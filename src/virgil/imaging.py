@@ -360,6 +360,12 @@ class LogSum(_ImageRegulariser):
     & Boyd 2008). It favours images with few bright pixels. It is not
     convex, so start the fit from a good image.
 
+    Do not sweep its weight with :func:`l_curve`, which starts each fit
+    from the previous, stronger one. A strong weight switches most pixels
+    off, and pixels driven that dark (in log-brightness) cannot recover, so
+    every weaker fit inherits the collapse. Fit each weight from the same
+    starting image instead.
+
     Parameters
     ----------
     weight : float

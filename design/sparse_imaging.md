@@ -199,6 +199,22 @@ CLEAN put its brightest component on the companion's pixel and reached
 χ²/N = 1 after 28 iterations, with 0.034 of the 0.05 companion flux
 (stopping at the discrepancy point under-recovers flux).
 
+### First MWE run (OzSTAR job 17999081, commit 05d5da8)
+
+Three knots and an extended blob (3.5% of the flux) beside a star, AMI
+DISCOs, 62² pixels of 20 mas:
+- CLEAN reached χ²/N = 1 in 131 iterations with 64 components and 0.0341 of
+  the 0.035 flux. Convolved with the beam it matches the truth (NCC 1.00);
+  at native resolution the blob is a scatter of points (NCC 0.70).
+- MEM and StarletL1, swept with `l_curve` from the CLEAN start, also match
+  the truth after convolution (NCC 1.00). Their native NCCs are 0.91 and
+  0.83, and neither converged within 50 000 L-BFGS steps at every weight.
+- **LogSum failed when swept with `l_curve`**: every weight ended at one
+  bright pixel, χ²/N = 58. A strong weight switches most pixels off, and in
+  log-brightness coordinates they cannot recover, so each warm-started
+  weaker fit inherits the collapse. The `LogSum` docstring now says so, and
+  the MWE fits each `LogSum` weight from the CLEAN start instead.
+
 ## References
 
 - Baron, Monnier & Kloppenborg 2010, Proc. SPIE 7734: SQUEEZE (MCMC
