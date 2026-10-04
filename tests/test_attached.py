@@ -220,3 +220,23 @@ def test_the_likelihood_is_differentiable_in_the_orbit():
     grad = jax.jit(jax.grad(loglike))(730.0)
     assert onp.isfinite(float(grad))
     assert float(jax.grad(loglike)(700.0)) > 0  # back towards the truth
+
+
+@pytest.mark.parametrize("bind", [{"inc": "apparent_inc"}, {"pa": "line_pa"}])
+def test_gradients_through_a_disc_with_angles_bound_per_sample(bind):
+    # With JAX 0.11, a vmap over samples of a disc whose bound angles vary
+    # per sample failed under grad (RuntimeProgramInputMismatch).
+    data = _epochs(T_REF + onp.array([0.0, 100.0]))
+
+    def loglike(inc):
+        orbit = eqx.tree_at(lambda o: o.inc, ORBIT, inc)
+        disc = Attached(
+            ModulatedGaussianRim(
+                4.0, 1.5, 30.0, 10.0, az_amps=0.5, az_pas=0.0, flux=0.02
+            ),
+            orbit,
+            bind=bind,
+        )
+        return model_loglike(System(primary=PointSource(), disc=disc), data)
+
+    assert onp.isfinite(float(jax.grad(loglike)(50.0)))
