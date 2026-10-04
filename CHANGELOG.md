@@ -9,6 +9,11 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Short-arc orbits.** `StateVectorOrbit` parameterises an orbit by the
+  relative position and velocity at `t_ref` and the gravitational parameter,
+  which a short arc constrains well where the elements are degenerate; it
+  converts exactly to a `KeplerOrbit` (`to_kepler`, `from_kepler`).
+
 - **Orbit example.** `notebooks/mwe/mwe_orbit.ipynb`: a companion and an
   attached disc observed on six VLTI nights, recovered through per-night
   positions, Thiele–Innes starting orbits and a joint fit to all the

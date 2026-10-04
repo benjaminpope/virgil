@@ -307,3 +307,59 @@ def test_position_data_checks_its_shapes():
         PositionData(mjd, onp.zeros(2), onp.zeros(3), cov)
     with pytest.raises(ValueError, match="ddec has shape"):
         PositionData(mjd, onp.zeros(3), 0.0, cov)
+
+
+# --- State vectors for short arcs (design R4) ---
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {},
+        {"ecc": 0.9, "omega": 300.0, "Omega": 20.0},
+        {"ecc": 1e-6},
+        {"inc": 2.0},
+        {"inc": 150.0, "Omega": 250.0},
+    ],
+)
+def test_state_vector_round_trip(changes):
+    from virgil.orbits import StateVectorOrbit
+
+    mjd = T_REF + onp.linspace(-300.0, 500.0, 41)
+    with jax.enable_x64(True):
+        orbit = _orbit(**changes)
+        state = StateVectorOrbit.from_kepler(orbit)
+        back = state.to_kepler()
+        # The orbit itself (all three axes, so the node is the true one).
+        assert onp.allclose(
+            onp.array(back.relative(mjd)),
+            onp.array(orbit.relative(mjd)),
+            atol=1e-7,
+        )
+        for name in ("period", "ecc", "a_mas"):
+            assert float(getattr(back, name)) == pytest.approx(
+                float(getattr(orbit, name)), rel=1e-7, abs=1e-9
+            )
+        if changes.get("ecc", 0.4) > 1e-3 and changes.get("inc", 60.0) > 5.0:
+            for name in ("inc", "omega", "Omega"):
+                assert float(getattr(back, name)) == pytest.approx(
+                    float(getattr(orbit, name)), abs=1e-6
+                )
+
+
+def test_unbound_states_are_rejected_and_gradients_are_finite():
+    import equinox as eqx
+
+    from virgil.orbits import StateVectorOrbit
+
+    with pytest.raises(ValueError, match="unbound"):
+        StateVectorOrbit(10.0, 0.0, 0.0, 1e4, 0.0, 0.0, 1.0)
+    state = StateVectorOrbit.from_kepler(_orbit())
+
+    def separation(vra):
+        orbit = eqx.tree_at(lambda s: s.vra, state, vra).to_kepler()
+        dra, ddec, _ = orbit._relative(onp.array([50.0, 100.0]))
+        return (dra**2 + ddec**2).sum()
+
+    grad = jax.jit(jax.grad(separation))(state.vra)
+    assert onp.isfinite(float(grad))

@@ -111,6 +111,7 @@ from .oifits import read_oifits, write_oifits  # noqa: E402
 from .orbits import (  # noqa: E402
     KeplerOrbit,
     PositionData,
+    StateVectorOrbit,
     ThieleInnesOrbit,
     starting_orbits,
 )
@@ -142,6 +143,7 @@ __all__ = [
     "QuadraticLimbDarkenedDisk",
     "Resolved",
     "SourceModel",
+    "StateVectorOrbit",
     "SquareRootLimbDarkenedDisk",
     "System",
     "ThieleInnesOrbit",

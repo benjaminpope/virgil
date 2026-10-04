@@ -13,5 +13,6 @@ Kepler's equation is solved by jaxoplanet, installed with
       members:
         - KeplerOrbit
         - ThieleInnesOrbit
+        - StateVectorOrbit
         - PositionData
         - starting_orbits
