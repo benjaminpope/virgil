@@ -490,6 +490,88 @@ def test_closure_phases_match_visibilities_within_an_exposure():
         read_oifits(hdul)
 
 
+def _t3_under_other_insname(waves, reverse=()):
+    """V² and T3 under different INSNAMEs with identical wavelengths.
+
+    The baselines in ``reverse`` are stored reversed in the OI_VIS2 table
+    (stations swapped, ``(u, v)`` negated), as in the 2006 Beauty Contest
+    files.
+    """
+    from virgil.oifits import build_hdulist
+
+    hdul = build_hdulist(_tables(waves=waves))
+    vis2 = hdul["OI_VIS2"].data
+    for pair in reverse:
+        row = onp.flatnonzero((vis2["STA_INDEX"] == pair).all(axis=1))[0]
+        vis2["STA_INDEX"][row] = pair[::-1]
+        vis2["UCOORD"][row] *= -1
+        vis2["VCOORD"][row] *= -1
+    wave_hdu = hdul["OI_WAVELENGTH"].copy()
+    insname = wave_hdu.header["INSNAME"]
+    wave_hdu.header["INSNAME"] = insname + "_TR01"
+    hdul["OI_T3"].header["INSNAME"] = insname + "_TR01"
+    hdul.append(wave_hdu)
+    return hdul
+
+
+@pytest.mark.parametrize("reverse", [(), ((1, 3),)])
+def test_closure_phases_pair_with_v2_of_another_insname(reverse, tmp_path):
+    waves = onp.array([4.4e-6, 4.8e-6, 5.2e-6])
+    hdul = _t3_under_other_insname(waves, reverse)
+    path = tmp_path / "split.fits"
+    hdul.writeto(path)
+    data = OIData(path)
+
+    n_bl, n_cp = len(PAIRS), len(TRIANGLES)
+    assert data.phi.shape == (n_cp * waves.size,)
+    # The V² are all there and unflagged; only a reversed leg adds samples.
+    vis_flag = read_oifits(path)["vis_flag"]
+    assert np.count_nonzero(~vis_flag) == n_bl * waves.size
+    assert vis_flag.size == (n_bl + len(reverse)) * waves.size
+    assert data.vis.shape == (n_bl * waves.size,)
+    # The model at each (u, v, wavelength) reproduces both the V² and the
+    # closure phases, so the reversed leg is the conjugate of the stored one.
+    assert np.allclose(data.model(TRUTH), data.flatten_data()[0], atol=1e-5)
+    # A table with different wavelengths is no match.
+    hdul[-1].data["EFF_WAVE"] *= 1.001
+    with pytest.raises(ValueError, match="same wavelengths"):
+        read_oifits(hdul)
+
+
+def test_closure_phases_never_pair_with_another_array():
+    # STA_INDEX belongs to an array: a V² table of another ARRNAME that
+    # reuses the station numbers and wavelengths (at other (u, v)) must not
+    # supply the legs, even when it comes first in the file.
+    hdul = _t3_under_other_insname((4.8e-6,))
+    own = hdul["OI_VIS2"]
+    for hdu in (own, hdul["OI_T3"]):
+        hdu.header["ARRNAME"] = "ARRAY_A"
+    other = own.copy()
+    other.header["ARRNAME"] = "ARRAY_B"
+    other.header["INSNAME"] = "OTHER"
+    other.data["UCOORD"] = 3.0 * own.data["UCOORD"]
+    wave = hdul["OI_WAVELENGTH"].copy()
+    wave.header["INSNAME"] = "OTHER"
+    hdul.insert(hdul.index_of("OI_VIS2"), other)
+    hdul.append(wave)
+
+    record = read_oifits(hdul)
+    legs = record["u"][
+        onp.concatenate([record[f"i_cps{k}"] for k in (1, 2, 3)])
+    ]
+    assert onp.isin(legs, own.data["UCOORD"]).all()
+    assert not onp.isin(legs, other.data["UCOORD"]).any()
+
+
+def test_missing_baseline_in_every_orientation_is_reported():
+    hdul = _t3_under_other_insname((4.8e-6,))
+    vis2 = hdul["OI_VIS2"].data
+    row = onp.flatnonzero((vis2["STA_INDEX"] == (1, 3)).all(axis=1))[0]
+    vis2["STA_INDEX"][row] = (2, 4)  # leaves (1, 3) stored nowhere
+    with pytest.raises(ValueError, match=r"either orientation"):
+        read_oifits(hdul)
+
+
 def test_closure_only_rows_of_different_times_keep_their_own_baselines():
     # Without a visibility table, each T3 row's legs come from its own
     # coordinates, so two epochs within the exposure window stay separate.
