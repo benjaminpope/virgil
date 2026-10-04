@@ -438,3 +438,38 @@ def test_positions_and_rvs_fix_the_node_in_a_joint_fit():
     # both the positions and the velocities there.
     assert sum(right.info["chi2"]) < 1e-3
     assert sum(wrong.info["chi2"]) > 1e3
+
+
+def test_a_plain_function_is_a_likelihood_term_and_axial_priors_work_in_fit():
+    import numpyro.distributions as dist
+
+    from virgil.fitting import fit
+    from virgil.orbits import AxialVonMises, RVData
+
+    truth = _orbit()
+    mjd = T_REF + onp.linspace(0.0, 380.0, 10)
+    with jax.enable_x64(True):
+        positions = _positions(truth, mjd)
+    fixed = {
+        k: float(getattr(truth, k))
+        for k in ("period", "dt_peri", "ecc", "inc", "omega", "a_mas")
+    }
+
+    def residuals(values):  # a plain function, as the docs allow
+        orbit = KeplerOrbit(**fixed, Omega=values["Omega"], t_ref=T_REF)
+        return positions.whitened_residuals(orbit)
+
+    result = fit(
+        lambda **kw: None,
+        {"Omega": AxialVonMises(110.0, 2.0)},
+        (),
+        init={"Omega": 100.0},
+        likelihoods=[residuals],
+    )
+    assert result.info["ndata"] == [20]
+    assert float(result.values["Omega"]) == pytest.approx(110.0, abs=1e-3)
+    with pytest.raises(ValueError, match="d_rv"):
+        RVData(mjd, onp.zeros(10), 0.0)
+    with pytest.raises(ValueError, match="d_rv"):
+        RVData(mjd, onp.zeros(10), onp.nan)
+    assert isinstance(AxialVonMises(1.0, 2.0), dist.Distribution)

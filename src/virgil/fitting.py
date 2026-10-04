@@ -417,7 +417,9 @@ def fit(
         # Optimisers see the loss per data point, so step sizes and
         # tolerances do not depend on the size of the dataset.
         ndata = [d.n_independent for d in problem.data]
-        ndata += [term.size for term in problem.likelihoods]
+        # A term's size is the length of its residuals at the start.
+        start = problem.constrain(z0)
+        ndata += [int(np.size(term(start))) for term in problem.likelihoods]
         scale = float(max(sum(ndata), 1))
         # Numbers go to the jitted solvers as arrays, which are traced, so
         # that new values do not recompile. The step limits of LM and Adam

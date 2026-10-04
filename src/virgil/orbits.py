@@ -628,6 +628,8 @@ class RVData(zx.Base):
             raise ValueError(
                 f"rv has shape {rv.shape} but there are {mjd.size} epochs."
             )
+        if not onp.all(onp.isfinite(d_rv) & (d_rv > 0)):
+            raise ValueError("d_rv must be positive and finite.")
         self.t_ref = float(mjd.min() if t_ref is None else t_ref)
         self.dt = np.asarray(mjd - self.t_ref)
         self.rv = np.asarray(rv)
@@ -687,13 +689,6 @@ class _Term(eqx.Module):
     def __call__(self, values):
         return np.ravel(self.data.whitened_residuals(*self.build(values)))
 
-    @property
-    def size(self):
-        """Number of residuals."""
-        return int(np.size(self.data.dt)) * (
-            2 if isinstance(self.data, PositionData) else 1
-        )
-
 
 def total_mass(orbit, distance_pc):
     """Total mass (solar masses) from the orbit at a distance (pc).
@@ -729,6 +724,10 @@ class AxialVonMises(dist.Distribution):
         width of about ``28.6 / sqrt(kappa)`` degrees.
     """
 
+    arg_constraints = {
+        "mean_deg": constraints.real,
+        "kappa": constraints.positive,
+    }
     support = constraints.interval(0.0, 360.0)
 
     def __init__(self, mean, kappa, *, validate_args=None):
