@@ -9,6 +9,12 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Orbit example.** `notebooks/mwe/mwe_orbit.ipynb`: a companion and an
+  attached disc observed on six VLTI nights, recovered through per-night
+  positions, Thiele–Innes starting orbits and a joint fit to all the
+  visibilities. `coverage.vlti_oidata(nights_mjd=...)` gives synthetic
+  coverage with times.
+
 - **Simulation.** `virgil.simulate.simulate(scene, template)` observes a scene
   with a template's sampling, errors and times (each sample at its own time
   for a moving scene, with `shift_days` to move the epochs), and

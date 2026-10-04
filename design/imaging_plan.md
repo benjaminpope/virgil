@@ -188,12 +188,14 @@ The design rationale was established in the earlier research: the gauge survey, 
 - MWEs:
   - `mwe_sam_v2_cp`: two NRM rolls, compared with AMIGO-style modes (NCC 0.93 against 0.98).
   - `mwe_vlti`: two nights, eleven channels, with a SPARCO `PowerLaw` ratio and index fitted together with the pixels. Pre-6.0: NCC 0.89, with ratio 0.509 against 0.5 and index 1.87 against 2.
+  - **Re-run post-6.0** (2026-10-04, OzSTAR job `virgil_notebooks`, virgil `ad131bd`): `mwe_vlti` ratio 0.506 and index 1.89, χ² per point 0.99 and 0.98; `mwe_sam_v2_cp` extended flux 0.0307 against 0.03, χ² per point 0.45 and 0.72 (roll 1 over-fitted at the discrepancy weight, which `diagnose` flags). Their NCCs are in the figure titles.
 - The field is limited to λ/B_min, so VLTI scenes are only 2–3 beams across.
 - **MWE-B** (`mwe_stress_test`): the VLTI scene at three coverages × five noise levels (0.5–8× the default errors), with one noise draw per coverage scaled across the levels. Each case is reconstructed with a hole and MEM at the discrepancy weight.
   - Pre-6.0: full coverage: NCC 0.86 at 0.5× and 1×, 0.77 at 4×, and 0.64 at 8×.
   - Two hour angles, or three UTs: NCC about 0.6 even at low noise.
   - χ² per point reached one in every case, so it says nothing about fidelity.
   - `diagnose`'s edge-flux warning flags noise-driven spreading to the edge of the field, but not coverage-driven failures (three UTs at 0.5×: NCC 0.62, no warning).
+  - **Re-run post-6.0** (2026-10-04): full coverage NCC 0.84, 0.81, 0.80, 0.73 and 0.56 from 0.5× to 8×; two hour angles 0.68 to 0.35; three UTs 0.62 to 0.21; χ² per point 0.95–1.05 throughout. The pattern is unchanged, and the three-UT case at 0.5× still gets no warning.
 
 ## Stage 4b: a rotating scene over two epochs
 A spiral that turns by 60° between two epochs, fitted jointly with the rotation known and then unknown. For an unknown rotation:
@@ -291,6 +293,7 @@ A background split off as a `Resolved` component also changes what the image's i
   - Levenberg–Marquardt converges in 23–53 steps, a few seconds per fit.
   - At the discrepancy pair (σ = 4, ℓ = 1 mas): NCC 0.93, ratio 0.511 and index 1.91, against MEM's 0.89, 0.509 and 1.87 (truth 0.5 and 2).
   - The result is insensitive to σ between 1 and 4.
+  - **Re-run post-6.0** (2026-10-04): the discrepancy pair is now σ = 4, ℓ = 2 mas. GP: NCC 0.939, ratio 0.503 and index 1.92; MEM: 0.852, 0.506 and 1.89. The GP's lead over MEM grew (0.09 against 0.04).
 
 **Log, 5b (2026-10-01; numbers pre-6.0):**
 - **Library:**
@@ -545,7 +548,7 @@ The version is already 0.2.0 but the release is not out. The review (`codebase_r
 - the blockers (B1 to B5), including the `Tabulated` API (B5; see `chromatic_sources.md`);
 - `CHANGELOG.md`, with the rename and the Stage 6.0 change to every four-telescope χ²;
 - the text fixes in this plan, the design notes, `AGENTS.md` and `MIGRATION_VIRGIL.md`, and the reference corrections;
-- re-executing the six MWEs (`mwe_sam_v2_cp`, `mwe_vlti`, `mwe_stress_test`, `mwe_gaussian_field`, `mwe_evidence`, `mwe_elr_chara`), or leaving their numbers marked "pre-6.0". They have not been re-run since Stage 6.0;
+- re-executing the six MWEs (`mwe_sam_v2_cp`, `mwe_vlti`, `mwe_stress_test`, `mwe_gaussian_field`, `mwe_evidence`, `mwe_elr_chara`): **done 2026-10-04** on OzSTAR (job `virgil_notebooks`, virgil `ad131bd`); the new numbers are logged beside the old ones;
 - publishing `virgil-astro` 0.2.0 and a final `drpangloss` 0.2.0 that forwards to it with a `FutureWarning` (the human's job).
 
 **Open debts** (not blockers):
