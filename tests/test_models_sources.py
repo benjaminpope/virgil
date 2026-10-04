@@ -29,6 +29,7 @@ from virgil.models import (
     Rotated,
     SquareRootLimbDarkenedDisk,
     System,
+    TruncatedCone,
     UniformDisk,
     cvis_radial_dirac_delta_modulated,
     cvis_uniform_disk,
@@ -445,6 +446,22 @@ def test_binary_render_is_available():
         (BinaryModelAngular(20.0, 60.0, 1.0 / 3.0), 2e-3),
         (_star_and_disk(4.0, 0.5, 6.0, 3.0), 2e-3),
         (UniformDisk(15.0, dra=-5.0, ddec=4.0), 2e-3),
+        (
+            TruncatedCone(
+                4.0,
+                35.0,
+                3.0,
+                6.0,
+                1.5,
+                tilt=30.0,
+                pa=60.0,
+                ratio=0.7,
+                dra=3.0,
+                ddec=-2.0,
+                n_rings=16,
+            ),
+            2e-3,
+        ),
         (LimbDarkenedDisk(15.0, u=[0.3, 0.2, 0.1], dra=-5.0, ddec=4.0), 2e-3),
         (QuadraticLimbDarkenedDisk(15.0, q1=0.5, q2=0.3, dra=-5.0), 2e-3),
         (SquareRootLimbDarkenedDisk(15.0, q1=0.6, q2=0.4, ddec=4.0), 2e-3),
@@ -539,6 +556,7 @@ def test_binary_render_is_available():
         "binary_ang",
         "gauss_disk",
         "uniform_disk",
+        "truncated_cone",
         "limb_darkened_disk",
         "quadratic_limb_darkened_disk",
         "square_root_limb_darkened_disk",
@@ -1118,3 +1136,46 @@ def test_gaussian_arc_longer_than_the_circle_goes_round_it_once():
     )
     assert onp.allclose([x[0], y[0]], antipode, atol=1e-5)
     assert onp.allclose([x[-1], y[-1]], antipode, atol=1e-5)
+
+
+def test_truncated_cone_limits_and_symmetries():
+    rng = onp.random.default_rng(3)
+    u, v = rng.uniform(-60.0, 60.0, (2, 30))
+    cone = dict(tip=5.0, alpha=30.0, s0=4.0, length=8.0, width=1.0, pa=40.0)
+    # Optically thin: the sign of the tilt does not matter.
+    assert onp.allclose(
+        TruncatedCone(**cone, tilt=25.0).model(u, v, 1e-6),
+        TruncatedCone(**cone, tilt=-25.0).model(u, v, 1e-6),
+    )
+    # Pointing at the observer (tilt 90), a circular cone is a set of
+    # concentric face-on rings: real and symmetric under rotation.
+    face_on = TruncatedCone(**cone, tilt=90.0)
+    angle = onp.deg2rad(70.0)
+    ur, vr = (
+        u * onp.cos(angle) - v * onp.sin(angle),
+        u * onp.sin(angle) + v * onp.cos(angle),
+    )
+    assert onp.allclose(
+        face_on.model(u, v, 1e-6), face_on.model(ur, vr, 1e-6), atol=1e-6
+    )
+    assert onp.allclose(onp.imag(face_on.model(u, v, 1e-6)), 0.0, atol=1e-6)
+    # Across the projected axis, ratio does not matter at tilt 0.
+    assert onp.allclose(
+        TruncatedCone(**cone, tilt=0.0, ratio=0.3).model(u, v, 1e-6),
+        TruncatedCone(**cone, tilt=0.0).model(u, v, 1e-6),
+    )
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"alpha": 95.0}, "alpha"),
+        ({"length": 0.0}, "length"),
+        ({"tilt": 120.0}, "tilt"),
+        ({"ratio": -1.0}, "ratio"),
+    ],
+)
+def test_truncated_cone_rejects_bad_shapes(kwargs, match):
+    base = dict(tip=5.0, alpha=30.0, s0=4.0, length=8.0, width=1.0)
+    with pytest.raises(ValueError, match=match):
+        TruncatedCone(**{**base, **kwargs})

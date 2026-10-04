@@ -9,6 +9,12 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`TruncatedCone`.** A thin, optically thin conical shell truncated near its
+  apex (e.g. the dust cone of a colliding-wind binary), with an analytic
+  visibility (a stack of projected rings), a tilt out of the sky plane, an
+  optional elliptical cross-section, and a rendered image that matches its
+  visibilities.
+
 - **Orbit example.** `notebooks/mwe/mwe_orbit.ipynb`: a companion and an
   attached disc observed on six VLTI nights, recovered through per-night
   positions, Thiele–Innes starting orbits and a joint fit to all the
