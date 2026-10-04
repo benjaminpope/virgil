@@ -113,10 +113,14 @@ class _Objective(eqx.Module):
     priors: dict
     regularisers: tuple
     noise: dict
+    likelihoods: tuple
 
-    def __init__(self, model, priors, data, regularisers=(), noise=None):
+    def __init__(
+        self, model, priors, data, regularisers=(), noise=None, likelihoods=()
+    ):
         self.model = model
         self.data = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+        self.likelihoods = tuple(likelihoods)
         self.priors = {path: _traced(p) for path, p in priors.items()}
         self.regularisers = tuple(regularisers)
         self.noise = {
@@ -212,6 +216,7 @@ class _Objective(eqx.Module):
         model = self.build(z)
         values = self.constrain(z)
         parts = self.data_residuals(model)
+        parts += [term(values) for term in self.likelihoods]
         for regulariser in self.regularisers:
             if not hasattr(regulariser, "residuals"):
                 raise TypeError(
@@ -236,6 +241,7 @@ class _Objective(eqx.Module):
         values = self.constrain(z)
         whitened = self._whitened(model, values)
         chi2 = sum(np.sum(w**2) for w, _ in whitened)
+        chi2 = chi2 + sum(np.sum(t(values) ** 2) for t in self.likelihoods)
         # With fitted error terms, the normalisation of the Gaussian
         # likelihood, sum(log σ), is no longer a constant.
         log_norm = sum(np.sum(np.log(e)) for _, e in whitened)
@@ -264,7 +270,8 @@ class FitResult:
     info : dict
         ``method``; ``converged`` (``None`` for Adam, which has no
         convergence test); ``steps``; ``loss`` (the unscaled negative log
-        posterior); ``chi2`` and ``ndata``, per dataset; and ``chi2_red``,
+        posterior); ``chi2`` and ``ndata``, per dataset and then per
+        likelihood term; and ``chi2_red``,
         the total χ² per data point. With fitted error terms, χ² uses the
         inflated errors, and ``values`` holds the terms too.
     """
@@ -289,6 +296,7 @@ def fit(
     learning_rate=1e-2,
     cg_steps=50,
     dtype="float64",
+    likelihoods=(),
 ):
     """Find the maximum a posteriori parameters of a model given data.
 
@@ -310,7 +318,8 @@ def fit(
         [`image_priors`][virgil.imaging.image_priors]). Priors on
         fluxes must have non-negative support.
     data : OIData or sequence of OIData
-        The data, fitted jointly.
+        The data, fitted jointly. May be empty (``()``) when
+        ``likelihoods`` holds all the data.
     regularisers : sequence, optional
         Penalties added to the loss, e.g. from
         [`virgil.imaging`][virgil.imaging].
@@ -376,6 +385,14 @@ def fit(
         ``jax.enable_x64`` context. The returned model and values are cast
         back to JAX's precision outside the fit (float32, unless x64 is
         enabled), so that they work with the rest of your code.
+    likelihoods : sequence, optional
+        Further Gaussian likelihood terms that are not visibilities: each is
+        a callable of the fitted values (a dict, by path or keyword) that
+        returns whitened residuals, such as
+        [`PositionData.term`][virgil.orbits.PositionData.term] or
+        [`RVData.term`][virgil.orbits.RVData.term] for an orbit's
+        positions and radial velocities. Their χ² follow the datasets' in
+        ``info``.
 
     Returns
     -------
@@ -392,13 +409,15 @@ def fit(
         )
     with run_in(dtype):
         problem = cast_tree(
-            _Objective(model, priors, data, regularisers, noise), dtype
+            _Objective(model, priors, data, regularisers, noise, likelihoods),
+            dtype,
         )
         z0 = problem.init(cast_tree(init, dtype))
         method = method or ("lm" if _has_residuals(problem, z0) else "lbfgs")
         # Optimisers see the loss per data point, so step sizes and
         # tolerances do not depend on the size of the dataset.
         ndata = [d.n_independent for d in problem.data]
+        ndata += [term.size for term in problem.likelihoods]
         scale = float(max(sum(ndata), 1))
         # Numbers go to the jitted solvers as arrays, which are traced, so
         # that new values do not recompile. The step limits of LM and Adam
@@ -616,7 +635,9 @@ def _summary(problem, z):
 
     With fitted error terms, chi-squared uses the inflated errors.
     """
-    residuals = problem.data_residuals(problem.build(z), problem.constrain(z))
+    values = problem.constrain(z)
+    residuals = problem.data_residuals(problem.build(z), values)
+    residuals += [term(values) for term in problem.likelihoods]
     chi2 = [np.sum(r**2) for r in residuals]
     return problem.loss(z), chi2
 
