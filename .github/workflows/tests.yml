@@ -133,6 +133,11 @@ jobs:
 
       # uv build builds the sdist, then the wheel from the sdist, so this
       # also checks that the sdist is complete.
+      # uv.lock must match pyproject.toml and track the newest JAX each
+      # Python version allows (see the comment on the jax floor there).
+      - name: check uv.lock is current
+        run: uv lock --check
+
       - name: build the wheel and sdist
         run: uv build
 
