@@ -9,6 +9,11 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Simulation.** `virgil.simulate.simulate(scene, template)` observes a scene
+  with a template's sampling, errors and times (each sample at its own time
+  for a moving scene, with `shift_days` to move the epochs), and
+  `bias_test` fits a model to many noise draws to show biases and spreads.
+
 - **Times and frames.** `OIData` keeps each sample's time (`mjd`, stored as
   `dt` days since a float64 `t_ref`) and exposure (`frame`) from OIFITS, and
   dict input may give `mjd` and `frame`. A frame is the baselines that

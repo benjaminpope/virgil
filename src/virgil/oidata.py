@@ -879,8 +879,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             scene = model_object.at(dt, self.t_ref)
             return scene.model(u[None], v[None], w[None])[0]
 
-        # Parts that do not depend on time are computed once under vmap.
-        return jax.vmap(one)(self.dt, self.u, self.v, wavel)
+        # A compiled loop over samples, not vmap: with JAX 0.11, vmapping
+        # components whose angles vary per sample (an Attached disc's bound
+        # inclination or position angle) and differentiating made JAX run
+        # executables with the wrong batch size (RuntimeProgramInputMismatch,
+        # or "Expected cotangent type" in fit).
+        return jax.lax.map(lambda x: one(*x), (self.dt, self.u, self.v, wavel))
 
     def with_error_scale(self, factor):
         """A copy of the data with every uncertainty multiplied by ``factor``.

@@ -51,6 +51,7 @@ from . import (  # noqa: E402
     orbits,
     plotting,
     scenes,
+    simulate,
     spectra,
 )
 from ._geometry import pixel_offsets  # noqa: E402

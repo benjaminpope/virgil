@@ -10,13 +10,25 @@ on the pixel fluxes ``b`` to the loss:
 | [`TSV`][virgil.imaging.TSV] | ``w Σ (Δx b)² + (Δy b)²`` | yes | no |
 | [`TV`][virgil.imaging.TV] | ``w Σ √((Δx b)² + (Δy b)² + ε²)`` | no | no |
 | [`MaxEntropy`][virgil.imaging.MaxEntropy] | ``w Σ b log(b / q)`` | no | no |
+| [`Laplacian`][virgil.imaging.Laplacian] | ``w Σ (∇²b)²`` | yes | no |
+| [`StarletL1`][virgil.imaging.StarletL1] | ``w Σ √(s² + ε²)`` over starlet details ``s`` | no | no |
+| [`LogSum`][virgil.imaging.LogSum] | ``w Σ log(1 + b / (ε b̄))`` | no | no |
 | [`Centroid`][virgil.imaging.Centroid] | ``½ |centroid / σ|²`` | yes | yes |
 
 Differences ``Δ`` are between neighbouring pixels, with zeros beyond the
-edges, so edge pixels are penalised too. TSV (total squared variation)
-favours smooth images, TV (total variation) piecewise-flat ones, and maximum
-entropy images close to a default ``q``. The weight ``w`` depends on the
-scene and the data; :func:`l_curve` sweeps it.
+edges, so edge pixels are penalised too. TSV (total squared variation) and
+the Laplacian favour smooth images, TV (total variation) piecewise-flat ones,
+and maximum entropy images close to a default ``q``. The weight ``w``
+depends on the scene and the data; :func:`l_curve` sweeps it.
+
+Sparse images, made of a few compact features, need a different penalty. An
+L1 norm of the pixels does not work: they are positive and sum to one, so
+``Σ |b| = 1`` for every image. ``StarletL1`` is an L1 norm of the image's
+wavelet (starlet) coefficients instead, which favours images built from few
+compact structures at any scale. ``LogSum`` is a smooth surrogate for the
+number of bright pixels (the L0 "norm" of SQUEEZE). It is not convex, so the
+fit can stop in a local minimum: start it from a good image.
+``design/sparse_imaging.md`` discusses the choices.
 
 When [`fit`][virgil.fitting.fit]'s model function returns one model per
 dataset, every regulariser acts on the **first model only**. That is right
@@ -192,6 +204,172 @@ class MaxEntropy(_ImageRegulariser):
             q = np.asarray(self.prior) / np.sum(self.prior)
         q = np.where(b > 0.0, q, 1.0)  # 0 log 0 = 0 outside the support
         return self.weight * np.sum(xlogy(b, b) - xlogy(b, q))
+
+
+class Laplacian(_ImageRegulariser):
+    """Squared Laplacian: ``weight * Σ (∇²b)²``.
+
+    ``∇²b`` is the five-point Laplacian, with zeros beyond the edges (so it
+    is evaluated on a ring of pixels around the image too). A quadratic
+    penalty on curvature, smoother than TSV, so it can be fitted by
+    Levenberg–Marquardt.
+
+    Parameters
+    ----------
+    weight : float
+        Strength of the penalty.
+    path : str, optional
+        Path of the Image in the model.
+    """
+
+    def __init__(self, weight, path=None):
+        self.weight = np.asarray(weight, dtype=float)
+        self.path = path
+
+    def residuals(self, model):
+        padded = np.pad(self.image(model).brightness, 2)
+        laplacian = (
+            padded[:-2, 1:-1]
+            + padded[2:, 1:-1]
+            + padded[1:-1, :-2]
+            + padded[1:-1, 2:]
+            - 4.0 * padded[1:-1, 1:-1]
+        )
+        return np.sqrt(2.0 * self.weight) * np.ravel(laplacian)
+
+    def value(self, model):
+        return 0.5 * np.sum(self.residuals(model) ** 2)
+
+
+_B3_SPLINE = (1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16)
+
+
+def _smooth(image, step):
+    """The B3-spline smoothing of the starlet, with taps ``step`` apart."""
+    for axis in (0, 1):
+        n = image.shape[axis]
+        width = [(0, 0), (0, 0)]
+        width[axis] = (2 * step, 2 * step)
+        padded = np.pad(image, width)
+        image = sum(
+            tap * jax.lax.slice_in_dim(padded, k * step, k * step + n, 1, axis)
+            for k, tap in enumerate(_B3_SPLINE)
+        )
+    return image
+
+
+def starlet(image, scales=4):
+    """The starlet (isotropic undecimated wavelet) transform of an image.
+
+    The à-trous algorithm with a B3-spline kernel (Starck, Murtagh & Fadili
+    2010): the image is smoothed ``scales`` times, the kernel's taps twice
+    as far apart each time, and each detail plane is the difference between
+    successive smoothings. Detail plane ``j`` holds structure about
+    ``2**j`` pixels across. Beyond the edges the image is zero.
+
+    Parameters
+    ----------
+    image : array-like, shape (ny, nx)
+        The image.
+    scales : int, optional
+        Number of detail planes (default 4).
+
+    Returns
+    -------
+    details : jax.Array, shape (scales, ny, nx)
+        The detail planes, finest first.
+    coarse : jax.Array, shape (ny, nx)
+        What is left after the last smoothing. ``details.sum(0) + coarse``
+        is the image.
+    """
+    if int(scales) != scales or scales < 1:
+        raise ValueError(f"scales must be a positive integer, not {scales}.")
+    smooth = np.asarray(image)
+    details = []
+    for j in range(int(scales)):
+        smoother = _smooth(smooth, 2**j)
+        details.append(smooth - smoother)
+        smooth = smoother
+    return np.stack(details), smooth
+
+
+class StarletL1(_ImageRegulariser):
+    """L1 norm of the starlet details: ``weight * Σ √(s² + ε²)``.
+
+    ``s`` are the detail coefficients of :func:`starlet`, at every scale.
+    An L1 norm favours few non-zero coefficients, so the image is built
+    from few compact structures, of any size: a sparse image in the
+    wavelet sense. The coarse plane, which carries the flux, is not
+    penalised. ``ε`` smooths the penalty near zero, so that it is
+    differentiable.
+
+    Parameters
+    ----------
+    weight : float
+        Strength of the penalty.
+    scales : int, optional
+        Number of detail planes (default 4); the largest holds structure
+        about ``2**(scales - 1)`` pixels across.
+    epsilon : float, optional
+        Smoothing scale, as a fraction of the mean pixel flux (default
+        1e-2).
+    path : str, optional
+        Path of the Image in the model.
+    """
+
+    scales: int = eqx.field(static=True)
+    epsilon: float
+
+    def __init__(self, weight, scales=4, epsilon=1e-2, path=None):
+        if int(scales) != scales or scales < 1:
+            raise ValueError(
+                f"scales must be a positive integer, not {scales}."
+            )
+        self.weight = np.asarray(weight, dtype=float)
+        self.scales = int(scales)
+        self.epsilon = np.asarray(epsilon, dtype=float)
+        self.path = path
+
+    def value(self, model):
+        b = self.image(model).brightness
+        details, _ = starlet(b, self.scales)
+        eps = self.epsilon / b.size
+        return self.weight * np.sum(np.sqrt(details**2 + eps**2))
+
+
+class LogSum(_ImageRegulariser):
+    """Log-sum sparsity: ``weight * Σ log(1 + b / (ε b̄))``.
+
+    ``b̄`` is the mean pixel flux over the support. A pixel costs about
+    ``log(b / (ε b̄))`` once it is brighter than ``ε b̄``, and almost
+    nothing when fainter, so as ``ε → 0`` the penalty counts the bright
+    pixels: a smooth surrogate for the L0 "norm" of SQUEEZE (Candès, Wakin
+    & Boyd 2008). It favours images with few bright pixels. It is not
+    convex, so start the fit from a good image.
+
+    Parameters
+    ----------
+    weight : float
+        Strength of the penalty.
+    epsilon : float, optional
+        The flux, as a fraction of the mean pixel flux, at which a pixel
+        starts to count (default 1e-2).
+    path : str, optional
+        Path of the Image in the model.
+    """
+
+    epsilon: float
+
+    def __init__(self, weight, epsilon=1e-2, path=None):
+        self.weight = np.asarray(weight, dtype=float)
+        self.epsilon = np.asarray(epsilon, dtype=float)
+        self.path = path
+
+    def value(self, model):
+        image = self.image(model)
+        b = image.brightness
+        n = b.size if image.support is None else np.sum(image.support)
+        return self.weight * np.sum(np.log1p(b * n / self.epsilon))
 
 
 class Centroid(_ImageRegulariser):

@@ -15,7 +15,9 @@ from virgil.imaging import (
     TV,
     Centroid,
     LCurve,
+    LogSum,
     MaxEntropy,
+    StarletL1,
     image_priors,
     l_curve,
     nyquist_pixel_scale,
@@ -451,6 +453,8 @@ def test_a_dirty_start_is_a_positive_image():
     [
         (lambda v: [TSV(1e2), Centroid(v)], "lm"),
         (lambda v: [TV(1e2, epsilon=v * 1e-3), Centroid(5.0)], "lbfgs"),
+        (lambda v: [StarletL1(1.0, epsilon=v * 1e-3)], "lbfgs"),
+        (lambda v: [LogSum(1e-3, epsilon=v * 1e-3)], "lbfgs"),
     ],
 )
 def test_new_centroid_widths_and_tv_smoothing_do_not_recompile(

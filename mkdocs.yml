@@ -94,5 +94,6 @@ nav:
       - Fields: api/fields.md
       - Scenes: api/scenes.md
       - Coverage: api/coverage.md
+      - Simulate: api/simulate.md
       - Plotting: api/plotting.md
       - Legacy: api/legacy.md
