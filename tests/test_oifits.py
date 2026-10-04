@@ -538,6 +538,31 @@ def test_closure_phases_pair_with_v2_of_another_insname(reverse, tmp_path):
         read_oifits(hdul)
 
 
+def test_closure_phases_never_pair_with_another_array():
+    # STA_INDEX belongs to an array: a V² table of another ARRNAME that
+    # reuses the station numbers and wavelengths (at other (u, v)) must not
+    # supply the legs, even when it comes first in the file.
+    hdul = _t3_under_other_insname((4.8e-6,))
+    own = hdul["OI_VIS2"]
+    for hdu in (own, hdul["OI_T3"]):
+        hdu.header["ARRNAME"] = "ARRAY_A"
+    other = own.copy()
+    other.header["ARRNAME"] = "ARRAY_B"
+    other.header["INSNAME"] = "OTHER"
+    other.data["UCOORD"] = 3.0 * own.data["UCOORD"]
+    wave = hdul["OI_WAVELENGTH"].copy()
+    wave.header["INSNAME"] = "OTHER"
+    hdul.insert(hdul.index_of("OI_VIS2"), other)
+    hdul.append(wave)
+
+    record = read_oifits(hdul)
+    legs = record["u"][
+        onp.concatenate([record[f"i_cps{k}"] for k in (1, 2, 3)])
+    ]
+    assert onp.isin(legs, own.data["UCOORD"]).all()
+    assert not onp.isin(legs, other.data["UCOORD"]).any()
+
+
 def test_missing_baseline_in_every_orientation_is_reported():
     hdul = _t3_under_other_insname((4.8e-6,))
     vis2 = hdul["OI_VIS2"].data

@@ -158,6 +158,15 @@ def _extname(hdu):
     return str(hdu.header.get("EXTNAME", "")).strip().upper()
 
 
+def _lookup_key(hdu):
+    """``(ARRNAME, INSNAME)`` of a data table, which scopes its STA_INDEX.
+
+    Station numbers are only meaningful within one array, so baselines are
+    matched within the same ``ARRNAME`` (empty when the table has none).
+    """
+    return (str(hdu.header.get("ARRNAME", "")).strip(), _insname(hdu))
+
+
 def _insname(hdu):
     value = hdu.header.get("INSNAME")
     return None if value is None else str(value).strip()
@@ -393,10 +402,12 @@ class _BaselineLookup:
         """Return ``(start, nwave)`` of the nearest-epoch row, or ``None``.
 
         The row must be from the same exposure: see ``_MJD_TOLERANCE``. It
-        is looked up under ``ins`` first. With ``wave``, other ``INSNAME``s
-        whose wavelengths equal ``wave`` are tried next: the standard links
-        every table to an ``OI_WAVELENGTH`` table by ``INSNAME`` but does
-        not require the V² and T3 tables to share one.
+        is looked up under ``ins``, an ``(ARRNAME, INSNAME)`` pair, first.
+        With ``wave``, other ``INSNAME``s of the same array whose
+        wavelengths equal ``wave`` are tried next: the standard links every
+        table to an ``OI_WAVELENGTH`` table by ``INSNAME`` but does not
+        require the V² and T3 tables to share one. Station numbers belong to
+        an array, so tables of another ``ARRNAME`` are never used.
         """
         found = self._find_in(ins, pair, mjd)
         if found is not None or wave is None:
@@ -405,6 +416,7 @@ class _BaselineLookup:
         for other, other_wave in self._waves.items():
             if (
                 other != ins
+                and other[0] == ins[0]  # the same array (ARRNAME)
                 and other_wave.shape == wave.shape
                 and onp.allclose(other_wave, wave, rtol=_WAVE_RTOL, atol=0.0)
             ):
@@ -472,7 +484,7 @@ def _read_visibilities(tables, wavelengths, target_id):
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
         exposure = _exposure_time(hdu, mask)
-        ins = _insname(hdu)
+        ins = _lookup_key(hdu)
         for row in range(values.shape[0]):
             lookup.add(
                 ins, sta_index[row], mjd[row], exposure, start, nwave, wave
@@ -517,7 +529,7 @@ def _baselines_from_triangles(tables, wavelengths, target_id):
         u2, v2 = _column(hdu, "U2COORD", mask), _column(hdu, "V2COORD", mask)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
-        ins = _insname(hdu)
+        ins = _lookup_key(hdu)
         for row, (a, b, c) in enumerate(sta_index):
             legs = (
                 ((a, b), u1[row], v1[row]),
@@ -571,7 +583,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
         flag = _flags(hdu, mask, nwave, values, errors)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
-        ins = _insname(hdu)
+        ins = _lookup_key(hdu)
         channels = onp.arange(nwave)
         coords = None  # the legs' (u, v), read only if a leg is reversed
         for row, (a, b, c) in enumerate(sta_index):
@@ -587,7 +599,8 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
                     if reverse is None or reverse[1] != nwave:
                         raise ValueError(
                             f"Closure-phase triangle {(a, b, c)} (INSNAME "
-                            f"{ins!r}, MJD {mjd[row]}) needs baseline "
+                            f"{ins[1]!r}, ARRNAME {ins[0]!r}, MJD {mjd[row]}) "
+                            "needs baseline "
                             f"{tuple(pair)}, which is in no visibility "
                             "table with the same wavelengths at this time "
                             f"(in either orientation, {tuple(pair[::-1])} "
@@ -673,7 +686,7 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
         flag = _flags(hdu, mask, nwave, values, errors)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
-        ins = _insname(hdu)
+        ins = _lookup_key(hdu)
         for row, pair in enumerate(sta_index):
             sign = 1.0
             found = lookup.find(ins, pair, mjd[row])
