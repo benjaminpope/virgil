@@ -760,7 +760,9 @@ def injection_recovery(
     and keeps the statistics and the best position. One compiled kernel,
     ``(key, injection) -> statistics``, serves every draw, null and
     injected, mapped with ``jax.lax.map(..., batch_size=draw_batch)``, so
-    memory stays bounded (there is no vmap over grid × draws).
+    memory stays bounded (there is no vmap over grid × draws). The default
+    grid ``batch_size`` is divided by ``draw_batch``, so the working set
+    stays within the usual budget of one search whatever ``draw_batch`` is.
 
     Parameters
     ----------
@@ -811,13 +813,19 @@ def injection_recovery(
     chunk_size : int, optional
         Draws per call of the compiled kernel, rounded up to a multiple of
         ``draw_batch``. The null and the injected draws run in chunks of
-        this size (the last one padded), with a progress bar over chunks.
-        By default the smaller of 64 and the larger number of draws. Fix
-        it to reuse the compilation across calls with different numbers
-        of draws.
+        this size, with a progress bar over chunks. By default it is the
+        smaller of 64 and the larger number of draws, and the last chunk of
+        each run is exactly as long as the draws that remain (one extra
+        compilation, and no wasted draws). If you set it, the last chunk
+        is padded to ``chunk_size`` instead, so the compilation is reused
+        across calls with different numbers of draws, at the cost of up to
+        ``chunk_size - 1`` discarded draws.
     batch_size : int, optional
         Grid points evaluated at once within each search, as for
         [`detection_statistics`][virgil.detection.detection_statistics].
+        An explicit value is used as given for each of the ``draw_batch``
+        searches evaluated together, so the working set is ``draw_batch``
+        times larger; the default is divided by ``draw_batch`` instead.
     progress : bool, optional
         Show a ``tqdm.auto`` progress bar, if tqdm is installed.
 
@@ -876,7 +884,7 @@ def injection_recovery(
         "params": params,
         "coord_keys": coord_keys,
         "flux_key": flux_key,
-        "batch_size": batch_size_or_default(batch_size, template),
+        "batch_size": _search_batch_size(batch_size, template, draw_batch),
         "draw_batch": draw_batch if draw_batch > 1 else None,
     }
     bar = _progress_bar(-(-n_null // chunk) - (-n_inj // chunk), progress)
@@ -886,14 +894,18 @@ def injection_recovery(
         out = []
         for start in range(0, values.shape[0], chunk):
             part = values[start : start + chunk]
-            padded = np.zeros((chunk, len(params)), dtype=np.float32)
+            # An explicit chunk_size keeps one compiled shape (padding the
+            # last chunk); by default the last chunk is compiled at its own
+            # length rather than padded with discarded draws.
+            width = chunk if chunk_size is not None else part.shape[0]
+            padded = np.zeros((width, len(params)), dtype=np.float32)
             padded[: part.shape[0]] = part
             stats = _simulated_statistics(
                 simulator,
                 model,
                 samples_dict,
                 base_key,
-                np.arange(start, start + chunk, dtype=np.int32),
+                np.arange(start, start + width, dtype=np.int32),
                 padded,
                 **static,
             )
@@ -1080,6 +1092,14 @@ def _chunk_size(chunk_size, draw_batch, n_max):
         if chunk < 1:
             raise ValueError(f"chunk_size must be positive; got {chunk}.")
     return -(-chunk // draw_batch) * draw_batch
+
+
+def _search_batch_size(batch_size, template, draw_batch):
+    """Grid batch size per search; the default is split among ``draw_batch``."""
+    default = batch_size_or_default(batch_size, template)
+    if batch_size is not None:
+        return default
+    return max(1, default // draw_batch)
 
 
 def _simulator(noise, template, null_scene):

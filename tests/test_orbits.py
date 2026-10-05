@@ -887,9 +887,9 @@ def test_single_instrument_tiny_prior_is_a_fixed_gamma():
         )
 
 
-def test_default_zero_point_prior_warns_and_flat_prior_is_rejected():
+def test_true_zero_point_prior_is_an_error_and_flat_prior_is_rejected():
     truth, rvs = _rv_setup(n=8)
-    with pytest.warns(UserWarning, match="effectively"):
+    with pytest.raises(ValueError, match=r"state the .*prior.*\(mean, sd\)"):
         rvs.term(lambda v: (truth, 0.5, 0.0, 50.0), marginalise_offsets=True)
     with pytest.raises(ValueError, match="finite sd"):
         rvs.term(

@@ -194,6 +194,10 @@ Two pitfalls follow. A `Uniform` prior over more than one period of an angle, su
 
 For orbits, [`orientation_priors`][virgil.orbits.orientation_priors] gives the node and periastron as angle vectors.
 
+### Passing priors to functions
+
+Prefer numpyro distributions: `dist.LogUniform(low, high)` and `dist.Normal(mean, sd)` are accepted wherever a prior is a parameter (`fit`, `numpyro_model`, `noise=`, and `linear_flux_grid(prior=)`). The exception is the analytically marginalised Gaussians, where a plain `(mean, sd)` pair (scalars, or one per instrument or telescope) stands for $N(\text{mean}, \text{sd}^2)$: `RVData.term(marginalise_offsets=(mean, sd))` and `with_flux_scale(scale=(mean, sd))`. A marginalised prior is never defaulted, so `marginalise_offsets=True` is an error.
+
 ## Priors and the MAP
 
 virgil's default priors are the invariant (Jeffreys) measures of the groups acting on each parameter: uniform for locations, log-uniform for scales, and isotropic for orientations (uniform in $\cos i$ for an inclination). A maximum a posteriori point is not invariant under a change of variables, because a density picks up a Jacobian. The mode of `LogUniform`'s density $1/x$ in $x$ is at the lower bound, so a fit in $x$ would pull every scale down, although nothing in the prior prefers small scales.
