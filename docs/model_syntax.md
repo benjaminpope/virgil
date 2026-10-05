@@ -250,7 +250,7 @@ ll_cart_perturbed = float(
 ```text
 {'ll_cart_true': 259.32464599609375,
  'll_ang_equivalent': 259.32464599609375,
- 'll_cart_perturbed': -580.6998291015625,
+ 'll_cart_perturbed': -580.6997680664062,
  'true_beats_perturbed': True}
 ```
 

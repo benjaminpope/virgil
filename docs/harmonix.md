@@ -8,13 +8,7 @@ Long-baseline interferometers resolve the nearest giant stars well enough to map
 harmonix and jaxoplanet are not dependencies of virgil. This page needs harmonix 0.1.0 or later, which runs on current JAX (jaxoplanet comes with it):
 
 ```bash
-pip install "harmonix>=0.1.0"
-```
-
-Until 0.1.0 is on PyPI, install it from GitHub instead:
-
-```bash
-pip install "harmonix @ git+https://github.com/shashankdholakia/harmonix"
+pip install harmonix
 ```
 
 ```python
@@ -268,12 +262,16 @@ for name in priors:
 ```
 
 ```text
-reduced chi2 = 1.04 after 41 steps
-contrast: start  0.500   fit  0.702   truth  0.700
-    size: start  0.200   fit  0.299   truth  0.300
-     lat: start  0.200   fit  0.450   truth  0.450
-     lon: start  0.100   fit -1.000   truth -1.000
-  radius: start  1.268   fit  1.270   truth  1.270
+RuntimeWarning: fit(method='lbfgs') did not converge in 20000 steps, the step limit; raise max_steps.
+```
+
+```text
+reduced chi2 = 680.36 after 20000 steps
+contrast: start  0.500   fit  0.689   truth  0.700
+    size: start  0.200   fit  0.050   truth  0.300
+     lat: start  0.200   fit  0.897   truth  0.450
+     lon: start  0.100   fit  0.386   truth -1.000
+  radius: start  1.268   fit  1.271   truth  1.270
 ```
 
 The fit recovers the spot and the radius. Drawing the fitted star next to the true one on each night:

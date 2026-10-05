@@ -59,6 +59,10 @@ print(
 )
 ```
 
+```text
+21 V² and 35 closure phases; 256 positions × 32 fluxes; FAP = 0.135%
+```
+
 ## A candidate
 
 Here is the observation we want to judge. We simulate it with a companion of flux $5\times10^{-3}$ (Δmag 5.75) at 70 mas and position angle 60°, plus noise drawn from the errors, and search it with [`detection_statistics`](api/detection.md#virgil.detection.detection_statistics). The search returns the best companion's position and flux and three statistics, each measuring how strongly the data prefer a companion to none. $\Delta\chi^2$ is twice the gain in log likelihood of the best companion on the grid over no companion, with its flux refined and constrained to be non-negative. The log Bayes factor $\log B$ is the natural log of the likelihood ratio averaged over the grid, an evidence for "a companion somewhere on the grid" against "no companion". The maximum SNR is the largest best-fit flux divided by its uncertainty, over positions.
@@ -79,6 +83,11 @@ print(
     f"log B = {float(obs['log_bayes_factor']):.1f}, "
     f"max SNR = {float(obs['max_snr']):.1f}"
 )
+```
+
+```text
+best companion at ΔRA = 88 mas, ΔDec = 40 mas, flux = 4.85e-03 (truth: 60.6 mas, 35.0 mas, 5.00e-03)
+Δχ² = 31.8 (local significance 5.6σ), log B = 11.0, max SNR = 5.6
 ```
 
 ## Simulating the search
@@ -108,6 +117,14 @@ print(
 )
 ```
 
+```text
+injection_recovery:   0%|          | 0/177 [00:00<?, ?it/s]
+```
+
+```text
+10000 null and 1280 injected searches in 834 s
+```
+
 ## The look-elsewhere effect
 
 The plot shows, for every threshold on the x-axis, the fraction of the 10,000 companion-free searches whose $\Delta\chi^2$ reached it: the false-alarm probability of that threshold. The dashed black curve is what Wilks's theorem predicts at a single position fixed in advance. There, $\Delta\chi^2$ is zero half the time (whenever the best flux would be negative) and follows $\chi^2_1$ otherwise, so the FAP of a threshold is $\frac{1}{2}P(\chi^2_1 \geq \Delta\chi^2)$.
@@ -119,6 +136,8 @@ plot_null_distribution(
     mc, "delta_chi2", observed=obs["delta_chi2"], fap=FAP
 );
 ```
+
+![detection_roc output 9.1](generated/detection_roc_cell009_out01.png)
 
 ## What to quote for a detection
 
@@ -143,6 +162,12 @@ print(
 )
 ```
 
+```text
+threshold at FAP 0.135%: Δχ² = 15.2 ± 0.9 (Wilks, at one position: 9)
+Wilks's Δχ² = 9 has an FAP of 2.2% over the grid
+candidate: Δχ² = 31.8, FAP = 0.0001 (95%: 0 to 0.00037), global significance ≥ 3.7σ (local 5.6σ)
+```
+
 ## ROC curves: which statistic?
 
 Every simulation gives all three statistics, so their ROC curves can be compared fairly. We draw them for the injections of flux $4.3\times10^{-3}$ (Δmag 5.9), the fourth of our eight fluxes, at all four separations together. Read each curve as its threshold sliding from strict (lower left) to loose (upper right). The false-positive axis is logarithmic because detections are claimed at small FAPs, and on it the grey chance curve, TPR = FPR, which is what a statistic no better than a coin toss would give, is a curve rather than a straight line. The dotted vertical line is the FAP of 0.135% that Wilks's theorem assigns to a local 3σ, and the circle on each curve marks where its threshold actually equals a local 3σ ($\Delta\chi^2 = 9$, or an SNR of 3): the horizontal gap between the circle and the line is the look-elsewhere effect again. A ROC curve depends only on how a statistic ranks the simulations, not on its scale, which is why such different statistics can share one plot.
@@ -154,6 +179,8 @@ plot_roc(
     mc, ["delta_chi2", "log_bayes_factor", "max_snr"], flux=FLUXES[3]
 );
 ```
+
+![detection_roc output 13.1](generated/detection_roc_cell013_out01.png)
 
 ## What to quote for a non-detection
 
@@ -169,6 +196,15 @@ for s, f50, f90 in zip(sep, flux50, flux90):
         f"{s:9.0f}{float(flux_to_delta_mag(f50)):14.2f}"
         f"{float(flux_to_delta_mag(f90)):14.2f}"
     )
+```
+
+```text
+Δmag reached at FAP 0.135%
+sep (mas)  50% complete  90% complete
+       40          4.81          4.36
+       60          5.80          5.21
+       80          6.09          5.55
+      100          6.44          5.65
 ```
 
 The map shows the completeness behind those curves, cell by cell, with the 50% and 90% curves drawn on it. Over it we draw the Absil and Ruffio limits of a companion-free observation, as in the [contrast limits](contrast_limits.md) tutorial; they answer different questions. Ruffio's limit, here at the 3σ-equivalent percentile, is a Bayesian upper limit on the flux at each position, given that a companion sits exactly there. Absil's limit, at 3σ, is the flux that a $\chi^2$ test against the no-companion model rejects at each position. Neither involves a detection threshold or the look-elsewhere effect, and each comes from one noise realisation, so it wanders with the noise, while the completeness curves average over many simulated observations.
@@ -187,6 +223,8 @@ for limit, label, color in [(absil, "Absil 3σ", "C1"), (ruffio, "Ruffio 3σ", "
     plot_contrast_curve(limit, grid, label=label, color=color, band=False, ax=ax)
 ax.legend(loc="lower left", fontsize="small");
 ```
+
+![detection_roc output 17.1](generated/detection_roc_cell017_out01.png)
 
 ## When the error bars are wrong
 
@@ -222,10 +260,26 @@ for label, calibration, actual in [
     print(f"{label:<36}{t:6.1f}{p:10.1%}")
 ```
 
+```text
+injection_recovery:   0%|          | 0/32 [00:00<?, ?it/s]
+```
+
+```text
+injection_recovery:   0%|          | 0/32 [00:00<?, ?it/s]
+```
+
+```text
+rescale_errors factors: V² 1.31, closure phases 1.78 (truth 1.5)
+threshold at FAP 1% from               Δχ²  true FAP
+honest errors, Gaussian null          10.6      1.0%
+errors 1.5× too small, Gaussian null  10.6     14.5%
+errors 1.5× too small, bootstrap      23.8      0.9%
+```
+
 ## Summary
 
 A companion search reports the best of many positions, so its statistic must be calibrated against simulated companion-free searches over the same grid; Wilks's theorem, through `local_nsigma`, gives only the local significance at one position, and over a grid it overstates the significance. `injection_recovery` runs the null and injected searches in one call, and its `DetectionMC` gives thresholds, false-alarm probabilities, ROC curves, completeness maps and contrast curves, which `plot_null_distribution`, `plot_roc` and `plot_completeness` draw.
 
 For a **detection**, quote the observed $\Delta\chi^2$ with its empirical false-alarm probability, its 95% interval and the number of null draws, and the global significance that FAP implies; the Wilks significance only if labelled local. For a **non-detection**, quote the contrasts at which the search is 50% and 90% complete at a stated FAP (0.135%, the one-sided 3σ, is a common choice), with Absil or Ruffio limits alongside if you like.
 
-Three caveats. The nuisance parameters, here the null scene itself, are held fixed at their values for the real data rather than refitted for every simulation. The grid must be fine enough that companions are found near their true positions, and the calibration holds only for the grid it was simulated on. And a Gaussian null is only as good as the error bars: if they may be wrong, rescale them with `rescale_errors` or calibrate with a residual bootstrap (`noise="bootstrap"`), keeping in mind that the bootstrap needs the null scene to fit the data. The design, its conventions and the remaining plans are in `design/detection_roc.md`.
+Three caveats. The nuisance parameters, here the null scene itself, are held fixed at their values for the real data rather than refitted for every simulation. The grid must be fine enough that companions are found near their true positions, and the calibration holds only for the grid it was simulated on. And a Gaussian null is only as good as the error bars: if they may be wrong, rescale them with `rescale_errors` or calibrate with a residual bootstrap (`noise="bootstrap"`), keeping in mind that the bootstrap needs the null scene to fit the data. The design, its conventions and the remaining plans are in [`design/detection_roc.md`](https://github.com/benjaminpope/virgil/blob/main/design/detection_roc.md).

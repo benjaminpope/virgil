@@ -11,7 +11,7 @@ virgil's `clean` uses the same idea in a form that works for any data. For linea
 3. adds the loop gain times that (Gauss–Newton) step there;
 4. stops when χ² per data point reaches one, the discrepancy principle of part 2.
 
-For linear data this is exactly Högbom's CLEAN. Mathematically it is *matching pursuit*. Step 2 normalises the gradient by how strongly each pixel affects the data. Without that, CLEAN would pile flux into pixels right next to the star, whose light is nearly indistinguishable from the star's own (`design/sparse_imaging.md` has the details).
+For linear data this is exactly Högbom's CLEAN. Mathematically it is *matching pursuit*. Step 2 normalises the gradient by how strongly each pixel affects the data. Without that, CLEAN would pile flux into pixels right next to the star, whose light is nearly indistinguishable from the star's own ([`design/sparse_imaging.md`](https://github.com/benjaminpope/virgil/blob/main/design/sparse_imaging.md) has the details).
 
 This part reconstructs a companion and a knot from AMI DISCOs, refines the result, looks at the loop gain, and then uses closure phases and V² from a long-baseline interferometer.
 

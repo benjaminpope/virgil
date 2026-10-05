@@ -337,14 +337,11 @@ for path in paths:
 
 ```text
 parameter     truth                HMC  Laplace σ  σ, rim fixed
-```
-
-```text
-comp.dra    45.0000   47.3283 ± 1.6535     1.6380        1.5883
-comp.ddec   30.0000   29.4055 ± 1.8052     1.8468        1.5855
-comp.flux    0.0100    0.0100 ± 0.0012     0.0012        0.0008
-rim.flux     0.5000    0.5004 ± 0.0364     0.0421             -
-rim.diam    40.0000   39.8913 ± 1.2349     1.4678             -
+comp.dra    45.0000   47.3183 ± 1.5362     1.6380        1.5882
+comp.ddec   30.0000   29.3432 ± 1.7142     1.8468        1.5855
+comp.flux    0.0100    0.0101 ± 0.0012     0.0012        0.0008
+rim.flux     0.5000    0.5041 ± 0.0365     0.0421             -
+rim.diam    40.0000   39.8353 ± 1.2293     1.4678             -
 ```
 
 The rim and the companion are recovered together, all within about two standard deviations of the truth, and the Laplace and HMC uncertainties broadly agree. Freeing the rim costs something: the Laplace uncertainty on the companion's flux grows by about a third (from 0.0006 to 0.0008), and its declination also becomes less certain, most likely because the lopsided rim also produces closure phases, and some of its signal can be traded against the companion's. But the companion is still detected at more than ten sigma, so here no plausible rim can masquerade as the planet. That is exactly the check you would want to make before believing a detection.
@@ -384,8 +381,8 @@ print(f"position angle {polar_best['pa']:6.2f} ± {polar_sigma['pa']:.2f} deg  (
 ```
 
 ```text
-separation      55.72 ± 1.52 mas  (HMC spread 1.55)
-position angle  58.15 ± 1.90 deg  (HMC spread 1.95)
+separation      55.68 ± 1.57 mas  (HMC spread 1.52)
+position angle  58.20 ± 1.91 deg  (HMC spread 1.78)
 ```
 
 The Laplace uncertainties in separation and position angle agree with the spread of the HMC samples converted to the same quantities. The function works everywhere a template does: in `numpyro_model` (with priors keyed by argument name), `laplace_cov`, and the grid tools.
