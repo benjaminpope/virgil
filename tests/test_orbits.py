@@ -896,3 +896,9 @@ def test_default_zero_point_prior_warns_and_flat_prior_is_rejected():
             lambda v: (truth, 0.5, 0.0, 50.0),
             marginalise_offsets=(0.0, onp.inf),
         )
+    for bad in (onp.nan, onp.inf):
+        with pytest.raises(ValueError, match="finite mean"):
+            rvs.term(
+                lambda v: (truth, 0.5, 0.0, 50.0),
+                marginalise_offsets=(bad, 10.0),
+            )

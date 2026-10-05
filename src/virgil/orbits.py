@@ -887,6 +887,8 @@ class RVData(zx.Base):
                 "the zero-point prior needs a positive, finite sd: an "
                 "infinite (flat) prior is not supported."
             )
+        if not onp.all(onp.isfinite(mean)):
+            raise ValueError("the zero-point prior needs a finite mean.")
         return np.asarray(mean), np.asarray(sd)
 
     def _design(self):
