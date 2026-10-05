@@ -14,6 +14,7 @@ from virgil.imaging import (
     beam,
     clean,
     image_priors,
+    l_curve,
     starlet,
 )
 from virgil.models import Image, PointSource, System
@@ -221,3 +222,113 @@ def test_clean_respects_the_support_and_checks_its_inputs():
             base=PointSource(),
             support=np.ones((3, 3), bool),
         )
+
+
+def _companion_data():
+    truth = System(
+        star=PointSource(), comp=PointSource(dra=30.0, ddec=-18.0, flux=0.05)
+    )
+    return DATA.with_model(truth, key=jax.random.PRNGKey(5))
+
+
+def test_clean_stops_when_chi2_stalls():
+    # A target below what the noise allows can never be reached: CLEAN
+    # notices that χ² has stopped falling instead of running to the limit.
+    result = clean(
+        _companion_data(),
+        NPIX,
+        SCALE,
+        base=PointSource(),
+        target_chi2_red=0.5,
+        max_iterations=5000,
+    )
+    assert result.stop == "stalled"
+    assert len(result.chi2_red) - 1 < 5000
+    assert result.chi2_red[-1] > 0.5
+
+
+def test_major_cycles_remove_a_wrong_component():
+    # Flux at an empty pixel, and a little on the companion: refitting the
+    # components moves the flux to the companion and removes the other.
+    init = np.zeros((NPIX, NPIX)).at[2, 2].set(0.05).at[9, 5].set(0.01)
+    result = clean(
+        _companion_data(),
+        NPIX,
+        SCALE,
+        base=PointSource(),
+        init=init,
+        refit_every=1,
+        max_iterations=6,
+    )
+    assert float(result.components[2, 2]) == 0.0
+    # Most of the companion's 0.05 is on it after these few iterations.
+    assert float(result.components[9, 5]) > 0.03
+    with pytest.raises(ValueError, match="refit_every"):
+        clean(
+            _companion_data(), NPIX, SCALE, base=PointSource(), refit_every=-1
+        )
+
+
+@pytest.mark.filterwarnings("ignore:fit\\(method=:RuntimeWarning")
+def test_l_curve_without_warm_starts_fits_each_weight_afresh():
+    truth = _image(gaussian_blob(NPIX, SCALE, 25.0))
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(4))
+    start = _image(np.ones((NPIX, NPIX)))
+    priors = image_priors(start)
+    options = dict(method="lbfgs", max_steps=10)
+    curve = l_curve(
+        start,
+        priors,
+        data,
+        LogSum(1.0),
+        [1e-2, 1e-3],
+        warm_start=False,
+        **options,
+    )
+    alone = fit(start, priors, data, [LogSum(1e-3)], **options)
+    assert np.allclose(
+        curve.results[1].model.brightness, alone.model.brightness, atol=1e-6
+    )
+
+
+def test_clean_with_a_spectrum_is_sparco():
+    # A star and a companion with their own spectra, and an environment
+    # with another: components with the environment's spectrum, beside the
+    # base's components, reproduce the SPARCO model.
+    from virgil.coverage import vlti_oidata
+    from virgil.spectra import PowerLaw
+
+    template = vlti_oidata(
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        wavelengths_m=onp.linspace(1.5e-6, 1.8e-6, 4),
+    )
+    base = System(
+        star=PointSource(flux=PowerLaw(1.0, -3.0, 1.65e-6)),
+        comp=PointSource(dra=1.5, ddec=-1.0, flux=0.02),
+    )
+    scale = 0.6
+    fluxes = np.zeros((NPIX, NPIX)).at[3, 4].set(0.02).at[10, 9].set(0.03)
+    shape = PowerLaw(1.0, 2.0, 1.65e-6)
+    scene = _CleanScene(base, fluxes, scale, 0.0, shape)
+    on = fluxes > 0
+    flat = System(
+        **base.components,
+        clean=Image(
+            np.log(np.where(on, fluxes, 1.0)),
+            scale,
+            support=on,
+            flux=PowerLaw(0.05, 2.0, 1.65e-6),
+        ),
+    )
+    assert np.allclose(template.model(scene), template.model(flat), atol=1e-6)
+
+    data = template.with_model(flat, key=jax.random.PRNGKey(8))
+    sparco = clean(data, NPIX, scale, base=base, spectrum=shape)
+    grey = clean(data, NPIX, scale, base=base)
+    assert sparco.stop == "target"
+    assert set(sparco.model.components) == {"star", "comp", "clean"}
+    assert np.isclose(sparco.model.clean.flux.index, 2.0)
+    assert np.isclose(sparco.model.clean.flux.ratio, sparco.components.sum())
+    assert len(sparco.chi2_red) < len(grey.chi2_red)
+    with pytest.raises(ValueError, match="needs a base"):
+        clean(data, NPIX, scale, spectrum=shape)

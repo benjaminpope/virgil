@@ -24,6 +24,10 @@ anything before 1.0 may change between minor versions.
   with widths `phi_offset_baseline`, `phi_offset_triangle` and
   `phi_offset_modes`. Four or more telescopes; off by default.
 
+- **Wavelength-scale nuisance** (Stage 6d). `OIData.with_wavelength_scale`
+  evaluates models at scale·λ + offset, and the noise terms `wavel_scale` and
+  `wavel_offset` fit or sample it (e.g. `Normal(1, 2e-4)` for GRAVITY).
+
 - **Calibration gains correlated across channels** (Stage 6d).
   `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)` adds gains
   on log |V| per frame: per telescope, per baseline, a chromatic coherence

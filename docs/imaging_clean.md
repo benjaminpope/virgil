@@ -92,7 +92,11 @@ plt.show()
 
 `clean(data, npix, pixel_scale_mas, base=...)` adds components to a fixed **base** scene, here the star, with flux 1. Fit the base's parameters first if it has any. The component fluxes are relative to the base, like a companion's flux in a `System`.
 
-The **support** says where components may go. A hole of half a beam under the star stops CLEAN trading the star's flux against the pixels around it, as `starting_image` does in part 2. The loop gain is 0.1 by default, and CLEAN stops when χ² per data point reaches `target_chi2_red`, 1 by default. That target assumes the error bars are right. Even then, noise scatters the truth's own χ² per point around one by about √(2/N); if it lands above the target, CLEAN keeps adding components until `max_iterations`, so check `result.stop`.
+The **support** says where components may go. A hole of half a beam under the star stops CLEAN trading the star's flux against the pixels around it, as `starting_image` does in part 2. The loop gain is 0.1 by default.
+
+Each iteration only adds flux. Every `refit_every` iterations (50 by default) a **major cycle**, as in the Clark and Cotton–Schwab variants of CLEAN, refits the fluxes of all the components at once, keeping them non-negative. Flux can then move off an early mistake, and a component whose flux falls to zero is removed.
+
+CLEAN stops when χ² per data point reaches `target_chi2_red`, 1 by default. That target assumes the error bars are right. Even then, noise scatters the truth's own χ² per point around one by about √(2/N), and if it lands above the target, the target cannot be reached. So CLEAN also stops when χ² has **stalled**, falling by less than 0.1% over 50 iterations even after a major cycle. Check `result.stop` (`"target"`, `"stalled"` or `"max_iterations"`).
 
 The result holds the χ² history, the components on the pixel grid, and `model`, an ordinary virgil model: `System(base=star, clean=Image(...))`, whose Image is non-zero only on the components.
 
@@ -123,19 +127,19 @@ for index in jnp.argsort(components.ravel())[::-1][:5]:
 ```
 
 ```text
-stopped (target) after 85 iterations at χ²/N = 1.000: 13 components with total flux 0.0297 (truth 0.030)
+stopped (target) after 51 iterations at χ²/N = 0.975: 6 components with total flux 0.0297 (truth 0.030)
 brightest components (dra, ddec in mas: flux):
 ```
 
 ```text
-  (   -90,     70): 0.0173
-  (   130,   -110): 0.0047
-  (   110,    -90): 0.0033
-  (   150,   -130): 0.0021
-  (  -110,     70): 0.0010
+  (   -90,     70): 0.0194
+  (   130,   -110): 0.0092
+  (   130,   -130): 0.0004
+  (   110,    -90): 0.0003
+  (  -110,     70): 0.0002
 ```
 
-χ² per point falls from about 160 to near one in some 60 iterations, then creeps down to the target. The brightest components sit exactly on the companion and the knot (circled), with a few fainter ones on the pixels next to them. The restored image, the components convolved with the beam, is the radio astronomers' way of showing what the data resolve; virgil's `plot_model(..., beam=, convolve=True)` draws it.
+χ² per point falls steadily from about 160 to 1.3 over the first 50 iterations. Then the first major cycle refits the components' fluxes, and takes χ² straight to the target. After it, the flux sits on the companion and the knot (circled), with only faint components on the pixels next to them. The restored image, the components convolved with the beam, is the radio astronomers' way of showing what the data resolve; virgil's `plot_model(..., beam=, convolve=True)` draws it.
 
 ```python
 fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
@@ -155,7 +159,7 @@ plt.show()
 
 ![imaging_clean output 8.1](generated/imaging_clean_cell008_out01.png)
 
-How close is the restored image to the truth? Here both are convolved with the beam and scaled to their total fluxes, relative to the star, and the right panel is their signed difference. The CLEAN image is a point estimate with no uncertainties, so these are plain differences, not z-scores. They peak at about 6% of the brightest pixel of the truth, at the sources themselves, where CLEAN's flux is distributed a little differently among neighbouring pixels.
+How close is the restored image to the truth? Here both are convolved with the beam and scaled to their total fluxes, relative to the star, and the right panel is their signed difference. The CLEAN image is a point estimate with no uncertainties, so these are plain differences, not z-scores. They peak at about 10% of the brightest pixel of the truth, positive at both sources with a faint negative ring around them: CLEAN's sources come out a little more compact than the truth as drawn on this grid. Their fluxes are, if anything, slightly low (0.0194 and 0.0092 against 0.02 and 0.01).
 
 ```python
 # render() gives unit-flux images: scale each by its flux relative to the star.
@@ -198,7 +202,7 @@ plt.show()
 
 ## Refining the fluxes
 
-CLEAN stops as soon as χ² per point reaches one, and each step adds only a fraction of the flux the data ask for, so the total is usually a little low. A source between two pixel centres is also shared between them. Both are easy to fix: the model is a `System` with an `Image`, so `fit` can refit the component fluxes on their support. That is a small, well-posed problem: a few pixels, not the whole grid. It needs no regulariser.
+The major cycles already refit the components' fluxes inside CLEAN, but only every 50 iterations, and only those fluxes. Because the model is a `System` with an `Image`, `fit` can do the same job on the components' support, and free other parameters alongside them, such as the components' spectrum or the base's fluxes. It is a small, well-posed problem: a few pixels, not the whole grid, so it needs no regulariser. Here, with the fluxes already refitted by the major cycle, it changes nothing.
 
 ```python
 priors = image_priors(result.model) | {"clean.flux": dist.Uniform(0.0, 1.0)}
@@ -211,12 +215,12 @@ print(
 ```
 
 ```text
-flux 0.0297 after CLEAN, 0.0300 refitted (truth 0.030); χ²/N 0.958
+flux 0.0297 after CLEAN, 0.0297 refitted (truth 0.030); χ²/N 0.975
 ```
 
 ## The loop gain
 
-The loop gain trades speed against care. A small gain takes many small steps, and can correct an early step with later ones. A large gain moves quickly, but a step that overshoots cannot be undone, because `clean` only ever adds flux (so the image stays positive). Here a gain of 0.5 gets χ² per point to about 1.1 within twenty iterations and then stalls: its early steps put flux where it cannot be taken back, and it runs to `max_iterations` without reaching the target. Gains of 0.03 and 0.1 both reach it, the smaller one with three times as many iterations. Values of 0.05–0.2 are the usual choice, as in radio astronomy.
+The loop gain trades speed against care. A small gain takes many small steps, and can correct an early step with later ones. A large gain moves quickly, but a step that overshoots cannot be undone, because `clean` only ever adds flux (so the image stays positive). The major cycles remove that limitation. Here a gain of 0.5 gets χ² per point to about 1.1 within ten iterations and then stalls, because its early steps put flux in the wrong places. The first major cycle, at iteration 50, moves that flux and reaches the target; without major cycles (`refit_every=0`) CLEAN would stop there, stalled. A gain of 0.03 is still at χ² per point of about 20 after 50 iterations, but by then it has found the right three pixels, and the major cycle solves for their fluxes. All three gains end at the target after the same major cycle, with 3, 6 and 13 components: the larger the gain, the more stray components it leaves. Values of 0.05–0.2 are still the usual choice.
 
 ```python
 fig, ax = plt.subplots(figsize=(6, 4))
@@ -235,15 +239,15 @@ plt.show()
 ```
 
 ```text
-gain 0.03: 281 iterations, 12 components, flux 0.0296, stopped (target)
+gain 0.03: 51 iterations, 3 components, flux 0.0297, stopped (target)
 ```
 
 ```text
-gain 0.1: 85 iterations, 13 components, flux 0.0297, stopped (target)
+gain 0.1: 51 iterations, 6 components, flux 0.0297, stopped (target)
 ```
 
 ```text
-gain 0.5: 1000 iterations, 22 components, flux 0.0301, stopped (max_iterations)
+gain 0.5: 51 iterations, 13 components, flux 0.0302, stopped (target)
 ```
 
 ![imaging_clean output 16.4](generated/imaging_clean_cell016_out04.png)
@@ -252,7 +256,7 @@ gain 0.5: 1000 iterations, 22 components, flux 0.0301, stopped (max_iterations)
 
 Classic CLEAN needs Fourier phases; with closure phases it has to be wrapped in self-calibration loops. Gradient CLEAN does not: it fits closure phases and squared visibilities directly, through the same likelihood as `fit`.
 
-Here are four VLTI unit telescopes in the L band, at five hour angles, with a star, a 3% companion and a 4% extended blob. The blob is larger than the beam, so CLEAN builds it from a cluster of components. CLEAN stops at χ² per point of one with about 90% of the true flux; the restored image matches the truth convolved with the beam, including the beam's elongation.
+Here are four VLTI unit telescopes in the L band, at five hour angles, with a star, a 3% companion and a 4% extended blob. The blob is larger than the beam, so CLEAN builds it from a cluster of components. CLEAN stops after the first major cycle, at χ² per point of 0.92, with 97% of the true flux; the restored image matches the truth convolved with the beam, including the beam's elongation.
 
 ```python
 vlti = vlti_oidata()
@@ -300,7 +304,7 @@ plt.show()
 
 ```text
 330 V² and 220 closure phases; field 24.1 mas, beam 6.8 × 3.9 mas
-stopped (target) after 54 iterations at χ²/N = 0.997: 30 components with flux 0.0623 (truth 0.070)
+stopped (target) after 51 iterations at χ²/N = 0.921: 17 components with flux 0.0677 (truth 0.070)
 ```
 
 ![imaging_clean output 18.2](generated/imaging_clean_cell018_out02.png)
@@ -310,5 +314,5 @@ stopped (target) after 54 iterations at χ²/N = 0.997: 30 components with flux 
 - `clean` builds an image from point components where they lower χ² most. It works for any data virgil fits: DISCOs, kernel and closure phases, V², or a mix.
 - Give it a fixed `base` (usually the star), a `support` with a hole under the star, and trust its stopping rule only as far as you trust the error bars.
 - The result is an ordinary model. Refit its fluxes with `fit` on the components' support, show it restored with the beam, or use it as the starting image of a regularised fit.
-- Components are only ever added, so an early mistake stays. Keep the loop gain small. The base scene is fixed, and the components are grey (the same fraction of the base's flux at every wavelength).
+- Each iteration only adds flux; the major cycles move it between components and remove those left with none, so an early mistake no longer stays. CLEAN stops by itself when χ² stalls. The base scene is fixed, and the components share one spectrum: grey by default, or `spectrum=` for SPARCO-style imaging.
 - For extended emission, a regularised fit started from the CLEAN image usually does better. `notebooks/mwe/mwe_sparse_imaging.ipynb` compares CLEAN with the sparsity regularisers `StarletL1` and `LogSum` and with maximum entropy, each started from CLEAN.

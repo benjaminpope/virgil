@@ -151,18 +151,25 @@ class _Objective(eqx.Module):
     def init(self, values=None):
         """Unconstrained coordinates of ``values`` (default: the template's).
 
-        Error terms start at 1 (scales, and the width of supplied gain
-        modes) or 0.01 (added errors and other gain widths), or at their
-        prior's mean if that is outside the prior's support.
+        Error terms start at 1 (scales, including ``wavel_scale``, and the
+        width of supplied gain modes), 0 (``wavel_offset``) or 0.01 (added
+        errors and other gain widths), or at their prior's mean if that is
+        outside the prior's support or on its boundary.
         """
         values = {} if values is None else dict(values)
         z = {}
         for site, (prior, _, term) in self.noise.items():
             unit = term.endswith("scale") or term.endswith("_modes")
-            start = values.get(site, 1.0 if unit else 0.01)
+            default = 0.0 if term == "wavel_offset" else 1.0 if unit else 0.01
+            start = values.get(site, default)
             if not bool(prior.support(np.asarray(start, float))):
                 start = prior.mean
             z[site] = _bijection(prior).inv(np.asarray(start, float))
+            if not bool(np.all(np.isfinite(z[site]))):
+                # On the boundary of a bounded prior (e.g. 0 for
+                # Uniform(0, ...)), the unconstrained coordinate is
+                # infinite: start inside it, at the prior's mean.
+                z[site] = _bijection(prior).inv(np.asarray(prior.mean, float))
         for path, prior in self.priors.items():
             if path not in values:
                 if not isinstance(self.model, SourceModel):
@@ -345,7 +352,10 @@ def fit(
         widths of gains correlated across channels, ``vis_gain_<group>``
         (see [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), and
         of closure-phase offsets, ``phi_offset_<group>`` (see
-        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]). A dict
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), and
+        the wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]), whose priors may
+        be of either sign (e.g. ``Normal(1, 2e-4)``). A dict
         applies to every dataset (values ``"noise.<term>"``); a list gives
         each dataset its own (``"noise[i].<term>"``). The loss is then the
         full Gaussian negative log likelihood, including ``Σ log σ``, so the

@@ -152,12 +152,14 @@ def _gaussian_loglike(whitened, errors):
     )
 
 
-# Error terms, as accepted by the likelihoods and the ``noise`` argument of
-# ``fit`` and ``numpyro_model``: error inflation (``inflated_errors``), and
+# Nuisance terms, as accepted by the likelihoods and the ``noise`` argument
+# of ``fit`` and ``numpyro_model``: error inflation (``inflated_errors``),
 # the widths of gains correlated across channels (``OIData.with_gains``) and
-# of closure-phase offsets (``OIData.with_closure_offsets``).
+# of closure-phase offsets (``OIData.with_closure_offsets``), and the
+# wavelength scale (``OIData.with_wavelength_scale``).
 GAIN_TERMS = tuple(f"vis_gain_{group}" for group in GAIN_GROUPS)
 OFFSET_TERMS = tuple(f"phi_offset_{group}" for group in OFFSET_GROUPS)
+WAVEL_TERMS = ("wavel_scale", "wavel_offset")
 NOISE_TERMS = (
     (
         "vis_scale",
@@ -167,6 +169,7 @@ NOISE_TERMS = (
     )
     + GAIN_TERMS
     + OFFSET_TERMS
+    + WAVEL_TERMS
 )
 
 
@@ -261,6 +264,10 @@ def noise_sites(noise, n_datasets):
                 raise ValueError(
                     f"Unknown noise term {term!r}; use one of {NOISE_TERMS}."
                 )
+            if term in WAVEL_TERMS:
+                # Not errors: a scale near 1 and an offset of either sign.
+                sites[f"{prefix}.{term}"] = (prior, datasets, term)
+                continue
             lower = getattr(prior.support, "lower_bound", None)
             value = None if lower is None else concrete(lower)
             if value is None or onp.any(value < 0.0):
@@ -299,12 +306,23 @@ def _whitened_and_errors(model_object, data_obj, noise):
             f"Error terms {sorted(offset_terms)} need closure-phase offsets: "
             "add them with OIData.with_closure_offsets."
         )
+    wavel_terms = {
+        k.removeprefix("wavel_"): v
+        for k, v in noise.items()
+        if k in WAVEL_TERMS
+    }
     inflation = {
         k: v
         for k, v in noise.items()
-        if k not in GAIN_TERMS and k not in OFFSET_TERMS
+        if k not in GAIN_TERMS
+        and k not in OFFSET_TERMS
+        and k not in WAVEL_TERMS
     }
+    observed = data_obj
+    if wavel_terms:
+        data_obj = data_obj.with_wavelength_scale(**wavel_terms)
     prediction = data_obj.model(model_object)
+    data_obj = observed
     errors = inflated_errors(data_obj, prediction, **inflation)
     data = data_obj.flatten_data()[0]
     return _whiten(
@@ -348,9 +366,11 @@ def whitened_residuals(model_object, data_obj, **noise):
         ``vis_error_rel`` and ``phi_error`` (see
         [`inflated_errors`][virgil.likelihood.inflated_errors]), and the
         widths of the data's gains, ``vis_gain_<group>`` (see
-        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]) and
+        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
         closure-phase offsets, ``phi_offset_<group>`` (see
-        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), and the
+        wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
 
     Returns
     -------
@@ -406,6 +426,8 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
         marginalised: the normalisation then includes the log-determinant
         of the visibility covariance. ``phi_offset_<group>`` does the same
         for closure-phase offsets ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
+        ``wavel_scale`` and ``wavel_offset`` evaluate the model at corrected
+        wavelengths (see [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
     """
     whitened, errors = _whitened_and_errors(model_object, data_obj, noise)
     logl = _gaussian_loglike(whitened, errors)
@@ -573,9 +595,11 @@ def numpyro_model(
         ``vis_error_rel``, ``phi_error``; see
         [`inflated_errors`][virgil.likelihood.inflated_errors]) and on
         gain widths (``vis_gain_<group>``; see
-        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]) and
+        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), on
         closure-offset widths (``phi_offset_<group>``; see
-        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]),
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]) and on the
+        wavelength scale (``wavel_scale``, ``wavel_offset``; see
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its
         own terms, as sites ``"noise[i].<term>"``.
     likelihoods : sequence, optional
