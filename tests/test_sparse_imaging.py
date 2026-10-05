@@ -3,7 +3,7 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from virgil.coverage import ami_grid_record
+from virgil.coverage import ami_grid_record, vlti_oidata
 from virgil.fitting import fit
 from virgil.imaging import (
     CleanResult,
@@ -17,7 +17,7 @@ from virgil.imaging import (
     l_curve,
     starlet,
 )
-from virgil.models import Image, PointSource, System
+from virgil.models import BinaryModelCartesian, Image, PointSource, System
 from virgil.oidata import OIData
 from virgil.scenes import gaussian_blob
 
@@ -222,6 +222,38 @@ def test_clean_respects_the_support_and_checks_its_inputs():
             base=PointSource(),
             support=np.ones((3, 3), bool),
         )
+
+
+VLTI_UTS = onp.array(
+    [
+        [-9.925, -20.335],
+        [14.887, 30.502],
+        [44.915, 66.183],
+        [103.306, 43.999],
+    ]
+)
+
+
+@pytest.mark.parametrize("npix", [33, 34, 40, 46, 52, 58, 64, 68])
+def test_clean_without_base_is_finite_with_correlated_closures(npix):
+    # Four telescopes give correlated closure phases. Without a base scene
+    # the seed pixel cannot change the image: its |J e_p| is zero, but on an
+    # even grid its phases are not exactly 1 and rounding left |J e_p|² ~
+    # 1e-24, a score of ~1e24, and an infinite first step (NaN χ²; F12).
+    with jax.enable_x64(True):  # as in a script that turns x64 on
+        data = vlti_oidata(
+            VLTI_UTS,
+            declination_deg=-30.0,
+            hour_angles_h=onp.linspace(-3, 3, 7),
+            wavelengths_m=onp.array([1.65e-6]),
+            sigma_v2=0.01,
+            sigma_cp_deg=1.0,
+        ).with_model(BinaryModelCartesian(4.0, 1.0, 0.3))
+        assert data.cp_noise is not None
+        result = clean(data, npix, 0.4, max_iterations=3)
+        assert onp.all(onp.isfinite(result.chi2_red))
+        assert len(result.chi2_red) == 4
+        assert onp.all(onp.isfinite(result.components))
 
 
 def _companion_data():
