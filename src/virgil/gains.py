@@ -94,9 +94,7 @@ class GainModes(eqx.Module):
         """Each group's width, with ``vis_gain_<group>`` terms replacing them."""
         terms = {} if terms is None else terms
         unknown = [
-            t
-            for t in terms
-            if t.removeprefix("vis_gain_") not in self.groups
+            t for t in terms if t.removeprefix("vis_gain_") not in self.groups
         ]
         if unknown:
             raise ValueError(
@@ -113,7 +111,9 @@ class GainModes(eqx.Module):
 
     def _columns(self, jacobian, widths):
         """The modes as columns of D^{-½} U, per block: (n_block, n_row, n_mode)."""
-        scale = np.asarray(jacobian).at[self.rows].get(mode="fill", fill_value=0)
+        scale = (
+            np.asarray(jacobian).at[self.rows].get(mode="fill", fill_value=0)
+        )
         return self.shapes * scale[..., None] * widths[self.group][:, None, :]
 
     def whiten(self, x, jacobian, widths):
@@ -154,8 +154,12 @@ class GainModes(eqx.Module):
         # Spread each block's ½ log det over its rows.
         n_rows = np.sum(self.rows < self.n_vis, axis=1)
         per_row = 0.5 * np.sum(logdets, axis=0) / np.maximum(n_rows, 1)
-        extra = np.zeros_like(x).at[self.rows].set(
-            np.broadcast_to(per_row[:, None], self.rows.shape), mode="drop"
+        extra = (
+            np.zeros_like(x)
+            .at[self.rows]
+            .set(
+                np.broadcast_to(per_row[:, None], self.rows.shape), mode="drop"
+            )
         )
         return whitened, extra
 
@@ -191,7 +195,9 @@ class GainModes(eqx.Module):
         n_new = int(keep.sum())
         rows = onp.asarray(self.rows)
         inside = rows < self.n_vis
-        mapped = onp.where(inside, new_index[onp.minimum(rows, self.n_vis - 1)], -1)
+        mapped = onp.where(
+            inside, new_index[onp.minimum(rows, self.n_vis - 1)], -1
+        )
         mapped = onp.where(mapped < 0, n_new, mapped)
         shapes = onp.where((mapped < n_new)[..., None], self.shapes, 0.0)
         return GainModes(
@@ -261,10 +267,16 @@ def gain_modes(
             "Gains act on observed visibilities, not on projected (kernel, "
             "DISCO) observables."
         )
-    built_in = {"telescope": telescope, "baseline": baseline, "chromatic": chromatic}
+    built_in = {
+        "telescope": telescope,
+        "baseline": baseline,
+        "chromatic": chromatic,
+    }
     for name, width in built_in.items():
         if width is not None and not (onp.isfinite(width) and width >= 0):
-            raise ValueError(f"The {name} width must be non-negative, not {width}.")
+            raise ValueError(
+                f"The {name} width must be non-negative, not {width}."
+            )
     need_stations = any(w is not None for w in built_in.values())
     index, frame, stations = _frames_and_stations(data, need_stations)
     n_vis = index.size
@@ -276,10 +288,14 @@ def gain_modes(
         return len(groups) - 1
 
     if need_stations:
-        wavel = onp.broadcast_to(onp.asarray(data.wavel), onp.shape(data.u))[index]
+        wavel = onp.broadcast_to(onp.asarray(data.wavel), onp.shape(data.u))[
+            index
+        ]
         chrom = (onp.median(wavel) / wavel) ** 2
         ids = {
-            name: add_group(name, w) for name, w in built_in.items() if w is not None
+            name: add_group(name, w)
+            for name, w in built_in.items()
+            if w is not None
         }
         for f in onp.unique(frame):
             in_frame = onp.flatnonzero(frame == f)
@@ -287,11 +303,15 @@ def gain_modes(
             if "telescope" in ids:
                 for t in onp.unique(pairs):
                     rows = in_frame[(pairs == t).any(axis=1)]
-                    columns.append((ids["telescope"], rows, onp.ones(rows.size)))
+                    columns.append(
+                        (ids["telescope"], rows, onp.ones(rows.size))
+                    )
             for pair in onp.unique(pairs, axis=0):
                 rows = in_frame[(pairs == pair).all(axis=1)]
                 if "baseline" in ids:
-                    columns.append((ids["baseline"], rows, onp.ones(rows.size)))
+                    columns.append(
+                        (ids["baseline"], rows, onp.ones(rows.size))
+                    )
                 if "chromatic" in ids:
                     columns.append((ids["chromatic"], rows, chrom[rows]))
     if modes is not None:
@@ -320,7 +340,9 @@ def _pack(columns, groups, widths, n_vis):
     # Columns are connected when they share a row: components of the
     # bipartite graph of columns and rows.
     n_col = len(columns)
-    col_ids = onp.concatenate([onp.full(r.size, k) for k, (_, r, _) in enumerate(columns)])
+    col_ids = onp.concatenate(
+        [onp.full(r.size, k) for k, (_, r, _) in enumerate(columns)]
+    )
     row_ids = onp.concatenate([r for _, r, _ in columns])
     graph = coo_matrix(
         (onp.ones(col_ids.size), (col_ids, n_col + row_ids)),
@@ -332,7 +354,8 @@ def _pack(columns, groups, widths, n_vis):
         blocks.setdefault(label[k], []).append(k)
     blocks = list(blocks.values())
     block_rows = [
-        onp.unique(onp.concatenate([columns[k][1] for k in ks])) for ks in blocks
+        onp.unique(onp.concatenate([columns[k][1] for k in ks]))
+        for ks in blocks
     ]
     n_row = max(r.size for r in block_rows)
     n_mode = max(len(ks) for ks in blocks)

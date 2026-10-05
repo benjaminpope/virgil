@@ -64,10 +64,14 @@ def test_whitening_matches_the_dense_covariance(vis_mode, v2):
     )
     chi2 = resid @ onp.linalg.solve(cov, resid)
     logdet = onp.linalg.slogdet(cov)[1]
-    expected = -0.5 * chi2 - 0.5 * logdet - 0.5 * resid.size * onp.log(2 * onp.pi)
+    expected = (
+        -0.5 * chi2 - 0.5 * logdet - 0.5 * resid.size * onp.log(2 * onp.pi)
+    )
     whitened = whitened_residuals(TRUTH, data)
     assert float(np.sum(whitened**2)) == pytest.approx(chi2, rel=1e-4)
-    assert float(model_loglike(TRUTH, data)) == pytest.approx(expected, rel=1e-4)
+    assert float(model_loglike(TRUTH, data)) == pytest.approx(
+        expected, rel=1e-4
+    )
 
 
 def test_supplied_modes_spanning_frames_join_one_block():
