@@ -682,12 +682,12 @@ def starting_image(
                 star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
             )
             priors = {
-                "env.sigma": dist.Uniform(1e-3 * resolution, widest),
-                "env.flux": dist.Uniform(0.0, 100.0),
+                "env.sigma": dist.LogUniform(1e-3 * resolution, widest),
+                "env.flux": dist.LogUniform(1e-4, 100.0),
             }
         else:
             model = GaussianDisk(sigma)
-            priors = {"sigma": dist.Uniform(1e-3 * resolution, widest)}
+            priors = {"sigma": dist.LogUniform(1e-3 * resolution, widest)}
         result = fit(model, priors, data)
         if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
             best = result

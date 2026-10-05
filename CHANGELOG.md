@@ -9,6 +9,15 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Isotropic-orientation priors.** `virgil.priors` has
+  `IsotropicInclination(low=0, high=180)` (degrees, density ∝ sin i, so cos i
+  is uniform; use `(0, 90)` when only |cos i| is identifiable) and
+  `IsotropicLatitude(low=-pi/2, high=pi/2)` (radians, density ∝ cos lat), as
+  numpyro distributions for `fit` and `numpyro_model`. Docstrings and error
+  text now recommend Jeffreys-consistent priors: `LogUniform` for scales
+  (RV jitter, fluxes, diameters, separations), with `ruffio_upperlimit`
+  documenting why its flat flux prior is deliberate.
+
 - **Spectro-interferometric observables (Stage 6a, PR B).**
   `read_oifits(..., extras=...)` and `OIData(path, extras=...)` read OI_FLUX
   (`"flux"` or `"nflux"`), T3AMP, VISAMP beside V² (absolute, or correlated
@@ -70,6 +79,9 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- `starting_image`'s internal fit uses `LogUniform` priors on the envelope
+  width and flux (flux bounds 1e-4 to 100), so the starting point may differ
+  slightly.
 - **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
   `1 / n_rings**2` error scale (about 8e-4 in |V| at the default 32 for a
   13.8 mas cone), and recommends doubling `n_rings` and checking Δχ² at the

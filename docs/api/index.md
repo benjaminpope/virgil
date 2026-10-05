@@ -12,6 +12,7 @@ The everyday names are importable from the top level, e.g.
 - [Inference](inference.md): Laplace and Fisher curvature
 - [Grid Fit](grid_fit.md): grid searches
 - [Limits](limits.md): contrast limits and flux/contrast/Δmag conversions
+- [Priors](priors.md): isotropic inclination and latitude priors
 - [Detection](detection.md): detection statistics for false-alarm rates and ROC curves
 - [Spectra](spectra.md): wavelength-dependent fluxes
 - [Fitting](fitting.md): `fit`, maximum a posteriori fits; `gauss_newton_mass`, a NUTS mass matrix from a fit
