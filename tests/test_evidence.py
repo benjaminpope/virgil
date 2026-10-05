@@ -229,3 +229,32 @@ def test_the_evidence_jacobian_compiles_once():
         log_evidence(second, DATA)
         error_scale(second, DATA)
     assert not compiles
+
+
+def test_the_evidence_is_finite_on_high_signal_to_noise_data():
+    # Tiny errors make J huge; the same data twice make J J^T rank
+    # deficient. A Cholesky factor of I + J J^T then fails to rounding
+    # (error ~ eps |J J^T| > 1); the singular values of J give
+    # log det(I + J^T J) without forming it, and the duplicate doubles the
+    # Gaussian log-likelihood exactly.
+    latent = jax.random.normal(jax.random.PRNGKey(0), (N, N))
+    precise = DATA.with_model(
+        _gp_scene(latent, 1.5), key=jax.random.PRNGKey(1), noise_scale=0.0
+    ).with_error_scale(1e-7)
+    start = _gp_scene(onp.zeros((N, N)), 1.5)
+    model = fit(start, image_priors(start), precise).model
+    assert onp.isfinite(log_evidence(model, [precise, precise]))
+
+
+def test_the_evidence_log_determinant_matches_a_direct_one():
+    from virgil.imaging import _residual_jacobian
+
+    latent = jax.random.normal(jax.random.PRNGKey(0), (N, N))
+    data = DATA.with_model(_gp_scene(latent, 1.5), key=jax.random.PRNGKey(1))
+    start = _gp_scene(onp.zeros((N, N)), 1.5)
+    model = fit(start, image_priors(start), data).model
+    r, jac = _residual_jacobian(model, data, "env.log_brightness.latent")
+    z = onp.asarray(model.get("env.log_brightness.latent"), dtype=float)
+    _, logdet = onp.linalg.slogdet(onp.eye(jac.shape[0]) + jac @ jac.T)
+    direct = -0.5 * float(r @ r) - 0.5 * onp.sum(z**2) - 0.5 * logdet
+    assert log_evidence(model, data) == pytest.approx(direct, rel=1e-10)
