@@ -10,6 +10,10 @@ on:
     branches:
       - main
   pull_request:
+  # Weekly full run, so the slow tests and macOS also run when main is quiet.
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
 
 concurrency:
   group: tests-${{ github.ref }}
@@ -19,35 +23,55 @@ permissions:
   contents: read
 
 jobs:
+  # Pull requests run the Linux jobs and skip the slow-marked tests; pushes to
+  # main, the weekly schedule and manual dispatches also run macOS and every
+  # test. macOS runners are scarce and slower (about 350 s of tests against
+  # 190 s on Linux), so they set the wall time of a pull request.
+  matrix:
+    name: choose the test matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.choose.outputs.matrix }}
+    steps:
+      - id: choose
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          include = [
+              {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"},
+              # x64 exercises the float64 paths.
+              {"os": "ubuntu-latest", "python-version": "3.12", "x64": "1"},
+              {"os": "ubuntu-latest", "python-version": "3.13", "x64": "0"},
+              # The dependency floors in pyproject.toml: every direct
+              # dependency at the oldest version it allows.
+              {
+                  "os": "ubuntu-latest",
+                  "python-version": "3.11",
+                  "x64": "0",
+                  "lowest": True,
+              },
+          ]
+          if os.environ["EVENT"] != "pull_request":
+              # The oldest Python on macOS: x64 dtype mix-ups (the Bessel
+              # functions, then cached integer index arrays) have surfaced
+              # on macOS and Python 3.11 but not in Linux CI.
+              include.insert(
+                  2, {"os": "macos-latest", "python-version": "3.11", "x64": "0"}
+              )
+          print("matrix=" + json.dumps({"include": include}))
+          EOF
+
   build:
     name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}
+    needs: matrix
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            python-version: "3.12"
-            x64: "0"
-          # x64 exercises the float64 paths.
-          - os: ubuntu-latest
-            python-version: "3.12"
-            x64: "1"
-          # The oldest Python on macOS: x64 dtype mix-ups (the Bessel
-          # functions, then cached integer index arrays) have surfaced on
-          # macOS and Python 3.11 but not in Linux CI.
-          - os: macos-latest
-            python-version: "3.11"
-            x64: "0"
-          - os: ubuntu-latest
-            python-version: "3.13"
-            x64: "0"
-          # The dependency floors in pyproject.toml: every direct
-          # dependency at the oldest version it allows.
-          - os: ubuntu-latest
-            python-version: "3.11"
-            x64: "0"
-            lowest: true
+      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     env:
       JAX_ENABLE_X64: ${{ matrix.x64 }}
       # One JAX cache per job: compiled code differs by OS, Python and x64.
@@ -99,8 +123,10 @@ jobs:
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
         # The JUnit report carries the validates markers (tests/conftest.py)
         # as evidence for virgil-validation; xunit1 keeps test properties.
+        # Pull requests skip the tests marked slow (tests/conftest.py).
         run: >-
           .venv/bin/python -m pytest -n auto -rs
+          ${{ github.event_name == 'pull_request' && '-m "not slow"' || '' }}
           --junitxml=junit-evidence.xml -o junit_family=xunit1
 
       - name: upload evidence
