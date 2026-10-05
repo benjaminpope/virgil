@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpyro.distributions as dist
 import pandas as pd
+from numpyro.diagnostics import summary
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_value
 from tqdm.auto import tqdm
@@ -252,7 +253,7 @@ virgil's default priors are the invariant (Jeffreys) measures of the groups that
 | Mean anomaly at `t_ref` | uniform on [0°, 360°) | A location in time: invariant under time translation. It is the same as a uniform time of periastron over one period. |
 | Eccentricity $e$ | uniform on [0, 1) | No group acts on $e$, so uniform $e$ is an interim prior, which a population prior can later reweight. |
 
-Two details of the parameterisation matter for the sampler. virgil has no helper for an isotropic inclination yet, so we sample $\cos i$ itself and set $i = \arccos(\cos i)$ in the model; uniform $\cos i$ is then exactly the isotropic prior, with no Jacobian to add. And the three angles are periodic, but a sampler given `Uniform(0, 360)` sees walls at 0° and 360°. We therefore sample each angle as the direction of a 2-vector with an isotropic Gaussian density: the direction is then exactly uniform over the full circle, there is no boundary, and the vector's length is a harmless nuisance. The function `elements` maps the sampled values to the orbital elements; it works on single values inside the model and on whole arrays of samples afterwards.
+Two details of the parameterisation matter for the sampler. virgil has no helper for an isotropic inclination yet, so we sample $\cos i$ itself and set $i = \arccos(\cos i)$ in the model; uniform $\cos i$ is then exactly the isotropic prior, with no Jacobian to add. And the three angles are periodic, but a sampler given `Uniform(0, 360)` sees walls at 0° and 360°. We therefore sample each angle as the direction of a 2-vector $v$. Any rotationally symmetric density for $v$ makes the direction exactly uniform over the full circle, with no boundary, and leaves the vector's length $r$ as a nuisance. The length still matters to the sampler. The data fix the angles to a fraction of a degree, so near a radius $r$ the posterior is a thin wedge, of width proportional to $r$. Under an isotropic Gaussian, $r$ ranges over more than a factor of ten, the wedge narrows into a funnel towards the origin, and no single step size suits it all: NUTS then diverges. So `Ring` gives $v$ the density $\exp[-(r - 1)^2/2s^2]$, with $s = 0.1$, which keeps $r$ within about 20% of 1 and the wedge's width nearly constant. virgil will provide this prior as `AngleVector` (virgil#211). The function `elements` maps the sampled values to the orbital elements; it works on single values inside the model and on whole arrays of samples afterwards.
 
 ```python
 def angle(vec):
@@ -273,7 +274,33 @@ def elements(v):
     )
 
 
-direction = dist.Normal(0.0, 1.0).expand([2]).to_event(1)
+class Ring(dist.Distribution):
+    # A 2-vector with a uniform direction and a length near 1: the density
+    # exp(-(r - 1)^2 / 2 s^2), normalised in the plane.
+    support = dist.constraints.real_vector
+
+    def __init__(self, width=0.1):
+        self.width = width
+        z = width**2 * jnp.exp(-0.5 / width**2) + width * jnp.sqrt(
+            jnp.pi / 2
+        ) * (1 + jax.scipy.special.erf(1 / (width * jnp.sqrt(2))))
+        self.log_z = jnp.log(2 * jnp.pi * z)
+        super().__init__(event_shape=(2,))
+
+    def log_prob(self, v):
+        r = jnp.linalg.norm(v, axis=-1)
+        return -0.5 * ((r - 1) / self.width) ** 2 - self.log_z
+
+    def sample(self, key, sample_shape=()):
+        # Uniform direction; the length from N(1, s), which is close to the
+        # ring's radial density for small s (used only to initialise).
+        k1, k2 = jax.random.split(key)
+        theta = jax.random.uniform(k1, sample_shape, maxval=2 * jnp.pi)
+        r = jnp.abs(1 + self.width * jax.random.normal(k2, sample_shape))
+        return r[..., None] * jnp.stack([jnp.cos(theta), jnp.sin(theta)], -1)
+
+
+direction = Ring(width=0.1)
 orbit_priors = {
     "period": dist.LogUniform(100.0, 1e4),
     "a_mas": dist.LogUniform(1.0, 300.0),
@@ -289,7 +316,7 @@ def run_nuts(model, seed, num_warmup, num_samples, num_chains=1, init=None):
     strategy = (
         {} if init is None else {"init_strategy": init_to_value(values=init)}
     )
-    kernel = NUTS(model, dense_mass=True, target_accept_prob=0.9, **strategy)
+    kernel = NUTS(model, dense_mass=True, target_accept_prob=0.95, **strategy)
     mcmc = MCMC(
         kernel,
         num_warmup=num_warmup,
@@ -346,7 +373,7 @@ plt.show()
 
 ## Sampling the orbit
 
-Now we add the positions. `measured.term(orbit_fn)` is a likelihood term, the Gaussian log density of the positions given an orbit, which `numpyro_model` adds to the prior. We start four chains at the best Thiele–Innes orbit (with $e$ and $\cos i$ moved slightly off the edges of their priors), and use a dense mass matrix, since period, eccentricity and time of periastron are strongly correlated when the periastron is unobserved. The run is short: a thousand warm-up steps and a thousand samples per chain.
+Now we add the positions. `measured.term(orbit_fn)` is a likelihood term, the Gaussian log density of the positions given an orbit, which `numpyro_model` adds to the prior. We start four chains at the best Thiele–Innes orbit (with $e$ and $\cos i$ moved slightly off the edges of their priors), and use a dense mass matrix, since period, eccentricity and time of periastron are strongly correlated when the periastron is unobserved. The run is short: a thousand warm-up steps and a thousand samples per chain. Afterwards we check the sampler: the number of divergent transitions, the largest split-$\hat R$ over the sampled sites and the smallest effective sample size.
 
 ```python
 def orbit_fn(values):
@@ -380,8 +407,14 @@ mcmc = run_nuts(
     init=init,
 )
 divergences = int(mcmc.get_extra_fields()["diverging"].sum())
+stats = summary(mcmc.get_samples(group_by_chain=True))
+r_hat = max(float(np.max(s["r_hat"])) for s in stats.values())
+n_eff = min(float(np.min(s["n_eff"])) for s in stats.values())
 print(f"{divergences} divergent transitions in {4 * 1000} samples")
+print(f"largest r_hat {r_hat:.3f}, smallest effective sample size {n_eff:.0f}")
 ```
+
+A healthy run has no divergences, $\hat R$ below about 1.01 and an effective sample size in the thousands. If there are more than a handful of divergences, do not trust the samples, because the divergences mark regions the sampler could not explore: reparameterise (as `Ring` does for the angles), start closer to the mode or raise `target_accept_prob`. Do not simply drop the divergent samples.
 
 Each sample is turned into orbital elements, and into a total mass at the assumed distance by Kepler's third law, $M = a^3/P^2$ with $a$ in au and $P$ in years. Positions cannot tell $(\Omega, \omega)$ from $(\Omega + 180°, \omega + 180°)$, which only flips the line-of-sight direction, so the full-circle prior gives two mirror-image modes of equal height. The chains stay in the mode where they started; we report it with $\Omega$ in [0°, 180°), the usual convention for visual orbits, and radial velocities would be needed to choose between the two. The table compares the posterior medians and 68% intervals with the truth.
 
