@@ -42,10 +42,9 @@ anything before 1.0 may change between minor versions.
   evidence, posterior mean and sd come from 256-node Gauss-Legendre
   quadrature in `ln f` over the part of the bounds the likelihood occupies,
   inside `jit` and `vmap`; they agree with a dense-grid quadrature to
-  better than 1e-4. The Gaussian prior is now `Gaussian(mean, sd)`
+  better than 1e-4. The Gaussian prior is `dist.Normal(mean, sd)`
   (documented as a Gaussian-prior evidence, a computational approximation
-  where `f` may go negative); a bare `(mean, sd)` tuple still works but warns
-  with a `DeprecationWarning`. With no `prior`, the posterior and Bayes-factor
+  where `f` may go negative). With no `prior`, the posterior and Bayes-factor
   fields are `None`, whatever the prior kind.
 
 - **Angle vectors (`virgil.angles.AngleVector`).** A prior for any angle
@@ -159,6 +158,27 @@ anything before 1.0 may change between minor versions.
   N(0, 1000²) km/s and warns).
 
 ### Changed
+
+- **API consistency before 0.3.0.**
+  - `linear_flux_grid(prior=)` takes numpyro's `dist.LogUniform(low, high)`
+    and `dist.Normal(mean, sd)` (scalar parameters), the same classes as
+    `fit` and `noise=`, so passing the numpyro `LogUniform` no longer raises
+    `TypeError`. The `virgil.grid_fit.LogUniform` and `Gaussian` named tuples
+    still work. A bare `(mean, sd)` tuple, whose deprecation path never
+    shipped, is now a `TypeError` with a message saying so.
+  - `RVData.term(marginalise_offsets=True)` raises `ValueError` instead of
+    silently using N(0, 1000²) km/s: state the zero-point prior as
+    `(mean, sd)`.
+  - `flux_param` and `batch_size` are keyword-only in `likelihood_grid`,
+    `optimized_likelihood_grid`, `optimized_flux_grid`, `linear_flux_grid`
+    and `laplace_flux_uncertainty_grid` (in the last, after `flux`).
+    The first four are from 0.2.0, so a positional `flux_param` or
+    `batch_size` there now raises `TypeError`.
+  - `injection_recovery(draw_batch > 1)` divides the default grid
+    `batch_size` by `draw_batch` and caps `draw_batch` at that default,
+    so the working set stays within the documented bound, and by default the last chunk is compiled at its own
+    length instead of being padded with discarded draws (an explicit
+    `chunk_size` still pads, to reuse one compilation).
 
 - **`fit` optimises each prior in its flat coordinate.** A prior that is
   uniform in some coordinate of its parameter, `LogUniform(a, b)` in

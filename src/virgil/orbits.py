@@ -26,7 +26,6 @@ toward the observer) and stay inside :meth:`KeplerOrbit.to_jaxoplanet` and
 """
 
 import math
-import warnings
 
 import jax
 import jax.numpy as np
@@ -926,7 +925,6 @@ class StateVectorOrbit(zx.Base):
 
 
 # Default sd (km/s) of the zero-point prior when marginalising with ``True``.
-_DEFAULT_ZERO_POINT_SD = 1000.0
 
 # km/s per (mas/day at 1 pc): 1 mas at 1 pc is 1e-3 au.
 _KMS_PER_MAS_DAY_PC = _AU_M * 1e-6 / _DAY_S  # 1 mas at 1 pc is 1e-3 au
@@ -1042,15 +1040,11 @@ class RVData(zx.Base):
         """``(mean, sd)`` arrays of length ``len(self.instruments)``."""
         k = len(self.instruments)
         if prior is True:
-            warnings.warn(
-                "marginalising the RV zero points with the default prior "
-                f"N(0, {_DEFAULT_ZERO_POINT_SD:g} km/s): it is effectively "
-                "flat, so the likelihood is the profile likelihood plus a "
-                "log-determinant correction, up to a constant that depends "
-                "on the prior width. Pass (mean, sd) for a proper prior.",
-                stacklevel=3,
+            raise ValueError(
+                "marginalise_offsets=True is not supported: state the "
+                "zero-point prior explicitly as (mean, sd) in km/s (scalars "
+                "or one per instrument), e.g. marginalise_offsets=(0.0, 50.0)."
             )
-            prior = (0.0, _DEFAULT_ZERO_POINT_SD)
         mean, sd = prior
         mean = onp.broadcast_to(onp.asarray(mean, dtype=float), (k,))
         sd = onp.broadcast_to(onp.asarray(sd, dtype=float), (k,))
@@ -1148,7 +1142,7 @@ class RVData(zx.Base):
             largest). ``dist.HalfNormal`` is a deliberate informative choice
             (scale about the expected scatter, a few km/s for a spotted
             star). The likelihood depends on ``s²`` only.
-        marginalise_offsets : True or (mean, sd), optional
+        marginalise_offsets : (mean, sd), optional
             Analytically marginalise one velocity zero point per instrument
             (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136). The model
             is ``m_kepler + A w`` with ``A`` the indicator matrix of
@@ -1159,7 +1153,7 @@ class RVData(zx.Base):
             ``w_j - w_0``. Return ``gamma = 0`` from ``params`` (a nonzero
             value just shifts the prior mean). ``mean`` and ``sd`` are
             scalars or one per instrument (in ``RVData.instruments``
-            order, km/s); ``True`` uses ``N(0, 1000²)`` and warns. The
+            order, km/s); ``True`` is an error, because the prior must be stated. The
             density is the dense ``N(m + Aμ, C + AΛAᵀ)`` log density with
             ``C = diag(σ_eff²)``, evaluated by the Woodbury identity and
             the matrix-determinant lemma in O(N k²), so the jitter enters
