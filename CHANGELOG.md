@@ -482,6 +482,10 @@ analysis or warn:
 
 ### Docs
 
+- **`GravityDarkenedStar` docstring: "Choosing `n_lat`"** gives the
+  measured mesh error from an independent ELR11 reference (virgil-validation),
+  the second-order convergence, and the doubling check (|Δχ²| ≳ 1 per
+  dataset).
 - **"Detection ROC curves" rewritten on `injection_recovery`** (Binaries,
   `notebooks/detection_roc.ipynb`). A candidate companion in a simulated
   NIRISS AMI observation, one Monte Carlo call (10⁴ null and 1280 injected
