@@ -63,6 +63,16 @@ analysis or warn:
 
 ### Added
 
+- **Hierarchical error scales and tied `noise=` terms.** A `noise=` entry of
+  `fit` and `numpyro_model` may now be a function of the sampled parameters
+  instead of a prior (`likelihood.is_tied`), recorded as a deterministic site;
+  a tied term's `log_prior(values)`, if any, is added once
+  (`likelihood.tied_log_prior`). `priors.hierarchical_scales(name, n,
+  median=, spread=, centred=True)` builds n scales (e.g. one closure-phase
+  error scale per epoch) from a log-normal population with log-uniform
+  hyperpriors: centred (log s sampled, for well-measured members; the
+  non-centred form diverged on such members in a test) or non-centred.
+
 - **`clean(base_priors=...)`** fits named parameters of the base (e.g. a
   companion's position) together with the components' fluxes at every major
   cycle. CLEAN also ends with a final major cycle when it stops at the target
@@ -411,6 +421,10 @@ analysis or warn:
 
 ### Fixed
 
+- **`clean` no longer hangs when `nnls` gives up in a major cycle.** The
+  bounded least-squares fallback now uses BVLS: scipy's default TRF solver
+  can loop forever in its line search once the step underflows, which stalled
+  the py3.11 lowest-dependency CI job on scipy 1.13.
 - **Contrast limits: one search, from below.** Found in the pre-0.3.0 review
   (`design/codebase_review_2026-10b.md`, B1, B2, S2 and S5).
   - `injection_limits(flux_bounds=None)` returned 1000, the top of its search
@@ -482,6 +496,10 @@ analysis or warn:
 
 ### Docs
 
+- **`GravityDarkenedStar` docstring: "Choosing `n_lat`"** gives the
+  measured mesh error from an independent ELR11 reference (virgil-validation),
+  the second-order convergence, and the doubling check (|Δχ²| ≳ 1 per
+  dataset).
 - **"Detection ROC curves" rewritten on `injection_recovery`** (Binaries,
   `notebooks/detection_roc.ipynb`). A candidate companion in a simulated
   NIRISS AMI observation, one Monte Carlo call (10⁴ null and 1280 injected
@@ -491,6 +509,22 @@ analysis or warn:
   for a non-detection against Absil and Ruffio limits, and what wrong error
   bars do to a Gaussian null and how `rescale_errors` and the bootstrap fix
   it.
+- **Orbit tutorial rewritten as a joint fit to the interferometric data**
+  ("Orbits from interferometric data", Binaries,
+  `notebooks/orbit_fitting.ipynb`, replacing the two-step version below).
+  One `KeplerOrbit` model is fitted to the V² and closure phases of all
+  eight simulated VLTI epochs at once, each sample at its own time, with
+  per-epoch V² and closure-phase error scales drawn from fitted log-normal
+  populations (`hierarchical_scales`). Priors are Jeffreys throughout
+  (`IsotropicInclination`, `orientation_priors` and `AngleVector` angles,
+  log-uniform scales, interim uniform e), with a no-data check.
+  Initialisation is kept separate from the inference: coarse per-epoch grids
+  seed `starting_orbits`, the candidates are ranked by the joint likelihood
+  of all the data, and the best four are refined with `fit`. Outputs are NUTS
+  diagnostics, a corner plot, an ensemble of posterior orbits on the sky with
+  the implied per-epoch positions, posterior-predictive closure-phase
+  checks, the inferred calibration, separation and position angle in time,
+  and a comparison with the two-step posterior.
 - **New tutorial: "Orbits from interferometric epochs"** (Binaries,
   `notebooks/orbit_fitting.ipynb`). Eight epochs of simulated VLTI
   (UT) V² and closure phases of a three-year binary: per-epoch astrometry

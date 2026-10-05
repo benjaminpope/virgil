@@ -1,5 +1,6 @@
 import doctest
 import importlib
+import importlib.util
 import warnings
 from pathlib import Path
 
@@ -25,11 +26,30 @@ def _module_names():
     return names
 
 
+def _has_jaxoplanet():
+    # Look it up without importing it: importing jaxoplanet enables x64
+    # globally, and the doctests must run in the default float32.
+    try:
+        return importlib.util.find_spec("jaxoplanet") is not None
+    except ValueError:  # in sys.modules as None (blocked)
+        return False
+
+
+def _needs_orbits(test):
+    """Whether a docstring example solves an orbit (the [orbits] extra)."""
+    return any("virgil.orbits" in ex.source for ex in test.examples)
+
+
 @pytest.mark.parametrize("name", _module_names())
 def test_docstring_examples_run(name):
     module = importlib.import_module(name)
-    result = doctest.testmod(module, optionflags=doctest.ELLIPSIS)
-    assert result.failed == 0
+    runner = doctest.DocTestRunner(optionflags=doctest.ELLIPSIS)
+    skip_orbits = not _has_jaxoplanet()
+    for test in doctest.DocTestFinder().find(module):
+        if skip_orbits and _needs_orbits(test):
+            continue
+        runner.run(test)
+    assert runner.summarize(verbose=False).failed == 0
 
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)

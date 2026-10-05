@@ -69,6 +69,9 @@ jobs:
     name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}
     needs: matrix
     runs-on: ${{ matrix.os }}
+    # A pull request's suite (no slow tests) takes about 10 minutes; fail a
+    # hung job instead of holding a runner for GitHub's 6-hour default.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 45 || 360 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}

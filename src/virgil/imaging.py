@@ -1019,7 +1019,11 @@ def _refit(fixed, fluxes, chi2, scale, rotation):
         # ill-conditioned columns of high signal-to-noise data. The bounded
         # least-squares solver returns its best point instead of raising,
         # and the backtracking below keeps the step only if χ² falls.
-        solution = lsq_linear(jacobian, rhs, bounds=(0.0, onp.inf)).x
+        # BVLS, not the default TRF: TRF's line search loops forever once
+        # its step underflows to zero, which hung CI on scipy 1.13.
+        solution = lsq_linear(
+            jacobian, rhs, bounds=(0.0, onp.inf), method="bvls"
+        ).x
     for fraction in (1.0, 0.5, 0.25, 0.125):
         trial = flat.copy()
         trial[active] = current + fraction * (solution - current)
@@ -1061,7 +1065,9 @@ def _clean_model(base, components, pixel_scale_mas, rotation_deg, spectrum):
     return System(base=base, clean=image)
 
 
-def _joint_refit(base, components, observations, priors, geometry, spectrum):
+def _joint_refit(
+    base, components, observations, priors, geometry, spectrum, dtype
+):
     """Fit the base's free parameters and the components' fluxes together.
 
     ``priors`` are keyed by paths in the base. The components keep their
@@ -1086,7 +1092,7 @@ def _joint_refit(base, components, observations, priors, geometry, spectrum):
         joint[flux_path] = dist.ImproperUniform(
             dist.constraints.positive, (), ()
         )
-    fitted = fit(model, joint, list(observations)).model
+    fitted = fit(model, joint, list(observations), dtype=dtype).model
     if not with_image:
         return fitted, components
     image = fitted.clean
@@ -1249,9 +1255,10 @@ def clean(
     base_priors : dict, optional
         Priors (numpyro distributions) on parameters of the base to fit at
         every major cycle, keyed by their paths in the base (e.g.
-        ``{"comp.dra": dist.Normal(30.0, 5.0)}`` for a System base, or
-        ``{"diameter": ...}`` for a single component). Needs a base and
-        major cycles (``refit_every`` > 0).
+        ``{"comp.dra": dist.Normal(30.0, 5.0)}`` for a System base, whose
+        paths must start with a component's name, or ``{"diameter": ...}``
+        for a single component). Needs a base and major cycles
+        (``refit_every`` > 0). The fits run in ``dtype``.
     refresh_norms : bool, optional
         Recompute the norms ``|J e_p|`` at every major cycle (default
         ``False``). For non-linear data they change as the image does, but
@@ -1314,6 +1321,15 @@ def clean(
         raise ValueError(
             "base_priors needs a base scene and major cycles (refit_every > 0)."
         )
+    if base_priors and isinstance(base, System):
+        # A root path (e.g. "dra") would move the whole scene, image and
+        # all, and the base rebuilt from its components would lose it.
+        loose = [k for k in base_priors if k.split(".")[0] not in base.names]
+        if loose:
+            raise ValueError(
+                f"base_priors on a System base must name its components' "
+                f"parameters (e.g. '{base.names[-1]}.dra'), not {loose}."
+            )
     if isinstance(base, System):
         if float(base.dra) != 0.0 or float(base.ddec) != 0.0:
             raise ValueError(
@@ -1371,10 +1387,12 @@ def clean(
             )
 
         def major_cycle(fluxes, chi2):
-            # Refit the components' fluxes; with free base parameters, then
-            # fit those and the components' fluxes together.
+            # With free base parameters, first fit those and the components'
+            # fluxes together; then refit the fluxes by non-negative least
+            # squares, which can remove components. Pruning against the
+            # corrected base, not the old one, keeps a component the old
+            # base was hiding.
             nonlocal base, fixed
-            fluxes = _refit(fixed, fluxes, chi2, *geometry)
             if base_priors:
                 base, components = _joint_refit(
                     base,
@@ -1383,10 +1401,12 @@ def clean(
                     base_priors,
                     geometry,
                     spectrum,
+                    dtype,
                 )
                 fixed = (cast_tree((base, spectrum), dtype), cast_observations)
                 fluxes = np.asarray(components, fluxes.dtype)
-            return fluxes
+                chi2 = float(_clean_chi2(*fixed, fluxes, *geometry))
+            return _refit(fixed, fluxes, chi2, *geometry)
 
         scores = scores_for(fluxes)
         history, stop = [], "max_iterations"
