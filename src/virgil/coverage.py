@@ -292,7 +292,9 @@ def vlti_oidata(
     -------
     OIData
         Data with zero values, for
-        [`with_model`][virgil.oidata.OIData.with_model].
+        [`with_model`][virgil.oidata.OIData.with_model]. Each snapshot is a
+        frame, and each baseline carries its station pair (numbered from
+        1), so [`with_gains`][virgil.oidata.OIData.with_gains] applies.
     """
     stations = onp.asarray(stations, float)
     n = len(stations)
@@ -300,6 +302,7 @@ def vlti_oidata(
     triangles = list(itertools.combinations(range(n), 3))
     lat, dec = onp.radians(latitude_deg), onp.radians(declination_deg)
     us, vs, mjd, all_pairs, all_triangles = [], [], [], [], []
+    frame, station_pairs = [], []
     nights = [None] if nights_mjd is None else list(nights_mjd)
     snapshots = [(night, hour) for night in nights for hour in hour_angles_h]
     for epoch, (night, hour) in enumerate(snapshots):
@@ -316,6 +319,8 @@ def vlti_oidata(
                 + onp.cos(dec) * z
             )
             all_pairs.append((n * epoch + i, n * epoch + j))
+            frame.append(epoch)
+            station_pairs.append((i + 1, j + 1))
             mjd.append(None if night is None else night + hour / 24.0)
         all_triangles += [
             tuple(n * epoch + t for t in tri) for tri in triangles
@@ -327,6 +332,8 @@ def vlti_oidata(
     return OIData(
         {
             **times,
+            "frame": onp.asarray(frame),
+            "stations": onp.asarray(station_pairs),
             "u": onp.asarray(us),
             "v": onp.asarray(vs),
             "wavel": wavelengths,

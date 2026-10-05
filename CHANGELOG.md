@@ -25,6 +25,15 @@ anything before 1.0 may change between minor versions.
   `f_hat = -(g . r0) / (g . g)`, `sigma_f = (g . g)**-0.5` and SNR are
   returned per pixel (f_hat unconstrained in sign). Valid only for
   f much smaller than 1: a bright companion (f ~ 0.3) is biased low.
+- **Calibration gains correlated across channels** (Stage 6d).
+  `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)` adds gains
+  on log |V| per frame: per telescope, per baseline, a chromatic coherence
+  loss, or supplied modes such as a calibrator PCA's. The likelihood
+  marginalises them analytically (`virgil.gains`), and their widths can be
+  fitted or sampled with the noise terms `vis_gain_telescope`,
+  `vis_gain_baseline`, `vis_gain_chromatic` and `vis_gain_modes`.
+  `OIData.stations` holds each sample's station pair, read from `STA_INDEX`.
+
 - **Line and node spectra (Stage 6a, spectra).** `GaussianLine` and
   `LorentzianLine` (amplitude is the peak flux; negative for absorption),
   `Nodes` (linear or natural cubic spline through free fluxes, constant or a
