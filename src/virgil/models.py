@@ -1267,8 +1267,8 @@ class GravityDarkenedStar(Component):
     (virgil-validation) measured it. In grey mode the error is 1.4-3.4e-4 in
     visibility at ``n_lat = 128``, falling 4x per doubling. At the default
     ``n_lat = 32`` it is 2-6e-3 for fast rotators. In chromatic mode
-    (``t_pole`` 9000 K) it is 1.3-1.4e-4 at 0.7, 1.65 and 2.2 µm; (the
-    report does not give the ``n_lat`` used). The default suits most data, but well-measured
+    (``t_pole`` 9000 K) it is 1.3-1.4e-4 at 0.7, 1.65 and 2.2 µm,
+    also at ``n_lat = 128``. The default suits most data, but well-measured
     data (e.g. GRAVITY) can be sensitive to errors of this size.
 
     To check, evaluate or refit at the best fit with ``n_lat`` doubled and
