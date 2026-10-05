@@ -70,6 +70,19 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **`fit` optimises each prior in its flat coordinate.** A prior that is
+  uniform in some coordinate of its parameter, `LogUniform(a, b)` in
+  `log x`, or any prior with a `flat_coordinate()` method (isotropic
+  inclinations in `cos i`, latitudes in `sin(lat)`), is fitted in that
+  coordinate, where it is constant and adds nothing to the loss. So
+  Levenberg–Marquardt now runs, and is chosen automatically, with these
+  Jeffreys priors (it used to fall back to L-BFGS, and `method="lm"`
+  raised), and `gauss_newton_mass` accepts them. **Behaviour change:** a
+  fit with a `LogUniform` prior (on a parameter or a `noise=` term) is now
+  the maximum of the likelihood inside the prior's range, the MAP in
+  `log x`; before, it was the mode of likelihood × `1/x` in `x`, which
+  pulled scales towards small values. Uniform, Normal and other priors are
+  unchanged. See "Priors and the MAP" in the conventions.
 - **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
   `1 / n_rings**2` error scale (about 8e-4 in |V| at the default 32 for a
   13.8 mas cone), and recommends doubling `n_rings` and checking Δχ² at the

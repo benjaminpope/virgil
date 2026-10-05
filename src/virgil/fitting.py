@@ -7,8 +7,11 @@ free parameters, and the data, plus optional regularisers (see
 [`virgil.imaging`][virgil.imaging]). It finds the maximum a
 posteriori parameters with Levenberg–Marquardt, L-BFGS or Adam, optimising
 each parameter in unconstrained coordinates through the bijection to its
-prior's support, in float64 by default. To sample the same posterior, pass
-the same arguments to ``numpyro_model``.
+prior's support, in float64 by default. A parameter whose prior is uniform in
+some coordinate (a log-uniform scale, an isotropic inclination) is fitted in
+that flat coordinate, where its prior adds nothing to the loss, so that
+Levenberg–Marquardt works with the Jeffreys priors. To sample the same
+posterior, pass the same arguments to ``numpyro_model``.
 """
 
 import dataclasses
@@ -42,28 +45,92 @@ def _bijection(distribution):
     return biject_to(distribution.support)
 
 
-def _prior_residuals(path, distribution, value):
-    """Residuals ``r`` with ``-log p(value) = 0.5 sum r² + const``, or None.
+def _base(distribution):
+    """``distribution`` without ``.expand(...)`` and ``.to_event(...)``.
 
-    ``None`` means the prior is flat on its support (Uniform,
-    ImproperUniform), so it adds nothing to a least-squares objective.
+    They change the shape, not the density's form (a flat prior stays flat,
+    a Normal stays Normal).
     """
     import numpyro.distributions as dist
 
-    # Unwrap .expand(...) and .to_event(...): they change the shape, not
-    # the density's form (a flat prior stays flat, a Normal stays Normal).
     while isinstance(
         distribution, (dist.Independent, dist.ExpandedDistribution)
     ):
         distribution = distribution.base_dist
+    return distribution
+
+
+def _flat_coordinate(distribution):
+    """The coordinate in which a prior is uniform, or None.
+
+    Returns ``(to_flat, from_flat, low, high)``: a monotonic map ``u =
+    to_flat(x)`` of the parameter, its inverse, and the interval ``[low,
+    high]`` of ``u`` on which the prior's density is constant. Such a prior
+    is an invariant measure written in a coordinate where it is not flat:
+
+    * ``LogUniform(a, b)``: ``u = log x`` on ``[log a, log b]``;
+    * any prior with a ``flat_coordinate()`` method returning that tuple,
+      such as an isotropic inclination (``u = cos i``) or latitude (``u =
+      sin(lat)``).
+
+    ``Uniform`` is its own flat coordinate (the identity) and keeps
+    numpyro's bijection; Normal and other priors have none and are
+    evaluated in the model's own parameters.
+    """
+    import numpyro.distributions as dist
+
+    base = _base(distribution)
+    if isinstance(base, dist.LogUniform):
+        return np.log, np.exp, np.log(base.low), np.log(base.high)
+    declared = getattr(base, "flat_coordinate", None)
+    if callable(declared):
+        return declared()
+    return None
+
+
+class _FlatBijection:
+    """Unconstrained z to a parameter uniform in ``u = to_flat(x)``.
+
+    ``x = from_flat(lo + (hi - lo) sigmoid(z))``: numpyro's bijection of the
+    flat coordinate's interval, followed by the map back to the parameter.
+    """
+
+    def __init__(self, to_flat, from_flat, low, high):
+        from numpyro.distributions import constraints
+        from numpyro.distributions.transforms import biject_to
+
+        self.to_flat, self.from_flat = to_flat, from_flat
+        self.interval = biject_to(constraints.interval(low, high))
+
+    def __call__(self, z):
+        return self.from_flat(self.interval(z))
+
+    def inv(self, x):
+        return self.interval.inv(self.to_flat(x))
+
+
+def _prior_residuals(path, distribution, value):
+    """Residuals ``r`` with ``-log p(value) = 0.5 sum r² + const``, or None.
+
+    ``None`` means the prior adds nothing to a least-squares objective:
+    it is flat on its support (Uniform, ImproperUniform), or flat in the
+    coordinate ``fit`` optimises it in (LogUniform and the other priors with
+    a flat coordinate; see ``_flat_coordinate``).
+    """
+    import numpyro.distributions as dist
+
+    if _flat_coordinate(distribution) is not None:
+        return None
+    distribution = _base(distribution)
     if isinstance(distribution, (dist.Uniform, dist.ImproperUniform)):
         return None
     if isinstance(distribution, dist.Normal):
         return np.ravel((value - distribution.loc) / distribution.scale)
     raise TypeError(
         f"The {type(distribution).__name__} prior on {path!r} has no "
-        "least-squares form; use Normal, Uniform or ImproperUniform "
-        "priors, or fit with method='lbfgs' or 'adam'."
+        "least-squares form; use Normal, Uniform, ImproperUniform or "
+        "LogUniform priors (or one with a flat coordinate, such as an "
+        "isotropic inclination), or fit with method='lbfgs' or 'adam'."
     )
 
 
@@ -106,6 +173,13 @@ class _Objective(eqx.Module):
     if a regulariser or prior has no least-squares form, or if error terms
     are fitted. ``z`` are the unconstrained coordinates of the parameters
     and of any error terms (keyed by their ``noise`` sites).
+
+    With ``flat=True`` (for ``fit``), a parameter whose prior has a flat
+    coordinate (``_flat_coordinate``: LogUniform, isotropic angles) is
+    unconstrained through that coordinate, where its prior is constant and
+    adds nothing to the loss. With ``flat=False`` (for
+    ``gauss_newton_mass``), every parameter uses numpyro's bijection of its
+    prior's support, the coordinates NUTS samples.
     """
 
     model: object
@@ -114,11 +188,20 @@ class _Objective(eqx.Module):
     regularisers: tuple
     noise: dict
     likelihoods: tuple
+    flat: bool = eqx.field(static=True)
 
     def __init__(
-        self, model, priors, data, regularisers=(), noise=None, likelihoods=()
+        self,
+        model,
+        priors,
+        data,
+        regularisers=(),
+        noise=None,
+        likelihoods=(),
+        flat=True,
     ):
         self.model = model
+        self.flat = flat
         self.data = tuple(data) if isinstance(data, (list, tuple)) else (data,)
         self.likelihoods = tuple(likelihoods)
         self.priors = {path: _traced(p) for path, p in priors.items()}
@@ -151,6 +234,16 @@ class _Objective(eqx.Module):
         """The free parameters' paths, in the order of ``priors``."""
         return tuple(self.priors)
 
+    def _in_flat_coordinate(self, prior):
+        """Whether ``prior``'s parameter is fitted in its flat coordinate."""
+        return self.flat and _flat_coordinate(prior) is not None
+
+    def bijection(self, prior):
+        """The map from unconstrained coordinates to ``prior``'s support."""
+        if self._in_flat_coordinate(prior):
+            return _FlatBijection(*_flat_coordinate(prior))
+        return _bijection(prior)
+
     def init(self, values=None):
         """Unconstrained coordinates of ``values`` (default: the template's).
 
@@ -167,12 +260,13 @@ class _Objective(eqx.Module):
             start = values.get(site, default)
             if not bool(prior.support(np.asarray(start, float))):
                 start = prior.mean
-            z[site] = _bijection(prior).inv(np.asarray(start, float))
+            z[site] = self.bijection(prior).inv(np.asarray(start, float))
             if not bool(np.all(np.isfinite(z[site]))):
                 # On the boundary of a bounded prior (e.g. 0 for
                 # Uniform(0, ...)), the unconstrained coordinate is
                 # infinite: start inside it, at the prior's mean.
-                z[site] = _bijection(prior).inv(np.asarray(prior.mean, float))
+                mean = np.asarray(prior.mean, float)
+                z[site] = self.bijection(prior).inv(mean)
         for path, prior in self.priors.items():
             if path not in values:
                 if not isinstance(self.model, SourceModel):
@@ -181,17 +275,19 @@ class _Objective(eqx.Module):
                         "the model is a function."
                     )
                 values[path] = self.model.get(path)  # raises if unknown
-            z[path] = _bijection(prior).inv(np.asarray(values[path], float))
+            z[path] = self.bijection(prior).inv(
+                np.asarray(values[path], float)
+            )
         return z
 
     def constrain(self, z):
         """Map unconstrained coordinates to parameter and error-term values."""
         values = {
-            path: _bijection(prior)(z[path])
+            path: self.bijection(prior)(z[path])
             for path, prior in self.priors.items()
         }
         for site, (prior, _, _) in self.noise.items():
-            values[site] = _bijection(prior)(z[site])
+            values[site] = self.bijection(prior)(z[site])
         return values
 
     def build(self, z):
@@ -267,9 +363,12 @@ class _Objective(eqx.Module):
     def loss(self, z):
         """Negative log posterior (up to a constant) at ``z``.
 
-        Priors are evaluated at the constrained values, without the
-        Jacobian of the bijection, so the minimum is the maximum a
-        posteriori in the model's own parameters.
+        A prior with a flat coordinate (LogUniform, isotropic angles) is
+        constant in it, and adds nothing: the minimum is the maximum a
+        posteriori in that coordinate. Other priors are evaluated at the
+        constrained values, without the Jacobian of the bijection, so for
+        them the minimum is the maximum a posteriori in the model's own
+        parameters.
         """
         model = self.build(z)
         values = self.constrain(z)
@@ -290,9 +389,11 @@ class _Objective(eqx.Module):
         log_prior = sum(
             np.sum(prior.log_prob(values[path]))
             for path, prior in self.priors.items()
+            if not self._in_flat_coordinate(prior)
         )
         for site, (prior, _, _) in self.noise.items():
-            log_prior = log_prior + np.sum(prior.log_prob(values[site]))
+            if not self._in_flat_coordinate(prior):
+                log_prior = log_prior + np.sum(prior.log_prob(values[site]))
         return 0.5 * chi2 + log_norm + penalty - log_prior
 
 
@@ -306,7 +407,8 @@ class FitResult:
         The fitted model, or models (one per dataset) if the model function
         returned a list.
     values : dict
-        The fitted parameter values, keyed by path.
+        The fitted parameter values, keyed by path, in the model's own
+        parameters (not the flat coordinates some are fitted in).
     info : dict
         ``method``; ``converged`` (``None`` for Adam, which has no
         convergence test); ``steps``; ``loss`` (the unscaled negative log
@@ -357,6 +459,24 @@ def fit(
         ``"comp.flux"`` or ``"env.log_brightness"``; see
         [`image_priors`][virgil.imaging.image_priors]). Priors on
         fluxes must have non-negative support.
+
+        A prior that is uniform in some coordinate of its parameter has a
+        *flat coordinate*, and ``fit`` optimises the parameter in it:
+        ``LogUniform(a, b)`` is uniform in ``log x`` on ``[log a, log b]``,
+        an isotropic inclination in ``cos i`` and an isotropic latitude in
+        ``sin(lat)`` (any prior with a ``flat_coordinate()`` method), and
+        ``Uniform`` in the parameter itself. The prior is then constant and
+        adds nothing to the loss, so the fit is the maximum of the
+        likelihood (times the other priors) inside the prior's range, and
+        Levenberg–Marquardt applies. This is the maximum a posteriori in the
+        coordinates in which the invariant (Jeffreys) prior is uniform, the
+        choice consistent with virgil's prior rule; a mode in ``x`` itself
+        would depend on the parametrisation (for ``LogUniform``, the density
+        ``1/x`` would pull every scale towards ``a``). Other priors, such as
+        ``Normal``, ``Beta`` or ``HalfNormal``, are evaluated in the model's
+        own parameters, without the Jacobian of the bijection, as before.
+        Either way the returned ``values`` are in the model's own
+        parameters.
     data : OIData or sequence of OIData
         The data, fitted jointly. May be empty (``()``) when
         ``likelihoods`` holds all the data.
@@ -392,7 +512,9 @@ def fit(
         coordinates, and otherwise matrix-free (``cg_steps``
         conjugate-gradient steps on the normal equations), so that the
         Jacobian of a larger image is never formed. The default when the whole
-        objective has a least-squares form.
+        objective has a least-squares form: Normal priors, and priors that
+        are flat in their fitted coordinate (Uniform, ImproperUniform,
+        LogUniform and the other priors with a flat coordinate).
         ``"lbfgs"``: L-BFGS (optax) on the loss, for penalties
         such as maximum entropy and total variation; the default otherwise.
         No unconstrained coordinate moves by more than ``max_step_size``
@@ -550,8 +672,13 @@ def gauss_newton_mass(model, priors, data, values):
     ----------
     model, priors, data
         As for [`fit`][virgil.fitting.fit]. The priors must have a
-        least-squares form (Normal, Uniform or ImproperUniform), as for
-        ``fit``'s Levenberg–Marquardt.
+        least-squares form, as for ``fit``'s Levenberg–Marquardt: Normal
+        priors, and flat ones (Uniform, ImproperUniform, LogUniform and the
+        other priors with a flat coordinate). Flat priors add no curvature,
+        as for Uniform. The matrix is in numpyro's unconstrained
+        coordinates (``biject_to`` of each prior's support), which NUTS
+        samples, not in ``fit``'s flat coordinates: for ``LogUniform(a,
+        b)`` that is the logit of ``(x - a) / (b - a)``, not of ``log x``.
     values : dict
         The parameter values at which to take the curvature, normally
         ``fit(model, priors, data).values``.
@@ -573,7 +700,11 @@ def gauss_newton_mass(model, priors, data, values):
     ...               **gauss_newton_mass(scene, priors, data, result.values))
     """
     with run_in("float64"):
-        problem = cast_tree(_Objective(model, priors, data), "float64")
+        # NUTS samples numpyro's unconstrained coordinates, so the
+        # curvature is taken in those, not in fit's flat coordinates.
+        problem = cast_tree(
+            _Objective(model, priors, data, flat=False), "float64"
+        )
         z = problem.init(cast_tree(values, "float64"))
         covariance, ok = _gauss_newton_covariance(problem, z)
         covariance = onp.asarray(covariance)
