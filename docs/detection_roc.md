@@ -59,11 +59,17 @@ print(
 )
 ```
 
+```text
+21 V² and 35 closure phases; 256 positions × 32 fluxes; FAP = 0.135%
+```
+
 ## A candidate
 
 Here is the observation we want to judge. We simulate it with a companion of flux $5\times10^{-3}$ (Δmag 5.75) at 70 mas and position angle 60°, plus noise drawn from the errors, and search it with [`detection_statistics`](api/detection.md#virgil.detection.detection_statistics). The search returns the best companion's position and flux and three statistics, each measuring how strongly the data prefer a companion to none. $\Delta\chi^2$ is twice the gain in log likelihood of the best companion on the grid over no companion, with its flux refined and constrained to be non-negative. The log Bayes factor $\log B$ is the natural log of the likelihood ratio averaged over the grid, an evidence for "a companion somewhere on the grid" against "no companion". The maximum SNR is the largest best-fit flux divided by its uncertainty, over positions.
 
 [`local_nsigma`](api/detection.md#virgil.detection.local_nsigma) converts $\Delta\chi^2$ into a significance with Wilks's theorem. It is a **local** significance: the one the candidate would have if we had looked at that single position only, decided before seeing the data.
+
+The output compares the best position with the truth. Expect them to differ by a grid step or two even on a fine grid: at an SNR of about 5, noise moves the likelihood peak by roughly the resolution divided by the SNR, some 30 mas for this mask, while the flux is recovered more closely.
 
 ```python
 truth = BinaryModelCartesian(dra=60.6, ddec=35.0, flux=5e-3)  # 70 mas, PA 60°
@@ -79,6 +85,11 @@ print(
     f"log B = {float(obs['log_bayes_factor']):.1f}, "
     f"max SNR = {float(obs['max_snr']):.1f}"
 )
+```
+
+```text
+best companion at ΔRA = 88 mas, ΔDec = 40 mas, flux = 4.85e-03 (truth: 60.6 mas, 35.0 mas, 5.00e-03)
+Δχ² = 31.8 (local significance 5.6σ), log B = 11.0, max SNR = 5.6
 ```
 
 ## Simulating the search
@@ -108,6 +119,14 @@ print(
 )
 ```
 
+```text
+injection_recovery:   0%|          | 0/177 [00:00<?, ?it/s]
+```
+
+```text
+10000 null and 1280 injected searches in 853 s
+```
+
 ## The look-elsewhere effect
 
 The plot shows, for every threshold on the x-axis, the fraction of the 10,000 companion-free searches whose $\Delta\chi^2$ reached it: the false-alarm probability of that threshold. The dashed black curve is what Wilks's theorem predicts at a single position fixed in advance. There, $\Delta\chi^2$ is zero half the time (whenever the best flux would be negative) and follows $\chi^2_1$ otherwise, so the FAP of a threshold is $\frac{1}{2}P(\chi^2_1 \geq \Delta\chi^2)$.
@@ -119,6 +138,8 @@ plot_null_distribution(
     mc, "delta_chi2", observed=obs["delta_chi2"], fap=FAP
 );
 ```
+
+![detection_roc output 9.1](generated/detection_roc_cell009_out01.png)
 
 ## What to quote for a detection
 
@@ -143,6 +164,12 @@ print(
 )
 ```
 
+```text
+threshold at FAP 0.135%: Δχ² = 15.2 ± 0.9 (Wilks, at one position: 9)
+Wilks's Δχ² = 9 has an FAP of 2.2% over the grid
+candidate: Δχ² = 31.8, FAP = 0.0001 (95%: 0 to 0.00037), global significance ≥ 3.7σ (local 5.6σ)
+```
+
 ## ROC curves: which statistic?
 
 Every simulation gives all three statistics, so their ROC curves can be compared fairly. We draw them for the injections of flux $4.3\times10^{-3}$ (Δmag 5.9), the fourth of our eight fluxes, at all four separations together. Read each curve as its threshold sliding from strict (lower left) to loose (upper right). The false-positive axis is logarithmic because detections are claimed at small FAPs, and on it the grey chance curve, TPR = FPR, which is what a statistic no better than a coin toss would give, is a curve rather than a straight line. The dotted vertical line is the FAP of 0.135% that Wilks's theorem assigns to a local 3σ, and the circle on each curve marks where its threshold actually equals a local 3σ ($\Delta\chi^2 = 9$, or an SNR of 3): the horizontal gap between the circle and the line is the look-elsewhere effect again. A ROC curve depends only on how a statistic ranks the simulations, not on its scale, which is why such different statistics can share one plot.
@@ -154,6 +181,8 @@ plot_roc(
     mc, ["delta_chi2", "log_bayes_factor", "max_snr"], flux=FLUXES[3]
 );
 ```
+
+![detection_roc output 13.1](generated/detection_roc_cell013_out01.png)
 
 ## What to quote for a non-detection
 
@@ -171,7 +200,16 @@ for s, f50, f90 in zip(sep, flux50, flux90):
     )
 ```
 
-The map shows the completeness behind those curves, cell by cell, with the 50% and 90% curves drawn on it. Over it we draw the Absil and Ruffio limits of a companion-free observation, as in the [contrast limits](contrast_limits.md) tutorial; they answer different questions. Ruffio's limit, here at the 3σ-equivalent percentile, is a Bayesian upper limit on the flux at each position, given that a companion sits exactly there. Absil's limit, at 3σ, is the flux that a $\chi^2$ test against the no-companion model rejects at each position. Neither involves a detection threshold or the look-elsewhere effect, and each comes from one noise realisation, so it wanders with the noise, while the completeness curves average over many simulated observations.
+```text
+Δmag reached at FAP 0.135%
+sep (mas)  50% complete  90% complete
+       40          4.81          4.36
+       60          5.80          5.21
+       80          6.09          5.55
+      100          6.44          5.65
+```
+
+The map shows the completeness behind those curves, cell by cell, with the 50% and 90% curves drawn on it. Over it we draw the Absil and Ruffio limits of a companion-free observation, as in the [contrast limits](contrast_limits.md) tutorial; they answer different questions. Ruffio's limit, here at the 3σ-equivalent percentile, is a Bayesian upper limit on the flux at each position, given that a companion sits exactly there. Absil's limit, at 3σ, is the flux that a $\chi^2$ test against the no-companion model rejects at each position. Neither involves a detection threshold or the look-elsewhere effect, and each comes from one noise realisation, so it wanders with the noise, while the completeness curves average over many simulated observations. In this run the Absil limit happens to follow the 90% curve and the Ruffio limit the 50% curve, but with a single noise realisation that agreement is partly luck, and only the completeness curves carry a stated false-alarm probability. (`absil_limits` warns that it did not converge at two positions and clipped their limits; they do not affect the curves.)
 
 For a non-detection, quote the 50% and 90% completeness contrasts at a stated FAP, for example "the search is 90% complete to Δmag X at 80 mas, at a false-alarm probability of 0.135%", together with the grid, the noise model and the number of injections. Absil or Ruffio limits can be given alongside, for comparison with the literature.
 
@@ -188,11 +226,18 @@ for limit, label, color in [(absil, "Absil 3σ", "C1"), (ruffio, "Ruffio 3σ", "
 ax.legend(loc="lower left", fontsize="small");
 ```
 
+```text
+RuntimeWarning: absil_limits(): the optimizer did not converge at 2 of 256 grid positions; values there may be inaccurate.
+RuntimeWarning: absil_limits(): 2 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped; pass flux_bounds=None to keep them.
+```
+
+![detection_roc output 17.2](generated/detection_roc_cell017_out02.png)
+
 ## When the error bars are wrong
 
 Everything so far assumed that the errors are right, because the null draws were simulated from them. Suppose instead that the real noise is 1.5 times the quoted errors, which is common for calibrated interferometric data. The Gaussian null still simulates the quoted errors, so its threshold is too low, and the true FAP of that threshold, measured on 2000 simulations with the real noise, is far above the nominal value.
 
-Two tools repair this. [`rescale_errors`](api/detection.md#virgil.detection.rescale_errors) estimates the factor from the data, scaling the errors so that the null scene has $\chi^2_r = 1$, separately for the V² and the closure phases; with the rescaled errors, the Gaussian calibration above is valid again. [`bootstrap_null`](api/detection.md#virgil.detection.bootstrap_null) (`noise="bootstrap"`) does not trust the errors at all: it builds null draws by flipping the signs of the data's own whitened residuals about the null scene, so the draws carry the real noise. The table compares the threshold at an FAP of 1% (looser than 0.135%, so that 2000 draws measure it well) from honest errors, from wrong errors with a Gaussian null, and from wrong errors with a bootstrap null of one companion-free observation, each with the true FAP of its threshold.
+Two tools repair this. [`rescale_errors`](api/detection.md#virgil.detection.rescale_errors) estimates the factor from the data, scaling the errors so that the null scene has $\chi^2_r = 1$, separately for the V² and the closure phases; with the rescaled errors, the Gaussian calibration above is valid again. From a single observation the factors are themselves noisy estimates: 21 V² and the 15 independent closure phases of this mask pin each one down to roughly ±20%, so expect them to scatter about the true 1.5. [`bootstrap_null`](api/detection.md#virgil.detection.bootstrap_null) (`noise="bootstrap"`) does not trust the errors at all: it builds null draws by flipping the signs of the data's own whitened residuals about the null scene, so the draws carry the real noise. The table compares the threshold at an FAP of 1% (looser than 0.135%, so that 2000 draws measure it well) from honest errors, from wrong errors with a Gaussian null, and from wrong errors with a bootstrap null of one companion-free observation, each with the true FAP of its threshold.
 
 ```python
 real_noise = gaussian_null(template, null_scene, error_scale=1.5)
@@ -220,6 +265,22 @@ for label, calibration, actual in [
     t = calibration.threshold("delta_chi2", 0.01)[0]
     p = actual.false_alarm_probability("delta_chi2", t)[0]
     print(f"{label:<36}{t:6.1f}{p:10.1%}")
+```
+
+```text
+injection_recovery:   0%|          | 0/32 [00:00<?, ?it/s]
+```
+
+```text
+injection_recovery:   0%|          | 0/32 [00:00<?, ?it/s]
+```
+
+```text
+rescale_errors factors: V² 1.31, closure phases 1.78 (truth 1.5)
+threshold at FAP 1% from               Δχ²  true FAP
+honest errors, Gaussian null          10.6      1.0%
+errors 1.5× too small, Gaussian null  10.6     14.5%
+errors 1.5× too small, bootstrap      23.8      0.9%
 ```
 
 ## Summary
