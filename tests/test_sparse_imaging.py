@@ -252,7 +252,8 @@ def test_clean_without_base_is_finite_with_correlated_closures(npix):
         assert data.cp_noise is not None
         result = clean(data, npix, 0.4, max_iterations=3)
         assert onp.all(onp.isfinite(result.chi2_red))
-        assert len(result.chi2_red) == 4
+        # Three iterations, the limit, then the final major cycle.
+        assert len(result.chi2_red) == 5
         assert onp.all(onp.isfinite(result.components))
 
 
@@ -364,3 +365,62 @@ def test_clean_with_a_spectrum_is_sparco():
     assert len(sparco.chi2_red) < len(grey.chi2_red)
     with pytest.raises(ValueError, match="needs a base"):
         clean(data, NPIX, scale, spectrum=shape)
+
+
+def test_clean_ends_with_a_major_cycle():
+    # Major cycles too far apart to run in the loop: CLEAN still refits the
+    # fluxes once before it returns, so they are closer to the companion's.
+    data = _companion_data()
+    none = clean(data, NPIX, SCALE, base=PointSource(), refit_every=0)
+    last = clean(data, NPIX, SCALE, base=PointSource(), refit_every=1000)
+    assert none.stop == last.stop == "target"
+    assert len(last.chi2_red) == len(none.chi2_red) + 1
+    assert last.chi2_red[-1] < none.chi2_red[-1]
+    assert abs(float(last.components.sum()) - 0.05) < abs(
+        float(none.components.sum()) - 0.05
+    )
+
+
+def test_clean_fits_the_base():
+    # A companion in the base, 85 mas out and started 6 mas off, and a knot
+    # for CLEAN: each major cycle fits the companion's position and flux
+    # together with the components' fluxes.
+    import numpyro.distributions as dist
+
+    truth = System(
+        star=PointSource(),
+        comp=PointSource(dra=66.0, ddec=-54.0, flux=0.05),
+        knot=PointSource(dra=-42.0, ddec=30.0, flux=0.02),
+    )
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(9))
+    base = System(
+        star=PointSource(), comp=PointSource(dra=60.0, ddec=-48.0, flux=0.04)
+    )
+    # Keep CLEAN's components away from the companion, which the base models.
+    offsets = (onp.arange(NPIX) - (NPIX - 1) / 2) * SCALE
+    away = onp.hypot(-offsets[None, :] - 63.0, -offsets[:, None] + 51.0) > 25.0
+    priors = {
+        "comp.dra": dist.Normal(60.0, 20.0),
+        "comp.ddec": dist.Normal(-48.0, 20.0),
+        "comp.flux": dist.Uniform(0.0, 0.2),
+    }
+    result = clean(
+        data,
+        NPIX,
+        SCALE,
+        base=base,
+        base_priors=priors,
+        support=away,
+        refit_every=10,
+    )
+    comp = result.model.comp
+    assert abs(float(comp.dra) - 66.0) < 3.0
+    assert abs(float(comp.ddec) + 54.0) < 3.0
+    row, col = onp.unravel_index(
+        int(np.argmax(result.components)), (NPIX, NPIX)
+    )
+    assert (-offsets[col], -offsets[row]) == (-42.0, 30.0)
+    with pytest.raises(ValueError, match="base_priors"):
+        clean(data, NPIX, SCALE, base=base, base_priors=priors, refit_every=0)
+    with pytest.raises(ValueError, match="base_priors"):
+        clean(data, NPIX, SCALE, base_priors=priors)
