@@ -60,6 +60,9 @@ def test_nuts_runs_on_an_injected_field():
     )
     mcmc.run(jax.random.PRNGKey(0), extra_fields=("diverging",))
     samples = mcmc.get_samples()
+    # Every prior site was sampled (and nothing else), so the finite check
+    # below cannot pass vacuously on an empty or partial dict.
+    assert set(samples) == set(priors)
     assert all(onp.all(onp.isfinite(onp.asarray(v))) for v in samples.values())
     assert int(mcmc.get_extra_fields()["diverging"].sum()) <= 5
 
