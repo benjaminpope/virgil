@@ -1049,8 +1049,8 @@ class QuadraticLimbDarkenedDisk(_LimbDarkenedDisk):
     >>> import numpyro.distributions as dist
     >>> star = QuadraticLimbDarkenedDisk(3.0, q1=0.4, q2=0.3)
     >>> priors = {
-    ...     "diam": dist.Uniform(2.0, 4.0),
-    ...     "q1": dist.Uniform(0.0, 1.0),
+    ...     "diam": dist.LogUniform(2.0, 4.0),  # a scale: log-uniform
+    ...     "q1": dist.Uniform(0.0, 1.0),  # Kipping's uniform prior
     ...     "q2": dist.Uniform(0.0, 1.0),
     ... }
 

@@ -13,15 +13,22 @@ import jax.numpy as np
 import numpy as onp
 import numpyro.distributions as dist
 import pytest
-from numpyro.distributions import constraints
 from numpyro.distributions.transforms import biject_to
 
+from virgil.angles import AngleVector
 from virgil.coverage import nrm_oidata
 from virgil.fields import GaussianField
 from virgil.fitting import _Objective, fit, gauss_newton_mass
 from virgil.imaging import image_priors
 from virgil.inference import laplace_cov
-from virgil.models import BinaryModelCartesian, Image, PointSource, System
+from virgil.models import (
+    BinaryModelAngular,
+    BinaryModelCartesian,
+    Image,
+    PointSource,
+    System,
+)
+from virgil.priors import IsotropicInclination, IsotropicLatitude
 from virgil.scenes import gaussian_blob
 
 TRUTH = BinaryModelCartesian(60.0, -40.0, 0.05)
@@ -34,32 +41,6 @@ POSITION = {
     "ddec": dist.Uniform(-200.0, 200.0),
 }
 LOG_UNIFORM = POSITION | {"flux": dist.LogUniform(1e-4, 0.5)}
-
-
-class _Inclination(dist.Distribution):
-    """An isotropic inclination in degrees, density ∝ sin i (cos i flat).
-
-    A stand-in for ``virgil.priors.IsotropicInclination`` (PR #213),
-    declaring its flat coordinate as ``fit`` expects.
-    """
-
-    support = constraints.interval(0.0, 180.0)
-
-    def log_prob(self, value):
-        return np.log(np.sin(np.deg2rad(value)) * np.pi / 360.0)
-
-    @property
-    def mean(self):
-        return 90.0
-
-    def flat_coordinate(self):
-        def to_flat(i):
-            return np.cos(np.deg2rad(i))
-
-        def from_flat(c):
-            return np.rad2deg(np.arccos(c))
-
-        return to_flat, from_flat, -1.0, 1.0
 
 
 def _no_model(**_):
@@ -78,11 +59,69 @@ def test_lm_is_chosen_for_log_uniform_and_isotropic_priors():
     assert abs(float(result.values["flux"]) - 0.05) < 5e-3
 
     term = _gaussian_term(lambda i: np.cos(np.deg2rad(i)), 0.5, 0.05)
-    priors = {"x": _Inclination()}
+    priors = {"x": IsotropicInclination()}
     result = fit(_no_model, priors, (), init={"x": 80.0}, likelihoods=[term])
     assert result.info["method"] == "lm"
     # Flat in cos i, so the MAP is where the likelihood peaks: cos i = 0.5.
     assert float(result.values["x"]) == pytest.approx(60.0, abs=1e-3)
+
+    term = _gaussian_term(np.sin, 0.3, 0.05)
+    priors = {"x": IsotropicLatitude()}
+    result = fit(_no_model, priors, (), init={"x": -0.4}, likelihoods=[term])
+    assert result.info["method"] == "lm"
+    # Flat in sin(lat): the MAP is at sin(lat) = 0.3.
+    assert float(result.values["x"]) == pytest.approx(onp.arcsin(0.3), 1e-5)
+
+
+def test_isotropic_flat_coordinates_are_affine_in_cos_i_and_sin_lat():
+    """The declared coordinate (the CDF) is cos i or sin(lat), rescaled."""
+    with jax.enable_x64(True):
+        inc = IsotropicInclination(10.0, 120.0)
+        to_flat, from_flat, low, high = inc.flat_coordinate()
+        i = np.linspace(15.0, 115.0, 7)
+        u = to_flat(i)
+        c = np.cos(np.deg2rad(i))
+        slope = (u[-1] - u[0]) / (c[-1] - c[0])
+        assert np.allclose(u - u[0], slope * (c - c[0]), atol=1e-12)
+        assert np.allclose(from_flat(u), i, atol=1e-10)
+        assert (low, high) == (0.0, 1.0)
+        lat = IsotropicLatitude(-0.5, 1.0)
+        to_flat, from_flat, _, _ = lat.flat_coordinate()
+        x = np.linspace(-0.4, 0.9, 7)
+        u, s = to_flat(x), np.sin(x)
+        slope = (u[-1] - u[0]) / (s[-1] - s[0])
+        assert np.allclose(u - u[0], slope * (s - s[0]), atol=1e-12)
+        assert np.allclose(from_flat(u), x, atol=1e-10)
+
+
+def test_angle_vector_priors_still_fit_beside_flat_coordinates():
+    """An AngleVector position angle (its own vector path, #211) next to a
+    LogUniform flux: LM runs, agrees with L-BFGS, and gives the same
+    angle and separation as with a Uniform flux (both priors are flat)."""
+    truth = BinaryModelAngular(70.0, 5.0, 0.05)
+    data = nrm_oidata(sigma_v2=0.005, sigma_cp_deg=0.3).with_model(
+        truth, key=jax.random.PRNGKey(3)
+    )
+    template = BinaryModelAngular(65.0, 355.0, 0.03)
+    priors = {
+        "sep": dist.Uniform(10.0, 200.0),
+        "pa": AngleVector(),
+        "flux": dist.LogUniform(1e-4, 0.5),
+    }
+    lm = fit(template, priors, data, gtol=1e-8)
+    assert lm.info["method"] == "lm"
+    assert lm.info["converged"] is True
+    assert "pa_vec" in lm.values
+    assert abs(float(lm.values["pa"]) - 5.0) < 2.0
+    lbfgs = fit(template, priors, data, method="lbfgs", gtol=1e-8)
+    uniform = fit(
+        template, priors | {"flux": dist.Uniform(1e-4, 0.5)}, data, gtol=1e-8
+    )
+    for other in (lbfgs, uniform):
+        for path in ("sep", "pa", "flux"):
+            assert np.allclose(
+                lm.values[path], other.values[path], rtol=1e-5
+            ), path
 
 
 def test_lm_agrees_with_lbfgs_in_the_flat_coordinates():

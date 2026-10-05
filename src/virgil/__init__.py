@@ -23,6 +23,8 @@ Modules:
   grid-marginalised Bayes factor, the best SNR) for ROC curves.
 * [`spectra`][virgil.spectra]: wavelength-dependent fluxes.
 * [`gains`][virgil.gains]: calibration gains correlated across channels.
+* [`priors`][virgil.priors]: isotropic-orientation priors (inclination,
+  latitude) for `fit` and `numpyro_model`.
 * [`plotting`][virgil.plotting]: figures.
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
@@ -55,6 +57,7 @@ from . import (  # noqa: E402
     oifits,
     orbits,
     plotting,
+    priors,
     scenes,
     simulate,
     spectra,
