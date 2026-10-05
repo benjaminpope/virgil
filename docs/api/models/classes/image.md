@@ -2,7 +2,7 @@
 
 A pixel image is one more [component](composition.md) of a `System`, for
 image reconstruction. Its visibilities are the exact Fourier transform of
-the pixels. The design is recorded in `design/image_reconstruction.md`.
+the pixels.
 
 ::: virgil.models.Image
     options:

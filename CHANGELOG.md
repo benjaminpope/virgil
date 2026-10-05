@@ -7,12 +7,14 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
-### Added
+### Removed
 
-- `EllipticalLimbDarkenedDisk(diam, ratio, pa, u)`: a limb-darkened disk
-  with an elliptical outline (minor/major axis `ratio`, major axis at `pa`
-  North to East as for `EllipticalGaussian`), with the polynomial law and
-  `u` of `LimbDarkenedDisk` and analytic visibilities.
+- `examples/elr_pavo/`, the PAVO re-analysis scripts, moved to the private paper repository; the golden-fixture generator is now `scripts/make_elr_golden.py`.
+
+### Docs
+
+- The `virgil._linear` API page is labelled internal.
+- Docs pages no longer point to the internal design notes.
 
 ## 0.3.0 (2026-10-06)
 
@@ -299,6 +301,10 @@ analysis or warn:
   visibility (a stack of projected rings), a tilt out of the sky plane, an
   optional elliptical cross-section, and a rendered image that matches its
   visibilities.
+- **`EllipticalLimbDarkenedDisk(diam, ratio, pa, u)`.** A limb-darkened disk
+  with an elliptical outline (minor/major axis `ratio`, major axis at `pa`
+  North to East as for `EllipticalGaussian`), with the polynomial law and
+  `u` of `LimbDarkenedDisk` and analytic visibilities.
 - **Short-arc orbits.** `StateVectorOrbit` parameterises an orbit by the
   relative position and velocity at `t_ref` and the gravitational parameter,
   which a short arc constrains well where the elements are degenerate; it
