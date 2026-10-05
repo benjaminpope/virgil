@@ -320,7 +320,9 @@ def noise_sites(noise, n_datasets):
             if value is None or onp.any(value < 0.0):
                 raise ValueError(
                     f"The prior on noise term {term!r} must have "
-                    "non-negative support, e.g. dist.Uniform(0, ...)."
+                    "non-negative support. It is a scale parameter, so its "
+                    "default (Jeffreys) prior is log-uniform on stated "
+                    "bounds, e.g. dist.LogUniform(1e-4, 0.3)."
                 )
             sites[f"{prefix}.{term}"] = (prior, datasets, term)
     return sites
@@ -649,6 +651,14 @@ def numpyro_model(
         [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its
         own terms, as sites ``"noise[i].<term>"``.
+        **Priors.** The scales and widths (``vis_scale``, ``phi_scale``,
+        ``vis_error_rel``, ``phi_error``, ``vis_gain_<group>``,
+        ``phi_offset_<group>``) are scale parameters, so their default
+        (Jeffreys) prior is log-uniform on stated bounds, e.g.
+        ``dist.LogUniform(1e-4, 0.3)``; a ``Uniform(0, ...)`` favours
+        large values. ``wavel_scale`` is a scale too: log-uniform unless a
+        calibration gives a Gaussian (``Normal(1, 2e-4)`` for GRAVITY is
+        such information).
     likelihoods : sequence, optional
         Extra data terms, as for [`fit`][virgil.fitting.fit]: callables of
         the sampled values (a dict keyed like ``priors``) returning whitened
