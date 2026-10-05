@@ -63,6 +63,7 @@ from .grid_fit import (  # noqa: E402
     best_grid_point,
     laplace_flux_uncertainty_grid,
     likelihood_grid,
+    linear_flux_grid,
     optimized_flux_grid,
     optimized_likelihood_grid,
 )
@@ -189,6 +190,7 @@ __all__ = [
     "loglike",
     "model_loglike",
     "numpyro_model",
+    "linear_flux_grid",
     "optimized_flux_grid",
     "optimized_likelihood_grid",
     "pixel_offsets",
