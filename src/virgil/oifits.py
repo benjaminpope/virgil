@@ -323,6 +323,18 @@ def _mjd(hdu, mask):
     return onp.zeros(int(mask.sum()))
 
 
+def _time(hdu, mask):
+    """The ``TIME`` column in days (zero where absent or not finite).
+
+    OIFITS v1 gives each row a ``TIME`` (UTC seconds) and an ``MJD``. Some
+    writers set ``MJD`` to the date of the night and put the snapshot in
+    ``TIME``, so two rows are one exposure only if both agree.
+    """
+    if "TIME" in hdu.columns.names:
+        return onp.nan_to_num(_column(hdu, "TIME", mask)) / 86400.0
+    return onp.zeros(int(mask.sum()))
+
+
 def _exposure_time(hdu, mask):
     """Longest ``INT_TIME`` in a table, in days (zero if there is none)."""
     if "INT_TIME" in hdu.columns.names and mask.any():
@@ -348,7 +360,7 @@ class _BaselineLookup:
 
     It also groups the baseline rows into frames (exposures): rows that a
     closure phase ties together (``link``), and rows of one ``INSNAME`` at
-    the same ``MJD``.
+    the same ``MJD`` and ``TIME``.
     """
 
     def __init__(self):
@@ -358,13 +370,13 @@ class _BaselineLookup:
         self._parent = {}  # union-find over row starts
         self._waves = {}  # INSNAME -> wavelengths of its rows
 
-    def add(self, ins, pair, mjd, exposure, start, nwave, wave=None):
+    def add(self, ins, pair, mjd, exposure, start, nwave, wave=None, time=0.0):
         if wave is not None:
             self._waves.setdefault(ins, onp.asarray(wave, dtype=float))
         key = (ins, int(pair[0]), int(pair[1]))
-        row = (float(mjd), exposure, start, nwave)
+        row = (float(mjd), exposure, start, nwave, float(time))
         self._rows.setdefault(key, []).append(row)
-        self._order.append((start, nwave, float(mjd), ins))
+        self._order.append((start, nwave, float(mjd), ins, float(time)))
         self._pairs.append((int(pair[0]), int(pair[1])))
         self._parent[start] = start
 
@@ -383,29 +395,33 @@ class _BaselineLookup:
     def times(self, frame_mjd):
         """Per-sample ``(mjd, frame)``; see ``read_oifits``."""
         by_ins = {}
-        for start, _, mjd, ins in self._order:
-            by_ins.setdefault(ins, []).append((mjd, start))
+        for start, _, mjd, ins, time in self._order:
+            by_ins.setdefault(ins, []).append((mjd, time, start))
         for rows in by_ins.values():
             rows.sort()
-            for (mjd0, a), (mjd1, b) in zip(rows, rows[1:]):
-                if mjd1 - mjd0 <= _MJD_TOLERANCE:
+            for (mjd0, t0, a), (mjd1, t1, b) in zip(rows, rows[1:]):
+                # The same exposure only if MJD and TIME both agree.
+                if (
+                    mjd1 - mjd0 <= _MJD_TOLERANCE
+                    and abs(t1 - t0) <= _MJD_TOLERANCE
+                ):
                     self.link(a, b)
         roots = [self._root(start) for start, *_ in self._order]
         labels = {root: k for k, root in enumerate(dict.fromkeys(roots))}
         frame = onp.array([labels[root] for root in roots])
-        row_mjd = onp.array([mjd for _, _, mjd, _ in self._order])
+        row_mjd = onp.array([mjd for _, _, mjd, _, _ in self._order])
         if frame_mjd == "mean":
             sums = onp.bincount(frame, weights=row_mjd)
             row_mjd = (sums / onp.bincount(frame))[frame]
-        nwave = [n for _, n, _, _ in self._order]
+        nwave = [n for _, n, _, _, _ in self._order]
         return onp.repeat(row_mjd, nwave), onp.repeat(frame, nwave)
 
     def stations(self):
         """Per-sample station pair ``(STA_INDEX)``, shape ``(n, 2)``."""
-        nwave = [n for _, n, _, _ in self._order]
+        nwave = [n for _, n, _, _, _ in self._order]
         return onp.repeat(onp.array(self._pairs, int).reshape(-1, 2), nwave, 0)
 
-    def find(self, ins, pair, mjd, wave=None):
+    def find(self, ins, pair, mjd, wave=None, time=0.0):
         """Return ``(start, nwave)`` of the nearest-epoch row, or ``None``.
 
         The row must be from the same exposure: see ``_MJD_TOLERANCE``. It
@@ -416,7 +432,7 @@ class _BaselineLookup:
         require the V² and T3 tables to share one. Station numbers belong to
         an array, so tables of another ``ARRNAME`` are never used.
         """
-        found = self._find_in(ins, pair, mjd)
+        found = self._find_in(ins, pair, mjd, time)
         if found is not None or wave is None:
             return found
         wave = onp.asarray(wave, dtype=float)
@@ -427,18 +443,21 @@ class _BaselineLookup:
                 and other_wave.shape == wave.shape
                 and onp.allclose(other_wave, wave, rtol=_WAVE_RTOL, atol=0.0)
             ):
-                found = self._find_in(other, pair, mjd)
+                found = self._find_in(other, pair, mjd, time)
                 if found is not None:
                     return found
         return None
 
-    def _find_in(self, ins, pair, mjd):
+    def _find_in(self, ins, pair, mjd, time=0.0):
         rows = self._rows.get((ins, int(pair[0]), int(pair[1])), [])
         if not rows:
             return None
-        best = min(rows, key=lambda row: abs(row[0] - mjd))
+        best = min(
+            rows, key=lambda row: abs(row[0] - mjd) + abs(row[4] - time)
+        )
         window = max(_MJD_TOLERANCE, 2.0 * best[1])
-        if abs(best[0] - mjd) > window:
+        # MJD and TIME must both agree: see ``_time``.
+        if abs(best[0] - mjd) > window or abs(best[4] - time) > window:
             return None
         return best[2], best[3]
 
@@ -490,11 +509,19 @@ def _read_visibilities(tables, wavelengths, target_id):
         vcoord = _column(hdu, "VCOORD", mask)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
+        time = _time(hdu, mask)
         exposure = _exposure_time(hdu, mask)
         ins = _lookup_key(hdu)
         for row in range(values.shape[0]):
             lookup.add(
-                ins, sta_index[row], mjd[row], exposure, start, nwave, wave
+                ins,
+                sta_index[row],
+                mjd[row],
+                exposure,
+                start,
+                nwave,
+                wave,
+                time[row],
             )
             start += nwave
         u.append(onp.repeat(ucoord, nwave))
@@ -536,6 +563,7 @@ def _baselines_from_triangles(tables, wavelengths, target_id):
         u2, v2 = _column(hdu, "U2COORD", mask), _column(hdu, "V2COORD", mask)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
+        time = _time(hdu, mask)
         ins = _lookup_key(hdu)
         for row, (a, b, c) in enumerate(sta_index):
             legs = (
@@ -544,11 +572,16 @@ def _baselines_from_triangles(tables, wavelengths, target_id):
                 ((a, c), u1[row] + u2[row], v1[row] + v2[row]),
             )
             for pair, uu, vv in legs:
-                if lookup.find(ins, pair, mjd[row]) is not None:
+                if (
+                    lookup.find(ins, pair, mjd[row], time=time[row])
+                    is not None
+                ):
                     continue
                 # Each T3 row carries its own (u, v), so rows of different
                 # times stay separate samples: no exposure window here.
-                lookup.add(ins, pair, mjd[row], 0.0, start, nwave, wave)
+                lookup.add(
+                    ins, pair, mjd[row], 0.0, start, nwave, wave, time[row]
+                )
                 start += nwave
                 u.append(onp.full(nwave, uu))
                 v.append(onp.full(nwave, vv))
@@ -590,6 +623,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
         flag = _flags(hdu, mask, nwave, values, errors)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
+        time = _time(hdu, mask)
         ins = _lookup_key(hdu)
         channels = onp.arange(nwave)
         coords = None  # the legs' (u, v), read only if a leg is reversed
@@ -598,11 +632,13 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
             for k, (leg, pair) in enumerate(
                 zip(i_cps, ((a, b), (b, c), (a, c)))
             ):
-                found = lookup.find(ins, pair, mjd[row], wave)
+                found = lookup.find(ins, pair, mjd[row], wave, time[row])
                 if found is not None and found[1] != nwave:
                     found = None
                 if found is None:
-                    reverse = lookup.find(ins, pair[::-1], mjd[row], wave)
+                    reverse = lookup.find(
+                        ins, pair[::-1], mjd[row], wave, time[row]
+                    )
                     if reverse is None or reverse[1] != nwave:
                         raise ValueError(
                             f"Closure-phase triangle {(a, b, c)} (INSNAME "
@@ -630,7 +666,14 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
                         (u1 + u2, v1 + v2),
                     )[k]
                     lookup.add(
-                        ins, pair, mjd[row], 0.0, n_samples, nwave, wave
+                        ins,
+                        pair,
+                        mjd[row],
+                        0.0,
+                        n_samples,
+                        nwave,
+                        wave,
+                        time[row],
                     )
                     found = (n_samples, nwave)
                     n_samples += nwave
