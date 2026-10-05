@@ -171,6 +171,17 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **Orbits: GM☉ in `total_mass`, Ω range, face-on inclination (F14–F16).**
+  `total_mass` and `distance_pc` now use Kepler's third law with the IAU 2015
+  nominal GM☉, au and the 86400 s day instead of a³/P² with P in Julian years
+  (masses were 3.8e-5 low). `ThieleInnesOrbit.to_kepler` no longer returns
+  Ω = 180° exactly: Ω is in [0°, 180°) with ω paired to keep the sky orbit.
+  `StateVectorOrbit.to_kepler` computes i, Ω and ω by atan2 from the orbit
+  normal, so nearly face-on orbits keep their inclination to float64
+  precision. `orientation_priors(..., inclination=True)` also returns
+  `IsotropicInclination` under `"inc"`: the full Haar orientation prior in
+  one call (default off, so existing callers are unchanged).
+
 - **Components build under `jax.jit` from concrete shape parameters.**
   `TruncatedCone` validated `tilt` with a `jax.numpy` call on the concrete
   array, which inside `jit` became a tracer and raised
