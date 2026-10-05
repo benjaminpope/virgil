@@ -34,16 +34,9 @@ from .inference import laplace_parameter_uncertainty
 from .likelihood import build_model, loglike, whitened_residuals
 
 
-def _best_grid_flux(
-    data_obj, model, samples_dict, params, flux_key, batch_size
-):
-    """Best flux on the grid, and its log likelihood, at every position."""
-    vals_vec, grid_shape = meshgrid_vectors(samples_dict, params)
-    loglike_im = map_points(
-        lambda values: loglike(values, params, data_obj, model),
-        vals_vec,
-        batch_size=batch_size,
-    ).reshape(grid_shape)
+def _best_grid_flux(loglike_im, samples_dict, params, flux_key):
+    """Best flux on a full likelihood grid, and its log likelihood, at every
+    position (``loglike_im`` has one axis per key of ``params``)."""
     flux_axis = params.index(flux_key)
     best_index = jnp.nanargmax(loglike_im, axis=flux_axis)
     best_flux = jnp.asarray(samples_dict[flux_key])[best_index]
@@ -60,11 +53,46 @@ def _optimize_flux_grid(
     coordinate key; a point has converged when it is within a quarter sigma
     of the likelihood maximum along the flux. The optimizer works in units of the starting flux, and on the log
     likelihood relative to its starting value, so its default tolerances are
-    relative to the problem's own scale.
+    relative to the problem's own scale. The starting points are the best
+    fluxes of the full likelihood grid.
     """
-    start_flux, start_loglike = _best_grid_flux(
-        data_obj, model, samples_dict, params, flux_key, batch_size
+    loglike_im = _likelihood_grid(
+        data_obj, model, samples_dict, params, batch_size
     )
+    start_flux, start_loglike = _best_grid_flux(
+        loglike_im, samples_dict, params, flux_key
+    )
+    return _refine_flux_grid(
+        data_obj,
+        model,
+        samples_dict,
+        params,
+        coord_keys,
+        flux_key,
+        batch_size,
+        start_flux,
+        start_loglike,
+    )
+
+
+def _refine_flux_grid(
+    data_obj,
+    model,
+    samples_dict,
+    params,
+    coord_keys,
+    flux_key,
+    batch_size,
+    start_flux,
+    start_loglike,
+):
+    """BFGS refinement of :func:`_optimize_flux_grid` from given starts.
+
+    ``start_flux`` and ``start_loglike`` have one axis per coordinate key,
+    e.g. from :func:`_best_grid_flux`. Not jitted itself: it is traced
+    inside :func:`_optimize_flux_grid` and the detection statistics, which
+    reuse a full likelihood grid they have already computed.
+    """
     coords, shape = coordinate_points(samples_dict, coord_keys)
 
     def objective(x, coord_vals, scale, loglike0):
