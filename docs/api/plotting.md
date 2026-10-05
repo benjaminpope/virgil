@@ -6,6 +6,9 @@
         - set_style
         - plot_grid_map
         - plot_contrast_curve
+        - plot_null_distribution
+        - plot_roc
+        - plot_completeness
         - plot_orbit_ensemble
         - plot_model
         - plot_residual_map
