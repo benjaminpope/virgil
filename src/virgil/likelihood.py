@@ -153,17 +153,23 @@ def _gaussian_loglike(whitened, errors):
     )
 
 
-# Error terms, as accepted by the likelihoods and the ``noise`` argument of
-# ``fit`` and ``numpyro_model``: error inflation (``inflated_errors``), and
-# the widths of gains correlated across channels (``OIData.with_gains``).
+# Nuisance terms, as accepted by the likelihoods and the ``noise`` argument
+# of ``fit`` and ``numpyro_model``: error inflation (``inflated_errors``),
+# the widths of gains correlated across channels (``OIData.with_gains``),
+# and the wavelength scale (``OIData.with_wavelength_scale``).
 GAIN_TERMS = tuple(f"vis_gain_{group}" for group in GAIN_GROUPS)
+WAVEL_TERMS = ("wavel_scale", "wavel_offset")
 NOISE_TERMS = (
-    "vis_scale",
-    "phi_scale",
-    "vis_error_rel",
-    "phi_error",
-    "vis_error",
-) + GAIN_TERMS
+    (
+        "vis_scale",
+        "phi_scale",
+        "vis_error_rel",
+        "phi_error",
+        "vis_error",
+    )
+    + GAIN_TERMS
+    + WAVEL_TERMS
+)
 
 
 def inflated_errors(
@@ -284,6 +290,10 @@ def noise_sites(noise, n_datasets):
                 raise ValueError(
                     f"Unknown noise term {term!r}; use one of {NOISE_TERMS}."
                 )
+            if term in WAVEL_TERMS:
+                # Not errors: a scale near 1 and an offset of either sign.
+                sites[f"{prefix}.{term}"] = (prior, datasets, term)
+                continue
             lower = getattr(prior.support, "lower_bound", None)
             value = None if lower is None else concrete(lower)
             if value is None or onp.any(value < 0.0):
@@ -316,8 +326,21 @@ def _whitened_and_errors(model_object, data_obj, noise):
             f"Error terms {sorted(gain_terms)} need gain modes: add them with "
             "OIData.with_gains."
         )
-    inflation = {k: v for k, v in noise.items() if k not in GAIN_TERMS}
+    wavel_terms = {
+        k.removeprefix("wavel_"): v
+        for k, v in noise.items()
+        if k in WAVEL_TERMS
+    }
+    inflation = {
+        k: v
+        for k, v in noise.items()
+        if k not in GAIN_TERMS and k not in WAVEL_TERMS
+    }
+    observed = data_obj
+    if wavel_terms:
+        data_obj = data_obj.with_wavelength_scale(**wavel_terms)
     prediction = data_obj.model(model_object)
+    data_obj = observed
     errors = inflated_errors(data_obj, prediction, **inflation)
     data = data_obj.flatten_data()[0]
     return _whiten(data_obj, prediction, data, errors, gain_terms)
@@ -359,7 +382,9 @@ def whitened_residuals(model_object, data_obj, **noise):
         ``vis_error_rel`` and ``phi_error`` (see
         [`inflated_errors`][virgil.likelihood.inflated_errors]), and the
         widths of the data's gains, ``vis_gain_<group>`` (see
-        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]).
+        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), and the
+        wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
 
     Returns
     -------
@@ -413,7 +438,9 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
         gains ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
         ``vis_gain_<group>`` sets the width of a group of gains, which are
         marginalised: the normalisation then includes the log-determinant
-        of the visibility covariance.
+        of the visibility covariance. ``wavel_scale`` and ``wavel_offset``
+        evaluate the model at corrected wavelengths (see
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
     """
     whitened, errors = _whitened_and_errors(model_object, data_obj, noise)
     logl = _gaussian_loglike(whitened, errors)
@@ -581,7 +608,9 @@ def numpyro_model(
         ``vis_error_rel``, ``phi_error``; see
         [`inflated_errors`][virgil.likelihood.inflated_errors]) and on
         gain widths (``vis_gain_<group>``; see
-        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
+        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]) and on the
+        wavelength scale (``wavel_scale``, ``wavel_offset``; see
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its
         own terms, as sites ``"noise[i].<term>"``.
     likelihoods : sequence, optional

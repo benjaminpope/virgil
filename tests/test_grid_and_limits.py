@@ -353,6 +353,46 @@ def test_absil_limit_responds_to_smaller_uncertainties():
     assert improved.item() < nominal.item()
 
 
+def test_absil_limit_does_not_depend_on_the_starting_flux_axis():
+    # A bright starting flux sits where the significance saturates, so the
+    # loss is flat; a single-value axis must still find the same limit.
+    null_cvis = np.ones_like(oidata_sim.u, dtype=complex)
+    data = OIData(
+        {
+            "u": oidata_sim.u,
+            "v": oidata_sim.v,
+            "wavel": oidata_sim.wavel,
+            "vis": oidata_sim.to_vis(null_cvis)
+            + np.linspace(-1.0, 1.0, oidata_sim.vis.size) * oidata_sim.d_vis,
+            "d_vis": oidata_sim.d_vis,
+            "phi": oidata_sim.to_phases(null_cvis)
+            + np.linspace(1.0, -1.0, oidata_sim.phi.size) * oidata_sim.d_phi,
+            "d_phi": oidata_sim.d_phi,
+            "i_cps1": oidata_sim.i_cps1,
+            "i_cps2": oidata_sim.i_cps2,
+            "i_cps3": oidata_sim.i_cps3,
+            "v2_flag": oidata_sim.v2_flag,
+            "cp_flag": oidata_sim.cp_flag,
+        }
+    )
+
+    def limit(flux_axis):
+        samples = {
+            "dra": np.array([100.0]),
+            "ddec": np.array([100.0]),
+            "flux": np.asarray(flux_axis),
+        }
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            return absil_limits(
+                data, BinaryModelCartesian, samples, 2.0, flux_bounds=None
+            ).item()
+
+    reference = limit(10 ** np.linspace(-6.0, -1.0, 30))
+    for axis in ([1e-2], [0.5], [1e-6]):
+        assert limit(axis) == pytest.approx(reference, rel=1e-3)
+
+
 def test_diagnostics_table_from_samples_follows_north_to_east_pa_convention():
     """A sample due East (dra=+40, ddec=0) must report pa=90 under the
     package's North-to-East convention. The previous swapped-argument
