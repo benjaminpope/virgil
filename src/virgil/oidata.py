@@ -420,9 +420,24 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         See :meth:`epochs`. Each part keeps its own samples, observables and
         closure phases, so it can be fitted on its own or with a model per
-        epoch. Not available for projected (kernel, DISCO) observables.
+        epoch. Not available for projected (kernel, DISCO) observables, nor
+        for data with a gain mode shared between epochs (a supplied mode
+        spanning frames): the parts' likelihoods would then not add up to
+        the whole.
         """
         labels = self.epochs(gap_days)
+        if self.gains is not None:
+            index = (
+                onp.arange(onp.size(self.u))
+                if self.vis_index is None
+                else onp.asarray(self.vis_index)
+            )
+            if self.gains.labels_shared(labels[index]):
+                raise ValueError(
+                    "A gain mode spans several epochs, so the epochs are not "
+                    "independent and their likelihoods would not add up; "
+                    "fit the data together, or drop that mode first."
+                )
         return [self._subset(labels == k) for k in range(labels.max() + 1)]
 
     def _subset(self, keep):

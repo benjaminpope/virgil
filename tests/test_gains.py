@@ -79,11 +79,33 @@ def test_supplied_modes_spanning_frames_join_one_block():
     mode = onp.zeros(data.u.size)
     mode[::7] = 0.01  # touches both frames
     # Baseline gains alone give a block per (frame, baseline); telescope
-    # gains join each frame, and the mode joins the frames.
+    # gains join each frame. A mode spanning frames stays apart, so the
+    # frames remain separate blocks.
     assert data.with_gains(baseline=0.01).gains.rows.shape[0] == 12
-    gains = data.with_gains(telescope=0.01, baseline=0.01, modes=mode).gains
-    assert gains.rows.shape[0] == 1
+    local = mode * (onp.asarray(data.frame) == 0)
+    data = data.with_gains(telescope=0.01, baseline=0.01, modes=[mode, local])
+    gains = data.gains
+    assert gains.rows.shape == (2, 30)
+    assert gains.spanning.shape == (60, 1)
     assert gains.groups == ("telescope", "baseline", "modes")
+    # ...and is still whitened exactly.
+    prediction = onp.asarray(data.model(TRUTH))
+    obs, err = (onp.asarray(x) for x in data.flatten_data())
+    resid = prediction - obs
+    cov = onp.asarray(
+        gains.covariance(err, 2 * prediction, gains.widths), float
+    )
+    chi2 = resid @ onp.linalg.solve(cov, resid)
+    logdet = onp.linalg.slogdet(cov)[1]
+    expected = (
+        -0.5 * chi2 - 0.5 * logdet - 0.5 * resid.size * onp.log(2 * onp.pi)
+    )
+    assert float(model_loglike(TRUTH, data)) == pytest.approx(
+        expected, rel=1e-4
+    )
+    # The frames are 1 day apart: a mode shared by them stops a split.
+    with pytest.raises(ValueError, match="spans several epochs"):
+        data.split_by_epoch()
 
 
 def test_gain_terms_replace_the_default_widths():
@@ -201,3 +223,38 @@ def test_fit_with_gains_uses_lbfgs_and_fits_widths():
     assert 0.0 <= float(result.values["noise.vis_gain_telescope"]) < 0.5
     with pytest.raises(TypeError, match="least-squares"):
         fit(start, {"flux": dist.Uniform(0.0, 1.0)}, data, method="lm")
+
+
+def test_synthetic_vlti_coverage_takes_gains():
+    from virgil.coverage import vlti_oidata
+
+    data = vlti_oidata(hour_angles_h=(-1.0, 0.0, 1.0)).with_gains(
+        telescope=0.01, baseline=0.01
+    )
+    assert data.gains.rows.shape[0] == 3  # a block per snapshot
+
+
+def test_modes_spanning_frames_alone_are_whitened_exactly():
+    data = _data()
+    rng = onp.random.default_rng(4)
+    data = data.with_gains(modes=rng.normal(0, 0.02, (2, data.u.size)))
+    gains = data.gains
+    assert gains.rows.shape[0] == 0 and gains.spanning.shape == (60, 2)
+    prediction = onp.asarray(data.model(TRUTH))
+    obs, err = (onp.asarray(x) for x in data.flatten_data())
+    resid = prediction - obs
+    cov = onp.asarray(
+        gains.covariance(err, 2 * prediction, gains.widths), float
+    )
+    chi2 = resid @ onp.linalg.solve(cov, resid)
+    logdet = onp.linalg.slogdet(cov)[1]
+    expected = (
+        -0.5 * chi2 - 0.5 * logdet - 0.5 * resid.size * onp.log(2 * onp.pi)
+    )
+    assert float(model_loglike(TRUTH, data)) == pytest.approx(
+        expected, rel=1e-4
+    )
+    draws = jax.vmap(lambda k: gains.sample(k, gains.widths))(
+        jax.random.split(jax.random.PRNGKey(0), 3)
+    )
+    assert draws.shape == (3, 60)

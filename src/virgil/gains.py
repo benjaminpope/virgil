@@ -58,11 +58,17 @@ GAIN_GROUPS = ("telescope", "baseline", "chromatic", "modes")
 
 
 class GainModes(eqx.Module):
-    """Low-rank gain modes on the visibility observables, in blocks.
+    """Low-rank gain modes on the visibility observables.
 
     Built by [`gain_modes`][virgil.gains.gain_modes] (or
     [`OIData.with_gains`][virgil.oidata.OIData.with_gains]); see the
     module notes for the model.
+
+    Modes within one frame are kept in blocks, the connected groups of such
+    modes (one per frame for the built-in groups), padded to a common size.
+    Modes that span frames (only supplied ones can) are kept apart, as
+    dense columns, and whitened after the blocks. That way, a few modes
+    across frames do not merge every frame into one dense block.
 
     Attributes
     ----------
@@ -75,6 +81,10 @@ class GainModes(eqx.Module):
     group : jax.Array
         ``(n_block, n_mode)`` int32: each mode's group, an index into
         ``groups``.
+    spanning : jax.Array
+        ``(n_vis, n_spanning)``: the shapes of modes that span frames.
+    spanning_group : jax.Array
+        ``(n_spanning,)`` int32: their groups.
     widths : jax.Array
         The default width of each group.
     groups : tuple of str
@@ -86,6 +96,8 @@ class GainModes(eqx.Module):
     rows: jax.Array
     shapes: jax.Array
     group: jax.Array
+    spanning: jax.Array
+    spanning_group: jax.Array
     widths: jax.Array
     groups: tuple = eqx.field(static=True)
     n_vis: int = eqx.field(static=True)
@@ -110,11 +122,14 @@ class GainModes(eqx.Module):
         )
 
     def _columns(self, jacobian, widths):
-        """The modes as columns of D^{-½} U, per block: (n_block, n_row, n_mode)."""
-        scale = (
-            np.asarray(jacobian).at[self.rows].get(mode="fill", fill_value=0)
+        """The modes as columns of D^{-½} U: per block, and spanning frames."""
+        jacobian = np.asarray(jacobian)
+        scale = jacobian.at[self.rows].get(mode="fill", fill_value=0)
+        local = self.shapes * scale[..., None] * widths[self.group][:, None, :]
+        spanning = (
+            self.spanning * jacobian[:, None] * widths[self.spanning_group]
         )
-        return self.shapes * scale[..., None] * widths[self.group][:, None, :]
+        return local, spanning
 
     def whiten(self, x, jacobian, widths):
         """Whiten residuals for the covariance ``I + Σ w_j w_jᵀ``.
@@ -136,21 +151,28 @@ class GainModes(eqx.Module):
             the log-determinant of the covariance, ``½ Σ log(1 + w_jᵀw_j)``.
         """
         x = np.asarray(x)
-        xb = x.at[self.rows].get(mode="fill", fill_value=0)
+        local, spanning = self._columns(jacobian, widths)
+        n_span = spanning.shape[1]
+        # The blocks first, carrying the spanning modes through them: the
+        # whitening of the blocks is applied to every column.
         stack = np.concatenate(
-            [xb[..., None], self._columns(jacobian, widths)], axis=-1
+            [
+                x.at[self.rows].get(mode="fill", fill_value=0)[..., None],
+                spanning.at[self.rows].get(mode="fill", fill_value=0),
+                local,
+            ],
+            axis=-1,
         )
-
-        def step(stack, j):
-            w = stack[:, :, j + 1]
-            s = np.sum(w**2, axis=1)
-            q = np.sqrt(1.0 + s)
-            coef = np.einsum("br,brk->bk", w, stack) / (q * (q + 1.0))[:, None]
-            return stack - w[:, :, None] * coef[:, None, :], np.log1p(s)
-
-        n_mode = self.shapes.shape[-1]
-        stack, logdets = jax.lax.scan(step, stack, np.arange(n_mode))
-        whitened = x.at[self.rows].set(stack[..., 0], mode="drop")
+        stack, logdets = jax.lax.scan(
+            _rank_one_step,
+            stack,
+            1 + n_span + np.arange(local.shape[-1]),
+        )
+        done = (
+            np.concatenate([x[:, None], spanning], axis=1)
+            .at[self.rows]
+            .set(stack[..., : 1 + n_span], mode="drop")
+        )
         # Spread each block's ½ log det over its rows.
         n_rows = np.sum(self.rows < self.n_vis, axis=1)
         per_row = 0.5 * np.sum(logdets, axis=0) / np.maximum(n_rows, 1)
@@ -161,7 +183,15 @@ class GainModes(eqx.Module):
                 np.broadcast_to(per_row[:, None], self.rows.shape), mode="drop"
             )
         )
-        return whitened, extra
+        if n_span:
+            # Then the spanning modes, as one dense block, their ½ log det
+            # spread over every observable.
+            done, span_logdets = jax.lax.scan(
+                _rank_one_step, done[None], 1 + np.arange(n_span)
+            )
+            done = done[0]
+            extra = extra + 0.5 * np.sum(span_logdets) / self.n_vis
+        return done[:, 0], extra
 
     def covariance(self, errors, jacobian, widths):
         """The dense visibility covariance ``D + U Uᵀ`` (for checks; O(n²)).
@@ -169,20 +199,23 @@ class GainModes(eqx.Module):
         ``jacobian`` is dObs/dlog|V| itself here, not divided by the errors.
         """
         errors = np.asarray(errors)
-        cols = self._columns(np.asarray(jacobian), widths)
-        u = np.zeros((self.n_vis,) + cols.shape[::2])
-        b = np.arange(cols.shape[0])[:, None]
-        u = u.at[self.rows, b].set(cols, mode="drop")
-        u = u.reshape(self.n_vis, -1)
+        local, spanning = self._columns(np.asarray(jacobian), widths)
+        u = np.zeros((self.n_vis,) + local.shape[::2])
+        b = np.arange(local.shape[0])[:, None]
+        u = u.at[self.rows, b].set(local, mode="drop")
+        u = np.concatenate([u.reshape(self.n_vis, -1), spanning], axis=1)
         return np.diag(errors**2) + u @ u.T
 
     def sample(self, key, widths):
         """Draw the gains: log |V| offset of each visibility observable."""
-        z = jax.random.normal(key, self.group.shape)
-        per_row = np.einsum(
-            "brk,bk->br", self.shapes, z * np.asarray(widths)[self.group]
-        )
-        return np.zeros(self.n_vis).at[self.rows].add(per_row, mode="drop")
+        widths = np.asarray(widths)
+        local_key, span_key = jax.random.split(key)
+        z = jax.random.normal(local_key, self.group.shape)
+        per_row = np.einsum("brk,bk->br", self.shapes, z * widths[self.group])
+        z = jax.random.normal(span_key, self.spanning_group.shape)
+        return np.zeros(self.n_vis).at[self.rows].add(
+            per_row, mode="drop"
+        ) + self.spanning @ (z * widths[self.spanning_group])
 
     def subset(self, keep):
         """The modes on the visibility observables where ``keep`` is True.
@@ -204,10 +237,40 @@ class GainModes(eqx.Module):
             np.asarray(mapped, np.int32),
             np.asarray(shapes),
             self.group,
+            self.spanning[keep],
+            self.spanning_group,
             self.widths,
             self.groups,
             n_new,
         )
+
+    def labels_shared(self, labels):
+        """Whether any mode touches observables with different ``labels``.
+
+        ``labels`` (one per visibility observable) partitions the data, e.g.
+        into epochs; a partition's likelihoods add up to the whole only if
+        no gain is shared between its parts.
+        """
+        labels = onp.asarray(labels)
+        rows = onp.asarray(self.rows)
+        for r, shapes in zip(rows, onp.asarray(self.shapes)):
+            for col in shapes.T:
+                touched = r[(r < self.n_vis) & (col != 0)]
+                if onp.unique(labels[touched]).size > 1:
+                    return True
+        for col in onp.asarray(self.spanning).T:
+            if onp.unique(labels[col != 0]).size > 1:
+                return True
+        return False
+
+
+def _rank_one_step(stack, j):
+    """Whiten ``stack`` (..., n_row, n_col) for its column ``j`` as a mode."""
+    w = stack[..., j]
+    s = np.sum(w**2, axis=-1)
+    q = np.sqrt(1.0 + s)
+    coef = np.einsum("...r,...rk->...k", w, stack) / (q * (q + 1.0))[..., None]
+    return stack - w[..., None] * coef[..., None, :], np.log1p(s)
 
 
 def _frames_and_stations(data, need_stations):
@@ -329,49 +392,64 @@ def gain_modes(
                 columns.append((gid, rows, m[rows]))
     if not columns:
         raise ValueError("No gain modes: give at least one group or mode.")
-    return _pack(columns, groups, widths, n_vis)
+    return _pack(columns, groups, widths, frame)
 
 
-def _pack(columns, groups, widths, n_vis):
-    """Group columns sharing rows into blocks, padded to common sizes."""
+def _pack(columns, groups, widths, frame):
+    """Sort columns into blocks within frames, and columns spanning frames.
+
+    Columns within one frame are connected when they share a row; each
+    connected group (a component of the bipartite graph of columns and
+    rows) is a block, padded to a common size.
+    """
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
 
-    # Columns are connected when they share a row: components of the
-    # bipartite graph of columns and rows.
-    n_col = len(columns)
-    col_ids = onp.concatenate(
-        [onp.full(r.size, k) for k, (_, r, _) in enumerate(columns)]
-    )
-    row_ids = onp.concatenate([r for _, r, _ in columns])
-    graph = coo_matrix(
-        (onp.ones(col_ids.size), (col_ids, n_col + row_ids)),
-        shape=(n_col + n_vis, n_col + n_vis),
-    )
-    _, label = connected_components(graph, directed=False)
-    blocks = {}
-    for k in range(n_col):
-        blocks.setdefault(label[k], []).append(k)
-    blocks = list(blocks.values())
+    n_vis = frame.size
+    within = [onp.unique(frame[r]).size == 1 for _, r, _ in columns]
+    local = [c for c, w in zip(columns, within) if w]
+    spanning_cols = [c for c, w in zip(columns, within) if not w]
+    spanning = onp.zeros((n_vis, len(spanning_cols)))
+    for j, (_, r, values) in enumerate(spanning_cols):
+        spanning[r, j] = values
+    spanning_group = onp.array([g for g, _, _ in spanning_cols], onp.int32)
+
+    blocks = []
+    if local:
+        n_col = len(local)
+        col_ids = onp.concatenate(
+            [onp.full(r.size, k) for k, (_, r, _) in enumerate(local)]
+        )
+        row_ids = onp.concatenate([r for _, r, _ in local])
+        graph = coo_matrix(
+            (onp.ones(col_ids.size), (col_ids, n_col + row_ids)),
+            shape=(n_col + n_vis, n_col + n_vis),
+        )
+        _, label = connected_components(graph, directed=False)
+        by_label = {}
+        for k in range(n_col):
+            by_label.setdefault(label[k], []).append(k)
+        blocks = list(by_label.values())
     block_rows = [
-        onp.unique(onp.concatenate([columns[k][1] for k in ks]))
-        for ks in blocks
+        onp.unique(onp.concatenate([local[k][1] for k in ks])) for ks in blocks
     ]
-    n_row = max(r.size for r in block_rows)
-    n_mode = max(len(ks) for ks in blocks)
+    n_row = max((r.size for r in block_rows), default=0)
+    n_mode = max((len(ks) for ks in blocks), default=0)
     rows = onp.full((len(blocks), n_row), n_vis, dtype=onp.int32)
     shapes = onp.zeros((len(blocks), n_row, n_mode))
     group = onp.zeros((len(blocks), n_mode), dtype=onp.int32)
     for b, (ks, r) in enumerate(zip(blocks, block_rows)):
         rows[b, : r.size] = r
         for j, k in enumerate(ks):
-            g, col_rows, values = columns[k]
+            g, col_rows, values = local[k]
             shapes[b, onp.searchsorted(r, col_rows), j] = values
             group[b, j] = g
     return GainModes(
         np.asarray(rows),
         np.asarray(shapes),
         np.asarray(group),
+        np.asarray(spanning),
+        np.asarray(spanning_group),
         np.asarray(widths, float),
         tuple(groups),
         int(n_vis),
