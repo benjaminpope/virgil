@@ -533,6 +533,22 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 
 **MWE:** a simulated multi-channel binary with an extended component and injected per-frame gains, fitted with 6d and with diagonal error terms, comparing the parameter errors with the truth. A real-data check (e.g. Apep's GRAVITY data) is optional.
 
+**Result (gains study, 2026-10-05).** OzSTAR job `stage6d_gains` (ozstar_scripts; virgil@08fc5eb, jobs 18043843 and 18043863), 200 realisations per scenario.
+- **Simulation.** Four UTs, 8 snapshots over ±3 h, 30 K-band channels, σ(V²) = 0.01, σ(CP) = 0.5°. The scene is a star, a companion (flux 0.1 at (6, −4) mas) and a Gaussian disk (σ = 1.5 mas, flux 0.4).
+- **Injected gains.** On log |V| per frame: 2% per telescope and 1% per baseline.
+- **Fits.** Each realisation is fitted four ways, each with Laplace errors at its MAP. The table gives rms pulls, (fit − truth)/σ, which are 1 for calibrated errors.
+
+| Fit | Pulls (5 parameters) | χ²/N | Notes |
+|---|---|---|---|
+| Reported errors only | 9.6–19.9 | 9.1 | errors 10–20× too small |
+| + fitted `vis_error_rel` | 1.5–5.2 | 1.00 | χ² looks right, errors still 1.5–5× too small; `vis_error_rel` → 5.7% |
+| Gains, true widths | 0.97–1.01 | 1.00 | 1σ coverage 0.65–0.71 |
+| Gains, widths fitted | 0.99–1.02 | 1.00 | widths 0.0197 ± 0.0027 (telescope) and 0.0097 ± 0.0017 (baseline), against 0.02 and 0.01 |
+
+- **Precision as well as calibration.** Marginalising the gains also makes the estimates more precise than inflating the errors does. Disk flux scatters 0.0060 rather than 0.0149, and disk σ 0.018 mas rather than 0.057 mas.
+- **Control (no gains in the data).** Fitted widths go to zero (median 0) and the results match the diagonal fit. Assuming gains that aren't there, at the same widths, gives conservative errors: disk σ error 0.019 mas, scatter 0.016 mas, against 0.003 mas without them. It also shifts the disk parameters by 0.2–0.3σ.
+- **Conclusion.** Fit the widths rather than fixing them.
+
 **Log (gains, branch `stage6d-nuisances`):**
 - `virgil.gains`: `GainModes` and `gain_modes`, set with `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)`. The groups are telescope, baseline, chromatic ((λ_ref/λ)²) and supplied 1σ modes, e.g. a calibrator PCA's from virgil-vlti. Widths are fitted with the noise terms `vis_gain_<group>`, one per group, rather than a single `vis_gain`.
 - Marginalisation: blocks are the connected groups of modes, whitened by successive rank-one steps (smooth gradients, also for degenerate modes and zero widths). The log-determinant is spread over effective errors, so `_gaussian_loglike` and `fit`'s normalisation are unchanged. The Jacobian dObs/dlog|V| is taken from the model (2V², |V| or 1).
