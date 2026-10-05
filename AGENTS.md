@@ -118,7 +118,7 @@ see that repository's `PLAN.md` for the boundary.
 | `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `error_scale`, `diagnose` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
-| `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
+| `limits.py` | `ruffio_upperlimit`, `absil_limits`, `injection_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
 | `fields.py` | Gaussian-process log-brightness for an `Image` (`GaussianField`, a DCT field with a Matérn-like spectrum) |
 | `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, `GaussianLine`, `LorentzianLine`, `Nodes` for a free flux per channel, and `Sum`; `Tabulated` is deprecated for `Nodes`) accepted as a component's `flux` (SPARCO) |
 | `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
@@ -239,7 +239,7 @@ to that test.
   (`"comp.flux"`); tools accept a template model plus paths anywhere they
   accept a model class (`build_model`). The argument is called `model`.
 - Grid tools that optimize a flux (`optimized_likelihood_grid`,
-  `optimized_flux_grid`, `laplace_flux_uncertainty_grid`, `absil_limits`)
+  `optimized_flux_grid`, `laplace_flux_uncertainty_grid`, `absil_limits`, `injection_limits`)
   use the one key whose last part is `flux` (`_utils.resolve_flux_param`);
   if there is none or more than one, the caller must pass `flux_param=`.
   Plotting uses the same rule.
