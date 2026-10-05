@@ -5,15 +5,9 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
-## Unreleased
+## 0.3.0 (2026-10-06)
 
-The release commit will set the version to 0.3.0 and date this section; until
-then the notes below are under "Unreleased". Everything listed as new was
-added after 0.2.0, which is on PyPI.
-
-The release commit must set `version = "0.3.0"` in `pyproject.toml` and refresh
-`uv.lock`, which records the editable virgil-astro version: run `uv lock` in a
-worktree, never in `~/code/drpangloss`.
+Everything listed as new was added after 0.2.0.
 
 ### Migration from 0.2.0
 
