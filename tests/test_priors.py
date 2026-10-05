@@ -119,6 +119,7 @@ def test_fit_with_a_flat_likelihood_is_not_pulled_by_the_prior():
 def test_fit_with_data_is_the_likelihood_maximum_in_the_range():
     # Flat in cos i, the prior adds nothing: the MAP is the likelihood's
     # peak (before, the sin i density pulled it towards 90 degrees).
+    # Tighten the gradient tolerance to resolve the peak to 1e-4 degrees.
     def term(values):
         return np.atleast_1d(values["inc"] - 50.0) / 20.0
 
@@ -128,7 +129,9 @@ def test_fit_with_data_is_the_likelihood_maximum_in_the_range():
         (),
         likelihoods=[term],
         init={"inc": 40.0},
+        gtol=1e-8,
     )
+    assert result.info["converged"] is True
     assert float(result.values["inc"]) == pytest.approx(50.0, abs=1e-4)
 
 
