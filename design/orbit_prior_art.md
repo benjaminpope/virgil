@@ -91,6 +91,8 @@ All three codes use the **secondary's** ω, with the primary's at ω + 180°, an
 - **Near face-on,** astrometry measures ϖ but not Ω and ω separately (orbit design §2.3, symmetry 4). ϖ is then the tight vector and Ω the broad one, instead of two broad, correlated angles.
 - **The primary/secondary swap** (ω + 180°, r → −r) is not a parameterisation matter. The flux-ratio convention fixes it.
 
+**Priors stay invariant.** virgil's default priors are the invariant (Jeffreys) priors of each parameter's symmetry group. For the orbit's orientation that is the Haar measure on rotations: uniform in cos i, Ω and ω. The ring makes each vector's angle exactly uniform. The map (Ω, ω) → (2Ω, ϖ) is linear on the torus, with a constant Jacobian (2), so uniform (Ω, ω) is uniform (2Ω, ϖ) and no correction is needed. A von Mises prior is strong information and must say where it comes from, such as an external orbit.
+
 **Evidence.** The radial dimension integrates out exactly, since its prior is normalised. A Laplace evidence in v-space approximates that integral by a Gaussian in r, with an error of order s². Test it against the angle-space evidence on a one-dimensional problem.
 
 **Interface (to be settled when built).**
@@ -115,6 +117,9 @@ Thompson et al. (2023) replace t_p with θ, the position angle at a reference ep
 
 **Properties.**
 - θ is itself an angle, so it is sampled as a vector (§4.1).
+- **The prior needs a Jacobian.** The invariant prior is uniform in the time of periastron, i.e. in the mean anomaly M at `t_ref` (a translation), not in θ. Sampling θ therefore carries the log-Jacobian
+  log|∂M/∂θ| = 3/2 log(1 − e²) − 2 log(1 + e cos f) + log|cos i| − log(cos²φ cos² i + sin²φ), with φ = θ − Ω,
+  as a prior term at fixed (P, e, i, ω, Ω). Checked numerically: it matches finite differences to 1e-7, and θ weighted by it gives a uniform M (to 1.5% in 12 bins over 4 × 10⁵ draws). Octofitter puts its prior on θ directly; with a uniform θ that is a different, data-independent prior on t_p, which is what this term undoes.
 - The map is singular at i = 90°, where the position angle takes only two values. Near edge-on, keep `dt_peri` or use `StateVectorOrbit`.
 - θ belongs with the short-arc tools, beside `StateVectorOrbit`.
 
