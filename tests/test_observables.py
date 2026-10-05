@@ -794,3 +794,41 @@ def test_with_model_draws_the_marginalised_modes_at_their_widths():
     onp.testing.assert_allclose(onp.mean(scales), 1.0, atol=0.15)
     spread = onp.std(onp.asarray(offsets), axis=0)[::-1]  # (offset, slope)
     onp.testing.assert_allclose(spread, [0.3, 0.5], rtol=0.15)
+
+
+def test_visphi_cached_cholesky_gives_the_same_whitening():
+    import equinox as eqx
+
+    data = OIData(read_oifits(build_hdulist(_tables()), extras=("visphi",)))
+    data = data.with_continuum(lines=[LINE])
+    (block,) = data.extras
+    assert block.chol is not None  # computed once, at build
+    uncached = eqx.tree_at(
+        lambda b: b.chol, block, None, is_leaf=lambda x: x is None
+    )
+    other = _scene(dra=0.6, ddec=0.1)
+    cvis = other.model(data.u, data.v, data.wavel)
+    prediction = block.predict(other, cvis)
+    for a, b in zip(
+        block.whiten(prediction, block.data(), None),
+        uncached.whiten(prediction, block.data(), None),
+    ):
+        onp.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-6)
+    # New errors refresh the factor.
+    rng = onp.random.default_rng(4)
+    noisier = block.with_errors(rng.uniform(0.005, 0.03, block.errors.shape))
+    fresh = eqx.tree_at(
+        lambda b: b.chol, noisier, None, is_leaf=lambda x: x is None
+    )
+    for a, b in zip(
+        noisier.whiten(prediction, block.data(), None),
+        fresh.whiten(prediction, block.data(), None),
+    ):
+        onp.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-6)
+    # The likelihood, its jit and its gradient go through the cache.
+    loglike = eqx.filter_jit(model_loglike)
+    onp.testing.assert_allclose(
+        loglike(other, data), model_loglike(other, data), rtol=1e-6
+    )
+    grads = eqx.filter_jit(eqx.filter_grad(model_loglike))(other, data)
+    assert bool(np.isfinite(grads.parts[1].dra))
