@@ -148,8 +148,8 @@ anything before 1.0 may change between minor versions.
     The first four are from 0.2.0, so a positional `flux_param` or
     `batch_size` there now raises `TypeError`.
   - `injection_recovery(draw_batch > 1)` divides the default grid
-    `batch_size` by `draw_batch`, so the working set stays within the
-    documented bound, and by default the last chunk is compiled at its own
+    `batch_size` by `draw_batch` and caps `draw_batch` at that default,
+    so the working set stays within the documented bound, and by default the last chunk is compiled at its own
     length instead of being padded with discarded draws (an explicit
     `chunk_size` still pads, to reuse one compilation).
 

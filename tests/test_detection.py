@@ -961,7 +961,13 @@ def test_default_grid_batch_size_is_split_among_draw_batch(monkeypatch):
     assert seen[0] == default
     assert seen[1] == default // 4
     assert seen[2] == 64  # an explicit value is used as given
-    assert detection._search_batch_size(None, TEMPLATE, 10**9) == 1
+    # A draw_batch above the default is capped at it, so the product of
+    # draws and grid points evaluated together stays within the budget.
+    for draw_batch in (1, 4, default, 2 * default, 10**9):
+        draws, grid = detection._batch_sizes(None, TEMPLATE, draw_batch)
+        assert draws == min(draw_batch, default)
+        assert grid >= 1 and draws * grid <= default
+    assert detection._batch_sizes(64, TEMPLATE, 10**9) == (10**9, 64)
 
 
 def test_last_chunk_is_not_padded_unless_chunk_size_is_set(monkeypatch):

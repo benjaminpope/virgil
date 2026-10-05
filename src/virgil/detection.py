@@ -761,8 +761,9 @@ def injection_recovery(
     ``(key, injection) -> statistics``, serves every draw, null and
     injected, mapped with ``jax.lax.map(..., batch_size=draw_batch)``, so
     memory stays bounded (there is no vmap over grid × draws). The default
-    grid ``batch_size`` is divided by ``draw_batch``, so the working set
-    stays within the usual budget of one search whatever ``draw_batch`` is.
+    grid ``batch_size`` is divided by ``draw_batch``, and ``draw_batch`` is
+    capped at that default, so the working set stays within the usual
+    budget of one search whatever ``draw_batch`` is.
 
     Parameters
     ----------
@@ -809,7 +810,10 @@ def injection_recovery(
     flux_param : str, optional
         The flux key of ``samples_dict``, as for the grid tools.
     draw_batch : int, optional
-        Draws evaluated together (vectorised) within ``jax.lax.map``.
+        Draws evaluated together (vectorised) within ``jax.lax.map``. When
+        ``batch_size`` is omitted, it is capped at the default grid batch
+        size, so that ``draw_batch`` searches of at least one grid point
+        each never exceed the budget of one search.
     chunk_size : int, optional
         Draws per call of the compiled kernel, rounded up to a multiple of
         ``draw_batch``. The null and the injected draws run in chunks of
@@ -877,6 +881,7 @@ def injection_recovery(
     )
     inj_values = _injection_values(injections, params, names)
     n_inj = inj_values.shape[0]
+    draw_batch, grid_batch = _batch_sizes(batch_size, template, draw_batch)
     chunk = _chunk_size(chunk_size, draw_batch, max(n_null, n_inj))
     seed = _seed_record(key)
     base = _raw_key(_as_key(key))
@@ -884,7 +889,7 @@ def injection_recovery(
         "params": params,
         "coord_keys": coord_keys,
         "flux_key": flux_key,
-        "batch_size": _search_batch_size(batch_size, template, draw_batch),
+        "batch_size": grid_batch,
         "draw_batch": draw_batch if draw_batch > 1 else None,
     }
     bar = _progress_bar(-(-n_null // chunk) - (-n_inj // chunk), progress)
@@ -1094,12 +1099,18 @@ def _chunk_size(chunk_size, draw_batch, n_max):
     return -(-chunk // draw_batch) * draw_batch
 
 
-def _search_batch_size(batch_size, template, draw_batch):
-    """Grid batch size per search; the default is split among ``draw_batch``."""
+def _batch_sizes(batch_size, template, draw_batch):
+    """``(draw_batch, grid batch size)`` for ``injection_recovery``.
+
+    An explicit ``batch_size`` is used as given. Otherwise the default grid
+    batch is split among the draws evaluated together, and ``draw_batch``
+    is capped at that default, so that their product never exceeds it.
+    """
     default = batch_size_or_default(batch_size, template)
     if batch_size is not None:
-        return default
-    return max(1, default // draw_batch)
+        return draw_batch, default
+    draw_batch = min(draw_batch, default)
+    return draw_batch, default // draw_batch
 
 
 def _simulator(noise, template, null_scene):

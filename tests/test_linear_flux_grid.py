@@ -13,8 +13,10 @@ from virgil.grid_fit import (
     LinearFluxGrid,
     LogUniform,
     laplace_flux_uncertainty_grid,
+    likelihood_grid,
     linear_flux_grid,
     optimized_flux_grid,
+    optimized_likelihood_grid,
 )
 from virgil.likelihood import build_model, whitened_residuals
 from virgil.models import BinaryModelCartesian
@@ -262,6 +264,10 @@ def test_grid_tools_take_flux_param_and_batch_size_by_keyword():
             fn(data, BinaryModelCartesian, grid, None, "flux")
     with pytest.raises(TypeError):
         linear_flux_grid(data, BinaryModelCartesian, grid, "flux")
+    with pytest.raises(TypeError):
+        optimized_likelihood_grid(data, BinaryModelCartesian, grid, "flux")
+    with pytest.raises(TypeError):
+        likelihood_grid(data, BinaryModelCartesian, grid, 10**6)
 
 
 def test_prior_validation():
