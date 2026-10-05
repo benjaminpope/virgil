@@ -1576,6 +1576,10 @@ class LCurve:
         return float(onp.exp(t[0] + fraction * (t[1] - t[0])))
 
 
+# Basis vectors pushed through together when building a residual Jacobian.
+_JACOBIAN_BATCH = 64
+
+
 @eqx.filter_jit
 def _jitted_residual_jacobian(model, datasets, path):
     """Jitted body of :func:`_residual_jacobian`.
@@ -1593,8 +1597,33 @@ def _jitted_residual_jacobian(model, datasets, path):
         )
 
     n_data = sum(d.n_residuals for d in datasets)
-    mode = jax.jacrev if n_data < np.size(leaf) else jax.jacfwd
-    return residuals(leaf), mode(residuals)(leaf).reshape(n_data, -1)
+    n_leaf = np.size(leaf)
+    # Row by row (reverse mode) or column by column (forward mode), whichever
+    # is shorter, in batches: jax.jacrev/jacfwd push every basis vector
+    # through at once, and each carries the image transform's intermediates
+    # (data x pixels), so their memory grows as data x data x pixels. A
+    # MATISSE contest file needed 432 GB that way on an 80 GB GPU.
+    if n_data < n_leaf:
+        r, pullback = jax.vjp(residuals, leaf)
+
+        def row(i):
+            cotangent = np.zeros(n_data, r.dtype).at[i].set(1.0)
+            return pullback(cotangent)[0].ravel()
+
+        jac = jax.lax.map(row, np.arange(n_data), batch_size=_JACOBIAN_BATCH)
+    else:
+        r = residuals(leaf)
+
+        def column(j):
+            tangent = np.zeros(n_leaf, leaf.dtype).at[j].set(1.0)
+            return jax.jvp(
+                residuals, (leaf,), (tangent.reshape(np.shape(leaf)),)
+            )[1]
+
+        jac = jax.lax.map(
+            column, np.arange(n_leaf), batch_size=_JACOBIAN_BATCH
+        ).T
+    return r, jac.reshape(n_data, -1)
 
 
 def _residual_jacobian(model, data, path):
