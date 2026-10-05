@@ -119,7 +119,7 @@ Thompson et al. (2023) replace t_p with θ, the position angle at a reference ep
 - θ is itself an angle, so it is sampled as a vector (§4.1).
 - **The prior needs a Jacobian.** The invariant prior is uniform in the time of periastron, i.e. in the mean anomaly M at `t_ref` (a translation), not in θ. Sampling θ therefore carries the log-Jacobian
   log|∂M/∂θ| = 3/2 log(1 − e²) − 2 log(1 + e cos f) + log|cos i| − log(cos²φ cos² i + sin²φ), with φ = θ − Ω,
-  as a prior term at fixed (P, e, i, ω, Ω). Checked numerically: it matches finite differences to 1e-7, and θ weighted by it gives a uniform M (to 1.5% in 12 bins over 4 × 10⁵ draws). Octofitter puts its prior on θ directly; with a uniform θ that is a different, data-independent prior on t_p, which is what this term undoes.
+  as a prior term at fixed (P, e, i, ω, Ω). Checked numerically: it matches finite differences to 1e-7, and θ weighted by it gives a uniform M (to 1.5% in 12 bins over 4 × 10⁵ draws). A uniform prior placed on θ itself would be a different prior on t_p, one that depends on the orientation and e; this term undoes that. (We have not checked how Octofitter handles this.)
 - The map is singular at i = 90°, where the position angle takes only two values. Near edge-on, keep `dt_peri` or use `StateVectorOrbit`.
 - θ belongs with the short-arc tools, beside `StateVectorOrbit`.
 
