@@ -25,8 +25,11 @@ toward the observer) and stay inside :meth:`KeplerOrbit.to_jaxoplanet` and
 :meth:`KeplerOrbit.from_jaxoplanet`.
 """
 
+import warnings
+
 import jax
 import jax.numpy as np
+import jax.scipy.linalg as jsl
 import numpy as onp
 
 import equinox as eqx
@@ -750,6 +753,9 @@ class StateVectorOrbit(zx.Base):
         return self.to_kepler().relative(mjd)
 
 
+# Default sd (km/s) of the zero-point prior when marginalising with ``True``.
+_DEFAULT_ZERO_POINT_SD = 1000.0
+
 # km/s per (mas/day at 1 pc): 1 mas at 1 pc is 1e-3 au.
 _KMS_PER_MAS_DAY_PC = 1.495978707e8 * 1e-3 / 86400.0
 
@@ -772,15 +778,23 @@ class RVData(zx.Base):
         Which star they are of.
     t_ref : float, optional
         Reference time (MJD, static float64); by default the first epoch.
+    instrument : array-like, optional
+        One label per epoch naming the spectrograph. Only used when
+        [`term`][virgil.orbits.RVData.term] marginalises the zero points;
+        by default there is a single instrument.
     """
 
     dt: jax.Array
     rv: jax.Array
     d_rv: jax.Array
+    inst: jax.Array
     t_ref: float = eqx.field(static=True)
     star: str = eqx.field(static=True)
+    instruments: tuple = eqx.field(static=True)
 
-    def __init__(self, mjd, rv, d_rv, star="primary", t_ref=None):
+    def __init__(
+        self, mjd, rv, d_rv, star="primary", t_ref=None, instrument=None
+    ):
         if star not in ("primary", "secondary"):
             raise ValueError(
                 f"star must be 'primary' or 'secondary', not {star!r}."
@@ -799,6 +813,14 @@ class RVData(zx.Base):
         self.rv = np.asarray(rv)
         self.d_rv = np.asarray(d_rv)
         self.star = star
+        if instrument is None:
+            labels, codes = (0,), onp.zeros(mjd.shape, dtype=int)
+        else:
+            instrument = onp.broadcast_to(onp.asarray(instrument), mjd.shape)
+            uniq, codes = onp.unique(instrument, return_inverse=True)
+            labels = tuple(u.item() for u in uniq)
+        self.instruments = labels
+        self.inst = np.asarray(codes.reshape(mjd.shape))
 
     def model(self, orbit, q, gamma, distance_pc):
         """Predicted radial velocities (km/s).
@@ -842,7 +864,127 @@ class RVData(zx.Base):
             - resid.size / 2 * np.log(2 * np.pi)
         )
 
-    def term(self, params, jitter=None):
+    # -- analytic marginalisation of the instrument zero points ----------
+
+    def _prior(self, prior):
+        """``(mean, sd)`` arrays of length ``len(self.instruments)``."""
+        k = len(self.instruments)
+        if prior is True:
+            warnings.warn(
+                "marginalising the RV zero points with the default prior "
+                f"N(0, {_DEFAULT_ZERO_POINT_SD:g} km/s): it is effectively "
+                "flat, so the likelihood is the profile likelihood plus a "
+                "log-determinant correction, up to a constant that depends "
+                "on the prior width. Pass (mean, sd) for a proper prior.",
+                stacklevel=3,
+            )
+            prior = (0.0, _DEFAULT_ZERO_POINT_SD)
+        mean, sd = prior
+        mean = onp.broadcast_to(onp.asarray(mean, dtype=float), (k,))
+        sd = onp.broadcast_to(onp.asarray(sd, dtype=float), (k,))
+        if not onp.all(onp.isfinite(sd) & (sd > 0)):
+            raise ValueError(
+                "the zero-point prior needs a positive, finite sd: an "
+                "infinite (flat) prior is not supported."
+            )
+        if not onp.all(onp.isfinite(mean)):
+            raise ValueError("the zero-point prior needs a finite mean.")
+        return np.asarray(mean), np.asarray(sd)
+
+    def _design(self):
+        k = len(self.instruments)
+        return (self.inst[:, None] == np.arange(k)[None, :]).astype(
+            self.rv.dtype
+        )
+
+    def _system(self, sigma, prior):
+        """Whitened design ``B = C^-1/2 A`` and the Cholesky ``L`` of
+        ``S = Λ^-1 + AᵀC^-1A``, which is all of the O(N k²) work."""
+        _, sd = prior
+        B = self._design() / sigma[:, None]
+        S = B.T @ B + np.diag(1.0 / sd**2)
+        return B, np.linalg.cholesky(S)
+
+    def marginal_whitened_residuals(
+        self, orbit, q, gamma, distance_pc, jitter=0.0, prior=None
+    ):
+        """Whitened residuals of the zero-point-marginalised Gaussian.
+
+        The data are ``d ~ N(m + Aμ, C + AΛAᵀ)`` with ``m`` the Keplerian
+        model (``gamma`` included), ``A`` the indicator matrix of the
+        instruments and ``w ~ N(μ, Λ)`` the zero points. Returns ``u`` of
+        length N with ``uᵀu = rᵀ(C + AΛAᵀ)⁻¹r``, ``r = d - m - Aμ``. By
+        the Woodbury identity ``(C + AΛAᵀ)⁻¹ = C^-1/2 (I - W Wᵀ) C^-1/2``
+        with ``W = B L⁻ᵀ``, ``B = C^-1/2 A`` and ``LLᵀ = Λ⁻¹ + BᵀB``;
+        ``u = z - W (I + Λ^-1/2 L⁻ᵀ)⁻¹ Wᵀ z`` is an exact square root of
+        that (``z = C^-1/2 r``), so no eigendecomposition is needed.
+
+        ``prior`` is ``(mean, sd)`` per instrument, as
+        [`term`][virgil.orbits.RVData.term] builds it.
+        """
+        mean, sd = prior
+        sigma = self.errors(jitter)
+        B, L = self._system(sigma, prior)
+        m = self.model(orbit, q, gamma, distance_pc)
+        z = (self.rv - m - self._design() @ mean) / sigma
+        W = jsl.solve_triangular(L, B.T, lower=True).T  # B L^-T
+        # Λ^-1/2 L^-T, as the transpose of L^-1 Λ^-1/2
+        C = jsl.solve_triangular(L, np.diag(1.0 / sd), lower=True).T
+        T = np.linalg.inv(np.eye(L.shape[0]) + C)
+        return z - W @ (T @ (W.T @ z))
+
+    def marginal_log_norm(self, jitter=0.0, prior=None):
+        """``½ log det(C + AΛAᵀ)``: ``Σ log σ_eff + Σ log sd + Σ log diag L``.
+
+        This is the normalisation that depends on the jitter, in the same
+        convention as the plain ``Σ log σ_eff``.
+        """
+        _, sd = prior
+        sigma = self.errors(jitter)
+        _, L = self._system(sigma, prior)
+        return (
+            np.sum(np.log(sigma))
+            + np.sum(np.log(sd))
+            + np.sum(np.log(np.diag(L)))
+        )
+
+    def marginal_loglike(
+        self, orbit, q, gamma, distance_pc, jitter=0.0, prior=None
+    ):
+        """Normalised log density of the zero-point-marginalised Gaussian.
+
+        Equal to a dense ``N(m + Aμ, C + AΛAᵀ)`` log density, computed in
+        O(N k²). A flat prior is the limit ``Λ → ∞`` only up to a constant
+        (``-½ Σ log Λ``); the finite prior width is part of the model.
+        """
+        u = self.marginal_whitened_residuals(
+            orbit, q, gamma, distance_pc, jitter, prior
+        )
+        return (
+            -0.5 * u @ u
+            - self.marginal_log_norm(jitter, prior)
+            - u.size / 2 * np.log(2 * np.pi)
+        )
+
+    def zero_point_posterior(
+        self, orbit, q, gamma, distance_pc, jitter=0.0, prior=None
+    ):
+        """Mean and covariance of the zero points ``w`` given the orbit.
+
+        ``w | d, θ ~ N(S⁻¹(Λ⁻¹μ + AᵀC⁻¹(d - m)), S⁻¹)`` with
+        ``S = Λ⁻¹ + AᵀC⁻¹A``. Entry ``j`` is the velocity zero point of
+        ``self.instruments[j]``; ``m`` includes ``gamma``, so with
+        ``gamma = 0`` they are the systemic velocity seen by each
+        instrument, and differences between them are the offsets.
+        """
+        mean, sd = prior
+        sigma = self.errors(jitter)
+        B, L = self._system(sigma, prior)
+        r = (self.rv - self.model(orbit, q, gamma, distance_pc)) / sigma
+        cov = np.linalg.inv(L @ L.T)
+        return cov @ (mean / sd**2 + B.T @ r), cov
+
+    def term(self, params, jitter=None, marginalise_offsets=None):
         """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
 
         Parameters
@@ -859,8 +1001,34 @@ class RVData(zx.Base):
             non-negative support, e.g. ``dist.HalfNormal`` (scale about the
             expected scatter, a few km/s for a spotted star) or
             ``dist.LogUniform``; the likelihood depends on ``s²`` only.
+        marginalise_offsets : True or (mean, sd), optional
+            Analytically marginalise one velocity zero point per instrument
+            (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136). The model
+            is ``m_kepler + A w`` with ``A`` the indicator matrix of
+            ``instrument=`` and ``w_j ~ N(mean_j, sd_j²)``. One zero point
+            per instrument, with no separate γ, is the parameterisation
+            without a degeneracy: ``w_j`` is the systemic velocity as
+            measured by instrument ``j``, and offsets are differences
+            ``w_j - w_0``. Return ``gamma = 0`` from ``params`` (a nonzero
+            value just shifts the prior mean). ``mean`` and ``sd`` are
+            scalars or one per instrument (in ``RVData.instruments``
+            order, km/s); ``True`` uses ``N(0, 1000²)`` and warns. The
+            density is the dense ``N(m + Aμ, C + AΛAᵀ)`` log density with
+            ``C = diag(σ_eff²)``, evaluated by the Woodbury identity and
+            the matrix-determinant lemma in O(N k²), so the jitter enters
+            the full log-determinant. For a broad prior this is the profile
+            likelihood plus a log-determinant correction; a flat prior is
+            the ``Λ → ∞`` limit up to a ``Λ``-dependent constant, and only
+            finite ``sd`` is supported. The term's residuals have length N
+            and its ``log_norm`` carries the marginal log-determinant.
+            ``term.posterior(values)`` returns the zero points' conditional
+            mean and covariance, to report after a fit.
         """
-        return _Term(self, params, jitter)
+        if marginalise_offsets not in (None, False):
+            marginalise_offsets = self._prior(marginalise_offsets)
+        else:
+            marginalise_offsets = None
+        return _Term(self, params, jitter, marginalise_offsets)
 
 
 class _Term(eqx.Module):
@@ -869,6 +1037,7 @@ class _Term(eqx.Module):
     data: object
     build: object = eqx.field(static=True)
     jitter: object = eqx.field(static=True, default=None)
+    prior: object = None
 
     def _args(self, values):
         args = tuple(self.build(values))
@@ -877,7 +1046,19 @@ class _Term(eqx.Module):
         return args
 
     def __call__(self, values):
+        if self.prior is not None:
+            return self.data.marginal_whitened_residuals(
+                *self._args(values), prior=self.prior
+            )
         return np.ravel(self.data.whitened_residuals(*self._args(values)))
+
+    def posterior(self, values):
+        """``(mean, cov)`` of the marginalised zero points given ``values``."""
+        if self.prior is None:
+            raise ValueError("the term does not marginalise zero points.")
+        return self.data.zero_point_posterior(
+            *self._args(values), prior=self.prior
+        )
 
     @property
     def has_log_norm(self):
@@ -885,11 +1066,19 @@ class _Term(eqx.Module):
         return self.jitter is not None
 
     def log_norm(self, values):
-        """``Σ log σ_eff``, which ``fit`` adds to the loss with a fitted jitter."""
+        """``Σ log σ_eff`` (``½ log det Σ`` when marginalising), which
+        ``fit`` adds to the loss with a fitted jitter."""
+        if self.prior is not None:
+            jit = values[self.jitter] if self.jitter is not None else 0.0
+            return self.data.marginal_log_norm(jit, self.prior)
         return np.sum(np.log(self.data.errors(values[self.jitter])))
 
     def loglike(self, values):
         """The data's normalised Gaussian log density, for ``numpyro_model``."""
+        if self.prior is not None:
+            return self.data.marginal_loglike(
+                *self._args(values), prior=self.prior
+            )
         return self.data.loglike(*self._args(values))
 
 

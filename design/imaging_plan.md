@@ -433,9 +433,9 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 | Item | Effort |
 |---|---|
 | `orbits.py`: `KeplerOrbit` and `ThieleInnesOrbit`, converters to and from jaxoplanet, convention unit tests and a reference ephemeris | 4–5 |
-| Starting orbits: per-epoch positions from the existing binary tools, then a Thiele–Innes least-squares solve on a grid of (P, e, T₀); `PositionData` | 2–3 |
+| Starting orbits: per-epoch positions from the existing binary tools, then a Thiele–Innes least-squares solve on a grid of (P, e, T₀); `PositionData` (the same linear solve marginalises A, B, F, G in position-only fits: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 6) | 2–3 |
 | `StateVectorOrbit` and its regular forms, for short arcs | 3 |
-| `RVData` and axial priors; `distance_pc` and the derived mass | 3 |
+| `RVData` and axial priors; `distance_pc` and the derived mass (RV zero points per instrument marginalise analytically: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 3) | 3 |
 | `SourceModel.at(mjd)` and time-dependent `OIData.model` | 3–4 |
 | `Attached(component, orbit, anchor, bind, offsets)`: any component's angles tied to the binary's frame (line of centres, nodes, inclination, "facing the primary") | 3 |
 | `simulate(scene, template)` and `bias_test`, for bias tests across instruments and for planning | 2–3 |
@@ -443,6 +443,8 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 | OIFITS position-angle round trips (GRAVITY layout; AMICAL and virgil writers) | 2, then 2 per real anchor |
 
 **Later:** physical orbital skew from aberration (2 h), once a system near periastron needs it.
+
+**Later:** analytic marginalisation of the Thiele–Innes constants, so that position fits and samplers see only (P, e, t_peri), with importance reweighting to the usual Campbell-element priors (about 11–16 h). Design: [`thiele_innes_marginalisation.md`](thiele_innes_marginalisation.md) (approved 2026-10-05); it uses the `log_norm` terms of #192.
 
 **Log:**
 - `orbits.py` (item 1): `KeplerOrbit` and `ThieleInnesOrbit`. jaxoplanet only solves Kepler's equation (`jaxoplanet.core.kepler`, with its exact derivatives); positions come from our Thiele–Innes constants (§2.4), so every convention lives in `orbits.py`, and `OrbitalBody` appears only in the converters. Velocities are exact JVPs. `[orbits]` is a new extra (and `integrations` includes it). Tests: §5.1.1 (an independent NumPy ephemeris, 1e-10 of a in float64, 1e-5 in float32) and §5.2.1–6; §5.2.7–8 come with `Attached` and the starting orbits. The α Cen and interferometric anchors (§5.1.2–3) wait for Ben's choice.
@@ -453,7 +455,7 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 
 **Log (StateVectorOrbit; item R4):** parameters (dra, ddec, vra, vdec, dz, vz) at `t_ref` (mas, mas/yr) and μ = 4π²a³/P² (mas³/yr², distance-free). `to_kepler` goes through the Thiele–Innes constants (P̂ = e/|e| and Q̂ = Ŵ × P̂ give A, B, F, G, C, H), so the angle conventions are those of `ThieleInnesOrbit.to_kepler`, and the line-of-sight constants C, H choose the node. A circular state uses the position at `t_ref` for P̂. Unbound states are rejected. Round trips KeplerOrbit → state → KeplerOrbit reproduce the 3-D orbit to 1e-7 mas for generic, e = 0.9, e = 1e-6, i = 2° and retrograde orbits; gradients are finite under jit. The (h, k), (p, q) forms of the design were not needed: the Thiele–Innes route has no removable singularity at i = 0, and at e = 0 only the periastron is undefined.
 
-**Log (RVs, masses, axial priors; items R5–R6):** `RVData(mjd, rv, d_rv, star)` predicts γ + share · v_rel, with v_rel the orbit's exact dz/dt in mas/day times D (pc) × 1.496e5/86400 km/s, and share −q/(1+q) for the primary, 1/(1+q) for the secondary. jaxoplanet's RV code is not used, so the physical scale stays explicit. `total_mass` and `distance_pc` (Kepler's third law, a in au = a_mas · D / 1000, P in years). `AxialVonMises(mean, kappa)`: a von Mises in 2θ on [0°, 360°), for a node known modulo 180°. `fit(..., likelihoods=[...])` takes callables of the fitted values returning whitened residuals (`PositionData.term(orbit_fn)`, `RVData.term(params_fn)`); data may then be `()`. Tests: the RV peak-to-peak equals 2K from Kepler's laws (to 1e-4); total mass 1 M☉ for 1 au at 1 pc in a year; the axial prior is normalised with period 180°; a joint position + RV fit from both nodes, where only the true node fits (χ² < 1e-3 against > 1e3). `numpyro_model(..., likelihoods=[...])` is done: term `i` is the site `likelihood_<i>`, adding the data's full normalised Gaussian log density for `PositionData.term` and `RVData.term` (as the OIData terms do) and `-χ²/2` alone for a plain callable. `RVData.term(params, jitter="rv_jitter")` fits RV jitter s (errors sqrt(d_rv² + s²)): a term may define `has_log_norm` and `log_norm(values)` (Σ log σ_eff), which `fit` adds to the loss (L-BFGS by default, as for `noise=`; LM raises `TypeError`); `numpyro_model` uses the term's `loglike`. Tests: loglike equals scipy's Gaussian with σ_eff, zero jitter equals the plain term, the numpyro log density, and a 30-point fit recovers s = 1 km/s.
+**Log (RVs, masses, axial priors; items R5–R6):** `RVData(mjd, rv, d_rv, star)` predicts γ + share · v_rel, with v_rel the orbit's exact dz/dt in mas/day times D (pc) × 1.496e5/86400 km/s, and share −q/(1+q) for the primary, 1/(1+q) for the secondary. jaxoplanet's RV code is not used, so the physical scale stays explicit. `total_mass` and `distance_pc` (Kepler's third law, a in au = a_mas · D / 1000, P in years). `AxialVonMises(mean, kappa)`: a von Mises in 2θ on [0°, 360°), for a node known modulo 180°. `fit(..., likelihoods=[...])` takes callables of the fitted values returning whitened residuals (`PositionData.term(orbit_fn)`, `RVData.term(params_fn)`); data may then be `()`. Tests: the RV peak-to-peak equals 2K from Kepler's laws (to 1e-4); total mass 1 M☉ for 1 au at 1 pc in a year; the axial prior is normalised with period 180°; a joint position + RV fit from both nodes, where only the true node fits (χ² < 1e-3 against > 1e3). `numpyro_model(..., likelihoods=[...])` is done: term `i` is the site `likelihood_<i>`, adding the data's full normalised Gaussian log density for `PositionData.term` and `RVData.term` (as the OIData terms do) and `-χ²/2` alone for a plain callable. `RVData.term(params, jitter="rv_jitter")` fits RV jitter s (errors sqrt(d_rv² + s²)): a term may define `has_log_norm` and `log_norm(values)` (Σ log σ_eff), which `fit` adds to the loss (L-BFGS by default, as for `noise=`; LM raises `TypeError`); `numpyro_model` uses the term's `loglike`. Tests: loglike equals scipy's Gaussian with σ_eff, zero jitter equals the plain term, the numpyro log density, and a 30-point fit recovers s = 1 km/s. `RVData(..., instrument=labels)` and `RVData.term(..., marginalise_offsets=(mean, sd))` marginalise one velocity zero point per instrument analytically (Luger, Foreman-Mackey & Hogg 2017): `d ~ N(m + Aμ, C + AΛAᵀ)` by Woodbury and the determinant lemma in O(N k²), the log-determinant (including the jitter) in `log_norm`, residuals of length N from an exact square root `z - W(I + Λ^-1/2 L⁻ᵀ)⁻¹Wᵀz`, and `term.posterior(values)` for the conditional mean and covariance of the zero points. One zero point per instrument and no separate γ is the non-degenerate parameterisation (`params` returns γ = 0); only finite prior sd is supported, `True` is N(0, 1000²) with a warning. Tests: dense scipy multivariate normal (2 instruments, jitter on), dense conditioning, a fit matching free offsets, and one instrument with a tiny prior equal to a fixed γ.
 
 **Log (simulate):** `virgil.simulate`: `simulate(scene, template, key, noise_scale, shift_days)` is `with_model` on the template, with every sample at its own time for moving scenes and `shift_days` to move the epochs (R8's `mjd=`); `bias_test(scene, template, model, priors, n, key, **fit_kwargs)` returns the fitted values and χ²_red of each draw. Not yet: R8's drawn nuisances (`noise=` dicts, correlated blocks, a wavelength scale; they come with 6d) and bandpass smearing (6a).
 
@@ -473,8 +475,8 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
 
 **Workflow and additions.** [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) sets out an end-to-end spectro-interferometric workflow (worked example: GRAVITY data on Apep) and adds to 6a:
 - `Nodes(..., outside=0.0)` for line excesses on a continuum, with positivity checked on the total; `Tabulated` (merged in PR #124, provisional) becomes a node spectrum;
-- `System.total_spectrum` for OI_FLUX;
-- VISPHI with the pipeline's continuum normalisation, and a test in the resolved regime;
+- `System.total_spectrum` for OI_FLUX (the grey scale and low-order polynomial in λ of OI_FLUX marginalise analytically: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 4);
+- VISPHI with the pipeline's continuum normalisation, and a test in the resolved regime (a per-baseline, per-frame offset and slope marginalise analytically, which puts the continuum projection on a sound footing: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 5);
 - error floors sharing one function with the fitted `noise=` terms;
 - a documented rule for when smearing matters, with a real-data check;
 - a prior on the reference component's spectrum, and docs on its degeneracy with the others (S §2.2b);
@@ -523,8 +525,8 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
   - per-baseline gains;
   - a chromatic mode from coherence loss, exp(−a/λ²).
 
-  They are marginalised analytically by Woodbury, as a small-log-gain approximation, so the likelihood keeps one whitened residual vector plus a log-determinant.
-- **No closure-phase offsets by default.** If calibrators show non-closing errors, use the baseline-based form T·e, a small-phase approximation under the chord likelihood (GRAVITY review §13).
+  They are marginalised analytically by Woodbury, as a small-log-gain approximation, so the likelihood keeps one whitened residual vector plus a log-determinant. (Cross-cutting note: [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 1.)
+- **No closure-phase offsets by default.** If calibrators show non-closing errors, use the baseline-based form T·e, a small-phase approximation under the chord likelihood (GRAVITY review §13). (Cross-cutting note: [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 2.)
 - **Widths** are fitted or known (`vis_gain`, and optionally `phi_offset`, in the per-dataset `noise=` specification). This needs `OIData.frame` (§2.5 of the same note).
 
 **Tests:**
@@ -566,6 +568,33 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 - **The dual-field (in-field) calibrator recipe.** Done in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti) (`virgil-vlti-calibrate --dual-field`), not in the core (S §2.7). Its transfer-function error should become 6d's known-width gains.
 
 **Merge order (historical).** The Apep agent's library commits (`EllipticalGaussian`, `Tabulated`, fitted error terms `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) were merged in PR #124, before 6a. 6a's node spectra will replace `Tabulated`, and 6d extends `noise=`.
+
+## Analytic marginalisation of linear parameters (cross-cutting)
+**Principle** (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136). If the model is linear in some parameters w, m = m₀(θ) + A(θ)w, and w has a Gaussian prior N(μ, Λ), then w marginalises exactly: d ~ N(m₀ + Aμ, C + AΛAᵀ), where C is the data covariance.
+- Evaluate it with the Woodbury identity and the matrix-determinant lemma, in O(N k²) for k linear parameters.
+- Keep the log-determinant. It depends on θ, and dropping it biases θ.
+- After the fit, report w's conditional mean and covariance.
+- Use a finite Λ only. A flat prior is the limit of a broad one only up to a constant.
+- For positive quantities, use it only with broad priors well away from zero, because the Gaussian is not truncated.
+
+**Where it does not apply.** Visibilities are normalised, V = Σ fᵢVᵢ / Σ fᵢ, and V² and closure phases are nonlinear in V. So component flux ratios, spectral amplitudes and image pixels cannot be marginalised this way in visibility or closure-phase fits.
+
+**Uses**
+
+| # | Linear parameters | Data | Status | Value |
+|---|---|---|---|---|
+| 1 | Telescope, baseline and chromatic gains | log\|V\| (V, V²) | Done in 6d (#180), as a small-gain approximation | Calibrated errors where diagonal inflation fails (6d gains study) |
+| 2 | Closure-phase offsets per frame | Closure phases | Done in 6d (#189), as a small-phase approximation | As 1, for non-closing phase errors |
+| 3 | RV zero points per instrument (γ and offsets) | RVs | Done (#192) | Removes a fitted nuisance per instrument |
+| 4 | OI_FLUX grey scale k and a low-order polynomial in λ, written as cⱼλʲ·Σfᵢ | FLUX | In progress in the 6a observables PR | High: exact, and removes a fitted nuisance for every dataset |
+| 5 | VISPHI continuum offset and slope per baseline and frame; NFLUX normalisation | VISPHI, NFLUX | In progress in the 6a observables PR | High: the pipeline's continuum subtraction is the flat-prior limit, so this puts the projection on a sound footing, and a finite-prior version comes almost for free |
+| 6 | Thiele–Innes A, B, F, G at fixed (P, e, T₀) | Positions only | Design note in progress (`design/thiele_innes_marginalisation.md`) | High for position-only orbits: NUTS works in 3 dimensions instead of 7. Open question: the prior, because a Gaussian on A, B, F, G implies a non-standard Campbell-element prior, so reweight or state it. It does not extend to joint position + RV fits; for closure-phase orbit fits it only gives starting points |
+| 7 | Overall V² scale s² (a fully resolved background, or a per-frame V² calibration factor) | V² only | Noted, not planned | Exact in V², whereas 6d is a small-gain approximation in log\|V\|, so it mostly overlaps 6d; the prior s² ∈ (0, 1] is not Gaussian |
+| 8 | Companion flux f, to first order in f ≪ 1 | V², closure phases | Done (#184; flat prior, profiled). Gauss–Newton iteration (`n_iter`) removes the bias for bright companions, and a Gaussian prior on f (`prior=(mean, sd)`) gives a marginal-likelihood detection map (`log_bayes_factor`) | Fast detection maps |
+| 9 | Spectral line or node amplitudes and continuum ratios | OI_FLUX alone | Noted, not planned | Exact only in spectrum-only fits; useful for starting values |
+| 10 | Image pixels | Complex visibilities only | Already in the sparse/CLEAN NNLS major cycles | Positive least squares, not Gaussian marginalisation |
+
+**Log (2026-10-05):** approved by Ben.
 
 ## Stage 6e: closure amplitudes (after 6d; not yet estimated)
 From the virgil-validation comparison with eht-imaging, which fits closure amplitudes (`camp`) and log closure amplitudes (`logcamp`, `logcamp_diag`).
