@@ -9,6 +9,18 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`clean(base_priors=...)`** fits named parameters of the base (e.g. a
+  companion's position) together with the components' fluxes at every major
+  cycle. CLEAN also ends with a final major cycle when it stops at the target
+  or at `max_iterations`, so its fluxes are refitted even when the data start
+  close to the target and no cycle has run.
+
+- **`fit(lbfgs_memory=50)`.** L-BFGS now keeps 50 past steps (optax's default
+  is 10). On regularised images, 10 stopped short of the optimum at many
+  weights; 50 reached lower losses (lower χ² and lower penalty together) and
+  converged in 2–3× fewer steps for StarletL1, at a higher cost per step.
+  L-BFGS fits therefore change slightly from earlier versions.
+
 - **Isotropic-orientation priors.** `virgil.priors` has
   `IsotropicInclination(low=0, high=180)` (degrees, density ∝ sin i, so cos i
   is uniform; use `(0, 90)` when only |cos i| is identifiable) and
