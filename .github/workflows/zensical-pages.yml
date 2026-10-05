@@ -11,6 +11,14 @@ on:
 permissions:
   contents: read
 
+# Pages allows one deployment at a time. Merges landing in quick succession
+# otherwise start overlapping runs and the later deploy fails with "due to in
+# progress deployment". Queue runs instead (a newer pending run replaces an
+# older pending one) and never cancel a deploy that is already under way.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   build-zensical:
     runs-on: ubuntu-latest
