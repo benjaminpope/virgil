@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh the development-carbon page, its ledger and the README badge.
+"""Refresh the development-carbon page, its archive and the README badge.
 
 A thin wrapper around ``carbon_report.py`` from
 claude-code-carbon-dashboard (https://github.com/benjaminpope/
@@ -7,26 +7,25 @@ claude-code-carbon-dashboard), found in ``$CLAUDE_CARBON_HOME`` (default
 ``~/.claude/carbon``). It runs locally only: it reads Claude Code
 transcripts, VS Code chat logs, ``gh`` and ``ssh nt``, none of which CI has.
 
-1. Collect every source into the private ledger
-   (``~/.claude/carbon/ledger-virgil.json``), which keeps full detail.
-2. Redact that ledger and max-merge it into the committed copy,
-   ``docs/generated/dev_carbon_ledger.json``: home directories become
-   ``~``, log paths and job variables are dropped, and data-analysis
-   records lose their names, branches and folders, so no science target
-   appears in the repository.
-3. Cost the committed ledger (offline) into
-   ``docs/generated/dev_carbon.json`` and ``docs/dev_carbon.md``.
-4. Rewrite the README badge between ``<!-- dev-carbon-badge -->`` markers
-   and run ``scripts/sync_tutorial_docs.py`` for ``docs/index.md``.
+``carbon_report.py`` collects every source into its private, per-record
+ledger (``~/.claude/carbon/ledger-virgil.json``) and compacts the records
+whose source has expired, or is about to, into
+``docs/generated/dev_carbon_archive.json``: daily totals by source, model
+or workflow, class and feature, with no PR titles and no names of
+data-analysis work. That archive is the permanent copy in git; live
+records are regenerated from their sources on each run. The report
+combines both into ``docs/generated/dev_carbon.json`` and
+``docs/dev_carbon.md``. This script then rewrites the README badge between
+``<!-- dev-carbon-badge -->`` markers and runs
+``scripts/sync_tutorial_docs.py`` for ``docs/index.md``.
 
 Usage::
 
-    python3 scripts/dev_carbon.py             # fetch, redact, write
-    python3 scripts/dev_carbon.py --offline   # rewrite from the committed ledger
+    python3 scripts/dev_carbon.py             # fetch, archive, write
+    python3 scripts/dev_carbon.py --offline   # from the private ledger only
 """
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -37,7 +36,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "scripts" / "dev_carbon.toml"
-LEDGER = ROOT / "docs" / "generated" / "dev_carbon_ledger.json"
+ARCHIVE = ROOT / "docs" / "generated" / "dev_carbon_archive.json"
 SUMMARY = ROOT / "docs" / "generated" / "dev_carbon.json"
 PAGE = ROOT / "docs" / "dev_carbon.md"
 README = ROOT / "README.md"
@@ -45,8 +44,6 @@ PAGE_URL = "https://benjaminpope.github.io/virgil/dev_carbon/"
 BADGE = re.compile(
     r"<!-- dev-carbon-badge -->.*?<!-- /dev-carbon-badge -->", re.S
 )
-SCIENCE = "data-analysis"
-HOME = str(Path.home())
 
 
 def carbon_home():
@@ -60,111 +57,6 @@ def carbon_home():
             "CLAUDE_CARBON_HOME"
         )
     return home
-
-
-def report(home, *args):
-    cmd = [sys.executable, str(home / "carbon_report.py")]
-    cmd += ["--config", str(CONFIG), *args]
-    subprocess.run(cmd, check=True)
-
-
-def tag(text):
-    """A stable, opaque stand-in for a redacted name."""
-    digest = hashlib.sha1(text.encode()).hexdigest()[:8]
-    return f"{SCIENCE}-{digest}"
-
-
-def tilde(path):
-    path = path or ""
-    return "~" + path[len(HOME) :] if path.startswith(HOME) else path
-
-
-def redact(sources, cfg, cc):
-    """A copy of the private ledger's sources that is safe to commit."""
-    classes = cfg.get("classes", {})
-    slug = cfg["repo"]
-    out = {}
-
-    claude = {}
-    for r in sources.get("claude", {}).values():
-        r = {k: v for k, v in r.items() if k not in ("project", "project_dir")}
-        r["cwd"] = tilde(r.get("cwd"))
-        science = (
-            cc.classify(classes, branch=r.get("branch"), dir=r["cwd"])
-            == "science"
-        )
-        if science:
-            r["branch"] = tag(r.get("branch") or "?")
-            r["cwd"] = SCIENCE
-        key = f"{r['session']}|{r['day']}|{r['model']}|{r.get('branch', '?')}"
-        claude[key] = r
-    out["claude"] = claude
-
-    vscode = {}
-    for rid, r in sources.get("vscode_copilot", {}).items():
-        r = dict(r, folders=[tilde(f) for f in r.get("folders", [])])
-        if any(cc.classify(classes, dir=f) == "science" for f in r["folders"]):
-            r["folders"] = [SCIENCE]
-        vscode[rid] = r
-    out["vscode_copilot"] = vscode
-
-    slurm = {}
-    drop = ("log", "ledger", "vars", "remote")
-    for jid, r in sources.get("slurm", {}).items():
-        r = {k: v for k, v in r.items() if k not in drop}
-        if r.get("log_dir"):
-            r["log_dir"] = "/".join(Path(r["log_dir"]).parts[-2:])
-        science = (
-            cc.classify(classes, job=r.get("name"), dir=r.get("log_dir"))
-            == "science"
-        )
-        if science:
-            r["name"] = SCIENCE
-            r["log_dir"] = SCIENCE
-            for k in ("sbatch", "lib", "sha", "array", "submitted"):
-                r.pop(k, None)
-        slurm[jid] = r
-    out["slurm"] = slurm
-
-    def science_branch(branch):
-        return cc.classify(classes, branch=branch) == "science"
-
-    for name in ("gha", "copilot_runs"):
-        runs = {}
-        for k, r in sources.get(name, {}).items():
-            r = {f: v for f, v in r.items() if f != "title"}
-            if science_branch(r.get("head_branch")):
-                r["head_branch"] = tag(r["head_branch"])
-            runs[k] = r
-        out[name] = runs
-    prs = {}
-    for k, r in sources.get("prs", {}).items():
-        if science_branch(r.get("branch")):
-            r = dict(r, branch=tag(r["branch"]), title="data analysis")
-        prs[k] = r
-    out["prs"] = prs
-
-    # Account-wide Copilot records: keep only this repository by name.
-    repo = slug.split("/")[1]
-    agent = {}
-    for k, r in sources.get("copilot_agent_prs", {}).items():
-        r = {f: v for f, v in r.items() if f != "title"}
-        if r.get("repo") != slug:
-            r = {"repo": "other", "number": 0, "month": r.get("month", "")}
-            k = f"other#{hashlib.sha1(k.encode()).hexdigest()[:8]}"
-        agent[k] = r
-    out["copilot_agent_prs"] = agent
-    billing = {}
-    for k, r in sources.get("copilot_billing", {}).items():
-        if r.get("repo") not in ("", repo):
-            r = dict(r, repo="other")
-            k = f"{r['day']}|{r['sku']}|other"
-        billing[k] = r
-    out["copilot_billing"] = billing
-
-    for name in ("copilot_premium", "vscode_months", "sha_prs"):
-        out[name] = sources.get(name, {})
-    return out
 
 
 def science_section(summary):
@@ -286,7 +178,7 @@ def main(argv=None):
     ap.add_argument(
         "--offline",
         action="store_true",
-        help="skip fetching; rewrite the outputs from the committed ledger",
+        help="skip fetching; report from the private ledger and the archive",
     )
     ap.add_argument(
         "--sources", help="comma-separated subset of sources to fetch"
@@ -294,44 +186,16 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     home = carbon_home()
-    sys.path.insert(0, str(home))
-    import carbon_common as cc
-    import carbon_report as cr
-
-    cfg = cr.load_config(CONFIG)
-    if not args.offline:
-        private = Path(
-            cfg.get("ledger") or home / "ledger-virgil.json"
-        ).expanduser()
-        with tempfile.TemporaryDirectory() as tmp:
-            extra = ["--sources", args.sources] if args.sources else []
-            # A full (non-offline) report also looks up the PRs of pinned
-            # commits and stores them in the ledger.
-            report(
-                home,
-                "--ledger",
-                str(private),
-                *extra,
-                "--summary",
-                str(Path(tmp) / "private.json"),
-            )
-        sources = cc.load_ledger(private)["sources"]
-        cc.update_ledger(LEDGER, redact(sources, cfg, cc))
-        LEDGER.with_suffix(".lock").unlink(missing_ok=True)
-
+    cmd = [sys.executable, str(home / "carbon_report.py")]
+    cmd += ["--config", str(CONFIG), "--archive", str(ARCHIVE)]
+    if args.offline:
+        cmd.append("--offline")
+    if args.sources:
+        cmd += ["--sources", args.sources]
     with tempfile.TemporaryDirectory() as tmp:
         fragment = Path(tmp) / "page.md"
-        report(
-            home,
-            "--ledger",
-            str(LEDGER),
-            "--offline",
-            "--markdown",
-            str(fragment),
-            "--summary",
-            str(SUMMARY),
-        )
-        LEDGER.with_suffix(".lock").unlink(missing_ok=True)
+        cmd += ["--markdown", str(fragment), "--summary", str(SUMMARY)]
+        subprocess.run(cmd, check=True)
         summary = json.loads(SUMMARY.read_text())
         PAGE.write_text(page(fragment.read_text(), summary), "utf-8")
     write_badge(summary)

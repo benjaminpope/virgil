@@ -5,8 +5,10 @@
 
 repo = "benjaminpope/virgil"
 github_user = "benjaminpope"
-# The raw ledger stays private, in ~/.claude/carbon/ledger-virgil.json;
-# dev_carbon.py commits a redacted copy to docs/generated/.
+# The per-record ledger stays private (~/.claude/carbon/ledger-virgil.json);
+# only daily totals of expired records are committed, as
+# docs/generated/dev_carbon_archive.json.
+hide_excluded = true
 
 [claude]
 # The main checkout and its worktrees (.claude/worktrees/*), the sessions
@@ -42,22 +44,19 @@ exclude = []
 # line. Covers the Apep, nuHor (HR 4049, HD 206893, PIONIER), ELR/PAVO,
 # IW Car, VLTI calibration (GRAVITY PCA, VLTI notebooks) and ESO archive
 # (download, pipeline image, reductions and fits) work, plus jobs whose
-# purpose is unclear. "data-analysis*" matches the names dev_carbon.py
-# writes when it redacts these records.
+# purpose is unclear. hide_excluded drops their names from every output,
+# including the archive committed to git.
 [classes.science]
 jobs = [
-    "data-analysis*",
     "apep*", "elr*", "pionier*", "hr4049*", "hd206893*", "iwcar*",
     "gcp_*", "gravity_cal*", "vlti*", "eso_*", "sweep-*", "gpu-test",
 ]
 dirs = [
-    "data-analysis*",
     "*apep*", "*nuHor*", "*hr4049*", "*hd206893*", "*iwcar*", "*elr-pavo*",
     "*drpangloss-elr*", "*gravity_cal*", "*vlti*", "*eso_*", "*pionier*",
     "*lbfgs_sweep_diag*",
 ]
 branches = [
-    "data-analysis*",
     "apep-*", "*-apep-*", "elr-*pavo*", "elr-robustness-review", "elr-s6-chara-notebook",
     "remove-elr-pavo",
     "gravity-calibration-review", "move-gravity-review", "pds70-disk",

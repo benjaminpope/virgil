@@ -3,74 +3,73 @@
 
 An estimate of the energy and carbon emitted in developing and validating virgil: AI coding assistants, continuous integration and cluster jobs. It is refreshed by hand with `python3 scripts/dev_carbon.py`, so it lags the repository.
 
-Estimated development carbon for `benjaminpope/virgil` from 2026-03-03 to 2026-10-06: **93.6 kg CO₂e** (range 72.7–201 kg), from 252 kWh (range 191–538 kWh). Data analysis runs are listed separately below and are not in this total.
+Estimated development carbon for `benjaminpope/virgil` from 2026-03-03 to 2026-10-06: **93.9 kg CO₂e** (range 73–202 kg), from 254 kWh (range 192–540 kWh). Data analysis runs are listed separately below and are not in this total.
 
 ## By source
 
 | Source | Items | kWh | kWh range | kg CO₂e | kg range |
 |---|---:|---:|---:|---:|---:|
-| Claude Code | 326 | 202 | 157–381 | 66.5 | 51.8–126 |
+| Claude Code | 328 | 203 | 158–383 | 66.9 | 52.1–126 |
 | OzSTAR/NT Slurm jobs | 771 | 24.4 | 23.5–58 | 18.1 | 17.4–42.9 |
-| Copilot cloud agent and review | 253 | 11.7 | 3.28–45.1 | 3.89 | 1.09–14.9 |
+| Copilot cloud agent and review | 251 | 11.7 | 3.28–45.1 | 3.89 | 1.09–14.9 |
 | VS Code Copilot Chat | 253 | 9.35 | 3.82–48.9 | 3.09 | 1.26–16.1 |
-| GitHub Actions CI | 2234 | 5.28 | 3.31–5.28 | 1.95 | 1.22–1.95 |
+| GitHub Actions CI | 2170 | 5.23 | 3.28–5.23 | 1.94 | 1.21–1.94 |
 
 ## By call and token type
 
 | Source | Type | Items | kWh | kg CO₂e | kg range |
 |---|---|---:|---:|---:|---:|
-| Claude Code | model calls | 326 | 202 | 66.5 | 51.8–126 |
+| Claude Code | model calls | 328 | 203 | 66.9 | 52.1–126 |
 | OzSTAR/NT Slurm jobs | GPU job | 462 | 23.2 | 17.2 | 16.5–42 |
 | Copilot cloud agent and review | code review | 192 | 10.5 | 3.47 | 0.947–13.3 |
 | VS Code Copilot Chat | local chat | 88 | 6.23 | 2.06 | 1.26–10.6 |
-| GitHub Actions CI | CI | 2234 | 5.28 | 1.95 | 1.22–1.95 |
+| GitHub Actions CI | CI | 2170 | 5.23 | 1.94 | 1.21–1.94 |
 | VS Code Copilot Chat | local chat (imputed tokens) | 165 | 3.12 | 1.03 | 0–5.49 |
 | OzSTAR/NT Slurm jobs | CPU job | 309 | 1.25 | 0.924 | 0.924–0.924 |
-| Copilot cloud agent and review | cloud agent | 61 | 1.27 | 0.424 | 0.147–1.57 |
+| Copilot cloud agent and review | cloud agent | 59 | 1.27 | 0.424 | 0.147–1.57 |
 
 Claude Code by token type (mid estimate):
 
 | Token type | Tokens | kg CO₂e |
 |---|---:|---:|
-| input | 38,000 | 0.00321 |
-| cache write | 84,682,783 | 7.19 |
-| cache read | 5,579,447,749 | 39.3 |
-| output | 10,612,807 | 20 |
+| input | 38,246 | 0.00323 |
+| cache write | 85,253,901 | 7.24 |
+| cache read | 5,608,252,806 | 39.6 |
+| output | 10,671,375 | 20.1 |
 
 By model or workflow:
 
 | Source | Model or workflow | Items | kg CO₂e | kg range |
 |---|---|---:|---:|---:|
-| Claude Code | Claude Opus | 245 | 65.4 | 50.9–123 |
-| GitHub Actions CI | automated tests | 668 | 1.8 | 1.13–1.8 |
-| Claude Code | Claude Sonnet | 80 | 1.15 | 0.922–2.07 |
+| Claude Code | Claude Opus | 246 | 65.8 | 51.2–124 |
+| GitHub Actions CI | automated tests | 644 | 1.79 | 1.12–1.79 |
+| Claude Code | Claude Sonnet | 81 | 1.15 | 0.924–2.07 |
 | VS Code Copilot Chat | gpt-5.3-codex | 172 | 1.07 | 0.0272–5.77 |
 | VS Code Copilot Chat | gpt-5.6-terra | 23 | 1.02 | 0.509–5.94 |
 | VS Code Copilot Chat | claude-sonnet-5 | 19 | 0.393 | 0.393–1.52 |
 | VS Code Copilot Chat | gpt-5.5-2026-04-23 | 13 | 0.285 | 0.142–1.09 |
 | VS Code Copilot Chat | gpt-5.6-sol | 5 | 0.124 | 0.062–1.12 |
-| GitHub Actions CI | Documentation | 668 | 0.0797 | 0.0499–0.0797 |
+| GitHub Actions CI | Documentation | 643 | 0.0793 | 0.0497–0.0793 |
 | VS Code Copilot Chat | gpt-5.5 | 2 | 0.0708 | 0.0354–0.179 |
 | VS Code Copilot Chat | claude-opus-5 | 3 | 0.0516 | 0.0516–0.121 |
-| GitHub Actions CI | lint | 605 | 0.041 | 0.0257–0.041 |
+| GitHub Actions CI | lint | 599 | 0.0408 | 0.0256–0.0408 |
 | VS Code Copilot Chat | gpt-5.6-luna | 7 | 0.0378 | 0.0192–0.269 |
-| GitHub Actions CI | Documentation (Zensical) | 246 | 0.0242 | 0.0152–0.0242 |
+| GitHub Actions CI | Documentation (Zensical) | 240 | 0.0236 | 0.0148–0.0236 |
 | VS Code Copilot Chat | mai-code-1.1-flash | 5 | 0.0196 | 0.0196–0.0617 |
 | VS Code Copilot Chat | claude-haiku-4.5 | 3 | 0.0113 | 0.00215–0.0512 |
 | VS Code Copilot Chat | copilot/auto | 1 | 0.00897 | 0–0.0179 |
 | GitHub Actions CI | Dependency Graph | 22 | 0.00572 | 0.00358–0.00572 |
 | Claude Code | Claude Haiku | 1 | 0.00468 | 0.00417–0.00675 |
-| GitHub Actions CI | copilot-setup-steps | 16 | <0.001 | <0.001–<0.001 |
-| GitHub Actions CI | pages-build-deployment | 8 | <0.001 | <0.001–<0.001 |
-| GitHub Actions CI | publish to PyPI | 1 | <0.001 | <0.001–<0.001 |
+| GitHub Actions CI | copilot-setup-steps | 15 | <0.001 | <0.001–<0.001 |
+| GitHub Actions CI | pages-build-deployment | 7 | <0.001 | <0.001–<0.001 |
 
-## By feature (top 15 of 223)
+## By feature (top 15 of 218)
 
 Each item is attributed to a pull request through its branch, the commit a job pinned, or the PR a Copilot run served, and labelled with the PR title.
 
 | Feature | Items | kg CO₂e | kg range |
 |---|---:|---:|---:|
-| main / unattributed | 466 | 40.8 | 30.6–87.2 |
+| main / unattributed | 465 | 40.9 | 30.7–87.5 |
 | Validation: imaging contests | 458 | 16.9 | 16.2–41.7 |
 | [#201](https://github.com/benjaminpope/virgil/pull/201) virgil docs minor changes | 33 | 5.78 | 4.45–11 |
 | [#91](https://github.com/benjaminpope/virgil/pull/91) Imaging Stage 5c: error-bar scale, sampling basics, and imaging tutorials 2–4 | 22 | 2.49 | 1.99–4.46 |
@@ -106,7 +105,7 @@ Compute for science with virgil (fits to observations, data reduction and archiv
 
 | Item | Records | kWh | kg CO₂e | kg range |
 |---|---:|---:|---:|---:|
-| Excluded data analysis | 479 | 26.7 | 11.6 | 9.88–18 |
+| Excluded data analysis | 504 | 27.2 | 12 | 9.89–18 |
 
 ## Scope and caveats
 
