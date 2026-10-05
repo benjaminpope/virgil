@@ -373,6 +373,12 @@ The last two came out of fitting GRAVITY data on Apep, but are written as genera
 6. **6b and 6c** (joint multi-filter AMI; `ImageCube`), then **milestone 2**.
 7. **Stage 7** (hardening and release), then **Stage 8** (the rest of the PMOIRED parity).
 
+**Binary-detection parity (from validation).** Two features that CANDID and fouriever have for finding companions are being implemented, each in its own PR:
+- injection-method detection limits (CANDID): in progress;
+- a fast linearised flux map (fouriever's `lincmap`): in progress.
+
+**Log (2026-10-05):** the additions to Stages 6a, 6e, 7 and 8 and the note above come from feature suggestions made in the virgil-validation session, which compared virgil with eht-imaging, CANDID, fouriever, MPoL and PMOIRED. Ben approved them the same day.
+
 ## Stage 6.0: urgent reader and likelihood fixes (done; PR #120)
 From the GRAVITY calibration review ([`gravity_calibration_review.md`](https://github.com/benjaminpope/virgil-vlti/blob/main/design/gravity_calibration_review.md), now in virgil-vlti), footguns 1, 2, 3 and 9. These affected every existing analysis of GRAVITY and of PIONIER (or any four-telescope) data.
 - **Only independent closure phases, with their covariance diagonalised first.** Triangles that share baselines (one frame and channel) are grouped. Their covariance is modelled as C = D^½ R D^½ with R = T Tᵀ/3 (Kammerer et al. 2020's equal-noise approximation: the reported σ on the diagonal, and correlations of ±1/3 between triangles that share a baseline), not T diag(s) Tᵀ from per-baseline errors, as an earlier draft of this plan had it. The likelihood whitens the independent combinations (`OIData.cp_noise`, `n_independent`). Three-telescope data are unchanged.
@@ -490,6 +496,7 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
   - Read and model T3AMP, OI_FLUX (FLUX and NFLUX), differential phase, normalised |V| and V², and correlated flux.
   - Allow V² with |V|, and closure phase with VISPHI, in one dataset.
   - Normalisation uses continuum ranges, or the analytic continuum of the lines.
+  - **Optional debiasing of OI_VIS amplitudes** (eht-imaging's `debias`), in the reader PR that reads VISAMP. |V| measured at low SNR is biased high, because noise adds in quadrature to the amplitude, so low-SNR GRAVITY VISAMP should either offer a debiasing option or at least document the bias and when it matters. Off by default.
 - **Instrumental effects.** A spectral-resolution kernel, and bandwidth smearing by oversampling in wavelength.
 - **Primary beam (fibre coupling), optional** (GRAVITY review §1; decided 2026-10-03). A Gaussian coupling of FWHM ≈ λ/D, optionally broadened by tip-tilt jitter, per telescope. It weights each component's flux, integrated over its brightness for extended components, by its position. One coupling model feeds both the coupled photometry (OI_FLUX) and the visibilities' normalisation. `System.total_spectrum` stays the *intrinsic* total.
 - **Errors.** `OIData` error floors (absolute and relative) and flags, alongside `with_error_scale`.
@@ -540,6 +547,12 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 
 **Merge order (historical).** The Apep agent's library commits (`EllipticalGaussian`, `Tabulated`, fitted error terms `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) were merged in PR #124, before 6a. 6a's node spectra will replace `Tabulated`, and 6d extends `noise=`.
 
+## Stage 6e: closure amplitudes (after 6d; not yet estimated)
+From the virgil-validation comparison with eht-imaging, which fits closure amplitudes (`camp`) and log closure amplitudes (`logcamp`, `logcamp_diag`).
+- **Why.** Closure amplitudes are immune to telescope-based amplitude miscalibration. That is valuable for masking data with a varying pupil.
+- **Build.** Closure amplitudes (and their logarithms) beside closure phases in `OIData`, correlated as the closure phases are (quadrangles that share baselines), so the likelihood still has one whitened residual vector.
+- **Design note first.** For VLTI this overlaps with 6d: 6d models telescope-based gains, while closure amplitudes discard them. The note should say when each is preferable, and it is written after 6d lands.
+
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop: Item 2 is Stage 6b and item 3 is Stage 6c. Both use 6a's node spectra for per-filter or per-channel fluxes.
 1. **Grey image with a spectral index.** This already works through `flux=PowerLaw(...)`. Add documentation and an MWE only.
@@ -585,8 +598,14 @@ The review also suggests restructuring the plan: replace "Order of work" with a 
     - a least-squares (LM) form of the entropy term;
     - a looser, better-founded stopping rule.
   - **Success test:** an L-curve from w = 0.1 to 10⁴ that converges at every weight within the default step limit, in float32 and float64.
+  - **Multi-start or annealed-weight image fitting** (priority: image fits are non-convex, and a single start can settle in a poor local minimum). Two independent pieces of evidence:
+    - virgil-validation found that, from the same start, eht-imaging's L-BFGS-B and virgil end in different local minima, although from each other's solution both agree to 5e-8 in loss. The minima differ; the optimisers do not.
+    - An independent real-data analysis of a GRAVITY dataset found Levenberg–Marquardt fits of `GaussianField` images from random latent starts getting trapped: not converged after 10⁴ steps, with χ²/N about 3.
+
+    Possible helpers: a multi-start that keeps the lowest-loss converged fit, or imaging in rounds with blurring and restarting, as eht-imaging users do.
 - API review for consistency and naming, with docstrings (units and examples) for every public object.
 - A mkdocs API page and a "choosing a regulariser and prior" guide.
+  - **K-fold cross-validation for the regularisation weight** (MPoL's `CrossValidate`): hold out folds of the data, fit the rest at each weight, and choose the weight with the lowest held-out χ². Unlike `l_curve`, `discrepancy` and the evidence, it does not assume the error bars are right, which matters for real VLTI data. The guide should compare it with those three.
 - Update `design/chromatic_sources.md` to mark `Image` as done.
 - Remove any leftovers, and do a final full-suite run under float32 and x64.
 - A version bump and a changelog entry.
@@ -597,7 +616,7 @@ The review also suggests restructuring the plan: replace "Order of work" with a 
 See [`pmoired_parity.md`](pmoired_parity.md). Orbits, first listed here, are now Stage 6a.1.
 - **`Projected(source, inc, pa)`.** A wrapper that stretches uv, like `Rotated`. It makes any component elliptical, and replaces per-class `inc`/`pa`.
 - **`RadialProfile`.** A callable I(r) with inner and outer radii, transformed by a fixed-quadrature Hankel transform: order 0, plus order n for azimuthal harmonics. It covers thick rings, power-law and limb-darkened disks, and harmonics on any profile. Crescents are differences of offset disks.
-- **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole.
+- **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole. Resample whole snapshots or whole baselines, never single points, since the points within one are correlated (as PMOIRED and CANDID's `fitBoot` do). The virgil-validation PMOIRED comparison is its test.
 - **Spectral correlations between channels.** Now Stage 6d, because GRAVITY data need them.
 
 **Tests:**
@@ -625,7 +644,7 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 | Twin-folding helpers | We fit V²-only data routinely |
 | Basis and decoder parameterisations | zodiax 0.6 `Map`/`Mask`/decoders are released |
 | MGVI/geoVI | Not planned |
-| Cross-validation for the weight (e.g. held-out DISCO modes) | Not now; discrepancy, L-curve and (Stage 5) evidence suffice |
+| Cross-validation for the weight (e.g. held-out DISCO modes) | K-fold cross-validation is planned in Stage 7; held-out DISCO modes only if that proves too coarse |
 | Deep Probabilistic Imaging and learned priors | Not planned; covered by other work in the group |
 | Top-Set surveys over synthetic truths | Not planned here; sophisticated PDS 70 truths are being built separately |
 | Bandwidth-smearing forward model | A real field-of-view need |
