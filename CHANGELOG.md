@@ -9,6 +9,16 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Gauss-Newton and a marginal-likelihood map in `linear_flux_grid`.**
+  `n_iter=k` relinearises the whitened residuals at the current flux per pixel
+  for `k` extra steps, removing the bias for bright companions (at f = 0.3,
+  `n_iter=3` agrees with `optimized_flux_grid` to 3e-7 and with the Laplace
+  `sigma_f` to 2e-5, where `n_iter=0` is 34% low). `prior=(mean, sd)` puts a
+  Gaussian prior on the flux and returns a dict that adds `posterior_mean`,
+  `posterior_sd` and `log_bayes_factor` (closed-form evidence ratio against
+  f = 0, in the linearised model about the final point). Defaults are
+  unchanged.
+
 - **Fitted RV jitter.** `RVData.term(params, jitter="rv_jitter")` inflates the
   errors to `sqrt(d_rv² + s²)` with `s` a fitted value (km/s; give it a
   half-normal or log-uniform prior). The term protocol gains an optional
