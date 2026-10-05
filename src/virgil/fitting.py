@@ -281,9 +281,9 @@ class _Objective(eqx.Module):
         values = self.constrain(z)
         if self._has_term_norms:
             raise TypeError(
-                "Likelihood terms with fitted error terms (an RV jitter) "
-                "have no least-squares form (their normalisation depends on "
-                "them); fit with method='lbfgs' or 'adam'."
+                "Likelihood terms with a log_norm (a fitted RV jitter, or "
+                "the Jacobian of a position-angle prior) have no "
+                "least-squares form; fit with method='lbfgs' or 'adam'."
             )
         parts = self.data_residuals(model)
         parts += [term(values) for term in self.likelihoods]

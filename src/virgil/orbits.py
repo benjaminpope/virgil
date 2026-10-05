@@ -50,6 +50,8 @@ __all__ = [
     "ThieleInnesOrbit",
     "distance_pc",
     "orientation_from_varpi",
+    "position_angle_log_jacobian",
+    "position_angle_prior",
     "orientation_priors",
     "starting_orbits",
     "total_mass",
@@ -229,6 +231,52 @@ class KeplerOrbit(zx.Base):
         omega, Omega = orientation_from_varpi(
             varpi, Omega=Omega, two_Omega=two_Omega
         )
+        return cls(period, dt_peri, ecc, inc, omega, Omega, a_mas, t_ref)
+
+    @classmethod
+    def from_position_angle(
+        cls, period, theta, ecc, inc, omega, Omega, a_mas, t_ref=0.0
+    ):
+        """The orbit whose position angle at ``t_ref`` is ``theta``.
+
+        An alternative to ``dt_peri`` for short arcs, after Thompson et al.
+        (2023, AJ 166, 164): astrometry measures the position angle at an
+        epoch directly. With φ = θ - Ω, the argument of latitude u = ω + f
+        at ``t_ref`` follows from (cos φ, sin φ) ∝ (cos u, sin u cos i):
+        u = atan2(sin φ / cos i, cos φ); then the true anomaly f = u - ω,
+        the eccentric and mean anomalies, and ``dt_peri = -M P / 2π`` (in
+        [-P/2, P/2)). Sample ``theta`` as an
+        [`AngleVector`][virgil.angles.AngleVector], and add
+        [`position_angle_prior`][virgil.orbits.position_angle_prior] to
+        the likelihood terms, so that the prior stays uniform in the time
+        of periastron.
+
+        **Singular at i = 90°**, where the position angle takes only two
+        values (Ω and Ω + 180°) and does not fix the phase; a concrete
+        ``inc`` of 90° is rejected. Near edge-on the map is badly
+        conditioned: keep ``dt_peri``, or use
+        [`StateVectorOrbit`][virgil.orbits.StateVectorOrbit].
+
+        Parameters
+        ----------
+        theta : float
+            Position angle of the secondary at ``t_ref`` (degrees, North
+            through East).
+        period, ecc, inc, omega, Omega, a_mas, t_ref
+            As for ``KeplerOrbit``.
+        """
+        inc_value = concrete(inc)
+        if inc_value is not None and onp.any(
+            onp.abs(onp.cos(onp.deg2rad(onp.asarray(inc_value, float))))
+            < 1e-12
+        ):
+            raise ValueError(
+                "KeplerOrbit.from_position_angle: inc = 90° is singular "
+                "(the position angle takes only two values); use dt_peri "
+                "or StateVectorOrbit for edge-on orbits."
+            )
+        mean = _mean_anomaly_at_ref(theta, ecc, inc, omega, Omega)
+        dt_peri = -mean * np.asarray(period, float) / (2.0 * np.pi)
         return cls(period, dt_peri, ecc, inc, omega, Omega, a_mas, t_ref)
 
     def thiele_innes(self):
@@ -1179,6 +1227,108 @@ def orientation_from_varpi(varpi, *, Omega=None, two_Omega=None):
     if Omega is None:
         Omega = 0.5 * np.mod(two_Omega, 360.0)
     return np.mod(varpi - Omega, 360.0), Omega
+
+
+def _true_anomaly_at_ref(theta, inc, omega, Omega):
+    """f (radians) at the epoch where the position angle is ``theta``
+    (degrees), from u = atan2(sin φ / cos i, cos φ), φ = θ - Ω."""
+    phi = np.deg2rad(theta - Omega)
+    u = np.arctan2(np.sin(phi) / np.cos(np.deg2rad(inc)), np.cos(phi))
+    return u - np.deg2rad(omega)
+
+
+def _mean_anomaly_at_ref(theta, ecc, inc, omega, Omega):
+    """M in [-π, π) at the epoch where the position angle is ``theta``."""
+    f = _true_anomaly_at_ref(theta, inc, omega, Omega)
+    ecc = np.asarray(ecc, float)
+    ecc_anomaly = np.arctan2(
+        np.sqrt(1.0 - ecc**2) * np.sin(f), ecc + np.cos(f)
+    )
+    mean = ecc_anomaly - ecc * np.sin(ecc_anomaly)
+    return np.mod(mean + np.pi, 2.0 * np.pi) - np.pi
+
+
+def position_angle_log_jacobian(theta, ecc, inc, omega, Omega):
+    """log|∂M/∂θ| at fixed (e, i, ω, Ω), for a prior uniform in t_peri.
+
+    The invariant prior on the epoch is uniform in the time of periastron,
+    i.e. in the mean anomaly M at ``t_ref`` (a translation), not in the
+    position angle θ there. Sampling θ uniformly (an
+    [`AngleVector`][virgil.angles.AngleVector]) and adding this term gives
+    back the uniform prior in M:
+
+        log|∂M/∂θ| = 3/2 log(1 - e²) - 2 log(1 + e cos f) + log|cos i|
+                     - log(cos²φ cos²i + sin²φ),  φ = θ - Ω,
+
+    from dM/df = (1 - e²)^{3/2}/(1 + e cos f)² and du/dφ = cos i /
+    (cos²φ cos²i + sin²φ). Over a full turn of θ it integrates to 2π, so
+    the prior stays normalised. It diverges at i = 90° (see
+    [`KeplerOrbit.from_position_angle`][virgil.orbits.KeplerOrbit.from_position_angle]).
+    All angles in degrees.
+    """
+    f = _true_anomaly_at_ref(theta, inc, omega, Omega)
+    phi = np.deg2rad(theta - Omega)
+    cos_i = np.cos(np.deg2rad(inc))
+    ecc = np.asarray(ecc, float)
+    return (
+        1.5 * np.log1p(-(ecc**2))
+        - 2.0 * np.log1p(ecc * np.cos(f))
+        + np.log(np.abs(cos_i))
+        - np.log(np.cos(phi) ** 2 * cos_i**2 + np.sin(phi) ** 2)
+    )
+
+
+class _PositionAnglePrior(eqx.Module):
+    """The log-Jacobian of a θ-sampled orbit, as a ``likelihoods=`` term.
+
+    It has no residuals; ``fit`` adds ``log_norm`` (= -log|∂M/∂θ|) to its
+    loss and ``numpyro_model`` adds ``loglike`` (= log|∂M/∂θ|).
+    """
+
+    orbit_fn: object = eqx.field(static=True)
+    has_log_norm = True
+
+    def _log_jacobian(self, values):
+        orbit = self.orbit_fn(values)
+        dra, ddec, _ = orbit._relative(np.zeros(()))
+        theta = np.rad2deg(np.arctan2(dra, ddec))
+        return position_angle_log_jacobian(
+            theta, orbit.ecc, orbit.inc, orbit.omega, orbit.Omega
+        )
+
+    def __call__(self, values):
+        return np.zeros((0,))
+
+    def log_norm(self, values):
+        return -self._log_jacobian(values)
+
+    def loglike(self, values):
+        return self._log_jacobian(values)
+
+
+def position_angle_prior(orbit_fn):
+    """The prior term that keeps a θ-sampled orbit uniform in t_peri.
+
+    Pass it in ``likelihoods=`` to [`fit`][virgil.fitting.fit] or
+    [`numpyro_model`][virgil.likelihood.numpyro_model], beside the data
+    terms, when ``orbit_fn(values)`` builds its orbit with
+    [`KeplerOrbit.from_position_angle`][virgil.orbits.KeplerOrbit.from_position_angle].
+    It adds [`position_angle_log_jacobian`][virgil.orbits.position_angle_log_jacobian]
+    at the orbit's position angle at ``t_ref`` (its θ) to the log
+    posterior. It has no least-squares form, so ``fit`` then defaults to
+    L-BFGS; its χ² in ``info`` is 0 over 0 points.
+
+    Examples
+    --------
+    >>> priors = {"theta": AngleVector(), "ecc": dist.Uniform(0.0, 0.9)}
+    >>> def orbit_fn(v):
+    ...     return KeplerOrbit.from_position_angle(
+    ...         400.0, v["theta"], v["ecc"], 60.0, 40.0, 110.0, 20.0,
+    ...         t_ref=60500.0,
+    ...     )
+    >>> terms = [positions.term(orbit_fn), position_angle_prior(orbit_fn)]
+    """
+    return _PositionAnglePrior(orbit_fn)
 
 
 def total_mass(orbit, distance_pc):

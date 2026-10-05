@@ -1007,3 +1007,205 @@ def test_an_orbit_fit_in_two_omega_and_varpi_through_the_wrap():
     assert result.info["method"] == "lm"
     assert float(result.values["varpi"]) == pytest.approx(350.0, abs=1e-3)
     assert float(result.values["two_Omega"]) == pytest.approx(20.0, abs=1e-3)
+
+
+def _random_elements(rng, n, edge_on_margin=0.05):
+    """Random elements, prograde and retrograde, away from edge-on."""
+    cos_i = rng.uniform(edge_on_margin, 1.0, n) * rng.choice([-1, 1], n)
+    return dict(
+        period=rng.uniform(50.0, 5000.0, n),
+        ecc=rng.uniform(0.0, 0.95, n),
+        inc=onp.rad2deg(onp.arccos(cos_i)),
+        omega=rng.uniform(0.0, 360.0, n),
+        Omega=rng.uniform(0.0, 360.0, n),
+        a_mas=rng.uniform(1.0, 100.0, n),
+    )
+
+
+def test_position_angle_at_t_ref_round_trips_through_dt_peri():
+    # design/orbit_prior_art.md §4.2: KeplerOrbit → PA at t_ref → back,
+    # over random elements in float64, and the PA of the orbit built from
+    # θ at t_ref is θ.
+    rng = onp.random.default_rng(7)
+    n = 200
+    elements = _random_elements(rng, n)
+    dt_peri = rng.uniform(-0.5, 0.5, n) * elements["period"]
+    theta_in = rng.uniform(0.0, 360.0, n)
+    mjd = T_REF + rng.uniform(-300.0, 300.0, 5)
+    with jax.enable_x64(True):
+        for k in range(n):
+            el = {key: value[k] for key, value in elements.items()}
+            orbit = KeplerOrbit(dt_peri=dt_peri[k], **el, t_ref=T_REF)
+            _, theta = orbit.separation_pa(T_REF)
+            back = KeplerOrbit.from_position_angle(
+                theta=theta, **el, t_ref=T_REF
+            )
+            offset = (float(back.dt_peri) - dt_peri[k]) / el["period"]
+            assert abs(offset - round(offset)) < 1e-12
+            onp.testing.assert_allclose(
+                onp.asarray(back.relative(mjd)),
+                onp.asarray(orbit.relative(mjd)),
+                atol=1e-9 * el["a_mas"],
+            )
+            from_theta = KeplerOrbit.from_position_angle(
+                theta=theta_in[k], **el, t_ref=T_REF
+            )
+            _, pa = from_theta.separation_pa(T_REF)
+            wrapped = (float(pa) - theta_in[k] + 180.0) % 360.0 - 180.0
+            assert abs(wrapped) < 1e-9
+
+
+def _mean_anomaly(theta, el):
+    from virgil.orbits import _mean_anomaly_at_ref
+
+    return onp.asarray(
+        _mean_anomaly_at_ref(
+            theta, el["ecc"], el["inc"], el["omega"], el["Omega"]
+        )
+    )
+
+
+def test_position_angle_jacobian_matches_finite_differences():
+    from virgil.orbits import position_angle_log_jacobian
+
+    rng = onp.random.default_rng(11)
+    elements = _random_elements(rng, 50)
+    step = 1e-5  # degrees
+    with jax.enable_x64(True):
+        for k in range(50):
+            el = {key: value[k] for key, value in elements.items()}
+            theta = rng.uniform(0.0, 360.0)
+            dm = _mean_anomaly(theta + step, el) - _mean_anomaly(
+                theta - step, el
+            )
+            dm = (dm + onp.pi) % (2 * onp.pi) - onp.pi
+            numeric = abs(dm / onp.deg2rad(2 * step))
+            log_j = float(
+                position_angle_log_jacobian(
+                    theta, el["ecc"], el["inc"], el["omega"], el["Omega"]
+                )
+            )
+            assert onp.exp(log_j) == pytest.approx(numeric, rel=1e-6)
+
+
+def test_theta_weighted_by_the_jacobian_is_uniform_in_mean_anomaly():
+    # Monte Carlo: θ uniform, weighted by |∂M/∂θ|, gives uniform M; θ
+    # uniform alone does not (so the term matters), and the weights
+    # average to 1 (the prior stays normalised).
+    from virgil.orbits import position_angle_log_jacobian
+
+    el = dict(ecc=0.7, inc=130.0, omega=75.0, Omega=200.0)
+    theta = onp.random.default_rng(5).uniform(0.0, 360.0, 400_000)
+    with jax.enable_x64(True):
+        weights = onp.exp(
+            onp.asarray(position_angle_log_jacobian(theta, **el))
+        )
+        mean = _mean_anomaly(theta, el)
+    assert weights.mean() == pytest.approx(1.0, rel=0.02)
+    edges = onp.linspace(-onp.pi, onp.pi, 13)
+    weighted = onp.histogram(mean, edges, weights=weights)[0]
+    onp.testing.assert_allclose(weighted / weights.sum(), 1 / 12, rtol=0.03)
+    unweighted = onp.histogram(mean, edges)[0] / mean.size
+    assert onp.max(onp.abs(unweighted * 12 - 1)) > 0.5
+
+
+def test_position_angle_is_singular_edge_on():
+    from virgil.orbits import position_angle_log_jacobian
+
+    el = dict(period=400.0, ecc=0.3, omega=40.0, Omega=110.0, a_mas=20.0)
+    with pytest.raises(ValueError, match="singular"):
+        KeplerOrbit.from_position_angle(theta=150.0, inc=90.0, **el)
+    # Near edge-on, θ away from the node line hardly moves the orbit's
+    # phase: |∂M/∂θ| → 0 there, and diverges on the node line, where all
+    # the phases crowd (density ∝ 1/|cos i| on a width ∝ |cos i|).
+    with jax.enable_x64(True):
+        log_j = [
+            float(
+                position_angle_log_jacobian(
+                    theta, 0.3, inc, el["omega"], el["Omega"]
+                )
+            )
+            for inc in (60.0, 89.99)
+            for theta in (el["Omega"] + 60.0, el["Omega"])
+        ]
+    assert log_j[2] < log_j[0] - 7.0
+    assert log_j[3] > log_j[1] + 7.0
+
+
+def test_position_angle_prior_term_in_numpyro_and_fit():
+    import numpyro.distributions as dist
+    from numpyro.infer.util import log_density
+
+    from virgil.angles import AngleVector
+    from virgil.fitting import fit
+    from virgil.likelihood import numpyro_model
+    from virgil.orbits import position_angle_log_jacobian, position_angle_prior
+
+    truth = _orbit()
+    _, theta_true = truth.separation_pa(T_REF)
+    el = {k: ORBIT[k] for k in ("period", "ecc", "inc", "omega", "Omega")}
+
+    def orbit_fn(v):
+        return KeplerOrbit.from_position_angle(
+            theta=v["theta"], a_mas=20.0, t_ref=T_REF, **el
+        )
+
+    prior_term = position_angle_prior(orbit_fn)
+    # numpyro: the vector's density plus the log-Jacobian at θ.
+    model = numpyro_model(
+        lambda **kw: None,
+        {"theta": AngleVector()},
+        (),
+        likelihoods=[prior_term],
+    )
+    v = jax.numpy.array([0.3, -1.1])
+    theta = float(onp.mod(onp.rad2deg(onp.arctan2(-1.1, 0.3)), 360.0))
+    expected = float(AngleVector().log_prob(v)) + float(
+        position_angle_log_jacobian(
+            theta, el["ecc"], el["inc"], el["omega"], el["Omega"]
+        )
+    )
+    value, _ = log_density(model, (), {}, {"theta_vec": v})
+    assert float(value) == pytest.approx(expected, rel=1e-5)
+    # fit: L-BFGS by default (no least-squares form), through the wrap.
+    mjd = T_REF + onp.linspace(-20.0, 20.0, 5)  # a short arc
+    with jax.enable_x64(True):
+        positions = _positions(truth, mjd)
+    result = fit(
+        lambda **kw: None,
+        {"theta": AngleVector(), "ecc": dist.Uniform(0.0, 0.9)},
+        (),
+        init={"theta": float(theta_true) + 30.0, "ecc": 0.4},
+        likelihoods=[positions.term(_ecc_free(orbit_fn)), prior_term],
+    )
+    assert result.info["method"] == "lbfgs"
+    wrapped = (float(result.values["theta"]) - float(theta_true) + 180) % 360
+    assert abs(wrapped - 180) < 0.05
+    with pytest.raises(TypeError, match="log_norm"):
+        fit(
+            lambda **kw: None,
+            {"theta": AngleVector()},
+            (),
+            init={"theta": float(theta_true)},
+            likelihoods=[prior_term],
+            method="lm",
+        )
+
+
+def _ecc_free(orbit_fn):
+    """``orbit_fn`` with its eccentricity taken from ``values["ecc"]``."""
+
+    def build(v):
+        orbit = orbit_fn(v)
+        return KeplerOrbit.from_position_angle(
+            orbit.period,
+            v["theta"],
+            v["ecc"],
+            orbit.inc,
+            orbit.omega,
+            orbit.Omega,
+            orbit.a_mas,
+            t_ref=orbit.t_ref,
+        )
+
+    return build
