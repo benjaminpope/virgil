@@ -128,7 +128,7 @@ def test_normal_priors_are_least_squares_terms():
     priors = dict(PRIORS, dra=dist.Normal(150.0, 2.0))
     objective = _Objective(START, priors, DATA)
     r = objective.residuals(objective.init())
-    assert r.size == DATA.n_independent + 1
+    assert r.size == DATA.n_residuals + 1
     assert np.isclose(r[-1], (140.0 - 150.0) / 2.0)
 
 
@@ -329,7 +329,11 @@ def test_fit_recovers_error_scales():
     n_vis = onp.size(data.vis)
     rms = {
         "vis_scale": onp.sqrt(onp.mean(whitened[:n_vis] ** 2)),
-        "phi_scale": onp.sqrt(onp.mean(whitened[n_vis:] ** 2)),
+        # (the periodic penalty rows that follow the whitened closure
+        # phases are not residuals to rescale)
+        "phi_scale": onp.sqrt(
+            onp.mean(whitened[n_vis : n_vis + data.cp_noise.size] ** 2)
+        ),
     }
     for term, expected in rms.items():
         assert result.values[f"noise.{term}"] == pytest.approx(

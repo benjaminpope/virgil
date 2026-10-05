@@ -43,9 +43,14 @@ def test_whitened_residuals_are_residuals_over_sigma_for_small_phases():
         whitened[:n_vis], delta[:n_vis] / errors[:n_vis], rtol=1e-5
     )
     # Closure phases are whitened as correlated groups (see test_closure);
-    # for small Δ the chord 2 sin(Δ/2) is Δ.
+    # for small Δ, sin Δ is Δ to O(Δ³). The penalty rows that follow are
+    # O(Δ²/σ), far below the whitened ones here.
+    k = oidata_sim.cp_noise.size
     phases, _ = oidata_sim.cp_noise.whiten(delta[n_vis:], errors[n_vis:])
-    assert np.allclose(whitened[n_vis:], phases, rtol=1e-4, atol=1e-4)
+    assert np.allclose(
+        whitened[n_vis : n_vis + k], phases, rtol=1e-4, atol=1e-4
+    )
+    assert whitened.size == oidata_sim.n_residuals
 
 
 @pytest.mark.validates(
@@ -56,23 +61,23 @@ def test_whitened_residuals_are_residuals_over_sigma_for_small_phases():
 def test_phase_term_is_von_mises_and_smooth_across_pi():
     n_vis = oidata_sim.vis.size
     sigma = oidata_sim.d_phi
-    # A common shift of every closure phase gives the same chord, 2 sin(Δ/2),
-    # in each: the whitened phase block is that chord times a fixed vector.
+    # A common shift of every closure phase gives the same sin Δ in each:
+    # the whitened block is sin Δ times a fixed vector, followed by the
+    # periodic penalty 2 sin²(Δ/2)/σ. Both are unchanged by 2π.
+    k = oidata_sim.cp_noise.size
     unit, _ = oidata_sim.cp_noise.whiten(np.ones_like(sigma), sigma)
     for shift in (0.3, 3.0, np.pi, 3.3, 2.0 * np.pi - 0.3):
         data = _shift_phases(oidata_sim, shift)
-        phase = whitened_residuals(TRUTH, data)[n_vis:]
-        # residual = model - data = -shift, wrapped into [-π, π) for
-        # correlated closure phases before taking the chord
-        wrapped = np.mod(-shift + np.pi, 2.0 * np.pi) - np.pi
-        chord = 2.0 * np.sin(0.5 * wrapped)
-        assert np.allclose(phase, chord * unit, rtol=1e-4, atol=1e-4)
+        r = whitened_residuals(TRUTH, data)[n_vis:]
+        assert np.allclose(r[:k], np.sin(-shift) * unit, rtol=1e-4, atol=1e-3)
+        penalty = 2.0 * np.sin(0.5 * shift) ** 2 / sigma
+        assert np.allclose(r[k:], penalty, rtol=1e-4, atol=1e-6)
 
     def loglike(shift):
         return model_loglike(TRUTH, _shift_phases(oidata_sim, shift))
 
     # The old wrapped-Δ² term had a kink at π (slopes of opposite sign on
-    # either side); the chord term has zero slope there.
+    # either side); the sine and penalty terms have zero slope there.
     below, above = (
         jax.grad(loglike)(np.pi - 1e-3),
         jax.grad(loglike)(np.pi + 1e-3),
@@ -98,10 +103,14 @@ def test_model_loglike_is_gaussian_in_whitened_residuals():
     )
     errors = np.concatenate([raw[:n_vis], phase_errors])
     r = whitened_residuals(model, oidata_sim)
+    # The periodic penalty rows (after the whitened ones) are normalised
+    # to nothing: they take no part in the density's constant.
+    n_density = errors.size
+    assert r.size == oidata_sim.n_residuals
     expected = (
         -0.5 * np.sum(r**2)
         - np.sum(np.log(errors))
-        - 0.5 * r.size * np.log(2.0 * np.pi)
+        - 0.5 * n_density * np.log(2.0 * np.pi)
     )
     assert np.allclose(model_loglike(model, oidata_sim), expected, rtol=1e-6)
 

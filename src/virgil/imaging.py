@@ -982,7 +982,7 @@ def _jitted_residual_jacobian(model, datasets, path):
             [whitened_residuals(changed, d) for d in datasets]
         )
 
-    n_data = sum(d.n_independent for d in datasets)
+    n_data = sum(d.n_residuals for d in datasets)
     mode = jax.jacrev if n_data < np.size(leaf) else jax.jacfwd
     return residuals(leaf), mode(residuals)(leaf).reshape(n_data, -1)
 
