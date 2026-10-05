@@ -740,3 +740,159 @@ def test_fit_recovers_an_injected_rv_jitter():
     s = float(result.values["rv_jitter"])
     assert s == pytest.approx(1.0, abs=3 / onp.sqrt(2 * 30))
     assert float(result.values["gamma"]) == pytest.approx(3.0, abs=0.6)
+
+
+# -- analytic marginalisation of the instrument zero points ----------------
+
+
+def _two_instruments(n=12, jitter=0.4, seed=5):
+    """RVs from two spectrographs with zero points 3 and 7 km/s."""
+    from virgil.orbits import RVData
+
+    truth = _orbit()
+    rng = onp.random.default_rng(seed)
+    mjd = T_REF + onp.sort(rng.uniform(0.0, 380.0, n))
+    inst = onp.where(onp.arange(n) % 3 == 0, "B", "A")
+    d_rv = rng.uniform(0.05, 0.3, n)
+    with jax.enable_x64(True):
+        clean = RVData(mjd, onp.zeros(n), d_rv, instrument=inst)
+        model = onp.asarray(clean.model(truth, 0.5, 0.0, 50.0))
+        zero = onp.where(inst == "B", 7.0, 3.0)
+        noise = rng.normal(0.0, onp.hypot(d_rv, jitter))
+        rvs = RVData(mjd, model + zero + noise, d_rv, instrument=inst)
+    return truth, rvs
+
+
+def _dense_marginal(rvs, model, s, mean, sd):
+    from scipy.stats import multivariate_normal
+
+    A = onp.asarray(rvs._design())
+    C = onp.diag(onp.asarray(rvs.d_rv) ** 2 + s**2)
+    cov = C + A @ onp.diag(sd**2) @ A.T
+    return multivariate_normal(model + A @ mean, cov).logpdf(
+        onp.asarray(rvs.rv)
+    ), (A, C)
+
+
+def _marginal_term(truth, rvs, mean, sd):
+    return rvs.term(
+        lambda v: (truth, 0.5, 0.0, 50.0),
+        jitter="rv_jitter",
+        marginalise_offsets=(mean, sd),
+    )
+
+
+def test_marginal_zero_points_match_the_dense_gaussian():
+    truth, rvs = _two_instruments()
+    s, mean, sd = 0.4, onp.array([1.0, -2.0]), onp.array([5.0, 20.0])
+    with jax.enable_x64(True):
+        term = _marginal_term(truth, rvs, mean, sd)
+        values = {"rv_jitter": s}
+        model = onp.asarray(rvs.model(truth, 0.5, 0.0, 50.0))
+        expected, _ = _dense_marginal(rvs, model, s, mean, sd)
+        assert rvs.instruments == ("A", "B")
+        assert float(term.loglike(values)) == pytest.approx(expected)
+        u = onp.asarray(term(values))
+        assert u.shape == (rvs.rv.size,)
+        # the whitened residuals and log_norm give the same density
+        logp = (
+            -0.5 * u @ u
+            - float(term.log_norm(values))
+            - (u.size / 2) * onp.log(2 * onp.pi)
+        )
+        assert logp == pytest.approx(expected)
+
+
+def test_zero_point_posterior_matches_dense_conditioning():
+    truth, rvs = _two_instruments()
+    s, mean, sd = 0.4, onp.array([1.0, -2.0]), onp.array([5.0, 20.0])
+    with jax.enable_x64(True):
+        term = _marginal_term(truth, rvs, mean, sd)
+        post_mean, post_cov = term.posterior({"rv_jitter": s})
+        model = onp.asarray(rvs.model(truth, 0.5, 0.0, 50.0))
+        _, (A, C) = _dense_marginal(rvs, model, s, mean, sd)
+        Lam = onp.diag(sd**2)
+        gain = Lam @ A.T @ onp.linalg.inv(C + A @ Lam @ A.T)
+        resid = onp.asarray(rvs.rv) - model - A @ mean
+        assert onp.asarray(post_mean) == pytest.approx(
+            mean + gain @ resid, rel=1e-8
+        )
+        assert onp.asarray(post_cov) == pytest.approx(
+            Lam - gain @ A @ Lam, rel=1e-8, abs=1e-12
+        )
+
+
+def test_marginalised_fit_recovers_the_orbit_like_free_offsets():
+    import numpyro.distributions as dist
+
+    from virgil.fitting import fit
+
+    truth, rvs = _two_instruments(n=16, jitter=0.0)
+    is_b = rvs.inst == 1
+    with jax.enable_x64(True):
+        free = fit(
+            lambda **k: None,
+            {
+                "gamma": dist.Uniform(-50.0, 50.0),
+                "off": dist.Uniform(-50.0, 50.0),
+                "dist": dist.Uniform(10.0, 200.0),
+            },
+            (),
+            init={"gamma": 0.0, "off": 0.0, "dist": 40.0},
+            likelihoods=[
+                rvs.term(
+                    lambda v: (
+                        truth,
+                        0.5,
+                        v["gamma"] + v["off"] * is_b,
+                        v["dist"],
+                    )
+                )
+            ],
+        )
+        marg = fit(
+            lambda **k: None,
+            {"dist": dist.Uniform(10.0, 200.0)},
+            (),
+            init={"dist": 40.0},
+            likelihoods=[
+                rvs.term(
+                    lambda v: (truth, 0.5, 0.0, v["dist"]),
+                    marginalise_offsets=(0.0, 100.0),
+                )
+            ],
+        )
+    assert float(free.values["dist"]) == pytest.approx(50.0, rel=0.05)
+    assert float(marg.values["dist"]) == pytest.approx(
+        float(free.values["dist"]), rel=2e-3
+    )
+
+
+def test_single_instrument_tiny_prior_is_a_fixed_gamma():
+    truth, rvs = _rv_setup(n=8)
+    with jax.enable_x64(True):
+        term = rvs.term(
+            lambda v: (truth, 0.5, 0.0, 50.0),
+            jitter="rv_jitter",
+            marginalise_offsets=(2.5, 1e-6),
+        )
+        fixed = _rv_term(truth, rvs)
+        values = {"rv_jitter": 0.7, "gamma": 2.5}
+        # the prior sd adds a constant: compare the data part of the density
+        assert float(term.loglike(values)) == pytest.approx(
+            float(fixed.loglike(values)), abs=1e-5
+        )
+        assert onp.asarray(term(values)) == pytest.approx(
+            onp.asarray(fixed(values)), abs=1e-5
+        )
+
+
+def test_default_zero_point_prior_warns_and_flat_prior_is_rejected():
+    truth, rvs = _rv_setup(n=8)
+    with pytest.warns(UserWarning, match="effectively"):
+        rvs.term(lambda v: (truth, 0.5, 0.0, 50.0), marginalise_offsets=True)
+    with pytest.raises(ValueError, match="finite sd"):
+        rvs.term(
+            lambda v: (truth, 0.5, 0.0, 50.0),
+            marginalise_offsets=(0.0, onp.inf),
+        )

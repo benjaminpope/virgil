@@ -17,6 +17,15 @@ anything before 1.0 may change between minor versions.
   `noise=`), and raises `TypeError` for `method="lm"`. `numpyro_model` needs
   no change, since the term's `loglike` is already normalised.
 
+- **Marginalised RV zero points.** `RVData(..., instrument=labels)` and
+  `RVData.term(params, marginalise_offsets=(mean, sd))` marginalise one
+  velocity zero point per instrument analytically (Luger, Foreman-Mackey &
+  Hogg 2017), in O(N k²) by the Woodbury identity and the matrix-determinant
+  lemma, with the jitter-dependent log-determinant in `log_norm`.
+  `term.posterior(values)` gives the zero points' conditional mean and
+  covariance after a fit. Only a finite prior width is supported (`True` is
+  N(0, 1000²) km/s and warns).
+
 ### Changed
 
 - **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
