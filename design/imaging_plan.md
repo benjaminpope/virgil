@@ -416,7 +416,7 @@ From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-
 - Not done: closure-phase legs from the OI_T3 coordinates (the reader still uses the matched VIS2 rows' (u, v); TODO in `oifits.py`).
 
 ## Stage 6a.1: orbits and binary-frame scenes (after 6a.0; about 25–30 h by its own table)
-Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
+Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O). Prior art, credit and features to adopt from orbitize!, Octofitter and orvara: [`orbit_prior_art.md`](orbit_prior_art.md).
 
 **Decided (2026-10-03):**
 - Orbits are built in virgil.
@@ -601,7 +601,7 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 | 5 | VISPHI continuum offset and slope per baseline and frame; NFLUX normalisation | VISPHI, NFLUX | Done in the 6a observables PR: projection by default, `with_continuum(prior_width=)` for the finite prior; NFLUX as a scale near 1 | High: the pipeline's continuum subtraction is the flat-prior limit, so this puts the projection on a sound footing, and a finite-prior version comes almost for free |
 | 6 | Thiele–Innes A, B, F, G at fixed (P, e, T₀) | Positions only | Design note in progress (`design/thiele_innes_marginalisation.md`) | High for position-only orbits: NUTS works in 3 dimensions instead of 7. Open question: the prior, because a Gaussian on A, B, F, G implies a non-standard Campbell-element prior, so reweight or state it. It does not extend to joint position + RV fits; for closure-phase orbit fits it only gives starting points |
 | 7 | Overall V² scale s² (a fully resolved background, or a per-frame V² calibration factor) | V² only | Noted, not planned | Exact in V², whereas 6d is a small-gain approximation in log\|V\|, so it mostly overlaps 6d; the prior s² ∈ (0, 1] is not Gaussian |
-| 8 | Companion flux f, to first order in f ≪ 1 | V², closure phases | Done (#184; flat prior, profiled). Planned follow-up: iterate it (Gauss–Newton) to remove the bias for bright companions, and use a Gaussian prior on f to get a marginal-likelihood detection map | Fast detection maps |
+| 8 | Companion flux f, to first order in f ≪ 1 | V², closure phases | Done (#184; flat prior, profiled). Gauss–Newton iteration (`n_iter`) removes the bias for bright companions, and a Gaussian prior on f (`prior=(mean, sd)`) gives a marginal-likelihood detection map (`log_bayes_factor`) | Fast detection maps |
 | 9 | Spectral line or node amplitudes and continuum ratios | OI_FLUX alone | Noted, not planned | Exact only in spectrum-only fits; useful for starting values |
 | 10 | Image pixels | Complex visibilities only | Already in the sparse/CLEAN NNLS major cycles | Positive least squares, not Gaussian marginalisation |
 

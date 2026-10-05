@@ -29,6 +29,7 @@ MAPPINGS = {
     "notebooks/binary_search.ipynb": "docs/binary_search.md",
     "notebooks/data_io.ipynb": "docs/data_io.md",
     "notebooks/contrast_limits.ipynb": "docs/contrast_limits.md",
+    "notebooks/detection_roc.ipynb": "docs/detection_roc.md",
     "notebooks/hierarchical_inference.ipynb": "docs/hierarchical_inference.md",
     "notebooks/model_syntax.ipynb": "docs/model_syntax.md",
     "notebooks/source_models.ipynb": "docs/source_models.md",

@@ -247,13 +247,34 @@ Steps 1–6 of the list above were done in virgil#178:
    They were already computed a row of pixels at a time; not yet needed by
    any run.
 
+### Known companions (2026-10-05)
+
+Example (HD 206893, JWST/AMI DISCOs from AMIGO in F380M, F430M and F480M;
+the analysis notebook is in the nuHor repo, not here). Each filter was CLEANed
+on its own, with the star alone as the base and the errors rescaled by the
+pipeline's two-companion (M2) fit, and compared with that fit:
+- **B** (~200 mas, flux ratio 5–8 × 10⁻⁴) was found in every filter, about
+  10 mas from the M2 position (under a tenth of the beam), with 76–90% of
+  the M2 flux after `fit` refitted the component fluxes.
+- **c** (~100 mas, under one resolution element, 2–5 × 10⁻⁴) got flux
+  16–18 mas from M2's position in F380M and F430M, and 31 mas closer to the
+  star in F480M.
+- χ²/N starts only 11–17% above one, so CLEAN reaches the target after 16–19
+  iterations, before any major cycle. Its own fluxes are then low (58–81% of
+  M2's for B). Refitting the fluxes fixes most of this.
+- The refitted images also hold 13–45% more flux than the two companions, in
+  noise-level blobs (χ²/N 0.98 after the refit): CLEAN at the discrepancy
+  level is a first look, not a detection test.
+
+A possible follow-up: when the starting χ²/N is close to the target, force a
+major cycle before stopping, so that CLEAN's own fluxes are right without a
+separate `fit`.
+
 ### Still open
 
 - **Multi-frequency CLEAN** (Rau & Cornwell 2011): a spectral index per
   component. `spectrum=` gives all components one spectrum, which was
   enough for HR 4049.
-- **A real dataset with a known companion** (AMI or NRM), to test positions
-  and fluxes against a parametric fit rather than against other images.
 - The L-BFGS step limit for MEM and StarletL1 (above), still not
   investigated.
 - Fitting the base scene during CLEAN, if a base parameter cannot be fitted

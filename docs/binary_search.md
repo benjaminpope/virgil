@@ -120,6 +120,8 @@ Grid estimate: dra=119 mas, ddec=-81.2 mas, flux=0.0038
 ## Visualize the Grid
 We have plotting helpers to achieve a consistent style and handle metadata: we'll see that the binary is very accurately recovered just from this grid search!
 
+How significant is the best grid point? Answering that needs the distribution of the search's best statistic under noise alone, which [Detection ROC curves](detection_roc.md) simulates.
+
 ```python
 # The full grid is reduced to the maximum log likelihood over flux at each
 # (dra, ddec).
