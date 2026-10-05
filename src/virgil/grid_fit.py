@@ -14,6 +14,10 @@ key whose last part is ``flux`` (``flux``, ``comp.flux``, ...), unless
 Contrast limits (Ruffio, Absil) are in [`virgil.limits`][virgil.limits].
 """
 
+import math
+import warnings
+from typing import NamedTuple
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -314,6 +318,139 @@ optimized_flux_grid.__doc__ = (
 )
 
 
+class Gaussian(NamedTuple):
+    """Gaussian prior ``N(mean, sd**2)`` on the companion flux ratio.
+
+    Gaussian-prior evidence (a computational approximation; ``f`` may go
+    negative): the prior has support on negative flux, so its evidence is
+    only a convenient closed form. Prefer [`LogUniform`][virgil.grid_fit.LogUniform].
+    """
+
+    mean: float
+    sd: float
+
+
+class LogUniform(NamedTuple):
+    """Log-uniform (scale-invariant) prior on the companion flux ratio.
+
+    ``p(f) = 1 / (f ln(f_max / f_min))`` on ``f_min <= f <= f_max``. The flux
+    ratio is a scale parameter spanning decades, so this is the invariant
+    measure of the scaling group (the Jeffreys prior under that group
+    action), not the root-Fisher-information prior of the linearised
+    likelihood, which has constant Fisher information in ``f`` and so would
+    be flat. It is improper without bounds, so the evidence needs
+    ``0 < f_min < f_max`` (finite), in the units of
+    the flux (companion/primary).
+    """
+
+    f_min: float
+    f_max: float
+
+
+_N_NODES = 256  # Gauss-Legendre nodes in ln f for the log-uniform evidence
+_WINDOW_SIGMA = 12.0  # half-width of the integration window, in sigma_f
+_TAIL_SIGMA = 40.0  # decay lengths kept when f_hat is outside the bounds
+
+
+def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
+    """Evidence, posterior mean and sd of f under ``LogUniform(f_min, f_max)``.
+
+    In the linear model the likelihood relative to ``f = 0`` is
+    ``h(f) = -((f - f_hat)**2 - f_hat**2) / (2 sigma**2)``, and the evidence
+    is ``(1 / ln(f_max / f_min)) * integral h-exponential d ln f``. It is
+    computed by fixed-node Gauss-Legendre quadrature in ``ln f`` over the
+    part of ``[f_min, f_max]`` where the likelihood is not negligible (within
+    ``_WINDOW_SIGMA`` sigma of ``f_hat``, or, with ``f_hat`` outside the
+    bounds, within the decay length of the nearer bound), so a narrow peak
+    inside wide bounds is resolved. Returns ``(log_B, mean, sd)``.
+    """
+    d = jnp.maximum(f_min - f_hat, f_hat - f_max)  # > 0 outside the bounds
+    outside = d > sigma
+    width = jnp.where(
+        outside,
+        _TAIL_SIGMA * sigma * (sigma / jnp.maximum(d, sigma)),
+        _WINDOW_SIGMA * sigma,
+    )
+    above = outside & (f_hat > f_max)
+    centre = jnp.clip(f_hat, f_min, f_max)
+    lo = jnp.clip(centre - width, f_min, f_max)
+    hi = jnp.clip(centre + width, f_min, f_max)
+    # The window is f = f0 * exp(sgn * delta), delta in [0, span]: anchored at
+    # the bound nearest f_hat when f_hat is outside, so that a window much
+    # narrower than f (float32!) is still resolved, and f - f_hat is formed
+    # from offsets rather than from two nearly equal fluxes.
+    tail = jnp.minimum(width, f_max - f_min)
+    f0 = jnp.where(above, f_max, lo)
+    sgn = jnp.where(above, -1.0, 1.0)
+    span = jnp.where(
+        outside,
+        jnp.where(above, -jnp.log1p(-tail / f_max), jnp.log1p(tail / f_min)),
+        jnp.log(hi) - jnp.log(lo),
+    )
+    x, w = np.polynomial.legendre.leggauss(_N_NODES)
+    delta = 0.5 * span * (jnp.asarray(x) + 1.0)
+    wd = 0.5 * span * jnp.asarray(w)
+    offset = f0 * jnp.expm1(sgn * delta)  # f - f0
+    # (f - f_hat)^2 - f_hat^2 with f = f0 + offset, expanded so that nothing
+    # large cancels: f0 (f0 - 2 f_hat) + 2 (f0 - f_hat) offset + offset^2.
+    h = -(
+        f0 * (f0 - 2.0 * f_hat) + 2.0 * (f0 - f_hat) * offset + offset**2
+    ) / (2.0 * sigma**2)
+    m = jnp.max(h)
+    wt = wd * jnp.exp(h - m)
+    s0 = jnp.sum(wt)
+    mean_offset = jnp.sum(wt * offset) / s0
+    var = jnp.sum(wt * (offset - mean_offset) ** 2) / s0
+    mean = f0 + mean_offset
+    log_b = m + jnp.log(s0) - jnp.log(jnp.log(f_max) - jnp.log(f_min))
+    return log_b, mean, jnp.sqrt(var)
+
+
+def _as_prior(prior):
+    """Validate ``prior`` and return it as ``Gaussian``, ``LogUniform`` or None."""
+    if prior is None:
+        return None
+    if isinstance(prior, (Gaussian, LogUniform)):
+        pass
+    elif isinstance(prior, tuple) and len(prior) == 2:
+        warnings.warn(
+            "A bare (mean, sd) prior is deprecated; use Gaussian(mean, sd) "
+            "or, preferably, LogUniform(f_min, f_max).",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        prior = Gaussian(*prior)
+    else:
+        raise TypeError(
+            "prior must be a LogUniform(f_min, f_max) or Gaussian(mean, sd), "
+            f"got {prior!r}"
+        )
+    a, b = (float(x) for x in prior)
+    if not (math.isfinite(a) and math.isfinite(b)):
+        raise ValueError(
+            f"{type(prior).__name__} needs finite parameters, got {prior}"
+        )
+    if isinstance(prior, LogUniform) and not 0.0 < a < b:
+        raise ValueError(f"LogUniform needs 0 < f_min < f_max, got ({a}, {b})")
+    if isinstance(prior, Gaussian) and not b > 0.0:
+        raise ValueError(f"Gaussian needs sd > 0, got sd = {b}")
+    return type(prior)(jnp.asarray(a), jnp.asarray(b))
+
+
+class LinearFluxGrid(NamedTuple):
+    """Result of [`linear_flux_grid`][virgil.grid_fit.linear_flux_grid].
+
+    The last three fields are ``None`` unless a ``prior`` was given.
+    """
+
+    flux: jnp.ndarray
+    flux_error: jnp.ndarray
+    snr: jnp.ndarray
+    posterior_mean: jnp.ndarray | None = None
+    posterior_sd: jnp.ndarray | None = None
+    log_bayes_factor: jnp.ndarray | None = None
+
+
 @eqx.filter_jit
 def _linear_flux_grid(
     data_obj,
@@ -355,10 +492,22 @@ def _linear_flux_grid(
         flux = jnp.where(ok, flux, jnp.nan)
         sigma = jnp.where(ok, 1.0 / jnp.sqrt(curvature), jnp.nan)
         if prior is None:
-            return flux, sigma
-        # The likelihood is exp(-curvature (f - flux)^2 / 2) up to a constant
-        # in the linear model about the final point. With a N(mean, sd^2)
-        # prior the precisions add (Luger et al. 2017).
+            return flux, sigma, None, None, None
+        if isinstance(prior, LogUniform):
+            safe = jnp.where(ok, curvature, 1.0)
+            log_bf, post_mean, post_sd = _log_uniform_evidence(
+                flux, 1.0 / jnp.sqrt(safe), prior.f_min, prior.f_max
+            )
+            return (
+                flux,
+                sigma,
+                jnp.where(ok, post_mean, jnp.nan),
+                jnp.where(ok, post_sd, jnp.nan),
+                jnp.where(ok, log_bf, jnp.nan),
+            )
+        # Gaussian: the likelihood is exp(-curvature (f - flux)^2 / 2) up to a
+        # constant in the linear model about the final point. With a
+        # N(mean, sd^2) prior the precisions add (Luger et al. 2017).
         mean, sd = prior
         precision = curvature + 1.0 / sd**2
         b = curvature * flux  # g . (g flux), whitened
@@ -377,18 +526,9 @@ def _linear_flux_grid(
         )
 
     out = map_points(solve, coords, batch_size=batch_size)
-    out = tuple(o.reshape(shape) for o in out)
+    out = tuple(None if o is None else o.reshape(shape) for o in out)
     flux, sigma = out[:2]
-    if prior is None:
-        return flux, sigma, flux / sigma
-    return {
-        "flux": flux,
-        "flux_error": sigma,
-        "snr": flux / sigma,
-        "posterior_mean": out[2],
-        "posterior_sd": out[3],
-        "log_bayes_factor": out[4],
-    }
+    return LinearFluxGrid(flux, sigma, flux / sigma, *out[2:])
 
 
 def linear_flux_grid(
@@ -476,38 +616,71 @@ def linear_flux_grid(
     n_iter : int, optional
         Number of Gauss–Newton refinement steps after the first
         linearisation at ``f = 0`` (default 0, the closed-form result).
-    prior : tuple of float, optional
-        ``(mean, sd)`` of a Gaussian prior on the flux ratio (same units as
-        ``flux``). If given, the result is a dict, with the posterior and
-        the marginal-likelihood detection map added (see Returns). With
-        ``P = g . g + 1 / sd**2`` (``g`` the final whitened derivative) the
-        posterior is Gaussian with mean ``(g . (g f_hat) + mean / sd**2) / P``
-        and sd ``P ** -0.5``, and the log Bayes factor against ``f = 0``
-        is the closed-form Gaussian evidence ratio
+    prior : LogUniform or Gaussian, optional
+        Prior on the flux ratio ``f``. By default none, and the posterior
+        and Bayes-factor fields of the result are ``None``. With a prior
+        they hold the posterior mean and sd and the marginal-likelihood
+        detection map ``log_bayes_factor`` (see Returns); ``log B > 0``
+        favours a companion at that pixel. All of
+        these hold in the linear model about the final linearisation point,
+        i.e. exactly only where the residuals are linear in ``f`` over the
+        posterior (``f`` much smaller than 1, or after enough ``n_iter`` for
+        the point to sit near the posterior); the position is not
+        marginalised. A bare ``(mean, sd)`` tuple is still accepted as
+        ``Gaussian(mean, sd)`` but is deprecated.
+
+        **Recommended: ``LogUniform(f_min, f_max)``**, the scale-invariant
+        (Jeffreys, under the scaling group) prior for a flux ratio,
+        ``p(f) = 1 / (f ln(f_max / f_min))``. The flux ratio is a scale
+        parameter spanning decades, so the prior is the invariant measure of
+        the scaling group, not the root-Fisher prior of the linearised
+        likelihood (which would be flat). It is improper without bounds, and the evidence needs a
+        proper prior, so both bounds are required (``0 < f_min < f_max``).
+        The Bayes factor depends on them, as it must for a scale prior: for
+        ``f_hat`` well inside the bounds, widening them by a factor changes
+        ``log B`` by about ``-Δ ln(ln(f_max / f_min))`` (the Occam
+        factor). Choose them from the physics or the data, for example
+        ``f_max`` the brightest companion you would entertain and ``f_min``
+        a little below the faintest contrast the data can reach (its
+        dynamic range, e.g. the smallest ``flux_error`` over the grid). The likelihood in ``f`` is Gaussian with
+        mean ``f_hat`` and sd ``sigma_f``, so ``Z = ∫ N(f; f_hat,
+        sigma_f**2) p(f) df / N(0; f_hat, sigma_f**2)``, computed by fixed
+        256-node Gauss–Legendre quadrature in ``ln f`` over the part of the
+        bounds where the likelihood is not negligible; the posterior mean
+        and sd come from the same quadrature. It is vmappable and
+        jit-compatible.
+
+        ``Gaussian(mean, sd)`` gives a Gaussian-prior evidence (a
+        computational approximation; ``f`` may go negative). With ``P = g . g
+        + 1 / sd**2`` (``g`` the final whitened derivative) the posterior is
+        Gaussian with mean ``(g . (g f_hat) + mean / sd**2) / P`` and sd
+        ``P ** -0.5``, and the log Bayes factor against ``f = 0`` is the
+        closed-form Gaussian evidence ratio
 
         ``log B = -0.5 log(sd**2 P) + (g.g f_hat + mean/sd**2)**2 / (2P)
         - mean**2 / (2 sd**2)``
 
-        (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136), so
-        ``log B > 0`` favours a companion at that pixel. These hold in the
-        linear model about the final linearisation point, i.e. exactly
-        only where the residuals are linear in ``f`` over the posterior
-        (``f`` much smaller than 1, or after enough ``n_iter`` for the
-        point to sit near the posterior); the position is not marginalised.
+        (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136).
 
     Returns
     -------
-    flux : array-like
-        Best-fit flux ratio (companion/primary), unconstrained in sign, with
-        one axis per coordinate key (axis 0 is the first, e.g. ``dra``).
-        With ``prior``, all outputs come as a dict with keys ``flux``,
-        ``flux_error``, ``snr``, ``posterior_mean``, ``posterior_sd`` and
-        ``log_bayes_factor`` instead of the tuple.
-    flux_error : array-like
-        One-sigma uncertainty on ``flux``, same shape, NaN where the model
-        does not depend on the flux.
-    snr : array-like
-        ``flux / flux_error``, same shape: the detection significance map.
+    LinearFluxGrid
+        A named tuple, always of the same type, whose fields are arrays with
+        one axis per coordinate key (axis 0 is the first, e.g. ``dra``):
+
+        - ``flux``: best-fit flux ratio (companion/primary), unconstrained
+          in sign.
+        - ``flux_error``: one-sigma uncertainty on ``flux``, NaN where the
+          model does not depend on the flux.
+        - ``snr``: ``flux / flux_error``, the detection significance map.
+        - ``posterior_mean``, ``posterior_sd``, ``log_bayes_factor``: the
+          posterior under the given ``prior`` and the log evidence ratio
+          against ``f = 0``; ``None`` if ``prior`` is not given, whatever
+          the kind of prior.
+
+        Because there are six fields, unpack by attribute (``res.flux``) or
+        take the first three with ``flux, error, snr = res[:3]``; unpacking
+        the result directly into three names fails.
 
     Examples
     --------
@@ -516,10 +689,12 @@ def linear_flux_grid(
     ...     "ddec": jnp.linspace(-300.0, 300.0, 61),
     ...     "flux": jnp.array([1e-3]),  # ignored: only names the parameter
     ... }
-    >>> flux, flux_error, snr = linear_flux_grid(
+    >>> res = linear_flux_grid(
     ...     data, BinaryModelCartesian, grid
     ... )  # doctest: +SKIP
-    >>> i, j = jnp.unravel_index(jnp.nanargmax(snr), snr.shape)  # doctest: +SKIP
+    >>> i, j = jnp.unravel_index(
+    ...     jnp.nanargmax(res.snr), res.snr.shape
+    ... )  # doctest: +SKIP
     """
     params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
     return _linear_flux_grid(
@@ -531,9 +706,7 @@ def linear_flux_grid(
         flux_key=flux_key,
         batch_size=batch_size_or_default(batch_size, data_obj),
         n_iter=int(n_iter),
-        prior=None
-        if prior is None
-        else tuple(jnp.asarray(float(x)) for x in prior),
+        prior=_as_prior(prior),
     )
 
 

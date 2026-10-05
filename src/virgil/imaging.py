@@ -703,7 +703,10 @@ def starting_image(
         support = circular_support(npix, scale, npix * scale, hole_mas)
     options = dict(flux=envelope.flux, support=support)
     if start == "moments":
-        model = GaussianDisk(envelope.sigma)
+        # With a log-uniform prior, data with no resolved envelope drive
+        # sigma to its (tiny) lower bound; a Gaussian narrower than a pixel
+        # sampled on the grid is all zeros, so start at least one pixel wide.
+        model = GaussianDisk(max(float(envelope.sigma), scale))
         image = Image.from_model(model, npix, scale, **options)
     elif start == "dirty":
         ratio = float(envelope.flux) if star else None
