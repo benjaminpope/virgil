@@ -1017,6 +1017,40 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             (self.d_vis * factor, self.d_phi * factor),
         )
 
+    def with_wavelength_scale(self, scale=1.0, offset=0.0):
+        """A copy of the data whose wavelengths are ``scale · λ + offset``.
+
+        A wavelength calibration error: models are evaluated at the
+        corrected wavelengths, which rescales the spatial frequencies
+        (``u`` and ``v`` are in metres) and moves the spectra together, as
+        a wrong wavelength scale does. Angular sizes scale with it, so with
+        a single dataset the scale is degenerate with every size, and its
+        prior *is* the systematic error. Fit it with the noise terms
+        ``wavel_scale`` and ``wavel_offset`` (e.g.
+        ``noise={"wavel_scale": dist.Normal(1.0, 2e-4)}``, about right for
+        GRAVITY), which call this.
+
+        Parameters
+        ----------
+        scale : float, optional
+            Factor on the wavelengths (default 1).
+        offset : float, optional
+            Shift added after scaling, in metres (default 0).
+
+        Returns
+        -------
+        OIData
+            The data with ``wavel`` replaced. A ``uv_grid`` is dropped,
+            since the scaled samples are off its lattice; models then use
+            the direct Fourier transform.
+        """
+        return eqx.tree_at(
+            lambda d: (d.wavel, d.uv_grid),
+            self,
+            (self.wavel * scale + offset, None),
+            is_leaf=lambda x: x is None,
+        )
+
     def with_gains(
         self, telescope=None, baseline=None, chromatic=None, modes=None
     ):
