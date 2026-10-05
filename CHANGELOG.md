@@ -5,17 +5,6 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
-## Unreleased
-
-### Removed
-
-- `examples/elr_pavo/`, the PAVO re-analysis scripts, moved to the private paper repository; the golden-fixture generator is now `scripts/make_elr_golden.py`.
-
-### Docs
-
-- The `virgil._linear` API page is labelled internal.
-- Docs pages no longer point to the internal design notes.
-
 ## 0.3.0 (2026-10-06)
 
 Everything listed as new was added after 0.2.0.
@@ -508,6 +497,10 @@ analysis or warn:
   `ValueError` on an empty residual list: with `data=()` the curvature comes
   from the priors alone, as `fit` and `numpyro_model` already allow.
 
+### Removed
+
+- `examples/elr_pavo/`, the PAVO re-analysis scripts, moved to the private paper repository; the golden-fixture generator is now `scripts/make_elr_golden.py`.
+
 ### Docs
 
 - **`GravityDarkenedStar` docstring: "Choosing `n_lat`"** gives the
@@ -544,6 +537,10 @@ analysis or warn:
   reference orbit and the primary.
 - **Conventions.** Dropped the stale "Not yet in this version" note from the
   orbit conventions: `virgil.orbits` is on main.
+- The `virgil._linear` API page is labelled internal.
+- Docs pages no longer point to the internal design notes.
+- Docstrings no longer point to the internal design notes.
+- **Closure-phase whitening** (`virgil._closure`): the docstring states that the correlation, built from the per-triangle errors, is exact only when the baseline phase errors are equal; with unequal errors the whitened χ² comes out slightly low (about 2% with one baseline three times noisier). OIFITS carries no per-baseline phase errors.
 
 ## 0.2.0 (2026-10-03)
 
