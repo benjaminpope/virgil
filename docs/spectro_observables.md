@@ -138,23 +138,25 @@ it twice. The default (design note S §2.3) is:
 
 * closure phases in every channel;
 * in the line windows only (both windows with `prior_width`), the part of
-  the differential phase that has no closure: per frame, the baseline phases are projected onto the
+  the differential phase that has no closure: per frame, the baseline phases
+  are projected onto the
   telescope-differenced subspace φ_ab = a_a − a_b, which is orthogonal to
   every closure. That leaves N − 1 combinations per channel for N
   telescopes.
 
 Per line channel there are then (N − 1)(N − 2)/2 closure phases plus N − 1
-differential phases, one per baseline. The projection, with its propagated
-covariance, is whitened as one dense block per frame.
+independent closure-free differential-phase combinations, not one per
+baseline. The projection's propagated covariance is whitened as one dense
+block per frame.
 
 **What is approximated.** The cross-covariance between the projected
-differential phases and the closure phases is neglected. It is exactly zero
-when the baseline errors of one frame and channel are equal. That is the
-same assumption behind virgil's closure-phase correlations (Kammerer et al.
-2020). Otherwise it is of the order of the spread of those errors. The
-residuals are treated as linear (Gaussian), which holds while differential
-phases stay well below π. Channels flagged on any baseline of a frame are
-dropped from that frame.
+differential phases and the closure phases is neglected as an approximation.
+It is exactly zero only when the baseline errors of one frame and channel
+are equal; for unequal errors it is nonzero, and the independent-block
+likelihood is not exact. The joint covariance is preferred when available.
+The residuals are treated as linear (Gaussian), which holds while
+differential phases stay well below π. Channels flagged on any baseline of
+a frame are dropped from that frame.
 
 ## Error floors
 

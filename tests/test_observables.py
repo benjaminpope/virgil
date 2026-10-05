@@ -136,6 +136,15 @@ def test_flux_round_trip(tmp_path):
         read_oifits(path, extras=("flux", "nflux"))
 
 
+def test_unused_oi_flux_does_not_affect_default_target_selection():
+    hdul = build_hdulist(_tables())
+    hdul["OI_FLUX"].data["TARGET_ID"] = 2
+    record = read_oifits(hdul)
+    assert record["u"].size == PAIRS.shape[0] * WAVES.size
+    with pytest.raises(ValueError, match="several targets"):
+        read_oifits(hdul, extras=("flux",))
+
+
 def test_t3amp_round_trip(tmp_path):
     tables = _tables()
     path = write_oifits(tables, tmp_path / "t3.fits")
@@ -655,6 +664,44 @@ def test_visphi_finite_prior_matches_a_dense_marginal():
     onp.testing.assert_allclose(
         float(np.sum(np.log(effective))), 0.5 * logdet, rtol=1e-3
     )
+
+
+def test_finite_prior_preserves_the_phase_anchor():
+    scene = _scene()
+    data = _visphi_data(scene, WAVES, PAIRS, lines=[LINE])
+    (block,) = data.with_continuum(lines=[LINE], prior_width=(0.3, 0.5)).extras
+    expected = onp.unwrap(
+        onp.asarray(block.values).reshape(len(PAIRS), WAVES.size), axis=1
+    )
+    onp.testing.assert_allclose(
+        onp.asarray(block.data()).reshape(len(PAIRS), WAVES.size),
+        expected,
+        atol=1e-6,
+    )
+    cvis = scene.model(data.u, data.v, data.wavel)
+    onp.testing.assert_allclose(
+        block.predict(scene, cvis), block.data(), atol=1e-6
+    )
+
+
+def test_with_model_draws_marginalized_extra_modes():
+    data = OIData(
+        read_oifits(build_hdulist(_tables()), extras=("flux", "visphi"))
+    ).with_continuum(lines=[LINE], prior_width=(0.3, 0.5))
+    scene = _scene()
+    key = jax.random.PRNGKey(5)
+    simulated = data.with_model(scene, key=key, noise_scale=0.0)
+    repeated = data.with_model(scene, key=key, noise_scale=0.0)
+    for original, draw in zip(data.extras, simulated.extras):
+        if original.kind == "flux":
+            prediction = original.predict(scene, None)
+            assert float(np.linalg.norm(draw.values - prediction)) > 0.0
+        elif original.kind == "visphi":
+            cvis = data._cvis(scene)
+            phases = np.angle(cvis)[original.sample]
+            assert float(np.linalg.norm(draw.values - phases)) > 0.0
+    for draw, again in zip(simulated.extras, repeated.extras):
+        onp.testing.assert_array_equal(draw.values, again.values)
 
 
 def test_visphi_broad_prior_tends_to_the_projection():

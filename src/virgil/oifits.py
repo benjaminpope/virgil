@@ -1041,9 +1041,10 @@ def _concat_extras(records, out):
 def _read_hdulist(hdul, target, insname=None, frame_mjd="mean", extras=()):
     tables = _select_insname(_collect_tables(hdul), insname)
     wavelengths = _wavelength_tables(tables)
-    target_id = _select_target(
-        tables, target, ("OI_VIS2", "OI_VIS", "OI_T3", "OI_FLUX")
-    )
+    target_tables = ["OI_VIS2", "OI_VIS", "OI_T3"]
+    if {"flux", "nflux"} & set(extras):
+        target_tables.append("OI_FLUX")
+    target_id = _select_target(tables, target, tuple(target_tables))
 
     record, lookup = _read_visibilities(tables, wavelengths, target_id, extras)
     if "OI_T3" in tables:

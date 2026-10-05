@@ -1470,9 +1470,9 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         """Return a copy populated from a model with optional Gaussian noise.
 
         Sampling, uncertainties, conventions, closure indices, and linear
-        observable operators are preserved from this object. With ``key``
-        and ``gains``, gains are drawn at their default widths too, and
-        applied exactly (|V| times e^g) before the noise is added.
+        observable operators are preserved from this object. With ``key``,
+        marginalized gains and extra-observable nuisance modes are drawn
+        along with diagonal noise.
         """
         noise_scale = float(noise_scale)
         if noise_scale < 0.0:
@@ -1516,12 +1516,23 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         for i, block in enumerate(self.extras):
             n = int(block.data().size)
             noise = None
+            block_key = None
             if key is not None:
+                block_key = jax.random.fold_in(key, 10 + i)
                 noise = noise_scale * jax.random.normal(
-                    jax.random.fold_in(key, 10 + i), block.values.shape
+                    jax.random.fold_in(block_key, 0), block.values.shape
                 )
             extras.append(
-                block.simulated(prediction[offset : offset + n], cvis, noise)
+                block.simulated(
+                    prediction[offset : offset + n],
+                    cvis,
+                    noise,
+                    key=(
+                        None
+                        if block_key is None
+                        else jax.random.fold_in(block_key, 1)
+                    ),
+                )
             )
             offset += n
         return eqx.tree_at(lambda d: d.extras, out, tuple(extras))

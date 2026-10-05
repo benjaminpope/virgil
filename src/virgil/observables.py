@@ -53,11 +53,10 @@ phases are also projected onto the telescope-differenced subspace
 φ_ab = a_a − a_b, orthogonal to every closure, and only channels in the
 line windows are kept. The closure phases (everywhere) and this closure-free
 part of the differential phase (in the lines) then measure different
-things. The cross-covariance between them is neglected: it is exactly zero
-when the baseline errors of a frame and channel are equal, which is the
-assumption behind the closure-phase correlations already used
-(Kammerer et al. 2020; see ``virgil._closure``), and of the
-order of the spread of those errors otherwise.
+things. The cross-covariance between them is neglected as an approximation: it is
+exactly zero only when the baseline errors of a frame and channel are equal.
+For unequal errors it is nonzero, and the independent-block likelihood is
+not exact. The joint covariance is preferred when available.
 """
 
 import equinox as eqx
@@ -193,7 +192,7 @@ class _Block(eqx.Module):
     def with_errors(self, errors):
         return eqx.tree_at(lambda b: b.errors, self, np.asarray(errors))
 
-    def simulated(self, prediction, cvis, noise):
+    def simulated(self, prediction, cvis, noise, key=None):
         """These data replaced by ``prediction`` plus ``noise`` × errors.
 
         ``noise`` is a standard normal draw shaped like ``values`` (or
@@ -518,10 +517,21 @@ class FluxSpectrum(_Block):
         mean = prior_mean + np.einsum("gjk,gk->gj", cov, rhs)
         return mean, cov
 
-    def simulated(self, prediction, cvis, noise):
+    def simulated(self, prediction, cvis, noise, key=None):
         values = prediction
         if noise is not None:
             values = values + self.errors * noise
+        if key is not None:
+            widths = np.asarray(self.widths, prediction.dtype)
+            columns = (
+                prediction[:, None]
+                * np.asarray(self.poly, prediction.dtype)
+                * widths
+            )
+            z = jax.random.normal(
+                key, (self.members.shape[0], len(self.widths))
+            )
+            values = values + np.sum(columns * z[self.group], axis=1)
         if isinstance(values, jax.core.Tracer):
             return eqx.tree_at(lambda b: b.values, self, values)
         # Centre the scale's prior on the new data's level.
@@ -811,21 +821,31 @@ class DifferentialPhase(_Block):
         return y.reshape(-1)[self.keep]
 
     @staticmethod
-    def _unwrap(steps):
+    def _unwrap(steps, anchor=None):
         """Phases along the last axis from their wrapped steps."""
-        zero = np.zeros(steps.shape[:-1] + (1,), steps.dtype)
-        return np.concatenate([zero, np.cumsum(steps, axis=-1)], axis=-1)
+        if anchor is None:
+            anchor = np.zeros(steps.shape[:-1] + (1,), steps.dtype)
+        return np.concatenate(
+            [anchor, anchor + np.cumsum(steps, axis=-1)], axis=-1
+        )
 
     def data(self):
         phases = np.asarray(self.values)[self.grid]
         steps = np.diff(phases, axis=-1)
         steps = np.mod(steps + np.pi, 2.0 * np.pi) - np.pi
-        return self._project(self._unwrap(steps))
+        anchor = np.arctan2(np.sin(phases[..., :1]), np.cos(phases[..., :1]))
+        return self._project(self._unwrap(steps, anchor))
 
     def predict(self, model_object, cvis):
         vis = np.asarray(cvis)[self.sample][self.grid]
+        phases = np.angle(vis)
         steps = np.angle(vis[..., 1:] * np.conj(vis[..., :-1]))
-        return self._project(self._unwrap(steps))
+        data_phase = np.asarray(self.values)[self.grid]
+        data_anchor = np.arctan2(
+            np.sin(data_phase[..., :1]), np.cos(data_phase[..., :1])
+        )
+        anchor_delta = np.angle(np.exp(1j * (phases[..., :1] - data_anchor)))
+        return self._project(self._unwrap(steps, data_anchor + anchor_delta))
 
     def covariance(self, errors=None):
         """Per frame, the covariance of the outputs, ``(F, K R, K R)``.
@@ -909,10 +929,29 @@ class DifferentialPhase(_Block):
             in_output_order(effective)[self.keep],
         )
 
-    def simulated(self, prediction, cvis, noise):
+    def simulated(self, prediction, cvis, noise, key=None):
         values = np.angle(np.asarray(cvis)[self.sample])
         if noise is not None:
             values = values + self.errors * noise
+        if key is not None and self.prior_width is not None:
+            n_f, n_b, _ = self.grid.shape
+            n_mode = len(self.prior_width)
+            latent = jax.random.normal(key, (n_f, n_b, n_mode))
+            widths = np.asarray(self.prior_width, values.dtype)
+            modes = np.einsum(
+                "fbp,frp->fbr",
+                latent,
+                np.asarray(self.basis, values.dtype) * widths,
+            )
+            channels = onp.argmax(onp.asarray(self.w), axis=-1)
+            for f in range(n_f):
+                baseline = onp.flatnonzero(
+                    onp.asarray(self.chan[f]).any(axis=-1)
+                )
+                for b in baseline:
+                    channel = channels[f, : self.basis.shape[1]]
+                    samples = self.grid[f, b, channel]
+                    values = values.at[samples].add(modes[f, b])
         return eqx.tree_at(lambda b: b.values, self, values)
 
 
