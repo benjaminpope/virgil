@@ -207,7 +207,8 @@ def plot_data_model_correlation(
     tuple
         ``(fig, (ax1, ax2))`` for visibility and phase axes. Data with no
         phase observables (e.g. AMIGO DISCOs, which hold every observable
-        in ``vis``) leave the phase axis hidden.
+        in ``vis``) leave the phase axis hidden and give the visibility
+        panel the whole figure.
     """
     vis_mode = getattr(oidata, "vis_mode", "v2")
     projected = getattr(oidata, "vis_mat", None) is not None
@@ -312,8 +313,9 @@ def plot_data_model_correlation(
         if square_axes:
             ax2.set_box_aspect(1)
         ax2.legend(loc="best")
-    else:
+    else:  # one panel, taking the whole figure
         ax2.set_visible(False)
+        ax1.set_subplotspec(fig.add_gridspec(1, 1)[0])
 
     fig.tight_layout()
     return fig, (ax1, ax2)
