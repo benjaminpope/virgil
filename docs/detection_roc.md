@@ -117,7 +117,7 @@ ax.set_ylabel(
     r"false-alarm probability $P(\Delta\chi^2_{\rm null} \geq$ threshold$)$"
 )
 ax.set_title(r"Null distribution of $\Delta\chi^2$ over the grid")
-ax.legend();
+ax.legend(loc="upper right");
 ```
 
 ## Injections
@@ -139,7 +139,7 @@ for i, flux in enumerate(FLUXES):
 
 ## ROC curves
 
-For each statistic, every null value is a possible threshold: its false-positive rate is the fraction of null searches at or above it, and its true-positive rate is the fraction of injections at or above it. The function `roc` below does this in three lines; the `DetectionMC` container of the next stage will do it, with uncertainties. We plot the curves for the faint ($2\times10^{-3}$) and moderate ($4\times10^{-3}$) injections with a logarithmic false-positive axis, because the interesting region is at small false-alarm rates; the dotted vertical line is our FAP, and the dotted diagonal is a statistic that cannot tell companions from noise. Only the ordering of a statistic's values matters for its ROC curve, so the three can be compared directly.
+For each statistic, every null value is a possible threshold: its false-positive rate is the fraction of null searches at or above it, and its true-positive rate is the fraction of injections at or above it. The function `roc` below does this in three lines; the `DetectionMC` container of the next stage will do it, with uncertainties. We plot the curves for the faint ($2\times10^{-3}$) and moderate ($4\times10^{-3}$) injections with a logarithmic false-positive axis, because the interesting region is at small false-alarm rates; the dash-dotted vertical line is our FAP, and the thin grey curve is a statistic that cannot tell companions from noise (true-positive rate equal to false-positive rate, which is a curve rather than a straight line on a logarithmic axis). Only the ordering of a statistic's values matters for its ROC curve, so the three can be compared directly. The curves for $\Delta\chi^2$ and the maximum SNR almost coincide: for a faint companion the likelihood is nearly quadratic in flux, so the maximum SNR is close to $\sqrt{\Delta\chi^2}$ and ranks the simulations in the same order. The log Bayes factor averages over positions instead of taking the best one, so it can rank them differently; at the smallest false-positive rates only a handful of null draws set each curve, so differences there are within the noise.
 
 ```python
 def roc(null_scores, injected_scores):
@@ -155,10 +155,11 @@ labels = {
 }
 fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
 for ax, i in zip(axes, [FLUXES.index(2e-3), FLUXES.index(4e-3)]):
-    for s in STATS:
-        ax.plot(*roc(null[s], injected[s][i]), label=labels[s])
-    ax.plot([1 / d0.size, 1], [1 / d0.size, 1], "k:", lw=0.8)
-    ax.axvline(FAP, color="grey", lw=0.8, ls=":")
+    for s, ls in zip(STATS, ("-", "--", ":")):
+        ax.plot(*roc(null[s], injected[s][i]), ls=ls, label=labels[s])
+    chance = onp.geomspace(1 / d0.size, 1.0, 100)
+    ax.plot(chance, chance, color="grey", lw=0.8)  # TPR = FPR
+    ax.axvline(FAP, color="grey", lw=0.8, ls="-.")
     ax.set_xscale("log")
     ax.set_xlabel("false-positive rate")
     ax.set_title(
