@@ -17,6 +17,15 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`injection_limits`: injection-method detection limits.** Like
+  `absil_limits`, with the same grid, inputs and return format, but each
+  limit is the flux at which a companion injected into the data (Gallenne et
+  al. 2015, section 3.2, as in CANDID's `detectionLimit(methods=["injection"])`)
+  would be detected at the requested significance. It solves for the flux by
+  bisection in log flux, vmapped over the grid. It agrees with CANDID's
+  criterion to 1e-4; unlike CANDID it does not refit the primary's diameter
+  to the injected data. It equals `absil_limits` on the data reflected about
+  the null model, and neither is uniformly more sensitive.
 - **Line and node spectra (Stage 6a, spectra).** `GaussianLine` and
   `LorentzianLine` (amplitude is the peak flux; negative for absorption),
   `Nodes` (linear or natural cubic spline through free fluxes, constant or a
