@@ -11,6 +11,8 @@ Likelihoods of source models given data, and numpyro models.
         - inflated_errors
         - flux_scale_posterior
         - noise_sites
+        - is_tied
+        - tied_log_prior
         - noise_for
         - loglike
         - joint_prediction
