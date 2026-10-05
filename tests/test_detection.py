@@ -15,7 +15,11 @@ from scipy import special, stats
 
 from tests._compiles import count_compiles
 from virgil.coverage import nrm_oidata
-from virgil.detection import detection_statistics, local_nsigma
+from virgil.detection import (
+    _constrained_profile,
+    detection_statistics,
+    local_nsigma,
+)
 from virgil.grid_fit import likelihood_grid
 from virgil.likelihood import loglike
 from virgil.models import BinaryModelCartesian, PointSource, System
@@ -269,3 +273,18 @@ def test_statistic_names_cannot_be_grid_keys():
     grid = {**_box(2, 3), "max_snr": jnp.array([1.0])}
     with pytest.raises(ValueError, match="clash"):
         detection_statistics(_data(0.0, 0), BinaryModelCartesian, grid)
+
+
+def test_constrained_profile_keeps_positive_grid_points():
+    # Positions: (0) refinement worse than the grid but with a negative
+    # flux; (1) refinement better but at a negative flux; (2) refinement
+    # NaN; (3) a valid positive refinement; (4) nothing beats the null.
+    grid_flux = jnp.array([0.2, 0.3, 0.1, 0.1, 0.1])
+    grid_loglike = jnp.array([5.0, 4.0, 3.0, 2.0, -1.0])
+    opt_flux = jnp.array([-0.1, -0.2, jnp.nan, 0.15, 0.1])
+    opt_loglike = jnp.array([4.0, 9.0, jnp.nan, 6.0, -0.5])
+    profile, flux = _constrained_profile(
+        grid_flux, grid_loglike, opt_flux, opt_loglike, 0.0
+    )
+    onp.testing.assert_allclose(profile, [5.0, 4.0, 3.0, 6.0, 0.0])
+    onp.testing.assert_allclose(flux, [0.2, 0.3, 0.1, 0.15, 0.0])

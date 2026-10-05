@@ -254,19 +254,12 @@ def _detection_statistics(
     null_values = ordered_values(0.0, coords[0], params, coord_keys, flux_key)
     loglike0 = loglike(null_values, params, data, model)
 
-    # Profile likelihood with flux >= 0. The refined optimum is used where
-    # it improves on the best grid point (it may fail, e.g. to NaN); where
-    # the unconstrained best flux is negative, the constrained optimum is
-    # flux 0, which is the null itself.
-    use_opt = opt_loglike >= grid_loglike
-    alt_loglike = jnp.where(use_opt, opt_loglike, grid_loglike)
-    alt_flux = jnp.where(use_opt, opt_flux, grid_flux)
-    sign = jnp.where(jnp.isnan(opt_flux), alt_flux, opt_flux)
-    positive = (sign > 0.0) & (alt_loglike > loglike0)
-    profile = jnp.where(positive, alt_loglike, loglike0)
+    profile, profile_flux = _constrained_profile(
+        grid_flux, grid_loglike, opt_flux, opt_loglike, loglike0
+    )
     best = jnp.argmax(profile.reshape(-1))
     delta_chi2 = 2.0 * (profile.reshape(-1)[best] - loglike0)
-    best_flux = jnp.where(positive, alt_flux, 0.0).reshape(-1)[best]
+    best_flux = profile_flux.reshape(-1)[best]
 
     # Grid-marginalised evidence ratio over the trapezoid-weighted prior.
     log_ratio = jnp.where(
@@ -304,6 +297,27 @@ def _detection_statistics(
         / _flux_step(samples_dict[flux_key], best_flux)
     )
     return stats, converged
+
+
+def _constrained_profile(
+    grid_flux, grid_loglike, opt_flux, opt_loglike, loglike0
+):
+    """Profile log likelihood and flux with flux >= 0 at every position.
+
+    The refined optimum is used only where its flux is non-negative and it
+    improves on the best grid point; otherwise (a negative or failed, e.g.
+    NaN, refinement) the grid candidate is kept, whose flux is non-negative
+    because flux axes are. A position whose candidate does not improve on
+    the null gets the null's log likelihood and flux 0.
+    """
+    use_opt = (opt_flux >= 0.0) & (opt_loglike >= grid_loglike)
+    alt_loglike = jnp.where(use_opt, opt_loglike, grid_loglike)
+    alt_flux = jnp.where(use_opt, opt_flux, grid_flux)
+    improves = (alt_flux > 0.0) & (alt_loglike > loglike0)
+    return (
+        jnp.where(improves, alt_loglike, loglike0),
+        jnp.where(improves, alt_flux, 0.0),
+    )
 
 
 def _log_prior_weights(shape, dtype):
