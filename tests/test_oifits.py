@@ -758,3 +758,41 @@ def test_station_pairs_are_read_per_sample(tmp_path):
     assert onp.array_equal(onp.asarray(data.stations), record["stations"])
     gains = data.with_gains(telescope=0.01).gains
     assert gains.rows.shape[0] == 2  # one block per frame
+
+
+def _two_snapshots(time_s, mjd):
+    """Two exposures of the 4-station file in one table each, with the
+    given per-snapshot TIME (s) and MJD values."""
+    from virgil.oifits import build_hdulist
+
+    hdul = build_hdulist(_tables())
+    for name in ("OI_VIS2", "OI_T3"):
+        table = hdul[name]
+        n = len(table.data)
+        both = fits.BinTableHDU.from_columns(table.columns, nrows=2 * n)
+        for column in table.columns.names:
+            both.data[column][n:] = table.data[column]
+        both.data["TIME"][:n], both.data["TIME"][n:] = time_s
+        both.data["MJD"][:n], both.data["MJD"][n:] = mjd
+        both.header.update(table.header)
+        hdul[name] = both
+    return OIData(hdul)
+
+
+def test_snapshots_told_apart_by_time_are_separate_frames():
+    # OIFITS v1 writers such as OYSTER give a night one MJD and put the
+    # snapshot in TIME. Closure phases are correlated only within a snapshot,
+    # so two snapshots of 4 stations have 2 x 3 independent closure phases.
+    by_mjd = _two_snapshots((0.0, 0.0), (60000.0, 60000.0 + 3600.0 / 86400.0))
+    by_time = _two_snapshots((0.0, 3600.0), (60000.0, 60000.0))
+    n_vis = by_mjd.vis.size
+    assert by_mjd.n_independent - n_vis == 6
+    assert by_time.n_independent - n_vis == 6
+    assert onp.unique(onp.asarray(by_time.frame)).size == 2
+
+
+def test_constant_time_still_groups_by_mjd():
+    same = _two_snapshots((0.0, 0.0), (60000.0, 60000.0))
+    apart = _two_snapshots((5.0, 5.0), (60000.0, 60001.0))
+    assert onp.unique(onp.asarray(same.frame)).size == 1
+    assert onp.unique(onp.asarray(apart.frame)).size == 2

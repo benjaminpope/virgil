@@ -129,7 +129,7 @@ def read_oifits(
     Each closure-phase triangle ``(a, b, c)`` is matched to the visibility
     baselines ``(a, b)``, ``(b, c)`` and ``(a, c)`` with the same ``INSNAME``
     (or, failing that, any ``INSNAME`` with identical wavelengths) and nearest
-    ``MJD``, within its own file. The MJDs must agree to within
+    ``MJD`` and ``TIME``, within its own file. The MJDs (and TIMEs) must agree to within
     twice the longest ``INT_TIME`` in the visibility table (or about 9
     seconds if there is none), since pipelines such as GRAVITY's average different
     frames of one exposure for each table. A baseline stored reversed, ``(b, a)``,
@@ -138,8 +138,11 @@ def read_oifits(
 
     A frame is one exposure of one instrument: the baselines that closure
     phases tie together, together with any rows of the same ``INSNAME`` at
-    the same ``MJD`` (within about 9 seconds). Frames are numbered within
-    the record, so different files never share one.
+    the same ``MJD`` and ``TIME`` (each within about 9 seconds). Both are
+    compared because some OIFITS v1 writers (e.g. OYSTER) give a night one
+    ``MJD`` and put each snapshot in ``TIME``; closure phases are correlated
+    only within a snapshot. Frames are numbered within the record, so
+    different files never share one.
 
     All files in a list must hold the same kinds of observable (squared
     visibilities or amplitudes; closure or absolute phases; the same
