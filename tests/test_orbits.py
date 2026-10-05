@@ -585,6 +585,15 @@ def test_numpyro_model_adds_a_position_term_to_the_prior():
     )
 
 
+def test_term_loglike_is_the_datas_loglike():
+    positions, _, orbit = _numpyro_setup()
+    values = {"a_mas": 19.0, "ecc": 0.35}
+    term = positions.term(orbit)
+    assert float(term.loglike(values)) == pytest.approx(
+        float(positions.loglike(orbit(values))), rel=1e-6
+    )
+
+
 def test_numpyro_model_sums_oidata_and_likelihood_terms():
     import numpyro.distributions as dist
 

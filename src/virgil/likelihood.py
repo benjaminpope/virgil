@@ -406,9 +406,8 @@ def _term_loglike(term, values):
     A plain callable returning whitened residuals has no known
     normalisation, so it contributes ``-0.5 * sum(r**2)`` only.
     """
-    data, build = getattr(term, "data", None), getattr(term, "build", None)
-    if hasattr(data, "loglike") and build is not None:
-        return data.loglike(*build(values))
+    if hasattr(term, "loglike"):
+        return term.loglike(values)
     return -0.5 * np.sum(np.ravel(term(values)) ** 2)
 
 
