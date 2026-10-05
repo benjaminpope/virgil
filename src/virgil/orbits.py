@@ -483,22 +483,48 @@ class PositionData(zx.Base):
         cov = jac * errors[..., None, :] ** 2 @ jac.swapaxes(-1, -2)
         return cls(mjd, dra, ddec, cov, t_ref)
 
-    def whitened_residuals(self, orbit):
-        """``L⁻¹ (data - orbit)`` for every epoch, flattened (2n,)."""
+    def model(self, orbit, north_angle=None, plate_scale=None):
+        """The positions ``(dra, ddec)`` these data would measure (mas).
+
+        The orbit's sky positions, seen through this dataset's astrometric
+        calibration: ``m R(δ) (dra, ddec)`` with ``δ = north_angle``
+        (degrees), ``m = plate_scale`` and
+        ``R(δ) = [[cos δ, sin δ], [-sin δ, cos δ]]``. So a companion at
+        true PA θ and separation ρ is measured at PA θ + δ and separation
+        m ρ: ``north_angle`` is the error *added* to every measured
+        position angle, as in
+        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle].
+        ``None`` (the default) leaves the positions untouched.
+        """
         dt = self.dt + (self.t_ref - orbit.t_ref)
         dra, ddec, _ = orbit._relative(dt)
+        if north_angle is not None:
+            c = np.cos(np.deg2rad(north_angle))
+            s = np.sin(np.deg2rad(north_angle))
+            dra, ddec = c * dra + s * ddec, -s * dra + c * ddec
+        if plate_scale is not None:
+            dra, ddec = plate_scale * dra, plate_scale * ddec
+        return dra, ddec
+
+    def whitened_residuals(self, orbit, north_angle=None, plate_scale=None):
+        """``L⁻¹ (data - model)`` for every epoch, flattened (2n,).
+
+        ``north_angle`` and ``plate_scale`` are this dataset's calibration
+        terms (see [`model`][virgil.orbits.PositionData.model]).
+        """
+        dra, ddec = self.model(orbit, north_angle, plate_scale)
         resid = np.stack([self.dra - dra, self.ddec - ddec], -1)
         return np.einsum("nij,nj->ni", self.whitener, resid).reshape(-1)
 
-    def loglike(self, orbit):
+    def loglike(self, orbit, north_angle=None, plate_scale=None):
         """Gaussian log-likelihood of the positions under ``orbit``."""
-        resid = self.whitened_residuals(orbit)
+        resid = self.whitened_residuals(orbit, north_angle, plate_scale)
         log_det = np.sum(np.log(np.abs(np.diagonal(self.whitener, 0, 1, 2))))
         return (
             -0.5 * resid @ resid + log_det - resid.size / 2 * np.log(2 * np.pi)
         )
 
-    def term(self, orbit):
+    def term(self, orbit, north_angle=None, plate_scale=None):
         """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
 
         Parameters
@@ -506,8 +532,36 @@ class PositionData(zx.Base):
         orbit : callable
             Maps the fitted values (a dict, by path or keyword) to a
             [`KeplerOrbit`][virgil.orbits.KeplerOrbit].
+        north_angle, plate_scale : str, optional
+            Names of fitted values holding this dataset's North angle δ
+            (degrees, added to every measured position angle) and plate
+            scale m (a factor, 1 when calibrated), as in
+            [`model`][virgil.orbits.PositionData.model]. As for
+            ``RVData.term``'s ``jitter``, each is a key of ``priors``
+            (which a function model must accept and may ignore); give
+            each dataset its own names. Their priors must be stated:
+            there is no default width. The invariant priors (uniform on
+            the circle for δ, log-uniform for m) leave each one
+            degenerate with the orbit's orientation and size if a single
+            dataset is fitted; a Gaussian, e.g. ``Normal(0, 0.1)`` for δ
+            and ``Normal(1, 1e-3)`` for m, is strong information and
+            should come from the instrument's astrometric calibration.
+            Per-dataset plate-scale and North-angle terms follow
+            Octofitter (Thompson et al. 2023, AJ 166, 164). They do not
+            change the likelihood's normalisation, so a least-squares
+            fit keeps its form.
         """
-        return _Term(self, lambda values: (orbit(values),))
+        if north_angle is None and plate_scale is None:
+            return _Term(self, lambda values: (orbit(values),))
+
+        def build(values):
+            return (
+                orbit(values),
+                None if north_angle is None else values[north_angle],
+                None if plate_scale is None else values[plate_scale],
+            )
+
+        return _Term(self, build)
 
 
 @jax.jit

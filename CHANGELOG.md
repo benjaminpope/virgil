@@ -131,6 +131,23 @@ anything before 1.0 may change between minor versions.
   `ValueError` on an empty residual list: with `data=()` the curvature comes
   from the priors alone, as `fit` and `numpyro_model` already allow.
 
+### Docs
+
+- **New tutorial: "Orbits from interferometric epochs"** (Binaries,
+  `notebooks/orbit_fitting.ipynb`). Eight epochs of simulated VLTI
+  (UT) V² and closure phases of a three-year binary: per-epoch astrometry
+  with a grid, a fit and the Laplace covariance into `PositionData`,
+  Thiele–Innes starting orbits, and a NUTS posterior under Jeffreys priors
+  (log-uniform P and a, uniform cos i, ω, Ω and phase as 2-vector
+  directions, uniform e) with a no-data prior check, a corner plot, and an
+  ensemble of posterior orbits on the sky and in time.
+- **`plotting.plot_orbit_ensemble`.** Draws a batch of `KeplerOrbit`s on the
+  sky (East left, North up) as thin lines, one period each, with measured
+  `PositionData` positions coloured by epoch with their error ellipses, a
+  reference orbit and the primary.
+- **Conventions.** Dropped the stale "Not yet in this version" note from the
+  orbit conventions: `virgil.orbits` is on main.
+
 ### Added
 
 - **Closure-phase offsets per frame** (Stage 6d).
