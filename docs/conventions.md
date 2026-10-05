@@ -9,7 +9,9 @@ This page collects the conventions virgil uses: which way the axes point, what s
 5. [Fluxes](#fluxes)
 6. [Times and frames](#times-and-frames)
 7. [Orbits](#orbits)
-8. [Precision](#precision)
+8. [Which priors?](#which-priors)
+9. [Priors and the MAP](#priors-and-the-map)
+10. [Precision](#precision)
 
 ## Sky coordinates and images
 
@@ -150,7 +152,7 @@ For analyses that treat nights separately, [`OIData.epochs`][virgil.oidata.OIDat
 
 ## Orbits
 
-The conventions below were decided in the orbit design note (`design/orbit_scene_joint_fitting.md`, §2.1–2.3) and are implemented by [`virgil.orbits`](api/orbits.md). The tutorial [Orbits from interferometric epochs](orbit_fitting.md) uses them end to end.
+The conventions below were fixed in the orbit design (the [design note](https://github.com/benjaminpope/virgil/blob/main/design/orbit_scene_joint_fitting.md), §2.1–2.3) and are implemented by [`virgil.orbits`](api/orbits.md). The tutorial [Orbits from interferometric epochs](orbit_fitting.md) uses them end to end.
 
 An orbit gives the position of a **secondary** star relative to a **primary** (or reference) star, which sits at the origin and is the scene's reference component at `flux=1`. It need not be the more massive star. The relative position is $\mathbf{r} = (\mathrm{dra}, \mathrm{ddec}, dz)$ of the secondary minus the primary.
 

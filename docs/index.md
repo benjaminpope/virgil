@@ -25,7 +25,10 @@ pip install virgil-astro
 
 Optional extras add the corner-plot helpers in `virgil.plotting`
 (`pip install "virgil-astro[plots]"`, for pandas and ChainConsumer) and the
-SIMBAD lookups in `virgil.legacy` (`[legacy]`, for astroquery).
+SIMBAD lookups in `virgil.legacy` (`[legacy]`, for astroquery). Orbit
+fitting (`virgil.orbits`) needs [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet), which comes with
+`pip install "virgil-astro[orbits]"`; without it, importing `virgil.orbits`
+raises an error that names the extra.
 
 You can also build from source. To do so, clone the git repo and enter the directory:
 
@@ -59,10 +62,10 @@ Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpo
 
 The sections in the sidebar hold worked examples on simulated and bundled data:
 - **Background:** [who contributed what](contributors.md), [Gaussian-process priors and information field theory](gp_and_ift.md), and [coordinate, sign and flux conventions](conventions.md).
-- **Data Handling:** [reading OIFITS files into `OIData`](data_io.md), and [AMIGO's DISCO data from JWST aperture masking](amigo_disco.md).
-- **Binaries:** [searching for companions](binary_search.md), [detection limits](contrast_limits.md), and [fitting several datasets together](hierarchical_inference.md).
+- **Data Handling:** [reading OIFITS files into `OIData`](data_io.md), and [AMIGO's DISCO data from JWST aperture masking](amigo_disco.md), and [spectro-interferometric observables](spectro_observables.md) (OI_FLUX spectra, differential phases and calibration nuisances).
+- **Binaries:** [searching for companions](binary_search.md), [detection limits](contrast_limits.md), [detection ROC curves](detection_roc.md) calibrated by injection and recovery, [fitting several datasets together](hierarchical_inference.md), and [orbits from interferometric epochs](orbit_fitting.md) (needs the `[orbits]` extra).
 - **Sources:** [visibility models](model_syntax.md), [extended sources](source_models.md), [composing scenes](composition.md), [spotted stars](harmonix.md), [limb-darkened stars](limb_darkening.md) and [gravity-darkened stars](gravity_darkened_star.md).
-- **Imaging:** image reconstruction in six parts: [simulating data](imaging_ami.md), [regularised maximum likelihood](imaging_rml.md), [Gaussian-process priors](imaging_gp.md), [a ring around a binary](imaging_composite.md) [sampling the posterior](imaging_sampling.md) and [sparse images and CLEAN](imaging_clean.md).
+- **Imaging:** image reconstruction in six parts: [simulating data](imaging_ami.md), [regularised maximum likelihood](imaging_rml.md), [Gaussian-process priors](imaging_gp.md), [a ring around a binary](imaging_composite.md), [sampling the posterior](imaging_sampling.md) and [sparse images and CLEAN](imaging_clean.md).
 - **[API Reference](api/index.md)** documents every public class and function.
 
 Documentation tooling is currently migrating from MkDocs to Zensical. During this transition, both builders are supported from the same configuration file.
@@ -90,6 +93,6 @@ VIRGIL is the **V**ersatile **I**nterferometric **R**econstruction and **G**radi
 
 ### Formerly drpangloss
 
-Until version 0.1.1 this package was called **drpangloss**, after Voltaire's Dr Pangloss and as a nod to Antoine Mérand's [CANDID](https://github.com/amerand/CANDID). From version 0.2.0 it is **virgil**: `import virgil`, installed with `pip install virgil-astro`. A final release of `drpangloss` under its own name will depend on `virgil-astro` and point here, so old installs find the new package.
+Until version 0.1.1 this package was called **drpangloss**, after Voltaire's Dr Pangloss and as a nod to Antoine Mérand's [CANDID](https://github.com/amerand/CANDID). From version 0.2.0 it is **virgil**: `import virgil`, installed with `pip install virgil-astro`. A final release of `drpangloss` (0.2.0) under its own name depends on `virgil-astro` and points here, so old installs find the new package.
 
 *e quindi uscimmo a riveder le stelle*

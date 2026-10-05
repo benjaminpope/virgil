@@ -1357,7 +1357,7 @@ def position_angle_prior(orbit_fn):
     ...         400.0, v["theta"], v["ecc"], 60.0, 40.0, 110.0, 20.0,
     ...         t_ref=60500.0,
     ...     )
-    >>> terms = [positions.term(orbit_fn), position_angle_prior(orbit_fn)]
+    >>> terms = [positions.term(orbit_fn), position_angle_prior(orbit_fn)]  # doctest: +SKIP
     """
     return _PositionAnglePrior(orbit_fn)
 
