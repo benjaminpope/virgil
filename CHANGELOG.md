@@ -7,16 +7,14 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
-### Added
+### Removed
 
-- **Multi-scale CLEAN**: `clean(scales_mas=(0.0, ...))` adds components
-  that are pixels convolved with circular Gaussians of the given FWHM
-  (Cornwell 2008), so extended emission takes a few broad components
-  instead of many points. The search and the major cycles run over every
-  (scale, pixel). `CleanResult` gains `components_by_scale` and
-  `scales_mas`; `components` is still the total image. The default
-  `scales_mas=(0.0,)` gives exactly the previous point-only results.
-  An optional `scale_bias` favours small scales; it is off by default.
+- `examples/elr_pavo/`, the PAVO re-analysis scripts, moved to the private paper repository; the golden-fixture generator is now `scripts/make_elr_golden.py`.
+
+### Docs
+
+- The `virgil._linear` API page is labelled internal.
+- Docs pages no longer point to the internal design notes.
 
 ## 0.3.0 (2026-10-06)
 
@@ -85,6 +83,15 @@ analysis or warn:
   cycle. CLEAN also ends with a final major cycle when it stops at the target
   or at `max_iterations`, so its fluxes are refitted even when the data start
   close to the target and no cycle has run.
+
+- **Multi-scale CLEAN**: `clean(scales_mas=(0.0, ...))` adds components
+  that are pixels convolved with circular Gaussians of the given FWHM
+  (Cornwell 2008), so extended emission takes a few broad components
+  instead of many points. The search and the major cycles run over every
+  (scale, pixel). `CleanResult` gains `components_by_scale` and
+  `scales_mas`; `components` is still the total image. The default
+  `scales_mas=(0.0,)` gives exactly the previous point-only results.
+  An optional `scale_bias` favours small scales; it is off by default.
 
 - **`fit(lbfgs_memory=50)`.** L-BFGS now keeps 50 past steps (optax's default
   is 10). On regularised images, 10 stopped short of the optimum at many

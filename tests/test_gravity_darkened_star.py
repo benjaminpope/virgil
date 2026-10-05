@@ -1,7 +1,7 @@
 """Tests for GravityDarkenedStar, written independently from its spec.
 
 Golden values come from Shashank Dholakia's original ELR code
-(``data/elr_golden.npz``, see ``examples/elr_pavo/make_golden.py``).
+(``data/elr_golden.npz``, see ``scripts/make_elr_golden.py``).
 """
 
 import os

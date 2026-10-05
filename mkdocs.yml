@@ -4,6 +4,7 @@
 
 # ===== Setup and Themes =====
 markdown_extensions:
+  - admonition
   - pymdownx.superfences
   - pymdownx.highlight
   - pymdownx.arithmatex:
@@ -92,7 +93,7 @@ nav:
           - Functions: api/models/functions.md
       - Likelihood: api/likelihood.md
       - Gains: api/gains.md
-      - Linear marginalisation: api/linear.md
+      - Linear marginalisation (internal): api/linear.md
       - Observables: api/observables.md
       - Fitting: api/fitting.md
       - Angles: api/angles.md
