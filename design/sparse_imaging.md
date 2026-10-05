@@ -215,6 +215,15 @@ DISCOs, 62² pixels of 20 mas:
   weaker fit inherits the collapse. The `LogSum` docstring now says so, and
   the MWE fits each `LogSum` weight from the CLEAN start instead.
 
+### MWE rerun (OzSTAR job 18019130, commit 3f3c0b2)
+
+With each `LogSum` weight fitted from the CLEAN start, `LogSum` reached
+χ²/N = 0.974 at w = 3.2e-3 and matches the truth after convolution (NCC
+1.00); it is as compact as CLEAN (all its flux in the brightest 2% of
+pixels) and, like CLEAN, breaks the extended blob into points (native NCC
+0.68). The other results were unchanged. The CLEAN tutorial
+(`notebooks/imaging_clean.ipynb`, imaging part 6) ran in 32 s.
+
 ## References
 
 - Baron, Monnier & Kloppenborg 2010, Proc. SPIE 7734: SQUEEZE (MCMC
