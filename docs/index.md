@@ -4,6 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![integration](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml)
 [![Documentation](https://github.com/benjaminpope/virgil/actions/workflows/zensical-pages.yml/badge.svg)](https://benjaminpope.github.io/virgil/)
+<!-- dev-carbon-badge -->[![dev carbon | 93.6 kg CO2e](https://img.shields.io/badge/dev%20carbon-93.6%20kg%20CO%E2%82%82e-2e7d32)](dev_carbon.md)<!-- /dev-carbon-badge -->
 
 **V**ersatile **I**nterferometric **R**econstruction and **G**radient-based **I**nference **L**ibrary.
 
