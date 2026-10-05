@@ -57,6 +57,7 @@ nav:
   - Binaries:
       - "Binary search": binary_search.md
       - "Contrast limits": contrast_limits.md
+      - "Detection ROC curves": detection_roc.md
       - "Hierarchical inference across filters": hierarchical_inference.md
   - Sources:
       - "Visibility models": model_syntax.md
