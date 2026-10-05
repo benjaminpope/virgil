@@ -10,6 +10,9 @@ as a magnitude difference ``Δmag = 2.5 log10(contrast)`` (5 mag here), which
   (Ruffio et al. 2018).
 * `absil_limits`: frequentist limits from the chi-squared ratio to the
   no-companion model (Absil et al. 2011), using :func:`nsigma`.
+* `injection_limits`: limits by companion injection (Gallenne et al. 2015,
+  as in CANDID): the flux at which an injected companion would be detected
+  at ``sigma``.
 * :func:`radial_profile`: azimuthal statistics of a limit map, for contrast
   curves.
 """
@@ -21,7 +24,6 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-import optimistix as optx
 
 from ._utils import concrete
 from ._grid import (
@@ -43,6 +45,7 @@ __all__ = [
     "contrast_to_flux",
     "flux_to_contrast",
     "flux_to_delta_mag",
+    "injection_limits",
     "nsigma",
     "radial_profile",
     "ruffio_upperlimit",
@@ -50,6 +53,11 @@ __all__ = [
 
 
 # === UNITS ===
+
+# Most decades the starting flux of `absil_limits` may be moved to bracket the
+# target significance.
+_MAX_BRACKET_DECADES = 40
+_BISECTIONS = 14
 
 # Smallest flux used in conversions, so that zero or negative limits map to a
 # large but finite contrast instead of infinity or NaN.
@@ -321,8 +329,9 @@ def absil_limits(
     samples_dict : dict[str, array-like]
         Grid axes, as a mapping from parameter name or path to 1D values
         (e.g. ``dra``/``ddec`` in milliarcseconds). The flux axis is only
-        used for the starting guess, and must contain at least one positive
-        value.
+        used for the starting guess (a single value is enough, and the limit
+        may lie decades away from it), and must contain at least one
+        positive value.
     sigma : float
         Exclusion significance. It must exceed the significance of a
         chi-squared ratio of 1 (about 0.67 for many degrees of freedom).
@@ -355,7 +364,7 @@ def absil_limits(
     if not np.any(np.asarray(samples_dict[flux_key]) > 0.0):
         raise ValueError(
             f"The flux axis {flux_key!r} needs at least one positive value "
-            "to start the log-flux optimizer from."
+            "to start the limit search from."
         )
     ndof = data_obj.n_independent
     floor = float(nsigma(1.0, 1.0, ndof))
@@ -428,7 +437,7 @@ def _absil_limits(
     best_flux_indices = jnp.nanargmin(loss_grid, axis=flux_axis)
 
     coords, shape = coordinate_points(samples_dict, coord_keys)
-    # A zero flux would start the log-flux optimizer at -inf; start from the
+    # A zero flux would start the log-flux search at -inf; start from the
     # smallest positive flux on the grid instead.
     flux_axis_vals = jnp.asarray(samples_dict[flux_key])
     smallest_positive = jnp.min(
@@ -437,26 +446,55 @@ def _absil_limits(
     start_flux = flux_axis_vals[best_flux_indices].reshape(-1)
     start_flux = jnp.where(start_flux > 0.0, start_flux, smallest_positive)
 
-    def optimize_log_flux(log_flux, coord_vals):
-        flux = 10.0 ** jnp.asarray(log_flux).reshape(-1)[0]
+    def significance_at(log_flux, coord_vals):
+        flux = 10.0**log_flux
         values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
-        return loss(values)
+        return nsigma(reduced_chi2(values), chi2_null, ndof)
+
+    def bracketed_limit(flux0, coord_vals):
+        # The significance saturates (about 37 sigma in float64) for bright
+        # companions, where the loss is flat and BFGS cannot move. Step the
+        # starting flux by decades until it crosses the target, then bisect
+        # that decade in log flux. The axis thus only has to give a rough
+        # starting point, and no gradient is needed. Returns log10 of the
+        # limit.
+        log0 = jnp.log10(flux0)
+        above = significance_at(log0, coord_vals) > sigma
+        direction = jnp.where(above, -1.0, 1.0)
+
+        def keep_going(state):
+            log_flux, n = state
+            same_side = (
+                significance_at(log_flux, coord_vals) > sigma
+            ) == above
+            return same_side & (n < _MAX_BRACKET_DECADES)
+
+        def step(state):
+            log_flux, n = state
+            return log_flux + direction, n + 1
+
+        log_end, _ = jax.lax.while_loop(keep_going, step, (log0, 0))
+        # [log_end, log_end - direction] brackets the target.
+
+        def bisect(_, edges):
+            near, far = edges
+            mid = 0.5 * (near + far)
+            same_side = (significance_at(mid, coord_vals) > sigma) == above
+            return jnp.where(same_side, mid, near), jnp.where(
+                same_side, far, mid
+            )
+
+        # `near` is on the starting side of the target; `far` on the other.
+        near, far = jax.lax.fori_loop(
+            0, _BISECTIONS, bisect, (log_end - direction, log_end)
+        )
+        return 0.5 * (near + far)
 
     def best_flux(flux0, coord_vals):
-        solution = optx.compat.minimize(
-            optimize_log_flux,
-            x0=jnp.array([jnp.log10(flux0)]),
-            args=(coord_vals,),
-            method="BFGS",
-            options={"maxiter": 100},
-        )
-        limit = 10.0 ** solution.x[0]
-        values = ordered_values(
-            limit, coord_vals, params, coord_keys, flux_key
-        )
+        limit = 10.0 ** bracketed_limit(flux0, coord_vals)
         # Converged if the target significance is reached to 0.01 sigma.
         reached = jnp.abs(
-            nsigma(reduced_chi2(values), chi2_null, ndof) - sigma
+            significance_at(jnp.log10(limit), coord_vals) - sigma
         )
         return limit, reached < 1e-2
 
@@ -464,3 +502,207 @@ def _absil_limits(
         best_flux, start_flux, coords, batch_size=batch_size
     )
     return limits.reshape(shape), success.reshape(shape)
+
+
+# Bisection steps in log flux: the default bracket (1e-6 to 1) spans 6
+# decades, so 40 steps resolve the limit to about 1e-11 decades.
+_BISECTION_STEPS = 40
+# Search range used when ``flux_bounds=None``: wide enough for System weights.
+_UNBOUNDED_BRACKET = (1e-8, 1e3)
+
+
+def injection_limits(
+    data_obj,
+    model,
+    samples_dict,
+    sigma,
+    flux_param=None,
+    flux_bounds=(1e-6, 1.0),
+    batch_size=None,
+):
+    """Flux at which an injected companion would be detected at ``sigma``.
+
+    This is the injection method of Gallenne et al. (2015, section 3.2),
+    as in CANDID's ``detectionLimit(methods=["injection"])``. At each grid
+    position a companion of flux ``f`` is added to the data (to every
+    observable: the observables of the model with the companion minus those
+    of the no-companion model), and the no-companion model is fitted to the
+    result. The limit is the flux at which the null model fits the injected
+    data worse than the companion model does, by a chi-squared ratio
+    corresponding to ``sigma`` (see [nsigma][virgil.limits.nsigma]). The
+    companion model fits the injected data exactly as the null model fits
+    the original data, so the ratio is
+    ``chi2(data + signal(f)) / chi2(data)`` for the null model.
+
+    Compare [`absil_limits`][virgil.limits.absil_limits], which uses
+    ``chi2(data - signal(f)) / chi2(data)``. The two differ by the sign of
+    the cross term between the data's residuals and the signal.
+
+    Parameters
+    ----------
+    data_obj : OIData
+        Data to fit.
+    model : SourceModel or class
+        Template model or model class, as for
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid]. The
+        no-companion model sets every parameter in ``samples_dict`` to zero.
+    samples_dict : dict[str, array-like]
+        Grid axes, as a mapping from parameter name or path to 1D values
+        (e.g. ``dra``/``ddec`` in milliarcseconds). The values on the flux
+        axis are not used, because the flux is solved for at each position.
+    sigma : float
+        Detection significance. It must exceed the significance of a
+        chi-squared ratio of 1 (about 0.67 for many degrees of freedom).
+    flux_param : str, optional
+        The key of ``samples_dict`` holding the flux that is solved for.
+        By default, the one key whose last part is ``flux``.
+    flux_bounds : tuple[float, float] or None, optional
+        The flux is searched in this range (default ``(1e-6, 1.0)``), and
+        limits outside it are clipped to it, with a ``RuntimeWarning``
+        reporting how many. Pass ``None`` to search 1e-8 to 1e3 instead,
+        e.g. for [`System`][virgil.models.System] weights that may exceed 1.
+    batch_size : int, optional
+        Number of grid points evaluated at once; see
+        [`absil_limits`][virgil.limits.absil_limits].
+
+    Returns
+    -------
+    array-like
+        Flux limit (companion/primary), with one axis per coordinate key;
+        see :func:`flux_to_contrast` and :func:`flux_to_delta_mag`.
+
+    Notes
+    -----
+    The flux is found by bisection in log flux. The significance rises with
+    flux once the signal exceeds the noise, but the cross term can make it
+    dip at very faint fluxes; bisection then returns one of the crossings.
+
+    Differences from CANDID: CANDID refits the primary's diameter to the
+    injected data before computing the null chi-squared (for V² and T3),
+    which virgil does not; the null model is exactly the one with every
+    grid parameter set to zero. CANDID also brackets the limit in steps of
+    1.4 in flux and interpolates linearly in significance, where virgil
+    solves the criterion by bisection. The chi-squared and the number of
+    degrees of freedom are virgil's, as for ``absil_limits``.
+
+    Examples
+    --------
+    >>> import jax.numpy as jnp
+    >>> from virgil import PointSource, System, UniformDisk, injection_limits
+    >>> template = System(star=UniformDisk(0.8), comp=PointSource(0.01))
+    >>> samples = {
+    ...     "comp.dra": jnp.linspace(-10, 10, 21),
+    ...     "comp.ddec": jnp.linspace(-10, 10, 21),
+    ...     "comp.flux": jnp.array([0.01]),
+    ... }
+    >>> limits = injection_limits(data, template, samples, 3.0)  # doctest: +SKIP
+    >>> limits.shape  # doctest: +SKIP
+    (21, 21)
+    """
+    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
+    ndof = data_obj.n_independent
+    floor = float(nsigma(1.0, 1.0, ndof))
+    if not float(sigma) > floor:
+        raise ValueError(
+            f"sigma={sigma} cannot be reached: with {ndof} degrees of "
+            f"freedom a chi-squared ratio of 1 is already {floor:.3g} sigma."
+        )
+    bracket = _UNBOUNDED_BRACKET if flux_bounds is None else flux_bounds
+    low, high = (float(b) for b in bracket)
+    if not (np.isfinite(low) and np.isfinite(high) and 0.0 < low < high):
+        raise ValueError(
+            "flux_bounds must be finite with 0 < low < high (the search is "
+            f"in log flux), got {tuple(bracket)}."
+        )
+    limits, outside = _injection_limits(
+        samples_dict,
+        data_obj,
+        model,
+        jnp.asarray(sigma, dtype=float),
+        jnp.asarray([low, high], dtype=float),
+        params=params,
+        coord_keys=coord_keys,
+        flux_key=flux_key,
+        batch_size=batch_size_or_default(batch_size, data_obj),
+    )
+    if flux_bounds is not None:
+        clipped = int(np.sum(np.asarray(outside)))
+        if clipped:
+            warnings.warn(
+                f"injection_limits(): {clipped} limits fell outside "
+                f"flux_bounds={tuple(flux_bounds)} and were clipped; pass "
+                "flux_bounds=None to search a wider range.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+    return limits
+
+
+@eqx.filter_jit
+def _injection_limits(
+    samples_dict,
+    data_obj,
+    model,
+    sigma,
+    bracket,
+    params,
+    coord_keys,
+    flux_key,
+    batch_size,
+):
+    """Jitted implementation of `injection_limits`.
+
+    Returns the limits and whether each sits at an end of the bracket
+    without reaching ``sigma`` inside it.
+    """
+    ndof = data_obj.n_independent
+    n_vis = data_obj.vis.shape[0]
+
+    null_source = build_model(model, params, [0.0] * len(params))
+    null_prediction = data_obj.model(null_source)
+    chi2_null = jnp.sum(whitened_residuals(null_source, data_obj) ** 2) / ndof
+
+    def significance(values):
+        # Add the companion's signal to the data, and fit the null model.
+        source = build_model(model, params, values)
+        signal = data_obj.model(source) - null_prediction
+        injected = eqx.tree_at(
+            lambda d: (d.vis, d.phi),
+            data_obj,
+            (data_obj.vis + signal[:n_vis], data_obj.phi + signal[n_vis:]),
+        )
+        chi2_injected = (
+            jnp.sum(whitened_residuals(null_source, injected) ** 2) / ndof
+        )
+        # The companion model fits the injected data as the null model fits
+        # the original data, with chi-squared chi2_null.
+        return nsigma(chi2_injected, chi2_null, ndof)
+
+    coords, shape = coordinate_points(samples_dict, coord_keys)
+    log_low, log_high = jnp.log10(bracket[0]), jnp.log10(bracket[1])
+
+    def excess(log_flux, coord_vals):
+        values = ordered_values(
+            10.0**log_flux, coord_vals, params, coord_keys, flux_key
+        )
+        return significance(values) - sigma
+
+    def solve(coord_vals):
+        def step(_, state):
+            lo, hi = state
+            mid = 0.5 * (lo + hi)
+            reached = excess(mid, coord_vals) >= 0.0
+            return jnp.where(reached, lo, mid), jnp.where(reached, mid, hi)
+
+        lo, hi = jax.lax.fori_loop(
+            0, _BISECTION_STEPS, step, (log_low, log_high)
+        )
+        below = excess(log_low, coord_vals) >= 0.0
+        above = excess(log_high, coord_vals) < 0.0
+        log_limit = jnp.where(
+            below, log_low, jnp.where(above, log_high, 0.5 * (lo + hi))
+        )
+        return 10.0**log_limit, below | above
+
+    limits, outside = map_points(solve, coords, batch_size=batch_size)
+    return limits.reshape(shape), outside.reshape(shape)
