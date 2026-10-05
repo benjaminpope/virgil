@@ -356,13 +356,21 @@ def test_block_error_scales_recover_different_miscalibrations():
         wavelengths_m=[3.2e-6, 3.5e-6, 3.8e-6],
     )
     latent = jax.random.normal(jax.random.PRNGKey(4), (N, N))
-    noisy = rich.with_model(_gp_scene(latent, 1.5), key=jax.random.PRNGKey(5))
+    truth = _gp_scene(latent, 1.5)
+    noisy = rich.with_model(truth, key=jax.random.PRNGKey(5))
     quoted = noisy.with_error_scale({"vis": 1.0 / 3.0, "phi": 2.0})
     start = _gp_scene(onp.zeros((N, N)), 1.5)
     model = fit(start, image_priors(start), quoted).model
     scales = error_scale(model, quoted, by_observable=True)
     assert set(scales) == {"vis", "phi"}
-    assert 2.5 < scales["vis"] < 3.5
+    # Compare with the scatter this noise draw actually has about the
+    # truth: 90 V² scatter by ~8%, and the draw (which depends on the
+    # dtype under JAX_ENABLE_X64) can sit 20% below 1.
+    m_vis = onp.asarray(noisy.model(truth))[: noisy.vis.size]
+    realised = onp.sqrt(
+        onp.mean(((onp.asarray(noisy.vis) - m_vis) / noisy.d_vis) ** 2)
+    )
+    assert scales["vis"] == pytest.approx(3.0 * realised, rel=0.12)
     # 45 independent closure phases: s_phi scatters by ~13%.
     assert 0.35 < scales["phi"] < 0.7
     single = error_scale(model, quoted)
