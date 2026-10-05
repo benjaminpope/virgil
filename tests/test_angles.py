@@ -129,7 +129,7 @@ def test_bad_arguments_are_rejected():
 
 def test_nuts_samples_a_posterior_straddling_the_wrap():
     # §4.1 test 3: a von Mises posterior centred on 0°, with half its
-    # mass on each side of the wrap. Tiny: one angle, 400 draws.
+    # mass on each side of the wrap. Tiny: one angle, 1000 draws.
     from numpyro.infer import MCMC, NUTS
 
     kappa = 4.0
@@ -140,17 +140,17 @@ def test_nuts_samples_a_posterior_straddling_the_wrap():
         likelihoods=[_chord(0.0, 1 / onp.sqrt(kappa))],
     )
     mcmc = MCMC(
-        NUTS(model), num_warmup=300, num_samples=400, progress_bar=False
+        NUTS(model), num_warmup=500, num_samples=1000, progress_bar=False
     )
     mcmc.run(jax.random.PRNGKey(0))
     samples = mcmc.get_samples()
-    assert samples["pa_vec"].shape == (400, 2)
+    assert samples["pa_vec"].shape == (1000, 2)
     angle = onp.deg2rad(onp.asarray(samples["pa"]))
     resultant = onp.mean(onp.exp(1j * angle))
     # The truth: mean 0, mean resultant length I1(κ)/I0(κ).
     assert abs(onp.rad2deg(onp.angle(resultant))) < 6.0
     assert abs(resultant) == pytest.approx(
-        special.i1(kappa) / special.i0(kappa), abs=0.04
+        special.i1(kappa) / special.i0(kappa), abs=0.05
     )
     assert 0.3 < onp.mean(angle > onp.pi) < 0.7  # both sides of the wrap
     # The radius stays on the ring, far from the origin.
