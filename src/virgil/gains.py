@@ -342,7 +342,6 @@ def gain_modes(
             )
     need_stations = any(w is not None for w in built_in.values())
     index, frame, stations = _frames_and_stations(data, need_stations)
-    n_vis = index.size
     groups, widths, columns = [], [], []  # columns: (group, rows, values)
 
     def add_group(name, width):
