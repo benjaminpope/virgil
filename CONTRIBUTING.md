@@ -30,9 +30,9 @@ with `uv pip install --python .venv/bin/python --upgrade -e ".[dev,notebooks]"`.
 The extras are `plots` (pandas and ChainConsumer, for the corner-plot helpers in
 `virgil.plotting`), `legacy` (astroquery, for `virgil.legacy`), `integrations`
 (jaxoplanet, for `HarmonixModel`), `test`, `docs`, `notebooks` and `dev` (`test` and
-`docs` plus the tools). harmonix itself is not yet on PyPI in a version virgil works
-with; to run its tests, install it from GitHub as CI does:
-`uv pip install --python .venv/bin/python "harmonix @ git+https://github.com/shashankdholakia/harmonix"`.
+`docs` plus the tools). harmonix itself is not an extra; to run its tests, install it
+from PyPI as CI does:
+`uv pip install --python .venv/bin/python "harmonix>=0.1.0"`.
 
 Ruff is pinned to an exact version in `pyproject.toml` (`required-version`) so that local
 runs and CI format identically; installing the `dev` extra gives you the right one. If you

@@ -24,7 +24,13 @@ pip install virgil-astro
 
 Optional extras add the corner-plot helpers in `virgil.plotting`
 (`pip install "virgil-astro[plots]"`, for pandas and ChainConsumer) and the
-SIMBAD lookups in `virgil.legacy` (`[legacy]`, for astroquery).
+SIMBAD lookups in `virgil.legacy` (`[legacy]`, for astroquery). Solving
+Kepler's equation in `virgil.orbits` needs
+[jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet), which comes with
+`pip install "virgil-astro[orbits]"`. `virgil.orbits` imports without it and
+loads jaxoplanet only when a Kepler-solving path is called (evaluating an
+orbit's positions or `to_jaxoplanet`); that call raises an error naming the
+extra if jaxoplanet is missing.
 
 You can also build from source. To do so, clone the git repo and enter the directory:
 
@@ -58,10 +64,10 @@ Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpo
 
 The sections in the sidebar hold worked examples on simulated and bundled data:
 - **Background:** [who contributed what](https://benjaminpope.github.io/virgil/contributors/), [Gaussian-process priors and information field theory](https://benjaminpope.github.io/virgil/gp_and_ift/), and [coordinate, sign and flux conventions](https://benjaminpope.github.io/virgil/conventions/).
-- **Data Handling:** [reading OIFITS files into `OIData`](https://benjaminpope.github.io/virgil/data_io/), and [AMIGO's DISCO data from JWST aperture masking](https://benjaminpope.github.io/virgil/amigo_disco/).
-- **Binaries:** [searching for companions](https://benjaminpope.github.io/virgil/binary_search/), [detection limits](https://benjaminpope.github.io/virgil/contrast_limits/), and [fitting several datasets together](https://benjaminpope.github.io/virgil/hierarchical_inference/).
+- **Data Handling:** [reading OIFITS files into `OIData`](https://benjaminpope.github.io/virgil/data_io/), and [AMIGO's DISCO data from JWST aperture masking](https://benjaminpope.github.io/virgil/amigo_disco/), and [spectro-interferometric observables](https://benjaminpope.github.io/virgil/spectro_observables/) (OI_FLUX spectra, differential phases and calibration nuisances).
+- **Binaries:** [searching for companions](https://benjaminpope.github.io/virgil/binary_search/), [detection limits](https://benjaminpope.github.io/virgil/contrast_limits/), [detection ROC curves](https://benjaminpope.github.io/virgil/detection_roc/) calibrated by injection and recovery, [fitting several datasets together](https://benjaminpope.github.io/virgil/hierarchical_inference/), and [orbits from interferometric epochs](https://benjaminpope.github.io/virgil/orbit_fitting/) (needs the `[orbits]` extra).
 - **Sources:** [visibility models](https://benjaminpope.github.io/virgil/model_syntax/), [extended sources](https://benjaminpope.github.io/virgil/source_models/), [composing scenes](https://benjaminpope.github.io/virgil/composition/), [spotted stars](https://benjaminpope.github.io/virgil/harmonix/), [limb-darkened stars](https://benjaminpope.github.io/virgil/limb_darkening/) and [gravity-darkened stars](https://benjaminpope.github.io/virgil/gravity_darkened_star/).
-- **Imaging:** image reconstruction in six parts: [simulating data](https://benjaminpope.github.io/virgil/imaging_ami/), [regularised maximum likelihood](https://benjaminpope.github.io/virgil/imaging_rml/), [Gaussian-process priors](https://benjaminpope.github.io/virgil/imaging_gp/), [a ring around a binary](https://benjaminpope.github.io/virgil/imaging_composite/) [sampling the posterior](https://benjaminpope.github.io/virgil/imaging_sampling/) and [sparse images and CLEAN](https://benjaminpope.github.io/virgil/imaging_clean/).
+- **Imaging:** image reconstruction in six parts: [simulating data](https://benjaminpope.github.io/virgil/imaging_ami/), [regularised maximum likelihood](https://benjaminpope.github.io/virgil/imaging_rml/), [Gaussian-process priors](https://benjaminpope.github.io/virgil/imaging_gp/), [a ring around a binary](https://benjaminpope.github.io/virgil/imaging_composite/), [sampling the posterior](https://benjaminpope.github.io/virgil/imaging_sampling/) and [sparse images and CLEAN](https://benjaminpope.github.io/virgil/imaging_clean/).
 - **[API Reference](https://benjaminpope.github.io/virgil/api/)** documents every public class and function.
 
 Documentation tooling is currently migrating from MkDocs to Zensical. During this transition, both builders are supported from the same configuration file.
@@ -89,6 +95,6 @@ VIRGIL is the **V**ersatile **I**nterferometric **R**econstruction and **G**radi
 
 ### Formerly drpangloss
 
-Until version 0.1.1 this package was called **drpangloss**, after Voltaire's Dr Pangloss and as a nod to Antoine Mérand's [CANDID](https://github.com/amerand/CANDID). From version 0.2.0 it is **virgil**: `import virgil`, installed with `pip install virgil-astro`. A final release of `drpangloss` under its own name will depend on `virgil-astro` and point here, so old installs find the new package.
+Until version 0.1.1 this package was called **drpangloss**, after Voltaire's Dr Pangloss and as a nod to Antoine Mérand's [CANDID](https://github.com/amerand/CANDID). From version 0.2.0 it is **virgil**: `import virgil`, installed with `pip install virgil-astro`. A final release of `drpangloss` (0.2.0) under its own name depends on `virgil-astro` and points here, so old installs find the new package.
 
 *e quindi uscimmo a riveder le stelle*

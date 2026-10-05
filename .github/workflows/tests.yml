@@ -89,10 +89,10 @@ jobs:
           if [ "${{ matrix.lowest }}" = "true" ]; then
             uv pip install --python .venv/bin/python --resolution lowest-direct -e ".[test]"
           else
-            # harmonix is not on PyPI in a version virgil works with; the
-            # integrations extra brings jaxoplanet, which it also needs.
+            # harmonix 0.1.0 is on PyPI; the integrations extra brings
+            # jaxoplanet, which it also needs.
             uv pip install --python .venv/bin/python -e ".[test,integrations]" \
-              "harmonix @ git+https://github.com/shashankdholakia/harmonix@245a68757f4b3d1acc045cda07a274c597a02b6b"
+              "harmonix>=0.1.0"
             # Test against the newest JAX the other dependencies allow.
             uv pip install --python .venv/bin/python --upgrade jax jaxlib
           fi
@@ -125,7 +125,7 @@ jobs:
         # as evidence for virgil-validation; xunit1 keeps test properties.
         # Pull requests skip the tests marked slow (tests/conftest.py).
         run: >-
-          .venv/bin/python -m pytest -n auto -rs
+          .venv/bin/python -m pytest -n auto -rs --durations=30
           ${{ github.event_name == 'pull_request' && '-m "not slow"' || '' }}
           --junitxml=junit-evidence.xml -o junit_family=xunit1
 

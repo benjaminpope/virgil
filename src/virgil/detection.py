@@ -508,7 +508,7 @@ def gaussian_null(template, null_scene, *, error_scale=1.0):
 
     Examples
     --------
-    >>> simulate = gaussian_null(template, BinaryModelCartesian(0, 0, 0))
+    >>> simulate = gaussian_null(template, BinaryModelCartesian(0, 0, 0))  # doctest: +SKIP
     >>> data = simulate(jax.random.PRNGKey(0))  # doctest: +SKIP
     """
     error_scale = float(error_scale)

@@ -770,10 +770,10 @@ def gauss_newton_mass(model, priors, data, values, *, likelihoods=()):
 
     Examples
     --------
-    >>> result = fit(scene, priors, data)
+    >>> result = fit(scene, priors, data)  # doctest: +SKIP
     >>> kernel = NUTS(numpyro_model(result.model, priors, data),
     ...               init_strategy=init_to_value(values=result.values),
-    ...               **gauss_newton_mass(scene, priors, data, result.values))
+    ...               **gauss_newton_mass(scene, priors, data, result.values))  # doctest: +SKIP
     """
     with run_in("float64"):
         # NUTS samples numpyro's unconstrained coordinates, so the
