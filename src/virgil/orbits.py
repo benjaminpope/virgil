@@ -853,6 +853,10 @@ class _Term(eqx.Module):
     def __call__(self, values):
         return np.ravel(self.data.whitened_residuals(*self.build(values)))
 
+    def loglike(self, values):
+        """The data's normalised Gaussian log density, for ``numpyro_model``."""
+        return self.data.loglike(*self.build(values))
+
 
 def total_mass(orbit, distance_pc):
     """Total mass (solar masses) from the orbit at a distance (pc).
