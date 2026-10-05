@@ -7,6 +7,16 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Added
+
+- **Fitted RV jitter.** `RVData.term(params, jitter="rv_jitter")` inflates the
+  errors to `sqrt(d_rv² + s²)` with `s` a fitted value (km/s; give it a
+  half-normal or log-uniform prior). The term protocol gains an optional
+  `log_norm(values)`, the `Σ log σ_eff` that a fitted error makes
+  non-constant: `fit` adds it to the loss, defaults to L-BFGS (as for
+  `noise=`), and raises `TypeError` for `method="lm"`. `numpyro_model` needs
+  no change, since the term's `loglike` is already normalised.
+
 ### Changed
 
 - **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
