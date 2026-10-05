@@ -354,6 +354,7 @@ class _BaselineLookup:
     def __init__(self):
         self._rows = {}
         self._order = []  # (start, nwave, mjd, ins) of every row, in order
+        self._pairs = []  # the station pair of every row, in order
         self._parent = {}  # union-find over row starts
         self._waves = {}  # INSNAME -> wavelengths of its rows
 
@@ -364,6 +365,7 @@ class _BaselineLookup:
         row = (float(mjd), exposure, start, nwave)
         self._rows.setdefault(key, []).append(row)
         self._order.append((start, nwave, float(mjd), ins))
+        self._pairs.append((int(pair[0]), int(pair[1])))
         self._parent[start] = start
 
     def _root(self, start):
@@ -397,6 +399,11 @@ class _BaselineLookup:
             row_mjd = (sums / onp.bincount(frame))[frame]
         nwave = [n for _, n, _, _ in self._order]
         return onp.repeat(row_mjd, nwave), onp.repeat(frame, nwave)
+
+    def stations(self):
+        """Per-sample station pair ``(STA_INDEX)``, shape ``(n, 2)``."""
+        nwave = [n for _, n, _, _ in self._order]
+        return onp.repeat(onp.array(self._pairs, int).reshape(-1, 2), nwave, 0)
 
     def find(self, ins, pair, mjd, wave=None):
         """Return ``(start, nwave)`` of the nearest-epoch row, or ``None``.
@@ -742,6 +749,7 @@ def _read_hdulist(hdul, target, insname=None, frame_mjd="mean"):
         )
 
     record["mjd"], record["frame"] = lookup.times(frame_mjd)
+    record["stations"] = lookup.stations()
     unique_wavel = onp.unique(record["wavel"])
     if unique_wavel.size == 1:
         record["wavel"] = unique_wavel
@@ -776,7 +784,7 @@ def _concat_records(records):
             for r in records
         ]
     )
-    for key in ("phi", "d_phi", "phi_flag", "mjd"):
+    for key in ("phi", "d_phi", "phi_flag", "mjd", "stations"):
         out[key] = onp.concatenate([onp.asarray(r[key]) for r in records])
     # Frames are numbered per file: shift them so files never share one.
     shifts = onp.cumsum([0] + [r["frame"].max() + 1 for r in records[:-1]])

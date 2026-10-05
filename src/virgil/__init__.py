@@ -20,6 +20,7 @@ Modules:
 * [`limits`][virgil.limits]: contrast limits and flux/contrast/Δmag
   conversions.
 * [`spectra`][virgil.spectra]: wavelength-dependent fluxes.
+* [`gains`][virgil.gains]: calibration gains correlated across channels.
 * [`plotting`][virgil.plotting]: figures.
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
@@ -40,6 +41,7 @@ from . import (  # noqa: E402
     coverage,
     fields,
     fitting,
+    gains,
     grid_fit,
     imaging,
     inference,
