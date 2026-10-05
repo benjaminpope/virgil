@@ -433,9 +433,9 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 | Item | Effort |
 |---|---|
 | `orbits.py`: `KeplerOrbit` and `ThieleInnesOrbit`, converters to and from jaxoplanet, convention unit tests and a reference ephemeris | 4–5 |
-| Starting orbits: per-epoch positions from the existing binary tools, then a Thiele–Innes least-squares solve on a grid of (P, e, T₀); `PositionData` | 2–3 |
+| Starting orbits: per-epoch positions from the existing binary tools, then a Thiele–Innes least-squares solve on a grid of (P, e, T₀); `PositionData` (the same linear solve marginalises A, B, F, G in position-only fits: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 6) | 2–3 |
 | `StateVectorOrbit` and its regular forms, for short arcs | 3 |
-| `RVData` and axial priors; `distance_pc` and the derived mass | 3 |
+| `RVData` and axial priors; `distance_pc` and the derived mass (RV zero points per instrument marginalise analytically: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 3) | 3 |
 | `SourceModel.at(mjd)` and time-dependent `OIData.model` | 3–4 |
 | `Attached(component, orbit, anchor, bind, offsets)`: any component's angles tied to the binary's frame (line of centres, nodes, inclination, "facing the primary") | 3 |
 | `simulate(scene, template)` and `bias_test`, for bias tests across instruments and for planning | 2–3 |
@@ -473,8 +473,8 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
 
 **Workflow and additions.** [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) sets out an end-to-end spectro-interferometric workflow (worked example: GRAVITY data on Apep) and adds to 6a:
 - `Nodes(..., outside=0.0)` for line excesses on a continuum, with positivity checked on the total; `Tabulated` (merged in PR #124, provisional) becomes a node spectrum;
-- `System.total_spectrum` for OI_FLUX;
-- VISPHI with the pipeline's continuum normalisation, and a test in the resolved regime;
+- `System.total_spectrum` for OI_FLUX (the grey scale and low-order polynomial in λ of OI_FLUX marginalise analytically: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 4);
+- VISPHI with the pipeline's continuum normalisation, and a test in the resolved regime (a per-baseline, per-frame offset and slope marginalise analytically, which puts the continuum projection on a sound footing: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 5);
 - error floors sharing one function with the fitted `noise=` terms;
 - a documented rule for when smearing matters, with a real-data check;
 - a prior on the reference component's spectrum, and docs on its degeneracy with the others (S §2.2b);
@@ -523,8 +523,8 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
   - per-baseline gains;
   - a chromatic mode from coherence loss, exp(−a/λ²).
 
-  They are marginalised analytically by Woodbury, as a small-log-gain approximation, so the likelihood keeps one whitened residual vector plus a log-determinant.
-- **No closure-phase offsets by default.** If calibrators show non-closing errors, use the baseline-based form T·e, a small-phase approximation under the chord likelihood (GRAVITY review §13).
+  They are marginalised analytically by Woodbury, as a small-log-gain approximation, so the likelihood keeps one whitened residual vector plus a log-determinant. (Cross-cutting note: [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 1.)
+- **No closure-phase offsets by default.** If calibrators show non-closing errors, use the baseline-based form T·e, a small-phase approximation under the chord likelihood (GRAVITY review §13). (Cross-cutting note: [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 2.)
 - **Widths** are fitted or known (`vis_gain`, and optionally `phi_offset`, in the per-dataset `noise=` specification). This needs `OIData.frame` (§2.5 of the same note).
 
 **Tests:**
@@ -566,6 +566,33 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 - **The dual-field (in-field) calibrator recipe.** Done in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti) (`virgil-vlti-calibrate --dual-field`), not in the core (S §2.7). Its transfer-function error should become 6d's known-width gains.
 
 **Merge order (historical).** The Apep agent's library commits (`EllipticalGaussian`, `Tabulated`, fitted error terms `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) were merged in PR #124, before 6a. 6a's node spectra will replace `Tabulated`, and 6d extends `noise=`.
+
+## Analytic marginalisation of linear parameters (cross-cutting)
+**Principle** (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136). If the model is linear in some parameters w, m = m₀(θ) + A(θ)w, and w has a Gaussian prior N(μ, Λ), then w marginalises exactly: d ~ N(m₀ + Aμ, C + AΛAᵀ), where C is the data covariance.
+- Evaluate it with the Woodbury identity and the matrix-determinant lemma, in O(N k²) for k linear parameters.
+- Keep the log-determinant. It depends on θ, and dropping it biases θ.
+- After the fit, report w's conditional mean and covariance.
+- Use a finite Λ only. A flat prior is the limit of a broad one only up to a constant.
+- For positive quantities, use it only with broad priors well away from zero, because the Gaussian is not truncated.
+
+**Where it does not apply.** Visibilities are normalised, V = Σ fᵢVᵢ / Σ fᵢ, and V² and closure phases are nonlinear in V. So component flux ratios, spectral amplitudes and image pixels cannot be marginalised this way in visibility or closure-phase fits.
+
+**Uses**
+
+| # | Linear parameters | Data | Status | Value |
+|---|---|---|---|---|
+| 1 | Telescope, baseline and chromatic gains | log\|V\| (V, V²) | Done in 6d (#180), as a small-gain approximation | Calibrated errors where diagonal inflation fails (6d gains study) |
+| 2 | Closure-phase offsets per frame | Closure phases | Done in 6d (#189), as a small-phase approximation | As 1, for non-closing phase errors |
+| 3 | RV zero points per instrument (γ and offsets) | RVs | Done (#192) | Removes a fitted nuisance per instrument |
+| 4 | OI_FLUX grey scale k and a low-order polynomial in λ, written as cⱼλʲ·Σfᵢ | FLUX | In progress in the 6a observables PR | High: exact, and removes a fitted nuisance for every dataset |
+| 5 | VISPHI continuum offset and slope per baseline and frame; NFLUX normalisation | VISPHI, NFLUX | In progress in the 6a observables PR | High: the pipeline's continuum subtraction is the flat-prior limit, so this puts the projection on a sound footing, and a finite-prior version comes almost for free |
+| 6 | Thiele–Innes A, B, F, G at fixed (P, e, T₀) | Positions only | Design note in progress (`design/thiele_innes_marginalisation.md`) | High for position-only orbits: NUTS works in 3 dimensions instead of 7. Open question: the prior, because a Gaussian on A, B, F, G implies a non-standard Campbell-element prior, so reweight or state it. It does not extend to joint position + RV fits; for closure-phase orbit fits it only gives starting points |
+| 7 | Overall V² scale s² (a fully resolved background, or a per-frame V² calibration factor) | V² only | Noted, not planned | Exact in V², whereas 6d is a small-gain approximation in log\|V\|, so it mostly overlaps 6d; the prior s² ∈ (0, 1] is not Gaussian |
+| 8 | Companion flux f, to first order in f ≪ 1 | V², closure phases | Done (#184; flat prior, profiled). Planned follow-up: iterate it (Gauss–Newton) to remove the bias for bright companions, and use a Gaussian prior on f to get a marginal-likelihood detection map | Fast detection maps |
+| 9 | Spectral line or node amplitudes and continuum ratios | OI_FLUX alone | Noted, not planned | Exact only in spectrum-only fits; useful for starting values |
+| 10 | Image pixels | Complex visibilities only | Already in the sparse/CLEAN NNLS major cycles | Positive least squares, not Gaussian marginalisation |
+
+**Log (2026-10-05):** approved by Ben.
 
 ## Stage 6e: closure amplitudes (after 6d; not yet estimated)
 From the virgil-validation comparison with eht-imaging, which fits closure amplitudes (`camp`) and log closure amplitudes (`logcamp`, `logcamp_diag`).
