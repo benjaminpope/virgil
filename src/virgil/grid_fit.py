@@ -316,7 +316,15 @@ optimized_flux_grid.__doc__ = (
 
 @eqx.filter_jit
 def _linear_flux_grid(
-    data_obj, model, samples_dict, params, coord_keys, flux_key, batch_size
+    data_obj,
+    model,
+    samples_dict,
+    params,
+    coord_keys,
+    flux_key,
+    batch_size,
+    n_iter,
+    prior,
 ):
     """Jitted implementation of [`linear_flux_grid`][virgil.grid_fit.linear_flux_grid]."""
     coords, shape = coordinate_points(samples_dict, coord_keys)
@@ -326,28 +334,71 @@ def _linear_flux_grid(
         return whitened_residuals(build_model(model, params, values), data_obj)
 
     def solve(coord_vals):
-        flux0 = jnp.zeros(())
-        # r(0) = whitened (model at f=0 - data); dr = dr/df at f=0, exactly.
-        r0, dr = jax.jvp(
-            lambda f: residuals(f, coord_vals), (flux0,), (jnp.ones(()),)
+        def linearise(flux):
+            # r(f_n) and g = dr/df at f_n, exactly (forward mode).
+            r, g = jax.jvp(
+                lambda f: residuals(f, coord_vals),
+                (flux,),
+                (jnp.ones(()),),
+            )
+            curvature = jnp.sum(g * g)
+            # Gauss-Newton step: the minimiser of the model linear about f_n.
+            return flux - jnp.sum(g * r) / curvature, curvature
+
+        flux, curvature = linearise(jnp.zeros(()))
+        # Relinearise at the current estimate; a fixed trip count keeps this
+        # jit- and vmap-friendly. The last g is the one sigma_f comes from.
+        flux, curvature = jax.lax.fori_loop(
+            0, n_iter, lambda _, c: linearise(c[0]), (flux, curvature)
         )
-        curvature = jnp.sum(dr * dr)
-        flux = -jnp.sum(dr * r0) / curvature
-        sigma = 1.0 / jnp.sqrt(curvature)
         ok = curvature > 0.0
+        flux = jnp.where(ok, flux, jnp.nan)
+        sigma = jnp.where(ok, 1.0 / jnp.sqrt(curvature), jnp.nan)
+        if prior is None:
+            return flux, sigma
+        # The likelihood is exp(-curvature (f - flux)^2 / 2) up to a constant
+        # in the linear model about the final point. With a N(mean, sd^2)
+        # prior the precisions add (Luger et al. 2017).
+        mean, sd = prior
+        precision = curvature + 1.0 / sd**2
+        b = curvature * flux  # g . (g flux), whitened
+        post_mean = (b + mean / sd**2) / precision
+        log_bf = (
+            -0.5 * jnp.log(sd**2 * precision)
+            + (b + mean / sd**2) ** 2 / (2.0 * precision)
+            - mean**2 / (2.0 * sd**2)
+        )
         return (
-            jnp.where(ok, flux, jnp.nan),
-            jnp.where(ok, sigma, jnp.nan),
+            flux,
+            sigma,
+            jnp.where(ok, post_mean, jnp.nan),
+            jnp.where(ok, precision**-0.5, jnp.nan),
+            jnp.where(ok, log_bf, jnp.nan),
         )
 
-    flux, sigma = map_points(solve, coords, batch_size=batch_size)
-    flux = flux.reshape(shape)
-    sigma = sigma.reshape(shape)
-    return flux, sigma, flux / sigma
+    out = map_points(solve, coords, batch_size=batch_size)
+    out = tuple(o.reshape(shape) for o in out)
+    flux, sigma = out[:2]
+    if prior is None:
+        return flux, sigma, flux / sigma
+    return {
+        "flux": flux,
+        "flux_error": sigma,
+        "snr": flux / sigma,
+        "posterior_mean": out[2],
+        "posterior_sd": out[3],
+        "log_bayes_factor": out[4],
+    }
 
 
 def linear_flux_grid(
-    data_obj, model, samples_dict, flux_param=None, batch_size=None
+    data_obj,
+    model,
+    samples_dict,
+    flux_param=None,
+    batch_size=None,
+    n_iter=0,
+    prior=None,
 ):
     """Linearised best-fit companion flux at every grid position, in closed form.
 
@@ -377,13 +428,22 @@ def linear_flux_grid(
     ``lincmap`` returns the *variance* ``1 / (g . g)`` (and warns not to
     trust it), ``sigma_f`` here is the standard deviation.
 
-    **Limitation.** The linearisation holds only for ``f`` much smaller than 1. The
+    **Limitation, and ``n_iter``.** With ``n_iter=0`` the linearisation
+    holds only for ``f`` much smaller than 1. The
     closure phase of a binary scales as ``f`` only to first order, with
     corrections of order ``f**2`` (and ``f`` times the |V| change for
     amplitudes), so for a bright companion (for example ``f ~ 0.3``)
     ``f_hat`` is biased, by tens of percent, and ``sigma_f`` is
-    unreliable. Use it to find candidates, then refine them with
-    [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]. At
+    unreliable. ``n_iter`` Gauss–Newton steps soften this: each relinearises
+    at the current ``f_hat`` per pixel (``g = dr/df`` at ``f_hat``, then
+    ``f_hat <- f_hat - (g . r(f_hat)) / (g . g)``), and ``sigma_f`` comes
+    from the final ``g``, so a few steps (3 at ``f ~ 0.3``) reach
+    the optimizer's ``f_hat`` and the Laplace ``sigma_f``, at
+    ``n_iter + 1`` model evaluations per pixel. The steps are not
+    safeguarded, so for companions far brighter than the primary or
+    strongly non-linear residuals they can fail to converge; use
+    [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid] to refine
+    candidates. At
     Δ-phase residuals of order 1 rad the phase wrapping is not
     linear either. A companion at a position where ``g`` is nearly zero
     (for example at a null of the baselines) has a large ``sigma_f``
@@ -413,12 +473,36 @@ def linear_flux_grid(
         Number of grid points evaluated at once. By default, enough for
         about 2**20 model visibilities on a CPU and 2**23 on other backends
         (GPU, TPU), and at least 256.
+    n_iter : int, optional
+        Number of Gauss–Newton refinement steps after the first
+        linearisation at ``f = 0`` (default 0, the closed-form result).
+    prior : tuple of float, optional
+        ``(mean, sd)`` of a Gaussian prior on the flux ratio (same units as
+        ``flux``). If given, the result is a dict, with the posterior and
+        the marginal-likelihood detection map added (see Returns). With
+        ``P = g . g + 1 / sd**2`` (``g`` the final whitened derivative) the
+        posterior is Gaussian with mean ``(g . (g f_hat) + mean / sd**2) / P``
+        and sd ``P ** -0.5``, and the log Bayes factor against ``f = 0``
+        is the closed-form Gaussian evidence ratio
+
+        ``log B = -0.5 log(sd**2 P) + (g.g f_hat + mean/sd**2)**2 / (2P)
+        - mean**2 / (2 sd**2)``
+
+        (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136), so
+        ``log B > 0`` favours a companion at that pixel. These hold in the
+        linear model about the final linearisation point, i.e. exactly
+        only where the residuals are linear in ``f`` over the posterior
+        (``f`` much smaller than 1, or after enough ``n_iter`` for the
+        point to sit near the posterior); the position is not marginalised.
 
     Returns
     -------
     flux : array-like
         Best-fit flux ratio (companion/primary), unconstrained in sign, with
         one axis per coordinate key (axis 0 is the first, e.g. ``dra``).
+        With ``prior``, all outputs come as a dict with keys ``flux``,
+        ``flux_error``, ``snr``, ``posterior_mean``, ``posterior_sd`` and
+        ``log_bayes_factor`` instead of the tuple.
     flux_error : array-like
         One-sigma uncertainty on ``flux``, same shape, NaN where the model
         does not depend on the flux.
@@ -446,6 +530,10 @@ def linear_flux_grid(
         coord_keys=coord_keys,
         flux_key=flux_key,
         batch_size=batch_size_or_default(batch_size, data_obj),
+        n_iter=int(n_iter),
+        prior=None
+        if prior is None
+        else tuple(jnp.asarray(float(x)) for x in prior),
     )
 
 
