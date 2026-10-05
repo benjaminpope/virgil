@@ -28,7 +28,7 @@ from ._utils import (
     inflate_errors,
     is_flux_param,
 )
-from .gains import GAIN_GROUPS
+from .gains import GAIN_GROUPS, OFFSET_GROUPS
 from .models import SourceModel
 
 
@@ -54,7 +54,9 @@ def _whiten_vis(data_obj, prediction, resid, errors, gain_terms):
     return whitened, errors * np.exp(extra)
 
 
-def _whiten(data_obj, prediction, reference, errors, gain_terms=None):
+def _whiten(
+    data_obj, prediction, reference, errors, gain_terms=None, offset_terms=None
+):
     """Whitened residuals, and the errors that normalise their likelihood.
 
     Returns ``(whitened, errors_out)``. Residuals are
@@ -96,6 +98,11 @@ def _whiten(data_obj, prediction, reference, errors, gain_terms=None):
       log-sum is ½ log of the covariance's pseudo-determinant, keeping the
       Gaussian normaliser (a correlated von Mises density has no
       closed-form one, and the Gaussian is its limit for σ ≪ 1).
+      With closure-phase offsets (``OIData.phase_offsets``), the whitened
+      sines are whitened again for the offsets' covariance (see
+      [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with widths from
+      ``offset_terms`` (``phi_offset_<group>``) or the defaults; the
+      penalty rows are unchanged.
     """
     prediction = np.asarray(prediction)
     resid = prediction - np.asarray(reference)
@@ -106,7 +113,7 @@ def _whiten(data_obj, prediction, reference, errors, gain_terms=None):
         data_obj, prediction[:n_vis], resid[:n_vis], errors[:n_vis], gain_terms
     )
     phase, phase_errors = _whiten_phases(
-        data_obj, resid[n_vis:n_phase], errors[n_vis:n_phase]
+        data_obj, resid[n_vis:n_phase], errors[n_vis:n_phase], offset_terms
     )
     whitened, effective = [vis, phase], [vis_errors, phase_errors]
     reference = np.asarray(reference)
@@ -124,7 +131,7 @@ def _whiten(data_obj, prediction, reference, errors, gain_terms=None):
     return np.concatenate(whitened), np.concatenate(effective)
 
 
-def _whiten_phases(data_obj, resid, errors):
+def _whiten_phases(data_obj, resid, errors, offset_terms=None):
     """Whitened phase residuals and their effective errors (see ``_whiten``)."""
     if not data_obj._phases_wrap:
         return resid / errors, errors
@@ -136,6 +143,15 @@ def _whiten_phases(data_obj, resid, errors):
     # and append the periodic penalty 2 sin²(Δ/2)/σ = (1 - cos Δ)/σ, which
     # removes the false minimum at Δ = π.
     whitened, whitened_errors = data_obj.cp_noise.whiten(np.sin(resid), errors)
+    offsets = data_obj.phase_offsets
+    if offsets is not None:
+        whitened, extra = offsets.whiten(
+            data_obj.cp_noise,
+            whitened,
+            errors,
+            offsets.widths_for(offset_terms),
+        )
+        whitened_errors = whitened_errors * np.exp(extra)
     penalty = 2.0 * np.sin(0.5 * resid) ** 2 / errors
     penalty_errors = np.full(penalty.shape, 1.0 / np.sqrt(2.0 * np.pi))
     return (
@@ -155,9 +171,11 @@ def _gaussian_loglike(whitened, errors):
 
 # Nuisance terms, as accepted by the likelihoods and the ``noise`` argument
 # of ``fit`` and ``numpyro_model``: error inflation (``inflated_errors``),
-# the widths of gains correlated across channels (``OIData.with_gains``),
-# and the wavelength scale (``OIData.with_wavelength_scale``).
+# the widths of gains correlated across channels (``OIData.with_gains``) and
+# of closure-phase offsets (``OIData.with_closure_offsets``), and the
+# wavelength scale (``OIData.with_wavelength_scale``).
 GAIN_TERMS = tuple(f"vis_gain_{group}" for group in GAIN_GROUPS)
+OFFSET_TERMS = tuple(f"phi_offset_{group}" for group in OFFSET_GROUPS)
 WAVEL_TERMS = ("wavel_scale", "wavel_offset")
 NOISE_TERMS = (
     (
@@ -168,6 +186,7 @@ NOISE_TERMS = (
         "vis_error",
     )
     + GAIN_TERMS
+    + OFFSET_TERMS
     + WAVEL_TERMS
 )
 
@@ -326,6 +345,12 @@ def _whitened_and_errors(model_object, data_obj, noise):
             f"Error terms {sorted(gain_terms)} need gain modes: add them with "
             "OIData.with_gains."
         )
+    offset_terms = {k: v for k, v in noise.items() if k in OFFSET_TERMS}
+    if offset_terms and data_obj.phase_offsets is None:
+        raise ValueError(
+            f"Error terms {sorted(offset_terms)} need closure-phase offsets: "
+            "add them with OIData.with_closure_offsets."
+        )
     wavel_terms = {
         k.removeprefix("wavel_"): v
         for k, v in noise.items()
@@ -334,7 +359,9 @@ def _whitened_and_errors(model_object, data_obj, noise):
     inflation = {
         k: v
         for k, v in noise.items()
-        if k not in GAIN_TERMS and k not in WAVEL_TERMS
+        if k not in GAIN_TERMS
+        and k not in OFFSET_TERMS
+        and k not in WAVEL_TERMS
     }
     observed = data_obj
     if wavel_terms:
@@ -343,7 +370,9 @@ def _whitened_and_errors(model_object, data_obj, noise):
     data_obj = observed
     errors = inflated_errors(data_obj, prediction, **inflation)
     data = data_obj.flatten_data()[0]
-    return _whiten(data_obj, prediction, data, errors, gain_terms)
+    return _whiten(
+        data_obj, prediction, data, errors, gain_terms, offset_terms
+    )
 
 
 def whitened_residuals(model_object, data_obj, **noise):
@@ -382,7 +411,9 @@ def whitened_residuals(model_object, data_obj, **noise):
         ``vis_error_rel`` and ``phi_error`` (see
         [`inflated_errors`][virgil.likelihood.inflated_errors]), and the
         widths of the data's gains, ``vis_gain_<group>`` (see
-        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), and the
+        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
+        closure-phase offsets, ``phi_offset_<group>`` (see
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), and the
         wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
         [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
 
@@ -438,9 +469,10 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
         gains ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
         ``vis_gain_<group>`` sets the width of a group of gains, which are
         marginalised: the normalisation then includes the log-determinant
-        of the visibility covariance. ``wavel_scale`` and ``wavel_offset``
-        evaluate the model at corrected wavelengths (see
-        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
+        of the visibility covariance. ``phi_offset_<group>`` does the same
+        for closure-phase offsets ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
+        ``wavel_scale`` and ``wavel_offset`` evaluate the model at corrected
+        wavelengths (see [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
     """
     whitened, errors = _whitened_and_errors(model_object, data_obj, noise)
     logl = _gaussian_loglike(whitened, errors)
@@ -608,7 +640,9 @@ def numpyro_model(
         ``vis_error_rel``, ``phi_error``; see
         [`inflated_errors`][virgil.likelihood.inflated_errors]) and on
         gain widths (``vis_gain_<group>``; see
-        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]) and on the
+        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), on
+        closure-offset widths (``phi_offset_<group>``; see
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]) and on the
         wavelength scale (``wavel_scale``, ``wavel_offset``; see
         [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its

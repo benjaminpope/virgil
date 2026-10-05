@@ -59,6 +59,7 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
         - has_model_covariance
         - with_gains
         - with_wavelength_scale
+        - with_closure_offsets
         - mjd
         - epochs
         - split_by_epoch

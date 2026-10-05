@@ -38,6 +38,15 @@ anything before 1.0 may change between minor versions.
   `noise=`), and raises `TypeError` for `method="lm"`. `numpyro_model` needs
   no change, since the term's `loglike` is already normalised.
 
+- **Marginalised RV zero points.** `RVData(..., instrument=labels)` and
+  `RVData.term(params, marginalise_offsets=(mean, sd))` marginalise one
+  velocity zero point per instrument analytically (Luger, Foreman-Mackey &
+  Hogg 2017), in O(N k²) by the Woodbury identity and the matrix-determinant
+  lemma, with the jitter-dependent log-determinant in `log_norm`.
+  `term.posterior(values)` gives the zero points' conditional mean and
+  covariance after a fit. Only a finite prior width is supported (`True` is
+  N(0, 1000²) km/s and warns).
+
 ### Changed
 
 - **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
@@ -57,6 +66,24 @@ anything before 1.0 may change between minor versions.
   no longer depends on the axis.
 
 ### Added
+
+- **Closure-phase offsets per frame** (Stage 6d).
+  `OIData.with_closure_offsets(baseline=, triangle=, modes=)` adds closure-phase
+  offsets common to a frame's channels (per baseline, as T·e; per triangle; or
+  supplied modes), marginalised analytically on the whitened closure phases,
+  with widths `phi_offset_baseline`, `phi_offset_triangle` and
+  `phi_offset_modes`. Four or more telescopes; off by default.
+
+- **`injection_limits`: injection-method detection limits.** Like
+  `absil_limits`, with the same grid, inputs and return format, but each
+  limit is the flux at which a companion injected into the data (Gallenne et
+  al. 2015, section 3.2, as in CANDID's `detectionLimit(methods=["injection"])`)
+  would be detected at the requested significance. It solves for the flux by
+  bisection in log flux, vmapped over the grid. It agrees with CANDID's
+  criterion to 1e-4; unlike CANDID it does not refit the primary's diameter
+  to the injected data. It equals `absil_limits` on the data reflected about
+  the null model, and neither is uniformly more sensitive.
+
 
 - **`linear_flux_grid`.** A closed-form, fouriever-style (`lincmap`)
   linearised companion flux map for fast first-pass searches, beside
