@@ -16,6 +16,27 @@ arXiv:1710.11136), and `term.posterior(values)` reports them after the fit.
 With a broad prior this is the profile likelihood plus a log-determinant
 correction; only a finite prior width is supported.
 
+**Credit and related software.** Kepler's equation is solved by
+[jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (Hattori et al.,
+[doi:10.5281/zenodo.10736936](https://doi.org/10.5281/zenodo.10736936)), the
+JAX successor to exoplanet (Foreman-Mackey et al. 2021, JOSS 6, 3285); please
+cite it with virgil when you fit orbits. The Thiele–Innes solve in
+`starting_orbits` is the classical method (Thiele 1883, AN 104, 245;
+Hartkopf, McAlister & Franz 1989, AJ 98, 1014). Analytic marginalisation of RV
+zero points is also done by orvara (Brandt et al. 2021, AJ 162, 186). For
+orbit fits to relative and absolute astrometry and RVs without an
+interferometric scene, mature codes exist:
+[orbitize!](https://github.com/sblunt/orbitize) (Blunt et al. 2020, AJ 159, 89),
+[Octofitter](https://github.com/sefffal/Octofitter.jl) (Thompson et al. 2023,
+AJ 166, 164; it also fits closure phases and kernel phases of point sources)
+and [orvara](https://github.com/t-brandt/orvara) (Brandt et al. 2021). They
+document the same conventions as virgil (the secondary's ω, +z away from the
+observer), not yet checked numerically. virgil's orbits exist to drive
+time-dependent scenes, extended components included, in JAX; for Hipparcos and
+Gaia absolute astrometry use one of those codes and bring the result in as a
+prior. See [`design/orbit_prior_art.md`](https://github.com/benjaminpope/virgil/blob/main/design/orbit_prior_art.md)
+for a feature comparison.
+
 ::: virgil.orbits
     options:
       members:

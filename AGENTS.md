@@ -119,7 +119,9 @@ see that repository's `PLAN.md` for the boundary.
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `injection_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
+| `detection.py` | `detection_statistics` (Δχ², grid-marginalised log Bayes factor, max SNR; traceable in the data for `lax.map` over simulations) and `local_nsigma`, for ROC curves; see `design/detection_roc.md` |
 | `fields.py` | Gaussian-process log-brightness for an `Image` (`GaussianField`, a DCT field with a Matérn-like spectrum) |
+| `observables.py` | extra observable blocks after `vis`/`phi` in `OIData`: OI_FLUX spectra with marginalised grey scales (`FluxSpectrum`), \|V\|, T3AMP, and continuum-normalised differential phases (`DifferentialPhase`, closure-free beside closure phases); `continuum_operator` |
 | `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, `GaussianLine`, `LorentzianLine`, `Nodes` for a free flux per channel, and `Sum`; `Tabulated` is deprecated for `Nodes`) accepted as a component's `flux` (SPARCO) |
 | `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
@@ -131,12 +133,12 @@ see that repository's `PLAN.md` for the boundary.
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |
 
 Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_closure`
-→ `oidata` → `coverage`. Separately, `_utils` → `spectra` and `fields`, and
+→ `oidata` → `coverage`; `gains` → `observables` → `oidata`. Separately, `_utils` → `spectra` and `fields`, and
 `_elr`/`spectra` → `models` → `likelihood` → `fitting` (which also imports `fields`) →
 `imaging` (which imports `fitting`, `fields`, `likelihood` and `models`). `likelihood` →
 `inference` → `grid_fit` and `likelihood` → `limits`; `grid_fit` and `limits` also use
 `_grid`, which imports only `_utils`, and do not import each other; `limits` →
-`plotting`. `scenes` imports only `_geometry` and `_utils`. `orbits` imports only `_utils`
+`plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `orbits` imports only `_utils`
 (and jaxoplanet lazily), and `models` imports `orbits` (for `Attached`). `simulate` imports `fitting`.
 
 ## Flux and contrast
