@@ -91,6 +91,8 @@ All three codes use the **secondary's** ω, with the primary's at ω + 180°, an
 - **Near face-on,** astrometry measures ϖ but not Ω and ω separately (orbit design §2.3, symmetry 4). ϖ is then the tight vector and Ω the broad one, instead of two broad, correlated angles.
 - **The primary/secondary swap** (ω + 180°, r → −r) is not a parameterisation matter. The flux-ratio convention fixes it.
 
+**Priors stay invariant.** virgil's default priors are the invariant (Jeffreys) priors of each parameter's symmetry group. For the orbit's orientation that is the Haar measure on rotations: uniform in cos i, Ω and ω. The ring makes each vector's angle exactly uniform. The map (Ω, ω) → (2Ω, ϖ) is linear on the torus, with a constant Jacobian (2), so uniform (Ω, ω) is uniform (2Ω, ϖ) and no correction is needed. A von Mises prior is strong information and must say where it comes from, such as an external orbit.
+
 **Evidence.** The radial dimension integrates out exactly, since its prior is normalised. A Laplace evidence in v-space approximates that integral by a Gaussian in r, with an error of order s². Test it against the angle-space evidence on a one-dimensional problem.
 
 **Interface (to be settled when built).**
@@ -115,6 +117,9 @@ Thompson et al. (2023) replace t_p with θ, the position angle at a reference ep
 
 **Properties.**
 - θ is itself an angle, so it is sampled as a vector (§4.1).
+- **The prior needs a Jacobian.** The invariant prior is uniform in the time of periastron, i.e. in the mean anomaly M at `t_ref` (a translation), not in θ. Sampling θ therefore carries the log-Jacobian
+  log|∂M/∂θ| = 3/2 log(1 − e²) − 2 log(1 + e cos f) + log|cos i| − log(cos²φ cos² i + sin²φ), with φ = θ − Ω,
+  as a prior term at fixed (P, e, i, ω, Ω). Checked numerically: it matches finite differences to 1e-7, and θ weighted by it gives a uniform M (to 1.5% in 12 bins over 4 × 10⁵ draws). A uniform prior placed on θ itself would be a different prior on t_p, one that depends on the orientation and e; this term undoes that. (We have not checked how Octofitter handles this.)
 - The map is singular at i = 90°, where the position angle takes only two values. Near edge-on, keep `dt_peri` or use `StateVectorOrbit`.
 - θ belongs with the short-arc tools, beside `StateVectorOrbit`.
 
@@ -124,6 +129,13 @@ Thompson et al. (2023) replace t_p with θ, the position angle at a reference ep
 - **Long-baseline interferometers** know their baselines geometrically, so δ = 0 there.
 - **Imaging, masking and kernel-phase datasets,** and published positions (`PositionData`), take both, with Gaussian priors from the instrument's astrometric calibration.
 - A sign test (a known rotation recovered with the right sign) goes with the position-angle round trips of orbit design §5.3.
+
+*As built (2026-10-05), with corrections to the above:*
+- **The sign, pinned.** R(δ) = [[cos δ, sin δ], [−sin δ, cos δ]] on (dra, ddec): every position angle the dataset measures is the true one plus δ. For `OIData` that is a rotation of (u, v) by −δ (`OIData.with_north_angle`, the `noise=` term `north_angle`, in degrees). The sign test is in `tests/test_pa_round_trip.py`.
+- **The scale is a factor m = 1 + s,** as `wavel_scale` is (and as Octofitter's plate scale is), so its prior is centred on 1. For `OIData` the plate scale is `wavel_scale` = **1/m**, not m: evaluating at λ·m rescales the spatial frequencies as a sky shrunk by m would.
+- **`PositionData` does not go through `noise=`,** which holds one dict per `OIData`. Its terms are paths of fitted values, `PositionData.term(orbit, north_angle="…", plate_scale="…")`, as `RVData.term`'s `jitter` is.
+- **No default priors.** "Gaussian priors from the instrument's astrometric calibration" is strong information the user must state: the invariant prior of δ is uniform on the circle (and of m log-uniform), under which, with one dataset, each is degenerate with the scene's orientation or size.
+- A `uv_grid` is dropped when `north_angle` is applied (its rotation is static); the direct transform gives the same visibilities.
 
 **Not adopted, and why:**
 - **OFTI** (Blunt et al. 2017). Its niche, cheap posteriors from short arcs of relative astrometry, is to be covered more exactly by the Thiele–Innes marginalisation. That is designed (`thiele_innes_marginalisation.md`) but not yet built (Stage 6a.1, "Later"); until then, `starting_orbits` plus NUTS is the route. The marginalisation integrates the four linear elements analytically instead of scaling and rotating prior draws. That note already cites OFTI and compares it (§2.1 there). OFTI is also a good comparison in item 2.
