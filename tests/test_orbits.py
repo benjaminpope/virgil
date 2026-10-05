@@ -95,6 +95,7 @@ def test_the_node_ambiguity_and_the_primary_swap():
     assert onp.allclose(swap, -base, atol=1e-10)
 
 
+@pytest.mark.slow
 def test_the_secondary_recedes_at_the_node_with_position_angle_omega():
     orbit = _orbit()
     with jax.enable_x64(True):

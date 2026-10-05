@@ -72,6 +72,7 @@ def test_circular_support_can_leave_a_hole_under_the_star():
     assert not support[10, 10] and support[10, 15] and not support[0, 0]
 
 
+@pytest.mark.slow
 def test_a_joint_fit_of_two_nights_recovers_a_binary():
     truth = BinaryModelCartesian(6.0, -4.0, 0.05)
     nights = [
