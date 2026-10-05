@@ -96,6 +96,22 @@ anything before 1.0 may change between minor versions.
   `local_nsigma` gives the single-position (Wilks) significance. A new tutorial,
   "Detection ROC curves", calibrates the statistics with simulations. Design
   and later stages in `design/detection_roc.md` (virgil#2).
+- **Detection Monte Carlo (`virgil.detection`, stage 2 of virgil#2).**
+  Null simulators `gaussian_null` (noise from the template's errors, with an
+  `error_scale` for mis-estimated errors) and `bootstrap_null` (a sign-flip or
+  resampling residual bootstrap about the null scene; correlated closure
+  phases are whitened and re-coloured with the new `ClosureNoise.colour`),
+  and `rescale_errors` (visibility and phase errors scaled separately so the
+  null has χ²_r = 1). `injection_grid` lays out companions at random PAs, and
+  `injection_recovery` runs the search on null and injected draws with one
+  compiled kernel (`jax.lax.map`, chunked, with a progress bar). It returns a
+  NumPy `DetectionMC` with empirical false-alarm probabilities and their
+  Clopper–Pearson intervals, thresholds with bootstrap errors, ROC curves,
+  AUC, completeness maps, contrast curves in the units of `absil_limits`, an
+  optional `match_radius` (Cartesian `dra`/`ddec` or angular `sep`/`pa`
+  grids), and `save`/`load`/`concatenate` for array jobs; `concatenate`
+  compares fingerprints of the whole model, null scene and template (every
+  field, static or not) and refuses runs that cannot be fingerprinted.
 
 - **Gauss-Newton and a marginal-likelihood map in `linear_flux_grid`.**
   `n_iter=k` relinearises the whitened residuals at the current flux per pixel
@@ -129,6 +145,19 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **`fit` optimises each prior in its flat coordinate.** A prior that is
+  uniform in some coordinate of its parameter, `LogUniform(a, b)` in
+  `log x`, or any prior with a `flat_coordinate()` method (isotropic
+  inclinations in `cos i`, latitudes in `sin(lat)`), is fitted in that
+  coordinate, where it is constant and adds nothing to the loss. So
+  Levenberg–Marquardt now runs, and is chosen automatically, with these
+  Jeffreys priors (it used to fall back to L-BFGS, and `method="lm"`
+  raised), and `gauss_newton_mass` accepts them. **Behaviour change:** a
+  fit with a `LogUniform` prior (on a parameter or a `noise=` term) is now
+  the maximum of the likelihood inside the prior's range, the MAP in
+  `log x`; before, it was the mode of likelihood × `1/x` in `x`, which
+  pulled scales towards small values. Uniform, Normal and other priors are
+  unchanged. See "Priors and the MAP" in the conventions.
 - `starting_image`'s internal fit uses `LogUniform` priors on the envelope
   width and flux (flux bounds 1e-4 to 100), so the starting point may differ
   slightly.
@@ -153,6 +182,17 @@ anything before 1.0 may change between minor versions.
   added.
 
 ### Fixed
+
+- **Orbits: GM☉ in `total_mass`, Ω range, face-on inclination (F14–F16).**
+  `total_mass` and `distance_pc` now use Kepler's third law with the IAU 2015
+  nominal GM☉, au and the 86400 s day instead of a³/P² with P in Julian years
+  (masses were 3.8e-5 low). `ThieleInnesOrbit.to_kepler` no longer returns
+  Ω = 180° exactly: Ω is in [0°, 180°) with ω paired to keep the sky orbit.
+  `StateVectorOrbit.to_kepler` computes i, Ω and ω by atan2 from the orbit
+  normal, so nearly face-on orbits keep their inclination to float64
+  precision. `orientation_priors(..., inclination=True)` also returns
+  `IsotropicInclination` under `"inc"`: the full Haar orientation prior in
+  one call (default off, so existing callers are unchanged).
 
 - **Components build under `jax.jit` from concrete shape parameters.**
   `TruncatedCone` validated `tilt` with a `jax.numpy` call on the concrete

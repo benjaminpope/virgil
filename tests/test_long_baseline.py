@@ -174,6 +174,29 @@ def test_starting_image_can_leave_a_hole_under_the_star():
     assert np.all(image.brightness[~image.support] == 0.0)
 
 
+def test_log_uniform_envelope_fit_stays_off_its_lower_bounds():
+    """The envelope fit behind starting_image, with LogUniform priors on
+    a point source's data: the envelope is unconstrained below the beam.
+
+    Fitted in log sigma and log flux, where the priors are flat, nothing
+    pulls the envelope towards the priors' lower bounds. (In the natural
+    coordinates, -log p = log x did, and sigma ran to ~1e-3 of the beam
+    and the flux to 1e-4.)
+    """
+    resolution = 7.25  # beam(NIGHT).major_mas
+    low_sigma, low_flux = 1e-3 * resolution, 1e-4
+    model = System(star=PointSource(), env=GaussianDisk(0.77, flux=0.1))
+    priors = {
+        "env.sigma": dist.LogUniform(low_sigma, 20.0),
+        "env.flux": dist.LogUniform(low_flux, 100.0),
+    }
+    result = fit(model, priors, NIGHT)
+    assert result.info["method"] == "lm"
+    assert result.info["converged"] is True
+    assert float(result.values["env.sigma"]) > 10.0 * low_sigma
+    assert float(result.values["env.flux"]) > 10.0 * low_flux
+
+
 def _binary_epochs(dra, ddec, flux, spin):
     epoch = BinaryModelCartesian(dra, ddec, flux)
     return [epoch, Rotated(epoch, spin)]

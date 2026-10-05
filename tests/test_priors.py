@@ -97,9 +97,11 @@ def test_numpyro_model_with_only_the_prior_reproduces_it():
     assert float(logp) == pytest.approx(float(prior.log_prob(60.0)))
 
 
-def test_fit_with_a_flat_likelihood_returns_the_mode_of_the_prior():
-    # The density sin i peaks at 90 degrees, and fit's MAP is the mode of
-    # the prior density in the model's own parameter (no bijection Jacobian).
+def test_fit_with_a_flat_likelihood_is_not_pulled_by_the_prior():
+    # fit optimises the inclination in its flat coordinate (cos i), where
+    # the prior is constant, so with a flat likelihood nothing moves it.
+    # (Before fit used flat coordinates, the MAP was the mode of sin i in
+    # i, 90 degrees, which depends on the parametrisation.)
     def term(values):
         return 0.0 * np.atleast_1d(values["inc"])
 
@@ -111,10 +113,13 @@ def test_fit_with_a_flat_likelihood_returns_the_mode_of_the_prior():
         init={"inc": 40.0},
         method="lbfgs",
     )
-    assert float(result.values["inc"]) == pytest.approx(90.0, abs=0.5)
+    assert float(result.values["inc"]) == pytest.approx(40.0, abs=1e-6)
 
 
-def test_fit_with_data_pulls_inclination_to_the_likelihood():
+def test_fit_with_data_is_the_likelihood_maximum_in_the_range():
+    # Flat in cos i, the prior adds nothing: the MAP is the likelihood's
+    # peak (before, the sin i density pulled it towards 90 degrees).
+    # Tighten the gradient tolerance to resolve the peak to 1e-4 degrees.
     def term(values):
         return np.atleast_1d(values["inc"] - 50.0) / 20.0
 
@@ -124,23 +129,37 @@ def test_fit_with_data_pulls_inclination_to_the_likelihood():
         (),
         likelihoods=[term],
         init={"inc": 40.0},
+        gtol=1e-8,
     )
-    assert 50.0 < float(result.values["inc"]) < 90.0
+    assert result.info["converged"] is True
+    assert float(result.values["inc"]) == pytest.approx(50.0, abs=1e-4)
 
 
-def test_fit_rejects_lm_for_isotropic_priors():
+@pytest.mark.parametrize(
+    "prior, start, peak",
+    [
+        (IsotropicInclination(), 40.0, 50.0),
+        (IsotropicInclination(0.0, 90.0), 80.0, 30.0),
+        (IsotropicLatitude(), 0.1, 0.6),
+        (IsotropicLatitude(-0.2, 1.2), 0.0, 1.0),
+    ],
+)
+def test_fit_chooses_lm_for_isotropic_priors(prior, start, peak):
+    # Isotropic priors have a flat coordinate, so they no longer force
+    # L-BFGS (method="lm" used to raise): LM runs and is the default.
     def term(values):
-        return np.atleast_1d(values["inc"] - 50.0)
+        return np.atleast_1d(values["x"] - peak) / 0.01
 
-    with pytest.raises(TypeError, match="least-squares"):
-        fit(
-            lambda **kw: None,
-            {"inc": IsotropicInclination()},
-            (),
-            likelihoods=[term],
-            init={"inc": 40.0},
-            method="lm",
-        )
+    result = fit(
+        lambda **kw: None,
+        {"x": prior},
+        (),
+        likelihoods=[term],
+        init={"x": start},
+    )
+    assert result.info["method"] == "lm"
+    assert result.info["converged"] is True
+    assert float(result.values["x"]) == pytest.approx(peak, abs=1e-5)
 
 
 def test_expanded_prior_for_several_spots():

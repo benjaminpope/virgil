@@ -176,6 +176,32 @@ The $\omega$ here is the visual-binary one, for the secondary relative to the pr
 
 **Swapping primary and secondary** is the same thing seen from the data. A binary with the companion at $\mathbf{r}$ and flux ratio $f$ looks, to the visibilities, like one with the companion at $-\mathbf{r}$ and flux ratio $1/f$: only the origin of the image moves (from the primary to the other star), so every squared visibility and closure phase is identical, and the visibilities differ only by a phase linear in $u$ and $v$. This was checked with `BinaryModelCartesian`: `(dra, ddec, f)` and `(-dra, -ddec, 1/f)` give the same $V^2$ and closure phases to float32 rounding, and a visibility ratio of $\exp[+2\pi i(u\,\mathrm{dra} + v\,\mathrm{ddec})]$. So the choice of which star is the reference is a convention, to be fixed once, by requiring the reference to be the brighter star in the band, say, and every PA, flux ratio and $\omega$ read afterwards must follow it.
 
+## Which priors?
+
+virgil's examples use the Jeffreys prior under the group that acts on each parameter, unless there is strong information to the contrary (a measurement, a population model). The prior then does not depend on how the parameter is written: a log-uniform prior on a period is also log-uniform in the frequency, and an isotropic orientation stays isotropic however it is parametrised. Every prior also has finite, stated bounds, which should contain the plausible values with a margin, and a scale's lower bound is nonzero, since `LogUniform(0, ...)` is undefined.
+
+| Parameter | Group | Prior |
+|---|---|---|
+| Position offsets `dra`, `ddec`; time of periastron; phase offsets; spectral index; log gains | translation | `Uniform` |
+| Fluxes and flux ratios; amplitudes; angular sizes and widths; periods; semi-major axes; noise and gain widths | scaling | `LogUniform`, with a nonzero lower bound |
+| Position angle, node, periastron, spin, longitude | rotation of the circle | `AngleVector()` (no edge at 0°/360°), or `Uniform` over exactly one period |
+| Inclination of an orbit or spin axis | rotation of the sphere | [`IsotropicInclination`][virgil.priors.IsotropicInclination] (uniform in cos i); over (0, 90) when only \|cos i\| is identifiable |
+| Latitude of a point on a sphere | rotation of the sphere | [`IsotropicLatitude`][virgil.priors.IsotropicLatitude] (uniform in sin lat) |
+| Eccentricity | none | `Uniform`, as the interim prior |
+| Kipping's limb-darkening $(q_1, q_2)$ | none (uniform over the physical triangle) | `Uniform(0, 1)` each |
+
+Two pitfalls follow. A `Uniform` prior over more than one period of an angle, such as (−360°, 720°), counts the circle several times. And a `Uniform` prior on a flux or a size favours large values, so the posterior depends on the upper bound. The [binary search](binary_search.md) and [hierarchical inference](hierarchical_inference.md) tutorials are the templates: they sample the companion's flux in log space, and the second infers a population of fluxes.
+
+For orbits, [`orientation_priors`][virgil.orbits.orientation_priors] gives the node and periastron as angle vectors.
+
+## Priors and the MAP
+
+virgil's default priors are the invariant (Jeffreys) measures of the groups acting on each parameter: uniform for locations, log-uniform for scales, and isotropic for orientations (uniform in $\cos i$ for an inclination). A maximum a posteriori point is not invariant under a change of variables, because a density picks up a Jacobian. The mode of `LogUniform`'s density $1/x$ in $x$ is at the lower bound, so a fit in $x$ would pull every scale down, although nothing in the prior prefers small scales.
+
+[`fit`][virgil.fitting.fit] therefore optimises each such parameter in its *flat coordinate*, the coordinate in which its prior is uniform: $\log x$ for `LogUniform(a, b)`, on $[\log a, \log b]$; $\cos i$ for an isotropic inclination; $\sin(\mathrm{lat})$ for an isotropic latitude (any prior with a `flat_coordinate()` method); and the parameter itself for `Uniform`. There the prior is constant and adds nothing to the loss, so the MAP is the maximum of the likelihood (times any other priors) inside the prior's range, and Levenberg–Marquardt applies. Other priors (`Normal`, `Beta`, `HalfNormal`, ...) have no flat coordinate and are evaluated in the model's own parameters. Fitted values are always reported in the model's own parameters.
+
+A Gaussian approximation at the fit should be taken in the same flat coordinate, and carried to the model's parameters by the delta method, $\sigma_x = |{\rm d}x/{\rm d}u|\,\sigma_u$ (for a log-uniform scale, $\sigma_x = x\,\sigma_{\log x}$). [`laplace_cov`][virgil.inference.laplace_cov] and [`fisher`][virgil.inference.fisher] are curvatures of the likelihood alone, in the model's parameters, so they do not depend on this. [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] is in the unconstrained coordinates that numpyro's NUTS samples (`biject_to` of each prior's support), with flat-coordinate priors adding no curvature, as `Uniform` priors never have.
+
 ## Precision
 
 virgil never switches on JAX's 64-bit mode globally. All library code runs in float32 by default, and is written to give correct results in float64 too. The fitting entry points, such as [`fit`][virgil.fitting.fit], instead run their optimisation in a local float64 context: they cast the model, data and priors to float64 on the way in, and restore the setting on exit. Pass `dtype="float32"` to `fit` for the faster, less precise version. The helper that does this is `virgil._precision.run_in`, which you will see in the source.
