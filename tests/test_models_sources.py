@@ -1179,3 +1179,83 @@ def test_truncated_cone_rejects_bad_shapes(kwargs, match):
     base = dict(tip=5.0, alpha=30.0, s0=4.0, length=8.0, width=1.0)
     with pytest.raises(ValueError, match=match):
         TruncatedCone(**{**base, **kwargs})
+
+
+def test_a_narrow_resolved_cone_renders_as_its_model():
+    # Large thin rings: the render must be continuous bands, not spots.
+    cone = TruncatedCone(
+        tip=0.0, alpha=30.0, s0=60.0, length=2.0, width=0.5, tilt=90.0
+    )
+    npix, fov_mas, wavel = 512, 80.0, 1.65e-6
+    image = onp.asarray(cone.render(npix=npix, fov_mas=fov_mas)).ravel()
+    xx, yy = (
+        onp.asarray(a).ravel() for a in _image_coordinates(npix, fov_mas)
+    )
+    q = onp.array([0.05, 0.15, 0.25, 0.35])  # cycles per mas
+    u = q / _MAS2RAD_REF * wavel
+    v = onp.zeros_like(u)
+    phase = onp.exp(
+        -2j
+        * onp.pi
+        * _MAS2RAD_REF
+        * (onp.outer(u, xx) + onp.outer(v, yy))
+        / wavel
+    )
+    rendered = phase @ image / image.sum()
+    assert (
+        onp.max(onp.abs(rendered - onp.asarray(cone.model(u, v, wavel))))
+        < 0.01
+    )
+
+
+@pytest.mark.parametrize(
+    "pa, east, north", [(0.0, 0.0, 1.0), (90.0, 1.0, 0.0)]
+)
+def test_a_cone_opens_towards_its_position_angle_on_the_sky(pa, east, north):
+    # With the apex at (dra, ddec) (tip=0), the cone lies towards pa: North
+    # (up) at pa=0, East (left) at pa=90.
+    cone = TruncatedCone(
+        tip=0.0, alpha=20.0, s0=3.0, length=4.0, width=1.0, tilt=0.0, pa=pa
+    )
+    npix, fov_mas = 128, 64.0
+    image = onp.asarray(cone.render(npix=npix, fov_mas=fov_mas))
+    xx, yy = (onp.asarray(a) for a in _image_coordinates(npix, fov_mas))
+    centroid = (
+        onp.array([onp.sum(image * xx), onp.sum(image * yy)]) / image.sum()
+    )
+    direction = centroid / onp.hypot(*centroid)
+    assert onp.allclose(direction, [east, north], atol=0.01)
+    # In pixels, along the axis: North is towards row 0, East column 0.
+    row, col = onp.unravel_index(onp.argmax(image), image.shape)
+    if north > 0.5:
+        assert row < npix // 2
+    else:
+        assert col < npix // 2
+
+
+def test_cone_quadrature_converges_and_tilt_is_checked_after_set():
+    rng = onp.random.default_rng(5)
+    u, v = rng.uniform(-30.0, 30.0, (2, 20))
+    cone = dict(
+        tip=5.0,
+        alpha=30.0,
+        s0=4.0,
+        length=8.0,
+        width=1.0,
+        tilt=40.0,
+        pa=20.0,
+        ratio=0.8,
+    )
+    fine = TruncatedCone(**cone, n_rings=256).model(u, v, 1e-6)
+    errors = [
+        onp.max(
+            onp.abs(TruncatedCone(**cone, n_rings=n).model(u, v, 1e-6) - fine)
+        )
+        for n in (16, 32, 64)
+    ]
+    # The midpoint rule converges as n_rings grows (second order).
+    assert errors[1] < errors[0] / 2 and errors[2] < errors[1] / 2
+    assert errors[2] < 1e-3
+    good = TruncatedCone(**cone)
+    assert bool(good.is_physical())
+    assert not bool(good.set("tilt", 120.0).is_physical())

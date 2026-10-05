@@ -611,9 +611,11 @@ class TruncatedCone(Component):
     weighted by the area element (∝ ρ) and the emissivity, and integrated
     over ``s`` from ``s0`` to ``s0 + 5 length`` (the last 0.7 % of the
     flux is dropped) by the midpoint rule on ``n_rings`` rings. It is
-    accurate while the spacing of the rings' centres on the sky,
-    ``5 length cos α cos β / n_rings``, is below half the shortest fringe
-    spacing.
+    accurate while both the spacing of the rings' centres on the sky,
+    ``5 length cos α cos β / n_rings``, and the step between their radii,
+    ``5 length sin α max(1, ratio) / n_rings``, are below half the shortest
+    fringe spacing: a cone seen down its axis (tilt 90°) has all its centres
+    together, and only the radius step matters.
 
     Parameters
     ----------
@@ -724,6 +726,7 @@ class TruncatedCone(Component):
         return (
             super().is_physical()
             & np.all((self.alpha > 0.0) & (self.alpha < 90.0))
+            & np.all(np.abs(self.tilt) <= 90.0)
             & np.all(self.s0 >= 0.0)
             & np.all(self.length > 0.0)
             & np.all(self.width > 0.0)
@@ -765,22 +768,39 @@ class TruncatedCone(Component):
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
         rho, along, weight = self.rings()
-        phi = np.linspace(0.0, 2.0 * np.pi, 64, endpoint=False)
         sin_pa, cos_pa = np.sin(self.pa * dtor), np.cos(self.pa * dtor)
         squash = self.ratio * np.sin(self.tilt * dtor)
         width = np.maximum(self.width, pixel_scale_mas)
+        # Points round each ring no further apart than a third of the blur,
+        # so a large thin ring is a continuous band, not a string of spots;
+        # they are added in blocks of 64 to keep memory small.
+        block = 64
+        circumference = concrete(
+            2.0 * np.pi * np.max(rho) * np.maximum(1.0, self.ratio)
+        )
+        blur = concrete(width)
+        if circumference is None or blur is None:
+            n_blocks = 4  # traced: a fixed sampling
+        else:
+            needed = float(np.max(circumference)) / (float(np.min(blur)) / 3.0)
+            n_blocks = int(min(max(onp.ceil(needed / block), 1), 128))
+        phi = np.linspace(0.0, 2.0 * np.pi, n_blocks * block, endpoint=False)
+        phi = phi.reshape(n_blocks, block)
 
         def add_ring(image, ring):
-            # Points round one ring's projected ellipse, blurred by the
-            # shell's thickness; one ring at a time keeps memory small.
             radius, centre, w = ring
-            par = centre + radius * np.sin(phi) * squash
-            perp = radius * np.cos(phi)
-            x = par * sin_pa + perp * cos_pa
-            y = par * cos_pa - perp * sin_pa
-            d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
-            blur = np.exp(-4.0 * np.log(2.0) * d2 / width**2)
-            return image + w * np.mean(blur, -1), None
+
+            def add_block(image, angles):
+                par = centre + radius * np.sin(angles) * squash
+                perp = radius * np.cos(angles)
+                x = par * sin_pa + perp * cos_pa
+                y = par * cos_pa - perp * sin_pa
+                d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
+                spots = np.exp(-4.0 * np.log(2.0) * d2 / width**2)
+                return image + w * np.sum(spots, -1) / phi.size, None
+
+            image, _ = jax.lax.scan(add_block, image, phi)
+            return image, None
 
         image, _ = jax.lax.scan(
             add_ring, np.zeros(np.shape(xx)), (rho, along, weight)
