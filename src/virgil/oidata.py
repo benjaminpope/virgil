@@ -1070,6 +1070,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         calibrators show such offsets: they are off by default. Needs
         closure phases from four or more telescopes.
 
+        This is a small-offset approximation: an offset δ changes the
+        whitened sine sin Δ by about δ cos Δ, which is treated as linear in
+        δ. It holds while the offsets (and the residuals) are small, about
+        δ ≲ 0.3 rad (17°); larger widths are not marginalised exactly.
+
         Parameters
         ----------
         baseline : float, optional

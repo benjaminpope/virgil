@@ -97,7 +97,7 @@ So:
 - The correlated model still produces **one whitened residual vector**, preserving the rule in `AGENTS.md`, plus a log-determinant. That log-determinant is the same kind of Σ log σ term that `noise=` already adds.
 - **Which optimiser.** For closure phase (m = 1) with τ fixed, C_b doesn't depend on the parameters, so the whitened residuals are the whole likelihood and LM works. For V², m = V²_model, so log det C_b depends on the scene even with τ fixed: least squares on r_w would optimise a different objective. Use L-BFGS or NUTS on the full likelihood for `vis_gain`, and whenever τ is fitted.
 - No per-block parameters are sampled; every block is integrated out exactly.
-- With unprojected closure phases, the chord residual 2 sin(Δ/2)/σ makes δ enter non-linearly. Applying the rank-one whitening to the chord residuals is then an approximation, good while the offsets are small (δ ≲ 0.3 rad). Document the limit.
+- With unprojected closure phases, the chord residual 2 sin(Δ/2)/σ makes δ enter non-linearly. Applying the rank-one whitening to the chord residuals is then an approximation, good while the offsets are small (δ ≲ 0.3 rad). Document the limit. (As built, on #174's sines rather than chords: the same limit, stated in `OIData.with_closure_offsets` and `ClosureOffsets`.)
 
 **Interface.** The rank-one terms extend `noise=`'s per-dataset vocabulary (§2.6): `vis_gain` (τ_V) and `phi_offset` (τ_φ). They need block labels in `OIData` (§2.5). A *known* τ (from calibrator scatter) is the same code with τ fixed. OIFITS v2's `OI_CORR` table can carry such correlations from a pipeline. Reading `OI_CORR` into a block structure is a later extension.
 

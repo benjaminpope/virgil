@@ -476,7 +476,10 @@ class ClosureOffsets(eqx.Module):
 
     The likelihood of correlated closure phases whitens their sines with
     ``OIData.cp_noise`` (see ``likelihood._whiten``). The offsets add
-    τ² m mᵀ to that covariance, a small-phase approximation. Each mode is
+    τ² m mᵀ to that covariance: a small-phase approximation, since an
+    offset δ changes sin Δ by about δ cos Δ. It holds for offsets (and
+    residuals) below about 0.3 rad; larger widths are not marginalised
+    exactly. Each mode is
     whitened the same way, one closure-phase group (frame and channel) at
     a time, and the modes of a frame then form one block of the rank-one
     whitening ([`GainModes`][virgil.gains.GainModes] has the details).
