@@ -119,6 +119,8 @@ So:
 
 **Proposal.** `u` and `v` are stored in metres and models divide by `wavel` (`Component.model`). So a scale nuisance s only has to evaluate the model at `wavel·s`. That rescales the spatial frequencies and the spectra together, which is physically right. It is one line in `OIData.model`, or `OIData.with_wavelength_scale(s)`, plus a per-dataset term `wavel_scale` (a generic example prior is `Normal(1, 1e-3)`). With one dataset it is degenerate with every angular size, so the prior *is* the systematic. Report it.
 
+*As built (Stage 6d, 2026-10-05):* `OIData.with_wavelength_scale(scale, offset)` evaluates models at λ′ = scale·λ + offset (metres), and the noise terms `wavel_scale` (a factor, starting at 1; GRAVITY prior `Normal(1, 2e-4)`) and `wavel_offset` (starting at 0) call it. Their priors may have either sign, unlike the error terms. A `uv_grid` is kept: it is in metres and divided by the wavelength where it is used.
+
 **The GRAVITY default (interim, GRAVITY review §6 and §12):** λ′ = λ(1 + s) + δ, with s ~ N(0, 2×10⁻⁴), and the offset δ fixed at zero unless spectral lines constrain it. That is five times narrower than the generic example, and is under review with the GRAVITY team.
 
 **One per-dataset nuisance vocabulary.** `noise=` (merged in PR #124) takes one dict of priors per dataset. It grows, under the same name, into the per-dataset nuisance specification:
