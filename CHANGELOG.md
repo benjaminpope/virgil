@@ -78,6 +78,14 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **Components build under `jax.jit` from concrete shape parameters.**
+  `TruncatedCone` validated `tilt` with a `jax.numpy` call on the concrete
+  array, which inside `jit` became a tracer and raised
+  `TracerBoolConversionError` when a fit's model function built a cone from
+  fixed shapes and a traced flux. The check now uses NumPy. The other
+  concrete checks (components, spectra, orbits) were audited and need no
+  change; a regression test builds each checked component inside `jit`.
+  Found in a real-data OzSTAR run.
 - **`absil_limits` with a far-off or single-value flux axis.** The
   significance saturates (about 37 sigma in float64) for bright companions,
   so starting the optimizer on such a flux, e.g. `flux=[0.01]`, gave a flat
