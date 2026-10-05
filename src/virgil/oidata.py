@@ -396,6 +396,41 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         labels = self.epochs(gap_days)
         return [self._subset(labels == k) for k in range(labels.max() + 1)]
 
+    def select(self, wavel_min=None, wavel_max=None):
+        """These data restricted to a wavelength range.
+
+        Parameters
+        ----------
+        wavel_min, wavel_max : float, optional
+            Keep the samples with ``wavel_min <= wavel <= wavel_max``
+            (metres); either bound may be left open.
+
+        Returns
+        -------
+        OIData
+            The samples in range, with their observables and closure phases
+            (a closure triangle's legs share a wavelength, so triangles are
+            kept whole). Not available for projected (kernel, DISCO)
+            observables.
+
+        Examples
+        --------
+        Keep the K-band continuum of a GRAVITY file but not the Brγ window:
+        ``data.select(2.05e-6, 2.16e-6)``.
+        """
+        wavel = onp.broadcast_to(onp.asarray(self.wavel), onp.shape(self.u))
+        keep = onp.ones(wavel.shape, dtype=bool)
+        if wavel_min is not None:
+            keep &= wavel >= wavel_min
+        if wavel_max is not None:
+            keep &= wavel <= wavel_max
+        if not keep.any():
+            raise ValueError(
+                f"No samples between {wavel_min} and {wavel_max} m; the data "
+                f"span {wavel.min():.4g} to {wavel.max():.4g} m."
+            )
+        return self._subset(keep)
+
     def _subset(self, keep):
         """These data restricted to the samples where ``keep`` is True."""
         if (

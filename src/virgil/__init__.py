@@ -120,7 +120,14 @@ from .orbits import (  # noqa: E402
     starting_orbits,
     total_mass,
 )
-from .spectra import BlackBody, PowerLaw  # noqa: E402
+from .spectra import (  # noqa: E402
+    BlackBody,
+    GaussianLine,
+    LorentzianLine,
+    Nodes,
+    PowerLaw,
+    Sum,
+)
 
 
 __all__ = [
@@ -136,12 +143,15 @@ __all__ = [
     "GaussianArc",
     "GaussianDisk",
     "GaussianField",
+    "GaussianLine",
     "GravityDarkenedStar",
     "HarmonixModel",
     "Image",
     "KeplerOrbit",
     "LimbDarkenedDisk",
+    "LorentzianLine",
     "ModulatedGaussianRim",
+    "Nodes",
     "OIData",
     "PointSource",
     "PositionData",
@@ -152,6 +162,7 @@ __all__ = [
     "SourceModel",
     "StateVectorOrbit",
     "SquareRootLimbDarkenedDisk",
+    "Sum",
     "System",
     "ThieleInnesOrbit",
     "TruncatedCone",

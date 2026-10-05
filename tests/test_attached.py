@@ -240,3 +240,8 @@ def test_gradients_through_a_disc_with_angles_bound_per_sample(bind):
         return model_loglike(System(primary=PointSource(), disc=disc), data)
 
     assert onp.isfinite(float(jax.grad(loglike)(50.0)))
+
+
+def test_attached_total_spectrum_is_its_components():
+    attached = Attached(PointSource(0.1), ORBIT)
+    assert onp.allclose(attached.total_spectrum(onp.array([2.0e-6])), 0.1)

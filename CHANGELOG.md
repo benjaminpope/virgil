@@ -9,6 +9,17 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Line and node spectra (Stage 6a, spectra).** `GaussianLine` and
+  `LorentzianLine` (amplitude is the peak flux; negative for absorption),
+  `Nodes` (linear or natural cubic spline through free fluxes, constant or a
+  fixed `outside` value beyond the nodes, e.g. `outside=0.0` for an excess)
+  and `Sum` (named parts, so continuum plus lines is one flux). Every
+  spectrum's reference flux is its value at `wavel0`, and positivity is
+  checked on the total. `Spectrum()` with no argument evaluates at `wavel0`.
+  `SourceModel.total_spectrum(wavel)` (a `System`'s sum over its parts) and
+  `OIData.select(wavel_min, wavel_max)`. `Tabulated` is deprecated in
+  favour of `Nodes` (a `DeprecationWarning`; behaviour unchanged).
+
 - **`numpyro_model(..., likelihoods=[...])`.** The extra data terms that `fit`
   takes (`PositionData.term`, `RVData.term`, or a callable returning whitened
   residuals) can now be sampled: term `i` is added as the site
