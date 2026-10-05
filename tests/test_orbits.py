@@ -533,3 +533,79 @@ def test_a_plain_function_is_a_likelihood_term_and_axial_priors_work_in_fit():
     with pytest.raises(ValueError, match="d_rv"):
         RVData(mjd, onp.zeros(10), onp.nan)
     assert isinstance(AxialVonMises(1.0, 2.0), dist.Distribution)
+
+
+def _numpyro_setup():
+    import numpyro.distributions as dist
+
+    truth = _orbit()
+    mjd = T_REF + onp.linspace(0.0, 380.0, 6)
+    with jax.enable_x64(True):
+        positions = _positions(
+            truth, mjd, sigma=0.3, key=jax.random.PRNGKey(2)
+        )
+    priors = {"a_mas": dist.Uniform(5.0, 50.0), "ecc": dist.Uniform(0.0, 0.9)}
+
+    def orbit(v):
+        return _orbit(a_mas=v["a_mas"], ecc=v["ecc"])
+
+    return positions, priors, orbit
+
+
+def _log_density(model, values):
+    from numpyro.infer.util import log_density
+
+    return float(log_density(model, (), {}, values)[0])
+
+
+def test_numpyro_model_adds_a_position_term_to_the_prior():
+    from virgil.likelihood import numpyro_model
+
+    positions, priors, orbit = _numpyro_setup()
+    model = numpyro_model(
+        lambda **kw: None, priors, (), likelihoods=[positions.term(orbit)]
+    )
+    values = {"a_mas": 19.0, "ecc": 0.35}
+    log_prior = sum(float(priors[k].log_prob(v)) for k, v in values.items())
+    chi2 = float(onp.sum(positions.whitened_residuals(orbit(values)) ** 2))
+    # Matching constant: the data's own normalisation, from ``loglike``.
+    constant = float(positions.loglike(orbit(values))) + 0.5 * chi2
+    assert _log_density(model, values) == pytest.approx(
+        log_prior - 0.5 * chi2 + constant, rel=1e-5
+    )
+    # A plain callable of whitened residuals adds -chi2/2 alone.
+    plain = numpyro_model(
+        lambda **kw: None,
+        priors,
+        (),
+        likelihoods=[lambda v: positions.whitened_residuals(orbit(v))],
+    )
+    assert _log_density(plain, values) == pytest.approx(
+        log_prior - 0.5 * chi2, rel=1e-5
+    )
+
+
+def test_numpyro_model_sums_oidata_and_likelihood_terms():
+    import numpyro.distributions as dist
+
+    from virgil.coverage import vlti_oidata
+    from virgil.likelihood import numpyro_model
+    from virgil.models import PointSource
+
+    positions, priors, orbit = _numpyro_setup()
+    priors = priors | {"flux": dist.Uniform(0.5, 2.0)}
+    data = vlti_oidata(hour_angles_h=(0.0,), wavelengths_m=[3.5e-6])
+
+    def source(flux, **kw):
+        return PointSource(flux=flux)
+
+    term = [positions.term(orbit)]
+    both = numpyro_model(source, priors, data, likelihoods=term)
+    oidata = numpyro_model(source, priors, data)
+    terms = numpyro_model(source, priors, (), likelihoods=term)
+    values = {"a_mas": 19.0, "ecc": 0.35, "flux": 1.0}
+    log_prior = sum(float(priors[k].log_prob(v)) for k, v in values.items())
+    assert _log_density(both, values) == pytest.approx(
+        _log_density(oidata, values) + _log_density(terms, values) - log_prior,
+        rel=1e-5,
+    )

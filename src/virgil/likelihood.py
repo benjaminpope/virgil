@@ -398,8 +398,28 @@ def _check_positive_flux_prior(name, distribution):
         )
 
 
+def _term_loglike(term, values):
+    """Log density of one ``likelihoods=`` term at the fitted ``values``.
+
+    A term built by ``PositionData.term`` or ``RVData.term`` wraps its data,
+    so its full normalised ``loglike`` is used, matching the OIData terms.
+    A plain callable returning whitened residuals has no known
+    normalisation, so it contributes ``-0.5 * sum(r**2)`` only.
+    """
+    data, build = getattr(term, "data", None), getattr(term, "build", None)
+    if hasattr(data, "loglike") and build is not None:
+        return data.loglike(*build(values))
+    return -0.5 * np.sum(np.ravel(term(values)) ** 2)
+
+
 def numpyro_model(
-    model, priors, data_obj, regularisers=(), noise=None, **options
+    model,
+    priors,
+    data_obj,
+    regularisers=(),
+    noise=None,
+    likelihoods=(),
+    **options,
 ):
     """Return a numpyro model sampling the parameters in ``priors``.
 
@@ -424,6 +444,7 @@ def numpyro_model(
         in ``.flux``) must have non-negative support.
     data_obj : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
+        May be ``()`` when ``likelihoods`` holds all the data.
     regularisers : sequence, optional
         Log-prior terms on the model, e.g. a
         [`Centroid`][virgil.imaging.Centroid] prior, added with
@@ -436,6 +457,14 @@ def numpyro_model(
         [`inflated_errors`][virgil.likelihood.inflated_errors]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its
         own terms, as sites ``"noise[i].<term>"``.
+    likelihoods : sequence, optional
+        Extra data terms, as for [`fit`][virgil.fitting.fit]: callables of
+        the sampled values (a dict keyed like ``priors``) returning whitened
+        residuals, such as ``PositionData.term(orbit_fn)`` or
+        ``RVData.term(params_fn)``. Term ``i`` is added with
+        ``numpyro.factor`` as site ``"likelihood_<i>"``. Those two built-in
+        terms add their full normalised Gaussian log density, like the OIData
+        terms; a plain callable adds ``-0.5 * sum(r**2)`` only.
     **options
         Fixed error terms and ``reject_unphysical``, passed to
         [`model_loglike`][virgil.likelihood.model_loglike].
@@ -444,6 +473,20 @@ def numpyro_model(
     -------
     callable
         Zero-argument numpyro model, e.g. for ``numpyro.infer.NUTS``.
+
+    Examples
+    --------
+    Sample an orbit from measured positions alone, with no OIData::
+
+        positions = PositionData(mjd, dra, ddec, cov)
+        priors = {"a_mas": dist.Uniform(5, 50), "e": dist.Uniform(0, 0.9)}
+        orbit_fn = lambda v: KeplerOrbit(a_mas=v["a_mas"], e=v["e"], ...)
+        model = numpyro_model(
+            lambda **kw: None,
+            priors,
+            (),
+            likelihoods=[positions.term(orbit_fn)],
+        )
     """
     import numpyro
 
@@ -462,21 +505,26 @@ def numpyro_model(
     )
 
     sites = noise_sites(noise, len(observations))
+    likelihoods = tuple(likelihoods)
 
     def numpyro_fn():
         values = [numpyro.sample(path, priors[path]) for path in paths]
         source = build_model(model, paths, values)
         sources = _per_dataset(source, len(observations))
         terms = {site: numpyro.sample(site, sites[site][0]) for site in sites}
-        numpyro.factor(
-            "loglike",
-            sum(
-                model_loglike(
-                    src, obs, **options, **noise_for(sites, terms, i)
-                )
-                for i, (src, obs) in enumerate(zip(sources, observations))
-            ),
-        )
+        if observations:
+            numpyro.factor(
+                "loglike",
+                sum(
+                    model_loglike(
+                        src, obs, **options, **noise_for(sites, terms, i)
+                    )
+                    for i, (src, obs) in enumerate(zip(sources, observations))
+                ),
+            )
+        fitted = dict(zip(paths, values))
+        for i, term in enumerate(likelihoods):
+            numpyro.factor(f"likelihood_{i}", _term_loglike(term, fitted))
         for i, regulariser in enumerate(regularisers):
             numpyro.factor(
                 f"regulariser_{i}", -regulariser.value(_reference(source))

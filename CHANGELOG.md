@@ -9,6 +9,12 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`numpyro_model(..., likelihoods=[...])`.** The extra data terms that `fit`
+  takes (`PositionData.term`, `RVData.term`, or a callable returning whitened
+  residuals) can now be sampled: term `i` is added as the site
+  `likelihood_<i>`, with the data's normalised Gaussian log density, and
+  `data_obj` may be `()`.
+
 - **Short-arc orbits.** `StateVectorOrbit` parameterises an orbit by the
   relative position and velocity at `t_ref` and the gravitational parameter,
   which a short arc constrains well where the elements are degenerate; it
