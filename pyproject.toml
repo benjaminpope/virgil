@@ -120,3 +120,6 @@ indent-style = "space"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
+# Dump every thread's traceback when a test runs past 5 minutes, so a hung
+# CI job shows where it stopped. It only prints; the test carries on.
+faulthandler_timeout = 300

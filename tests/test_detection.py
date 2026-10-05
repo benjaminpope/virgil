@@ -169,12 +169,24 @@ def test_log_bayes_factor_rises_with_injected_flux():
 )
 @pytest.mark.slow
 def test_log_bayes_factor_is_stable_under_grid_refinement():
-    # A ~5 sigma companion off the grid points, on grids of 7 to 25
-    # positions per axis over the same box (the 7-point grid resolves the
-    # flux peak with fewer than two steps across its FWHM).
+    # A ~5 sigma companion off the grid points, on grids of 13 to 49
+    # positions per axis over the same box. The evidence is a trapezoid
+    # rule, so it converges as O(step^2) once every axis resolves the
+    # likelihood peaks, as the docstring requires. The noise draw differs
+    # between float32 and x64 (jax.random is dtype dependent), and so do
+    # the peaks: position FWHMs of 34-46 mas in float32 but 23-25 mas
+    # under x64. A 7-point grid (20 mas steps) is then pre-asymptotic, 1.2
+    # steps per FWHM, and was 0.03 low under x64 (0.003 in float32). From
+    # 13 points (10 mas, at least 2.3 steps) the error falls by 4 per
+    # halving: against an exact flux integral of linear_flux_grid on
+    # 193 points, 1.4e-3 at 13, 3.6e-4 at 25 and 9e-5 at 49 under x64.
+    # The 16-point flux axis (1.7 to 8 steps per FWHM at the best
+    # position) is within 3e-4 of a 121-point one. Measured spreads to
+    # the 49-point grid are at most 2e-3 in either precision; atol=0.01
+    # leaves a margin of five.
     data = _data(5e-3, 3, position=(57.0, -43.0))
     log_b = []
-    for n_pos, n_flux in [(7, 16), (13, 31), (25, 61)]:
+    for n_pos, n_flux in [(13, 16), (25, 31), (49, 61)]:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             result = detection_statistics(
@@ -182,7 +194,7 @@ def test_log_bayes_factor_is_stable_under_grid_refinement():
             )
         log_b.append(float(result["log_bayes_factor"]))
     assert log_b[2] > 5.0
-    assert onp.allclose(log_b, log_b[2], atol=0.02)
+    assert onp.allclose(log_b, log_b[2], atol=0.01)
 
 
 @pytest.mark.validates(

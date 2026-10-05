@@ -11,7 +11,11 @@ from scipy import integrate, stats
 
 from virgil import fit
 from virgil.likelihood import numpyro_model
-from virgil.priors import IsotropicInclination, IsotropicLatitude
+from virgil.priors import (
+    IsotropicInclination,
+    IsotropicLatitude,
+    hierarchical_scales,
+)
 
 CASES = [
     (IsotropicInclination(), 0.0, 180.0),
@@ -243,3 +247,67 @@ def test_array_valued_full_range_bounds_are_accepted():
     IsotropicInclination(np.asarray(0.0), np.asarray(180.0))
     with pytest.raises(ValueError, match="within"):
         IsotropicLatitude(-half_pi, half_pi + 0.01)
+
+
+def test_hierarchical_scales_are_log_normal_members():
+    values = {"cp_median": 2.0, "cp_spread": 0.5}
+    expected = 2.0 * onp.exp(0.5 * onp.array([-1.0, 0.0, 2.0]))
+    # Centred (default): log s is sampled, with the population density.
+    priors, scales = hierarchical_scales(
+        "cp", 3, median=dist.LogUniform(0.5, 4.0)
+    )
+    assert set(priors) == {"cp_median", "cp_spread", "cp_log"}
+    assert isinstance(priors["cp_spread"], dist.LogUniform)
+    assert priors["cp_log"].event_shape == (3,)
+    centred = {**values, "cp_log": np.log(np.asarray(expected))}
+    got = [float(s(centred)) for s in scales]
+    assert got == pytest.approx(expected, rel=1e-6)
+    density = stats.norm(onp.log(2.0), 0.5).logpdf(onp.log(expected[2]))
+    assert float(scales[2].log_prior(centred)) == pytest.approx(density)
+    # Non-centred: s = median exp(spread z), with no extra density.
+    priors, scales = hierarchical_scales("cp", 3, centred=False)
+    assert set(priors) == {"cp_median", "cp_spread", "cp_z"}
+    raw = {**values, "cp_z": np.array([-1.0, 0.0, 2.0])}
+    got = [float(s(raw)) for s in scales]
+    assert got == pytest.approx(expected, rel=1e-6)
+    assert float(scales[0].log_prior(raw)) == 0.0
+    # Equal members compare equal, so repeated fits do not recompile.
+    assert hierarchical_scales("cp", 3, centred=False)[1] == scales
+    with pytest.raises(ValueError, match="at least 1"):
+        hierarchical_scales("cp", 0)
+
+
+def test_hierarchical_scales_no_data_reproduce_the_population():
+    # With no data, NUTS on the priors (plus any population densities)
+    # must reproduce the generative model: hyperparameters from their
+    # priors, then log s ~ N(log median, spread). The non-centred form is
+    # sampled here: with no data the centred one is the classic funnel,
+    # which NUTS cannot explore (its density is checked exactly in
+    # test_fitting.py).
+    import numpyro
+
+    from virgil.likelihood import noise_sites, tied_log_prior
+
+    population, scales = hierarchical_scales("s", 2, centred=False)
+    sites = noise_sites([{"phi_scale": s} for s in scales], 2)
+
+    def model():
+        values = {k: numpyro.sample(k, p) for k, p in population.items()}
+        numpyro.factor("population", tied_log_prior(sites, values))
+        numpyro.deterministic("log_s", np.log(scales[0](values)))
+
+    mcmc = MCMC(
+        NUTS(model, target_accept_prob=0.9),
+        num_warmup=1000,
+        num_samples=6000,
+        progress_bar=False,
+    )
+    mcmc.run(jax.random.PRNGKey(0))
+    log_s = onp.asarray(mcmc.get_samples()["log_s"])
+    keys = jax.random.split(jax.random.PRNGKey(1), 3)
+    median = onp.asarray(population["s_median"].sample(keys[0], (20000,)))
+    spread = onp.asarray(population["s_spread"].sample(keys[1], (20000,)))
+    unit = onp.asarray(jax.random.normal(keys[2], (20000,)))
+    direct = onp.log(median) + spread * unit
+    # Thinned: NUTS draws are correlated.
+    assert stats.ks_2samp(log_s[::10], direct).pvalue > 1e-3

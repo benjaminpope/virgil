@@ -17,6 +17,11 @@ The longitude of the node, argument of periastron and spot longitude are
 uniform in their angles, so ``numpyro.distributions.Uniform`` is right for
 them.
 
+[`hierarchical_scales`][virgil.priors.hierarchical_scales] gives a set of
+scale factors (say one error scale per epoch) drawn from a log-normal
+population whose median and spread are themselves sampled, with
+log-uniform hyperpriors.
+
 Both classes are numpyro distributions, so they work as entries of the
 ``priors`` of [`fit`][virgil.fitting.fit] and
 [`numpyro_model`][virgil.likelihood.numpyro_model]: their support is an
@@ -26,13 +31,21 @@ sin(lat), through ``flat_coordinate()``), where the prior is constant, so
 Levenberg–Marquardt applies and is ``fit``'s automatic choice.
 """
 
+import dataclasses
+
 import jax
 import jax.numpy as jnp
 import numpy as onp
+import numpyro.distributions as dist
 from numpyro.distributions import Distribution, constraints
 from numpyro.distributions.util import promote_shapes
 
-__all__ = ["IsotropicInclination", "IsotropicLatitude"]
+__all__ = [
+    "IsotropicInclination",
+    "IsotropicLatitude",
+    "PopulationScale",
+    "hierarchical_scales",
+]
 
 
 def _check_range(name, low, high, limit, unit):
@@ -269,3 +282,132 @@ class IsotropicLatitude(_InverseCDFPrior):
         )
         mean = num / (jnp.sin(hi) - jnp.sin(lo))
         return jnp.clip(mean, lo, hi)
+
+
+@dataclasses.dataclass(frozen=True)
+class PopulationScale:
+    """Member ``index`` of a log-normal population of scales (see
+    [`hierarchical_scales`][virgil.priors.hierarchical_scales]).
+
+    Called with the dict of sampled values, it returns the member's scale
+    s_k. With ``centred=True``, log s_k is sampled itself (at
+    ``"<name>_log"``, under a flat prior) and :meth:`log_prior` is its
+    population density, log N(log s_k | log median, spread), which
+    [`numpyro_model`][virgil.likelihood.numpyro_model] and
+    [`fit`][virgil.fitting.fit] add once for each member used as a
+    ``noise`` term. Otherwise s_k = median exp(spread z_k) with z_k ~ N(0,
+    1) sampled at ``"<name>_z"``, and the log prior is zero.
+
+    It is a frozen dataclass, so equal members compare (and hash) equal:
+    repeated fits do not recompile, and a member used for two terms adds
+    its density once.
+    """
+
+    name: str
+    index: int
+    centred: bool = True
+
+    def _hyper(self, values):
+        return values[f"{self.name}_median"], values[f"{self.name}_spread"]
+
+    def __call__(self, values):
+        if self.centred:
+            return jnp.exp(values[f"{self.name}_log"][..., self.index])
+        median, spread = self._hyper(values)
+        z = values[f"{self.name}_z"][..., self.index]
+        return median * jnp.exp(spread * z)
+
+    def log_prior(self, values):
+        """The member's population log density (zero when non-centred,
+        where the standard normal prior on z_k carries it)."""
+        if not self.centred:
+            return jnp.zeros(())
+        median, spread = self._hyper(values)
+        log_scale = values[f"{self.name}_log"][..., self.index]
+        return dist.Normal(jnp.log(median), spread).log_prob(log_scale)
+
+
+def hierarchical_scales(name, n, median=None, spread=None, centred=True):
+    """``n`` positive scales drawn from a log-normal population.
+
+    log s_k is normal about log ``median`` with standard deviation
+    ``spread``, and ``median`` and ``spread`` are sampled too. They are
+    scales, so their default (Jeffreys) priors are log-uniform.
+
+    Use it for calibration nuisances that differ from epoch to epoch but
+    come from one instrument, such as one closure-phase error scale per
+    night: the population pulls poorly constrained epochs towards the
+    typical value, and its median and spread say how well the stated
+    errors describe the instrument. Pass the scales as ``noise`` terms
+    tied to the parameters, for
+    [`numpyro_model`][virgil.likelihood.numpyro_model] or
+    [`fit`][virgil.fitting.fit]. Use every member: an unused member of
+    the centred form has a flat, improper prior.
+
+    **Centred or not.** The centred form (default) samples u_k = log s_k
+    and adds the population density N(u_k | log median, spread). It suits
+    members that the data measure well, such as error scales of epochs
+    with tens of closure phases or more: u_k is then nearly independent of
+    the hyperparameters. The non-centred form samples z_k ~ N(0, 1) with
+    s_k = median exp(spread z_k), and suits members the data barely
+    constrain; with well-measured members it makes a curved ridge,
+    z_k ∝ 1/spread, on which NUTS diverges (in a test with eight members
+    measured to 7%, 10 divergences in 4000 draws against none centred).
+
+    Parameters
+    ----------
+    name : str
+        Prefix of the new parameters, ``"<name>_median"``,
+        ``"<name>_spread"``, and ``"<name>_log"`` (centred) or
+        ``"<name>_z"`` (non-centred), a vector of length ``n``.
+    n : int
+        Number of scales, e.g. the number of epochs.
+    median : numpyro.distributions.Distribution, optional
+        Prior on the population median (default ``LogUniform(0.1, 10)``,
+        for error scales whose neutral value is 1).
+    spread : numpyro.distributions.Distribution, optional
+        Prior on the standard deviation of log s (default
+        ``LogUniform(0.01, 1)``: from 1% to a factor of e).
+    centred : bool, optional
+        The parameterisation (see above).
+
+    Returns
+    -------
+    priors : dict
+        The three priors, to merge into a ``priors`` dict.
+    scales : list of PopulationScale
+        One callable per member, each mapping the sampled values to s_k.
+
+    Examples
+    --------
+    >>> import numpyro.distributions as dist
+    >>> from virgil.priors import hierarchical_scales
+    >>> priors, scales = hierarchical_scales("cp_scale", 3)
+    >>> sorted(priors)
+    ['cp_scale_log', 'cp_scale_median', 'cp_scale_spread']
+    >>> noise = [{"phi_scale": s} for s in scales]
+    >>> values = {"cp_scale_median": 2.0, "cp_scale_spread": 0.5,
+    ...           "cp_scale_log": jnp.log(jnp.array([1.0, 2.0, 4.0]))}
+    >>> round(float(scales[1](values)), 6)
+    2.0
+    """
+    n = int(n)
+    if n < 1:
+        raise ValueError("hierarchical_scales: n must be at least 1.")
+    if centred:
+        members = dist.ImproperUniform(constraints.real, (), (n,))
+        key = f"{name}_log"
+    else:
+        members = dist.Normal(0.0, 1.0).expand([n]).to_event(1)
+        key = f"{name}_z"
+    priors = {
+        f"{name}_median": dist.LogUniform(0.1, 10.0)
+        if median is None
+        else median,
+        f"{name}_spread": dist.LogUniform(0.01, 1.0)
+        if spread is None
+        else spread,
+        key: members,
+    }
+    scales = [PopulationScale(name, k, bool(centred)) for k in range(n)]
+    return priors, scales

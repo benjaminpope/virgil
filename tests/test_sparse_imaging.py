@@ -443,3 +443,58 @@ def test_clean_survives_a_failed_major_cycle_solve(monkeypatch):
     result = clean(data, NPIX, SCALE, max_iterations=60, refit_every=20)
     assert onp.isfinite(result.chi2_red).all()
     assert result.chi2_red[-1] < result.chi2_red[0]
+
+
+def test_base_fit_runs_in_cleans_precision_and_before_pruning(monkeypatch):
+    # The joint base fit uses clean's dtype, not fit's float64 default, and
+    # comes before the non-negative refit, so components are pruned
+    # against the corrected base.
+    import numpyro.distributions as dist
+
+    import virgil.imaging as imaging
+
+    calls, real_fit, real_refit = [], imaging.fit, imaging._refit
+
+    def recording_fit(*args, **kwargs):
+        calls.append(("fit", kwargs.get("dtype")))
+        return real_fit(*args, **kwargs)
+
+    def recording_refit(*args, **kwargs):
+        calls.append(("nnls", None))
+        return real_refit(*args, **kwargs)
+
+    monkeypatch.setattr(imaging, "fit", recording_fit)
+    monkeypatch.setattr(imaging, "_refit", recording_refit)
+    base = System(
+        star=PointSource(), comp=PointSource(dra=24.0, ddec=-12.0, flux=0.04)
+    )
+    priors = {"comp.flux": dist.Uniform(0.0, 0.2)}
+    clean(
+        _companion_data(),
+        NPIX,
+        SCALE,
+        base=base,
+        base_priors=priors,
+        refit_every=2,
+        max_iterations=4,
+        dtype="float32",
+    )
+    assert calls and calls[0] == ("fit", "float32")
+    assert all(d == "float32" for kind, d in calls if kind == "fit")
+    assert calls[1] == ("nnls", None)
+
+
+def test_base_priors_on_a_system_must_name_components():
+    import numpyro.distributions as dist
+
+    base = System(
+        star=PointSource(), comp=PointSource(dra=24.0, ddec=-12.0, flux=0.04)
+    )
+    with pytest.raises(ValueError, match="components' parameters"):
+        clean(
+            _companion_data(),
+            NPIX,
+            SCALE,
+            base=base,
+            base_priors={"dra": dist.Normal(0.0, 5.0)},
+        )

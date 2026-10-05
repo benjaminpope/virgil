@@ -283,18 +283,44 @@ def inflated_errors(
     return np.concatenate([d_vis, d_phi, errors[n_phase:]])
 
 
+def is_tied(spec):
+    """Whether a ``noise`` entry is tied: a function of the sampled
+    parameters (rather than a prior), e.g. one epoch's error scale drawn
+    from a population (see
+    [`hierarchical_scales`][virgil.priors.hierarchical_scales])."""
+    return callable(spec) and not hasattr(spec, "log_prob")
+
+
+def tied_log_prior(sites, values):
+    """The summed ``log_prior(values)`` of the distinct tied ``noise``
+    terms that have one, such as the population density of a centred
+    [`hierarchical_scales`][virgil.priors.hierarchical_scales] member
+    (a term used twice counts once)."""
+    seen = []
+    for spec, _, _ in sites.values():
+        if is_tied(spec) and hasattr(spec, "log_prior") and spec not in seen:
+            seen.append(spec)
+    return sum((spec.log_prior(values) for spec in seen), np.zeros(()))
+
+
 def noise_sites(noise, n_datasets):
     """Expand a ``noise`` specification into named sites.
 
     ``noise`` maps error-inflation terms (``NOISE_TERMS``) to priors and
     applies to every dataset, giving sites ``"noise.<term>"``; a list of such
-    dicts, one per dataset, gives sites ``"noise[i].<term>"``.
+    dicts, one per dataset, gives sites ``"noise[i].<term>"``. An entry may
+    also be *tied*: a function of the dict of sampled parameter values
+    (keyed like ``priors``) that returns the term's value, which then has
+    no prior of its own (see [`is_tied`][virgil.likelihood.is_tied]),
+    unless it has a ``log_prior(values)`` method (see
+    [`tied_log_prior`][virgil.likelihood.tied_log_prior]).
 
     Returns
     -------
     dict
         ``{site: (prior, datasets, term)}``, ``datasets`` being the indices
-        of the datasets the term applies to.
+        of the datasets the term applies to; ``prior`` is the function for
+        a tied term.
     """
     if noise is None:
         return {}
@@ -315,9 +341,10 @@ def noise_sites(noise, n_datasets):
                 raise ValueError(
                     f"Unknown noise term {term!r}; use one of {NOISE_TERMS}."
                 )
-            if term in WAVEL_TERMS + NORTH_TERMS:
-                # Not errors: a scale near 1, an offset or an angle of
-                # either sign.
+            if is_tied(prior) or term in WAVEL_TERMS + NORTH_TERMS:
+                # Tied to the parameters (no prior of its own), or not
+                # errors: a scale near 1, an offset or an angle of either
+                # sign.
                 sites[f"{prefix}.{term}"] = (prior, datasets, term)
                 continue
             lower = getattr(prior.support, "lower_bound", None)
@@ -682,7 +709,14 @@ def numpyro_model(
         and on the North angle (``north_angle``, degrees; see
         [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its
-        own terms, as sites ``"noise[i].<term>"``.
+        own terms, as sites ``"noise[i].<term>"``. An entry may instead be
+        a function of the dict of sampled values (keyed like ``priors``),
+        recorded as a deterministic site: a term *tied* to parameters in
+        ``priors``, as in a hierarchical model where each epoch's error
+        scale is drawn from a population with fitted hyperparameters (see
+        [`hierarchical_scales`][virgil.priors.hierarchical_scales]). A
+        tied term's ``log_prior(values)``, if it has one, is added once
+        (site ``"noise_prior"``).
         **Priors.** These terms are scale parameters, so their default
         (Jeffreys) prior is log-uniform on stated bounds; a
         ``Uniform(0, ...)`` favours large values. The bounds must contain
@@ -760,7 +794,17 @@ def numpyro_model(
         values = [_sample(numpyro, path, priors[path]) for path in paths]
         source = build_model(model, paths, values)
         sources = _per_dataset(source, len(observations))
-        terms = {site: numpyro.sample(site, sites[site][0]) for site in sites}
+        fitted = dict(zip(paths, values))
+        terms = {
+            site: (
+                numpyro.deterministic(site, spec(fitted))
+                if is_tied(spec)
+                else numpyro.sample(site, spec)
+            )
+            for site, (spec, _, _) in sites.items()
+        }
+        if any(is_tied(spec) for spec, _, _ in sites.values()):
+            numpyro.factor("noise_prior", tied_log_prior(sites, fitted))
         if observations:
             numpyro.factor(
                 "loglike",
@@ -771,7 +815,6 @@ def numpyro_model(
                     for i, (src, obs) in enumerate(zip(sources, observations))
                 ),
             )
-        fitted = dict(zip(paths, values))
         for i, term in enumerate(likelihoods):
             numpyro.factor(f"likelihood_{i}", _term_loglike(term, fitted))
         for i, regulariser in enumerate(regularisers):

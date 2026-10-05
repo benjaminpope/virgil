@@ -1,23 +1,32 @@
 <!-- AUTO-GENERATED FROM notebooks/orbit_fitting.ipynb by scripts/sync_tutorial_docs.py. -->
-# Fitting a binary's orbit from interferometric epochs
+# Fitting a binary's orbit to interferometric data
 
-A long-baseline interferometer resolves a close binary into two stars, and if we observe it again over months and years we can watch the companion move around its primary. This tutorial fits a Keplerian orbit to such a sequence of observations, from start to finish, with no radial velocities.
+A long-baseline interferometer resolves a close binary into two stars, and if we observe it again over months and years we can watch the companion move around its primary. This tutorial infers the Keplerian orbit **directly from the interferometric data of every epoch at once**: one model predicts the squared visibilities and closure phases of all the nights, with the companion at its orbital position at the time of each measurement, and one sampler explores the orbit, the flux ratio and each night's calibration together.
 
-**What you'll get.** The orbit, recovered from eight epochs that cover half of it:
+**What you'll get.** The orbit, recovered from eight epochs that cover about half of it:
 
-![150 orbits drawn from the posterior (blue), the true orbit (red) and the measured positions, coloured by epoch](generated/orbit_fitting_cell027_out01.png)
+![150 orbits drawn from the joint posterior (blue), the true orbit (red), and the companion's position at each epoch implied by the posterior](generated/orbit_fitting_cell031_out01.png)
 
-*150 posterior orbits (blue) around the true orbit (red), with the positions measured at each epoch. The orbits spread only near the unobserved periastron, south of the primary.*
+*150 orbits drawn from the joint posterior (blue) around the true orbit (red). The markers are the companion's positions at the eight epochs implied by the posterior, coloured by time: they are derived from the orbit, not measured separately. The orbits spread most near the unobserved periastron, south of the primary.*
 
-The path is the classical one. We first measure the companion's position at each epoch separately, with a grid search and a fit of a binary to that night's squared visibilities and closure phases. A grid over period, eccentricity and time of periastron then gives starting orbits, because at fixed values of those three the positions are linear in the remaining elements. Finally we sample the orbit's posterior with NUTS, under priors that respect the symmetries of the problem, and look at the result as a corner plot and as an ensemble of orbits drawn on the sky.
+The classical route is in two steps: measure the companion's position at each epoch, then fit an orbit to the positions. It is quick, but it throws information away. Each epoch's position is summarised by a Gaussian, which is poor when a night's likelihood is skewed or has several peaks, and each epoch's error scale must be settled before the orbit is fitted. Here we skip that compression:
+
+1. **Simulate** eight VLTI-like epochs of a mildly eccentric binary, whose quoted errors underestimate the real scatter by a different factor each night, as they do for real data.
+2. **Write one model** for all the data: a `KeplerOrbit` places the companion at the time of every sample.
+3. **Add hierarchical calibration nuisances**: one error scale per epoch for $V^2$ and one for closure phases, drawn from a population whose median and spread are fitted too.
+4. **Initialise** cheaply, with coarse per-epoch grids and a Thiele–Innes grid over orbits, ranked against the data. This is only a starting point, not the inference.
+5. **Sample** the joint posterior with NUTS and check the sampler.
+6. **Look** at the orbit on the sky and in time, at the positions it implies, at the data it predicts and at the calibration it infers.
+7. **Compare** with the two-step result.
 
 The orbit conventions are those of [Conventions](conventions.md#orbits): `Omega` is the position angle of the node where the secondary recedes, `omega` is the secondary's argument of periastron, an inclination below 90° means the position angle increases with time, and times are days since a reference epoch `t_ref`.
 
-We need numpyro for the sampler, virgil's coverage, fitting and orbit tools, and two plotting helpers: `plot_chainconsumer_diagnostics` for the corner plot and `plot_orbit_ensemble` for orbits on the sky. `set_style` applies the figure style used throughout the docs.
+We need numpyro for the sampler and virgil's coverage, fitting, orbit and prior tools. `plot_orbit_ensemble` draws orbits on the sky, `plot_chainconsumer_diagnostics` draws the corner plot, and `set_style` applies the figure style used throughout the docs. We sample in double precision: the likelihood sums a few thousand terms, and NUTS's energy checks are more reliable when that sum is accurate.
 
 ```python
 import warnings
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -29,15 +38,18 @@ from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_value
 from tqdm.auto import tqdm
 
+from virgil.angles import AngleVector
 from virgil.coverage import vlti_oidata
 from virgil.fitting import fit
 from virgil.grid_fit import best_grid_point, likelihood_grid
 from virgil.inference import laplace_cov
-from virgil.likelihood import numpyro_model
+from virgil.likelihood import model_loglike, numpyro_model
+from virgil.likelihood import whitened_residuals
 from virgil.models import Attached, BinaryModelCartesian, PointSource, System
 from virgil.orbits import (
     KeplerOrbit,
     PositionData,
+    orientation_priors,
     starting_orbits,
     total_mass,
 )
@@ -46,25 +58,28 @@ from virgil.plotting import (
     plot_orbit_ensemble,
     set_style,
 )
+from virgil.priors import hierarchical_scales
 from virgil.simulate import simulate
 
+jax.config.update("jax_enable_x64", True)
 warnings.filterwarnings("ignore", message="IProgress not found.*")
 set_style()
 ```
 
 ## The system
 
-Our binary has a period of about three years, a mildly eccentric orbit ($e = 0.3$), an angular semimajor axis of 25 mas and an inclination of 55°. The companion is 0.15 times as bright as the primary in the K band. We place it at 105 pc, which we will treat as known exactly when we turn the orbit into a total mass.
+The binary is the one of the earlier two-step version of this tutorial: a period of about three years, a mildly eccentric orbit ($e = 0.3$), an angular semimajor axis of 25 mas and an inclination of 55°. The companion is 0.15 times as bright as the primary in the K band. We place it at 105 pc, which we treat as known exactly when we turn the orbit into a total mass.
 
-The eight epochs fall in two observing seasons and cover about half of the orbit. The periastron passage is not observed: the last epoch is about ten months before the next one. We will see that this is where the orbit is least certain.
+The eight epochs fall in two observing seasons and cover about half of the orbit. The periastron passage is not observed: the last epoch is about ten months before the next one. Times are measured from a reference epoch near the middle of the observations, `T_REF`, which keeps the period and the orbital phase there nearly uncorrelated.
 
 ```python
-T_REF = 60000.0  # MJD of the first epoch; every time is measured from it
+T_REF = 60280.0  # MJD near the middle of the epochs
+T_PERI = 59780.0  # MJD of a periastron passage
 DISTANCE_PC = 105.0  # assumed known exactly, for the total mass
 FLUX = 0.15  # companion / primary
 TRUTH = dict(
     period=1100.0,
-    dt_peri=-220.0,
+    dt_peri=T_PERI - T_REF,
     ecc=0.3,
     inc=55.0,
     omega=70.0,
@@ -72,9 +87,10 @@ TRUTH = dict(
     a_mas=25.0,
 )
 truth_orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
-NIGHTS = T_REF + np.array([0.0, 35, 95, 150, 330, 385, 445, 560])
+NIGHTS = 60000.0 + np.array([0.0, 35, 95, 150, 330, 385, 445, 560])
+N_EPOCHS = len(NIGHTS)
 
-next_peri = T_REF + TRUTH["dt_peri"] + TRUTH["period"]
+next_peri = T_PERI + TRUTH["period"]
 print(
     f"period {TRUTH['period'] / 365.25:.2f} yr, total mass "
     f"{float(total_mass(truth_orbit, DISTANCE_PC)):.2f} M_sun at "
@@ -93,11 +109,17 @@ the epochs span 51% of the orbit; the next periastron is at MJD 60880
 
 ## Simulating the observations
 
-[`vlti_oidata`](api/coverage.md) builds the coverage of the four 8-m Unit Telescopes at Paranal for a target at declination −30°: three snapshots per night, two hours apart either side of transit, each with all six baselines and four closure triangles, in six K-band channels (2.0–2.4 μm). Passing `nights_mjd` repeats this on every night and stamps each snapshot with its own time. The errors are 0.05 on each $V^2$ and 3° on each closure phase, typical of calibrated VLTI data.
+[`vlti_oidata`](api/coverage.md) builds the coverage of the four 8-m Unit Telescopes at Paranal for a target at declination −30°: three snapshots per night, two hours apart either side of transit, each with all six baselines and four closure triangles, in six K-band channels (2.0–2.4 μm). Passing `nights_mjd` repeats this on every night and stamps each snapshot with its own time. The quoted errors are 0.05 on each $V^2$ and 3° on each closure phase.
 
-The scene is a primary point source and a companion `Attached` to the true orbit, so [`simulate`](api/simulate.md) evaluates the companion's position at the time of each sample and adds noise with a fixed seed. Splitting the result by epoch gives one dataset per night.
+Real calibrated errors are rarely right. They are usually too small, by a factor that changes from night to night with the seeing, the calibrators and the instrument's state, and differently for $V^2$ and for closure phases. We mimic this: each night's true scatter is its quoted error times a factor drawn from a log-normal population (median 1.3, spread 0.3 in the natural log), separately for $V^2$ and closure phases, while the data keep the quoted errors. The model will have to find these factors.
+
+The scene is a primary point source and a companion `Attached` to the true orbit, so [`simulate`](api/simulate.md) evaluates the companion's position at the time of each sample. We simulate each night twice with a fixed seed, once at its $V^2$ noise level and once at its closure-phase level, and keep the $V^2$ of the first and the closure phases of the second. `binary_scene` builds this scene for any orbit and flux ratio; it is the model we will fit.
 
 ```python
+rng = np.random.default_rng(11)
+TRUE_V2_SCALE = 1.3 * np.exp(0.3 * rng.standard_normal(N_EPOCHS))
+TRUE_CP_SCALE = 1.3 * np.exp(0.3 * rng.standard_normal(N_EPOCHS))
+
 template = vlti_oidata(
     declination_deg=-30.0,
     hour_angles_h=(-2.0, 0.0, 2.0),
@@ -106,19 +128,80 @@ template = vlti_oidata(
     sigma_cp_deg=3.0,
     nights_mjd=NIGHTS,
 )
-scene = System(
-    primary=PointSource(), comp=Attached(PointSource(FLUX), truth_orbit)
-)
-data = simulate(scene, template, key=jax.random.PRNGKey(2026))
-epochs = data.split_by_epoch()
+
+
+def binary_scene(orbit, flux):
+    return System(
+        primary=PointSource(), comp=Attached(PointSource(flux), orbit)
+    )
+
+
+truth_scene = binary_scene(truth_orbit, FLUX)
+keys = jax.random.split(jax.random.PRNGKey(2026), 2 * N_EPOCHS)
+epochs = []
+for k, night in enumerate(template.split_by_epoch()):
+    v2 = simulate(truth_scene, night, keys[2 * k], TRUE_V2_SCALE[k])
+    cp = simulate(truth_scene, night, keys[2 * k + 1], TRUE_CP_SCALE[k])
+    epochs.append(eqx.tree_at(lambda d: d.phi, v2, cp.phi))
+epoch_mjd = np.array([float(np.mean(night.mjd)) for night in epochs])
 print(
-    f"{len(epochs)} epochs, each with {epochs[0].n_independent} "
-    "independent V² and closure phases"
+    f"{len(epochs)} epochs, each with {epochs[0].vis.size} V² and "
+    f"{epochs[0].phi.size} closure phases ({epochs[0].n_independent} "
+    "independent observables)"
 )
 ```
 
 ```text
-8 epochs, each with 162 independent V² and closure phases
+8 epochs, each with 108 V² and 72 closure phases (162 independent observables)
+```
+
+The quoted errors are too small, and the data show it. The reduced χ² of the *true* model against each night's data, with the quoted errors, is close to the square of that night's error factor, for $V^2$ and closure phases alike. A fit that trusted the quoted errors would weight the worst nights most heavily relative to their real quality, and would report intervals that are too narrow.
+
+```python
+print("   MJD    χ²_r V²  (true factor²)   χ²_r CP  (true factor²)")
+for k, night in enumerate(epochs):
+    w = np.asarray(whitened_residuals(truth_scene, night))
+    n_vis = night.vis.size
+    n_cp = night.n_independent - n_vis
+    chi2_v2 = np.sum(w[:n_vis] ** 2) / n_vis
+    chi2_cp = np.sum(w[n_vis:] ** 2) / n_cp
+    print(
+        f"{epoch_mjd[k]:8.1f}  {chi2_v2:6.2f}   ({TRUE_V2_SCALE[k] ** 2:5.2f})"
+        f"         {chi2_cp:6.2f}   ({TRUE_CP_SCALE[k] ** 2:5.2f})"
+    )
+```
+
+```text
+   MJD    χ²_r V²  (true factor²)   χ²_r CP  (true factor²)
+```
+
+```text
+ 60000.0    1.68   ( 1.73)           2.58   ( 2.65)
+ 60035.0    3.19   ( 3.82)           0.45   ( 0.56)
+```
+
+```text
+ 60095.0    3.31   ( 3.52)           3.22   ( 4.33)
+```
+
+```text
+ 60150.0    1.10   ( 1.24)           1.28   ( 1.59)
+```
+
+```text
+ 60330.0    1.66   ( 1.41)           1.79   ( 2.54)
+```
+
+```text
+ 60385.0    0.83   ( 1.23)           1.47   ( 1.56)
+```
+
+```text
+ 60445.0    2.15   ( 2.38)           1.25   ( 1.35)
+```
+
+```text
+ 60560.0    1.69   ( 1.63)           0.99   ( 2.23)
 ```
 
 The left panel shows the uv coverage of the first night, coloured by wavelength: Earth rotation carries each baseline along a short track, and the spread of channels stretches it radially. The right panel shows the true orbit on the sky (East to the left, North up), with the companion's position at each of the eight epochs and the unobserved periastron marked.
@@ -143,14 +226,14 @@ ax_uv.set(
 )
 ax_uv.invert_xaxis()  # East to the left
 
-track = T_REF + TRUTH["dt_peri"] + np.linspace(0, TRUTH["period"], 400)
+track = T_PERI + np.linspace(0, TRUTH["period"], 400)
 dra, ddec, _ = truth_orbit.relative(track)
-night_dra, night_ddec, _ = truth_orbit.relative(NIGHTS)
+night_dra, night_ddec, _ = truth_orbit.relative(epoch_mjd)
 ax_sky.plot(dra, ddec, color="0.6", lw=1.2)
 ax_sky.scatter(
     night_dra,
     night_ddec,
-    c=NIGHTS,
+    c=epoch_mjd,
     cmap="viridis",
     s=40,
     edgecolors="k",
@@ -173,192 +256,81 @@ ax_sky.legend(frameon=False, fontsize="small")
 plt.show()
 ```
 
-![orbit_fitting output 9.1](generated/orbit_fitting_cell009_out01.png)
+![orbit_fitting output 11.1](generated/orbit_fitting_cell011_out01.png)
 
-## Astrometry at each epoch
+## One model for all the data
 
-For each night we first search a grid of companion positions and flux ratios (±40 mas in steps of 1 mas, finer than the resolution λ/B ≈ 3.5 mas of the longest baseline), and start a fit of `BinaryModelCartesian` from the best grid point. The positions have uniform priors, and the flux ratio a log-uniform (Jeffreys) prior, as it is a scale. The Laplace approximation at the best fit, [`laplace_cov`](api/inference.md), gives the covariance of the position, and each epoch's time is the mean time of its samples. Between a night's first and last snapshots the companion moves by under 0.02 mas, less than half its positional error, and the motion averages out at the mean time, so one position per night is adequate here.
+The model is a function of the sampled parameters that returns a scene. It builds a `KeplerOrbit` and attaches the companion to it, and [`OIData.model`](api/oidata.md) evaluates the scene at each sample's own time. So the same function, with the same parameters, predicts every epoch, and the companion even moves within a night (by under 0.02 mas here). There is no per-epoch position anywhere in the model.
 
-We collect the positions and covariances into a [`PositionData`](api/orbits.md), virgil's container for relative astrometry.
-
-```python
-axis = np.linspace(-40.0, 40.0, 81)
-grid = {"dra": axis, "ddec": axis, "flux": np.geomspace(0.02, 0.5, 6)}
-binary_priors = {
-    "dra": dist.Uniform(-50.0, 50.0),
-    "ddec": dist.Uniform(-50.0, 50.0),
-    "flux": dist.LogUniform(1e-3, 1.0),
-}
-names = ["dra", "ddec", "flux"]
-
-rows = []
-for night in tqdm(epochs, desc="epochs"):
-    loglike_grid = likelihood_grid(night, BinaryModelCartesian, grid)
-    start = best_grid_point(loglike_grid, grid)
-    result = fit(BinaryModelCartesian(**start), binary_priors, night)
-    values = [float(result.values[k]) for k in names]
-    cov = np.asarray(laplace_cov(values, names, night, result.model))
-    rows.append(
-        dict(
-            zip(names, values), mjd=float(np.mean(night.mjd)), cov=cov[:2, :2]
-        )
-    )
-
-measured = PositionData(
-    [r["mjd"] for r in rows],
-    [r["dra"] for r in rows],
-    [r["ddec"] for r in rows],
-    np.array([r["cov"] for r in rows]),
-    t_ref=T_REF,
-)
-```
-
-```text
-epochs:   0%|          | 0/8 [00:00<?, ?it/s]
-```
-
-The fitted positions agree with the true ones to within their errors of a few hundredths of a milliarcsecond. The last column is each epoch's χ² (two degrees of freedom) of the fitted position against the truth, using the Laplace covariance; their sum should be near twice the number of epochs if the covariances are right.
+We sample the orbit's orientation as two angles that the data identify, rather than $\Omega$ and $\omega$ themselves. Sky positions, and therefore visibilities and closure phases, cannot tell $(\Omega, \omega)$ from $(\Omega + 180°, \omega + 180°)$: the second orbit is the first with the line of sight reversed. Sampling $2\Omega$ and the longitude of periastron $\varpi = \Omega + \omega$ instead maps both onto one point, so this exact mirror mode disappears ([`orientation_priors`](api/orbits.md), [`KeplerOrbit.from_varpi`](api/orbits.md)). $\Omega$ is then reported in [0°, 180°), the usual convention for visual orbits; radial velocities would be needed to fix it absolutely. The time of periastron is sampled as `phase`, the mean anomaly at `T_REF` in degrees.
 
 ```python
-true_dra, true_ddec, _ = (
-    np.asarray(x) for x in truth_orbit.relative([r["mjd"] for r in rows])
-)
-print(
-    "    MJD   Δα fitted (mas)  Δα true   Δδ fitted (mas)  Δδ true"
-    "   flux    χ²"
-)
-total = 0.0
-for r, ra, de in zip(rows, true_dra, true_ddec):
-    err = np.sqrt(np.diag(r["cov"]))
-    offset = np.array([r["dra"] - ra, r["ddec"] - de])
-    chi2 = float(offset @ np.linalg.solve(r["cov"], offset))
-    total += chi2
-    print(
-        f"{r['mjd']:7.1f}  {r['dra']:7.3f} ± {err[0]:.3f}  {ra:7.3f}"
-        f"   {r['ddec']:7.3f} ± {err[1]:.3f}  {de:7.3f}"
-        f"   {r['flux']:.3f}  {chi2:5.2f}"
+def orbit_from(v):
+    # The orbit for a dict of sampled values (or arrays of samples).
+    return KeplerOrbit.from_varpi(
+        v["period"],
+        -v["period"] * v["phase"] / 360.0,  # dt_peri from the mean anomaly
+        v["ecc"],
+        v["inc"],
+        v["varpi"],
+        v["a_mas"],
+        two_Omega=v["two_Omega"],
+        t_ref=T_REF,
     )
-print(f"total χ² = {total:.1f} for {2 * len(rows)} degrees of freedom")
-```
 
-```text
-    MJD   Δα fitted (mas)  Δα true   Δδ fitted (mas)  Δδ true   flux    χ²
-60000.0  -19.564 ± 0.030  -19.569    15.338 ± 0.037   15.341   0.156   0.03
-60035.0  -18.807 ± 0.034  -18.832    18.192 ± 0.041   18.236   0.154   1.15
-60095.0  -16.151 ± 0.035  -16.142    21.719 ± 0.041   21.762   0.152   2.82
-60150.0  -12.590 ± 0.033  -12.534    23.518 ± 0.041   23.487   0.147   3.06
-60330.0    2.708 ± 0.034    2.745    20.581 ± 0.043   20.564   0.150   1.24
-60385.0    7.495 ± 0.033    7.522    17.500 ± 0.043   17.507   0.154   1.26
-60445.0   12.298 ± 0.037   12.330    13.277 ± 0.043   13.262   0.149   0.83
-60560.0   19.211 ± 0.033   19.209     3.151 ± 0.038    3.171   0.148   0.34
-total χ² = 10.7 for 16 degrees of freedom
-```
 
-## Starting orbits
-
-At a fixed period, eccentricity and time of periastron, the sky positions are linear in the four Thiele–Innes constants, so each point of a grid in those three is an exact weighted least-squares solve. [`starting_orbits`](api/orbits.md) runs this grid (here 120 periods from 300 to 5000 days, eccentricities from 0 to 0.9, and 36 times of periastron per period) and converts the best solutions back to Keplerian elements. It needs no random restarts and finds the right basin even when the arc is short. Positions alone fix the node only modulo 180°, so the returned `Omega` lies in [0°, 180°).
-
-```python
-starts = starting_orbits(
-    measured, periods=np.geomspace(300.0, 5000.0, 120), n_best=3
-)
-columns = ("period", "ecc", "inc", "omega", "Omega", "a_mas")
-print("        " + "".join(f"{c:>9}" for c in columns) + "       χ²")
-print("truth   " + "".join(f"{TRUTH[c]:9.2f}" for c in columns))
-for k, (orbit, chi2) in enumerate(starts):
-    print(
-        f"start {k} "
-        + "".join(f"{float(getattr(orbit, c)):9.2f}" for c in columns)
-        + f"  {chi2:7.1f}"
-    )
-best_start = starts[0][0]
-```
-
-```text
-           period      ecc      inc    omega    Omega    a_mas       χ²
-truth     1100.00     0.30    55.00    70.00   130.00    25.00
-start 0   1101.14     0.30    55.49    71.01   130.43    25.18     13.0
-start 1   1050.28     0.35    55.95    70.47   127.61    24.88     32.3
-start 2   1239.31     0.20    54.50    75.71   134.75    26.00     76.9
+def scene_fn(**v):
+    return binary_scene(orbit_from(v), v["flux"])
 ```
 
 ## Priors
 
-virgil's default priors are the invariant (Jeffreys) measures of the groups that act on each parameter, unless there is strong information otherwise:
+Every prior is the invariant (Jeffreys) measure of the group that acts on its parameter, unless there is strong information otherwise:
 
 | Parameter | Prior | Why it is the invariant choice |
 |---|---|---|
-| Period $P$ | log-uniform, 100–10⁴ d | A scale: the prior should not depend on the unit of time, so it is invariant under rescaling. |
-| Semimajor axis $a$ | log-uniform, 1–300 mas | A scale, invariant under rescaling of angles. With $P$ this is $1/(aP)$, the invariant prior for independent rescalings of space and time. |
-| Inclination | uniform in $\cos i$ on [−1, 1] | An isotropic orientation of the orbital plane is the uniform (Haar) measure on rotations, which is uniform in $\cos i$. |
-| $\omega$, $\Omega$ | uniform on [0°, 360°) | The same rotation-invariant measure: no direction of the node or of periastron is preferred. |
-| Mean anomaly at `t_ref` | uniform on [0°, 360°) | A location in time: invariant under time translation. It is the same as a uniform time of periastron over one period. |
-| Eccentricity $e$ | uniform on [0, 1) | No group acts on $e$, so uniform $e$ is an interim prior, which a population prior can later reweight. |
+| Period $P$ | log-uniform, 100–10⁴ d | A scale: invariant under a change of the unit of time. |
+| Semimajor axis $a$ | log-uniform, 1–300 mas | A scale, invariant under rescaling of angles. |
+| Inclination $i$ | `IsotropicInclination` (from `orientation_priors(inclination=True)`), ∝ sin i | An isotropic orbital plane: the Haar measure on rotations, uniform in cos i. |
+| $2\Omega$, $\varpi$ | `AngleVector`, uniform on the circle | The same rotation-invariant measure; the map from $(\Omega, \omega)$ is linear, so uniform stays uniform. |
+| Mean anomaly at `T_REF` | `AngleVector`, uniform | A location in time: uniform in the time of periastron over one period. |
+| Eccentricity $e$ | uniform on [0, 1) | No group acts on $e$: an interim prior, which a population prior can later reweight. |
+| Flux ratio | log-uniform, 10⁻³–1 | A scale. |
+| Error scales: population median and spread | log-uniform, 0.1–10 and 0.01–1 | Scales. |
 
-Two details of the parameterisation matter for the sampler. virgil has no helper for an isotropic inclination yet, so we sample $\cos i$ itself and set $i = \arccos(\cos i)$ in the model; uniform $\cos i$ is then exactly the isotropic prior, with no Jacobian to add. And the three angles are periodic, but a sampler given `Uniform(0, 360)` sees walls at 0° and 360°. We therefore sample each angle as the direction of a 2-vector $v$. Any rotationally symmetric density for $v$ makes the direction exactly uniform over the full circle, with no boundary, and leaves the vector's length $r$ as a nuisance. The length still matters to the sampler. The data fix the angles to a fraction of a degree, so near a radius $r$ the posterior is a thin wedge, of width proportional to $r$. Under an isotropic Gaussian, $r$ ranges over more than a factor of ten, the wedge narrows into a funnel towards the origin, and no single step size suits it all: NUTS then diverges. So `Ring` gives $v$ the density $\exp[-(r - 1)^2/2s^2]$, with $s = 0.1$, which keeps $r$ within about 20% of 1 and the wedge's width nearly constant. virgil will provide this prior as `AngleVector` (virgil#211). The function `elements` maps the sampled values to the orbital elements; it works on single values inside the model and on whole arrays of samples afterwards.
+Each `AngleVector` samples a 2-vector whose direction is the angle, so there is no wall at 0°/360°. Its length is a nuisance with a ring-shaped prior, $\exp[-(r - 1)^2/2s^2]$, which leaves the angle exactly uniform. The width $s$ matters to the sampler, not to the prior on the angle. The data fix these angles to a fraction of a degree, so near radius $r$ the posterior is a thin wedge of width proportional to $r$; if $r$ ranged widely, the wedge would narrow into a funnel towards the origin and NUTS would diverge. We take $s = 0.1$, which keeps $r$ within about 20% of 1 and the wedge's width nearly constant ([`AngleVector`](api/angles.md)).
+
+**Hierarchical error scales.** Each epoch $k$ gets a factor $s_k$ multiplying its quoted $V^2$ errors and a factor $c_k$ multiplying its closure-phase errors. Treating these as independent unknowns would be valid, but they are not unrelated: they come from one instrument and one pipeline. So we give them a population: $\log s_k$ is normal about the log of a median with a fitted spread, and likewise for $c_k$. [`hierarchical_scales`](api/priors.md) returns the priors and one callable per epoch, which we pass as `noise=` terms tied to the parameters. This matters most for real data with uneven epochs: a night with few frames, whose own scale is poorly measured, borrows strength from the others instead of being free to inflate its errors and drop out of the fit. And the population's median and spread are useful numbers in themselves: they say how far the pipeline's errors are off. Here every night has well over a hundred observables, so each scale is measured well; virgil then uses the *centred* form (sampling $\log s_k$ directly), which NUTS handles without divergences in that regime.
 
 ```python
-def angle(vec):
-    # The direction of a 2-vector (last axis), in degrees in [0, 360).
-    return jnp.mod(jnp.degrees(jnp.arctan2(vec[..., 1], vec[..., 0])), 360.0)
-
-
-def elements(v):
-    mean_anomaly = angle(v["phase_vec"])  # at t_ref
-    return dict(
-        period=v["period"],
-        dt_peri=-v["period"] * mean_anomaly / 360.0,
-        ecc=v["ecc"],
-        inc=jnp.degrees(jnp.arccos(v["cos_inc"])),
-        omega=angle(v["omega_vec"]),
-        Omega=angle(v["Omega_vec"]),
-        a_mas=v["a_mas"],
-    )
-
-
-class Ring(dist.Distribution):
-    # A 2-vector with a uniform direction and a length near 1: the density
-    # exp(-(r - 1)^2 / 2 s^2), normalised in the plane.
-    support = dist.constraints.real_vector
-
-    def __init__(self, width=0.1):
-        self.width = width
-        z = width**2 * jnp.exp(-0.5 / width**2) + width * jnp.sqrt(
-            jnp.pi / 2
-        ) * (1 + jax.scipy.special.erf(1 / (width * jnp.sqrt(2))))
-        self.log_z = jnp.log(2 * jnp.pi * z)
-        super().__init__(event_shape=(2,))
-
-    def log_prob(self, v):
-        r = jnp.linalg.norm(v, axis=-1)
-        return -0.5 * ((r - 1) / self.width) ** 2 - self.log_z
-
-    def sample(self, key, sample_shape=()):
-        # Uniform direction; the length from N(1, s), which is close to the
-        # ring's radial density for small s (used only to initialise).
-        k1, k2 = jax.random.split(key)
-        theta = jax.random.uniform(k1, sample_shape, maxval=2 * jnp.pi)
-        r = jnp.abs(1 + self.width * jax.random.normal(k2, sample_shape))
-        return r[..., None] * jnp.stack([jnp.cos(theta), jnp.sin(theta)], -1)
-
-
-direction = Ring(width=0.1)
 orbit_priors = {
     "period": dist.LogUniform(100.0, 1e4),
     "a_mas": dist.LogUniform(1.0, 300.0),
     "ecc": dist.Uniform(0.0, 1.0),
-    "cos_inc": dist.Uniform(-1.0, 1.0),
-    "omega_vec": direction,
-    "Omega_vec": direction,
-    "phase_vec": direction,
+    # "inc" (isotropic), and "two_Omega" and "varpi" as angle vectors
+    # with a narrow ring: the full invariant prior on the orientation
+    **orientation_priors(ring_width=0.1, inclination=True),
+    "phase": AngleVector(ring_width=0.1),
 }
+v2_population, v2_scales = hierarchical_scales("v2_scale", N_EPOCHS)
+cp_population, cp_scales = hierarchical_scales("cp_scale", N_EPOCHS)
+priors = {
+    **orbit_priors,
+    "flux": dist.LogUniform(1e-3, 1.0),
+    **v2_population,
+    **cp_population,
+}
+noise = [
+    {"vis_scale": v2_scales[k], "phi_scale": cp_scales[k]}
+    for k in range(N_EPOCHS)
+]
 
 
 def run_nuts(model, seed, num_warmup, num_samples, num_chains=1, init=None):
     strategy = (
         {} if init is None else {"init_strategy": init_to_value(values=init)}
     )
-    kernel = NUTS(model, dense_mass=True, target_accept_prob=0.95, **strategy)
+    kernel = NUTS(model, dense_mass=True, target_accept_prob=0.9, **strategy)
     mcmc = MCMC(
         kernel,
         num_warmup=num_warmup,
@@ -373,119 +345,259 @@ def run_nuts(model, seed, num_warmup, num_samples, num_chains=1, init=None):
 
 ### Prior check
 
-A sampler should reproduce its prior when there are no data, Jacobians included. [`numpyro_model`](api/likelihood.md) builds the model from the same priors with no data and no likelihood terms (the scene is empty, since the positions are not visibilities), and a short NUTS run samples it. The histograms of the derived elements match the stated densities (dashed): log-uniform $P$ and $a$, uniform $e$ and $\cos i$, the $\sin i$ density that uniform $\cos i$ implies, and flat angles.
+A sampler should reproduce its prior when there are no data, Jacobians included. [`numpyro_model`](api/likelihood.md) builds the model from the orbit and flux priors with no data, and a short NUTS run samples it. The histograms of the derived elements match the stated densities (dashed): log-uniform $P$, $a$ and flux ratio, uniform $e$ and $\cos i$, the $\sin i$ density of an isotropic orientation, and flat angles. (The error-scale population is a log-normal with log-uniform hyperpriors; its own no-data test is in virgil's test suite.)
 
 ```python
-no_scene = lambda **values: None  # the positions carry all the data
-prior_model = numpyro_model(no_scene, orbit_priors, ())
+prior_model = numpyro_model(
+    scene_fn, {**orbit_priors, "flux": priors["flux"]}, ()
+)
 prior = run_nuts(prior_model, seed=1, num_warmup=500, num_samples=4000)
-draws = prior.get_samples()
-derived = {k: np.asarray(v) for k, v in elements(draws).items()}
-mean_anomaly = np.asarray(angle(draws["phase_vec"]))
+draws = {k: np.asarray(v) for k, v in prior.get_samples().items()}
 
-degrees = np.linspace(0, 360, 2)
+
+def flat(lo, hi):
+    return [lo, hi], [1 / (hi - lo)] * 2
+
+
+inc_grid = np.linspace(0, 180, 100)
 panels = [
-    ("log₁₀ P (d)", np.log10(derived["period"]), [2, 4], [0.5, 0.5]),
-    (
-        "log₁₀ a (mas)",
-        np.log10(derived["a_mas"]),
-        [0, np.log10(300)],
-        [1 / np.log10(300)] * 2,
-    ),
-    ("e", derived["ecc"], [0, 1], [1, 1]),
-    ("cos i", np.asarray(draws["cos_inc"]), [-1, 1], [0.5, 0.5]),
+    ("log₁₀ P (d)", np.log10(draws["period"]), *flat(2, 4)),
+    ("log₁₀ a (mas)", np.log10(draws["a_mas"]), *flat(0, np.log10(300))),
+    ("log₁₀ flux ratio", np.log10(draws["flux"]), *flat(-3, 0)),
+    ("e", draws["ecc"], *flat(0, 1)),
+    ("cos i", np.cos(np.radians(draws["inc"])), *flat(-1, 1)),
     (
         "i (deg)",
-        derived["inc"],
-        np.linspace(0, 180, 100),
-        np.sin(np.radians(np.linspace(0, 180, 100))) * np.pi / 360,
+        draws["inc"],
+        inc_grid,
+        np.sin(np.radians(inc_grid)) * np.pi / 360,
     ),
-    ("ω (deg)", derived["omega"], degrees, [1 / 360] * 2),
-    ("Ω (deg)", derived["Omega"], degrees, [1 / 360] * 2),
-    ("mean anomaly at t_ref (deg)", mean_anomaly, degrees, [1 / 360] * 2),
+    ("Ω (deg)", draws["two_Omega"] / 2, *flat(0, 180)),
+    ("ϖ = Ω + ω (deg)", draws["varpi"], *flat(0, 360)),
+    ("mean anomaly at T_REF (deg)", draws["phase"], *flat(0, 360)),
 ]
-fig, axes = plt.subplots(2, 4, figsize=(13, 5), constrained_layout=True)
+fig, axes = plt.subplots(3, 3, figsize=(11, 7.5), constrained_layout=True)
 for ax, (label, samples, x, density) in zip(axes.flat, panels):
     ax.hist(samples, bins=30, density=True, color="#3c6e9f", alpha=0.6)
     ax.plot(x, density, "k--", lw=1.2)
-    ax.set(xlabel=label, yticks=[])
+    ax.set(xlabel=label, ylabel="density")
 fig.suptitle("Prior draws from NUTS with no data (dashed: stated prior)")
 plt.show()
 ```
 
-![orbit_fitting output 19.1](generated/orbit_fitting_cell019_out01.png)
+![orbit_fitting output 17.1](generated/orbit_fitting_cell017_out01.png)
 
-## Sampling the orbit
+## Initialisation (not inference)
 
-Now we add the positions. `measured.term(orbit_fn)` is a likelihood term, the Gaussian log density of the positions given an orbit, which `numpyro_model` adds to the prior. We start four chains at the best Thiele–Innes orbit (with $e$ and $\cos i$ moved slightly off the edges of their priors), and use a dense mass matrix, since period, eccentricity and time of periastron are strongly correlated when the periastron is unobserved. The run is short: a thousand warm-up steps and a thousand samples per chain. Afterwards we check the sampler: the number of divergent transitions, the largest split-$\hat R$ over the sampled sites and the smallest effective sample size.
+NUTS explores one mode well but does not search for it, so it needs a start in the right basin. Finding the basin is cheap if we borrow the classical tools, as long as we treat their output only as a starting point. Nothing from this section enters the posterior.
+
+**Per-epoch grids.** For each night we compute the likelihood of a static binary on a coarse grid of positions (±40 mas in steps of 1 mas, finer than the resolution λ/B ≈ 3.5 mas of the longest baseline) and flux ratios, and keep the best grid point. We also record how decisive the night is: the gap in log likelihood between the best peak and the best one more than 4 mas away. On these clean simulated nights every gap is large. **On real data, per-epoch closure-phase surfaces are often strongly multimodal**, and a night's best peak can sit away from the true orbit. Use only decisive nights to seed orbits (here a gap above 5), and let the joint fit judge the rest.
 
 ```python
-def orbit_fn(values):
-    return KeplerOrbit(**elements(values), t_ref=T_REF)
+axis = np.linspace(-40.0, 40.0, 81)
+grid = {"dra": axis, "ddec": axis, "flux": np.geomspace(0.02, 0.5, 6)}
+xx, yy = np.meshgrid(axis, axis, indexing="ij")
 
-
-def direction_of(degrees):
-    return jnp.array(
-        [jnp.cos(jnp.radians(degrees)), jnp.sin(jnp.radians(degrees))]
+quick = []
+for night in tqdm(epochs, desc="per-epoch grids"):
+    loglike_grid = np.asarray(
+        likelihood_grid(night, BinaryModelCartesian, grid)
     )
+    best = best_grid_point(loglike_grid, grid)
+    by_position = loglike_grid.max(axis=2)  # best flux at each position
+    far = np.hypot(xx - best["dra"], yy - best["ddec"]) > 4.0
+    gap = by_position.max() - by_position[far].max()
+    quick.append({**{k: float(v) for k, v in best.items()}, "gap": gap})
 
+true_dra, true_ddec, _ = (np.asarray(x) for x in truth_orbit.relative(epoch_mjd))
+print("    MJD   grid Δα  true Δα   grid Δδ  true Δδ  flux   gap")
+for t, q, ra, de in zip(epoch_mjd, quick, true_dra, true_ddec):
+    print(
+        f"{t:8.1f}  {q['dra']:6.1f}  {ra:7.2f}   {q['ddec']:6.1f}  {de:7.2f}"
+        f"  {q['flux']:.2f}  {q['gap']:5.0f}"
+    )
+```
 
-posterior_model = numpyro_model(
-    no_scene, orbit_priors, (), likelihoods=[measured.term(orbit_fn)]
+```text
+per-epoch grids:   0%|          | 0/8 [00:00<?, ?it/s]
+```
+
+```text
+    MJD   grid Δα  true Δα   grid Δδ  true Δδ  flux   gap
+ 60000.0   -19.0   -19.57     15.0    15.34  0.14    862
+ 60035.0   -19.0   -18.83     18.0    18.24  0.14    750
+ 60095.0   -16.0   -16.14     22.0    21.76  0.14    796
+ 60150.0   -12.0   -12.53     23.0    23.49  0.14    746
+ 60330.0     3.0     2.74     20.0    20.56  0.14    687
+ 60385.0     7.0     7.52     18.0    17.51  0.14    635
+ 60445.0    12.0    12.33     14.0    13.26  0.14    349
+ 60560.0    19.0    19.21      3.0     3.17  0.14    909
+```
+
+**Starting orbits.** At a fixed period, eccentricity and time of periastron the sky positions are linear in the four Thiele–Innes constants, so each point of a grid in those three is an exact weighted least-squares solve. [`starting_orbits`](api/orbits.md) runs this grid (here 160 periods from 300 to 5000 days, eccentricities from 0 to 0.9 and 36 times of periastron per period) on the decisive nights' grid positions, with a generous 0.5 mas error each. With few seed positions many orbits fit them almost equally well, so we keep the best 200 and **rank them by the likelihood of the interferometric data of all the epochs**, at the median grid flux ratio, rather than by the fit to the rough positions. The ranking is one vectorised evaluation of the joint model.
+
+```python
+decisive = [k for k, q in enumerate(quick) if q["gap"] > 5.0]
+seeds = PositionData(
+    epoch_mjd[decisive],
+    [quick[k]["dra"] for k in decisive],
+    [quick[k]["ddec"] for k in decisive],
+    np.tile(0.5**2 * np.eye(2), (len(decisive), 1, 1)),
+    t_ref=T_REF,
 )
-init = {
-    "period": float(best_start.period),
-    "a_mas": float(best_start.a_mas),
-    "ecc": float(np.clip(best_start.ecc, 0.02, 0.95)),
-    "cos_inc": float(np.clip(np.cos(np.radians(best_start.inc)), -0.99, 0.99)),
-    "omega_vec": direction_of(best_start.omega),
-    "Omega_vec": direction_of(best_start.Omega),
-    "phase_vec": direction_of(-360.0 * best_start.dt_peri / best_start.period),
+candidates = starting_orbits(
+    seeds, periods=np.geomspace(300.0, 5000.0, 160), n_best=200
+)
+flux0 = float(np.median([quick[k]["flux"] for k in decisive]))
+ELEMENTS = ("period", "dt_peri", "ecc", "inc", "omega", "Omega", "a_mas")
+stacked = {
+    k: jnp.array([float(getattr(orbit, k)) for orbit, _ in candidates])
+    for k in ELEMENTS
 }
+
+
+@jax.vmap
+def data_loglike(elements):
+    scene = binary_scene(KeplerOrbit(**elements, t_ref=T_REF), flux0)
+    return sum(model_loglike(scene, night) for night in epochs)
+
+
+scores = np.asarray(jax.jit(data_loglike)(stacked))
+order = np.argsort(-scores)
+print(f"{len(decisive)} decisive epochs seed {len(candidates)} orbits")
+print("rank   P (d)     e     a (mas)  log L (data)  χ² (seed positions)")
+for rank, k in enumerate(order[:6]):
+    orbit, chi2 = candidates[k]
+    print(
+        f"{rank:4d} {float(orbit.period):7.1f}  {float(orbit.ecc):5.2f}"
+        f"  {float(orbit.a_mas):7.2f}  {scores[k]:12.1f}  {chi2:8.2f}"
+    )
+```
+
+```text
+8 decisive epochs seed 200 orbits
+rank   P (d)     e     a (mas)  log L (data)  χ² (seed positions)
+   0  1151.2   0.25    24.93        1125.2      8.76
+   1   999.2   0.40    24.28        1117.4      7.80
+   2  1303.0   0.15    25.78        1116.9      9.32
+   3  1214.0   0.20    25.02        1112.1      8.90
+   4  1235.6   0.20    25.74        1109.4      9.29
+   5  1111.2   0.30    24.95        1101.8      8.48
+```
+
+**Refining the best starts.** We refine the four best-ranked orbits with [`fit`](api/fitting.md), a maximum a posteriori fit of the full joint model, error-scale population included, to all the epochs. `start_values` converts an orbit into the sampled parameters. If the four refined fits land on the same orbit with the same loss, the posterior has one dominant mode near it. If some land elsewhere, those are other modes, typically period aliases from sparse sampling; compare their losses (a difference of Δ in loss is a factor of about $e^{Δ}$ in posterior density) and, if any is close, start chains in each and compare them.
+
+```python
+N_REFINE = 4
+
+
+def start_values(orbit, flux):
+    period, ecc = float(orbit.period), float(np.clip(orbit.ecc, 0.02, 0.95))
+    Omega, omega = float(orbit.Omega), float(orbit.omega)
+    return {
+        "period": period,
+        "a_mas": float(orbit.a_mas),
+        "ecc": ecc,
+        "inc": float(np.clip(orbit.inc, 1.0, 179.0)),
+        "two_Omega": np.mod(2 * Omega, 360.0),
+        "varpi": np.mod(Omega + omega, 360.0),
+        "phase": np.mod(-360.0 * float(orbit.dt_peri) / period, 360.0),
+        "flux": flux,
+        "v2_scale_median": 1.0,
+        "v2_scale_spread": 0.3,
+        "v2_scale_log": np.zeros(N_EPOCHS),
+        "cp_scale_median": 1.0,
+        "cp_scale_spread": 0.3,
+        "cp_scale_log": np.zeros(N_EPOCHS),
+    }
+
+
+refined = []
+for k in tqdm(order[:N_REFINE], desc="joint MAP fits"):
+    init = start_values(candidates[k][0], flux0)
+    refined.append(fit(scene_fn, priors, epochs, noise=noise, init=init))
+
+print("start  loss       P (d)     e      i (deg)  Ω (deg)  ϖ (deg)  a (mas)")
+for k, result in enumerate(refined):
+    v = result.values
+    print(
+        f"{k:5d}  {result.info['loss']:9.2f}  {float(v['period']):7.2f}"
+        f"  {float(v['ecc']):5.3f}  {float(v['inc']):7.2f}"
+        f"  {float(v['two_Omega']) / 2:7.2f}  {float(v['varpi']):7.2f}"
+        f"  {float(v['a_mas']):6.3f}"
+    )
+best = min(refined, key=lambda result: result.info["loss"])
+```
+
+```text
+joint MAP fits:   0%|          | 0/4 [00:00<?, ?it/s]
+```
+
+```text
+start  loss       P (d)     e      i (deg)  Ω (deg)  ϖ (deg)  a (mas)
+    0   -3360.02  1095.29  0.303    54.93   129.89   199.66  24.941
+    1   -3360.02  1095.35  0.303    54.93   129.89   199.66  24.941
+    2   -3360.02  1095.31  0.303    54.93   129.89   199.66  24.941
+    3   -3360.02  1095.29  0.303    54.93   129.89   199.66  24.941
+```
+
+## Sampling the joint posterior
+
+We start four chains at the best joint fit and run NUTS with a dense mass matrix, adapted during warm-up: period, eccentricity, time of periastron and inclination are strongly correlated when the periastron is unobserved, and a dense matrix absorbs those correlations. The 31 sampled coordinates are the orbit (ten, counting each angle vector's two), the flux ratio, and the two error-scale populations (two hyperparameters and eight log scales each). A thousand warm-up steps and a thousand samples per chain are enough.
+
+Afterwards we check the sampler: the number of divergent transitions (it must be zero), the largest split-$\hat R$ over the sampled coordinates (below about 1.01) and the smallest effective sample size (several hundred or more). Divergences mark regions the sampler could not explore; if there are any, do not trust or prune the samples. Reparameterise, start closer to the mode or raise `target_accept_prob`.
+
+```python
+NUM_WARMUP, NUM_SAMPLES, NUM_CHAINS = 1000, 1000, 4
+posterior_model = numpyro_model(scene_fn, priors, epochs, noise=noise)
 mcmc = run_nuts(
     posterior_model,
     seed=2,
-    num_warmup=1000,
-    num_samples=1000,
-    num_chains=4,
-    init=init,
+    num_warmup=NUM_WARMUP,
+    num_samples=NUM_SAMPLES,
+    num_chains=NUM_CHAINS,
+    init=best.values,
 )
 divergences = int(mcmc.get_extra_fields()["diverging"].sum())
-stats = summary(mcmc.get_samples(group_by_chain=True))
+by_chain = mcmc.get_samples(group_by_chain=True)
+sampled = {
+    k: v
+    for k, v in by_chain.items()
+    if k in priors and not isinstance(priors[k], AngleVector)
+    or k.endswith("_vec")
+}
+stats = summary(sampled)
 r_hat = max(float(np.max(s["r_hat"])) for s in stats.values())
 n_eff = min(float(np.min(s["n_eff"])) for s in stats.values())
-print(f"{divergences} divergent transitions in {4 * 1000} samples")
+print(
+    f"divergences: {divergences} in {NUM_CHAINS * NUM_SAMPLES} samples"
+)
 print(f"largest r_hat {r_hat:.3f}, smallest effective sample size {n_eff:.0f}")
 ```
 
 ```text
-0 divergent transitions in 4000 samples
-largest r_hat 1.003, smallest effective sample size 1952
+divergences: 0 in 4000 samples
+largest r_hat 1.003, smallest effective sample size 1722
 ```
 
-A healthy run has no divergences, $\hat R$ below about 1.01 and an effective sample size in the thousands. If there are more than a handful of divergences, do not trust the samples, because the divergences mark regions the sampler could not explore: reparameterise (as `Ring` does for the angles), start closer to the mode or raise `target_accept_prob`. Do not simply drop the divergent samples.
+## The orbit
 
-Each sample is turned into orbital elements, and into a total mass at the assumed distance by Kepler's third law, $M = a^3/P^2$ with $a$ in au and $P$ in years. Positions cannot tell $(\Omega, \omega)$ from $(\Omega + 180°, \omega + 180°)$, which only flips the line-of-sight direction, so the full-circle prior gives two mirror-image modes of equal height. The chains stay in the mode where they started; we report it with $\Omega$ in [0°, 180°), the usual convention for visual orbits, and radial velocities would be needed to choose between the two. The table compares the posterior medians and 68% intervals with the truth.
+Each sample is an orbit, and the elements, the time of periastron and the total mass (by Kepler's third law at the assumed distance, $M \propto a^3/P^2$ with $a$ in au; [`total_mass`](api/orbits.md)) are derived quantities. The table compares the posterior medians and 68% intervals with the truth.
 
 ```python
-samples = mcmc.get_samples()
-post = {k: np.asarray(v, dtype=float) for k, v in elements(samples).items()}
-flip = post["Omega"] >= 180.0  # fold onto the Omega < 180 mirror image
-post["Omega"] = np.where(flip, post["Omega"] - 180.0, post["Omega"])
-post["omega"] = np.mod(post["omega"] - 180.0 * flip, 360.0)
-
+samples = {k: np.asarray(v, dtype=float) for k, v in mcmc.get_samples().items()}
+orbits = orbit_from(samples)  # one KeplerOrbit holding every sample
 table = pd.DataFrame(
     {
-        "P (d)": post["period"],
-        "a (mas)": post["a_mas"],
-        "e": post["ecc"],
-        "i (deg)": post["inc"],
-        "ω (deg)": post["omega"],
-        "Ω (deg)": post["Omega"],
-        "t_peri (MJD)": T_REF + post["dt_peri"],
-        "M_tot (M☉)": np.asarray(
-            total_mass(KeplerOrbit(**post, t_ref=T_REF), DISTANCE_PC)
-        ),
+        "P (d)": samples["period"],
+        "a (mas)": samples["a_mas"],
+        "e": samples["ecc"],
+        "i (deg)": samples["inc"],
+        "ω (deg)": np.asarray(orbits.omega),
+        "Ω (deg)": np.asarray(orbits.Omega),
+        "t_peri (MJD)": T_REF + np.asarray(orbits.dt_peri),
+        "M_tot (M☉)": np.asarray(total_mass(orbits, DISTANCE_PC)),
+        "flux ratio": samples["flux"],
     }
 )
 truths = dict(
@@ -498,8 +610,9 @@ truths = dict(
             TRUTH["inc"],
             TRUTH["omega"],
             TRUTH["Omega"],
-            T_REF + TRUTH["dt_peri"],
+            T_PERI,
             float(total_mass(truth_orbit, DISTANCE_PC)),
+            FLUX,
         ],
     )
 )
@@ -512,21 +625,22 @@ for name, lo, m, hi in zip(table.columns, low, mid, high):
 ```
 
 ```text
-P (d)           1108.328  + 20.554 − 19.057   truth   1100.000
-a (mas)           25.059  +  0.096 −  0.085   truth     25.000
-e                  0.292  +  0.017 −  0.017   truth      0.300
-i (deg)           54.981  +  0.317 −  0.301   truth     55.000
-ω (deg)           70.151  +  0.351 −  0.323   truth     70.000
-Ω (deg)          130.416  +  0.780 −  0.746   truth    130.000
-t_peri (MJD)   59778.436  +  6.360 −  6.159   truth  59780.000
-M_tot (M☉)         1.977  +  0.057 −  0.053   truth      1.994
+P (d)           1098.230  + 27.118 − 25.370   truth   1100.000
+a (mas)           24.955  +  0.110 −  0.091   truth     25.000
+e                  0.300  +  0.023 −  0.024   truth      0.300
+i (deg)           54.890  +  0.457 −  0.470   truth     55.000
+ω (deg)           69.820  +  0.444 −  0.438   truth     70.000
+Ω (deg)          129.999  +  1.027 −  1.011   truth    130.000
+t_peri (MJD)   59779.951  +  8.806 −  9.493   truth  59780.000
+M_tot (M☉)         1.989  +  0.081 −  0.080   truth      1.994
+flux ratio         0.150  +  0.001 −  0.001   truth      0.150
 ```
 
-The corner plot shows the joint posterior, with the truth marked. The total mass assumes the distance of 105 pc exactly; with a parallax, its error would add to the mass's through $M \propto D^3$. With the periastron unobserved, the period, eccentricity, time of periastron, inclination and node are strongly correlated: a slightly longer period with a lower eccentricity and an earlier periastron fits the observed half orbit almost as well. The total mass inherits these through $a^3/P^2$. Only the next periastron passage will break the correlations.
+The corner plot shows the joint posterior of the elements, with the truth marked. With the periastron unobserved, the period, eccentricity, time of periastron, inclination and node are correlated: a slightly longer period with a lower eccentricity and an earlier periastron fits the observed half orbit almost as well. The total mass inherits these through $a^3/P^2$; with a parallax, its error would add to the mass's through $M \propto D^3$. Only the next periastron passage will break the correlations.
 
 ```python
 _, corner_fig, walks_fig = plot_chainconsumer_diagnostics(
-    {"NUTS": table},
+    {"joint NUTS": table},
     columns=list(table.columns),
     truth=truths,
     colors=["#3c6e9f"],
@@ -535,26 +649,65 @@ plt.close(walks_fig)  # the chains' traces are not needed here
 plt.show()
 ```
 
-![orbit_fitting output 25.1](generated/orbit_fitting_cell025_out01.png)
+![orbit_fitting output 29.1](generated/orbit_fitting_cell029_out01.png)
 
-## Orbits drawn from the posterior
+### Orbits on the sky
 
-A corner plot shows the elements; what an observer needs to know is where the companion can be. We draw 150 orbits from the posterior and plot them on the sky with [`plot_orbit_ensemble`](api/plotting.md), together with the measured positions (coloured by epoch, with their 1σ error ellipses, which are far smaller than the markers) and the true orbit. Where the epochs cover the orbit the draws coincide; around the unobserved periastron, just south of the primary, they spread by up to about a milliarcsecond.
+What an observer needs to know is where the companion can be. We draw 150 orbits from the posterior and plot them with [`plot_orbit_ensemble`](api/plotting.md), with the primary at the origin and the true orbit in red. The markers are the companion's positions at the eight epochs implied by the posterior: at each epoch's mean time we take the mean and covariance of the position over all the samples, a derived quantity of the joint fit, and wrap them in a `PositionData` for the plot (their 1σ ellipses are far smaller than the markers).
 
 ```python
+dra_t, ddec_t, _ = (np.asarray(x) for x in orbits.relative(epoch_mjd[:, None]))
+# dra_t, ddec_t: (epoch, sample)
+implied_cov = np.array(
+    [np.cov(np.stack([dra_t[k], ddec_t[k]])) for k in range(N_EPOCHS)]
+)
+implied = PositionData(
+    epoch_mjd, dra_t.mean(axis=1), ddec_t.mean(axis=1), implied_cov, t_ref=T_REF
+)
 pick = np.random.default_rng(7).choice(len(table), 150, replace=False)
-ensemble = KeplerOrbit(**{k: v[pick] for k, v in post.items()}, t_ref=T_REF)
-fig, ax = plot_orbit_ensemble(ensemble, measured, truth_orbit)
+ensemble = orbit_from({k: v[pick] for k, v in samples.items()})
+fig, ax = plot_orbit_ensemble(ensemble, implied, truth_orbit)
+ax.set_title("Joint posterior: 150 orbits and the implied positions")
 plt.show()
 ```
 
-![orbit_fitting output 27.1](generated/orbit_fitting_cell027_out01.png)
+![orbit_fitting output 31.1](generated/orbit_fitting_cell031_out01.png)
+
+Zooming in on each epoch shows those implied positions properly. Each panel shows the posterior samples of the companion's position at that epoch's mean time, relative to the true position, in microarcseconds. The orbit ties each night to the others, so even the worst-calibrated epochs are pinned about as tightly as the best, and the true position (red cross) should fall within each cloud.
+
+```python
+fig, axes = plt.subplots(
+    2, 4, figsize=(12, 6.2), sharex=True, sharey=True, constrained_layout=True
+)
+thin = slice(None, None, 4)
+for k, ax in enumerate(axes.flat[:N_EPOCHS]):
+    off_ra = 1e3 * (dra_t[k] - true_dra[k])
+    off_de = 1e3 * (ddec_t[k] - true_ddec[k])
+    ax.scatter(off_ra[thin], off_de[thin], s=2, color="#3c6e9f", alpha=0.3)
+    ax.plot(0, 0, "+", color="#d1495b", ms=14, mew=2)
+    ax.set_title(
+        f"MJD {epoch_mjd[k]:.0f}  (V² ×{TRUE_V2_SCALE[k]:.1f}, "
+        f"CP ×{TRUE_CP_SCALE[k]:.1f})",
+        fontsize="small",
+    )
+    ax.set_aspect("equal")
+axes[0, 0].invert_xaxis()  # East to the left (shared by every panel)
+for ax in axes[-1]:
+    ax.set_xlabel("Δα − true (μas)")
+for ax in axes[:, 0]:
+    ax.set_ylabel("Δδ − true (μas)")
+fig.suptitle("Companion position at each epoch, from the joint posterior")
+plt.show()
+```
+
+![orbit_fitting output 33.1](generated/orbit_fitting_cell033_out01.png)
+
+### Separation and position angle in time
 
 The same draws as functions of time show when the uncertainty matters. Separation and position angle are tightly pinned during the two observed seasons and spread out towards the next periastron (dotted line), which is therefore the most valuable time for the next observation. The position angle increases with time, as it should for an inclination below 90°.
 
 ```python
-times = T_REF + np.linspace(-150.0, 1050.0, 600)
-epoch_mjd = measured.t_ref + np.asarray(measured.dt)
+times = T_REF + np.linspace(-430.0, 770.0, 600)
 
 
 def unwrapped_pa(pa):
@@ -567,31 +720,31 @@ true_sep, true_pa = truth_orbit.separation_pa(times)
 true_pa = unwrapped_pa(true_pa)
 pa = unwrapped_pa(pa)
 pa += 360.0 * np.round((true_pa[0] - pa[:, :1]) / 360.0)
-data_sep = np.hypot(measured.dra, measured.ddec)
-data_pa = np.degrees(np.arctan2(measured.dra, measured.ddec))
+implied_sep = np.hypot(implied.dra, implied.ddec)
+implied_pa = np.degrees(np.arctan2(implied.dra, implied.ddec))
 near = np.interp(epoch_mjd, times, true_pa)  # same branch as the curves
-data_pa += 360.0 * np.round((near - data_pa) / 360.0)
+implied_pa += 360.0 * np.round((near - implied_pa) / 360.0)
 
 fig, axes = plt.subplots(
     2, 1, figsize=(9, 6), sharex=True, constrained_layout=True
 )
 curves = (
-    (np.asarray(sep), np.asarray(true_sep), data_sep, "Separation (mas)"),
-    (pa, true_pa, data_pa, "Position angle (deg)"),
+    (np.asarray(sep), np.asarray(true_sep), implied_sep, "Separation (mas)"),
+    (pa, true_pa, implied_pa, "Position angle (deg)"),
 )
-for ax, (draws_t, true_t, observed, label) in zip(axes, curves):
+for ax, (draws_t, true_t, at_epochs, label) in zip(axes, curves):
     ax.plot(times, draws_t.T, color="#3c6e9f", lw=0.6, alpha=0.06)
     ax.plot(times, true_t, color="#d1495b", lw=1.5, label="true orbit")
     ax.scatter(
         epoch_mjd,
-        observed,
+        at_epochs,
         c=epoch_mjd,
         cmap="viridis",
         s=36,
         edgecolors="k",
         linewidths=0.5,
         zorder=3,
-        label="measured",
+        label="posterior, at the epochs",
     )
     ax.axvline(next_peri, color="k", ls=":", lw=1)
     ax.set_ylabel(label)
@@ -600,14 +753,237 @@ axes[1].set_xlabel("MJD")
 plt.show()
 ```
 
-![orbit_fitting output 29.1](generated/orbit_fitting_cell029_out01.png)
+![orbit_fitting output 35.1](generated/orbit_fitting_cell035_out01.png)
+
+## Checking the model against the data
+
+A posterior is only as good as the model. We draw 200 samples, predict the closure phases of two epochs, the best and the worst calibrated, and compare them with the data. The top panels show the data with their quoted errors and the posterior-predictive band; the bottom panels show the residuals in units of the quoted errors times that epoch's fitted closure-phase scale, which should scatter as a unit normal. (The closure phases of four telescopes are correlated, so neighbouring residuals are not quite independent.)
+
+```python
+ppc_pick = np.random.default_rng(8).choice(len(table), 200, replace=False)
+ppc_samples = {k: v[ppc_pick] for k, v in samples.items()}
+shown = [int(np.argmin(TRUE_CP_SCALE)), int(np.argmax(TRUE_CP_SCALE))]
+fig, axes = plt.subplots(
+    2,
+    2,
+    figsize=(12, 6),
+    sharex="col",
+    gridspec_kw={"height_ratios": [2, 1]},
+    constrained_layout=True,
+)
+for col, k in enumerate(shown):
+    night = epochs[k]
+    n_vis = night.vis.size
+
+    def predict(row, night=night, n_vis=n_vis):
+        prediction = night.model(scene_fn(**row))
+        return prediction[n_vis : n_vis + night.phi.size]
+
+    model_cp = np.degrees(np.asarray(jax.vmap(predict)(ppc_samples)))
+    data_cp = np.degrees(np.asarray(night.phi))
+    quoted = np.degrees(np.asarray(night.d_phi))
+    scale = np.median(np.asarray(samples[f"noise[{k}].phi_scale"]))
+    index = np.arange(data_cp.size)
+    lo, mid, hi = np.percentile(model_cp, [2.5, 50, 97.5], axis=0)
+    top, bottom = axes[0, col], axes[1, col]
+    top.errorbar(index, data_cp, quoted, fmt=".", color="k", ms=3, lw=0.6)
+    top.fill_between(index, lo, hi, color="#3c6e9f", alpha=0.4, step="mid")
+    top.set(
+        ylabel="Closure phase (deg)",
+        title=f"MJD {epoch_mjd[k]:.0f}: fitted CP error scale {scale:.2f}"
+        f" (true {TRUE_CP_SCALE[k]:.2f})",
+    )
+    residual = (data_cp - mid) / (quoted * scale)
+    bottom.plot(index, residual, ".", color="k", ms=3)
+    bottom.axhline(0, color="#3c6e9f")
+    bottom.set(
+        xlabel="Closure phase index (frame, triangle, channel)",
+        ylabel="Residual (σ)",
+        ylim=(-4.5, 4.5),
+    )
+    print(
+        f"MJD {epoch_mjd[k]:.0f}: rms residual {np.std(residual):.2f} σ "
+        f"over {residual.size} closure phases"
+    )
+plt.show()
+```
+
+```text
+MJD 60035: rms residual 0.90 σ over 72 closure phases
+```
+
+```text
+MJD 60095: rms residual 1.02 σ over 72 closure phases
+```
+
+![orbit_fitting output 37.3](generated/orbit_fitting_cell037_out03.png)
+
+### The inferred calibration
+
+The error scales are part of the posterior too. Each epoch's $V^2$ and closure-phase factors are recovered (median and 68% interval against the truth), and the population's median and spread, which describe how far the "pipeline" errors are off, can be compared with the population the factors were drawn from (median 1.3, spread 0.3); with only eight draws per population, the spread in particular is loosely constrained.
+
+```python
+fig, axes = plt.subplots(1, 2, figsize=(11, 3.8), constrained_layout=True)
+for ax, (name, term, true_scale) in zip(
+    axes,
+    [
+        ("V²", "vis_scale", TRUE_V2_SCALE),
+        ("closure phase", "phi_scale", TRUE_CP_SCALE),
+    ],
+):
+    fitted = np.array(
+        [np.asarray(samples[f"noise[{k}].{term}"]) for k in range(N_EPOCHS)]
+    )
+    lo, mid, hi = np.percentile(fitted, [16, 50, 84], axis=1)
+    ax.errorbar(
+        epoch_mjd, mid, [mid - lo, hi - mid], fmt="o", color="#3c6e9f",
+        label="posterior (68%)",
+    )
+    ax.plot(epoch_mjd, true_scale, "x", color="#d1495b", ms=9, mew=2,
+            label="true")
+    ax.set(xlabel="MJD", ylabel=f"{name} error scale", title=name)
+axes[0].legend(frameon=False, fontsize="small")
+plt.show()
+
+for prefix, label in (("v2_scale", "V²"), ("cp_scale", "closure phase")):
+    for part in ("median", "spread"):
+        lo, mid, hi = np.percentile(samples[f"{prefix}_{part}"], [16, 50, 84])
+        print(
+            f"{label:14s} population {part:6s} {mid:.2f} "
+            f"+{hi - mid:.2f} −{mid - lo:.2f}"
+        )
+```
+
+![orbit_fitting output 39.1](generated/orbit_fitting_cell039_out01.png)
+
+```text
+V²             population median 1.34 +0.12 −0.11
+V²             population spread 0.24 +0.09 −0.06
+closure phase  population median 1.21 +0.15 −0.12
+closure phase  population spread 0.29 +0.11 −0.07
+```
+
+## Comparison with the two-step fit
+
+For comparison we run the classical two-step analysis on the same data. At each epoch we fit a static binary (`BinaryModelCartesian`) from the grid's best point, take its Laplace covariance, [`laplace_cov`](api/inference.md), at face value with the quoted errors, as such a pipeline usually does, and then sample the orbit from the positions alone with the same orbit priors. The table compares the two posteriors: for each element, the median, the 68% half-width, and the offset of the median from the truth in units of that half-width (a "pull"; honest intervals give pulls of order 1).
+
+```python
+binary_priors = {
+    "dra": dist.Uniform(-50.0, 50.0),
+    "ddec": dist.Uniform(-50.0, 50.0),
+    "flux": dist.LogUniform(1e-3, 1.0),
+}
+names = ["dra", "ddec", "flux"]
+per_epoch = []
+for night, q in tqdm(list(zip(epochs, quick)), desc="per-epoch fits"):
+    start = BinaryModelCartesian(q["dra"], q["ddec"], q["flux"])
+    result = fit(start, binary_priors, night)
+    values = [float(result.values[k]) for k in names]
+    cov = np.asarray(laplace_cov(values, names, night, result.model))
+    per_epoch.append((values, cov[:2, :2]))
+measured = PositionData(
+    epoch_mjd,
+    [v[0] for v, _ in per_epoch],
+    [v[1] for v, _ in per_epoch],
+    np.array([c for _, c in per_epoch]),
+    t_ref=T_REF,
+)
+positions_model = numpyro_model(
+    lambda **v: None,
+    orbit_priors,
+    (),
+    likelihoods=[measured.term(orbit_from)],
+)
+two_step = run_nuts(
+    positions_model,
+    seed=4,
+    num_warmup=NUM_WARMUP,
+    num_samples=NUM_SAMPLES,
+    num_chains=NUM_CHAINS,
+    init={k: best.values[k] for k in best.values if k.split("_vec")[0] in orbit_priors},
+)
+print(
+    "two-step divergences: "
+    f"{int(two_step.get_extra_fields()['diverging'].sum())}"
+)
+```
+
+```text
+per-epoch fits:   0%|          | 0/8 [00:00<?, ?it/s]
+```
+
+```text
+two-step divergences: 0
+```
+
+```python
+two = {k: np.asarray(v, dtype=float) for k, v in two_step.get_samples().items()}
+two_orbits = orbit_from(two)
+compare = {
+    "P (d)": (samples["period"], two["period"], TRUTH["period"]),
+    "a (mas)": (samples["a_mas"], two["a_mas"], TRUTH["a_mas"]),
+    "e": (samples["ecc"], two["ecc"], TRUTH["ecc"]),
+    "i (deg)": (samples["inc"], two["inc"], TRUTH["inc"]),
+    "t_peri (MJD)": (
+        T_REF + np.asarray(orbits.dt_peri),
+        T_REF + np.asarray(two_orbits.dt_peri),
+        T_PERI,
+    ),
+    "M_tot (M☉)": (
+        np.asarray(total_mass(orbits, DISTANCE_PC)),
+        np.asarray(total_mass(two_orbits, DISTANCE_PC)),
+        float(total_mass(truth_orbit, DISTANCE_PC)),
+    ),
+}
+rows = []
+for name, (joint_s, two_s, truth) in compare.items():
+    row = {"element": name, "truth": truth}
+    for label, s in (("joint", joint_s), ("two-step", two_s)):
+        lo, mid, hi = np.percentile(s, [16, 50, 84])
+        half = (hi - lo) / 2
+        row[f"{label} median"] = mid
+        row[f"{label} ±"] = half
+        row[f"{label} pull"] = (mid - truth) / half
+    rows.append(row)
+comparison = pd.DataFrame(rows).set_index("element")
+print(comparison.to_string(float_format=lambda x: f"{x:.3g}"))
+widths = comparison["joint ±"] / comparison["two-step ±"]
+pulls = comparison[["joint pull", "two-step pull"]].abs()
+print(
+    f"\njoint / two-step interval width: {widths.min():.2f} to "
+    f"{widths.max():.2f}"
+)
+print(
+    f"rms pull: joint {np.sqrt(np.mean(pulls['joint pull'] ** 2)):.2f}, "
+    f"two-step {np.sqrt(np.mean(pulls['two-step pull'] ** 2)):.2f}"
+)
+```
+
+```text
+                truth  joint median  joint ±  joint pull  two-step median  two-step ±  two-step pull
+element                                                                                             
+P (d)         1.1e+03       1.1e+03     26.2     -0.0675         1.09e+03        18.6         -0.534
+a (mas)            25            25    0.101      -0.443             24.9      0.0753         -0.832
+e                 0.3           0.3   0.0235      0.0163            0.307      0.0169          0.425
+i (deg)            55          54.9    0.463      -0.238               55       0.336          0.079
+t_peri (MJD) 5.98e+04      5.98e+04     9.15    -0.00533         5.98e+04        6.46          0.431
+M_tot (M☉)       1.99          1.99   0.0805     -0.0652             2.01       0.058          0.347
+
+joint / two-step interval width: 1.33 to 1.42
+rms pull: joint 0.21, two-step 0.50
+```
+
+Read the table in two ways. The interval widths say how much each analysis claims to know, and the pulls say whether that claim is justified. The two-step positions carry the quoted errors, which are too small by the factors we simulated, so its intervals reflect the quoted precision rather than the real one; the joint fit learns each night's error scale from the data themselves and propagates it into the orbit. Each epoch's position is also no longer reduced to a Gaussian before the orbit sees it. On real data, with skewed or multi-peaked nightly likelihoods, that is where the two analyses differ most. The two-step fit remains a good quick look, and a source of starting orbits, as in the initialisation above.
 
 ## Summary
 
-We simulated eight epochs of VLTI-like squared visibilities and closure phases of a binary with a three-year orbit, measured the companion's position at each epoch with a grid search, a fit and its Laplace covariance, found starting orbits with the Thiele–Innes grid, and sampled the orbit's posterior with NUTS under invariant priors: log-uniform period and semimajor axis, an isotropic orientation, a uniform phase and a uniform eccentricity. The prior check confirmed that the sampler reproduces those priors without data. The posterior recovers the truth, and the ensemble of orbits shows where the companion's position is still uncertain: around the unobserved periastron.
+We simulated eight epochs of VLTI-like squared visibilities and closure phases of a binary with a three-year orbit, with nightly errors that are wrong by different amounts, and fitted one model to all of them: a Keplerian orbit placing the companion at the time of every sample, a flux ratio, and per-epoch $V^2$ and closure-phase error scales drawn from fitted populations. Every prior is the invariant prior of its parameter, and a no-data run reproduced them. Coarse per-epoch grids and a Thiele–Innes grid, ranked by the likelihood of all the data, gave the starting orbit; NUTS then sampled the joint posterior. The outputs are the orbit and its derived quantities, the positions it implies at each epoch, posterior-predictive checks against the closure phases, and the inferred calibration.
 
-Where to go next:
+Practical notes for real data:
 
-- Fitting the orbit to the visibilities themselves, jointly with the rest of the scene, avoids the per-epoch step, which can be biased when the source is more than two point stars. Tie components to an orbit with `Attached`; the orbit worked example [`notebooks/mwe/mwe_orbit.ipynb`](https://github.com/benjaminpope/virgil/blob/main/notebooks/mwe/mwe_orbit.ipynb) does this for a companion with a disc, and the design is in [`design/orbit_scene_joint_fitting.md`](https://github.com/benjaminpope/virgil/blob/main/design/orbit_scene_joint_fitting.md).
-- The four Thiele–Innes constants enter the positions linearly, so they can be marginalised analytically, leaving a three-dimensional sampling problem in $P$, $e$ and $t_{\rm peri}$. This marginalised sampler is designed in [`design/thiele_innes_marginalisation.md`](https://github.com/benjaminpope/virgil/blob/main/design/thiele_innes_marginalisation.md) but not built yet.
-- [Binary search](binary_search.md) covers the grid and the sampler for one epoch in more detail, and [Conventions](conventions.md#orbits) the orbit conventions and the degeneracies of visual orbits.
+- **Expect multimodal nights.** Seed starting orbits from decisive nights only, rank candidates by the joint likelihood of all the data, and refine several. The (Ω, ω) mirror is removed by sampling 2Ω and ϖ; period aliases are not, and need the refined starts (or chains in each mode) to be compared.
+- **Fit the calibration.** Per-epoch error scales are cheap and usually matter; the population tells you how far the pipeline's errors are off. For epochs with few data, the non-centred form, `hierarchical_scales(..., centred=False)`, can sample better.
+- **Choose what to fit.** Real $V^2$ calibrations are often poorer than closure phases; dropping $V^2$, or giving it gains (see [`OIData.with_gains`](api/oidata.md)), is a common choice, as is cutting wavelength channels affected by telluric or stellar features.
+- **Run it where it is fast.** Each joint MAP fit and each NUTS run evaluates the whole dataset at every step; on real data with many frames this is a job for a cluster CPU or a GPU.
+
+Where to go next: scenes with more than two point stars attach other components to the same orbit with `Attached` (the worked example [`notebooks/mwe/mwe_orbit.ipynb`](https://github.com/benjaminpope/virgil/blob/main/notebooks/mwe/mwe_orbit.ipynb) adds a disc around the companion; the design is in [`design/orbit_scene_joint_fitting.md`](https://github.com/benjaminpope/virgil/blob/main/design/orbit_scene_joint_fitting.md)), radial velocities join through `RVData.term` and fix the node, and [Binary search](binary_search.md) covers the single-epoch grid and sampler in more detail.

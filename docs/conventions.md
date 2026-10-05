@@ -152,7 +152,7 @@ For analyses that treat nights separately, [`OIData.epochs`][virgil.oidata.OIDat
 
 ## Orbits
 
-The conventions below were fixed in the orbit design (the [design note](https://github.com/benjaminpope/virgil/blob/main/design/orbit_scene_joint_fitting.md), §2.1–2.3) and are implemented by [`virgil.orbits`](api/orbits.md). The tutorial [Orbits from interferometric epochs](orbit_fitting.md) uses them end to end.
+The conventions below were fixed in the orbit design (the [design note](https://github.com/benjaminpope/virgil/blob/main/design/orbit_scene_joint_fitting.md), §2.1–2.3) and are implemented by [`virgil.orbits`](api/orbits.md). The tutorial [Orbits from interferometric data](orbit_fitting.md) uses them end to end, fitting an orbit jointly to every epoch's visibilities and closure phases.
 
 An orbit gives the position of a **secondary** star relative to a **primary** (or reference) star, which sits at the origin and is the scene's reference component at `flux=1`. It need not be the more massive star. The relative position is $\mathbf{r} = (\mathrm{dra}, \mathrm{ddec}, dz)$ of the secondary minus the primary.
 

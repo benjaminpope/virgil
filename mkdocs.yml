@@ -60,7 +60,7 @@ nav:
       - "Contrast limits": contrast_limits.md
       - "Detection ROC curves": detection_roc.md
       - "Hierarchical inference across filters": hierarchical_inference.md
-      - "Orbits from interferometric epochs": orbit_fitting.md
+      - "Orbits from interferometric data": orbit_fitting.md
   - Sources:
       - "Visibility models": model_syntax.md
       - "Extended source models": source_models.md
