@@ -97,6 +97,10 @@ samples = {
 opt_flux = optimized_flux_grid(oidata_sim, BinaryModelCartesian, samples)
 ```
 
+```text
+RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+```
+
 ## Ruffio Contrast Limits
 
 The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) method for contrast limits is Bayesian - you infer the Gaussian posterior on flux of a companion, and impose a prior that the flux is positive. Then you report a chosen percentile of this as the flux upper limit for a nondetection, *conditioned on this being the correct astrometry and there being a real source there*.
@@ -138,7 +142,7 @@ plot_grid_map(absil_map, samples, kind="limit", units="delta_mag", sigma=2.0);
 ```
 
 ```text
-RuntimeWarning: absil_limits(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
 ```
 
 ![contrast_limits output 11.2](generated/contrast_limits_cell011_out02.png)

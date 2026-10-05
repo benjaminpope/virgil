@@ -325,9 +325,17 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-![binary_search output 19.1](generated/binary_search_cell019_out01.png)
+```text
+findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
+```
 
-![binary_search output 19.2](generated/binary_search_cell019_out02.png)
+```text
+findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
+```
+
+![binary_search output 19.3](generated/binary_search_cell019_out03.png)
+
+![binary_search output 19.4](generated/binary_search_cell019_out04.png)
 
 And in polar coordinates:
 

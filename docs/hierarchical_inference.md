@@ -115,7 +115,7 @@ print(f"initial log-likelihood: {float(initial_loglike)}, optimal: {float(truth_
 ```
 
 ```text
-initial log-likelihood: -5654.11919129586, optimal: 682.2989910028463
+initial log-likelihood: -5654.119194585739, optimal: 682.298987712977
 ```
 
 ## Joint grid initialization
@@ -330,9 +330,17 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-![hierarchical_inference output 18.1](generated/hierarchical_inference_cell018_out01.png)
+```text
+findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
+```
 
-![hierarchical_inference output 18.2](generated/hierarchical_inference_cell018_out02.png)
+```text
+findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
+```
+
+![hierarchical_inference output 18.3](generated/hierarchical_inference_cell018_out03.png)
+
+![hierarchical_inference output 18.4](generated/hierarchical_inference_cell018_out04.png)
 
 ## Posterior predictive correlation per filter
 

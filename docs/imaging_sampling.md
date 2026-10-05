@@ -70,7 +70,7 @@ print(f"MAP: converged {result.info['converged']} in {result.info['steps']} step
 ```
 
 ```text
-MAP: converged True in 52 steps; chi2 per point 0.95; flux 0.0503 (truth 0.05); σ = 4.0, ℓ = 131 mas
+MAP: converged True in 45 steps; chi2 per point 0.95; flux 0.0507 (truth 0.05); σ = 4.0, ℓ = 131 mas
 ```
 
 ## Why plain NUTS is slow, and the mass matrix that fixes it
@@ -96,7 +96,7 @@ print(f"300 warmup + 300 draws in {time.time() - t0:.0f} s; median {onp.median(s
 ```
 
 ```text
-300 warmup + 300 draws in 347 s; median 63 leapfrog steps per draw (at most 1023); 0 divergences
+300 warmup + 300 draws in 550 s; median 63 leapfrog steps per draw (at most 1023); 0 divergences
 ```
 
 ## Are the draws trustworthy?
@@ -112,7 +112,7 @@ print(f"flux {mid:.4f} (90%: {low:.4f}–{high:.4f}; truth 0.05), ESS {float(eff
 ```
 
 ```text
-flux 0.0503 (90%: 0.0500–0.0507; truth 0.05), ESS 334; latent ESS: 5th percentile 473, median 754 of 300
+flux 0.0507 (90%: 0.0503–0.0511; truth 0.05), ESS 179; latent ESS: 5th percentile 183, median 293 of 300
 ```
 
 ## The posterior mean and standard deviation

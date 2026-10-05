@@ -183,8 +183,8 @@ for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
 ```
 
 ```text
- uniform disk: diam = 5.686 mas, chi2 per point 489.80 (162 points)
-limb-darkened: diam = 6.022 mas, chi2 per point 1.14 (162 points)
+ uniform disk: diam = 5.686 mas, chi2 per point 451.32 (234 points)
+limb-darkened: diam = 6.022 mas, chi2 per point 0.79 (234 points)
 ```
 
 A point estimate hides how well the limb darkening is actually measured. Because the priors are bounded and $q_1, q_2$ are nonlinear functions of $u_1, u_2$, a Gaussian (Laplace) approximation is a poor description here, so we sample the posterior with NUTS: `numpyro_model` turns the template and the priors into a numpyro model, with no hand-written model function. On the left is the posterior in Kipping's $(q_1, q_2)$, where the prior is uniform over the whole square; on the right are the same samples mapped to $(u_1, u_2)$, inside the physical triangle. The data constrain a combination of the two coefficients much better than either alone, as is usual for limb darkening: $u_1$ and $u_2$ are strongly anticorrelated, and the diameter is correlated with both, since a darker limb also makes the star look smaller.
@@ -235,11 +235,11 @@ plt.show()
 
 ```text
          truth         posterior
-  diam   6.000      6.033 ± 0.060
-    q1   0.360      0.519 ± 0.223
-    q2   0.292      0.159 ± 0.117
-    u1   0.350      0.231 ± 0.101
-    u2   0.250      0.495 ± 0.245
+  diam   6.000      6.037 ± 0.054
+    q1   0.360      0.536 ± 0.215
+    q2   0.292      0.150 ± 0.117
+    u1   0.350      0.219 ± 0.110
+    u2   0.250      0.519 ± 0.248
 ```
 
 ![limb_darkening output 11.2](generated/limb_darkening_cell011_out02.png)

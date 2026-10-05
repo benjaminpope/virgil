@@ -325,7 +325,7 @@ cvis_star = star.model(u, v, wavel)
 {'diam_eq_mas': 1.0,
  'omega': 0.8999999761581421,
  'n_baselines': 32,
- 'vis_range': (0.985670268535614, 0.9998691082000732)}
+ 'vis_range': (0.9856705069541931, 0.9998699426651001)}
 ```
 
 The grey star's visible surface, coloured by local flux, shows the bright pole towards the upper left (with East to the left and North up, the pole at a position angle of 30 degrees) and the darkened equator. The chromatic star at 0.6 micron, drawn through `render`, is the same shape with the equator much dimmer than the pole.
