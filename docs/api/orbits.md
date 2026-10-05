@@ -26,6 +26,16 @@ orientation; the map to (2Ω, ϖ) has a constant Jacobian. The vectors follow
 Octofitter's `UniformCircular` and exoplanet's `Angle` (see
 [`virgil.angles`](angles.md)).
 
+**The position angle at a reference epoch.** For short arcs,
+`KeplerOrbit.from_position_angle(period, theta, ecc, inc, omega, Omega, a_mas,
+t_ref)` takes θ, the position angle at `t_ref`, which astrometry measures
+directly, in place of `dt_peri` (after Thompson et al. 2023). Sample θ as an
+[angle vector](angles.md), and add `position_angle_prior(orbit_fn)` to the
+`likelihoods=`. It adds log|∂M/∂θ|, so that the prior stays uniform in the
+time of periastron, which is the invariant prior, rather than uniform in θ.
+The map is singular at i = 90°, where the position angle takes only two values.
+Near edge-on, keep `dt_peri` or use `StateVectorOrbit`.
+
 **Credit and related software.** Kepler's equation is solved by
 [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (Hattori et al.,
 [doi:10.5281/zenodo.10736936](https://doi.org/10.5281/zenodo.10736936)), the
@@ -61,3 +71,5 @@ for a feature comparison.
         - AxialVonMises
         - orientation_priors
         - orientation_from_varpi
+        - position_angle_prior
+        - position_angle_log_jacobian

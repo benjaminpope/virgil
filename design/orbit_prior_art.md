@@ -123,6 +123,8 @@ Thompson et al. (2023) replace t_p with θ, the position angle at a reference ep
 - The map is singular at i = 90°, where the position angle takes only two values. Near edge-on, keep `dt_peri` or use `StateVectorOrbit`.
 - θ belongs with the short-arc tools, beside `StateVectorOrbit`.
 
+**Built.** `KeplerOrbit.from_position_angle(period, theta, ecc, inc, omega, Omega, a_mas, t_ref)` uses the conversion above, with E = atan2(√(1 − e²) sin f, e + cos f) and `dt_peri` = −M P/2π in [−P/2, P/2). A concrete i = 90° is rejected. The Jacobian is `position_angle_log_jacobian`. `position_angle_prior(orbit_fn)` is a `likelihoods=` term with no residuals, whose `log_norm` is −log|∂M/∂θ| (for `fit`, which then uses L-BFGS) and whose `loglike` is +log|∂M/∂θ| (for `numpyro_model`). It reads θ back from the orbit's position at `t_ref`, so it needs only the orbit function.
+
 ### 4.3 North angle and plate scale (item 5)
 **Per dataset,** a rotation δ and a fractional scale s act on the scene's sky positions: (dra, ddec) → (1 + s) R(δ)(dra, ddec).
 - Rotating and scaling the sky is the same as rotating and scaling (u, v), so for `OIData` the plate scale is the existing `wavel_scale` (spectro note §2.6). Only the North angle is new.
