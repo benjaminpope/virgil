@@ -110,16 +110,21 @@ from .models import (  # noqa: E402
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
 from .orbits import (  # noqa: E402
+    AxialVonMises,
     KeplerOrbit,
     PositionData,
+    RVData,
     ThieleInnesOrbit,
+    distance_pc,
     starting_orbits,
+    total_mass,
 )
 from .spectra import BlackBody, PowerLaw  # noqa: E402
 
 
 __all__ = [
     "Attached",
+    "AxialVonMises",
     "BinaryModelAngular",
     "BinaryModelCartesian",
     "BlackBody",
@@ -139,6 +144,7 @@ __all__ = [
     "OIData",
     "PointSource",
     "PositionData",
+    "RVData",
     "PowerLaw",
     "QuadraticLimbDarkenedDisk",
     "Resolved",
@@ -154,6 +160,7 @@ __all__ = [
     "build_model",
     "contrast_to_flux",
     "delta_mag_to_flux",
+    "distance_pc",
     "fit",
     "fisher",
     "inflated_errors",
@@ -172,6 +179,7 @@ __all__ = [
     "read_oifits",
     "ruffio_upperlimit",
     "starting_orbits",
+    "total_mass",
     "whitened_residuals",
     "write_oifits",
 ]
