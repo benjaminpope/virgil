@@ -9,6 +9,20 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Log-uniform (Jeffreys) detection prior for `linear_flux_grid`.**
+  `prior=LogUniform(f_min, f_max)` puts the Jeffreys prior for a scale
+  parameter, `1 / f`, on the companion flux ratio, and is now the documented
+  recommendation. The evidence needs a proper prior, so both bounds are
+  required, and the Bayes factor depends on them as it must (widening them
+  changes `log_bayes_factor` by about `-Δ ln ln(f_max / f_min)`). The
+  evidence, posterior mean and sd come from 256-node Gauss-Legendre
+  quadrature in `ln f` over the part of the bounds the likelihood occupies,
+  inside `jit` and `vmap`; they agree with a dense-grid quadrature to
+  better than 1e-4. The Gaussian prior is now `Gaussian(mean, sd)`
+  (documented as a Gaussian-prior evidence, a computational approximation
+  where `f` may go negative); a bare `(mean, sd)` tuple still works but warns
+  with a `DeprecationWarning`. With no `prior`, results are unchanged.
+
 - **Spectro-interferometric observables (Stage 6a, PR B).**
   `read_oifits(..., extras=...)` and `OIData(path, extras=...)` read OI_FLUX
   (`"flux"` or `"nflux"`), T3AMP, VISAMP beside V² (absolute, or correlated

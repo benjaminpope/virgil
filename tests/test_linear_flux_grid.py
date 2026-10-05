@@ -8,6 +8,8 @@ import numpy as onp
 import pytest
 
 from virgil.grid_fit import (
+    Gaussian,
+    LogUniform,
     laplace_flux_uncertainty_grid,
     linear_flux_grid,
     optimized_flux_grid,
@@ -160,7 +162,7 @@ def test_prior_matches_numerical_marginalisation(noise_scale):
     data = _simulate(1e-3, noise_scale=noise_scale)
     mean, sd = 2e-3, 3e-3
     out = linear_flux_grid(
-        data, BinaryModelCartesian, _grid(), prior=(mean, sd)
+        data, BinaryModelCartesian, _grid(), prior=Gaussian(mean, sd)
     )
     base = linear_flux_grid(data, BinaryModelCartesian, _grid())
     assert onp.array_equal(out["flux"], base[0])
@@ -198,3 +200,84 @@ def test_prior_matches_numerical_marginalisation(noise_scale):
         assert onp.isclose(out["log_bayes_factor"][ij], log_z, rtol=1e-3)
         assert onp.isclose(out["posterior_mean"][ij], pm, rtol=1e-3)
         assert onp.isclose(out["posterior_sd"][ij], psd, rtol=1e-3)
+
+
+def test_bare_tuple_prior_is_deprecated_gaussian():
+    data = _simulate(1e-3, noise_scale=0.1)
+    new = linear_flux_grid(
+        data, BinaryModelCartesian, _grid(), prior=Gaussian(2e-3, 3e-3)
+    )
+    with pytest.warns(DeprecationWarning):
+        old = linear_flux_grid(
+            data, BinaryModelCartesian, _grid(), prior=(2e-3, 3e-3)
+        )
+    for key in new:
+        assert onp.array_equal(new[key], old[key], equal_nan=True)
+
+
+def test_prior_validation():
+    data = _simulate(1e-3, noise_scale=0.1)
+    for bad in [LogUniform(1e-3, 1e-4), LogUniform(0.0, 1.0), Gaussian(0, 0)]:
+        with pytest.raises(ValueError):
+            linear_flux_grid(data, BinaryModelCartesian, _grid(), prior=bad)
+    with pytest.raises(TypeError):
+        linear_flux_grid(data, BinaryModelCartesian, _grid(), prior=1.0)
+
+
+def _brute_log_uniform(f_hat, sigma, f_min, f_max, n=2_000_001):
+    """Evidence, mean, sd by trapezoid on a dense log grid (float64)."""
+    u = onp.linspace(onp.log(f_min), onp.log(f_max), n)
+    f = onp.exp(u)
+    h = -((f - f_hat) ** 2 - f_hat**2) / (2 * sigma**2)
+    m = h.max()
+    w = onp.exp(h - m)
+    z = onp.trapezoid(w, u)
+    mean = onp.trapezoid(w * f, u) / z
+    sd = onp.sqrt(onp.trapezoid(w * (f - mean) ** 2, u) / z)
+    return m + onp.log(z) - onp.log(u[-1] - u[0]), mean, sd
+
+
+@pytest.mark.parametrize("noise_scale", [0.1, 30.0])
+def test_log_uniform_matches_brute_force(noise_scale):
+    """Strong (log B ~ 5e4) and marginal (log B of order 1) detections."""
+    data = _simulate(1e-3, noise_scale=noise_scale)
+    f_min, f_max = 1e-6, 1.0
+    out = linear_flux_grid(
+        data, BinaryModelCartesian, _grid(), prior=LogUniform(f_min, f_max)
+    )
+    base = linear_flux_grid(data, BinaryModelCartesian, _grid())
+    assert onp.array_equal(out["flux"], base[0])
+    for ij in [(0, 0), (1, 1)]:
+        f_hat = float(out["flux"][ij])
+        sigma = float(out["flux_error"][ij])
+        log_b, mean, sd = _brute_log_uniform(f_hat, sigma, f_min, f_max)
+        assert onp.isclose(out["log_bayes_factor"][ij], log_b, rtol=1e-4)
+        assert onp.isclose(out["posterior_mean"][ij], mean, rtol=1e-4)
+        assert onp.isclose(out["posterior_sd"][ij], sd, rtol=1e-4)
+
+
+def test_log_uniform_occam_factor():
+    """Widening the bounds shifts log B by -Delta ln ln(f_max / f_min)."""
+    data = _simulate(1e-3, noise_scale=0.1)
+    b1 = linear_flux_grid(
+        data, BinaryModelCartesian, _grid(), prior=LogUniform(1e-6, 1.0)
+    )
+    b2 = linear_flux_grid(
+        data, BinaryModelCartesian, _grid(), prior=LogUniform(1e-8, 1e2)
+    )
+    expected = -onp.log(onp.log(1e10) / onp.log(1e6))
+    shift = onp.asarray(b2["log_bayes_factor"] - b1["log_bayes_factor"])
+    assert onp.isclose(shift[0, 0], expected, atol=1e-3)
+    assert onp.allclose(b1["posterior_mean"], b2["posterior_mean"], rtol=1e-4)
+
+
+def test_log_uniform_estimate_outside_bounds_is_finite():
+    """A peak far above f_max or below f_min still gives a finite log B."""
+    data = _simulate(1e-3, noise_scale=0.1)
+    for bounds in [(1e-9, 1e-7), (1e-1, 1.0)]:
+        out = linear_flux_grid(
+            data, BinaryModelCartesian, _grid(), prior=LogUniform(*bounds)
+        )
+        assert onp.all(onp.isfinite(out["log_bayes_factor"]))
+        assert onp.all(out["posterior_mean"] >= bounds[0] * 0.999)
+        assert onp.all(out["posterior_mean"] <= bounds[1] * 1.001)
