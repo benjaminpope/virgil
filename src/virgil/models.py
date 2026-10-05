@@ -1261,6 +1261,20 @@ class GravityDarkenedStar(Component):
     | ``inc`` (0 = equator-on) | ``90 - inc`` degrees |
     | ``obl`` | ``pa`` degrees |
 
+    **Choosing ``n_lat``.** The mesh is a second-order quadrature: the error
+    in the visibility falls as ``1 / n_lat**2``, so each doubling of ``n_lat``
+    cuts it by about 4. An independent ELR11 reference
+    (virgil-validation) measured it. In grey mode the error is 1.4-3.4e-4 in
+    visibility at ``n_lat = 128``, falling 4x per doubling. At the default
+    ``n_lat = 32`` it is 2-6e-3 for fast rotators. In chromatic mode it is
+    1.3e-4 over 0.7-2.2 µm. The default suits most data, but well-measured
+    data (e.g. GRAVITY) can be sensitive to errors of this size.
+
+    To check, evaluate or refit at the best fit with ``n_lat`` doubled and
+    compare χ²: if |Δχ²| ≳ 1 per dataset, use more latitude rings, and double
+    again until the change is below that. The cost is O(``n_lat``$^2$) per
+    baseline.
+
     Examples
     --------
     >>> star = GravityDarkenedStar(2.0, omega=0.8, inc=60.0, pa=30.0)
