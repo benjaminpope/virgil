@@ -3,6 +3,12 @@
 
 A long-baseline interferometer resolves a close binary into two stars, and if we observe it again over months and years we can watch the companion move around its primary. This tutorial fits a Keplerian orbit to such a sequence of observations, from start to finish, with no radial velocities.
 
+**What you'll get.** The orbit, recovered from eight epochs that cover half of it:
+
+![150 orbits drawn from the posterior (blue), the true orbit (red) and the measured positions, coloured by epoch](generated/orbit_fitting_cell027_out01.png)
+
+*150 posterior orbits (blue) around the true orbit (red), with the positions measured at each epoch. The orbits spread only near the unobserved periastron, south of the primary.*
+
 The path is the classical one. We first measure the companion's position at each epoch separately, with a grid search and a fit of a binary to that night's squared visibilities and closure phases. A grid over period, eccentricity and time of periastron then gives starting orbits, because at fixed values of those three the positions are linear in the remaining elements. Finally we sample the orbit's posterior with NUTS, under priors that respect the symmetries of the problem, and look at the result as a corner plot and as an ensemble of orbits drawn on the sky.
 
 The orbit conventions are those of [Conventions](conventions.md#orbits): `Omega` is the position angle of the node where the secondary recedes, `omega` is the secondary's argument of periastron, an inclination below 90° means the position angle increases with time, and times are days since a reference epoch `t_ref`.
@@ -18,6 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpyro.distributions as dist
 import pandas as pd
+from numpyro.diagnostics import summary
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_value
 from tqdm.auto import tqdm
@@ -79,6 +86,11 @@ print(
 )
 ```
 
+```text
+period 3.01 yr, total mass 1.99 M_sun at 105 pc
+the epochs span 51% of the orbit; the next periastron is at MJD 60880
+```
+
 ## Simulating the observations
 
 [`vlti_oidata`](api/coverage.md) builds the coverage of the four 8-m Unit Telescopes at Paranal for a target at declination −30°: three snapshots per night, two hours apart either side of transit, each with all six baselines and four closure triangles, in six K-band channels (2.0–2.4 μm). Passing `nights_mjd` repeats this on every night and stamps each snapshot with its own time. The errors are 0.05 on each $V^2$ and 3° on each closure phase, typical of calibrated VLTI data.
@@ -103,6 +115,10 @@ print(
     f"{len(epochs)} epochs, each with {epochs[0].n_independent} "
     "independent V² and closure phases"
 )
+```
+
+```text
+8 epochs, each with 162 independent V² and closure phases
 ```
 
 The left panel shows the uv coverage of the first night, coloured by wavelength: Earth rotation carries each baseline along a short track, and the spread of channels stretches it radially. The right panel shows the true orbit on the sky (East to the left, North up), with the companion's position at each of the eight epochs and the unobserved periastron marked.
@@ -157,6 +173,8 @@ ax_sky.legend(frameon=False, fontsize="small")
 plt.show()
 ```
 
+![orbit_fitting output 9.1](generated/orbit_fitting_cell009_out01.png)
+
 ## Astrometry at each epoch
 
 For each night we first search a grid of companion positions and flux ratios (±40 mas in steps of 1 mas, finer than the resolution λ/B ≈ 3.5 mas of the longest baseline), and start a fit of `BinaryModelCartesian` from the best grid point. The positions have uniform priors, and the flux ratio a log-uniform (Jeffreys) prior, as it is a scale. The Laplace approximation at the best fit, [`laplace_cov`](api/inference.md), gives the covariance of the position, and each epoch's time is the mean time of its samples. Between a night's first and last snapshots the companion moves by under 0.02 mas, less than half its positional error, and the motion averages out at the mean time, so one position per night is adequate here.
@@ -195,6 +213,10 @@ measured = PositionData(
 )
 ```
 
+```text
+epochs:   0%|          | 0/8 [00:00<?, ?it/s]
+```
+
 The fitted positions agree with the true ones to within their errors of a few hundredths of a milliarcsecond. The last column is each epoch's χ² (two degrees of freedom) of the fitted position against the truth, using the Laplace covariance; their sum should be near twice the number of epochs if the covariances are right.
 
 ```python
@@ -219,6 +241,19 @@ for r, ra, de in zip(rows, true_dra, true_ddec):
 print(f"total χ² = {total:.1f} for {2 * len(rows)} degrees of freedom")
 ```
 
+```text
+    MJD   Δα fitted (mas)  Δα true   Δδ fitted (mas)  Δδ true   flux    χ²
+60000.0  -19.564 ± 0.030  -19.569    15.338 ± 0.037   15.341   0.156   0.03
+60035.0  -18.807 ± 0.034  -18.832    18.192 ± 0.041   18.236   0.154   1.15
+60095.0  -16.151 ± 0.035  -16.142    21.719 ± 0.041   21.762   0.152   2.82
+60150.0  -12.590 ± 0.033  -12.534    23.518 ± 0.041   23.487   0.147   3.06
+60330.0    2.708 ± 0.034    2.745    20.581 ± 0.043   20.564   0.150   1.24
+60385.0    7.495 ± 0.033    7.522    17.500 ± 0.043   17.507   0.154   1.26
+60445.0   12.298 ± 0.037   12.330    13.277 ± 0.043   13.262   0.149   0.83
+60560.0   19.211 ± 0.033   19.209     3.151 ± 0.038    3.171   0.148   0.34
+total χ² = 10.7 for 16 degrees of freedom
+```
+
 ## Starting orbits
 
 At a fixed period, eccentricity and time of periastron, the sky positions are linear in the four Thiele–Innes constants, so each point of a grid in those three is an exact weighted least-squares solve. [`starting_orbits`](api/orbits.md) runs this grid (here 120 periods from 300 to 5000 days, eccentricities from 0 to 0.9, and 36 times of periastron per period) and converts the best solutions back to Keplerian elements. It needs no random restarts and finds the right basin even when the arc is short. Positions alone fix the node only modulo 180°, so the returned `Omega` lies in [0°, 180°).
@@ -239,6 +274,14 @@ for k, (orbit, chi2) in enumerate(starts):
 best_start = starts[0][0]
 ```
 
+```text
+           period      ecc      inc    omega    Omega    a_mas       χ²
+truth     1100.00     0.30    55.00    70.00   130.00    25.00
+start 0   1101.14     0.30    55.49    71.01   130.43    25.18     13.0
+start 1   1050.28     0.35    55.95    70.47   127.61    24.88     32.3
+start 2   1239.31     0.20    54.50    75.71   134.75    26.00     76.9
+```
+
 ## Priors
 
 virgil's default priors are the invariant (Jeffreys) measures of the groups that act on each parameter, unless there is strong information otherwise:
@@ -252,7 +295,7 @@ virgil's default priors are the invariant (Jeffreys) measures of the groups that
 | Mean anomaly at `t_ref` | uniform on [0°, 360°) | A location in time: invariant under time translation. It is the same as a uniform time of periastron over one period. |
 | Eccentricity $e$ | uniform on [0, 1) | No group acts on $e$, so uniform $e$ is an interim prior, which a population prior can later reweight. |
 
-Two details of the parameterisation matter for the sampler. virgil has no helper for an isotropic inclination yet, so we sample $\cos i$ itself and set $i = \arccos(\cos i)$ in the model; uniform $\cos i$ is then exactly the isotropic prior, with no Jacobian to add. And the three angles are periodic, but a sampler given `Uniform(0, 360)` sees walls at 0° and 360°. We therefore sample each angle as the direction of a 2-vector with an isotropic Gaussian density: the direction is then exactly uniform over the full circle, there is no boundary, and the vector's length is a harmless nuisance. The function `elements` maps the sampled values to the orbital elements; it works on single values inside the model and on whole arrays of samples afterwards.
+Two details of the parameterisation matter for the sampler. virgil has no helper for an isotropic inclination yet, so we sample $\cos i$ itself and set $i = \arccos(\cos i)$ in the model; uniform $\cos i$ is then exactly the isotropic prior, with no Jacobian to add. And the three angles are periodic, but a sampler given `Uniform(0, 360)` sees walls at 0° and 360°. We therefore sample each angle as the direction of a 2-vector $v$. Any rotationally symmetric density for $v$ makes the direction exactly uniform over the full circle, with no boundary, and leaves the vector's length $r$ as a nuisance. The length still matters to the sampler. The data fix the angles to a fraction of a degree, so near a radius $r$ the posterior is a thin wedge, of width proportional to $r$. Under an isotropic Gaussian, $r$ ranges over more than a factor of ten, the wedge narrows into a funnel towards the origin, and no single step size suits it all: NUTS then diverges. So `Ring` gives $v$ the density $\exp[-(r - 1)^2/2s^2]$, with $s = 0.1$, which keeps $r$ within about 20% of 1 and the wedge's width nearly constant. virgil will provide this prior as `AngleVector` (virgil#211). The function `elements` maps the sampled values to the orbital elements; it works on single values inside the model and on whole arrays of samples afterwards.
 
 ```python
 def angle(vec):
@@ -273,7 +316,33 @@ def elements(v):
     )
 
 
-direction = dist.Normal(0.0, 1.0).expand([2]).to_event(1)
+class Ring(dist.Distribution):
+    # A 2-vector with a uniform direction and a length near 1: the density
+    # exp(-(r - 1)^2 / 2 s^2), normalised in the plane.
+    support = dist.constraints.real_vector
+
+    def __init__(self, width=0.1):
+        self.width = width
+        z = width**2 * jnp.exp(-0.5 / width**2) + width * jnp.sqrt(
+            jnp.pi / 2
+        ) * (1 + jax.scipy.special.erf(1 / (width * jnp.sqrt(2))))
+        self.log_z = jnp.log(2 * jnp.pi * z)
+        super().__init__(event_shape=(2,))
+
+    def log_prob(self, v):
+        r = jnp.linalg.norm(v, axis=-1)
+        return -0.5 * ((r - 1) / self.width) ** 2 - self.log_z
+
+    def sample(self, key, sample_shape=()):
+        # Uniform direction; the length from N(1, s), which is close to the
+        # ring's radial density for small s (used only to initialise).
+        k1, k2 = jax.random.split(key)
+        theta = jax.random.uniform(k1, sample_shape, maxval=2 * jnp.pi)
+        r = jnp.abs(1 + self.width * jax.random.normal(k2, sample_shape))
+        return r[..., None] * jnp.stack([jnp.cos(theta), jnp.sin(theta)], -1)
+
+
+direction = Ring(width=0.1)
 orbit_priors = {
     "period": dist.LogUniform(100.0, 1e4),
     "a_mas": dist.LogUniform(1.0, 300.0),
@@ -289,7 +358,7 @@ def run_nuts(model, seed, num_warmup, num_samples, num_chains=1, init=None):
     strategy = (
         {} if init is None else {"init_strategy": init_to_value(values=init)}
     )
-    kernel = NUTS(model, dense_mass=True, target_accept_prob=0.9, **strategy)
+    kernel = NUTS(model, dense_mass=True, target_accept_prob=0.95, **strategy)
     mcmc = MCMC(
         kernel,
         num_warmup=num_warmup,
@@ -344,9 +413,11 @@ fig.suptitle("Prior draws from NUTS with no data (dashed: stated prior)")
 plt.show()
 ```
 
+![orbit_fitting output 19.1](generated/orbit_fitting_cell019_out01.png)
+
 ## Sampling the orbit
 
-Now we add the positions. `measured.term(orbit_fn)` is a likelihood term, the Gaussian log density of the positions given an orbit, which `numpyro_model` adds to the prior. We start four chains at the best Thiele–Innes orbit (with $e$ and $\cos i$ moved slightly off the edges of their priors), and use a dense mass matrix, since period, eccentricity and time of periastron are strongly correlated when the periastron is unobserved. The run is short: a thousand warm-up steps and a thousand samples per chain.
+Now we add the positions. `measured.term(orbit_fn)` is a likelihood term, the Gaussian log density of the positions given an orbit, which `numpyro_model` adds to the prior. We start four chains at the best Thiele–Innes orbit (with $e$ and $\cos i$ moved slightly off the edges of their priors), and use a dense mass matrix, since period, eccentricity and time of periastron are strongly correlated when the periastron is unobserved. The run is short: a thousand warm-up steps and a thousand samples per chain. Afterwards we check the sampler: the number of divergent transitions, the largest split-$\hat R$ over the sampled sites and the smallest effective sample size.
 
 ```python
 def orbit_fn(values):
@@ -380,8 +451,19 @@ mcmc = run_nuts(
     init=init,
 )
 divergences = int(mcmc.get_extra_fields()["diverging"].sum())
+stats = summary(mcmc.get_samples(group_by_chain=True))
+r_hat = max(float(np.max(s["r_hat"])) for s in stats.values())
+n_eff = min(float(np.min(s["n_eff"])) for s in stats.values())
 print(f"{divergences} divergent transitions in {4 * 1000} samples")
+print(f"largest r_hat {r_hat:.3f}, smallest effective sample size {n_eff:.0f}")
 ```
+
+```text
+0 divergent transitions in 4000 samples
+largest r_hat 1.003, smallest effective sample size 1952
+```
+
+A healthy run has no divergences, $\hat R$ below about 1.01 and an effective sample size in the thousands. If there are more than a handful of divergences, do not trust the samples, because the divergences mark regions the sampler could not explore: reparameterise (as `Ring` does for the angles), start closer to the mode or raise `target_accept_prob`. Do not simply drop the divergent samples.
 
 Each sample is turned into orbital elements, and into a total mass at the assumed distance by Kepler's third law, $M = a^3/P^2$ with $a$ in au and $P$ in years. Positions cannot tell $(\Omega, \omega)$ from $(\Omega + 180°, \omega + 180°)$, which only flips the line-of-sight direction, so the full-circle prior gives two mirror-image modes of equal height. The chains stay in the mode where they started; we report it with $\Omega$ in [0°, 180°), the usual convention for visual orbits, and radial velocities would be needed to choose between the two. The table compares the posterior medians and 68% intervals with the truth.
 
@@ -429,6 +511,17 @@ for name, lo, m, hi in zip(table.columns, low, mid, high):
     )
 ```
 
+```text
+P (d)           1108.328  + 20.554 − 19.057   truth   1100.000
+a (mas)           25.059  +  0.096 −  0.085   truth     25.000
+e                  0.292  +  0.017 −  0.017   truth      0.300
+i (deg)           54.981  +  0.317 −  0.301   truth     55.000
+ω (deg)           70.151  +  0.351 −  0.323   truth     70.000
+Ω (deg)          130.416  +  0.780 −  0.746   truth    130.000
+t_peri (MJD)   59778.436  +  6.360 −  6.159   truth  59780.000
+M_tot (M☉)         1.977  +  0.057 −  0.053   truth      1.994
+```
+
 The corner plot shows the joint posterior, with the truth marked. The total mass assumes the distance of 105 pc exactly; with a parallax, its error would add to the mass's through $M \propto D^3$. With the periastron unobserved, the period, eccentricity, time of periastron, inclination and node are strongly correlated: a slightly longer period with a lower eccentricity and an earlier periastron fits the observed half orbit almost as well. The total mass inherits these through $a^3/P^2$. Only the next periastron passage will break the correlations.
 
 ```python
@@ -442,9 +535,11 @@ plt.close(walks_fig)  # the chains' traces are not needed here
 plt.show()
 ```
 
+![orbit_fitting output 25.1](generated/orbit_fitting_cell025_out01.png)
+
 ## Orbits drawn from the posterior
 
-A corner plot shows the elements; what an observer needs to know is where the companion can be. We draw 150 orbits from the posterior and plot them on the sky with [`plot_orbit_ensemble`](api/plotting.md), together with the measured positions (coloured by epoch, with their 1σ error ellipses, which are far smaller than the markers) and the true orbit. Where the epochs cover the orbit the draws coincide; around the unobserved periastron, just south of the primary, they fan out by up to a few milliarcseconds.
+A corner plot shows the elements; what an observer needs to know is where the companion can be. We draw 150 orbits from the posterior and plot them on the sky with [`plot_orbit_ensemble`](api/plotting.md), together with the measured positions (coloured by epoch, with their 1σ error ellipses, which are far smaller than the markers) and the true orbit. Where the epochs cover the orbit the draws coincide; around the unobserved periastron, just south of the primary, they spread by up to about a milliarcsecond.
 
 ```python
 pick = np.random.default_rng(7).choice(len(table), 150, replace=False)
@@ -452,6 +547,8 @@ ensemble = KeplerOrbit(**{k: v[pick] for k, v in post.items()}, t_ref=T_REF)
 fig, ax = plot_orbit_ensemble(ensemble, measured, truth_orbit)
 plt.show()
 ```
+
+![orbit_fitting output 27.1](generated/orbit_fitting_cell027_out01.png)
 
 The same draws as functions of time show when the uncertainty matters. Separation and position angle are tightly pinned during the two observed seasons and spread out towards the next periastron (dotted line), which is therefore the most valuable time for the next observation. The position angle increases with time, as it should for an inclination below 90°.
 
@@ -502,6 +599,8 @@ axes[0].legend(frameon=False, fontsize="small")
 axes[1].set_xlabel("MJD")
 plt.show()
 ```
+
+![orbit_fitting output 29.1](generated/orbit_fitting_cell029_out01.png)
 
 ## Summary
 
