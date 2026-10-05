@@ -82,6 +82,7 @@ from .limits import (  # noqa: E402
     delta_mag_to_flux,
     flux_to_contrast,
     flux_to_delta_mag,
+    injection_limits,
     radial_profile,
     ruffio_upperlimit,
 )
@@ -171,6 +172,7 @@ __all__ = [
     "TruncatedCone",
     "UniformDisk",
     "absil_limits",
+    "injection_limits",
     "circular_support",
     "best_grid_point",
     "build_model",
