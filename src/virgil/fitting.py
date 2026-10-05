@@ -671,11 +671,13 @@ def _gauss_newton_covariance(problem, z):
     def data_residuals(x):
         z_x = unflatten(x)
         model = problem.build(z_x)
-        rows = problem.data_residuals(model)
+        rows = list(problem.data_residuals(model))
         constrained = problem.constrain(z_x)
         rows += [np.ravel(term(constrained)) for term in problem.likelihoods]
         rows += [problem.priors[p].residuals(z_x[p]) for p in vectors]
-        return np.concatenate(rows)
+        # With data=() and no other rows there are no residuals: an empty
+        # vector.
+        return np.concatenate(rows) if rows else np.zeros(0)
 
     def prior_curvature(path):
         prior = problem.priors[path]

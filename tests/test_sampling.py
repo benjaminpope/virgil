@@ -152,6 +152,18 @@ def test_gauss_newton_mass_rejects_an_unconstrained_parameter():
         gauss_newton_mass(scene, priors, data, {"c.dra": 5.0})
 
 
+def test_gauss_newton_mass_allows_no_data():
+    # With data=() the curvature is the priors' alone: a Normal prior's
+    # covariance is its variance.
+    scene = System(star=PointSource(), c=PointSource(flux=0.1, dra=5.0))
+    priors = {"c.dra": dist.Normal(5.0, 2.0)}
+    mass = gauss_newton_mass(scene, priors, (), {"c.dra": 5.0})
+    (paths,) = mass["dense_mass"]
+    onp.testing.assert_allclose(
+        mass["inverse_mass_matrix"][paths], [[4.0]], rtol=1e-6
+    )
+
+
 @pytest.mark.slow
 @pytest.mark.skipif(
     not jax.config.jax_enable_x64, reason="the Hessian check needs x64"

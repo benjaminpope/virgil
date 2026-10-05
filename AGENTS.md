@@ -308,4 +308,5 @@ warm up, so iterate with a single test id and run the full suite once at the end
 - Keep diffs small and focused on the request.
 - Do not commit notebook output churn unrelated to your change.
 - Do not add runtime dependencies to `[project].dependencies` without asking.
+- The pre-push hook (`.githooks/pre-push`, via `scripts/lint_local.sh`) runs the pinned ruff through `uvx ruff@<version>`, reading the version from `[tool.ruff] required-version`, so it works in fresh worktrees without a `.venv`. Never bypass it.
 - Never use `--no-verify`, never rewrite published history, never commit secrets.
