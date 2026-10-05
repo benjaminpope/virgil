@@ -683,12 +683,12 @@ def starting_image(
                 star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
             )
             priors = {
-                "env.sigma": dist.Uniform(1e-3 * resolution, widest),
-                "env.flux": dist.Uniform(0.0, 100.0),
+                "env.sigma": dist.LogUniform(1e-3 * resolution, widest),
+                "env.flux": dist.LogUniform(1e-4, 100.0),
             }
         else:
             model = GaussianDisk(sigma)
-            priors = {"sigma": dist.Uniform(1e-3 * resolution, widest)}
+            priors = {"sigma": dist.LogUniform(1e-3 * resolution, widest)}
         result = fit(model, priors, data)
         if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
             best = result
@@ -704,7 +704,10 @@ def starting_image(
         support = circular_support(npix, scale, npix * scale, hole_mas)
     options = dict(flux=envelope.flux, support=support)
     if start == "moments":
-        model = GaussianDisk(envelope.sigma)
+        # With a log-uniform prior, data with no resolved envelope drive
+        # sigma to its (tiny) lower bound; a Gaussian narrower than a pixel
+        # sampled on the grid is all zeros, so start at least one pixel wide.
+        model = GaussianDisk(max(float(envelope.sigma), scale))
         image = Image.from_model(model, npix, scale, **options)
     elif start == "dirty":
         ratio = float(envelope.flux) if star else None
@@ -994,7 +997,7 @@ def _refit(fixed, fluxes, chi2, scale, rotation):
     χ² falls. Components it sets to zero are removed. Returns the new
     fluxes, or the old ones if no step lowers χ².
     """
-    from scipy.optimize import nnls
+    from scipy.optimize import lsq_linear, nnls
 
     flat = onp.asarray(fluxes).ravel()
     active = onp.flatnonzero(flat > 0)
@@ -1008,7 +1011,15 @@ def _refit(fixed, fluxes, chi2, scale, rotation):
     r, columns = _clean_columns(*fixed, fluxes, indices, scale, rotation)
     jacobian = onp.asarray(columns, float)[: active.size].T
     current = flat[active]
-    solution, _ = nnls(jacobian, jacobian @ current - onp.asarray(r, float))
+    rhs = jacobian @ current - onp.asarray(r, float)
+    try:
+        solution, _ = nnls(jacobian, rhs, maxiter=50 * active.size)
+    except RuntimeError:
+        # nnls gives up ("Maximum number of iterations reached") on the
+        # ill-conditioned columns of high signal-to-noise data. The bounded
+        # least-squares solver returns its best point instead of raising,
+        # and the backtracking below keeps the step only if χ² falls.
+        solution = lsq_linear(jacobian, rhs, bounds=(0.0, onp.inf)).x
     for fraction in (1.0, 0.5, 0.25, 0.125):
         trial = flat.copy()
         trial[active] = current + fraction * (solution - current)
@@ -1549,7 +1560,10 @@ class LCurve:
                     )
                 )
             scaled = jac[:, b > 0] / onp.sqrt(b[b > 0])
-            curvature = onp.linalg.eigvalsh(_smaller_gram(scaled))
+            # Eigenvalues of the Gram matrix, as squared singular values:
+            # forming the Gram matrix loses them to rounding (see
+            # log_evidence).
+            curvature = onp.linalg.svd(scaled, compute_uv=False) ** 2
             n_good = onp.sum(curvature / (curvature + weight))
             gap.append(2.0 * weight * penalty - n_good)
         gap = onp.asarray(gap)
@@ -1595,15 +1609,6 @@ def _residual_jacobian(model, data, path):
         model, datasets = cast_tree((model, datasets), "float64")
         r, jac = _jitted_residual_jacobian(model, datasets, path)
         return onp.asarray(r, dtype=float), onp.asarray(jac, dtype=float)
-
-
-def _smaller_gram(matrix):
-    """``A Aᵀ`` or ``Aᵀ A``, whichever is smaller (same nonzero eigenvalues)."""
-    return (
-        matrix @ matrix.T
-        if matrix.shape[0] <= matrix.shape[1]
-        else matrix.T @ matrix
-    )
 
 
 def _single_model(model, caller):
@@ -1679,11 +1684,13 @@ def log_evidence(model, data, path="env"):
     r, jac = _residual_jacobian(model, data, latent_path)
     chi2 = float(r @ r)
     z = onp.asarray(model.get(latent_path), dtype=float)
-    # I + JᵀJ is symmetric positive definite: its log-determinant from a
-    # Cholesky factor.
-    gram = _smaller_gram(jac)
-    factor = onp.linalg.cholesky(onp.eye(gram.shape[0]) + gram)
-    logdet = 2.0 * onp.sum(onp.log(onp.diag(factor)))
+    # log det(I + JᵀJ) = Σ log(1 + s²) over the singular values s of J. A
+    # Cholesky factor of I + JJᵀ fails on high signal-to-noise data: the
+    # Gram matrix is low rank with a huge norm, and its rounding error
+    # (~ε‖JJᵀ‖) can exceed the identity, leaving I + JJᵀ numerically
+    # indefinite. The singular values avoid forming it.
+    singular = onp.linalg.svd(jac, compute_uv=False)
+    logdet = float(onp.sum(onp.log1p(singular**2)))
     return float(-0.5 * chi2 - 0.5 * onp.sum(z**2) - 0.5 * logdet)
 
 
@@ -1788,7 +1795,9 @@ def error_scale(model, data, path="env"):
     # add penalty residuals (OIData.n_residuals) that are not observations.
     datasets = data if isinstance(data, (list, tuple)) else [data]
     n_data = sum(d.n_independent for d in datasets)
-    lam = onp.clip(onp.linalg.eigvalsh(_smaller_gram(jac)), 0.0, None)
+    # The Gram matrix's eigenvalues, as squared singular values (see
+    # log_evidence): never negative, unlike eigvalsh of a rounded JJᵀ.
+    lam = onp.linalg.svd(jac, compute_uv=False) ** 2
     # Solve g(β) = β χ² + γ(β) − N = 0. g is increasing and concave, so
     # Newton's method from β = 0 (where g = −N) rises monotonically to the
     # root.

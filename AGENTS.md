@@ -123,6 +123,7 @@ see that repository's `PLAN.md` for the boundary.
 | `fields.py` | Gaussian-process log-brightness for an `Image` (`GaussianField`, a DCT field with a Matérn-like spectrum) |
 | `observables.py` | extra observable blocks after `vis`/`phi` in `OIData`: OI_FLUX spectra with marginalised grey scales (`FluxSpectrum`), \|V\|, T3AMP, and continuum-normalised differential phases (`DifferentialPhase`, closure-free beside closure phases); `continuum_operator` |
 | `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, `GaussianLine`, `LorentzianLine`, `Nodes` for a free flux per channel, and `Sum`; `Tabulated` is deprecated for `Nodes`) accepted as a component's `flux` (SPARCO) |
+| `angles.py` | `AngleVector`: an angle prior sampled as a 2-D vector (site `<path>_vec`, ring and von Mises chord residuals), recognised by `fit`, `gauss_newton_mass` and `numpyro_model`; imports nothing from virgil |
 | `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
@@ -138,7 +139,8 @@ Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_c
 `imaging` (which imports `fitting`, `fields`, `likelihood` and `models`). `likelihood` →
 `inference` → `grid_fit` and `likelihood` → `limits`; `grid_fit` and `limits` also use
 `_grid`, which imports only `_utils`, and do not import each other; `limits` →
-`plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `orbits` imports only `_utils`
+`plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `angles` imports nothing from virgil, and
+`likelihood`, `fitting` and `orbits` import it. `orbits` imports only `_utils` and `angles`
 (and jaxoplanet lazily), and `models` imports `orbits` (for `Attached`). `simulate` imports `fitting`.
 
 ## Flux and contrast
@@ -306,4 +308,6 @@ warm up, so iterate with a single test id and run the full suite once at the end
 - Keep diffs small and focused on the request.
 - Do not commit notebook output churn unrelated to your change.
 - Do not add runtime dependencies to `[project].dependencies` without asking.
+- The pre-push hook (`.githooks/pre-push`, via `scripts/lint_local.sh`) runs the pinned ruff through `uvx ruff@<version>`, reading the version from `[tool.ruff] required-version`, so it works in fresh worktrees without a `.venv`. Never bypass it.
+- Before the first push of a branch that may predate a tooling fix on main, merge `origin/main` into it (a merge, never a rebase). The pre-push hook runs the branch's own copy of `scripts/lint_local.sh`, so an old branch can carry an old, broken hook. If the hook fails because of the environment rather than the code (e.g. "ruff 0.12 does not match 0.11.0"), merging main is the fix, not `--no-verify`.
 - Never use `--no-verify`, never rewrite published history, never commit secrets.

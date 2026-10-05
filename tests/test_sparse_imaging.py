@@ -424,3 +424,22 @@ def test_clean_fits_the_base():
         clean(data, NPIX, SCALE, base=base, base_priors=priors, refit_every=0)
     with pytest.raises(ValueError, match="base_priors"):
         clean(data, NPIX, SCALE, base_priors=priors)
+
+
+def test_clean_survives_a_failed_major_cycle_solve(monkeypatch):
+    # scipy's nnls can give up ("Maximum number of iterations reached") on
+    # the ill-conditioned columns of high signal-to-noise data; the refit
+    # then falls back to a bounded least-squares solve.
+    import scipy.optimize
+
+    def failing_nnls(*args, **kwargs):
+        raise RuntimeError("Maximum number of iterations reached.")
+
+    monkeypatch.setattr(scipy.optimize, "nnls", failing_nnls)
+    truth = Image.from_brightness(
+        gaussian_blob(NPIX, SCALE, 15.0, dra=20.0), SCALE
+    )
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(6))
+    result = clean(data, NPIX, SCALE, max_iterations=60, refit_every=20)
+    assert onp.isfinite(result.chi2_red).all()
+    assert result.chi2_red[-1] < result.chi2_red[0]

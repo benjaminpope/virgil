@@ -91,11 +91,13 @@ All three codes use the **secondary's** ω, with the primary's at ω + 180°, an
 - **Near face-on,** astrometry measures ϖ but not Ω and ω separately (orbit design §2.3, symmetry 4). ϖ is then the tight vector and Ω the broad one, instead of two broad, correlated angles.
 - **The primary/secondary swap** (ω + 180°, r → −r) is not a parameterisation matter. The flux-ratio convention fixes it.
 
-**Evidence.** The radial dimension integrates out exactly, since its prior is normalised. A Laplace evidence in v-space approximates that integral by a Gaussian in r, with an error of order s². Test it against the angle-space evidence on a one-dimensional problem.
+**Priors stay invariant.** virgil's default priors are the invariant (Jeffreys) priors of each parameter's symmetry group. For the orbit's orientation that is the Haar measure on rotations: uniform in cos i, Ω and ω. The ring makes each vector's angle exactly uniform. The map (Ω, ω) → (2Ω, ϖ) is linear on the torus, with a constant Jacobian (2), so uniform (Ω, ω) is uniform (2Ω, ϖ) and no correction is needed. A von Mises prior is strong information and must say where it comes from, such as an external orbit.
 
-**Interface (to be settled when built).**
-- Keep it general: an angle-vector prior usable for any angle path in virgil, not only orbits. It would create a sample site `<path>_vec` of shape (2,) with the ring and an optional von Mises or axial chord, and a deterministic `<path>` in degrees. `fit`'s prior-residual hook recognises it.
-- An orbit helper chooses (2Ω, ϖ) or (Ω, ϖ), and builds the `KeplerOrbit`.
+**Evidence.** The radial dimension integrates out exactly, since its prior is normalised. A Laplace evidence in v-space approximates that integral by a Gaussian in r. *Corrected when built:* the error is not of order s². The plane density's mode is at r = 1, and there the Hessian in v is diagonal in (r, rθ), with no cross term. So the v-space Laplace evidence is the angle-space Laplace evidence times s√(2π)/Z_s, the Gaussian integral of exp(−(r − 1)²/2s²) over the whole line divided by the exact normaliser Z_s = ∫₀^∞ r exp(−(r − 1)²/2s²) dr = s√(2π) Φ(1/s) + s² exp(−1/2s²). The two differ only by the truncation at r = 0, a relative error of order exp(−1/2s²) (about 1e-6 in log Z at s = 0.25). (The polar marginal of r, ∝ r exp(−(r − 1)²/2s²), has mean ≈ 1 + s², but that does not enter.) The only error left is the Laplace error in θ itself. `tests/test_angles.py` checks both.
+
+**Interface (built).**
+- `virgil.angles.AngleVector(mean=None, kappa=None, *, axial=False, ring_width=0.25)`, a numpyro distribution on ℝ², placed in the usual `priors` dict under the angle's path. `numpyro_model` samples `<path>_vec` and records the deterministic `<path>` in degrees; `fit` optimises the vector (from the unit vector of the starting angle), its residuals are the ring and the chord, and `FitResult.values` holds both `<path>` and `<path>_vec`. `gauss_newton_mass` keys the block by `<path>_vec` and differentiates the vector's residuals with the data's rows, since they mix its two coordinates.
+- `orbits.orientation_priors(positions_only=True, prefix="")` returns uniform angle vectors for `two_Omega` (or `Omega`) and `varpi`; `KeplerOrbit.from_varpi(period, dt_peri, ecc, inc, varpi, a_mas, two_Omega=... | Omega=...)` builds the orbit, through `orientation_from_varpi`.
 
 **Tests.**
 1. θ is uniform under the ring prior (Kolmogorov–Smirnov test).
@@ -115,8 +117,13 @@ Thompson et al. (2023) replace t_p with θ, the position angle at a reference ep
 
 **Properties.**
 - θ is itself an angle, so it is sampled as a vector (§4.1).
+- **The prior needs a Jacobian.** The invariant prior is uniform in the time of periastron, i.e. in the mean anomaly M at `t_ref` (a translation), not in θ. Sampling θ therefore carries the log-Jacobian
+  log|∂M/∂θ| = 3/2 log(1 − e²) − 2 log(1 + e cos f) + log|cos i| − log(cos²φ cos² i + sin²φ), with φ = θ − Ω,
+  as a prior term at fixed (P, e, i, ω, Ω). Checked numerically: it matches finite differences to 1e-7, and θ weighted by it gives a uniform M (to 1.5% in 12 bins over 4 × 10⁵ draws). A uniform prior placed on θ itself would be a different prior on t_p, one that depends on the orientation and e; this term undoes that. (We have not checked how Octofitter handles this.)
 - The map is singular at i = 90°, where the position angle takes only two values. Near edge-on, keep `dt_peri` or use `StateVectorOrbit`.
 - θ belongs with the short-arc tools, beside `StateVectorOrbit`.
+
+**Built.** `KeplerOrbit.from_position_angle(period, theta, ecc, inc, omega, Omega, a_mas, t_ref)` uses the conversion above, with E = atan2(√(1 − e²) sin f, e + cos f) and `dt_peri` = −M P/2π in [−P/2, P/2). A concrete i = 90° is rejected. The Jacobian is `position_angle_log_jacobian`. `position_angle_prior(orbit_fn)` is a `likelihoods=` term with no residuals, whose `log_norm` is −log|∂M/∂θ| (for `fit`, which then uses L-BFGS) and whose `loglike` is +log|∂M/∂θ| (for `numpyro_model`). It reads θ back from the orbit's position at `t_ref`, so it needs only the orbit function.
 
 ### 4.3 North angle and plate scale (item 5)
 **Per dataset,** a rotation δ and a fractional scale s act on the scene's sky positions: (dra, ddec) → (1 + s) R(δ)(dra, ddec).
@@ -124,6 +131,13 @@ Thompson et al. (2023) replace t_p with θ, the position angle at a reference ep
 - **Long-baseline interferometers** know their baselines geometrically, so δ = 0 there.
 - **Imaging, masking and kernel-phase datasets,** and published positions (`PositionData`), take both, with Gaussian priors from the instrument's astrometric calibration.
 - A sign test (a known rotation recovered with the right sign) goes with the position-angle round trips of orbit design §5.3.
+
+*As built (2026-10-05), with corrections to the above:*
+- **The sign, pinned.** R(δ) = [[cos δ, sin δ], [−sin δ, cos δ]] on (dra, ddec): every position angle the dataset measures is the true one plus δ. For `OIData` that is a rotation of (u, v) by −δ (`OIData.with_north_angle`, the `noise=` term `north_angle`, in degrees). The sign test is in `tests/test_pa_round_trip.py`.
+- **The scale is a factor m = 1 + s,** as `wavel_scale` is (and as Octofitter's plate scale is), so its prior is centred on 1. For `OIData` the plate scale is `wavel_scale` = **1/m**, not m: evaluating at λ·m rescales the spatial frequencies as a sky shrunk by m would.
+- **`PositionData` does not go through `noise=`,** which holds one dict per `OIData`. Its terms are paths of fitted values, `PositionData.term(orbit, north_angle="…", plate_scale="…")`, as `RVData.term`'s `jitter` is.
+- **No default priors.** "Gaussian priors from the instrument's astrometric calibration" is strong information the user must state: the invariant prior of δ is uniform on the circle (and of m log-uniform), under which, with one dataset, each is degenerate with the scene's orientation or size.
+- A `uv_grid` is dropped when `north_angle` is applied (its rotation is static); the direct transform gives the same visibilities.
 
 **Not adopted, and why:**
 - **OFTI** (Blunt et al. 2017). Its niche, cheap posteriors from short arcs of relative astrometry, is to be covered more exactly by the Thiele–Innes marginalisation. That is designed (`thiele_innes_marginalisation.md`) but not yet built (Stage 6a.1, "Later"); until then, `starting_orbits` plus NUTS is the route. The marginalisation integrates the four linear elements analytically instead of scaling and rotating prior draws. That note already cites OFTI and compares it (§2.1 there). OFTI is also a good comparison in item 2.
@@ -147,7 +161,7 @@ Thompson et al. (2023) replace t_p with θ, the position angle at a reference ep
 | Rejection sampling for short arcs (comparison) | Blunt et al. 2017, AJ 153, 229 (OFTI) |
 | Orbit fits directly to closure phases and kernel phases; multi-epoch detection in the orbital domain | Thompson et al. 2023, AJ 166, 164 (Octofitter) |
 | Observable-based priors (if adopted) | O'Neil et al. 2019, AJ 158, 4 |
-| Angle parameterisation (if adopted) | Octofitter's `UniformCircular`; exoplanet's `Angle` (Foreman-Mackey et al. 2021) |
+| Angle vectors (`virgil.angles.AngleVector`, adopted) | Octofitter's `UniformCircular` (Thompson et al. 2023); exoplanet's `Angle` (Foreman-Mackey et al. 2021) |
 
 **Cite as related software in the docs:** orbitize! (Blunt et al. 2020, AJ 159, 89; Blunt et al. 2024, JOSS 9, 6756), Octofitter (Thompson et al. 2023, AJ 166, 164), orvara (Brandt et al. 2021, AJ 162, 186).
 

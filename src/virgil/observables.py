@@ -27,13 +27,24 @@ whitened residual vector:
 **Grey scales are marginalised, not fitted.** A spectrum's scale k (and an
 optional polynomial in λ times the spectrum) enters linearly, so with a
 Gaussian prior it integrates out in closed form (Luger, Foreman-Mackey &
-Hogg 2017): the data are Gaussian with covariance ``D + A Λ Aᵀ`` about
-``A μ``, whitened by the same successive rank-one steps as the 6d gains
-([`virgil.gains`][virgil.gains]), with the log-determinant (which depends
-on the model's spectral shape) kept in the effective errors. The prior on
-k is centred on the data's own mean level, with a width of 100% by default:
-broad, but not truncated at zero. The conditional posterior of k is
+Hogg 2017; ``virgil._linear``): the data are Gaussian with covariance
+``D + A Λ Aᵀ`` about ``A μ``, whitened by the same successive rank-one
+steps as the 6d gains, with the log-determinant (which depends on the
+model's spectral shape) kept in the effective errors. The conditional
+posterior of k is
 [`flux_scale_posterior`][virgil.likelihood.flux_scale_posterior].
+
+**The prior on k is stated, never taken from the data.** Give it as
+``scale=(mean, sd)`` in the data's units (e.g. Jy), with
+[`OIData.with_flux_scale`][virgil.oidata.OIData.with_flux_scale]. Normalised
+spectra (``"nflux"``) default to ``(1, 0.1)``. The Gaussian is a
+*proposal*: k is a positive scale, whose Jeffreys prior is 1/k on stated
+bounds. The two differ by about σ_k/k, which is negligible for a
+well-measured spectrum. For the Jeffreys posterior, reweight samples of k
+from the conditional posterior by ``1 / (k N(k; mean, sd²))`` within the
+bounds, or sample log k under a log-uniform prior directly, as a model
+parameter rather than marginalised. Make no evidence claims that depend
+on the Gaussian's width.
 
 **Differential phases.** A pipeline's differential phase is arg V minus a
 fit of a + b/λ (an offset and a delay) over continuum channels, per
@@ -65,7 +76,7 @@ import jax.numpy as np
 import jax.scipy.linalg as jsl
 import numpy as onp
 
-from .gains import _whiten_blocks
+from ._linear import posterior, whiten_blocks
 
 __all__ = [
     "DifferentialPhase",
@@ -253,18 +264,34 @@ class FluxSpectrum(_Block):
 
     The model of sample i (wavelength λᵢ, scale group gᵢ) is
 
-        mᵢ = Σ_j w_j tᵢ xᵢʲ,   w ~ N((μ_g, 0, ...), diag(τ_j μ_g)²),
+        mᵢ = Σ_j w_j tᵢ xᵢʲ,   w ~ N((μ, 0, ...), diag(s, τ_1 μ, ...)²),
 
     with t the model's template: the total spectrum Σ fᵢ(λ)
     (``"flux"``), the same divided by its continuum fit per row
     (``"nflux"``), or the total spectrum times |V| (``"corrflux"``),
     normalised to a mean of 1 per scale group (except ``"nflux"``, which
     is already normalised). x is λ scaled to [-1, 1] across the group, so
-    w_0 = k is the grey scale and w_j (j ≥ 1) an optional polynomial. μ_g
-    is the data's weighted mean level (1 for ``"nflux"``), and τ the
-    relative widths, so the prior is broad but not truncated at zero. The
-    weights are marginalised analytically (see the module notes). Build
-    with :meth:`build`; change the groups and widths with
+    w_0 = k is the grey scale and w_j (j ≥ 1) an optional polynomial.
+    ``(μ, s)`` is the stated prior on k, in the data's units (the same for
+    every group; ``(1, 0.1)`` by default for ``"nflux"``), and τ the
+    polynomial's widths relative to μ. The prior is a proposal for the
+    Jeffreys 1/k (see the module notes). The weights are marginalised
+    analytically.
+
+    **Choice of prior.** k is a scale parameter. Under rescaling of k the
+    invariant (Jeffreys) prior is ∝ 1/k, uniform in log k, but that prior
+    is improper, so an evidence computed with it is undefined. The broad
+    Gaussian used here instead approximates a prior uniform in k. The only
+    claim made is local: when k is sharply measured (σ_k/k ≪ 1, as for any
+    useful OI_FLUX spectrum), the factor 1/k varies by only a fraction
+    σ_k/k across the likelihood's width, so the posteriors of k and of the
+    other parameters are insensitive to the choice. Evidence comparisons
+    need a proper prior: finite positive bounds [k_min, k_max], with density
+    1 / (k ln(k_max/k_min)). With such bounds, that log-uniform prior is the
+    Jeffreys choice under the rule for scale groups. Marginalising in log k
+    is not linear and is not done here (a follow-up).
+
+    Build with :meth:`build`; change the prior, groups and widths with
     [`OIData.with_flux_scale`][virgil.oidata.OIData.with_flux_scale].
     """
 
@@ -278,12 +305,14 @@ class FluxSpectrum(_Block):
     members: onp.ndarray
     count: onp.ndarray
     poly: onp.ndarray
-    mu: onp.ndarray
+    mu: onp.ndarray | None
     cont_rows: onp.ndarray | None
     cont_basis: onp.ndarray | None
     cont_fit: onp.ndarray | None
     kind: str = eqx.field(static=True)
-    widths: tuple = eqx.field(static=True)
+    widths: tuple | None = eqx.field(static=True)
+    scale: tuple | None = eqx.field(static=True)
+    poly_width: float = eqx.field(static=True)
     per: str = eqx.field(static=True)
     continuum: tuple | None = eqx.field(static=True)
     continuum_order: int = eqx.field(static=True)
@@ -303,7 +332,7 @@ class FluxSpectrum(_Block):
         sample=None,
         mjd=None,
         per="dataset",
-        width=None,
+        scale=None,
         poly_order=0,
         poly_width=0.1,
         continuum=None,
@@ -328,14 +357,17 @@ class FluxSpectrum(_Block):
         per : {"dataset", "row", "frame", "station"}, optional
             One grey scale for all the samples (default), or one per row,
             frame or station (telescope or baseline).
-        width : float, optional
-            Relative prior width of the grey scale (default 1.0, or 0.1 for
-            ``"nflux"``).
+        scale : (float, float), optional
+            The prior ``(mean, sd)`` of the grey scale k, in the data's
+            units, stated rather than taken from the data. Required for
+            ``"flux"`` and ``"corrflux"`` before the likelihood is
+            evaluated; ``(1, 0.1)`` by default for ``"nflux"``.
         poly_order : int, optional
             Also marginalise a polynomial in λ of this order times the
             template (default 0: a grey scale only).
         poly_width : float, optional
-            Relative prior width of each polynomial coefficient.
+            Prior width of each polynomial coefficient, relative to the
+            scale's prior mean.
         continuum : sequence of (lo, hi), optional
             For ``"nflux"``: the continuum ranges (metres) its model is
             normalised over, per row (default: every channel).
@@ -373,18 +405,25 @@ class FluxSpectrum(_Block):
             for j in range(1, poly_order + 1):
                 poly[idx, j] = x**j
 
-        weights = 1.0 / errors**2
-        mu = onp.ones(n_group)
-        if kind != "nflux":
-            level = onp.bincount(group, weights * values, n_group)
-            level = level / onp.bincount(group, weights, n_group)
-            fallback = onp.bincount(group, onp.abs(values), n_group)
-            fallback = fallback / onp.bincount(group, None, n_group)
-            mu = onp.where(level > 0, level, fallback)
-            mu = onp.where(mu > 0, mu, 1.0)
-        if width is None:
-            width = 0.1 if kind == "nflux" else 1.0
-        widths = (float(width),) + (float(poly_width),) * poly_order
+        if scale is None and kind == "nflux":
+            scale = (1.0, 0.1)
+        mu, widths = None, None
+        if scale is not None:
+            mean, sd = (float(x) for x in scale)
+            if not (onp.isfinite(mean) and mean > 0):
+                raise ValueError(
+                    f"The scale's prior mean must be positive and finite, "
+                    f"not {mean}."
+                )
+            if not (onp.isfinite(sd) and sd > 0):
+                raise ValueError(
+                    f"The scale's prior sd must be positive and finite, not "
+                    f"{sd} (a flat prior is not supported)."
+                )
+            mu = onp.full(n_group, mean)
+            # Widths relative to the mean: the scale's own, then the
+            # polynomial's.
+            widths = (sd / mean,) + (float(poly_width),) * poly_order
 
         continuum = _ranges(continuum)
         cont_rows = cont_basis = cont_fit = None
@@ -411,6 +450,8 @@ class FluxSpectrum(_Block):
             cont_fit=cont_fit,
             kind=kind,
             widths=widths,
+            scale=None if scale is None else (mean, sd),
+            poly_width=float(poly_width),
             per=per,
             continuum=continuum,
             continuum_order=int(continuum_order),
@@ -422,9 +463,9 @@ class FluxSpectrum(_Block):
         rows = onp.flatnonzero(keep)
         options = dict(
             per=self.per,
-            width=self.widths[0],
-            poly_order=len(self.widths) - 1,
-            poly_width=self.widths[1] if len(self.widths) > 1 else 0.1,
+            scale=self.scale,
+            poly_order=self.poly.shape[1] - 1,
+            poly_width=self.poly_width,
             continuum=self.continuum,
             continuum_order=self.continuum_order,
         )
@@ -472,7 +513,16 @@ class FluxSpectrum(_Block):
         count = np.asarray(self.count, base.dtype)
         return base / (total / count)[self.group]
 
+    def _require_prior(self):
+        if self.mu is None:
+            raise ValueError(
+                f"State the prior on the {self.kind!r} grey scale, in the "
+                "data's units: data.with_flux_scale(scale=(mean, sd)). It is "
+                "not taken from the data (see virgil.observables)."
+            )
+
     def predict(self, model_object, cvis):
+        self._require_prior()
         mu = np.asarray(self.mu)[self.group]
         return mu * self._template(model_object, cvis)
 
@@ -489,33 +539,32 @@ class FluxSpectrum(_Block):
         x = (prediction - data) / errors
         cols = self._columns(prediction, errors)
         local = cols.at[self.members].get(mode="fill", fill_value=0.0)
-        whitened, extra = _whiten_blocks(x, self.members, local)
+        whitened, extra = whiten_blocks(x, self.members, local)
         return whitened, errors * np.exp(extra)
 
     def posterior(self, prediction, data, errors):
         """Conditional posterior of the weights w per group: mean and cov.
 
         ``mean[g, 0]`` is the grey scale k of group g, multiplying the
-        template; ``mean[g, j]`` (j ≥ 1) the polynomial coefficients.
+        template; ``mean[g, j]`` (j ≥ 1) the polynomial coefficients. The
+        Gaussian prior is a proposal for k's Jeffreys prior (see the
+        module notes).
         """
+        # In the standardised form of virgil._linear: x about the prior
+        # mean A μ (the prediction is μ t), U the whitened columns, per
+        # group; padding has zero rows, which change nothing.
+        x = (data - prediction) / errors
+        cols = self._columns(prediction, errors)
+        x = x.at[self.members].get(mode="fill", fill_value=0.0)
+        U = cols.at[self.members].get(mode="fill", fill_value=0.0)
+        mean, cov = jax.vmap(posterior)(x, U)
         mu = np.asarray(self.mu, prediction.dtype)
-        template = prediction / mu[self.group]
-        a = template[:, None] * np.asarray(self.poly, prediction.dtype)
-        a = a.at[self.members].get(mode="fill", fill_value=0.0)
-        d = data.at[self.members].get(mode="fill", fill_value=0.0)
-        inv_var = (
-            (1.0 / errors**2).at[self.members].get(mode="fill", fill_value=0.0)
+        root = np.asarray(self.widths, prediction.dtype)[None, :] * mu[:, None]
+        prior_mean = np.zeros_like(root).at[:, 0].set(mu)
+        return (
+            prior_mean + root * mean,
+            root[:, :, None] * cov * root[:, None, :],
         )
-        widths = np.asarray(self.widths, prediction.dtype)
-        prior_var = (widths[None, :] * mu[:, None]) ** 2
-        prior_mean = np.zeros_like(prior_var).at[:, 0].set(mu)
-        precision = np.einsum("gn,gnj,gnk->gjk", inv_var, a, a)
-        precision = precision + jax.vmap(np.diag)(1.0 / prior_var)
-        cov = np.linalg.inv(precision)
-        resid = d - np.einsum("gnj,gj->gn", a, prior_mean)
-        rhs = np.einsum("gn,gnj,gn->gj", inv_var, a, resid)
-        mean = prior_mean + np.einsum("gjk,gk->gj", cov, rhs)
-        return mean, cov
 
     def simulated(self, prediction, cvis, noise, key=None):
         values = prediction
@@ -534,7 +583,6 @@ class FluxSpectrum(_Block):
             values = values + np.sum(columns * z[self.group], axis=1)
         if isinstance(values, jax.core.Tracer):
             return eqx.tree_at(lambda b: b.values, self, values)
-        # Centre the scale's prior on the new data's level.
         return self.rebuild(values=values)
 
 
@@ -917,7 +965,7 @@ class DifferentialPhase(_Block):
         n = n_f * r * k
         flat = np.arange(n).reshape(n_f, r * k)
         rows = np.where(valid.reshape(n_f, r * k), flat, n)
-        white, extra = _whiten_blocks(x.reshape(-1), rows, local)
+        white, extra = whiten_blocks(x.reshape(-1), rows, local)
         effective = np.diagonal(chol, axis1=2, axis2=3).reshape(-1)
         effective = effective * np.exp(extra)
 

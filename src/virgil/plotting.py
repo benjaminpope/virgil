@@ -1116,6 +1116,184 @@ def plot_contrast_curve(
     return fig, ax
 
 
+# === ORBITS ===
+
+
+def _orbit_tracks(orbits, n_points):
+    """``(dra, ddec)`` over one period of each orbit, shape (n, n_points)."""
+    import jax
+    import jax.numpy as jnp
+
+    batched = jax.tree_util.tree_map(jnp.atleast_1d, orbits)
+    phase = jnp.linspace(0.0, 1.0, n_points)
+
+    def track(orbit):
+        # Times relative to the orbit's t_ref, from one periastron to the
+        # next, so the tracks need no absolute (float32-unsafe) MJDs.
+        dra, ddec, _ = orbit._relative(orbit.dt_peri + orbit.period * phase)
+        return dra, ddec
+
+    dra, ddec = jax.vmap(track)(batched)
+    return np.asarray(dra), np.asarray(ddec)
+
+
+def _position_covariances(positions):
+    """The ``(n, 2, 2)`` covariances of a ``PositionData``'s positions."""
+    chol = np.linalg.inv(np.asarray(positions.whitener, dtype=float))
+    return chol @ np.swapaxes(chol, -1, -2)
+
+
+@_styled
+def plot_orbit_ensemble(
+    orbits,
+    positions=None,
+    truth=None,
+    *,
+    n_points=400,
+    n_sigma=1.0,
+    color="#3c6e9f",
+    alpha=None,
+    truth_color="#d1495b",
+    cmap="viridis",
+    ax=None,
+    figsize=(6.5, 6),
+):
+    """Draw orbits on the sky, e.g. draws from a posterior, with the data.
+
+    East is to the left and North up, and the primary sits at the origin.
+    Each orbit is drawn over one full period as a thin line; the measured
+    positions are coloured by time, with their error ellipses.
+
+    Parameters
+    ----------
+    orbits : KeplerOrbit
+        One orbit, or many as a single
+        [`KeplerOrbit`][virgil.orbits.KeplerOrbit] whose elements are 1-D
+        arrays of equal length (e.g. built from posterior samples).
+    positions : PositionData, optional
+        Measured positions to overlay, with ``n_sigma`` error ellipses.
+    truth : KeplerOrbit, optional
+        A reference orbit (e.g. the truth of a simulation), drawn as a
+        thicker contrasting line.
+    n_points : int, optional
+        Points along each orbit.
+    n_sigma : float, optional
+        Size of the error ellipses, in standard deviations.
+    color, truth_color : optional
+        Colours of the ensemble and of the reference orbit.
+    alpha : float, optional
+        Opacity of each ensemble line; by default it falls with the number
+        of orbits, so that the density of lines reads as probability.
+    cmap : str, optional
+        Colour map for the epochs' times.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on.
+    figsize : tuple, optional
+        Size of a new figure.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)``.
+    """
+    from matplotlib.collections import LineCollection
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Ellipse
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+
+    dra, ddec = _orbit_tracks(orbits, n_points)
+    if alpha is None:
+        alpha = float(np.clip(8.0 / len(dra), 0.03, 0.8))
+    ax.add_collection(
+        LineCollection(
+            np.stack([dra, ddec], -1),
+            colors=color,
+            linewidths=0.7,
+            alpha=alpha,
+            zorder=1,
+        )
+    )
+    handles = [Line2D([], [], color=color, lw=1.2, alpha=0.8)]
+    labels = [f"{len(dra)} sampled orbits" if len(dra) > 1 else "orbit"]
+
+    if truth is not None:
+        true_dra, true_ddec = _orbit_tracks(truth, n_points)
+        (line,) = ax.plot(
+            true_dra[0], true_ddec[0], color=truth_color, lw=1.8, zorder=2
+        )
+        handles.append(line)
+        labels.append("true orbit")
+
+    (star,) = ax.plot(
+        0.0, 0.0, "*", color="k", ms=14, mec="w", mew=0.6, zorder=4
+    )
+    handles.append(star)
+    labels.append("primary")
+
+    if positions is not None:
+        mjd = positions.t_ref + np.asarray(positions.dt, dtype=float)
+        x = np.asarray(positions.dra, dtype=float)
+        y = np.asarray(positions.ddec, dtype=float)
+        norm = matplotlib.colors.Normalize(
+            mjd.min(), max(mjd.max(), mjd.min() + 1)
+        )
+        colours = matplotlib.colormaps[cmap](norm(mjd))
+        for xi, yi, cov, c in zip(
+            x, y, _position_covariances(positions), colours
+        ):
+            values, vectors = np.linalg.eigh(cov)
+            angle = np.degrees(np.arctan2(vectors[1, -1], vectors[0, -1]))
+            width, height = 2 * n_sigma * np.sqrt(np.maximum(values[::-1], 0))
+            ax.add_patch(
+                Ellipse(
+                    (xi, yi),
+                    width,
+                    height,
+                    angle=angle,
+                    fc="none",
+                    ec=c,
+                    lw=1.0,
+                    zorder=3,
+                )
+            )
+        points = ax.scatter(
+            x,
+            y,
+            c=mjd,
+            cmap=cmap,
+            norm=norm,
+            s=36,
+            edgecolors="k",
+            linewidths=0.5,
+            zorder=5,
+        )
+        handles.append(points)
+        labels.append("measured positions")
+        bar = fig.colorbar(points, ax=ax, shrink=0.8, pad=0.02)
+        bar.set_label("Epoch (MJD)")
+
+    ax.autoscale_view()
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_xlabel("Δα (mas, East)")
+    ax.set_ylabel("Δδ (mas, North)")
+    _enforce_sky_orientation(ax)
+    # Below the axes, so that it never hides an orbit.
+    ax.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.12),
+        ncol=2,
+        frameon=False,
+        fontsize="small",
+    )
+    return fig, ax
+
+
 # === DATA ===
 
 

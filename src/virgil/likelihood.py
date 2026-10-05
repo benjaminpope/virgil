@@ -28,6 +28,7 @@ from ._utils import (
     inflate_errors,
     is_flux_param,
 )
+from .angles import is_angle_vector, vector_angle, vector_site
 from .gains import GAIN_GROUPS, OFFSET_GROUPS
 from .models import SourceModel
 
@@ -174,11 +175,13 @@ def _gaussian_loglike(whitened, errors):
 # Nuisance terms, as accepted by the likelihoods and the ``noise`` argument
 # of ``fit`` and ``numpyro_model``: error inflation (``inflated_errors``),
 # the widths of gains correlated across channels (``OIData.with_gains``) and
-# of closure-phase offsets (``OIData.with_closure_offsets``), and the
-# wavelength scale (``OIData.with_wavelength_scale``).
+# of closure-phase offsets (``OIData.with_closure_offsets``), the
+# wavelength scale (``OIData.with_wavelength_scale``) and the North angle
+# (``OIData.with_north_angle``).
 GAIN_TERMS = tuple(f"vis_gain_{group}" for group in GAIN_GROUPS)
 OFFSET_TERMS = tuple(f"phi_offset_{group}" for group in OFFSET_GROUPS)
 WAVEL_TERMS = ("wavel_scale", "wavel_offset")
+NORTH_TERMS = ("north_angle",)
 NOISE_TERMS = (
     (
         "vis_scale",
@@ -190,6 +193,7 @@ NOISE_TERMS = (
     + GAIN_TERMS
     + OFFSET_TERMS
     + WAVEL_TERMS
+    + NORTH_TERMS
 )
 
 
@@ -311,8 +315,9 @@ def noise_sites(noise, n_datasets):
                 raise ValueError(
                     f"Unknown noise term {term!r}; use one of {NOISE_TERMS}."
                 )
-            if term in WAVEL_TERMS:
-                # Not errors: a scale near 1 and an offset of either sign.
+            if term in WAVEL_TERMS + NORTH_TERMS:
+                # Not errors: a scale near 1, an offset or an angle of
+                # either sign.
                 sites[f"{prefix}.{term}"] = (prior, datasets, term)
                 continue
             lower = getattr(prior.support, "lower_bound", None)
@@ -320,7 +325,12 @@ def noise_sites(noise, n_datasets):
             if value is None or onp.any(value < 0.0):
                 raise ValueError(
                     f"The prior on noise term {term!r} must have "
-                    "non-negative support, e.g. dist.Uniform(0, ...)."
+                    "non-negative support. It is a scale parameter, so its "
+                    "default (Jeffreys) prior is log-uniform on stated "
+                    "bounds that contain its plausible values, e.g. "
+                    "dist.LogUniform(0.1, 10.0) for vis_scale or phi_scale "
+                    "(neutral value 1) and dist.LogUniform(1e-4, 0.3) for "
+                    "added errors and widths."
                 )
             sites[f"{prefix}.{term}"] = (prior, datasets, term)
     return sites
@@ -364,10 +374,13 @@ def _whitened_and_errors(model_object, data_obj, noise):
         if k not in GAIN_TERMS
         and k not in OFFSET_TERMS
         and k not in WAVEL_TERMS
+        and k not in NORTH_TERMS
     }
     observed = data_obj
     if wavel_terms:
         data_obj = data_obj.with_wavelength_scale(**wavel_terms)
+    if "north_angle" in noise:
+        data_obj = data_obj.with_north_angle(noise["north_angle"])
     prediction = data_obj.model(model_object)
     data_obj = observed
     errors = inflated_errors(data_obj, prediction, **inflation)
@@ -415,9 +428,11 @@ def whitened_residuals(model_object, data_obj, **noise):
         widths of the data's gains, ``vis_gain_<group>`` (see
         [`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
         closure-phase offsets, ``phi_offset_<group>`` (see
-        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), and the
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), the
         wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
-        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
+        and the North angle, ``north_angle`` (degrees; see
+        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]).
 
     Returns
     -------
@@ -474,7 +489,9 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
         of the visibility covariance. ``phi_offset_<group>`` does the same
         for closure-phase offsets ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
         ``wavel_scale`` and ``wavel_offset`` evaluate the model at corrected
-        wavelengths (see [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
+        wavelengths (see [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
+        and ``north_angle`` on a rotated sky (see
+        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]).
     """
     whitened, errors = _whitened_and_errors(model_object, data_obj, noise)
     logl = _gaussian_loglike(whitened, errors)
@@ -580,8 +597,10 @@ def _check_positive_flux_prior(name, distribution):
     if unbounded:
         raise ValueError(
             f"The prior on {name!r} allows negative values, but fluxes must "
-            "be non-negative. Use a prior with non-negative support, e.g. "
-            "dist.LogUniform or dist.Uniform(0, ...)."
+            "be non-negative. Use a prior with non-negative support: "
+            "dist.LogUniform(lo, hi) (scale invariant) by default, or "
+            "dist.Uniform(0, ...) as the exception, when a flat flux "
+            "prior is really what you mean."
         )
 
 
@@ -596,6 +615,15 @@ def _term_loglike(term, values):
     if hasattr(term, "loglike"):
         return term.loglike(values)
     return -0.5 * np.sum(np.ravel(term(values)) ** 2)
+
+
+def _sample(numpyro, path, prior):
+    """Sample the parameter at ``path``: an angle vector at ``<path>_vec``,
+    with the angle (degrees) recorded as the deterministic site ``path``."""
+    if is_angle_vector(prior):
+        vector = numpyro.sample(vector_site(path), prior)
+        return numpyro.deterministic(path, vector_angle(vector))
+    return numpyro.sample(path, prior)
 
 
 def numpyro_model(
@@ -627,7 +655,11 @@ def numpyro_model(
         Mapping from parameter path (e.g. ``"comp.flux"``) or function
         argument name to prior; each key is also used as the numpyro
         sample-site name. Priors on fluxes (keys named ``flux`` or ending
-        in ``.flux``) must have non-negative support.
+        in ``.flux``) must have non-negative support. An angle (degrees)
+        with an [`AngleVector`][virgil.angles.AngleVector] prior is
+        sampled as a 2-D vector at the site ``"<path>_vec"``, with the
+        angle recorded as the deterministic site ``"<path>"``: there is no
+        wrap boundary at 0°/360°.
     data_obj : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
         May be ``()`` when ``likelihoods`` holds all the data.
@@ -644,11 +676,24 @@ def numpyro_model(
         gain widths (``vis_gain_<group>``; see
         [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), on
         closure-offset widths (``phi_offset_<group>``; see
-        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]) and on the
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), on the
         wavelength scale (``wavel_scale``, ``wavel_offset``; see
-        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale])
+        and on the North angle (``north_angle``, degrees; see
+        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its
         own terms, as sites ``"noise[i].<term>"``.
+        **Priors.** These terms are scale parameters, so their default
+        (Jeffreys) prior is log-uniform on stated bounds; a
+        ``Uniform(0, ...)`` favours large values. The bounds must contain
+        the plausible values: for the factors ``vis_scale`` and
+        ``phi_scale``, whose neutral value is 1, e.g.
+        ``dist.LogUniform(0.1, 10.0)``; for the added errors and widths
+        (``vis_error_rel``, ``phi_error``, ``vis_gain_<group>``,
+        ``phi_offset_<group>``), e.g. ``dist.LogUniform(1e-4, 0.3)``.
+        ``wavel_scale`` is a scale too: log-uniform about 1 unless a
+        calibration gives a Gaussian (``Normal(1, 2e-4)`` for GRAVITY is
+        such information).
     likelihoods : sequence, optional
         Extra data terms, as for [`fit`][virgil.fitting.fit]: callables of
         the sampled values (a dict keyed like ``priors``) returning whitened
@@ -679,7 +724,7 @@ def numpyro_model(
     >>> dra, ddec, _ = (np.asarray(x) for x in truth.relative(mjd))
     >>> cov = np.broadcast_to(0.05**2 * np.eye(2), (4, 2, 2))
     >>> positions = PositionData(mjd, dra, ddec, cov)
-    >>> priors = {"a_mas": dist.Uniform(5.0, 50.0), "ecc": dist.Uniform(0.0, 0.9)}
+    >>> priors = {"a_mas": dist.LogUniform(5.0, 50.0), "ecc": dist.Uniform(0.0, 0.9)}
     >>> def orbit_fn(v):
     ...     return KeplerOrbit(
     ...         400.0, 30.0, v["ecc"], 60.0, 40.0, 110.0, v["a_mas"], t_ref=60500.0
@@ -712,7 +757,7 @@ def numpyro_model(
     likelihoods = tuple(likelihoods)
 
     def numpyro_fn():
-        values = [numpyro.sample(path, priors[path]) for path in paths]
+        values = [_sample(numpyro, path, priors[path]) for path in paths]
         source = build_model(model, paths, values)
         sources = _per_dataset(source, len(observations))
         terms = {site: numpyro.sample(site, sites[site][0]) for site in sites}

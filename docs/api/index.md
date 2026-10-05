@@ -9,12 +9,15 @@ The everyday names are importable from the top level, e.g.
 - [Models](models/index.md): source models and visibilities
 - [Likelihood](likelihood.md): likelihoods and numpyro models
 - [Gains](gains.md): calibration gains correlated across channels, marginalised analytically
+- [Linear marginalisation](linear.md): the shared algebra for parameters marginalised analytically
 - [Inference](inference.md): Laplace and Fisher curvature
 - [Grid Fit](grid_fit.md): grid searches
 - [Limits](limits.md): contrast limits and flux/contrast/Δmag conversions
+- [Priors](priors.md): isotropic inclination and latitude priors
 - [Detection](detection.md): detection statistics for false-alarm rates and ROC curves
 - [Spectra](spectra.md): wavelength-dependent fluxes
 - [Fitting](fitting.md): `fit`, maximum a posteriori fits; `gauss_newton_mass`, a NUTS mass matrix from a fit
+- [Angles](angles.md): `AngleVector`, angles sampled as 2-D vectors with no wrap boundary, and von Mises priors in least-squares form
 - [Imaging](imaging.md): regularisers and helpers for image reconstruction
 - [Scenes](scenes.md): synthetic truth images for testing reconstructions
 - [Coverage](coverage.md): synthetic uv coverage and noise for simulations

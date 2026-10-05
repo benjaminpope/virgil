@@ -271,6 +271,11 @@ def ruffio_upperlimit(mean, sigma, percentile):
 
     Notes
     -----
+    The flat ``flux >= 0`` prior is the published convention (Ruffio et al.
+    2018) and is deliberately not the Jeffreys prior for a scale: a
+    log-uniform prior on the flux makes the posterior improper as
+    ``flux -> 0``, so there would be no finite upper limit to quote.
+
     The quantile is computed from the upper tail,
     ``mean + sigma * z`` with ``Q(z) = (1 - percentile) Q(-mean / sigma)``
     and ``Q`` the standard normal survival function, evaluated in log space
