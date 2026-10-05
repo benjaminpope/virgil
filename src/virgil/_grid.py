@@ -112,6 +112,54 @@ def ordered_values(flux, coord_vals, params, coord_keys, flux_key):
     ]
 
 
+def first_crossing(
+    reached, log_start, log_low, log_high, max_steps, bisections
+):
+    """Bracket a crossing in log flux by decades, then bisect it.
+
+    ``reached(log_flux)`` says whether the target (e.g. a significance) is
+    reached at ``10**log_flux``. From ``log_start`` (inside
+    ``[log_low, log_high]``, which may be infinite), the flux steps up by
+    decades while the target is not reached, or down while it is, clamped
+    to the range and for at most ``max_steps`` steps, until ``reached``
+    changes. The last step is then bisected ``bisections`` times. Starting
+    below the target, this finds its first crossing above ``log_start``,
+    even where the target is not reached again at higher flux.
+
+    Returns ``(log_limit, crossed)``. Without a crossing, ``log_limit`` is
+    where the search stopped (an end of the range, or ``max_steps``
+    decades away) and ``crossed`` is False; ``reached(log_start)`` then
+    tells which end.
+    """
+    above = reached(log_start)
+    direction = jnp.where(above, -1.0, 1.0)
+    edge = jnp.where(above, log_low, log_high)
+
+    def keep_going(state):
+        _, log_flux, same_side, n = state
+        return same_side & (log_flux != edge) & (n < max_steps)
+
+    def step(state):
+        _, log_flux, _, n = state
+        new = jnp.clip(log_flux + direction, log_low, log_high)
+        return log_flux, new, reached(new) == above, n + 1
+
+    near, stop, same_side, _ = jax.lax.while_loop(
+        keep_going, step, (log_start, log_start, jnp.asarray(True), 0)
+    )
+
+    # `near` is on the starting side of the target and `far` on the other.
+    def bisect(_, edges):
+        near, far = edges
+        mid = 0.5 * (near + far)
+        same = reached(mid) == above
+        return jnp.where(same, mid, near), jnp.where(same, far, mid)
+
+    near, far = jax.lax.fori_loop(0, bisections, bisect, (near, stop))
+    crossed = ~same_side
+    return jnp.where(crossed, 0.5 * (near + far), stop), crossed
+
+
 def coordinate_points(samples_dict, coord_keys):
     """Flattened ``(n_points, n_coords)`` coordinate grid and its shape.
 
