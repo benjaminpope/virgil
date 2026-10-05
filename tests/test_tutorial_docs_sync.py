@@ -78,3 +78,15 @@ def test_landing_page_links_stay_inside_the_docs():
     assert "[b](api/index.md)" in page
     assert f"[c]({url})" in page
     assert f"[d]({module.REPO_FILE_URL}CONTRIBUTING.md)" in page
+
+
+def test_sanitize_text_strips_machine_paths():
+    module = _load_sync_module(Path(__file__).resolve().parents[1])
+    for prefix in ("/Users/ben/code/virgil", "/fred/oz1/x/virgil", "/a/b"):
+        text = f"{prefix}/src/virgil/fitting.py:12: UserWarning: no\n"
+        assert module._sanitize_text(text) == (
+            "virgil/fitting.py:12: UserWarning: no\n"
+        )
+    other = "/home/me/.venv/lib/x.py:3: DeprecationWarning: old"
+    assert module._sanitize_text(other) == "x.py:3: DeprecationWarning: old"
+    assert module._sanitize_text("plain /Users/x/y") == "plain /Users/x/y"

@@ -11,6 +11,10 @@ The release commit will set the version to 0.3.0 and date this section; until
 then the notes below are under "Unreleased". Everything listed as new was
 added after 0.2.0, which is on PyPI.
 
+The release commit must set `version = "0.3.0"` in `pyproject.toml` and refresh
+`uv.lock`, which records the editable virgil-astro version: run `uv lock` in a
+worktree, never in `~/code/drpangloss`.
+
 ### Migration from 0.2.0
 
 Most of 0.3.0 is additive. These are the changes that can alter an existing
