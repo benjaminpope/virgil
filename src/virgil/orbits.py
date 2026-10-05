@@ -25,6 +25,7 @@ toward the observer) and stay inside :meth:`KeplerOrbit.to_jaxoplanet` and
 :meth:`KeplerOrbit.from_jaxoplanet`.
 """
 
+import math
 import warnings
 
 import jax
@@ -112,6 +113,9 @@ def _days_since(mjd, t_ref):
 _GM_SUN = 1.3271244e20  # m³ s⁻²
 _AU_M = 149597870700.0  # m
 _DAY_S = 86400.0  # s
+# M[M_sun] = _KEPLER_FACTOR a[au]^3 / P[day]^2, evaluated once in Python
+# float64 so float32 arrays never see SI-sized intermediates (a_m^3 overflows).
+_KEPLER_FACTOR = 4 * math.pi**2 * _AU_M**3 / (_GM_SUN * _DAY_S**2)
 
 
 def _wrap_node(omega, Omega):
@@ -1424,18 +1428,16 @@ def total_mass(orbit, distance_pc):
     distance, or with the distance's uncertainty: positions alone do not
     fix it.
     """
-    a_m = orbit.a_mas * 1e-3 * distance_pc * _AU_M
-    period_s = orbit.period * _DAY_S
-    return 4 * np.pi**2 * a_m**3 / (_GM_SUN * period_s**2)
+    a_au = orbit.a_mas * 1e-3 * distance_pc
+    return _KEPLER_FACTOR * a_au**3 / orbit.period**2
 
 
 def distance_pc(orbit, total_mass):
     """The distance (pc) at which ``orbit`` has this total mass (M☉): the
     dynamical parallax, the inverse of [`total_mass`][virgil.orbits.total_mass]
     (same constants)."""
-    period_s = orbit.period * _DAY_S
-    a_m = (total_mass * _GM_SUN * period_s**2 / (4 * np.pi**2)) ** (1.0 / 3.0)
-    return a_m / _AU_M / (orbit.a_mas * 1e-3)
+    a_au = (total_mass * orbit.period**2 / _KEPLER_FACTOR) ** (1.0 / 3.0)
+    return a_au / (orbit.a_mas * 1e-3)
 
 
 class AxialVonMises(dist.Distribution):

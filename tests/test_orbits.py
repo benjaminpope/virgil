@@ -422,7 +422,7 @@ def test_total_mass_and_distance_are_inverse():
         earth = _orbit(period=period, a_mas=1000.0)
         assert float(total_mass(earth, 1.0)) == pytest.approx(1.0, abs=1e-12)
         assert float(distance_pc(earth, 1.0)) == pytest.approx(1.0, abs=1e-12)
-        # 8 times the mass at the same period: a is 4 times larger.
+        # At the same period M scales as a^3: 4 times larger a is 64 times the mass.
         wide = _orbit(period=period, a_mas=4000.0)
         assert float(total_mass(wide, 1.0)) == pytest.approx(64.0, rel=1e-12)
     # The old M = a³/P² with P in Julian years was 3.8e-5 low.
@@ -1418,3 +1418,19 @@ def test_orientation_priors_inclination_option_gives_the_haar_prior():
     # cos i uniform: a quarter of the mass is below i = 60 degrees.
     inc = onp.asarray(priors["orbit.inc"].sample(jax.random.key(0), (4000,)))
     assert onp.mean(inc < 60.0) == pytest.approx(0.25, abs=0.03)
+
+
+@pytest.mark.parametrize("a_au, period_yr", [(100.0, 1000.0), (0.01, 0.001)])
+def test_total_mass_and_distance_are_finite_in_float32(a_au, period_yr):
+    from virgil.orbits import distance_pc, total_mass
+
+    # a^3 / P^2 = 1 in au and Gaussian years: one solar mass (to 4e-5 for the
+    # Julian year used here). SI-sized intermediates would overflow float32.
+    gaussian_year = 365.256898
+    orbit = _orbit(period=period_yr * gaussian_year, a_mas=a_au * 1000.0)
+    mass = total_mass(orbit, 1.0)
+    assert mass.dtype == onp.float32 or mass.dtype == jax.numpy.float32
+    assert onp.isfinite(float(mass))
+    assert float(mass) == pytest.approx(1.0, rel=1e-4)
+    dist = distance_pc(orbit, mass)
+    assert float(dist) == pytest.approx(1.0, rel=1e-4)
