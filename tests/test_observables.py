@@ -181,6 +181,13 @@ def test_visamp_round_trip(amptyp, tmp_path):
     # The model at the matched samples reproduces the data (up to the
     # grey scale, recovered for correlated fluxes).
     r = whitened_residuals(_scene(), data)
+    # The values themselves round-trip exactly (float64 columns, checked
+    # above). This compares two float32 evaluations of the model, at the
+    # fixture's (6, 12) layout and at the reader's flat samples. Near the
+    # 3 nm line, λ − λ_line loses ~4 digits to cancellation in float32
+    # (ulp(λ) ≈ 2e-13 m), so XLA's op order changes the line flux by ~3e-5
+    # (measured 0.035σ on Linux CI, 5e-4σ on macOS). Correlated fluxes of
+    # ~5 with σ = 1e-3 (S/N 5000) see that; |V| with σ = 1e-3 does not.
     limit = 0.1 if amptyp == "correlated flux" else 1e-2
     assert float(np.max(np.abs(r))) < limit
     if amptyp == "correlated flux":
@@ -198,7 +205,11 @@ def test_visphi_round_trip_with_a_reversed_baseline(tmp_path):
         _scene().model(record["u"], record["v"], record["wavel"])
     )
     onp.testing.assert_allclose(
-        visphi["value"], onp.angle(cvis[visphi["sample"]]), atol=5e-6
+        # float32 model phases of two layouts (see test_visamp_round_trip):
+        # 2e-6 rad on Linux CI, 1e-8 on macOS; VISPHIERR is 3.5e-3 rad.
+        visphi["value"],
+        onp.angle(cvis[visphi["sample"]]),
+        atol=5e-6,
     )
     assert record["u"].size == PAIRS.shape[0] * WAVES.size  # no new samples
 
@@ -755,3 +766,31 @@ def test_the_grey_scale_prior_is_stated_not_taken_from_the_data():
     louder = block.rebuild(values=10 * onp.asarray(block.values))
     assert louder.scale == block.scale == SCALE_PRIOR
     onp.testing.assert_array_equal(louder.mu, block.mu)
+
+
+def test_with_model_draws_the_marginalised_modes_at_their_widths():
+    # The grey scale and the finite-prior VISPHI offsets are drawn from
+    # their priors, so simulations have the likelihood's covariance.
+    data = OIData(
+        read_oifits(build_hdulist(_tables()), extras=("flux", "visphi"))
+    ).with_continuum(lines=[LINE], prior_width=(0.3, 0.5))
+    data = data.with_flux_scale(scale=SCALE_PRIOR)
+    flux, visphi = data.extras
+    scene = _scene()
+    cvis = data._cvis(scene)
+    prediction = flux.predict(scene, None)
+    phases = np.angle(cvis)[visphi.sample]
+    keys = jax.random.split(jax.random.PRNGKey(7), 400)
+    scales, offsets = [], []
+    first = onp.asarray(visphi.grid[0, 0])  # one baseline of one frame
+    x = onp.asarray(visphi.basis[0, :, 1])
+    for key in keys:
+        draw = flux.simulated(prediction, None, None, key=key)
+        scales.append(float(np.mean(draw.values / prediction)))
+        draw = visphi.simulated(None, cvis, None, key=key)
+        shift = onp.asarray(draw.values - phases)[first]
+        offsets.append(onp.polyfit(x[: shift.size], shift, 1))
+    onp.testing.assert_allclose(onp.std(scales), flux.widths[0], rtol=0.15)
+    onp.testing.assert_allclose(onp.mean(scales), 1.0, atol=0.15)
+    spread = onp.std(onp.asarray(offsets), axis=0)[::-1]  # (offset, slope)
+    onp.testing.assert_allclose(spread, [0.3, 0.5], rtol=0.15)

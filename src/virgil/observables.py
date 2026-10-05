@@ -276,8 +276,22 @@ class FluxSpectrum(_Block):
     every group; ``(1, 0.1)`` by default for ``"nflux"``), and τ the
     polynomial's widths relative to μ. The prior is a proposal for the
     Jeffreys 1/k (see the module notes). The weights are marginalised
-    analytically. Build with :meth:`build`; change the prior, groups and
-    widths with
+    analytically.
+
+    **Choice of prior.** k is a scale parameter. Under rescaling of k the
+    invariant (Jeffreys) prior is ∝ 1/k, uniform in log k, but that prior
+    is improper, so an evidence computed with it is undefined. The broad
+    Gaussian used here instead approximates a prior uniform in k. The only
+    claim made is local: when k is sharply measured (σ_k/k ≪ 1, as for any
+    useful OI_FLUX spectrum), the factor 1/k varies by only a fraction
+    σ_k/k across the likelihood's width, so the posteriors of k and of the
+    other parameters are insensitive to the choice. Evidence comparisons
+    need a proper prior: finite positive bounds [k_min, k_max], with density
+    1 / (k ln(k_max/k_min)). With such bounds, that log-uniform prior is the
+    Jeffreys choice under the rule for scale groups. Marginalising in log k
+    is not linear and is not done here (a follow-up).
+
+    Build with :meth:`build`; change the prior, groups and widths with
     [`OIData.with_flux_scale`][virgil.oidata.OIData.with_flux_scale].
     """
 

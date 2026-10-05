@@ -159,7 +159,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             * ``mjd``, ``frame`` (optional): the time (days) and an integer
               exposure label of each sample (or of each baseline, for
               several channels). Without ``frame``, samples with the same
-              ``mjd`` form one frame.
+              ``mjd`` form one frame. (OIFITS input also compares each row's
+              ``TIME``: see [`read_oifits`][virgil.oifits.read_oifits].)
             * ``stations`` (optional): the station pair ``(a, b)``
               (``STA_INDEX``) of each sample, or of each baseline for
               several channels, for telescope and baseline gains
