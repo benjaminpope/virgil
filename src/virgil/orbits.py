@@ -1245,7 +1245,9 @@ def _mean_anomaly_at_ref(theta, ecc, inc, omega, Omega):
         np.sqrt(1.0 - ecc**2) * np.sin(f), ecc + np.cos(f)
     )
     mean = ecc_anomaly - ecc * np.sin(ecc_anomaly)
-    return np.mod(mean + np.pi, 2.0 * np.pi) - np.pi
+    # E from atan2 is in (-π, π], so M is too: only M = π needs moving.
+    # (Shifting by π before a modulo would round small M to zero in float32.)
+    return np.where(mean >= np.pi, mean - 2.0 * np.pi, mean)
 
 
 def position_angle_log_jacobian(theta, ecc, inc, omega, Omega):

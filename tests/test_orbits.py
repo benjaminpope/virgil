@@ -1150,11 +1150,12 @@ def test_position_angle_prior_term_in_numpyro_and_fit():
             theta=v["theta"], a_mas=20.0, t_ref=T_REF, **el
         )
 
-    prior_term = position_angle_prior(orbit_fn)
+    # Both terms see the fitted eccentricity (the numpyro check fixes it).
+    prior_term = position_angle_prior(_ecc_free(orbit_fn))
     # numpyro: the vector's density plus the log-Jacobian at θ.
     model = numpyro_model(
         lambda **kw: None,
-        {"theta": AngleVector()},
+        {"theta": AngleVector(), "ecc": dist.Delta(el["ecc"])},
         (),
         likelihoods=[prior_term],
     )
@@ -1165,7 +1166,7 @@ def test_position_angle_prior_term_in_numpyro_and_fit():
             theta, el["ecc"], el["inc"], el["omega"], el["Omega"]
         )
     )
-    value, _ = log_density(model, (), {}, {"theta_vec": v})
+    value, _ = log_density(model, (), {}, {"theta_vec": v, "ecc": el["ecc"]})
     assert float(value) == pytest.approx(expected, rel=1e-5)
     # fit: L-BFGS by default (no least-squares form), through the wrap.
     mjd = T_REF + onp.linspace(-20.0, 20.0, 5)  # a short arc
@@ -1184,9 +1185,9 @@ def test_position_angle_prior_term_in_numpyro_and_fit():
     with pytest.raises(TypeError, match="log_norm"):
         fit(
             lambda **kw: None,
-            {"theta": AngleVector()},
+            {"theta": AngleVector(), "ecc": dist.Uniform(0.0, 0.9)},
             (),
-            init={"theta": float(theta_true)},
+            init={"theta": float(theta_true), "ecc": 0.4},
             likelihoods=[prior_term],
             method="lm",
         )
@@ -1280,3 +1281,23 @@ def _angle(vector):
     from virgil.angles import vector_angle
 
     return vector_angle(vector)
+
+
+def test_position_angle_keeps_a_small_mean_anomaly_in_float32():
+    """Near periastron M is tiny; float32 must not round it to zero."""
+    kw = dict(
+        period=1000.0,
+        theta=5.0,
+        ecc=0.9999,
+        inc=0.0,
+        omega=0.0,
+        Omega=0.0,
+        a_mas=20.0,
+        t_ref=T_REF,
+    )
+    with jax.enable_x64(True):
+        expected = float(KeplerOrbit.from_position_angle(**kw).dt_peri)
+    orbit = KeplerOrbit.from_position_angle(**kw)  # default float32
+    assert orbit.dt_peri.dtype == jax.numpy.float32
+    assert expected != 0.0
+    assert float(orbit.dt_peri) == pytest.approx(expected, rel=1e-3)
