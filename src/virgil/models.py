@@ -1010,6 +1010,107 @@ class LimbDarkenedDisk(_LimbDarkenedDisk):
         return coeffs, tuple(float(k) for k in range(order + 1))
 
 
+class EllipticalLimbDarkenedDisk(_LimbDarkenedDisk):
+    r"""Limb-darkened disk with an elliptical outline, e.g. an oblate star.
+
+    A [`LimbDarkenedDisk`][virgil.models.LimbDarkenedDisk] compressed along
+    its minor axis: the brightness is
+    $I(\mu) / I(1) = 1 - \sum_{n=1}^{N} u_n (1 - \mu)^n$, with
+    $\mu = \sqrt{1 - \rho^2}$ and $\rho$ the elliptical radius (1 on the
+    limb), so the profile follows the outline. The major axis is
+    oriented exactly as an
+    [`EllipticalGaussian`][virgil.models.EllipticalGaussian]'s. Like every
+    component it has unit flux on its own: compressing the disk does not
+    change its total flux, so the visibility at zero baseline is 1 and
+    ``flux`` is its weight in a [`System`][virgil.models.System].
+
+    The visibility is that of the circular disk at the spatial frequencies
+    stretched by ``ratio`` along the minor axis (the Fourier similarity
+    theorem), so it is analytic like
+    [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk].
+    This is a geometric ellipse with a radial profile, not a model of a
+    rapid rotator's gravity darkening; for that use
+    [`GravityDarkenedStar`][virgil.models.GravityDarkenedStar].
+
+    Parameters
+    ----------
+    diam : float or array-like
+        Angular diameter of the limb along the major axis, in
+        milliarcseconds.
+    ratio : float or array-like, optional
+        Minor-to-major axis ratio, in (0, 1] (default 1, a circular
+        [`LimbDarkenedDisk`][virgil.models.LimbDarkenedDisk]).
+    pa : float or array-like, optional
+        Position angle of the major axis in degrees, North to East
+        (default 0).
+    u : sequence of float, optional
+        Limb-darkening coefficients $u_1, \ldots, u_N$ as in
+        [`LimbDarkenedDisk`][virgil.models.LimbDarkenedDisk] (default: none,
+        a uniform elliptical disk).
+        [`is_physical`][virgil.models.SourceModel.is_physical] is false
+        where the profile goes negative.
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][virgil.models.System], or a spectrum from
+        [`virgil.spectra`][virgil.spectra] (default 1).
+    dra, ddec : float or array-like, optional
+        Offset of the centre in milliarcseconds, positive to the East and
+        North.
+
+    Examples
+    --------
+    >>> star = EllipticalLimbDarkenedDisk(5.5, ratio=0.8, pa=30.0, u=[0.5])
+    """
+
+    u: jax.Array
+    ratio: jax.Array
+    pa: jax.Array
+
+    def __init__(
+        self, diam, ratio=1.0, pa=0.0, u=(), flux=1.0, dra=0.0, ddec=0.0
+    ):
+        self._set_position(diam, flux, dra, ddec)
+        self.u = np.asarray(u, dtype=float).reshape(-1)
+        self.ratio = np.asarray(ratio, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+
+    # The same law, and the same ``u``, as LimbDarkenedDisk.
+    _profile = LimbDarkenedDisk._profile
+
+    def __check_init__(self):
+        super().__check_init__()
+        _check_shape_params(
+            type(self).__name__,
+            (
+                ("diam", self.diam, lambda x: x > 0.0, "positive"),
+                (
+                    "ratio",
+                    self.ratio,
+                    lambda x: (x > 0.0) & (x <= 1.0),
+                    "in (0, 1]",
+                ),
+            ),
+        )
+
+    def is_physical(self):
+        return super().is_physical() & np.all(
+            (self.ratio > 0.0) & (self.ratio <= 1.0)
+        )
+
+    def _centred_cvis(self, uu, vv):
+        # In the frame where the outline is a circle of the major axis's
+        # diameter, the visibility is the circular disk's. The frequencies
+        # at zero baseline stay zero, so the visibility there stays 1.
+        ut, vt = undo_elliptical_transf_spat_freq(uu, vv, self.pa, self.ratio)
+        return super()._centred_cvis(ut, vt)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        # Unnormalized; render divides by the sum, so no 1/ratio is needed.
+        ratio = np.maximum(self.ratio, 1e-9)
+        xt, yt = undo_elliptical_transf_coord(xx, yy, self.pa, ratio)
+        return super()._centred_image(xt, yt, pixel_scale_mas)
+
+
 class QuadraticLimbDarkenedDisk(_LimbDarkenedDisk):
     r"""Circular disk with quadratic limb darkening in Kipping's (2013) $q_1, q_2$.
 

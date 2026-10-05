@@ -72,6 +72,12 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
       members:
         - from_cd
 
+::: virgil.models.EllipticalLimbDarkenedDisk
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members: false
+
 ::: virgil.models.GravityDarkenedStar
     options:
       show_root_heading: true
