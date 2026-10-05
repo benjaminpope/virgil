@@ -27,6 +27,17 @@ anything before 1.0 may change between minor versions.
   with a `DeprecationWarning`. With no `prior`, the posterior and Bayes-factor
   fields are `None`, whatever the prior kind.
 
+- **Angle vectors (`virgil.angles.AngleVector`).** A prior for any angle
+  (degrees), sampled as a 2-D vector at the site `"<path>_vec"` with the
+  angle as the deterministic `"<path>"`, so there is no wall at 0°/360°.
+  A ring prior on the radius keeps MAP fits off the origin; von Mises and
+  axial von Mises priors are chords √κ (v̂ − m̂), the same form as the phase
+  residuals, so `fit`'s Levenberg–Marquardt and `gauss_newton_mass` take
+  them (`fit` used to reject `VonMises`). The density is normalised in the
+  plane. For orbits, `orientation_priors` samples 2Ω and ϖ = Ω + ω (or Ω
+  and ϖ with RVs), and `KeplerOrbit.from_varpi` builds the orbit. After
+  Octofitter's `UniformCircular` and exoplanet's `Angle`.
+
 - **Spectro-interferometric observables (Stage 6a, PR B).**
   `read_oifits(..., extras=...)` and `OIData(path, extras=...)` read OI_FLUX
   (`"flux"` or `"nflux"`), T3AMP, VISAMP beside V² (absolute, or correlated

@@ -16,6 +16,7 @@ The everyday names are importable from the top level, e.g.
 - [Detection](detection.md): detection statistics for false-alarm rates and ROC curves
 - [Spectra](spectra.md): wavelength-dependent fluxes
 - [Fitting](fitting.md): `fit`, maximum a posteriori fits; `gauss_newton_mass`, a NUTS mass matrix from a fit
+- [Angles](angles.md): `AngleVector`, angles sampled as 2-D vectors with no wrap boundary, and von Mises priors in least-squares form
 - [Imaging](imaging.md): regularisers and helpers for image reconstruction
 - [Scenes](scenes.md): synthetic truth images for testing reconstructions
 - [Coverage](coverage.md): synthetic uv coverage and noise for simulations

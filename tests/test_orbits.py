@@ -904,6 +904,182 @@ def test_default_zero_point_prior_warns_and_flat_prior_is_rejected():
             )
 
 
+@pytest.mark.parametrize("positions_only", [True, False])
+def test_varpi_orientation_round_trips_and_the_flip_collapses(
+    positions_only,
+):
+    # design/orbit_prior_art.md §4.1 test 5: (Ω, ω) → (2Ω or Ω, ϖ) → back
+    # gives the same sky orbit, and both members of the flip pair
+    # (Ω + 180°, ω + 180°) map to one point when positions alone fit.
+    from virgil.angles import AngleVector
+    from virgil.orbits import orientation_from_varpi, orientation_priors
+
+    priors = orientation_priors(positions_only, prefix="orbit.")
+    node = "orbit.two_Omega" if positions_only else "orbit.Omega"
+    assert set(priors) == {node, "orbit.varpi"}
+    assert all(
+        isinstance(p, AngleVector) and p.uniform for p in priors.values()
+    )
+
+    rng = onp.random.default_rng(3)
+    mjd = T_REF + onp.linspace(0.0, 400.0, 9)
+    for Omega, omega in rng.uniform(0.0, 360.0, (20, 2)):
+        truth = _orbit(Omega=Omega, omega=omega)
+        flipped = _orbit(Omega=Omega + 180.0, omega=omega + 180.0)
+        varpi = onp.mod(Omega + omega, 360.0)
+        node_value = (
+            {"two_Omega": onp.mod(2 * Omega, 360.0)}
+            if positions_only
+            else {"Omega": Omega}
+        )
+        flipped_varpi = onp.mod(Omega + omega + 360.0, 360.0)
+        flipped_node = (
+            {"two_Omega": onp.mod(2 * (Omega + 180.0), 360.0)}
+            if positions_only
+            else {"Omega": Omega + 180.0}
+        )
+        if positions_only:  # one point for both modes
+            assert flipped_varpi == pytest.approx(varpi)
+            assert flipped_node["two_Omega"] == pytest.approx(
+                node_value["two_Omega"]
+            )
+        rebuilt = KeplerOrbit.from_varpi(
+            ORBIT["period"],
+            ORBIT["dt_peri"],
+            ORBIT["ecc"],
+            ORBIT["inc"],
+            varpi,
+            20.0,
+            t_ref=T_REF,
+            **node_value,
+        )
+        omega_back, Omega_back = orientation_from_varpi(varpi, **node_value)
+        assert float(rebuilt.omega) == pytest.approx(float(omega_back))
+        sky = onp.asarray(rebuilt.relative(mjd)[:2])
+        onp.testing.assert_allclose(
+            sky, onp.asarray(truth.relative(mjd)[:2]), atol=1e-3
+        )
+        onp.testing.assert_allclose(
+            sky, onp.asarray(flipped.relative(mjd)[:2]), atol=1e-3
+        )
+        if positions_only:
+            assert 0.0 <= float(rebuilt.Omega) < 180.0
+        else:  # the node, and so dz, is the truth's
+            onp.testing.assert_allclose(
+                onp.asarray(rebuilt.relative(mjd)[2]),
+                onp.asarray(truth.relative(mjd)[2]),
+                atol=1e-3,
+            )
+    with pytest.raises(ValueError, match="exactly one"):
+        orientation_from_varpi(10.0)
+
+
+def test_an_orbit_fit_in_two_omega_and_varpi_through_the_wrap():
+    # A position-only fit samples 2Ω and ϖ as vectors, starting across the
+    # wrap from the truth (ϖ = 350°, 2Ω = 20°).
+    from virgil.fitting import fit
+    from virgil.orbits import orientation_priors
+
+    truth = _orbit(Omega=10.0, omega=340.0)
+    mjd = T_REF + onp.linspace(0.0, 380.0, 10)
+    with jax.enable_x64(True):
+        positions = _positions(truth, mjd)
+
+    def orbit_fn(v):
+        return KeplerOrbit.from_varpi(
+            ORBIT["period"],
+            ORBIT["dt_peri"],
+            ORBIT["ecc"],
+            ORBIT["inc"],
+            v["varpi"],
+            20.0,
+            two_Omega=v["two_Omega"],
+            t_ref=T_REF,
+        )
+
+    result = fit(
+        lambda **kw: None,
+        orientation_priors(),
+        (),
+        init={"two_Omega": 340.0, "varpi": 15.0},
+        likelihoods=[positions.term(orbit_fn)],
+    )
+    assert result.info["method"] == "lm"
+    assert float(result.values["varpi"]) == pytest.approx(350.0, abs=1e-3)
+    assert float(result.values["two_Omega"]) == pytest.approx(20.0, abs=1e-3)
+
+
+def test_gauss_newton_mass_includes_likelihood_terms():
+    # Regression (virgil#211 review): with data=() and the positions as a
+    # likelihoods= term, the mass matrix must see the term's residuals, or
+    # the angular directions are singular. At noiseless truth the
+    # Gauss–Newton matrix is the Hessian of the loss in the vectors.
+    from virgil.angles import AngleVector
+    from virgil.fitting import gauss_newton_mass
+    from virgil.orbits import orientation_priors
+
+    truth = _orbit(Omega=10.0, omega=340.0)
+    mjd = T_REF + onp.linspace(0.0, 380.0, 10)
+    with jax.enable_x64(True):
+        positions = _positions(truth, mjd)
+
+    def orbit_fn(v):
+        return KeplerOrbit.from_varpi(
+            ORBIT["period"],
+            ORBIT["dt_peri"],
+            ORBIT["ecc"],
+            ORBIT["inc"],
+            v["varpi"],
+            20.0,
+            two_Omega=v["two_Omega"],
+            t_ref=T_REF,
+        )
+
+    priors = orientation_priors()
+    values = {"two_Omega": 20.0, "varpi": 350.0}
+    mass = gauss_newton_mass(
+        lambda **kw: None,
+        priors,
+        (),
+        values,
+        likelihoods=[positions.term(orbit_fn)],
+    )
+    sites = ("two_Omega_vec", "varpi_vec")
+    covariance = onp.asarray(mass["inverse_mass_matrix"][sites])
+    assert mass["dense_mass"] == [sites]
+    assert onp.all(onp.linalg.eigvalsh(covariance) > 0)
+
+    # Independently: J of all the residuals (the term's and the rings')
+    # with respect to the two vectors, and (JᵀJ)⁻¹.
+    with jax.enable_x64(True):
+        ring = AngleVector()
+
+        def residuals(x):
+            v = {"two_Omega": _angle(x[:2]), "varpi": _angle(x[2:])}
+            return jax.numpy.concatenate(
+                [
+                    positions.whitened_residuals(orbit_fn(v)),
+                    ring.residuals(x[:2]),
+                    ring.residuals(x[2:]),
+                ]
+            )
+
+        angles = onp.deg2rad([20.0, 20.0, 350.0, 350.0])
+        x = jax.numpy.asarray(
+            onp.where([1, 0, 1, 0], onp.cos(angles), onp.sin(angles))
+        )
+        jac = onp.asarray(jax.jacfwd(residuals)(x))
+    onp.testing.assert_allclose(
+        (jac.T @ jac) @ covariance, onp.eye(4), atol=1e-6
+    )
+
+
+def _angle(vector):
+    from virgil.angles import vector_angle
+
+    return vector_angle(vector)
+
+
 def test_plot_orbit_ensemble_draws_east_left_and_one_period_per_orbit():
     import matplotlib.pyplot as plt
 

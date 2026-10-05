@@ -123,6 +123,7 @@ see that repository's `PLAN.md` for the boundary.
 | `fields.py` | Gaussian-process log-brightness for an `Image` (`GaussianField`, a DCT field with a Matérn-like spectrum) |
 | `observables.py` | extra observable blocks after `vis`/`phi` in `OIData`: OI_FLUX spectra with marginalised grey scales (`FluxSpectrum`), \|V\|, T3AMP, and continuum-normalised differential phases (`DifferentialPhase`, closure-free beside closure phases); `continuum_operator` |
 | `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, `GaussianLine`, `LorentzianLine`, `Nodes` for a free flux per channel, and `Sum`; `Tabulated` is deprecated for `Nodes`) accepted as a component's `flux` (SPARCO) |
+| `angles.py` | `AngleVector`: an angle prior sampled as a 2-D vector (site `<path>_vec`, ring and von Mises chord residuals), recognised by `fit`, `gauss_newton_mass` and `numpyro_model`; imports nothing from virgil |
 | `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
@@ -138,7 +139,8 @@ Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_c
 `imaging` (which imports `fitting`, `fields`, `likelihood` and `models`). `likelihood` →
 `inference` → `grid_fit` and `likelihood` → `limits`; `grid_fit` and `limits` also use
 `_grid`, which imports only `_utils`, and do not import each other; `limits` →
-`plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `orbits` imports only `_utils`
+`plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `angles` imports nothing from virgil, and
+`likelihood`, `fitting` and `orbits` import it. `orbits` imports only `_utils` and `angles`
 (and jaxoplanet lazily), and `models` imports `orbits` (for `Attached`). `simulate` imports `fitting`.
 
 ## Flux and contrast
