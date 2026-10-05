@@ -1102,9 +1102,12 @@ class RVData(zx.Base):
             then depends on a parameter, so the term reports it
             (``log_norm``) and ``fit`` adds it to the loss, defaulting to
             L-BFGS (no least-squares form). Give ``jitter`` a prior with
-            non-negative support, e.g. ``dist.HalfNormal`` (scale about the
-            expected scatter, a few km/s for a spotted star) or
-            ``dist.LogUniform``; the likelihood depends on ``s²`` only.
+            positive support. The jitter is a scale, so the default is
+            ``dist.LogUniform(lo, hi)`` (the Jeffreys prior; pick ``lo``
+            well below the smallest plausible scatter and ``hi`` above the
+            largest). ``dist.HalfNormal`` is a deliberate informative choice
+            (scale about the expected scatter, a few km/s for a spotted
+            star). The likelihood depends on ``s²`` only.
         marginalise_offsets : True or (mean, sd), optional
             Analytically marginalise one velocity zero point per instrument
             (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136). The model
