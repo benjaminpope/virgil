@@ -163,12 +163,92 @@ Horseshoe or Laplace priors on starlet coefficients through `numpyro_model`.
 Deferred: the posterior mean under a Laplace prior is not sparse (the
 "Bayesian lasso"), and the Gaussian-process prior already covers sampling.
 
+## Status and next steps (paused 2026-10-05)
+
+S1 and S2 are merged (#165, #166). Users have `StarletL1`, `LogSum`,
+`Laplacian`, `starlet`, `clean` and `CleanResult`. The docs have imaging part 6,
+"Sparse images and CLEAN" (`notebooks/imaging_clean.ipynb`), and there are two
+MWEs: `notebooks/mwe/mwe_clean.ipynb` (five cells) and
+`notebooks/mwe/mwe_sparse_imaging.ipynb` (CLEAN against MEM, StarletL1 and
+LogSum). Work is paused here.
+
+### What the runs taught us
+
+- **Normalise CLEAN's pixel selection.** Picking the most negative raw
+  gradient piles flux next to an analytic star (S2 log). The matching-pursuit
+  score `g_p² / |J e_p|²` fixes it, and is exactly Högbom's rule for linear
+  data.
+- **CLEAN stops slightly short of the flux.** At the default gain of 0.1 and
+  the discrepancy target, it recovered 90–99% of the flux: 0.0297 of 0.030 (AMI),
+  0.0341 of 0.035 (AMI, extended) and 0.062 of 0.070 (VLTI). Refitting the
+  component fluxes with `fit` on the support recovers the rest.
+- **A large gain stalls.** At a gain of 0.5, CLEAN reached χ²/N ≈ 1.1 in
+  20 iterations and then ran to `max_iterations`, because flux is never
+  removed. CLEAN also runs to the limit when noise puts the truth's own
+  χ²/N above the target (about √(2/N) scatter). Neither case is detected.
+- **Warm-started sweeps fail for penalties that switch pixels off.** Under
+  `l_curve` (strong to weak, warm starts), `LogSum` collapsed to one pixel at
+  every weight, because log-brightness pixels driven to ~0 never recover.
+  Fitted per weight from the CLEAN start, it reached χ²/N = 0.97 and was as
+  compact as CLEAN. The same path dependence could affect any penalty strong
+  enough to darken pixels, including MEM with a peaked prior.
+- **L-BFGS hits the step limit.** MEM and StarletL1 did not converge
+  within 50 000 steps at some weights on 62² pixels, although they reached
+  χ²/N ≈ 1. Not yet investigated.
+- **StarletL1 barely changes how sparse the image is.** At the discrepancy
+  weight, its brightest 2% of pixels held 0.78 of the flux, against 0.80 for MEM
+  and 1.00 for CLEAN and LogSum. Its benefit, if any, is multi-scale
+  structure, which these scenes do not test. So far this is no case for S3:
+  LogSum started from CLEAN already gives sparse images.
+- **Cost.** The atom norms cost one JVP per pixel, once. That is negligible at
+  40–62² (the tutorial runs in 31 s on a CPU node), but grows as N² pixels times
+  the cost of one JVP. The norms are also frozen at the start, which is only
+  approximate for non-linear data.
+
+### Next steps, in order
+
+1. **Detect stalls in `clean`.** Stop when χ² falls by less than a tolerance
+   over the last k iterations, with `stop="stalled"`. Report the closest
+   approach to the target. Cheap, and it removes both silent runs to
+   `max_iterations`.
+2. **Remove flux.** Every k iterations, refit the component fluxes on the
+   support: a few LM steps of `fit`, or projected non-negative least squares
+   on the Gauss–Newton model. These are the "major cycles" of Clark and
+   Cotton–Schwab CLEAN, and they let flux move off early mistakes. The
+   alternative is Frank–Wolfe "away steps". Either should fix the gain-0.5
+   stall.
+3. **Sweeps without warm starts.** Give `l_curve` a `warm_start=False` option,
+   or a weak-to-strong order, so that `LogSum` (and anything like it) can be
+   swept with the standard tool. Then the MWE's hand-written loop can go.
+4. **Real data.** Try CLEAN on an AMI or NRM dataset with a known companion,
+   and on PIONIER closure phases (e.g. the HR 4049 or IW Car data used
+   elsewhere). Compare with the parametric fits.
+5. **Independent validation.** Request a virgil-validation check (as an
+   Issue there; see AGENTS.md): for linear complex-visibility data, `clean`
+   must reproduce an independent Högbom CLEAN component for component.
+6. **Refresh the atom norms** every so often for non-linear data, and
+   compute them in chunks for large grids, if real data need ≥128² pixels.
+7. **Multi-frequency CLEAN** (Rau & Cornwell 2011): a spectral index per
+   component, instead of grey components, for polychromatic data.
+
+S3 (proximal solver) and S4 (sparse sampling) stay deferred; nothing so far
+needs them.
+
+### Running the notebooks
+
+The MWEs and tutorial run on OzSTAR, never on the laptop. The new generic
+runner `ozstar_scripts/scripts/_notebook_template` takes the notebook list as
+`--notebooks=a,b`. `scripts/sparse_mwe` (one task per notebook, as listed in
+its `tasks.txt`) still works, but can be retired in favour of the runner.
+The full `mwe_sparse_imaging` takes about 28 min on a CPU node, mostly in the
+MEM and StarletL1 sweeps. The tutorial and the five-cell MWE take under a minute each.
+
 ## Deferred items
 
 | Item | Revisit when |
 | --- | --- |
 | Dark-energy regulariser | Someone needs it; read its definition in SQUEEZE's source first |
-| Removing CLEAN components (away steps) | Early wrong components spoil real reconstructions |
+| Removing CLEAN components (major cycles or away steps) | Next step 2 above; the gain-0.5 stall shows the need |
 | Fitting the base scene during CLEAN | A base parameter cannot be fitted beforehand |
 | Residual map in flux units (per-pixel curvature) | Restored images need residuals added |
 | S3, proximal solver | S1 images are not sparse enough to matter scientifically |
@@ -231,6 +311,8 @@ pixels) and, like CLEAN, breaks the extended blob into points (native NCC
 - Candès, Wakin & Boyd 2008, J. Fourier Anal. Appl. 14, 877: reweighted L1
   and the log-sum penalty.
 - Högbom 1974, A&AS 15, 417: CLEAN.
+- Rau & Cornwell 2011, A&A 532, A71: multi-scale multi-frequency synthesis
+  (multi-frequency CLEAN).
 - Starck, Murtagh & Fadili 2010, *Sparse Image and Signal Processing*
   (Cambridge): the starlet transform.
 - Thiébaut & Young 2017, JOSA A 34, 904 (arXiv:1708.08390): principles of
