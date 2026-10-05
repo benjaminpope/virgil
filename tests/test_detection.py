@@ -390,6 +390,22 @@ def test_monte_carlo_is_reproducible_and_independent_of_chunking():
     )
 
 
+def test_draw_batch_vectorises_the_same_draws():
+    # draw_batch > 1 vmaps the search over draws (the tutorial uses it to
+    # amortise the flux optimizer's loop); draw i keeps its key.
+    inj = injection_grid([60.0], [1e-2], 4, 1)
+    a = _recover(key=7, n_null=4, injections=inj)
+    b = _recover(key=7, n_null=4, injections=inj, draw_batch=2)
+    for part in ("null", "injected"):
+        for stat in STATISTICS:
+            onp.testing.assert_allclose(
+                getattr(b, part)[stat],
+                getattr(a, part)[stat],
+                rtol=1e-3,
+                atol=1e-3,
+            )
+
+
 def test_system_template_and_bootstrap_noise_run_through_the_driver():
     # Injections at a grid point inside TINY's box (random PAs can fall
     # outside it): two null ones, and two ~10 sigma companions.
@@ -943,3 +959,65 @@ def test_gaussian_null_error_scale_scales_the_noise_not_the_errors():
         assert onp.array_equal(simulate(keys[0]).d_vis, TEMPLATE.d_vis)
     with pytest.raises(ValueError, match="error_scale"):
         gaussian_null(TEMPLATE, NULL, error_scale=-1.0)
+
+
+def test_default_grid_batch_size_is_split_among_draw_batch(monkeypatch):
+    seen = []
+    real = detection._simulated_statistics
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs["batch_size"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(detection, "_simulated_statistics", spy)
+    default = detection.batch_size_or_default(None, TEMPLATE)
+    _recover(n_null=4, draw_batch=1)
+    _recover(n_null=4, draw_batch=4)
+    _recover(n_null=4, draw_batch=4, batch_size=64)
+    assert seen[0] == default
+    assert seen[1] == default // 4
+    assert seen[2] == 64  # an explicit value is used as given
+    # A draw_batch above the default is capped at it, so the product of
+    # draws and grid points evaluated together stays within the budget.
+    for draw_batch in (1, 4, default, 2 * default, 10**9):
+        draws, grid = detection._batch_sizes(None, TEMPLATE, draw_batch)
+        assert draws == min(draw_batch, default)
+        assert grid >= 1 and draws * grid <= default
+    assert detection._batch_sizes(64, TEMPLATE, 10**9) == (10**9, 64)
+
+
+def test_last_chunk_is_not_padded_unless_chunk_size_is_set(monkeypatch):
+    widths = []
+    real = detection._simulated_statistics
+
+    def spy(simulator, model, samples_dict, base_key, index, values, **kw):
+        widths.append(values.shape[0])
+        return real(
+            simulator, model, samples_dict, base_key, index, values, **kw
+        )
+
+    monkeypatch.setattr(detection, "_simulated_statistics", spy)
+    inj = injection_grid([60.0], [1e-2], 3, 1)  # 3 injected draws
+    auto = _recover(n_null=5, injections=inj, chunk_size=None)
+    # Auto: one chunk of 5 null and one of 3 injected, none padded.
+    assert widths == [5, 3]
+    widths.clear()
+    fixed = _recover(n_null=5, injections=inj, chunk_size=4)
+    # Explicit chunk_size pads the short chunks to one compiled shape.
+    assert widths == [4, 4, 4]
+    for part in ("null", "injected"):
+        for k, v in getattr(auto, part).items():
+            onp.testing.assert_allclose(
+                v, getattr(fixed, part)[k], rtol=1e-4, atol=1e-6
+            )
+    assert auto.n_null == 5 and auto.n_injected == 3
+
+
+def test_remainder_chunk_matches_unchunked_run():
+    # 70 > the default chunk of 64: a full chunk plus a remainder of 6.
+    a = _recover(n_null=70, chunk_size=None)
+    b = _recover(n_null=70, chunk_size=70)
+    assert a.n_null == 70
+    onp.testing.assert_allclose(
+        a.null["delta_chi2"], b.null["delta_chi2"], rtol=1e-4, atol=1e-6
+    )

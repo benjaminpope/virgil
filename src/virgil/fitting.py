@@ -476,6 +476,7 @@ def fit(
     max_steps=None,
     gtol=1e-4,
     max_step_size=2.0,
+    lbfgs_memory=50,
     learning_rate=1e-2,
     cg_steps=50,
     dtype="float64",
@@ -600,6 +601,12 @@ def fit(
         at a spurious stationary point far above the minimum. Coordinates
         with real support (e.g. a position under a Normal prior) are in
         their own units, so raise this if they must move far.
+    lbfgs_memory : int, optional
+        Number of past steps L-BFGS keeps to model the curvature (default
+        50; optax's own default is 10). On regularised images, 10 left the
+        fits short of their optimum at many weights, and weakly
+        regularised ones running to the step limit; 50 found lower losses
+        and converged in fewer steps, at a higher cost per step.
     learning_rate : float, optional
         Adam's learning rate, in unconstrained coordinates.
     cg_steps : int, optional
@@ -665,6 +672,7 @@ def fit(
                 np.asarray(limit),
                 gtol,
                 np.asarray(max_step_size),
+                int(lbfgs_memory),
             )
         elif method == "adam":
             steps = max_steps or 2000
@@ -1006,7 +1014,7 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
     return solution.value, int(solution.stats["num_steps"]), converged
 
 
-def _capped_lbfgs(max_step_size):
+def _capped_lbfgs(max_step_size, memory):
     """optax's L-BFGS, with no coordinate moving more than ``max_step_size``.
 
     The L-BFGS direction is scaled down to the cap before the zoom line
@@ -1024,7 +1032,7 @@ def _capped_lbfgs(max_step_size):
         return jax.tree.map(lambda u: u * factor, updates), state
 
     return optax.chain(
-        optax.scale_by_lbfgs(),
+        optax.scale_by_lbfgs(memory_size=memory),
         optax.scale(-1.0),
         optax.GradientTransformation(lambda params: optax.EmptyState(), cap),
         optax.scale_by_zoom_linesearch(
@@ -1036,7 +1044,7 @@ def _capped_lbfgs(max_step_size):
 
 
 @eqx.filter_jit
-def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
+def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size, memory):
     # optax's L-BFGS (with a zoom line search, and capped steps; see
     # _capped_lbfgs), stopped on the gradient.
     # A gradient test suits log-brightness pixels: the gradient for a pixel
@@ -1048,7 +1056,7 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
     # stopping at once. The fit also stops, unconverged, when a step no
     # longer changes the parameters (the line search has run out of
     # precision, as can happen in float32).
-    optimiser = _capped_lbfgs(max_step_size)
+    optimiser = _capped_lbfgs(max_step_size, memory)
     loss = _scaled_loss(problem, scale)
     value_and_grad = optax.value_and_grad_from_state(loss)
     tolerance = _tolerance(jax.grad(loss)(z0), gtol)
@@ -1095,7 +1103,7 @@ def _lbfgs_not_converged(stop, steps, limit, dtype):
     )
 
 
-def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size):
+def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory=50):
     """L-BFGS, returning ``(z, steps, converged, stop)``.
 
     ``stop`` says why an unconverged fit ended: ``"limit"`` (``max_steps``),
@@ -1104,7 +1112,7 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size):
     fit converged.
     """
     z, count, gradient, tolerance, moved = _lbfgs_run(
-        problem, z0, scale, max_steps, gtol, max_step_size
+        problem, z0, scale, max_steps, gtol, max_step_size, int(memory)
     )
     count, gradient, tolerance = int(count), float(gradient), float(tolerance)
     if gradient <= tolerance:

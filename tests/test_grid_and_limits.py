@@ -1,5 +1,7 @@
 import warnings
 
+import equinox as eqx
+
 import jax.numpy as np
 import numpy as onp
 from matplotlib import get_backend
@@ -449,3 +451,237 @@ def test_ruffio_matches_truncated_gaussian_even_far_below_zero():
     assert onp.all(limits >= 0.0)
     assert onp.all(onp.diff(limits, axis=1) > 0.0)
     onp.testing.assert_allclose(limits, expected, rtol=2e-3)
+
+
+# === LIMIT SEARCH (first crossing, extras, float precision) ===
+
+
+def test_first_crossing_finds_the_first_crossing_from_below():
+    # A significance that rises through the target at log f = -2.3, then
+    # falls below it again above log f = 1 (a companion outshining the
+    # primary): the search must return the first crossing, not the top.
+    from virgil._grid import first_crossing
+
+    def significance(log_f):
+        return 5.0 - (log_f + 2.3) * (log_f - 1.0)
+
+    def reached(log_f):
+        return significance(log_f) >= 5.0
+
+    for log_start, bounds in [(-6.0, (-6.0, 3.0)), (-4.0, (-np.inf, np.inf))]:
+        log_limit, crossed = first_crossing(
+            reached, np.asarray(log_start), *bounds, 40, 24
+        )
+        assert bool(crossed)
+        assert float(log_limit) == pytest.approx(-2.3, abs=1e-5)
+
+    # Reached only on [-2.8, -2.2], between two whole decades: quarter-decade
+    # steps must not step over it.
+    def window(log_f):
+        return (log_f >= -2.8) & (log_f <= -2.2)
+
+    log_limit, crossed = first_crossing(
+        window, np.asarray(-6.0), -6.0, 3.0, 40, 22, 0.25
+    )
+    assert bool(crossed)
+    assert float(log_limit) == pytest.approx(-2.8, abs=1e-5)
+
+    # Reached at the lower bound, or never within the range: not crossed,
+    # and the search stops at the bound.
+    log_limit, crossed = first_crossing(
+        reached, np.asarray(-1.0), -1.0, 0.5, 40, 24
+    )
+    assert not bool(crossed) and float(log_limit) == -1.0
+    log_limit, crossed = first_crossing(
+        reached, np.asarray(-6.0), -6.0, -3.0, 40, 24
+    )
+    assert not bool(crossed) and float(log_limit) == -3.0
+
+
+def test_unbounded_limits_match_bounded_limits():
+    """Regression (B1): ``flux_bounds=None`` found the top of its bracket.
+
+    For a normalised scene the significance falls again once the
+    "companion" outshines the primary: at flux 1000 the scene mirrors one
+    at flux 1e-3, below the limit (about 3e-3 with these errors). So
+    ``injection_limits`` with ``flux_bounds=None`` returned 1000 everywhere,
+    for a model class and for a ``System``. Both functions must find the
+    first crossing from below, as with bounds.
+    """
+    import jax
+
+    from virgil.limits import injection_limits
+    from virgil.models import PointSource, System
+
+    null = BinaryModelCartesian(0.0, 0.0, 0.0)
+    data = oidata.with_error_scale(10.0).with_model(
+        null, key=jax.random.PRNGKey(0)
+    )
+    axes = {
+        "dra": np.array([60.0, 120.0]),
+        "ddec": np.array([-40.0]),
+        "flux": np.array([1e-3]),
+    }
+    system = System(star=PointSource(), comp=PointSource(0.01, 0.0, 0.0))
+    cases = [
+        (BinaryModelCartesian, axes),
+        (system, {f"comp.{key}": value for key, value in axes.items()}),
+    ]
+    for limit_fn in (injection_limits, absil_limits):
+        for model, samples in cases:
+            bounded = limit_fn(
+                data, model, samples, 3.0, flux_bounds=(1e-6, 1.0)
+            )
+            unbounded = limit_fn(data, model, samples, 3.0, flux_bounds=None)
+            assert onp.all((onp.asarray(bounded) > 1e-3) & (bounded < 0.1))
+            assert onp.allclose(unbounded, bounded, rtol=1e-4)
+
+
+@pytest.mark.parametrize("sigma", [14.0, 40.0])
+def test_limits_reject_sigma_beyond_float_precision(sigma):
+    """``nsigma`` saturates (about 12.95 in float32, 37 in float64)."""
+    from virgil.limits import _significance_ceiling, injection_limits
+
+    if sigma < _significance_ceiling():
+        pytest.skip("float64 represents this significance")
+    samples = {
+        "dra": np.array([60.0]),
+        "ddec": np.array([-40.0]),
+        "flux": np.array([1e-3]),
+    }
+    for limit_fn in (injection_limits, absil_limits):
+        with pytest.raises(ValueError, match="largest significance"):
+            limit_fn(oidata_sim, BinaryModelCartesian, samples, sigma)
+
+
+def test_limit_options_are_keyword_only():
+    from virgil.limits import injection_limits
+
+    samples = {
+        "dra": np.array([60.0]),
+        "ddec": np.array([-40.0]),
+        "flux": np.array([1e-3]),
+    }
+    for limit_fn in (injection_limits, absil_limits):
+        with pytest.raises(TypeError):
+            limit_fn(oidata_sim, BinaryModelCartesian, samples, 3.0, "flux")
+
+
+def _extras_data(extras):
+    """Noisy four-telescope null data with extra observables."""
+    import jax
+
+    from tests.test_observables import _tables
+    from virgil.models import PointSource, System
+    from virgil.oifits import build_hdulist, read_oifits
+
+    null = System(star=PointSource(), comp=PointSource(0.0, 0.0, 0.0))
+    data = OIData(read_oifits(build_hdulist(_tables(null)), extras=extras))
+    if "flux" in extras:
+        data = data.with_flux_scale(scale=(3.0, 3.0))
+    template = System(star=PointSource(), comp=PointSource(0.01, 0.0, 0.0))
+    return data.with_model(null, key=jax.random.PRNGKey(3)), template
+
+
+EXTRAS_SAMPLES = {
+    "comp.dra": np.array([4.0, -6.0]),
+    "comp.ddec": np.array([3.0]),
+    "comp.flux": np.array([0.01]),
+}
+
+
+def test_injection_limits_with_extras_is_absil_on_reflected_data():
+    """Regression (B2): extras were added to the phases (a TypeError).
+
+    The signal is injected into every block, so as without extras (see
+    tests/test_injection_limits.py), the injection limit equals Absil's on
+    the data reflected about the null model, here built directly, block by
+    block, including the T3AMP block.
+    """
+    import equinox as eqx
+
+    from virgil.likelihood import build_model
+    from virgil.limits import injection_limits
+
+    data, template = _extras_data(("t3amp",))
+    (block,) = data.extras
+    null = build_model(template, ("comp.flux",), [0.0])
+    m0 = data.model(null)
+    n_vis, n_phi = data.vis.size, data.phi.size
+    reflected = eqx.tree_at(
+        lambda d: (d.vis, d.phi, d.extras[0].values),
+        data,
+        (
+            2 * m0[:n_vis] - data.vis,
+            2 * m0[n_vis : n_vis + n_phi] - data.phi,
+            2 * m0[n_vis + n_phi :] - block.values,
+        ),
+    )
+    injection = injection_limits(data, template, EXTRAS_SAMPLES, 3.0)
+    absil = absil_limits(reflected, template, EXTRAS_SAMPLES, 3.0)
+    assert onp.all(onp.isfinite(injection))
+    assert onp.allclose(injection, absil, rtol=2e-3)
+
+    # The extras count: dropping them changes the limit.
+    plain = eqx.tree_at(lambda d: d.extras, data, ())
+    without = injection_limits(plain, template, EXTRAS_SAMPLES, 3.0)
+    assert not onp.allclose(without, injection, rtol=1e-3)
+
+
+def test_injection_limits_run_with_every_extra():
+    from virgil.limits import injection_limits
+
+    data, template = _extras_data(("flux", "t3amp", "visamp", "visphi"))
+    assert len(data.extras) == 4
+    limits = injection_limits(data, template, EXTRAS_SAMPLES, 3.0)
+    assert limits.shape == (2, 1)
+    assert onp.all((limits > 1e-6) & (limits < 1.0))
+
+
+def test_injection_limits_with_oi_flux_reach_sigma_on_injected_data():
+    """The OI_FLUX block whitens with the model's own prediction.
+
+    So the companion model's chi-squared on the injected data is not the
+    null model's on the original data. At each limit, injected data built
+    directly, block by block, must give ``sigma`` from the public
+    likelihood: the null model's chi-squared over the companion model's.
+    """
+    from virgil.likelihood import build_model, whitened_residuals
+    from virgil.limits import injection_limits
+
+    data, template = _extras_data(("flux", "t3amp"))
+    keys = tuple(EXTRAS_SAMPLES)
+    null = build_model(template, keys, [0.0, 0.0, 0.0])
+    m0 = data.model(null)
+    limits = injection_limits(data, template, EXTRAS_SAMPLES, 3.0)
+    ndof = data.n_independent
+    for i, dra in enumerate(EXTRAS_SAMPLES["comp.dra"]):
+        flux = float(limits[i, 0])
+        ddec = float(EXTRAS_SAMPLES["comp.ddec"][0])
+        companion = build_model(template, keys, [dra, ddec, flux])
+        signal = data.model(companion) - m0
+        n_vis, n_phi = data.vis.size, data.phi.size
+        injected = data.set(
+            ["vis", "phi"],
+            [
+                data.vis + signal[:n_vis],
+                data.phi + signal[n_vis : n_vis + n_phi],
+            ],
+        )
+        blocks, offset = [], n_vis + n_phi
+        for block in data.extras:
+            n = block.values.size
+            blocks.append(
+                block.simulated(
+                    block.values + signal[offset : offset + n], None, None
+                )
+            )
+            offset += n
+        injected = eqx.tree_at(lambda d: d.extras, injected, tuple(blocks))
+        chi2 = [
+            float(np.sum(whitened_residuals(m, injected) ** 2)) / ndof
+            for m in (null, companion)
+        ]
+        assert float(nsigma(chi2[0], chi2[1], ndof)) == pytest.approx(
+            3.0, abs=1e-2
+        )

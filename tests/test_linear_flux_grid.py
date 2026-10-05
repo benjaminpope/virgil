@@ -5,6 +5,7 @@ import warnings
 import jax
 import jax.numpy as np
 import numpy as onp
+import numpyro.distributions as dist
 import pytest
 
 from virgil.grid_fit import (
@@ -12,8 +13,10 @@ from virgil.grid_fit import (
     LinearFluxGrid,
     LogUniform,
     laplace_flux_uncertainty_grid,
+    likelihood_grid,
     linear_flux_grid,
     optimized_flux_grid,
+    optimized_likelihood_grid,
 )
 from virgil.likelihood import build_model, whitened_residuals
 from virgil.models import BinaryModelCartesian
@@ -206,18 +209,65 @@ def test_prior_matches_numerical_marginalisation(noise_scale):
         assert onp.isclose(out.posterior_sd[ij], psd, rtol=1e-3)
 
 
-def test_bare_tuple_prior_is_deprecated_gaussian():
+def test_numpyro_priors_match_the_named_tuples():
     data = _simulate(1e-3, noise_scale=0.1)
-    new = linear_flux_grid(
-        data, BinaryModelCartesian, _grid(), prior=Gaussian(2e-3, 3e-3)
-    )
-    with pytest.warns(DeprecationWarning):
-        old = linear_flux_grid(
+    for new, old in [
+        (dist.LogUniform(1e-5, 1e-1), LogUniform(1e-5, 1e-1)),
+        (dist.Normal(2e-3, 3e-3), Gaussian(2e-3, 3e-3)),
+    ]:
+        res_new = linear_flux_grid(
+            data, BinaryModelCartesian, _grid(), prior=new
+        )
+        res_old = linear_flux_grid(
+            data, BinaryModelCartesian, _grid(), prior=old
+        )
+        assert type(res_new) is type(res_old)
+        for a, b in zip(res_new, res_old):
+            assert onp.array_equal(a, b, equal_nan=True)
+
+
+def test_bare_tuple_prior_is_an_error():
+    data = _simulate(1e-3, noise_scale=0.1)
+    with pytest.raises(TypeError, match=r"bare \(mean, sd\) tuple"):
+        linear_flux_grid(
             data, BinaryModelCartesian, _grid(), prior=(2e-3, 3e-3)
         )
-    assert type(new) is type(old)
-    for a, b in zip(new, old):
-        assert onp.array_equal(a, b, equal_nan=True)
+
+
+def test_numpyro_prior_needs_scalar_parameters():
+    data = _simulate(1e-3, noise_scale=0.1)
+    with pytest.raises(ValueError, match="scalar"):
+        linear_flux_grid(
+            data,
+            BinaryModelCartesian,
+            _grid(),
+            prior=dist.Normal(np.zeros(2), 1.0),
+        )
+    with pytest.raises(ValueError, match="0 < f_min < f_max"):
+        linear_flux_grid(
+            data,
+            BinaryModelCartesian,
+            _grid(),
+            prior=dist.LogUniform(1e-2, 1e-3),
+        )
+
+
+def test_grid_tools_take_flux_param_and_batch_size_by_keyword():
+    data = _simulate(1e-3, noise_scale=0.1)
+    grid = _grid()
+    for fn in (
+        linear_flux_grid,
+        laplace_flux_uncertainty_grid,
+        optimized_flux_grid,
+    ):
+        with pytest.raises(TypeError):
+            fn(data, BinaryModelCartesian, grid, None, "flux")
+    with pytest.raises(TypeError):
+        linear_flux_grid(data, BinaryModelCartesian, grid, "flux")
+    with pytest.raises(TypeError):
+        optimized_likelihood_grid(data, BinaryModelCartesian, grid, "flux")
+    with pytest.raises(TypeError):
+        likelihood_grid(data, BinaryModelCartesian, grid, 10**6)
 
 
 def test_prior_validation():

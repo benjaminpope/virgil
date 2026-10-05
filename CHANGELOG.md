@@ -42,11 +42,38 @@ analysis or warn:
 - **`starting_image` uses `LogUniform` priors** on the envelope width and
   flux (flux bounds 1e-4 to 100), so the starting point, and a fit that
   begins from it, can differ slightly from 0.2.0.
+- **Keyword-only grid and limit arguments.** `flux_param` and `batch_size`
+  must be passed by keyword to `likelihood_grid`, `optimized_likelihood_grid`,
+  `optimized_flux_grid` and `linear_flux_grid`, and `flux_param`,
+  `flux_bounds` and `batch_size` to `absil_limits` and `injection_limits`;
+  positional calls from 0.2.0 raise `TypeError`. A bare `(mean, sd)` tuple
+  as `linear_flux_grid(prior=)` is a `TypeError` (use `dist.Normal`), and
+  `RVData.term(marginalise_offsets=True)` needs a stated zero-point prior.
+- **`injection_limits(flux_bounds=None)` limits change** where 0.2.0
+  returned the top of its search range (1000); both limit functions now
+  find the first crossing from below. Bounded results agree with 0.2.0 to
+  about 1e-4.
+- **L-BFGS keeps 50 past steps** (`fit(lbfgs_memory=50)`, was optax's 10),
+  so L-BFGS fits, regularised images especially, change slightly.
+- **`total_mass` and `distance_pc` use GM☉** instead of a³/P² in Julian
+  years, which raises masses by 3.8e-5 (relative).
 - **`Tabulated` is deprecated** in favour of `virgil.spectra.Nodes`: it
   now raises a `DeprecationWarning`, behaviour is unchanged, and removal is
   planned for 0.4.0.
 
 ### Added
+
+- **`clean(base_priors=...)`** fits named parameters of the base (e.g. a
+  companion's position) together with the components' fluxes at every major
+  cycle. CLEAN also ends with a final major cycle when it stops at the target
+  or at `max_iterations`, so its fluxes are refitted even when the data start
+  close to the target and no cycle has run.
+
+- **`fit(lbfgs_memory=50)`.** L-BFGS now keeps 50 past steps (optax's default
+  is 10). On regularised images, 10 stopped short of the optimum at many
+  weights; 50 reached lower losses (lower χ² and lower penalty together) and
+  converged in 2–3× fewer steps for StarletL1, at a higher cost per step.
+  L-BFGS fits therefore change slightly from earlier versions.
 
 - **Isotropic-orientation priors.** `virgil.priors` has
   `IsotropicInclination(low=0, high=180)` (degrees, density ∝ sin i, so cos i
@@ -69,7 +96,7 @@ analysis or warn:
   evidence, posterior mean and sd come from 256-node Gauss-Legendre
   quadrature in `ln f` over the part of the bounds the likelihood occupies,
   inside `jit` and `vmap`; they agree with a dense-grid quadrature to
-  better than 1e-4. A Gaussian prior is `Gaussian(mean, sd)` (a
+  better than 1e-4. A Gaussian prior is `dist.Normal(mean, sd)` (a
   Gaussian-prior evidence, a computational approximation where `f` may go
   negative). With no `prior`, the posterior and Bayes-factor fields are
   `None`, whatever the prior kind.
@@ -138,6 +165,21 @@ analysis or warn:
   grids), and `save`/`load`/`concatenate` for array jobs; `concatenate`
   compares fingerprints of the whole model, null scene and template (every
   field, static or not) and refuses runs that cannot be fingerprinted.
+- **Detection plots (`virgil.plotting`, stage 3 of virgil#2).**
+  `plot_null_distribution(mc, stat, observed=, fap=)` draws the empirical
+  false-alarm probability of every threshold on a log scale, with the
+  single-position reference (½χ²₁ for Δχ², the Gaussian tail for max SNR),
+  the threshold at a FAP, and an observed value with its FAP and 95%
+  interval; its legend sits outside the axes so it never hides the tail.
+  `plot_roc(mc, stat, flux=, sep_bin=)` draws ROC curves for one or several
+  statistics, fluxes or separation bins (distinct colours and line styles),
+  on a log false-positive axis by default with the chance curve TPR = FPR
+  drawn as a curve, and marks the one-position FAP of local 3σ and 5σ
+  (0.135%, 2.9×10⁻⁷) next to where each curve's threshold equals them, to
+  show the look-elsewhere effect. `plot_completeness(mc, stat, fap,
+  units=)` draws the completeness map against separation and Δmag, contrast
+  or flux, with the 50% and 90% `contrast_curve`s, on axes that
+  `plot_contrast_curve` can draw Absil or Ruffio limits onto.
 
 - **Gauss-Newton and a marginal-likelihood map in `linear_flux_grid`.**
   `n_iter=k` relinearises the whitened residuals at the current flux per pixel
@@ -297,6 +339,28 @@ analysis or warn:
 
 ### Changed
 
+- **API consistency before 0.3.0.**
+  - `linear_flux_grid(prior=)` takes numpyro's `dist.LogUniform(low, high)`
+    and `dist.Normal(mean, sd)` (scalar parameters), the same classes as
+    `fit` and `noise=`, so passing the numpyro `LogUniform` no longer raises
+    `TypeError`. The `virgil.grid_fit.LogUniform` and `Gaussian` named tuples
+    still work. A bare `(mean, sd)` tuple, whose deprecation path never
+    shipped, is now a `TypeError` with a message saying so.
+  - `RVData.term(marginalise_offsets=True)` raises `ValueError` instead of
+    silently using N(0, 1000²) km/s: state the zero-point prior as
+    `(mean, sd)`.
+  - `flux_param` and `batch_size` are keyword-only in `likelihood_grid`,
+    `optimized_likelihood_grid`, `optimized_flux_grid`, `linear_flux_grid`
+    and `laplace_flux_uncertainty_grid` (in the last, after `flux`).
+    The first four are from 0.2.0, so a positional `flux_param` or
+    `batch_size` there now raises `TypeError`.
+  - `injection_recovery(draw_batch > 1)` divides the default grid
+    `batch_size` by `draw_batch` and caps `draw_batch` at that default,
+    so the working set stays within the documented bound, and by default
+    the last chunk is compiled at its own length instead of being padded
+    with discarded draws (an explicit `chunk_size` still pads, to reuse one
+    compilation).
+
 - **Frames are grouped by `MJD` and `TIME` (#203).** OIFITS v1 gives each row
   a `TIME` (UTC seconds) and an `MJD`, and some writers (OYSTER, the 2004
   Interferometry Beauty Contest files) set `MJD` to the night's date and put
@@ -347,6 +411,48 @@ analysis or warn:
 
 ### Fixed
 
+- **Contrast limits: one search, from below.** Found in the pre-0.3.0 review
+  (`design/codebase_review_2026-10b.md`, B1, B2, S2 and S5).
+  - `injection_limits(flux_bounds=None)` returned 1000, the top of its search
+    range, at every position whose limit was above about 1e-3. For a
+    normalised scene the significance falls again once the companion
+    outshines the primary, and the bisection ended at that top. Both limit
+    functions now find the *first* crossing from below: they step up by
+    quarter decades (CANDID steps by 1.4) and then bisect the last step in
+    log flux (one shared helper, `_grid.first_crossing`). Unbounded results
+    now match bounded ones, for model classes and for `System` templates.
+  - `injection_limits` raised `TypeError` on data with extra observables
+    (T3AMP, VISAMP, VISPHI, OI_FLUX). The companion's signal is now injected
+    into every block of the data vector, extras included. The companion
+    model's chi-squared on the injected data is computed in full, since the
+    OI_FLUX blocks and gains whiten with the model's own prediction.
+  - Both functions raise a `ValueError` up front for a `sigma` beyond what
+    `nsigma` can represent in the float type (about 12.95 in float32, 37 in
+    float64). Before, `absil_limits` returned about 1e37 or silently clipped,
+    with a stale "optimizer did not converge" warning. The new warnings say
+    what happened: limits clipped to `flux_bounds`, or no crossing within 40
+    decades of the start.
+  - `flux_bounds` now means the same in both functions: the range searched,
+    upward from its lower end, with limits outside it set to the nearer
+    bound and a `RuntimeWarning`. With `flux_bounds=None`, the search starts
+    at the flux axis's smallest positive value, and only then must the axis
+    have one. `absil_limits` no longer evaluates the whole positions × fluxes
+    loss grid to choose a start. Results agree with the old ones to about
+    1e-4 relative or better.
+  - `flux_param`, `flux_bounds` and `batch_size` are keyword-only in
+    `absil_limits` and `injection_limits`, as in `grid_fit` and `detection`.
+
+- **Orbits: GM☉ in `total_mass`, Ω range, face-on inclination (F14–F16).**
+  `total_mass` and `distance_pc` now use Kepler's third law with the IAU 2015
+  nominal GM☉, au and the 86400 s day instead of a³/P² with P in Julian years
+  (masses were 3.8e-5 low). `ThieleInnesOrbit.to_kepler` no longer returns
+  Ω = 180° exactly: Ω is in [0°, 180°) with ω paired to keep the sky orbit.
+  `StateVectorOrbit.to_kepler` computes i, Ω and ω by atan2 from the orbit
+  normal, so nearly face-on orbits keep their inclination to float64
+  precision. `orientation_priors(..., inclination=True)` also returns
+  `IsotropicInclination` under `"inc"`: the full Haar orientation prior in
+  one call (default off, so existing callers are unchanged).
+
 - **`log_evidence` and `clean` on high signal-to-noise data (#214).** The
   evidence takes `log det(I + JᵀJ)` from the singular values of the Jacobian,
   instead of a Cholesky factor of `I + J Jᵀ`, which was numerically
@@ -376,6 +482,15 @@ analysis or warn:
 
 ### Docs
 
+- **"Detection ROC curves" rewritten on `injection_recovery`** (Binaries,
+  `notebooks/detection_roc.ipynb`). A candidate companion in a simulated
+  NIRISS AMI observation, one Monte Carlo call (10⁴ null and 1280 injected
+  searches), the look-elsewhere effect on the null distribution, the
+  empirical threshold and FAP to quote for a detection, ROC curves of the
+  three statistics, the completeness map and 50%/90% contrast curves to quote
+  for a non-detection against Absil and Ruffio limits, and what wrong error
+  bars do to a Gaussian null and how `rescale_errors` and the bootstrap fix
+  it.
 - **New tutorial: "Orbits from interferometric epochs"** (Binaries,
   `notebooks/orbit_fitting.ipynb`). Eight epochs of simulated VLTI
   (UT) V² and closure phases of a three-year binary: per-epoch astrometry
