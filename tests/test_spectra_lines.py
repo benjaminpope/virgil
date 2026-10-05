@@ -224,3 +224,65 @@ def test_select_keeps_whole_triangles_in_a_wavelength_range():
     assert upper.n_independent + lower.n_independent == data.n_independent
     with pytest.raises(ValueError, match="No samples"):
         data.select(3.0e-6)
+
+
+def test_array_line_parameters_are_rejected():
+    with pytest.raises(ValueError, match="scalar"):
+        GaussianLine(0.4, onp.array([BRG, 2.2e-6]), FWHM)
+    with pytest.raises(ValueError, match="scalar"):
+        LorentzianLine(0.4, BRG, FWHM, wavel0=onp.array([BRG, BRG]))
+    with pytest.raises(ValueError, match="scalar"):
+        Nodes([0.1, 0.2], [2.0e-6, 2.1e-6], wavel0=onp.array([2.0e-6] * 2))
+    # Scalars inside vmap are fine.
+    amplitudes = jax.vmap(lambda a: GaussianLine(a, BRG, FWHM)(BRG))(
+        np.array([0.1, 0.2])
+    )
+    assert onp.allclose(amplitudes, [0.1, 0.2], rtol=1e-6)
+
+
+def test_cubic_nodes_that_undershoot_between_positive_nodes_are_unphysical():
+    nodes = onp.array([2.0, 2.1, 2.12, 2.3, 2.4]) * 1e-6
+    values = onp.array([1.0, 1.0, 0.02, 1.0, 1.0])
+    spectrum = Nodes(values, nodes, kind="cubic")
+    dense = onp.linspace(nodes[0], nodes[-1], 20001)
+    assert onp.asarray(spectrum(dense)).min() < 0.0
+    assert not bool(spectrum.is_physical())
+    with pytest.raises(ValueError, match="non-negative"):
+        PointSource(flux=spectrum)
+    # The same nodes are fine linearly, and a gentle cubic stays physical.
+    assert bool(Nodes(values, nodes).is_physical())
+    gentle = Nodes([0.2, 0.5, 0.3, 0.4], nodes[[0, 1, 3, 4]], kind="cubic")
+    assert bool(gentle.is_physical())
+    assert not bool(jax.jit(lambda s: s.is_physical())(spectrum))
+
+
+def test_sum_part_names_cannot_clash_with_attributes():
+    part = PowerLaw(1.0, wavel0=2.2e-6)
+    for bad in ("_private", "names", "parts", "wavel0", "components", "set"):
+        with pytest.raises(ValueError, match="Sum part name|cannot be"):
+            Sum({bad: part})
+    with pytest.raises(ValueError, match="identifier"):
+        Sum({"two words": part})
+    assert Sum(continuum=part).continuum is part
+
+
+def test_binary_and_wrapped_total_spectra_match_their_systems():
+    from virgil import BinaryModelAngular, BinaryModelCartesian
+    from virgil.models import Rotated
+
+    wavel = onp.array([2.0e-6, 2.2e-6])
+    cartesian = BinaryModelCartesian(5.0, 3.0, 0.2)
+    angular = BinaryModelAngular(8.0, 30.0, 0.2)
+    assert onp.allclose(cartesian.total_spectrum(wavel), 1.2)
+    assert onp.allclose(
+        cartesian.total_spectrum(wavel),
+        cartesian.to_system().total_spectrum(wavel),
+    )
+    assert onp.allclose(angular.total_spectrum(wavel), 1.2)
+    system = System(
+        star=PointSource(),
+        comp=PointSource(PowerLaw(0.3, 1.0, 2.0e-6), dra=5.0),
+    )
+    expected = system.total_spectrum(wavel)
+    assert onp.allclose(expected, 1.0 + 0.3 * wavel / 2.0e-6, rtol=1e-6)
+    assert onp.allclose(Rotated(system, 40.0).total_spectrum(wavel), expected)

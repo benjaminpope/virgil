@@ -2478,6 +2478,9 @@ class Rotated(SourceModel):
     def _weight(self, wavel=None):
         return self.source._weight(wavel)
 
+    def total_spectrum(self, wavel):
+        return self.source.total_spectrum(wavel)
+
     def is_physical(self):
         return self.source.is_physical()
 
@@ -2629,6 +2632,9 @@ class Attached(SourceModel):
     def _weight(self, wavel=None):
         return self.component._weight(wavel)
 
+    def total_spectrum(self, wavel):
+        return self.component.total_spectrum(wavel)
+
     def is_physical(self):
         return self.component.is_physical()
 
@@ -2706,6 +2712,9 @@ class BinaryModelAngular(SourceModel):
             self.sep * np.sin(th), self.sep * np.cos(th), self.flux
         )
 
+    def total_spectrum(self, wavel):
+        return self.to_cartesian().to_system().total_spectrum(wavel)
+
     def is_physical(self):
         return _flux_is_non_negative(self.flux)
 
@@ -2755,6 +2764,9 @@ class BinaryModelCartesian(SourceModel):
         sep = np.sqrt(self.dra**2 + self.ddec**2)
         pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
         return BinaryModelAngular(sep, pa, self.flux)
+
+    def total_spectrum(self, wavel):
+        return self.to_system().total_spectrum(wavel)
 
     def is_physical(self):
         return _flux_is_non_negative(self.flux)

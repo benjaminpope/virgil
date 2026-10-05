@@ -247,6 +247,13 @@ class _Line(Spectrum):
 
     def __check_init__(self):
         name = type(self).__name__
+        for field in ("amplitude", "line_wavel", "fwhm", "wavel0"):
+            shape = onp.shape(getattr(self, field))
+            if shape != ():
+                raise ValueError(
+                    f"{name} {field} must be a scalar, not shape {shape}; "
+                    "use one line per value (or jax.vmap)."
+                )
         for field in ("line_wavel", "fwhm", "wavel0"):
             value = concrete(getattr(self, field))
             if value is not None and not (
@@ -271,13 +278,13 @@ class GaussianLine(_Line):
 
     Parameters
     ----------
-    amplitude : float or array-like
+    amplitude : float
         Flux at the line centre, relative to the other components.
-    line_wavel : float or array-like
+    line_wavel : float
         Line centre in metres (shifted by any velocity: λ₀(1 + v/c)).
-    fwhm : float or array-like
+    fwhm : float
         Full width at half maximum in metres.
-    wavel0 : float or array-like, optional
+    wavel0 : float, optional
         Reference wavelength in metres; the line centre by default.
 
     Examples
@@ -402,7 +409,11 @@ class Nodes(Spectrum):
         )
 
     def _check_wavel(self):
-        return np.concatenate([self.wavel, np.ravel(self.wavel0)])
+        points = [self.wavel, np.ravel(self.wavel0)]
+        if self.kind == "cubic" and self.values.size >= 3:
+            # A natural spline can dip below zero between positive nodes.
+            points.append(_cubic_extrema(self.wavel, self.values))
+        return np.concatenate(points)
 
     def __check_init__(self):
         if (
@@ -428,6 +439,10 @@ class Nodes(Spectrum):
         ):
             raise ValueError(
                 "Nodes wavel must be finite, positive and strictly increasing."
+            )
+        if self.wavel0.shape != ():
+            raise ValueError(
+                f"Nodes wavel0 must be a scalar, not shape {self.wavel0.shape}."
             )
         wavel0 = concrete(self.wavel0)
         if wavel0 is not None and not (
@@ -476,10 +491,7 @@ class Sum(Spectrum):
         if not parts:
             raise ValueError("Sum needs at least one spectrum.")
         for name, part in parts.items():
-            if not name.isidentifier() or name in ("names", "parts", "wavel0"):
-                raise ValueError(
-                    f"{name!r} is not a valid name for a Sum part."
-                )
+            _check_part_name(name)
             if not isinstance(part, Spectrum):
                 raise TypeError(f"Part '{name}' is not a Spectrum: {part!r}")
         self.names = tuple(parts)
@@ -649,23 +661,51 @@ def _planck_ratio(wavel, temperature, wavel0, temperature0):
     return np.exp(log_ratio)
 
 
-def _natural_cubic(x, nodes, values):
-    """Natural cubic spline through ``(nodes, values)`` at ``x`` (in range).
+def _check_part_name(name):
+    """Reject Sum part names that are not parameter-path safe or clash.
 
-    The second derivatives at the nodes solve a small tridiagonal system,
-    built densely (node counts are small), with zero curvature at the ends.
-    Differentiable in the values and node positions.
+    The same rule as a [`System`][virgil.models.System] component name
+    (which `models` owns, and imports this module).
+    """
+    if not isinstance(name, str) or not name.isidentifier():
+        raise ValueError(
+            f"Sum part name {name!r} must be a valid Python identifier, so "
+            "that it can be used in parameter paths such as "
+            "'flux.brg.amplitude'."
+        )
+    if (
+        name.startswith("_")
+        or name in {"names", "parts", "wavel0", "components"}
+        or hasattr(Sum, name)
+    ):
+        raise ValueError(
+            f"'{name}' cannot be a Sum part name because it clashes with a "
+            "Sum attribute or method; choose another name."
+        )
+
+
+def _spline_moments(nodes, values):
+    """Second derivatives of the natural cubic spline at the nodes.
+
+    They solve a small tridiagonal system, built densely (node counts are
+    small), with zero curvature at the ends. Differentiable in the values and
+    node positions.
     """
     h = np.diff(nodes)
     slope = np.diff(values) / h
-    n = values.size
     interior = 2.0 * (h[:-1] + h[1:])
     a = np.diag(interior) + np.diag(h[1:-1], 1) + np.diag(h[1:-1], -1)
-    m = (
-        np.zeros(n, dtype=values.dtype)
+    return (
+        np.zeros(values.size, dtype=values.dtype)
         .at[1:-1]
         .set(np.linalg.solve(a, 6.0 * np.diff(slope)))
     )
+
+
+def _natural_cubic(x, nodes, values):
+    """Natural cubic spline through ``(nodes, values)`` at ``x`` (in range)."""
+    n = values.size
+    m = _spline_moments(nodes, values)
     i = np.clip(np.searchsorted(nodes, x, side="right") - 1, 0, n - 2)
     t0, t1 = nodes[i], nodes[i + 1]
     hi = t1 - t0
@@ -676,6 +716,35 @@ def _natural_cubic(x, nodes, values):
         + (values[i] / hi - m[i] * hi / 6.0) * left
         + (values[i + 1] / hi - m[i + 1] * hi / 6.0) * right
     )
+
+
+def _cubic_extrema(nodes, values):
+    """Where each segment of the natural spline is stationary, clipped in.
+
+    On a segment of width ``h`` the derivative is the quadratic
+    ``a s² + b s + c`` in ``s = x - nodes[i]``. Both roots are returned
+    (shape ``(2 (n - 1),)``), solved without branching (a stable quadratic
+    formula, and the linear root where ``a`` vanishes), so the result is
+    traceable and finite. A root outside the segment, or a complex one, is
+    clipped to an end or the vertex, where the spline is merely evaluated.
+    """
+    h = np.diff(nodes)
+    m = _spline_moments(nodes, values)
+    m0, m1 = m[:-1], m[1:]
+    a = (m0 + m1) / (2.0 * h)
+    b = m0
+    c = (values[1:] - values[:-1]) / h - h * (m1 - m0) / 6.0 - m0 * h / 2.0
+    tiny = 1e-12 * (np.abs(b) + h * np.abs(a) + 1e-30)
+    disc = np.sqrt(np.maximum(b**2 - 4.0 * a * c, 0.0))
+    q = -0.5 * (b + np.where(b >= 0.0, disc, -disc))
+    small_a = np.abs(a * h) <= tiny
+    safe_a = np.where(small_a, 1.0, a)
+    safe_q = np.where(np.abs(q) <= 1e-30, 1.0, q)
+    safe_b = np.where(np.abs(b) <= 1e-30, 1.0, b)
+    root1 = np.where(small_a, -c / safe_b, q / safe_a)
+    root2 = np.where(small_a, -c / safe_b, c / safe_q)
+    roots = np.clip(np.concatenate([root1, root2]), 0.0, np.tile(h, 2))
+    return np.tile(nodes[:-1], 2) + roots
 
 
 def flux_at(flux, wavel=None):
