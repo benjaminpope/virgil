@@ -68,8 +68,7 @@ document the same conventions as virgil (the secondary's ω, +z away from the
 observer), not yet checked numerically. virgil's orbits exist to drive
 time-dependent scenes, extended components included, in JAX; for Hipparcos and
 Gaia absolute astrometry use one of those codes and bring the result in as a
-prior. See [`design/orbit_prior_art.md`](https://github.com/benjaminpope/virgil/blob/main/design/orbit_prior_art.md)
-for a feature comparison.
+prior.
 
 ::: virgil.orbits
     options:

@@ -34,7 +34,6 @@ and ϖ when RVs fix the node.
 (Thompson et al. 2023, AJ 166, 164) and exoplanet's `Angle`
 (Foreman-Mackey et al. 2021, JOSS 6, 3285), which sample v ~ N(0, I). The
 ring and the von Mises chords are virgil's. No code is taken from either.
-See [`design/orbit_prior_art.md`](https://github.com/benjaminpope/virgil/blob/main/design/orbit_prior_art.md) §4.1.
 
 ::: virgil.angles
     options:
