@@ -1,12 +1,14 @@
-"""Detection statistics for ROC curves (design/detection_roc.md, Stage 1).
+"""Detection statistics and their Monte Carlo (design/detection_roc.md).
 
 Small synthetic data (the 7-hole NIRISS mask, 21 V² and 35 closure phases)
 and small grids, so that these run on a laptop.
 """
 
+import dataclasses
 import itertools
 import warnings
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as onp
@@ -16,13 +18,25 @@ from scipy import special, stats
 from tests._compiles import count_compiles
 from virgil.coverage import nrm_oidata
 from virgil.detection import (
+    STATISTICS,
+    DetectionMC,
     _constrained_profile,
+    bootstrap_null,
     detection_statistics,
+    gaussian_null,
+    injection_grid,
+    injection_recovery,
     local_nsigma,
+    rescale_errors,
 )
 from virgil.grid_fit import likelihood_grid
-from virgil.likelihood import loglike
-from virgil.models import BinaryModelCartesian, PointSource, System
+from virgil.likelihood import loglike, whitened_residuals
+from virgil.models import (
+    BinaryModelAngular,
+    BinaryModelCartesian,
+    PointSource,
+    System,
+)
 
 TEMPLATE = nrm_oidata()
 NULL = BinaryModelCartesian(0.0, 0.0, 0.0)
@@ -288,3 +302,493 @@ def test_constrained_profile_keeps_positive_grid_points():
     )
     onp.testing.assert_allclose(profile, [5.0, 4.0, 3.0, 6.0, 0.0])
     onp.testing.assert_allclose(flux, [0.2, 0.3, 0.1, 0.15, 0.0])
+
+
+# ---------------------------------------------------------------------------
+# Stage 2: simulators, the Monte Carlo driver and DetectionMC
+# ---------------------------------------------------------------------------
+
+# A tiny grid for compile and bookkeeping tests, and a 7 x 7 x 8 one for the
+# statistical tests (shared through a module fixture: 64 null and 72
+# injected draws).
+TINY = {
+    "dra": jnp.linspace(0.0, 120.0, 3),
+    "ddec": jnp.linspace(-100.0, 20.0, 3),
+    "flux": jnp.geomspace(1e-3, 3e-2, 6),
+}
+SEARCH = {
+    "dra": jnp.linspace(-120.0, 120.0, 7),
+    "ddec": jnp.linspace(-120.0, 120.0, 7),
+    "flux": jnp.geomspace(5e-4, 5e-2, 8),
+}
+
+
+def _recover(grid=TINY, key=0, n_null=4, injections=None, **kwargs):
+    kwargs = {"chunk_size": 4, "progress": False} | kwargs
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return injection_recovery(
+            TEMPLATE,
+            NULL,
+            BinaryModelCartesian,
+            grid,
+            key,
+            n_null=n_null,
+            injections=injections,
+            **kwargs,
+        )
+
+
+@pytest.fixture(scope="module")
+def search_mc():
+    fluxes = [0.0, 1e-3, 3e-3, 2e-2]
+    injections = injection_grid([60.0, 90.0], fluxes, 12, 1)
+    return _recover(
+        SEARCH, key=3, n_null=64, injections=injections, chunk_size=24
+    )
+
+
+def _synthetic(null, injected=None, **meta):
+    """A DetectionMC built by hand, with every statistic set to ``null``."""
+    null = {s: onp.asarray(null, float) for s in STATISTICS}
+    injected = injected or {}
+    n = len(injected.get("flux", []))
+    full = {s: onp.zeros(n) for s in STATISTICS}
+    full.update({k: onp.asarray(v, float) for k, v in injected.items()})
+    meta = {"match_radius": None, "seeds": [{"seed": 0}]} | meta
+    return DetectionMC(null=null, injected=full, meta=meta)
+
+
+def test_monte_carlo_compiles_once_across_draws_null_and_injected():
+    inj = injection_grid([60.0], [0.0, 1e-2], 2, 1)
+    _recover(key=0, n_null=4, injections=inj)
+    more = injection_grid([40.0, 80.0], [5e-3, 1e-2], 3, 2)
+    with count_compiles() as compiles:
+        mc = _recover(key=5, n_null=9, injections=more)
+    assert not compiles
+    assert mc.n_null == 9 and mc.n_injected == 12
+    assert mc.meta["n_null"] == 9 and mc.meta["n_injected"] == 12
+
+
+def test_monte_carlo_is_reproducible_and_independent_of_chunking():
+    inj = injection_grid([60.0], [1e-2], 4, 1)
+    a = _recover(key=7, n_null=4, injections=inj)
+    b = _recover(key=7, n_null=4, injections=inj)
+    for part in ("null", "injected"):
+        for key, values in getattr(a, part).items():
+            onp.testing.assert_array_equal(values, getattr(b, part)[key])
+    c = _recover(key=8, n_null=4, injections=inj)
+    assert not onp.allclose(a.null["delta_chi2"], c.null["delta_chi2"])
+    # Draw i always uses the same key, whatever the chunks.
+    d = _recover(key=7, n_null=4, injections=inj, chunk_size=3)
+    onp.testing.assert_allclose(
+        d.injected["delta_chi2"], a.injected["delta_chi2"], rtol=1e-4
+    )
+
+
+def test_system_template_and_bootstrap_noise_run_through_the_driver():
+    inj = injection_grid([60.0], [0.0, 1e-2], 2, 1)
+    binary = _recover(n_null=4, injections=inj)
+    template = System(primary=PointSource(), comp=PointSource(0.01))
+    paths = {f"comp.{key}": values for key, values in TINY.items()}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        system = injection_recovery(
+            TEMPLATE,
+            NULL,
+            template,
+            paths,
+            0,
+            n_null=4,
+            injections=inj,
+            chunk_size=4,
+            progress=False,
+        )
+    onp.testing.assert_allclose(
+        system.injected["delta_chi2"],
+        binary.injected["delta_chi2"],
+        rtol=1e-3,
+        atol=1e-2,
+    )
+    assert set(system.injected) == set(binary.injected)
+    data = TEMPLATE.with_model(NULL, key=jax.random.PRNGKey(9))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        boot = injection_recovery(
+            data,
+            NULL,
+            BinaryModelCartesian,
+            TINY,
+            0,
+            n_null=4,
+            injections=inj,
+            noise="bootstrap",
+            chunk_size=4,
+            progress=False,
+        )
+    assert boot.meta["noise"] == {"kind": "bootstrap", "method": "sign_flip"}
+    assert onp.all(boot.null["delta_chi2"] >= 0.0)
+    # The bright injections are found.
+    assert onp.all(boot.injected["delta_chi2"][2:] > 20.0)
+
+
+def test_null_scene_must_match_the_model_at_zero_flux():
+    with pytest.raises(ValueError, match="predict different data"):
+        injection_recovery(
+            TEMPLATE,
+            BinaryModelCartesian(60.0, -40.0, 0.01),
+            BinaryModelCartesian,
+            TINY,
+            0,
+            n_null=1,
+        )
+
+
+def test_save_load_and_concatenate_round_trip(tmp_path):
+    inj = injection_grid([60.0], [1e-2], 2, 1)
+    a = _recover(key=1, n_null=4, injections=inj)
+    b = _recover(key=2, n_null=4, injections=inj)
+    path = tmp_path / "mc.npz"
+    a.save(path)
+    loaded = DetectionMC.load(path)
+    assert loaded.meta == a.meta
+    for part in ("null", "injected"):
+        assert getattr(loaded, part).keys() == getattr(a, part).keys()
+        for key, values in getattr(a, part).items():
+            onp.testing.assert_array_equal(getattr(loaded, part)[key], values)
+    merged = DetectionMC.concatenate([loaded, b])
+    assert merged.n_null == 8 and merged.n_injected == 4
+    assert merged.meta["n_null"] == 8
+    assert merged.meta["seeds"] == [{"seed": 1}, {"seed": 2}]
+    onp.testing.assert_array_equal(
+        merged.null["delta_chi2"],
+        onp.concatenate([a.null["delta_chi2"], b.null["delta_chi2"]]),
+    )
+    # A null-only job merges with an injection-only one.
+    null_only = _recover(key=3, n_null=4)
+    inj_only = _recover(key=4, n_null=0, injections=inj)
+    both = DetectionMC.concatenate([null_only, inj_only])
+    assert both.n_null == 4 and both.n_injected == 2
+
+
+def test_concatenate_refuses_incompatible_results():
+    a = _recover(key=1, n_null=4)
+    with pytest.raises(ValueError, match="share a seed"):
+        DetectionMC.concatenate([a, a])
+    for change in (
+        {"grid": {"dra": [0.0]}},
+        {"noise": {"kind": "bootstrap", "method": "sign_flip"}},
+        {"match_radius": 10.0},
+        {"template": {"n_vis": 1, "n_phi": 0, "hash": "0"}},
+    ):
+        other = dataclasses.replace(
+            a, meta=a.meta | change | {"seeds": [{"seed": 2}]}
+        )
+        with pytest.raises(ValueError, match="differ in"):
+            DetectionMC.concatenate([a, other])
+
+
+@pytest.mark.validates(
+    "virgil.detection.injection_recovery",
+    "virgil.detection.DetectionMC.threshold",
+    roots=["statistics"],
+)
+def test_empirical_threshold_exceeds_wilks_over_a_grid(search_mc):
+    # Searching 49 positions makes the null's maximum larger than at one
+    # fixed position (the look-elsewhere effect): the empirical threshold
+    # at a given FAP is above Wilks's, where ½χ²₁ has that tail.
+    assert onp.all(search_mc.null["delta_chi2"] >= 0.0)
+    for fap in (0.2, 0.1, 0.05):
+        threshold, error = search_mc.threshold("delta_chi2", fap)
+        wilks = stats.norm.isf(fap) ** 2
+        assert threshold >= wilks
+        assert 0.0 < error < threshold
+        # The empirical FAP of Wilks's threshold is above the nominal one.
+        assert search_mc.false_alarm_probability("delta_chi2", wilks)[0] > fap
+
+
+@pytest.mark.validates(
+    "virgil.detection.injection_recovery",
+    "virgil.detection.DetectionMC.auc",
+    roots=["statistics"],
+)
+def test_auc_is_a_half_without_a_companion_and_one_when_bright(search_mc):
+    # Zero-flux injections are null draws, so no statistic separates them
+    # (96 of each: the AUC's standard error is about 0.04); a 20-sigma
+    # companion is always found.
+    zero = injection_grid([60.0, 90.0], [0.0], 48, 2)
+    mc = _recover(key=4, n_null=96, injections=zero, chunk_size=48)
+    for stat in STATISTICS:
+        assert mc.auc(stat) == pytest.approx(0.5, abs=0.15)
+        assert search_mc.auc(stat, flux=2e-2) > 0.99
+        assert search_mc.auc(stat, flux=3e-3) > search_mc.auc(stat, 1e-3)
+    fpr, tpr, thresholds = search_mc.roc("delta_chi2", flux=3e-3)
+    assert fpr[0] == 0.0 and tpr[0] == 0.0 and thresholds[0] == onp.inf
+    assert fpr[-1] == 1.0 and tpr[-1] == 1.0
+    assert onp.all(onp.diff(fpr) >= 0.0) and onp.all(onp.diff(tpr) >= 0.0)
+    assert onp.all(onp.diff(thresholds) < 0.0)
+
+
+def test_completeness_and_contrast_curve_of_the_search(search_mc):
+    result = search_mc.completeness("delta_chi2", 0.1)
+    onp.testing.assert_allclose(result["sep"], [60.0, 90.0])
+    onp.testing.assert_allclose(result["flux"], [0.0, 1e-3, 3e-3, 2e-2])
+    assert onp.all(result["n"] == 12)
+    assert onp.all(result["completeness"][:, -1] == 1.0)
+    # At 10% FAP, about 10% of zero-flux injections pass by chance.
+    assert onp.all(result["completeness"][:, 0] <= 0.35)
+    sep, flux = search_mc.contrast_curve("delta_chi2", 0.1, 0.5)
+    onp.testing.assert_allclose(sep, [60.0, 90.0])
+    # A companion of 1e-3 has an SNR of about 1, one of 3e-3 about 3.
+    assert onp.all((flux > 1e-3) & (flux < 2e-2))
+
+
+@pytest.mark.validates(
+    "virgil.detection.DetectionMC.false_alarm_probability",
+    roots=["statistics"],
+)
+def test_false_alarm_interval_covers_the_truth():
+    # Null statistics from a known distribution: P(N(0, 1) >= 1.645) = 5%.
+    # The exact binomial interval covers it at least 95% of the time.
+    rng = onp.random.default_rng(0)
+    value, truth = 1.645, stats.norm.sf(1.645)
+    covered, fap = [], []
+    for _ in range(400):
+        mc = _synthetic(rng.standard_normal(200))
+        p, lower, upper = mc.false_alarm_probability("delta_chi2", value)
+        covered.append(lower <= truth <= upper)
+        fap.append(p)
+    assert onp.mean(covered) >= 0.93
+    assert onp.mean(fap) == pytest.approx(truth, abs=0.01)
+    # (k + 1)/(n + 1): never zero, and exact counts.
+    mc = _synthetic(onp.arange(10.0))
+    p, lower, upper = mc.false_alarm_probability("max_snr", [0.0, 9.0, 10.0])
+    onp.testing.assert_allclose(p, [11 / 11, 2 / 11, 1 / 11])
+    assert lower[-1] == 0.0 and upper[0] == 1.0
+
+
+def test_threshold_warns_when_the_null_draws_are_too_few():
+    mc = _synthetic(onp.arange(100.0))
+    assert mc.threshold("delta_chi2", 0.1)[0] == pytest.approx(89.1)
+    with pytest.warns(RuntimeWarning, match="cannot resolve"):
+        mc.threshold("delta_chi2", 1e-3)
+
+
+def test_completeness_and_contrast_curve_by_hand():
+    # Two separations, three fluxes, four injections per cell; the null
+    # threshold at FAP 0.1 is 89.1, and an injection is detected when its
+    # statistic (100 or 0) exceeds it.
+    sep = onp.repeat([50.0, 100.0], 12)
+    flux = onp.tile(onp.repeat([1e-3, 2e-3, 4e-3], 4), 2)
+    detected = onp.array(
+        [0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1]  # 0, 1/4, 1 at 50 mas
+        + [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0]  # 0, 0, 1/2 at 100 mas
+    )
+    mc = _synthetic(
+        onp.arange(100.0),
+        {
+            "dra": sep,
+            "ddec": onp.zeros_like(sep),
+            "flux": flux,
+            "delta_chi2": 100.0 * detected,
+        },
+    )
+    result = mc.completeness("delta_chi2", 0.1)
+    onp.testing.assert_allclose(
+        result["completeness"], [[0.0, 0.25, 1.0], [0.0, 0.0, 0.5]]
+    )
+    sep_out, limit = mc.contrast_curve("delta_chi2", 0.1, 0.5)
+    onp.testing.assert_allclose(sep_out, [50.0, 100.0])
+    # Halfway in log flux from 25% at 2e-3 to 100% at 4e-3 is 1/3 of the
+    # way; 50% is reached exactly at 4e-3 at 100 mas.
+    onp.testing.assert_allclose(limit, [2e-3 * 2 ** (1 / 3), 4e-3])
+    assert onp.isnan(mc.contrast_curve("delta_chi2", 0.1, 0.9)[1][1])
+    # Bin edges instead of distinct values.
+    binned = mc.completeness(
+        "delta_chi2", 0.1, sep_bins=[0, 75, 150], flux_bins=[5e-4, 3e-3, 5e-3]
+    )
+    onp.testing.assert_allclose(
+        binned["completeness"], [[0.125, 1.0], [0.0, 0.5]]
+    )
+
+
+def test_match_radius_counts_only_detections_near_the_injection():
+    injected = {
+        "dra": [50.0, 50.0, 50.0],
+        "ddec": [0.0, 0.0, 0.0],
+        "flux": [1e-2, 1e-2, 1e-2],
+        "best_dra": [52.0, 50.0, -50.0],  # 2, 5 and 100 mas away
+        "best_ddec": [0.0, 5.0, 0.0],
+        "delta_chi2": [100.0, 100.0, 100.0],
+    }
+    mc = _synthetic(onp.arange(100.0), injected)
+    assert mc.detected("delta_chi2", 0.1).tolist() == [True, True, True]
+    for radius, expected in ((10.0, 2), (3.0, 1), (0.5, 0)):
+        mc.meta["match_radius"] = radius
+        assert mc.detected("delta_chi2", 0.1).sum() == expected
+        assert mc.roc("delta_chi2")[1][-1] == pytest.approx(expected / 3)
+
+
+def test_match_radius_in_the_driver(search_mc):
+    # Bright companions are found within a grid step (40 mas) of the truth,
+    # but rarely within a hundredth of a mas, since they lie off the grid.
+    with pytest.raises(ValueError, match="match_radius"):
+        _recover(
+            {"sep": jnp.array([60.0]), "flux": jnp.geomspace(1e-3, 1e-2, 4)},
+            n_null=1,
+            match_radius=5.0,
+        )
+    bright = search_mc.injected["flux"] == 2e-2
+    for radius, low, high in ((40.0, 0.9, 1.0), (0.01, 0.0, 0.2)):
+        mc = dataclasses.replace(
+            search_mc, meta=search_mc.meta | {"match_radius": radius}
+        )
+        fraction = mc.detected("delta_chi2", 0.1)[bright].mean()
+        assert low <= fraction <= high
+
+
+def test_injection_grid_geometry():
+    out = injection_grid([30.0, 60.0], [0.0, 1e-3, 1e-2], 50, 4)
+    assert set(out) == {"dra", "ddec", "flux"}
+    assert all(values.shape == (300,) for values in out.values())
+    sep = onp.hypot(out["dra"], out["ddec"])
+    onp.testing.assert_allclose(sep, onp.repeat([30.0, 60.0], 150))
+    onp.testing.assert_array_equal(
+        out["flux"], onp.tile(onp.repeat([0.0, 1e-3, 1e-2], 50), 2)
+    )
+    # PA from North through East: dra = sep sin PA, ddec = sep cos PA. The
+    # PAs are uniform, so every quadrant is populated.
+    pa = onp.degrees(onp.arctan2(out["dra"], out["ddec"])) % 360.0
+    counts = onp.histogram(pa, bins=[0, 90, 180, 270, 360])[0]
+    assert onp.all(counts > 40)
+    angular = BinaryModelAngular(sep[0], pa[0], 1e-2)
+    cartesian = BinaryModelCartesian(out["dra"][0], out["ddec"][0], 1e-2)
+    onp.testing.assert_allclose(
+        TEMPLATE.model(angular), TEMPLATE.model(cartesian), atol=1e-5
+    )
+    again = injection_grid([30.0, 60.0], [0.0, 1e-3, 1e-2], 50, 4)
+    onp.testing.assert_array_equal(again["dra"], out["dra"])
+
+
+def _unequal_template():
+    """The 7-hole template with unequal errors on V² and closure phases."""
+    rng = onp.random.default_rng(1)
+    return eqx.tree_at(
+        lambda d: (d.d_vis, d.d_phi),
+        TEMPLATE,
+        (
+            TEMPLATE.d_vis * (0.5 + rng.random(21)),
+            TEMPLATE.d_phi * (0.5 + rng.random(35)),
+        ),
+    )
+
+
+@pytest.mark.validates(
+    "virgil.detection.rescale_errors", roots=["self-consistency"]
+)
+def test_rescale_errors_gives_unit_reduced_chi2():
+    # The true noise is 3x the quoted visibility errors and half the
+    # closure-phase ones.
+    template = _unequal_template()
+    truth = eqx.tree_at(
+        lambda d: (d.d_vis, d.d_phi),
+        template,
+        (template.d_vis * 3.0, template.d_phi * 0.5),
+    )
+    n_cp = TEMPLATE.cp_noise.size
+    squares = {"vis": [], "phi": []}
+    for seed in range(20):
+        data = truth.with_model(NULL, key=jax.random.PRNGKey(seed))
+        data = eqx.tree_at(
+            lambda d: (d.d_vis, d.d_phi),
+            data,
+            (template.d_vis, template.d_phi),
+        )
+        scaled, factors = rescale_errors(data, NULL)
+        r = onp.asarray(whitened_residuals(NULL, scaled))
+        assert onp.sum(r[:21] ** 2) / 21 == pytest.approx(1.0, rel=1e-4)
+        assert onp.sum(r[21:] ** 2) / n_cp == pytest.approx(1.0, rel=1e-4)
+        onp.testing.assert_allclose(
+            scaled.d_vis, data.d_vis * factors["vis"], rtol=1e-6
+        )
+        for name in squares:
+            squares[name].append(factors[name] ** 2)
+    # The mean squared factor estimates the true variance ratio (420 and
+    # 300 degrees of freedom: about 7% and 8% standard error).
+    assert onp.mean(squares["vis"]) == pytest.approx(9.0, rel=0.2)
+    assert onp.mean(squares["phi"]) == pytest.approx(0.25, rel=0.2)
+
+
+def test_sign_flip_bootstrap_keeps_each_whitened_residual_magnitude():
+    template = _unequal_template()
+    data = template.with_model(NULL, key=jax.random.PRNGKey(0))
+    simulate = bootstrap_null(data, NULL)
+    noise = data.cp_noise
+    resid = onp.asarray(data.vis) - onp.asarray(TEMPLATE.model(NULL)[:21])
+    w = onp.asarray(noise.whiten(data.phi, data.d_phi)[0])
+    signs = set()
+    for seed in range(5):
+        draw = simulate(jax.random.PRNGKey(seed))
+        r_vis = onp.asarray(draw.vis) - 1.0  # the null's V² are 1
+        onp.testing.assert_allclose(onp.abs(r_vis), onp.abs(resid), atol=1e-6)
+        w_draw = onp.asarray(noise.whiten(draw.phi, draw.d_phi)[0])
+        onp.testing.assert_allclose(onp.abs(w_draw), onp.abs(w), atol=1e-4)
+        signs.add(tuple(onp.sign(w_draw * w).astype(int)))
+        assert onp.array_equal(onp.asarray(draw.d_vis), data.d_vis)
+    assert len(signs) == 5
+    # Resampling draws the whitened visibility residuals with replacement.
+    resample = bootstrap_null(data, NULL, method="resample")
+    draw = resample(jax.random.PRNGKey(1))
+    z = resid / onp.asarray(data.d_vis)
+    z_draw = (onp.asarray(draw.vis) - 1.0) / onp.asarray(data.d_vis)
+    assert all(onp.min(onp.abs(z - x)) < 1e-4 for x in z_draw)
+
+
+@pytest.mark.validates("virgil.detection.bootstrap_null", roots=["statistics"])
+def test_bootstrap_keeps_the_closure_phase_covariance_on_average():
+    # Over many Gaussian datasets with unequal errors, the bootstrapped
+    # closure phases whiten to unit covariance: the triangles' correlations
+    # survive the bootstrap.
+    template = _unequal_template()
+    noise = template.cp_noise
+    n_data, n_draw = 150, 4
+
+    def whitened_draws(key):
+        data_key, draw_key = jax.random.split(key)
+        data = template.with_model(NULL, key=data_key)
+        simulate = bootstrap_null(data, NULL)
+        phi = jax.vmap(lambda k: simulate(k).phi)(
+            jax.random.split(draw_key, n_draw)
+        )
+        return jax.vmap(lambda p: noise.whiten(p, template.d_phi)[0])(phi)
+
+    keys = jax.random.split(jax.random.PRNGKey(0), n_data)
+    w = onp.asarray(jax.jit(jax.vmap(whitened_draws))(keys))
+    w = w.reshape(-1, noise.size)
+    assert w.shape[1] == 15
+    cov = w.T @ w / w.shape[0]
+    onp.testing.assert_allclose(cov, onp.eye(15), atol=0.25)
+    assert onp.mean(onp.diag(cov)) == pytest.approx(1.0, abs=0.08)
+
+
+def test_bootstrap_rejects_unsupported_data():
+    data = TEMPLATE.with_model(NULL, key=jax.random.PRNGKey(0))
+    with pytest.raises(ValueError, match="method"):
+        bootstrap_null(data, NULL, method="jackknife")
+    # Any gain model is refused (a placeholder stands in for one).
+    gains = eqx.tree_at(
+        lambda d: d.gains, data, "gains", is_leaf=lambda x: x is None
+    )
+    with pytest.raises(ValueError, match="gains"):
+        bootstrap_null(gains, NULL)
+
+
+def test_gaussian_null_error_scale_scales_the_noise_not_the_errors():
+    keys = jax.random.split(jax.random.PRNGKey(0), 200)
+    for scale in (1.0, 2.0):
+        simulate = gaussian_null(TEMPLATE, NULL, error_scale=scale)
+        vis = onp.asarray(jax.vmap(lambda k: simulate(k).vis)(keys))
+        assert onp.std(vis - 1.0) == pytest.approx(0.01 * scale, rel=0.1)
+        assert onp.array_equal(simulate(keys[0]).d_vis, TEMPLATE.d_vis)
+    with pytest.raises(ValueError, match="error_scale"):
+        gaussian_null(TEMPLATE, NULL, error_scale=-1.0)
