@@ -148,3 +148,79 @@ def test_expanded_prior_for_several_spots():
     assert prior.sample(jax.random.key(4)).shape == (3,)
     assert prior.log_prob(np.zeros(3)).shape == (3,)
     assert isinstance(prior.base_dist, dist.Distribution)
+
+
+# float32 and float64 robustness (Copilot review of #213).
+def _both_precisions(test):
+    def wrapper():
+        test()
+        with jax.enable_x64(True):
+            test()
+
+    wrapper.__name__ = test.__name__
+    return pytest.mark.filterwarnings("ignore")(wrapper)
+
+
+@_both_precisions
+def test_narrow_ranges_near_both_poles():
+    cases = [
+        (IsotropicInclination(0.0, 0.01), 0.0, 0.01),
+        (IsotropicInclination(179.99, 180.0), 179.99, 180.0),
+        (
+            IsotropicLatitude(np.pi / 2 - 1e-3, np.pi / 2),
+            np.pi / 2 - 1e-3,
+            np.pi / 2,
+        ),
+        (
+            IsotropicLatitude(-np.pi / 2, -np.pi / 2 + 1e-3),
+            -np.pi / 2,
+            -np.pi / 2 + 1e-3,
+        ),
+    ]
+    for prior, lo, hi in cases:
+        samples = onp.asarray(prior.sample(jax.random.key(0), (500,)), float)
+        assert onp.all(onp.isfinite(samples))
+        assert samples.min() >= lo - 1e-6 and samples.max() <= hi + 1e-6
+        width = hi - lo
+        # Spread over the range, not collapsed onto one end.
+        assert samples.std() > 0.1 * width
+        mid = 0.5 * (lo + hi)
+        assert 0.2 < float(onp.mean(samples < mid)) < 0.8
+        logp = onp.asarray(prior.log_prob(np.asarray(samples)), float)
+        assert onp.all(onp.isfinite(logp))
+        # The density integrates to about 1: mean of p over uniform draws.
+        grid = onp.linspace(lo, hi, 2001)[1:-1]
+        pdf = onp.exp(onp.asarray(prior.log_prob(np.asarray(grid)), float))
+        assert onp.trapezoid(pdf, grid) == pytest.approx(1.0, rel=0.05)
+
+
+@_both_precisions
+def test_cdf_outside_the_support_is_zero_and_one():
+    for prior, lo, hi in CASES:
+        below = np.asarray(lo - (270.0 if hi > 10 else 3.0))
+        above = np.asarray(hi + (270.0 if hi > 10 else 3.0))
+        assert float(prior.cdf(below)) == 0.0
+        assert float(prior.cdf(above)) == 1.0
+    assert float(IsotropicInclination().cdf(np.asarray(-90.0))) == 0.0
+    assert float(IsotropicLatitude().cdf(np.asarray(-np.pi))) == 0.0
+    assert float(IsotropicLatitude().cdf(np.asarray(np.pi))) == 1.0
+
+
+@_both_precisions
+def test_log_prob_at_the_endpoints_is_minus_inf_not_nan():
+    for prior in (IsotropicInclination(), IsotropicLatitude()):
+        for edge in (prior.low, prior.high):
+            value = float(prior.log_prob(np.asarray(edge)))
+            assert value == -onp.inf
+    inc = float(IsotropicInclination(0.0, 90.0).log_prob(np.asarray(90.0)))
+    assert onp.isfinite(inc)
+
+
+@_both_precisions
+def test_array_valued_full_range_bounds_are_accepted():
+    half_pi = np.asarray(np.pi / 2)
+    prior = IsotropicLatitude(-half_pi, half_pi)
+    assert onp.isfinite(float(prior.log_prob(np.asarray(0.0))))
+    IsotropicInclination(np.asarray(0.0), np.asarray(180.0))
+    with pytest.raises(ValueError, match="within"):
+        IsotropicLatitude(-half_pi, half_pi + 0.01)

@@ -34,17 +34,28 @@ from numpyro.distributions.util import promote_shapes
 __all__ = ["IsotropicInclination", "IsotropicLatitude"]
 
 
-def _check_range(name, low, high, lo_limit, hi_limit):
-    """Validate bounds that are concrete numbers (tracers pass unchecked)."""
+def _check_range(name, low, high, limit, unit):
+    """Validate concrete bounds (tracers pass unchecked).
+
+    ``limit`` is the pole angle (180 or pi/2) in the bounds' unit. It is
+    rounded to each bound's own dtype, so float32 full-range bounds, whose
+    pole rounds past the true value, are accepted.
+    """
     try:
         low_v, high_v = onp.asarray(low, float), onp.asarray(high, float)
+        limits = []
+        for bound in (low, high):
+            dtype = jnp.asarray(bound).dtype
+            limits.append(float(onp.asarray(jnp.asarray(limit, dtype))))
     except (TypeError, jax.errors.TracerArrayConversionError):
         return
+    lim_low, lim_high = limits
+    lo_limit = 0.0 if unit == "inc" else -lim_low
     if onp.any(low_v >= high_v):
         raise ValueError(f"{name}: need low < high, got {low} and {high}.")
-    if onp.any(low_v < lo_limit) or onp.any(high_v > hi_limit):
+    if onp.any(low_v < lo_limit) or onp.any(high_v > lim_high):
         raise ValueError(
-            f"{name}: the range must lie within [{lo_limit}, {hi_limit}], "
+            f"{name}: the range must lie within [{lo_limit}, {lim_high}], "
             f"got [{low}, {high}]."
         )
 
@@ -107,40 +118,61 @@ class IsotropicInclination(_InverseCDFPrior):
     """
 
     def __init__(self, low=0.0, high=180.0, *, validate_args=None):
-        _check_range("IsotropicInclination", low, high, 0.0, 180.0)
+        _check_range("IsotropicInclination", low, high, 180.0, "inc")
         self._init(low, high, validate_args)
 
+    # All formulas below avoid cos a - cos b and 1 - cos x, which cancel
+    # for narrow ranges or ranges at a pole (every float32 range at 0 or 180
+    # degrees of a few thousandths of a degree). With a, b the bounds in
+    # radians, cos a - cos b = 2 S, S = sin((a+b)/2) sin((b-a)/2), and
+    # 1 - cos x = 2 sin^2(x/2), 1 + cos x = 2 cos^2(x/2).
+
     @property
-    def _cos_bounds(self):
-        return (
-            jnp.cos(jnp.deg2rad(self.low)),
-            jnp.cos(jnp.deg2rad(self.high)),
-        )
+    def _radians(self):
+        return jnp.deg2rad(self.low), jnp.deg2rad(self.high)
+
+    @property
+    def _half_norm(self):
+        a, b = self._radians
+        return jnp.sin(0.5 * (a + b)) * jnp.sin(0.5 * (b - a))
 
     def icdf(self, q):
-        """Quantile function: cos i is uniform, so invert through arccos."""
-        c_lo, c_hi = self._cos_bounds
-        return jnp.rad2deg(jnp.arccos(c_lo - q * (c_lo - c_hi)))
+        """Quantile function: cos i is uniform, inverted near the nearer pole."""
+        a, b = self._radians
+        qs = q * self._half_norm
+        south = jnp.sin(0.5 * a) ** 2 + qs  # sin^2(i/2)
+        north = jnp.cos(0.5 * a) ** 2 - qs  # cos^2(i/2)
+        near_zero = jnp.clip(south, 0.0, 1.0) <= 0.5
+        half = jnp.where(
+            near_zero,
+            jnp.arcsin(jnp.sqrt(jnp.clip(south, 0.0, 1.0))),
+            jnp.arccos(jnp.sqrt(jnp.clip(north, 0.0, 1.0))),
+        )
+        return jnp.clip(jnp.rad2deg(2.0 * half), self.low, self.high)
 
     def cdf(self, value):
-        c_lo, c_hi = self._cos_bounds
-        c = jnp.cos(jnp.deg2rad(value))
-        return jnp.clip((c_lo - c) / (c_lo - c_hi), 0.0, 1.0)
+        a, b = self._radians
+        x = jnp.deg2rad(jnp.clip(value, self.low, self.high))
+        num = jnp.sin(0.5 * (a + x)) * jnp.sin(0.5 * (x - a))
+        return jnp.clip(num / self._half_norm, 0.0, 1.0)
 
     def log_prob(self, value):
-        c_lo, c_hi = self._cos_bounds
-        # The density is per degree, so d(cos i)/di carries pi/180.
-        log_norm = jnp.log((c_lo - c_hi) * 180.0 / jnp.pi)
+        # The density is per degree: d(cos i)/di carries pi/180. sin i is
+        # evaluated from the distance to the nearer pole, so that it is
+        # exactly 0 at 0 and 180 degrees even if the angle rounds past pi.
+        distance = jnp.clip(jnp.minimum(value, 180.0 - value), 0.0, None)
+        log_sin = jnp.log(jnp.sin(jnp.deg2rad(distance)))
+        log_norm = jnp.log(2.0 * self._half_norm * 180.0 / jnp.pi)
         inside = (value >= self.low) & (value <= self.high)
-        log_sin = jnp.log(jnp.sin(jnp.deg2rad(value)))
         return jnp.where(inside, log_sin - log_norm, -jnp.inf)
 
     @property
     def mean(self):
-        lo, hi = jnp.deg2rad(self.low), jnp.deg2rad(self.high)
-        c_lo, c_hi = self._cos_bounds
-        num = (jnp.sin(hi) - hi * c_hi) - (jnp.sin(lo) - lo * c_lo)
-        return jnp.rad2deg(num / (c_lo - c_hi))
+        a, b = self._radians
+        c_a, c_b = jnp.cos(a), jnp.cos(b)
+        num = (jnp.sin(b) - b * c_b) - (jnp.sin(a) - a * c_a)
+        mean = jnp.rad2deg(num / (2.0 * self._half_norm))
+        return jnp.clip(mean, self.low, self.high)
 
 
 class IsotropicLatitude(_InverseCDFPrior):
@@ -170,24 +202,50 @@ class IsotropicLatitude(_InverseCDFPrior):
     def __init__(
         self, low=-jnp.pi / 2, high=jnp.pi / 2, *, validate_args=None
     ):
-        half_pi = onp.pi / 2 + 1e-12
-        _check_range("IsotropicLatitude", low, high, -half_pi, half_pi)
+        _check_range("IsotropicLatitude", low, high, onp.pi / 2, "lat")
         self._init(low, high, validate_args)
 
+    # Cancellation-resistant, as for the inclination: sin b - sin a =
+    # 2 cos((a+b)/2) sin((b-a)/2) =: 2 S, and near a pole 1 -/+ sin x =
+    # 2 sin^2(delta/2) with delta the colatitude from that pole.
+
+    @property
+    def _half_norm(self):
+        return jnp.cos(0.5 * (self.low + self.high)) * jnp.sin(
+            0.5 * (self.high - self.low)
+        )
+
     def icdf(self, q):
-        s_lo, s_hi = jnp.sin(self.low), jnp.sin(self.high)
-        return jnp.arcsin(s_lo + q * (s_hi - s_lo))
+        qs = q * self._half_norm
+        quarter = 0.25 * jnp.pi
+        # North pole: sin^2((pi/2 - x)/2) = sin^2(pi/4 - a/2) - qs.
+        north = jnp.sin(quarter - 0.5 * self.low) ** 2 - qs
+        # South pole: sin^2((pi/2 + x)/2) = sin^2(pi/4 + a/2) + qs.
+        south = jnp.sin(quarter + 0.5 * self.low) ** 2 + qs
+        use_north = jnp.sin(self.low) + 2.0 * qs >= 0.0
+        half_pi = 0.5 * jnp.pi
+        x = jnp.where(
+            use_north,
+            half_pi - 2.0 * jnp.arcsin(jnp.sqrt(jnp.clip(north, 0.0, 1.0))),
+            2.0 * jnp.arcsin(jnp.sqrt(jnp.clip(south, 0.0, 1.0))) - half_pi,
+        )
+        return jnp.clip(x, self.low, self.high)
 
     def cdf(self, value):
-        s_lo, s_hi = jnp.sin(self.low), jnp.sin(self.high)
-        return jnp.clip((jnp.sin(value) - s_lo) / (s_hi - s_lo), 0.0, 1.0)
+        a = self.low
+        x = jnp.clip(value, self.low, self.high)
+        num = jnp.sin(0.5 * (x - a)) * jnp.cos(0.5 * (x + a))
+        return jnp.clip(num / self._half_norm, 0.0, 1.0)
 
     def log_prob(self, value):
-        s_lo, s_hi = jnp.sin(self.low), jnp.sin(self.high)
+        # cos(lat) from the distance to the nearer pole, in the dtype of
+        # value, so it is exactly 0 at the (rounded) endpoints, not negative.
+        half_pi = jnp.asarray(jnp.pi / 2, jnp.result_type(value, float))
+        distance = jnp.clip(half_pi - jnp.abs(value), 0.0, None)
+        log_cos = jnp.log(jnp.sin(distance))
+        log_norm = jnp.log(2.0 * self._half_norm)
         inside = (value >= self.low) & (value <= self.high)
-        return jnp.where(
-            inside, jnp.log(jnp.cos(value)) - jnp.log(s_hi - s_lo), -jnp.inf
-        )
+        return jnp.where(inside, log_cos - log_norm, -jnp.inf)
 
     @property
     def mean(self):
@@ -195,4 +253,5 @@ class IsotropicLatitude(_InverseCDFPrior):
         num = (jnp.cos(hi) + hi * jnp.sin(hi)) - (
             jnp.cos(lo) + lo * jnp.sin(lo)
         )
-        return num / (jnp.sin(hi) - jnp.sin(lo))
+        mean = num / (jnp.sin(hi) - jnp.sin(lo))
+        return jnp.clip(mean, lo, hi)
