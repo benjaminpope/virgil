@@ -7,13 +7,18 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
-The release commit will set the version to 0.3.0 and date this section; until
-then the notes below are under "Unreleased". Everything listed as new was
-added after 0.2.0, which is on PyPI.
+### Removed
 
-The release commit must set `version = "0.3.0"` in `pyproject.toml` and refresh
-`uv.lock`, which records the editable virgil-astro version: run `uv lock` in a
-worktree, never in `~/code/drpangloss`.
+- `examples/elr_pavo/`, the PAVO re-analysis scripts, moved to the private paper repository; the golden-fixture generator is now `scripts/make_elr_golden.py`.
+
+### Docs
+
+- The `virgil._linear` API page is labelled internal.
+- Docs pages no longer point to the internal design notes.
+
+## 0.3.0 (2026-10-06)
+
+Everything listed as new was added after 0.2.0.
 
 ### Migration from 0.2.0
 
@@ -521,9 +526,8 @@ analysis or warn:
   for a non-detection against Absil and Ruffio limits, and what wrong error
   bars do to a Gaussian null and how `rescale_errors` and the bootstrap fix
   it.
-- **Orbit tutorial rewritten as a joint fit to the interferometric data**
-  ("Orbits from interferometric data", Binaries,
-  `notebooks/orbit_fitting.ipynb`, replacing the two-step version below).
+- **New tutorial: "Orbits from interferometric data"**, a joint fit to
+  the interferometric data (Binaries, `notebooks/orbit_fitting.ipynb`).
   One `KeplerOrbit` model is fitted to the V² and closure phases of all
   eight simulated VLTI epochs at once, each sample at its own time, with
   per-epoch V² and closure-phase error scales drawn from fitted log-normal
@@ -537,14 +541,6 @@ analysis or warn:
   the implied per-epoch positions, posterior-predictive closure-phase
   checks, the inferred calibration, separation and position angle in time,
   and a comparison with the two-step posterior.
-- **New tutorial: "Orbits from interferometric epochs"** (Binaries,
-  `notebooks/orbit_fitting.ipynb`). Eight epochs of simulated VLTI
-  (UT) V² and closure phases of a three-year binary: per-epoch astrometry
-  with a grid, a fit and the Laplace covariance into `PositionData`,
-  Thiele–Innes starting orbits, and a NUTS posterior under Jeffreys priors
-  (log-uniform P and a, uniform cos i, ω, Ω and phase as 2-vector
-  directions, uniform e) with a no-data prior check, a corner plot, and an
-  ensemble of posterior orbits on the sky and in time.
 - **`plotting.plot_orbit_ensemble`.** Draws a batch of `KeplerOrbit`s on the
   sky (East left, North up) as thin lines, one period each, with measured
   `PositionData` positions coloured by epoch with their error ellipses, a

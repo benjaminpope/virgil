@@ -122,7 +122,7 @@ print(f"converged {one.info['converged']} after {one.info['steps']} steps; chi2 
 ```
 
 ```text
-converged True after 7211 steps; chi2 per point 0.989; image flux 0.0514 (truth 0.05)
+converged True after 3621 steps; chi2 per point 1.007; image flux 0.0514 (truth 0.05)
 ```
 
 ## Choosing the weight: the L-curve and the discrepancy principle
@@ -219,12 +219,12 @@ print(diagnose(final["moments"], data))
 ```
 
 ```text
-chi2_red         [0.977]
+chi2_red         [0.979]
 anchored         True
 pixel_scale_mas  [20.9]
-edge_flux        [0.0139]
-centroid_mas     [[47.9, 18.9]]
-flip_dchi2       2.04e+04
+edge_flux        [0.0161]
+centroid_mas     [[50, 18.3]]
+flip_dchi2       2.11e+04
 phase_regime     [0]
 
 No warnings.
@@ -237,4 +237,4 @@ RML turns the reconstruction into an optimisation of ½χ² + wR:
 - **The weight.** `l_curve` sweeps it with warm starts. The discrepancy principle chooses the weight at which χ² per point reaches one; the corner is a check that needs no error bars.
 - **Checks.** Look at the images either side of the chosen weight, and run `diagnose`.
 
-Part 3 replaces the maximum-entropy penalty with a Gaussian-process prior, whose two hyperparameters can be chosen from the Bayesian evidence instead of a sweep. `design/regulariser_weight_selection.md` discusses the criteria for choosing w in more depth.
+Part 3 replaces the maximum-entropy penalty with a Gaussian-process prior, whose two hyperparameters can be chosen from the Bayesian evidence instead of a sweep.

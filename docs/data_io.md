@@ -83,18 +83,25 @@ OIData(
   phi_index=None,
   uv_grid=None,
   cp_noise=ClosureNoise(
-    groups=i64[1,4](numpy),
+    groups=i32[1,4](numpy),
     mask=bool[1,4](numpy),
     incidence=f64[1,4,6](numpy),
     basis=f64[1,3,4](numpy),
     chol=f64[1,3,3](numpy),
     valid=bool[1,3](numpy),
-    keep=i64[3](numpy)
+    keep=i32[3](numpy)
   ),
+  dt=f32[6],
+  frame=i32[6],
+  stations=i32[6,2],
+  gains=None,
+  phase_offsets=None,
+  extras=(),
   observable_kind='split',
   vis_mode='v2',
   v2_flag=True,
-  cp_flag=True
+  cp_flag=True,
+  t_ref=61000.0
 )
 ```
 

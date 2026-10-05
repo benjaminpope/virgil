@@ -170,12 +170,15 @@ print(f"largest difference: {difference.max():.1e}")
 ```
 
 ```text
-lattice (MFT): 0.11 ms per evaluation
-per point: 0.22 ms per evaluation
+lattice (MFT): 0.20 ms per evaluation
 ```
 
 ```text
-largest difference: 8.6e-08
+per point: 0.43 ms per evaluation
+```
+
+```text
+largest difference: 4.1e-08
 ```
 
 ## Another scene: a lopsided ring

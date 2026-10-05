@@ -102,7 +102,7 @@ print(f"{one.info['method']}: converged {one.info['converged']} in {one.info['st
 ```
 
 ```text
-lm: converged True in 37 steps; chi2 per point 1.021; flux 0.0505 (truth 0.05)
+lm: converged True in 37 steps; chi2 per point 1.023; flux 0.0507 (truth 0.05)
 ```
 
 ## Choosing σ and ℓ from the evidence
@@ -178,7 +178,7 @@ honest errors: s = 1.04
 ```
 
 ```text
-errors overstated twofold: chi2 per point 0.26, s = 0.53; after rescaling, s = 0.99
+errors overstated twofold: chi2 per point 0.26, s = 0.53; after rescaling, s = 0.98
 ```
 
 ## The GP image against maximum entropy

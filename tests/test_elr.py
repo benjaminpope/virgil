@@ -1,7 +1,7 @@
 """Tests for the Espinosa-Lara & Rieutord (2011) gravity-darkening port.
 
 The golden values in ``data/elr_golden.npz`` were produced by Shashank
-Dholakia's original code (see ``examples/elr_pavo/make_golden.py``).  The
+Dholakia's original code (see ``scripts/make_elr_golden.py``).  The
 physics checks below are independent of that fixture.
 """
 
