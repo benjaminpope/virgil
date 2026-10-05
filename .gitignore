@@ -23,9 +23,3 @@ data/calibrated_visibility_private.npy
 # retired APIs and are not maintained, tested or read by agents.
 notebooks/archive/
 .jax-cache/
-
-# ELR PAVO re-analysis outputs (results are kept private for now)
-examples/elr_pavo/output/
-examples/elr_pavo/comparison.md
-# ELR PAVO robustness outputs
-examples/elr_pavo/robustness/output/
