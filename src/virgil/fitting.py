@@ -158,7 +158,7 @@ class _Objective(eqx.Module):
         values = {} if values is None else dict(values)
         z = {}
         for site, (prior, _, term) in self.noise.items():
-            unit = term.endswith("scale") or term == "vis_gain_modes"
+            unit = term.endswith("scale") or term.endswith("_modes")
             start = values.get(site, 1.0 if unit else 0.01)
             if not bool(prior.support(np.asarray(start, float))):
                 start = prior.mean
@@ -343,7 +343,9 @@ def fit(
         ``phi_error`` (radians) are added in quadrature (see
         [`inflated_errors`][virgil.likelihood.inflated_errors]), and the
         widths of gains correlated across channels, ``vis_gain_<group>``
-        (see [`OIData.with_gains`][virgil.oidata.OIData.with_gains]). A dict
+        (see [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), and
+        of closure-phase offsets, ``phi_offset_<group>`` (see
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]). A dict
         applies to every dataset (values ``"noise.<term>"``); a list gives
         each dataset its own (``"noise[i].<term>"``). The loss is then the
         full Gaussian negative log likelihood, including ``Σ log σ``, so the

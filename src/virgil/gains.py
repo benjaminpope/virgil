@@ -48,9 +48,17 @@ eigendecomposition's are not) and where widths go to zero.
 import equinox as eqx
 import jax
 import jax.numpy as np
+import jax.scipy.linalg as jsl
 import numpy as onp
 
-__all__ = ["GainModes", "GAIN_GROUPS", "gain_modes"]
+__all__ = [
+    "GainModes",
+    "GAIN_GROUPS",
+    "gain_modes",
+    "ClosureOffsets",
+    "OFFSET_GROUPS",
+    "closure_offsets",
+]
 
 # Groups of gain modes, in order; their widths are fitted with the noise
 # terms "vis_gain_<group>".
@@ -104,21 +112,8 @@ class GainModes(eqx.Module):
 
     def widths_for(self, terms=None):
         """Each group's width, with ``vis_gain_<group>`` terms replacing them."""
-        terms = {} if terms is None else terms
-        unknown = [
-            t for t in terms if t.removeprefix("vis_gain_") not in self.groups
-        ]
-        if unknown:
-            raise ValueError(
-                f"Noise terms {unknown} have no gain modes in these data "
-                f"(they have {list(self.groups)}); add them with "
-                "OIData.with_gains."
-            )
-        return np.stack(
-            [
-                np.asarray(terms.get(f"vis_gain_{g}", self.widths[i]), float)
-                for i, g in enumerate(self.groups)
-            ]
+        return _widths_for(
+            self.groups, self.widths, terms, "vis_gain_", "OIData.with_gains"
         )
 
     def _columns(self, jacobian, widths):
@@ -150,48 +145,8 @@ class GainModes(eqx.Module):
             of the factor its effective error grows by: they sum to half
             the log-determinant of the covariance, ``½ Σ log(1 + w_jᵀw_j)``.
         """
-        x = np.asarray(x)
         local, spanning = self._columns(jacobian, widths)
-        n_span = spanning.shape[1]
-        # The blocks first, carrying the spanning modes through them: the
-        # whitening of the blocks is applied to every column.
-        stack = np.concatenate(
-            [
-                x.at[self.rows].get(mode="fill", fill_value=0)[..., None],
-                spanning.at[self.rows].get(mode="fill", fill_value=0),
-                local,
-            ],
-            axis=-1,
-        )
-        stack, logdets = jax.lax.scan(
-            _rank_one_step,
-            stack,
-            1 + n_span + np.arange(local.shape[-1]),
-        )
-        done = (
-            np.concatenate([x[:, None], spanning], axis=1)
-            .at[self.rows]
-            .set(stack[..., : 1 + n_span], mode="drop")
-        )
-        # Spread each block's ½ log det over its rows.
-        n_rows = np.sum(self.rows < self.n_vis, axis=1)
-        per_row = 0.5 * np.sum(logdets, axis=0) / np.maximum(n_rows, 1)
-        extra = (
-            np.zeros_like(x)
-            .at[self.rows]
-            .set(
-                np.broadcast_to(per_row[:, None], self.rows.shape), mode="drop"
-            )
-        )
-        if n_span:
-            # Then the spanning modes, as one dense block, their ½ log det
-            # spread over every observable.
-            done, span_logdets = jax.lax.scan(
-                _rank_one_step, done[None], 1 + np.arange(n_span)
-            )
-            done = done[0]
-            extra = extra + 0.5 * np.sum(span_logdets) / self.n_vis
-        return done[:, 0], extra
+        return _whiten_blocks(x, self.rows, local, spanning)
 
     def covariance(self, errors, jacobian, widths):
         """The dense visibility covariance ``D + U Uᵀ`` (for checks; O(n²)).
@@ -262,6 +217,57 @@ class GainModes(eqx.Module):
             if onp.unique(labels[col != 0]).size > 1:
                 return True
         return False
+
+
+def _whiten_blocks(x, rows, local, spanning=None):
+    """Whiten ``x`` for the covariance ``I + Σ w_j w_jᵀ``, block by block.
+
+    ``rows`` (n_block, n_row) indexes ``x`` (padded out of range) and
+    ``local`` (n_block, n_row, n_mode) holds each block's modes there;
+    ``spanning`` (n, n_spanning) holds modes across blocks, whitened after
+    them. Returns the whitened ``x`` and, per entry, the log of the factor
+    its effective error grows by (summing to ½ log det).
+    """
+    x = np.asarray(x)
+    n = x.shape[0]
+    if spanning is None:
+        spanning = np.zeros((n, 0), x.dtype)
+    n_span = spanning.shape[1]
+    # The blocks first, carrying the spanning modes through them: the
+    # whitening of the blocks is applied to every column.
+    stack = np.concatenate(
+        [
+            x.at[rows].get(mode="fill", fill_value=0)[..., None],
+            spanning.at[rows].get(mode="fill", fill_value=0),
+            local,
+        ],
+        axis=-1,
+    )
+    stack, logdets = jax.lax.scan(
+        _rank_one_step, stack, 1 + n_span + np.arange(local.shape[-1])
+    )
+    done = (
+        np.concatenate([x[:, None], spanning], axis=1)
+        .at[rows]
+        .set(stack[..., : 1 + n_span], mode="drop")
+    )
+    # Spread each block's ½ log det over its rows.
+    n_rows = np.sum(rows < n, axis=1)
+    per_row = 0.5 * np.sum(logdets, axis=0) / np.maximum(n_rows, 1)
+    extra = (
+        np.zeros_like(x)
+        .at[rows]
+        .set(np.broadcast_to(per_row[:, None], rows.shape), mode="drop")
+    )
+    if n_span:
+        # Then the spanning modes, as one dense block, their ½ log det
+        # spread over every entry.
+        done, span_logdets = jax.lax.scan(
+            _rank_one_step, done[None], 1 + np.arange(n_span)
+        )
+        done = done[0]
+        extra = extra + 0.5 * np.sum(span_logdets) / n
+    return done[:, 0], extra
 
 
 def _rank_one_step(stack, j):
@@ -452,4 +458,316 @@ def _pack(columns, groups, widths, frame):
         np.asarray(widths, float),
         tuple(groups),
         int(n_vis),
+    )
+
+
+# Groups of closure-phase offsets; widths are the noise terms
+# "phi_offset_<group>".
+OFFSET_GROUPS = ("baseline", "triangle", "modes")
+
+
+class ClosureOffsets(eqx.Module):
+    """Closure-phase offsets common to the channels of a frame, marginalised.
+
+    Built by [`closure_offsets`][virgil.gains.closure_offsets] (or
+    [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
+    Each offset is a mode m over the closure phases, in radians per unit
+    width: φ_obs = φ + Σ τ_j z_j m_j with z_j ~ N(0, 1).
+
+    The likelihood of correlated closure phases whitens their sines with
+    ``OIData.cp_noise`` (see ``likelihood._whiten``). The offsets add
+    τ² m mᵀ to that covariance, a small-phase approximation. Each mode is
+    whitened the same way, one closure-phase group (frame and channel) at
+    a time, and the modes of a frame then form one block of the rank-one
+    whitening ([`GainModes`][virgil.gains.GainModes] has the details).
+    The periodic penalty rows are left as they are.
+
+    Attributes
+    ----------
+    groups : numpy.ndarray
+        ``(n_block, n_group)`` int32: the ``cp_noise`` groups of each block.
+    group_mask : numpy.ndarray
+        ``(n_block, n_group)``: True for real groups (the rest is padding).
+    values : numpy.ndarray
+        ``(n_block, n_mode, n_group, m)``: each mode's value at each slot
+        of each group (as ``cp_noise.groups``), zero on padding.
+    group : numpy.ndarray
+        ``(n_block, n_mode)`` int32: each mode's width group.
+    rows : numpy.ndarray
+        ``(n_block, n_group · k)`` int32: the whitened row of each (group,
+        basis row), padded with ``n_out`` (out of range).
+    widths : jax.Array
+        The default width of each group, in radians.
+    groups_present : tuple of str
+        The groups present, a subset of ``OFFSET_GROUPS``.
+    n_out : int
+        The number of whitened closure phases (``cp_noise.size``).
+    """
+
+    groups: onp.ndarray
+    group_mask: onp.ndarray
+    values: onp.ndarray
+    group: onp.ndarray
+    rows: onp.ndarray
+    widths: jax.Array
+    groups_present: tuple = eqx.field(static=True)
+    n_out: int = eqx.field(static=True)
+
+    def widths_for(self, terms=None):
+        """Each group's width, with ``phi_offset_<group>`` terms replacing them."""
+        return _widths_for(
+            self.groups_present, self.widths, terms, "phi_offset_",
+            "OIData.with_closure_offsets",
+        )  # fmt: skip
+
+    def _slots(self, cp_noise):
+        """Closure-phase index and validity of each (block, group, slot)."""
+        index = np.asarray(cp_noise.groups)[self.groups]
+        mask = np.asarray(cp_noise.mask)[self.groups]
+        return index, mask & np.asarray(self.group_mask)[..., None]
+
+    def _columns(self, cp_noise, sigma, widths):
+        """The modes, whitened like the sines: (n_block, n_group · k, n_mode)."""
+        sigma = np.asarray(sigma)
+        values = np.asarray(self.values, sigma.dtype)
+        index, mask = self._slots(cp_noise)
+        x = np.where(mask[:, None], values / sigma[index][:, None], 0.0)
+        basis = np.asarray(cp_noise.basis, sigma.dtype)[self.groups]
+        chol = np.asarray(cp_noise.chol, sigma.dtype)[self.groups]
+        a = np.einsum("bgkm,bjgm->bjgk", basis, x)
+        chol = np.broadcast_to(chol[:, None], a.shape + a.shape[-1:])
+        w = jsl.solve_triangular(chol, a[..., None], lower=True)[..., 0]
+        n_block, n_mode, n_group, k = w.shape
+        cols = w.transpose(0, 2, 3, 1).reshape(n_block, n_group * k, n_mode)
+        return cols * np.asarray(widths)[self.group][:, None, :]
+
+    def whiten(self, cp_noise, x, sigma, widths):
+        """Whiten the closure-phase sines ``x`` (already whitened by ``cp_noise``).
+
+        Returns the whitened values and, per value, the log of the factor its
+        effective error grows by (summing to ½ log det).
+        """
+        cols = self._columns(cp_noise, sigma, widths)
+        return _whiten_blocks(x, np.asarray(self.rows), cols)
+
+    def modes(self, cp_noise, n_phase, widths=None):
+        """The modes as dense columns over the closure phases (for checks)."""
+        widths = self.widths if widths is None else widths
+        group = np.asarray(self.group)
+        scaled = (
+            np.asarray(self.values)
+            * np.asarray(widths)[group][..., None, None]
+        )
+        index, mask = self._slots(cp_noise)
+        n_block, n_mode = group.shape
+        b = np.arange(n_block)[:, None, None, None]
+        j = np.arange(n_mode)[None, :, None, None]
+        idx = np.where(mask, index, n_phase)[:, None]
+        out = np.zeros((n_phase, n_block, n_mode))
+        out = out.at[idx, b, j].set(scaled, mode="drop")
+        return out.reshape(n_phase, -1)
+
+    def sample(self, key, cp_noise, n_phase, widths):
+        """Draw the offsets: radians added to each closure phase."""
+        group = np.asarray(self.group)
+        z = jax.random.normal(key, group.shape) * np.asarray(widths)[group]
+        per_slot = np.einsum("bjgm,bj->bgm", np.asarray(self.values), z)
+        index, mask = self._slots(cp_noise)
+        index = np.where(mask, index, n_phase)
+        return np.zeros(n_phase).at[index].add(per_slot, mode="drop")
+
+
+def _widths_for(groups, widths, terms, prefix, how):
+    """Each group's width, with ``<prefix><group>`` terms replacing them."""
+    terms = {} if terms is None else terms
+    unknown = [t for t in terms if t.removeprefix(prefix) not in groups]
+    if unknown:
+        raise ValueError(
+            f"Noise terms {unknown} have no modes in these data (they have "
+            f"{list(groups)}); add them with {how}."
+        )
+    return np.stack(
+        [
+            np.asarray(terms.get(f"{prefix}{g}", widths[i]), float)
+            for i, g in enumerate(groups)
+        ]
+    )
+
+
+def closure_offsets(data, baseline=None, triangle=None, modes=None):
+    """Closure-phase offsets for a dataset, with default widths.
+
+    Parameters
+    ----------
+    data : OIData
+        Closure phases from four or more telescopes (``cp_noise``), not
+        projected, with frames and, for baseline and triangle offsets,
+        station pairs, as read from OIFITS.
+    baseline : float, optional
+        Width (radians) of a phase offset per (frame, baseline), common to
+        all channels, which reaches the closure phases as T·e (T the
+        triangle-by-baseline signs). The design's default form.
+    triangle : float, optional
+        Width (radians) of an offset per (frame, triangle), common to all
+        channels: what a pair test of consecutive frames measures.
+    modes : array-like, optional
+        Further modes, ``(n_mode, n_phase)``, in radians per 1σ, one value
+        per closure phase of ``data.phi``. Each must lie within one frame.
+        Their width (default 1) scales them all.
+
+    Returns
+    -------
+    ClosureOffsets
+    """
+    cp_noise = data.cp_noise
+    if not data.cp_flag or cp_noise is None or data.phi_mat is not None:
+        raise ValueError(
+            "Closure-phase offsets need correlated closure phases from four "
+            "or more telescopes (OIData.cp_noise), unprojected. Three "
+            "telescopes are not supported yet."
+        )
+    if data.frame is None:
+        raise ValueError(
+            "Offsets per frame need each sample's frame: read the data from "
+            "OIFITS, or give 'frame' (or 'mjd') in the dictionary."
+        )
+    for name, width in (("baseline", baseline), ("triangle", triangle)):
+        if width is not None and not (onp.isfinite(width) and width >= 0):
+            raise ValueError(
+                f"The {name} width must be non-negative, not {width}."
+            )
+    legs = [onp.asarray(i) for i in (data.i_cps1, data.i_cps2, data.i_cps3)]
+    n_phase = legs[0].size
+    frame = onp.asarray(data.frame)[legs[0]]
+    names, widths, columns = [], [], []  # columns: (group, rows, values)
+
+    def add_group(name, width):
+        names.append(name)
+        widths.append(float(width))
+        return len(names) - 1
+
+    if baseline is not None or triangle is not None:
+        if data.stations is None:
+            raise ValueError(
+                "Baseline and triangle offsets need each sample's stations: "
+                "read the data from OIFITS, or give 'stations' (station "
+                "pairs) in the dictionary."
+            )
+        stations = onp.asarray(data.stations)
+        pairs = [stations[leg] for leg in legs]
+    if baseline is not None:
+        gid = add_group("baseline", baseline)
+        found = {}
+        for leg_pairs, sign in zip(pairs, (1.0, 1.0, -1.0)):
+            # A sample's phase is that of its stored pair (a, b); a baseline
+            # offset e on (min, max) is +e there if a < b, -e otherwise.
+            for t, (a, b) in enumerate(leg_pairs):
+                key = (frame[t], min(a, b), max(a, b))
+                rows, values = found.setdefault(key, ([], []))
+                rows.append(t)
+                values.append(sign if a < b else -sign)
+        for rows, values in found.values():
+            rows, values = onp.asarray(rows), onp.asarray(values)
+            order = onp.argsort(rows)
+            columns.append((gid, rows[order], values[order]))
+    if triangle is not None:
+        gid = add_group("triangle", triangle)
+        found = {}
+        for t in range(n_phase):
+            key = (frame[t], *pairs[0][t], pairs[1][t][1])
+            found.setdefault(key, []).append(t)
+        for rows in found.values():
+            columns.append((gid, onp.asarray(rows), onp.ones(len(rows))))
+    if modes is not None:
+        modes = onp.atleast_2d(onp.asarray(modes, float))
+        if modes.shape[1] != n_phase:
+            raise ValueError(
+                f"modes has {modes.shape[1]} values per mode for {n_phase} "
+                "closure phases; give one per closure phase of data.phi."
+            )
+        gid = add_group("modes", 1.0)
+        for m in modes:
+            rows = onp.flatnonzero(m)
+            if onp.unique(frame[rows]).size > 1:
+                raise ValueError(
+                    "A closure-phase mode spans several frames; each must "
+                    "lie within one frame."
+                )
+            if rows.size:
+                columns.append((gid, rows, m[rows]))
+    if not columns:
+        raise ValueError("No offsets: give at least one group or mode.")
+    return _pack_offsets(cp_noise, columns, names, widths)
+
+
+def _pack_offsets(cp_noise, columns, names, widths):
+    """Group closure-phase modes into blocks of the groups they touch."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    cp_groups, cp_mask = (
+        onp.asarray(cp_noise.groups),
+        onp.asarray(cp_noise.mask),
+    )
+    n_group, m = cp_groups.shape
+    group_of = onp.zeros(cp_groups.max() + 1, int)
+    slot_of = onp.zeros(cp_groups.max() + 1, int)
+    g_idx, s_idx = onp.nonzero(cp_mask)
+    group_of[cp_groups[g_idx, s_idx]] = g_idx
+    slot_of[cp_groups[g_idx, s_idx]] = s_idx
+    # Modes are connected when they touch a common group.
+    n_col = len(columns)
+    col_ids = onp.concatenate(
+        [onp.full(r.size, k) for k, (_, r, _) in enumerate(columns)]
+    )
+    grp_ids = onp.concatenate([group_of[r] for _, r, _ in columns])
+    graph = coo_matrix(
+        (onp.ones(col_ids.size), (col_ids, n_col + grp_ids)),
+        shape=(n_col + n_group, n_col + n_group),
+    )
+    _, label = connected_components(graph, directed=False)
+    by_label = {}
+    for k in range(n_col):
+        by_label.setdefault(label[k], []).append(k)
+    blocks = list(by_label.values())
+    block_groups = [
+        onp.unique(onp.concatenate([group_of[columns[k][1]] for k in ks]))
+        for ks in blocks
+    ]
+    n_block = len(blocks)
+    n_g = max(g.size for g in block_groups)
+    n_mode = max(len(ks) for ks in blocks)
+    k_basis = onp.asarray(cp_noise.basis).shape[1]
+    # The whitened row of each (group, basis row): cp_noise keeps the valid
+    # rows of its (n_group, k) output, in order.
+    n_out = int(cp_noise.size)
+    position = onp.full(n_group * k_basis, n_out, dtype=onp.int32)
+    position[onp.asarray(cp_noise.keep)] = onp.arange(n_out)
+    groups = onp.zeros((n_block, n_g), dtype=onp.int32)
+    group_mask = onp.zeros((n_block, n_g), dtype=bool)
+    values = onp.zeros((n_block, n_mode, n_g, m))
+    group = onp.zeros((n_block, n_mode), dtype=onp.int32)
+    rows = onp.full((n_block, n_g * k_basis), n_out, dtype=onp.int32)
+    for b, (ks, gs) in enumerate(zip(blocks, block_groups)):
+        groups[b, : gs.size] = gs
+        group_mask[b, : gs.size] = True
+        where = {g: i for i, g in enumerate(gs)}
+        for j, k in enumerate(ks):
+            g, cps, vals = columns[k]
+            gi = onp.array([where[x] for x in group_of[cps]])
+            values[b, j, gi, slot_of[cps]] = vals
+            group[b, j] = g
+        for i, g in enumerate(gs):
+            rows[b, i * k_basis : (i + 1) * k_basis] = position[
+                g * k_basis : (g + 1) * k_basis
+            ]
+    return ClosureOffsets(
+        groups,
+        group_mask,
+        values,
+        group,
+        rows,
+        np.asarray(widths, float),
+        tuple(names),
+        n_out,
     )

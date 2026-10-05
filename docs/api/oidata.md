@@ -54,6 +54,7 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
         - with_model
         - with_error_scale
         - with_gains
+        - with_closure_offsets
         - mjd
         - epochs
         - split_by_epoch

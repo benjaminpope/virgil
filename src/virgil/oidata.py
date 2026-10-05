@@ -8,7 +8,7 @@ import equinox as eqx
 import zodiax as zx
 
 from ._closure import ClosureNoise
-from .gains import GainModes, gain_modes
+from .gains import ClosureOffsets, GainModes, closure_offsets, gain_modes
 from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from .amigo import is_mixed_disco_record, mixed_disco_fields
 from .oifits import read_oifits
@@ -74,7 +74,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ``gains`` holds calibration gains correlated across channels
     ([`GainModes`][virgil.gains.GainModes], set with
     [`with_gains`][virgil.oidata.OIData.with_gains]), which the likelihood
-    marginalises; ``None`` by default.
+    marginalises; ``None`` by default. ``phase_offsets`` likewise holds
+    closure-phase offsets per frame
+    ([`ClosureOffsets`][virgil.gains.ClosureOffsets], set with
+    [`with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
     """
 
     u: jax.Array
@@ -97,6 +100,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     frame: jax.Array | None
     stations: jax.Array | None
     gains: GainModes | None
+    phase_offsets: ClosureOffsets | None
     observable_kind: str = eqx.field(static=True)
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
@@ -166,7 +170,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             for name, value in mixed_disco_fields(data).items():
                 setattr(self, name, value)
             self.dt = self.frame = self.t_ref = None
-            self.stations = self.gains = None
+            self.stations = self.gains = self.phase_offsets = None
             return
 
         u = onp.asarray(data["u"], dtype=float)
@@ -336,6 +340,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             None if stations is None else np.asarray(stations, np.int32)
         )
         self.gains = None
+        self.phase_offsets = None
         vis_mode_in = data.get(
             "vis_mode", data.get("observable_vis_mode", "auto")
         )
@@ -486,6 +491,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             raise ValueError(
                 "Only unprojected data can be split: projected (kernel, "
                 "DISCO) observables mix samples."
+            )
+        if self.phase_offsets is not None:
+            raise ValueError(
+                "Data with closure-phase offsets cannot be split or "
+                "selected; add the offsets (with_closure_offsets) afterwards."
             )
         keep = onp.asarray(keep, dtype=bool)
         new_index = onp.cumsum(keep) - 1  # old sample -> new sample
@@ -1017,6 +1027,44 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             (self.d_vis * factor, self.d_phi * factor),
         )
 
+    def with_closure_offsets(self, baseline=None, triangle=None, modes=None):
+        """A copy of the data with closure-phase offsets per frame.
+
+        Calibration can leave closure phases that do not close. The
+        likelihood then marginalises offsets common to the channels of a
+        frame analytically (see
+        [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with these widths
+        unless they are fitted as the noise terms ``phi_offset_baseline``,
+        ``phi_offset_triangle`` or ``phi_offset_modes``. Use them only if
+        calibrators show such offsets: they are off by default. Needs
+        closure phases from four or more telescopes.
+
+        Parameters
+        ----------
+        baseline : float, optional
+            Width (radians) of a phase offset per (frame, baseline), which
+            reaches the closure phases through the triangles' signs.
+        triangle : float, optional
+            Width (radians) of an offset per (frame, triangle).
+        modes : array-like, optional
+            Further modes, ``(n_mode, n_phase)``, radians per 1σ, one value
+            per closure phase, each within one frame (e.g. a calibrator
+            PCA's). Their width, 1 by default, scales them.
+
+        Returns
+        -------
+        OIData
+            The data with ``phase_offsets`` set. Split or select the data
+            first: data with offsets cannot be split.
+        """
+        offsets = closure_offsets(self, baseline, triangle, modes)
+        return eqx.tree_at(
+            lambda d: d.phase_offsets,
+            self,
+            offsets,
+            is_leaf=lambda x: x is None,
+        )
+
     def with_gains(
         self, telescope=None, baseline=None, chromatic=None, modes=None
     ):
@@ -1083,6 +1131,14 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             else:
                 phi_noise = self.cp_noise.sample(phi_key, self.d_phi, phi.size)
             phi = phi + noise_scale * phi_noise
+            if self.phase_offsets is not None:
+                offsets = self.phase_offsets
+                phi = phi + offsets.sample(
+                    jax.random.fold_in(key, 3),
+                    self.cp_noise,
+                    phi.size,
+                    offsets.widths,
+                )
         return self.set(["vis", "phi"], [vis, phi])
 
 

@@ -539,7 +539,9 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 - `fit` includes the normalisation and refuses LM when any dataset has gains. `numpyro_model` gets them through `model_loglike`.
 - `OIData.stations` (from `STA_INDEX`, or a dictionary's `stations`), and `gains` survive `_subset`/`split_by_epoch` (dropping rows is an exact marginal). `with_model(key)` draws the gains at their default widths and applies them exactly.
 - Tests: whitened norm and log-det against the dense covariance (V², |V|, log|V|); block structure; width terms; zero widths reduce to the diagonal likelihood, with finite gradients on degenerate data; splitting by epoch; covariance of the drawn gains; refusal for projected data; fit defaults to L-BFGS.
-- Not yet: the width-recovery and calibration study, and the MWE (OzSTAR); `phi_offset` (after #174); `wavel_scale`.
+- Merged as #180. The width-recovery and calibration study is OzSTAR job `stage6d_gains` (submitted 2026-10-05); the MWE is next.
+
+**Log (closure offsets, branch `stage6d-phi-offset`):** `OIData.with_closure_offsets(baseline=, triangle=, modes=)` (`virgil.gains.ClosureOffsets`), widths `phi_offset_<group>`, on #174's sine likelihood. Tested against the dense whitened covariance, the closure of baseline offsets around four telescopes, zero widths, width terms, drawn offsets, and a fit of the width. Not yet: three telescopes; splitting data with offsets.
 
 **Also in 6d:**
 - **`wavel_scale`** (and `wavel_offset`). A per-dataset wavelength nuisance in `noise=` (S §2.6; 1–2 h). The GRAVITY default is λ′ = λ(1 + s) + δ, with s ~ N(0, 2×10⁻⁴) and δ = 0 unless lines constrain it.

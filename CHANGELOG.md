@@ -17,6 +17,13 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Closure-phase offsets per frame** (Stage 6d).
+  `OIData.with_closure_offsets(baseline=, triangle=, modes=)` adds closure-phase
+  offsets common to a frame's channels (per baseline, as T·e; per triangle; or
+  supplied modes), marginalised analytically on the whitened closure phases,
+  with widths `phi_offset_baseline`, `phi_offset_triangle` and
+  `phi_offset_modes`. Four or more telescopes; off by default.
+
 - **Calibration gains correlated across channels** (Stage 6d).
   `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)` adds gains
   on log |V| per frame: per telescope, per baseline, a chromatic coherence
