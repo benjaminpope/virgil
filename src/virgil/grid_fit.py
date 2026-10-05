@@ -31,7 +31,7 @@ from ._grid import (
     warn_unconverged,
 )
 from .inference import laplace_parameter_uncertainty
-from .likelihood import loglike
+from .likelihood import build_model, loglike, whitened_residuals
 
 
 def _best_grid_flux(
@@ -284,6 +284,141 @@ optimized_flux_grid.__doc__ = (
         (axis 0 is the first coordinate key, e.g. ``dra``).
     """
 )
+
+
+@eqx.filter_jit
+def _linear_flux_grid(
+    data_obj, model, samples_dict, params, coord_keys, flux_key, batch_size
+):
+    """Jitted implementation of [`linear_flux_grid`][virgil.grid_fit.linear_flux_grid]."""
+    coords, shape = coordinate_points(samples_dict, coord_keys)
+
+    def residuals(flux, coord_vals):
+        values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
+        return whitened_residuals(build_model(model, params, values), data_obj)
+
+    def solve(coord_vals):
+        flux0 = jnp.zeros(())
+        # r(0) = whitened (model at f=0 - data); dr = dr/df at f=0, exactly.
+        r0, dr = jax.jvp(
+            lambda f: residuals(f, coord_vals), (flux0,), (jnp.ones(()),)
+        )
+        curvature = jnp.sum(dr * dr)
+        flux = -jnp.sum(dr * r0) / curvature
+        sigma = 1.0 / jnp.sqrt(curvature)
+        ok = curvature > 0.0
+        return (
+            jnp.where(ok, flux, jnp.nan),
+            jnp.where(ok, sigma, jnp.nan),
+        )
+
+    flux, sigma = map_points(solve, coords, batch_size=batch_size)
+    flux = flux.reshape(shape)
+    sigma = sigma.reshape(shape)
+    return flux, sigma, flux / sigma
+
+
+def linear_flux_grid(
+    data_obj, model, samples_dict, flux_param=None, batch_size=None
+):
+    """Linearised best-fit companion flux at every grid position, in closed form.
+
+    A fast first pass for companion searches, beside the iterative
+    [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid], and the
+    equivalent of fouriever's linear contrast map (``lincmap``). For a faint
+    companion (flux ``f`` much smaller than 1) the whitened residuals
+    ``r`` of virgil's likelihood are linear in ``f`` at fixed position:
+    ``r(f) = r(0) + f g``, where ``g = dr/df`` at ``f = 0`` is computed
+    exactly by forward-mode automatic differentiation of the model (no
+    finite difference, no hand-derived closure-phase derivative). The
+    weighted least-squares solution is then
+
+    ``f_hat = -(g . r(0)) / (g . g)``, ``sigma_f = (g . g) ** -0.5``,
+
+    which is ``(gᵀ C⁻¹ (d - m₀)) / (gᵀ C⁻¹ g)`` with ``C`` the data
+    covariance, because ``r`` is already whitened: correlated closure phases
+    are handled exactly as in the likelihood
+    ([`whitened_residuals`][virgil.likelihood.whitened_residuals]), and
+    every observable in the data (|V| or V², and phases) contributes.
+    One model evaluation with its derivative per grid position, and no
+    optimizer.
+
+    ``f_hat`` is not constrained to be positive (as with
+    ``optimized_flux_grid`` and fouriever's ``lincmap``), so noise gives
+    negative values with SNR of either sign. Unlike fouriever, whose
+    ``lincmap`` returns the *variance* ``1 / (g . g)`` (and warns not to
+    trust it), ``sigma_f`` here is the standard deviation.
+
+    **Limitation.** The linearisation holds only for ``f`` much smaller than 1. The
+    closure phase of a binary scales as ``f`` only to first order, with
+    corrections of order ``f**2`` (and ``f`` times the |V| change for
+    amplitudes), so for a bright companion (for example ``f ~ 0.3``)
+    ``f_hat`` is biased, by tens of percent, and ``sigma_f`` is
+    unreliable. Use it to find candidates, then refine them with
+    [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]. At
+    Δ-phase residuals of order 1 rad the phase wrapping is not
+    linear either. A companion at a position where ``g`` is nearly zero
+    (for example at a null of the baselines) has a large ``sigma_f``
+    and so a small SNR.
+
+    Parameters
+    ----------
+    data_obj : OIData
+        Data to fit.
+    model : SourceModel or class
+        Template model whose parameters at the paths in ``samples_dict`` are
+        varied (e.g. a [System][virgil.models.System] with paths such as
+        ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
+        as keyword arguments (e.g. ``BinaryModelCartesian``). At zero flux
+        it must reduce to the primary alone (flux 1).
+    samples_dict : dict[str, array-like]
+        Grid axes, as for
+        [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]:
+        ``dra``/``ddec`` in milliarcseconds, plus a flux key, whose values
+        are ignored (the flux is solved for, at ``f = 0``), but which must
+        be present to name the parameter. The output has one axis per
+        coordinate key (every key except ``flux_param``), in this order.
+    flux_param : str, optional
+        The key of ``samples_dict`` holding the flux, e.g. ``"comp.flux"``.
+        By default, the one key whose last part is ``flux``.
+    batch_size : int, optional
+        Number of grid points evaluated at once. By default, enough for
+        about 2**20 model visibilities on a CPU and 2**23 on other backends
+        (GPU, TPU), and at least 256.
+
+    Returns
+    -------
+    flux : array-like
+        Best-fit flux ratio (companion/primary), unconstrained in sign, with
+        one axis per coordinate key (axis 0 is the first, e.g. ``dra``).
+    flux_error : array-like
+        One-sigma uncertainty on ``flux``, same shape, NaN where the model
+        does not depend on the flux.
+    snr : array-like
+        ``flux / flux_error``, same shape: the detection significance map.
+
+    Examples
+    --------
+    >>> grid = {
+    ...     "dra": jnp.linspace(-300.0, 300.0, 61),
+    ...     "ddec": jnp.linspace(-300.0, 300.0, 61),
+    ...     "flux": jnp.array([1e-3]),  # ignored: only names the parameter
+    ... }
+    >>> flux, flux_error, snr = linear_flux_grid(
+    ...     data, BinaryModelCartesian, grid
+    ... )  # doctest: +SKIP
+    >>> i, j = jnp.unravel_index(jnp.nanargmax(snr), snr.shape)  # doctest: +SKIP
+    """
+    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
+    return _linear_flux_grid(
+        data_obj,
+        model,
+        samples_dict,
+        params=params,
+        coord_keys=coord_keys,
+        flux_key=flux_key,
+        batch_size=batch_size_or_default(batch_size, data_obj),
+    )
 
 
 def laplace_flux_uncertainty_grid(

@@ -7,6 +7,16 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Added
+
+- **Fitted RV jitter.** `RVData.term(params, jitter="rv_jitter")` inflates the
+  errors to `sqrt(d_rv² + s²)` with `s` a fitted value (km/s; give it a
+  half-normal or log-uniform prior). The term protocol gains an optional
+  `log_norm(values)`, the `Σ log σ_eff` that a fitted error makes
+  non-constant: `fit` adds it to the loss, defaults to L-BFGS (as for
+  `noise=`), and raises `TypeError` for `method="lm"`. `numpyro_model` needs
+  no change, since the term's `loglike` is already normalised.
+
 ### Changed
 
 - **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
@@ -15,7 +25,40 @@ anything before 1.0 may change between minor versions.
   best fit; well-measured data may need 64 or more. A convergence test was
   added.
 
+### Fixed
+
+- **`absil_limits` with a far-off or single-value flux axis.** The
+  significance saturates (about 37 sigma in float64) for bright companions,
+  so starting the optimizer on such a flux, e.g. `flux=[0.01]`, gave a flat
+  loss and returned the starting flux with a non-convergence warning. The
+  flux axis now only gives a rough starting point: the limit is bracketed by
+  decades and bisected in log flux, replacing the BFGS search, so the result
+  no longer depends on the axis.
+
 ### Added
+
+- **`injection_limits`: injection-method detection limits.** Like
+  `absil_limits`, with the same grid, inputs and return format, but each
+  limit is the flux at which a companion injected into the data (Gallenne et
+  al. 2015, section 3.2, as in CANDID's `detectionLimit(methods=["injection"])`)
+  would be detected at the requested significance. It solves for the flux by
+  bisection in log flux, vmapped over the grid. It agrees with CANDID's
+  criterion to 1e-4; unlike CANDID it does not refit the primary's diameter
+  to the injected data. It equals `absil_limits` on the data reflected about
+  the null model, and neither is uniformly more sensitive.
+
+
+- **`linear_flux_grid`.** A closed-form, fouriever-style (`lincmap`)
+  linearised companion flux map for fast first-pass searches, beside
+  `optimized_flux_grid`. The derivative of virgil's whitened residuals with
+  respect to the flux at f = 0 is computed exactly with `jax.jvp`, so
+  correlated closure phases are whitened as in the likelihood, and
+  `f_hat = -(g . r0) / (g . g)`, `sigma_f = (g . g)**-0.5` and SNR are
+  returned per pixel (f_hat unconstrained in sign). Valid only for
+  f much smaller than 1: a bright companion (f ~ 0.3) is biased low.
+- **Wavelength-scale nuisance** (Stage 6d). `OIData.with_wavelength_scale`
+  evaluates models at scale·λ + offset, and the noise terms `wavel_scale` and
+  `wavel_offset` fit or sample it (e.g. `Normal(1, 2e-4)` for GRAVITY).
 
 - **Calibration gains correlated across channels** (Stage 6d).
   `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)` adds gains

@@ -619,3 +619,124 @@ def test_numpyro_model_sums_oidata_and_likelihood_terms():
         _log_density(oidata, values) + _log_density(terms, values) - log_prior,
         rel=1e-5,
     )
+
+
+def _rv_setup(n=30, jitter=1.0, d_rv=0.1, seed=3):
+    from virgil.orbits import RVData
+
+    truth = _orbit()
+    mjd = T_REF + onp.linspace(0.0, 380.0, n)
+    with jax.enable_x64(True):
+        clean = RVData(mjd, onp.zeros(n), d_rv)
+        model = onp.asarray(clean.model(truth, 0.5, 3.0, 50.0))
+        noise = onp.random.default_rng(seed).normal(
+            0.0, onp.hypot(d_rv, jitter), n
+        )
+        rvs = RVData(mjd, model + noise, d_rv)
+    return truth, rvs
+
+
+def _rv_term(truth, rvs, jitter="rv_jitter"):
+    return rvs.term(lambda v: (truth, 0.5, v["gamma"], 50.0), jitter=jitter)
+
+
+def test_rv_jitter_loglike_is_the_gaussian_with_inflated_errors():
+    from scipy.stats import norm
+
+    truth, rvs = _rv_setup(n=8)
+    s = 0.7
+    values = {"gamma": 2.5, "rv_jitter": s}
+    with jax.enable_x64(True):
+        model = onp.asarray(rvs.model(truth, 0.5, 2.5, 50.0))
+        sigma = onp.sqrt(onp.asarray(rvs.d_rv) ** 2 + s**2)
+        expected = norm.logpdf(onp.asarray(rvs.rv), model, sigma).sum()
+        term = _rv_term(truth, rvs)
+        assert float(term.loglike(values)) == pytest.approx(expected)
+        assert float(term.log_norm(values)) == pytest.approx(
+            onp.log(sigma).sum()
+        )
+
+
+def test_rv_jitter_zero_matches_the_plain_term():
+    truth, rvs = _rv_setup(n=8)
+    zero = {"gamma": 2.5, "rv_jitter": 0.0}
+    with jax.enable_x64(True):
+        term, plain = _rv_term(truth, rvs), _rv_term(truth, rvs, None)
+        assert float(term.loglike(zero)) == pytest.approx(
+            float(plain.loglike(zero))
+        )
+        onp.testing.assert_allclose(term(zero), plain(zero))
+    assert term.has_log_norm and not plain.has_log_norm
+
+
+def test_numpyro_model_includes_the_rv_jitter_normalisation():
+    import numpyro.distributions as dist
+
+    from virgil.likelihood import numpyro_model
+
+    truth, rvs = _rv_setup(n=8)
+    priors = {
+        "gamma": dist.Normal(0.0, 10.0),
+        "rv_jitter": dist.HalfNormal(2.0),
+    }
+    values = {"gamma": 2.5, "rv_jitter": 0.7}
+    with jax.enable_x64(True):
+        term = _rv_term(truth, rvs)
+        model = numpyro_model(
+            lambda **kw: None, priors, (), likelihoods=[term]
+        )
+        expected = sum(
+            float(priors[k].log_prob(v)) for k, v in values.items()
+        ) + float(term.loglike(values))
+        assert _log_density(model, values) == pytest.approx(expected)
+
+
+def test_fit_with_rv_jitter_uses_lbfgs_and_rejects_lm():
+    import numpyro.distributions as dist
+
+    from virgil.fitting import fit
+
+    truth, rvs = _rv_setup(n=10)
+    priors = {
+        "gamma": dist.Uniform(-50.0, 50.0),
+        "rv_jitter": dist.HalfNormal(5.0),
+    }
+    init = {"gamma": 0.0, "rv_jitter": 0.5}
+    with jax.enable_x64(True):
+        term = _rv_term(truth, rvs)
+        result = fit(
+            lambda **k: None, priors, (), init=init, likelihoods=[term]
+        )
+        assert result.info["method"] == "lbfgs"
+        with pytest.raises(TypeError, match="least-squares"):
+            fit(
+                lambda **k: None,
+                priors,
+                (),
+                init=init,
+                likelihoods=[term],
+                method="lm",
+            )
+
+
+def test_fit_recovers_an_injected_rv_jitter():
+    import numpyro.distributions as dist
+
+    from virgil.fitting import fit
+
+    truth, rvs = _rv_setup(n=30, jitter=1.0)
+    priors = {
+        "gamma": dist.Uniform(-50.0, 50.0),
+        "rv_jitter": dist.HalfNormal(5.0),
+    }
+    with jax.enable_x64(True):
+        result = fit(
+            lambda **k: None,
+            priors,
+            (),
+            init={"gamma": 0.0, "rv_jitter": 0.5},
+            likelihoods=[_rv_term(truth, rvs)],
+        )
+    s = float(result.values["rv_jitter"])
+    assert s == pytest.approx(1.0, abs=3 / onp.sqrt(2 * 30))
+    assert float(result.values["gamma"]) == pytest.approx(3.0, abs=0.6)
