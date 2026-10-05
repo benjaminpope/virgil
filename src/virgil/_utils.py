@@ -34,6 +34,59 @@ def concrete(value):
         return None
 
 
+# === ERROR INFLATION ===
+
+
+def inflate_errors(
+    sigma,
+    reference=None,
+    absolute=None,
+    relative=None,
+    scale=None,
+    combine="quadrature",
+):
+    """Uncertainties scaled, with absolute and relative terms combined.
+
+    The one rule behind both the fitted error terms
+    ([`inflated_errors`][virgil.likelihood.inflated_errors], which add in
+    quadrature relative to the model) and the fixed error floors
+    ([`OIData.with_error_floor`][virgil.oidata.OIData.with_error_floor],
+    a maximum relative to the data), so the two cannot drift apart.
+
+    Parameters
+    ----------
+    sigma : array-like
+        The uncertainties.
+    reference : array-like, optional
+        What ``relative`` is a fraction of (the model or the data).
+    absolute, relative, scale : float, optional
+        An absolute term, a term ``relative * |reference|``, and a factor
+        applied to ``sigma`` first. ``None`` leaves a term out.
+    combine : {"quadrature", "max"}, optional
+        Add the terms in quadrature (default), or take the largest of
+        ``sigma`` and the terms (a floor).
+    """
+    sigma = np.asarray(sigma)
+    if scale is not None:
+        sigma = scale * sigma
+    terms = []
+    if absolute is not None:
+        terms.append(np.broadcast_to(np.asarray(absolute), sigma.shape))
+    if relative is not None:
+        terms.append(relative * np.abs(np.asarray(reference)))
+    if combine == "quadrature":
+        for term in terms:
+            sigma = np.hypot(sigma, term)
+        return sigma
+    if combine == "max":
+        for term in terms:
+            sigma = np.maximum(sigma, term)
+        return sigma
+    raise ValueError(
+        f"combine must be 'quadrature' or 'max', not {combine!r}."
+    )
+
+
 # === PER-DATASET MODELS ===
 
 

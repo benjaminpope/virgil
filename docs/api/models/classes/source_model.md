@@ -8,6 +8,7 @@
         - model
         - model_on_grid
         - render
+        - total_spectrum
         - is_physical
         - at
         - time_dependent

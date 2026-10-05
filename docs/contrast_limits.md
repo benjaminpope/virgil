@@ -148,6 +148,8 @@ We can visualize these as contrast curves, and plot these on the same axis. They
 
 The limits are companion/primary flux ratios, but by astronomical convention they are reported as a contrast (primary/companion) or in magnitudes: a companion 100 times fainter than the star has a contrast of 100, or 5 mag. `units="delta_mag"` (the default for curves) or `units="contrast"` converts for display, and `flux_to_delta_mag` / `flux_to_contrast` convert the numbers themselves.
 
+Contrast limits say which companions a non-detection rules out at each position. To calibrate a detection threshold against simulated noise, including the look-elsewhere effect of searching a grid, and to measure a search's completeness at a fixed false-alarm probability, see [Detection ROC curves](detection_roc.md).
+
 ```python
 # Overplot Ruffio and Absil radial contrast curves on one axis
 fig, ax = plt.subplots(figsize=(8, 4))
