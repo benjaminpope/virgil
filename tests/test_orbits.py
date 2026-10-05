@@ -3,6 +3,7 @@
 import itertools
 
 import jax
+import jax.numpy as jnp
 import numpy as onp
 import pytest
 from scipy.optimize import brentq
@@ -1427,10 +1428,16 @@ def test_total_mass_and_distance_are_finite_in_float32(a_au, period_yr):
     # a^3 / P^2 = 1 in au and Gaussian years: one solar mass (to 4e-5 for the
     # Julian year used here). SI-sized intermediates would overflow float32.
     gaussian_year = 365.256898
-    orbit = _orbit(period=period_yr * gaussian_year, a_mas=a_au * 1000.0)
-    mass = total_mass(orbit, 1.0)
-    assert mass.dtype == onp.float32 or mass.dtype == jax.numpy.float32
-    assert onp.isfinite(float(mass))
-    assert float(mass) == pytest.approx(1.0, rel=1e-4)
-    dist = distance_pc(orbit, mass)
-    assert float(dist) == pytest.approx(1.0, rel=1e-4)
+    with jax.enable_x64(False):
+        f32 = jnp.float32
+        orbit = _orbit(
+            period=jnp.asarray(period_yr * gaussian_year, f32),
+            a_mas=jnp.asarray(a_au * 1000.0, f32),
+        )
+        mass = total_mass(orbit, jnp.asarray(1.0, f32))
+        assert mass.dtype == f32
+        assert onp.isfinite(float(mass))
+        assert float(mass) == pytest.approx(1.0, rel=1e-4)
+        dist = distance_pc(orbit, mass)
+        assert onp.isfinite(float(dist))
+        assert float(dist) == pytest.approx(1.0, rel=1e-4)
