@@ -81,7 +81,10 @@ anything before 1.0 may change between minor versions.
   NumPy `DetectionMC` with empirical false-alarm probabilities and their
   Clopper–Pearson intervals, thresholds with bootstrap errors, ROC curves,
   AUC, completeness maps, contrast curves in the units of `absil_limits`, an
-  optional `match_radius`, and `save`/`load`/`concatenate` for array jobs.
+  optional `match_radius` (Cartesian `dra`/`ddec` or angular `sep`/`pa`
+  grids), and `save`/`load`/`concatenate` for array jobs; `concatenate`
+  compares fingerprints of the whole model, null scene and template (every
+  field, static or not) and refuses runs that cannot be fingerprinted.
 
 - **Gauss-Newton and a marginal-likelihood map in `linear_flux_grid`.**
   `n_iter=k` relinearises the whitened residuals at the current flux per pixel

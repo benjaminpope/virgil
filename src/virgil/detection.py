@@ -47,6 +47,7 @@ import dataclasses
 import hashlib
 import json
 import math
+import types
 import warnings
 
 import equinox as eqx
@@ -793,13 +794,16 @@ def injection_recovery(
         Null noise model: [`gaussian_null`][virgil.detection.gaussian_null]
         or [`bootstrap_null`][virgil.detection.bootstrap_null] of
         ``template`` and ``null_scene`` with their defaults, or a simulator
-        built by either (for ``error_scale`` or ``method="resample"``),
-        whose null scene must predict the same data as ``null_scene``.
+        built by either (for ``error_scale`` or ``method="resample"``)
+        from ``template`` itself (checked by fingerprint), whose null
+        scene must predict the same data as ``null_scene``.
     match_radius : float, optional
-        In mas. When set, an injection counts as detected only if its best
-        position lies within ``match_radius`` of the injected one. Needs
-        coordinate keys ending in ``dra`` and ``ddec``. Stored in
-        ``meta``; the best positions are stored either way.
+        In mas, finite and non-negative. When set, an injection counts as
+        detected only if its best position lies within ``match_radius`` of
+        the injected one. Needs coordinate keys ending in ``dra`` and
+        ``ddec`` (Cartesian, mas) or ``sep`` and ``pa`` (mas and degrees,
+        as in ``BinaryModelAngular``). Stored in ``meta``; the best
+        positions are stored either way.
     flux_param : str, optional
         The flux key of ``samples_dict``, as for the grid tools.
     draw_batch : int, optional
@@ -844,10 +848,16 @@ def injection_recovery(
         raise ValueError(f"draw_batch must be positive; got {draw_batch}.")
     if match_radius is not None:
         match_radius = float(match_radius)
-        if not {"dra", "ddec"} <= set(names.values()):
+        if not (np.isfinite(match_radius) and match_radius >= 0.0):
+            raise ValueError(
+                "match_radius must be finite and non-negative, not "
+                f"{match_radius}."
+            )
+        short = set(names.values())
+        if not any(set(pair) <= short for pair in _POSITION_KEYS):
             raise ValueError(
                 "match_radius needs coordinate keys ending in 'dra' and "
-                f"'ddec'; the grid has {list(coord_keys)}."
+                f"'ddec', or 'sep' and 'pa'; the grid has {list(coord_keys)}."
             )
     simulator = _simulator(noise, template, null_scene)
     _check_same_prediction(
@@ -973,6 +983,12 @@ def _simulated_statistics(
 _FORMAT = 1
 # Statistics stored per draw, besides the best position (``best_<name>``).
 _STORED = STATISTICS + ("flux_peak_steps", "converged_fraction")
+# Coordinate names that give positions on the sky: Cartesian (mas), or
+# separation (mas) and position angle (degrees, North through East).
+_POSITION_KEYS = (("dra", "ddec"), ("sep", "pa"))
+# Rows of null draws per bootstrap batch in DetectionMC.threshold, to bound
+# its memory (about 2**22 values, 32 MB).
+_BOOT_VALUES = 2**22
 # Metadata that must agree for results to be concatenated.
 _COMPATIBLE = (
     "format",
@@ -1010,12 +1026,21 @@ def _seed_record(key):
 
 
 def _canonical_names(params, flux_key):
-    """Short names of the grid keys: their last dotted part."""
+    """Short names of the grid keys: their last dotted part.
+
+    The outputs are stored under ``_STORED``, ``best_<name>`` and (for the
+    injected values) ``<name>``; all of them must be distinct, or one
+    would overwrite another.
+    """
     names = {k: k.rsplit(".", 1)[-1] for k in params}
     names[flux_key] = "flux"
-    if len(set(names.values())) != len(names):
+    short = list(names.values())
+    fields = list(_STORED) + short + [f"best_{n}" for n in short]
+    if len(set(fields)) != len(fields):
         raise ValueError(
-            f"The grid keys {list(params)} do not have distinct last parts."
+            f"The grid keys {list(params)} have last parts {short}, which "
+            "repeat or clash with the stored outputs (statistics, "
+            "diagnostics and best_<name>); rename them."
         )
     return names
 
@@ -1059,6 +1084,19 @@ def _chunk_size(chunk_size, draw_batch, n_max):
 
 def _simulator(noise, template, null_scene):
     if isinstance(noise, _SIMULATORS):
+        # The null check, batch sizing and metadata use ``template``, so
+        # the simulator must observe through the same data.
+        source = (
+            noise.template if isinstance(noise, _GaussianNull) else noise.data
+        )
+        if source is not template:
+            mine, theirs = _fingerprint(source), _fingerprint(template)
+            if mine is None or mine != theirs:
+                raise ValueError(
+                    "The simulator was built from different data than "
+                    "template (or from data that cannot be fingerprinted); "
+                    "pass the simulator's own data as template."
+                )
         _check_same_prediction(
             template,
             noise.null_scene,
@@ -1115,33 +1153,85 @@ def _concat(arrays):
     return np.concatenate(arrays).astype(float)
 
 
-def _hash_arrays(arrays):
+class _Unfingerprintable(Exception):
+    """An object whose content cannot be hashed reproducibly."""
+
+
+def _fingerprint(obj):
+    """Hash of a whole object, or None if part of it cannot be hashed.
+
+    Equinox Modules (``OIData``, models, ``ClosureNoise``, ...) are
+    dataclasses: every field is hashed, static or not, with the class of
+    every node, so two objects hash equally only if they hold the same
+    arrays (dtype, shape, bytes), the same Python values and the same
+    structure. Classes and module-level functions are hashed by name;
+    anything else (a lambda, a closure, an arbitrary object) makes the
+    fingerprint None, so that results built on it are never merged.
+    """
     h = hashlib.sha256()
-    for a in arrays:
-        a = np.asarray(a, dtype=float)
-        h.update(str(a.shape).encode())
-        h.update(a.tobytes())
+    try:
+        _feed(h, obj)
+    except _Unfingerprintable:
+        return None
     return h.hexdigest()[:16]
 
 
+def _feed(h, obj):
+    """Add ``obj`` to the hash ``h`` (see :func:`_fingerprint`)."""
+    if obj is None or isinstance(obj, (bool, int, float, complex, str)):
+        h.update(f"{type(obj).__name__}:{obj!r};".encode())
+    elif isinstance(obj, (jax.Array, np.ndarray, np.generic)):
+        try:
+            a = np.ascontiguousarray(np.asarray(obj))
+        except TypeError as err:  # e.g. typed PRNG keys
+            raise _Unfingerprintable from err
+        if a.dtype == object:
+            raise _Unfingerprintable
+        h.update(f"array:{a.dtype}:{a.shape};".encode())
+        h.update(a.tobytes())
+    elif isinstance(obj, (tuple, list)):
+        h.update(f"{type(obj).__name__}:{len(obj)}(".encode())
+        for item in obj:
+            _feed(h, item)
+        h.update(b")")
+    elif isinstance(obj, dict):
+        h.update(f"dict:{len(obj)}(".encode())
+        for key in sorted(obj, key=repr):
+            _feed(h, key)
+            _feed(h, obj[key])
+        h.update(b")")
+    elif dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        h.update(f"{_qualname(type(obj))}(".encode())
+        for field in dataclasses.fields(obj):
+            h.update(f"{field.name}=".encode())
+            _feed(h, getattr(obj, field.name, "<unset>"))
+        h.update(b")")
+    elif isinstance(obj, (type, types.FunctionType)) and "<" not in (
+        obj.__qualname__
+    ):
+        h.update(f"{type(obj).__name__}:{_qualname(obj)};".encode())
+    else:
+        raise _Unfingerprintable
+
+
+def _qualname(obj):
+    return f"{getattr(obj, '__module__', '')}.{obj.__qualname__}"
+
+
 def _fingerprint_data(data):
-    """Shape and hash of the template's sampling, values and errors."""
-    arrays = [data.u, data.v, data.wavel, data.vis, data.d_vis]
-    arrays += [data.phi, data.d_phi]
+    """Shape and hash of the whole template (see :func:`_fingerprint`)."""
     return {
         "n_vis": int(np.size(data.vis)),
         "n_phi": int(np.size(data.phi)),
-        "hash": _hash_arrays(arrays),
+        "hash": _fingerprint(data),
     }
 
 
 def _describe(model):
     """A JSON description of a model class, function or template."""
-    if isinstance(model, eqx.Module):
-        leaves = jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array))
-        return f"{type(model).__qualname__}:{_hash_arrays(leaves)}"
-    module = getattr(model, "__module__", "")
-    return f"{module}.{getattr(model, '__qualname__', repr(model))}"
+    named = isinstance(model, (type, types.FunctionType))
+    name = _qualname(model if named else type(model))
+    return {"type": name, "hash": _fingerprint(model)}
 
 
 # ---------------------------------------------------------------------------
@@ -1168,8 +1258,9 @@ class DetectionMC:
         The same per injected draw, plus the injected values under their
         names (e.g. ``dra``, ``ddec``, ``flux``).
     meta : dict
-        JSON-serialisable: the grid, descriptions of the model and null
-        scene, a fingerprint of the template, the noise model,
+        JSON-serialisable: the grid, fingerprints (hashes of every field,
+        static or not) of the model, the null scene and the template, the
+        noise model,
         ``match_radius``, the numbers of draws, the seeds and the virgil
         version.
 
@@ -1179,7 +1270,8 @@ class DetectionMC:
     null draws at or above it; at a threshold ``t`` a draw is detected
     when its statistic exceeds ``t`` (and, with ``match_radius``, its best
     position matches the injection). Separations are ``hypot(dra, ddec)``
-    of the injections, in mas; fluxes are relative to the primary, as in
+    of the injections, or their ``sep`` for angular grids (``sep`` in mas,
+    ``pa`` in degrees), in mas; fluxes are relative to the primary, as in
     [`absil_limits`][virgil.limits.absil_limits].
 
     The single-position null of ``delta_chi2`` is ½δ₀ + ½χ²₁, so a local
@@ -1223,23 +1315,41 @@ class DetectionMC:
             raise ValueError("There are no null draws.")
         return x
 
+    def _positions(self, prefix=""):
+        """Injected (or best, with prefix "best_") ``(dra, ddec)`` in mas."""
+        part = self.injected
+        if f"{prefix}dra" in part and f"{prefix}ddec" in part:
+            return part[f"{prefix}dra"], part[f"{prefix}ddec"]
+        if f"{prefix}sep" in part and f"{prefix}pa" in part:
+            sep = np.asarray(part[f"{prefix}sep"], dtype=float)
+            pa = np.radians(np.asarray(part[f"{prefix}pa"], dtype=float))
+            return sep * np.sin(pa), sep * np.cos(pa)
+        raise ValueError(
+            "The injections have neither 'dra' and 'ddec' nor 'sep' and "
+            f"'pa'; they have {sorted(part)}."
+        )
+
     def separations(self):
-        """Separations of the injections, ``hypot(dra, ddec)`` in mas."""
-        return np.hypot(self.injected["dra"], self.injected["ddec"])
+        """Separations of the injections in mas.
+
+        ``hypot(dra, ddec)`` for Cartesian grids, or the injected ``sep``
+        for angular ones (``sep``, ``pa`` in degrees).
+        """
+        if "dra" not in self.injected and "sep" in self.injected:
+            return np.asarray(self.injected["sep"], dtype=float)
+        return np.hypot(*self._positions())
 
     def matched(self):
         """Whether each injection's best position is within match_radius.
 
-        All True when ``meta["match_radius"]`` is None.
+        All True when ``meta["match_radius"]`` is None. Angular positions
+        (``sep``, ``pa`` in degrees) are compared on the sky.
         """
         radius = self.meta.get("match_radius")
         if radius is None:
             return np.ones(self.n_injected, dtype=bool)
-        distance = np.hypot(
-            self.injected["best_dra"] - self.injected["dra"],
-            self.injected["best_ddec"] - self.injected["ddec"],
-        )
-        return distance <= radius
+        (x, y), (bx, by) = self._positions(), self._positions("best_")
+        return np.hypot(bx - x, by - y) <= radius
 
     def false_alarm_probability(self, stat, value, *, confidence=0.95):
         """Empirical false-alarm probability of ``value``, with an interval.
@@ -1305,7 +1415,29 @@ class DetectionMC:
             If fewer than one null draw is expected above the threshold
             (``fap * n < 1``): it is then about the largest null value and
             underestimates the true threshold.
+
+        Notes
+        -----
+        The bootstrap runs in batches of resamples, holding about 2²²
+        values at a time, so its memory does not grow with
+        ``n_boot × n``.
         """
+        null, value = self._threshold(stat, fap)
+        q = 1.0 - float(fap)
+        rng = np.random.default_rng(seed)
+        n_boot = int(n_boot)
+        rows = max(1, _BOOT_VALUES // null.size)
+        quantiles = []
+        for start in range(0, n_boot, rows):
+            boot = rng.choice(
+                null, size=(min(rows, n_boot - start), null.size)
+            )
+            quantiles.append(np.quantile(boot, q, axis=1))
+        error = float(np.std(np.concatenate(quantiles))) if n_boot else np.nan
+        return value, error
+
+    def _threshold(self, stat, fap):
+        """The null scores and their ``1 - fap`` quantile, without error."""
         null = self._null_scores(stat)
         fap = float(fap)
         if not 0.0 < fap < 1.0:
@@ -1316,13 +1448,9 @@ class DetectionMC:
                 f"of {fap:.3g}; the threshold is about the largest null "
                 "value. Simulate more null draws.",
                 RuntimeWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
-        q = 1.0 - fap
-        rng = np.random.default_rng(seed)
-        boot = rng.choice(null, size=(int(n_boot), null.size), replace=True)
-        error = float(np.std(np.quantile(boot, q, axis=1)))
-        return float(np.quantile(null, q)), error
+        return null, float(np.quantile(null, 1.0 - fap))
 
     def detected(self, stat, fap):
         """Whether each injection is detected at false-alarm probability fap.
@@ -1330,10 +1458,11 @@ class DetectionMC:
         Its statistic exceeds :meth:`threshold` and, with ``match_radius``,
         its best position matches the injection.
         """
-        threshold, _ = self.threshold(stat, fap)
-        return (self._scores(self.injected, stat) > threshold) & (
-            self.matched()
-        )
+        return self._detected(stat, self._threshold(stat, fap)[1])
+
+    def _detected(self, stat, threshold):
+        scores = self._scores(self.injected, stat)
+        return (scores > threshold) & self.matched()
 
     def _select(self, flux=None, sep_bin=None):
         keep = np.ones(self.n_injected, dtype=bool)
@@ -1411,10 +1540,11 @@ class DetectionMC:
         dict
             ``completeness`` (n_sep × n_flux, NaN in empty bins), ``n``
             (the injections per bin), ``sep`` and ``flux`` (the distinct
-            values, or the bin centres, geometric for positive flux
-            edges), and ``threshold``.
+            values, or the bin centres: arithmetic, except geometric for
+            flux bins whose two edges are positive), and ``threshold``.
         """
-        detected = self.detected(stat, fap).astype(float)
+        threshold = self._threshold(stat, fap)[1]
+        detected = self._detected(stat, threshold).astype(float)
         sep_idx, sep = _bin(self.separations(), sep_bins, geometric=False)
         flux_idx, flux = _bin(self.injected["flux"], flux_bins, True)
         shape = (sep.size, flux.size)
@@ -1430,7 +1560,7 @@ class DetectionMC:
             "n": n,
             "sep": sep,
             "flux": flux,
-            "threshold": self.threshold(stat, fap)[0],
+            "threshold": threshold,
         }
 
     def contrast_curve(
@@ -1530,6 +1660,18 @@ class DetectionMC:
         if not results:
             raise ValueError("Nothing to concatenate.")
         first = results[0].meta
+        unhashed = [
+            k
+            for k in ("model", "null_scene", "template")
+            if isinstance(first.get(k), dict) and first[k]["hash"] is None
+        ]
+        if len(results) > 1 and unhashed:
+            raise ValueError(
+                f"Cannot concatenate: the {unhashed} could not be "
+                "fingerprinted (they hold a lambda, a closure or another "
+                "object without a reproducible hash), so the runs cannot be "
+                "shown to match."
+            )
         for other in results[1:]:
             bad = [k for k in _COMPATIBLE if other.meta.get(k) != first.get(k)]
             if bad:
@@ -1585,8 +1727,9 @@ def _bin(values, edges, geometric):
     edges = np.asarray(edges, dtype=float)
     index = np.searchsorted(edges, values, side="right") - 1
     index = np.where((index >= 0) & (index < edges.size - 1), index, -1)
-    if geometric and np.all(edges > 0.0):
-        labels = np.sqrt(edges[:-1] * edges[1:])
-    else:
-        labels = 0.5 * (edges[:-1] + edges[1:])
+    lo, hi = edges[:-1], edges[1:]
+    labels = 0.5 * (lo + hi)
+    if geometric:
+        positive = (lo > 0.0) & (hi > 0.0)
+        labels = np.where(positive, np.sqrt(np.abs(lo * hi)), labels)
     return index, labels

@@ -17,10 +17,13 @@ from scipy import special, stats
 
 from tests._compiles import count_compiles
 from virgil.coverage import nrm_oidata
+from virgil import detection
 from virgil.detection import (
     STATISTICS,
     DetectionMC,
     _constrained_profile,
+    _describe,
+    _fingerprint,
     bootstrap_null,
     detection_statistics,
     gaussian_null,
@@ -34,6 +37,7 @@ from virgil.likelihood import loglike, whitened_residuals
 from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
+    Image,
     PointSource,
     System,
 )
@@ -309,8 +313,8 @@ def test_constrained_profile_keeps_positive_grid_points():
 # ---------------------------------------------------------------------------
 
 # A tiny grid for compile and bookkeeping tests, and a 7 x 7 x 8 one for the
-# statistical tests (shared through a module fixture: 64 null and 72
-# injected draws).
+# statistical tests (shared through a module fixture: 64 null and
+# 2 x 4 x 12 = 96 injected draws).
 TINY = {
     "dra": jnp.linspace(0.0, 120.0, 3),
     "ddec": jnp.linspace(-100.0, 20.0, 3),
@@ -387,7 +391,13 @@ def test_monte_carlo_is_reproducible_and_independent_of_chunking():
 
 
 def test_system_template_and_bootstrap_noise_run_through_the_driver():
-    inj = injection_grid([60.0], [0.0, 1e-2], 2, 1)
+    # Injections at a grid point inside TINY's box (random PAs can fall
+    # outside it): two null ones, and two ~10 sigma companions.
+    inj = {
+        "dra": [60.0] * 4,
+        "ddec": [-40.0] * 4,
+        "flux": [0.0, 0.0, 1e-2, 1e-2],
+    }
     binary = _recover(n_null=4, injections=inj)
     template = System(primary=PointSource(), comp=PointSource(0.01))
     paths = {f"comp.{key}": values for key, values in TINY.items()}
@@ -428,8 +438,11 @@ def test_system_template_and_bootstrap_noise_run_through_the_driver():
         )
     assert boot.meta["noise"] == {"kind": "bootstrap", "method": "sign_flip"}
     assert onp.all(boot.null["delta_chi2"] >= 0.0)
-    # The bright injections are found.
-    assert onp.all(boot.injected["delta_chi2"][2:] > 20.0)
+    # The bright injections are found: well above every null draw, and
+    # well above Wilks's 5 sigma (delta_chi2 = 25; about 100 expected).
+    bright = boot.injected["delta_chi2"][2:]
+    assert onp.all(bright > 25.0)
+    assert bright.min() > boot.null["delta_chi2"].max()
 
 
 def test_null_scene_must_match_the_model_at_zero_flux():
@@ -647,6 +660,134 @@ def test_match_radius_in_the_driver(search_mc):
         assert low <= fraction <= high
 
 
+def test_grid_names_may_not_overwrite_stored_outputs():
+    # A key's last part names its outputs (<name>, best_<name>), which must
+    # not replace a statistic, a diagnostic or another key's best position.
+    flux = jnp.geomspace(1e-3, 1e-2, 4)
+    for grid in (
+        {"comp.dra": TINY["dra"], "comp.max_snr": TINY["ddec"]},
+        {"a.converged_fraction": TINY["dra"], "ddec": TINY["ddec"]},
+        {"dra": TINY["dra"], "x.best_dra": TINY["ddec"]},
+    ):
+        with pytest.raises(ValueError, match="stored outputs"):
+            _recover({**grid, "flux": flux}, n_null=1)
+
+
+def test_match_radius_must_be_finite_and_non_negative():
+    for radius in (-1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="finite and non-negative"):
+            _recover(n_null=1, match_radius=radius)
+
+
+def test_a_simulator_must_observe_through_the_template():
+    # An equal copy of the template is accepted (nothing is drawn here);
+    # a simulator of other data is refused.
+    copy = gaussian_null(nrm_oidata(), NULL)
+    assert _recover(n_null=0, noise=copy).n_null == 0
+    other = TEMPLATE.with_error_scale(2.0)
+    for simulator in (gaussian_null(other, NULL), bootstrap_null(other, NULL)):
+        with pytest.raises(ValueError, match="different data"):
+            _recover(n_null=0, noise=simulator)
+
+
+def test_fingerprints_cover_static_fields_and_every_array():
+    pixels = onp.zeros((4, 4))
+    image = _describe(Image(pixels, 1.0))
+    assert image["type"] == "virgil.models.Image"
+    assert image == _describe(Image(pixels.copy(), 1.0))
+    # Static fields, which hold no arrays, change the hash.
+    assert image != _describe(Image(pixels, 2.0))
+    assert image != _describe(Image(pixels, 1.0, rotation_deg=10.0))
+    # So do the template's closure indices, not only its values.
+    shuffled = eqx.tree_at(lambda d: d.i_cps1, TEMPLATE, TEMPLATE.i_cps1[::-1])
+    assert _fingerprint(shuffled) != _fingerprint(TEMPLATE)
+    assert _fingerprint(nrm_oidata()) == _fingerprint(TEMPLATE)
+    # Classes are named; a lambda or an arbitrary object cannot be hashed.
+    assert _describe(BinaryModelCartesian)["hash"] is not None
+    assert _describe(lambda x: x)["hash"] is None
+    assert _fingerprint({"a": object()}) is None
+
+
+def test_concatenate_refuses_unfingerprinted_runs():
+    a = _synthetic(onp.arange(4.0))
+    a.meta["model"] = {"type": "f", "hash": None}
+    b = dataclasses.replace(a, meta=a.meta | {"seeds": [{"seed": 1}]})
+    with pytest.raises(ValueError, match="fingerprinted"):
+        DetectionMC.concatenate([a, b])
+    assert DetectionMC.concatenate([a]).n_null == 4
+
+
+def test_angular_injections_give_separations_and_match_on_the_sky():
+    # sep in mas, pa in degrees from North through East.
+    injected = {
+        "sep": [50.0, 50.0, 100.0, 100.0],
+        "pa": [0.0, 90.0, 180.0, 270.0],
+        "flux": [1e-2] * 4,
+        "best_sep": [50.0, 52.0, 100.0, 100.0],
+        "best_pa": [359.0, 90.0, 0.0, 271.0],  # 0.9, 2, 200, 1.7 mas away
+        "delta_chi2": [100.0] * 4,
+    }
+    mc = _synthetic(onp.arange(100.0), injected)
+    onp.testing.assert_allclose(mc.separations(), injected["sep"])
+    result = mc.completeness("delta_chi2", 0.1)
+    onp.testing.assert_allclose(result["sep"], [50.0, 100.0])
+    onp.testing.assert_allclose(result["completeness"], [[1.0], [1.0]])
+    mc.meta["match_radius"] = 2.5
+    assert mc.matched().tolist() == [True, True, False, True]
+    # The driver accepts match_radius on an angular grid.
+    angular = {
+        "sep": jnp.array([60.0, 80.0]),
+        "pa": jnp.array([0.0, 90.0]),
+        "flux": jnp.geomspace(1e-3, 1e-2, 4),
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        out = injection_recovery(
+            TEMPLATE,
+            NULL,
+            BinaryModelAngular,
+            angular,
+            0,
+            n_null=0,
+            match_radius=5.0,
+            progress=False,
+        )
+    assert out.meta["match_radius"] == 5.0
+
+
+def test_threshold_bootstrap_is_batched_and_skipped_when_unused(monkeypatch):
+    mc = _synthetic(onp.random.default_rng(0).standard_normal(1000))
+    full = mc.threshold("delta_chi2", 0.1, n_boot=50)
+    # Batches of a few resamples give the same draws as one batch.
+    monkeypatch.setattr(detection, "_BOOT_VALUES", 3000)
+    assert mc.threshold("delta_chi2", 0.1, n_boot=50) == full
+    assert full[1] > 0.0
+
+    def no_bootstrap(*args, **kwargs):
+        raise AssertionError("threshold() was called")
+
+    monkeypatch.setattr(DetectionMC, "threshold", no_bootstrap)
+    injected = {"dra": [50.0], "ddec": [0.0], "flux": [1e-2]}
+    mc = _synthetic(onp.arange(100.0), injected)
+    mc.detected("delta_chi2", 0.1)
+    assert mc.completeness("delta_chi2", 0.1)["threshold"] == pytest.approx(
+        89.1
+    )
+
+
+def test_flux_bin_centres_are_geometric_for_positive_edges():
+    injected = {
+        "dra": [50.0, 50.0],
+        "ddec": [0.0, 0.0],
+        "flux": [5e-4, 5e-3],
+        "delta_chi2": [0.0, 100.0],
+    }
+    mc = _synthetic(onp.arange(100.0), injected)
+    result = mc.completeness("delta_chi2", 0.1, flux_bins=[0.0, 1e-3, 1e-2])
+    onp.testing.assert_allclose(result["flux"], [5e-4, onp.sqrt(1e-5)])
+    onp.testing.assert_allclose(result["completeness"], [[0.0, 1.0]])
+
+
 def test_injection_grid_geometry():
     out = injection_grid([30.0, 60.0], [0.0, 1e-3, 1e-2], 50, 4)
     assert set(out) == {"dra", "ddec", "flux"}
@@ -767,8 +908,18 @@ def test_bootstrap_keeps_the_closure_phase_covariance_on_average():
     w = w.reshape(-1, noise.size)
     assert w.shape[1] == 15
     cov = w.T @ w / w.shape[0]
-    onp.testing.assert_allclose(cov, onp.eye(15), atol=0.25)
-    assert onp.mean(onp.diag(cov)) == pytest.approx(1.0, abs=0.08)
+    # Sign flips of one dataset keep each |w|, so the draws add no
+    # variance to the diagonal: the effective sample is the n_data
+    # datasets. A sample variance of unit normals then has a standard
+    # error of sqrt(2 / n_eff) (0.12), a covariance at most 1 / sqrt(n_eff)
+    # (0.08), and the mean of the 15 diagonal terms sqrt(2 / (15 n_eff)).
+    n_eff = n_data
+    diag, off = onp.diag(cov), cov[~onp.eye(15, dtype=bool)]
+    assert onp.all(onp.abs(diag - 1.0) < 5.0 * onp.sqrt(2.0 / n_eff))
+    assert onp.all(onp.abs(off) < 5.0 / onp.sqrt(n_eff))
+    assert onp.mean(diag) == pytest.approx(
+        1.0, abs=5.0 * onp.sqrt(2.0 / (15 * n_eff))
+    )
 
 
 def test_bootstrap_rejects_unsupported_data():

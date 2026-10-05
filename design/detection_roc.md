@@ -180,25 +180,40 @@ injection_recovery(template, null_scene, model, samples_dict, key, *,
   not depend on the chunking.
 - The best position of every draw is stored (`best_dra`, `best_ddec`,
   `best_flux`, named by the last dotted part of each grid key), with the
-  diagnostics `flux_peak_steps` and `converged_fraction`. `match_radius`
-  (mas) is kept in the metadata and applied by `DetectionMC`.
+  diagnostics `flux_peak_steps` and `converged_fraction`; grid keys whose
+  short names would overwrite one of these outputs are refused.
+  `match_radius` (mas, finite and non-negative) is kept in the metadata
+  and applied by `DetectionMC`, on Cartesian (`dra`, `ddec`) or angular
+  (`sep`, `pa` in degrees) positions; angular grids take separations from
+  the injected `sep`.
+- A simulator passed as `noise` must be built from `template` (checked by
+  fingerprint), since the null check, batch sizing and metadata use
+  `template`.
 
 `DetectionMC`, plain NumPy:
 
 - fields `null`, `injected` (statistics, best positions and the injected
   values) and `meta` (grid, model, null-scene and template fingerprints,
-  noise model, `match_radius`, numbers of draws, seeds, virgil version);
+  noise model, `match_radius`, numbers of draws, seeds, virgil version).
+  A fingerprint hashes the whole object, every equinox field static or
+  not, with the class of every node (so closure indices, projections,
+  `uv_grid`, gains and an `Image`'s `pixel_scale_mas` all count); a
+  lambda, closure or other object without a reproducible hash gives
+  `None`, and `concatenate` then refuses to merge;
 - `false_alarm_probability(stat, value, *, confidence=0.95)` → the
   empirical (k + 1)/(n + 1) with the Clopper–Pearson interval for
   P(null ≥ value);
 - `threshold(stat, fap, *, n_boot=200, seed=0)` → the null's 1 − fap
-  quantile and its bootstrap error, warning when fap × n < 1;
+  quantile and its bootstrap error, warning when fap × n < 1; the
+  bootstrap runs in batches of about 2²² values, and `detected` and
+  `completeness` use the quantile alone, without it;
 - `detected(stat, fap)`: statistic above the threshold (and matched);
 - `roc(stat, flux=None, sep_bin=None)` → `(fpr, tpr, thresholds)` and
   `auc(...)`;
 - `completeness(stat, fap, sep_bins=None, flux_bins=None)` → a dict of
   the detection-fraction map, counts and bin labels (by default each
-  distinct injected separation and flux is a bin);
+  distinct injected separation and flux is a bin; with edges, centres are
+  arithmetic, but geometric for flux bins whose two edges are positive);
 - `contrast_curve(stat, fap, completeness=0.5, ...)` → `(sep, flux)`,
   interpolating the running maximum of completeness linearly in log flux,
   in flux relative to the primary as `absil_limits` gives;
