@@ -9,6 +9,9 @@ markdown_extensions:
   - pymdownx.arithmatex:
       generic: true
 
+extra_css:
+  - stylesheets/nav.css
+
 extra_javascript:
   - javascripts/mathjax.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
@@ -22,6 +25,8 @@ theme:
     scheme: slate
   icon:
     logo: material/telescope
+  features:
+    - navigation.sections
 
 # ===== Plugins =====
 plugins:
