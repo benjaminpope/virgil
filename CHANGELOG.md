@@ -17,6 +17,14 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`linear_flux_grid`.** A closed-form, fouriever-style (`lincmap`)
+  linearised companion flux map for fast first-pass searches, beside
+  `optimized_flux_grid`. The derivative of virgil's whitened residuals with
+  respect to the flux at f = 0 is computed exactly with `jax.jvp`, so
+  correlated closure phases are whitened as in the likelihood, and
+  `f_hat = -(g . r0) / (g . g)`, `sigma_f = (g . g)**-0.5` and SNR are
+  returned per pixel (f_hat unconstrained in sign). Valid only for
+  f much smaller than 1: a bright companion (f ~ 0.3) is biased low.
 - **Line and node spectra (Stage 6a, spectra).** `GaussianLine` and
   `LorentzianLine` (amplitude is the peak flux; negative for absorption),
   `Nodes` (linear or natural cubic spline through free fluxes, constant or a
