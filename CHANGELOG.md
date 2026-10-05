@@ -9,6 +9,24 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Log-uniform (scale-invariant) detection prior for `linear_flux_grid`.**
+  `prior=LogUniform(f_min, f_max)` puts the scale-invariant (Jeffreys, under
+  the scaling group) prior, `1 / f`, on the companion flux ratio, and is now
+  the documented recommendation. The flux ratio is a scale parameter
+  spanning decades, so the prior is the invariant measure of the scaling
+  group, not the root-Fisher prior of the linearised likelihood (which has
+  constant Fisher information and would be flat). The evidence needs a proper prior, so both bounds are
+  required, and the Bayes factor depends on them as it must (widening them
+  changes `log_bayes_factor` by about `-Δ ln ln(f_max / f_min)`). The
+  evidence, posterior mean and sd come from 256-node Gauss-Legendre
+  quadrature in `ln f` over the part of the bounds the likelihood occupies,
+  inside `jit` and `vmap`; they agree with a dense-grid quadrature to
+  better than 1e-4. The Gaussian prior is now `Gaussian(mean, sd)`
+  (documented as a Gaussian-prior evidence, a computational approximation
+  where `f` may go negative); a bare `(mean, sd)` tuple still works but warns
+  with a `DeprecationWarning`. With no `prior`, the posterior and Bayes-factor
+  fields are `None`, whatever the prior kind.
+
 - **Angle vectors (`virgil.angles.AngleVector`).** A prior for any angle
   (degrees), sampled as a 2-D vector at the site `"<path>_vec"` with the
   angle as the deterministic `"<path>"`, so there is no wall at 0°/360°.
@@ -19,6 +37,7 @@ anything before 1.0 may change between minor versions.
   plane. For orbits, `orientation_priors` samples 2Ω and ϖ = Ω + ω (or Ω
   and ϖ with RVs), and `KeplerOrbit.from_varpi` builds the orbit. After
   Octofitter's `UniformCircular` and exoplanet's `Angle`.
+
 - **Spectro-interferometric observables (Stage 6a, PR B).**
   `read_oifits(..., extras=...)` and `OIData(path, extras=...)` read OI_FLUX
   (`"flux"` or `"nflux"`), T3AMP, VISAMP beside V² (absolute, or correlated
@@ -55,11 +74,14 @@ anything before 1.0 may change between minor versions.
   `n_iter=k` relinearises the whitened residuals at the current flux per pixel
   for `k` extra steps, removing the bias for bright companions (at f = 0.3,
   `n_iter=3` agrees with `optimized_flux_grid` to 3e-7 and with the Laplace
-  `sigma_f` to 2e-5, where `n_iter=0` is 34% low). `prior=(mean, sd)` puts a
-  Gaussian prior on the flux and returns a dict that adds `posterior_mean`,
-  `posterior_sd` and `log_bayes_factor` (closed-form evidence ratio against
-  f = 0, in the linearised model about the final point). Defaults are
-  unchanged.
+  `sigma_f` to 2e-5, where `n_iter=0` is 34% low). `prior=Gaussian(mean, sd)` puts a
+  Gaussian prior on the flux and fills the `posterior_mean`,
+  `posterior_sd` and `log_bayes_factor` fields (closed-form evidence ratio
+  against f = 0, in the linearised model about the final point). The result
+  is always a `LinearFluxGrid` named tuple (those three fields are `None`
+  without a prior), so unpack it by attribute, or take the first three
+  with `flux, error, snr = res[:3]`; unpacking it into three names directly
+  fails. Nothing has been released with the old tuple return.
 
 - **Fitted RV jitter.** `RVData.term(params, jitter="rv_jitter")` inflates the
   errors to `sqrt(d_rv² + s²)` with `s` a fitted value (km/s; give it a
@@ -88,6 +110,14 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **Components build under `jax.jit` from concrete shape parameters.**
+  `TruncatedCone` validated `tilt` with a `jax.numpy` call on the concrete
+  array, which inside `jit` became a tracer and raised
+  `TracerBoolConversionError` when a fit's model function built a cone from
+  fixed shapes and a traced flux. The check now uses NumPy. The other
+  concrete checks (components, spectra, orbits) were audited and need no
+  change; a regression test builds each checked component inside `jit`.
+  Found in a real-data OzSTAR run.
 - **`absil_limits` with a far-off or single-value flux axis.** The
   significance saturates (about 37 sigma in float64) for bright companions,
   so starting the optimizer on such a flux, e.g. `flux=[0.01]`, gave a flat
@@ -95,6 +125,9 @@ anything before 1.0 may change between minor versions.
   flux axis now only gives a rough starting point: the limit is bracketed by
   decades and bisected in log flux, replacing the BFGS search, so the result
   no longer depends on the axis.
+- `gauss_newton_mass(model, priors, (), values)` no longer raises a
+  `ValueError` on an empty residual list: with `data=()` the curvature comes
+  from the priors alone, as `fit` and `numpyro_model` already allow.
 
 ### Added
 

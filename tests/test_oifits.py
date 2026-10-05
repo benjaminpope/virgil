@@ -758,3 +758,103 @@ def test_station_pairs_are_read_per_sample(tmp_path):
     assert onp.array_equal(onp.asarray(data.stations), record["stations"])
     gains = data.with_gains(telescope=0.01).gains
     assert gains.rows.shape[0] == 2  # one block per frame
+
+
+def _two_snapshots(time_s, mjd):
+    """Two exposures of the 4-station file in one table each, with the
+    given per-snapshot TIME (s) and MJD values."""
+    from virgil.oifits import build_hdulist
+
+    hdul = build_hdulist(_tables())
+    for name in ("OI_VIS2", "OI_T3"):
+        table = hdul[name]
+        n = len(table.data)
+        both = fits.BinTableHDU.from_columns(table.columns, nrows=2 * n)
+        for column in table.columns.names:
+            both.data[column][n:] = table.data[column]
+        both.data["TIME"][:n], both.data["TIME"][n:] = time_s
+        both.data["MJD"][:n], both.data["MJD"][n:] = mjd
+        both.header.update(table.header)
+        hdul[name] = both
+    return OIData(hdul)
+
+
+def test_snapshots_told_apart_by_time_are_separate_frames():
+    # OIFITS v1 writers such as OYSTER give a night one MJD and put the
+    # snapshot in TIME. Closure phases are correlated only within a snapshot,
+    # so two snapshots of 4 stations have 2 x 3 independent closure phases.
+    by_mjd = _two_snapshots((0.0, 0.0), (60000.0, 60000.0 + 3600.0 / 86400.0))
+    by_time = _two_snapshots((0.0, 3600.0), (60000.0, 60000.0))
+    n_vis = by_mjd.vis.size
+    assert by_mjd.n_independent - n_vis == 6
+    assert by_time.n_independent - n_vis == 6
+    assert onp.unique(onp.asarray(by_time.frame)).size == 2
+
+
+def test_constant_time_still_groups_by_mjd():
+    same = _two_snapshots((0.0, 0.0), (60000.0, 60000.0))
+    apart = _two_snapshots((5.0, 5.0), (60000.0, 60001.0))
+    assert onp.unique(onp.asarray(same.frame)).size == 1
+    assert onp.unique(onp.asarray(apart.frame)).size == 2
+
+
+def test_interleaved_times_within_the_mjd_window_share_a_frame():
+    # Visibility-only rows at (M, 0 s), (M, 3600 s) and (M + 1 s, 0 s): the
+    # first and third are one exposure even though the second sorts between
+    # them.
+    from virgil.oifits import build_hdulist
+
+    tables = _tables()
+    del tables["OI_T3"]
+    hdul = build_hdulist(tables)
+    table = hdul["OI_VIS2"]
+    n = len(table.data)
+    three = fits.BinTableHDU.from_columns(table.columns, nrows=3 * n)
+    for column in table.columns.names:
+        for k in (1, 2):
+            three.data[column][k * n : (k + 1) * n] = table.data[column]
+    three.data["MJD"][:] = 60000.0
+    three.data["MJD"][2 * n :] += 1.0 / 86400.0
+    three.data["TIME"][:] = 0.0
+    three.data["TIME"][n : 2 * n] = 3600.0
+    three.header.update(table.header)
+    hdul["OI_VIS2"] = three
+    frame = read_oifits(hdul)["frame"]
+    assert onp.unique(frame).size == 2
+    assert onp.array_equal(onp.unique(frame[:n]), onp.unique(frame[2 * n :]))
+
+
+def test_lookup_takes_the_nearest_row_inside_both_windows():
+    from virgil.oifits import _MJD_TOLERANCE, _BaselineLookup
+
+    second = 1.0 / 86400.0
+    lookup = _BaselineLookup()
+    ins = ("ARRAY", "INS")
+    # Nearer in the summed distance but outside the MJD window.
+    lookup.add(ins, (1, 2), 60000.0 + 10 * second, 0.0, 0, 1, time=0.0)
+    # Inside both windows.
+    lookup.add(ins, (1, 2), 60000.0 + 8 * second, 0.0, 1, 1, time=8 * second)
+    assert 8 * second < _MJD_TOLERANCE < 10 * second
+    assert lookup.find(ins, (1, 2), 60000.0, time=0.0) == (1, 1)
+
+
+def test_absolute_phases_with_a_nonzero_constant_time(tmp_path):
+    tables = _tables()
+    u, v = _baselines()
+    cvis = onp.asarray(TRUTH.model(u, v, 4.8e-6))
+    tables["OI_VIS"] = {
+        "VISAMP": onp.abs(cvis),
+        "VISAMPERR": onp.full(cvis.shape, 1e-3),
+        "VISPHI": onp.rad2deg(onp.angle(cvis)),
+        "VISPHIERR": onp.full(cvis.shape, 0.5),
+        "UCOORD": u,
+        "VCOORD": v,
+        "STA_INDEX": PAIRS,
+    }
+    del tables["OI_T3"]
+    with fits.open(write_oifits(tables, tmp_path / "vis.oifits")) as hdul:
+        for name in ("OI_VIS2", "OI_VIS"):
+            hdul[name].data["TIME"] = 3600.0
+        data = OIData(hdul)
+        assert not data.cp_flag
+        assert np.allclose(data.phi, onp.angle(cvis), atol=1e-6)

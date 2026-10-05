@@ -51,7 +51,15 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if command -v uv >/dev/null 2>&1 && [[ -x ".venv/bin/python" ]]; then
+# Single source of truth for the ruff version: [tool.ruff] required-version
+# in pyproject.toml (e.g. required-version = "==0.11.0").
+ruff_version="$(sed -n 's/^required-version *= *"==\([^"]*\)".*/\1/p' pyproject.toml | head -n 1)"
+
+if command -v uvx >/dev/null 2>&1 && [[ -n "$ruff_version" ]]; then
+  # Preferred: run the pinned ruff in uv's tool cache. Needs no .venv, so it
+  # works in fresh worktrees and never picks up a stray ruff from PATH.
+  ruff_cmd=(uvx "ruff@${ruff_version}")
+elif command -v uv >/dev/null 2>&1 && [[ -x ".venv/bin/python" ]]; then
   ruff_cmd=(uv run --python .venv/bin/python ruff)
 elif command -v uv >/dev/null 2>&1; then
   ruff_cmd=(uv run ruff)
