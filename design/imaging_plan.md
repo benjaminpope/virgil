@@ -416,7 +416,7 @@ From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-
 - Not done: closure-phase legs from the OI_T3 coordinates (the reader still uses the matched VIS2 rows' (u, v); TODO in `oifits.py`).
 
 ## Stage 6a.1: orbits and binary-frame scenes (after 6a.0; about 25–30 h by its own table)
-Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
+Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O). Prior art, credit and features to adopt from orbitize!, Octofitter and orvara: [`orbit_prior_art.md`](orbit_prior_art.md).
 
 **Decided (2026-10-03):**
 - Orbits are built in virgil.
