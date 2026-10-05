@@ -60,6 +60,7 @@ from ._geometry import pixel_offsets, rotate
 from ._utils import _reference, mas2rad
 from ._precision import cast_tree, run_in
 from .fitting import FitResult, fit
+from .spectra import flux_at
 from .fields import GaussianField
 from .likelihood import whitened_residuals
 from .models import (
@@ -1028,6 +1029,77 @@ def _refit(fixed, fluxes, chi2, scale, rotation):
     return fluxes
 
 
+def _clean_model(base, components, pixel_scale_mas, rotation_deg, spectrum):
+    """The base with the components as an Image: the model ``clean`` returns.
+
+    ``components`` are the fluxes on the grid (unnormalised without a
+    base). With no flux in them, the base alone.
+    """
+    components = onp.asarray(components, float)
+    total = float(components.sum())
+    if not total > 0:
+        return base
+    on = components > 0
+    if base is None:
+        flux = 1.0
+    elif spectrum is None:
+        flux = total
+    else:  # the spectrum's shape, with the components' total flux
+        scale = total / spectrum(None)
+        flux = eqx.tree_at(lambda f: f.ratio, spectrum, spectrum.ratio * scale)
+    image = Image(
+        onp.log(onp.where(on, components, 1.0)),
+        pixel_scale_mas,
+        support=on,
+        flux=flux,
+        rotation_deg=rotation_deg,
+    )
+    if base is None:
+        return image
+    if isinstance(base, System):
+        return System(**base.components, clean=image)
+    return System(base=base, clean=image)
+
+
+def _joint_refit(base, components, observations, priors, geometry, spectrum):
+    """Fit the base's free parameters and the components' fluxes together.
+
+    ``priors`` are keyed by paths in the base. The components keep their
+    support (their fluxes stay positive). Returns ``(base, components)``.
+    Fitting the two together, rather than in turn, keeps the components from
+    absorbing an error in the base, and the base from absorbing flux it does
+    not model.
+    """
+    import numpyro.distributions as dist
+
+    model = _clean_model(base, components, *geometry, spectrum)
+    with_image = model is not base
+    prefix = "" if isinstance(base, System) or not with_image else "base."
+    joint = {prefix + k: v for k, v in priors.items()}
+    if with_image:
+        joint |= {
+            k: v
+            for k, v in image_priors(model).items()
+            if k.startswith("clean.")
+        }
+        flux_path = "clean.flux" if spectrum is None else "clean.flux.ratio"
+        joint[flux_path] = dist.ImproperUniform(
+            dist.constraints.positive, (), ()
+        )
+    fitted = fit(model, joint, list(observations)).model
+    if not with_image:
+        return fitted, components
+    image = fitted.clean
+    components = onp.asarray(image.brightness) * float(
+        flux_at(image.flux, None)
+    )
+    if isinstance(base, System):
+        base = System(**{name: fitted.components[name] for name in base.names})
+    else:
+        base = fitted.base
+    return base, components
+
+
 @dataclasses.dataclass(frozen=True)
 class CleanResult:
     """The result of :func:`clean`.
@@ -1084,6 +1156,7 @@ def clean(
     stall_window=50,
     stall_tolerance=1e-3,
     refresh_norms=False,
+    base_priors=None,
     spectrum=None,
     support=None,
     init=None,
@@ -1128,6 +1201,18 @@ def clean(
     the components at once, by non-negative least squares on the
     linearised residuals: flux can move between components, and components
     whose flux falls to zero are removed. The fluxes stay non-negative.
+    A last major cycle runs when CLEAN stops at the target or at
+    ``max_iterations``, so that the fluxes it returns are refitted even when
+    it stops early (when the data start close to the target, a major cycle
+    may otherwise never run).
+
+    The base is fixed unless ``base_priors`` names some of its parameters,
+    e.g. a companion's position or a star's diameter. Each major cycle then
+    fits those together with the components' fluxes, with
+    [`fit`][virgil.fitting.fit]: fitting them in turn instead would let the
+    components absorb an error in the base, or let the base absorb flux it
+    does not model. A companion much closer to the star than λ/B has its
+    flux and separation nearly degenerate, whatever fits it.
 
     Iteration stops when χ² per data point reaches ``target_chi2_red`` (the
     discrepancy principle; it relies on correct error bars), or after
@@ -1161,6 +1246,12 @@ def clean(
         Stop when χ² has fallen by less than a fraction
         ``stall_tolerance`` (default 1e-3) over the last ``stall_window``
         (default 50) iterations, even after a major cycle.
+    base_priors : dict, optional
+        Priors (numpyro distributions) on parameters of the base to fit at
+        every major cycle, keyed by their paths in the base (e.g.
+        ``{"comp.dra": dist.Normal(30.0, 5.0)}`` for a System base, or
+        ``{"diameter": ...}`` for a single component). Needs a base and
+        major cycles (``refit_every`` > 0).
     refresh_norms : bool, optional
         Recompute the norms ``|J e_p|`` at every major cycle (default
         ``False``). For non-linear data they change as the image does, but
@@ -1218,6 +1309,11 @@ def clean(
         raise ValueError("The base scene must not change with time.")
     if spectrum is not None and base is None:
         raise ValueError("A spectrum for the components needs a base scene.")
+    base_priors = dict(base_priors or {})
+    if base_priors and (base is None or not refit_every):
+        raise ValueError(
+            "base_priors needs a base scene and major cycles (refit_every > 0)."
+        )
     if isinstance(base, System):
         if float(base.dra) != 0.0 or float(base.ddec) != 0.0:
             raise ValueError(
@@ -1253,7 +1349,8 @@ def clean(
         raise ValueError("Without a base scene, init needs a positive pixel.")
     ndata = sum(d.n_independent for d in observations)
     with run_in(dtype):
-        fixed = cast_tree(((base, spectrum), observations), dtype)
+        cast_observations = cast_tree(observations, dtype)
+        fixed = (cast_tree((base, spectrum), dtype), cast_observations)
         fluxes = np.asarray(init, dtype)
         geometry = (pixel_scale_mas, rotation_deg)
 
@@ -1272,6 +1369,24 @@ def clean(
             return np.where(
                 support & live, 1.0 / np.where(live, norms, 1.0), 0.0
             )
+
+        def major_cycle(fluxes, chi2):
+            # Refit the components' fluxes; with free base parameters, then
+            # fit those and the components' fluxes together.
+            nonlocal base, fixed
+            fluxes = _refit(fixed, fluxes, chi2, *geometry)
+            if base_priors:
+                base, components = _joint_refit(
+                    base,
+                    onp.asarray(fluxes, float),
+                    observations,
+                    base_priors,
+                    geometry,
+                    spectrum,
+                )
+                fixed = (cast_tree((base, spectrum), dtype), cast_observations)
+                fluxes = np.asarray(components, fluxes.dtype)
+            return fluxes
 
         scores = scores_for(fluxes)
         history, stop = [], "max_iterations"
@@ -1294,7 +1409,7 @@ def clean(
             )
             due = refit_every and since_refit >= refit_every
             if (due or stalled) and refit_every and since_refit > 0:
-                fluxes = _refit(fixed, fluxes, float(chi2), *geometry)
+                fluxes = major_cycle(fluxes, float(chi2))
                 if refresh_norms:
                     scores = scores_for(fluxes)
                 since_refit = 0
@@ -1304,36 +1419,18 @@ def clean(
                 break
             fluxes = fluxes.ravel().at[p].add(gain * step).reshape(shape)
             since_refit += 1
+        if refit_every and since_refit > 0:
+            # A last major cycle, so the returned fluxes are refitted even
+            # if CLEAN reached the target before any major cycle ran.
+            fluxes = major_cycle(fluxes, float(chi2))
+            chi2 = _clean_chi2(*fixed, fluxes, *geometry)
+            history.append(float(chi2) / ndata)
         components = onp.asarray(fluxes, float)
     if base is None:
         components = components / components.sum()
-    total = float(components.sum())
-    if total > 0:
-        on = components > 0
-        if base is None:
-            flux = 1.0
-        elif spectrum is None:
-            flux = total
-        else:  # the spectrum's shape, with the components' total flux
-            scale = total / spectrum(None)
-            flux = eqx.tree_at(
-                lambda f: f.ratio, spectrum, spectrum.ratio * scale
-            )
-        image = Image(
-            onp.log(onp.where(on, components, 1.0)),
-            pixel_scale_mas,
-            support=on,
-            flux=flux,
-            rotation_deg=rotation_deg,
-        )
-        if base is None:
-            model = image
-        elif isinstance(base, System):
-            model = System(**base.components, clean=image)
-        else:
-            model = System(base=base, clean=image)
-    else:
-        model = base
+    model = _clean_model(
+        base, components, pixel_scale_mas, rotation_deg, spectrum
+    )
     return CleanResult(
         model,
         np.asarray(components),
