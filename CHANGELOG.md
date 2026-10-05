@@ -198,6 +198,37 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **Contrast limits: one search, from below.** Found in the pre-0.3.0 review
+  (`design/codebase_review_2026-10b.md`, B1, B2, S2 and S5).
+  - `injection_limits(flux_bounds=None)` returned 1000, the top of its search
+    range, at every position whose limit was above about 1e-3. For a
+    normalised scene the significance falls again once the companion
+    outshines the primary, and the bisection ended at that top. Both limit
+    functions now find the *first* crossing from below: they step up by
+    quarter decades (CANDID steps by 1.4) and then bisect the last step in
+    log flux (one shared helper, `_grid.first_crossing`). Unbounded results
+    now match bounded ones, for model classes and for `System` templates.
+  - `injection_limits` raised `TypeError` on data with extra observables
+    (T3AMP, VISAMP, VISPHI, OI_FLUX). The companion's signal is now injected
+    into every block of the data vector, extras included. The companion
+    model's chi-squared on the injected data is computed in full, since the
+    OI_FLUX blocks and gains whiten with the model's own prediction.
+  - Both functions raise a `ValueError` up front for a `sigma` beyond what
+    `nsigma` can represent in the float type (about 12.95 in float32, 37 in
+    float64). Before, `absil_limits` returned about 1e37 or silently clipped,
+    with a stale "optimizer did not converge" warning. The new warnings say
+    what happened: limits clipped to `flux_bounds`, or no crossing within 40
+    decades of the start.
+  - `flux_bounds` now means the same in both functions: the range searched,
+    upward from its lower end, with limits outside it set to the nearer
+    bound and a `RuntimeWarning`. With `flux_bounds=None`, the search starts
+    at the flux axis's smallest positive value, and only then must the axis
+    have one. `absil_limits` no longer evaluates the whole positions × fluxes
+    loss grid to choose a start. Results agree with the old ones to about
+    1e-4 relative or better.
+  - `flux_param`, `flux_bounds` and `batch_size` are keyword-only in
+    `absil_limits` and `injection_limits`, as in `grid_fit` and `detection`.
+
 - **Orbits: GM☉ in `total_mass`, Ω range, face-on inclination (F14–F16).**
   `total_mass` and `distance_pc` now use Kepler's third law with the IAU 2015
   nominal GM☉, au and the 86400 s day instead of a³/P² with P in Julian years

@@ -145,8 +145,8 @@ def test_negative_explicit_flux_param_axis_is_rejected():
 
 
 def test_absil_limits_zero_starting_flux_uses_smallest_positive_flux():
-    # A tiny sigma makes the zero flux the best grid start; the optimizer
-    # must start from the smallest positive flux instead of log10(0).
+    # An unbounded search starts from the flux axis; it must start from the
+    # smallest positive flux instead of log10(0).
     coords = {
         "comp.dra": np.array([100.0, 200.0]),
         "comp.ddec": np.array([100.0]),
@@ -154,10 +154,10 @@ def test_absil_limits_zero_starting_flux_uses_smallest_positive_flux():
     with_zero = {**coords, "comp.flux": np.array([0.0, 1e-3])}
     positive = {**coords, "comp.flux": np.array([1e-3])}
     template = _composed_binary()
-    kwargs = dict(flux_param="comp.flux")
+    kwargs = dict(flux_param="comp.flux", flux_bounds=None)
 
     # Just above the smallest reachable significance (a chi-squared ratio
-    # of 1), so the zero flux is the best starting point.
+    # of 1).
     ndof = oidata.n_independent
     sigma = float(nsigma(1.0, 1.0, ndof)) + 1e-3
     assert np.allclose(
@@ -167,10 +167,16 @@ def test_absil_limits_zero_starting_flux_uses_smallest_positive_flux():
 
 
 def test_absil_limits_rejects_flux_axis_without_positive_values():
+    # Only an unbounded search starts from the flux axis.
     grid = {**_path_samples(), "comp.flux": np.array([0.0])}
     with pytest.raises(ValueError, match="positive value"):
         absil_limits(
-            oidata, _composed_binary(), grid, 3.0, flux_param="comp.flux"
+            oidata,
+            _composed_binary(),
+            grid,
+            3.0,
+            flux_param="comp.flux",
+            flux_bounds=None,
         )
 
 
