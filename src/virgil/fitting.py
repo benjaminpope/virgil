@@ -248,7 +248,8 @@ class _Objective(eqx.Module):
         """Unconstrained coordinates of ``values`` (default: the template's).
 
         Error terms start at 1 (scales, including ``wavel_scale``, and the
-        width of supplied gain modes), 0 (``wavel_offset``) or 0.01 (added
+        width of supplied gain modes), 0 (``wavel_offset``, ``north_angle``)
+        or 0.01 (added
         errors and other gain widths), or at their prior's mean if that is
         outside the prior's support or on its boundary.
         """
@@ -256,7 +257,8 @@ class _Objective(eqx.Module):
         z = {}
         for site, (prior, _, term) in self.noise.items():
             unit = term.endswith("scale") or term.endswith("_modes")
-            default = 0.0 if term == "wavel_offset" else 1.0 if unit else 0.01
+            zero = term in ("wavel_offset", "north_angle")
+            default = 0.0 if zero else 1.0 if unit else 0.01
             start = values.get(site, default)
             if not bool(prior.support(np.asarray(start, float))):
                 start = prior.mean
@@ -494,8 +496,10 @@ def fit(
         of closure-phase offsets, ``phi_offset_<group>`` (see
         [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), and
         the wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
-        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]), whose priors may
-        be of either sign (e.g. ``Normal(1, 2e-4)``). A dict
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]), and the North
+        angle, ``north_angle`` in degrees (see
+        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]),
+        whose priors may be of either sign (e.g. ``Normal(1, 2e-4)``). A dict
         applies to every dataset (values ``"noise.<term>"``); a list gives
         each dataset its own (``"noise[i].<term>"``). The loss is then the
         full Gaussian negative log likelihood, including ``Σ log σ``, so the
@@ -503,6 +507,17 @@ def fit(
         covariance depends on the model. Fitting error terms with an image is
         degenerate (a smoother image with larger errors fits as well):
         estimate them with a parametric model first.
+        **Priors.** These terms are scale parameters, so their default
+        (Jeffreys) prior is log-uniform on stated bounds; a
+        ``Uniform(0, ...)`` favours large values. The bounds must contain
+        the plausible values: for the factors ``vis_scale`` and
+        ``phi_scale``, whose neutral value is 1, e.g.
+        ``dist.LogUniform(0.1, 10.0)``; for the added errors and widths
+        (``vis_error_rel``, ``phi_error``, ``vis_gain_<group>``,
+        ``phi_offset_<group>``), e.g. ``dist.LogUniform(1e-4, 0.3)``.
+        ``wavel_scale`` is a scale too: log-uniform about 1 unless a
+        calibration gives a Gaussian (``Normal(1, 2e-4)`` for GRAVITY is
+        such information).
     init : dict, optional
         Starting values by path (or ``noise`` site), overriding the
         template's (required for a function model).
@@ -741,7 +756,9 @@ def _gauss_newton_covariance(problem, z):
 
     def data_residuals(x):
         model = problem.build(unflatten(x))
-        return np.concatenate(problem.data_residuals(model))
+        residuals = problem.data_residuals(model)
+        # With data=() there are no residuals: an empty vector.
+        return np.concatenate(residuals) if residuals else np.zeros(0)
 
     def prior_curvature(path):
         prior = problem.priors[path]

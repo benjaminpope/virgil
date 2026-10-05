@@ -217,10 +217,14 @@ def test_fit_with_gains_uses_lbfgs_and_fits_widths():
         start,
         {"flux": dist.Uniform(0.0, 1.0)},
         data,
-        noise={"vis_gain_telescope": dist.Uniform(0.0, 0.5)},
+        # Widths are scale parameters: log-uniform (Jeffreys) on stated bounds.
+        # The default start, 0.01, is outside these bounds, so the fit
+        # starts at the prior's mean instead.
+        noise={"vis_gain_telescope": dist.LogUniform(0.02, 0.5)},
     )
     assert result.info["method"] == "lbfgs"
-    assert 0.0 <= float(result.values["noise.vis_gain_telescope"]) < 0.5
+    assert 0.02 <= float(result.values["noise.vis_gain_telescope"]) <= 0.5
+    assert onp.isfinite(result.info["loss"])
     with pytest.raises(TypeError, match="least-squares"):
         fit(start, {"flux": dist.Uniform(0.0, 1.0)}, data, method="lm")
 
