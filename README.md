@@ -8,6 +8,8 @@
 
 Contributors: [Dori Blakely](https://github.com/blakelyd), [Benjamin Pope](https://github.com/benjaminpope), [Louis Desdoigts](https://github.com/LouisDesdoigts), [Shashank Dholakia](https://github.com/shashankdholakia), [Toon De Prins](https://github.com/DePrinsT), [Jonah Goldfine](https://github.com/JonahDG), [Max Charles](https://github.com/maxecharles).
 
+*facilis descensus averno*
+
 ## What is virgil?
 
 virgil is a package for modelling optical interferometry data in JAX. It is a one-stop shop for fitting parametric models and for image reconstruction, accelerated on GPU and HPC.
@@ -88,3 +90,5 @@ VIRGIL is the **V**ersatile **I**nterferometric **R**econstruction and **G**radi
 ### Formerly drpangloss
 
 Until version 0.1.1 this package was called **drpangloss**, after Voltaire's Dr Pangloss and as a nod to Antoine Mérand's [CANDID](https://github.com/amerand/CANDID). From version 0.2.0 it is **virgil**: `import virgil`, installed with `pip install virgil-astro`. A final release of `drpangloss` under its own name will depend on `virgil-astro` and point here, so old installs find the new package.
+
+*e quindi uscimmo a riveder le stelle*
