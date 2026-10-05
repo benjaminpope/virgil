@@ -336,6 +336,9 @@ def test_temperatures_have_gradients_and_are_not_fluxes():
     assert not is_flux_param("secondary.flux.temperature")
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
 def test_tabulated_interpolates_between_channels():
     spectrum = Tabulated([0.2, 0.4, 0.1], WAVES)
     assert np.allclose(spectrum(WAVES), np.array([0.2, 0.4, 0.1]))
@@ -344,6 +347,9 @@ def test_tabulated_interpolates_between_channels():
     assert np.isclose(spectrum(), np.mean(np.array([0.2, 0.4, 0.1])))
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
 def test_reference_flux_is_each_spectrums_own_reference():
     from virgil.spectra import reference_flux
 
@@ -357,6 +363,9 @@ def test_reference_flux_is_each_spectrums_own_reference():
     assert reference_flux(0.25) == 0.25
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
 def test_negative_tabulated_node_is_rejected_despite_positive_mean():
     # Tabulated rejects negatives itself, so inject one past its constructor.
     bad = eqx.tree_at(
@@ -369,6 +378,9 @@ def test_negative_tabulated_node_is_rejected_despite_positive_mean():
         PointSource(flux=bad)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
 def test_tabulated_rejects_bad_tables():
     with pytest.raises(ValueError, match="non-negative"):
         Tabulated([0.2, -0.1, 0.1], WAVES)
@@ -384,6 +396,9 @@ def test_tabulated_rejects_bad_tables():
         Tabulated([], [])
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
 def test_tabulated_is_physical_checks_traced_tables():
     good = Tabulated([0.2, 0.4, 0.1], WAVES)
     assert bool(good.is_physical())
@@ -395,6 +410,9 @@ def test_tabulated_is_physical_checks_traced_tables():
         Tabulated([0.2, 0.1], WAVES)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
 def test_tabulated_flux_per_channel_matches_achromatic_scenes():
     u, v = onp.array([30.0, -20.0]), onp.array([10.0, 40.0])
     ratios = onp.array([0.05, 0.3, 0.1])

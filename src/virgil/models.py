@@ -97,9 +97,14 @@ def _flux_is_non_negative(flux):
 
 
 def _check_non_negative_flux(flux, owner):
-    """Raise if a concrete ``flux`` is negative; traced values are not checked."""
-    # The raw values, so every Tabulated node is checked, not just their mean.
-    value = concrete(flux.ratio if isinstance(flux, Spectrum) else flux)
+    """Raise if a concrete ``flux`` is negative; traced values are not checked.
+
+    A spectrum is checked at its characteristic wavelengths (``wavel0``,
+    every node and line centre), where its total must be non-negative.
+    """
+    if isinstance(flux, Spectrum):
+        flux = flux(flux._check_wavel())
+    value = concrete(flux)
     if value is not None and onp.any(value < 0.0):
         raise ValueError(
             f"{owner} has flux {value.tolist()}; fluxes must be non-negative."
@@ -219,6 +224,29 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         evaluate it here.
         """
         return 1.0
+
+    def total_spectrum(self, wavel):
+        """The model's total flux at ``wavel`` (metres), e.g. for OI_FLUX.
+
+        The sum of the component spectra, in the same relative units as
+        their fluxes: one grey scale (absolute calibration, injection) away
+        from a measured spectrum. It is the *intrinsic* total, with no
+        fibre coupling. For a [`System`][virgil.models.System] it is the
+        sum of its parts' fluxes, where a nested system counts with its own
+        ``flux``, as in the visibilities.
+
+        Examples
+        --------
+        >>> from virgil.spectra import PowerLaw
+        >>> scene = System(
+        ...     star=PointSource(),
+        ...     disk=GaussianDisk(5.0, flux=PowerLaw(0.5, index=1.0, wavel0=2.0e-6)),
+        ... )
+        >>> [round(float(f), 3) for f in scene.total_spectrum(np.array([2.0e-6, 4.0e-6]))]
+        [1.5, 2.0]
+        """
+        wavel = np.asarray(wavel)
+        return np.broadcast_to(self._weight(wavel), wavel.shape)
 
     @property
     def time_dependent(self):
@@ -2163,6 +2191,12 @@ class System(SourceModel):
 
     def _weight(self, wavel=None):
         return flux_at(self.flux, wavel)
+
+    def total_spectrum(self, wavel):
+        wavel = np.asarray(wavel)
+        return sum(
+            np.broadcast_to(c._weight(wavel), wavel.shape) for c in self.parts
+        )
 
     def is_physical(self):
         valid = _flux_is_non_negative(self.flux)

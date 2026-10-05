@@ -471,6 +471,8 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
 - a prior on the reference component's spectrum, and docs on its degeneracy with the others (S §2.2b);
 - `with_error_floor`, sharing `likelihood.inflated_errors` (S §2.6).
 
+**Log (spectra, PR A):** `GaussianLine` / `LorentzianLine` (`amplitude` = peak flux, `line_wavel`, `fwhm`, `wavel0`), `Nodes(values, wavel, kind="linear"|"cubic", outside="constant"|float, wavel0)` with a natural cubic spline, and `Sum(parts, wavel0=, **named)` with `System`-style paths (`"star.flux.brg.amplitude"`). Every spectrum's reference flux is its value at `wavel0` (`Spectrum()` evaluates there); positivity is checked on the total at the characteristic wavelengths (`wavel0`, each node, each line centre), not on parts; smoothness stays a prior. `Tabulated` is deprecated with a `DeprecationWarning` but unchanged (the Apep scripts use it). `SourceModel.total_spectrum(wavel)` (a `System`: the sum over parts) and `OIData.select(wavel_min, wavel_max)` (closure triangles kept whole). Tests in `tests/test_spectra_lines.py`: line integral and centroid (x64), node interpolation, `outside=0.0` excesses, a line in a component moves the visibility only near the line, `select` splits the likelihood. Left for PR B, after 6d merges: the OI_FLUX / T3AMP / VISPHI readers, continuum normalisation of VISPHI, error floors through `inflated_errors` (6d), bandpass smearing, the spectral-resolution kernel and the primary beam.
+
 **Defaults in force** (S §4, until Ben says otherwise):
 - `noise=` grows into the general per-dataset nuisance argument;
 - every spectrum's reference flux is its value at `wavel0`;

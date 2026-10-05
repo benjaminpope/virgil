@@ -52,6 +52,7 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
         - mjd
         - epochs
         - split_by_epoch
+        - select
 
 ## uv grids
 
