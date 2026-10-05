@@ -10,33 +10,72 @@ on:
     branches:
       - main
   pull_request:
+  # Weekly full run, so the slow tests and macOS also run when main is quiet.
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
+  # Pull requests run the Linux jobs and skip the slow-marked tests; pushes to
+  # main, the weekly schedule and manual dispatches also run macOS and every
+  # test. macOS runners are scarce and slower (about 350 s of tests against
+  # 190 s on Linux), so they set the wall time of a pull request.
+  matrix:
+    name: choose the test matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.choose.outputs.matrix }}
+    steps:
+      - id: choose
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          include = [
+              {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"},
+              # x64 exercises the float64 paths.
+              {"os": "ubuntu-latest", "python-version": "3.12", "x64": "1"},
+              {"os": "ubuntu-latest", "python-version": "3.13", "x64": "0"},
+              # The dependency floors in pyproject.toml: every direct
+              # dependency at the oldest version it allows.
+              {
+                  "os": "ubuntu-latest",
+                  "python-version": "3.11",
+                  "x64": "0",
+                  "lowest": True,
+              },
+          ]
+          if os.environ["EVENT"] != "pull_request":
+              # The oldest Python on macOS: x64 dtype mix-ups (the Bessel
+              # functions, then cached integer index arrays) have surfaced
+              # on macOS and Python 3.11 but not in Linux CI.
+              include.insert(
+                  2, {"os": "macos-latest", "python-version": "3.11", "x64": "0"}
+              )
+          print("matrix=" + json.dumps({"include": include}))
+          EOF
+
   build:
-    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}
+    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}
+    needs: matrix
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-        # 3.11, the oldest supported version, runs on pushes to main only;
-        # pull requests test 3.12.
-        python-version: >-
-          ${{ fromJSON(github.event_name == 'push'
-          && '["3.11", "3.12"]' || '["3.12"]') }}
-        x64: ["0"]
-        include:
-          # The jax.enable_x64 dtype mix-up fixed in the Bessel functions (now
-          # jaxbessel) surfaced locally on macOS but not in Linux CI; x64
-          # exercises the float64 paths.
-          - os: macos-latest
-            python-version: "3.12"
-            x64: "0"
-          - os: ubuntu-latest
-            python-version: "3.12"
-            x64: "1"
+      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     env:
       JAX_ENABLE_X64: ${{ matrix.x64 }}
+      # One JAX cache per job: compiled code differs by OS, Python and x64.
+      CACHE_PREFIX: jax-${{ matrix.os }}-py${{ matrix.python-version }}-x64${{ matrix.x64 }}${{ matrix.lowest && '-lowest' || '' }}
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -47,24 +86,32 @@ jobs:
       - name: create environment
         run: |
           uv venv --python ${{ matrix.python-version }} .venv
-          uv pip install --python .venv/bin/python -e ".[dev]"
-          # Test against the newest JAX the other dependencies allow.
-          uv pip install --python .venv/bin/python --upgrade jax jaxlib
-          .venv/bin/python -c "import jax; print('jax', jax.__version__)"
+          if [ "${{ matrix.lowest }}" = "true" ]; then
+            uv pip install --python .venv/bin/python --resolution lowest-direct -e ".[test]"
+          else
+            # harmonix is not on PyPI in a version virgil works with; the
+            # integrations extra brings jaxoplanet, which it also needs.
+            uv pip install --python .venv/bin/python -e ".[test,integrations]" \
+              "harmonix @ git+https://github.com/shashankdholakia/harmonix@245a68757f4b3d1acc045cda07a274c597a02b6b"
+            # Test against the newest JAX the other dependencies allow.
+            uv pip install --python .venv/bin/python --upgrade jax jaxlib
+          fi
+          uv pip list --python .venv/bin/python
 
       # Linting lives in lint.yml and docs builds in documentation.yml, so
       # neither blocks the test suite.
 
       # Most of the suite's time is JAX compiling; JAX's persistent cache
       # (keyed internally on the JAX version and the code compiled) halves
-      # it on later runs. Each run saves an updated cache.
-      - name: JAX compilation cache
-        uses: actions/cache@v4
+      # it on later runs. Only pushes to main save a cache, one per change
+      # to the code, so pull requests reuse main's and the cache quota is
+      # not filled with a copy per run.
+      - name: restore JAX compilation cache
+        uses: actions/cache/restore@v4
         with:
           path: .jax-cache
-          # One cache per job: compiled code differs by OS and by x64.
-          key: jax-${{ matrix.os }}-${{ matrix.python-version }}-x64${{ matrix.x64 }}-${{ github.run_id }}
-          restore-keys: jax-${{ matrix.os }}-${{ matrix.python-version }}-x64${{ matrix.x64 }}-
+          key: ${{ env.CACHE_PREFIX }}-${{ hashFiles('pyproject.toml', 'src/**/*.py', 'tests/**/*.py') }}
+          restore-keys: ${{ env.CACHE_PREFIX }}-
 
       # ===== Tests =====
       # pytest-xdist runs one worker per core; the suite is many small,
@@ -74,4 +121,77 @@ jobs:
           JAX_COMPILATION_CACHE_DIR: .jax-cache
           JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
-        run: uv run --python .venv/bin/python pytest -n auto
+        # The JUnit report carries the validates markers (tests/conftest.py)
+        # as evidence for virgil-validation; xunit1 keeps test properties.
+        # Pull requests skip the tests marked slow (tests/conftest.py).
+        run: >-
+          .venv/bin/python -m pytest -n auto -rs
+          ${{ github.event_name == 'pull_request' && '-m "not slow"' || '' }}
+          --junitxml=junit-evidence.xml -o junit_family=xunit1
+
+      - name: upload evidence
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: virgil-evidence-${{ matrix.os }}-py${{ matrix.python-version }}-x64${{ matrix.x64 }}
+          path: junit-evidence.xml
+          if-no-files-found: ignore
+
+      - name: save JAX compilation cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: .jax-cache
+          key: ${{ env.CACHE_PREFIX }}-${{ hashFiles('pyproject.toml', 'src/**/*.py', 'tests/**/*.py') }}
+
+  # Builds the distributions as publish.yml does, installs the wheel into a
+  # clean environment (no test or dev extras) and imports it, so packaging
+  # mistakes surface on the pull request rather than at release time.
+  package:
+    name: build and install the wheel
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v6
+
+      # uv build builds the sdist, then the wheel from the sdist, so this
+      # also checks that the sdist is complete.
+      # uv.lock must match pyproject.toml and track the newest JAX each
+      # Python version allows (see the comment on the jax floor there).
+      - name: check uv.lock is current
+        run: uv lock --check
+
+      - name: build the wheel and sdist
+        run: uv build
+
+      - name: check the distributions
+        run: uvx twine check --strict dist/*
+
+      - name: install the wheel into a clean environment
+        run: |
+          uv venv --python 3.12 /tmp/wheel-env
+          uv pip install --python /tmp/wheel-env/bin/python dist/*.whl
+
+      # Run from outside the checkout, so the installed wheel is imported.
+      - name: import and smoke test
+        working-directory: /tmp
+        run: |
+          /tmp/wheel-env/bin/python - <<'EOF'
+          import importlib.metadata
+          import math
+
+          import virgil
+          from virgil.coverage import nrm_oidata
+          from virgil.likelihood import model_loglike
+
+          assert "site-packages" in virgil.__file__, virgil.__file__
+          version = importlib.metadata.version("virgil-astro")
+          assert virgil.__version__ == version, virgil.__version__
+          model = virgil.BinaryModelCartesian(dra=100.0, ddec=50.0, flux=0.01)
+          value = float(model_loglike(model, nrm_oidata()))
+          assert math.isfinite(value), value
+          print("virgil", virgil.__version__, "log likelihood", value)
+          EOF

@@ -121,7 +121,7 @@ fetched and summarised, and the appendix figures could not be inspected.)
 - Golub, Heath and Wahba, "Generalized cross-validation as a method for choosing a good
   ridge parameter", Technometrics 21 (1979). For a linear smoother y_hat = A(w) y,
   GCV(w) = N ||y - y_hat||^2 / (N - tr A)^2, with no need for sigma.
-- Nonlinear extension: Ramani, Liu, Rosen and Fessler, "Regularization parameter
+- Nonlinear extension: Ramani, Liu, Rosen, Nielsen and Fessler, "Regularization parameter
   selection for nonlinear iterative image restoration and MRI reconstruction using GCV
   and SURE-based methods", IEEE Trans. Image Process. 21 (2012) 3659,
   [PDF](https://web.eecs.umich.edu/~fessler/papers/files/jour/12/pre/ramani-12-rps.pdf).
@@ -168,20 +168,23 @@ fetched and summarised, and the appendix figures could not be inspected.)
 
 ### 2.5 Bayesian evidence and Gull-Skilling
 - For a quadratic prior (Gaussian, or a quadratic R such as TSV), the evidence in w is
-  analytic in the linear-data case: log p(d|w) = -chi2(x*) - w R(x*) -
+  analytic in the linear-data case: log p(d|w) = -0.5 chi2(x*) - w R(x*) -
   0.5 log det(J^T J + w H_R) + 0.5 M log w + const, where M is the number of pixels
   the prior constrains. MacKay's evidence framework, "Bayesian interpolation", Neural
   Comput. 4 (1992) 415 ([MIT Press](https://direct.mit.edu/neco/article/4/3/415/5639/Bayesian-Interpolation)),
   optimises this to find w; the derivative gives gamma = the effective number of
   well-determined parameters, and the fixed point is 2 w R = gamma. This is the Gull
-  (1989) and Skilling "classic MaxEnt" recipe, generalised.
-- Classic MaxEnt: Skilling and Bryan, "Maximum entropy image reconstruction: general
+  (1989) and Skilling (1989, "Classic Maximum Entropy", in *Maximum Entropy and Bayesian
+  Methods*, Kluwer, 45-52) "classic MaxEnt" recipe, generalised.
+- Historic MaxEnt (chi2 = N) and its algorithm: Skilling and Bryan, "Maximum entropy image reconstruction: general
   algorithm", MNRAS 211 (1984) 111 ([PDF](https://files.batistalab.com/teaching/attachments/chem572/Skilling_Bryan1984.pdf)),
   implemented in MEMSYS. BSMEM (Buscher)
   uses it: alpha is picked by maximising the evidence (search-result summaries of BSMEM
   documentation, and of [arXiv:1007.4473](https://arxiv.org/abs/1007.4473)).
 - Cost: needs log det of a pixel-space Hessian. For 10^3 to 10^5 pixels use
-  stochastic Lanczos quadrature or a low-rank plus diagonal approximation. It is
+  stochastic Lanczos quadrature or a low-rank plus diagonal approximation (virgil's
+  `log_evidence` uses a dense Cholesky factor instead, which is fine up to about 10^4
+  data or pixels; a stochastic log-determinant is not built). It is
   exact for the GP prior with a linear-Gaussian model, which is why it belongs in
   Stage 5. For TV/MEM the Laplace approximation is uncontrolled: TV is not
   differentiable at zero, and MEM is on positive pixels only.
@@ -198,7 +201,7 @@ MacKay's evidence framework treats the noise precision β = 1/s² as one more hy
 
 where λᵢ are the eigenvalues of the likelihood's Gauss–Newton curvature in whitened prior coordinates. γ, the effective number of well-measured parameters, is the same quantity that appears in classic MaxEnt's fixed point, 2wR = γ.
 
-The intuition: each well-measured parameter absorbs one datum's worth of scatter, so honest errors give χ² ≈ N − γ rather than N. Using χ²/N would underestimate s², as dividing by N rather than N − 1 does for a sample variance. The formula is MacKay 1992 (Neural Comput. 4, 415, [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415)), eq. 4.14, and Bishop 2006, *PRML*, §3.5.2.
+The intuition: each well-measured parameter absorbs one datum's worth of scatter, so honest errors give χ² ≈ N − γ rather than N. Using χ²/N would underestimate s², as dividing by N rather than N − 1 does for a sample variance. The formula is MacKay 1992 (Neural Comput. 4, 415, [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415)), eq. 4.10, and Bishop 2006, *PRML*, §3.5.2.
 
 In virgil:
 - `imaging.error_scale(model, data)` computes s at a `GaussianField` MAP, from the same Jacobian as `log_evidence`.
@@ -208,9 +211,8 @@ One fixed-point step usually suffices. The estimate assumes the model is adequat
 
 ### 2.6 What the codes actually do
 - **BSMEM**: evidence-based automatic alpha as above (see 2.5).
-- **MiRA** (Thiébaut 2008, [arXiv:0807.3020](https://arxiv.org/abs/0807.3020)? title
-  seen in the search result is "Imaging reconstruction for infrared interferometry",
-  check authorship before citing): weight is a user-set hyperparameter, with a
+- **MiRA** (Thiébaut 2008, SPIE 7013, 70131I; note that arXiv:0807.3020, which an
+  earlier draft cited here, is Renard et al. 2008 and not MiRA): weight is a user-set hyperparameter, with a
   suggested procedure of scanning it. The tutorial
   [arXiv:1708.08390](https://arxiv.org/abs/1708.08390) states the same.
 - **WISARD, SQUEEZE, OITOOLS.jl**: the user sets the weights. The Beauty Contests
@@ -225,12 +227,13 @@ One fixed-point step usually suffices. The estimate assumes the model is adequat
   geometric data (ring, crescent, disk, double Gaussian) and keeps a **Top-Set**:
   parameter combinations that fit the real data (chi2 within a bound) and recover the
   synthetic truths. The Sgr A* paper
-  ([arXiv:2311.09479](https://arxiv.org/abs/2311.09479)) repeats the recipe. It is the
+  ([arXiv:2311.09479](https://arxiv.org/abs/2311.09479), ApJL 930, L14, 2022) repeats the recipe. It is the
   most defensible published procedure, but it needs simulated truths and a large
   compute budget.
 - **Comrade / THEMIS** (Bayesian sampling; Tiede, JOSS 2022): weights are not tuned;
   they are hyperparameters with priors and are sampled with the image (see
-  [arXiv:2405.04749](https://arxiv.org/abs/2405.04749) for an application; the
+  Tiede et al.'s hierarchical interferometric Bayesian imaging, HIBI,
+  [arXiv:2511.17706](https://arxiv.org/abs/2511.17706), for an application; the
   hierarchical CHIBI idea is at [arXiv:2606.04094](https://arxiv.org/abs/2606.04094),
   seen in search results only).
 
@@ -274,9 +277,9 @@ error_scale(gp_fit.model, data)    # MacKay's s = √(χ²/(N − γ)); then dat
 |---|---|---|---|
 | L-curve corner | N_w = 10 to 12 (warm-started) | none | Stage 3 |
 | Discrepancy | same sweep | none | Stage 3 |
-| Cross-validation | K x N_w = 40 to 60 | none | Stage 3, optional |
+| Cross-validation | K x N_w = 40 to 60 | none | dropped (see Deferred in `imaging_plan.md`) |
 | Randomised GCV / MC-SURE | N_w (+ 2 per probe for MC-SURE) | k = 10 to 30 CG solves per weight (GCV) | Stage 5 with the evidence machinery |
-| Laplace evidence | N_w | log det via Lanczos, about 30 probes | Stage 5 (GP) |
+| Laplace evidence | N_w | dense Jacobian, Cholesky log det (Lanczos probes not built) | Stage 5 (GP) |
 | Sampling w | one long run | gradients only | Stage 5 (GP); Comrade-style |
 
 ## 6. Open questions

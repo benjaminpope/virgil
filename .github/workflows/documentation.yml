@@ -10,6 +10,9 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   documentation:
     runs-on: ubuntu-latest
@@ -30,7 +33,7 @@ jobs:
       - name: create environment
         run: |
           uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python -e ".[dev]"
+          uv pip install --python .venv/bin/python -e ".[docs]"
 
       # This is the one docs build for pull requests; deployment happens in
       # zensical-pages.yml on pushes to main.

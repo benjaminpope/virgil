@@ -29,6 +29,7 @@ MAPPINGS = {
     "notebooks/binary_search.ipynb": "docs/binary_search.md",
     "notebooks/data_io.ipynb": "docs/data_io.md",
     "notebooks/contrast_limits.ipynb": "docs/contrast_limits.md",
+    "notebooks/detection_roc.ipynb": "docs/detection_roc.md",
     "notebooks/hierarchical_inference.ipynb": "docs/hierarchical_inference.md",
     "notebooks/model_syntax.ipynb": "docs/model_syntax.md",
     "notebooks/source_models.ipynb": "docs/source_models.md",
@@ -39,7 +40,9 @@ MAPPINGS = {
     "notebooks/imaging_gp.ipynb": "docs/imaging_gp.md",
     "notebooks/imaging_composite.ipynb": "docs/imaging_composite.md",
     "notebooks/imaging_sampling.ipynb": "docs/imaging_sampling.md",
+    "notebooks/imaging_clean.ipynb": "docs/imaging_clean.md",
     "notebooks/harmonix.ipynb": "docs/harmonix.md",
+    "notebooks/limb_darkening.ipynb": "docs/limb_darkening.md",
     "notebooks/gravity_darkened_star.ipynb": "docs/gravity_darkened_star.md",
 }
 

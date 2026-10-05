@@ -8,7 +8,6 @@ the pixels. The design is recorded in `design/image_reconstruction.md`.
     options:
       show_root_heading: true
       heading_level: 2
-      show_attributes: false
       members:
         - brightness
         - eta

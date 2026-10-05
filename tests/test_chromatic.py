@@ -1,5 +1,6 @@
 """Chromatic scenes: spectra, resolved flux, several files, likelihood options."""
 
+import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -15,11 +16,11 @@ from virgil import (
     PowerLaw,
     Resolved,
     System,
-    Tabulated,
     UniformDisk,
     write_oifits,
 )
 from virgil._utils import is_flux_param, resolve_flux_param
+from virgil.spectra import Tabulated
 from virgil.likelihood import (
     joint_loglike,
     model_loglike,
@@ -118,18 +119,22 @@ def _toon_loglike(model, data_obj, vis_error_rel, phi_error):
     errors_vis = np.hypot(errors[:n_vis], vis_error_rel * model_data[:n_vis])
     errors_phi = np.hypot(errors[n_vis:], phi_error)
     errors = np.concatenate([errors_vis, errors_phi])
-    # Closure-phase residuals Δ enter as the chord 2 sin(Δ/2), as in
-    # virgil.likelihood.whitened_residuals (the original used Δ). The
-    # original also treated the four closure phases of each frame and
-    # channel as independent, counting them 4/3 times; they are whitened
-    # as correlated groups instead (OIData.cp_noise; see test_closure).
+    # Closure-phase residuals Δ enter as sin Δ, plus the periodic penalty
+    # 2 sin²(Δ/2)/σ, as in virgil.likelihood.whitened_residuals (the
+    # original used Δ). The original also treated the four closure phases
+    # of each frame and channel as independent, counting them 4/3 times;
+    # they are whitened as correlated groups instead (OIData.cp_noise; see
+    # test_closure). The penalty rows add nothing to the normalisation.
     resid = model_data - data
-    chord = 2.0 * np.sin(0.5 * resid[n_vis:])
-    phase, phase_errors = data_obj.cp_noise.whiten(chord, errors_phi)
+    phase, phase_errors = data_obj.cp_noise.whiten(
+        np.sin(resid[n_vis:]), errors_phi
+    )
+    penalty = 2.0 * np.sin(0.5 * resid[n_vis:]) ** 2 / errors_phi
     whitened = np.concatenate([resid[:n_vis] / errors_vis, phase])
     errors = np.concatenate([errors_vis, phase_errors])
     return (
         -0.5 * np.sum(whitened**2)
+        - 0.5 * np.sum(penalty**2)
         - np.sum(np.log(errors))
         - whitened.size / 2 * np.log(2 * np.pi)
     )
@@ -335,6 +340,9 @@ def test_temperatures_have_gradients_and_are_not_fluxes():
     assert not is_flux_param("secondary.flux.temperature")
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
 def test_tabulated_interpolates_between_channels():
     spectrum = Tabulated([0.2, 0.4, 0.1], WAVES)
     assert np.allclose(spectrum(WAVES), np.array([0.2, 0.4, 0.1]))
@@ -343,6 +351,40 @@ def test_tabulated_interpolates_between_channels():
     assert np.isclose(spectrum(), np.mean(np.array([0.2, 0.4, 0.1])))
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
+def test_reference_flux_is_each_spectrums_own_reference():
+    from virgil.spectra import reference_flux
+
+    nodes = Tabulated([0.2, 0.4, 0.1], WAVES)
+    assert reference_flux(nodes).shape == ()
+    assert np.isclose(
+        reference_flux(nodes), np.mean(np.array([0.2, 0.4, 0.1]))
+    )
+    assert np.isclose(reference_flux(PowerLaw(0.3, 1.0)), 0.3)
+    assert np.isclose(reference_flux(BlackBody(0.3, 3000.0)), 0.3)
+    assert reference_flux(0.25) == 0.25
+
+
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
+def test_negative_tabulated_node_is_rejected_despite_positive_mean():
+    # Tabulated rejects negatives itself, so inject one past its constructor.
+    bad = eqx.tree_at(
+        lambda s: s.ratio,
+        Tabulated([0.2, 0.4, 0.1], WAVES),
+        np.array([0.5, -0.1, 0.4]),
+    )
+    assert float(bad()) > 0.0
+    with pytest.raises(ValueError, match="must be non-negative"):
+        PointSource(flux=bad)
+
+
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
 def test_tabulated_rejects_bad_tables():
     with pytest.raises(ValueError, match="non-negative"):
         Tabulated([0.2, -0.1, 0.1], WAVES)
@@ -358,6 +400,9 @@ def test_tabulated_rejects_bad_tables():
         Tabulated([], [])
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
 def test_tabulated_is_physical_checks_traced_tables():
     good = Tabulated([0.2, 0.4, 0.1], WAVES)
     assert bool(good.is_physical())
@@ -369,6 +414,9 @@ def test_tabulated_is_physical_checks_traced_tables():
         Tabulated([0.2, 0.1], WAVES)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:Tabulated is deprecated:DeprecationWarning"
+)
 def test_tabulated_flux_per_channel_matches_achromatic_scenes():
     u, v = onp.array([30.0, -20.0]), onp.array([10.0, 40.0])
     ratios = onp.array([0.05, 0.3, 0.1])

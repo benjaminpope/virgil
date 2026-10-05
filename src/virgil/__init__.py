@@ -19,19 +19,32 @@ Modules:
 * [`grid_fit`][virgil.grid_fit]: grid searches.
 * [`limits`][virgil.limits]: contrast limits and flux/contrast/Δmag
   conversions.
+* [`detection`][virgil.detection]: detection statistics (Δχ², the
+  grid-marginalised Bayes factor, the best SNR) for ROC curves.
 * [`spectra`][virgil.spectra]: wavelength-dependent fluxes.
+* [`gains`][virgil.gains]: calibration gains correlated across channels.
 * [`plotting`][virgil.plotting]: figures.
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
 """
 
+import importlib.metadata as _metadata
+
 name = "virgil"
+
+try:
+    __version__ = _metadata.version("virgil-astro")
+except _metadata.PackageNotFoundError:
+    # Running from a source tree that was never installed.
+    __version__ = "unknown"
 
 from . import (  # noqa: E402
     amigo,
     coverage,
+    detection,
     fields,
     fitting,
+    gains,
     grid_fit,
     imaging,
     inference,
@@ -40,17 +53,21 @@ from . import (  # noqa: E402
     models,
     oidata,
     oifits,
+    orbits,
     plotting,
     scenes,
+    simulate,
     spectra,
 )
-from .amigo import load_oi_data  # noqa: E402
+from ._geometry import pixel_offsets  # noqa: E402
+from .detection import detection_statistics  # noqa: E402
 from .fields import GaussianField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
     best_grid_point,
     laplace_flux_uncertainty_grid,
     likelihood_grid,
+    linear_flux_grid,
     optimized_flux_grid,
     optimized_likelihood_grid,
 )
@@ -69,10 +86,12 @@ from .limits import (  # noqa: E402
     delta_mag_to_flux,
     flux_to_contrast,
     flux_to_delta_mag,
+    injection_limits,
     radial_profile,
     ruffio_upperlimit,
 )
 from .models import (  # noqa: E402
+    Attached,
     BinaryModelAngular,
     BinaryModelCartesian,
     EllipticalGaussian,
@@ -81,23 +100,47 @@ from .models import (  # noqa: E402
     FlaredDiskPowerLaw,
     GaussianArc,
     GaussianDisk,
-    GaussianDiskModel,
     GravityDarkenedStar,
+    HarmonixModel,
     Image,
+    LimbDarkenedDisk,
     ModulatedGaussianRim,
     PointSource,
+    QuadraticLimbDarkenedDisk,
     Resolved,
     SourceModel,
+    SquareRootLimbDarkenedDisk,
     System,
+    TruncatedCone,
     UniformDisk,
     circular_support,
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
-from .spectra import BlackBody, PowerLaw, Tabulated  # noqa: E402
+from .orbits import (  # noqa: E402
+    AxialVonMises,
+    KeplerOrbit,
+    PositionData,
+    RVData,
+    StateVectorOrbit,
+    ThieleInnesOrbit,
+    distance_pc,
+    starting_orbits,
+    total_mass,
+)
+from .spectra import (  # noqa: E402
+    BlackBody,
+    GaussianLine,
+    LorentzianLine,
+    Nodes,
+    PowerLaw,
+    Sum,
+)
 
 
 __all__ = [
+    "Attached",
+    "AxialVonMises",
     "BinaryModelAngular",
     "BinaryModelCartesian",
     "BlackBody",
@@ -107,25 +150,40 @@ __all__ = [
     "FlaredDiskPowerLaw",
     "GaussianArc",
     "GaussianDisk",
-    "GaussianDiskModel",
     "GaussianField",
+    "GaussianLine",
     "GravityDarkenedStar",
+    "HarmonixModel",
     "Image",
+    "KeplerOrbit",
+    "LimbDarkenedDisk",
+    "LorentzianLine",
     "ModulatedGaussianRim",
+    "Nodes",
     "OIData",
     "PointSource",
+    "PositionData",
+    "RVData",
     "PowerLaw",
+    "QuadraticLimbDarkenedDisk",
     "Resolved",
     "SourceModel",
+    "StateVectorOrbit",
+    "SquareRootLimbDarkenedDisk",
+    "Sum",
     "System",
-    "Tabulated",
+    "ThieleInnesOrbit",
+    "TruncatedCone",
     "UniformDisk",
     "absil_limits",
+    "injection_limits",
     "circular_support",
     "best_grid_point",
     "build_model",
     "contrast_to_flux",
     "delta_mag_to_flux",
+    "detection_statistics",
+    "distance_pc",
     "fit",
     "fisher",
     "inflated_errors",
@@ -134,15 +192,18 @@ __all__ = [
     "laplace_cov",
     "laplace_flux_uncertainty_grid",
     "likelihood_grid",
-    "load_oi_data",
     "loglike",
     "model_loglike",
     "numpyro_model",
+    "linear_flux_grid",
     "optimized_flux_grid",
     "optimized_likelihood_grid",
+    "pixel_offsets",
     "radial_profile",
     "read_oifits",
     "ruffio_upperlimit",
+    "starting_orbits",
+    "total_mass",
     "whitened_residuals",
     "write_oifits",
 ]

@@ -21,11 +21,22 @@ virgil is hosted on PyPI; the easiest way to install it is:
 pip install virgil-astro
 ```
 
-You can also build from source. To do so, clone the git repo, enter the directory, and run
+Optional extras add the corner-plot helpers in `virgil.plotting`
+(`pip install "virgil-astro[plots]"`, for pandas and ChainConsumer) and the
+SIMBAD lookups in `virgil.legacy` (`[legacy]`, for astroquery).
+
+You can also build from source. To do so, clone the git repo and enter the directory:
 
 ```
+git clone --filter=blob:none https://github.com/benjaminpope/virgil
+cd virgil
 pip install .
 ```
+
+`--filter=blob:none` makes a partial clone: you get the full history, but old
+versions of files are fetched only if you ask for them. It skips large data
+files that are no longer used, so the download is about 15 MB rather than
+about 280 MB.
 
 We recommend using a virtual environment to avoid dependency conflicts.
 
@@ -34,7 +45,7 @@ Using `uv` (recommended):
 ```bash
 uv python install 3.11
 uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python -e . pytest
+uv pip install --python .venv/bin/python -e ".[test]"
 uv run --python .venv/bin/python pytest -q
 ```
 
@@ -45,11 +56,11 @@ Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpo
 ### Using these docs
 
 The sections in the sidebar hold worked examples on simulated and bundled data:
-- **Background:** [who contributed what](contributors.md), and [Gaussian-process priors and information field theory](gp_and_ift.md).
+- **Background:** [who contributed what](contributors.md), [Gaussian-process priors and information field theory](gp_and_ift.md), and [coordinate, sign and flux conventions](conventions.md).
 - **Data Handling:** [reading OIFITS files into `OIData`](data_io.md), and [AMIGO's DISCO data from JWST aperture masking](amigo_disco.md).
 - **Binaries:** [searching for companions](binary_search.md), [detection limits](contrast_limits.md), and [fitting several datasets together](hierarchical_inference.md).
-- **Sources:** [visibility models](model_syntax.md), [extended sources](source_models.md), [composing scenes](composition.md), [spotted stars](harmonix.md) and [gravity-darkened stars](gravity_darkened_star.md).
-- **Imaging:** image reconstruction in five parts: [simulating data](imaging_ami.md), [regularised maximum likelihood](imaging_rml.md), [Gaussian-process priors](imaging_gp.md), [a ring around a binary](imaging_composite.md) and [sampling the posterior](imaging_sampling.md).
+- **Sources:** [visibility models](model_syntax.md), [extended sources](source_models.md), [composing scenes](composition.md), [spotted stars](harmonix.md), [limb-darkened stars](limb_darkening.md) and [gravity-darkened stars](gravity_darkened_star.md).
+- **Imaging:** image reconstruction in six parts: [simulating data](imaging_ami.md), [regularised maximum likelihood](imaging_rml.md), [Gaussian-process priors](imaging_gp.md), [a ring around a binary](imaging_composite.md) [sampling the posterior](imaging_sampling.md) and [sparse images and CLEAN](imaging_clean.md).
 - **[API Reference](api/index.md)** documents every public class and function.
 
 Documentation tooling is currently migrating from MkDocs to Zensical. During this transition, both builders are supported from the same configuration file.
@@ -67,7 +78,7 @@ virgil's own tests mostly check virgil against itself. The companion repository 
 
 ## Collaboration & Development
 
-We welcome collaboration and development contributions. See [CONTRIBUTING.md](https://github.com/benjaminpope/virgil/blob/main/CONTRIBUTING.md) for development setup, testing, and pull request workflow.
+We welcome collaboration and development contributions. See [CONTRIBUTING.md](https://github.com/benjaminpope/virgil/blob/main/CONTRIBUTING.md) for development setup, testing, and pull request workflow. Release notes are in the [changelog](https://github.com/benjaminpope/virgil/blob/main/CHANGELOG.md).
 
 ## Name
 

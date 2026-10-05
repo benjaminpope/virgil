@@ -49,11 +49,13 @@ evaluates:
 |---|---|---|
 | `PowerLaw(ratio, index, wavel0)` | `ratio * (λ/λ0)**index` | `.flux.ratio`, `.flux.index` |
 | `Blackbody(ratio, temperature, wavel0)` | `ratio * B_λ(T) / B_λ0(T)` | `.flux.ratio`, `.flux.temperature` |
-| `Tabulated(wavels, values)` | interpolated `values` | `.flux.values` |
+| `Tabulated(ratio, wavel)` (provisional, private in 0.2.0; Stage 6a's `Nodes` will replace it) | `ratio` interpolated linearly between nodes at `wavel` (metres), constant beyond the end nodes | `.flux.ratio` |
 
-`wavel0` is a static reference wavelength (not fitted). With `wavel=None`
-every spectrum returns its value at `wavel0`, so `render()` and the
-zero-baseline normalization keep working.
+`wavel0` is a reference wavelength (traceable, not normally fitted). With
+`wavel=None`, `PowerLaw` and `BlackBody` return their value at `wavel0`, so
+`render()` and the zero-baseline normalization keep working. `Tabulated` has
+no `wavel0`: its reference flux is the mean of its nodes, a rule that Stage 6a
+is to settle (see `spectro_interferometry_workflow.md` §2.1).
 
 SPARCO then reads:
 
@@ -78,12 +80,12 @@ one flux per filter, by threading a filter index through
 `model_fn(params, index)`. With spectra, the scene is a single model evaluated
 at each observation's own wavelength, so the index plumbing disappears:
 
-- `comp=PointSource(dra, ddec, flux=Tabulated(filter_wavels, fluxes))`
+- `comp=PointSource(dra, ddec, flux=Tabulated(fluxes, filter_wavels))`
   reproduces the current tutorial exactly;
 - `flux=PowerLaw(...)` reduces three free fluxes to two parameters.
 
 What stays hierarchical lives in the **priors**, not the model: smoothness or
-GP priors on `Tabulated` values, hyperpriors on spectral indices, and
+GP priors on `Tabulated` `ratio` values, hyperpriors on spectral indices, and
 per-epoch or per-instrument calibration terms, which remain the job of
 `joint_loglike`/`model_fn`. So spectra replace the tutorial's plumbing and
 complement its priors. Once spectra exist, rewrite the tutorial in two steps:
@@ -147,9 +149,9 @@ wavelengths.
 ## Open questions
 
 - Positivity: spectra must be non-negative at every wavelength. Checking the
-  amplitude (`ratio`, `values`) is enough for `PowerLaw`/`Blackbody`, but
-  `Tabulated` interpolation also needs non-negative `values`; `numpyro_model`'s
-  flux-prior check should extend to `.flux.ratio` and `.flux.values` paths.
+  amplitude (`ratio`) is enough for `PowerLaw`/`BlackBody`, and `Tabulated`
+  likewise needs a non-negative `ratio` at every node (its `is_physical`);
+  `numpyro_model`'s flux-prior check covers `.flux.ratio` paths.
 - Should `render()` take an optional `wavel` to show the scene at a given
   wavelength? Probably yes, once any component is chromatic.
 - Bandwidth smearing across a wide filter is a scene-level operation (an

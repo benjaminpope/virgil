@@ -281,6 +281,25 @@ def test_visibility_correlation_ticks_use_adaptive_float_formatter():
     plt.close(fig)
 
 
+def test_data_model_correlation_without_phases():
+    # AMIGO DISCO data hold every observable in vis and have no phases.
+    from virgil.coverage import ami_grid_record
+    from virgil.models import PointSource
+
+    data = OIData(ami_grid_record(pitch_m=0.5))
+    assert data.phi.size == 0
+    prediction = data.model(PointSource())
+    pred = {
+        "vis_mean": prediction,
+        "vis_std": 0 * prediction,
+        "phi_mean": prediction[:0],
+        "phi_std": prediction[:0],
+    }
+    fig, (ax1, ax2) = plot_data_model_correlation(data, {"star": pred})
+    assert ax1.get_visible() and not ax2.get_visible()
+    plt.close(fig)
+
+
 def test_delta_mag_map_uses_reversed_colormap_by_default():
     limit_map = np.array([[1e-3, 2e-3], [5e-4, 1e-3]])
     grid = {"dra": np.array([-1.0, 1.0]), "ddec": np.array([-1.0, 1.0])}
@@ -435,10 +454,8 @@ def test_best_grid_point_rejects_reduced_grids():
     }
 
 
-def test_legacy_savefits_writes_a_readable_file(tmp_path):
-    from virgil.legacy import savefits
-
-    phi = onp.array([10.0, -5.0, 3.0])
+def _legacy_dic(phi):
+    """A three-hole dictionary for the legacy ImPlaneIA writer."""
     dic = {
         "info": {
             "TARGET": "UNKNOWN",
@@ -501,9 +518,17 @@ def test_legacy_savefits_writes_a_readable_file(tmp_path):
         STA_INDEX=dic["OI_VIS"]["STA_INDEX"],
         FLAG=onp.zeros(3, dtype=bool),
     )
+    return dic
+
+
+def test_legacy_save_writes_a_readable_file(tmp_path):
+    from virgil.legacy import oifits_implaneia
+
+    phi = onp.array([10.0, -5.0, 3.0])
+    dic = _legacy_dic(phi)
     original_mjd = list(dic["info"]["MJD"])
 
-    savefits.save(dic, datadir=tmp_path)
+    oifits_implaneia.save(dic, datadir=tmp_path)
 
     # The caller's dictionary is untouched, and the file reads back.
     assert dic["info"]["MJD"] == original_mjd
@@ -513,6 +538,22 @@ def test_legacy_savefits_writes_a_readable_file(tmp_path):
         assert hdul[0].header["MASK"] == "MASK3"
         assert hdul["OI_ARRAY"].data["FOV"][0] == pytest.approx(0.065 * 81 / 2)
     assert np.allclose(OIData(path).phi, onp.deg2rad(12.0))
+
+
+def test_legacy_save_needs_astroquery_for_a_named_target(
+    tmp_path, monkeypatch
+):
+    # Without the [legacy] extra a named target must not be written with
+    # placeholder coordinates.
+    import sys
+
+    from virgil.legacy import oifits_implaneia
+
+    dic = _legacy_dic(onp.array([10.0, -5.0, 3.0]))
+    dic["info"]["TARGET"] = "HD 1"
+    monkeypatch.setitem(sys.modules, "astroquery.simbad", None)
+    with pytest.raises(ImportError, match=r"virgil-astro\[legacy\]"):
+        oifits_implaneia.save(dic, datadir=tmp_path)
 
 
 def test_transposed_operator_is_rejected_with_a_hint():
@@ -604,7 +645,7 @@ def test_legacy_load_then_save_round_trips(tmp_path):
     from virgil.legacy import oifits_implaneia
 
     first = tmp_path / "first"
-    test_legacy_savefits_writes_a_readable_file(first)
+    test_legacy_save_writes_a_readable_file(first)
     (path,) = first.glob("*.oifits")
     loaded = oifits_implaneia.load(path)
     oifits_implaneia.save(loaded, datadir=tmp_path / "second")

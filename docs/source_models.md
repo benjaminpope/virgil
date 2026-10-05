@@ -1,7 +1,7 @@
 <!-- AUTO-GENERATED FROM notebooks/source_models.ipynb by scripts/sync_tutorial_docs.py. -->
 # Extended source models
 
-This tutorial mirrors the binary-model walkthrough style, but focuses on the non-binary source models in `virgil`: `GaussianDiskModel` (a star plus a Gaussian disk), the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `GravityDarkenedStar` (a rapidly rotating star). Spotted stars from harmonix, wrapped in `HarmonixModel`, have [their own tutorial](harmonix.md).
+This tutorial mirrors the binary-model walkthrough style, but focuses on the non-binary source models in `virgil`: a star plus a `GaussianDisk`, the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `GravityDarkenedStar` (a rapidly rotating star). Spotted stars from harmonix, wrapped in `HarmonixModel`, have [their own tutorial](harmonix.md).
 
 We'll build synthetic interferometric observables from a resolved Gaussian disk, pass them through `OIData`, then do the same for a uniform disk and an azimuthally modulated rim, and finally draw a gravity-darkened rapid rotator. See the composition tutorial for how to combine these building blocks into more complex scenes.
 
@@ -23,7 +23,7 @@ if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
 from virgil.models import (
-    GaussianDiskModel,
+    GaussianDisk,
     ModulatedGaussianRim,
     PointSource,
     System,
@@ -46,7 +46,7 @@ v = jnp.array(rng.uniform(-24.0, 24.0, size=n_bl))
 wavel = jnp.full((n_bl,), 1.65e-6)
 
 truth = {"sigma": 18.0, "flux": 0.15, "dra": 12.0, "ddec": -7.5}
-disk = GaussianDiskModel(**truth)
+disk = System(star=PointSource(), disk=GaussianDisk(**truth))
 cvis_true = disk.model(u, v, wavel)
 
 vis_true = jnp.abs(cvis_true) ** 2
@@ -145,7 +145,7 @@ im = axes[2].imshow(
 )
 axes[2].set_xlabel(r"$\Delta$RA (mas)")
 axes[2].set_ylabel(r"$\Delta$Dec (mas)")
-axes[2].set_title("`GaussianDiskModel.render(...)`")
+axes[2].set_title("`System.render(...)`")
 fig.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
 
 plt.tight_layout()
@@ -341,7 +341,7 @@ axes[0].set_title("Grey star: visible surface")
 plot_model(
     hot_star,
     fov_mas=1.2,
-    npix=40,
+    npix=128,
     ax=axes[1],
     title="Chromatic star (9000 K pole) at 0.6 micron",
 )

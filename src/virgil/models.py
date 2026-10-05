@@ -2,7 +2,8 @@
 
 * Components ([`PointSource`][virgil.models.PointSource],
   [`GaussianDisk`][virgil.models.GaussianDisk],
-  [`UniformDisk`][virgil.models.UniformDisk],
+  [`UniformDisk`][virgil.models.UniformDisk], the limb-darkened disks such
+  as [`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk],
   [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim], and
   the flared scattered-light disks such as
   [`FlaredDiskPowerLaw`][virgil.models.FlaredDiskPowerLaw]) are
@@ -19,6 +20,7 @@ ratio. Likelihoods of these models are in
 """
 
 import dataclasses
+import math
 import textwrap
 from typing import Any
 
@@ -29,7 +31,7 @@ import numpy as onp
 import zodiax as zx
 from jax.scipy.ndimage import map_coordinates
 from jax.scipy.signal import fftconvolve
-from jaxbessel import bessel_jn
+from jaxbessel import bessel_jn, bessel_jv_over_xv, j0
 
 from ._geometry import (
     check_az_prof_nonnegative,
@@ -44,7 +46,8 @@ from ._geometry import (
 )
 from . import _elr
 from ._utils import concrete, dtor, mas2rad
-from .spectra import Spectrum, _planck_ratio, flux_at, reference_flux
+from .orbits import _days_since
+from .spectra import Spectrum, _planck_ratio, flux_at
 
 
 def _normalize_image(image):
@@ -94,8 +97,14 @@ def _flux_is_non_negative(flux):
 
 
 def _check_non_negative_flux(flux, owner):
-    """Raise if a concrete ``flux`` is negative; traced values are not checked."""
-    value = concrete(reference_flux(flux))
+    """Raise if a concrete ``flux`` is negative; traced values are not checked.
+
+    A spectrum is checked at its characteristic wavelengths (``wavel0``,
+    every node and line centre), where its total must be non-negative.
+    """
+    if isinstance(flux, Spectrum):
+        flux = flux(flux._check_wavel())
+    value = concrete(flux)
     if value is not None and onp.any(value < 0.0):
         raise ValueError(
             f"{owner} has flux {value.tolist()}; fluxes must be non-negative."
@@ -215,6 +224,48 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         evaluate it here.
         """
         return 1.0
+
+    def total_spectrum(self, wavel):
+        """The model's total flux at ``wavel`` (metres), e.g. for OI_FLUX.
+
+        The sum of the component spectra, in the same relative units as
+        their fluxes: one grey scale (absolute calibration, injection) away
+        from a measured spectrum. It is the *intrinsic* total, with no
+        fibre coupling. For a [`System`][virgil.models.System] it is the
+        sum of its parts' fluxes, where a nested system counts with its own
+        ``flux``, as in the visibilities.
+
+        Examples
+        --------
+        >>> from virgil.spectra import PowerLaw
+        >>> scene = System(
+        ...     star=PointSource(),
+        ...     disk=GaussianDisk(5.0, flux=PowerLaw(0.5, index=1.0, wavel0=2.0e-6)),
+        ... )
+        >>> [round(float(f), 3) for f in scene.total_spectrum(np.array([2.0e-6, 4.0e-6]))]
+        [1.5, 2.0]
+        """
+        wavel = np.asarray(wavel)
+        return np.broadcast_to(self._weight(wavel), wavel.shape)
+
+    @property
+    def time_dependent(self):
+        """Whether the model changes with time (it contains an
+        [`Attached`][virgil.models.Attached] component). Such a model is
+        evaluated with [`at`][virgil.models.SourceModel.at], which
+        [`OIData.model`][virgil.oidata.OIData.model] does sample by sample."""
+        return False
+
+    def at(self, mjd, t_ref=0.0):
+        """This model at time ``t_ref + mjd`` (days, MJD).
+
+        The time is split so that it keeps its precision: ``t_ref`` is a
+        float64 number and ``mjd`` may be small offsets from it, even in
+        float32 (as [`OIData`][virgil.oidata.OIData] passes them). For a
+        single time, ``model.at(60500.3)`` is enough. A model that does not
+        change with time returns itself.
+        """
+        return self
 
     def is_physical(self):
         """Whether the model is physically valid, as a (traceable) boolean.
@@ -566,6 +617,244 @@ class GaussianArc(Component):
         return np.sum(weight * np.exp(-4.0 * np.log(2.0) * d2 / width**2), -1)
 
 
+class TruncatedCone(Component):
+    """A thin conical shell, truncated near its apex, e.g. a dust cone.
+
+    The cone's axis points towards position angle ``pa`` and is tilted
+    ``tilt`` degrees out of the sky plane; its half-opening angle is
+    ``alpha``. Its apex lies ``tip`` milliarcseconds (along the axis, in 3-D)
+    behind ``(dra, ddec)``, opposite to ``pa``. The emission starts a slant
+    distance ``s0`` from the apex along the walls and falls off as
+    ``exp(-(s - s0) / length)``, and the shell has a Gaussian thickness of
+    FWHM ``width``. It is optically thin, so the sign of the tilt does not
+    change the image.
+
+    The cone is a stack of rings about its axis. A ring of radius ρ in the
+    plane perpendicular to an axis tilted β out of the sky projects to an
+    ellipse, whose visibility is ``J0(2π ρ q)`` with
+    ``q² = q_perp² + (ratio · q_par sin β)²``, where ``q_par`` and
+    ``q_perp`` are the spatial frequencies along and across the projected
+    axis, times the phase of the ring's centre, which lies
+    ``(s cos α - tip) cos β`` along the projected axis. The rings are
+    weighted by the area element (∝ ρ) and the emissivity, and integrated
+    over ``s`` from ``s0`` to ``s0 + 5 length`` (the last 0.7 % of the
+    flux is dropped) by the midpoint rule on ``n_rings`` rings.
+
+    **Choosing ``n_rings``.** The quadrature is second order: once the rings
+    are fine enough to resolve the fringes, the error in the visibility falls
+    as ``1 / n_rings**2``, so each doubling of ``n_rings`` cuts it by about
+    4. It is fine enough when both the spacing of the rings' centres on the
+    sky, ``5 length cos α cos β / n_rings``, and the step between their radii,
+    ``5 length sin α max(1, ratio) / n_rings``, are below half the shortest
+    fringe spacing (a cone seen down its axis, tilt 90°, has all its centres
+    together, and only the radius step matters). That criterion only says the
+    error is small, not that it is below your noise. For a cone with
+    ``length`` 13.8 mas and ``alpha`` 62.5°, over baselines out to 0.3
+    cycles/mas, ``max |V(n) - V(2n)|`` is about 6e-4 for ``n = 32``, 1.5e-4
+    for 64, 4e-5 for 128 and 1e-5 for 256, so the error of ``n_rings = 32``
+    itself is about 8e-4 in visibility amplitude. That is negligible for
+    noisy data but not for well-measured data: a high-S/N GRAVITY dataset
+    gained about 4 in log-likelihood per epoch going from 32 to 64 rings at
+    fixed parameters, and nearly 29 over three epochs from 24 to 64.
+
+    To check, refit or evaluate at the best fit with ``n_rings`` doubled and
+    compare χ² (or the log-likelihood): if |Δχ²| ≳ 1 per dataset (equivalently
+    |Δ log L| ≳ 0.5), use more rings, and double again until it is below that. Well-measured data (e.g.
+    GRAVITY) may need 64 or more. The cost is linear in ``n_rings``.
+
+    Parameters
+    ----------
+    tip : float or array-like
+        Distance from ``(dra, ddec)`` back to the apex along the axis, in
+        milliarcseconds.
+    alpha : float or array-like
+        Half-opening angle of the cone, in degrees (0 < alpha < 90).
+    s0 : float or array-like
+        Slant distance from the apex where the emission starts, in
+        milliarcseconds.
+    length : float or array-like
+        e-folding length of the emission along the walls, in
+        milliarcseconds.
+    width : float or array-like
+        FWHM thickness of the shell, in milliarcseconds.
+    tilt : float or array-like, optional
+        Angle of the axis out of the sky plane, in degrees (-90 to 90).
+    pa : float or array-like, optional
+        Position angle the cone opens towards, in degrees North to East.
+    ratio : float or array-like, optional
+        Axis ratio of the cross-section (default 1, circular): its axis in
+        the plane of the cone's axis and the line of sight is ``ratio``
+        times the one across.
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][virgil.models.System] (default 1).
+    dra, ddec : float or array-like, optional
+        Offset of the reference point in milliarcseconds, positive to the
+        East and North.
+    n_rings : int, optional
+        Quadrature rings along the walls, at least 2 (default 32). The
+        visibility error falls as ``1 / n_rings**2``; check convergence by
+        doubling it (see above).
+
+    Examples
+    --------
+    >>> cone = TruncatedCone(tip=5.0, alpha=30.0, s0=4.0, length=10.0,
+    ...                      width=1.0, tilt=20.0, pa=90.0)
+    """
+
+    tip: jax.Array
+    alpha: jax.Array
+    s0: jax.Array
+    length: jax.Array
+    width: jax.Array
+    tilt: jax.Array
+    pa: jax.Array
+    ratio: jax.Array
+    n_rings: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        tip,
+        alpha,
+        s0,
+        length,
+        width,
+        tilt=0.0,
+        pa=0.0,
+        ratio=1.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+        n_rings=32,
+    ):
+        self.tip = np.asarray(tip, dtype=float)
+        self.alpha = np.asarray(alpha, dtype=float)
+        self.s0 = np.asarray(s0, dtype=float)
+        self.length = np.asarray(length, dtype=float)
+        self.width = np.asarray(width, dtype=float)
+        self.tilt = np.asarray(tilt, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.ratio = np.asarray(ratio, dtype=float)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+        if isinstance(n_rings, bool) or int(n_rings) != n_rings or n_rings < 2:
+            raise ValueError(
+                f"n_rings must be an integer >= 2, got {n_rings}."
+            )
+        self.n_rings = int(n_rings)
+
+    def __check_init__(self):
+        super().__check_init__()
+        positive = lambda x: x > 0.0  # noqa: E731
+        _check_shape_params(
+            type(self).__name__,
+            (
+                (
+                    "alpha",
+                    self.alpha,
+                    lambda x: (x > 0.0) & (x < 90.0),
+                    "in (0, 90)",
+                ),
+                ("s0", self.s0, lambda x: x >= 0.0, "non-negative"),
+                ("length", self.length, positive, "positive"),
+                ("width", self.width, positive, "positive"),
+                (
+                    "tilt",
+                    self.tilt,
+                    lambda x: np.abs(x) <= 90.0,
+                    "in [-90, 90]",
+                ),
+                ("ratio", self.ratio, positive, "positive"),
+            ),
+        )
+
+    def is_physical(self):
+        return (
+            super().is_physical()
+            & np.all((self.alpha > 0.0) & (self.alpha < 90.0))
+            & np.all(np.abs(self.tilt) <= 90.0)
+            & np.all(self.s0 >= 0.0)
+            & np.all(self.length > 0.0)
+            & np.all(self.width > 0.0)
+            & np.all(self.ratio > 0.0)
+        )
+
+    def rings(self):
+        """Radius, sky offset of the centre along the projected axis (mas)
+        and normalised weight of each ring."""
+        t = (np.arange(self.n_rings) + 0.5) / self.n_rings * 5.0
+        s = self.s0 + t * self.length
+        rho = s * np.sin(self.alpha * dtor)
+        along = (s * np.cos(self.alpha * dtor) - self.tip) * np.cos(
+            self.tilt * dtor
+        )
+        weight = rho * np.exp(-(s - self.s0) / self.length)
+        return rho, along, weight / np.sum(weight)
+
+    def _axes(self, uu, vv):
+        """Spatial frequencies along and across the projected axis."""
+        sin_pa, cos_pa = np.sin(self.pa * dtor), np.cos(self.pa * dtor)
+        return uu * sin_pa + vv * cos_pa, uu * cos_pa - vv * sin_pa
+
+    def _centred_cvis(self, uu, vv):
+        rho, along, weight = self.rings()
+        shape = np.shape(uu)
+        uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
+        q_par, q_perp = self._axes(uu, vv)
+        q = np.sqrt(
+            q_perp**2
+            + (self.ratio * q_par * np.sin(self.tilt * dtor)) ** 2
+            + 1e-30
+        )
+        sin_pa, cos_pa = np.sin(self.pa * dtor), np.cos(self.pa * dtor)
+        shift = offset_phase(uu, vv, along * sin_pa, along * cos_pa)
+        rings = j0(2.0 * np.pi * mas2rad * rho * q) * shift
+        envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
+        return np.reshape((rings @ weight) * envelope, shape)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        rho, along, weight = self.rings()
+        sin_pa, cos_pa = np.sin(self.pa * dtor), np.cos(self.pa * dtor)
+        squash = self.ratio * np.sin(self.tilt * dtor)
+        width = np.maximum(self.width, pixel_scale_mas)
+        # Points round each ring no further apart than a third of the blur,
+        # so a large thin ring is a continuous band, not a string of spots;
+        # they are added in blocks of 64 to keep memory small.
+        block = 64
+        circumference = concrete(
+            2.0 * np.pi * np.max(rho) * np.maximum(1.0, self.ratio)
+        )
+        blur = concrete(width)
+        if circumference is None or blur is None:
+            n_blocks = 4  # traced: a fixed sampling
+        else:
+            needed = float(np.max(circumference)) / (float(np.min(blur)) / 3.0)
+            n_blocks = int(min(max(onp.ceil(needed / block), 1), 128))
+        phi = np.linspace(0.0, 2.0 * np.pi, n_blocks * block, endpoint=False)
+        phi = phi.reshape(n_blocks, block)
+
+        def add_ring(image, ring):
+            radius, centre, w = ring
+
+            def add_block(image, angles):
+                par = centre + radius * np.sin(angles) * squash
+                perp = radius * np.cos(angles)
+                x = par * sin_pa + perp * cos_pa
+                y = par * cos_pa - perp * sin_pa
+                d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
+                spots = np.exp(-4.0 * np.log(2.0) * d2 / width**2)
+                return image + w * np.sum(spots, -1) / phi.size, None
+
+            image, _ = jax.lax.scan(add_block, image, phi)
+            return image, None
+
+        image, _ = jax.lax.scan(
+            add_ring, np.zeros(np.shape(xx)), (rho, along, weight)
+        )
+        return image
+
+
 class UniformDisk(Component):
     """Uniformly bright (tophat) circular disk, e.g. a resolved stellar photosphere.
 
@@ -603,6 +892,287 @@ class UniformDisk(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
         return np.where(xx**2 + yy**2 <= radius**2, 1.0, 0.0)
+
+
+class _LimbDarkenedDisk(Component):
+    r"""Circular disk whose brightness is a sum of powers of $\mu$.
+
+    Subclasses give the profile $I(\mu) = \sum_\nu a_\nu \mu^\nu$, with
+    $\mu = \sqrt{1 - (r / R)^2}$, through ``_profile``, which returns the
+    coefficients $a_\nu$ (traceable) and the powers $\nu$ (a static tuple);
+    the visibility is then
+    [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk].
+    """
+
+    diam: jax.Array
+
+    def _profile(self):
+        r"""``(coeffs, powers)`` of $I(\mu) = \sum a_\nu \mu^\nu$."""
+        raise NotImplementedError
+
+    def _set_position(self, diam, flux, dra, ddec):
+        self.diam = np.asarray(diam, dtype=float)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def _centred_cvis(self, uu, vv):
+        coeffs, powers = self._profile()
+        return cvis_limb_darkened_disk(uu, vv, self.diam, coeffs, powers)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        coeffs, powers = self._profile()
+        radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
+        r2 = (xx**2 + yy**2) / radius**2
+        inside = r2 <= 1.0
+        # mu = 0 at the limb; keep it positive so mu**nu has finite gradients
+        tiny = np.finfo(r2.dtype).tiny
+        mu = np.sqrt(np.where(inside, np.maximum(1.0 - r2, tiny), 1.0))
+        brightness = sum(a * mu**nu for a, nu in zip(coeffs, powers))
+        return np.where(inside, brightness, 0.0)
+
+    def is_physical(self):
+        r"""Positive diameter and a profile that is nowhere negative.
+
+        The profile is checked on a grid of 101 values of $\mu$ from 0 to 1;
+        each law has $I(1) = 1$, so this also keeps the flux positive.
+        """
+        coeffs, powers = self._profile()
+        mu = np.linspace(0.0, 1.0, 101)
+        brightness = sum(a * mu**nu for a, nu in zip(coeffs, powers))
+        return (
+            super().is_physical()
+            & np.all(self.diam > 0.0)
+            & np.all(brightness >= 0.0)
+        )
+
+
+class LimbDarkenedDisk(_LimbDarkenedDisk):
+    r"""Circular disk with polynomial limb darkening of order up to 22.
+
+    The brightness is
+    $I(\mu) / I(1) = 1 - \sum_{n=1}^{N} u_n (1 - \mu)^n$, with
+    $\mu = \sqrt{1 - (r / R)^2}$ the cosine of the angle between the line of
+    sight and the surface normal. This is the convention of jaxoplanet,
+    *starry* and harmonix, so ``u`` is the same as a jaxoplanet
+    ``Surface``'s ``u``: ``u=(u1,)`` is the linear law, ``u=(u1, u2)`` the
+    quadratic law, and the default ``u=()`` a uniform disk. The order is at
+    most 22, as the Bessel functions needed are of order at most 12. To fit the
+    quadratic law with priors that cover exactly the physical profiles, use
+    [`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk].
+
+    The visibility is analytic (Quirrenbach et al. 1996, eq. 3; see
+    [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk]).
+    harmonix ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433))
+    generalises the same result to limb-darkened spherical-harmonic maps.
+
+    Parameters
+    ----------
+    diam : float or array-like
+        Limb-darkened angular diameter (of the stellar limb) in
+        milliarcseconds.
+    u : sequence of float, optional
+        Limb-darkening coefficients $u_1, \ldots, u_N$ (default: none, a
+        uniform disk). A 1D array; its length, the order of the law (at most
+        22), is fixed. [`is_physical`][virgil.models.SourceModel.is_physical]
+        is false where the profile goes negative.
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][virgil.models.System], or a spectrum from
+        [`virgil.spectra`][virgil.spectra] (default 1).
+    dra : float or array-like, optional
+        Right-ascension offset of the centre in milliarcseconds, positive to
+        the East.
+    ddec : float or array-like, optional
+        Declination offset of the centre in milliarcseconds, positive to the
+        North.
+
+    Examples
+    --------
+    >>> linear = LimbDarkenedDisk(3.0, u=[0.6])
+    >>> quadratic = LimbDarkenedDisk(3.0, u=[0.4, 0.25])
+    """
+
+    u: jax.Array
+
+    def __init__(self, diam, u=(), flux=1.0, dra=0.0, ddec=0.0):
+        self._set_position(diam, flux, dra, ddec)
+        self.u = np.asarray(u, dtype=float).reshape(-1)
+
+    def _profile(self):
+        # (1 - mu)^n = sum_k C(n, k) (-mu)^k
+        order = self.u.shape[0]
+        expand = onp.zeros((order, order + 1))
+        for n in range(1, order + 1):
+            for k in range(n + 1):
+                expand[n - 1, k] = math.comb(n, k) * (-1.0) ** k
+        coeffs = np.zeros(order + 1).at[0].set(1.0) - self.u @ expand
+        return coeffs, tuple(float(k) for k in range(order + 1))
+
+
+class QuadraticLimbDarkenedDisk(_LimbDarkenedDisk):
+    r"""Circular disk with quadratic limb darkening in Kipping's (2013) $q_1, q_2$.
+
+    The brightness is $I(\mu) / I(1) = 1 - u_1 (1 - \mu) - u_2 (1 - \mu)^2$,
+    with
+    $u_1 = 2 \sqrt{q_1}\, q_2$ and $u_2 = \sqrt{q_1}\,(1 - 2 q_2)$
+    ([Kipping 2013](https://doi.org/10.1093/mnras/stt1435), eqs. 15-16).
+    Every $(q_1, q_2)$ in the unit square gives a profile that is positive
+    and decreases from the centre to the limb, and every such profile has one,
+    so uniform priors on $[0, 1]$ for both are uninformative over exactly the
+    physical laws. The visibility is analytic (Quirrenbach et al. 1996,
+    eq. 3; see
+    [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk]).
+
+    Parameters
+    ----------
+    diam : float or array-like
+        Limb-darkened angular diameter in milliarcseconds.
+    q1, q2 : float or array-like, optional
+        Kipping's coefficients, each in $[0, 1]$; $q_1 = 0$ is a uniform
+        disk. Start a fit inside the square, not on its edges: ``fit`` maps
+        Uniform priors onto unbounded variables, and the edges map to
+        infinity (and $\sqrt{q_1}$ has an infinite derivative at 0).
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][virgil.models.System], or a spectrum from
+        [`virgil.spectra`][virgil.spectra] (default 1).
+    dra : float or array-like, optional
+        Right-ascension offset of the centre in milliarcseconds, positive to
+        the East.
+    ddec : float or array-like, optional
+        Declination offset of the centre in milliarcseconds, positive to the
+        North.
+
+    Examples
+    --------
+    >>> import numpyro.distributions as dist
+    >>> star = QuadraticLimbDarkenedDisk(3.0, q1=0.4, q2=0.3)
+    >>> priors = {
+    ...     "diam": dist.Uniform(2.0, 4.0),
+    ...     "q1": dist.Uniform(0.0, 1.0),
+    ...     "q2": dist.Uniform(0.0, 1.0),
+    ... }
+
+    From tabulated $u_1, u_2$ (e.g. Claret's tables):
+
+    >>> star = QuadraticLimbDarkenedDisk.from_u(3.0, u1=0.4, u2=0.25)
+    """
+
+    q1: jax.Array
+    q2: jax.Array
+
+    def __init__(self, diam, q1, q2, flux=1.0, dra=0.0, ddec=0.0):
+        self._set_position(diam, flux, dra, ddec)
+        self.q1 = np.asarray(q1, dtype=float)
+        self.q2 = np.asarray(q2, dtype=float)
+
+    @classmethod
+    def from_u(cls, diam, u1, u2, **kwargs):
+        """Build from the usual $u_1, u_2$ (Kipping 2013, eqs. 17-18)."""
+        total = u1 + u2
+        q2 = np.where(
+            total == 0, 0.0, u1 / (2.0 * np.where(total == 0, 1.0, total))
+        )
+        return cls(diam, q1=total**2, q2=q2, **kwargs)
+
+    @property
+    def u1(self):
+        return 2.0 * np.sqrt(self.q1) * self.q2
+
+    @property
+    def u2(self):
+        return np.sqrt(self.q1) * (1.0 - 2.0 * self.q2)
+
+    def _profile(self):
+        u1, u2 = self.u1, self.u2
+        # 1 - u1 (1 - mu) - u2 (1 - mu)^2, expanded in powers of mu
+        coeffs = np.stack([1.0 - u1 - u2, u1 + 2.0 * u2, -u2])
+        return coeffs, (0.0, 1.0, 2.0)
+
+    def is_physical(self):
+        return super().is_physical() & _in_unit_square(self.q1, self.q2)
+
+
+class SquareRootLimbDarkenedDisk(_LimbDarkenedDisk):
+    r"""Circular disk with square-root limb darkening in Kipping's (2013) $q_1, q_2$.
+
+    The brightness is
+    $I(\mu) / I(1) = 1 - c (1 - \mu) - d (1 - \sqrt{\mu})$
+    (Díaz-Cordovés & Giménez 1992), which suits late-type stars in the
+    near-infrared better than the quadratic law (van Hamme 1993), with
+    $c = \sqrt{q_1}\,(1 - 2 q_2)$ and $d = 2 \sqrt{q_1}\, q_2$, inverting
+    [Kipping (2013)](https://doi.org/10.1093/mnras/stt1435), eqs. 23-24. As
+    for [`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk],
+    the unit square in $(q_1, q_2)$ is exactly the set of positive profiles
+    that decrease towards the limb, so uniform priors on $[0, 1]$ are
+    uninformative over the physical laws. The $\sqrt{\mu}$ term needs a
+    Bessel function of order $5/4$ in the analytic visibility (Quirrenbach
+    et al. 1996, eq. 3; see
+    [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk]).
+
+    Parameters
+    ----------
+    diam : float or array-like
+        Limb-darkened angular diameter in milliarcseconds.
+    q1, q2 : float or array-like, optional
+        Kipping's coefficients, each in $[0, 1]$; $q_1 = 0$ is a uniform
+        disk. Start a fit inside the square, not on its edges: ``fit`` maps
+        Uniform priors onto unbounded variables, and the edges map to
+        infinity (and $\sqrt{q_1}$ has an infinite derivative at 0).
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][virgil.models.System], or a spectrum from
+        [`virgil.spectra`][virgil.spectra] (default 1).
+    dra : float or array-like, optional
+        Right-ascension offset of the centre in milliarcseconds, positive to
+        the East.
+    ddec : float or array-like, optional
+        Declination offset of the centre in milliarcseconds, positive to the
+        North.
+
+    Examples
+    --------
+    >>> star = SquareRootLimbDarkenedDisk(3.0, q1=0.5, q2=0.4)
+    >>> same = SquareRootLimbDarkenedDisk.from_cd(3.0, c=star.c, d=star.d)
+    """
+
+    q1: jax.Array
+    q2: jax.Array
+
+    def __init__(self, diam, q1, q2, flux=1.0, dra=0.0, ddec=0.0):
+        self._set_position(diam, flux, dra, ddec)
+        self.q1 = np.asarray(q1, dtype=float)
+        self.q2 = np.asarray(q2, dtype=float)
+
+    @classmethod
+    def from_cd(cls, diam, c, d, **kwargs):
+        """Build from the usual $c, d$ (Kipping 2013, eqs. 23-24)."""
+        total = c + d
+        q2 = np.where(
+            total == 0, 0.0, d / (2.0 * np.where(total == 0, 1.0, total))
+        )
+        return cls(diam, q1=total**2, q2=q2, **kwargs)
+
+    @property
+    def c(self):
+        return np.sqrt(self.q1) * (1.0 - 2.0 * self.q2)
+
+    @property
+    def d(self):
+        return 2.0 * np.sqrt(self.q1) * self.q2
+
+    def _profile(self):
+        c, d = self.c, self.d
+        # 1 - c (1 - mu) - d (1 - sqrt(mu)), in powers of mu
+        return np.stack([1.0 - c - d, c, d]), (0.0, 1.0, 0.5)
+
+    def is_physical(self):
+        return super().is_physical() & _in_unit_square(self.q1, self.q2)
+
+
+def _in_unit_square(q1, q2):
+    return np.all((q1 >= 0.0) & (q1 <= 1.0) & (q2 >= 0.0) & (q2 <= 1.0))
 
 
 class GravityDarkenedStar(Component):
@@ -843,27 +1413,60 @@ class GravityDarkenedStar(Component):
         x, y, w, _ = self._surface()
         return _elr.visibilities(x, y, w, uu, vv)
 
+    # sub-pixel samples per pixel side when rasterising the image
+    _image_oversample = 4
+
     def _centred_image(self, xx, yy, pixel_scale_mas):
-        if self.t_pole is None:
-            x, y, w, _ = self._surface()
-        else:  # drawn at wavel0
-            x, y, w = self._planck_weights(self.wavel0)
-        # Index formulas inverted from image_coordinates: x falls with the
-        # column and y with the row, from the (0, 0) pixel.
-        col = (xx[0, 0] - x) / pixel_scale_mas
-        row = (yy[0, 0] - y) / pixel_scale_mas
+        """Rasterise the faceted surface, flat-shaded per triangle.
+
+        Each pixel averages ``_image_oversample`` squared sub-pixel samples
+        of the surface brightness, so the limb is anti-aliased. A sample
+        takes the intensity of the front-facing triangle that contains it in
+        projection (those do not overlap, so no depth sorting is needed) and
+        0 outside the outline. This is what ``plot_surface`` draws and what
+        the visibilities transform, as opposed to splatting the barycentres
+        onto pixels, which blurs the limb and aliases against the mesh.
+        The sum matches the total weight of the DFT's point sources.
+        """
+        *_, teff, (pts, tri, cosine, intensity) = self._surface(
+            return_mesh=True
+        )
+        if self.t_pole is not None:  # drawn at wavel0
+            intensity = self._planck_intensity(teff, self.wavel0)
+        px, py = pts[tri, 0], pts[tri, 1]  # (n_tri, 3) corners on the sky
+        ax, ay = px[:, 0], py[:, 0]
+        e1x, e1y = px[:, 1] - ax, py[:, 1] - ay
+        e2x, e2y = px[:, 2] - ax, py[:, 2] - ay
+        det = e1x * e2y - e1y * e2x
+        # back-facing and degenerate triangles never contain a sample
+        valid = (cosine > 0) & (det != 0)
+        inv = 1.0 / np.where(valid, det, 1.0)
+        value = np.where(valid, intensity, 0.0)
+
+        def sample_row(pos):
+            sx, sy = pos[0] - ax[:, None], pos[1] - ay[:, None]
+            wb = (sx * e2y[:, None] - sy * e2x[:, None]) * inv[:, None]
+            wc = (e1x[:, None] * sy - e1y[:, None] * sx) * inv[:, None]
+            inside = valid[:, None] & (wb >= 0) & (wc >= 0) & (wb + wc <= 1)
+            hits = np.sum(inside, axis=0)
+            # a sample exactly on a shared edge counts once, not twice
+            total = np.sum(np.where(inside, value[:, None], 0.0), axis=0)
+            return total / np.maximum(hits, 1)
+
+        # sub-pixel sample positions; the pixel centres are the grid xx, yy
+        s = self._image_oversample
         nrow, ncol = xx.shape
-        c0, r0 = np.floor(col), np.floor(row)
-        fc, fr = col - c0, row - r0
-        image = np.zeros(xx.shape, dtype=w.dtype)
-        for dr, wr in ((0, 1.0 - fr), (1, fr)):
-            for dc, wc in ((0, 1.0 - fc), (1, fc)):
-                rr, cc = r0.astype(int) + dr, c0.astype(int) + dc
-                inside = (rr >= 0) & (rr < nrow) & (cc >= 0) & (cc < ncol)
-                image = image.at[
-                    np.clip(rr, 0, nrow - 1), np.clip(cc, 0, ncol - 1)
-                ].add(np.where(inside, w * wr * wc, 0.0))
-        return image
+        frac = ((np.arange(s) + 0.5) / s - 0.5) * pixel_scale_mas
+        sx = (xx[0, :, None] + frac).reshape(-1)  # (ncol * s,)
+        sy = (yy[:, 0, None] + frac).reshape(-1)  # (nrow * s,)
+        # one sub-row of samples at a time bounds memory by ncol * s * n_tri
+        sub_rows = jax.lax.map(
+            lambda y: sample_row((sx, y)), sy.astype(intensity.dtype)
+        )
+        mean = sub_rows.reshape(nrow, s, ncol, s).mean(axis=(1, 3))
+        # |normal| = 2 x area, so cosine carries twice the projected area
+        # in the DFT weights; the pixel area carries the same factor here
+        return 2.0 * pixel_scale_mas**2 * mean
 
     def plot_surface(self, ax=None, cmap="plasma"):
         """Plot the visible surface, coloured by its local brightness.
@@ -909,15 +1512,18 @@ def _modulation_array(values, name):
 
 class ModulatedGaussianRim(Component):
     r"""
-    Azimuthally modulated, infinitely thin rim convolved with an isotropic 2D
-    Gaussian, optionally inclined and rotated.
+    Azimuthally modulated, infinitely thin rim convolved with a 2D Gaussian
+    that is isotropic in the plane of the rim, optionally inclined and
+    rotated.
 
     Parameters
     ----------
     diam : float or array-like
         Diameter of the rim in milliarcseconds.
     fwhm : float or array-like
-        Gaussian FWHM of the rim in milliarcseconds.
+        Gaussian FWHM of the rim in milliarcseconds, measured in the plane of
+        the rim. On the sky this is the FWHM along the projected major axis;
+        along the minor axis it is ``fwhm * cos(inc)``.
     inc : float or array-like
         Apparent inclination of the rim in degrees.
     pa : float or array-like
@@ -953,11 +1559,15 @@ class ModulatedGaussianRim(Component):
     The rim is defined in its own plane and then inclined. In polar
     coordinates $(r, \phi)$ in the plane of the rim, the thin ring is
     $\delta(r - \mathrm{diam}/2) \left( 1 + \sum_{m=1}^{n}
-    A_m \cos{(m(\phi - \mathrm{pa}_m))} \right)$. The in-plane azimuth
-    $\phi$ is counted in the same sense as position angle, with
-    $\phi = \mathrm{pa}$ along the major axis. The ring is then compressed
-    by $\cos(\mathrm{inc})$ along the minor axis and convolved on the sky
-    with an isotropic Gaussian of FWHM ``fwhm``.
+    A_m \cos{(m(\phi - \mathrm{pa}_m))} \right)$, convolved with an
+    isotropic Gaussian of FWHM ``fwhm`` in that same plane. The in-plane
+    azimuth $\phi$ is counted in the same sense as position angle, with
+    $\phi = \mathrm{pa}$ along the major axis. This face-on image is then
+    compressed by $\cos(\mathrm{inc})$ along the minor axis, so on the sky
+    the blur is an elliptical Gaussian with FWHM ``fwhm`` along the major
+    axis and ``fwhm * cos(inc)`` along the minor axis. An unmodulated rim
+    therefore has the same peak brightness all the way round, without
+    bright ansae at the ends of the major axis.
 
     So ``az_pas`` are in-plane (deprojected) angles, not on-sky position
     angles. A point at in-plane azimuth $\phi$ appears at the on-sky
@@ -1062,7 +1672,20 @@ class ModulatedGaussianRim(Component):
         sigma_mas = np.maximum(
             self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0))), 1e-9
         )
-        psf = np.exp(-0.5 * (kx**2 + ky**2) / sigma_mas**2)
+        # Gaussian kernel that is isotropic in the rim plane: on the sky it
+        # has sigma_mas along the major axis and sigma_mas * stretch along
+        # the minor axis. The stretch is floored so that the sky-plane
+        # minor-axis sigma stays at least half a pixel, or sigma_mas if that
+        # is smaller (a near edge-on kernel then cannot fall between pixel
+        # centres), and capped at 1 so that a face-on rim keeps its
+        # isotropic sky kernel.
+        psf_stretch = np.minimum(
+            np.maximum(stretch, 0.5 * pixel_scale_mas / sigma_mas), 1.0
+        )
+        kx_ell, ky_ell = undo_elliptical_transf_coord(
+            kx, ky, self.pa, psf_stretch
+        )
+        psf = np.exp(-0.5 * (kx_ell**2 + ky_ell**2) / sigma_mas**2)
         return fftconvolve(ring, psf, mode="same")
 
 
@@ -1095,6 +1718,30 @@ def circular_support(npix, pixel_scale_mas, radius_mas, inner_radius_mas=0.0):
     offsets = pixel_offsets(int(npix), float(pixel_scale_mas))
     radius = np.hypot(offsets[None, :], offsets[:, None])
     return (radius <= radius_mas) & (radius >= inner_radius_mas)
+
+
+def _pixel_visibilities(
+    fluxes, pixel_scale_mas, rotation_deg, u, v, wavel, grid=None
+):
+    """Fourier transform of pixel fluxes centred on the origin, unnormalised.
+
+    Uses the exact matrix Fourier transform when the samples lie on a uv
+    ``grid`` whose rotation matches the pixels' (and there is a single
+    wavelength), and the direct transform otherwise.
+    """
+    matched = (
+        grid is not None
+        and abs(grid.rotation_deg - rotation_deg) < 1e-9
+        and np.size(wavel) == 1
+    )
+    if matched:
+        wavel = np.reshape(wavel, ())
+        vis = grid_visibilities(
+            fluxes, grid.u_axis / wavel, grid.v_axis / wavel, pixel_scale_mas
+        )
+        return vis.ravel()[grid.index]
+    uu, vv = rotate(u / wavel, v / wavel, -rotation_deg)
+    return image_visibilities(fluxes, uu, vv, pixel_scale_mas)
 
 
 class Image(Component):
@@ -1251,20 +1898,16 @@ class Image(Component):
         )
 
     def model_on_grid(self, u, v, wavel, grid):
-        matched = abs(grid.rotation_deg - self.rotation_deg) < 1e-9
-        if not (matched and np.size(wavel) == 1):
-            return self.model(u, v, wavel)
-        wavel = np.reshape(wavel, ())
-        vis = grid_visibilities(
+        vis = _pixel_visibilities(
             self.brightness,
-            grid.u_axis / wavel,
-            grid.v_axis / wavel,
             self.pixel_scale_mas,
+            self.rotation_deg,
+            u,
+            v,
+            wavel,
+            grid,
         )
-        uu, vv = u / wavel, v / wavel
-        return vis.ravel()[grid.index] * offset_phase(
-            uu, vv, self.dra, self.ddec
-        )
+        return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
         # Bilinear resampling of the pixels, exact at their centres.
@@ -1752,6 +2395,16 @@ class System(SourceModel):
     def model(self, u, v, wavel):
         return self._mix(u, v, wavel, lambda c: c.model(u, v, wavel))
 
+    @property
+    def time_dependent(self):
+        return any(part.time_dependent for part in self.parts)
+
+    def at(self, mjd, t_ref=0.0):
+        if not self.time_dependent:
+            return self
+        parts = tuple(part.at(mjd, t_ref) for part in self.parts)
+        return eqx.tree_at(lambda s: s.parts, self, parts)
+
     def model_on_grid(self, u, v, wavel, grid):
         return self._mix(
             u, v, wavel, lambda c: c.model_on_grid(u, v, wavel, grid)
@@ -1776,6 +2429,12 @@ class System(SourceModel):
 
     def _weight(self, wavel=None):
         return flux_at(self.flux, wavel)
+
+    def total_spectrum(self, wavel):
+        wavel = np.asarray(wavel)
+        return sum(
+            np.broadcast_to(c._weight(wavel), wavel.shape) for c in self.parts
+        )
 
     def is_physical(self):
         valid = _flux_is_non_negative(self.flux)
@@ -1838,8 +2497,178 @@ class Rotated(SourceModel):
     def _weight(self, wavel=None):
         return self.source._weight(wavel)
 
+    def total_spectrum(self, wavel):
+        return self.source.total_spectrum(wavel)
+
     def is_physical(self):
         return self.source.is_physical()
+
+    @property
+    def time_dependent(self):
+        return self.source.time_dependent
+
+    def at(self, mjd, t_ref=0.0):
+        if not self.time_dependent:
+            return self
+        return eqx.tree_at(
+            lambda r: r.source, self, self.source.at(mjd, t_ref)
+        )
+
+
+_FRAME_ANGLES = (
+    "line_pa",
+    "towards_primary",
+    "line_tilt",
+    "node_pa",
+    "inc",
+    "apparent_inc",
+)
+
+
+class Attached(SourceModel):
+    """A component placed and oriented in the frame of a binary's orbit.
+
+    At each time the component is moved to its anchor on the orbit, and
+    its angle attributes are set from angles of the binary frame (see
+    [`KeplerOrbit.frame`][virgil.orbits.KeplerOrbit.frame]). A companion
+    on its orbit is ``Attached(PointSource(flux), orbit)``; a disc around
+    it in the orbital plane, brighter on the side facing the primary, is
+
+    ``Attached(ModulatedGaussianRim(...), orbit, bind={"pa": "node_pa",
+    "inc": "apparent_inc", "az_pas": "towards_primary"})``.
+
+    The model changes with time, so it is evaluated through
+    [`at`][virgil.models.SourceModel.at]; inside a
+    [`System`][virgil.models.System],
+    [`OIData.model`][virgil.oidata.OIData.model] evaluates every sample at
+    its own time. Components that should share one orbit (a companion and
+    its disc) are best built from shared parameters in a model function
+    (see [`fit`][virgil.fitting.fit]).
+
+    Parameters
+    ----------
+    component : Component
+        The component (its ``dra``, ``ddec`` and bound angles are set).
+    orbit : KeplerOrbit
+        The orbit of the secondary about the primary (the scene's origin).
+    anchor : {"secondary", "primary"} or float, optional
+        Where the component sits: on the secondary (default), on the
+        primary, or at this fraction of the way from the primary to the
+        secondary (e.g. ``q / (1 + q)`` for the barycentre).
+    bind : dict, optional
+        ``{attribute: frame angle}``, e.g. ``{"pa": "line_pa"}``. Frame
+        angles: ``line_pa``, ``towards_primary``, ``line_tilt``,
+        ``node_pa``, ``inc`` and ``apparent_inc``. An ``az_pas`` binding is a
+        sky position angle, converted to the component's deprojected rim
+        angle after its ``pa`` and ``inc`` are set (as
+        [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]
+        measures it).
+    offsets : dict, optional
+        ``{attribute: degrees}`` added to the bound angles (fittable, e.g. a
+        skew); zero by default.
+    """
+
+    component: SourceModel
+    orbit: Any
+    offsets: dict
+    bind: tuple = eqx.field(static=True)
+    anchor: Any = eqx.field(static=True)
+
+    def __init__(
+        self, component, orbit, anchor="secondary", bind=None, offsets=None
+    ):
+        bind = dict(bind or {})
+        for attr, angle in bind.items():
+            if not hasattr(component, attr):
+                raise ValueError(
+                    f"{type(component).__name__} has no attribute {attr!r} "
+                    "to bind."
+                )
+            if angle not in _FRAME_ANGLES:
+                raise ValueError(
+                    f"Unknown frame angle {angle!r}; use one of "
+                    f"{', '.join(_FRAME_ANGLES)}."
+                )
+        offsets = dict(offsets or {})
+        unknown = set(offsets) - set(bind)
+        if unknown:
+            raise ValueError(
+                f"Offsets for unbound attributes: {sorted(unknown)}."
+            )
+        if anchor not in ("primary", "secondary"):
+            anchor = float(anchor)
+        self.component = component
+        self.orbit = orbit
+        self.anchor = anchor
+        # az_pas last: it is deprojected with the bound pa and inc.
+        self.bind = tuple(sorted(bind.items(), key=lambda b: b[0] == "az_pas"))
+        self.offsets = {
+            attr: np.asarray(offsets.get(attr, 0.0), dtype=float)
+            for attr in bind
+        }
+
+    @property
+    def time_dependent(self):
+        return True
+
+    def at(self, mjd, t_ref=0.0):
+        dt = _days_since(mjd, self.orbit.t_ref - t_ref)
+        dra, ddec, _ = self.orbit._relative(dt)
+        fraction = {"primary": 0.0, "secondary": 1.0}.get(
+            self.anchor, self.anchor
+        )
+        out = eqx.tree_at(
+            lambda c: (c.dra, c.ddec),
+            self.component,
+            (fraction * dra, fraction * ddec),
+        )
+        frame = self.orbit._frame(dt)
+        for attr, angle in self.bind:
+            value = frame[angle] + self.offsets[attr]
+            if attr == "az_pas":
+                value = _rim_angle(value, out.pa, out.inc)
+            old = getattr(out, attr)
+            out = eqx.tree_at(
+                lambda c: getattr(c, attr),
+                out,
+                np.broadcast_to(value, np.shape(old)).astype(
+                    np.result_type(old)
+                ),
+            )
+        return out
+
+    def model(self, u, v, wavel):
+        raise ValueError(
+            "Attached changes with time: evaluate model.at(mjd), or let "
+            "OIData.model evaluate each sample at its own time."
+        )
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        raise ValueError(
+            "Attached changes with time: render model.at(mjd) instead."
+        )
+
+    def _weight(self, wavel=None):
+        return self.component._weight(wavel)
+
+    def total_spectrum(self, wavel):
+        return self.component.total_spectrum(wavel)
+
+    def is_physical(self):
+        return self.component.is_physical()
+
+
+def _rim_angle(sky_pa, pa, inc):
+    """The in-plane rim angle whose projection points at ``sky_pa``.
+
+    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] measures
+    ``az_pas - pa`` in the deprojected disc and then compresses its minor
+    axis by ``cos(inc)``, so a sky angle is deprojected first.
+    """
+    d = np.deg2rad(sky_pa - pa)
+    return pa + np.rad2deg(
+        np.arctan2(np.sin(d) / np.cos(np.deg2rad(inc)), np.cos(d))
+    )
 
 
 _RESERVED_COMPONENT_NAMES = frozenset({"components", "names", "parts"})
@@ -1862,25 +2691,6 @@ def _check_component_name(name):
             f"'{name}' cannot be a component name because it clashes with a "
             "System attribute or method; choose another name."
         )
-
-
-def GaussianDiskModel(sigma, flux, dra=0.0, ddec=0.0):
-    """Point source at the origin plus a Gaussian disk with disk/star ratio ``flux``.
-
-    Convenience constructor equivalent to
-    ``System(star=PointSource(), disk=GaussianDisk(sigma, flux, dra, ddec))``,
-    whose parameters are addressed as ``"disk.sigma"``, ``"disk.flux"`` etc.
-    It can still be passed as a model class with plain parameter names
-    (``sigma``, ``flux``, ``dra``, ``ddec``) to the fitting tools.
-
-    ``GaussianDiskModel`` used to be a class. It now returns a
-    [`System`][virgil.models.System], so ``isinstance(model, GaussianDiskModel)`` no longer
-    works.
-    """
-    return System(
-        star=PointSource(),
-        disk=GaussianDisk(sigma, flux=flux, dra=dra, ddec=ddec),
-    )
 
 
 class BinaryModelAngular(SourceModel):
@@ -1921,13 +2731,16 @@ class BinaryModelAngular(SourceModel):
             self.sep * np.sin(th), self.sep * np.cos(th), self.flux
         )
 
+    def total_spectrum(self, wavel):
+        return self.to_cartesian().to_system().total_spectrum(wavel)
+
     def is_physical(self):
         return _flux_is_non_negative(self.flux)
 
     def model(self, u, v, wavel):
         """Complex visibilities on baselines ``u``, ``v`` (m) at ``wavel`` (m)."""
         uu, vv = u / wavel, v / wavel
-        return cvis_binary_angular(uu, vv, self.sep, self.pa, self.flux)
+        return _cvis_binary_angular(uu, vv, self.sep, self.pa, self.flux)
 
     def _image(self, xx, yy, pixel_scale_mas):
         return self.to_cartesian()._image(xx, yy, pixel_scale_mas)
@@ -1970,6 +2783,9 @@ class BinaryModelCartesian(SourceModel):
         sep = np.sqrt(self.dra**2 + self.ddec**2)
         pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
         return BinaryModelAngular(sep, pa, self.flux)
+
+    def total_spectrum(self, wavel):
+        return self.to_system().total_spectrum(wavel)
 
     def is_physical(self):
         return _flux_is_non_negative(self.flux)
@@ -2107,7 +2923,7 @@ class HarmonixModel(SourceModel):
         return np.where(on_disk, np.reshape(intensity, xx.shape), 0.0)
 
 
-def cvis_binary_angular(u, v, sep, pa, flux):
+def _cvis_binary_angular(u, v, sep, pa, flux):
     """Complex visibilities of a binary in polar coordinates.
 
     Parameters
@@ -2162,29 +2978,6 @@ def cvis_binary(u, v, dra, ddec, flux):
     return primary + companion * offset_phase(u, v, dra, ddec)
 
 
-def cvis_gaussian_disk(
-    u,
-    v,
-    sigma,
-    flux,
-    dra: jax.Array | float = 0.0,
-    ddec: jax.Array | float = 0.0,
-):
-    """Compute complex visibilities for a Gaussian-disk companion mixed with
-    an unresolved point source, using the ``flux`` companion/primary flux ratio
-    convention shared with [`cvis_binary`][virgil.models.cvis_binary].
-    """
-    sigma_rad = mas2rad * sigma
-    rho2 = u**2 + v**2
-    envelope = np.exp(-2.0 * (np.pi**2) * (sigma_rad**2) * rho2)
-
-    phase = offset_phase(u, v, dra, ddec)
-
-    l2 = flux / (flux + 1.0)
-    l1 = 1.0 - l2
-    return l1 + l2 * envelope * phase
-
-
 def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
     """Compute complex visibilities for a uniform (tophat) disk.
 
@@ -2226,6 +3019,64 @@ def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
     )
 
     return envelope * offset_phase(u, v, dra, ddec)
+
+
+def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
+    r"""Complex visibilities of a disk whose brightness is a sum of powers of $\mu$.
+
+    For $I(\mu) = \sum_\nu a_\nu \mu^\nu$, with $\mu = \sqrt{1 - (r/R)^2}$,
+    Quirrenbach et al. (1996, A&A 312, 160, eqs. 1-4) show that
+
+    $$
+    V(x) = \frac{1}{C} \sum_\nu a_\nu\, 2^{\nu/2}\,
+    \Gamma\!\left(\frac{\nu}{2} + 1\right)
+    \frac{J_{\nu/2+1}(x)}{x^{\nu/2+1}}, \qquad
+    C = \sum_\nu \frac{a_\nu}{\nu + 2},
+    $$
+
+    with $x = \pi\,\theta\,|b| / \lambda$ for diameter $\theta$, normalized to
+    1 at zero baseline. A uniform disk ($a_0 = 1$) gives $2 J_1(x)/x$. The
+    powers need not be integers: the square-root law has $\nu = 1/2$, which
+    needs order $5/4$, from jaxbessel's ``bessel_jv_over_xv``, which takes
+    orders up to 12, so $-2 < \nu \le 22$ (the lower limit keeps the flux
+    finite). harmonix
+    ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalises
+    the result to polynomial limb darkening of spherical-harmonic maps.
+
+    Parameters
+    ----------
+    u : array-like
+        Baseline ``u`` coordinates in wavelength units (cycles / rad).
+    v : array-like
+        Baseline ``v`` coordinates in wavelength units (cycles / rad).
+    diam : float or array-like
+        Limb-darkened diameter in milliarcseconds.
+    coeffs : array-like
+        Coefficients $a_\nu$, one per power (traceable).
+    powers : sequence of float
+        Powers $\nu$ of $\mu$, each with $-2 < \nu \le 22$ (static).
+    dra : float or array-like
+        Right-ascension offset in milliarcseconds.
+    ddec : float or array-like
+        Declination offset in milliarcseconds.
+
+    Returns
+    -------
+    array-like
+        Complex visibility samples.
+    """
+    bad = [nu for nu in powers if not -2.0 < float(nu) <= 22.0]
+    if bad:
+        raise ValueError(f"Powers of mu must be in (-2, 22], got {bad}.")
+    x = np.pi * np.hypot(u, v) * mas2rad * diam
+    total = 0.0
+    norm = 0.0
+    for i, nu in enumerate(powers):
+        nu = float(nu)
+        scale = 2.0 ** (nu / 2) * math.gamma(nu / 2 + 1)
+        total = total + coeffs[i] * scale * bessel_jv_over_xv(nu / 2 + 1, x)
+        norm = norm + coeffs[i] / (nu + 2)
+    return (total / norm + 0j) * offset_phase(u, v, dra, ddec)
 
 
 def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
@@ -2310,8 +3161,9 @@ def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
 def _cvis_gaussian_envelope(u, v, fwhm):
     """Complex visibility envelope of a centered isotropic 2D Gaussian PSF, used
     as the convolution kernel of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]. Not offered as a public
-    function: unlike [`cvis_gaussian_disk`][virgil.models.cvis_gaussian_disk], this is a plain Gaussian envelope
-    with no point-source/companion mixture.
+    function: this is a plain Gaussian envelope
+    with no point-source/companion mixture. The rim evaluates it on deprojected
+    spatial frequencies, so the kernel is isotropic in the rim plane.
     """
     fwhm_rad = fwhm * mas2rad
     base_norm = np.hypot(u, v)
@@ -2322,7 +3174,7 @@ def _cvis_gaussian_envelope(u, v, fwhm):
 
 
 def _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis):
-    """Unit-flux visibility of a Gaussian-blurred, inclined, modulated thin ring at the origin."""
+    """Unit-flux visibility of an inclined, modulated thin ring at the origin, blurred by a Gaussian that is isotropic in the rim plane."""
     # Transform spatial frequency coordinates to the frame of reference where the
     # model rim is uninclined and the major axis is pointed North.
     stretch_factor = np.maximum(np.cos(inc * dtor), 1e-8)
@@ -2332,5 +3184,7 @@ def _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis):
         ut, vt, diam / 2.0, az_amps, az_phis
     )
 
-    # Image-plane Gaussian blur, evaluated in the original (untransformed) frame.
-    return cvis * _cvis_gaussian_envelope(u, v, fwhm)
+    # Gaussian blur that is isotropic in the rim plane, so it is evaluated in
+    # the same (deprojected) frame as the ring; on the sky it is an elliptical
+    # Gaussian that is narrower along the minor axis.
+    return cvis * _cvis_gaussian_envelope(ut, vt, fwhm)

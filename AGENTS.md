@@ -50,8 +50,8 @@ Before committing:
    `pytest tests/test_tutorial_docs_sync.py`.
 4. If you touched docstrings or `docs/`: `mkdocs build --strict`.
 
-CI also autofixes formatting on same-repo PRs (`.github/workflows/lint.yml`), but do not
-rely on it — a clean diff keeps review focused on the actual change.
+CI checks linting and formatting (`.github/workflows/lint.yml`) but does not fix
+them, so lint before you push.
 
 ## Independent validation
 
@@ -65,6 +65,14 @@ validation that is not covered there, ask them to open an Issue on
 virgil-validation (https://github.com/benjaminpope/virgil-validation/issues)
 detailing the request: the model or function, the independent result it should
 match, and the precision expected.
+
+## Instrument-specific work
+
+Calibration and error models specific to the VLTI instruments (GRAVITY,
+PIONIER, MATISSE) live in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti),
+together with the GRAVITY calibration review. virgil keeps the generic
+machinery (readers, likelihoods, nuisance modes) and never imports virgil-vlti;
+see that repository's `PLAN.md` for the boundary.
 
 ## Conventions
 
@@ -83,7 +91,9 @@ match, and the precision expected.
   `cast_tree`), with float32 as an option.
 - Every likelihood, grid, limit and fit uses one residual vector,
   `likelihood.whitened_residuals` (unprojected phases as the chord 2 sin(Δ/2)/σ,
-  a von Mises likelihood). Do not recompute χ² from `OIData.residuals`, which is for
+  a von Mises likelihood; correlated closure phases from four or more
+  telescopes use whitened sin Δ plus a periodic penalty 2 sin²(Δ/2)/σ, so
+  `OIData.n_residuals` exceeds `n_independent`). Do not recompute χ² from `OIData.residuals`, which is for
   display.
 - `OIData.model` calls `model_on_grid` when the data carry a `uv_grid` (a regular uv
   lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
@@ -99,17 +109,22 @@ match, and the precision expected.
 | Module | Contents |
 | --- | --- |
 | `oidata.py` | `OIData` (observables, flags, operators, residuals), `closure_phases`, `cp_indices` |
+| `_closure.py` | `ClosureNoise`: independent, whitened closure phases with Kammerer et al.'s (2020) correlations, used by `whitened_residuals` (private) |
 | `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
 | `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
 | `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
-| `fitting.py` | `fit(model, priors, data, regularisers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments) |
-| `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `beam`, `l_curve`, `diagnose` |
+| `fitting.py` | `fit(model, priors, data, regularisers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
+| `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `error_scale`, `diagnose` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
-| `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
+| `limits.py` | `ruffio_upperlimit`, `absil_limits`, `injection_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
+| `detection.py` | `detection_statistics` (Δχ², grid-marginalised log Bayes factor, max SNR; traceable in the data for `lax.map` over simulations) and `local_nsigma`, for ROC curves; see `design/detection_roc.md` |
 | `fields.py` | Gaussian-process log-brightness for an `Image` (`GaussianField`, a DCT field with a Matérn-like spectrum) |
-| `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, and `Tabulated` for a free flux per channel, provisional until Stage 6a's `Nodes`) accepted as a component's `flux` (SPARCO) |
+| `observables.py` | extra observable blocks after `vis`/`phi` in `OIData`: OI_FLUX spectra with marginalised grey scales (`FluxSpectrum`), \|V\|, T3AMP, and continuum-normalised differential phases (`DifferentialPhase`, closure-free beside closure phases); `continuum_operator` |
+| `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, `GaussianLine`, `LorentzianLine`, `Nodes` for a free flux per channel, and `Sum`; `Tabulated` is deprecated for `Nodes`) accepted as a component's `flux` (SPARCO) |
+| `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
+| `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
@@ -117,10 +132,14 @@ match, and the precision expected.
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |
 
-Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`oidata`
-→ `models` → `likelihood` → `fitting` → `imaging`, and `likelihood` → `inference` → `_grid` →
-(`grid_fit`, `limits`) → `plotting`. `grid_fit` and `limits` do not import each other;
-`scenes` imports only `_geometry` and `_utils`.
+Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_closure`
+→ `oidata` → `coverage`; `gains` → `observables` → `oidata`. Separately, `_utils` → `spectra` and `fields`, and
+`_elr`/`spectra` → `models` → `likelihood` → `fitting` (which also imports `fields`) →
+`imaging` (which imports `fitting`, `fields`, `likelihood` and `models`). `likelihood` →
+`inference` → `grid_fit` and `likelihood` → `limits`; `grid_fit` and `limits` also use
+`_grid`, which imports only `_utils`, and do not import each other; `limits` →
+`plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `orbits` imports only `_utils`
+(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached`). `simulate` imports `fitting`.
 
 ## Flux and contrast
 
@@ -133,6 +152,8 @@ astronomical convention instead: **contrast** is primary/companion (100) and
 `contrast`.
 
 ## Image coordinate convention
+
+The user-facing version of the conventions (coordinates, Fourier sign, observables, fluxes, times) is `docs/conventions.md`; keep it in step with this section.
 
 **This convention must never be violated.** It has been the direct cause of real
 bugs (see below), and any new coordinate, rendering, or plotting code must be
@@ -220,7 +241,7 @@ to that test.
   (`"comp.flux"`); tools accept a template model plus paths anywhere they
   accept a model class (`build_model`). The argument is called `model`.
 - Grid tools that optimize a flux (`optimized_likelihood_grid`,
-  `optimized_flux_grid`, `laplace_flux_uncertainty_grid`, `absil_limits`)
+  `optimized_flux_grid`, `laplace_flux_uncertainty_grid`, `absil_limits`, `injection_limits`)
   use the one key whose last part is `flux` (`_utils.resolve_flux_param`);
   if there is none or more than one, the caller must pass `flux_param=`.
   Plotting uses the same rule.

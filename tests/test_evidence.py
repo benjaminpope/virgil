@@ -5,8 +5,9 @@ import pytest
 
 from virgil.coverage import vlti_oidata
 from virgil.fields import GaussianField
-from virgil.fitting import fit
+from virgil.fitting import FitResult, fit
 from virgil.imaging import (
+    LCurve,
     MaxEntropy,
     error_scale,
     image_priors,
@@ -14,6 +15,8 @@ from virgil.imaging import (
     log_evidence,
 )
 from virgil.models import GaussianDisk, Image, PointSource, System
+
+from ._compiles import count_compiles
 
 DATA = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
 N, H = 16, 1.0
@@ -148,3 +151,81 @@ def test_error_scale_rejects_bad_factors_and_pixel_images():
     )
     with pytest.raises(TypeError, match="GaussianField"):
         error_scale(scene, DATA)
+
+
+def test_error_scale_solves_mackays_fixed_point():
+    # s² = χ² / (N − γ) with γ = Σ βλ / (1 + βλ) evaluated at β = 1/s²
+    # itself (MacKay 1992, eqs. 4.9-4.10), not at β = 1.
+    from virgil._precision import cast_tree, run_in
+    from virgil.likelihood import whitened_residuals
+
+    latent = jax.random.normal(jax.random.PRNGKey(6), (N, N))
+    noisy = DATA.with_model(
+        _gp_scene(latent, 1.5), key=jax.random.PRNGKey(7), noise_scale=0.5
+    )
+    start = _gp_scene(onp.zeros((N, N)), 1.5)
+    result = fit(start, image_priors(start), noisy)
+    scale = error_scale(result.model, noisy)
+    path = "env.log_brightness.latent"
+    with run_in("float64"):
+        model, d = cast_tree((result.model, noisy), "float64")
+
+        def residuals(z):
+            return whitened_residuals(model.set(path, z), d)
+
+        z = model.get(path)
+        r = onp.asarray(residuals(z))
+        jac = onp.asarray(jax.jacfwd(residuals)(z)).reshape(r.size, -1)
+    lam = onp.linalg.eigvalsh(jac.T @ jac).clip(0.0)
+    beta = 1.0 / scale**2
+    gamma = onp.sum(beta * lam / (1.0 + beta * lam))
+    # N is the number of independent data, not of residuals (correlated
+    # closure phases add penalty residuals that are not observations).
+    n_data = noisy.n_independent
+    assert scale**2 == pytest.approx((r @ r) / (n_data - gamma), rel=1e-6)
+
+
+def test_evidence_helpers_reject_fitted_noise_and_model_lists():
+    latent = onp.zeros((N, N))
+    scene = _gp_scene(latent, 1.5)
+    noisy_fit = FitResult(scene, {"noise.vis_scale": 1.2}, {})
+    for helper in (log_evidence, error_scale):
+        with pytest.raises(ValueError, match="noise"):
+            helper(noisy_fit, DATA)
+        with pytest.raises(TypeError, match="list of models"):
+            helper([scene, scene], [DATA, DATA])
+        # A FitResult without noise terms is accepted, like its model.
+        clean_fit = FitResult(scene, {}, {})
+        assert helper(clean_fit, DATA) == pytest.approx(helper(scene, DATA))
+    pixels = System(
+        star=PointSource(), env=Image.from_model(GaussianDisk(3.0), N, H)
+    )
+    curve = LCurve(
+        weights=np.array([1.0]),
+        chi2=np.array([1.0]),
+        chi2_red=np.array([[1.0]]),
+        penalty=np.array([1.0]),
+        results=[FitResult(pixels, {"noise[0].phi_error": 0.1}, {})],
+    )
+    with pytest.raises(ValueError, match="noise"):
+        curve.classic_maxent(DATA)
+
+
+def test_the_evidence_jacobian_compiles_once():
+    # The residual Jacobian is jitted once at module level. Run eagerly, it
+    # compiled hundreds of small operations one at a time on its first call
+    # (about 340 here); jitted, it is a handful of compilations.
+    n = 11  # a grid size no other test uses, so nothing is cached
+
+    def scene(sigma):
+        field = GaussianField(onp.zeros((n, n)), sigma, 2.0)
+        return System(star=PointSource(), env=Image(field, H, flux=0.4))
+
+    first, second = scene(1.5), scene(3.0)
+    with count_compiles() as compiles:
+        log_evidence(first, DATA)
+    assert len(compiles) < 20
+    with count_compiles() as compiles:
+        log_evidence(second, DATA)
+        error_scale(second, DATA)
+    assert not compiles

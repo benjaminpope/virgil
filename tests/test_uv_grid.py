@@ -29,6 +29,9 @@ def _without_grid(data):
     )
 
 
+@pytest.mark.validates(
+    "virgil.models.Image.model_on_grid", roots=["self-consistency"]
+)
 @pytest.mark.parametrize("shape", [(17, 17), (16, 16), (12, 15)])
 def test_grid_transform_equals_the_dft_at_the_grid_points(shape):
     rng = onp.random.default_rng(0)
@@ -92,6 +95,7 @@ def test_rotated_image_pixel_lands_at_the_rotated_sky_position():
     assert np.unravel_index(np.argmax(rendered), rendered.shape) == (4, 0)
 
 
+@pytest.mark.validates("virgil.models.Image", roots=["mathematics"])
 def test_rotated_from_model_matches_the_analytic_model():
     disk = GaussianDisk(sigma=5.0, dra=4.0, ddec=-3.0)
     image = Image.from_model(disk, 49, 1.0, rotation_deg=30.0)
@@ -102,6 +106,9 @@ def test_rotated_from_model_matches_the_analytic_model():
     )
 
 
+@pytest.mark.validates(
+    "virgil.models.Image.model_on_grid", roots=["self-consistency"]
+)
 @pytest.mark.parametrize("x64", [False, True])
 def test_grid_path_matches_the_per_point_path(x64):
     with jax.enable_x64(x64):
@@ -118,6 +125,9 @@ def test_grid_path_matches_the_per_point_path(x64):
         assert np.max(np.abs(fast - slow)) < tol * np.max(np.abs(slow)) + tol
 
 
+@pytest.mark.validates(
+    "virgil.models.Image.model_on_grid", roots=["self-consistency"]
+)
 def test_mismatched_rotation_falls_back_to_the_exact_per_point_path():
     data = OIData(ami_grid_record(rotation_deg=-6.9))
     scene = System(star=PointSource(), env=Image(np.zeros((9, 9)), 20.0))

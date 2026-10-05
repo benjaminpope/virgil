@@ -35,7 +35,7 @@ for path in (repo_root, repo_root / "src"):
 from virgil.inference import (
     fisher_projection,
     gaussian_fisher,
-    observed_information,
+    hessian_matrix,
     regularized_inverse,
 )
 from virgil.likelihood import (
@@ -231,7 +231,7 @@ def flat_objective(values):
 
 
 expected_fisher, _ = gaussian_fisher(prediction_fn, recovered, errors)
-observed_info = observed_information(flat_objective, recovered_vector)
+observed_info = hessian_matrix(flat_objective, recovered_vector)
 laplace_covariance = regularized_inverse(observed_info, ridge=1e-8)
 laplace_sigma = jnp.sqrt(jnp.diag(laplace_covariance))
 

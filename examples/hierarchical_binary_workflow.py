@@ -10,7 +10,7 @@ from jax.flatten_util import ravel_pytree
 from virgil.inference import (
     fisher_projection,
     gaussian_fisher,
-    observed_information,
+    hessian_matrix,
     regularized_inverse,
 )
 from virgil.likelihood import joint_loglike, joint_prediction
@@ -151,7 +151,7 @@ def fit_hierarchical_binary(observations, initial=None, max_steps=256):
         )
 
     expected, _ = gaussian_fisher(prediction, recovered, errors)
-    observed = observed_information(flat_objective, recovered_vector)
+    observed = hessian_matrix(flat_objective, recovered_vector)
     covariance = regularized_inverse(observed, ridge=1e-8)
     return recovered, expected, observed, covariance
 

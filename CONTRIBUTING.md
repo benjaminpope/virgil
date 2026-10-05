@@ -11,16 +11,28 @@ Firstly, you will need to fork the repository to your own GitHub account. This w
 Next, you will need to clone the repository to your local machine. To do this, open a terminal and navigate to the directory you would like to clone the repository to. Then run the following command:
 
 ```bash
-git clone https://github.com/your-username-here/virgil.git
+git clone --filter=blob:none https://github.com/your-username-here/virgil.git
 cd virgil
 uv python install 3.11
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -e ".[dev,notebooks]"
 ```
 
+`--filter=blob:none` makes a partial clone: it downloads every commit, so `git log`,
+`git blame` and pushing work as usual, but fetches old versions of files only when you
+look at them. The history holds large data files that are no longer used, so this cuts
+the download from about 280 MB to about 15 MB.
+
 CI tests against the newest JAX, so if you reuse an existing `.venv`, upgrade it first
 with `uv pip install --python .venv/bin/python --upgrade -e ".[dev,notebooks]"`. Upgrading
 `jax` on its own can leave optax, equinox etc. too old for it.
+
+The extras are `plots` (pandas and ChainConsumer, for the corner-plot helpers in
+`virgil.plotting`), `legacy` (astroquery, for `virgil.legacy`), `integrations`
+(jaxoplanet, for `HarmonixModel`), `test`, `docs`, `notebooks` and `dev` (`test` and
+`docs` plus the tools). harmonix itself is not yet on PyPI in a version virgil works
+with; to run its tests, install it from GitHub as CI does:
+`uv pip install --python .venv/bin/python "harmonix @ git+https://github.com/shashankdholakia/harmonix"`.
 
 Ruff is pinned to an exact version in `pyproject.toml` (`required-version`) so that local
 runs and CI format identically; installing the `dev` extra gives you the right one. If you
@@ -84,7 +96,14 @@ This will run all tests in the `tests` directory. If you would like to run a spe
 uv run --python .venv/bin/python pytest tests/test_file.py
 ```
 
-Note that passing locally does not guarantee cross-platform compatibility. GitHub Actions runs CI checks for consistency across environments.
+Note that passing locally does not guarantee cross-platform compatibility. On every pull
+request, GitHub Actions (`.github/workflows/tests.yml`) runs the suite on Linux with
+Python 3.12 (in float32 and float64) and 3.13, on macOS with Python 3.11, and once with
+every dependency at the oldest version `pyproject.toml` allows; it also builds the wheel
+and sdist, checks them with `twine check --strict`, and imports the wheel in a clean
+environment. Raising a dependency floor means editing `pyproject.toml`, which that last
+job then tests. The lint workflow only checks: fix what it reports with
+`bash scripts/lint_local.sh --fix` and push again.
 
 **Documentation**
 
@@ -108,8 +127,8 @@ Typical helper usage patterns:
 
 - Grid and map visuals: `plot_grid_map(values, grid, kind=...)` (kinds `loglike`, `flux`, `sigma`, `snr`, `limit`) and `plot_contrast_curve`
 - Data: `plot_oidata_overview`, `plot_model`
-- Posterior diagnostics: `plot_chainconsumer_diagnostics`, `plot_trace_panels`
-- Recovery/correlation summaries: `plot_recovery_residuals`, `plot_data_model_correlation`
+- Posterior diagnostics: `plot_chainconsumer_diagnostics`
+- Correlation summaries: `plot_data_model_correlation`
 
 To build the documentation locally and make sure everything is working correctly, you can run the following command:
 

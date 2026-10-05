@@ -21,7 +21,7 @@ if not (repo_root / "src").exists():
 if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
-from virgil._geometry import pixel_offsets
+from virgil import pixel_offsets
 from virgil.coverage import ami_grid_record
 from virgil.models import BinaryModelCartesian, Image, PointSource, System
 from virgil.oidata import OIData

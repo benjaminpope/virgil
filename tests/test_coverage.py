@@ -82,3 +82,21 @@ def test_rotation_follows_the_position_angle_convention():
     assert np.allclose(data.u, u, atol=1e-5) and np.allclose(
         data.v, v, atol=1e-5
     )
+
+
+def test_vlti_nights_repeat_the_snapshots_with_times():
+    from virgil.coverage import vlti_oidata
+
+    hours, nights = (-1.0, 0.0, 1.0), (60000.0, 60100.0)
+    one = vlti_oidata(hour_angles_h=hours, wavelengths_m=[2.2e-6])
+    timed = vlti_oidata(
+        hour_angles_h=hours, wavelengths_m=[2.2e-6], nights_mjd=nights
+    )
+    assert one.mjd is None
+    assert timed.u.size == 2 * one.u.size
+    assert onp.allclose(timed.u[: one.u.size], one.u)
+    assert onp.allclose(
+        onp.unique(timed.mjd), [n + h / 24 for n in nights for h in hours]
+    )
+    assert onp.unique(onp.asarray(timed.frame)).size == 6
+    assert len(timed.split_by_epoch()) == 2

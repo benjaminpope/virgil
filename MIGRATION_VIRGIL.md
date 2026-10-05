@@ -9,7 +9,7 @@
 | Source directory | `src/drpangloss/` | `src/virgil/` |
 | PyPI distribution | `drpangloss` | `virgil-astro` (`virgil` is taken on PyPI) |
 | Install | `pip install drpangloss` | `pip install virgil-astro` |
-| Extras | `drpangloss[nufft]` | `virgil-astro[nufft]` |
+| Extras | `drpangloss[nufft]` | none: the NUFFT backend was removed (issue #75) |
 | Docs site | `benjaminpope.github.io/drpangloss` | `benjaminpope.github.io/virgil` |
 
 This file replaces any earlier instructions for a rename to `sibylla`. That rename never landed and must not be started.
@@ -38,7 +38,7 @@ Branch names, PR numbers and commit SHAs are unchanged. Keep working as normal.
 
 ## Step 2: wait for the code rename to land
 
-Until the human tells you the rename is done, keep using `drpangloss` everywhere (imports, docs, new files under `src/drpangloss/`). Do **not** rename anything pre-emptively.
+**Status: the rename has landed** (merged 3 October 2026, PR #126; the tags below exist), so new work uses `virgil`. The rest of this step is the historical instruction. While the rename was pending, agents kept using `drpangloss` everywhere (imports, docs, new files under `src/drpangloss/`) and did not rename anything pre-emptively.
 
 The rename has landed when both tags exist:
 
@@ -99,7 +99,7 @@ Restart any Python kernels or long-running processes: they still have `drpanglos
 ## After migration
 
 - Code: `import virgil`, `from virgil.models import ...`. Doc cross-references use `[name][virgil.module.name]`.
-- Packaging: the distribution is `virgil-astro` (`pip install virgil-astro`, `importlib.metadata.version("virgil-astro")`, `virgil-astro[nufft]`). Never write `pip install virgil`: that installs an unrelated package.
+- Packaging: the distribution is `virgil-astro` (`pip install virgil-astro`, `importlib.metadata.version("virgil-astro")`; there is no `nufft` extra). Never write `pip install virgil`: that installs an unrelated package.
 - New modules go in `src/virgil/`.
 - Leave these intentional leftovers alone:
   - the string `drpangloss-synthetic-mixed-disco-v1`: the tag stored inside `data/calibrated_visibility.npy`;
@@ -125,7 +125,7 @@ Do this once, while feature agents are paused at Step 2.
 3. **Commit A:** `python3 scripts/rename_to_virgil.py && git add -A && git commit -m "Rename drpangloss -> virgil (mechanical, script output)"`. Nothing else may go in this commit. Do not touch its output by hand. In the rehearsal on current `main`, the script:
    - moved 22 files and rewrote 120;
    - set `name = "virgil-astro"` in `pyproject.toml` and `uv.lock`;
-   - changed `pip install drpangloss` to `pip install virgil-astro` in `README.md` and `docs/index.md`, and `drpangloss[nufft]` to `virgil-astro[nufft]` in `design/`;
+   - changed `pip install drpangloss` to `pip install virgil-astro` in `README.md` and `docs/index.md`, and `drpangloss[nufft]` to `virgil-astro[nufft]` in `design/` (that extra never existed on `main`: the NUFFT backend had been removed);
    - left everything else as `virgil`;
    - passed `ruff check .` and the full `pytest` suite (390 passed, 5 skipped).
 4. **Commit B and later:** hand edits only. Keep this small:

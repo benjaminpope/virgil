@@ -10,8 +10,6 @@
         - plot_residual_map
         - plot_oidata_overview
         - plot_data_model_correlation
-        - plot_trace_panels
-        - plot_recovery_residuals
         - plot_chainconsumer_diagnostics
         - plot_hmc_fisher_chainconsumer
         - diagnostics_table_from_samples

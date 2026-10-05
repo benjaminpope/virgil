@@ -12,6 +12,12 @@ Gaussian-field images, the Laplace evidence (`log_evidence`).
         - TSV
         - TV
         - MaxEntropy
+        - Laplacian
+        - StarletL1
+        - LogSum
+        - starlet
+        - clean
+        - CleanResult
         - Centroid
         - starting_image
         - dirty_image
@@ -27,3 +33,8 @@ Gaussian-field images, the Laplace evidence (`log_evidence`).
         - error_scale
         - diagnose
         - Diagnosis
+
+::: virgil._geometry
+    options:
+      members:
+        - pixel_offsets

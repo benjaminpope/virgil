@@ -14,6 +14,7 @@ HANDOFF.md
 site/
 docs/generated/_tmp_*
 dist/
+build/
 
 # Proprietary AMIGO reduction product used only to generate the public fixture.
 data/calibrated_visibility_private.npy
@@ -23,7 +24,8 @@ data/calibrated_visibility_private.npy
 notebooks/archive/
 .jax-cache/
 
-# ELR PAVO re-analysis outputs
+# ELR PAVO re-analysis outputs (results are kept private for now)
 examples/elr_pavo/output/
+examples/elr_pavo/comparison.md
 # ELR PAVO robustness outputs
 examples/elr_pavo/robustness/output/

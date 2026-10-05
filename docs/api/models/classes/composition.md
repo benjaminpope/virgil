@@ -6,7 +6,6 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
     options:
       show_root_heading: true
       heading_level: 2
-      show_attributes: false
       members:
         - model
         - render
@@ -15,7 +14,6 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
     options:
       show_root_heading: true
       heading_level: 2
-      show_attributes: false
       members: false
 
 ::: virgil.models.PointSource
@@ -42,11 +40,37 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
       heading_level: 2
       members: false
 
+::: virgil.models.TruncatedCone
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members: false
+
 ::: virgil.models.UniformDisk
     options:
       show_root_heading: true
       heading_level: 2
       members: false
+
+::: virgil.models.LimbDarkenedDisk
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members: false
+
+::: virgil.models.QuadraticLimbDarkenedDisk
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members:
+        - from_u
+
+::: virgil.models.SquareRootLimbDarkenedDisk
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members:
+        - from_cd
 
 ::: virgil.models.GravityDarkenedStar
     options:
@@ -95,7 +119,13 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
     options:
       show_root_heading: true
       heading_level: 2
-      show_attributes: false
+
+::: virgil.models.Attached
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members:
+        - at
 
 Models are fitted through [`virgil.likelihood`](../../likelihood.md)
 (`build_model`, `loglike`, `numpyro_model`).

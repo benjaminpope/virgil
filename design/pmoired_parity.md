@@ -57,6 +57,6 @@ These are what GRAVITY and MATISSE line data need.
 
 ## Not planned
 - **The string expression language.** Python functions do the same job.
-- **GRAVITY-specific tools** (telluric correction, fibre losses, polarisation averaging, pipeline parameters): no longer "not planned". They move to the separate GRAVITY project in [`imaging_plan.md`](imaging_plan.md), decided 2026-10-03.
+- **GRAVITY-specific tools** (telluric correction, fibre losses, polarisation averaging, pipeline parameters): no longer "not planned". They move to the separate instrument project, [virgil-vlti](https://github.com/benjaminpope/virgil-vlti) (decided 2026-10-03; see [`imaging_plan.md`](imaging_plan.md)).
 - **Physical templates:** the Keplerian-disk and rotating/pulsating-star models. `HarmonixModel` already wraps rotating stars, and these can be added on demand.
 - **Other utilities:** microlensing, SATLAS tables, JSDC calibrator diameters, `slant`, `spatial kernel`, and barycentric velocity.

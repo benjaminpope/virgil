@@ -350,8 +350,12 @@ def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
 
     The modulation is $1 + f(\theta)$ with
     $f(\theta) = \sum_{m=1}^{n} A_m \cos(m(\theta - \mathrm{pa}_m))$. Its
-    minimum is found from the roots of $f'$, using a Laurent polynomial and
-    its companion matrix, so the check is fast and exact.
+    minimum is found by evaluating $f$ on $64 n$ equally spaced angles and
+    polishing the lowest one with a few Newton steps on $f'$. Every value
+    used is a true value of $f$, so the minimum is never underestimated;
+    the grid alone overestimates it by at most
+    $\tfrac12 \sum_m m^2 |A_m| \, (\pi / 64 n)^2$, and the Newton steps
+    remove it at the minimum they polish. It is traceable (``jit``-safe).
 
     Parameters
     ----------
@@ -374,45 +378,28 @@ def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
     if k == 0:
         # No modulation: the profile is the constant 1.
         return True
-    deg = 2 * k
+    az_amps = np.asarray(az_amps)
+    orders = np.arange(1, k + 1)
+    phases = np.asarray(az_pas) * dtor * orders
 
-    # Orders start from 1 up to k
-    idx = np.arange(1, k + 1)
-    phases_terms_rad = az_pas * dtor * idx
+    def derivatives(theta):
+        # f and its first two derivatives at the angles ``theta``.
+        arg = orders * theta[..., None] - phases
+        cos, sin = np.cos(arg), np.sin(arg)
+        f = np.sum(az_amps * cos, axis=-1)
+        df = -np.sum(az_amps * orders * sin, axis=-1)
+        d2f = -np.sum(az_amps * orders**2 * cos, axis=-1)
+        return f, df, d2f
 
-    # Initialize polynomial coefficients (must be complex).
-    coeffs = np.zeros(deg + 1) + 0j
+    theta = np.linspace(0.0, 2 * np.pi, 64 * k, endpoint=False)
+    f_grid = derivatives(theta)[0]
+    f_min = np.min(f_grid)
+    # Newton steps on f' from the lowest grid point, where f'' > 0 near a
+    # minimum; a step is skipped where it is not.
+    t = theta[np.argmin(f_grid)]
+    for _ in range(3):
+        f, df, d2f = derivatives(t)
+        t = t - np.where(d2f > 0, df / np.where(d2f > 0, d2f, 1.0), 0.0)
+        f_min = np.minimum(f_min, derivatives(t)[0])
 
-    # Correctly aligned Fourier derivative polterms for z^k * f'(z) = 0.
-    lower_vals = -0.5j * az_amps * idx * np.exp(1j * phases_terms_rad)
-    upper_vals = 0.5j * az_amps * idx * np.exp(-1j * phases_terms_rad)
-
-    # Set complex polynomial coefficients.
-    coeffs = coeffs.at[k - np.arange(1, k + 1)].set(lower_vals)
-    coeffs = coeffs.at[k + np.arange(1, k + 1)].set(upper_vals)
-
-    # Prevent division-by-zero errors during matrix normalization.
-    leading_coef = np.where(np.abs(coeffs[-1]) > 1e-6, coeffs[-1], 1.0 + 0.0j)
-    coeffs_norm = coeffs / leading_coef
-
-    # Build Companion Matrix (must be complex).
-    companion_matrix = np.zeros((deg, deg)) + 0j
-    if deg > 1:
-        companion_matrix = companion_matrix.at[1:, :-1].set(np.eye(deg - 1))
-    companion_matrix = companion_matrix.at[:, -1].set(-coeffs_norm[:-1])
-
-    # Extract all complex points where derivative is 0.
-    roots = np.linalg.eigvals(companion_matrix)
-    angles = np.angle(roots)
-
-    # Evaluate at these local minima.
-    harmonics = az_amps * np.cos(idx * angles[:, None] - phases_terms_rad)
-    f_at_peaks = np.sum(harmonics, axis=1)
-
-    # Isolate valid peaks near unit circle.
-    global_min = np.min(f_at_peaks)
-
-    # Find global minimum of azimuthal profile.
-    f_global_min = 1.0 + global_min
-
-    return f_global_min > 0.0 - tol
+    return 1.0 + f_min > -tol

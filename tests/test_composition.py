@@ -3,6 +3,7 @@ import jax.numpy as np
 import numpy as onp
 import numpyro.distributions as dist
 import pytest
+from numpyro.infer import MCMC, NUTS, init_to_value
 from numpyro.infer.util import log_density
 
 from virgil.grid_fit import (
@@ -13,13 +14,17 @@ from virgil.grid_fit import (
     optimized_likelihood_grid,
 )
 from virgil.inference import laplace_cov
-from virgil.likelihood import build_model, loglike, numpyro_model
+from virgil.likelihood import (
+    build_model,
+    loglike,
+    model_loglike,
+    numpyro_model,
+)
 from virgil.limits import absil_limits, nsigma
 from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
     GaussianDisk,
-    GaussianDiskModel,
     ModulatedGaussianRim,
     PointSource,
     System,
@@ -257,17 +262,6 @@ def test_shifted_subsystem_renders_east_on_the_left():
     assert onp.unravel_index(image.argmax(), image.shape) == (2, 0)
 
 
-def test_gaussian_disk_model_is_star_plus_disk():
-    legacy = GaussianDiskModel(sigma=6.0, flux=0.3, dra=4.0, ddec=-2.0)
-    composed = System(
-        star=PointSource(),
-        disk=GaussianDisk(6.0, flux=0.3, dra=4.0, ddec=-2.0),
-    )
-    assert np.allclose(
-        legacy.model(U, V, WAVEL), composed.model(U, V, WAVEL), atol=1e-12
-    )
-
-
 def test_build_model_accepts_classes_and_templates():
     params, values = ("dra", "ddec", "flux"), (10.0, -5.0, 0.01)
     from_class = build_model(BinaryModelCartesian, params, values)
@@ -499,6 +493,69 @@ def test_numpyro_model_accepts_a_function_of_new_parameters():
     assert covariance.shape == (3, 3)
     assert np.all(np.isfinite(covariance))
     assert np.allclose(covariance, covariance.T, rtol=1e-3)
+
+
+def _two_epochs(dra1, ddec1, dra2, ddec2, flux):
+    """A binary at two epochs: a position each, one flux ratio."""
+    return [
+        _composed_binary(dra1, ddec1, flux),
+        _composed_binary(dra2, ddec2, flux),
+    ]
+
+
+def test_numpyro_model_pairs_a_list_of_models_with_the_datasets():
+    truth = {
+        "dra1": 120.0,
+        "ddec1": -80.0,
+        "dra2": 100.0,
+        "ddec2": -110.0,
+        "flux": 4e-3,
+    }
+    epochs = [
+        oidata.with_model(m, key=jax.random.PRNGKey(k))
+        for k, m in enumerate(_two_epochs(**truth))
+    ]
+    priors = {
+        key: dist.Uniform(-200.0, 0.0)
+        if key.startswith("ddec")
+        else dist.Uniform(0.0, 200.0)
+        for key in truth
+        if key != "flux"
+    } | {"flux": dist.LogUniform(1e-5, 1e-1)}
+    sampler = numpyro_model(_two_epochs, priors, epochs)
+    point = truth | {"dra2": 105.0, "flux": 5e-3}
+    logp, _ = log_density(sampler, (), {}, point)
+    paired = sum(
+        model_loglike(m, d) for m, d in zip(_two_epochs(**point), epochs)
+    )
+    log_prior = sum(
+        priors[key].log_prob(value) for key, value in point.items()
+    )
+    assert np.isclose(logp, log_prior + paired, rtol=1e-6)
+    # Each model meets its own dataset: swapping them costs likelihood.
+    swapped = sum(
+        model_loglike(m, d) for m, d in zip(_two_epochs(**point)[::-1], epochs)
+    )
+    assert swapped < paired - 10.0
+
+    mcmc = MCMC(
+        NUTS(sampler, init_strategy=init_to_value(values=truth)),
+        num_warmup=100,
+        num_samples=100,
+        progress_bar=False,
+    )
+    mcmc.run(jax.random.PRNGKey(0))
+    samples = mcmc.get_samples()
+    assert all(np.all(np.isfinite(samples[key])) for key in truth)
+    assert abs(float(np.median(samples["dra2"])) - 100.0) < 5.0
+
+    with pytest.raises(ValueError, match="2 models for 3 datasets"):
+        log_density(
+            numpyro_model(_two_epochs, priors, epochs + [oidata]),
+            (),
+            {},
+            point,
+        )
 
 
 def test_function_ties_parameters_between_components():

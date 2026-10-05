@@ -5,7 +5,8 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from virgil._geometry import image_visibilities, pixel_offsets
+from virgil import pixel_offsets
+from virgil._geometry import image_visibilities
 from virgil.amigo import load_oi_data
 from virgil.likelihood import model_loglike
 from virgil.models import (

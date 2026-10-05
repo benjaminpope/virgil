@@ -390,7 +390,7 @@ exp(+i t/2) along each even-length axis. That is because the pixel centre
 is at (n − 1)/2 but FINUFFT's mode 0 is at n/2. `eps` is fixed by dtype:
 1e-7 in float64 and 1e-5 in float32 (FINUFFT cannot go much below 1e-6 in
 single precision). No user-facing `eps` knob until someone needs one. The
-optional extra is `virgil-astro[nufft]`, tested in its own CI job.
+optional extra was `nufft` (there is no such extra now that the backend is removed), tested in its own CI job.
 
 Laptop CPU (Apple arm64, jax 0.9.1, jax-finufft 1.3.1 pip wheel), jitted
 value + gradient of Σ|V|², from `scripts/bench_ft.py`; raw numbers in
@@ -490,13 +490,13 @@ its starting value:
   does not recompile for every weight.
 - `fit` runs in float64 and casts its results back to the ambient precision.
 
-**Simulated data.** `amigo.simulated_disco_record` filled a whole uv disc
+**Simulated data.** `amigo.simulated_disco_record` (now `coverage.ami_grid_record`) filled a whole uv disc
 with independent log-amplitude and phase modes, a far easier inversion than
 real AMI (which made early reconstructions look much too good). It is
 replaced by `coverage.ami_grid_record`: a uv grid whose information is
 weighted by the mask's transfer function, with flux and position projected
 out and an SVD basis kept to 99% of the precision, after AMIGO's latent
-visibility basis (Desdoigts et al. 2025, arXiv:2510.09806); and
+visibility basis (Desdoigts et al., PASA 43, e075 (2026), arXiv:2510.09806); and
 `coverage.nrm_oidata`, classical V² and closure phases at the splodge
 centres. The real ν Hor F430M product, by comparison, has 833 modes on a
 1860-cell grid whose operators are confined to the splodges.
@@ -564,7 +564,7 @@ On simulated VLTI and AMI data the GP image matches or beats maximum entropy. On
 
 ### Stage 6
 
-Additions driven by VLTI/GRAVITY data on Apep, a dusty Wolf–Rayet binary (branch `apep-gravity`):
+Additions driven by VLTI/GRAVITY data on Apep, a dusty Wolf–Rayet binary (merged from the `apep-gravity` branch):
 - `EllipticalGaussian` and `GaussianArc` (a Gaussian ridge along a circular arc, by quadrature), both in the render↔model test;
 - an anisotropic `GaussianField` (`length_mas=(row, col)`);
 - `Tabulated`, a free flux per spectral channel, provisional until 6a's `Nodes`;

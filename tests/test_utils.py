@@ -93,3 +93,46 @@ def test_check_az_prof_nonnegative_detects_valid_and_invalid_profiles():
 
 def test_check_az_prof_nonnegative_accepts_no_modulation():
     assert check_az_prof_nonnegative(az_amps=np.array([]), az_pas=np.array([]))
+
+
+def _brute_force_minimum(amps, pas, n=200_000):
+    theta = onp.linspace(0.0, 2 * onp.pi, n, endpoint=False)
+    orders = onp.arange(1, len(amps) + 1)
+    arg = orders * theta[:, None] - onp.deg2rad(pas) * orders
+    return 1.0 + onp.min(onp.sum(amps * onp.cos(arg), axis=1))
+
+
+def test_check_az_prof_nonnegative_with_zero_top_order():
+    # Review 1.1: a zero highest-order amplitude used to break the
+    # companion-matrix roots, and 1 + 1.2 cos(θ - 45°) (minimum -0.2)
+    # passed.
+    amps, pas = np.array([1.2, 0.0]), np.array([45.0, 0.0])
+    assert _brute_force_minimum(onp.asarray(amps), onp.asarray(pas)) < -0.19
+    assert not bool(check_az_prof_nonnegative(amps, pas))
+    assert bool(check_az_prof_nonnegative(np.array([0.8, 0.0]), pas))
+
+
+def test_check_az_prof_nonnegative_matches_brute_force():
+    rng = onp.random.default_rng(1)
+    for _ in range(40):
+        k = rng.integers(1, 5)
+        amps = rng.uniform(-0.8, 0.8, k) * (rng.random(k) > 0.3)
+        pas = rng.uniform(0.0, 360.0, k)
+        true_min = _brute_force_minimum(amps, pas)
+        if abs(true_min) < 1e-3:
+            continue  # too close to call against the brute-force grid
+        got = check_az_prof_nonnegative(np.asarray(amps), np.asarray(pas))
+        assert bool(got) == (true_min > 0.0), (amps, pas, true_min)
+
+
+def test_check_az_prof_nonnegative_finds_a_narrow_dip():
+    # A just-negative minimum between grid points is still caught: the
+    # Newton steps polish the grid's lowest value.
+    amps, pas = np.array([0.0, 0.0, 1.0 + 1e-4]), np.array([0.0, 0.0, 1.0])
+    assert not bool(check_az_prof_nonnegative(amps, pas))
+
+
+def test_check_az_prof_nonnegative_under_jit():
+    check = jax.jit(check_az_prof_nonnegative)
+    assert not bool(check(np.array([1.2, 0.0]), np.array([45.0, 0.0])))
+    assert bool(check(np.array([0.5, 0.3]), np.array([10.0, 70.0])))

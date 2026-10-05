@@ -54,6 +54,9 @@ def _rms_widths(image, fov_mas):
 # --- 1. golden values ----------------------------------------------------
 
 
+@pytest.mark.validates(
+    "virgil.models.GravityDarkenedStar", roots=["golden:dholakia"]
+)
 def test_matches_original_code_golden_values():
     golden = onp.load(_GOLDEN)
     with jax.enable_x64():
@@ -88,6 +91,9 @@ def _ud_error(n_lat):
     )
 
 
+@pytest.mark.validates(
+    "virgil.models.GravityDarkenedStar", roots=["mathematics"]
+)
 def test_omega_zero_matches_uniform_disk():
     assert _ud_error(32) < 1e-2
 
@@ -145,6 +151,7 @@ def test_equator_on_shape_is_perpendicular_to_pole():
     assert w_ns > 1.03 * w_ew  # pole East: equator runs North-South
 
 
+@pytest.mark.slow
 def test_offsets_shift_photocentre():
     diam, fov = 2.0, 16.0
     base = GravityDarkenedStar(diam, 0.9, 45.0, 0.0)
@@ -391,3 +398,74 @@ def test_plot_surface_returns_artist():
     artist2 = GravityDarkenedStar(1.0, 0.8, 60.0).plot_surface()
     assert artist2 is not None
     plt.close("all")
+
+
+# --- 5. rasterised image ------------------------------------------------
+
+
+def _outline_radii(star):
+    """Smallest and largest sky radius of the visible outline."""
+    pts, tri, cosine, _ = star._surface(return_mesh=True)[-1]
+    pts, tri = onp.asarray(pts), onp.asarray(tri)
+    visible = onp.asarray(cosine) > 0
+    used = pts[onp.unique(tri[visible])][:, :2]
+    radius = onp.hypot(used[:, 0], used[:, 1])
+    return radius.min(), radius.max()
+
+
+def test_image_flux_matches_dft_weights():
+    xx, yy = image_coordinates(64, 3.0)
+    star = GravityDarkenedStar(2.0, 0.9, 45.0, 20.0, n_lat=32)
+    image = star._centred_image(xx, yy, 3.0 / 64)
+    total = star._surface()[2].sum()
+    onp.testing.assert_allclose(image.sum(), total, rtol=5e-3)
+    hot = GravityDarkenedStar(2.0, 0.9, 45.0, 20.0, t_pole=9000.0)
+    image = hot._centred_image(xx, yy, 3.0 / 64)
+    weights = hot._planck_weights(hot.wavel0)[2]
+    onp.testing.assert_allclose(image.sum(), weights.sum(), rtol=5e-3)
+
+
+def test_image_is_zero_outside_outline_and_positive_inside():
+    fov, npix = 3.0, 64
+    pixel = fov / npix
+    star = GravityDarkenedStar(2.0, 0.9, 45.0, 20.0, n_lat=32)
+    image = onp.asarray(star.render(npix, fov))
+    xx, yy = image_coordinates(npix, fov)
+    radius = onp.hypot(xx, yy)
+    # the star is centred on the origin; edge pixels are partly covered
+    r_min, r_max = _outline_radii(star)
+    assert onp.all(image[radius > r_max + 1.5 * pixel] == 0.0)
+    assert onp.all(image[radius < r_min - 1.5 * pixel] > 0.0)
+
+
+def test_pole_on_disk_is_smooth():
+    # slow rotation, pole-on: nearly uniform disk, so no speckle expected
+    fov, npix = 3.0, 128
+    star = GravityDarkenedStar(2.0, 0.05, 0.0, n_lat=32)
+    image = onp.asarray(star.render(npix, fov))
+    xx, yy = image_coordinates(npix, fov)
+    radius = onp.hypot(xx, yy)
+    values = image[(radius > 0.3) & (radius < 0.8)]
+    assert values.std() / values.mean() < 0.01
+
+
+@pytest.mark.slow
+def test_image_works_in_float64_and_fine_grid():
+    star = GravityDarkenedStar(2.0, 0.7, 60.0, 10.0, n_lat=64)
+    image = star.render(128, 3.0)
+    assert image.shape == (128, 128)
+    assert onp.all(onp.isfinite(image))
+    with jax.enable_x64(True):
+        star64 = GravityDarkenedStar(2.0, 0.7, 60.0, 10.0, n_lat=16)
+        image64 = star64.render(48, 3.0)
+        assert image64.dtype == onp.float64
+        onp.testing.assert_allclose(image64.sum(), 1.0, rtol=1e-10)
+
+
+def test_image_is_jit_and_grad_safe():
+    def left_half(omega):
+        star = GravityDarkenedStar(2.0, omega, 50.0, 10.0, n_lat=16)
+        return star.render(24, 3.0)[:, :12].sum()
+
+    value, grad = jax.jit(jax.value_and_grad(left_half))(0.5)
+    assert onp.isfinite(value) and onp.isfinite(grad)

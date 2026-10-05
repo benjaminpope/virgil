@@ -254,6 +254,7 @@ def vlti_oidata(
     sigma_v2=0.03,
     sigma_cp_deg=1.0,
     latitude_deg=PARANAL_LATITUDE_DEG,
+    nights_mjd=None,
 ):
     """A simulated long-baseline observation: V² and closure phases.
 
@@ -281,20 +282,30 @@ def vlti_oidata(
         Error of each closure phase, in degrees.
     latitude_deg : float, optional
         The array's latitude (default: Paranal).
+    nights_mjd : sequence of float, optional
+        Repeat the snapshots on each of these nights, given as the MJD of
+        the target's transit; each snapshot is then a frame at
+        ``night + hour_angle / 24`` (for orbits and other scenes that
+        change with time). By default the data have no times.
 
     Returns
     -------
     OIData
         Data with zero values, for
-        [`with_model`][virgil.oidata.OIData.with_model].
+        [`with_model`][virgil.oidata.OIData.with_model]. Each snapshot is a
+        frame, and each baseline carries its station pair (numbered from
+        1), so [`with_gains`][virgil.oidata.OIData.with_gains] applies.
     """
     stations = onp.asarray(stations, float)
     n = len(stations)
     pairs = list(itertools.combinations(range(n), 2))
     triangles = list(itertools.combinations(range(n), 3))
     lat, dec = onp.radians(latitude_deg), onp.radians(declination_deg)
-    us, vs, all_pairs, all_triangles = [], [], [], []
-    for epoch, hour in enumerate(hour_angles_h):
+    us, vs, mjd, all_pairs, all_triangles = [], [], [], [], []
+    frame, station_pairs = [], []
+    nights = [None] if nights_mjd is None else list(nights_mjd)
+    snapshots = [(night, hour) for night in nights for hour in hour_angles_h]
+    for epoch, (night, hour) in enumerate(snapshots):
         h = onp.radians(15.0 * hour)
         for i, j in pairs:
             east, north = stations[j] - stations[i]
@@ -308,14 +319,21 @@ def vlti_oidata(
                 + onp.cos(dec) * z
             )
             all_pairs.append((n * epoch + i, n * epoch + j))
+            frame.append(epoch)
+            station_pairs.append((i + 1, j + 1))
+            mjd.append(None if night is None else night + hour / 24.0)
         all_triangles += [
             tuple(n * epoch + t for t in tri) for tri in triangles
         ]
     i1, i2, i3 = cp_indices(all_pairs, all_triangles)
     wavelengths = onp.asarray(wavelengths_m, float)
     n_bl, n_cp, n_wl = len(us), len(all_triangles), wavelengths.size
+    times = {} if nights_mjd is None else {"mjd": onp.asarray(mjd, float)}
     return OIData(
         {
+            **times,
+            "frame": onp.asarray(frame),
+            "stations": onp.asarray(station_pairs),
             "u": onp.asarray(us),
             "v": onp.asarray(vs),
             "wavel": wavelengths,

@@ -4,9 +4,11 @@
     options:
       show_root_heading: false
       heading_level: 3
-      show_attributes: false
       members:
         - model
         - model_on_grid
         - render
+        - total_spectrum
         - is_physical
+        - at
+        - time_dependent

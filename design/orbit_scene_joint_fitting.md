@@ -1,8 +1,8 @@
 # Keplerian orbits in virgil: alone, and jointly with the scene
 
-Status: **design**, 2026-10-03. Orbits are to be built in virgil, with the Kepler solver and orbital geometry from [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (0.1.0) as an optional dependency. No orbit code exists yet.
+Status: **design**, 2026-10-03. Orbits are built in virgil, which owns the orbital geometry and conventions (Thiele–Innes, §2.4); [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (0.1.0, an optional dependency) only solves Kepler's equation, and appears otherwise only in the converters. Being built in Stage 6a.1: `virgil.orbits` (`KeplerOrbit`, `ThieleInnesOrbit`) exists; see the implementation log in [`imaging_plan.md`](imaging_plan.md).
 
-This note is the design of Stage 6a.1, orbits and binary-frame scenes, which grew out of the "Keplerian orbits" item first listed in Stage 8 ([`imaging_plan.md`](imaging_plan.md), [`pmoired_parity.md`](pmoired_parity.md)) into a general capability: fitting orbits to interferometric data from any instrument virgil reads, with radial velocities and external priors, and with scene components that move with the binary. The spectral and calibration side is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md). The runnable sketch is [`sketches/orbit_attached.py`](sketches/orbit_attached.py).
+This note is the design of Stage 6a.1, orbits and binary-frame scenes, which grew out of the "Keplerian orbits" item first listed in Stage 8 ([`imaging_plan.md`](imaging_plan.md), [`pmoired_parity.md`](pmoired_parity.md)) into a general capability: fitting orbits to interferometric data from any instrument virgil reads, with radial velocities and external priors, and with scene components that move with the binary. The spectral and calibration side is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md). The runnable sketch is [`sketches/orbit_attached.py`](sketches/orbit_attached.py). How this compares with orbitize!, Octofitter and orvara, and what to credit and adopt from them, is in [`orbit_prior_art.md`](orbit_prior_art.md).
 
 The colliding-wind binary Apep (VLTI/GRAVITY, 2023–25) is a worked example. It exposed most of the requirements below. Its science and Apep-specific scripts live with the analysis, in `~/data/apep_gravity` (`notes/lessons_for_drpangloss.md`, `notes/omega_convention_question.md`, `scripts/attached_cone_sketch.py`).
 
@@ -74,6 +74,8 @@ With X = cos E − e and Y = √(1 − e²) sin E:
 - F = a(−sin ω cos Ω − cos ω sin Ω cos i), G = a(−sin ω sin Ω + cos ω cos Ω cos i),
 - C = a sin ω sin i, H = a cos ω sin i.
 
+With a Gaussian prior, A, B, F, G can also be integrated out analytically, which leaves a three-parameter posterior in (P, e, t_peri). That prior is not the usual one on the Campbell elements, so the result needs reweighting: see [`thiele_innes_marginalisation.md`](thiele_innes_marginalisation.md).
+
 ### 2.5 Why conventions matter: an example
 Two real cases from Apep show what goes wrong.
 1. **External elements disagree.** The JWST plume orbit (Ω = 164°, read as North through East) predicts a line of centres at PA 164°/344°. GRAVITY measures 96°.
@@ -100,6 +102,7 @@ Two real cases from Apep show what goes wrong.
   1. Fit each epoch with the existing binary tools (grids, `fit`, Laplace errors) to get positions and their covariances.
   2. On a grid of (P, e, t_peri), the positions are **linear** in the Thiele–Innes constants A, B, F, G (§2.4), so these are a weighted linear least-squares solve per grid point.
   3. The best grid points start the joint visibility fit (R7) or NUTS. This is the classical approach. It is cheap, it needs no random restarts, and it handles the multimodality of short arcs.
+  4. The marginal version of the same solve (a Gaussian prior on A, B, F, G, and the log-determinant kept) ranks grid points by evidence and gives exact posteriors from positions: [`thiele_innes_marginalisation.md`](thiele_innes_marginalisation.md).
 - **The fast route, when it is valid.** For two point sources well inside the field, per-epoch Laplace positions are close to sufficient statistics. Fitting the orbit to them (`PositionData`, R7) is then fast and nearly exact. With extended emission it is not, and the joint fit is required (R7).
 
 ### R1. An orbit that exposes the 3-D relative vector

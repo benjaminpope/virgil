@@ -1,12 +1,11 @@
 from pathlib import Path
 
 import jax.numpy as np
-import jax.scipy as jsp
 import numpy as onp
 import pytest
 
 from virgil.amigo import load_oi_data
-from virgil.likelihood import loglike_nosignal, model_loglike
+from virgil.likelihood import model_loglike
 from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData
 
@@ -92,7 +91,7 @@ def test_mixed_disco_flatten_data_returns_coefficients_and_sigma():
     assert np.allclose(errors, oidata.d_vis)
 
 
-def test_mixed_disco_likelihoods_are_finite_and_no_signal_is_zero_target():
+def test_mixed_disco_likelihood_is_finite_and_unity_is_zero_target():
     oidata = load_oi_data(PRODUCT, "F380M")
     model = BinaryModelCartesian(100.0, -50.0, 1e-3)
 
@@ -101,18 +100,6 @@ def test_mixed_disco_likelihoods_are_finite_and_no_signal_is_zero_target():
         oidata.standardize_model(unity), np.zeros_like(oidata.vis)
     )
     assert np.isfinite(model_loglike(model, oidata))
-
-    values = np.array([100.0, -50.0, 1e-3])
-    params = ["dra", "ddec", "flux"]
-    model_data = oidata.model(BinaryModelCartesian(*values))
-    expected = jsp.stats.norm.logpdf(
-        model_data, loc=np.zeros_like(oidata.vis), scale=oidata.d_vis
-    ).sum()
-
-    assert np.allclose(
-        loglike_nosignal(values, params, oidata, BinaryModelCartesian),
-        expected,
-    )
 
 
 def test_mixed_disco_record_validation_rejects_bad_shapes_and_covariance():

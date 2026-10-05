@@ -212,8 +212,9 @@ for dt in (0.0, 120.0, 240.0):
     image = np.asarray(centred.render(npix, fov))
     # render(): column 0 is the most positive dra (East left), row 0 North.
     # The flux-weighted centroid of a ring modulated as 1 + a cos(θ - φ)
-    # points along the projection of φ (projection is linear; the brightest
-    # pixel is not, being pulled towards the minor axis).
+    # points along the projection of φ (projection is linear). The brightest
+    # pixel does too, since the rim is blurred in its own plane, but only to
+    # the nearest pixel, so the centroid is the sharper check.
     dra = (-xs)[None, :] * np.ones((npix, 1))
     ddec = (-xs)[:, None] * np.ones((1, npix))
     bright_pa = (

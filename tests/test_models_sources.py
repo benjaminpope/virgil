@@ -9,6 +9,7 @@ from scipy.special import jn_zeros
 
 from virgil._geometry import image_coordinates as _image_coordinates
 from virgil._geometry import offset_phase
+from virgil._geometry import undo_elliptical_transf_spat_freq
 from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
@@ -18,16 +19,18 @@ from virgil.models import (
     FlaredDiskHG,
     FlaredDiskPowerLaw,
     GaussianDisk,
-    GaussianDiskModel,
     GravityDarkenedStar,
     HarmonixModel,
     Image,
+    LimbDarkenedDisk,
     ModulatedGaussianRim,
     PointSource,
+    QuadraticLimbDarkenedDisk,
     Rotated,
+    SquareRootLimbDarkenedDisk,
     System,
+    TruncatedCone,
     UniformDisk,
-    cvis_gaussian_disk,
     cvis_radial_dirac_delta_modulated,
     cvis_uniform_disk,
 )
@@ -39,23 +42,21 @@ from tests._test_data import oidata
 _MAS2RAD_REF = onp.pi / 180.0 / 3600.0 / 1000.0
 
 
+def _star_and_disk(sigma, flux, dra=0.0, ddec=0.0):
+    return System(
+        star=PointSource(),
+        disk=GaussianDisk(sigma, flux=flux, dra=dra, ddec=ddec),
+    )
+
+
 def _star_and_rim(flux, **rim_kwargs):
     return System(
         star=PointSource(), rim=ModulatedGaussianRim(flux=flux, **rim_kwargs)
     )
 
 
-def test_cvis_gaussian_disk_is_well_behaved():
-    uu = oidata.u / oidata.wavel
-    vv = oidata.v / oidata.wavel
-    cvis = cvis_gaussian_disk(uu, vv, sigma=20.0, flux=0.1, dra=5.0, ddec=-3.0)
-    assert cvis.shape == uu.shape
-    assert np.all(np.isfinite(cvis))
-    assert np.all(np.abs(cvis) <= 1.0 + 1e-12)
-
-
 def test_gaussian_disk_oidata_and_render():
-    model = GaussianDiskModel(sigma=30.0, flux=0.1, dra=10.0, ddec=-10.0)
+    model = _star_and_disk(sigma=30.0, flux=0.1, dra=10.0, ddec=-10.0)
     model_vec = oidata.model(model)
     image = model.render(npix=64, fov_mas=150.0)
 
@@ -67,7 +68,7 @@ def test_gaussian_disk_oidata_and_render():
 
 
 def test_gaussian_disk_render_remains_finite_for_narrow_shifted_disk():
-    image = GaussianDiskModel(sigma=1e-6, flux=0.1, dra=1e6, ddec=-1e6).render(
+    image = _star_and_disk(sigma=1e-6, flux=0.1, dra=1e6, ddec=-1e6).render(
         npix=32, fov_mas=20.0
     )
 
@@ -90,6 +91,7 @@ def test_cvis_uniform_disk_zero_baseline_is_unity():
     assert np.allclose(cvis, 1.0 + 0j)
 
 
+@pytest.mark.validates("virgil.models.UniformDisk", roots=["mathematics"])
 def test_cvis_uniform_disk_matches_analytic_airy_formula():
     """Visibility amplitude should follow 2*J1(pi*theta*B/lambda) /
     (pi*theta*B/lambda), with theta the disk diameter in mas and B/lambda
@@ -111,6 +113,7 @@ def test_cvis_uniform_disk_matches_analytic_airy_formula():
     assert onp.allclose(onp.asarray(cvis).imag, 0.0, atol=1e-8)
 
 
+@pytest.mark.validates("virgil.models.UniformDisk", roots=["mathematics"])
 def test_cvis_uniform_disk_vanishes_at_first_airy_null():
     ud = 8.0
     first_null_kernel = jn_zeros(1, 1)[0]
@@ -190,6 +193,9 @@ def test_star_and_zero_flux_rim_is_pure_point_source():
     assert np.allclose(cvis, 1.0 + 0j)
 
 
+@pytest.mark.validates(
+    "virgil.models.ModulatedGaussianRim", roots=["mathematics"]
+)
 def test_symmetric_rim_matches_bessel_j0():
     """An unmodulated, uninclined, infinitely-narrow rim is a plain thin
     ring, whose visibility is the classic J0(2*pi*r0*B/lambda) form; mixed
@@ -332,6 +338,95 @@ def test_modulated_gaussian_rim_render_follows_north_to_east_pa_convention(
     assert halves[bright_half] > halves[faint_half]
 
 
+def _rim_baselines():
+    rng = onp.random.default_rng(3)
+    return rng.uniform(-60.0, 60.0, 40), rng.uniform(-60.0, 60.0, 40), 2.2e-6
+
+
+@pytest.mark.validates(
+    "virgil.models.ModulatedGaussianRim", roots=["mathematics"]
+)
+@pytest.mark.parametrize("x64", [False, True])
+def test_unmodulated_rim_visibility_is_blurred_in_the_rim_plane(x64):
+    """An unmodulated rim is a thin ring times a Gaussian envelope, both
+    evaluated on the deprojected spatial frequencies (ut, vt): the blur is
+    isotropic in the plane of the rim, not on the sky. Checked against
+    independent scipy.special.j0 and numpy calls.
+    """
+    diam, fwhm, inc, pa = 30.0, 6.0, 55.0, 25.0
+    u, v, wavel = _rim_baselines()
+    with jax.enable_x64(x64):
+        cvis = ModulatedGaussianRim(diam, fwhm, inc, pa).model(u, v, wavel)
+
+    pa_rad, inc_rad = onp.deg2rad(pa), onp.deg2rad(inc)
+    uu, vv = u / wavel, v / wavel
+    ut = (uu * onp.cos(pa_rad) - vv * onp.sin(pa_rad)) * onp.cos(inc_rad)
+    vt = uu * onp.sin(pa_rad) + vv * onp.cos(pa_rad)
+    q = onp.hypot(ut, vt)
+    fwhm_rad = fwhm * _MAS2RAD_REF
+    expected = scipy_j0(
+        2.0 * onp.pi * q * (diam / 2.0) * _MAS2RAD_REF
+    ) * onp.exp(-(onp.pi**2) * fwhm_rad**2 * q**2 / (4.0 * onp.log(2.0)))
+
+    assert onp.allclose(onp.asarray(cvis).real, expected, atol=1e-6)
+    assert onp.allclose(onp.asarray(cvis).imag, 0.0, atol=1e-6)
+
+
+def test_inclined_rim_visibility_is_the_face_on_rim_in_the_rim_plane():
+    """Inclining and rotating a modulated rim only changes the frame: its
+    visibility is that of the face-on (inc=0, pa=0) rim, with modulation
+    angles az_pas - pa, sampled at the deprojected frequencies.
+    """
+    diam, fwhm, inc, pa = 25.0, 4.0, 65.0, 40.0
+    az_amps = np.array([0.5, 0.3])
+    az_pas = np.array([100.0, 20.0])
+    u, v, wavel = _rim_baselines()
+
+    cvis = ModulatedGaussianRim(
+        diam, fwhm, inc, pa, az_amps=az_amps, az_pas=az_pas
+    ).model(u, v, wavel)
+    ut, vt = undo_elliptical_transf_spat_freq(
+        u, v, pa, max(onp.cos(onp.deg2rad(inc)), 1e-8)
+    )
+    face_on = ModulatedGaussianRim(
+        diam, fwhm, 0.0, 0.0, az_amps=az_amps, az_pas=az_pas - pa
+    ).model(ut, vt, wavel)
+
+    assert onp.allclose(onp.asarray(cvis), onp.asarray(face_on), atol=1e-6)
+
+
+def test_inclined_unmodulated_rim_render_has_no_bright_ansae():
+    """With the blur isotropic in the rim plane, an inclined unmodulated
+    rim is the face-on blurred ring compressed along its minor axis, so its
+    peak brightness is the same on the major and the minor axis. A blur
+    that is isotropic on the sky instead gives ansae about 2.5 times
+    brighter at inc=70.
+    """
+    npix = 201
+    image = onp.asarray(
+        ModulatedGaussianRim(diam=40.0, fwhm=8.0, inc=70.0, pa=0.0).render(
+            npix=npix, fov_mas=100.5
+        )
+    )
+    center = npix // 2
+    # pa=0: the major axis runs North-South (a column), the minor axis
+    # East-West (a row).
+    major_peak = image[:, center].max()
+    minor_peak = image[center, :].max()
+
+    assert abs(major_peak / minor_peak - 1.0) < 0.05
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_edge_on_rotated_rim_render_is_finite_and_normalized(x64):
+    with jax.enable_x64(x64):
+        image = ModulatedGaussianRim(
+            diam=40.0, fwhm=2.0, inc=90.0, pa=37.0
+        ).render(npix=64, fov_mas=100.0)
+        assert np.all(np.isfinite(image))
+        assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
+
+
 def test_binary_render_is_available():
     image = BinaryModelCartesian(10.0, -5.0, 1e-3).render(
         npix=32, fov_mas=80.0
@@ -341,13 +436,35 @@ def test_binary_render_is_available():
     assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
 
 
+@pytest.mark.validates(
+    "virgil.models.SourceModel.render", roots=["self-consistency"]
+)
 @pytest.mark.parametrize(
     ("model", "atol"),
     [
         (BinaryModelCartesian(12.0, -7.0, 0.3), 2e-3),
         (BinaryModelAngular(20.0, 60.0, 1.0 / 3.0), 2e-3),
-        (GaussianDiskModel(4.0, 0.5, 6.0, 3.0), 2e-3),
+        (_star_and_disk(4.0, 0.5, 6.0, 3.0), 2e-3),
         (UniformDisk(15.0, dra=-5.0, ddec=4.0), 2e-3),
+        (
+            TruncatedCone(
+                4.0,
+                35.0,
+                3.0,
+                6.0,
+                1.5,
+                tilt=30.0,
+                pa=60.0,
+                ratio=0.7,
+                dra=3.0,
+                ddec=-2.0,
+                n_rings=16,
+            ),
+            2e-3,
+        ),
+        (LimbDarkenedDisk(15.0, u=[0.3, 0.2, 0.1], dra=-5.0, ddec=4.0), 2e-3),
+        (QuadraticLimbDarkenedDisk(15.0, q1=0.5, q2=0.3, dra=-5.0), 2e-3),
+        (SquareRootLimbDarkenedDisk(15.0, q1=0.6, q2=0.4, ddec=4.0), 2e-3),
         (
             Image.from_model(GaussianDisk(4.0), 49, 0.5, dra=6.0, ddec=-3.0),
             2e-3,
@@ -426,11 +543,13 @@ def test_binary_render_is_available():
             ),
             2e-3,
         ),
-        (
+        pytest.param(
             GravityDarkenedStar(
                 12.0, omega=0.9, inc=50.0, pa=30.0, dra=-5.0, ddec=4.0
             ),
-            2e-4,
+            # the image shades whole facets, the DFT uses barycentre points
+            5e-4,
+            marks=pytest.mark.slow,
         ),
     ],
     ids=[
@@ -438,6 +557,10 @@ def test_binary_render_is_available():
         "binary_ang",
         "gauss_disk",
         "uniform_disk",
+        "truncated_cone",
+        "limb_darkened_disk",
+        "quadratic_limb_darkened_disk",
+        "square_root_limb_darkened_disk",
         "image",
         "rim",
         "nested_system",
@@ -488,7 +611,7 @@ def test_image_coordinates_use_pixel_centers(npix, fov_mas, expected):
 
 
 def test_gaussian_disk_render_uses_interferometric_image_orientation():
-    image = GaussianDiskModel(sigma=1e-3, flux=10.0, dra=2.0, ddec=2.0).render(
+    image = _star_and_disk(sigma=1e-3, flux=10.0, dra=2.0, ddec=2.0).render(
         npix=5, fov_mas=10.0
     )
 
@@ -649,6 +772,10 @@ def _render_visibilities(model, u, v, npix, fov_mas):
     return phase @ image
 
 
+@pytest.mark.slow
+@pytest.mark.validates(
+    "virgil.models.HarmonixModel", roots=["self-consistency"]
+)
 def test_harmonix_render_fourier_transform_matches_model_visibilities():
     # The rendered star must be on the sky (East left, North up) at its
     # radius: its Fourier transform reproduces harmonix's visibilities, and
@@ -674,6 +801,7 @@ def test_harmonix_render_fourier_transform_matches_model_visibilities():
     assert onp.max(onp.abs(cvis_changed - cvis_model)) > 1e-2
 
 
+@pytest.mark.slow
 def test_harmonix_parameters_are_reachable_through_paths():
     model = HarmonixModel(_spotted_harmonix_star(), observation_time=0.2)
     u = np.linspace(1e7, 7e7, 8)
@@ -1011,3 +1139,149 @@ def test_gaussian_arc_longer_than_the_circle_goes_round_it_once():
     )
     assert onp.allclose([x[0], y[0]], antipode, atol=1e-5)
     assert onp.allclose([x[-1], y[-1]], antipode, atol=1e-5)
+
+
+def test_truncated_cone_limits_and_symmetries():
+    rng = onp.random.default_rng(3)
+    u, v = rng.uniform(-60.0, 60.0, (2, 30))
+    cone = dict(tip=5.0, alpha=30.0, s0=4.0, length=8.0, width=1.0, pa=40.0)
+    # Optically thin: the sign of the tilt does not matter.
+    assert onp.allclose(
+        TruncatedCone(**cone, tilt=25.0).model(u, v, 1e-6),
+        TruncatedCone(**cone, tilt=-25.0).model(u, v, 1e-6),
+    )
+    # Pointing at the observer (tilt 90), a circular cone is a set of
+    # concentric face-on rings: real and symmetric under rotation.
+    face_on = TruncatedCone(**cone, tilt=90.0)
+    angle = onp.deg2rad(70.0)
+    ur, vr = (
+        u * onp.cos(angle) - v * onp.sin(angle),
+        u * onp.sin(angle) + v * onp.cos(angle),
+    )
+    assert onp.allclose(
+        face_on.model(u, v, 1e-6), face_on.model(ur, vr, 1e-6), atol=1e-6
+    )
+    assert onp.allclose(onp.imag(face_on.model(u, v, 1e-6)), 0.0, atol=1e-6)
+    # Across the projected axis, ratio does not matter at tilt 0.
+    assert onp.allclose(
+        TruncatedCone(**cone, tilt=0.0, ratio=0.3).model(u, v, 1e-6),
+        TruncatedCone(**cone, tilt=0.0).model(u, v, 1e-6),
+    )
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"alpha": 95.0}, "alpha"),
+        ({"length": 0.0}, "length"),
+        ({"tilt": 120.0}, "tilt"),
+        ({"ratio": -1.0}, "ratio"),
+    ],
+)
+def test_truncated_cone_rejects_bad_shapes(kwargs, match):
+    base = dict(tip=5.0, alpha=30.0, s0=4.0, length=8.0, width=1.0)
+    with pytest.raises(ValueError, match=match):
+        TruncatedCone(**{**base, **kwargs})
+
+
+def test_a_narrow_resolved_cone_renders_as_its_model():
+    # Large thin rings: the render must be continuous bands, not spots.
+    cone = TruncatedCone(
+        tip=0.0, alpha=30.0, s0=60.0, length=2.0, width=0.5, tilt=90.0
+    )
+    npix, fov_mas, wavel = 512, 80.0, 1.65e-6
+    image = onp.asarray(cone.render(npix=npix, fov_mas=fov_mas)).ravel()
+    xx, yy = (
+        onp.asarray(a).ravel() for a in _image_coordinates(npix, fov_mas)
+    )
+    q = onp.array([0.05, 0.15, 0.25, 0.35])  # cycles per mas
+    u = q / _MAS2RAD_REF * wavel
+    v = onp.zeros_like(u)
+    phase = onp.exp(
+        -2j
+        * onp.pi
+        * _MAS2RAD_REF
+        * (onp.outer(u, xx) + onp.outer(v, yy))
+        / wavel
+    )
+    rendered = phase @ image / image.sum()
+    assert (
+        onp.max(onp.abs(rendered - onp.asarray(cone.model(u, v, wavel))))
+        < 0.01
+    )
+
+
+@pytest.mark.parametrize(
+    "pa, east, north", [(0.0, 0.0, 1.0), (90.0, 1.0, 0.0)]
+)
+def test_a_cone_opens_towards_its_position_angle_on_the_sky(pa, east, north):
+    # With the apex at (dra, ddec) (tip=0), the cone lies towards pa: North
+    # (up) at pa=0, East (left) at pa=90.
+    cone = TruncatedCone(
+        tip=0.0, alpha=20.0, s0=3.0, length=4.0, width=1.0, tilt=0.0, pa=pa
+    )
+    npix, fov_mas = 128, 64.0
+    image = onp.asarray(cone.render(npix=npix, fov_mas=fov_mas))
+    xx, yy = (onp.asarray(a) for a in _image_coordinates(npix, fov_mas))
+    centroid = (
+        onp.array([onp.sum(image * xx), onp.sum(image * yy)]) / image.sum()
+    )
+    direction = centroid / onp.hypot(*centroid)
+    assert onp.allclose(direction, [east, north], atol=0.01)
+    # In pixels, along the axis: North is towards row 0, East column 0.
+    row, col = onp.unravel_index(onp.argmax(image), image.shape)
+    if north > 0.5:
+        assert row < npix // 2
+    else:
+        assert col < npix // 2
+
+
+def test_cone_ring_error_falls_quadratically_with_n_rings():
+    # |V(n) - V(2n)| ~ 1 / n**2 on a modest uv set out to ~0.3 cycles/mas:
+    # about a factor 4 per doubling, and small at 128 (documented guidance).
+    rng = onp.random.default_rng(7)
+    q = rng.uniform(0.02, 0.3, 12) / 4.84813681109536e-9  # cycles/rad
+    theta = rng.uniform(0.0, onp.pi, 12)
+    wavel = 2.2e-6
+    u, v = q * onp.cos(theta) * wavel, q * onp.sin(theta) * wavel
+    cone = dict(
+        tip=5.0, alpha=62.5, s0=4.0, length=13.8, width=2.0, tilt=40.0, pa=96.0
+    )
+    vis = {
+        n: onp.asarray(TruncatedCone(**cone, n_rings=n).model(u, v, wavel))
+        for n in (32, 64, 128, 256)
+    }
+    d32, d64, d128 = (
+        onp.max(onp.abs(vis[n] - vis[2 * n])) for n in (32, 64, 128)
+    )
+    assert 3.0 < d32 / d64 < 6.0
+    assert 3.0 < d64 / d128 < 6.0
+    assert d128 < 1e-4
+
+
+def test_cone_quadrature_converges_and_tilt_is_checked_after_set():
+    rng = onp.random.default_rng(5)
+    u, v = rng.uniform(-30.0, 30.0, (2, 20))
+    cone = dict(
+        tip=5.0,
+        alpha=30.0,
+        s0=4.0,
+        length=8.0,
+        width=1.0,
+        tilt=40.0,
+        pa=20.0,
+        ratio=0.8,
+    )
+    fine = TruncatedCone(**cone, n_rings=256).model(u, v, 1e-6)
+    errors = [
+        onp.max(
+            onp.abs(TruncatedCone(**cone, n_rings=n).model(u, v, 1e-6) - fine)
+        )
+        for n in (16, 32, 64)
+    ]
+    # The midpoint rule converges as n_rings grows (second order).
+    assert errors[1] < errors[0] / 2 and errors[2] < errors[1] / 2
+    assert errors[2] < 1e-3
+    good = TruncatedCone(**cone)
+    assert bool(good.is_physical())
+    assert not bool(good.set("tilt", 120.0).is_physical())

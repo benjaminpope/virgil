@@ -154,9 +154,9 @@ best: σ = 4.0, ℓ = 131 mas; all fits converged: True
 
 The evidence, like the discrepancy principle, trusts the error bars. `error_scale(model, data)` checks them by treating the noise level as one more hyperparameter. Maximising the evidence over it gives MacKay's re-estimate:
 
-$$s^2 = \frac{\chi^2}{N - \gamma}, \qquad \gamma = \sum_i \frac{\lambda_i}{1 + \lambda_i}.$$
+$$s^2 = \frac{\chi^2}{N - \gamma}, \qquad \gamma = \sum_i \frac{\lambda_i / s^2}{1 + \lambda_i / s^2}.$$
 
-Here λᵢ are the eigenvalues of JᵀJ, and γ is the effective number of parameters the data measure. Each one absorbs a datum's worth of scatter, so honest error bars give χ² ≈ N − γ rather than N, and s ≈ 1.
+Here λᵢ are the eigenvalues of JᵀJ with the quoted errors, so λᵢ/s² are those with the rescaled ones, and γ is the effective number of parameters the data measure. Each one absorbs a datum's worth of scatter, so honest error bars give χ² ≈ N − γ rather than N, and s ≈ 1. Since γ depends on s, `error_scale` solves the equation for s.
 
 These simulated data have honest errors. For contrast, the same truth is also simulated with only half as much noise as the error bars claim, which is like overestimated errors on real data. Rescaling those data by s (`OIData.with_error_scale`) and refitting brings the estimate back to about one. The `error_scale` docstring gives the derivation and references.
 
@@ -178,7 +178,7 @@ honest errors: s = 1.04
 ```
 
 ```text
-errors overstated twofold: chi2 per point 0.26, s = 0.52; after rescaling, s = 0.99
+errors overstated twofold: chi2 per point 0.26, s = 0.53; after rescaling, s = 0.99
 ```
 
 ## The GP image against maximum entropy

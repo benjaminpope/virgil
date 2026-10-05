@@ -13,7 +13,7 @@ from jax.flatten_util import ravel_pytree
 from numpyro.infer.initialization import init_to_value
 from numpyro.infer import MCMC, NUTS
 
-from virgil.inference import fisher_matrix, fisher_projection
+from virgil.inference import fisher_projection, hessian_matrix
 from virgil.grid_fit import likelihood_grid
 from virgil.likelihood import loglike
 from virgil.models import BinaryModelCartesian
@@ -337,7 +337,7 @@ def _recover_hmc_fisher(
         values = jnp.array([xdict["dra"], xdict["ddec"], flux])
         return -loglike(values, params, oidata, BinaryModelCartesian)
 
-    fmat = fisher_matrix(objective, x0, ridge=1e-8)
+    fmat = hessian_matrix(objective, x0)
     proj = fisher_projection(fmat)
 
     def model_hmc(data_obj: OIData):

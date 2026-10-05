@@ -17,7 +17,6 @@ from virgil.likelihood import (
     joint_loglike,
     joint_prediction,
     loglike,
-    loglike_nosignal,
     model_loglike,
 )
 from virgil.models import (
@@ -49,7 +48,7 @@ def test_cvis_binary():
 
 
 def test_cvis_binary_argument_order_matches_other_cvis_functions():
-    # dra before ddec, as in cvis_gaussian_disk and cvis_uniform_disk.
+    # dra before ddec, as in cvis_uniform_disk.
     uu, vv = u / oidata.wavel, v / oidata.wavel
     assert np.allclose(
         cvis_binary(uu, vv, dra=150.0, ddec=-40.0, flux=1e-2),
@@ -161,19 +160,24 @@ def test_binary_model_angular_matches_cartesian_at_east_position_angle():
 def _reference_logpdf(data_obj, prediction, reference):
     """Gaussian log density of ``prediction`` about ``reference``, by hand.
 
-    Visibilities are independent; closure phases enter as chords
-    2 sin(Δ/2), whitened as correlated groups (see test_closure).
+    Visibilities are independent; closure phases enter as sin Δ,
+    whitened as correlated groups (see test_closure), plus the periodic
+    penalty 2 sin²(Δ/2)/σ per closure phase, which has no normalisation.
     """
     _, errors = data_obj.flatten_data()
     n_vis = data_obj.vis.size
     resid = np.asarray(prediction) - np.asarray(reference)
     vis = jsp.stats.norm.logpdf(resid[:n_vis], scale=errors[:n_vis]).sum()
-    chord = 2.0 * np.sin(0.5 * resid[n_vis:])
-    whitened, phase_errors = data_obj.cp_noise.whiten(chord, errors[n_vis:])
+    sigma = errors[n_vis:]
+    whitened, phase_errors = data_obj.cp_noise.whiten(
+        np.sin(resid[n_vis:]), sigma
+    )
+    penalty = 2.0 * np.sin(0.5 * resid[n_vis:]) ** 2 / sigma
     return (
         vis
         + jsp.stats.norm.logpdf(whitened).sum()
         - np.sum(np.log(phase_errors))
+        - 0.5 * np.sum(penalty**2)
     )
 
 
@@ -198,6 +202,7 @@ def test_laplace_and_fisher_wrappers_are_finite():
     assert np.allclose(like, expected_like)
 
 
+@pytest.mark.slow
 def test_laplace_wrappers_match_closures_and_compile_once():
     # The model-level curvatures must agree with the generic, closure-based
     # helpers. They are jitted once at module level, so a call at new values
@@ -238,23 +243,6 @@ def test_laplace_wrappers_need_a_1d_parameter_vector():
             oidata,
             BinaryModelCartesian,
         )
-
-
-def test_loglike_nosignal_matches_normalized_gaussian_logpdf():
-    params = ["dra", "ddec", "flux"]
-    values = np.array([120.0, -80.0, 2e-3])
-    param_dict = dict(zip(params, values))
-    model_data = oidata.model(BinaryModelCartesian(**param_dict))
-    _, errors = oidata.flatten_data()
-    null_data = np.concatenate(
-        [np.ones_like(oidata.vis), np.zeros_like(oidata.phi)]
-    )
-
-    like = loglike_nosignal(values, params, oidata, BinaryModelCartesian)
-    expected_like = _reference_logpdf(oidata, model_data, null_data)
-
-    assert np.isfinite(like)
-    assert np.allclose(like, expected_like)
 
 
 def test_model_and_joint_loglike_helpers_match_legacy_loglike():

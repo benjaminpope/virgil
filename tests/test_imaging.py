@@ -15,7 +15,9 @@ from virgil.imaging import (
     TV,
     Centroid,
     LCurve,
+    LogSum,
     MaxEntropy,
+    StarletL1,
     image_priors,
     l_curve,
     nyquist_pixel_scale,
@@ -25,6 +27,8 @@ from virgil.models import GaussianDisk, Image, PointSource, System
 from virgil.oidata import OIData
 from virgil.plotting import plot_model
 from virgil.scenes import gaussian_blob
+
+from ._compiles import count_compiles
 
 NPIX, SCALE = 16, 12.0
 DATA = OIData(ami_grid_record(pitch_m=0.5))
@@ -441,3 +445,40 @@ def test_a_dirty_start_is_a_positive_image():
     assert np.all(start.env.brightness > 0.0)
     moments = starting_image(data)
     assert start.env.log_brightness.shape == moments.env.log_brightness.shape
+
+
+@pytest.mark.filterwarnings("ignore:fit\\(method=:RuntimeWarning")
+@pytest.mark.parametrize(
+    "regularisers, method",
+    [
+        (lambda v: [TSV(1e2), Centroid(v)], "lm"),
+        (lambda v: [TV(1e2, epsilon=v * 1e-3), Centroid(5.0)], "lbfgs"),
+        (lambda v: [StarletL1(1.0, epsilon=v * 1e-3)], "lbfgs"),
+        (lambda v: [LogSum(1e-3, epsilon=v * 1e-3)], "lbfgs"),
+    ],
+)
+def test_new_centroid_widths_and_tv_smoothing_do_not_recompile(
+    regularisers, method
+):
+    # sigma_mas and epsilon are arrays, like weight, so they are traced:
+    # a new value reuses the fit's compilation. As Python floats they were
+    # static, and every value recompiled the whole fit.
+    truth = _image(gaussian_blob(NPIX, SCALE, 25.0))
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(4))
+    start = _image(np.ones((NPIX, NPIX)) / NPIX**2)
+    priors = image_priors(start)
+
+    def run(value):
+        fit(
+            start,
+            priors,
+            data,
+            regularisers(value),
+            method=method,
+            max_steps=5,
+        )
+
+    run(5.0)
+    with count_compiles() as compiles:
+        run(7.0)
+    assert not compiles

@@ -23,7 +23,7 @@ from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_value
 
 from virgil.grid_fit import likelihood_grid
-from virgil.inference import fisher_matrix, fisher_projection
+from virgil.inference import fisher_projection, hessian_matrix
 from virgil.likelihood import loglike, posterior_predictive_summary
 from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData
@@ -119,6 +119,8 @@ Grid estimate: dra=119 mas, ddec=-81.2 mas, flux=0.0038
 
 ## Visualize the Grid
 We have plotting helpers to achieve a consistent style and handle metadata: we'll see that the binary is very accurately recovered just from this grid search!
+
+How significant is the best grid point? Answering that needs the distribution of the search's best statistic under noise alone, which [Detection ROC curves](detection_roc.md) simulates.
 
 ```python
 # The full grid is reduced to the maximum log likelihood over flux at each
@@ -227,7 +229,7 @@ def objective(x):
     return -loglike(values, params, data, BinaryModelCartesian)
 
 
-F = fisher_matrix(objective, x0, ridge=1e-8)
+F = hessian_matrix(objective, x0)
 P = fisher_projection(F)
 
 

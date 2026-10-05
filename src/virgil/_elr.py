@@ -341,7 +341,12 @@ def mesh(n_lat):
         axis=1,
     )
     triangulation = ConvexHull(points).simplices
-    out = Mesh(thetas, ns, phi, np.asarray(triangulation))
+    # int32 indices: JAX caches the converted copy of a NumPy array by
+    # identity whatever the x64 mode it was made in (JAX 0.10), and int32
+    # is the same in both modes. The floats are cast at use.
+    out = Mesh(
+        thetas, ns.astype(np.int32), phi, triangulation.astype(np.int32)
+    )
     for a in out:
         a.setflags(write=False)
     return out

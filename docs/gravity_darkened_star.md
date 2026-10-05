@@ -48,12 +48,12 @@ fig, axes = plt.subplots(1, 2, figsize=(9, 4))
 plot_model(
     UniformDisk(diam=4.0),
     fov_mas=fov,
-    npix=40,
+    npix=128,
     ax=axes[0],
     title="Uniform disk, 4 mas",
 )
 plot_model(
-    star, fov_mas=fov, npix=40, ax=axes[1], title="Gravity-darkened star"
+    star, fov_mas=fov, npix=128, ax=axes[1], title="Gravity-darkened star"
 )
 plt.tight_layout()
 plt.show()
@@ -63,7 +63,7 @@ plt.show()
 
 ## The chromatic mode
 
-In the grey mode the star looks the same at every wavelength. Setting `t_pole`, the effective temperature of the pole in kelvin, switches on the chromatic mode: each patch of the surface takes a temperature from the ELR11 gravity darkening and radiates the Planck function at that temperature, so at short wavelengths, where the Planck function is steepest, the hot pole outshines the cool equator by far more than at long wavelengths. The reference wavelength `wavel0` sets the wavelength at which `render` draws the star. We draw the same 9000 K star at 0.6 and at 3.0 microns, each panel on its own colour scale, to show the contrast between the pole and the equator becoming stronger at the shorter wavelength. These wavelengths are chosen far apart for visibility; the data we fit below span the narrower range from 1.6 to 2.4 microns. The mesh is refined to 64 latitude rings and the image drawn on a coarse grid, because `render` places each surface triangle on the nearest pixels and so looks speckled when the pixels are smaller than the triangles.
+In the grey mode the star looks the same at every wavelength. Setting `t_pole`, the effective temperature of the pole in kelvin, switches on the chromatic mode: each patch of the surface takes a temperature from the ELR11 gravity darkening and radiates the Planck function at that temperature, so at short wavelengths, where the Planck function is steepest, the hot pole outshines the cool equator by far more than at long wavelengths. The reference wavelength `wavel0` sets the wavelength at which `render` draws the star. We draw the same 9000 K star at 0.6 and at 3.0 microns, each panel on its own colour scale, to show the contrast between the pole and the equator becoming stronger at the shorter wavelength. These wavelengths are chosen far apart for visibility; the data we fit below span the narrower range from 1.6 to 2.4 microns. The mesh is refined to 64 latitude rings. `render` rasterises the faceted surface, shading each triangle with its own brightness and averaging sub-pixel samples to soften the limb, so the image is smooth at any pixel size; the visibilities still sum over the same triangles.
 
 ```python
 fig, axes = plt.subplots(1, 2, figsize=(9, 4))
@@ -80,7 +80,7 @@ for ax, wavel0 in zip(axes, (0.6e-6, 3.0e-6)):
     plot_model(
         hot,
         fov_mas=fov,
-        npix=40,
+        npix=128,
         ax=ax,
         title=f"9000 K pole at {wavel0 * 1e6:.1f} micron",
     )

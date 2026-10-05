@@ -10,7 +10,8 @@ from numpyro.infer.util import initialize_model
 
 from virgil.coverage import vlti_oidata
 from virgil.fields import GaussianField
-from virgil.fitting import fit, gauss_newton_mass
+from virgil._precision import cast_tree, run_in
+from virgil.fitting import _Objective, fit, gauss_newton_mass
 from virgil.imaging import image_priors
 from virgil.likelihood import numpyro_model
 from virgil.models import GaussianDisk, Image, PointSource, System
@@ -27,7 +28,12 @@ def _scene(latent, sigma, length):
 @pytest.mark.skipif(
     not jax.config.jax_enable_x64, reason="NUTS on an image needs x64"
 )
-def test_nuts_recovers_the_amplitude_of_an_injected_field():
+def test_nuts_runs_on_an_injected_field():
+    # A smoke test: NUTS runs through numpyro_model, stays finite and
+    # rarely diverges. Whether its posterior is calibrated (the injected
+    # amplitude inside the credible interval, at the nominal rate) needs
+    # many repeats, and is checked by the coverage campaign in
+    # virgil-validation rather than by a single chain here.
     truth = _scene(jax.random.normal(jax.random.PRNGKey(10), (N, N)), 1.5, 2.0)
     data = vlti_oidata(
         hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6]
@@ -48,17 +54,20 @@ def test_nuts_recovers_the_amplitude_of_an_injected_field():
             numpyro_model(start, priors, data),
             init_strategy=init_to_value(values=init),
         ),
-        num_warmup=300,
-        num_samples=300,
+        num_warmup=50,
+        num_samples=50,
         progress_bar=False,
     )
     mcmc.run(jax.random.PRNGKey(0), extra_fields=("diverging",))
-    sigma = onp.asarray(mcmc.get_samples()["env.log_brightness.sigma"])
-    low, high = onp.percentile(sigma, [5, 95])
-    assert low < 1.5 < high
+    samples = mcmc.get_samples()
+    # Every prior site was sampled (and nothing else), so the finite check
+    # below cannot pass vacuously on an empty or partial dict.
+    assert set(samples) == set(priors)
+    assert all(onp.all(onp.isfinite(onp.asarray(v))) for v in samples.values())
     assert int(mcmc.get_extra_fields()["diverging"].sum()) <= 5
 
 
+@pytest.mark.slow
 def test_gauss_newton_mass_matches_the_curvature_and_its_layout():
     # Fixed σ and ℓ, flux sampled: one dense block over both sites, in the
     # order of the priors, whose inverse is JᵀJ (+ I from the latents'
@@ -83,6 +92,57 @@ def test_gauss_newton_mass_matches_the_curvature_and_its_layout():
     assert onp.all(variances <= 1.0 + 1e-9) and variances.min() < 0.5
 
 
+def _dense_gauss_newton(model, priors, data, values):
+    """(JᵀJ)⁻¹ with J the full Jacobian of the residuals, priors included."""
+    with run_in("float64"):
+        problem = cast_tree(_Objective(model, priors, data), "float64")
+        z = problem.init(cast_tree(values, "float64"))
+        paths = problem.paths
+        shapes = [np.shape(z[p]) for p in paths]
+        flat = np.concatenate([np.ravel(z[p]) for p in paths])
+
+        def residuals(x):
+            sizes = onp.cumsum([int(onp.prod(s)) for s in shapes])[:-1]
+            pieces = np.split(x, sizes)
+            zz = {p: v.reshape(s) for p, v, s in zip(paths, pieces, shapes)}
+            return problem.residuals(zz)
+
+        jac = onp.asarray(jax.jacfwd(residuals)(flat))
+    return onp.linalg.inv(jac.T @ jac)
+
+
+@pytest.mark.parametrize("case", ["latents", "latents and flux", "disk"])
+def test_gauss_newton_mass_is_the_inverse_curvature(case):
+    # The covariance is computed from the data's Jacobian and the priors'
+    # diagonal curvature: by Woodbury when there are fewer data than
+    # parameters (an image, with or without a flat-prior flux), else
+    # directly. Each must equal (JᵀJ)⁻¹ from the full Jacobian.
+    data = vlti_oidata(
+        hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6]
+    ).with_model(_scene(onp.zeros((N, N)), 1.5, 2.0))
+    if case == "disk":
+        scene = System(star=PointSource(), env=GaussianDisk(3.0, flux=0.3))
+        priors = {
+            "env.sigma": dist.Normal(3.0, 1.0),
+            "env.flux": dist.Uniform(0.0, 1.0),
+        }
+        values = {"env.sigma": 3.2, "env.flux": 0.35}
+    else:
+        scene = _scene(onp.zeros((N, N)), 1.5, 2.0)
+        priors = image_priors(scene)
+        if case == "latents and flux":
+            priors |= {"env.flux": dist.Uniform(0.0, 1.0)}
+        latent = jax.random.normal(jax.random.PRNGKey(3), (N, N))
+        values = {"env.log_brightness.latent": 0.3 * latent, "env.flux": 0.4}
+        values = {k: v for k, v in values.items() if k in priors}
+    mass = gauss_newton_mass(scene, priors, data, values)
+    (paths,) = mass["dense_mass"]
+    covariance = mass["inverse_mass_matrix"][paths]
+    expected = _dense_gauss_newton(scene, priors, data, values)
+    scale = onp.max(onp.abs(expected))
+    onp.testing.assert_allclose(covariance, expected, atol=1e-9 * scale)
+
+
 def test_gauss_newton_mass_rejects_an_unconstrained_parameter():
     # A zero-flux companion's position leaves the data unchanged.
     data = vlti_oidata(hour_angles_h=(0.0,), wavelengths_m=[3.5e-6])
@@ -92,6 +152,7 @@ def test_gauss_newton_mass_rejects_an_unconstrained_parameter():
         gauss_newton_mass(scene, priors, data, {"c.dra": 5.0})
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(
     not jax.config.jax_enable_x64, reason="the Hessian check needs x64"
 )

@@ -4,7 +4,8 @@ version = "0.2.0"
 description = "VIRGIL, the Versatile Interferometric Reconstruction and Gradient-based Inference Library: modelling and imaging interferometric data in JAX."
 readme = "README.md"
 requires-python =">=3.11"
-license = {file = "LICENSE"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   {name = "Benjamin Pope", email = "benjamin.pope@mq.edu.au"},
   {name = "Dori Blakely", email = "blakelyd@uvic.ca"},
@@ -16,56 +17,81 @@ authors = [
 keywords = ["python", "optics", "machine-learning", "jax", "autodiff", "differentiable", "diffraction", "simulation", "telescope", "virgil"]
 urls = {repository = "https://github.com/benjaminpope/virgil"}
 dependencies = [
-  "jax>=0.4.30",
-  "jaxbessel>=0.1.0",
-  "equinox>=0.11",
-  "zodiax>=0.4",
-  "optimistix>=0.0.10",
-  "lineax>=0.0.5",
-  "optax>=0.2.4",
-  "numpyro>=0.15",
-  "numpy",
+  # Floors are the oldest versions CI tests (the "lowest" job in
+  # tests.yml installs exactly these). jax.enable_x64 needs jax 0.8.
+  # There is deliberately no upper bound: the other jobs in tests.yml
+  # upgrade to the newest JAX, and uv.lock tracks it too (JAX 0.11 needs
+  # Python 3.12, so Python 3.11 locks the last release that supports it).
+  "jax>=0.8.0",
+  "jaxbessel>=0.2.0",
+  "equinox>=0.13.2",
+  "zodiax>=0.4.1",
+  "optimistix>=0.0.11",
+  "lineax>=0.1.0",
+  "optax>=0.2.6",
+  "numpyro>=0.19.0",
+  "numpy>=2.0",
   # scipy.spatial.ConvexHull triangulates the stellar mesh in _elr.py
   # (jax already depends on scipy).
-  "scipy",
-  "matplotlib",
-  "pandas",
-  "chainconsumer",
-  "astropy",
-  "pyoifits",
-  # Only needed by the legacy writers in savefits.py / oifits_implaneia.py.
-  "astroquery",
-  "termcolor",
+  "scipy>=1.13",
+  "matplotlib>=3.8",
+  "astropy>=6.1",
 ]
 classifiers=[
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
 ]
 
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]
-notebooks = [
-  "tqdm",
-  "ipywidgets",
+# ChainConsumer corner plots and the pandas tables in virgil.plotting.
+plots = [
+  "pandas>=2.2.2",
+  "chainconsumer>=1.1.3",
 ]
-sampling = [
-  "blackjax",
+# The ImPlaneIA-derived writers in virgil.legacy look targets up in SIMBAD.
+legacy = [
+  "astroquery>=0.4.7",
+]
+# Spherical-harmonic stars (HarmonixModel). harmonix is not yet on PyPI in
+# a version virgil works with; install it from GitHub, as CI does:
+#   pip install "harmonix @ git+https://github.com/shashankdholakia/harmonix"
+# Keplerian orbits (virgil.orbits) solve Kepler's equation with jaxoplanet.
+orbits = [
+  "jaxoplanet>=0.1.0",
+]
+integrations = [
+  "virgil-astro[orbits]",
+]
+test = [
+  "pytest>=8.0",
+  "pytest-xdist>=3.5",
+  "pyoifits>=0.4.10",
+  "virgil-astro[plots]",
+]
+notebooks = [
+  "tqdm>=4.66",
+  "ipywidgets>=8.0",
+  "virgil-astro[plots,integrations]",
+]
+docs = [
+  "mkdocs>=1.6,<2",
+  "mkdocs-material>=9.6,<10",
+  "mkdocstrings[python]>=0.30",
+  "zensical>=0.0.62,<0.1",
 ]
 dev = [
+  "virgil-astro[test,docs]",
   "ruff==0.11.0",
   "pre-commit",
-  "pytest",
-  "pytest-xdist",
-  "scipy",
-  "mkdocs",
-  "mkdocs-material",
-  "mkdocstrings[python]",
-  "zensical",
+  "build",
+  "twine",
 ]
 
 [tool.ruff]
@@ -95,6 +121,3 @@ indent-style = "space"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
-filterwarnings = [
-  "ignore:Setting `jax_pmap_shmap_merge` is deprecated in JAX v0.9.0:DeprecationWarning",
-]
