@@ -566,7 +566,7 @@ def fit(
     )
 
 
-def gauss_newton_mass(model, priors, data, values):
+def gauss_newton_mass(model, priors, data, values, *, likelihoods=()):
     """A dense NUTS mass matrix from the Gauss–Newton curvature at a fit.
 
     Near the maximum a posteriori, the posterior is close to a Gaussian
@@ -599,6 +599,13 @@ def gauss_newton_mass(model, priors, data, values):
     values : dict
         The parameter values at which to take the curvature, normally
         ``fit(model, priors, data).values``.
+    likelihoods : sequence, optional
+        Further likelihood terms, as for ``fit`` (e.g.
+        [`PositionData.term`][virgil.orbits.PositionData.term]); data may
+        then be ``()``. Their residuals join the data's in J. A term's
+        ``log_norm`` (a fitted RV jitter's) has no residuals, so its
+        curvature is left out: the matrix is a preconditioner, so that
+        costs efficiency, not correctness.
 
     Returns
     -------
@@ -617,7 +624,10 @@ def gauss_newton_mass(model, priors, data, values):
     ...               **gauss_newton_mass(scene, priors, data, result.values))
     """
     with run_in("float64"):
-        problem = cast_tree(_Objective(model, priors, data), "float64")
+        problem = cast_tree(
+            _Objective(model, priors, data, likelihoods=likelihoods),
+            "float64",
+        )
         z = problem.init(cast_tree(values, "float64"))
         covariance, ok = _gauss_newton_covariance(problem, z)
         covariance = onp.asarray(covariance)
@@ -660,6 +670,8 @@ def _gauss_newton_covariance(problem, z):
         z_x = unflatten(x)
         model = problem.build(z_x)
         rows = problem.data_residuals(model)
+        constrained = problem.constrain(z_x)
+        rows += [np.ravel(term(constrained)) for term in problem.likelihoods]
         rows += [problem.priors[p].residuals(z_x[p]) for p in vectors]
         return np.concatenate(rows)
 

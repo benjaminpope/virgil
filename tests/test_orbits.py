@@ -1007,3 +1007,74 @@ def test_an_orbit_fit_in_two_omega_and_varpi_through_the_wrap():
     assert result.info["method"] == "lm"
     assert float(result.values["varpi"]) == pytest.approx(350.0, abs=1e-3)
     assert float(result.values["two_Omega"]) == pytest.approx(20.0, abs=1e-3)
+
+
+def test_gauss_newton_mass_includes_likelihood_terms():
+    # Regression (virgil#211 review): with data=() and the positions as a
+    # likelihoods= term, the mass matrix must see the term's residuals, or
+    # the angular directions are singular. At noiseless truth the
+    # Gauss–Newton matrix is the Hessian of the loss in the vectors.
+    from virgil.angles import AngleVector
+    from virgil.fitting import gauss_newton_mass
+    from virgil.orbits import orientation_priors
+
+    truth = _orbit(Omega=10.0, omega=340.0)
+    mjd = T_REF + onp.linspace(0.0, 380.0, 10)
+    with jax.enable_x64(True):
+        positions = _positions(truth, mjd)
+
+    def orbit_fn(v):
+        return KeplerOrbit.from_varpi(
+            ORBIT["period"],
+            ORBIT["dt_peri"],
+            ORBIT["ecc"],
+            ORBIT["inc"],
+            v["varpi"],
+            20.0,
+            two_Omega=v["two_Omega"],
+            t_ref=T_REF,
+        )
+
+    priors = orientation_priors()
+    values = {"two_Omega": 20.0, "varpi": 350.0}
+    mass = gauss_newton_mass(
+        lambda **kw: None,
+        priors,
+        (),
+        values,
+        likelihoods=[positions.term(orbit_fn)],
+    )
+    sites = ("two_Omega_vec", "varpi_vec")
+    covariance = onp.asarray(mass["inverse_mass_matrix"][sites])
+    assert mass["dense_mass"] == [sites]
+    assert onp.all(onp.linalg.eigvalsh(covariance) > 0)
+
+    # Independently: J of all the residuals (the term's and the rings')
+    # with respect to the two vectors, and (JᵀJ)⁻¹.
+    with jax.enable_x64(True):
+        ring = AngleVector()
+
+        def residuals(x):
+            v = {"two_Omega": _angle(x[:2]), "varpi": _angle(x[2:])}
+            return jax.numpy.concatenate(
+                [
+                    positions.whitened_residuals(orbit_fn(v)),
+                    ring.residuals(x[:2]),
+                    ring.residuals(x[2:]),
+                ]
+            )
+
+        angles = onp.deg2rad([20.0, 20.0, 350.0, 350.0])
+        x = jax.numpy.asarray(
+            onp.where([1, 0, 1, 0], onp.cos(angles), onp.sin(angles))
+        )
+        jac = onp.asarray(jax.jacfwd(residuals)(x))
+    onp.testing.assert_allclose(
+        (jac.T @ jac) @ covariance, onp.eye(4), atol=1e-6
+    )
+
+
+def _angle(vector):
+    from virgil.angles import vector_angle
+
+    return vector_angle(vector)
