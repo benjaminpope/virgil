@@ -354,6 +354,10 @@ def test_unbound_states_are_rejected_and_gradients_are_finite():
 
     with pytest.raises(ValueError, match="unbound"):
         StateVectorOrbit(10.0, 0.0, 0.0, 1e4, 0.0, 0.0, 1.0)
+    with pytest.raises(ValueError, match="away from the primary"):
+        StateVectorOrbit(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+    with pytest.raises(ValueError, match="no angular momentum"):
+        StateVectorOrbit(10.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1e3)
     state = StateVectorOrbit.from_kepler(_orbit())
 
     def separation(vra):

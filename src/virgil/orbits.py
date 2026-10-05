@@ -629,6 +629,23 @@ class StateVectorOrbit(zx.Base):
             "StateVectorOrbit",
             (("mu", self.mu, lambda x: x > 0, "positive"),),
         )
+        r = np.stack([self.dra, self.ddec, self.dz])
+        v = np.stack([self.vra, self.vdec, self.vz])
+        radius = concrete(np.linalg.norm(r))
+        momentum = concrete(np.linalg.norm(np.cross(r, v)))
+        if radius is not None and not (onp.isfinite(radius) and radius > 0):
+            raise ValueError(
+                "StateVectorOrbit: the position must be finite and away from "
+                "the primary."
+            )
+        if momentum is not None and not (
+            onp.isfinite(momentum) and momentum > 0
+        ):
+            raise ValueError(
+                "StateVectorOrbit: the velocity is along the line to the "
+                "primary (no angular momentum), a radial fall with no orbital "
+                "plane."
+            )
         energy = concrete(self._energy())
         if energy is not None and not onp.all(energy < 0):
             raise ValueError(
