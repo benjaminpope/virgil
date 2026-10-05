@@ -21,8 +21,9 @@ Both classes are numpyro distributions, so they work as entries of the
 ``priors`` of [`fit`][virgil.fitting.fit] and
 [`numpyro_model`][virgil.likelihood.numpyro_model]: their support is an
 interval, which both map to unconstrained coordinates with numpyro's
-``biject_to``. These priors have no least-squares form, so ``fit`` uses
-L-BFGS (its automatic choice) or Adam, not ``method="lm"``.
+``biject_to``. ``fit`` optimises them in their flat coordinate (cos i or
+sin(lat), through ``flat_coordinate()``), where the prior is constant, so
+Levenberg–Marquardt applies and is ``fit``'s automatic choice.
 """
 
 import jax
@@ -79,6 +80,19 @@ class _InverseCDFPrior(Distribution):
     def sample(self, key, sample_shape=()):
         shape = sample_shape + self.batch_shape
         return self.icdf(jax.random.uniform(key, shape))
+
+    def flat_coordinate(self):
+        """The coordinate in which the prior is uniform, for ``fit``.
+
+        Returns ``(cdf, icdf, 0, 1)``: the CDF is uniform on [0, 1] and
+        affine in cos i (inclination) or sin(lat) (latitude), so it is that
+        flat coordinate, rescaled. Using the CDF rather than cos i itself
+        keeps the cancellation-resistant formulas above, which matter for
+        narrow ranges and ranges at a pole. ``fit`` optimises the angle in
+        this coordinate, where the prior adds nothing to the loss (see
+        "Priors and the MAP" in the conventions).
+        """
+        return self.cdf, self.icdf, 0.0, 1.0
 
 
 class IsotropicInclination(_InverseCDFPrior):
