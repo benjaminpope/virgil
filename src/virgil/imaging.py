@@ -1114,7 +1114,19 @@ def clean(
         fixed = cast_tree((base, observations), dtype)
         fluxes = np.asarray(init, dtype)
         norms = _atom_norms(*fixed, fluxes, pixel_scale_mas, rotation_deg)
-        scores = np.where(support & (norms > 0), 1.0 / norms, 0.0)
+        # A pixel whose flux cannot change the model has |J e_p| = 0 exactly,
+        # but rounding leaves ~eps |J e|max there: without a base scene the
+        # seed pixel is such a pixel (flux added to the only component
+        # leaves the normalised image unchanged), and on an even grid its
+        # phase factors are not exactly 1. Its score 1/|J e_p|² would be
+        # ~1e24 and, on any noise in the gradient, win the search and take
+        # an infinite step. Pixels with |J e_p| below 100 eps of the
+        # largest are dead.
+        eps = float(np.finfo(norms.dtype).eps)
+        live = norms > (100.0 * eps) ** 2 * np.max(norms)
+        scores = np.where(
+            support & live, 1.0 / np.where(live, norms, 1.0), 0.0
+        )
         history, stop = [], "max_iterations"
         for iteration in range(max_iterations + 1):
             chi2, p, decrease, step = _clean_step(
