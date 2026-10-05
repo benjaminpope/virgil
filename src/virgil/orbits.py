@@ -30,17 +30,23 @@ import jax.numpy as np
 import numpy as onp
 
 import equinox as eqx
+import numpyro.distributions as dist
 import zodiax as zx
+from numpyro.distributions import constraints
 
 from ._utils import concrete
 
 
 __all__ = [
+    "AxialVonMises",
     "KeplerOrbit",
     "PositionData",
+    "RVData",
     "StateVectorOrbit",
     "ThieleInnesOrbit",
+    "distance_pc",
     "starting_orbits",
+    "total_mass",
 ]
 
 
@@ -489,6 +495,17 @@ class PositionData(zx.Base):
             -0.5 * resid @ resid + log_det - resid.size / 2 * np.log(2 * np.pi)
         )
 
+    def term(self, orbit):
+        """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
+
+        Parameters
+        ----------
+        orbit : callable
+            Maps the fitted values (a dict, by path or keyword) to a
+            [`KeplerOrbit`][virgil.orbits.KeplerOrbit].
+        """
+        return _Term(self, lambda values: (orbit(values),))
+
 
 @jax.jit
 def _thiele_innes_fit(dt, dra, ddec, whitener, period, dt_peri, ecc):
@@ -731,3 +748,169 @@ class StateVectorOrbit(zx.Base):
         """``(dra, ddec, dz)`` (mas), as for
         [`KeplerOrbit.relative`][virgil.orbits.KeplerOrbit.relative]."""
         return self.to_kepler().relative(mjd)
+
+
+# km/s per (mas/day at 1 pc): 1 mas at 1 pc is 1e-3 au.
+_KMS_PER_MAS_DAY_PC = 1.495978707e8 * 1e-3 / 86400.0
+
+
+class RVData(zx.Base):
+    """Radial velocities of one star of the binary.
+
+    Radial velocities are the only data that fix the node absolutely: from
+    positions alone (Omega + 180, omega + 180) fits equally well. They need
+    a physical scale, the distance, to turn the orbit's angular velocities
+    into km/s, and the mass ratio to share the motion between the stars.
+
+    Parameters
+    ----------
+    mjd : array-like
+        Times (MJD).
+    rv, d_rv : array-like
+        Radial velocities and their errors (km/s, positive receding).
+    star : {"primary", "secondary"}, optional
+        Which star they are of.
+    t_ref : float, optional
+        Reference time (MJD, static float64); by default the first epoch.
+    """
+
+    dt: jax.Array
+    rv: jax.Array
+    d_rv: jax.Array
+    t_ref: float = eqx.field(static=True)
+    star: str = eqx.field(static=True)
+
+    def __init__(self, mjd, rv, d_rv, star="primary", t_ref=None):
+        if star not in ("primary", "secondary"):
+            raise ValueError(
+                f"star must be 'primary' or 'secondary', not {star!r}."
+            )
+        mjd = onp.atleast_1d(onp.asarray(mjd, dtype=onp.float64))
+        rv = onp.atleast_1d(onp.asarray(rv, dtype=float))
+        d_rv = onp.broadcast_to(onp.asarray(d_rv, dtype=float), mjd.shape)
+        if rv.shape != mjd.shape:
+            raise ValueError(
+                f"rv has shape {rv.shape} but there are {mjd.size} epochs."
+            )
+        if not onp.all(onp.isfinite(d_rv) & (d_rv > 0)):
+            raise ValueError("d_rv must be positive and finite.")
+        self.t_ref = float(mjd.min() if t_ref is None else t_ref)
+        self.dt = np.asarray(mjd - self.t_ref)
+        self.rv = np.asarray(rv)
+        self.d_rv = np.asarray(d_rv)
+        self.star = star
+
+    def model(self, orbit, q, gamma, distance_pc):
+        """Predicted radial velocities (km/s).
+
+        Parameters
+        ----------
+        orbit : KeplerOrbit
+            The relative orbit (secondary about primary).
+        q : float
+            Mass ratio, secondary / primary.
+        gamma : float
+            Systemic velocity (km/s).
+        distance_pc : float
+            Distance (pc), which turns mas/day into km/s.
+        """
+        dt = self.dt + (self.t_ref - orbit.t_ref)
+        vz = _velocity(orbit._relative, dt)[2]  # mas/day, positive receding
+        v_rel = vz * distance_pc * _KMS_PER_MAS_DAY_PC
+        share = -q / (1.0 + q) if self.star == "primary" else 1.0 / (1.0 + q)
+        return gamma + share * v_rel
+
+    def whitened_residuals(self, orbit, q, gamma, distance_pc):
+        """``(rv - model) / d_rv`` for every epoch."""
+        return (self.rv - self.model(orbit, q, gamma, distance_pc)) / self.d_rv
+
+    def loglike(self, orbit, q, gamma, distance_pc):
+        """Gaussian log-likelihood of the velocities."""
+        resid = self.whitened_residuals(orbit, q, gamma, distance_pc)
+        return (
+            -0.5 * resid @ resid
+            - np.sum(np.log(self.d_rv))
+            - resid.size / 2 * np.log(2 * np.pi)
+        )
+
+    def term(self, params):
+        """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
+
+        Parameters
+        ----------
+        params : callable
+            Maps the fitted values to ``(orbit, q, gamma, distance_pc)``.
+        """
+        return _Term(self, params)
+
+
+class _Term(eqx.Module):
+    """``data.whitened_residuals(*build(values))``, for ``fit``."""
+
+    data: object
+    build: object = eqx.field(static=True)
+
+    def __call__(self, values):
+        return np.ravel(self.data.whitened_residuals(*self.build(values)))
+
+
+def total_mass(orbit, distance_pc):
+    """Total mass (solar masses) from the orbit at a distance (pc).
+
+    Kepler's third law, M = a³ / P², with a in au (``a_mas · D / 1000``)
+    and P in years. Report it as a function of distance, or with the
+    distance's uncertainty: positions alone do not fix it.
+    """
+    a_au = orbit.a_mas * 1e-3 * distance_pc
+    return a_au**3 / (orbit.period / 365.25) ** 2
+
+
+def distance_pc(orbit, total_mass):
+    """The distance (pc) at which ``orbit`` has this total mass (M☉): the
+    dynamical parallax, the inverse of [`total_mass`][virgil.orbits.total_mass]."""
+    a_au = (total_mass * (orbit.period / 365.25) ** 2) ** (1.0 / 3.0)
+    return a_au / (orbit.a_mas * 1e-3)
+
+
+class AxialVonMises(dist.Distribution):
+    """A prior on an angle (degrees) known only modulo 180°.
+
+    For a node position angle from a source whose convention is in doubt:
+    the density is a von Mises in 2θ, so θ and θ + 180° are equally likely,
+    ``exp(kappa cos 2(θ - mean))``, normalised over [0, 360).
+
+    Parameters
+    ----------
+    mean : float
+        Mean angle (degrees); ``mean + 180`` is equivalent.
+    kappa : float
+        Concentration (of the doubled angle); larger is tighter, with a
+        width of about ``28.6 / sqrt(kappa)`` degrees.
+    """
+
+    arg_constraints = {
+        "mean_deg": constraints.real,
+        "kappa": constraints.positive,
+    }
+    support = constraints.interval(0.0, 360.0)
+
+    def __init__(self, mean, kappa, *, validate_args=None):
+        self.mean_deg = np.asarray(mean, dtype=float)
+        self.kappa = np.asarray(kappa, dtype=float)
+        super().__init__(
+            batch_shape=np.broadcast_shapes(np.shape(mean), np.shape(kappa)),
+            validate_args=validate_args,
+        )
+
+    def log_prob(self, value):
+        doubled = 2.0 * np.deg2rad(value - self.mean_deg)
+        return self.kappa * (np.cos(doubled) - 1.0) - np.log(
+            360.0 * jax.scipy.special.i0e(self.kappa)
+        )
+
+    def sample(self, key, sample_shape=()):
+        shape = sample_shape + self.batch_shape
+        key_vm, key_flip = jax.random.split(key)
+        doubled = dist.VonMises(0.0, self.kappa).sample(key_vm, sample_shape)
+        flip = 180.0 * jax.random.bernoulli(key_flip, 0.5, shape)
+        return np.mod(self.mean_deg + np.rad2deg(doubled) / 2.0 + flip, 360.0)

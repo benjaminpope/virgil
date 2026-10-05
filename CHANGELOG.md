@@ -14,6 +14,14 @@ anything before 1.0 may change between minor versions.
   which a short arc constrains well where the elements are degenerate; it
   converts exactly to a `KeplerOrbit` (`to_kepler`, `from_kepler`).
 
+
+- **Radial velocities and masses.** `RVData` fits radial velocities of either
+  star (with the mass ratio, systemic velocity and distance), which fix the
+  node that positions leave ambiguous by 180°; `total_mass` and `distance_pc`
+  convert between them by Kepler's third law; `AxialVonMises` is a prior on an
+  angle known only modulo 180°. `fit(..., likelihoods=[...])` adds such terms
+  (`PositionData.term`, `RVData.term`) to a fit, with or without visibilities.
+
 - **Orbit example.** `notebooks/mwe/mwe_orbit.ipynb`: a companion and an
   attached disc observed on six VLTI nights, recovered through per-night
   positions, Thiele–Innes starting orbits and a joint fit to all the

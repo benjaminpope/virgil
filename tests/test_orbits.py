@@ -367,3 +367,169 @@ def test_unbound_states_are_rejected_and_gradients_are_finite():
 
     grad = jax.jit(jax.grad(separation))(state.vra)
     assert onp.isfinite(float(grad))
+
+
+# --- Radial velocities, masses and the axial prior (design R5, R6) ---
+
+
+def test_rv_semi_amplitude_matches_keplers_laws():
+    from virgil.orbits import RVData
+
+    orbit = _orbit()  # P 400 d, e 0.4, i 60, a 20 mas
+    q, distance = 0.5, 50.0
+    mjd = T_REF + onp.linspace(0.0, 400.0, 4001)
+    with jax.enable_x64(True):
+        rv = onp.asarray(
+            RVData(mjd, onp.zeros(mjd.size), 1.0).model(
+                orbit, q, 3.0, distance
+            )
+        )
+    # K1 = 2π a1 sin i / (P √(1 - e²)), a1 = a q / (1 + q) in km.
+    a_km = 20e-3 * distance * 1.495978707e8
+    k1 = (
+        2
+        * onp.pi
+        * a_km
+        * q
+        / (1 + q)
+        * onp.sin(onp.deg2rad(60.0))
+        / (400.0 * 86400 * onp.sqrt(1 - 0.4**2))
+    )
+    assert (rv.max() - rv.min()) / 2 == pytest.approx(k1, rel=1e-4)
+    assert (rv.max() + rv.min()) / 2 != pytest.approx(3.0)  # e ≠ 0: skewed
+    # The primary recedes while the secondary approaches, and vice versa.
+    with jax.enable_x64(True):
+        vz = onp.asarray(orbit.relative_velocity(mjd)[2])
+        secondary = RVData(mjd, onp.zeros(mjd.size), 1.0, star="secondary")
+        rv2 = onp.asarray(secondary.model(orbit, q, 3.0, distance))
+    assert onp.all(
+        onp.sign(rv - 3.0)[onp.abs(vz) > 1e-6]
+        == -onp.sign(vz)[onp.abs(vz) > 1e-6]
+    )
+    assert onp.allclose((rv - 3.0) * (1 + q) / q, -(rv2 - 3.0) * (1 + q))
+
+
+def test_total_mass_and_distance_are_inverse():
+    from virgil.orbits import distance_pc, total_mass
+
+    # 1 au at 1 pc is 1000 mas; a 1-year orbit then has 1 solar mass.
+    earth = _orbit(period=365.25, a_mas=1000.0)
+    assert float(total_mass(earth, 1.0)) == pytest.approx(1.0)
+    assert float(distance_pc(earth, 1.0)) == pytest.approx(1.0)
+    orbit = _orbit()
+    assert float(
+        distance_pc(orbit, total_mass(orbit, 123.0))
+    ) == pytest.approx(123.0)
+
+
+def test_axial_von_mises_is_a_normalised_prior_with_period_180():
+    from virgil.orbits import AxialVonMises
+
+    prior = AxialVonMises(100.0, 4.0)
+    theta = onp.linspace(0.0, 360.0, 36001)[:-1]
+    density = onp.exp(onp.asarray(prior.log_prob(theta)))
+    assert density.sum() * 0.01 == pytest.approx(1.0, rel=1e-6)
+    assert float(prior.log_prob(100.0)) == pytest.approx(
+        float(prior.log_prob(280.0))
+    )
+    draws = onp.asarray(prior.sample(jax.random.PRNGKey(0), (4000,)))
+    assert draws.min() >= 0.0 and draws.max() < 360.0
+    near = onp.abs((draws - 100.0 + 90.0) % 180.0 - 90.0) < 30.0
+    assert near.mean() > 0.9
+    assert (
+        0.4
+        < (onp.abs((draws - 100.0 + 180.0) % 360.0 - 180.0) < 90.0).mean()
+        < 0.6
+    )
+
+
+def test_positions_and_rvs_fix_the_node_in_a_joint_fit():
+    import numpyro.distributions as dist
+
+    from virgil.fitting import fit
+    from virgil.orbits import RVData
+
+    truth = _orbit()
+    mjd = T_REF + onp.linspace(0.0, 380.0, 10)
+    with jax.enable_x64(True):
+        positions = _positions(truth, mjd)
+        rvs = RVData(
+            mjd,
+            onp.asarray(
+                RVData(mjd, onp.zeros(10), 1.0).model(truth, 0.5, 3.0, 50.0)
+            ),
+            0.1,
+        )
+    names = ("period", "dt_peri", "ecc", "inc", "omega", "Omega", "a_mas")
+
+    def orbit(v):
+        return KeplerOrbit(*(v[k] for k in names), t_ref=T_REF)
+
+    priors = {
+        "period": dist.Uniform(300.0, 500.0),
+        "dt_peri": dist.Uniform(-200.0, 200.0),
+        "ecc": dist.Uniform(0.0, 0.9),
+        "inc": dist.Uniform(0.0, 180.0),
+        "omega": dist.Uniform(-360.0, 720.0),
+        "Omega": dist.Uniform(-360.0, 720.0),
+        "a_mas": dist.Uniform(1.0, 50.0),
+        "gamma": dist.Uniform(-50.0, 50.0),
+    }
+    # Positions alone cannot tell the node from (Omega + 180, omega + 180):
+    # fit from both, and the radial velocities pick the true one.
+    terms = [
+        positions.term(orbit),
+        rvs.term(lambda v: (orbit(v), 0.5, v["gamma"], 50.0)),
+    ]
+    results = []
+    for flip in (0.0, 180.0):
+        start = {**{k: float(getattr(truth, k)) for k in names}, "gamma": 0.0}
+        start["Omega"] += flip
+        start["omega"] += flip
+        results.append(
+            fit(lambda **kw: None, priors, (), init=start, likelihoods=terms)
+        )
+    right, wrong = results
+    assert right.info["converged"]
+    assert right.info["ndata"] == [20, 10]
+    assert float(right.values["Omega"]) == pytest.approx(110.0, abs=0.1)
+    assert float(right.values["gamma"]) == pytest.approx(3.0, abs=0.01)
+    # From the other node the velocities' signs are reversed: no orbit fits
+    # both the positions and the velocities there.
+    assert sum(right.info["chi2"]) < 1e-3
+    assert sum(wrong.info["chi2"]) > 1e3
+
+
+def test_a_plain_function_is_a_likelihood_term_and_axial_priors_work_in_fit():
+    import numpyro.distributions as dist
+
+    from virgil.fitting import fit
+    from virgil.orbits import AxialVonMises, RVData
+
+    truth = _orbit()
+    mjd = T_REF + onp.linspace(0.0, 380.0, 10)
+    with jax.enable_x64(True):
+        positions = _positions(truth, mjd)
+    fixed = {
+        k: float(getattr(truth, k))
+        for k in ("period", "dt_peri", "ecc", "inc", "omega", "a_mas")
+    }
+
+    def residuals(values):  # a plain function, as the docs allow
+        orbit = KeplerOrbit(**fixed, Omega=values["Omega"], t_ref=T_REF)
+        return positions.whitened_residuals(orbit)
+
+    result = fit(
+        lambda **kw: None,
+        {"Omega": AxialVonMises(110.0, 2.0)},
+        (),
+        init={"Omega": 100.0},
+        likelihoods=[residuals],
+    )
+    assert result.info["ndata"] == [20]
+    assert float(result.values["Omega"]) == pytest.approx(110.0, abs=1e-3)
+    with pytest.raises(ValueError, match="d_rv"):
+        RVData(mjd, onp.zeros(10), 0.0)
+    with pytest.raises(ValueError, match="d_rv"):
+        RVData(mjd, onp.zeros(10), onp.nan)
+    assert isinstance(AxialVonMises(1.0, 2.0), dist.Distribution)
