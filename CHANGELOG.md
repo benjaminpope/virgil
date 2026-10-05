@@ -14,6 +14,10 @@ anything before 1.0 may change between minor versions.
   visibility (a stack of projected rings), a tilt out of the sky plane, an
   optional elliptical cross-section, and a rendered image that matches its
   visibilities.
+- **Short-arc orbits.** `StateVectorOrbit` parameterises an orbit by the
+  relative position and velocity at `t_ref` and the gravitational parameter,
+  which a short arc constrains well where the elements are degenerate; it
+  converts exactly to a `KeplerOrbit` (`to_kepler`, `from_kepler`).
 - **Radial velocities and masses.** `RVData` fits radial velocities of either
   star (with the mass ratio, systemic velocity and distance), which fix the
   node that positions leave ambiguous by 180°; `total_mass` and `distance_pc`

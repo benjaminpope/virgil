@@ -42,6 +42,7 @@ __all__ = [
     "KeplerOrbit",
     "PositionData",
     "RVData",
+    "StateVectorOrbit",
     "ThieleInnesOrbit",
     "distance_pc",
     "starting_orbits",
@@ -584,6 +585,169 @@ def starting_orbits(positions, periods, eccs=None, n_phase=36, n_best=5):
         )
         for k in best
     ]
+
+
+class StateVectorOrbit(zx.Base):
+    """An orbit given by the relative position and velocity at ``t_ref``.
+
+    For short arcs, where the measured quantities (the position and its
+    rate of change) are well determined but the Keplerian elements are not:
+    sampling these instead of the elements avoids long curved degeneracies.
+    The line-of-sight position and velocity, and the gravitational
+    parameter, carry the physical priors.
+
+    Parameters
+    ----------
+    dra, ddec : float
+        Position of the secondary from the primary at ``t_ref`` (mas).
+    vra, vdec : float
+        Its velocity at ``t_ref`` (mas/yr).
+    dz, vz : float
+        Line-of-sight position (mas) and velocity (mas/yr), positive away
+        from the observer.
+    mu : float
+        Gravitational parameter in angular units, ``4π² a_mas³ / P²`` with
+        P in years (mas³/yr²). It is free of distance.
+    t_ref : float, optional
+        The epoch of the state (MJD, static float64).
+
+    Notes
+    -----
+    Use [`to_kepler`][virgil.orbits.StateVectorOrbit.to_kepler] for the
+    elements. Only bound states (negative energy) are orbits.
+    """
+
+    dra: jax.Array
+    ddec: jax.Array
+    vra: jax.Array
+    vdec: jax.Array
+    dz: jax.Array
+    vz: jax.Array
+    mu: jax.Array
+    t_ref: float = eqx.field(static=True)
+
+    def __init__(self, dra, ddec, vra, vdec, dz, vz, mu, t_ref=0.0):
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+        self.vra = np.asarray(vra, dtype=float)
+        self.vdec = np.asarray(vdec, dtype=float)
+        self.dz = np.asarray(dz, dtype=float)
+        self.vz = np.asarray(vz, dtype=float)
+        self.mu = np.asarray(mu, dtype=float)
+        self.t_ref = float(t_ref)
+
+    def _energy(self):
+        r = np.sqrt(self.dra**2 + self.ddec**2 + self.dz**2)
+        v2 = self.vra**2 + self.vdec**2 + self.vz**2
+        return v2 / 2 - self.mu / r
+
+    def __check_init__(self):
+        _check(
+            "StateVectorOrbit",
+            (("mu", self.mu, lambda x: x > 0, "positive"),),
+        )
+        r = np.stack([self.dra, self.ddec, self.dz])
+        v = np.stack([self.vra, self.vdec, self.vz])
+        radius = concrete(np.linalg.norm(r))
+        momentum = concrete(np.linalg.norm(np.cross(r, v)))
+        if radius is not None and not (onp.isfinite(radius) and radius > 0):
+            raise ValueError(
+                "StateVectorOrbit: the position must be finite and away from "
+                "the primary."
+            )
+        if momentum is not None and not (
+            onp.isfinite(momentum) and momentum > 0
+        ):
+            raise ValueError(
+                "StateVectorOrbit: the velocity is along the line to the "
+                "primary (no angular momentum), a radial fall with no orbital "
+                "plane."
+            )
+        energy = concrete(self._energy())
+        if energy is not None and not onp.all(energy < 0):
+            raise ValueError(
+                "StateVectorOrbit: the state is unbound (non-negative "
+                "energy), so it is not an orbit."
+            )
+
+    @classmethod
+    def from_kepler(cls, orbit):
+        """The state of ``orbit`` at its ``t_ref``."""
+        dra, ddec, dz = orbit._relative(np.asarray(0.0))
+        vra, vdec, vz = _velocity(orbit._relative, np.asarray(0.0))
+        per_year = 365.25
+        mu = 4 * np.pi**2 * orbit.a_mas**3 / (orbit.period / per_year) ** 2
+        return cls(
+            dra,
+            ddec,
+            vra * per_year,
+            vdec * per_year,
+            dz,
+            vz * per_year,
+            mu,
+            t_ref=orbit.t_ref,
+        )
+
+    def to_kepler(self):
+        """The [`KeplerOrbit`][virgil.orbits.KeplerOrbit] of this state.
+
+        The periastron and the direction of motion there give the
+        Thiele–Innes constants directly, which fixes the angles in virgil's
+        conventions; the line-of-sight components then pick the node, which
+        positions alone leave ambiguous by 180°. A circular orbit (e = 0)
+        has no periastron: the position at ``t_ref`` is used instead.
+        """
+        r = np.stack([self.dra, self.ddec, self.dz])  # (East, North, away)
+        v = np.stack([self.vra, self.vdec, self.vz])
+        r_norm = np.linalg.norm(r)
+        h = np.cross(r, v)
+        e_vec = np.cross(v, h) / self.mu - r / r_norm
+        ecc = np.linalg.norm(e_vec)
+        a_mas = 1.0 / (2.0 / r_norm - np.dot(v, v) / self.mu)
+        period = 2 * np.pi * np.sqrt(a_mas**3 / self.mu) * 365.25  # days
+        circular = ecc < 1e-12
+        p_hat = np.where(
+            circular, r / r_norm, e_vec / np.where(circular, 1.0, ecc)
+        )
+        q_hat = np.cross(h / np.linalg.norm(h), p_hat)
+        # Eccentric anomaly at t_ref, then the time of periastron.
+        cos_e = np.where(
+            circular, 1.0, (1 - r_norm / a_mas) / np.where(circular, 1.0, ecc)
+        )
+        sin_e = np.where(
+            circular,
+            0.0,
+            np.dot(r, v)
+            / (np.where(circular, 1.0, ecc) * np.sqrt(self.mu * a_mas)),
+        )
+        ecc_anomaly = np.arctan2(sin_e, cos_e)
+        mean_anomaly = ecc_anomaly - ecc * np.sin(ecc_anomaly)
+        dt_peri = -mean_anomaly / (2 * np.pi) * period
+        # Thiele–Innes: (ddec, dra, dz) = a (P X + Q Y) per component.
+        a_ti, b_ti, c_ti = a_mas * p_hat[1], a_mas * p_hat[0], a_mas * p_hat[2]
+        f_ti, g_ti, h_ti = a_mas * q_hat[1], a_mas * q_hat[0], a_mas * q_hat[2]
+        sky = ThieleInnesOrbit(
+            period, dt_peri, ecc, a_ti, b_ti, f_ti, g_ti, t_ref=self.t_ref
+        ).to_kepler()
+        # to_kepler picks Omega in [0, 180); the line of sight decides.
+        _, _, c_sky, h_sky = sky.thiele_innes()[2:]
+        flip = (c_sky * c_ti + h_sky * h_ti) < 0
+        shift = np.where(flip, 180.0, 0.0)
+        return KeplerOrbit(
+            period,
+            dt_peri,
+            ecc,
+            sky.inc,
+            np.mod(sky.omega + shift, 360.0),
+            np.mod(sky.Omega + shift, 360.0),
+            a_mas,
+            t_ref=self.t_ref,
+        )
+
+    def relative(self, mjd):
+        """``(dra, ddec, dz)`` (mas), as for
+        [`KeplerOrbit.relative`][virgil.orbits.KeplerOrbit.relative]."""
+        return self.to_kepler().relative(mjd)
 
 
 # km/s per (mas/day at 1 pc): 1 mas at 1 pc is 1e-3 au.

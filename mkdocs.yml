@@ -9,11 +9,14 @@ markdown_extensions:
   - pymdownx.arithmatex:
       generic: true
 
+extra_css:
+  - stylesheets/nav.css
+
 extra_javascript:
   - javascripts/mathjax.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
-site_name: "VIRGIL: Versatile Interferometric Reconstruction and Gradient-based Inference Library"
+site_name: virgil
 repo_url: https://github.com/benjaminpope/virgil
 
 theme:
