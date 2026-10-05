@@ -85,6 +85,9 @@ anything before 1.0 may change between minor versions.
   flux axis now only gives a rough starting point: the limit is bracketed by
   decades and bisected in log flux, replacing the BFGS search, so the result
   no longer depends on the axis.
+- `gauss_newton_mass(model, priors, (), values)` no longer raises a
+  `ValueError` on an empty residual list: with `data=()` the curvature comes
+  from the priors alone, as `fit` and `numpyro_model` already allow.
 
 ### Added
 
