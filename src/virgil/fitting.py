@@ -154,7 +154,7 @@ class _Objective(eqx.Module):
         Error terms start at 1 (scales, including ``wavel_scale``, and the
         width of supplied gain modes), 0 (``wavel_offset``) or 0.01 (added
         errors and other gain widths), or at their prior's mean if that is
-        outside the prior's support.
+        outside the prior's support or on its boundary.
         """
         values = {} if values is None else dict(values)
         z = {}
@@ -165,6 +165,11 @@ class _Objective(eqx.Module):
             if not bool(prior.support(np.asarray(start, float))):
                 start = prior.mean
             z[site] = _bijection(prior).inv(np.asarray(start, float))
+            if not bool(np.all(np.isfinite(z[site]))):
+                # On the boundary of a bounded prior (e.g. 0 for
+                # Uniform(0, ...)), the unconstrained coordinate is
+                # infinite: start inside it, at the prior's mean.
+                z[site] = _bijection(prior).inv(np.asarray(prior.mean, float))
         for path, prior in self.priors.items():
             if path not in values:
                 if not isinstance(self.model, SourceModel):

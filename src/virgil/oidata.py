@@ -1040,15 +1040,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         Returns
         -------
         OIData
-            The data with ``wavel`` replaced. A ``uv_grid`` is dropped,
-            since the scaled samples are off its lattice; models then use
-            the direct Fourier transform.
+            The data with ``wavel`` replaced. A ``uv_grid`` is kept: it is
+            in metres and divided by the wavelength where it is used, so
+            it still matches the samples.
         """
         return eqx.tree_at(
-            lambda d: (d.wavel, d.uv_grid),
-            self,
-            (self.wavel * scale + offset, None),
-            is_leaf=lambda x: x is None,
+            lambda d: d.wavel, self, self.wavel * scale + offset
         )
 
     def with_gains(
