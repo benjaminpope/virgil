@@ -268,6 +268,26 @@ def test_unequal_errors_are_kept_and_simulation_matches_whitening():
 
 
 @pytest.mark.validates(
+    "virgil._closure.ClosureNoise.colour", roots=["self-consistency"]
+)
+def test_colour_inverts_whiten_on_the_covariance_column_space():
+    # Three frames of four telescopes, with unequal errors: whiten(colour(w))
+    # is w for any w, and colour(whiten(r)) is r for any draw of sample().
+    template = vlti_oidata(
+        hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6]
+    )
+    sigma = 0.02 + 0.06 * onp.random.default_rng(0).random(12)
+    data = OIData(_record(template, d_phi=sigma))
+    noise = data.cp_noise
+    w = jax.random.normal(jax.random.PRNGKey(1), (noise.size,))
+    r = noise.colour(w, data.d_phi, 12)
+    assert onp.allclose(noise.whiten(r, data.d_phi)[0], w, atol=1e-5)
+    r = noise.sample(jax.random.PRNGKey(2), data.d_phi, 12)
+    w = noise.whiten(r, data.d_phi)[0]
+    assert onp.allclose(noise.colour(w, data.d_phi, 12), r, atol=1e-6)
+
+
+@pytest.mark.validates(
     "virgil.oidata.OIData",
     "virgil.likelihood.whitened_residuals",
     roots=["self-consistency"],

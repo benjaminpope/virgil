@@ -177,6 +177,37 @@ class ClosureNoise(eqx.Module):
         errors = np.diagonal(chol, axis1=1, axis2=2) * scale
         return w.reshape(-1)[self.keep], errors.reshape(-1)[self.keep]
 
+    def colour(self, whitened, sigma, n_phase):
+        """Closure-phase residuals whose :meth:`whiten` is ``whitened``.
+
+        The inverse of :meth:`whiten` on the column space of the covariance
+        C: ``whiten(colour(w, σ, n), σ)[0]`` is ``w`` for any ``w``, and
+        ``colour(whiten(r, σ)[0], σ, n)`` is ``r`` for residuals ``r`` in
+        that space (any draw of :meth:`sample`). A component of ``r``
+        outside it, which only arises for unequal σ within a group (see
+        the module notes), is not recovered.
+
+        Parameters
+        ----------
+        whitened : array-like
+            One entry per independent combination (:attr:`size`), as
+            returned by :meth:`whiten`.
+        sigma : array-like
+            One error per closure phase.
+        n_phase : int
+            Number of closure phases.
+        """
+        w = np.asarray(whitened)
+        flat = np.zeros(self.valid.size, dtype=w.dtype)
+        flat = flat.at[self.keep].set(w).reshape(self.valid.shape)
+        basis, chol = (np.asarray(a, w.dtype) for a in (self.basis, self.chol))
+        a = np.einsum("gkl,gl->gk", chol, flat)
+        x = np.einsum("gkm,gk->gm", basis, a)
+        r = x * np.asarray(sigma)[self.groups]
+        # Each closure phase sits in exactly one group; padded slots add 0.
+        out = np.zeros(n_phase, dtype=r.dtype)
+        return out.at[self.groups].add(np.where(self.mask, r, 0.0))
+
     def sample(self, key, sigma, n_phase):
         """Closure-phase noise with the covariance used by :meth:`whiten`."""
         e = jax.random.normal(key, self.incidence.shape[::2])

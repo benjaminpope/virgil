@@ -84,6 +84,22 @@ anything before 1.0 may change between minor versions.
   `local_nsigma` gives the single-position (Wilks) significance. A new tutorial,
   "Detection ROC curves", calibrates the statistics with simulations. Design
   and later stages in `design/detection_roc.md` (virgil#2).
+- **Detection Monte Carlo (`virgil.detection`, stage 2 of virgil#2).**
+  Null simulators `gaussian_null` (noise from the template's errors, with an
+  `error_scale` for mis-estimated errors) and `bootstrap_null` (a sign-flip or
+  resampling residual bootstrap about the null scene; correlated closure
+  phases are whitened and re-coloured with the new `ClosureNoise.colour`),
+  and `rescale_errors` (visibility and phase errors scaled separately so the
+  null has χ²_r = 1). `injection_grid` lays out companions at random PAs, and
+  `injection_recovery` runs the search on null and injected draws with one
+  compiled kernel (`jax.lax.map`, chunked, with a progress bar). It returns a
+  NumPy `DetectionMC` with empirical false-alarm probabilities and their
+  Clopper–Pearson intervals, thresholds with bootstrap errors, ROC curves,
+  AUC, completeness maps, contrast curves in the units of `absil_limits`, an
+  optional `match_radius` (Cartesian `dra`/`ddec` or angular `sep`/`pa`
+  grids), and `save`/`load`/`concatenate` for array jobs; `concatenate`
+  compares fingerprints of the whole model, null scene and template (every
+  field, static or not) and refuses runs that cannot be fingerprinted.
 
 - **Gauss-Newton and a marginal-likelihood map in `linear_flux_grid`.**
   `n_iter=k` relinearises the whitened residuals at the current flux per pixel
