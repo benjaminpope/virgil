@@ -682,12 +682,12 @@ def starting_image(
                 star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
             )
             priors = {
-                "env.sigma": dist.Uniform(1e-3 * resolution, widest),
-                "env.flux": dist.Uniform(0.0, 100.0),
+                "env.sigma": dist.LogUniform(1e-3 * resolution, widest),
+                "env.flux": dist.LogUniform(1e-4, 100.0),
             }
         else:
             model = GaussianDisk(sigma)
-            priors = {"sigma": dist.Uniform(1e-3 * resolution, widest)}
+            priors = {"sigma": dist.LogUniform(1e-3 * resolution, widest)}
         result = fit(model, priors, data)
         if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
             best = result
@@ -703,7 +703,10 @@ def starting_image(
         support = circular_support(npix, scale, npix * scale, hole_mas)
     options = dict(flux=envelope.flux, support=support)
     if start == "moments":
-        model = GaussianDisk(envelope.sigma)
+        # With a log-uniform prior, data with no resolved envelope drive
+        # sigma to its (tiny) lower bound; a Gaussian narrower than a pixel
+        # sampled on the grid is all zeros, so start at least one pixel wide.
+        model = GaussianDisk(max(float(envelope.sigma), scale))
         image = Image.from_model(model, npix, scale, **options)
     elif start == "dirty":
         ratio = float(envelope.flux) if star else None

@@ -597,8 +597,10 @@ def _check_positive_flux_prior(name, distribution):
     if unbounded:
         raise ValueError(
             f"The prior on {name!r} allows negative values, but fluxes must "
-            "be non-negative. Use a prior with non-negative support, e.g. "
-            "dist.LogUniform or dist.Uniform(0, ...)."
+            "be non-negative. Use a prior with non-negative support: "
+            "dist.LogUniform(lo, hi) (scale invariant) by default, or "
+            "dist.Uniform(0, ...) as the exception, when a flat flux "
+            "prior is really what you mean."
         )
 
 
@@ -722,7 +724,7 @@ def numpyro_model(
     >>> dra, ddec, _ = (np.asarray(x) for x in truth.relative(mjd))
     >>> cov = np.broadcast_to(0.05**2 * np.eye(2), (4, 2, 2))
     >>> positions = PositionData(mjd, dra, ddec, cov)
-    >>> priors = {"a_mas": dist.Uniform(5.0, 50.0), "ecc": dist.Uniform(0.0, 0.9)}
+    >>> priors = {"a_mas": dist.LogUniform(5.0, 50.0), "ecc": dist.Uniform(0.0, 0.9)}
     >>> def orbit_fn(v):
     ...     return KeplerOrbit(
     ...         400.0, 30.0, v["ecc"], 60.0, 40.0, 110.0, v["a_mas"], t_ref=60500.0
