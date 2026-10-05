@@ -24,7 +24,6 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-import optimistix as optx
 
 from ._utils import concrete
 from ._grid import (
@@ -54,6 +53,11 @@ __all__ = [
 
 
 # === UNITS ===
+
+# Most decades the starting flux of `absil_limits` may be moved to bracket the
+# target significance.
+_MAX_BRACKET_DECADES = 40
+_BISECTIONS = 14
 
 # Smallest flux used in conversions, so that zero or negative limits map to a
 # large but finite contrast instead of infinity or NaN.
@@ -325,8 +329,9 @@ def absil_limits(
     samples_dict : dict[str, array-like]
         Grid axes, as a mapping from parameter name or path to 1D values
         (e.g. ``dra``/``ddec`` in milliarcseconds). The flux axis is only
-        used for the starting guess, and must contain at least one positive
-        value.
+        used for the starting guess (a single value is enough, and the limit
+        may lie decades away from it), and must contain at least one
+        positive value.
     sigma : float
         Exclusion significance. It must exceed the significance of a
         chi-squared ratio of 1 (about 0.67 for many degrees of freedom).
@@ -359,7 +364,7 @@ def absil_limits(
     if not np.any(np.asarray(samples_dict[flux_key]) > 0.0):
         raise ValueError(
             f"The flux axis {flux_key!r} needs at least one positive value "
-            "to start the log-flux optimizer from."
+            "to start the limit search from."
         )
     ndof = data_obj.n_independent
     floor = float(nsigma(1.0, 1.0, ndof))
@@ -432,7 +437,7 @@ def _absil_limits(
     best_flux_indices = jnp.nanargmin(loss_grid, axis=flux_axis)
 
     coords, shape = coordinate_points(samples_dict, coord_keys)
-    # A zero flux would start the log-flux optimizer at -inf; start from the
+    # A zero flux would start the log-flux search at -inf; start from the
     # smallest positive flux on the grid instead.
     flux_axis_vals = jnp.asarray(samples_dict[flux_key])
     smallest_positive = jnp.min(
@@ -441,26 +446,55 @@ def _absil_limits(
     start_flux = flux_axis_vals[best_flux_indices].reshape(-1)
     start_flux = jnp.where(start_flux > 0.0, start_flux, smallest_positive)
 
-    def optimize_log_flux(log_flux, coord_vals):
-        flux = 10.0 ** jnp.asarray(log_flux).reshape(-1)[0]
+    def significance_at(log_flux, coord_vals):
+        flux = 10.0**log_flux
         values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
-        return loss(values)
+        return nsigma(reduced_chi2(values), chi2_null, ndof)
+
+    def bracketed_limit(flux0, coord_vals):
+        # The significance saturates (about 37 sigma in float64) for bright
+        # companions, where the loss is flat and BFGS cannot move. Step the
+        # starting flux by decades until it crosses the target, then bisect
+        # that decade in log flux. The axis thus only has to give a rough
+        # starting point, and no gradient is needed. Returns log10 of the
+        # limit.
+        log0 = jnp.log10(flux0)
+        above = significance_at(log0, coord_vals) > sigma
+        direction = jnp.where(above, -1.0, 1.0)
+
+        def keep_going(state):
+            log_flux, n = state
+            same_side = (
+                significance_at(log_flux, coord_vals) > sigma
+            ) == above
+            return same_side & (n < _MAX_BRACKET_DECADES)
+
+        def step(state):
+            log_flux, n = state
+            return log_flux + direction, n + 1
+
+        log_end, _ = jax.lax.while_loop(keep_going, step, (log0, 0))
+        # [log_end, log_end - direction] brackets the target.
+
+        def bisect(_, edges):
+            near, far = edges
+            mid = 0.5 * (near + far)
+            same_side = (significance_at(mid, coord_vals) > sigma) == above
+            return jnp.where(same_side, mid, near), jnp.where(
+                same_side, far, mid
+            )
+
+        # `near` is on the starting side of the target; `far` on the other.
+        near, far = jax.lax.fori_loop(
+            0, _BISECTIONS, bisect, (log_end - direction, log_end)
+        )
+        return 0.5 * (near + far)
 
     def best_flux(flux0, coord_vals):
-        solution = optx.compat.minimize(
-            optimize_log_flux,
-            x0=jnp.array([jnp.log10(flux0)]),
-            args=(coord_vals,),
-            method="BFGS",
-            options={"maxiter": 100},
-        )
-        limit = 10.0 ** solution.x[0]
-        values = ordered_values(
-            limit, coord_vals, params, coord_keys, flux_key
-        )
+        limit = 10.0 ** bracketed_limit(flux0, coord_vals)
         # Converged if the target significance is reached to 0.01 sigma.
         reached = jnp.abs(
-            nsigma(reduced_chi2(values), chi2_null, ndof) - sigma
+            significance_at(jnp.log10(limit), coord_vals) - sigma
         )
         return limit, reached < 1e-2
 

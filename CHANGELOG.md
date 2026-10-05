@@ -7,6 +7,16 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Added
+
+- **Fitted RV jitter.** `RVData.term(params, jitter="rv_jitter")` inflates the
+  errors to `sqrt(d_rv² + s²)` with `s` a fitted value (km/s; give it a
+  half-normal or log-uniform prior). The term protocol gains an optional
+  `log_norm(values)`, the `Σ log σ_eff` that a fitted error makes
+  non-constant: `fit` adds it to the loss, defaults to L-BFGS (as for
+  `noise=`), and raises `TypeError` for `method="lm"`. `numpyro_model` needs
+  no change, since the term's `loglike` is already normalised.
+
 ### Changed
 
 - **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
@@ -14,6 +24,16 @@ anything before 1.0 may change between minor versions.
   13.8 mas cone), and recommends doubling `n_rings` and checking Δχ² at the
   best fit; well-measured data may need 64 or more. A convergence test was
   added.
+
+### Fixed
+
+- **`absil_limits` with a far-off or single-value flux axis.** The
+  significance saturates (about 37 sigma in float64) for bright companions,
+  so starting the optimizer on such a flux, e.g. `flux=[0.01]`, gave a flat
+  loss and returned the starting flux with a non-convergence warning. The
+  flux axis now only gives a rough starting point: the limit is bracketed by
+  decades and bisected in log flux, replacing the BFGS search, so the result
+  no longer depends on the axis.
 
 ### Added
 
