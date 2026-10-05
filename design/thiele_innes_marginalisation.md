@@ -1,12 +1,12 @@
 # Analytic marginalisation of the Thiele–Innes constants in orbit fits
 
-Status: **design**, 2026-10-05 (approved by Ben). Nothing here is implemented yet. It builds on Stage 6a.1 ([`imaging_plan.md`](imaging_plan.md)) and on the orbit note ([`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md), "O" below), whose conventions (O §2.1) and Thiele–Innes definitions (O §2.4) it uses unchanged. The algebra below is checked numerically by [`sketches/thiele_innes_marginal_check.py`](sketches/thiele_innes_marginal_check.py), which uses NumPy only and runs in a few seconds; its checks are cited as [S1]–[S7].
+Status: **design**, 2026-10-05 (approved by Ben; decisions D1–D6 recorded in §6). Nothing here is implemented yet. It builds on Stage 6a.1 ([`imaging_plan.md`](imaging_plan.md)) and on the orbit note ([`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md), "O" below), whose conventions (O §2.1) and Thiele–Innes definitions (O §2.4) it uses unchanged. The algebra below is checked numerically by [`sketches/thiele_innes_marginal_check.py`](sketches/thiele_innes_marginal_check.py), which uses NumPy only and runs in a few seconds; its checks are cited as [S1]–[S7].
 
 ## 0. Summary
 
 - **Relative positions are linear in the Thiele–Innes constants ψ = (A, B, F, G) at fixed φ = (P, e, t_peri).** With a Gaussian prior on ψ, ψ integrates out in closed form (Luger, Foreman-Mackey & Hogg 2017). A sampler or optimiser then sees three nonlinear parameters instead of seven, and ψ is recovered exactly afterwards from its conditional Gaussian. `starting_orbits` already does the profile (least-squares) version of this. The marginal version adds the prior and the log-determinant, which depends on φ and must be kept (§1.2).
 - **The catch is the prior.** No Gaussian prior on ψ, and no scale mixture of isotropic Gaussians, gives isotropic orientations. The isotropic zero-mean Gaussian implies p(cos i) = (1 − cos² i)/(1 + cos² i)², which gives orbits within 30° of face-on about 1% of the prior mass instead of 13% (§2.2, [S3]). That matters most for short arcs, where marginalisation would help most.
-- **Recommendation (§2.4):** marginalise under an isotropic Gaussian prior, then **importance-reweight** the recovered Campbell elements to the prior the user asked for (option b), and report the Pareto-smoothed importance-sampling diagnostic k̂. When k̂ > 0.7, fall back to full-parameter NUTS (option c), initialised from the reweighted draws. Accepting the implied prior (option a) is allowed only when the user opts in, and the implied prior is reported.
+- **Recommendation (§2.4):** marginalise under an isotropic Gaussian prior, then **importance-reweight** the recovered Campbell elements to the prior the user asked for (option b), and report the Pareto-smoothed importance-sampling diagnostic k̂. When k̂ > 0.7, fall back to full-parameter NUTS (option c), initialised from the reweighted draws. Accepting the implied prior (option a) is dropped (D1): the Gaussian is only a computational proposal. Face-on systems are expected to need the fallback.
 - **Scope (§3):** exact for positions alone. In joint position + RV fits the line-of-sight constants C and H are functions of ψ, so ψ no longer marginalises. Two partial schemes exist: marginalise the RV amplitude and zero points given (φ, ψ), as an extension of #192; or follow Wright & Howard (2009) and sample (i, Ω) as well, keeping (C, H) linear. Fits to closure phases admit no marginalisation. The method still supplies their starting points, a fast intermediate posterior from per-epoch positions, and an importance proposal for the joint fit.
 
 ## 1. The mathematics
@@ -80,7 +80,7 @@ so a = (|z₁| + |z₂|)/2 and cos i = (|z₁| − |z₂|)/(|z₁| + |z₂|). Th
 - **Edge-on (i → 90°):** AG − BF = a² cos i → 0, so (A, B) is parallel to (F, G) and the sky orbit is a segment. Nothing is singular, but i and 180° − i are then nearly degenerate, and the sense of rotation is poorly measured (O §2.3.3).
 
 ### 1.5 Degenerate and periodic cases in φ
-- **e → 0.** X = cos M and Y = sin M, so a shift in t_peri is a rotation of (X, Y), which ψ absorbs. With an isotropic prior (§2.3) the marginal likelihood is then **exactly** independent of t_peri at e = 0 ([S5]: a spread of 5e-12 in ln Z over seven t_peri). This is correct, but it is a flat circle in φ. Parameterise the phase as the mean anomaly at t_ref, M_ref = 2π(−dt_peri)/P, which is periodic. The pair (e cos M_ref, e sin M_ref) makes the likelihood analytic at e = 0: by the d'Alembert property, terms of order e^k carry harmonics of M_ref up to k. A uniform prior on e then needs a density ∝ 1/e on that plane. The usual (√e cos M_ref, √e sin M_ref) gives a uniform-e prior for free, but at the origin the likelihood is then only C¹ (its first-order term is e cos(M_ref − α)). Both are acceptable for NUTS. The second matches `KeplerOrbit`'s √e cos ω convention, so it is the default (decision D4).
+- **e → 0.** X = cos M and Y = sin M, so a shift in t_peri is a rotation of (X, Y), which ψ absorbs. With an isotropic prior (§2.3) the marginal likelihood is then **exactly** independent of t_peri at e = 0 ([S5]: a spread of 5e-12 in ln Z over seven t_peri). This is correct, but it is a flat circle in φ. Parameterise the phase as the mean anomaly at t_ref, M_ref = 2π(−dt_peri)/P, which is periodic. The pair (e cos M_ref, e sin M_ref) makes the likelihood analytic at e = 0: by the d'Alembert property, terms of order e^k carry harmonics of M_ref up to k. A uniform prior on e then needs a density ∝ 1/e on that plane. The usual (√e cos M_ref, √e sin M_ref) gives a uniform-e prior for free, but at the origin the likelihood is then only C¹ (its first-order term is e cos(M_ref − α)). Both are acceptable for NUTS. The second matches `KeplerOrbit`'s √e cos ω convention, so it is the default (decision D4: uniform e as the interim prior, with population e priors applied by reweighting).
 - **e → 1.** D is finite; the Kepler solver's derivatives become steep. This is unchanged from the full-parameter fit.
 - **Too few epochs.** There are 2n data and 4 linear parameters. With n = 2, every φ fits exactly and p(φ | d) is prior × Occam factor only. With n = 3, a one-parameter family of φ fits exactly. Only n ≥ 4 epochs at distinct phases constrain all three of φ through χ², which is the classical statement. The proper prior keeps ln Z finite in all these cases (§1.2).
 - **Period aliases.** P and P/k (or P = Δt/k for regularly spaced epochs) give near-equal ln Z. This is genuine multimodality, which the 3-D marginal lets us map completely (§4).
@@ -124,11 +124,11 @@ This is the known pattern for linear parameters in orbit fits. The Joker margina
 
 ### 2.3 The prior to marginalise with
 - **Shape: zero mean and isotropic, ψ ~ N(0, s² I₄).** Changing Ω by δ rotates (A, B) and (F, G) by δ, and changing ω rotates (A, F) and (B, G). Both are orthogonal maps of ψ, and only zero-mean s² I is invariant under both. It is therefore the only Gaussian that keeps ω and Ω uniform. It also makes the e = 0 invariance of §1.5 exact.
-- **Scale tied to the period.** For angular orbits Kepler's law gives a ∝ P^{2/3} (M_tot ϖ³)^{1/3}, so take s(P) = s₀ (P/P₀)^{2/3}, by analogy with The Joker's σ_K(P, e). Here s₀ is set from a plausible mass and distance, or from the data's own scale (e.g. the median separation). In the prior-whitened form (M1) this φ-dependence is already inside −½ ln det M̃, since K = D̃S(φ); do not add a separate −½ ln det Λ(φ). That term appears only in the equivalent decomposition ln det M̃ = ln det Λ + ln det(Λ⁻¹ + D̃ᵀD̃). Either way it must be kept (§1.2).
-- **Optionally, a hierarchical scale:** s as a fourth nonlinear parameter, with a log-uniform hyperprior. This broadens the prior on a toward log-uniform at the cost of one dimension. It does not change the inclination prior (§2.2).
+- **Scale tied to the period (a proposal setting, D6).** For angular orbits Kepler's law gives a ∝ P^{2/3} (M_tot ϖ³)^{1/3}, so take s(P) = s₀ (P/P₀)^{2/3}, by analogy with The Joker's σ_K(P, e). Here s₀ is set from a plausible mass and distance, or from the data's own scale (e.g. the median separation). In the prior-whitened form (M1) this φ-dependence is already inside −½ ln det M̃, since K = D̃S(φ); do not add a separate −½ ln det Λ(φ). That term appears only in the equivalent decomposition ln det M̃ = ln det Λ + ln det(Λ⁻¹ + D̃ᵀD̃). Either way it must be kept (§1.2).
+- **s is a proposal setting, not a prior (D6).** It is fixed at s₀(P/P₀)^{2/3}, or adapted per (P, e, T₀) for efficiency, with the importance weights of §2.4(b) using the same s. A hierarchical s, sampled as a fourth nonlinear parameter, is ruled out: it would replace the invariant prior with a radial mixture, which cannot give isotropic orientations (§2.2).
 
 ### 2.4 Options, and the recommendation
-**(a) Accept the implied prior and state it.** This is valid when the data pin i and a far more tightly than the prior varies: well-covered orbits, in Lucy's terms an orbital coverage f_orb ≳ 0.6. The choice of prior then barely matters (Lucy 2014, §5.4). It is wrong in exactly the regime where marginalisation pays most: short arcs, where i is poorly constrained, the prior pushes orbits toward edge-on and so biases a and the dynamical mass a³/P². It must never be silent.
+**(a) Accept the implied prior and state it (dropped; D1).** The rule is that priors are the invariant measures unless there is strong information otherwise (`imaging_plan.md`, standing design decision 9), and the implied prior is non-isotropic, p(cos i) ∝ (1 − cos² i)/(1 + cos² i)². The Gaussian is only a computational proposal. The rest of this paragraph records why the option is unsafe. It would be valid when the data pin i and a far more tightly than the prior varies: well-covered orbits, in Lucy's terms an orbital coverage f_orb ≳ 0.6. The choice of prior then barely matters (Lucy 2014, §5.4). It is wrong in exactly the regime where marginalisation pays most: short arcs, where i is poorly constrained, the prior pushes orbits toward edge-on and so biases a and the dynamical mass a³/P². It must never be silent.
 
 **(b) Importance-reweight to the desired prior.** For each draw (φ, ψ) from §1.3, converted to Campbell elements θ = (a, i, ω, Ω), the weight is
 
@@ -144,11 +144,20 @@ where π(φ) is the prior on φ used in the marginal, normally the target's own,
 
 **(c) Marginalise only for exploration, and sample the full parameters with NUTS.** The marginal gives starting points, MAP fits in 3-D, a map of the modes, and a mass matrix: the conditional covariance (M2) is the ψ block, and the 3-D Laplace covariance is the φ block. The reported posterior then comes from 7-D NUTS with the user's priors, in `ThieleInnesOrbit` or `KeplerOrbit` coordinates. This is always correct, but it inherits 7-D NUTS's difficulties on short arcs (O R4). Worse, separate chains stuck in separate modes do **not** give the relative weights of the modes.
 
-**Recommendation: (b), with (c) as the fallback and the cross-check.**
+**Recommendation, adopted as D1: (b), with (c) as the fallback and the cross-check.** The fallback is full 7-D NUTS initialised from the reweighted draws, used when PSIS k̂ > 0.7. Face-on systems are expected to need it.
 - Option (b) gets mode weights right automatically. The modes live in 3-D φ space, where p(φ | d) can be mapped exhaustively (§4). Only (b) and (c) honour the user's prior, and (c) cannot weight modes.
 - Its failure modes are diagnosable per run (k̂).
 - The fallback reuses the same machinery: chains initialised from the reweighted draws in every mode with non-negligible weight, and the mode weights taken from (b) when k̂ is acceptable within each mode.
-- Option (a) is offered with an explicit `implied_prior=True` flag, and the result records the implied prior.
+- Option (a) is not offered (D1). The target prior is set by D2.
+
+**Default target prior (D2).**
+- Log-uniform a and P, equivalently log-uniform P and μ = a³/P².
+- Isotropic orientation (uniform cos i, ω, Ω).
+- Uniform phase.
+- Uniform e, as the interim prior (D4).
+- Stated bounds on a and P, with a check that the posterior is proper.
+
+A parallax prior (Gaia) overrides this as strong information. With the distance known, the scale prior goes on the total mass (1/M).
 
 ## 3. Scope and limits
 
@@ -175,11 +184,11 @@ The method is exact and complete: `PositionData` with correlated per-epoch covar
    - The coefficients diverge as 1/sin i, so the scheme fails near face-on. Face-on orbits are exactly where RVs carry no information anyway.
    - A Gaussian prior on (C, H) implies uniform ω and a Rayleigh prior on a sin i, so it needs reweighting too.
 
-Scheme 2 is preferred. It is exact, regular at all inclinations, and a small extension of #192 (decision D5).
+Scheme 2 is preferred. It is exact, regular at all inclinations, and a small extension of #192. **Decision D5: deferred until a real system needs it.** When built, K is a scale parameter, so a Gaussian on K is again only a proposal and needs reweighting (§2.4(b)).
 
 ### 3.3 Joint fits to interferometric data
 Closure phases, V² and kernel phases are nonlinear in the companion's position, and the flux ratio does not enter linearly either: the binary's normalised visibility has the flux in its denominator. There is nothing to marginalise in a joint visibility fit (O R7), but the method still helps in four ways:
-- **Starting points:** per-epoch positions, then the marginal over φ on a grid, as `starting_orbits` does now, but ranked by ln Z (decision D3).
+- **Starting points:** per-epoch positions, then the marginal over φ on a grid, as `starting_orbits` does now. It keeps the χ² ranking by default (D3): starting points make no inferential claim. Ranking by posterior comes only once reweighting exists.
 - **Intermediate data.** When per-epoch Laplace positions are close to sufficient (two point sources well inside the field; O R0), the position-based posterior of §1.3 *is* the answer to good accuracy. `simulate`/`bias_test` decides when that holds.
 - **An importance proposal for the joint fit.** Reweight draws from the position-based posterior by L_vis(θ)/L_pos(θ). This is valid where the positions capture most of the visibilities' information, and it is diagnosed by k̂ like §2.4(b). When it fails, it still supplies initialisations and a mass matrix for joint NUTS.
 - **Mode weights** for multimodal short arcs, which joint NUTS chains cannot provide (§2.4).
@@ -213,7 +222,7 @@ mean, cov = term.posterior(values)                   # (M2): ψ | φ, shape (4,)
 orbits = term.draw(samples, key, n_per=1)            # φ samples -> ThieleInnesOrbit draws
                                                      #   -> .to_kepler(), both nodes
 log_w, k_hat = reweight(orbits, prior, target_log_prior)  # §2.4(b), PSIS
-best = starting_orbits(positions, periods, prior=prior)   # rank by ln Z, not χ²
+best = starting_orbits(positions, periods, prior=prior)   # χ² ranking by default (D3)
 ```
 - **One solver.** Refactor `_thiele_innes_fit`'s whitened design into a private `_thiele_innes_system(dt, whitener, period, dt_peri, ecc) -> (D̃, d̃)`. The existing least-squares route uses it, so `starting_orbits` is unchanged when `prior=None`. So does a new `_thiele_innes_marginal(D̃, d̃, mu, sd) -> (ln Z, ρ, log_norm, mean, cov)` (QR of [K; I₄], §1.2).
 - **`PositionData` methods,** named like `RVData`'s in #192: `marginal_loglike(period, dt_peri, ecc, prior)`, `marginal_whitened_residuals`, `marginal_log_norm`, `thiele_innes_posterior`.
@@ -230,7 +239,8 @@ Fast, in `tests/test_orbits.py` (float64 in a local `jax.enable_x64`, plus a flo
 5. A degenerate design (all epochs at one phase): ln Z and its gradient are finite with a proper prior, and a flat prior is rejected.
 6. float32 agrees with float64 for a well-conditioned case. The QR route stays finite where the Cholesky route fails (cond M̃ ~ 1e8).
 7. Prior-only reweighting (no data) reproduces the target prior: uniform cos i and log-uniform a, as in [S6]. k̂ is large for a target at face-on.
-8. `starting_orbits(prior=None)` is exactly the current χ² ranking (backward compatible). `starting_orbits(prior=...)` keeps the true grid point among the best (O §5.2.8), and its ln Z per grid point equals the dense Gaussian evidence. A wide prior does **not** recover the χ² ranking: the Occam factor tends to −½ ln det(D̃ᵀD̃) plus a constant, which still depends on φ.
+   - **No-data prior test** (`imaging_plan.md`, standing design decision 9; Hogg+2010 §4): sampling with an empty dataset, through the marginal, the conditional draws and the reweighting, reproduces the D2 default prior, Jacobians included: log-uniform P and μ, isotropic orientation, uniform phase and uniform e.
+8. `starting_orbits(prior=None)` is exactly the current χ² ranking (backward compatible), and stays the default (D3). `starting_orbits(prior=...)` keeps the true grid point among the best (O §5.2.8), and its ln Z per grid point equals the dense Gaussian evidence. A wide prior does **not** recover the χ² ranking: the Occam factor tends to −½ ln det(D̃ᵀD̃) plus a constant, which still depends on φ.
 
 Independent, in [virgil-validation](https://github.com/benjaminpope/virgil-validation) (the independence rule of `AGENTS.md`): the brute-force 4-D quadrature of [S4], and the Jacobian and implied prior of [S1] and [S3], written from scratch there. An Issue requesting this will be opened on that repository when the code PR lands.
 
@@ -252,13 +262,21 @@ Slow, on **OzSTAR** (CPU and GPU; never on a laptop), on simulated systems from 
 | RV amplitude columns (§3.2 scheme 2), half-Gaussian node evidence | 2–3 | #192 merged |
 | validation Issue and its independent checks (in virgil-validation) | 1–2 | — |
 
-## 6. Open decisions for Ben
-1. **D1, the prior policy.** The recommendation is (b), reweighting to the user's Campbell prior with k̂ reported, falling back to (c) full-parameter NUTS. Is (a) acceptable at all as an opt-in, or should the implied prior always be reweighted away?
-2. **D2, the default target prior** for reweighting: isotropic i, uniform ω and Ω, and a prior on a that is either log-uniform over a user range, or derived from a prior on M_tot and on the distance (O R6). Which should be the default when the user gives none?
-3. **D3, `starting_orbits` ranking.** Rank by ln Z under a default prior instead of χ²? This changes the current behaviour. The alternative is to keep χ² and add `prior=`.
-4. **D4, the phase parameterisation for the 3-D sampler:** (√e cos M_ref, √e sin M_ref) (a uniform prior on e, C¹ at e = 0; the proposed default) or (e cos M_ref, e sin M_ref) (analytic, but needs a 1/e density).
-5. **D5, joint RV fits:** implement scheme 2 of §3.2 (the RV amplitude as a linear column given ψ, extending #192) now, or wait until a real system needs it?
-6. **D6, the scale s:** fixed s₀ (P/P₀)^{2/3} (proposed), or a hierarchical s as a fourth sampled parameter, which brings the prior on a closer to log-uniform at the cost of one dimension.
+## 6. Decisions (Ben, 2026-10-05)
+These follow the standing rule that priors are Jeffreys priors under the relevant group actions, unless there is strong information otherwise (`imaging_plan.md`, standing design decision 9).
+1. **D1, the prior policy.** (b), importance reweighting of the conditional (A, B, F, G) draws to the invariant target prior (§2.4), with (c), full 7-D NUTS initialised from the reweighted draws, as the fallback when PSIS k̂ > 0.7. Option (a), accepting the Gaussian-implied prior, is dropped entirely: that prior is non-isotropic, p(cos i) ∝ (1 − cos² i)/(1 + cos² i)² (§2.2), and the Gaussian is only a computational proposal. Face-on systems are expected to need the fallback.
+2. **D2, the default target prior** (§2.4):
+   - log-uniform a and P, equivalently log-uniform P and μ;
+   - isotropic orientation;
+   - uniform phase;
+   - uniform e (interim);
+   - stated bounds, with a check that the posterior is proper.
+
+   A parallax prior (Gaia) overrides as strong information. With the distance known, the scale prior goes on total mass (1/M).
+3. **D3, `starting_orbits`** keeps χ² ranking by default (§3.3). Starting points make no inferential claim, and ln Z under the Gaussian proposal is not the posterior either. Ranking by posterior comes only once reweighting exists.
+4. **D4, the phase parameterisation:** uniform e as the interim prior, sampled as (√e cos M_ref, √e sin M_ref), which is Jacobian-free for uniform e (§1.5). Population e priors are applied by reweighting.
+5. **D5, joint RV fits:** the RV amplitude as a linear column (scheme 2 of §3.2) is deferred until a real system needs it. When built, K is a scale parameter, so a Gaussian on K is again only a proposal and needs reweighting.
+6. **D6, the Gaussian width s** is a proposal setting, not a prior (§2.3). It is fixed, s₀(P/P₀)^{2/3}, or adapted per (P, e, T₀) for efficiency, with the importance weights using the same s. A hierarchical s, sampled as a parameter, is ruled out, because it would replace the invariant prior.
 
 ## References
 - Blunt, S., et al. 2017, AJ 153, 229 (arXiv:1703.10653): Orbits for the Impatient (OFTI).
