@@ -852,20 +852,36 @@ def convolve_beam(image, pixel_scale_mas, beam):
     return fftconvolve(image, kernel / np.sum(kernel), mode="same")
 
 
+def _base_weight(base, wavel):
+    """The flux the components are measured against: a System's total."""
+    if isinstance(base, System):
+        return sum(part._weight(wavel) for part in base.parts)
+    return base._weight(wavel)
+
+
+def _spectral_shape(spectrum, wavel):
+    """The components' spectrum, 1 at its reference (``None``: grey)."""
+    if spectrum is None:
+        return 1.0
+    return spectrum(wavel) / spectrum(None)
+
+
 class _CleanScene(SourceModel):
     """A fixed base scene plus point components on a pixel grid.
 
-    ``V = (w V_base + Σ c_p e_p) / (w + Σ c_p)``, where ``w`` is the base's
-    weight, ``c`` the components' fluxes and ``e_p`` the visibility of a
-    point at pixel ``p``. It is smooth in ``c``, even at ``c = 0``, and
-    equals ``System(base=base, clean=Image(c / Σc, flux=Σc))``. Without a
-    base, ``V = Σ c_p e_p / Σ c_p``.
+    ``V = (w V_base + s Σ c_p e_p) / (w + s Σ c_p)``, where ``w`` is the
+    base's weight (a System's total flux), ``c`` the components' fluxes,
+    ``s`` the shape of their spectrum (1 if grey) and ``e_p`` the
+    visibility of a point at pixel ``p``. It is smooth in ``c``, even at
+    ``c = 0``, and equals the model ``clean`` returns. Without a base,
+    ``V = Σ c_p e_p / Σ c_p``.
     """
 
     base: object
     fluxes: jax.Array
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
+    spectrum: object = None
 
     def model(self, u, v, wavel):
         return self.model_on_grid(u, v, wavel, None)
@@ -887,15 +903,20 @@ class _CleanScene(SourceModel):
             base = self.base.model(u, v, wavel)
         else:
             base = self.base.model_on_grid(u, v, wavel, grid)
-        weight = self.base._weight(wavel)
-        return (weight * base + pixels) / (weight + total)
+        weight = _base_weight(self.base, wavel)
+        shape = _spectral_shape(self.spectrum, wavel)
+        return (weight * base + shape * pixels) / (weight + shape * total)
 
 
-def _clean_residuals(base, observations, scale, rotation):
-    """Whitened residuals of all the data, as a function of the fluxes."""
+def _clean_residuals(parts, observations, scale, rotation):
+    """Whitened residuals of all the data, as a function of the fluxes.
+
+    ``parts`` is ``(base, spectrum)``.
+    """
+    base, spectrum = parts
 
     def residuals(fluxes):
-        scene = _CleanScene(base, fluxes, scale, rotation)
+        scene = _CleanScene(base, fluxes, scale, rotation, spectrum)
         return np.concatenate(
             [np.ravel(whitened_residuals(scene, d)) for d in observations]
         )
@@ -904,13 +925,13 @@ def _clean_residuals(base, observations, scale, rotation):
 
 
 @eqx.filter_jit
-def _atom_norms(base, observations, fluxes, scale, rotation):
+def _atom_norms(parts, observations, fluxes, scale, rotation):
     """``|J e_p|²`` for every pixel ``p``: the χ² response to its flux.
 
     One Jacobian–vector product per pixel, a row of pixels at a time, so
     the Jacobian is never held whole.
     """
-    residuals = _clean_residuals(base, observations, scale, rotation)
+    residuals = _clean_residuals(parts, observations, scale, rotation)
     nrow, ncol = fluxes.shape
 
     def row(i):
@@ -924,14 +945,14 @@ def _atom_norms(base, observations, fluxes, scale, rotation):
 
 
 @eqx.filter_jit
-def _clean_step(base, observations, fluxes, scores, scale, rotation):
+def _clean_step(parts, observations, fluxes, scores, scale, rotation):
     """χ², and the best pixel and Gauss–Newton step for one CLEAN iteration.
 
     The best pixel lowers χ² most: the largest ``g_p² / |J e_p|²`` with
     ``g_p < 0``, where ``g`` is the gradient of χ² and ``scores`` holds
     ``1 / |J e_p|²`` (zero outside the support).
     """
-    residuals = _clean_residuals(base, observations, scale, rotation)
+    residuals = _clean_residuals(parts, observations, scale, rotation)
     r, vjp = jax.vjp(residuals, fluxes)
     (gradient,) = vjp(2.0 * r)
     gradient = gradient.ravel()
@@ -946,15 +967,15 @@ def _clean_step(base, observations, fluxes, scores, scale, rotation):
 
 
 @eqx.filter_jit
-def _clean_chi2(base, observations, fluxes, scale, rotation):
-    residuals = _clean_residuals(base, observations, scale, rotation)
+def _clean_chi2(parts, observations, fluxes, scale, rotation):
+    residuals = _clean_residuals(parts, observations, scale, rotation)
     return np.sum(residuals(fluxes) ** 2)
 
 
 @eqx.filter_jit
-def _clean_columns(base, observations, fluxes, indices, scale, rotation):
+def _clean_columns(parts, observations, fluxes, indices, scale, rotation):
     """The residuals, and their derivatives by the fluxes at ``indices``."""
-    residuals = _clean_residuals(base, observations, scale, rotation)
+    residuals = _clean_residuals(parts, observations, scale, rotation)
 
     def column(k):
         e = np.zeros(fluxes.size, fluxes.dtype).at[k].set(1.0)
@@ -1004,9 +1025,11 @@ class CleanResult:
     ----------
     model : SourceModel
         The base scene with the components, ``System(base=base,
-        clean=Image(...))``: the Image is non-zero only on the components,
-        and its ``flux`` is their total relative to the base. Without a
-        base scene, the Image alone; with no components, the base alone.
+        clean=Image(...))``, or for a System base its components and
+        ``clean`` side by side. The Image is non-zero only on the
+        components, and its ``flux`` is their total relative to the base
+        (with the components' spectrum, if one was given). Without a base
+        scene, the Image alone; with no components, the base alone.
     components : array, shape (npix, npix)
         The components' fluxes on the pixel grid, relative to the base
         scene's weight (without a base scene, normalised to unit sum).
@@ -1050,6 +1073,7 @@ def clean(
     stall_window=50,
     stall_tolerance=1e-3,
     refresh_norms=False,
+    spectrum=None,
     support=None,
     init=None,
     rotation_deg=0.0,
@@ -1075,9 +1099,15 @@ def clean(
     the star's: the gradient there is small, but so is ``|J e_p|``, and an
     unnormalised search would pile flux beside the star.
 
-    Components are added relative to a fixed ``base`` scene, usually an
-    analytic star at flux 1; fit its parameters first. Without a base, the
-    components alone make the image, starting from one at the centre of the
+    Components are added to a fixed ``base`` scene, usually an analytic
+    star at flux 1; fit its parameters first. Their fluxes are relative to
+    the base's, like a companion's in a System; for a
+    [`System`][virgil.models.System] base they are siblings of its
+    components, relative to its total. By default the components are grey,
+    the same fraction of the base's flux at every wavelength; give a
+    ``spectrum`` to make them follow one, as the image does in SPARCO
+    (e.g. a star with its own spectral index and an environment with
+    another). Without a base, the components alone make the image, starting from one at the centre of the
     grid (closure phases do not fix the position, so this is also the
     anchor).
 
@@ -1105,7 +1135,8 @@ def clean(
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
     base : SourceModel, optional
-        A fixed scene the components are added to (default: none).
+        A fixed scene the components are added to (default: none). A
+        System base must not be offset (put any offset on its components).
     gain : float, optional
         Loop gain, the fraction of each step taken (default 0.1). Smaller
         is slower but less likely to put flux in the wrong place.
@@ -1124,6 +1155,11 @@ def clean(
         ``False``). For non-linear data they change as the image does, but
         each refresh costs one Jacobian–vector product per pixel, computed a
         row of pixels at a time.
+    spectrum : Spectrum, optional
+        The spectrum all the components share, e.g.
+        ``PowerLaw(1.0, index, wavel0)``; only its shape matters, and the
+        component fluxes are at its reference wavelength. Default: grey.
+        Needs a base.
     support : array-like of bool, shape (npix, npix), optional
         Pixels allowed to receive components (default: all), e.g. a
         [`circular_support`][virgil.models.circular_support] with a hole
@@ -1169,6 +1205,15 @@ def clean(
     refit_every, stall_window = int(refit_every), int(stall_window)
     if base is not None and base.time_dependent:
         raise ValueError("The base scene must not change with time.")
+    if spectrum is not None and base is None:
+        raise ValueError("A spectrum for the components needs a base scene.")
+    if isinstance(base, System):
+        if float(base.dra) != 0.0 or float(base.ddec) != 0.0:
+            raise ValueError(
+                "A System base must not be offset; offset its components."
+            )
+        if "clean" in base.components:
+            raise ValueError("The base already has a component 'clean'.")
     shape = (npix, npix)
     support = (
         onp.ones(shape, bool)
@@ -1197,7 +1242,7 @@ def clean(
         raise ValueError("Without a base scene, init needs a positive pixel.")
     ndata = sum(d.n_independent for d in observations)
     with run_in(dtype):
-        fixed = cast_tree((base, observations), dtype)
+        fixed = cast_tree(((base, spectrum), observations), dtype)
         fluxes = np.asarray(init, dtype)
         geometry = (pixel_scale_mas, rotation_deg)
 
@@ -1242,14 +1287,28 @@ def clean(
     total = float(components.sum())
     if total > 0:
         on = components > 0
+        if base is None:
+            flux = 1.0
+        elif spectrum is None:
+            flux = total
+        else:  # the spectrum's shape, with the components' total flux
+            scale = total / spectrum(None)
+            flux = eqx.tree_at(
+                lambda f: f.ratio, spectrum, spectrum.ratio * scale
+            )
         image = Image(
             onp.log(onp.where(on, components, 1.0)),
             pixel_scale_mas,
             support=on,
-            flux=total if base is not None else 1.0,
+            flux=flux,
             rotation_deg=rotation_deg,
         )
-        model = image if base is None else System(base=base, clean=image)
+        if base is None:
+            model = image
+        elif isinstance(base, System):
+            model = System(**base.components, clean=image)
+        else:
+            model = System(base=base, clean=image)
     else:
         model = base
     return CleanResult(

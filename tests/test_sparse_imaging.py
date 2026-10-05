@@ -288,3 +288,46 @@ def test_l_curve_without_warm_starts_fits_each_weight_afresh():
     assert np.allclose(
         curve.results[1].model.brightness, alone.model.brightness, atol=1e-6
     )
+
+
+def test_clean_with_a_spectrum_is_sparco():
+    # A star and a companion with their own spectra, and an environment
+    # with another: components with the environment's spectrum, beside the
+    # base's components, reproduce the SPARCO model.
+    from virgil.coverage import vlti_oidata
+    from virgil.spectra import PowerLaw
+
+    template = vlti_oidata(
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        wavelengths_m=onp.linspace(1.5e-6, 1.8e-6, 4),
+    )
+    base = System(
+        star=PointSource(flux=PowerLaw(1.0, -3.0, 1.65e-6)),
+        comp=PointSource(dra=1.5, ddec=-1.0, flux=0.02),
+    )
+    scale = 0.6
+    fluxes = np.zeros((NPIX, NPIX)).at[3, 4].set(0.02).at[10, 9].set(0.03)
+    shape = PowerLaw(1.0, 2.0, 1.65e-6)
+    scene = _CleanScene(base, fluxes, scale, 0.0, shape)
+    on = fluxes > 0
+    flat = System(
+        **base.components,
+        clean=Image(
+            np.log(np.where(on, fluxes, 1.0)),
+            scale,
+            support=on,
+            flux=PowerLaw(0.05, 2.0, 1.65e-6),
+        ),
+    )
+    assert np.allclose(template.model(scene), template.model(flat), atol=1e-6)
+
+    data = template.with_model(flat, key=jax.random.PRNGKey(8))
+    sparco = clean(data, NPIX, scale, base=base, spectrum=shape)
+    grey = clean(data, NPIX, scale, base=base)
+    assert sparco.stop == "target"
+    assert set(sparco.model.components) == {"star", "comp", "clean"}
+    assert np.isclose(sparco.model.clean.flux.index, 2.0)
+    assert np.isclose(sparco.model.clean.flux.ratio, sparco.components.sum())
+    assert len(sparco.chi2_red) < len(grey.chi2_red)
+    with pytest.raises(ValueError, match="needs a base"):
+        clean(data, NPIX, scale, spectrum=shape)
