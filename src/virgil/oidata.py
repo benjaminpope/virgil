@@ -1452,7 +1452,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         frame analytically (see
         [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with these widths
         unless they are fitted as the noise terms ``phi_offset_baseline``,
-        ``phi_offset_triangle`` or ``phi_offset_modes``. Use them only if
+        ``phi_offset_triangle`` or ``phi_offset_modes`` (scale parameters:
+        log-uniform priors on stated bounds). Use them only if
         calibrators show such offsets: they are off by default. Needs
         closure phases from four or more telescopes.
 
@@ -1495,7 +1496,9 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         The likelihood then marginalises gains on log |V| per frame
         analytically (see [`virgil.gains`][virgil.gains]), with these widths
         unless they are fitted as the noise terms ``vis_gain_telescope``,
-        ``vis_gain_baseline``, ``vis_gain_chromatic`` or ``vis_gain_modes``.
+        ``vis_gain_baseline``, ``vis_gain_chromatic`` or ``vis_gain_modes``
+        (scale parameters: give them log-uniform priors on stated bounds,
+        e.g. ``dist.LogUniform(1e-4, 0.3)``).
         The covariance then depends on the model, so fits use L-BFGS.
 
         Parameters
