@@ -112,6 +112,21 @@ anything before 1.0 may change between minor versions.
   grids), and `save`/`load`/`concatenate` for array jobs; `concatenate`
   compares fingerprints of the whole model, null scene and template (every
   field, static or not) and refuses runs that cannot be fingerprinted.
+- **Detection plots (`virgil.plotting`, stage 3 of virgil#2).**
+  `plot_null_distribution(mc, stat, observed=, fap=)` draws the empirical
+  false-alarm probability of every threshold on a log scale, with the
+  single-position reference (½χ²₁ for Δχ², the Gaussian tail for max SNR),
+  the threshold at a FAP, and an observed value with its FAP and 95%
+  interval; its legend sits outside the axes so it never hides the tail.
+  `plot_roc(mc, stat, flux=, sep_bin=)` draws ROC curves for one or several
+  statistics, fluxes or separation bins (distinct colours and line styles),
+  on a log false-positive axis by default with the chance curve TPR = FPR
+  drawn as a curve, and marks the one-position FAP of local 3σ and 5σ
+  (0.135%, 2.9×10⁻⁷) next to where each curve's threshold equals them, to
+  show the look-elsewhere effect. `plot_completeness(mc, stat, fap,
+  units=)` draws the completeness map against separation and Δmag, contrast
+  or flux, with the 50% and 90% `contrast_curve`s, on axes that
+  `plot_contrast_curve` can draw Absil or Ruffio limits onto.
 
 - **Gauss-Newton and a marginal-likelihood map in `linear_flux_grid`.**
   `n_iter=k` relinearises the whitened residuals at the current flux per pixel
@@ -215,6 +230,15 @@ anything before 1.0 may change between minor versions.
 
 ### Docs
 
+- **"Detection ROC curves" rewritten on `injection_recovery`** (Binaries,
+  `notebooks/detection_roc.ipynb`). A candidate companion in a simulated
+  NIRISS AMI observation, one Monte Carlo call (10⁴ null and 1280 injected
+  searches), the look-elsewhere effect on the null distribution, the
+  empirical threshold and FAP to quote for a detection, ROC curves of the
+  three statistics, the completeness map and 50%/90% contrast curves to quote
+  for a non-detection against Absil and Ruffio limits, and what wrong error
+  bars do to a Gaussian null and how `rescale_errors` and the bootstrap fix
+  it.
 - **New tutorial: "Orbits from interferometric epochs"** (Binaries,
   `notebooks/orbit_fitting.ipynb`). Eight epochs of simulated VLTI
   (UT) V² and closure phases of a three-year binary: per-epoch astrometry
