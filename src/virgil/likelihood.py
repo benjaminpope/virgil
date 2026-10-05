@@ -22,6 +22,7 @@ import numpy as onp
 from jax.scipy.special import i0e
 
 from ._utils import _per_dataset, _reference, concrete, is_flux_param
+from .angles import is_angle_vector, vector_angle, vector_site
 from .gains import GAIN_GROUPS, OFFSET_GROUPS
 from .models import SourceModel
 
@@ -551,6 +552,15 @@ def _term_loglike(term, values):
     return -0.5 * np.sum(np.ravel(term(values)) ** 2)
 
 
+def _sample(numpyro, path, prior):
+    """Sample the parameter at ``path``: an angle vector at ``<path>_vec``,
+    with the angle (degrees) recorded as the deterministic site ``path``."""
+    if is_angle_vector(prior):
+        vector = numpyro.sample(vector_site(path), prior)
+        return numpyro.deterministic(path, vector_angle(vector))
+    return numpyro.sample(path, prior)
+
+
 def numpyro_model(
     model,
     priors,
@@ -580,7 +590,11 @@ def numpyro_model(
         Mapping from parameter path (e.g. ``"comp.flux"``) or function
         argument name to prior; each key is also used as the numpyro
         sample-site name. Priors on fluxes (keys named ``flux`` or ending
-        in ``.flux``) must have non-negative support.
+        in ``.flux``) must have non-negative support. An angle (degrees)
+        with an [`AngleVector`][virgil.angles.AngleVector] prior is
+        sampled as a 2-D vector at the site ``"<path>_vec"``, with the
+        angle recorded as the deterministic site ``"<path>"``: there is no
+        wrap boundary at 0°/360°.
     data_obj : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
         May be ``()`` when ``likelihoods`` holds all the data.
@@ -665,7 +679,7 @@ def numpyro_model(
     likelihoods = tuple(likelihoods)
 
     def numpyro_fn():
-        values = [numpyro.sample(path, priors[path]) for path in paths]
+        values = [_sample(numpyro, path, priors[path]) for path in paths]
         source = build_model(model, paths, values)
         sources = _per_dataset(source, len(observations))
         terms = {site: numpyro.sample(site, sites[site][0]) for site in sites}

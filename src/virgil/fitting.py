@@ -25,6 +25,7 @@ import optimistix as optx
 
 from ._precision import cast_tree, run_in
 from ._utils import _per_dataset, _reference, is_flux_param
+from .angles import is_angle_vector, vector_angle, vector_site
 from .fields import GaussianField
 from .likelihood import (
     _check_positive_flux_prior,
@@ -56,14 +57,17 @@ def _prior_residuals(path, distribution, value):
         distribution, (dist.Independent, dist.ExpandedDistribution)
     ):
         distribution = distribution.base_dist
+    if is_angle_vector(distribution):
+        return distribution.residuals(value)  # ``value`` is the vector
     if isinstance(distribution, (dist.Uniform, dist.ImproperUniform)):
         return None
     if isinstance(distribution, dist.Normal):
         return np.ravel((value - distribution.loc) / distribution.scale)
     raise TypeError(
         f"The {type(distribution).__name__} prior on {path!r} has no "
-        "least-squares form; use Normal, Uniform or ImproperUniform "
-        "priors, or fit with method='lbfgs' or 'adam'."
+        "least-squares form; use Normal, Uniform, ImproperUniform or "
+        "AngleVector priors (an AngleVector takes von Mises priors on "
+        "angles), or fit with method='lbfgs' or 'adam'."
     )
 
 
@@ -148,6 +152,22 @@ class _Objective(eqx.Module):
         """The free parameters' paths, in the order of ``priors``."""
         return tuple(self.priors)
 
+    @property
+    def sites(self):
+        """The numpyro sites of the free parameters, in the order of
+        ``priors``: ``"<path>_vec"`` for an angle vector, else its path."""
+        return tuple(
+            vector_site(p) if is_angle_vector(q) else p
+            for p, q in self.priors.items()
+        )
+
+    def _prior_value(self, values, path):
+        """The value a prior's density is evaluated at: the vector for an
+        angle vector, else the parameter."""
+        if is_angle_vector(self.priors[path]):
+            return values[vector_site(path)]
+        return values[path]
+
     def init(self, values=None):
         """Unconstrained coordinates of ``values`` (default: the template's).
 
@@ -171,6 +191,9 @@ class _Objective(eqx.Module):
                 # infinite: start inside it, at the prior's mean.
                 z[site] = _bijection(prior).inv(np.asarray(prior.mean, float))
         for path, prior in self.priors.items():
+            if is_angle_vector(prior) and vector_site(path) in values:
+                z[path] = np.asarray(values[vector_site(path)], float)
+                continue
             if path not in values:
                 if not isinstance(self.model, SourceModel):
                     raise ValueError(
@@ -178,15 +201,28 @@ class _Objective(eqx.Module):
                         "the model is a function."
                     )
                 values[path] = self.model.get(path)  # raises if unknown
+            if is_angle_vector(prior):
+                # The unit vector of the starting angle (degrees).
+                angle = np.deg2rad(np.asarray(values[path], float))
+                z[path] = np.stack([np.cos(angle), np.sin(angle)])
+                continue
             z[path] = _bijection(prior).inv(np.asarray(values[path], float))
         return z
 
     def constrain(self, z):
-        """Map unconstrained coordinates to parameter and error-term values."""
-        values = {
-            path: _bijection(prior)(z[path])
-            for path, prior in self.priors.items()
-        }
+        """Map unconstrained coordinates to parameter and error-term values.
+
+        An angle with an [`AngleVector`][virgil.angles.AngleVector] prior
+        appears twice: in degrees at its path, and as the vector at
+        ``"<path>_vec"``.
+        """
+        values = {}
+        for path, prior in self.priors.items():
+            if is_angle_vector(prior):
+                values[vector_site(path)] = z[path]
+                values[path] = vector_angle(z[path])
+            else:
+                values[path] = _bijection(prior)(z[path])
         for site, (prior, _, _) in self.noise.items():
             values[site] = _bijection(prior)(z[site])
         return values
@@ -255,7 +291,7 @@ class _Objective(eqx.Module):
                 )
             parts.append(np.ravel(regulariser.residuals(_reference(model))))
         for path, prior in self.priors.items():
-            r = _prior_residuals(path, prior, values[path])
+            r = _prior_residuals(path, prior, self._prior_value(values, path))
             if r is not None:
                 parts.append(r)
         return np.concatenate(parts)
@@ -284,7 +320,7 @@ class _Objective(eqx.Module):
         )
         penalty = sum(r.value(_reference(model)) for r in self.regularisers)
         log_prior = sum(
-            np.sum(prior.log_prob(values[path]))
+            np.sum(prior.log_prob(self._prior_value(values, path)))
             for path, prior in self.priors.items()
         )
         for site, (prior, _, _) in self.noise.items():
@@ -302,7 +338,10 @@ class FitResult:
         The fitted model, or models (one per dataset) if the model function
         returned a list.
     values : dict
-        The fitted parameter values, keyed by path.
+        The fitted parameter values, keyed by path. An angle with an
+        [`AngleVector`][virgil.angles.AngleVector] prior is in degrees at
+        its path and its vector at ``"<path>_vec"``, so that ``values`` can
+        start numpyro (``init_to_value``).
     info : dict
         ``method``; ``converged`` (``None`` for Adam, which has no
         convergence test); ``steps``; ``loss`` (the unscaled negative log
@@ -352,7 +391,10 @@ def fit(
         A prior for each free parameter, keyed by its path (e.g.
         ``"comp.flux"`` or ``"env.log_brightness"``; see
         [`image_priors`][virgil.imaging.image_priors]). Priors on
-        fluxes must have non-negative support.
+        fluxes must have non-negative support. An angle (degrees) with an
+        [`AngleVector`][virgil.angles.AngleVector] prior is fitted as a
+        2-D vector, with no wrap boundary; its von Mises prior, if any, has
+        a least-squares form.
     data : OIData or sequence of OIData
         The data, fitted jointly. May be empty (``()``) when
         ``likelihoods`` holds all the data.
@@ -546,8 +588,10 @@ def gauss_newton_mass(model, priors, data, values):
     ----------
     model, priors, data
         As for [`fit`][virgil.fitting.fit]. The priors must have a
-        least-squares form (Normal, Uniform or ImproperUniform), as for
-        ``fit``'s Levenberg–Marquardt.
+        least-squares form (Normal, Uniform, ImproperUniform or
+        [`AngleVector`][virgil.angles.AngleVector]), as for ``fit``'s
+        Levenberg–Marquardt. An angle vector's block is keyed by its site,
+        ``"<path>_vec"``.
     values : dict
         The parameter values at which to take the curvature, normally
         ``fit(model, priors, data).values``.
@@ -578,10 +622,10 @@ def gauss_newton_mass(model, priors, data, values):
             "The Gauss–Newton curvature is singular: a parameter in priors "
             "is constrained by neither the data nor a Normal prior."
         )
-    paths = problem.paths
+    sites = problem.sites
     return {
-        "inverse_mass_matrix": {paths: covariance},
-        "dense_mass": [paths],
+        "inverse_mass_matrix": {sites: covariance},
+        "dense_mass": [sites],
         "adapt_mass_matrix": False,
     }
 
@@ -591,10 +635,12 @@ def _gauss_newton_covariance(problem, z):
     """(JᵀJ)⁻¹ over the parameters, in the order of ``problem.paths``.
 
     J is the Jacobian of the residuals, the data's and the priors', with
-    respect to the unconstrained coordinates ``z``. The priors' residuals
-    are elementwise, so they add a diagonal D to JᵀJ, and only the data's
-    rows are differentiated (in reverse mode, one pass per datum). Returns
-    the covariance and whether JᵀJ + D was positive definite.
+    respect to the unconstrained coordinates ``z``. Most priors'
+    residuals are elementwise, so they add a diagonal D to JᵀJ, and only the
+    data's rows are differentiated (in reverse mode, one pass per datum).
+    An angle vector's residuals mix its two coordinates, so they are
+    differentiated with the data's rows instead. Returns the covariance and
+    whether JᵀJ + D was positive definite.
     """
     paths = problem.paths
     shapes = [np.shape(z[p]) for p in paths]
@@ -604,12 +650,19 @@ def _gauss_newton_covariance(problem, z):
         pieces = np.split(x, onp.cumsum(sizes)[:-1])
         return {p: v.reshape(s) for p, v, s in zip(paths, pieces, shapes)}
 
+    vectors = [p for p in paths if is_angle_vector(problem.priors[p])]
+
     def data_residuals(x):
-        model = problem.build(unflatten(x))
-        return np.concatenate(problem.data_residuals(model))
+        z_x = unflatten(x)
+        model = problem.build(z_x)
+        rows = problem.data_residuals(model)
+        rows += [problem.priors[p].residuals(z_x[p]) for p in vectors]
+        return np.concatenate(rows)
 
     def prior_curvature(path):
         prior = problem.priors[path]
+        if path in vectors:
+            return None  # differentiated with the data's rows
         if _prior_residuals(path, prior, z[path]) is None:
             return None  # a flat prior
         bijection = _bijection(prior)

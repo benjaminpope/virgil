@@ -38,6 +38,7 @@ import zodiax as zx
 from numpyro.distributions import constraints
 
 from ._utils import concrete
+from .angles import AngleVector
 
 
 __all__ = [
@@ -48,6 +49,8 @@ __all__ = [
     "StateVectorOrbit",
     "ThieleInnesOrbit",
     "distance_pc",
+    "orientation_from_varpi",
+    "orientation_priors",
     "starting_orbits",
     "total_mass",
 ]
@@ -200,6 +203,33 @@ class KeplerOrbit(zx.Base):
                 ("Omega", self.Omega, lambda x: True, "finite"),
             ),
         )
+
+    @classmethod
+    def from_varpi(
+        cls,
+        period,
+        dt_peri,
+        ecc,
+        inc,
+        varpi,
+        a_mas,
+        *,
+        Omega=None,
+        two_Omega=None,
+        t_ref=0.0,
+    ):
+        """The orbit with longitude of periastron ``varpi`` = Ω + ω.
+
+        Give ``two_Omega`` (2Ω, degrees) for positions alone, which fix Ω
+        only modulo 180°, or ``Omega`` when other data (RVs) fix the node;
+        see [`orientation_priors`][virgil.orbits.orientation_priors],
+        which samples them as angle vectors. ``omega`` is ``varpi - Omega``,
+        the secondary's argument of periastron, as everywhere in virgil.
+        """
+        omega, Omega = orientation_from_varpi(
+            varpi, Omega=Omega, two_Omega=two_Omega
+        )
+        return cls(period, dt_peri, ecc, inc, omega, Omega, a_mas, t_ref)
 
     def thiele_innes(self):
         """The Thiele–Innes constants ``(A, B, F, G, C, H)`` (mas).
@@ -1080,6 +1110,75 @@ class _Term(eqx.Module):
                 *self._args(values), prior=self.prior
             )
         return self.data.loglike(*self._args(values))
+
+
+def orientation_priors(positions_only=True, *, prefix="", ring_width=0.25):
+    """Angle-vector priors for an orbit's node and periastron.
+
+    Vectors remove the wrap at 0°/360° (see
+    [`AngleVector`][virgil.angles.AngleVector]); these choose which angles
+    to sample, so that exact symmetries become single points rather than
+    separate modes:
+
+    * ``positions_only=True``: ``"two_Omega"`` (2Ω, i.e. Ω modulo 180°)
+      and ``"varpi"`` (ϖ = Ω + ω, the longitude of periastron). Positions
+      alone cannot tell (Ω, ω) from (Ω + 180°, ω + 180°); both have the same
+      2Ω and ϖ, so the two modes collapse to one.
+    * ``positions_only=False``, when RVs or other data fix the node:
+      ``"Omega"`` and ``"varpi"``.
+
+    Near face-on, positions fix ϖ but not Ω and ω separately; ϖ is then
+    the well-measured angle and Ω the broad one. Build the orbit with
+    [`KeplerOrbit.from_varpi`][virgil.orbits.KeplerOrbit.from_varpi].
+
+    The angles are uniform, which with a prior uniform in cos i is the
+    invariant (Haar) prior on the orbit's orientation: (Ω, ω) → (2Ω, ϖ) is
+    linear with a constant Jacobian, so uniform (Ω, ω) is uniform (2Ω, ϖ).
+
+    Parameters
+    ----------
+    positions_only : bool, optional
+        Whether only positions constrain the orbit (default ``True``).
+    prefix : str, optional
+        Prepended to the keys, e.g. ``"orbit."``.
+    ring_width : float, optional
+        Passed to ``AngleVector``.
+
+    Returns
+    -------
+    dict
+        Priors keyed ``prefix + "two_Omega"`` (or ``"Omega"``) and
+        ``prefix + "varpi"``.
+
+    Examples
+    --------
+    >>> priors = {**orientation_priors(), "ecc": dist.Uniform(0.0, 0.9)}
+    >>> def orbit_fn(v):
+    ...     return KeplerOrbit.from_varpi(
+    ...         400.0, 30.0, v["ecc"], 60.0, v["varpi"], 20.0,
+    ...         two_Omega=v["two_Omega"], t_ref=60500.0,
+    ...     )
+    """
+    node = "two_Omega" if positions_only else "Omega"
+    return {
+        prefix + name: AngleVector(ring_width=ring_width)
+        for name in (node, "varpi")
+    }
+
+
+def orientation_from_varpi(varpi, *, Omega=None, two_Omega=None):
+    """``(omega, Omega)`` (degrees) from ϖ = Ω + ω and the node.
+
+    Give exactly one of ``Omega`` and ``two_Omega``. From ``two_Omega``,
+    Ω is reported in [0°, 180°), as by
+    [`starting_orbits`][virgil.orbits.starting_orbits]; ω is in
+    [0°, 360°).
+    """
+    if (Omega is None) == (two_Omega is None):
+        raise ValueError("Give exactly one of Omega and two_Omega.")
+    if Omega is None:
+        Omega = 0.5 * np.mod(two_Omega, 360.0)
+    return np.mod(varpi - Omega, 360.0), Omega
 
 
 def total_mass(orbit, distance_pc):
