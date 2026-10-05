@@ -21,7 +21,13 @@ import jax.numpy as np
 import numpy as onp
 from jax.scipy.special import i0e
 
-from ._utils import _per_dataset, _reference, concrete, is_flux_param
+from ._utils import (
+    _per_dataset,
+    _reference,
+    concrete,
+    inflate_errors,
+    is_flux_param,
+)
 from .gains import GAIN_GROUPS, OFFSET_GROUPS
 from .models import SourceModel
 
@@ -97,21 +103,34 @@ def _whiten(
       [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with widths from
       ``offset_terms`` (``phi_offset_<group>``) or the defaults; the
       penalty rows are unchanged.
+    - Extra observables (``OIData.extras``) follow the phases, each block
+      whitened by itself (see [`virgil.observables`][virgil.observables]).
     """
     prediction = np.asarray(prediction)
     resid = prediction - np.asarray(reference)
     errors = np.asarray(errors)
     n_vis = np.asarray(data_obj.vis).size
+    n_phase = n_vis + np.asarray(data_obj.phi).size
     vis, vis_errors = _whiten_vis(
         data_obj, prediction[:n_vis], resid[:n_vis], errors[:n_vis], gain_terms
     )
     phase, phase_errors = _whiten_phases(
-        data_obj, resid[n_vis:], errors[n_vis:], offset_terms
+        data_obj, resid[n_vis:n_phase], errors[n_vis:n_phase], offset_terms
     )
-    return (
-        np.concatenate([vis, phase]),
-        np.concatenate([vis_errors, phase_errors]),
-    )
+    whitened, effective = [vis, phase], [vis_errors, phase_errors]
+    reference = np.asarray(reference)
+    offset = n_phase
+    for block in data_obj.extras:
+        # Extra observables (OI_FLUX, T3AMP, VISAMP, VISPHI) whiten their
+        # own blocks: see virgil.observables.
+        end = offset + int(block.data().size)
+        w, e = block.whiten(
+            prediction[offset:end], reference[offset:end], errors[offset:end]
+        )
+        whitened.append(w)
+        effective.append(e)
+        offset = end
+    return np.concatenate(whitened), np.concatenate(effective)
 
 
 def _whiten_phases(data_obj, resid, errors, offset_terms=None):
@@ -166,6 +185,7 @@ NOISE_TERMS = (
         "phi_scale",
         "vis_error_rel",
         "phi_error",
+        "vis_error",
     )
     + GAIN_TERMS
     + OFFSET_TERMS
@@ -180,13 +200,20 @@ def inflated_errors(
     phi_error=None,
     vis_scale=None,
     phi_scale=None,
+    vis_error=None,
+    *,
+    where="model",
+    combine="quadrature",
 ):
     """The data uncertainties, scaled and with extra terms in quadrature.
 
-    The visibility errors become ``hypot(vis_scale σ, vis_error_rel V)``,
-    for the model visibility observable ``V``, and the phase errors
+    The visibility errors become
+    ``hypot(vis_scale σ, vis_error, vis_error_rel V)``, for the model
+    visibility observable ``V``, and the phase errors
     ``hypot(phi_scale σ, phi_error)``. Terms left as ``None`` are not
-    applied.
+    applied. Extra observables (``OIData.extras``) are left unchanged;
+    give them floors with
+    [`OIData.with_error_floor`][virgil.oidata.OIData.with_error_floor].
 
     Parameters
     ----------
@@ -202,34 +229,54 @@ def inflated_errors(
         Extra phase error in radians.
     vis_scale, phi_scale : float, optional
         Factors multiplying the visibility and phase uncertainties.
+    vis_error : float, optional
+        Extra absolute visibility error, in the units of the observable.
+    where : {"model", "data"}, optional
+        What ``vis_error_rel`` is relative to: the model (default, the
+        right choice for a fitted term, as it does not reward the model for
+        low data points) or the data (as error floors are).
+    combine : {"quadrature", "max"}, optional
+        Add the terms in quadrature (default), or take the largest (a
+        floor, as ``with_error_floor`` does; both use
+        ``_utils.inflate_errors``).
 
     Returns
     -------
     array-like
         Uncertainties matching [`flatten_data`][virgil.oidata.OIData.flatten_data].
     """
-    _, errors = data_obj.flatten_data()
-    terms = (vis_error_rel, phi_error, vis_scale, phi_scale)
+    data, errors = data_obj.flatten_data()
+    terms = (vis_error_rel, phi_error, vis_scale, phi_scale, vis_error)
     if all(term is None for term in terms):
         return errors
     projected = data_obj.vis_mat is not None or data_obj.phi_mat is not None
-    if projected and (vis_error_rel is not None or phi_error is not None):
+    added = (vis_error_rel, phi_error, vis_error)
+    if projected and any(term is not None for term in added):
         raise ValueError(
             "Extra error terms are defined for the observed visibilities and "
             "phases, not for projected (vis_mat/phi_mat) observables; scale "
             "their errors with vis_scale/phi_scale instead."
         )
+    if where not in ("model", "data"):
+        raise ValueError(f"where must be 'model' or 'data', not {where!r}.")
+    reference = data if where == "data" else np.asarray(prediction)
     n_vis = np.asarray(data_obj.vis).size
-    d_vis, d_phi = errors[:n_vis], errors[n_vis:]
-    if vis_scale is not None:
-        d_vis = vis_scale * d_vis
-    if phi_scale is not None:
-        d_phi = phi_scale * d_phi
-    if vis_error_rel is not None:
-        d_vis = np.hypot(d_vis, vis_error_rel * np.asarray(prediction)[:n_vis])
-    if phi_error is not None:
-        d_phi = np.hypot(d_phi, phi_error)
-    return np.concatenate([d_vis, d_phi])
+    n_phase = n_vis + np.asarray(data_obj.phi).size
+    d_vis = inflate_errors(
+        errors[:n_vis],
+        reference[:n_vis],
+        absolute=vis_error,
+        relative=vis_error_rel,
+        scale=vis_scale,
+        combine=combine,
+    )
+    d_phi = inflate_errors(
+        errors[n_vis:n_phase],
+        absolute=phi_error,
+        scale=phi_scale,
+        combine=combine,
+    )
+    return np.concatenate([d_vis, d_phi, errors[n_phase:]])
 
 
 def noise_sites(noise, n_datasets):
@@ -720,10 +767,60 @@ def posterior_predictive_summary(samples, model, data_obj, params=None):
         lambda row: data_obj.model(build_model(model, params, list(row)))
     )(values)
     n_vis = np.asarray(data_obj.vis).size
-    vis, phi = predictions[:, :n_vis], predictions[:, n_vis:]
+    n_phase = n_vis + np.asarray(data_obj.phi).size
+    vis, phi = predictions[:, :n_vis], predictions[:, n_vis:n_phase]
     return {
         "vis_mean": vis.mean(axis=0),
         "vis_std": vis.std(axis=0),
         "phi_mean": phi.mean(axis=0),
         "phi_std": phi.std(axis=0),
     }
+
+
+def flux_scale_posterior(model_object, data_obj):
+    """The grey scales of the extra spectra, given a model.
+
+    The scales (and polynomial coefficients) of OI_FLUX spectra and
+    correlated fluxes are marginalised in the likelihood (see
+    [`FluxSpectrum`][virgil.observables.FluxSpectrum]); this is their
+    Gaussian posterior conditional on ``model_object``, for reporting.
+
+    Parameters
+    ----------
+    model_object : SourceModel
+        E.g. the best fit.
+    data_obj : OIData
+        Data with extra spectra (``extras=("flux",)`` and the like).
+
+    Returns
+    -------
+    dict
+        Per kind (``"flux"``, ``"nflux"``, ``"corrflux"``): ``mean``
+        ``(n_group, p)`` and ``cov`` ``(n_group, p, p)`` of the weights,
+        whose first is the scale k multiplying the model's template
+        (normalised to a mean of 1 per group); and ``scale``, the scale of
+        ``total_spectrum`` itself (k over the template's normalisation),
+        for ``"flux"`` and ``"corrflux"``: data ≈ scale × model. ``groups``
+        gives each sample's group.
+    """
+    from .observables import FluxSpectrum
+
+    cvis = data_obj._cvis(model_object)
+    out = {}
+    for block in data_obj.extras:
+        if not isinstance(block, FluxSpectrum):
+            continue
+        prediction = block.predict(model_object, cvis)
+        mean, cov = block.posterior(prediction, block.values, block.errors)
+        entry = {"mean": mean, "cov": cov, "groups": block.group}
+        if block.kind != "nflux":
+            base = model_object.total_spectrum(np.asarray(block.wavel))
+            base = np.broadcast_to(base, block.wavel.shape)
+            if block.kind == "corrflux":
+                base = base * np.abs(cvis)[block.sample]
+            n_group = block.members.shape[0]
+            norm = jax.ops.segment_sum(base, block.group, n_group)
+            norm = norm / np.asarray(block.count, norm.dtype)
+            entry["scale"] = mean[:, 0] / norm
+        out[block.kind] = entry
+    return out
