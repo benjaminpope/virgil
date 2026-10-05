@@ -14,6 +14,7 @@ key whose last part is ``flux`` (``flux``, ``comp.flux``, ...), unless
 Contrast limits (Ruffio, Absil) are in [`virgil.limits`][virgil.limits].
 """
 
+import math
 import warnings
 from typing import NamedTuple
 
@@ -330,12 +331,15 @@ class Gaussian(NamedTuple):
 
 
 class LogUniform(NamedTuple):
-    """Log-uniform (Jeffreys) prior on the companion flux ratio.
+    """Log-uniform (scale-invariant) prior on the companion flux ratio.
 
     ``p(f) = 1 / (f ln(f_max / f_min))`` on ``f_min <= f <= f_max``. The flux
-    ratio is a scale parameter (``f >= 0``, invariant under rescaling), whose
-    Jeffreys prior under that group action is ``1 / f``. It is improper, so
-    the evidence needs the bounds: ``0 < f_min < f_max``, in the units of
+    ratio is a scale parameter spanning decades, so this is the invariant
+    measure of the scaling group (the Jeffreys prior under that group
+    action), not the root-Fisher-information prior of the linearised
+    likelihood, which has constant Fisher information in ``f`` and so would
+    be flat. It is improper without bounds, so the evidence needs
+    ``0 < f_min < f_max`` (finite), in the units of
     the flux (companion/primary).
     """
 
@@ -381,20 +385,24 @@ def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
     span = jnp.where(
         outside,
         jnp.where(above, -jnp.log1p(-tail / f_max), jnp.log1p(tail / f_min)),
-        jnp.log(hi / lo),
+        jnp.log(hi) - jnp.log(lo),
     )
     x, w = np.polynomial.legendre.leggauss(_N_NODES)
     delta = 0.5 * span * (jnp.asarray(x) + 1.0)
     wd = 0.5 * span * jnp.asarray(w)
     offset = f0 * jnp.expm1(sgn * delta)  # f - f0
-    h = -(((f0 - f_hat) + offset) ** 2 - f_hat**2) / (2.0 * sigma**2)
+    # (f - f_hat)^2 - f_hat^2 with f = f0 + offset, expanded so that nothing
+    # large cancels: f0 (f0 - 2 f_hat) + 2 (f0 - f_hat) offset + offset^2.
+    h = -(
+        f0 * (f0 - 2.0 * f_hat) + 2.0 * (f0 - f_hat) * offset + offset**2
+    ) / (2.0 * sigma**2)
     m = jnp.max(h)
     wt = wd * jnp.exp(h - m)
     s0 = jnp.sum(wt)
     mean_offset = jnp.sum(wt * offset) / s0
     var = jnp.sum(wt * (offset - mean_offset) ** 2) / s0
     mean = f0 + mean_offset
-    log_b = m + jnp.log(s0) - jnp.log(jnp.log(f_max / f_min))
+    log_b = m + jnp.log(s0) - jnp.log(jnp.log(f_max) - jnp.log(f_min))
     return log_b, mean, jnp.sqrt(var)
 
 
@@ -418,6 +426,10 @@ def _as_prior(prior):
             f"got {prior!r}"
         )
     a, b = (float(x) for x in prior)
+    if not (math.isfinite(a) and math.isfinite(b)):
+        raise ValueError(
+            f"{type(prior).__name__} needs finite parameters, got {prior}"
+        )
     if isinstance(prior, LogUniform) and not 0.0 < a < b:
         raise ValueError(f"LogUniform needs 0 < f_min < f_max, got ({a}, {b})")
     if isinstance(prior, Gaussian) and not b > 0.0:
@@ -617,9 +629,12 @@ def linear_flux_grid(
         marginalised. A bare ``(mean, sd)`` tuple is still accepted as
         ``Gaussian(mean, sd)`` but is deprecated.
 
-        **Recommended: ``LogUniform(f_min, f_max)``**, the Jeffreys prior
-        for a scale parameter (``f >= 0``), ``p(f) = 1 / (f ln(f_max /
-        f_min))``. It is improper without bounds, and the evidence needs a
+        **Recommended: ``LogUniform(f_min, f_max)``**, the scale-invariant
+        (Jeffreys, under the scaling group) prior for a flux ratio,
+        ``p(f) = 1 / (f ln(f_max / f_min))``. The flux ratio is a scale
+        parameter spanning decades, so the prior is the invariant measure of
+        the scaling group, not the root-Fisher prior of the linearised
+        likelihood (which would be flat). It is improper without bounds, and the evidence needs a
         proper prior, so both bounds are required (``0 < f_min < f_max``).
         The Bayes factor depends on them, as it must for a scale prior: for
         ``f_hat`` well inside the bounds, widening them by a factor changes

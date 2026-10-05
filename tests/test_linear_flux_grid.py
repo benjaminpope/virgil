@@ -222,7 +222,16 @@ def test_bare_tuple_prior_is_deprecated_gaussian():
 
 def test_prior_validation():
     data = _simulate(1e-3, noise_scale=0.1)
-    for bad in [LogUniform(1e-3, 1e-4), LogUniform(0.0, 1.0), Gaussian(0, 0)]:
+    for bad in [
+        LogUniform(1e-3, 1e-4),
+        LogUniform(0.0, 1.0),
+        LogUniform(1e-3, float("inf")),
+        LogUniform(float("nan"), 1.0),
+        Gaussian(0, 0),
+        Gaussian(float("inf"), 1.0),
+        Gaussian(0.0, float("inf")),
+        Gaussian(float("nan"), 1.0),
+    ]:
         with pytest.raises(ValueError):
             linear_flux_grid(data, BinaryModelCartesian, _grid(), prior=bad)
     with pytest.raises(TypeError):
@@ -306,3 +315,19 @@ def test_return_type_does_not_depend_on_prior(prior):
     flux, error, snr = res[:3]
     assert onp.allclose(snr, flux / error)
     assert (res.log_bayes_factor is None) == (prior is None)
+
+
+def test_log_uniform_float32_edge_cases():
+    """Very wide bounds (f_max/f_min overflows float32) and f_hat above f_max."""
+    data = _simulate(1e-3, noise_scale=0.1)
+    wide = linear_flux_grid(
+        data, BinaryModelCartesian, _grid(), prior=LogUniform(1e-30, 1e10)
+    )
+    assert onp.all(onp.isfinite(wide.log_bayes_factor))
+    # f_hat (1e-3) far above f_max: compare with brute force from f_hat, sigma.
+    out = linear_flux_grid(
+        data, BinaryModelCartesian, _grid(), prior=LogUniform(1e-9, 1e-7)
+    )
+    f_hat, sigma = float(out.flux[0, 0]), float(out.flux_error[0, 0])
+    log_b, _, _ = _brute_log_uniform(f_hat, sigma, 1e-9, 1e-7)
+    assert onp.isclose(out.log_bayes_factor[0, 0], log_b, rtol=1e-4)

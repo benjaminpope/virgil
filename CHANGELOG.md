@@ -9,10 +9,13 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
-- **Log-uniform (Jeffreys) detection prior for `linear_flux_grid`.**
-  `prior=LogUniform(f_min, f_max)` puts the Jeffreys prior for a scale
-  parameter, `1 / f`, on the companion flux ratio, and is now the documented
-  recommendation. The evidence needs a proper prior, so both bounds are
+- **Log-uniform (scale-invariant) detection prior for `linear_flux_grid`.**
+  `prior=LogUniform(f_min, f_max)` puts the scale-invariant (Jeffreys, under
+  the scaling group) prior, `1 / f`, on the companion flux ratio, and is now
+  the documented recommendation. The flux ratio is a scale parameter
+  spanning decades, so the prior is the invariant measure of the scaling
+  group, not the root-Fisher prior of the linearised likelihood (which has
+  constant Fisher information and would be flat). The evidence needs a proper prior, so both bounds are
   required, and the Bayes factor depends on them as it must (widening them
   changes `log_bayes_factor` by about `-Δ ln ln(f_max / f_min)`). The
   evidence, posterior mean and sd come from 256-node Gauss-Legendre
