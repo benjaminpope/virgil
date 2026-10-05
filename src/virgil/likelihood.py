@@ -501,17 +501,29 @@ def numpyro_model(
 
     Examples
     --------
-    Sample an orbit from measured positions alone, with no OIData::
+    Sample an orbit from measured positions alone, with no OIData:
 
-        positions = PositionData(mjd, dra, ddec, cov)
-        priors = {"a_mas": dist.Uniform(5, 50), "e": dist.Uniform(0, 0.9)}
-        orbit_fn = lambda v: KeplerOrbit(a_mas=v["a_mas"], e=v["e"], ...)
-        model = numpyro_model(
-            lambda **kw: None,
-            priors,
-            (),
-            likelihoods=[positions.term(orbit_fn)],
-        )
+    >>> import numpy as np
+    >>> import numpyro.distributions as dist
+    >>> from virgil.likelihood import numpyro_model
+    >>> from virgil.orbits import KeplerOrbit, PositionData
+    >>> mjd = 60500.0 + np.array([0.0, 100.0, 200.0, 300.0])
+    >>> truth = KeplerOrbit(400.0, 30.0, 0.4, 60.0, 40.0, 110.0, 20.0, t_ref=60500.0)
+    >>> dra, ddec, _ = (np.asarray(x) for x in truth.relative(mjd))
+    >>> cov = np.broadcast_to(0.05**2 * np.eye(2), (4, 2, 2))
+    >>> positions = PositionData(mjd, dra, ddec, cov)
+    >>> priors = {"a_mas": dist.Uniform(5.0, 50.0), "ecc": dist.Uniform(0.0, 0.9)}
+    >>> def orbit_fn(v):
+    ...     return KeplerOrbit(
+    ...         400.0, 30.0, v["ecc"], 60.0, 40.0, 110.0, v["a_mas"], t_ref=60500.0
+    ...     )
+    >>> model = numpyro_model(
+    ...     lambda **kw: None, priors, (), likelihoods=[positions.term(orbit_fn)]
+    ... )
+    >>> from numpyro.infer.util import log_density
+    >>> values = {"a_mas": 20.0, "ecc": 0.4}
+    >>> bool(np.isfinite(float(log_density(model, (), {}, values)[0])))
+    True
     """
     import numpyro
 

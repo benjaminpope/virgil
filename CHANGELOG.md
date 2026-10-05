@@ -12,8 +12,9 @@ anything before 1.0 may change between minor versions.
 - **`numpyro_model(..., likelihoods=[...])`.** The extra data terms that `fit`
   takes (`PositionData.term`, `RVData.term`, or a callable returning whitened
   residuals) can now be sampled: term `i` is added as the site
-  `likelihood_<i>`, with the data's normalised Gaussian log density, and
-  `data_obj` may be `()`.
+  `likelihood_<i>`, and `data_obj` may be `()`. Only `PositionData` and
+  `RVData` terms are fully normalised Gaussian log densities (like the OIData
+  terms); a plain callable of whitened residuals adds `-0.5 * sum(r**2)` only.
 
 - **`TruncatedCone`.** A thin, optically thin conical shell truncated near its
   apex (e.g. the dust cone of a colliding-wind binary), with an analytic
