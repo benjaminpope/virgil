@@ -7,6 +7,14 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Changed
+
+- **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
+  `1 / n_rings**2` error scale (about 8e-4 in |V| at the default 32 for a
+  13.8 mas cone), and recommends doubling `n_rings` and checking Δχ² at the
+  best fit; well-measured data may need 64 or more. A convergence test was
+  added.
+
 ### Added
 
 - **Calibration gains correlated across channels** (Stage 6d).
@@ -17,6 +25,17 @@ anything before 1.0 may change between minor versions.
   fitted or sampled with the noise terms `vis_gain_telescope`,
   `vis_gain_baseline`, `vis_gain_chromatic` and `vis_gain_modes`.
   `OIData.stations` holds each sample's station pair, read from `STA_INDEX`.
+
+- **Line and node spectra (Stage 6a, spectra).** `GaussianLine` and
+  `LorentzianLine` (amplitude is the peak flux; negative for absorption),
+  `Nodes` (linear or natural cubic spline through free fluxes, constant or a
+  fixed `outside` value beyond the nodes, e.g. `outside=0.0` for an excess)
+  and `Sum` (named parts, so continuum plus lines is one flux). Every
+  spectrum's reference flux is its value at `wavel0`, and positivity is
+  checked on the total. `Spectrum()` with no argument evaluates at `wavel0`.
+  `SourceModel.total_spectrum(wavel)` (a `System`'s sum over its parts) and
+  `OIData.select(wavel_min, wavel_max)`. `Tabulated` is deprecated in
+  favour of `Nodes` (a `DeprecationWarning`; behaviour unchanged).
 
 - **`numpyro_model(..., likelihoods=[...])`.** The extra data terms that `fit`
   takes (`PositionData.term`, `RVData.term`, or a callable returning whitened

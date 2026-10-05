@@ -97,9 +97,14 @@ def _flux_is_non_negative(flux):
 
 
 def _check_non_negative_flux(flux, owner):
-    """Raise if a concrete ``flux`` is negative; traced values are not checked."""
-    # The raw values, so every Tabulated node is checked, not just their mean.
-    value = concrete(flux.ratio if isinstance(flux, Spectrum) else flux)
+    """Raise if a concrete ``flux`` is negative; traced values are not checked.
+
+    A spectrum is checked at its characteristic wavelengths (``wavel0``,
+    every node and line centre), where its total must be non-negative.
+    """
+    if isinstance(flux, Spectrum):
+        flux = flux(flux._check_wavel())
+    value = concrete(flux)
     if value is not None and onp.any(value < 0.0):
         raise ValueError(
             f"{owner} has flux {value.tolist()}; fluxes must be non-negative."
@@ -219,6 +224,29 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         evaluate it here.
         """
         return 1.0
+
+    def total_spectrum(self, wavel):
+        """The model's total flux at ``wavel`` (metres), e.g. for OI_FLUX.
+
+        The sum of the component spectra, in the same relative units as
+        their fluxes: one grey scale (absolute calibration, injection) away
+        from a measured spectrum. It is the *intrinsic* total, with no
+        fibre coupling. For a [`System`][virgil.models.System] it is the
+        sum of its parts' fluxes, where a nested system counts with its own
+        ``flux``, as in the visibilities.
+
+        Examples
+        --------
+        >>> from virgil.spectra import PowerLaw
+        >>> scene = System(
+        ...     star=PointSource(),
+        ...     disk=GaussianDisk(5.0, flux=PowerLaw(0.5, index=1.0, wavel0=2.0e-6)),
+        ... )
+        >>> [round(float(f), 3) for f in scene.total_spectrum(np.array([2.0e-6, 4.0e-6]))]
+        [1.5, 2.0]
+        """
+        wavel = np.asarray(wavel)
+        return np.broadcast_to(self._weight(wavel), wavel.shape)
 
     @property
     def time_dependent(self):
@@ -610,12 +638,29 @@ class TruncatedCone(Component):
     ``(s cos α - tip) cos β`` along the projected axis. The rings are
     weighted by the area element (∝ ρ) and the emissivity, and integrated
     over ``s`` from ``s0`` to ``s0 + 5 length`` (the last 0.7 % of the
-    flux is dropped) by the midpoint rule on ``n_rings`` rings. It is
-    accurate while both the spacing of the rings' centres on the sky,
-    ``5 length cos α cos β / n_rings``, and the step between their radii,
+    flux is dropped) by the midpoint rule on ``n_rings`` rings.
+
+    **Choosing ``n_rings``.** The quadrature is second order: once the rings
+    are fine enough to resolve the fringes, the error in the visibility falls
+    as ``1 / n_rings**2``, so each doubling of ``n_rings`` cuts it by about
+    4. It is fine enough when both the spacing of the rings' centres on the
+    sky, ``5 length cos α cos β / n_rings``, and the step between their radii,
     ``5 length sin α max(1, ratio) / n_rings``, are below half the shortest
-    fringe spacing: a cone seen down its axis (tilt 90°) has all its centres
-    together, and only the radius step matters.
+    fringe spacing (a cone seen down its axis, tilt 90°, has all its centres
+    together, and only the radius step matters). That criterion only says the
+    error is small, not that it is below your noise. For a cone with
+    ``length`` 13.8 mas and ``alpha`` 62.5°, over baselines out to 0.3
+    cycles/mas, ``max |V(n) - V(2n)|`` is about 6e-4 for ``n = 32``, 1.5e-4
+    for 64, 4e-5 for 128 and 1e-5 for 256, so the error of ``n_rings = 32``
+    itself is about 8e-4 in visibility amplitude. That is negligible for
+    noisy data but not for well-measured data: a high-S/N GRAVITY dataset
+    gained about 4 in log-likelihood per epoch going from 32 to 64 rings at
+    fixed parameters, and nearly 29 over three epochs from 24 to 64.
+
+    To check, refit or evaluate at the best fit with ``n_rings`` doubled and
+    compare χ² (or the log-likelihood): if |Δχ²| ≳ 1 per dataset (equivalently
+    |Δ log L| ≳ 0.5), use more rings, and double again until it is below that. Well-measured data (e.g.
+    GRAVITY) may need 64 or more. The cost is linear in ``n_rings``.
 
     Parameters
     ----------
@@ -647,7 +692,9 @@ class TruncatedCone(Component):
         Offset of the reference point in milliarcseconds, positive to the
         East and North.
     n_rings : int, optional
-        Quadrature rings along the walls, at least 2 (default 32).
+        Quadrature rings along the walls, at least 2 (default 32). The
+        visibility error falls as ``1 / n_rings**2``; check convergence by
+        doubling it (see above).
 
     Examples
     --------
@@ -2383,6 +2430,12 @@ class System(SourceModel):
     def _weight(self, wavel=None):
         return flux_at(self.flux, wavel)
 
+    def total_spectrum(self, wavel):
+        wavel = np.asarray(wavel)
+        return sum(
+            np.broadcast_to(c._weight(wavel), wavel.shape) for c in self.parts
+        )
+
     def is_physical(self):
         valid = _flux_is_non_negative(self.flux)
         for part in self.parts:
@@ -2443,6 +2496,9 @@ class Rotated(SourceModel):
 
     def _weight(self, wavel=None):
         return self.source._weight(wavel)
+
+    def total_spectrum(self, wavel):
+        return self.source.total_spectrum(wavel)
 
     def is_physical(self):
         return self.source.is_physical()
@@ -2595,6 +2651,9 @@ class Attached(SourceModel):
     def _weight(self, wavel=None):
         return self.component._weight(wavel)
 
+    def total_spectrum(self, wavel):
+        return self.component.total_spectrum(wavel)
+
     def is_physical(self):
         return self.component.is_physical()
 
@@ -2672,6 +2731,9 @@ class BinaryModelAngular(SourceModel):
             self.sep * np.sin(th), self.sep * np.cos(th), self.flux
         )
 
+    def total_spectrum(self, wavel):
+        return self.to_cartesian().to_system().total_spectrum(wavel)
+
     def is_physical(self):
         return _flux_is_non_negative(self.flux)
 
@@ -2721,6 +2783,9 @@ class BinaryModelCartesian(SourceModel):
         sep = np.sqrt(self.dra**2 + self.ddec**2)
         pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
         return BinaryModelAngular(sep, pa, self.flux)
+
+    def total_spectrum(self, wavel):
+        return self.to_system().total_spectrum(wavel)
 
     def is_physical(self):
         return _flux_is_non_negative(self.flux)

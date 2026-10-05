@@ -8,12 +8,18 @@ sample's wavelength, as in SPARCO.
     options:
       members:
         - BlackBody
+        - GaussianLine
+        - LorentzianLine
+        - Nodes
         - PowerLaw
         - Spectrum
+        - Sum
         - Tabulated
         - flux_at
         - reference_flux
 
-`Tabulated` is **provisional**: it is not exported from the top-level
-`virgil` namespace (import it from `virgil.spectra`), and it will be replaced
-by the node spectra of Stage 6a.
+`Tabulated` is **deprecated**: it still works unchanged (and emits a
+`DeprecationWarning`), but new code should use `Nodes`, which adds cubic
+interpolation, a fixed value outside the nodes and a reference flux at
+`wavel0`. It is not exported from the top-level `virgil` namespace (import it
+from `virgil.spectra`) and will be removed in a later release.

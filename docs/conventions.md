@@ -125,6 +125,19 @@ Reports and plots follow the astronomer's convention instead. **Contrast** is pr
 
 **Chromatic fluxes.** A component's `flux` may be a spectrum from [`virgil.spectra`][virgil.spectra] instead of a number, which gives its weight at each wavelength (SPARCO; Kluska et al. 2014). The `ratio` of [`PowerLaw`][virgil.spectra.PowerLaw] or [`BlackBody`][virgil.spectra.BlackBody] is the flux weight *at the reference wavelength* `wavel0`, in metres (default $1.65\,\mu$m, H band), and the other wavelengths follow from the spectrum's shape: $\mathrm{ratio}\,(\lambda/\lambda_0)^{\mathrm{index}}$ for the power law (index $-4$ for a Rayleigh–Jeans star in $F_\lambda$), and a Planck curve scaled to the same value at $\lambda_0$ for the black body. The reference flux is also what is used when a model is rendered, since an image has no wavelength. Choose `wavel0` in the middle of your data, so that `ratio` is something you can interpret.
 
+**Continuum plus lines, and excesses.** [`Sum`][virgil.spectra.Sum] adds named spectra, so that a continuum and its emission or absorption lines are one flux, reached by name like the components of a `System` (`"star.flux.brg.amplitude"`):
+
+```python
+from virgil.spectra import GaussianLine, PowerLaw, Sum
+
+flux = Sum(
+    continuum=PowerLaw(0.3, index=-4.0, wavel0=2.2e-6),
+    brg=GaussianLine(0.1, line_wavel=2.1661e-6, fwhm=2.0e-9),
+)
+```
+
+A line's `amplitude` is its peak flux (negative for absorption), and `fwhm` is in metres. Every spectrum's reference flux is its value at `wavel0`, and only the *total* must be non-negative, so a part may be negative where the others cover it. For a spectrum measured channel by channel, [`Nodes`][virgil.spectra.Nodes] interpolates (linearly or by a natural cubic spline) between free fluxes at fixed wavelengths. `Nodes(excess, wavel, outside=0.0)` is an excess that vanishes outside its window, so it can sit on a continuum in a `Sum`. Smoothness is a prior on the node values, not a property of the class. `System.total_spectrum(wavel)` gives the summed flux of the scene (the model of an OI_FLUX spectrum, up to a grey scale), and `OIData.select(wavel_min, wavel_max)` restricts data to a window, e.g. the continuum on either side of a line.
+
 ## Times and frames
 
 Times are Modified Julian Dates in days. At MJD 60000, a float32 number can only change in steps of 0.0039 d (about 5.6 minutes), and a multi-year campaign cannot be resolved to better than that: a binary's orbital motion between nights would be quantised. virgil therefore never keeps an absolute MJD in a JAX array.
