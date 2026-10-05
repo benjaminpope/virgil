@@ -309,4 +309,5 @@ warm up, so iterate with a single test id and run the full suite once at the end
 - Do not commit notebook output churn unrelated to your change.
 - Do not add runtime dependencies to `[project].dependencies` without asking.
 - The pre-push hook (`.githooks/pre-push`, via `scripts/lint_local.sh`) runs the pinned ruff through `uvx ruff@<version>`, reading the version from `[tool.ruff] required-version`, so it works in fresh worktrees without a `.venv`. Never bypass it.
+- Before the first push of a branch that may predate a tooling fix on main, merge `origin/main` into it (a merge, never a rebase). The pre-push hook runs the branch's own copy of `scripts/lint_local.sh`, so an old branch can carry an old, broken hook. If the hook fails because of the environment rather than the code (e.g. "ruff 0.12 does not match 0.11.0"), merging main is the fix, not `--no-verify`.
 - Never use `--no-verify`, never rewrite published history, never commit secrets.
