@@ -434,11 +434,25 @@ def test_fit_with_hierarchical_error_scales():
         noise=[{"vis_scale": s} for s in scales],
         init=init,
     )
-    ratio = (
-        result.values["noise[1].vis_scale"]
-        / result.values["noise[0].vis_scale"]
+    # Unpooled reference: an independent log-uniform scale per dataset.
+    unpooled = fit(
+        _binary_fn,
+        PRIORS,
+        [quiet, noisy],
+        noise=[{"vis_scale": dist.LogUniform(0.1, 10.0)} for _ in range(2)],
+        init={"dra": 150.0, "ddec": -80.0, "flux": 0.02},
     )
-    assert float(ratio) == pytest.approx(3.0, rel=0.25)
+
+    def ratio(r):
+        return float(
+            r.values["noise[1].vis_scale"] / r.values["noise[0].vis_scale"]
+        )
+
+    assert ratio(unpooled) == pytest.approx(3.0, rel=0.25)
+    # The two-member population shrinks the scales towards each other
+    # (the ratio drops by 10-15% for these draws, which differ between
+    # float32 and x64), but they stay clearly separated.
+    assert 1.5 < ratio(result) <= ratio(unpooled) * (1 + 1e-3)
     assert abs(result.values["dra"] - 150.0) < 5.0
 
 
