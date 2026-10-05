@@ -70,7 +70,9 @@ def faint():
 
 def test_faint_companion_matches_optimizer_and_laplace(faint):
     data, optimized, laplace = faint
-    flux, error, snr = linear_flux_grid(data, BinaryModelCartesian, _grid())
+    flux, error, snr = linear_flux_grid(data, BinaryModelCartesian, _grid())[
+        :3
+    ]
     assert flux.shape == error.shape == snr.shape == (3, 3)
     # Measured: at the true pixel f_hat is 0.9977e-3 against 0.9992e-3
     # (0.15% apart, from O(f^2) terms), and sigma_f agrees to 0.3%.
@@ -90,7 +92,7 @@ def test_snr_peaks_at_true_position(faint):
         "ddec": TRUE_POS[1] + np.linspace(-30.0, 30.0, 13),
         "flux": np.array([1e-3]),
     }
-    _, _, snr = linear_flux_grid(data, BinaryModelCartesian, fine)
+    _, _, snr = linear_flux_grid(data, BinaryModelCartesian, fine)[:3]
     assert np.unravel_index(np.argmax(snr), snr.shape) == (6, 6)
 
 
@@ -99,7 +101,7 @@ def test_bright_companion_is_biased():
     # the flux (measured 0.20 for a true 0.30, with the optimizer at 0.30),
     # so we only check the sign and the size of the bias, not agreement.
     data = _simulate(0.3, noise_scale=0.01)
-    flux, _, _ = linear_flux_grid(data, BinaryModelCartesian, _grid())
+    flux, _, _ = linear_flux_grid(data, BinaryModelCartesian, _grid())[:3]
     assert 0.1 < flux[0, 0] < 0.27
 
 
@@ -113,7 +115,7 @@ def test_gradient_matches_finite_difference():
     importable in the test environment.)
     """
     data = _simulate(1e-3, noise_scale=0.1)
-    _, error, _ = linear_flux_grid(data, BinaryModelCartesian, _grid())
+    _, error, _ = linear_flux_grid(data, BinaryModelCartesian, _grid())[:3]
     params = ("dra", "ddec", "flux")
 
     def resid(flux):
@@ -134,10 +136,10 @@ def test_gauss_newton_fixes_bright_companion():
     laplace = laplace_flux_uncertainty_grid(
         data, BinaryModelCartesian, _grid(), flux=optimized
     )
-    flux0, _, _ = linear_flux_grid(data, BinaryModelCartesian, _grid())
+    flux0, _, _ = linear_flux_grid(data, BinaryModelCartesian, _grid())[:3]
     flux, error, snr = linear_flux_grid(
         data, BinaryModelCartesian, _grid(), n_iter=3
-    )
+    )[:3]
     # Measured at f = 0.3: n_iter=0 gives 0.198; n_iter=3 gives 0.29999995
     # against the optimizer's 0.29999986 (3e-7 relative), and sigma_f agrees
     # with the Laplace value to 2e-5 relative (5.4843e-7 vs 5.4844e-7).
@@ -163,7 +165,8 @@ def test_prior_matches_numerical_marginalisation(noise_scale):
         data, BinaryModelCartesian, _grid(), prior=(mean, sd)
     )
     base = linear_flux_grid(data, BinaryModelCartesian, _grid())
-    assert onp.array_equal(out["flux"], base[0])
+    assert base.posterior_mean is None and base.log_bayes_factor is None
+    assert onp.array_equal(out.flux, base.flux)
     params = ("dra", "ddec", "flux")
     for ij in [(0, 0), (1, 1)]:
         dra, ddec = float(_grid()["dra"][ij[0]]), float(_grid()["ddec"][ij[1]])
@@ -178,8 +181,8 @@ def test_prior_matches_numerical_marginalisation(noise_scale):
         # jvp (a float32 finite difference would be too noisy here).
         r0, g = jax.jvp(resid, (0.0,), (1.0,))
         r0, g = onp.asarray(r0, dtype=float), onp.asarray(g, dtype=float)
-        centre = float(out["posterior_mean"][ij])
-        width = 10 * float(out["posterior_sd"][ij])
+        centre = float(out.posterior_mean[ij])
+        width = 10 * float(out.posterior_sd[ij])
         fgrid = onp.linspace(centre - width, centre + width, 20001)
         # log L(f) - log L(0), up to float rounding, in log space.
         dchi = onp.sum(
@@ -195,6 +198,6 @@ def test_prior_matches_numerical_marginalisation(noise_scale):
         log_z = m + onp.log(zint)
         pm = onp.trapezoid(fgrid * w, fgrid) / zint
         psd = onp.sqrt(onp.trapezoid(fgrid**2 * w, fgrid) / zint - pm**2)
-        assert onp.isclose(out["log_bayes_factor"][ij], log_z, rtol=1e-3)
-        assert onp.isclose(out["posterior_mean"][ij], pm, rtol=1e-3)
-        assert onp.isclose(out["posterior_sd"][ij], psd, rtol=1e-3)
+        assert onp.isclose(out.log_bayes_factor[ij], log_z, rtol=1e-3)
+        assert onp.isclose(out.posterior_mean[ij], pm, rtol=1e-3)
+        assert onp.isclose(out.posterior_sd[ij], psd, rtol=1e-3)

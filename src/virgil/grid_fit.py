@@ -14,6 +14,8 @@ key whose last part is ``flux`` (``flux``, ``comp.flux``, ...), unless
 Contrast limits (Ruffio, Absil) are in [`virgil.limits`][virgil.limits].
 """
 
+from typing import NamedTuple
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -286,6 +288,20 @@ optimized_flux_grid.__doc__ = (
 )
 
 
+class LinearFluxGrid(NamedTuple):
+    """Result of [`linear_flux_grid`][virgil.grid_fit.linear_flux_grid].
+
+    The last three fields are ``None`` unless a ``prior`` was given.
+    """
+
+    flux: jnp.ndarray
+    flux_error: jnp.ndarray
+    snr: jnp.ndarray
+    posterior_mean: jnp.ndarray | None = None
+    posterior_sd: jnp.ndarray | None = None
+    log_bayes_factor: jnp.ndarray | None = None
+
+
 @eqx.filter_jit
 def _linear_flux_grid(
     data_obj,
@@ -327,7 +343,7 @@ def _linear_flux_grid(
         flux = jnp.where(ok, flux, jnp.nan)
         sigma = jnp.where(ok, 1.0 / jnp.sqrt(curvature), jnp.nan)
         if prior is None:
-            return flux, sigma
+            return flux, sigma, None, None, None
         # The likelihood is exp(-curvature (f - flux)^2 / 2) up to a constant
         # in the linear model about the final point. With a N(mean, sd^2)
         # prior the precisions add (Luger et al. 2017).
@@ -349,18 +365,9 @@ def _linear_flux_grid(
         )
 
     out = map_points(solve, coords, batch_size=batch_size)
-    out = tuple(o.reshape(shape) for o in out)
+    out = tuple(None if o is None else o.reshape(shape) for o in out)
     flux, sigma = out[:2]
-    if prior is None:
-        return flux, sigma, flux / sigma
-    return {
-        "flux": flux,
-        "flux_error": sigma,
-        "snr": flux / sigma,
-        "posterior_mean": out[2],
-        "posterior_sd": out[3],
-        "log_bayes_factor": out[4],
-    }
+    return LinearFluxGrid(flux, sigma, flux / sigma, *out[2:])
 
 
 def linear_flux_grid(
@@ -450,8 +457,8 @@ def linear_flux_grid(
         linearisation at ``f = 0`` (default 0, the closed-form result).
     prior : tuple of float, optional
         ``(mean, sd)`` of a Gaussian prior on the flux ratio (same units as
-        ``flux``). If given, the result is a dict, with the posterior and
-        the marginal-likelihood detection map added (see Returns). With
+        ``flux``). If given, the posterior and the marginal-likelihood
+        detection map are filled in (see Returns). With
         ``P = g . g + 1 / sd**2`` (``g`` the final whitened derivative) the
         posterior is Gaussian with mean ``(g . (g f_hat) + mean / sd**2) / P``
         and sd ``P ** -0.5``, and the log Bayes factor against ``f = 0``
@@ -469,17 +476,21 @@ def linear_flux_grid(
 
     Returns
     -------
-    flux : array-like
-        Best-fit flux ratio (companion/primary), unconstrained in sign, with
-        one axis per coordinate key (axis 0 is the first, e.g. ``dra``).
-        With ``prior``, all outputs come as a dict with keys ``flux``,
-        ``flux_error``, ``snr``, ``posterior_mean``, ``posterior_sd`` and
-        ``log_bayes_factor`` instead of the tuple.
-    flux_error : array-like
-        One-sigma uncertainty on ``flux``, same shape, NaN where the model
-        does not depend on the flux.
-    snr : array-like
-        ``flux / flux_error``, same shape: the detection significance map.
+    LinearFluxGrid
+        A named tuple, always of the same type, whose fields are arrays with
+        one axis per coordinate key (axis 0 is the first, e.g. ``dra``):
+
+        - ``flux``: best-fit flux ratio (companion/primary), unconstrained
+          in sign.
+        - ``flux_error``: one-sigma uncertainty on ``flux``, NaN where the
+          model does not depend on the flux.
+        - ``snr``: ``flux / flux_error``, the detection significance map.
+        - ``posterior_mean``, ``posterior_sd``, ``log_bayes_factor``: the
+          Gaussian posterior and the log evidence ratio against ``f = 0``
+          for the given ``prior``; ``None`` if ``prior`` is not given.
+
+        Because there are six fields, unpack by attribute (``res.flux``) or
+        index (``res[:3]``), not as ``flux, error, snr = ...``.
 
     Examples
     --------
@@ -488,10 +499,12 @@ def linear_flux_grid(
     ...     "ddec": jnp.linspace(-300.0, 300.0, 61),
     ...     "flux": jnp.array([1e-3]),  # ignored: only names the parameter
     ... }
-    >>> flux, flux_error, snr = linear_flux_grid(
+    >>> res = linear_flux_grid(
     ...     data, BinaryModelCartesian, grid
     ... )  # doctest: +SKIP
-    >>> i, j = jnp.unravel_index(jnp.nanargmax(snr), snr.shape)  # doctest: +SKIP
+    >>> i, j = jnp.unravel_index(
+    ...     jnp.nanargmax(res.snr), res.snr.shape
+    ... )  # doctest: +SKIP
     """
     params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
     return _linear_flux_grid(
