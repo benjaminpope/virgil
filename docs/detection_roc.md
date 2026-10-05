@@ -46,6 +46,10 @@ print(
 )
 ```
 
+```text
+21 V² and 35 closure phases; grid of 361 positions × 32 fluxes; FAP = 0.135%
+```
+
 ## Null simulations
 
 `detection_statistics` reduces a search over the grid to three numbers. $\Delta\chi^2$ is twice the gain in log likelihood of the best companion on the grid, with its flux refined and constrained to be non-negative, over no companion. The log Bayes factor is the log of the likelihood ratio averaged over the grid, a grid-marginalised evidence for "a companion somewhere" against "none"; on a grid this coarse it is a valid test statistic but not an accurate evidence. The maximum SNR is the largest best-fit flux divided by its Laplace uncertainty, the significance map of the composition tutorial.
@@ -92,6 +96,14 @@ print(
 )
 ```
 
+```text
+  0%|          | 0/10 [00:00<?, ?it/s]
+```
+
+```text
+3000 null searches in 174 s: median Δχ² = 2.17, largest = 25.0
+```
+
 ## The look-elsewhere effect
 
 At one position fixed in advance, $\Delta\chi^2$ under the null is zero half the time (when the best flux would be negative) and follows $\chi^2_1$ otherwise, so its tail is $\tfrac{1}{2}\chi^2_1$ (Wilks's theorem with a parameter on its boundary, Chernoff 1954). That is the reference behind `local_nsigma`. A grid search takes the best of hundreds of positions, and although neighbouring positions are correlated, the best of many is much larger than any one. The plot shows the empirical probability that a null search exceeds a threshold, against the local reference: the grid search's tail sits far above it, and the horizontal line at our FAP shows how much higher the threshold must be.
@@ -120,6 +132,8 @@ ax.set_title(r"Null distribution of $\Delta\chi^2$ over the grid")
 ax.legend(loc="upper right");
 ```
 
+![detection_roc output 7.1](generated/detection_roc_cell007_out01.png)
+
 ## Injections
 
 Now we inject companions at six fluxes from $10^{-3}$ to $8\times10^{-3}$, 300 simulations each, at random positions in the same annulus and with fresh noise, and keep the same three statistics. A flux of $10^{-3}$ is roughly the uncertainty of a companion's flux at these separations, so the injections run from barely visible to obvious. The table gives the median of each statistic per flux; all three rise steadily with flux.
@@ -135,6 +149,20 @@ for i, flux in enumerate(FLUXES):
         f"{flux:8.0e}{float(flux_to_delta_mag(flux)):6.2f}"
         + "".join(f"{m:{w}.1f}" for m, w in zip(medians, (8, 8, 9)))
     )
+```
+
+```text
+  0%|          | 0/6 [00:00<?, ?it/s]
+```
+
+```text
+    flux  Δmag     Δχ²   log B  max SNR  (medians)
+   1e-03  7.50     4.8    -0.4      2.2
+   2e-03  6.75     8.2     0.4      2.8
+   3e-03  6.31    15.0     2.5      3.8
+   4e-03  5.99    24.0     6.1      4.9
+   6e-03  5.55    50.4    18.1      7.0
+   8e-03  5.24    91.5    37.9      9.4
 ```
 
 ## ROC curves
@@ -169,6 +197,8 @@ axes[0].set_ylabel("true-positive rate (completeness)")
 axes[0].legend();
 ```
 
+![detection_roc output 11.1](generated/detection_roc_cell011_out01.png)
+
 ## Thresholds and completeness
 
 Finally, the calibration. The empirical $\Delta\chi^2$ threshold for our FAP is the corresponding quantile of the null searches, to compare with Wilks's local threshold of 9 (where `local_nsigma` gives 3σ). With 3000 null draws only four lie above a 0.135% quantile, so the empirical threshold is rough; the next stage will attach a bootstrap error to it, and production runs use many more draws. The table then gives the completeness, the fraction of injections detected, at each threshold. Wilks's threshold finds more companions only because its real false-alarm probability over this grid is much higher than 0.135%, as the second line shows.
@@ -192,6 +222,19 @@ for i, flux in enumerate(FLUXES):
         f"{flux:8.0e}{float(flux_to_delta_mag(flux)):6.2f}"
         f"{onp.mean(d >= threshold):21.0%}{onp.mean(d >= wilks):17.0%}"
     )
+```
+
+```text
+Δχ² threshold at FAP 0.135%: empirical 15.5 (local 3.9σ), Wilks 9 (local 3σ)
+Wilks's threshold over this grid has FAP 3.8%
+
+    flux  Δmag  complete, empirical  complete, Wilks
+   1e-03  7.50                   2%              16%
+   2e-03  6.75                  14%              42%
+   3e-03  6.31                  47%              80%
+   4e-03  5.99                  77%              91%
+   6e-03  5.55                  94%              99%
+   8e-03  5.24                  99%             100%
 ```
 
 ## Summary
