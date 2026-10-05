@@ -197,6 +197,7 @@ def test_laplace_and_fisher_wrappers_are_finite():
     assert np.allclose(like, expected_like)
 
 
+@pytest.mark.slow
 def test_laplace_wrappers_match_closures_and_compile_once():
     # The model-level curvatures must agree with the generic, closure-based
     # helpers. They are jitted once at module level, so a call at new values

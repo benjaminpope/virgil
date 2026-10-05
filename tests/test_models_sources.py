@@ -526,12 +526,13 @@ def test_binary_render_is_available():
             ),
             2e-3,
         ),
-        (
+        pytest.param(
             GravityDarkenedStar(
                 12.0, omega=0.9, inc=50.0, pa=30.0, dra=-5.0, ddec=4.0
             ),
             # the image shades whole facets, the DFT uses barycentre points
             5e-4,
+            marks=pytest.mark.slow,
         ),
     ],
     ids=[
@@ -753,6 +754,7 @@ def _render_visibilities(model, u, v, npix, fov_mas):
     return phase @ image
 
 
+@pytest.mark.slow
 @pytest.mark.validates(
     "virgil.models.HarmonixModel", roots=["self-consistency"]
 )
@@ -781,6 +783,7 @@ def test_harmonix_render_fourier_transform_matches_model_visibilities():
     assert onp.max(onp.abs(cvis_changed - cvis_model)) > 1e-2
 
 
+@pytest.mark.slow
 def test_harmonix_parameters_are_reachable_through_paths():
     model = HarmonixModel(_spotted_harmonix_star(), observation_time=0.2)
     u = np.linspace(1e7, 7e7, 8)

@@ -248,15 +248,15 @@ def test_unequal_errors_are_kept_and_simulation_matches_whitening():
     assert onp.all(onp.linalg.eigvalsh(cov) > -1e-12)
 
     keys = jax.random.split(jax.random.PRNGKey(4), 4000)
-    noise = onp.stack(
-        [onp.asarray(data.cp_noise.sample(k, data.d_phi, 4)) for k in keys]
-    )
+    # Vectorised over the draws: a Python loop over 4000 keys is dominated
+    # by per-call dispatch.
+    noise = jax.vmap(lambda k: data.cp_noise.sample(k, data.d_phi, 4))(keys)
+    noise = onp.asarray(noise)
     assert onp.allclose(noise.var(axis=0), sigma**2, rtol=0.1)
-    whitened = onp.stack(
-        [
-            onp.asarray(data.cp_noise.whiten(np.asarray(n), data.d_phi)[0])
-            for n in noise
-        ]
+    whitened = onp.asarray(
+        jax.vmap(lambda n: data.cp_noise.whiten(n, data.d_phi)[0])(
+            np.asarray(noise)
+        )
     )
     assert onp.allclose(onp.cov(whitened.T), onp.eye(3), atol=0.1)
 
