@@ -1257,7 +1257,9 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         )
         return eqx.tree_at(lambda d: d.extras, self, extras)
 
-    def with_continuum(self, continuum=None, lines=None, order=None):
+    def with_continuum(
+        self, continuum=None, lines=None, order=None, prior_width=None
+    ):
         """A copy with the continuum and line windows of the extra spectra.
 
         They set how differential phases (``"visphi"``) and normalised
@@ -1273,6 +1275,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         order : int, optional
             The continuum polynomial in wavenumber: 1 (a mean and a slope)
             by default for differential phases, 0 (a mean) for spectra.
+        prior_width : float or (float, float), optional
+            For differential phases: marginalise each baseline and frame's
+            offset (and slope) under Gaussian priors of these widths
+            (radians), using the channels of both windows, instead of
+            projecting them out as the pipeline does (the default). See
+            [`DifferentialPhase`][virgil.observables.DifferentialPhase].
 
         Examples
         --------
@@ -1294,6 +1302,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                     continuum=continuum,
                     lines=lines,
                     order=b.order if order is None else order,
+                    prior_width=prior_width,
                 ),
             )
         if "nflux" in kinds:

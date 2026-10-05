@@ -613,3 +613,64 @@ def test_likelihood_compiles_and_differentiates_with_traced_data():
     assert bool(np.isfinite(grads.parts[1].dra))
     with jax.enable_x64(True):
         assert bool(np.isfinite(model_loglike(scene, data)))
+
+
+def _dense_prior_reference(block, other, cvis, widths, errors):
+    """χ² and log det of the finite-prior VISPHI block, from scratch."""
+    grid = onp.asarray(block.grid[0])
+    q = onp.asarray(block.q[0])
+    sel = onp.asarray(block.w[0])  # selects the used channels
+    k = onp.kron(q, sel)
+    model_phase = onp.unwrap(onp.angle(onp.asarray(cvis)[block.sample][grid]))
+    data_phase = onp.unwrap(onp.asarray(block.values)[grid])
+    resid = k @ (model_phase - data_phase).reshape(-1)
+    used = sel.argmax(axis=1)
+    sigma = 1.0 / WAVES[used]
+    x = (sigma - sigma.mean()) / (sigma.max() - sigma.min())
+    basis = onp.column_stack([onp.ones_like(x), x])
+    nb = q.shape[1]
+    modes = onp.kron(q, basis) @ onp.kron(onp.eye(nb), onp.diag(widths))
+    cov = k @ onp.diag(errors[grid].reshape(-1) ** 2) @ k.T + modes @ modes.T
+    chi2 = resid @ onp.linalg.solve(cov, resid)
+    return chi2, onp.linalg.slogdet(cov)[1]
+
+
+def test_visphi_finite_prior_matches_a_dense_marginal():
+    data = OIData(read_oifits(build_hdulist(_tables()), extras=("visphi",)))
+    data = data.with_continuum(lines=[LINE], prior_width=(0.3, 0.5))
+    (block,) = data.extras
+    assert block.n_independent == 3 * WAVES.size  # every channel kept
+    rng = onp.random.default_rng(2)
+    errors = rng.uniform(0.005, 0.02, block.errors.shape)
+    block = block.with_errors(errors)
+    other = _scene(dra=0.6, ddec=0.1)
+    cvis = other.model(data.u, data.v, data.wavel)
+    white, effective = block.whiten(
+        block.predict(other, cvis), block.data(), None
+    )
+    chi2, logdet = _dense_prior_reference(
+        block, other, cvis, onp.array([0.3, 0.5]), errors
+    )
+    onp.testing.assert_allclose(float(np.sum(white**2)), chi2, rtol=1e-3)
+    onp.testing.assert_allclose(
+        float(np.sum(np.log(effective))), 0.5 * logdet, rtol=1e-3
+    )
+
+
+def test_visphi_broad_prior_tends_to_the_projection():
+    with jax.enable_x64(True):
+        data = OIData(
+            read_oifits(build_hdulist(_tables()), extras=("visphi",))
+        )
+        other = _scene(dra=0.6, ddec=0.1)
+        cvis = other.model(data.u, data.v, data.wavel)
+
+        def chi2(block):
+            white, _ = block.whiten(
+                block.predict(other, cvis), block.data(), None
+            )
+            return float(np.sum(white**2))
+
+        projected = data.extras[0]  # every channel continuum and line
+        broad = data.with_continuum(prior_width=1e4).extras[0]
+        onp.testing.assert_allclose(chi2(broad), chi2(projected), rtol=1e-4)

@@ -114,9 +114,21 @@ always uses arg V (tested in `tests/test_observables.py`).
 delay) per baseline and frame is the flat-prior limit of marginalising those
 nuisances. The likelihood of N d, with covariance N D Nᵀ, does not depend on
 which projection with that null space is used (restricted maximum
-likelihood). A finite-prior version would whiten the raw phases with
-D + B Λ Bᵀ instead. That needs the un-normalised phases, which pipelines
-rarely provide.
+likelihood). The finite-prior version is an option:
+
+```python
+data = data.with_continuum(continuum, lines=line, prior_width=(0.5, 2.0))
+```
+
+It marginalises each baseline and frame's offset (and slope, per unit of
+wavenumber scaled to span 1 across the channels) under Gaussian priors of
+these widths, in radians. Then every channel of both windows is kept. This
+works whether or not the pipeline has already normalised the data, because
+the pipeline's subtraction only shifts the offset and slope that are
+marginalised. It reuses the low-rank whitening of the 6d gains. As the
+widths grow, its χ² tends to the projection's when every channel is used
+(tested). The projection remains the default, because it matches what the
+pipeline did.
 
 ### Closure phases and differential phases together
 
@@ -125,8 +137,8 @@ phases is the continuum-normalised closure phase. Fitting both would count
 it twice. The default (design note S §2.3) is:
 
 * closure phases in every channel;
-* in the line windows only, the part of the differential phase that has no
-  closure: per frame, the baseline phases are projected onto the
+* in the line windows only (both windows with `prior_width`), the part of
+  the differential phase that has no closure: per frame, the baseline phases are projected onto the
   telescope-differenced subspace φ_ab = a_a − a_b, which is orthogonal to
   every closure. That leaves N − 1 combinations per channel for N
   telescopes.

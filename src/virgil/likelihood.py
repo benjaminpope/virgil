@@ -103,6 +103,8 @@ def _whiten(
       [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with widths from
       ``offset_terms`` (``phi_offset_<group>``) or the defaults; the
       penalty rows are unchanged.
+    - Extra observables (``OIData.extras``) follow the phases, each block
+      whitened by itself (see [`virgil.observables`][virgil.observables]).
     """
     prediction = np.asarray(prediction)
     resid = prediction - np.asarray(reference)

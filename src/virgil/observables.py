@@ -66,7 +66,7 @@ import jax.numpy as np
 import jax.scipy.linalg as jsl
 import numpy as onp
 
-from .gains import _rank_one_step
+from .gains import _whiten_blocks
 
 __all__ = [
     "DifferentialPhase",
@@ -484,19 +484,14 @@ class FluxSpectrum(_Block):
         return prediction[:, None] * poly * widths / errors[:, None]
 
     def whiten(self, prediction, data, errors):
+        # The residual is already about the prior mean A μ (the prediction
+        # is μ t), so the weights' covariance alone is left: I + Σ w_j w_jᵀ
+        # per group, whitened by the 6d gains' blocks.
         x = (prediction - data) / errors
         cols = self._columns(prediction, errors)
-        stack = np.concatenate([x[:, None], cols], axis=1)
-        stack = stack.at[self.members].get(mode="fill", fill_value=0.0)
-        stack, logdets = jax.lax.scan(
-            _rank_one_step, stack, 1 + np.arange(cols.shape[1])
-        )
-        whitened = (
-            np.zeros_like(x).at[self.members].set(stack[..., 0], mode="drop")
-        )
-        count = np.asarray(self.count, x.dtype)
-        extra = 0.5 * np.sum(logdets, axis=0) / count
-        return whitened, errors * np.exp(extra[self.group])
+        local = cols.at[self.members].get(mode="fill", fill_value=0.0)
+        whitened, extra = _whiten_blocks(x, self.members, local)
+        return whitened, errors * np.exp(extra)
 
     def posterior(self, prediction, data, errors):
         """Conditional posterior of the weights w per group: mean and cov.
@@ -576,6 +571,15 @@ class DifferentialPhase(_Block):
     frame. Build with :meth:`build`, or change the windows with
     [`OIData.with_continuum`][virgil.oidata.OIData.with_continuum].
 
+    With ``prior_width``, the offset and slope of every baseline and frame
+    are instead marginalised under a finite Gaussian prior (the
+    projection is its flat limit): W keeps the channels of both windows
+    unchanged, each channel's closure-free combinations are whitened for
+    their covariance Qᵀ D Q, and the offsets and slopes are whitened out as
+    low-rank modes per frame, by the 6d gains' blocks
+    ([`virgil.gains`][virgil.gains]). Their log-determinant does not depend
+    on the model.
+
     Residuals are treated as linear (Gaussian), which holds while the
     differential phases are well below π, as they are after removing the
     continuum.
@@ -592,10 +596,12 @@ class DifferentialPhase(_Block):
     w: onp.ndarray  # (F, R, C) wavelength operator W
     valid: onp.ndarray  # (F, K, R) True for real outputs
     keep: onp.ndarray  # flat indices of the real outputs
+    basis: onp.ndarray | None  # (F, R, p) continuum basis, finite prior
     continuum: tuple | None = eqx.field(static=True)
     lines: tuple | None = eqx.field(static=True)
     order: int = eqx.field(static=True)
     closure_free: bool = eqx.field(static=True)
+    prior_width: tuple | None = eqx.field(static=True, default=None)
     kind: str = eqx.field(static=True, default="visphi")
 
     @classmethod
@@ -612,6 +618,7 @@ class DifferentialPhase(_Block):
         lines=None,
         order=1,
         closure_free=True,
+        prior_width=None,
     ):
         """Build from per-sample phases (see the class notes).
 
@@ -638,6 +645,13 @@ class DifferentialPhase(_Block):
             Keep only the telescope-differenced part of each frame's
             phases, orthogonal to the closure phases (default True; use it
             whenever the data have closure phases).
+        prior_width : float or (float, float), optional
+            Marginalise the offset (and slope, per unit of the scaled
+            wavenumber, which spans 1 across the channels) of each
+            baseline and frame under Gaussian priors of these widths
+            (radians), over the channels of both windows, instead of
+            projecting them out (``None``, the default, as the pipeline
+            does).
         """
         values = onp.asarray(values, float).reshape(-1)
         errors = onp.asarray(errors, float).reshape(-1)
@@ -649,6 +663,13 @@ class DifferentialPhase(_Block):
             row = _labels(onp.column_stack([frame, stations]))
         row = _labels(row)
         continuum, lines = _ranges(continuum), _ranges(lines)
+        if prior_width is not None:
+            widths = onp.broadcast_to(
+                onp.asarray(prior_width, float), (order + 1,)
+            )
+            if not onp.all(widths > 0):
+                raise ValueError("prior_width must be positive.")
+            prior_width = tuple(float(x) for x in widths)
 
         frames = []
         for f in onp.unique(frame):
@@ -671,13 +692,19 @@ class DifferentialPhase(_Block):
             cont, line = _windows(channels, continuum, lines)
             if not line.any():
                 continue
-            n_op = continuum_operator(channels, cont, order)
-            m = (onp.eye(channels.size) - n_op)[line]
-            u, s, _ = onp.linalg.svd(m, full_matrices=False)
-            rank = int(onp.sum(s > 1e-9 * s.max())) if s.size else 0
-            if rank == 0:
-                continue
-            w_op = u[:, :rank].T @ m
+            if prior_width is None:
+                n_op = continuum_operator(channels, cont, order)
+                m = (onp.eye(channels.size) - n_op)[line]
+                u, s, _ = onp.linalg.svd(m, full_matrices=False)
+                rank = int(onp.sum(s > 1e-9 * s.max())) if s.size else 0
+                if rank == 0:
+                    continue
+                w_op = u[:, :rank].T @ m
+                basis_f = None
+            else:
+                used = cont | line
+                w_op = onp.eye(channels.size)[used]
+                basis_f = _continuum_basis(channels[used], order)
             grid = onp.empty((rows.size, channels.size), dtype=int)
             pairs = onp.empty((rows.size, 2), dtype=int)
             for b, r in enumerate(rows):
@@ -690,19 +717,22 @@ class DifferentialPhase(_Block):
             q_op = _baseline_basis(pairs) if closure_free else None
             if q_op is None:
                 q_op = onp.eye(rows.size)
-            frames.append((grid, q_op, w_op))
+            frames.append((grid, q_op, w_op, basis_f))
 
         n_f = len(frames)
-        b_max = max((g.shape[0] for g, _, _ in frames), default=0)
-        c_max = max((g.shape[1] for g, _, _ in frames), default=0)
-        k_max = max((q.shape[0] for _, q, _ in frames), default=0)
-        r_max = max((w.shape[0] for _, _, w in frames), default=0)
+        b_max = max((x[0].shape[0] for x in frames), default=0)
+        c_max = max((x[0].shape[1] for x in frames), default=0)
+        k_max = max((x[1].shape[0] for x in frames), default=0)
+        r_max = max((x[2].shape[0] for x in frames), default=0)
         grid = onp.zeros((n_f, b_max, c_max), dtype=onp.int32)
         chan = onp.zeros((n_f, b_max, c_max), dtype=bool)
         q = onp.zeros((n_f, k_max, b_max))
         w = onp.zeros((n_f, r_max, c_max))
         valid = onp.zeros((n_f, k_max, r_max), dtype=bool)
-        for f, (g, q_op, w_op) in enumerate(frames):
+        basis = None
+        if prior_width is not None:
+            basis = onp.zeros((n_f, r_max, order + 1))
+        for f, (g, q_op, w_op, basis_f) in enumerate(frames):
             nb, nc = g.shape
             # Padding repeats a real sample of the same row, so that the
             # unwrapped phase stays constant there (W is zero there anyway).
@@ -713,6 +743,8 @@ class DifferentialPhase(_Block):
             q[f, : q_op.shape[0], :nb] = q_op
             w[f, : w_op.shape[0], :nc] = w_op
             valid[f, : q_op.shape[0], : w_op.shape[0]] = True
+            if basis is not None:
+                basis[f, : w_op.shape[0]] = basis_f
         keep = onp.flatnonzero(valid.reshape(-1)).astype(onp.int32)
         return cls(
             values=np.asarray(values),
@@ -728,10 +760,12 @@ class DifferentialPhase(_Block):
             w=w,
             valid=valid,
             keep=keep,
+            basis=basis,
             continuum=continuum,
             lines=lines,
             order=int(order),
             closure_free=bool(closure_free),
+            prior_width=prior_width,
         )
 
     def rebuild(self, values=None, errors=None, keep=None, **settings):
@@ -743,6 +777,7 @@ class DifferentialPhase(_Block):
             lines=self.lines,
             order=self.order,
             closure_free=self.closure_free,
+            prior_width=self.prior_width,
         )
         options.update(settings)
         values = self.values if values is None else values
@@ -818,6 +853,8 @@ class DifferentialPhase(_Block):
     def whiten(self, prediction, data, errors):
         # ``errors`` (the propagated diagonal) is not used: the block is
         # whitened with its full covariance from the per-sample errors.
+        if self.prior_width is not None:
+            return self._whiten_with_prior(prediction - data)
         n_f, k, r = self.valid.shape
         resid = np.zeros(n_f * k * r, prediction.dtype)
         resid = resid.at[self.keep].set(prediction - data)
@@ -829,6 +866,47 @@ class DifferentialPhase(_Block):
         return (
             white.reshape(-1)[self.keep],
             effective.reshape(-1)[self.keep],
+        )
+
+    def _whiten_with_prior(self, resid):
+        """Whitened residuals with offsets and slopes marginalised."""
+        n_f, k, r = self.valid.shape
+        y = np.zeros(n_f * k * r, resid.dtype).at[self.keep].set(resid)
+        y = y.reshape(n_f, k, r).transpose(0, 2, 1)  # (F, R, K)
+        errors = np.asarray(self.errors)
+        var = np.where(self.chan, errors[self.grid] ** 2, 0.0)
+        q = np.asarray(self.q, var.dtype)
+        w = np.asarray(self.w, var.dtype)
+        var = np.einsum("frc,fbc->fbr", w**2, var)  # W selects channels
+        valid = np.asarray(self.valid).transpose(0, 2, 1)  # (F, R, K)
+        pad = 1.0 - valid.astype(var.dtype)
+        # Each channel's closure-free combinations: covariance Qᵀ D Q.
+        cov = np.einsum("fkb,flb,fbr->frkl", q, q, var)
+        cov = cov + pad[..., None] * np.eye(k, dtype=var.dtype)
+        chol = np.linalg.cholesky(cov)
+        x = jsl.solve_triangular(chol, y[..., None], lower=True)[..., 0]
+        # Offset and slope of each baseline: Qᵀ e_b times the basis, through
+        # the same whitening; degenerate (closure) directions are harmless.
+        q_cols = np.broadcast_to(q[:, None], (n_f, r, k, q.shape[2]))
+        q_cols = jsl.solve_triangular(chol, q_cols, lower=True)
+        widths = np.asarray(self.prior_width, var.dtype)
+        basis = np.asarray(self.basis, var.dtype) * widths
+        local = np.einsum("frkb,frj->frkbj", q_cols, basis)
+        local = np.where(valid[..., None, None], local, 0.0)
+        local = local.reshape(n_f, r * k, -1)
+        n = n_f * r * k
+        flat = np.arange(n).reshape(n_f, r * k)
+        rows = np.where(valid.reshape(n_f, r * k), flat, n)
+        white, extra = _whiten_blocks(x.reshape(-1), rows, local)
+        effective = np.diagonal(chol, axis1=2, axis2=3).reshape(-1)
+        effective = effective * np.exp(extra)
+
+        def in_output_order(a):
+            return a.reshape(n_f, r, k).transpose(0, 2, 1).reshape(-1)
+
+        return (
+            in_output_order(white)[self.keep],
+            in_output_order(effective)[self.keep],
         )
 
     def simulated(self, prediction, cvis, noise):
