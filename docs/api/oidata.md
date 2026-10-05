@@ -31,6 +31,20 @@ from independent noise on the baseline phases. `n_independent` counts the
 observables that remain (the degrees of freedom); `n_residuals` is the
 length of `whitened_residuals`, which adds the penalty residuals.
 
+**Calibration nuisances per dataset.** `with_wavelength_scale` and
+`with_north_angle` are what the `noise=` terms `wavel_scale` and
+`north_angle` of [`fit`][virgil.fitting.fit] and
+[`numpyro_model`][virgil.likelihood.numpyro_model] apply. A North angle δ
+means the data see every position angle as the true one plus δ, which is
+a rotation of `(u, v)` by −δ. A plate scale needs no term of its own: a sky
+magnified by m is `wavel_scale = 1/m`. Neither has a default prior. Their
+invariant priors (uniform on the circle for δ) leave them degenerate with
+the scene's orientation and size for a single dataset, so a Gaussian prior
+is strong information and its width should come from the instrument's
+astrometric calibration. The same terms for published positions are in
+[`PositionData.term`][virgil.orbits.PositionData.term]; they follow
+Octofitter (Thompson et al. 2023, AJ 166, 164).
+
 The bundled `data/calibrated_visibility.npy` fixture is synthetic; see the
 AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
 
@@ -59,6 +73,7 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
         - has_model_covariance
         - with_gains
         - with_wavelength_scale
+        - with_north_angle
         - with_closure_offsets
         - mjd
         - epochs
