@@ -411,6 +411,10 @@ analysis or warn:
 
 ### Fixed
 
+- **`clean` no longer hangs when `nnls` gives up in a major cycle.** The
+  bounded least-squares fallback now uses BVLS: scipy's default TRF solver
+  can loop forever in its line search once the step underflows, which stalled
+  the py3.11 lowest-dependency CI job on scipy 1.13.
 - **Contrast limits: one search, from below.** Found in the pre-0.3.0 review
   (`design/codebase_review_2026-10b.md`, B1, B2, S2 and S5).
   - `injection_limits(flux_bounds=None)` returned 1000, the top of its search

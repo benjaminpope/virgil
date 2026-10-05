@@ -1019,7 +1019,11 @@ def _refit(fixed, fluxes, chi2, scale, rotation):
         # ill-conditioned columns of high signal-to-noise data. The bounded
         # least-squares solver returns its best point instead of raising,
         # and the backtracking below keeps the step only if χ² falls.
-        solution = lsq_linear(jacobian, rhs, bounds=(0.0, onp.inf)).x
+        # BVLS, not the default TRF: TRF's line search loops forever once
+        # its step underflows to zero, which hung CI on scipy 1.13.
+        solution = lsq_linear(
+            jacobian, rhs, bounds=(0.0, onp.inf), method="bvls"
+        ).x
     for fraction in (1.0, 0.5, 0.25, 0.125):
         trial = flat.copy()
         trial[active] = current + fraction * (solution - current)
