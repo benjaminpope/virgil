@@ -43,16 +43,17 @@ def _gain_jacobian(data_obj, vis_prediction):
 
 
 def _whiten_vis(data_obj, prediction, resid, errors, gain_terms):
-    """Whitened visibility residuals and their effective errors."""
+    """Whitened visibility residuals, their effective errors, and the log
+    normalisation of the marginalised gains (``Σ extra``, 0 without)."""
     whitened = resid / errors
     if data_obj.gains is None:
-        return whitened, errors
+        return whitened, errors, np.zeros((), errors.dtype)
     gains = data_obj.gains
     jacobian = _gain_jacobian(data_obj, prediction) / errors
     whitened, extra = gains.whiten(
         whitened, jacobian, gains.widths_for(gain_terms)
     )
-    return whitened, errors * np.exp(extra)
+    return whitened, errors * np.exp(extra), np.sum(extra)
 
 
 def _whiten(
@@ -60,7 +61,30 @@ def _whiten(
 ):
     """Whitened residuals, and the errors that normalise their likelihood.
 
-    Returns ``(whitened, errors_out)``. Residuals are
+    Returns ``(whitened, errors_out)``; see ``_whiten_with_log_norm``.
+    """
+    return _whiten_with_log_norm(
+        data_obj, prediction, reference, errors, gain_terms, offset_terms
+    )[:2]
+
+
+def _whiten_with_log_norm(
+    data_obj, prediction, reference, errors, gain_terms=None, offset_terms=None
+):
+    """Whitened residuals, effective errors, and the marginal log-normaliser.
+
+    Returns ``(whitened, errors_out, log_norm)``. ``log_norm`` is the part
+    of ``Σ log errors_out`` that comes from marginalised linear nuisances
+    and so may depend on the model: ½ log det of the gains' and the
+    closure offsets' covariance factors (``Σ extra`` of
+    [`GainModes.whiten`][virgil.gains.GainModes.whiten] and
+    [`ClosureOffsets.whiten`][virgil.gains.ClosureOffsets.whiten]), and
+    for each extra observable block ``Σ log(errors_out / errors)``. It is
+    zero for visibilities and phases without gains or offsets. The rest of
+    the normaliser (the quoted errors, the von Mises and correlated
+    closure-phase terms) depends only on the data and error terms.
+
+    Residuals are
     ``(prediction - reference) / errors``, except:
 
     - With gains (``OIData.gains``), the visibility residuals are whitened
@@ -112,13 +136,14 @@ def _whiten(
     errors = np.asarray(errors)
     n_vis = np.asarray(data_obj.vis).size
     n_phase = n_vis + np.asarray(data_obj.phi).size
-    vis, vis_errors = _whiten_vis(
+    vis, vis_errors, vis_norm = _whiten_vis(
         data_obj, prediction[:n_vis], resid[:n_vis], errors[:n_vis], gain_terms
     )
-    phase, phase_errors = _whiten_phases(
+    phase, phase_errors, phase_norm = _whiten_phases(
         data_obj, resid[n_vis:n_phase], errors[n_vis:n_phase], offset_terms
     )
     whitened, effective = [vis, phase], [vis_errors, phase_errors]
+    log_norm = vis_norm + phase_norm
     reference = np.asarray(reference)
     offset = n_phase
     for block in data_obj.extras:
@@ -130,23 +155,27 @@ def _whiten(
         )
         whitened.append(w)
         effective.append(e)
+        log_norm = log_norm + np.sum(np.log(e) - np.log(errors[offset:end]))
         offset = end
-    return np.concatenate(whitened), np.concatenate(effective)
+    return np.concatenate(whitened), np.concatenate(effective), log_norm
 
 
 def _whiten_phases(data_obj, resid, errors, offset_terms=None):
-    """Whitened phase residuals and their effective errors (see ``_whiten``)."""
+    """Whitened phase residuals, their effective errors and the closure
+    offsets' log normalisation (see ``_whiten_with_log_norm``)."""
+    zero = np.zeros((), errors.dtype)
     if not data_obj._phases_wrap:
-        return resid / errors, errors
+        return resid / errors, errors, zero
     if data_obj.cp_noise is None:
         von_mises = np.sqrt(2.0 * np.pi) * i0e(1.0 / errors**2)
-        return 2.0 * np.sin(0.5 * resid) / errors, von_mises
+        return 2.0 * np.sin(0.5 * resid) / errors, von_mises, zero
     # Correlated closure phases mix their residuals, so each sign matters,
     # and a chord's sign flips under 2π. Whiten the (smooth, periodic) sines
     # and append the periodic penalty 2 sin²(Δ/2)/σ = (1 - cos Δ)/σ, which
     # removes the false minimum at Δ = π.
     whitened, whitened_errors = data_obj.cp_noise.whiten(np.sin(resid), errors)
     offsets = data_obj.phase_offsets
+    log_norm = zero
     if offsets is not None:
         whitened, extra = offsets.whiten(
             data_obj.cp_noise,
@@ -155,11 +184,13 @@ def _whiten_phases(data_obj, resid, errors, offset_terms=None):
             offsets.widths_for(offset_terms),
         )
         whitened_errors = whitened_errors * np.exp(extra)
+        log_norm = np.sum(extra)
     penalty = 2.0 * np.sin(0.5 * resid) ** 2 / errors
     penalty_errors = np.full(penalty.shape, 1.0 / np.sqrt(2.0 * np.pi))
     return (
         np.concatenate([whitened, penalty]),
         np.concatenate([whitened_errors, penalty_errors.astype(errors.dtype)]),
+        log_norm,
     )
 
 
@@ -373,6 +404,27 @@ def noise_for(sites, values, index):
 
 
 def _whitened_and_errors(model_object, data_obj, noise):
+    """Whitened residuals and effective errors (see ``_whiten``)."""
+    return _whitened_errors_and_log_norm(model_object, data_obj, noise)[:2]
+
+
+def _whitened_and_log_norm(model_object, data_obj, noise=None):
+    """Whitened residuals and the marginal nuisances' log-normaliser.
+
+    ``model_loglike`` is ``-½ Σ r² - log_norm`` plus a term that depends
+    only on the data and the error terms (``-Σ log σ - ½ n log 2π`` and
+    its von Mises and correlated-closure-phase forms), where ``log_norm``
+    is ½ log det of the covariance factors of marginalised gains and
+    closure offsets, which may depend on the model (see
+    ``_whiten_with_log_norm``). Without them it is zero.
+    """
+    whitened, _, log_norm = _whitened_errors_and_log_norm(
+        model_object, data_obj, {} if noise is None else noise
+    )
+    return whitened, log_norm
+
+
+def _whitened_errors_and_log_norm(model_object, data_obj, noise):
     unknown = set(noise) - set(NOISE_TERMS)
     if unknown:
         raise TypeError(
@@ -412,7 +464,7 @@ def _whitened_and_errors(model_object, data_obj, noise):
     data_obj = observed
     errors = inflated_errors(data_obj, prediction, **inflation)
     data = data_obj.flatten_data()[0]
-    return _whiten(
+    return _whiten_with_log_norm(
         data_obj, prediction, data, errors, gain_terms, offset_terms
     )
 

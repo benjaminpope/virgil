@@ -5,6 +5,28 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
+## Unreleased
+
+### Added
+
+- **`fit` reports `info["grad_norm"]`**, the infinity norm of the gradient
+  of the loss per data point at the result, in the unconstrained
+  coordinates of the convergence test, for every method (LM, L-BFGS, Adam).
+- **`imaging.laplace_samples`** draws Gaussian-field images from the
+  Laplace (Gauss–Newton) posterior of the whitened latents about the MAP,
+  `N(z_MAP, (I + JᵀJ)⁻¹)`, and optionally renders the whole model for each
+  draw. Other fitted parameters are held at the MAP.
+
+### Fixed
+
+- **`log_evidence` with calibration gains or closure offsets** now includes
+  the likelihood's model-dependent normalisation, ½ log det of the
+  marginalised nuisances' covariance factor (and, for extra observable
+  blocks, their effective-error normaliser), exactly as `model_loglike`
+  evaluates it. Before, it used the whitened χ² alone, so wider gains
+  always looked better. Values for plain data are unchanged; the evidence
+  still omits the data-only normalisation (`-Σ log σ - ½ n log 2π`).
+
 ## 0.3.0 (2026-10-06)
 
 Everything listed as new was added after 0.2.0.

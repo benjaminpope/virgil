@@ -30,6 +30,7 @@ Gaussian-field images, the Laplace evidence (`log_evidence`).
         - l_curve
         - LCurve
         - log_evidence
+        - laplace_samples
         - error_scale
         - diagnose
         - Diagnosis
