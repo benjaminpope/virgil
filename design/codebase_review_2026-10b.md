@@ -25,7 +25,7 @@ its fixed findings are not repeated, but they were checked for regressions
     - `flux_bounds=None` silently returns the top of the search bracket (flux 1000) at every position (B1).
     - It crashes on data with extra observables (B2).
   - The other two are release hygiene:
-    - 22 notebooks, 11 of them rendered into the docs, show results from priors that their own source no longer uses (B3).
+    - 22 notebooks, 9 of them rendered into docs pages by the sync script, show results from priors that their own source no longer uses (B3).
     - `CHANGELOG.md` is wrong about what was released and misses three changes, one of them a behaviour change to χ² for OIFITS v1 files (B4).
 - **The new numerical code is sound.**
   - `_linear`'s two whitenings agree with dense algebra in float32 and float64.
@@ -103,7 +103,7 @@ Effort is for one agent, including tests. "Blocks" means it must be fixed before
   - `/var/folders/...` in `contrast_limits`.
   - Saved `fit(method='lbfgs') did not converge` warnings in nine MWEs.
 
-  Re-running fixes the paths. The prose should say which non-convergences are expected, which is Stage 7's MEM item.
+  Re-running does **not** remove the paths: `scripts/sync_tutorial_docs.py::_sanitize_text` strips only `ipykernel_*` warning locations, and these warnings point into `src/virgil/imaging.py`. The release must sanitise or clear those outputs explicitly (being done separately in #233). The prose should say which non-convergences are expected, which is Stage 7's MEM item.
 - **Leave alone:** `detection_roc` and `mwe_uv_lattice_mft` are current.
 
 **B4. `CHANGELOG.md` is wrong about what was released, and incomplete.** Blocks; 1 h.
@@ -118,7 +118,7 @@ Effort is for one agent, including tests. "Blocks" means it must be fixed before
   - **The flat-coordinate MAP.** `LogUniform` priors on parameters and on `noise=` terms (which existed in 0.2.0) now give the MAP in log x, and LM is chosen automatically.
   - **`Tabulated` is deprecated** (it was in `virgil.spectra.__all__` in 0.2.0), with a removal version, e.g. "removed in 0.5.0".
   - **#203 and `starting_image`'s new priors.**
-- **Version.** Bump `pyproject.toml:3` to 0.3.0. It is the only version string, and `__version__` comes from metadata.
+- **Version.** Bump `pyproject.toml:3` to 0.3.0. `__version__` comes from metadata, but `uv.lock` (around lines 2624-2625) also records `virgil-astro` 0.2.0, so the release commit must refresh and commit `uv.lock` too.
 
 ### Should fix before 0.3.0
 
@@ -164,7 +164,7 @@ Effort is for one agent, including tests. "Blocks" means it must be fixed before
   - In `injection_limits`, it is the *search range*.
   - The docstrings say different things about the same keyword. Pick one, the search range plus a clipping warning.
 - **A grid computed only to be discarded.** `_absil_limits` still evaluates the full positions × fluxes loss grid (`:440-446`), only to pick a starting flux. Since bracketing makes the result independent of the start (the CHANGELOG says so), one start per position suffices, and the work drops by the length of the flux axis. Profile P3 measures it.
-- **A stale comment.** `_BISECTION_STEPS = 40` claims a "6 decade" default bracket (`:512-513`), while `_UNBOUNDED_BRACKET` spans 11. About 28 steps reach float32 resolution.
+- **An over-conservative step count.** The comment on `_BISECTION_STEPS = 40` (`:512-513`) is accurate for the public default bracket (`flux_bounds=(1e-6, 1)`, six decades), but 40 steps resolve about 1e-11 decades, far past float32; about 28 would do. (#235 has since replaced this code.)
 
 **S6. Docs.** About 2 h, excluding notebook reruns. Generated pages are fixed in their notebooks.
 - **README and `docs/index.md`:**
@@ -265,7 +265,7 @@ Effort is for one agent, including tests. "Blocks" means it must be fixed before
   - `spectra.py:79` (a bare `NotImplementedError`).
 
   Each should say what was passed and what to do.
-- **Five `mwe/` notebooks import private names:** `_geometry`, `_precision.cast_tree` and `plotting._enforce_sky_orientation`. Promote `cast_tree`, or accept that the MWEs are internal.
+- **Four `mwe/` notebooks import private names** (`mwe_scenes`, `mwe_uv_lattice_mft`, `mwe_image_component`, `mwe_elr_chara`): `_geometry`, `_precision.cast_tree` and `plotting._enforce_sky_orientation`. Promote `cast_tree`, or accept that the MWEs are internal.
 - **`docs/orbit_fitting.md` has a 119-line stretch with no heading or figure** (from line 418), in a 613-line page. Split it.
 
 ## Correctness spot checks
@@ -326,8 +326,9 @@ The resource requests (1 h, 8 CPUs, 32 GB, one A100) are guesses; set them from 
 
 1. **Fix B1 and B2** in `limits.py`, with tests, and share the bisection helper (S5).
 2. **Rewrite `orbit_fitting`** with `IsotropicInclination` and `AngleVector`.
-3. **Re-execute on OzSTAR** (`virgil_notebooks`) the 22 notebooks #227 touched, plus `orbit_fitting`, `binary_search`, `contrast_limits` and `hierarchical_inference`. Then run `scripts/sync_tutorial_docs.py` and update the §6d MWE numbers in `imaging_plan.md`.
-4. **CHANGELOG (B4):**
+3. **Sanitise or clear the absolute paths in saved MWE outputs** (#233; re-executing alone does not remove them).
+4. **Re-execute on OzSTAR** (`virgil_notebooks`) the 22 notebooks #227 touched, plus `orbit_fitting`, `binary_search`, `contrast_limits` and `hierarchical_inference`. Then run `scripts/sync_tutorial_docs.py` and update the §6d MWE numbers in `imaging_plan.md`.
+5. **CHANGELOG (B4):**
    - a `## 0.3.0 (date)` heading;
    - one `Added` section;
    - entries for #203, #212 and #214;
@@ -335,16 +336,16 @@ The resource requests (1 h, 8 CPUs, 32 GB, one A100) are guesses; set them from 
    - a removal version for `Tabulated`;
    - mark 0.2.0 as released;
    - a "Migrating from 0.2" box with the flat-coordinate MAP, #203, `Tabulated` and `starting_image`.
-5. **Decide the API names before they freeze:**
+6. **Decide the API names before they freeze:**
    - the prior convention, the `LogUniform` clash and the tuple path (S1);
    - `marginalise_offsets=True`;
    - keyword-only `flux_param` and `batch_size` (S8).
-6. **Small fixes:** the S2 guard, the S6 docs fixes, and the S7 doctests across every module.
-7. **Version bump** to 0.3.0 (`pyproject.toml:3`). `uv lock --check` passes in CI.
-8. **CI:** add `--durations=30` (S9). Optionally install harmonix from PyPI, now that 0.1.0 is out.
-9. **Full suite** under float32 and x64 (CI does both). `mkdocs build --strict` and `zensical build --clean` (CI). The wheel smoke job.
-10. **Run virgil-validation** against the release candidate. #203 changes the reader's frame grouping, which AGENTS.md says needs it.
-11. **Tag `v0.3.0` on main.** `publish.yml` checks the tag against the version.
+7. **Small fixes:** the S2 guard, the S6 docs fixes, and the S7 doctests across every module.
+8. **Version bump** to 0.3.0 (`pyproject.toml:3`), and refresh and commit `uv.lock`, which also records `virgil-astro` 0.2.0. `uv lock --check` in CI then passes.
+9. **CI:** add `--durations=30` (S9). Optionally install harmonix from PyPI, now that 0.1.0 is out.
+10. **Full suite** under float32 and x64 (CI does both). `mkdocs build --strict` and `zensical build --clean` (CI). The wheel smoke job.
+11. **Run virgil-validation** against the release candidate. #203 changes the reader's frame grouping, which AGENTS.md says needs it.
+12. **Tag `v0.3.0` on main.** `publish.yml` checks the tag against the version.
 
 ## Only Ben can decide
 
