@@ -34,7 +34,6 @@ fit can stop in a local minimum: start it from a good image, such as a
 components added one at a time where the gradient of χ² is steepest: CLEAN
 for any data, including closure and DISCO phases. With ``scales_mas`` the
 components can also be Gaussians of several widths (multi-scale CLEAN).
-``design/sparse_imaging.md`` discusses the choices.
 
 When [`fit`][virgil.fitting.fit]'s model function returns one model per
 dataset, every regulariser acts on the **first model only**. That is right
@@ -2017,8 +2016,6 @@ def l_curve(
     compare [`LCurve.corner`][virgil.imaging.LCurve.corner] and
     [`LCurve.discrepancy`][virgil.imaging.LCurve.discrepancy] with
     the images either side: there is usually a wide range of good weights.
-    Other ways of choosing the weight are compared in
-    ``design/regulariser_weight_selection.md``.
 
     Parameters
     ----------

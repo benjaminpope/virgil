@@ -17,8 +17,7 @@ star, a disk, a companion already found) stay in both hypotheses.
 
 The function is traceable in the data: inside ``jax.jit`` or
 ``jax.lax.map`` over simulated observations it compiles once, which is what
-Monte Carlo estimates of false-alarm rates and completeness need. The
-design is described in ``design/detection_roc.md``.
+Monte Carlo estimates of false-alarm rates and completeness need.
 
 [`local_nsigma`][virgil.detection.local_nsigma] converts ``delta_chi2`` to
 Wilks's Gaussian-equivalent significance at a single position. It ignores
