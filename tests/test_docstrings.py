@@ -1,5 +1,6 @@
 import doctest
 import importlib
+import importlib.util
 import warnings
 from pathlib import Path
 
@@ -26,11 +27,12 @@ def _module_names():
 
 
 def _has_jaxoplanet():
+    # Look it up without importing it: importing jaxoplanet enables x64
+    # globally, and the doctests must run in the default float32.
     try:
-        importlib.import_module("jaxoplanet")
-    except ImportError:
+        return importlib.util.find_spec("jaxoplanet") is not None
+    except ValueError:  # in sys.modules as None (blocked)
         return False
-    return True
 
 
 def _needs_orbits(test):
