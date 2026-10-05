@@ -24,10 +24,13 @@ pip install virgil-astro
 
 Optional extras add the corner-plot helpers in `virgil.plotting`
 (`pip install "virgil-astro[plots]"`, for pandas and ChainConsumer) and the
-SIMBAD lookups in `virgil.legacy` (`[legacy]`, for astroquery). Orbit
-fitting (`virgil.orbits`) needs [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet), which comes with
-`pip install "virgil-astro[orbits]"`; without it, importing `virgil.orbits`
-raises an error that names the extra.
+SIMBAD lookups in `virgil.legacy` (`[legacy]`, for astroquery). Solving
+Kepler's equation in `virgil.orbits` needs
+[jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet), which comes with
+`pip install "virgil-astro[orbits]"`. `virgil.orbits` imports without it and
+loads jaxoplanet only when a Kepler-solving path is called (evaluating an
+orbit's positions or `to_jaxoplanet`); that call raises an error naming the
+extra if jaxoplanet is missing.
 
 You can also build from source. To do so, clone the git repo and enter the directory:
 
