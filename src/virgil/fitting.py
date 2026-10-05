@@ -159,7 +159,7 @@ class _Objective(eqx.Module):
         values = {} if values is None else dict(values)
         z = {}
         for site, (prior, _, term) in self.noise.items():
-            unit = term.endswith("scale") or term == "vis_gain_modes"
+            unit = term.endswith("scale") or term.endswith("_modes")
             default = 0.0 if term == "wavel_offset" else 1.0 if unit else 0.01
             start = values.get(site, default)
             if not bool(prior.support(np.asarray(start, float))):
@@ -367,6 +367,8 @@ def fit(
         [`inflated_errors`][virgil.likelihood.inflated_errors]), and the
         widths of gains correlated across channels, ``vis_gain_<group>``
         (see [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), and
+        of closure-phase offsets, ``phi_offset_<group>`` (see
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), and
         the wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
         [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]), whose priors may
         be of either sign (e.g. ``Normal(1, 2e-4)``). A dict
