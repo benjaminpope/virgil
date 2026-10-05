@@ -74,6 +74,8 @@ With X = cos E − e and Y = √(1 − e²) sin E:
 - F = a(−sin ω cos Ω − cos ω sin Ω cos i), G = a(−sin ω sin Ω + cos ω cos Ω cos i),
 - C = a sin ω sin i, H = a cos ω sin i.
 
+With a Gaussian prior, A, B, F, G can also be integrated out analytically, which leaves a three-parameter posterior in (P, e, t_peri). That prior is not the usual one on the Campbell elements, so the result needs reweighting: see [`thiele_innes_marginalisation.md`](thiele_innes_marginalisation.md).
+
 ### 2.5 Why conventions matter: an example
 Two real cases from Apep show what goes wrong.
 1. **External elements disagree.** The JWST plume orbit (Ω = 164°, read as North through East) predicts a line of centres at PA 164°/344°. GRAVITY measures 96°.
@@ -100,6 +102,7 @@ Two real cases from Apep show what goes wrong.
   1. Fit each epoch with the existing binary tools (grids, `fit`, Laplace errors) to get positions and their covariances.
   2. On a grid of (P, e, t_peri), the positions are **linear** in the Thiele–Innes constants A, B, F, G (§2.4), so these are a weighted linear least-squares solve per grid point.
   3. The best grid points start the joint visibility fit (R7) or NUTS. This is the classical approach. It is cheap, it needs no random restarts, and it handles the multimodality of short arcs.
+  4. The marginal version of the same solve (a Gaussian prior on A, B, F, G, and the log-determinant kept) ranks grid points by evidence and gives exact posteriors from positions: [`thiele_innes_marginalisation.md`](thiele_innes_marginalisation.md).
 - **The fast route, when it is valid.** For two point sources well inside the field, per-epoch Laplace positions are close to sufficient statistics. Fitting the orbit to them (`PositionData`, R7) is then fast and nearly exact. With extended emission it is not, and the joint fit is required (R7).
 
 ### R1. An orbit that exposes the 3-D relative vector
