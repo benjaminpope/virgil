@@ -1236,6 +1236,27 @@ def test_a_cone_opens_towards_its_position_angle_on_the_sky(pa, east, north):
         assert col < npix // 2
 
 
+def test_cone_ring_error_falls_quadratically_with_n_rings():
+    # |V(n) - V(2n)| ~ 1 / n**2 on a modest uv set: the 64 -> 128 difference
+    # is well below the 32 -> 64 one, and small at 128 (documented guidance).
+    rng = onp.random.default_rng(7)
+    q = rng.uniform(0.02, 0.2, 12) / 4.84813681109536e-9  # cycles/rad
+    theta = rng.uniform(0.0, onp.pi, 12)
+    wavel = 2.2e-6
+    u, v = q * onp.cos(theta) * wavel, q * onp.sin(theta) * wavel
+    cone = dict(
+        tip=5.0, alpha=62.5, s0=4.0, length=13.8, width=2.0, tilt=40.0, pa=96.0
+    )
+    vis = {
+        n: onp.asarray(TruncatedCone(**cone, n_rings=n).model(u, v, wavel))
+        for n in (32, 64, 128)
+    }
+    d32 = onp.max(onp.abs(vis[32] - vis[64]))
+    d64 = onp.max(onp.abs(vis[64] - vis[128]))
+    assert d64 < d32 / 2
+    assert d64 < 5e-4
+
+
 def test_cone_quadrature_converges_and_tilt_is_checked_after_set():
     rng = onp.random.default_rng(5)
     u, v = rng.uniform(-30.0, 30.0, (2, 20))
