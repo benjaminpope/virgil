@@ -265,15 +265,18 @@ class FluxSpectrum(_Block):
     relative widths, so the prior is broad but not truncated at zero. The
     weights are marginalised analytically (see the module notes).
 
-    **Choice of prior.** k is a scale parameter, so its invariant (Jeffreys)
-    prior is 1/k, uniform in log k. The broad Gaussian used here instead
-    approximates a prior uniform in k. The two posteriors for k differ by
-    the factor 1/k, which varies by a fraction σ_k/k across the likelihood's
-    width. So for a well-measured scale (σ_k/k ≪ 1, any useful OI_FLUX
-    spectrum) the difference in the marginal likelihood, and in the other
-    parameters' posteriors, is of that order and negligible. It matters only
-    for poorly measured spectra. Marginalising in log k is not linear and is
-    not done here (a follow-up). Build
+    **Choice of prior.** k is a scale parameter. Under rescaling of k the
+    invariant (Jeffreys) prior is ∝ 1/k, uniform in log k, but that prior
+    is improper, so an evidence computed with it is undefined. The broad
+    Gaussian used here instead approximates a prior uniform in k. The only
+    claim made is local: when k is sharply measured (σ_k/k ≪ 1, as for any
+    useful OI_FLUX spectrum), the factor 1/k varies by only a fraction
+    σ_k/k across the likelihood's width, so the posteriors of k and of the
+    other parameters are insensitive to the choice. Evidence comparisons
+    need a proper prior: finite positive bounds [k_min, k_max], with density
+    1 / (k ln(k_max/k_min)). With such bounds, that log-uniform prior is the
+    Jeffreys choice under the rule for scale groups. Marginalising in log k
+    is not linear and is not done here (a follow-up). Build
     with :meth:`build`; change the groups and widths with
     [`OIData.with_flux_scale`][virgil.oidata.OIData.with_flux_scale].
     """
