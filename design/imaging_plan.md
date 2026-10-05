@@ -551,13 +551,18 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 - **Control (no gains in the data).** Fitted widths go to zero (median 0) and the results match the diagonal fit. Assuming gains that aren't there, at the same widths, gives conservative errors: disk σ error 0.019 mas, scatter 0.016 mas, against 0.003 mas without them. It also shifts the disk parameters by 0.2–0.3σ.
 - **Conclusion.** Fit the widths rather than fixing them.
 
+**MWE:** `notebooks/mwe/mwe_gains.ipynb`, executed on OzSTAR (`virgil_notebooks` task 7, virgil@cebfa5d, 113 s). One realisation of the study's setup is fitted three ways, followed by a 40-realisation Monte Carlo.
+- **Rms pulls:** 8.2–16.8 with the reported errors, 1.3–4.4 with `vis_error_rel`, 0.87–0.98 with the gains.
+- **Fitted widths:** 0.0201 ± 0.0028 (telescope) and 0.0097 ± 0.0020 (baseline).
+- **Whitened V² residuals** of the gains fit: rms 0.98.
+
 **Log (gains, branch `stage6d-nuisances`):**
 - `virgil.gains`: `GainModes` and `gain_modes`, set with `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)`. The groups are telescope, baseline, chromatic ((λ_ref/λ)²) and supplied 1σ modes, e.g. a calibrator PCA's from virgil-vlti. Widths are fitted with the noise terms `vis_gain_<group>`, one per group, rather than a single `vis_gain`.
 - Marginalisation: blocks are the connected groups of modes, whitened by successive rank-one steps (smooth gradients, also for degenerate modes and zero widths). The log-determinant is spread over effective errors, so `_gaussian_loglike` and `fit`'s normalisation are unchanged. The Jacobian dObs/dlog|V| is taken from the model (2V², |V| or 1).
 - `fit` includes the normalisation and refuses LM when any dataset has gains. `numpyro_model` gets them through `model_loglike`.
 - `OIData.stations` (from `STA_INDEX`, or a dictionary's `stations`), and `gains` survive `_subset`/`split_by_epoch` (dropping rows is an exact marginal). `with_model(key)` draws the gains at their default widths and applies them exactly.
 - Tests: whitened norm and log-det against the dense covariance (V², |V|, log|V|); block structure; width terms; zero widths reduce to the diagonal likelihood, with finite gradients on degenerate data; splitting by epoch; covariance of the drawn gains; refusal for projected data; fit defaults to L-BFGS.
-- Merged as #180. The width-recovery and calibration study is OzSTAR job `stage6d_gains` (submitted 2026-10-05); the MWE is next.
+- Merged as #180. The width-recovery and calibration study is OzSTAR job `stage6d_gains` (submitted 2026-10-05); the MWE is recorded above.
 
 **Log (`wavel_scale`, branch `stage6d-wavel`):** `OIData.with_wavelength_scale(scale, offset)` and the noise terms `wavel_scale` (factor, from 1) and `wavel_offset` (metres, from 0), with signed priors allowed. Tested: a scale is a separation rescaling for a grey binary, an offset is a shifted grid, and a noiseless fit recovers a 0.2% scale with the separation known.
 
