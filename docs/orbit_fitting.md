@@ -102,6 +102,11 @@ print(
 )
 ```
 
+```text
+period 3.01 yr, total mass 1.99 M_sun at 105 pc
+the epochs span 51% of the orbit; the next periastron is at MJD 60880
+```
+
 ## Simulating the observations
 
 [`vlti_oidata`](api/coverage.md) builds the coverage of the four 8-m Unit Telescopes at Paranal for a target at declination −30°: three snapshots per night, two hours apart either side of transit, each with all six baselines and four closure triangles, in six K-band channels (2.0–2.4 μm). Passing `nights_mjd` repeats this on every night and stamps each snapshot with its own time. The quoted errors are 0.05 on each $V^2$ and 3° on each closure phase.
@@ -146,6 +151,10 @@ print(
 )
 ```
 
+```text
+8 epochs, each with 108 V² and 72 closure phases (162 independent observables)
+```
+
 The quoted errors are too small, and the data show it. The reduced χ² of the *true* model against each night's data, with the quoted errors, is close to the square of that night's error factor, for $V^2$ and closure phases alike. A fit that trusted the quoted errors would weight the worst nights most heavily relative to their real quality, and would report intervals that are too narrow.
 
 ```python
@@ -160,6 +169,39 @@ for k, night in enumerate(epochs):
         f"{epoch_mjd[k]:8.1f}  {chi2_v2:6.2f}   ({TRUE_V2_SCALE[k] ** 2:5.2f})"
         f"         {chi2_cp:6.2f}   ({TRUE_CP_SCALE[k] ** 2:5.2f})"
     )
+```
+
+```text
+   MJD    χ²_r V²  (true factor²)   χ²_r CP  (true factor²)
+```
+
+```text
+ 60000.0    1.68   ( 1.73)           2.58   ( 2.65)
+ 60035.0    3.19   ( 3.82)           0.45   ( 0.56)
+```
+
+```text
+ 60095.0    3.31   ( 3.52)           3.22   ( 4.33)
+```
+
+```text
+ 60150.0    1.10   ( 1.24)           1.28   ( 1.59)
+```
+
+```text
+ 60330.0    1.66   ( 1.41)           1.79   ( 2.54)
+```
+
+```text
+ 60385.0    0.83   ( 1.23)           1.47   ( 1.56)
+```
+
+```text
+ 60445.0    2.15   ( 2.38)           1.25   ( 1.35)
+```
+
+```text
+ 60560.0    1.69   ( 1.63)           0.99   ( 2.23)
 ```
 
 The left panel shows the uv coverage of the first night, coloured by wavelength: Earth rotation carries each baseline along a short track, and the spread of channels stretches it radially. The right panel shows the true orbit on the sky (East to the left, North up), with the companion's position at each of the eight epochs and the unobserved periastron marked.
@@ -213,6 +255,8 @@ ax_sky.invert_xaxis()
 ax_sky.legend(frameon=False, fontsize="small")
 plt.show()
 ```
+
+![orbit_fitting output 11.1](generated/orbit_fitting_cell011_out01.png)
 
 ## One model for all the data
 
@@ -341,6 +385,8 @@ fig.suptitle("Prior draws from NUTS with no data (dashed: stated prior)")
 plt.show()
 ```
 
+![orbit_fitting output 17.1](generated/orbit_fitting_cell017_out01.png)
+
 ## Initialisation (not inference)
 
 NUTS explores one mode well but does not search for it, so it needs a start in the right basin. Finding the basin is cheap if we borrow the classical tools, as long as we treat their output only as a starting point. Nothing from this section enters the posterior.
@@ -370,6 +416,22 @@ for t, q, ra, de in zip(epoch_mjd, quick, true_dra, true_ddec):
         f"{t:8.1f}  {q['dra']:6.1f}  {ra:7.2f}   {q['ddec']:6.1f}  {de:7.2f}"
         f"  {q['flux']:.2f}  {q['gap']:5.0f}"
     )
+```
+
+```text
+per-epoch grids:   0%|          | 0/8 [00:00<?, ?it/s]
+```
+
+```text
+    MJD   grid Δα  true Δα   grid Δδ  true Δδ  flux   gap
+ 60000.0   -19.0   -19.57     15.0    15.34  0.14    862
+ 60035.0   -19.0   -18.83     18.0    18.24  0.14    750
+ 60095.0   -16.0   -16.14     22.0    21.76  0.14    796
+ 60150.0   -12.0   -12.53     23.0    23.49  0.14    746
+ 60330.0     3.0     2.74     20.0    20.56  0.14    687
+ 60385.0     7.0     7.52     18.0    17.51  0.14    635
+ 60445.0    12.0    12.33     14.0    13.26  0.14    349
+ 60560.0    19.0    19.21      3.0     3.17  0.14    909
 ```
 
 **Starting orbits.** At a fixed period, eccentricity and time of periastron the sky positions are linear in the four Thiele–Innes constants, so each point of a grid in those three is an exact weighted least-squares solve. [`starting_orbits`](api/orbits.md) runs this grid (here 160 periods from 300 to 5000 days, eccentricities from 0 to 0.9 and 36 times of periastron per period) on the decisive nights' grid positions, with a generous 0.5 mas error each. With few seed positions many orbits fit them almost equally well, so we keep the best 200 and **rank them by the likelihood of the interferometric data of all the epochs**, at the median grid flux ratio, rather than by the fit to the rough positions. The ranking is one vectorised evaluation of the joint model.
@@ -410,6 +472,17 @@ for rank, k in enumerate(order[:6]):
         f"{rank:4d} {float(orbit.period):7.1f}  {float(orbit.ecc):5.2f}"
         f"  {float(orbit.a_mas):7.2f}  {scores[k]:12.1f}  {chi2:8.2f}"
     )
+```
+
+```text
+8 decisive epochs seed 200 orbits
+rank   P (d)     e     a (mas)  log L (data)  χ² (seed positions)
+   0  1151.2   0.25    24.93        1125.2      8.76
+   1   999.2   0.40    24.28        1117.4      7.80
+   2  1303.0   0.15    25.78        1116.9      9.32
+   3  1214.0   0.20    25.02        1112.1      8.90
+   4  1235.6   0.20    25.74        1109.4      9.29
+   5  1111.2   0.30    24.95        1101.8      8.48
 ```
 
 **Refining the best starts.** We refine the four best-ranked orbits with [`fit`](api/fitting.md), a maximum a posteriori fit of the full joint model, error-scale population included, to all the epochs. `start_values` converts an orbit into the sampled parameters. If the four refined fits land on the same orbit with the same loss, the posterior has one dominant mode near it. If some land elsewhere, those are other modes, typically period aliases from sparse sampling; compare their losses (a difference of Δ in loss is a factor of about $e^{Δ}$ in posterior density) and, if any is close, start chains in each and compare them.
@@ -456,6 +529,18 @@ for k, result in enumerate(refined):
 best = min(refined, key=lambda result: result.info["loss"])
 ```
 
+```text
+joint MAP fits:   0%|          | 0/4 [00:00<?, ?it/s]
+```
+
+```text
+start  loss       P (d)     e      i (deg)  Ω (deg)  ϖ (deg)  a (mas)
+    0   -3360.02  1095.29  0.303    54.93   129.89   199.66  24.941
+    1   -3360.02  1095.35  0.303    54.93   129.89   199.66  24.941
+    2   -3360.02  1095.31  0.303    54.93   129.89   199.66  24.941
+    3   -3360.02  1095.29  0.303    54.93   129.89   199.66  24.941
+```
+
 ## Sampling the joint posterior
 
 We start four chains at the best joint fit and run NUTS with a dense mass matrix, adapted during warm-up: period, eccentricity, time of periastron and inclination are strongly correlated when the periastron is unobserved, and a dense matrix absorbs those correlations. The 31 sampled coordinates are the orbit (ten, counting each angle vector's two), the flux ratio, and the two error-scale populations (two hyperparameters and eight log scales each). A thousand warm-up steps and a thousand samples per chain are enough.
@@ -488,6 +573,11 @@ print(
     f"divergences: {divergences} in {NUM_CHAINS * NUM_SAMPLES} samples"
 )
 print(f"largest r_hat {r_hat:.3f}, smallest effective sample size {n_eff:.0f}")
+```
+
+```text
+divergences: 0 in 4000 samples
+largest r_hat 1.003, smallest effective sample size 1722
 ```
 
 ## The orbit
@@ -534,6 +624,18 @@ for name, lo, m, hi in zip(table.columns, low, mid, high):
     )
 ```
 
+```text
+P (d)           1098.230  + 27.118 − 25.370   truth   1100.000
+a (mas)           24.955  +  0.110 −  0.091   truth     25.000
+e                  0.300  +  0.023 −  0.024   truth      0.300
+i (deg)           54.890  +  0.457 −  0.470   truth     55.000
+ω (deg)           69.820  +  0.444 −  0.438   truth     70.000
+Ω (deg)          129.999  +  1.027 −  1.011   truth    130.000
+t_peri (MJD)   59779.951  +  8.806 −  9.493   truth  59780.000
+M_tot (M☉)         1.989  +  0.081 −  0.080   truth      1.994
+flux ratio         0.150  +  0.001 −  0.001   truth      0.150
+```
+
 The corner plot shows the joint posterior of the elements, with the truth marked. With the periastron unobserved, the period, eccentricity, time of periastron, inclination and node are correlated: a slightly longer period with a lower eccentricity and an earlier periastron fits the observed half orbit almost as well. The total mass inherits these through $a^3/P^2$; with a parallax, its error would add to the mass's through $M \propto D^3$. Only the next periastron passage will break the correlations.
 
 ```python
@@ -546,6 +648,8 @@ _, corner_fig, walks_fig = plot_chainconsumer_diagnostics(
 plt.close(walks_fig)  # the chains' traces are not needed here
 plt.show()
 ```
+
+![orbit_fitting output 29.1](generated/orbit_fitting_cell029_out01.png)
 
 ### Orbits on the sky
 
@@ -566,6 +670,8 @@ fig, ax = plot_orbit_ensemble(ensemble, implied, truth_orbit)
 ax.set_title("Joint posterior: 150 orbits and the implied positions")
 plt.show()
 ```
+
+![orbit_fitting output 31.1](generated/orbit_fitting_cell031_out01.png)
 
 Zooming in on each epoch shows those implied positions properly. Each panel shows the posterior samples of the companion's position at that epoch's mean time, relative to the true position, in microarcseconds. The orbit ties each night to the others, so even the worst-calibrated epochs are pinned about as tightly as the best, and the true position (red cross) should fall within each cloud.
 
@@ -593,6 +699,8 @@ for ax in axes[:, 0]:
 fig.suptitle("Companion position at each epoch, from the joint posterior")
 plt.show()
 ```
+
+![orbit_fitting output 33.1](generated/orbit_fitting_cell033_out01.png)
 
 ### Separation and position angle in time
 
@@ -644,6 +752,8 @@ axes[0].legend(frameon=False, fontsize="small")
 axes[1].set_xlabel("MJD")
 plt.show()
 ```
+
+![orbit_fitting output 35.1](generated/orbit_fitting_cell035_out01.png)
 
 ## Checking the model against the data
 
@@ -698,6 +808,16 @@ for col, k in enumerate(shown):
 plt.show()
 ```
 
+```text
+MJD 60035: rms residual 0.90 σ over 72 closure phases
+```
+
+```text
+MJD 60095: rms residual 1.02 σ over 72 closure phases
+```
+
+![orbit_fitting output 37.3](generated/orbit_fitting_cell037_out03.png)
+
 ### The inferred calibration
 
 The error scales are part of the posterior too. Each epoch's $V^2$ and closure-phase factors are recovered (median and 68% interval against the truth), and the population's median and spread, which describe how far the "pipeline" errors are off, can be compared with the population the factors were drawn from (median 1.3, spread 0.3); with only eight draws per population, the spread in particular is loosely constrained.
@@ -732,6 +852,15 @@ for prefix, label in (("v2_scale", "V²"), ("cp_scale", "closure phase")):
             f"{label:14s} population {part:6s} {mid:.2f} "
             f"+{hi - mid:.2f} −{mid - lo:.2f}"
         )
+```
+
+![orbit_fitting output 39.1](generated/orbit_fitting_cell039_out01.png)
+
+```text
+V²             population median 1.34 +0.12 −0.11
+V²             population spread 0.24 +0.09 −0.06
+closure phase  population median 1.21 +0.15 −0.12
+closure phase  population spread 0.29 +0.11 −0.07
 ```
 
 ## Comparison with the two-step fit
@@ -779,6 +908,14 @@ print(
 )
 ```
 
+```text
+per-epoch fits:   0%|          | 0/8 [00:00<?, ?it/s]
+```
+
+```text
+two-step divergences: 0
+```
+
 ```python
 two = {k: np.asarray(v, dtype=float) for k, v in two_step.get_samples().items()}
 two_orbits = orbit_from(two)
@@ -820,6 +957,20 @@ print(
     f"rms pull: joint {np.sqrt(np.mean(pulls['joint pull'] ** 2)):.2f}, "
     f"two-step {np.sqrt(np.mean(pulls['two-step pull'] ** 2)):.2f}"
 )
+```
+
+```text
+                truth  joint median  joint ±  joint pull  two-step median  two-step ±  two-step pull
+element                                                                                             
+P (d)         1.1e+03       1.1e+03     26.2     -0.0675         1.09e+03        18.6         -0.534
+a (mas)            25            25    0.101      -0.443             24.9      0.0753         -0.832
+e                 0.3           0.3   0.0235      0.0163            0.307      0.0169          0.425
+i (deg)            55          54.9    0.463      -0.238               55       0.336          0.079
+t_peri (MJD) 5.98e+04      5.98e+04     9.15    -0.00533         5.98e+04        6.46          0.431
+M_tot (M☉)       1.99          1.99   0.0805     -0.0652             2.01       0.058          0.347
+
+joint / two-step interval width: 1.33 to 1.42
+rms pull: joint 0.21, two-step 0.50
 ```
 
 Read the table in two ways. The interval widths say how much each analysis claims to know, and the pulls say whether that claim is justified. The two-step positions carry the quoted errors, which are too small by the factors we simulated, so its intervals reflect the quoted precision rather than the real one; the joint fit learns each night's error scale from the data themselves and propagates it into the orbit. Each epoch's position is also no longer reduced to a Gaussian before the orbit sees it. On real data, with skewed or multi-peaked nightly likelihoods, that is where the two analyses differ most. The two-step fit remains a good quick look, and a source of starting orbits, as in the initialisation above.
