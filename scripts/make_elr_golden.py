@@ -14,7 +14,7 @@ Run (from the repository root):
         --with "jax==0.4.23" --with "jaxlib==0.4.23" --with "jaxopt==0.8.2" \
         --with "zodiax==0.4.1" --with "equinox==0.11.2" \
         --with "scipy<1.13" --with "numpy<2" --with matplotlib \
-        examples/elr_pavo/make_golden.py
+        scripts/make_elr_golden.py
 
 Keys in ``data/elr_golden.npz`` (all float64 unless stated):
 
@@ -54,7 +54,7 @@ import numpy as np
 SHA = "70689ed3dba338d59c98d02e8126a07a3b4e86da"
 RAW = "https://raw.githubusercontent.com/shashankdholakia/jax-interferometry/%s/core/%s"
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "..", "..", "data", "elr_golden.npz")
+OUT = os.path.join(HERE, "..", "data", "elr_golden.npz")
 
 
 def fetch(cache):

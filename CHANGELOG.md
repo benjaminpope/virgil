@@ -7,25 +7,14 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
-### Added
+### Removed
 
-- **`fit` reports `info["grad_norm"]`**, the infinity norm of the gradient
-  of the loss per data point at the result, in the unconstrained
-  coordinates of the convergence test, for every method (LM, L-BFGS, Adam).
-- **`imaging.laplace_samples`** draws Gaussian-field images from the
-  Laplace (Gauss–Newton) posterior of the whitened latents about the MAP,
-  `N(z_MAP, (I + JᵀJ)⁻¹)`, and optionally renders the whole model for each
-  draw. Other fitted parameters are held at the MAP.
+- `examples/elr_pavo/`, the PAVO re-analysis scripts, moved to the private paper repository; the golden-fixture generator is now `scripts/make_elr_golden.py`.
 
-### Fixed
+### Docs
 
-- **`log_evidence` with calibration gains or closure offsets** now includes
-  the likelihood's model-dependent normalisation, ½ log det of the
-  marginalised nuisances' covariance factor (and, for extra observable
-  blocks, their effective-error normaliser), exactly as `model_loglike`
-  evaluates it. Before, it used the whitened χ² alone, so wider gains
-  always looked better. Values for plain data are unchanged; the evidence
-  still omits the data-only normalisation (`-Σ log σ - ½ n log 2π`).
+- The `virgil._linear` API page is labelled internal.
+- Docs pages no longer point to the internal design notes.
 
 ## 0.3.0 (2026-10-06)
 
@@ -88,6 +77,15 @@ analysis or warn:
   error scale per epoch) from a log-normal population with log-uniform
   hyperpriors: centred (log s sampled, for well-measured members; the
   non-centred form diverged on such members in a test) or non-centred.
+
+- **`fit` reports `info["grad_norm"]`**, the infinity norm of the gradient
+  of the loss per data point at the result, in the unconstrained
+  coordinates of the convergence test, for every method (LM, L-BFGS, Adam).
+
+- **`imaging.laplace_samples`** draws Gaussian-field images from the
+  Laplace (Gauss–Newton) posterior of the whitened latents about the MAP,
+  `N(z_MAP, (I + JᵀJ)⁻¹)`, and optionally renders the whole model for each
+  draw. Other fitted parameters are held at the MAP.
 
 - **`clean(base_priors=...)`** fits named parameters of the base (e.g. a
   companion's position) together with the components' fluxes at every major
@@ -482,6 +480,14 @@ analysis or warn:
   precision. `orientation_priors(..., inclination=True)` also returns
   `IsotropicInclination` under `"inc"`: the full Haar orientation prior in
   one call (default off, so existing callers are unchanged).
+
+- **`log_evidence` with calibration gains or closure offsets** now includes
+  the likelihood's model-dependent normalisation, ½ log det of the
+  marginalised nuisances' covariance factor (and, for extra observable
+  blocks, their effective-error normaliser), exactly as `model_loglike`
+  evaluates it. Before, it used the whitened χ² alone, so wider gains
+  always looked better. Values for plain data are unchanged; the evidence
+  still omits the data-only normalisation (`-Σ log σ - ½ n log 2π`).
 
 - **`log_evidence` and `clean` on high signal-to-noise data (#214).** The
   evidence takes `log det(I + JᵀJ)` from the singular values of the Jacobian,
