@@ -70,6 +70,19 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **One home for analytic marginalisation of linear parameters.**
+  `virgil._linear` holds the shared algebra: `LinearMarginal(design,
+  prior_mean, prior_sd | prior_cov, method)`, the successive rank-one and
+  dense-Cholesky whitenings, and the conditional posterior. The gains,
+  closure-phase offsets, VISPHI continuum terms, flux grey scales and RV
+  zero points use it.
+- **The OI_FLUX / correlated-flux grey-scale prior is stated, not taken from
+  the data** (breaking). `with_flux_scale(scale=(mean, sd))` gives it in the
+  data's units and replaces `width=`. It is required for `"flux"` and
+  `"corrflux"`, and the likelihood raises until it is given; `"nflux"`
+  defaults to `(1, 0.1)`. The Gaussian is documented as a proposal for the
+  Jeffreys 1/k prior.
+
 - **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
   `1 / n_rings**2` error scale (about 8e-4 in |V| at the default 32 for a
   13.8 mas cone), and recommends doubling `n_rings` and checking Δχ² at the
