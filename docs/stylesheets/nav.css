@@ -1,0 +1,13 @@
+/* Sidebar: keep the top-level section headings visible, but collapse the
+   topics under each heading unless that section is open (the section holding
+   the current page starts open; click a heading to open or close it). */
+.md-nav--primary > .md-nav__list > .md-nav__item--section > .md-nav {
+  display: none;
+}
+.md-nav--primary > .md-nav__list > .md-nav__item--section > .md-toggle:checked ~ .md-nav {
+  display: block;
+}
+.md-nav--primary > .md-nav__list > .md-nav__item--section > label.md-nav__link {
+  cursor: pointer;
+  pointer-events: auto;
+}
