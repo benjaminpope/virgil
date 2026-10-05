@@ -17,6 +17,7 @@ import numpyro
 import numpyro.distributions as dist
 import pytest
 from numpyro.distributions.transforms import biject_to
+from numpyro.diagnostics import effective_sample_size
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.util import potential_energy
 from scipy import stats
@@ -60,9 +61,26 @@ def _cdf(prior, x):
     return onp.asarray(prior.cdf(x), float)
 
 
+def _thinned(draws):
+    """``draws`` thinned to about their effective sample size.
+
+    NUTS draws are autocorrelated, and KS assumes independent ones: keep
+    every ``n / ESS``-th draw (numpyro's ESS of the single chain).
+    """
+    draws = onp.asarray(draws, float)
+    ess = float(effective_sample_size(draws[None]))
+    step = max(1, int(onp.ceil(len(draws) / max(ess, 1.0))))
+    return draws[::step]
+
+
 def _assert_marginal(samples, site, prior):
-    """The draws of ``site`` are consistent with ``prior`` (KS, fixed seed)."""
-    draws = onp.asarray(samples[site], float)
+    """The draws of ``site`` are consistent with ``prior`` (KS, fixed seed).
+
+    KS runs on draws thinned by the effective sample size. The seed is
+    fixed, so the many marginals are one deterministic outcome, and the
+    floor is far below any chance fluctuation of them.
+    """
+    draws = _thinned(samples[site])
     result = stats.kstest(draws, lambda x: _cdf(prior, x))
     assert result.pvalue > KS_FLOOR, (site, result)
 
@@ -120,7 +138,7 @@ def test_numpyro_model_with_no_data_has_no_likelihood_site():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+@pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
 def test_fit_with_no_data_is_the_normal_prior_mode(method):
     priors = {"a": dist.Normal(2.0, 0.5), "b": dist.Normal(-1.0, 3.0)}
     result = fit(
@@ -129,9 +147,11 @@ def test_fit_with_no_data_is_the_normal_prior_mode(method):
         (),
         init={"a": 0.0, "b": 0.0},
         method=method,
+        learning_rate=0.1,  # Adam only
     )
-    assert float(result.values["a"]) == pytest.approx(2.0, abs=1e-3)
-    assert float(result.values["b"]) == pytest.approx(-1.0, abs=1e-3)
+    tol = 0.05 if method == "adam" else 1e-3
+    assert float(result.values["a"]) == pytest.approx(2.0, abs=tol)
+    assert float(result.values["b"]) == pytest.approx(-1.0, abs=tol)
 
 
 @pytest.mark.parametrize(
@@ -295,7 +315,7 @@ def test_gp_latents_are_standard_normal_and_imply_the_stated_kernel():
     flat = latent.reshape(len(latent), -1)
     normal = dist.Normal(0.0, 1.0)
     for j in range(flat.shape[1]):
-        result = stats.kstest(flat[:, j], lambda x: _cdf(normal, x))
+        result = stats.kstest(_thinned(flat[:, j]), lambda x: _cdf(normal, x))
         assert result.pvalue > KS_FLOOR, (j, result)
     # Independent coefficients: the sample correlation is noise of ~1/sqrt(N).
     corr = onp.corrcoef(flat.T) - onp.eye(flat.shape[1])
@@ -463,7 +483,7 @@ def test_flux_scale_prior_does_not_depend_on_the_data():
 
 @pytest.mark.parametrize("shape", [(5,), (3, 4), (3, 3, 6), (1, 5), (2, 2)])
 def test_grid_prior_weights_integrate_to_one(shape):
-    weights = onp.exp(onp.asarray(_log_prior_weights(shape, jnp.float64)))
+    weights = onp.exp(onp.asarray(_log_prior_weights(shape, jnp.float32)))
     assert weights.sum() == pytest.approx(1.0, rel=1e-6)
     assert weights.shape == shape
 
