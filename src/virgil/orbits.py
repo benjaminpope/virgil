@@ -25,6 +25,7 @@ toward the observer) and stay inside :meth:`KeplerOrbit.to_jaxoplanet` and
 :meth:`KeplerOrbit.from_jaxoplanet`.
 """
 
+import math
 import warnings
 
 import jax
@@ -39,6 +40,7 @@ from numpyro.distributions import constraints
 from ._linear import LinearMarginal
 from ._utils import concrete
 from .angles import AngleVector
+from .priors import IsotropicInclination
 
 
 __all__ = [
@@ -104,6 +106,33 @@ def _days_since(mjd, t_ref):
     if isinstance(mjd, jax.core.Tracer):
         return mjd - t_ref
     return np.asarray(onp.asarray(mjd, dtype=onp.float64) - t_ref)
+
+
+# IAU 2015 nominal values (SI): the solar mass parameter, the astronomical
+# unit and the day used throughout (periods are in days, a in au).
+_GM_SUN = 1.3271244e20  # m³ s⁻²
+_AU_M = 149597870700.0  # m
+_DAY_S = 86400.0  # s
+# M[M_sun] = _KEPLER_FACTOR a[au]^3 / P[day]^2, evaluated once in Python
+# float64 so float32 arrays never see SI-sized intermediates (a_m^3 overflows).
+_KEPLER_FACTOR = 4 * math.pi**2 * _AU_M**3 / (_GM_SUN * _DAY_S**2)
+
+
+def _wrap_node(omega, Omega):
+    """Move (omega, Omega) (degrees) to the twin with ``0 <= Omega < 180``.
+
+    Shifting both angles by 180° leaves the sky orbit unchanged. The wrap is
+    done in degrees, after conversion, so an ``Omega`` that is 180° to
+    rounding cannot come back as exactly 180; ``omega`` is put in [0, 360).
+    """
+    shift = np.floor(Omega / 180.0) * 180.0
+    Omega = Omega - shift
+    omega = omega - shift
+    again = Omega >= 180.0  # Omega = -tiny: 180 - tiny rounds to 180
+    Omega = np.where(again, Omega - 180.0, Omega)
+    omega = np.where(again, omega - 180.0, omega)
+    omega = np.mod(omega, 360.0)
+    return np.where(omega >= 360.0, 0.0, omega), Omega
 
 
 def _unit_orbit(dt, period, dt_peri, ecc):
@@ -469,25 +498,30 @@ class ThieleInnesOrbit(zx.Base):
         a, b, f, g = self.A, self.B, self.F, self.G
         total = np.arctan2(b - f, a + g)  # omega + Omega
         difference = np.arctan2(-(b + f), a - g)  # omega - Omega
-        omega, Omega = (total + difference) / 2, (total - difference) / 2
-        # Omega into [0, π): shifting both angles by π keeps the sky orbit.
-        shift = np.floor(Omega / np.pi) * np.pi
-        omega, Omega = omega - shift, Omega - shift
+        omega = np.rad2deg((total + difference) / 2)
+        Omega = np.rad2deg((total - difference) / 2)
+        omega, Omega = _wrap_node(omega, Omega)
         half = (a**2 + b**2 + f**2 + g**2) / 2
         if concrete(half) is not None and not onp.all(concrete(half) > 0):
             raise ValueError(
                 "The Thiele–Innes constants are all zero: the positions "
                 "carry no orbit (all at the primary)."
             )
-        cos_term = a * g - b * f  # a² cos i
-        a_sq = half + np.sqrt(np.maximum(half**2 - cos_term**2, 0.0))
+        # The singular values of [[A, B], [F, G]] are a and a |cos i|, and
+        # in terms of p = |(A - G, B + F)|, q = |(A + G, B - F)| they are
+        # (q ± p) / 2 (p, q are differences of norms that cannot cancel).
+        # So tan²(i/2) = p / q: exact near i = 0 and i = 180°, unlike arccos.
+        p_norm = np.hypot(a - g, b + f)
+        q_norm = np.hypot(a + g, b - f)
+        a_sq = ((q_norm + p_norm) / 2) ** 2
+        inc = 2.0 * np.rad2deg(np.arctan2(np.sqrt(p_norm), np.sqrt(q_norm)))
         return KeplerOrbit(
             period=self.period,
             dt_peri=self.dt_peri,
             ecc=self.ecc,
-            inc=np.rad2deg(np.arccos(np.clip(cos_term / a_sq, -1.0, 1.0))),
-            omega=np.mod(np.rad2deg(omega), 360.0),
-            Omega=np.rad2deg(Omega),
+            inc=inc,
+            omega=omega,
+            Omega=Omega,
             a_mas=np.sqrt(a_sq),
             t_ref=self.t_ref,
         )
@@ -844,37 +878,43 @@ class StateVectorOrbit(zx.Base):
         p_hat = np.where(
             circular, r / r_norm, e_vec / np.where(circular, 1.0, ecc)
         )
+        # Eccentric anomaly at t_ref, then the time of periastron. It goes
+        # through the true anomaly measured from ``p_hat`` itself, so for a
+        # near-circular orbit, where ``p_hat`` is uncertain by about
+        # eps / e, the error moves ω and the anomaly oppositely and cancels
+        # in the positions (ω + M is what the sky fixes).
         q_hat = np.cross(h / np.linalg.norm(h), p_hat)
-        # Eccentric anomaly at t_ref, then the time of periastron.
-        cos_e = np.where(
-            circular, 1.0, (1 - r_norm / a_mas) / np.where(circular, 1.0, ecc)
+        nu = np.arctan2(np.dot(r, q_hat), np.dot(r, p_hat))
+        ecc_anomaly = 2.0 * np.arctan2(
+            np.sqrt(1.0 - ecc) * np.sin(nu / 2),
+            np.sqrt(1.0 + ecc) * np.cos(nu / 2),
         )
-        sin_e = np.where(
-            circular,
-            0.0,
-            np.dot(r, v)
-            / (np.where(circular, 1.0, ecc) * np.sqrt(self.mu * a_mas)),
-        )
-        ecc_anomaly = np.arctan2(sin_e, cos_e)
         mean_anomaly = ecc_anomaly - ecc * np.sin(ecc_anomaly)
         dt_peri = -mean_anomaly / (2 * np.pi) * period
-        # Thiele–Innes: (ddec, dra, dz) = a (P X + Q Y) per component.
-        a_ti, b_ti, c_ti = a_mas * p_hat[1], a_mas * p_hat[0], a_mas * p_hat[2]
-        f_ti, g_ti, h_ti = a_mas * q_hat[1], a_mas * q_hat[0], a_mas * q_hat[2]
-        sky = ThieleInnesOrbit(
-            period, dt_peri, ecc, a_ti, b_ti, f_ti, g_ti, t_ref=self.t_ref
-        ).to_kepler()
-        # to_kepler picks Omega in [0, 180); the line of sight decides.
-        _, _, c_sky, h_sky = sky.thiele_innes()[2:]
-        flip = (c_sky * c_ti + h_sky * h_ti) < 0
-        shift = np.where(flip, 180.0, 0.0)
+        # The angles from the plane's orientation, all by atan2 so that they
+        # stay accurate near face-on and edge-on. With P, Q the unit vectors
+        # of the Thiele–Innes constants, h ∝ P × Q = (sin i cos Ω,
+        # -sin i sin Ω, -cos i) in (East, North, away), which fixes i and
+        # the true node Ω (in [0, 360), not just modulo 180°) directly.
+        h_xy = np.hypot(h[0], h[1])
+        inc = np.arctan2(h_xy, -h[2])
+        Omega = np.arctan2(-h[1], h[0])
+        sin_i, cos_i = np.sin(inc), np.cos(inc)
+        sin_n, cos_n = np.sin(Omega), np.cos(Omega)
+        # P = cos ω u + sin ω w, with u the node direction at ω = 0 and w
+        # the in-plane direction 90° on from it.
+        u_hat = np.stack([sin_n, cos_n, np.zeros_like(sin_n)])
+        w_hat = np.stack([cos_n * cos_i, -sin_n * cos_i, sin_i])
+        omega = np.arctan2(np.dot(p_hat, w_hat), np.dot(p_hat, u_hat))
+        Omega_deg = np.mod(np.rad2deg(Omega), 360.0)
+        omega_deg = np.mod(np.rad2deg(omega), 360.0)
         return KeplerOrbit(
             period,
             dt_peri,
             ecc,
-            sky.inc,
-            np.mod(sky.omega + shift, 360.0),
-            np.mod(sky.Omega + shift, 360.0),
+            np.rad2deg(inc),
+            np.where(omega_deg >= 360.0, 0.0, omega_deg),
+            np.where(Omega_deg >= 360.0, 0.0, Omega_deg),
             a_mas,
             t_ref=self.t_ref,
         )
@@ -889,7 +929,7 @@ class StateVectorOrbit(zx.Base):
 _DEFAULT_ZERO_POINT_SD = 1000.0
 
 # km/s per (mas/day at 1 pc): 1 mas at 1 pc is 1e-3 au.
-_KMS_PER_MAS_DAY_PC = 1.495978707e8 * 1e-3 / 86400.0
+_KMS_PER_MAS_DAY_PC = _AU_M * 1e-6 / _DAY_S  # 1 mas at 1 pc is 1e-3 au
 
 
 class RVData(zx.Base):
@@ -1189,7 +1229,9 @@ class _Term(eqx.Module):
         return self.data.loglike(*self._args(values))
 
 
-def orientation_priors(positions_only=True, *, prefix="", ring_width=0.25):
+def orientation_priors(
+    positions_only=True, *, prefix="", ring_width=0.25, inclination=False
+):
     """Angle-vector priors for an orbit's node and periastron.
 
     Vectors remove the wrap at 0°/360° (see
@@ -1212,6 +1254,13 @@ def orientation_priors(positions_only=True, *, prefix="", ring_width=0.25):
     invariant (Haar) prior on the orbit's orientation: (Ω, ω) → (2Ω, ϖ) is
     linear with a constant Jacobian, so uniform (Ω, ω) is uniform (2Ω, ϖ).
 
+    With ``inclination=True`` the inclination prior
+    [`IsotropicInclination`][virgil.priors.IsotropicInclination] (density
+    ∝ sin i on 0° to 180°) is added under ``"inc"``, so one call gives the
+    full Haar (isotropic) prior on the orientation. It is off by default so
+    that existing code, which fixes or places its own prior on ``inc``,
+    keeps getting exactly the keys it did.
+
     Parameters
     ----------
     positions_only : bool, optional
@@ -1220,12 +1269,15 @@ def orientation_priors(positions_only=True, *, prefix="", ring_width=0.25):
         Prepended to the keys, e.g. ``"orbit."``.
     ring_width : float, optional
         Passed to ``AngleVector``.
+    inclination : bool, optional
+        Also return ``IsotropicInclination()`` under ``prefix + "inc"``
+        (default ``False``).
 
     Returns
     -------
     dict
-        Priors keyed ``prefix + "two_Omega"`` (or ``"Omega"``) and
-        ``prefix + "varpi"``.
+        Priors keyed ``prefix + "two_Omega"`` (or ``"Omega"``),
+        ``prefix + "varpi"`` and, if ``inclination``, ``prefix + "inc"``.
 
     Examples
     --------
@@ -1237,10 +1289,13 @@ def orientation_priors(positions_only=True, *, prefix="", ring_width=0.25):
     ...     )
     """
     node = "two_Omega" if positions_only else "Omega"
-    return {
+    priors = {
         prefix + name: AngleVector(ring_width=ring_width)
         for name in (node, "varpi")
     }
+    if inclination:
+        priors[prefix + "inc"] = IsotropicInclination()
+    return priors
 
 
 def orientation_from_varpi(varpi, *, Omega=None, two_Omega=None):
@@ -1365,18 +1420,23 @@ def position_angle_prior(orbit_fn):
 def total_mass(orbit, distance_pc):
     """Total mass (solar masses) from the orbit at a distance (pc).
 
-    Kepler's third law, M = a³ / P², with a in au (``a_mas · D / 1000``)
-    and P in years. Report it as a function of distance, or with the
-    distance's uncertainty: positions alone do not fix it.
+    Kepler's third law, M = 4π² a³ / (G P²), with a in au
+    (``a_mas · D / 1000``) and P in days, and the IAU 2015 nominal
+    G M☉ = 1.3271244e20 m³ s⁻², au = 149597870700 m and day = 86400 s. (The
+    shortcut M = a³ / P² with P in Julian years holds only for the Gaussian
+    year, 365.256898 d, and is 4e-5 off in M.) Report it as a function of
+    distance, or with the distance's uncertainty: positions alone do not
+    fix it.
     """
     a_au = orbit.a_mas * 1e-3 * distance_pc
-    return a_au**3 / (orbit.period / 365.25) ** 2
+    return _KEPLER_FACTOR * a_au**3 / orbit.period**2
 
 
 def distance_pc(orbit, total_mass):
     """The distance (pc) at which ``orbit`` has this total mass (M☉): the
-    dynamical parallax, the inverse of [`total_mass`][virgil.orbits.total_mass]."""
-    a_au = (total_mass * (orbit.period / 365.25) ** 2) ** (1.0 / 3.0)
+    dynamical parallax, the inverse of [`total_mass`][virgil.orbits.total_mass]
+    (same constants)."""
+    a_au = (total_mass * orbit.period**2 / _KEPLER_FACTOR) ** (1.0 / 3.0)
     return a_au / (orbit.a_mas * 1e-3)
 
 

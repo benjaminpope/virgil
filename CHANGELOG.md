@@ -9,6 +9,18 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`clean(base_priors=...)`** fits named parameters of the base (e.g. a
+  companion's position) together with the components' fluxes at every major
+  cycle. CLEAN also ends with a final major cycle when it stops at the target
+  or at `max_iterations`, so its fluxes are refitted even when the data start
+  close to the target and no cycle has run.
+
+- **`fit(lbfgs_memory=50)`.** L-BFGS now keeps 50 past steps (optax's default
+  is 10). On regularised images, 10 stopped short of the optimum at many
+  weights; 50 reached lower losses (lower χ² and lower penalty together) and
+  converged in 2–3× fewer steps for StarletL1, at a higher cost per step.
+  L-BFGS fits therefore change slightly from earlier versions.
+
 - **Isotropic-orientation priors.** `virgil.priors` has
   `IsotropicInclination(low=0, high=180)` (degrees, density ∝ sin i, so cos i
   is uniform; use `(0, 90)` when only |cos i| is identifiable) and
@@ -100,6 +112,21 @@ anything before 1.0 may change between minor versions.
   grids), and `save`/`load`/`concatenate` for array jobs; `concatenate`
   compares fingerprints of the whole model, null scene and template (every
   field, static or not) and refuses runs that cannot be fingerprinted.
+- **Detection plots (`virgil.plotting`, stage 3 of virgil#2).**
+  `plot_null_distribution(mc, stat, observed=, fap=)` draws the empirical
+  false-alarm probability of every threshold on a log scale, with the
+  single-position reference (½χ²₁ for Δχ², the Gaussian tail for max SNR),
+  the threshold at a FAP, and an observed value with its FAP and 95%
+  interval; its legend sits outside the axes so it never hides the tail.
+  `plot_roc(mc, stat, flux=, sep_bin=)` draws ROC curves for one or several
+  statistics, fluxes or separation bins (distinct colours and line styles),
+  on a log false-positive axis by default with the chance curve TPR = FPR
+  drawn as a curve, and marks the one-position FAP of local 3σ and 5σ
+  (0.135%, 2.9×10⁻⁷) next to where each curve's threshold equals them, to
+  show the look-elsewhere effect. `plot_completeness(mc, stat, fap,
+  units=)` draws the completeness map against separation and Δmag, contrast
+  or flux, with the 50% and 90% `contrast_curve`s, on axes that
+  `plot_contrast_curve` can draw Absil or Ruffio limits onto.
 
 - **Gauss-Newton and a marginal-likelihood map in `linear_flux_grid`.**
   `n_iter=k` relinearises the whitened residuals at the current flux per pixel
@@ -201,6 +228,18 @@ anything before 1.0 may change between minor versions.
     1e-4 relative or better.
   - `flux_param`, `flux_bounds` and `batch_size` are keyword-only in
     `absil_limits` and `injection_limits`, as in `grid_fit` and `detection`.
+
+- **Orbits: GM☉ in `total_mass`, Ω range, face-on inclination (F14–F16).**
+  `total_mass` and `distance_pc` now use Kepler's third law with the IAU 2015
+  nominal GM☉, au and the 86400 s day instead of a³/P² with P in Julian years
+  (masses were 3.8e-5 low). `ThieleInnesOrbit.to_kepler` no longer returns
+  Ω = 180° exactly: Ω is in [0°, 180°) with ω paired to keep the sky orbit.
+  `StateVectorOrbit.to_kepler` computes i, Ω and ω by atan2 from the orbit
+  normal, so nearly face-on orbits keep their inclination to float64
+  precision. `orientation_priors(..., inclination=True)` also returns
+  `IsotropicInclination` under `"inc"`: the full Haar orientation prior in
+  one call (default off, so existing callers are unchanged).
+
 - **Components build under `jax.jit` from concrete shape parameters.**
   `TruncatedCone` validated `tilt` with a `jax.numpy` call on the concrete
   array, which inside `jit` became a tracer and raised
@@ -222,6 +261,15 @@ anything before 1.0 may change between minor versions.
 
 ### Docs
 
+- **"Detection ROC curves" rewritten on `injection_recovery`** (Binaries,
+  `notebooks/detection_roc.ipynb`). A candidate companion in a simulated
+  NIRISS AMI observation, one Monte Carlo call (10⁴ null and 1280 injected
+  searches), the look-elsewhere effect on the null distribution, the
+  empirical threshold and FAP to quote for a detection, ROC curves of the
+  three statistics, the completeness map and 50%/90% contrast curves to quote
+  for a non-detection against Absil and Ruffio limits, and what wrong error
+  bars do to a Gaussian null and how `rescale_errors` and the bootstrap fix
+  it.
 - **New tutorial: "Orbits from interferometric epochs"** (Binaries,
   `notebooks/orbit_fitting.ipynb`). Eight epochs of simulated VLTI
   (UT) V² and closure phases of a three-year binary: per-epoch astrometry

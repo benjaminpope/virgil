@@ -661,6 +661,10 @@ class DifferentialPhase(_Block):
     closure_free: bool = eqx.field(static=True)
     prior_width: tuple | None = eqx.field(static=True, default=None)
     kind: str = eqx.field(static=True, default="visphi")
+    # Per frame, the Cholesky factor of the covariance (projection only):
+    # it depends only on the errors, so it is computed once, where they are
+    # set (build, with_errors), in NumPy float64 and cast at use.
+    chol: onp.ndarray | None = None
 
     @classmethod
     def build(
@@ -804,7 +808,7 @@ class DifferentialPhase(_Block):
             if basis is not None:
                 basis[f, : w_op.shape[0]] = basis_f
         keep = onp.flatnonzero(valid.reshape(-1)).astype(onp.int32)
-        return cls(
+        out = cls(
             values=np.asarray(values),
             errors=np.asarray(errors),
             sample=sample,
@@ -825,6 +829,7 @@ class DifferentialPhase(_Block):
             closure_free=bool(closure_free),
             prior_width=prior_width,
         )
+        return out._with_cholesky()
 
     def rebuild(self, values=None, errors=None, keep=None, **settings):
         """The same block with new settings, data, or only some samples."""
@@ -912,6 +917,44 @@ class DifferentialPhase(_Block):
         pad = 1.0 - self.valid.reshape(n_f, k * r).astype(cov.dtype)
         return cov + pad[:, :, None] * np.eye(k * r, dtype=cov.dtype)
 
+    def _with_cholesky(self):
+        """This block with its covariance's Cholesky factor cached.
+
+        Only for the projection (the finite prior whitens otherwise), and only
+        with concrete errors: traced ones (e.g. errors set inside ``jit``)
+        leave it to :meth:`whiten`.
+        """
+        chol = None
+        if self.prior_width is None:
+            try:
+                errors = onp.asarray(self.errors, dtype=onp.float64)
+            except jax.errors.TracerArrayConversionError:
+                errors = None
+            if errors is not None:
+                # In NumPy float64 throughout, so a later float64 fit gets a
+                # factor as precise as one it would build itself.
+                try:
+                    chol = onp.linalg.cholesky(self._covariance64(errors))
+                except onp.linalg.LinAlgError:
+                    chol = None  # leave it to whiten, as before
+        return eqx.tree_at(
+            lambda b: b.chol, self, chol, is_leaf=lambda x: x is None
+        )
+
+    def _covariance64(self, errors):
+        """:meth:`covariance` in NumPy float64, for the cached factor."""
+        var = onp.where(self.chan, errors[self.grid] ** 2, 0.0)
+        q, w = (onp.asarray(x, onp.float64) for x in (self.q, self.w))
+        a = onp.einsum("frc,fsc,fbc->fbrs", w, w, var)
+        cov = onp.einsum("fkb,flb,fbrs->fkrls", q, q, a)
+        n_f, k, r = self.valid.shape
+        cov = cov.reshape(n_f, k * r, k * r)
+        pad = 1.0 - onp.asarray(self.valid).reshape(n_f, k * r)
+        return cov + pad[:, :, None] * onp.eye(k * r)
+
+    def with_errors(self, errors):
+        return super().with_errors(errors)._with_cholesky()
+
     def data_errors(self):
         cov = self.covariance()
         return np.sqrt(np.diagonal(cov, axis1=1, axis2=2)).reshape(-1)[
@@ -926,7 +969,10 @@ class DifferentialPhase(_Block):
         n_f, k, r = self.valid.shape
         resid = np.zeros(n_f * k * r, prediction.dtype)
         resid = resid.at[self.keep].set(prediction - data)
-        chol = np.linalg.cholesky(self.covariance())
+        if self.chol is None:
+            chol = np.linalg.cholesky(self.covariance())
+        else:
+            chol = np.asarray(self.chol, resid.dtype)
         white = jsl.solve_triangular(
             chol, resid.reshape(n_f, k * r, 1), lower=True
         )
