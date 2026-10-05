@@ -411,7 +411,9 @@ def injection_limits(
     chi-squared ratio corresponding to ``sigma`` (see
     [nsigma][virgil.limits.nsigma]). The companion model fits the injected
     data exactly as the null model fits the original data, so the ratio is
-    ``chi2(data + signal(f)) / chi2(data)`` for the null model.
+    ``chi2(data + signal(f)) / chi2(data)`` for the null model. (With gains
+    or OI_FLUX data, whose whitening depends on the model, the companion
+    model's chi-squared on the injected data is computed in full.)
 
     Compare [`absil_limits`][virgil.limits.absil_limits], which uses
     ``chi2(data - signal(f)) / chi2(data)``. The two differ by the sign of
@@ -498,12 +500,15 @@ def injection_limits(
     )
 
 
-# Most decades an unbounded search (``flux_bounds=None``) steps from its
-# start to bracket the target significance.
+# The search brackets the target significance in steps of a quarter decade
+# (a factor of 1.78; CANDID uses 1.4), so a significance that rises above
+# sigma and falls back within one decade is not stepped over, then bisects
+# the last step: 2**-22 of a quarter decade is below float32 resolution in
+# log flux. An unbounded search (``flux_bounds=None``) goes at most
+# _MAX_BRACKET_DECADES from its start.
+_STEP_DECADES = 0.25
+_BISECTIONS = 22
 _MAX_BRACKET_DECADES = 40
-# Bisections of the bracketing decade: 2**-24 of a decade is below float32
-# resolution in log flux.
-_BISECTIONS = 24
 
 
 def _significance_ceiling():
@@ -549,7 +554,8 @@ def _limits(
                 "least one positive value to start the limit search from."
             )
         start = float(np.min(fluxes[fluxes > 0.0]))
-        search = (start, -np.inf, np.inf, _MAX_BRACKET_DECADES)
+        max_steps = int(np.ceil(_MAX_BRACKET_DECADES / _STEP_DECADES))
+        search = (start, -np.inf, np.inf, max_steps)
     else:
         low, high = (float(b) for b in flux_bounds)
         if not (np.isfinite(low) and np.isfinite(high) and 0.0 < low < high):
@@ -557,8 +563,8 @@ def _limits(
                 "flux_bounds must be finite with 0 < low < high (the search "
                 f"is in log flux), got {tuple(flux_bounds)}."
             )
-        # Every step but the last moves a whole decade.
-        steps = int(np.ceil(np.log10(high / low)))
+        # Every step but the last moves a whole step.
+        steps = int(np.ceil(np.log10(high / low) / _STEP_DECADES))
         search = (low, np.log10(low), np.log10(high), steps)
     start, log_low, log_high, max_steps = search
     limits, crossed = solver(
@@ -621,7 +627,13 @@ def _solve_limits(
             return significance(values) >= sigma
 
         log_limit, crossed = first_crossing(
-            reached, log_start, log_low, log_high, max_steps, _BISECTIONS
+            reached,
+            log_start,
+            log_low,
+            log_high,
+            max_steps,
+            _BISECTIONS,
+            _STEP_DECADES,
         )
         return 10.0**log_limit, crossed
 
@@ -693,24 +705,27 @@ def _injection_limits(
     data_vector = data_obj.flatten_data()[0]
     errors = inflated_errors(data_obj, null_prediction)
 
-    def reduced_chi2(reference):
-        # The null model against ``reference`` in place of the data vector,
+    def reduced_chi2(prediction, reference):
+        # ``prediction`` against ``reference`` in place of the data vector,
         # each block (visibilities, phases, every extra) whitened as by
         # `whitened_residuals`.
-        whitened, _ = _whiten(
-            data_obj, null_prediction, reference, errors, {}, {}
-        )
+        whitened, _ = _whiten(data_obj, prediction, reference, errors, {}, {})
         return jnp.sum(whitened**2) / ndof
 
-    chi2_null = reduced_chi2(data_vector)
-
     def significance(values):
-        # Add the companion's signal to every observable, and fit the null
-        # model. The companion model fits the injected data as the null
-        # model fits the original data, with chi-squared chi2_null.
+        # Add the companion's signal to every observable, and compare the
+        # null model's fit to the result with the companion model's. With
+        # whitening independent of the model the latter is the null model's
+        # chi-squared on the original data; it is computed in full because
+        # gains and OI_FLUX blocks whiten with the model's own prediction.
         source = build_model(model, params, values)
-        signal = data_obj.model(source) - null_prediction
-        return nsigma(reduced_chi2(data_vector + signal), chi2_null, ndof)
+        prediction = data_obj.model(source)
+        injected = data_vector + (prediction - null_prediction)
+        return nsigma(
+            reduced_chi2(null_prediction, injected),
+            reduced_chi2(prediction, injected),
+            ndof,
+        )
 
     return _solve_limits(
         significance,

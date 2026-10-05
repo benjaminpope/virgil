@@ -1,5 +1,7 @@
 import warnings
 
+import equinox as eqx
+
 import jax.numpy as np
 import numpy as onp
 from matplotlib import get_backend
@@ -473,6 +475,17 @@ def test_first_crossing_finds_the_first_crossing_from_below():
         assert bool(crossed)
         assert float(log_limit) == pytest.approx(-2.3, abs=1e-5)
 
+    # Reached only on [-2.8, -2.2], between two whole decades: quarter-decade
+    # steps must not step over it.
+    def window(log_f):
+        return (log_f >= -2.8) & (log_f <= -2.2)
+
+    log_limit, crossed = first_crossing(
+        window, np.asarray(-6.0), -6.0, 3.0, 40, 22, 0.25
+    )
+    assert bool(crossed)
+    assert float(log_limit) == pytest.approx(-2.8, abs=1e-5)
+
     # Reached at the lower bound, or never within the range: not crossed,
     # and the search stops at the bound.
     log_limit, crossed = first_crossing(
@@ -623,3 +636,52 @@ def test_injection_limits_run_with_every_extra():
     limits = injection_limits(data, template, EXTRAS_SAMPLES, 3.0)
     assert limits.shape == (2, 1)
     assert onp.all((limits > 1e-6) & (limits < 1.0))
+
+
+def test_injection_limits_with_oi_flux_reach_sigma_on_injected_data():
+    """The OI_FLUX block whitens with the model's own prediction.
+
+    So the companion model's chi-squared on the injected data is not the
+    null model's on the original data. At each limit, injected data built
+    directly, block by block, must give ``sigma`` from the public
+    likelihood: the null model's chi-squared over the companion model's.
+    """
+    from virgil.likelihood import build_model, whitened_residuals
+    from virgil.limits import injection_limits
+
+    data, template = _extras_data(("flux", "t3amp"))
+    keys = tuple(EXTRAS_SAMPLES)
+    null = build_model(template, keys, [0.0, 0.0, 0.0])
+    m0 = data.model(null)
+    limits = injection_limits(data, template, EXTRAS_SAMPLES, 3.0)
+    ndof = data.n_independent
+    for i, dra in enumerate(EXTRAS_SAMPLES["comp.dra"]):
+        flux = float(limits[i, 0])
+        ddec = float(EXTRAS_SAMPLES["comp.ddec"][0])
+        companion = build_model(template, keys, [dra, ddec, flux])
+        signal = data.model(companion) - m0
+        n_vis, n_phi = data.vis.size, data.phi.size
+        injected = data.set(
+            ["vis", "phi"],
+            [
+                data.vis + signal[:n_vis],
+                data.phi + signal[n_vis : n_vis + n_phi],
+            ],
+        )
+        blocks, offset = [], n_vis + n_phi
+        for block in data.extras:
+            n = block.values.size
+            blocks.append(
+                block.simulated(
+                    block.values + signal[offset : offset + n], None, None
+                )
+            )
+            offset += n
+        injected = eqx.tree_at(lambda d: d.extras, injected, tuple(blocks))
+        chi2 = [
+            float(np.sum(whitened_residuals(m, injected) ** 2)) / ndof
+            for m in (null, companion)
+        ]
+        assert float(nsigma(chi2[0], chi2[1], ndof)) == pytest.approx(
+            3.0, abs=1e-2
+        )

@@ -178,12 +178,14 @@ anything before 1.0 may change between minor versions.
     normalised scene the significance falls again once the companion
     outshines the primary, and the bisection ended at that top. Both limit
     functions now find the *first* crossing from below: they step up by
-    decades and then bisect that decade in log flux (one shared helper,
-    `_grid.first_crossing`). Unbounded results now match bounded ones, for
-    model classes and for `System` templates.
+    quarter decades (CANDID steps by 1.4) and then bisect the last step in
+    log flux (one shared helper, `_grid.first_crossing`). Unbounded results
+    now match bounded ones, for model classes and for `System` templates.
   - `injection_limits` raised `TypeError` on data with extra observables
     (T3AMP, VISAMP, VISPHI, OI_FLUX). The companion's signal is now injected
-    into every block of the data vector, extras included.
+    into every block of the data vector, extras included. The companion
+    model's chi-squared on the injected data is computed in full, since the
+    OI_FLUX blocks and gains whiten with the model's own prediction.
   - Both functions raise a `ValueError` up front for a `sigma` beyond what
     `nsigma` can represent in the float type (about 12.95 in float32, 37 in
     float64). Before, `absil_limits` returned about 1e37 or silently clipped,
