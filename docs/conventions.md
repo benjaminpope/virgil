@@ -194,6 +194,14 @@ Two pitfalls follow. A `Uniform` prior over more than one period of an angle, su
 
 For orbits, [`orientation_priors`][virgil.orbits.orientation_priors] gives the node and periastron as angle vectors.
 
+## Priors and the MAP
+
+virgil's default priors are the invariant (Jeffreys) measures of the groups acting on each parameter: uniform for locations, log-uniform for scales, and isotropic for orientations (uniform in $\cos i$ for an inclination). A maximum a posteriori point is not invariant under a change of variables, because a density picks up a Jacobian. The mode of `LogUniform`'s density $1/x$ in $x$ is at the lower bound, so a fit in $x$ would pull every scale down, although nothing in the prior prefers small scales.
+
+[`fit`][virgil.fitting.fit] therefore optimises each such parameter in its *flat coordinate*, the coordinate in which its prior is uniform: $\log x$ for `LogUniform(a, b)`, on $[\log a, \log b]$; $\cos i$ for an isotropic inclination; $\sin(\mathrm{lat})$ for an isotropic latitude (any prior with a `flat_coordinate()` method); and the parameter itself for `Uniform`. There the prior is constant and adds nothing to the loss, so the MAP is the maximum of the likelihood (times any other priors) inside the prior's range, and Levenberg–Marquardt applies. Other priors (`Normal`, `Beta`, `HalfNormal`, ...) have no flat coordinate and are evaluated in the model's own parameters. Fitted values are always reported in the model's own parameters.
+
+A Gaussian approximation at the fit should be taken in the same flat coordinate, and carried to the model's parameters by the delta method, $\sigma_x = |{\rm d}x/{\rm d}u|\,\sigma_u$ (for a log-uniform scale, $\sigma_x = x\,\sigma_{\log x}$). [`laplace_cov`][virgil.inference.laplace_cov] and [`fisher`][virgil.inference.fisher] are curvatures of the likelihood alone, in the model's parameters, so they do not depend on this. [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] is in the unconstrained coordinates that numpyro's NUTS samples (`biject_to` of each prior's support), with flat-coordinate priors adding no curvature, as `Uniform` priors never have.
+
 ## Precision
 
 virgil never switches on JAX's 64-bit mode globally. All library code runs in float32 by default, and is written to give correct results in float64 too. The fitting entry points, such as [`fit`][virgil.fitting.fit], instead run their optimisation in a local float64 context: they cast the model, data and priors to float64 on the way in, and restore the setting on exit. Pass `dtype="float32"` to `fit` for the faster, less precise version. The helper that does this is `virgil._precision.run_in`, which you will see in the source.

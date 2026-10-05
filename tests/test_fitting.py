@@ -140,8 +140,13 @@ def test_non_least_squares_objectives_default_to_lbfgs():
         objective.residuals(objective.init())
     result = fit(start, priors, data, regularisers, max_steps=50)
     assert result.info["method"] == "lbfgs"
+    # A prior with no least-squares form (here a Beta flux) also falls back.
+    beta = dict(PRIORS, flux=dist.Beta(1.0, 20.0))
+    assert fit(START, beta, DATA).info["method"] == "lbfgs"
+    # LogUniform is flat in log flux, the coordinate it is fitted in, so it
+    # keeps LM (it used to fall back to L-BFGS).
     log_uniform = dict(PRIORS, flux=dist.LogUniform(1e-4, 0.5))
-    assert fit(START, log_uniform, DATA).info["method"] == "lbfgs"
+    assert fit(START, log_uniform, DATA).info["method"] == "lm"
 
 
 def test_numpyro_model_accepts_prior_regularisers_only():

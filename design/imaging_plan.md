@@ -66,6 +66,8 @@ The design rationale was established in the earlier research: the gauge survey, 
 
    **Log (2026-10-05):** approved by Ben.
 
+   **Log (2026-10-05):** `fit` now optimises each prior in its flat coordinate (approved by Ben): a LogUniform scale in log x, an isotropic inclination in cos i, an isotropic latitude in sin(lat) (any prior with a `flat_coordinate()` method). There the prior is constant and adds nothing, so Levenberg–Marquardt works with the Jeffreys priors, and the MAP is the maximum of the likelihood times the invariant prior in the coordinates where that prior is uniform, rather than the mode of 1/x in x. Reported values are in the model's parameters; `gauss_newton_mass` stays in numpyro's coordinates.
+
 ## Branching and workflow
 - **Branch.** Create `imaging` in `~/code/drpangloss` (the local folder keeps its old name), branched from `chromatic-scenes`. It needs the chromatic work (`Spectrum`, `Resolved`, multi-channel `OIData`), and `chromatic-scenes` is 3 commits ahead of `main`. Once `chromatic-scenes` merges, rebase `imaging` onto `main`.
 - **Each stage is a PR** from `imaging-sN-<name>` (git cannot hold both `imaging` and `imaging/…` branches), stacked on the previous stage's branch and retargeted to `imaging` as earlier stages merge. Each PR has:
