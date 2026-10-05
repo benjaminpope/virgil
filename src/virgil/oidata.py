@@ -18,6 +18,7 @@ from .observables import (
     VisibilityAmplitude,
 )
 from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
+from ._geometry import rotate
 from .amigo import is_mixed_disco_record, mixed_disco_fields
 from .oifits import read_oifits
 
@@ -1367,7 +1368,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         (``u`` and ``v`` are in metres) and moves the spectra together, as
         a wrong wavelength scale does. Angular sizes scale with it, so with
         a single dataset the scale is degenerate with every size, and its
-        prior *is* the systematic error. Fit it with the noise terms
+        prior *is* the systematic error. Its effect on the spatial
+        frequencies is that of magnifying the sky by ``1 / scale``, so it
+        is also the plate-scale term for interferometric data (see
+        [`with_north_angle`][virgil.oidata.OIData.with_north_angle]).
+        Fit it with the noise terms
         ``wavel_scale`` and ``wavel_offset`` (e.g.
         ``noise={"wavel_scale": dist.Normal(1.0, 2e-4)}``, about right for
         GRAVITY), which call this.
@@ -1389,6 +1394,54 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         return eqx.tree_at(
             lambda d: d.wavel, self, self.wavel * scale + offset
         )
+
+    def with_north_angle(self, angle):
+        """A copy of the data that see the sky rotated by ``angle`` degrees.
+
+        An error in the instrument's North: every position angle these
+        data measure is the true one plus ``angle`` (North through East).
+        A source at ``(dra, ddec)`` appears at ``R(angle) (dra, ddec)``,
+        with ``R(δ) = [[cos δ, sin δ], [-sin δ, cos δ]]``, so a companion
+        at PA θ appears at PA θ + ``angle``. Because virgil's Fourier
+        kernel is ``u dra + v ddec``, rotating the sky rotates ``(u, v)``
+        the same way, and models are evaluated at ``R(-angle) (u, v)``, as
+        for [`Rotated`][virgil.models.Rotated]``(model, angle)``. Fit it
+        with the noise term ``north_angle``, which calls this.
+
+        Its prior must be stated, as for every noise term: there is no
+        default width. The invariant prior of a rotation is uniform on the
+        circle, under which, with one dataset, the angle is degenerate with
+        every position angle in the scene. A Gaussian prior (e.g.
+        ``noise=[{}, {"north_angle": dist.Normal(0.0, 0.5)}]``) is strong
+        information, and its width should come from the instrument's
+        astrometric calibration. Long-baseline interferometers know their
+        baselines' orientation geometrically, so leave the term out there;
+        it is for imaging, masking and kernel-phase data.
+
+        A plate scale needs no term of its own: a sky magnified by a factor
+        ``m`` is ``with_wavelength_scale(1 / m)`` (the noise term
+        ``wavel_scale``). Per-dataset North-angle and plate-scale
+        calibration terms follow Octofitter (Thompson et al. 2023, AJ 166,
+        164).
+
+        Parameters
+        ----------
+        angle : float
+            Rotation of the sky as these data see it, in degrees, North
+            through East.
+
+        Returns
+        -------
+        OIData
+            The data with ``u`` and ``v`` rotated. A ``uv_grid`` is
+            dropped, since its rotation is static, so models are evaluated
+            by the direct transform, which gives the same visibilities.
+        """
+        u, v = rotate(self.u, self.v, -angle)
+        rotated = eqx.tree_at(lambda d: (d.u, d.v), self, (u, v))
+        if self.uv_grid is not None:
+            rotated = eqx.tree_at(lambda d: d.uv_grid, rotated, None)
+        return rotated
 
     def with_closure_offsets(self, baseline=None, triangle=None, modes=None):
         """A copy of the data with closure-phase offsets per frame.
