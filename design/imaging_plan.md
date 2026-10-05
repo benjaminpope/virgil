@@ -551,6 +551,11 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 - **Control (no gains in the data).** Fitted widths go to zero (median 0) and the results match the diagonal fit. Assuming gains that aren't there, at the same widths, gives conservative errors: disk σ error 0.019 mas, scatter 0.016 mas, against 0.003 mas without them. It also shifts the disk parameters by 0.2–0.3σ.
 - **Conclusion.** Fit the widths rather than fixing them.
 
+**MWE:** `notebooks/mwe/mwe_gains.ipynb`, executed on OzSTAR (`virgil_notebooks` task 7, virgil@cebfa5d, 113 s). One realisation of the study's setup is fitted three ways, followed by a 40-realisation Monte Carlo.
+- **Rms pulls:** 8.2–16.8 with the reported errors, 1.3–4.4 with `vis_error_rel`, 0.87–0.98 with the gains.
+- **Fitted widths:** 0.0201 ± 0.0028 (telescope) and 0.0097 ± 0.0020 (baseline).
+- **Whitened V² residuals** of the gains fit: rms 0.98.
+
 **Log (gains, branch `stage6d-nuisances`):**
 - `virgil.gains`: `GainModes` and `gain_modes`, set with `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)`. The groups are telescope, baseline, chromatic ((λ_ref/λ)²) and supplied 1σ modes, e.g. a calibrator PCA's from virgil-vlti. Widths are fitted with the noise terms `vis_gain_<group>`, one per group, rather than a single `vis_gain`.
 - Marginalisation: blocks are the connected groups of modes, whitened by successive rank-one steps (smooth gradients, also for degenerate modes and zero widths). The log-determinant is spread over effective errors, so `_gaussian_loglike` and `fit`'s normalisation are unchanged. The Jacobian dObs/dlog|V| is taken from the model (2V², |V| or 1).
