@@ -25,6 +25,10 @@ anything before 1.0 may change between minor versions.
   `f_hat = -(g . r0) / (g . g)`, `sigma_f = (g . g)**-0.5` and SNR are
   returned per pixel (f_hat unconstrained in sign). Valid only for
   f much smaller than 1: a bright companion (f ~ 0.3) is biased low.
+- **Wavelength-scale nuisance** (Stage 6d). `OIData.with_wavelength_scale`
+  evaluates models at scale·λ + offset, and the noise terms `wavel_scale` and
+  `wavel_offset` fit or sample it (e.g. `Normal(1, 2e-4)` for GRAVITY).
+
 - **Calibration gains correlated across channels** (Stage 6d).
   `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)` adds gains
   on log |V| per frame: per telescope, per baseline, a chromatic coherence
