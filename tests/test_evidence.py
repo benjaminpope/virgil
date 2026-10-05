@@ -258,3 +258,32 @@ def test_the_evidence_log_determinant_matches_a_direct_one():
     _, logdet = onp.linalg.slogdet(onp.eye(jac.shape[0]) + jac @ jac.T)
     direct = -0.5 * float(r @ r) - 0.5 * onp.sum(z**2) - 0.5 * logdet
     assert log_evidence(model, data) == pytest.approx(direct, rel=1e-10)
+
+
+@pytest.mark.parametrize("n", [N, 3])
+def test_the_batched_jacobian_matches_jax(n):
+    # The residual Jacobian is built in batches of VJPs (more latents than
+    # residuals) or JVPs (fewer); both must equal jax.jacrev/jacfwd, which
+    # push every basis vector through at once and run out of memory on
+    # large datasets.
+    from virgil.imaging import _residual_jacobian
+    from virgil.likelihood import whitened_residuals
+
+    latent = jax.random.normal(jax.random.PRNGKey(3), (n, n))
+    template = onp.asarray(GaussianDisk(4.0).render(n, n * H))
+    field = GaussianField(latent, 1.5, 2.0, mean=template)
+    model = System(star=PointSource(), env=Image(field, H, flux=0.4))
+    path = "env.log_brightness.latent"
+    r, jac = _residual_jacobian(model, DATA, path)
+
+    from virgil.fitting import cast_tree, run_in
+
+    with run_in("float64"):  # as _residual_jacobian does
+        model64, data64 = cast_tree((model, DATA), "float64")
+
+        def residuals(x):
+            return whitened_residuals(model64.set(path, x), data64)
+
+        full = jax.jacrev(residuals)(model64.get(path)).reshape(r.size, -1)
+    assert (r.size < latent.size) == (n == N)  # both branches are exercised
+    onp.testing.assert_allclose(jac, onp.asarray(full), rtol=1e-10, atol=1e-12)
