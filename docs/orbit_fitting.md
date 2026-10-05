@@ -58,7 +58,7 @@ from virgil.plotting import (
     plot_orbit_ensemble,
     set_style,
 )
-from virgil.priors import IsotropicInclination, hierarchical_scales
+from virgil.priors import hierarchical_scales
 from virgil.simulate import simulate
 
 jax.config.update("jax_enable_x64", True)
@@ -247,7 +247,7 @@ Every prior is the invariant (Jeffreys) measure of the group that acts on its pa
 |---|---|---|
 | Period $P$ | log-uniform, 100–10⁴ d | A scale: invariant under a change of the unit of time. |
 | Semimajor axis $a$ | log-uniform, 1–300 mas | A scale, invariant under rescaling of angles. |
-| Inclination $i$ | `IsotropicInclination`, ∝ sin i | An isotropic orbital plane: the Haar measure on rotations, uniform in cos i. |
+| Inclination $i$ | `IsotropicInclination` (from `orientation_priors(inclination=True)`), ∝ sin i | An isotropic orbital plane: the Haar measure on rotations, uniform in cos i. |
 | $2\Omega$, $\varpi$ | `AngleVector`, uniform on the circle | The same rotation-invariant measure; the map from $(\Omega, \omega)$ is linear, so uniform stays uniform. |
 | Mean anomaly at `T_REF` | `AngleVector`, uniform | A location in time: uniform in the time of periastron over one period. |
 | Eccentricity $e$ | uniform on [0, 1) | No group acts on $e$: an interim prior, which a population prior can later reweight. |
@@ -263,9 +263,9 @@ orbit_priors = {
     "period": dist.LogUniform(100.0, 1e4),
     "a_mas": dist.LogUniform(1.0, 300.0),
     "ecc": dist.Uniform(0.0, 1.0),
-    "inc": IsotropicInclination(),
-    # "two_Omega" and "varpi", as angle vectors with a narrow ring
-    **orientation_priors(ring_width=0.1),
+    # "inc" (isotropic), and "two_Omega" and "varpi" as angle vectors
+    # with a narrow ring: the full invariant prior on the orientation
+    **orientation_priors(ring_width=0.1, inclination=True),
     "phase": AngleVector(ring_width=0.1),
 }
 v2_population, v2_scales = hierarchical_scales("v2_scale", N_EPOCHS)
@@ -492,7 +492,7 @@ print(f"largest r_hat {r_hat:.3f}, smallest effective sample size {n_eff:.0f}")
 
 ## The orbit
 
-Each sample is an orbit, and the elements, the time of periastron and the total mass (by Kepler's third law at the assumed distance, $M = a^3/P^2$ with $a$ in au and $P$ in years) are derived quantities. The table compares the posterior medians and 68% intervals with the truth.
+Each sample is an orbit, and the elements, the time of periastron and the total mass (by Kepler's third law at the assumed distance, $M \propto a^3/P^2$ with $a$ in au; [`total_mass`](api/orbits.md)) are derived quantities. The table compares the posterior medians and 68% intervals with the truth.
 
 ```python
 samples = {k: np.asarray(v, dtype=float) for k, v in mcmc.get_samples().items()}

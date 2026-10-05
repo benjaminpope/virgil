@@ -1,6 +1,7 @@
 # Detection statistics, false-alarm rates and ROC curves
 
-Status: **Stages 1 and 2 built**, 2026-10-05. Tracks the last open item of
+Status: **Stages 1 to 3 built**, 2026-10-05 (the Stage 3 tutorial's
+outputs await a cluster run). Tracks the last open item of
 [virgil#2](https://github.com/benjaminpope/virgil/issues/2), "ROC curves from
 evidence / injection recovery".
 
@@ -221,13 +222,52 @@ injection_recovery(template, null_scene, model, samples_dict, key, *,
   `concatenate`, which refuses results that differ in grid, model, null
   scene, template, noise model or `match_radius`, or share a seed.
 
-### Planned
+### Built (Stage 3): plots in `virgil.plotting`
 
-Stage 3, plotting in `plotting.py`: `plot_roc` (log FPR option, marking the
-FAP of Wilks 3σ and 5σ, 0.135% and 2.9×10⁻⁷, to show the look-elsewhere
-offset), `plot_completeness` (with Absil/Ruffio curves),
-`plot_null_distribution` (with the ½χ²₁ reference and the observed value's
-FAP).
+```python
+plot_null_distribution(mc, stat="delta_chi2", *, observed=None, fap=None,
+                       reference=True, ax=None, title=None, figsize=(7, 4.5))
+plot_roc(mc, stat, *, flux=None, sep_bin=None, ax=None, log_fpr=True,
+         mark_wilks=(3.0, 5.0), title=None, figsize=(7, 4.5))
+plot_completeness(mc, stat, fap, *, units="delta_mag", contours=(0.5, 0.9),
+                  sep_bins=None, flux_bins=None, ax=None, cmap="viridis",
+                  colorbar=True, title=None, figsize=(8, 4.5))
+    # each -> (fig, ax)
+```
+
+- `plotting` takes the `DetectionMC` duck-typed and does not import
+  `detection`, so the import graph is unchanged (`limits` → `plotting`).
+- `plot_null_distribution` draws the empirical exceedance P(null ≥ x) as a
+  step on a log axis down to 0.5/n, the single-position reference
+  (½ P(χ²₁ ≥ x) = `norm.sf(√x)` for Δχ², `norm.sf(x)` for max SNR, none for
+  log B), a FAP as a horizontal line with its empirical threshold (the
+  quantile alone, `threshold(..., n_boot=0)`) as a vertical one, and the
+  observed value with its (k + 1)/(n + 1) FAP and Clopper–Pearson interval.
+  Its legend sits outside the axes, to the right, so that it never covers
+  the tail (the Stage 1 tutorial's legend did).
+- `plot_roc` takes one statistic or several, and a flux, a flux range, a
+  separation bin, or lists of them for one curve each (a tuple is a range,
+  as for `DetectionMC.roc`, so several fluxes are a list). Several
+  statistics differ in line style and selections in colour; one statistic
+  varies both. The chance curve is 200 points of TPR = FPR, geometric on
+  the default log axis (from 0.5/n_null), so it is a curve there.
+  `mark_wilks` draws the one-position FAP of each local significance (the
+  one-sided tail, 0.135% at 3σ, 2.9×10⁻⁷ at 5σ, when it is on the axis) as
+  a vertical line, and a circle (square for the second) on every Δχ² or
+  max-SNR curve where its threshold equals that local significance
+  (Δχ² = n², SNR = n): the horizontal gap is the look-elsewhere effect.
+  Legend outside, as above; the title names what the curves share.
+- `plot_completeness` draws `DetectionMC.completeness` as cells spanning
+  halfway to their neighbours in separation and log flux (zero-flux
+  injections are left out), and the "contours" as the `contrast_curve`s
+  themselves (white with a black outline), so the lines on the map are the
+  numbers one quotes, and the running maximum and log-flux interpolation
+  are the method's. Units and orientation follow `plot_contrast_curve`
+  (fainter lower down; log axes for flux and contrast). The map fixes the
+  axis limits, so limit curves drawn afterwards with `plot_contrast_curve`
+  do not widen them; that function redraws the legend (`loc="best"`), so
+  callers place it again (the map's own legend is lower left, the
+  undetected corner).
 
 A candidate fourth statistic, or a cross-check of `log_bayes_factor`:
 `grid_fit.linear_flux_grid(..., prior=...)` now returns a closed-form
@@ -247,7 +287,7 @@ Stacked PRs into main.
    save/load round trip; the empirical FAP threshold exceeds Wilks's on a
    multi-point grid; AUC ≈ 0.5 for zero-flux injections and → 1 at high
    flux; the bootstrap preserves the closure-phase covariance on average.
-3. **Plotting and a tutorial** (`notebooks/detection_roc.ipynb` →
+3. **Plotting and a tutorial** (built; outputs pending; `notebooks/detection_roc.ipynb` →
    `docs/detection_roc.md`), run on a cluster rather than a laptop: a
    detection (observed Δχ² and log B, empirical FAP against Wilks nσ) and a
    non-detection (completeness map and empirical contrast curve against
@@ -332,3 +372,38 @@ correction over the box is what Stage 2 measures.
   interval covers a known 5% tail in ≥ 93% of 400 synthetic sets; the
   bootstrapped closure phases of 150 datasets with unequal errors whiten
   to unit covariance.
+
+### Stage 3 (2026-10-05)
+
+- Built `plot_null_distribution`, `plot_roc` and `plot_completeness` (see
+  the API above), with tests on `DetectionMC`s built by hand from NumPy
+  arrays (`tests/test_plotting_detection.py`, no JAX): each curve is
+  `DetectionMC.roc`'s, the chance curve is y = x over the whole log axis,
+  the Wilks marks sit at the one-sided FAP and at the rates of Δχ² = 9,
+  the map's cells and contour lines are `completeness` and
+  `contrast_curve`, the axes stay put and inverted under
+  `plot_contrast_curve`, the exceedance and ½χ²₁ curves are exact, and the
+  legend lies outside the axes. Added a driver test that `draw_batch > 1`
+  gives the same draws (the tutorial uses `draw_batch=8`).
+- Deviations from the plan: the completeness "contours" are the
+  `contrast_curve`s rather than matplotlib contours, so the lines are the
+  quoted numbers and work with a single separation; the Wilks marks are a
+  vertical line at the nominal FAP plus a circle on each curve at the
+  local threshold, which shows the look-elsewhere offset as a gap; the
+  null distribution is an exceedance curve rather than a histogram, since
+  FAPs are read off its tail.
+- Rewrote the tutorial on the Stage 2 API, for a reader who has not met
+  false-alarm calibration: definitions of FAP, completeness and ROC; a
+  candidate (5×10⁻³ at 70 mas) searched with `detection_statistics`; one
+  `injection_recovery` call (10⁴ nulls, so ~13 lie above 0.135%, and
+  4 separations × 8 fluxes × 40 PAs) on a 16 × 16 grid of 16 mas steps
+  (λ/10B, origin excluded) × 32 log fluxes; the look-elsewhere picture with
+  the candidate on it; the threshold and the candidate's empirical FAP and
+  global significance, and what to quote for a detection; ROC curves of
+  the three statistics; the completeness map and 50%/90% contrast curves
+  against Absil and Ruffio 3σ limits, and what to quote for a
+  non-detection; and a table of true FAPs at a 1% threshold when the noise
+  is 1.5 times the errors (Gaussian null against bootstrap null, with the
+  `rescale_errors` factors). Outputs pending a cluster run; the run time is
+  not yet measured (the Stage 1 version took 51 ms per search on a 4-core
+  CPU node for 361 positions × 32 fluxes).

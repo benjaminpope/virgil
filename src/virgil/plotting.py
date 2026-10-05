@@ -5,6 +5,12 @@
   with defaults chosen by ``kind=``, and
   [`plot_contrast_curve`][virgil.plotting.plot_contrast_curve] draws
   radial contrast curves.
+* [`plot_null_distribution`][virgil.plotting.plot_null_distribution],
+  [`plot_roc`][virgil.plotting.plot_roc] and
+  [`plot_completeness`][virgil.plotting.plot_completeness] draw the
+  simulated searches of a
+  [`DetectionMC`][virgil.detection.DetectionMC]: false-alarm
+  probabilities, ROC curves and completeness maps.
 * Contrasts can be shown as flux ratios (companion/primary), as contrasts
   (primary/companion, e.g. 100) or in magnitudes (e.g. 5 mag), with
   ``units="flux" | "contrast" | "delta_mag"``.
@@ -1113,6 +1119,652 @@ def plot_contrast_curve(
     ax.set_ylabel(f"Contrast limit ({_UNIT_LABELS[units]})")
     ax.grid(alpha=0.3)
     ax.legend(loc="best")
+    return fig, ax
+
+
+# === DETECTION: NULL DISTRIBUTIONS, ROC CURVES AND COMPLETENESS ===
+
+# Labels of the statistics of virgil.detection.
+_STAT_LABELS = {
+    "delta_chi2": r"$\Delta\chi^2$",
+    "log_bayes_factor": r"$\log B$",
+    "max_snr": "max SNR",
+}
+# Line styles that tell curves apart without colour.
+_LINE_STYLES = ("-", "--", ":", "-.")
+
+
+def _stat_label(stat):
+    if stat not in _STAT_LABELS:
+        raise ValueError(
+            f"stat must be one of {sorted(_STAT_LABELS)}, not {stat!r}."
+        )
+    return _STAT_LABELS[stat]
+
+
+def _local_threshold(stat, n_sigma):
+    """The statistic at a local (one-position) significance of n_sigma.
+
+    At one position fixed in advance, ``delta_chi2`` follows ½δ₀ + ½χ²₁
+    and the unconstrained flux SNR is a standard normal, so a one-sided
+    ``n_sigma`` is ``delta_chi2 = n_sigma²`` or ``max_snr = n_sigma``. The
+    log Bayes factor has no such reference (None).
+    """
+    if stat == "delta_chi2":
+        return float(n_sigma) ** 2
+    if stat == "max_snr":
+        return float(n_sigma)
+    return None
+
+
+def _one_sided_fap(n_sigma):
+    """One-sided Gaussian tail at ``n_sigma``: 0.135% at 3σ."""
+    from scipy.stats import norm
+
+    return float(norm.sf(float(n_sigma)))
+
+
+def _format_probability(p):
+    """A probability as a short percentage, or as a power of ten if tiny."""
+    p = float(p)
+    if not np.isfinite(p):
+        return str(p)
+    if p >= 1e-3:
+        return f"{100.0 * p:.3g}%"
+    mantissa, exponent = f"{p:.1e}".split("e")
+    mantissa = mantissa.rstrip("0").rstrip(".")
+    power = f"10^{{{int(exponent)}}}"
+    return f"${power}$" if mantissa == "1" else f"${mantissa}\\times{power}$"
+
+
+def _selections(value):
+    """One curve per entry of a list (or array); otherwise one curve.
+
+    A tuple is a range ``(lo, hi)``, as for ``DetectionMC.roc``, so several
+    fluxes or bins must be given as a list.
+    """
+    if value is None:
+        return [None]
+    if isinstance(value, np.ndarray) and value.ndim >= 1:
+        return [tuple(v) if np.ndim(v) else float(v) for v in value]
+    if isinstance(value, list):
+        return list(value)
+    return [value]
+
+
+def _flux_selection_label(flux):
+    if flux is None:
+        return None
+    if np.ndim(flux) == 0:
+        flux = float(flux)
+        if flux <= 0.0:
+            return "flux 0"
+        return f"flux {flux:.3g} (Δmag {float(flux_to_delta_mag(flux)):.2f})"
+    lo, hi = flux
+    return f"flux {lo:.3g}–{hi:.3g}"
+
+
+def _sep_selection_label(sep_bin):
+    if sep_bin is None:
+        return None
+    lo, hi = sep_bin
+    return f"{lo:g}–{hi:g} mas"
+
+
+def _selection_labels(flux, sep_bin):
+    """Labels of a flux and separation selection (None is left out)."""
+    labels = (_flux_selection_label(flux), _sep_selection_label(sep_bin))
+    return [label for label in labels if label is not None]
+
+
+def _legend_outside(ax):
+    """A legend to the right of the axes, where it covers no data."""
+    ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        fontsize="small",
+        borderaxespad=0.0,
+    )
+
+
+def _rates_at(fpr, tpr, thresholds, value):
+    """False- and true-positive rates of the threshold ``value``.
+
+    ``thresholds`` decrease from ``+inf`` through every distinct score, so
+    the smallest one at or above ``value`` has the same rates as ``value``.
+    """
+    i = int(np.count_nonzero(np.asarray(thresholds) >= value)) - 1
+    return float(fpr[i]), float(tpr[i])
+
+
+@_styled
+def plot_roc(
+    mc,
+    stat,
+    *,
+    flux=None,
+    sep_bin=None,
+    ax=None,
+    log_fpr=True,
+    mark_wilks=(3.0, 5.0),
+    title=None,
+    figsize=(7, 4.5),
+):
+    """Plot ROC curves: completeness against false-alarm probability.
+
+    Each curve follows a detection threshold from high to low: its
+    false-positive rate (the fraction of companion-free simulations above
+    the threshold, i.e. its false-alarm probability) on the x-axis and its
+    true-positive rate (the fraction of injected companions recovered, the
+    completeness) on the y-axis. A statistic that cannot tell companions
+    from noise lies on the chance curve TPR = FPR; a better one lies above
+    it.
+
+    Parameters
+    ----------
+    mc : DetectionMC
+        Simulated searches, from
+        [`injection_recovery`][virgil.detection.injection_recovery].
+    stat : str or sequence of str
+        ``"delta_chi2"``, ``"log_bayes_factor"`` or ``"max_snr"``, or
+        several of them to compare.
+    flux : float, (float, float) or list, optional
+        Only the injections of this flux, or in this range ``(lo, hi)``, as
+        for [`DetectionMC.roc`][virgil.detection.DetectionMC.roc]. A list
+        gives one curve per entry. By default, every injection.
+    sep_bin : (float, float) or list of them, optional
+        Only the injections with separations in ``[lo, hi)`` (mas); a list
+        gives one curve per bin.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on; a new figure is made if omitted.
+    log_fpr : bool, optional
+        Logarithmic false-positive axis (default), from half a null draw's
+        worth (0.5 / n_null) to 1, since detections are claimed at small
+        false-alarm probabilities. On it the chance curve TPR = FPR is a
+        curve, not a straight line.
+    mark_wilks : sequence of float, optional
+        Local significances (default 3σ and 5σ) to mark. A vertical line
+        shows the false-alarm probability that Wilks's theorem gives them
+        at one position fixed in advance, the one-sided Gaussian tail
+        (0.135% at 3σ, 2.9×10⁻⁷ at 5σ), when it lies on the axis. A circle
+        on every ``delta_chi2`` or ``max_snr`` curve shows where the
+        threshold equals that local significance (``delta_chi2`` = 9 or
+        ``max_snr`` = 3 at 3σ): its horizontal distance from the line is
+        the look-elsewhere effect of searching a grid. None or ``()`` marks
+        nothing.
+    title : str, optional
+        Title; by default it names what all the curves share (one
+        statistic, one flux or separation selection), and the legend
+        names what differs.
+    figsize : tuple, optional
+        Size of a new figure. The legend is drawn outside the axes; a
+        tight bounding box (as Jupyter uses) includes it.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)``.
+
+    Notes
+    -----
+    With several statistics, the line style tells the statistics apart
+    and the colour the flux or separation selections; with one statistic,
+    both change from curve to curve. The legend sits outside the axes, to
+    their right, as in
+    [`plot_null_distribution`][virgil.plotting.plot_null_distribution].
+
+    Examples
+    --------
+    Three statistics at one injected flux, then one statistic at several:
+
+    >>> plot_roc(mc, ["delta_chi2", "log_bayes_factor", "max_snr"],
+    ...          flux=4e-3)  # doctest: +SKIP
+    >>> plot_roc(mc, "delta_chi2", flux=[2e-3, 4e-3, 8e-3])  # doctest: +SKIP
+    """
+    stats = [stat] if isinstance(stat, str) else list(stat)
+    if not stats:
+        raise ValueError("Pass at least one statistic.")
+    for s in stats:
+        _stat_label(s)
+    marks = () if mark_wilks is None else tuple(mark_wilks)
+    selections = [
+        (f, b) for f in _selections(flux) for b in _selections(sep_bin)
+    ]
+    n_null = mc.n_null
+    if n_null == 0:
+        raise ValueError("The DetectionMC has no null draws.")
+    fpr_min = 0.5 / n_null
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+
+    for j, (f, b) in enumerate(selections):
+        for i, s in enumerate(stats):
+            fpr, tpr, thresholds = mc.roc(s, flux=f, sep_bin=b)
+            parts = [_STAT_LABELS[s]] if len(stats) > 1 else []
+            if len(selections) > 1:
+                parts += _selection_labels(f, b)
+            color = f"C{j % 10}"
+            style = _LINE_STYLES[(i if len(stats) > 1 else j) % 4]
+            ax.plot(
+                fpr,
+                tpr,
+                color=color,
+                ls=style,
+                lw=2,
+                label=", ".join(parts) or _STAT_LABELS[s],
+            )
+            for k, n_sigma in enumerate(marks):
+                value = _local_threshold(s, n_sigma)
+                if value is None:
+                    continue
+                x, y = _rates_at(fpr, tpr, thresholds, value)
+                if log_fpr and x <= 0.0:
+                    continue  # no null draw reaches it: off the log axis
+                ax.plot(
+                    x,
+                    y,
+                    marker="os"[k % 2],
+                    ms=8,
+                    mfc="none",
+                    mec=color,
+                    mew=1.5,
+                    ls="none",
+                )
+
+    chance = (
+        np.geomspace(fpr_min, 1.0, 200)
+        if log_fpr
+        else np.linspace(0.0, 1.0, 200)
+    )
+    ax.plot(chance, chance, color="grey", lw=1, label="chance (TPR = FPR)")
+    for k, n_sigma in enumerate(marks):
+        nominal = _one_sided_fap(n_sigma)
+        if log_fpr and nominal < fpr_min:
+            continue
+        ax.axvline(
+            nominal,
+            color="k",
+            lw=0.8,
+            ls=_LINE_STYLES[(k + 2) % 4],
+            label=(
+                f"local {n_sigma:g}σ: FAP {_format_probability(nominal)} "
+                "at one position"
+            ),
+        )
+        values = [
+            f"{_STAT_LABELS[s]} = {_local_threshold(s, n_sigma):g}"
+            for s in stats
+            if _local_threshold(s, n_sigma) is not None
+        ]
+        if values:
+            ax.plot(
+                [],
+                [],
+                marker="os"[k % 2],
+                mfc="none",
+                mec="k",
+                ls="none",
+                label=(
+                    f"threshold {', '.join(values)} "
+                    f"(local {n_sigma:g}σ) over the grid"
+                ),
+            )
+
+    if log_fpr:
+        ax.set_xscale("log")
+        ax.set_xlim(fpr_min, 1.0)
+    else:
+        ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.02)
+    ax.set_xlabel("False-positive rate (false-alarm probability)")
+    ax.set_ylabel("True-positive rate (completeness)")
+    if title is None:
+        # What all the curves share: the statistic, or the selection.
+        pieces = ["ROC"]
+        if len(stats) == 1:
+            pieces = [f"ROC of {_STAT_LABELS[stats[0]]}"]
+        if len(selections) == 1:
+            pieces += _selection_labels(*selections[0])
+        title = ", ".join(pieces)
+    if title:
+        ax.set_title(title)
+    ax.grid(alpha=0.3)
+    _legend_outside(ax)
+    return fig, ax
+
+
+def _cell_edges(centres, log):
+    """Edges of cells centred on sorted ``centres`` (in log space if log)."""
+    c = np.asarray(centres, dtype=float)
+    if log:
+        c = np.log(c)
+    if c.size == 1:
+        half = 0.2 if log else max(0.5, 0.1 * abs(c[0]))
+        edges = np.array([c[0] - half, c[0] + half])
+    else:
+        mid = 0.5 * (c[1:] + c[:-1])
+        edges = np.concatenate(
+            [[c[0] - (mid[0] - c[0])], mid, [c[-1] + (c[-1] - mid[-1])]]
+        )
+    return np.exp(edges) if log else edges
+
+
+@_styled
+def plot_completeness(
+    mc,
+    stat,
+    fap,
+    *,
+    units="delta_mag",
+    contours=(0.5, 0.9),
+    sep_bins=None,
+    flux_bins=None,
+    ax=None,
+    cmap="viridis",
+    colorbar=True,
+    title=None,
+    figsize=(8, 4.5),
+):
+    """Plot a completeness map against separation and companion brightness.
+
+    Each cell is the fraction of injected companions of that separation and
+    flux that a search detects at the false-alarm probability ``fap``
+    ([`DetectionMC.completeness`][virgil.detection.DetectionMC.completeness]).
+    Lines mark where the completeness reaches each level in ``contours``,
+    the empirical contrast curves of
+    [`DetectionMC.contrast_curve`][virgil.detection.DetectionMC.contrast_curve].
+
+    Parameters
+    ----------
+    mc : DetectionMC
+        Simulated searches with injections, from
+        [`injection_recovery`][virgil.detection.injection_recovery].
+    stat : str
+        The detection statistic, e.g. ``"delta_chi2"``.
+    fap : float
+        False-alarm probability of the detection threshold, e.g. 1.35e-3
+        (the one-sided Gaussian tail at 3σ).
+    units : {"delta_mag", "contrast", "flux"}, optional
+        The y-axis, as in
+        [`plot_contrast_curve`][virgil.plotting.plot_contrast_curve]:
+        magnitude difference (default, linear), contrast
+        (primary/companion, log) or flux ratio (companion/primary, log).
+        Fainter companions are always drawn lower down, so limit curves
+        from ``plot_contrast_curve`` can be drawn on the same axes.
+    contours : sequence of float, optional
+        Completeness levels to draw as lines (default 50% and 90%); ``()``
+        draws none.
+    sep_bins, flux_bins : array-like, optional
+        Bin edges (mas, and flux), as for ``DetectionMC.completeness``. By
+        default every distinct injected separation and flux is a cell.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on; a new figure is made if omitted.
+    cmap : str or Colormap, optional
+        Colour map of the completeness, from 0 to 1.
+    colorbar : bool, optional
+        Add a colour bar (default True).
+    title : str, optional
+        Title; by default it gives the statistic and the FAP.
+    figsize : tuple, optional
+        Size of a new figure.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)``.
+
+    Notes
+    -----
+    Cells span halfway to their neighbours, in separation and in log flux.
+    Injections of zero flux have no Δmag or contrast and are left out. The
+    contour lines are ``contrast_curve``'s: in each separation bin the
+    completeness is made non-decreasing in flux and interpolated linearly
+    in log flux (linearly in Δmag), so they are exactly the curves that
+    method returns, and they are absent where the injected fluxes do not
+    bracket the level. The map sets the axis limits to its cells, so
+    curves drawn afterwards do not widen them.
+
+    Examples
+    --------
+    A completeness map with Absil limits of companion-free data
+    overplotted (``plot_contrast_curve`` redraws the legend, so place it
+    again at the end):
+
+    >>> fig, ax = plot_completeness(mc, "delta_chi2", 1.35e-3)  # doctest: +SKIP
+    >>> plot_contrast_curve(absil_map, grid, sigma=3, band=False,
+    ...                     ax=ax)  # doctest: +SKIP
+    >>> ax.legend(loc="lower left", fontsize="small")  # doctest: +SKIP
+    """
+    import matplotlib.patheffects as path_effects
+
+    label = _stat_label(stat)
+    _convert_flux(1.0, units)  # validates units
+    result = mc.completeness(stat, fap, sep_bins, flux_bins)
+    sep, flux = result["sep"], result["flux"]
+    positive = flux > 0.0
+    if sep.size == 0 or not np.any(positive):
+        raise ValueError(
+            "plot_completeness needs injections with positive fluxes."
+        )
+    fraction = result["completeness"][:, positive]
+    flux = flux[positive]
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+    x_edges = _cell_edges(sep, log=False)
+    y_edges = _convert_flux(_cell_edges(flux, log=True), units)
+    mesh = ax.pcolormesh(
+        x_edges,
+        y_edges,
+        fraction.T,
+        cmap=cmap,
+        vmin=0.0,
+        vmax=1.0,
+        shading="flat",
+        zorder=0,
+    )
+    if colorbar:
+        fig.colorbar(
+            mesh,
+            ax=ax,
+            pad=0.01,
+            label=f"Completeness at FAP {_format_probability(fap)}",
+        )
+    outline = [path_effects.withStroke(linewidth=4, foreground="k")]
+    for k, level in enumerate(contours):
+        curve_sep, curve_flux = mc.contrast_curve(
+            stat, fap, level, sep_bins, flux_bins
+        )
+        ax.plot(
+            curve_sep,
+            _convert_flux(curve_flux, units),
+            color="white",
+            ls=_LINE_STYLES[k % 4],
+            lw=2,
+            marker="o",
+            ms=4,
+            path_effects=outline,
+            label=f"{100.0 * level:g}% completeness",
+        )
+
+    if units != "delta_mag":
+        ax.set_yscale("log")
+    ax.set_xlim(x_edges[0], x_edges[-1])
+    ax.set_ylim(np.min(y_edges), np.max(y_edges))
+    # Fainter companions lower down, as in plot_contrast_curve.
+    if units != "flux" and not ax.yaxis_inverted():
+        ax.invert_yaxis()
+    ax.set_xlabel("Separation (mas)")
+    ax.set_ylabel(f"Companion contrast ({_UNIT_LABELS[units]})")
+    if title is None:
+        title = f"Completeness of {label} at FAP {_format_probability(fap)}"
+    ax.set_title(title)
+    if len(contours):
+        # Faint companions close in (lower left) are rarely detected, so
+        # the legend hides the least informative part of the map.
+        ax.legend(loc="lower left", fontsize="small")
+    return fig, ax
+
+
+@_styled
+def plot_null_distribution(
+    mc,
+    stat="delta_chi2",
+    *,
+    observed=None,
+    fap=None,
+    reference=True,
+    ax=None,
+    title=None,
+    figsize=(7, 4.5),
+):
+    """Plot how often companion-free searches exceed each threshold.
+
+    The curve is the empirical exceedance (survival) function of the
+    statistic over the null simulations: at each threshold, the fraction
+    of companion-free searches at or above it, that is the threshold's
+    false-alarm probability. It is drawn on a log scale, so the tail that
+    sets detection thresholds is visible.
+
+    Parameters
+    ----------
+    mc : DetectionMC
+        Simulated searches, from
+        [`injection_recovery`][virgil.detection.injection_recovery].
+    stat : str, optional
+        ``"delta_chi2"`` (default), ``"log_bayes_factor"`` or
+        ``"max_snr"``.
+    observed : float, optional
+        The statistic of the real data. It is drawn as a vertical line, with
+        its empirical false-alarm probability
+        ([`DetectionMC.false_alarm_probability`][virgil.detection.DetectionMC.false_alarm_probability])
+        and the 95% interval of that probability as a point with error
+        bars.
+    fap : float, optional
+        A false-alarm probability to draw as a horizontal line, with the
+        empirical threshold that reaches it
+        ([`DetectionMC.threshold`][virgil.detection.DetectionMC.threshold])
+        as a vertical line.
+    reference : bool, optional
+        Draw what the statistic would do at one position fixed in advance
+        (default True): ½ P(χ²₁ ≥ x) for ``delta_chi2`` (Wilks's theorem
+        with the flux on its boundary at zero), the Gaussian tail for
+        ``max_snr``. The gap between this curve and the empirical one is
+        the look-elsewhere effect. ``log_bayes_factor`` has no reference.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on; a new figure is made if omitted.
+    title : str, optional
+        Title; by default it names the statistic and the number of draws.
+    figsize : tuple, optional
+        Size of a new figure. The legend is drawn outside the axes; a
+        tight bounding box (as Jupyter uses) includes it.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)``.
+
+    Notes
+    -----
+    The legend sits outside the axes, to their right, so that it never
+    covers the tail of the distribution. When drawing on axes in a grid of
+    subplots, leave room for it or move it with ``ax.legend(...)``.
+
+    Examples
+    --------
+    >>> plot_null_distribution(mc, "delta_chi2", observed=21.3,
+    ...                        fap=1.35e-3)  # doctest: +SKIP
+    """
+    from scipy.stats import norm
+
+    label = _stat_label(stat)
+    null = np.asarray(mc.null[stat], dtype=float)
+    n = null.size
+    if n == 0:
+        raise ValueError("The DetectionMC has no null draws.")
+    x = np.sort(np.where(np.isnan(null), -np.inf, null))
+    exceed = (n - np.arange(n)) / n  # P(null >= x[i])
+    finite = np.isfinite(x)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+    ax.step(
+        x[finite],
+        exceed[finite],
+        where="pre",
+        color="C0",
+        lw=2,
+        label=f"grid search, {n} null simulations",
+    )
+    right = [x[finite].max() if np.any(finite) else 1.0]
+    bottom = 0.5 / n
+
+    if fap is not None:
+        threshold = mc.threshold(stat, fap, n_boot=0)[0]
+        right.append(threshold)
+        bottom = min(bottom, 0.5 * float(fap))
+        ax.axhline(
+            fap,
+            color="grey",
+            lw=1,
+            ls=":",
+            label=f"FAP {_format_probability(fap)}",
+        )
+        ax.axvline(
+            threshold,
+            color="C0",
+            lw=1,
+            ls="--",
+            label=f"empirical threshold, {label} = {threshold:.3g}",
+        )
+    if observed is not None:
+        observed = float(observed)
+        p, low, high = (
+            float(v) for v in mc.false_alarm_probability(stat, observed)
+        )
+        right.append(observed)
+        bottom = min(bottom, 0.5 * low) if low > 0.0 else bottom
+        ax.axvline(observed, color="C3", lw=1.5)
+        ax.errorbar(
+            observed,
+            p,
+            yerr=[[max(p - low, 0.0)], [max(high - p, 0.0)]],
+            fmt="o",
+            color="C3",
+            capsize=3,
+            label=(
+                f"observed {label} = {observed:.3g}, "
+                f"FAP {_format_probability(p)}"
+            ),
+        )
+
+    left = min(0.0, x[finite].min()) if np.any(finite) else 0.0
+    xmax = 1.1 * max(right) if max(right) > 0 else 1.0
+    if reference and stat != "log_bayes_factor":
+        grid = np.linspace(max(left, 0.0), xmax, 400)
+        if stat == "delta_chi2":
+            ref = norm.sf(np.sqrt(grid))  # = ½ P(χ²₁ ≥ x)
+            ref_label = r"one position fixed in advance, $\frac{1}{2}\chi^2_1$"
+        else:
+            ref = norm.sf(grid)
+            ref_label = "one position fixed in advance, Gaussian"
+        ax.plot(grid, ref, color="k", ls="--", lw=1.2, label=ref_label)
+
+    ax.set_yscale("log")
+    ax.set_xlim(left, xmax)
+    ax.set_ylim(bottom, 1.5)
+    ax.set_xlabel(f"Threshold {label}")
+    ax.set_ylabel("False-alarm probability\nP(null ≥ threshold)")
+    ax.set_title(title or f"Null distribution of {label}")
+    ax.grid(alpha=0.3)
+    _legend_outside(ax)
     return fig, ax
 
 

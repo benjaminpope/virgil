@@ -14,7 +14,9 @@ fitting their zero points: `RVData(..., instrument=labels)` with
 zero point per instrument analytically (Luger, Foreman-Mackey & Hogg 2017,
 arXiv:1710.11136), and `term.posterior(values)` reports them after the fit.
 With a broad prior this is the profile likelihood plus a log-determinant
-correction; only a finite prior width is supported.
+correction; only a finite prior width is supported. The prior must be
+stated: `marginalise_offsets=True` is an error, not a default of N(0, 1000²)
+km/s.
 
 **Angles without a wrap.** `orientation_priors()` samples the node and
 periastron as [angle vectors](angles.md): 2Ω and ϖ = Ω + ω for positions

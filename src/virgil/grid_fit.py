@@ -15,13 +15,13 @@ Contrast limits (Ruffio, Absil) are in [`virgil.limits`][virgil.limits].
 """
 
 import math
-import warnings
 from typing import NamedTuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpyro.distributions as dist
 import optimistix as optx
 
 from ._grid import (
@@ -160,7 +160,7 @@ def _refine_flux_grid(
     )
 
 
-def likelihood_grid(data_obj, model, samples_dict, batch_size=None):
+def likelihood_grid(data_obj, model, samples_dict, *, batch_size=None):
     """Evaluate the log likelihood at every point of a parameter grid.
 
     Parameters
@@ -245,7 +245,7 @@ _OPTIMIZED_PARAMS_DOC = """
 
 
 def optimized_likelihood_grid(
-    data_obj, model, samples_dict, flux_param=None, batch_size=None
+    data_obj, model, samples_dict, *, flux_param=None, batch_size=None
 ):
     params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
     _, best_loglike, success = _optimize_flux_grid(
@@ -280,7 +280,7 @@ optimized_likelihood_grid.__doc__ = (
 
 
 def optimized_flux_grid(
-    data_obj, model, samples_dict, flux_param=None, batch_size=None
+    data_obj, model, samples_dict, *, flux_param=None, batch_size=None
 ):
     params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
     best_flux, _, success = _optimize_flux_grid(
@@ -407,23 +407,28 @@ def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
 
 
 def _as_prior(prior):
-    """Validate ``prior`` and return it as ``Gaussian``, ``LogUniform`` or None."""
+    """Validate ``prior`` and return it as ``Gaussian``, ``LogUniform`` or None.
+
+    Accepts numpyro's ``dist.LogUniform(low, high)`` and ``dist.Normal(mean,
+    sd)`` (scalar parameters), converting them to the NamedTuples, as well as
+    the NamedTuples themselves.
+    """
     if prior is None:
         return None
-    if isinstance(prior, (Gaussian, LogUniform)):
-        pass
-    elif isinstance(prior, tuple) and len(prior) == 2:
-        warnings.warn(
-            "A bare (mean, sd) prior is deprecated; use Gaussian(mean, sd) "
-            "or, preferably, LogUniform(f_min, f_max).",
-            DeprecationWarning,
-            stacklevel=3,
+    if isinstance(prior, dist.LogUniform):
+        prior = LogUniform(*_scalar_params(prior, ("low", "high")))
+    elif isinstance(prior, dist.Normal):
+        prior = Gaussian(*_scalar_params(prior, ("loc", "scale")))
+    elif not isinstance(prior, (Gaussian, LogUniform)):
+        hint = (
+            " A bare (mean, sd) tuple is not accepted: use dist.Normal."
+            if isinstance(prior, tuple)
+            else ""
         )
-        prior = Gaussian(*prior)
-    else:
         raise TypeError(
-            "prior must be a LogUniform(f_min, f_max) or Gaussian(mean, sd), "
-            f"got {prior!r}"
+            "prior must be numpyro's dist.LogUniform(low, high) or "
+            "dist.Normal(mean, sd) (or grid_fit.LogUniform / Gaussian), "
+            f"got {prior!r}.{hint}"
         )
     a, b = (float(x) for x in prior)
     if not (math.isfinite(a) and math.isfinite(b)):
@@ -435,6 +440,20 @@ def _as_prior(prior):
     if isinstance(prior, Gaussian) and not b > 0.0:
         raise ValueError(f"Gaussian needs sd > 0, got sd = {b}")
     return type(prior)(jnp.asarray(a), jnp.asarray(b))
+
+
+def _scalar_params(d, names):
+    """Scalar float parameters of a numpyro distribution, or a clear error."""
+    out = []
+    for name in names:
+        v = np.asarray(getattr(d, name))
+        if v.ndim != 0:
+            raise ValueError(
+                f"linear_flux_grid needs scalar {type(d).__name__} "
+                f"parameters, but {name} has shape {v.shape}."
+            )
+        out.append(float(v))
+    return out
 
 
 class LinearFluxGrid(NamedTuple):
@@ -535,6 +554,7 @@ def linear_flux_grid(
     data_obj,
     model,
     samples_dict,
+    *,
     flux_param=None,
     batch_size=None,
     n_iter=0,
@@ -616,7 +636,7 @@ def linear_flux_grid(
     n_iter : int, optional
         Number of Gauss–Newton refinement steps after the first
         linearisation at ``f = 0`` (default 0, the closed-form result).
-    prior : LogUniform or Gaussian, optional
+    prior : numpyro LogUniform or Normal, optional
         Prior on the flux ratio ``f``. By default none, and the posterior
         and Bayes-factor fields of the result are ``None``. With a prior
         they hold the posterior mean and sd and the marginal-likelihood
@@ -626,10 +646,12 @@ def linear_flux_grid(
         i.e. exactly only where the residuals are linear in ``f`` over the
         posterior (``f`` much smaller than 1, or after enough ``n_iter`` for
         the point to sit near the posterior); the position is not
-        marginalised. A bare ``(mean, sd)`` tuple is still accepted as
-        ``Gaussian(mean, sd)`` but is deprecated.
+        marginalised. Give numpyro's ``dist.LogUniform(low, high)`` or
+        ``dist.Normal(mean, sd)`` with scalar parameters (the ``LogUniform``
+        and ``Gaussian`` named tuples of this module are still accepted); a
+        bare ``(mean, sd)`` tuple is an error.
 
-        **Recommended: ``LogUniform(f_min, f_max)``**, the scale-invariant
+        **Recommended: ``dist.LogUniform(f_min, f_max)``**, the scale-invariant
         (Jeffreys, under the scaling group) prior for a flux ratio,
         ``p(f) = 1 / (f ln(f_max / f_min))``. The flux ratio is a scale
         parameter spanning decades, so the prior is the invariant measure of
@@ -650,7 +672,7 @@ def linear_flux_grid(
         and sd come from the same quadrature. It is vmappable and
         jit-compatible.
 
-        ``Gaussian(mean, sd)`` gives a Gaussian-prior evidence (a
+        ``dist.Normal(mean, sd)`` gives a Gaussian-prior evidence (a
         computational approximation; ``f`` may go negative). With ``P = g . g
         + 1 / sd**2`` (``g`` the final whitened derivative) the posterior is
         Gaussian with mean ``(g . (g f_hat) + mean / sd**2) / P`` and sd
@@ -711,7 +733,13 @@ def linear_flux_grid(
 
 
 def laplace_flux_uncertainty_grid(
-    data_obj, model, samples_dict, flux=None, flux_param=None, batch_size=None
+    data_obj,
+    model,
+    samples_dict,
+    flux=None,
+    *,
+    flux_param=None,
+    batch_size=None,
 ):
     """Laplace uncertainty of the flux at every grid position.
 

@@ -18,11 +18,24 @@ _CELL_WARNING = re.compile(
     re.MULTILINE,
 )
 
+# Absolute paths into the package, from any machine, become "virgil/<file>".
+_PACKAGE_PATH = re.compile(r"(?:/[^\s:\"'()]+)*/src/(virgil/[^\s:\"'()]+)")
+# Other absolute home, cluster and temporary prefixes on a warning line keep
+# only the file name.
+_HOME_PATH = re.compile(
+    r"/(?:Users|home|fred|var/folders|tmp)/[^\s:\"'()]*/(?=[^\s/:\"'()]+)"
+)
+
 
 def _sanitize_text(text: str) -> str:
-    """Strip terminal colours and machine-specific warning locations."""
+    """Strip terminal colours and machine-specific paths in warnings."""
     text = _ANSI_ESCAPE.sub("", text)
-    return _CELL_WARNING.sub(lambda m: m.group("warning") + "\n", text)
+    text = _CELL_WARNING.sub(lambda m: m.group("warning") + "\n", text)
+    text = _PACKAGE_PATH.sub(r"\1", text)
+    return "\n".join(
+        _HOME_PATH.sub("", line) if "Warning" in line else line
+        for line in text.split("\n")
+    )
 
 
 MAPPINGS = {

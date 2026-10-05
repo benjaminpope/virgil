@@ -590,7 +590,9 @@ def test_batched_grid_matches_unbatched():
         "ddec": np.linspace(-200.0, 200.0, 7),
         "flux": np.array([1e-4, 1e-3, 1e-2]),
     }
-    whole = likelihood_grid(oidata, BinaryModelCartesian, samples, 10**6)
+    whole = likelihood_grid(
+        oidata, BinaryModelCartesian, samples, batch_size=10**6
+    )
     batched = likelihood_grid(
         oidata, BinaryModelCartesian, samples, batch_size=10
     )

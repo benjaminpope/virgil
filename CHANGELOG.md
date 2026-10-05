@@ -7,6 +7,60 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+The release commit will set the version to 0.3.0 and date this section; until
+then the notes below are under "Unreleased". Everything listed as new was
+added after 0.2.0, which is on PyPI.
+
+The release commit must set `version = "0.3.0"` in `pyproject.toml` and refresh
+`uv.lock`, which records the editable virgil-astro version: run `uv lock` in a
+worktree, never in `~/code/drpangloss`.
+
+### Migration from 0.2.0
+
+Most of 0.3.0 is additive. These are the changes that can alter an existing
+analysis or warn:
+
+- **`fit` with a `LogUniform` prior now returns the MAP in `log x`.** This
+  covers priors on parameters and on `noise=` terms (#226). Each prior is
+  optimised in its flat coordinate (`LogUniform(a, b)` in `log x`; isotropic
+  priors in `cos i` or `sin(lat)`), where it is constant, so the fit is the
+  maximum of the likelihood inside the prior's range. In 0.2.0 it was the mode
+  of likelihood × `1/x` in `x`, which pulled scales towards small values, so
+  fitted values of scales (fluxes, diameters, noise terms) can shift.
+  Levenberg–Marquardt is now chosen automatically for these priors, where
+  0.2.0 used L-BFGS and `method="lm"` raised. Uniform, Normal and other
+  priors are unchanged. See "Priors and the MAP" in the conventions.
+- **Frames are grouped by `MJD` and `TIME` (#203), which changes χ² for
+  OIFITS v1 files** that keep the snapshot in `TIME` rather than `MJD`
+  (OYSTER output, the 2004 Interferometry Beauty Contest files). Snapshots
+  that share an `MJD` used to be one frame, and closure phases from
+  different snapshots were whitened as one correlated group. They are now
+  separate frames: for the 2004 contest files the independent closure phases
+  go from 10/130 to 130/130, and every χ² and uncertainty from them
+  changes. Files with a constant `TIME`, and the other files we tested
+  (AMBER, CHARA, GRAVITY, MIRC), are unchanged.
+- **`starting_image` uses `LogUniform` priors** on the envelope width and
+  flux (flux bounds 1e-4 to 100), so the starting point, and a fit that
+  begins from it, can differ slightly from 0.2.0.
+- **Keyword-only grid and limit arguments.** `flux_param` and `batch_size`
+  must be passed by keyword to `likelihood_grid`, `optimized_likelihood_grid`,
+  `optimized_flux_grid` and `linear_flux_grid`, and `flux_param`,
+  `flux_bounds` and `batch_size` to `absil_limits` and `injection_limits`;
+  positional calls from 0.2.0 raise `TypeError`. A bare `(mean, sd)` tuple
+  as `linear_flux_grid(prior=)` is a `TypeError` (use `dist.Normal`), and
+  `RVData.term(marginalise_offsets=True)` needs a stated zero-point prior.
+- **`injection_limits(flux_bounds=None)` limits change** where 0.2.0
+  returned the top of its search range (1000); both limit functions now
+  find the first crossing from below. Bounded results agree with 0.2.0 to
+  about 1e-4.
+- **L-BFGS keeps 50 past steps** (`fit(lbfgs_memory=50)`, was optax's 10),
+  so L-BFGS fits, regularised images especially, change slightly.
+- **`total_mass` and `distance_pc` use GM☉** instead of a³/P² in Julian
+  years, which raises masses by 3.8e-5 (relative).
+- **`Tabulated` is deprecated** in favour of `virgil.spectra.Nodes`: it
+  now raises a `DeprecationWarning`, behaviour is unchanged, and removal is
+  planned for 0.4.0.
+
 ### Added
 
 - **Hierarchical error scales and tied `noise=` terms.** A `noise=` entry of
@@ -18,6 +72,19 @@ anything before 1.0 may change between minor versions.
   error scale per epoch) from a log-normal population with log-uniform
   hyperpriors: centred (log s sampled, for well-measured members; the
   non-centred form diverged on such members in a test) or non-centred.
+
+- **`clean(base_priors=...)`** fits named parameters of the base (e.g. a
+  companion's position) together with the components' fluxes at every major
+  cycle. CLEAN also ends with a final major cycle when it stops at the target
+  or at `max_iterations`, so its fluxes are refitted even when the data start
+  close to the target and no cycle has run.
+
+- **`fit(lbfgs_memory=50)`.** L-BFGS now keeps 50 past steps (optax's default
+  is 10). On regularised images, 10 stopped short of the optimum at many
+  weights; 50 reached lower losses (lower χ² and lower penalty together) and
+  converged in 2–3× fewer steps for StarletL1, at a higher cost per step.
+  L-BFGS fits therefore change slightly from earlier versions.
+
 - **Isotropic-orientation priors.** `virgil.priors` has
   `IsotropicInclination(low=0, high=180)` (degrees, density ∝ sin i, so cos i
   is uniform; use `(0, 90)` when only |cos i| is identifiable) and
@@ -39,11 +106,10 @@ anything before 1.0 may change between minor versions.
   evidence, posterior mean and sd come from 256-node Gauss-Legendre
   quadrature in `ln f` over the part of the bounds the likelihood occupies,
   inside `jit` and `vmap`; they agree with a dense-grid quadrature to
-  better than 1e-4. The Gaussian prior is now `Gaussian(mean, sd)`
-  (documented as a Gaussian-prior evidence, a computational approximation
-  where `f` may go negative); a bare `(mean, sd)` tuple still works but warns
-  with a `DeprecationWarning`. With no `prior`, the posterior and Bayes-factor
-  fields are `None`, whatever the prior kind.
+  better than 1e-4. A Gaussian prior is `dist.Normal(mean, sd)` (a
+  Gaussian-prior evidence, a computational approximation where `f` may go
+  negative). With no `prior`, the posterior and Bayes-factor fields are
+  `None`, whatever the prior kind.
 
 - **Angle vectors (`virgil.angles.AngleVector`).** A prior for any angle
   (degrees), sampled as a 2-D vector at the site `"<path>_vec"` with the
@@ -109,6 +175,21 @@ anything before 1.0 may change between minor versions.
   grids), and `save`/`load`/`concatenate` for array jobs; `concatenate`
   compares fingerprints of the whole model, null scene and template (every
   field, static or not) and refuses runs that cannot be fingerprinted.
+- **Detection plots (`virgil.plotting`, stage 3 of virgil#2).**
+  `plot_null_distribution(mc, stat, observed=, fap=)` draws the empirical
+  false-alarm probability of every threshold on a log scale, with the
+  single-position reference (½χ²₁ for Δχ², the Gaussian tail for max SNR),
+  the threshold at a FAP, and an observed value with its FAP and 95%
+  interval; its legend sits outside the axes so it never hides the tail.
+  `plot_roc(mc, stat, flux=, sep_bin=)` draws ROC curves for one or several
+  statistics, fluxes or separation bins (distinct colours and line styles),
+  on a log false-positive axis by default with the chance curve TPR = FPR
+  drawn as a curve, and marks the one-position FAP of local 3σ and 5σ
+  (0.135%, 2.9×10⁻⁷) next to where each curve's threshold equals them, to
+  show the look-elsewhere effect. `plot_completeness(mc, stat, fap,
+  units=)` draws the completeness map against separation and Δmag, contrast
+  or flux, with the 50% and 90% `contrast_curve`s, on axes that
+  `plot_contrast_curve` can draw Absil or Ruffio limits onto.
 
 - **Gauss-Newton and a marginal-likelihood map in `linear_flux_grid`.**
   `n_iter=k` relinearises the whitened residuals at the current flux per pixel
@@ -118,10 +199,10 @@ anything before 1.0 may change between minor versions.
   Gaussian prior on the flux and fills the `posterior_mean`,
   `posterior_sd` and `log_bayes_factor` fields (closed-form evidence ratio
   against f = 0, in the linearised model about the final point). The result
-  is always a `LinearFluxGrid` named tuple (those three fields are `None`
+  is a `LinearFluxGrid` named tuple (those three fields are `None`
   without a prior), so unpack it by attribute, or take the first three
   with `flux, error, snr = res[:3]`; unpacking it into three names directly
-  fails. Nothing has been released with the old tuple return.
+  fails.
 
 - **Fitted RV jitter.** `RVData.term(params, jitter="rv_jitter")` inflates the
   errors to `sqrt(d_rv² + s²)` with `s` a fitted value (km/s; give it a
@@ -140,99 +221,17 @@ anything before 1.0 may change between minor versions.
   covariance after a fit. Only a finite prior width is supported (`True` is
   N(0, 1000²) km/s and warns).
 
-### Changed
-
-- **`fit` optimises each prior in its flat coordinate.** A prior that is
-  uniform in some coordinate of its parameter, `LogUniform(a, b)` in
-  `log x`, or any prior with a `flat_coordinate()` method (isotropic
-  inclinations in `cos i`, latitudes in `sin(lat)`), is fitted in that
-  coordinate, where it is constant and adds nothing to the loss. So
-  Levenberg–Marquardt now runs, and is chosen automatically, with these
-  Jeffreys priors (it used to fall back to L-BFGS, and `method="lm"`
-  raised), and `gauss_newton_mass` accepts them. **Behaviour change:** a
-  fit with a `LogUniform` prior (on a parameter or a `noise=` term) is now
-  the maximum of the likelihood inside the prior's range, the MAP in
-  `log x`; before, it was the mode of likelihood × `1/x` in `x`, which
-  pulled scales towards small values. Uniform, Normal and other priors are
-  unchanged. See "Priors and the MAP" in the conventions.
-- `starting_image`'s internal fit uses `LogUniform` priors on the envelope
-  width and flux (flux bounds 1e-4 to 100), so the starting point may differ
-  slightly.
-
-- **One home for analytic marginalisation of linear parameters.**
-  `virgil._linear` holds the shared algebra: `LinearMarginal(design,
-  prior_mean, prior_sd | prior_cov, method)`, the successive rank-one and
-  dense-Cholesky whitenings, and the conditional posterior. The gains,
-  closure-phase offsets, VISPHI continuum terms, flux grey scales and RV
-  zero points use it.
-- **The OI_FLUX / correlated-flux grey-scale prior is stated, not taken from
-  the data** (breaking). `with_flux_scale(scale=(mean, sd))` gives it in the
-  data's units and replaces `width=`. It is required for `"flux"` and
-  `"corrflux"`, and the likelihood raises until it is given; `"nflux"`
-  defaults to `(1, 0.1)`. The Gaussian is documented as a proposal for the
-  Jeffreys 1/k prior.
-
-- **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
-  `1 / n_rings**2` error scale (about 8e-4 in |V| at the default 32 for a
-  13.8 mas cone), and recommends doubling `n_rings` and checking Δχ² at the
-  best fit; well-measured data may need 64 or more. A convergence test was
-  added.
-
-### Fixed
-
-- **Components build under `jax.jit` from concrete shape parameters.**
-  `TruncatedCone` validated `tilt` with a `jax.numpy` call on the concrete
-  array, which inside `jit` became a tracer and raised
-  `TracerBoolConversionError` when a fit's model function built a cone from
-  fixed shapes and a traced flux. The check now uses NumPy. The other
-  concrete checks (components, spectra, orbits) were audited and need no
-  change; a regression test builds each checked component inside `jit`.
-  Found in a real-data OzSTAR run.
-- **`absil_limits` with a far-off or single-value flux axis.** The
-  significance saturates (about 37 sigma in float64) for bright companions,
-  so starting the optimizer on such a flux, e.g. `flux=[0.01]`, gave a flat
-  loss and returned the starting flux with a non-convergence warning. The
-  flux axis now only gives a rough starting point: the limit is bracketed by
-  decades and bisected in log flux, replacing the BFGS search, so the result
-  no longer depends on the axis.
-- `gauss_newton_mass(model, priors, (), values)` no longer raises a
-  `ValueError` on an empty residual list: with `data=()` the curvature comes
-  from the priors alone, as `fit` and `numpyro_model` already allow.
-
-### Docs
-
-- **Orbit tutorial rewritten as a joint fit to the interferometric data**
-  ("Orbits from interferometric data", Binaries,
-  `notebooks/orbit_fitting.ipynb`, replacing the two-step version below).
-  One `KeplerOrbit` model is fitted to the V² and closure phases of all
-  eight simulated VLTI epochs at once, each sample at its own time, with
-  per-epoch V² and closure-phase error scales drawn from fitted log-normal
-  populations (`hierarchical_scales`). Priors are Jeffreys throughout
-  (`IsotropicInclination`, `orientation_priors` and `AngleVector` angles,
-  log-uniform scales, interim uniform e), with a no-data check.
-  Initialisation is kept separate from the inference: coarse per-epoch grids
-  seed `starting_orbits`, the candidates are ranked by the joint likelihood
-  of all the data, and the best four are refined with `fit`. Outputs are NUTS
-  diagnostics, a corner plot, an ensemble of posterior orbits on the sky with
-  the implied per-epoch positions, posterior-predictive closure-phase
-  checks, the inferred calibration, separation and position angle in time,
-  and a comparison with the two-step posterior.
-- **New tutorial: "Orbits from interferometric epochs"** (Binaries,
-  `notebooks/orbit_fitting.ipynb`). Eight epochs of simulated VLTI
-  (UT) V² and closure phases of a three-year binary: per-epoch astrometry
-  with a grid, a fit and the Laplace covariance into `PositionData`,
-  Thiele–Innes starting orbits, and a NUTS posterior under Jeffreys priors
-  (log-uniform P and a, uniform cos i, ω, Ω and phase as 2-vector
-  directions, uniform e) with a no-data prior check, a corner plot, and an
-  ensemble of posterior orbits on the sky and in time.
-- **`plotting.plot_orbit_ensemble`.** Draws a batch of `KeplerOrbit`s on the
-  sky (East left, North up) as thin lines, one period each, with measured
-  `PositionData` positions coloured by epoch with their error ellipses, a
-  reference orbit and the primary.
-- **Conventions.** Dropped the stale "Not yet in this version" note from the
-  orbit conventions: `virgil.orbits` is on main.
-
-### Added
+- **North-angle and plate-scale nuisances (#212).**
+  `OIData.with_north_angle(angle)`, and the `noise=` term `north_angle`
+  (degrees) in `fit`, `numpyro_model`, `model_loglike` and
+  `whitened_residuals`, rotate a dataset's sky by a fitted angle: every
+  position angle it measures is the true one plus the angle (North through
+  East). The plate scale is the existing `wavel_scale`, as 1/m for a
+  magnification m. For positions, `PositionData.model(orbit, north_angle=,
+  plate_scale=)` and `PositionData.term(orbit, north_angle="path",
+  plate_scale="path")` take the paths of fitted values. Both are off by
+  default, there are no default widths, and a `uv_grid` is dropped when the
+  rotation is applied. After Octofitter (Thompson et al. 2023).
 
 - **Closure-phase offsets per frame** (Stage 6d).
   `OIData.with_closure_offsets(baseline=, triangle=, modes=)` adds closure-phase
@@ -282,7 +281,8 @@ anything before 1.0 may change between minor versions.
   checked on the total. `Spectrum()` with no argument evaluates at `wavel0`.
   `SourceModel.total_spectrum(wavel)` (a `System`'s sum over its parts) and
   `OIData.select(wavel_min, wavel_max)`. `Tabulated` is deprecated in
-  favour of `Nodes` (a `DeprecationWarning`; behaviour unchanged).
+  favour of `Nodes` (a `DeprecationWarning`; behaviour unchanged). Removal is
+  planned for 0.4.0.
 
 - **`numpyro_model(..., likelihoods=[...])`.** The extra data terms that `fit`
   takes (`PositionData.term`, `RVData.term`, or a callable returning whitened
@@ -347,7 +347,192 @@ anything before 1.0 may change between minor versions.
   parameters (e.g. a binary at several epochs with one flux ratio).
   Regularisers act on the first model.
 
-## 0.2.0 (not yet released)
+### Changed
+
+- **API consistency before 0.3.0.**
+  - `linear_flux_grid(prior=)` takes numpyro's `dist.LogUniform(low, high)`
+    and `dist.Normal(mean, sd)` (scalar parameters), the same classes as
+    `fit` and `noise=`, so passing the numpyro `LogUniform` no longer raises
+    `TypeError`. The `virgil.grid_fit.LogUniform` and `Gaussian` named tuples
+    still work. A bare `(mean, sd)` tuple, whose deprecation path never
+    shipped, is now a `TypeError` with a message saying so.
+  - `RVData.term(marginalise_offsets=True)` raises `ValueError` instead of
+    silently using N(0, 1000²) km/s: state the zero-point prior as
+    `(mean, sd)`.
+  - `flux_param` and `batch_size` are keyword-only in `likelihood_grid`,
+    `optimized_likelihood_grid`, `optimized_flux_grid`, `linear_flux_grid`
+    and `laplace_flux_uncertainty_grid` (in the last, after `flux`).
+    The first four are from 0.2.0, so a positional `flux_param` or
+    `batch_size` there now raises `TypeError`.
+  - `injection_recovery(draw_batch > 1)` divides the default grid
+    `batch_size` by `draw_batch` and caps `draw_batch` at that default,
+    so the working set stays within the documented bound, and by default
+    the last chunk is compiled at its own length instead of being padded
+    with discarded draws (an explicit `chunk_size` still pads, to reuse one
+    compilation).
+
+- **Frames are grouped by `MJD` and `TIME` (#203).** OIFITS v1 gives each row
+  a `TIME` (UTC seconds) and an `MJD`, and some writers (OYSTER, the 2004
+  Interferometry Beauty Contest files) set `MJD` to the night's date and put
+  the snapshot in `TIME`. The reader grouped frames, and matched
+  closure-phase legs to baselines, by `MJD` alone, so every snapshot of such
+  a file became one frame and closure phases from different snapshots were
+  whitened as one correlated group. Rows are now one frame, and a leg matches
+  a baseline row, only if `MJD` and `TIME` both agree within the existing
+  tolerance. **Behaviour change:** for the 2004 contest files the independent
+  closure phases go from 10/130 to 130/130, and every χ² from them changes.
+  Files with a constant `TIME` group as before, and epochs and model times
+  still come from `MJD`.
+- **`fit` optimises each prior in its flat coordinate.** A prior that is
+  uniform in some coordinate of its parameter, `LogUniform(a, b)` in
+  `log x`, or any prior with a `flat_coordinate()` method (isotropic
+  inclinations in `cos i`, latitudes in `sin(lat)`), is fitted in that
+  coordinate, where it is constant and adds nothing to the loss. So
+  Levenberg–Marquardt now runs, and is chosen automatically, with these
+  Jeffreys priors (it used to fall back to L-BFGS, and `method="lm"`
+  raised), and `gauss_newton_mass` accepts them. **Behaviour change:** a
+  fit with a `LogUniform` prior (on a parameter or a `noise=` term) is now
+  the maximum of the likelihood inside the prior's range, the MAP in
+  `log x`; before, it was the mode of likelihood × `1/x` in `x`, which
+  pulled scales towards small values. Uniform, Normal and other priors are
+  unchanged. See "Priors and the MAP" in the conventions.
+- `starting_image`'s internal fit uses `LogUniform` priors on the envelope
+  width and flux (flux bounds 1e-4 to 100), so the starting point may differ
+  slightly.
+
+- **One home for analytic marginalisation of linear parameters.**
+  `virgil._linear` holds the shared algebra: `LinearMarginal(design,
+  prior_mean, prior_sd | prior_cov, method)`, the successive rank-one and
+  dense-Cholesky whitenings, and the conditional posterior. The gains,
+  closure-phase offsets, VISPHI continuum terms, flux grey scales and RV
+  zero points use it.
+- **The OI_FLUX / correlated-flux grey-scale prior is stated, not taken from
+  the data.** `with_flux_scale(scale=(mean, sd))` gives it in the
+  data's units. It is required for `"flux"` and
+  `"corrflux"`, and the likelihood raises until it is given; `"nflux"`
+  defaults to `(1, 0.1)`. The Gaussian is documented as a proposal for the
+  Jeffreys 1/k prior.
+
+- **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
+  `1 / n_rings**2` error scale (about 8e-4 in |V| at the default 32 for a
+  13.8 mas cone), and recommends doubling `n_rings` and checking Δχ² at the
+  best fit; well-measured data may need 64 or more. A convergence test was
+  added.
+
+### Fixed
+
+- **Contrast limits: one search, from below.** Found in the pre-0.3.0 review
+  (`design/codebase_review_2026-10b.md`, B1, B2, S2 and S5).
+  - `injection_limits(flux_bounds=None)` returned 1000, the top of its search
+    range, at every position whose limit was above about 1e-3. For a
+    normalised scene the significance falls again once the companion
+    outshines the primary, and the bisection ended at that top. Both limit
+    functions now find the *first* crossing from below: they step up by
+    quarter decades (CANDID steps by 1.4) and then bisect the last step in
+    log flux (one shared helper, `_grid.first_crossing`). Unbounded results
+    now match bounded ones, for model classes and for `System` templates.
+  - `injection_limits` raised `TypeError` on data with extra observables
+    (T3AMP, VISAMP, VISPHI, OI_FLUX). The companion's signal is now injected
+    into every block of the data vector, extras included. The companion
+    model's chi-squared on the injected data is computed in full, since the
+    OI_FLUX blocks and gains whiten with the model's own prediction.
+  - Both functions raise a `ValueError` up front for a `sigma` beyond what
+    `nsigma` can represent in the float type (about 12.95 in float32, 37 in
+    float64). Before, `absil_limits` returned about 1e37 or silently clipped,
+    with a stale "optimizer did not converge" warning. The new warnings say
+    what happened: limits clipped to `flux_bounds`, or no crossing within 40
+    decades of the start.
+  - `flux_bounds` now means the same in both functions: the range searched,
+    upward from its lower end, with limits outside it set to the nearer
+    bound and a `RuntimeWarning`. With `flux_bounds=None`, the search starts
+    at the flux axis's smallest positive value, and only then must the axis
+    have one. `absil_limits` no longer evaluates the whole positions × fluxes
+    loss grid to choose a start. Results agree with the old ones to about
+    1e-4 relative or better.
+  - `flux_param`, `flux_bounds` and `batch_size` are keyword-only in
+    `absil_limits` and `injection_limits`, as in `grid_fit` and `detection`.
+
+- **Orbits: GM☉ in `total_mass`, Ω range, face-on inclination (F14–F16).**
+  `total_mass` and `distance_pc` now use Kepler's third law with the IAU 2015
+  nominal GM☉, au and the 86400 s day instead of a³/P² with P in Julian years
+  (masses were 3.8e-5 low). `ThieleInnesOrbit.to_kepler` no longer returns
+  Ω = 180° exactly: Ω is in [0°, 180°) with ω paired to keep the sky orbit.
+  `StateVectorOrbit.to_kepler` computes i, Ω and ω by atan2 from the orbit
+  normal, so nearly face-on orbits keep their inclination to float64
+  precision. `orientation_priors(..., inclination=True)` also returns
+  `IsotropicInclination` under `"inc"`: the full Haar orientation prior in
+  one call (default off, so existing callers are unchanged).
+
+- **`log_evidence` and `clean` on high signal-to-noise data (#214).** The
+  evidence takes `log det(I + JᵀJ)` from the singular values of the Jacobian,
+  instead of a Cholesky factor of `I + J Jᵀ`, which was numerically
+  indefinite and raised `LinAlgError` when `J Jᵀ` is rank deficient;
+  `classic_maxent`'s curvature and `error_scale`'s λ use the squared singular
+  values too. The CLEAN major-cycle refit survives an `nnls` failure: it
+  gets a larger iteration limit and falls back to bounded `lsq_linear`, so
+  no-base CLEAN runs on the 2004 contest data instead of raising.
+- **Components build under `jax.jit` from concrete shape parameters.**
+  `TruncatedCone` validated `tilt` with a `jax.numpy` call on the concrete
+  array, which inside `jit` became a tracer and raised
+  `TracerBoolConversionError` when a fit's model function built a cone from
+  fixed shapes and a traced flux. The check now uses NumPy. The other
+  concrete checks (components, spectra, orbits) were audited and need no
+  change; a regression test builds each checked component inside `jit`.
+  Found in a real-data OzSTAR run.
+- **`absil_limits` with a far-off or single-value flux axis.** The
+  significance saturates (about 37 sigma in float64) for bright companions,
+  so starting the optimizer on such a flux, e.g. `flux=[0.01]`, gave a flat
+  loss and returned the starting flux with a non-convergence warning. The
+  flux axis now only gives a rough starting point: the limit is bracketed by
+  decades and bisected in log flux, replacing the BFGS search, so the result
+  no longer depends on the axis.
+- `gauss_newton_mass(model, priors, (), values)` no longer raises a
+  `ValueError` on an empty residual list: with `data=()` the curvature comes
+  from the priors alone, as `fit` and `numpyro_model` already allow.
+
+### Docs
+
+- **"Detection ROC curves" rewritten on `injection_recovery`** (Binaries,
+  `notebooks/detection_roc.ipynb`). A candidate companion in a simulated
+  NIRISS AMI observation, one Monte Carlo call (10⁴ null and 1280 injected
+  searches), the look-elsewhere effect on the null distribution, the
+  empirical threshold and FAP to quote for a detection, ROC curves of the
+  three statistics, the completeness map and 50%/90% contrast curves to quote
+  for a non-detection against Absil and Ruffio limits, and what wrong error
+  bars do to a Gaussian null and how `rescale_errors` and the bootstrap fix
+  it.
+- **Orbit tutorial rewritten as a joint fit to the interferometric data**
+  ("Orbits from interferometric data", Binaries,
+  `notebooks/orbit_fitting.ipynb`, replacing the two-step version below).
+  One `KeplerOrbit` model is fitted to the V² and closure phases of all
+  eight simulated VLTI epochs at once, each sample at its own time, with
+  per-epoch V² and closure-phase error scales drawn from fitted log-normal
+  populations (`hierarchical_scales`). Priors are Jeffreys throughout
+  (`IsotropicInclination`, `orientation_priors` and `AngleVector` angles,
+  log-uniform scales, interim uniform e), with a no-data check.
+  Initialisation is kept separate from the inference: coarse per-epoch grids
+  seed `starting_orbits`, the candidates are ranked by the joint likelihood
+  of all the data, and the best four are refined with `fit`. Outputs are NUTS
+  diagnostics, a corner plot, an ensemble of posterior orbits on the sky with
+  the implied per-epoch positions, posterior-predictive closure-phase
+  checks, the inferred calibration, separation and position angle in time,
+  and a comparison with the two-step posterior.
+- **New tutorial: "Orbits from interferometric epochs"** (Binaries,
+  `notebooks/orbit_fitting.ipynb`). Eight epochs of simulated VLTI
+  (UT) V² and closure phases of a three-year binary: per-epoch astrometry
+  with a grid, a fit and the Laplace covariance into `PositionData`,
+  Thiele–Innes starting orbits, and a NUTS posterior under Jeffreys priors
+  (log-uniform P and a, uniform cos i, ω, Ω and phase as 2-vector
+  directions, uniform e) with a no-data prior check, a corner plot, and an
+  ensemble of posterior orbits on the sky and in time.
+- **`plotting.plot_orbit_ensemble`.** Draws a batch of `KeplerOrbit`s on the
+  sky (East left, North up) as thin lines, one period each, with measured
+  `PositionData` positions coloured by epoch with their error ellipses, a
+  reference orbit and the primary.
+- **Conventions.** Dropped the stale "Not yet in this version" note from the
+  orbit conventions: `virgil.orbits` is on main.
+
+## 0.2.0 (2026-10-03)
 
 ### Renamed: drpangloss is now virgil
 
@@ -356,7 +541,7 @@ anything before 1.0 may change between minor versions.
   an unrelated package.
 - The GitHub repository is `benjaminpope/virgil` and the docs are at
   <https://benjaminpope.github.io/virgil/>.
-- A final `drpangloss` 0.2.0 on PyPI will depend on `virgil-astro` and forward
+- A final `drpangloss` 0.2.0 on PyPI depends on `virgil-astro` and forwards
   to it, with a `FutureWarning` on import. Replace `import drpangloss` with
   `import virgil` and `drpangloss.x` with `virgil.x`; nothing else was renamed.
 - There is no `nufft` extra: the NUFFT backend was removed (see below).

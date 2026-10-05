@@ -55,7 +55,7 @@ units, with `with_flux_scale(scale=(mean, sd))` (Luger, Foreman-Mackey &
 Hogg 2017). The prior is never taken from the data, and for `"flux"` and
 correlated fluxes the likelihood raises until it is given. Normalised
 spectra (`"nflux"`) default to `(1, 0.1)`. This is the same low-rank
-marginalisation as the Stage 6d gains (`virgil._linear`). The likelihood
+marginalisation as the calibration gains of `OIData.with_gains`, which share its linear-algebra code. The likelihood
 keeps the log-determinant, which depends on the model's spectral shape.
 
 The Gaussian is a *proposal*: k is a positive scale, whose Jeffreys prior is
@@ -145,7 +145,7 @@ pipeline did.
 
 When VISPHI and T3PHI come from one frame, the closure of the differential
 phases is the continuum-normalised closure phase. Fitting both would count
-it twice. The default (design note S §2.3) is:
+it twice. The default is:
 
 * closure phases in every channel;
 * in the line windows only (both windows with `prior_width`), the part of
@@ -207,8 +207,8 @@ eht-imaging's `debias` does: |V| → √max(|V|² − σ², 0).
 
 ## Not yet
 
-These come with Stage 6a PR C: bandwidth smearing, the spectral-resolution
-kernel, the primary beam (fibre coupling), differential visibility
-amplitudes (`AMPTYP='differential'`), and fitted `noise=` terms for the
-extra observables. The 6d wavelength scale (`wavel_scale`) does not yet
-rescale the OI_FLUX wavelengths.
+virgil does not model the following yet: bandwidth smearing, the
+spectral-resolution kernel, the primary beam (fibre coupling), differential
+visibility amplitudes (`AMPTYP='differential'`), and fitted `noise=` terms
+for the extra observables. The wavelength scale (`wavel_scale`, from
+`OIData.with_wavelength_scale`) does not yet rescale the OI_FLUX wavelengths.

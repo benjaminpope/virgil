@@ -1,244 +1,231 @@
 <!-- AUTO-GENERATED FROM notebooks/detection_roc.ipynb by scripts/sync_tutorial_docs.py. -->
 # Detection ROC curves
 
-A companion search over a grid ends with a number, such as the best $\Delta\chi^2$, a peak signal-to-noise ratio or an evidence ratio. On its own that number does not say how often noise alone would give a value as large, nor how often a real companion of a given flux would be found. This tutorial measures both by simulation for a small aperture-masking observation, using [`detection_statistics`](api/detection.md#virgil.detection.detection_statistics), and combines them into receiver operating characteristic (ROC) curves: the fraction of real companions detected (the true-positive rate) against the fraction of companion-free observations wrongly flagged (the false-positive rate) as the detection threshold varies.
+You run a companion search over a grid of positions and fluxes, and it returns a best candidate with a $\Delta\chi^2$ of, say, 20. Is it real? And if the search finds nothing convincing, how faint a companion could it have found? Both questions have a frequentist answer that you can compute by simulation for your own observation and search grid, and this page shows how, with [`virgil.detection`](api/detection.md).
 
-You should come away with three points. The local Wilks significance of a $\Delta\chi^2$, which is right for one position fixed in advance, overstates the significance of the best of many positions on a grid (the look-elsewhere effect), so a threshold for a chosen false-alarm probability has to come from simulated null observations over the same grid. The three statistics that `detection_statistics` returns can be compared on equal terms through their ROC curves. And the completeness at a calibrated threshold is the number to quote after a non-detection, next to the [contrast limits](contrast_limits.md) of the Absil and Ruffio methods.
+Three terms carry the whole page. The **false-alarm probability (FAP)** of a threshold is the fraction of companion-free observations in which the search would still return a statistic at or above that threshold. For a detection, the FAP of the observed value is the probability that noise alone would have produced a candidate at least as strong somewhere on the grid: it is the p-value of the search. The **completeness**, also called the true-positive rate, is the fraction of real companions of a given flux and separation that the search finds above the threshold. A **ROC curve** (receiver operating characteristic) plots completeness against FAP as the threshold slides from strict to loose: a strict threshold gives few false alarms but misses faint companions, a loose one finds more companions but also more false alarms, and the curve shows the whole trade-off at once.
 
-This page uses only the first stage of the plan in `design/detection_roc.md`: the statistics themselves. The few lines of NumPy that turn simulated statistics into false-alarm rates, ROC curves and thresholds will be replaced by a `DetectionMC` container in the next stage.
+You should come away with three things. First, the look-elsewhere effect: Wilks's theorem, which turns $\Delta\chi^2$ into a significance, is right for one position chosen in advance, but the best of hundreds of positions is much larger than any one of them, so a search must take its detection threshold from simulations of companion-free data over the same grid. Second, what to quote for a detection: the empirical FAP of the observed statistic, with its uncertainty. Third, what to quote for a non-detection: the contrast at which the search is 50% and 90% complete at a stated FAP, next to the Absil and Ruffio limits of the [contrast limits](contrast_limits.md) tutorial.
 
 ## Setup
 
-We simulate the 7-hole NIRISS aperture mask at 4.3 µm with [`nrm_oidata`](api/coverage.md#virgil.coverage.nrm_oidata), which gives 21 squared visibilities with errors of 0.01 and 35 closure phases with errors of 0.5°. Its longest baseline is about 5.3 m, so $\lambda/B \approx 170$ mas. The scene without a companion is a point-source primary, which is a `BinaryModelCartesian` with companion flux zero; that is also the null hypothesis of `detection_statistics`, which sets the companion flux to zero and keeps everything else.
+We simulate the 7-hole NIRISS aperture mask at 4.3 µm with [`nrm_oidata`](api/coverage.md#virgil.coverage.nrm_oidata), which gives 21 squared visibilities with errors of 0.01 and 35 closure phases with errors of 0.5°. Its longest baseline is about 5.3 m, so its resolution $\lambda/B$ is about 170 mas. The star is a point source, so the scene without a companion, which we call the **null scene**, is a `BinaryModelCartesian` with companion flux zero. That is also the null hypothesis that every statistic on this page tests: the companion model with its flux set to zero.
 
-The search grid covers ±180 mas in both coordinates in steps of 20 mas, and 32 fluxes spaced logarithmically from $2\times10^{-4}$ to $3\times10^{-2}$ (fluxes are always companion/primary). The flux axis plays two roles: it is the starting grid of the optimizer that refines the best flux at each position, and it is the prior of the log Bayes factor, which is then uniform in log flux between its ends. The grid is deliberately coarse, so that thousands of simulated searches take a minute or two on a CPU. We also fix the false-alarm probability (FAP) that we will calibrate later: 0.135%, the one-sided Gaussian tail at 3σ, which is the FAP that [`local_nsigma`](api/detection.md#virgil.detection.local_nsigma) calls 3σ. It is one-sided because the companion flux cannot be negative, so only upward fluctuations count; the often quoted 0.27% is the two-sided value.
+The search grid covers ±120 mas in both coordinates in steps of 16 mas, about $\lambda/(10B)$. That is fine enough that a companion lying between grid points loses at most a few per cent of its $\Delta\chi^2$ and is found close to its true position; a much coarser grid can place a companion's best match on the wrong grid point. The even number of points keeps the star's own position, where a companion cannot be told apart from the star, off the grid. The flux axis has 32 values spaced logarithmically from $3\times10^{-4}$ to $3\times10^{-2}$ (fluxes are always companion/primary). It plays two roles: it seeds the optimizer that refines the best flux at each position, and it is the prior of the log Bayes factor, which is then uniform in log flux between its ends. Finally we fix the FAP at which we will claim a detection: 0.135%, the one-sided Gaussian tail at 3σ. It is one-sided because a companion's flux cannot be negative, so only upward fluctuations count; the often quoted 0.27% is the two-sided value.
 
 ```python
 import time
 
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 import numpy as onp
 from scipy import stats
-from tqdm.auto import tqdm
 
 from virgil.coverage import nrm_oidata
-from virgil.detection import detection_statistics, local_nsigma
-from virgil.limits import flux_to_delta_mag
+from virgil.detection import (
+    detection_statistics,
+    gaussian_null,
+    injection_grid,
+    injection_recovery,
+    local_nsigma,
+    rescale_errors,
+)
+from virgil.grid_fit import laplace_flux_uncertainty_grid, optimized_flux_grid
+from virgil.limits import absil_limits, flux_to_delta_mag, ruffio_upperlimit
 from virgil.models import BinaryModelCartesian
-from virgil.plotting import set_style
+from virgil.plotting import (
+    plot_completeness,
+    plot_contrast_curve,
+    plot_null_distribution,
+    plot_roc,
+    set_style,
+)
 
 set_style()  # the figure style used throughout the docs
 
 template = nrm_oidata()  # 21 V² and 35 closure phases, no values yet
+null_scene = BinaryModelCartesian(dra=0.0, ddec=0.0, flux=0.0)  # star alone
 grid = {
-    "dra": jnp.linspace(-180.0, 180.0, 19),
-    "ddec": jnp.linspace(-180.0, 180.0, 19),
-    "flux": jnp.geomspace(2e-4, 3e-2, 32),
+    "dra": jnp.linspace(-120.0, 120.0, 16),  # mas, steps of 16 mas
+    "ddec": jnp.linspace(-120.0, 120.0, 16),
+    "flux": jnp.geomspace(3e-4, 3e-2, 32),
 }
-FAP = stats.norm.sf(3.0)  # 0.135%: what local_nsigma calls 3 sigma
+FAP = stats.norm.sf(3.0)  # 0.135%: the one-sided tail at 3 sigma
 
 print(
-    f"{template.vis.size} V² and {template.phi.size} closure phases; grid of "
+    f"{template.vis.size} V² and {template.phi.size} closure phases; "
     f"{grid['dra'].size * grid['ddec'].size} positions × "
     f"{grid['flux'].size} fluxes; FAP = {FAP:.3%}"
 )
 ```
 
-```text
-21 V² and 35 closure phases; grid of 361 positions × 32 fluxes; FAP = 0.135%
-```
+## A candidate
 
-## Null simulations
+Here is the observation we want to judge. We simulate it with a companion of flux $5\times10^{-3}$ (Δmag 5.75) at 70 mas and position angle 60°, plus noise drawn from the errors, and search it with [`detection_statistics`](api/detection.md#virgil.detection.detection_statistics). The search returns the best companion's position and flux and three statistics, each measuring how strongly the data prefer a companion to none. $\Delta\chi^2$ is twice the gain in log likelihood of the best companion on the grid over no companion, with its flux refined and constrained to be non-negative. The log Bayes factor $\log B$ is the natural log of the likelihood ratio averaged over the grid, an evidence for "a companion somewhere on the grid" against "no companion". The maximum SNR is the largest best-fit flux divided by its uncertainty, over positions.
 
-`detection_statistics` reduces a search over the grid to three numbers. $\Delta\chi^2$ is twice the gain in log likelihood of the best companion on the grid, with its flux refined and constrained to be non-negative, over no companion. The log Bayes factor is the log of the likelihood ratio averaged over the grid, a grid-marginalised evidence for "a companion somewhere" against "none"; on a grid this coarse it is a valid test statistic but not an accurate evidence. The maximum SNR is the largest best-fit flux divided by its Laplace uncertainty, the significance map of the composition tutorial.
-
-The function is traceable in the data, so we can map it over simulated observations with `jax.lax.map` inside one `jax.jit` and it compiles once. The function `search` below takes a batch of random keys and a companion flux. Each key draws a companion position, uniform in separation between 50 and 170 mas and in position angle, and a noise realisation from the template's errors, via [`OIData.with_model`](api/oidata.md#virgil.oidata.OIData.with_model). With flux zero the companion contributes nothing, so these are null observations; with a positive flux the same function gives injections, without recompiling. The helper `run` calls it on batches of 300 simulations, one batch per flux in its list, with a progress bar. Here we run 3000 null simulations.
+[`local_nsigma`](api/detection.md#virgil.detection.local_nsigma) converts $\Delta\chi^2$ into a significance with Wilks's theorem. It is a **local** significance: the one the candidate would have if we had looked at that single position only, decided before seeing the data.
 
 ```python
-STATS = ("delta_chi2", "log_bayes_factor", "max_snr")
-BATCH = 300
+truth = BinaryModelCartesian(dra=60.6, ddec=35.0, flux=5e-3)  # 70 mas, PA 60°
+observed = template.with_model(truth, key=jax.random.PRNGKey(2026))
+obs = detection_statistics(observed, BinaryModelCartesian, grid)
 
-
-@jax.jit
-def search(keys, flux):
-    def one(key):
-        pos_key, noise_key = jax.random.split(key)
-        sep = jax.random.uniform(pos_key, minval=50.0, maxval=170.0)
-        pa = jax.random.uniform(
-            jax.random.fold_in(pos_key, 1), maxval=2 * jnp.pi
-        )
-        scene = BinaryModelCartesian(
-            sep * jnp.sin(pa), sep * jnp.cos(pa), flux
-        )
-        data = template.with_model(scene, key=noise_key)
-        result = detection_statistics(data, BinaryModelCartesian, grid)
-        return {name: result[name] for name in STATS}
-
-    return jax.lax.map(one, keys)
-
-
-def run(fluxes, seed):
-    keys = jax.random.split(jax.random.PRNGKey(seed), (len(fluxes), BATCH))
-    batches = [
-        search(k, f) for k, f in tqdm(list(zip(keys, fluxes)), leave=False)
-    ]
-    return {s: onp.stack([onp.asarray(b[s]) for b in batches]) for s in STATS}
-
-
-start = time.perf_counter()
-null = {s: v.reshape(-1) for s, v in run([0.0] * 10, seed=0).items()}
 print(
-    f"{null['delta_chi2'].size} null searches in {time.perf_counter() - start:.0f} s: "
-    f"median Δχ² = {onp.median(null['delta_chi2']):.2f}, "
-    f"largest = {null['delta_chi2'].max():.1f}"
+    f"best companion at ΔRA = {float(obs['dra']):.0f} mas, "
+    f"ΔDec = {float(obs['ddec']):.0f} mas, flux = {float(obs['flux']):.2e} "
+    f"(truth: 60.6 mas, 35.0 mas, 5.00e-03)\n"
+    f"Δχ² = {float(obs['delta_chi2']):.1f} "
+    f"(local significance {float(local_nsigma(obs['delta_chi2'])):.1f}σ), "
+    f"log B = {float(obs['log_bayes_factor']):.1f}, "
+    f"max SNR = {float(obs['max_snr']):.1f}"
 )
 ```
 
-```text
-  0%|          | 0/10 [00:00<?, ?it/s]
-```
+## Simulating the search
 
-```text
-3000 null searches in 174 s: median Δχ² = 2.17, largest = 25.0
+To learn how often noise alone gives a $\Delta\chi^2$ that large, and how often a real companion is found, we repeat the whole search on simulated observations. [`injection_recovery`](api/detection.md#virgil.detection.injection_recovery) does this in one call. It simulates `n_null` companion-free observations, the **null draws**, with Gaussian noise from the template's errors ([`gaussian_null`](api/detection.md#virgil.detection.gaussian_null)). It also simulates one observation per companion in `injections`, here laid out by [`injection_grid`](api/detection.md#virgil.detection.injection_grid): 4 separations from 40 to 100 mas times 8 fluxes from $10^{-3}$ to $3\times10^{-2}$, each at 40 random position angles. Every simulation is searched exactly as the real data were, by one compiled function, and the result is a [`DetectionMC`](api/detection.md#virgil.detection.DetectionMC), a plain NumPy container from which everything below is computed.
+
+We use 10,000 null draws, so that about 13 of them lie above the 0.135% threshold and pin it down; `draw_batch=8` searches eight simulations at once, which is faster on a CPU. A larger run can be split over cluster array jobs with different seeds: `save` each result and merge them with `DetectionMC.concatenate`.
+
+```python
+FLUXES = onp.geomspace(1e-3, 3e-2, 8)
+injections = injection_grid([40.0, 60.0, 80.0, 100.0], FLUXES, n_pa=40, key=1)
+
+start = time.perf_counter()
+mc = injection_recovery(
+    template,
+    null_scene,
+    BinaryModelCartesian,
+    grid,
+    key=0,
+    n_null=10_000,
+    injections=injections,
+    draw_batch=8,
+)
+print(
+    f"{mc.n_null} null and {mc.n_injected} injected searches "
+    f"in {time.perf_counter() - start:.0f} s"
+)
 ```
 
 ## The look-elsewhere effect
 
-At one position fixed in advance, $\Delta\chi^2$ under the null is zero half the time (when the best flux would be negative) and follows $\chi^2_1$ otherwise, so its tail is $\tfrac{1}{2}\chi^2_1$ (Wilks's theorem with a parameter on its boundary, Chernoff 1954). That is the reference behind `local_nsigma`. A grid search takes the best of hundreds of positions, and although neighbouring positions are correlated, the best of many is much larger than any one. The plot shows the empirical probability that a null search exceeds a threshold, against the local reference: the grid search's tail sits far above it, and the horizontal line at our FAP shows how much higher the threshold must be.
+The plot shows, for every threshold on the x-axis, the fraction of the 10,000 companion-free searches whose $\Delta\chi^2$ reached it: the false-alarm probability of that threshold. The dashed black curve is what Wilks's theorem predicts at a single position fixed in advance. There, $\Delta\chi^2$ is zero half the time (whenever the best flux would be negative) and follows $\chi^2_1$ otherwise, so the FAP of a threshold is $\frac{1}{2}P(\chi^2_1 \geq \Delta\chi^2)$.
+
+The grid search's curve lies far above it. Each of the 256 positions is a fresh chance for noise to mimic a companion, and the search reports the best of them, which is larger than any single one; neighbouring positions are correlated, so the effect is smaller than 256 independent tries would give, but still large. The dotted horizontal line is our FAP of 0.135%. Wilks's curve crosses it at $\Delta\chi^2 = 9$, the local 3σ, while the simulations cross it at the much higher empirical threshold, the dashed blue line. The red point is our candidate: its $\Delta\chi^2$, and its FAP with a 95% interval.
 
 ```python
-d0 = onp.sort(null["delta_chi2"])
-exceed = 1.0 - onp.arange(d0.size) / d0.size  # P(null Δχ² >= each value)
-x = onp.linspace(0.0, 1.1 * d0[-1], 400)
-
-fig, ax = plt.subplots(figsize=(6.5, 4))
-ax.step(d0, exceed, where="post", label=f"grid search ({d0.size} null draws)")
-ax.plot(
-    x,
-    0.5 * stats.chi2(1).sf(x),
-    "k--",
-    label=r"one fixed position, $\frac{1}{2}\chi^2_1$",
-)
-ax.axhline(FAP, color="grey", lw=0.8, ls=":", label=f"FAP {FAP:.3%} (3σ)")
-ax.set_yscale("log")
-ax.set_ylim(0.5 / d0.size, 1.0)
-ax.set_xlabel(r"threshold $\Delta\chi^2$")
-ax.set_ylabel(
-    r"false-alarm probability $P(\Delta\chi^2_{\rm null} \geq$ threshold$)$"
-)
-ax.set_title(r"Null distribution of $\Delta\chi^2$ over the grid")
-ax.legend(loc="upper right");
+plot_null_distribution(
+    mc, "delta_chi2", observed=obs["delta_chi2"], fap=FAP
+);
 ```
 
-![detection_roc output 7.1](generated/detection_roc_cell007_out01.png)
+## What to quote for a detection
 
-## Injections
+Now the numbers behind the plot. [`threshold`](api/detection.md#virgil.detection.DetectionMC.threshold) gives the $\Delta\chi^2$ that 0.135% of the null searches exceed, with a bootstrap error from the finite number of draws. [`false_alarm_probability`](api/detection.md#virgil.detection.DetectionMC.false_alarm_probability) gives the FAP of any value as $(k+1)/(n+1)$, where $k$ of the $n$ null draws reach it, with an exact binomial 95% interval. We print the FAP of Wilks's local 3σ threshold, which shows how optimistic the local significance is over a grid, and the FAP of the candidate. The candidate's FAP converts back to an equivalent **global** significance through the one-sided Gaussian tail: the significance of the search as a whole. If no null draw reaches the candidate, its FAP is only an upper limit, set by the number of draws, and its global significance a lower limit; more null draws would sharpen both.
 
-Now we inject companions at six fluxes from $10^{-3}$ to $8\times10^{-3}$, 300 simulations each, at random positions in the same annulus and with fresh noise, and keep the same three statistics. A flux of $10^{-3}$ is roughly the uncertainty of a companion's flux at these separations, so the injections run from barely visible to obvious. The table gives the median of each statistic per flux; all three rise steadily with flux.
+For a detection, quote the observed $\Delta\chi^2$, its empirical FAP with the interval and the number of null draws, and the global significance it implies, and say what was simulated: the grid, the noise model and the errors. The local Wilks significance may be given too, but always labelled local.
 
 ```python
-FLUXES = [1e-3, 2e-3, 3e-3, 4e-3, 6e-3, 8e-3]
-injected = run(FLUXES, seed=1)  # one row of 300 simulations per flux
+threshold, error = mc.threshold("delta_chi2", FAP)
+wilks_fap = mc.false_alarm_probability("delta_chi2", 9.0)[0]
+fap, low, high = mc.false_alarm_probability("delta_chi2", obs["delta_chi2"])
+bound = "≥ " if low == 0.0 else ""  # no null draw reached the candidate
 
-print(f"{'flux':>8}{'Δmag':>6}{'Δχ²':>8}{'log B':>8}{'max SNR':>9}  (medians)")
-for i, flux in enumerate(FLUXES):
-    medians = [onp.median(injected[s][i]) for s in STATS]
+print(
+    f"threshold at FAP {FAP:.3%}: Δχ² = {threshold:.1f} ± {error:.1f} "
+    f"(Wilks, at one position: 9)\n"
+    f"Wilks's Δχ² = 9 has an FAP of {wilks_fap:.1%} over the grid\n"
+    f"candidate: Δχ² = {float(obs['delta_chi2']):.1f}, FAP = {fap:.2g} "
+    f"(95%: {low:.2g} to {high:.2g}), global significance "
+    f"{bound}{stats.norm.isf(fap):.1f}σ "
+    f"(local {float(local_nsigma(obs['delta_chi2'])):.1f}σ)"
+)
+```
+
+## ROC curves: which statistic?
+
+Every simulation gives all three statistics, so their ROC curves can be compared fairly. We draw them for the injections of flux $4.3\times10^{-3}$ (Δmag 5.9), the fourth of our eight fluxes, at all four separations together. Read each curve as its threshold sliding from strict (lower left) to loose (upper right). The false-positive axis is logarithmic because detections are claimed at small FAPs, and on it the grey chance curve, TPR = FPR, which is what a statistic no better than a coin toss would give, is a curve rather than a straight line. The dotted vertical line is the FAP of 0.135% that Wilks's theorem assigns to a local 3σ, and the circle on each curve marks where its threshold actually equals a local 3σ ($\Delta\chi^2 = 9$, or an SNR of 3): the horizontal gap between the circle and the line is the look-elsewhere effect again. A ROC curve depends only on how a statistic ranks the simulations, not on its scale, which is why such different statistics can share one plot.
+
+The $\Delta\chi^2$ and maximum-SNR curves practically coincide. For a faint companion the log likelihood is nearly quadratic in flux, so at each position $\Delta\chi^2 \approx \mathrm{SNR}^2$ whenever the best flux is positive, and both statistics pick the same best position; the maximum SNR is then close to $\sqrt{\Delta\chi^2}$, which ranks the simulations in the same order. The log Bayes factor averages the likelihood over all positions and fluxes instead of taking the best one, so it can rank them differently, and the plot shows whether that helps for this observation.
+
+```python
+plot_roc(
+    mc, ["delta_chi2", "log_bayes_factor", "max_snr"], flux=FLUXES[3]
+);
+```
+
+## What to quote for a non-detection
+
+After a non-detection the question becomes what the search could have found. [`completeness`](api/detection.md#virgil.detection.DetectionMC.completeness) counts, for each injected separation and flux, the fraction of injections detected above the calibrated threshold, and [`contrast_curve`](api/detection.md#virgil.detection.DetectionMC.contrast_curve) interpolates in flux to the contrast at which that fraction reaches a chosen level. These are empirical contrast curves: at the 90% contrast, nine companions out of ten would have been detected at an FAP of 0.135%, look-elsewhere effect included. The table gives them in Δmag at each injected separation (NaN where the injected fluxes do not span that completeness).
+
+```python
+sep, flux50 = mc.contrast_curve("delta_chi2", FAP, completeness=0.5)
+_, flux90 = mc.contrast_curve("delta_chi2", FAP, completeness=0.9)
+
+print(f"Δmag reached at FAP {FAP:.3%}\nsep (mas)  50% complete  90% complete")
+for s, f50, f90 in zip(sep, flux50, flux90):
     print(
-        f"{flux:8.0e}{float(flux_to_delta_mag(flux)):6.2f}"
-        + "".join(f"{m:{w}.1f}" for m, w in zip(medians, (8, 8, 9)))
+        f"{s:9.0f}{float(flux_to_delta_mag(f50)):14.2f}"
+        f"{float(flux_to_delta_mag(f90)):14.2f}"
     )
 ```
 
-```text
-  0%|          | 0/6 [00:00<?, ?it/s]
-```
+The map shows the completeness behind those curves, cell by cell, with the 50% and 90% curves drawn on it. Over it we draw the Absil and Ruffio limits of a companion-free observation, as in the [contrast limits](contrast_limits.md) tutorial; they answer different questions. Ruffio's limit, here at the 3σ-equivalent percentile, is a Bayesian upper limit on the flux at each position, given that a companion sits exactly there. Absil's limit, at 3σ, is the flux that a $\chi^2$ test against the no-companion model rejects at each position. Neither involves a detection threshold or the look-elsewhere effect, and each comes from one noise realisation, so it wanders with the noise, while the completeness curves average over many simulated observations.
 
-```text
-    flux  Δmag     Δχ²   log B  max SNR  (medians)
-   1e-03  7.50     4.8    -0.4      2.2
-   2e-03  6.75     8.2     0.4      2.8
-   3e-03  6.31    15.0     2.5      3.8
-   4e-03  5.99    24.0     6.1      4.9
-   6e-03  5.55    50.4    18.1      7.0
-   8e-03  5.24    91.5    37.9      9.4
-```
-
-## ROC curves
-
-For each statistic, every null value is a possible threshold: its false-positive rate is the fraction of null searches at or above it, and its true-positive rate is the fraction of injections at or above it. The function `roc` below does this in three lines; the `DetectionMC` container of the next stage will do it, with uncertainties. We plot the curves for the faint ($2\times10^{-3}$) and moderate ($4\times10^{-3}$) injections with a logarithmic false-positive axis, because the interesting region is at small false-alarm rates; the dash-dotted vertical line is our FAP, and the thin grey curve is a statistic that cannot tell companions from noise (true-positive rate equal to false-positive rate, which is a curve rather than a straight line on a logarithmic axis). Only the ordering of a statistic's values matters for its ROC curve, so the three can be compared directly. The curves for $\Delta\chi^2$ and the maximum SNR almost coincide: for a faint companion the likelihood is nearly quadratic in flux, so the maximum SNR is close to $\sqrt{\Delta\chi^2}$ and ranks the simulations in the same order. The log Bayes factor averages over positions instead of taking the best one, so it can rank them differently; at the smallest false-positive rates only a handful of null draws set each curve, so differences there are within the noise.
+For a non-detection, quote the 50% and 90% completeness contrasts at a stated FAP, for example "the search is 90% complete to Δmag X at 80 mas, at a false-alarm probability of 0.135%", together with the grid, the noise model and the number of injections. Absil or Ruffio limits can be given alongside, for comparison with the literature.
 
 ```python
-def roc(null_scores, injected_scores):
-    thresholds = onp.sort(null_scores)[::-1]
-    fpr = onp.arange(1, thresholds.size + 1) / thresholds.size
-    return fpr, (injected_scores[:, None] >= thresholds).mean(axis=0)
+blank = template.with_model(null_scene, key=jax.random.PRNGKey(7))
+absil = absil_limits(blank, BinaryModelCartesian, grid, sigma=3.0)
+best = optimized_flux_grid(blank, BinaryModelCartesian, grid)
+sigma = laplace_flux_uncertainty_grid(blank, BinaryModelCartesian, grid, best)
+ruffio = ruffio_upperlimit(best, sigma, stats.norm.cdf(3.0))
 
-
-labels = {
-    "delta_chi2": r"$\Delta\chi^2$",
-    "log_bayes_factor": r"$\log B$",
-    "max_snr": "max SNR",
-}
-fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
-for ax, i in zip(axes, [FLUXES.index(2e-3), FLUXES.index(4e-3)]):
-    for s, ls in zip(STATS, ("-", "--", ":")):
-        ax.plot(*roc(null[s], injected[s][i]), ls=ls, label=labels[s])
-    chance = onp.geomspace(1 / d0.size, 1.0, 100)
-    ax.plot(chance, chance, color="grey", lw=0.8)  # TPR = FPR
-    ax.axvline(FAP, color="grey", lw=0.8, ls="-.")
-    ax.set_xscale("log")
-    ax.set_xlabel("false-positive rate")
-    ax.set_title(
-        f"injected flux {FLUXES[i]:.0e} (Δmag {float(flux_to_delta_mag(FLUXES[i])):.2f})"
-    )
-axes[0].set_ylabel("true-positive rate (completeness)")
-axes[0].legend();
+fig, ax = plot_completeness(mc, "delta_chi2", FAP)
+for limit, label, color in [(absil, "Absil 3σ", "C1"), (ruffio, "Ruffio 3σ", "C3")]:
+    plot_contrast_curve(limit, grid, label=label, color=color, band=False, ax=ax)
+ax.legend(loc="lower left", fontsize="small");
 ```
 
-![detection_roc output 11.1](generated/detection_roc_cell011_out01.png)
+## When the error bars are wrong
 
-## Thresholds and completeness
+Everything so far assumed that the errors are right, because the null draws were simulated from them. Suppose instead that the real noise is 1.5 times the quoted errors, which is common for calibrated interferometric data. The Gaussian null still simulates the quoted errors, so its threshold is too low, and the true FAP of that threshold, measured on 2000 simulations with the real noise, is far above the nominal value.
 
-Finally, the calibration. The empirical $\Delta\chi^2$ threshold for our FAP is the corresponding quantile of the null searches, to compare with Wilks's local threshold of 9 (where `local_nsigma` gives 3σ). With 3000 null draws only four lie above a 0.135% quantile, so the empirical threshold is rough; the next stage will attach a bootstrap error to it, and production runs use many more draws. The table then gives the completeness, the fraction of injections detected, at each threshold. Wilks's threshold finds more companions only because its real false-alarm probability over this grid is much higher than 0.135%, as the second line shows.
+Two tools repair this. [`rescale_errors`](api/detection.md#virgil.detection.rescale_errors) estimates the factor from the data, scaling the errors so that the null scene has $\chi^2_r = 1$, separately for the V² and the closure phases; with the rescaled errors, the Gaussian calibration above is valid again. [`bootstrap_null`](api/detection.md#virgil.detection.bootstrap_null) (`noise="bootstrap"`) does not trust the errors at all: it builds null draws by flipping the signs of the data's own whitened residuals about the null scene, so the draws carry the real noise. The table compares the threshold at an FAP of 1% (looser than 0.135%, so that 2000 draws measure it well) from honest errors, from wrong errors with a Gaussian null, and from wrong errors with a bootstrap null of one companion-free observation, each with the true FAP of its threshold.
 
 ```python
-threshold = onp.quantile(null["delta_chi2"], 1.0 - FAP)
-wilks = 9.0  # local_nsigma(9) = 3
-print(
-    f"Δχ² threshold at FAP {FAP:.3%}: empirical {threshold:.1f} "
-    f"(local {float(local_nsigma(threshold)):.1f}σ), Wilks {wilks:.0f} (local 3σ)"
+real_noise = gaussian_null(template, null_scene, error_scale=1.5)
+bad = real_noise(jax.random.PRNGKey(11))  # companion-free, errors too small
+truth_mc = injection_recovery(  # what the wrong errors really give
+    template, null_scene, BinaryModelCartesian, grid, key=2,
+    n_null=2000, noise=real_noise, draw_batch=8,
 )
-print(
-    f"Wilks's threshold over this grid has FAP {onp.mean(null['delta_chi2'] >= wilks):.1%}\n"
+boot_mc = injection_recovery(  # calibrated on the data's own residuals
+    bad, null_scene, BinaryModelCartesian, grid, key=3,
+    n_null=2000, noise="bootstrap", draw_batch=8,
 )
-print(
-    f"{'flux':>8}{'Δmag':>6}{'complete, empirical':>21}{'complete, Wilks':>17}"
-)
-for i, flux in enumerate(FLUXES):
-    d = injected["delta_chi2"][i]
-    print(
-        f"{flux:8.0e}{float(flux_to_delta_mag(flux)):6.2f}"
-        f"{onp.mean(d >= threshold):21.0%}{onp.mean(d >= wilks):17.0%}"
-    )
-```
+factors = rescale_errors(bad, null_scene)[1]
 
-```text
-Δχ² threshold at FAP 0.135%: empirical 15.5 (local 3.9σ), Wilks 9 (local 3σ)
-Wilks's threshold over this grid has FAP 3.8%
-
-    flux  Δmag  complete, empirical  complete, Wilks
-   1e-03  7.50                   2%              16%
-   2e-03  6.75                  14%              42%
-   3e-03  6.31                  47%              80%
-   4e-03  5.99                  77%              91%
-   6e-03  5.55                  94%              99%
-   8e-03  5.24                  99%             100%
+print(
+    f"rescale_errors factors: V² {factors['vis']:.2f}, "
+    f"closure phases {factors['phi']:.2f} (truth 1.5)\n"
+    f"{'threshold at FAP 1% from':<36}{'Δχ²':>6}{'true FAP':>10}"
+)
+for label, calibration, actual in [
+    ("honest errors, Gaussian null", mc, mc),
+    ("errors 1.5× too small, Gaussian null", mc, truth_mc),
+    ("errors 1.5× too small, bootstrap", boot_mc, truth_mc),
+]:
+    t = calibration.threshold("delta_chi2", 0.01)[0]
+    p = actual.false_alarm_probability("delta_chi2", t)[0]
+    print(f"{label:<36}{t:6.1f}{p:10.1%}")
 ```
 
 ## Summary
 
-We reduced thousands of simulated companion searches to three statistics each with `detection_statistics`, mapped over random keys with `jax.lax.map` in a single compilation. The null simulations showed the look-elsewhere effect directly: the best $\Delta\chi^2$ on the grid exceeds Wilks's single-position reference by a wide margin, so a threshold for a given false-alarm probability must come from simulated nulls over the same grid and observation, and `local_nsigma` should only ever be reported as a local significance. The ROC curves compare the statistics on equal terms, and the completeness at the calibrated threshold is the honest measure of what a search could have found, to set next to the [contrast limits](contrast_limits.md) of the Absil and Ruffio methods.
+A companion search reports the best of many positions, so its statistic must be calibrated against simulated companion-free searches over the same grid; Wilks's theorem, through `local_nsigma`, gives only the local significance at one position, and over a grid it overstates the significance. `injection_recovery` runs the null and injected searches in one call, and its `DetectionMC` gives thresholds, false-alarm probabilities, ROC curves, completeness maps and contrast curves, which `plot_null_distribution`, `plot_roc` and `plot_completeness` draw.
 
-This is the first stage of the plan in `design/detection_roc.md`. The next stages add Gaussian and residual-bootstrap null simulators, the Monte Carlo driver and the `DetectionMC` container (false-alarm probabilities with binomial errors, thresholds with bootstrap errors, ROC curves, completeness maps and empirical contrast curves, saved and merged across cluster jobs), and plotting functions for all of these. Nuisance parameters, such as the null scene's own parameters or an error inflation, are held fixed here; refitting them for every draw comes later.
+For a **detection**, quote the observed $\Delta\chi^2$ with its empirical false-alarm probability, its 95% interval and the number of null draws, and the global significance that FAP implies; the Wilks significance only if labelled local. For a **non-detection**, quote the contrasts at which the search is 50% and 90% complete at a stated FAP (0.135%, the one-sided 3σ, is a common choice), with Absil or Ruffio limits alongside if you like.
+
+Three caveats. The nuisance parameters, here the null scene itself, are held fixed at their values for the real data rather than refitted for every simulation. The grid must be fine enough that companions are found near their true positions, and the calibration holds only for the grid it was simulated on. And a Gaussian null is only as good as the error bars: if they may be wrong, rescale them with `rescale_errors` or calibrate with a residual bootstrap (`noise="bootstrap"`), keeping in mind that the bootstrap needs the null scene to fit the data. The design, its conventions and the remaining plans are in `design/detection_roc.md`.

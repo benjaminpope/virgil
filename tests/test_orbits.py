@@ -3,6 +3,7 @@
 import itertools
 
 import jax
+import jax.numpy as jnp
 import numpy as onp
 import pytest
 from scipy.optimize import brentq
@@ -413,10 +414,21 @@ def test_rv_semi_amplitude_matches_keplers_laws():
 def test_total_mass_and_distance_are_inverse():
     from virgil.orbits import distance_pc, total_mass
 
-    # 1 au at 1 pc is 1000 mas; a 1-year orbit then has 1 solar mass.
-    earth = _orbit(period=365.25, a_mas=1000.0)
-    assert float(total_mass(earth, 1.0)) == pytest.approx(1.0)
-    assert float(distance_pc(earth, 1.0)) == pytest.approx(1.0)
+    # 1 au at 1 pc is 1000 mas; an orbit with P = 2π sqrt(au³ / GM☉) (the
+    # Gaussian year, 365.256898 d) then has 1 solar mass.
+    gm_sun, au, day = 1.3271244e20, 149597870700.0, 86400.0
+    period = 2 * onp.pi * onp.sqrt(au**3 / gm_sun) / day
+    assert period == pytest.approx(365.256898, abs=1e-6)
+    with jax.enable_x64(True):
+        earth = _orbit(period=period, a_mas=1000.0)
+        assert float(total_mass(earth, 1.0)) == pytest.approx(1.0, abs=1e-12)
+        assert float(distance_pc(earth, 1.0)) == pytest.approx(1.0, abs=1e-12)
+        # At the same period M scales as a^3: 4 times larger a is 64 times the mass.
+        wide = _orbit(period=period, a_mas=4000.0)
+        assert float(total_mass(wide, 1.0)) == pytest.approx(64.0, rel=1e-12)
+    # The old M = a³/P² with P in Julian years was 3.8e-5 low.
+    julian = _orbit(period=365.25, a_mas=1000.0)
+    assert float(total_mass(julian, 1.0)) == pytest.approx(1.0, rel=1e-4)
     orbit = _orbit()
     assert float(
         distance_pc(orbit, total_mass(orbit, 123.0))
@@ -887,9 +899,9 @@ def test_single_instrument_tiny_prior_is_a_fixed_gamma():
         )
 
 
-def test_default_zero_point_prior_warns_and_flat_prior_is_rejected():
+def test_true_zero_point_prior_is_an_error_and_flat_prior_is_rejected():
     truth, rvs = _rv_setup(n=8)
-    with pytest.warns(UserWarning, match="effectively"):
+    with pytest.raises(ValueError, match=r"state the .*prior.*\(mean, sd\)"):
         rvs.term(lambda v: (truth, 0.5, 0.0, 50.0), marginalise_offsets=True)
     with pytest.raises(ValueError, match="finite sd"):
         rvs.term(
@@ -1348,3 +1360,84 @@ def test_plot_orbit_ensemble_draws_east_left_and_one_period_per_orbit():
         assert ellipse.width == pytest.approx(2 * s, rel=1e-5)
         assert ellipse.height == pytest.approx(2 * s, rel=1e-5)
     plt.close(fig)
+
+
+def test_thiele_innes_node_180_maps_to_the_twin_in_range():
+    # Omega = 180 is outside [0, 180): the twin (0, omega + 180) is the same
+    # sky orbit.
+    mjd = T_REF + onp.linspace(-200.0, 500.0, 15)
+    with jax.enable_x64(True):
+        orbit = KeplerOrbit(1000, 0, 0.3, 60, 270, 180, 100)
+        back = orbit.to_thiele_innes().to_kepler()
+        assert float(back.Omega) == 0.0
+        assert float(back.omega) == pytest.approx(90.0, abs=1e-9)
+        assert float(back.inc) == pytest.approx(60.0, abs=1e-9)
+        assert onp.allclose(
+            onp.array(back.relative(mjd))[:2],
+            onp.array(orbit.relative(mjd))[:2],
+            atol=1e-9,
+        )
+        for Omega in (0.0, 1e-13, 90.0, 179.99999999, 180.0, 359.0):
+            twin = (
+                KeplerOrbit(1000, 0, 0.3, 60, 30, Omega, 100)
+                .to_thiele_innes()
+                .to_kepler()
+            )
+            assert 0.0 <= float(twin.Omega) < 180.0
+            assert 0.0 <= float(twin.omega) < 360.0
+
+
+@pytest.mark.parametrize("inc", [1e-4, 1e-3, 0.01, 0.1, 179.9, 179.99])
+@pytest.mark.parametrize("ecc", [0.3, 1e-7])
+def test_state_vector_round_trip_near_face_on(inc, ecc):
+    from virgil.orbits import StateVectorOrbit
+
+    mjd = T_REF + onp.linspace(-300.0, 900.0, 13)
+    with jax.enable_x64(True):
+        orbit = KeplerOrbit(1000.0, 100.0, ecc, inc, 30.0, 60.0, 100.0)
+        back = StateVectorOrbit.from_kepler(orbit).to_kepler()
+        assert float(back.inc) == pytest.approx(inc, rel=1e-9)
+        assert float(back.Omega) == pytest.approx(60.0, abs=1e-9)
+        assert onp.allclose(
+            onp.array(back.relative(mjd)),
+            onp.array(orbit.relative(mjd)),
+            atol=1e-12 * 100.0,
+        )
+        if ecc > 1e-3:
+            assert float(back.omega) == pytest.approx(30.0, abs=1e-9)
+
+
+def test_orientation_priors_inclination_option_gives_the_haar_prior():
+    from virgil.orbits import orientation_priors
+    from virgil.priors import IsotropicInclination
+
+    # Backward compatible: no inclination unless asked for.
+    assert "inc" not in orientation_priors()
+    priors = orientation_priors(False, prefix="orbit.", inclination=True)
+    assert set(priors) == {"orbit.Omega", "orbit.varpi", "orbit.inc"}
+    assert isinstance(priors["orbit.inc"], IsotropicInclination)
+    # cos i uniform: a quarter of the mass is below i = 60 degrees.
+    inc = onp.asarray(priors["orbit.inc"].sample(jax.random.key(0), (4000,)))
+    assert onp.mean(inc < 60.0) == pytest.approx(0.25, abs=0.03)
+
+
+@pytest.mark.parametrize("a_au, period_yr", [(100.0, 1000.0), (0.01, 0.001)])
+def test_total_mass_and_distance_are_finite_in_float32(a_au, period_yr):
+    from virgil.orbits import distance_pc, total_mass
+
+    # a^3 / P^2 = 1 in au and Gaussian years: one solar mass (to 4e-5 for the
+    # Julian year used here). SI-sized intermediates would overflow float32.
+    gaussian_year = 365.256898
+    with jax.enable_x64(False):
+        f32 = jnp.float32
+        orbit = _orbit(
+            period=jnp.asarray(period_yr * gaussian_year, f32),
+            a_mas=jnp.asarray(a_au * 1000.0, f32),
+        )
+        mass = total_mass(orbit, jnp.asarray(1.0, f32))
+        assert mass.dtype == f32
+        assert onp.isfinite(float(mass))
+        assert float(mass) == pytest.approx(1.0, rel=1e-4)
+        dist = distance_pc(orbit, mass)
+        assert onp.isfinite(float(dist))
+        assert float(dist) == pytest.approx(1.0, rel=1e-4)

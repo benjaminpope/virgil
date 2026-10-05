@@ -9,7 +9,9 @@ This page collects the conventions virgil uses: which way the axes point, what s
 5. [Fluxes](#fluxes)
 6. [Times and frames](#times-and-frames)
 7. [Orbits](#orbits)
-8. [Precision](#precision)
+8. [Which priors?](#which-priors)
+9. [Priors and the MAP](#priors-and-the-map)
+10. [Precision](#precision)
 
 ## Sky coordinates and images
 
@@ -150,7 +152,7 @@ For analyses that treat nights separately, [`OIData.epochs`][virgil.oidata.OIDat
 
 ## Orbits
 
-The conventions below were decided in the orbit design note (`design/orbit_scene_joint_fitting.md`, §2.1–2.3) and are implemented by [`virgil.orbits`](api/orbits.md). The tutorial [Orbits from interferometric data](orbit_fitting.md) uses them end to end, fitting an orbit jointly to every epoch's visibilities and closure phases.
+The conventions below were fixed in the orbit design (the [design note](https://github.com/benjaminpope/virgil/blob/main/design/orbit_scene_joint_fitting.md), §2.1–2.3) and are implemented by [`virgil.orbits`](api/orbits.md). The tutorial [Orbits from interferometric data](orbit_fitting.md) uses them end to end, fitting an orbit jointly to every epoch's visibilities and closure phases.
 
 An orbit gives the position of a **secondary** star relative to a **primary** (or reference) star, which sits at the origin and is the scene's reference component at `flux=1`. It need not be the more massive star. The relative position is $\mathbf{r} = (\mathrm{dra}, \mathrm{ddec}, dz)$ of the secondary minus the primary.
 
@@ -193,6 +195,10 @@ virgil's examples use the Jeffreys prior under the group that acts on each param
 Two pitfalls follow. A `Uniform` prior over more than one period of an angle, such as (−360°, 720°), counts the circle several times. And a `Uniform` prior on a flux or a size favours large values, so the posterior depends on the upper bound. The [binary search](binary_search.md) and [hierarchical inference](hierarchical_inference.md) tutorials are the templates: they sample the companion's flux in log space, and the second infers a population of fluxes.
 
 For orbits, [`orientation_priors`][virgil.orbits.orientation_priors] gives the node and periastron as angle vectors.
+
+### Passing priors to functions
+
+Prefer numpyro distributions: `dist.LogUniform(low, high)` and `dist.Normal(mean, sd)` are accepted wherever a prior is a parameter (`fit`, `numpyro_model`, `noise=`, and `linear_flux_grid(prior=)`). The exception is the analytically marginalised Gaussians, where a plain `(mean, sd)` pair (scalars, or one per instrument or telescope) stands for $N(\text{mean}, \text{sd}^2)$: `RVData.term(marginalise_offsets=(mean, sd))` and `with_flux_scale(scale=(mean, sd))`. A marginalised prior is never defaulted, so `marginalise_offsets=True` is an error.
 
 ## Priors and the MAP
 
