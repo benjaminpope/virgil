@@ -5,6 +5,11 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
+## Unreleased
+
+### Removed
+- `examples/elr_pavo/`, the PAVO re-analysis scripts, moved to the private paper repository; the golden-fixture generator is now `scripts/make_elr_golden.py`.
+
 ## 0.3.0 (2026-10-06)
 
 Everything listed as new was added after 0.2.0.
