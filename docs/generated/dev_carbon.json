@@ -1,6 +1,6 @@
 {
  "repo": "benjaminpope/virgil",
- "generated": "2026-10-06T10:11+11:00",
+ "generated": "2026-10-06T10:18+11:00",
  "archived": {
   "copilot": {
    "n": 17,
@@ -32,43 +32,43 @@
  "first_day": "2026-03-03",
  "last_day": "2026-10-06",
  "total": {
-  "n": 3773,
+  "n": 3742,
   "kwh": [
-   191.69386052823668,
-   253.5264139015213,
-   539.7153349649689
+   151.91181316050424,
+   202.21793118676962,
+   446.87221213603027
   ],
   "kg": [
-   73.02840948424276,
-   93.90832111047948,
-   202.08547966683798
+   59.66902916821826,
+   76.45289785118388,
+   171.63590661742114
   ]
  },
  "by_source": {
   "claude": {
-   "n": 328,
+   "n": 278,
    "kwh": [
-    157.82182415084696,
-    202.77089848307514,
-    382.567195811988
+    118.59802007182799,
+    152.72957930009264,
+    289.25581621315195
    ],
    "kg": [
-    52.07843316584703,
-    66.91083911523091,
-    126.24046291276629
+    39.13526595668443,
+    50.39808170272711,
+    95.44934468689782
    ]
   },
   "slurm": {
-   "n": 771,
+   "n": 785,
    "kwh": [
-    23.48607772330207,
-    24.44013676656596,
-    57.95049667545484
+    22.919420723199664,
+    23.159554766463547,
+    58.40533497701906
    ],
    "kg": [
-    17.379697515243567,
-    18.085701207258833,
-    42.883367539836584
+    16.96037133516776,
+    17.138070527183043,
+    43.219947882994106
    ]
   },
   "copilot": {
@@ -98,85 +98,85 @@
    ]
   },
   "gha": {
-   "n": 2170,
+   "n": 2175,
    "kwh": [
-    3.2828852201250136,
-    5.234539664569431,
-    5.234539664569431
+    3.2912989315139023,
+    5.247958132902765,
+    5.247958132902765
    ],
    "kg": [
-    1.2146675314462532,
-    1.9367796758906946,
-    1.9367796758906946
+    1.2177806046601423,
+    1.941744509174028,
+    1.941744509174028
    ]
   }
  },
  "by_class": {
   "dev": {
-   "n": 3168,
+   "n": 3124,
    "kwh": [
-    168.16681281785193,
-    228.84359431413523,
-    480.6643935284478
+    129.0872832474281,
+    178.9675378117677,
+    387.58221027052906
    ],
    "kg": [
-    56.010899774195366,
-    76.12567137159914,
-    159.22211720355392
-   ]
-  },
-  "validation": {
-   "n": 605,
-   "kwh": [
-    23.527047710384853,
-    24.682819587386245,
-    59.05094143652079
-   ],
-   "kg": [
-    17.017509710047467,
-    17.782649738880288,
-    42.863362463284005
+    43.115677317801875,
+    59.66798471849874,
+    128.50716672335574
    ]
   },
   "science": {
-   "n": 504,
+   "n": 555,
    "kwh": [
-    21.972683200094618,
-    27.23518050828146,
-    45.615589899145725
+    61.46808428957732,
+    77.6193838028337,
+    139.5550020139765
    ],
    "kg": [
-    9.886460009543102,
-    11.952780393568238,
-    18.019155623498147
+    22.92260209594975,
+    28.582036176030247,
+    49.020866190181565
+   ]
+  },
+  "validation": {
+   "n": 618,
+   "kwh": [
+    22.824529913076447,
+    23.250393375002233,
+    59.290001865501004
+   ],
+   "kg": [
+    16.55335185041644,
+    16.784913132685112,
+    43.128739894065525
    ]
   }
  },
  "by_kind": {
   "Claude Code|model calls": {
-   "n": 328,
+   "n": 278,
    "kwh": [
-    157.82182415084696,
-    202.77089848307514,
-    382.567195811988
+    118.59802007182799,
+    152.72957930009264,
+    289.25581621315195
    ],
    "kg": [
-    52.07843316584703,
-    66.91083911523091,
-    126.24046291276629
+    39.13526595668443,
+    50.39808170272711,
+    95.44934468689782
    ]
   },
   "OzSTAR/NT Slurm jobs|GPU job": {
-   "n": 462,
+   "n": 476,
    "kwh": [
-    22.23740873968836,
-    23.19146778295225,
-    56.70182769184112
+    21.67075173958595,
+    21.910885782849835,
+    57.15666599340533
    ],
    "kg": [
-    16.455682467369403,
-    17.161686159384672,
-    41.95935249196243
+    16.0363562872936,
+    16.21405547930888,
+    42.29593283511995
    ]
   },
   "Copilot cloud agent and review|code review": {
@@ -206,16 +206,16 @@
    ]
   },
   "GitHub Actions CI|CI": {
-   "n": 2170,
+   "n": 2175,
    "kwh": [
-    3.2828852201250136,
-    5.234539664569431,
-    5.234539664569431
+    3.2912989315139023,
+    5.247958132902765,
+    5.247958132902765
    ],
    "kg": [
-    1.2146675314462532,
-    1.9367796758906946,
-    1.9367796758906946
+    1.2177806046601423,
+    1.941744509174028,
+    1.941744509174028
    ]
   },
   "VS Code Copilot Chat|local chat (imputed tokens)": {
@@ -260,29 +260,29 @@
  },
  "by_label": {
   "claude|Claude Opus": {
-   "n": 246,
+   "n": 198,
    "kwh": [
-    155.01013548988195,
-    199.2623316081071,
-    376.2711160810078
+    115.81693751383798,
+    149.26365758662067,
+    283.0505378777519
    ],
    "kg": [
-    51.15062523559983,
-    65.75307360029626,
-    124.16286705908206
+    38.21755750346979,
+    49.254388342925445,
+    93.40171170074805
    ]
   },
   "slurm|contest-camp": {
-   "n": 246,
+   "n": 250,
    "kwh": [
-    14.354319386447916,
-    14.354319386447916,
-    46.84696663644791
+    14.013739319131941,
+    14.013739319131941,
+    47.26423256913194
    ],
    "kg": [
-    10.622196345971464,
-    10.622196345971464,
-    34.666755310971446
+    10.370167096157642,
+    10.370167096157642,
+    34.975532101157626
    ]
   },
   "slurm|contest-img": {
@@ -312,29 +312,29 @@
    ]
   },
   "gha|automated tests": {
-   "n": 644,
+   "n": 645,
    "kwh": [
-    3.0279280677916676,
-    4.82792547056944,
-    4.82792547056944
+    3.0359946231805566,
+    4.840790282902773,
+    4.840790282902773
    ],
    "kg": [
-    1.120333385082916,
-    1.7863324241106948,
-    1.7863324241106948
+    1.1233180105768048,
+    1.7910924046740282,
+    1.7910924046740282
    ]
   },
   "claude|Claude Sonnet": {
-   "n": 81,
+   "n": 79,
    "kwh": [
-    2.799061868090999,
-    3.494371964829599,
-    6.275612351784001
+    2.7684557651159993,
+    3.451726803333599,
+    6.184810956204001
    ],
    "kg": [
-    0.9236413101214668,
-    1.1530814436224552,
-    2.070841977626408
+    0.9135418330888919,
+    1.1390092884895031,
+    2.040879110091948
    ]
   },
   "vscode_copilot|gpt-5.3-codex": {
@@ -361,19 +361,6 @@
     0.50882673101372,
     1.01765346202744,
     5.936280709483179
-   ]
-  },
-  "slurm|contest-bench": {
-   "n": 30,
-   "kwh": [
-    0.2791579762890625,
-    0.9930829762890626,
-    0.9930829762890626
-   ],
-   "kg": [
-    0.20657690245390622,
-    0.7348814024539063,
-    0.7348814024539063
    ]
   },
   "slurm|sbc-numpyro": {
@@ -481,16 +468,16 @@
    ]
   },
   "gha|Documentation": {
-   "n": 643,
+   "n": 645,
    "kwh": [
-    0.13431079911111132,
-    0.2142033546666667,
-    0.2142033546666667
+    0.13455187966666687,
+    0.21458783800000003,
+    0.21458783800000003
    ],
    "kg": [
-    0.04969499567111101,
-    0.07925524122666641,
-    0.07925524122666641
+    0.04978419547666657,
+    0.07939750005999974,
+    0.07939750005999974
    ]
   },
   "slurm|lbfgs-mwe-diag": {
@@ -546,16 +533,29 @@
    ]
   },
   "gha|lint": {
-   "n": 599,
+   "n": 601,
    "kwh": [
-    0.0692190491111111,
-    0.11039285466666643,
-    0.11039285466666643
+    0.06932512455555553,
+    0.11056202733333309,
+    0.11056202733333309
    ],
    "kg": [
-    0.025611048171111,
-    0.0408453562266666,
-    0.0408453562266666
+    0.025650296085555444,
+    0.04090795011333327,
+    0.04090795011333327
+   ]
+  },
+  "slurm|contest-bench": {
+   "n": 40,
+   "kwh": [
+    0.05308104350260417,
+    0.05308104350260417,
+    1.0306553451692708
+   ],
+   "kg": [
+    0.03927997219192708,
+    0.03927997219192708,
+    0.7626849554252606
    ]
   },
   "vscode_copilot|gpt-5.6-luna": {
@@ -769,68 +769,42 @@
  },
  "by_feature": {
   "main / unattributed": {
-   "n": 465,
+   "n": 451,
    "kwh": [
-    93.00307294421488,
-    123.97081291699813,
-    265.1185703730464
+    67.49093561961088,
+    91.33703241272775,
+    203.99821715011018
    ],
    "kg": [
-    30.693234536083335,
-    40.91855671253781,
-    87.49484039658651
+    22.27467680032059,
+    30.149981668592886,
+    67.32619611991643
    ]
   },
   "Validation: imaging contests": {
-   "n": 458,
+   "n": 472,
    "kwh": [
-    21.897740555214835,
-    22.833086030770396,
-    56.34344593965925
+    21.33108355511242,
+    21.552504030667976,
+    56.79828424122348
    ],
    "kg": [
-    16.204328010858994,
-    16.896483662770095,
-    41.69414999534785
+    15.785001830783187,
+    15.948852982694298,
+    42.03073033850537
    ]
   },
   "#201 virgil docs minor changes": {
-   "n": 33,
+   "n": 29,
    "kwh": [
-    13.495840530368561,
-    17.501992395537968,
-    33.47550564436611
+    9.68284432076056,
+    12.419330196125179,
+    23.3141794857341
    ],
    "kg": [
-    4.454262162743149,
-    5.776740110916139,
-    11.047719245954884
-   ]
-  },
-  "#91 Imaging Stage 5c: error-bar scale, sampling basics, and imaging tutorials 2\u20134": {
-   "n": 22,
-   "kwh": [
-    6.02610987095553,
-    7.532569404662676,
-    13.504187476665912
-   ],
-   "kg": [
-    1.9894393150567486,
-    2.48709612888785,
-    4.457625327419584
-   ]
-  },
-  "#110 Imaging Stage 5d: a Gauss\u2013Newton NUTS mass matrix, and the sampling tutorial; plan PMOIRED parity": {
-   "n": 16,
-   "kwh": [
-    4.235698104298373,
-    5.328909979343934,
-    9.66971169632994
-   ],
-   "kg": [
-    1.3982596596591044,
-    1.7593292717808646,
-    3.1917176839701598
+    3.196040308242854,
+    4.099550754622184,
+    7.694659882486297
    ]
   },
   "#76 Imaging Stage 3: Problem, fit, regularisers, L-curves and diagnose": {
@@ -846,17 +820,30 @@
     2.846101878848341
    ]
   },
-  "#120 Stage 6.0: independent, whitened closure phases; INSNAME selection; PHITYP check; no diagonal truncation": {
-   "n": 10,
+  "#110 Imaging Stage 5d: a Gauss\u2013Newton NUTS mass matrix, and the sampling tutorial; plan PMOIRED parity": {
+   "n": 13,
    "kwh": [
-    1.8393690711248163,
-    2.415355645715213,
-    4.693479280924922
+    3.246352647646372,
+    4.061488584148735,
+    7.289986546961943
    ],
    "kg": [
-    0.6074217803063215,
-    0.7977619119753995,
-    1.549502744513283
+    1.0717930159017803,
+    1.3411024468295223,
+    2.4064501342427436
+   ]
+  },
+  "#91 Imaging Stage 5c: error-bar scale, sampling basics, and imaging tutorials 2\u20134": {
+   "n": 16,
+   "kwh": [
+    2.9579633194815296,
+    3.871207673784278,
+    7.469965028169913
+   ],
+   "kg": [
+    0.9770047802028112,
+    1.2789109921143096,
+    2.466437782967632
    ]
   },
   "#226 fit: optimise in each prior's flat coordinate (LM with Jeffreys priors)": {
@@ -885,19 +872,6 @@
     1.247031789812035
    ]
   },
-  "#104 Compile fit's solvers once, not on every call": {
-   "n": 13,
-   "kwh": [
-    1.370022060278065,
-    1.7329076034998552,
-    3.1572692162708873
-   ],
-   "kg": [
-    0.4525495731130382,
-    0.572572382099764,
-    1.0425867255139802
-   ]
-  },
   "#83 SPARCO spectra: BlackBody temperatures": {
    "n": 17,
    "kwh": [
@@ -909,6 +883,19 @@
     0.4071919975447675,
     0.5353928822810776,
     1.020343673675955
+   ]
+  },
+  "#120 Stage 6.0: independent, whitened closure phases; INSNAME selection; PHITYP check; no diagonal truncation": {
+   "n": 9,
+   "kwh": [
+    1.0832616411008162,
+    1.5215448722128135,
+    3.2488551335089197
+   ],
+   "kg": [
+    0.35791959344103336,
+    0.5028200376103705,
+    1.0728021201492914
    ]
   },
   "#118 Merge imaging into main: image reconstruction (milestone 1 and Stage 5)": {
@@ -950,19 +937,6 @@
     1.0166260411058248
    ]
   },
-  "#78 Imaging Stage 4b: a scene rotating between epochs (known and unknown angle)": {
-   "n": 10,
-   "kwh": [
-    1.1534841590726403,
-    1.3921639566353583,
-    2.328398297154234
-   ],
-   "kg": [
-    0.38095041017350706,
-    0.4599014227366688,
-    0.7688423299440289
-   ]
-  },
   "#244 CI: fix the py3.11 lowest job (orbit doctests, clean hang)": {
    "n": 19,
    "kwh": [
@@ -989,30 +963,30 @@
     0.972283218764709
    ]
   },
-  "#88 Imaging Stage 5b: regularisation from the evidence (GP evidence, classic MaxEnt)": {
+  "#78 Imaging Stage 4b: a scene rotating between epochs (known and unknown angle)": {
    "n": 9,
    "kwh": [
-    0.9648195513154375,
-    1.262660351807726,
-    2.4313703557653055
+    1.0239554309906402,
+    1.2501426762881584,
+    2.136406807746234
    ],
    "kg": [
-    0.31876694835585584,
-    0.41728320844810274,
-    0.8029370060698237
+    0.33820820234027305,
+    0.41303689182350245,
+    0.7054885067111328
    ]
   },
-  "#180 Stage 6d: calibration gains correlated across channels": {
-   "n": 15,
+  "#104 Compile fit's solvers once, not on every call": {
+   "n": 11,
    "kwh": [
-    0.9528760411459084,
-    1.2112011782897145,
-    2.195092529515658
+    0.959330611640065,
+    1.2090166783430552,
+    2.180580385038887
    ],
    "kg": [
-    0.31527845796920656,
-    0.4010244987901679,
-    0.7256913834429534
+    0.3170286001756322,
+    0.3996975678668825,
+    0.7202965460991964
    ]
   },
   "#231 Review: adversarial pre-0.3.0 codebase review": {
@@ -1039,19 +1013,6 @@
     0.29606195270289704,
     0.37084908295408753,
     0.6597133413024312
-   ]
-  },
-  "#217 virgil._linear: shared analytic marginalisation; stated OI_FLUX scale prior": {
-   "n": 12,
-   "kwh": [
-    0.7614224409752742,
-    1.092008451965834,
-    2.3633535926274036
-   ],
-   "kg": [
-    0.2521324271570492,
-    0.3617408979995063,
-    0.7812624901171108
    ]
   },
   "#245 detection: x64 grid-refinement stability of the Bayes factor": {
@@ -1119,32 +1080,6 @@
     0.5928246701592992
    ]
   },
-  "#133 Docs: point to virgil-validation for independent checks": {
-   "n": 12,
-   "kwh": [
-    0.7393599443038101,
-    0.8941781582136906,
-    1.495807131910697
-   ],
-   "kg": [
-    0.24427857021823474,
-    0.2955456968719939,
-    0.4940727032977305
-   ]
-  },
-  "#85 Image reconstruction, milestone 1: MAP imaging for AMI and long-baseline data (Stages 0\u20134)": {
-   "n": 20,
-   "kwh": [
-    0.6471074644571169,
-    0.8839075746403668,
-    1.7808587553342683
-   ],
-   "kg": [
-    0.21441916772779077,
-    0.2930855113366958,
-    0.5890636649800569
-   ]
-  },
   "#101 ELR stage 4: GravityDarkenedStar MWE notebook and tutorial section": {
    "n": 18,
    "kwh": [
@@ -1184,6 +1119,19 @@
     0.288244347198047
    ]
   },
+  "#85 Image reconstruction, milestone 1: MAP imaging for AMI and long-baseline data (Stages 0\u20134)": {
+   "n": 19,
+   "kwh": [
+    0.6268241860271169,
+    0.8627069225923667,
+    1.7559886088142682
+   ],
+   "kg": [
+    0.20772604169288075,
+    0.2860896681021198,
+    0.5808569529468169
+   ]
+  },
   "#72 Imaging Stage 2b: exact MFT on uv lattices, AMI-like simulated record": {
    "n": 22,
    "kwh": [
@@ -1197,6 +1145,19 @@
     0.5555873190140624
    ]
   },
+  "#253 Development carbon page, ledger and README badge": {
+   "n": 7,
+   "kwh": [
+    0.6392710203478889,
+    0.848677872379733,
+    1.6662862527293334
+   ],
+   "kg": [
+    0.21128491749827188,
+    0.28058578294489,
+    0.5503822044535854
+   ]
+  },
   "#235 limits: first-crossing bracketing (B1), extras in injection (B2), float32 \u03c3 guard (S2), one bisection helper (S5)": {
    "n": 16,
    "kwh": [
@@ -1208,6 +1169,19 @@
     0.18278804234980278,
     0.27718515087724743,
     0.5460200776008809
+   ]
+  },
+  "#88 Imaging Stage 5b: regularisation from the evidence (GP evidence, classic MaxEnt)": {
+   "n": 8,
+   "kwh": [
+    0.5759208820114375,
+    0.8245369305693262,
+    1.7963479267893048
+   ],
+   "kg": [
+    0.19043721026920793,
+    0.27271016581524193,
+    0.5933907452521117
    ]
   },
   "#77 Imaging Stage 4: long-baseline and SAM imaging, rotating epochs, SPARCO spectra, FlaredDisk": {
@@ -1275,17 +1249,17 @@
     0.4994238290793039
    ]
   },
-  "#205 Jeffreys priors for fitted widths and error scales": {
-   "n": 15,
+  "#133 Docs: point to virgil-validation for independent checks": {
+   "n": 11,
    "kwh": [
-    0.49536455766780363,
-    0.7240248103885881,
-    1.5924159575191525
+    0.6034991470978102,
+    0.7423339459320907,
+    1.280029259326697
    ],
    "kg": [
-    0.16425116087169092,
-    0.24017468191570093,
-    0.5267285255363815
+    0.19944689066301274,
+    0.24543977075261475,
+    0.4228697909217225
    ]
   },
   "#71 Imaging Stage 2: optional NUFFT backend, FT benchmark and OzSTAR GPU job": {
@@ -1327,32 +1301,6 @@
     0.4741809382956426
    ]
   },
-  "#87 Imaging Stage 5a: Gaussian-process log-brightness (GaussianField)": {
-   "n": 9,
-   "kwh": [
-    0.5160057432399212,
-    0.7023366082756952,
-    1.413453494944381
-   ],
-   "kg": [
-    0.17086095119281305,
-    0.2326966943909044,
-    0.46735279125671686
-   ]
-  },
-  "#95 Add imaging.convolve_beam and plot_model(convolve=True); add the contributors page": {
-   "n": 14,
-   "kwh": [
-    0.5168327362721042,
-    0.6974952167525306,
-    1.3485539191011895
-   ],
-   "kg": [
-    0.17176210919761076,
-    0.23210010056010016,
-    0.4469380502526602
-   ]
-  },
   "#213 Priors: isotropic-orientation helpers and Jeffreys-consistent recommendations": {
    "n": 19,
    "kwh": [
@@ -1366,17 +1314,17 @@
     0.5133655436380112
    ]
   },
-  "#253 Development carbon page, ledger and README badge": {
-   "n": 2,
+  "#87 Imaging Stage 5a: Gaussian-process log-brightness (GaussianField)": {
+   "n": 8,
    "kwh": [
-    0.49443734682600005,
-    0.6560277058176,
-    1.302389141784
+    0.4773150257139212,
+    0.6610317686740952,
+    1.3616921670403812
    ],
    "kg": [
-    0.163155650113162,
-    0.21647763366181114,
-    0.42976556785640796
+    0.15809369319375105,
+    0.2190668219686852,
+    0.45027246114186886
    ]
   },
   "#117 Address Copilot's review of the ELR merge (#116)": {
@@ -1444,19 +1392,6 @@
     0.4198561580272515
    ]
   },
-  "#232 DifferentialPhase: cache the projection's Cholesky factor (review S3)": {
-   "n": 12,
-   "kwh": [
-    0.3849553804154376,
-    0.5844534146980863,
-    1.3497041933667449
-   ],
-   "kg": [
-    0.12758981067416414,
-    0.1937545353378357,
-    0.44627386684623577
-   ]
-  },
   "#108 Size the grid tools' default batch by data size": {
    "n": 5,
    "kwh": [
@@ -1468,19 +1403,6 @@
     0.1550286832006565,
     0.1930452755455344,
     0.33955507279890473
-   ]
-  },
-  "#189 Stage 6d: closure-phase offsets per frame (phi_offset_<group>)": {
-   "n": 12,
-   "kwh": [
-    0.4227451643499734,
-    0.5820772726483183,
-    1.1874458312444738
-   ],
-   "kg": [
-    0.14005321612673555,
-    0.19295998761462957,
-    0.39272099145033285
    ]
   },
   "NUTS mass matrix": {
@@ -1704,32 +1626,6 @@
     0.2748689266737886
    ]
   },
-  "#80 Add FlaredDisk components (Blakely et al. 2024 scattered-light disk)": {
-   "n": 14,
-   "kwh": [
-    0.20957861775113662,
-    0.3529476910977082,
-    0.8913577376676329
-   ],
-   "kg": [
-    0.06977316035690868,
-    0.11744879325882092,
-    0.29511466283660537
-   ]
-  },
-  "#187 Stage 6d: wavelength-scale nuisance (wavel_scale, wavel_offset)": {
-   "n": 12,
-   "kwh": [
-    0.2289972901579145,
-    0.3470387687340504,
-    0.7710683375437352
-   ],
-   "kg": [
-    0.07639758493195088,
-    0.11584416673135996,
-    0.2557664853233136
-   ]
-  },
   "#206 Concrete parameter checks: NumPy only, so components build under jit": {
    "n": 13,
    "kwh": [
@@ -1897,19 +1793,6 @@
     0.06050612493010452,
     0.08509177517652294,
     0.174317992498156
-   ]
-  },
-  "#96 Commit the composite tutorial's regenerated dirty-image PNG (fixes the docs build on imaging)": {
-   "n": 4,
-   "kwh": [
-    0.1887448011916667,
-    0.25435294252788887,
-    0.5002491189838889
-   ],
-   "kg": [
-    0.06256097713996667,
-    0.08437594917780687,
-    0.16551737344027892
    ]
   },
   "#82 Stack PR #80 (FlaredDisk) on the imaging stages": {
@@ -2315,19 +2198,6 @@
     0.11484166192045683
    ]
   },
-  "#79 Imaging Stage 4c: SPARCO imaging of real PIONIER data": {
-   "n": 9,
-   "kwh": [
-    0.08903680859505858,
-    0.13783611030674353,
-    0.31578284943177415
-   ],
-   "kg": [
-    0.02967984873900509,
-    0.04596077438372875,
-    0.1046800764223726
-   ]
-  },
   "#65 Code review fixes: OIFITS I/O, likelihood and fitting bugs, docs and CI": {
    "n": 12,
    "kwh": [
@@ -2339,19 +2209,6 @@
     0.013561703610877513,
     0.04531614709177932,
     0.1646715180471173
-   ]
-  },
-  "#223 AGENTS: merge main before pushing a branch that predates a tooling fix": {
-   "n": 9,
-   "kwh": [
-    0.08918131789807833,
-    0.1354772530918647,
-    0.3064800113946588
-   ],
-   "kg": [
-    0.0296702284106191,
-    0.04509099957906811,
-    0.10151890977059888
    ]
   },
   "#230 CLEAN: final major cycle, base_priors; fit: L-BFGS memory 50": {
@@ -2367,17 +2224,17 @@
     0.11017680198684027
    ]
   },
-  "#200 Stage 6d MWE: calibration gains correlated across channels": {
-   "n": 15,
+  "#80 Add FlaredDisk components (Blakely et al. 2024 scattered-light disk)": {
+   "n": 13,
    "kwh": [
-    0.09197980510480083,
-    0.13101357194903876,
-    0.23936119299815503
+    0.04199040040313662,
+    0.12939160042890824,
+    0.44393015371563294
    ],
    "kg": [
-    0.03116135025155758,
-    0.04452306615927577,
-    0.08027588027002715
+    0.014471988776232689,
+    0.04367920537479534,
+    0.14747140973918138
    ]
   },
   "#64 Composable source models, explicit flux parameters, and fewer recompiles": {
@@ -2391,6 +2248,19 @@
     0.012058866696726778,
     0.04357919113964689,
     0.16625922423858758
+   ]
+  },
+  "#79 Imaging Stage 4c: SPARCO imaging of real PIONIER data": {
+   "n": 8,
+   "kwh": [
+    0.08303744128905859,
+    0.1299124520251435,
+    0.30016202724777413
+   ],
+   "kg": [
+    0.027700162780083092,
+    0.04334610616234955,
+    0.09952547915116461
    ]
   },
   "#186 Injection-method detection limits (CANDID parity)": {
@@ -2417,6 +2287,19 @@
     0.028252785037846156,
     0.04274536499653304,
     0.09027839641726923
+   ]
+  },
+  "#187 Stage 6d: wavelength-scale nuisance (wavel_scale, wavel_offset)": {
+   "n": 11,
+   "kwh": [
+    0.04372671281591448,
+    0.12352723546685046,
+    0.3945929805757351
+   ],
+   "kg": [
+    0.01526154477009687,
+    0.042089282008153574,
+    0.13153622235469764
    ]
   },
   "#112 Harmonix tutorial: install harmonix>=0.1.0 or from upstream GitHub": {
@@ -2497,6 +2380,19 @@
     0.13503351929695973
    ]
   },
+  "#217 virgil._linear: shared analytic marginalisation; stated OI_FLUX scale prior": {
+   "n": 11,
+   "kwh": [
+    0.04017375140127408,
+    0.10694483444743424,
+    0.32303026333140367
+   ],
+   "kg": [
+    0.014133013083411212,
+    0.036687186036285555,
+    0.1079915865955589
+   ]
+  },
   "#141 Tests: validates markers as evidence for virgil-validation": {
    "n": 11,
    "kwh": [
@@ -2523,19 +2419,6 @@
     0.10264804693825305
    ]
   },
-  "#222 Gains MWE: outputs from the log-uniform-prior run": {
-   "n": 9,
-   "kwh": [
-    0.05509244312950307,
-    0.09945115839859019,
-    0.26259908263916076
-   ],
-   "kg": [
-    0.01842805805458364,
-    0.033213482900521916,
-    0.08704943565562528
-   ]
-  },
   "#211 Angle vectors: AngleVector prior for fit and numpyro, orbit (2\u03a9, \u03d6) helpers": {
    "n": 20,
    "kwh": [
@@ -2547,6 +2430,19 @@
     0.014248884395545947,
     0.0331495966290326,
     0.08567857810613042
+   ]
+  },
+  "#180 Stage 6d: calibration gains correlated across channels": {
+   "n": 14,
+   "kwh": [
+    0.036497131057908125,
+    0.0942401565809145,
+    0.27580306132365806
+   ],
+   "kg": [
+    0.012889494463150578,
+    0.032446957433662355,
+    0.09235953068464942
    ]
   },
   "#229 Orbits: GM\u2609 in total_mass, \u03a9 range, face-on inclination (F14\u2013F16); full orientation prior": {
@@ -2588,6 +2484,19 @@
     0.09376432264738417
    ]
   },
+  "#95 Add imaging.convolve_beam and plot_model(convolve=True); add the contributors page": {
+   "n": 13,
+   "kwh": [
+    0.04120893917810432,
+    0.09107204420213072,
+    0.21893324472518955
+   ],
+   "kg": [
+    0.014814600433732802,
+    0.0319910926214954,
+    0.07418304561514827
+   ]
+  },
   "#30 Clarify laplace_contrast_uncertainty: use explicit scalar second derivative and improve docs": {
    "n": 4,
    "kwh": [
@@ -2599,6 +2508,19 @@
     0.015939176029105113,
     0.031028748071822466,
     0.08645398841514493
+   ]
+  },
+  "#189 Stage 6d: closure-phase offsets per frame (phi_offset_<group>)": {
+   "n": 11,
+   "kwh": [
+    0.031379085087973435,
+    0.09115283994911844,
+    0.2982879847964737
+   ],
+   "kg": [
+    0.010909276041841581,
+    0.03096353753323921,
+    0.09931450138295683
    ]
   },
   "#116 Gravity-darkened rapid rotators: port Shashank Dholakia's ELR model (GravityDarkenedStar)": {
@@ -2666,19 +2588,6 @@
     0.07704057598997799
    ]
   },
-  "#193 Stage 6d: results of the gains study": {
-   "n": 9,
-   "kwh": [
-    0.05291509361061428,
-    0.08300160439797685,
-    0.18880016758870743
-   ],
-   "kg": [
-    0.017710342708601157,
-    0.027786649555278594,
-    0.06269831929307598
-   ]
-  },
   "#126 Rename drpangloss \u2192 virgil (import virgil; PyPI virgil-astro; v0.2.0)": {
    "n": 14,
    "kwh": [
@@ -2703,6 +2612,19 @@
     0.008801509558141424,
     0.027403193876360192,
     0.09475241777544077
+   ]
+  },
+  "#205 Jeffreys priors for fitted widths and error scales": {
+   "n": 14,
+   "kwh": [
+    0.03162426010980363,
+    0.07834855619178824,
+    0.21899587676715293
+   ],
+   "kg": [
+    0.01122499847224497,
+    0.027112845684339377,
+    0.07352399397735751
    ]
   },
   "#158 Visibility-only data: read and fit V\u00b2 without phases": {
@@ -2900,6 +2822,19 @@
     0.032780479847056225
    ]
   },
+  "#232 DifferentialPhase: cache the projection's Cholesky factor (review S3)": {
+   "n": 11,
+   "kwh": [
+    0.024839000761437652,
+    0.06498964050768628,
+    0.1928508410307451
+   ],
+   "kg": [
+    0.008757723219566135,
+    0.022340603254550957,
+    0.06453255624820382
+   ]
+  },
   "#160 Visibility-only data: fixes from the review of #158": {
    "n": 11,
    "kwh": [
@@ -3082,6 +3017,19 @@
     0.06528190997739984
    ]
   },
+  "#200 Stage 6d MWE: calibration gains correlated across channels": {
+   "n": 13,
+   "kwh": [
+    0.025664886764800846,
+    0.053672995637038756,
+    0.11791798479815506
+   ],
+   "kg": [
+    0.009278590618977588,
+    0.019002032828531787,
+    0.04020175214662716
+   ]
+  },
   "#165 Sparse imaging S1: plan, StarletL1, LogSum, Laplacian": {
    "n": 8,
    "kwh": [
@@ -3251,6 +3199,19 @@
     0.03829296942289969
    ]
   },
+  "#222 Gains MWE: outputs from the log-uniform-prior run": {
+   "n": 8,
+   "kwh": [
+    0.014590258991503069,
+    0.042935100801790194,
+    0.14202753120716077
+   ],
+   "kg": [
+    0.0050630478536776435,
+    0.014564175403360323,
+    0.04726293897344129
+   ]
+  },
   "#168 OIData: evaluate time-dependent models with lax.map (JAX 0.11 vmap failure)": {
    "n": 8,
    "kwh": [
@@ -3381,6 +3342,19 @@
     0.02817509548955855
    ]
   },
+  "#193 Stage 6d: results of the gains study": {
+   "n": 8,
+   "kwh": [
+    0.010933147862614265,
+    0.02847492340917686,
+    0.08409454563670744
+   ],
+   "kg": [
+    0.0038570371371251565,
+    0.009793801437412996,
+    0.028147300989651985
+   ]
+  },
   "#142 fit: choose LM for expanded and to_event uniform priors": {
    "n": 8,
    "kwh": [
@@ -3431,6 +3405,19 @@
     0.004670829139865003,
     0.009102880287654005,
     0.021819287676641347
+   ]
+  },
+  "#223 AGENTS: merge main before pushing a branch that predates a tooling fix": {
+   "n": 8,
+   "kwh": [
+    0.009560503896078347,
+    0.023494472056664707,
+    0.06504936222665882
+   ],
+   "kg": [
+    0.003396756646345104,
+    0.008138646447645725,
+    0.021851031170582902
    ]
   },
   "#53 Stabilize tutorial-doc sync by removing machine-specific notebook paths": {
@@ -3524,6 +3511,19 @@
     0.01713155831510765
    ]
   },
+  "#96 Commit the composite tutorial's regenerated dirty-image PNG (fixes the docs build on imaging)": {
+   "n": 3,
+   "kwh": [
+    0.0069595490416666655,
+    0.011093646263888889,
+    0.011093646263888889
+   ],
+   "kg": [
+    0.0025750331454166666,
+    0.004104649117638889,
+    0.004104649117638889
+   ]
+  },
   "#175 Docs: collapsible nav sections, short site title": {
    "n": 4,
    "kwh": [
@@ -3605,29 +3605,29 @@
  },
  "science": {
   "Claude Code|excluded": {
-   "n": 25,
+   "n": 75,
    "kwh": [
-    15.123594630914997,
-    19.18713985704,
-    35.44132076154
+    54.610818927231,
+    69.5631663584256,
+    129.372556083204
    ],
    "kg": [
-    4.990520901980356,
-    6.331419536334479,
-    11.695014073750981
+    18.020612161443644,
+    22.954624491853096,
+    42.690673813490946
    ]
   },
   "OzSTAR/NT Slurm jobs|excluded": {
-   "n": 356,
+   "n": 357,
    "kwh": [
-    6.413666030904944,
-    7.209090556460496,
-    7.21192603090494
+    6.42184282407161,
+    7.217267349627162,
+    7.220102824071606
    ],
    "kg": [
-    4.746112862869664,
-    5.334727011780771,
-    5.3368252628696595
+    4.752163689812997,
+    5.3407778387241045,
+    5.342876089812993
    ]
   },
   "Copilot cloud agent and review|excluded": {
@@ -3672,20 +3672,20 @@
  },
  "claude_token_types": {
   "input": {
-   "tokens": 38246,
-   "kg": 0.0032289237257199996
+   "tokens": 31604,
+   "kg": 0.0026359609723999996
   },
   "cache_write": {
-   "tokens": 85253901,
-   "kg": 7.2390374935318995
+   "tokens": 63763507,
+   "kg": 5.317297540797759
   },
   "cache_read": {
-   "tokens": 5608252806,
-   "kg": 39.55308253169029
+   "tokens": 4277775367,
+   "kg": 30.034175322780467
   },
   "output": {
-   "tokens": 10671375,
-   "kg": 20.115490166282978
+   "tokens": 8001134,
+   "kg": 15.043972878176477
   }
  },
  "copilot_check": [
@@ -3825,23 +3825,13 @@
   "#101 ELR stage 4: GravityDarkenedStar MWE notebook and tutorial section": 101,
   "#121 Design: spectro-interferometry, orbits and GRAVITY calibration notes; the plan through Stage 6": 121,
   "#102 Cap L-BFGS steps so image fits don't stall with dark pixels": 102,
-  "#223 AGENTS: merge main before pushing a branch that predates a tooling fix": 223,
-  "#217 virgil._linear: shared analytic marginalisation; stated OI_FLUX scale prior": 217,
-  "#222 Gains MWE: outputs from the log-uniform-prior run": 222,
-  "#205 Jeffreys priors for fitted widths and error scales": 205,
-  "#200 Stage 6d MWE: calibration gains correlated across channels": 200,
-  "#180 Stage 6d: calibration gains correlated across channels": 180,
-  "#189 Stage 6d: closure-phase offsets per frame (phi_offset_<group>)": 189,
-  "#193 Stage 6d: results of the gains study": 193,
-  "#187 Stage 6d: wavelength-scale nuisance (wavel_scale, wavel_offset)": 187,
-  "#232 DifferentialPhase: cache the projection's Cholesky factor (review S3)": 232,
   "#104 Compile fit's solvers once, not on every call": 104,
   "#110 Imaging Stage 5d: a Gauss\u2013Newton NUTS mass matrix, and the sampling tutorial; plan PMOIRED parity": 110,
-  "#133 Docs: point to virgil-validation for independent checks": 133,
   "#148 GravityDarkenedStar: rasterise facets for images instead of splatting barycentres": 148,
   "#149 Limb-darkened disks: Quirrenbach (1996) visibilities with Kipping (2013) q\u2081, q\u2082": 149,
   "#144 fit: report convergence when started at an exact optimum": 144,
   "#135 Fix laplace_cov and siblings with array-valued parameter paths": 135,
+  "#133 Docs: point to virgil-validation for independent checks": 133,
   "#155 OIData: clear error when every closure phase is flagged": 155,
   "#163 reference_flux: return the documented scalar for Tabulated": 163,
   "#176 CI speed: no macOS or slow tests on PRs, vectorise closure test": 176,
@@ -3850,32 +3840,29 @@
   "#118 Merge imaging into main: image reconstruction (milestone 1 and Stage 5)": 118,
   "#103 Use jaxbessel for Bessel functions and drop drpangloss's copy": 103,
   "#84 Make bessel.py dtype-consistent across jax.enable_x64 modes": 84,
-  "#80 Add FlaredDisk components (Blakely et al. 2024 scattered-light disk)": 80,
-  "#78 Imaging Stage 4b: a scene rotating between epochs (known and unknown angle)": 78,
-  "#79 Imaging Stage 4c: SPARCO imaging of real PIONIER data": 79,
-  "#96 Commit the composite tutorial's regenerated dirty-image PNG (fixes the docs build on imaging)": 96,
-  "#95 Add imaging.convolve_beam and plot_model(convolve=True); add the contributors page": 95,
   "#100 Regression test for Bessel float32-after-float64 calls; keep dev JAX current": 100,
   "#150 read_oifits: check AMPTYP before reading VISAMP as an amplitude": 150,
   "#134 Address virgil-validation findings: rim azimuth docs, GaussianArc span, uv_grid docs": 134,
-  "#87 Imaging Stage 5a: Gaussian-process log-brightness (GaussianField)": 87,
-  "#88 Imaging Stage 5b: regularisation from the evidence (GP evidence, classic MaxEnt)": 88,
   "#73 Imaging MWEs: five-cell notebooks for Stages 0\u20132b": 73,
   "#72 Imaging Stage 2b: exact MFT on uv lattices, AMI-like simulated record": 72,
   "#76 Imaging Stage 3: Problem, fit, regularisers, L-curves and diagnose": 76,
+  "#78 Imaging Stage 4b: a scene rotating between epochs (known and unknown angle)": 78,
   "#253 Development carbon page, ledger and README badge": 253,
   "#122 Add Claude Code transcript export script (docs/misc)": 122,
   "#85 Image reconstruction, milestone 1: MAP imaging for AMI and long-baseline data (Stages 0\u20134)": 85,
-  "#120 Stage 6.0: independent, whitened closure phases; INSNAME selection; PHITYP check; no diagonal truncation": 120,
   "#69 Imaging Stage 0: one likelihood through whitened_residuals": 69,
   "#70 Imaging Stage 1: Image component with an exact DFT, scenes, AMI simulation MWE": 70,
   "#71 Imaging Stage 2: optional NUFFT backend, FT benchmark and OzSTAR GPU job": 71,
   "#77 Imaging Stage 4: long-baseline and SAM imaging, rotating epochs, SPARCO spectra, FlaredDisk": 77,
+  "#79 Imaging Stage 4c: SPARCO imaging of real PIONIER data": 79,
   "#81 Imaging Stage 4d: a binary star alongside the PIONIER image": 81,
   "#82 Stack PR #80 (FlaredDisk) on the imaging stages": 82,
   "#83 SPARCO spectra: BlackBody temperatures": 83,
   "#86 Imaging Stage 4 MWE-B: noise and coverage stress test": 86,
+  "#87 Imaging Stage 5a: Gaussian-process log-brightness (GaussianField)": 87,
+  "#88 Imaging Stage 5b: regularisation from the evidence (GP evidence, classic MaxEnt)": 88,
   "#119 Follow-up to #118: Copilot review fixes": 119,
+  "#120 Stage 6.0: independent, whitened closure phases; INSNAME selection; PHITYP check; no diagonal truncation": 120,
   "#123 Follow-up to #120: keep reported closure-phase variances; 2\u03c0 invariance; reader fixes": 123,
   "#191 absil_limits: find the limit from any starting flux (single-value axis)": 191,
   "#182 TruncatedCone: honest n_rings accuracy guidance and a convergence test": 182,
@@ -3943,7 +3930,10 @@
   "#66 Restructure the package: one job per module, one flux convention, one grid-plot function": 66,
   "#67 Bessel derivatives via custom JVP rules": 67,
   "#68 Chromatic fluxes, Resolved background, multi-file OIData, likelihood options": 68,
+  "#80 Add FlaredDisk components (Blakely et al. 2024 scattered-light disk)": 80,
   "#90 Merge main into imaging: bessel.py dtype fix for JAX >= 0.10": 90,
+  "#95 Add imaging.convolve_beam and plot_model(convolve=True); add the contributors page": 95,
+  "#96 Commit the composite tutorial's regenerated dirty-image PNG (fixes the docs build on imaging)": 96,
   "#107 Jit the model-level Laplace and Fisher curvatures once": 107,
   "#109 Speed up the test suite and CI": 109,
   "#116 Gravity-darkened rapid rotators: port Shashank Dholakia's ELR model (GravityDarkenedStar)": 116,
@@ -3983,19 +3973,29 @@
   "#177 Sparse imaging: status and next steps in the design note": 177,
   "#178 CLEAN: major cycles, stall detection; l_curve(warm_start=False)": 178,
   "#179 numpyro_model: likelihoods= terms (Stage 6a.1)": 179,
+  "#180 Stage 6d: calibration gains correlated across channels": 180,
   "#181 Stage 6a: line and node spectra, Sum, total_spectrum, OIData.select": 181,
   "#183 Plan: feature suggestions from virgil-validation": 183,
+  "#187 Stage 6d: wavelength-scale nuisance (wavel_scale, wavel_offset)": 187,
+  "#189 Stage 6d: closure-phase offsets per frame (phi_offset_<group>)": 189,
+  "#193 Stage 6d: results of the gains study": 193,
   "#197 Orbit prior art: compare with orbitize!, Octofitter and orvara; add credit": 197,
   "#199 Sparse imaging design note: known-companion CLEAN test": 199,
+  "#200 Stage 6d MWE: calibration gains correlated across channels": 200,
   "#198 Stage 6a: OI_FLUX, T3AMP and VISPHI observables, error floors": 198,
   "#202 Add quotes to README for thematic context": 202,
   "#204 Design: Jeffreys-prior rule and Thiele\u2013Innes decisions": 204,
+  "#205 Jeffreys priors for fitted widths and error scales": 205,
   "#211 Angle vectors: AngleVector prior for fit and numpyro, orbit (2\u03a9, \u03d6) helpers": 211,
   "#212 North-angle and plate-scale nuisances per dataset (prior art \u00a74.3)": 212,
+  "#217 virgil._linear: shared analytic marginalisation; stated OI_FLUX scale prior": 217,
   "#218 KeplerOrbit.from_position_angle: the position angle at t_ref, with its prior Jacobian": 218,
+  "#222 Gains MWE: outputs from the log-uniform-prior run": 222,
+  "#223 AGENTS: merge main before pushing a branch that predates a tooling fix": 223,
   "#228 Fix inclination test convergence in lowest-dependency CI": 228,
   "#229 Orbits: GM\u2609 in total_mass, \u03a9 range, face-on inclination (F14\u2013F16); full orientation prior": 229,
   "#230 CLEAN: final major cycle, base_priors; fit: L-BFGS memory 50": 230,
+  "#232 DifferentialPhase: cache the projection's Cholesky factor (review S3)": 232,
   "#240 clean base fit: Copilot's three findings from #230": 240,
   "#241 Release 0.3.0: executed notebooks (OzSTAR job 18077914) and notebook text fixes": 241,
   "#243 GravityDarkenedStar: n_lat accuracy guidance": 243,
@@ -4016,7 +4016,7 @@
   "#45 swapping ruff hard-pin for soft-requirement": 45
  },
  "badge": {
-  "text": "dev carbon | 93.9 kg CO2e",
-  "url": "https://img.shields.io/badge/dev%20carbon-93.9%20kg%20CO%E2%82%82e-2e7d32"
+  "text": "dev carbon | 76.5 kg CO2e",
+  "url": "https://img.shields.io/badge/dev%20carbon-76.5%20kg%20CO%E2%82%82e-2e7d32"
  }
 }

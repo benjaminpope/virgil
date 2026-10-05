@@ -47,6 +47,7 @@ exclude = []
 # purpose is unclear. hide_excluded drops their names from every output,
 # including the archive committed to git.
 [classes.science]
+sessions_file = "~/.claude/carbon/virgil-science-sessions.txt"
 jobs = [
     "apep*", "elr*", "pionier*", "hr4049*", "hd206893*", "iwcar*",
     "gcp_*", "gravity_cal*", "vlti*", "eso_*", "sweep-*", "gpu-test",

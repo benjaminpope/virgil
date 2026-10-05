@@ -3,27 +3,27 @@
 
 An estimate of the energy and carbon emitted in developing and validating virgil: AI coding assistants, continuous integration and cluster jobs. It is refreshed by hand with `python3 scripts/dev_carbon.py`, so it lags the repository.
 
-Estimated development carbon for `benjaminpope/virgil` from 2026-03-03 to 2026-10-06: **93.9 kg CO₂e** (range 73–202 kg), from 254 kWh (range 192–540 kWh). Data analysis runs are listed separately below and are not in this total.
+Estimated development carbon for `benjaminpope/virgil` from 2026-03-03 to 2026-10-06: **76.5 kg CO₂e** (range 59.7–172 kg), from 202 kWh (range 152–447 kWh). Data analysis runs are listed separately below and are not in this total.
 
 ## By source
 
 | Source | Items | kWh | kWh range | kg CO₂e | kg range |
 |---|---:|---:|---:|---:|---:|
-| Claude Code | 328 | 203 | 158–383 | 66.9 | 52.1–126 |
-| OzSTAR/NT Slurm jobs | 771 | 24.4 | 23.5–58 | 18.1 | 17.4–42.9 |
+| Claude Code | 278 | 153 | 119–289 | 50.4 | 39.1–95.4 |
+| OzSTAR/NT Slurm jobs | 785 | 23.2 | 22.9–58.4 | 17.1 | 17–43.2 |
 | Copilot cloud agent and review | 251 | 11.7 | 3.28–45.1 | 3.89 | 1.09–14.9 |
 | VS Code Copilot Chat | 253 | 9.35 | 3.82–48.9 | 3.09 | 1.26–16.1 |
-| GitHub Actions CI | 2170 | 5.23 | 3.28–5.23 | 1.94 | 1.21–1.94 |
+| GitHub Actions CI | 2175 | 5.25 | 3.29–5.25 | 1.94 | 1.22–1.94 |
 
 ## By call and token type
 
 | Source | Type | Items | kWh | kg CO₂e | kg range |
 |---|---|---:|---:|---:|---:|
-| Claude Code | model calls | 328 | 203 | 66.9 | 52.1–126 |
-| OzSTAR/NT Slurm jobs | GPU job | 462 | 23.2 | 17.2 | 16.5–42 |
+| Claude Code | model calls | 278 | 153 | 50.4 | 39.1–95.4 |
+| OzSTAR/NT Slurm jobs | GPU job | 476 | 21.9 | 16.2 | 16–42.3 |
 | Copilot cloud agent and review | code review | 192 | 10.5 | 3.47 | 0.947–13.3 |
 | VS Code Copilot Chat | local chat | 88 | 6.23 | 2.06 | 1.26–10.6 |
-| GitHub Actions CI | CI | 2170 | 5.23 | 1.94 | 1.21–1.94 |
+| GitHub Actions CI | CI | 2175 | 5.25 | 1.94 | 1.22–1.94 |
 | VS Code Copilot Chat | local chat (imputed tokens) | 165 | 3.12 | 1.03 | 0–5.49 |
 | OzSTAR/NT Slurm jobs | CPU job | 309 | 1.25 | 0.924 | 0.924–0.924 |
 | Copilot cloud agent and review | cloud agent | 59 | 1.27 | 0.424 | 0.147–1.57 |
@@ -32,27 +32,27 @@ Claude Code by token type (mid estimate):
 
 | Token type | Tokens | kg CO₂e |
 |---|---:|---:|
-| input | 38,246 | 0.00323 |
-| cache write | 85,253,901 | 7.24 |
-| cache read | 5,608,252,806 | 39.6 |
-| output | 10,671,375 | 20.1 |
+| input | 31,604 | 0.00264 |
+| cache write | 63,763,507 | 5.32 |
+| cache read | 4,277,775,367 | 30 |
+| output | 8,001,134 | 15 |
 
 By model or workflow:
 
 | Source | Model or workflow | Items | kg CO₂e | kg range |
 |---|---|---:|---:|---:|
-| Claude Code | Claude Opus | 246 | 65.8 | 51.2–124 |
-| GitHub Actions CI | automated tests | 644 | 1.79 | 1.12–1.79 |
-| Claude Code | Claude Sonnet | 81 | 1.15 | 0.924–2.07 |
+| Claude Code | Claude Opus | 198 | 49.3 | 38.2–93.4 |
+| GitHub Actions CI | automated tests | 645 | 1.79 | 1.12–1.79 |
+| Claude Code | Claude Sonnet | 79 | 1.14 | 0.914–2.04 |
 | VS Code Copilot Chat | gpt-5.3-codex | 172 | 1.07 | 0.0272–5.77 |
 | VS Code Copilot Chat | gpt-5.6-terra | 23 | 1.02 | 0.509–5.94 |
 | VS Code Copilot Chat | claude-sonnet-5 | 19 | 0.393 | 0.393–1.52 |
 | VS Code Copilot Chat | gpt-5.5-2026-04-23 | 13 | 0.285 | 0.142–1.09 |
 | VS Code Copilot Chat | gpt-5.6-sol | 5 | 0.124 | 0.062–1.12 |
-| GitHub Actions CI | Documentation | 643 | 0.0793 | 0.0497–0.0793 |
+| GitHub Actions CI | Documentation | 645 | 0.0794 | 0.0498–0.0794 |
 | VS Code Copilot Chat | gpt-5.5 | 2 | 0.0708 | 0.0354–0.179 |
 | VS Code Copilot Chat | claude-opus-5 | 3 | 0.0516 | 0.0516–0.121 |
-| GitHub Actions CI | lint | 599 | 0.0408 | 0.0256–0.0408 |
+| GitHub Actions CI | lint | 601 | 0.0409 | 0.0257–0.0409 |
 | VS Code Copilot Chat | gpt-5.6-luna | 7 | 0.0378 | 0.0192–0.269 |
 | GitHub Actions CI | Documentation (Zensical) | 240 | 0.0236 | 0.0148–0.0236 |
 | VS Code Copilot Chat | mai-code-1.1-flash | 5 | 0.0196 | 0.0196–0.0617 |
@@ -69,21 +69,21 @@ Each item is attributed to a pull request through its branch, the commit a job p
 
 | Feature | Items | kg CO₂e | kg range |
 |---|---:|---:|---:|
-| main / unattributed | 465 | 40.9 | 30.7–87.5 |
-| Validation: imaging contests | 458 | 16.9 | 16.2–41.7 |
-| [#201](https://github.com/benjaminpope/virgil/pull/201) virgil docs minor changes | 33 | 5.78 | 4.45–11 |
-| [#91](https://github.com/benjaminpope/virgil/pull/91) Imaging Stage 5c: error-bar scale, sampling basics, and imaging tutorials 2–4 | 22 | 2.49 | 1.99–4.46 |
-| [#110](https://github.com/benjaminpope/virgil/pull/110) Imaging Stage 5d: a Gauss–Newton NUTS mass matrix, and the sampling tutorial; plan PMOIRED parity | 16 | 1.76 | 1.4–3.19 |
+| main / unattributed | 451 | 30.1 | 22.3–67.3 |
+| Validation: imaging contests | 472 | 15.9 | 15.8–42 |
+| [#201](https://github.com/benjaminpope/virgil/pull/201) virgil docs minor changes | 29 | 4.1 | 3.2–7.69 |
 | [#76](https://github.com/benjaminpope/virgil/pull/76) Imaging Stage 3: Problem, fit, regularisers, L-curves and diagnose | 25 | 1.43 | 1.07–2.85 |
-| [#120](https://github.com/benjaminpope/virgil/pull/120) Stage 6.0: independent, whitened closure phases; INSNAME selection; PHITYP check; no diagonal truncation | 10 | 0.798 | 0.607–1.55 |
+| [#110](https://github.com/benjaminpope/virgil/pull/110) Imaging Stage 5d: a Gauss–Newton NUTS mass matrix, and the sampling tutorial; plan PMOIRED parity | 13 | 1.34 | 1.07–2.41 |
+| [#91](https://github.com/benjaminpope/virgil/pull/91) Imaging Stage 5c: error-bar scale, sampling basics, and imaging tutorials 2–4 | 16 | 1.28 | 0.977–2.47 |
 | [#226](https://github.com/benjaminpope/virgil/pull/226) fit: optimise in each prior's flat coordinate (LM with Jeffreys priors) | 10 | 0.665 | 0.481–1.4 |
 | [#210](https://github.com/benjaminpope/virgil/pull/210) Stage 6a PR B follow-up: VISPHI/T3PHI departure stated, Jeffreys note, draw test | 23 | 0.602 | 0.434–1.25 |
-| [#104](https://github.com/benjaminpope/virgil/pull/104) Compile fit's solvers once, not on every call | 13 | 0.573 | 0.453–1.04 |
 | [#83](https://github.com/benjaminpope/virgil/pull/83) SPARCO spectra: BlackBody temperatures | 17 | 0.535 | 0.407–1.02 |
+| [#120](https://github.com/benjaminpope/virgil/pull/120) Stage 6.0: independent, whitened closure phases; INSNAME selection; PHITYP check; no diagonal truncation | 9 | 0.503 | 0.358–1.07 |
 | [#118](https://github.com/benjaminpope/virgil/pull/118) Merge imaging into main: image reconstruction (milestone 1 and Stage 5) | 14 | 0.479 | 0.326–1.08 |
 | Validation: simulation-based calibration | 100 | 0.466 | 0.466–0.466 |
 | [#121](https://github.com/benjaminpope/virgil/pull/121) Design: spectro-interferometry, orbits and GRAVITY calibration notes; the plan through Stage 6 | 27 | 0.461 | 0.313–1.02 |
-| [#78](https://github.com/benjaminpope/virgil/pull/78) Imaging Stage 4b: a scene rotating between epochs (known and unknown angle) | 10 | 0.46 | 0.381–0.769 |
+| [#244](https://github.com/benjaminpope/virgil/pull/244) CI: fix the py3.11 lowest job (orbit doctests, clean hang) | 19 | 0.459 | 0.398–0.663 |
+| [#246](https://github.com/benjaminpope/virgil/pull/246) Orbit tutorial: joint, hierarchical inference from every epoch's interferometric data | 10 | 0.42 | 0.277–0.972 |
 
 
 ## Copilot cross-check
@@ -105,7 +105,7 @@ Compute for science with virgil (fits to observations, data reduction and archiv
 
 | Item | Records | kWh | kg CO₂e | kg range |
 |---|---:|---:|---:|---:|
-| Excluded data analysis | 504 | 27.2 | 12 | 9.89–18 |
+| Excluded data analysis | 555 | 77.6 | 28.6 | 22.9–49 |
 
 ## Scope and caveats
 
