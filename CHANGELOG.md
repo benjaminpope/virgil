@@ -15,6 +15,16 @@ anything before 1.0 may change between minor versions.
   best fit; well-measured data may need 64 or more. A convergence test was
   added.
 
+### Fixed
+
+- **`absil_limits` with a far-off or single-value flux axis.** The
+  significance saturates (about 37 sigma in float64) for bright companions,
+  so starting the optimizer on such a flux, e.g. `flux=[0.01]`, gave a flat
+  loss and returned the starting flux with a non-convergence warning. The
+  flux axis now only gives a rough starting point: the limit is bracketed by
+  decades and bisected in log flux, replacing the BFGS search, so the result
+  no longer depends on the axis.
+
 ### Added
 
 - **Calibration gains correlated across channels** (Stage 6d).
