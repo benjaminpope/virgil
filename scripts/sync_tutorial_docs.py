@@ -31,6 +31,7 @@ MAPPINGS = {
     "notebooks/contrast_limits.ipynb": "docs/contrast_limits.md",
     "notebooks/detection_roc.ipynb": "docs/detection_roc.md",
     "notebooks/hierarchical_inference.ipynb": "docs/hierarchical_inference.md",
+    "notebooks/orbit_fitting.ipynb": "docs/orbit_fitting.md",
     "notebooks/model_syntax.ipynb": "docs/model_syntax.md",
     "notebooks/source_models.ipynb": "docs/source_models.md",
     "notebooks/composition.ipynb": "docs/composition.md",
