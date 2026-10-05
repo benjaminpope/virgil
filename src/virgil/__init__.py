@@ -19,6 +19,8 @@ Modules:
 * [`grid_fit`][virgil.grid_fit]: grid searches.
 * [`limits`][virgil.limits]: contrast limits and flux/contrast/Δmag
   conversions.
+* [`detection`][virgil.detection]: detection statistics (Δχ², the
+  grid-marginalised Bayes factor, the best SNR) for ROC curves.
 * [`spectra`][virgil.spectra]: wavelength-dependent fluxes.
 * [`gains`][virgil.gains]: calibration gains correlated across channels.
 * [`plotting`][virgil.plotting]: figures.
@@ -39,6 +41,7 @@ except _metadata.PackageNotFoundError:
 from . import (  # noqa: E402
     amigo,
     coverage,
+    detection,
     fields,
     fitting,
     gains,
@@ -57,6 +60,7 @@ from . import (  # noqa: E402
     spectra,
 )
 from ._geometry import pixel_offsets  # noqa: E402
+from .detection import detection_statistics  # noqa: E402
 from .fields import GaussianField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
@@ -178,6 +182,7 @@ __all__ = [
     "build_model",
     "contrast_to_flux",
     "delta_mag_to_flux",
+    "detection_statistics",
     "distance_pc",
     "fit",
     "fisher",

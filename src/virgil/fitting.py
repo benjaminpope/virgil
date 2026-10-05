@@ -144,8 +144,11 @@ class _Objective(eqx.Module):
 
     @property
     def _has_gains(self):
-        """Whether any dataset has gains, whose covariance depends on the model."""
-        return any(getattr(d, "gains", None) is not None for d in self.data)
+        """Whether any dataset's covariance depends on the model: gains, or
+        marginalised flux scales (``OIData.has_model_covariance``)."""
+        return any(
+            getattr(d, "has_model_covariance", False) for d in self.data
+        )
 
     @property
     def paths(self):
@@ -269,8 +272,9 @@ class _Objective(eqx.Module):
             )
         if self._has_gains:
             raise TypeError(
-                "Data with gains have no least-squares form (their "
-                "covariance, and its determinant, depend on the model); fit "
+                "Data with gains or marginalised flux scales have no "
+                "least-squares form (their covariance, and its determinant, "
+                "depend on the model); fit "
                 "with method='lbfgs' or 'adam'."
             )
         model = self.build(z)

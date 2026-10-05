@@ -54,9 +54,11 @@ nav:
   - Data Handling:
       - "Reading data: OIFITS and OIData": data_io.md
       - "AMIGO DISCO data": amigo_disco.md
+      - "Spectro-interferometric observables": spectro_observables.md
   - Binaries:
       - "Binary search": binary_search.md
       - "Contrast limits": contrast_limits.md
+      - "Detection ROC curves": detection_roc.md
       - "Hierarchical inference across filters": hierarchical_inference.md
   - Sources:
       - "Visibility models": model_syntax.md
@@ -89,11 +91,13 @@ nav:
           - Functions: api/models/functions.md
       - Likelihood: api/likelihood.md
       - Gains: api/gains.md
+      - Observables: api/observables.md
       - Fitting: api/fitting.md
       - Imaging: api/imaging.md
       - Inference: api/inference.md
       - Grid Fit: api/grid_fit.md
       - Limits: api/limits.md
+      - Detection: api/detection.md
       - Spectra: api/spectra.md
       - Orbits: api/orbits.md
       - Fields: api/fields.md
