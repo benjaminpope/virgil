@@ -1129,30 +1129,69 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         return jax.lax.map(lambda x: one(*x), (self.dt, self.u, self.v, wavel))
 
     def with_error_scale(self, factor):
-        """A copy of the data with every uncertainty multiplied by ``factor``.
+        """A copy of the data with its uncertainties multiplied by ``factor``.
 
-        Use it when the error bars are known to be too large or too small
-        overall, for example with a factor from
+        Use it when the error bars are known to be too large or too small,
+        for example with a factor from
         [`error_scale`][virgil.imaging.error_scale]. The uncertainties
         are those of the observables as fitted (after any projection), so
         the whitened residuals simply scale by ``1 / factor``.
 
+        A dictionary scales each kind of observable by its own factor, as
+        returned by ``error_scale(..., by_observable=True)``: ``"vis"``
+        (``d_vis``), ``"phi"`` (``d_phi``) and the kinds of ``extras``
+        (``"flux"``, ``"nflux"``, ``"corrflux"``, ``"visamp"``,
+        ``"t3amp"``, ``"visphi"``). Kinds missing from the dictionary are
+        left unchanged, and so are kinds these data lack, so one
+        dictionary can rescale several datasets.
+
         Parameters
         ----------
-        factor : float
-            Positive scale for ``d_vis`` and ``d_phi``.
+        factor : float or dict
+            Positive scale for every uncertainty, or a dictionary of
+            positive scales by kind of observable.
+
+        Raises
+        ------
+        ValueError
+            For a factor that is not finite and positive, or a dictionary
+            key that is not a kind of observable.
+
+        Examples
+        --------
+        >>> data = OIData({"u": [1.0, 2.0], "v": [0.0, 1.0], "wavel": 1e-6,
+        ...                "vis": [0.9, 0.5], "d_vis": [0.01, 0.02]})
+        >>> scaled = data.with_error_scale({"vis": 3.0})
+        >>> [round(float(e), 3) for e in scaled.d_vis]
+        [0.03, 0.06]
         """
-        factor = float(factor)
-        if not (onp.isfinite(factor) and factor > 0.0):
-            raise ValueError(
-                f"factor must be finite and positive, not {factor}."
+        if isinstance(factor, dict):
+            unknown = sorted(set(factor) - {"vis", "phi", *KINDS})
+            if unknown:
+                raise ValueError(
+                    f"Unknown observables {unknown}; use 'vis', 'phi' or "
+                    f"one of {list(KINDS)}."
+                )
+            factors = {k: _positive_factor(v) for k, v in factor.items()}
+        else:
+            factor = _positive_factor(factor)
+            factors = dict.fromkeys(
+                ["vis", "phi", *(b.kind for b in self.extras)], factor
             )
         out = eqx.tree_at(
             lambda d: (d.d_vis, d.d_phi),
             self,
-            (self.d_vis * factor, self.d_phi * factor),
+            (
+                self.d_vis * factors.get("vis", 1.0),
+                self.d_phi * factors.get("phi", 1.0),
+            ),
         )
-        extras = tuple(b.with_errors(b.errors * factor) for b in self.extras)
+        extras = tuple(
+            b.with_errors(b.errors * factors[b.kind])
+            if b.kind in factors
+            else b
+            for b in self.extras
+        )
         return eqx.tree_at(lambda d: d.extras, out, extras)
 
     def with_error_floor(self, absolute=None, relative=None):
@@ -1614,6 +1653,14 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
 # Keys of a record (or dictionary) holding extra observables.
 _RECORD_KEYS = ("flux", "nflux", "visamp", "t3amp", "visphi")
+
+
+def _positive_factor(factor):
+    """``factor`` as a float, checked to be finite and positive."""
+    factor = float(factor)
+    if not (onp.isfinite(factor) and factor > 0.0):
+        raise ValueError(f"factor must be finite and positive, not {factor}.")
+    return factor
 
 
 def _good(record):

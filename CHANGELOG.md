@@ -63,6 +63,16 @@ analysis or warn:
 
 ### Added
 
+- **Per-observable error scales.** `error_scale(model, data,
+  by_observable=True)` re-estimates MacKay's noise scale separately for each
+  kind of observable (`"vis"`, `"phi"`, and each kind in `extras`, pooled over
+  datasets), solving the coupled equations `1/β_b = χ²_b/(N_b − γ_b)` with
+  `γ_b` from the hat matrix. Use it when blocks are mis-calibrated by
+  different factors (in a MATISSE N-band contest file, V² gave χ² per point
+  0.005 and closure phases 0.49). `OIData.with_error_scale` accepts the
+  returned dictionary of factors per kind. The default single scale is
+  unchanged.
+
 - **Hierarchical error scales and tied `noise=` terms.** A `noise=` entry of
   `fit` and `numpyro_model` may now be a function of the sampled parameters
   instead of a prior (`likelihood.is_tied`), recorded as a deterministic site;
