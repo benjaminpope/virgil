@@ -124,7 +124,7 @@ This is the known pattern for linear parameters in orbit fits. The Joker margina
 
 ### 2.3 The prior to marginalise with
 - **Shape: zero mean and isotropic, ψ ~ N(0, s² I₄).** Changing Ω by δ rotates (A, B) and (F, G) by δ, and changing ω rotates (A, F) and (B, G). Both are orthogonal maps of ψ, and only zero-mean s² I is invariant under both. It is therefore the only Gaussian that keeps ω and Ω uniform. It also makes the e = 0 invariance of §1.5 exact.
-- **Scale tied to the period.** For angular orbits Kepler's law gives a ∝ P^{2/3} (M_tot ϖ³)^{1/3}, so take s(P) = s₀ (P/P₀)^{2/3}, by analogy with The Joker's σ_K(P, e). Here s₀ is set from a plausible mass and distance, or from the data's own scale (e.g. the median separation). The φ-dependence enters −½ ln det Λ(φ) and must be kept (§1.2).
+- **Scale tied to the period.** For angular orbits Kepler's law gives a ∝ P^{2/3} (M_tot ϖ³)^{1/3}, so take s(P) = s₀ (P/P₀)^{2/3}, by analogy with The Joker's σ_K(P, e). Here s₀ is set from a plausible mass and distance, or from the data's own scale (e.g. the median separation). In the prior-whitened form (M1) this φ-dependence is already inside −½ ln det M̃, since K = D̃S(φ); do not add a separate −½ ln det Λ(φ). That term appears only in the equivalent decomposition ln det M̃ = ln det Λ + ln det(Λ⁻¹ + D̃ᵀD̃). Either way it must be kept (§1.2).
 - **Optionally, a hierarchical scale:** s as a fourth nonlinear parameter, with a log-uniform hyperprior. This broadens the prior on a toward log-uniform at the cost of one dimension. It does not change the inclination prior (§2.2).
 
 ### 2.4 Options, and the recommendation
@@ -230,7 +230,7 @@ Fast, in `tests/test_orbits.py` (float64 in a local `jax.enable_x64`, plus a flo
 5. A degenerate design (all epochs at one phase): ln Z and its gradient are finite with a proper prior, and a flat prior is rejected.
 6. float32 agrees with float64 for a well-conditioned case. The QR route stays finite where the Cholesky route fails (cond M̃ ~ 1e8).
 7. Prior-only reweighting (no data) reproduces the target prior: uniform cos i and log-uniform a, as in [S6]. k̂ is large for a target at face-on.
-8. `starting_orbits(prior=...)` keeps the true grid point among the best (O §5.2.8). With a wide prior it reproduces the χ² ranking on a well-conditioned set.
+8. `starting_orbits(prior=None)` is exactly the current χ² ranking (backward compatible). `starting_orbits(prior=...)` keeps the true grid point among the best (O §5.2.8), and its ln Z per grid point equals the dense Gaussian evidence. A wide prior does **not** recover the χ² ranking: the Occam factor tends to −½ ln det(D̃ᵀD̃) plus a constant, which still depends on φ.
 
 Independent, in [virgil-validation](https://github.com/benjaminpope/virgil-validation) (the independence rule of `AGENTS.md`): the brute-force 4-D quadrature of [S4], and the Jacobian and implied prior of [S1] and [S3], written from scratch there. An Issue requesting this will be opened on that repository when the code PR lands.
 

@@ -78,7 +78,7 @@ def design_matrix(t, period, t_peri, ecc):
 
 
 def marginal(t, data, cov, period, t_peri, ecc, mu, prior_sd):
-    """log Z, conditional mean and covariance: the note's eq. (M1)-(M3)."""
+    """log Z, conditional mean and covariance: the note's eqs. (M1) and (M2)."""
     chol = np.linalg.cholesky(cov)  # (n, 2, 2)
     whiten = np.linalg.inv(chol)
     D = np.einsum(
@@ -214,6 +214,8 @@ def check_marginal():
         f"error {np.max(np.abs(grid_cov / post_cov - 1)):.1e}"
     )
     assert abs(log_z - dense) < 1e-8 and abs(log_z - brute) < 1e-5
+    assert np.max(np.abs(grid_mean - mean)) < 1e-8
+    assert np.max(np.abs(grid_cov / post_cov - 1)) < 1e-8
 
 
 def check_circular():
