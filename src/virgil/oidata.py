@@ -1321,45 +1321,62 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     def with_flux_scale(
         self,
+        scale=None,
         per="dataset",
-        width=None,
         poly_order=0,
         poly_width=0.1,
-        kinds=("flux", "nflux", "corrflux"),
+        kinds=None,
     ):
         """A copy with new grey-scale nuisances for the extra spectra.
 
         Each spectrum (OI_FLUX, or correlated fluxes) is known up to a
-        scale, marginalised analytically under a broad Gaussian prior (see
-        [`FluxSpectrum`][virgil.observables.FluxSpectrum]).
+        scale, marginalised analytically under a Gaussian prior that you
+        state (see [`FluxSpectrum`][virgil.observables.FluxSpectrum]). It
+        is never taken from the data, and it is a proposal for the scale's
+        Jeffreys prior 1/k (see [`virgil.observables`][virgil.observables]).
 
         Parameters
         ----------
+        scale : (float, float), optional
+            The prior ``(mean, sd)`` of the scale k, in the data's units
+            (e.g. a calibrated OI_FLUX in Jy: a broad prior about the
+            expected level). Required for ``"flux"`` and ``"corrflux"``
+            before fitting; ``(1, 0.1)`` by default for ``"nflux"``. It
+            applies to ``"flux"`` and ``"corrflux"`` unless ``kinds`` says
+            otherwise; blocks without it keep their own.
         per : {"dataset", "row", "frame", "station"}, optional
             One scale for the whole dataset (default), or one per spectrum
             (row), per exposure, or per telescope (baseline, for
             correlated fluxes). Fibre injection varies per telescope and
             exposure, so per row is the safest for uncalibrated spectra.
-        width : float, optional
-            The scale's relative prior width (default 1.0; 0.1 for
-            ``"nflux"``).
         poly_order : int, optional
             Also marginalise a polynomial in λ of this order times the
             model spectrum (a chromatic calibration).
         poly_width : float, optional
-            Relative prior width of each polynomial coefficient.
+            Prior width of each polynomial coefficient, relative to the
+            scale's prior mean.
         kinds : sequence of str, optional
-            Which blocks to change.
+            Which blocks to change: by default ``"flux"`` and
+            ``"corrflux"`` when ``scale`` is given, and every spectrum
+            (also ``"nflux"``) otherwise.
         """
-        return self._replace_extra(
-            tuple(kinds),
-            lambda b: b.rebuild(
+        if kinds is None:
+            kinds = (
+                ("flux", "corrflux")
+                if scale is not None
+                else ("flux", "nflux", "corrflux")
+            )
+
+        def rebuilt(block):
+            stated = block.scale if scale is None else scale
+            return block.rebuild(
                 per=per,
-                width=width,
+                scale=stated,
                 poly_order=poly_order,
                 poly_width=poly_width,
-            ),
-        )
+            )
+
+        return self._replace_extra(tuple(kinds), rebuilt)
 
     def with_wavelength_scale(self, scale=1.0, offset=0.0):
         """A copy of the data whose wavelengths are ``scale · λ + offset``.
@@ -1452,7 +1469,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         frame analytically (see
         [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with these widths
         unless they are fitted as the noise terms ``phi_offset_baseline``,
-        ``phi_offset_triangle`` or ``phi_offset_modes``. Use them only if
+        ``phi_offset_triangle`` or ``phi_offset_modes`` (scale parameters:
+        log-uniform priors on stated bounds). Use them only if
         calibrators show such offsets: they are off by default. Needs
         closure phases from four or more telescopes.
 
@@ -1495,7 +1513,9 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         The likelihood then marginalises gains on log |V| per frame
         analytically (see [`virgil.gains`][virgil.gains]), with these widths
         unless they are fitted as the noise terms ``vis_gain_telescope``,
-        ``vis_gain_baseline``, ``vis_gain_chromatic`` or ``vis_gain_modes``.
+        ``vis_gain_baseline``, ``vis_gain_chromatic`` or ``vis_gain_modes``
+        (scale parameters: give them log-uniform priors on stated bounds,
+        e.g. ``dist.LogUniform(1e-4, 0.3)``).
         The covariance then depends on the model, so fits use L-BFGS.
 
         Parameters

@@ -27,6 +27,17 @@ anything before 1.0 may change between minor versions.
   with a `DeprecationWarning`. With no `prior`, the posterior and Bayes-factor
   fields are `None`, whatever the prior kind.
 
+- **Angle vectors (`virgil.angles.AngleVector`).** A prior for any angle
+  (degrees), sampled as a 2-D vector at the site `"<path>_vec"` with the
+  angle as the deterministic `"<path>"`, so there is no wall at 0°/360°.
+  A ring prior on the radius keeps MAP fits off the origin; von Mises and
+  axial von Mises priors are chords √κ (v̂ − m̂), the same form as the phase
+  residuals, so `fit`'s Levenberg–Marquardt and `gauss_newton_mass` take
+  them (`fit` used to reject `VonMises`). The density is normalised in the
+  plane. For orbits, `orientation_priors` samples 2Ω and ϖ = Ω + ω (or Ω
+  and ϖ with RVs), and `KeplerOrbit.from_varpi` builds the orbit. After
+  Octofitter's `UniformCircular` and exoplanet's `Angle`.
+
 - **Spectro-interferometric observables (Stage 6a, PR B).**
   `read_oifits(..., extras=...)` and `OIData(path, extras=...)` read OI_FLUX
   (`"flux"` or `"nflux"`), T3AMP, VISAMP beside V² (absolute, or correlated
@@ -104,6 +115,19 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **One home for analytic marginalisation of linear parameters.**
+  `virgil._linear` holds the shared algebra: `LinearMarginal(design,
+  prior_mean, prior_sd | prior_cov, method)`, the successive rank-one and
+  dense-Cholesky whitenings, and the conditional posterior. The gains,
+  closure-phase offsets, VISPHI continuum terms, flux grey scales and RV
+  zero points use it.
+- **The OI_FLUX / correlated-flux grey-scale prior is stated, not taken from
+  the data** (breaking). `with_flux_scale(scale=(mean, sd))` gives it in the
+  data's units and replaces `width=`. It is required for `"flux"` and
+  `"corrflux"`, and the likelihood raises until it is given; `"nflux"`
+  defaults to `(1, 0.1)`. The Gaussian is documented as a proposal for the
+  Jeffreys 1/k prior.
+
 - **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
   `1 / n_rings**2` error scale (about 8e-4 in |V| at the default 32 for a
   13.8 mas cone), and recommends doubling `n_rings` and checking Δχ² at the
@@ -130,6 +154,23 @@ anything before 1.0 may change between minor versions.
 - `gauss_newton_mass(model, priors, (), values)` no longer raises a
   `ValueError` on an empty residual list: with `data=()` the curvature comes
   from the priors alone, as `fit` and `numpyro_model` already allow.
+
+### Docs
+
+- **New tutorial: "Orbits from interferometric epochs"** (Binaries,
+  `notebooks/orbit_fitting.ipynb`). Eight epochs of simulated VLTI
+  (UT) V² and closure phases of a three-year binary: per-epoch astrometry
+  with a grid, a fit and the Laplace covariance into `PositionData`,
+  Thiele–Innes starting orbits, and a NUTS posterior under Jeffreys priors
+  (log-uniform P and a, uniform cos i, ω, Ω and phase as 2-vector
+  directions, uniform e) with a no-data prior check, a corner plot, and an
+  ensemble of posterior orbits on the sky and in time.
+- **`plotting.plot_orbit_ensemble`.** Draws a batch of `KeplerOrbit`s on the
+  sky (East left, North up) as thin lines, one period each, with measured
+  `PositionData` positions coloured by epoch with their error ellipses, a
+  reference orbit and the primary.
+- **Conventions.** Dropped the stale "Not yet in this version" note from the
+  orbit conventions: `virgil.orbits` is on main.
 
 ### Added
 

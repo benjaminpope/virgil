@@ -28,6 +28,7 @@ from ._utils import (
     inflate_errors,
     is_flux_param,
 )
+from .angles import is_angle_vector, vector_angle, vector_site
 from .gains import GAIN_GROUPS, OFFSET_GROUPS
 from .models import SourceModel
 
@@ -324,7 +325,12 @@ def noise_sites(noise, n_datasets):
             if value is None or onp.any(value < 0.0):
                 raise ValueError(
                     f"The prior on noise term {term!r} must have "
-                    "non-negative support, e.g. dist.Uniform(0, ...)."
+                    "non-negative support. It is a scale parameter, so its "
+                    "default (Jeffreys) prior is log-uniform on stated "
+                    "bounds that contain its plausible values, e.g. "
+                    "dist.LogUniform(0.1, 10.0) for vis_scale or phi_scale "
+                    "(neutral value 1) and dist.LogUniform(1e-4, 0.3) for "
+                    "added errors and widths."
                 )
             sites[f"{prefix}.{term}"] = (prior, datasets, term)
     return sites
@@ -609,6 +615,15 @@ def _term_loglike(term, values):
     return -0.5 * np.sum(np.ravel(term(values)) ** 2)
 
 
+def _sample(numpyro, path, prior):
+    """Sample the parameter at ``path``: an angle vector at ``<path>_vec``,
+    with the angle (degrees) recorded as the deterministic site ``path``."""
+    if is_angle_vector(prior):
+        vector = numpyro.sample(vector_site(path), prior)
+        return numpyro.deterministic(path, vector_angle(vector))
+    return numpyro.sample(path, prior)
+
+
 def numpyro_model(
     model,
     priors,
@@ -638,7 +653,11 @@ def numpyro_model(
         Mapping from parameter path (e.g. ``"comp.flux"``) or function
         argument name to prior; each key is also used as the numpyro
         sample-site name. Priors on fluxes (keys named ``flux`` or ending
-        in ``.flux``) must have non-negative support.
+        in ``.flux``) must have non-negative support. An angle (degrees)
+        with an [`AngleVector`][virgil.angles.AngleVector] prior is
+        sampled as a 2-D vector at the site ``"<path>_vec"``, with the
+        angle recorded as the deterministic site ``"<path>"``: there is no
+        wrap boundary at 0°/360°.
     data_obj : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
         May be ``()`` when ``likelihoods`` holds all the data.
@@ -662,6 +681,17 @@ def numpyro_model(
         [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its
         own terms, as sites ``"noise[i].<term>"``.
+        **Priors.** These terms are scale parameters, so their default
+        (Jeffreys) prior is log-uniform on stated bounds; a
+        ``Uniform(0, ...)`` favours large values. The bounds must contain
+        the plausible values: for the factors ``vis_scale`` and
+        ``phi_scale``, whose neutral value is 1, e.g.
+        ``dist.LogUniform(0.1, 10.0)``; for the added errors and widths
+        (``vis_error_rel``, ``phi_error``, ``vis_gain_<group>``,
+        ``phi_offset_<group>``), e.g. ``dist.LogUniform(1e-4, 0.3)``.
+        ``wavel_scale`` is a scale too: log-uniform about 1 unless a
+        calibration gives a Gaussian (``Normal(1, 2e-4)`` for GRAVITY is
+        such information).
     likelihoods : sequence, optional
         Extra data terms, as for [`fit`][virgil.fitting.fit]: callables of
         the sampled values (a dict keyed like ``priors``) returning whitened
@@ -725,7 +755,7 @@ def numpyro_model(
     likelihoods = tuple(likelihoods)
 
     def numpyro_fn():
-        values = [numpyro.sample(path, priors[path]) for path in paths]
+        values = [_sample(numpyro, path, priors[path]) for path in paths]
         source = build_model(model, paths, values)
         sources = _per_dataset(source, len(observations))
         terms = {site: numpyro.sample(site, sites[site][0]) for site in sites}
