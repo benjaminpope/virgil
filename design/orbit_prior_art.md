@@ -1,16 +1,17 @@
 # Orbit fitting in virgil: prior art, credit and what to adopt
 
-Status: **review**, 2026-10-05. This note compares `virgil.orbits` with the two orbit-fitting codes nearest to it, [orbitize!](https://github.com/sblunt/orbitize) and [Octofitter](https://github.com/sefffal/Octofitter.jl), and with orvara where it matters. It records which of our features already exist elsewhere, whom to credit for them, what is worth adopting, and what virgil should not try to rebuild.
+Status: **decided** (Ben, 2026-10-05; §6). This note compares `virgil.orbits` with the two orbit-fitting codes nearest to it, [orbitize!](https://github.com/sblunt/orbitize) and [Octofitter](https://github.com/sefffal/Octofitter.jl), and with orvara where it matters. It records which of our features already exist elsewhere, whom to credit for them, what is worth adopting, and what virgil should not try to rebuild.
 
 Sources: orbitize! 3.4.0 (source and `docs/*.rst`, read 2026-10-05); Octofitter's documentation, paper and `src/likelihoods/` on `main` (read 2026-10-05); the papers below, checked on ADS. Items marked *(unverified)* come from documentation summaries and need a look at the source before anything depends on them.
 
 ## 1. Summary
 
 - **The overlap is real but narrow.** The orbit kernel (Campbell, Thiele–Innes and Cartesian elements; Gaussian position and RV likelihoods with per-instrument offsets and jitter) is standard, and all three codes have it. virgil's version exists because it has to run inside JAX and inside the scene: an orbit drives the components of an interferometric model at each datum's time (`at(mjd)`, `Attached`). Neither orbitize! nor Octofitter can do that from Python/JAX, and neither models extended structure.
-- **We already avoid the worst duplication.** Kepler's equation is solved by jaxoplanet, not by us. The conventions (§3) agree with orbitize!, Octofitter and orvara.
+- **We already avoid the worst duplication.** Kepler's equation is solved by jaxoplanet, not by us. The conventions (§3) agree with those documented by orbitize!, Octofitter and orvara.
 - **Credit is missing.** The docs name jaxoplanet but cite nothing, and the orbit docs name none of the prior codes. §5 lists what to cite; this PR adds it to `docs/api/orbits.md`.
 - **Octofitter is the closest prior art for our use case.** It fits orbits directly to closure phases, V² and kernel phases, and its paper demonstrates multi-epoch detection with simulated JWST/NIRISS AMI data (Thompson et al. 2023). Our detection and AMI work should cite it and compare with it.
-- **Adopt** (§4): angle parameterisations for sampling; a reference-epoch position angle instead of the time of periastron; per-dataset North-angle and plate-scale nuisances; and, in virgil-validation, orbitize! as an independent ephemeris and posterior oracle.
+- **No dependency** on orbitize!, Octofitter or orvara in virgil (§6). orbitize! is used only in virgil-validation, as an independent root of trust.
+- **Adopt** (§4): angles sampled as 2-D vectors, with von Mises priors as chord residuals that match our phase likelihoods (§4.1); the position angle at a reference epoch as an alternative to the time of periastron (§4.2); per-dataset North-angle and plate-scale nuisances (§4.3); simulation-based calibration in virgil-validation.
 - **Do not rebuild** absolute astrometry (Hipparcos IAD, HGCA, Gaia epoch astrometry), N-body dynamics, or a general orbit-fitting front end. If a science case needs them, the user should run orbitize!, Octofitter or orvara, and import the result as a prior.
 
 ## 2. Feature comparison
@@ -47,7 +48,7 @@ All three codes use the **secondary's** ω, with the primary's at ω + 180°, an
 | a_mas | sma × plx | a × plx |
 | P (days) | from sma and mtot (years) | P or from a and M |
 
-**This agreement is from documentation and has not been tested numerically.** orbitize! computes positions from Green's (1985) cos²(i/2), sin²(i/2) form, which is independent of our Thiele–Innes route. That makes it a good oracle (§4.1). Its documented RV input convention is also worth noting: RVs of a non-primary body are barycentric.
+**This agreement is from documentation and has not been tested numerically.** orbitize! computes positions from Green's (1985) cos²(i/2), sin²(i/2) form, which is independent of our Thiele–Innes route. That makes it a good oracle (§4, item 1). Its documented RV input convention is also worth noting: RVs of a non-primary body are barycentric.
 
 ## 4. What to adopt
 
@@ -55,15 +56,77 @@ All three codes use the **secondary's** ω, with the primary's at ω + 180°, an
 |---|---|---|---|---|---|
 | 1 | Ephemeris and convention cross-check against orbitize!: sep, PA and RV over a grid of elements, both stars, after mapping §3 | orbitize! | virgil-validation (independent side), never virgil | 2–3 h | **high**: closes §5.1.3 of the orbit design without a real anchor |
 | 2 | Posterior comparison on a published dataset that orbitize! ships (e.g. β Pic b relative astrometry, Nielsen et al. 2020), with the same priors | orbitize! | virgil-validation; OzSTAR | 3–4 h | medium |
-| 3 | Angle parameterisation for NUTS: Ω, ω (and PA-like angles in general) sampled as a 2-D vector whose direction is the angle, so that there is no wrap boundary | Octofitter's `UniformCircular`; exoplanet's `Angle` | `virgil` priors, reusable beyond orbits | 2 h | high |
-| 4 | θ, the position angle at `t_ref`, as an alternative to `dt_peri` for sampling `KeplerOrbit` | Thompson et al. (2023) | `orbits.py`, a reparameterisation with a test | 2 h | medium (short arcs, with `StateVectorOrbit`) |
-| 5 | Per-dataset North-angle and plate-scale nuisances (a rotation and a scale of (dra, ddec) or of (u, v)) | Octofitter | the `noise=` / per-dataset terms of `fit` | 2–3 h | medium: the multi-instrument fits of R7 need it for imaging and masking data |
+| 3 | Angle parameterisation for NUTS: Ω, ω (and PA-like angles in general) sampled as a 2-D vector whose direction is the angle, so that there is no wrap boundary | Octofitter's `UniformCircular`; exoplanet's `Angle` | `virgil` priors, reusable beyond orbits | 3–4 h | high; design in §4.1 |
+| 4 | θ, the position angle at `t_ref`, as an alternative to `dt_peri` for sampling `KeplerOrbit` | Thompson et al. (2023) | `orbits.py`, a reparameterisation with a test | 2 h | medium (short arcs, with `StateVectorOrbit`); §4.2 |
+| 5 | Per-dataset North-angle and plate-scale nuisances (a rotation and a scale of (dra, ddec) or of (u, v)) | Octofitter | the `noise=` / per-dataset terms of `fit` | 2–3 h | medium: the multi-instrument fits of R7 need it for imaging and masking data; §4.3 |
 | 6 | Observable-based priors for short arcs | O'Neil et al. (2019) | a prior helper, after `StateVectorOrbit` is in use | 3 h | low |
 | 7 | Simulation-based calibration of orbit posteriors | Octofitter (`sbc.jl`) | virgil-validation campaigns on OzSTAR | 3–4 h | medium |
 | 8 | Initialisation by Pathfinder after `starting_orbits` | Octofitter (Zhang et al. 2022) | only if NUTS warm-up is slow on real problems; BlackJAX has Pathfinder | 1–2 h | low |
 
+### 4.1 Angles as 2-D vectors, and how they meet the von Mises likelihoods
+
+**The problem is the parameterisation, not the likelihood.**
+- Every angle in a virgil model (Ω, ω, a binary's or disc's position angle, a rim's azimuth) enters through sines and cosines. Unprojected phase residuals are chords, 2 sin(Δ/2)/σ (`likelihood.py`), so the likelihood is a von Mises density, smooth and 2π-periodic, in data and in parameters alike.
+- The wall comes from the priors. `fit` and numpyro map each prior's support onto the real line. `Uniform(0, 360)`, numpyro's `VonMises` (support `circular`, [−π, π)) and `AxialVonMises` (support [0°, 360°)) all go through a sigmoid onto an interval (checked: `biject_to(VonMises(0, 1).support)` is a sigmoid–affine composition).
+- So an angle whose posterior straddles the wrap sits against a hard boundary in the unconstrained coordinates, and a broad angle cannot pass from 359° to 1°.
+
+**The construction.** Sample v = (x, y) = r(cos θ, sin θ) in ℝ², and report θ = atan2(y, x). Any rotationally symmetric prior on v makes θ exactly uniform and independent of r. The likelihood depends on v only through the direction v̂ = v/r, so r is a pure nuisance.
+
+**A ring, not a Gaussian.**
+- Octofitter (`UniformCircular`) and exoplanet (`Angle`) put v ~ N(0, I). Its density peaks at the origin, where θ is undefined. That is harmless for NUTS, since r is then Rayleigh-distributed with its mode at 1. It is not harmless for `fit`: a MAP fit drives r → 0, where the gradients of v̂ grow as 1/r.
+- virgil should use the residual (r − 1)/s instead: a density ∝ exp(−(r − 1)²/2s²) in v. It is rotationally symmetric, so θ is still exactly uniform. Its mode is the unit circle. It is a least-squares residual, so Levenberg–Marquardt, the Laplace covariance and `gauss_newton_mass` all take it unchanged. Start with s = 0.25 and tune it in the tests.
+- **Sampling geometry.** A tightly measured angle (width σ_θ) gives a blob near the unit circle, s wide radially and σ_θ wide tangentially. It is nearly straight, so the dense Gauss–Newton mass matrix whitens it. A broad angle gives a ring of width s, which NUTS goes round. Unlike with the Gaussian, the sampler cannot cut through the origin. That matters only for well-separated modes, which the next part removes where they are exact.
+
+**Von Mises priors become chord residuals, the same form as the likelihood.**
+- A von Mises prior VM(μ, κ) on θ has −log p = κ(1 − cos(θ − μ)) + const = (κ/2)|v̂ − m̂|², with m̂ = (cos μ, sin μ). It is therefore the 2-vector residual √κ (v̂ − m̂).
+- This is the chord of virgil's phase likelihood: 2 sin(Δ/2)/σ = |e^{iφ} − e^{iφ_data}|/σ, with κ = 1/σ². One form then serves data and priors.
+- `fit` today rejects `VonMises` priors, which have no least-squares form. On an angle vector it can take them.
+- Keep the normaliser on the circle, −log(2π I₀(κ)), through `i0e` as `likelihood.py` does, so that evidences stay normalised.
+- **`AxialVonMises`** is the same chord on the doubled direction, (cos 2θ, sin 2θ) = (x² − y², 2xy)/r²: the residual is √κ ((cos 2θ, sin 2θ) − (cos 2μ, sin 2μ)).
+- **A uniform prior on θ** adds no residual beyond the ring.
+
+**Sample the identified combinations, not the raw angles.** Vectors remove the wall, not multimodality. For orbits, the exact symmetries of the orbit design (§2.3 there) say which angles to make vectors:
+- **Positions only.** (Ω, ω) and (Ω + 180°, ω + 180°) predict the same positions. Sample the vector of 2Ω (Ω modulo 180°) and the vector of ϖ = Ω + ω. The flip changes ϖ by 360°, so ϖ is invariant, and each pair of modes collapses to one point. Report Ω in [0°, 180°), as `starting_orbits` does.
+- **With RVs, or any other datum that breaks the flip:** the vectors of Ω and ϖ.
+- **Near face-on,** astrometry measures ϖ but not Ω and ω separately (orbit design §2.3, symmetry 4). ϖ is then the tight vector and Ω the broad one, instead of two broad, correlated angles.
+- **The primary/secondary swap** (ω + 180°, r → −r) is not a parameterisation matter. The flux-ratio convention fixes it.
+
+**Evidence.** The radial dimension integrates out exactly, since its prior is normalised. A Laplace evidence in v-space approximates that integral by a Gaussian in r, with an error of order s². Test it against the angle-space evidence on a one-dimensional problem.
+
+**Interface (to be settled when built).**
+- Keep it general: an angle-vector prior usable for any angle path in virgil, not only orbits. It would create a sample site `<path>_vec` of shape (2,) with the ring and an optional von Mises or axial chord, and a deterministic `<path>` in degrees. `fit`'s prior-residual hook recognises it.
+- An orbit helper chooses (2Ω, ϖ) or (Ω, ϖ), and builds the `KeplerOrbit`.
+
+**Tests.**
+1. θ is uniform under the ring prior (Kolmogorov–Smirnov test).
+2. The von Mises and axial chords give the right marginals.
+3. NUTS on a posterior straddling 0°/360° matches the wrapped truth.
+4. A MAP fit converges through the wrap.
+5. (2Ω, ϖ) ↔ (Ω, ω) round-trips, and the flip modes collapse to one point.
+6. The Laplace evidence agrees with the angle-space evidence.
+
+### 4.2 The position angle at a reference epoch (item 4)
+Thompson et al. (2023) replace t_p with θ, the position angle at a reference epoch, because astrometry measures it directly.
+
+**Conversion.** In our elements, with u = ω + f the argument of latitude at `t_ref`, the Thiele–Innes relations (orbit design §2.4) give (cos(θ − Ω), sin(θ − Ω)) ∝ (cos u, sin u cos i). Then:
+1. u = atan2(sin(θ − Ω)/cos i, cos(θ − Ω));
+2. f = u − ω;
+3. f gives E, then M, then `dt_peri`.
+
+**Properties.**
+- θ is itself an angle, so it is sampled as a vector (§4.1).
+- The map is singular at i = 90°, where the position angle takes only two values. Near edge-on, keep `dt_peri` or use `StateVectorOrbit`.
+- θ belongs with the short-arc tools, beside `StateVectorOrbit`.
+
+### 4.3 North angle and plate scale (item 5)
+**Per dataset,** a rotation δ and a fractional scale s act on the scene's sky positions: (dra, ddec) → (1 + s) R(δ)(dra, ddec).
+- Rotating and scaling the sky is the same as rotating and scaling (u, v), so for `OIData` the plate scale is the existing `wavel_scale` (spectro note §2.6). Only the North angle is new.
+- **Long-baseline interferometers** know their baselines geometrically, so δ = 0 there.
+- **Imaging, masking and kernel-phase datasets,** and published positions (`PositionData`), take both, with Gaussian priors from the instrument's astrometric calibration.
+- A sign test (a known rotation recovered with the right sign) goes with the position-angle round trips of orbit design §5.3.
+
 **Not adopted, and why:**
-- **OFTI** (Blunt et al. 2017). Its niche, cheap posteriors from short arcs of relative astrometry, is covered more exactly by the Thiele–Innes marginalisation (`thiele_innes_marginalisation.md`), which integrates the four linear elements analytically instead of scaling and rotating prior draws. That note already cites OFTI and compares it (§2.1 there). OFTI is also a good comparison in item 2.
+- **OFTI** (Blunt et al. 2017). Its niche, cheap posteriors from short arcs of relative astrometry, is to be covered more exactly by the Thiele–Innes marginalisation. That is designed (`thiele_innes_marginalisation.md`) but not yet built (Stage 6a.1, "Later"); until then, `starting_orbits` plus NUTS is the route. The marginalisation integrates the four linear elements analytically instead of scaling and rotating prior draws. That note already cites OFTI and compares it (§2.1 there). OFTI is also a good comparison in item 2.
 - **Absolute astrometry** (Hipparcos IAD, HGCA, Gaia DR4). It is a large, specialised effort that three codes have already done carefully (Brandt 2021; Nielsen et al. 2020; Leclerc et al. 2023). If a system needs it, fit it in orvara, orbitize! or Octofitter and bring the result into virgil as a prior on the shared elements. Gaia DR4 epoch astrometry (expected December 2026) may change this for binaries resolved by interferometry; revisit then.
 - **N-body and hierarchical systems.** Not needed by any current case. A triple would bring it back.
 - **GP noise for RVs, photometry, evolutionary-model priors.** Out of scope for an interferometry package.
@@ -90,9 +153,15 @@ All three codes use the **secondary's** ω, with the primary's at ω + 180°, an
 
 **Not copied.** No code from orbitize!, Octofitter or orvara is in virgil. Both orbitize! (BSD-3) and Octofitter (MIT) are permissively licensed. If code is ever ported, keep the licence notice and say so in the docstring.
 
-## 6. Decisions for Ben
+## 6. Decisions (Ben, 2026-10-05)
 
-1. **orbitize! in virgil-validation (items 1, 2, 7).** The 2026-10-03 decision ruled out orbitize! as a dependency or converter in virgil. Using it as an independent oracle in the validation repo leaves that intact, and fits the validation repo's rule that the reference side is never virgil. Approve?
-2. **Which of items 3–5 to build in Stage 6a.1** (default: 3 and 5 now; 4 with the short-arc work).
-3. **Absolute astrometry stays out** (default), revisited with Gaia DR4.
-4. **Talk to the authors?** William Thompson (Octofitter) has an interferometry likelihood and an AMI demonstration close to ours. A comparison on a shared simulated AMI dataset would test both codes; ask first.
+1. **No dependency** on orbitize!, Octofitter or orvara in virgil, its tests or its docs build, wherever it can be avoided. No converters (as decided on 2026-10-03).
+2. **orbitize! is a root of trust in virgil-validation** (items 1 and 2): ephemerides, RVs, symmetries and derived masses checked against it on the validation repo's independent side.
+3. **Adopt:**
+   - angles as 2-D vectors (§4.1), designed together with our von Mises likelihoods;
+   - the position angle at a reference epoch (§4.2);
+   - North-angle and plate-scale nuisances (§4.3);
+   - simulation-based calibration of orbit posteriors in virgil-validation (item 7).
+4. **Not now:** observable-based priors (item 6) and Pathfinder (item 8).
+5. **Absolute astrometry stays out** (default), revisited with Gaia DR4.
+6. **No contact with the Octofitter authors** for now; Ben will arrange a comparison in due course.
