@@ -95,7 +95,7 @@ def gp_scene(sigma, length):
     return System(star=PointSource(), env=Image(field, h, support=start.env.support, flux=start.env.flux))
 
 
-flux_prior = {"env.flux": dist.Uniform(0.0, 1.0)}
+flux_prior = {"env.flux": dist.LogUniform(1e-3, 2.0)}
 scene = gp_scene(2.0, 0.5 * resolution.minor_mas)
 one = fit(scene, image_priors(scene) | flux_prior, data)
 print(f"{one.info['method']}: converged {one.info['converged']} in {one.info['steps']} steps; chi2 per point {one.info['chi2_red']:.3f}; flux {float(one.values['env.flux']):.4f} (truth 0.05)")

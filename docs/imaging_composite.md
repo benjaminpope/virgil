@@ -88,7 +88,7 @@ def gp_image(flux=0.3):
 
 
 single = System(primary=PointSource(), env=gp_image())
-single_fit = fit(single, image_priors(single) | {"env.flux": dist.Uniform(0.0, 2.0)}, data)
+single_fit = fit(single, image_priors(single) | {"env.flux": dist.LogUniform(1e-3, 2.0)}, data)
 print(f"one star: converged {single_fit.info['converged']}, chi2 per point {single_fit.info['chi2_red']:.3f}, image flux {float(single_fit.values['env.flux']):.3f} (ring truth 0.35)")
 ```
 
@@ -108,8 +108,8 @@ knot = (float(centres[col]), float(centres[row]))
 
 binary = System(primary=PointSource(), secondary=PointSource(flux=0.05, dra=knot[0], ddec=knot[1]), env=gp_image())
 priors = image_priors(binary) | {
-    "env.flux": dist.Uniform(0.0, 2.0),
-    "secondary.flux": dist.Uniform(0.0, 1.0),
+    "env.flux": dist.LogUniform(1e-3, 2.0),
+    "secondary.flux": dist.LogUniform(1e-3, 1.0),
     "secondary.dra": dist.Uniform(-5.0, 5.0),
     "secondary.ddec": dist.Uniform(-5.0, 5.0),
 }

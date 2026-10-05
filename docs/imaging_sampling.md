@@ -64,7 +64,7 @@ Part 3's evidence chose σ = 4 and ℓ equal to the beam's minor axis. Here they
 sigma, length = 4.0, resolution.minor_mas
 field = GaussianField(onp.zeros((n, n)), sigma, length, mean=onp.asarray(start.env.brightness))
 scene = System(star=PointSource(), env=Image(field, h, support=start.env.support, flux=start.env.flux))
-priors = image_priors(scene) | {"env.flux": dist.Uniform(0.0, 1.0)}
+priors = image_priors(scene) | {"env.flux": dist.LogUniform(1e-3, 2.0)}
 result = fit(scene, priors, data)
 print(f"MAP: converged {result.info['converged']} in {result.info['steps']} steps; chi2 per point {result.info['chi2_red']:.2f}; flux {float(result.values['env.flux']):.4f} (truth 0.05); σ = {sigma}, ℓ = {length:.0f} mas")
 ```
@@ -143,7 +143,7 @@ rendering draws:   0%|          | 0/300 [00:00<?, ?it/s]
 
 ## What about σ and ℓ?
 
-Holding σ and ℓ at the evidence's choice ignores their own uncertainty. Part 3's evidence grid shows how much that matters: if neighbouring σ and ℓ have nearly the same evidence, images drawn at either would do as well. Sampling them too is possible. Give them priors (e.g. log-normal) and run plain NUTS without `gauss_newton_mass`, whose matrix would be wrong as they move. On this scene that took about 4 minutes on an A100 GPU, and gave σ = 3–10 and ℓ = 80–340 mas (90% intervals), consistent with the evidence's choice. Run that on a GPU, or average images over the evidence grid's neighbouring points.
+Holding σ and ℓ at the evidence's choice ignores their own uncertainty. Part 3's evidence grid shows how much that matters: if neighbouring σ and ℓ have nearly the same evidence, images drawn at either would do as well. Sampling them too is possible. Give them priors (they are scales, so log-uniform on stated bounds) and run plain NUTS without `gauss_newton_mass`, whose matrix would be wrong as they move. On this scene that took about 4 minutes on an A100 GPU, and gave σ = 3–10 and ℓ = 80–340 mas (90% intervals), consistent with the evidence's choice. Run that on a GPU, or average images over the evidence grid's neighbouring points.
 
 ## Summary
 - **NUTS on a Gaussian-field image** samples the field's standard-normal latents with `numpyro_model`, starting at the MAP from `fit`.

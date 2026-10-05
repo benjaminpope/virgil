@@ -116,7 +116,7 @@ Here is one fit, at w = 100.
 
 ```python
 start = starts["moments"]
-priors = image_priors(start) | {"env.flux": dist.Uniform(0.0, 1.0)}
+priors = image_priors(start) | {"env.flux": dist.LogUniform(1e-3, 2.0)}
 one = fit(start, priors, data, [MaxEntropy(100.0, path="env")])
 print(f"converged {one.info['converged']} after {one.info['steps']} steps; chi2 per point {one.info['chi2_red']:.3f}; image flux {float(one.model.env.flux):.4f} (truth 0.05)")
 ```
@@ -135,7 +135,7 @@ Here both starting images are swept, and the two criteria are marked on each cur
 
 ```python
 weights = jnp.logspace(3.5, 1.0, 11)
-curves = {kind: l_curve(s, image_priors(s) | {"env.flux": dist.Uniform(0.0, 1.0)}, data, MaxEntropy(1.0, path="env"), weights, max_steps=200_000) for kind, s in starts.items()}
+curves = {kind: l_curve(s, image_priors(s) | {"env.flux": dist.LogUniform(1e-3, 2.0)}, data, MaxEntropy(1.0, path="env"), weights, max_steps=200_000) for kind, s in starts.items()}
 
 fig, ax = plt.subplots(figsize=(6, 4.5))
 for (kind, curve), colour in zip(curves.items(), ("C0", "C1")):
