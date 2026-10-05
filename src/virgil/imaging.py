@@ -32,7 +32,8 @@ fit can stop in a local minimum: start it from a good image, such as a
 
 [`clean`][virgil.imaging.clean] builds a sparse image directly, from point
 components added one at a time where the gradient of χ² is steepest: CLEAN
-for any data, including closure and DISCO phases.
+for any data, including closure and DISCO phases. With ``scales_mas`` the
+components can also be Gaussians of several widths (multi-scale CLEAN).
 ``design/sparse_imaging.md`` discusses the choices.
 
 When [`fit`][virgil.fitting.fit]'s model function returns one model per
@@ -72,6 +73,8 @@ from .models import (
     _pixel_visibilities,
     circular_support,
 )
+
+_HIGHEST = jax.lax.Precision.HIGHEST
 
 
 class _ImageRegulariser(eqx.Module):
@@ -912,15 +915,64 @@ class _CleanScene(SourceModel):
         return (weight * base + shape * pixels) / (weight + shape * total)
 
 
+def _scale_shapes(scales_mas, support, pixel_scale_mas):
+    """The component shapes of multi-scale CLEAN, one per scale.
+
+    ``None`` for a point (scale 0), and otherwise ``(kernel, weight,
+    mask)``: ``kernel`` the 1-D Gaussian of FWHM ``s`` on the pixel grid
+    (the 2-D shape is separable, ``K F K``), ``mask`` the support, and
+    ``weight`` the inverse of the part of each pixel's shape inside the
+    support (zero outside it), so that the image of a component is
+    confined to the support and its flux is the component's.
+    """
+    mask = onp.asarray(support, float)
+    offsets = onp.arange(mask.shape[0], dtype=float)
+    shapes = []
+    for s in scales_mas:
+        if s == 0.0:
+            shapes.append(None)
+            continue
+        sigma = s / (2.0 * onp.sqrt(2.0 * onp.log(2.0)) * pixel_scale_mas)
+        kernel = onp.exp(
+            -0.5 * ((offsets[:, None] - offsets[None, :]) / sigma) ** 2
+        )
+        inside = kernel @ mask @ kernel  # the kernel is symmetric
+        weight = onp.where(support, 1.0 / onp.where(support, inside, 1), 0)
+        shapes.append((kernel, weight, mask))
+    return tuple(shapes)
+
+
+def _sky(fluxes, shapes):
+    """The image ``Σ_s G_s * F_s`` of fluxes of shape (n_scales, n, n)."""
+    images = []
+    for f, shape in zip(fluxes, shapes):
+        if shape is None:
+            images.append(f)
+            continue
+        kernel, weight, mask = shape
+        smooth = np.matmul(
+            np.matmul(kernel, f * weight, precision=_HIGHEST),
+            kernel,
+            precision=_HIGHEST,
+        )
+        images.append(mask * smooth)
+    sky = images[0]
+    for image in images[1:]:
+        sky = sky + image
+    return sky
+
+
 def _clean_residuals(parts, observations, scale, rotation):
     """Whitened residuals of all the data, as a function of the fluxes.
 
-    ``parts`` is ``(base, spectrum)``.
+    ``parts`` is ``(base, spectrum, shapes)``, with ``shapes`` from
+    :func:`_scale_shapes`; the fluxes have shape (n_scales, npix, npix).
     """
-    base, spectrum = parts
+    base, spectrum, shapes = parts
 
     def residuals(fluxes):
-        scene = _CleanScene(base, fluxes, scale, rotation, spectrum)
+        sky = _sky(fluxes, shapes)
+        scene = _CleanScene(base, sky, scale, rotation, spectrum)
         return np.concatenate(
             [np.ravel(whitened_residuals(scene, d)) for d in observations]
         )
@@ -930,22 +982,24 @@ def _clean_residuals(parts, observations, scale, rotation):
 
 @eqx.filter_jit
 def _atom_norms(parts, observations, fluxes, scale, rotation):
-    """``|J e_p|²`` for every pixel ``p``: the χ² response to its flux.
+    """``|J e_p|²`` for every component ``p``: the χ² response to its flux.
 
-    One Jacobian–vector product per pixel, a row of pixels at a time, so
-    the Jacobian is never held whole.
+    One Jacobian–vector product per (scale, pixel), a row of pixels at a
+    time, so the Jacobian is never held whole.
     """
     residuals = _clean_residuals(parts, observations, scale, rotation)
-    nrow, ncol = fluxes.shape
+    ncol = fluxes.shape[-1]
+    nrow = fluxes.size // ncol
 
     def row(i):
         def pixel(j):
-            e = np.zeros(fluxes.shape, fluxes.dtype).at[i, j].set(1.0)
+            e = np.zeros((nrow, ncol), fluxes.dtype).at[i, j].set(1.0)
+            e = e.reshape(fluxes.shape)
             return np.sum(jax.jvp(residuals, (fluxes,), (e,))[1] ** 2)
 
         return jax.vmap(pixel)(np.arange(ncol))
 
-    return jax.lax.map(row, np.arange(nrow))
+    return jax.lax.map(row, np.arange(nrow)).reshape(fluxes.shape)
 
 
 @eqx.filter_jit
@@ -1120,7 +1174,8 @@ class CleanResult:
         (with the components' spectrum, if one was given). Without a base
         scene, the Image alone; with no components, the base alone.
     components : array, shape (npix, npix)
-        The components' fluxes on the pixel grid, relative to the base
+        The components' total flux in each pixel of the grid,
+        ``Σ_s G_s * F_s`` summed over the scales, relative to the base
         scene's weight (without a base scene, normalised to unit sum).
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
@@ -1131,6 +1186,12 @@ class CleanResult:
         Why CLEAN stopped: ``"target"`` (χ² per point reached
         ``target_chi2_red``), ``"stalled"`` (χ² stopped falling, even after
         a major cycle) or ``"max_iterations"``.
+    components_by_scale : array, shape (n_scales, npix, npix)
+        The components' fluxes ``F_s`` at each scale, at the pixel at the
+        centre of their shape, in the units of ``components``. Each sums to
+        that scale's share of the total flux.
+    scales_mas : tuple of float
+        The FWHM of each scale's Gaussian shape (0 for a point).
     """
 
     model: object
@@ -1138,6 +1199,8 @@ class CleanResult:
     pixel_scale_mas: float
     chi2_red: jax.Array
     stop: str
+    components_by_scale: jax.Array = None
+    scales_mas: tuple = (0.0,)
 
     def restored(self, beam):
         """The components convolved with ``beam``: the "restored" image.
@@ -1168,8 +1231,10 @@ def clean(
     init=None,
     rotation_deg=0.0,
     dtype="float64",
+    scales_mas=(0.0,),
+    scale_bias=0.0,
 ):
-    """Build an image from point components, one at a time: gradient CLEAN.
+    """Build an image from components, one at a time: gradient CLEAN.
 
     Högbom's CLEAN repeatedly finds the peak of the residual dirty image
     and adds a fraction (the loop ``gain``) of a point source there. For
@@ -1219,6 +1284,22 @@ def clean(
     components absorb an error in the base, or let the base absorb flux it
     does not model. A companion much closer to the star than λ/B has its
     flux and separation nearly degenerate, whatever fits it.
+
+    **Multi-scale CLEAN** (Cornwell 2008, IEEE JSTSP 2, 793): with several
+    ``scales_mas``, each component is a pixel convolved with a circular
+    Gaussian of FWHM ``s`` (``s = 0`` is a point), and the image is
+    ``Σ_s G_s * F_s``. The search runs over every (scale, pixel), with the
+    same score ``g² / |J e|²``, and the major cycles refit the components
+    at all scales together. An extended source then takes a few broad
+    components instead of many points. Each shape is cut to the
+    ``support`` and renormalised there, so a component's flux is the flux
+    it puts in the image. Cornwell multiplies the peak residual at each
+    scale by a bias ``1 - 0.6 s / s_max`` that favours small scales,
+    because the peak of a smoothed residual grows with the scale's area.
+    The score here is instead the χ² decrease of each component's
+    Gauss–Newton step, which does not depend on its size, so no bias is
+    needed; ``scale_bias`` applies one, ``1 - scale_bias s / s_max``, if
+    the broad components grab flux that belongs to points.
 
     Iteration stops when χ² per data point reaches ``target_chi2_red`` (the
     discrepancy principle; it relies on correct error bars), or after
@@ -1273,16 +1354,25 @@ def clean(
         Pixels allowed to receive components (default: all), e.g. a
         [`circular_support`][virgil.models.circular_support] with a hole
         under the star.
-    init : array-like, shape (npix, npix), optional
+    init : array-like, shape (npix, npix) or (n_scales, npix, npix), optional
         Starting component fluxes, non-negative and zero outside
         ``support`` (default: none with a base, and without one a single
-        component on the supported pixel nearest the centre).
+        component of the smallest scale on the supported pixel nearest the
+        centre). An (npix, npix) array is point components, and needs 0
+        among the ``scales_mas``.
     rotation_deg : float, optional
         Position angle of the grid's "up" axis, as for
         [`Image`][virgil.models.Image]; match the data's uv lattice
         (``data.uv_grid.rotation_deg``) for the fast exact transform.
     dtype : {"float64", "float32"}, optional
         Precision of the iterations, as for [`fit`][virgil.fitting.fit].
+    scales_mas : sequence of float, optional
+        FWHM in mas of the components' Gaussian shapes, distinct and
+        non-negative (default ``(0.0,)``: points only, Högbom-like CLEAN).
+        E.g. ``(0.0, 2 * beam_fwhm)`` for points and broad emission.
+    scale_bias : float, optional
+        In [0, 1): scales the scores of scale ``s`` by
+        ``1 - scale_bias s / max(scales_mas)`` (default 0, no bias).
 
     Returns
     -------
@@ -1312,6 +1402,19 @@ def clean(
                 f"{name} must be a non-negative integer, not {value}."
             )
     refit_every, stall_window = int(refit_every), int(stall_window)
+    scales_mas = tuple(float(s) for s in onp.atleast_1d(scales_mas))
+    if (
+        not scales_mas
+        or not all(onp.isfinite(s) and s >= 0.0 for s in scales_mas)
+        or len(set(scales_mas)) != len(scales_mas)
+    ):
+        raise ValueError(
+            f"scales_mas must be distinct, finite and non-negative, not "
+            f"{scales_mas}."
+        )
+    if not 0.0 <= scale_bias < 1.0:
+        raise ValueError(f"scale_bias must be in [0, 1), not {scale_bias}.")
+    nscales = len(scales_mas)
     if base is not None and base.time_dependent:
         raise ValueError("The base scene must not change with time.")
     if spectrum is not None and base is None:
@@ -1348,25 +1451,44 @@ def clean(
             f"support must have shape {shape} and at least one pixel."
         )
     if init is None:
-        init = onp.zeros(shape)
+        init = onp.zeros((nscales,) + shape)
         if base is None:  # the supported pixel nearest the centre
             offsets = pixel_offsets(npix, 1.0)
             radius = onp.hypot(offsets[None, :], offsets[:, None])
             centre = onp.argmin(onp.where(support, radius, onp.inf))
-            init.flat[centre] = 1.0
+            init[onp.argmin(scales_mas)].flat[centre] = 1.0
     init = onp.asarray(init, float)
-    if init.shape != shape or not onp.all(onp.isfinite(init) & (init >= 0)):
+    if init.shape == shape:  # point components
+        if 0.0 not in scales_mas:
+            raise ValueError(
+                f"An init of shape {shape} is point components; give "
+                f"one of shape {(nscales,) + shape}, or a scale of 0."
+            )
+        points = init
+        init = onp.zeros((nscales,) + shape)
+        init[scales_mas.index(0.0)] = points
+    if init.shape != (nscales,) + shape or not onp.all(
+        onp.isfinite(init) & (init >= 0)
+    ):
         raise ValueError(
-            f"init must have shape {shape} and be finite and non-negative."
+            f"init must have shape {shape} or {(nscales,) + shape} and be "
+            f"finite and non-negative."
         )
-    if onp.any(init[~support] > 0):
+    if onp.any(init[:, ~support] > 0):
         raise ValueError("init has flux outside the support.")
     if base is None and not init.sum() > 0:
         raise ValueError("Without a base scene, init needs a positive pixel.")
     ndata = sum(d.n_independent for d in observations)
+    shapes = _scale_shapes(scales_mas, support, pixel_scale_mas)
+    bias = onp.ones((nscales, 1, 1))
+    if scale_bias and max(scales_mas) > 0.0:
+        bias[:, 0, 0] -= scale_bias * onp.array(scales_mas) / max(scales_mas)
     with run_in(dtype):
         cast_observations = cast_tree(observations, dtype)
-        fixed = (cast_tree((base, spectrum), dtype), cast_observations)
+        fixed = (
+            cast_tree((base, spectrum, shapes), dtype),
+            cast_observations,
+        )
         fluxes = np.asarray(init, dtype)
         geometry = (pixel_scale_mas, rotation_deg)
 
@@ -1382,9 +1504,10 @@ def clean(
             # with |J e_p| below 100 eps of the largest are dead.
             eps = float(np.finfo(norms.dtype).eps)
             live = norms > (100.0 * eps) ** 2 * np.max(norms)
-            return np.where(
+            scores = np.where(
                 support & live, 1.0 / np.where(live, norms, 1.0), 0.0
             )
+            return scores if not scale_bias else scores * bias
 
         def major_cycle(fluxes, chi2):
             # With free base parameters, first fit those and the components'
@@ -1392,19 +1515,26 @@ def clean(
             # squares, which can remove components. Pruning against the
             # corrected base, not the old one, keeps a component the old
             # base was hiding.
+            # With several scales the joint fit is of the image, which
+            # has no unique split into scales: it gives the base, and the
+            # non-negative refit the components at every scale.
             nonlocal base, fixed
             if base_priors:
                 base, components = _joint_refit(
                     base,
-                    onp.asarray(fluxes, float),
+                    onp.asarray(_sky(fluxes, fixed[0][2]), float),
                     observations,
                     base_priors,
                     geometry,
                     spectrum,
                     dtype,
                 )
-                fixed = (cast_tree((base, spectrum), dtype), cast_observations)
-                fluxes = np.asarray(components, fluxes.dtype)
+                fixed = (
+                    cast_tree((base, spectrum, shapes), dtype),
+                    cast_observations,
+                )
+                if scales_mas == (0.0,):
+                    fluxes = np.asarray(components, fluxes.dtype)[None]
                 chi2 = float(_clean_chi2(*fixed, fluxes, *geometry))
             return _refit(fixed, fluxes, chi2, *geometry)
 
@@ -1437,7 +1567,9 @@ def clean(
             if stalled:
                 stop = "stalled"
                 break
-            fluxes = fluxes.ravel().at[p].add(gain * step).reshape(shape)
+            fluxes = (
+                fluxes.ravel().at[p].add(gain * step).reshape(fluxes.shape)
+            )
             since_refit += 1
         if refit_every and since_refit > 0:
             # A last major cycle, so the returned fluxes are refitted even
@@ -1445,9 +1577,11 @@ def clean(
             fluxes = major_cycle(fluxes, float(chi2))
             chi2 = _clean_chi2(*fixed, fluxes, *geometry)
             history.append(float(chi2) / ndata)
-        components = onp.asarray(fluxes, float)
+        by_scale = onp.asarray(fluxes, float)
+        components = onp.asarray(_sky(fluxes, fixed[0][2]), float)
     if base is None:
-        components = components / components.sum()
+        total = components.sum()
+        components, by_scale = components / total, by_scale / total
     model = _clean_model(
         base, components, pixel_scale_mas, rotation_deg, spectrum
     )
@@ -1457,6 +1591,8 @@ def clean(
         pixel_scale_mas,
         np.asarray(history),
         stop,
+        np.asarray(by_scale),
+        scales_mas,
     )
 
 

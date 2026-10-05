@@ -5,6 +5,19 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
+## Unreleased
+
+### Added
+
+- **Multi-scale CLEAN**: `clean(scales_mas=(0.0, ...))` adds components
+  that are pixels convolved with circular Gaussians of the given FWHM
+  (Cornwell 2008), so extended emission takes a few broad components
+  instead of many points. The search and the major cycles run over every
+  (scale, pixel). `CleanResult` gains `components_by_scale` and
+  `scales_mas`; `components` is still the total image. The default
+  `scales_mas=(0.0,)` gives exactly the previous point-only results.
+  An optional `scale_bias` favours small scales; it is off by default.
+
 ## 0.3.0 (2026-10-06)
 
 Everything listed as new was added after 0.2.0.

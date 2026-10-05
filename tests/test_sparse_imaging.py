@@ -17,7 +17,14 @@ from virgil.imaging import (
     l_curve,
     starlet,
 )
-from virgil.models import BinaryModelCartesian, Image, PointSource, System
+from virgil.models import (
+    BinaryModelCartesian,
+    GaussianDisk,
+    Image,
+    PointSource,
+    System,
+    circular_support,
+)
 from virgil.oidata import OIData
 from virgil.scenes import gaussian_blob
 
@@ -498,3 +505,129 @@ def test_base_priors_on_a_system_must_name_components():
             base=base,
             base_priors={"dra": dist.Normal(0.0, 5.0)},
         )
+
+
+# Pinned from clean before multi-scale components were added, on the data of
+# test_clean_finds_a_companion_with_disco_phases.
+POINT_CHI2 = [29.341616, 23.968899, 4.6554294, 0.99760872, 0.87133229]
+POINT_FLUXES = [0.0013277380, 0.0034459550, 0.038950216, 0.0026211475]
+
+
+def test_point_scale_reproduces_point_clean():
+    # With points only, multi-scale CLEAN is the same algorithm as before.
+    data = _companion_data()
+    default = clean(data, NPIX, SCALE, base=PointSource(), max_iterations=300)
+    points = clean(
+        data,
+        NPIX,
+        SCALE,
+        base=PointSource(),
+        max_iterations=300,
+        scales_mas=(0.0,),
+    )
+    assert onp.array_equal(points.chi2_red, default.chi2_red)
+    assert onp.array_equal(points.components, default.components)
+    assert points.scales_mas == (0.0,)
+    assert onp.array_equal(points.components_by_scale[0], points.components)
+    assert len(points.chi2_red) == 30
+    assert onp.allclose(
+        points.chi2_red[onp.array([0, 1, 10, -2, -1])], POINT_CHI2, rtol=1e-5
+    )
+    on = onp.flatnonzero(onp.asarray(points.components))
+    assert list(on) == [106, 148, 149, 164]
+    assert onp.allclose(
+        onp.asarray(points.components).ravel()[on], POINT_FLUXES, rtol=1e-4
+    )
+
+
+def _disk_and_point():
+    # A star, a resolved Gaussian disk (FWHM 16 mas, ~3 beams) and a point,
+    # in V² and closure phases from the four UTs.
+    truth = System(
+        star=PointSource(),
+        disk=GaussianDisk(dra=-7.0, ddec=5.0, sigma=7.0, flux=0.5),
+        comp=PointSource(dra=9.0, ddec=-9.0, flux=0.2),
+    )
+    data = vlti_oidata(wavelengths_m=onp.linspace(3.0e-6, 4.0e-6, 5))
+    return data.with_model(truth, key=jax.random.PRNGKey(3), noise_scale=0.3)
+
+
+def test_multiscale_clean_puts_extended_flux_in_broad_components():
+    data = _disk_and_point()
+    npix, scale = 20, 2.0
+    support = circular_support(npix, scale, 20.0, 2.0)
+    kwargs = dict(base=PointSource(), support=support, max_iterations=600)
+    points = clean(data, npix, scale, **kwargs)
+    multi = clean(data, npix, scale, scales_mas=(0.0, 16.0), **kwargs)
+    assert points.stop == multi.stop == "target"
+    assert multi.components_by_scale.shape == (2, npix, npix)
+    n_points = int(np.sum(points.components_by_scale > 0))
+    n_multi = int(np.sum(multi.components_by_scale > 0))
+    assert n_multi < n_points / 2
+    assert len(multi.chi2_red) < len(points.chi2_red)
+    assert multi.chi2_red[-1] < points.chi2_red[-1]
+    # The disk's 0.5 is mostly in the broad scale, and the point's 0.2 in
+    # the point scale, at the point's pixel.
+    by_scale = onp.asarray(multi.components_by_scale).sum(axis=(1, 2))
+    assert by_scale[1] > 0.35
+    assert abs(by_scale[0] - 0.2) < 0.05
+    offsets = (onp.arange(npix) - (npix - 1) / 2) * scale
+    row, col = onp.unravel_index(
+        int(np.argmax(multi.components_by_scale[0])), (npix, npix)
+    )
+    assert (-offsets[col], -offsets[row]) == (9.0, -9.0)
+    # The image is the sum of the scales' shapes, and keeps their flux.
+    assert np.isclose(multi.components.sum(), by_scale.sum(), rtol=1e-5)
+    assert np.isclose(multi.model.clean.flux, multi.components.sum())
+
+
+def test_multiscale_clean_respects_support_and_fits_the_base():
+    import numpyro.distributions as dist
+
+    support = circular_support(NPIX, SCALE, 80.0, 15.0)
+    base = System(
+        star=PointSource(), comp=PointSource(dra=24.0, ddec=-12.0, flux=0.04)
+    )
+    result = clean(
+        _companion_data(),
+        NPIX,
+        SCALE,
+        base=base,
+        base_priors={"comp.flux": dist.Uniform(0.0, 0.2)},
+        support=support,
+        refit_every=5,
+        max_iterations=12,
+        scales_mas=(0.0, 30.0),
+        scale_bias=0.3,
+    )
+    by_scale = onp.asarray(result.components_by_scale)
+    assert by_scale.shape == (2, NPIX, NPIX)
+    assert onp.all(by_scale >= 0.0)
+    assert onp.all(by_scale[:, ~support] == 0.0)
+    assert onp.all(onp.asarray(result.components)[~support] == 0.0)
+    assert onp.all(onp.asarray(result.components) >= 0.0)
+    assert result.chi2_red[-1] < result.chi2_red[0]
+    assert {"star", "comp", "clean"} == set(result.model.components)
+    assert result.restored(beam(DATA)).shape == (NPIX, NPIX)
+    # A point init needs a point scale; a per-scale init does not.
+    init = np.zeros((NPIX, NPIX)).at[9, 5].set(0.01)
+    with pytest.raises(ValueError, match="point components"):
+        clean(
+            DATA, NPIX, SCALE, base=PointSource(), init=init, scales_mas=30.0
+        )
+    started = clean(
+        _companion_data(),
+        NPIX,
+        SCALE,
+        base=PointSource(),
+        init=np.stack([init, init]),
+        scales_mas=(0.0, 30.0),
+        max_iterations=0,
+        refit_every=0,
+    )
+    assert np.isclose(started.components_by_scale.sum(), 0.02)
+    for bad in [(), (0.0, 0.0), (-1.0,)]:
+        with pytest.raises(ValueError, match="scales_mas"):
+            clean(DATA, NPIX, SCALE, base=PointSource(), scales_mas=bad)
+    with pytest.raises(ValueError, match="scale_bias"):
+        clean(DATA, NPIX, SCALE, base=PointSource(), scale_bias=1.0)

@@ -303,6 +303,33 @@ at each major cycle. For a companion 85 mas out, it lands within 3 mas of
 the truth. At 35 mas, far inside λ/B, it ends along the degeneracy (closer
 and brighter), as any fit of those data must.
 
+### Multi-scale CLEAN (2026-10-06)
+
+`clean(scales_mas=...)` adds Gaussian components of several FWHM (Cornwell
+2008). The fluxes are an array (n_scales, npix, npix) and the image is
+`Σ_s G_s * F_s`. Each Gaussian is separable, `K F K` with a 1-D kernel
+matrix, cut to the support and renormalised there, so a component's flux is
+the flux it puts in the image and nothing lands outside the support. The
+search and the NNLS major cycles run over every (scale, pixel); the norms
+`|J e|²` cost one JVP per (scale, pixel), batched a row at a time as before.
+
+Cornwell's scale bias (`1 - 0.6 s / s_max` on the peak residual) corrects
+the peak of a smoothed residual, which grows with the scale's area. Our
+score `g² / |J e|²` is the χ² decrease of a component's Gauss–Newton step,
+which does not grow with its size, so the default has no bias;
+`scale_bias` is there if broad components take flux that belongs to points.
+
+With `base_priors` and several scales, the joint fit is of the image (it
+has no unique split into scales): it corrects the base, and the NNLS refit
+that follows sets the per-scale fluxes. With points only it is unchanged.
+
+On a test scene (a star, a Gaussian disk of FWHM 16 mas (about three beams)
+holding 0.5 of the star's flux and a 0.2 point, VLTI UTs in L band, three
+noise draws), points-only CLEAN reached χ²/N = 1 with 43–51 components in
+73–103 iterations; scales (0, 16 mas) did so with 9–11 components in 52, put
+0.47 in the broad scale and 0.20 in the point at the right pixel, and ended
+at a lower χ² after the final major cycle.
+
 ### Still open
 
 - **Multi-frequency CLEAN** (Rau & Cornwell 2011): a spectral index per
@@ -384,6 +411,8 @@ pixels) and, like CLEAN, breaks the extended blob into points (native NCC
   imaging with L0 and multiple regularisers).
 - Candès, Wakin & Boyd 2008, J. Fourier Anal. Appl. 14, 877: reweighted L1
   and the log-sum penalty.
+- Cornwell 2008, IEEE J. Sel. Top. Signal Process. 2, 793: multi-scale
+  CLEAN.
 - Högbom 1974, A&AS 15, 417: CLEAN.
 - Rau & Cornwell 2011, A&A 532, A71: multi-scale multi-frequency synthesis
   (multi-frequency CLEAN).
