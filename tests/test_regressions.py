@@ -281,6 +281,25 @@ def test_visibility_correlation_ticks_use_adaptive_float_formatter():
     plt.close(fig)
 
 
+def test_data_model_correlation_without_phases():
+    # AMIGO DISCO data hold every observable in vis and have no phases.
+    from virgil.coverage import ami_grid_record
+    from virgil.models import PointSource
+
+    data = OIData(ami_grid_record(pitch_m=0.5))
+    assert data.phi.size == 0
+    prediction = data.model(PointSource())
+    pred = {
+        "vis_mean": prediction,
+        "vis_std": 0 * prediction,
+        "phi_mean": prediction[:0],
+        "phi_std": prediction[:0],
+    }
+    fig, (ax1, ax2) = plot_data_model_correlation(data, {"star": pred})
+    assert ax1.get_visible() and not ax2.get_visible()
+    plt.close(fig)
+
+
 def test_delta_mag_map_uses_reversed_colormap_by_default():
     limit_map = np.array([[1e-3, 2e-3], [5e-4, 1e-3]])
     grid = {"dra": np.array([-1.0, 1.0]), "ddec": np.array([-1.0, 1.0])}
