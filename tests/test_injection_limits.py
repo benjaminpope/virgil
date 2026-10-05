@@ -146,6 +146,23 @@ def test_injection_limits_grid_shape_and_bounds(data, template):
     assert onp.allclose(clipped, 0.5)
 
 
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        (1e-6, float("inf")),
+        (0.0, 1.0),
+        (-1.0, 1.0),
+        (float("nan"), 1.0),
+        (1.0, 1e-6),
+    ],
+)
+def test_injection_limits_rejects_invalid_flux_bounds(data, template, bounds):
+    with pytest.raises(ValueError, match="flux_bounds"):
+        injection_limits(
+            data, template, one_point(5.0, 8.0), 3.0, flux_bounds=bounds
+        )
+
+
 def test_injection_limits_rejects_unreachable_sigma(data, template):
     with pytest.raises(ValueError, match="cannot be reached"):
         injection_limits(data, template, one_point(5.0, 8.0), 0.1)

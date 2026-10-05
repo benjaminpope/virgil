@@ -8,6 +8,7 @@ The everyday names are importable from the top level, e.g.
 - [AMIGO](amigo.md): AMIGO mixed-DISCO products
 - [Models](models/index.md): source models and visibilities
 - [Likelihood](likelihood.md): likelihoods and numpyro models
+- [Gains](gains.md): calibration gains correlated across channels, marginalised analytically
 - [Inference](inference.md): Laplace and Fisher curvature
 - [Grid Fit](grid_fit.md): grid searches
 - [Limits](limits.md): contrast limits and flux/contrast/Δmag conversions

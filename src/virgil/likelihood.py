@@ -22,14 +22,44 @@ import numpy as onp
 from jax.scipy.special import i0e
 
 from ._utils import _per_dataset, _reference, concrete, is_flux_param
+from .gains import GAIN_GROUPS
 from .models import SourceModel
 
 
-def _whiten(data_obj, prediction, reference, errors):
+def _gain_jacobian(data_obj, vis_prediction):
+    """dObs/dlog|V| of the model's visibility observables."""
+    if data_obj.vis_mode == "v2":
+        return 2.0 * vis_prediction
+    if data_obj.vis_mode == "amp":
+        return vis_prediction
+    return np.ones_like(vis_prediction)
+
+
+def _whiten_vis(data_obj, prediction, resid, errors, gain_terms):
+    """Whitened visibility residuals and their effective errors."""
+    whitened = resid / errors
+    if data_obj.gains is None:
+        return whitened, errors
+    gains = data_obj.gains
+    jacobian = _gain_jacobian(data_obj, prediction) / errors
+    whitened, extra = gains.whiten(
+        whitened, jacobian, gains.widths_for(gain_terms)
+    )
+    return whitened, errors * np.exp(extra)
+
+
+def _whiten(data_obj, prediction, reference, errors, gain_terms=None):
     """Whitened residuals, and the errors that normalise their likelihood.
 
     Returns ``(whitened, errors_out)``. Residuals are
     ``(prediction - reference) / errors``, except:
+
+    - With gains (``OIData.gains``), the visibility residuals are whitened
+      by their covariance with the gains marginalised (see
+      [`virgil.gains`][virgil.gains]), with widths from ``gain_terms``
+      (``vis_gain_<group>``) or the defaults. ``errors_out`` then holds
+      effective errors whose log-sum is ½ log of that covariance's
+      determinant.
 
     - An unprojected phase residual Δ becomes 2 sin(Δ/2). Its square,
       2(1 - cos Δ), equals Δ² to fourth order, repeats every 2π and is
@@ -61,39 +91,39 @@ def _whiten(data_obj, prediction, reference, errors):
       Gaussian normaliser (a correlated von Mises density has no
       closed-form one, and the Gaussian is its limit for σ ≪ 1).
     """
-    resid = np.asarray(prediction) - np.asarray(reference)
+    prediction = np.asarray(prediction)
+    resid = prediction - np.asarray(reference)
     errors = np.asarray(errors)
+    n_vis = np.asarray(data_obj.vis).size
+    vis, vis_errors = _whiten_vis(
+        data_obj, prediction[:n_vis], resid[:n_vis], errors[:n_vis], gain_terms
+    )
+    phase, phase_errors = _whiten_phases(
+        data_obj, resid[n_vis:], errors[n_vis:]
+    )
+    return (
+        np.concatenate([vis, phase]),
+        np.concatenate([vis_errors, phase_errors]),
+    )
+
+
+def _whiten_phases(data_obj, resid, errors):
+    """Whitened phase residuals and their effective errors (see ``_whiten``)."""
     if not data_obj._phases_wrap:
         return resid / errors, errors
-    n_vis = np.asarray(data_obj.vis).size
     if data_obj.cp_noise is None:
-        chord = 2.0 * np.sin(0.5 * resid[n_vis:])
-        whitened = np.concatenate([resid[:n_vis], chord]) / errors
-        phase_errors = errors[n_vis:]
-        von_mises = np.sqrt(2.0 * np.pi) * i0e(1.0 / phase_errors**2)
-        return whitened, np.concatenate([errors[:n_vis], von_mises])
+        von_mises = np.sqrt(2.0 * np.pi) * i0e(1.0 / errors**2)
+        return 2.0 * np.sin(0.5 * resid) / errors, von_mises
     # Correlated closure phases mix their residuals, so each sign matters,
     # and a chord's sign flips under 2π. Whiten the (smooth, periodic) sines
     # and append the periodic penalty 2 sin²(Δ/2)/σ = (1 - cos Δ)/σ, which
     # removes the false minimum at Δ = π.
-    phase = resid[n_vis:]
-    phase_errors = errors[n_vis:]
-    whitened_phase, whitened_errors = data_obj.cp_noise.whiten(
-        np.sin(phase), phase_errors
-    )
-    penalty = 2.0 * np.sin(0.5 * phase) ** 2 / phase_errors
+    whitened, whitened_errors = data_obj.cp_noise.whiten(np.sin(resid), errors)
+    penalty = 2.0 * np.sin(0.5 * resid) ** 2 / errors
     penalty_errors = np.full(penalty.shape, 1.0 / np.sqrt(2.0 * np.pi))
     return (
-        np.concatenate(
-            [resid[:n_vis] / errors[:n_vis], whitened_phase, penalty]
-        ),
-        np.concatenate(
-            [
-                errors[:n_vis],
-                whitened_errors,
-                penalty_errors.astype(errors.dtype),
-            ]
-        ),
+        np.concatenate([whitened, penalty]),
+        np.concatenate([whitened_errors, penalty_errors.astype(errors.dtype)]),
     )
 
 
@@ -106,9 +136,16 @@ def _gaussian_loglike(whitened, errors):
     )
 
 
-# Error-inflation terms, as accepted by ``inflated_errors``, the likelihoods,
-# and the ``noise`` argument of ``fit`` and ``numpyro_model``.
-NOISE_TERMS = ("vis_scale", "phi_scale", "vis_error_rel", "phi_error")
+# Error terms, as accepted by the likelihoods and the ``noise`` argument of
+# ``fit`` and ``numpyro_model``: error inflation (``inflated_errors``), and
+# the widths of gains correlated across channels (``OIData.with_gains``).
+GAIN_TERMS = tuple(f"vis_gain_{group}" for group in GAIN_GROUPS)
+NOISE_TERMS = (
+    "vis_scale",
+    "phi_scale",
+    "vis_error_rel",
+    "phi_error",
+) + GAIN_TERMS
 
 
 def inflated_errors(
@@ -223,10 +260,22 @@ def noise_for(sites, values, index):
 
 
 def _whitened_and_errors(model_object, data_obj, noise):
+    unknown = set(noise) - set(NOISE_TERMS)
+    if unknown:
+        raise TypeError(
+            f"Unknown error terms {sorted(unknown)}; use {NOISE_TERMS}."
+        )
+    gain_terms = {k: v for k, v in noise.items() if k in GAIN_TERMS}
+    if gain_terms and data_obj.gains is None:
+        raise ValueError(
+            f"Error terms {sorted(gain_terms)} need gain modes: add them with "
+            "OIData.with_gains."
+        )
+    inflation = {k: v for k, v in noise.items() if k not in GAIN_TERMS}
     prediction = data_obj.model(model_object)
-    errors = inflated_errors(data_obj, prediction, **noise)
+    errors = inflated_errors(data_obj, prediction, **inflation)
     data = data_obj.flatten_data()[0]
-    return _whiten(data_obj, prediction, data, errors)
+    return _whiten(data_obj, prediction, data, errors, gain_terms)
 
 
 def whitened_residuals(model_object, data_obj, **noise):
@@ -263,7 +312,9 @@ def whitened_residuals(model_object, data_obj, **noise):
     **noise
         Error-inflation terms, ``vis_scale``, ``phi_scale``,
         ``vis_error_rel`` and ``phi_error`` (see
-        [`inflated_errors`][virgil.likelihood.inflated_errors]).
+        [`inflated_errors`][virgil.likelihood.inflated_errors]), and the
+        widths of the data's gains, ``vis_gain_<group>`` (see
+        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]).
 
     Returns
     -------
@@ -313,7 +364,11 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
         ``vis_error_rel`` (relative to the model visibility) and
         ``phi_error`` (radians) are added in quadrature (see
         [`inflated_errors`][virgil.likelihood.inflated_errors]). The
-        Gaussian normalization uses the inflated errors.
+        Gaussian normalization uses the inflated errors. For data with
+        gains ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
+        ``vis_gain_<group>`` sets the width of a group of gains, which are
+        marginalised: the normalisation then includes the log-determinant
+        of the visibility covariance.
     """
     whitened, errors = _whitened_and_errors(model_object, data_obj, noise)
     logl = _gaussian_loglike(whitened, errors)
@@ -479,7 +534,9 @@ def numpyro_model(
     noise : dict or list of dict, optional
         Priors on error-inflation terms (``vis_scale``, ``phi_scale``,
         ``vis_error_rel``, ``phi_error``; see
-        [`inflated_errors`][virgil.likelihood.inflated_errors]),
+        [`inflated_errors`][virgil.likelihood.inflated_errors]) and on
+        gain widths (``vis_gain_<group>``; see
+        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its
         own terms, as sites ``"noise[i].<term>"``.
     likelihoods : sequence, optional

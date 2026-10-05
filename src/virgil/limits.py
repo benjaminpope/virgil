@@ -575,9 +575,10 @@ def injection_limits(
         )
     bracket = _UNBOUNDED_BRACKET if flux_bounds is None else flux_bounds
     low, high = (float(b) for b in bracket)
-    if not 0.0 < low < high:
+    if not (np.isfinite(low) and np.isfinite(high) and 0.0 < low < high):
         raise ValueError(
-            f"flux_bounds must satisfy 0 < low < high, got {tuple(bracket)}."
+            "flux_bounds must be finite with 0 < low < high (the search is "
+            f"in log flux), got {tuple(bracket)}."
         )
     limits, outside = _injection_limits(
         samples_dict,
