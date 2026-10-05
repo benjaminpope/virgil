@@ -360,11 +360,11 @@ class LogSum(_ImageRegulariser):
     & Boyd 2008). It favours images with few bright pixels. It is not
     convex, so start the fit from a good image.
 
-    Do not sweep its weight with :func:`l_curve`, which starts each fit
-    from the previous, stronger one. A strong weight switches most pixels
-    off, and pixels driven that dark (in log-brightness) cannot recover, so
-    every weaker fit inherits the collapse. Fit each weight from the same
-    starting image instead.
+    Sweep its weight with ``l_curve(..., warm_start=False)``. By default
+    :func:`l_curve` starts each fit from the previous, stronger one; a
+    strong weight switches most pixels off, and pixels driven that dark (in
+    log-brightness) cannot recover, so every weaker fit would inherit the
+    collapse.
 
     Parameters
     ----------
@@ -945,6 +945,57 @@ def _clean_step(base, observations, fluxes, scores, scale, rotation):
     return np.sum(r**2), p, gain[p], -gradient[p] / curvature
 
 
+@eqx.filter_jit
+def _clean_chi2(base, observations, fluxes, scale, rotation):
+    residuals = _clean_residuals(base, observations, scale, rotation)
+    return np.sum(residuals(fluxes) ** 2)
+
+
+@eqx.filter_jit
+def _clean_columns(base, observations, fluxes, indices, scale, rotation):
+    """The residuals, and their derivatives by the fluxes at ``indices``."""
+    residuals = _clean_residuals(base, observations, scale, rotation)
+
+    def column(k):
+        e = np.zeros(fluxes.size, fluxes.dtype).at[k].set(1.0)
+        return jax.jvp(residuals, (fluxes,), (e.reshape(fluxes.shape),))[1]
+
+    return residuals(fluxes), jax.vmap(column)(indices)
+
+
+def _refit(fixed, fluxes, chi2, scale, rotation):
+    """A major cycle: refit the fluxes of the components, keeping them >= 0.
+
+    Linearises the residuals about the current fluxes over the components
+    (one Jacobian–vector product each), solves the non-negative least
+    squares problem for their fluxes, and backtracks along the step until
+    χ² falls. Components it sets to zero are removed. Returns the new
+    fluxes, or the old ones if no step lowers χ².
+    """
+    from scipy.optimize import nnls
+
+    flat = onp.asarray(fluxes).ravel()
+    active = onp.flatnonzero(flat > 0)
+    if active.size == 0:
+        return fluxes
+    # Pad to a power of two, so the jitted Jacobian compiles a few times.
+    size = 1 << int(onp.ceil(onp.log2(active.size)))
+    indices = onp.concatenate(
+        [active, onp.full(size - active.size, active[0])]
+    )
+    r, columns = _clean_columns(*fixed, fluxes, indices, scale, rotation)
+    jacobian = onp.asarray(columns, float)[: active.size].T
+    current = flat[active]
+    solution, _ = nnls(jacobian, jacobian @ current - onp.asarray(r, float))
+    for fraction in (1.0, 0.5, 0.25, 0.125):
+        trial = flat.copy()
+        trial[active] = current + fraction * (solution - current)
+        trial = np.asarray(trial.reshape(fluxes.shape), fluxes.dtype)
+        if float(_clean_chi2(*fixed, trial, scale, rotation)) < chi2:
+            return trial
+    return fluxes
+
+
 @dataclasses.dataclass(frozen=True)
 class CleanResult:
     """The result of :func:`clean`.
@@ -966,8 +1017,8 @@ class CleanResult:
         the final model.
     stop : str
         Why CLEAN stopped: ``"target"`` (χ² per point reached
-        ``target_chi2_red``), ``"stalled"`` (no pixel lowers χ²) or
-        ``"max_iterations"``.
+        ``target_chi2_red``), ``"stalled"`` (χ² stopped falling, even after
+        a major cycle) or ``"max_iterations"``.
     """
 
     model: object
@@ -995,6 +1046,10 @@ def clean(
     gain=0.1,
     max_iterations=1000,
     target_chi2_red=1.0,
+    refit_every=50,
+    stall_window=50,
+    stall_tolerance=1e-3,
+    refresh_norms=False,
     support=None,
     init=None,
     rotation_deg=0.0,
@@ -1021,14 +1076,25 @@ def clean(
     unnormalised search would pile flux beside the star.
 
     Components are added relative to a fixed ``base`` scene, usually an
-    analytic star at flux 1; fit its parameters first. They are never
-    removed, so the fluxes stay non-negative. Without a base, the components
-    alone make the image, starting from one at the centre of the grid
-    (closure phases do not fix the position, so this is also the anchor).
+    analytic star at flux 1; fit its parameters first. Without a base, the
+    components alone make the image, starting from one at the centre of the
+    grid (closure phases do not fix the position, so this is also the
+    anchor).
+
+    Each iteration only adds flux, so an early step that overshoots cannot
+    be undone by later ones. Every ``refit_every`` iterations a **major
+    cycle** (as in Clark and Cotton–Schwab CLEAN) refits the fluxes of all
+    the components at once, by non-negative least squares on the
+    linearised residuals: flux can move between components, and components
+    whose flux falls to zero are removed. The fluxes stay non-negative.
 
     Iteration stops when χ² per data point reaches ``target_chi2_red`` (the
-    discrepancy principle; it relies on correct error bars), when no pixel
-    lowers χ², or after ``max_iterations``.
+    discrepancy principle; it relies on correct error bars), or after
+    ``max_iterations``. It also stops when χ² has **stalled**: when no
+    pixel lowers it, or when it has fallen by less than a fraction
+    ``stall_tolerance`` over the last ``stall_window`` iterations, and a
+    major cycle does not help. That happens when noise puts the truth's own
+    χ² per point above the target; ``chi2_red`` shows how close it came.
 
     Parameters
     ----------
@@ -1047,6 +1113,17 @@ def clean(
         Iteration limit (default 1000).
     target_chi2_red : float, optional
         χ² per data point at which to stop (default 1).
+    refit_every : int, optional
+        Iterations between major cycles (default 50); 0 for none.
+    stall_window, stall_tolerance : int and float, optional
+        Stop when χ² has fallen by less than a fraction
+        ``stall_tolerance`` (default 1e-3) over the last ``stall_window``
+        (default 50) iterations, even after a major cycle.
+    refresh_norms : bool, optional
+        Recompute the norms ``|J e_p|`` at every major cycle (default
+        ``False``). For non-linear data they change as the image does, but
+        each refresh costs one Jacobian–vector product per pixel, computed a
+        row of pixels at a time.
     support : array-like of bool, shape (npix, npix), optional
         Pixels allowed to receive components (default: all), e.g. a
         [`circular_support`][virgil.models.circular_support] with a hole
@@ -1081,6 +1158,15 @@ def clean(
             f"{max_iterations}."
         )
     max_iterations = int(max_iterations)
+    for name, value in (
+        ("refit_every", refit_every),
+        ("stall_window", stall_window),
+    ):
+        if int(value) != value or value < 0:
+            raise ValueError(
+                f"{name} must be a non-negative integer, not {value}."
+            )
+    refit_every, stall_window = int(refit_every), int(stall_window)
     if base is not None and base.time_dependent:
         raise ValueError("The base scene must not change with time.")
     shape = (npix, npix)
@@ -1113,23 +1199,43 @@ def clean(
     with run_in(dtype):
         fixed = cast_tree((base, observations), dtype)
         fluxes = np.asarray(init, dtype)
-        norms = _atom_norms(*fixed, fluxes, pixel_scale_mas, rotation_deg)
-        scores = np.where(support & (norms > 0), 1.0 / norms, 0.0)
+        geometry = (pixel_scale_mas, rotation_deg)
+
+        def scores_for(fluxes):
+            norms = _atom_norms(*fixed, fluxes, *geometry)
+            return np.where(support & (norms > 0), 1.0 / norms, 0.0)
+
+        scores = scores_for(fluxes)
         history, stop = [], "max_iterations"
+        since_refit = 0  # iterations since the last major cycle
         for iteration in range(max_iterations + 1):
             chi2, p, decrease, step = _clean_step(
-                *fixed, fluxes, scores, pixel_scale_mas, rotation_deg
+                *fixed, fluxes, scores, *geometry
             )
             history.append(float(chi2) / ndata)
             if history[-1] <= target_chi2_red:
                 stop = "target"
                 break
-            if not float(decrease) > 0.0:
-                stop = "stalled"
-                break
             if iteration == max_iterations:
                 break
+            stalled = not float(decrease) > 0.0 or (
+                stall_window
+                and since_refit >= stall_window
+                and history[-1 - stall_window] - history[-1]
+                < stall_tolerance * history[-1]
+            )
+            due = refit_every and since_refit >= refit_every
+            if (due or stalled) and refit_every and since_refit > 0:
+                fluxes = _refit(fixed, fluxes, float(chi2), *geometry)
+                if refresh_norms:
+                    scores = scores_for(fluxes)
+                since_refit = 0
+                continue
+            if stalled:
+                stop = "stalled"
+                break
             fluxes = fluxes.ravel().at[p].add(gain * step).reshape(shape)
+            since_refit += 1
         components = onp.asarray(fluxes, float)
     if base is None:
         components = components / components.sum()
@@ -1526,7 +1632,15 @@ def error_scale(model, data, path="env"):
 
 
 def l_curve(
-    model, priors, data, regulariser, weights, others=(), **fit_options
+    model,
+    priors,
+    data,
+    regulariser,
+    weights,
+    others=(),
+    *,
+    warm_start=True,
+    **fit_options,
 ):
     """Fit a model over a range of weights for one regulariser.
 
@@ -1552,6 +1666,12 @@ def l_curve(
     others : sequence, optional
         Further regularisers kept fixed, e.g. a
         [`Centroid`][virgil.imaging.Centroid] prior.
+    warm_start : bool, optional
+        Start each fit from the previous, stronger one (default), or every
+        fit from ``model`` (and ``init``). Use ``False`` for penalties that
+        switch pixels off, such as [`LogSum`][virgil.imaging.LogSum]: pixels
+        a strong weight has driven dark cannot recover in the weaker fits
+        that follow.
     **fit_options
         Passed to [`fit`][virgil.fitting.fit].
 
@@ -1566,7 +1686,7 @@ def l_curve(
             f"not {weights}."
         )
     results, chi2, chi2_red, penalty = [], [], [], []
-    init = fit_options.pop("init", None)
+    start = init = fit_options.pop("init", None)
     for weight in weights:
         weighted = eqx.tree_at(
             lambda r: r.weight, regulariser, np.asarray(weight, dtype=float)
@@ -1574,7 +1694,7 @@ def l_curve(
         result = fit(
             model, priors, data, [weighted, *others], init=init, **fit_options
         )
-        init = result.values
+        init = result.values if warm_start else start
         results.append(result)
         chi2.append(sum(result.info["chi2"]))
         chi2_red.append(
