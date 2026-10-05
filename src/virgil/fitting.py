@@ -175,7 +175,8 @@ class _Objective(eqx.Module):
         """Unconstrained coordinates of ``values`` (default: the template's).
 
         Error terms start at 1 (scales, including ``wavel_scale``, and the
-        width of supplied gain modes), 0 (``wavel_offset``) or 0.01 (added
+        width of supplied gain modes), 0 (``wavel_offset``, ``north_angle``)
+        or 0.01 (added
         errors and other gain widths), or at their prior's mean if that is
         outside the prior's support or on its boundary.
         """
@@ -183,7 +184,8 @@ class _Objective(eqx.Module):
         z = {}
         for site, (prior, _, term) in self.noise.items():
             unit = term.endswith("scale") or term.endswith("_modes")
-            default = 0.0 if term == "wavel_offset" else 1.0 if unit else 0.01
+            zero = term in ("wavel_offset", "north_angle")
+            default = 0.0 if zero else 1.0 if unit else 0.01
             start = values.get(site, default)
             if not bool(prior.support(np.asarray(start, float))):
                 start = prior.mean
@@ -416,8 +418,10 @@ def fit(
         of closure-phase offsets, ``phi_offset_<group>`` (see
         [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), and
         the wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
-        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]), whose priors may
-        be of either sign (e.g. ``Normal(1, 2e-4)``). A dict
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]), and the North
+        angle, ``north_angle`` in degrees (see
+        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]),
+        whose priors may be of either sign (e.g. ``Normal(1, 2e-4)``). A dict
         applies to every dataset (values ``"noise.<term>"``); a list gives
         each dataset its own (``"noise[i].<term>"``). The loss is then the
         full Gaussian negative log likelihood, including ``Σ log σ``, so the

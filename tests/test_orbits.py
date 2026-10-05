@@ -1078,3 +1078,49 @@ def _angle(vector):
     from virgil.angles import vector_angle
 
     return vector_angle(vector)
+
+
+def test_plot_orbit_ensemble_draws_east_left_and_one_period_per_orbit():
+    import matplotlib.pyplot as plt
+
+    from virgil.plotting import plot_orbit_ensemble
+
+    plt.switch_backend("Agg")
+    # Two orbits as one batched KeplerOrbit, and the truth on its own.
+    batch = KeplerOrbit(
+        period=onp.array([400.0, 420.0]),
+        dt_peri=onp.array([30.0, 35.0]),
+        ecc=onp.array([0.4, 0.38]),
+        inc=onp.array([60.0, 61.0]),
+        omega=onp.array([40.0, 41.0]),
+        Omega=onp.array([110.0, 111.0]),
+        a_mas=onp.array([20.0, 20.5]),
+        t_ref=T_REF,
+    )
+    truth = _orbit()
+    mjd = T_REF + onp.array([0.0, 100.0, 200.0])
+    dra, ddec, _ = (onp.asarray(x) for x in truth.relative(mjd))
+    sigma = onp.array([0.5, 1.0, 2.0])
+    cov = sigma[:, None, None] ** 2 * onp.eye(2)
+    positions = PositionData(mjd, dra, ddec, cov)
+
+    fig, ax = plot_orbit_ensemble(batch, positions, truth, n_points=50)
+
+    # East (positive dra) to the left, North up.
+    assert ax.get_xlim()[0] > ax.get_xlim()[1]
+    assert ax.get_ylim()[0] < ax.get_ylim()[1]
+    # Each track is one closed period that starts at periastron.
+    tracks = ax.collections[0].get_segments()
+    assert len(tracks) == 2
+    for track in tracks:
+        onp.testing.assert_allclose(track[0], track[-1], atol=1e-3)
+    start = onp.array(truth.relative(T_REF + ORBIT["dt_peri"])[:2])
+    onp.testing.assert_allclose(ax.lines[0].get_xydata()[0], start, atol=1e-3)
+    # One n_sigma ellipse per epoch, centred on it and 2σ across.
+    ellipses = ax.patches
+    assert len(ellipses) == 3
+    for ellipse, x, y, s in zip(ellipses, dra, ddec, sigma):
+        assert ellipse.center == pytest.approx((x, y))
+        assert ellipse.width == pytest.approx(2 * s, rel=1e-5)
+        assert ellipse.height == pytest.approx(2 * s, rel=1e-5)
+    plt.close(fig)

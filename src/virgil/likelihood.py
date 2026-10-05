@@ -175,11 +175,13 @@ def _gaussian_loglike(whitened, errors):
 # Nuisance terms, as accepted by the likelihoods and the ``noise`` argument
 # of ``fit`` and ``numpyro_model``: error inflation (``inflated_errors``),
 # the widths of gains correlated across channels (``OIData.with_gains``) and
-# of closure-phase offsets (``OIData.with_closure_offsets``), and the
-# wavelength scale (``OIData.with_wavelength_scale``).
+# of closure-phase offsets (``OIData.with_closure_offsets``), the
+# wavelength scale (``OIData.with_wavelength_scale``) and the North angle
+# (``OIData.with_north_angle``).
 GAIN_TERMS = tuple(f"vis_gain_{group}" for group in GAIN_GROUPS)
 OFFSET_TERMS = tuple(f"phi_offset_{group}" for group in OFFSET_GROUPS)
 WAVEL_TERMS = ("wavel_scale", "wavel_offset")
+NORTH_TERMS = ("north_angle",)
 NOISE_TERMS = (
     (
         "vis_scale",
@@ -191,6 +193,7 @@ NOISE_TERMS = (
     + GAIN_TERMS
     + OFFSET_TERMS
     + WAVEL_TERMS
+    + NORTH_TERMS
 )
 
 
@@ -312,8 +315,9 @@ def noise_sites(noise, n_datasets):
                 raise ValueError(
                     f"Unknown noise term {term!r}; use one of {NOISE_TERMS}."
                 )
-            if term in WAVEL_TERMS:
-                # Not errors: a scale near 1 and an offset of either sign.
+            if term in WAVEL_TERMS + NORTH_TERMS:
+                # Not errors: a scale near 1, an offset or an angle of
+                # either sign.
                 sites[f"{prefix}.{term}"] = (prior, datasets, term)
                 continue
             lower = getattr(prior.support, "lower_bound", None)
@@ -365,10 +369,13 @@ def _whitened_and_errors(model_object, data_obj, noise):
         if k not in GAIN_TERMS
         and k not in OFFSET_TERMS
         and k not in WAVEL_TERMS
+        and k not in NORTH_TERMS
     }
     observed = data_obj
     if wavel_terms:
         data_obj = data_obj.with_wavelength_scale(**wavel_terms)
+    if "north_angle" in noise:
+        data_obj = data_obj.with_north_angle(noise["north_angle"])
     prediction = data_obj.model(model_object)
     data_obj = observed
     errors = inflated_errors(data_obj, prediction, **inflation)
@@ -416,9 +423,11 @@ def whitened_residuals(model_object, data_obj, **noise):
         widths of the data's gains, ``vis_gain_<group>`` (see
         [`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
         closure-phase offsets, ``phi_offset_<group>`` (see
-        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), and the
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), the
         wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
-        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
+        and the North angle, ``north_angle`` (degrees; see
+        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]).
 
     Returns
     -------
@@ -475,7 +484,9 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
         of the visibility covariance. ``phi_offset_<group>`` does the same
         for closure-phase offsets ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
         ``wavel_scale`` and ``wavel_offset`` evaluate the model at corrected
-        wavelengths (see [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]).
+        wavelengths (see [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
+        and ``north_angle`` on a rotated sky (see
+        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]).
     """
     whitened, errors = _whitened_and_errors(model_object, data_obj, noise)
     logl = _gaussian_loglike(whitened, errors)
@@ -658,9 +669,11 @@ def numpyro_model(
         gain widths (``vis_gain_<group>``; see
         [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), on
         closure-offset widths (``phi_offset_<group>``; see
-        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]) and on the
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), on the
         wavelength scale (``wavel_scale``, ``wavel_offset``; see
-        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale])
+        and on the North angle (``north_angle``, degrees; see
+        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its
         own terms, as sites ``"noise[i].<term>"``.
     likelihoods : sequence, optional
