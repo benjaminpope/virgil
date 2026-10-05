@@ -176,6 +176,24 @@ The $\omega$ here is the visual-binary one, for the secondary relative to the pr
 
 **Swapping primary and secondary** is the same thing seen from the data. A binary with the companion at $\mathbf{r}$ and flux ratio $f$ looks, to the visibilities, like one with the companion at $-\mathbf{r}$ and flux ratio $1/f$: only the origin of the image moves (from the primary to the other star), so every squared visibility and closure phase is identical, and the visibilities differ only by a phase linear in $u$ and $v$. This was checked with `BinaryModelCartesian`: `(dra, ddec, f)` and `(-dra, -ddec, 1/f)` give the same $V^2$ and closure phases to float32 rounding, and a visibility ratio of $\exp[+2\pi i(u\,\mathrm{dra} + v\,\mathrm{ddec})]$. So the choice of which star is the reference is a convention, to be fixed once, by requiring the reference to be the brighter star in the band, say, and every PA, flux ratio and $\omega$ read afterwards must follow it.
 
+## Which priors?
+
+virgil's examples use the Jeffreys prior under the group that acts on each parameter, unless there is strong information to the contrary (a measurement, a population model). The prior then does not depend on how the parameter is written: a log-uniform prior on a period is also log-uniform in the frequency, and an isotropic orientation stays isotropic however it is parametrised. Every prior also has finite, stated bounds, which should contain the plausible values with a margin, and a scale's lower bound is nonzero, since `LogUniform(0, ...)` is undefined.
+
+| Parameter | Group | Prior |
+|---|---|---|
+| Position offsets `dra`, `ddec`; time of periastron; phase offsets; spectral index; log gains | translation | `Uniform` |
+| Fluxes and flux ratios; amplitudes; angular sizes and widths; periods; semi-major axes; noise and gain widths | scaling | `LogUniform`, with a nonzero lower bound |
+| Position angle, node, periastron, spin, longitude | rotation of the circle | `AngleVector()` (no edge at 0°/360°), or `Uniform` over exactly one period |
+| Inclination of an orbit or spin axis | rotation of the sphere | [`IsotropicInclination`][virgil.priors.IsotropicInclination] (uniform in cos i); over (0, 90) when only \|cos i\| is identifiable |
+| Latitude of a point on a sphere | rotation of the sphere | [`IsotropicLatitude`][virgil.priors.IsotropicLatitude] (uniform in sin lat) |
+| Eccentricity | none | `Uniform`, as the interim prior |
+| Kipping's limb-darkening $(q_1, q_2)$ | none (uniform over the physical triangle) | `Uniform(0, 1)` each |
+
+Two pitfalls follow. A `Uniform` prior over more than one period of an angle, such as (−360°, 720°), counts the circle several times. And a `Uniform` prior on a flux or a size favours large values, so the posterior depends on the upper bound. The [binary search](binary_search.md) and [hierarchical inference](hierarchical_inference.md) tutorials are the templates: they sample the companion's flux in log space, and the second infers a population of fluxes.
+
+For orbits, [`orientation_priors`][virgil.orbits.orientation_priors] gives the node and periastron as angle vectors.
+
 ## Priors and the MAP
 
 virgil's default priors are the invariant (Jeffreys) measures of the groups acting on each parameter: uniform for locations, log-uniform for scales, and isotropic for orientations (uniform in $\cos i$ for an inclination). A maximum a posteriori point is not invariant under a change of variables, because a density picks up a Jacobian. The mode of `LogUniform`'s density $1/x$ in $x$ is at the lower bound, so a fit in $x$ would pull every scale down, although nothing in the prior prefers small scales.

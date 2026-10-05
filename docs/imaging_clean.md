@@ -205,7 +205,7 @@ plt.show()
 The major cycles already refit the components' fluxes inside CLEAN, but only every 50 iterations, and only those fluxes. Because the model is a `System` with an `Image`, `fit` can do the same job on the components' support, and free other parameters alongside them, such as the components' spectrum or the base's fluxes. It is a small, well-posed problem: a few pixels, not the whole grid, so it needs no regulariser. Here, with the fluxes already refitted by the major cycle, it changes nothing.
 
 ```python
-priors = image_priors(result.model) | {"clean.flux": dist.Uniform(0.0, 1.0)}
+priors = image_priors(result.model) | {"clean.flux": dist.LogUniform(1e-3, 1.0)}
 polished = fit(result.model, priors, data)
 print(
     f"flux {float(components.sum()):.4f} after CLEAN, "

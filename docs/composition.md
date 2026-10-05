@@ -301,8 +301,8 @@ priors = {
     "comp.dra": dist.Uniform(-100.0, 100.0),
     "comp.ddec": dist.Uniform(-100.0, 100.0),
     "comp.flux": dist.LogUniform(1e-4, 1e-1),
-    "rim.flux": dist.Uniform(0.2, 1.0),
-    "rim.diam": dist.Uniform(30.0, 50.0),
+    "rim.flux": dist.LogUniform(0.1, 2.0),
+    "rim.diam": dist.LogUniform(20.0, 80.0),
 }
 paths = list(priors)
 start = {**best, "rim.flux": 0.5, "rim.diam": 40.0}

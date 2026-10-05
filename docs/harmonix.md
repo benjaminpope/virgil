@@ -41,6 +41,7 @@ from virgil.coverage import vlti_oidata
 from virgil.fitting import fit
 from virgil.likelihood import whitened_residuals
 from virgil.models import HarmonixModel
+from virgil.priors import IsotropicLatitude
 from virgil.plotting import plot_model
 
 # Importing harmonix turns on float64, which its solutions need.
@@ -241,15 +242,15 @@ plt.show()
 
 ![harmonix output 12.1](generated/harmonix_cell012_out01.png)
 
-Then the spot. `fit` accepts a function of the parameters that returns one model per dataset, so the three nights share one star seen at three rotation phases. We start the spot far from its true position. (Its latitude and longitude should not start at exactly zero: jaxoplanet's rotation of the spot expansion has zero gradient there.) Every step differentiates through jaxoplanet's spot expansion and harmonix's analytic visibilities.
+Then the spot. `fit` accepts a function of the parameters that returns one model per dataset, so the three nights share one star seen at three rotation phases. The priors are the invariant ones: log-uniform for the contrast, spot size and radius (scales), `IsotropicLatitude` for the latitude (a point uniform on the sphere has sin(lat) uniform, so it favours the equator) and uniform for the longitude. We start the spot far from its true position. (Its latitude and longitude should not start at exactly zero: jaxoplanet's rotation of the spot expansion has zero gradient there.) Every step differentiates through jaxoplanet's spot expansion and harmonix's analytic visibilities.
 
 ```python
 priors = dict(
-    contrast=dist.Uniform(0.0, 1.0),
-    size=dist.Uniform(0.05, 0.8),
-    lat=dist.Uniform(-1.5, 1.5),
+    contrast=dist.LogUniform(1e-2, 1.0),
+    size=dist.LogUniform(0.05, 0.8),
+    lat=IsotropicLatitude(-1.5, 1.5),
     lon=dist.Uniform(-np.pi, np.pi),
-    radius=dist.Uniform(1.0, 1.6),
+    radius=dist.LogUniform(0.8, 2.0),
 )
 init = dict(contrast=0.5, size=0.2, lat=0.2, lon=0.1, radius=radius_guess)
 
