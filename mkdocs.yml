@@ -93,6 +93,7 @@ nav:
       - Gains: api/gains.md
       - Observables: api/observables.md
       - Fitting: api/fitting.md
+      - Angles: api/angles.md
       - Imaging: api/imaging.md
       - Inference: api/inference.md
       - Grid Fit: api/grid_fit.md

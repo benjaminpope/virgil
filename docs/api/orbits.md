@@ -16,6 +16,16 @@ arXiv:1710.11136), and `term.posterior(values)` reports them after the fit.
 With a broad prior this is the profile likelihood plus a log-determinant
 correction; only a finite prior width is supported.
 
+**Angles without a wrap.** `orientation_priors()` samples the node and
+periastron as [angle vectors](angles.md): 2Ω and ϖ = Ω + ω for positions
+alone, whose (Ω, ω) and (Ω + 180°, ω + 180°) then fall on one point, or Ω and
+ϖ (`positions_only=False`) when RVs fix the node.
+`KeplerOrbit.from_varpi(..., varpi, a_mas, two_Omega=...)` builds the orbit.
+Uniform angles with a prior uniform in cos i are the invariant prior on the
+orientation; the map to (2Ω, ϖ) has a constant Jacobian. The vectors follow
+Octofitter's `UniformCircular` and exoplanet's `Angle` (see
+[`virgil.angles`](angles.md)).
+
 **Credit and related software.** Kepler's equation is solved by
 [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (Hattori et al.,
 [doi:10.5281/zenodo.10736936](https://doi.org/10.5281/zenodo.10736936)), the
@@ -49,3 +59,5 @@ for a feature comparison.
         - total_mass
         - distance_pc
         - AxialVonMises
+        - orientation_priors
+        - orientation_from_varpi
