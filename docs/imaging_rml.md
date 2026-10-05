@@ -237,4 +237,4 @@ RML turns the reconstruction into an optimisation of ½χ² + wR:
 - **The weight.** `l_curve` sweeps it with warm starts. The discrepancy principle chooses the weight at which χ² per point reaches one; the corner is a check that needs no error bars.
 - **Checks.** Look at the images either side of the chosen weight, and run `diagnose`.
 
-Part 3 replaces the maximum-entropy penalty with a Gaussian-process prior, whose two hyperparameters can be chosen from the Bayesian evidence instead of a sweep. `design/regulariser_weight_selection.md` discusses the criteria for choosing w in more depth.
+Part 3 replaces the maximum-entropy penalty with a Gaussian-process prior, whose two hyperparameters can be chosen from the Bayesian evidence instead of a sweep. [`design/regulariser_weight_selection.md`](https://github.com/benjaminpope/virgil/blob/main/design/regulariser_weight_selection.md) discusses the criteria for choosing w in more depth.

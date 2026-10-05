@@ -8,13 +8,7 @@ Long-baseline interferometers resolve the nearest giant stars well enough to map
 harmonix and jaxoplanet are not dependencies of virgil. This page needs harmonix 0.1.0 or later, which runs on current JAX (jaxoplanet comes with it):
 
 ```bash
-pip install "harmonix>=0.1.0"
-```
-
-Until 0.1.0 is on PyPI, install it from GitHub instead:
-
-```bash
-pip install "harmonix @ git+https://github.com/shashankdholakia/harmonix"
+pip install harmonix
 ```
 
 ```python
