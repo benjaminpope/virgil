@@ -663,7 +663,7 @@ class DifferentialPhase(_Block):
     kind: str = eqx.field(static=True, default="visphi")
     # Per frame, the Cholesky factor of the covariance (projection only):
     # it depends only on the errors, so it is computed once, where they are
-    # set (build, with_errors), in float64 and cast at use.
+    # set (build, with_errors), in NumPy float64 and cast at use.
     chol: onp.ndarray | None = None
 
     @classmethod
@@ -927,14 +927,30 @@ class DifferentialPhase(_Block):
         chol = None
         if self.prior_width is None:
             try:
-                cov = onp.asarray(self.covariance(), dtype=onp.float64)
+                errors = onp.asarray(self.errors, dtype=onp.float64)
             except jax.errors.TracerArrayConversionError:
-                cov = None
-            if cov is not None:
-                chol = onp.linalg.cholesky(cov)
+                errors = None
+            if errors is not None:
+                # In NumPy float64 throughout, so a later float64 fit gets a
+                # factor as precise as one it would build itself.
+                try:
+                    chol = onp.linalg.cholesky(self._covariance64(errors))
+                except onp.linalg.LinAlgError:
+                    chol = None  # leave it to whiten, as before
         return eqx.tree_at(
             lambda b: b.chol, self, chol, is_leaf=lambda x: x is None
         )
+
+    def _covariance64(self, errors):
+        """:meth:`covariance` in NumPy float64, for the cached factor."""
+        var = onp.where(self.chan, errors[self.grid] ** 2, 0.0)
+        q, w = (onp.asarray(x, onp.float64) for x in (self.q, self.w))
+        a = onp.einsum("frc,fsc,fbc->fbrs", w, w, var)
+        cov = onp.einsum("fkb,flb,fbrs->fkrls", q, q, a)
+        n_f, k, r = self.valid.shape
+        cov = cov.reshape(n_f, k * r, k * r)
+        pad = 1.0 - onp.asarray(self.valid).reshape(n_f, k * r)
+        return cov + pad[:, :, None] * onp.eye(k * r)
 
     def with_errors(self, errors):
         return super().with_errors(errors)._with_cholesky()
