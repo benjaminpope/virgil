@@ -263,7 +263,17 @@ class FluxSpectrum(_Block):
     w_0 = k is the grey scale and w_j (j ≥ 1) an optional polynomial. μ_g
     is the data's weighted mean level (1 for ``"nflux"``), and τ the
     relative widths, so the prior is broad but not truncated at zero. The
-    weights are marginalised analytically (see the module notes). Build
+    weights are marginalised analytically (see the module notes).
+
+    **Choice of prior.** k is a scale parameter, so its invariant (Jeffreys)
+    prior is 1/k, uniform in log k. The broad Gaussian used here instead
+    approximates a prior uniform in k. The two posteriors for k differ by
+    the factor 1/k, which varies by a fraction σ_k/k across the likelihood's
+    width. So for a well-measured scale (σ_k/k ≪ 1, any useful OI_FLUX
+    spectrum) the difference in the marginal likelihood, and in the other
+    parameters' posteriors, is of that order and negligible. It matters only
+    for poorly measured spectra. Marginalising in log k is not linear and is
+    not done here (a follow-up). Build
     with :meth:`build`; change the groups and widths with
     [`OIData.with_flux_scale`][virgil.oidata.OIData.with_flux_scale].
     """
