@@ -16,6 +16,8 @@ Gaussian-field images, the Laplace evidence (`log_evidence`).
         - StarletL1
         - LogSum
         - starlet
+        - clean
+        - CleanResult
         - Centroid
         - starting_image
         - dirty_image

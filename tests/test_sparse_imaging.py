@@ -6,13 +6,17 @@ import pytest
 from virgil.coverage import ami_grid_record
 from virgil.fitting import fit
 from virgil.imaging import (
+    CleanResult,
     Laplacian,
     LogSum,
     StarletL1,
+    _CleanScene,
+    beam,
+    clean,
     image_priors,
     starlet,
 )
-from virgil.models import Image
+from virgil.models import Image, PointSource, System
 from virgil.oidata import OIData
 from virgil.scenes import gaussian_blob
 
@@ -121,3 +125,99 @@ def test_sparsity_regularisers_fit(regulariser, method):
     assert result.info["method"] == method
     assert onp.isfinite(result.info["loss"])
     assert np.all(np.isfinite(result.model.brightness))
+
+
+def test_clean_scene_is_a_system_with_an_image():
+    fluxes = np.zeros((NPIX, NPIX)).at[3, 4].set(0.02).at[10, 9].set(0.01)
+    on = fluxes > 0
+    image = Image(
+        np.log(np.where(on, fluxes, 1.0)), SCALE, support=on, flux=0.03
+    )
+    system = System(base=PointSource(), clean=image)
+    scene = _CleanScene(PointSource(), fluxes, SCALE, 0.0)
+    # On the AMI uv lattice (the matrix Fourier transform) and off it.
+    assert np.allclose(DATA.model(scene), DATA.model(system), atol=1e-5)
+    u, v, wavel = DATA.u, DATA.v, DATA.wavel
+    assert np.allclose(
+        scene.model(u, v, wavel), system.model(u, v, wavel), atol=1e-5
+    )
+
+
+def test_clean_finds_a_companion_with_disco_phases():
+    # A 5% companion on a pixel centre, East and South of the star.
+    truth = System(
+        star=PointSource(), comp=PointSource(dra=30.0, ddec=-18.0, flux=0.05)
+    )
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(5))
+    result = clean(data, NPIX, SCALE, base=PointSource(), max_iterations=300)
+    assert isinstance(result, CleanResult)
+    assert result.stop == "target"
+    assert result.chi2_red[-1] <= 1.0 < result.chi2_red[0]
+    # Column 0 is East (dra = +90 mas), row 0 North (ddec = +90 mas).
+    row, col = onp.unravel_index(
+        int(np.argmax(result.components)), (NPIX, NPIX)
+    )
+    assert (row, col) == (9, 5)
+    assert abs(float(result.components.sum()) - 0.05) < 0.02
+    assert isinstance(result.model, System)
+    assert np.isclose(result.model.clean.flux, result.components.sum())
+    restored = result.restored(beam(data))
+    assert restored.shape == (NPIX, NPIX)
+
+
+def test_clean_without_a_base_starts_at_the_centre():
+    truth = Image.from_brightness(
+        gaussian_blob(NPIX, SCALE, 15.0, dra=20.0), SCALE
+    )
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(6))
+    result = clean(data, NPIX, SCALE, max_iterations=20)
+    assert isinstance(result.model, Image)
+    assert np.isclose(result.components.sum(), 1.0)
+    assert result.chi2_red[-1] < result.chi2_red[0]
+
+
+def test_clean_respects_the_support_and_checks_its_inputs():
+    truth = System(
+        star=PointSource(), comp=PointSource(dra=30.0, ddec=-18.0, flux=0.05)
+    )
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(5))
+    support = np.ones((NPIX, NPIX), bool).at[9, 5].set(False)
+    result = clean(
+        data,
+        NPIX,
+        SCALE,
+        base=PointSource(),
+        support=support,
+        max_iterations=10,
+    )
+    assert float(result.components[9, 5]) == 0.0
+    with pytest.raises(ValueError, match="outside the support"):
+        clean(
+            data,
+            NPIX,
+            SCALE,
+            base=PointSource(),
+            init=np.zeros((NPIX, NPIX)).at[9, 5].set(0.01),
+            support=support,
+        )
+    with pytest.raises(ValueError, match="max_iterations"):
+        clean(data, NPIX, SCALE, base=PointSource(), max_iterations=2.5)
+    # Without a base, the starting component avoids a hole at the centre.
+    hole = np.ones((NPIX, NPIX), bool).at[6:10, 6:10].set(False)
+    centred = clean(data, NPIX, SCALE, support=hole, max_iterations=0)
+    assert float(np.sum(np.where(hole, 0.0, centred.components))) == 0.0
+    assert len(centred.chi2_red) == 1
+    with pytest.raises(ValueError, match="gain"):
+        clean(data, NPIX, SCALE, base=PointSource(), gain=0.0)
+    with pytest.raises(ValueError, match="init"):
+        clean(
+            data, NPIX, SCALE, base=PointSource(), init=-np.ones((NPIX, NPIX))
+        )
+    with pytest.raises(ValueError, match="support"):
+        clean(
+            data,
+            NPIX,
+            SCALE,
+            base=PointSource(),
+            support=np.ones((3, 3), bool),
+        )

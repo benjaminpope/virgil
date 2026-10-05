@@ -27,7 +27,12 @@ L1 norm of the pixels does not work: they are positive and sum to one, so
 wavelet (starlet) coefficients instead, which favours images built from few
 compact structures at any scale. ``LogSum`` is a smooth surrogate for the
 number of bright pixels (the L0 "norm" of SQUEEZE). It is not convex, so the
-fit can stop in a local minimum: start it from a good image.
+fit can stop in a local minimum: start it from a good image, such as a
+[`clean`][virgil.imaging.clean] model.
+
+[`clean`][virgil.imaging.clean] builds a sparse image directly, from point
+components added one at a time where the gradient of χ² is steepest: CLEAN
+for any data, including closure and DISCO phases.
 ``design/sparse_imaging.md`` discusses the choices.
 
 When [`fit`][virgil.fitting.fit]'s model function returns one model per
@@ -57,7 +62,15 @@ from ._precision import cast_tree, run_in
 from .fitting import FitResult, fit
 from .fields import GaussianField
 from .likelihood import whitened_residuals
-from .models import Image, PointSource, Rotated, System, circular_support
+from .models import (
+    Image,
+    PointSource,
+    Rotated,
+    SourceModel,
+    System,
+    _pixel_visibilities,
+    circular_support,
+)
 
 
 class _ImageRegulariser(eqx.Module):
@@ -346,6 +359,12 @@ class LogSum(_ImageRegulariser):
     pixels: a smooth surrogate for the L0 "norm" of SQUEEZE (Candès, Wakin
     & Boyd 2008). It favours images with few bright pixels. It is not
     convex, so start the fit from a good image.
+
+    Do not sweep its weight with :func:`l_curve`, which starts each fit
+    from the previous, stronger one. A strong weight switches most pixels
+    off, and pixels driven that dark (in log-brightness) cannot recover, so
+    every weaker fit inherits the collapse. Fit each weight from the same
+    starting image instead.
 
     Parameters
     ----------
@@ -833,6 +852,309 @@ def convolve_beam(image, pixel_scale_mas, beam):
     return fftconvolve(image, kernel / np.sum(kernel), mode="same")
 
 
+class _CleanScene(SourceModel):
+    """A fixed base scene plus point components on a pixel grid.
+
+    ``V = (w V_base + Σ c_p e_p) / (w + Σ c_p)``, where ``w`` is the base's
+    weight, ``c`` the components' fluxes and ``e_p`` the visibility of a
+    point at pixel ``p``. It is smooth in ``c``, even at ``c = 0``, and
+    equals ``System(base=base, clean=Image(c / Σc, flux=Σc))``. Without a
+    base, ``V = Σ c_p e_p / Σ c_p``.
+    """
+
+    base: object
+    fluxes: jax.Array
+    pixel_scale_mas: float = eqx.field(static=True)
+    rotation_deg: float = eqx.field(static=True)
+
+    def model(self, u, v, wavel):
+        return self.model_on_grid(u, v, wavel, None)
+
+    def model_on_grid(self, u, v, wavel, grid):
+        pixels = _pixel_visibilities(
+            self.fluxes,
+            self.pixel_scale_mas,
+            self.rotation_deg,
+            u,
+            v,
+            wavel,
+            grid,
+        )
+        total = np.sum(self.fluxes)
+        if self.base is None:
+            return pixels / total
+        if grid is None:
+            base = self.base.model(u, v, wavel)
+        else:
+            base = self.base.model_on_grid(u, v, wavel, grid)
+        weight = self.base._weight(wavel)
+        return (weight * base + pixels) / (weight + total)
+
+
+def _clean_residuals(base, observations, scale, rotation):
+    """Whitened residuals of all the data, as a function of the fluxes."""
+
+    def residuals(fluxes):
+        scene = _CleanScene(base, fluxes, scale, rotation)
+        return np.concatenate(
+            [np.ravel(whitened_residuals(scene, d)) for d in observations]
+        )
+
+    return residuals
+
+
+@eqx.filter_jit
+def _atom_norms(base, observations, fluxes, scale, rotation):
+    """``|J e_p|²`` for every pixel ``p``: the χ² response to its flux.
+
+    One Jacobian–vector product per pixel, a row of pixels at a time, so
+    the Jacobian is never held whole.
+    """
+    residuals = _clean_residuals(base, observations, scale, rotation)
+    nrow, ncol = fluxes.shape
+
+    def row(i):
+        def pixel(j):
+            e = np.zeros(fluxes.shape, fluxes.dtype).at[i, j].set(1.0)
+            return np.sum(jax.jvp(residuals, (fluxes,), (e,))[1] ** 2)
+
+        return jax.vmap(pixel)(np.arange(ncol))
+
+    return jax.lax.map(row, np.arange(nrow))
+
+
+@eqx.filter_jit
+def _clean_step(base, observations, fluxes, scores, scale, rotation):
+    """χ², and the best pixel and Gauss–Newton step for one CLEAN iteration.
+
+    The best pixel lowers χ² most: the largest ``g_p² / |J e_p|²`` with
+    ``g_p < 0``, where ``g`` is the gradient of χ² and ``scores`` holds
+    ``1 / |J e_p|²`` (zero outside the support).
+    """
+    residuals = _clean_residuals(base, observations, scale, rotation)
+    r, vjp = jax.vjp(residuals, fluxes)
+    (gradient,) = vjp(2.0 * r)
+    gradient = gradient.ravel()
+    gain = np.where(gradient < 0.0, gradient**2 * scores.ravel(), 0.0)
+    p = np.argmax(gain)
+    direction = np.zeros(fluxes.size, fluxes.dtype).at[p].set(1.0)
+    _, change = jax.jvp(
+        residuals, (fluxes,), (direction.reshape(fluxes.shape),)
+    )
+    curvature = 2.0 * np.sum(change**2)
+    return np.sum(r**2), p, gain[p], -gradient[p] / curvature
+
+
+@dataclasses.dataclass(frozen=True)
+class CleanResult:
+    """The result of :func:`clean`.
+
+    Attributes
+    ----------
+    model : SourceModel
+        The base scene with the components, ``System(base=base,
+        clean=Image(...))``: the Image is non-zero only on the components,
+        and its ``flux`` is their total relative to the base. Without a
+        base scene, the Image alone; with no components, the base alone.
+    components : array, shape (npix, npix)
+        The components' fluxes on the pixel grid, relative to the base
+        scene's weight (without a base scene, normalised to unit sum).
+    pixel_scale_mas : float
+        Pixel size in milliarcseconds.
+    chi2_red : array
+        χ² per data point before each iteration; the last entry is that of
+        the final model.
+    stop : str
+        Why CLEAN stopped: ``"target"`` (χ² per point reached
+        ``target_chi2_red``), ``"stalled"`` (no pixel lowers χ²) or
+        ``"max_iterations"``.
+    """
+
+    model: object
+    components: jax.Array
+    pixel_scale_mas: float
+    chi2_red: jax.Array
+    stop: str
+
+    def restored(self, beam):
+        """The components convolved with ``beam``: the "restored" image.
+
+        In the orientation of the pixel grid, in the units of
+        ``components``. Unlike radio astronomy's restored image, it does not
+        include the residuals.
+        """
+        return convolve_beam(self.components, self.pixel_scale_mas, beam)
+
+
+def clean(
+    data,
+    npix,
+    pixel_scale_mas,
+    base=None,
+    *,
+    gain=0.1,
+    max_iterations=1000,
+    target_chi2_red=1.0,
+    support=None,
+    init=None,
+    rotation_deg=0.0,
+    dtype="float64",
+):
+    """Build an image from point components, one at a time: gradient CLEAN.
+
+    Högbom's CLEAN repeatedly finds the peak of the residual dirty image
+    and adds a fraction (the loop ``gain``) of a point source there. For
+    data that are linear in the image, the residual dirty image is
+    proportional to ``-∂χ²/∂c``, the gradient of χ² with respect to the
+    flux ``c_p`` of a point at each pixel. This function uses that gradient
+    directly, so it works for any data virgil can fit: closure phases,
+    kernel or DISCO phases, squared visibilities, or a mix. ``J e_p`` is
+    the change in the whitened residuals per unit flux at pixel ``p``. Each
+    iteration picks the pixel whose Gauss–Newton step would lower χ² most,
+    the largest ``g_p² / |J e_p|²`` with ``g_p < 0``, and adds ``gain``
+    times that step, ``-g_p / (2 |J e_p|²)``. This is matching pursuit; for
+    linear data, where ``|J e_p|`` is the same everywhere, it is exactly
+    Högbom's CLEAN. The norms ``|J e_p|`` are computed once, at the start,
+    with one Jacobian–vector product per pixel. Normalising by them matters
+    next to an analytic star, where flux in a pixel is nearly the same as
+    the star's: the gradient there is small, but so is ``|J e_p|``, and an
+    unnormalised search would pile flux beside the star.
+
+    Components are added relative to a fixed ``base`` scene, usually an
+    analytic star at flux 1; fit its parameters first. They are never
+    removed, so the fluxes stay non-negative. Without a base, the components
+    alone make the image, starting from one at the centre of the grid
+    (closure phases do not fix the position, so this is also the anchor).
+
+    Iteration stops when χ² per data point reaches ``target_chi2_red`` (the
+    discrepancy principle; it relies on correct error bars), when no pixel
+    lowers χ², or after ``max_iterations``.
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        The data, fitted jointly.
+    npix : int
+        Pixels on a side of the grid.
+    pixel_scale_mas : float
+        Pixel size in milliarcseconds.
+    base : SourceModel, optional
+        A fixed scene the components are added to (default: none).
+    gain : float, optional
+        Loop gain, the fraction of each step taken (default 0.1). Smaller
+        is slower but less likely to put flux in the wrong place.
+    max_iterations : int, optional
+        Iteration limit (default 1000).
+    target_chi2_red : float, optional
+        χ² per data point at which to stop (default 1).
+    support : array-like of bool, shape (npix, npix), optional
+        Pixels allowed to receive components (default: all), e.g. a
+        [`circular_support`][virgil.models.circular_support] with a hole
+        under the star.
+    init : array-like, shape (npix, npix), optional
+        Starting component fluxes, non-negative and zero outside
+        ``support`` (default: none with a base, and without one a single
+        component on the supported pixel nearest the centre).
+    rotation_deg : float, optional
+        Position angle of the grid's "up" axis, as for
+        [`Image`][virgil.models.Image]; match the data's uv lattice
+        (``data.uv_grid.rotation_deg``) for the fast exact transform.
+    dtype : {"float64", "float32"}, optional
+        Precision of the iterations, as for [`fit`][virgil.fitting.fit].
+
+    Returns
+    -------
+    CleanResult
+        The model, components and χ² history. The model can be polished
+        with [`fit`][virgil.fitting.fit] on the components' support, used
+        as a starting image for a regularised fit, or restored with the
+        beam.
+    """
+    observations = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+    npix, pixel_scale_mas = int(npix), float(pixel_scale_mas)
+    rotation_deg = float(rotation_deg)
+    if not 0.0 < gain <= 1.0:
+        raise ValueError(f"gain must be in (0, 1], not {gain}.")
+    if int(max_iterations) != max_iterations or max_iterations < 0:
+        raise ValueError(
+            f"max_iterations must be a non-negative integer, not "
+            f"{max_iterations}."
+        )
+    max_iterations = int(max_iterations)
+    if base is not None and base.time_dependent:
+        raise ValueError("The base scene must not change with time.")
+    shape = (npix, npix)
+    support = (
+        onp.ones(shape, bool)
+        if support is None
+        else onp.asarray(support, bool)
+    )
+    if support.shape != shape or not support.any():
+        raise ValueError(
+            f"support must have shape {shape} and at least one pixel."
+        )
+    if init is None:
+        init = onp.zeros(shape)
+        if base is None:  # the supported pixel nearest the centre
+            offsets = pixel_offsets(npix, 1.0)
+            radius = onp.hypot(offsets[None, :], offsets[:, None])
+            centre = onp.argmin(onp.where(support, radius, onp.inf))
+            init.flat[centre] = 1.0
+    init = onp.asarray(init, float)
+    if init.shape != shape or not onp.all(onp.isfinite(init) & (init >= 0)):
+        raise ValueError(
+            f"init must have shape {shape} and be finite and non-negative."
+        )
+    if onp.any(init[~support] > 0):
+        raise ValueError("init has flux outside the support.")
+    if base is None and not init.sum() > 0:
+        raise ValueError("Without a base scene, init needs a positive pixel.")
+    ndata = sum(d.n_independent for d in observations)
+    with run_in(dtype):
+        fixed = cast_tree((base, observations), dtype)
+        fluxes = np.asarray(init, dtype)
+        norms = _atom_norms(*fixed, fluxes, pixel_scale_mas, rotation_deg)
+        scores = np.where(support & (norms > 0), 1.0 / norms, 0.0)
+        history, stop = [], "max_iterations"
+        for iteration in range(max_iterations + 1):
+            chi2, p, decrease, step = _clean_step(
+                *fixed, fluxes, scores, pixel_scale_mas, rotation_deg
+            )
+            history.append(float(chi2) / ndata)
+            if history[-1] <= target_chi2_red:
+                stop = "target"
+                break
+            if not float(decrease) > 0.0:
+                stop = "stalled"
+                break
+            if iteration == max_iterations:
+                break
+            fluxes = fluxes.ravel().at[p].add(gain * step).reshape(shape)
+        components = onp.asarray(fluxes, float)
+    if base is None:
+        components = components / components.sum()
+    total = float(components.sum())
+    if total > 0:
+        on = components > 0
+        image = Image(
+            onp.log(onp.where(on, components, 1.0)),
+            pixel_scale_mas,
+            support=on,
+            flux=total if base is not None else 1.0,
+            rotation_deg=rotation_deg,
+        )
+        model = image if base is None else System(base=base, clean=image)
+    else:
+        model = base
+    return CleanResult(
+        model,
+        np.asarray(components),
+        pixel_scale_mas,
+        np.asarray(history),
+        stop,
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class LCurve:
     """The result of :func:`l_curve`.
@@ -1222,7 +1544,7 @@ def l_curve(
     ----------
     model, priors, data
         As for [`fit`][virgil.fitting.fit].
-    regulariser : TSV, TV or MaxEntropy
+    regulariser : TSV, TV, MaxEntropy, Laplacian, StarletL1 or LogSum
         The regulariser whose ``weight`` is swept (its own weight is
         ignored).
     weights : sequence of float

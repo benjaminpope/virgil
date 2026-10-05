@@ -1454,6 +1454,30 @@ def circular_support(npix, pixel_scale_mas, radius_mas, inner_radius_mas=0.0):
     return (radius <= radius_mas) & (radius >= inner_radius_mas)
 
 
+def _pixel_visibilities(
+    fluxes, pixel_scale_mas, rotation_deg, u, v, wavel, grid=None
+):
+    """Fourier transform of pixel fluxes centred on the origin, unnormalised.
+
+    Uses the exact matrix Fourier transform when the samples lie on a uv
+    ``grid`` whose rotation matches the pixels' (and there is a single
+    wavelength), and the direct transform otherwise.
+    """
+    matched = (
+        grid is not None
+        and abs(grid.rotation_deg - rotation_deg) < 1e-9
+        and np.size(wavel) == 1
+    )
+    if matched:
+        wavel = np.reshape(wavel, ())
+        vis = grid_visibilities(
+            fluxes, grid.u_axis / wavel, grid.v_axis / wavel, pixel_scale_mas
+        )
+        return vis.ravel()[grid.index]
+    uu, vv = rotate(u / wavel, v / wavel, -rotation_deg)
+    return image_visibilities(fluxes, uu, vv, pixel_scale_mas)
+
+
 class Image(Component):
     """Pixelised brightness distribution, for image reconstruction.
 
@@ -1608,20 +1632,16 @@ class Image(Component):
         )
 
     def model_on_grid(self, u, v, wavel, grid):
-        matched = abs(grid.rotation_deg - self.rotation_deg) < 1e-9
-        if not (matched and np.size(wavel) == 1):
-            return self.model(u, v, wavel)
-        wavel = np.reshape(wavel, ())
-        vis = grid_visibilities(
+        vis = _pixel_visibilities(
             self.brightness,
-            grid.u_axis / wavel,
-            grid.v_axis / wavel,
             self.pixel_scale_mas,
+            self.rotation_deg,
+            u,
+            v,
+            wavel,
+            grid,
         )
-        uu, vv = u / wavel, v / wavel
-        return vis.ravel()[grid.index] * offset_phase(
-            uu, vv, self.dra, self.ddec
-        )
+        return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
         # Bilinear resampling of the pixels, exact at their centres.

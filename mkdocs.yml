@@ -71,6 +71,7 @@ nav:
       - "3. Gaussian-process priors": imaging_gp.md
       - "4. A ring around a binary": imaging_composite.md
       - "5. Sampling the posterior": imaging_sampling.md
+      - "6. Sparse images and CLEAN": imaging_clean.md
   - API Reference:
       - Overview: api/index.md
       - OIData: api/oidata.md

@@ -205,7 +205,10 @@ def plot_data_model_correlation(
     Returns
     -------
     tuple
-        ``(fig, (ax1, ax2))`` for visibility and phase axes.
+        ``(fig, (ax1, ax2))`` for visibility and phase axes. Data with no
+        phase observables (e.g. AMIGO DISCOs, which hold every observable
+        in ``vis``) leave the phase axis hidden and give the visibility
+        panel the whole figure.
     """
     vis_mode = getattr(oidata, "vis_mode", "v2")
     projected = getattr(oidata, "vis_mat", None) is not None
@@ -226,11 +229,13 @@ def plot_data_model_correlation(
         colors = [f"C{i}" for i in range(max(1, len(predictions_by_label)))]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+    # Projected (e.g. AMIGO DISCO) data may hold every observable in vis.
+    has_phase = phi_data.size > 0
 
     vis_low = [vis_data.min()]
     vis_high = [vis_data.max()]
-    phi_low = [phi_data.min()]
-    phi_high = [phi_data.max()]
+    phi_low = [phi_data.min()] if has_phase else []
+    phi_high = [phi_data.max()] if has_phase else []
 
     for idx, (label, pred) in enumerate(predictions_by_label.items()):
         color = colors[idx % len(colors)]
@@ -247,6 +252,10 @@ def plot_data_model_correlation(
             color=color,
             label=label,
         )
+        if not has_phase:
+            vis_low.append(np.asarray(pred["vis_mean"]).min())
+            vis_high.append(np.asarray(pred["vis_mean"]).max())
+            continue
         ax2.errorbar(
             phi_data,
             np.asarray(pred["phi_mean"]).reshape(-1),
@@ -270,15 +279,11 @@ def plot_data_model_correlation(
 
     vis_min = min(vis_low) - vis_pad
     vis_max = max(vis_high) + vis_pad
-    phi_min = min(phi_low) - phi_pad
-    phi_max = max(phi_high) + phi_pad
 
     vis_line = np.linspace(vis_min, vis_max, 200)
-    phi_line = np.linspace(phi_min, phi_max, 200)
     vis_formatter = _range_aware_float_formatter(
         vis_min, vis_max, scale=vis_scale
     )
-    phi_formatter = _range_aware_float_formatter(phi_min, phi_max)
 
     ax1.plot(vis_line, vis_line, "k--", lw=1)
     ax1.set_xlim(vis_min, vis_max)
@@ -292,17 +297,25 @@ def plot_data_model_correlation(
         ax1.set_box_aspect(1)
     ax1.legend(loc="best")
 
-    ax2.plot(phi_line, phi_line, "k--", lw=1)
-    ax2.set_xlim(phi_min, phi_max)
-    ax2.set_ylim(phi_min, phi_max)
-    ax2.xaxis.set_major_formatter(phi_formatter)
-    ax2.yaxis.set_major_formatter(phi_formatter)
-    ax2.set_xlabel("Data (rad)")
-    ax2.set_ylabel("Model (rad)")
-    ax2.set_title(phase_title)
-    if square_axes:
-        ax2.set_box_aspect(1)
-    ax2.legend(loc="best")
+    if has_phase:
+        phi_min = min(phi_low) - phi_pad
+        phi_max = max(phi_high) + phi_pad
+        phi_line = np.linspace(phi_min, phi_max, 200)
+        phi_formatter = _range_aware_float_formatter(phi_min, phi_max)
+        ax2.plot(phi_line, phi_line, "k--", lw=1)
+        ax2.set_xlim(phi_min, phi_max)
+        ax2.set_ylim(phi_min, phi_max)
+        ax2.xaxis.set_major_formatter(phi_formatter)
+        ax2.yaxis.set_major_formatter(phi_formatter)
+        ax2.set_xlabel("Data (rad)")
+        ax2.set_ylabel("Model (rad)")
+        ax2.set_title(phase_title)
+        if square_axes:
+            ax2.set_box_aspect(1)
+        ax2.legend(loc="best")
+    else:  # one panel, taking the whole figure
+        ax2.set_visible(False)
+        ax1.set_subplotspec(fig.add_gridspec(1, 1)[0])
 
     fig.tight_layout()
     return fig, (ax1, ax2)
