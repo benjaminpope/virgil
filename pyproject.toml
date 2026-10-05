@@ -19,6 +19,9 @@ urls = {repository = "https://github.com/benjaminpope/virgil"}
 dependencies = [
   # Floors are the oldest versions CI tests (the "lowest" job in
   # tests.yml installs exactly these). jax.enable_x64 needs jax 0.8.
+  # There is deliberately no upper bound: the other jobs in tests.yml
+  # upgrade to the newest JAX, and uv.lock tracks it too (JAX 0.11 needs
+  # Python 3.12, so Python 3.11 locks the last release that supports it).
   "jax>=0.8.0",
   "jaxbessel>=0.2.0",
   "equinox>=0.13.2",
@@ -118,6 +121,3 @@ indent-style = "space"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
-filterwarnings = [
-  "ignore:Setting `jax_pmap_shmap_merge` is deprecated in JAX v0.9.0:DeprecationWarning",
-]
