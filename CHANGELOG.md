@@ -5,6 +5,13 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
+## Unreleased
+
+### Docs
+
+- The `virgil._linear` API page is labelled internal.
+- Docs pages no longer point to the internal design notes.
+
 ## 0.3.0 (2026-10-06)
 
 Everything listed as new was added after 0.2.0.
