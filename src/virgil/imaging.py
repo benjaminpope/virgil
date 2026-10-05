@@ -1831,7 +1831,9 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
         With ``fov_mas``, also render the whole model for each draw (see
         [`SourceModel.render`][virgil.models.SourceModel.render]).
     fov_mas : float, optional
-        The rendered field of view, in milliarcseconds.
+        The rendered field of view, in milliarcseconds. Give both or
+        neither of ``npix`` and ``fov_mas`` (one alone raises a
+        ``ValueError``).
 
     Returns
     -------
@@ -1840,6 +1842,10 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
         ``npix`` and ``fov_mas``, ``"images"``, ``(n, npix, npix)``:
         unit-sum images of the whole model.
     """
+    if (npix is None) != (fov_mas is None):
+        raise ValueError(
+            "laplace_samples renders images only given both npix and fov_mas."
+        )
     model = _single_model(model, "laplace_samples")
     latent_path = _gaussian_field_latents(model, path, "laplace_samples")
     _, jac = _residual_jacobian(model, data, latent_path)

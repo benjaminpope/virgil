@@ -409,3 +409,5 @@ def test_laplace_samples_have_the_gauss_newton_covariance():
     assert images.shape == (3, 8, 8)
     onp.testing.assert_allclose(images.sum(axis=(1, 2)), 1.0, rtol=1e-5)
     assert not onp.allclose(images[0], images[1])
+    with pytest.raises(ValueError, match="both npix and fov_mas"):
+        laplace_samples(result, data, 3, jax.random.PRNGKey(12), npix=8)
