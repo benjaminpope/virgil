@@ -610,7 +610,9 @@ def _gauss_newton_covariance(problem, z):
 
     def data_residuals(x):
         model = problem.build(unflatten(x))
-        return np.concatenate(problem.data_residuals(model))
+        residuals = problem.data_residuals(model)
+        # With data=() there are no residuals: an empty vector.
+        return np.concatenate(residuals) if residuals else np.zeros(0)
 
     def prior_curvature(path):
         prior = problem.priors[path]
