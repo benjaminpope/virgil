@@ -185,13 +185,15 @@ LogSum). Work is paused here.
 - **A large gain stalls.** At a gain of 0.5, CLEAN reached χ²/N ≈ 1.1 in
   20 iterations and then ran to `max_iterations`, because flux is never
   removed. CLEAN also runs to the limit when noise puts the truth's own
-  χ²/N above the target (about √(2/N) scatter). Neither case is detected.
+  χ²/N above the target (about √(2/N) scatter). Neither case was detected.
+  (Fixed in virgil#178 by major cycles and stall detection; see below.)
 - **Warm-started sweeps fail for penalties that switch pixels off.** Under
   `l_curve` (strong to weak, warm starts), `LogSum` collapsed to one pixel at
   every weight, because log-brightness pixels driven to ~0 never recover.
   Fitted per weight from the CLEAN start, it reached χ²/N = 0.97 and was as
   compact as CLEAN. The same path dependence could affect any penalty strong
   enough to darken pixels, including MEM with a peaked prior.
+  (`l_curve(..., warm_start=False)` added in virgil#178.)
 - **L-BFGS hits the step limit.** MEM and StarletL1 did not converge
   within 50 000 steps at some weights on 62² pixels, although they reached
   χ²/N ≈ 1. Not yet investigated.
@@ -205,41 +207,65 @@ LogSum). Work is paused here.
   the cost of one JVP. The norms are also frozen at the start, which is only
   approximate for non-linear data.
 
-### Next steps, in order
+### Next steps: what was done (virgil#178, 2026-10-05)
 
-1. **Detect stalls in `clean`.** Stop when χ² falls by less than a tolerance
-   over the last k iterations, with `stop="stalled"`. Report the closest
-   approach to the target. Cheap, and it removes both silent runs to
-   `max_iterations`.
-2. **Remove flux.** Every k iterations, refit the component fluxes on the
-   support: a few LM steps of `fit`, or projected non-negative least squares
-   on the Gauss–Newton model. These are the "major cycles" of Clark and
-   Cotton–Schwab CLEAN, and they let flux move off early mistakes. The
-   alternative is Frank–Wolfe "away steps". Either should fix the gain-0.5
-   stall.
-3. **Sweeps without warm starts.** Give `l_curve` a `warm_start=False` option,
-   or a weak-to-strong order, so that `LogSum` (and anything like it) can be
-   swept with the standard tool. Then the MWE's hand-written loop can go.
-4. **Real data.** Try CLEAN on an AMI or NRM dataset with a known companion,
-   and on PIONIER closure phases (e.g. the HR 4049 or IW Car data used
-   elsewhere). Compare with the parametric fits.
-5. **Independent validation.** Request a virgil-validation check (as an
-   Issue there; see AGENTS.md): for linear complex-visibility data, `clean`
-   must reproduce an independent Högbom CLEAN component for component.
-6. **Refresh the atom norms** every so often for non-linear data, and
-   compute them in chunks for large grids, if real data need ≥128² pixels.
-7. **Multi-frequency CLEAN** (Rau & Cornwell 2011): a spectral index per
-   component, instead of grey components, for polychromatic data.
+Steps 1–6 of the list above were done in virgil#178:
+1. **Stall detection.** `clean` stops with `stop="stalled"` when no pixel
+   lowers χ², or when χ² falls by less than `stall_tolerance` (1e-3) over
+   `stall_window` (50) iterations, after a major cycle has failed to help.
+   With an unreachable target (χ²/N = 0.5) on the test data, it stopped by
+   itself after 653 iterations.
+2. **Major cycles.** Every `refit_every` (50) iterations, the fluxes of all
+   components are refitted by non-negative least squares on the linearised
+   residuals (scipy's `nnls`; one JVP per component, padded to a power of two
+   so the Jacobian compiles a few times), with backtracking until χ² falls.
+   On a deliberately wrong component, two cycles moved all its flux to the
+   companion. In the tutorial, the first cycle (iteration 50) took every gain
+   to the target. Gain 0.5, which had stalled at χ²/N ≈ 1.1, ended there
+   with 13 components, gain 0.1 with 6 and gain 0.03 with 3: the cycle solves
+   for the fluxes once CLEAN has found the right pixels.
+3. **`l_curve(..., warm_start=False)`**, used for `LogSum` in the MWE
+   (χ²/N 0.976, all its flux in the brightest 2% of pixels).
+4. **Real data: HR 4049 PIONIER** (19 files, V² and closure phases, errors
+   rescaled by 1.15; analysis notebook in the nuHor repo, not here). This
+   needed a component **spectrum** (SPARCO), so `clean(spectrum=...)` was
+   added, and **System bases** now count as siblings of the components.
+   From the stars and background of a parametric fit, CLEAN reached
+   χ²/N = 0.986 with 56 components in 306 iterations (56 s on a GPU), and
+   0.957 after `fit` refitted the fluxes and spectrum. Parametric ring:
+   2.69; GP and MEM images: 0.89 and 0.85 with thousands of pixels.
+   At the beam's resolution CLEAN shows the same two features as those
+   images: the eastern crescent of the rim, and compact flux at the edge of
+   the hole near the primary. The disc has 15.6% of the H-band flux (GP and
+   MEM 16.7–17.3%) and d_env = 4.10 (images 4.4–4.6, paper 2.39). CLEAN
+   builds only as much rim as the data need, so the western side is fainter
+   than the parametric ring's.
+5. **Independent validation** requested: virgil-validation#27 (Högbom
+   equivalence on linear complex-visibility data, and NNLS for the major
+   cycles).
+6. **`refresh_norms=True`** recomputes the atom norms at each major cycle.
+   They were already computed a row of pixels at a time; not yet needed by
+   any run.
 
-S3 (proximal solver) and S4 (sparse sampling) stay deferred; nothing so far
-needs them.
+### Still open
+
+- **Multi-frequency CLEAN** (Rau & Cornwell 2011): a spectral index per
+  component. `spectrum=` gives all components one spectrum, which was
+  enough for HR 4049.
+- **A real dataset with a known companion** (AMI or NRM), to test positions
+  and fluxes against a parametric fit rather than against other images.
+- The L-BFGS step limit for MEM and StarletL1 (above), still not
+  investigated.
+- Fitting the base scene during CLEAN, if a base parameter cannot be fitted
+  beforehand.
+
+S3 (proximal solver) and S4 (sparse sampling) stay deferred.
 
 ### Running the notebooks
 
-The MWEs and tutorial run on OzSTAR, never on the laptop. The new generic
-runner `ozstar_scripts/scripts/_notebook_template` takes the notebook list as
-`--notebooks=a,b`. `scripts/sparse_mwe` (one task per notebook, as listed in
-its `tasks.txt`) still works, but can be retired in favour of the runner.
+The MWEs and tutorial run on OzSTAR, never on the laptop. `ozstar_scripts/scripts/virgil_clean`, made from the generic
+`_notebook_template`, runs the tutorial and both MWEs (one array task each);
+it replaces `scripts/sparse_mwe`.
 The full `mwe_sparse_imaging` takes about 28 min on a CPU node, mostly in the
 MEM and StarletL1 sweeps. The tutorial and the five-cell MWE take under a minute each.
 
@@ -248,7 +274,6 @@ MEM and StarletL1 sweeps. The tutorial and the five-cell MWE take under a minute
 | Item | Revisit when |
 | --- | --- |
 | Dark-energy regulariser | Someone needs it; read its definition in SQUEEZE's source first |
-| Removing CLEAN components (major cycles or away steps) | Next step 2 above; the gain-0.5 stall shows the need |
 | Fitting the base scene during CLEAN | A base parameter cannot be fitted beforehand |
 | Residual map in flux units (per-pixel curvature) | Restored images need residuals added |
 | S3, proximal solver | S1 images are not sparse enough to matter scientifically |

@@ -139,6 +139,11 @@ class _Objective(eqx.Module):
                 _check_positive_flux_prior(path, prior)
 
     @property
+    def _has_gains(self):
+        """Whether any dataset has gains, whose covariance depends on the model."""
+        return any(getattr(d, "gains", None) is not None for d in self.data)
+
+    @property
     def paths(self):
         """The free parameters' paths, in the order of ``priors``."""
         return tuple(self.priors)
@@ -146,16 +151,25 @@ class _Objective(eqx.Module):
     def init(self, values=None):
         """Unconstrained coordinates of ``values`` (default: the template's).
 
-        Error terms start at 1 (scales) or 0.01 (added errors), or at their
-        prior's mean if that is outside the prior's support.
+        Error terms start at 1 (scales, including ``wavel_scale``, and the
+        width of supplied gain modes), 0 (``wavel_offset``) or 0.01 (added
+        errors and other gain widths), or at their prior's mean if that is
+        outside the prior's support or on its boundary.
         """
         values = {} if values is None else dict(values)
         z = {}
         for site, (prior, _, term) in self.noise.items():
-            start = values.get(site, 1.0 if term.endswith("scale") else 0.01)
+            unit = term.endswith("scale") or term.endswith("_modes")
+            default = 0.0 if term == "wavel_offset" else 1.0 if unit else 0.01
+            start = values.get(site, default)
             if not bool(prior.support(np.asarray(start, float))):
                 start = prior.mean
             z[site] = _bijection(prior).inv(np.asarray(start, float))
+            if not bool(np.all(np.isfinite(z[site]))):
+                # On the boundary of a bounded prior (e.g. 0 for
+                # Uniform(0, ...)), the unconstrained coordinate is
+                # infinite: start inside it, at the prior's mean.
+                z[site] = _bijection(prior).inv(np.asarray(prior.mean, float))
         for path, prior in self.priors.items():
             if path not in values:
                 if not isinstance(self.model, SourceModel):
@@ -183,6 +197,10 @@ class _Objective(eqx.Module):
         return build_model(
             self.model, self.paths, [values[p] for p in self.paths]
         )
+
+    @property
+    def _has_term_norms(self):
+        return any(getattr(t, "has_log_norm", False) for t in self.likelihoods)
 
     def data_residuals(self, model, values=None):
         """Whitened residuals of ``model`` for each dataset, as a list.
@@ -213,8 +231,20 @@ class _Objective(eqx.Module):
                 "likelihood's normalisation depends on them); fit with "
                 "method='lbfgs' or 'adam'."
             )
+        if self._has_gains:
+            raise TypeError(
+                "Data with gains have no least-squares form (their "
+                "covariance, and its determinant, depend on the model); fit "
+                "with method='lbfgs' or 'adam'."
+            )
         model = self.build(z)
         values = self.constrain(z)
+        if self._has_term_norms:
+            raise TypeError(
+                "Likelihood terms with fitted error terms (an RV jitter) "
+                "have no least-squares form (their normalisation depends on "
+                "them); fit with method='lbfgs' or 'adam'."
+            )
         parts = self.data_residuals(model)
         parts += [term(values) for term in self.likelihoods]
         for regulariser in self.regularisers:
@@ -245,7 +275,13 @@ class _Objective(eqx.Module):
         # With fitted error terms, the normalisation of the Gaussian
         # likelihood, sum(log σ), is no longer a constant.
         log_norm = sum(np.sum(np.log(e)) for _, e in whitened)
-        log_norm = log_norm if self.noise else 0.0
+        log_norm = log_norm if self.noise or self._has_gains else 0.0
+        # A likelihood term with a fitted jitter reports its own Σ log σ.
+        log_norm = log_norm + sum(
+            t.log_norm(values)
+            for t in self.likelihoods
+            if getattr(t, "has_log_norm", False)
+        )
         penalty = sum(r.value(_reference(model)) for r in self.regularisers)
         log_prior = sum(
             np.sum(prior.log_prob(values[path]))
@@ -328,11 +364,19 @@ def fit(
         ``vis_scale`` and ``phi_scale`` multiply the uncertainties, and
         ``vis_error_rel`` (a fraction of the model visibility) and
         ``phi_error`` (radians) are added in quadrature (see
-        [`inflated_errors`][virgil.likelihood.inflated_errors]). A dict
+        [`inflated_errors`][virgil.likelihood.inflated_errors]), and the
+        widths of gains correlated across channels, ``vis_gain_<group>``
+        (see [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), and
+        of closure-phase offsets, ``phi_offset_<group>`` (see
+        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), and
+        the wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
+        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]), whose priors may
+        be of either sign (e.g. ``Normal(1, 2e-4)``). A dict
         applies to every dataset (values ``"noise.<term>"``); a list gives
         each dataset its own (``"noise[i].<term>"``). The loss is then the
         full Gaussian negative log likelihood, including ``Σ log σ``, so the
-        default method is L-BFGS. Fitting error terms with an image is
+        default method is L-BFGS. So it is for data with gains, whose
+        covariance depends on the model. Fitting error terms with an image is
         degenerate (a smoother image with larger errors fits as well):
         estimate them with a parametric model first.
     init : dict, optional

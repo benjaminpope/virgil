@@ -13,6 +13,7 @@ Contrast limits, significance, and conversions between flux ratios
         - delta_mag_to_flux
         - ruffio_upperlimit
         - absil_limits
+        - injection_limits
         - nsigma
         - chi2ppf
         - radial_profile

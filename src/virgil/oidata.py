@@ -8,6 +8,7 @@ import equinox as eqx
 import zodiax as zx
 
 from ._closure import ClosureNoise
+from .gains import ClosureOffsets, GainModes, closure_offsets, gain_modes
 from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from .amigo import is_mixed_disco_record, mixed_disco_fields
 from .oifits import read_oifits
@@ -67,7 +68,16 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     sample's time, and :meth:`epochs` and :meth:`split_by_epoch` group the
     frames into nights. The time is stored as ``dt``, days since the static
     float64 ``t_ref``, so that models of time see small numbers that keep
-    their precision in float32 (about 5 s over 1000 days).
+    their precision in float32 (about 5 s over 1000 days). ``stations``
+    holds each sample's station pair (``STA_INDEX``).
+
+    ``gains`` holds calibration gains correlated across channels
+    ([`GainModes`][virgil.gains.GainModes], set with
+    [`with_gains`][virgil.oidata.OIData.with_gains]), which the likelihood
+    marginalises; ``None`` by default. ``phase_offsets`` likewise holds
+    closure-phase offsets per frame
+    ([`ClosureOffsets`][virgil.gains.ClosureOffsets], set with
+    [`with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
     """
 
     u: jax.Array
@@ -88,6 +98,9 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     cp_noise: ClosureNoise | None
     dt: jax.Array | None
     frame: jax.Array | None
+    stations: jax.Array | None
+    gains: GainModes | None
+    phase_offsets: ClosureOffsets | None
     observable_kind: str = eqx.field(static=True)
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
@@ -132,6 +145,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
               exposure label of each sample (or of each baseline, for
               several channels). Without ``frame``, samples with the same
               ``mjd`` form one frame.
+            * ``stations`` (optional): the station pair ``(a, b)``
+              (``STA_INDEX``) of each sample, or of each baseline for
+              several channels, for telescope and baseline gains
+              ([`with_gains`][virgil.oidata.OIData.with_gains]).
             * ``vis_mat``, ``phi_mat`` (optional): linear operators of shape
               ``(n_out, n_in)`` projecting the channels into, e.g., kernel
               or DISCO observables. The ``disco_vis_mat``/``disco_phi_mat``
@@ -153,6 +170,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             for name, value in mixed_disco_fields(data).items():
                 setattr(self, name, value)
             self.dt = self.frame = self.t_ref = None
+            self.stations = self.gains = self.phase_offsets = None
             return
 
         u = onp.asarray(data["u"], dtype=float)
@@ -196,10 +214,13 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         vis_flag = data.get("vis_flag")
         phi_flag = data.get("phi_flag")
         mjd, frame = data.get("mjd"), data.get("frame")
+        stations = data.get("stations")
         if mjd is not None:
             mjd = onp.asarray(mjd, dtype=onp.float64)
         if frame is not None:
             frame = onp.asarray(frame)
+        if stations is not None:
+            stations = onp.asarray(stations, dtype=int).reshape(-1, 2)
         if vis.ndim == 2:
             # Per-baseline times are repeated over channels, like u and v;
             # per-sample ones (shaped like vis, or flat) are flattened.
@@ -209,6 +230,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 return onp.repeat(values, vis.shape[1])
 
             mjd, frame = per_sample(mjd), per_sample(frame)
+            if stations is not None and len(stations) == vis.shape[0]:
+                stations = onp.repeat(stations, vis.shape[1], axis=0)
         if vis.ndim == 2:
             u, v, wavel, indices = _expand_channels(u, v, wavel, vis, indices)
             vis, d_vis = vis.reshape(-1), d_vis.reshape(-1)
@@ -307,6 +330,17 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         closure = ClosureNoise.from_indices(*indices) if cp_flag else None
         self.cp_noise = closure if phi_mat is None else None
         self._set_times(mjd, frame)
+        if stations is not None and len(stations) != onp.size(self.u):
+            raise ValueError(
+                f"stations has {len(stations)} station pairs for "
+                f"{onp.size(self.u)} samples; give one per sample (or per "
+                "baseline, for several channels)."
+            )
+        self.stations = (
+            None if stations is None else np.asarray(stations, np.int32)
+        )
+        self.gains = None
+        self.phase_offsets = None
         vis_mode_in = data.get(
             "vis_mode", data.get("observable_vis_mode", "auto")
         )
@@ -391,9 +425,24 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         See :meth:`epochs`. Each part keeps its own samples, observables and
         closure phases, so it can be fitted on its own or with a model per
-        epoch. Not available for projected (kernel, DISCO) observables.
+        epoch. Not available for projected (kernel, DISCO) observables, nor
+        for data with a gain mode shared between epochs (a supplied mode
+        spanning frames): the parts' likelihoods would then not add up to
+        the whole.
         """
         labels = self.epochs(gap_days)
+        if self.gains is not None:
+            index = (
+                onp.arange(onp.size(self.u))
+                if self.vis_index is None
+                else onp.asarray(self.vis_index)
+            )
+            if self.gains.labels_shared(labels[index]):
+                raise ValueError(
+                    "A gain mode spans several epochs, so the epochs are not "
+                    "independent and their likelihoods would not add up; "
+                    "fit the data together, or drop that mode first."
+                )
         return [self._subset(labels == k) for k in range(labels.max() + 1)]
 
     def select(self, wavel_min=None, wavel_max=None):
@@ -443,6 +492,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "Only unprojected data can be split: projected (kernel, "
                 "DISCO) observables mix samples."
             )
+        if self.phase_offsets is not None:
+            raise ValueError(
+                "Data with closure-phase offsets cannot be split or "
+                "selected; add the offsets (with_closure_offsets) afterwards."
+            )
         keep = onp.asarray(keep, dtype=bool)
         new_index = onp.cumsum(keep) - 1  # old sample -> new sample
 
@@ -474,7 +528,15 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             phi_rows, phi_index = observed(self.phi_index)
             legs, closure = [None] * 3, None
         wavel = self.wavel if self.wavel.size == 1 else self.wavel[keep]
-        times = [None if x is None else x[keep] for x in (self.dt, self.frame)]
+        times = [
+            None if x is None else x[keep]
+            for x in (self.dt, self.frame, self.stations)
+        ]
+        gains = None
+        if self.gains is not None:
+            kept = onp.zeros(self.vis.size, bool)
+            kept[vis_rows] = True
+            gains = self.gains.subset(kept)
         return eqx.tree_at(
             lambda d: (
                 d.u,
@@ -492,6 +554,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 d.cp_noise,
                 d.dt,
                 d.frame,
+                d.stations,
+                d.gains,
             ),
             self,
             (
@@ -507,6 +571,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 phi_index,
                 closure,
                 *times,
+                gains,
             ),
             is_leaf=lambda x: x is None,
         )
@@ -962,11 +1027,120 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             (self.d_vis * factor, self.d_phi * factor),
         )
 
+    def with_wavelength_scale(self, scale=1.0, offset=0.0):
+        """A copy of the data whose wavelengths are ``scale · λ + offset``.
+
+        A wavelength calibration error: models are evaluated at the
+        corrected wavelengths, which rescales the spatial frequencies
+        (``u`` and ``v`` are in metres) and moves the spectra together, as
+        a wrong wavelength scale does. Angular sizes scale with it, so with
+        a single dataset the scale is degenerate with every size, and its
+        prior *is* the systematic error. Fit it with the noise terms
+        ``wavel_scale`` and ``wavel_offset`` (e.g.
+        ``noise={"wavel_scale": dist.Normal(1.0, 2e-4)}``, about right for
+        GRAVITY), which call this.
+
+        Parameters
+        ----------
+        scale : float, optional
+            Factor on the wavelengths (default 1).
+        offset : float, optional
+            Shift added after scaling, in metres (default 0).
+
+        Returns
+        -------
+        OIData
+            The data with ``wavel`` replaced. A ``uv_grid`` is kept: it is
+            in metres and divided by the wavelength where it is used, so
+            it still matches the samples.
+        """
+        return eqx.tree_at(
+            lambda d: d.wavel, self, self.wavel * scale + offset
+        )
+
+    def with_closure_offsets(self, baseline=None, triangle=None, modes=None):
+        """A copy of the data with closure-phase offsets per frame.
+
+        Calibration can leave closure phases that do not close. The
+        likelihood then marginalises offsets common to the channels of a
+        frame analytically (see
+        [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with these widths
+        unless they are fitted as the noise terms ``phi_offset_baseline``,
+        ``phi_offset_triangle`` or ``phi_offset_modes``. Use them only if
+        calibrators show such offsets: they are off by default. Needs
+        closure phases from four or more telescopes.
+
+        This is a small-offset approximation: an offset δ changes the
+        whitened sine sin Δ by about δ cos Δ, which is treated as linear in
+        δ. It holds while the offsets (and the residuals) are small, about
+        δ ≲ 0.3 rad (17°); larger widths are not marginalised exactly.
+
+        Parameters
+        ----------
+        baseline : float, optional
+            Width (radians) of a phase offset per (frame, baseline), which
+            reaches the closure phases through the triangles' signs.
+        triangle : float, optional
+            Width (radians) of an offset per (frame, triangle).
+        modes : array-like, optional
+            Further modes, ``(n_mode, n_phase)``, radians per 1σ, one value
+            per closure phase, each within one frame (e.g. a calibrator
+            PCA's). Their width, 1 by default, scales them.
+
+        Returns
+        -------
+        OIData
+            The data with ``phase_offsets`` set. Split or select the data
+            first: data with offsets cannot be split.
+        """
+        offsets = closure_offsets(self, baseline, triangle, modes)
+        return eqx.tree_at(
+            lambda d: d.phase_offsets,
+            self,
+            offsets,
+            is_leaf=lambda x: x is None,
+        )
+
+    def with_gains(
+        self, telescope=None, baseline=None, chromatic=None, modes=None
+    ):
+        """A copy of the data with calibration gains correlated across channels.
+
+        The likelihood then marginalises gains on log |V| per frame
+        analytically (see [`virgil.gains`][virgil.gains]), with these widths
+        unless they are fitted as the noise terms ``vis_gain_telescope``,
+        ``vis_gain_baseline``, ``vis_gain_chromatic`` or ``vis_gain_modes``.
+        The covariance then depends on the model, so fits use L-BFGS.
+
+        Parameters
+        ----------
+        telescope, baseline, chromatic : float, optional
+            Widths (1σ on log |V|; 0.01 is a 1% amplitude or 2% V² gain)
+            of gains per (frame, telescope), per (frame, baseline), and per
+            (frame, baseline) shaped (λ_ref/λ)², a coherence loss. ``None``
+            leaves a group out.
+        modes : array-like, optional
+            Further modes, ``(n_mode, n_sample)``: shapes on log |V| per 1σ,
+            one value per sample (the order of ``u``), e.g. a calibrator
+            PCA's. Their width, 1 by default, scales them.
+
+        Returns
+        -------
+        OIData
+            The data with ``gains`` set (replacing any earlier ones).
+        """
+        gains = gain_modes(self, telescope, baseline, chromatic, modes)
+        return eqx.tree_at(
+            lambda d: d.gains, self, gains, is_leaf=lambda x: x is None
+        )
+
     def with_model(self, model_object, key=None, noise_scale=1.0):
         """Return a copy populated from a model with optional Gaussian noise.
 
         Sampling, uncertainties, conventions, closure indices, and linear
-        observable operators are preserved from this object.
+        observable operators are preserved from this object. With ``key``
+        and ``gains``, gains are drawn at their default widths too, and
+        applied exactly (|V| times e^g) before the noise is added.
         """
         noise_scale = float(noise_scale)
         if noise_scale < 0.0:
@@ -978,6 +1152,13 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         phi = prediction[n_vis:]
         if key is not None:
             vis_key, phi_key = jax.random.split(key)
+            if self.gains is not None:
+                gain_key = jax.random.fold_in(key, 2)
+                g = self.gains.sample(gain_key, self.gains.widths)
+                vis = {
+                    "v2": vis * np.exp(2.0 * g),
+                    "amp": vis * np.exp(g),
+                }.get(self.vis_mode, vis + g)
             vis = vis + noise_scale * self.d_vis * jax.random.normal(
                 vis_key, vis.shape
             )
@@ -986,6 +1167,14 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             else:
                 phi_noise = self.cp_noise.sample(phi_key, self.d_phi, phi.size)
             phi = phi + noise_scale * phi_noise
+            if self.phase_offsets is not None:
+                offsets = self.phase_offsets
+                phi = phi + offsets.sample(
+                    jax.random.fold_in(key, 3),
+                    self.cp_noise,
+                    phi.size,
+                    offsets.widths,
+                )
         return self.set(["vis", "phi"], [vis, phi])
 
 

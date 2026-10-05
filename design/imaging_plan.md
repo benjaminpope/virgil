@@ -373,6 +373,12 @@ The last two came out of fitting GRAVITY data on Apep, but are written as genera
 6. **6b and 6c** (joint multi-filter AMI; `ImageCube`), then **milestone 2**.
 7. **Stage 7** (hardening and release), then **Stage 8** (the rest of the PMOIRED parity).
 
+**Binary-detection parity (from validation).** Two features that CANDID and fouriever have for finding companions are being implemented, each in its own PR:
+- injection-method detection limits (CANDID): in progress;
+- a fast linearised flux map (fouriever's `lincmap`): in progress.
+
+**Log (2026-10-05):** the additions to Stages 6a, 6e, 7 and 8 and the note above come from feature suggestions made in the virgil-validation session, which compared virgil with eht-imaging, CANDID, fouriever, MPoL and PMOIRED. Ben approved them the same day.
+
 ## Stage 6.0: urgent reader and likelihood fixes (done; PR #120)
 From the GRAVITY calibration review ([`gravity_calibration_review.md`](https://github.com/benjaminpope/virgil-vlti/blob/main/design/gravity_calibration_review.md), now in virgil-vlti), footguns 1, 2, 3 and 9. These affected every existing analysis of GRAVITY and of PIONIER (or any four-telescope) data.
 - **Only independent closure phases, with their covariance diagonalised first.** Triangles that share baselines (one frame and channel) are grouped. Their covariance is modelled as C = D^½ R D^½ with R = T Tᵀ/3 (Kammerer et al. 2020's equal-noise approximation: the reported σ on the diagonal, and correlations of ±1/3 between triangles that share a baseline), not T diag(s) Tᵀ from per-baseline errors, as an earlier draft of this plan had it. The likelihood whitens the independent combinations (`OIData.cp_noise`, `n_independent`). Three-telescope data are unchanged.
@@ -427,9 +433,9 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 | Item | Effort |
 |---|---|
 | `orbits.py`: `KeplerOrbit` and `ThieleInnesOrbit`, converters to and from jaxoplanet, convention unit tests and a reference ephemeris | 4–5 |
-| Starting orbits: per-epoch positions from the existing binary tools, then a Thiele–Innes least-squares solve on a grid of (P, e, T₀); `PositionData` | 2–3 |
+| Starting orbits: per-epoch positions from the existing binary tools, then a Thiele–Innes least-squares solve on a grid of (P, e, T₀); `PositionData` (the same linear solve marginalises A, B, F, G in position-only fits: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 6) | 2–3 |
 | `StateVectorOrbit` and its regular forms, for short arcs | 3 |
-| `RVData` and axial priors; `distance_pc` and the derived mass | 3 |
+| `RVData` and axial priors; `distance_pc` and the derived mass (RV zero points per instrument marginalise analytically: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 3) | 3 |
 | `SourceModel.at(mjd)` and time-dependent `OIData.model` | 3–4 |
 | `Attached(component, orbit, anchor, bind, offsets)`: any component's angles tied to the binary's frame (line of centres, nodes, inclination, "facing the primary") | 3 |
 | `simulate(scene, template)` and `bias_test`, for bias tests across instruments and for planning | 2–3 |
@@ -447,7 +453,7 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 
 **Log (StateVectorOrbit; item R4):** parameters (dra, ddec, vra, vdec, dz, vz) at `t_ref` (mas, mas/yr) and μ = 4π²a³/P² (mas³/yr², distance-free). `to_kepler` goes through the Thiele–Innes constants (P̂ = e/|e| and Q̂ = Ŵ × P̂ give A, B, F, G, C, H), so the angle conventions are those of `ThieleInnesOrbit.to_kepler`, and the line-of-sight constants C, H choose the node. A circular state uses the position at `t_ref` for P̂. Unbound states are rejected. Round trips KeplerOrbit → state → KeplerOrbit reproduce the 3-D orbit to 1e-7 mas for generic, e = 0.9, e = 1e-6, i = 2° and retrograde orbits; gradients are finite under jit. The (h, k), (p, q) forms of the design were not needed: the Thiele–Innes route has no removable singularity at i = 0, and at e = 0 only the periastron is undefined.
 
-**Log (RVs, masses, axial priors; items R5–R6):** `RVData(mjd, rv, d_rv, star)` predicts γ + share · v_rel, with v_rel the orbit's exact dz/dt in mas/day times D (pc) × 1.496e5/86400 km/s, and share −q/(1+q) for the primary, 1/(1+q) for the secondary. jaxoplanet's RV code is not used, so the physical scale stays explicit. `total_mass` and `distance_pc` (Kepler's third law, a in au = a_mas · D / 1000, P in years). `AxialVonMises(mean, kappa)`: a von Mises in 2θ on [0°, 360°), for a node known modulo 180°. `fit(..., likelihoods=[...])` takes callables of the fitted values returning whitened residuals (`PositionData.term(orbit_fn)`, `RVData.term(params_fn)`); data may then be `()`. Tests: the RV peak-to-peak equals 2K from Kepler's laws (to 1e-4); total mass 1 M☉ for 1 au at 1 pc in a year; the axial prior is normalised with period 180°; a joint position + RV fit from both nodes, where only the true node fits (χ² < 1e-3 against > 1e3). `numpyro_model(..., likelihoods=[...])` is done: term `i` is the site `likelihood_<i>`, adding the data's full normalised Gaussian log density for `PositionData.term` and `RVData.term` (as the OIData terms do) and `-χ²/2` alone for a plain callable. Not yet: `rv_jitter` (fitted RV error inflation; needs `noise=`-style terms for likelihood terms).
+**Log (RVs, masses, axial priors; items R5–R6):** `RVData(mjd, rv, d_rv, star)` predicts γ + share · v_rel, with v_rel the orbit's exact dz/dt in mas/day times D (pc) × 1.496e5/86400 km/s, and share −q/(1+q) for the primary, 1/(1+q) for the secondary. jaxoplanet's RV code is not used, so the physical scale stays explicit. `total_mass` and `distance_pc` (Kepler's third law, a in au = a_mas · D / 1000, P in years). `AxialVonMises(mean, kappa)`: a von Mises in 2θ on [0°, 360°), for a node known modulo 180°. `fit(..., likelihoods=[...])` takes callables of the fitted values returning whitened residuals (`PositionData.term(orbit_fn)`, `RVData.term(params_fn)`); data may then be `()`. Tests: the RV peak-to-peak equals 2K from Kepler's laws (to 1e-4); total mass 1 M☉ for 1 au at 1 pc in a year; the axial prior is normalised with period 180°; a joint position + RV fit from both nodes, where only the true node fits (χ² < 1e-3 against > 1e3). `numpyro_model(..., likelihoods=[...])` is done: term `i` is the site `likelihood_<i>`, adding the data's full normalised Gaussian log density for `PositionData.term` and `RVData.term` (as the OIData terms do) and `-χ²/2` alone for a plain callable. `RVData.term(params, jitter="rv_jitter")` fits RV jitter s (errors sqrt(d_rv² + s²)): a term may define `has_log_norm` and `log_norm(values)` (Σ log σ_eff), which `fit` adds to the loss (L-BFGS by default, as for `noise=`; LM raises `TypeError`); `numpyro_model` uses the term's `loglike`. Tests: loglike equals scipy's Gaussian with σ_eff, zero jitter equals the plain term, the numpyro log density, and a 30-point fit recovers s = 1 km/s. `RVData(..., instrument=labels)` and `RVData.term(..., marginalise_offsets=(mean, sd))` marginalise one velocity zero point per instrument analytically (Luger, Foreman-Mackey & Hogg 2017): `d ~ N(m + Aμ, C + AΛAᵀ)` by Woodbury and the determinant lemma in O(N k²), the log-determinant (including the jitter) in `log_norm`, residuals of length N from an exact square root `z - W(I + Λ^-1/2 L⁻ᵀ)⁻¹Wᵀz`, and `term.posterior(values)` for the conditional mean and covariance of the zero points. One zero point per instrument and no separate γ is the non-degenerate parameterisation (`params` returns γ = 0); only finite prior sd is supported, `True` is N(0, 1000²) with a warning. Tests: dense scipy multivariate normal (2 instruments, jitter on), dense conditioning, a fit matching free offsets, and one instrument with a tiny prior equal to a fixed γ.
 
 **Log (simulate):** `virgil.simulate`: `simulate(scene, template, key, noise_scale, shift_days)` is `with_model` on the template, with every sample at its own time for moving scenes and `shift_days` to move the epochs (R8's `mjd=`); `bias_test(scene, template, model, priors, n, key, **fit_kwargs)` returns the fitted values and χ²_red of each draw. Not yet: R8's drawn nuisances (`noise=` dicts, correlated blocks, a wavelength scale; they come with 6d) and bandpass smearing (6a).
 
@@ -467,8 +473,8 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
 
 **Workflow and additions.** [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) sets out an end-to-end spectro-interferometric workflow (worked example: GRAVITY data on Apep) and adds to 6a:
 - `Nodes(..., outside=0.0)` for line excesses on a continuum, with positivity checked on the total; `Tabulated` (merged in PR #124, provisional) becomes a node spectrum;
-- `System.total_spectrum` for OI_FLUX;
-- VISPHI with the pipeline's continuum normalisation, and a test in the resolved regime;
+- `System.total_spectrum` for OI_FLUX (the grey scale and low-order polynomial in λ of OI_FLUX marginalise analytically: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 4);
+- VISPHI with the pipeline's continuum normalisation, and a test in the resolved regime (a per-baseline, per-frame offset and slope marginalise analytically, which puts the continuum projection on a sound footing: see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 5);
 - error floors sharing one function with the fitted `noise=` terms;
 - a documented rule for when smearing matters, with a real-data check;
 - a prior on the reference component's spectrum, and docs on its degeneracy with the others (S §2.2b);
@@ -490,6 +496,7 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
   - Read and model T3AMP, OI_FLUX (FLUX and NFLUX), differential phase, normalised |V| and V², and correlated flux.
   - Allow V² with |V|, and closure phase with VISPHI, in one dataset.
   - Normalisation uses continuum ranges, or the analytic continuum of the lines.
+  - **Optional debiasing of OI_VIS amplitudes** (eht-imaging's `debias`), in the reader PR that reads VISAMP. |V| measured at low SNR is biased high, because noise adds in quadrature to the amplitude, so low-SNR GRAVITY VISAMP should either offer a debiasing option or at least document the bias and when it matters. Off by default.
 - **Instrumental effects.** A spectral-resolution kernel, and bandwidth smearing by oversampling in wavelength.
 - **Primary beam (fibre coupling), optional** (GRAVITY review §1; decided 2026-10-03). A Gaussian coupling of FWHM ≈ λ/D, optionally broadened by tip-tilt jitter, per telescope. It weights each component's flux, integrated over its brightness for extended components, by its position. One coupling model feeds both the coupled photometry (OI_FLUX) and the visibilities' normalisation. `System.total_spectrum` stays the *intrinsic* total.
 - **Errors.** `OIData` error floors (absolute and relative) and flags, alongside `with_error_scale`.
@@ -516,8 +523,8 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
   - per-baseline gains;
   - a chromatic mode from coherence loss, exp(−a/λ²).
 
-  They are marginalised analytically by Woodbury, as a small-log-gain approximation, so the likelihood keeps one whitened residual vector plus a log-determinant.
-- **No closure-phase offsets by default.** If calibrators show non-closing errors, use the baseline-based form T·e, a small-phase approximation under the chord likelihood (GRAVITY review §13).
+  They are marginalised analytically by Woodbury, as a small-log-gain approximation, so the likelihood keeps one whitened residual vector plus a log-determinant. (Cross-cutting note: [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 1.)
+- **No closure-phase offsets by default.** If calibrators show non-closing errors, use the baseline-based form T·e, a small-phase approximation under the chord likelihood (GRAVITY review §13). (Cross-cutting note: [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting), use 2.)
 - **Widths** are fitted or known (`vis_gain`, and optionally `phi_offset`, in the per-dataset `noise=` specification). This needs `OIData.frame` (§2.5 of the same note).
 
 **Tests:**
@@ -526,11 +533,72 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 
 **MWE:** a simulated multi-channel binary with an extended component and injected per-frame gains, fitted with 6d and with diagonal error terms, comparing the parameter errors with the truth. A real-data check (e.g. Apep's GRAVITY data) is optional.
 
+**Result (gains study, 2026-10-05).** OzSTAR job `stage6d_gains` (ozstar_scripts; virgil@08fc5eb, jobs 18043843 and 18043863), 200 realisations per scenario.
+- **Simulation.** Four UTs, 8 snapshots over ±3 h, 30 K-band channels, σ(V²) = 0.01, σ(CP) = 0.5°. The scene is a star, a companion (flux 0.1 at (6, −4) mas) and a Gaussian disk (σ = 1.5 mas, flux 0.4).
+- **Injected gains.** On log |V| per frame: 2% per telescope and 1% per baseline.
+- **Fits.** Each realisation is fitted four ways, each with Laplace errors at its MAP. The table gives rms pulls, (fit − truth)/σ, which are 1 for calibrated errors.
+
+| Fit | Pulls (5 parameters) | χ²/N | Notes |
+|---|---|---|---|
+| Reported errors only | 9.6–19.9 | 9.1 | errors 10–20× too small |
+| + fitted `vis_error_rel` | 1.5–5.2 | 1.00 | χ² looks right, errors still 1.5–5× too small; `vis_error_rel` → 5.7% |
+| Gains, true widths | 0.97–1.01 | 1.00 | 1σ coverage 0.65–0.71 |
+| Gains, widths fitted | 0.99–1.02 | 1.00 | widths 0.0197 ± 0.0027 (telescope) and 0.0097 ± 0.0017 (baseline), against 0.02 and 0.01 |
+
+- **Precision as well as calibration.** Marginalising the gains also makes the estimates more precise than inflating the errors does. Disk flux scatters 0.0060 rather than 0.0149, and disk σ 0.018 mas rather than 0.057 mas.
+- **Control (no gains in the data).** Fitted widths go to zero (median 0) and the results match the diagonal fit. Assuming gains that aren't there, at the same widths, gives conservative errors: disk σ error 0.019 mas, scatter 0.016 mas, against 0.003 mas without them. It also shifts the disk parameters by 0.2–0.3σ.
+- **Conclusion.** Fit the widths rather than fixing them.
+
+**Log (gains, branch `stage6d-nuisances`):**
+- `virgil.gains`: `GainModes` and `gain_modes`, set with `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)`. The groups are telescope, baseline, chromatic ((λ_ref/λ)²) and supplied 1σ modes, e.g. a calibrator PCA's from virgil-vlti. Widths are fitted with the noise terms `vis_gain_<group>`, one per group, rather than a single `vis_gain`.
+- Marginalisation: blocks are the connected groups of modes, whitened by successive rank-one steps (smooth gradients, also for degenerate modes and zero widths). The log-determinant is spread over effective errors, so `_gaussian_loglike` and `fit`'s normalisation are unchanged. The Jacobian dObs/dlog|V| is taken from the model (2V², |V| or 1).
+- `fit` includes the normalisation and refuses LM when any dataset has gains. `numpyro_model` gets them through `model_loglike`.
+- `OIData.stations` (from `STA_INDEX`, or a dictionary's `stations`), and `gains` survive `_subset`/`split_by_epoch` (dropping rows is an exact marginal). `with_model(key)` draws the gains at their default widths and applies them exactly.
+- Tests: whitened norm and log-det against the dense covariance (V², |V|, log|V|); block structure; width terms; zero widths reduce to the diagonal likelihood, with finite gradients on degenerate data; splitting by epoch; covariance of the drawn gains; refusal for projected data; fit defaults to L-BFGS.
+- Merged as #180. The width-recovery and calibration study is OzSTAR job `stage6d_gains` (submitted 2026-10-05); the MWE is next.
+
+**Log (`wavel_scale`, branch `stage6d-wavel`):** `OIData.with_wavelength_scale(scale, offset)` and the noise terms `wavel_scale` (factor, from 1) and `wavel_offset` (metres, from 0), with signed priors allowed. Tested: a scale is a separation rescaling for a grey binary, an offset is a shifted grid, and a noiseless fit recovers a 0.2% scale with the separation known.
+
+**Log (closure offsets, branch `stage6d-phi-offset`):** `OIData.with_closure_offsets(baseline=, triangle=, modes=)` (`virgil.gains.ClosureOffsets`), widths `phi_offset_<group>`, on #174's sine likelihood. Tested against the dense whitened covariance, the closure of baseline offsets around four telescopes, zero widths, width terms, drawn offsets, and a fit of the width. Not yet: three telescopes; splitting data with offsets.
+
 **Also in 6d:**
 - **`wavel_scale`** (and `wavel_offset`). A per-dataset wavelength nuisance in `noise=` (S §2.6; 1–2 h). The GRAVITY default is λ′ = λ(1 + s) + δ, with s ~ N(0, 2×10⁻⁴) and δ = 0 unless lines constrain it.
 - **The dual-field (in-field) calibrator recipe.** Done in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti) (`virgil-vlti-calibrate --dual-field`), not in the core (S §2.7). Its transfer-function error should become 6d's known-width gains.
 
 **Merge order (historical).** The Apep agent's library commits (`EllipticalGaussian`, `Tabulated`, fitted error terms `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) were merged in PR #124, before 6a. 6a's node spectra will replace `Tabulated`, and 6d extends `noise=`.
+
+## Analytic marginalisation of linear parameters (cross-cutting)
+**Principle** (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136). If the model is linear in some parameters w, m = m₀(θ) + A(θ)w, and w has a Gaussian prior N(μ, Λ), then w marginalises exactly: d ~ N(m₀ + Aμ, C + AΛAᵀ), where C is the data covariance.
+- Evaluate it with the Woodbury identity and the matrix-determinant lemma, in O(N k²) for k linear parameters.
+- Keep the log-determinant. It depends on θ, and dropping it biases θ.
+- After the fit, report w's conditional mean and covariance.
+- Use a finite Λ only. A flat prior is the limit of a broad one only up to a constant.
+- For positive quantities, use it only with broad priors well away from zero, because the Gaussian is not truncated.
+
+**Where it does not apply.** Visibilities are normalised, V = Σ fᵢVᵢ / Σ fᵢ, and V² and closure phases are nonlinear in V. So component flux ratios, spectral amplitudes and image pixels cannot be marginalised this way in visibility or closure-phase fits.
+
+**Uses**
+
+| # | Linear parameters | Data | Status | Value |
+|---|---|---|---|---|
+| 1 | Telescope, baseline and chromatic gains | log\|V\| (V, V²) | Done in 6d (#180), as a small-gain approximation | Calibrated errors where diagonal inflation fails (6d gains study) |
+| 2 | Closure-phase offsets per frame | Closure phases | Done in 6d (#189), as a small-phase approximation | As 1, for non-closing phase errors |
+| 3 | RV zero points per instrument (γ and offsets) | RVs | Done (#192) | Removes a fitted nuisance per instrument |
+| 4 | OI_FLUX grey scale k and a low-order polynomial in λ, written as cⱼλʲ·Σfᵢ | FLUX | In progress in the 6a observables PR | High: exact, and removes a fitted nuisance for every dataset |
+| 5 | VISPHI continuum offset and slope per baseline and frame; NFLUX normalisation | VISPHI, NFLUX | In progress in the 6a observables PR | High: the pipeline's continuum subtraction is the flat-prior limit, so this puts the projection on a sound footing, and a finite-prior version comes almost for free |
+| 6 | Thiele–Innes A, B, F, G at fixed (P, e, T₀) | Positions only | Design note in progress (`design/thiele_innes_marginalisation.md`) | High for position-only orbits: NUTS works in 3 dimensions instead of 7. Open question: the prior, because a Gaussian on A, B, F, G implies a non-standard Campbell-element prior, so reweight or state it. It does not extend to joint position + RV fits; for closure-phase orbit fits it only gives starting points |
+| 7 | Overall V² scale s² (a fully resolved background, or a per-frame V² calibration factor) | V² only | Noted, not planned | Exact in V², whereas 6d is a small-gain approximation in log\|V\|, so it mostly overlaps 6d; the prior s² ∈ (0, 1] is not Gaussian |
+| 8 | Companion flux f, to first order in f ≪ 1 | V², closure phases | Done (#184; flat prior, profiled). Planned follow-up: iterate it (Gauss–Newton) to remove the bias for bright companions, and use a Gaussian prior on f to get a marginal-likelihood detection map | Fast detection maps |
+| 9 | Spectral line or node amplitudes and continuum ratios | OI_FLUX alone | Noted, not planned | Exact only in spectrum-only fits; useful for starting values |
+| 10 | Image pixels | Complex visibilities only | Already in the sparse/CLEAN NNLS major cycles | Positive least squares, not Gaussian marginalisation |
+
+**Log (2026-10-05):** approved by Ben.
+
+## Stage 6e: closure amplitudes (after 6d; not yet estimated)
+From the virgil-validation comparison with eht-imaging, which fits closure amplitudes (`camp`) and log closure amplitudes (`logcamp`, `logcamp_diag`).
+- **Why.** Closure amplitudes are immune to telescope-based amplitude miscalibration. That is valuable for masking data with a varying pupil.
+- **Build.** Closure amplitudes (and their logarithms) beside closure phases in `OIData`, correlated as the closure phases are (quadrangles that share baselines), so the likelihood still has one whitened residual vector.
+- **Design note first.** For VLTI this overlaps with 6d: 6d models telescope-based gains, while closure amplitudes discard them. The note should say when each is preferable, and it is written after 6d lands.
 
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop: Item 2 is Stage 6b and item 3 is Stage 6c. Both use 6a's node spectra for per-filter or per-channel fluxes.
@@ -577,8 +645,14 @@ The review also suggests restructuring the plan: replace "Order of work" with a 
     - a least-squares (LM) form of the entropy term;
     - a looser, better-founded stopping rule.
   - **Success test:** an L-curve from w = 0.1 to 10⁴ that converges at every weight within the default step limit, in float32 and float64.
+  - **Multi-start or annealed-weight image fitting** (priority: image fits are non-convex, and a single start can settle in a poor local minimum). Two independent pieces of evidence:
+    - virgil-validation found that, from the same start, eht-imaging's L-BFGS-B and virgil end in different local minima, although from each other's solution both agree to 5e-8 in loss. The minima differ; the optimisers do not.
+    - An independent real-data analysis of a GRAVITY dataset found Levenberg–Marquardt fits of `GaussianField` images from random latent starts getting trapped: not converged after 10⁴ steps, with χ²/N about 3.
+
+    Possible helpers: a multi-start that keeps the lowest-loss converged fit, or imaging in rounds with blurring and restarting, as eht-imaging users do.
 - API review for consistency and naming, with docstrings (units and examples) for every public object.
 - A mkdocs API page and a "choosing a regulariser and prior" guide.
+  - **K-fold cross-validation for the regularisation weight** (MPoL's `CrossValidate`): hold out folds of the data, fit the rest at each weight, and choose the weight with the lowest held-out χ². Unlike `l_curve`, `discrepancy` and the evidence, it does not assume the error bars are right, which matters for real VLTI data. The guide should compare it with those three.
 - Update `design/chromatic_sources.md` to mark `Image` as done.
 - Remove any leftovers, and do a final full-suite run under float32 and x64.
 - A version bump and a changelog entry.
@@ -589,7 +663,7 @@ The review also suggests restructuring the plan: replace "Order of work" with a 
 See [`pmoired_parity.md`](pmoired_parity.md). Orbits, first listed here, are now Stage 6a.1.
 - **`Projected(source, inc, pa)`.** A wrapper that stretches uv, like `Rotated`. It makes any component elliptical, and replaces per-class `inc`/`pa`.
 - **`RadialProfile`.** A callable I(r) with inner and outer radii, transformed by a fixed-quadrature Hankel transform: order 0, plus order n for azimuthal harmonics. It covers thick rings, power-law and limb-darkened disks, and harmonics on any profile. Crescents are differences of offset disks.
-- **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole.
+- **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole. Resample whole snapshots or whole baselines, never single points, since the points within one are correlated (as PMOIRED and CANDID's `fitBoot` do). The virgil-validation PMOIRED comparison is its test.
 - **Spectral correlations between channels.** Now Stage 6d, because GRAVITY data need them.
 
 **Tests:**
@@ -617,7 +691,7 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 | Twin-folding helpers | We fit V²-only data routinely |
 | Basis and decoder parameterisations | zodiax 0.6 `Map`/`Mask`/decoders are released |
 | MGVI/geoVI | Not planned |
-| Cross-validation for the weight (e.g. held-out DISCO modes) | Not now; discrepancy, L-curve and (Stage 5) evidence suffice |
+| Cross-validation for the weight (e.g. held-out DISCO modes) | K-fold cross-validation is planned in Stage 7; held-out DISCO modes only if that proves too coarse |
 | Deep Probabilistic Imaging and learned priors | Not planned; covered by other work in the group |
 | Top-Set surveys over synthetic truths | Not planned here; sophisticated PDS 70 truths are being built separately |
 | Bandwidth-smearing forward model | A real field-of-view need |

@@ -22,6 +22,7 @@ Modules:
 * [`detection`][virgil.detection]: detection statistics (Δχ², the
   grid-marginalised Bayes factor, the best SNR) for ROC curves.
 * [`spectra`][virgil.spectra]: wavelength-dependent fluxes.
+* [`gains`][virgil.gains]: calibration gains correlated across channels.
 * [`plotting`][virgil.plotting]: figures.
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
@@ -43,6 +44,7 @@ from . import (  # noqa: E402
     detection,
     fields,
     fitting,
+    gains,
     grid_fit,
     imaging,
     inference,
@@ -65,6 +67,7 @@ from .grid_fit import (  # noqa: E402
     best_grid_point,
     laplace_flux_uncertainty_grid,
     likelihood_grid,
+    linear_flux_grid,
     optimized_flux_grid,
     optimized_likelihood_grid,
 )
@@ -83,6 +86,7 @@ from .limits import (  # noqa: E402
     delta_mag_to_flux,
     flux_to_contrast,
     flux_to_delta_mag,
+    injection_limits,
     radial_profile,
     ruffio_upperlimit,
 )
@@ -172,6 +176,7 @@ __all__ = [
     "TruncatedCone",
     "UniformDisk",
     "absil_limits",
+    "injection_limits",
     "circular_support",
     "best_grid_point",
     "build_model",
@@ -190,6 +195,7 @@ __all__ = [
     "loglike",
     "model_loglike",
     "numpyro_model",
+    "linear_flux_grid",
     "optimized_flux_grid",
     "optimized_likelihood_grid",
     "pixel_offsets",

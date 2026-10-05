@@ -97,9 +97,13 @@ So:
 - The correlated model still produces **one whitened residual vector**, preserving the rule in `AGENTS.md`, plus a log-determinant. That log-determinant is the same kind of Σ log σ term that `noise=` already adds.
 - **Which optimiser.** For closure phase (m = 1) with τ fixed, C_b doesn't depend on the parameters, so the whitened residuals are the whole likelihood and LM works. For V², m = V²_model, so log det C_b depends on the scene even with τ fixed: least squares on r_w would optimise a different objective. Use L-BFGS or NUTS on the full likelihood for `vis_gain`, and whenever τ is fitted.
 - No per-block parameters are sampled; every block is integrated out exactly.
-- With unprojected closure phases, the chord residual 2 sin(Δ/2)/σ makes δ enter non-linearly. Applying the rank-one whitening to the chord residuals is then an approximation, good while the offsets are small (δ ≲ 0.3 rad). Document the limit.
+- With unprojected closure phases, the chord residual 2 sin(Δ/2)/σ makes δ enter non-linearly. Applying the rank-one whitening to the chord residuals is then an approximation, good while the offsets are small (δ ≲ 0.3 rad). Document the limit. (As built, on #174's sines rather than chords: the same limit, stated in `OIData.with_closure_offsets` and `ClosureOffsets`.)
 
 **Interface.** The rank-one terms extend `noise=`'s per-dataset vocabulary (§2.6): `vis_gain` (τ_V) and `phi_offset` (τ_φ). They need block labels in `OIData` (§2.5). A *known* τ (from calibrator scatter) is the same code with τ fixed. OIFITS v2's `OI_CORR` table can carry such correlations from a pipeline. Reading `OI_CORR` into a block structure is a later extension.
+
+*As built, closure offsets (Stage 6d, 2026-10-05):* `OIData.with_closure_offsets(baseline=, triangle=, modes=)` and the noise terms `phi_offset_baseline`, `phi_offset_triangle` and `phi_offset_modes`. After #174 the correlated closure phases are whitened as sines (plus a periodic penalty per closure phase); each offset mode is whitened the same way, group by group, and a frame's modes are then one block of the same rank-one whitening as the gains. The penalty rows are unchanged. Baseline offsets enter as T·e, signed by each sample's stored station pair; triangle offsets (per frame and triangle, what the PIONIER pair test measures) and supplied per-frame modes (virgil-vlti's templates) are also allowed. Not yet: three telescopes (their phases use the von Mises chord, not sines), and splitting data that carry offsets (add them after splitting).
+
+*As built (Stage 6d, 2026-10-05):* the modes live in `OIData.gains` (`virgil.gains.GainModes`, set by `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)`), and each group's width is a noise term, `vis_gain_telescope`, `vis_gain_baseline`, `vis_gain_chromatic` or `vis_gain_modes`, rather than one `vis_gain`. Blocks are the connected groups of modes, not fixed frames, so supplied modes may span frames. Rank k is whitened by k successive rank-one steps (R = I − w wᵀ/(q(q+1)) applied to the residual and to the remaining modes), which needs only scalar square roots and so keeps gradients finite where modes are degenerate; an SVD or eigendecomposition does not. Telescope and baseline gains need the station pair of each sample, now read from `STA_INDEX` into `OIData.stations`.
 
 **Binning.** Once the correlated model exists, binning is no longer an error-model decision; only compute cost remains a reason to bin. The tutorial should say so.
 
@@ -117,6 +121,8 @@ So:
 
 **Proposal.** `u` and `v` are stored in metres and models divide by `wavel` (`Component.model`). So a scale nuisance s only has to evaluate the model at `wavel·s`. That rescales the spatial frequencies and the spectra together, which is physically right. It is one line in `OIData.model`, or `OIData.with_wavelength_scale(s)`, plus a per-dataset term `wavel_scale` (a generic example prior is `Normal(1, 1e-3)`). With one dataset it is degenerate with every angular size, so the prior *is* the systematic. Report it.
 
+*As built (Stage 6d, 2026-10-05):* `OIData.with_wavelength_scale(scale, offset)` evaluates models at λ′ = scale·λ + offset (metres), and the noise terms `wavel_scale` (a factor, starting at 1; GRAVITY prior `Normal(1, 2e-4)`) and `wavel_offset` (starting at 0) call it. Their priors may have either sign, unlike the error terms. A `uv_grid` is kept: it is in metres and divided by the wavelength where it is used.
+
 **The GRAVITY default (interim, GRAVITY review §6 and §12):** λ′ = λ(1 + s) + δ, with s ~ N(0, 2×10⁻⁴), and the offset δ fixed at zero unless spectral lines constrain it. That is five times narrower than the generic example, and is under review with the GRAVITY team.
 
 **One per-dataset nuisance vocabulary.** `noise=` (merged in PR #124) takes one dict of priors per dataset. It grows, under the same name, into the per-dataset nuisance specification:
@@ -125,7 +131,7 @@ So:
 |---|---|---|
 | `vis_scale`, `phi_scale` | multiply σ | merged (PR #124) |
 | `vis_error_rel`, `phi_error` | add in quadrature (relative to the **model** V², and absolute) | merged (PR #124) |
-| `vis_gain` | low-rank correlated blocks on log \|V\|, marginalised (§2.4; GRAVITY review §4c) | Stage 6d |
+| `vis_gain_<group>` | low-rank correlated blocks on log \|V\|, marginalised (§2.4; GRAVITY review §4c) | Stage 6d |
 | `phi_offset` | baseline-based closure offsets, **off by default**, only if calibrators need them (GRAVITY review §13) | Stage 6d, optional |
 | `wavel_scale` (+ `wavel_offset`) | evaluate at λ(1 + s) + δ; GRAVITY default s ~ N(0, 2×10⁻⁴), δ = 0 | Stage 6d |
 | `flux_scale` (+ `flux_poly`) | OI_FLUX calibration (§2.2) | 6a/new |
