@@ -47,6 +47,12 @@ anything before 1.0 may change between minor versions.
   and ϖ with RVs), and `KeplerOrbit.from_varpi` builds the orbit. After
   Octofitter's `UniformCircular` and exoplanet's `Angle`.
 
+- **`KeplerOrbit.from_position_angle`.** The position angle θ at `t_ref`
+  as an alternative to `dt_peri`, for short arcs (after Thompson et al.
+  2023). `position_angle_prior(orbit_fn)` is a `likelihoods=` term adding
+  log|∂M/∂θ| (`position_angle_log_jacobian`), so a uniform θ gives the
+  invariant prior, uniform in the time of periastron. Singular at i = 90°.
+
 - **Spectro-interferometric observables (Stage 6a, PR B).**
   `read_oifits(..., extras=...)` and `OIData(path, extras=...)` read OI_FLUX
   (`"flux"` or `"nflux"`), T3AMP, VISAMP beside V² (absolute, or correlated

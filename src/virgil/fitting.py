@@ -283,9 +283,9 @@ class _Objective(eqx.Module):
         values = self.constrain(z)
         if self._has_term_norms:
             raise TypeError(
-                "Likelihood terms with fitted error terms (an RV jitter) "
-                "have no least-squares form (their normalisation depends on "
-                "them); fit with method='lbfgs' or 'adam'."
+                "Likelihood terms with a log_norm (a fitted RV jitter, or "
+                "the Jacobian of a position-angle prior) have no "
+                "least-squares form; fit with method='lbfgs' or 'adam'."
             )
         parts = self.data_residuals(model)
         parts += [term(values) for term in self.likelihoods]
@@ -618,7 +618,9 @@ def gauss_newton_mass(model, priors, data, values, *, likelihoods=()):
         Further likelihood terms, as for ``fit`` (e.g.
         [`PositionData.term`][virgil.orbits.PositionData.term]); data may
         then be ``()``. Their residuals join the data's in J. A term's
-        ``log_norm`` (a fitted RV jitter's) has no residuals, so its
+        ``log_norm`` (a fitted RV jitter's, or the Jacobian of
+        [`position_angle_prior`][virgil.orbits.position_angle_prior]) has
+        no residuals, so its
         curvature is left out: the matrix is a preconditioner, so that
         costs efficiency, not correctness.
 
