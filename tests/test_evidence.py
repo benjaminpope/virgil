@@ -384,6 +384,19 @@ def test_with_error_scale_takes_a_scale_per_observable():
         DATA.with_error_scale({"vis": -1.0})
 
 
+def test_block_error_scales_refuse_unscaled_nuisance_covariance():
+    # Gains and closure offsets add covariance (D + UΛUᵀ) that scaling the
+    # quoted errors leaves alone, so the block fixed point would not be the
+    # evidence optimum: refuse rather than return a wrong scale.
+    start = _gp_scene(onp.zeros((N, N)), 1.5)
+    for data, what in (
+        (DATA.with_gains(telescope=0.01), "calibration gains"),
+        (DATA.with_closure_offsets(triangle=0.01), "closure-phase offsets"),
+    ):
+        with pytest.raises(ValueError, match=what):
+            error_scale(start, data, by_observable=True)
+
+
 @pytest.mark.parametrize("n_telescopes", [3, 4])
 def test_observable_blocks_map_residual_rows(n_telescopes):
     # The rows labelled "phi" are exactly those that change when only the

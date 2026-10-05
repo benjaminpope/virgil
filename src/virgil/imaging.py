@@ -1864,6 +1864,37 @@ def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
     return dict(zip(kinds, beta))
 
 
+def _check_scalable_blocks(datasets):
+    """Refuse data whose covariance is not ``s_b² D`` per block.
+
+    The block fixed point assumes that scaling a block's quoted errors by
+    ``s_b`` divides its whitened residuals and Jacobian rows by ``s_b``.
+    That fails where the likelihood marginalises a nuisance with its own
+    width, ``s_b² D + U Λ Uᵀ``: calibration gains, closure-phase offsets,
+    flux spectra's marginalised scales, and differential phases with a
+    finite ``prior_width``. ``with_error_scale`` scales only ``D``, so the
+    returned scales would not be the evidence optimum for the rescaled data.
+    """
+    for i, d in enumerate(datasets):
+        reasons = []
+        if d.gains is not None:
+            reasons.append("calibration gains (with_gains)")
+        if d.phase_offsets is not None:
+            reasons.append("closure-phase offsets (with_closure_offsets)")
+        for b in d.extras:
+            if b.model_dependent_covariance:
+                reasons.append(f"a marginalised {b.kind} block")
+            elif getattr(b, "prior_width", None) is not None:
+                reasons.append(f"a {b.kind} block with a finite prior_width")
+        if reasons:
+            raise ValueError(
+                f"error_scale(by_observable=True) cannot rescale dataset {i}: "
+                f"it has {', '.join(reasons)}, whose nuisance widths do not "
+                "scale with the quoted errors. Estimate the scales without "
+                "them, or fit the nuisance widths as noise terms."
+            )
+
+
 def error_scale(model, data, path="env", *, by_observable=False):
     r"""Re-estimate the scale of the error bars from a Gaussian-field fit.
 
@@ -1943,7 +1974,13 @@ def error_scale(model, data, path="env", *, by_observable=False):
     together by iterating ``β_b ← N_b / (χ²_b + γ_b/β_b)`` (the same fixed
     point as MacKay's ``β_b ← (N_b − γ_b)/χ²_b``, but monotone, so it
     cannot oscillate) from ``β_b = N_b/χ²_b`` to a relative change of
-    1e-10. With one block it reproduces the single scale. ``N_b`` counts
+    1e-10. With one block it reproduces the single scale. The blocks'
+    covariances must be ``s_b² D``: data with calibration gains,
+    closure-phase offsets, marginalised flux scales or differential phases
+    with a finite ``prior_width`` add nuisance covariance that does not
+    scale with the quoted errors, and raise a ``ValueError`` (the single
+    scale makes the same assumption, so treat it with care for such data).
+    ``N_b`` counts
     independent data: closure phases from four or more telescopes count
     their independent combinations, while their periodic penalty residuals
     (see [`whitened_residuals`][virgil.likelihood.whitened_residuals])
@@ -2009,6 +2046,7 @@ def error_scale(model, data, path="env", *, by_observable=False):
     r, jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
     datasets = data if isinstance(data, (list, tuple)) else [data]
     if by_observable:
+        _check_scalable_blocks(datasets)
         rows, counts = _observable_blocks(datasets)
         beta = _block_precisions(r, jac, rows, counts)
         return {k: float(1.0 / onp.sqrt(b)) for k, b in beta.items()}

@@ -70,8 +70,10 @@ analysis or warn:
   `γ_b` from the hat matrix. Use it when blocks are mis-calibrated by
   different factors (in a MATISSE N-band contest file, V² gave χ² per point
   0.005 and closure phases 0.49). `OIData.with_error_scale` accepts the
-  returned dictionary of factors per kind. The default single scale is
-  unchanged.
+  returned dictionary of factors per kind. Data whose covariance includes
+  nuisance terms that do not scale with the quoted errors (gains, closure
+  offsets, marginalised flux scales, differential phases with a finite
+  `prior_width`) raise a `ValueError`. The default single scale is unchanged.
 
 - **Hierarchical error scales and tied `noise=` terms.** A `noise=` entry of
   `fit` and `numpyro_model` may now be a function of the sampled parameters
