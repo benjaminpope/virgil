@@ -270,15 +270,44 @@ A possible follow-up: when the starting χ²/N is close to the target, force a
 major cycle before stopping, so that CLEAN's own fluxes are right without a
 separate `fit`.
 
+### The L-BFGS step limit, a final major cycle and base fitting (2026-10-05)
+
+**L-BFGS.** An OzSTAR diagnostic (`ozstar_scripts/scripts/lbfgs_mwe_diag`,
+job 18061096) reran the MWE's MEM and StarletL1 sweeps in four
+configurations. With the defaults (50 000 steps, L-BFGS memory 10, step cap
+2), only the weakest weights, below the discrepancy weight and at χ²/N ≈ 0.91,
+hit the step limit. Given 300 000 steps they converge after 87 000–222 000,
+with χ² and penalty unchanged to four digits: that warning was harmless. A
+memory of 50 was better everywhere: lower χ² and lower penalty together at
+almost every weight (so memory 10 had stopped short of the optimum even where
+it converged), and for StarletL1 every fit converged, in 2–3× fewer steps and
+less time (1 071 s against 1 418 s). For MEM, whose objective is cheap, the
+larger memory's cost per step made the sweep slower (773 s against 469 s). A
+step cap of 10 did not help. `fit` now uses `lbfgs_memory=50` by default.
+
+**A final major cycle.** On HD 206893 (above) CLEAN reached the target
+before any major cycle, so its fluxes were low until a separate `fit`. CLEAN
+now ends with a major cycle whenever components were added since the last.
+
+**Fitting the base** (`clean(base_priors=...)`). Two orders were tried and
+failed on a test scene (a star, a 5% companion in the base started 6 mas off,
+and a 2% knot for CLEAN):
+- fitting the base at each major cycle with the components fixed: CLEAN's
+  components had already absorbed the companion's offset, so the base hardly
+  moved;
+- fitting the base before CLEAN: unable to see the knot, a companion 35 mas
+  from the star slid along its flux–separation degeneracy to the prior's
+  bound.
+What works is fitting the base parameters and the components' fluxes jointly
+at each major cycle. For a companion 85 mas out, it lands within 3 mas of
+the truth. At 35 mas, far inside λ/B, it ends along the degeneracy (closer
+and brighter), as any fit of those data must.
+
 ### Still open
 
 - **Multi-frequency CLEAN** (Rau & Cornwell 2011): a spectral index per
   component. `spectrum=` gives all components one spectrum, which was
   enough for HR 4049.
-- The L-BFGS step limit for MEM and StarletL1 (above), still not
-  investigated.
-- Fitting the base scene during CLEAN, if a base parameter cannot be fitted
-  beforehand.
 
 S3 (proximal solver) and S4 (sparse sampling) stay deferred.
 
@@ -295,7 +324,6 @@ MEM and StarletL1 sweeps. The tutorial and the five-cell MWE take under a minute
 | Item | Revisit when |
 | --- | --- |
 | Dark-energy regulariser | Someone needs it; read its definition in SQUEEZE's source first |
-| Fitting the base scene during CLEAN | A base parameter cannot be fitted beforehand |
 | Residual map in flux units (per-pixel curvature) | Restored images need residuals added |
 | S3, proximal solver | S1 images are not sparse enough to matter scientifically |
 | S4, sparse sampling | A science case needs uncertainties on a sparse image |

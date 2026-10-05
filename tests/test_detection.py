@@ -390,6 +390,22 @@ def test_monte_carlo_is_reproducible_and_independent_of_chunking():
     )
 
 
+def test_draw_batch_vectorises_the_same_draws():
+    # draw_batch > 1 vmaps the search over draws (the tutorial uses it to
+    # amortise the flux optimizer's loop); draw i keeps its key.
+    inj = injection_grid([60.0], [1e-2], 4, 1)
+    a = _recover(key=7, n_null=4, injections=inj)
+    b = _recover(key=7, n_null=4, injections=inj, draw_batch=2)
+    for part in ("null", "injected"):
+        for stat in STATISTICS:
+            onp.testing.assert_allclose(
+                getattr(b, part)[stat],
+                getattr(a, part)[stat],
+                rtol=1e-3,
+                atol=1e-3,
+            )
+
+
 def test_system_template_and_bootstrap_noise_run_through_the_driver():
     # Injections at a grid point inside TINY's box (random PAs can fall
     # outside it): two null ones, and two ~10 sigma companions.
