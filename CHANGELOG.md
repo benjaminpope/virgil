@@ -9,6 +9,17 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Detection statistics for ROC curves (`virgil.detection`).**
+  `detection_statistics(data, model, samples_dict)` returns, from one
+  companion grid search, the profile likelihood ratio `delta_chi2` (flux >= 0),
+  a grid-marginalised `log_bayes_factor` against no companion (trapezoid prior
+  weights, uniform in position and following the flux axis's spacing), the
+  largest flux/σ `max_snr`, and the best position and flux. It is traceable in
+  the data, so it compiles once under `jax.lax.map` over simulated datasets;
+  `local_nsigma` gives the single-position (Wilks) significance. A new tutorial,
+  "Detection ROC curves", calibrates the statistics with simulations. Design
+  and later stages in `design/detection_roc.md` (virgil#2).
+
 - **Gauss-Newton and a marginal-likelihood map in `linear_flux_grid`.**
   `n_iter=k` relinearises the whitened residuals at the current flux per pixel
   for `k` extra steps, removing the bias for bright companions (at f = 0.3,
