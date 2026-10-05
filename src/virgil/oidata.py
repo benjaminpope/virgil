@@ -596,7 +596,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         Projected outputs are linear combinations of the input angles and
         are not wrapped (as for kernel phases and DISCOs), so a projection
         of closure phases is not invariant to shifting one input by 2π;
-        prefer unprojected closure phases, which are whitened with wrapping
+        prefer unprojected closure phases, whose likelihood is periodic
         (``cp_noise``).
 
         The outputs of ``operator`` have covariance A D^½ R D^½ Aᵀ, with D
@@ -778,16 +778,32 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     @property
     def n_independent(self):
-        """Number of independent observables: the length of the residuals.
+        """Number of independent observables, for degrees of freedom.
 
         Equal to the size of :meth:`flatten_data`, except for closure phases
         from four or more telescopes, where only the independent
         combinations count (three of the four triangles of a frame and
-        channel, for four telescopes).
+        channel, for four telescopes). The residual vector of
+        [`whitened_residuals`][virgil.likelihood.whitened_residuals] is
+        longer for such data; see :attr:`n_residuals`.
         """
         n = int(np.asarray(self.vis).size) + int(np.asarray(self.phi).size)
         if self.cp_noise is not None:
             n += self.cp_noise.size - int(np.asarray(self.phi).size)
+        return n
+
+    @property
+    def n_residuals(self):
+        """Length of [`whitened_residuals`][virgil.likelihood.whitened_residuals].
+
+        Equal to ``n_independent``, except for correlated closure phases
+        (four or more telescopes), which add one periodic penalty residual
+        per closure phase that keeps the likelihood continuous where a
+        residual crosses ±π. Use ``n_independent`` for degrees of freedom.
+        """
+        n = self.n_independent
+        if self.cp_noise is not None:
+            n += int(np.asarray(self.phi).size)
         return n
 
     def flatten_data(self):

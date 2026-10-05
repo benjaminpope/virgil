@@ -41,7 +41,9 @@ def test_four_telescopes_keep_three_closure_phases_per_frame():
     n_vis, n_cp = data.vis.size, data.phi.size  # 3 frames x 4 triangles
     assert n_cp == 12
     assert data.n_independent == n_vis + 9
-    assert whitened_residuals(MODEL, data).size == data.n_independent
+    # The residuals add one periodic penalty per closure phase (n_residuals).
+    assert whitened_residuals(MODEL, data).size == data.n_residuals
+    assert data.n_residuals == data.n_independent + n_cp
 
 
 def test_indices_are_int32_and_whiten_in_either_precision():
@@ -76,14 +78,18 @@ def test_whitening_matches_the_dense_pseudo_inverse():
     prediction = onp.asarray(data.model(MODEL))
     n_vis = data.vis.size
     delta = prediction[n_vis:] - onp.asarray(data.phi)
-    chord = 2.0 * onp.sin(0.5 * delta)
+    chord = onp.sin(delta)
     chi2_dense = chord @ onp.linalg.pinv(cov) @ chord
     eig = onp.linalg.eigvalsh(cov)
     logdet_dense = onp.sum(onp.log(eig[eig > 1e-9 * eig.max()]))
 
     whitened = onp.asarray(whitened_residuals(MODEL, data))
-    chi2_phase = onp.sum(whitened[n_vis:] ** 2)
+    k = data.cp_noise.size
+    chi2_phase = onp.sum(whitened[n_vis : n_vis + k] ** 2)
     assert chi2_phase == pytest.approx(chi2_dense, rel=1e-5)
+    # then one periodic penalty 2 sin²(Δ/2)/σ per closure phase
+    penalty = 2.0 * onp.sin(0.5 * delta) ** 2 / sigma
+    assert onp.allclose(whitened[n_vis + k :], penalty, rtol=1e-4, atol=1e-6)
     _, errors = data.cp_noise.whiten(np.asarray(chord), data.d_phi)
     assert 2.0 * onp.sum(onp.log(errors)) == pytest.approx(
         logdet_dense, rel=1e-5
@@ -356,3 +362,124 @@ def test_switching_x64_mode_keeps_the_index_dtypes():
             assert all(out.dtype == dtype for out in use())
             assert all(out.dtype == dtype for out in jax.jit(use)())
         del held
+
+
+def _reproducer_data(stations=VLTI_UTS):
+    """One epoch, one channel; the F11 reproducer (model at (3, 2, 0.9))."""
+    return vlti_oidata(
+        stations,
+        declination_deg=-30,
+        hour_angles_h=(0.0,),
+        wavelengths_m=onp.array([2.2e-6]),
+        sigma_v2=0.01,
+        sigma_cp_deg=0.5,
+    ).with_model(BinaryModelCartesian(3.0, 2.0, 0.9))
+
+
+def _sweep(data):
+    dras = np.linspace(-6.0, 6.0, 4001)
+
+    @jax.jit
+    def chi2(dra):
+        model = BinaryModelCartesian(dra, -2.0, 0.9)
+        return np.sum(whitened_residuals(model, data) ** 2)
+
+    return onp.abs(onp.diff(onp.asarray(jax.vmap(chi2)(dras))))
+
+
+@pytest.mark.validates(
+    "virgil.likelihood.whitened_residuals", roots=["self-consistency"]
+)
+def test_correlated_closure_chi2_is_continuous_in_the_model():
+    # virgil-validation F11. The old chord likelihood jumped by ~5e4 at four
+    # places in this sweep (largest neighbour difference 1741 x the median);
+    # the three-telescope sweep has 48 x, from steep but continuous fringes.
+    four = _sweep(_reproducer_data())
+    three = _sweep(_reproducer_data(onp.asarray(VLTI_UTS)[:3]))
+    assert four.max() < 100.0 * onp.median(four)
+    assert three.max() < 100.0 * onp.median(three)
+
+
+@pytest.mark.validates(
+    "virgil.likelihood.whitened_residuals", roots=["self-consistency"]
+)
+def test_correlated_closure_chi2_is_continuous_across_a_residual_of_pi():
+    # Shift one closure phase of exact data by s (and another by 0.5, so that
+    # there is a cross term) and sweep s through π: the
+    # chord's sign flips there, which changes its cross term with the other, so the
+    # old χ² jumped (a single or common shift would not show it);
+    # the sine and the periodic penalty are smooth, and stationary at π.
+    data = _reproducer_data()
+    model = BinaryModelCartesian(3.0, 2.0, 0.9)
+    shifts = np.linspace(np.pi - 0.02, np.pi + 0.02, 801)
+
+    def chi2(shift):
+        phi = data.phi.at[0].add(shift).at[1].add(0.5)
+        shifted = eqx.tree_at(lambda d: d.phi, data, phi)
+        return np.sum(whitened_residuals(model, shifted) ** 2)
+
+    values = onp.asarray(jax.jit(jax.vmap(chi2))(shifts))
+    assert onp.max(onp.abs(onp.diff(values))) < 1e-3 * values.max()
+    # and no false minimum: a residual of π costs far more than none
+    assert values.min() > 1e4
+    assert float(chi2(0.0)) < 0.1 * values.min()
+
+
+@pytest.mark.validates(
+    "virgil.likelihood.whitened_residuals", roots=["self-consistency"]
+)
+def test_correlated_closure_chi2_matches_the_whitened_gaussian_near_zero():
+    # For small residuals the new χ² is the old correlated Gaussian
+    # (whitened Δ) up to O(Δ³) in the residuals, so relatively O(Δ²).
+    with jax.enable_x64(True):
+        data = _reproducer_data()
+        model = BinaryModelCartesian(3.0, 2.0, 0.9)
+        n_vis = data.vis.size
+        sigma = onp.asarray(data.d_phi)
+        rng = onp.random.default_rng(1)
+        direction = rng.normal(size=sigma.size)
+        relative = []
+        for amplitude in (0.04, 0.02, 0.01):
+            delta = amplitude * direction / onp.abs(direction).max()
+            shifted = eqx.tree_at(
+                lambda d: d.phi, data, np.asarray(data.phi) - delta
+            )
+            r = whitened_residuals(model, shifted)
+            chi2_new = float(np.sum(r[n_vis:] ** 2))
+            old, _ = data.cp_noise.whiten(np.asarray(delta), sigma)
+            chi2_old = float(np.sum(old**2))
+            relative.append(abs(chi2_new - chi2_old) / chi2_old)
+        # relative difference shrinks like the square of the amplitude
+        assert relative[0] < 0.01
+        assert relative[1] < relative[0] / 3.0
+        assert relative[2] < relative[1] / 3.0
+
+
+@pytest.mark.validates(
+    "virgil.likelihood.model_loglike", roots=["self-consistency"]
+)
+def test_gradients_match_finite_differences_with_residuals_near_pi():
+    with jax.enable_x64(True):
+        data = _reproducer_data()
+        shifted = eqx.tree_at(
+            lambda d: d.phi, data, np.asarray(data.phi) + np.pi - 0.003
+        )
+
+        def loglike(x):
+            return model_loglike(
+                BinaryModelCartesian(x[0], x[1], x[2]), shifted
+            )
+
+        x0 = np.array([3.0, 2.0, 0.9])
+        grad = onp.asarray(jax.grad(loglike)(x0))
+        eps = 1e-6
+        fd = onp.array(
+            [
+                (loglike(x0.at[i].add(eps)) - loglike(x0.at[i].add(-eps)))
+                / (2 * eps)
+                for i in range(3)
+            ]
+        )
+        assert onp.allclose(
+            grad, fd, rtol=1e-5, atol=1e-8 * onp.abs(grad).max()
+        )
