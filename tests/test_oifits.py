@@ -742,3 +742,19 @@ def test_one_closure_phase_left_is_unchanged(tmp_path):
     assert data.cp_noise is None  # a single triangle: nothing correlates
     assert whitened_residuals(TRUTH, data).size == len(PAIRS) + 1
     assert np.isfinite(model_loglike(TRUTH, data))
+
+
+def test_station_pairs_are_read_per_sample(tmp_path):
+    paths = [
+        _night(tmp_path, "a.oifits", 60000.2),
+        _night(tmp_path, "b.oifits", 60003.1),
+    ]
+    record = read_oifits(paths)
+    assert record["stations"].shape == (record["u"].size, 2)
+    # Two channels per baseline, baseline-major, in the table's order.
+    expected = onp.repeat(PAIRS, 2, axis=0)
+    assert onp.array_equal(record["stations"], onp.vstack([expected] * 2))
+    data = OIData(paths)
+    assert onp.array_equal(onp.asarray(data.stations), record["stations"])
+    gains = data.with_gains(telescope=0.01).gains
+    assert gains.rows.shape[0] == 2  # one block per frame

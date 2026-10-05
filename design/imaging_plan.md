@@ -521,6 +521,14 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 
 **MWE:** a simulated multi-channel binary with an extended component and injected per-frame gains, fitted with 6d and with diagonal error terms, comparing the parameter errors with the truth. A real-data check (e.g. Apep's GRAVITY data) is optional.
 
+**Log (gains, branch `stage6d-nuisances`):**
+- `virgil.gains`: `GainModes` and `gain_modes`, set with `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)`. The groups are telescope, baseline, chromatic ((λ_ref/λ)²) and supplied 1σ modes, e.g. a calibrator PCA's from virgil-vlti. Widths are fitted with the noise terms `vis_gain_<group>`, one per group, rather than a single `vis_gain`.
+- Marginalisation: blocks are the connected groups of modes, whitened by successive rank-one steps (smooth gradients, also for degenerate modes and zero widths). The log-determinant is spread over effective errors, so `_gaussian_loglike` and `fit`'s normalisation are unchanged. The Jacobian dObs/dlog|V| is taken from the model (2V², |V| or 1).
+- `fit` includes the normalisation and refuses LM when any dataset has gains. `numpyro_model` gets them through `model_loglike`.
+- `OIData.stations` (from `STA_INDEX`, or a dictionary's `stations`), and `gains` survive `_subset`/`split_by_epoch` (dropping rows is an exact marginal). `with_model(key)` draws the gains at their default widths and applies them exactly.
+- Tests: whitened norm and log-det against the dense covariance (V², |V|, log|V|); block structure; width terms; zero widths reduce to the diagonal likelihood, with finite gradients on degenerate data; splitting by epoch; covariance of the drawn gains; refusal for projected data; fit defaults to L-BFGS.
+- Not yet: the width-recovery and calibration study, and the MWE (OzSTAR); `phi_offset` (after #174); `wavel_scale`.
+
 **Also in 6d:**
 - **`wavel_scale`** (and `wavel_offset`). A per-dataset wavelength nuisance in `noise=` (S §2.6; 1–2 h). The GRAVITY default is λ′ = λ(1 + s) + δ, with s ~ N(0, 2×10⁻⁴) and δ = 0 unless lines constrain it.
 - **The dual-field (in-field) calibrator recipe.** Done in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti) (`virgil-vlti-calibrate --dual-field`), not in the core (S §2.7). Its transfer-function error should become 6d's known-width gains.
