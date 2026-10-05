@@ -427,7 +427,7 @@ def test_rv_jitter_with_marginalised_zero_points_is_its_prior(rv_params):
 # ---------------------------------------------------------------------------
 
 
-def _flux_block(values, errors, width):
+def _flux_block(values, errors, scale):
     wavel = onp.linspace(2.0e-6, 2.4e-6, 5)
     return FluxSpectrum.build(
         "flux",
@@ -437,24 +437,16 @@ def _flux_block(values, errors, width):
         row=onp.zeros(5),
         frame=onp.zeros(5),
         station=onp.zeros(5),
-        width=width,
+        scale=scale,
     )
 
 
 @pytest.mark.parametrize("width", [1.0, 0.3])
 def test_flux_scale_with_no_information_is_its_prior(width):
-    """The mechanism: errors → ∞ leaves the prior N(μ, (width μ)²).
-
-    Limitation (a breach of the no-data rule, to be fixed): ``build`` centres
-    μ on the data's own mean level, so the prior is not independent of the
-    data. Here μ is set by hand to a fixed value to test the mechanism, and
-    the first assertion documents the data dependence.
-    """
-    import equinox as eqx
-
-    block = _flux_block(onp.full(5, 7.0), onp.full(5, HUGE), width)
-    assert float(block.mu[0]) == pytest.approx(7.0)  # centred on the data
-    block = eqx.tree_at(lambda b: b.mu, block, onp.array([2.0]))
+    """With no information (errors → ∞), the posterior is the stated prior."""
+    block = _flux_block(
+        onp.full(5, 7.0), onp.full(5, HUGE), (2.0, width * 2.0)
+    )
     prediction = block.predict(_PointTemplate(), None)
     mean, cov = block.posterior(prediction, block.values, block.errors)
     assert float(mean[0, 0]) == pytest.approx(2.0, rel=1e-5)
@@ -468,18 +460,12 @@ class _PointTemplate:
         return jnp.ones_like(wavel)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FluxSpectrum.build centres the grey-scale prior on the data's own "
-        "weighted mean (mu), so with no information the posterior mean is "
-        "whatever the (uninformative) data values are, not a fixed prior"
-    ),
-)
 def test_flux_scale_prior_does_not_depend_on_the_data():
+    # The prior is stated (virgil#217), so uninformative data at different
+    # levels leave the same posterior: the prior.
     means = []
     for level in (7.0, 70.0):
-        block = _flux_block(onp.full(5, level), onp.full(5, HUGE), 1.0)
+        block = _flux_block(onp.full(5, level), onp.full(5, HUGE), (2.0, 2.0))
         prediction = block.predict(_PointTemplate(), None)
         mean, _ = block.posterior(prediction, block.values, block.errors)
         means.append(float(mean[0, 0]))
