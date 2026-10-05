@@ -383,12 +383,15 @@ def fit(
         covariance depends on the model. Fitting error terms with an image is
         degenerate (a smoother image with larger errors fits as well):
         estimate them with a parametric model first.
-        **Priors.** The scales and widths (``vis_scale``, ``phi_scale``,
-        ``vis_error_rel``, ``phi_error``, ``vis_gain_<group>``,
-        ``phi_offset_<group>``) are scale parameters, so their default
-        (Jeffreys) prior is log-uniform on stated bounds, e.g.
-        ``dist.LogUniform(1e-4, 0.3)``; a ``Uniform(0, ...)`` favours
-        large values. ``wavel_scale`` is a scale too: log-uniform unless a
+        **Priors.** These terms are scale parameters, so their default
+        (Jeffreys) prior is log-uniform on stated bounds; a
+        ``Uniform(0, ...)`` favours large values. The bounds must contain
+        the plausible values: for the factors ``vis_scale`` and
+        ``phi_scale``, whose neutral value is 1, e.g.
+        ``dist.LogUniform(0.1, 10.0)``; for the added errors and widths
+        (``vis_error_rel``, ``phi_error``, ``vis_gain_<group>``,
+        ``phi_offset_<group>``), e.g. ``dist.LogUniform(1e-4, 0.3)``.
+        ``wavel_scale`` is a scale too: log-uniform about 1 unless a
         calibration gives a Gaussian (``Normal(1, 2e-4)`` for GRAVITY is
         such information).
     init : dict, optional
