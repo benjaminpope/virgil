@@ -60,6 +60,7 @@ nav:
       - "Contrast limits": contrast_limits.md
       - "Detection ROC curves": detection_roc.md
       - "Hierarchical inference across filters": hierarchical_inference.md
+      - "Orbits from interferometric epochs": orbit_fitting.md
   - Sources:
       - "Visibility models": model_syntax.md
       - "Extended source models": source_models.md
@@ -91,6 +92,7 @@ nav:
           - Functions: api/models/functions.md
       - Likelihood: api/likelihood.md
       - Gains: api/gains.md
+      - Linear marginalisation: api/linear.md
       - Observables: api/observables.md
       - Fitting: api/fitting.md
       - Imaging: api/imaging.md

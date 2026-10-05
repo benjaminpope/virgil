@@ -105,6 +105,9 @@ def _tables(scene=None, scale=3.7, amptyp="absolute", reverse=False):
 
 
 ALL = ("flux", "t3amp", "visamp", "visphi")
+# A stated prior on the grey scale (the tables' true scale is 3.7): broad,
+# and not taken from the data.
+SCALE_PRIOR = (3.0, 3.0)
 
 
 # === READERS AND WRITER ===
@@ -171,11 +174,20 @@ def test_visamp_round_trip(amptyp, tmp_path):
         record["visamp"]["value"], tables["OI_VIS"]["VISAMP"].reshape(-1)
     )
     data = OIData(record)
+    if amptyp == "correlated flux":
+        data = data.with_flux_scale(scale=SCALE_PRIOR)
     (block,) = data.extras
     assert block.kind == ("visamp" if amptyp == "absolute" else "corrflux")
     # The model at the matched samples reproduces the data (up to the
     # grey scale, recovered for correlated fluxes).
     r = whitened_residuals(_scene(), data)
+    # The values themselves round-trip exactly (float64 columns, checked
+    # above). This compares two float32 evaluations of the model, at the
+    # fixture's (6, 12) layout and at the reader's flat samples. Near the
+    # 3 nm line, λ − λ_line loses ~4 digits to cancellation in float32
+    # (ulp(λ) ≈ 2e-13 m), so XLA's op order changes the line flux by ~3e-5
+    # (measured 0.035σ on Linux CI, 5e-4σ on macOS). Correlated fluxes of
+    # ~5 with σ = 1e-3 (S/N 5000) see that; |V| with σ = 1e-3 does not.
     limit = 0.1 if amptyp == "correlated flux" else 1e-2
     assert float(np.max(np.abs(r))) < limit
     if amptyp == "correlated flux":
@@ -193,7 +205,11 @@ def test_visphi_round_trip_with_a_reversed_baseline(tmp_path):
         _scene().model(record["u"], record["v"], record["wavel"])
     )
     onp.testing.assert_allclose(
-        visphi["value"], onp.angle(cvis[visphi["sample"]]), atol=5e-6
+        # float32 model phases of two layouts (see test_visamp_round_trip):
+        # 2e-6 rad on Linux CI, 1e-8 on macOS; VISPHIERR is 3.5e-3 rad.
+        visphi["value"],
+        onp.angle(cvis[visphi["sample"]]),
+        atol=5e-6,
     )
     assert record["u"].size == PAIRS.shape[0] * WAVES.size  # no new samples
 
@@ -402,6 +418,7 @@ def test_visphi_whitening_matches_a_dense_covariance():
 
 def test_flux_grey_scale_is_recovered_and_marginalised():
     data = OIData(read_oifits(build_hdulist(_tables()), extras=("flux",)))
+    data = data.with_flux_scale(scale=SCALE_PRIOR)
     (block,) = [b for b in data.extras if b.kind == "flux"]
     scene = _scene()
     post = flux_scale_posterior(scene, data)["flux"]
@@ -426,6 +443,7 @@ def test_flux_grey_scale_is_recovered_and_marginalised():
 
 def test_flux_scale_per_row_and_polynomial():
     data = OIData(read_oifits(build_hdulist(_tables()), extras=("flux",)))
+    data = data.with_flux_scale(scale=SCALE_PRIOR)
     per_row = data.with_flux_scale(per="station", poly_order=1)
     (block,) = per_row.extras
     assert block.members.shape[0] == 4 and len(block.widths) == 2
@@ -552,9 +570,11 @@ def test_inflated_errors_where_and_combine():
 
 
 def test_select_split_scale_and_simulate_keep_the_extras():
-    data = OIData(
-        read_oifits(build_hdulist(_tables()), extras=ALL)
-    ).with_continuum(lines=[LINE])
+    data = (
+        OIData(read_oifits(build_hdulist(_tables()), extras=ALL))
+        .with_continuum(lines=[LINE])
+        .with_flux_scale(scale=SCALE_PRIOR)
+    )
     assert [b.kind for b in data.extras] == [
         "flux",
         "visamp",
@@ -587,6 +607,7 @@ def test_fit_refuses_least_squares_with_a_marginalised_scale():
     from virgil.fitting import fit
 
     data = OIData(read_oifits(build_hdulist(_tables()), extras=("flux",)))
+    data = data.with_flux_scale(scale=SCALE_PRIOR)
     priors = {"blob.dra": dist.Uniform(0.0, 1.0)}
     with pytest.raises(TypeError, match="flux scales"):
         fit(_scene(), priors, data, method="lm", max_steps=1)
@@ -612,9 +633,11 @@ def test_flux_build_checks_its_inputs():
 def test_likelihood_compiles_and_differentiates_with_traced_data():
     import equinox as eqx
 
-    data = OIData(
-        read_oifits(build_hdulist(_tables()), extras=ALL)
-    ).with_continuum(lines=[LINE])
+    data = (
+        OIData(read_oifits(build_hdulist(_tables()), extras=ALL))
+        .with_continuum(lines=[LINE])
+        .with_flux_scale(scale=SCALE_PRIOR)
+    )
     scene = _scene(dra=0.6)
     eager = model_loglike(scene, data)
     jitted = eqx.filter_jit(model_loglike)(scene, data)
@@ -686,9 +709,13 @@ def test_finite_prior_preserves_the_phase_anchor():
 
 
 def test_with_model_draws_marginalized_extra_modes():
-    data = OIData(
-        read_oifits(build_hdulist(_tables()), extras=("flux", "visphi"))
-    ).with_continuum(lines=[LINE], prior_width=(0.3, 0.5))
+    data = (
+        OIData(
+            read_oifits(build_hdulist(_tables()), extras=("flux", "visphi"))
+        )
+        .with_continuum(lines=[LINE], prior_width=(0.3, 0.5))
+        .with_flux_scale(scale=SCALE_PRIOR)
+    )
     scene = _scene()
     key = jax.random.PRNGKey(5)
     simulated = data.with_model(scene, key=key, noise_scale=0.0)
@@ -722,3 +749,48 @@ def test_visphi_broad_prior_tends_to_the_projection():
         projected = data.extras[0]  # every channel continuum and line
         broad = data.with_continuum(prior_width=1e4).extras[0]
         onp.testing.assert_allclose(chi2(broad), chi2(projected), rtol=1e-4)
+
+
+def test_the_grey_scale_prior_is_stated_not_taken_from_the_data():
+    data = OIData(read_oifits(build_hdulist(_tables()), extras=("flux",)))
+    with pytest.raises(ValueError, match="State the prior"):
+        model_loglike(_scene(), data)
+    with pytest.raises(ValueError, match="positive"):
+        data.with_flux_scale(scale=(0.0, 1.0))
+    with pytest.raises(ValueError, match="flat prior"):
+        data.with_flux_scale(scale=(3.0, onp.inf))
+    # The same prior whatever the data's level: rescaling the data by 10
+    # leaves the block's prior unchanged.
+    stated = data.with_flux_scale(scale=SCALE_PRIOR)
+    (block,) = stated.extras
+    louder = block.rebuild(values=10 * onp.asarray(block.values))
+    assert louder.scale == block.scale == SCALE_PRIOR
+    onp.testing.assert_array_equal(louder.mu, block.mu)
+
+
+def test_with_model_draws_the_marginalised_modes_at_their_widths():
+    # The grey scale and the finite-prior VISPHI offsets are drawn from
+    # their priors, so simulations have the likelihood's covariance.
+    data = OIData(
+        read_oifits(build_hdulist(_tables()), extras=("flux", "visphi"))
+    ).with_continuum(lines=[LINE], prior_width=(0.3, 0.5))
+    data = data.with_flux_scale(scale=SCALE_PRIOR)
+    flux, visphi = data.extras
+    scene = _scene()
+    cvis = data._cvis(scene)
+    prediction = flux.predict(scene, None)
+    phases = np.angle(cvis)[visphi.sample]
+    keys = jax.random.split(jax.random.PRNGKey(7), 400)
+    scales, offsets = [], []
+    first = onp.asarray(visphi.grid[0, 0])  # one baseline of one frame
+    x = onp.asarray(visphi.basis[0, :, 1])
+    for key in keys:
+        draw = flux.simulated(prediction, None, None, key=key)
+        scales.append(float(np.mean(draw.values / prediction)))
+        draw = visphi.simulated(None, cvis, None, key=key)
+        shift = onp.asarray(draw.values - phases)[first]
+        offsets.append(onp.polyfit(x[: shift.size], shift, 1))
+    onp.testing.assert_allclose(onp.std(scales), flux.widths[0], rtol=0.15)
+    onp.testing.assert_allclose(onp.mean(scales), 1.0, atol=0.15)
+    spread = onp.std(onp.asarray(offsets), axis=0)[::-1]  # (offset, slope)
+    onp.testing.assert_allclose(spread, [0.3, 0.5], rtol=0.15)

@@ -6,6 +6,7 @@
         - set_style
         - plot_grid_map
         - plot_contrast_curve
+        - plot_orbit_ensemble
         - plot_model
         - plot_residual_map
         - plot_oidata_overview

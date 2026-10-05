@@ -32,17 +32,10 @@ with D the diagonal of squared errors. Modes that share no sample are
 independent, so C is block diagonal, one block per connected group of
 modes (one per frame, for the built-in groups).
 
-**Whitening.** Each block is whitened by k rank-one steps. With D's
-whitening already applied (x = D^{-½} r, w_j = D^{-½} u_j), a rank-one
-covariance I + w wᵀ is whitened by
-
-    R = I − w wᵀ / (q (q + 1)),   q = √(1 + wᵀw),
-
-since R (I + w wᵀ) Rᵀ = I; its log-determinant is log(1 + wᵀw). Applying R
-to x and to the remaining modes, mode by mode, whitens I + Σ w_j w_jᵀ
-(Woodbury, as a sequence of updates). Only square roots of scalars appear,
-so the gradients stay smooth, also where modes are degenerate (an
-eigendecomposition's are not) and where widths go to zero.
+**Whitening.** Each block is whitened by successive rank-one steps, the
+shared machinery for linear marginalisation in ``virgil._linear``
+(``whiten_blocks``). Only square roots of scalars appear, so the gradients
+stay smooth, also where modes are degenerate and where widths go to zero.
 """
 
 import equinox as eqx
@@ -50,6 +43,8 @@ import jax
 import jax.numpy as np
 import jax.scipy.linalg as jsl
 import numpy as onp
+
+from ._linear import whiten_blocks
 
 __all__ = [
     "GainModes",
@@ -146,7 +141,7 @@ class GainModes(eqx.Module):
             the log-determinant of the covariance, ``½ Σ log(1 + w_jᵀw_j)``.
         """
         local, spanning = self._columns(jacobian, widths)
-        return _whiten_blocks(x, self.rows, local, spanning)
+        return whiten_blocks(x, self.rows, local, spanning)
 
     def covariance(self, errors, jacobian, widths):
         """The dense visibility covariance ``D + U Uᵀ`` (for checks; O(n²)).
@@ -217,66 +212,6 @@ class GainModes(eqx.Module):
             if onp.unique(labels[col != 0]).size > 1:
                 return True
         return False
-
-
-def _whiten_blocks(x, rows, local, spanning=None):
-    """Whiten ``x`` for the covariance ``I + Σ w_j w_jᵀ``, block by block.
-
-    ``rows`` (n_block, n_row) indexes ``x`` (padded out of range) and
-    ``local`` (n_block, n_row, n_mode) holds each block's modes there;
-    ``spanning`` (n, n_spanning) holds modes across blocks, whitened after
-    them. Returns the whitened ``x`` and, per entry, the log of the factor
-    its effective error grows by (summing to ½ log det).
-    """
-    x = np.asarray(x)
-    n = x.shape[0]
-    if spanning is None:
-        spanning = np.zeros((n, 0), x.dtype)
-    n_span = spanning.shape[1]
-    # The blocks first, carrying the spanning modes through them: the
-    # whitening of the blocks is applied to every column.
-    stack = np.concatenate(
-        [
-            x.at[rows].get(mode="fill", fill_value=0)[..., None],
-            spanning.at[rows].get(mode="fill", fill_value=0),
-            local,
-        ],
-        axis=-1,
-    )
-    stack, logdets = jax.lax.scan(
-        _rank_one_step, stack, 1 + n_span + np.arange(local.shape[-1])
-    )
-    done = (
-        np.concatenate([x[:, None], spanning], axis=1)
-        .at[rows]
-        .set(stack[..., : 1 + n_span], mode="drop")
-    )
-    # Spread each block's ½ log det over its rows.
-    n_rows = np.sum(rows < n, axis=1)
-    per_row = 0.5 * np.sum(logdets, axis=0) / np.maximum(n_rows, 1)
-    extra = (
-        np.zeros_like(x)
-        .at[rows]
-        .set(np.broadcast_to(per_row[:, None], rows.shape), mode="drop")
-    )
-    if n_span:
-        # Then the spanning modes, as one dense block, their ½ log det
-        # spread over every entry.
-        done, span_logdets = jax.lax.scan(
-            _rank_one_step, done[None], 1 + np.arange(n_span)
-        )
-        done = done[0]
-        extra = extra + 0.5 * np.sum(span_logdets) / n
-    return done[:, 0], extra
-
-
-def _rank_one_step(stack, j):
-    """Whiten ``stack`` (..., n_row, n_col) for its column ``j`` as a mode."""
-    w = stack[..., j]
-    s = np.sum(w**2, axis=-1)
-    q = np.sqrt(1.0 + s)
-    coef = np.einsum("...r,...rk->...k", w, stack) / (q * (q + 1.0))[..., None]
-    return stack - w[..., None] * coef[..., None, :], np.log1p(s)
 
 
 def _frames_and_stations(data, need_stations):
@@ -551,7 +486,7 @@ class ClosureOffsets(eqx.Module):
         effective error grows by (summing to ½ log det).
         """
         cols = self._columns(cp_noise, sigma, widths)
-        return _whiten_blocks(x, np.asarray(self.rows), cols)
+        return whiten_blocks(x, np.asarray(self.rows), cols)
 
     def modes(self, cp_noise, n_phase, widths=None):
         """The modes as dense columns over the closure phases (for checks)."""
