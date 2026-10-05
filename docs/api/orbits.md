@@ -36,6 +36,18 @@ time of periastron, which is the invariant prior, rather than uniform in θ.
 The map is singular at i = 90°, where the position angle takes only two values.
 Near edge-on, keep `dt_peri` or use `StateVectorOrbit`.
 
+Positions measured by an instrument whose North or plate scale is
+uncertain take per-dataset calibration terms:
+`PositionData.term(orbit, north_angle="north_b", plate_scale="scale_b")`
+compares the data with `m R(δ)` times the orbit's positions, so that every
+measured position angle is the true one plus δ and every separation is m
+times the true one. `"north_b"` and `"scale_b"` are fitted values, with
+priors you supply (there is no default width; a Gaussian should come from
+the instrument's astrometric calibration). These terms follow Octofitter
+(Thompson et al. 2023, AJ 166, 164). The interferometric counterparts are
+the `noise=` terms `north_angle` and `wavel_scale`
+(see [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]).
+
 **Credit and related software.** Kepler's equation is solved by
 [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (Hattori et al.,
 [doi:10.5281/zenodo.10736936](https://doi.org/10.5281/zenodo.10736936)), the

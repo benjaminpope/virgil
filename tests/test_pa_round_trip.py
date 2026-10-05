@@ -6,13 +6,21 @@ choice of reference star) each flip a binary by 180°. A binary with unequal
 fluxes is written to OIFITS in an instrument's layout, read back, and found
 by a grid search over the whole field: it must come back within 1° of its
 true position angle, not 180° away, and fainter than the primary.
+
+The same files test the sign of a dataset's North angle (design
+orbit_prior_art.md §4.3): a binary written at PA θ + δ is fitted with the
+binary fixed at θ, and the fitted ``north_angle`` must be +δ.
 """
 
+import jax
 import numpy as onp
+import numpyro.distributions as dist
 import pytest
 
 from virgil.coverage import NIRISS_AMI_HOLES, VLTI_UTS
+from virgil.fitting import fit
 from virgil.grid_fit import best_grid_point, likelihood_grid
+from virgil.likelihood import model_loglike
 from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData, cp_indices
 from virgil.oifits import write_oifits
@@ -21,8 +29,10 @@ TRUTH = BinaryModelCartesian(dra=-3.0, ddec=5.0, flux=0.2)  # PA ≈ 329°
 TRUE_PA = onp.degrees(onp.arctan2(-3.0, 5.0)) % 360
 
 
-def _tables(stations, pairs, triangles, waves, hour_angles, insname):
-    """OIFITS tables sampling TRUTH, one frame per hour angle.
+def _tables(
+    stations, pairs, triangles, waves, hour_angles, insname, truth=TRUTH
+):
+    """OIFITS tables sampling ``truth``, one frame per hour angle.
 
     ``pairs`` and ``triangles`` are the instrument's STA_INDEX values, in its
     own order; UCOORD/VCOORD run from the first station to the second.
@@ -43,7 +53,7 @@ def _tables(stations, pairs, triangles, waves, hour_angles, insname):
 
         uv = onp.array([baseline(a, b) for a, b in pairs])
         cvis = onp.asarray(
-            TRUTH.model(uv[:, :1], uv[:, 1:], onp.asarray(waves)[None, :])
+            truth.model(uv[:, :1], uv[:, 1:], onp.asarray(waves)[None, :])
         )
         i1, i2, i3 = cp_indices(pairs, triangles)
         uv1 = onp.array([baseline(a, b) for a, b, _ in triangles])
@@ -148,3 +158,43 @@ def test_a_binary_comes_back_at_its_position_angle(tmp_path, layout):
     tables["OI_T3"]["T3PHI"] = -tables["OI_T3"]["T3PHI"]
     pa, _ = _found(tables, tmp_path / "flipped.oifits")
     assert _miss(pa, TRUE_PA + 180.0) < 1.0
+
+
+@pytest.mark.parametrize("layout", [_gravity_layout, _mask_layout])
+def test_a_north_angle_comes_back_with_its_sign(tmp_path, layout):
+    # The instrument's North is off by δ: it records the binary at PA θ + δ
+    # (written with sep, PA by hand, not with virgil's rotation helpers).
+    delta = 7.0
+    sep, pa = onp.hypot(-3.0, 5.0), onp.deg2rad(TRUE_PA + delta)
+    seen = BinaryModelCartesian(
+        dra=sep * onp.sin(pa), ddec=sep * onp.cos(pa), flux=0.2
+    )
+    stations, pairs, triangles, waves, hour_angles, insname = layout()
+    if insname == "MASK":
+        stations = stations * 20.0
+    tables = _tables(
+        stations, pairs, triangles, waves, hour_angles, insname, seen
+    )
+    data = OIData(write_oifits(tables, tmp_path / "rotated.oifits"))
+    # Profile the likelihood of the unrotated binary over the North angle.
+    angles = onp.arange(-15.0, 15.01, 0.25)
+    logl = jax.vmap(lambda a: model_loglike(TRUTH, data, north_angle=a))(
+        angles
+    )
+    assert angles[onp.argmax(logl)] == pytest.approx(delta)
+    # The opposite sign is far from a fit.
+    assert (
+        float(model_loglike(TRUTH, data, north_angle=-delta))
+        < float(model_loglike(TRUTH, data, north_angle=delta)) - 100.0
+    )
+    # And fit finds it through the noise= mechanism, from δ = 0.
+    result = fit(
+        TRUTH,
+        {"flux": dist.Uniform(0.01, 0.99)},
+        data,
+        noise={"north_angle": dist.Normal(0.0, 20.0)},
+    )
+    assert float(result.values["noise.north_angle"]) == pytest.approx(
+        delta, abs=0.01
+    )
+    assert float(result.values["flux"]) == pytest.approx(0.2, abs=1e-3)

@@ -6,7 +6,9 @@ analytically. Add them with
 [`OIData.with_gains`][virgil.oidata.OIData.with_gains], and fit their widths
 with the noise terms `vis_gain_telescope`, `vis_gain_baseline`,
 `vis_gain_chromatic` and `vis_gain_modes` (e.g.
-`fit(..., noise={"vis_gain_telescope": dist.Uniform(0, 0.1)})`).
+`fit(..., noise={"vis_gain_telescope": dist.LogUniform(1e-4, 0.1)})`). Widths
+are scale parameters, so their default (Jeffreys) prior is log-uniform on
+stated bounds; a `Uniform(0, ...)` would favour large widths.
 
 Closure-phase offsets common to a frame's channels work the same way, on the
 whitened closure phases: add them with
