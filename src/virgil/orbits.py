@@ -820,28 +820,47 @@ class RVData(zx.Base):
         share = -q / (1.0 + q) if self.star == "primary" else 1.0 / (1.0 + q)
         return gamma + share * v_rel
 
-    def whitened_residuals(self, orbit, q, gamma, distance_pc):
-        """``(rv - model) / d_rv`` for every epoch."""
-        return (self.rv - self.model(orbit, q, gamma, distance_pc)) / self.d_rv
+    def errors(self, jitter=0.0):
+        """Effective errors ``sqrt(d_rv² + jitter²)`` (km/s)."""
+        return np.sqrt(self.d_rv**2 + jitter**2)
 
-    def loglike(self, orbit, q, gamma, distance_pc):
-        """Gaussian log-likelihood of the velocities."""
-        resid = self.whitened_residuals(orbit, q, gamma, distance_pc)
+    def whitened_residuals(self, orbit, q, gamma, distance_pc, jitter=0.0):
+        """``(rv - model) / sqrt(d_rv² + jitter²)`` for every epoch."""
+        model = self.model(orbit, q, gamma, distance_pc)
+        return (self.rv - model) / self.errors(jitter)
+
+    def loglike(self, orbit, q, gamma, distance_pc, jitter=0.0):
+        """Gaussian log-likelihood of the velocities.
+
+        ``jitter`` (km/s) adds an extra scatter in quadrature to every error;
+        the normalisation then depends on it.
+        """
+        resid = self.whitened_residuals(orbit, q, gamma, distance_pc, jitter)
         return (
             -0.5 * resid @ resid
-            - np.sum(np.log(self.d_rv))
+            - np.sum(np.log(self.errors(jitter)))
             - resid.size / 2 * np.log(2 * np.pi)
         )
 
-    def term(self, params):
+    def term(self, params, jitter=None):
         """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
 
         Parameters
         ----------
         params : callable
             Maps the fitted values to ``(orbit, q, gamma, distance_pc)``.
+        jitter : str, optional
+            Path of a fitted value holding an RV jitter ``s`` (km/s), which
+            inflates the errors to ``sqrt(d_rv² + s²)``. As with fitted
+            ``noise=`` terms, the likelihood's normalisation ``Σ log σ_eff``
+            then depends on a parameter, so the term reports it
+            (``log_norm``) and ``fit`` adds it to the loss, defaulting to
+            L-BFGS (no least-squares form). Give ``jitter`` a prior with
+            non-negative support, e.g. ``dist.HalfNormal`` (scale about the
+            expected scatter, a few km/s for a spotted star) or
+            ``dist.LogUniform``; the likelihood depends on ``s²`` only.
         """
-        return _Term(self, params)
+        return _Term(self, params, jitter)
 
 
 class _Term(eqx.Module):
@@ -849,13 +868,29 @@ class _Term(eqx.Module):
 
     data: object
     build: object = eqx.field(static=True)
+    jitter: object = eqx.field(static=True, default=None)
+
+    def _args(self, values):
+        args = tuple(self.build(values))
+        if self.jitter is not None:
+            args += (values[self.jitter],)
+        return args
 
     def __call__(self, values):
-        return np.ravel(self.data.whitened_residuals(*self.build(values)))
+        return np.ravel(self.data.whitened_residuals(*self._args(values)))
+
+    @property
+    def has_log_norm(self):
+        """Whether the normalisation depends on fitted values."""
+        return self.jitter is not None
+
+    def log_norm(self, values):
+        """``Σ log σ_eff``, which ``fit`` adds to the loss with a fitted jitter."""
+        return np.sum(np.log(self.data.errors(values[self.jitter])))
 
     def loglike(self, values):
         """The data's normalised Gaussian log density, for ``numpyro_model``."""
-        return self.data.loglike(*self.build(values))
+        return self.data.loglike(*self._args(values))
 
 
 def total_mass(orbit, distance_pc):

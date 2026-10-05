@@ -191,6 +191,10 @@ class _Objective(eqx.Module):
             self.model, self.paths, [values[p] for p in self.paths]
         )
 
+    @property
+    def _has_term_norms(self):
+        return any(getattr(t, "has_log_norm", False) for t in self.likelihoods)
+
     def data_residuals(self, model, values=None):
         """Whitened residuals of ``model`` for each dataset, as a list.
 
@@ -228,6 +232,12 @@ class _Objective(eqx.Module):
             )
         model = self.build(z)
         values = self.constrain(z)
+        if self._has_term_norms:
+            raise TypeError(
+                "Likelihood terms with fitted error terms (an RV jitter) "
+                "have no least-squares form (their normalisation depends on "
+                "them); fit with method='lbfgs' or 'adam'."
+            )
         parts = self.data_residuals(model)
         parts += [term(values) for term in self.likelihoods]
         for regulariser in self.regularisers:
@@ -259,6 +269,12 @@ class _Objective(eqx.Module):
         # likelihood, sum(log σ), is no longer a constant.
         log_norm = sum(np.sum(np.log(e)) for _, e in whitened)
         log_norm = log_norm if self.noise or self._has_gains else 0.0
+        # A likelihood term with a fitted jitter reports its own Σ log σ.
+        log_norm = log_norm + sum(
+            t.log_norm(values)
+            for t in self.likelihoods
+            if getattr(t, "has_log_norm", False)
+        )
         penalty = sum(r.value(_reference(model)) for r in self.regularisers)
         log_prior = sum(
             np.sum(prior.log_prob(values[path]))
