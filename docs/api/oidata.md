@@ -53,6 +53,10 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
         - residuals
         - with_model
         - with_error_scale
+        - with_error_floor
+        - with_continuum
+        - with_flux_scale
+        - has_model_covariance
         - with_gains
         - with_wavelength_scale
         - mjd

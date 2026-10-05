@@ -9,6 +9,27 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Spectro-interferometric observables (Stage 6a, PR B).**
+  `read_oifits(..., extras=...)` and `OIData(path, extras=...)` read OI_FLUX
+  (`"flux"` or `"nflux"`), T3AMP, VISAMP beside V² (absolute, or correlated
+  flux as `AMPTYP` declares) and VISPHI as a differential phase beside
+  closure phases. They are off by default, so existing analyses are
+  unchanged. The new `virgil.observables` blocks follow the phases in the data
+  vector. Spectra are predicted from `total_spectrum`, with the grey scale
+  (and optionally a polynomial in λ) marginalised analytically under a broad
+  Gaussian prior; `likelihood.flux_scale_posterior` reports it. Differential
+  phases use the exact arg V, with the continuum normalisation (offset and
+  delay over continuum channels) applied as a linear operator and its
+  propagated covariance N D Nᵀ. Beside closure phases, only their
+  closure-free part in the line windows is used, so nothing is counted
+  twice. New methods: `OIData.with_continuum`, `with_flux_scale` and
+  `with_error_floor` (PMOIRED-style floors per observable). The writer
+  gains OI_FLUX and the `AMPTYP`/`PHITYP`/`CALSTAT` keywords. Guide:
+  "Spectro-interferometric observables".
+- **`vis_error`, and `where=`/`combine=` in `inflated_errors`.** A fitted
+  absolute visibility error term. Floors and fitted terms share one rule,
+  `_utils.inflate_errors`.
+
 - **Fitted RV jitter.** `RVData.term(params, jitter="rv_jitter")` inflates the
   errors to `sqrt(d_rv² + s²)` with `s` a fitted value (km/s; give it a
   half-normal or log-uniform prior). The term protocol gains an optional

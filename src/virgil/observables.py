@@ -56,7 +56,7 @@ part of the differential phase (in the lines) then measure different
 things. The cross-covariance between them is neglected: it is exactly zero
 when the baseline errors of a frame and channel are equal, which is the
 assumption behind the closure-phase correlations already used
-([`virgil._closure`][virgil._closure], Kammerer et al. 2020), and of the
+(Kammerer et al. 2020; see ``virgil._closure``), and of the
 order of the spread of those errors otherwise.
 """
 
