@@ -1188,6 +1188,10 @@ def error_scale(model, data, path="env"):
         )
     r, jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
     chi2 = float(r @ r)
+    # N counts independent data, not residuals: correlated closure phases
+    # add penalty residuals (OIData.n_residuals) that are not observations.
+    datasets = data if isinstance(data, (list, tuple)) else [data]
+    n_data = sum(d.n_independent for d in datasets)
     lam = onp.clip(onp.linalg.eigvalsh(_smaller_gram(jac)), 0.0, None)
     # Solve g(β) = β χ² + γ(β) − N = 0. g is increasing and concave, so
     # Newton's method from β = 0 (where g = −N) rises monotonically to the
@@ -1196,7 +1200,7 @@ def error_scale(model, data, path="env"):
     for _ in range(100):
         g = beta * chi2 + onp.sum(beta * lam / (1.0 + beta * lam))
         slope = chi2 + onp.sum(lam / (1.0 + beta * lam) ** 2)
-        step = (g - jac.shape[0]) / slope
+        step = (g - n_data) / slope
         beta -= step
         if abs(step) <= 1e-12 * beta:
             break
