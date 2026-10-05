@@ -452,13 +452,15 @@ class _BaselineLookup:
             by_ins.setdefault(ins, []).append((mjd, time, start))
         for rows in by_ins.values():
             rows.sort()
-            for (mjd0, t0, a), (mjd1, t1, b) in zip(rows, rows[1:]):
-                # The same exposure only if MJD and TIME both agree.
-                if (
-                    mjd1 - mjd0 <= _MJD_TOLERANCE
-                    and abs(t1 - t0) <= _MJD_TOLERANCE
-                ):
-                    self.link(a, b)
+            # The same exposure only if MJD and TIME both agree. Rows sorted
+            # by MJD can interleave in TIME, so compare every pair inside the
+            # MJD window, not just neighbours.
+            for i, (mjd0, t0, a) in enumerate(rows):
+                for mjd1, t1, b in rows[i + 1 :]:
+                    if mjd1 - mjd0 > _MJD_TOLERANCE:
+                        break
+                    if abs(t1 - t0) <= _MJD_TOLERANCE:
+                        self.link(a, b)
         roots = [self._root(start) for start, *_ in self._order]
         labels = {root: k for k, root in enumerate(dict.fromkeys(roots))}
         frame = onp.array([labels[root] for root in roots])
@@ -505,13 +507,19 @@ class _BaselineLookup:
         rows = self._rows.get((ins, int(pair[0]), int(pair[1])), [])
         if not rows:
             return None
-        best = min(
-            rows, key=lambda row: abs(row[0] - mjd) + abs(row[4] - time)
-        )
-        window = max(_MJD_TOLERANCE, 2.0 * best[1])
-        # MJD and TIME must both agree: see ``_time``.
-        if abs(best[0] - mjd) > window or abs(best[4] - time) > window:
+        # MJD and TIME must both agree (see ``_time``): keep the rows inside
+        # their exposure window in both, then take the nearest of those.
+        eligible = [
+            row
+            for row in rows
+            if abs(row[0] - mjd) <= max(_MJD_TOLERANCE, 2.0 * row[1])
+            and abs(row[4] - time) <= max(_MJD_TOLERANCE, 2.0 * row[1])
+        ]
+        if not eligible:
             return None
+        best = min(
+            eligible, key=lambda row: abs(row[0] - mjd) + abs(row[4] - time)
+        )
         return best[2], best[3]
 
 
@@ -799,13 +807,14 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
         flag = _flags(hdu, mask, nwave, values, errors)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
+        time = _time(hdu, mask)
         ins = _lookup_key(hdu)
         for row, pair in enumerate(sta_index):
             sign = 1.0
-            found = lookup.find(ins, pair, mjd[row])
+            found = lookup.find(ins, pair, mjd[row], time=time[row])
             if found is None:
                 # The phase of the reversed baseline is the negated phase.
-                found = lookup.find(ins, pair[::-1], mjd[row])
+                found = lookup.find(ins, pair[::-1], mjd[row], time=time[row])
                 sign = -1.0
             if found is None or found[1] != nwave:
                 continue
@@ -853,9 +862,9 @@ class _NewSamples:
         self.n = record["u"].size
         self.parts = {"u": [], "v": [], "wavel": []}
 
-    def add(self, lookup, ins, pair, mjd, u, v, wave):
+    def add(self, lookup, ins, pair, mjd, u, v, wave, time=0.0):
         nwave = wave.size
-        lookup.add(ins, pair, mjd, 0.0, self.n, nwave, wave)
+        lookup.add(ins, pair, mjd, 0.0, self.n, nwave, wave, time)
         start = self.n
         self.n += nwave
         self.parts["u"].append(onp.full(nwave, u))
@@ -913,17 +922,25 @@ def _vis_rows(tables, wavelengths, target_id, lookup, new, value, error):
         ucoord = _column(hdu, "UCOORD", mask)
         vcoord = _column(hdu, "VCOORD", mask)
         mjd = _mjd(hdu, mask)
+        time = _time(hdu, mask)
         ins = _lookup_key(hdu)
         samples = onp.zeros((len(sta_index), nwave), dtype=int)
         sign = onp.ones(len(sta_index))
         for row, pair in enumerate(sta_index):
-            found = lookup.find(ins, pair, mjd[row], wave)
+            found = lookup.find(ins, pair, mjd[row], wave, time[row])
             if found is None or found[1] != nwave:
-                found = lookup.find(ins, pair[::-1], mjd[row], wave)
+                found = lookup.find(ins, pair[::-1], mjd[row], wave, time[row])
                 sign[row] = -1.0
             if found is None or found[1] != nwave:
                 start = new.add(
-                    lookup, ins, pair, mjd[row], ucoord[row], vcoord[row], wave
+                    lookup,
+                    ins,
+                    pair,
+                    mjd[row],
+                    ucoord[row],
+                    vcoord[row],
+                    wave,
+                    time[row],
                 )
                 found, sign[row] = (start, nwave), 1.0
             samples[row] = found[0] + onp.arange(nwave)
