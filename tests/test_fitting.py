@@ -377,6 +377,105 @@ def test_numpyro_model_samples_noise_terms():
     assert "noise.vis_scale" in trace
 
 
+def _binary_fn(dra, ddec, flux, **_):
+    return BinaryModelCartesian(dra, ddec, flux)
+
+
+def test_numpyro_model_tied_noise_terms_match_the_likelihood():
+    # A noise term given as a function of the sampled values is recorded
+    # as a deterministic site and enters the likelihood like a fitted one.
+    from numpyro.infer.util import log_density
+
+    from virgil.likelihood import model_loglike
+
+    priors = {**PRIORS, "s": dist.LogUniform(0.5, 5.0)}
+    noise = [
+        {"vis_scale": lambda v: v["s"]},
+        {"vis_scale": lambda v: 2.0 * v["s"]},
+    ]
+    model = numpyro_model(_binary_fn, priors, [DATA, DATA], noise=noise)
+    values = {"dra": 150.0, "ddec": -80.0, "flux": 0.02, "s": 1.5}
+    trace = numpyro.handlers.trace(
+        numpyro.handlers.substitute(numpyro.handlers.seed(model, 0), values)
+    ).get_trace()
+    assert trace["noise[1].vis_scale"]["type"] == "deterministic"
+    assert float(trace["noise[1].vis_scale"]["value"]) == pytest.approx(3.0)
+    binary = BinaryModelCartesian(150.0, -80.0, 0.02)
+    expected = (
+        model_loglike(binary, DATA, vis_scale=1.5)
+        + model_loglike(binary, DATA, vis_scale=3.0)
+        + sum(priors[k].log_prob(values[k]) for k in priors)
+    )
+    got = log_density(model, (), {}, values)[0]
+    assert float(got) == pytest.approx(float(expected), rel=1e-5)
+
+
+def test_fit_with_hierarchical_error_scales():
+    from virgil.priors import hierarchical_scales
+
+    quiet = oidata.with_model(TRUTH, key=jax.random.PRNGKey(1))
+    noisy = oidata.with_model(
+        TRUTH, key=jax.random.PRNGKey(2), noise_scale=3.0
+    )
+    population, scales = hierarchical_scales("v2", 2)
+    priors = {**PRIORS, **population}
+    init = {
+        "dra": 150.0,
+        "ddec": -80.0,
+        "flux": 0.02,
+        "v2_median": 1.0,
+        "v2_spread": 0.5,
+        "v2_log": np.zeros(2),
+    }
+    result = fit(
+        _binary_fn,
+        priors,
+        [quiet, noisy],
+        noise=[{"vis_scale": s} for s in scales],
+        init=init,
+    )
+    ratio = (
+        result.values["noise[1].vis_scale"]
+        / result.values["noise[0].vis_scale"]
+    )
+    assert float(ratio) == pytest.approx(3.0, rel=0.25)
+    assert abs(result.values["dra"] - 150.0) < 5.0
+
+
+def test_numpyro_model_adds_each_population_density_once():
+    from numpyro.infer.util import log_density
+
+    from virgil.likelihood import model_loglike
+    from virgil.priors import hierarchical_scales
+
+    population, scales = hierarchical_scales("e", 2)
+    priors = {**PRIORS, **population}
+    # Member 0 scales both observables of dataset 0: its density counts once.
+    noise = [
+        {"vis_scale": scales[0], "phi_scale": scales[0]},
+        {"vis_scale": scales[1]},
+    ]
+    model = numpyro_model(_binary_fn, priors, [DATA, DATA], noise=noise)
+    log_s = np.log(np.array([1.5, 0.8]))
+    values = {
+        "dra": 150.0,
+        "ddec": -80.0,
+        "flux": 0.02,
+        "e_median": 1.2,
+        "e_spread": 0.3,
+        "e_log": log_s,
+    }
+    binary = BinaryModelCartesian(150.0, -80.0, 0.02)
+    expected = (
+        model_loglike(binary, DATA, vis_scale=1.5, phi_scale=1.5)
+        + model_loglike(binary, DATA, vis_scale=0.8)
+        + sum(np.sum(priors[k].log_prob(values[k])) for k in priors)
+        + np.sum(dist.Normal(np.log(1.2), 0.3).log_prob(log_s))
+    )
+    got = log_density(model, (), {}, values)[0]
+    assert float(got) == pytest.approx(float(expected), rel=1e-5)
+
+
 @pytest.mark.parametrize("method", ["lm", "lbfgs"])
 def test_a_start_at_an_exact_optimum_is_converged(method):
     # Noise-free data and the true parameters: chi2 ~ 0, gradient ~ rounding

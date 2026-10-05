@@ -34,8 +34,10 @@ from .likelihood import (
     _check_positive_flux_prior,
     _whitened_and_errors,
     build_model,
+    is_tied,
     noise_for,
     noise_sites,
+    tied_log_prior,
 )
 from .models import SourceModel
 
@@ -211,7 +213,7 @@ class _Objective(eqx.Module):
         self.priors = {path: _traced(p) for path, p in priors.items()}
         self.regularisers = tuple(regularisers)
         self.noise = {
-            site: (_traced(prior), datasets, term)
+            site: (prior if is_tied(prior) else _traced(prior), datasets, term)
             for site, (prior, datasets, term) in noise_sites(
                 noise, len(self.data)
             ).items()
@@ -276,6 +278,8 @@ class _Objective(eqx.Module):
         values = {} if values is None else dict(values)
         z = {}
         for site, (prior, _, term) in self.noise.items():
+            if is_tied(prior):
+                continue  # a function of the parameters, not a coordinate
             unit = term.endswith("scale") or term.endswith("_modes")
             zero = term in ("wavel_offset", "north_angle")
             default = 0.0 if zero else 1.0 if unit else 0.01
@@ -325,7 +329,12 @@ class _Objective(eqx.Module):
             else:
                 values[path] = self.bijection(prior)(z[path])
         for site, (prior, _, _) in self.noise.items():
-            values[site] = self.bijection(prior)(z[site])
+            if not is_tied(prior):
+                values[site] = self.bijection(prior)(z[site])
+        params = {path: values[path] for path in self.priors}
+        for site, (prior, _, _) in self.noise.items():
+            if is_tied(prior):
+                values[site] = prior(params)
         return values
 
     def build(self, z):
@@ -430,8 +439,9 @@ class _Objective(eqx.Module):
             if not self._in_flat_coordinate(prior)
         )
         for site, (prior, _, _) in self.noise.items():
-            if not self._in_flat_coordinate(prior):
+            if not is_tied(prior) and not self._in_flat_coordinate(prior):
                 log_prior = log_prior + np.sum(prior.log_prob(values[site]))
+        log_prior = log_prior + tied_log_prior(self.noise, values)
         return 0.5 * chi2 + log_norm + penalty - log_prior
 
 
@@ -543,7 +553,10 @@ def fit(
         [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]),
         whose priors may be of either sign (e.g. ``Normal(1, 2e-4)``). A dict
         applies to every dataset (values ``"noise.<term>"``); a list gives
-        each dataset its own (``"noise[i].<term>"``). The loss is then the
+        each dataset its own (``"noise[i].<term>"``). An entry may be a
+        function of the fitted values instead of a prior, tying the term to
+        parameters in ``priors`` (see
+        [`hierarchical_scales`][virgil.priors.hierarchical_scales]). The loss is then the
         full Gaussian negative log likelihood, including ``Σ log σ``, so the
         default method is L-BFGS. So it is for data with gains, whose
         covariance depends on the model. Fitting error terms with an image is
