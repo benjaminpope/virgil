@@ -1,9 +1,8 @@
 # `virgil.imaging`
 
 Regularisers, priors and helpers for image reconstruction with
-[`Image`](models/classes/image.md). How to choose a regularisation weight is
-discussed in the [design note](https://github.com/benjaminpope/virgil/blob/main/design/regulariser_weight_selection.md): the L-curve's corner, the
-discrepancy principle, classic MaxEnt (`LCurve.classic_maxent`) and, for
+[`Image`](models/classes/image.md). Ways to choose a regularisation weight are the
+L-curve's corner, the discrepancy principle, classic MaxEnt (`LCurve.classic_maxent`) and, for
 Gaussian-field images, the Laplace evidence (`log_evidence`).
 
 ::: virgil.imaging
