@@ -47,6 +47,24 @@ The design rationale was established in the earlier research: the gauge survey, 
    - Something must fix the origin: an analytic star, a `Centroid` prior, or a centred mean.
    - Initialise from a parametric fit.
 8. **Dependencies:** optax (and lineax) become required. `blackjax` (`[sampling]`) is an optional extra. zodiax stays at `>=0.4`.
+9. **Priors: Jeffreys priors under the relevant group actions.** Default priors are the invariant measures of the groups that act on a parameter, unless there is strong information otherwise, because statistical correctness comes first. Ben: "we should always be adopting Jeffreys priors under the relevant group actions, unless we have strong information otherwise, because we prioritise statistical correctness."
+
+   | Parameter kind | Group | Default prior |
+   |---|---|---|
+   | Location: time of periastron, orbital phase, RV zero points, phase offsets, log gains | translation | uniform |
+   | Scale: a, P, fluxes and flux ratios, the OI_FLUX grey scale k, jitter, angular sizes | scaling | log-uniform, 1/x |
+   | Orbit orientation | rotation | Haar measure on SO(3): uniform in cos i, Ω and ω |
+   | Kepler orbits | independent rescalings of space and time | 1/(aP), equivalently log-uniform in P and in μ = a³/P² |
+   | Eccentricity | none | no symmetry-derived prior; uniform e as the interim prior (Hogg, Myers & Bovy 2010, arXiv:1008.4146) |
+
+   - **Eccentricity.** Population priors, such as Kipping 2013's Beta(0.867, 3.03) used by The Joker (Price-Whelan et al. 2017, arXiv:1610.07602) for planets, or thermal or empirical distributions for wide binaries, are strong information and are applied by importance reweighting (below).
+   - **Improper priors** need stated bounds and a check that the posterior is proper. Bayes factors and evidences need proper priors.
+   - **Strong information overrides the rule**, e.g. a Gaia parallax, or gain widths derived from calibrators.
+   - **Gaussian priors in analytic linear marginalisation** (see [Analytic marginalisation of linear parameters](#analytic-marginalisation-of-linear-parameters-cross-cutting)) satisfy the rule only as broad approximations for location parameters. For scale or orientation parameters they are computational proposals, and must be importance-reweighted to the invariant prior or justified as strong information.
+   - **Interim prior and reweighting.** Sample under an uninformative interim prior that has support everywhere, then reweight to the target or population prior. This is one mechanism for per-object prior changes and for hierarchical population inference. Report the PSIS k̂ diagnostic.
+   - **Test rule.** Every sampler and prior must pass a no-data test: sampling with an empty dataset reproduces the stated prior, Jacobians included (Hogg+2010 §4).
+
+   **Log (2026-10-05):** approved by Ben.
 
 ## Branching and workflow
 - **Branch.** Create `imaging` in `~/code/drpangloss` (the local folder keeps its old name), branched from `chromatic-scenes`. It needs the chromatic work (`Spectrum`, `Resolved`, multi-channel `OIData`), and `chromatic-scenes` is 3 commits ahead of `main`. Once `chromatic-scenes` merges, rebase `imaging` onto `main`.
@@ -592,6 +610,7 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 - After the fit, report w's conditional mean and covariance.
 - Use a finite Λ only. A flat prior is the limit of a broad one only up to a constant.
 - For positive quantities, use it only with broad priors well away from zero, because the Gaussian is not truncated.
+- The Gaussian is a location-parameter prior or a computational proposal, not a default for scale or orientation parameters. Those follow the Jeffreys-prior rule (standing design decision 9): reweight to the invariant prior, or justify the Gaussian as strong information.
 
 **Where it does not apply.** Visibilities are normalised, V = Σ fᵢVᵢ / Σ fᵢ, and V² and closure phases are nonlinear in V. So component flux ratios, spectral amplitudes and image pixels cannot be marginalised this way in visibility or closure-phase fits.
 
@@ -604,7 +623,7 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 | 3 | RV zero points per instrument (γ and offsets) | RVs | Done (#192) | Removes a fitted nuisance per instrument |
 | 4 | OI_FLUX grey scale k and a low-order polynomial in λ, written as cⱼλʲ·Σfᵢ | FLUX | Done in the 6a observables PR (`FluxSpectrum`, on `gains._whiten_blocks`; `flux_scale_posterior`) | High: exact, and removes a fitted nuisance for every dataset |
 | 5 | VISPHI continuum offset and slope per baseline and frame; NFLUX normalisation | VISPHI, NFLUX | Done in the 6a observables PR: projection by default, `with_continuum(prior_width=)` for the finite prior; NFLUX as a scale near 1 | High: the pipeline's continuum subtraction is the flat-prior limit, so this puts the projection on a sound footing, and a finite-prior version comes almost for free |
-| 6 | Thiele–Innes A, B, F, G at fixed (P, e, T₀) | Positions only | Design note in progress (`design/thiele_innes_marginalisation.md`) | High for position-only orbits: NUTS works in 3 dimensions instead of 7. Open question: the prior, because a Gaussian on A, B, F, G implies a non-standard Campbell-element prior, so reweight or state it. It does not extend to joint position + RV fits; for closure-phase orbit fits it only gives starting points |
+| 6 | Thiele–Innes A, B, F, G at fixed (P, e, T₀) | Positions only | Design note in progress (`design/thiele_innes_marginalisation.md`) | High for position-only orbits: NUTS works in 3 dimensions instead of 7. The prior: a Gaussian on A, B, F, G implies a non-isotropic Campbell-element prior, so the draws are reweighted to the invariant prior (decided 2026-10-05; see the note). It does not extend to joint position + RV fits; for closure-phase orbit fits it only gives starting points |
 | 7 | Overall V² scale s² (a fully resolved background, or a per-frame V² calibration factor) | V² only | Noted, not planned | Exact in V², whereas 6d is a small-gain approximation in log\|V\|, so it mostly overlaps 6d; the prior s² ∈ (0, 1] is not Gaussian |
 | 8 | Companion flux f, to first order in f ≪ 1 | V², closure phases | Done (#184; flat prior, profiled). Gauss–Newton iteration (`n_iter`) removes the bias for bright companions, and a prior on f (recommended: the scale-invariant log-uniform `LogUniform(f_min, f_max)`, the invariant measure of the scaling group, since f is a scale parameter; or `Gaussian(mean, sd)`) gives a marginal-likelihood detection map (`log_bayes_factor`) | Fast detection maps |
 | 9 | Spectral line or node amplitudes and continuum ratios | OI_FLUX alone | Noted, not planned | Exact only in spectrum-only fits; useful for starting values |

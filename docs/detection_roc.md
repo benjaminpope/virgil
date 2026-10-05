@@ -46,6 +46,10 @@ print(
 )
 ```
 
+```text
+21 V² and 35 closure phases; grid of 361 positions × 32 fluxes; FAP = 0.135%
+```
+
 ## Null simulations
 
 `detection_statistics` reduces a search over the grid to three numbers. $\Delta\chi^2$ is twice the gain in log likelihood of the best companion on the grid, with its flux refined and constrained to be non-negative, over no companion. The log Bayes factor is the log of the likelihood ratio averaged over the grid, a grid-marginalised evidence for "a companion somewhere" against "none"; on a grid this coarse it is a valid test statistic but not an accurate evidence. The maximum SNR is the largest best-fit flux divided by its Laplace uncertainty, the significance map of the composition tutorial.
@@ -92,6 +96,14 @@ print(
 )
 ```
 
+```text
+  0%|          | 0/10 [00:00<?, ?it/s]
+```
+
+```text
+3000 null searches in 174 s: median Δχ² = 2.17, largest = 25.0
+```
+
 ## The look-elsewhere effect
 
 At one position fixed in advance, $\Delta\chi^2$ under the null is zero half the time (when the best flux would be negative) and follows $\chi^2_1$ otherwise, so its tail is $\tfrac{1}{2}\chi^2_1$ (Wilks's theorem with a parameter on its boundary, Chernoff 1954). That is the reference behind `local_nsigma`. A grid search takes the best of hundreds of positions, and although neighbouring positions are correlated, the best of many is much larger than any one. The plot shows the empirical probability that a null search exceeds a threshold, against the local reference: the grid search's tail sits far above it, and the horizontal line at our FAP shows how much higher the threshold must be.
@@ -117,8 +129,10 @@ ax.set_ylabel(
     r"false-alarm probability $P(\Delta\chi^2_{\rm null} \geq$ threshold$)$"
 )
 ax.set_title(r"Null distribution of $\Delta\chi^2$ over the grid")
-ax.legend();
+ax.legend(loc="upper right");
 ```
+
+![detection_roc output 7.1](generated/detection_roc_cell007_out01.png)
 
 ## Injections
 
@@ -137,9 +151,23 @@ for i, flux in enumerate(FLUXES):
     )
 ```
 
+```text
+  0%|          | 0/6 [00:00<?, ?it/s]
+```
+
+```text
+    flux  Δmag     Δχ²   log B  max SNR  (medians)
+   1e-03  7.50     4.8    -0.4      2.2
+   2e-03  6.75     8.2     0.4      2.8
+   3e-03  6.31    15.0     2.5      3.8
+   4e-03  5.99    24.0     6.1      4.9
+   6e-03  5.55    50.4    18.1      7.0
+   8e-03  5.24    91.5    37.9      9.4
+```
+
 ## ROC curves
 
-For each statistic, every null value is a possible threshold: its false-positive rate is the fraction of null searches at or above it, and its true-positive rate is the fraction of injections at or above it. The function `roc` below does this in three lines; the `DetectionMC` container of the next stage will do it, with uncertainties. We plot the curves for the faint ($2\times10^{-3}$) and moderate ($4\times10^{-3}$) injections with a logarithmic false-positive axis, because the interesting region is at small false-alarm rates; the dotted vertical line is our FAP, and the dotted diagonal is a statistic that cannot tell companions from noise. Only the ordering of a statistic's values matters for its ROC curve, so the three can be compared directly.
+For each statistic, every null value is a possible threshold: its false-positive rate is the fraction of null searches at or above it, and its true-positive rate is the fraction of injections at or above it. The function `roc` below does this in three lines; the `DetectionMC` container of the next stage will do it, with uncertainties. We plot the curves for the faint ($2\times10^{-3}$) and moderate ($4\times10^{-3}$) injections with a logarithmic false-positive axis, because the interesting region is at small false-alarm rates; the dash-dotted vertical line is our FAP, and the thin grey curve is a statistic that cannot tell companions from noise (true-positive rate equal to false-positive rate, which is a curve rather than a straight line on a logarithmic axis). Only the ordering of a statistic's values matters for its ROC curve, so the three can be compared directly. The curves for $\Delta\chi^2$ and the maximum SNR almost coincide: for a faint companion the likelihood is nearly quadratic in flux, so the maximum SNR is close to $\sqrt{\Delta\chi^2}$ and ranks the simulations in the same order. The log Bayes factor averages over positions instead of taking the best one, so it can rank them differently; at the smallest false-positive rates only a handful of null draws set each curve, so differences there are within the noise.
 
 ```python
 def roc(null_scores, injected_scores):
@@ -155,10 +183,11 @@ labels = {
 }
 fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
 for ax, i in zip(axes, [FLUXES.index(2e-3), FLUXES.index(4e-3)]):
-    for s in STATS:
-        ax.plot(*roc(null[s], injected[s][i]), label=labels[s])
-    ax.plot([1 / d0.size, 1], [1 / d0.size, 1], "k:", lw=0.8)
-    ax.axvline(FAP, color="grey", lw=0.8, ls=":")
+    for s, ls in zip(STATS, ("-", "--", ":")):
+        ax.plot(*roc(null[s], injected[s][i]), ls=ls, label=labels[s])
+    chance = onp.geomspace(1 / d0.size, 1.0, 100)
+    ax.plot(chance, chance, color="grey", lw=0.8)  # TPR = FPR
+    ax.axvline(FAP, color="grey", lw=0.8, ls="-.")
     ax.set_xscale("log")
     ax.set_xlabel("false-positive rate")
     ax.set_title(
@@ -167,6 +196,8 @@ for ax, i in zip(axes, [FLUXES.index(2e-3), FLUXES.index(4e-3)]):
 axes[0].set_ylabel("true-positive rate (completeness)")
 axes[0].legend();
 ```
+
+![detection_roc output 11.1](generated/detection_roc_cell011_out01.png)
 
 ## Thresholds and completeness
 
@@ -191,6 +222,19 @@ for i, flux in enumerate(FLUXES):
         f"{flux:8.0e}{float(flux_to_delta_mag(flux)):6.2f}"
         f"{onp.mean(d >= threshold):21.0%}{onp.mean(d >= wilks):17.0%}"
     )
+```
+
+```text
+Δχ² threshold at FAP 0.135%: empirical 15.5 (local 3.9σ), Wilks 9 (local 3σ)
+Wilks's threshold over this grid has FAP 3.8%
+
+    flux  Δmag  complete, empirical  complete, Wilks
+   1e-03  7.50                   2%              16%
+   2e-03  6.75                  14%              42%
+   3e-03  6.31                  47%              80%
+   4e-03  5.99                  77%              91%
+   6e-03  5.55                  94%              99%
+   8e-03  5.24                  99%             100%
 ```
 
 ## Summary
