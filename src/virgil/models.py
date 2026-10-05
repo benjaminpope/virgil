@@ -31,7 +31,7 @@ import numpy as onp
 import zodiax as zx
 from jax.scipy.ndimage import map_coordinates
 from jax.scipy.signal import fftconvolve
-from jaxbessel import bessel_jn, bessel_jv_over_xv
+from jaxbessel import bessel_jn, bessel_jv_over_xv, j0
 
 from ._geometry import (
     check_az_prof_nonnegative,
@@ -587,6 +587,225 @@ class GaussianArc(Component):
         width = np.maximum(self.width, pixel_scale_mas)
         d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
         return np.sum(weight * np.exp(-4.0 * np.log(2.0) * d2 / width**2), -1)
+
+
+class TruncatedCone(Component):
+    """A thin conical shell, truncated near its apex, e.g. a dust cone.
+
+    The cone's axis points towards position angle ``pa`` and is tilted
+    ``tilt`` degrees out of the sky plane; its half-opening angle is
+    ``alpha``. Its apex lies ``tip`` milliarcseconds (along the axis, in 3-D)
+    behind ``(dra, ddec)``, opposite to ``pa``. The emission starts a slant
+    distance ``s0`` from the apex along the walls and falls off as
+    ``exp(-(s - s0) / length)``, and the shell has a Gaussian thickness of
+    FWHM ``width``. It is optically thin, so the sign of the tilt does not
+    change the image.
+
+    The cone is a stack of rings about its axis. A ring of radius ρ in the
+    plane perpendicular to an axis tilted β out of the sky projects to an
+    ellipse, whose visibility is ``J0(2π ρ q)`` with
+    ``q² = q_perp² + (ratio · q_par sin β)²``, where ``q_par`` and
+    ``q_perp`` are the spatial frequencies along and across the projected
+    axis, times the phase of the ring's centre, which lies
+    ``(s cos α - tip) cos β`` along the projected axis. The rings are
+    weighted by the area element (∝ ρ) and the emissivity, and integrated
+    over ``s`` from ``s0`` to ``s0 + 5 length`` (the last 0.7 % of the
+    flux is dropped) by the midpoint rule on ``n_rings`` rings. It is
+    accurate while both the spacing of the rings' centres on the sky,
+    ``5 length cos α cos β / n_rings``, and the step between their radii,
+    ``5 length sin α max(1, ratio) / n_rings``, are below half the shortest
+    fringe spacing: a cone seen down its axis (tilt 90°) has all its centres
+    together, and only the radius step matters.
+
+    Parameters
+    ----------
+    tip : float or array-like
+        Distance from ``(dra, ddec)`` back to the apex along the axis, in
+        milliarcseconds.
+    alpha : float or array-like
+        Half-opening angle of the cone, in degrees (0 < alpha < 90).
+    s0 : float or array-like
+        Slant distance from the apex where the emission starts, in
+        milliarcseconds.
+    length : float or array-like
+        e-folding length of the emission along the walls, in
+        milliarcseconds.
+    width : float or array-like
+        FWHM thickness of the shell, in milliarcseconds.
+    tilt : float or array-like, optional
+        Angle of the axis out of the sky plane, in degrees (-90 to 90).
+    pa : float or array-like, optional
+        Position angle the cone opens towards, in degrees North to East.
+    ratio : float or array-like, optional
+        Axis ratio of the cross-section (default 1, circular): its axis in
+        the plane of the cone's axis and the line of sight is ``ratio``
+        times the one across.
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][virgil.models.System] (default 1).
+    dra, ddec : float or array-like, optional
+        Offset of the reference point in milliarcseconds, positive to the
+        East and North.
+    n_rings : int, optional
+        Quadrature rings along the walls, at least 2 (default 32).
+
+    Examples
+    --------
+    >>> cone = TruncatedCone(tip=5.0, alpha=30.0, s0=4.0, length=10.0,
+    ...                      width=1.0, tilt=20.0, pa=90.0)
+    """
+
+    tip: jax.Array
+    alpha: jax.Array
+    s0: jax.Array
+    length: jax.Array
+    width: jax.Array
+    tilt: jax.Array
+    pa: jax.Array
+    ratio: jax.Array
+    n_rings: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        tip,
+        alpha,
+        s0,
+        length,
+        width,
+        tilt=0.0,
+        pa=0.0,
+        ratio=1.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+        n_rings=32,
+    ):
+        self.tip = np.asarray(tip, dtype=float)
+        self.alpha = np.asarray(alpha, dtype=float)
+        self.s0 = np.asarray(s0, dtype=float)
+        self.length = np.asarray(length, dtype=float)
+        self.width = np.asarray(width, dtype=float)
+        self.tilt = np.asarray(tilt, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.ratio = np.asarray(ratio, dtype=float)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+        if isinstance(n_rings, bool) or int(n_rings) != n_rings or n_rings < 2:
+            raise ValueError(
+                f"n_rings must be an integer >= 2, got {n_rings}."
+            )
+        self.n_rings = int(n_rings)
+
+    def __check_init__(self):
+        super().__check_init__()
+        positive = lambda x: x > 0.0  # noqa: E731
+        _check_shape_params(
+            type(self).__name__,
+            (
+                (
+                    "alpha",
+                    self.alpha,
+                    lambda x: (x > 0.0) & (x < 90.0),
+                    "in (0, 90)",
+                ),
+                ("s0", self.s0, lambda x: x >= 0.0, "non-negative"),
+                ("length", self.length, positive, "positive"),
+                ("width", self.width, positive, "positive"),
+                (
+                    "tilt",
+                    self.tilt,
+                    lambda x: np.abs(x) <= 90.0,
+                    "in [-90, 90]",
+                ),
+                ("ratio", self.ratio, positive, "positive"),
+            ),
+        )
+
+    def is_physical(self):
+        return (
+            super().is_physical()
+            & np.all((self.alpha > 0.0) & (self.alpha < 90.0))
+            & np.all(np.abs(self.tilt) <= 90.0)
+            & np.all(self.s0 >= 0.0)
+            & np.all(self.length > 0.0)
+            & np.all(self.width > 0.0)
+            & np.all(self.ratio > 0.0)
+        )
+
+    def rings(self):
+        """Radius, sky offset of the centre along the projected axis (mas)
+        and normalised weight of each ring."""
+        t = (np.arange(self.n_rings) + 0.5) / self.n_rings * 5.0
+        s = self.s0 + t * self.length
+        rho = s * np.sin(self.alpha * dtor)
+        along = (s * np.cos(self.alpha * dtor) - self.tip) * np.cos(
+            self.tilt * dtor
+        )
+        weight = rho * np.exp(-(s - self.s0) / self.length)
+        return rho, along, weight / np.sum(weight)
+
+    def _axes(self, uu, vv):
+        """Spatial frequencies along and across the projected axis."""
+        sin_pa, cos_pa = np.sin(self.pa * dtor), np.cos(self.pa * dtor)
+        return uu * sin_pa + vv * cos_pa, uu * cos_pa - vv * sin_pa
+
+    def _centred_cvis(self, uu, vv):
+        rho, along, weight = self.rings()
+        shape = np.shape(uu)
+        uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
+        q_par, q_perp = self._axes(uu, vv)
+        q = np.sqrt(
+            q_perp**2
+            + (self.ratio * q_par * np.sin(self.tilt * dtor)) ** 2
+            + 1e-30
+        )
+        sin_pa, cos_pa = np.sin(self.pa * dtor), np.cos(self.pa * dtor)
+        shift = offset_phase(uu, vv, along * sin_pa, along * cos_pa)
+        rings = j0(2.0 * np.pi * mas2rad * rho * q) * shift
+        envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
+        return np.reshape((rings @ weight) * envelope, shape)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        rho, along, weight = self.rings()
+        sin_pa, cos_pa = np.sin(self.pa * dtor), np.cos(self.pa * dtor)
+        squash = self.ratio * np.sin(self.tilt * dtor)
+        width = np.maximum(self.width, pixel_scale_mas)
+        # Points round each ring no further apart than a third of the blur,
+        # so a large thin ring is a continuous band, not a string of spots;
+        # they are added in blocks of 64 to keep memory small.
+        block = 64
+        circumference = concrete(
+            2.0 * np.pi * np.max(rho) * np.maximum(1.0, self.ratio)
+        )
+        blur = concrete(width)
+        if circumference is None or blur is None:
+            n_blocks = 4  # traced: a fixed sampling
+        else:
+            needed = float(np.max(circumference)) / (float(np.min(blur)) / 3.0)
+            n_blocks = int(min(max(onp.ceil(needed / block), 1), 128))
+        phi = np.linspace(0.0, 2.0 * np.pi, n_blocks * block, endpoint=False)
+        phi = phi.reshape(n_blocks, block)
+
+        def add_ring(image, ring):
+            radius, centre, w = ring
+
+            def add_block(image, angles):
+                par = centre + radius * np.sin(angles) * squash
+                perp = radius * np.cos(angles)
+                x = par * sin_pa + perp * cos_pa
+                y = par * cos_pa - perp * sin_pa
+                d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
+                spots = np.exp(-4.0 * np.log(2.0) * d2 / width**2)
+                return image + w * np.sum(spots, -1) / phi.size, None
+
+            image, _ = jax.lax.scan(add_block, image, phi)
+            return image, None
+
+        image, _ = jax.lax.scan(
+            add_ring, np.zeros(np.shape(xx)), (rho, along, weight)
+        )
+        return image
 
 
 class UniformDisk(Component):
