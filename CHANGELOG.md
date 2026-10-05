@@ -7,6 +7,14 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Changed
+
+- **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
+  `1 / n_rings**2` error scale (about 8e-4 in |V| at the default 32 for a
+  13.8 mas cone), and recommends doubling `n_rings` and checking Δχ² at the
+  best fit; well-measured data may need 64 or more. A convergence test was
+  added.
+
 ### Added
 
 - **Line and node spectra (Stage 6a, spectra).** `GaussianLine` and

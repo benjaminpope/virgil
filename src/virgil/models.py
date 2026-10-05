@@ -638,12 +638,29 @@ class TruncatedCone(Component):
     ``(s cos α - tip) cos β`` along the projected axis. The rings are
     weighted by the area element (∝ ρ) and the emissivity, and integrated
     over ``s`` from ``s0`` to ``s0 + 5 length`` (the last 0.7 % of the
-    flux is dropped) by the midpoint rule on ``n_rings`` rings. It is
-    accurate while both the spacing of the rings' centres on the sky,
-    ``5 length cos α cos β / n_rings``, and the step between their radii,
+    flux is dropped) by the midpoint rule on ``n_rings`` rings.
+
+    **Choosing ``n_rings``.** The quadrature is second order: once the rings
+    are fine enough to resolve the fringes, the error in the visibility falls
+    as ``1 / n_rings**2``, so each doubling of ``n_rings`` cuts it by about
+    4. It is fine enough when both the spacing of the rings' centres on the
+    sky, ``5 length cos α cos β / n_rings``, and the step between their radii,
     ``5 length sin α max(1, ratio) / n_rings``, are below half the shortest
-    fringe spacing: a cone seen down its axis (tilt 90°) has all its centres
-    together, and only the radius step matters.
+    fringe spacing (a cone seen down its axis, tilt 90°, has all its centres
+    together, and only the radius step matters). That criterion only says the
+    error is small, not that it is below your noise. For a cone with
+    ``length`` 13.8 mas and ``alpha`` 62.5°, over baselines out to 0.3
+    cycles/mas, ``max |V(n) - V(2n)|`` is about 6e-4 for ``n = 32``, 1.5e-4
+    for 64, 4e-5 for 128 and 1e-5 for 256, so the error of ``n_rings = 32``
+    itself is about 8e-4 in visibility amplitude. That is negligible for
+    noisy data but not for well-measured data: a high-S/N GRAVITY dataset
+    gained about 4 in log-likelihood per epoch going from 32 to 64 rings at
+    fixed parameters, and nearly 29 over three epochs from 24 to 64.
+
+    To check, refit or evaluate at the best fit with ``n_rings`` doubled and
+    compare χ² (or the log-likelihood): if |Δχ²| ≳ 1 per dataset (equivalently
+    |Δ log L| ≳ 0.5), use more rings, and double again until it is below that. Well-measured data (e.g.
+    GRAVITY) may need 64 or more. The cost is linear in ``n_rings``.
 
     Parameters
     ----------
@@ -675,7 +692,9 @@ class TruncatedCone(Component):
         Offset of the reference point in milliarcseconds, positive to the
         East and North.
     n_rings : int, optional
-        Quadrature rings along the walls, at least 2 (default 32).
+        Quadrature rings along the walls, at least 2 (default 32). The
+        visibility error falls as ``1 / n_rings**2``; check convergence by
+        doubling it (see above).
 
     Examples
     --------
