@@ -160,19 +160,24 @@ def test_binary_model_angular_matches_cartesian_at_east_position_angle():
 def _reference_logpdf(data_obj, prediction, reference):
     """Gaussian log density of ``prediction`` about ``reference``, by hand.
 
-    Visibilities are independent; closure phases enter as chords
-    2 sin(Δ/2), whitened as correlated groups (see test_closure).
+    Visibilities are independent; closure phases enter as sin Δ,
+    whitened as correlated groups (see test_closure), plus the periodic
+    penalty 2 sin²(Δ/2)/σ per closure phase, which has no normalisation.
     """
     _, errors = data_obj.flatten_data()
     n_vis = data_obj.vis.size
     resid = np.asarray(prediction) - np.asarray(reference)
     vis = jsp.stats.norm.logpdf(resid[:n_vis], scale=errors[:n_vis]).sum()
-    chord = 2.0 * np.sin(0.5 * resid[n_vis:])
-    whitened, phase_errors = data_obj.cp_noise.whiten(chord, errors[n_vis:])
+    sigma = errors[n_vis:]
+    whitened, phase_errors = data_obj.cp_noise.whiten(
+        np.sin(resid[n_vis:]), sigma
+    )
+    penalty = 2.0 * np.sin(0.5 * resid[n_vis:]) ** 2 / sigma
     return (
         vis
         + jsp.stats.norm.logpdf(whitened).sum()
         - np.sum(np.log(phase_errors))
+        - 0.5 * np.sum(penalty**2)
     )
 
 
