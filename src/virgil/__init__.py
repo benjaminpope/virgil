@@ -103,6 +103,7 @@ from .models import (  # noqa: E402
     SourceModel,
     SquareRootLimbDarkenedDisk,
     System,
+    TruncatedCone,
     UniformDisk,
     circular_support,
 )
@@ -164,6 +165,7 @@ __all__ = [
     "Sum",
     "System",
     "ThieleInnesOrbit",
+    "TruncatedCone",
     "UniformDisk",
     "absil_limits",
     "circular_support",

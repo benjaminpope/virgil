@@ -91,7 +91,9 @@ see that repository's `PLAN.md` for the boundary.
   `cast_tree`), with float32 as an option.
 - Every likelihood, grid, limit and fit uses one residual vector,
   `likelihood.whitened_residuals` (unprojected phases as the chord 2 sin(Δ/2)/σ,
-  a von Mises likelihood). Do not recompute χ² from `OIData.residuals`, which is for
+  a von Mises likelihood; correlated closure phases from four or more
+  telescopes use whitened sin Δ plus a periodic penalty 2 sin²(Δ/2)/σ, so
+  `OIData.n_residuals` exceeds `n_independent`). Do not recompute χ² from `OIData.residuals`, which is for
   display.
 - `OIData.model` calls `model_on_grid` when the data carry a `uv_grid` (a regular uv
   lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides

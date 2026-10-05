@@ -119,18 +119,22 @@ def _toon_loglike(model, data_obj, vis_error_rel, phi_error):
     errors_vis = np.hypot(errors[:n_vis], vis_error_rel * model_data[:n_vis])
     errors_phi = np.hypot(errors[n_vis:], phi_error)
     errors = np.concatenate([errors_vis, errors_phi])
-    # Closure-phase residuals Δ enter as the chord 2 sin(Δ/2), as in
-    # virgil.likelihood.whitened_residuals (the original used Δ). The
-    # original also treated the four closure phases of each frame and
-    # channel as independent, counting them 4/3 times; they are whitened
-    # as correlated groups instead (OIData.cp_noise; see test_closure).
+    # Closure-phase residuals Δ enter as sin Δ, plus the periodic penalty
+    # 2 sin²(Δ/2)/σ, as in virgil.likelihood.whitened_residuals (the
+    # original used Δ). The original also treated the four closure phases
+    # of each frame and channel as independent, counting them 4/3 times;
+    # they are whitened as correlated groups instead (OIData.cp_noise; see
+    # test_closure). The penalty rows add nothing to the normalisation.
     resid = model_data - data
-    chord = 2.0 * np.sin(0.5 * resid[n_vis:])
-    phase, phase_errors = data_obj.cp_noise.whiten(chord, errors_phi)
+    phase, phase_errors = data_obj.cp_noise.whiten(
+        np.sin(resid[n_vis:]), errors_phi
+    )
+    penalty = 2.0 * np.sin(0.5 * resid[n_vis:]) ** 2 / errors_phi
     whitened = np.concatenate([resid[:n_vis] / errors_vis, phase])
     errors = np.concatenate([errors_vis, phase_errors])
     return (
         -0.5 * np.sum(whitened**2)
+        - 0.5 * np.sum(penalty**2)
         - np.sum(np.log(errors))
         - whitened.size / 2 * np.log(2 * np.pi)
     )
