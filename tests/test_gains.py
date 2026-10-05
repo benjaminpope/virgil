@@ -116,7 +116,7 @@ def test_gain_terms_replace_the_default_widths():
         float(model_loglike(TRUTH, nominal, vis_gain_telescope=0.03)),
         rel=1e-5,
     )
-    with pytest.raises(ValueError, match="no gain modes"):
+    with pytest.raises(ValueError, match="no modes"):
         model_loglike(TRUTH, nominal, vis_gain_chromatic=0.01)
     with pytest.raises(ValueError, match="with_gains"):
         model_loglike(TRUTH, data, vis_gain_telescope=0.01)

@@ -8,9 +8,18 @@ with the noise terms `vis_gain_telescope`, `vis_gain_baseline`,
 `vis_gain_chromatic` and `vis_gain_modes` (e.g.
 `fit(..., noise={"vis_gain_telescope": dist.Uniform(0, 0.1)})`).
 
+Closure-phase offsets common to a frame's channels work the same way, on the
+whitened closure phases: add them with
+[`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets] and
+fit their widths with `phi_offset_baseline`, `phi_offset_triangle` and
+`phi_offset_modes`. They are off by default.
+
 ::: virgil.gains
     options:
       members:
         - GainModes
         - gain_modes
         - GAIN_GROUPS
+        - ClosureOffsets
+        - closure_offsets
+        - OFFSET_GROUPS
