@@ -54,6 +54,7 @@ nav:
   - Data Handling:
       - "Reading data: OIFITS and OIData": data_io.md
       - "AMIGO DISCO data": amigo_disco.md
+      - "Spectro-interferometric observables": spectro_observables.md
   - Binaries:
       - "Binary search": binary_search.md
       - "Contrast limits": contrast_limits.md
@@ -90,6 +91,7 @@ nav:
           - Functions: api/models/functions.md
       - Likelihood: api/likelihood.md
       - Gains: api/gains.md
+      - Observables: api/observables.md
       - Fitting: api/fitting.md
       - Imaging: api/imaging.md
       - Inference: api/inference.md
