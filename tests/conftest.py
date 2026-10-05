@@ -36,6 +36,14 @@ def pytest_configure(config):
         "this test validates and the roots of trust it checks them against "
         "(see virgil-validation's docs/design.md)",
     )
+    # The heaviest, compile-dominated tests. Pull requests run
+    # `-m "not slow"` to keep CI fast; pushes to main, the weekly schedule
+    # and manual dispatches run everything, so no coverage is lost.
+    config.addinivalue_line(
+        "markers",
+        "slow: heaviest, compile-dominated tests; skipped on pull requests "
+        "(-m 'not slow') but run on main and the weekly schedule",
+    )
 
 
 def pytest_collection_modifyitems(config, items):

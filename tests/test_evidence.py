@@ -179,7 +179,10 @@ def test_error_scale_solves_mackays_fixed_point():
     lam = onp.linalg.eigvalsh(jac.T @ jac).clip(0.0)
     beta = 1.0 / scale**2
     gamma = onp.sum(beta * lam / (1.0 + beta * lam))
-    assert scale**2 == pytest.approx((r @ r) / (r.size - gamma), rel=1e-6)
+    # N is the number of independent data, not of residuals (correlated
+    # closure phases add penalty residuals that are not observations).
+    n_data = noisy.n_independent
+    assert scale**2 == pytest.approx((r @ r) / (n_data - gamma), rel=1e-6)
 
 
 def test_evidence_helpers_reject_fitted_noise_and_model_lists():

@@ -10,9 +10,10 @@ Every likelihood, grid, limit and fit goes through one residual vector,
 residuals divided by their uncertainties, with unprojected phases measured
 as a chord, 2 sin(Δ/2), so that the likelihood is smooth where phases
 wrap at ±π. Closure phases from four or more telescopes are correlated:
-their independent combinations are whitened together, after each residual
-is wrapped into [-π, π), so that likelihood is unchanged by 2π but jumps
-where a residual crosses ±π (a 180° misfit).
+their independent combinations are whitened together, using the sine
+sin Δ (not the chord) of each residual, with a periodic penalty
+2 sin²(Δ/2) / σ added per closure phase. Both terms repeat every 2π and
+are smooth, so the likelihood is continuous everywhere.
 """
 
 import jax
@@ -40,14 +41,25 @@ def _whiten(data_obj, prediction, reference, errors):
       (kernel or DISCO) phases are linear combinations that are not
       wrapped, and are left as Δ.
     - Closure phases from four or more telescopes are correlated, and only
-      some are independent. Their residuals are wrapped into [-π, π),
-      taken as chords, mapped to the independent combinations and
-      whitened with their covariance (``OIData.cp_noise``), so there are
-      fewer of them than closure phases. ``errors_out`` then holds
-      effective errors for those rows, whose log-sum is ½ log of the
-      covariance's pseudo-determinant. This keeps the Gaussian
-      normaliser: a correlated von Mises density has no closed-form
-      normaliser, and the Gaussian is its limit for σ ≪ 1.
+      some are independent. A chord changes sign under Δ → Δ + 2π, which
+      is harmless in a single square but not in correlated cross terms
+      (wrapping the residuals first just moves the discontinuity to
+      ±π). So the sines s = sin Δ, which are smooth and 2π-periodic, are
+      mapped to the independent combinations and whitened with the
+      covariance (``OIData.cp_noise``): ``k`` residuals, fewer than the
+      closure phases. Then, for each closure phase, a periodic penalty
+      q/σ = 2 sin²(Δ/2)/σ = (1 - cos Δ)/σ is appended, uncorrelated, so
+      there are ``n_phase`` more residuals (``OIData.n_residuals`` in all).
+      Near Δ = 0, sin Δ = Δ - Δ³/6 and q/σ = Δ²/(2σ), so the χ² is the
+      correlated Gaussian ΔᵀC⁻¹Δ to O(Δ³), with the penalty adding only
+      O(Δ⁴/σ²). At Δ = π the sines vanish, which alone would be a false
+      minimum; the penalty there is (2/σ)², which removes it. The
+      penalty rows carry the effective error 1/√(2π), so that they add
+      nothing to the normalisation (their ``-log σ - ½ log 2π`` is zero);
+      ``errors_out`` for the whitened rows holds effective errors whose
+      log-sum is ½ log of the covariance's pseudo-determinant, keeping the
+      Gaussian normaliser (a correlated von Mises density has no
+      closed-form one, and the Gaussian is its limit for σ ≪ 1).
     """
     resid = np.asarray(prediction) - np.asarray(reference)
     errors = np.asarray(errors)
@@ -60,20 +72,28 @@ def _whiten(data_obj, prediction, reference, errors):
         phase_errors = errors[n_vis:]
         von_mises = np.sqrt(2.0 * np.pi) * i0e(1.0 / phase_errors**2)
         return whitened, np.concatenate([errors[:n_vis], von_mises])
-    # Correlated closure phases mix their residuals, so each sign matters:
-    # wrap each residual into [-π, π) before taking its chord, so that a
-    # phase shifted by 2π gives the same likelihood. The likelihood then
-    # jumps only where a residual crosses ±π, a 180° misfit.
-    # (Subtracting whole turns, rather than mod(Δ + π) - π, leaves a
-    # residual already inside the interval exactly as it was, which keeps
-    # small residuals precise in float32.)
+    # Correlated closure phases mix their residuals, so each sign matters,
+    # and a chord's sign flips under 2π. Whiten the (smooth, periodic) sines
+    # and append the periodic penalty 2 sin²(Δ/2)/σ = (1 - cos Δ)/σ, which
+    # removes the false minimum at Δ = π.
     phase = resid[n_vis:]
-    wrapped = phase - 2.0 * np.pi * np.round(phase / (2.0 * np.pi))
-    chord = 2.0 * np.sin(0.5 * wrapped)
-    phase, phase_errors = data_obj.cp_noise.whiten(chord, errors[n_vis:])
+    phase_errors = errors[n_vis:]
+    whitened_phase, whitened_errors = data_obj.cp_noise.whiten(
+        np.sin(phase), phase_errors
+    )
+    penalty = 2.0 * np.sin(0.5 * phase) ** 2 / phase_errors
+    penalty_errors = np.full(penalty.shape, 1.0 / np.sqrt(2.0 * np.pi))
     return (
-        np.concatenate([resid[:n_vis] / errors[:n_vis], phase]),
-        np.concatenate([errors[:n_vis], phase_errors]),
+        np.concatenate(
+            [resid[:n_vis] / errors[:n_vis], whitened_phase, penalty]
+        ),
+        np.concatenate(
+            [
+                errors[:n_vis],
+                whitened_errors,
+                penalty_errors.astype(errors.dtype),
+            ]
+        ),
     )
 
 
@@ -225,11 +245,14 @@ def whitened_residuals(model_object, data_obj, **noise):
     normalised exactly on the circle.
 
     Closure phases from four or more telescopes are the exception: they are
-    correlated, so their chords (of residuals first wrapped into [-π, π))
-    are whitened together and replaced by their independent combinations.
-    That likelihood is a Gaussian approximation to a correlated circular
-    one: it is unchanged by 2π, but jumps where a residual crosses ±π, a
-    180° misfit, rather than being smooth there.
+    correlated, so the sines sin Δ of the residuals are whitened together
+    and replaced by their independent combinations, and a periodic penalty
+    2 sin²(Δ/2)/σ per closure phase is appended (chords would flip sign at
+    Δ → Δ + 2π, making correlated combinations discontinuous). The χ² is
+    continuous and smooth everywhere, equals the correlated Gaussian
+    ΔᵀC⁻¹Δ to O(Δ³) for small residuals, and has no false minimum at
+    Δ = π. There are then ``n_independent`` + (number of closure phases)
+    residuals, namely ``OIData.n_residuals``.
 
     Parameters
     ----------
@@ -250,7 +273,9 @@ def whitened_residuals(model_object, data_obj, **noise):
         them), in the order of
         [`flatten_data`][virgil.oidata.OIData.flatten_data]; correlated
         closure phases are replaced by their whitened independent
-        combinations.
+        combinations, followed by one periodic penalty residual per
+        closure phase, so the length is
+        [`n_residuals`][virgil.oidata.OIData.n_residuals].
     """
     return _whitened_and_errors(model_object, data_obj, noise)[0]
 
@@ -267,7 +292,8 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
     on the circle when σ is large (e.g. a fitted ``phi_error``).
     Correlated closure phases (``OIData.cp_noise``) keep the Gaussian
     normalisation, their small-σ limit, since a correlated circular
-    density has no closed-form normaliser.
+    density has no closed-form normaliser; their periodic penalty
+    residuals add nothing to it.
 
     Parameters
     ----------

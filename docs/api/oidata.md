@@ -18,15 +18,18 @@ Likelihoods and fits use
 ordinary unprojected phases, chord residuals `2 sin(Δ/2)` give a squared
 contribution that is smooth across phase wraps. Correlated closure phases are
 the exception: their residuals are wrapped into `[-π, π)`, combined, and
-whitened together, so the likelihood is unchanged by 2π but jumps where a
-residual crosses ±π.
+whitened together as sines sin Δ, with a periodic penalty
+2 sin²(Δ/2)/σ per closure phase, so the likelihood is continuous
+everywhere (the correlated Gaussian for small residuals, with no false
+minimum at Δ = π).
 
 Closure phases from four or more telescopes are correlated: the triangles
 of one frame and channel share baselines, and only some of them are
 independent (three of four, for four telescopes). The likelihood keeps only
 the independent combinations and whitens them with their covariance, built
 from independent noise on the baseline phases. `n_independent` counts the
-observables that remain.
+observables that remain (the degrees of freedom); `n_residuals` is the
+length of `whitened_residuals`, which adds the penalty residuals.
 
 The bundled `data/calibrated_visibility.npy` fixture is synthetic; see the
 AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
@@ -42,6 +45,7 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
         - flatten_data
         - has_phases
         - n_independent
+        - n_residuals
         - standardize_model
         - to_vis
         - to_phases

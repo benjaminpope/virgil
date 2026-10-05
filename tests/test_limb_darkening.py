@@ -111,6 +111,7 @@ def test_uniform_limit_is_uniform_disk():
             )
 
 
+@pytest.mark.slow
 def test_matches_harmonix_for_unspotted_stars():
     pytest.importorskip("harmonix")
     from harmonix.harmonix import Harmonix

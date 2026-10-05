@@ -151,6 +151,7 @@ def test_equator_on_shape_is_perpendicular_to_pole():
     assert w_ns > 1.03 * w_ew  # pole East: equator runs North-South
 
 
+@pytest.mark.slow
 def test_offsets_shift_photocentre():
     diam, fov = 2.0, 16.0
     base = GravityDarkenedStar(diam, 0.9, 45.0, 0.0)
@@ -448,6 +449,7 @@ def test_pole_on_disk_is_smooth():
     assert values.std() / values.mean() < 0.01
 
 
+@pytest.mark.slow
 def test_image_works_in_float64_and_fine_grid():
     star = GravityDarkenedStar(2.0, 0.7, 60.0, 10.0, n_lat=64)
     image = star.render(128, 3.0)
