@@ -630,8 +630,8 @@ class TruncatedCone(Component):
     fixed parameters, and nearly 29 over three epochs from 24 to 64.
 
     To check, refit or evaluate at the best fit with ``n_rings`` doubled and
-    compare χ² (or the log-likelihood): if Δχ² ≳ 1 per dataset, use more
-    rings, and double again until it is below that. Well-measured data (e.g.
+    compare χ² (or the log-likelihood): if |Δχ²| ≳ 1 per dataset (equivalently
+    |Δ log L| ≳ 0.5), use more rings, and double again until it is below that. Well-measured data (e.g.
     GRAVITY) may need 64 or more. The cost is linear in ``n_rings``.
 
     Parameters
