@@ -106,3 +106,27 @@ def test_standardised_posterior_is_the_prior_without_data():
     mean, cov = posterior(np.zeros(6), np.zeros((6, 3)))
     onp.testing.assert_allclose(mean, 0.0)
     onp.testing.assert_allclose(cov, onp.eye(3))
+
+
+@pytest.mark.parametrize("method", ["cholesky", "rank_one"])
+def test_marginal_in_float32_with_a_broad_zero_point_prior(method):
+    # Default JAX precision, with an RV-like design: instrument indicators
+    # (integers), km/s errors and the broad 1000 km/s zero-point prior.
+    rng = onp.random.default_rng(3)
+    inst = onp.repeat(onp.arange(3), 15)
+    design = (inst[:, None] == onp.arange(3)[None, :]).astype(int)
+    sigma = rng.uniform(0.5, 2.0, inst.size)
+    resid = rng.normal(size=inst.size) + onp.array([20.0, -35.0, 5.0])[inst]
+    lm = LinearMarginal(design, 0.5, prior_sd=1000.0, method=method)
+    assert lm.prior_mean.dtype == np.result_type(float)  # not truncated
+    u, log_norm = lm.whiten(resid, sigma)
+    cov = 1000.0**2 * onp.eye(3)
+    chi2, logdet, _ = _dense(
+        design.astype(float), sigma, onp.full(3, 0.5), cov, resid
+    )
+    onp.testing.assert_allclose(float(u @ u), chi2, rtol=1e-3)
+    onp.testing.assert_allclose(float(log_norm), 0.5 * logdet, rtol=1e-4)
+    mean, _ = lm.posterior(resid, sigma)
+    onp.testing.assert_allclose(
+        onp.asarray(mean), [20.0, -35.0, 5.0], atol=1.0
+    )

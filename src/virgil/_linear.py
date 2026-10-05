@@ -229,6 +229,9 @@ class LinearMarginal(eqx.Module):
         method="cholesky",
     ):
         design = np.asarray(design)
+        if not np.issubdtype(design.dtype, np.inexact):
+            # An integer indicator design would truncate fractional priors.
+            design = design.astype(np.result_type(float))
         if design.ndim != 2:
             raise ValueError("design must be (n, k).")
         k = design.shape[1]
