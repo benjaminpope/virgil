@@ -9,6 +9,18 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`clean(base_priors=...)`** fits named parameters of the base (e.g. a
+  companion's position) together with the components' fluxes at every major
+  cycle. CLEAN also ends with a final major cycle when it stops at the target
+  or at `max_iterations`, so its fluxes are refitted even when the data start
+  close to the target and no cycle has run.
+
+- **`fit(lbfgs_memory=50)`.** L-BFGS now keeps 50 past steps (optax's default
+  is 10). On regularised images, 10 stopped short of the optimum at many
+  weights; 50 reached lower losses (lower χ² and lower penalty together) and
+  converged in 2–3× fewer steps for StarletL1, at a higher cost per step.
+  L-BFGS fits therefore change slightly from earlier versions.
+
 - **Isotropic-orientation priors.** `virgil.priors` has
   `IsotropicInclination(low=0, high=180)` (degrees, density ∝ sin i, so cos i
   is uniform; use `(0, 90)` when only |cos i| is identifiable) and
@@ -185,6 +197,17 @@ anything before 1.0 may change between minor versions.
   added.
 
 ### Fixed
+
+- **Orbits: GM☉ in `total_mass`, Ω range, face-on inclination (F14–F16).**
+  `total_mass` and `distance_pc` now use Kepler's third law with the IAU 2015
+  nominal GM☉, au and the 86400 s day instead of a³/P² with P in Julian years
+  (masses were 3.8e-5 low). `ThieleInnesOrbit.to_kepler` no longer returns
+  Ω = 180° exactly: Ω is in [0°, 180°) with ω paired to keep the sky orbit.
+  `StateVectorOrbit.to_kepler` computes i, Ω and ω by atan2 from the orbit
+  normal, so nearly face-on orbits keep their inclination to float64
+  precision. `orientation_priors(..., inclination=True)` also returns
+  `IsotropicInclination` under `"inc"`: the full Haar orientation prior in
+  one call (default off, so existing callers are unchanged).
 
 - **Components build under `jax.jit` from concrete shape parameters.**
   `TruncatedCone` validated `tilt` with a `jax.numpy` call on the concrete
