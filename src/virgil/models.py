@@ -762,7 +762,7 @@ class TruncatedCone(Component):
                 (
                     "tilt",
                     self.tilt,
-                    lambda x: np.abs(x) <= 90.0,
+                    lambda x: onp.abs(x) <= 90.0,
                     "in [-90, 90]",
                 ),
                 ("ratio", self.ratio, positive, "positive"),
