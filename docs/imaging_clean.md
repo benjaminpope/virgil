@@ -35,6 +35,7 @@ from virgil.fitting import fit
 from virgil.imaging import (
     beam,
     clean,
+    convolve_beam,
     dirty_image,
     field_of_view,
     image_priors,
@@ -42,7 +43,11 @@ from virgil.imaging import (
 from virgil.likelihood import whitened_residuals
 from virgil.models import Image, PointSource, System, circular_support
 from virgil.oidata import OIData
-from virgil.plotting import plot_model, plot_residual_map
+from virgil.plotting import (
+    plot_data_model_correlation,
+    plot_model,
+    plot_residual_map,
+)
 from virgil.scenes import gaussian_blob
 
 # A star with a 2% companion and a 1% knot, both on pixel centres.
@@ -150,6 +155,47 @@ plt.show()
 
 ![imaging_clean output 8.1](generated/imaging_clean_cell008_out01.png)
 
+How close is the restored image to the truth? Here both are convolved with the beam and scaled to their total fluxes, relative to the star, and the right panel is their signed difference. The CLEAN image is a point estimate with no uncertainties, so these are plain differences, not z-scores. They peak at about 6% of the brightest pixel of the truth, at the sources themselves, where CLEAN's flux is distributed a little differently among neighbouring pixels.
+
+```python
+# render() gives unit-flux images: scale each by its flux relative to the star.
+truth_smooth = 0.03 * convolve_beam(faint.render(npix, fov), scale, resolution)
+clean_smooth = float(components.sum()) * convolve_beam(
+    result.model.clean.render(npix, fov), scale, resolution
+)
+fig, axes = plt.subplots(1, 3, figsize=(15, 4.3))
+plot_model(faint, fov, npix, ax=axes[0], beam=resolution, convolve=True, title="truth ⊛ beam")
+plot_model(
+    result.model.clean, fov, npix, ax=axes[1], beam=resolution, convolve=True,
+    title="CLEAN, restored",
+)
+plot_residual_map(clean_smooth - truth_smooth, fov, ax=axes[2], title="CLEAN − truth")
+plt.tight_layout()
+plt.show()
+```
+
+![imaging_clean output 10.1](generated/imaging_clean_cell010_out01.png)
+
+An image that looks right should also fit the data. The correlation plot compares the CLEAN model's predictions with the data, with the data's error bars and a one-to-one line. AMI DISCO observables are projections that mix amplitude and phase information, so they appear in a single panel. The points scatter evenly about the line across the full range: the components explain the data.
+
+```python
+n_vis = data.vis.size
+prediction = data.model(result.model)
+summary = {
+    "CLEAN": {
+        "vis_mean": prediction[:n_vis],
+        "vis_std": 0 * prediction[:n_vis],
+        "phi_mean": prediction[n_vis:],
+        "phi_std": 0 * prediction[n_vis:],
+    }
+}
+fig, (ax, _) = plot_data_model_correlation(data, summary, figsize=(5, 4.5))
+ax.set_title("CLEAN model against the simulated DISCOs")
+plt.show()
+```
+
+![imaging_clean output 12.1](generated/imaging_clean_cell012_out01.png)
+
 ## Refining the fluxes
 
 CLEAN stops as soon as χ² per point reaches one, and each step adds only a fraction of the flux the data ask for, so the total is usually a little low. A source between two pixel centres is also shared between them. Both are easy to fix: the model is a `System` with an `Image`, so `fit` can refit the component fluxes on their support. That is a small, well-posed problem: a few pixels, not the whole grid. It needs no regulariser.
@@ -200,7 +246,7 @@ gain 0.1: 85 iterations, 13 components, flux 0.0297, stopped (target)
 gain 0.5: 1000 iterations, 22 components, flux 0.0301, stopped (max_iterations)
 ```
 
-![imaging_clean output 12.4](generated/imaging_clean_cell012_out04.png)
+![imaging_clean output 16.4](generated/imaging_clean_cell016_out04.png)
 
 ## Closure phases and V² from a long-baseline interferometer
 
@@ -257,7 +303,7 @@ plt.show()
 stopped (target) after 54 iterations at χ²/N = 0.997: 30 components with flux 0.0623 (truth 0.070)
 ```
 
-![imaging_clean output 14.2](generated/imaging_clean_cell014_out02.png)
+![imaging_clean output 18.2](generated/imaging_clean_cell018_out02.png)
 
 ## Summary
 
