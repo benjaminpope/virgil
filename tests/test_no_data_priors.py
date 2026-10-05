@@ -200,15 +200,6 @@ def test_gauss_newton_mass_without_information_is_the_prior_covariance():
     assert onp.allclose(covariance, expected, rtol=1e-5)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "gauss_newton_mass(data=()) raises: _gauss_newton_covariance "
-        "concatenates the data residuals, an empty list, although fit "
-        "documents data=() as allowed"
-    ),
-    raises=ValueError,
-)
 def test_gauss_newton_mass_with_empty_data_is_the_prior_covariance():
     template = BinaryModelCartesian(6.0, -4.0, 0.3)
     mass = gauss_newton_mass(
@@ -308,18 +299,23 @@ def test_gp_latents_are_standard_normal_and_imply_the_stated_kernel():
     priors = image_priors(scene)
     assert list(priors) == ["log_brightness.latent"]
     model = numpyro_model(scene, priors, ())
-    samples = _nuts(model, num_samples=3000, num_warmup=500)
+    samples = _nuts(model, num_samples=6000, num_warmup=500)
     latent = onp.asarray(samples["log_brightness.latent"])
-    assert latent.shape == (3000, *SHAPE)
+    assert latent.shape == (6000, *SHAPE)
 
     flat = latent.reshape(len(latent), -1)
     normal = dist.Normal(0.0, 1.0)
     for j in range(flat.shape[1]):
         result = stats.kstest(_thinned(flat[:, j]), lambda x: _cdf(normal, x))
         assert result.pvalue > KS_FLOOR, (j, result)
-    # Independent coefficients: the sample correlation is noise of ~1/sqrt(N).
+    # Monte Carlo errors scale with the effective number of independent
+    # draws (NUTS draws are autocorrelated; capped at N if antithetic).
+    n_eff = min(
+        float(onp.min(effective_sample_size(latent[None]))), len(latent)
+    )
+    # Independent coefficients: sample correlations are noise of 1/sqrt(n_eff).
     corr = onp.corrcoef(flat.T) - onp.eye(flat.shape[1])
-    assert onp.abs(corr).max() < 6 / onp.sqrt(len(flat))
+    assert onp.abs(corr).max() < 6 / onp.sqrt(n_eff)
 
     eta = jax.vmap(lambda z: field.set("latent", z).evaluate(PIXEL_MAS))(
         jnp.asarray(latent)
@@ -327,15 +323,23 @@ def test_gp_latents_are_standard_normal_and_imply_the_stated_kernel():
     eta = onp.asarray(eta).reshape(len(latent), -1)
     expected = _kernel()
     sample_cov = onp.cov(eta.T)
-    # Every kernel entry to within the sampling error of 3000 draws.
-    scale = onp.sqrt(onp.outer(onp.diag(expected), onp.diag(expected)))
-    assert onp.abs(sample_cov - expected).max() < 0.1 * scale.max()
-    assert onp.linalg.norm(sample_cov - expected) < 0.06 * onp.linalg.norm(
-        expected
-    )
-    # The field's variance averaged over pixels is sigma².
-    assert onp.trace(sample_cov) / sample_cov.shape[0] == pytest.approx(
-        SIGMA**2, rel=0.05
+    # For Gaussian draws the sample covariance S of n independent draws has
+    # Var(S_ij) = (Σ_ij² + Σ_ii Σ_jj) / n, so the tolerances below are
+    # multiples of these standard errors, not fixed fractions: a fixed 6% of
+    # ||Σ|| is under 2σ of the Frobenius error at a few thousand draws.
+    diag = onp.diag(expected)
+    var_ij = (expected**2 + onp.outer(diag, diag)) / n_eff
+    # Every entry within 5σ (136 entries, so a 4σ bound could fail by chance).
+    assert (onp.abs(sample_cov - expected) < 5 * onp.sqrt(var_ij)).all()
+    # E||S - Σ||_F² = Σ_ij Var(S_ij); 3x its root is a generous but still
+    # informative bound on the Frobenius error.
+    frob = onp.linalg.norm(sample_cov - expected)
+    assert frob < 3 * onp.sqrt(var_ij.sum())
+    # The field's variance averaged over pixels is sigma²: Var(tr S) =
+    # 2 ||Σ||_F² / n.
+    se_mean_var = onp.sqrt(2 * (expected**2).sum() / n_eff) / len(expected)
+    assert onp.trace(sample_cov) / len(expected) == pytest.approx(
+        SIGMA**2, abs=5 * se_mean_var
     )
 
 
@@ -349,11 +353,19 @@ def test_gp_kernel_helper_is_the_documented_normalisation():
 # 5, 8. RV zero points and jitter
 # ---------------------------------------------------------------------------
 
-ORBIT = KeplerOrbit(400.0, 30.0, 0.4, 60.0, 40.0, 110.0, 20.0, t_ref=60500.0)
 
+@pytest.fixture
+def rv_params():
+    """Maps fitted values to an RV model; orbits need the [orbits] extra."""
+    pytest.importorskip("jaxoplanet")
+    orbit = KeplerOrbit(
+        400.0, 30.0, 0.4, 60.0, 40.0, 110.0, 20.0, t_ref=60500.0
+    )
 
-def _rv_params(values):
-    return ORBIT, 0.5, 0.0, 50.0
+    def params(values):
+        return orbit, 0.5, 0.0, 50.0
+
+    return params
 
 
 def _empty_rv():
@@ -367,18 +379,16 @@ def _uninformative_rv(instrument=None):
     )
 
 
-def test_rv_zero_point_with_no_data_is_the_prior():
-    term = _empty_rv().term(_rv_params, marginalise_offsets=(12.0, 3.0))
+def test_rv_zero_point_with_no_data_is_the_prior(rv_params):
+    term = _empty_rv().term(rv_params, marginalise_offsets=(12.0, 3.0))
     mean, cov = term.posterior({})
     assert onp.allclose(mean, [12.0], atol=1e-10)
     assert onp.allclose(cov, [[9.0]], atol=1e-10)
 
 
-def test_rv_zero_points_without_information_are_the_priors():
+def test_rv_zero_points_without_information_are_the_priors(rv_params):
     data = _uninformative_rv(instrument=["a", "b", "a", "b"])
-    term = data.term(
-        _rv_params, marginalise_offsets=([10.0, -5.0], [3.0, 7.0])
-    )
+    term = data.term(rv_params, marginalise_offsets=([10.0, -5.0], [3.0, 7.0]))
     mean, cov = term.posterior({})
     assert onp.allclose(mean, [10.0, -5.0], atol=1e-6)
     assert onp.allclose(cov, onp.diag([9.0, 49.0]), atol=1e-6)
@@ -388,9 +398,9 @@ JITTER = dist.LogUniform(0.1, 20.0)
 
 
 @pytest.mark.parametrize("empty", [True, False])
-def test_rv_jitter_with_no_data_is_its_prior(empty):
+def test_rv_jitter_with_no_data_is_its_prior(empty, rv_params):
     data = _empty_rv() if empty else _uninformative_rv()
-    term = data.term(_rv_params, jitter="jitter")
+    term = data.term(rv_params, jitter="jitter")
     model = numpyro_model(
         _function_model, {"jitter": JITTER}, (), likelihoods=[term]
     )
@@ -398,10 +408,10 @@ def test_rv_jitter_with_no_data_is_its_prior(empty):
     _assert_marginal(samples, "jitter", JITTER)
 
 
-def test_rv_jitter_with_marginalised_zero_points_is_its_prior():
+def test_rv_jitter_with_marginalised_zero_points_is_its_prior(rv_params):
     data = _uninformative_rv(instrument=["a", "b", "a", "b"])
     term = data.term(
-        _rv_params,
+        rv_params,
         jitter="jitter",
         marginalise_offsets=([0.0, 0.0], [5.0, 5.0]),
     )
