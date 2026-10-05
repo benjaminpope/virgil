@@ -291,56 +291,57 @@ def _kernel(order=2):
     return synthesis @ onp.diag(spectrum.ravel()) @ synthesis.T
 
 
-def test_gp_latents_are_standard_normal_and_imply_the_stated_kernel():
-    field = GaussianField(
+def _field():
+    return GaussianField(
         onp.zeros(SHAPE), sigma=SIGMA, length_mas=LENGTH, order=2
     )
-    scene = Image(field, pixel_scale_mas=PIXEL_MAS, flux=0.3)
+
+
+def test_gp_field_covariance_is_the_stated_kernel_exactly():
+    """The field is linear in standard-normal latents: cov = J Jᵀ, exactly.
+
+    No Monte Carlo: J = ∂field/∂latent, compared with the kernel built
+    independently from the documented spectrum and a hand-written DCT.
+    """
+    field = _field()
+
+    def pixels(z):
+        return (
+            field.set("latent", z.reshape(SHAPE)).evaluate(PIXEL_MAS).ravel()
+        )
+
+    n = SHAPE[0] * SHAPE[1]
+    jac = onp.asarray(jax.jacfwd(pixels)(jnp.zeros(n)), float)
+    expected = _kernel()
+    tol = 1e-9 if jax.config.jax_enable_x64 else 1e-5
+    assert (
+        onp.abs(jac @ jac.T - expected).max() < tol * onp.abs(expected).max()
+    )
+
+
+def test_gp_latents_sample_standard_normal():
+    """The only Monte Carlo part: each latent's marginal is N(0, 1)."""
+    scene = Image(_field(), pixel_scale_mas=PIXEL_MAS, flux=0.3)
     priors = image_priors(scene)
     assert list(priors) == ["log_brightness.latent"]
-    model = numpyro_model(scene, priors, ())
-    samples = _nuts(model, num_samples=6000, num_warmup=500)
+    samples = _nuts(
+        numpyro_model(scene, priors, ()), num_samples=4000, num_warmup=500
+    )
     latent = onp.asarray(samples["log_brightness.latent"])
-    assert latent.shape == (6000, *SHAPE)
-
+    assert latent.shape == (4000, *SHAPE)
     flat = latent.reshape(len(latent), -1)
     normal = dist.Normal(0.0, 1.0)
     for j in range(flat.shape[1]):
-        result = stats.kstest(_thinned(flat[:, j]), lambda x: _cdf(normal, x))
-        assert result.pvalue > KS_FLOOR, (j, result)
-    # Monte Carlo errors scale with the effective number of independent
-    # draws (NUTS draws are autocorrelated; capped at N if antithetic).
-    n_eff = min(
-        float(onp.min(effective_sample_size(latent[None]))), len(latent)
-    )
-    # Independent coefficients: sample correlations are noise of 1/sqrt(n_eff).
-    corr = onp.corrcoef(flat.T) - onp.eye(flat.shape[1])
-    assert onp.abs(corr).max() < 6 / onp.sqrt(n_eff)
-
-    eta = jax.vmap(lambda z: field.set("latent", z).evaluate(PIXEL_MAS))(
-        jnp.asarray(latent)
-    )
-    eta = onp.asarray(eta).reshape(len(latent), -1)
-    expected = _kernel()
-    sample_cov = onp.cov(eta.T)
-    # For Gaussian draws the sample covariance S of n independent draws has
-    # Var(S_ij) = (Σ_ij² + Σ_ii Σ_jj) / n, so the tolerances below are
-    # multiples of these standard errors, not fixed fractions: a fixed 6% of
-    # ||Σ|| is under 2σ of the Frobenius error at a few thousand draws.
-    diag = onp.diag(expected)
-    var_ij = (expected**2 + onp.outer(diag, diag)) / n_eff
-    # Every entry within 5σ (136 entries, so a 4σ bound could fail by chance).
-    assert (onp.abs(sample_cov - expected) < 5 * onp.sqrt(var_ij)).all()
-    # E||S - Σ||_F² = Σ_ij Var(S_ij); 3x its root is a generous but still
-    # informative bound on the Frobenius error.
-    frob = onp.linalg.norm(sample_cov - expected)
-    assert frob < 3 * onp.sqrt(var_ij.sum())
-    # The field's variance averaged over pixels is sigma²: Var(tr S) =
-    # 2 ||Σ||_F² / n.
-    se_mean_var = onp.sqrt(2 * (expected**2).sum() / n_eff) / len(expected)
-    assert onp.trace(sample_cov) / len(expected) == pytest.approx(
-        SIGMA**2, abs=5 * se_mean_var
-    )
+        x = flat[:, j]
+        result = stats.kstest(_thinned(x), lambda t: _cdf(normal, t))
+        # Bonferroni over the latents: 16 tests share the family floor.
+        assert result.pvalue > KS_FLOOR / flat.shape[1], (j, result)
+        # Mean and variance within 5 standard errors, each with the ESS of
+        # the quantity itself (that of x**2 differs from that of x).
+        ess_x = float(effective_sample_size(x[None]))
+        ess_x2 = float(effective_sample_size((x**2)[None]))
+        assert abs(x.mean()) < 5 / onp.sqrt(min(ess_x, len(x)))
+        assert abs(x.var() - 1.0) < 5 * onp.sqrt(2 / min(ess_x2, len(x)))
 
 
 def test_gp_kernel_helper_is_the_documented_normalisation():
@@ -427,7 +428,7 @@ def test_rv_jitter_with_marginalised_zero_points_is_its_prior(rv_params):
 # ---------------------------------------------------------------------------
 
 
-def _flux_block(values, errors, width):
+def _flux_block(values, errors, scale):
     wavel = onp.linspace(2.0e-6, 2.4e-6, 5)
     return FluxSpectrum.build(
         "flux",
@@ -437,28 +438,8 @@ def _flux_block(values, errors, width):
         row=onp.zeros(5),
         frame=onp.zeros(5),
         station=onp.zeros(5),
-        width=width,
+        scale=scale,
     )
-
-
-@pytest.mark.parametrize("width", [1.0, 0.3])
-def test_flux_scale_with_no_information_is_its_prior(width):
-    """The mechanism: errors → ∞ leaves the prior N(μ, (width μ)²).
-
-    Limitation (a breach of the no-data rule, to be fixed): ``build`` centres
-    μ on the data's own mean level, so the prior is not independent of the
-    data. Here μ is set by hand to a fixed value to test the mechanism, and
-    the first assertion documents the data dependence.
-    """
-    import equinox as eqx
-
-    block = _flux_block(onp.full(5, 7.0), onp.full(5, HUGE), width)
-    assert float(block.mu[0]) == pytest.approx(7.0)  # centred on the data
-    block = eqx.tree_at(lambda b: b.mu, block, onp.array([2.0]))
-    prediction = block.predict(_PointTemplate(), None)
-    mean, cov = block.posterior(prediction, block.values, block.errors)
-    assert float(mean[0, 0]) == pytest.approx(2.0, rel=1e-5)
-    assert float(cov[0, 0, 0]) == pytest.approx((width * 2.0) ** 2, rel=1e-5)
 
 
 class _PointTemplate:
@@ -468,22 +449,27 @@ class _PointTemplate:
         return jnp.ones_like(wavel)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FluxSpectrum.build centres the grey-scale prior on the data's own "
-        "weighted mean (mu), so with no information the posterior mean is "
-        "whatever the (uninformative) data values are, not a fixed prior"
-    ),
-)
+def _flux_posterior(level, scale):
+    block = _flux_block(onp.full(5, level), onp.full(5, HUGE), scale)
+    prediction = block.predict(_PointTemplate(), None)
+    return block.posterior(prediction, block.values, block.errors)
+
+
+@pytest.mark.parametrize("sd", [2.0, 0.6])
+def test_flux_scale_with_no_information_is_its_prior(sd):
+    """Errors -> infinity leaves the stated prior N(mean, sd²) on the scale."""
+    mean, cov = _flux_posterior(7.0, scale=(2.0, sd))
+    assert float(mean[0, 0]) == pytest.approx(2.0, rel=1e-5)
+    assert float(cov[0, 0, 0]) == pytest.approx(sd**2, rel=1e-5)
+
+
 def test_flux_scale_prior_does_not_depend_on_the_data():
-    means = []
-    for level in (7.0, 70.0):
-        block = _flux_block(onp.full(5, level), onp.full(5, HUGE), 1.0)
-        prediction = block.predict(_PointTemplate(), None)
-        mean, _ = block.posterior(prediction, block.values, block.errors)
-        means.append(float(mean[0, 0]))
+    means = [
+        float(_flux_posterior(level, scale=(2.0, 2.0))[0][0, 0])
+        for level in (7.0, 70.0)
+    ]
     assert means[0] == pytest.approx(means[1])
+    assert means[0] == pytest.approx(2.0, rel=1e-5)
 
 
 # ---------------------------------------------------------------------------

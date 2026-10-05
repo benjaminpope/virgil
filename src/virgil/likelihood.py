@@ -28,6 +28,7 @@ from ._utils import (
     inflate_errors,
     is_flux_param,
 )
+from .angles import is_angle_vector, vector_angle, vector_site
 from .gains import GAIN_GROUPS, OFFSET_GROUPS
 from .models import SourceModel
 
@@ -596,8 +597,10 @@ def _check_positive_flux_prior(name, distribution):
     if unbounded:
         raise ValueError(
             f"The prior on {name!r} allows negative values, but fluxes must "
-            "be non-negative. Use a prior with non-negative support, e.g. "
-            "dist.LogUniform or dist.Uniform(0, ...)."
+            "be non-negative. Use a prior with non-negative support: "
+            "dist.LogUniform(lo, hi) (scale invariant) by default, or "
+            "dist.Uniform(0, ...) as the exception, when a flat flux "
+            "prior is really what you mean."
         )
 
 
@@ -612,6 +615,15 @@ def _term_loglike(term, values):
     if hasattr(term, "loglike"):
         return term.loglike(values)
     return -0.5 * np.sum(np.ravel(term(values)) ** 2)
+
+
+def _sample(numpyro, path, prior):
+    """Sample the parameter at ``path``: an angle vector at ``<path>_vec``,
+    with the angle (degrees) recorded as the deterministic site ``path``."""
+    if is_angle_vector(prior):
+        vector = numpyro.sample(vector_site(path), prior)
+        return numpyro.deterministic(path, vector_angle(vector))
+    return numpyro.sample(path, prior)
 
 
 def numpyro_model(
@@ -643,7 +655,11 @@ def numpyro_model(
         Mapping from parameter path (e.g. ``"comp.flux"``) or function
         argument name to prior; each key is also used as the numpyro
         sample-site name. Priors on fluxes (keys named ``flux`` or ending
-        in ``.flux``) must have non-negative support.
+        in ``.flux``) must have non-negative support. An angle (degrees)
+        with an [`AngleVector`][virgil.angles.AngleVector] prior is
+        sampled as a 2-D vector at the site ``"<path>_vec"``, with the
+        angle recorded as the deterministic site ``"<path>"``: there is no
+        wrap boundary at 0°/360°.
     data_obj : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
         May be ``()`` when ``likelihoods`` holds all the data.
@@ -708,7 +724,7 @@ def numpyro_model(
     >>> dra, ddec, _ = (np.asarray(x) for x in truth.relative(mjd))
     >>> cov = np.broadcast_to(0.05**2 * np.eye(2), (4, 2, 2))
     >>> positions = PositionData(mjd, dra, ddec, cov)
-    >>> priors = {"a_mas": dist.Uniform(5.0, 50.0), "ecc": dist.Uniform(0.0, 0.9)}
+    >>> priors = {"a_mas": dist.LogUniform(5.0, 50.0), "ecc": dist.Uniform(0.0, 0.9)}
     >>> def orbit_fn(v):
     ...     return KeplerOrbit(
     ...         400.0, 30.0, v["ecc"], 60.0, 40.0, 110.0, v["a_mas"], t_ref=60500.0
@@ -741,7 +757,7 @@ def numpyro_model(
     likelihoods = tuple(likelihoods)
 
     def numpyro_fn():
-        values = [numpyro.sample(path, priors[path]) for path in paths]
+        values = [_sample(numpyro, path, priors[path]) for path in paths]
         source = build_model(model, paths, values)
         sources = _per_dataset(source, len(observations))
         terms = {site: numpyro.sample(site, sites[site][0]) for site in sites}

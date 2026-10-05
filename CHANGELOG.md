@@ -9,6 +9,15 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Isotropic-orientation priors.** `virgil.priors` has
+  `IsotropicInclination(low=0, high=180)` (degrees, density ∝ sin i, so cos i
+  is uniform; use `(0, 90)` when only |cos i| is identifiable) and
+  `IsotropicLatitude(low=-pi/2, high=pi/2)` (radians, density ∝ cos lat), as
+  numpyro distributions for `fit` and `numpyro_model`. Docstrings and error
+  text now recommend Jeffreys-consistent priors: `LogUniform` for scales
+  (RV jitter, fluxes, diameters, separations), with `ruffio_upperlimit`
+  documenting why its flat flux prior is deliberate.
+
 - **Log-uniform (scale-invariant) detection prior for `linear_flux_grid`.**
   `prior=LogUniform(f_min, f_max)` puts the scale-invariant (Jeffreys, under
   the scaling group) prior, `1 / f`, on the companion flux ratio, and is now
@@ -26,6 +35,17 @@ anything before 1.0 may change between minor versions.
   where `f` may go negative); a bare `(mean, sd)` tuple still works but warns
   with a `DeprecationWarning`. With no `prior`, the posterior and Bayes-factor
   fields are `None`, whatever the prior kind.
+
+- **Angle vectors (`virgil.angles.AngleVector`).** A prior for any angle
+  (degrees), sampled as a 2-D vector at the site `"<path>_vec"` with the
+  angle as the deterministic `"<path>"`, so there is no wall at 0°/360°.
+  A ring prior on the radius keeps MAP fits off the origin; von Mises and
+  axial von Mises priors are chords √κ (v̂ − m̂), the same form as the phase
+  residuals, so `fit`'s Levenberg–Marquardt and `gauss_newton_mass` take
+  them (`fit` used to reject `VonMises`). The density is normalised in the
+  plane. For orbits, `orientation_priors` samples 2Ω and ϖ = Ω + ω (or Ω
+  and ϖ with RVs), and `KeplerOrbit.from_varpi` builds the orbit. After
+  Octofitter's `UniformCircular` and exoplanet's `Angle`.
 
 - **Spectro-interferometric observables (Stage 6a, PR B).**
   `read_oifits(..., extras=...)` and `OIData(path, extras=...)` read OI_FLUX
@@ -90,6 +110,23 @@ anything before 1.0 may change between minor versions.
   N(0, 1000²) km/s and warns).
 
 ### Changed
+
+- `starting_image`'s internal fit uses `LogUniform` priors on the envelope
+  width and flux (flux bounds 1e-4 to 100), so the starting point may differ
+  slightly.
+
+- **One home for analytic marginalisation of linear parameters.**
+  `virgil._linear` holds the shared algebra: `LinearMarginal(design,
+  prior_mean, prior_sd | prior_cov, method)`, the successive rank-one and
+  dense-Cholesky whitenings, and the conditional posterior. The gains,
+  closure-phase offsets, VISPHI continuum terms, flux grey scales and RV
+  zero points use it.
+- **The OI_FLUX / correlated-flux grey-scale prior is stated, not taken from
+  the data** (breaking). `with_flux_scale(scale=(mean, sd))` gives it in the
+  data's units and replaces `width=`. It is required for `"flux"` and
+  `"corrflux"`, and the likelihood raises until it is given; `"nflux"`
+  defaults to `(1, 0.1)`. The Gaussian is documented as a proposal for the
+  Jeffreys 1/k prior.
 
 - **`TruncatedCone.n_rings` guidance.** The docstring now states the measured
   `1 / n_rings**2` error scale (about 8e-4 in |V| at the default 32 for a

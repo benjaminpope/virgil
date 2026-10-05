@@ -29,7 +29,6 @@ import warnings
 
 import jax
 import jax.numpy as np
-import jax.scipy.linalg as jsl
 import numpy as onp
 
 import equinox as eqx
@@ -37,7 +36,9 @@ import numpyro.distributions as dist
 import zodiax as zx
 from numpyro.distributions import constraints
 
+from ._linear import LinearMarginal
 from ._utils import concrete
+from .angles import AngleVector
 
 
 __all__ = [
@@ -48,6 +49,8 @@ __all__ = [
     "StateVectorOrbit",
     "ThieleInnesOrbit",
     "distance_pc",
+    "orientation_from_varpi",
+    "orientation_priors",
     "starting_orbits",
     "total_mass",
 ]
@@ -200,6 +203,33 @@ class KeplerOrbit(zx.Base):
                 ("Omega", self.Omega, lambda x: True, "finite"),
             ),
         )
+
+    @classmethod
+    def from_varpi(
+        cls,
+        period,
+        dt_peri,
+        ecc,
+        inc,
+        varpi,
+        a_mas,
+        *,
+        Omega=None,
+        two_Omega=None,
+        t_ref=0.0,
+    ):
+        """The orbit with longitude of periastron ``varpi`` = Ω + ω.
+
+        Give ``two_Omega`` (2Ω, degrees) for positions alone, which fix Ω
+        only modulo 180°, or ``Omega`` when other data (RVs) fix the node;
+        see [`orientation_priors`][virgil.orbits.orientation_priors],
+        which samples them as angle vectors. ``omega`` is ``varpi - Omega``,
+        the secondary's argument of periastron, as everywhere in virgil.
+        """
+        omega, Omega = orientation_from_varpi(
+            varpi, Omega=Omega, two_Omega=two_Omega
+        )
+        return cls(period, dt_peri, ecc, inc, omega, Omega, a_mas, t_ref)
 
     def thiele_innes(self):
         """The Thiele–Innes constants ``(A, B, F, G, C, H)`` (mas).
@@ -951,13 +981,10 @@ class RVData(zx.Base):
             self.rv.dtype
         )
 
-    def _system(self, sigma, prior):
-        """Whitened design ``B = C^-1/2 A`` and the Cholesky ``L`` of
-        ``S = Λ^-1 + AᵀC^-1A``, which is all of the O(N k²) work."""
-        _, sd = prior
-        B = self._design() / sigma[:, None]
-        S = B.T @ B + np.diag(1.0 / sd**2)
-        return B, np.linalg.cholesky(S)
+    def _marginal(self, prior):
+        """The zero points as a [`LinearMarginal`][virgil._linear.LinearMarginal]."""
+        mean, sd = prior
+        return LinearMarginal(self._design(), mean, prior_sd=sd)
 
     def marginal_whitened_residuals(
         self, orbit, q, gamma, distance_pc, jitter=0.0, prior=None
@@ -967,40 +994,25 @@ class RVData(zx.Base):
         The data are ``d ~ N(m + Aμ, C + AΛAᵀ)`` with ``m`` the Keplerian
         model (``gamma`` included), ``A`` the indicator matrix of the
         instruments and ``w ~ N(μ, Λ)`` the zero points. Returns ``u`` of
-        length N with ``uᵀu = rᵀ(C + AΛAᵀ)⁻¹r``, ``r = d - m - Aμ``. By
-        the Woodbury identity ``(C + AΛAᵀ)⁻¹ = C^-1/2 (I - W Wᵀ) C^-1/2``
-        with ``W = B L⁻ᵀ``, ``B = C^-1/2 A`` and ``LLᵀ = Λ⁻¹ + BᵀB``;
-        ``u = z - W (I + Λ^-1/2 L⁻ᵀ)⁻¹ Wᵀ z`` is an exact square root of
-        that (``z = C^-1/2 r``), so no eigendecomposition is needed.
+        length N with ``uᵀu = rᵀ(C + AΛAᵀ)⁻¹r``, ``r = d - m - Aμ``, by the
+        dense Woodbury whitening of
+        [`virgil._linear`][virgil._linear] (an exact square root, with no
+        eigendecomposition).
 
         ``prior`` is ``(mean, sd)`` per instrument, as
         [`term`][virgil.orbits.RVData.term] builds it.
         """
-        mean, sd = prior
-        sigma = self.errors(jitter)
-        B, L = self._system(sigma, prior)
-        m = self.model(orbit, q, gamma, distance_pc)
-        z = (self.rv - m - self._design() @ mean) / sigma
-        W = jsl.solve_triangular(L, B.T, lower=True).T  # B L^-T
-        # Λ^-1/2 L^-T, as the transpose of L^-1 Λ^-1/2
-        C = jsl.solve_triangular(L, np.diag(1.0 / sd), lower=True).T
-        T = np.linalg.inv(np.eye(L.shape[0]) + C)
-        return z - W @ (T @ (W.T @ z))
+        resid = self.rv - self.model(orbit, q, gamma, distance_pc)
+        return self._marginal(prior).whiten(resid, self.errors(jitter))[0]
 
     def marginal_log_norm(self, jitter=0.0, prior=None):
-        """``½ log det(C + AΛAᵀ)``: ``Σ log σ_eff + Σ log sd + Σ log diag L``.
+        """``½ log det(C + AΛAᵀ)``.
 
         This is the normalisation that depends on the jitter, in the same
         convention as the plain ``Σ log σ_eff``.
         """
-        _, sd = prior
         sigma = self.errors(jitter)
-        _, L = self._system(sigma, prior)
-        return (
-            np.sum(np.log(sigma))
-            + np.sum(np.log(sd))
-            + np.sum(np.log(np.diag(L)))
-        )
+        return self._marginal(prior).whiten(np.zeros_like(sigma), sigma)[1]
 
     def marginal_loglike(
         self, orbit, q, gamma, distance_pc, jitter=0.0, prior=None
@@ -1011,14 +1023,8 @@ class RVData(zx.Base):
         O(N k²). A flat prior is the limit ``Λ → ∞`` only up to a constant
         (``-½ Σ log Λ``); the finite prior width is part of the model.
         """
-        u = self.marginal_whitened_residuals(
-            orbit, q, gamma, distance_pc, jitter, prior
-        )
-        return (
-            -0.5 * u @ u
-            - self.marginal_log_norm(jitter, prior)
-            - u.size / 2 * np.log(2 * np.pi)
-        )
+        resid = self.rv - self.model(orbit, q, gamma, distance_pc)
+        return self._marginal(prior).loglike(resid, self.errors(jitter))
 
     def zero_point_posterior(
         self, orbit, q, gamma, distance_pc, jitter=0.0, prior=None
@@ -1031,12 +1037,8 @@ class RVData(zx.Base):
         ``gamma = 0`` they are the systemic velocity seen by each
         instrument, and differences between them are the offsets.
         """
-        mean, sd = prior
-        sigma = self.errors(jitter)
-        B, L = self._system(sigma, prior)
-        r = (self.rv - self.model(orbit, q, gamma, distance_pc)) / sigma
-        cov = np.linalg.inv(L @ L.T)
-        return cov @ (mean / sd**2 + B.T @ r), cov
+        resid = self.rv - self.model(orbit, q, gamma, distance_pc)
+        return self._marginal(prior).posterior(resid, self.errors(jitter))
 
     def term(self, params, jitter=None, marginalise_offsets=None):
         """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
@@ -1052,9 +1054,12 @@ class RVData(zx.Base):
             then depends on a parameter, so the term reports it
             (``log_norm``) and ``fit`` adds it to the loss, defaulting to
             L-BFGS (no least-squares form). Give ``jitter`` a prior with
-            non-negative support, e.g. ``dist.HalfNormal`` (scale about the
-            expected scatter, a few km/s for a spotted star) or
-            ``dist.LogUniform``; the likelihood depends on ``s²`` only.
+            positive support. The jitter is a scale, so the default is
+            ``dist.LogUniform(lo, hi)`` (the Jeffreys prior; pick ``lo``
+            well below the smallest plausible scatter and ``hi`` above the
+            largest). ``dist.HalfNormal`` is a deliberate informative choice
+            (scale about the expected scatter, a few km/s for a spotted
+            star). The likelihood depends on ``s²`` only.
         marginalise_offsets : True or (mean, sd), optional
             Analytically marginalise one velocity zero point per instrument
             (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136). The model
@@ -1134,6 +1139,75 @@ class _Term(eqx.Module):
                 *self._args(values), prior=self.prior
             )
         return self.data.loglike(*self._args(values))
+
+
+def orientation_priors(positions_only=True, *, prefix="", ring_width=0.25):
+    """Angle-vector priors for an orbit's node and periastron.
+
+    Vectors remove the wrap at 0°/360° (see
+    [`AngleVector`][virgil.angles.AngleVector]); these choose which angles
+    to sample, so that exact symmetries become single points rather than
+    separate modes:
+
+    * ``positions_only=True``: ``"two_Omega"`` (2Ω, i.e. Ω modulo 180°)
+      and ``"varpi"`` (ϖ = Ω + ω, the longitude of periastron). Positions
+      alone cannot tell (Ω, ω) from (Ω + 180°, ω + 180°); both have the same
+      2Ω and ϖ, so the two modes collapse to one.
+    * ``positions_only=False``, when RVs or other data fix the node:
+      ``"Omega"`` and ``"varpi"``.
+
+    Near face-on, positions fix ϖ but not Ω and ω separately; ϖ is then
+    the well-measured angle and Ω the broad one. Build the orbit with
+    [`KeplerOrbit.from_varpi`][virgil.orbits.KeplerOrbit.from_varpi].
+
+    The angles are uniform, which with a prior uniform in cos i is the
+    invariant (Haar) prior on the orbit's orientation: (Ω, ω) → (2Ω, ϖ) is
+    linear with a constant Jacobian, so uniform (Ω, ω) is uniform (2Ω, ϖ).
+
+    Parameters
+    ----------
+    positions_only : bool, optional
+        Whether only positions constrain the orbit (default ``True``).
+    prefix : str, optional
+        Prepended to the keys, e.g. ``"orbit."``.
+    ring_width : float, optional
+        Passed to ``AngleVector``.
+
+    Returns
+    -------
+    dict
+        Priors keyed ``prefix + "two_Omega"`` (or ``"Omega"``) and
+        ``prefix + "varpi"``.
+
+    Examples
+    --------
+    >>> priors = {**orientation_priors(), "ecc": dist.Uniform(0.0, 0.9)}
+    >>> def orbit_fn(v):
+    ...     return KeplerOrbit.from_varpi(
+    ...         400.0, 30.0, v["ecc"], 60.0, v["varpi"], 20.0,
+    ...         two_Omega=v["two_Omega"], t_ref=60500.0,
+    ...     )
+    """
+    node = "two_Omega" if positions_only else "Omega"
+    return {
+        prefix + name: AngleVector(ring_width=ring_width)
+        for name in (node, "varpi")
+    }
+
+
+def orientation_from_varpi(varpi, *, Omega=None, two_Omega=None):
+    """``(omega, Omega)`` (degrees) from ϖ = Ω + ω and the node.
+
+    Give exactly one of ``Omega`` and ``two_Omega``. From ``two_Omega``,
+    Ω is reported in [0°, 180°), as by
+    [`starting_orbits`][virgil.orbits.starting_orbits]; ω is in
+    [0°, 360°).
+    """
+    if (Omega is None) == (two_Omega is None):
+        raise ValueError("Give exactly one of Omega and two_Omega.")
+    if Omega is None:
+        Omega = 0.5 * np.mod(two_Omega, 360.0)
+    return np.mod(varpi - Omega, 360.0), Omega
 
 
 def total_mass(orbit, distance_pc):

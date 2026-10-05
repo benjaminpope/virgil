@@ -18,6 +18,9 @@ and closure phases as before. Name the extras you want:
 from virgil.oidata import OIData
 
 data = OIData("gravity.fits", extras=("flux", "visphi"))
+# State the grey scale's prior, in the data's units (here Jy): required for
+# "flux" and correlated fluxes, never taken from the data.
+data = data.with_flux_scale(scale=(2.0, 2.0))
 data = OIData(
     "gravity.fits", extras=("nflux", "t3amp", "visamp", "visphi")
 )
@@ -47,12 +50,20 @@ the components' fluxes. Its absolute level (calibration, fibre injection)
 is unknown, so the model is k Σ fᵢ(λ), where k is a grey scale.
 
 The scale is linear, so virgil does not fit it: it integrates it out
-analytically, under a Gaussian prior centred on the data's mean level with
-a width of 100% (Luger, Foreman-Mackey & Hogg 2017). This is the same
-low-rank marginalisation as the Stage 6d gains. The likelihood keeps the
-log-determinant, which depends on the model's spectral shape. The prior is
-broad but not truncated at zero. After a fit, report the scale's
-conditional posterior:
+analytically, under a Gaussian prior that **you state**, in the data's
+units, with `with_flux_scale(scale=(mean, sd))` (Luger, Foreman-Mackey &
+Hogg 2017). The prior is never taken from the data, and for `"flux"` and
+correlated fluxes the likelihood raises until it is given. Normalised
+spectra (`"nflux"`) default to `(1, 0.1)`. This is the same low-rank
+marginalisation as the Stage 6d gains (`virgil._linear`). The likelihood
+keeps the log-determinant, which depends on the model's spectral shape.
+
+The Gaussian is a *proposal*: k is a positive scale, whose Jeffreys prior is
+1/k on stated bounds. For a well-measured spectrum the two differ by about
+σ_k/k. For the Jeffreys posterior, reweight samples of k from its conditional
+posterior by 1/(k N(k; mean, sd²)) within the bounds, or sample log k
+directly. Make no evidence claims that depend on the Gaussian's width.
+After a fit, report the scale's conditional posterior:
 
 ```python
 from virgil.likelihood import flux_scale_posterior
@@ -62,7 +73,7 @@ post["scale"]  # data ≈ scale × total_spectrum, per group
 post["mean"], post["cov"]  # the weights, in template units
 ```
 
-Change the grouping and the prior with
+Change the prior and the grouping with
 [`with_flux_scale`][virgil.oidata.OIData.with_flux_scale]. Use
 `per="row"` (one scale per spectrum) or `per="station"` (per telescope)
 when the injection differs between telescopes and exposures, as it does
