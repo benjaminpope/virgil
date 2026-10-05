@@ -582,9 +582,9 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 - **Control (no gains in the data).** Fitted widths go to zero (median 0) and the results match the diagonal fit. Assuming gains that aren't there, at the same widths, gives conservative errors: disk σ error 0.019 mas, scatter 0.016 mas, against 0.003 mas without them. It also shifts the disk parameters by 0.2–0.3σ.
 - **Conclusion.** Fit the widths rather than fixing them.
 
-**MWE:** `notebooks/mwe/mwe_gains.ipynb`, executed on OzSTAR (`virgil_notebooks` task 7, virgil@cebfa5d, 113 s). One realisation of the study's setup is fitted three ways, followed by a 40-realisation Monte Carlo.
+**MWE:** `notebooks/mwe/mwe_gains.ipynb`, executed on OzSTAR (`virgil_notebooks` task 7, job 18061227, virgil@6ab551d, 110 s), with log-uniform (Jeffreys) priors on the fitted widths and `vis_error_rel` (#205; the first run, with `Uniform(0, ·)`, gave the same conclusions). One realisation of the study's setup is fitted three ways, followed by a 40-realisation Monte Carlo.
 - **Rms pulls:** 8.2–16.8 with the reported errors, 1.3–4.4 with `vis_error_rel`, 0.87–0.98 with the gains.
-- **Fitted widths:** 0.0201 ± 0.0028 (telescope) and 0.0097 ± 0.0020 (baseline).
+- **Fitted widths:** 0.0198 ± 0.0028 (telescope) and 0.0094 ± 0.0020 (baseline), against 0.02 and 0.01 injected.
 - **Whitened V² residuals** of the gains fit: rms 0.98.
 
 **Log (gains, branch `stage6d-nuisances`):**
