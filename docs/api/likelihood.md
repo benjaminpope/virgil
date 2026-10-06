@@ -20,4 +20,5 @@ Likelihoods of source models given data, and numpyro models.
         - joint_errors
         - joint_loglike
         - numpyro_model
+        - chain_init_params
         - posterior_predictive_summary

@@ -877,6 +877,65 @@ def numpyro_model(
     return numpyro_fn
 
 
+def chain_init_params(model, starts, key=None):
+    """Initial parameters for numpyro's ``MCMC``, one chain per start.
+
+    ``init_to_value`` starts every chain at one point. To start each
+    chain in its own mode (e.g. the distinct fits of
+    [`OrbitStart.chain_values`][virgil.epochs.OrbitStart.chain_values]),
+    numpyro instead takes ``init_params``, in its unconstrained
+    coordinates and with a leading axis over chains; this converts one
+    dict of values per chain into them.
+
+    Parameters
+    ----------
+    model : callable
+        The numpyro model, e.g. from
+        [`numpyro_model`][virgil.likelihood.numpyro_model].
+    starts : sequence of dict
+        One dict of values per chain, keyed by sample site as
+        ``init_to_value`` takes them (e.g. ``FitResult.values``, which
+        holds the ``"<path>_vec"`` sites of angle vectors). Sites missing
+        from a dict start uniformly at random, as ``init_to_value`` does.
+    key : jax.Array, optional
+        Random key for those missing sites (default ``PRNGKey(0)``).
+
+    Returns
+    -------
+    dict
+        Unconstrained parameters by site, with a leading axis of
+        ``len(starts)`` (none for a single start). Pass them as
+        ``mcmc.run(key, init_params=...)`` with
+        ``num_chains=len(starts)``.
+
+    Examples
+    --------
+    >>> posterior = numpyro_model(model, priors, data)  # doctest: +SKIP
+    >>> init = chain_init_params(posterior, start.chain_values(4))  # doctest: +SKIP
+    >>> mcmc = MCMC(NUTS(posterior), num_warmup=500, num_samples=500,
+    ...             num_chains=4, chain_method="vectorized")  # doctest: +SKIP
+    >>> mcmc.run(jax.random.PRNGKey(1), init_params=init)  # doctest: +SKIP
+    """
+    from numpyro.infer.initialization import init_to_value
+    from numpyro.infer.util import initialize_model
+
+    starts = list(starts)
+    if not starts:
+        raise ValueError("starts must hold at least one dict of values.")
+    keys = jax.random.split(
+        jax.random.PRNGKey(0) if key is None else key, len(starts)
+    )
+    unconstrained = [
+        initialize_model(
+            k, model, init_strategy=init_to_value(values=dict(values))
+        )[0].z
+        for k, values in zip(keys, starts)
+    ]
+    if len(unconstrained) == 1:
+        return unconstrained[0]
+    return jax.tree_util.tree_map(lambda *z: np.stack(z), *unconstrained)
+
+
 def posterior_predictive_summary(samples, model, data_obj, params=None):
     """Mean and spread of the model observables over posterior samples.
 
