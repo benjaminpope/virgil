@@ -289,6 +289,130 @@ def test_the_batched_jacobian_matches_jax(n):
     onp.testing.assert_allclose(jac, onp.asarray(full), rtol=1e-10, atol=1e-12)
 
 
+def test_plain_data_have_no_marginal_log_normaliser():
+    # The evidence of plain data is unchanged by the marginal normaliser:
+    # it is exactly zero without gains, offsets or extra observables.
+    from virgil.imaging import _log_norm
+
+    scene = _gp_scene(onp.zeros((N, N)), 1.5)
+    assert _log_norm(scene, DATA) == 0.0
+    assert _log_norm(scene, [DATA, DATA]) == 0.0
+
+
+# Several channels, so that gains common to a baseline's channels stand out
+# from independent noise.
+CHROMATIC = vlti_oidata(
+    hour_angles_h=(-2.0, 0.0, 2.0),
+    wavelengths_m=onp.linspace(3.2e-6, 3.8e-6, 5),
+    sigma_v2=0.01,
+)
+NG = 8
+
+
+def _small_scene(latent, sigma=1.5):
+    template = onp.asarray(GaussianDisk(4.0).render(NG, NG * H))
+    field = GaussianField(latent, sigma, 2.0, mean=template)
+    return System(star=PointSource(), env=Image(field, H, flux=0.4))
+
+
+def test_the_evidence_with_gains_matches_model_loglike():
+    from virgil._precision import cast_tree, run_in
+    from virgil.imaging import _residual_jacobian
+    from virgil.likelihood import model_loglike, whitened_residuals
+
+    latent = jax.random.normal(jax.random.PRNGKey(5), (NG, NG))
+    plain = CHROMATIC.with_model(
+        _small_scene(latent), key=jax.random.PRNGKey(6)
+    )
+    gains = plain.with_gains(telescope=0.03, baseline=0.05)
+    start = _small_scene(onp.zeros((NG, NG)))
+    model = fit(start, image_priors(start), gains).model
+    path = "env.log_brightness.latent"
+    _, jac = _residual_jacobian(model, gains, path)
+    z = onp.asarray(model.get(path), dtype=float)
+    singular = onp.linalg.svd(jac, compute_uv=False)
+    occam = -0.5 * onp.sum(z**2) - 0.5 * onp.sum(onp.log1p(singular**2))
+    likelihood_term = log_evidence(model, gains) - occam
+    with run_in("float64"):
+        m, g, p = cast_tree((model, gains, plain), "float64")
+        exact = float(model_loglike(m, g))
+        # The documented constant: the normalisation of the same data
+        # without gains, which depends only on the quoted errors.
+        r = whitened_residuals(m, p)
+        constant = float(model_loglike(m, p) + 0.5 * np.sum(r**2))
+    assert likelihood_term == pytest.approx(exact - constant, abs=1e-6)
+    # The gains' normaliser is not negligible here: without it the two
+    # would differ.
+    r = onp.asarray(_residual_jacobian(model, gains, path)[0])
+    assert abs(-0.5 * float(r @ r) - (exact - constant)) > 1.0
+
+
+def test_the_evidence_prefers_the_simulated_gain_width():
+    latent = jax.random.normal(jax.random.PRNGKey(7), (NG, NG))
+    truth = _small_scene(latent)
+    width = 0.05
+    data = CHROMATIC.with_gains(baseline=width).with_model(
+        truth, key=jax.random.PRNGKey(8)
+    )
+    from virgil.imaging import _log_norm
+
+    start = _small_scene(onp.zeros((NG, NG)))
+    evidence, normaliser = {}, {}
+    for trial in (0.005, width, 0.5):
+        trial_data = data.with_gains(baseline=trial)
+        result = fit(start, image_priors(start), trial_data)
+        evidence[trial] = log_evidence(result.model, trial_data)
+        normaliser[trial] = _log_norm(result.model, trial_data)
+    assert max(evidence, key=evidence.get) == width
+    # Without the gains' normaliser, wider gains would always win.
+    bare = {t: evidence[t] + normaliser[t] for t in evidence}
+    assert max(bare, key=bare.get) == 0.5
+
+
+def test_laplace_samples_have_the_gauss_newton_covariance():
+    from virgil.imaging import _residual_jacobian, laplace_samples
+
+    n = 4
+    latent = jax.random.normal(jax.random.PRNGKey(9), (n, n))
+    template = onp.asarray(GaussianDisk(4.0).render(n, n * H))
+    field = GaussianField(latent, 1.5, 2.0, mean=template)
+    truth = System(star=PointSource(), env=Image(field, H, flux=0.4))
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(10))
+    start = System(
+        star=PointSource(),
+        env=Image(
+            GaussianField(onp.zeros((n, n)), 1.5, 2.0, mean=template),
+            H,
+            flux=0.4,
+        ),
+    )
+    result = fit(start, image_priors(start), data)
+    path = "env.log_brightness.latent"
+    _, jac = _residual_jacobian(result.model, data, path)
+    expected = onp.linalg.inv(onp.eye(n * n) + jac.T @ jac)
+    draws = 20_000
+    out = laplace_samples(result, data, draws, jax.random.PRNGKey(11))
+    latents = out["latents"]
+    assert latents.shape == (draws, n, n)
+    flat = latents.reshape(draws, -1)
+    z_map = onp.asarray(result.model.get(path), dtype=float).ravel()
+    # Monte Carlo error: sd/√n on the mean, about √(2/n) on a variance.
+    sd = onp.sqrt(onp.diag(expected))
+    assert onp.all(onp.abs(flat.mean(0) - z_map) < 5 * sd / onp.sqrt(draws))
+    cov = onp.cov(flat, rowvar=False)
+    onp.testing.assert_allclose(cov, expected, atol=5 * onp.sqrt(2 / draws))
+    # The data constrain some directions well below the prior's unit width.
+    assert onp.linalg.eigvalsh(expected).min() < 0.5
+    images = laplace_samples(
+        result, data, 3, jax.random.PRNGKey(12), npix=8, fov_mas=8.0
+    )["images"]
+    assert images.shape == (3, 8, 8)
+    onp.testing.assert_allclose(images.sum(axis=(1, 2)), 1.0, rtol=1e-5)
+    assert not onp.allclose(images[0], images[1])
+    with pytest.raises(ValueError, match="both npix and fov_mas"):
+        laplace_samples(result, data, 3, jax.random.PRNGKey(12), npix=8)
+
+
 def _hat_gammas(jac, rows, beta):
     """γ_b from the explicit hat matrix, B½ J (I + Jᵀ B J)⁻¹ Jᵀ B½."""
     per_row = onp.zeros(jac.shape[0])

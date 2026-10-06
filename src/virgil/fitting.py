@@ -464,8 +464,11 @@ class FitResult:
         ``method``; ``converged`` (``None`` for Adam, which has no
         convergence test); ``steps``; ``loss`` (the unscaled negative log
         posterior); ``chi2`` and ``ndata``, per dataset and then per
-        likelihood term; and ``chi2_red``,
-        the total χ² per data point. With fitted error terms, χ² uses the
+        likelihood term; ``chi2_red``,
+        the total χ² per data point; and ``grad_norm``, the infinity norm
+        (largest absolute component) of the gradient of the loss per data
+        point at the result, in the unconstrained coordinates of the
+        convergence test (see ``gtol`` in [`fit`][virgil.fitting.fit]). With fitted error terms, χ² uses the
         inflated errors, and ``values`` holds the terms too.
     """
 
@@ -649,6 +652,16 @@ def fit(
         the fit reached ``max_steps``, met a non-finite gradient, or stopped
         earlier because a step no longer changed the parameters (its
         precision ran out, as can happen in float32).
+
+        ``info["grad_norm"]`` is the infinity norm (largest absolute
+        component) of the gradient of the loss per data point at the
+        returned point, in the unconstrained coordinates the optimiser
+        works in: the quantity LM and L-BFGS compare with their tolerance
+        (see ``gtol``). It is computed the same way for every method, so a
+        fit that stopped early (at ``max_steps``, or after Adam's fixed
+        number of steps) shows a larger value. L-BFGS tests the gradient
+        at the point before its last step, so a converged L-BFGS fit's
+        ``grad_norm`` can be slightly above the tolerance.
     """
     if not math.isfinite(max_step_size) or max_step_size <= 0:
         raise ValueError(
@@ -707,7 +720,7 @@ def fit(
             )
         model = problem.build(z)
         values = problem.constrain(z)
-        loss, chi2 = _summary(problem, z)
+        loss, chi2, grad_norm = _summary(problem, z, traced_scale)
         chi2 = [float(c) for c in chi2]
         info = {
             "method": method,
@@ -717,6 +730,7 @@ def fit(
             "chi2": chi2,
             "ndata": ndata,
             "chi2_red": sum(chi2) / scale,
+            "grad_norm": float(grad_norm),
         }
     ambient = "float64" if jax.config.jax_enable_x64 else "float32"
     return FitResult(
@@ -916,16 +930,20 @@ def _has_residuals(problem, z):
 
 
 @eqx.filter_jit
-def _summary(problem, z):
-    """The loss and each dataset's chi-squared at ``z``.
+def _summary(problem, z, scale):
+    """The loss, each dataset's chi-squared and the gradient norm at ``z``.
 
-    With fitted error terms, chi-squared uses the inflated errors.
+    With fitted error terms, chi-squared uses the inflated errors. The
+    gradient norm is the largest absolute component of the gradient of the
+    loss per data point in the unconstrained coordinates, the quantity the
+    convergence test of LM and L-BFGS compares with its tolerance.
     """
     values = problem.constrain(z)
     residuals = problem.data_residuals(problem.build(z), values)
     residuals += [term(values) for term in problem.likelihoods]
     chi2 = [np.sum(r**2) for r in residuals]
-    return problem.loss(z), chi2
+    gradient = jax.grad(_scaled_loss(problem, scale))(z)
+    return problem.loss(z), chi2, _largest(gradient)
 
 
 def _largest(tree):

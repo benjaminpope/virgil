@@ -63,7 +63,7 @@ from ._precision import cast_tree, run_in
 from .fitting import FitResult, fit
 from .spectra import flux_at
 from .fields import GaussianField
-from .likelihood import whitened_residuals
+from .likelihood import _whitened_and_log_norm, whitened_residuals
 from .models import (
     Image,
     PointSource,
@@ -1690,6 +1690,30 @@ def _single_model(model, caller):
     return model
 
 
+@eqx.filter_jit
+def _jitted_log_norm(model, datasets):
+    """The marginal nuisances' log-normaliser, summed over datasets."""
+    return sum(_whitened_and_log_norm(model, d)[1] for d in datasets)
+
+
+def _log_norm(model, data):
+    """``_whitened_and_log_norm``'s log-normaliser at ``model``, in float64."""
+    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+    with run_in("float64"):
+        model, datasets = cast_tree((model, datasets), "float64")
+        return float(_jitted_log_norm(model, datasets))
+
+
+def _gaussian_field_latents(model, path, caller):
+    """The path of a GaussianField's latents in ``model``, checked."""
+    image = model.get(path)
+    if not isinstance(image.log_brightness, GaussianField):
+        raise TypeError(
+            f"{caller} needs an Image with a GaussianField at {path!r}."
+        )
+    return path + ".log_brightness.latent"
+
+
 def log_evidence(model, data, path="env"):
     """Laplace-approximated log evidence of a Gaussian-field image fit.
 
@@ -1697,17 +1721,37 @@ def log_evidence(model, data, path="env"):
     [`GaussianField`][virgil.fields.GaussianField] with standard-normal
     latents ``z``, at the MAP ``model`` from [`fit`][virgil.fitting.fit],
 
-    ``log Z ≈ -½ χ² - ½ |z|² - ½ log det(I + JᵀJ)``,
+    ``log Z ≈ -½ χ² - L - ½ |z|² - ½ log det(I + JᵀJ)``,
 
-    up to a constant that is the same for every ``sigma`` and
-    ``length_mas`` on a given grid. ``J`` is the Jacobian of the whitened
-    residuals with respect to ``z``, so ``JᵀJ`` is the Gauss–Newton
-    curvature of the likelihood. Other fitted parameters (fluxes, spectra)
-    are held at their MAP values. Compare it across fits with different
-    hyperparameters and choose the largest, as MacKay's evidence framework
-    does; it is exact for a linear model, and assumes correct error bars.
-    It uses the data's quoted errors, so it does not support fits with
-    ``noise=`` terms, nor fits with one model per dataset.
+    up to a constant that depends only on the data (see below). ``J`` is
+    the Jacobian of the whitened residuals with respect to ``z``, so
+    ``JᵀJ`` is the Gauss–Newton curvature of the likelihood. Other fitted
+    parameters (fluxes, spectra) are held at their MAP values. Compare it
+    across fits with different hyperparameters and choose the largest, as
+    MacKay's evidence framework does; it is exact for a linear model, and
+    assumes correct error bars. It uses the data's quoted errors, so it
+    does not support fits with ``noise=`` terms, nor fits with one model
+    per dataset.
+
+    **Normalisation.** ``-½ χ² - L`` is
+    [`model_loglike`][virgil.likelihood.model_loglike] at the MAP less
+    its data-only normalisation, ``-Σ log σ - ½ n log 2π`` (in its von
+    Mises form for unprojected phases, and with the correlated closure
+    phases' determinant), which is the same for every model and
+    hyperparameter on a given dataset and so cancels in differences of
+    ``log Z``, the only meaningful quantity. For plain data ``L = 0``.
+    ``L`` is the rest of the likelihood's normaliser, which can depend on
+    the model and on nuisance widths: for data with calibration gains
+    ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]) or closure
+    offsets
+    ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]),
+    which the likelihood marginalises, it is ½ log det of their covariance
+    factor, and for extra observables (``OIData.extras``) the log ratio of
+    their effective to quoted errors. It is evaluated at the MAP exactly
+    as the likelihood evaluates it, so that evidences for data with
+    different gain or offset widths can be compared; its curvature with
+    respect to ``z`` is left out of ``J``, as Gauss–Newton leaves out the
+    residuals' own second derivatives.
 
     Parameters
     ----------
@@ -1725,14 +1769,10 @@ def log_evidence(model, data, path="env"):
     float
     """
     model = _single_model(model, "log_evidence")
-    image = model.get(path)
-    if not isinstance(image.log_brightness, GaussianField):
-        raise TypeError(
-            f"log_evidence needs an Image with a GaussianField at {path!r}."
-        )
-    latent_path = path + ".log_brightness.latent"
+    latent_path = _gaussian_field_latents(model, path, "log_evidence")
     r, jac = _residual_jacobian(model, data, latent_path)
     chi2 = float(r @ r)
+    log_norm = _log_norm(model, data)
     z = onp.asarray(model.get(latent_path), dtype=float)
     # log det(I + JᵀJ) = Σ log(1 + s²) over the singular values s of J. A
     # Cholesky factor of I + JJᵀ fails on high signal-to-noise data: the
@@ -1741,7 +1781,97 @@ def log_evidence(model, data, path="env"):
     # indefinite. The singular values avoid forming it.
     singular = onp.linalg.svd(jac, compute_uv=False)
     logdet = float(onp.sum(onp.log1p(singular**2)))
-    return float(-0.5 * chi2 - 0.5 * onp.sum(z**2) - 0.5 * logdet)
+    return float(-0.5 * chi2 - log_norm - 0.5 * onp.sum(z**2) - 0.5 * logdet)
+
+
+@eqx.filter_jit
+def _render_latents(model, latent_path, latents, npix, fov_mas):
+    """The whole model rendered with each of ``latents`` at its field."""
+    return jax.vmap(lambda x: model.set(latent_path, x).render(npix, fov_mas))(
+        latents
+    )
+
+
+def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
+    """Draws from the Laplace posterior of a Gaussian-field image.
+
+    For an Image whose log-brightness is a
+    [`GaussianField`][virgil.fields.GaussianField], the prior on its
+    whitened latents ``z`` is N(0, I), so about the MAP ``z₀`` the
+    Gauss–Newton (Laplace) posterior is
+
+    ``z ~ N(z₀, (I + JᵀJ)⁻¹)``,
+
+    with ``J`` the Jacobian of the whitened residuals with respect to
+    ``z``: the same approximation as
+    [`log_evidence`][virgil.imaging.log_evidence]. With the thin SVD
+    ``J = U S Vᵀ``, a draw is
+    ``z₀ + V diag((1 + s²)^-½) ε₁ + (I - V Vᵀ) ε₂`` with standard-normal
+    ``ε₁`` and ``ε₂``, so directions the data do not constrain keep the
+    prior's unit width. The draws show which features of the image the
+    data support. Only the latents vary: every other fitted parameter
+    (fluxes, the star, spectra) is held at its MAP value, so the spread
+    is narrower than the full posterior's where they are correlated with
+    the image. Like ``log_evidence``, it uses the data's quoted errors.
+
+    Parameters
+    ----------
+    model : SourceModel or FitResult
+        The MAP model, or the [`FitResult`][virgil.fitting.FitResult]
+        itself (fits with fitted ``noise=`` terms raise a ``ValueError``,
+        lists of models a ``TypeError``).
+    data : OIData or sequence of OIData
+        The data it was fitted to.
+    n : int
+        Number of draws.
+    key : jax.Array
+        A JAX random key.
+    path : str, optional
+        Path of the Image in the model (default ``"env"``).
+    npix : int, optional
+        With ``fov_mas``, also render the whole model for each draw (see
+        [`SourceModel.render`][virgil.models.SourceModel.render]).
+    fov_mas : float, optional
+        The rendered field of view, in milliarcseconds. Give both or
+        neither of ``npix`` and ``fov_mas`` (one alone raises a
+        ``ValueError``).
+
+    Returns
+    -------
+    dict
+        ``"latents"``, a NumPy array ``(n, *latent.shape)``, and, given
+        ``npix`` and ``fov_mas``, ``"images"``, ``(n, npix, npix)``:
+        unit-sum images of the whole model.
+    """
+    if (npix is None) != (fov_mas is None):
+        raise ValueError(
+            "laplace_samples renders images only given both npix and fov_mas."
+        )
+    model = _single_model(model, "laplace_samples")
+    latent_path = _gaussian_field_latents(model, path, "laplace_samples")
+    _, jac = _residual_jacobian(model, data, latent_path)
+    z = onp.asarray(model.get(latent_path), dtype=float)
+    _, singular, vt = onp.linalg.svd(jac, full_matrices=False)
+    first, second = jax.random.split(key)
+    e1 = onp.asarray(jax.random.normal(first, (n, singular.size)), float)
+    e2 = onp.asarray(jax.random.normal(second, (n, z.size)), float)
+    # V diag((1+s²)^-½) ε₁ along the data's directions, and ε₂ projected
+    # off them, (I - VVᵀ) ε₂, along the prior's.
+    draws = (e1 / onp.sqrt(1.0 + singular**2)) @ vt
+    draws += e2 - (e2 @ vt.T) @ vt
+    latents = (z.ravel() + draws).reshape((n,) + z.shape)
+    out = {"latents": latents}
+    if npix is not None and fov_mas is not None:
+        out["images"] = onp.asarray(
+            _render_latents(
+                model,
+                latent_path,
+                np.asarray(latents, dtype=model.get(latent_path).dtype),
+                int(npix),
+                float(fov_mas),
+            )
+        )
+    return out
 
 
 def _observable_blocks(datasets):

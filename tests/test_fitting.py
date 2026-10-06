@@ -216,6 +216,25 @@ def test_a_warm_start_still_converges(dtype):
     assert cold.info["chi2_red"] < 1.5
 
 
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_grad_norm_is_small_at_convergence_and_large_when_stopped(method):
+    converged = fit(START, PRIORS, DATA, method=method)
+    assert converged.info["converged"]
+    # The convergence test compares the same norm with at most gtol (for
+    # L-BFGS, at the point before the last step).
+    assert 0.0 <= converged.info["grad_norm"] <= 1e-3
+    with pytest.warns(RuntimeWarning):
+        stopped = fit(START, PRIORS, DATA, method=method, max_steps=1)
+    assert stopped.info["grad_norm"] > 10 * converged.info["grad_norm"]
+    assert stopped.info["grad_norm"] > 1e-4
+
+
+def test_adam_reports_a_grad_norm():
+    result = fit(START, PRIORS, DATA, method="adam", max_steps=5)
+    assert np.isfinite(result.info["grad_norm"])
+    assert result.info["grad_norm"] > 0.0
+
+
 def test_lbfgs_warning_says_it_hit_the_step_limit():
     with pytest.warns(RuntimeWarning, match="in 2 steps, the step limit"):
         fit(START, PRIORS, DATA, method="lbfgs", max_steps=2)
