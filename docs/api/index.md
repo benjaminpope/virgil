@@ -20,6 +20,7 @@ The everyday names are importable from the top level, e.g.
 - [Angles](angles.md): `AngleVector`, angles sampled as 2-D vectors with no wrap boundary, and von Mises priors in least-squares form
 - [Imaging](imaging.md): regularisers and helpers for image reconstruction
 - [Scenes](scenes.md): synthetic truth images for testing reconstructions
+- [Metrics](metrics.md): image-recovery scores for reconstructions
 - [Coverage](coverage.md): synthetic uv coverage and noise for simulations
 - [Plotting](plotting.md): figures
 - [Legacy](legacy.md): ImPlaneIA-derived OIFITS tools

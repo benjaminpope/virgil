@@ -109,6 +109,7 @@ nav:
       - Epochs: api/epochs.md
       - Fields: api/fields.md
       - Scenes: api/scenes.md
+      - Metrics: api/metrics.md
       - Coverage: api/coverage.md
       - Simulate: api/simulate.md
       - Plotting: api/plotting.md
