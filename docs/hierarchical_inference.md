@@ -108,8 +108,8 @@ def binary_model(values, observation_index):
                                 10.0 ** values["log10_flux"][observation_index])
 
 
-initial_loglike = joint_loglike(params, observations, binary_model)
-truth_loglike = joint_loglike(truth, observations, binary_model)
+initial_loglike = joint_loglike(params, binary_model, observations)
+truth_loglike = joint_loglike(truth, binary_model, observations)
 
 print(f"initial log-likelihood: {float(initial_loglike)}, optimal: {float(truth_loglike)}")
 ```
@@ -138,7 +138,7 @@ def shared_flux_loglike(values):
         "log10_flux": jnp.full(
             len(observations), jnp.log10(values[2]), dtype=values.dtype)
             }
-    return joint_loglike(shared_params, observations, binary_model)
+    return joint_loglike(shared_params, binary_model, observations)
 
 
 joint_grid_loglike = jax.vmap(shared_flux_loglike)(joint_grid_values).reshape(
@@ -173,7 +173,7 @@ params = {
 The Fisher Information Matrix tells us the expected information in the data, providing both a limit to the best possible covariance we can obtain from the data (the Cramér-Rao lower bound) and a way of normalising parameters, which might have very different scales and correlations. It is often best to do this normalization before Bayesian inference, in order to precondition the model for fast convergence.
 
 ```python
-prediction_fn = lambda values: joint_prediction(values, observations, binary_model)
+prediction_fn = lambda values: joint_prediction(values, binary_model, observations)
 errors = joint_errors(observations)
 initial_fisher, unravel = gaussian_fisher(prediction_fn, params, errors, ridge=1e-8)
 projection = fisher_projection(initial_fisher, eps=1e-10)
@@ -198,7 +198,7 @@ def project(latent):
     return unravel(initial_vector + projection @ latent)
 
 def latent_objective(latent, args) :
-    return -joint_loglike(project(latent), observations, binary_model)
+    return -joint_loglike(project(latent), binary_model, observations)
 
 solver = optx.BestSoFarMinimiser(optx.BFGS(rtol=1e-8, atol=1e-8))
 solution = optx.minimise(
@@ -227,7 +227,7 @@ Reduced chi-squared: 113.66 -> 0.89
 recovered_vector, recovered_unravel = ravel_pytree(recovered)
 
 def flat_objective(values):
-    return -joint_loglike(recovered_unravel(values), observations, binary_model)
+    return -joint_loglike(recovered_unravel(values), binary_model, observations)
 
 
 expected_fisher, _ = gaussian_fisher(prediction_fn, recovered, errors)
@@ -267,7 +267,7 @@ def model_hmc():
         "log10_flux", dist.Uniform(-6.0, -1.0).expand([len(observations)])
     ) # uniform prior for the fluxes in log space, ie jeffreys prior
     values = {"dra": dra, "ddec": ddec, "log10_flux": log10_flux}
-    numpyro.factor("loglike", joint_loglike(values, observations, binary_model))
+    numpyro.factor("loglike", joint_loglike(values, binary_model, observations))
 
 init_values = {
     "dra": float(params["dra"]),

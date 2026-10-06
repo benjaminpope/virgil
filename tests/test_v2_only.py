@@ -117,8 +117,8 @@ def test_a_fit_recovers_a_diameter_from_v2_alone():
         cov = laplace_cov(
             onp.array([float(result.values["diam"])]),
             ["diam"],
-            data,
             UniformDisk,
+            data,
         )
         sigma = float(onp.sqrt(onp.asarray(cov)[0, 0]))
     assert result.info["converged"]

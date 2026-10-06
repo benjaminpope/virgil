@@ -136,11 +136,11 @@ def test_laplace_cov_and_fisher_run_in_float64_by_default():
     params = ["dra", "ddec", "flux"]
     values = [120.0, 80.0, 1e-3]
     with jax.enable_x64(True):
-        cov64 = onp.asarray(laplace_cov(values, params, data, truth))
-        info64 = onp.asarray(fisher(values, params, data, truth))
+        cov64 = onp.asarray(laplace_cov(values, params, truth, data))
+        info64 = onp.asarray(fisher(values, params, truth, data))
         assert cov64.dtype == onp.float64
-    cov = laplace_cov(values, params, data, truth)
-    info = fisher(values, params, data, truth)
+    cov = laplace_cov(values, params, truth, data)
+    info = fisher(values, params, truth, data)
     # Results come back in the ambient precision (float64 in the x64 CI job).
     ambient = np.float64 if jax.config.jax_enable_x64 else np.float32
     assert cov.dtype == ambient and info.dtype == ambient
@@ -151,5 +151,5 @@ def test_laplace_cov_and_fisher_run_in_float64_by_default():
     assert close(cov, cov64) and close(info, info64)
     # dtype="float32" is the ambient calculation, which is measurably off.
     assert not close(
-        laplace_cov(values, params, data, truth, dtype="float32"), cov64
+        laplace_cov(values, params, truth, data, dtype="float32"), cov64
     )

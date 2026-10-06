@@ -21,6 +21,7 @@ import jax.numpy as np
 import numpy as onp
 from jax.scipy.special import i0e
 
+from ._deprecate import old_order, renamed
 from ._utils import (
     _per_dataset,
     _reference,
@@ -469,7 +470,8 @@ def _whitened_errors_and_log_norm(model_object, data_obj, noise):
     )
 
 
-def whitened_residuals(model_object, data_obj, **noise):
+@renamed()
+def whitened_residuals(model, data, **noise):
     """Residuals of a model divided by the data uncertainties.
 
     This is the one residual vector behind every likelihood in virgil:
@@ -496,9 +498,9 @@ def whitened_residuals(model_object, data_obj, **noise):
 
     Parameters
     ----------
-    model_object : SourceModel
+    model : SourceModel
         Model to evaluate.
-    data_obj : OIData
+    data : OIData
         Data to compare with.
     **noise
         Error-inflation terms, ``vis_scale``, ``phi_scale``,
@@ -525,10 +527,11 @@ def whitened_residuals(model_object, data_obj, **noise):
         closure phase, so the length is
         [`n_residuals`][virgil.oidata.OIData.n_residuals].
     """
-    return _whitened_and_errors(model_object, data_obj, noise)[0]
+    return _whitened_and_errors(model, data, noise)[0]
 
 
-def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
+@renamed()
+def model_loglike(model, data, *, reject_unphysical=False, **noise):
     """Evaluate the log likelihood for an instantiated model object.
 
     This is ``-0.5 * sum(r**2)`` for the residuals ``r`` of
@@ -545,9 +548,9 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
 
     Parameters
     ----------
-    model_object : SourceModel
+    model : SourceModel
         Model to evaluate.
-    data_obj : OIData
+    data : OIData
         Data to compare with.
     reject_unphysical : bool, optional
         If True, return ``-inf`` when
@@ -572,23 +575,24 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
         and ``north_angle`` on a rotated sky (see
         [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]).
     """
-    whitened, errors = _whitened_and_errors(model_object, data_obj, noise)
+    whitened, errors = _whitened_and_errors(model, data, noise)
     logl = _gaussian_loglike(whitened, errors)
     if reject_unphysical:
-        logl = np.where(model_object.is_physical(), logl, -np.inf)
+        logl = np.where(model.is_physical(), logl, -np.inf)
     return logl
 
 
-def joint_prediction(params, observations, model_fn):
-    """Concatenate predictions for a parameter pytree and multiple observations.
+@old_order("params", "data", "model", data="data")
+def joint_prediction(params, model, data):
+    """Concatenate predictions for a parameter pytree and multiple data.
 
-    ``model_fn(params, index)`` defines which parameters are shared and which
+    ``model(params, index)`` defines which parameters are shared and which
     are specific to each observation.
     """
     return np.concatenate(
         [
-            observation.model(model_fn(params, index))
-            for index, observation in enumerate(observations)
+            observation.model(model(params, index))
+            for index, observation in enumerate(data)
         ]
     )
 
@@ -607,15 +611,16 @@ def joint_errors(observations):
     )
 
 
-def joint_loglike(params, observations, model_fn, **options):
-    """Sum independent Gaussian log likelihoods over multiple observations.
+@old_order("params", "data", "model", data="data")
+def joint_loglike(params, model, data, **options):
+    """Sum independent Gaussian log likelihoods over multiple data.
 
     ``options`` (error terms and ``reject_unphysical``) are
     passed to [`model_loglike`][virgil.likelihood.model_loglike].
     """
     return sum(
-        model_loglike(model_fn(params, index), observation, **options)
-        for index, observation in enumerate(observations)
+        model_loglike(model(params, index), observation, **options)
+        for index, observation in enumerate(data)
     )
 
 
@@ -631,7 +636,8 @@ def build_model(model, params, values):
     return model(**dict(zip(params, values)))
 
 
-def loglike(values, params, data_obj, model, **options):
+@old_order("values", "params", "data", "model", data="data")
+def loglike(values, params, model, data, **options):
     """
     Gaussian log-likelihood of a model with the given parameter values, assuming Gaussian errors.
 
@@ -641,12 +647,12 @@ def loglike(values, params, data_obj, model, **options):
         Values of the model parameters.
     params : list
         List of parameter names.
-    data_obj : OIData
-        Object containing the data to be fitted.
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
         ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
+    data : OIData
+        Object containing the data to be fitted.
     **options
         Error terms and ``reject_unphysical``, passed to
         [`model_loglike`][virgil.likelihood.model_loglike].
@@ -657,9 +663,7 @@ def loglike(values, params, data_obj, model, **options):
         Log-likelihood value.
     """
 
-    return model_loglike(
-        build_model(model, params, values), data_obj, **options
-    )
+    return model_loglike(build_model(model, params, values), data, **options)
 
 
 def _check_positive_flux_prior(name, distribution):
@@ -705,10 +709,11 @@ def _sample(numpyro, path, prior):
     return numpyro.sample(path, prior)
 
 
+@renamed()
 def numpyro_model(
     model,
     priors,
-    data_obj,
+    data,
     regularisers=(),
     noise=None,
     likelihoods=(),
@@ -726,7 +731,7 @@ def numpyro_model(
         separation and position angle, or one inclination shared by two
         components (see [`build_model`][virgil.likelihood.build_model]).
         As for [`fit`][virgil.fitting.fit], the function may return a
-        list of models, one per dataset in ``data_obj``, sharing
+        list of models, one per dataset in ``data``, sharing
         parameters: for example binaries at two epochs with one flux
         ratio and a position each. Model ``i`` is compared with dataset
         ``i``, and regularisers act on the first model only.
@@ -739,7 +744,7 @@ def numpyro_model(
         sampled as a 2-D vector at the site ``"<path>_vec"``, with the
         angle recorded as the deterministic site ``"<path>"``: there is no
         wrap boundary at 0°/360°.
-    data_obj : OIData or sequence of OIData
+    data : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
         May be ``()`` when ``likelihoods`` holds all the data.
     regularisers : sequence, optional
@@ -835,9 +840,7 @@ def numpyro_model(
             f"{', '.join(penalties)} are penalties, not log prior densities, "
             "so they cannot be sampled; use fit for regularised MAP images."
         )
-    observations = (
-        tuple(data_obj) if isinstance(data_obj, (list, tuple)) else (data_obj,)
-    )
+    observations = tuple(data) if isinstance(data, (list, tuple)) else (data,)
 
     sites = noise_sites(noise, len(observations))
     likelihoods = tuple(likelihoods)
@@ -936,7 +939,8 @@ def chain_init_params(model, starts, key=None):
     return jax.tree_util.tree_map(lambda *z: np.stack(z), *unconstrained)
 
 
-def posterior_predictive_summary(samples, model, data_obj, params=None):
+@renamed()
+def posterior_predictive_summary(samples, model, data, params=None):
     """Mean and spread of the model observables over posterior samples.
 
     Parameters
@@ -946,7 +950,7 @@ def posterior_predictive_summary(samples, model, data_obj, params=None):
         name or path (e.g. from ``mcmc.get_samples()``).
     model : SourceModel or callable
         Template model or class, as for :func:`loglike`.
-    data_obj : OIData
+    data : OIData
         Data defining the observables.
     params : list[str], optional
         Which keys of ``samples`` to use (default: all of them).
@@ -963,10 +967,10 @@ def posterior_predictive_summary(samples, model, data_obj, params=None):
         [np.asarray(samples[param], dtype=float) for param in params], axis=1
     )
     predictions = jax.vmap(
-        lambda row: data_obj.model(build_model(model, params, list(row)))
+        lambda row: data.model(build_model(model, params, list(row)))
     )(values)
-    n_vis = np.asarray(data_obj.vis).size
-    n_phase = n_vis + np.asarray(data_obj.phi).size
+    n_vis = np.asarray(data.vis).size
+    n_phase = n_vis + np.asarray(data.phi).size
     vis, phi = predictions[:, :n_vis], predictions[:, n_vis:n_phase]
     return {
         "vis_mean": vis.mean(axis=0),
@@ -976,19 +980,20 @@ def posterior_predictive_summary(samples, model, data_obj, params=None):
     }
 
 
-def flux_scale_posterior(model_object, data_obj):
+@renamed()
+def flux_scale_posterior(model, data):
     """The grey scales of the extra spectra, given a model.
 
     The scales (and polynomial coefficients) of OI_FLUX spectra and
     correlated fluxes are marginalised in the likelihood (see
     [`FluxSpectrum`][virgil.observables.FluxSpectrum]); this is their
-    Gaussian posterior conditional on ``model_object``, for reporting.
+    Gaussian posterior conditional on ``model``, for reporting.
 
     Parameters
     ----------
-    model_object : SourceModel
+    model : SourceModel
         E.g. the best fit.
-    data_obj : OIData
+    data : OIData
         Data with extra spectra (``extras=("flux",)`` and the like).
 
     Returns
@@ -1004,16 +1009,16 @@ def flux_scale_posterior(model_object, data_obj):
     """
     from .observables import FluxSpectrum
 
-    cvis = data_obj._cvis(model_object)
+    cvis = data._cvis(model)
     out = {}
-    for block in data_obj.extras:
+    for block in data.extras:
         if not isinstance(block, FluxSpectrum):
             continue
-        prediction = block.predict(model_object, cvis)
+        prediction = block.predict(model, cvis)
         mean, cov = block.posterior(prediction, block.values, block.errors)
         entry = {"mean": mean, "cov": cov, "groups": block.group}
         if block.kind != "nflux":
-            base = model_object.total_spectrum(np.asarray(block.wavel))
+            base = model.total_spectrum(np.asarray(block.wavel))
             base = np.broadcast_to(base, block.wavel.shape)
             if block.kind == "corrflux":
                 base = base * np.abs(cvis)[block.sample]

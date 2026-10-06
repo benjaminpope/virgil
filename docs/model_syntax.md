@@ -219,23 +219,23 @@ plt.show()
 
 ## Likelihood wiring from `OIData` + model class
 
-`loglike(values, params, data_obj, model)` zips parameter names to values, instantiates `model(**param_dict)` (or, for a template model instance, sets the leaves at those paths), evaluates `data_obj.model(...)`, then compares to flattened data with Gaussian errors.
+`loglike(values, params, model, data)` zips parameter names to values, instantiates `model(**param_dict)` (or, for a template model instance, sets the leaves at those paths), evaluates `data.model(...)`, then compares to flattened data with Gaussian errors.
 
 ```python
 params_cart = ["dra", "ddec", "flux"]
 vals_cart = [dra, ddec, flux]
-ll_cart = float(loglike(vals_cart, params_cart, data, BinaryModelCartesian))
+ll_cart = float(loglike(vals_cart, params_cart, BinaryModelCartesian, data))
 
 params_ang = ["sep", "pa", "flux"]
 vals_ang = [sep, pa, flux]
-ll_ang = float(loglike(vals_ang, params_ang, data, BinaryModelAngular))
+ll_ang = float(loglike(vals_ang, params_ang, BinaryModelAngular, data))
 
 ll_cart_perturbed = float(
     loglike(
         [dra + 20.0, ddec - 20.0, flux * 1.6],
         params_cart,
-        data,
         BinaryModelCartesian,
+        data,
     )
 )
 

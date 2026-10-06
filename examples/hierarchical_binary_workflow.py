@@ -103,7 +103,7 @@ def reduced_chi2(params, observations):
     data = jnp.concatenate(
         [observation.flatten_data()[0] for observation in observations]
     )
-    model = joint_prediction(params, observations, binary_model)
+    model = joint_prediction(params, binary_model, observations)
     errors = observation_errors(observations)
     return jnp.sum(((data - model) / errors) ** 2) / (data.size - 5)
 
@@ -118,7 +118,7 @@ def fit_hierarchical_binary(observations, initial=None, max_steps=256):
         }
 
     prediction = lambda params: joint_prediction(
-        params, observations, binary_model
+        params, binary_model, observations
     )
     errors = observation_errors(observations)
     initial_fisher, unravel = gaussian_fisher(
@@ -132,7 +132,7 @@ def fit_hierarchical_binary(observations, initial=None, max_steps=256):
 
     def latent_objective(latent, args):
         del args
-        return -joint_loglike(project(latent), observations, binary_model)
+        return -joint_loglike(project(latent), binary_model, observations)
 
     solver = optx.BestSoFarMinimiser(optx.BFGS(rtol=1e-8, atol=1e-8))
     solution = optx.minimise(
@@ -147,7 +147,7 @@ def fit_hierarchical_binary(observations, initial=None, max_steps=256):
 
     def flat_objective(values):
         return -joint_loglike(
-            recovered_unravel(values), observations, binary_model
+            recovered_unravel(values), binary_model, observations
         )
 
     expected, _ = gaussian_fisher(prediction, recovered, errors)

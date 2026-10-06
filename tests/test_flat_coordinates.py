@@ -187,7 +187,7 @@ def test_gauss_newton_mass_is_in_numpyros_coordinates():
     # Noiseless data: the Gauss–Newton matrix is the Hessian at the truth.
     sigma_x = onp.asarray(
         laplace_cov(
-            onp.array([values[p] for p in paths]), list(paths), data, TRUTH
+            onp.array([values[p] for p in paths]), list(paths), TRUTH, data
         )
     )
     with jax.enable_x64(True):

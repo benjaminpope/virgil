@@ -14,6 +14,7 @@ import jax.numpy as np
 import numpy as onp
 from jax.flatten_util import ravel_pytree
 
+from ._deprecate import old_order
 from ._precision import cast_tree, run_in
 from ._utils import concrete as _concrete
 from .likelihood import loglike
@@ -202,7 +203,7 @@ def _unpack(values, shapes):
 @eqx.filter_jit
 def _neg_loglike_hessian(values, params, data_obj, model, shapes=None):
     return hessian_matrix(
-        lambda x: -loglike(_unpack(x, shapes), params, data_obj, model),
+        lambda x: -loglike(_unpack(x, shapes), params, model, data_obj),
         values,
     )
 
@@ -213,7 +214,7 @@ def _neg_loglike_curvature(values, idx, params, data_obj, model, shapes=None):
 
     def objective(x):
         return -loglike(
-            _unpack(values.at[idx].set(x), shapes), params, data_obj, model
+            _unpack(values.at[idx].set(x), shapes), params, model, data_obj
         )
 
     return jax.grad(jax.grad(objective))(values[idx])
@@ -239,7 +240,8 @@ def _hessian_then(finish, values, params, data_obj, model, dtype):
     return cast_tree(result, ambient)
 
 
-def laplace_cov(values, params, data_obj, model, *, dtype="float64"):
+@old_order("values", "params", "data", "model", data="data")
+def laplace_cov(values, params, model, data, *, dtype="float64"):
     """
     Compute the full Laplace covariance matrix for all model parameters jointly.
 
@@ -266,12 +268,12 @@ def laplace_cov(values, params, data_obj, model, *, dtype="float64"):
         concatenated in order.
     params : list
         List of parameter names.
-    data_obj : OIData
-        Object containing the data to be fitted.
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
         ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
+    data : OIData
+        Object containing the data to be fitted.
     dtype : {"float64", "float32"}, optional
         Precision of the calculation, as for [`fit`][virgil.fitting.fit]:
         float64 by default, inside a local ``jax.enable_x64`` context. The
@@ -286,15 +288,14 @@ def laplace_cov(values, params, data_obj, model, *, dtype="float64"):
         lambda hess: regularized_inverse(hess, ridge=1e-10),
         values,
         params,
-        data_obj,
+        data,
         model,
         dtype,
     )
 
 
-def laplace_parameter_uncertainty(
-    values, params, data_obj, model, target_param
-):
+@old_order("values", "params", "data", "model", data="data")
+def laplace_parameter_uncertainty(values, params, model, data, target_param):
     """Compute scalar Laplace uncertainty for one parameter with all others fixed.
 
     Parameters
@@ -305,10 +306,10 @@ def laplace_parameter_uncertainty(
         [`laplace_cov`][virgil.inference.laplace_cov]).
     params : list[str]
         Parameter paths corresponding to ``values``.
-    data_obj : OIData
-        Data to fit.
     model : SourceModel or callable
         Template model or class, as for [`loglike`][virgil.likelihood.loglike].
+    data : OIData
+        Data to fit.
     target_param : str
         The scalar parameter whose uncertainty is returned (a path whose
         template leaf has more than one element is rejected).
@@ -340,12 +341,13 @@ def laplace_parameter_uncertainty(
     values = np.asarray(values, dtype=float)
 
     d2_axis = _neg_loglike_curvature(
-        values, idx, tuple(params), data_obj, model, shapes
+        values, idx, tuple(params), data, model, shapes
     )
     return np.sqrt(1.0 / np.asarray(d2_axis, dtype=float))
 
 
-def fisher(values, params, data_obj, model, ridge=0.0, *, dtype="float64"):
+@old_order("values", "params", "data", "model", data="data")
+def fisher(values, params, model, data, ridge=0.0, *, dtype="float64"):
     """Observed information (Hessian of ``-log L``) at a parameter point.
 
     At the maximum-likelihood point this approximates the Fisher matrix.
@@ -358,12 +360,12 @@ def fisher(values, params, data_obj, model, ridge=0.0, *, dtype="float64"):
         [`laplace_cov`][virgil.inference.laplace_cov]).
     params : list[str]
         Parameter paths corresponding to ``values``.
-    data_obj : OIData
-        Observational data object.
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
         ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
+    data : OIData
+        Observational data object.
     ridge : float, optional
         Diagonal regularization term.
     dtype : {"float64", "float32"}, optional
@@ -380,4 +382,4 @@ def fisher(values, params, data_obj, model, ridge=0.0, *, dtype="float64"):
         ident = np.eye(information.shape[-1], dtype=information.dtype)
         return information + np.maximum(ridge, 0.0) * ident
 
-    return _hessian_then(add_ridge, values, params, data_obj, model, dtype)
+    return _hessian_then(add_ridge, values, params, data, model, dtype)

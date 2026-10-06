@@ -27,7 +27,7 @@ SPEC.loader.exec_module(WORKFLOW)
 
 def test_joint_loglike_and_filter_specific_parameter_coupling():
     observations, truth = WORKFLOW.simulate_observations(noise_scale=0.0)
-    joint = joint_loglike(truth, observations, WORKFLOW.binary_model)
+    joint = joint_loglike(truth, WORKFLOW.binary_model, observations)
     individual = sum(
         model_loglike(WORKFLOW.binary_model(truth, index), observation)
         for index, observation in enumerate(observations)
@@ -35,8 +35,8 @@ def test_joint_loglike_and_filter_specific_parameter_coupling():
     jacobian = jax.jacrev(
         lambda log_flux: joint_prediction(
             {**truth, "log10_flux": log_flux},
-            observations,
             WORKFLOW.binary_model,
+            observations,
         )
     )(truth["log10_flux"])
     block_size = observations[0].flatten_data()[0].size
@@ -56,7 +56,7 @@ def test_joint_loglike_and_filter_specific_parameter_coupling():
 def test_joint_expected_fisher_shape_and_shared_geometry():
     observations, truth = WORKFLOW.simulate_observations(noise_scale=0.0)
     prediction = lambda params: joint_prediction(
-        params, observations, WORKFLOW.binary_model
+        params, WORKFLOW.binary_model, observations
     )
     fmat, _ = gaussian_fisher(
         prediction, truth, WORKFLOW.observation_errors(observations)

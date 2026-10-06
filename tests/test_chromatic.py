@@ -106,7 +106,7 @@ def test_several_files_read_as_one(tmp_path):
     assert joined.wavel.shape == joined.u.shape
     assert np.allclose(
         model_loglike(TRUTH, joined),
-        joint_loglike(None, singles, lambda params, index: TRUTH),
+        joint_loglike(None, lambda params, index: TRUTH, singles),
         rtol=1e-6,
     )
 
