@@ -14,6 +14,7 @@ from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
     EllipticalGaussian,
+    EllipticalLimbDarkenedDisk,
     FlaredDiskGaussian,
     GaussianArc,
     FlaredDiskHG,
@@ -466,6 +467,12 @@ def test_binary_render_is_available():
         (QuadraticLimbDarkenedDisk(15.0, q1=0.5, q2=0.3, dra=-5.0), 2e-3),
         (SquareRootLimbDarkenedDisk(15.0, q1=0.6, q2=0.4, ddec=4.0), 2e-3),
         (
+            EllipticalLimbDarkenedDisk(
+                15.0, 0.6, 30.0, u=[0.6], dra=-5.0, ddec=4.0
+            ),
+            2e-3,
+        ),
+        (
             Image.from_model(GaussianDisk(4.0), 49, 0.5, dra=6.0, ddec=-3.0),
             2e-3,
         ),
@@ -561,6 +568,7 @@ def test_binary_render_is_available():
         "limb_darkened_disk",
         "quadratic_limb_darkened_disk",
         "square_root_limb_darkened_disk",
+        "elliptical_limb_darkened_disk",
         "image",
         "rim",
         "nested_system",

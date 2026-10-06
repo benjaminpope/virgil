@@ -11,6 +11,7 @@ import pytest
 
 from virgil.models import (
     EllipticalGaussian,
+    EllipticalLimbDarkenedDisk,
     FlaredDiskHG,
     GaussianArc,
     GravityDarkenedStar,
@@ -32,6 +33,11 @@ CASES = [
         EllipticalGaussian,
         dict(fwhm=3.0, ratio=0.6, pa=20.0),
         ("fwhm", "ratio", "pa"),
+    ),
+    (
+        EllipticalLimbDarkenedDisk,
+        dict(diam=3.0, ratio=0.6, pa=20.0, u=[0.5]),
+        ("diam", "ratio", "pa", "u"),
     ),
     (
         GaussianArc,

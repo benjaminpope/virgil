@@ -12,7 +12,10 @@ import pytest
 from scipy.integrate import quad
 from scipy.special import j0
 
+from virgil._geometry import image_coordinates
 from virgil.models import (
+    EllipticalGaussian,
+    EllipticalLimbDarkenedDisk,
     LimbDarkenedDisk,
     PointSource,
     QuadraticLimbDarkenedDisk,
@@ -280,3 +283,110 @@ def test_in_a_system_with_a_companion():
     vis = onp.asarray(system.model(np.asarray(U), np.asarray(V), WAVEL))
     assert onp.isclose(vis[0], 1.0)
     assert onp.all(onp.isfinite(vis))
+
+
+@pytest.mark.parametrize("u", [[], [0.6], [0.4, 0.25], [0.3, 0.2, 0.1]])
+def test_elliptical_disk_at_unit_ratio_is_a_limb_darkened_disk(u):
+    with jax.enable_x64(True):
+        ellipse = EllipticalLimbDarkenedDisk(
+            DIAM, 1.0, 37.0, u=u, dra=0.5, ddec=-0.3
+        )
+        disk = LimbDarkenedDisk(DIAM, u=u, dra=0.5, ddec=-0.3)
+        assert onp.allclose(
+            _visibility(ellipse), _visibility(disk), rtol=0.0, atol=1e-12
+        )
+
+
+def test_elliptical_disk_visibilities_match_its_rendered_image():
+    # Direct Fourier sum of the model's own image. The limb of a linear law
+    # is a step of 1 - u = 0.4, and pixels are wholly in or out of the
+    # ellipse, so the error comes from the jagged limb and falls as the
+    # pixels shrink: 1.0e-3 at 128 pixels across the 12 mas field, 2.2e-4
+    # at 256. A wrong scale or orientation errs by ~0.1.
+    npix, fov_mas, wavel = 256, 12.0, 1.65e-6
+    rng = onp.random.default_rng(0)
+    u, v = rng.uniform(-60.0, 60.0, (2, 30))  # past the first null
+    with jax.enable_x64(True):
+        model = EllipticalLimbDarkenedDisk(10.0, 0.6, 30.0, u=[0.6])
+        image = onp.asarray(model.render(npix=npix, fov_mas=fov_mas)).ravel()
+        xx, yy = (
+            onp.asarray(a).ravel() for a in image_coordinates(npix, fov_mas)
+        )
+        expected = onp.asarray(model.model(u, v, wavel))
+    phase = onp.exp(
+        -2j
+        * onp.pi
+        * _MAS2RAD_REF
+        * (onp.outer(u, xx) + onp.outer(v, yy))
+        / wavel
+    )
+    assert onp.max(onp.abs(phase @ image - expected)) < 1e-3
+
+
+def _along(model, baseline, pa):
+    """|V| on baselines of length ``baseline`` (m) at position angle ``pa``."""
+    rad = onp.deg2rad(pa)
+    east, north = baseline * onp.sin(rad), baseline * onp.cos(rad)
+    return onp.abs(onp.asarray(model.model(east, north, WAVEL)))
+
+
+@pytest.mark.parametrize("pa", [0.0, 30.0, 115.0])
+def test_elliptical_disk_is_oriented_like_an_elliptical_gaussian(pa):
+    # A source long along PA is narrow in the uv plane along PA, so both
+    # visibilities fall fastest on baselines at PA (u East, v North).
+    theta = onp.arange(0.0, 180.0, 1.0)
+    disk = EllipticalLimbDarkenedDisk(DIAM, 0.5, pa, u=[0.6])
+    gauss = EllipticalGaussian(DIAM, 0.5, pa)
+    # 100 m is inside the disk's first lobe in every direction
+    steepest = [
+        theta[onp.argmin(_along(m, 100.0, theta))] for m in (disk, gauss)
+    ]
+    assert steepest[0] == steepest[1] == pa
+    # The first null (about 220 m along the major axis, before the second
+    # at about 390 m) is twice as far out along the minor axis.
+    b = onp.linspace(1.0, 300.0, 600)
+    major = b[onp.argmin(_along(disk, b, onp.full_like(b, pa)))]
+    minor = b[onp.argmin(_along(disk, 2.0 * b, onp.full_like(b, pa + 90.0)))]
+    assert 150.0 < major < 280.0 and minor == major
+
+
+@pytest.mark.parametrize("ratio", [1.0, 0.6, 0.2])
+def test_elliptical_disk_carries_its_flux(ratio):
+    flux = 0.3
+    disk = EllipticalLimbDarkenedDisk(6.0, ratio, 40.0, u=[0.5], flux=flux)
+    assert onp.isclose(complex(disk.model(0.0, 0.0, WAVEL)), 1.0)
+    # Its weight in a System is its flux, whatever its area: with a star
+    # well away from it, the disk holds flux / (1 + flux) of the image.
+    scene = System(star=PointSource(dra=-12.0), disk=disk)
+    assert onp.isclose(complex(scene.model(0.0, 0.0, WAVEL)), 1.0)
+    image = onp.asarray(scene.render(npix=128, fov_mas=32.0))
+    xx = onp.asarray(image_coordinates(128, 32.0)[0])
+    assert onp.isclose(image.sum(), 1.0, atol=1e-5)
+    assert onp.isclose(image[xx > -6.0].sum(), flux / (1.0 + flux), atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"diam": 0.0}, "diam"),
+        ({"diam": -2.0}, "diam"),
+        ({"diam": onp.nan}, "diam"),
+        ({"ratio": 0.0}, "ratio"),
+        ({"ratio": -0.5}, "ratio"),
+        ({"ratio": 1.5}, "ratio"),
+        ({"flux": -1.0}, "flux"),
+    ],
+)
+def test_elliptical_disk_rejects_invalid_parameters(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        EllipticalLimbDarkenedDisk(**({"diam": 3.0, "ratio": 0.5} | kwargs))
+
+
+def test_elliptical_disk_is_physical_checks_traced_parameters():
+    good = EllipticalLimbDarkenedDisk(3.0, 0.5, 30.0, u=[0.6])
+    assert bool(good.is_physical())
+    assert not bool(good.set("diam", np.array(-1.0)).is_physical())
+    assert not bool(good.set("ratio", np.array(1.2)).is_physical())
+    assert not bool(good.set("ratio", np.array(0.0)).is_physical())
+    # a profile that goes negative at the limb
+    assert not bool(good.set("u", np.array([1.5])).is_physical())

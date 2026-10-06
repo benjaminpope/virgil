@@ -313,6 +313,10 @@ analysis or warn:
   visibility (a stack of projected rings), a tilt out of the sky plane, an
   optional elliptical cross-section, and a rendered image that matches its
   visibilities.
+- **`EllipticalLimbDarkenedDisk(diam, ratio, pa, u)`.** A limb-darkened disk
+  with an elliptical outline (minor/major axis `ratio`, major axis at `pa`
+  North to East as for `EllipticalGaussian`), with the polynomial law and
+  `u` of `LimbDarkenedDisk` and analytic visibilities.
 - **Short-arc orbits.** `StateVectorOrbit` parameterises an orbit by the
   relative position and velocity at `t_ref` and the gravitational parameter,
   which a short arc constrains well where the elements are degenerate; it
