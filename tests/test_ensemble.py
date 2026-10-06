@@ -1,0 +1,204 @@
+import jax
+import numpy as onp
+import pytest
+
+from virgil.coverage import ami_grid_record
+from virgil.ensemble import (
+    Draw,
+    EnsembleSpec,
+    Group,
+    combine,
+    draw_groups,
+    ensemble,
+    reference_starts,
+    run_group,
+)
+from virgil.fitting import FitResult
+from virgil.imaging import LCurve, _chi2
+from virgil.metrics import score
+from virgil.models import Image, PointSource, System
+from virgil.oidata import OIData
+from virgil.scenes import gaussian_blob
+
+from ._compiles import count_compiles
+
+NPIX, SCALE = 12, 24.0
+DATA = OIData(ami_grid_record(pitch_m=0.5))
+
+
+def _scene(sigma=40.0, dra=48.0, flux=0.3):
+    blob = gaussian_blob(NPIX, SCALE, sigma, dra=dra)
+    image = Image.from_brightness(blob, SCALE, flux=flux)
+    return System(star=PointSource(), env=image)
+
+
+TRUTH = _scene()
+# Two noise draws of the same scene stand for two datasets.
+DATASETS = [DATA.with_model(TRUTH, key=jax.random.PRNGKey(k)) for k in (1, 2)]
+
+
+def _group(index, models):
+    """A Group of ready-made "fits", weights largest first."""
+    weights = onp.array([1e3, 1e2, 1e1][: len(models)])
+    results = []
+    for model in models:
+        chi2 = _chi2(model, DATASETS)
+        ndata = [d.n_independent for d in DATASETS]
+        results.append(FitResult(model, {}, {"chi2": chi2, "ndata": ndata}))
+    chi2 = onp.array([sum(r.info["chi2"]) for r in results])
+    curve = LCurve(
+        weights,
+        chi2,
+        onp.array(
+            [
+                [c / n for c, n in zip(r.info["chi2"], r.info["ndata"])]
+                for r in results
+            ]
+        ),
+        onp.array([1.0, 2.0, 4.0][: len(models)]),
+        results,
+    )
+    draw = Draw(index, "tsv", NPIX, SCALE, "flat", tuple(weights))
+    return Group(draw, curve)
+
+
+def test_selection_drops_a_member_that_fits_badly():
+    # The window keeps the two strongest weights of each group (the corner
+    # of a three-point L-curve is its middle point).
+    good = _group(0, [_scene(38.0), _scene(42.0), _scene(40.0)])
+    bad = _group(1, [_scene(40.0), _scene(dra=-48.0), _scene(40.0)])
+    result = combine(DATASETS, [good, bad])
+    reasons = [(m.draw.index, m.weight, m.reason) for m in result.members]
+    assert (1, 1e2, "chi2") in reasons
+    assert all(m.reason == "window" for m in result.members if m.weight == 10)
+    assert all(m.kept for m in result.members if m.reason is None)
+    assert 1 <= len(result.kept) <= 3
+
+
+def test_iterative_mean_never_raises_any_datasets_chi2():
+    groups = [
+        _group(0, [_scene(36.0), _scene(44.0), _scene(40.0)]),
+        _group(1, [_scene(40.0, flux=0.25), _scene(dra=40.0), TRUTH]),
+    ]
+    result = combine(DATASETS, groups, spec=EnsembleSpec(chi2_ratio=1e3))
+    trace = onp.array(result.trace)
+    # Never higher, up to the rounding that mean_rtol forgives.
+    assert onp.all(onp.diff(trace, axis=0) <= 1e-9 * trace[:-1])
+    assert onp.all(onp.array(result.chi2_red) <= trace[0] * (1 + 1e-6))
+    assert len(trace) == len(result.kept)
+    assert "raw chi2/N per dataset" in result.summary()
+
+
+def test_identical_members_have_zero_spread():
+    groups = [_group(i, [TRUTH, TRUTH, TRUTH]) for i in range(2)]
+    result = combine(DATASETS, groups)
+    assert len(result.kept) == 4
+    assert onp.allclose(result.std, 0.0, atol=1e-7)
+    assert onp.allclose(
+        result.mean.brightness, TRUTH.env.brightness, atol=1e-6
+    )
+    assert onp.isclose(float(result.mean.flux), 0.3, rtol=1e-5)
+
+
+def test_draws_are_reproducible_and_grouped_by_geometry():
+    spec = EnsembleSpec(n_weights=4)
+    a = draw_groups(DATA, 8, jax.random.PRNGKey(3), spec)
+    b = draw_groups(DATA, 8, jax.random.PRNGKey(3), spec)
+    assert a == b
+    assert [d.geometry for d in a] == sorted(d.geometry for d in a)
+    assert sorted(d.index for d in a) == list(range(8))
+    n_data = DATA.n_independent
+    for d in a:
+        assert d.npix <= spec.max_npix
+        low, high = spec.weight_ranges[d.family]
+        assert all(low * n_data <= w <= high * n_data for w in d.weights)
+        assert list(d.weights) == sorted(d.weights, reverse=True)
+    with pytest.raises(ValueError, match="Unknown regulariser"):
+        EnsembleSpec(families=("l2",))
+
+
+SMALL = EnsembleSpec(
+    families=("tsv",),
+    n_weights=3,
+    oversample=(2.0,),
+    field_factors=(0.5,),
+    starts=("flat",),
+    max_npix=8,
+)
+
+
+def test_ensemble_smoke():
+    data = DATASETS[0]
+    result = ensemble(
+        data, 2, jax.random.PRNGKey(0), spec=SMALL, method="lm", max_steps=50
+    )
+    assert len(result.members) == 6
+    assert len(result.groups) == 2
+    assert result.kept
+    assert onp.all(onp.isfinite(onp.asarray(result.mean.brightness)))
+    assert result.std.shape == result.mean.brightness.shape
+    assert len(result.chi2_red) == 1
+    assert "kept" in result.summary()
+
+
+def test_groups_sharing_a_geometry_compile_once():
+    data = DATASETS[0]
+    starts = reference_starts(data, True, ("flat",))
+    first, second = (
+        Draw(i, "tsv", 8, 38.0, "flat", weights)
+        for i, weights in enumerate([(1e4, 1e3, 1e2), (5e4, 2e3, 7e1)])
+    )
+    with count_compiles() as compiles:
+        run_group(data, first, starts=starts, method="lm", max_steps=20)
+    assert compiles  # the first group compiles its fit
+    with count_compiles() as compiles:
+        run_group(data, second, starts=starts, method="lm", max_steps=20)
+    assert not compiles
+
+
+def test_without_a_star_members_are_recentred_on_the_best():
+    def image(dra):
+        blob = gaussian_blob(NPIX, SCALE, 40.0, dra=dra)
+        return Image.from_brightness(blob, SCALE)
+
+    data = [DATA.with_model(image(0.0), key=jax.random.PRNGKey(5))]
+    weights = onp.array([1e3, 1e2, 1e1])
+    results = [
+        FitResult(m, {}, {"chi2": _chi2(m, data), "ndata": [220]})
+        for m in (image(0.0), image(SCALE), image(-SCALE))
+    ]
+    curve = LCurve(
+        weights,
+        onp.array([sum(r.info["chi2"]) for r in results]),
+        onp.array([[r.info["chi2"][0] / 220] for r in results]),
+        onp.array([1.0, 2.0, 4.0]),
+        results,
+    )
+    group = Group(Draw(0, "tsv", NPIX, SCALE, "flat", tuple(weights)), curve)
+    # Keep every member whatever its fit: only the recentring is tested.
+    spec = EnsembleSpec(window_dex=3, chi2_ratio=1e9, mean_rtol=1e9)
+    result = combine(data, [group], star=False, spec=spec)
+    assert len(result.kept) == 2
+    peak = float(result.mean.brightness.max())
+    assert onp.abs(result.std).max() < 0.02 * peak
+
+
+@pytest.mark.slow
+def test_ensemble_recovers_two_blobs():
+    npix, scale = 24, 19.0
+    blobs = gaussian_blob(npix, scale, 25.0, dra=60.0) + 0.6 * gaussian_blob(
+        npix, scale, 35.0, dra=-40.0, ddec=50.0
+    )
+    truth = System(
+        star=PointSource(),
+        env=Image.from_brightness(blobs, scale, flux=0.5),
+    )
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(7))
+    result = ensemble(data, 8, jax.random.PRNGKey(1))
+    best = min(result.kept, key=lambda m: m.total_chi2_red)
+    assert all(
+        c <= b * (1 + 1e-6) for c, b in zip(result.chi2_red, result.trace[0])
+    )
+    assert best.chi2_red[0] < 2.0
+    scores = score(result.mean, truth.env)
+    assert scores["ncc"] > 0.8

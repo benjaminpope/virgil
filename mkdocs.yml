@@ -77,6 +77,7 @@ nav:
       - "4. A ring around a binary": imaging_composite.md
       - "5. Sampling the posterior": imaging_sampling.md
       - "6. Sparse images and CLEAN": imaging_clean.md
+      - "7. Ensembles": imaging_ensemble.md
   - API Reference:
       - Overview: api/index.md
       - OIData: api/oidata.md
@@ -109,6 +110,7 @@ nav:
       - Fields: api/fields.md
       - Scenes: api/scenes.md
       - Metrics: api/metrics.md
+      - Ensemble: api/ensemble.md
       - Coverage: api/coverage.md
       - Simulate: api/simulate.md
       - Plotting: api/plotting.md
