@@ -11,9 +11,24 @@ Ben has approved the following, and this note does not reopen it:
   argument-order rule;
 - 0.4 ships the new order with a deprecation shim: the old positional
   order still works and raises a `FutureWarning`, and the shim is removed
-  in 0.5;
+  in 0.5 (decision 3 below keeps its type check);
 - in the same pass `samples_dict` is renamed `grid`, and `samples_dict=`
   stays as a deprecated keyword alias until 0.5.
+
+Ben then settled the three questions this note first left open
+(2026-10-06):
+
+1. **Parameter names are standardized in the same pass.** The data
+   argument is `data` (not `data_obj` or `observations`) and the model
+   argument is `model` (not `model_object` or `model_fn`). The old names
+   stay as deprecated keyword aliases with a `FutureWarning` until 0.5,
+   so users break only once.
+2. **`injection_recovery` puts the model first**, as the rule says and
+   as `detection_statistics` does: `injection_recovery(model, null_scene,
+   template, grid, key, ...)`.
+3. **In 0.5 the shim goes but the type check stays.** An old-order call
+   raises a `TypeError` that names the new call form, instead of failing
+   deep inside with an `AttributeError` on the model.
 
 What this note settles is *which* rule, how the shim works, and the order
 of the code PRs.
@@ -129,7 +144,9 @@ keep their roles around that pair:
   data)`;
 - what modifies the model (priors) may sit between model and data, as in
   `fit(model, priors, data)`;
-- the search `grid`, then other required arguments, come after the data.
+- the search `grid`, then other required arguments, come after the data;
+- the model argument is called `model` and the data argument `data`
+  everywhere, whether the data are one `OIData` or a sequence.
 
 The new signatures:
 
@@ -137,14 +154,20 @@ The new signatures:
 | --- | --- |
 | grid family (5) | `likelihood_grid(model, data, grid, *, ...)`, and likewise `optimized_likelihood_grid`, `optimized_flux_grid`, `linear_flux_grid`, `laplace_flux_uncertainty_grid(model, data, grid, flux, *, ...)` |
 | limits | `absil_limits(model, data, grid, sigma, *, ...)`, `injection_limits(model, data, grid, sigma, *, ...)` |
-| detection | `detection_statistics(model, data, grid, *, ...)`, `gaussian_null(null_scene, template, *, ...)`, `rescale_errors(null_scene, data)`, `bootstrap_null(null_scene, data, *, ...)`, `injection_recovery(null_scene, template, model, grid, key, *, ...)` |
+| detection | `detection_statistics(model, data, grid, *, ...)`, `gaussian_null(null_scene, template, *, ...)`, `rescale_errors(null_scene, data)`, `bootstrap_null(null_scene, data, *, ...)`, `injection_recovery(model, null_scene, template, grid, key, *, ...)` |
 | values-first | `loglike(values, params, model, data, **options)`, `laplace_cov(values, params, model, data, *, ...)`, `laplace_parameter_uncertainty(values, params, model, data, target_param)`, `fisher(values, params, model, data, ridge, *, ...)` |
-| joint | `joint_prediction(params, model_fn, observations)`, `joint_loglike(params, model_fn, observations, **options)` |
-| rename only | `best_grid_point(loglike_grid, grid)`, `plot_grid_map(values, grid, kind, ...)`, `plot_contrast_curve(values, grid, ...)` |
+| joint | `joint_prediction(params, model, data)`, `joint_loglike(params, model, data, **options)` |
+| rename only (`grid`) | `best_grid_point(loglike_grid, grid)`, `plot_grid_map(values, grid, kind, ...)`, `plot_contrast_curve(values, grid, ...)` |
+| rename only (`model`, `data`) | `whitened_residuals(model, data, **noise)`, `model_loglike(model, data, *, ...)`, `flux_scale_posterior(model, data)`, `numpyro_model(model, priors, data, ...)`, `posterior_predictive_summary(samples, model, data, params)` |
 
-`injection_recovery` follows `bias_test(scene, template, model, ...)`: the
-null scene and template that generate the draws, then the model fitted to
-them.
+In the joint functions `model` is still the callable `model(params,
+index)` that builds one source per observation; only its name changes.
+
+`injection_recovery` puts the fitted model first, as
+`detection_statistics` does, then the null scene and template that
+generate the draws. This departs from `bias_test(scene, template, model,
+...)`, whose subject is the scene being simulated; `injection_recovery`'s
+subject is the model whose detection statistics are being calibrated.
 
 ### Why model first
 
@@ -220,30 +243,45 @@ positions hold data, or neither does (an empty tuple, or a data-like
 object that is not an `OIData`), the call is bound in the new order and the
 function's own errors apply. New-order code therefore never warns, and an
 old-order call with exotic data fails as it would have after 0.5.
-Keyword calls (`model=`, `data_obj=`) are never ambiguous and are never
+Keyword calls (`model=`, `data=`) are never ambiguous and are never
 reordered.
 
 ### Sketch
 
+The module has two decorators. `old_order` reorders and renames;
+`renamed` only renames, for the functions whose order is already right
+but whose argument names change. Both accept the deprecated keyword
+names below until 0.5, each with its own `FutureWarning`, and raise a
+`TypeError` if a call passes both the old and the new name:
+
 ```python
-"""Deprecation helpers for the 0.4 argument-order change (private)."""
+NAME_ALIASES = {
+    "data_obj": "data",
+    "observations": "data",
+    "model_object": "model",
+    "model_fn": "model",
+    "samples_dict": "grid",
+}
+```
 
-import functools
-import inspect
-import warnings
+A function only gets the aliases whose new name it has (and whose old
+name it does not), so functions without a `grid` are unaffected.
 
-
-def old_order(*old_names, data):
+```python
+def old_order(*old_names, data, aliases=None, removed=False):
     """Accept calls in the pre-0.4 positional order, with a FutureWarning.
 
     ``old_names`` are the leading positional parameters in their old
     order, under their new names; ``data`` names the data parameter.
-    Remove in 0.5.
+    ``removed=True`` (0.5) raises a TypeError naming the new call.
     """
 
     def decorate(fn):
         sig = inspect.signature(fn)
         params = sig.parameters
+        names = _alias_map(
+            params, NAME_ALIASES if aliases is None else aliases
+        )
         new_names = [n for n in params if n in old_names]
         moved = [params[n] for n in old_names] + [
             p for n, p in params.items() if n not in old_names
@@ -254,52 +292,31 @@ def old_order(*old_names, data):
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            _grid_alias(fn.__name__, kwargs)
-            if (
+            _apply_aliases(fn.__name__, kwargs, names)  # warns per alias
+            if not (
                 len(args) > i_old
                 and _is_data(args[i_old])
                 and not (len(args) > i_new and _is_data(args[i_new]))
             ):
-                warnings.warn(
-                    f"{fn.__name__} now takes the model before the data; "
-                    f"call {new_call}. The old order stops working in "
-                    "virgil 0.5.",
-                    FutureWarning,
-                    stacklevel=2,
+                return fn(*args, **kwargs)
+            if removed:
+                raise TypeError(
+                    f"{fn.__name__} takes the model before the data "
+                    f"since virgil 0.4; call {new_call}."
                 )
-                bound = old_sig.bind(*args, **kwargs)
-                return fn(**_as_keywords(bound, params))
-            return fn(*args, **kwargs)
+            warnings.warn(
+                f"{fn.__name__} now takes the model before the data; "
+                f"call {new_call}. The old order stops working in "
+                "virgil 0.5.",
+                FutureWarning,
+                stacklevel=2,
+            )
+            bound = old_sig.bind(*args, **kwargs)
+            return fn(**_as_keywords(bound, params))  # expands **kwargs
 
         return wrapper
 
     return decorate
-
-
-def _grid_alias(name, kwargs):
-    if "samples_dict" in kwargs:
-        if "grid" in kwargs:
-            raise TypeError(
-                f"{name} got both grid= and samples_dict=; use grid="
-            )
-        warnings.warn(
-            f"{name}(samples_dict=...) is now {name}(grid=...); "
-            "samples_dict= stops working in virgil 0.5.",
-            FutureWarning,
-            stacklevel=3,
-        )
-        kwargs["grid"] = kwargs.pop("samples_dict")
-
-
-def _as_keywords(bound, params):
-    """Flatten a binding to keywords, expanding any **kwargs."""
-    out = {}
-    for name, value in bound.arguments.items():
-        if params[name].kind is inspect.Parameter.VAR_KEYWORD:
-            out.update(value)
-        else:
-            out[name] = value
-    return out
 ```
 
 Applied as, for example:
@@ -311,18 +328,24 @@ def likelihood_grid(model, data, grid, *, batch_size=None): ...
 @old_order("values", "params", "data", "model", data="data")
 def loglike(values, params, model, data, **options): ...
 
+@old_order("params", "data", "model", data="data")  # observations=, model_fn=
+def joint_loglike(params, model, data, **options): ...
+
 @old_order(
     "template", "null_scene", "model", "grid", "key", data="template"
 )
-def injection_recovery(null_scene, template, model, grid, key, *, ...): ...
+def injection_recovery(model, null_scene, template, grid, key, *, ...): ...
+
+@renamed()  # model_object=, data_obj=
+def whitened_residuals(model, data, **noise): ...
 ```
 
-The three rename-only functions (`best_grid_point`, `plot_grid_map`,
-`plot_contrast_curve`) take a smaller decorator that calls only
-`_grid_alias`. No reordered function takes `*args`, so the binding needs
-no case for it. `functools.wraps` keeps the name, docstring and
-`__wrapped__`, so `inspect.signature` and the API pages (griffe reads the
-source) show the new signature.
+The rename-only functions (`best_grid_point`, `plot_grid_map`,
+`plot_contrast_curve`, and the already model-first functions whose names
+change) take `renamed`. No reordered function takes `*args`, so the
+binding needs no case for it. `functools.wraps` keeps the name,
+docstring and `__wrapped__`, so `inspect.signature` and the API pages
+(griffe reads the source) show the new signature.
 
 `FutureWarning` rather than `DeprecationWarning`, because Python shows it
 by default in notebooks and scripts, where these calls live; a
@@ -360,8 +383,11 @@ time and never becomes part of traced code:
 Each PR migrates every internal call, docstring example and test for the
 functions it touches, so `main` stays free of the warnings it introduces.
 
-1. **`_deprecate.py`** with `old_order`, the `samples_dict` alias and
-   unit tests on small dummy functions (no JAX models needed).
+1. **`_deprecate.py`** with `old_order`, `renamed`, the name aliases
+   (`samples_dict`, `data_obj`, `observations`, `model_object`,
+   `model_fn`), the 0.5 `removed=True` mode, and unit tests on small
+   dummy functions (no JAX models needed). No public function is
+   decorated yet.
 2. **Grids, limits and detection**: the five grid functions,
    `absil_limits`, `injection_limits`, `detection_statistics`,
    `gaussian_null`, `rescale_errors`, `bootstrap_null`,
@@ -372,7 +398,10 @@ functions it touches, so `main` stays free of the warnings it introduces.
    carry the old key).
 3. **Values-first and joint likelihoods**: `loglike`, `laplace_cov`,
    `laplace_parameter_uncertainty`, `fisher`, `joint_prediction`,
-   `joint_loglike`, and their callers in `grid_fit` and `inference`.
+   `joint_loglike`, and their callers in `grid_fit` and `inference`;
+   and `renamed` on the already model-first functions whose names change
+   (`whitened_residuals`, `model_loglike`, `flux_scale_posterior`,
+   `numpyro_model`, `posterior_predictive_summary`).
 4. **Notebooks, examples and docs**, then the pytest filter below.
 
 ### Tests
@@ -386,7 +415,11 @@ stays cheap:
   equal: the same code runs);
 - the new order, positional and by keyword, raises no warning (run under
   `warnings.simplefilter("error")`);
-- `samples_dict=` warns and equals `grid=`; passing both is a `TypeError`;
+- `samples_dict=`, `data_obj=`, `observations=`, `model_object=` and
+  `model_fn=` each warn and equal the new name; passing an old name with
+  its new one is a `TypeError`;
+- with `removed=True` an old-order call is a `TypeError` naming the new
+  call, and a new-order call is unchanged;
 - an ambiguous call (neither argument is data) does not warn;
 - under `jax.jit` (for `loglike` and `detection_statistics`) the old order
   warns while tracing and matches the new order, and a `jax.vmap` over the
@@ -397,7 +430,7 @@ PR 4 adds to `[tool.pytest.ini_options]`
 ```toml
 filterwarnings = [
     "error:.*now takes the model before the data:FutureWarning",
-    "error:.*samples_dict.*:FutureWarning",
+    "error:.*stops working in virgil 0.5:FutureWarning",
 ]
 ```
 
@@ -415,15 +448,16 @@ Under `## 0.4.0`, `### Migration from 0.3.0`:
 >   `injection_limits` and `detection_statistics` are now `f(model, data,
 >   grid, ...)`; `loglike`, `laplace_cov`, `laplace_parameter_uncertainty`
 >   and `fisher` are `f(values, params, model, data, ...)`;
->   `joint_prediction` and `joint_loglike` are `f(params, model_fn,
->   observations)`; `gaussian_null`, `rescale_errors` and `bootstrap_null`
->   take the null scene first; `injection_recovery` is `(null_scene,
->   template, model, grid, key, ...)`. Calls in the 0.3 order still work,
->   with a `FutureWarning` naming the new call; they stop working in 0.5.
->   Keyword calls are unaffected.
-> - **`samples_dict` is now `grid`** in every grid, limit, detection and
->   plotting function. `samples_dict=` still works with a `FutureWarning`
->   until 0.5.
+>   `joint_prediction` and `joint_loglike` are `f(params, model,
+>   data)`; `gaussian_null`, `rescale_errors` and `bootstrap_null`
+>   take the null scene first; `injection_recovery` is `(model,
+>   null_scene, template, grid, key, ...)`. Calls in the 0.3 order still
+>   work, with a `FutureWarning` naming the new call; from 0.5 they raise
+>   a `TypeError` naming it.
+> - **One name for each argument.** The model is `model` and the data
+>   `data` everywhere, and the search grid is `grid`: `model_object=`,
+>   `model_fn=`, `data_obj=`, `observations=` and `samples_dict=` still
+>   work with a `FutureWarning` until 0.5.
 
 ### Notebooks and docs
 
@@ -439,23 +473,13 @@ they move to 0.5; the warnings tell them where.
 
 ### Removal in 0.5
 
-Delete `_deprecate.py`, the decorators and the deprecation tests, remove
-the `samples_dict` alias (an unexpected keyword is then a `TypeError`),
-drop the pytest filters, and add a `### Migration from 0.4.0` line saying
-the old order and `samples_dict=` are gone.
-
-## Open questions for Ben
-
-1. **Parameter names.** The same functions call the data `data`,
-   `data_obj` or `observations` and the model `model`, `model_object` or
-   `model_fn`. The shim could also accept `data_obj=` and `model_object=`
-   as deprecated aliases and standardize on `data` and `model` in 0.4,
-   at little extra cost. Only `samples_dict` was approved.
-2. **`injection_recovery`'s order.** This note follows `bias_test`
-   (`null_scene, template, model, grid, key`). The alternative is the
-   fitted model first (`model, null_scene, template, grid, key`), closer
-   to `detection_statistics`.
-3. **0.5 behaviour.** Removing the shim lets an old-order call fail deep
-   inside (an `AttributeError` on the model). Keeping the cheap type check
-   for 0.5 and raising a `TypeError` that names the new call would be
-   friendlier; deleting it entirely is simpler.
+Keep the type check and drop the rest. Every `old_order(...)` becomes
+`old_order(..., removed=True)`, so an old-order call raises a `TypeError`
+naming the new call instead of failing deep inside with an
+`AttributeError` on the model; the check costs an `isinstance` per call.
+Delete `renamed`, `NAME_ALIASES` and the alias handling (an old keyword
+is then Python's own unexpected-keyword `TypeError`), turn the
+old-order deprecation tests into `TypeError` tests, drop the pytest
+filters, and add a `### Migration from 0.4.0` line saying the old order
+and the old names are gone. Removing the check altogether is left for a
+later release, once downstream code has moved.
