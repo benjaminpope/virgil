@@ -41,6 +41,13 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- Parallel numpyro chains (`chain_method="parallel"`) on data with
+  `with_gains` no longer segfault. `GainModes` held zero-size arrays when
+  no mode spans frames, and XLA's Shardy pass crashes compiling a
+  `jax.pmap` that captures one (JAX 0.11.2). `GainModes.spanning` and
+  `spanning_group` are now `None` then. `numpyro_model` warns, suggesting
+  `chain_method="vectorized"`, when the data still hold zero-size arrays
+  (e.g. no closure phases) and more than one device is visible.
 - `metrics.rms_convolved` no longer needs `pixel_scale_mas` for array
   inputs when no `beam` is given (the docstring already said so); a beam
   with arrays and no pixel scale still raises a clear `ValueError`.

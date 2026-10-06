@@ -16,6 +16,10 @@ sin Δ (not the chord) of each residual, with a periodic penalty
 are smooth, so the likelihood is continuous everywhere.
 """
 
+import os
+import re
+import warnings
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -709,6 +713,53 @@ def _sample(numpyro, path, prior):
     return numpyro.sample(path, prior)
 
 
+def _host_devices():
+    """The number of local devices, without initialising the backend.
+
+    Once JAX's backend starts, ``XLA_FLAGS`` can no longer set the number
+    of host devices, so before that read the flag instead.
+    """
+    try:
+        from jax._src import xla_bridge
+
+        if xla_bridge.backends_are_initialized():
+            return jax.local_device_count()
+    except (ImportError, AttributeError):
+        return 1
+    flag = re.search(
+        r"xla_force_host_platform_device_count=(\d+)",
+        os.environ.get("XLA_FLAGS", ""),
+    )
+    return int(flag.group(1)) if flag else 1
+
+
+def _warn_zero_size_for_parallel_chains(observations):
+    """Warn if parallel chains would crash on zero-size arrays in the data.
+
+    XLA's Shardy pass segfaults compiling a ``jax.pmap`` (numpyro's
+    ``chain_method="parallel"``) that captures a zero-size array (JAX
+    0.11.2, CPU). Data without closure phases, for example, carry some.
+    """
+    if _host_devices() < 2:
+        return
+    empty = [
+        jax.tree_util.keystr(path)
+        for path, leaf in jax.tree_util.tree_leaves_with_path(observations)
+        if isinstance(leaf, (jax.Array, onp.ndarray)) and leaf.size == 0
+    ]
+    if empty:
+        warnings.warn(
+            "The data hold zero-size arrays ("
+            + ", ".join(empty[:4])
+            + ("" if len(empty) <= 4 else ", ...")
+            + "), on which jax.pmap segfaults while compiling (JAX 0.11.2). "
+            'Run numpyro chains with chain_method="vectorized", not '
+            '"parallel".',
+            RuntimeWarning,
+            stacklevel=4,
+        )
+
+
 @renamed()
 def numpyro_model(
     model,
@@ -841,6 +892,7 @@ def numpyro_model(
             "so they cannot be sampled; use fit for regularised MAP images."
         )
     observations = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+    _warn_zero_size_for_parallel_chains(observations)
 
     sites = noise_sites(noise, len(observations))
     likelihoods = tuple(likelihoods)

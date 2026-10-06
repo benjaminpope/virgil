@@ -84,10 +84,13 @@ class GainModes(eqx.Module):
     group : jax.Array
         ``(n_block, n_mode)`` int32: each mode's group, an index into
         ``groups``.
-    spanning : jax.Array
-        ``(n_vis, n_spanning)``: the shapes of modes that span frames.
-    spanning_group : jax.Array
-        ``(n_spanning,)`` int32: their groups.
+    spanning : jax.Array or None
+        ``(n_vis, n_spanning)``: the shapes of modes that span frames, or
+        None if there are none. Never a zero-size array: XLA's Shardy pass
+        segfaults compiling a ``jax.pmap`` (numpyro's parallel chains) that
+        captures one (JAX 0.11.2).
+    spanning_group : jax.Array or None
+        ``(n_spanning,)`` int32: their groups (None with ``spanning``).
     widths : jax.Array
         The default width of each group.
     groups : tuple of str
@@ -99,8 +102,8 @@ class GainModes(eqx.Module):
     rows: jax.Array
     shapes: jax.Array
     group: jax.Array
-    spanning: jax.Array
-    spanning_group: jax.Array
+    spanning: jax.Array | None
+    spanning_group: jax.Array | None
     widths: jax.Array
     groups: tuple = eqx.field(static=True)
     n_vis: int = eqx.field(static=True)
@@ -116,6 +119,8 @@ class GainModes(eqx.Module):
         jacobian = np.asarray(jacobian)
         scale = jacobian.at[self.rows].get(mode="fill", fill_value=0)
         local = self.shapes * scale[..., None] * widths[self.group][:, None, :]
+        if self.spanning is None:
+            return local, None
         spanning = (
             self.spanning * jacobian[:, None] * widths[self.spanning_group]
         )
@@ -153,7 +158,9 @@ class GainModes(eqx.Module):
         u = np.zeros((self.n_vis,) + local.shape[::2])
         b = np.arange(local.shape[0])[:, None]
         u = u.at[self.rows, b].set(local, mode="drop")
-        u = np.concatenate([u.reshape(self.n_vis, -1), spanning], axis=1)
+        u = u.reshape(self.n_vis, -1)
+        if spanning is not None:
+            u = np.concatenate([u, spanning], axis=1)
         return np.diag(errors**2) + u @ u.T
 
     def sample(self, key, widths):
@@ -162,10 +169,11 @@ class GainModes(eqx.Module):
         local_key, span_key = jax.random.split(key)
         z = jax.random.normal(local_key, self.group.shape)
         per_row = np.einsum("brk,bk->br", self.shapes, z * widths[self.group])
+        gains = np.zeros(self.n_vis).at[self.rows].add(per_row, mode="drop")
+        if self.spanning is None:
+            return gains
         z = jax.random.normal(span_key, self.spanning_group.shape)
-        return np.zeros(self.n_vis).at[self.rows].add(
-            per_row, mode="drop"
-        ) + self.spanning @ (z * widths[self.spanning_group])
+        return gains + self.spanning @ (z * widths[self.spanning_group])
 
     def subset(self, keep):
         """The modes on the visibility observables where ``keep`` is True.
@@ -187,7 +195,7 @@ class GainModes(eqx.Module):
             np.asarray(mapped, np.int32),
             np.asarray(shapes),
             self.group,
-            self.spanning[keep],
+            None if self.spanning is None else self.spanning[keep],
             self.spanning_group,
             self.widths,
             self.groups,
@@ -208,7 +216,8 @@ class GainModes(eqx.Module):
                 touched = r[(r < self.n_vis) & (col != 0)]
                 if onp.unique(labels[touched]).size > 1:
                     return True
-        for col in onp.asarray(self.spanning).T:
+        spanning = () if self.spanning is None else self.spanning
+        for col in onp.asarray(spanning).T:
             if onp.unique(labels[col != 0]).size > 1:
                 return True
         return False
@@ -388,8 +397,8 @@ def _pack(columns, groups, widths, frame):
         np.asarray(rows),
         np.asarray(shapes),
         np.asarray(group),
-        np.asarray(spanning),
-        np.asarray(spanning_group),
+        np.asarray(spanning) if spanning_cols else None,
+        np.asarray(spanning_group) if spanning_cols else None,
         np.asarray(widths, float),
         tuple(groups),
         int(n_vis),
