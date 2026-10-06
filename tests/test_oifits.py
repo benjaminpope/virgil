@@ -290,8 +290,8 @@ def test_phase_residuals_wrap_around_pi():
     flipped = OIData(_dict_data(phi=onp.full(len(TRIANGLES), -onp.pi + 1e-3)))
     # Data at +π and -π are the same angle, so the likelihood is the same.
     assert np.allclose(
-        loglike(values, params, near_pi, BinaryModelCartesian),
-        loglike(values, params, flipped, BinaryModelCartesian),
+        loglike(values, params, BinaryModelCartesian, near_pi),
+        loglike(values, params, BinaryModelCartesian, flipped),
         rtol=1e-4,
     )
 

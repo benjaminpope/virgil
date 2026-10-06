@@ -98,8 +98,8 @@ def binary_model(values, observation_index):
     )
 
 
-joint_prediction(params, observations, binary_model).shape, joint_loglike(
-    params, observations, binary_model
+joint_prediction(params, binary_model, observations).shape, joint_loglike(
+    params, binary_model, observations
 )
 ```
 

@@ -188,9 +188,9 @@ def test_laplace_and_fisher_wrappers_are_finite():
     model_data = oidata.model(BinaryModelCartesian(**param_dict))
     data, errors = oidata.flatten_data()
 
-    cov = laplace_cov(values, params, oidata, BinaryModelCartesian)
-    fmat = fisher(values, params, oidata, BinaryModelCartesian, ridge=1e-10)
-    like = loglike(values, params, oidata, BinaryModelCartesian)
+    cov = laplace_cov(values, params, BinaryModelCartesian, oidata)
+    fmat = fisher(values, params, BinaryModelCartesian, oidata, ridge=1e-10)
+    like = loglike(values, params, BinaryModelCartesian, oidata)
     expected_like = _reference_logpdf(oidata, model_data, data)
 
     assert cov.shape == (3, 3)
@@ -216,7 +216,7 @@ def test_laplace_wrappers_match_closures_and_compile_once():
         calls.append(1)
         return BinaryModelCartesian(dra, ddec, flux)
 
-    args = (params, oidata, binary)
+    args = (params, binary, oidata)
     objective = lambda x: -loglike(x, *args)
 
     cov = laplace_cov(values, *args)
@@ -240,8 +240,8 @@ def test_laplace_wrappers_need_a_1d_parameter_vector():
         laplace_cov(
             np.array([[120.0], [-80.0], [2e-3]]),
             ["dra", "ddec", "flux"],
-            oidata,
             BinaryModelCartesian,
+            oidata,
         )
 
 
@@ -255,14 +255,14 @@ def test_model_and_joint_loglike_helpers_match_legacy_loglike():
         values["dra"], values["ddec"], values["flux"][index]
     )
 
-    legacy = loglike(values, params, oidata, BinaryModelCartesian)
+    legacy = loglike(values, params, BinaryModelCartesian, oidata)
     assert np.allclose(model_loglike(model, oidata), legacy)
-    assert np.allclose(joint_loglike(tree, observations, model_fn), 2 * legacy)
+    assert np.allclose(joint_loglike(tree, model_fn, observations), 2 * legacy)
     assert joint_data(observations).shape[0] == 2 * (
         oidata.vis.size + oidata.phi.size
     )
     assert joint_errors(observations).shape == joint_data(observations).shape
-    assert joint_prediction(tree, observations, model_fn).shape[0] == 2 * (
+    assert joint_prediction(tree, model_fn, observations).shape[0] == 2 * (
         oidata.vis.size + oidata.phi.size
     )
 

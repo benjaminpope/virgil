@@ -1,11 +1,11 @@
-"""The 0.4 model-before-data order of the grid, limit and detection tools.
+"""The 0.4 model-before-data argument order and argument names.
 
 Calls in the 0.3 order still work, with one ``FutureWarning`` naming the
 new call, and give exactly the new-order result (the same code runs).
 New-order calls, positional or by keyword, do not warn. The old keyword
-names ``samples_dict=`` and ``data_obj=`` warn and still work. The data
-are the smallest that exercise each function: the 7-hole mask and a
-2 x 2 grid.
+names (``samples_dict=``, ``data_obj=``, ``observations=``,
+``model_object=``, ``model_fn=``) warn and still work. The data are the
+smallest that exercise each function: the 7-hole mask and a 2 x 2 grid.
 """
 
 import warnings
@@ -35,6 +35,21 @@ from virgil.grid_fit import (  # noqa: E402
     linear_flux_grid,
     optimized_flux_grid,
     optimized_likelihood_grid,
+)
+from virgil.inference import (  # noqa: E402
+    fisher,
+    laplace_cov,
+    laplace_parameter_uncertainty,
+)
+from virgil.likelihood import (  # noqa: E402
+    flux_scale_posterior,
+    joint_loglike,
+    joint_prediction,
+    loglike,
+    model_loglike,
+    numpyro_model,
+    posterior_predictive_summary,
+    whitened_residuals,
 )
 from virgil.limits import absil_limits, injection_limits  # noqa: E402
 from virgil.models import BinaryModelCartesian  # noqa: E402
@@ -198,3 +213,103 @@ def test_grid_rename_in_best_point_and_plots():
     with pytest.warns(FutureWarning, match="samples_dict="):
         fig, _ = plot_contrast_curve(limits, samples_dict=GRID)
     plt.close(fig)
+
+
+# --- Values-first and joint likelihoods (argument-order PR 3) -------------
+
+PARAMS = ["dra", "ddec", "flux"]
+VALUES = jnp.array([60.0, -40.0, 5e-3])
+DATA2 = nrm_oidata(rotation_deg=30.0).with_model(
+    BinaryModelCartesian(60.0, -40.0, 5e-3), key=jax.random.PRNGKey(1)
+)
+JOINT_PARAMS = {"dra": 60.0, "ddec": -40.0, "flux": 5e-3}
+
+
+def _joint_model(params, index):
+    return BinaryModelCartesian(params["dra"], params["ddec"], params["flux"])
+
+
+@pytest.mark.parametrize(
+    "fn", [loglike, laplace_cov, fisher], ids=lambda f: f.__name__
+)
+def test_values_first_functions_accept_the_old_order(fn):
+    new = _new_order(fn, VALUES, PARAMS, MODEL, DATA)
+    by_name = _new_order(
+        fn, values=VALUES, params=PARAMS, model=MODEL, data=DATA
+    )
+    _assert_same(by_name, new)
+    _assert_same(_old_order(fn, VALUES, PARAMS, DATA, MODEL), new)
+    with pytest.warns(FutureWarning, match="data_obj=") as record:
+        out = fn(VALUES, PARAMS, model=MODEL, data_obj=DATA)
+    assert len(_future(record)) == 1
+    _assert_same(out, new)
+
+
+def test_laplace_parameter_uncertainty_accepts_the_old_order():
+    fn = laplace_parameter_uncertainty
+    new = _new_order(fn, VALUES, PARAMS, MODEL, DATA, "flux")
+    _assert_same(_old_order(fn, VALUES, PARAMS, DATA, MODEL, "flux"), new)
+
+
+@pytest.mark.parametrize(
+    "fn", [joint_prediction, joint_loglike], ids=lambda f: f.__name__
+)
+def test_joint_functions_take_the_model_first(fn):
+    data = (DATA, DATA2)
+    new = _new_order(fn, JOINT_PARAMS, _joint_model, data)
+    _assert_same(_new_order(fn, JOINT_PARAMS, _joint_model, list(data)), new)
+    _assert_same(_old_order(fn, JOINT_PARAMS, data, _joint_model), new)
+    with pytest.warns(FutureWarning) as record:
+        out = fn(JOINT_PARAMS, model_fn=_joint_model, observations=data)
+    messages = [str(w.message) for w in _future(record)]
+    assert len(messages) == 2
+    assert any("model_fn=" in m for m in messages)
+    assert any("observations=" in m for m in messages)
+    _assert_same(out, new)
+
+
+def test_loglike_old_order_under_jit_and_grad():
+    new = _new_order(loglike, VALUES, PARAMS, MODEL, DATA)
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        old = jax.jit(lambda v: loglike(v, PARAMS, DATA, MODEL))(VALUES)
+        # argnums=0 is the values, whose position does not change.
+        grad_old = jax.grad(loglike)(VALUES, PARAMS, DATA, MODEL)
+    assert sum(ORDER in str(w.message) for w in _future(record)) == 2
+    onp.testing.assert_allclose(old, new, rtol=1e-6)
+    grad_new = _new_order(jax.grad(loglike), VALUES, PARAMS, MODEL, DATA)
+    _assert_same(grad_old, grad_new)
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [whitened_residuals, model_loglike, flux_scale_posterior],
+    ids=lambda f: f.__name__,
+)
+def test_model_first_functions_accept_their_old_names(fn):
+    scene = BinaryModelCartesian(*VALUES)
+    new = _new_order(fn, scene, DATA)
+    _assert_same(_new_order(fn, model=scene, data=DATA), new)
+    with pytest.warns(FutureWarning) as record:
+        out = fn(model_object=scene, data_obj=DATA)
+    messages = [str(w.message) for w in _future(record)]
+    assert len(messages) == 2
+    assert any("model_object=" in m for m in messages)
+    assert any("data_obj=" in m for m in messages)
+    _assert_same(out, new)
+    with pytest.raises(TypeError, match="both data= and data_obj="):
+        fn(scene, data=DATA, data_obj=DATA)
+
+
+def test_numpyro_model_and_posterior_summary_accept_data_obj():
+    import numpyro.distributions as dist
+
+    priors = {"flux": dist.LogUniform(1e-4, 0.1)}
+    template = BinaryModelCartesian(60.0, -40.0, 5e-3)
+    with pytest.warns(FutureWarning, match="data_obj="):
+        numpyro_model(template, priors, data_obj=DATA)
+    samples = {"flux": jnp.array([4e-3, 5e-3, 6e-3])}
+    new = _new_order(posterior_predictive_summary, samples, template, DATA)
+    with pytest.warns(FutureWarning, match="data_obj="):
+        old = posterior_predictive_summary(samples, template, data_obj=DATA)
+    _assert_same(old, new)

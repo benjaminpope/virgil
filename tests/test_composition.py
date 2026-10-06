@@ -281,7 +281,7 @@ def test_build_model_accepts_classes_and_templates():
 
 def _loglike_at(point):
     return loglike(
-        list(point.values()), list(point), oidata, _composed_binary()
+        list(point.values()), list(point), _composed_binary(), oidata
     )
 
 
@@ -436,9 +436,9 @@ def test_laplace_cov_with_paths_matches_model_class():
     params = ["dra", "ddec", "flux"]
     assert np.allclose(
         laplace_cov(
-            values, [f"comp.{p}" for p in params], oidata, _composed_binary()
+            values, [f"comp.{p}" for p in params], _composed_binary(), oidata
         ),
-        laplace_cov(values, params, oidata, BinaryModelCartesian),
+        laplace_cov(values, params, BinaryModelCartesian, oidata),
         rtol=1e-3,
     )
 
@@ -455,7 +455,7 @@ def test_numpyro_model_log_density_is_prior_plus_loglike():
     )
     expected = sum(
         priors[key].log_prob(value) for key, value in point.items()
-    ) + loglike(list(point.values()), list(point), oidata, _composed_binary())
+    ) + loglike(list(point.values()), list(point), _composed_binary(), oidata)
     assert np.isclose(logp, expected, rtol=1e-6)
 
 
@@ -491,10 +491,10 @@ def test_numpyro_model_accepts_a_function_of_new_parameters():
     )
     expected = sum(
         priors[key].log_prob(value) for key, value in point.items()
-    ) + loglike(list(point.values()), list(point), oidata, polar_binary)
+    ) + loglike(list(point.values()), list(point), polar_binary, oidata)
     assert np.isclose(logp, expected, rtol=1e-5)
     covariance = laplace_cov(
-        np.array(list(point.values())), list(point), oidata, polar_binary
+        np.array(list(point.values())), list(point), polar_binary, oidata
     )
     assert covariance.shape == (3, 3)
     assert np.all(np.isfinite(covariance))
@@ -579,7 +579,7 @@ def test_function_ties_parameters_between_components():
     tied = build_model(coplanar_rings, names, values)
     assert float(tied.inner.inc) == float(tied.outer.inc) == 40.0
     assert float(tied.inner.pa) == float(tied.outer.pa) == 25.0
-    assert np.isfinite(loglike(values, names, oidata, coplanar_rings))
+    assert np.isfinite(loglike(values, names, coplanar_rings, oidata))
 
 
 def test_nesting_ties_positions_of_a_group():
