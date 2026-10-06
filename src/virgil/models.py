@@ -46,7 +46,7 @@ from ._geometry import (
 )
 from . import _elr
 from ._utils import concrete, dtor, mas2rad
-from .orbits import _days_since
+from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
 
@@ -2729,6 +2729,7 @@ class Attached(SourceModel):
 
     def at(self, mjd, t_ref=0.0):
         dt = _days_since(mjd, self.orbit.t_ref - t_ref)
+        _warn_if_mjd_without_t_ref(self.orbit.t_ref, dt)
         dra, ddec, _ = self.orbit._relative(dt)
         fraction = {"primary": 0.0, "secondary": 1.0}.get(
             self.anchor, self.anchor
@@ -2772,6 +2773,77 @@ class Attached(SourceModel):
 
     def is_physical(self):
         return self.component.is_physical()
+
+
+class OrbitalBinary(SourceModel):
+    """A primary and a point-source companion moving on a Keplerian orbit.
+
+    The time-dependent form of
+    [`BinaryModelCartesian`][virgil.models.BinaryModelCartesian]: at each
+    time, [`at`][virgil.models.SourceModel.at] returns the
+    ``BinaryModelCartesian`` with the companion at the orbit's sky
+    position, so each snapshot keeps the fast binary path. It is the same
+    scene as ``System(primary=PointSource(), companion=Attached(
+    PointSource(flux), orbit))``, for the common case of two unresolved
+    stars. The primary is the scene's origin and reference (``flux`` is
+    the companion's flux relative to it).
+
+    Evaluate it with one snapshot per dataset or epoch through
+    [`Epochs`][virgil.epochs.Epochs], or per sample by
+    [`OIData.model`][virgil.oidata.OIData.model].
+
+    Parameters
+    ----------
+    orbit : KeplerOrbit
+        The companion's orbit about the primary (any orbit class with
+        ``t_ref`` and ``_relative``).
+    flux : float
+        Companion/primary flux ratio.
+
+    Examples
+    --------
+    >>> from virgil.models import OrbitalBinary
+    >>> from virgil.orbits import KeplerOrbit
+    >>> orbit = KeplerOrbit(700.0, 0.0, 0.3, 50.0, 60.0, 120.0, 20.0,
+    ...                     t_ref=60500.0)
+    >>> snap = OrbitalBinary(orbit, 0.1).at(60500.0)
+    >>> type(snap).__name__, round(float(snap.flux), 2)
+    ('BinaryModelCartesian', 0.1)
+    """
+
+    orbit: Any
+    flux: jax.Array
+
+    def __init__(self, orbit, flux):
+        self.orbit = orbit
+        self.flux = np.asarray(flux, dtype=float)
+
+    @property
+    def time_dependent(self):
+        return True
+
+    def at(self, mjd, t_ref=0.0):
+        dt = _days_since(mjd, self.orbit.t_ref - t_ref)
+        _warn_if_mjd_without_t_ref(self.orbit.t_ref, dt)
+        dra, ddec, _ = self.orbit._relative(dt)
+        return BinaryModelCartesian(dra, ddec, self.flux)
+
+    def model(self, u, v, wavel):
+        raise ValueError(
+            "OrbitalBinary changes with time: evaluate model.at(mjd), or "
+            "let OIData.model evaluate each sample at its own time."
+        )
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        raise ValueError(
+            "OrbitalBinary changes with time: render model.at(mjd) instead."
+        )
+
+    def total_spectrum(self, wavel):
+        return BinaryModelCartesian(0.0, 0.0, self.flux).total_spectrum(wavel)
+
+    def is_physical(self):
+        return _flux_is_non_negative(self.flux)
 
 
 def _rim_angle(sky_pa, pa, inc):
