@@ -121,7 +121,7 @@ def test_traced_fluxes_are_not_checked():
 def test_negative_flux_grid_axis_is_rejected():
     grid = {**_path_samples(), "comp.flux": np.array([-1e-3, 1e-3])}
     with pytest.raises(ValueError, match="negative values"):
-        likelihood_grid(oidata, _composed_binary(), grid)
+        likelihood_grid(_composed_binary(), oidata, grid)
 
 
 def test_negative_explicit_flux_param_axis_is_rejected():
@@ -134,10 +134,10 @@ def test_negative_explicit_flux_param_axis_is_rejected():
     }
     with pytest.raises(ValueError, match="negative values"):
         absil_limits(
-            oidata,
             lambda sep, pa, companion_brightness: BinaryModelAngular(
                 sep, pa, companion_brightness
             ),
+            oidata,
             grid,
             3.0,
             flux_param="companion_brightness",
@@ -161,8 +161,8 @@ def test_absil_limits_zero_starting_flux_uses_smallest_positive_flux():
     ndof = oidata.n_independent
     sigma = float(nsigma(1.0, 1.0, ndof)) + 1e-3
     assert np.allclose(
-        absil_limits(oidata, template, with_zero, sigma, **kwargs),
-        absil_limits(oidata, template, positive, sigma, **kwargs),
+        absil_limits(template, oidata, with_zero, sigma, **kwargs),
+        absil_limits(template, oidata, positive, sigma, **kwargs),
     )
 
 
@@ -171,8 +171,8 @@ def test_absil_limits_rejects_flux_axis_without_positive_values():
     grid = {**_path_samples(), "comp.flux": np.array([0.0])}
     with pytest.raises(ValueError, match="positive value"):
         absil_limits(
-            oidata,
             _composed_binary(),
+            oidata,
             grid,
             3.0,
             flux_param="comp.flux",
@@ -301,26 +301,26 @@ def test_ambiguous_flux_needs_flux_param():
     small = {key: value[::6] for key, value in _path_samples().items()}
     grid = {"disk.flux": np.array([0.05, 0.1]), **small}
     with pytest.raises(ValueError, match="Pass flux_param"):
-        optimized_flux_grid(oidata, _two_flux_template(), grid)
+        optimized_flux_grid(_two_flux_template(), oidata, grid)
     explicit = optimized_flux_grid(
-        oidata, _two_flux_template(), grid, flux_param="comp.flux"
+        _two_flux_template(), oidata, grid, flux_param="comp.flux"
     )
     assert explicit.shape == (2,) + tuple(v.size for v in small.values())[:2]
 
 
 def test_flux_inference_matches_explicit_and_model_class():
     small = {key: value[::6] for key, value in _path_samples().items()}
-    inferred = optimized_flux_grid(oidata, _composed_binary(), small)
+    inferred = optimized_flux_grid(_composed_binary(), oidata, small)
     legacy_samples = {key.split(".")[1]: value for key, value in small.items()}
-    legacy = optimized_flux_grid(oidata, BinaryModelCartesian, legacy_samples)
+    legacy = optimized_flux_grid(BinaryModelCartesian, oidata, legacy_samples)
     explicit = optimized_flux_grid(
-        oidata, _composed_binary(), small, flux_param="comp.flux"
+        _composed_binary(), oidata, small, flux_param="comp.flux"
     )
     assert np.allclose(inferred, explicit)
     # The two models round differently in float32, which moves the optimum
     # by a small fraction of the flux uncertainty.
     sigma = laplace_flux_uncertainty_grid(
-        oidata, BinaryModelCartesian, legacy_samples, flux=legacy
+        BinaryModelCartesian, oidata, legacy_samples, flux=legacy
     )
     assert onp.all(onp.abs(onp.asarray(legacy - explicit)) < 0.2 * sigma)
 
@@ -348,7 +348,7 @@ def test_new_template_values_do_not_recompile(monkeypatch):
             disk=GaussianDisk(sigma, flux=0.1),
             comp=PointSource(flux=1e-3),
         )
-        likelihood_grid(oidata, template, grid)
+        likelihood_grid(template, oidata, grid)
     assert len(traces) == 1
 
 
@@ -361,10 +361,10 @@ def test_flux_param_can_be_any_key_regardless_of_order():
     }
     assert np.allclose(
         optimized_flux_grid(
-            oidata, _composed_binary(), reordered, flux_param="comp.flux"
+            _composed_binary(), oidata, reordered, flux_param="comp.flux"
         ),
         optimized_flux_grid(
-            oidata, _composed_binary(), small, flux_param="comp.flux"
+            _composed_binary(), oidata, small, flux_param="comp.flux"
         ),
         rtol=1e-4,
     )
@@ -373,13 +373,13 @@ def test_flux_param_can_be_any_key_regardless_of_order():
 def test_unknown_flux_param_is_rejected():
     with pytest.raises(ValueError, match="is not one of the keys"):
         optimized_flux_grid(
-            oidata, _composed_binary(), _path_samples(), flux_param="flux"
+            _composed_binary(), oidata, _path_samples(), flux_param="flux"
         )
 
 
 def test_best_grid_point_returns_named_values():
     grid = _path_samples()
-    loglike = likelihood_grid(oidata, _composed_binary(), grid)
+    loglike = likelihood_grid(_composed_binary(), oidata, grid)
     best = best_grid_point(loglike, grid)
     assert list(best) == list(grid)
     assert np.isclose(
@@ -389,24 +389,24 @@ def test_best_grid_point_returns_named_values():
 
 def test_likelihood_grid_with_paths_matches_model_class():
     assert np.allclose(
-        likelihood_grid(oidata, _composed_binary(), _path_samples()),
-        likelihood_grid(oidata, BinaryModelCartesian, samples_dict),
+        likelihood_grid(_composed_binary(), oidata, _path_samples()),
+        likelihood_grid(BinaryModelCartesian, oidata, samples_dict),
         rtol=1e-4,
     )
 
 
 def test_optimized_likelihood_grid_with_paths_matches_model_class():
     grid_best = onp.asarray(
-        likelihood_grid(oidata, BinaryModelCartesian, samples_dict)
+        likelihood_grid(BinaryModelCartesian, oidata, samples_dict)
     ).max(axis=2)
     composed = onp.asarray(
         optimized_likelihood_grid(
-            oidata, _composed_binary(), _path_samples(), flux_param="comp.flux"
+            _composed_binary(), oidata, _path_samples(), flux_param="comp.flux"
         )
     )
     reference = onp.asarray(
         optimized_likelihood_grid(
-            oidata, BinaryModelCartesian, samples_dict, flux_param="flux"
+            BinaryModelCartesian, oidata, samples_dict, flux_param="flux"
         )
     )
     # In float32, BFGS lands on slightly different optima in ~1% of cells for
@@ -420,10 +420,10 @@ def test_absil_limits_with_paths_matches_model_class():
     paths = {f"comp.{key}": value for key, value in small.items()}
     assert np.allclose(
         absil_limits(
-            oidata, _composed_binary(), paths, 3.0, flux_param="comp.flux"
+            _composed_binary(), oidata, paths, 3.0, flux_param="comp.flux"
         ),
         absil_limits(
-            oidata, BinaryModelCartesian, small, 3.0, flux_param="flux"
+            BinaryModelCartesian, oidata, small, 3.0, flux_param="flux"
         ),
         # Limits near the flux_bounds ceiling of 1 are barely constrained,
         # so float32 rounding differences move them by up to a few percent.

@@ -160,7 +160,7 @@ def test_a_grid_search_runs_on_v2_alone():
     data = OIData(_v2_dict(model))
     axis = onp.linspace(-6, 6, 13)
     grid = likelihood_grid(
-        data, BinaryModelCartesian, {"dra": axis, "ddec": axis, "flux": [0.1]}
+        BinaryModelCartesian, data, {"dra": axis, "ddec": axis, "flux": [0.1]}
     )[..., 0]
     grid = onp.asarray(grid)
     assert onp.all(onp.isfinite(grid))

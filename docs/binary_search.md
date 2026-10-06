@@ -98,7 +98,7 @@ samples = {
     "flux": 10 ** jnp.linspace(-4.5, -1.5, 60),
 }
 
-ll_cube = likelihood_grid(data, BinaryModelCartesian, samples)
+ll_cube = likelihood_grid(BinaryModelCartesian, data, samples)
 max_idx = jnp.unravel_index(jnp.argmax(ll_cube), ll_cube.shape)
 grid_est = {
     "dra": float(samples["dra"][max_idx[0]]),

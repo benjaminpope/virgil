@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FuncFormatter
 
+from ._deprecate import renamed
 from ._utils import is_flux_param, resolve_flux_param
 from .limits import flux_to_contrast, flux_to_delta_mag, radial_profile
 
@@ -768,15 +769,15 @@ def _convert_flux(values, units):
     )
 
 
-def _grid_axes(values, samples_dict, kind, flux_param):
+def _grid_axes(values, grid, kind, flux_param):
     """Coordinate keys of ``values``, reducing a flux axis if present.
 
     Returns ``(values, coord_keys)``. ``values`` may have one axis per key of
-    ``samples_dict`` (a full grid), or one per key except the flux. A full
+    ``grid`` (a full grid), or one per key except the flux. A full
     log-likelihood grid is reduced to its maximum over the flux axis.
     """
     values = np.asarray(values, dtype=float)
-    keys = list(samples_dict)
+    keys = list(grid)
     if values.ndim == len(keys):
         try:
             flux_key = resolve_flux_param(keys, flux_param)
@@ -793,7 +794,7 @@ def _grid_axes(values, samples_dict, kind, flux_param):
         flux_key = resolve_flux_param(keys, flux_param)
         return values, [key for key in keys if key != flux_key]
     raise ValueError(
-        f"values has {values.ndim} axes but samples_dict has keys {keys}; "
+        f"values has {values.ndim} axes but grid has keys {keys}; "
         "expected one axis per key, or per key except the flux."
     )
 
@@ -805,10 +806,11 @@ def _coord_value(values, key, coord_keys):
     return float(values[list(coord_keys).index(key)])
 
 
+@renamed()
 @_styled
 def plot_grid_map(
     values,
-    samples_dict,
+    grid,
     kind="loglike",
     *,
     units="flux",
@@ -830,14 +832,14 @@ def plot_grid_map(
     Parameters
     ----------
     values : array-like
-        Grid result with one axis per coordinate key of ``samples_dict``
+        Grid result with one axis per coordinate key of ``grid``
         (every key except the flux), in key order, as returned by
         [`virgil.grid_fit`][virgil.grid_fit] and
         [`virgil.limits`][virgil.limits]. A full
         [`likelihood_grid`][virgil.grid_fit.likelihood_grid] (with the
         flux axis) is reduced to its maximum over flux. One coordinate gives
         a line plot.
-    samples_dict : dict[str, array-like]
+    grid : dict[str, array-like]
         The grid axes used to compute ``values``.
     kind : {"loglike", "flux", "sigma", "snr", "limit"}, optional
         What ``values`` holds, which sets the default colour map, scale and
@@ -874,7 +876,7 @@ def plot_grid_map(
     -----
     When the coordinates include ``dra`` and ``ddec`` (also as paths such as
     ``"comp.dra"``) they are drawn as x and y, East-left and North-up,
-    whatever their order in ``samples_dict``; pixels are centred on the
+    whatever their order in ``grid``; pixels are centred on the
     samples.
 
     Examples
@@ -889,7 +891,7 @@ def plot_grid_map(
             f"kind must be one of {sorted(_KINDS)}; got {kind!r}."
         )
     defaults = _KINDS[kind]
-    values, coord_keys = _grid_axes(values, samples_dict, kind, flux_param)
+    values, coord_keys = _grid_axes(values, grid, kind, flux_param)
 
     if defaults["flux_like"]:
         values = _convert_flux(values, units)
@@ -921,7 +923,7 @@ def plot_grid_map(
 
     if values.ndim == 1:
         x_key = coord_keys[0]
-        ax.plot(np.asarray(samples_dict[x_key]), values, color="C0", lw=2)
+        ax.plot(np.asarray(grid[x_key]), values, color="C0", lw=2)
         if truth is not None:
             ax.axvline(
                 _coord_value(truth, x_key, coord_keys),
@@ -953,7 +955,7 @@ def plot_grid_map(
     im = ax.imshow(
         image,
         origin="lower",
-        extent=_centres_to_extent(samples_dict[x_key], samples_dict[y_key]),
+        extent=_centres_to_extent(grid[x_key], grid[y_key]),
         cmap=cmap,
         norm=norm,
         aspect="equal" if is_sky else "auto",
@@ -992,21 +994,20 @@ def plot_grid_map(
     return fig, ax
 
 
-def _sky_map(values, samples_dict):
+def _sky_map(values, grid):
     """A sky map with axes ``(dra, ddec)``, and those two axes.
 
-    ``values`` has one axis per coordinate key of ``samples_dict`` (every key
+    ``values`` has one axis per coordinate key of ``grid`` (every key
     whose name does not end in ``flux``), in key order, so it is transposed
     when ``ddec`` comes before ``dra``.
     """
-    keys = [key for key in samples_dict if not is_flux_param(key)]
+    keys = [key for key in grid if not is_flux_param(key)]
     found = []
     for name in ("dra", "ddec"):
         matches = [key for key in keys if _is_sky_key(key, name)]
         if len(matches) != 1:
             raise ValueError(
-                f"samples_dict needs exactly one {name!r} axis; keys are "
-                f"{list(samples_dict)}."
+                f"grid needs exactly one {name!r} axis; keys are {list(grid)}."
             )
         found.append(matches[0])
     if len(keys) != 2:
@@ -1016,14 +1017,15 @@ def _sky_map(values, samples_dict):
     values = np.asarray(values, dtype=float)
     if keys.index(found[0]) == 1:
         values = values.T
-    dra, ddec = (np.asarray(samples_dict[key]) for key in found)
+    dra, ddec = (np.asarray(grid[key]) for key in found)
     return values, dra, ddec
 
 
+@renamed()
 @_styled
 def plot_contrast_curve(
     values,
-    samples_dict=None,
+    grid=None,
     *,
     units="delta_mag",
     sigma=None,
@@ -1044,11 +1046,11 @@ def plot_contrast_curve(
     ----------
     values : array-like or dict
         A limit map (companion/primary flux ratios, with one axis per
-        coordinate key of ``samples_dict`` in key order, as from
+        coordinate key of ``grid`` in key order, as from
         [`absil_limits`][virgil.limits.absil_limits] or
         [`ruffio_upperlimit`][virgil.limits.ruffio_upperlimit]), or a
         [`radial_profile`][virgil.limits.radial_profile] of one.
-    samples_dict : dict[str, array-like], optional
+    grid : dict[str, array-like], optional
         The grid axes of a limit map; it must contain ``dra`` and ``ddec``
         axes (also as paths such as ``"comp.dra"``).
     units : {"delta_mag", "contrast", "flux"}, optional
@@ -1080,9 +1082,9 @@ def plot_contrast_curve(
     if isinstance(values, dict):
         profile = values
     else:
-        if samples_dict is None:
-            raise ValueError("Pass samples_dict with a limit map.")
-        sky_values, dra, ddec = _sky_map(values, samples_dict)
+        if grid is None:
+            raise ValueError("Pass grid with a limit map.")
+        sky_values, dra, ddec = _sky_map(values, grid)
         profile = radial_profile(
             sky_values, dra, ddec, center=center, r_max=r_max, bins=bins
         )

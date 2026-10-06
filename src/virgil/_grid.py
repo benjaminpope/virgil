@@ -40,14 +40,14 @@ def batch_visibilities():
     return ACCELERATOR_BATCH_VISIBILITIES
 
 
-def batch_size_or_default(batch_size, data_obj):
-    """Validate a ``batch_size`` argument, or choose one for ``data_obj``.
+def batch_size_or_default(batch_size, data):
+    """Validate a ``batch_size`` argument, or choose one for ``data``.
 
     The default holds about ``batch_visibilities()`` model visibilities per
     batch, and at least ``MIN_BATCH_SIZE`` grid points.
     """
     if batch_size is None:
-        n_vis = max(np.size(data_obj.u), np.size(data_obj.wavel), 1)
+        n_vis = max(np.size(data.u), np.size(data.wavel), 1)
         return max(MIN_BATCH_SIZE, batch_visibilities() // n_vis)
     batch_size = int(batch_size)
     if batch_size < 1:
@@ -60,13 +60,13 @@ def map_points(fn, *xs, batch_size):
     return jax.lax.map(lambda args: fn(*args), xs, batch_size=batch_size)
 
 
-def check_flux_axes(samples_dict, flux_param=None):
+def check_flux_axes(grid, flux_param=None):
     """Reject grid axes that would give a flux parameter negative values.
 
     Axes whose name ends in ``flux`` are checked, as is the explicitly
     selected ``flux_param`` whatever its name.
     """
-    for key, values in samples_dict.items():
+    for key, values in grid.items():
         if not (is_flux_param(key) or key == flux_param):
             continue
         values = concrete(values)
@@ -77,26 +77,26 @@ def check_flux_axes(samples_dict, flux_param=None):
             )
 
 
-def resolve_grid_keys(samples_dict, flux_param=None):
+def resolve_grid_keys(grid, flux_param=None):
     """Return ``(params, coord_keys, flux_key)`` for a grid-fitting call."""
-    params = tuple(samples_dict.keys())
-    check_flux_axes(samples_dict, flux_param)
+    params = tuple(grid.keys())
+    check_flux_axes(grid, flux_param)
     flux_key = resolve_flux_param(params, flux_param)
     coord_keys = tuple(key for key in params if key != flux_key)
     if not coord_keys:
         raise ValueError(
-            "samples_dict needs at least one coordinate parameter besides "
+            "grid needs at least one coordinate parameter besides "
             f"the flux {flux_key!r}."
         )
     return params, coord_keys, flux_key
 
 
-def meshgrid_vectors(samples_dict, params):
+def meshgrid_vectors(grid, params):
     """Build flattened meshgrid vectors with axis order matching ``params``."""
-    samples = [jnp.asarray(samples_dict[param]) for param in params]
+    samples = [jnp.asarray(grid[param]) for param in params]
     grid_shape = tuple(sample.shape[0] for sample in samples)
     grids = jnp.meshgrid(*samples, indexing="ij")
-    vals_vec = jnp.stack([grid.reshape(-1) for grid in grids], axis=1)
+    vals_vec = jnp.stack([g.reshape(-1) for g in grids], axis=1)
     return vals_vec, grid_shape
 
 
@@ -162,17 +162,17 @@ def first_crossing(
     return jnp.where(crossed, 0.5 * (near + far), stop), crossed
 
 
-def coordinate_points(samples_dict, coord_keys):
+def coordinate_points(grid, coord_keys):
     """Flattened ``(n_points, n_coords)`` coordinate grid and its shape.
 
     The grid uses ``indexing="ij"``: axis ``k`` follows ``coord_keys[k]``,
     so for ``(dra, ddec)`` axis 0 is ``dra``.
     """
     coord_grids = jnp.meshgrid(
-        *[jnp.asarray(samples_dict[key]) for key in coord_keys],
+        *[jnp.asarray(grid[key]) for key in coord_keys],
         indexing="ij",
     )
-    points = jnp.stack([grid.reshape(-1) for grid in coord_grids], axis=1)
+    points = jnp.stack([g.reshape(-1) for g in coord_grids], axis=1)
     return points, coord_grids[0].shape
 
 

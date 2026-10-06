@@ -72,7 +72,7 @@ Here is the observation we want to judge. We simulate it with a companion of flu
 ```python
 truth = BinaryModelCartesian(dra=60.6, ddec=35.0, flux=5e-3)  # 70 mas, PA 60°
 observed = template.with_model(truth, key=jax.random.PRNGKey(2026))
-obs = detection_statistics(observed, BinaryModelCartesian, grid)
+obs = detection_statistics(BinaryModelCartesian, observed, grid)
 
 print(
     f"best companion at ΔRA = {float(obs['dra']):.0f} mas, "
@@ -102,9 +102,9 @@ injections = injection_grid([40.0, 60.0, 80.0, 100.0], FLUXES, n_pa=40, key=1)
 
 start = time.perf_counter()
 mc = injection_recovery(
-    template,
-    null_scene,
     BinaryModelCartesian,
+    null_scene,
+    template,
     grid,
     key=0,
     n_null=10_000,
@@ -213,9 +213,9 @@ For a non-detection, quote the 50% and 90% completeness contrasts at a stated FA
 
 ```python
 blank = template.with_model(null_scene, key=jax.random.PRNGKey(7))
-absil = absil_limits(blank, BinaryModelCartesian, grid, sigma=3.0)
-best = optimized_flux_grid(blank, BinaryModelCartesian, grid)
-sigma = laplace_flux_uncertainty_grid(blank, BinaryModelCartesian, grid, best)
+absil = absil_limits(BinaryModelCartesian, blank, grid, sigma=3.0)
+best = optimized_flux_grid(BinaryModelCartesian, blank, grid)
+sigma = laplace_flux_uncertainty_grid(BinaryModelCartesian, blank, grid, best)
 ruffio = ruffio_upperlimit(best, sigma, stats.norm.cdf(3.0))
 
 fig, ax = plot_completeness(mc, "delta_chi2", FAP)
@@ -233,17 +233,17 @@ Everything so far assumed that the errors are right, because the null draws were
 Two tools repair this. [`rescale_errors`](api/detection.md#virgil.detection.rescale_errors) estimates the factor from the data, scaling the errors so that the null scene has $\chi^2_r = 1$, separately for the V² and the closure phases; with the rescaled errors, the Gaussian calibration above is valid again. [`bootstrap_null`](api/detection.md#virgil.detection.bootstrap_null) (`noise="bootstrap"`) does not trust the errors at all: it builds null draws by flipping the signs of the data's own whitened residuals about the null scene, so the draws carry the real noise. The table compares the threshold at an FAP of 1% (looser than 0.135%, so that 2000 draws measure it well) from honest errors, from wrong errors with a Gaussian null, and from wrong errors with a bootstrap null of one companion-free observation, each with the true FAP of its threshold.
 
 ```python
-real_noise = gaussian_null(template, null_scene, error_scale=1.5)
+real_noise = gaussian_null(null_scene, template, error_scale=1.5)
 bad = real_noise(jax.random.PRNGKey(11))  # companion-free, errors too small
 truth_mc = injection_recovery(  # what the wrong errors really give
-    template, null_scene, BinaryModelCartesian, grid, key=2,
+    BinaryModelCartesian, null_scene, template, grid, key=2,
     n_null=2000, noise=real_noise, draw_batch=8,
 )
 boot_mc = injection_recovery(  # calibrated on the data's own residuals
-    bad, null_scene, BinaryModelCartesian, grid, key=3,
+    BinaryModelCartesian, null_scene, bad, grid, key=3,
     n_null=2000, noise="bootstrap", draw_batch=8,
 )
-factors = rescale_errors(bad, null_scene)[1]
+factors = rescale_errors(null_scene, bad)[1]
 
 print(
     f"rescale_errors factors: V² {factors['vis']:.2f}, "

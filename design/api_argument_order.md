@@ -1,6 +1,7 @@
 # One argument order for models and data
 
-Status: **approved for 0.4, not built**, 2026-10-06. Surveyed against
+Status: **approved for 0.4; code PRs 1 (`_deprecate.py`) and 2 (grids,
+limits and detection) built**, 2026-10-06. Surveyed against
 `main` at c064b82 (0.3.0 plus the post-release review merges).
 
 ## Decision
