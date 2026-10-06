@@ -177,25 +177,16 @@ for k, night in enumerate(nights):
 
 ```text
  60095.0    3.31   ( 3.52)           3.22   ( 4.33)
-```
-
-```text
  60150.0    1.10   ( 1.24)           1.28   ( 1.59)
 ```
 
 ```text
  60330.0    1.66   ( 1.41)           1.79   ( 2.54)
-```
-
-```text
  60385.0    0.83   ( 1.23)           1.47   ( 1.56)
 ```
 
 ```text
  60445.0    2.15   ( 2.38)           1.25   ( 1.35)
-```
-
-```text
  60560.0    1.69   ( 1.63)           0.99   ( 2.23)
 ```
 
@@ -288,6 +279,14 @@ print(
     f"{1e3 * max(np.ptp(np.hypot(*truth_orbit.relative(n.mjd)[:2])) for n in nights):.1f} μas"
     " in separation within a night"
 )
+```
+
+```text
+Epochs(8 epochs, 8 datasets, at='dataset')
+```
+
+```text
+largest spread of times about a snapshot: 2.0 h; the companion moves by at most 8.0 μas in separation within a night
 ```
 
 ## Priors
@@ -470,6 +469,18 @@ for k, t in enumerate(epoch_mjd):
     )
 ```
 
+```text
+    MJD    fit Δα  true Δα    fit Δδ  true Δδ   σ (mas)  flux    gap
+ 60000.0   -19.57   -19.57     15.27    15.34     0.039  0.150    862
+ 60035.0   -18.81   -18.83     18.19    18.24     0.041  0.157    750
+ 60095.0   -16.22   -16.14     21.80    21.76     0.039  0.151    796
+ 60150.0   -12.50   -12.53     23.45    23.49     0.041  0.150    746
+ 60330.0     2.78     2.74     20.49    20.56     0.042  0.156    687
+ 60385.0     7.50     7.52     17.58    17.51     0.043  0.147    635
+ 60445.0    12.27    12.33     13.33    13.26     0.043  0.150    349
+ 60560.0    19.20    19.21      3.14     3.17     0.037  0.151    909
+```
+
 **Ranking and refinement.** The best-ranked starting orbits, by the log likelihood of all the data, then the refined fits. If the refined fits land on the same orbit with the same loss, the posterior has one dominant mode near it. If some land elsewhere, those are other modes, typically period aliases from sparse sampling; compare their losses (a difference of Δ in loss is a factor of about $e^{Δ}$ in posterior density). [`OrbitStart.modes`](api/epochs.md) keeps the distinct fits within a loss of 10 of the best, and the sampler below starts one chain in each.
 
 ```python
@@ -494,6 +505,24 @@ for k, result in enumerate(start.fits):
 modes = start.modes()
 print(f"\n{len(modes)} distinct mode(s) within a loss of 10 of the best")
 best = start.best
+```
+
+```text
+rank   P (d)     e     a (mas)  log L (data)
+   0  1151.2   0.25    25.27        1389.0
+   1   999.2   0.40    24.67        1382.0
+   2  1303.0   0.15    26.11        1376.5
+   3  1214.0   0.20    25.36        1375.5
+   4  1235.6   0.20    26.08        1366.3
+   5  1091.7   0.30    24.44        1358.9
+
+fit    loss       P (d)     e      i (deg)  Ω (deg)  ϖ (deg)  a (mas)
+  0   -3359.45  1095.14  0.303    54.92   129.88   199.65  24.938
+```
+
+```text
+
+1 distinct mode(s) within a loss of 10 of the best
 ```
 
 ## Sampling the joint posterior
@@ -532,6 +561,11 @@ print(
     f"divergences: {divergences} in {NUM_CHAINS * NUM_SAMPLES} samples"
 )
 print(f"largest r_hat {r_hat:.3f}, smallest effective sample size {n_eff:.0f}")
+```
+
+```text
+divergences: 2 in 4000 samples
+largest r_hat 1.005, smallest effective sample size 835
 ```
 
 ## The orbit
@@ -579,15 +613,15 @@ for name, lo, m, hi in zip(table.columns, low, mid, high):
 ```
 
 ```text
-P (d)           1098.230  + 27.118 − 25.370   truth   1100.000
-a (mas)           24.955  +  0.110 −  0.091   truth     25.000
-e                  0.300  +  0.023 −  0.024   truth      0.300
-i (deg)           54.890  +  0.457 −  0.470   truth     55.000
-ω (deg)           69.820  +  0.444 −  0.438   truth     70.000
-Ω (deg)          129.999  +  1.027 −  1.011   truth    130.000
-t_peri (MJD)   59779.951  +  8.806 −  9.493   truth  59780.000
-M_tot (M☉)         1.989  +  0.081 −  0.080   truth      1.994
-flux ratio         0.150  +  0.001 −  0.001   truth      0.150
+P (d)           1098.093  + 26.388 − 24.789   truth   1100.000
+a (mas)           24.951  +  0.105 −  0.089   truth     25.000
+e                  0.300  +  0.023 −  0.023   truth      0.300
+i (deg)           54.873  +  0.461 −  0.438   truth     55.000
+ω (deg)           69.830  +  0.412 −  0.442   truth     70.000
+Ω (deg)          129.985  +  1.007 −  0.974   truth    130.000
+t_peri (MJD)   59779.924  +  8.757 −  9.088   truth  59780.000
+M_tot (M☉)         1.988  +  0.081 −  0.075   truth      1.994
+flux ratio         0.151  +  0.001 −  0.001   truth      0.150
 ```
 
 The corner plot shows the joint posterior of the elements, with the truth marked. With the periastron unobserved, the period, eccentricity, time of periastron, inclination and node are correlated: a slightly longer period with a lower eccentricity and an earlier periastron fits the observed half orbit almost as well. The total mass inherits these through $a^3/P^2$; with a parallax, its error would add to the mass's through $M \propto D^3$. Only the next periastron passage will break the correlations.
@@ -762,6 +796,13 @@ for col, k in enumerate(shown):
 plt.show()
 ```
 
+```text
+MJD 60035: rms residual 0.90 σ over 72 closure phases
+MJD 60095: rms residual 1.02 σ over 72 closure phases
+```
+
+![orbit_fitting output 37.2](generated/orbit_fitting_cell037_out02.png)
+
 ### The inferred calibration
 
 The error scales are part of the posterior too. Each epoch's $V^2$ and closure-phase factors are recovered (median and 68% interval against the truth), and the population's median and spread, which describe how far the "pipeline" errors are off, can be compared with the population the factors were drawn from (median 1.3, spread 0.3); with only eight draws per population, the spread in particular is loosely constrained.
@@ -802,9 +843,9 @@ for prefix, label in (("v2_scale", "V²"), ("cp_scale", "closure phase")):
 
 ```text
 V²             population median 1.34 +0.12 −0.11
-V²             population spread 0.24 +0.09 −0.06
-closure phase  population median 1.21 +0.15 −0.12
-closure phase  population spread 0.29 +0.11 −0.07
+V²             population spread 0.23 +0.09 −0.06
+closure phase  population median 1.21 +0.15 −0.13
+closure phase  population spread 0.29 +0.11 −0.08
 ```
 
 ## Comparison with the two-step fit
@@ -831,6 +872,10 @@ print(
     "two-step divergences: "
     f"{int(two_step.get_extra_fields()['diverging'].sum())}"
 )
+```
+
+```text
+two-step divergences: 0
 ```
 
 ```python
@@ -879,15 +924,15 @@ print(
 ```text
                 truth  joint median  joint ±  joint pull  two-step median  two-step ±  two-step pull
 element                                                                                             
-P (d)         1.1e+03       1.1e+03     26.2     -0.0675         1.09e+03        18.6         -0.534
-a (mas)            25            25    0.101      -0.443             24.9      0.0753         -0.832
-e                 0.3           0.3   0.0235      0.0163            0.307      0.0169          0.425
-i (deg)            55          54.9    0.463      -0.238               55       0.336          0.079
-t_peri (MJD) 5.98e+04      5.98e+04     9.15    -0.00533         5.98e+04        6.46          0.431
-M_tot (M☉)       1.99          1.99   0.0805     -0.0652             2.01       0.058          0.347
+P (d)         1.1e+03       1.1e+03     25.6     -0.0745         1.09e+03        18.3         -0.535
+a (mas)            25            25   0.0969      -0.502             24.9      0.0738         -0.842
+e                 0.3           0.3   0.0229      0.0217            0.307      0.0165          0.439
+i (deg)            55          54.9    0.449      -0.283               55        0.33          0.117
+t_peri (MJD) 5.98e+04      5.98e+04     8.92    -0.00849         5.98e+04        6.37          0.454
+M_tot (M☉)       1.99          1.99    0.078     -0.0876             2.01      0.0572          0.357
 
-joint / two-step interval width: 1.33 to 1.42
-rms pull: joint 0.21, two-step 0.50
+joint / two-step interval width: 1.31 to 1.40
+rms pull: joint 0.24, two-step 0.51
 ```
 
 Read the table in two ways. The interval widths say how much each analysis claims to know, and the pulls say whether that claim is justified. The two-step positions carry the quoted errors, which are too small by the factors we simulated, so its intervals reflect the quoted precision rather than the real one; the joint fit learns each night's error scale from the data themselves and propagates it into the orbit. Each epoch's position is also no longer reduced to a Gaussian before the orbit sees it. On real data, with skewed or multi-peaked nightly likelihoods, that is where the two analyses differ most. The two-step fit remains a good quick look, and a source of starting orbits, as in the initialisation above.
