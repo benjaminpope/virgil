@@ -54,6 +54,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ._deprecate import old_order
 from ._grid import (
     batch_size_or_default,
     coordinate_points,
@@ -94,34 +95,35 @@ MIN_PEAK_STEPS = 2.0
 FWHM_PER_SIGMA = 2.0 * np.sqrt(2.0 * np.log(2.0))
 
 
+@old_order("data", "model", "grid", data="data")
 def detection_statistics(
-    data, model, samples_dict, *, flux_param=None, batch_size=None
+    model, data, grid, *, flux_param=None, batch_size=None
 ):
     """Detection statistics of a companion search over a grid.
 
     Parameters
     ----------
+    model : SourceModel or class
+        Companion model, as for
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid]: a template
+        whose parameters at the paths in ``grid`` are varied (e.g.
+        a [System][virgil.models.System] with ``"comp.dra"``), or a class
+        called with ``grid``'s keys (e.g. ``BinaryModelCartesian``).
+        The null hypothesis is this model with ``flux_param`` set to zero
+        and everything else as given.
     data : OIData
         Data to search. It may be traced (e.g. a simulation built inside
         ``jax.lax.map`` with
         [`OIData.with_model`][virgil.oidata.OIData.with_model]); the
         function then compiles once for all of them.
-    model : SourceModel or class
-        Companion model, as for
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid]: a template
-        whose parameters at the paths in ``samples_dict`` are varied (e.g.
-        a [System][virgil.models.System] with ``"comp.dra"``), or a class
-        called with ``samples_dict``'s keys (e.g. ``BinaryModelCartesian``).
-        The null hypothesis is this model with ``flux_param`` set to zero
-        and everything else as given.
-    samples_dict : dict[str, array-like]
+    grid : dict[str, array-like]
         Grid axes, as for
         [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]: the
         coordinate keys (e.g. ``dra``, ``ddec`` in mas) and a non-negative
         flux axis. The flux axis is both the starting grid of the flux
         optimizer and the flux prior of ``log_bayes_factor``.
     flux_param : str, optional
-        The key of ``samples_dict`` holding the companion flux. By default,
+        The key of ``grid`` holding the companion flux. By default,
         the one key whose last part is ``flux``.
     batch_size : int, optional
         Number of grid points evaluated at once, as for
@@ -148,7 +150,7 @@ def detection_statistics(
           in flux for a linear one). Positive values favour a companion.
         - ``max_snr``: the largest unconstrained best flux over its Laplace
           uncertainty, over positions (NaN-safe).
-        - one entry per key of ``samples_dict`` (e.g. ``dra``, ``ddec``,
+        - one entry per key of ``grid`` (e.g. ``dra``, ``ddec``,
           ``flux``): the position where ``delta_chi2`` is reached and the
           non-negative best flux there. If ``delta_chi2`` is 0 the flux is
           0 and the position is the first grid position.
@@ -198,22 +200,22 @@ def detection_statistics(
     >>> keys = jax.random.split(jax.random.PRNGKey(0), 100)
     >>> stats = jax.lax.map(
     ...     lambda key: detection_statistics(
-    ...         template.with_model(null_scene, key=key), model, grid
+    ...         model, template.with_model(null_scene, key=key), grid
     ...     ),
     ...     keys,
     ... )  # doctest: +SKIP
     """
-    params, coord_keys, flux_key = _resolve_keys(samples_dict, flux_param)
+    params, coord_keys, flux_key = _resolve_keys(grid, flux_param)
     stats, success = _detection_statistics(
         data,
         model,
-        samples_dict,
+        grid,
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
         batch_size=batch_size_or_default(batch_size, data),
     )
-    _warn_if_concrete(stats, success, samples_dict, flux_key)
+    _warn_if_concrete(stats, success, grid, flux_key)
     return stats
 
 
@@ -247,13 +249,13 @@ def local_nsigma(delta_chi2):
     return nsigma(delta_chi2, 1.0, 1)
 
 
-def _resolve_keys(samples_dict, flux_param):
+def _resolve_keys(grid, flux_param):
     """Grid keys as ``resolve_grid_keys``, refusing statistic names."""
-    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
+    params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     clash = set(params) & (set(STATISTICS) | {"flux_peak_steps"})
     if clash:
         raise ValueError(
-            f"samples_dict keys {sorted(clash)} clash with the names of the "
+            f"grid keys {sorted(clash)} clash with the names of the "
             "returned statistics."
         )
     return params, coord_keys, flux_key
@@ -261,23 +263,21 @@ def _resolve_keys(samples_dict, flux_param):
 
 @eqx.filter_jit
 def _detection_statistics(
-    data, model, samples_dict, params, coord_keys, flux_key, batch_size
+    data, model, grid, params, coord_keys, flux_key, batch_size
 ):
     """Jitted implementation of :func:`detection_statistics`.
 
     Returns ``(stats, converged)``, where ``converged`` is the flux
     optimizer's convergence at every position.
     """
-    loglike_im = _likelihood_grid(
-        data, model, samples_dict, params, batch_size
-    )
+    loglike_im = _likelihood_grid(data, model, grid, params, batch_size)
     grid_flux, grid_loglike = _best_grid_flux(
-        loglike_im, samples_dict, params, flux_key
+        loglike_im, grid, params, flux_key
     )
     opt_flux, opt_loglike, converged = _refine_flux_grid(
         data,
         model,
-        samples_dict,
+        grid,
         params,
         coord_keys,
         flux_key,
@@ -285,7 +285,7 @@ def _detection_statistics(
         grid_flux,
         grid_loglike,
     )
-    coords, shape = coordinate_points(samples_dict, coord_keys)
+    coords, shape = coordinate_points(grid, coord_keys)
     null_values = ordered_values(0.0, coords[0], params, coord_keys, flux_key)
     loglike0 = loglike(null_values, params, data, model)
 
@@ -308,7 +308,7 @@ def _detection_statistics(
         opt_flux,
         data,
         model,
-        samples_dict,
+        grid,
         params,
         coord_keys,
         flux_key,
@@ -329,7 +329,7 @@ def _detection_statistics(
     stats["flux_peak_steps"] = (
         FWHM_PER_SIGMA
         * sigma.reshape(-1)[best]
-        / _flux_step(samples_dict[flux_key], best_flux)
+        / _flux_step(grid[flux_key], best_flux)
     )
     return stats, converged
 
@@ -380,14 +380,14 @@ def _flux_step(flux_axis, flux):
     return axis[i] - axis[i - 1]
 
 
-def _warn_if_concrete(stats, success, samples_dict, flux_key):
+def _warn_if_concrete(stats, success, grid, flux_key):
     """The checks of :func:`detection_statistics` that need numbers."""
     steps = concrete(stats["flux_peak_steps"])
     if steps is None:
         return
     warn_unconverged(success, "detection_statistics")
     flux = float(concrete(stats[flux_key]))
-    top = float(np.max(np.asarray(samples_dict[flux_key])))
+    top = float(np.max(np.asarray(grid[flux_key])))
     if flux > top:
         warnings.warn(
             f"detection_statistics(): the best flux {flux:.3g} lies above "
@@ -472,7 +472,8 @@ class _BootstrapNull(eqx.Module):
 BOOTSTRAP_METHODS = ("sign_flip", "resample")
 
 
-def gaussian_null(template, null_scene, *, error_scale=1.0):
+@old_order("template", "null_scene", data="template")
+def gaussian_null(null_scene, template, *, error_scale=1.0):
     """A simulator of the null hypothesis with Gaussian noise.
 
     Each draw is ``template.with_model(scene, key=key)``
@@ -483,10 +484,10 @@ def gaussian_null(template, null_scene, *, error_scale=1.0):
 
     Parameters
     ----------
-    template : OIData
-        Sampling and errors to simulate. Its values are not used.
     null_scene : SourceModel
         The scene without a companion.
+    template : OIData
+        Sampling and errors to simulate. Its values are not used.
     error_scale : float, optional
         The true noise as a multiple of the template's errors. The draws
         still carry the template's errors, as real data analysed with
@@ -507,7 +508,7 @@ def gaussian_null(template, null_scene, *, error_scale=1.0):
 
     Examples
     --------
-    >>> simulate = gaussian_null(template, BinaryModelCartesian(0, 0, 0))  # doctest: +SKIP
+    >>> simulate = gaussian_null(BinaryModelCartesian(0, 0, 0), template)  # doctest: +SKIP
     >>> data = simulate(jax.random.PRNGKey(0))  # doctest: +SKIP
     """
     error_scale = float(error_scale)
@@ -518,7 +519,8 @@ def gaussian_null(template, null_scene, *, error_scale=1.0):
     return _GaussianNull(template, null_scene, error_scale)
 
 
-def rescale_errors(data, null_scene):
+@old_order("data", "null_scene", data="data")
+def rescale_errors(null_scene, data):
     """Scale the errors so that the null scene has χ²_r = 1.
 
     The visibility errors and the phase errors are scaled separately, each
@@ -533,10 +535,10 @@ def rescale_errors(data, null_scene):
 
     Parameters
     ----------
-    data : OIData
-        Data to rescale, concrete (not traced).
     null_scene : SourceModel
         The scene without a companion, fitted to ``data``.
+    data : OIData
+        Data to rescale, concrete (not traced).
 
     Returns
     -------
@@ -579,7 +581,8 @@ def rescale_errors(data, null_scene):
     return scaled, {"vis": s_vis, "phi": s_phi}
 
 
-def bootstrap_null(data, null_scene, *, method="sign_flip"):
+@old_order("data", "null_scene", data="data")
+def bootstrap_null(null_scene, data, *, method="sign_flip"):
     """A simulator of the null hypothesis by residual bootstrap.
 
     The residuals of ``data`` about ``null_scene``'s prediction are
@@ -608,11 +611,11 @@ def bootstrap_null(data, null_scene, *, method="sign_flip"):
 
     Parameters
     ----------
+    null_scene : SourceModel
+        The scene without a companion, fitted to ``data``.
     data : OIData
         The real data, concrete. Data with gains, closure-phase offsets or
         extra observables are not supported.
-    null_scene : SourceModel
-        The scene without a companion, fitted to ``data``.
     method : {"sign_flip", "resample"}, optional
         How to draw new whitened residuals.
 
@@ -734,11 +737,12 @@ def injection_grid(separations, fluxes, n_pa, key):
     }
 
 
+@old_order("template", "null_scene", "model", "grid", "key", data="template")
 def injection_recovery(
-    template,
-    null_scene,
     model,
-    samples_dict,
+    null_scene,
+    template,
+    grid,
     key,
     *,
     n_null,
@@ -766,20 +770,20 @@ def injection_recovery(
 
     Parameters
     ----------
-    template : OIData
-        For ``noise="gaussian"``, the sampling and errors to simulate; for
-        ``noise="bootstrap"``, the real data.
-    null_scene : SourceModel
-        The scene without a companion. It must predict the same data as
-        ``model`` with zero companion flux, the null hypothesis that the
-        statistics test (checked on ``template``).
     model : SourceModel or class
         Companion model, as for
         [`detection_statistics`][virgil.detection.detection_statistics]:
         a template with dotted paths or a class called with
-        ``samples_dict``'s keys. Injections are this model at the injected
+        ``grid``'s keys. Injections are this model at the injected
         coordinates and flux; null draws are this model at zero flux.
-    samples_dict : dict[str, array-like]
+    null_scene : SourceModel
+        The scene without a companion. It must predict the same data as
+        ``model`` with zero companion flux, the null hypothesis that the
+        statistics test (checked on ``template``).
+    template : OIData
+        For ``noise="gaussian"``, the sampling and errors to simulate; for
+        ``noise="bootstrap"``, the real data.
+    grid : dict[str, array-like]
         The search grid.
     key : jax.Array or int
         Random key, or an integer seed. Draw ``i`` of the null (or of the
@@ -807,7 +811,7 @@ def injection_recovery(
         as in ``BinaryModelAngular``). Stored in ``meta``; the best
         positions are stored either way.
     flux_param : str, optional
-        The flux key of ``samples_dict``, as for the grid tools.
+        The flux key of ``grid``, as for the grid tools.
     draw_batch : int, optional
         Draws evaluated together (vectorised) within ``jax.lax.map``. When
         ``batch_size`` is omitted, it is capped at the default grid batch
@@ -844,12 +848,12 @@ def injection_recovery(
     ...         "flux": jnp.geomspace(1e-4, 0.03, 32)}
     >>> injections = injection_grid([60, 100], [1e-3, 3e-3], 100, 1)
     >>> mc = injection_recovery(
-    ...     template, BinaryModelCartesian(0, 0, 0), BinaryModelCartesian,
+    ...     BinaryModelCartesian, BinaryModelCartesian(0, 0, 0), template,
     ...     grid, 0, n_null=1000, injections=injections,
     ... )  # doctest: +SKIP
     >>> mc.threshold("delta_chi2", 1.35e-3)  # doctest: +SKIP
     """
-    params, coord_keys, flux_key = _resolve_keys(samples_dict, flux_param)
+    params, coord_keys, flux_key = _resolve_keys(grid, flux_param)
     names = _canonical_names(params, flux_key)
     n_null = int(n_null)
     if n_null < 0:
@@ -907,7 +911,7 @@ def injection_recovery(
             stats = _simulated_statistics(
                 simulator,
                 model,
-                samples_dict,
+                grid,
                 base_key,
                 np.arange(start, start + width, dtype=np.int32),
                 padded,
@@ -946,7 +950,7 @@ def injection_recovery(
         "names": {k: names[k] for k in params},
         "grid": {
             k: np.asarray(v, dtype=float).reshape(-1).tolist()
-            for k, v in samples_dict.items()
+            for k, v in grid.items()
         },
         "model": _describe(model),
         "null_scene": _describe(null_scene),
@@ -964,7 +968,7 @@ def injection_recovery(
 def _simulated_statistics(
     simulator,
     model,
-    samples_dict,
+    grid,
     base_key,
     index,
     values,
@@ -983,7 +987,7 @@ def _simulated_statistics(
         stats, converged = _detection_statistics(
             data,
             model,
-            samples_dict,
+            grid,
             params=params,
             coord_keys=coord_keys,
             flux_key=flux_key,
@@ -1136,9 +1140,9 @@ def _simulator(noise, template, null_scene):
         )
         return noise
     if noise == "gaussian":
-        return gaussian_null(template, null_scene)
+        return gaussian_null(null_scene, template)
     if noise == "bootstrap":
-        return bootstrap_null(template, null_scene)
+        return bootstrap_null(null_scene, template)
     raise ValueError(
         "noise must be 'gaussian', 'bootstrap' or a simulator from "
         f"gaussian_null or bootstrap_null, not {noise!r}."

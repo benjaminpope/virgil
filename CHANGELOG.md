@@ -7,6 +7,22 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Migration from 0.3.0
+
+- **Model before data in the grid, limit and detection tools.**
+  `likelihood_grid`, `optimized_likelihood_grid`, `optimized_flux_grid`,
+  `linear_flux_grid`, `laplace_flux_uncertainty_grid`, `absil_limits`,
+  `injection_limits` and `detection_statistics` are now `f(model, data,
+  grid, ...)`, as `fit` already was; `gaussian_null`, `rescale_errors`
+  and `bootstrap_null` take the null scene first; `injection_recovery`
+  is `(model, null_scene, template, grid, key, ...)`. Calls in the 0.3
+  order still work, with a `FutureWarning` naming the new call; from 0.5
+  they raise a `TypeError` naming it.
+- **`samples_dict` is now `grid`** in these functions and in
+  `best_grid_point`, `plot_grid_map` and `plot_contrast_curve`, and their
+  data argument is `data`. `samples_dict=` and `data_obj=` still work
+  with a `FutureWarning` until 0.5.
+
 ### Added
 
 - A private `virgil._deprecate` module for the 0.4 change to a single

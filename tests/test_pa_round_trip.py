@@ -129,7 +129,7 @@ def _found(tables, path):
         "ddec": axis,
         "flux": onp.array([0.05, 0.2, 0.6, 0.9]),
     }
-    best = best_grid_point(likelihood_grid(data, TRUTH, samples), samples)
+    best = best_grid_point(likelihood_grid(TRUTH, data, samples), samples)
     return onp.degrees(onp.arctan2(best["dra"], best["ddec"])) % 360, best[
         "flux"
     ]

@@ -498,5 +498,5 @@ def test_log_bayes_factor_without_information_is_zero(axis):
     }
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        result = detection_statistics(_flat_data(), BinaryModelCartesian, grid)
+        result = detection_statistics(BinaryModelCartesian, _flat_data(), grid)
     assert float(result["log_bayes_factor"]) == pytest.approx(0.0, abs=1e-8)

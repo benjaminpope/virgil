@@ -94,7 +94,7 @@ samples = {
 }
 
 # Best-fit companion/primary flux at every (dra, ddec).
-opt_flux = optimized_flux_grid(oidata_sim, BinaryModelCartesian, samples)
+opt_flux = optimized_flux_grid(BinaryModelCartesian, oidata_sim, samples)
 ```
 
 ```text
@@ -107,7 +107,7 @@ The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/ab
 
 ```python
 sigma_flux = laplace_flux_uncertainty_grid(
-    oidata_sim, BinaryModelCartesian, samples, flux=opt_flux
+    BinaryModelCartesian, oidata_sim, samples, flux=opt_flux
 )
 
 # Ruffio method at the 2σ-equivalent percentile
@@ -127,7 +127,7 @@ In [Absil et al 2011](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/ab
 
 ```python
 # Absil method at 2σ
-absil_map = absil_limits(oidata_sim, BinaryModelCartesian, samples, sigma=2.0)
+absil_map = absil_limits(BinaryModelCartesian, oidata_sim, samples, sigma=2.0)
 
 {
     "opt_flux_finite_frac": float(jnp.mean(jnp.isfinite(opt_flux))),

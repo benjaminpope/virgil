@@ -1,7 +1,7 @@
 """Grid searches over model parameters.
 
 Grids are built with ``indexing="ij"``: every output has one axis per grid
-key, in the order of ``samples_dict``. For ``{"dra", "ddec", ...}`` axis 0 is
+key, in the order of ``grid``. For ``{"dra", "ddec", ...}`` axis 0 is
 ``dra`` (East offset) and axis 1 is ``ddec`` (North offset), so 2D maps need
 a transpose to be shown as images with North up;
 [`plot_grid_map`][virgil.plotting.plot_grid_map] handles this.
@@ -34,22 +34,23 @@ from ._grid import (
     resolve_grid_keys,
     warn_unconverged,
 )
+from ._deprecate import old_order, renamed
 from .inference import laplace_parameter_uncertainty
 from .likelihood import build_model, loglike, whitened_residuals
 
 
-def _best_grid_flux(loglike_im, samples_dict, params, flux_key):
+def _best_grid_flux(loglike_im, grid, params, flux_key):
     """Best flux on a full likelihood grid, and its log likelihood, at every
     position (``loglike_im`` has one axis per key of ``params``)."""
     flux_axis = params.index(flux_key)
     best_index = jnp.nanargmax(loglike_im, axis=flux_axis)
-    best_flux = jnp.asarray(samples_dict[flux_key])[best_index]
+    best_flux = jnp.asarray(grid[flux_key])[best_index]
     return best_flux, jnp.nanmax(loglike_im, axis=flux_axis)
 
 
 @eqx.filter_jit
 def _optimize_flux_grid(
-    data_obj, model, samples_dict, params, coord_keys, flux_key, batch_size
+    data, model, grid, params, coord_keys, flux_key, batch_size
 ):
     """Refine the best grid flux at every position with BFGS.
 
@@ -60,16 +61,14 @@ def _optimize_flux_grid(
     relative to the problem's own scale. The starting points are the best
     fluxes of the full likelihood grid.
     """
-    loglike_im = _likelihood_grid(
-        data_obj, model, samples_dict, params, batch_size
-    )
+    loglike_im = _likelihood_grid(data, model, grid, params, batch_size)
     start_flux, start_loglike = _best_grid_flux(
-        loglike_im, samples_dict, params, flux_key
+        loglike_im, grid, params, flux_key
     )
     return _refine_flux_grid(
-        data_obj,
+        data,
         model,
-        samples_dict,
+        grid,
         params,
         coord_keys,
         flux_key,
@@ -80,9 +79,9 @@ def _optimize_flux_grid(
 
 
 def _refine_flux_grid(
-    data_obj,
+    data,
     model,
-    samples_dict,
+    grid,
     params,
     coord_keys,
     flux_key,
@@ -97,17 +96,17 @@ def _refine_flux_grid(
     inside :func:`_optimize_flux_grid` and the detection statistics, which
     reuse a full likelihood grid they have already computed.
     """
-    coords, shape = coordinate_points(samples_dict, coord_keys)
+    coords, shape = coordinate_points(grid, coord_keys)
 
     def objective(x, coord_vals, scale, loglike0):
         values = ordered_values(
             x * scale, coord_vals, params, coord_keys, flux_key
         )
-        return loglike0 - loglike(values, params, data_obj, model)
+        return loglike0 - loglike(values, params, data, model)
 
     def flux_loglike(flux, coord_vals):
         values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
-        return loglike(values, params, data_obj, model)
+        return loglike(values, params, data, model)
 
     def newton_step(flux, coord_vals):
         grad = jax.grad(flux_loglike)(flux, coord_vals)
@@ -160,19 +159,20 @@ def _refine_flux_grid(
     )
 
 
-def likelihood_grid(data_obj, model, samples_dict, *, batch_size=None):
+@old_order("data", "model", "grid", data="data")
+def likelihood_grid(model, data, grid, *, batch_size=None):
     """Evaluate the log likelihood at every point of a parameter grid.
 
     Parameters
     ----------
-    data_obj : OIData
-        Data to fit.
     model : SourceModel or class
-        Template model whose parameters at the paths in ``samples_dict`` are
+        Template model whose parameters at the paths in ``grid`` are
         varied (e.g. a [System][virgil.models.System] with paths such as
-        ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
+        ``"comp.dra"``), or a model class called with ``grid``'s keys
         as keyword arguments (e.g. ``BinaryModelCartesian``).
-    samples_dict : dict[str, array-like]
+    data : OIData
+        Data to fit.
+    grid : dict[str, array-like]
         Grid axes, as a mapping from parameter name or path to 1D values
         (e.g. ``dra``/``ddec`` in milliarcseconds and ``flux`` as a
         companion/primary flux ratio). The output has one axis per key, in
@@ -187,30 +187,30 @@ def likelihood_grid(data_obj, model, samples_dict, *, batch_size=None):
     -------
     array-like
         Log likelihood with shape
-        ``tuple(len(v) for v in samples_dict.values())``. Axis ``k`` follows
+        ``tuple(len(v) for v in grid.values())``. Axis ``k`` follows
         the ``k``-th key (``indexing="ij"``), so for
         ``{"dra", "ddec", "flux"}`` axis 0 is ``dra``: transpose a 2D slice
         before showing it as an image with North up.
     """
-    params = tuple(samples_dict.keys())
-    check_flux_axes(samples_dict)
+    params = tuple(grid.keys())
+    check_flux_axes(grid)
     return _likelihood_grid(
-        data_obj,
+        data,
         model,
-        samples_dict,
+        grid,
         params=params,
-        batch_size=batch_size_or_default(batch_size, data_obj),
+        batch_size=batch_size_or_default(batch_size, data),
     )
 
 
 @eqx.filter_jit
-def _likelihood_grid(data_obj, model, samples_dict, params, batch_size):
+def _likelihood_grid(data, model, grid, params, batch_size):
     """Jitted implementation of [`likelihood_grid`][virgil.grid_fit.likelihood_grid]."""
 
-    vals_vec, grid_shape = meshgrid_vectors(samples_dict, params)
+    vals_vec, grid_shape = meshgrid_vectors(grid, params)
 
     return map_points(
-        lambda values: loglike(values, params, data_obj, model),
+        lambda values: loglike(values, params, data, model),
         vals_vec,
         batch_size=batch_size,
     ).reshape(grid_shape)
@@ -219,21 +219,21 @@ def _likelihood_grid(data_obj, model, samples_dict, params, batch_size):
 _OPTIMIZED_PARAMS_DOC = """
     Parameters
     ----------
-    data_obj : OIData
-        Data to fit.
     model : SourceModel or class
-        Template model whose parameters at the paths in ``samples_dict`` are
+        Template model whose parameters at the paths in ``grid`` are
         varied (e.g. a [System][virgil.models.System] with paths such as
-        ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
+        ``"comp.dra"``), or a model class called with ``grid``'s keys
         as keyword arguments (e.g. ``BinaryModelCartesian``).
-    samples_dict : dict[str, array-like]
+    data : OIData
+        Data to fit.
+    grid : dict[str, array-like]
         Grid axes, as a mapping from parameter name or path to 1D values
         (e.g. ``dra``/``ddec`` in milliarcseconds and ``flux`` as a
         companion/primary flux ratio). The output has one axis per
         coordinate key (every key except ``flux_param``), in this order;
         the flux axis only sets the optimizer's starting points.
     flux_param : str, optional
-        The key of ``samples_dict`` holding the flux optimized at each grid
+        The key of ``grid`` holding the flux optimized at each grid
         position, e.g. ``"comp.flux"``. By default, the one key whose last
         part is ``flux``.
     batch_size : int, optional
@@ -244,18 +244,19 @@ _OPTIMIZED_PARAMS_DOC = """
 """
 
 
+@old_order("data", "model", "grid", data="data")
 def optimized_likelihood_grid(
-    data_obj, model, samples_dict, *, flux_param=None, batch_size=None
+    model, data, grid, *, flux_param=None, batch_size=None
 ):
-    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
+    params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     _, best_loglike, success = _optimize_flux_grid(
-        data_obj,
+        data,
         model,
-        samples_dict,
+        grid,
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
-        batch_size=batch_size_or_default(batch_size, data_obj),
+        batch_size=batch_size_or_default(batch_size, data),
     )
     warn_unconverged(success, "optimized_likelihood_grid")
     return best_loglike
@@ -279,18 +280,19 @@ optimized_likelihood_grid.__doc__ = (
 )
 
 
+@old_order("data", "model", "grid", data="data")
 def optimized_flux_grid(
-    data_obj, model, samples_dict, *, flux_param=None, batch_size=None
+    model, data, grid, *, flux_param=None, batch_size=None
 ):
-    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
+    params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     best_flux, _, success = _optimize_flux_grid(
-        data_obj,
+        data,
         model,
-        samples_dict,
+        grid,
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
-        batch_size=batch_size_or_default(batch_size, data_obj),
+        batch_size=batch_size_or_default(batch_size, data),
     )
     warn_unconverged(success, "optimized_flux_grid")
     return best_flux
@@ -472,9 +474,9 @@ class LinearFluxGrid(NamedTuple):
 
 @eqx.filter_jit
 def _linear_flux_grid(
-    data_obj,
+    data,
     model,
-    samples_dict,
+    grid,
     params,
     coord_keys,
     flux_key,
@@ -483,11 +485,11 @@ def _linear_flux_grid(
     prior,
 ):
     """Jitted implementation of [`linear_flux_grid`][virgil.grid_fit.linear_flux_grid]."""
-    coords, shape = coordinate_points(samples_dict, coord_keys)
+    coords, shape = coordinate_points(grid, coord_keys)
 
     def residuals(flux, coord_vals):
         values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
-        return whitened_residuals(build_model(model, params, values), data_obj)
+        return whitened_residuals(build_model(model, params, values), data)
 
     def solve(coord_vals):
         def linearise(flux):
@@ -550,10 +552,11 @@ def _linear_flux_grid(
     return LinearFluxGrid(flux, sigma, flux / sigma, *out[2:])
 
 
+@old_order("data", "model", "grid", data="data")
 def linear_flux_grid(
-    data_obj,
     model,
-    samples_dict,
+    data,
+    grid,
     *,
     flux_param=None,
     batch_size=None,
@@ -611,15 +614,15 @@ def linear_flux_grid(
 
     Parameters
     ----------
-    data_obj : OIData
-        Data to fit.
     model : SourceModel or class
-        Template model whose parameters at the paths in ``samples_dict`` are
+        Template model whose parameters at the paths in ``grid`` are
         varied (e.g. a [System][virgil.models.System] with paths such as
-        ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
+        ``"comp.dra"``), or a model class called with ``grid``'s keys
         as keyword arguments (e.g. ``BinaryModelCartesian``). At zero flux
         it must reduce to the primary alone (flux 1).
-    samples_dict : dict[str, array-like]
+    data : OIData
+        Data to fit.
+    grid : dict[str, array-like]
         Grid axes, as for
         [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]:
         ``dra``/``ddec`` in milliarcseconds, plus a flux key, whose values
@@ -627,7 +630,7 @@ def linear_flux_grid(
         be present to name the parameter. The output has one axis per
         coordinate key (every key except ``flux_param``), in this order.
     flux_param : str, optional
-        The key of ``samples_dict`` holding the flux, e.g. ``"comp.flux"``.
+        The key of ``grid`` holding the flux, e.g. ``"comp.flux"``.
         By default, the one key whose last part is ``flux``.
     batch_size : int, optional
         Number of grid points evaluated at once. By default, enough for
@@ -712,30 +715,31 @@ def linear_flux_grid(
     ...     "flux": jnp.array([1e-3]),  # ignored: only names the parameter
     ... }
     >>> res = linear_flux_grid(
-    ...     data, BinaryModelCartesian, grid
+    ...     BinaryModelCartesian, data, grid
     ... )  # doctest: +SKIP
     >>> i, j = jnp.unravel_index(
     ...     jnp.nanargmax(res.snr), res.snr.shape
     ... )  # doctest: +SKIP
     """
-    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
+    params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     return _linear_flux_grid(
-        data_obj,
+        data,
         model,
-        samples_dict,
+        grid,
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
-        batch_size=batch_size_or_default(batch_size, data_obj),
+        batch_size=batch_size_or_default(batch_size, data),
         n_iter=int(n_iter),
         prior=_as_prior(prior),
     )
 
 
+@old_order("data", "model", "grid", data="data")
 def laplace_flux_uncertainty_grid(
-    data_obj,
     model,
-    samples_dict,
+    data,
+    grid,
     flux=None,
     *,
     flux_param=None,
@@ -749,11 +753,11 @@ def laplace_flux_uncertainty_grid(
 
     Parameters
     ----------
-    data_obj : OIData
-        Data to fit.
     model : SourceModel or class
         Template model or model class, as for :func:`likelihood_grid`.
-    samples_dict : dict[str, array-like]
+    data : OIData
+        Data to fit.
+    grid : dict[str, array-like]
         Grid axes, as for :func:`optimized_flux_grid`. The output has one
         axis per coordinate key (every key except the flux), in this order.
     flux : array-like, optional
@@ -763,7 +767,7 @@ def laplace_flux_uncertainty_grid(
         [`ruffio_upperlimit`][virgil.limits.ruffio_upperlimit] expects;
         pass it if you have already computed it.
     flux_param : str, optional
-        The key of ``samples_dict`` holding the flux. By default, the one key
+        The key of ``grid`` holding the flux. By default, the one key
         whose last part is ``flux``.
     batch_size : int, optional
         Number of grid points evaluated at once. By default, enough for
@@ -778,40 +782,40 @@ def laplace_flux_uncertainty_grid(
         NaN where the curvature is not positive (the flux is not at a
         likelihood maximum).
     """
-    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
+    params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     if flux is None:
         flux = optimized_flux_grid(
-            data_obj,
             model,
-            samples_dict,
+            data,
+            grid,
             flux_param=flux_key,
             batch_size=batch_size,
         )
     return _laplace_flux_uncertainty_grid(
         jnp.asarray(flux),
-        data_obj,
+        data,
         model,
-        samples_dict,
+        grid,
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
-        batch_size=batch_size_or_default(batch_size, data_obj),
+        batch_size=batch_size_or_default(batch_size, data),
     )
 
 
 @eqx.filter_jit
 def _laplace_flux_uncertainty_grid(
     flux_values,
-    data_obj,
+    data,
     model,
-    samples_dict,
+    grid,
     params,
     coord_keys,
     flux_key,
     batch_size,
 ):
     """Jitted implementation of :func:`laplace_flux_uncertainty_grid`."""
-    coords, shape = coordinate_points(samples_dict, coord_keys)
+    coords, shape = coordinate_points(grid, coord_keys)
 
     def sigma(flux, coord_vals):
         values = jnp.stack(
@@ -820,7 +824,7 @@ def _laplace_flux_uncertainty_grid(
         return laplace_parameter_uncertainty(
             values=values,
             params=params,
-            data_obj=data_obj,
+            data_obj=data,
             model=model,
             target_param=flux_key,
         )
@@ -830,30 +834,30 @@ def _laplace_flux_uncertainty_grid(
     ).reshape(shape)
 
 
-def best_grid_point(loglike_grid, samples_dict):
+@renamed()
+def best_grid_point(loglike_grid, grid):
     """Return the grid point with the highest log likelihood.
 
     Parameters
     ----------
     loglike_grid : array-like
-        Output of [`likelihood_grid`][virgil.grid_fit.likelihood_grid] for ``samples_dict``, with one axis
+        Output of [`likelihood_grid`][virgil.grid_fit.likelihood_grid] for ``grid``, with one axis
         per key. NaNs are ignored.
-    samples_dict : dict[str, array-like]
+    grid : dict[str, array-like]
         The grid axes used to compute ``loglike_grid``.
 
     Returns
     -------
     dict[str, float]
-        ``{name: value}`` at the maximum, in the order of ``samples_dict``.
+        ``{name: value}`` at the maximum, in the order of ``grid``.
     """
     shape = jnp.shape(loglike_grid)
-    if len(shape) != len(samples_dict):
+    if len(shape) != len(grid):
         raise ValueError(
-            f"loglike_grid has {len(shape)} axes but samples_dict has "
-            f"{len(samples_dict)} keys; pass the full likelihood_grid output."
+            f"loglike_grid has {len(shape)} axes but grid has "
+            f"{len(grid)} keys; pass the full likelihood_grid output."
         )
     index = np.unravel_index(int(jnp.nanargmax(loglike_grid)), shape)
     return {
-        key: float(values[i])
-        for (key, values), i in zip(samples_dict.items(), index)
+        key: float(values[i]) for (key, values), i in zip(grid.items(), index)
     }

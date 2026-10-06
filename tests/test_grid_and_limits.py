@@ -58,7 +58,7 @@ def _assert_sky_oriented(fig):
 
 
 def test_likelihood_grid():
-    loglike_im = likelihood_grid(oidata, BinaryModelCartesian, samples_dict)
+    loglike_im = likelihood_grid(BinaryModelCartesian, oidata, samples_dict)
     assert np.all(np.isfinite(loglike_im))
     assert loglike_im.shape == (
         samples_dict["dra"].shape[0],
@@ -82,14 +82,14 @@ def test_likelihood_grid_axis_order_tracks_key_order():
         "ddec": samples_dict["ddec"][::12],
         "flux": samples_dict["flux"][::12],
     }
-    ordered = likelihood_grid(oidata, BinaryModelCartesian, reduced_samples)
+    ordered = likelihood_grid(BinaryModelCartesian, oidata, reduced_samples)
 
     permuted_samples = {
         "flux": reduced_samples["flux"],
         "dra": reduced_samples["dra"],
         "ddec": reduced_samples["ddec"],
     }
-    permuted = likelihood_grid(oidata, BinaryModelCartesian, permuted_samples)
+    permuted = likelihood_grid(BinaryModelCartesian, oidata, permuted_samples)
 
     assert ordered.shape == (
         reduced_samples["dra"].shape[0],
@@ -106,7 +106,7 @@ def test_likelihood_grid_axis_order_tracks_key_order():
 
 def test_optimized_likelihood_grid():
     loglike_im = optimized_likelihood_grid(
-        oidata, BinaryModelCartesian, samples_dict, flux_param="flux"
+        BinaryModelCartesian, oidata, samples_dict, flux_param="flux"
     )
     assert np.all(np.isfinite(loglike_im))
     assert loglike_im.shape == (
@@ -124,7 +124,7 @@ def test_optimized_likelihood_grid_axis_order_tracks_key_order():
         "flux": samples_dict["flux"][::12],
     }
     ordered = optimized_likelihood_grid(
-        oidata, BinaryModelCartesian, reduced_samples, flux_param="flux"
+        BinaryModelCartesian, oidata, reduced_samples, flux_param="flux"
     )
 
     permuted_samples = {
@@ -133,7 +133,7 @@ def test_optimized_likelihood_grid_axis_order_tracks_key_order():
         "dra": reduced_samples["dra"],
     }
     permuted = optimized_likelihood_grid(
-        oidata, BinaryModelCartesian, permuted_samples, flux_param="flux"
+        BinaryModelCartesian, oidata, permuted_samples, flux_param="flux"
     )
 
     assert ordered.shape == (
@@ -149,7 +149,7 @@ def test_optimized_likelihood_grid_axis_order_tracks_key_order():
 
 def test_optimized():
     optimized = optimized_flux_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict
+        BinaryModelCartesian, oidata_sim, samples_dict
     )
     assert optimized.shape == (
         samples_dict["dra"].shape[0],
@@ -167,7 +167,7 @@ def test_optimized_flux_grid_axis_order_tracks_key_order():
         "flux": samples_dict["flux"][::12],
     }
     ordered = optimized_flux_grid(
-        oidata_sim, BinaryModelCartesian, reduced_samples
+        BinaryModelCartesian, oidata_sim, reduced_samples
     )
 
     permuted_samples = {
@@ -176,7 +176,7 @@ def test_optimized_flux_grid_axis_order_tracks_key_order():
         "dra": reduced_samples["dra"],
     }
     permuted = optimized_flux_grid(
-        oidata_sim, BinaryModelCartesian, permuted_samples
+        BinaryModelCartesian, oidata_sim, permuted_samples
     )
 
     assert ordered.shape == (
@@ -192,10 +192,10 @@ def test_optimized_flux_grid_axis_order_tracks_key_order():
 
 def test_laplace():
     optimized = optimized_flux_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict
+        BinaryModelCartesian, oidata_sim, samples_dict
     )
     laplace_sigma_grid = laplace_flux_uncertainty_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict, flux=optimized
+        BinaryModelCartesian, oidata_sim, samples_dict, flux=optimized
     )
     assert laplace_sigma_grid.shape == (
         samples_dict["dra"].shape[0],
@@ -205,12 +205,12 @@ def test_laplace():
     # By default the curvature is taken at the optimized flux.
     small = {key: value[::6] for key, value in samples_dict.items()}
     assert np.allclose(
-        laplace_flux_uncertainty_grid(oidata_sim, BinaryModelCartesian, small),
+        laplace_flux_uncertainty_grid(BinaryModelCartesian, oidata_sim, small),
         laplace_flux_uncertainty_grid(
-            oidata_sim,
             BinaryModelCartesian,
+            oidata_sim,
             small,
-            flux=optimized_flux_grid(oidata_sim, BinaryModelCartesian, small),
+            flux=optimized_flux_grid(BinaryModelCartesian, oidata_sim, small),
         ),
     )
 
@@ -230,7 +230,7 @@ def test_laplace_grid_axis_order_tracks_key_order():
         "flux": samples_dict["flux"][::12],
     }
     ordered = laplace_flux_uncertainty_grid(
-        oidata_sim, BinaryModelCartesian, reduced_samples
+        BinaryModelCartesian, oidata_sim, reduced_samples
     )
     permuted_samples = {
         "ddec": reduced_samples["ddec"],
@@ -238,7 +238,7 @@ def test_laplace_grid_axis_order_tracks_key_order():
         "dra": reduced_samples["dra"],
     }
     permuted = laplace_flux_uncertainty_grid(
-        oidata_sim, BinaryModelCartesian, permuted_samples
+        BinaryModelCartesian, oidata_sim, permuted_samples
     )
     assert permuted.shape == (
         reduced_samples["ddec"].shape[0],
@@ -249,10 +249,10 @@ def test_laplace_grid_axis_order_tracks_key_order():
 
 def test_ruffio():
     optimized = optimized_flux_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict
+        BinaryModelCartesian, oidata_sim, samples_dict
     )
     sigma = laplace_flux_uncertainty_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict, flux=optimized
+        BinaryModelCartesian, oidata_sim, samples_dict, flux=optimized
     )
     limits = ruffio_upperlimit(optimized, sigma, perc[0])
     assert limits.shape == optimized.shape
@@ -280,7 +280,7 @@ def test_ruffio():
 
 def test_absil():
     limits_absil = absil_limits(
-        oidata_sim, BinaryModelCartesian, samples_dict, 5.0
+        BinaryModelCartesian, oidata_sim, samples_dict, 5.0
     )
     assert np.all(np.isfinite(limits_absil))
     fig, ax = plot_grid_map(
@@ -347,9 +347,9 @@ def test_absil_limit_responds_to_smaller_uncertainties():
             }
         )
 
-    nominal = absil_limits(noisy_null(1.0), BinaryModelCartesian, samples, 2.0)
+    nominal = absil_limits(BinaryModelCartesian, noisy_null(1.0), samples, 2.0)
     improved = absil_limits(
-        noisy_null(0.1), BinaryModelCartesian, samples, 2.0
+        BinaryModelCartesian, noisy_null(0.1), samples, 2.0
     )
 
     assert improved.item() < nominal.item()
@@ -387,7 +387,7 @@ def test_absil_limit_does_not_depend_on_the_starting_flux_axis():
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             return absil_limits(
-                data, BinaryModelCartesian, samples, 2.0, flux_bounds=None
+                BinaryModelCartesian, data, samples, 2.0, flux_bounds=None
             ).item()
 
     reference = limit(10 ** np.linspace(-6.0, -1.0, 30))
@@ -530,9 +530,9 @@ def test_unbounded_limits_match_bounded_limits():
     for limit_fn in (injection_limits, absil_limits):
         for model, samples in cases:
             bounded = limit_fn(
-                data, model, samples, 3.0, flux_bounds=(1e-6, 1.0)
+                model, data, samples, 3.0, flux_bounds=(1e-6, 1.0)
             )
-            unbounded = limit_fn(data, model, samples, 3.0, flux_bounds=None)
+            unbounded = limit_fn(model, data, samples, 3.0, flux_bounds=None)
             assert onp.all((onp.asarray(bounded) > 1e-3) & (bounded < 0.1))
             assert onp.allclose(unbounded, bounded, rtol=1e-4)
 
@@ -551,7 +551,7 @@ def test_limits_reject_sigma_beyond_float_precision(sigma):
     }
     for limit_fn in (injection_limits, absil_limits):
         with pytest.raises(ValueError, match="largest significance"):
-            limit_fn(oidata_sim, BinaryModelCartesian, samples, sigma)
+            limit_fn(BinaryModelCartesian, oidata_sim, samples, sigma)
 
 
 def test_limit_options_are_keyword_only():
@@ -564,7 +564,7 @@ def test_limit_options_are_keyword_only():
     }
     for limit_fn in (injection_limits, absil_limits):
         with pytest.raises(TypeError):
-            limit_fn(oidata_sim, BinaryModelCartesian, samples, 3.0, "flux")
+            limit_fn(BinaryModelCartesian, oidata_sim, samples, 3.0, "flux")
 
 
 def _extras_data(extras):
@@ -617,14 +617,14 @@ def test_injection_limits_with_extras_is_absil_on_reflected_data():
             2 * m0[n_vis + n_phi :] - block.values,
         ),
     )
-    injection = injection_limits(data, template, EXTRAS_SAMPLES, 3.0)
-    absil = absil_limits(reflected, template, EXTRAS_SAMPLES, 3.0)
+    injection = injection_limits(template, data, EXTRAS_SAMPLES, 3.0)
+    absil = absil_limits(template, reflected, EXTRAS_SAMPLES, 3.0)
     assert onp.all(onp.isfinite(injection))
     assert onp.allclose(injection, absil, rtol=2e-3)
 
     # The extras count: dropping them changes the limit.
     plain = eqx.tree_at(lambda d: d.extras, data, ())
-    without = injection_limits(plain, template, EXTRAS_SAMPLES, 3.0)
+    without = injection_limits(template, plain, EXTRAS_SAMPLES, 3.0)
     assert not onp.allclose(without, injection, rtol=1e-3)
 
 
@@ -633,7 +633,7 @@ def test_injection_limits_run_with_every_extra():
 
     data, template = _extras_data(("flux", "t3amp", "visamp", "visphi"))
     assert len(data.extras) == 4
-    limits = injection_limits(data, template, EXTRAS_SAMPLES, 3.0)
+    limits = injection_limits(template, data, EXTRAS_SAMPLES, 3.0)
     assert limits.shape == (2, 1)
     assert onp.all((limits > 1e-6) & (limits < 1.0))
 
@@ -653,7 +653,7 @@ def test_injection_limits_with_oi_flux_reach_sigma_on_injected_data():
     keys = tuple(EXTRAS_SAMPLES)
     null = build_model(template, keys, [0.0, 0.0, 0.0])
     m0 = data.model(null)
-    limits = injection_limits(data, template, EXTRAS_SAMPLES, 3.0)
+    limits = injection_limits(template, data, EXTRAS_SAMPLES, 3.0)
     ndof = data.n_independent
     for i, dra in enumerate(EXTRAS_SAMPLES["comp.dra"]):
         flux = float(limits[i, 0])

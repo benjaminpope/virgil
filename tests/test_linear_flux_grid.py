@@ -67,16 +67,16 @@ def faint():
     data = _simulate(1e-3, noise_scale=0.1)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        optimized = optimized_flux_grid(data, BinaryModelCartesian, _grid())
+        optimized = optimized_flux_grid(BinaryModelCartesian, data, _grid())
     laplace = laplace_flux_uncertainty_grid(
-        data, BinaryModelCartesian, _grid(), flux=optimized
+        BinaryModelCartesian, data, _grid(), flux=optimized
     )
     return data, optimized, laplace
 
 
 def test_faint_companion_matches_optimizer_and_laplace(faint):
     data, optimized, laplace = faint
-    flux, error, snr = linear_flux_grid(data, BinaryModelCartesian, _grid())[
+    flux, error, snr = linear_flux_grid(BinaryModelCartesian, data, _grid())[
         :3
     ]
     assert flux.shape == error.shape == snr.shape == (3, 3)
@@ -98,7 +98,7 @@ def test_snr_peaks_at_true_position(faint):
         "ddec": TRUE_POS[1] + np.linspace(-30.0, 30.0, 13),
         "flux": np.array([1e-3]),
     }
-    _, _, snr = linear_flux_grid(data, BinaryModelCartesian, fine)[:3]
+    _, _, snr = linear_flux_grid(BinaryModelCartesian, data, fine)[:3]
     assert np.unravel_index(np.argmax(snr), snr.shape) == (6, 6)
 
 
@@ -107,7 +107,7 @@ def test_bright_companion_is_biased():
     # the flux (measured 0.20 for a true 0.30, with the optimizer at 0.30),
     # so we only check the sign and the size of the bias, not agreement.
     data = _simulate(0.3, noise_scale=0.01)
-    flux, _, _ = linear_flux_grid(data, BinaryModelCartesian, _grid())[:3]
+    flux, _, _ = linear_flux_grid(BinaryModelCartesian, data, _grid())[:3]
     assert 0.1 < flux[0, 0] < 0.27
 
 
@@ -121,7 +121,7 @@ def test_gradient_matches_finite_difference():
     importable in the test environment.)
     """
     data = _simulate(1e-3, noise_scale=0.1)
-    _, error, _ = linear_flux_grid(data, BinaryModelCartesian, _grid())[:3]
+    _, error, _ = linear_flux_grid(BinaryModelCartesian, data, _grid())[:3]
     params = ("dra", "ddec", "flux")
 
     def resid(flux):
@@ -138,13 +138,13 @@ def test_gauss_newton_fixes_bright_companion():
     data = _simulate(0.3, noise_scale=0.01)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        optimized = optimized_flux_grid(data, BinaryModelCartesian, _grid())
+        optimized = optimized_flux_grid(BinaryModelCartesian, data, _grid())
     laplace = laplace_flux_uncertainty_grid(
-        data, BinaryModelCartesian, _grid(), flux=optimized
+        BinaryModelCartesian, data, _grid(), flux=optimized
     )
-    flux0, _, _ = linear_flux_grid(data, BinaryModelCartesian, _grid())[:3]
+    flux0, _, _ = linear_flux_grid(BinaryModelCartesian, data, _grid())[:3]
     flux, error, snr = linear_flux_grid(
-        data, BinaryModelCartesian, _grid(), n_iter=3
+        BinaryModelCartesian, data, _grid(), n_iter=3
     )[:3]
     # Measured at f = 0.3: n_iter=0 gives 0.198; n_iter=3 gives 0.29999995
     # against the optimizer's 0.29999986 (3e-7 relative), and sigma_f agrees
@@ -153,8 +153,8 @@ def test_gauss_newton_fixes_bright_companion():
     assert onp.isclose(error[0, 0], laplace[0, 0], rtol=0.05)
     assert onp.allclose(snr, flux / error)
     # n_iter=0 is the default, unchanged.
-    f_def = linear_flux_grid(data, BinaryModelCartesian, _grid())[0]
-    f_zero = linear_flux_grid(data, BinaryModelCartesian, _grid(), n_iter=0)[0]
+    f_def = linear_flux_grid(BinaryModelCartesian, data, _grid())[0]
+    f_zero = linear_flux_grid(BinaryModelCartesian, data, _grid(), n_iter=0)[0]
     assert onp.array_equal(f_def, f_zero)
 
 
@@ -168,9 +168,9 @@ def test_prior_matches_numerical_marginalisation(noise_scale):
     data = _simulate(1e-3, noise_scale=noise_scale)
     mean, sd = 2e-3, 3e-3
     out = linear_flux_grid(
-        data, BinaryModelCartesian, _grid(), prior=Gaussian(mean, sd)
+        BinaryModelCartesian, data, _grid(), prior=Gaussian(mean, sd)
     )
-    base = linear_flux_grid(data, BinaryModelCartesian, _grid())
+    base = linear_flux_grid(BinaryModelCartesian, data, _grid())
     assert base.posterior_mean is None and base.log_bayes_factor is None
     assert onp.array_equal(out.flux, base.flux)
     params = ("dra", "ddec", "flux")
@@ -216,10 +216,10 @@ def test_numpyro_priors_match_the_named_tuples():
         (dist.Normal(2e-3, 3e-3), Gaussian(2e-3, 3e-3)),
     ]:
         res_new = linear_flux_grid(
-            data, BinaryModelCartesian, _grid(), prior=new
+            BinaryModelCartesian, data, _grid(), prior=new
         )
         res_old = linear_flux_grid(
-            data, BinaryModelCartesian, _grid(), prior=old
+            BinaryModelCartesian, data, _grid(), prior=old
         )
         assert type(res_new) is type(res_old)
         for a, b in zip(res_new, res_old):
@@ -230,7 +230,7 @@ def test_bare_tuple_prior_is_an_error():
     data = _simulate(1e-3, noise_scale=0.1)
     with pytest.raises(TypeError, match=r"bare \(mean, sd\) tuple"):
         linear_flux_grid(
-            data, BinaryModelCartesian, _grid(), prior=(2e-3, 3e-3)
+            BinaryModelCartesian, data, _grid(), prior=(2e-3, 3e-3)
         )
 
 
@@ -238,15 +238,15 @@ def test_numpyro_prior_needs_scalar_parameters():
     data = _simulate(1e-3, noise_scale=0.1)
     with pytest.raises(ValueError, match="scalar"):
         linear_flux_grid(
-            data,
             BinaryModelCartesian,
+            data,
             _grid(),
             prior=dist.Normal(np.zeros(2), 1.0),
         )
     with pytest.raises(ValueError, match="0 < f_min < f_max"):
         linear_flux_grid(
-            data,
             BinaryModelCartesian,
+            data,
             _grid(),
             prior=dist.LogUniform(1e-2, 1e-3),
         )
@@ -261,13 +261,13 @@ def test_grid_tools_take_flux_param_and_batch_size_by_keyword():
         optimized_flux_grid,
     ):
         with pytest.raises(TypeError):
-            fn(data, BinaryModelCartesian, grid, None, "flux")
+            fn(BinaryModelCartesian, data, grid, None, "flux")
     with pytest.raises(TypeError):
-        linear_flux_grid(data, BinaryModelCartesian, grid, "flux")
+        linear_flux_grid(BinaryModelCartesian, data, grid, "flux")
     with pytest.raises(TypeError):
-        optimized_likelihood_grid(data, BinaryModelCartesian, grid, "flux")
+        optimized_likelihood_grid(BinaryModelCartesian, data, grid, "flux")
     with pytest.raises(TypeError):
-        likelihood_grid(data, BinaryModelCartesian, grid, 10**6)
+        likelihood_grid(BinaryModelCartesian, data, grid, 10**6)
 
 
 def test_prior_validation():
@@ -283,9 +283,9 @@ def test_prior_validation():
         Gaussian(float("nan"), 1.0),
     ]:
         with pytest.raises(ValueError):
-            linear_flux_grid(data, BinaryModelCartesian, _grid(), prior=bad)
+            linear_flux_grid(BinaryModelCartesian, data, _grid(), prior=bad)
     with pytest.raises(TypeError):
-        linear_flux_grid(data, BinaryModelCartesian, _grid(), prior=1.0)
+        linear_flux_grid(BinaryModelCartesian, data, _grid(), prior=1.0)
 
 
 def _brute_log_uniform(f_hat, sigma, f_min, f_max, n=2_000_001):
@@ -307,9 +307,9 @@ def test_log_uniform_matches_brute_force(noise_scale):
     data = _simulate(1e-3, noise_scale=noise_scale)
     f_min, f_max = 1e-6, 1.0
     out = linear_flux_grid(
-        data, BinaryModelCartesian, _grid(), prior=LogUniform(f_min, f_max)
+        BinaryModelCartesian, data, _grid(), prior=LogUniform(f_min, f_max)
     )
-    base = linear_flux_grid(data, BinaryModelCartesian, _grid())
+    base = linear_flux_grid(BinaryModelCartesian, data, _grid())
     assert onp.array_equal(out.flux, base.flux)
     for ij in [(0, 0), (1, 1)]:
         f_hat = float(out.flux[ij])
@@ -324,10 +324,10 @@ def test_log_uniform_occam_factor():
     """Widening the bounds shifts log B by -Delta ln ln(f_max / f_min)."""
     data = _simulate(1e-3, noise_scale=0.1)
     b1 = linear_flux_grid(
-        data, BinaryModelCartesian, _grid(), prior=LogUniform(1e-6, 1.0)
+        BinaryModelCartesian, data, _grid(), prior=LogUniform(1e-6, 1.0)
     )
     b2 = linear_flux_grid(
-        data, BinaryModelCartesian, _grid(), prior=LogUniform(1e-8, 1e2)
+        BinaryModelCartesian, data, _grid(), prior=LogUniform(1e-8, 1e2)
     )
     expected = -onp.log(onp.log(1e10) / onp.log(1e6))
     shift = onp.asarray(b2.log_bayes_factor - b1.log_bayes_factor)
@@ -340,7 +340,7 @@ def test_log_uniform_estimate_outside_bounds_is_finite():
     data = _simulate(1e-3, noise_scale=0.1)
     for bounds in [(1e-9, 1e-7), (1e-1, 1.0)]:
         out = linear_flux_grid(
-            data, BinaryModelCartesian, _grid(), prior=LogUniform(*bounds)
+            BinaryModelCartesian, data, _grid(), prior=LogUniform(*bounds)
         )
         assert onp.all(onp.isfinite(out.log_bayes_factor))
         assert onp.all(out.posterior_mean >= bounds[0] * 0.999)
@@ -352,7 +352,7 @@ def test_log_uniform_estimate_outside_bounds_is_finite():
 )
 def test_return_type_does_not_depend_on_prior(prior):
     data = _simulate(1e-3, noise_scale=0.1)
-    res = linear_flux_grid(data, BinaryModelCartesian, _grid(), prior=prior)
+    res = linear_flux_grid(BinaryModelCartesian, data, _grid(), prior=prior)
     assert isinstance(res, LinearFluxGrid)
     assert res._fields == (
         "flux",
@@ -371,12 +371,12 @@ def test_log_uniform_float32_edge_cases():
     """Very wide bounds (f_max/f_min overflows float32) and f_hat above f_max."""
     data = _simulate(1e-3, noise_scale=0.1)
     wide = linear_flux_grid(
-        data, BinaryModelCartesian, _grid(), prior=LogUniform(1e-30, 1e10)
+        BinaryModelCartesian, data, _grid(), prior=LogUniform(1e-30, 1e10)
     )
     assert onp.all(onp.isfinite(wide.log_bayes_factor))
     # f_hat (1e-3) far above f_max: compare with brute force from f_hat, sigma.
     out = linear_flux_grid(
-        data, BinaryModelCartesian, _grid(), prior=LogUniform(1e-9, 1e-7)
+        BinaryModelCartesian, data, _grid(), prior=LogUniform(1e-9, 1e-7)
     )
     f_hat, sigma = float(out.flux[0, 0]), float(out.flux_error[0, 0])
     log_b, _, _ = _brute_log_uniform(f_hat, sigma, 1e-9, 1e-7)

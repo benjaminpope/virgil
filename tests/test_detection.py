@@ -77,10 +77,10 @@ def test_delta_chi2_is_non_negative_and_at_least_the_grid_maximum():
     }
     for flux, seed in [(0.0, 0), (0.0, 1), (0.0, 2), (3e-3, 3)]:
         data = _data(flux, seed)
-        result = _quiet(detection_statistics, data, BinaryModelCartesian, grid)
+        result = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
         assert float(result["delta_chi2"]) >= 0.0
         # The flux optimizer only improves on the best grid point.
-        grid_ll = likelihood_grid(data, BinaryModelCartesian, grid)
+        grid_ll = likelihood_grid(BinaryModelCartesian, data, grid)
         loglike0 = loglike(jnp.array([0.0, 0.0, 0.0]), *_args(data))
         grid_delta = 2.0 * float(jnp.max(grid_ll) - loglike0)
         assert float(result["delta_chi2"]) >= grid_delta - 1e-3
@@ -113,8 +113,8 @@ def test_one_point_null_delta_chi2_follows_the_chernoff_mixture():
     def null_stats(keys):
         return jax.lax.map(
             lambda key: detection_statistics(
-                TEMPLATE.with_model(NULL, key=key),
                 BinaryModelCartesian,
+                TEMPLATE.with_model(NULL, key=key),
                 grid,
             ),
             keys,
@@ -150,8 +150,8 @@ def test_log_bayes_factor_rises_with_injected_flux():
         float(
             _quiet(
                 detection_statistics,
-                _data(flux, 5),
                 BinaryModelCartesian,
+                _data(flux, 5),
                 grid,
             )["log_bayes_factor"]
         )
@@ -190,7 +190,7 @@ def test_log_bayes_factor_is_stable_under_grid_refinement():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             result = detection_statistics(
-                data, BinaryModelCartesian, _box(n_pos, n_flux)
+                BinaryModelCartesian, data, _box(n_pos, n_flux)
             )
         log_b.append(float(result["log_bayes_factor"]))
     assert log_b[2] > 5.0
@@ -208,7 +208,7 @@ def test_log_bayes_factor_matches_a_brute_force_marginalisation():
         "flux": onp.geomspace(1e-3, 1e-2, 4),
     }
     data = _data(4e-3, 7)
-    result = _quiet(detection_statistics, data, BinaryModelCartesian, grid)
+    result = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
 
     def trapezoid(n):
         # Uniform in position, and in log flux, between the axes' ends.
@@ -241,10 +241,10 @@ def test_system_template_with_paths_matches_the_binary_class():
         "flux": jnp.geomspace(1e-4, 0.03, 30),
     }
     data = _data(5e-3, 11)
-    binary = _quiet(detection_statistics, data, BinaryModelCartesian, grid)
+    binary = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
     template = System(primary=PointSource(), comp=PointSource(0.01))
     paths = {f"comp.{key}": values for key, values in grid.items()}
-    system = _quiet(detection_statistics, data, template, paths)
+    system = _quiet(detection_statistics, template, data, paths)
     for key in ("delta_chi2", "log_bayes_factor", "max_snr"):
         assert float(system[key]) == pytest.approx(
             float(binary[key]), rel=1e-3, abs=1e-3
@@ -258,13 +258,13 @@ def test_system_template_with_paths_matches_the_binary_class():
 def test_one_compile_across_simulated_draws():
     grid = _box(4, 12)
     first = _data(0.0, 0)
-    _quiet(detection_statistics, first, BinaryModelCartesian, grid)
+    _quiet(detection_statistics, BinaryModelCartesian, first, grid)
     with count_compiles() as compiles:
         for seed in (1, 2):
             _quiet(
                 detection_statistics,
-                _data(3e-3, seed),
                 BinaryModelCartesian,
+                _data(3e-3, seed),
                 grid,
             )
     assert not compiles
@@ -273,8 +273,8 @@ def test_one_compile_across_simulated_draws():
     def run(keys):
         return jax.lax.map(
             lambda key: detection_statistics(
-                TEMPLATE.with_model(NULL, key=key),
                 BinaryModelCartesian,
+                TEMPLATE.with_model(NULL, key=key),
                 grid,
             ),
             keys,
@@ -292,17 +292,17 @@ def test_unresolved_flux_peak_and_flux_beyond_the_axis_warn():
     position = {"dra": jnp.array([60.0]), "ddec": jnp.array([-40.0])}
     coarse = {**position, "flux": jnp.geomspace(1e-4, 0.1, 5)}
     with pytest.warns(RuntimeWarning, match="does not resolve"):
-        result = detection_statistics(data, BinaryModelCartesian, coarse)
+        result = detection_statistics(BinaryModelCartesian, data, coarse)
     assert float(result["flux_peak_steps"]) < 2.0
     short = {**position, "flux": jnp.linspace(0.0, 3e-3, 20)}
     with pytest.warns(RuntimeWarning, match="above the flux axis"):
-        detection_statistics(data, BinaryModelCartesian, short)
+        detection_statistics(BinaryModelCartesian, data, short)
 
 
 def test_statistic_names_cannot_be_grid_keys():
     grid = {**_box(2, 3), "max_snr": jnp.array([1.0])}
     with pytest.raises(ValueError, match="clash"):
-        detection_statistics(_data(0.0, 0), BinaryModelCartesian, grid)
+        detection_statistics(BinaryModelCartesian, _data(0.0, 0), grid)
 
 
 def test_constrained_profile_keeps_positive_grid_points():
@@ -344,9 +344,9 @@ def _recover(grid=TINY, key=0, n_null=4, injections=None, **kwargs):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         return injection_recovery(
-            TEMPLATE,
-            NULL,
             BinaryModelCartesian,
+            NULL,
+            TEMPLATE,
             grid,
             key,
             n_null=n_null,
@@ -432,9 +432,9 @@ def test_system_template_and_bootstrap_noise_run_through_the_driver():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         system = injection_recovery(
-            TEMPLATE,
-            NULL,
             template,
+            NULL,
+            TEMPLATE,
             paths,
             0,
             n_null=4,
@@ -453,9 +453,9 @@ def test_system_template_and_bootstrap_noise_run_through_the_driver():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         boot = injection_recovery(
-            data,
-            NULL,
             BinaryModelCartesian,
+            NULL,
+            data,
             TINY,
             0,
             n_null=4,
@@ -476,9 +476,9 @@ def test_system_template_and_bootstrap_noise_run_through_the_driver():
 def test_null_scene_must_match_the_model_at_zero_flux():
     with pytest.raises(ValueError, match="predict different data"):
         injection_recovery(
-            TEMPLATE,
-            BinaryModelCartesian(60.0, -40.0, 0.01),
             BinaryModelCartesian,
+            BinaryModelCartesian(60.0, -40.0, 0.01),
+            TEMPLATE,
             TINY,
             0,
             n_null=1,
@@ -710,10 +710,10 @@ def test_match_radius_must_be_finite_and_non_negative():
 def test_a_simulator_must_observe_through_the_template():
     # An equal copy of the template is accepted (nothing is drawn here);
     # a simulator of other data is refused.
-    copy = gaussian_null(nrm_oidata(), NULL)
+    copy = gaussian_null(NULL, nrm_oidata())
     assert _recover(n_null=0, noise=copy).n_null == 0
     other = TEMPLATE.with_error_scale(2.0)
-    for simulator in (gaussian_null(other, NULL), bootstrap_null(other, NULL)):
+    for simulator in (gaussian_null(NULL, other), bootstrap_null(NULL, other)):
         with pytest.raises(ValueError, match="different data"):
             _recover(n_null=0, noise=simulator)
 
@@ -771,9 +771,9 @@ def test_angular_injections_give_separations_and_match_on_the_sky():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         out = injection_recovery(
-            TEMPLATE,
-            NULL,
             BinaryModelAngular,
+            NULL,
+            TEMPLATE,
             angular,
             0,
             n_null=0,
@@ -873,7 +873,7 @@ def test_rescale_errors_gives_unit_reduced_chi2():
             data,
             (template.d_vis, template.d_phi),
         )
-        scaled, factors = rescale_errors(data, NULL)
+        scaled, factors = rescale_errors(NULL, data)
         r = onp.asarray(whitened_residuals(NULL, scaled))
         assert onp.sum(r[:21] ** 2) / 21 == pytest.approx(1.0, rel=1e-4)
         assert onp.sum(r[21:] ** 2) / n_cp == pytest.approx(1.0, rel=1e-4)
@@ -891,7 +891,7 @@ def test_rescale_errors_gives_unit_reduced_chi2():
 def test_sign_flip_bootstrap_keeps_each_whitened_residual_magnitude():
     template = _unequal_template()
     data = template.with_model(NULL, key=jax.random.PRNGKey(0))
-    simulate = bootstrap_null(data, NULL)
+    simulate = bootstrap_null(NULL, data)
     noise = data.cp_noise
     resid = onp.asarray(data.vis) - onp.asarray(TEMPLATE.model(NULL)[:21])
     w = onp.asarray(noise.whiten(data.phi, data.d_phi)[0])
@@ -906,7 +906,7 @@ def test_sign_flip_bootstrap_keeps_each_whitened_residual_magnitude():
         assert onp.array_equal(onp.asarray(draw.d_vis), data.d_vis)
     assert len(signs) == 5
     # Resampling draws the whitened visibility residuals with replacement.
-    resample = bootstrap_null(data, NULL, method="resample")
+    resample = bootstrap_null(NULL, data, method="resample")
     draw = resample(jax.random.PRNGKey(1))
     z = resid / onp.asarray(data.d_vis)
     z_draw = (onp.asarray(draw.vis) - 1.0) / onp.asarray(data.d_vis)
@@ -925,7 +925,7 @@ def test_bootstrap_keeps_the_closure_phase_covariance_on_average():
     def whitened_draws(key):
         data_key, draw_key = jax.random.split(key)
         data = template.with_model(NULL, key=data_key)
-        simulate = bootstrap_null(data, NULL)
+        simulate = bootstrap_null(NULL, data)
         phi = jax.vmap(lambda k: simulate(k).phi)(
             jax.random.split(draw_key, n_draw)
         )
@@ -953,24 +953,24 @@ def test_bootstrap_keeps_the_closure_phase_covariance_on_average():
 def test_bootstrap_rejects_unsupported_data():
     data = TEMPLATE.with_model(NULL, key=jax.random.PRNGKey(0))
     with pytest.raises(ValueError, match="method"):
-        bootstrap_null(data, NULL, method="jackknife")
+        bootstrap_null(NULL, data, method="jackknife")
     # Any gain model is refused (a placeholder stands in for one).
     gains = eqx.tree_at(
         lambda d: d.gains, data, "gains", is_leaf=lambda x: x is None
     )
     with pytest.raises(ValueError, match="gains"):
-        bootstrap_null(gains, NULL)
+        bootstrap_null(NULL, gains)
 
 
 def test_gaussian_null_error_scale_scales_the_noise_not_the_errors():
     keys = jax.random.split(jax.random.PRNGKey(0), 200)
     for scale in (1.0, 2.0):
-        simulate = gaussian_null(TEMPLATE, NULL, error_scale=scale)
+        simulate = gaussian_null(NULL, TEMPLATE, error_scale=scale)
         vis = onp.asarray(jax.vmap(lambda k: simulate(k).vis)(keys))
         assert onp.std(vis - 1.0) == pytest.approx(0.01 * scale, rel=0.1)
         assert onp.array_equal(simulate(keys[0]).d_vis, TEMPLATE.d_vis)
     with pytest.raises(ValueError, match="error_scale"):
-        gaussian_null(TEMPLATE, NULL, error_scale=-1.0)
+        gaussian_null(NULL, TEMPLATE, error_scale=-1.0)
 
 
 def test_default_grid_batch_size_is_split_among_draw_batch(monkeypatch):

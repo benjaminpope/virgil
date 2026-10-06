@@ -241,7 +241,7 @@ grid = {
     "comp.ddec": jnp.linspace(-100.0, 100.0, 61),
     "comp.flux": 10.0 ** jnp.linspace(-3.5, -1.0, 16),
 }
-loglike_grid = likelihood_grid(data, search, grid)
+loglike_grid = likelihood_grid(search, data, grid)
 
 best = best_grid_point(loglike_grid, grid)
 print("best grid point:", {path: round(value, 4) for path, value in best.items()})
@@ -271,8 +271,8 @@ A likelihood peak is not yet a detection. `optimized_flux_grid` finds the best-f
 Both functions need to know which parameter is the flux to optimize and which are the coordinates of the map. They use the one key ending in `flux` (here `comp.flux`); if a grid has several, say which with `flux_param=`.
 
 ```python
-best_flux = optimized_flux_grid(data, search, grid)
-flux_sigma = laplace_flux_uncertainty_grid(data, search, grid, flux=best_flux)
+best_flux = optimized_flux_grid(search, data, grid)
+flux_sigma = laplace_flux_uncertainty_grid(search, data, grid, flux=best_flux)
 significance = best_flux / flux_sigma
 
 fig, ax = plot_grid_map(

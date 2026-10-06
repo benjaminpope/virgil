@@ -75,7 +75,7 @@ def test_injection_limits_match_candid(data, template):
     """
     got = onp.array(
         [
-            float(injection_limits(data, template, one_point(x, y), 3.0)[0, 0])
+            float(injection_limits(template, data, one_point(x, y), 3.0)[0, 0])
             for x, y in POSITIONS
         ]
     )
@@ -103,8 +103,8 @@ def test_injection_is_absil_on_data_reflected_about_the_null(data, template):
     fluxes = onp.logspace(-4, -1, 8)
     for x, y in POSITIONS[:3]:
         samples = one_point(x, y, fluxes)
-        injection = injection_limits(data, template, samples, 3.0)
-        absil = absil_limits(reflected, template, samples, 3.0)
+        injection = injection_limits(template, data, samples, 3.0)
+        absil = absil_limits(template, reflected, samples, 3.0)
         assert float(injection[0, 0]) == pytest.approx(
             float(absil[0, 0]), rel=2e-3
         )
@@ -122,8 +122,8 @@ def test_injection_limit_depends_on_the_chi2_ratio_only(data, template):
         (2 * data.d_vis, 2 * data.d_phi),
     )
     samples = one_point(5.0, 8.0)
-    nominal = float(injection_limits(data, template, samples, 3.0)[0, 0])
-    other = float(injection_limits(scaled, template, samples, 3.0)[0, 0])
+    nominal = float(injection_limits(template, data, samples, 3.0)[0, 0])
+    other = float(injection_limits(template, scaled, samples, 3.0)[0, 0])
     assert other == pytest.approx(nominal, rel=1e-3)
 
 
@@ -133,7 +133,7 @@ def test_injection_limits_grid_shape_and_bounds(data, template):
         "comp.ddec": jnp.array([-4.0, 4.0]),
         "comp.flux": jnp.array([0.01]),
     }
-    limits = injection_limits(data, template, samples, 3.0)
+    limits = injection_limits(template, data, samples, 3.0)
     assert limits.shape == (3, 2)
     assert onp.all(onp.isfinite(limits))
     assert onp.all((limits > 1e-6) & (limits < 1.0))
@@ -141,7 +141,7 @@ def test_injection_limits_grid_shape_and_bounds(data, template):
     # A bracket that cannot contain the limit clips, and warns.
     with pytest.warns(RuntimeWarning, match="clipped"):
         clipped = injection_limits(
-            data, template, samples, 3.0, flux_bounds=(0.5, 1.0)
+            template, data, samples, 3.0, flux_bounds=(0.5, 1.0)
         )
     assert onp.allclose(clipped, 0.5)
 
@@ -159,10 +159,10 @@ def test_injection_limits_grid_shape_and_bounds(data, template):
 def test_injection_limits_rejects_invalid_flux_bounds(data, template, bounds):
     with pytest.raises(ValueError, match="flux_bounds"):
         injection_limits(
-            data, template, one_point(5.0, 8.0), 3.0, flux_bounds=bounds
+            template, data, one_point(5.0, 8.0), 3.0, flux_bounds=bounds
         )
 
 
 def test_injection_limits_rejects_unreachable_sigma(data, template):
     with pytest.raises(ValueError, match="cannot be reached"):
-        injection_limits(data, template, one_point(5.0, 8.0), 0.1)
+        injection_limits(template, data, one_point(5.0, 8.0), 0.1)

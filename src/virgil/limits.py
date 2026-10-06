@@ -25,6 +25,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
 
+from ._deprecate import old_order
 from ._utils import concrete
 from ._grid import (
     batch_size_or_default,
@@ -304,10 +305,11 @@ def ruffio_upperlimit(mean, sigma, percentile):
     return jnp.maximum(mean + sigma * z, 0.0)
 
 
+@old_order("data", "model", "grid", data="data")
 def absil_limits(
-    data_obj,
     model,
-    samples_dict,
+    data,
+    grid,
     sigma,
     *,
     flux_param=None,
@@ -325,13 +327,13 @@ def absil_limits(
 
     Parameters
     ----------
-    data_obj : OIData
-        Data to fit.
     model : SourceModel or class
         Template model or model class, as for
         [`likelihood_grid`][virgil.grid_fit.likelihood_grid]. The
-        no-companion model sets every parameter in ``samples_dict`` to zero.
-    samples_dict : dict[str, array-like]
+        no-companion model sets every parameter in ``grid`` to zero.
+    data : OIData
+        Data to fit.
+    grid : dict[str, array-like]
         Grid axes, as a mapping from parameter name or path to 1D values
         (e.g. ``dra``/``ddec`` in milliarcseconds). The flux axis is only
         used with ``flux_bounds=None``, where its smallest positive value
@@ -342,7 +344,7 @@ def absil_limits(
         and be below the largest significance the floating-point type can
         represent (about 12.9 in float32, 37 in float64).
     flux_param : str, optional
-        The key of ``samples_dict`` holding the flux solved for at each grid
+        The key of ``grid`` holding the flux solved for at each grid
         position. By default, the one key whose last part is ``flux``.
     flux_bounds : tuple[float, float] or None, optional
         Search range of the flux (default ``(1e-6, 1.0)``), searched upward
@@ -379,9 +381,9 @@ def absil_limits(
     return _limits(
         "absil_limits",
         _absil_limits,
-        data_obj,
+        data,
         model,
-        samples_dict,
+        grid,
         sigma,
         flux_param,
         flux_bounds,
@@ -389,10 +391,11 @@ def absil_limits(
     )
 
 
+@old_order("data", "model", "grid", data="data")
 def injection_limits(
-    data_obj,
     model,
-    samples_dict,
+    data,
+    grid,
     sigma,
     *,
     flux_param=None,
@@ -421,13 +424,13 @@ def injection_limits(
 
     Parameters
     ----------
-    data_obj : OIData
-        Data to fit.
     model : SourceModel or class
         Template model or model class, as for
         [`likelihood_grid`][virgil.grid_fit.likelihood_grid]. The
-        no-companion model sets every parameter in ``samples_dict`` to zero.
-    samples_dict : dict[str, array-like]
+        no-companion model sets every parameter in ``grid`` to zero.
+    data : OIData
+        Data to fit.
+    grid : dict[str, array-like]
         Grid axes, as a mapping from parameter name or path to 1D values
         (e.g. ``dra``/``ddec`` in milliarcseconds). The flux axis is only
         used with ``flux_bounds=None``, where its smallest positive value
@@ -436,7 +439,7 @@ def injection_limits(
         Detection significance; see
         [`absil_limits`][virgil.limits.absil_limits] for its range.
     flux_param : str, optional
-        The key of ``samples_dict`` holding the flux that is solved for.
+        The key of ``grid`` holding the flux that is solved for.
         By default, the one key whose last part is ``flux``.
     flux_bounds : tuple[float, float] or None, optional
         Search range of the flux (default ``(1e-6, 1.0)``), searched upward
@@ -478,21 +481,21 @@ def injection_limits(
     >>> import jax.numpy as jnp
     >>> from virgil import PointSource, System, UniformDisk, injection_limits
     >>> template = System(star=UniformDisk(0.8), comp=PointSource(0.01))
-    >>> samples = {
+    >>> grid = {
     ...     "comp.dra": jnp.linspace(-10, 10, 21),
     ...     "comp.ddec": jnp.linspace(-10, 10, 21),
     ...     "comp.flux": jnp.array([0.01]),
     ... }
-    >>> limits = injection_limits(data, template, samples, 3.0)  # doctest: +SKIP
+    >>> limits = injection_limits(template, data, grid, 3.0)  # doctest: +SKIP
     >>> limits.shape  # doctest: +SKIP
     (21, 21)
     """
     return _limits(
         "injection_limits",
         _injection_limits,
-        data_obj,
+        data,
         model,
-        samples_dict,
+        grid,
         sigma,
         flux_param,
         flux_bounds,
@@ -520,17 +523,17 @@ def _significance_ceiling():
 def _limits(
     caller,
     solver,
-    data_obj,
+    data,
     model,
-    samples_dict,
+    grid,
     sigma,
     flux_param,
     flux_bounds,
     batch_size,
 ):
     """Validate the inputs of a limit function, solve, and report."""
-    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
-    ndof = data_obj.n_independent
+    params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
+    ndof = data.n_independent
     floor = float(nsigma(1.0, 1.0, ndof))
     if not float(sigma) > floor:
         raise ValueError(
@@ -547,7 +550,7 @@ def _limits(
             "about 37 sigma), or use a lower sigma."
         )
     if flux_bounds is None:
-        fluxes = np.asarray(samples_dict[flux_key], dtype=float)
+        fluxes = np.asarray(grid[flux_key], dtype=float)
         if not np.any(fluxes > 0.0):
             raise ValueError(
                 f"With flux_bounds=None, the flux axis {flux_key!r} needs at "
@@ -568,8 +571,8 @@ def _limits(
         search = (low, np.log10(low), np.log10(high), steps)
     start, log_low, log_high, max_steps = search
     limits, crossed = solver(
-        samples_dict,
-        data_obj,
+        grid,
+        data,
         model,
         jnp.asarray(sigma, dtype=float),
         jnp.asarray([np.log10(start), log_low, log_high], dtype=float),
@@ -577,7 +580,7 @@ def _limits(
         coord_keys=coord_keys,
         flux_key=flux_key,
         max_steps=max_steps,
-        batch_size=batch_size_or_default(batch_size, data_obj),
+        batch_size=batch_size_or_default(batch_size, data),
     )
     missed = int(np.sum(~np.asarray(crossed, dtype=bool)))
     if missed and flux_bounds is not None:
@@ -605,7 +608,7 @@ def _solve_limits(
     sigma,
     search,
     coord_keys,
-    samples_dict,
+    grid,
     max_steps,
     batch_size,
     flux_key,
@@ -616,7 +619,7 @@ def _solve_limits(
     ``search`` holds the log10 of the starting flux and of the bounds.
     Returns the limits and whether each was bracketed.
     """
-    coords, shape = coordinate_points(samples_dict, coord_keys)
+    coords, shape = coordinate_points(grid, coord_keys)
     log_start, log_low, log_high = search[0], search[1], search[2]
 
     def solve(coord_vals):
@@ -643,8 +646,8 @@ def _solve_limits(
 
 @eqx.filter_jit
 def _absil_limits(
-    samples_dict,
-    data_obj,
+    grid,
+    data,
     model,
     sigma,
     search,
@@ -658,11 +661,11 @@ def _absil_limits(
 
     Returns the limits and whether each was bracketed.
     """
-    ndof = data_obj.n_independent
+    ndof = data.n_independent
 
     def reduced_chi2(values):
         source = build_model(model, params, values)
-        return jnp.sum(whitened_residuals(source, data_obj) ** 2) / ndof
+        return jnp.sum(whitened_residuals(source, data) ** 2) / ndof
 
     chi2_null = reduced_chi2([0.0] * len(params))
 
@@ -674,7 +677,7 @@ def _absil_limits(
         sigma,
         search,
         coord_keys,
-        samples_dict,
+        grid,
         max_steps,
         batch_size,
         flux_key,
@@ -684,8 +687,8 @@ def _absil_limits(
 
 @eqx.filter_jit
 def _injection_limits(
-    samples_dict,
-    data_obj,
+    grid,
+    data,
     model,
     sigma,
     search,
@@ -699,17 +702,17 @@ def _injection_limits(
 
     Returns the limits and whether each was bracketed.
     """
-    ndof = data_obj.n_independent
+    ndof = data.n_independent
     null_source = build_model(model, params, [0.0] * len(params))
-    null_prediction = data_obj.model(null_source)
-    data_vector = data_obj.flatten_data()[0]
-    errors = inflated_errors(data_obj, null_prediction)
+    null_prediction = data.model(null_source)
+    data_vector = data.flatten_data()[0]
+    errors = inflated_errors(data, null_prediction)
 
     def reduced_chi2(prediction, reference):
         # ``prediction`` against ``reference`` in place of the data vector,
         # each block (visibilities, phases, every extra) whitened as by
         # `whitened_residuals`.
-        whitened, _ = _whiten(data_obj, prediction, reference, errors, {}, {})
+        whitened, _ = _whiten(data, prediction, reference, errors, {}, {})
         return jnp.sum(whitened**2) / ndof
 
     def significance(values):
@@ -719,7 +722,7 @@ def _injection_limits(
         # chi-squared on the original data; it is computed in full because
         # gains and OI_FLUX blocks whiten with the model's own prediction.
         source = build_model(model, params, values)
-        prediction = data_obj.model(source)
+        prediction = data.model(source)
         injected = data_vector + (prediction - null_prediction)
         return nsigma(
             reduced_chi2(null_prediction, injected),
@@ -732,7 +735,7 @@ def _injection_limits(
         sigma,
         search,
         coord_keys,
-        samples_dict,
+        grid,
         max_steps,
         batch_size,
         flux_key,
