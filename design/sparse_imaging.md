@@ -288,6 +288,10 @@ step cap of 10 did not help. `fit` now uses `lbfgs_memory=50` by default.
 **A final major cycle.** On HD 206893 (above) CLEAN reached the target
 before any major cycle, so its fluxes were low until a separate `fit`. CLEAN
 now ends with a major cycle whenever components were added since the last.
+Rerun at eb3befe (2026-10-06), CLEAN alone gives B 76–90% of the M2 flux,
+the same as the old refit, and a further `fit` changes nothing (χ²/N
+0.976–0.979). The other notebooks' numbers barely moved: the AMI tutorial
+already reached the target after its first major cycle.
 
 **Fitting the base** (`clean(base_priors=...)`). Two orders were tried and
 failed on a test scene (a star, a 5% companion in the base started 6 mas off,
