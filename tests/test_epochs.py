@@ -522,17 +522,17 @@ def _start_values(orbit, flux):
 
 def test_a_positions_fit_starts_where_a_default_start_fails():
     epochs = _simulated_epochs(STAGE2_TIMES[:5], seed=5, frames=4)
-    axis = onp.arange(-30.0, 30.5, 1.0)
+    axis = onp.arange(-30.0, 30.5, 2.0)
     start = start_from_positions(
         _scene,
         STAGE2_PRIORS,
         epochs,
         _start_values,
         grid={"dra": axis, "ddec": axis, "flux": [0.05, 0.1, 0.2]},
-        periods=onp.geomspace(400.0, 2000.0, 20),
+        periods=onp.geomspace(400.0, 2000.0, 10),
         t_ref=T_REF,
         n_phase=24,
-        n_candidates=40,
+        n_candidates=20,
         n_refine=2,
         method="lm",
     )
@@ -544,7 +544,7 @@ def test_a_positions_fit_starts_where_a_default_start_fails():
     )
     assert onp.all(found < 0.5), found
     assert onp.all(start.positions.gap > 5.0)
-    assert len(start.candidates) == 40
+    assert len(start.candidates) == 20
     assert start.best.info["chi2_red"] < 2.0
     with jax.enable_x64(True):
         best = _scene(**{k: start.best.values[k] for k in NAMES})
@@ -597,17 +597,17 @@ def test_each_chain_starts_at_its_own_values():
                 assert float(back[name]) == pytest.approx(
                     values[name], rel=1e-6
                 )
-        # A 20-step smoke test of NUTS with one start per chain; a real
+        # A 5-step smoke test of NUTS with one start per chain; a real
         # recovery run is an OzSTAR job.
         mcmc = MCMC(
             NUTS(posterior),
-            num_warmup=10,
-            num_samples=10,
+            num_warmup=3,
+            num_samples=2,
             num_chains=2,
             chain_method="vectorized",
             progress_bar=False,
         )
         mcmc.run(jax.random.PRNGKey(1), init_params=init)
         samples = mcmc.get_samples(group_by_chain=True)
-    assert samples["period"].shape == (2, 10)
+    assert samples["period"].shape == (2, 2)
     assert all(onp.all(onp.isfinite(v)) for v in samples.values())

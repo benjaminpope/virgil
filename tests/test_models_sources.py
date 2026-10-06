@@ -1192,6 +1192,42 @@ def test_truncated_cone_rejects_bad_shapes(kwargs, match):
         TruncatedCone(**{**base, **kwargs})
 
 
+@pytest.mark.parametrize("rotation", [0.0, 33.0])
+def test_cone_grid_render_matches_the_pointwise_render(monkeypatch, rotation):
+    # The factorized render on a (shifted, rotated) grid adds the same
+    # Gaussian spots as the pointwise fallback for arbitrary coordinates.
+    import virgil.models as models
+    from virgil._geometry import rotate
+
+    cone = TruncatedCone(
+        tip=0.0,
+        alpha=20.0,
+        s0=3.0,
+        length=4.0,
+        width=1.0,
+        tilt=40.0,
+        pa=70.0,
+        dra=2.0,
+        ddec=-3.0,
+    )
+    xx, yy = rotate(*_image_coordinates(64, 40.0), rotation)
+    assert models._orthogonal_grid(xx, yy) is not None
+    fast = onp.asarray(cone._image(xx, yy, 40.0 / 64))
+    monkeypatch.setattr(models, "_orthogonal_grid", lambda xx, yy: None)
+    slow = onp.asarray(cone._image(xx, yy, 40.0 / 64))
+    assert onp.max(onp.abs(fast - slow)) < 1e-3 * onp.max(slow)
+
+
+def test_irregular_coordinates_are_not_a_grid():
+    from virgil.models import _orthogonal_grid
+
+    xx, yy = _image_coordinates(16, 10.0)
+    assert _orthogonal_grid(xx**2, yy) is None
+    assert _orthogonal_grid(xx.ravel(), yy.ravel()) is None
+    # Sheared axes are regular but not orthogonal.
+    assert _orthogonal_grid(xx + 0.5 * yy, yy) is None
+
+
 def test_a_narrow_resolved_cone_renders_as_its_model():
     # Large thin rings: the render must be continuous bands, not spots.
     cone = TruncatedCone(
