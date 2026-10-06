@@ -597,18 +597,17 @@ def test_each_chain_starts_at_its_own_values():
                 assert float(back[name]) == pytest.approx(
                     values[name], rel=1e-6
                 )
-        # A 20-step smoke test of NUTS from the second start; one chain
-        # keeps it cheap, and a real recovery run is an OzSTAR job.
+        # A 5-step smoke test of NUTS with one start per chain; a real
+        # recovery run is an OzSTAR job.
         mcmc = MCMC(
             NUTS(posterior),
-            num_warmup=10,
-            num_samples=10,
+            num_warmup=3,
+            num_samples=2,
+            num_chains=2,
+            chain_method="vectorized",
             progress_bar=False,
         )
-        mcmc.run(
-            jax.random.PRNGKey(1),
-            init_params=chain_init_params(posterior, starts[1:]),
-        )
-        samples = mcmc.get_samples()
-    assert samples["period"].shape == (10,)
+        mcmc.run(jax.random.PRNGKey(1), init_params=init)
+        samples = mcmc.get_samples(group_by_chain=True)
+    assert samples["period"].shape == (2, 2)
     assert all(onp.all(onp.isfinite(v)) for v in samples.values())

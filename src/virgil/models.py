@@ -858,7 +858,10 @@ class TruncatedCone(Component):
                 s_row = (dx * e_row[0] + dy * e_row[1]) / (e_row @ e_row)
                 g_col = np.exp(-k * (e_col @ e_col) * (cols - s_col) ** 2)
                 g_row = np.exp(-k * (e_row @ e_row) * (rows - s_row) ** 2)
-                return image + w * (g_row @ g_col.T) / phi.size, None
+                ring = np.matmul(
+                    g_row, g_col.T, precision=jax.lax.Precision.HIGHEST
+                )
+                return image + w * ring / phi.size, None
 
         else:
             # Arbitrary coordinates: add the points in blocks of 64 to keep
