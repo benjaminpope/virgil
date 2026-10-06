@@ -1,8 +1,9 @@
 # One argument order for models and data
 
-Status: **approved for 0.4; code PRs 1 (`_deprecate.py`), 2 (grids,
-limits and detection) and 3 (values-first and joint likelihoods, and
-the renames) built**, 2026-10-06. Surveyed against
+Status: **built for 0.4** (code PRs 1–4: `_deprecate.py`; grids,
+limits and detection; values-first and joint likelihoods and the
+renames; the last call sites and the pytest filters), 2026-10-06. What
+remains is the 0.5 removal below. Surveyed against
 `main` at c064b82 (0.3.0 plus the post-release review merges).
 
 ## Decision

@@ -33,6 +33,9 @@ anything before 1.0 may change between minor versions.
   `best_grid_point`, `plot_grid_map` and `plot_contrast_curve`, and their
   data argument is `data`. `samples_dict=` and `data_obj=` still work
   with a `FutureWarning` until 0.5.
+- To find the remaining 0.3-order calls in your own code before 0.5, run
+  your tests with `pytest -W "error:.*stops working in virgil 0.5:FutureWarning"`, as
+  virgil's own test suite now does through its `filterwarnings`.
 
 ### Added
 
