@@ -49,7 +49,8 @@ jobs:
           track_progress: ${{ github.event_name == 'pull_request' }}
           # Only automatic reviews get this prompt; an @claude comment is
           # answered as written.
-          prompt: ${{ github.event_name == 'pull_request' && format('REPO {0}, PR #{1}. Review this pull request. Read AGENTS.md first and hold the change to it. Look for, in order of importance - wrong results (maths, units, angle and sign conventions, priors that are not invariant where they should be), behaviour changes to defaults that the changelog does not mention, tests that would pass even if the code were wrong, notebooks or docs left stale by the change, and public docs that link to design/ files. Do not comment on style that ruff already enforces. Put each specific problem in an inline comment on the line, with the failure it would cause. Finish with one short summary comment; if you find nothing worth changing, say so in one line.', github.repository, github.event.pull_request.number) || '' }}
+          prompt: >-
+            ${{ github.event_name == 'pull_request' && format('REPO {0}, PR {1}. Review this pull request. Read AGENTS.md first and hold the change to it. Look for, in order of importance - wrong results (maths, units, angle and sign conventions, priors that are not invariant where they should be), behaviour changes to defaults that the changelog does not mention, tests that would pass even if the code were wrong, notebooks or docs left stale by the change, and public docs that link to design/ files. Do not comment on style that ruff already enforces. Put each specific problem in an inline comment on the line, with the failure it would cause. Finish with one short summary comment; if you find nothing worth changing, say so in one line.', github.repository, github.event.pull_request.number) || '' }}
           claude_args: |
             --model claude-opus-5-5
             --max-turns 40
