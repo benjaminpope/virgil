@@ -95,8 +95,8 @@ General requirements, numbered for reference in the stages below.
   are not yet verified.
 * **V8 t_ref.** `KeplerOrbit` counts `dt_peri` from `t_ref`, by default 0.
   With MJD times and the default, the phase is silently wrong. Warn when
-  times look like MJDs (|t − t_ref| > 15000 d) and `t_ref` is 0. Requiring
-  `t_ref` is a breaking change, left for Ben (§7).
+  times look like MJDs (|t − t_ref| > 15000 d) and `t_ref` is 0 (0.4); `t_ref` becomes
+  required in 0.5 (§7).
 * **V9 PA unwrapping.** Summaries and plots of PA over time unwrap it,
   anchored near a measured epoch, so a track through 0°/360° is continuous.
 
@@ -312,7 +312,7 @@ Each stage is one reviewable PR.
    V5 (anchors: existing; scene origin documented), V8, V10.
 2. **Starting and sampling**: `rank_orbits`, start from a positions fit
    (`init_to_value`), per-chain starts; the orbit tutorial switches to
-   `Epochs` snapshots (results change slightly; see §7). V13–V16.
+   `Epochs` snapshots by default (results change slightly; §7). V13–V16.
 3. **Curvature**: `gauss_newton_mass(noise=...)`, the no-data check with
    noise terms, a public Laplace covariance of a `FitResult` (priors,
    noise, lists of datasets, the LogUniform log-space note), and the
@@ -407,18 +407,27 @@ written as a script for OzSTAR and marked so.
   chromatic smearing biases the separation; the bandpass model is the
   honest fix.
 
-## 7. Decisions for Ben
+## 7. Decisions
 
-* Should the orbit tutorial switch to snapshots by default (stage 2)? It
-  is far cheaper, but its numbers change slightly.
-* Require `t_ref` in `KeplerOrbit` (breaking) or keep the warning?
-* The scene origin is the primary (the current convention). Is a
-  photocentre-origin option wanted, or is `anchor=` fractions enough?
-* Plate-scale priors: no fixed default; document the λ_eff over
-  filter × SED derivation (a few tenths of a per cent to ~1 % for
-  broad-band SAM on red sources). Should virgil provide a helper that
-  computes it from a filter curve and an SED, or only document it?
-* Should the two-stage Laplace → NUTS → PSIS workflow become a
-  recommended path once validated against full NUTS, or stay a
-  documented option?
-* Which external orbit catalogues and codes the conversions table covers.
+Decided by Ben, 2026-10-06.
+
+1. **Snapshots by default.** The orbit tutorial switches to `Epochs`
+   snapshots by default in stage 2; the per-sample path stays available
+   for scenes that move within an observation.
+2. **t_ref.** `KeplerOrbit` warns about a default `t_ref` with MJD-like
+   times in 0.4 (stage 1); `t_ref` becomes required in 0.5.
+3. **Scene origin.** The origin stays the primary. `anchor=` to either
+   star (or a fraction between them) is enough; there is no photocentre
+   option.
+4. **Plate-scale prior.** The λ_eff over filter × SED derivation is
+   documented now; a helper computing it from a filter curve and an SED
+   is added in stage 6.
+5. **Conversions table.** It covers orbitize!, orvara, Gaia DR3 NSS
+   two-body solutions and the Sixth Catalog of Orbits of Visual Binary
+   Stars. Each row gets a regression test that converts a published orbit
+   to virgil's conventions and reproduces the published positions.
+6. **Two-stage workflow.** Laplace → NUTS → PSIS is a documented option,
+   not the default. Full NUTS on the visibilities stays the default until
+   an OzSTAR validation against full NUTS (with the Apep job 18077844 as
+   the reference) shows agreement with Pareto k̂ < 0.7; it is then
+   promoted to the default.
