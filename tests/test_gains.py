@@ -280,9 +280,9 @@ def test_gains_without_spanning_modes_hold_no_zero_size_arrays():
     assert _zero_size_leaves(data.gains) == []
     sub = data.gains.subset(onp.arange(data.gains.n_vis) % 2 == 0)
     assert sub.spanning is None
-    assert data.gains.sample(jax.random.PRNGKey(0), data.gains.widths).shape == (
-        data.gains.n_vis,
-    )
+    assert data.gains.sample(
+        jax.random.PRNGKey(0), data.gains.widths
+    ).shape == (data.gains.n_vis,)
 
 
 def test_parallel_chains_compile_with_gains():
