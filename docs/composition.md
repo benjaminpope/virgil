@@ -307,12 +307,12 @@ priors = {
 paths = list(priors)
 start = {**best, "rim.flux": 0.5, "rim.diam": 40.0}
 
-covariance = laplace_cov(jnp.array([start[p] for p in paths]), paths, data, search)
+covariance = laplace_cov(jnp.array([start[p] for p in paths]), paths, search, data)
 laplace_sigma = dict(zip(paths, np.sqrt(np.diag(covariance))))
 
 # For comparison: the same estimate with the rim held fixed at its true shape.
 comp_paths = list(grid)
-fixed_covariance = laplace_cov(jnp.array([best[p] for p in comp_paths]), comp_paths, data, search)
+fixed_covariance = laplace_cov(jnp.array([best[p] for p in comp_paths]), comp_paths, search, data)
 fixed_sigma = dict(zip(comp_paths, np.sqrt(np.diag(fixed_covariance))))
 
 kernel = NUTS(
@@ -370,7 +370,7 @@ polar_best = {
     "rim_diam": median["rim.diam"],
 }
 names = list(polar_best)
-polar_covariance = laplace_cov(jnp.array(list(polar_best.values())), names, data, star_rim_planet)
+polar_covariance = laplace_cov(jnp.array(list(polar_best.values())), names, star_rim_planet, data)
 polar_sigma = dict(zip(names, np.sqrt(np.diag(polar_covariance))))
 
 # The same quantities computed directly from the HMC samples, for comparison.

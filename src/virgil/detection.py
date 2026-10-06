@@ -287,7 +287,7 @@ def _detection_statistics(
     )
     coords, shape = coordinate_points(grid, coord_keys)
     null_values = ordered_values(0.0, coords[0], params, coord_keys, flux_key)
-    loglike0 = loglike(null_values, params, data, model)
+    loglike0 = loglike(null_values, params, model, data)
 
     profile, profile_flux = _constrained_profile(
         grid_flux, grid_loglike, opt_flux, opt_loglike, loglike0

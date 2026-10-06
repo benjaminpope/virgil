@@ -150,7 +150,7 @@ def model_hmc(oidata):
     ddec = numpyro.sample("ddec", dist.Uniform(-300.0, 300.0))
     log10_flux = numpyro.sample("log10_flux", dist.Uniform(-6.0, -1.0))
     flux = 10.0**log10_flux
-    ll = loglike([dra, ddec, flux], params, oidata, BinaryModelCartesian)
+    ll = loglike([dra, ddec, flux], params, BinaryModelCartesian, oidata)
     numpyro.factor("loglike", ll)
 
 
@@ -226,7 +226,7 @@ def objective(x):
     xdict = unravel(x)
     flux = 10.0 ** xdict["log10_flux"]
     values = jnp.array([xdict["dra"], xdict["ddec"], flux])
-    return -loglike(values, params, data, BinaryModelCartesian)
+    return -loglike(values, params, BinaryModelCartesian, data)
 
 
 F = hessian_matrix(objective, x0)
@@ -258,7 +258,7 @@ def model_hmc_fisher(oidata):
     numpyro.factor("prior_correction", log_prior_x - log_q_u)
     numpyro.factor(
         "loglike",
-        loglike([dra, ddec, flux], params, oidata, BinaryModelCartesian),
+        loglike([dra, ddec, flux], params, BinaryModelCartesian, oidata),
     )
 
 

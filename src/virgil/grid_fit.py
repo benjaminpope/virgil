@@ -102,11 +102,11 @@ def _refine_flux_grid(
         values = ordered_values(
             x * scale, coord_vals, params, coord_keys, flux_key
         )
-        return loglike0 - loglike(values, params, data, model)
+        return loglike0 - loglike(values, params, model, data)
 
     def flux_loglike(flux, coord_vals):
         values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
-        return loglike(values, params, data, model)
+        return loglike(values, params, model, data)
 
     def newton_step(flux, coord_vals):
         grad = jax.grad(flux_loglike)(flux, coord_vals)
@@ -210,7 +210,7 @@ def _likelihood_grid(data, model, grid, params, batch_size):
     vals_vec, grid_shape = meshgrid_vectors(grid, params)
 
     return map_points(
-        lambda values: loglike(values, params, data, model),
+        lambda values: loglike(values, params, model, data),
         vals_vec,
         batch_size=batch_size,
     ).reshape(grid_shape)
@@ -824,7 +824,7 @@ def _laplace_flux_uncertainty_grid(
         return laplace_parameter_uncertainty(
             values=values,
             params=params,
-            data_obj=data,
+            data=data,
             model=model,
             target_param=flux_key,
         )

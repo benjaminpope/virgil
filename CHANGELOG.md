@@ -18,6 +18,17 @@ anything before 1.0 may change between minor versions.
   is `(model, null_scene, template, grid, key, ...)`. Calls in the 0.3
   order still work, with a `FutureWarning` naming the new call; from 0.5
   they raise a `TypeError` naming it.
+- **Model before data in the likelihoods.** `loglike`, `laplace_cov`,
+  `laplace_parameter_uncertainty` and `fisher` are now `f(values, params,
+  model, data, ...)`, and `joint_prediction` and `joint_loglike` are
+  `f(params, model, data)`, with the same `FutureWarning` for the 0.3
+  order until 0.5.
+- **One name for each argument.** The model is `model` and the data
+  `data` everywhere: `whitened_residuals`, `model_loglike`,
+  `flux_scale_posterior`, `numpyro_model` and
+  `posterior_predictive_summary` (whose order was already right) and the
+  reordered functions accept `model_object=`, `model_fn=`, `data_obj=`
+  and `observations=` with a `FutureWarning` until 0.5.
 - **`samples_dict` is now `grid`** in these functions and in
   `best_grid_point`, `plot_grid_map` and `plot_contrast_curve`, and their
   data argument is `data`. `samples_dict=` and `data_obj=` still work

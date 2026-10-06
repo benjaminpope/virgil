@@ -90,7 +90,7 @@ def test_delta_chi2_is_non_negative_and_at_least_the_grid_maximum():
 
 
 def _args(data):
-    return (["dra", "ddec", "flux"], data, BinaryModelCartesian)
+    return (["dra", "ddec", "flux"], BinaryModelCartesian, data)
 
 
 @pytest.mark.validates(

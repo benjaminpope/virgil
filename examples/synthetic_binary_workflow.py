@@ -273,7 +273,7 @@ def _recover_hmc(
         flux = 10.0**log10_flux
         numpyro.factor(
             "loglike",
-            loglike([dra, ddec, flux], params, data_obj, BinaryModelCartesian),
+            loglike([dra, ddec, flux], params, BinaryModelCartesian, data_obj),
         )
 
     if init is None:
@@ -335,7 +335,7 @@ def _recover_hmc_fisher(
         xdict = unravel(x)
         flux = 10.0 ** xdict["log10_flux"]
         values = jnp.array([xdict["dra"], xdict["ddec"], flux])
-        return -loglike(values, params, oidata, BinaryModelCartesian)
+        return -loglike(values, params, BinaryModelCartesian, oidata)
 
     fmat = hessian_matrix(objective, x0)
     proj = fisher_projection(fmat)
@@ -365,7 +365,7 @@ def _recover_hmc_fisher(
         numpyro.factor("prior_correction", log_prior_x - log_q_u)
         numpyro.factor(
             "loglike",
-            loglike([dra, ddec, flux], params, data_obj, BinaryModelCartesian),
+            loglike([dra, ddec, flux], params, BinaryModelCartesian, data_obj),
         )
 
     kernel = NUTS(model_hmc)
