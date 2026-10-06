@@ -21,6 +21,7 @@ The everyday names are importable from the top level, e.g.
 - [Imaging](imaging.md): regularisers and helpers for image reconstruction
 - [Scenes](scenes.md): synthetic truth images for testing reconstructions
 - [Metrics](metrics.md): image-recovery scores for reconstructions
+- [Ensemble](ensemble.md): randomised reconstruction ensembles, selected and averaged into a mean image with a per-pixel spread
 - [Coverage](coverage.md): synthetic uv coverage and noise for simulations
 - [Plotting](plotting.md): figures
 - [Legacy](legacy.md): ImPlaneIA-derived OIFITS tools

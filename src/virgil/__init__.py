@@ -15,6 +15,7 @@ Modules:
 * [`imaging`][virgil.imaging]: regularisers and helpers for image
   reconstruction; [`scenes`][virgil.scenes]: synthetic truth images;
   [`metrics`][virgil.metrics]: image-recovery scores;
+  [`ensemble`][virgil.ensemble]: averaged ensembles of reconstructions;
   [`coverage`][virgil.coverage]: synthetic coverage and noise.
 * [`inference`][virgil.inference]: Laplace and Fisher curvature.
 * [`grid_fit`][virgil.grid_fit]: grid searches.
@@ -48,6 +49,7 @@ from . import (  # noqa: E402
     amigo,
     coverage,
     detection,
+    ensemble,
     epochs,
     fields,
     fitting,
