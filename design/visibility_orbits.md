@@ -1,6 +1,6 @@
 # Orbits fitted directly to visibilities across epochs
 
-Status: plan for 0.4. Stage 1 is implemented alongside this note.
+Status: plan for 0.4. Stages 1 and 2 are implemented.
 
 This note extends `design/orbit_scene_joint_fitting.md` (requirements
 R0–R9, conventions §2), which built the pieces: `KeplerOrbit` and its
@@ -285,12 +285,73 @@ The per-sample path is unchanged: passing the datasets and a
 time-dependent scene to `fit` directly evaluates each sample at its own
 time, for scenes that move within an observation.
 
+### Stage 2 (implemented)
+
+Model before data, as everywhere in 0.4 (`design/api_argument_order.md`).
+
+```python
+from virgil import rank_orbits, start_from_positions
+from virgil.epochs import chain_starts
+from virgil.likelihood import chain_init_params, numpyro_model
+
+# Rank trial orbits by all the data (one compiled kernel, lax.map).
+ranked = rank_orbits(lambda orbit: OrbitalBinary(orbit, 0.15), epochs,
+                     starting_orbits(positions, periods))
+ranked.best, ranked.loglike, ranked.order
+starts = chain_starts(ranked, 4)   # distinct modes, repeated if fewer
+
+# Or the whole start: positions -> orbits -> ranking -> fit (V14).
+start = start_from_positions(
+    scene_fn, priors, epochs, start_values,   # start_values(orbit, flux)
+    grid={"dra": axis, "ddec": axis, "flux": fluxes},
+    periods=periods, t_ref=T_REF, noise=noise,
+)
+start.positions    # EpochPositions: per-dataset positions, covariances, gaps
+start.candidates   # RankedOrbits
+start.best         # the FitResult with the lowest loss
+posterior = numpyro_model(epochs.model_fn(scene_fn), priors, epochs.data,
+                          noise=noise)
+init = chain_init_params(posterior, start.chain_values(4))   # V15
+mcmc.run(key, init_params=init)
+```
+
+* `rank_orbits(model, data, orbits, *, noise=None, batch_size=None,
+  dtype="float64")`: `model` maps an orbit to a time-dependent scene and
+  is traced; `orbits` is a list, `starting_orbits` pairs, a
+  `RankedOrbits` or one orbit with a leading axis (prior draws). Orbits
+  with a non-finite likelihood rank last with `-inf`.
+* `chain_starts(ranked, n_chains, *, min_distance_mas=None)`: greedy,
+  best first. Two orbits are one mode when the companion's positions at
+  every snapshot time agree within `min_distance_mas`, by default half the
+  finest resolution λ/B_max (`Epochs.resolution_mas`). This measures modes
+  where the data see them: the (Ω + 180°, ω + 180°) mirror is one mode,
+  fringe and period aliases are not. (The draft's `distinct_deg` compared
+  elements, which is not invariant to the parametrisation.)
+* `epoch_positions(data, grid, *, gap_mas=None, refine=True)`: per dataset,
+  a `BinaryModelCartesian` likelihood grid, its best point, a `fit` from it
+  and the Hessian's 2×2 position covariance; `gap` is the log likelihood
+  of the best peak over the best peak more than λ/B_max away, the
+  tutorial's decisiveness test. It uses only `model_loglike` and `fit`
+  (already model first), not the grid tools whose argument order changes
+  in 0.4.
+* `start_from_positions(model, priors, data, start_values, *, grid,
+  periods, t_ref, noise=None, ...)`: `t_ref` is required, because the
+  starting orbits' `dt_peri` must be counted from the model's `t_ref`
+  (V8). `start_values(orbit, flux)` maps an orbit and the median fitted
+  flux to the model's parameters (it may use Python floats); the ranking
+  stacks those values and maps over them, so the ranked scene is exactly
+  the model's. The refinement fits start from the `n_refine` best distinct
+  candidates, not the `n_refine` best, which are usually one mode.
+* `OrbitStart.modes(max_delta_loss=10, same_mode_chi2=1)`: the distinct
+  refined fits (their whitened residuals differ by more than χ² = 1)
+  within Δloss of the best; `chain_values(n)` cycles through them.
+* `chain_init_params(model, starts, key=None)`: numpyro's `init_params`
+  (unconstrained, leading chain axis) from one values dict per chain, via
+  `initialize_model` with `init_to_value`.
+
 ### Later stages (proposed)
 
 ```python
-ranked = rank_orbits(scene_fn, epochs, orbits, noise=None)   # stage 2
-start = fit_positions_then_visibilities(...)                  # stage 2, name TBD
-init = chain_starts(ranked, n_chains, distinct_deg=...)       # stage 2
 cov = result.covariance()           # stage 3: Laplace, priors + noise
 mass = gauss_newton_mass(model, priors, data, values, noise=noise)  # stage 3
 report = forecast(scene_fn, posterior, templates, mjd, error_scale=1.0)  # stage 4
@@ -306,11 +367,11 @@ helper (`epoch_offsets(name, epochs, tau)`) mirroring
 
 Each stage is one reviewable PR.
 
-1. **Snapshots and named epochs** (this PR): `Epochs`, `OrbitalBinary`,
+1. **Snapshots and named epochs** (#257, done): `Epochs`, `OrbitalBinary`,
    the t_ref warning, the Attached + TruncatedCone binding test, the
    multi-epoch recovery test. Requirements V1, V2, V3 (noise by name),
    V5 (anchors: existing; scene origin documented), V8, V10.
-2. **Starting and sampling**: `rank_orbits`, start from a positions fit
+2. **Starting and sampling** (done): `rank_orbits`, start from a positions fit
    (`init_to_value`), per-chain starts; the orbit tutorial switches to
    `Epochs` snapshots by default (results change slightly; §7). V13–V16.
 3. **Curvature**: `gauss_newton_mass(noise=...)`, the no-data check with
@@ -364,7 +425,7 @@ written as a script for OzSTAR and marked so.
    for a simulated system; a positions-fit start converges to the truth
    where a default start does not (a small alias case); per-chain starts
    are distinct modes. A short NUTS recovery (≤ 200 samples) is marked
-   for OzSTAR; locally only a 20-step smoke test.
+   for OzSTAR; locally only a 20-step smoke test. Implemented as four tests in `tests/test_epochs.py` (about a minute together, most of it the positions-fit start); the NUTS recovery job is proposed in the stage-2 PR.
 3. Stage 3: the covariance of `fit` on a linear-Gaussian model equals the
    analytic one (with priors and a noise term); `gauss_newton_mass` with
    noise matches the Hessian at the truth; with no data, it is the prior
