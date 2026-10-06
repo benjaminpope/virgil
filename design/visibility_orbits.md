@@ -146,6 +146,27 @@ General requirements, numbered for reference in the stages below.
 
   For GRAVITY the honest analogue is a wavelength scale (its calibration
   is spectral), with a prior from the instrument's wavelength calibration.
+
+  **Lesson: a broad scale prior absorbs inter-instrument motion.** A
+  per-instrument plate-scale nuisance with a broad prior will soak up
+  secular motion between instruments whenever another constraint pins the
+  orbit's geometry, so the scale ends up compensating for real change in
+  separation. Always report the fitted scale next to the orbital
+  elements and compare it with the instrument's independent calibration
+  uncertainty; a large tension is itself diagnostic of this failure.
+  Design implications: the planned plate-scale helper should default to a
+  prior from the instrument calibration (the filter × SED derivation
+  above, about 0.5 % for NACO), not a broad one, and fits should print
+  the scale's pull (fitted minus prior mean, in prior widths).
+
+  Worked example (Apep, 2026-10-06): a joint orbit and scene fit to
+  GRAVITY 2023–25 and NACO SAM 2019 of a colliding-wind binary. When a
+  dust-cone tilt was bound to the orbit's line of centres, NACO's free
+  plate scale fitted to 0.957 ± 0.009; with the tilt unconstrained it
+  was 0.989. The bound tilt forced Ω to be about the binary PA and
+  allowed only 0.02 mas/yr of separation growth, so the 2019 to 2023
+  increase from 26.4 to 28.1 mas went into a 4 % scale error: a tension
+  of about 9σ with the expected ~0.5 % NACO scale uncertainty.
 * **V12 Bandwidth smearing.** In a broad filter, smearing is chromatic,
   not a pure plate scale. Provide (or document) a bandpass-integrated
   model: evaluate over a few sub-channels across the filter and average,
