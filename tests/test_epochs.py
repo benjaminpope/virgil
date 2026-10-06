@@ -189,17 +189,40 @@ def test_snapshots_match_the_per_sample_model_for_one_time_per_dataset():
 
 
 def test_snapshots_approximate_a_slowly_moving_scene_within_a_night():
-    """Over 2 h the companion moves ~0.01 mas: far below λ/B ~ 5 mas."""
+    """The snapshot's loss of likelihood is bounded by the orbital motion.
+
+    The data are noiseless, so the per-sample model fits them exactly and
+    the snapshot loses ``0.5 * dchi2``. A companion of flux ratio f that
+    moves by d (mas) shifts the fringe phase on a baseline of spatial
+    frequency b (cycles/mas) by at most 2 pi b d, so its complex visibility
+    by at most f/(1+f) of that, V^2 by at most 2|dV| + |dV|^2, and each
+    baseline's phase by at most f/(1-f) of it (three in a closure phase).
+    """
     orbit = _orbit()
     data = simulate(
         System(primary=PointSource(), comp=Attached(PointSource(FLUX), orbit)),
         _night(T_REF + 200.0, frames=3),
-        jax.random.PRNGKey(0),
     )
     epochs = Epochs({"night": data})
     with jax.enable_x64(True):
         scene = OrbitalBinary(orbit, FLUX)
-        assert abs(epochs.loglike(scene) - model_loglike(scene, data)) < 0.05
+        lost = float(model_loglike(scene, data) - epochs.loglike(scene))
+        dra, ddec, _ = orbit.relative(data.mjd)
+        dra0, ddec0, _ = orbit.relative(epochs.times[0])
+    moved = onp.hypot(onp.asarray(dra) - dra0, onp.asarray(ddec) - ddec0)
+    mas = onp.pi / 180 / 3.6e6
+    b = onp.hypot(data.u, data.v) / onp.asarray(data.wavel) * mas
+    dpsi = 2 * onp.pi * b * moved
+    dv = FLUX / (1 + FLUX) * dpsi
+    dphase = FLUX / (1 - FLUX) * dpsi
+    dcp = sum(
+        dphase[onp.asarray(i)] for i in (data.i_cps1, data.i_cps2, data.i_cps3)
+    )
+    dchi2 = onp.sum(((2 * dv + dv**2) / onp.asarray(data.d_vis)) ** 2)
+    dchi2 += onp.sum((dcp / onp.asarray(data.d_phi)) ** 2)
+    assert epochs.spread_days[0] == pytest.approx(1 / 24, rel=1e-3)
+    assert 0.0 <= lost <= 0.5 * dchi2
+    assert 0.5 * dchi2 < 0.1  # the approximation is tight here
 
 
 def test_mjd_times_with_a_default_t_ref_warn():

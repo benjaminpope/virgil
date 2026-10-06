@@ -346,7 +346,8 @@ written as a script for OzSTAR and marked so.
    * an `OrbitalBinary` snapshot equals `BinaryModelCartesian` at the
      orbit's position and the `System` + `Attached` snapshot;
    * snapshot and per-sample log likelihoods agree (exactly for one time
-     per dataset, to < 0.05 for a 2 h night);
+     per dataset; for a 2 h night of noiseless data, the loss is
+     within the bound ½Δχ² derived from the companion's motion);
    * the t_ref warning fires with MJDs and t_ref = 0, and not otherwise;
    * a cone bound to `towards_primary` + skew and `line_tilt`, under
      `jit` with traced Ω and skew, has the right angles and a finite,
