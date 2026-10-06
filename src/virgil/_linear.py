@@ -14,8 +14,7 @@ residual of the same length as x, so the likelihood keeps one residual
 vector, and the log-determinant ``½ log det(I + UᵀU)``, kept as effective
 errors or a log-normalisation.
 
-**Rules** (``design/imaging_plan.md``, "Analytic marginalisation of linear
-parameters"):
+**Rules**:
 
 - **Keep the log-determinant.** It depends on the model wherever A or σ
   does, e.g. a flux scale times the model's spectrum, or fitted jitter.

@@ -26,6 +26,11 @@ baseline, a mean of 2.87 against the 3 expected for three independent
 closure phases), and :meth:`ClosureNoise.sample` draws noise from C that is
 not the closure of any set of baseline phases. The exact model would be
 C = T diag(s) Tᵀ with baseline variances s chosen to reproduce σ².
+The correlation is built from the per-triangle errors σ, so it is exact
+only when the baseline phase errors are equal; with unequal baseline
+errors the whitened χ² comes out slightly low, by about 2% with one
+baseline three times noisier than the others. OIFITS carries no
+per-baseline phase errors, so the data do not allow better.
 
 ``ClosureNoise`` groups the triangles that share baselines (one frame and
 channel each). It whitens residuals r by dividing by σ, projecting onto an

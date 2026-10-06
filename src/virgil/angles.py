@@ -27,7 +27,7 @@ and the density is normalised in ℝ², so evidences stay normalised.
 The construction follows Octofitter's ``UniformCircular`` (Thompson et al.
 2023, AJ 166, 164) and exoplanet's ``Angle`` (Foreman-Mackey et al. 2021,
 JOSS 6, 3285), which sample v ~ N(0, I); the ring and the chord priors are
-virgil's. See ``design/orbit_prior_art.md`` §4.1.
+virgil's.
 """
 
 import jax

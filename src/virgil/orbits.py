@@ -1,6 +1,6 @@
 """Keplerian orbits of a binary's secondary about its primary.
 
-The conventions are those of ``design/orbit_scene_joint_fitting.md`` §2.1:
+The conventions are:
 
 * ``dra`` is positive East and ``ddec`` positive North (mas), as everywhere
   in virgil, and ``dz`` is positive **away from** the observer, so that
