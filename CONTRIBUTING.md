@@ -84,17 +84,13 @@ Next you can start to make any changes you desire!
 
 It is important that any changes you make are tested to ensure that they work as intended and do not break any existing functionality. If you are creating _new_ functionality you will need to create some new unit tests, otherwise you should be able to modify the existing tests.
 
-To ensure that everything is working as expected, you can run the unit tests by running the following command:
+Locally, run the lint checks plus the tests relevant to your change, for example:
 
 ```bash
-uv run --python .venv/bin/python pytest tests
+.venv/bin/python -m pytest tests/test_file.py
 ```
 
-This will run all tests in the `tests` directory. If you would like to run a specific test, you can run:
-
-```bash
-uv run --python .venv/bin/python pytest tests/test_file.py
-```
+Do not run the full suite locally: the JAX tests are heavy, and GitHub Actions runs the full suite on every pull request. Call the venv interpreter directly rather than `uv run`, which resyncs the venv to the lock.
 
 Note that passing locally does not guarantee cross-platform compatibility. On every pull
 request, GitHub Actions (`.github/workflows/tests.yml`) runs the suite on Linux with
@@ -112,7 +108,7 @@ Any changes you make should also be appropriately documented! For small API chan
 Tutorial pages are notebook-synced: for every notebook listed in `MAPPINGS` in `scripts/sync_tutorial_docs.py`, edit the notebook first, then regenerate the corresponding docs markdown with:
 
 ```bash
-uv run --python .venv/bin/python scripts/sync_tutorial_docs.py
+.venv/bin/python scripts/sync_tutorial_docs.py
 ```
 
 Notebook style conventions for tutorials:
@@ -130,22 +126,17 @@ Typical helper usage patterns:
 - Posterior diagnostics: `plot_chainconsumer_diagnostics`
 - Correlation summaries: `plot_data_model_correlation`
 
-To build the documentation locally and make sure everything is working correctly, you can run the following command:
+The documentation is built with Zensical. To build it locally and make sure everything is working correctly, run:
 
 ```bash
-mkdocs serve
+.venv/bin/python -m zensical build --clean
 ```
 
-This will build the documentation and serve it on a local server. You can then navigate to `localhost:8000` in your browser to view the documentation.
-
-During the migration window, please also verify the same docs project with Zensical:
+To preview it on a local server, run:
 
 ```bash
-uv run --python .venv/bin/python zensical build --clean
-uv run --python .venv/bin/python zensical serve
+.venv/bin/python -m zensical serve
 ```
-
-Keep `mkdocs.yml` as the shared configuration until migration cutover is complete.
 
 ---
 
