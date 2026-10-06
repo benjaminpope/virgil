@@ -8,7 +8,6 @@ Tracing is off unless ``JAX_PROFILE_DIR`` is set (or ``--profile DIR`` of
 """
 
 import contextlib
-import json
 import os
 import socket
 import time
