@@ -601,6 +601,38 @@ def test_select_split_scale_and_simulate_keep_the_extras():
     assert data.has_model_covariance  # the flux scale
 
 
+def test_error_scales_per_observable_cover_the_extras():
+    # with_error_scale takes a factor per kind, extras included, and the
+    # residual rows error_scale(by_observable=True) assigns to each kind
+    # are the ones that scale with it.
+    from virgil.imaging import _observable_blocks
+
+    data = (
+        OIData(read_oifits(build_hdulist(_tables()), extras=ALL))
+        .with_continuum(lines=[LINE])
+        .with_flux_scale(scale=SCALE_PRIOR)
+    )
+    scaled = data.with_error_scale({"visamp": 2.0, "phi": 3.0})
+    kinds = [b.kind for b in data.extras]
+    for kind, before, after in zip(kinds, data.extras, scaled.extras):
+        factor = 2.0 if kind == "visamp" else 1.0
+        onp.testing.assert_allclose(after.errors, factor * before.errors)
+    onp.testing.assert_allclose(scaled.d_phi, 3.0 * data.d_phi)
+    onp.testing.assert_allclose(scaled.d_vis, data.d_vis)
+    rows, counts = _observable_blocks([data])
+    assert list(rows) == ["vis", "phi", *kinds]
+    assert sum(counts.values()) == data.n_independent
+    assert sum(v.size for v in rows.values()) == data.n_residuals
+    sim = data.with_model(_scene(), key=jax.random.PRNGKey(0))
+    base = onp.asarray(whitened_residuals(_scene(), sim))
+    for kind in rows:
+        other = onp.asarray(
+            whitened_residuals(_scene(), sim.with_error_scale({kind: 2.0}))
+        )
+        changed = onp.flatnonzero(~onp.isclose(other, base, rtol=1e-5))
+        assert changed.size and set(changed) <= set(rows[kind])
+
+
 def test_fit_refuses_least_squares_with_a_marginalised_scale():
     import numpyro.distributions as dist
 

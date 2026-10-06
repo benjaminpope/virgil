@@ -92,7 +92,7 @@ up to a constant that is the same for every σ and ℓ. Each quantity is evaluat
 - $\lVert z\rVert^2$ is the prior penalty;
 - J is the Jacobian of the whitened residuals with respect to z, so $J^\top J$ measures how strongly the data constrain each direction of z. The log-determinant is the Occam factor, which penalises a prior that leaves many directions for the data to fix.
 
-The approximation is exact for a linear model with Gaussian noise. Choosing the σ and ℓ that maximise Z is called type-II maximum likelihood, empirical Bayes, or MacKay's evidence framework. [`error_scale`][virgil.imaging.error_scale] applies the same framework to the noise level, to check whether the error bars are too large or too small. Alternatively, σ and ℓ can be given priors and sampled together with z.
+The approximation is exact for a linear model with Gaussian noise. Choosing the σ and ℓ that maximise Z is called type-II maximum likelihood, empirical Bayes, or MacKay's evidence framework. [`error_scale`][virgil.imaging.error_scale] applies the same framework to the noise level, to check whether the error bars are too large or too small; with `by_observable=True` it gives one scale per kind of observable (V², closure phases, fluxes), for data whose blocks are mis-calibrated by different factors. Alternatively, σ and ℓ can be given priors and sampled together with z.
 
 ### Relation to TSV and Gaussian Markov random fields
 

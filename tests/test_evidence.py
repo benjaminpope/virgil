@@ -287,3 +287,153 @@ def test_the_batched_jacobian_matches_jax(n):
         full = jax.jacrev(residuals)(model64.get(path)).reshape(r.size, -1)
     assert (r.size < latent.size) == (n == N)  # both branches are exercised
     onp.testing.assert_allclose(jac, onp.asarray(full), rtol=1e-10, atol=1e-12)
+
+
+def _hat_gammas(jac, rows, beta):
+    """γ_b from the explicit hat matrix, B½ J (I + Jᵀ B J)⁻¹ Jᵀ B½."""
+    per_row = onp.zeros(jac.shape[0])
+    for kind, b in beta.items():
+        per_row[rows[kind]] = b
+    a = onp.eye(jac.shape[1]) + jac.T @ (per_row[:, None] * jac)
+    hat = per_row * onp.einsum("ij,jk,ik->i", jac, onp.linalg.inv(a), jac)
+    return {kind: hat[rows[kind]].sum() for kind in beta}
+
+
+@pytest.mark.parametrize("shape", [(30, 50), (60, 12)])
+def test_block_precisions_solve_the_coupled_fixed_point(shape):
+    # Both forms (fewer data than latents, and more) satisfy
+    # 1/β_b = χ²_b / (N_b − γ_b), with γ_b from the hat matrix's diagonal.
+    from virgil.imaging import _block_precisions
+
+    rng = onp.random.default_rng(0)
+    n_rows, n_latent = shape
+    jac = rng.normal(size=shape) * onp.geomspace(10.0, 0.01, n_latent)
+    r = rng.normal(size=n_rows) * onp.where(onp.arange(n_rows) < 20, 3, 0.5)
+    rows = {"vis": onp.arange(20), "phi": onp.arange(20, n_rows)}
+    # Penalty-like rows: the phase block has fewer data than rows.
+    counts = {"vis": 20, "phi": n_rows - 25}
+    beta = _block_precisions(r, jac, rows, counts)
+    gamma = _hat_gammas(jac, rows, beta)
+    for kind in rows:
+        chi2 = r[rows[kind]] @ r[rows[kind]]
+        assert 1.0 / beta[kind] == pytest.approx(
+            chi2 / (counts[kind] - gamma[kind]), rel=1e-8
+        )
+
+
+def test_block_error_scale_with_one_block_matches_the_scalar():
+    # One block holding every residual is the single-β problem, which
+    # error_scale solves by Newton's method.
+    from virgil.imaging import _block_precisions, _residual_jacobian
+
+    latent = jax.random.normal(jax.random.PRNGKey(6), (N, N))
+    noisy = DATA.with_model(
+        _gp_scene(latent, 1.5), key=jax.random.PRNGKey(7), noise_scale=0.5
+    )
+    start = _gp_scene(onp.zeros((N, N)), 1.5)
+    model = fit(start, image_priors(start), noisy).model
+    scale = error_scale(model, noisy)
+    r, jac = _residual_jacobian(model, noisy, "env.log_brightness.latent")
+    rows = {"all": onp.arange(r.size)}
+    counts = {"all": noisy.n_independent}
+    # The n x n form (39 rows, 256 latents) against error_scale, and the
+    # latent form (20 of the columns) against the single-β equation.
+    beta = _block_precisions(r, jac, rows, counts)["all"]
+    assert 1.0 / onp.sqrt(beta) == pytest.approx(scale, rel=1e-8)
+    lam = onp.linalg.svd(jac[:, :20], compute_uv=False) ** 2
+    beta = _block_precisions(r, jac[:, :20], rows, counts)["all"]
+    gamma = onp.sum(beta * lam / (1.0 + beta * lam))
+    assert 1.0 / beta == pytest.approx(
+        (r @ r) / (counts["all"] - gamma), rel=1e-8
+    )
+
+
+def test_block_error_scales_recover_different_miscalibrations():
+    # V² quoted 3 times too small and closure phases 2 times too large:
+    # the block scales recover 3 and 1/2, and one scale lies between.
+    rich = vlti_oidata(
+        hour_angles_h=(-3.0, -1.5, 0.0, 1.5, 3.0),
+        wavelengths_m=[3.2e-6, 3.5e-6, 3.8e-6],
+    )
+    latent = jax.random.normal(jax.random.PRNGKey(4), (N, N))
+    truth = _gp_scene(latent, 1.5)
+    noisy = rich.with_model(truth, key=jax.random.PRNGKey(5))
+    quoted = noisy.with_error_scale({"vis": 1.0 / 3.0, "phi": 2.0})
+    start = _gp_scene(onp.zeros((N, N)), 1.5)
+    model = fit(start, image_priors(start), quoted).model
+    scales = error_scale(model, quoted, by_observable=True)
+    assert set(scales) == {"vis", "phi"}
+    # Compare with the scatter this noise draw actually has about the
+    # truth: 90 V² scatter by ~8%, and the draw (which depends on the
+    # dtype under JAX_ENABLE_X64) can sit 20% below 1.
+    m_vis = onp.asarray(noisy.model(truth))[: noisy.vis.size]
+    realised = onp.sqrt(
+        onp.mean(((onp.asarray(noisy.vis) - m_vis) / noisy.d_vis) ** 2)
+    )
+    assert scales["vis"] == pytest.approx(3.0 * realised, rel=0.12)
+    # 45 independent closure phases: s_phi scatters by ~13%.
+    assert 0.35 < scales["phi"] < 0.7
+    single = error_scale(model, quoted)
+    assert scales["phi"] < single < scales["vis"]
+
+
+def test_with_error_scale_takes_a_scale_per_observable():
+    scaled = DATA.with_error_scale({"phi": 2.0})
+    onp.testing.assert_allclose(scaled.d_vis, DATA.d_vis)
+    onp.testing.assert_allclose(scaled.d_phi, 2.0 * DATA.d_phi)
+    both = DATA.with_error_scale({"vis": 3.0, "phi": 3.0})
+    onp.testing.assert_allclose(both.d_vis, DATA.with_error_scale(3.0).d_vis)
+    onp.testing.assert_allclose(both.d_phi, DATA.with_error_scale(3.0).d_phi)
+    # A kind these data lack (no OI_FLUX) is ignored; a non-kind is not.
+    DATA.with_error_scale({"flux": 2.0})
+    with pytest.raises(ValueError, match="Unknown observables"):
+        DATA.with_error_scale({"v2": 2.0})
+    with pytest.raises(ValueError, match="factor"):
+        DATA.with_error_scale({"vis": -1.0})
+
+
+def test_block_error_scales_refuse_unscaled_nuisance_covariance():
+    # Gains and closure offsets add covariance (D + UΛUᵀ) that scaling the
+    # quoted errors leaves alone, so the block fixed point would not be the
+    # evidence optimum: refuse rather than return a wrong scale.
+    start = _gp_scene(onp.zeros((N, N)), 1.5)
+    for data, what in (
+        (DATA.with_gains(telescope=0.01), "calibration gains"),
+        (DATA.with_closure_offsets(triangle=0.01), "closure-phase offsets"),
+    ):
+        with pytest.raises(ValueError, match=what):
+            error_scale(start, data, by_observable=True)
+
+
+@pytest.mark.parametrize("n_telescopes", [3, 4])
+def test_observable_blocks_map_residual_rows(n_telescopes):
+    # The rows labelled "phi" are exactly those that change when only the
+    # phase errors change: for four telescopes, the whitened independent
+    # combinations and the penalty rows; N_phi counts only the former.
+    from virgil.coverage import VLTI_UTS
+    from virgil.imaging import _observable_blocks
+    from virgil.likelihood import whitened_residuals
+
+    data = vlti_oidata(
+        stations=VLTI_UTS[:n_telescopes],
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        wavelengths_m=[3.5e-6],
+    )
+    scene = System(star=PointSource(), env=GaussianDisk(3.0, flux=0.4))
+    data = data.with_model(scene, key=jax.random.PRNGKey(0))
+    other = System(star=PointSource(), env=GaussianDisk(3.0, dra=1.0))
+    rows, counts = _observable_blocks([data, data])
+    n_vis, n_phi = data.vis.size, data.phi.size
+    n_comb = n_phi if data.cp_noise is None else data.cp_noise.size
+    assert (data.cp_noise is None) == (n_telescopes == 3)
+    assert counts == {"vis": 2 * n_vis, "phi": 2 * n_comb}
+    assert sum(counts.values()) == 2 * data.n_independent
+    assert sum(v.size for v in rows.values()) == 2 * data.n_residuals
+    base = onp.concatenate([whitened_residuals(other, data)] * 2)
+    halved = onp.concatenate(
+        [whitened_residuals(other, data.with_error_scale({"phi": 2.0}))] * 2
+    )
+    onp.testing.assert_allclose(halved[rows["vis"]], base[rows["vis"]])
+    onp.testing.assert_allclose(
+        halved[rows["phi"]], 0.5 * base[rows["phi"]], rtol=1e-5
+    )

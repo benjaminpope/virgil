@@ -48,6 +48,7 @@ checks a fit for this and other common pitfalls.
 """
 
 import dataclasses
+import warnings
 
 import equinox as eqx
 import jax
@@ -1743,7 +1744,158 @@ def log_evidence(model, data, path="env"):
     return float(-0.5 * chi2 - 0.5 * onp.sum(z**2) - 0.5 * logdet)
 
 
-def error_scale(model, data, path="env"):
+def _observable_blocks(datasets):
+    """The rows of the residual vector that belong to each observable.
+
+    Returns ``(rows, counts)``: dictionaries from each kind of observable
+    (``"vis"``, ``"phi"``, then the kinds of ``extras``, in order of first
+    appearance) to the indices of its rows in the residuals of
+    [`whitened_residuals`][virgil.likelihood.whitened_residuals],
+    concatenated over ``datasets``, and to its number of independent data.
+    Per dataset the rows are the visibilities, then the phases, then each
+    extra block. Correlated closure phases (``cp_noise``, four or more
+    telescopes) have ``cp_noise.size`` whitened combinations, the
+    independent data, followed by one periodic penalty row per closure
+    phase; all of them are phase rows, but only the combinations are
+    counted as data. Kinds with no rows are left out.
+    """
+    rows, counts = {}, {}
+    start = 0
+
+    def add(kind, n_rows, n_independent):
+        nonlocal start
+        if n_rows:
+            rows.setdefault(kind, []).append(onp.arange(start, start + n_rows))
+            counts[kind] = counts.get(kind, 0) + n_independent
+        start += n_rows
+
+    for d in datasets:
+        first = start
+        n_vis = int(onp.size(d.vis))
+        n_phi = int(onp.size(d.phi))
+        add("vis", n_vis, n_vis)
+        if d.cp_noise is None:
+            add("phi", n_phi, n_phi)
+        else:
+            add("phi", d.cp_noise.size + n_phi, d.cp_noise.size)
+        for block in d.extras:
+            add(block.kind, int(onp.size(block.data())), block.n_independent)
+        if start - first != d.n_residuals:
+            raise RuntimeError(
+                f"The observable blocks have {start - first} rows, but the "
+                f"data have {d.n_residuals} residuals."
+            )
+    return {k: onp.concatenate(v) for k, v in rows.items()}, counts
+
+
+def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
+    """MacKay's noise precision β_b of each block of residual rows.
+
+    Iterates ``β_b ← N_b / (χ²_b + t_b)``, with ``t_b = γ_b / β_b =
+    tr(A⁻¹ G_b)``, ``A = I + Σ_b β_b G_b`` and ``G_b = J_bᵀ J_b``, from
+    ``β_b = N_b / χ²_b``. Its fixed point is MacKay's
+    ``1/β_b = χ²_b / (N_b − γ_b)``; written this way the update is
+    monotone (raising any β lowers every t), so from that start, which is
+    above the fixed point, the iterates decrease to it without
+    oscillating. ``A``'s Cholesky factor comes from a QR decomposition of
+    the stacked, row-scaled Jacobian and the identity, never forming the
+    Gram matrix, whose rounding fails on high signal-to-noise data (see
+    ``log_evidence``), in the smaller of the data and latent dimensions.
+    """
+    from scipy.linalg import solve_triangular
+
+    kinds = list(rows)
+    n_rows, n_latent = jac.shape
+    chi2 = onp.array([float(r[rows[k]] @ r[rows[k]]) for k in kinds])
+    n = onp.array([counts[k] for k in kinds], dtype=float)
+    if n_rows <= n_latent:
+        # The n x n form: with Jᵀ = Q R, K = B½ J Jᵀ B½ = (R B½)ᵀ (R B½),
+        # and the hat matrix's diagonal is h = 1 − diag((K + I)⁻¹).
+        reduced = onp.linalg.qr(jac.T, mode="r")
+        eye = onp.eye(n_rows)
+
+        def traces(beta):
+            per_row = onp.zeros(n_rows)
+            for k, b in zip(kinds, beta):
+                per_row[rows[k]] = b
+            scaled = reduced * onp.sqrt(per_row)
+            factor = onp.linalg.qr(onp.vstack([scaled, eye]), mode="r")
+            inverse = solve_triangular(factor, eye)
+            hat = 1.0 - onp.sum(inverse**2, axis=1)
+            return onp.array(
+                [onp.sum(hat[rows[k]]) / b for k, b in zip(kinds, beta)]
+            )
+
+    else:
+        # The latent form: G_b = R_bᵀ R_b with J_b = Q_b R_b, so A is
+        # factored from the stacked √β_b R_b, and t_b = |R_A⁻ᵀ R_bᵀ|².
+        reduced = [onp.linalg.qr(jac[rows[k]], mode="r") for k in kinds]
+        eye = onp.eye(n_latent)
+
+        def traces(beta):
+            stacked = [onp.sqrt(b) * rb for b, rb in zip(beta, reduced)]
+            factor = onp.linalg.qr(onp.vstack(stacked + [eye]), mode="r")
+            return onp.array(
+                [
+                    onp.sum(solve_triangular(factor.T, rb.T, lower=True) ** 2)
+                    for rb in reduced
+                ]
+            )
+
+    if not onp.all(chi2 > 0.0):
+        raise ValueError(
+            "error_scale: a block of observables is fitted exactly (χ² = 0), "
+            "so its noise scale is undefined."
+        )
+    beta = n / chi2
+    for _ in range(max_iter):
+        new = n / (chi2 + traces(beta))
+        change = onp.max(onp.abs(new - beta) / new)
+        beta = new
+        if change < rtol:
+            break
+    else:
+        warnings.warn(
+            f"error_scale: the block noise scales did not converge in "
+            f"{max_iter} iterations (relative change {change:.1e}).",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    return dict(zip(kinds, beta))
+
+
+def _check_scalable_blocks(datasets):
+    """Refuse data whose covariance is not ``s_b² D`` per block.
+
+    The block fixed point assumes that scaling a block's quoted errors by
+    ``s_b`` divides its whitened residuals and Jacobian rows by ``s_b``.
+    That fails where the likelihood marginalises a nuisance with its own
+    width, ``s_b² D + U Λ Uᵀ``: calibration gains, closure-phase offsets,
+    flux spectra's marginalised scales, and differential phases with a
+    finite ``prior_width``. ``with_error_scale`` scales only ``D``, so the
+    returned scales would not be the evidence optimum for the rescaled data.
+    """
+    for i, d in enumerate(datasets):
+        reasons = []
+        if d.gains is not None:
+            reasons.append("calibration gains (with_gains)")
+        if d.phase_offsets is not None:
+            reasons.append("closure-phase offsets (with_closure_offsets)")
+        for b in d.extras:
+            if b.model_dependent_covariance:
+                reasons.append(f"a marginalised {b.kind} block")
+            elif getattr(b, "prior_width", None) is not None:
+                reasons.append(f"a {b.kind} block with a finite prior_width")
+        if reasons:
+            raise ValueError(
+                f"error_scale(by_observable=True) cannot rescale dataset {i}: "
+                f"it has {', '.join(reasons)}, whose nuisance widths do not "
+                "scale with the quoted errors. Estimate the scales without "
+                "them, or fit the nuisance widths as noise terms."
+            )
+
+
+def error_scale(model, data, path="env", *, by_observable=False):
     r"""Re-estimate the scale of the error bars from a Gaussian-field fit.
 
     **What it does.** It estimates the factor ``s`` by which every error
@@ -1796,6 +1948,52 @@ def error_scale(model, data, path="env"):
     ``s`` by a fraction of about 1/(2N). That is negligible while such
     parameters are few compared with the data, as in every SPARCO fit.
 
+    **One scale per observable.** A single ``s`` assumes every error bar is
+    off by the same factor. Often it is not: the V² and closure phases of
+    one instrument are calibrated differently, and in a MATISSE N-band
+    contest file the V² gave χ² per point 0.005 while the closure phases
+    gave 0.49. One scale between the two leaves the V² overweighted and the
+    phases underweighted. With ``by_observable=True`` each kind of
+    observable ``b`` (``"vis"``, ``"phi"`` and each kind in ``extras``,
+    pooled over the datasets) gets its own precision β_b on its own rows
+    of the residual vector. The evidence is then maximised where, for
+    every block,
+
+    $$\frac{1}{\beta_b} = s_b^2 = \frac{\chi^2_b}{N_b - \gamma_b},
+    \qquad \gamma_b = \beta_b \operatorname{tr}(A^{-1} G_b),
+    \qquad A = I + \sum_b \beta_b G_b,$$
+
+    with ``G_b = J_bᵀJ_b`` the curvature from block ``b``'s rows of the
+    Jacobian: MacKay's re-estimation of β applied to each block (MacKay
+    1992, eqs. 4.9–4.10; Bishop 2006, §§3.5.2–3.5.3). Equivalently,
+    ``γ_b`` is the sum over the block's rows of the diagonal of the hat
+    matrix ``B½ J A⁻¹ Jᵀ B½`` (``B`` the diagonal matrix of each row's
+    β_b): the share of the measured parameters that block ``b`` pays for.
+    The ``γ_b`` add up to the total ``γ = tr(A⁻¹(A − I))``. They are
+    coupled, so the equations are solved
+    together by iterating ``β_b ← N_b / (χ²_b + γ_b/β_b)`` (the same fixed
+    point as MacKay's ``β_b ← (N_b − γ_b)/χ²_b``, but monotone, so it
+    cannot oscillate) from ``β_b = N_b/χ²_b`` to a relative change of
+    1e-10. With one block it reproduces the single scale. The blocks'
+    covariances must be ``s_b² D``: data with calibration gains,
+    closure-phase offsets, marginalised flux scales or differential phases
+    with a finite ``prior_width`` add nuisance covariance that does not
+    scale with the quoted errors, and raise a ``ValueError`` (the single
+    scale makes the same assumption, so treat it with care for such data).
+    ``N_b`` counts
+    independent data: closure phases from four or more telescopes count
+    their independent combinations, while their periodic penalty residuals
+    (see [`whitened_residuals`][virgil.likelihood.whitened_residuals])
+    belong to the block's χ² and ``γ_b`` but are not counted as data.
+
+    Use it when the blocks' χ² per point differ markedly, e.g. V² and
+    closure phases from different calibrations, or OI_FLUX spectra beside
+    interferometry. Rescale with the dictionary it returns,
+    ``data.with_error_scale(scales)``, and refit. Prefer the single scale
+    when a block has few data: its ``s_b`` scatters by about
+    ``1/√(2(N_b − γ_b))``. Like the single scale, it absorbs into ``s_b``
+    any structure in block ``b`` the model cannot fit.
+
     It uses the data's quoted errors, so it does not support fits with
     ``noise=`` terms (which estimate the errors another way), nor fits with
     one model per dataset.
@@ -1812,11 +2010,18 @@ def error_scale(model, data, path="env"):
         The data it was fitted to.
     path : str, optional
         Path of the Image in the model (default ``"env"``).
+    by_observable : bool, optional
+        Estimate one scale per kind of observable (default False: one
+        scale for all the data).
 
     Returns
     -------
-    float
-        The scale ``s``.
+    float or dict
+        The scale ``s``, or with ``by_observable=True`` a dictionary from
+        each kind of observable present (``"vis"``, ``"phi"``, and e.g.
+        ``"flux"`` or ``"visphi"``) to its scale ``s_b``, ready for
+        [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale].
+        A warning is issued if the block scales do not converge.
 
     References
     ----------
@@ -1839,10 +2044,15 @@ def error_scale(model, data, path="env"):
             f"error_scale needs an Image with a GaussianField at {path!r}."
         )
     r, jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
+    datasets = data if isinstance(data, (list, tuple)) else [data]
+    if by_observable:
+        _check_scalable_blocks(datasets)
+        rows, counts = _observable_blocks(datasets)
+        beta = _block_precisions(r, jac, rows, counts)
+        return {k: float(1.0 / onp.sqrt(b)) for k, b in beta.items()}
     chi2 = float(r @ r)
     # N counts independent data, not residuals: correlated closure phases
     # add penalty residuals (OIData.n_residuals) that are not observations.
-    datasets = data if isinstance(data, (list, tuple)) else [data]
     n_data = sum(d.n_independent for d in datasets)
     # The Gram matrix's eigenvalues, as squared singular values (see
     # log_evidence): never negative, unlike eigvalsh of a rounded JJᵀ.
