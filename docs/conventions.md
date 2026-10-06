@@ -150,11 +150,17 @@ The data also carry a `frame` number per sample. A **frame** is one exposure of 
 
 For analyses that treat nights separately, [`OIData.epochs`][virgil.oidata.OIData.epochs] labels each sample with an epoch number: a run of frames with no gap longer than `gap_days` (default 0.5 d), numbered from 0 in time order. A frame is never split between epochs. [`OIData.split_by_epoch`][virgil.oidata.OIData.split_by_epoch] returns one `OIData` per epoch, which is how you would fit a binary's position night by night. It does not work on projected (kernel or DISCO) observables.
 
+For orbit fits across epochs, [`Epochs`][virgil.epochs.Epochs] groups datasets into named epochs and evaluates a moving scene once per dataset, at the mean time of its samples (a **snapshot**), instead of at every sample's own time. That is exact for data with one time per dataset and an excellent approximation whenever the scene moves by much less than the resolution $\lambda/B$ within a dataset, as a binary with a period of months or more does over a night; [`Epochs.spread_days`][virgil.epochs.Epochs] says how far each dataset's samples lie from its snapshot. Each snapshot is a static model, so a binary on its orbit ([`OrbitalBinary`][virgil.models.OrbitalBinary]) keeps the fast binary path.
+
+An orbit's `t_ref` is the zero of its `dt_peri`. Give it a time near the data (e.g. `KeplerOrbit(..., t_ref=60500.0)`): with the default `t_ref=0` and MJD times, `dt_peri` is counted from MJD 0, and virgil warns.
+
 ## Orbits
 
 The conventions below are implemented by [`virgil.orbits`](api/orbits.md). The tutorial [Orbits from interferometric data](orbit_fitting.md) uses them end to end, fitting an orbit jointly to every epoch's visibilities and closure phases.
 
 An orbit gives the position of a **secondary** star relative to a **primary** (or reference) star, which sits at the origin and is the scene's reference component at `flux=1`. It need not be the more massive star. The relative position is $\mathbf{r} = (\mathrm{dra}, \mathrm{ddec}, dz)$ of the secondary minus the primary.
+
+The primary is also the scene's phase reference: the visibilities of a scene with an orbit are those of an image centred on the primary, not on the photocentre or the barycentre. A component tied to the orbit by [`Attached`][virgil.models.Attached] sits on the secondary by default, on the primary with `anchor="primary"`, or at a fraction of the way from the primary to the secondary (e.g. `anchor=q / (1 + q)` for the barycentre).
 
 - The first two components are the sky offsets above, East and North, in mas.
 - The third axis, `dz`, is positive **away from the observer**. With East, North and away-from-us, the axes form a right-handed set. So $d(dz)/dt$ has the sign of the secondary's radial velocity relative to the primary: positive means it is receding.

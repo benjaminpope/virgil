@@ -26,6 +26,7 @@ toward the observer) and stay inside :meth:`KeplerOrbit.to_jaxoplanet` and
 """
 
 import math
+import warnings
 
 import jax
 import jax.numpy as np
@@ -105,6 +106,34 @@ def _days_since(mjd, t_ref):
     if isinstance(mjd, jax.core.Tracer):
         return mjd - t_ref
     return np.asarray(onp.asarray(mjd, dtype=onp.float64) - t_ref)
+
+
+# Times this far (days) from an orbit's t_ref = 0 are MJDs (MJD 15000 is
+# 1899), not offsets: the orbit was built without its t_ref.
+_MJD_LIKE_DAYS = 15000.0
+
+
+def _warn_if_mjd_without_t_ref(orbit_t_ref, dt):
+    """Warn when an orbit with the default ``t_ref = 0`` is given MJDs.
+
+    The phase is then computed from MJD 0, which is valid but almost never
+    meant, and in float32 it is also imprecise. Concrete times only.
+    """
+    if orbit_t_ref != 0.0:
+        return
+    days = concrete(dt)
+    if (
+        days is not None
+        and onp.size(days)
+        and (onp.max(onp.abs(days)) > _MJD_LIKE_DAYS)
+    ):
+        warnings.warn(
+            "The orbit has t_ref = 0 but is evaluated at times that look "
+            f"like MJDs (up to {onp.max(onp.abs(days)):.0f} d): its "
+            "dt_peri is then counted from MJD 0. Give the orbit a t_ref "
+            "near the data (e.g. KeplerOrbit(..., t_ref=60500.0)).",
+            stacklevel=3,
+        )
 
 
 # IAU 2015 nominal values (SI): the solar mass parameter, the astronomical
@@ -336,7 +365,9 @@ class KeplerOrbit(zx.Base):
         tuple of arrays
             ``(dra, ddec, dz)``, each shaped like ``mjd``.
         """
-        return tuple(self._relative(_days_since(mjd, self.t_ref)))
+        dt = _days_since(mjd, self.t_ref)
+        _warn_if_mjd_without_t_ref(self.t_ref, dt)
+        return tuple(self._relative(dt))
 
     def relative_velocity(self, mjd):
         """``d(dra, ddec, dz)/dt`` (mas per day), exactly."""
@@ -371,7 +402,9 @@ class KeplerOrbit(zx.Base):
           ``arccos|cos inc|`` (0–90), the projected tilt, for components
           whose ``inc`` is an apparent inclination.
         """
-        return self._frame(_days_since(mjd, self.t_ref))
+        dt = _days_since(mjd, self.t_ref)
+        _warn_if_mjd_without_t_ref(self.t_ref, dt)
+        return self._frame(dt)
 
     def separation_pa(self, mjd):
         """Separation (mas) and position angle (degrees, North through East,
