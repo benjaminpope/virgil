@@ -889,3 +889,42 @@ def test_visphi_cached_factor_matches_a_float64_rebuild():
             uncached.whiten(prediction, block.data(), None),
         ):
             onp.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-12)
+
+
+def test_select_observables_drops_extras_and_frees_the_visphi_closures():
+    data = (
+        OIData(read_oifits(build_hdulist(_tables()), extras=ALL))
+        .with_continuum(lines=[LINE])
+        .with_flux_scale(scale=SCALE_PRIOR)
+    )
+    n_line = int(((WAVES >= LINE[0]) & (WAVES <= LINE[1])).sum())
+    # Without closure phases, the differential phases keep their closure
+    # part: all 6 baselines per line channel, not N - 1 = 3.
+    alone = data.select(observables="visphi")
+    (block,) = alone.extras
+    assert not block.closure_free and not alone.has_phases
+    assert alone.vis.size == 0
+    assert block.n_independent == 6 * n_line == alone.n_independent
+    # With the closure phases kept, nothing changes.
+    both = data.select(observables=("phi", "visphi"))
+    assert both.extras[0].closure_free
+    assert both.n_independent == 36 + 3 * n_line
+    spectra = data.select(observables=("vis", "flux"))
+    assert [b.kind for b in spectra.extras] == ["flux"]
+    assert spectra.has_model_covariance  # the flux scale survives
+    assert bool(np.isfinite(model_loglike(_scene(), alone)))
+    sim = alone.with_model(_scene(), key=jax.random.PRNGKey(3))
+    chi2 = float(np.sum(whitened_residuals(_scene(), sim) ** 2))
+    assert 0.3 * alone.n_residuals < chi2 < 2.0 * alone.n_residuals
+
+
+def test_select_observables_takes_the_gains_with_the_visibilities():
+    data = OIData(read_oifits(build_hdulist(_tables()))).with_gains(
+        telescope=0.05
+    )
+    assert data.select(observables="vis").gains is not None
+    cp_only = data.select(observables="phi")
+    assert cp_only.gains is None and not cp_only.has_model_covariance
+    offsets = data.with_closure_offsets(baseline=0.01)
+    with pytest.raises(ValueError, match="closure-phase offsets"):
+        offsets.select(observables="vis")

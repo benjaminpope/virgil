@@ -1,6 +1,6 @@
 # Matching PMOIRED's features
 
-PMOIRED (Mérand 2022, [arXiv:2207.11047](https://arxiv.org/abs/2207.11047); [GitHub](https://github.com/amerand/PMOIRED)) is the standard VLTI code for parametric spectro-interferometric modelling. This note compares its features with virgil's as of 2026-10-03 and assigns the gaps to stages.
+PMOIRED (Mérand 2022, [arXiv:2207.11047](https://arxiv.org/abs/2207.11047); [GitHub](https://github.com/amerand/PMOIRED)) is the standard VLTI code for parametric spectro-interferometric modelling. This note compares its features with virgil's as of 2026-10-03 and assigns the gaps to stages. *Update (2026-10-06):* of the Stage 6a gaps, the spectra, observables and error floors are built; the spectral-resolution kernel and bandwidth smearing are not (see the audit in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) §5).
 
 virgil does not copy PMOIRED's interface.
 - **Models are Python objects, not string expressions.** PMOIRED builds models from a string language such as `'$inner,fwhm'`. virgil models are equinox modules. Tied parameters come from a model function (as `fit` already accepts), and extra residuals come from regularisers.

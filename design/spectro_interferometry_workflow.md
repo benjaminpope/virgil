@@ -1,6 +1,6 @@
 # Spectro-interferometry workflow (GRAVITY, MATISSE and similar)
 
-Status: **design**, 2026-10-03. Nothing here is implemented, except where it says it is already in the library (the Apep library commits were merged in PR #124).
+Status: **mostly built**, audited 2026-10-06 (§5). Written as a design on 2026-10-03; the paragraphs marked *As built* describe the library, and §5 lists every item with its evidence. Still to build: bandwidth smearing and the other instrument effects (§2.8), the coupled flux of a primary beam (§2.2), closure offsets for three telescopes and `OI_CORR` (§2.4), and the cross-covariance of VISPHI with T3PHI (§2.3, open for Ben).
 
 This note describes an end-to-end workflow for fitting multi-channel long-baseline data (V², closure phase, differential phase, spectra), the gaps in virgil, and proposed APIs. It extends Stage 6a ([`imaging_plan.md`](imaging_plan.md), [`pmoired_parity.md`](pmoired_parity.md)) and does not replace it: another agent is building 6a. Orbits are in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md).
 
@@ -16,16 +16,16 @@ The analysis and its scripts are in `~/data/apep_gravity` (`notes/lessons_for_dr
 
 | Step | What to do | What virgil has | Example (Apep) |
 |---|---|---|---|
-| 1. Calibrate | Divide V² by a transfer function interpolated in time per baseline and channel. Subtract the calibrator's closure phases, averaged as unit vectors | Nothing (pipeline products are read as given) | The in-field calibrator recipe, §2.7 |
-| 2. Times and frames | Give each frame one time, shared by V² and T3. Keep it per datum | Triangles matched to baselines within 1e-4 d; no times kept | GRAVITY stamps baselines up to 12 s apart, so triangles failed to match (§2.5) |
-| 3. Channels | Choose the channels; bin only for compute cost | Multi-channel `OIData` | Binned ×2–×4 by hand to tame correlated errors (§2.4) |
-| 4. Continuum fit | Grey geometry with chromatic fluxes (SPARCO), fitted to V² and closure phase over all epochs, with fitted error terms. Multi-start, then NUTS | `PowerLaw`, `BlackBody`, `fit`, `numpyro_model`; `noise=` on `apep-gravity` | 21 parameters, three epochs, no divergences |
-| 5. Lines | Continuum plus line excess spectra, in **one** model across the band | Free fluxes per channel (`Tabulated`, merged in PR #124 as a provisional, private class) | Separate continuum and line fits disagreed by 15–20% (§2.1) |
-| 6. Spectra and differential phase | Fit OI_FLUX/NFLUX and VISPHI with the visibilities | Not read | Unused, so the reference star's spectral index was assumed (§2.2, §2.3) |
+| 1. Calibrate | Divide V² by a transfer function interpolated in time per baseline and channel. Subtract the calibrator's closure phases, averaged as unit vectors | Nothing in the core (pipeline products are read as given); virgil-vlti's `virgil-vlti-calibrate` | The in-field calibrator recipe, §2.7 |
+| 2. Times and frames | Give each frame one time, shared by V² and T3. Keep it per datum | Frames matched by `INT_TIME`; `OIData.mjd`, `frame`, `epochs()` (§2.5, built) | GRAVITY stamps baselines up to 12 s apart, so triangles failed to match (§2.5) |
+| 3. Channels | Choose the channels; bin only for compute cost | Multi-channel `OIData`; `OIData.select` by window and observable | Binned ×2–×4 by hand to tame correlated errors (§2.4) |
+| 4. Continuum fit | Grey geometry with chromatic fluxes (SPARCO), fitted to V² and closure phase over all epochs, with fitted error terms. Multi-start, then NUTS | `PowerLaw`, `BlackBody`, `fit`, `numpyro_model`; `noise=` (PR #124) | 21 parameters, three epochs, no divergences |
+| 5. Lines | Continuum plus line excess spectra, in **one** model across the band | `Nodes`, `Sum`, `GaussianLine`, `LorentzianLine` (6a PR A); `Tabulated` deprecated | Separate continuum and line fits disagreed by 15–20% (§2.1) |
+| 6. Spectra and differential phase | Fit OI_FLUX/NFLUX and VISPHI with the visibilities | `read_oifits(extras=)`, `FluxSpectrum`, `DifferentialPhase` (6a PR B) | Unused, so the reference star's spectral index was assumed (§2.2, §2.3) |
 | 7. Compare models | χ²/N with the **uninflated** errors per dataset, scatter plots of data against model, and evidence where Laplace applies | `fit`'s χ², `imaging` evidence | Five models ranked clearly |
 | 8. Image | `GaussianField` pixels, with point-like components analytic | Stage 5 | — |
 
-**What already generalises:** grey geometry with spectra (SPARCO), fitted error terms, multi-start fits then NUTS, and model ranking on the uninflated χ². Steps 1, 2, 3, 5 and 6 are where the gaps are.
+**What already generalises:** grey geometry with spectra (SPARCO), fitted error terms, multi-start fits then NUTS, and model ranking on the uninflated χ². Steps 1, 2, 3, 5 and 6 were where the gaps were (2026-10-03); all are now built, step 1 in virgil-vlti (§5).
 
 ## 2. Gaps and proposals
 
@@ -49,6 +49,8 @@ The analysis and its scripts are in `~/data/apep_gravity` (`notes/lessons_for_dr
    - 6a's `Nodes` replaces `Tabulated`, which was merged earlier (PR #124) as provisional and private.
    - **One semantic to settle in 6a:** the reference flux (`wavel=None`, used when rendering). `Tabulated` uses the node mean, but `PowerLaw` uses its value at `wavel0`. Default: every spectrum takes a `wavel0` and is evaluated there.
 
+*As built (6a PR A):* `virgil.spectra.Nodes(values, wavel, kind="linear" | "cubic", outside="constant" | float, wavel0)` and `Sum(**named)`, with `System`-style paths. Every spectrum's reference flux is its value at `wavel0`. Positivity is checked on the total at the characteristic wavelengths (`wavel0`, each node, each line centre), not on the parts. `Tabulated` is deprecated (a `DeprecationWarning`) but kept, since analysis scripts still use it; removing it is a 0.5 item.
+
 ### 2.2 The total spectrum: OI_FLUX/NFLUX, and the reference component's spectrum (6a, plus a small new item)
 **Problem.** V = Σ fᵢ(λ)Vᵢ / Σ fᵢ(λ) is unchanged when every fᵢ(λ) is multiplied by a common g(λ). So with V² and closure phase alone:
 - the reference component's spectral shape is **unidentifiable**;
@@ -65,6 +67,8 @@ Only a measurement of the total spectrum breaks this. (Apep: with the reference 
    - **NFLUX:** normalised by the same continuum ranges as the data, with one helper shared with differential phase.
 2. **New:** a prior on the reference spectrum instead of a fixed shape. The reference component gets its own `PowerLaw` or `BlackBody`, with its index or temperature freed under a prior from a model atmosphere. The other components' spectra are then absolute, as in item 1. No library change is needed beyond documentation. The docs must say that, without OI_FLUX, this prior *is* the systematic on every other component's colour.
 3. **Calibrator spectra.** Any calibrator observed through the same optics gives F_target/F_cal(λ). Times a model spectrum of the calibrator, that is an NFLUX-quality spectrum of the target, with the injection ratio as a grey nuisance (§2.7).
+
+*As built (6a PR B):* `SourceModel.total_spectrum` (the intrinsic total), `observables.FluxSpectrum` for FLUX, NFLUX and correlated fluxes, and `OIData.with_flux_scale(scale=(mean, sd), per=, poly_order=)`: the grey scale is marginalised analytically under a stated prior rather than fitted as a `noise=` term. Item 2 is documented in `docs/spectro_observables.md` ("The degeneracy without OI_FLUX"). **Not built:** the coupled flux of a primary beam (6a PR C), and item 3, which belongs to virgil-vlti.
 
 ### 2.3 Differential phase (VISPHI) (6a)
 **Requirements on 6a's differential phase:**
@@ -133,16 +137,18 @@ So:
 |---|---|---|
 | `vis_scale`, `phi_scale` | multiply σ | merged (PR #124) |
 | `vis_error_rel`, `phi_error` | add in quadrature (relative to the **model** V², and absolute) | merged (PR #124) |
-| `vis_gain_<group>` | low-rank correlated blocks on log \|V\|, marginalised (§2.4; GRAVITY review §4c) | Stage 6d |
-| `phi_offset` | baseline-based closure offsets, **off by default**, only if calibrators need them (GRAVITY review §13) | Stage 6d, optional |
-| `wavel_scale` (+ `wavel_offset`) | evaluate at λ(1 + s) + δ; GRAVITY default s ~ N(0, 2×10⁻⁴), δ = 0 | Stage 6d |
+| `vis_gain_<group>` | low-rank correlated blocks on log \|V\|, marginalised (§2.4; GRAVITY review §4c) | built (Stage 6d) |
+| `phi_offset_<group>` | baseline-based closure offsets, **off by default**, only if calibrators need them (GRAVITY review §13) | built (Stage 6d), four or more telescopes |
+| `wavel_scale` (+ `wavel_offset`) | evaluate at λ(1 + s) + δ; GRAVITY default s ~ N(0, 2×10⁻⁴), δ = 0 | built (Stage 6d) |
 | `flux_scale` (+ `flux_poly`) | OI_FLUX calibration (§2.2) | 6a PR B: marginalised analytically, not a `noise=` term (`OIData.with_flux_scale`) |
 
 **Reconciling with 6a's error floors.** Floors (PMOIRED's `min error`, `min relative error`) are *fixed* changes to the data and belong on `OIData` (`with_error_floor`, like `with_error_scale`). `noise=` is the *fitted* counterpart, in the likelihood. Two differences must be explicit:
 - `vis_error_rel` multiplies the **model** V², while PMOIRED's relative floor multiplies the **data**. The model version is the right one for a fitted term, because it does not reward the model for low data points.
 - A floor is a `max(σ, floor)`, whereas `noise=` adds in quadrature.
 
-Both go through one function (`likelihood.inflated_errors`, merged in PR #124 without the `where=` and `combine=` arguments yet), with `where="data" | "model"` and `combine="max" | "quadrature"`, so that the two cannot drift apart.
+Both go through one function (`likelihood.inflated_errors`), with `where="data" | "model"` and `combine="max" | "quadrature"`, so that the two cannot drift apart.
+
+*As built (6a PR B):* `OIData.with_error_floor(absolute=, relative=)` per observable, and `likelihood.inflated_errors(..., vis_error=, where=, combine=)`, both through `_utils.inflate_errors`. The `noise=` terms act on V² and closure phases only; the extras take fixed floors. The OI_FLUX wavelengths are not yet rescaled by `wavel_scale`.
 
 ### 2.7 The in-field (dual-field) calibrator recipe (done in virgil-vlti, not the core)
 In dual-field instruments (GRAVITY's dual-field mode), archival data often include frames on the fringe-tracking star, interleaved with the target. When that star is unresolved, it is a calibrator observed minutes apart, in the same mode, with no separate calibration needed. GRAVITY-specific tools were "not planned" in [`pmoired_parity.md`](pmoired_parity.md) when this was written, so it was planned as a recipe, not a reader. Those tools now belong to [virgil-vlti](https://github.com/benjaminpope/virgil-vlti), which implements the recipe:
@@ -155,6 +161,8 @@ In dual-field instruments (GRAVITY's dual-field mode), archival data often inclu
 **Done (2026-10-04)** in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti), as `virgil-vlti-calibrate --dual-field`, generalised from Apep's `scripts/calibrate.py`. Its known τ is a leave-one-out prediction error, as the GRAVITY review (§7, now in virgil-vlti) recommends. **Caveat for the docs:** the calibrator must be unresolved, and close enough on the sky that the transfer function is shared.
 
 ### 2.8 Smearing (6a)
+*Not built* (6a PR C, with the spectral-resolution kernel and the primary beam).
+
 Once 6a's smearing exists, its docs should give the rule for when it matters: the number of fringes across the scene's extent, B·θ/λ, compared with the resolving power R. They should also include a check on real data near the limit. (Apep: R ≈ 130–240 after binning, with up to 8 fringes across the scene on 130 m baselines. Refitting with smearing on should move the separation by ≲ 0.01 mas.)
 
 ## 3. Mapping and effort
@@ -180,6 +188,8 @@ Once 6a's smearing exists, its docs should give the rule for when it matters: th
 
 The 6a agent needs only the "+" items folded into its plan.
 
+*Done (2026-10-06):* steps 1–5 of this order; what remains is in §5.
+
 ## 4. Decisions and open questions
 
 ### Decided (Ben, 2026-10-03)
@@ -192,3 +202,37 @@ The 6a agent needs only the "+" items folded into its plan.
 2. **Reference flux for every spectrum:** the value at `wavel0` (default), not the node mean.
 3. **Closure phase everywhere,** plus the closure-free projection of continuum-normalised VISPHI in the line windows (default; §2.3).
 4. **Real anchor binaries** for the position-angle round trips are not chosen yet; see the reminder in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) §7.
+
+## 5. Audit (2026-10-06)
+
+Every item above, against `main` at c2e41c4 plus the `OIData.select` windows and observables of this note's audit PR. Functions are in `src/virgil/` unless the path says otherwise.
+
+| Item | Status | Evidence |
+|---|---|---|
+| Step 1, calibrate | built, in virgil-vlti | `virgil_vlti/calibrate.py`, `virgil-vlti-calibrate --dual-field`; the core reads pipeline products as given |
+| Step 2, times and frames | built | `oifits.read_oifits(frame_mjd=)`, `oifits._exposure_time` (`INT_TIME` matching); `OIData.mjd`, `OIData.frame`, `OIData.epochs`, `OIData.split_by_epoch` |
+| Step 3, channels | built | `OIData.select(wavel_min, wavel_max, ranges=, exclude=, observables=)`; no binning helper (binning is only for compute cost, §2.4) |
+| Step 4, continuum fit | built | `spectra.PowerLaw`, `spectra.BlackBody`, `fitting.fit`, `likelihood.numpyro_model`, `noise=` through `likelihood.inflated_errors` |
+| Step 5, lines | built | `spectra.Nodes`, `spectra.Sum`, `spectra.GaussianLine`, `spectra.LorentzianLine`; `spectra.Tabulated` deprecated |
+| Step 6, spectra and differential phase | built | `oifits.read_oifits(extras=)`, `observables.FluxSpectrum`, `observables.DifferentialPhase`, `OIData.with_flux_scale`, `OIData.with_continuum` |
+| Step 7, compare models | partly built | `fitting.fit` (`info["chi2"]` per dataset, with the inflated errors when error terms are fitted), `imaging.log_evidence`, `likelihood.posterior_predictive_summary`; no helper reports χ²/N on the uninflated errors or plots data against model |
+| Step 8, image | built | `models.Image`, `fields.GaussianField`, composites in `models.System` |
+| 2.1 `Sum`, `Nodes(outside=0.0)`, positivity on the total, one reference-flux rule | built | `spectra.Nodes`, `spectra.Sum._params_valid`, `spectra.Spectrum.__call__` (value at `wavel0`); `spectra.Tabulated.__init__` warns, removal pending |
+| 2.2 item 1, OI_FLUX/NFLUX, `total_spectrum`, grey scale | built (intrinsic flux) | `models.SourceModel.total_spectrum`, `observables.FluxSpectrum`, `OIData.with_flux_scale`, `likelihood.flux_scale_posterior`; coupled flux (primary beam) not built |
+| 2.2 item 2, prior on the reference spectrum | built (documentation) | `docs/spectro_observables.md`, "The degeneracy without OI_FLUX" |
+| 2.2 item 3, calibrator spectra | not built (virgil-vlti scope) | — |
+| 2.3 differential phase | built, one approximation | `observables.DifferentialPhase.build` (closure-free projection, `prior_width=` option), `observables.continuum_operator`; cross-covariance with T3PHI neglected (open for Ben) |
+| 2.4 gains on log \|V\| | built | `gains.GainModes`, `gains.gain_modes`, `OIData.with_gains`; noise terms `vis_gain_telescope`, `_baseline`, `_chromatic`, `_modes` |
+| 2.4 closure offsets | partly built | `gains.ClosureOffsets`, `gains.closure_offsets`, `OIData.with_closure_offsets`; three telescopes refused in `gains.closure_offsets`; `OI_CORR` not read; data with offsets cannot be split or selected |
+| 2.5 `mjd`, `frame`, epochs | built | as step 2 |
+| 2.6 wavelength scale | built | `OIData.with_wavelength_scale`, `likelihood.WAVEL_TERMS`; the OI_FLUX wavelengths are not rescaled |
+| 2.6 floors and `inflated_errors(where=, combine=)` | built | `likelihood.inflated_errors`, `OIData.with_error_floor`, `_utils.inflate_errors`; no `noise=` terms for the extras |
+| 2.7 dual-field calibrator | built, in virgil-vlti | `virgil_vlti/calibrate.py` (`--dual-field`) |
+| 2.8 smearing | not built | nothing in `src/virgil`; listed under "Not yet" in `docs/spectro_observables.md` |
+
+**Next, in order of value** (none needs new data):
+1. Bandwidth smearing by oversampling in wavelength, with the rule of §2.8 (6a PR C); then the spectral-resolution kernel.
+2. Closure offsets for three telescopes (von Mises chord residuals).
+3. A model-comparison helper for step 7: χ²/N per dataset and observable on the uninflated errors, beside the fitted ones.
+4. Rescale the OI_FLUX wavelengths by `wavel_scale`, and `noise=` terms for the extras.
+5. The primary beam (coupled flux), and reading `OI_CORR` into gain or offset modes.

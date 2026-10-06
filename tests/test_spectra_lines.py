@@ -286,3 +286,54 @@ def test_binary_and_wrapped_total_spectra_match_their_systems():
     expected = system.total_spectrum(wavel)
     assert onp.allclose(expected, 1.0 + 0.3 * wavel / 2.0e-6, rtol=1e-6)
     assert onp.allclose(Rotated(system, 40.0).total_spectrum(wavel), expected)
+
+
+def test_select_ranges_and_exclude_split_the_likelihood():
+    waves = (2.0e-6, 2.1e-6, 2.2e-6, 2.3e-6)
+    data = OIData(read_oifits(build_hdulist(_tables(waves=waves))))
+    noisy = data.with_model(TRUTH, jax.random.PRNGKey(1))
+    window = [(2.15e-6, 2.25e-6)]
+    outer = noisy.select(ranges=[(1.9e-6, 2.15e-6), (2.25e-6, 2.4e-6)])
+    assert onp.allclose(
+        onp.unique(onp.asarray(outer.wavel)),
+        [2.0e-6, 2.1e-6, 2.3e-6],
+        rtol=1e-6,
+    )
+    excluded = noisy.select(exclude=window)
+    assert excluded.n_independent == outer.n_independent
+    inner = noisy.select(ranges=window)
+    whole = model_loglike(TRUTH, noisy)
+    parts = model_loglike(TRUTH, excluded) + model_loglike(TRUTH, inner)
+    assert parts == pytest.approx(whole, rel=1e-5)
+    with pytest.raises(ValueError, match="not both"):
+        noisy.select(2.0e-6, ranges=window)
+    with pytest.raises(ValueError, match="No samples"):
+        noisy.select(exclude=[(1.0e-6, 3.0e-6)])
+
+
+def test_select_observables_keeps_closure_phases_or_visibilities():
+    waves = (2.0e-6, 2.1e-6, 2.2e-6, 2.3e-6)
+    data = OIData(read_oifits(build_hdulist(_tables(waves=waves))))
+    noisy = data.with_model(TRUTH, jax.random.PRNGKey(2))
+    cp_only = noisy.select(2.05e-6, 2.25e-6, observables="phi")
+    assert cp_only.vis.size == 0 and cp_only.has_phases
+    assert cp_only.cp_flag
+    middle = noisy.select(2.05e-6, 2.25e-6)
+    assert cp_only.phi.size == middle.phi.size
+    vis_only = noisy.select(observables=("vis",))
+    assert not vis_only.has_phases and not vis_only.cp_flag
+    assert vis_only.vis.size == noisy.vis.size
+    # V² and closure phases are independent, so the parts sum to the whole.
+    whole = model_loglike(TRUTH, noisy)
+    parts = model_loglike(TRUTH, vis_only) + model_loglike(
+        TRUTH, noisy.select(observables="phi")
+    )
+    assert parts == pytest.approx(whole, rel=1e-5)
+    assert (
+        cp_only.n_independent + vis_only.select(2.05e-6, 2.25e-6).n_independent
+        == middle.n_independent
+    )
+    with pytest.raises(ValueError, match="observables must name"):
+        noisy.select(observables=("v2",))
+    with pytest.raises(ValueError, match="observables must name"):
+        noisy.select(observables=())
