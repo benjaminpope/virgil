@@ -119,3 +119,20 @@ def test_score_resamples_onto_the_truth_grid():
         fine, truth, pixel_scale_mas=0.5, truth_pixel_scale_mas=SCALE
     )
     assert out["ncc"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_rms_convolved_arrays_without_scale_or_beam():
+    truth = np.asarray(_scene())
+    other = np.roll(truth, 2, axis=1)
+    out = metrics.rms_convolved(other, truth)
+    assert float(out) > 0
+    assert float(metrics.rms_convolved(truth, truth)) == pytest.approx(0.0)
+    with_scale = metrics.rms_convolved(other, truth, SCALE)
+    assert float(out) == pytest.approx(float(with_scale))
+
+
+def test_rms_convolved_beam_needs_pixel_scale_for_arrays():
+    truth = np.asarray(_scene())
+    beam = Beam(1.0, 1.0, 0.0)
+    with pytest.raises(ValueError, match="pixel_scale_mas"):
+        metrics.rms_convolved(truth, truth, beam=beam)
