@@ -50,6 +50,7 @@ nav:
   - Home: index.md
   - Background:
       - Contributions: contributors.md
+      - Development carbon: dev_carbon.md
       - Conventions: conventions.md
       - "Gaussian processes and information field theory": gp_and_ift.md
   - Data Handling:

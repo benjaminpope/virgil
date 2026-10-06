@@ -1,0 +1,91 @@
+# Development carbon of virgil: config for claude-code-carbon-dashboard's
+# carbon_report.py, run through scripts/dev_carbon.py. See that tool's
+# README for the schema. The headline counts development and validation
+# only; data analysis (science) is costed but kept out of it.
+
+repo = "benjaminpope/virgil"
+github_user = "benjaminpope"
+# The per-record ledger stays private (~/.claude/carbon/ledger-virgil.json);
+# only daily totals of expired records are committed, as
+# docs/generated/dev_carbon_archive.json.
+hide_excluded = true
+
+[claude]
+# The main checkout and its worktrees (.claude/worktrees/*), the sessions
+# opened in them from other projects, and the old sibling worktrees
+# (~/code/drpangloss-*).
+projects = ["drpangloss"]
+
+[vscode]
+# Single-folder workspaces on the repository. The multi-root workspace that
+# also holds nuHor matches too; its science folder puts it in the excluded
+# class below.
+folders = ["~/code/drpangloss"]
+
+[gha]
+enabled = true
+
+[slurm]
+host = "nt"
+user = "bpope"
+start = "2026-01-01"
+local_dirs = [
+    "~/code/ozstar_scripts/results",
+    "~/code/drpangloss/ozstar",
+    "~/data/imaging_contests/results/logs",
+    "~/data/virgil_validation/sbc_numpyro/logs",
+    "~/code/nuHor/notebooks/ozstar_virgil",
+]
+remote_dirs = ["/fred/oz440/bpope/jobs/*/logs"]
+include = ["*"]
+exclude = []
+
+# Data analysis: excluded from the headline and shown only as one aggregate
+# line. Covers the Apep, nuHor (HR 4049, HD 206893, PIONIER), ELR/PAVO,
+# IW Car, VLTI calibration (GRAVITY PCA, VLTI notebooks) and ESO archive
+# (download, pipeline image, reductions and fits) work, plus jobs whose
+# purpose is unclear. hide_excluded drops their names from every output,
+# including the archive committed to git.
+[classes.science]
+sessions_file = "~/.claude/carbon/virgil-science-sessions.txt"
+jobs = [
+    "apep*", "elr*", "pionier*", "hr4049*", "hd206893*", "iwcar*",
+    "gcp_*", "gravity_cal*", "vlti*", "eso_*", "sweep-*", "gpu-test",
+]
+dirs = [
+    "*apep*", "*nuHor*", "*hr4049*", "*hd206893*", "*iwcar*", "*elr-pavo*",
+    "*drpangloss-elr*", "*gravity_cal*", "*vlti*", "*eso_*", "*pionier*",
+    "*lbfgs_sweep_diag*",
+]
+branches = [
+    "apep-*", "*-apep-*", "elr-*pavo*", "elr-robustness-review", "elr-s6-chara-notebook",
+    "remove-elr-pavo",
+    "gravity-calibration-review", "move-gravity-review", "pds70-disk",
+]
+
+# Validation of virgil: counted in the headline, shown as validation.
+[classes.validation]
+jobs = ["sbc*", "contest*", "detection-mc", "orbitize*", "*validation*"]
+dirs = ["*virgil_validation*", "*sbc_numpyro*", "*contest_imaging*", "*imaging_contests*",
+        "*detection_mc*", "*orbitize_posterior*"]
+branches = ["validation-*"]
+
+# Everything else counts as development: dpg_prof, virgil-nb, sparse-mwe,
+# nuts-mass, virgil-clean, stage6d-gains, lbfgs-mwe-diag, bench-ft.
+
+[features]
+# Feature labels are public PR titles; these two name a science target, so
+# they are shortened here (keeping the "#N" prefix that links the PR).
+"imaging-s4f-sparco" = "#83 SPARCO spectra: BlackBody temperatures"
+"imaging-s4c-pionier" = "#79 Imaging Stage 4c: SPARCO imaging of real PIONIER data"
+"job:dpg_prof" = "Performance profiling"
+"job:virgil-nb" = "Tutorial notebooks"
+"job:stage6d-gains" = "Stage 6d gains"
+"job:sparse-mwe" = "Sparse imaging / CLEAN"
+"job:virgil-clean" = "Sparse imaging / CLEAN"
+"job:nuts-mass" = "NUTS mass matrix"
+"job:lbfgs-mwe-diag" = "Imaging optimiser diagnostics"
+"job:contest*" = "Validation: imaging contests"
+"job:sbc*" = "Validation: simulation-based calibration"
+"job:detection-mc" = "Validation: detection false alarms"
+"job:orbitize*" = "Validation: orbits against orbitize!"

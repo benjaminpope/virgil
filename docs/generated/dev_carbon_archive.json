@@ -1,0 +1,845 @@
+{
+"rows": {
+"2026-03-04|copilot|Copilot cloud agent|cloud agent|dev|#30": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#30",
+"kg": [
+0.006916086415833331,
+0.013491726704999997,
+0.05214814338149999
+],
+"kg_by_type": {},
+"kind": "cloud agent",
+"kwh": [
+0.020683546333333327,
+0.040446967999999986,
+0.1575938525
+],
+"label": "Copilot cloud agent",
+"n": 1,
+"override": false,
+"pr": 30,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot cloud agent|cloud agent|dev|#31": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#31",
+"kg": [
+0.0014830673630555555,
+0.002893130355,
+0.011182510576499998
+],
+"kg_by_type": {},
+"kind": "cloud agent",
+"kwh": [
+0.004435325222222223,
+0.008673341333333334,
+0.03379401083333333
+],
+"label": "Copilot cloud agent",
+"n": 1,
+"override": false,
+"pr": 31,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot cloud agent|cloud agent|dev|#32": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#32",
+"kg": [
+0.010484258388333332,
+0.02045242647,
+0.079052599521
+],
+"kg_by_type": {},
+"kind": "cloud agent",
+"kwh": [
+0.03135467533333333,
+0.061314512,
+0.238900235
+],
+"label": "Copilot cloud agent",
+"n": 2,
+"override": false,
+"pr": 32,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot cloud agent|cloud agent|dev|#33": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#33",
+"kg": [
+0.0010572361400000001,
+0.00206242956,
+0.007971690707999999
+],
+"kg_by_type": {},
+"kind": "cloud agent",
+"kwh": [
+0.003161816,
+0.006182976,
+0.02409078
+],
+"label": "Copilot cloud agent",
+"n": 1,
+"override": false,
+"pr": 33,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot cloud agent|cloud agent|dev|#34": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#34",
+"kg": [
+0.0024668843266666663,
+0.004812335639999999,
+0.018600611651999995
+],
+"kg_by_type": {},
+"kind": "cloud agent",
+"kwh": [
+0.007377570666666665,
+0.014426943999999997,
+0.05621181999999999
+],
+"label": "Copilot cloud agent",
+"n": 1,
+"override": false,
+"pr": 34,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot cloud agent|cloud agent|dev|#35": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#35",
+"kg": [
+0.0016739572216666666,
+0.0032655134699999997,
+0.012621843620999999
+],
+"kg_by_type": {},
+"kind": "cloud agent",
+"kwh": [
+0.005006208666666666,
+0.009789711999999999,
+0.038143735
+],
+"label": "Copilot cloud agent",
+"n": 1,
+"override": false,
+"pr": 35,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot cloud agent|cloud agent|dev|#36": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#36",
+"kg": [
+0.0027165095263888884,
+0.005299298174999999,
+0.0204828164025
+],
+"kg_by_type": {},
+"kind": "cloud agent",
+"kwh": [
+0.008124110555555555,
+0.015886813333333333,
+0.06189992083333333
+],
+"label": "Copilot cloud agent",
+"n": 1,
+"override": false,
+"pr": 36,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot cloud agent|cloud agent|dev|#37": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#37",
+"kg": [
+0.006945454086388888,
+0.013549016414999998,
+0.052369579234499995
+],
+"kg_by_type": {},
+"kind": "cloud agent",
+"kwh": [
+0.020771374555555555,
+0.04061871733333333,
+0.15826304083333328
+],
+"label": "Copilot cloud agent",
+"n": 1,
+"override": false,
+"pr": 37,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot cloud agent|cloud agent|dev|#38": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#38",
+"kg": [
+0.01267214984472222,
+0.024720509864999997,
+0.0955495705695
+],
+"kg_by_type": {},
+"kind": "cloud agent",
+"kwh": [
+0.03789787788888889,
+0.07410983733333332,
+0.2887547658333333
+],
+"label": "Copilot cloud agent",
+"n": 2,
+"override": false,
+"pr": 38,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot cloud agent|cloud agent|dev|#44": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#44",
+"kg": [
+0.004302363736388889,
+0.008392942515,
+0.0324403524645
+],
+"kg_by_type": {},
+"kind": "cloud agent",
+"kwh": [
+0.012866834555555557,
+0.025161277333333336,
+0.09803609083333333
+],
+"label": "Copilot cloud agent",
+"n": 1,
+"override": false,
+"pr": 44,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot code review|code review|dev|#29": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#29",
+"kg": [
+0.00872550504845452,
+0.017000112732627966,
+0.03343688048525593
+],
+"kg_by_type": {},
+"kind": "code review",
+"kwh": [
+0.026326554572965472,
+0.05133358924375533,
+0.10114462448751065
+],
+"label": "Copilot code review",
+"n": 1,
+"override": false,
+"pr": 29,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot code review|code review|dev|#30": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#30",
+"kg": [
+0.008901777877716227,
+0.017343549353489137,
+0.03411237302031161
+],
+"kg_by_type": {},
+"kind": "code review",
+"kwh": [
+0.026858404160298107,
+0.05237063145069988,
+0.1031879502347331
+],
+"label": "Copilot code review",
+"n": 1,
+"override": false,
+"pr": 30,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot code review|code review|dev|#31": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#31",
+"kg": [
+0.004406820731542687,
+0.008585915521529276,
+0.016887313376391887
+],
+"kg_by_type": {},
+"kind": "code review",
+"kwh": [
+0.013296239683315898,
+0.025926055173613804,
+0.051083143680560945
+],
+"label": "Copilot code review",
+"n": 1,
+"override": false,
+"pr": 31,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot code review|code review|dev|#33": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#33",
+"kg": [
+0.003613592999865003,
+0.007040450727654006,
+0.013847596968641346
+],
+"kg_by_type": {},
+"kind": "code review",
+"kwh": [
+0.010902916540319036,
+0.021259365242363316,
+0.041888177818059966
+],
+"label": "Copilot code review",
+"n": 1,
+"override": false,
+"pr": 33,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot code review|code review|dev|#34": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#34",
+"kg": [
+0.004450888938858114,
+0.008671774676744569,
+0.017056186510155804
+],
+"kg_by_type": {},
+"kind": "code review",
+"kwh": [
+0.013429202080149054,
+0.02618531572534994,
+0.05159397511736655
+],
+"label": "Copilot code review",
+"n": 1,
+"override": false,
+"pr": 34,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot code review|code review|dev|#36": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#36",
+"kg": [
+0.00898991429234708,
+0.017515267663919722,
+0.03445011928783944
+],
+"kg_by_type": {},
+"kind": "code review",
+"kwh": [
+0.027124328953964428,
+0.052889152554172154,
+0.10420961310834431
+],
+"label": "Copilot code review",
+"n": 1,
+"override": false,
+"pr": 36,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|copilot|Copilot code review|code review|dev|#37": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#37",
+"kg": [
+0.004583093560804394,
+0.008929352142390448,
+0.01756280591144756
+],
+"kg_by_type": {},
+"kind": "code review",
+"kwh": [
+0.013828089270648531,
+0.026963097380558354,
+0.053126469427783374
+],
+"label": "Copilot code review",
+"n": 1,
+"override": false,
+"pr": 37,
+"source": "copilot",
+"tokens": {}
+},
+"2026-03-04|gha|Documentation|CI|dev|#29": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#29",
+"kg": [
+0.0015003407294444447,
+0.0023927935766666665,
+0.0023927935766666665
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.004054974944444445,
+0.006467009666666666,
+0.006467009666666666
+],
+"label": "Documentation",
+"n": 17,
+"override": false,
+"pr": 29,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|Documentation|CI|dev|#30": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#30",
+"kg": [
+8.206382111111111e-05,
+0.00013087812666666667,
+0.00013087812666666667
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.00022179411111111113,
+0.00035372466666666667,
+0.00035372466666666667
+],
+"label": "Documentation",
+"n": 1,
+"override": false,
+"pr": 30,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|Documentation|CI|dev|#31": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#31",
+"kg": [
+3.211193e-05,
+5.121317999999999e-05,
+5.121317999999999e-05
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+8.6789e-05,
+0.00013841399999999998,
+0.00013841399999999998
+],
+"label": "Documentation",
+"n": 1,
+"override": false,
+"pr": 31,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|Documentation|CI|dev|#36": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#36",
+"kg": [
+8.563181333333333e-05,
+0.00013656848,
+0.00013656848
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.00023143733333333335,
+0.000369104,
+0.000369104
+],
+"label": "Documentation",
+"n": 1,
+"override": false,
+"pr": 36,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|Documentation|CI|dev|#37": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#37",
+"kg": [
+8.0279825e-05,
+0.00012803294999999998,
+0.00012803294999999998
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.00021697250000000002,
+0.00034603499999999996,
+0.00034603499999999996
+],
+"label": "Documentation",
+"n": 1,
+"override": false,
+"pr": 37,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|Documentation|CI|dev|#38": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#38",
+"kg": [
+0.00012131173555555557,
+0.00019347201333333333,
+0.00019347201333333333
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.0003278695555555556,
+0.0005228973333333333,
+0.0005228973333333333
+],
+"label": "Documentation",
+"n": 2,
+"override": false,
+"pr": 38,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|Documentation|CI|dev|#40": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#40",
+"kg": [
+0.00016769563444444445,
+0.0002674466066666667,
+0.0002674466066666667
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.0004532314444444445,
+0.0007228286666666667,
+0.0007228286666666667
+],
+"label": "Documentation",
+"n": 2,
+"override": false,
+"pr": 40,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|automated tests|CI|dev|#29": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#29",
+"kg": [
+0.0011060775888888888,
+0.0017640095333333332,
+0.0017640095333333332
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.002989398888888889,
+0.004767593333333334,
+0.004767593333333334
+],
+"label": "automated tests",
+"n": 17,
+"override": false,
+"pr": 29,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|automated tests|CI|dev|#30": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#30",
+"kg": [
+3.924791444444445e-05,
+6.259388666666666e-05,
+6.259388666666666e-05
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.00010607544444444445,
+0.00016917266666666665,
+0.00016917266666666665
+],
+"label": "automated tests",
+"n": 1,
+"override": false,
+"pr": 30,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|automated tests|CI|dev|#31": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#31",
+"kg": [
+3.389592611111111e-05,
+5.405835666666666e-05,
+5.405835666666666e-05
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+9.161061111111111e-05,
+0.00014610366666666666,
+0.00014610366666666666
+],
+"label": "automated tests",
+"n": 1,
+"override": false,
+"pr": 31,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|automated tests|CI|dev|#36": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#36",
+"kg": [
+5.887187166666667e-05,
+9.389083e-05,
+9.389083e-05
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.00015911316666666667,
+0.000253759,
+0.000253759
+],
+"label": "automated tests",
+"n": 1,
+"override": false,
+"pr": 36,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|automated tests|CI|dev|#37": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#37",
+"kg": [
+3.389592611111111e-05,
+5.405835666666666e-05,
+5.405835666666666e-05
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+9.161061111111111e-05,
+0.00014610366666666666,
+0.00014610366666666666
+],
+"label": "automated tests",
+"n": 1,
+"override": false,
+"pr": 37,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|automated tests|CI|dev|#38": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#38",
+"kg": [
+0.0001462876811111111,
+0.0002333044866666667,
+0.0002333044866666667
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.00039537211111111115,
+0.0006305526666666667,
+0.0006305526666666667
+],
+"label": "automated tests",
+"n": 2,
+"override": false,
+"pr": 38,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|automated tests|CI|dev|#40": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "#40",
+"kg": [
+0.0003460952455555556,
+0.0005519642733333332,
+0.0005519642733333332
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.0009353925555555556,
+0.0014917953333333333,
+0.0014917953333333333
+],
+"label": "automated tests",
+"n": 2,
+"override": false,
+"pr": 40,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-04|gha|pages-build-deployment|CI|dev|main / unattributed": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-04",
+"feature": "main / unattributed",
+"kg": [
+6.957584833333335e-05,
+0.00011096188999999999,
+0.00011096188999999999
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.00018804283333333336,
+0.000299897,
+0.000299897
+],
+"label": "pages-build-deployment",
+"n": 2,
+"override": false,
+"pr": null,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-26|gha|Documentation|CI|dev|#45": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-26",
+"feature": "#45",
+"kg": [
+0.0001801836072222222,
+0.00028736284333333333,
+0.00028736284333333333
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.0004869827222222222,
+0.0007766563333333333,
+0.0007766563333333333
+],
+"label": "Documentation",
+"n": 2,
+"override": false,
+"pr": 45,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-26|gha|automated tests|CI|dev|#45": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-26",
+"feature": "#45",
+"kg": [
+0.0003353912688888889,
+0.0005348932133333332,
+0.0005348932133333332
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.000906462888888889,
+0.001445657333333333,
+0.001445657333333333
+],
+"label": "automated tests",
+"n": 2,
+"override": false,
+"pr": 45,
+"source": "gha",
+"tokens": {}
+},
+"2026-03-26|gha|pages-build-deployment|CI|dev|main / unattributed": {
+"calls": 0,
+"class": "dev",
+"day": "2026-03-26",
+"feature": "main / unattributed",
+"kg": [
+3.746391833333334e-05,
+5.974871e-05,
+5.974871e-05
+],
+"kg_by_type": {},
+"kind": "CI",
+"kwh": [
+0.00010125383333333334,
+0.000161483,
+0.000161483
+],
+"label": "pages-build-deployment",
+"n": 1,
+"override": false,
+"pr": null,
+"source": "gha",
+"tokens": {}
+}
+},
+"version": 1
+}
