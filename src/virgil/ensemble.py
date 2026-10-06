@@ -265,14 +265,18 @@ class Ensemble:
 
     Attributes
     ----------
-    model : SourceModel
-        The mean scene: ``System(star=PointSource(), env=mean)``, or the
-        mean Image alone without a star.
+    model : System
+        The mean scene, exactly: the kept members' images on their own
+        grids (``member0``, ``member1``, ...), each carrying its share of
+        the flux, and with a star a ``star`` component. ``chi2_red`` and
+        ``trace`` are of this model.
     mean : Image
         The mean extended emission, on the common grid (the finest pixels
         and the largest field of the kept members). Its brightness sums to
         one; with a star its ``flux`` is the mean flux relative to the
-        star.
+        star. Resampling smooths the members' images a little, so this
+        image is for display and scoring; it fits the data less well than
+        ``model``.
     std : array, shape (npix, npix)
         Standard deviation across the kept members of the same quantity as
         ``mean.brightness``, pixel by pixel.
@@ -512,6 +516,36 @@ def _mean_model(pixels, fraction, scale, star):
     return System(star=PointSource(), env=image)
 
 
+def _member_image(model, shift, star):
+    """A member's Image on its own grid, moved by ``shift`` (dra, ddec)."""
+    if star:
+        return model.env
+    return model.set(
+        ["dra", "ddec"],
+        [model.dra + float(shift[0]), model.ddec + float(shift[1])],
+    )
+
+
+def _mixture(images, fractions, chosen, star):
+    """The mean of the ``chosen`` members' normalised scenes.
+
+    Each image keeps its own grid, so the visibilities are exactly the mean
+    of the members'. The others carry zero flux: every subset has the same
+    structure and so shares one compilation of the χ².
+    """
+    share = onp.zeros(len(images))
+    share[list(chosen)] = 1.0 / len(chosen)
+    fluxes = share * onp.asarray(fractions, dtype=float)
+    parts = {
+        f"member{j}": image.set("flux", jax.numpy.asarray(flux))
+        for j, (image, flux) in enumerate(zip(images, fluxes))
+    }
+    if not star:
+        return System(**parts)
+    star_flux = jax.numpy.asarray(1.0 - fluxes.sum())
+    return System(star=PointSource(flux=star_flux), **parts)
+
+
 def _chi2_red(model, datasets):
     chi2 = _chi2(model, datasets)
     return tuple(c / d.n_independent for c, d in zip(chi2, datasets))
@@ -535,7 +569,10 @@ def combine(data, groups, *, spec=None, star=True):
     4. In order of total χ², add members to a running mean one at a time,
        keeping each only if the mean's χ² does not rise on any dataset (so
        visibilities and closure phases, given as separate datasets, are
-       judged separately).
+       judged separately). The running mean is judged as the mixture of
+       the members' images on their own grids, which is exact; resampling
+       to the common grid smooths them, which on precise data can raise
+       χ² several-fold and so let worse members through.
 
     With a star, the mean is of the whole normalised sky, star included:
     the star's fraction of the flux is the members' mean, and the image's
@@ -628,28 +665,34 @@ def combine(data, groups, *, spec=None, star=True):
             onp.asarray(resample(image, draw.pixel_scale_mas, npix, scale))
         )
         fractions.append(fraction)
+    shifts = [(0.0, 0.0)] * len(live)
     if not star:
         shift = spec.max_shift_mas
         if shift is None:
             shift = beam(data).major_mas
-        pixels = [pixels[0]] + [
-            onp.asarray(align(p, pixels[0], shift, scale)[0])
-            for p in pixels[1:]
-        ]
+        aligned = [align(p, pixels[0], shift, scale) for p in pixels[1:]]
+        pixels = [pixels[0]] + [onp.asarray(a[0]) for a in aligned]
+        shifts = [(0.0, 0.0)] + [a[1] for a in aligned]
     # A member's image carries its fraction of the total flux; float64, so
     # that averaging identical images returns them unchanged.
     pixels = [onp.asarray(p, dtype=float) for p in pixels]
     weighted = [f * p / p.sum() for p, f in zip(pixels, fractions)]
+    images = [
+        _member_image(members[i].result.model, s, star)
+        for i, s in zip(live, shifts)
+    ]
 
     # The iterative mean, from the best member, judged in float64 so that
-    # rounding cannot reject a member that changes nothing.
+    # rounding cannot reject a member that changes nothing. It is judged as
+    # the mixture of the members' images on their own grids, which is
+    # exact: the common grid is only for display, as resampling there
+    # smooths the images.
     with run_in("float64"):
         observations = cast_tree(datasets, "float64")
+        images = cast_tree(images, "float64")
 
         def chi2_red(members):
-            mean = onp.mean([weighted[j] for j in members], axis=0)
-            fraction = float(onp.mean([fractions[j] for j in members]))
-            model = _mean_model(mean, fraction, scale, star)
+            model = _mixture(images, fractions, members, star)
             return _chi2_red(model, observations)
 
         chosen = [0]
@@ -665,6 +708,12 @@ def combine(data, groups, *, spec=None, star=True):
                 trace.append(current)
             else:
                 drop([live[k]], "mean")
+        model = _mixture(
+            [images[j] for j in chosen],
+            [fractions[j] for j in chosen],
+            range(len(chosen)),
+            star,
+        )
     for k in chosen:
         members[live[k]] = dataclasses.replace(
             members[live[k]], kept=True, reason=None
@@ -673,12 +722,12 @@ def combine(data, groups, *, spec=None, star=True):
     stack = onp.stack([weighted[j] for j in chosen])
     fraction = float(onp.mean([fractions[j] for j in chosen]))
     mean = stack.mean(axis=0)
-    model = _mean_model(mean, fraction, scale, star)
+    image = _mean_model(mean, fraction, scale, star)
     # In units of the mean image's unit-sum brightness.
     std = stack.std(axis=0) / mean.sum()
     return Ensemble(
         model=model,
-        mean=model.env if star else model,
+        mean=image.env if star else image,
         std=std,
         chi2_red=current,
         trace=trace,

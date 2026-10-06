@@ -100,6 +100,37 @@ def test_identical_members_have_zero_spread():
     assert onp.isclose(float(result.mean.flux), 0.3, rtol=1e-5)
 
 
+def test_mean_is_judged_on_the_members_own_grids():
+    # The common grid has the finest pixels and the largest field, so a
+    # member on a coarser, incommensurate grid is resampled to it, which
+    # smooths the image and on these data raises its chi2 several-fold.
+    # Judged on its own grid, the best member alone keeps its own chi2.
+    coarse = SCALE * 4 / 3
+    best = System(
+        star=PointSource(),
+        env=Image.from_brightness(
+            gaussian_blob(9, coarse, 40.0, dra=48.0), coarse, flux=0.3
+        ),
+    )
+    group = _group(0, [_scene(36.0), best, _scene(44.0)])
+    group = Group(
+        Draw(0, "tsv", 9, coarse, "flat", group.draw.weights), group.curve
+    )
+    other = _group(1, [_scene(30.0), _scene(32.0), _scene(34.0)])
+    # Keep the fine-grid members live, so that the common grid is theirs.
+    spec = EnsembleSpec(chi2_ratio=1e9, mad_cut=1e9)
+    result = combine(DATASETS, [group, other], spec=spec)
+    first = min(
+        (m for m in result.members if m.reason != "window"),
+        key=lambda m: m.total_chi2_red,
+    )
+    assert first.result.model is best
+    assert onp.allclose(result.trace[0], first.chi2_red, rtol=1e-4)
+    ndata = [d.n_independent for d in DATASETS]
+    chi2 = [c / n for c, n in zip(_chi2(result.model, DATASETS), ndata)]
+    assert onp.allclose(result.chi2_red, chi2, rtol=1e-4)
+
+
 def test_draws_are_reproducible_and_grouped_by_geometry():
     spec = EnsembleSpec(n_weights=4)
     a = draw_groups(DATA, 8, jax.random.PRNGKey(3), spec)
