@@ -27,6 +27,9 @@ Modules:
 * [`gains`][virgil.gains]: calibration gains correlated across channels.
 * [`priors`][virgil.priors]: isotropic-orientation priors (inclination,
   latitude) for `fit` and `numpyro_model`.
+* [`orbits`][virgil.orbits]: Keplerian orbits; [`epochs`][virgil.epochs]:
+  named epochs of data, one snapshot of a moving scene per dataset.
+* [`simulate`][virgil.simulate]: simulated observations and bias tests.
 * [`plotting`][virgil.plotting]: figures.
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
@@ -47,6 +50,7 @@ from . import (  # noqa: E402
     coverage,
     detection,
     ensemble,
+    epochs,
     fields,
     fitting,
     gains,
@@ -68,6 +72,7 @@ from . import (  # noqa: E402
 )
 from ._geometry import pixel_offsets  # noqa: E402
 from .detection import detection_statistics  # noqa: E402
+from .epochs import Epochs  # noqa: E402
 from .fields import GaussianField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
@@ -113,6 +118,7 @@ from .models import (  # noqa: E402
     Image,
     LimbDarkenedDisk,
     ModulatedGaussianRim,
+    OrbitalBinary,
     PointSource,
     QuadraticLimbDarkenedDisk,
     Resolved,
@@ -154,6 +160,7 @@ __all__ = [
     "BlackBody",
     "EllipticalGaussian",
     "EllipticalLimbDarkenedDisk",
+    "Epochs",
     "FlaredDiskGaussian",
     "FlaredDiskHG",
     "FlaredDiskPowerLaw",
@@ -170,6 +177,7 @@ __all__ = [
     "ModulatedGaussianRim",
     "Nodes",
     "OIData",
+    "OrbitalBinary",
     "PointSource",
     "PositionData",
     "RVData",

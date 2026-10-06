@@ -107,6 +107,7 @@ nav:
       - Detection: api/detection.md
       - Spectra: api/spectra.md
       - Orbits: api/orbits.md
+      - Epochs: api/epochs.md
       - Fields: api/fields.md
       - Scenes: api/scenes.md
       - Metrics: api/metrics.md
