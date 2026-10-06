@@ -34,6 +34,15 @@ anything before 1.0 may change between minor versions.
   data argument is `data`. `samples_dict=` and `data_obj=` still work
   with a `FutureWarning` until 0.5.
 
+### Fixed
+
+- `metrics.rms_convolved` no longer needs `pixel_scale_mas` for array
+  inputs when no `beam` is given (the docstring already said so); a beam
+  with arrays and no pixel scale still raises a clear `ValueError`.
+- The `lawson_sigma_over_peak` docstring now states that both images are
+  normalised over the whole array, so flux in empty sky does affect σ.
+  Values are unchanged.
+
 ### Added
 
 - A private `virgil._deprecate` module for the 0.4 change to a single

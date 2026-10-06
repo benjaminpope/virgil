@@ -193,7 +193,9 @@ def rms_convolved(
     image, truth : Image or array-like, shape (ny, nx)
         Images on the same grid.
     pixel_scale_mas : float, optional
-        Pixel size in milliarcseconds; needed with a ``beam`` for arrays.
+        Pixel size in milliarcseconds; needed only with a ``beam``
+        (for an ``Image`` it is taken from the image). Without a beam,
+        arrays are compared as they are and no pixel size is required.
     beam : Beam, optional
         The beam, usually [`beam(data)`][virgil.imaging.beam].
     relative : bool, optional
@@ -205,8 +207,15 @@ def rms_convolved(
     jax.Array
         The rms difference.
     """
-    e, scale = _array_and_scale(image, pixel_scale_mas)
-    r, _ = _array_and_scale(truth, scale)
+    if beam is None:
+        e, r = (
+            np.asarray(getattr(image, "brightness", image)),
+            np.asarray(getattr(truth, "brightness", truth)),
+        )
+        scale = None
+    else:
+        e, scale = _array_and_scale(image, pixel_scale_mas)
+        r, _ = _array_and_scale(truth, scale)
     _check_same_shape(e, r)
     e, r = _unit_sum(e), _unit_sum(r)
     if beam is not None:
@@ -222,8 +231,13 @@ def lawson_sigma_over_peak(image, truth):
     Lawson et al. (2004), Eq. 2: with both images normalised to unit flux,
     σ is the root of the mean squared difference weighted by the true flux,
     ``σ² = Σ r (e - r)² / Σ r``, and the score is σ divided by the peak of
-    the truth. Smaller is better; 0 is a perfect reconstruction. Weighting
-    by the true flux means errors in the empty sky do not count.
+    the truth. Smaller is better; 0 is a perfect reconstruction.
+
+    Both images are normalised to unit sum over the whole array, and only
+    then is the rms weighted by the truth. The weighting means pixels where
+    the truth is zero are not scored directly, but flux the reconstruction
+    puts in empty sky lowers its flux on the source (the sum is fixed), so
+    it still raises σ indirectly.
 
     Parameters
     ----------
