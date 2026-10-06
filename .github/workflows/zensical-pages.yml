@@ -1,11 +1,12 @@
 name: Documentation (Zensical)
 
-# Pull requests are built by documentation.yml; this workflow builds main
-# once and (when ZENSICAL_DEPLOY_ENABLED is 'true') deploys that build.
+# Pull requests are built (not deployed) here; pushes to main are built once
+# and (when ZENSICAL_DEPLOY_ENABLED is 'true') deployed.
 on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 
 permissions:

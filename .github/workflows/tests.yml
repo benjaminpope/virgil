@@ -101,7 +101,7 @@ jobs:
           fi
           uv pip list --python .venv/bin/python
 
-      # Linting lives in lint.yml and docs builds in documentation.yml, so
+      # Linting lives in lint.yml and docs builds in zensical-pages.yml, so
       # neither blocks the test suite.
 
       # Most of the suite's time is JAX compiling; JAX's persistent cache
