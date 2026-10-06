@@ -127,10 +127,11 @@ jobs:
         # The JUnit report carries the validates markers (tests/conftest.py)
         # as evidence for virgil-validation; xunit1 keeps test properties.
         # Pull requests skip the tests marked slow (tests/conftest.py).
+        # Two workers on lowest deps: 4 workers at about 4 GB each exhaust the 16 GB runner.
         run: >-
           nproc; free -m; df -h .;
           ( while true; do echo "[mem] $(date +%T) $(free -m | awk '/Mem/{print "used " $3 " avail " $7}; /Swap/{print "swap " $3}' | tr '\n' ' ') $(ps -eo rss,args --sort=-rss | awk 'NR>1&&NR<6{printf "%dMB ", $1/1024}')"; sleep 10; done ) &
-          .venv/bin/python -m pytest -n auto -rs --durations=30
+          .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} -rs --durations=30
           ${{ github.event_name == 'pull_request' && '-m "not slow"' || '' }}
           --junitxml=junit-evidence.xml -o junit_family=xunit1
 
