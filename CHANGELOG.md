@@ -5,6 +5,21 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
+## Unreleased
+
+### Added
+
+- A private `virgil._deprecate` module for the 0.4 change to a single
+  model-before-data argument order. `old_order` lets a function written
+  in the new order accept calls in the 0.3 positional order, recognized
+  by which argument is the `OIData`, with a `FutureWarning` that names the
+  new call; with `removed=True` (for 0.5) such a call is a `TypeError`
+  naming the new call. `old_order` and `renamed` also accept the old
+  keyword names `data_obj=`, `observations=`, `model_object=`,
+  `model_fn=` and `samples_dict=` for `data`, `model` and `grid`, with a
+  `FutureWarning`; passing an old name with its new one is a `TypeError`.
+  No public function uses it yet, so nothing changes for users.
+
 ## 0.3.0 (2026-10-06)
 
 Everything listed as new was added after 0.2.0.
