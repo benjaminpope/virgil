@@ -5,8 +5,9 @@ the `Image` component (prerequisite 2), `Resolved` (prerequisite 3) and the
 `PowerLaw` and `BlackBody` spectra (prerequisite 4, in `virgil.spectra`)
 exist, and `Component`/`System` accept a spectrum as `flux`. The first
 component with a chromatic *shape*, `GravityDarkenedStar`, is described
-below. `Tabulated` (a free flux per channel) exists, provisionally: Stage 6a's
-`Nodes` will replace it. Still to do: rendering at a given wavelength.
+below. Stage 6a added `Nodes` (a free flux per channel), lines and `Sum`;
+`Tabulated` is deprecated in their favour. Still to do: rendering at a
+given wavelength.
 
 ## Goal
 
@@ -49,13 +50,14 @@ evaluates:
 |---|---|---|
 | `PowerLaw(ratio, index, wavel0)` | `ratio * (λ/λ0)**index` | `.flux.ratio`, `.flux.index` |
 | `Blackbody(ratio, temperature, wavel0)` | `ratio * B_λ(T) / B_λ0(T)` | `.flux.ratio`, `.flux.temperature` |
-| `Tabulated(ratio, wavel)` (provisional, private in 0.2.0; Stage 6a's `Nodes` will replace it) | `ratio` interpolated linearly between nodes at `wavel` (metres), constant beyond the end nodes | `.flux.ratio` |
+| `Tabulated(ratio, wavel)` (deprecated for Stage 6a's `Nodes`) | `ratio` interpolated linearly between nodes at `wavel` (metres), constant beyond the end nodes | `.flux.ratio` |
 
 `wavel0` is a reference wavelength (traceable, not normally fitted). With
 `wavel=None`, `PowerLaw` and `BlackBody` return their value at `wavel0`, so
 `render()` and the zero-baseline normalization keep working. `Tabulated` has
-no `wavel0`: its reference flux is the mean of its nodes, a rule that Stage 6a
-is to settle (see `spectro_interferometry_workflow.md` §2.1).
+no `wavel0`: its reference flux is the mean of its nodes. Stage 6a settled
+the rule as the value at `wavel0` for every spectrum, `Nodes` included
+(see `spectro_interferometry_workflow.md` §2.1).
 
 SPARCO then reads:
 

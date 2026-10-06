@@ -16,6 +16,8 @@ from .observables import (
     FluxSpectrum,
     TripleAmplitude,
     VisibilityAmplitude,
+    _ranges,
+    in_ranges,
 )
 from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from ._geometry import rotate
@@ -526,14 +528,35 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             out[id(b)] = epoch_of_frame[nearest]
         return out
 
-    def select(self, wavel_min=None, wavel_max=None):
-        """These data restricted to a wavelength range.
+    def select(
+        self,
+        wavel_min=None,
+        wavel_max=None,
+        *,
+        ranges=None,
+        exclude=None,
+        observables=None,
+    ):
+        """These data restricted to wavelength windows and observables.
 
         Parameters
         ----------
         wavel_min, wavel_max : float, optional
             Keep the samples with ``wavel_min <= wavel <= wavel_max``
             (metres); either bound may be left open.
+        ranges : sequence of (lo, hi), optional
+            Keep the samples in any of these wavelength ranges (metres,
+            inclusive), instead of ``wavel_min`` and ``wavel_max``.
+        exclude : sequence of (lo, hi), optional
+            Then drop the samples in any of these ranges (metres,
+            inclusive), e.g. a line or a telluric band.
+        observables : str or sequence of str, optional
+            The observables to keep: ``"vis"``, ``"phi"`` and the kinds of
+            ``extras`` (``observables.KINDS``); the others are dropped at
+            every wavelength. All are kept by default. Without the closure
+            phases, differential phases keep their closure part
+            (``closure_free=False``), which is then counted only once.
+            Calibration gains go with the visibilities.
 
         Returns
         -------
@@ -541,34 +564,107 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             The samples in range, with their observables and closure phases
             (a closure triangle's legs share a wavelength, so triangles are
             kept whole). Not available for projected (kernel, DISCO)
-            observables.
+            observables, or after closure-phase offsets are added.
 
         Examples
         --------
         Keep the K-band continuum of a GRAVITY file but not the Brγ window:
-        ``data.select(2.05e-6, 2.16e-6)``.
+        ``data.select(2.05e-6, 2.16e-6)``, or the continuum on both sides
+        of the line: ``data.select(exclude=[(2.162e-6, 2.170e-6)])``.
+        Closure phases alone, between 2.05 and 2.18 µm:
+        ``data.select(2.05e-6, 2.18e-6, observables="phi")``.
         """
-        wavel = onp.broadcast_to(onp.asarray(self.wavel), onp.shape(self.u))
-        keep = onp.ones(wavel.shape, dtype=bool)
-        if wavel_min is not None:
-            keep &= wavel >= wavel_min
-        if wavel_max is not None:
-            keep &= wavel <= wavel_max
-        if not keep.any():
+        if ranges is not None and (
+            wavel_min is not None or wavel_max is not None
+        ):
             raise ValueError(
-                f"No samples between {wavel_min} and {wavel_max} m; the data "
-                f"span {wavel.min():.4g} to {wavel.max():.4g} m."
+                "Give ranges, or wavel_min and wavel_max, not both."
             )
+        if ranges is None:
+            lo = -onp.inf if wavel_min is None else float(wavel_min)
+            hi = onp.inf if wavel_max is None else float(wavel_max)
+            ranges = [(lo, hi)]
+        ranges = _ranges(ranges)
+        exclude = _ranges(exclude) or ()
 
-        def flux_keep(block):
-            inside = onp.ones(block.wavel.shape, dtype=bool)
-            if wavel_min is not None:
-                inside &= block.wavel >= wavel_min
-            if wavel_max is not None:
-                inside &= block.wavel <= wavel_max
-            return inside
+        def inside(wavel):
+            keep = in_ranges(wavel, ranges)
+            if exclude:
+                keep &= ~in_ranges(wavel, exclude)
+            return keep
 
-        return self._subset(keep, flux_keep)
+        data = self
+        if observables is not None:
+            data = data._keep_observables(observables)
+        wavel = onp.broadcast_to(onp.asarray(data.wavel), onp.shape(data.u))
+        keep = inside(wavel)
+        if not keep.any():
+            outside = f", outside {list(exclude)}," if exclude else ""
+            raise ValueError(
+                f"No samples in {list(ranges)}{outside} "
+                f"while the data span {wavel.min():.4g} to "
+                f"{wavel.max():.4g} m."
+            )
+        out = data._subset(keep, lambda block: inside(block.wavel))
+        if out.n_independent == 0:
+            raise ValueError("No observables are left in these windows.")
+        return out
+
+    def _keep_observables(self, observables):
+        """These data with only the observables named (see ``select``)."""
+        if isinstance(observables, str):
+            observables = (observables,)
+        names = set(observables)
+        known = ("vis", "phi", *KINDS)
+        if not names or names - set(known):
+            raise ValueError(
+                f"observables must name some of {list(known)}; got "
+                f"{sorted(names)}."
+            )
+        if self.phase_offsets is not None and "phi" not in names:
+            raise ValueError(
+                "Data with closure-phase offsets cannot drop their closure "
+                "phases; add the offsets (with_closure_offsets) afterwards."
+            )
+        out = self
+        empty = np.zeros(0, dtype=int)
+        if "vis" not in names:
+            out = eqx.tree_at(
+                lambda d: (d.vis, d.d_vis, d.vis_index, d.gains),
+                out,
+                (out.vis[:0], out.d_vis[:0], empty, None),
+                is_leaf=lambda x: x is None,
+            )
+        dropped_phases = "phi" not in names and out.has_phases
+        if "phi" not in names:
+            out = eqx.tree_at(
+                lambda d: (
+                    d.phi,
+                    d.d_phi,
+                    d.i_cps1,
+                    d.i_cps2,
+                    d.i_cps3,
+                    d.phi_index,
+                    d.cp_noise,
+                ),
+                out,
+                (out.phi[:0], out.d_phi[:0], None, None, None, empty, None),
+                is_leaf=lambda x: x is None,
+            )
+            # A static field: tree_at made a fresh copy, so set it there.
+            object.__setattr__(out, "cp_flag", False)
+        extras = []
+        for block in out.extras:
+            if block.kind not in names:
+                continue
+            if (
+                dropped_phases
+                and isinstance(block, DifferentialPhase)
+                and block.closure_free
+            ):
+                block = block.rebuild(closure_free=False)
+            extras.append(block)
+        return eqx.tree_at(lambda d: d.extras, out, tuple(extras))
 
     def _subset(self, keep, flux_keep=None):
         """These data restricted to the samples where ``keep`` is True.

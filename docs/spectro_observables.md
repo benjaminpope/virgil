@@ -40,6 +40,44 @@ Choose one of `"flux"` and `"nflux"`: they are two readings of the same
 table. V² and |V| of one measurement are not independent, so read both only
 when the pipeline measured them separately.
 
+## Choosing channels and observables
+
+[`OIData.select`][virgil.oidata.OIData.select] restricts data to wavelength
+windows and to some of their observables, so there is no need to flag a
+`read_oifits` record by hand. Wavelengths are in metres and ranges are
+inclusive:
+
+```python
+data.select(2.05e-6, 2.40e-6)                       # one window
+data.select(ranges=[(2.05e-6, 2.10e-6), (2.20e-6, 2.40e-6)])
+data.select(exclude=[(2.162e-6, 2.170e-6)])         # drop a line
+data.select(2.05e-6, 2.18e-6, observables="phi")    # closure phases only
+data.select(observables=("phi", "visphi"))          # no V², no spectrum
+```
+
+`observables` names what to keep: `"vis"`, `"phi"` and the `extras` kinds
+of the table above. The others are dropped at every wavelength. Closure
+triangles are kept whole, since their legs share a wavelength. Calibration
+gains ([`with_gains`][virgil.oidata.OIData.with_gains]) go with the
+visibilities. When the closure phases are dropped, the differential phases
+keep their closure part as well (below), because it is then counted only
+once. Projected observables (kernel phases, DISCOs) cannot be selected, and
+closure-phase offsets must be added after selecting.
+
+Windows that differ by observable are separate datasets of one fit. V² and
+closure phases are independent, so the list below counts nothing twice.
+Here a line window is left out of the V², for example, while the closure
+phases are used everywhere:
+
+```python
+line = [(2.162e-6, 2.170e-6)]
+datasets = [
+    data.select(exclude=line, observables="vis"),
+    data.select(observables="phi"),
+]
+result = fit(model, priors, datasets)
+```
+
 ## Spectra and the grey scale
 
 Visibilities only constrain flux *ratios*: multiplying every component's
