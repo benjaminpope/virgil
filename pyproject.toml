@@ -123,3 +123,10 @@ addopts = "-q"
 # Dump every thread's traceback when a test runs past 5 minutes, so a hung
 # CI job shows where it stopped. It only prints; the test carries on.
 faulthandler_timeout = 300
+# The 0.4 argument-order shims (virgil._deprecate) warn on the 0.3 order and
+# the old argument names. No virgil code, test or tutorial may use them; the
+# tests of the shims opt in with pytest.warns.
+filterwarnings = [
+    "error:.*now takes the model before the data:FutureWarning",
+    "error:.*stops working in virgil 0.5:FutureWarning",
+]
