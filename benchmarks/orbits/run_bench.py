@@ -772,6 +772,7 @@ def parser():
     p.add_argument(
         "--suite",
         action="append",
+        choices=["baseline", "compile", "nuts-child"],
         default=None,
         help="baseline (default) and/or compile",
     )

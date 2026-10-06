@@ -199,7 +199,10 @@ class Measurement:
     n_compiles_first: int
     n_compiles_warm: int
     compile_names_warm: list
-    peak_rss_mb: float  # process peak after the step
+    peak_rss_mb: float  # process-lifetime peak so far: bleeds across rows
+    step_peak_rss_mb: float  # RSS sampled during this step only
+    rss_delta_mb: float  # step_peak_rss_mb minus RSS before the step
+    profiled: bool
     compile_peak_rss_mb: float  # sampled during the cold call
     device_in_use_delta_mb: object  # bytes_in_use after minus before
     device_peak_process_mb: object  # process-wide high-water mark
@@ -218,19 +221,29 @@ def measure(fn, repeats=5, profile_trace=None):
     ``profile_trace``: an optional context-manager factory (see
     ``run_bench.py --profile``) wrapped around extra warm calls, after the
     timed ones, so the trace holds no compile and does not bias the timings.
+    It is skipped (``profiled`` False) when the warm calls compiled.
+
+    ``peak_rss_mb`` and ``device_peak_process_mb`` are process-lifetime
+    high-water marks and carry over from earlier rows; the per-step figures
+    are ``rss_delta_mb`` and ``device_in_use_delta_mb``.
     """
     use0, _ = device_memory_mb()
-    with count_compiles() as cold, RssWatcher() as watch:
-        t0 = time.perf_counter()
-        result = block(fn())
-        first = time.perf_counter() - t0
-    warm_times = []
-    with count_compiles() as warm:
-        for _ in range(repeats):
+    rss0 = current_rss_mb()
+    with RssWatcher() as step_watch:
+        with count_compiles() as cold, RssWatcher() as watch:
             t0 = time.perf_counter()
-            block(fn())
-            warm_times.append(time.perf_counter() - t0)
-    if profile_trace is not None:
+            result = block(fn())
+            first = time.perf_counter() - t0
+        warm_times = []
+        with count_compiles() as warm:
+            for _ in range(repeats):
+                t0 = time.perf_counter()
+                block(fn())
+                warm_times.append(time.perf_counter() - t0)
+    # A step that compiles in warm calls would be profiled as compile, not
+    # steady state: skip it.
+    profiled = profile_trace is not None and warm["n"] == 0
+    if profiled:
         with profile_trace():
             for i in range(3):
                 with jax.profiler.StepTraceAnnotation("step", step_num=i):
@@ -247,6 +260,9 @@ def measure(fn, repeats=5, profile_trace=None):
         n_compiles_warm=warm["n"],
         compile_names_warm=sorted(set(warm["names"])),
         peak_rss_mb=peak_rss_mb(),
+        step_peak_rss_mb=step_watch.peak,
+        rss_delta_mb=max(step_watch.peak - rss0, 0.0),
+        profiled=profiled,
         compile_peak_rss_mb=watch.peak,
         device_in_use_delta_mb=(
             None if use1 is None or use0 is None else use1 - use0

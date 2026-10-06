@@ -77,7 +77,7 @@ class Case:
     truth: tuple = tuple(TRUTH.items())
     flux: float = 0.1
     d_vis: float = 0.01
-    d_phi: float = 0.02  # degrees
+    d_phi: float = 0.02  # degrees (the data carry phi_unit="deg")
 
     def manifest(self):
         d = dataclasses.asdict(self)
@@ -173,6 +173,7 @@ def night(mjd, frames=1, rotation=0.0, d_vis=0.01, d_phi=0.5):
             "d_vis": onp.full(u.size, d_vis),
             "phi": onp.zeros(len(i1) * frames),
             "d_phi": onp.full(len(i1) * frames, d_phi),
+            "phi_unit": "deg",
             "i_cps1": shift(i1),
             "i_cps2": shift(i2),
             "i_cps3": shift(i3),
