@@ -236,8 +236,9 @@ def lawson_sigma_over_peak(image, truth):
     Both images are normalised to unit sum over the whole array, and only
     then is the rms weighted by the truth. The weighting means pixels where
     the truth is zero are not scored directly, but flux the reconstruction
-    puts in empty sky lowers its flux on the source (the sum is fixed), so
-    it still raises σ indirectly.
+    puts in empty sky changes its flux on the source (the sum is fixed), so
+    it still affects σ indirectly. It can raise or lower σ: taking flux off
+    a source pixel that was too bright lowers it.
 
     Parameters
     ----------
