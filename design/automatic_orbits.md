@@ -87,12 +87,27 @@ was the wrong one.
 * **The ranking is wrong.** `start_from_positions` ranks candidates with
   `noise=None`, i.e. the quoted errors. The nights with the largest s,
   the worst-calibrated, dominate the ranking.
-* **Mirror peaks.** With weak closure phases, or a near-equal-flux pair
-  (flux ≈ 0.5 here), a night's second peak is often near the point
-  reflection −r of the first. A single night taken from its mirror peak
-  reverses the apparent sense of motion. This is a plausible route from
-  i ≈ 31° (prograde) to i ≈ 110° (retrograde). It is a hypothesis for
-  the validation rerun to confirm, not a finding.
+* **The per-night ranking disagrees with an independent fit.** The
+  validation session's per-night fits (`fit_nights`: a binary with
+  linear motion and a fitted `phi_scale`) rank the peaks differently
+  from `epoch_positions`:
+  * on one night (2023-12-29), `epoch_positions` picked a peak that the
+    independent fit puts 8.9 behind the best, and reported a gap of
+    22.6 for it;
+  * on another (2024-02-27), its position was not among the
+    independent fit's top five.
+
+  The 180° mirror hypothesis (one night taken from the point
+  reflection −r of its true peak) is **ruled out**. Besides the quoted
+  errors, the candidate causes are:
+  * the grid's position or flux range (a peak cut off by the flux axis,
+    or a refinement leaving the grid cell);
+  * static versus within-night motion: `epoch_positions` fits a static
+    binary, while the independent fit includes the companion's motion
+    over the night, which for a short period moves it by a fraction of
+    λ/B.
+
+  PR A tests for this directly (§12).
 
 **The scale-marginalized surface.** Each night has an unknown error
 scale s_b per observable block b (V², closure phase). Give s_b its
@@ -784,11 +799,11 @@ need no `start_values`; a default maps an orbit and flux to an
 
 | Tool | Change |
 |---|---|
-| `epoch_positions` | PR A: gap, covariance and ranking on the scale-marginalized surface; new fields `chi2_raw` (χ²/N per dataset on the quoted errors), `scale` (ŝ per block) and `gap_quoted` (the old value, for comparison). Later it becomes a thin view of `epoch_maps` (the best peak of each catalogue). |
-| `EpochPositions.decisive`, `min_gap` | Unchanged API. The meaning of `gap` changes in PR A (documented in the CHANGELOG as a behaviour change). |
-| `start_from_positions`, `OrbitStart` | Kept through 0.4, with PR A's fixes. Deprecated (FutureWarning) when `automatic_orbit` lands; removed in 0.5. `OrbitStart.modes` switches from χ² on quoted errors to the positional identity used by `chain_starts`, so modes mean one thing everywhere. |
+| `epoch_positions` | PR A: a new field `gap_marginal` (the gap on the scale-marginalized surface) beside the unchanged `gap` for one release, then `gap` switches to the marginal value (decision 6). Covariance and ranking on the scale-marginalized surface; new fields `chi2_raw` (χ²/N per dataset on the quoted errors) and `scale` (ŝ per block). Later it becomes a thin view of `epoch_maps` (the best peak of each catalogue). |
+| `EpochPositions.decisive`, `min_gap` | Unchanged API. In PR A they compare `gap_marginal` (CHANGELOG: a behaviour change of `start_from_positions`); `gap` keeps its old value until the switch. |
+| `start_from_positions`, `OrbitStart` | Kept through 0.4, with PR A's fixes. Deprecated with a FutureWarning when `automatic_orbit` lands, then removed (decision 5). `OrbitStart.modes` switches from χ² on quoted errors to the positional identity used by `chain_starts`, so modes mean one thing everywhere. |
 | `OrbitStart.chain_values` | Superseded by `sample_modes` (chains per mode, not cycling). Kept until removal. |
-| `rank_orbits` | Gains `scales="quoted" \| "marginal"` (default "quoted" in 0.4, "marginal" in 0.5). |
+| `rank_orbits` | Gains `scales="quoted" \| "marginal"`, with "marginal" the default (decision 5). Until the default changes, omitting `scales` gives a FutureWarning. |
 | `chain_starts` | Unchanged; used inside `orbit_modes`. |
 | `starting_orbits` | Unchanged. It is the K = 1, no-floor special case of the TI-EM search and is tested to agree with it. |
 | `Epochs.noise` | Docs fixed or fixed values accepted (#268 item 3), in PR B. |
@@ -805,23 +820,35 @@ Benchmarks are staged alongside the code.
   * compute per-block raw χ² at every grid point (`whitened_residuals`
     split by block) and the scale-marginalized m = −Σ_b (ν_b/2) ln χ²_b
     with ν_b = `n_independent`;
-  * take the gap on m;
+  * add `gap_marginal`, the gap on m, beside the unchanged `gap` for
+    one release (decision 6); `decisive` and `min_gap` compare
+    `gap_marginal`;
   * take the covariance from the Hessian of −m at the refined position,
     which is the quoted-error covariance × ŝ² to first order;
-  * record `chi2_raw`, `scale` and `gap_quoted`;
+  * record `chi2_raw` and `scale`;
   * warn when raw χ²/N > 4.
 
   In `start_from_positions`, rank candidates with each dataset's ŝ
   (passed as `noise` values) instead of the quoted errors.
 
   **Tests:**
-  1. Multiplying one dataset's errors by 3 leaves `gap`, positions and
-     `cov` unchanged (rtol 1e-6) and divides `gap_quoted` by 9.
+  1. Multiplying one dataset's errors by 3 leaves `gap_marginal`,
+     positions and `cov` unchanged (rtol 1e-6) and divides `gap` by 9.
   2. On a simulated night with two peaks Δm < 1 and errors quoted 3× too
      small, `decisive(5.0)` is False (it is True on main), and
      `start_from_positions` does not seed from that night.
   3. `chi2_raw` ≈ s² for a simulated s.
   4. The ranking is unchanged under a common error rescaling.
+  5. **Per-night ranking against an independent fit.** On simulated
+     nights with several near-equal peaks, the order of the peaks from
+     `epoch_positions` on the scale-marginalized surface matches a
+     brute-force reference: a `fit` with a fitted `phi_scale` (and
+     `vis_scale`) started from every grid peak, then ranked by its
+     marginal score. Variants test the other candidate causes of the
+     Gl 229 disagreement (§1): a peak whose flux lies near the grid's
+     flux bound, a peak near the grid edge, and a night whose companion
+     moves by 0.2 λ/B within the night, where the static fit must
+     either agree or flag the motion (`spread_days`).
 
   CHANGELOG entry; the design note V gets a pointer. **Validation:** the
   `orbit_gl229` job, which reruns the Gl 229 fits.
@@ -873,25 +900,24 @@ Benchmarks are staged alongside the code.
 Order: A → B (and B0) → C → D → E → F → G → H. A and B are independent of
 the rest and of each other.
 
-## 13. Open questions for Ben
+## 13. Decisions (2026-10-07)
 
-1. **Δ thresholds.** Are a calibrated Δ_keep (bootstrap 99.9th
-   percentile, default 10 nats) and Δ_mode = 20 nats acceptable, or do
-   you want them fixed and documented instead of calibrated per system?
-2. **ν_eff.** Is reducing the degrees of freedom from the bootstrap
-   acceptable for correlated errors, or should correlated systematics be
-   modelled explicitly (e.g. wavelength-correlated closure-phase
-   offsets, as in the gains work)?
-3. **Weights.** Evidence-based mode weights as the default, with
-   stacking only as a misspecification check?
-4. **Dependencies.** May jaxns or blackjax become an optional extra if
-   the benchmark shows NS on the maps is the cheapest independent
-   check, or should it stay in virgil-validation only?
-5. **Defaults for 0.5.** Should `rank_orbits(scales="marginal")` become
-   the default, with `start_from_positions` removed?
-6. **Scope of PR A.** It changes the meaning of `gap` on main. Should it
-   instead add `gap_marginal` beside the old `gap` and switch only the
-   default `min_gap` comparison?
+Ben accepted the recommendations of this note, with these decisions:
+
+1. **Thresholds.** Δ_keep and Δ_mode are calibrated by bootstrap (§6),
+   with 10 and 20 nats as the defaults when no calibration is run.
+2. **Correlated errors.** Reduce the effective degrees of freedom ν_eff
+   from the bootstrap now; model correlated systematics explicitly
+   (e.g. wavelength-correlated closure-phase offsets) later.
+3. **Weights.** Per-mode evidence weights are the default; stacking is
+   reported as a misspecification check.
+4. **Dependencies.** jaxns and blackjax are allowed as optional extras
+   only, never core dependencies.
+5. **Defaults.** Ranking with marginalized scales is the default.
+   `start_from_positions` is deprecated with a FutureWarning, then
+   removed.
+6. **PR A.** It adds `gap_marginal` beside the unchanged `gap` for one
+   release, then `gap` switches to the marginal value.
 
 ## References
 
