@@ -3,6 +3,7 @@ visibilities and closure phases."""
 
 import warnings
 
+import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -249,6 +250,15 @@ def test_a_bound_cone_follows_the_orbit_with_traced_angles_under_jit():
         )
         assert float(snap.tilt) == pytest.approx(float(frame["line_tilt"]))
         assert float(snap.dra) == 0.0 and float(snap.ddec) == 0.0
+        # An optically thin cone is the same at +tilt and -tilt (mirror
+        # images through the sky plane): a bound tilt sees |line_tilt|.
+        assert abs(float(snap.tilt)) > 1.0
+        mirror = eqx.tree_at(lambda c: c.tilt, snap, -snap.tilt)
+        onp.testing.assert_allclose(
+            data.model(System(star=PointSource(), cone=mirror)),
+            data.model(System(star=PointSource(), cone=snap)),
+            atol=1e-12,
+        )
 
         def loglike(O, s):
             scene = System(

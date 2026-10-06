@@ -56,7 +56,11 @@ General requirements, numbered for reference in the stages below.
   the North angle and wavelength (plate) scale per instrument, the flux of
   an extended component per instrument, and a halo per filter. These are
   set by name, per epoch or per dataset, and may be tied between datasets
-  (one value per instrument).
+  (one value per instrument). A tied per-instrument flux scale for an
+  extended component must accept a spectral flux (a `BlackBody` or any
+  `Spectrum`, e.g. a scale times a spectrum shared across instruments), not
+  only a scalar, so that one SED is shared and only its normalisation is
+  per instrument.
 * **V4 Shared shape with optional per-epoch offsets.** The extended
   component's shape is shared across epochs, with an option for per-epoch
   offsets δ_e ~ N(0, τ²) of chosen parameters (a hierarchical shape), with
@@ -84,8 +88,11 @@ General requirements, numbered for reference in the stages below.
   the Sixth Catalog of Orbits of Visual Binary Stars) and one
   regression test per row against a published orbit. Worked example: the
   White et al. (2025) Apep frame (+x West, z towards the observer) gives
-  virgil Ω = 105.9° (mod 180°) and ω_WC = 169.4°, which puts projected
-  apastron at PA 96.2°, matching the GRAVITY measurement of 96.1°.
+  virgil Ω = 105.9° (mod 180°) and ω_WC = 169.4°, which would put
+  projected apastron at PA 96.2°, close to the GRAVITY measurement of
+  96.1°. These numbers are **to be checked** against the output of the
+  Apep prototype's orbit build before they become a regression test; they
+  are not yet verified.
 * **V8 t_ref.** `KeplerOrbit` counts `dt_peri` from `t_ref`, by default 0.
   With MJD times and the default, the phase is silently wrong. Warn when
   times look like MJDs (|t − t_ref| > 15000 d) and `t_ref` is 0. Requiring
@@ -102,16 +109,43 @@ General requirements, numbered for reference in the stages below.
   traced orbital elements under `jit` and `grad` (a `__check_init__`
   check on traced values broke this before #206).
 
+  **Tilt sign.** An optically thin cone looks the same tilted by +β and
+  −β out of the sky: the two are mirror images through the sky plane, and
+  their projected brightness is identical. Binding the tilt to the signed
+  `line_tilt` therefore gives a likelihood that sees only |`line_tilt`|:
+  the data cannot tell which side of the sky plane the secondary is on
+  from the cone alone, and the sign of `line_tilt` (hence of dz, i.e.
+  which node is receding) comes only from the orbit's motion. Posteriors
+  of the tilt should be reported folded (|tilt|), and samplers should
+  expect the mirror mode. The stage-1 binding test asserts that ±tilt give
+  identical visibilities.
+
 ### Calibration
 
 * **V11 Plate scale and North for visibilities (#212).** For `OIData`,
   the plate scale is the wavelength scale: `wavel_scale` = 1/m stretches
   uv by m, equivalent to scaling the sky by m. The North angle is
-  `OIData.with_north_angle` and the `north_angle` noise term. Default
-  priors: plate scale log-normal with σ = 0.03 for an aperture-masking
-  camera (NACO SAM), the North angle N(0, 0.3°). For GRAVITY the honest
-  analogue is a wavelength scale (its calibration is spectral), with a
-  prior from the instrument's wavelength calibration.
+  `OIData.with_north_angle` and the `north_angle` noise term, with the
+  North angle prior from the instrument's astrometric calibration (e.g.
+  N(0, 0.3°) for an adaptive-optics camera).
+
+  There is **no fixed default** for the plate-scale prior. For broad-band
+  aperture masking the dominant term is the effective wavelength, which
+  depends on the filter transmission times the source's SED (times the
+  detector response and atmosphere): λ_eff = ∫ λ T(λ) F(λ) dλ / ∫ T(λ)
+  F(λ) dλ. Derive the prior from it: compute λ_eff for the range of SEDs
+  the source could have (e.g. temperatures or spectral slopes allowed by
+  photometry) and for the calibrator, and take the spread of
+  λ_eff,source / λ_eff,calibrator as the width of a log-normal prior on
+  the scale. For broad-band SAM on red sources this is a few tenths of a
+  per cent to about 1 %. The width matters: in the Apep example, at a
+  separation of 28 mas, 3 % is 0.8 mas, about half the change in
+  separation between 2019 and 2025, so a 3 % prior would decide whether
+  that change is detected at all. Stage 6 documents the calculation (and
+  may provide a helper taking a filter curve and an SED).
+
+  For GRAVITY the honest analogue is a wavelength scale (its calibration
+  is spectral), with a prior from the instrument's wavelength calibration.
 * **V12 Bandwidth smearing.** In a broad filter, smearing is chromatic,
   not a pure plate scale. Provide (or document) a bandpass-integrated
   model: evaluate over a few sub-channels across the filter and average,
@@ -147,6 +181,31 @@ General requirements, numbered for reference in the stages below.
   `FitResult.covariance()` (or `laplace_cov(result, ...)`). Note: since
   0.3.0 a `LogUniform` parameter's MAP is in log x, so the covariance must
   be reported in the space the fit used and transformed explicitly.
+
+  **Two-stage workflow (later stage, not stage 1).** Full NUTS over scene
+  and orbit together is expensive for extended scenes. A documented,
+  validated alternative:
+
+  1. *Scene stage.* At each epoch, fit the scene (with its nuisance shape,
+     flux and calibration terms) and take its Laplace approximation;
+     marginalise it to the per-epoch companion positions, keeping the full
+     cross-covariance between epochs. The positions correlate with the
+     nuisance shape and flux parameters (shared across epochs), so those
+     terms must be kept, not dropped to a block-diagonal form.
+  2. *Orbit stage.* NUTS on the orbit with that Gaussian on the positions
+     as its likelihood (cheap: no visibilities), with a folded |tilt|
+     where the scene has a bound tilt (V10).
+  3. *Correction.* Pareto-smoothed importance sampling (PSIS) of the orbit
+     samples with the exact visibility likelihood, reporting the Pareto
+     k̂ (k̂ < 0.7 reliable; above that, fall back to full NUTS).
+  4. *Validation.* Compare against full NUTS on simulated data and on one
+     real dataset (an OzSTAR job) before recommending it.
+
+  The evidence so far (Apep example): the scene posteriors are close to
+  Gaussian, but the orbit posteriors are not: 2–3 % of samples lie beyond
+  the χ² 99 % level, and the variance of the potential energy is 12–15 %
+  above k/2 (k parameters). So the Gaussian is used only for the
+  positions, never for the orbit, and the PSIS step is required.
 * **V19 `gauss_newton_mass` with noise.** It takes `noise=` (and lists of
   datasets) like `fit`, so the NUTS mass matrix includes the error terms;
   plus the no-data check (the Gauss–Newton matrix with no data is the
@@ -256,15 +315,19 @@ Each stage is one reviewable PR.
    `Epochs` snapshots (results change slightly; see §7). V13–V16.
 3. **Curvature**: `gauss_newton_mass(noise=...)`, the no-data check with
    noise terms, a public Laplace covariance of a `FitResult` (priors,
-   noise, lists of datasets, the LogUniform log-space note). V18, V19.
+   noise, lists of datasets, the LogUniform log-space note), and the
+   two-stage Laplace → NUTS → PSIS workflow with its validation against
+   full NUTS (marked for OzSTAR). V18, V19.
 4. **Forecasts**: `forecast` from posterior draws over one or more
    templates, the width-ratio report, and the documented `shift_days`
    assumption. V20.
 5. **Conventions**: the conversions docs section and its regression tests
-   (including the White et al. 2025 example), the convention tests (V6),
+   (including the White et al. 2025 example, once checked), the
+   convention tests (V6),
    axial Ω reporting, PA unwrapping in summaries and plots. V6, V7, V9.
-6. **Calibration and shape**: plate scale and North for visibilities
-   documented with default priors (#212 follow-up), a bandpass-integrated
+6. **Calibration and shape**: plate scale and North for visibilities,
+   with the plate-scale prior derived from λ_eff over filter × SED
+   (#212 follow-up), spectral tied flux scales (V3), a bandpass-integrated
    option for chromatic smearing, per-epoch shape offsets δ_e with τ, and
    evidence over prior configurations. V4, V11, V12, V17.
 
@@ -287,7 +350,7 @@ written as a script for OzSTAR and marked so.
    * the t_ref warning fires with MJDs and t_ref = 0, and not otherwise;
    * a cone bound to `towards_primary` + skew and `line_tilt`, under
      `jit` with traced Ω and skew, has the right angles and a finite,
-     non-zero gradient;
+     non-zero gradient, and gives identical visibilities at ±tilt;
    * **recovery**: six epochs simulated from a known orbit with noise; an
      LM fit from a start within a fraction of λ/B recovers all eight
      parameters within 4σ of the Laplace (Hessian) errors, with reduced
@@ -304,7 +367,10 @@ written as a script for OzSTAR and marked so.
 3. Stage 3: the covariance of `fit` on a linear-Gaussian model equals the
    analytic one (with priors and a noise term); `gauss_newton_mass` with
    noise matches the Hessian at the truth; with no data, it is the prior
-   precision, noise terms included.
+   precision, noise terms included. Two-stage workflow: on a simulated
+   multi-epoch binary, the marginal position covariance matches the full
+   Laplace; PSIS k̂ is reported; the reweighted posterior agrees with full
+   NUTS (the comparison is an OzSTAR job, not a unit test).
 4. Stage 4: a forecast with a template identical to an existing epoch
    shrinks the widths by about √(n+1)/√n in the linear regime; several
    templates give one report each; posterior draws are reproducible from
@@ -312,8 +378,9 @@ written as a script for OzSTAR and marked so.
 5. Stage 5: one test per convention (V6) and one per conversion row (V7),
    including the White et al. (2025) worked example; PA unwrapping is
    continuous across 0° and anchored at the chosen epoch.
-6. Stage 6: a plate-scale/North recovery on simulated data with a known
-   scale; the bandpass model converges to the monochromatic one as the
+6. Stage 6: λ_eff from a filter curve and an SED matches a hand
+   calculation; a plate-scale/North recovery on simulated data with a known
+   scale; a tied `BlackBody` flux scale across two instruments; the bandpass model converges to the monochromatic one as the
    bandwidth goes to 0; per-epoch offsets with τ → 0 reproduce the shared
    shape; the evidence comparison picks the true period alias in a toy.
 
@@ -347,7 +414,11 @@ written as a script for OzSTAR and marked so.
 * Require `t_ref` in `KeplerOrbit` (breaking) or keep the warning?
 * The scene origin is the primary (the current convention). Is a
   photocentre-origin option wanted, or is `anchor=` fractions enough?
-* Default calibration priors (log-normal σ 0.03 plate scale, N(0, 0.3°)
-  North) for aperture masking: adopt as documented defaults or leave to
-  the user?
+* Plate-scale priors: no fixed default; document the λ_eff over
+  filter × SED derivation (a few tenths of a per cent to ~1 % for
+  broad-band SAM on red sources). Should virgil provide a helper that
+  computes it from a filter curve and an SED, or only document it?
+* Should the two-stage Laplace → NUTS → PSIS workflow become a
+  recommended path once validated against full NUTS, or stay a
+  documented option?
 * Which external orbit catalogues and codes the conversions table covers.
