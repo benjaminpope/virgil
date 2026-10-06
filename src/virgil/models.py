@@ -819,8 +819,7 @@ class TruncatedCone(Component):
         squash = self.ratio * np.sin(self.tilt * dtor)
         width = np.maximum(self.width, pixel_scale_mas)
         # Points round each ring no further apart than a third of the blur,
-        # so a large thin ring is a continuous band, not a string of spots;
-        # they are added in blocks of 64 to keep memory small.
+        # so a large thin ring is a continuous band, not a string of spots.
         block = 64
         circumference = concrete(
             2.0 * np.pi * np.max(rho) * np.maximum(1.0, self.ratio)
@@ -832,27 +831,85 @@ class TruncatedCone(Component):
             needed = float(np.max(circumference)) / (float(np.min(blur)) / 3.0)
             n_blocks = int(min(max(onp.ceil(needed / block), 1), 128))
         phi = np.linspace(0.0, 2.0 * np.pi, n_blocks * block, endpoint=False)
-        phi = phi.reshape(n_blocks, block)
 
-        def add_ring(image, ring):
-            radius, centre, w = ring
+        def ring_points(radius, centre, angles):
+            par = centre + radius * np.sin(angles) * squash
+            perp = radius * np.cos(angles)
+            return (
+                par * sin_pa + perp * cos_pa,
+                par * cos_pa - perp * sin_pa,
+            )
 
-            def add_block(image, angles):
-                par = centre + radius * np.sin(angles) * squash
-                perp = radius * np.cos(angles)
-                x = par * sin_pa + perp * cos_pa
-                y = par * cos_pa - perp * sin_pa
-                d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
-                spots = np.exp(-4.0 * np.log(2.0) * d2 / width**2)
-                return image + w * np.sum(spots, -1) / phi.size, None
+        grid = _orthogonal_grid(xx, yy)
+        if grid is not None:
+            # On a regular grid the Gaussian spot of each point factorizes
+            # into a row and a column profile, so a ring is one matrix
+            # product instead of a Gaussian per point and pixel.
+            origin, e_col, e_row = grid
+            k = 4.0 * np.log(2.0) / width**2
+            cols = np.arange(np.shape(xx)[1])[:, None]
+            rows = np.arange(np.shape(xx)[0])[:, None]
 
-            image, _ = jax.lax.scan(add_block, image, phi)
-            return image, None
+            def add_ring(image, ring):
+                radius, centre, w = ring
+                x, y = ring_points(radius, centre, phi)
+                dx, dy = x - origin[0], y - origin[1]
+                s_col = (dx * e_col[0] + dy * e_col[1]) / (e_col @ e_col)
+                s_row = (dx * e_row[0] + dy * e_row[1]) / (e_row @ e_row)
+                g_col = np.exp(-k * (e_col @ e_col) * (cols - s_col) ** 2)
+                g_row = np.exp(-k * (e_row @ e_row) * (rows - s_row) ** 2)
+                return image + w * (g_row @ g_col.T) / phi.size, None
+
+        else:
+            # Arbitrary coordinates: add the points in blocks of 64 to keep
+            # memory small.
+            blocks = phi.reshape(n_blocks, block)
+
+            def add_ring(image, ring):
+                radius, centre, w = ring
+
+                def add_block(image, angles):
+                    x, y = ring_points(radius, centre, angles)
+                    d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
+                    spots = np.exp(-4.0 * np.log(2.0) * d2 / width**2)
+                    return image + w * np.sum(spots, -1) / phi.size, None
+
+                image, _ = jax.lax.scan(add_block, image, blocks)
+                return image, None
 
         image, _ = jax.lax.scan(
             add_ring, np.zeros(np.shape(xx)), (rho, along, weight)
         )
         return image
+
+
+def _orthogonal_grid(xx, yy):
+    """Origin and column and row steps of a regular grid, or ``None``.
+
+    The grid may be shifted and rotated (as ``Component._image`` and
+    ``Image.from_model`` make it) but its axes must be orthogonal. Returns
+    ``None`` for traced or irregular coordinates.
+    """
+    xx, yy = concrete(xx), concrete(yy)
+    if xx is None or yy is None or xx.ndim != 2 or min(xx.shape) < 2:
+        return None
+    xx, yy = xx.astype(float), yy.astype(float)
+    origin = onp.array([xx[0, 0], yy[0, 0]])
+    e_col = onp.array([xx[0, 1], yy[0, 1]]) - origin
+    e_row = onp.array([xx[1, 0], yy[1, 0]]) - origin
+    step = min(onp.hypot(*e_col), onp.hypot(*e_row))
+    rows, cols = onp.indices(xx.shape)
+    tol = 1e-3 * step
+    if (
+        step <= 0.0
+        or abs(e_col @ e_row) > tol * step
+        or onp.max(onp.abs(origin[0] + cols * e_col[0] + rows * e_row[0] - xx))
+        > tol
+        or onp.max(onp.abs(origin[1] + cols * e_col[1] + rows * e_row[1] - yy))
+        > tol
+    ):
+        return None
+    return origin, e_col, e_row
 
 
 class UniformDisk(Component):
