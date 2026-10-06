@@ -119,7 +119,30 @@ so that
 
   m(θ) = −Σ_b (ν_b/2) ln χ²_b(θ),   ν_b = n_independent of block b.
 
-The profile over s gives the same function up to a constant. Two
+Throughout this note **N = ν = `n_independent`**: raw χ²/N, ŝ² = χ²/ν
+and m all use it. For correlated closure phases from four or more
+telescopes, `whitened_residuals` returns `n_residuals` > `n_independent`
+entries; the periodic-penalty terms add to χ² but not to ν. At the best
+fit, E[χ²_b] = (ν_b − p_b)s_b² with p_b fitted parameters, so "χ²/N ≈ s²"
+holds to O(p/ν).
+
+**m is a search surface with Gaussian normalization.** The integral
+assumes a normalization s^−ν for every block. That is true for V²,
+kernel phases, DISCOs and correlated closure phases, but not for
+uncorrelated unprojected closure phases, which `model_loglike`
+normalizes as a von Mises density (−ln 2π − ln I₀(κ) with κ = 1/(sσ)²).
+That density tends to the uniform 1/2π as s → ∞, so the likelihood
+tends to a constant there and the exact Jeffreys marginal is improper.
+m therefore uses the Gaussian (small-σ) normalization for every block,
+on the same chord residuals 2 sin(Δ/2)/σ, as the correlated closure
+phases already do. It is only a search surface: refinement and sampling
+(§6) use virgil's exact likelihood with fitted scales. Where sσ ≳ 0.5 rad
+(weak closure phases with large s), m and the exact profile diverge.
+There, the option `s_max` bounds the scale and the marginal is
+integrated numerically on a 1-D quadrature in ln s per block; PR A tests
+that regime.
+
+The profile over s gives the same function as m up to a constant. Two
 properties make m the right surface for search:
 
 * m is **invariant to a constant rescaling of the errors**, which is
@@ -213,7 +236,7 @@ them. Store instead:
 * **A peak catalogue.** All local maxima of the profile M_e(r) = max_f
   m_e(r, f) within Δ_keep of the best, each refined by `fit` and
   carrying its mean μ_ek, its Laplace covariance Σ_ek (from the Hessian
-  of m, so already scaled by ŝ²), its height h_ek, its flux and its
+  of −m at the maximum of m, §12 PR A), its height h_ek, its flux and its
   log-determinant.
 * **A floor.** The coarse grid M_e itself, interpolated
   (bilinear/bicubic), which covers positions far from all catalogued
@@ -223,19 +246,35 @@ them. Store instead:
 
 The epoch score is
 
-  S_e(r) = logsumexp_k [h_ek + ln N(r; μ_ek, Σ_ek) + c_ek] ⊕ M_e(r),
+  S_e(r) = max( logsumexp_k [h_ek − ½ d²_ek(r)],  M̃_e(r) ),
 
-a mixture of Gaussians (MoG) with a floor, where ⊕ is a smooth maximum
-and c_ek normalizes each component to its peak height. Near a peak S_e
-is the Laplace approximation; far away it is the grid.
+where d²_ek is the Mahalanobis distance from r to μ_ek under Σ_ek, and
+M̃_e is the floor M_e with every point within d_ek < 3 of a catalogued
+peak masked to −∞. This is a mixture of Gaussians (MoG) with a floor.
+The combination is a **hard maximum, not a log-sum-exp**: a smooth
+maximum would overshoot each peak by up to ln 2 wherever the coarse
+floor comes close to the peak height. With the mask, S_e(μ_ek) = h_ek
+exactly when the peaks are well separated (the other components' tails
+add at most e^(−d²/2)). Near a peak S_e is the Laplace approximation;
+far away it is the grid.
+
+**The flux is bounded, f ≤ 1, in the grid and in every refinement
+prior.** The flip f ↔ 1/f with r ↔ −r is exact for every f: with the
+companion at r and flux f, V = (1 + f e^(−2πiu·r))/(1 + f), and with the
+companion at −r and flux 1/f, V′ = e^(2πiu·r) V, which is the same
+visibility times a pure phase gradient. V², closure phases and kernel
+phases are therefore identical. Without the bound every epoch would
+carry an exact twin peak, the catalogue would double, and EM would split
+responsibility between twins in every epoch. With f ≤ 1 the flip
+survives only as a near-twin when f is close to 1.
 
 **Flux.** By default the flux is profiled per epoch, which is robust to
 different filters. As an option, flux is tied per instrument/filter:
 keep the flux axis of the map and evaluate Σ_e m_e(r_e, f) on the shared
 flux axis, then take the maximum (or log-sum-exp under the log-uniform
 prior) over f. This costs a factor n_flux and helps near-equal-flux
-pairs, where a per-epoch flux flip (f ↔ 1/f with r ↔ −r) is otherwise
-free.
+pairs, where the near-twin at f ≈ 1 is otherwise almost free per
+epoch.
 
 **Search option (a): (P, e, T₀) with linear Thiele–Innes constants.**
 At fixed φ = (P, e, T₀), r_e = K_e(φ)ψ is linear in ψ = (A, B, F, G).
@@ -243,20 +282,35 @@ At fixed φ = (P, e, T₀), r_e = K_e(φ)ψ is linear in ψ = (A, B, F, G).
 per epoch, the profile over ψ is no longer one least-squares solve, but
 EM makes it a few:
 
-* **E-step:** responsibilities γ_ek ∝ exp(h_ek) N(K_eψ; μ_ek, Σ_ek), with
-  the floor as an extra broad component (weight from M_e at K_eψ, which
-  keeps outlier epochs from dominating).
-* **M-step:** a weighted linear solve for ψ, with the TI Gaussian
-  proposal prior Λ (width s₀(P/P₀)^(2/3), TI D6):
-  ψ = (Σ_ek γ_ek K_eᵀΣ_ek⁻¹K_e + Λ⁻¹)⁻¹ Σ_ek γ_ek K_eᵀΣ_ek⁻¹μ_ek.
+* **E-step:** responsibilities γ_ek ∝ exp(h_ek) N(K_eψ; μ_ek, Σ_ek),
+  plus an outlier component per epoch with a **constant** density
+  exp(F_e), where F_e is the epoch's floor level (the maximum of M̃_e).
+  This keeps outlier epochs from dominating. The outlier component
+  does not depend on ψ, so this is the standard Gaussian-plus-uniform
+  mixture and the iteration is genuine EM: it increases the surrogate
+  objective monotonically. The interpolated floor M̃_e, which depends on
+  ψ non-quadratically, enters only the rescoring below, never the
+  M-step.
+* **M-step:** a weighted linear solve for ψ:
+  ψ = (Σ_ek γ_ek K_eᵀΣ_ek⁻¹K_e + εI)⁻¹ Σ_ek γ_ek K_eᵀΣ_ek⁻¹μ_ek,
+  with a tiny ridge ε for conditioning only, so that this is the profile
+  over ψ and no prior.
 * **Starts per φ:** a few. Use the best component of every epoch, and
   the best component of the decisive epochs with the ambiguous ones
   left free (γ uniform), plus R random assignments. EM converges in
   3–10 iterations, because peaks are separated by many σ.
-* **Rescore** each converged ψ on the exact S_e (not the EM bound), and
-  keep the marginal over ψ by the Laplace/TI formula at the EM optimum.
-  The result is a 3-D map of the marginal score over φ, as in TI §4
-  ("exhaustive 3-D maps").
+* **Rescore** each converged ψ on the exact S_e (not the EM bound).
+  **Pruning uses this prior-free profile score only.** The TI Gaussian
+  prior on ψ is not isotropic (TI §2.2), and pruning on a score that
+  includes it could discard face-on modes because of a proposal that TI
+  D1 rejects. This keeps TI D3 (starting points rank by fit, not by
+  posterior).
+* **Mode evidence, after pruning.** For each surviving mode, draw ψ from
+  its conditional Gaussian under the TI proposal prior (width
+  s₀(P/P₀)^(2/3), TI D6), importance-reweight the draws to the
+  invariant target prior (TI D1), and report PSIS k̂. These map
+  evidences are a proxy for mode weights. Where k̂ > 0.7 the mode is
+  kept, with its weight left to the visibility evidence of §5.3.
 
 The cost per φ is (starts) × (iterations) × n × K solves of 4×4
 systems. It is near-linear and vmaps over φ.
@@ -330,15 +384,28 @@ data (Epochs) ──► 1. maps + peak catalogue (per dataset; scale-marginalize
   their ψ.
 * **Step 3** reuses `_distinct` (positions at every snapshot within
   ½ λ/B_max make one mode). Every mode within Δ_mode (default 20 nats on
-  the map score) of the best goes on, up to n_modes_max (default 8;
-  exceeding it is a flag, not a truncation).
+  the map score) of the best is returned in the catalogue of modes,
+  however many there are. The contract on `n_modes_max` (default 8) is:
+  all modes are refined in step 4 (fits are cheap), and NUTS runs on
+  the n_modes_max modes with the largest Laplace evidence. The omitted
+  mass is bounded by the Laplace evidences of the unsampled modes. If
+  that bound exceeds 0.01 of the total, the pipeline stops before
+  sampling with the flag "mode overflow" and returns the refined modes,
+  marked incomplete. It never truncates silently.
 * **Step 4** fits the full scene (extended components, hierarchical
   scales, North angles) from each mode's best orbit. A fit that leaves
   its mode (its positions move by more than ½ λ/B_max) is recorded as
-  "mode merged" and deduplicated. The map score and the visibility
-  log likelihood at the refined point are compared: for point-source
-  binaries they agree to within interpolation tolerance, and a larger
-  difference flags model misspecification or a map that is too coarse.
+  "mode merged" and deduplicated. **The map check compares like with
+  like:** at the refined orbit's positions, Σ_e S_e (the interpolated
+  map score) is compared with Σ_e m_e recomputed directly from the
+  visibility residuals of a point-source snapshot, with the same
+  scale marginalization and flux profile. It is not compared with the
+  refinement's own log likelihood, which uses hierarchical scales and
+  the exact normalization. For point-source binaries the two agree to
+  within the interpolation tolerance measured in PR C. A larger
+  difference flags a map that is too coarse. A separate comparison of
+  the point-source m_e with the full scene's m_e at the same positions
+  flags extended emission or a third body.
 * **Step 5** runs NUTS per mode with `chain_init_params`, at least two
   chains per mode, so that R̂ is meaningful within a mode. A chain that
   leaves its mode is detected by its positions and reported. The weight
@@ -368,9 +435,11 @@ whole search is one compiled kernel, batchable across systems.
   broken by closure phases. With V² only it is reported as one mode
   with a "primary/secondary unresolved" flag; with weak closure phases
   it is two modes with weights.
-* **Per-epoch flips for near-equal fluxes.** f ↔ 1/f with r ↔ −r on a
-  single epoch. The catalogue keeps both peaks, and the orbit decides.
-  With flux tied across epochs this ambiguity is mostly broken.
+* **Per-epoch flips (f ↔ 1/f, r ↔ −r).** Exact for every f (§3.2), and
+  removed by the bound f ≤ 1 except near f = 1, where a near-twin peak
+  remains on single epochs. The catalogue keeps both, and the orbit
+  decides. With flux tied across epochs this ambiguity is mostly
+  broken.
 * **Inclination sense (i ↔ 180° − i).** Determined by the sense of
   motion; a single flipped epoch can swap it (§1). It is handled by
   scoring all peaks.
@@ -430,10 +499,16 @@ depends on that epoch alone).
   epochs. This is where population information about the instrument
   enters.
 * **Effective degrees of freedom.** ν_eff per dataset defaults to
-  `n_independent`. It is calibrated, not assumed: the residual bootstrap
-  of `detection.bootstrap_null` (sign-flip, closure phases whitened)
-  applied at the best peak gives the null distribution of the gap
-  between the true peak and its best alias. Δ_keep and the "decisive"
+  `n_independent`. It is calibrated, not assumed. The current
+  `detection.bootstrap_null` cannot do this: it sign-flips each whitened
+  residual independently, which destroys exactly the wavelength, frame
+  and baseline correlations that make ν_eff < ν. The calibration uses a
+  **grouped (block) sign-flip bootstrap** instead: one sign per group
+  of residuals that share a calibration error, i.e. per exposure (or
+  frame) and per baseline or triangle, across all wavelengths. This is
+  a new `groups=` option of `bootstrap_null`, added in PR C. Applied at
+  the best peak, it gives the null distribution of the gap between the
+  true peak and its best alias. Δ_keep and the "decisive"
   threshold are set to its 99.9th percentile. If that percentile exceeds
   the Gaussian expectation by a factor of more than 2, ν_eff is reduced
   so that it does not, and the reduction is reported. This is the same
@@ -627,7 +702,7 @@ data):
 | A4 ω + 180° | V² only (no closure phases); must flag primary/secondary |
 | A5 sparse epochs | 3, 4 and 5 epochs; arc-only flag for 3 |
 | A6 inflated errors | s = 3–5, with correlated closure-phase errors; the Gl 229 failure |
-| A7 near-equal flux | f = 0.8–1.0; per-epoch 180° flips |
+| A7 near-equal flux | f = 0.8–1.0; the f ↔ 1/f, r ↔ −r flip is exact, removed by f ≤ 1 except near f = 1, where near-twin peaks remain per epoch |
 | A8 unresolved epochs | some epochs at separation < λ/(2B) |
 | A9 grid edge | companion at or beyond the grid edge in some epochs |
 | A10 non-detection | some epochs below the detection threshold |
@@ -759,7 +834,7 @@ from virgil.orbit_search import (
     automatic_orbit,
 )
 
-maps = epoch_maps(epochs, grid, *, scales="marginal", dof=None,
+maps = epoch_maps(epochs, grid, *, scales="marginal", dof=None, s_max=None,
                   keep_delta=None, refine=True, batch_size=None)
 #  EpochMaps: per dataset the profile map M_e(dra, ddec) (+ flux axis),
 #  PeakCatalogue (mu, cov, height, flux, log_det), raw chi2/N and s-hat per
@@ -803,7 +878,7 @@ need no `start_values`; a default maps an orbit and flux to an
 | `EpochPositions.decisive`, `min_gap` | Unchanged API. In PR A they compare `gap_marginal` (CHANGELOG: a behaviour change of `start_from_positions`); `gap` keeps its old value until the switch. |
 | `start_from_positions`, `OrbitStart` | Kept through 0.4, with PR A's fixes. Deprecated with a FutureWarning when `automatic_orbit` lands, then removed (decision 5). `OrbitStart.modes` switches from χ² on quoted errors to the positional identity used by `chain_starts`, so modes mean one thing everywhere. |
 | `OrbitStart.chain_values` | Superseded by `sample_modes` (chains per mode, not cycling). Kept until removal. |
-| `rank_orbits` | Gains `scales="quoted" \| "marginal"`, with "marginal" the default (decision 5). Until the default changes, omitting `scales` gives a FutureWarning. |
+| `rank_orbits`, `start_from_positions` | Both gain `scales="quoted" \| "marginal"` in PR A, with one staged default for both: "quoted" in 0.4 (omitting `scales` gives a FutureWarning), then "marginal" (decision 5). The `start_from_positions` docstring ("The ranking uses the quoted errors") is updated. |
 | `chain_starts` | Unchanged; used inside `orbit_modes`. |
 | `starting_orbits` | Unchanged. It is the K = 1, no-floor special case of the TI-EM search and is tested to agree with it. |
 | `Epochs.noise` | Docs fixed or fixed values accepted (#268 item 3), in PR B. |
@@ -819,30 +894,63 @@ Benchmarks are staged alongside the code.
   `epoch_positions`:
   * compute per-block raw χ² at every grid point (`whitened_residuals`
     split by block) and the scale-marginalized m = −Σ_b (ν_b/2) ln χ²_b
-    with ν_b = `n_independent`;
+    with ν_b = `n_independent`, using the Gaussian normalization for
+    every block (§1), with the optional `s_max` numerical marginal for
+    weak closure phases;
   * add `gap_marginal`, the gap on m, beside the unchanged `gap` for
     one release (decision 6); `decisive` and `min_gap` compare
     `gap_marginal`;
-  * take the covariance from the Hessian of −m at the refined position,
-    which is the quoted-error covariance × ŝ² to first order;
-  * record `chi2_raw` and `scale`;
+  * **refine on m itself**, not on the quoted errors: fit
+    `BinaryModelCartesian` with per-block `vis_scale` and `phi_scale`
+    free (their profile has the same maximum as m). With V² and closure
+    phases together, the quoted-error maximum of Σ_b χ²_b and the
+    maximum of m differ whenever ŝ_V2 ≠ ŝ_CP, and can sit on different
+    fringe aliases;
+  * take the covariance from the Hessian of −m at that maximum,
+    Σ_b [H_b/(2ŝ_b²) − (ν_b/2) g_b g_bᵀ/χ_b⁴], where H_b and g_b are the
+    Hessian and gradient of χ²_b. The per-block gradients do not vanish
+    individually, so the second term is not a small correction, and the
+    result is not the quoted-error covariance × ŝ²;
+  * **bound the flux, f ≤ 1**, in the grid and in the refinement prior
+    (today `LogUniform(0.1·min, max(1, 2·max))`), which removes the
+    exact f ↔ 1/f, r ↔ −r twin (§3.2). This is also one of the candidate
+    causes of the Gl 229 disagreement (§1);
+  * record `chi2_raw` (χ²/N with N = `n_independent`, per dataset and
+    block) and `scale` (ŝ per block);
   * warn when raw χ²/N > 4.
 
-  In `start_from_positions`, rank candidates with each dataset's ŝ
-  (passed as `noise` values) instead of the quoted errors.
+  `rank_orbits` and `start_from_positions` gain `scales="quoted" |
+  "marginal"`, with the staged default of §11 ("quoted" in 0.4 with a
+  FutureWarning when omitted). With "marginal", `start_from_positions`
+  ranks candidates with each dataset's per-block ŝ. The docstring and the
+  CHANGELOG record this as a behaviour change of the default to come.
 
-  **Tests:**
-  1. Multiplying one dataset's errors by 3 leaves `gap_marginal`,
-     positions and `cov` unchanged (rtol 1e-6) and divides `gap` by 9.
-  2. On a simulated night with two peaks Δm < 1 and errors quoted 3× too
-     small, `decisive(5.0)` is False (it is True on main), and
-     `start_from_positions` does not seed from that night.
-  3. `chi2_raw` ≈ s² for a simulated s.
-  4. The ranking is unchanged under a common error rescaling.
-  5. **Per-night ranking against an independent fit.** On simulated
+  **Tests** (each on a 3-hole `nrm_oidata` case and a 4-telescope
+  `vlti_oidata` case with correlated closure phases):
+  1. **Per-block invariance.** Multiplying one dataset's errors by 3, and
+     separately multiplying only its closure-phase errors by 3, leaves
+     the grid quantities of m (`gap_marginal`, the best grid point and
+     its rival) exactly unchanged and the refined positions and `cov`
+     unchanged to the fit tolerance. With all blocks scaled, `gap` is
+     divided by 9, with the test asserting that the best peak and rival
+     grid point are the same in both runs. A pooled per-dataset scale
+     or a quoted-error refinement fails the closure-phase-only case.
+  2. **The fix, pinned.** A simulated night with two peaks
+     0.6 < Δm < 1 and errors quoted 3× too small: assert `gap > 5`
+     (decisive on main) and `gap_marginal < 1`, so `decisive(5.0)` is
+     False and `start_from_positions` does not seed from that night.
+  3. `chi2_raw` ≈ s² (N = `n_independent`) for a simulated s, within
+     the tolerance set by E[χ²] = (ν − 3)s² and its scatter.
+  4. The ranking is unchanged when one dataset's errors are rescaled
+     (by 3) and the others are not; on main (`scales="quoted"`) it
+     changes.
+  5. **Weak closure phases.** sσ ≈ 0.7 rad: the `s_max` numerical
+     marginal is finite, and the peak order from m agrees with the exact
+     von Mises profile over s.
+  6. **Per-night ranking against an independent fit.** On simulated
      nights with several near-equal peaks, the order of the peaks from
      `epoch_positions` on the scale-marginalized surface matches a
-     brute-force reference: a `fit` with a fitted `phi_scale` (and
+     brute-force reference: a `fit` with fitted `phi_scale` (and
      `vis_scale`) started from every grid peak, then ranked by its
      marginal score. Variants test the other candidate causes of the
      Gl 229 disagreement (§1): a peak whose flux lies near the grid's
@@ -864,13 +972,22 @@ Benchmarks are staged alongside the code.
 * **PR C, `epoch_maps` and the peak catalogue.** Batched over datasets;
   scale-marginalized; peak finding (local maxima on the profile map
   above the floor, within Δ_keep); vmapped peak `fit`s and Hessians;
-  floor interpolant; `save/load`. Tests: every simulated alias within Δ
-  is catalogued; the peak Gaussians match a brute-force fine grid near
-  each peak (KL < 0.05); S_e equals the exact snapshot likelihood at the
-  catalogued peaks (point-source binary) to 10⁻³ nats; a non-detected
-  epoch gives a flat map and no peaks above the floor.
+  floor interpolant with the peak mask; f ≤ 1; the grouped sign-flip
+  bootstrap (`bootstrap_null(groups=...)`) for Δ_keep and ν_eff;
+  `save/load`. Tests: every simulated alias within Δ is catalogued; no
+  exact f ↔ 1/f twins appear; the peak Gaussians match a brute-force
+  fine grid near each peak (KL < 0.05); S_e equals m computed directly
+  from the visibilities at the catalogued peaks (point-source binary)
+  to 10⁻³ nats, and between peaks to an interpolation tolerance that the
+  test measures and records against a fine grid; a non-detected epoch
+  gives a flat map and no peaks above the floor; the grouped bootstrap
+  recovers a known ν_eff from simulated correlated closure phases
+  within 20%.
 * **PR D, `search_orbits` (TI-EM over (P, e, T₀)).** Tests: with K = 1 and
-  no floor it reproduces `starting_orbits` exactly; the true orbit is in
+  no floor it reproduces `starting_orbits` exactly; EM increases the
+  surrogate objective monotonically; a face-on true orbit survives
+  pruning (the prior-free score); the reweighted mode evidence reports
+  k̂; the true orbit is in
   the top modes for cases A1, A2, A6 and A7 at CI size; a seed change
   gives the same mode set; a compile count of 1 for two systems of one
   bucket. Benchmark: `orbit_bench` and `orbit_prof`.
