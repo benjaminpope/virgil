@@ -108,6 +108,7 @@ nav:
       - Orbits: api/orbits.md
       - Fields: api/fields.md
       - Scenes: api/scenes.md
+      - Metrics: api/metrics.md
       - Coverage: api/coverage.md
       - Simulate: api/simulate.md
       - Plotting: api/plotting.md

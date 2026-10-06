@@ -14,6 +14,7 @@ Modules:
   Levenberg–Marquardt, L-BFGS or Adam.
 * [`imaging`][virgil.imaging]: regularisers and helpers for image
   reconstruction; [`scenes`][virgil.scenes]: synthetic truth images;
+  [`metrics`][virgil.metrics]: image-recovery scores;
   [`coverage`][virgil.coverage]: synthetic coverage and noise.
 * [`inference`][virgil.inference]: Laplace and Fisher curvature.
 * [`grid_fit`][virgil.grid_fit]: grid searches.
@@ -52,6 +53,7 @@ from . import (  # noqa: E402
     inference,
     likelihood,
     limits,
+    metrics,
     models,
     oidata,
     oifits,
