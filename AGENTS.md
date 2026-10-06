@@ -30,26 +30,28 @@ upgrading `jax` alone can leave optax, equinox etc. too old for it.
 
 | Task | Command |
 | --- | --- |
-| Run relevant tests | `uv run --python .venv/bin/python pytest tests/test_models_core.py` |
-| Run one test | `uv run --python .venv/bin/python pytest tests/test_models_core.py::test_name` |
+| Run relevant tests | `.venv/bin/python -m pytest tests/test_models_core.py` |
+| Run one test | `.venv/bin/python -m pytest tests/test_models_core.py::test_name` |
 | Lint (check only) | `bash scripts/lint_local.sh` |
 | Lint (apply fixes) | `bash scripts/lint_local.sh --fix` |
 | Lint changed files only | `bash scripts/lint_local.sh --changed --fix` |
-| Full pre-commit pass | `uv run --python .venv/bin/python pre-commit run --all-files` |
-| Regenerate tutorial docs | `uv run --python .venv/bin/python scripts/sync_tutorial_docs.py` |
-| Build docs | `uv run --python .venv/bin/python zensical build --clean` |
+| Full pre-commit pass | `.venv/bin/python -m pre_commit run --all-files` |
+| Regenerate tutorial docs | `.venv/bin/python scripts/sync_tutorial_docs.py` |
+| Build docs | `.venv/bin/python -m zensical build --clean` |
 | Refresh the development-carbon page and badge (local only; needs [claude-code-carbon-dashboard](https://github.com/benjaminpope/claude-code-carbon-dashboard) installed) | `python3 scripts/dev_carbon.py` |
+
+Call the venv interpreter directly: `uv run` resyncs the venv to the lock, so use `.venv/bin/python -m <cmd>`.
 
 ## Definition of done
 
 Before committing:
 
 1. `bash scripts/lint_local.sh --fix`
-2. `uv run --python .venv/bin/python pytest` on the relevant test files or tests only. Do not
+2. `.venv/bin/python -m pytest` on the relevant test files or tests only. Do not
    run the full suite locally: heavy JAX work overloads the laptop, and CI runs the full suite.
 3. If you touched a tutorial notebook: rerun `scripts/sync_tutorial_docs.py` and
    `pytest tests/test_tutorial_docs_sync.py`.
-4. If you touched docstrings or `docs/`: `uv run --python .venv/bin/python zensical build --clean`.
+4. If you touched docstrings or `docs/`: `.venv/bin/python -m zensical build --clean`.
 
 CI checks linting and formatting (`.github/workflows/lint.yml`) but does not fix
 them, so lint before you push.
