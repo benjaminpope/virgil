@@ -88,7 +88,9 @@ def _clear_jax_caches():
     runner swapped itself to death (stalls reported as pytest timeouts in
     whatever JAX call was running, then a runner shutdown). Programs a later
     module needs again are recompiled, or read from the persistent cache CI
-    keeps.
+    keeps. Under xdist's default ``--dist load`` a worker can receive one
+    module's tests in several batches, so this can run more than once per
+    module on a worker; that only costs recompiles.
     """
     yield
     jax.clear_caches()
