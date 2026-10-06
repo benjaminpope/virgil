@@ -11,8 +11,10 @@ CI uploads that file from main and virgil-validation reads it as evidence.
 Tests without the marker are unaffected.
 """
 
+import gc
 import json
 
+import jax
 import pytest
 
 ROOTS = (
@@ -74,3 +76,20 @@ def pytest_collection_modifyitems(config, items):
                 "tier": tier,
             }
             item.user_properties.append(("validates", json.dumps(claim)))
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _clear_jax_caches():
+    """Drop JAX's in-memory compilation caches after each test module.
+
+    JAX keeps every compiled executable alive for the life of the process,
+    so a pytest-xdist worker's memory grows with every test it has run. On
+    CI's 16 GB, 4-core runners four workers reached 4 GB each and the
+    runner swapped itself to death (stalls reported as pytest timeouts in
+    whatever JAX call was running, then a runner shutdown). Programs a later
+    module needs again are recompiled, or read from the persistent cache CI
+    keeps.
+    """
+    yield
+    jax.clear_caches()
+    gc.collect()
