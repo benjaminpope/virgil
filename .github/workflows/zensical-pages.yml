@@ -1,11 +1,12 @@
 name: Documentation (Zensical)
 
-# Pull requests are built by documentation.yml; this workflow builds main
-# once and (when ZENSICAL_DEPLOY_ENABLED is 'true') deploys that build.
+# Pull requests are built (not deployed) here; pushes to main are built once
+# and (when ZENSICAL_DEPLOY_ENABLED is 'true') deployed.
 on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -13,11 +14,13 @@ permissions:
 
 # Pages allows one deployment at a time. Merges landing in quick succession
 # otherwise start overlapping runs and the later deploy fails with "due to in
-# progress deployment". Queue runs instead (a newer pending run replaces an
-# older pending one) and never cancel a deploy that is already under way.
+# progress deployment". Queue main's runs instead (a newer pending run replaces
+# an older pending one) and never cancel a deploy that is already under way.
+# Each pull request gets its own group, so PR builds never displace a pending
+# deploy, and a new push to a PR cancels that PR's older build.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-zensical:
@@ -34,8 +37,10 @@ jobs:
           uv venv --python 3.11 .venv
           uv pip install --python .venv/bin/python -e ".[docs]"
 
+      # --strict fails the build on warnings: broken cross-references, missing
+      # nav pages and dead relative links.
       - name: build documentation (zensical)
-        run: .venv/bin/zensical build --clean
+        run: .venv/bin/zensical build --clean --strict
 
       - name: upload pages artifact
         uses: actions/upload-pages-artifact@v3

@@ -59,10 +59,9 @@ if command -v uvx >/dev/null 2>&1 && [[ -n "$ruff_version" ]]; then
   # Preferred: run the pinned ruff in uv's tool cache. Needs no .venv, so it
   # works in fresh worktrees and never picks up a stray ruff from PATH.
   ruff_cmd=(uvx "ruff@${ruff_version}")
-elif command -v uv >/dev/null 2>&1 && [[ -x ".venv/bin/python" ]]; then
-  ruff_cmd=(uv run --python .venv/bin/python ruff)
-elif command -v uv >/dev/null 2>&1; then
-  ruff_cmd=(uv run ruff)
+elif [[ -x ".venv/bin/python" ]] && .venv/bin/python -m ruff --version >/dev/null 2>&1; then
+  # Call the venv interpreter directly: `uv run` would resync the venv.
+  ruff_cmd=(.venv/bin/python -m ruff)
 elif command -v ruff >/dev/null 2>&1; then
   ruff_cmd=(ruff)
 else
