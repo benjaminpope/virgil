@@ -136,7 +136,10 @@ class EnsembleSpec:
     mean_rtol : float
         A member joins the mean if no dataset's χ² rises by more than this
         fraction: only enough to forgive rounding, since the mean of
-        identical images is not always bit-identical to them.
+        identical images is not always bit-identical to them. On data that
+        the best member fits to the noise, so strict a rule may keep that
+        member alone (and the spread is then zero); a value of order the
+        χ²/N noise, √(2/N), keeps more.
     """
 
     families: tuple = ("tv", "tsv", "maxent", "starlet")

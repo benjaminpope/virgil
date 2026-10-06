@@ -11,6 +11,7 @@ from virgil.ensemble import (
     draw_groups,
     ensemble,
     reference_starts,
+    _mixture,
     run_group,
 )
 from virgil.fitting import FitResult
@@ -131,6 +132,32 @@ def test_mean_is_judged_on_the_members_own_grids():
     assert onp.allclose(result.chi2_red, chi2, rtol=1e-4)
 
 
+def test_mixture_is_the_mean_of_the_members_scenes():
+    # Members with different image fluxes, on different grids.
+    members = [
+        _scene(36.0, flux=0.1),
+        System(
+            star=PointSource(),
+            env=Image.from_brightness(
+                gaussian_blob(9, SCALE * 4 / 3, 44.0, dra=-30.0),
+                SCALE * 4 / 3,
+                flux=0.6,
+            ),
+        ),
+        _scene(40.0, flux=0.3),
+    ]
+    images = [m.env for m in members]
+    fractions = [
+        float(m.env.flux) / (1.0 + float(m.env.flux)) for m in members
+    ]
+    u, v, wavel = DATA.u, DATA.v, DATA.wavel
+    mixture = _mixture(images, fractions, [0, 1], True)
+    expected = (
+        members[0].model(u, v, wavel) + members[1].model(u, v, wavel)
+    ) / 2
+    assert onp.allclose(mixture.model(u, v, wavel), expected, atol=1e-6)
+
+
 def test_draws_are_reproducible_and_grouped_by_geometry():
     spec = EnsembleSpec(n_weights=4)
     a = draw_groups(DATA, 8, jax.random.PRNGKey(3), spec)
@@ -212,6 +239,13 @@ def test_without_a_star_members_are_recentred_on_the_best():
     assert len(result.kept) == 2
     peak = float(result.mean.brightness.max())
     assert onp.abs(result.std).max() < 0.02 * peak
+    # The model moves each member by its shift too. These kernel phases
+    # cannot see a shift, so compare the complex visibilities: shifted,
+    # the second member is the best one's image.
+    u, v, wavel = DATA.u, DATA.v, DATA.wavel
+    best = result.model.member0.model(u, v, wavel)
+    moved = result.model.member1.model(u, v, wavel)
+    assert onp.abs(moved - best).max() < 0.01
 
 
 @pytest.mark.slow
