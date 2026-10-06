@@ -55,7 +55,7 @@ Using `uv` (recommended):
 uv python install 3.11
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -e ".[test]"
-uv run --python .venv/bin/python pytest -q
+.venv/bin/python -m pytest tests/test_models_core.py -q
 ```
 
 ## Use & Documentation
@@ -72,13 +72,10 @@ The sections in the sidebar hold worked examples on simulated and bundled data:
 - **Imaging:** image reconstruction in six parts: [simulating data](imaging_ami.md), [regularised maximum likelihood](imaging_rml.md), [Gaussian-process priors](imaging_gp.md), [a ring around a binary](imaging_composite.md), [sampling the posterior](imaging_sampling.md) and [sparse images and CLEAN](imaging_clean.md).
 - **[API Reference](api/index.md)** documents every public class and function.
 
-Documentation tooling is currently migrating from MkDocs to Zensical. During this transition, both builders are supported from the same configuration file.
-
-Local docs checks:
+The documentation is built with Zensical. Local docs check:
 
 ```bash
-uv run --python .venv/bin/python mkdocs build --strict
-uv run --python .venv/bin/python zensical build --clean
+.venv/bin/python -m zensical build --clean
 ```
 
 ## Independent validation

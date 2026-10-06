@@ -46,6 +46,23 @@ anything before 1.0 may change between minor versions.
   `model_fn=` and `samples_dict=` for `data`, `model` and `grid`, with a
   `FutureWarning`; passing an old name with its new one is a `TypeError`.
   No public function uses it yet, so nothing changes for users.
+- Starting and sampling orbit fits to multi-epoch visibilities
+  (`design/visibility_orbits.md`, stage 2), all model first:
+  `rank_orbits(model, data, orbits)` ranks trial orbits (e.g. from
+  `starting_orbits`) by the log likelihood of all the epochs, one snapshot
+  per dataset; `chain_starts` picks the best distinct orbits (modes judged
+  by the companion's positions at the epochs), one per chain;
+  `epoch_positions` fits the companion's position and covariance in each
+  dataset; `start_from_positions(model, priors, data, start_values, ...)`
+  chains these into a start (positions, starting orbits, ranking, `fit`
+  from distinct orbits) returned as an `OrbitStart`, whose `chain_values`
+  give one start per distinct mode; and `likelihood.chain_init_params`
+  turns one start per chain into numpyro's `init_params`.
+  `Epochs.resolution_mas` gives the data's finest λ/B_max.
+- The orbit tutorial now fits one snapshot per night with `Epochs` and
+  `OrbitalBinary` (the default for orbits whose motion within a night is
+  negligible), starts from `start_from_positions`, and starts one NUTS
+  chain per distinct mode.
 
 ## 0.3.0 (2026-10-06)
 

@@ -15,6 +15,7 @@ Modules:
 * [`imaging`][virgil.imaging]: regularisers and helpers for image
   reconstruction; [`scenes`][virgil.scenes]: synthetic truth images;
   [`metrics`][virgil.metrics]: image-recovery scores;
+  [`ensemble`][virgil.ensemble]: averaged ensembles of reconstructions;
   [`coverage`][virgil.coverage]: synthetic coverage and noise.
 * [`inference`][virgil.inference]: Laplace and Fisher curvature.
 * [`grid_fit`][virgil.grid_fit]: grid searches.
@@ -48,6 +49,7 @@ from . import (  # noqa: E402
     amigo,
     coverage,
     detection,
+    ensemble,
     epochs,
     fields,
     fitting,
@@ -70,7 +72,7 @@ from . import (  # noqa: E402
 )
 from ._geometry import pixel_offsets  # noqa: E402
 from .detection import detection_statistics  # noqa: E402
-from .epochs import Epochs  # noqa: E402
+from .epochs import Epochs, rank_orbits, start_from_positions  # noqa: E402
 from .fields import GaussianField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
@@ -215,8 +217,10 @@ __all__ = [
     "optimized_likelihood_grid",
     "pixel_offsets",
     "radial_profile",
+    "rank_orbits",
     "read_oifits",
     "ruffio_upperlimit",
+    "start_from_positions",
     "starting_orbits",
     "total_mass",
     "whitened_residuals",

@@ -12,9 +12,18 @@ import pytest
 
 pytest.importorskip("jaxoplanet")
 
-from virgil.epochs import Epochs  # noqa: E402
+from virgil.epochs import (  # noqa: E402
+    Epochs,
+    chain_starts,
+    rank_orbits,
+    start_from_positions,
+)
 from virgil.fitting import fit  # noqa: E402
-from virgil.likelihood import model_loglike  # noqa: E402
+from virgil.likelihood import (  # noqa: E402
+    chain_init_params,
+    model_loglike,
+    numpyro_model,
+)
 from virgil.models import (  # noqa: E402
     Attached,
     BinaryModelCartesian,
@@ -24,7 +33,11 @@ from virgil.models import (  # noqa: E402
     TruncatedCone,
 )
 from virgil.oidata import OIData, cp_indices  # noqa: E402
-from virgil.orbits import KeplerOrbit  # noqa: E402
+from virgil.orbits import (  # noqa: E402
+    KeplerOrbit,
+    PositionData,
+    starting_orbits,
+)
 from virgil.simulate import simulate  # noqa: E402
 
 T_REF = 60500.0
@@ -380,3 +393,221 @@ def test_snapshots_work_in_float32():
     with jax.enable_x64(True):
         exact = epochs.loglike(_scene(**TRUTH, flux=FLUX))
     assert float(loglike) == pytest.approx(float(exact), rel=1e-3, abs=0.1)
+
+
+# ---------------------------------------------------------------------------
+# Starting and sampling (stage 2)
+# ---------------------------------------------------------------------------
+
+STAGE2_TIMES = [-300.0, -150.0, 0.0, 120.0, 260.0, 400.0]
+
+
+def _simulated_epochs(times=STAGE2_TIMES, seed=None, frames=1):
+    """Epochs of the true binary, noiseless unless ``seed`` is given."""
+    nights = [
+        _night(T_REF + t, rotation=30.0 * k, frames=frames, d_phi=0.02)
+        for k, t in enumerate(times)
+    ]
+    with jax.enable_x64(True):
+        snapshots = Epochs(
+            {f"e{k}": n for k, n in enumerate(nights)}
+        ).snapshots(_scene(**TRUTH, flux=FLUX))
+        keys = (
+            [None] * len(times)
+            if seed is None
+            else list(jax.random.split(jax.random.PRNGKey(seed), len(times)))
+        )
+        return Epochs(
+            {
+                f"e{k}": simulate(snap, night, key)
+                for k, (snap, night, key) in enumerate(
+                    zip(snapshots, nights, keys)
+                )
+            }
+        )
+
+
+def _binary(orbit):
+    return OrbitalBinary(orbit, FLUX)
+
+
+def test_rank_orbits_puts_the_truth_first_among_starting_orbits():
+    epochs = _simulated_epochs()
+    with jax.enable_x64(True):
+        dra, ddec, _ = _orbit().relative(epochs.times)
+    offsets = onp.random.default_rng(1).normal(0.0, 0.3, (2, len(epochs)))
+    positions = PositionData(
+        epochs.times,
+        onp.asarray(dra) + offsets[0],
+        onp.asarray(ddec) + offsets[1],
+        onp.tile(0.3**2 * onp.eye(2), (len(epochs), 1, 1)),
+        t_ref=T_REF,
+    )
+    candidates = starting_orbits(
+        positions, onp.geomspace(400.0, 2000.0, 20), n_phase=24, n_best=30
+    )
+    ranked = rank_orbits(_binary, epochs, candidates + [(_orbit(), 0.0)])
+    assert len(ranked) == 31
+    assert ranked.order[0] == 30  # the true orbit
+    assert sorted(ranked.order) == list(range(31))
+    assert onp.all(onp.diff(ranked.loglike) <= 0)
+    with jax.enable_x64(True):
+        exact = float(epochs.loglike(_binary(_orbit())))
+    assert ranked.loglike[0] == pytest.approx(exact, rel=1e-6)
+    orbit, loglike = ranked[0]
+    assert orbit is ranked.best and loglike == ranked.loglike[0]
+    # One orbit with a leading axis ranks like the list of its parts.
+    batched = jax.tree_util.tree_map(
+        lambda *x: np.stack(x), *[o for o, _ in candidates[:5]]
+    )
+    again = rank_orbits(_binary, epochs, batched)
+    onp.testing.assert_allclose(
+        again.loglike, onp.sort(ranked.loglike[ranked.order < 5])[::-1]
+    )
+
+
+def test_chain_starts_are_distinct_modes():
+    epochs = _simulated_epochs(STAGE2_TIMES[:4])
+    orbits = [
+        _orbit(),
+        _orbit(period=700.01),  # the same mode
+        _orbit(omega=240.0, Omega=300.0),  # the mirror: the same sky motion
+        _orbit(Omega=150.0),
+        _orbit(a_mas=12.0),
+    ]
+    ranked = rank_orbits(_binary, epochs, orbits)
+    starts = chain_starts(ranked, 3)
+    assert len(starts) == 3
+    assert starts.order[0] in (0, 2)
+    assert set(starts.order[1:]) == {3, 4}
+    positions = starts.positions()
+    for i in range(3):
+        for j in range(i):
+            offset = positions[i] - positions[j]
+            moved = onp.hypot(offset[:, 0], offset[:, 1]).max()
+            assert moved > 0.5 * epochs.resolution_mas
+    # Fewer distinct modes than chains: the modes repeat in turn.
+    more = chain_starts(ranked, 5)
+    onp.testing.assert_array_equal(more.order[3:], starts.order[:2])
+    with pytest.raises(ValueError, match="n_chains"):
+        chain_starts(ranked, 0)
+
+
+STAGE2_PRIORS = {
+    "period": dist.LogUniform(300.0, 3000.0),
+    "dt_peri": dist.Uniform(-1500.0, 1500.0),
+    "ecc": dist.Uniform(0.0, 0.9),
+    "inc": dist.Uniform(0.0, 180.0),
+    "omega": dist.Uniform(-180.0, 360.0),
+    "Omega": dist.Uniform(-180.0, 360.0),
+    "a_mas": dist.LogUniform(2.0, 100.0),
+    "flux": dist.LogUniform(1e-3, 1.0),
+}
+
+
+def _start_values(orbit, flux):
+    period = float(orbit.period)
+    dt_peri = float(orbit.dt_peri)
+    return {
+        "period": period,
+        "dt_peri": dt_peri - period * onp.round(dt_peri / period),
+        "ecc": float(onp.clip(orbit.ecc, 0.01, 0.85)),
+        "inc": float(onp.clip(orbit.inc, 1.0, 179.0)),
+        "omega": float(onp.mod(orbit.omega, 360.0)),
+        "Omega": float(onp.mod(orbit.Omega, 360.0)),
+        "a_mas": float(orbit.a_mas),
+        "flux": flux,
+    }
+
+
+def test_a_positions_fit_starts_where_a_default_start_fails():
+    epochs = _simulated_epochs(STAGE2_TIMES[:5], seed=5, frames=4)
+    axis = onp.arange(-30.0, 30.5, 1.0)
+    start = start_from_positions(
+        _scene,
+        STAGE2_PRIORS,
+        epochs,
+        _start_values,
+        grid={"dra": axis, "ddec": axis, "flux": [0.05, 0.1, 0.2]},
+        periods=onp.geomspace(400.0, 2000.0, 20),
+        t_ref=T_REF,
+        n_phase=24,
+        n_candidates=40,
+        n_refine=2,
+        method="lm",
+    )
+    with jax.enable_x64(True):
+        true_dra, true_ddec, _ = _orbit().relative(epochs.times)
+    found = onp.hypot(
+        start.positions.dra - onp.asarray(true_dra),
+        start.positions.ddec - onp.asarray(true_ddec),
+    )
+    assert onp.all(found < 0.5), found
+    assert onp.all(start.positions.gap > 5.0)
+    assert len(start.candidates) == 40
+    assert start.best.info["chi2_red"] < 2.0
+    with jax.enable_x64(True):
+        best = _scene(**{k: start.best.values[k] for k in NAMES})
+        fitted = onp.array(
+            [onp.asarray(s.dra) for s in epochs.snapshots(best)]
+        )
+    onp.testing.assert_allclose(fitted, onp.asarray(true_dra), atol=0.3)
+    # A start far from the truth, in the middle of the priors, sticks in
+    # another minimum of the multimodal likelihood.
+    default = fit(
+        epochs.model_fn(_scene),
+        STAGE2_PRIORS,
+        epochs.data,
+        init={
+            "period": 1000.0,
+            "dt_peri": 0.0,
+            "ecc": 0.45,
+            "inc": 90.0,
+            "omega": 90.0,
+            "Omega": 90.0,
+            "a_mas": 10.0,
+            "flux": 0.05,
+        },
+        method="lm",
+    )
+    assert default.info["loss"] > start.best.info["loss"] + 100.0
+    values = start.chain_values(3)
+    assert len(values) == 3 and set(NAMES) <= set(values[0])
+    assert values[0] == dict(start.best.values)
+
+
+def test_each_chain_starts_at_its_own_values():
+    from numpyro.infer import MCMC, NUTS
+    from numpyro.infer.util import constrain_fn
+
+    epochs = _simulated_epochs(STAGE2_TIMES[:3], seed=7)
+    truth = {**TRUTH, "flux": FLUX}
+    starts = [truth, {**truth, "period": 710.0, "Omega": 121.0}]
+    with jax.enable_x64(True):
+        posterior = numpyro_model(
+            epochs.model_fn(_scene), STAGE2_PRIORS, epochs.data
+        )
+        init = chain_init_params(posterior, starts, jax.random.PRNGKey(0))
+        assert init["period"].shape == (2,)
+        for k, values in enumerate(starts):
+            back = constrain_fn(
+                posterior, (), {}, {n: z[k] for n, z in init.items()}
+            )
+            for name in NAMES:
+                assert float(back[name]) == pytest.approx(
+                    values[name], rel=1e-6
+                )
+        # A 20-step smoke test of NUTS with one start per chain; a real
+        # recovery run is an OzSTAR job.
+        mcmc = MCMC(
+            NUTS(posterior),
+            num_warmup=10,
+            num_samples=10,
+            num_chains=2,
+            chain_method="vectorized",
+            progress_bar=False,
+        )
+        mcmc.run(jax.random.PRNGKey(1), init_params=init)
+        samples = mcmc.get_samples(group_by_chain=True)
+    assert samples["period"].shape == (2, 10)
+    assert all(onp.all(onp.isfinite(v)) for v in samples.values())

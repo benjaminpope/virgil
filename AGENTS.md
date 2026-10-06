@@ -30,26 +30,28 @@ upgrading `jax` alone can leave optax, equinox etc. too old for it.
 
 | Task | Command |
 | --- | --- |
-| Run tests | `uv run --python .venv/bin/python pytest` |
-| Run one test | `uv run --python .venv/bin/python pytest tests/test_models_core.py::test_name` |
+| Run relevant tests | `.venv/bin/python -m pytest tests/test_models_core.py` |
+| Run one test | `.venv/bin/python -m pytest tests/test_models_core.py::test_name` |
 | Lint (check only) | `bash scripts/lint_local.sh` |
 | Lint (apply fixes) | `bash scripts/lint_local.sh --fix` |
 | Lint changed files only | `bash scripts/lint_local.sh --changed --fix` |
-| Full pre-commit pass | `uv run --python .venv/bin/python pre-commit run --all-files` |
-| Regenerate tutorial docs | `uv run --python .venv/bin/python scripts/sync_tutorial_docs.py` |
-| Build docs | `uv run --python .venv/bin/python mkdocs build --strict` |
-| Build docs (zensical) | `uv run --python .venv/bin/python zensical build --clean` |
+| Full pre-commit pass | `.venv/bin/python -m pre_commit run --all-files` |
+| Regenerate tutorial docs | `.venv/bin/python scripts/sync_tutorial_docs.py` |
+| Build docs | `.venv/bin/python -m zensical build --clean` |
 | Refresh the development-carbon page and badge (local only; needs [claude-code-carbon-dashboard](https://github.com/benjaminpope/claude-code-carbon-dashboard) installed) | `python3 scripts/dev_carbon.py` |
+
+Call the venv interpreter directly: `uv run` resyncs the venv to the lock, so use `.venv/bin/python -m <cmd>`.
 
 ## Definition of done
 
 Before committing:
 
 1. `bash scripts/lint_local.sh --fix`
-2. `uv run --python .venv/bin/python pytest`
+2. `.venv/bin/python -m pytest` on the relevant test files or tests only. Do not
+   run the full suite locally: heavy JAX work overloads the laptop, and CI runs the full suite.
 3. If you touched a tutorial notebook: rerun `scripts/sync_tutorial_docs.py` and
    `pytest tests/test_tutorial_docs_sync.py`.
-4. If you touched docstrings or `docs/`: `mkdocs build --strict`.
+4. If you touched docstrings or `docs/`: `.venv/bin/python -m zensical build --clean`.
 
 CI checks linting and formatting (`.github/workflows/lint.yml`) but does not fix
 them, so lint before you push.
@@ -114,7 +116,7 @@ see that repository's `PLAN.md` for the boundary.
 | `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
 | `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
-| `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
+| `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `chain_init_params` (numpyro `init_params`, one start per chain), `posterior_predictive_summary` |
 | `fitting.py` | `fit(model, priors, data, regularisers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
 | `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
@@ -126,9 +128,10 @@ see that repository's `PLAN.md` for the boundary.
 | `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, `GaussianLine`, `LorentzianLine`, `Nodes` for a free flux per channel, and `Sum`; `Tabulated` is deprecated for `Nodes`) accepted as a component's `flux` (SPARCO) |
 | `angles.py` | `AngleVector`: an angle prior sampled as a 2-D vector (site `<path>_vec`, ring and von Mises chord residuals), recognised by `fit`, `gauss_newton_mass` and `numpyro_model`; imports nothing from virgil |
 | `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
-| `epochs.py` | `Epochs`: datasets grouped into named epochs, one snapshot of a time-dependent scene per dataset (or epoch), name-keyed per-dataset `noise`, and the model function, data and summed log likelihood for multi-epoch orbit fits; see `design/visibility_orbits.md` |
+| `epochs.py` | `Epochs`: datasets grouped into named epochs, one snapshot of a time-dependent scene per dataset (or epoch), name-keyed per-dataset `noise`, and the model function, data and summed log likelihood for multi-epoch orbit fits; starting them: `rank_orbits` (trial orbits ranked by the data), `chain_starts` (distinct modes, one per chain), `epoch_positions` and `start_from_positions` (positions → `starting_orbits` → ranking → `fit` from distinct starts, as an `OrbitStart`); see `design/visibility_orbits.md` |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
+| `ensemble.py` | PYRA/MYTHRA-style reconstruction ensembles: `EnsembleSpec`, `draw_groups`, `run_group` (one L-curve per geometry group), `combine` (selection and the iterative mean) and `ensemble`, returning an `Ensemble` (mean `Image`, per-pixel σ, raw χ²/N per dataset) |
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve`; for a `DetectionMC`, `plot_null_distribution`, `plot_roc` and `plot_completeness` (duck-typed: `plotting` does not import `detection`) |
 | `_elr.py` | Espinosa Lara & Rieutord (2011) Roche shape and gravity darkening on a triangle mesh, ported from S. Dholakia's jax-interferometry (private; used by the gravity-darkened star model) |
@@ -142,9 +145,9 @@ Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_c
 `imaging` (which imports `fitting`, `fields`, `likelihood` and `models`). `likelihood` →
 `inference` → `grid_fit` and `likelihood` → `limits`; `grid_fit` and `limits` also use
 `_grid`, which imports only `_utils`, and do not import each other; `limits` →
-`plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `angles` imports nothing from virgil, and
+`plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `ensemble` imports `imaging`, `metrics` and `models`. `angles` imports nothing from virgil, and
 `likelihood`, `fitting` and `orbits` import it. `orbits` imports only `_utils` and `angles`
-(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached` and `OrbitalBinary`). `epochs` imports `likelihood`. `simulate` imports `fitting`.
+(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached` and `OrbitalBinary`). `epochs` imports `likelihood`, `fitting`, `models` and `orbits`. `simulate` imports `fitting`.
 
 ## Flux and contrast
 
@@ -306,7 +309,7 @@ If the kernel is missing, recreate it with
 ## Testing notes
 
 `pytest` is preconfigured with `-q` and `testpaths = ["tests"]`. The JAX suites are slow to
-warm up, so iterate with a single test id and run the full suite once at the end.
+warm up, so iterate with a single test id, then run the relevant test files. Leave the full suite to CI.
 
 ## Pull requests
 
