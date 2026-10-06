@@ -11,6 +11,7 @@ from virgil.ensemble import (
     draw_groups,
     ensemble,
     reference_starts,
+    _mixture,
     run_group,
 )
 from virgil.fitting import FitResult
@@ -100,6 +101,63 @@ def test_identical_members_have_zero_spread():
     assert onp.isclose(float(result.mean.flux), 0.3, rtol=1e-5)
 
 
+def test_mean_is_judged_on_the_members_own_grids():
+    # The common grid has the finest pixels and the largest field, so a
+    # member on a coarser, incommensurate grid is resampled to it, which
+    # smooths the image and on these data raises its chi2 several-fold.
+    # Judged on its own grid, the best member alone keeps its own chi2.
+    coarse = SCALE * 4 / 3
+    best = System(
+        star=PointSource(),
+        env=Image.from_brightness(
+            gaussian_blob(9, coarse, 40.0, dra=48.0), coarse, flux=0.3
+        ),
+    )
+    group = _group(0, [_scene(36.0), best, _scene(44.0)])
+    group = Group(
+        Draw(0, "tsv", 9, coarse, "flat", group.draw.weights), group.curve
+    )
+    other = _group(1, [_scene(30.0), _scene(32.0), _scene(34.0)])
+    # Keep the fine-grid members live, so that the common grid is theirs.
+    spec = EnsembleSpec(chi2_ratio=1e9, mad_cut=1e9)
+    result = combine(DATASETS, [group, other], spec=spec)
+    first = min(
+        (m for m in result.members if m.reason != "window"),
+        key=lambda m: m.total_chi2_red,
+    )
+    assert first.result.model is best
+    assert onp.allclose(result.trace[0], first.chi2_red, rtol=1e-4)
+    ndata = [d.n_independent for d in DATASETS]
+    chi2 = [c / n for c, n in zip(_chi2(result.model, DATASETS), ndata)]
+    assert onp.allclose(result.chi2_red, chi2, rtol=1e-4)
+
+
+def test_mixture_is_the_mean_of_the_members_scenes():
+    # Members with different image fluxes, on different grids.
+    members = [
+        _scene(36.0, flux=0.1),
+        System(
+            star=PointSource(),
+            env=Image.from_brightness(
+                gaussian_blob(9, SCALE * 4 / 3, 44.0, dra=-30.0),
+                SCALE * 4 / 3,
+                flux=0.6,
+            ),
+        ),
+        _scene(40.0, flux=0.3),
+    ]
+    images = [m.env for m in members]
+    fractions = [
+        float(m.env.flux) / (1.0 + float(m.env.flux)) for m in members
+    ]
+    u, v, wavel = DATA.u, DATA.v, DATA.wavel
+    mixture = _mixture(images, fractions, [0, 1], True)
+    expected = (
+        members[0].model(u, v, wavel) + members[1].model(u, v, wavel)
+    ) / 2
+    assert onp.allclose(mixture.model(u, v, wavel), expected, atol=1e-6)
+
+
 def test_draws_are_reproducible_and_grouped_by_geometry():
     spec = EnsembleSpec(n_weights=4)
     a = draw_groups(DATA, 8, jax.random.PRNGKey(3), spec)
@@ -181,6 +239,13 @@ def test_without_a_star_members_are_recentred_on_the_best():
     assert len(result.kept) == 2
     peak = float(result.mean.brightness.max())
     assert onp.abs(result.std).max() < 0.02 * peak
+    # The model moves each member by its shift too. These kernel phases
+    # cannot see a shift, so compare the complex visibilities: shifted,
+    # the second member is the best one's image.
+    u, v, wavel = DATA.u, DATA.v, DATA.wavel
+    best = result.model.member0.model(u, v, wavel)
+    moved = result.model.member1.model(u, v, wavel)
+    assert onp.abs(moved - best).max() < 0.01
 
 
 @pytest.mark.slow
