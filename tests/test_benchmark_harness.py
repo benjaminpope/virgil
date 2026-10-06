@@ -53,6 +53,11 @@ def test_a_tiny_case_writes_valid_rows(tmp_path):
         assert r["n_epochs"] == 4 and r["jax_version"] == jax.__version__
     assert rows[0]["n_compiles_first"] > 0  # the grid kernel was compiled
     assert rows[0]["n_compiles_new_system"] == 0
+    # Clean tiny A1: every epoch's position is found at the truth (a sign
+    # or orientation slip in the harness's truth would break this).
+    assert rows[0]["q_max_position_error_mas"] < 0.5
+    assert rows[0]["q_n_true_peak"] == 4
+    assert rows[1]["q_n_returned"] == 10
 
 
 def test_the_csv_format_has_one_row_per_measurement(tmp_path):

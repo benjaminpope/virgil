@@ -141,10 +141,10 @@ def current_rss_mb():
 
 
 def peak_rss_mb():
-    """Process peak RSS in MB (``ru_maxrss`` is bytes on macOS, KB on
+    """Process peak RSS in MB (``ru_maxrss`` is bytes on macOS, KiB on
     Linux). It is monotone over the process: use ``RssWatcher`` for a step."""
     r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return r / 1e6 if sys.platform == "darwin" else r / 1e3
+    return r / 1e6 if sys.platform == "darwin" else r * 1024 / 1e6
 
 
 class RssWatcher:
@@ -172,16 +172,21 @@ class RssWatcher:
         self.peak = max(self.peak, current_rss_mb())
 
 
-def device_peak_mb():
-    """Peak device memory in MB, or None where the backend gives none (CPU)."""
+def device_memory_mb():
+    """``(bytes_in_use, peak_bytes_in_use)`` of device 0 in MB, or
+    ``(None, None)`` where the backend reports none (CPU). The peak is a
+    process-wide high-water mark that never falls."""
     try:
         stats = jax.devices()[0].memory_stats()
     except Exception:
-        return None
+        stats = None
     if not stats:
-        return None
-    peak = stats.get("peak_bytes_in_use")
-    return None if peak is None else peak / 1e6
+        return None, None
+    use, peak = stats.get("bytes_in_use"), stats.get("peak_bytes_in_use")
+    return (
+        None if use is None else use / 1e6,
+        None if peak is None else peak / 1e6,
+    )
 
 
 @dataclasses.dataclass
@@ -196,7 +201,8 @@ class Measurement:
     compile_names_warm: list
     peak_rss_mb: float  # process peak after the step
     compile_peak_rss_mb: float  # sampled during the cold call
-    peak_device_mb: object
+    device_in_use_delta_mb: object  # bytes_in_use after minus before
+    device_peak_process_mb: object  # process-wide high-water mark
     result: object = None
 
     def row(self):
@@ -213,6 +219,7 @@ def measure(fn, repeats=5, profile_trace=None):
     ``run_bench.py --profile``) wrapped around extra warm calls, after the
     timed ones, so the trace holds no compile and does not bias the timings.
     """
+    use0, _ = device_memory_mb()
     with count_compiles() as cold, RssWatcher() as watch:
         t0 = time.perf_counter()
         result = block(fn())
@@ -229,6 +236,7 @@ def measure(fn, repeats=5, profile_trace=None):
                 with jax.profiler.StepTraceAnnotation("step", step_num=i):
                     block(fn())
     run = statistics.median(warm_times) if warm_times else first
+    use1, peak1 = device_memory_mb()
     return Measurement(
         first_s=first,
         run_s=run,
@@ -240,7 +248,10 @@ def measure(fn, repeats=5, profile_trace=None):
         compile_names_warm=sorted(set(warm["names"])),
         peak_rss_mb=peak_rss_mb(),
         compile_peak_rss_mb=watch.peak,
-        peak_device_mb=device_peak_mb(),
+        device_in_use_delta_mb=(
+            None if use1 is None or use0 is None else use1 - use0
+        ),
+        device_peak_process_mb=peak1,
         result=result,
     )
 

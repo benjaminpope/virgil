@@ -20,7 +20,8 @@ likelihood against the number of epochs, and NUTS with each
 
 Failing assertions (exit status 1, listed at the end):
 
-* a warm call that compiles (a recompile) in any step;
+* a warm call that compiles (a recompile) in a step marked ``bounded=True``
+  (any step with ``--strict``);
 * with ``--systems 2``, a second system of the same shape bucket that
   compiles in a step marked ``bounded=True``;
 * with ``--max-hlo-exponent X``, HLO size growing faster than n_epochs**X.
@@ -87,8 +88,8 @@ SIZES = {
     "tiny": dict(
         ref=dict(
             n_epochs=4,
-            n_obs=20,
-            grid_size=17,
+            n_obs=100,
+            grid_size=33,
             n_flux=2,
             n_candidates=10,
             n_phase=8,
@@ -250,18 +251,17 @@ def prep_rank_orbits(system, ctx, variant):
             _binary_of(flux), system.epochs, orbits, batch_size=batch
         )
     cands = _candidates(system, ctx)
-    truth = KeplerOrbit(
-        **{k: system.truth_values[k] for k in cases.TRUTH},
-        t_ref=system.t_ref,
-    )
-    orbits = list(cands) + [(truth, 0.0)]
+    orbits = [orbit for orbit, _ in cands]
     return lambda: rank_orbits(
         _binary_of(flux), system.epochs, orbits, batch_size=batch
     )
 
 
 def quality_rank_orbits(result, system):
-    best = result.loglike[0]
+    """Do the candidates reach the truth's likelihood? The truth is not
+    among them: ``best_minus_truth`` is the best candidate's log likelihood
+    minus the truth's (near or above 0 is good), and ``truth_rank`` is how
+    many candidates beat the truth."""
     with jax.enable_x64(True):
         exact = float(
             system.epochs.loglike(
@@ -275,9 +275,10 @@ def quality_rank_orbits(result, system):
             )
         )
     return dict(
-        best_loglike=float(best),
+        best_loglike=float(result.loglike[0]),
         truth_loglike=exact,
-        best_minus_truth=float(best - exact),
+        best_minus_truth=float(result.loglike[0] - exact),
+        truth_rank=int((result.loglike > exact).sum()),
         n_ranked=len(result),
     )
 
@@ -614,14 +615,15 @@ def compile_suite(args):
         system = cases.build(
             cases.Case(case="A1", seed=args.seed, **{**ref, "n_epochs": n})
         )
-        theta = {
-            k: jax.numpy.asarray(v) for k, v in system.truth_values.items()
-        }
 
         def loglike(theta, system=system):
             return system.epochs.loglike(system.scene_fn(**theta))
 
-        with jax.enable_x64(True):
+        with jax.enable_x64(True), harness.RssWatcher() as watch:
+            theta = {
+                k: jax.numpy.asarray(v)
+                for k, v in system.truth_values.items()
+            }
             n_hlo, secs = harness.hlo_size(loglike, theta)
         sizes.append(n_hlo)
         row = base_row("compile", system)
@@ -631,7 +633,7 @@ def compile_suite(args):
             status="ok",
             hlo_instructions=n_hlo,
             lower_compile_s=secs,
-            compile_peak_rss_mb=harness.current_rss_mb(),
+            compile_peak_rss_mb=watch.peak,
         )
         rows.append(row)
         print(f"[compile] loglike n_epochs={n}: {n_hlo} HLO ops, {secs:.2f}s")
@@ -679,6 +681,8 @@ def _nuts_subprocess(args, method):
         os.path.abspath(__file__),
         "--size",
         args.size,
+        "--seed",
+        str(args.seed),
         "--suite",
         "nuts-child",
         "--chain-method",
