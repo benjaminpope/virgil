@@ -347,7 +347,7 @@ def run_nuts(
     strategy = (
         {} if init is None else {"init_strategy": init_to_value(values=init)}
     )
-    kernel = NUTS(model, dense_mass=True, target_accept_prob=0.9, **strategy)
+    kernel = NUTS(model, dense_mass=True, target_accept_prob=0.95, **strategy)
     mcmc = MCMC(
         kernel,
         num_warmup=num_warmup,
