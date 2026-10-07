@@ -156,6 +156,110 @@ def radial_profile(values, dra, ddec, center=(0.0, 0.0), r_max=None, bins=20):
 # === SIGNIFICANCE ===
 
 
+def chi2ppf(p, df):
+    """
+    Percentile function for chi-square.
+
+    It is ``2·gammaincinv(df/2, p)``, inverting
+    ``jax.scipy.special.gammainc`` by Halley's method from a
+    Wilson–Hilferty start, with the residual taken in the upper tail
+    (``gammaincc``) for ``p > 1/2``. It is accurate to about 1e-14
+    relative in float64 for every ``df`` and ``p`` in [1e-10, 1 - 1e-10],
+    needs no optional dependency, and is differentiable (by the implicit
+    function theorem) and ``jit``-able in both arguments.
+
+    Parameters
+    ----------
+    p : array-like
+        Percentile value.
+    df : array-like
+        Degrees of freedom.
+
+    Returns
+    -------
+    array-like
+        Corresponding chi2 value to the percentile.
+
+    Notes
+    -----
+    ``p`` is clipped to ``[eps, 1 - eps]`` of its own floating-point type, so
+    the result stays finite. Near ``p = 1`` this loses precision; to convert
+    small tail probabilities, use [`nsigma`][virgil.limits.nsigma], which works with the upper
+    tail directly.
+    """
+    p = jnp.asarray(p, dtype=float)
+    eps = jnp.finfo(p.dtype).eps
+    p = jnp.clip(p, eps, 1.0 - eps)
+
+    a = jnp.asarray(df, dtype=p.dtype) / 2.0
+    x = _gammaincinv(jnp.where(a > 0.0, a, 1.0), p)
+    return jnp.where(a > 0.0, 2.0 * x, jnp.nan)
+
+
+def _gammaincinv_guess(a, p):
+    """Starting point for :func:`_gammaincinv` (Numerical Recipes, 3rd ed.,
+    §6.2.1): Wilson–Hilferty for ``a > 1``, a power law in the lower tail
+    and an exponential in the upper tail otherwise."""
+    tiny = jnp.finfo(p.dtype).tiny
+    pp = jnp.where(p < 0.5, p, 1.0 - p)
+    t = jnp.sqrt(-2.0 * jnp.log(pp))
+    z = (2.30753 + t * 0.27061) / (1.0 + t * (0.99229 + t * 0.04481)) - t
+    z = jnp.where(p < 0.5, -z, z)
+    a_big = jnp.maximum(a, 1.0)
+    wh = a_big * (1.0 - 1.0 / (9.0 * a_big) - z / (3.0 * jnp.sqrt(a_big))) ** 3
+    wh = jnp.maximum(1e-3, wh)
+
+    a_small = jnp.clip(a, tiny, 1.0)
+    t = 1.0 - a_small * (0.253 + a_small * 0.12)
+    lower = jnp.exp(jnp.log(jnp.maximum(p, tiny) / t) / a_small)
+    upper = 1.0 - jnp.log1p(-jnp.minimum((p - t) / (1.0 - t), 1.0 - 1e-16))
+    small = jnp.where(p < t, lower, upper)
+    return jnp.where(a > 1.0, wh, small)
+
+
+@jax.custom_jvp
+def _gammaincinv(a, p):
+    """``x`` with ``gammainc(a, x) = p``, by Halley's method.
+
+    Residuals use the upper tail ``gammaincc(a, x) = 1 - p`` when
+    ``p > 1/2``, so the result keeps full relative precision at both ends.
+    The derivative is from the implicit function theorem, so this is
+    differentiable in ``a`` and ``p`` and does not unroll the iterations.
+    """
+    a, p = jnp.broadcast_arrays(a, p)
+    q = 1.0 - p
+    upper_tail = p > 0.5
+    log_gamma_a = jsp.special.gammaln(a)
+
+    def step(_, x):
+        err = jnp.where(
+            upper_tail,
+            q - jsp.special.gammaincc(a, x),
+            jsp.special.gammainc(a, x) - p,
+        )
+        log_x = jnp.log(x)
+        density = jnp.exp((a - 1.0) * log_x - x - log_gamma_a)
+        u = err / density
+        halley = u / (1.0 - 0.5 * jnp.minimum(1.0, u * ((a - 1.0) / x - 1.0)))
+        new = x - halley
+        new = jnp.where(new <= 0.0, 0.5 * x, new)
+        converged = (density == 0.0) | ~jnp.isfinite(u)
+        return jnp.where(converged, x, new)
+
+    return jax.lax.fori_loop(0, 20, step, _gammaincinv_guess(a, p))
+
+
+@_gammaincinv.defjvp
+def _gammaincinv_jvp(primals, tangents):
+    a, p = primals
+    da, dp = tangents
+    x = _gammaincinv(a, p)
+    density = jnp.exp((a - 1.0) * jnp.log(x) - x - jsp.special.gammaln(a))
+    # gammainc(a, x(a, p)) = p, so dx = (dp - ∂_a gammainc da) / density.
+    _, dpda = jax.jvp(lambda a_: jsp.special.gammainc(a_, x), (a,), (da,))
+    return x, (dp - dpda) / density
+
+
 def nsigma(chi2r_test, chi2r_true, ndof):
     """
     Convert a reduced-chi-squared ratio to a Gaussian-equivalent significance.

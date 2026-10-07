@@ -1,10 +1,13 @@
+import jax
 import jax.numpy as np
 import matplotlib.pyplot as plt
 import numpy as onp
 import pytest
 from astropy.io import fits
 from matplotlib.ticker import FuncFormatter
+from scipy import stats
 
+from virgil.limits import chi2ppf
 from virgil.models import GaussianDisk
 from virgil.oidata import OIData, closure_phases
 from virgil.plotting import (
@@ -246,6 +249,72 @@ def test_v2_flag_string_true_is_parsed_as_true():
     data["v2_flag"] = "true"
     oidata = OIData(data)
     assert oidata.v2_flag is True
+
+
+def test_chi2ppf_df1_returns_finite_values():
+    p = np.array([1e-6, 0.5, 0.95, 1.0 - 1e-6])
+    q = chi2ppf(p, 1.0)
+    assert np.all(np.isfinite(q))
+    assert np.all(q >= 0.0)
+
+
+@pytest.mark.parametrize("df", [1.0, 2.0, 3.0, 5.0, 10.0, 50.0])
+def test_chi2ppf_matches_scipy_for_any_df(df):
+    # F17 (virgil-validation): df != 1 used numpyro's gammaincinv, which
+    # needs tensorflow_probability. It is now a Halley inversion of gammainc.
+    p = onp.concatenate(
+        [
+            onp.logspace(-10, -1, 10),
+            onp.linspace(0.1, 0.9, 9),
+            1.0 - onp.logspace(-1, -10, 10),
+        ]
+    )
+    with jax.enable_x64(True):
+        q = onp.asarray(chi2ppf(p, df))
+    onp.testing.assert_allclose(q, stats.chi2.ppf(p, df), rtol=1e-10, atol=0.0)
+
+
+@pytest.mark.parametrize("df", [1.0, 2.0, 3.0, 5.0, 10.0, 50.0])
+def test_chi2ppf_matches_scipy_in_float32(df):
+    p = onp.concatenate(
+        [
+            onp.logspace(-4, -1, 10),
+            onp.linspace(0.1, 0.9, 9),
+            1.0 - onp.logspace(-1, -4, 10),
+        ]
+    ).astype(onp.float32)
+    with jax.enable_x64(False):
+        q = chi2ppf(p, df)
+    assert q.dtype == onp.float32
+    onp.testing.assert_allclose(
+        onp.asarray(q), stats.chi2.ppf(p.astype(float), df), rtol=1e-4
+    )
+
+
+@pytest.mark.parametrize("df", [0.0, -2.0])
+def test_chi2ppf_nonpositive_df_is_nan(df):
+    q = onp.asarray(chi2ppf(onp.array([0.1, 0.5, 0.9]), df))
+    assert onp.all(onp.isnan(q))
+
+
+def test_chi2ppf_is_differentiable_and_jittable():
+    with jax.enable_x64(True):
+        p, df = 0.9, 3.0
+        x = stats.chi2.ppf(p, df)
+        dq_dp = jax.grad(chi2ppf, argnums=0)(p, df)
+        onp.testing.assert_allclose(
+            dq_dp, 1.0 / stats.chi2.pdf(x, df), rtol=1e-10
+        )
+        h = 1e-5
+        numeric = (stats.chi2.ppf(p, df + h) - stats.chi2.ppf(p, df - h)) / (
+            2 * h
+        )
+        dq_ddf = jax.grad(chi2ppf, argnums=1)(p, df)
+        onp.testing.assert_allclose(dq_ddf, numeric, rtol=1e-6)
+        jitted = jax.jit(chi2ppf)(np.asarray([0.5, 0.99]), np.asarray(4.0))
+        onp.testing.assert_allclose(
+            jitted, stats.chi2.ppf([0.5, 0.99], 4.0), rtol=1e-10
+        )
 
 
 def test_visibility_correlation_ticks_use_adaptive_float_formatter():
