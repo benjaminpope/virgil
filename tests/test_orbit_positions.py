@@ -464,9 +464,10 @@ def test_the_per_night_ranking_agrees_with_an_independent_fit(case):
     top = onp.array(top[:2])
     if reference[0][3] > 0.99:
         # At flux 1 the companion at r and at -r is one scene: the peak's
-        # sign is undetermined, and the marginal gap says so.
+        # sign is undetermined, and the marginal gap says so. (The refined
+        # peaks, at fluxes just below 1, differ by a few hundredths.)
         assert min(onp.hypot(*(best - top)), onp.hypot(*(best + top))) < 0.05
-        assert found.gap_marginal[0] < 1e-6
+        assert found.gap_marginal[0] < 0.1
         return
     # The same best peak, to the fits' tolerance ...
     assert onp.hypot(*(best - top)) < 0.05, (best, reference[:3])
@@ -488,3 +489,141 @@ def test_the_per_night_ranking_agrees_with_an_independent_fit(case):
         # A static fit of a night with 0.2 λ/B of motion agrees; the motion
         # is visible in the night's spread of times.
         assert epochs.spread_days[0] > 0.0
+
+
+# ---------------------------------------------------------------------------
+# 7. The peak catalogue: refine several grid peaks before committing
+# ---------------------------------------------------------------------------
+
+COARSE = {
+    "dra": onp.arange(-15.0, 15.01, 1.5),
+    "ddec": onp.arange(-15.0, 15.01, 1.5),
+    "flux": [0.1, 1.0],
+}
+FLIP_TRUTH = (4.3, -2.2, 0.4)
+
+
+def test_the_refined_best_peak_wins_when_the_grid_best_is_a_decoy():
+    # On a coarse grid whose fluxes miss the companion's (0.4), the best
+    # grid point is near the mirror image -r, and refining it alone
+    # commits there with a decisive-looking gap (the Gl 229 failure).
+    # Refining the top peaks finds the companion at r.
+    epochs = Epochs({"night": _night(VLTI_UTS, 5, FLIP_TRUTH)})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        alone = epoch_positions(epochs, COARSE, n_peaks=1)
+        found = epoch_positions(epochs, COARSE)
+    truth = onp.array(FLIP_TRUTH[:2])
+    assert onp.hypot(alone.dra[0] + truth[0], alone.ddec[0] + truth[1]) < 1.0
+    assert alone.gap_marginal[0] > 5.0
+    assert onp.hypot(found.dra[0] - truth[0], found.ddec[0] - truth[1]) < 0.5
+    assert abs(found.flux[0] - FLIP_TRUTH[2]) < 0.1
+    peaks = found.peaks[0]
+    assert peaks.marginal[0] > alone.peaks[0].marginal[0] + 1.0
+    # The gap is the refined best's score less its best refined rival's
+    # (here the decoy, which no grid point beats).
+    decoy = onp.hypot(peaks.dra + truth[0], peaks.ddec + truth[1]) < 1.0
+    assert decoy.any()
+    onp.testing.assert_allclose(
+        found.gap_marginal[0],
+        peaks.marginal[0] - peaks.marginal[decoy].max(),
+        rtol=1e-9,
+    )
+    assert not found.decisive(5.0)[0]
+
+
+def test_the_catalogue_holds_scored_peaks_with_weights():
+    data = _night(VLTI_UTS, 5, FLIP_TRUTH)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        found = epoch_positions(Epochs({"night": data}), COARSE, n_peaks=4)
+        grid = epoch_positions(
+            Epochs({"night": data}), COARSE, refine=False, n_peaks=4
+        )
+    peaks = found.peaks[0]
+    assert len(peaks) == 4
+    # Best first, and the best is the fitted position.
+    assert onp.all(onp.diff(peaks.marginal) <= 0.0)
+    assert (peaks.dra[0], peaks.ddec[0], peaks.flux[0]) == (
+        found.dra[0],
+        found.ddec[0],
+        found.flux[0],
+    )
+    # Distinct peaks, each scored on the data directly.
+    xy = onp.stack([peaks.dra, peaks.ddec], -1)
+    apart = onp.hypot(*(xy[:, None] - xy[None]).transpose(2, 0, 1))
+    assert onp.all(apart[onp.triu_indices(4, 1)] > 0.5)
+    with jax.enable_x64(True):
+        d64 = cast_tree(data, "float64")
+        for k in range(4):
+            model = BinaryModelCartesian(
+                peaks.dra[k], peaks.ddec[k], peaks.flux[k]
+            )
+            assert float(marginal_loglike(model, d64)) == pytest.approx(
+                peaks.marginal[k], abs=1e-6
+            )
+            assert float(model_loglike(model, d64)) == pytest.approx(
+                peaks.loglike[k], abs=1e-6
+            )
+    weight = onp.exp(peaks.marginal - peaks.marginal.max())
+    onp.testing.assert_allclose(peaks.weight, weight / weight.sum())
+    assert peaks.weight.sum() == pytest.approx(1.0)
+    assert not found.edge[0]
+    # Without refinement the peaks are grid points, and the position the
+    # best of them, as before.
+    assert grid.peaks[0].dra[0] == grid.dra[0]
+    assert grid.dra[0] in COARSE["dra"] and grid.ddec[0] in COARSE["ddec"]
+
+
+def test_peak_selection_and_reranking_on_a_synthetic_surface():
+    from virgil.epochs import _grid_peaks, _rank_peaks, _refined_gap
+
+    axis = onp.arange(-10.0, 10.01, 1.0)
+    xx, yy, _ = onp.meshgrid(axis, axis, [0.5], indexing="ij")
+
+    def bump(x, y, height, width=1.5):
+        return height - ((xx - x) ** 2 + (yy - y) ** 2) / (2 * width**2)
+
+    # A decoy at (3, 1) higher on the grid than the companion at (-2, 5),
+    # and a low peak on the edge.
+    score = onp.maximum.reduce(
+        [bump(3, 1, 10.0), bump(-2, 5, 9.0), bump(10, -10, 2.0)]
+    )
+    cells = _grid_peaks(score, xx, yy, rival=2.0, n_peaks=5)
+    found = [(axis[i], axis[j]) for i, j, _ in cells]
+    assert found == [(3.0, 1.0), (-2.0, 5.0), (10.0, -10.0)]
+    assert _grid_peaks(score, xx, yy, rival=2.0, n_peaks=1) == [cells[0]]
+    # A stub refinement that finds the companion's narrow peak 8.9 above
+    # its grid point, the decoy's barely above its own, and the edge
+    # peak's below its grid point (so that grid point is kept).
+    lifted = {(3.0, 1.0): 10.2, (-2.0, 5.0): 17.9, (10.0, -10.0): 1.0}
+    points = [[axis[i], axis[j], 0.5] for i, j, _ in cells]
+
+    def refine(x0):
+        return x0 + onp.array([0.3, 0.0, 0.0]), lifted[tuple(x0[:2])]
+
+    def stub_score(x):
+        values = []
+        for p in x:
+            key = (round(p[0] - 0.3, 6), p[1])
+            values.append(lifted[key] if key in lifted else 2.0)
+        values = onp.array(values)
+        return values - 1.0, values
+
+    best, loglike, marginal, order = _rank_peaks(
+        points, [score[c] for c in cells], refine, stub_score
+    )
+    onp.testing.assert_allclose(best[0], [-1.7, 5.0, 0.5])
+    onp.testing.assert_allclose(best[2], [10.0, -10.0, 0.5])
+    assert list(order) == [1, 0, 2]
+    onp.testing.assert_allclose(marginal, [17.9, 10.2, 2.0])
+    onp.testing.assert_allclose(loglike, marginal - 1.0)
+    gap = _refined_gap(best, marginal, score, xx, yy, rival=2.0)
+    assert gap == pytest.approx(17.9 - 10.2)
+    # The grid is a floor for the rival: here a grid point beats every
+    # refined rival.
+    floor = score.copy()
+    floor[0, 0, 0] = 15.0
+    assert _refined_gap(
+        best, marginal, floor, xx, yy, rival=2.0
+    ) == pytest.approx(2.9)

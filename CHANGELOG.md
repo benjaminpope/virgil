@@ -74,6 +74,23 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **`epoch_positions` no longer commits to a peak before refining it.**
+  It refined only the best grid point, which is not always the best peak
+  once refined: fringe peaks are often narrower than the grid step, and
+  on Gl 229 (GRAVITY) two nights committed to a wrong peak with a
+  `gap_marginal` above `min_gap`, which then seeded the orbit search in a
+  wrong mode. It now refines the top `n_peaks=5` distinct local maxima of
+  the grid (more than `gap_mas` apart), takes the best refined one as the
+  position, and measures `gap_marginal` against its best refined rival
+  (with the grid as a floor). The new `EpochPositions.peaks` holds each
+  dataset's catalogue (`EpochPeaks`: positions, fluxes, quoted and
+  marginal scores, weights ∝ exp(m − max m), and an `edge` flag; also
+  `EpochPositions.edge`). The quoted `gap` stays the grid quantity for
+  its last release. The cost of the refinement grows linearly with
+  `n_peaks`. `start_from_positions(n_peaks=)` passes it on, and
+  `OrbitStart.seeded` and `OrbitStart.ambiguous` name the datasets that
+  seeded the orbits and those left out (with a `UserWarning`), so that no
+  night is dropped silently.
 - `ensemble.combine` drops members whose fit diverged (a non-finite χ²),
   with `reason="diverged"`, instead of rejecting every member with a
   `ValueError`, and `LCurve.corner` ignores non-finite points so that a

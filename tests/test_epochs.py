@@ -553,6 +553,12 @@ def test_a_positions_fit_starts_where_a_default_start_fails():
     # On this coarse (2 mas) grid one night's marginal gap is about 3,
     # so it does not seed orbits; the others do.
     assert start.positions.decisive(5.0).sum() >= 4
+    # Every dataset is either seeded or reported ambiguous, never dropped.
+    decisive = start.positions.decisive(5.0)
+    names = onp.array(start.positions.names)
+    assert start.seeded == tuple(names[decisive])
+    assert start.ambiguous == tuple(names[~decisive])
+    assert len(start.positions.peaks) == len(names)
     assert len(start.candidates) == 20
     assert start.best.info["chi2_red"] < 2.0
     with jax.enable_x64(True):

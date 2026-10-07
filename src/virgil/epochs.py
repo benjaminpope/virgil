@@ -68,6 +68,7 @@ from .orbits import (
 
 __all__ = [
     "Epochs",
+    "EpochPeaks",
     "EpochPositions",
     "OrbitStart",
     "RankedOrbits",
@@ -934,6 +935,45 @@ def chain_starts(ranked, n_chains, *, min_distance_mas=None):
 
 
 @dataclasses.dataclass(frozen=True)
+class EpochPeaks:
+    """The catalogue of one dataset's peaks, from
+    [`epoch_positions`][virgil.epochs.epoch_positions]: the highest
+    distinct local maxima of its grid, each refined with ``refine``,
+    best first.
+
+    Attributes
+    ----------
+    dra, ddec, flux : numpy.ndarray
+        The peaks' positions (mas, East and North) and companion/primary
+        fluxes, after refinement.
+    loglike : numpy.ndarray
+        The log likelihood of each peak on the quoted errors.
+    marginal : numpy.ndarray
+        The scale-marginalized score m of each peak
+        ([`marginal_loglike`][virgil.epochs.marginal_loglike]); the peaks
+        are sorted by it, highest first.
+    weight : numpy.ndarray
+        Relative weights ∝ exp(m - max m), summing to 1: how much each
+        peak counts as the companion's position in this dataset alone.
+    edge : numpy.ndarray
+        Whether each peak started from a grid point on the edge of the
+        position grid. A best peak at the edge may stand for a companion
+        outside the grid: treat that dataset as ambiguous.
+    """
+
+    dra: onp.ndarray
+    ddec: onp.ndarray
+    flux: onp.ndarray
+    loglike: onp.ndarray
+    marginal: onp.ndarray
+    weight: onp.ndarray
+    edge: onp.ndarray
+
+    def __len__(self):
+        return len(self.marginal)
+
+
+@dataclasses.dataclass(frozen=True)
 class EpochPositions:
     """The companion's position in each dataset, from
     [`epoch_positions`][virgil.epochs.epoch_positions].
@@ -963,7 +1003,9 @@ class EpochPositions:
         added: the log likelihood of the best grid position minus that of
         the best grid position more than ``gap_mas`` from it. It grows as
         1/s² when the errors are underestimated by s, so an ambiguous
-        dataset can look decisive. Kept unchanged for one release, after
+        dataset can look decisive. It is a grid quantity, not refined,
+        and its best grid position need not be the fitted one. Kept
+        unchanged for one release, after
         which ``gap`` will hold the marginal value.
     gap_marginal : numpy.ndarray
         How decisive each dataset is, on the scale-marginalized surface:
@@ -971,7 +1013,10 @@ class EpochPositions:
         rival more than ``gap_mas`` away, with each block's error scale
         integrated out. A small gap means another peak (a fringe alias,
         or a mirror image when closure phases are weak) fits almost as
-        well. ``decisive`` and ``min_gap`` compare this.
+        well. ``decisive`` and ``min_gap`` compare this. With ``refine``
+        it compares refined peaks: the best of the catalogue (``peaks``)
+        and the best of its refined rivals and of the grid points more
+        than ``gap_mas`` from it.
     chi2_raw : tuple of dict
         For each dataset, χ²/N on the quoted errors at the fitted
         position, N = ``n_independent``: per block (``"vis"``, ``"phi"``,
@@ -981,6 +1026,9 @@ class EpochPositions:
     scale : tuple of dict
         For each dataset, the fitted error scale ŝ = √(χ²/ν) of each
         block (``"vis_scale"``, ``"phi_scale"``, ``"extra[k]_scale"``).
+    peaks : tuple of EpochPeaks
+        For each dataset, the catalogue of its peaks, best first: the
+        first is the fitted position.
     """
 
     names: tuple
@@ -993,10 +1041,17 @@ class EpochPositions:
     gap_marginal: onp.ndarray
     chi2_raw: tuple
     scale: tuple
+    peaks: tuple = ()
 
     def decisive(self, min_gap):
         """Whether each dataset's ``gap_marginal`` exceeds ``min_gap``."""
         return self.gap_marginal > min_gap
+
+    @property
+    def edge(self):
+        """Whether each dataset's best peak started at the edge of the
+        position grid (see ``EpochPeaks.edge``)."""
+        return onp.array([bool(p.edge[0]) for p in self.peaks], dtype=bool)
 
     def positions(self, *, t_ref, min_gap=None):
         """The positions as [`PositionData`][virgil.orbits.PositionData],
@@ -1082,6 +1137,72 @@ def _gap(score, xx, yy, rival):
     return (i, j, int(onp.argmax(score[i, j]))), float(gap)
 
 
+def _grid_peaks(score, xx, yy, rival, n_peaks):
+    """The ``(i, j, k)`` cells of up to ``n_peaks`` local maxima of a
+    (dra, ddec, flux) grid of scores, highest first, each more than
+    ``rival`` from every higher one (k is the best flux there)."""
+    from scipy.ndimage import maximum_filter
+
+    by_position = score.max(axis=2)
+    finite = onp.isfinite(by_position)
+    local = finite & (
+        by_position == maximum_filter(by_position, size=3, mode="nearest")
+    )
+    cells = onp.argwhere(local)
+    cells = cells[onp.argsort(-by_position[local], kind="stable")]
+    if not len(cells):
+        cells = [onp.unravel_index(onp.argmax(by_position), by_position.shape)]
+    chosen = []
+    for i, j in cells:
+        if all(
+            onp.hypot(xx[i, j, 0] - xx[a, b, 0], yy[i, j, 0] - yy[a, b, 0])
+            > rival
+            for a, b, _ in chosen
+        ):
+            chosen.append((int(i), int(j), int(onp.argmax(score[i, j]))))
+            if len(chosen) == n_peaks:
+                break
+    return chosen
+
+
+def _rank_peaks(grid_points, grid_marginal, refine, score):
+    """Refine each grid peak and rank the peaks by their marginal score.
+
+    ``refine(x0)`` returns a refined point and its marginal score, kept
+    only when it is no worse than the grid point's; ``score(points)``
+    returns the quoted log likelihood and the marginal score of each
+    point. Returns the points, quoted and marginal scores, best first,
+    and the order (indices into ``grid_points``).
+    """
+    points = onp.array(grid_points, dtype=float)
+    if refine is not None:
+        for n, (x0, m0) in enumerate(zip(grid_points, grid_marginal)):
+            refined, value = refine(onp.asarray(x0, dtype=float))
+            if value >= m0:
+                points[n] = refined
+    loglike, marginal = score(points)
+    loglike = onp.asarray(loglike, dtype=float)
+    marginal = onp.where(
+        onp.isfinite(marginal), onp.asarray(marginal, dtype=float), -onp.inf
+    )
+    order = onp.argsort(-marginal, kind="stable")
+    return points[order], loglike[order], marginal[order], order
+
+
+def _refined_gap(points, marginal, grid_score, xx, yy, rival):
+    """The best peak's marginal score minus that of its best rival more
+    than ``rival`` from it: a refined peak or, as a floor, a grid
+    point."""
+    x, y = points[0, :2]
+    far = onp.hypot(points[1:, 0] - x, points[1:, 1] - y) > rival
+    rivals = list(marginal[1:][far])
+    by_position = grid_score.max(axis=2)
+    far_grid = onp.hypot(xx[..., 0] - x, yy[..., 0] - y) > rival
+    if far_grid.any():
+        rivals.append(by_position[far_grid].max())
+    return float(marginal[0] - max(rivals)) if rivals else onp.inf
+
+
 def _refine_marginal(x0, dof, d64, surface, bounds):
     """Maximize the scale-marginalized surface from ``x0`` (L-BFGS-B in
     float64, deterministic) within ``bounds``."""
@@ -1110,6 +1231,7 @@ def epoch_positions(
     *,
     gap_mas=None,
     refine=True,
+    n_peaks=5,
     dof=1.0,
     s_max=None,
     batch_size=4096,
@@ -1122,10 +1244,15 @@ def epoch_positions(
     surface m = -Σ_b (ν_b/2) ln χ²_b
     ([`marginal_loglike`][virgil.epochs.marginal_loglike]), in which the
     error scale of each observable block (visibilities, closure phases)
-    is integrated out under its Jeffreys prior. Its best point is
-    refined (with ``refine``) by maximizing m, which is the fit with a
-    free ``vis_scale`` and ``phi_scale`` per dataset, profiled; the
-    curvature of m there gives the covariance of the position. The
+    is integrated out under its Jeffreys prior. The ``n_peaks`` highest
+    distinct local maxima of the grid (more than ``gap_mas`` apart) are
+    each refined (with ``refine``) by maximizing m, which is the fit with
+    a free ``vis_scale`` and ``phi_scale`` per dataset, profiled, and
+    ranked by their refined m: the best grid point is not always the best
+    peak once refined, since fringe peaks are often narrower than the
+    grid step. The best refined peak is the position, and the curvature
+    of m there gives its covariance. Every peak is kept in the catalogue
+    ``EpochPositions.peaks``. The
     positions, covariances and ``gap_marginal`` therefore do not depend
     on how well each block's errors were quoted, and nights whose errors
     are underestimated do not look more decisive than they are. These
@@ -1156,9 +1283,14 @@ def epoch_positions(
         for ``gap`` and ``gap_marginal``; by default each dataset's
         resolution λ/B_max.
     refine : bool, optional
-        Refine each grid point by maximizing m (default). Otherwise the
-        position is the grid point, with a covariance of one grid step
-        squared.
+        Refine each grid peak by maximizing m (default). Otherwise the
+        position is the best grid point, with a covariance of one grid
+        step squared, and the peaks are the grid points.
+    n_peaks : int, optional
+        The peaks catalogued and refined per dataset (default 5). Each
+        refinement is a small fit, so the cost of ``refine`` grows
+        linearly with ``n_peaks``; 1 refines only the best grid point,
+        which can commit to the wrong peak.
     dof : float or dict, optional
         The effective-dof fraction ν_eff/ν of each dataset's blocks (one
         number, or a dict keyed by dataset or epoch name; default 1),
@@ -1213,20 +1345,67 @@ def epoch_positions(
             Epochs({name: d}).resolution_mas if gap_mas is None else gap_mas
         )
         _, gap = _gap(loglike, xx, yy, rival)
-        (i, j, k), gap_marginal = _gap(marginal, xx, yy, rival)
-        if i in (0, xx.shape[0] - 1) or j in (0, xx.shape[1] - 1):
+        _, gap_marginal = _gap(marginal, xx, yy, rival)
+        cells = _grid_peaks(marginal, xx, yy, rival, n_peaks)
+        grid_points = [
+            [axes[0][a], axes[1][b], axes[2][c]] for a, b, c in cells
+        ]
+        with run_in("float64"):
+            dof64 = np.asarray(dof_k)
+
+        def score(x, d64=d64, surface=surface, dof64=dof64):
+            with run_in("float64"):
+                quoted, chi2 = _grid_scores(
+                    np.asarray(x), d64, surface, len(x)
+                )
+                m = _grid_marginal(chi2, dof64, d64, surface)
+            return onp.asarray(quoted), onp.asarray(m)
+
+        def refine_one(x0, d64=d64, surface=surface, dof64=dof64):
+            with run_in("float64"):
+                x, value = _refine_marginal(x0, dof64, d64, surface, bounds)
+            return x, -value
+
+        peaks, peak_loglike, peak_marginal, order = _rank_peaks(
+            grid_points,
+            [marginal[c] for c in cells],
+            refine_one if refine else None,
+            score,
+        )
+        if refine:
+            gap_marginal = _refined_gap(
+                peaks, peak_marginal, marginal, xx, yy, rival
+            )
+        on_edge = onp.array(
+            [
+                cells[n][0] in (0, xx.shape[0] - 1)
+                or cells[n][1] in (0, xx.shape[1] - 1)
+                for n in order
+            ],
+            dtype=bool,
+        )
+        if on_edge[0]:
             edge.append(name)
-        best = onp.array([axes[0][i], axes[1][j], axes[2][k]])
+        weight = (
+            onp.exp(peak_marginal - peak_marginal[0])
+            if onp.isfinite(peak_marginal[0])
+            else onp.ones(len(peak_marginal))
+        )
+        catalogue = EpochPeaks(
+            dra=peaks[:, 0],
+            ddec=peaks[:, 1],
+            flux=peaks[:, 2],
+            loglike=peak_loglike,
+            marginal=peak_marginal,
+            weight=weight / weight.sum(),
+            edge=on_edge,
+        )
+        best = peaks[0]
         cov = max(steps) ** 2 * onp.eye(2)
         with run_in("float64"):
             if refine:
-                refined, value = _refine_marginal(
-                    best, np.asarray(dof_k), d64, surface, bounds
-                )
-                if -value >= marginal[i, j, k]:
-                    best = refined
                 hess = _negative_marginal_hessian(
-                    np.asarray(best), np.asarray(dof_k), d64, surface
+                    np.asarray(best), dof64, d64, surface
                 )
                 full = onp.linalg.pinv(onp.asarray(hess, dtype=float))
                 if onp.all(onp.isfinite(full)) and onp.all(
@@ -1244,7 +1423,9 @@ def epoch_positions(
             f"{n}_scale": float(v)
             for n, v in zip(surface.names, surface.scales(chi2_best))
         }
-        rows.append((best, cov, gap, gap_marginal, per_block, scale))
+        rows.append(
+            (best, cov, gap, gap_marginal, per_block, scale, catalogue)
+        )
     if inflated:
         warnings.warn(
             "Raw chi2/N on the quoted errors exceeds 4 (errors underestimated "
@@ -1272,6 +1453,7 @@ def epoch_positions(
         gap_marginal=onp.array([float(r[3]) for r in rows]),
         chi2_raw=tuple(r[4] for r in rows),
         scale=tuple(r[5] for r in rows),
+        peaks=tuple(r[6] for r in rows),
     )
 
 
@@ -1298,6 +1480,14 @@ class OrbitStart:
     failed : tuple of (int, str)
         The candidates whose refinement fit raised an error, with the
         error.
+    seeded : tuple of str
+        The datasets whose positions seeded the starting orbits (a
+        ``gap_marginal`` above ``min_gap``).
+    ambiguous : tuple of str
+        The other datasets: their best peak has a rival within
+        ``min_gap``, so their positions did not seed the orbits. They
+        still enter the ranking and the fits through their visibilities;
+        their peaks are in ``positions.peaks``.
     """
 
     positions: EpochPositions
@@ -1305,6 +1495,8 @@ class OrbitStart:
     fits: tuple
     data: Epochs
     failed: tuple = ()
+    seeded: tuple = ()
+    ambiguous: tuple = ()
 
     @property
     def best(self):
@@ -1374,6 +1566,7 @@ def start_from_positions(
     n_refine=4,
     min_gap=5.0,
     refine_positions=True,
+    n_peaks=5,
     batch_size=None,
     **fit_options,
 ):
@@ -1383,12 +1576,15 @@ def start_from_positions(
     resolution λ/B (fringe aliases), and a sampler started from default
     values can stick in an alias. This builds a start in four steps:
 
-    1. **Positions**: the companion's position in each dataset, from a
-       grid and a binary fit
+    1. **Positions**: the companion's position in each dataset, the
+       best of its refined grid peaks
        ([`epoch_positions`][virgil.epochs.epoch_positions]).
     2. **Starting orbits**: a Thiele–Innes grid over period, eccentricity
        and time of periastron on the decisive datasets' positions
-       ([`starting_orbits`][virgil.orbits.starting_orbits]).
+       ([`starting_orbits`][virgil.orbits.starting_orbits]). An
+       ambiguous dataset does not seed them; its other peaks are kept in
+       ``positions.peaks``, but only its visibilities judge between
+       them here.
     3. **Ranking** of those orbits by the likelihood of all the
        visibilities, with each orbit mapped to the model's parameters by
        ``start_values`` and the flux at the median of the positions fits.
@@ -1456,8 +1652,13 @@ def start_from_positions(
         ``gap_marginal`` above this (see ``EpochPositions``). This
         compares the scale-marginalized gap, so a night whose errors are
         underestimated no longer passes it with a gap inflated by s².
+        The datasets left out are named in ``OrbitStart.ambiguous``, with
+        a ``UserWarning``.
     refine_positions : bool, optional
-        Refine each grid position with a fit (see ``epoch_positions``).
+        Refine each grid peak with a fit (see ``epoch_positions``).
+    n_peaks : int, optional
+        Peaks refined per dataset (see ``epoch_positions``); the cost of
+        step 1 grows linearly with it.
     batch_size : int, optional
         Orbits ranked together (see ``rank_orbits``).
     **fit_options
@@ -1480,8 +1681,25 @@ def start_from_positions(
     """
     scales = _check_scales(scales, "start_from_positions")
     positions = epoch_positions(
-        data, grid, refine=refine_positions, dof=dof, s_max=s_max
+        data,
+        grid,
+        refine=refine_positions,
+        n_peaks=n_peaks,
+        dof=dof,
+        s_max=s_max,
     )
+    decisive = positions.decisive(min_gap)
+    seeded = tuple(n for n, d in zip(positions.names, decisive) if d)
+    ambiguous = tuple(n for n, d in zip(positions.names, decisive) if not d)
+    if ambiguous and seeded:
+        warnings.warn(
+            f"The positions of {', '.join(ambiguous)} are ambiguous (a "
+            f"marginal gap of at most min_gap={min_gap}) and do not seed "
+            "the orbits; their visibilities still enter the ranking and "
+            "the fits. See OrbitStart.ambiguous and positions.peaks.",
+            UserWarning,
+            stacklevel=2,
+        )
     with run_in("float64"):
         seeds = positions.positions(t_ref=t_ref, min_gap=min_gap)
     if len(seeds.dt) < 2:
@@ -1496,7 +1714,7 @@ def start_from_positions(
         candidates = starting_orbits(
             seeds, periods, eccs=eccs, n_phase=n_phase, n_best=n_candidates
         )
-    flux = float(onp.median(positions.flux[positions.decisive(min_gap)]))
+    flux = float(onp.median(positions.flux[decisive]))
     orbits = [orbit for orbit, _ in candidates]
     values = [dict(start_values(orbit, flux)) for orbit in orbits]
     missing = set(priors) - set(values[0])
@@ -1564,6 +1782,8 @@ def start_from_positions(
         fits=tuple(fits),
         data=data,
         failed=tuple(failed),
+        seeded=seeded,
+        ambiguous=ambiguous,
     )
 
 
