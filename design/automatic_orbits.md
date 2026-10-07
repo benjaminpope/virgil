@@ -1060,6 +1060,10 @@ period prior widened to 10.5–13 d):
 * At the orbit confirmed by RVs, three of seven nights lie 8–13 mas from
   their best peak, yet fit with raw χ²/N 3.3–8.1. On two of them the
   true position is not among the top five refined peaks at all.
+* Not yet measured: on how many nights the truth is a peak (within
+  Δ_keep) **at the shared flux** of 0.47. This number decides whether
+  any anchor-based generator can find the worked example; a fixed-flux
+  per-night job measures it before D2's defaults are set.
 * The free search therefore still lands in a wrong mode (i ≈ 128°, Δloss
   ≈ +1100), and with three training nights it finds the 11.0 d period
   alias.
@@ -1074,7 +1078,7 @@ is wrong.
 
 1. **Shared nuisances are the default.** A nuisance shared across
    epochs in the model is shared in every score that ranks, clusters or
-   weights candidates (A11). Concretely:
+   weights candidates (R11). Concretely:
    * **Flux.** One flux per band, with a chromatic slope where the band
      is dispersed: f(λ) = f₀(λ/λ₀)^β. The bound f ≤ 1 applies in one
      reference band only, so that the r ↔ −r labelling is the same in
@@ -1083,9 +1087,18 @@ is wrong.
      attenuation, bandwidth smearing) is part of the forward model, not
      a per-epoch flux, so that wide orbits do not break the sharing.
    * **Per-epoch calibration gains** (e.g. a V² gain), which are truly
-     per epoch and degenerate with f, are profiled analytically (they
-     enter linearly; Luger et al. 2017). This is the only per-epoch
-     freedom allowed in ranking.
+     per epoch and degenerate with f, are **profiled** analytically
+     inside χ² (they enter linearly; Luger et al. 2017), not
+     marginalized: a marginal gain covariance does not scale with s, so
+     χ² would no longer be ∝ 1/s². Each profiled gain costs one degree of
+     freedom (ν → ν − 1). `marginal_loglike` and `epoch_positions`
+     currently refuse `with_gains` and `with_closure_offsets`
+     (`NotImplementedError`); D1 replaces that refusal and tests it.
+     Because a V² gain is partly degenerate with f, it can hand
+     V²-dominated data back part of the per-epoch flux freedom of §14.1;
+     a V²-only variant of A17 checks that it does not recreate decoys.
+     Gains and the per-epoch error scale s of the scale marginal m (§1)
+     are the only per-epoch nuisances allowed in ranking.
    * **Variability** is a hierarchical per-epoch δf about the shared
      flux, with a Laplace correction; it is off by default.
    * **Cost structure.** The expensive term per candidate and epoch is
@@ -1117,16 +1130,24 @@ is wrong.
    (an MJD in float32 has a 0.004 d resolution, fatal for periods of
    days).
 5. **Candidate generators are plug-ins**, each estimating its cost in
-   work units before it runs and stopping at its budget (A12):
+   work units before it runs and stopping at its budget (R12):
    * **(a) Anchor pairs.** Two epochs fix the four Thiele–Innes
      constants exactly at each (P, e, T₀).
      * **Peaks:** every peak within Δ_keep (calibrated, §6) at each
        value of a coarse shared-flux grid, not "the top two" (in §14.1
        the truth was not in the top five on two epochs).
-     * **Pairs:** a deterministic covering design of disjoint pairs:
-       of w + 1 disjoint pairs at least one avoids w wrong epochs, so
-       about n/2 pairs give the robustness of all C(n, 2) at a fraction
-       of the cost.
+     * **Pairs:** sized by the number w of wrong (or truth-less)
+       epochs to tolerate, not by n. One perfect matching of n epochs
+       has ⌊n/2⌋ disjoint pairs and tolerates only w ≤ ⌊n/2⌋ − 1; all
+       C(n, 2) pairs tolerate w = n − 2. The design is the first k
+       rounds of a round-robin schedule (each round a perfect
+       matching, n − 1 rounds giving all pairs), with k the smallest
+       that guarantees a clean pair for the required w. Default: all
+       pairs when C(n, 2) is within budget (n = 7 gives 21 pairs, w ≤ 5),
+       since the worked example needs w ≥ 3. The conditioning
+       exclusions below break the design, so the guaranteed w is
+       recomputed after them and recorded; if it falls below the
+       required w the search says so.
      * **Conditioning:** a pair is used only where the 2-epoch solve is
        well conditioned (eccentric anomalies not ≈ 0 or π apart;
        same-season pairs with Δt ≪ P excluded). The condition number is
@@ -1141,9 +1162,15 @@ is wrong.
    * **(c) Arcs**, for periods above about 2T (T the time span). Exact
      rejection sampling fails (peaks are about 0.1 mas wide), so arcs use
      OFTI's scale-and-rotate from one anchor epoch's peak Gaussians, then
-     the exact score. A period prior spanning decades is split: (a) or
-     (b) for P ≲ 2T, (c) above. Generators are merged by evidence, not by
-     peak score.
+     the exact score. The draws are deterministic: a fixed Sobol index
+     range, recorded in the result (§14.2.10). A period prior spanning
+     decades is split: (a) or (b) for P ≲ 2T, (c) above.
+   * **Merging generators.** Generators only propose; they never weigh
+     their own candidates. All candidates are polished and clustered
+     together (item 7), and modes are compared on the refined
+     scale-marginal score plus the Laplace log volume under the one
+     common prior. Different prior volumes of the generators' P ranges
+     therefore do not enter.
 
    Which generator runs by default, and the hand-off thresholds, are
    measured on the benchmark (§14.4), not assumed.
@@ -1155,7 +1182,9 @@ is wrong.
      largest |t − t_ref| (half the span when t_ref is centred) and
      v_e = √((1 + e)/(1 − e)) the periastron speed factor (4.4 at
      e = 0.9).
-   * **T₀ and e:** δT₀ ≤ P ρ / (2π a_max v_e) and δe ≤ ρ / a_max.
+   * **T₀ and e:** δT₀ ≤ P ρ / (2π a_max v_e) and δe ≤ ρ √(1 − e²) / a_max (at fixed mean anomaly, ∂y/∂e reaches
+     a/√(1 − e²) near E = π/2: 2.3× at e = 0.9, 7× at e = 0.99), or
+     equivalently uniform steps in a √e-type parameter.
    * **a_max(P) is coupled to P by Kepler's law** from a total-mass prior
      and the parallax where known, a_max ∝ P^(2/3). Without that
      coupling the step count explodes: for a fixed a_max = 100 mas with
@@ -1169,10 +1198,18 @@ is wrong.
    almost at random, because peaks (0.05–0.2 mas) are narrower than any
    affordable step. So:
    1. non-maximum suppression on predicted positions: one candidate per
-      cell of radius ρ in position space at every epoch;
+      cell of radius ρ in position space at every epoch, the one with
+      the best exact score in the cell (so every grid point is scored
+      before suppression; ties by index);
    2. polish every surviving cell's candidate by L-BFGS on the score
-      (elements and the shared nuisances), up to the budget; the number
-      polished follows the cell count, not a constant;
+      (elements and the shared nuisances). The number polished is the
+      cell count, not a constant, and it is **not truncated**: since raw
+      scores rank cells almost at random, nothing principled could pick
+      a subset. The cost (cells × polish steps, §14.5) is estimated
+      before scoring; over budget, the search refuses with a flag, as in
+      item 6. An ordering proxy (e.g. the score at an inflated error
+      scale) may replace the refusal only once validated on A17 and
+      A18;
    3. cluster the polished candidates into modes (§4 step 3);
    4. refine on the full model under a work-unit budget, rejecting modes
       at a prior bound with a flag.
@@ -1187,6 +1224,10 @@ is wrong.
    score, at most n_sample (default 3) modes, and modes within the
    bootstrap tolerance of the boundary are flagged "borderline".
    **Sampling runs only from the best mode, or the comparable few.**
+   This keeps §4 step 3's overflow rule: up to n_modes_max = 8 modes are
+   refined and reported with Laplace weights, and if the Laplace weight
+   of comparable modes left unsampled exceeds 0.01 the result is flagged
+   "mode overflow", so §9.2's weight calibration stays testable.
 10. **Reproducibility.**
     * Enumeration everywhere, with deterministic covering designs; no
       random draws in the search.
@@ -1198,18 +1239,25 @@ is wrong.
       cells tying to rounding error).
     * Every setting, step rule, budget, platform, precision and version
       is recorded in the result.
-    * "Identical across seeds" (§7.1, §9.2) becomes identical across
-      CPU and GPU, float32 and float64, and under changes of step size
-      and search domain.
+    * "Identical across seeds" (§7.1, §9.2) becomes a contract across
+      CPU and GPU, float32 and float64, and changes of step size and
+      search domain: the same top mode, unless its gap is below the
+      score quantum or the bootstrap tolerance, in which case the result
+      is flagged "borderline" (a score near a quantum boundary can round
+      either way).
 
 ### 14.3 Requirements added
 
-* **A11 No per-epoch nuisances in ranking**, except per-epoch
-  calibration gains profiled analytically (§14.2.1).
-* **A12 Work-unit budgets.** Every stage estimates its cost and runs
+Requirements are numbered R11–R13 to avoid the benchmark cases A11–A13
+of §9.3.
+
+* **R11 No per-epoch nuisances in ranking**, except the per-epoch error
+  scale s of the scale marginal m and per-epoch calibration gains
+  profiled analytically (§14.2.1).
+* **R12 Work-unit budgets.** Every stage estimates its cost and runs
   under a budget in deterministic work units; it reports `stop` and
   `at_bound` (as `fit` does). Wall-clock limits are a flagged hard kill.
-* **A13 Generality.** No default may be tuned on one system. Every
+* **R13 Generality.** No default may be tuned on one system. Every
   default (ρ, Δ_keep, Δ_mode, budgets, hand-off thresholds) is set on the
   benchmark suite of §14.4, across instruments and bands, before the
   sealed set is run.
@@ -1226,7 +1274,7 @@ and simulating with virgil's own `simulate` alone is an inverse crime.
 |---|---|
 | A15 hang start | a retrograde start that crawls to the bounds; must stop within its budget, flag `at_bound`, and rank below the true mode |
 | A16 realistic noise | residuals block-bootstrapped (by exposure and triangle) from real data, one residual source per instrument family, plus injected per-epoch closure-phase offsets |
-| A17 per-epoch flux scatter | best per-epoch fluxes scattered over 0.15–0.95 by the noise; the per-epoch catalogue misses the truth on some epochs |
+| A17 per-epoch flux scatter | best per-epoch fluxes scattered over 0.15–0.95 by the noise; the per-epoch catalogue misses the truth on some epochs. Variant A17-V²: V²-dominated data with a profiled per-epoch gain, which must not recreate the decoys |
 | A18 wrong decisive epoch | one epoch with a decoy at a decisive gap; the covering design must still recover the truth |
 | A19 null | a single star; no confident mode |
 | A20 wide orbit | separations beyond the default grid, with field-of-view attenuation and smearing |
@@ -1264,8 +1312,15 @@ sizes, the search domain, the platform or the precision.
 Exact scoring costs, per candidate, (visibilities) × (epochs) × (grid
 nuisance points) evaluations of g. With 10⁴ visibilities, 10 epochs and
 16 flux points, that is about 10⁶ per candidate.
-* After Kepler coupling and suppression, 10⁶ candidates cost about 10¹²
+* **Scoring** happens before suppression (§14.2.7), on every grid point.
+  After Kepler coupling, 10⁶ grid candidates cost about 10¹²
   evaluations: minutes on an A100, hours on a CPU node.
+* **Polishing** costs about 50 L-BFGS steps per cell, each with a
+  gradient (a few score evaluations), so roughly 100–200 candidate
+  scores per cell. 10⁴ surviving cells then cost as much as scoring the
+  whole grid, and 10⁵ cells about 10× more. Polishing therefore
+  dominates unless suppression leaves ≲ 10⁴ cells; the up-front estimate
+  (§14.2.7) counts both.
 * 10⁹ candidates (wide, long-period searches without a mass prior) are
   out of reach, hence the refusal of §14.2.6.
 
@@ -1278,7 +1333,7 @@ figures, to be replaced by measurements (§9.1).
 
 | Section | What changes |
 |---|---|
-| §0 summary, §4 steps 1–3 | maps and TI-EM replaced by exact scoring, plug-in generators, suppression and polishing |
+| §0 summary, §4 steps 1–3 | maps and TI-EM replaced by exact scoring, plug-in generators, suppression and polishing; §4 step 3 keeps n_modes_max = 8 and the 0.01 "mode overflow" rule, but samples at most n_sample comparable modes (§14.2.9) |
 | §3.2 | flux default (per-epoch profile → shared); TI-EM demoted to a diagnostic; the period-sampling paragraph replaced by §14.2.6 |
 | §7.1 | the grid step λ/(3B_max) replaced by the capture radius; "two Sobol scrambles" replaced by the invariance checks of §14.2.10 |
 | §7.3 | search costs replaced by §14.5 |
