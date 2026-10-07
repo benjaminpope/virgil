@@ -172,21 +172,33 @@ for k, night in enumerate(nights):
 
 ```text
  60000.0    1.68   ( 1.73)           2.58   ( 2.65)
+```
+
+```text
  60035.0    3.19   ( 3.82)           0.45   ( 0.56)
 ```
 
 ```text
  60095.0    3.31   ( 3.52)           3.22   ( 4.33)
+```
+
+```text
  60150.0    1.10   ( 1.24)           1.28   ( 1.59)
 ```
 
 ```text
  60330.0    1.66   ( 1.41)           1.79   ( 2.54)
+```
+
+```text
  60385.0    0.83   ( 1.23)           1.47   ( 1.56)
 ```
 
 ```text
  60445.0    2.15   ( 2.38)           1.25   ( 1.35)
+```
+
+```text
  60560.0    1.69   ( 1.63)           0.99   ( 2.23)
 ```
 
@@ -472,14 +484,14 @@ for k, t in enumerate(epoch_mjd):
 
 ```text
     MJD    fit Δα  true Δα    fit Δδ  true Δδ   σ (mas)  flux  gap_marginal
- 60000.0   -19.57   -19.57     15.27    15.34     0.057  0.149         57
- 60035.0   -18.81   -18.83     18.22    18.24     0.042  0.152         79
- 60095.0   -16.22   -16.14     21.80    21.76     0.072  0.151         68
- 60150.0   -12.50   -12.53     23.45    23.49     0.044  0.150         76
- 60330.0     2.78     2.74     20.49    20.56     0.054  0.155         72
- 60385.0     7.50     7.52     17.58    17.51     0.042  0.147         61
- 60445.0    12.27    12.33     13.35    13.26     0.057  0.149         50
- 60560.0    19.21    19.21      3.15     3.17     0.041  0.152         84
+ 60000.0   -19.57   -19.57     15.27    15.34     0.057  0.149         78
+ 60035.0   -18.81   -18.83     18.22    18.24     0.042  0.152        121
+ 60095.0   -16.22   -16.14     21.80    21.76     0.072  0.151         69
+ 60150.0   -12.50   -12.53     23.45    23.49     0.044  0.150         98
+ 60330.0     2.78     2.74     20.49    20.56     0.054  0.155         81
+ 60385.0     7.50     7.52     17.58    17.51     0.042  0.147         81
+ 60445.0    12.27    12.33     13.35    13.26     0.057  0.149         76
+ 60560.0    19.21    19.21      3.15     3.17     0.041  0.152        109
 ```
 
 **Ranking and refinement.** The best-ranked starting orbits, by the scale-marginalised log likelihood of all the data (each night's error scales integrated out, so it is not comparable with the fit `loss` below, which is on a different surface), then the refined fits. If the refined fits land on the same orbit with the same loss, the posterior has one dominant mode near it. If some land elsewhere, those are other modes, typically period aliases from sparse sampling; compare their losses (a difference of Δ in loss is a factor of about $e^{Δ}$ in posterior density). [`OrbitStart.modes`](api/epochs.md) keeps the distinct fits within a loss of 10 of the best, and the sampler below starts one chain in each. Here all 200 candidates lie within one mode (they agree to within half the resolution of the data), so only one fit is refined and every chain starts from it, even though we asked for `n_refine=4`. With a single start, $\hat R$ cannot detect a second mode; the ranking above is the check that there is none.
@@ -518,7 +530,7 @@ rank   P (d)     e     a (mas)  log L (marg.)
    5  1111.2   0.30    25.32       -3240.9
 
 fit    loss       P (d)     e      i (deg)  Ω (deg)  ϖ (deg)  a (mas)
-  0   -3359.45  1095.16  0.303    54.92   129.88   199.65  24.937
+  0   -3359.45  1095.15  0.303    54.92   129.88   199.65  24.937
 ```
 
 ```text
@@ -566,7 +578,7 @@ print(f"largest r_hat {r_hat:.3f}, smallest effective sample size {n_eff:.0f}")
 
 ```text
 divergences: 0 in 4000 samples
-largest r_hat 1.004, smallest effective sample size 1994
+largest r_hat 1.002, smallest effective sample size 1478
 ```
 
 ## The orbit
@@ -614,14 +626,14 @@ for name, lo, m, hi in zip(table.columns, low, mid, high):
 ```
 
 ```text
-P (d)           1098.795  + 26.709 − 25.376   truth   1100.000
-a (mas)           24.952  +  0.105 −  0.090   truth     25.000
-e                  0.300  +  0.023 −  0.023   truth      0.300
-i (deg)           54.868  +  0.466 −  0.441   truth     55.000
-ω (deg)           69.815  +  0.416 −  0.419   truth     70.000
-Ω (deg)          130.021  +  1.005 −  1.010   truth    130.000
-t_peri (MJD)   59779.825  +  8.814 −  9.149   truth  59780.000
-M_tot (M☉)         1.986  +  0.082 −  0.074   truth      1.994
+P (d)           1097.693  + 25.980 − 25.326   truth   1100.000
+a (mas)           24.950  +  0.103 −  0.091   truth     25.000
+e                  0.301  +  0.023 −  0.023   truth      0.300
+i (deg)           54.886  +  0.447 −  0.430   truth     55.000
+ω (deg)           69.819  +  0.417 −  0.441   truth     70.000
+Ω (deg)          129.958  +  0.988 −  0.990   truth    130.000
+t_peri (MJD)   59780.133  +  8.748 −  8.769   truth  59780.000
+M_tot (M☉)         1.989  +  0.082 −  0.072   truth      1.994
 flux ratio         0.151  +  0.001 −  0.001   truth      0.150
 ```
 
@@ -843,10 +855,10 @@ for prefix, label in (("v2_scale", "V²"), ("cp_scale", "closure phase")):
 ![orbit_fitting output 39.1](generated/orbit_fitting_cell039_out01.png)
 
 ```text
-V²             population median 1.34 +0.12 −0.11
-V²             population spread 0.24 +0.09 −0.06
-closure phase  population median 1.20 +0.15 −0.12
-closure phase  population spread 0.29 +0.12 −0.08
+V²             population median 1.34 +0.12 −0.12
+V²             population spread 0.23 +0.09 −0.06
+closure phase  population median 1.21 +0.15 −0.13
+closure phase  population spread 0.29 +0.12 −0.07
 ```
 
 ## Comparison with the two-step fit
@@ -925,14 +937,14 @@ print(
 ```text
                 truth  joint median  joint ±  joint pull  two-step median  two-step ±  two-step pull
 element                                                                                             
-P (d)         1.1e+03       1.1e+03       26     -0.0463          1.1e+03        25.2         0.0416
-a (mas)            25            25   0.0974       -0.49               25      0.0972         -0.386
-e                 0.3           0.3   0.0232    -0.00632            0.298      0.0223        -0.0906
-i (deg)            55          54.9    0.454      -0.291             54.8       0.431         -0.371
-t_peri (MJD) 5.98e+04      5.98e+04     8.98     -0.0195         5.98e+04        8.69         -0.114
-M_tot (M☉)       1.99          1.99   0.0781      -0.104             1.98      0.0743         -0.188
+P (d)         1.1e+03       1.1e+03     25.7     -0.0899          1.1e+03        25.6         0.0224
+a (mas)            25            25   0.0972      -0.514               25      0.0988         -0.415
+e                 0.3         0.301   0.0229      0.0372            0.298      0.0227        -0.0721
+i (deg)            55          54.9    0.439       -0.26             54.8       0.432         -0.356
+t_peri (MJD) 5.98e+04      5.98e+04     8.76      0.0152         5.98e+04        8.83           -0.1
+M_tot (M☉)       1.99          1.99   0.0769     -0.0732             1.98      0.0759         -0.183
 
-joint / two-step interval width: 1.00 to 1.05
+joint / two-step interval width: 0.98 to 1.02
 rms pull: joint 0.24, two-step 0.24
 ```
 

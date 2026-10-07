@@ -96,7 +96,7 @@ print(f"300 warmup + 300 draws in {time.time() - t0:.0f} s; median {onp.median(s
 ```
 
 ```text
-300 warmup + 300 draws in 550 s; median 63 leapfrog steps per draw (at most 1023); 0 divergences
+300 warmup + 300 draws in 67 s; median 127 leapfrog steps per draw (at most 1023); 0 divergences
 ```
 
 ## Are the draws trustworthy?
@@ -112,7 +112,7 @@ print(f"flux {mid:.4f} (90%: {low:.4f}–{high:.4f}; truth 0.05), ESS {float(eff
 ```
 
 ```text
-flux 0.0507 (90%: 0.0503–0.0511; truth 0.05), ESS 179; latent ESS: 5th percentile 183, median 293 of 300
+flux 0.0507 (90%: 0.0504–0.0512; truth 0.05), ESS 346; latent ESS: 5th percentile 373, median 596 of 300
 ```
 
 ## The posterior mean and standard deviation
@@ -151,5 +151,5 @@ Holding σ and ℓ at the evidence's choice ignores their own uncertainty. Part 
 
 ## Summary
 - **NUTS on a Gaussian-field image** samples the field's standard-normal latents with `numpyro_model`, starting at the MAP from `fit`.
-- **Large images need a mass matrix.** `gauss_newton_mass` turns the MAP's Gauss–Newton curvature into a dense mass matrix. On this 62² image it cut the cost from 1023 to tens of leapfrog steps per draw. Use it with σ and ℓ fixed, and keep every sampled parameter, flux included, in `priors`.
+- **Large images need a mass matrix.** `gauss_newton_mass` turns the MAP's Gauss–Newton curvature into a dense mass matrix. On this 62² image it cut the cost from 1023 to about a hundred leapfrog steps per draw. Use it with σ and ℓ fixed, and keep every sampled parameter, flux included, in `priors`.
 - **The posterior mean and standard deviation** summarise the image and its uncertainty pixel by pixel, and make residuals into z-scores.
