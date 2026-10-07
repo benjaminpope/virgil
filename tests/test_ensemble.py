@@ -76,6 +76,30 @@ def test_selection_drops_a_member_that_fits_badly():
     assert 1 <= len(result.kept) <= 3
 
 
+def test_selection_drops_a_diverged_member_without_rejecting_the_rest():
+    group = _group(0, [_scene(38.0), _scene(42.0), _scene(40.0)])
+    # The second-strongest weight is the corner, so both of the first two
+    # members are live; one fit diverged to a NaN chi2.
+    results = list(group.curve.results)
+    info = dict(results[0].info, chi2=[float("nan")] * len(DATASETS))
+    results[0] = FitResult(results[0].model, {}, info)
+    chi2_red = onp.array(group.curve.chi2_red)
+    chi2_red[0] = onp.nan
+    curve = LCurve(
+        group.curve.weights,
+        group.curve.chi2,
+        chi2_red,
+        group.curve.penalty,
+        results,
+    )
+    result = combine(DATASETS, [Group(group.draw, curve)])
+    assert result.members[0].reason == "chi2"
+    assert result.kept
+    assert all(
+        onp.isfinite(m.chi2_red).all() for m in result.members if m.kept
+    )
+
+
 def test_iterative_mean_never_raises_any_datasets_chi2():
     groups = [
         _group(0, [_scene(36.0), _scene(44.0), _scene(40.0)]),

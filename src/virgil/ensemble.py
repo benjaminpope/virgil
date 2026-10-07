@@ -633,11 +633,16 @@ def combine(data, groups, *, spec=None, star=True):
     if not live:
         raise ValueError("No member lies in its group's L-curve window.")
     chi2 = onp.array([members[i].chi2_red for i in live])
-    best = chi2.min(axis=0)
-    good = onp.all(
-        (chi2 <= spec.max_chi2_red) & (chi2 <= spec.chi2_ratio * best),
-        axis=1,
-    )
+    # A fit that diverged (a NaN or infinite chi2) is dropped, and must not
+    # set the best chi2 that the others are judged against: NaN propagates
+    # through min, which would reject every member.
+    finite = onp.all(onp.isfinite(chi2), axis=1)
+    best = onp.where(finite[:, None], chi2, onp.inf).min(axis=0)
+    with onp.errstate(invalid="ignore"):
+        good = finite & onp.all(
+            (chi2 <= spec.max_chi2_red) & (chi2 <= spec.chi2_ratio * best),
+            axis=1,
+        )
     drop([i for i, g in zip(live, good) if not g], "chi2")
     live = [i for i, g in zip(live, good) if g]
     if not live:
