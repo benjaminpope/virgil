@@ -484,10 +484,13 @@ def test_closure_phases_match_visibilities_within_an_exposure():
     t3["MJD"] = vis2["MJD"][0] + 131.0 / 86400.0
     assert read_oifits(hdul)["i_cps1"].size == len(TRIANGLES)
 
-    # A different exposure (beyond twice the longest INT_TIME) is not used.
+    # A different exposure (beyond twice the longest INT_TIME) is not used:
+    # the legs come from the T3 rows' own (u, v) instead.
     t3["MJD"] = vis2["MJD"][0] + 300.0 / 86400.0
-    with pytest.raises(ValueError, match="needs baseline"):
-        read_oifits(hdul)
+    with pytest.warns(UserWarning, match="6 closure-phase triangle legs"):
+        record = read_oifits(hdul)
+    assert record["u"].size == 2 * len(PAIRS)
+    assert (record["i_cps1"] >= len(PAIRS)).all()
 
 
 def _t3_under_other_insname(waves, reverse=()):
@@ -532,10 +535,14 @@ def test_closure_phases_pair_with_v2_of_another_insname(reverse, tmp_path):
     # The model at each (u, v, wavelength) reproduces both the V² and the
     # closure phases, so the reversed leg is the conjugate of the stored one.
     assert np.allclose(data.model(TRUTH), data.flatten_data()[0], atol=1e-5)
-    # A table with different wavelengths is no match.
+    # A table with different wavelengths is no match: the legs come from
+    # the T3 rows' own (u, v), one flagged sample per baseline.
     hdul[-1].data["EFF_WAVE"] *= 1.001
-    with pytest.raises(ValueError, match="same wavelengths"):
-        read_oifits(hdul)
+    with pytest.warns(UserWarning, match="same wavelengths"):
+        record = read_oifits(hdul)
+    n_v2 = n_bl * waves.size  # the OI_VIS2 rows
+    assert record["vis_flag"].size == n_v2 + n_bl * waves.size
+    assert (record["i_cps3"] >= n_v2).all()
 
 
 def test_closure_phases_never_pair_with_another_array():
@@ -568,8 +575,77 @@ def test_missing_baseline_in_every_orientation_is_reported():
     vis2 = hdul["OI_VIS2"].data
     row = onp.flatnonzero((vis2["STA_INDEX"] == (1, 3)).all(axis=1))[0]
     vis2["STA_INDEX"][row] = (2, 4)  # leaves (1, 3) stored nowhere
-    with pytest.raises(ValueError, match=r"either orientation"):
-        read_oifits(hdul)
+    with pytest.warns(UserWarning, match=r"1 closure-phase triangle leg has"):
+        record = read_oifits(hdul)
+    # One flagged sample at the T3 coordinates of (1, 3), shared by the
+    # triangles (1, 2, 3) and (1, 3, 4).
+    assert record["u"].size == len(PAIRS) + 1
+    assert onp.count_nonzero(record["i_cps3"] == len(PAIRS)) == 1
+    assert onp.count_nonzero(record["i_cps1"] == len(PAIRS)) == 1
+
+
+def _without_v2_of(pair, waves):
+    """The complete file, and copies with ``pair``'s V² removed or flagged."""
+    from virgil.oifits import build_hdulist
+
+    complete = build_hdulist(_tables(waves=waves))
+    rows = onp.array(
+        [set(s) == set(pair) for s in complete["OI_VIS2"].data["STA_INDEX"]]
+    )
+    flagged = build_hdulist(_tables(waves=waves))
+    flagged["OI_VIS2"].data["FLAG"][rows] = True
+    removed = build_hdulist(_tables(waves=waves))
+    vis2 = removed["OI_VIS2"]
+    removed["OI_VIS2"] = fits.BinTableHDU(
+        data=vis2.data[~rows], header=vis2.header, name="OI_VIS2"
+    )
+    return complete, flagged, removed
+
+
+@pytest.mark.parametrize("pair", [(1, 2), (1, 3), (3, 4)])
+def test_closure_leg_without_v2_comes_from_the_t3_coordinates(pair, tmp_path):
+    # OI_T3 is self-contained (OIFITS v2): a writer may drop a baseline's
+    # V² (MIRC-X, ESO phase-3 PIONIER) and keep the closure phases.
+    waves = onp.array([1.6e-6, 1.7e-6, 1.8e-6])
+    complete, flagged, removed = _without_v2_of(pair, waves)
+    path = tmp_path / "removed.fits"
+    removed.writeto(path)
+
+    # (i) It reads, with one warning for the one baseline.
+    with pytest.warns(UserWarning, match=r"1 closure-phase triangle leg has"):
+        record = read_oifits(path)
+    with pytest.warns(UserWarning):
+        data = OIData(path)
+    full = OIData(complete)
+
+    # (ii) The closure phases are those of the complete file, and the model
+    # at the placed leg's (u, v) reproduces them.
+    assert onp.array_equal(onp.asarray(data.phi), onp.asarray(full.phi))
+    assert onp.array_equal(record["phi"], read_oifits(complete)["phi"])
+    assert data.vis.shape == ((len(PAIRS) - 1) * waves.size,)
+    assert np.allclose(data.model(TRUTH), data.flatten_data()[0], atol=1e-5)
+    legs = onp.concatenate([record[f"i_cps{k}"] for k in (1, 2, 3)])
+    placed = onp.unique(legs[legs >= (len(PAIRS) - 1) * waves.size])
+    assert placed.size == waves.size  # one sample per channel, shared
+    assert record["vis_flag"][placed].all()
+    assert onp.unique(record["frame"]).size == 1
+
+    # (iii) Same likelihood as the complete file with that V² flagged: the
+    # same observables, independent closure phases and projector.
+    ref = OIData(flagged)
+    assert data.n_independent == ref.n_independent
+    assert data.n_residuals == ref.n_residuals
+    model = BinaryModelCartesian(dra=25.0, ddec=35.0, flux=0.2)
+    assert float(model_loglike(model, data)) == pytest.approx(
+        float(model_loglike(model, ref)), rel=1e-6
+    )
+    # The whitened closure phases are a basis of the same subspace, rotated
+    # by the leg order, so compare their sum of squares, not elementwise.
+    chi2 = [
+        float(onp.sum(onp.asarray(whitened_residuals(model, d)) ** 2))
+        for d in (data, ref)
+    ]
+    assert chi2[0] == pytest.approx(chi2[1], rel=1e-6)
 
 
 def test_closure_only_rows_of_different_times_keep_their_own_baselines():

@@ -19,6 +19,7 @@ wavelength.
 
 import datetime
 import os
+import warnings
 
 import numpy as onp
 from astropy.io import fits
@@ -132,9 +133,14 @@ def read_oifits(
     ``MJD`` and ``TIME``, within its own file. The MJDs (and TIMEs) must agree to within
     twice the longest ``INT_TIME`` in the visibility table (or about 9
     seconds if there is none), since pipelines such as GRAVITY's average different
-    frames of one exposure for each table. A baseline stored reversed, ``(b, a)``,
-    is used as the conjugate: the closure phase gets an extra flagged sample
-    at the triangle leg's own ``(u, v)``.
+    frames of one exposure for each table. A leg with no such visibility row,
+    or stored only reversed as ``(b, a)``, gets an extra flagged sample at
+    its own ``(u, v)`` from the ``OI_T3`` row (``U1COORD``...``V2COORD``),
+    as the standard makes ``OI_T3`` self-contained; for a reversed leg the
+    model's visibility there is the conjugate of the stored one. A file
+    with legs that have no visibility row in either orientation (V²
+    coverage incomplete, as in some MIRC-X and ESO phase-3 files) gives one
+    warning with their number.
 
     A frame is one exposure of one instrument: the baselines that closure
     phases tie together, together with any rows of the same ``INSNAME`` at
@@ -675,15 +681,23 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
     """Closure phases, with the sample index of each triangle leg.
 
     A triangle is matched to the baselines of the table with the same
-    ``INSNAME``, or else of one with the same wavelengths. A leg stored
-    reversed as ``(b, a)`` is the conjugate of ``(a, b)``: it gets a flagged
-    sample at the T3 leg's own ``(u, v)``, appended to ``record``, so that
-    the model's visibility there is the conjugate.
+    ``INSNAME``, or else of one with the same wavelengths. A leg that no
+    such row holds as ``(a, b)`` gets a flagged sample (no V² or amplitude)
+    at the T3 row's own coordinates, appended to ``record``: ``(U1COORD,
+    V1COORD)`` for ``(a, b)``, ``(U2COORD, V2COORD)`` for ``(b, c)`` and
+    their sum for ``(a, c)``. The OIFITS standard makes ``OI_T3``
+    self-contained, so a writer may omit a baseline's V² (MIRC-X, some ESO
+    phase-3 products). A leg stored reversed as ``(b, a)`` is handled the
+    same way: the model's visibility at the leg's own ``(u, v)`` is the
+    conjugate of the stored one. The new sample is registered in ``lookup``,
+    so later triangles of the same frame share it. One warning per file
+    gives the number of legs with no visibility row in either orientation.
     """
     phi, d_phi, phi_flag = [], [], []
     i_cps = ([], [], [])
     extra = {"u": [], "v": [], "wavel": []}
     n_samples = record["u"].size
+    n_unmatched = 0  # legs with no visibility row in either orientation
     for hdu in tables["OI_T3"]:
         wave = _table_wavelengths(hdu, wavelengths)
         nwave = wave.size
@@ -697,7 +711,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
         time = _time(hdu, mask)
         ins = _lookup_key(hdu)
         channels = onp.arange(nwave)
-        coords = None  # the legs' (u, v), read only if a leg is reversed
+        coords = None  # the legs' (u, v), read only if a leg is unmatched
         for row, (a, b, c) in enumerate(sta_index):
             starts = []
             for k, (leg, pair) in enumerate(
@@ -711,15 +725,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
                         ins, pair[::-1], mjd[row], wave, time[row]
                     )
                     if reverse is None or reverse[1] != nwave:
-                        raise ValueError(
-                            f"Closure-phase triangle {(a, b, c)} (INSNAME "
-                            f"{ins[1]!r}, ARRNAME {ins[0]!r}, MJD {mjd[row]}) "
-                            "needs baseline "
-                            f"{tuple(pair)}, which is in no visibility "
-                            "table with the same wavelengths at this time "
-                            f"(in either orientation, {tuple(pair[::-1])} "
-                            "included)."
-                        )
+                        n_unmatched += 1
                     if coords is None:
                         coords = [
                             _column(hdu, name, mask)
@@ -758,6 +764,16 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
         d_phi.append(errors.reshape(-1))
         phi_flag.append(flag.reshape(-1))
 
+    if n_unmatched:
+        warnings.warn(
+            f"{n_unmatched} closure-phase triangle "
+            f"{'leg has' if n_unmatched == 1 else 'legs have'} no "
+            "visibility row (V² or amplitude) with the same wavelengths at "
+            "that time, in either orientation. Each is placed at the OI_T3 "
+            "table's own (u, v) as a flagged sample: the closure phases are "
+            "fitted, but the V² coverage of this file is incomplete.",
+            stacklevel=4,
+        )
     if extra["u"]:
         n_extra = n_samples - record["u"].size
         for key in ("u", "v", "wavel"):
