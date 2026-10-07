@@ -212,6 +212,143 @@ def test_the_von_mises_marginal_is_the_gaussian_one_for_small_errors():
     assert exact == pytest.approx(limit, abs=1e-6)
 
 
+def _bounded_gaussian_marginal(chi2, nu, dof, s_max):
+    """log ∫ exp(dof (-χ²/(2s²) - ν ln s)) d ln s over [1/s_max, s_max], in
+    closed form: with y = dof χ²/(2s²) and a = dof ν/2 it is
+    ½ (2/(dof χ²))^a Γ(a) [P(a, y(1/s_max)) - P(a, y(s_max))]."""
+    from scipy import special
+
+    a = dof * nu / 2.0
+    y_lo, y_hi = dof * chi2 / (2.0 * s_max**2), dof * chi2 * s_max**2 / 2.0
+    if y_lo > a:  # both in the upper tail: difference the upper functions
+        mass = special.gammaincc(a, y_lo) - special.gammaincc(a, y_hi)
+    else:
+        mass = special.gammainc(a, y_hi) - special.gammainc(a, y_lo)
+    return (
+        onp.log(0.5)
+        + a * onp.log(2.0 / (dof * chi2))
+        + special.gammaln(a)
+        + onp.log(mass)
+    )
+
+
+@pytest.mark.parametrize(
+    "chi2, nu, dof, s_max",
+    [
+        (1787.0, 60, 1.0, 1.2),  # s ≈ 5.5 against s_max = 1.2: steep edge
+        (15.0, 60, 1.0, 1.2),  # s ≈ 0.5 against 1/s_max: steep lower edge
+        (60.0, 60, 1.0, 10.0),  # smooth, peak inside
+        (66.0, 60, 0.5, 1.2),  # bound within a posterior width, dof < 1
+        (1.69e5, 1e5, 1.0, 10.0),  # a peak far narrower than the old grid
+    ],
+)
+def test_bounded_marginal_is_the_incomplete_gamma_integral(
+    chi2, nu, dof, s_max
+):
+    # F18 (virgil-validation): the bounded integral on a fixed ln s grid
+    # missed by up to 0.7 where the likelihood falls steeply from a bound.
+    from virgil.epochs import _Surface
+
+    surface = _Surface.__new__(_Surface)
+    surface.blocks = (("v2", 0, 1, nu, False),)
+    surface.nu = onp.array([nu], dtype=float)
+    surface.s_max = s_max
+    with jax.enable_x64(True):
+        got = float(surface.score(jnp.asarray([chi2]), dof, None))
+    want = _bounded_gaussian_marginal(chi2, nu, dof, s_max)
+    assert got == pytest.approx(want, abs=1e-6)
+
+
+def _bounded_surface(nu, s_max):
+    from virgil.epochs import _Surface
+
+    surface = _Surface.__new__(_Surface)
+    surface.blocks = (("v2", 0, 1, nu, False),)
+    surface.nu = onp.array([nu], dtype=float)
+    surface.s_max = s_max
+    return surface
+
+
+@pytest.mark.parametrize(
+    "chi2, nu, dof, s_max",
+    [
+        (1787.0, 60, 1.0, 1.2),
+        (15.0, 60, 1.0, 1.2),
+        (60.0, 60, 1.0, 10.0),
+        (66.0, 60, 0.5, 1.2),
+    ],
+)
+def test_bounded_marginal_gradient_matches_finite_difference(
+    chi2, nu, dof, s_max
+):
+    # The integration window is detached, so d score / d chi2 is that of the
+    # integrand alone and equals the derivative of the closed form.
+    surface = _bounded_surface(nu, s_max)
+    with jax.enable_x64(True):
+        grad = float(
+            jax.grad(lambda c: surface.score(c, dof, None))(
+                jnp.asarray([chi2])
+            )[0]
+        )
+    h = 1e-4 * chi2
+    fd = (
+        _bounded_gaussian_marginal(chi2 + h, nu, dof, s_max)
+        - _bounded_gaussian_marginal(chi2 - h, nu, dof, s_max)
+    ) / (2.0 * h)
+    assert grad == pytest.approx(fd, rel=1e-5)
+
+
+def test_bounded_marginal_steep_edge_in_float32():
+    chi2, nu, dof, s_max = 1787.0, 60, 1.0, 1.2
+    surface = _bounded_surface(nu, s_max)
+    got = float(surface.score(jnp.asarray([chi2], jnp.float32), dof, None))
+    want = _bounded_gaussian_marginal(chi2, nu, dof, s_max)
+    print(f"float32 steep-edge error: {got - want:.3e} on {want:.3f}")
+    assert got == pytest.approx(want, rel=1e-3)
+
+
+@pytest.mark.parametrize("s_max", [1.2, 10.0])
+def test_bounded_von_mises_marginal_matches_quad(s_max):
+    from scipy import integrate, special
+
+    from virgil.epochs import _Surface
+
+    # Weak closure phases (σ = 40°) scattered 3 times more: sσ is not small.
+    data = _night(VLTI_UTS[:3], 3, sigma_cp_deg=40.0, s_vis=5.0)
+    surface = _Surface(data, s_max=s_max)
+    with jax.enable_x64(True):
+        d64 = cast_tree(data, "float64")
+        chi2 = surface.chi2(BinaryModelCartesian(*TRUTH), d64)
+        got = float(surface.score(chi2, 1.0, d64))
+    sigma = onp.asarray(data.d_phi, float).ravel()
+    want = 0.0
+    for k, (_, _, _, nu, von_mises) in enumerate(surface.blocks):
+        c = float(chi2[k])
+
+        def log_f(t, c=c, nu=nu, von_mises=von_mises):
+            out = -0.5 * c * onp.exp(-2.0 * t)
+            if not von_mises:
+                return out - nu * t
+            kappa = 1.0 / (onp.exp(2.0 * t) * sigma**2)
+            norm = onp.log(onp.sqrt(2.0 * onp.pi) * special.i0e(kappa))
+            return out - onp.sum(norm) + onp.sum(onp.log(sigma))
+
+        grid = onp.linspace(-onp.log(s_max), onp.log(s_max), 4001)
+        peak = max(log_f(t) for t in grid)
+        value, _ = integrate.quad(
+            lambda t: onp.exp(log_f(t) - peak),
+            -onp.log(s_max),
+            onp.log(s_max),
+            points=[grid[onp.argmax([log_f(t) for t in grid])]],
+            epsabs=0.0,
+            epsrel=1e-12,
+            limit=500,
+        )
+        want += peak + onp.log(value)
+    assert any(b[4] for b in surface.blocks)
+    assert got == pytest.approx(want, abs=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # 2. The fix, pinned; 3. raw χ²/N
 # ---------------------------------------------------------------------------

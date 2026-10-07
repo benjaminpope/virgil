@@ -72,6 +72,14 @@ anything before 1.0 may change between minor versions.
   ranking. The default stays `"quoted"` in 0.4, with a `FutureWarning`
   when `scales` is not given; it will become `"marginal"`.
 
+### Removed
+
+- **`limits.chi2ppf` (#43).** Nothing in virgil used it, and its df ≠ 1
+  path needed an inverse incomplete gamma function, which JAX does not
+  provide. The Absil test never needs one: `nsigma` takes the upper tail
+  with `gammaincc` and `ndtri`, and `absil_limits` bisects in flux. To
+  turn a χ² into a significance, use `nsigma`.
+
 ### Fixed
 
 - **`epoch_positions` no longer commits to a peak before refining it.**
@@ -117,6 +125,17 @@ anything before 1.0 may change between minor versions.
 - The `lawson_sigma_over_peak` docstring now states that both images are
   normalised over the whole array, so flux in empty sky does affect σ.
   Values are unchanged.
+- `epochs.marginal_loglike(..., s_max=...)` (and `scales="marginal"` in
+  `epoch_positions` and `rank_orbits` with `s_max`) integrates each
+  block's error scale adaptively in ln s instead of on a fixed 257-node
+  grid, which missed by up to 0.7 in `m` where the likelihood falls
+  steeply from a bound (a model with s ≈ 5 against `s_max = 1.2`). It now
+  matches `scipy.integrate.quad` and the closed form in incomplete gamma
+  functions to about 1e-11 in float64. `m` is now the log of the integral
+  over ln s itself, so bounded values shift by a constant per block
+  (differences between models are unaffected by it), and `gap_marginal`
+  values computed with `s_max` may shift slightly. Found by
+  virgil-validation (F18).
 
 ### Added
 
