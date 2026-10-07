@@ -460,7 +460,8 @@ Visual-binary catalogues.
 - **TI linear split in `starting_orbits`.** This is the literature's
   standard search, done correctly.
 - **Noise-marginalized single-epoch surface (`gap_marginal`, #281).**
-  This replaces the tautological rescaling the literature criticizes.
+  This replaces the rescaling to χ²_red = 1 that ARMADA and Lester use
+  (1.3).
   Raw χ²/N is recorded and a warning is raised above 4.
 - **Two-step ≈ joint.** The tutorial shows that two-step fits with the
   scale marginalized match the joint fit. We found no published
@@ -525,10 +526,17 @@ Visual-binary catalogues.
      the ARMADA rule gives roughly 370 trial periods. We should set the
      grid from the baseline by default.
 5. **Static snapshot per night.**
-   - Gl 229 Bb moves about 3.8 mas a day, roughly 0.3 λ/B over a night
-     for GRAVITY.
-   - PR A tested 0.2 λ/B and found no effect, so Gl 229 lies just
-     outside the tested range.
+   - Gl 229 Bb moves 3.8–4.6 mas a day: 4.6 mas/day is Xuan's
+     first-epoch rate (1.0); 3.8 mas/day is the orbit-averaged rate
+     (2πa/P for a ≈ 7.3 mas, P ≈ 12.1 d).
+   - Our snapshots span 0.1–1.3 h per night (job 18172340: 1.3 h on
+     2023-12-25, 0.3–0.4 h on 2023-12-29, 2024-02-27 and 2024-03-28,
+     0.1 h on 2024-04-29). At 4.6 mas/day the largest is 0.25 mas,
+     about 0.08 λ/B for λ/B ≈ 3.15 mas.
+   - PR A tested 0.2 λ/B and found no effect, so on these windows Gl 229
+     lies inside the tested range, and within-night motion is an
+     unlikely cause of the 2023-12-29 misranking (0.06 mas over 0.4 h).
+     It matters only for tracks of several hours.
    - Published two-step work (ARMADA, Le Bouquin 2017, which neglects
      motion within a night for P ≈ 0.5–15 yr) targets slower orbits,
      where this never matters. Xuan 2024 did include linear motion over
@@ -545,7 +553,7 @@ Visual-binary catalogues.
    - The remaining candidates are:
      - the old flux prior, f up to 2: the f↔1/f, r↔−r twin is exact, and
        f ≤ 1 is now enforced;
-     - within-night motion above 0.2 λ/B;
+     - within-night motion above 0.2 λ/B, unlikely on these windows (item 5);
      - the grid range.
    - Validation job 18172340 decides between them. Until it does, we
      cannot claim PR A fixes Gl 229.
@@ -580,7 +588,7 @@ Visual-binary catalogues.
 | # | Improvement | Benefit | Cost | PR |
 |---|---|---|---|---|
 | 1 | Wall-clock and step budget per start in `fit`, NaN/bound guards, progress logging, failed-start flag; batch continues | stops 3.5 h hangs blocking runs; failures visible | small (chunked optimizer loop) | **B** (or B0 if B is large) |
-| 2 | Default period grid from baseline: δP = P²/(kT), log-spaced, P_min/P_max from data and priors; warn when user grid is coarser | prevents silently missing short-P modes (Gl 229) | small; grid cost grows ~P_min⁻¹ | **B** |
+| 2 | Default period grid from baseline: uniform in frequency, δP = P²/(kT), P_min/P_max from data and priors; warn when user grid is coarser | prevents silently missing short-P modes (Gl 229) | small; grid cost grows ~P_min⁻¹ | **B** |
 | 3 | Resolve the Gl 229 reordering with job 18172340: f ≤ 1 vs f ≤ 2, grid range, injected within-night motion 0.2–0.5 λ/B | tells us whether PR A is enough or C is needed first | OzSTAR only, no code | before **C** |
 | 4 | Peak catalogue: keep top-K peaks per night with marginal weights; never drop ambiguous nights | removes the main early-commit failure | medium | **C** (as designed) |
 | 5 | TI-EM / mixture search over aliases, keep top-N distinct orbits, report mode weights | literature-standard multimodality handling | medium–large | **D** |
@@ -589,7 +597,7 @@ Visual-binary catalogues.
 | 8 | Per-mode NUTS acceptance: split-R̂ < 1.01, bulk/tail ESS, divergences, two seeds agree on mode weights | reproducible mode weights | small on top of #279 | **F** |
 | 9 | Validation cascade and grade: raw χ²/N, orbit vs linear-motion Δχ², a/σ_a, held-out-epoch prediction | catches failed fits automatically | small–medium | **G** |
 | 10 | Vectorize the dataset loop (stack equal-shape nights, vmap) | constant HLO; faster compile on 7+ nights | medium | **H** |
-| 11 | Check Xuan et al. 2024 Methods and the unverified [M] citations before any public claim | credible prior-art section | reading only | any |
+| 11 | Check the remaining [A]/[U] citations (incl. Halbwachs 2023 Table 1 parallax cut, Muterspaugh "2010a") before any public claim | credible prior-art section | reading only | any |
 
 > **Literature check, 2026-10-07: notes on Part 3.** No recommendation
 > is changed. The literature supports rows 1–5 and 7–9 and qualifies
