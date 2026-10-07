@@ -72,6 +72,14 @@ anything before 1.0 may change between minor versions.
   ranking. The default stays `"quoted"` in 0.4, with a `FutureWarning`
   when `scales` is not given; it will become `"marginal"`.
 
+### Removed
+
+- **`limits.chi2ppf` (#43).** Nothing in virgil used it, and its df ≠ 1
+  path needed an inverse incomplete gamma function, which JAX does not
+  provide. The Absil test never needs one: `nsigma` takes the upper tail
+  with `gammaincc` and `ndtri`, and `absil_limits` bisects in flux. To
+  turn a χ² into a significance, use `nsigma`.
+
 ### Fixed
 
 - `ensemble.combine` drops members whose fit diverged (a non-finite χ²),

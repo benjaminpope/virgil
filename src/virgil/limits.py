@@ -26,7 +26,6 @@ import jax.scipy as jsp
 import numpy as np
 
 from ._deprecate import old_order
-from ._utils import concrete
 from ._grid import (
     batch_size_or_default,
     coordinate_points,
@@ -45,7 +44,6 @@ from .likelihood import (
 
 __all__ = [
     "absil_limits",
-    "chi2ppf",
     "delta_mag_to_flux",
     "contrast_to_flux",
     "flux_to_contrast",
@@ -156,49 +154,6 @@ def radial_profile(values, dra, ddec, center=(0.0, 0.0), r_max=None, bins=20):
 
 
 # === SIGNIFICANCE ===
-
-
-def chi2ppf(p, df):
-    """
-    Percentile function for chi-square.
-
-    For ``df=1`` (the path used in ``nsigma``), use the closed-form identity
-    based on the standard normal quantile, i.e. square ``norm.ppf((p+1)/2)``.
-    This remains JAX-native, differentiable, and fast.
-
-    For ``df != 1``, this falls back to numpyro's gammaincinv backend.
-
-    Parameters
-    ----------
-    p : array-like
-        Percentile value.
-    df : array-like
-        Degrees of freedom.
-
-    Returns
-    -------
-    array-like
-        Corresponding chi2 value to the percentile.
-
-    Notes
-    -----
-    ``p`` is clipped to ``[eps, 1 - eps]`` of its own floating-point type, so
-    the result stays finite. Near ``p = 1`` this loses precision; to convert
-    small tail probabilities, use [`nsigma`][virgil.limits.nsigma], which works with the upper
-    tail directly.
-    """
-    p = jnp.asarray(p, dtype=float)
-    eps = jnp.finfo(p.dtype).eps
-    p = jnp.clip(p, eps, 1.0 - eps)
-
-    df_value = concrete(df)
-    if df_value is not None and df_value.size == 1 and float(df_value) == 1.0:
-        z = jax.scipy.stats.norm.ppf((p + 1.0) / 2.0)
-        return z**2
-
-    from numpyro.distributions.util import gammaincinv
-
-    return jnp.asarray(gammaincinv(df / 2.0, p), dtype=float) * 2.0
 
 
 def nsigma(chi2r_test, chi2r_true, ndof):
