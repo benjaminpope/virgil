@@ -1144,14 +1144,25 @@ is wrong.
        matching, n − 1 rounds giving all pairs), with k the smallest
        that guarantees a clean pair for the required w. Default: all
        pairs when C(n, 2) is within budget (n = 7 gives 21 pairs, w ≤ 5),
-       since the worked example needs w ≥ 3. The conditioning
-       exclusions below break the design, so the guaranteed w is
-       recomputed after them and recorded; if it falls below the
+       since the worked example needs w ≥ 3. Pairs whose regularized
+       solve still fails (e.g. identical times) are dropped, which
+       breaks the design, so the guaranteed w is recomputed after
+       that and recorded; if it falls below the
        required w the search says so.
-     * **Conditioning:** a pair is used only where the 2-epoch solve is
-       well conditioned (eccentric anomalies not ≈ 0 or π apart;
-       same-season pairs with Δt ≪ P excluded). The condition number is
-       recorded per candidate.
+     * **Conditioning, by regularization.** The exactly determined
+       2-epoch Thiele–Innes solve is ill conditioned when the
+       eccentric anomalies are ≈ 0 or π apart or Δt ≪ P, and then
+       proposes huge a. Instead of hand-set exclusions, the solve is
+       ridge regularized: a Gaussian prior on (A, B, F, G) with width
+       σ_a(P) ∝ P^(2/3) from Kepler's law (the total-mass prior and
+       parallax where known, otherwise the field bound of §14.2.6), the
+       astrometric analogue of The Joker's period-scaled prior on K
+       (Price-Whelan et al. 2020). This prior shapes only what is
+       proposed, never the ranking, so it does not conflict with the
+       default Jeffreys priors of the fit. The condition number and the
+       ridge's log Occam term are recorded per candidate. The width's
+       scale factor is set once on the ill-conditioned pairs of A17 and
+       A18 (R13).
      * **Usable epoch:** detected (§7.1), resolved (separation >
        λ/(2B_max)) and with at least one peak within Δ_keep.
      * Anchor χ² never ranks: with three or more anchors it leaves a
@@ -1446,6 +1457,8 @@ the refined peak catalogue (`EpochPeaks`).
 * Price-Whelan et al. (2017), The Joker: rejection sampling of
   Keplerian orbits.
 * Blunt et al. (2017), OFTI (orbits for the impatient).
+* Price-Whelan, A. M., et al. (2017, 2020), The Joker: rejection sampling for
+  Keplerian orbits with linear parameters marginalized.
 * Lucy (2014), dense grids over (P, e, T₀) with linear Thiele–Innes
   constants.
 * Yao, Vehtari & Gelman (2022), stacking for non-mixing Bayesian
