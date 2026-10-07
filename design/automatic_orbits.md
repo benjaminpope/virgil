@@ -1189,11 +1189,26 @@ is wrong.
      and the parallax where known, a_max ∝ P^(2/3). Without that
      coupling the step count explodes: for a fixed a_max = 100 mas with
      GRAVITY UT baselines, a 5 yr span and P_min = 10 d it reaches about
-     10¹¹ (P, T₀, e) points. Without a distance or mass prior, a search
-     whose estimate exceeds its budget refuses with a flag (decision 4,
-     §14.6).
-   * The count is estimated first and recorded. Over budget, the search
-     refuses with a flag; it never coarsens silently.
+     10¹¹ (P, T₀, e) points.
+   * **Without a distance or mass prior** (decision 4), the search does
+     not refuse. a_max defaults to the instrument's field: the fibre
+     field of view and the bandwidth-smearing limit for GRAVITY, the
+     equivalent for aperture masking (the interferogram's field and the
+     smearing limit of its spectral channels), or an explicit maximum
+     separation if given. P and a are then independent: Kepler's law
+     constrains only the total mass a³/(ϖ³P²), which is reported, with a
+     flag when it is implausible for the parallax where known.
+   * **The period range** then comes from the period prior alone, which
+     must be proper. The default is log-uniform from P_min, twice the
+     longest single-epoch sample span (shorter periods are not
+     separable from within-epoch motion at the sampling), to P_max = 100
+     × the time span T, with P ≳ 2T handled by the arc generator (c).
+   * The count is estimated first and recorded, and the search never
+     coarsens silently. Over budget, with a mass prior, it refuses with a
+     flag. Without one, it runs the anchor-pair generator (a), whose
+     Thiele–Innes solve leaves a free, in budget order, and reports the
+     fraction of the (P, T₀, e) step grid covered with an "incomplete
+     coverage" flag.
 7. **Suppress, then polish.** Raw scores at grid points rank candidates
    almost at random, because peaks (0.05–0.2 mas) are narrower than any
    affordable step. So:
@@ -1283,12 +1298,13 @@ and simulating with virgil's own `simulate` alone is an inverse crime.
 | A23 cadence aliases | P near 1 d and 1 yr |
 | A24 triples | a resolved third body; an unresolved photocentre wobble |
 | A25 disc + orbit | a circumbinary disc with a binary orbit |
-| A26 single epoch | one epoch (e.g. AMI) alone, and with RVs or Gaia astrometry |
+| A26 single epoch | one epoch (e.g. AMI): position recovery only (decision 6); with RVs or Gaia astrometry later |
 
 **Statistics.** Zero failures in 200 trials bounds the failure rate only
 at 1.5% (95%, the rule of three). The recall target of 0.999 (§9.2)
 needs about 3000 systems per case; the full suite's size is set from
-these bounds (decision 5).
+these bounds and fixed, with the sealed manifest, before any default is
+chosen (decision 5).
 
 **Against gaming.**
 * Defaults are frozen on a development manifest. A **sealed** manifest,
@@ -1355,19 +1371,24 @@ figures, to be replaced by measurements (§9.1).
 | §9.1 "Candidate scoring", "Search" | timed on the exact scorer and polishing (§14.5) |
 | §9.3 A11, A13 | A11 tests the map cache only when it is used; A13 tests sample-time evaluation, not the snapshot flag |
 
-**Decisions for Ben:**
+**Decisions** (Ben, 2026-10-07; 2 and 3 still open):
 
-1. Shared flux (and chromatic slope): integrate out (marginal) or
-   profile? The flux Occam factor can change the ranking between modes.
-2. Is the bootstrap calibration of Δ_keep, Δ_mode and ν_eff mandatory
-   for a run to count as unattended?
-3. Work-unit budgets only, with wall-clock time as a flagged kill?
-4. Is a distance or total-mass prior required for the Kepler-coupled
-   a_max(P)? Without one, wide or long searches refuse.
-5. Sample sizes per case, and the sealed held-out manifest, fixed before
-   any default is chosen?
-6. Single epochs (e.g. JWST AMI, alone or with RVs or Gaia): in scope,
-   or explicitly "position only" or "arc only"?
+1. **Shared flux** (and chromatic slope): integrated out wherever
+   possible (marginal), **and** the fitted (profiled) value with its
+   uncertainty is reported as an output.
+2. *Open:* is the bootstrap calibration of Δ_keep, Δ_mode and ν_eff
+   mandatory for a run to count as unattended?
+3. *Open:* work-unit budgets only, with wall-clock time as a flagged
+   kill?
+4. **No distance or mass prior required.** With neither and no explicit
+   maximum, the separation bound defaults to the instrument's field and
+   the search does not refuse (§14.2.6, which also says how the period
+   range is bounded).
+5. **Preregistration: yes.** Sample sizes per case and the sealed
+   held-out manifest are fixed before any default is chosen.
+6. **Single epochs are "position only"** in this design. Joint
+   single-epoch fits with RVs or Gaia astrometry come later; A26 tests
+   position recovery only until then.
 
 ### 14.7 Staging, revised
 
@@ -1379,7 +1400,8 @@ the refined peak catalogue (`EpochPeaks`).
   shared=..., terms=(), scales="marginal", batch_size)` in
   `orbit_search.py`, generalizing `_loglikes`:
   * shared flux per band with an optional chromatic slope, on a grid
-    (marginal or profile, per decision 1);
+    (marginalized, with the profiled value and its uncertainty also
+    reported, per decision 1);
   * analytically profiled per-epoch gains;
   * extra terms with their own scales;
   * positions at sample times, times relative to t_ref in float64;
