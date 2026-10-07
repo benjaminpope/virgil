@@ -16,6 +16,14 @@ detection statistics), and answers two questions:
 Science targets appear only as worked examples. Spelling is Oxford
 (-ize).
 
+> **Revised 2026-10-07 (§14).** A rerun after the peak catalogue and an
+> adversarial review showed that per-epoch flux freedom makes false
+> decisive peaks, so a mixture of Gaussians built from per-epoch peaks
+> excludes the truth by construction. §14 replaces the search engine of
+> §3.2–§4 (shared nuisances by default, exact scoring, plug-in candidate
+> generators with automatic steps and budgets) and extends §9.3. Where
+> §14 and earlier sections disagree, §14 wins.
+
 ## 0. Summary
 
 * **Yes, and more than that.** For a binary of two point sources, the
@@ -1035,6 +1043,300 @@ Ben accepted the recommendations of this note, with these decisions:
    removed.
 6. **PR A.** It adds `gap_marginal` beside the unchanged `gap` for one
    release, then `gap` switches to the marginal value.
+
+## 14. Revision after the peak-catalogue rerun (2026-10-07)
+
+### 14.1 What the rerun showed
+
+Worked example (Gl 229 Ba–Bb, seven GRAVITY nights, closure phases
+only, after `epoch_positions` refined and ranked its top peaks, with the
+period prior widened to 10.5–13 d):
+
+* One night that had committed to the wrong peak (2023-12-29) now takes
+  its refined best, which is the true peak.
+* Two others still commit to wrong peaks with decisive marginal gaps
+  (9.2 and 7.5): one at the grid edge with flux 0.21, one with flux
+  0.95. The flux fixed by the RVs is 0.47.
+* At the orbit confirmed by RVs, three of seven nights lie 8–13 mas from
+  their best peak, yet fit with raw χ²/N 3.3–8.1. On two of them the
+  true position is not among the top five refined peaks at all.
+* The free search therefore still lands in a wrong mode (i ≈ 128°, Δloss
+  ≈ +1100), and with three training nights it finds the 11.0 d period
+  alias.
+
+The cause is **per-epoch nuisance freedom**, not only multimodality.
+With the flux free per epoch (fitted values 0.15–0.95), each epoch's
+peaks move by about 1 mas and new peaks appear that no orbit with one
+flux visits. §3.2 profiled the flux per epoch by default; that default
+is wrong.
+
+### 14.2 Consequences for the design
+
+1. **Shared nuisances are the default.** A nuisance shared across
+   epochs in the model is shared in every score that ranks, clusters or
+   weights candidates (A11). Concretely:
+   * **Flux.** One flux per band, with a chromatic slope where the band
+     is dispersed: f(λ) = f₀(λ/λ₀)^β. The bound f ≤ 1 applies in one
+     reference band only, so that the r ↔ −r labelling is the same in
+     every band.
+   * **Separation-dependent throughput** (fibre field-of-view
+     attenuation, bandwidth smearing) is part of the forward model, not
+     a per-epoch flux, so that wide orbits do not break the sharing.
+   * **Per-epoch calibration gains** (e.g. a V² gain), which are truly
+     per epoch and degenerate with f, are profiled analytically (they
+     enter linearly; Luger et al. 2017). This is the only per-epoch
+     freedom allowed in ranking.
+   * **Variability** is a hierarchical per-epoch δf about the shared
+     flux, with a Laplace correction; it is off by default.
+   * **Cost structure.** The expensive term per candidate and epoch is
+     g = exp(−2πi u·r). Flux, the slope and a primary's uniform-disc
+     visibility (cached per epoch) are cheap arithmetic on g. At most
+     two nuisances are grid-integrated (≤ 32 points each); the rest are
+     profiled by Gauss–Newton with a Laplace term, at the polish stage
+     only.
+   * The per-epoch flux profile is a strictly looser model. It may
+     propose candidates; it never ranks them.
+2. **Exact scoring replaces the MoG surrogate.** A candidate is scored
+   with the scale-marginal likelihood m (§1), computed from the
+   visibilities at its predicted positions, with the shared nuisances
+   handled as in item 1. This is `_loglikes` generalized and needs no
+   interpolation tolerance. A mixture of Gaussians from per-epoch peaks
+   puts the truth on the floor whenever the truth is not a per-epoch
+   peak (§14.1), so the MoG and TI-EM of §3.2(a) are demoted to a
+   diagnostic. Maps survive only as an optional cache, with their flux
+   axis, if the benchmark shows exact scoring is too slow. Two
+   properties of m are documented: being Student-t-like, it is robust to
+   an outlier epoch, and it compresses the gap of a very sharp epoch.
+3. **Extra terms enter the score**, each with its own Jeffreys scale
+   (RV jitter, an astrometric error scale), so a search with RVs uses
+   them from the start. The (Ω, ω) flip is folded only when no term
+   breaks it.
+4. **Positions are evaluated at sample times, always.** Kepler solves
+   per sample cost nothing next to g, so no "within-night motion"
+   threshold is needed. Times are stored relative to t_ref in float64
+   (an MJD in float32 has a 0.004 d resolution, fatal for periods of
+   days).
+5. **Candidate generators are plug-ins**, each estimating its cost in
+   work units before it runs and stopping at its budget (A12):
+   * **(a) Anchor pairs.** Two epochs fix the four Thiele–Innes
+     constants exactly at each (P, e, T₀).
+     * **Peaks:** every peak within Δ_keep (calibrated, §6) at each
+       value of a coarse shared-flux grid, not "the top two" (in §14.1
+       the truth was not in the top five on two epochs).
+     * **Pairs:** a deterministic covering design of disjoint pairs:
+       of w + 1 disjoint pairs at least one avoids w wrong epochs, so
+       about n/2 pairs give the robustness of all C(n, 2) at a fraction
+       of the cost.
+     * **Conditioning:** a pair is used only where the 2-epoch solve is
+       well conditioned (eccentric anomalies not ≈ 0 or π apart;
+       same-season pairs with Δt ≪ P excluded). The condition number is
+       recorded per candidate.
+     * **Usable epoch:** detected (§7.1), resolved (separation >
+       λ/(2B_max)) and with at least one peak within Δ_keep.
+     * Anchor χ² never ranks: with three or more anchors it leaves a
+       valley of perfect fits.
+   * **(b) Anchor-free fallback.** The dense quasi-random search of
+     §3.2(b) on the exact score, for systems with fewer than two usable
+     epochs, or with non-linear nuisances.
+   * **(c) Arcs**, for periods above about 2T (T the time span). Exact
+     rejection sampling fails (peaks are about 0.1 mas wide), so arcs use
+     OFTI's scale-and-rotate from one anchor epoch's peak Gaussians, then
+     the exact score. A period prior spanning decades is split: (a) or
+     (b) for P ≲ 2T, (c) above. Generators are merged by evidence, not by
+     peak score.
+
+   Which generator runs by default, and the hand-off thresholds, are
+   measured on the benchmark (§14.4), not assumed.
+6. **Steps follow the data and the polisher.** Neighbouring candidates
+   must lie within the polisher's **capture radius** ρ of each other in
+   predicted position at every epoch. ρ is measured on the benchmark
+   (expected about λ/(4B_max)).
+   * **Period:** δP ≤ P² ρ / (2π a_max(P) Δt_max · v_e), with Δt_max the
+     largest |t − t_ref| (half the span when t_ref is centred) and
+     v_e = √((1 + e)/(1 − e)) the periastron speed factor (4.4 at
+     e = 0.9).
+   * **T₀ and e:** δT₀ ≤ P ρ / (2π a_max v_e) and δe ≤ ρ / a_max.
+   * **a_max(P) is coupled to P by Kepler's law** from a total-mass prior
+     and the parallax where known, a_max ∝ P^(2/3). Without that
+     coupling the step count explodes: for a fixed a_max = 100 mas with
+     GRAVITY UT baselines, a 5 yr span and P_min = 10 d it reaches about
+     10¹¹ (P, T₀, e) points. Without a distance or mass prior, a search
+     whose estimate exceeds its budget refuses with a flag (decision 4,
+     §14.6).
+   * The count is estimated first and recorded. Over budget, the search
+     refuses with a flag; it never coarsens silently.
+7. **Suppress, then polish.** Raw scores at grid points rank candidates
+   almost at random, because peaks (0.05–0.2 mas) are narrower than any
+   affordable step. So:
+   1. non-maximum suppression on predicted positions: one candidate per
+      cell of radius ρ in position space at every epoch;
+   2. polish every surviving cell's candidate by L-BFGS on the score
+      (elements and the shared nuisances), up to the budget; the number
+      polished follows the cell count, not a constant;
+   3. cluster the polished candidates into modes (§4 step 3);
+   4. refine on the full model under a work-unit budget, rejecting modes
+      at a prior bound with a flag.
+8. **Grid domain.** Peak finding covers the prior's largest separation
+   (or flags that it does not). A refined peak leaving the grid is kept
+   and flagged, never clipped.
+9. **Comparing modes.** Modes are compared on the scale-marginal score
+   with shared nuisances, in units scaled by ν_eff/ν from the grouped
+   bootstrap (§6), because a fixed number of nats means different things
+   for 50 closure phases and 10⁴ V². Every reported mode shows raw χ²/N
+   per epoch. "Comparable" is a recorded rule: within Δ_mode on that
+   score, at most n_sample (default 3) modes, and modes within the
+   bootstrap tolerance of the boundary are flagged "borderline".
+   **Sampling runs only from the best mode, or the comparable few.**
+10. **Reproducibility.**
+    * Enumeration everywhere, with deterministic covering designs; no
+      random draws in the search.
+    * Budgets in deterministic work units (candidates, L-BFGS steps,
+      likelihood evaluations). Wall-clock time is only a hard kill, which
+      sets a "non-reproducible" flag.
+    * Ties are broken on quantized scores, then by index, never by
+      floating-point accident (a CI test was lost to two mirror grid
+      cells tying to rounding error).
+    * Every setting, step rule, budget, platform, precision and version
+      is recorded in the result.
+    * "Identical across seeds" (§7.1, §9.2) becomes identical across
+      CPU and GPU, float32 and float64, and under changes of step size
+      and search domain.
+
+### 14.3 Requirements added
+
+* **A11 No per-epoch nuisances in ranking**, except per-epoch
+  calibration gains profiled analytically (§14.2.1).
+* **A12 Work-unit budgets.** Every stage estimates its cost and runs
+  under a budget in deterministic work units; it reports `stop` and
+  `at_bound` (as `fit` does). Wall-clock limits are a flagged hard kill.
+* **A13 Generality.** No default may be tuned on one system. Every
+  default (ρ, Δ_keep, Δ_mode, budgets, hand-off thresholds) is set on the
+  benchmark suite of §14.4, across instruments and bands, before the
+  sealed set is run.
+
+### 14.4 Benchmark suite: additions
+
+The cases of §9.3 are simulated with white noise, under which the truth
+is always a per-epoch peak. They cannot reproduce the failure of §14.1,
+and simulating with virgil's own `simulate` alone is an inverse crime.
+
+**New cases:**
+
+| Case | What it tests |
+|---|---|
+| A15 hang start | a retrograde start that crawls to the bounds; must stop within its budget, flag `at_bound`, and rank below the true mode |
+| A16 realistic noise | residuals block-bootstrapped (by exposure and triangle) from real data, one residual source per instrument family, plus injected per-epoch closure-phase offsets |
+| A17 per-epoch flux scatter | best per-epoch fluxes scattered over 0.15–0.95 by the noise; the per-epoch catalogue misses the truth on some epochs |
+| A18 wrong decisive epoch | one epoch with a decoy at a decisive gap; the covering design must still recover the truth |
+| A19 null | a single star; no confident mode |
+| A20 wide orbit | separations beyond the default grid, with field-of-view attenuation and smearing |
+| A21 mixed instruments | two bands or instruments, different fluxes, scales and a chromatic slope; a companion brighter in one band; a plate-scale or wavelength miscalibration between them |
+| A22 extreme geometry | e > 0.9; exactly face-on and edge-on |
+| A23 cadence aliases | P near 1 d and 1 yr |
+| A24 triples | a resolved third body; an unresolved photocentre wobble |
+| A25 disc + orbit | a circumbinary disc with a binary orbit |
+| A26 single epoch | one epoch (e.g. AMI) alone, and with RVs or Gaia astrometry |
+
+**Statistics.** Zero failures in 200 trials bounds the failure rate only
+at 1.5% (95%, the rule of three). The recall target of 0.999 (§9.2)
+needs about 3000 systems per case; the full suite's size is set from
+these bounds (decision 5).
+
+**Against gaming.**
+* Defaults are frozen on a development manifest. A **sealed** manifest,
+  generated after the freeze, is then run once.
+* Part of the simulation uses an independent forward model from
+  virgil-validation.
+
+**Real data with known orbits** run blind, in virgil-validation (its
+independence rule): the Gl 229 worked example with and without RVs; the
+SPIE imaging-contest data; PIONIER binaries with published orbits.
+Single-epoch calibrator binaries (NACO SAM, with published positions or
+a non-detection) test per-epoch recovery and detection limits only. The
+proposed multi-epoch set is GRAVITY SB2 binaries with published relative
+positions at many epochs.
+
+**Invariance metrics:** the top mode must not change with the step
+sizes, the search domain, the platform or the precision.
+
+### 14.5 Cost, re-estimated
+
+Exact scoring costs, per candidate, (visibilities) × (epochs) × (grid
+nuisance points) evaluations of g. With 10⁴ visibilities, 10 epochs and
+16 flux points, that is about 10⁶ per candidate.
+* After Kepler coupling and suppression, 10⁶ candidates cost about 10¹²
+  evaluations: minutes on an A100, hours on a CPU node.
+* 10⁹ candidates (wide, long-period searches without a mass prior) are
+  out of reach, hence the refusal of §14.2.6.
+
+§3.2's "about 10⁶ φ" and §7.3's search costs are superseded by these
+figures, to be replaced by measurements (§9.1).
+
+### 14.6 Superseded sections and open decisions
+
+**Superseded by §14:**
+
+| Section | What changes |
+|---|---|
+| §0 summary, §4 steps 1–3 | maps and TI-EM replaced by exact scoring, plug-in generators, suppression and polishing |
+| §3.2 | flux default (per-epoch profile → shared); TI-EM demoted to a diagnostic; the period-sampling paragraph replaced by §14.2.6 |
+| §7.1 | the grid step λ/(3B_max) replaced by the capture radius; "two Sobol scrambles" replaced by the invariance checks of §14.2.10 |
+| §7.3 | search costs replaced by §14.5 |
+| §9.2, §9.3 | "across seeds" replaced (§14.2.10); sample sizes per §14.4 |
+| §9.6 | the PR D jobs follow §14.7 |
+| §10 | `epoch_maps` optional; `tie_flux=None` replaced by shared nuisances by default |
+| §11 | `starting_orbits` is no longer "the K = 1 case of TI-EM"; it is the inner solve of the anchor-pair generator |
+| §12 PR C/D tests, "Later: tied flux" | replaced by §14.7 |
+
+**Decisions for Ben:**
+
+1. Shared flux (and chromatic slope): integrate out (marginal) or
+   profile? The flux Occam factor can change the ranking between modes.
+2. Is the bootstrap calibration of Δ_keep, Δ_mode and ν_eff mandatory
+   for a run to count as unattended?
+3. Work-unit budgets only, with wall-clock time as a flagged kill?
+4. Is a distance or total-mass prior required for the Kepler-coupled
+   a_max(P)? Without one, wide or long searches refuse.
+5. Sample sizes per case, and the sealed held-out manifest, fixed before
+   any default is chosen?
+6. Single epochs (e.g. JWST AMI, alone or with RVs or Gaia): in scope,
+   or explicitly "position only" or "arc only"?
+
+### 14.7 Staging, revised
+
+PR letters below are this note's (§12), not GitHub numbers. Already
+done: PR A (`gap_marginal`), a budget and `period_grid` for `fit`, and
+the refined peak catalogue (`EpochPeaks`).
+
+* **PR D1, the scorer.** `score_orbits(epochs, model, orbits, *,
+  shared=..., terms=(), scales="marginal", batch_size)` in
+  `orbit_search.py`, generalizing `_loglikes`:
+  * shared flux per band with an optional chromatic slope, on a grid
+    (marginal or profile, per decision 1);
+  * analytically profiled per-epoch gains;
+  * extra terms with their own scales;
+  * positions at sample times, times relative to t_ref in float64;
+  * quantized, index-broken ties.
+
+  Tests:
+  * equals the sum of `marginal_loglike` at a fixed flux;
+  * the flux marginal matches quadrature;
+  * an RV term adds its scale-marginal `loglike`;
+  * independent of `batch_size`;
+  * agrees between float32 and float64 and is tie-deterministic;
+  * a per-epoch-flux decoy loses to the truth under shared flux.
+* **PR H (brought forward), the suite.** A15–A26 at CI size, the harness
+  writing each row as it finishes, and the development and sealed
+  manifests; the full runs on OzSTAR. It lands beside D1, so that D2's
+  defaults are chosen on it.
+* **PR D2, generators and modes.** Peaks at a coarse shared-flux grid;
+  the anchor-pair covering design with conditioning; the step rules and
+  cost estimate; suppression and polishing; clustering; refinement
+  under a budget; the mode report and the sampling rule. Then the
+  fallback (b) and the arcs (c). `start_from_positions` becomes a thin
+  deprecated wrapper.
+* PRs E–G of §12 follow, except that NUTS starts only from the best mode
+  or the comparable few.
 
 ## References
 
