@@ -41,7 +41,11 @@ def source_hash(nb):
 
 
 def has_outputs(nb):
-    return any(c.get("outputs") for c in nb.get("cells", []) if c.get("cell_type") == "code")
+    return any(
+        c.get("outputs")
+        for c in nb.get("cells", [])
+        if c.get("cell_type") == "code"
+    )
 
 
 def recorded_hash(nb):
@@ -49,7 +53,9 @@ def recorded_hash(nb):
 
 
 def stamp(nb):
-    nb.setdefault("metadata", {}).setdefault("virgil", {})["source_hash"] = source_hash(nb)
+    nb.setdefault("metadata", {}).setdefault("virgil", {})["source_hash"] = (
+        source_hash(nb)
+    )
     return nb
 
 
@@ -75,8 +81,17 @@ def _dump(nb, path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--stamp", metavar="NB", nargs="+", help="record the source hash in these notebooks")
-    ap.add_argument("notebooks", nargs="*", help="notebooks to check (default: notebooks/*.ipynb)")
+    ap.add_argument(
+        "--stamp",
+        metavar="NB",
+        nargs="+",
+        help="record the source hash in these notebooks",
+    )
+    ap.add_argument(
+        "notebooks",
+        nargs="*",
+        help="notebooks to check (default: notebooks/*.ipynb)",
+    )
     args = ap.parse_args(argv)
 
     if args.stamp:
@@ -86,13 +101,17 @@ def main(argv=None):
             print(f"stamped {path}: {recorded_hash(nb)[:12]}")
         return 0
 
-    paths = [Path(p) for p in args.notebooks] or sorted((ROOT / "notebooks").glob("*.ipynb"))
+    paths = [Path(p) for p in args.notebooks] or sorted(
+        (ROOT / "notebooks").glob("*.ipynb")
+    )
     stale = []
     for path in paths:
         result = status(_load(path))
         if result == "stale":
             stale.append(path)
-            print(f"ERROR: {path}: outputs are stale (source changed since they were produced)")
+            print(
+                f"ERROR: {path}: outputs are stale (source changed since they were produced)"
+            )
         elif result == "unstamped":
             print(f"warning: {path}: has outputs but no virgil.source_hash")
     if stale:

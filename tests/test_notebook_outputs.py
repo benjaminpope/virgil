@@ -7,14 +7,22 @@ import importlib.util
 import json
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_notebook_outputs.py"
+SCRIPT = (
+    Path(__file__).resolve().parent.parent
+    / "scripts"
+    / "check_notebook_outputs.py"
+)
 spec = importlib.util.spec_from_file_location("check_notebook_outputs", SCRIPT)
 chk = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(chk)
 
 
 def _nb(source="x = 1", outputs=True, count=1):
-    out = [{"output_type": "stream", "name": "stdout", "text": ["1\n"]}] if outputs else []
+    out = (
+        [{"output_type": "stream", "name": "stdout", "text": ["1\n"]}]
+        if outputs
+        else []
+    )
     return {
         "cells": [
             {"cell_type": "markdown", "metadata": {}, "source": ["# Title"]},
