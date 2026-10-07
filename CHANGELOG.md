@@ -74,6 +74,32 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **`epoch_positions` no longer commits to a peak before refining it.**
+  It refined only the best grid point, which is not always the best peak
+  once refined: fringe peaks are often narrower than the grid step, and
+  on Gl 229 (GRAVITY) two nights committed to a wrong peak with a
+  `gap_marginal` above `min_gap`, which then seeded the orbit search in a
+  wrong mode. It now refines the top `n_peaks=5` distinct local maxima of
+  the grid (more than `gap_mas` apart), takes the best refined one as the
+  position, and measures `gap_marginal` against its best refined rival
+  (with the grid as a floor). The new `EpochPositions.peaks` holds each
+  dataset's catalogue (`EpochPeaks`: positions, fluxes, quoted and
+  marginal scores, weights, an `edge` flag and a `laplace` flag; also
+  `EpochPositions.edge`). The weights are each peak's Laplace mass
+  exp(m) det(H)^(-1/2) over (dra, ddec, flux), normalized, falling back
+  to the height exp(m) where `laplace` is false (no refinement, or a
+  Hessian that is not positive definite). Refined peaks within `gap_mas`
+  of a higher one are dropped, so two grid cells that refine to one
+  maximum are counted once. The quoted `gap` stays the grid quantity for
+  its last release. The cost of the refinement grows linearly with
+  `n_peaks`, which must be an integer of at least 1 (a `ValueError`
+  otherwise). The edge warning now fires when either the best grid point
+  or the best refined peak's starting cell is on the grid edge, with a
+  message for each case; before, only the best grid point was tested.
+  `start_from_positions(n_peaks=)` passes it on, and
+  `OrbitStart.seeded` and `OrbitStart.ambiguous` name the datasets that
+  seeded the orbits and those left out (with a `UserWarning`), so that no
+  night is dropped silently.
 - `ensemble.combine` drops members whose fit diverged (a non-finite χ²),
   with `reason="diverged"`, instead of rejecting every member with a
   `ValueError`, and `LCurve.corner` ignores non-finite points so that a
@@ -115,6 +141,27 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and
+  L-BFGS run in chunks of steps, check the wall clock between them and
+  stop, unconverged, with `info["stop"] == "time"` (L-BFGS carries its
+  whole state across chunks, so its path is unchanged; LM restarts each
+  chunk with its damping reset); `progress` reports steps, loss, gradient
+  norm and elapsed time between chunks. `info["stop"]` gives every
+  unconverged fit's reason (`"limit"`, `"time"`, `"stalled"`,
+  `"non-finite"`, `"failed"`), a non-finite loss now stops L-BFGS, a fit
+  by any method (Adam included) that ends on a non-finite loss is now
+  marked unconverged, and `info["at_bound"]` lists parameters that ended
+  at a genuine edge of a Uniform, LogUniform or other interval prior
+  (not at the poles of isotropic inclinations or latitudes).
+  `start_from_positions` forwards `time_limit`, keeps going when one
+  refinement fit raises (recorded in `OrbitStart.failed`; a `TypeError`
+  or `ValueError`, such as a misspelt option, still raises at once, and
+  if every fit fails the `RuntimeError` is chained to the last error),
+  sorts non-finite losses last and leaves them out of `modes()`.
+- `orbits.period_grid(times, p_min, p_max, k=9)`: trial periods uniform
+  in frequency with δP ≤ P²/(kT) over the baseline T, finer than
+  ARMADA's and The Joker's rules; `start_from_positions` warns when its
+  `periods` are coarser than that over the seeding datasets.
 - A private `virgil._deprecate` module for the 0.4 change to a single
   model-before-data argument order. `old_order` lets a function written
   in the new order accept calls in the 0.3 positional order, recognized

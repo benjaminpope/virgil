@@ -16,5 +16,6 @@ from a fit of positions.
         - epoch_positions
         - marginal_loglike
         - EpochPositions
+        - EpochPeaks
         - start_from_positions
         - OrbitStart

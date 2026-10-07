@@ -241,15 +241,16 @@ def test_lbfgs_warning_says_it_hit_the_step_limit():
 
 
 @pytest.mark.parametrize(
-    "gradient, moved, message",
+    "loss, gradient, moved, message",
     [
-        (1.0, False, "stopped after 7 of 100 steps, when a step no longer"),
-        (float("nan"), False, "gradient was not finite"),
-        (float("nan"), True, "gradient was not finite"),
+        (0.0, 1.0, False, "stopped after 7 of 100 steps, when a step no"),
+        (0.0, float("nan"), False, "gradient was not finite"),
+        (0.0, float("nan"), True, "gradient was not finite"),
+        (float("nan"), 1.0, True, "loss or gradient was not finite"),
     ],
 )
 def test_lbfgs_warning_says_why_it_stopped_early(
-    monkeypatch, gradient, moved, message
+    monkeypatch, loss, gradient, moved, message
 ):
     # L-BFGS also stops before max_steps, unconverged, when a step no
     # longer changes the parameters (out of precision) or the gradient is
@@ -258,7 +259,7 @@ def test_lbfgs_warning_says_why_it_stopped_early(
     import virgil.fitting
 
     def stopped(problem, z0, *_):
-        return z0, 7, gradient, 1e-3, moved
+        return (7, z0, None, loss, gradient, moved), 1e-3
 
     monkeypatch.setattr(virgil.fitting, "_lbfgs_run", stopped)
     with pytest.warns(RuntimeWarning, match=message):
@@ -266,6 +267,98 @@ def test_lbfgs_warning_says_why_it_stopped_early(
             START, PRIORS, DATA, method="lbfgs", max_steps=100, dtype="float32"
         )
     assert result.info["converged"] is False
+    stop = "stalled" if not moved and gradient == 1.0 else "non-finite"
+    assert result.info["stop"] == stop
+
+
+def test_chunked_lbfgs_takes_the_unchunked_path(monkeypatch):
+    # With a time limit or a progress report, L-BFGS runs in chunks of
+    # steps and carries its whole state across them, so it takes the same
+    # path as one uninterrupted loop.
+    import virgil.fitting
+
+    plain = fit(START, PRIORS, DATA, method="lbfgs")
+    monkeypatch.setattr(virgil.fitting, "_LBFGS_CHUNK", 3)
+    reports = []
+    chunked = fit(
+        START,
+        PRIORS,
+        DATA,
+        method="lbfgs",
+        time_limit=1e6,
+        progress=reports.append,
+    )
+    assert plain.info["converged"] and plain.info["stop"] is None
+    assert chunked.info["converged"] and chunked.info["stop"] is None
+    assert chunked.info["steps"] == plain.info["steps"] > 3
+    for path in PRIORS:
+        onp.testing.assert_allclose(
+            chunked.values[path], plain.values[path], rtol=1e-6
+        )
+    # A report after every chunk that ended short of convergence.
+    steps = [r["steps"] for r in reports]
+    assert steps == list(range(3, plain.info["steps"], 3))
+    assert all(r["elapsed"] >= 0 and onp.isfinite(r["loss"]) for r in reports)
+
+
+@pytest.mark.parametrize("method, chunk", [("lbfgs", 2), ("lm", 1)])
+def test_a_fit_stops_at_its_time_limit(monkeypatch, method, chunk):
+    # A start that runs for hours must not block the starts after it: the
+    # optimiser stops after the first chunk past the time limit.
+    import virgil.fitting
+
+    monkeypatch.setattr(virgil.fitting, "_LBFGS_CHUNK", chunk)
+    monkeypatch.setattr(virgil.fitting, "_LM_CHUNK", chunk)
+    far = BinaryModelCartesian(100.0, -20.0, 0.05)
+    with pytest.warns(RuntimeWarning, match="time_limit of 0.0 s"):
+        result = fit(far, PRIORS, DATA, method=method, time_limit=0.0)
+    assert result.info["converged"] is False
+    assert result.info["stop"] == "time"
+    assert result.info["steps"] == chunk
+
+
+def test_adam_takes_no_time_limit_and_bad_limits_are_rejected():
+    with pytest.raises(ValueError, match="Adam runs exactly"):
+        fit(START, PRIORS, DATA, method="adam", time_limit=10.0)
+    with pytest.raises(ValueError, match="time_limit"):
+        fit(START, PRIORS, DATA, time_limit=-1.0)
+
+
+def test_poles_of_isotropic_priors_are_not_prior_bounds():
+    # A face-on inclination is an end of the isotropic prior's flat
+    # coordinate (its CDF), but a pole of the coordinates, not an edge of
+    # the prior: at_bound must not flag it. A Uniform's edge is flagged.
+    from types import SimpleNamespace
+
+    from virgil.fitting import _at_bound
+    from virgil.priors import IsotropicInclination, IsotropicLatitude
+
+    problem = SimpleNamespace(
+        priors={
+            "inc": IsotropicInclination(),
+            "lat": IsotropicLatitude(),
+            "ecc": dist.Uniform(0.0, 0.9),
+        },
+        noise={},
+        flat=True,
+    )
+    values = {"inc": np.asarray(0.5), "lat": np.asarray(89.9), "ecc": 0.4}
+    assert _at_bound(problem, values) == ()
+    assert _at_bound(problem, dict(values, ecc=0.8999)) == ("ecc",)
+
+
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
+def test_fits_report_parameters_at_a_prior_bound():
+    # The data's flux is 0.02, above this prior's upper bound: the fit runs
+    # into the bound, which info["at_bound"] reports.
+    assert fit(START, PRIORS, DATA).info["at_bound"] == ()
+    capped = dict(PRIORS, flux=dist.Uniform(0.0, 0.01))
+    result = fit(START, capped, DATA, init={"flux": 0.005})
+    assert result.info["at_bound"] == ("flux",)
+    # The same in a flat coordinate (log flux for a LogUniform prior).
+    capped = dict(PRIORS, flux=dist.LogUniform(1e-4, 0.01))
+    result = fit(START, capped, DATA, init={"flux": 0.005})
+    assert result.info["at_bound"] == ("flux",)
 
 
 @pytest.mark.filterwarnings("ignore:fit.*did not converge")
@@ -315,6 +408,7 @@ def test_repeated_fits_do_not_recompile(method):
         ("lm", [{"gtol": 1e-4}, {"gtol": 2e-4}, {"gtol": 3e-4}]),
         ("lbfgs", [{}, {"gtol": 2e-4}, {"max_step_size": 1.5}]),
         ("lbfgs", [{"max_steps": 100}, {"max_steps": 200}, {}]),
+        ("lbfgs", [{"time_limit": t} for t in (100.0, 200.0, 300.0)]),
         ("adam", [{"learning_rate": r} for r in (1e-2, 2e-2, 3e-2)]),
     ],
 )
