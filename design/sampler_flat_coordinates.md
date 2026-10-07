@@ -35,7 +35,7 @@ the clean logistic density that `fit`'s coordinate gives.
 both `fit` and the samplers (it moved out of `fitting.py`):
 
 - `_flat_coordinate(prior)` returns `(to_flat, from_flat, low, high)`:
-  LogUniform gives `(log, exp, log a, log b)`; a prior with a
+  LogUniform gives `(log, from_flat, log a, log b)`, where `from_flat` is the straight-through exp clipped into [a, b]; a prior with a
   `flat_coordinate()` method (the isotropic priors) gives its own, the CDF
   and quantile function on [0, 1].
 - `_FlatBijection` is z → u = low + (high − low) σ(z) → x = from_flat(u),
@@ -166,8 +166,11 @@ returns the model's own parameters under the same site names.
 
 - *Guides in the flat coordinates*: none needed. AutoGuides build their
   Gaussian in `biject_to(site.support)`, so with this change they are
-  Gaussian in the flat coordinate, where a LogUniform scale's posterior is
-  closest to Gaussian (log-normal in x). This was the main obstacle.
+  Gaussian in the flat coordinate z = logit((log x − log a)/(log b −
+  log a)), not in log x. Away from the bounds z is close to an affine
+  function of log x, so a LogUniform scale's posterior is close to
+  log-normal in x there; near a bound the logit stretches it. This was
+  the main obstacle.
 - *Start from a fit*: `init_to_value(values=FitResult.values)` works now.
   A helper could also set the initial scale of an `AutoMultivariateNormal`
   from `gauss_newton_mass`'s covariance, which is in the same coordinates
@@ -179,9 +182,11 @@ returns the model's own parameters under the same site names.
   guide="mvn", start=result)`) returning draws keyed like NUTS's, plus
   the ELBO, would make it one call. Optional.
 - *Tests*: no-data SVI with `AutoMultivariateNormal` reproduces nothing
-  exactly (a logistic is not Gaussian), so test (i) that a Gaussian
-  posterior in the flat coordinate is recovered exactly by `AutoNormal`
-  (e.g. a LogUniform scale with a log-normal likelihood), (ii) that
+  exactly (a logistic is not Gaussian), so test (i) that a posterior
+  that is Gaussian in z is recovered by `AutoNormal` (a likelihood
+  Gaussian in z, so that the logistic prior is not in the way, or a
+  narrow posterior far from the bounds, where the prior is locally flat
+  in z up to a small tilt, so the match is approximate, not exact), (ii) that
   `AutoLaplaceApproximation` matches `gauss_newton_mass` at the MAP, and
   (iii) agreement of means and widths with a short NUTS run on a binary,
   in float32 and x64.
@@ -202,7 +207,7 @@ conditioned scale can fail; the flat coordinates and the logistic prior
 potential help, but SVI should run in x64 like `fit` by default.
 
 **Does the flat-coordinate work help?** Yes: it is what makes the
-standard AutoGuides sensible for virgil's Jeffreys priors (Gaussian in log
-x and cos i rather than in the logit of x), and it puts `fit`, the
+standard AutoGuides sensible for virgil's Jeffreys priors (Gaussian in the logit of the
+flat coordinate, log x or cos i, rather than in the logit of x itself), and it puts `fit`, the
 Gauss–Newton covariance, NUTS and any guide in one coordinate system, so a
 guide can be started from the MAP and its curvature directly.

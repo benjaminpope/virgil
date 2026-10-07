@@ -862,10 +862,14 @@ def numpyro_model(
         [`IsotropicInclination`][virgil.priors.IsotropicInclination] in
         cos i, an [`IsotropicLatitude`][virgil.priors.IsotropicLatitude]
         in sin(lat), for parameters and error terms alike. There the
-        prior is a logistic density in NUTS's unconstrained coordinate,
-        without the funnel that numpyro's own bijection (the logit of x
-        itself) gives a scale spanning decades or an inclination near a
-        pole. Only the coordinate NUTS moves in changes: the sites keep
+        prior's potential is exactly logistic in NUTS's unconstrained
+        coordinate, and the coordinates match those of
+        [`fit`][virgil.fitting.fit] and
+        [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass]. This
+        does not cure hierarchical funnels, which come from the
+        dependence between a group scale and its members: use the
+        non-centred form or the mass matrix for those. Only the
+        coordinate NUTS moves in changes: the sites keep
         their names, their values are the parameters, and the posterior
         is the same. ``False`` restores numpyro's bijection of each
         prior's support (virgil 0.3), e.g. to reuse unconstrained
