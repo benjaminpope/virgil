@@ -412,7 +412,7 @@ NUTS explores one mode well but does not search for it, so it needs a start in t
 
 1. **Per-epoch positions.** For each night, the likelihood of a static binary on a coarse grid of positions (±40 mas in steps of 1 mas, finer than λ/B) and flux ratios, its best point, and a binary fit from there, whose curvature gives the position's covariance. It also records how decisive the night is: the gap in log likelihood between the best peak and the best one more than λ/B away. The gap that decides, `gap_marginal`, is taken with each night's V² and closure-phase error scales integrated out under their Jeffreys priors, so a night whose errors are underestimated does not look more decisive than it is; `gap` keeps the old value on the quoted errors, which grows as 1/s² for errors underestimated by s, for one release. **On real data, per-epoch closure-phase surfaces are often strongly multimodal**, and a night's best peak can sit away from the true orbit; only decisive nights (a `gap_marginal` above `min_gap`, 5 by default) seed orbits, and the joint fit judges the rest.
 2. **Starting orbits.** At a fixed period, eccentricity and time of periastron the sky positions are linear in the four Thiele–Innes constants, so each point of a grid in those three is an exact weighted least-squares solve ([`starting_orbits`](api/orbits.md); here 160 periods from 300 to 5000 days, eccentricities from 0 to 0.9 and 36 times of periastron per period).
-3. **Ranking.** With few seed positions many orbits fit them almost equally well, so the best 200 are ranked **by the likelihood of the interferometric data of all the epochs**, at the median fitted flux ratio, rather than by the fit to the positions. The ranking is one compiled evaluation of the joint model, mapped over the orbits ([`rank_orbits`](api/epochs.md) does this for any scene).
+3. **Ranking.** With few seed positions many orbits fit them almost equally well, so the best 200 are ranked **by the scale-marginalised likelihood of the interferometric data of all the epochs**, at the median fitted flux ratio, rather than by the fit to the positions. The ranking is one compiled evaluation of the joint model, mapped over the orbits ([`rank_orbits`](api/epochs.md) does this for any scene).
 4. **Refinement.** The four best *distinct* orbits (whose positions differ by more than half of λ/B at some epoch; the best few are usually one mode) are refined with [`fit`](api/fitting.md), a maximum a posteriori fit of the full joint model, error-scale population included.
 
 `start_values` converts an orbit and a flux ratio into the sampled parameters; it is the only part specific to this model. `T_REF` is passed so that the starting orbits count the time of periastron from the model's reference time.
@@ -455,18 +455,18 @@ start = start_from_positions(
 )
 ```
 
-**Per-epoch positions.** The fitted positions against the truth, with each night's 1σ position error (from the binary fit's curvature, with each night's error scales integrated out) and gap. On these clean simulated nights every gap is large, so every night seeds the starting orbits.
+**Per-epoch positions.** The fitted positions against the truth, with each night's 1σ position error (from the binary fit's curvature, with each night's error scales integrated out) and gap. `gap` is the gap on the quoted errors, and `gap_marginal` is the one that decides, with each night's error scales integrated out; we print `gap_marginal`. On these clean simulated nights it is large for every night, so every night seeds the starting orbits.
 
 ```python
 positions = start.positions
 true_dra, true_ddec, _ = (np.asarray(x) for x in truth_orbit.relative(epoch_mjd))
-print("    MJD    fit Δα  true Δα    fit Δδ  true Δδ   σ (mas)  flux    gap")
+print("    MJD    fit Δα  true Δα    fit Δδ  true Δδ   σ (mas)  flux  gap_marginal")
 for k, t in enumerate(epoch_mjd):
     sigma = np.sqrt(np.diag(positions.cov[k])).max()
     print(
         f"{t:8.1f}  {positions.dra[k]:7.2f}  {true_dra[k]:7.2f}"
         f"   {positions.ddec[k]:7.2f}  {true_ddec[k]:7.2f}"
-        f"   {sigma:7.3f}  {positions.flux[k]:.3f}  {positions.gap[k]:5.0f}"
+        f"   {sigma:7.3f}  {positions.flux[k]:.3f}  {positions.gap_marginal[k]:9.0f}"
     )
 ```
 
@@ -482,11 +482,11 @@ for k, t in enumerate(epoch_mjd):
  60560.0    19.21    19.21      3.15     3.17     0.041  0.152    909
 ```
 
-**Ranking and refinement.** The best-ranked starting orbits, by the log likelihood of all the data, then the refined fits. If the refined fits land on the same orbit with the same loss, the posterior has one dominant mode near it. If some land elsewhere, those are other modes, typically period aliases from sparse sampling; compare their losses (a difference of Δ in loss is a factor of about $e^{Δ}$ in posterior density). [`OrbitStart.modes`](api/epochs.md) keeps the distinct fits within a loss of 10 of the best, and the sampler below starts one chain in each. Here all 200 candidates lie within one mode (they agree to within half the resolution of the data), so only one fit is refined and every chain starts from it, even though we asked for `n_refine=4`. With a single start, $\hat R$ cannot detect a second mode; the ranking above is the check that there is none.
+**Ranking and refinement.** The best-ranked starting orbits, by the scale-marginalised log likelihood of all the data (each night's error scales integrated out, so it is not comparable with the fit `loss` below, which is on a different surface), then the refined fits. If the refined fits land on the same orbit with the same loss, the posterior has one dominant mode near it. If some land elsewhere, those are other modes, typically period aliases from sparse sampling; compare their losses (a difference of Δ in loss is a factor of about $e^{Δ}$ in posterior density). [`OrbitStart.modes`](api/epochs.md) keeps the distinct fits within a loss of 10 of the best, and the sampler below starts one chain in each. Here all 200 candidates lie within one mode (they agree to within half the resolution of the data), so only one fit is refined and every chain starts from it, even though we asked for `n_refine=4`. With a single start, $\hat R$ cannot detect a second mode; the ranking above is the check that there is none.
 
 ```python
 ranked = start.candidates
-print("rank   P (d)     e     a (mas)  log L (data)")
+print("rank   P (d)     e     a (mas)  log L (marg.)")
 for rank in range(6):
     orbit, loglike = ranked[rank]
     print(
@@ -851,7 +851,7 @@ closure phase  population spread 0.29 +0.12 −0.08
 
 ## Comparison with the two-step fit
 
-For comparison we run the classical two-step analysis on the same data. Its per-epoch positions are the ones the initialisation already fitted: a static binary at each epoch, with the covariance from its curvature at face value with the quoted errors, as such a pipeline usually does. We sample the orbit from the positions alone with the same orbit priors. The table compares the two posteriors: for each element, the median, the 68% half-width, and the offset of the median from the truth in units of that half-width (a "pull"; honest intervals give pulls of order 1).
+For comparison we run the classical two-step analysis on the same data. Its per-epoch positions are the ones the initialisation already fitted: a static binary at each epoch, with the covariance from its curvature on the scale-marginalised surface, so each position's error already includes that night's fitted error scale. We sample the orbit from the positions alone with the same orbit priors. The table compares the two posteriors: for each element, the median, the 68% half-width, and the offset of the median from the truth in units of that half-width (a "pull"; honest intervals give pulls of order 1).
 
 ```python
 measured = start.positions.positions(t_ref=T_REF)
@@ -936,7 +936,7 @@ joint / two-step interval width: 1.00 to 1.05
 rms pull: joint 0.24, two-step 0.24
 ```
 
-Read the table in two ways. The interval widths say how much each analysis claims to know, and the pulls say whether that claim is justified. The two-step positions carry the quoted errors, which are too small by the factors we simulated, so its intervals reflect the quoted precision rather than the real one; the joint fit learns each night's error scale from the data themselves and propagates it into the orbit. Each epoch's position is also no longer reduced to a Gaussian before the orbit sees it. On real data, with skewed or multi-peaked nightly likelihoods, that is where the two analyses differ most. The two-step fit remains a good quick look, and a source of starting orbits, as in the initialisation above.
+Read the table in two ways. The interval widths say how much each analysis claims to know, and the pulls say whether that claim is justified. With the error scales marginalised, the two-step positions carry the right uncertainties, and the two-step fit recovers them: on these Gaussian simulated data it agrees with the joint visibility fit, with interval widths within a few percent and equal pulls. The joint fit still matters when the nightly likelihoods are non-Gaussian or multimodal, because it keeps each epoch's full likelihood, where the two-step fit reduces it to a Gaussian before the orbit sees it. The two-step fit is a good quick look, and a source of starting orbits, as in the initialisation above.
 
 ## Summary
 
