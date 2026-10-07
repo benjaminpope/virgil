@@ -141,6 +141,24 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Orbit-search scorer.** `virgil.orbit_search.score_orbits(epochs,
+  model, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
+  scores a stack of candidate orbits on all epochs in one compiled,
+  `lax.map`-batched kernel. The companion flux is shared: one flux per
+  band (optionally f₀(λ/λ₀)^β), at most 1 in a reference band, integrated
+  out on a log-uniform grid and also reported profiled, with an
+  uncertainty from the grid's curvature. Each dataset's error scales are
+  marginalized as in `marginal_loglike`. Gains (`OIData.with_gains`) and
+  closure-phase offsets (`OIData.with_closure_offsets`), which
+  `marginal_loglike` refuses, are profiled analytically, at one degree of
+  freedom each. `RVData`/`PositionData` terms or callables are added.
+  Positions are evaluated at every sample's own time, and the visibility
+  of a unit companion is computed once per candidate, with every flux
+  point cheap arithmetic on it. `max_evaluations` refuses a run whose
+  predicted cost (candidates × datasets × flux points) is over budget.
+  `rank_scores` / `OrbitScores.order` rank with ties broken on quantized
+  scores, then by index.
+
 - **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and
   L-BFGS run in chunks of steps, check the wall clock between them and
   stop, unconverged, with `info["stop"] == "time"` (L-BFGS carries its
