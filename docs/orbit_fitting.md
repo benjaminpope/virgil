@@ -471,15 +471,15 @@ for k, t in enumerate(epoch_mjd):
 ```
 
 ```text
-    MJD    fit Δα  true Δα    fit Δδ  true Δδ   σ (mas)  flux    gap
- 60000.0   -19.57   -19.57     15.27    15.34     0.057  0.149    862
- 60035.0   -18.81   -18.83     18.22    18.24     0.042  0.152    750
- 60095.0   -16.22   -16.14     21.80    21.76     0.072  0.151    796
- 60150.0   -12.50   -12.53     23.45    23.49     0.044  0.150    746
- 60330.0     2.78     2.74     20.49    20.56     0.054  0.155    687
- 60385.0     7.50     7.52     17.58    17.51     0.042  0.147    635
- 60445.0    12.27    12.33     13.35    13.26     0.057  0.149    349
- 60560.0    19.21    19.21      3.15     3.17     0.041  0.152    909
+    MJD    fit Δα  true Δα    fit Δδ  true Δδ   σ (mas)  flux  gap_marginal
+ 60000.0   -19.57   -19.57     15.27    15.34     0.057  0.149         57
+ 60035.0   -18.81   -18.83     18.22    18.24     0.042  0.152         79
+ 60095.0   -16.22   -16.14     21.80    21.76     0.072  0.151         68
+ 60150.0   -12.50   -12.53     23.45    23.49     0.044  0.150         76
+ 60330.0     2.78     2.74     20.49    20.56     0.054  0.155         72
+ 60385.0     7.50     7.52     17.58    17.51     0.042  0.147         61
+ 60445.0    12.27    12.33     13.35    13.26     0.057  0.149         50
+ 60560.0    19.21    19.21      3.15     3.17     0.041  0.152         84
 ```
 
 **Ranking and refinement.** The best-ranked starting orbits, by the scale-marginalised log likelihood of all the data (each night's error scales integrated out, so it is not comparable with the fit `loss` below, which is on a different surface), then the refined fits. If the refined fits land on the same orbit with the same loss, the posterior has one dominant mode near it. If some land elsewhere, those are other modes, typically period aliases from sparse sampling; compare their losses (a difference of Δ in loss is a factor of about $e^{Δ}$ in posterior density). [`OrbitStart.modes`](api/epochs.md) keeps the distinct fits within a loss of 10 of the best, and the sampler below starts one chain in each. Here all 200 candidates lie within one mode (they agree to within half the resolution of the data), so only one fit is refined and every chain starts from it, even though we asked for `n_refine=4`. With a single start, $\hat R$ cannot detect a second mode; the ranking above is the check that there is none.
@@ -509,7 +509,7 @@ best = start.best
 ```
 
 ```text
-rank   P (d)     e     a (mas)  log L (data)
+rank   P (d)     e     a (mas)  log L (marg.)
    0  1303.0   0.15    26.10       -3226.7
    1  1151.2   0.25    25.25       -3226.8
    2   999.2   0.40    24.67       -3228.9
