@@ -1415,6 +1415,26 @@ figures, to be replaced by measurements (§9.1).
    bound: a mode that only fits with errors inflated four- or five-fold
    is meant to lose to one that fits the quoted errors. The bound also
    removes the unbounded −(ν/2) ln χ² spike of small-ν blocks.
+8. **Release criterion: trap or degeneracy** (Ben, 2026-10-08). The
+   orbit search is ready for release when an unattended run on a
+   reference system reproduces an independently built reference, which
+   tells a real degeneracy apart from a trapped search:
+   1. *Trap test.* Every candidate mode (the published one, its Ω/ω
+      flip, the period aliases, and every mode the search reports) is
+      refined from a seed under the same exact score. If a seeded
+      maximum beats the unattended best, the search is trapped: a D2/D3
+      bug, not a property of the data.
+   2. *Degeneracy test.* Each refined mode's evidence is computed by
+      Laplace on the exact score and checked by nested sampling. If one
+      mode is decisively higher, the run must report it as best; if
+      they are comparable, the run must report them as comparable modes
+      with their weights, and extra data that should break the
+      degeneracy (e.g. RVs) must do so.
+   3. *Release test.* The unattended run's modes and weights agree with
+      this reference within the calibrated tolerance (decision 2).
+   Every report gives raw χ²/N per mode on the quoted errors. The first
+   reference system is a GRAVITY binary with published RVs (Gl 229 Ba–Bb
+   in the worked example).
 
 ### 14.7 Staging, revised
 
