@@ -109,7 +109,6 @@ def test_equals_summed_marginal_loglike_at_fixed_flux():
     assert scores.score[0] > scores.score[1] + 10.0
     assert scores.flux[:, 0] == pytest.approx([0.4, 0.4])
     assert onp.all(onp.isnan(scores.flux_err))
-    assert scores.cost == 2 * 3 * 1
 
 
 def test_several_times_per_epoch_equal_the_split_with_a_tied_scale():
@@ -142,43 +141,108 @@ def test_several_times_per_epoch_equal_the_split_with_a_tied_scale():
     assert abs(snapshot - expect) > 1.0
 
 
-def test_flux_marginal_matches_quadrature():
-    # The flux is measured to about 2% (σ_ln f ≈ 0.02), so the grid's step
-    # in ln f must be comparable for the trapezoidal rule to converge.
-    epochs = _epochs(sigma_v2=0.1, sigma_cp_deg=10.0)
-    lo, hi = 0.2, 0.8
-    scores = score_orbits(
-        epochs, OrbitalBinary, [TRUTH], shared=SharedFlux((lo, hi, 64))
-    )
-    log_f = onp.linspace(onp.log(lo), onp.log(hi), 2001)
+def _brute(epochs, orbit, log_f, beta=(0.0,), wavel0=None):
+    """The summed marginal_loglike on a dense (ln f, β) grid (float64)."""
     with jax.enable_x64(True):
         positions = [
-            [float(x) for x in _f64(TRUTH).relative(onp.mean(d.mjd))[:2]]
+            [float(x) for x in _f64(orbit).relative(onp.mean(d.mjd))[:2]]
             for d in epochs.data
         ]
         datasets = _f64(epochs.data)
+        ratios = [
+            onp.broadcast_to(onp.asarray(d.wavel, float), onp.shape(d.u))
+            / (wavel0 or 1.0)
+            for d in epochs.data
+        ]
 
         @jax.jit
-        @jax.vmap
-        def total(lf):
-            f = jax.numpy.exp(lf)
-            return sum(
-                marginal_loglike(BinaryModelCartesian(*p, f), d)
-                for p, d in zip(positions, datasets)
-            )
+        def total(lf, b):
+            out = 0.0
+            for p, d, r in zip(positions, datasets, ratios):
+                f = jax.numpy.exp(lf) * r**b
+                out = out + marginal_loglike(BinaryModelCartesian(*p, f), d)
+            return out
 
-        values = onp.asarray(total(log_f))
-    peak = values.max()
-    expect = peak + onp.log(
-        onp.trapezoid(onp.exp(values - peak), log_f) / (log_f[-1] - log_f[0])
+        grid = jax.vmap(jax.vmap(total, (None, 0)), (0, None))
+        return onp.asarray(grid(onp.asarray(log_f), onp.asarray(beta)))
+
+
+def _log_mean_exp(values, x, axis=-1):
+    """log of the mean of exp(values) over the range of x (trapezoid)."""
+    peak = onp.max(values)
+    integral = onp.trapezoid(onp.exp(values - peak), x, axis=axis)
+    return peak + onp.log(integral / (x[-1] - x[0]))
+
+
+# A well-measured flux (σ_ln f ≈ 0.02) whose true value falls at, between
+# and next to the default grid's points (1e-3 to 1, 16 log-spaced).
+@pytest.mark.parametrize("flux", [0.215, 0.28, 0.33, 0.4, 0.46])
+@pytest.mark.parametrize("dtype", ["float64", "float32"])
+def test_flux_marginal_matches_quadrature_wherever_the_peak_falls(flux, dtype):
+    epochs = _epochs(flux=flux, sigma_v2=0.1, sigma_cp_deg=10.0)
+    scores = score_orbits(epochs, OrbitalBinary, [TRUTH], dtype=dtype)
+    log_f = onp.linspace(onp.log(1e-3), 0.0, 20001)
+    values = _brute(epochs, TRUTH, log_f)[:, 0]
+    assert scores.score[0] == pytest.approx(
+        _log_mean_exp(values, log_f), abs=0.05
     )
-    assert scores.score[0] == pytest.approx(expect, abs=2e-3)
-    assert scores.profiled[0] <= peak + 1e-9
-    # The profiled flux: the parabola's vertex near the quadrature's best.
+    assert not scores.fallback[0, 0]
+    assert scores.profiled[0] == pytest.approx(values.max(), abs=1e-2)
     best = onp.exp(log_f[onp.argmax(values)])
-    assert scores.flux[0, 0] == pytest.approx(best, rel=0.05)
-    assert 0.0 < scores.flux_err[0, 0] < scores.flux[0, 0]
+    assert scores.flux[0, 0] == pytest.approx(best, rel=2e-3)
+    sigma = scores.flux_err[0, 0] / scores.flux[0, 0]
+    assert 0.005 < sigma < 0.2
     assert not scores.flux_at_edge[0, 0]
+
+
+@pytest.mark.parametrize("flux", [0.97, 1.3])
+def test_flux_marginal_near_the_reference_bound(flux):
+    # f <= 1 in the reference band: a peak just inside the bound, and one
+    # beyond it (the profile then sits on the bound with a slope).
+    epochs = _epochs(flux=flux, sigma_v2=0.1, sigma_cp_deg=10.0)
+    scores = score_orbits(epochs, OrbitalBinary, [TRUTH])
+    log_f = onp.linspace(onp.log(1e-3), 0.0, 20001)
+    values = _brute(epochs, TRUTH, log_f)[:, 0]
+    assert scores.score[0] == pytest.approx(
+        _log_mean_exp(values, log_f), abs=0.05
+    )
+    assert not scores.fallback[0, 0]
+    assert scores.flux_at_edge[0, 0] == (flux > 1.0)
+
+
+def test_flux_marginal_when_the_prior_dominates():
+    # A faint companion in noisy data: the likelihood is nearly flat in
+    # ln f over most of the prior.
+    epochs = _epochs(flux=0.003, sigma_v2=0.3, sigma_cp_deg=30.0)
+    for dtype in ("float64", "float32"):
+        scores = score_orbits(epochs, OrbitalBinary, [TRUTH], dtype=dtype)
+        log_f = onp.linspace(onp.log(1e-3), 0.0, 20001)
+        values = _brute(epochs, TRUTH, log_f)[:, 0]
+        assert values.max() - values.min() > 1.0  # not exactly flat
+        assert scores.score[0] == pytest.approx(
+            _log_mean_exp(values, log_f), abs=0.05
+        )
+
+
+def test_flux_and_slope_marginal_matches_quadrature():
+    epochs = _epochs(flux=0.33, sigma_v2=0.1, sigma_cp_deg=10.0)
+    wavel0 = 2.2e-6
+    shared = SharedFlux(slope=(-3.0, 3.0, 7), wavel0=wavel0)
+    scores = score_orbits(epochs, OrbitalBinary, [TRUTH], shared=shared)
+    # Brute force about the peak; the rest of the prior is negligible.
+    lf0 = onp.log(scores.flux[0, 0])
+    log_f = onp.linspace(lf0 - 0.8, min(lf0 + 0.8, 0.0), 1601)
+    beta = onp.linspace(-3.0, 3.0, 601)
+    values = _brute(epochs, TRUTH, log_f, beta, wavel0)
+    edges = (values[0], values[-1], values[:, 0], values[:, -1])
+    assert values.max() - max(e.max() for e in edges) > 15.0
+    inner = _log_mean_exp(values, beta, axis=1) + onp.log(6.0)
+    expect = _log_mean_exp(inner, log_f) + onp.log(
+        (log_f[-1] - log_f[0]) / (6.0 * -onp.log(1e-3))
+    )
+    assert scores.score[0] == pytest.approx(expect, abs=0.05)
+    assert not scores.fallback[0, 0]
+    assert 0.0 < scores.slope_err[0, 0] < 3.0
 
 
 def test_rv_term_adds_its_loglike():
@@ -217,8 +281,9 @@ def test_independent_of_batch_size():
     batched = score_orbits(
         epochs, OrbitalBinary, candidates, shared=shared, batch_size=2
     )
-    onp.testing.assert_allclose(batched.score, every.score, rtol=1e-12)
-    onp.testing.assert_allclose(batched.flux, every.flux, rtol=1e-12)
+    # Batching changes how XLA fuses the Newton steps: equal to rounding.
+    onp.testing.assert_allclose(batched.score, every.score, rtol=1e-10)
+    onp.testing.assert_allclose(batched.flux, every.flux, rtol=1e-6)
 
 
 def test_float32_agrees_with_float64_and_ties_rank_by_index():
@@ -286,22 +351,27 @@ def test_per_epoch_flux_decoy_loses_under_shared_flux():
 
 def test_budget_refuses_before_scoring():
     epochs = _epochs()
-    with pytest.raises(ValueError, match="max_evaluations=10"):
+    shared = SharedFlux((0.1, 1.0, 8))
+    cost = score_orbits(
+        epochs, OrbitalBinary, [TRUTH, OTHER], shared=shared
+    ).cost
+    with pytest.raises(ValueError, match=f"max_evaluations={cost - 1}"):
         score_orbits(
             epochs,
             OrbitalBinary,
             [TRUTH, OTHER],
-            shared=SharedFlux((0.1, 1.0, 8)),
-            max_evaluations=10,
+            shared=shared,
+            max_evaluations=cost - 1,
         )
     within = score_orbits(
-        epochs,
-        OrbitalBinary,
-        [TRUTH, OTHER],
-        shared=SharedFlux((0.1, 1.0, 8)),
-        max_evaluations=2 * 3 * 8,
+        epochs, OrbitalBinary, [TRUTH, OTHER], shared=shared,
+        max_evaluations=cost,
+    )  # fmt: skip
+    assert within.cost == cost
+    fixed = score_orbits(
+        epochs, OrbitalBinary, [TRUTH, OTHER], shared=SharedFlux([0.4])
     )
-    assert within.cost == 48
+    assert fixed.cost == 2 * 3
 
 
 def test_reference_band_flux_is_bounded_by_one():

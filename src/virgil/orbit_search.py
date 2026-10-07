@@ -7,8 +7,9 @@ nuisances that a single orbit shares across epochs shared in the score:
 
 * **Flux.** One companion flux per band (or instrument), the same at
   every epoch of that band, optionally with a chromatic power law
-  f(λ) = f₀ (λ/λ₀)^β. It is integrated out on a small log-uniform
-  (Jeffreys) grid, and its profiled value and uncertainty are reported.
+  f(λ) = f₀ (λ/λ₀)^β. It is integrated out under a log-uniform
+  (Jeffreys) prior, adaptively about its profiled peak, and its profiled
+  value and uncertainty are reported.
   Letting each epoch have its own flux is a strictly looser model, whose
   extra freedom moves each epoch's peaks and makes new ones that no orbit
   with one flux visits, so it is never used to rank.
@@ -65,13 +66,14 @@ class SharedFlux:
     Parameters
     ----------
     grid : tuple, array-like or dict, optional
-        The flux grid at the reference wavelength λ₀: ``(lo, hi, n)`` for
-        ``n`` points spaced uniformly in ln f from ``lo`` to ``hi``, or the
-        flux values themselves (one value fixes the flux), or a dict
-        ``{band: either}``. The default, ``(1e-3, 1.0, 16)``, is used for
-        every band not in the dict. The prior is log-uniform (Jeffreys)
-        between the first and last points, integrated by the trapezoidal
-        rule in ln f.
+        The coarse flux grid at the reference wavelength λ₀: ``(lo, hi,
+        n)`` for ``n`` points spaced uniformly in ln f from ``lo`` to
+        ``hi``, or the flux values themselves (one value fixes the flux),
+        or a dict ``{band: either}``. The default, ``(1e-3, 1.0, 16)``, is
+        used for every band not in the dict. The prior is log-uniform
+        (Jeffreys) between the first and last points. The grid only finds
+        the peak: the marginal is integrated adaptively about the profiled
+        peak (see ``order``).
     bands : dict, optional
         ``{epoch or dataset name: band}``; a dataset's own entry overrides
         its epoch's. Every dataset of a band shares that band's flux. By
@@ -89,6 +91,18 @@ class SharedFlux:
     wavel0 : float or dict, optional
         The reference wavelength λ₀ (metres), one or per band; by default
         the geometric mean of each band's wavelengths.
+    order : int, optional
+        Gauss–Legendre nodes per side of the adaptive marginal (default
+        16): each side of the profiled peak is integrated out to where the
+        score has fallen by 12 nats (grown from the curvature's length
+        scale, and at a prior bound also the slope's), cut at the prior's
+        bounds, with the nodes crowded towards the peak. With a slope,
+        ``order`` nodes per side over the whole β prior each integrate
+        ln f from their own conditional peak.
+    newton : int, optional
+        Newton steps from the best coarse grid point to the profiled peak
+        (default 8), each at most one grid step and kept only if it raises
+        the score.
     """
 
     grid: object = (1e-3, 1.0, 16)
@@ -96,6 +110,12 @@ class SharedFlux:
     reference: object = None
     slope: object = None
     wavel0: object = None
+    order: int = 16
+    newton: int = 8
+
+    def __post_init__(self):
+        if int(self.order) < 2 or int(self.newton) < 0:
+            raise ValueError("SharedFlux needs order >= 2 and newton >= 0.")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -114,20 +134,23 @@ class OrbitScores:
         errors), gains profiled, plus the extra terms. ``-inf`` where not
         finite.
     profiled : numpy.ndarray
-        ``(n,)``: the same at the best grid point of each band, instead of
-        integrated over the grid.
+        ``(n,)``: the same at the profiled flux (and slope) of each band,
+        instead of integrated over them.
     flux, flux_err : numpy.ndarray
-        ``(n, n_band)``: the profiled flux f₀ of each band, refined by a
-        parabola in ln f through the best grid point and its neighbours,
-        and its uncertainty from that parabola's curvature (NaN at a grid
-        edge, with one grid point, or where the curvature is not
-        negative).
+        ``(n, n_band)``: the profiled flux f₀ of each band (Newton steps
+        in ln f from the best coarse grid point), and its uncertainty from
+        the curvature in ln f there, σ_f = f σ_ln f (NaN with one grid
+        point, or where the curvature is not negative).
     flux_at_edge : numpy.ndarray
-        ``(n, n_band)`` bool: the best grid point is the first or last.
+        ``(n, n_band)`` bool: the profiled flux is at a prior bound.
     slope, slope_err, slope_at_edge : numpy.ndarray
         The same for the chromatic slope β (0 and NaN without a slope
-        grid). The uncertainties are conditional, each at the other's best
-        grid value.
+        grid). With both free, the uncertainties are marginal (from the
+        inverse of the 2 × 2 curvature).
+    fallback : numpy.ndarray
+        ``(n, n_band)`` bool: the curvature at the peak was not negative
+        or not finite, so the marginal is the coarse grid's trapezoidal
+        rule instead of the adaptive integral.
     terms : numpy.ndarray
         ``(n, n_terms)``: each extra term's log likelihood (included in
         ``score``).
@@ -136,8 +159,9 @@ class OrbitScores:
         flux is at most 1.
     reference : object
     cost : int
-        The work units spent: candidates × Σ over datasets of the flux
-        points of the dataset's band.
+        The work units spent: candidates × Σ over datasets of the score
+        evaluations of the band's marginal (grid points, Newton steps with
+        their derivatives, and nodes).
     """
 
     score: onp.ndarray
@@ -148,6 +172,7 @@ class OrbitScores:
     slope: onp.ndarray
     slope_err: onp.ndarray
     slope_at_edge: onp.ndarray
+    fallback: onp.ndarray
     terms: onp.ndarray
     bands: tuple
     reference: object
@@ -246,7 +271,8 @@ def _for_band(spec, band, default):
 
 @dataclasses.dataclass(frozen=True)
 class _Band:
-    """One band's grid: ln f₀ and β per point, log weights, and shape."""
+    """One band's coarse grid: ln f₀ and β per point, log trapezoid
+    weights, shape, and the axes (whose ends bound the priors)."""
 
     name: object
     log_flux: onp.ndarray
@@ -255,6 +281,8 @@ class _Band:
     shape: tuple
     datasets: tuple
     wavel0: float
+    flux_axis: onp.ndarray
+    slope_axis: onp.ndarray
 
     @property
     def size(self):
@@ -326,6 +354,8 @@ def _bands(epochs, shared):
                 (log_f.size, beta.size),
                 members,
                 float(wavel0),
+                log_f,
+                beta,
             )
         )
     return tuple(bands), reference
@@ -484,51 +514,244 @@ class _Scorer:
 # ---------------------------------------------------------------------------
 
 
-def _parabola(x, y, i):
-    """Vertex and 1σ (from the curvature) of the parabola through the best
-    grid point ``i`` of ``(x, y)`` and its neighbours; edge flag."""
-    n = x.shape[0]
-    if n < 3:
-        edge = np.asarray(False) if n == 1 else (i == 0) | (i == n - 1)
-        return x[i], np.asarray(np.nan, x.dtype), edge
-    j = np.clip(i, 1, n - 2)
-    x0, x1, x2 = x[j - 1], x[j], x[j + 1]
-    y0, y1, y2 = y[j - 1], y[j], y[j + 1]
-    d1 = (y1 - y0) / (x1 - x0)
-    d2 = (y2 - y1) / (x2 - x1)
-    a = (d2 - d1) / (x2 - x0)
-    b = d1 - a * (x0 + x1)
-    edge = (i == 0) | (i == n - 1)
-    ok = (a < 0) & ~edge & np.isfinite(a) & np.isfinite(b)
-    safe = np.where(ok, a, -1.0)
-    vertex = np.clip(-b / (2.0 * safe), x0, x2)
-    return (
-        np.where(ok, vertex, x[i]),
-        np.where(ok, 1.0 / np.sqrt(-2.0 * safe), np.nan),
-        edge,
+# The adaptive marginal: from the profiled peak, each side's range is
+# doubled (at most _DOUBLINGS times, from two length scales) until the
+# integrand has fallen by _DEPTH nats or the range reaches the prior's
+# bound; Gauss–Legendre then integrates each side. Newton steps that do
+# not raise the score are halved up to _HALVINGS times.
+_DEPTH = 12.0
+_DOUBLINGS = 8
+_HALVINGS = 20
+# With a slope, rounds of 1-D Newton steps in ln f and β before 2-D ones.
+_ALTERNATIONS = 3
+# Each side's nodes are spaced as u**_POWER for Gauss–Legendre nodes u.
+_POWER = 3
+
+
+def _newton(f, x, lo, hi, delta, steps):
+    """Maximize the scalar ``f`` from ``x`` in ``[lo, hi]`` by Newton steps
+    of at most ``delta``, halved until they raise ``f`` (the best of the
+    halvings is taken, or none).
+
+    Returns ``(x, f(x), f'(x), f''(x))``.
+    """
+    d1 = jax.grad(f)
+    d2 = jax.grad(d1)
+    fx = f(x)
+    shrink = 0.5 ** np.arange(_HALVINGS + 1, dtype=x.dtype)
+    for _ in range(steps):
+        g, h = d1(x), d2(x)
+        # Where the curvature is not negative, a gradient step instead.
+        step = -g / np.where(h < 0, h, -1.0)
+        step = np.clip(step, -delta, delta)
+        trials = np.clip(x + step * shrink, lo, hi)
+        values = jax.vmap(f)(trials)
+        values = np.where(np.isnan(values), -np.inf, values)
+        k = np.argmax(values)
+        better = values[k] > fx
+        x = np.where(better, trials[k], x)
+        fx = np.where(better, values[k], fx)
+    return x, fx, d1(x), d2(x)
+
+
+def _scale(g, h, x, lo, hi):
+    """The integrand's length scale at a peak ``x`` (``h`` the curvature,
+    and at a bound also the slope ``g``), and whether it is usable."""
+    at_bound = (x <= lo) | (x >= hi)
+    rate = np.sqrt(np.maximum(-h, 0.0)) + np.where(at_bound, np.abs(g), 0.0)
+    ok = np.isfinite(rate) & (rate > 0)
+    return 1.0 / np.where(ok, rate, 1.0), ok
+
+
+def _nodes(f, x, fx, scale, lo, hi, order):
+    """Gauss–Legendre nodes and log weights over each side of the peak
+    ``x``, each side's range grown until ``f`` falls by ``_DEPTH``, in the
+    variable u with x = x̂ ± L u³."""
+    t, w = (
+        np.asarray(v, x.dtype) for v in onp.polynomial.legendre.leggauss(order)
     )
+    nodes, log_w = [], []
+    for side, room in ((-1.0, x - lo), (1.0, hi - x)):
+        length = np.minimum(2.0 * scale, room)
+        for _ in range(_DOUBLINGS):
+            drop = fx - f(x + side * length)
+            grow = ~(drop >= _DEPTH) & (length < room)
+            length = np.where(grow, np.minimum(2.0 * length, room), length)
+        # x = x̂ ± L u³ crowds the nodes near the peak, so that a narrow
+        # spike on a broad shoulder (a block whose χ² nearly vanishes) is
+        # resolved together with the shoulder.
+        u = 0.5 * (t + 1.0)
+        nodes.append(x + side * length * u**_POWER)
+        log_w.append(
+            np.log(0.5 * w * _POWER * u ** (_POWER - 1)) + np.log(length)
+        )
+    return np.concatenate(nodes), np.concatenate(log_w)
 
 
-def _band_summary(band, scores, log_flux, slope, log_weight):
-    """Marginal, best, and refined (f₀, σ_f, β, σ_β, edges) of one band."""
-    finite = np.where(np.isnan(scores), -np.inf, scores)
-    marginal = jax.nn.logsumexp(finite + log_weight)
+def _marginal_1d(f, x0, lo, hi, delta, shared):
+    """Profile and integrate ``f`` over one nuisance with a uniform prior on
+    ``[lo, hi]``: ``(log marginal, x̂, f(x̂), σ, ok)``."""
+    x, fx, g, h = _newton(f, x0, lo, hi, delta, shared.newton)
+    scale, ok = _scale(g, h, x, lo, hi)
+    nodes, log_w = _nodes(f, x, fx, scale, lo, hi, shared.order)
+    values = jax.vmap(f)(nodes)
+    values = np.where(np.isnan(values), -np.inf, values)
+    log_z = jax.nn.logsumexp(values + log_w) - math.log(hi - lo)
+    sigma = np.where(h < 0, 1.0 / np.sqrt(np.where(h < 0, -h, 1.0)), np.nan)
+    return log_z, x, fx, sigma, ok & np.isfinite(log_z)
+
+
+def _band_marginal(band, shared, score, grid_scores):
+    """One band's marginal over its flux (and slope), its profile and the
+    profiled values: ``(marginal, profiled, (f, σ_f, f_edge, β, σ_β,
+    β_edge, fallback))``.
+
+    The coarse grid's best point starts Newton steps to the profiled peak;
+    the marginal then integrates each side of it by Gauss–Legendre, over a
+    range grown from the curvature's length scale until the score has
+    fallen by ``_DEPTH`` nats (cut at the prior's bounds), so that it does
+    not depend on where the peak falls between grid points. With a slope,
+    an outer rule over the whole slope prior takes, at each node, this 1-D
+    marginal over ln f. Where the peak's curvature is not negative (and it
+    is not at a bound with a slope), the trapezoidal rule on the coarse
+    grid is used instead and flagged.
+    """
+    finite = np.where(np.isnan(grid_scores), -np.inf, grid_scores)
+    coarse = jax.nn.logsumexp(finite + band.log_weight)
     best = np.argmax(finite)
     n_f, n_b = band.shape
-    grid = finite.reshape(n_f, n_b)
-    i_f, i_b = best // n_b, best % n_b
-    lf, f_err, f_edge = _parabola(
-        log_flux.reshape(n_f, n_b)[:, 0], grid[:, i_b], i_f
-    )
-    beta, b_err, b_edge = _parabola(
-        slope.reshape(n_f, n_b)[0, :], grid[i_f, :], i_b
-    )
-    flux = np.exp(lf)
+    lf0 = np.asarray(band.log_flux, finite.dtype)[best]
+    b0 = np.asarray(band.slope, finite.dtype)[best]
+    f_axis, b_axis = band.flux_axis, band.slope_axis
+    free_f, free_b = n_f > 1, n_b > 1
+    nan = np.asarray(np.nan, finite.dtype)
+    no = np.asarray(False)
+
+    def bounds(axis):
+        lo, hi = float(axis[0]), float(axis[-1])
+        delta = float(onp.max(onp.diff(axis)))
+        return lo, hi, delta
+
+    def edge(x, axis):
+        return (x <= axis[0]) | (x >= axis[-1])
+
+    if not free_f and not free_b:
+        value = score(lf0, b0)
+        return value, value, (np.exp(lf0), nan, no, b0, nan, no, no)
+    if free_f != free_b:
+        axis = f_axis if free_f else b_axis
+
+        def f(x):
+            return score(x, b0) if free_f else score(lf0, x)
+
+        lo, hi, delta = bounds(axis)
+        log_z, x, fx, sigma, ok = _marginal_1d(
+            f, lf0 if free_f else b0, lo, hi, delta, shared
+        )
+        marginal = np.where(ok, log_z, coarse)
+        if free_f:
+            out = (np.exp(x), np.exp(x) * sigma, edge(x, axis), b0, nan, no)
+        else:
+            out = (np.exp(lf0), nan, no, x, sigma, edge(x, axis))
+        return marginal, fx, (*out, ~ok)
+
+    # Both free: Newton in (ln f, β), then an outer Gauss–Legendre over β
+    # about the peak and, at each β node, the 1-D adaptive marginal over
+    # ln f from the conditional peak.
+    f_lo, f_hi, f_delta = bounds(f_axis)
+    b_lo, b_hi, b_delta = bounds(b_axis)
+    lo = np.asarray([f_lo, b_lo], finite.dtype)
+    hi = np.asarray([f_hi, b_hi], finite.dtype)
+    delta = np.asarray([f_delta, b_delta], finite.dtype)
+
+    def f2(v):
+        return score(v[0], v[1])
+
+    # Far from the peak the 2-D curvature is often not negative definite:
+    # first alternate 1-D Newton steps in ln f and β, then polish in 2-D.
+    lf, beta = lf0, b0
+    for _ in range(_ALTERNATIONS):
+        lf = _newton(
+            lambda x: score(x, beta), lf, f_lo, f_hi, f_delta, shared.newton
+        )[0]
+        beta = _newton(
+            lambda x: score(lf, x), beta, b_lo, b_hi, b_delta, shared.newton
+        )[0]
+    grad, hess = jax.grad(f2), jax.hessian(f2)
+    v = np.stack([lf, beta])
+    fv = f2(v)
+    shrink = 0.5 ** np.arange(_HALVINGS + 1, dtype=v.dtype)
+    for _ in range(shared.newton):
+        g, h = grad(v), hess(v)
+        neg = (h[0, 0] < 0) & (np.linalg.det(h) > 0)
+        step = np.where(
+            neg, -np.linalg.solve(np.where(neg, h, -np.eye(2)), g), g
+        )
+        step = step / np.maximum(1.0, np.max(np.abs(step) / delta))
+        trials = np.clip(v + shrink[:, None] * step, lo, hi)
+        values = jax.vmap(f2)(trials)
+        values = np.where(np.isnan(values), -np.inf, values)
+        k = np.argmax(values)
+        better = values[k] > fv
+        v = np.where(better, trials[k], v)
+        fv = np.where(better, values[k], fv)
+    g, h = grad(v), hess(v)
+    neg = (h[0, 0] < 0) & (np.linalg.det(h) > 0)
+    cov = -np.linalg.inv(np.where(neg, h, -np.eye(2)))
+    sigma = np.where(neg, np.sqrt(np.abs(np.diagonal(cov))), np.nan)
+    at_b = (v[1] <= b_lo) | (v[1] >= b_hi)
+    rate = 1.0 / sigma[1] + np.where(at_b, np.abs(g[1]), 0.0)
+    ok = neg & np.isfinite(rate) & (rate > 0)
+    tilt = np.where(neg, cov[0, 1] / cov[1, 1], 0.0)
+
+    # The outer nodes span the whole slope prior on each side of the peak
+    # (a drop measured from a narrow spike would cut off a broad shoulder
+    # that carries much of the integral); the u³ spacing still resolves
+    # the peak.
+    b_nodes, b_log_w = _nodes(
+        lambda beta: fv, v[1], fv, np.asarray(b_hi - b_lo, v.dtype),
+        b_lo, b_hi, shared.order,
+    )  # fmt: skip
+
+    def inner(beta):
+        start = np.clip(v[0] + tilt * (beta - v[1]), f_lo, f_hi)
+        log_z, _, _, _, ok = _marginal_1d(
+            lambda x: score(x, beta), start, f_lo, f_hi, f_delta, shared
+        )
+        return log_z, ok
+
+    inner_z, inner_ok = jax.vmap(inner)(b_nodes)
+    log_z = jax.nn.logsumexp(inner_z + b_log_w) - math.log(b_hi - b_lo)
+    ok = ok & np.all(inner_ok) & np.isfinite(log_z)
+    flux = np.exp(v[0])
     return (
-        marginal,
-        finite[best],
-        (flux, flux * f_err, f_edge, beta, b_err, b_edge),
+        np.where(ok, log_z, coarse),
+        fv,
+        (
+            flux,
+            flux * sigma[0],
+            edge(v[0], f_axis),
+            v[1],
+            sigma[1],
+            edge(v[1], b_axis),
+            ~ok,
+        ),
     )
+
+
+def _evaluations(band, shared):
+    """Score evaluations per dataset of ``band`` (work units), counting a
+    first or second derivative as one evaluation."""
+    n_f, n_b = band.shape
+    newton = 1 + shared.newton * (3 + _HALVINGS) + 2
+    sides = 2 * (_DOUBLINGS + shared.order)
+    one_d = newton + sides
+    if n_f > 1 and n_b > 1:
+        start = 2 * _ALTERNATIONS * newton
+        return band.size + start + newton + sides + 2 * shared.order * one_d
+    if n_f > 1 or n_b > 1:
+        return band.size + one_d
+    return 1
 
 
 def _term_function(term):
@@ -662,14 +885,14 @@ def score_orbits(
 
     For each candidate, the companion's position is computed at every
     sample's own time, and the visibilities ``g`` of a unit companion
-    there once. Every point of each band's flux grid is then cheap
+    there once. Every evaluation at another flux is then cheap
     arithmetic on ``g``: for a scene linear in the companion's flux f
     (a component weight), the complex visibility is
     ``V(f) = (A + f B) / (T₀ + f ΔT)``, with ``A`` and the total fluxes
     computed once per dataset and ``B`` from ``g``. With a slope, f
     differs per sample: f = f₀ (λ/λ₀)^β.
 
-    For each dataset and grid point the score is the scale-marginalized
+    For each dataset and flux the score is the scale-marginalized
     log likelihood ``m = -Σ_b (ν_b/2) ln χ²_b`` of
     [`marginal_loglike`][virgil.epochs.marginal_loglike] (or, with
     ``s_max``, its bounded form; with ``scales="quoted"``, ``-χ²/2``).
@@ -679,9 +902,17 @@ def score_orbits(
     are profiled analytically inside χ²: their widths are ignored, and each
     independent mode removes one degree of freedom from its block (a
     single gain per dataset is ``with_gains(modes=onp.ones((1, n)))``, with
-    ``n`` the number of samples). Each band's flux grid is then integrated
-    out under its log-uniform prior, ``ln Σ_j w_j exp(Σ_d m_d(f_j))``, and
-    the extra terms are added.
+    ``n`` the number of samples).
+
+    Each band's flux is then integrated out under its log-uniform prior.
+    The coarse grid only finds the peak: Newton steps in ln f (and β)
+    profile it, and Gauss–Legendre nodes on each side of it, out to a
+    12-nat drop or the prior's bounds, integrate it, so that the marginal does not
+    depend on where the peak falls between grid points (a well-measured
+    flux, σ_ln f ≈ 0.02, is far narrower than any affordable grid step).
+    Where the curvature at the peak is not usable, the coarse grid's
+    trapezoidal rule is used and ``OrbitScores.fallback`` is set. The
+    extra terms are then added.
 
     Parameters
     ----------
@@ -720,8 +951,9 @@ def score_orbits(
         Candidates evaluated together by ``jax.lax.map`` (default: all).
         The result does not depend on it.
     max_evaluations : int, optional
-        A budget in work units, candidates × Σ over datasets of the grid
-        points of the dataset's band. The cost is predicted before
+        A budget in work units: candidates × Σ over datasets of the score
+        evaluations of the dataset's band's marginal (coarse grid points,
+        Newton steps counting each derivative as one, and nodes). The cost is predicted before
         anything is evaluated, and a cost over budget raises a
         ``ValueError``.
     dtype : {"float64", "float32"}, optional
@@ -750,11 +982,14 @@ def score_orbits(
     shared = SharedFlux() if shared is None else shared
     bands, reference = _bands(epochs, shared)
     stacked, n = _candidates(orbits)
-    cost = n * sum(band.size * len(band.datasets) for band in bands)
+    cost = n * sum(
+        _evaluations(band, shared) * len(band.datasets) for band in bands
+    )
     if max_evaluations is not None and cost > int(max_evaluations):
         raise ValueError(
             f"Scoring {n} candidates would cost {cost} work units "
-            "(candidates × Σ over datasets of their band's flux points), "
+            "(candidates × Σ over datasets of the score evaluations of "
+            "their band's flux marginal), "
             f"over the budget max_evaluations={int(max_evaluations)}. "
             "Score fewer candidates, or use coarser flux grids."
         )
@@ -778,7 +1013,7 @@ def score_orbits(
                 tuple(s.offsets for s in scorers),
                 tuple(fixed),
                 tuple(onp.log(r) for r in ratios),
-                tuple((b.log_flux, b.slope, b.log_weight) for b in bands),
+                tuple((b.log_flux, b.slope) for b in bands),
                 onp.asarray(dofs, float),
             ),
             dtype,
@@ -798,7 +1033,7 @@ def score_orbits(
                         _cvis_at_times(epochs, k, plain, scene) * t1 - a
                     )
                 marginals, best, summaries = [], [], []
-                for band, (log_flux, slope, log_weight) in zip(bands, grids):
+                for band, (log_flux, slope) in zip(bands, grids):
 
                     def at(lf, beta, band=band):
                         total = 0.0
@@ -816,9 +1051,7 @@ def score_orbits(
                         return total
 
                     scores = jax.vmap(at)(log_flux, slope)
-                    m, top, summary = _band_summary(
-                        band, scores, log_flux, slope, log_weight
-                    )
+                    m, top, summary = _band_marginal(band, shared, at, scores)
                     marginals.append(m)
                     best.append(top)
                     summaries.append(summary)
@@ -843,7 +1076,8 @@ def score_orbits(
 
         out = every(*args)
     out = [onp.asarray(x) for x in out]
-    score, profiled, flux, flux_err, f_edge, slope, slope_err, b_edge = out[:8]
+    (score, profiled, flux, flux_err, f_edge, slope, slope_err, b_edge,
+     fallback) = out[:9]  # fmt: skip
     return OrbitScores(
         score=score.astype(float),
         profiled=profiled.astype(float),
@@ -853,7 +1087,8 @@ def score_orbits(
         slope=slope.astype(float),
         slope_err=slope_err.astype(float),
         slope_at_edge=b_edge.astype(bool),
-        terms=out[8][:, : len(term_fns)].astype(float),
+        fallback=fallback.astype(bool),
+        terms=out[9][:, : len(term_fns)].astype(float),
         bands=tuple(b.name for b in bands),
         reference=reference,
         cost=int(cost),

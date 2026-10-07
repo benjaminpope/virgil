@@ -146,8 +146,12 @@ anything before 1.0 may change between minor versions.
   scores a stack of candidate orbits on all epochs in one compiled,
   `lax.map`-batched kernel. The companion flux is shared: one flux per
   band (optionally f₀(λ/λ₀)^β), at most 1 in a reference band, integrated
-  out on a log-uniform grid and also reported profiled, with an
-  uncertainty from the grid's curvature. Each dataset's error scales are
+  out under a log-uniform prior and also reported profiled, with an
+  uncertainty from the curvature. The coarse grid only seeds Newton steps
+  to the profiled peak; Gauss–Legendre nodes on each side, out to a 12-nat
+  drop or the prior's bound, then integrate it, so the marginal is within
+  0.05 nat of brute-force quadrature wherever the peak falls (a coarse-grid
+  fallback is flagged in `OrbitScores.fallback`). Each dataset's error scales are
   marginalized as in `marginal_loglike`. Gains (`OIData.with_gains`) and
   closure-phase offsets (`OIData.with_closure_offsets`), which
   `marginal_loglike` refuses, are profiled analytically, at one degree of
@@ -155,7 +159,7 @@ anything before 1.0 may change between minor versions.
   Positions are evaluated at every sample's own time, and the visibility
   of a unit companion is computed once per candidate, with every flux
   point cheap arithmetic on it. `max_evaluations` refuses a run whose
-  predicted cost (candidates × datasets × flux points) is over budget.
+  predicted cost (candidates × datasets × score evaluations) is over budget.
   `rank_scores` / `OrbitScores.order` rank with ties broken on quantized
   scores, then by index.
 
