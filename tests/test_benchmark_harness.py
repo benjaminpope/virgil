@@ -104,3 +104,34 @@ def test_cases_are_reproducible_from_their_manifest():
     assert len(cases.build(TINY.replace(case="A5", n_epochs=8)).epochs) == 5
     with pytest.raises(NotImplementedError, match="A13"):
         cases.build(TINY.replace(case="A13"))
+
+
+def test_rows_survive_a_crash_in_a_later_config(tmp_path, monkeypatch):
+    real_build = cases.build
+
+    def build(case):
+        if case.n_epochs == 6:
+            raise MemoryError("boom")
+        return real_build(case)
+
+    monkeypatch.setattr(cases, "build", build)
+    out = tmp_path / "bench.jsonl"
+    code = run_bench.main(
+        ["--size", "small", "--axis", "n_epochs", "--steps", "starting_orbits",
+         "--repeats", "1", "--out", str(out)]
+    )  # fmt: skip
+    rows = [json.loads(line) for line in out.read_text().splitlines()]
+    assert code == 1
+    assert [r["status"] for r in rows] == ["ok", "error", "ok"]
+    assert "boom" in rows[1]["error"] and rows[1]["n_epochs"] == 6
+
+
+def test_max_epochs_drops_large_n_epochs_axis_values():
+    def n_epochs(**kw):
+        return [
+            c.n_epochs
+            for _, c in run_bench.configurations("small", "A1", 0, **kw)
+        ]
+
+    assert n_epochs() == [4, 6, 8, 4, 4, 4]
+    assert n_epochs(max_epochs=6) == [4, 6, 4, 4, 4]
