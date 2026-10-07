@@ -14,6 +14,7 @@ from a fit of positions.
         - RankedOrbits
         - chain_starts
         - epoch_positions
+        - marginal_loglike
         - EpochPositions
         - start_from_positions
         - OrbitStart

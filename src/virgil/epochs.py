@@ -41,15 +41,21 @@ basin. The tools for starting and sampling such a fit are:
 
 import dataclasses
 import functools
+import warnings
 
 import jax
 import jax.numpy as np
 import numpy as onp
-import numpyro.distributions as dist
+from jax.scipy.special import i0e
 
 from ._precision import cast_tree, run_in
 from .fitting import fit
-from .likelihood import model_loglike, whitened_residuals
+from .likelihood import (
+    _gaussian_loglike,
+    _whitened_and_errors,
+    model_loglike,
+    whitened_residuals,
+)
 from .models import BinaryModelCartesian
 from .orbits import PositionData, starting_orbits
 
@@ -61,6 +67,7 @@ __all__ = [
     "RankedOrbits",
     "chain_starts",
     "epoch_positions",
+    "marginal_loglike",
     "rank_orbits",
     "start_from_positions",
 ]
@@ -367,15 +374,307 @@ def _stack(trees, what="orbits"):
         ) from None
 
 
-def _loglikes(scene_of, inputs, data, noise, batch_size, dtype):
+def _blocks(data):
+    """The observable blocks of ``data``'s whitened residuals, each with
+    its own error scale: ``(name, start, stop, ν, von_mises)``.
+
+    The blocks are the visibilities (``"vis"``, scaled by ``vis_scale``),
+    the phases (``"phi"``, ``phi_scale``; for correlated closure phases,
+    the independent combinations followed by the periodic penalty rows,
+    of which only the former count in ``ν``) and each extra observable
+    block (``"extra[k]"``). ``ν`` is the block's number of independent
+    observables (they add up to ``data.n_independent``), and
+    ``von_mises`` marks uncorrelated wrapping phases, whose exact
+    likelihood is a von Mises density. Empty blocks are left out.
+    """
+    n_vis = int(onp.asarray(data.vis).size)
+    n_phi = int(onp.asarray(data.phi).size)
+    blocks = []
+    if n_vis:
+        blocks.append(("vis", 0, n_vis, n_vis, False))
+    if n_phi:
+        correlated = data._phases_wrap and data.cp_noise is not None
+        nu = int(data.cp_noise.size) if correlated else n_phi
+        rows = nu + n_phi if correlated else nu
+        von_mises = bool(data._phases_wrap and data.cp_noise is None)
+        blocks.append(("phi", n_vis, n_vis + rows, nu, von_mises))
+    stop = blocks[-1][2] if blocks else 0
+    for k, block in enumerate(data.extras):
+        nu = int(block.n_independent)
+        blocks.append((f"extra[{k}]", stop, stop + nu, nu, False))
+        stop += nu
+    if stop != data.n_residuals or not blocks:
+        raise ValueError(
+            "Cannot split the whitened residuals into observable blocks "
+            f"({stop} rows for n_residuals = {data.n_residuals})."
+        )
+    return tuple(blocks)
+
+
+def _dof_for(dof, data, index):
+    """The effective-dof fraction of dataset ``index``: one number, or
+    a dict keyed by dataset or epoch name (default 1)."""
+    if not isinstance(dof, dict):
+        return float(dof)
+    name = data.dataset_names[index]
+    return float(dof.get(name, dof.get(data.epoch_of[index], 1.0)))
+
+
+_N_QUADRATURE = 257  # nodes in ln s of the bounded (s_max) marginal
+
+
+def _check_dof(dof):
+    dof = float(dof)
+    if not 0.0 < dof <= 1.0:
+        raise ValueError(
+            f"The effective-dof fraction must be in (0, 1], got {dof}."
+        )
+    return dof
+
+
+def _check_marginal_data(data):
+    """Raise if ``data`` has a model-dependent likelihood normalizer, which
+    the scale-marginalized surface does not include."""
+    found = [
+        what
+        for what, present in (
+            ("gains (OIData.with_gains)", data.gains is not None),
+            (
+                "closure-phase offsets (OIData.with_closure_offsets)",
+                data.phase_offsets is not None,
+            ),
+            (
+                "extra observables with a model-dependent covariance",
+                bool(data.has_model_covariance),
+            ),
+        )
+        if present
+    ]
+    if found:
+        raise NotImplementedError(
+            "The scale-marginalized surface (scales='marginal', "
+            "epoch_positions, marginal_loglike) needs a likelihood whose "
+            "normalization depends only on the error scales; these data "
+            f"have {' and '.join(found)}, whose covariance a scale does not "
+            "multiply. Use the data without them, or scales='quoted'."
+        )
+
+
+class _Surface:
+    """The scale-marginalized score of one dataset, block by block.
+
+    Only the layout of the data enters (the blocks, their ν and
+    ``s_max``), so that one compiled kernel serves every dataset of one
+    shape: the hash and equality, used as a static jit argument, never
+    depend on data values. ``score(chi2, dof, data)`` maps the blocks' χ²
+    on the quoted errors to ``m = -Σ_b (ν_b/2) ln χ²_b`` (Gaussian
+    normalization in every block) or, with ``s_max``, to the log of each
+    block's likelihood integrated over ln s in [-ln s_max, ln s_max]
+    (uniform in ln s: the Jeffreys prior, bounded), with the exact von
+    Mises normalization for uncorrelated closure phases (whose quoted
+    errors are read from the traced ``data``). ``dof`` (a fraction in
+    (0, 1], traced) tempers every block's log likelihood: ν_eff = dof · ν.
+    """
+
+    def __init__(self, data, s_max=None):
+        _check_marginal_data(data)
+        if s_max is not None and not float(s_max) > 1.0:
+            raise ValueError(f"s_max must exceed 1, got {s_max}.")
+        self.blocks = _blocks(data)
+        self.names = tuple(b[0] for b in self.blocks)
+        self.nu = onp.array([b[3] for b in self.blocks], dtype=float)
+        self.s_max = None if s_max is None else float(s_max)
+
+    def _key(self):
+        return (self.blocks, self.s_max)
+
+    def __hash__(self):
+        return hash(self._key())
+
+    def __eq__(self, other):
+        return isinstance(other, _Surface) and self._key() == other._key()
+
+    def chi2(self, model, data, noise=None):
+        """χ² of each block of ``data`` for ``model``, on the quoted errors."""
+        r = whitened_residuals(model, data, **(noise or {}))
+        return np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in self.blocks])
+
+    def score(self, chi2, dof, data):
+        dof = np.asarray(dof, chi2.dtype)
+        if self.s_max is None:
+            tiny = np.finfo(chi2.dtype).tiny
+            nu = np.asarray(self.nu, chi2.dtype)
+            return -0.5 * dof * np.sum(nu * np.log(np.maximum(chi2, tiny)))
+        log_s = np.linspace(
+            -onp.log(self.s_max), onp.log(self.s_max), _N_QUADRATURE
+        ).astype(chi2.dtype)
+        total = 0.0
+        for k, (_, _, _, nu, von_mises) in enumerate(self.blocks):
+            loglike = -0.5 * chi2[k] * np.exp(-2.0 * log_s)
+            if not von_mises:
+                loglike = loglike - nu * log_s
+            else:
+                # von Mises: -log(2π I0(κ)) + κ per phase, κ = 1/(s σ)²,
+                # relative to the Gaussian's -log(√(2π) σ), as in the other
+                # blocks: -log(√(2π) i0e(κ)) + log σ, which is -log s for
+                # κ ≫ 1.
+                sigma = np.asarray(data.d_phi, chi2.dtype).reshape(-1)
+                kappa = 1.0 / (np.exp(2.0 * log_s)[:, None] * sigma**2)
+                loglike = (
+                    loglike
+                    - np.sum(np.log(np.sqrt(2.0 * np.pi) * i0e(kappa)), axis=1)
+                    + np.sum(np.log(sigma))
+                )
+            total = total + jax.nn.logsumexp(dof * loglike)
+        return total
+
+    def scales(self, chi2):
+        """ŝ_b = √(χ²_b/ν_b), the profile maximum of each block's scale."""
+        return onp.sqrt(onp.asarray(chi2, float) / self.nu)
+
+
+def marginal_loglike(model, data, *, dof=1.0, s_max=None, **noise):
+    """The log likelihood with each block's error scale marginalized.
+
+    Each observable block *b* of ``data`` (visibilities, phases, and each
+    extra observable) has an unknown factor ``s_b`` on its quoted errors.
+    Integrating it out under its Jeffreys prior ``1/s_b`` gives, up to a
+    constant,
+
+        m = -Σ_b (ν_b/2) ln χ²_b,
+
+    where χ²_b is the block's χ² on the quoted errors (from
+    [`whitened_residuals`][virgil.likelihood.whitened_residuals]) and
+    ν_b its number of independent observables
+    ([`n_independent`][virgil.oidata.OIData.n_independent], split by
+    block). Profiling ``s_b`` gives the same function, at
+    ŝ_b² = χ²_b/ν_b. ``m`` does not change when any block's errors are
+    multiplied by a constant, so its differences between models (e.g.
+    the gap between two peaks) do not depend on how well the errors were
+    quoted. Near a peak, m ≈ -χ²/(2ŝ²): differences are those of the
+    quoted-error log likelihood divided by ŝ².
+
+    Every block uses the Gaussian (small-σ) normalization, including
+    uncorrelated closure phases, whose likelihood in
+    [`model_loglike`][virgil.likelihood.model_loglike] is a von Mises
+    density; for those the unbounded marginal would be improper as
+    s → ∞. ``m`` is a search surface, not a replacement for
+    ``model_loglike``. Where sσ is not small (weak closure phases with a
+    large scale), pass ``s_max``.
+
+    Data whose likelihood has a model-dependent normalization are refused
+    with a ``NotImplementedError``: gains
+    ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]), closure-phase
+    offsets
+    ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets])
+    and extra observables with a model-dependent covariance. Their
+    marginalized nuisance covariance is not multiplied by an error scale,
+    so a block's χ² is not ∝ 1/s² and the scale would not be integrated
+    out. The same holds for ``epoch_positions`` and
+    ``rank_orbits(scales="marginal")``.
+
+    Parameters
+    ----------
+    model : SourceModel
+        Model to evaluate.
+    data : OIData
+        Data to compare with.
+    dof : float, optional
+        The effective number of degrees of freedom as a fraction of ν_b
+        (default 1). Errors correlated beyond the model of the quoted
+        errors carry fewer than ν_b degrees of freedom, and ``m`` with
+        ν_b is then over-confident by about ν_b/ν_eff; a ``dof`` below 1
+        (e.g. calibrated by a residual bootstrap) scales every difference
+        of ``m`` down by that factor.
+    s_max : float, optional
+        Bound each scale to [1/s_max, s_max] and integrate it out
+        numerically (on a grid in ln s), with the exact von Mises
+        normalization for uncorrelated closure phases. This is finite
+        and proper where the unbounded marginal is not.
+    **noise
+        Other noise terms (e.g. ``wavel_scale``), as for
+        ``whitened_residuals``. ``vis_scale`` and ``phi_scale`` should be
+        left out: the scales are integrated out.
+
+    Returns
+    -------
+    float
+    """
+    surface = _Surface(data, s_max)
+    return surface.score(
+        surface.chi2(model, data, noise), _check_dof(dof), data
+    )
+
+
+_SCALES = ("quoted", "marginal")
+
+
+def _check_scales(scales, name):
+    if scales is None:
+        warnings.warn(
+            f"{name} ranks with the quoted errors when scales is not given; "
+            "the default will become scales='marginal' (each dataset's error "
+            "scales integrated out, see marginal_loglike). Pass "
+            "scales='quoted' or scales='marginal' to choose.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return "quoted"
+    if scales not in _SCALES:
+        raise ValueError(f"scales must be one of {_SCALES}, not {scales!r}.")
+    return scales
+
+
+def _loglikes(
+    scene_of,
+    inputs,
+    data,
+    noise,
+    batch_size,
+    dtype,
+    scales="quoted",
+    dof=1.0,
+    s_max=None,
+):
     """``data``'s log likelihood of ``scene_of(x)`` for each ``x`` in the
-    stacked ``inputs``, as a NumPy array (``-inf`` where not finite)."""
+    stacked ``inputs``, as a NumPy array (``-inf`` where not finite).
+
+    With ``scales="marginal"`` it is the scale-marginalized score
+    ``m = -Σ (ν/2) ln χ²`` over every block of every dataset (see
+    [`marginal_loglike`][virgil.epochs.marginal_loglike])."""
     if not isinstance(data, Epochs):
         raise TypeError(
             f"data must be an Epochs, not {type(data).__name__}: rankings "
             "take one snapshot per dataset."
         )
     per_dataset = data.noise(noise or {})
+    if scales == "marginal":
+        surfaces = tuple(_Surface(d, s_max) for d in data.data)
+        dofs = np.asarray(
+            [_check_dof(_dof_for(dof, data, k)) for k in range(len(data))]
+        )
+        with run_in(dtype):
+            inputs = cast_tree(inputs, dtype)
+            datasets = cast_tree(tuple(data.data), dtype)
+
+            @jax.jit
+            def every_marginal(inputs, datasets, dofs):
+                def one(x):
+                    snapshots = data.snapshots(scene_of(x))
+                    total = sum(
+                        f.score(f.chi2(s, d, n), dofs[k], d)
+                        for k, (s, d, n, f) in enumerate(
+                            zip(snapshots, datasets, per_dataset, surfaces)
+                        )
+                    )
+                    return np.where(np.isfinite(total), total, -np.inf)
+
+                return jax.lax.map(one, inputs, batch_size=batch_size)
+
+            dofs = np.asarray(dofs, dtype)
+            return onp.asarray(
+                every_marginal(inputs, datasets, dofs), dtype=float
+            )
     with run_in(dtype):
         inputs = cast_tree(inputs, dtype)
         datasets = cast_tree(tuple(data.data), dtype)
@@ -411,7 +710,8 @@ class RankedOrbits:
         The orbits, best first.
     loglike : numpy.ndarray
         The log likelihood of all the data for each orbit (with the
-        ``noise`` values of the ranking), in the same order.
+        ``noise`` values of the ranking), or with ``scales="marginal"``
+        the scale-marginalized score, in the same order.
     order : numpy.ndarray
         The position of each orbit in the list that was ranked.
     times : numpy.ndarray
@@ -471,7 +771,16 @@ def _ranked(orbits, loglike, data):
 
 
 def rank_orbits(
-    model, data, orbits, *, noise=None, batch_size=None, dtype="float64"
+    model,
+    data,
+    orbits,
+    *,
+    scales=None,
+    noise=None,
+    dof=1.0,
+    s_max=None,
+    batch_size=None,
+    dtype="float64",
 ):
     """Rank trial orbits by the log likelihood of multi-epoch data.
 
@@ -498,10 +807,29 @@ def rank_orbits(
         ``starting_orbits``, a ``RankedOrbits``, or one orbit whose
         elements have a leading axis (e.g. prior draws). All must share
         one class and ``t_ref``.
+    scales : {"quoted", "marginal"}, optional
+        How the errors are scaled. ``"quoted"`` ranks by
+        ``Epochs.loglike`` on the quoted errors (with ``noise``), so the
+        datasets with the most underestimated errors dominate the
+        ranking. ``"marginal"`` integrates each dataset's error scale out,
+        block by block (visibilities, phases), under its Jeffreys prior,
+        and ranks by the sum of
+        [`marginal_loglike`][virgil.epochs.marginal_loglike]: the
+        ranking then does not change when one dataset's errors are
+        rescaled. Data with gains, closure-phase offsets or a
+        model-dependent covariance are refused (see ``marginal_loglike``). The default is ``"quoted"`` for now, with a
+        ``FutureWarning`` when ``scales`` is not given; it will become
+        ``"marginal"``.
     noise : dict, optional
         Noise values keyed by epoch or dataset name, as for
         [`Epochs.loglike`][virgil.epochs.Epochs.loglike]; by default
-        the quoted errors.
+        the quoted errors. With ``scales="marginal"``, error scales are
+        integrated out and only the other terms (e.g. ``wavel_scale``)
+        matter.
+    dof, s_max : optional
+        For ``scales="marginal"``: the effective-dof fraction (one
+        number, or a dict keyed by dataset or epoch name) and the bound
+        on the scales, as for ``marginal_loglike``.
     batch_size : int, optional
         Orbits evaluated together by ``jax.lax.map`` (default: all of them
         at once). Lower it if the data are large.
@@ -519,11 +847,22 @@ def rank_orbits(
     --------
     >>> candidates = starting_orbits(positions, periods)  # doctest: +SKIP
     >>> ranked = rank_orbits(lambda o: OrbitalBinary(o, 0.1), epochs,
-    ...                      candidates)  # doctest: +SKIP
+    ...                      candidates, scales="marginal")  # doctest: +SKIP
     >>> ranked.best, ranked.loglike[:3]  # doctest: +SKIP
     """
+    scales = _check_scales(scales, "rank_orbits")
     listed = _orbit_list(orbits)
-    loglike = _loglikes(model, _stack(listed), data, noise, batch_size, dtype)
+    loglike = _loglikes(
+        model,
+        _stack(listed),
+        data,
+        noise,
+        batch_size,
+        dtype,
+        scales=scales,
+        dof=dof,
+        s_max=s_max,
+    )
     return _ranked(listed, loglike, data)
 
 
@@ -593,6 +932,13 @@ class EpochPositions:
     """The companion's position in each dataset, from
     [`epoch_positions`][virgil.epochs.epoch_positions].
 
+    Positions, covariances and ``gap_marginal`` come from the
+    scale-marginalized surface
+    ([`marginal_loglike`][virgil.epochs.marginal_loglike]), on which each
+    observable block's error scale is integrated out: they do not change
+    when a dataset's quoted errors, or only its closure-phase errors, are
+    multiplied by a constant.
+
     Attributes
     ----------
     names : tuple of str
@@ -602,14 +948,33 @@ class EpochPositions:
     dra, ddec : numpy.ndarray
         The fitted positions (mas, East and North).
     cov : numpy.ndarray
-        The covariance of each position, shape ``(n, 2, 2)`` (mas²).
+        The covariance of each position, shape ``(n, 2, 2)`` (mas²), from
+        the curvature of the scale-marginalized surface.
     flux : numpy.ndarray
-        The fitted companion/primary flux of each dataset.
+        The fitted companion/primary flux of each dataset (at most 1).
     gap : numpy.ndarray
-        How decisive each dataset is: the log likelihood of the best
-        position minus that of the best position more than ``gap_mas``
-        from it. A small gap means another peak (a fringe alias, or a
-        mirror image when closure phases are weak) fits almost as well.
+        The gap on the **quoted** errors, as before ``gap_marginal`` was
+        added: the log likelihood of the best grid position minus that of
+        the best grid position more than ``gap_mas`` from it. It grows as
+        1/s² when the errors are underestimated by s, so an ambiguous
+        dataset can look decisive. Kept unchanged for one release, after
+        which ``gap`` will hold the marginal value.
+    gap_marginal : numpy.ndarray
+        How decisive each dataset is, on the scale-marginalized surface:
+        the same difference between the best grid position and its best
+        rival more than ``gap_mas`` away, with each block's error scale
+        integrated out. A small gap means another peak (a fringe alias,
+        or a mirror image when closure phases are weak) fits almost as
+        well. ``decisive`` and ``min_gap`` compare this.
+    chi2_raw : tuple of dict
+        For each dataset, χ²/N on the quoted errors at the fitted
+        position, N = ``n_independent``: per block (``"vis"``, ``"phi"``,
+        ``"extra[k]"``) and for the whole dataset (``"all"``). A value
+        well above 1 means the quoted errors are too small; it is not
+        made 1 by the scale marginalization.
+    scale : tuple of dict
+        For each dataset, the fitted error scale ŝ = √(χ²/ν) of each
+        block (``"vis_scale"``, ``"phi_scale"``, ``"extra[k]_scale"``).
     """
 
     names: tuple
@@ -619,10 +984,13 @@ class EpochPositions:
     cov: onp.ndarray
     flux: onp.ndarray
     gap: onp.ndarray
+    gap_marginal: onp.ndarray
+    chi2_raw: tuple
+    scale: tuple
 
     def decisive(self, min_gap):
-        """Whether each dataset's ``gap`` exceeds ``min_gap``."""
-        return self.gap > min_gap
+        """Whether each dataset's ``gap_marginal`` exceeds ``min_gap``."""
+        return self.gap_marginal > min_gap
 
     def positions(self, *, t_ref, min_gap=None):
         """The positions as [`PositionData`][virgil.orbits.PositionData],
@@ -634,9 +1002,9 @@ class EpochPositions:
             The reference time (MJD) of the orbits fitted to them: give
             the ``t_ref`` of your model.
         min_gap : float, optional
-            Keep only the datasets whose ``gap`` exceeds this. Seeding
-            orbits with an indecisive dataset's position can start every
-            orbit at the wrong peak; the visibility fit judges those
+            Keep only the datasets whose ``gap_marginal`` exceeds this.
+            Seeding orbits with an indecisive dataset's position can start
+            every orbit at the wrong peak; the visibility fit judges those
             datasets instead.
         """
         keep = (
@@ -646,8 +1014,8 @@ class EpochPositions:
         )
         if not keep.any():
             raise ValueError(
-                f"No dataset is decisive: the gaps are {self.gap.round(1)}"
-                f" and min_gap is {min_gap}."
+                "No dataset is decisive: the marginal gaps are "
+                f"{self.gap_marginal.round(1)} and min_gap is {min_gap}."
             )
         return PositionData(
             self.mjd[keep],
@@ -658,46 +1026,143 @@ class EpochPositions:
         )
 
 
-def _binary_loglike(x, data):
-    return model_loglike(BinaryModelCartesian(x[0], x[1], x[2]), data)
+def _binary(x):
+    return BinaryModelCartesian(x[0], x[1], x[2])
 
 
-_binary_hessian = jax.jit(jax.hessian(lambda x, d: -_binary_loglike(x, d)))
+@functools.partial(jax.jit, static_argnames=("surface", "batch_size"))
+def _grid_scores(points, data, surface, batch_size):
+    """The quoted-error log likelihood and the blocks' χ² at each point."""
+
+    def one(x):
+        whitened, errors = _whitened_and_errors(_binary(x), data, {})
+        chi2 = np.stack(
+            [np.sum(whitened[a:b] ** 2) for _, a, b, _, _ in surface.blocks]
+        )
+        return _gaussian_loglike(whitened, errors), chi2
+
+    return jax.lax.map(one, points, batch_size=batch_size)
 
 
-@functools.partial(jax.jit, static_argnames="batch_size")
-def _grid_loglike(points, data, batch_size):
-    return jax.lax.map(
-        lambda x: _binary_loglike(x, data), points, batch_size=batch_size
+@functools.partial(jax.jit, static_argnames="surface")
+def _grid_marginal(chi2, dof, data, surface):
+    """The scale-marginalized score of each grid point's block χ²."""
+    return jax.vmap(lambda c: surface.score(c, dof, data))(chi2)
+
+
+def _negative_marginal(x, dof, data, surface):
+    return -surface.score(surface.chi2(_binary(x), data), dof, data)
+
+
+_negative_marginal_and_grad = jax.jit(
+    jax.value_and_grad(_negative_marginal), static_argnames="surface"
+)
+_negative_marginal_hessian = jax.jit(
+    jax.hessian(_negative_marginal), static_argnames="surface"
+)
+_block_chi2 = jax.jit(
+    lambda x, data, surface: surface.chi2(_binary(x), data),
+    static_argnames="surface",
+)
+
+
+def _gap(score, xx, yy, rival):
+    """The best position of a (dra, ddec, flux) grid of scores, and its
+    score minus that of the best point more than ``rival`` from it."""
+    by_position = score.max(axis=2)
+    i, j = onp.unravel_index(onp.argmax(by_position), by_position.shape)
+    far = onp.hypot(xx[..., 0] - xx[i, j, 0], yy[..., 0] - yy[i, j, 0]) > rival
+    gap = by_position[i, j] - by_position[far].max() if far.any() else onp.inf
+    return (i, j, int(onp.argmax(score[i, j]))), float(gap)
+
+
+def _refine_marginal(x0, dof, d64, surface, bounds):
+    """Maximize the scale-marginalized surface from ``x0`` (L-BFGS-B in
+    float64, deterministic) within ``bounds``."""
+    from scipy.optimize import minimize
+
+    def fun(x):
+        value, grad = _negative_marginal_and_grad(
+            np.asarray(x), dof, d64, surface
+        )
+        return float(value), onp.asarray(grad, dtype=float)
+
+    result = minimize(
+        fun,
+        onp.clip(x0, [b[0] for b in bounds], [b[1] for b in bounds]),
+        jac=True,
+        method="L-BFGS-B",
+        bounds=bounds,
+        options={"ftol": 1e-15, "gtol": 1e-10, "maxiter": 500},
     )
+    return onp.asarray(result.x, dtype=float), float(result.fun)
 
 
-def epoch_positions(data, grid, *, gap_mas=None, refine=True, batch_size=4096):
+def epoch_positions(
+    data,
+    grid,
+    *,
+    gap_mas=None,
+    refine=True,
+    dof=1.0,
+    s_max=None,
+    batch_size=4096,
+):
     """The companion's position in each dataset of a binary.
 
-    For each dataset: the log likelihood of a static binary
+    For each dataset: a static binary
     ([`BinaryModelCartesian`][virgil.models.BinaryModelCartesian]) on a
-    grid of positions and fluxes, its best point, and (with ``refine``) a
-    [`fit`][virgil.fitting.fit] from there, whose curvature gives the
-    covariance of the position. These positions are only a starting
-    point for a fit of the orbit to the visibilities: when the scene is
-    more than two point stars they can be biased.
+    grid of positions and fluxes, scored on the scale-marginalized
+    surface m = -Σ_b (ν_b/2) ln χ²_b
+    ([`marginal_loglike`][virgil.epochs.marginal_loglike]), in which the
+    error scale of each observable block (visibilities, closure phases)
+    is integrated out under its Jeffreys prior. Its best point is
+    refined (with ``refine``) by maximizing m, which is the fit with a
+    free ``vis_scale`` and ``phi_scale`` per dataset, profiled; the
+    curvature of m there gives the covariance of the position. The
+    positions, covariances and ``gap_marginal`` therefore do not depend
+    on how well each block's errors were quoted, and nights whose errors
+    are underestimated do not look more decisive than they are. These
+    positions are only a starting point for a fit of the orbit to the
+    visibilities: when the scene is more than two point stars they can be
+    biased.
+
+    The raw χ²/N on the quoted errors and the fitted scale of each block
+    are recorded, and a ``UserWarning`` names the datasets whose raw
+    χ²/N exceeds 4 (errors underestimated by more than 2): their orbit
+    fits need fitted error scales, and a rescaled χ²/N ≈ 1 does not make
+    them good fits.
 
     Parameters
     ----------
     data : Epochs
-        The data.
+        The data. Datasets with gains, closure-phase offsets or a
+        model-dependent covariance are refused (see ``marginal_loglike``).
     grid : dict
         ``{"dra": axis, "ddec": axis, "flux": values}``: the positions
         (mas) and companion/primary fluxes to try. The position step
         should be finer than the resolution λ/B of the longest baseline.
+        Fluxes must be in (0, 1]: a binary with flux ratio f > 1 at r is
+        the one with 1/f at -r, so f > 1 would only add a twin of every
+        peak.
     gap_mas : float, optional
         The distance (mas) beyond which another peak counts as a rival
-        for ``gap``; by default each dataset's resolution λ/B_max.
+        for ``gap`` and ``gap_marginal``; by default each dataset's
+        resolution λ/B_max.
     refine : bool, optional
-        Refine each grid point with a fit (default). Otherwise the
+        Refine each grid point by maximizing m (default). Otherwise the
         position is the grid point, with a covariance of one grid step
         squared.
+    dof : float or dict, optional
+        The effective-dof fraction ν_eff/ν of each dataset's blocks (one
+        number, or a dict keyed by dataset or epoch name; default 1),
+        for errors correlated beyond the quoted ones (see
+        ``marginal_loglike``). It multiplies ``gap_marginal`` by ``dof``
+        and ``cov`` by 1/dof.
+    s_max : float, optional
+        Bound the scales and integrate them out numerically (see
+        ``marginal_loglike``), for weak closure phases with a large
+        scale.
     batch_size : int, optional
         Grid points evaluated together.
 
@@ -711,8 +1176,11 @@ def epoch_positions(data, grid, *, gap_mas=None, refine=True, batch_size=4096):
     if missing:
         raise ValueError(f"grid needs the axes {sorted(missing)}.")
     axes = [onp.asarray(grid[k], float) for k in ("dra", "ddec", "flux")]
-    if (axes[2] <= 0).any():
-        raise ValueError("The grid's fluxes must be positive.")
+    if (axes[2] <= 0).any() or (axes[2] > 1).any():
+        raise ValueError(
+            "The grid's fluxes must be in (0, 1]: a companion brighter than "
+            "the primary is the fainter one on the other side (1/f at -r)."
+        )
     xx, yy, ff = onp.meshgrid(*axes, indexing="ij")
     points = onp.stack([xx.ravel(), yy.ravel(), ff.ravel()], -1)
     steps = [
@@ -720,49 +1188,73 @@ def epoch_positions(data, grid, *, gap_mas=None, refine=True, batch_size=4096):
         for a in axes[:2]
     ]
     bounds = [(a.min() - s, a.max() + s) for a, s in zip(axes[:2], steps)]
-    priors = {
-        "dra": dist.Uniform(*bounds[0]),
-        "ddec": dist.Uniform(*bounds[1]),
-        "flux": dist.LogUniform(
-            0.1 * float(axes[2].min()), max(1.0, 2 * float(axes[2].max()))
-        ),
-    }
-    rows = []
-    for name, d in zip(data.dataset_names, data.data):
+    bounds.append((0.1 * float(axes[2].min()), 1.0))
+    rows, inflated, edge = [], [], []
+    for index, (name, d) in enumerate(zip(data.dataset_names, data.data)):
+        surface = _Surface(d, s_max)
+        dof_k = _check_dof(_dof_for(dof, data, index))
         with run_in("float64"):
             d64 = cast_tree(d, "float64")
-            loglike = _grid_loglike(
-                np.asarray(points), d64, min(batch_size, len(points))
+            loglike, chi2 = _grid_scores(
+                np.asarray(points), d64, surface, min(batch_size, len(points))
             )
+            marginal = _grid_marginal(chi2, np.asarray(dof_k), d64, surface)
             loglike = onp.asarray(loglike).reshape(xx.shape)
+            marginal = onp.asarray(marginal).reshape(xx.shape)
         loglike = onp.where(onp.isfinite(loglike), loglike, -onp.inf)
-        by_position = loglike.max(axis=2)
-        i, j = onp.unravel_index(onp.argmax(by_position), by_position.shape)
-        k = int(onp.argmax(loglike[i, j]))
-        best = onp.array([axes[0][i], axes[1][j], axes[2][k]])
+        marginal = onp.where(onp.isfinite(marginal), marginal, -onp.inf)
         rival = (
             Epochs({name: d}).resolution_mas if gap_mas is None else gap_mas
         )
-        far = onp.hypot(xx[..., 0] - best[0], yy[..., 0] - best[1]) > rival
-        gap = (
-            by_position[i, j] - by_position[far].max()
-            if far.any()
-            else onp.inf
-        )
+        _, gap = _gap(loglike, xx, yy, rival)
+        (i, j, k), gap_marginal = _gap(marginal, xx, yy, rival)
+        if i in (0, xx.shape[0] - 1) or j in (0, xx.shape[1] - 1):
+            edge.append(name)
+        best = onp.array([axes[0][i], axes[1][j], axes[2][k]])
         cov = max(steps) ** 2 * onp.eye(2)
-        if refine:
-            result = fit(BinaryModelCartesian(*best), priors, d)
-            best = onp.array(
-                [float(result.values[p]) for p in ("dra", "ddec", "flux")]
+        with run_in("float64"):
+            if refine:
+                refined, value = _refine_marginal(
+                    best, np.asarray(dof_k), d64, surface, bounds
+                )
+                if -value >= marginal[i, j, k]:
+                    best = refined
+                hess = _negative_marginal_hessian(
+                    np.asarray(best), np.asarray(dof_k), d64, surface
+                )
+                full = onp.linalg.pinv(onp.asarray(hess, dtype=float))
+                if onp.all(onp.isfinite(full)) and onp.all(
+                    onp.linalg.eigvalsh(full[:2, :2]) > 0
+                ):
+                    cov = full[:2, :2]
+            chi2_best = onp.asarray(
+                _block_chi2(np.asarray(best), d64, surface), dtype=float
             )
-            with run_in("float64"):
-                hess = _binary_hessian(np.asarray(best), d64)
-            full = onp.linalg.pinv(onp.asarray(hess, dtype=float))
-            if onp.all(onp.isfinite(full)) and onp.all(
-                onp.linalg.eigvalsh(full[:2, :2]) > 0
-            ):
-                cov = full[:2, :2]
-        rows.append((best, cov, gap))
+        per_block = dict(zip(surface.names, chi2_best / surface.nu))
+        per_block["all"] = float(chi2_best.sum() / surface.nu.sum())
+        if per_block["all"] > 4.0:
+            inflated.append(f"{name} ({per_block['all']:.1f})")
+        scale = {
+            f"{n}_scale": float(v)
+            for n, v in zip(surface.names, surface.scales(chi2_best))
+        }
+        rows.append((best, cov, gap, gap_marginal, per_block, scale))
+    if inflated:
+        warnings.warn(
+            "Raw chi2/N on the quoted errors exceeds 4 (errors underestimated "
+            f"by more than 2) in {', '.join(inflated)}: fit error scales for "
+            "these datasets, and do not read a rescaled chi2/N of 1 as a "
+            "good fit.",
+            UserWarning,
+            stacklevel=2,
+        )
+    if edge:
+        warnings.warn(
+            f"The best grid position of {', '.join(edge)} is at the edge of "
+            "the grid: the companion may lie outside it. Widen the grid.",
+            UserWarning,
+            stacklevel=2,
+        )
     return EpochPositions(
         names=data.dataset_names,
         mjd=onp.asarray(data.times, dtype=onp.float64),
@@ -771,6 +1263,9 @@ def epoch_positions(data, grid, *, gap_mas=None, refine=True, batch_size=4096):
         cov=onp.array([r[1] for r in rows]),
         flux=onp.array([r[0][2] for r in rows]),
         gap=onp.array([float(r[2]) for r in rows]),
+        gap_marginal=onp.array([float(r[3]) for r in rows]),
+        chi2_raw=tuple(r[4] for r in rows),
+        scale=tuple(r[5] for r in rows),
     )
 
 
@@ -852,7 +1347,10 @@ def start_from_positions(
     grid,
     periods,
     t_ref,
+    scales=None,
     noise=None,
+    dof=1.0,
+    s_max=None,
     eccs=None,
     n_phase=36,
     n_candidates=200,
@@ -910,10 +1408,21 @@ def start_from_positions(
     t_ref : float
         The reference time (MJD) of the starting orbits: the ``t_ref`` of
         your model.
+    scales : {"quoted", "marginal"}, optional
+        How step 3 ranks the candidates (see ``rank_orbits``):
+        ``"quoted"`` on the quoted errors, where the datasets with the
+        most underestimated errors dominate, or ``"marginal"`` with each
+        dataset's per-block error scale integrated out, so that each
+        dataset counts by its own fitted scale ŝ. The default is
+        ``"quoted"`` for now, with a ``FutureWarning`` when ``scales`` is
+        not given; it will become ``"marginal"``.
     noise : dict or list of dict, optional
         Noise terms of the refinement fits, as for ``fit`` (e.g. from
-        [`Epochs.noise`][virgil.epochs.Epochs.noise]). The ranking uses
-        the quoted errors.
+        [`Epochs.noise`][virgil.epochs.Epochs.noise]). The ranking does
+        not use them.
+    dof, s_max : optional
+        Passed to ``epoch_positions`` and, with ``scales="marginal"``, to
+        the ranking.
     eccs, n_phase : optional
         Passed to ``starting_orbits``.
     n_candidates : int, optional
@@ -922,7 +1431,9 @@ def start_from_positions(
         Distinct orbits to refine (default 4).
     min_gap : float, optional
         Seed orbits only with datasets whose positions are decisive: a
-        log likelihood ``gap`` above this (see ``EpochPositions``).
+        ``gap_marginal`` above this (see ``EpochPositions``). This
+        compares the scale-marginalized gap, so a night whose errors are
+        underestimated no longer passes it with a gap inflated by s².
     refine_positions : bool, optional
         Refine each grid position with a fit (see ``epoch_positions``).
     batch_size : int, optional
@@ -934,13 +1445,17 @@ def start_from_positions(
     -------
     OrbitStart
     """
-    positions = epoch_positions(data, grid, refine=refine_positions)
+    scales = _check_scales(scales, "start_from_positions")
+    positions = epoch_positions(
+        data, grid, refine=refine_positions, dof=dof, s_max=s_max
+    )
     with run_in("float64"):
         seeds = positions.positions(t_ref=t_ref, min_gap=min_gap)
     if len(seeds.dt) < 2:
         raise ValueError(
             "At least two decisive datasets are needed to seed orbits; "
-            f"the gaps are {positions.gap.round(1)}. Lower min_gap or "
+            f"the marginal gaps are {positions.gap_marginal.round(1)}. Lower "
+            "min_gap or "
             "refine the grid."
         )
     with run_in("float64"):
@@ -960,7 +1475,15 @@ def start_from_positions(
         [{k: v[k] for k in priors} for v in values], "starting values"
     )
     loglike = _loglikes(
-        lambda v: model(**v), stacked, data, None, batch_size, "float64"
+        lambda v: model(**v),
+        stacked,
+        data,
+        None,
+        batch_size,
+        "float64",
+        scales=scales,
+        dof=dof,
+        s_max=s_max,
     )
     ranked = _ranked(orbits, loglike, data)
     chosen = _distinct(ranked, n_refine, 0.5 * ranked.resolution_mas)

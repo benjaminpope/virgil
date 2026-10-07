@@ -39,6 +39,39 @@ anything before 1.0 may change between minor versions.
   `pytest -W error::FutureWarning`. A message regex given to `-W` on the
   command line is matched literally, so it would not catch them.
 
+### Changed
+
+- **Orbit starts are scale-aware (#268).** `epoch_positions` now scores
+  its grid on the scale-marginalized surface m = -Σ_b (ν_b/2) ln χ²_b,
+  in which each dataset's V² and closure-phase error scales are
+  integrated out under their Jeffreys priors (new
+  `epochs.marginal_loglike`; Gaussian normalization in every block, with
+  `s_max=` for a bounded numerical marginal where closure phases are
+  weak, and `dof=` for an effective-dof fraction). The refinement
+  maximizes m (equivalently, a fit with free `vis_scale` and
+  `phi_scale`), and the covariance is the curvature of m, so positions,
+  covariances and the new `EpochPositions.gap_marginal` do not change
+  when one dataset's errors, or only its closure-phase errors, are
+  rescaled. `gap` keeps its old value on the quoted errors for one
+  release and will then switch to the marginal value; `decisive`,
+  `positions(min_gap=...)` and `start_from_positions(min_gap=...)` now
+  compare `gap_marginal`. **Behaviour change:** a night whose errors are
+  underestimated by s used to look s² times more decisive than it is, and
+  is no longer used to seed orbits unless its marginal gap passes
+  `min_gap`. New fields `chi2_raw` (χ²/N on the quoted errors, per block
+  and in all, N = `n_independent`) and `scale` (ŝ per block) are
+  recorded, and a `UserWarning` names the datasets with raw χ²/N > 4.
+  Grid fluxes must be at most 1 (and the refinement keeps f ≤ 1): f > 1
+  at r is the same binary as 1/f at -r.
+  Data with gains, closure-phase offsets or a model-dependent covariance
+  raise a `NotImplementedError` on the marginalized surface, since their
+  nuisance covariance is not multiplied by an error scale.
+- `rank_orbits` and `start_from_positions` take `scales="quoted" |
+  "marginal"`. `"marginal"` ranks with each dataset's error scales
+  integrated out, so the worst-calibrated nights no longer dominate the
+  ranking. The default stays `"quoted"` in 0.4, with a `FutureWarning`
+  when `scales` is not given; it will become `"marginal"`.
+
 ### Fixed
 
 - `metrics.rms_convolved` no longer needs `pixel_scale_mas` for array

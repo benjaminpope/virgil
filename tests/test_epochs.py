@@ -446,7 +446,9 @@ def test_rank_orbits_puts_the_truth_first_among_starting_orbits():
     candidates = starting_orbits(
         positions, onp.geomspace(400.0, 2000.0, 20), n_phase=24, n_best=30
     )
-    ranked = rank_orbits(_binary, epochs, candidates + [(_orbit(), 0.0)])
+    ranked = rank_orbits(
+        _binary, epochs, candidates + [(_orbit(), 0.0)], scales="quoted"
+    )
     assert len(ranked) == 31
     assert ranked.order[0] == 30  # the true orbit
     assert sorted(ranked.order) == list(range(31))
@@ -460,7 +462,7 @@ def test_rank_orbits_puts_the_truth_first_among_starting_orbits():
     batched = jax.tree_util.tree_map(
         lambda *x: np.stack(x), *[o for o, _ in candidates[:5]]
     )
-    again = rank_orbits(_binary, epochs, batched)
+    again = rank_orbits(_binary, epochs, batched, scales="quoted")
     onp.testing.assert_allclose(
         again.loglike, onp.sort(ranked.loglike[ranked.order < 5])[::-1]
     )
@@ -475,7 +477,7 @@ def test_chain_starts_are_distinct_modes():
         _orbit(Omega=150.0),
         _orbit(a_mas=12.0),
     ]
-    ranked = rank_orbits(_binary, epochs, orbits)
+    ranked = rank_orbits(_binary, epochs, orbits, scales="quoted")
     starts = chain_starts(ranked, 3)
     assert len(starts) == 3
     assert starts.order[0] in (0, 2)
@@ -534,6 +536,7 @@ def test_a_positions_fit_starts_where_a_default_start_fails():
         n_phase=24,
         n_candidates=20,
         n_refine=2,
+        scales="quoted",
         method="lm",
     )
     with jax.enable_x64(True):
@@ -544,6 +547,9 @@ def test_a_positions_fit_starts_where_a_default_start_fails():
     )
     assert onp.all(found < 0.5), found
     assert onp.all(start.positions.gap > 5.0)
+    # On this coarse (2 mas) grid one night's marginal gap is about 3,
+    # so it does not seed orbits; the others do.
+    assert start.positions.decisive(5.0).sum() >= 4
     assert len(start.candidates) == 20
     assert start.best.info["chi2_red"] < 2.0
     with jax.enable_x64(True):
