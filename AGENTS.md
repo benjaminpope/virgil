@@ -306,6 +306,17 @@ user-level `python3` kernel may point at another environment.
 If the kernel is missing, recreate it with
 `.venv/bin/python -m ipykernel install --sys-prefix --name virgil --display-name "virgil (.venv)"`.
 
+## OzSTAR outputs and PRs
+
+The `OzSTAR outputs synced` check fails while a PR carries the `awaiting-ozstar` label.
+When you hand the user a submit block for a PR, add the label and put a line
+`Awaiting OzSTAR: <job ids>` in the PR body. When you commit the pulled outputs, remove
+the label and stamp each executed notebook with
+`python3 scripts/check_notebook_outputs.py --stamp NOTEBOOK`. That records
+`metadata.virgil.source_hash`, and the `Notebook outputs not stale` check then fails if the
+notebook source changes without being re-executed. Notebooks with outputs but no hash only
+produce a warning.
+
 ## Testing notes
 
 `pytest` is preconfigured with `-q` and `testpaths = ["tests"]`. The JAX suites are slow to
