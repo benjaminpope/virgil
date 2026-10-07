@@ -1,0 +1,33 @@
+name: ozstar-sync
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  synced:
+    name: OzSTAR outputs synced
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail while the PR is labelled awaiting-ozstar
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if echo "$LABELS" | jq -e 'index("awaiting-ozstar")' >/dev/null; then
+            ids=$(printf '%s\n' "$BODY" | sed -n 's/^Awaiting OzSTAR:[[:space:]]*//p' | head -n1)
+            echo "::error::Waiting on OzSTAR outputs (job IDs: ${ids:-not listed}). Pull and commit them, then remove the awaiting-ozstar label."
+            exit 1
+          fi
+          echo "No awaiting-ozstar label."
+
+  notebooks:
+    name: Notebook outputs not stale
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_notebook_outputs.py
