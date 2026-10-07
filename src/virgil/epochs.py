@@ -420,7 +420,54 @@ def _dof_for(dof, data, index):
     return float(dof.get(name, dof.get(data.epoch_of[index], 1.0)))
 
 
-_N_QUADRATURE = 257  # nodes in ln s of the bounded (s_max) marginal
+# The bounded (s_max) marginal integrates over ln s adaptively: scans of
+# _N_SCAN nodes narrow the range to where the integrand is within
+# exp(-depth) of its peak, then _N_QUADRATURE Gauss–Legendre nodes
+# integrate it there.
+_N_SCAN = 64
+_N_NARROW = 4
+_N_QUADRATURE = 64
+_LEGENDRE = onp.polynomial.legendre.leggauss(_N_QUADRATURE)
+
+
+def _log_integral(log_f, lo, hi, guess):
+    """``log ∫ exp(log_f(t)) dt`` over ``[lo, hi]``, for ``log_f`` mapping
+    an array of ``t`` to the log integrand, which may be steep.
+
+    A fixed grid in t misses steep edges (a likelihood cut off sharply by
+    a bound, falling by many e-folds per grid step) and narrow peaks. Here
+    each scan evaluates ``log_f`` on a uniform grid over the current
+    window (plus ``guess``, the expected peak) and keeps the span of nodes
+    within ``depth`` e-folds of the maximum, widened by one node on each
+    side, so that the window brackets every part of the integrand that
+    matters. Gauss–Legendre then integrates over the final window, all in
+    log space. The window does not carry gradients: its edges are where
+    the integrand is ~exp(-depth) of its peak, or the fixed bounds.
+    """
+    dtype = guess.dtype
+    depth = -onp.log(float(np.finfo(dtype).eps)) + 10.0
+    lo = np.asarray(lo, dtype)
+    hi = np.asarray(hi, dtype)
+    a, b = lo, hi
+    uniform = np.linspace(0.0, 1.0, _N_SCAN, dtype=dtype)
+    for k in range(_N_NARROW):
+        nodes = a + (b - a) * uniform
+        if k == 0:
+            nodes = np.sort(
+                np.concatenate([nodes, np.clip(guess, lo, hi)[None]])
+            )
+        values = jax.lax.stop_gradient(log_f(jax.lax.stop_gradient(nodes)))
+        values = np.where(np.isnan(values), -np.inf, values)
+        keep = values >= np.max(values) - depth
+        index = np.arange(nodes.size)
+        first = np.min(np.where(keep, index, nodes.size))
+        last = np.max(np.where(keep, index, -1))
+        a = nodes[np.maximum(first - 1, 0)]
+        b = nodes[np.minimum(last + 1, nodes.size - 1)]
+    x, w = (np.asarray(v, dtype) for v in _LEGENDRE)
+    half = 0.5 * (b - a)
+    t = a + half * (x + 1.0)
+    return jax.nn.logsumexp(log_f(t) + np.log(w)) + np.log(half)
 
 
 def _check_dof(dof):
@@ -505,15 +552,14 @@ class _Surface:
             tiny = np.finfo(chi2.dtype).tiny
             nu = np.asarray(self.nu, chi2.dtype)
             return -0.5 * dof * np.sum(nu * np.log(np.maximum(chi2, tiny)))
-        log_s = np.linspace(
-            -onp.log(self.s_max), onp.log(self.s_max), _N_QUADRATURE
-        ).astype(chi2.dtype)
+        bound = onp.log(self.s_max)
         total = 0.0
         for k, (_, _, _, nu, von_mises) in enumerate(self.blocks):
-            loglike = -0.5 * chi2[k] * np.exp(-2.0 * log_s)
-            if not von_mises:
-                loglike = loglike - nu * log_s
-            else:
+
+            def log_f(log_s, k=k, nu=nu, von_mises=von_mises):
+                loglike = -0.5 * chi2[k] * np.exp(-2.0 * log_s)
+                if not von_mises:
+                    return dof * (loglike - nu * log_s)
                 # von Mises: -log(2π I0(κ)) + κ per phase, κ = 1/(s σ)²,
                 # relative to the Gaussian's -log(√(2π) σ), as in the other
                 # blocks: -log(√(2π) i0e(κ)) + log σ, which is -log s for
@@ -525,7 +571,12 @@ class _Surface:
                     - np.sum(np.log(np.sqrt(2.0 * np.pi) * i0e(kappa)), axis=1)
                     + np.sum(np.log(sigma))
                 )
-            total = total + jax.nn.logsumexp(dof * loglike)
+                return dof * loglike
+
+            # The Gaussian block's peak, ln ŝ = ln √(χ²/ν).
+            tiny = np.finfo(chi2.dtype).tiny
+            guess = 0.5 * np.log(np.maximum(chi2[k], tiny) / nu)
+            total = total + _log_integral(log_f, -bound, bound, guess)
         return total
 
     def scales(self, chi2):
@@ -588,9 +639,13 @@ def marginal_loglike(model, data, *, dof=1.0, s_max=None, **noise):
         of ``m`` down by that factor.
     s_max : float, optional
         Bound each scale to [1/s_max, s_max] and integrate it out
-        numerically (on a grid in ln s), with the exact von Mises
-        normalization for uncorrelated closure phases. This is finite
-        and proper where the unbounded marginal is not.
+        numerically, with the exact von Mises normalization for
+        uncorrelated closure phases: ``m`` is then Σ_b ln ∫ L_b(s)^dof
+        d ln s over the bounds. The integral is adaptive in ln s (scans
+        narrow it to where the integrand matters, then Gauss–Legendre),
+        so it stays accurate where the likelihood falls steeply from a
+        bound. This is finite and proper where the unbounded marginal is
+        not.
     **noise
         Other noise terms (e.g. ``wavel_scale``), as for
         ``whitened_residuals``. ``vis_scale`` and ``phi_scale`` should be
