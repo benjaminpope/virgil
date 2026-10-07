@@ -243,7 +243,8 @@ def test_modes_spanning_frames_alone_are_whitened_exactly():
     rng = onp.random.default_rng(4)
     data = data.with_gains(modes=rng.normal(0, 0.02, (2, data.u.size)))
     gains = data.gains
-    assert gains.rows.shape[0] == 0 and gains.spanning.shape == (60, 2)
+    assert gains.rows.shape[0] == 1 and gains.spanning.shape == (60, 2)
+    assert onp.all(gains.rows == data.u.size)  # one empty block
     prediction = onp.asarray(data.model(TRUTH))
     obs, err = (onp.asarray(x) for x in data.flatten_data())
     resid = prediction - obs
@@ -262,3 +263,93 @@ def test_modes_spanning_frames_alone_are_whitened_exactly():
         jax.random.split(jax.random.PRNGKey(0), 3)
     )
     assert draws.shape == (3, 60)
+
+
+def _zero_size_leaves(tree):
+    return [
+        jax.tree_util.keystr(path)
+        for path, leaf in jax.tree_util.tree_leaves_with_path(tree)
+        if hasattr(leaf, "size") and leaf.size == 0
+    ]
+
+
+def test_gains_without_spanning_modes_hold_no_zero_size_arrays():
+    # jax.pmap segfaults compiling a zero-size captured array (JAX 0.11.2),
+    # which crashed numpyro's parallel chains on data with gains.
+    data = _data().with_gains(telescope=0.01, baseline=0.01, chromatic=0.01)
+    assert data.gains.spanning is None and data.gains.spanning_group is None
+    assert _zero_size_leaves(data.gains) == []
+    spanning_only = _data().with_gains(
+        modes=onp.random.default_rng(4).normal(0, 0.02, (2, 60))
+    )
+    assert _zero_size_leaves(spanning_only.gains) == []
+    sub = data.gains.subset(onp.arange(data.gains.n_vis) % 2 == 0)
+    assert sub.spanning is None
+    assert data.gains.sample(
+        jax.random.PRNGKey(0), data.gains.widths
+    ).shape == (data.gains.n_vis,)
+
+
+@pytest.mark.parametrize(
+    "gains",
+    [
+        "with_gains(telescope=0.01, baseline=0.01)",
+        # every mode spans frames: no blocks within a frame
+        "with_gains(modes=onp.random.default_rng(0).normal(0, 0.02, (2, d.u.size)))",
+    ],
+)
+def test_parallel_chains_compile_with_gains(gains):
+    # Guards the fix only on JAX versions whose pmap goes through Shardy
+    # (0.11.2 segfaults); on others it passes either way.
+    import subprocess
+    import sys
+
+    script = f"""
+import os
+os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=2"
+import jax, jax.numpy as jnp, numpy as onp
+from virgil.coverage import vlti_oidata
+from virgil.likelihood import model_loglike
+from virgil.models import BinaryModelCartesian
+
+d = vlti_oidata(hour_angles_h=(-1.0, 0.0, 1.0), wavelengths_m=[2.0e-6, 2.4e-6])
+data = d.{gains}
+ll = jax.pmap(
+    lambda f: model_loglike(BinaryModelCartesian(dra=3.0, ddec=-2.0, flux=f), data)
+)
+print(ll(jnp.array([0.1, 0.2])))
+"""
+    run = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert run.returncode == 0, run.stderr[-2000:]
+
+
+def test_numpyro_model_warns_of_zero_size_arrays_with_parallel_chains(
+    monkeypatch,
+):
+    import warnings
+
+    import numpyro.distributions as dist
+
+    from virgil import likelihood
+    from virgil.likelihood import numpyro_model
+
+    priors = {"flux": dist.LogUniform(0.01, 1.0)}
+
+    def build(**kw):
+        return BinaryModelCartesian(dra=3.0, ddec=-2.0, **kw)
+
+    v2_only = _data()  # no closure phases: zero-size phase arrays
+    assert _zero_size_leaves(v2_only)
+    monkeypatch.setattr(likelihood, "_host_devices", lambda: 2)
+    with pytest.warns(RuntimeWarning, match="vectorized") as record:
+        numpyro_model(build, priors, v2_only)
+    assert record[0].filename == __file__
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        monkeypatch.setattr(likelihood, "_host_devices", lambda: 1)
+        numpyro_model(build, priors, v2_only)
