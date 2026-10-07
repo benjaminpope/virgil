@@ -91,6 +91,14 @@ anything before 1.0 may change between minor versions.
 - The `lawson_sigma_over_peak` docstring now states that both images are
   normalised over the whole array, so flux in empty sky does affect σ.
   Values are unchanged.
+- `limits.chi2ppf` works for any number of degrees of freedom on a
+  standard install. For `df != 1` it called numpyro's `gammaincinv`,
+  which needs `tensorflow_probability`, not a virgil dependency; it now
+  inverts `jax.scipy.special.gammainc` by Halley's method for every `df`,
+  matching `scipy.stats.chi2.ppf` to about 1e-14 relative in float64
+  for p in [1e-10, 1 - 1e-10], and stays differentiable and `jit`-able.
+  `df = 1` also uses it, gaining precision at small p. Found by
+  virgil-validation (F17).
 
 ### Added
 
