@@ -523,8 +523,9 @@ def _new_system_compiles(system, name, variant):
 # ---------------------------------------------------------------------------
 
 
-def configurations(size, case_name, seed, only_axes=None):
-    """The reference configuration, then each axis varied alone."""
+def configurations(size, case_name, seed, only_axes=None, max_epochs=None):
+    """The reference configuration, then each axis varied alone. Axis values
+    of ``n_epochs`` above ``max_epochs`` are dropped (the memory guard)."""
     preset = SIZES[size]
     ref = dict(preset["ref"])
     out = [("ref", ref)]
@@ -532,6 +533,8 @@ def configurations(size, case_name, seed, only_axes=None):
         if only_axes and axis not in only_axes:
             continue
         for v in values:
+            if axis == "n_epochs" and max_epochs and v > max_epochs:
+                continue
             if v != ref[axis]:
                 out.append((axis, {**ref, axis: v}))
     return [
@@ -540,7 +543,30 @@ def configurations(size, case_name, seed, only_axes=None):
     ]
 
 
-def sweep(args, suite="baseline"):
+def _error_row(suite, case, axis, step, exc):
+    """A row for a failure outside ``run_step`` (building a system, lowering)."""
+    row = dict(
+        suite=suite,
+        case=case.case,
+        seed=case.seed,
+        n_epochs=case.n_epochs,
+        grid_size=case.grid_size,
+        n_flux=case.n_flux,
+        n_candidates=case.n_candidates,
+        axis=axis,
+        step=step,
+        variant=step,
+        status="error",
+        error=f"{type(exc).__name__}: {exc}"[:500],
+        platform=platform(),
+        jax_version=jax.__version__,
+        commit=commit(),
+        timestamp=time.strftime("%Y-%m-%dT%H:%M:%S"),
+    )
+    return row, [f"{axis}/{case.case}/{step}: {row['error']}"]
+
+
+def sweep(args, suite="baseline", sink=None):
     rows, failures = [], []
     names = args.steps or (
         SMOKE_STEPS if args.size == "tiny" else DEFAULT_STEPS
@@ -548,9 +574,16 @@ def sweep(args, suite="baseline"):
     repeats = args.repeats or SIZES[args.size]["repeats"]
     for case_name in args.case:
         for axis, case in configurations(
-            args.size, case_name, args.seed, args.axis
+            args.size, case_name, args.seed, args.axis, args.max_epochs
         ):
-            system = cases.build(case)
+            try:
+                system = cases.build(case)
+            except Exception as e:  # one config must not lose the others
+                row, fails = _error_row(suite, case, axis, "build", e)
+                _record(rows, row, sink)
+                failures += fails
+                _log(row)
+                continue
             for name in names:
                 for variant in STEPS[name]["variants"]:
                     if (
@@ -576,13 +609,26 @@ def sweep(args, suite="baseline"):
                         args.strict,
                     )
                     row["axis"] = axis
-                    rows.append(row)
+                    _record(rows, row, sink)
                     failures += fails
                     _log(row)
     return rows, failures
 
 
+def _record(rows, row, sink):
+    rows.append(row)
+    if sink is not None:
+        sink.append(row)
+
+
 def _log(row):
+    if row.get("step") == "build":
+        print(
+            f"[{row['case']}|{row['axis']}] build n_epochs={row['n_epochs']} "
+            f"ERROR {row['error']}",
+            flush=True,
+        )
+        return
     print(
         f"[{row['case']}|{row['axis']}] {row['step']}/{row['variant']} "
         f"n_epochs={row['n_epochs']} "
@@ -604,28 +650,39 @@ def _log(row):
 # ---------------------------------------------------------------------------
 
 
-def compile_suite(args):
+def compile_suite(args, sink=None):
     """HLO size of the multi-epoch likelihood against n_epochs, and NUTS
     with each chain_method in a subprocess."""
     rows, failures = [], []
     counts = [2, 4, 8] if args.size != "full" else [2, 4, 8, 16, 32]
-    sizes = []
+    if args.max_epochs:
+        counts = [n for n in counts if n <= args.max_epochs]
+    sizes, ok_counts = [], []
     ref = SIZES[args.size]["ref"]
     for n in counts:
-        system = cases.build(
-            cases.Case(case="A1", seed=args.seed, **{**ref, "n_epochs": n})
-        )
+        case = cases.Case(case="A1", seed=args.seed, **{**ref, "n_epochs": n})
+        try:
+            system = cases.build(case)
 
-        def loglike(theta, system=system):
-            return system.epochs.loglike(system.scene_fn(**theta))
+            def loglike(theta, system=system):
+                return system.epochs.loglike(system.scene_fn(**theta))
 
-        with jax.enable_x64(True), harness.RssWatcher() as watch:
-            theta = {
-                k: jax.numpy.asarray(v)
-                for k, v in system.truth_values.items()
-            }
-            n_hlo, secs = harness.hlo_size(loglike, theta)
+            with jax.enable_x64(True), harness.RssWatcher() as watch:
+                theta = {
+                    k: jax.numpy.asarray(v)
+                    for k, v in system.truth_values.items()
+                }
+                n_hlo, secs = harness.hlo_size(loglike, theta)
+        except Exception as e:  # one n_epochs must not lose the others
+            row, fails = _error_row(
+                "compile", case, f"n_epochs={n}", "loglike_hlo", e
+            )
+            _record(rows, row, sink)
+            failures += fails
+            print(f"[compile] loglike n_epochs={n}: ERROR {row['error']}")
+            continue
         sizes.append(n_hlo)
+        ok_counts.append(n)
         row = base_row("compile", system)
         row.update(
             step="loglike_hlo",
@@ -635,9 +692,12 @@ def compile_suite(args):
             lower_compile_s=secs,
             compile_peak_rss_mb=watch.peak,
         )
-        rows.append(row)
+        _record(rows, row, sink)
         print(f"[compile] loglike n_epochs={n}: {n_hlo} HLO ops, {secs:.2f}s")
-    exponent = harness.growth_exponent(counts, sizes)
+    counts = ok_counts
+    exponent = (
+        harness.growth_exponent(counts, sizes) if len(counts) > 1 else None
+    )
     summary = dict(
         suite="compile",
         step="loglike_hlo",
@@ -650,16 +710,21 @@ def compile_suite(args):
         jax_version=jax.__version__,
         commit=commit(),
     )
-    rows.append(summary)
-    print(f"[compile] HLO size grows as n_epochs**{exponent:.2f}")
-    if args.max_hlo_exponent is not None and exponent > args.max_hlo_exponent:
+    _record(rows, summary, sink)
+    if exponent is not None:
+        print(f"[compile] HLO size grows as n_epochs**{exponent:.2f}")
+    if (
+        args.max_hlo_exponent is not None
+        and exponent is not None
+        and exponent > args.max_hlo_exponent
+    ):
         failures.append(
             f"loglike HLO grows as n_epochs**{exponent:.2f} "
             f"(limit {args.max_hlo_exponent})"
         )
     for method in args.chain_methods:
         row, fails = _nuts_subprocess(args, method)
-        rows.append(row)
+        _record(rows, row, sink)
         failures += fails
         print(f"[compile] nuts {method}: {row['exit']}")
     return rows, failures
@@ -728,6 +793,31 @@ def nuts_child(args):
 # ---------------------------------------------------------------------------
 # Output and CLI
 # ---------------------------------------------------------------------------
+
+
+class RowSink:
+    """Append each row to a jsonl file as it is produced (flushed and
+    fsynced), so a run killed by OOM or the time limit keeps its rows. For
+    ``--format csv`` the jsonl goes to ``<out>.jsonl`` and ``main`` converts
+    it at the end."""
+
+    def __init__(self, path, fmt):
+        self.path = None if path == os.devnull else path
+        if self.path and fmt == "csv":
+            self.path += ".jsonl"
+        if self.path:
+            os.makedirs(
+                os.path.dirname(os.path.abspath(self.path)), exist_ok=True
+            )
+            open(self.path, "w").close()  # truncate
+
+    def append(self, row):
+        if not self.path:
+            return
+        with open(self.path, "a") as f:
+            f.write(json.dumps(row, default=_json_default) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
 
 def write_rows(rows, path, fmt):
@@ -812,6 +902,11 @@ def parser():
         help="fail on recompiles in every step, not only the bounded ones",
     )
     p.add_argument("--max-hlo-exponent", type=float)
+    p.add_argument(
+        "--max-epochs",
+        type=int,
+        help="drop n_epochs axis values above this (memory guard)",
+    )
     return p
 
 
@@ -825,11 +920,17 @@ def main(argv=None):
         nuts_child(args)
         return 0
     rows, failures = [], []
+    sink = RowSink(args.out, args.format)
     for suite in suites:
-        r, f = (compile_suite if suite == "compile" else sweep)(args)
+        r, f = (compile_suite if suite == "compile" else sweep)(
+            args, sink=sink
+        )
         rows += r
         failures += f
-    write_rows(rows, args.out, args.format)
+    if args.format == "csv":
+        write_rows(rows, args.out, "csv")
+        if sink.path:
+            os.remove(sink.path)
     print(f"wrote {len(rows)} rows to {args.out}")
     if failures:
         print("FAILED:\n  " + "\n  ".join(failures), file=sys.stderr)

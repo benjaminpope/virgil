@@ -20,3 +20,11 @@ Times each step of the multi-epoch orbit pipeline on simulated binaries
 A recompile in a warm call is recorded for every step and fails the run for
 steps marked `bounded`, or all of them with `--strict`. `rank_orbits` is
 not bounded on main: it rebuilds its jitted kernel on every call.
+
+Rows are appended to the output file (flushed and fsynced) as each is
+produced, so a run killed by out-of-memory or the time limit keeps every
+completed row; with `--format csv` they go to `<out>.jsonl` and are
+converted at the end. A crash while building a system or lowering the
+likelihood becomes a `status: error` row, and the run continues.
+`--max-epochs N` drops `n_epochs` axis values above `N` from the sweep and
+the compile suite, to keep a run within memory.
