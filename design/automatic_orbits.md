@@ -1247,8 +1247,9 @@ is wrong.
     * Enumeration everywhere, with deterministic covering designs; no
       random draws in the search.
     * Budgets in deterministic work units (candidates, L-BFGS steps,
-      likelihood evaluations). Wall-clock time is only a hard kill, which
-      sets a "non-reproducible" flag.
+      likelihood evaluations), with the predicted cost checked up front.
+      Wall-clock time is only a kill, which marks the run failed
+      (decision 3).
     * Ties are broken on quantized scores, then by index, never by
       floating-point accident (a CI test was lost to two mirror grid
       cells tying to rounding error).
@@ -1271,7 +1272,8 @@ of §9.3.
   profiled analytically (§14.2.1).
 * **R12 Work-unit budgets.** Every stage estimates its cost and runs
   under a budget in deterministic work units; it reports `stop` and
-  `at_bound` (as `fit` does). Wall-clock limits are a flagged hard kill.
+  `at_bound` (as `fit` does). Wall-clock limits are only a kill, which marks the run
+  failed.
 * **R13 Generality.** No default may be tuned on one system. Every
   default (ρ, Δ_keep, Δ_mode, budgets, hand-off thresholds) is set on the
   benchmark suite of §14.4, across instruments and bands, before the
@@ -1371,7 +1373,7 @@ figures, to be replaced by measurements (§9.1).
 | §9.1 "Candidate scoring", "Search" | timed on the exact scorer and polishing (§14.5) |
 | §9.3 A11, A13 | A11 tests the map cache only when it is used; A13 tests sample-time evaluation, not the snapshot flag |
 
-**Decisions** (Ben, 2026-10-07; 3 still open):
+**Decisions** (Ben, 2026-10-07):
 
 1. **Shared flux** (and chromatic slope): integrated out wherever
    possible (marginal), **and** the fitted (profiled) value with its
@@ -1381,8 +1383,9 @@ figures, to be replaced by measurements (§9.1).
    calibrated by the grouped bootstrap, cached per dataset (the
    correlations differ by night). Without it, the result is flagged
    "needs review".
-3. *Open:* work-unit budgets only, with wall-clock time as a flagged
-   kill?
+3. **Work-unit budgets.** Budgets count likelihood evaluations or
+   optimizer steps, with the predicted cost checked before the run.
+   Wall-clock time is only a kill, which marks the run failed.
 4. **No distance or mass prior required.** With neither and no explicit
    maximum, the separation bound defaults to the instrument's field and
    the search does not refuse (§14.2.6, which also says how the period
