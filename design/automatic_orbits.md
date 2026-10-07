@@ -1450,15 +1450,17 @@ the refined peak catalogue (`EpochPeaks`).
   deprecated wrapper.
 * PRs E–G of §12 follow, except that NUTS starts only from the best mode
   or the comparable few.
+* **Later, low priority** (virgil's main use is astrometry only): when RVs
+  are available, an RV-first generator, in which a Joker-style RV pass
+  fixes a few (P, e, T₀) modes and the four-constant astrometric solve
+  runs at each.
 
 ## References
 
 * Luger, Foreman-Mackey & Hogg (2017), linear marginalization.
-* Price-Whelan et al. (2017), The Joker: rejection sampling of
-  Keplerian orbits.
+* Price-Whelan et al. (2017, 2020), The Joker: rejection sampling of
+  Keplerian orbits; the 2020 paper scales the prior on K with P and e.
 * Blunt et al. (2017), OFTI (orbits for the impatient).
-* Price-Whelan, A. M., et al. (2017, 2020), The Joker: rejection sampling for
-  Keplerian orbits with linear parameters marginalized.
 * Lucy (2014), dense grids over (P, e, T₀) with linear Thiele–Innes
   constants.
 * Yao, Vehtari & Gelman (2022), stacking for non-mixing Bayesian
