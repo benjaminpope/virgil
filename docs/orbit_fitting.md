@@ -448,6 +448,7 @@ start = start_from_positions(
     grid={"dra": axis, "ddec": axis, "flux": np.geomspace(0.02, 0.5, 6)},
     periods=np.geomspace(300.0, 5000.0, 160),
     t_ref=T_REF,
+    scales="marginal",
     noise=noise,
     n_candidates=200,
     n_refine=4,

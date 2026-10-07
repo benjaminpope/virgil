@@ -131,22 +131,85 @@ def test_rescaling_one_dataset_or_only_its_closure_phases_changes_nothing(
     onp.testing.assert_allclose(every.gap, base.gap / 9.0, rtol=1e-6)
 
 
-def test_the_covariance_is_the_curvature_of_the_marginal_surface():
-    data = _night(VLTI_UTS, 1)
+def test_the_covariance_is_the_analytic_curvature_of_the_marginal_surface():
+    # Independent of the code under test: each block's χ² is built from the
+    # data's predictions directly (three telescopes, so the closure phases
+    # are uncorrelated chords 2 sin(Δ/2)/σ), and the Hessian of
+    # -m = Σ_b (ν_b/2) ln χ²_b is Σ_b [H_b/(2ŝ_b²) - (ν_b/2) g_b g_bᵀ/χ_b⁴].
+    data = _night(VLTI_UTS[:3], 1, s_vis=2.0, s_phi=4.0)
     found = _positions(data)
-    x = onp.array([found.dra[0], found.ddec[0], found.flux[0]])
+    x = jnp.asarray([found.dra[0], found.ddec[0], found.flux[0]])
     with jax.enable_x64(True):
         d64 = cast_tree(data, "float64")
+        reference, errors = d64.flatten_data()
+        n_vis = onp.asarray(data.vis).size
 
-        def negative(v):
-            return -marginal_loglike(BinaryModelCartesian(*v), d64)
+        def chi2(v, block):
+            r = d64.model(BinaryModelCartesian(*v)) - reference
+            if block == "vis":
+                return jnp.sum((r[:n_vis] / errors[:n_vis]) ** 2)
+            return jnp.sum((2 * jnp.sin(r[n_vis:] / 2) / errors[n_vis:]) ** 2)
 
-        hess = onp.asarray(jax.hessian(negative)(jnp.asarray(x)))
+        curvature = 0.0
+        for block, nu in (("vis", n_vis), ("phi", reference.size - n_vis)):
+            c = float(chi2(x, block))
+            g = onp.asarray(jax.grad(chi2)(x, block))
+            h = onp.asarray(jax.hessian(chi2)(x, block))
+            curvature = (
+                curvature + h / (2 * c / nu) - nu / 2 * onp.outer(g, g) / c**2
+            )
     onp.testing.assert_allclose(
-        found.cov[0], onp.linalg.inv(hess)[:2, :2], rtol=1e-6
+        found.cov[0], onp.linalg.inv(curvature)[:2, :2], rtol=1e-4
     )
-    # It is not the quoted-error covariance times ŝ² of one block.
-    assert onp.all(onp.linalg.eigvalsh(found.cov[0]) > 0)
+    # Not the quoted-error covariance times one ŝ²: the scales differ.
+    assert found.scale[0]["phi_scale"] > 1.5 * found.scale[0]["vis_scale"]
+
+
+def test_data_with_a_model_dependent_normalization_are_refused():
+    data = _night(VLTI_UTS, 1).with_gains(telescope=0.05)
+    with pytest.raises(NotImplementedError, match="gains"):
+        epoch_positions(Epochs({"night": data}), GRID)
+    with pytest.raises(NotImplementedError, match="gains"):
+        marginal_loglike(BinaryModelCartesian(*TRUTH), data)
+
+
+def test_one_kernel_serves_every_dataset_of_one_shape():
+    import virgil.epochs as epochs_module
+
+    kernels = [
+        epochs_module._grid_scores,
+        epochs_module._grid_marginal,
+        epochs_module._negative_marginal_and_grad,
+        epochs_module._negative_marginal_hessian,
+        epochs_module._block_chi2,
+    ]
+    first = _night(VLTI_UTS[:3], 1, sigma_cp_deg=5.0)
+    _positions(first, s_max=10.0)
+    _positions(first)
+    sizes = [k._cache_size() for k in kernels]
+    # Other values (data, quoted errors, dof) of the same shapes.
+    other = _night(
+        VLTI_UTS[:3], 2, TRUTH[::-1], sigma_v2=0.03, sigma_cp_deg=8.0
+    )
+    _positions(other, s_max=10.0, dof=0.5)
+    _positions(other, dof=0.7)
+    assert [k._cache_size() for k in kernels] == sizes
+
+
+def test_the_von_mises_marginal_is_the_gaussian_one_for_small_errors():
+    from virgil.epochs import _Surface
+
+    data = _night(VLTI_UTS[:3], 1, sigma_cp_deg=0.05, s_phi=1.0, s_vis=1.0)
+    surface = _Surface(data, s_max=10.0)
+    gaussian = _Surface(data, s_max=10.0)
+    gaussian.blocks = tuple(b[:4] + (False,) for b in surface.blocks)
+    assert any(b[4] for b in surface.blocks)
+    with jax.enable_x64(True):
+        d64 = cast_tree(data, "float64")
+        chi2 = surface.chi2(BinaryModelCartesian(*TRUTH), d64)
+        exact = float(surface.score(chi2, 1.0, d64))
+        limit = float(gaussian.score(chi2, 1.0, d64))
+    assert exact == pytest.approx(limit, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------

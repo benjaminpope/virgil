@@ -63,6 +63,9 @@ anything before 1.0 may change between minor versions.
   recorded, and a `UserWarning` names the datasets with raw χ²/N > 4.
   Grid fluxes must be at most 1 (and the refinement keeps f ≤ 1): f > 1
   at r is the same binary as 1/f at -r.
+  Data with gains, closure-phase offsets or a model-dependent covariance
+  raise a `NotImplementedError` on the marginalized surface, since their
+  nuisance covariance is not multiplied by an error scale.
 - `rank_orbits` and `start_from_positions` take `scales="quoted" |
   "marginal"`. `"marginal"` ranks with each dataset's error scales
   integrated out, so the worst-calibrated nights no longer dominate the

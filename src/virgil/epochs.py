@@ -423,37 +423,70 @@ def _dof_for(dof, data, index):
 _N_QUADRATURE = 257  # nodes in ln s of the bounded (s_max) marginal
 
 
+def _check_dof(dof):
+    dof = float(dof)
+    if not 0.0 < dof <= 1.0:
+        raise ValueError(
+            f"The effective-dof fraction must be in (0, 1], got {dof}."
+        )
+    return dof
+
+
+def _check_marginal_data(data):
+    """Raise if ``data`` has a model-dependent likelihood normalizer, which
+    the scale-marginalized surface does not include."""
+    found = [
+        what
+        for what, present in (
+            ("gains (OIData.with_gains)", data.gains is not None),
+            (
+                "closure-phase offsets (OIData.with_closure_offsets)",
+                data.phase_offsets is not None,
+            ),
+            (
+                "extra observables with a model-dependent covariance",
+                bool(data.has_model_covariance),
+            ),
+        )
+        if present
+    ]
+    if found:
+        raise NotImplementedError(
+            "The scale-marginalized surface (scales='marginal', "
+            "epoch_positions, marginal_loglike) needs a likelihood whose "
+            "normalization depends only on the error scales; these data "
+            f"have {' and '.join(found)}, whose covariance a scale does not "
+            "multiply. Use the data without them, or scales='quoted'."
+        )
+
+
 class _Surface:
     """The scale-marginalized score of one dataset, block by block.
 
-    ``score(chi2)`` maps the blocks' χ² on the quoted errors to
-    ``m = -Σ_b (ν_b/2) ln χ²_b`` (Gaussian normalization in every block),
-    or, with ``s_max``, to the log of each block's likelihood integrated
-    over ln s in [-ln s_max, ln s_max] (uniform in ln s: the Jeffreys
-    prior, bounded), with the exact von Mises normalization for
-    uncorrelated closure phases. ``dof`` (a fraction in (0, 1]) tempers
-    every block's log likelihood: ν_eff = dof · ν.
+    Only the layout of the data enters (the blocks, their ν and
+    ``s_max``), so that one compiled kernel serves every dataset of one
+    shape: the hash and equality, used as a static jit argument, never
+    depend on data values. ``score(chi2, dof, data)`` maps the blocks' χ²
+    on the quoted errors to ``m = -Σ_b (ν_b/2) ln χ²_b`` (Gaussian
+    normalization in every block) or, with ``s_max``, to the log of each
+    block's likelihood integrated over ln s in [-ln s_max, ln s_max]
+    (uniform in ln s: the Jeffreys prior, bounded), with the exact von
+    Mises normalization for uncorrelated closure phases (whose quoted
+    errors are read from the traced ``data``). ``dof`` (a fraction in
+    (0, 1], traced) tempers every block's log likelihood: ν_eff = dof · ν.
     """
 
-    def __init__(self, data, dof=1.0, s_max=None):
-        dof = float(dof)
-        if not 0.0 < dof <= 1.0:
-            raise ValueError(
-                f"The effective-dof fraction must be in (0, 1], got {dof}."
-            )
+    def __init__(self, data, s_max=None):
+        _check_marginal_data(data)
         if s_max is not None and not float(s_max) > 1.0:
             raise ValueError(f"s_max must exceed 1, got {s_max}.")
         self.blocks = _blocks(data)
         self.names = tuple(b[0] for b in self.blocks)
         self.nu = onp.array([b[3] for b in self.blocks], dtype=float)
-        self.dof = dof
         self.s_max = None if s_max is None else float(s_max)
-        d_phi = onp.asarray(data.d_phi, dtype=float).reshape(-1)
-        self.sigma = tuple(d_phi if b[4] else None for b in self.blocks)
 
     def _key(self):
-        sigma = tuple(None if x is None else x.tobytes() for x in self.sigma)
-        return (self.blocks, self.dof, self.s_max, sigma)
+        return (self.blocks, self.s_max)
 
     def __hash__(self):
         return hash(self._key())
@@ -466,32 +499,33 @@ class _Surface:
         r = whitened_residuals(model, data, **(noise or {}))
         return np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in self.blocks])
 
-    def score(self, chi2):
+    def score(self, chi2, dof, data):
+        dof = np.asarray(dof, chi2.dtype)
         if self.s_max is None:
             tiny = np.finfo(chi2.dtype).tiny
-            nu = np.asarray(self.dof * self.nu, chi2.dtype)
-            return -0.5 * np.sum(nu * np.log(np.maximum(chi2, tiny)))
+            nu = np.asarray(self.nu, chi2.dtype)
+            return -0.5 * dof * np.sum(nu * np.log(np.maximum(chi2, tiny)))
         log_s = np.linspace(
             -onp.log(self.s_max), onp.log(self.s_max), _N_QUADRATURE
         ).astype(chi2.dtype)
         total = 0.0
-        for k, (nu, sigma) in enumerate(zip(self.nu, self.sigma)):
+        for k, (_, _, _, nu, von_mises) in enumerate(self.blocks):
             loglike = -0.5 * chi2[k] * np.exp(-2.0 * log_s)
-            if sigma is None:
+            if not von_mises:
                 loglike = loglike - nu * log_s
             else:
                 # von Mises: -log(2π I0(κ)) + κ per phase, κ = 1/(s σ)²,
-                # relative to its small-σ limit -log(√(2π) σ).
-                kappa = 1.0 / (
-                    np.exp(2.0 * log_s)[:, None]
-                    * np.asarray(sigma**2, chi2.dtype)
-                )
+                # relative to the Gaussian's -log(√(2π) σ), as in the other
+                # blocks: -log(√(2π) i0e(κ)) + log σ, which is -log s for
+                # κ ≫ 1.
+                sigma = np.asarray(data.d_phi, chi2.dtype).reshape(-1)
+                kappa = 1.0 / (np.exp(2.0 * log_s)[:, None] * sigma**2)
                 loglike = (
                     loglike
                     - np.sum(np.log(np.sqrt(2.0 * np.pi) * i0e(kappa)), axis=1)
-                    - np.sum(np.log(np.asarray(sigma, chi2.dtype)))
+                    + np.sum(np.log(sigma))
                 )
-            total = total + jax.nn.logsumexp(self.dof * loglike)
+            total = total + jax.nn.logsumexp(dof * loglike)
         return total
 
     def scales(self, chi2):
@@ -528,6 +562,17 @@ def marginal_loglike(model, data, *, dof=1.0, s_max=None, **noise):
     ``model_loglike``. Where sσ is not small (weak closure phases with a
     large scale), pass ``s_max``.
 
+    Data whose likelihood has a model-dependent normalization are refused
+    with a ``NotImplementedError``: gains
+    ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]), closure-phase
+    offsets
+    ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets])
+    and extra observables with a model-dependent covariance. Their
+    marginalized nuisance covariance is not multiplied by an error scale,
+    so a block's χ² is not ∝ 1/s² and the scale would not be integrated
+    out. The same holds for ``epoch_positions`` and
+    ``rank_orbits(scales="marginal")``.
+
     Parameters
     ----------
     model : SourceModel
@@ -555,8 +600,10 @@ def marginal_loglike(model, data, *, dof=1.0, s_max=None, **noise):
     -------
     float
     """
-    surface = _Surface(data, dof, s_max)
-    return surface.score(surface.chi2(model, data, noise))
+    surface = _Surface(data, s_max)
+    return surface.score(
+        surface.chi2(model, data, noise), _check_dof(dof), data
+    )
 
 
 _SCALES = ("quoted", "marginal")
@@ -602,29 +649,32 @@ def _loglikes(
         )
     per_dataset = data.noise(noise or {})
     if scales == "marginal":
-        surfaces = [
-            _Surface(d, _dof_for(dof, data, k), s_max)
-            for k, d in enumerate(data.data)
-        ]
+        surfaces = tuple(_Surface(d, s_max) for d in data.data)
+        dofs = np.asarray(
+            [_check_dof(_dof_for(dof, data, k)) for k in range(len(data))]
+        )
         with run_in(dtype):
             inputs = cast_tree(inputs, dtype)
             datasets = cast_tree(tuple(data.data), dtype)
 
             @jax.jit
-            def every_marginal(inputs, datasets):
+            def every_marginal(inputs, datasets, dofs):
                 def one(x):
                     snapshots = data.snapshots(scene_of(x))
                     total = sum(
-                        f.score(f.chi2(s, d, n))
-                        for s, d, n, f in zip(
-                            snapshots, datasets, per_dataset, surfaces
+                        f.score(f.chi2(s, d, n), dofs[k], d)
+                        for k, (s, d, n, f) in enumerate(
+                            zip(snapshots, datasets, per_dataset, surfaces)
                         )
                     )
                     return np.where(np.isfinite(total), total, -np.inf)
 
                 return jax.lax.map(one, inputs, batch_size=batch_size)
 
-            return onp.asarray(every_marginal(inputs, datasets), dtype=float)
+            dofs = np.asarray(dofs, dtype)
+            return onp.asarray(
+                every_marginal(inputs, datasets, dofs), dtype=float
+            )
     with run_in(dtype):
         inputs = cast_tree(inputs, dtype)
         datasets = cast_tree(tuple(data.data), dtype)
@@ -766,7 +816,8 @@ def rank_orbits(
         and ranks by the sum of
         [`marginal_loglike`][virgil.epochs.marginal_loglike]: the
         ranking then does not change when one dataset's errors are
-        rescaled. The default is ``"quoted"`` for now, with a
+        rescaled. Data with gains, closure-phase offsets or a
+        model-dependent covariance are refused (see ``marginal_loglike``). The default is ``"quoted"`` for now, with a
         ``FutureWarning`` when ``scales`` is not given; it will become
         ``"marginal"``.
     noise : dict, optional
@@ -993,8 +1044,14 @@ def _grid_scores(points, data, surface, batch_size):
     return jax.lax.map(one, points, batch_size=batch_size)
 
 
-def _negative_marginal(x, data, surface):
-    return -surface.score(surface.chi2(_binary(x), data))
+@functools.partial(jax.jit, static_argnames="surface")
+def _grid_marginal(chi2, dof, data, surface):
+    """The scale-marginalized score of each grid point's block χ²."""
+    return jax.vmap(lambda c: surface.score(c, dof, data))(chi2)
+
+
+def _negative_marginal(x, dof, data, surface):
+    return -surface.score(surface.chi2(_binary(x), data), dof, data)
 
 
 _negative_marginal_and_grad = jax.jit(
@@ -1019,13 +1076,15 @@ def _gap(score, xx, yy, rival):
     return (i, j, int(onp.argmax(score[i, j]))), float(gap)
 
 
-def _refine_marginal(x0, d64, surface, bounds):
+def _refine_marginal(x0, dof, d64, surface, bounds):
     """Maximize the scale-marginalized surface from ``x0`` (L-BFGS-B in
     float64, deterministic) within ``bounds``."""
     from scipy.optimize import minimize
 
     def fun(x):
-        value, grad = _negative_marginal_and_grad(np.asarray(x), d64, surface)
+        value, grad = _negative_marginal_and_grad(
+            np.asarray(x), dof, d64, surface
+        )
         return float(value), onp.asarray(grad, dtype=float)
 
     result = minimize(
@@ -1077,7 +1136,8 @@ def epoch_positions(
     Parameters
     ----------
     data : Epochs
-        The data.
+        The data. Datasets with gains, closure-phase offsets or a
+        model-dependent covariance are refused (see ``marginal_loglike``).
     grid : dict
         ``{"dra": axis, "ddec": axis, "flux": values}``: the positions
         (mas) and companion/primary fluxes to try. The position step
@@ -1131,13 +1191,14 @@ def epoch_positions(
     bounds.append((0.1 * float(axes[2].min()), 1.0))
     rows, inflated, edge = [], [], []
     for index, (name, d) in enumerate(zip(data.dataset_names, data.data)):
-        surface = _Surface(d, _dof_for(dof, data, index), s_max)
+        surface = _Surface(d, s_max)
+        dof_k = _check_dof(_dof_for(dof, data, index))
         with run_in("float64"):
             d64 = cast_tree(d, "float64")
             loglike, chi2 = _grid_scores(
                 np.asarray(points), d64, surface, min(batch_size, len(points))
             )
-            marginal = jax.vmap(surface.score)(chi2)
+            marginal = _grid_marginal(chi2, np.asarray(dof_k), d64, surface)
             loglike = onp.asarray(loglike).reshape(xx.shape)
             marginal = onp.asarray(marginal).reshape(xx.shape)
         loglike = onp.where(onp.isfinite(loglike), loglike, -onp.inf)
@@ -1153,11 +1214,13 @@ def epoch_positions(
         cov = max(steps) ** 2 * onp.eye(2)
         with run_in("float64"):
             if refine:
-                refined, value = _refine_marginal(best, d64, surface, bounds)
+                refined, value = _refine_marginal(
+                    best, np.asarray(dof_k), d64, surface, bounds
+                )
                 if -value >= marginal[i, j, k]:
                     best = refined
                 hess = _negative_marginal_hessian(
-                    np.asarray(best), d64, surface
+                    np.asarray(best), np.asarray(dof_k), d64, surface
                 )
                 full = onp.linalg.pinv(onp.asarray(hess, dtype=float))
                 if onp.all(onp.isfinite(full)) and onp.all(
