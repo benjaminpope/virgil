@@ -74,6 +74,19 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **`read_oifits` reads closure triangles whose leg has no visibility
+  row** ([#299](https://github.com/benjaminpope/virgil/issues/299)). A
+  triangle leg stored in no `OI_VIS2`/`OI_VIS` row in either orientation
+  raised a `ValueError`, so MIRC-X files and some ESO phase-3 PIONIER
+  products (which omit a baseline's V²) could not be read. `OI_T3` is
+  self-contained in the OIFITS standard, so such a leg now gets a flagged
+  sample at the T3 row's own coordinates (`(U1COORD, V1COORD)`,
+  `(U2COORD, V2COORD)` or their sum), shared by later triangles of the
+  same frame, as reversed legs already were. One `UserWarning` per file
+  gives the number of legs placed this way. The `ValueError` remains when
+  those coordinates are NaN or zero, or disagree with the triangle's other
+  legs (a table written with the opposite baseline direction).
+
 - **`epoch_positions` no longer commits to a peak before refining it.**
   It refined only the best grid point, which is not always the best peak
   once refined: fringe peaks are often narrower than the grid step, and
