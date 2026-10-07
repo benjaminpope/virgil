@@ -18,8 +18,10 @@ Closure-phase triangles `(a, b, c)` find their baselines `(a, b)`, `(b, c)`
 and `(a, c)` in the visibility table with the same `ARRNAME` and `INSNAME`, or
 else in one of the same array with identical wavelengths (the standard does
 not require T3 and V² tables to share an `INSNAME`; station numbers belong to
-an array, so another `ARRNAME` is never used). A baseline stored reversed is used as the conjugate; a
-baseline stored in neither orientation raises a clear error.
+an array, so another `ARRNAME` is never used). A baseline stored reversed is used as the conjugate. A
+baseline stored in neither orientation (some MIRC-X and ESO phase-3 files omit
+a baseline's V²) is placed at the `OI_T3` row's own `(u, v)` as a flagged
+sample, with one warning per file giving the number of such legs.
 
 ## Functions
 
