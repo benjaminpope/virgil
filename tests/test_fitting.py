@@ -324,6 +324,29 @@ def test_adam_takes_no_time_limit_and_bad_limits_are_rejected():
         fit(START, PRIORS, DATA, time_limit=-1.0)
 
 
+def test_poles_of_isotropic_priors_are_not_prior_bounds():
+    # A face-on inclination is an end of the isotropic prior's flat
+    # coordinate (its CDF), but a pole of the coordinates, not an edge of
+    # the prior: at_bound must not flag it. A Uniform's edge is flagged.
+    from types import SimpleNamespace
+
+    from virgil.fitting import _at_bound
+    from virgil.priors import IsotropicInclination, IsotropicLatitude
+
+    problem = SimpleNamespace(
+        priors={
+            "inc": IsotropicInclination(),
+            "lat": IsotropicLatitude(),
+            "ecc": dist.Uniform(0.0, 0.9),
+        },
+        noise={},
+        flat=True,
+    )
+    values = {"inc": np.asarray(0.5), "lat": np.asarray(89.9), "ecc": 0.4}
+    assert _at_bound(problem, values) == ()
+    assert _at_bound(problem, dict(values, ecc=0.8999)) == ("ecc",)
+
+
 @pytest.mark.filterwarnings("ignore:fit.*did not converge")
 def test_fits_report_parameters_at_a_prior_bound():
     # The data's flux is 0.02, above this prior's upper bound: the fit runs

@@ -1465,7 +1465,9 @@ def start_from_positions(
         ``time_limit`` in seconds per fit, ``progress``). A fit that raises
         an error is recorded in ``OrbitStart.failed``, with a
         ``RuntimeWarning``, and the others go on; one that stops at its
-        ``time_limit`` is kept, unconverged.
+        ``time_limit`` is kept, unconverged. A ``TypeError`` or
+        ``ValueError`` (such as a misspelt option) does not depend on the
+        start, and is raised at once.
 
     Returns
     -------
@@ -1474,7 +1476,7 @@ def start_from_positions(
     Raises
     ------
     RuntimeError
-        If every refinement fit raised an error.
+        If every refinement fit raised an error (chained to the last).
     """
     scales = _check_scales(scales, "start_from_positions")
     positions = epoch_positions(
@@ -1521,9 +1523,12 @@ def start_from_positions(
     chosen = _distinct(ranked, n_refine, 0.5 * ranked.resolution_mas)
     if not chosen:
         raise ValueError("No starting orbit has a finite log likelihood.")
-    fits, failed = [], []
+    fits, failed, error = [], [], None
     for k in chosen:
         # One bad start (a NaN, a solver error) must not lose the others.
+        # TypeError and ValueError are the caller's (a misspelt option,
+        # Adam with a time limit): they do not depend on the start, so
+        # they propagate.
         try:
             result = fit(
                 data.model_fn(model),
@@ -1533,7 +1538,10 @@ def start_from_positions(
                 init=values[ranked.order[k]],
                 **fit_options,
             )
-        except Exception as error:
+        except (TypeError, ValueError):
+            raise
+        except Exception as caught:
+            error = caught
             reason = f"{type(error).__name__}: {error}"
             failed.append((int(k), reason))
             warnings.warn(
@@ -1546,7 +1554,9 @@ def start_from_positions(
         result.info["candidate"] = int(k)
         fits.append(result)
     if not fits:
-        raise RuntimeError(f"Every refinement fit failed: {failed}.")
+        raise RuntimeError(
+            f"Every refinement fit failed: {failed}."
+        ) from error
     fits.sort(key=_loss_order)
     return OrbitStart(
         positions=positions,

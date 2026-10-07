@@ -101,11 +101,16 @@ anything before 1.0 may change between minor versions.
   chunk with its damping reset); `progress` reports steps, loss, gradient
   norm and elapsed time between chunks. `info["stop"]` gives every
   unconverged fit's reason (`"limit"`, `"time"`, `"stalled"`,
-  `"non-finite"`, `"failed"`), a non-finite loss now stops L-BFGS, and
-  `info["at_bound"]` lists parameters that ended at a finite prior
-  bound. `start_from_positions` forwards `time_limit`, keeps going when
-  one refinement fit raises (recorded in `OrbitStart.failed`), sorts
-  non-finite losses last and leaves them out of `modes()`.
+  `"non-finite"`, `"failed"`), a non-finite loss now stops L-BFGS, a fit
+  by any method (Adam included) that ends on a non-finite loss is now
+  marked unconverged, and `info["at_bound"]` lists parameters that ended
+  at a genuine edge of a Uniform, LogUniform or other interval prior
+  (not at the poles of isotropic inclinations or latitudes).
+  `start_from_positions` forwards `time_limit`, keeps going when one
+  refinement fit raises (recorded in `OrbitStart.failed`; a `TypeError`
+  or `ValueError`, such as a misspelt option, still raises at once, and
+  if every fit fails the `RuntimeError` is chained to the last error),
+  sorts non-finite losses last and leaves them out of `modes()`.
 - `orbits.period_grid(times, p_min, p_max, k=9)`: trial periods uniform
   in frequency with δP ≤ P²/(kT) over the baseline T, finer than
   ARMADA's and The Joker's rules; `start_from_positions` warns when its

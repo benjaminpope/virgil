@@ -471,11 +471,13 @@ class FitResult:
         point at the result, in the unconstrained coordinates of the
         convergence test (see ``gtol`` in [`fit`][virgil.fitting.fit]). With fitted error terms, χ² uses the
         inflated errors, and ``values`` holds the terms too. ``stop`` says
-        why an unconverged LM or L-BFGS fit ended (``None`` when it
-        converged, and for Adam): ``"limit"`` (``max_steps``), ``"time"``
+        why an unconverged fit ended (``None`` when it converged, and for
+        an Adam fit with a finite loss, which has no convergence test):
+        ``"limit"`` (``max_steps``), ``"time"``
         (``time_limit``), ``"stalled"`` (an L-BFGS step no longer moved
         the parameters), ``"non-finite"`` (a NaN or infinite loss or
-        gradient) or ``"failed"`` (another LM failure). ``at_bound`` lists
+        gradient; any method ending on a non-finite loss is unconverged)
+        or ``"failed"`` (another LM failure). ``at_bound`` lists
         the parameters and error terms that ended within 1/1000 of their
         prior's range of one of its finite ends, in the coordinate they
         are fitted in: a fit that runs into a prior bound (say an
@@ -837,15 +839,22 @@ _AT_BOUND = 1e-3
 def _bound_fraction(problem, prior, value):
     """Where ``value`` lies in its prior's finite interval, as a fraction.
 
-    In the flat coordinate for a prior that has one (see
-    ``_flat_coordinate``), else in the parameter. ``None`` for priors with
-    an unbounded side, angle vectors and tied terms.
+    Only genuine edges of the support count: a LogUniform's (in log x,
+    the coordinate it is fitted in) and an interval support's, such as a
+    Uniform's. ``None`` for priors with an unbounded side, angle vectors,
+    tied terms and other priors with a flat coordinate: the ends of an
+    isotropic inclination's (face-on) or latitude's (the poles) are poles
+    of the coordinates, not edges of the prior.
     """
     if is_tied(prior) or is_angle_vector(prior):
         return None
-    if problem._in_flat_coordinate(prior):
+    import numpyro.distributions as dist
+
+    if isinstance(_base(prior), dist.LogUniform) and problem.flat:
         to_flat, _, low, high = _flat_coordinate(prior)
         value = to_flat(value)
+    elif _flat_coordinate(prior) is not None:
+        return None
     else:
         support = _base(prior).support
         low = getattr(support, "lower_bound", None)
@@ -1321,7 +1330,13 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
             f"fit(method={method!r}) did not converge: it reached its "
             f"time_limit of {time_limit} s after {steps} steps."
         )
-    if method == "lbfgs" or stop == "non-finite":
+    if stop == "non-finite":
+        return (
+            f"fit(method={method!r}) did not converge: its loss or gradient "
+            f"was not finite (NaN or inf) after {steps} steps; check the "
+            "model and priors for invalid values."
+        )
+    if method == "lbfgs":
         return _lbfgs_not_converged(method, stop, steps, limit, dtype)
     return f"fit(method={method!r}) did not converge in {steps} steps."
 
@@ -1331,12 +1346,6 @@ def _lbfgs_not_converged(method, stop, steps, limit, dtype):
     head = f"fit(method={method!r}) did not converge"
     if stop == "limit":
         return f"{head} in {steps} steps, the step limit; raise max_steps."
-    if stop == "non-finite":
-        return (
-            f"{head}: its loss or gradient was not finite (NaN or inf) "
-            f"after {steps} steps; check the model and priors for invalid "
-            "values."
-        )
     hint = "; dtype='float64' can go further" if dtype == "float32" else ""
     return (
         f"{head}: it stopped after {steps} of {limit} steps, when a step no "
@@ -1370,7 +1379,8 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
         running = count < limit and gradient > tolerance and bool(moved)
         if not (running and math.isfinite(value)):
             break
-        if budget.check(count, lambda: (value * float(scale), gradient)):
+        z = carry[1]
+        if budget.check(count, lambda: _loss_and_gradient(problem, z, scale)):
             stop = "time"
             break
         carry = _lbfgs_resume(
