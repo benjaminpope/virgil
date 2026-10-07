@@ -44,7 +44,6 @@ from .likelihood import (
 
 __all__ = [
     "absil_limits",
-    "chi2ppf",
     "delta_mag_to_flux",
     "contrast_to_flux",
     "flux_to_contrast",

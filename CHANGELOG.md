@@ -97,8 +97,10 @@ anything before 1.0 may change between minor versions.
   inverts `jax.scipy.special.gammainc` by Halley's method for every `df`,
   matching `scipy.stats.chi2.ppf` to about 1e-14 relative in float64
   for p in [1e-10, 1 - 1e-10], and stays differentiable and `jit`-able.
-  `df = 1` also uses it, gaining precision at small p. Found by
-  virgil-validation (F17).
+  `df = 1` also uses it, gaining precision at small p. It returns NaN
+  for `df <= 0`, and no longer needs `tensorflow_probability`. This
+  supersedes the removal of `chi2ppf` in #293, which is reverted. Found
+  by virgil-validation (F17).
 
 ### Added
 
