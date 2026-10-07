@@ -444,6 +444,7 @@ def _log_integral(log_f, lo, hi, guess):
     log space. The window does not carry gradients: its edges are where
     the integrand is ~exp(-depth) of its peak, or the fixed bounds.
     """
+    guess = jax.lax.stop_gradient(guess)
     dtype = guess.dtype
     depth = -onp.log(float(np.finfo(dtype).eps)) + 10.0
     lo = np.asarray(lo, dtype)

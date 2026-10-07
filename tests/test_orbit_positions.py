@@ -259,6 +259,54 @@ def test_bounded_marginal_is_the_incomplete_gamma_integral(
     assert got == pytest.approx(want, abs=1e-6)
 
 
+def _bounded_surface(nu, s_max):
+    from virgil.epochs import _Surface
+
+    surface = _Surface.__new__(_Surface)
+    surface.blocks = (("v2", 0, 1, nu, False),)
+    surface.nu = onp.array([nu], dtype=float)
+    surface.s_max = s_max
+    return surface
+
+
+@pytest.mark.parametrize(
+    "chi2, nu, dof, s_max",
+    [
+        (1787.0, 60, 1.0, 1.2),
+        (15.0, 60, 1.0, 1.2),
+        (60.0, 60, 1.0, 10.0),
+        (66.0, 60, 0.5, 1.2),
+    ],
+)
+def test_bounded_marginal_gradient_matches_finite_difference(
+    chi2, nu, dof, s_max
+):
+    # The integration window is detached, so d score / d chi2 is that of the
+    # integrand alone and equals the derivative of the closed form.
+    surface = _bounded_surface(nu, s_max)
+    with jax.enable_x64(True):
+        grad = float(
+            jax.grad(lambda c: surface.score(c, dof, None))(
+                jnp.asarray([chi2])
+            )[0]
+        )
+    h = 1e-4 * chi2
+    fd = (
+        _bounded_gaussian_marginal(chi2 + h, nu, dof, s_max)
+        - _bounded_gaussian_marginal(chi2 - h, nu, dof, s_max)
+    ) / (2.0 * h)
+    assert grad == pytest.approx(fd, rel=1e-5)
+
+
+def test_bounded_marginal_steep_edge_in_float32():
+    chi2, nu, dof, s_max = 1787.0, 60, 1.0, 1.2
+    surface = _bounded_surface(nu, s_max)
+    got = float(surface.score(jnp.asarray([chi2], jnp.float32), dof, None))
+    want = _bounded_gaussian_marginal(chi2, nu, dof, s_max)
+    print(f"float32 steep-edge error: {got - want:.3e} on {want:.3f}")
+    assert got == pytest.approx(want, rel=1e-3)
+
+
 @pytest.mark.parametrize("s_max", [1.2, 10.0])
 def test_bounded_von_mises_marginal_matches_quad(s_max):
     from scipy import integrate, special
