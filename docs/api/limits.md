@@ -14,5 +14,6 @@ Contrast limits, significance, and conversions between flux ratios
         - ruffio_upperlimit
         - absil_limits
         - injection_limits
+        - chi2ppf
         - nsigma
         - radial_profile

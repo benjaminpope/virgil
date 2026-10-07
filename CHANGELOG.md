@@ -72,14 +72,6 @@ anything before 1.0 may change between minor versions.
   ranking. The default stays `"quoted"` in 0.4, with a `FutureWarning`
   when `scales` is not given; it will become `"marginal"`.
 
-### Removed
-
-- **`limits.chi2ppf` (#43).** Nothing in virgil used it, and its df ≠ 1
-  path needed an inverse incomplete gamma function, which JAX does not
-  provide. The Absil test never needs one: `nsigma` takes the upper tail
-  with `gammaincc` and `ndtri`, and `absil_limits` bisects in flux. To
-  turn a χ² into a significance, use `nsigma`.
-
 ### Fixed
 
 - **`epoch_positions` no longer commits to a peak before refining it.**
@@ -125,6 +117,16 @@ anything before 1.0 may change between minor versions.
 - The `lawson_sigma_over_peak` docstring now states that both images are
   normalised over the whole array, so flux in empty sky does affect σ.
   Values are unchanged.
+- `limits.chi2ppf` works for any number of degrees of freedom on a
+  standard install. For `df != 1` it called numpyro's `gammaincinv`,
+  which needs `tensorflow_probability`, not a virgil dependency; it now
+  inverts `jax.scipy.special.gammainc` by Halley's method for every `df`,
+  matching `scipy.stats.chi2.ppf` to about 1e-14 relative in float64
+  for p in [1e-10, 1 - 1e-10], and stays differentiable and `jit`-able.
+  `df = 1` also uses it, gaining precision at small p. It returns NaN
+  for `df <= 0`, and no longer needs `tensorflow_probability`. This
+  supersedes the removal of `chi2ppf` in #293, which is reverted. Found
+  by virgil-validation (F17).
 - `epochs.marginal_loglike(..., s_max=...)` (and `scales="marginal"` in
   `epoch_positions` and `rank_orbits` with `s_max`) integrates each
   block's error scale adaptively in ln s instead of on a fixed 257-node
