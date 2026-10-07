@@ -59,6 +59,7 @@ nav:
       - "Spectro-interferometric observables": spectro_observables.md
   - Binaries:
       - "Binary search": binary_search.md
+      - "Variational inference": variational_inference.md
       - "Contrast limits": contrast_limits.md
       - "Detection ROC curves": detection_roc.md
       - "Hierarchical inference across filters": hierarchical_inference.md
@@ -98,6 +99,7 @@ nav:
       - Linear marginalisation (internal): api/linear.md
       - Observables: api/observables.md
       - Fitting: api/fitting.md
+      - SVI: api/svi.md
       - Angles: api/angles.md
       - Imaging: api/imaging.md
       - Inference: api/inference.md

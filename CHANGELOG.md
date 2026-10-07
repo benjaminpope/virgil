@@ -158,6 +158,18 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Variational inference** (virgil#12). `virgil.svi.variational(model,
+  priors, data, ..., start=fit_result)` fits a guide to `numpyro_model`'s
+  posterior with numpyro's SVI and returns a `VariationalResult`: draws in
+  the model's parameters under NUTS's site names, the loss history, the
+  guide and its parameters, a convergence flag and the PSIS k̂. Every guide
+  starts at the Laplace approximation (the fit and its Gauss–Newton
+  covariance) and learns in units of its widths. The default is a block
+  neural autoregressive flow (`"bnaf"`), which follows curved, skewed and
+  bounded posteriors; `"iaf"`, `"mvn"` (a Gaussian, ≈ Laplace) and
+  `"laplace"` are the alternatives. float64 by default, as for `fit`;
+  `flat_coordinates` is passed through. New page: Variational inference.
+
 - **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and
   L-BFGS run in chunks of steps, check the wall clock between them and
   stop, unconverged, with `info["stop"] == "time"` (L-BFGS carries its
