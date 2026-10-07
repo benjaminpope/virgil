@@ -1371,13 +1371,16 @@ figures, to be replaced by measurements (§9.1).
 | §9.1 "Candidate scoring", "Search" | timed on the exact scorer and polishing (§14.5) |
 | §9.3 A11, A13 | A11 tests the map cache only when it is used; A13 tests sample-time evaluation, not the snapshot flag |
 
-**Decisions** (Ben, 2026-10-07; 2 and 3 still open):
+**Decisions** (Ben, 2026-10-07; 3 still open):
 
 1. **Shared flux** (and chromatic slope): integrated out wherever
    possible (marginal), **and** the fitted (profiled) value with its
    uncertainty is reported as an output.
-2. *Open:* is the bootstrap calibration of Δ_keep, Δ_mode and ν_eff
-   mandatory for a run to count as unattended?
+2. **Bootstrap calibration is mandatory for unattended runs.** A run
+   counts as unattended only if Δ_keep, Δ_mode and ν_eff were
+   calibrated by the grouped bootstrap, cached per dataset (the
+   correlations differ by night). Without it, the result is flagged
+   "needs review".
 3. *Open:* work-unit budgets only, with wall-clock time as a flagged
    kill?
 4. **No distance or mass prior required.** With neither and no explicit
