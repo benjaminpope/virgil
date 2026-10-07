@@ -584,6 +584,39 @@ def test_missing_baseline_in_every_orientation_is_reported():
     assert onp.count_nonzero(record["i_cps1"] == len(PAIRS)) == 1
 
 
+COORDS = ("U1COORD", "V1COORD", "U2COORD", "V2COORD")
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        (lambda t3: t3.__setitem__("U1COORD", onp.nan), "NaN or zero"),
+        (
+            lambda t3: [t3.__setitem__(n, 0.0) for n in COORDS],
+            "NaN or zero",
+        ),
+        (
+            lambda t3: [t3.__setitem__(n, -t3[n]) for n in COORDS],
+            "opposite baseline direction",
+        ),
+    ],
+    ids=["nan", "zero", "mirrored"],
+)
+def test_unusable_t3_coordinates_for_a_missing_leg_raise(change, match):
+    # Placing a leg at coordinates that are NaN, zero or mirrored would give
+    # NaN or a wrong closure-phase geometry silently.
+    hdul = _t3_under_other_insname((4.8e-6,))
+    vis2 = hdul["OI_VIS2"].data
+    row = onp.flatnonzero((vis2["STA_INDEX"] == (1, 3)).all(axis=1))[0]
+    vis2["STA_INDEX"][row] = (2, 4)  # (1, 3) is now in no visibility row
+    t3 = hdul["OI_T3"].data
+    t3 = t3[onp.all(t3["STA_INDEX"] == (1, 2, 3), axis=1)]
+    hdul["OI_T3"].data = t3
+    change(t3)
+    with pytest.raises(ValueError, match=match):
+        read_oifits(hdul)
+
+
 def _without_v2_of(pair, waves):
     """The complete file, and copies with ``pair``'s V² removed or flagged."""
     from virgil.oifits import build_hdulist

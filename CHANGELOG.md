@@ -83,7 +83,9 @@ anything before 1.0 may change between minor versions.
   sample at the T3 row's own coordinates (`(U1COORD, V1COORD)`,
   `(U2COORD, V2COORD)` or their sum), shared by later triangles of the
   same frame, as reversed legs already were. One `UserWarning` per file
-  gives the number of legs placed this way.
+  gives the number of legs placed this way. The `ValueError` remains when
+  those coordinates are NaN or zero, or disagree with the triangle's other
+  legs (a table written with the opposite baseline direction).
 
 - **`epoch_positions` no longer commits to a peak before refining it.**
   It refined only the best grid point, which is not always the best peak

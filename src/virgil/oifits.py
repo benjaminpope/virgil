@@ -677,6 +677,40 @@ def _baselines_from_triangles(tables, wavelengths, target_id):
     return record, lookup
 
 
+def _check_t3_coordinates(legs_uv, founds, record, k, ins, triangle, mjd):
+    """Refuse T3 coordinates that cannot place leg ``k`` of a triangle.
+
+    The coordinates must be finite and non-zero (older AMI and legacy
+    writers leave ``U1COORD``..``V2COORD`` as NaN or 0), and must agree with
+    the legs of the triangle that do have a visibility row: a T3 table
+    written with the opposite baseline direction would otherwise fit a
+    mirrored closure phase.
+    """
+    uu, vv = legs_uv[k]
+    where = (
+        f"Closure-phase triangle {tuple(int(x) for x in triangle)} (INSNAME "
+        f"{ins[1]!r}, ARRNAME {ins[0]!r}, MJD {mjd})"
+    )
+    if not (onp.isfinite(uu) and onp.isfinite(vv)) or (uu == 0 and vv == 0):
+        raise ValueError(
+            f"{where} has a leg with no visibility row, and its OI_T3 "
+            f"coordinates ({uu}, {vv}) are NaN or zero, so the leg cannot "
+            "be placed."
+        )
+    for j, found in enumerate(founds):
+        if j == k or found is None or found[0] >= record["u"].size:
+            continue
+        ut, vt = legs_uv[j]
+        us, vs = record["u"][found[0]], record["v"][found[0]]
+        if onp.hypot(us - ut, vs - vt) > 0.1 * max(onp.hypot(us, vs), 1.0):
+            raise ValueError(
+                f"{where} has a leg with no visibility row, and its OI_T3 "
+                f"coordinates disagree with the visibility table for leg "
+                f"{j + 1}: ({ut}, {vt}) against ({us}, {vs}). The table may "
+                "use the opposite baseline direction."
+            )
+
+
 def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
     """Closure phases, with the sample index of each triangle leg.
 
@@ -714,12 +748,15 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
         coords = None  # the legs' (u, v), read only if a leg is unmatched
         for row, (a, b, c) in enumerate(sta_index):
             starts = []
-            for k, (leg, pair) in enumerate(
-                zip(i_cps, ((a, b), (b, c), (a, c)))
-            ):
+            pairs = ((a, b), (b, c), (a, c))
+            founds = []
+            for pair in pairs:
                 found = lookup.find(ins, pair, mjd[row], wave, time[row])
                 if found is not None and found[1] != nwave:
                     found = None
+                founds.append(found)
+            for k, (leg, pair) in enumerate(zip(i_cps, pairs)):
+                found = founds[k]
                 if found is None:
                     reverse = lookup.find(
                         ins, pair[::-1], mjd[row], wave, time[row]
@@ -737,11 +774,11 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
                             )
                         ]
                     u1, v1, u2, v2 = (x[row] for x in coords)
-                    uu, vv = (
-                        (u1, v1),
-                        (u2, v2),
-                        (u1 + u2, v1 + v2),
-                    )[k]
+                    legs_uv = ((u1, v1), (u2, v2), (u1 + u2, v1 + v2))
+                    uu, vv = legs_uv[k]
+                    _check_t3_coordinates(
+                        legs_uv, founds, record, k, ins, (a, b, c), mjd[row]
+                    )
                     lookup.add(
                         ins,
                         pair,
