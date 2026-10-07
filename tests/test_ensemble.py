@@ -76,28 +76,58 @@ def test_selection_drops_a_member_that_fits_badly():
     assert 1 <= len(result.kept) <= 3
 
 
-def test_selection_drops_a_diverged_member_without_rejecting_the_rest():
-    group = _group(0, [_scene(38.0), _scene(42.0), _scene(40.0)])
-    # The second-strongest weight is the corner, so both of the first two
-    # members are live; one fit diverged to a NaN chi2.
-    results = list(group.curve.results)
-    info = dict(results[0].info, chi2=[float("nan")] * len(DATASETS))
-    results[0] = FitResult(results[0].model, {}, info)
-    chi2_red = onp.array(group.curve.chi2_red)
-    chi2_red[0] = onp.nan
-    curve = LCurve(
-        group.curve.weights,
-        group.curve.chi2,
-        chi2_red,
-        group.curve.penalty,
-        results,
+def _sweep(models, weights, penalty, diverged=()):
+    """A Group of ready-made fits; the ``diverged`` ones have a NaN chi2."""
+    results = []
+    for k, model in enumerate(models):
+        chi2 = _chi2(model, DATASETS)
+        if k in diverged:
+            chi2 = [float("nan")] * len(DATASETS)
+        ndata = [d.n_independent for d in DATASETS]
+        results.append(FitResult(model, {}, {"chi2": chi2, "ndata": ndata}))
+    # As in l_curve: the total chi2 of a diverged fit is NaN too.
+    total = onp.array([sum(r.info["chi2"]) for r in results])
+    red = onp.array(
+        [
+            [c / n for c, n in zip(r.info["chi2"], r.info["ndata"])]
+            for r in results
+        ]
     )
-    result = combine(DATASETS, [Group(group.draw, curve)])
-    assert result.members[0].reason == "chi2"
+    weights = onp.asarray(weights, dtype=float)
+    curve = LCurve(weights, total, red, onp.asarray(penalty), results)
+    return Group(Draw(0, "tsv", NPIX, SCALE, "flat", tuple(weights)), curve)
+
+
+def test_a_diverged_member_is_dropped_and_does_not_move_the_corner():
+    sigmas = [37.0, 38.0, 40.0, 44.0, 52.0, 64.0]
+    models = [_scene(s) for s in sigmas]
+    weights = [1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
+    penalty = [1.0, 1.1, 1.4, 2.5, 6.0, 20.0]
+    spec = EnsembleSpec(window_dex=2, chi2_ratio=1e9, mean_rtol=1e9)
+
+    # The fit at weight 1e5 diverged: the same sweep without it is the
+    # reference for where the corner and the window should be.
+    diverged = _sweep(models, weights, penalty, diverged=(0,))
+    keep = [1, 2, 3, 4, 5]
+    reference = _sweep(
+        [models[i] for i in keep],
+        [weights[i] for i in keep],
+        [penalty[i] for i in keep],
+    )
+    corner = reference.curve.corner()
+    assert diverged.curve.corner() == corner
+
+    result = combine(DATASETS, [diverged], spec=spec)
+    expected = combine(DATASETS, [reference], spec=spec)
+    assert corner == 1e3
+    assert result.members[0].reason == "diverged"
+    assert not result.members[0].kept
+    windowed = {m.weight for m in result.members if m.reason == "window"}
+    assert windowed == {
+        m.weight for m in expected.members if m.reason == "window"
+    }
     assert result.kept
-    assert all(
-        onp.isfinite(m.chi2_red).all() for m in result.members if m.kept
-    )
+    assert all(onp.isfinite(m.chi2_red).all() for m in result.kept)
 
 
 def test_iterative_mean_never_raises_any_datasets_chi2():

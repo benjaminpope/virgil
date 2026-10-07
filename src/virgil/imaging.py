@@ -1627,16 +1627,22 @@ class LCurve:
         the corner is the interior point of largest curvature (Hansen &
         O'Leary 1993). Check it by eye: the curvature of a sparse or noisy
         sweep is itself noisy, and a smooth curve has no clear corner.
+        A fit that diverged (a non-finite χ² or penalty) is left out, so
+        that its NaN cannot spread to the curvature of its neighbours.
         """
-        t = np.log(self.weights)
-        x, y = np.log(self.chi2), np.log(self.penalty)
+        weights = onp.asarray(self.weights)
+        chi2, penalty = onp.asarray(self.chi2), onp.asarray(self.penalty)
+        ok = onp.isfinite(chi2) & onp.isfinite(penalty)
+        weights, chi2, penalty = weights[ok], chi2[ok], penalty[ok]
+        t = np.log(weights)
+        x, y = np.log(chi2), np.log(penalty)
         if t.size < 3:
             raise ValueError("The sweep needs at least three weights.")
         dx, dy = np.gradient(x, t), np.gradient(y, t)
         ddx, ddy = np.gradient(dx, t), np.gradient(dy, t)
         curvature = (dx * ddy - ddx * dy) / (dx**2 + dy**2) ** 1.5
         # The end points have one-sided derivatives; leave them out.
-        return float(self.weights[1 + int(np.argmax(np.abs(curvature[1:-1])))])
+        return float(weights[1 + int(np.argmax(np.abs(curvature[1:-1])))])
 
     def discrepancy(self, target=1.0):
         """The weight at which χ² per data point reaches ``target``.
