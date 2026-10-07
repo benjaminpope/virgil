@@ -152,7 +152,11 @@ anything before 1.0 may change between minor versions.
   drop or the prior's bound, then integrate it, so the marginal is within
   0.05 nat of brute-force quadrature wherever the peak falls (a coarse-grid
   fallback is flagged in `OrbitScores.fallback`). Each dataset's error scales are
-  marginalized as in `marginal_loglike`. Gains (`OIData.with_gains`) and
+  marginalized as in `marginal_loglike`, bounded by default to
+  [1/5, 5] (`s_max=5`; `s_max=None` for the unbounded closed form). The
+  scale each dataset needs at the profiled flux is reported in
+  `OrbitScores.scale`, and `OrbitScores.scale_at_bound` flags candidates
+  whose scale posterior presses against `s_max`. Gains (`OIData.with_gains`) and
   closure-phase offsets (`OIData.with_closure_offsets`), which
   `marginal_loglike` refuses, are profiled analytically, at one degree of
   freedom each. `RVData`/`PositionData` terms or callables are added.

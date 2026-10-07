@@ -154,6 +154,15 @@ class OrbitScores:
     terms : numpy.ndarray
         ``(n, n_terms)``: each extra term's log likelihood (included in
         ``score``).
+    scale : numpy.ndarray
+        ``(n, n_dataset)``: each dataset's largest block error scale
+        ŝ = √(χ²/ν) at the profiled flux (and slope), on the quoted errors.
+    scale_at_bound : numpy.ndarray
+        ``(n, n_dataset)`` bool: a block's scale posterior presses against
+        ``s_max`` (ŝ within one posterior width in ln s, 1/√(2 dof ν), of
+        the bound), so its score is penalized by the bound: the candidate
+        needs errors inflated past ``s_max`` there. Always False with
+        ``s_max=None``.
     bands : tuple
         The band names, in column order; ``reference`` is the one whose
         flux is at most 1.
@@ -174,6 +183,8 @@ class OrbitScores:
     slope_at_edge: onp.ndarray
     fallback: onp.ndarray
     terms: onp.ndarray
+    scale: onp.ndarray
+    scale_at_bound: onp.ndarray
     bands: tuple
     reference: object
     cost: int
@@ -880,6 +891,24 @@ def _fixed_parts(epochs, model, stacked, n, dtype):
     return parts
 
 
+def _peak_scales(scorers, chi2_peak, dofs, s_max):
+    """Each dataset's largest block scale ŝ = √(χ²/ν) at the profiled
+    flux, ``(n, n_dataset)``, and whether its posterior presses against
+    ``s_max``: ŝ is within one posterior width in ln s, 1/√(2 dof ν), of
+    the bound (always False without ``s_max``)."""
+    scale, at_bound = [], []
+    for scorer, chi2, dof in zip(scorers, chi2_peak, dofs):
+        nu = scorer.surface.nu
+        s_hat = onp.sqrt(onp.asarray(chi2, float) / nu)
+        scale.append(s_hat.max(axis=1))
+        if s_max is None:
+            at_bound.append(onp.zeros(len(s_hat), bool))
+        else:
+            reach = s_hat * onp.exp(1.0 / onp.sqrt(2.0 * dof * nu))
+            at_bound.append(onp.any(reach >= float(s_max), axis=1))
+    return onp.stack(scale, axis=1), onp.stack(at_bound, axis=1)
+
+
 def score_orbits(
     epochs,
     model,
@@ -889,7 +918,7 @@ def score_orbits(
     terms=(),
     scales="marginal",
     dof=1.0,
-    s_max=None,
+    s_max=5.0,
     batch_size=None,
     max_evaluations=None,
     dtype="float64",
@@ -960,12 +989,15 @@ def score_orbits(
         The effective-dof fraction (one number, or a dict keyed by dataset
         or epoch name) and the bound on the scales, as for
         ``marginal_loglike`` (each block's likelihood integrated over
-        ln s in [-ln s_max, ln s_max]). With ``s_max=None`` (the default)
-        a block's -(ν/2) ln χ² is unbounded as χ² → 0: a block with few
-        degrees of freedom (one triangle's closure phases, say) that a
-        flux or slope fits almost exactly makes a narrow spike in the
-        score, which can dominate the profile (``profiled``, ``flux``,
-        ``slope``) though it adds little to the marginal. A finite
+        ln s in [-ln s_max, ln s_max], log-uniform). The default
+        ``s_max=5`` leaves about twice the error inflation of typical
+        interferometric data: a candidate that needs more than that on some
+        dataset is penalized, and flagged in ``OrbitScores.scale_at_bound``.
+        The bound also keeps the score finite: with ``s_max=None`` a block's
+        -(ν/2) ln χ² is unbounded as χ² → 0, so a block with few degrees of
+        freedom (one triangle's closure phases, say) that a flux or slope
+        fits almost exactly makes a narrow spike in the score, which can
+        dominate the profile (``profiled``, ``flux``, ``slope``). A finite
         ``s_max`` bounds each block's gain at about ν ln s_max.
     batch_size : int, optional
         Candidates evaluated together by ``jax.lax.map`` (default: all).
@@ -1053,6 +1085,7 @@ def score_orbits(
                         _cvis_at_times(epochs, k, plain, scene) * t1 - a
                     )
                 marginals, best, summaries = [], [], []
+                chi2_peak = [None] * len(plains)
                 for band, (log_flux, slope) in zip(bands, grids):
 
                     def at(lf, beta, band=band):
@@ -1072,6 +1105,13 @@ def score_orbits(
 
                     scores = jax.vmap(at)(log_flux, slope)
                     m, top, summary = _band_marginal(band, shared, at, scores)
+                    for k in band.datasets:
+                        a, t0, dt = fixed[k]
+                        f = summary[0] * np.exp(summary[3] * log_ratio[k])
+                        cvis = (a + f * b_parts[k]) / (t0 + f * dt)
+                        chi2_peak[k] = scorers[k].chi2(
+                            cvis, plains[k], gains[k], offsets[k]
+                        )
                     marginals.append(m)
                     best.append(top)
                     summaries.append(summary)
@@ -1090,12 +1130,15 @@ def score_orbits(
                     np.where(np.isfinite(profiled), profiled, -np.inf),
                     *columns,
                     extra,
+                    tuple(chi2_peak),
                 )
 
             return jax.lax.map(one, stacked, batch_size=batch_size)
 
         out = every(*args)
-    out = [onp.asarray(x) for x in out]
+    chi2_peak = out[-1]
+    out = [onp.asarray(x) for x in out[:-1]]
+    scale, scale_at_bound = _peak_scales(scorers, chi2_peak, dofs, s_max)
     (score, profiled, flux, flux_err, f_edge, slope, slope_err, b_edge,
      fallback) = out[:9]  # fmt: skip
     return OrbitScores(
@@ -1109,6 +1152,8 @@ def score_orbits(
         slope_at_edge=b_edge.astype(bool),
         fallback=fallback.astype(bool),
         terms=out[9][:, : len(term_fns)].astype(float),
+        scale=scale,
+        scale_at_bound=scale_at_bound,
         bands=tuple(b.name for b in bands),
         reference=reference,
         cost=int(cost),

@@ -1406,6 +1406,15 @@ figures, to be replaced by measurements (§9.1).
 6. **Single epochs are "position only"** in this design. Joint
    single-epoch fits with RVs or Gaia astrometry come later; A26 tests
    position recovery only until then.
+7. **Scale bound s_max = 5 by default** (Ben, 2026-10-08). Each block's
+   error scale s is log-uniform on [1/s_max, s_max] and integrated out.
+   Typical calibrated interferometric data need s ≈ 1–3, so 5 leaves
+   about twice that headroom. A candidate whose scale posterior presses
+   against the bound (ŝ within one posterior width in ln s,
+   1/√(2 ν_eff), of s_max) is flagged per dataset and penalized by the
+   bound: a mode that only fits with errors inflated four- or five-fold
+   is meant to lose to one that fits the quoted errors. The bound also
+   removes the unbounded −(ν/2) ln χ² spike of small-ν blocks.
 
 ### 14.7 Staging, revised
 

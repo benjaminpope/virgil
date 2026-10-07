@@ -100,7 +100,11 @@ def _summed_marginal(epochs, orbit, flux):
 def test_equals_summed_marginal_loglike_at_fixed_flux():
     epochs = _epochs()
     scores = score_orbits(
-        epochs, OrbitalBinary, [TRUTH, OTHER], shared=SharedFlux([0.4])
+        epochs,
+        OrbitalBinary,
+        [TRUTH, OTHER],
+        shared=SharedFlux([0.4]),
+        s_max=None,
     )
     for k, orbit in enumerate((TRUTH, OTHER)):
         expect = _summed_marginal(epochs, orbit, 0.4)
@@ -120,7 +124,9 @@ def test_several_times_per_epoch_equal_the_split_with_a_tied_scale():
     fast = KeplerOrbit(3.0, 0.4, 0.1, 40.0, 30.0, 70.0, 6.0, t_ref=T_REF)
     night = _night(fast, 0.4, T_REF, seed=7, hours=(-2.0, 0.0, 2.0))
     epochs = Epochs({"night": night})
-    got = score_orbits(epochs, OrbitalBinary, [fast], shared=SharedFlux([0.4]))
+    got = score_orbits(
+        epochs, OrbitalBinary, [fast], shared=SharedFlux([0.4]), s_max=None
+    )
     parts = night.split_by_epoch(gap_days=0.01)
     assert len(parts) == 3
     chi2 = onp.zeros(2)
@@ -186,7 +192,9 @@ def _log_mean_exp(values, x, axis=-1):
 @pytest.mark.parametrize("dtype", ["float64", "float32"])
 def test_flux_marginal_matches_quadrature_wherever_the_peak_falls(flux, dtype):
     epochs = _epochs(flux=flux, sigma_v2=0.1, sigma_cp_deg=10.0)
-    scores = score_orbits(epochs, OrbitalBinary, [TRUTH], dtype=dtype)
+    scores = score_orbits(
+        epochs, OrbitalBinary, [TRUTH], dtype=dtype, s_max=None
+    )
     log_f = onp.linspace(onp.log(1e-3), 0.0, 20001)
     values = _brute(epochs, TRUTH, log_f)[:, 0]
     assert scores.score[0] == pytest.approx(
@@ -206,7 +214,7 @@ def test_flux_marginal_near_the_reference_bound(flux):
     # f <= 1 in the reference band: a peak just inside the bound, and one
     # beyond it (the profile then sits on the bound with a slope).
     epochs = _epochs(flux=flux, sigma_v2=0.1, sigma_cp_deg=10.0)
-    scores = score_orbits(epochs, OrbitalBinary, [TRUTH])
+    scores = score_orbits(epochs, OrbitalBinary, [TRUTH], s_max=None)
     log_f = onp.linspace(onp.log(1e-3), 0.0, 20001)
     values = _brute(epochs, TRUTH, log_f)[:, 0]
     assert scores.score[0] == pytest.approx(
@@ -221,7 +229,9 @@ def test_flux_marginal_when_the_prior_dominates():
     # ln f over most of the prior.
     epochs = _epochs(flux=0.003, sigma_v2=0.3, sigma_cp_deg=30.0)
     for dtype in ("float64", "float32"):
-        scores = score_orbits(epochs, OrbitalBinary, [TRUTH], dtype=dtype)
+        scores = score_orbits(
+            epochs, OrbitalBinary, [TRUTH], dtype=dtype, s_max=None
+        )
         log_f = onp.linspace(onp.log(1e-3), 0.0, 20001)
         values = _brute(epochs, TRUTH, log_f)[:, 0]
         assert values.max() - values.min() > 1.0  # not exactly flat
@@ -234,7 +244,9 @@ def test_flux_and_slope_marginal_matches_quadrature():
     epochs = _epochs(flux=0.33, sigma_v2=0.1, sigma_cp_deg=10.0)
     wavel0 = 2.2e-6
     shared = SharedFlux(slope=(-3.0, 3.0, 7), wavel0=wavel0)
-    scores = score_orbits(epochs, OrbitalBinary, [TRUTH], shared=shared)
+    scores = score_orbits(
+        epochs, OrbitalBinary, [TRUTH], shared=shared, s_max=None
+    )
     # Brute force about the peak; the rest of the prior is negligible.
     lf0 = onp.log(scores.flux[0, 0])
     log_f = onp.linspace(lf0 - 0.8, min(lf0 + 0.8, 0.0), 1601)
@@ -413,7 +425,9 @@ def test_s_max_bounds_a_small_dof_block_driven_to_zero_chi2():
     exact = exact.set("phi", onp.asarray(model.phi))
     epochs = Epochs({"n0": exact, "n1": _night(TRUTH, 0.4, NIGHTS[1], 1)})
     shared = SharedFlux([0.4])
-    free = score_orbits(epochs, OrbitalBinary, [TRUTH], shared=shared)
+    free = score_orbits(
+        epochs, OrbitalBinary, [TRUTH], shared=shared, s_max=None
+    )
     s_max = 10.0
     bounded = score_orbits(
         epochs, OrbitalBinary, [TRUTH], shared=shared, s_max=s_max
@@ -465,7 +479,7 @@ def test_profiled_gain_matches_a_fitted_v2_scale():
     with pytest.raises(NotImplementedError):
         marginal_loglike(BinaryModelCartesian(1.0, 1.0, 0.4), gained.data[0])
     got = score_orbits(
-        gained, OrbitalBinary, [TRUTH], shared=SharedFlux([0.4])
+        gained, OrbitalBinary, [TRUTH], shared=SharedFlux([0.4]), s_max=None
     )
     expect = 0.0
     with jax.enable_x64(True):
@@ -486,7 +500,7 @@ def test_profiled_gain_matches_a_fitted_v2_scale():
             expect += -0.5 * (r.size - n_vis) * onp.log(chi2_phi)
     assert got.score[0] == pytest.approx(expect, rel=1e-8)
     plain = score_orbits(
-        epochs, OrbitalBinary, [TRUTH], shared=SharedFlux([0.4])
+        epochs, OrbitalBinary, [TRUTH], shared=SharedFlux([0.4]), s_max=None
     )
     assert got.score[0] > plain.score[0]
 
@@ -534,3 +548,25 @@ def test_refuses_a_model_whose_companion_free_scene_moves():
 
     with pytest.raises(ValueError, match="must not depend on the orbit"):
         score_orbits(epochs, moving, [TRUTH, OTHER])
+
+
+def test_scale_at_bound_flags_a_candidate_that_needs_inflated_errors():
+    # The truth fits the quoted errors (ŝ ≈ 1); the wrong orbit needs its
+    # errors inflated by ŝ. With s_max between the two, only the wrong
+    # orbit's scale posterior presses against the bound.
+    epochs = _epochs()
+    shared = SharedFlux([0.4])
+    free = score_orbits(
+        epochs, OrbitalBinary, [TRUTH, OTHER], shared=shared, s_max=None
+    )
+    assert not free.scale_at_bound.any()
+    truth, wrong = free.scale.max(axis=1)
+    assert 0.7 < truth < 1.4
+    assert wrong > 2.0 * truth
+    s_max = onp.sqrt(truth * wrong)
+    bounded = score_orbits(
+        epochs, OrbitalBinary, [TRUTH, OTHER], shared=shared, s_max=s_max
+    )
+    assert bounded.scale == pytest.approx(free.scale)
+    assert not bounded.scale_at_bound[0].any()
+    assert bounded.scale_at_bound[1].any()
