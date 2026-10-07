@@ -1309,9 +1309,13 @@ sizes, the search domain, the platform or the precision.
 
 ### 14.5 Cost, re-estimated
 
-Exact scoring costs, per candidate, (visibilities) × (epochs) × (grid
-nuisance points) evaluations of g. With 10⁴ visibilities, 10 epochs and
-16 flux points, that is about 10⁶ per candidate.
+Exact scoring costs, per candidate, (visibilities) × (epochs)
+evaluations of g, the complex exponential, plus (visibilities) ×
+(epochs) × (grid nuisance points) multiply-adds for the flux grid, which
+is cheap arithmetic on g (§14.2.1). With 10⁴ visibilities per epoch, 10
+epochs and 16 flux points, that is 10⁵ g evaluations and 1.6 × 10⁶
+multiply-adds per candidate; the figures below count the latter, as the
+larger.
 * **Scoring** happens before suppression (§14.2.7), on every grid point.
   After Kepler coupling, 10⁶ grid candidates cost about 10¹²
   evaluations: minutes on an A100, hours on a CPU node.
@@ -1342,6 +1346,14 @@ figures, to be replaced by measurements (§9.1).
 | §10 | `epoch_maps` optional; `tie_flux=None` replaced by shared nuisances by default |
 | §11 | `starting_orbits` is no longer "the K = 1 case of TI-EM"; it is the inner solve of the anchor-pair generator |
 | §12 PR C/D tests, "Later: tied flux" | replaced by §14.7 |
+| §2 A10 | requirements on maps hold only where the optional map cache is used |
+| §3.3, §5.3 item 3 | nested sampling on the map surrogate is no longer the independent weight check; the check is NS (or Laplace) on the exact score |
+| §4 step 4 | the map–visibility check applies only with the map cache; otherwise scoring is already on the visibilities |
+| §5.1 | per-epoch flips are not searched separately: positions come from whole orbits, and the (Ω, ω) flip is folded per §14.2.3 |
+| §6, first bullet | maps are not kept independent per epoch by default; the shared nuisances couple the epochs |
+| §7.1 Snapshot and Refinement rows; §7.2 "within-night motion", "map too coarse" | positions are always evaluated at sample times (§14.2.4), so the snapshot flag and the map-resolution warning apply only to the map cache |
+| §9.1 "Candidate scoring", "Search" | timed on the exact scorer and polishing (§14.5) |
+| §9.3 A11, A13 | A11 tests the map cache only when it is used; A13 tests sample-time evaluation, not the snapshot flag |
 
 **Decisions for Ben:**
 
@@ -1374,7 +1386,12 @@ the refined peak catalogue (`EpochPeaks`).
   * quantized, index-broken ties.
 
   Tests:
-  * equals the sum of `marginal_loglike` at a fixed flux;
+  * equals the sum of `marginal_loglike` at a fixed flux, on data with
+    one time per epoch;
+  * on data with several sample times per epoch, equals the sum of
+    `marginal_loglike` over the same data split into one dataset per
+    time (with the error scale tied across the split), so that
+    within-night motion is exercised;
   * the flux marginal matches quadrature;
   * an RV term adds its scale-marginal `loglike`;
   * independent of `batch_size`;
@@ -1383,7 +1400,9 @@ the refined peak catalogue (`EpochPeaks`).
 * **PR H (brought forward), the suite.** A15–A26 at CI size, the harness
   writing each row as it finishes, and the development and sealed
   manifests; the full runs on OzSTAR. It lands beside D1, so that D2's
-  defaults are chosen on it.
+  defaults are chosen on it. Cases that need D2's generators (A15, A18,
+  and any others that fail at CI size with D1 alone) are marked
+  `xfail(strict=True)` until D2, so the suite does not land red.
 * **PR D2, generators and modes.** Peaks at a coarse shared-flux grid;
   the anchor-pair covering design with conditioning; the step rules and
   cost estimate; suppression and polishing; clustering; refinement
