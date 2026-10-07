@@ -14,6 +14,9 @@ pytest.importorskip("jaxoplanet")
 
 from virgil.epochs import (  # noqa: E402
     Epochs,
+    OrbitStart,
+    _loss_order,
+    _warn_if_coarse,
     chain_starts,
     rank_orbits,
     start_from_positions,
@@ -580,6 +583,30 @@ def test_a_positions_fit_starts_where_a_default_start_fails():
     values = start.chain_values(3)
     assert len(values) == 3 and set(NAMES) <= set(values[0])
     assert values[0] == dict(start.best.values)
+
+
+def test_coarse_period_grids_warn_and_failed_fits_sort_last():
+    from virgil.fitting import FitResult
+    from virgil.orbits import period_grid
+
+    times = [0.0, 100.0, 410.0]
+    with pytest.warns(UserWarning, match="period_grid"):
+        _warn_if_coarse(onp.geomspace(5.0, 50.0, 100), times)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _warn_if_coarse(period_grid(times, 5.0, 50.0), times)
+        _warn_if_coarse([12.0], times)
+    fits = [
+        FitResult(None, {}, {"loss": loss})
+        for loss in (3.0, float("nan"), 1.0, float("inf"), 2.0)
+    ]
+    order = [r.info["loss"] for r in sorted(fits, key=_loss_order)]
+    assert order[:3] == [1.0, 2.0, 3.0]
+    assert not any(onp.isfinite(order[3:]))
+    # modes() skips non-finite fits, and says when none is left.
+    start = OrbitStart(None, None, (fits[1], fits[3]), None)
+    with pytest.raises(ValueError, match="finite loss"):
+        start.modes()
 
 
 def test_each_chain_starts_at_its_own_values():

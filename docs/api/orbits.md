@@ -78,6 +78,7 @@ prior.
         - StateVectorOrbit
         - PositionData
         - RVData
+        - period_grid
         - starting_orbits
         - total_mass
         - distance_pc

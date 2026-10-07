@@ -55,6 +55,7 @@ __all__ = [
     "position_angle_log_jacobian",
     "position_angle_prior",
     "orientation_priors",
+    "period_grid",
     "starting_orbits",
     "total_mass",
 ]
@@ -729,6 +730,78 @@ def _thiele_innes_fit(dt, dra, ddec, whitener, period, dt_peri, ecc):
     return params, resid @ resid
 
 
+# Trial periods are spaced so that neighbouring ones drift apart by at most
+# 1/k of a cycle over the baseline T: a frequency step of 1/(kT), i.e. δP =
+# P²/(kT). The true period is then within half a step of a trial period,
+# and once the trial times of periastron have centred the phase, its phase
+# error is at most 1/(4k) of a cycle at the ends of the baseline. k = 9
+# makes that 1/36 of a cycle, one step of the default n_phase = 36 grid of
+# times of periastron, so the period grid is about as fine as the phase
+# grid. This is finer than both published rules: ARMADA's periods P =
+# 2fT/n with f = 3 (a frequency step of 1/(6T), k = 6) and The Joker's
+# resolution δP = 4P²/(2πT) (k = π/2). For P = 5–20 d over T = 410 d,
+# ARMADA's rule gives ~370 periods and k = 9 ~550. (A step of 0.0005 d at
+# P ≈ 12 d, which found the Gl 229 B mode unseeded, is ~80 times finer
+# than k = 9 needs on that baseline.)
+_PHASE_COHERENCE = 9.0
+
+
+def period_grid(times, p_min, p_max, k=_PHASE_COHERENCE):
+    """Trial periods that stay in phase across the observations.
+
+    A period that is wrong by δP drifts by ``T δP / P²`` cycles over the
+    time baseline T, so trial periods must be spaced by no more than δP =
+    P²/(kT) for the best of them to stay within a fraction of a cycle of
+    the truth at every epoch. That is a uniform grid in frequency 1/P, with
+    a step of 1/(kT): many more periods at short periods than a
+    log-spaced grid, which misses short-period orbits on a long baseline.
+
+    Parameters
+    ----------
+    times : array-like
+        The times (days, e.g. MJD) of the epochs that seed the orbits;
+        their range is the baseline T.
+    p_min, p_max : float
+        The shortest and longest trial periods (days), e.g. from the
+        period prior.
+    k : float, optional
+        Neighbouring trial periods drift apart by at most ``1/k`` of a
+        cycle over the baseline (default 9; the true period then drifts
+        by at most 1/36 of a cycle from the nearest once its phase is
+        centred, a step of ``starting_orbits``' default phase grid). The
+        default is finer than ARMADA's grid, P = 2fT/n with f = 3 (k = 6),
+        and The Joker's resolution, δP = 4P²/(2πT) (k = π/2).
+
+    Returns
+    -------
+    numpy.ndarray
+        The periods (days), increasing from ``p_min`` to ``p_max``, for
+        [`starting_orbits`][virgil.orbits.starting_orbits].
+    """
+    times = onp.asarray(times, float)
+    baseline = float(onp.ptp(times)) if times.size else 0.0
+    if not 0 < p_min < p_max:
+        raise ValueError(
+            f"Need 0 < p_min < p_max, not p_min={p_min}, p_max={p_max}."
+        )
+    if baseline <= 0 or not k > 0:
+        raise ValueError(
+            "period_grid needs times spanning a positive baseline and k > 0."
+        )
+    span = 1.0 / p_min - 1.0 / p_max
+    n = int(onp.ceil(span * k * baseline)) + 1
+    return 1.0 / onp.linspace(1.0 / p_min, 1.0 / p_max, max(n, 2))
+
+
+def _phase_drift(periods, baseline):
+    """The largest phase drift (cycles) between neighbouring trial periods
+    over ``baseline`` days: ``T |1/P_i - 1/P_(i+1)|``; 0 for one period."""
+    frequencies = onp.sort(1.0 / onp.asarray(periods, float).ravel())
+    if frequencies.size < 2:
+        return 0.0
+    return float(baseline * onp.max(onp.diff(frequencies)))
+
+
 def starting_orbits(positions, periods, eccs=None, n_phase=36, n_best=5):
     """Good starting orbits for a set of positions, from a grid search.
 
@@ -744,7 +817,9 @@ def starting_orbits(positions, periods, eccs=None, n_phase=36, n_best=5):
     positions : PositionData
         The measured positions.
     periods : array-like
-        Trial periods (days), e.g. log-spaced over the plausible range.
+        Trial periods (days), dense enough to stay in phase across the
+        positions' time baseline: see
+        [`period_grid`][virgil.orbits.period_grid].
     eccs : array-like, optional
         Trial eccentricities; by default 0 to 0.9 in steps of 0.05.
     n_phase : int, optional

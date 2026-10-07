@@ -94,6 +94,22 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and
+  L-BFGS run in chunks of steps, check the wall clock between them and
+  stop, unconverged, with `info["stop"] == "time"` (L-BFGS carries its
+  whole state across chunks, so its path is unchanged; LM restarts each
+  chunk with its damping reset); `progress` reports steps, loss, gradient
+  norm and elapsed time between chunks. `info["stop"]` gives every
+  unconverged fit's reason (`"limit"`, `"time"`, `"stalled"`,
+  `"non-finite"`, `"failed"`), a non-finite loss now stops L-BFGS, and
+  `info["at_bound"]` lists parameters that ended at a finite prior
+  bound. `start_from_positions` forwards `time_limit`, keeps going when
+  one refinement fit raises (recorded in `OrbitStart.failed`), sorts
+  non-finite losses last and leaves them out of `modes()`.
+- `orbits.period_grid(times, p_min, p_max, k=9)`: trial periods uniform
+  in frequency with δP ≤ P²/(kT) over the baseline T, finer than
+  ARMADA's and The Joker's rules; `start_from_positions` warns when its
+  `periods` are coarser than that over the seeding datasets.
 - A private `virgil._deprecate` module for the 0.4 change to a single
   model-before-data argument order. `old_order` lets a function written
   in the new order accept calls in the 0.3 positional order, recognized

@@ -14,6 +14,8 @@ from virgil.orbits import (  # noqa: E402
     KeplerOrbit,
     PositionData,
     ThieleInnesOrbit,
+    _phase_drift,
+    period_grid,
     starting_orbits,
 )
 
@@ -242,6 +244,31 @@ def test_starting_orbits_in_float32():
         onp.array(best.relative(mjd))[:2] - onp.array(truth.relative(mjd))[:2]
     )
     assert onp.max(onp.abs(offset)) < 2.0
+
+
+def test_period_grid_stays_in_phase_across_the_baseline():
+    # Gl 229 B-like: P ~ 12 d over a 410-day baseline. A grid that is
+    # uniform in log P spends its points on long periods, and neighbouring
+    # short periods drift apart by many cycles.
+    times = 59000.0 + onp.array([0.0, 30.0, 200.0, 410.0])
+    periods = period_grid(times, 5.0, 50.0)
+    assert periods[0] == pytest.approx(5.0) and periods[-1] == pytest.approx(
+        50.0
+    )
+    assert onp.all(onp.diff(periods) > 0)
+    # δP <= P²/(kT): neighbouring periods drift by at most 1/k cycles.
+    assert _phase_drift(periods, 410.0) <= 1 / 9 + 1e-12
+    steps = onp.diff(periods)
+    assert onp.all(steps <= periods[1:] ** 2 / (9 * 410.0) * (1 + 1e-12))
+    # No more periods than needed (one more than the drift requires).
+    assert len(periods) == int(onp.ceil((1 / 5 - 1 / 50) * 9 * 410)) + 1
+    assert len(period_grid(times, 5.0, 50.0, k=3)) < len(periods) / 2
+    assert _phase_drift(onp.geomspace(5.0, 50.0, 100), 410.0) > 1.0
+    assert _phase_drift([12.0], 410.0) == 0.0
+    with pytest.raises(ValueError):
+        period_grid(times, 50.0, 5.0)
+    with pytest.raises(ValueError):
+        period_grid([59000.0], 5.0, 50.0)
 
 
 def test_positions_at_the_origin_have_no_orbit():

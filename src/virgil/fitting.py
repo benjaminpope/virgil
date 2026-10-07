@@ -16,6 +16,7 @@ posterior, pass the same arguments to ``numpyro_model``.
 
 import dataclasses
 import math
+import time
 import warnings
 
 import equinox as eqx
@@ -469,7 +470,16 @@ class FitResult:
         (largest absolute component) of the gradient of the loss per data
         point at the result, in the unconstrained coordinates of the
         convergence test (see ``gtol`` in [`fit`][virgil.fitting.fit]). With fitted error terms, χ² uses the
-        inflated errors, and ``values`` holds the terms too.
+        inflated errors, and ``values`` holds the terms too. ``stop`` says
+        why an unconverged LM or L-BFGS fit ended (``None`` when it
+        converged, and for Adam): ``"limit"`` (``max_steps``), ``"time"``
+        (``time_limit``), ``"stalled"`` (an L-BFGS step no longer moved
+        the parameters), ``"non-finite"`` (a NaN or infinite loss or
+        gradient) or ``"failed"`` (another LM failure). ``at_bound`` lists
+        the parameters and error terms that ended within 1/1000 of their
+        prior's range of one of its finite ends, in the coordinate they
+        are fitted in: a fit that runs into a prior bound (say an
+        eccentricity at 0.9) is often not at a mode.
     """
 
     model: object
@@ -494,6 +504,8 @@ def fit(
     cg_steps=50,
     dtype="float64",
     likelihoods=(),
+    time_limit=None,
+    progress=None,
 ):
     """Find the maximum a posteriori parameters of a model given data.
 
@@ -643,15 +655,31 @@ def fit(
         [`RVData.term`][virgil.orbits.RVData.term] for an orbit's
         positions and radial velocities. Their χ² follow the datasets' in
         ``info``.
+    time_limit : float, optional
+        Wall-clock budget (seconds) for the optimiser, for LM and L-BFGS.
+        The optimiser then runs in chunks of steps, and stops after the
+        first chunk that ends past the limit, unconverged, with
+        ``info["stop"] == "time"`` and a warning; the time to compile the
+        first chunk counts. L-BFGS carries its whole state from chunk to
+        chunk, so its path is the same as without a limit. optimistix's LM
+        restarts from the last point in each chunk (with its damping
+        reset), so its path can differ slightly. Adam, whose cost is set
+        by ``max_steps``, takes neither this nor ``progress``.
+    progress : callable or bool, optional
+        Report progress between chunks (as for ``time_limit``): a function
+        called with a dict of ``steps``, ``loss`` (the negative log
+        posterior), ``grad_norm`` (as in ``info``) and ``elapsed``
+        (seconds), or ``True`` to print them.
 
     Returns
     -------
     FitResult
         The fitted model, parameter values and diagnostics. A warning is
         raised if LM or L-BFGS did not converge; for L-BFGS it says whether
-        the fit reached ``max_steps``, met a non-finite gradient, or stopped
-        earlier because a step no longer changed the parameters (its
-        precision ran out, as can happen in float32).
+        the fit reached ``max_steps`` or ``time_limit``, met a non-finite
+        loss or gradient, or stopped earlier because a step no longer
+        changed the parameters (its precision ran out, as can happen in
+        float32). ``info["stop"]`` holds the reason.
 
         ``info["grad_norm"]`` is the infinity norm (largest absolute
         component) of the gradient of the loss per data point at the
@@ -667,6 +695,11 @@ def fit(
         raise ValueError(
             f"max_step_size must be finite and positive, not {max_step_size}."
         )
+    if time_limit is not None and not time_limit >= 0:
+        raise ValueError(
+            f"time_limit must be a number of seconds, not {time_limit}."
+        )
+    budget = _Budget(time_limit, progress)
     with run_in(dtype):
         problem = cast_tree(
             _Objective(model, priors, data, regularisers, noise, likelihoods),
@@ -685,9 +718,11 @@ def fit(
         # that new values do not recompile. The step limits of LM and Adam
         # set a loop's length, so they stay static.
         traced_scale, gtol = np.asarray(scale), np.asarray(gtol)
+        stop = None
         if method == "lm":
-            z, steps, converged = _lm(
-                problem, z0, traced_scale, max_steps or 1000, gtol, cg_steps
+            limit = max_steps or 1000
+            z, steps, converged, stop = _lm(
+                problem, z0, traced_scale, limit, gtol, cg_steps, budget
             )
         elif method == "lbfgs":
             limit = max_steps or 20_000
@@ -699,9 +734,16 @@ def fit(
                 gtol,
                 np.asarray(max_step_size),
                 int(lbfgs_memory),
+                budget,
             )
         elif method == "adam":
-            steps = max_steps or 2000
+            if budget.chunked:
+                raise ValueError(
+                    "Adam runs exactly max_steps steps: set those, not "
+                    "time_limit or progress (which apply to 'lm' and "
+                    "'lbfgs')."
+                )
+            steps = limit = max_steps or 2000
             z, converged = _adam(
                 problem, z0, traced_scale, np.asarray(learning_rate), steps
             )
@@ -709,33 +751,125 @@ def fit(
             raise ValueError(
                 f"method must be 'lm', 'lbfgs' or 'adam', not {method!r}."
             )
-        if converged is False:
-            warnings.warn(
-                _lbfgs_not_converged(stop, steps, limit, dtype)
-                if method == "lbfgs"
-                else f"fit(method={method!r}) did not converge in {steps} "
-                "steps.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
         model = problem.build(z)
         values = problem.constrain(z)
         loss, chi2, grad_norm = _summary(problem, z, traced_scale)
+        loss = float(loss)
+        if not math.isfinite(loss) and converged is not False:
+            # E.g. LM or Adam ending on NaN parameters.
+            converged, stop = False, "non-finite"
+        if converged is False:
+            warnings.warn(
+                _not_converged(method, stop, steps, limit, dtype, time_limit),
+                RuntimeWarning,
+                stacklevel=2,
+            )
         chi2 = [float(c) for c in chi2]
         info = {
             "method": method,
             "converged": converged,
+            "stop": stop,
             "steps": steps,
-            "loss": float(loss),
+            "loss": loss,
             "chi2": chi2,
             "ndata": ndata,
             "chi2_red": sum(chi2) / scale,
             "grad_norm": float(grad_norm),
+            "at_bound": _at_bound(problem, values),
         }
     ambient = "float64" if jax.config.jax_enable_x64 else "float32"
     return FitResult(
         cast_tree(model, ambient), cast_tree(values, ambient), info
     )
+
+
+def _print_progress(report):
+    print(
+        f"fit: {report['steps']} steps, loss {report['loss']:.6g}, "
+        f"grad_norm {report['grad_norm']:.3g}, {report['elapsed']:.1f} s",
+        flush=True,
+    )
+
+
+class _Budget:
+    """The time limit and progress report of a fit (see ``fit``).
+
+    The clock starts when the budget is made, at the start of ``fit``, so
+    the time to set up and compile the fit counts.
+    """
+
+    def __init__(self, time_limit=None, progress=None):
+        self.time_limit = time_limit
+        self.progress = _print_progress if progress is True else progress
+        self.progress = self.progress or None
+        self.start = time.monotonic()
+
+    @property
+    def chunked(self):
+        """Whether the optimiser must stop between chunks of steps."""
+        return self.time_limit is not None or self.progress is not None
+
+    def check(self, steps, loss_and_gradient):
+        """Report progress after ``steps`` steps; whether time is up.
+
+        ``loss_and_gradient()`` returns the loss and the gradient norm,
+        and is called only to report them.
+        """
+        elapsed = time.monotonic() - self.start
+        if self.progress is not None:
+            loss, grad_norm = loss_and_gradient()
+            self.progress(
+                {
+                    "steps": steps,
+                    "loss": loss,
+                    "grad_norm": grad_norm,
+                    "elapsed": elapsed,
+                }
+            )
+        return self.time_limit is not None and elapsed >= self.time_limit
+
+
+# A parameter is at a bound of its prior when it is within this fraction of
+# the prior's range of one end, in the coordinate it is fitted in.
+_AT_BOUND = 1e-3
+
+
+def _bound_fraction(problem, prior, value):
+    """Where ``value`` lies in its prior's finite interval, as a fraction.
+
+    In the flat coordinate for a prior that has one (see
+    ``_flat_coordinate``), else in the parameter. ``None`` for priors with
+    an unbounded side, angle vectors and tied terms.
+    """
+    if is_tied(prior) or is_angle_vector(prior):
+        return None
+    if problem._in_flat_coordinate(prior):
+        to_flat, _, low, high = _flat_coordinate(prior)
+        value = to_flat(value)
+    else:
+        support = _base(prior).support
+        low = getattr(support, "lower_bound", None)
+        high = getattr(support, "upper_bound", None)
+        if low is None or high is None:
+            return None
+    low, high = onp.asarray(low, float), onp.asarray(high, float)
+    if not (onp.all(onp.isfinite(low)) and onp.all(onp.isfinite(high))):
+        return None
+    return (onp.asarray(value, float) - low) / (high - low)
+
+
+def _at_bound(problem, values):
+    """The paths and noise sites within ``_AT_BOUND`` of a prior bound."""
+    priors = dict(problem.priors)
+    priors.update({site: p for site, (p, _, _) in problem.noise.items()})
+    found = []
+    for site, prior in priors.items():
+        fraction = _bound_fraction(problem, prior, values[site])
+        if fraction is not None and onp.any(
+            (fraction < _AT_BOUND) | (fraction > 1 - _AT_BOUND)
+        ):
+            found.append(site)
+    return tuple(found)
 
 
 def gauss_newton_mass(model, priors, data, values, *, likelihoods=()):
@@ -946,6 +1080,12 @@ def _summary(problem, z, scale):
     return problem.loss(z), chi2, _largest(gradient)
 
 
+def _loss_and_gradient(problem, z, scale):
+    """The loss and gradient norm at ``z``, as ``_summary`` reports them."""
+    loss, _, grad_norm = _summary(problem, z, scale)
+    return float(loss), float(grad_norm)
+
+
 def _largest(tree):
     """The largest absolute value in a pytree of arrays."""
     return np.max(np.stack([np.max(np.abs(x)) for x in jax.tree.leaves(tree)]))
@@ -1030,19 +1170,46 @@ def _lm_linear_solver(z0, cg_steps):
     return lx.Normal(lx.CG(rtol=0.0, atol=0.0, max_steps=min(cg_steps, n)))
 
 
-def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
+# Steps per chunk when fit has a time limit or reports progress: LM steps
+# (a Jacobian and a solve each) cost far more than L-BFGS steps.
+_LM_CHUNK = 50
+_LBFGS_CHUNK = 200
+
+
+def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
+    """Levenberg–Marquardt, returning ``(z, steps, converged, stop)``.
+
+    With a time limit or progress report (``budget.chunked``), optimistix
+    runs ``_LM_CHUNK`` steps at a time, each restarting from where the last
+    ended. optimistix's LM state (its damping, the last Jacobian) holds
+    closures that cannot be carried between jitted calls without
+    recompiling, so a restart resets the damping: the path can differ
+    slightly from an unchunked run.
+    """
     tolerance = _lm_tolerance(problem, z0, scale, gtol)
     solver = _GradientStoppedLM(tolerance, _lm_linear_solver(z0, cg_steps))
-    solution = optx.least_squares(
-        _lm_residuals,
-        solver,
-        z0,
-        args=(problem, scale),
-        max_steps=max_steps,
-        throw=False,
-    )
-    converged = bool(solution.result == optx.RESULTS.successful)
-    return solution.value, int(solution.stats["num_steps"]), converged
+    chunk = min(_LM_CHUNK, max_steps) if budget.chunked else max_steps
+    z, steps = z0, 0
+    while True:
+        solution = optx.least_squares(
+            _lm_residuals,
+            solver,
+            z,
+            args=(problem, scale),
+            max_steps=min(chunk, max_steps - steps),
+            throw=False,
+        )
+        z = solution.value
+        steps += int(solution.stats["num_steps"])
+        if solution.result == optx.RESULTS.successful:
+            return z, steps, True, None
+        limited = solution.result == optx.RESULTS.nonlinear_max_steps_reached
+        if not limited:
+            return z, steps, False, "failed"
+        if steps >= max_steps:
+            return z, steps, False, "limit"
+        if budget.check(steps, lambda: _loss_and_gradient(problem, z, scale)):
+            return z, steps, False, "time"
 
 
 def _capped_lbfgs(max_step_size, memory):
@@ -1074,6 +1241,43 @@ def _capped_lbfgs(max_step_size, memory):
     )
 
 
+def _lbfgs_loop(problem, carry, scale, stop_at, tolerance, step_size, memory):
+    """L-BFGS steps from ``carry`` until step ``stop_at`` or a stop.
+
+    ``carry`` is ``(count, z, optimiser state, loss, gradient, moved)``,
+    the loss per data point and the largest component of its gradient
+    being those at the point before the last step. The loop stops at
+    ``stop_at`` steps, when the gradient is within ``tolerance``, when a
+    step no longer moves the parameters, or when the loss or gradient is
+    not finite (a NaN gradient fails the comparison with ``tolerance``).
+    ``stop_at`` is traced, so a fit run in chunks (see ``_lbfgs``) compiles
+    the loop once.
+    """
+    optimiser = _capped_lbfgs(step_size, memory)
+    loss = _scaled_loss(problem, scale)
+    value_and_grad = optax.value_and_grad_from_state(loss)
+
+    def keep_going(carry):
+        count, _, _, value, gradient, moved = carry
+        running = (count < stop_at) & (gradient > tolerance) & moved
+        return running & np.isfinite(value)
+
+    def step(carry):
+        count, z, state, _, _, _ = carry
+        value, grad = value_and_grad(z, state=state)
+        updates, state = optimiser.update(
+            grad, state, z, value=value, grad=grad, value_fn=loss
+        )
+        new = optax.apply_updates(z, updates)
+        moved = jax.tree.reduce(
+            np.logical_or,
+            jax.tree.map(lambda a, b: np.any(a != b), new, z),
+        )
+        return count + 1, new, state, value, _largest(grad), moved
+
+    return jax.lax.while_loop(keep_going, step, carry)
+
+
 @eqx.filter_jit
 def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size, memory):
     # optax's L-BFGS (with a zoom line search, and capped steps; see
@@ -1086,45 +1290,52 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size, memory):
     # gradient is small from the outset) still converges rather than
     # stopping at once. The fit also stops, unconverged, when a step no
     # longer changes the parameters (the line search has run out of
-    # precision, as can happen in float32).
-    optimiser = _capped_lbfgs(max_step_size, memory)
+    # precision, as can happen in float32). Returns the loop's carry (see
+    # _lbfgs_loop) after at most max_steps steps, and the tolerance.
     loss = _scaled_loss(problem, scale)
-    value_and_grad = optax.value_and_grad_from_state(loss)
-    tolerance = _tolerance(jax.grad(loss)(z0), gtol)
-
-    def keep_going(carry):
-        step, _, _, gradient, moved = carry
-        return (step < max_steps) & (gradient > tolerance) & moved
-
-    def step(carry):
-        count, z, state, _, _ = carry
-        value, grad = value_and_grad(z, state=state)
-        updates, state = optimiser.update(
-            grad, state, z, value=value, grad=grad, value_fn=loss
-        )
-        new = optax.apply_updates(z, updates)
-        moved = jax.tree.reduce(
-            np.logical_or,
-            jax.tree.map(lambda a, b: np.any(a != b), new, z),
-        )
-        return count + 1, new, state, _largest(grad), moved
-
+    value, gradient = jax.value_and_grad(loss)(z0)
+    tolerance = _tolerance(gradient, gtol)
     # The start itself may already be a stationary point.
-    start_gradient = _largest(jax.grad(loss)(z0))
-    start = (0, z0, optimiser.init(z0), start_gradient, np.asarray(True))
-    count, z, _, gradient, moved = jax.lax.while_loop(keep_going, step, start)
-    return z, count, gradient, tolerance, moved
+    state = _capped_lbfgs(max_step_size, memory).init(z0)
+    start = (0, z0, state, value, _largest(gradient), np.asarray(True))
+    carry = _lbfgs_loop(
+        problem, start, scale, max_steps, tolerance, max_step_size, memory
+    )
+    return carry, tolerance
 
 
-def _lbfgs_not_converged(stop, steps, limit, dtype):
+@eqx.filter_jit
+def _lbfgs_resume(
+    problem, carry, scale, stop_at, tolerance, step_size, memory
+):
+    """Continue ``_lbfgs_run`` from its carry, up to ``stop_at`` steps."""
+    return _lbfgs_loop(
+        problem, carry, scale, stop_at, tolerance, step_size, memory
+    )
+
+
+def _not_converged(method, stop, steps, limit, dtype, time_limit):
+    """The warning for an unconverged fit, saying why it stopped."""
+    if stop == "time":
+        return (
+            f"fit(method={method!r}) did not converge: it reached its "
+            f"time_limit of {time_limit} s after {steps} steps."
+        )
+    if method == "lbfgs" or stop == "non-finite":
+        return _lbfgs_not_converged(method, stop, steps, limit, dtype)
+    return f"fit(method={method!r}) did not converge in {steps} steps."
+
+
+def _lbfgs_not_converged(method, stop, steps, limit, dtype):
     """The warning for an unconverged L-BFGS fit, saying why it stopped."""
-    head = "fit(method='lbfgs') did not converge"
+    head = f"fit(method={method!r}) did not converge"
     if stop == "limit":
         return f"{head} in {steps} steps, the step limit; raise max_steps."
     if stop == "non-finite":
         return (
-            f"{head}: its gradient was not finite (NaN or inf) after "
-            f"{steps} steps; check the model and priors for invalid values."
+            f"{head}: its loss or gradient was not finite (NaN or inf) "
+            f"after {steps} steps; check the model and priors for invalid "
+            "values."
         )
     hint = "; dtype='float64' can go further" if dtype == "float32" else ""
     return (
@@ -1134,26 +1345,54 @@ def _lbfgs_not_converged(stop, steps, limit, dtype):
     )
 
 
-def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory=50):
+def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
     """L-BFGS, returning ``(z, steps, converged, stop)``.
 
     ``stop`` says why an unconverged fit ended: ``"limit"`` (``max_steps``),
-    ``"stalled"`` (a step no longer moved the parameters) or
-    ``"non-finite"`` (a NaN or infinite gradient); it is ``None`` when the
-    fit converged.
+    ``"time"`` (the budget's time limit), ``"stalled"`` (a step no longer
+    moved the parameters) or ``"non-finite"`` (a NaN or infinite loss or
+    gradient); it is ``None`` when the fit converged.
+
+    With a time limit or progress report (``budget.chunked``), the loop runs
+    ``_LBFGS_CHUNK`` steps per jitted call, carrying the whole optimiser
+    state, so that the path is the one an unchunked run takes, and checks
+    the clock between calls.
     """
-    z, count, gradient, tolerance, moved = _lbfgs_run(
-        problem, z0, scale, max_steps, gtol, max_step_size, int(memory)
+    limit = int(max_steps)
+    first = min(limit, _LBFGS_CHUNK) if budget.chunked else limit
+    carry, traced_tolerance = _lbfgs_run(
+        problem, z0, scale, np.asarray(first), gtol, max_step_size, memory
     )
-    count, gradient, tolerance = int(count), float(gradient), float(tolerance)
+    tolerance, stop = float(traced_tolerance), None
+    while budget.chunked:
+        count, _, _, value, gradient, moved = carry
+        count, value, gradient = int(count), float(value), float(gradient)
+        running = count < limit and gradient > tolerance and bool(moved)
+        if not (running and math.isfinite(value)):
+            break
+        if budget.check(count, lambda: (value * float(scale), gradient)):
+            stop = "time"
+            break
+        carry = _lbfgs_resume(
+            problem,
+            carry,
+            scale,
+            np.asarray(min(count + _LBFGS_CHUNK, limit)),
+            traced_tolerance,
+            max_step_size,
+            memory,
+        )
+    count, z, _, value, gradient, moved = carry
+    count, value, gradient = int(count), float(value), float(gradient)
+    # A gradient seen only at the start (count 0) that is not finite gives
+    # a non-finite tolerance too.
+    finite = math.isfinite(tolerance) and math.isfinite(value)
+    if not finite or (count > 0 and not math.isfinite(gradient)):
+        return z, count, False, "non-finite"
     if gradient <= tolerance:
         return z, count, True, None
-    # The loop starts from an infinite gradient, so only a gradient seen
-    # after a step (or a non-finite starting tolerance) is a real failure.
-    if not math.isfinite(tolerance) or (
-        count > 0 and not math.isfinite(gradient)
-    ):
-        return z, count, False, "non-finite"
+    if stop == "time":
+        return z, count, False, "time"
     return z, count, False, "limit" if bool(moved) else "stalled"
 
 

@@ -41,6 +41,7 @@ basin. The tools for starting and sampling such a fit are:
 
 import dataclasses
 import functools
+import math
 import warnings
 
 import jax
@@ -57,7 +58,12 @@ from .likelihood import (
     whitened_residuals,
 )
 from .models import BinaryModelCartesian
-from .orbits import PositionData, starting_orbits
+from .orbits import (
+    _PHASE_COHERENCE,
+    PositionData,
+    _phase_drift,
+    starting_orbits,
+)
 
 
 __all__ = [
@@ -1282,15 +1288,23 @@ class OrbitStart:
         The starting orbits, ranked by the visibilities.
     fits : tuple of FitResult
         The fits to the visibilities from the distinct best candidates,
-        lowest loss first.
+        lowest loss first, and those with a non-finite loss last. Each
+        ``info`` holds the ``candidate`` it started from (its rank in
+        ``candidates``); a fit that did not converge, or stopped at its
+        ``time_limit``, says so in ``info["converged"]`` and
+        ``info["stop"]``.
     data : Epochs
         The data.
+    failed : tuple of (int, str)
+        The candidates whose refinement fit raised an error, with the
+        error.
     """
 
     positions: EpochPositions
     candidates: RankedOrbits
     fits: tuple
     data: Epochs
+    failed: tuple = ()
 
     @property
     def best(self):
@@ -1305,11 +1319,14 @@ class OrbitStart:
         whitened residuals, with the quoted errors). Fits whose loss is
         more than ``max_delta_loss`` above the best's are dropped: a
         difference Δ in loss is a factor of about e^Δ in posterior
-        density.
+        density. Fits with a non-finite loss are left out.
         """
-        floor = self.fits[0].info["loss"]
+        finite = [r for r in self.fits if math.isfinite(r.info["loss"])]
+        if not finite:
+            raise ValueError("No refinement fit has a finite loss.")
+        floor = finite[0].info["loss"]
         kept, residuals = [], []
-        for result in self.fits:
+        for result in finite:
             if result.info["loss"] - floor > max_delta_loss:
                 break
             models = result.model
@@ -1404,7 +1421,12 @@ def start_from_positions(
         The per-dataset grid of positions and fluxes (see
         ``epoch_positions``).
     periods : array-like
-        Trial periods (days) for ``starting_orbits``.
+        Trial periods (days) for ``starting_orbits``. Build them with
+        [`period_grid`][virgil.orbits.period_grid] over the times of the
+        datasets: a ``UserWarning`` says when neighbouring periods would
+        drift apart by more than 1/9 of a cycle over the baseline of the
+        datasets that seed the orbits, so that the grid can miss the
+        true period.
     t_ref : float
         The reference time (MJD) of the starting orbits: the ``t_ref`` of
         your model.
@@ -1439,11 +1461,20 @@ def start_from_positions(
     batch_size : int, optional
         Orbits ranked together (see ``rank_orbits``).
     **fit_options
-        Passed to the refinement fits (e.g. ``method``, ``max_steps``).
+        Passed to the refinement fits (e.g. ``method``, ``max_steps``,
+        ``time_limit`` in seconds per fit, ``progress``). A fit that raises
+        an error is recorded in ``OrbitStart.failed``, with a
+        ``RuntimeWarning``, and the others go on; one that stops at its
+        ``time_limit`` is kept, unconverged.
 
     Returns
     -------
     OrbitStart
+
+    Raises
+    ------
+    RuntimeError
+        If every refinement fit raised an error.
     """
     scales = _check_scales(scales, "start_from_positions")
     positions = epoch_positions(
@@ -1458,6 +1489,7 @@ def start_from_positions(
             "min_gap or "
             "refine the grid."
         )
+    _warn_if_coarse(periods, seeds.dt)
     with run_in("float64"):
         candidates = starting_orbits(
             seeds, periods, eccs=eccs, n_phase=n_phase, n_best=n_candidates
@@ -1489,18 +1521,61 @@ def start_from_positions(
     chosen = _distinct(ranked, n_refine, 0.5 * ranked.resolution_mas)
     if not chosen:
         raise ValueError("No starting orbit has a finite log likelihood.")
-    fits = [
-        fit(
-            data.model_fn(model),
-            priors,
-            data.data,
-            noise=noise,
-            init=values[ranked.order[k]],
-            **fit_options,
-        )
-        for k in chosen
-    ]
-    fits.sort(key=lambda result: result.info["loss"])
+    fits, failed = [], []
+    for k in chosen:
+        # One bad start (a NaN, a solver error) must not lose the others.
+        try:
+            result = fit(
+                data.model_fn(model),
+                priors,
+                data.data,
+                noise=noise,
+                init=values[ranked.order[k]],
+                **fit_options,
+            )
+        except Exception as error:
+            reason = f"{type(error).__name__}: {error}"
+            failed.append((int(k), reason))
+            warnings.warn(
+                f"The refinement fit from candidate {k} failed ({reason}); "
+                "the others go on.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            continue
+        result.info["candidate"] = int(k)
+        fits.append(result)
+    if not fits:
+        raise RuntimeError(f"Every refinement fit failed: {failed}.")
+    fits.sort(key=_loss_order)
     return OrbitStart(
-        positions=positions, candidates=ranked, fits=tuple(fits), data=data
+        positions=positions,
+        candidates=ranked,
+        fits=tuple(fits),
+        data=data,
+        failed=tuple(failed),
     )
+
+
+def _loss_order(result):
+    """Sort key: lowest loss first, non-finite losses last."""
+    loss = result.info["loss"]
+    return (0, loss) if math.isfinite(loss) else (1, 0.0)
+
+
+def _warn_if_coarse(periods, times):
+    """Warn when trial periods drift apart by more than 1/k of a cycle
+    over the baseline of ``times`` (see ``period_grid``)."""
+    times = onp.asarray(times, float)
+    baseline = float(onp.ptp(times)) if times.size else 0.0
+    drift = _phase_drift(periods, baseline)
+    if drift > 1.0 / _PHASE_COHERENCE:
+        warnings.warn(
+            f"Neighbouring trial periods drift apart by up to {drift:.2g} "
+            f"cycles over the {baseline:.0f}-day baseline of the seeding "
+            f"datasets (more than 1/{_PHASE_COHERENCE:g}), so the starting "
+            "orbits can miss the true period; use "
+            "virgil.orbits.period_grid(times, p_min, p_max).",
+            UserWarning,
+            stacklevel=3,
+        )
