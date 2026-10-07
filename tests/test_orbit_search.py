@@ -381,6 +381,45 @@ def test_reference_band_flux_is_bounded_by_one():
         )
 
 
+def _summed_bounded(epochs, orbit, flux, s_max):
+    with jax.enable_x64(True):
+        return sum(
+            float(
+                marginal_loglike(
+                    _snapshot(orbit, onp.mean(d.mjd), flux),
+                    _f64(d),
+                    s_max=s_max,
+                )
+            )
+            for d in epochs.data
+        )
+
+
+def test_s_max_bounds_a_small_dof_block_driven_to_zero_chi2():
+    # The closure phases (one triangle, three channels: ν = 3) of one night
+    # are noise-free at the true position: χ² → 0, and without s_max the
+    # block's -(ν/2) ln χ² is unbounded (a spike). With s_max the score is
+    # Σ marginal_loglike(s_max), and the block gains at most about
+    # ν ln s_max over a noisy one.
+    exact = _night(TRUTH, 0.4, NIGHTS[0], seed=0)
+    with jax.enable_x64(True):
+        model = simulate(_snapshot(TRUTH, NIGHTS[0], 0.4), _f64(exact))
+    exact = exact.set("phi", onp.asarray(model.phi))
+    epochs = Epochs({"n0": exact, "n1": _night(TRUTH, 0.4, NIGHTS[1], 1)})
+    shared = SharedFlux([0.4])
+    free = score_orbits(epochs, OrbitalBinary, [TRUTH], shared=shared)
+    s_max = 10.0
+    bounded = score_orbits(
+        epochs, OrbitalBinary, [TRUTH], shared=shared, s_max=s_max
+    )
+    expect = _summed_bounded(epochs, TRUTH, 0.4, s_max)
+    assert bounded.score[0] == pytest.approx(expect, rel=1e-6, abs=1e-5)
+    noisy = _epochs(nights=NIGHTS[:2])
+    reference = _summed_bounded(noisy, TRUTH, 0.4, s_max)
+    assert bounded.score[0] < reference + 3 * onp.log(s_max) + 5.0
+    assert free.score[0] > bounded.score[0] + 30.0
+
+
 def test_profiled_gain_matches_a_fitted_v2_scale():
     # One gain per night on log|V|: for V² it scales the model V² by
     # (1 + 2γ), so profiling it is a linear least-squares fit of a V² scale,

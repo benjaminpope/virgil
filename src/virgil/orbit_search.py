@@ -537,9 +537,10 @@ def _newton(f, x, lo, hi, delta, steps):
     """
     d1 = jax.grad(f)
     d2 = jax.grad(d1)
-    fx = f(x)
     shrink = 0.5 ** np.arange(_HALVINGS + 1, dtype=x.dtype)
-    for _ in range(steps):
+
+    def step(_, carry):
+        x, fx = carry
         g, h = d1(x), d2(x)
         # Where the curvature is not negative, a gradient step instead.
         step = -g / np.where(h < 0, h, -1.0)
@@ -549,8 +550,10 @@ def _newton(f, x, lo, hi, delta, steps):
         values = np.where(np.isnan(values), -np.inf, values)
         k = np.argmax(values)
         better = values[k] > fx
-        x = np.where(better, trials[k], x)
-        fx = np.where(better, values[k], fx)
+        return np.where(better, trials[k], x), np.where(better, values[k], fx)
+
+    # A rolled loop: one compiled step, however many steps.
+    x, fx = jax.lax.fori_loop(0, steps, step, (x, f(x)))
     return x, fx, d1(x), d2(x)
 
 
@@ -669,19 +672,22 @@ def _band_marginal(band, shared, score, grid_scores):
 
     # Far from the peak the 2-D curvature is often not negative definite:
     # first alternate 1-D Newton steps in ln f and β, then polish in 2-D.
-    lf, beta = lf0, b0
-    for _ in range(_ALTERNATIONS):
+    def alternate(_, carry):
+        lf, beta = carry
         lf = _newton(
             lambda x: score(x, beta), lf, f_lo, f_hi, f_delta, shared.newton
         )[0]
         beta = _newton(
             lambda x: score(lf, x), beta, b_lo, b_hi, b_delta, shared.newton
         )[0]
+        return lf, beta
+
+    lf, beta = jax.lax.fori_loop(0, _ALTERNATIONS, alternate, (lf0, b0))
     grad, hess = jax.grad(f2), jax.hessian(f2)
-    v = np.stack([lf, beta])
-    fv = f2(v)
-    shrink = 0.5 ** np.arange(_HALVINGS + 1, dtype=v.dtype)
-    for _ in range(shared.newton):
+    shrink = 0.5 ** np.arange(_HALVINGS + 1, dtype=finite.dtype)
+
+    def newton_2d(_, carry):
+        v, fv = carry
         g, h = grad(v), hess(v)
         neg = (h[0, 0] < 0) & (np.linalg.det(h) > 0)
         step = np.where(
@@ -693,8 +699,10 @@ def _band_marginal(band, shared, score, grid_scores):
         values = np.where(np.isnan(values), -np.inf, values)
         k = np.argmax(values)
         better = values[k] > fv
-        v = np.where(better, trials[k], v)
-        fv = np.where(better, values[k], fv)
+        return np.where(better, trials[k], v), np.where(better, values[k], fv)
+
+    v = np.stack([lf, beta])
+    v, fv = jax.lax.fori_loop(0, shared.newton, newton_2d, (v, f2(v)))
     g, h = grad(v), hess(v)
     neg = (h[0, 0] < 0) & (np.linalg.det(h) > 0)
     cov = -np.linalg.inv(np.where(neg, h, -np.eye(2)))
@@ -946,7 +954,14 @@ def score_orbits(
     dof, s_max : optional
         The effective-dof fraction (one number, or a dict keyed by dataset
         or epoch name) and the bound on the scales, as for
-        ``marginal_loglike``.
+        ``marginal_loglike`` (each block's likelihood integrated over
+        ln s in [-ln s_max, ln s_max]). With ``s_max=None`` (the default)
+        a block's -(ν/2) ln χ² is unbounded as χ² → 0: a block with few
+        degrees of freedom (one triangle's closure phases, say) that a
+        flux or slope fits almost exactly makes a narrow spike in the
+        score, which can dominate the profile (``profiled``, ``flux``,
+        ``slope``) though it adds little to the marginal. A finite
+        ``s_max`` bounds each block's gain at about ν ln s_max.
     batch_size : int, optional
         Candidates evaluated together by ``jax.lax.map`` (default: all).
         The result does not depend on it.
