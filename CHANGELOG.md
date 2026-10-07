@@ -164,7 +164,9 @@ anything before 1.0 may change between minor versions.
   the model's parameters under NUTS's site names, the loss history, the
   guide and its parameters, a convergence flag and the PSIS k̂. Every guide
   starts at the Laplace approximation (the fit and its Gauss–Newton
-  covariance) and learns in units of its widths. The default is a block
+  covariance, at the nominal errors and without regularisers; with
+  regularisers it starts at `init_scale` instead) and learns in units of
+  its widths. The default is a block
   neural autoregressive flow (`"bnaf"`), which follows curved, skewed and
   bounded posteriors; `"iaf"`, `"mvn"` (a Gaussian, ≈ Laplace) and
   `"laplace"` are the alternatives. float64 by default, as for `fit`;

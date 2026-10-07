@@ -67,11 +67,14 @@ class VariationalResult:
         necessary, not sufficient: compare with NUTS on a test problem.
     info : dict
         ``guide`` (its name), ``steps``, ``elbo`` (minus the mean loss over
-        the last window), ``dense_start`` (whether the guide's width
+        the last window; ``None`` for a point-mass guide, ``AutoDelta`` or
+        ``AutoLaplaceApproximation``, whose loss is minus the log joint,
+        given as ``log_joint``), ``dense_start`` (whether the guide's width
         started from the Gauss–Newton covariance), ``khat`` (the Pareto
         k̂ of the importance weights p/q of ``num_samples`` draws, PSIS;
         below 0.7 the guide is good enough to reweight, above it the guide
-        misses mass the posterior has; ``None`` if not computed), ``time``
+        misses mass the posterior has; ``None`` if not computed or for a
+        point-mass guide), ``time``
         (seconds, compilation included) and ``dtype``.
     """
 
@@ -163,7 +166,7 @@ def _laplace_started(base):
 
 def _make_guide(guide, posterior, init_loc_fn):
     if callable(guide) and not isinstance(guide, str):
-        return guide(posterior, init_loc_fn)
+        return guide(posterior, init_loc_fn=init_loc_fn)
     bases = {
         "bnaf": autoguide.AutoBNAFNormal,
         "iaf": autoguide.AutoIAFNormal,
@@ -191,9 +194,12 @@ def _start_scale(
     latent vector, for the sites it covers; ``init_scale`` times the
     identity for any others (error terms). Returns ``(L, dense)``.
     """
-    shapes = {k: np.shape(v) for k, v in guide_obj._init_locs.items()}
-    sizes = {k: math.prod(s) for k, s in shapes.items()}
-    n = sum(sizes.values())
+    n = guide_obj.latent_dim
+    # The guide's own map from its latent vector to sites gives each
+    # site's indices in it, whatever order numpyro packs them in.
+    index = guide_obj._unpack_latent(np.arange(n, dtype=float))
+    latent_index = {k: onp.asarray(v, int).ravel() for k, v in index.items()}
+    sizes = {k: v.size for k, v in latent_index.items()}
     covariance = onp.eye(n) * init_scale**2
     if values is None:
         return onp.linalg.cholesky(covariance), False
@@ -215,20 +221,14 @@ def _start_scale(
         return onp.linalg.cholesky(covariance), False
     ((sites, gn),) = mass["inverse_mass_matrix"].items()
     gn = onp.asarray(gn)
-    # Offsets of each site in the guide's latent vector and in GN's.
-    offsets, start = {}, 0
-    for k in shapes:
-        offsets[k] = start
-        start += sizes[k]
+    # Indices of each site in GN's matrix (in the order of ``sites``).
     gn_index, start = {}, 0
     for site in sites:
         size = sizes.get(site, math.prod(onp.shape(values.get(site, 0.0))))
         gn_index[site] = onp.arange(start, start + size)
         start += size
-    common = [s for s in sites if s in shapes]
-    latent = onp.concatenate(
-        [offsets[s] + onp.arange(sizes[s]) for s in common]
-    )
+    common = [s for s in sites if s in latent_index]
+    latent = onp.concatenate([latent_index[s] for s in common])
     source = onp.concatenate([gn_index[s] for s in common])
     covariance[onp.ix_(latent, latent)] = gn[onp.ix_(source, source)]
     return onp.linalg.cholesky(covariance), True
@@ -299,8 +299,9 @@ def variational(
     widths and 5–95% quantiles, where the Gaussian guides missed the
     banana's curvature and the tail. A flow's cost grows with the square of the
     number of parameters, so for images use ``"mvn"`` or the Laplace
-    approximation. A callable ``guide(model, init_loc_fn)``
-    returning any numpyro autoguide may be passed instead. Flows need at
+    approximation. A callable ``guide(model, init_loc_fn=...)``
+    returning any numpyro autoguide, such as an autoguide class
+    (``autoguide.AutoNormal``), may be passed instead. Flows need at
     least two parameters.
 
     **One mode.** Every guide here covers one mode of the posterior. For
@@ -345,10 +346,16 @@ def variational(
         log b]`` for a ``LogUniform(a, b)``.
     dense_start : bool, optional
         Start the guide's width from the Gauss–Newton covariance at
-        ``start`` (default ``True``). It needs priors with a least-squares
-        form (see ``gauss_newton_mass``); otherwise, or for error terms in
-        ``noise``, which it does not cover, the width starts at
-        ``init_scale``.
+        ``start`` (default ``True``). That covariance is the data's and
+        the priors' curvature at the nominal errors: it leaves out
+        ``regularisers``, fitted error terms in ``noise`` and fixed ones
+        in ``**options``. With regularisers (whose absence can leave the
+        curvature singular, as for an image) the dense start is skipped,
+        with a warning. With error terms it is kept: an inflated error
+        makes the start too narrow, which the guide learns away at the
+        cost of steps. The error terms' own sites, which it does not
+        cover, and priors without a least-squares form (see
+        ``gauss_newton_mass``) start at ``init_scale``.
     init_scale : float, optional
         Starting width, in the unconstrained coordinates, of the
         coordinates not covered by the Gauss–Newton covariance (default
@@ -422,13 +429,27 @@ def variational(
         svi.init(k_init)
         dense = False
         name = guide if isinstance(guide, str) else type(guide_obj).__name__
+        point_mass = isinstance(
+            guide_obj,
+            (autoguide.AutoDelta, autoguide.AutoLaplaceApproximation),
+        )
+        if dense_start and regularisers and values_c is not None:
+            # gauss_newton_mass takes no regularisers: without them an
+            # image's curvature is singular, so start at init_scale.
+            warnings.warn(
+                "The Gauss–Newton starting width leaves out regularisers; "
+                f"with them, the guide starts with width "
+                f"init_scale={init_scale}.",
+                stacklevel=2,
+            )
+        use_dense = dense_start and not regularisers
         if hasattr(guide_obj, "start_tril"):  # started at the Laplace frame
             guide_obj.start_tril, dense = _start_scale(
                 guide_obj,
                 model_c,
                 priors_c,
                 data_c,
-                values_c if dense_start else None,
+                values_c if use_dense else None,
                 likelihoods,
                 flat_coordinates,
                 init_scale,
@@ -442,7 +463,7 @@ def variational(
         khat = None
         if psis:
             khat = _khat(
-                k_psis, params, posterior, guide_obj, num_samples, name
+                k_psis, params, posterior, guide_obj, num_samples, point_mass
             )
     losses = onp.asarray(run.losses)
     converged = _converged(losses, window)
@@ -455,7 +476,9 @@ def variational(
     info = {
         "guide": name,
         "steps": steps,
-        "elbo": float(-losses[-window:].mean()),
+        # A point-mass guide's loss is minus the log joint, not an ELBO.
+        "elbo": None if point_mass else float(-losses[-window:].mean()),
+        "log_joint": (float(-losses[-window:].mean()) if point_mass else None),
         "dense_start": dense,
         "khat": khat,
         "time": time.perf_counter() - tic,
@@ -466,13 +489,13 @@ def variational(
     )
 
 
-def _khat(key, params, posterior, guide, num_samples, name):
+def _khat(key, params, posterior, guide, num_samples, point_mass):
     """PSIS k̂ of the guide's importance weights, or None.
 
     Undefined for the Laplace guide (a point mass while it is optimised)
     and for numpyro releases without ``psis_diagnostic``.
     """
-    if name == "laplace":
+    if point_mass:
         return None
     try:
         from numpyro.infer.importance import psis_diagnostic

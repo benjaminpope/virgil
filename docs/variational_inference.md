@@ -17,7 +17,7 @@ VI is worth running when the posterior is *not* Gaussian in the coordinates the 
 
 On small test posteriors (a banana, a curved ridge, and a scale with a tail down to its prior bound), the BNAF guide came closest to NUTS's means, widths and 5–95% quantiles. On the banana, the Gaussian guides missed the curvature (half the width in one parameter, and a third of the shift in the other's mean); on the bounded scale they missed the tail towards the bound. No guide reproduced the heavy tail along the ridge, where NUTS's width was about 1.5 times the guides'. A flow's cost grows with the square of the number of parameters, so for an image of thousands of pixels use `"mvn"` with care, or better the Laplace approximation (see [Sampling the posterior](imaging_sampling.md)).
 
-Every guide starts at the Laplace approximation. Its centre is at a [`FitResult`][virgil.fitting.FitResult] passed as `start`, and its width is the Gauss–Newton covariance there. The guide's parameters are then learnt in units of those widths, so one step size suits a position known to a milliarcsecond and a flux known to a few per cent. Like NUTS, the guide works in the priors' flat coordinates (`flat_coordinates=True`, see [Conventions](conventions.md)), and its draws are returned in the model's own parameters, under the site names NUTS uses.
+Every guide starts at the Laplace approximation. Its centre is at a [`FitResult`][virgil.fitting.FitResult] passed as `start`, and its width is the Gauss–Newton covariance there. That covariance uses the nominal errors and leaves out regularisers: fitted or fixed error terms make the start too narrow, which the guide learns away, and with regularisers (as for an image) the guide starts with a width of `init_scale` instead. The guide's parameters are then learnt in units of those widths, so one step size suits a position known to a milliarcsecond and a flux known to a few per cent. Like NUTS, the guide works in the priors' flat coordinates (`flat_coordinates=True`, see [Conventions](conventions.md)), and its draws are returned in the model's own parameters, under the site names NUTS uses.
 
 ## A binary
 
@@ -41,15 +41,15 @@ priors = {
     "ddec": dist.Uniform(-400.0, 400.0),
     "flux": dist.LogUniform(1e-4, 1.0),
 }
-start = BinaryModelCartesian(110.0, -70.0, 0.01)
-result = fit(start, priors, data)
+template = BinaryModelCartesian(110.0, -70.0, 0.01)
+result = fit(template, priors, data)
 
-vi = variational(start, priors, data, start=result)
+vi = variational(template, priors, data, start=result)
 print(vi.converged, vi.info["elbo"], vi.info["khat"])
 
 mcmc = MCMC(
     NUTS(
-        numpyro_model(start, priors, data),
+        numpyro_model(template, priors, data),
         init_strategy=init_to_value(values=result.values),
     ),
     num_warmup=500,

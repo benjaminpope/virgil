@@ -22,9 +22,11 @@ from virgil.likelihood import numpyro_model
 from virgil.models import BinaryModelAngular, BinaryModelCartesian
 from virgil.svi import variational
 
-PRIORS = {"s": dist.LogUniform(1e-3, 1.0), "x": dist.Uniform(-5.0, 5.0)}
-MU = onp.array([-0.5, 0.3])
-COV = onp.array([[0.04, 0.04], [0.04, 0.16]])  # σ = 0.2, 0.4; ρ = 0.5
+# Not in alphabetical order, so that the exact test pins the map from
+# sites to the guide's latent vector (insertion order, not sorted keys).
+PRIORS = {"x": dist.Uniform(-5.0, 5.0), "s": dist.LogUniform(1e-3, 1.0)}
+MU = onp.array([0.3, -0.5])
+COV = onp.array([[0.16, 0.04], [0.04, 0.04]])  # σ = 0.4, 0.2; ρ = 0.5
 
 
 def _no_model(**_):
@@ -69,6 +71,15 @@ class _GaussianInZ:
         return -0.5 * jnp.sum(self(values) ** 2) - log_prior
 
 
+def _in_site_order(guide, loc, tril):
+    """The guide's centre and covariance in the order of PRIORS, through
+    the guide's own map from its latent vector to sites."""
+    latent = guide._unpack_latent(jnp.arange(guide.latent_dim, dtype=float))
+    index = [int(latent[name]) for name in PRIORS]
+    cov = tril @ tril.T
+    return loc[index], cov[onp.ix_(index, index)]
+
+
 def _x_of_z(z, flat):
     out = {}
     for i, name in enumerate(PRIORS):
@@ -106,8 +117,9 @@ def test_a_posterior_gaussian_in_z_is_recovered_exactly(flat):
         _no_model, PRIORS, (), steps=20, learning_rate=1e-12, **common
     )
     loc, tril = map(onp.asarray, exact.guide.gaussian(exact.params))
+    loc, cov = _in_site_order(exact.guide, loc, tril)
     onp.testing.assert_allclose(loc, MU, atol=1e-8)
-    onp.testing.assert_allclose(tril @ tril.T, COV, atol=1e-8)
+    onp.testing.assert_allclose(cov, COV, atol=1e-8)
     assert exact.info["dense_start"]
     normalisation = 0.5 * onp.log(onp.linalg.det(2 * onp.pi * COV))
     # PRIORS are float32 inside the term, float64 in the model: 1e-7.
@@ -124,9 +136,10 @@ def test_a_posterior_gaussian_in_z_is_recovered_exactly(flat):
         **common,
     )
     loc, tril = map(onp.asarray, learnt.guide.gaussian(learnt.params))
+    loc, cov = _in_site_order(learnt.guide, loc, tril)
     onp.testing.assert_allclose(loc, MU, atol=0.02)
     onp.testing.assert_allclose(
-        onp.sqrt(onp.diag(tril @ tril.T)), onp.sqrt(onp.diag(COV)), rtol=0.05
+        onp.sqrt(onp.diag(cov)), onp.sqrt(onp.diag(COV)), rtol=0.05
     )
     # The draws, carried back to z, have the posterior's moments.
     z = _z_of_x(learnt.samples, flat)
@@ -172,7 +185,10 @@ def test_laplace_guide_covariance_matches_gauss_newton(flat):
         transform = vi.guide.get_transform(vi.params)
         tril = onp.asarray(transform.scale_tril)
     laplace = tril @ tril.T
-    order = list(vi.guide._init_locs)
+    # Sites in the order of the guide's latent vector, from its own map.
+    n = vi.guide.latent_dim
+    latent = vi.guide._unpack_latent(jnp.arange(n, dtype=float))
+    order = sorted(latent, key=lambda site: float(latent[site]))
     mass = gauss_newton_mass(
         BINARY, BINARY_PRIORS, data, result.values, flat_coordinates=flat
     )
@@ -277,3 +293,33 @@ def test_unknown_guide_is_rejected():
         variational(
             _no_model, PRIORS, (), likelihoods=[_GaussianInZ(True)], guide="x"
         )
+
+
+def test_default_flow_follows_a_banana():
+    """x ~ N(0, 1), y | x ~ N(x²/2, 0.3²): E[y] = 0.5 and y is skewed to
+    the right. The Laplace start (and a Gaussian guide) is centred at
+    y = 0 with no skew; the default flow must learn both. Uniform priors
+    have no flat coordinate, so ``flat_coordinates`` does not matter."""
+    priors = {"x": dist.Uniform(-10.0, 10.0), "y": dist.Uniform(-10.0, 10.0)}
+
+    def banana(v):
+        return jnp.stack([v["x"], (v["y"] - 0.5 * v["x"] ** 2) / 0.3])
+
+    common = dict(
+        likelihoods=[banana],
+        start={"x": 0.0, "y": 0.0},
+        steps=3000,
+        num_samples=4000,
+        psis=False,
+    )
+
+    def mean_and_skew(guide):
+        vi = variational(_no_model, priors, (), guide=guide, **common)
+        y = vi.samples["y"]
+        return y.mean(), ((y - y.mean()) ** 3).mean() / y.std() ** 3
+
+    mean, skew = mean_and_skew("bnaf")
+    assert mean == pytest.approx(0.5, abs=0.12)
+    assert skew > 0.5  # 2.2 for the exact posterior
+    mean, skew = mean_and_skew("mvn")
+    assert mean < 0.25 and abs(skew) < 0.3  # what the flow must beat
