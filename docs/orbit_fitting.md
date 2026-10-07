@@ -936,7 +936,7 @@ joint / two-step interval width: 1.00 to 1.05
 rms pull: joint 0.24, two-step 0.24
 ```
 
-Read the table in two ways. The interval widths say how much each analysis claims to know, and the pulls say whether that claim is justified. With the error scales marginalised, the two-step positions carry the right uncertainties, and the two-step fit recovers them: on these Gaussian simulated data it agrees with the joint visibility fit, with interval widths within a few percent and equal pulls. The joint fit still matters when the nightly likelihoods are non-Gaussian or multimodal, because it keeps each epoch's full likelihood, where the two-step fit reduces it to a Gaussian before the orbit sees it. The two-step fit is a good quick look, and a source of starting orbits, as in the initialisation above.
+Read the table in two ways. The interval widths say how much each analysis claims to know, and the pulls say whether that claim is justified. With the error scales marginalised, the two-step positions carry the right uncertainties, and the two-step fit recovers them: on these Gaussian simulated data it agrees with the joint visibility fit, with interval widths within a few per cent and equal pulls. The joint fit still matters when the nightly likelihoods are non-Gaussian or multimodal, because it keeps each epoch's full likelihood, where the two-step fit reduces it to a Gaussian before the orbit sees it. The two-step fit is a good quick look, and a source of starting orbits, as in the initialisation above.
 
 ## Summary
 
