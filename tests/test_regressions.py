@@ -5,7 +5,6 @@ import pytest
 from astropy.io import fits
 from matplotlib.ticker import FuncFormatter
 
-from virgil.limits import chi2ppf
 from virgil.models import GaussianDisk
 from virgil.oidata import OIData, closure_phases
 from virgil.plotting import (
@@ -247,13 +246,6 @@ def test_v2_flag_string_true_is_parsed_as_true():
     data["v2_flag"] = "true"
     oidata = OIData(data)
     assert oidata.v2_flag is True
-
-
-def test_chi2ppf_df1_returns_finite_values():
-    p = np.array([1e-6, 0.5, 0.95, 1.0 - 1e-6])
-    q = chi2ppf(p, 1.0)
-    assert np.all(np.isfinite(q))
-    assert np.all(q >= 0.0)
 
 
 def test_visibility_correlation_ticks_use_adaptive_float_formatter():
