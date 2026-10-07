@@ -501,21 +501,31 @@ COARSE = {
     "flux": [0.1, 1.0],
 }
 FLIP_TRUTH = (4.3, -2.2, 0.4)
+# At flux 1.0 the closure phases vanish, so mirror-image grid points score
+# alike, and on COARSE the cells nearest r and -r tie to rounding error
+# (which one wins depended on the platform). This grid has a point on
+# -(4.7, -2.3), the flux-1.0 best near r, and none there, so the grid best
+# is the mirror by a margin of about 2.
+DECOY = dict(
+    COARSE,
+    dra=onp.arange(-15.2, 15.01, 1.5),
+    ddec=onp.arange(-14.2, 15.01, 1.5),
+)
 
 
 def test_the_refined_best_peak_wins_when_the_grid_best_is_a_decoy():
     # On a coarse grid whose fluxes miss the companion's (0.4), the best
     # grid point is near the mirror image -r, and refining it alone
-    # commits there with a decisive-looking gap (the Gl 229 failure).
+    # commits there with a clear-looking gap (the Gl 229 failure).
     # Refining the top peaks finds the companion at r.
     epochs = Epochs({"night": _night(VLTI_UTS, 5, FLIP_TRUTH)})
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
-        alone = epoch_positions(epochs, COARSE, n_peaks=1)
-        found = epoch_positions(epochs, COARSE)
+        alone = epoch_positions(epochs, DECOY, n_peaks=1)
+        found = epoch_positions(epochs, DECOY)
     truth = onp.array(FLIP_TRUTH[:2])
     assert onp.hypot(alone.dra[0] + truth[0], alone.ddec[0] + truth[1]) < 1.0
-    assert alone.gap_marginal[0] > 5.0
+    assert alone.gap_marginal[0] > 2.0
     assert onp.hypot(found.dra[0] - truth[0], found.ddec[0] - truth[1]) < 0.5
     assert abs(found.flux[0] - FLIP_TRUTH[2]) < 0.1
     peaks = found.peaks[0]
