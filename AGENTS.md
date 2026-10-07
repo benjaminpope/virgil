@@ -312,10 +312,13 @@ The `OzSTAR outputs synced` check fails while a PR carries the `awaiting-ozstar`
 When you hand the user a submit block for a PR, add the label and put a line
 `Awaiting OzSTAR: <job ids>` in the PR body. When you commit the pulled outputs, remove
 the label and stamp each executed notebook with
-`python3 scripts/check_notebook_outputs.py --stamp NOTEBOOK`. That records
-`metadata.virgil.source_hash`, and the `Notebook outputs not stale` check then fails if the
-notebook source changes without being re-executed. Notebooks with outputs but no hash only
-produce a warning.
+`python3 scripts/check_notebook_outputs.py --stamp NOTEBOOK`. Stamp last, after
+`lint_local.sh --fix` and any other edit to the notebook. That records
+`metadata.virgil.source_hash`, a hash of the code-cell sources only (prose edits cannot
+change outputs, so they need no re-run or re-stamp). The `Notebook outputs not stale` check
+fails if a code cell changes without a re-execution. It covers every notebook under
+`notebooks/`, recursively, skipping the git-ignored `archive/`. Notebooks with outputs but
+no hash only produce a warning.
 
 ## Testing notes
 
