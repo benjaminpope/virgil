@@ -283,7 +283,8 @@ def test_chi2ppf_matches_scipy_in_float32(df):
             1.0 - onp.logspace(-1, -4, 10),
         ]
     ).astype(onp.float32)
-    q = chi2ppf(p, df)
+    with jax.enable_x64(False):
+        q = chi2ppf(p, df)
     assert q.dtype == onp.float32
     onp.testing.assert_allclose(
         onp.asarray(q), stats.chi2.ppf(p.astype(float), df), rtol=1e-4
