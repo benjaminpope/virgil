@@ -74,6 +74,10 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- `ensemble.combine` drops members whose fit diverged (a non-finite χ²),
+  with `reason="diverged"`, instead of rejecting every member with a
+  `ValueError`, and `LCurve.corner` ignores non-finite points so that a
+  diverged fit cannot move the corner.
 - Parallel numpyro chains (`chain_method="parallel"`) on data with
   `with_gains` no longer segfault. `GainModes` held zero-size arrays when
   no mode spans frames, and XLA's Shardy pass crashes compiling a

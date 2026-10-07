@@ -128,15 +128,19 @@ jobs:
         # as evidence for virgil-validation; xunit1 keeps test properties.
         # Pull requests skip the tests marked slow (tests/conftest.py).
         # Two workers on lowest deps: 4 workers at about 4 GB each exhaust the 16 GB runner.
-        run: >-
-          nproc; free -m; df -h .;
-          ( while true; do echo "[mem] $(date +%T) $(free -m | awk '/Mem/{print "used " $3 " avail " $7}; /Swap/{print "swap " $3}' | tr '\n' ' ') $(ps -eo rss,args --sort=-rss | awk 'NR>1&&NR<6{printf "%dMB ", $1/1024}')"; sleep 10; done ) &
-          .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} -rs --durations=30
-          ${{ github.event_name == 'pull_request' && '-m "not slow"' || '' }}
-          --junitxml=junit-evidence.xml -o junit_family=xunit1
+        # The memory sampler needs GNU free and procps ps, so it runs on Linux
+        # only (macOS has neither nproc nor free: exit code 127).
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            nproc; free -m; df -h .
+            ( while true; do echo "[mem] $(date +%T) $(free -m | awk '/Mem/{print "used " $3 " avail " $7}; /Swap/{print "swap " $3}' | tr '\n' ' ') $(ps -eo rss,args --sort=-rss | awk 'NR>1&&NR<6{printf "%dMB ", $1/1024}')"; sleep 10; done ) &
+          fi
+          .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} -rs --durations=30 \
+            ${{ github.event_name == 'pull_request' && '-m "not slow"' || '' }} \
+            --junitxml=junit-evidence.xml -o junit_family=xunit1
 
       - name: kernel log
-        if: always()
+        if: always() && runner.os == 'Linux'
         run: sudo dmesg | grep -iE "oom|killed process" | tail -20 || true
 
       - name: upload evidence

@@ -243,7 +243,8 @@ class Member:
         Whether it is in the mean image.
     reason : str or None
         Why it was left out: ``"window"`` (outside its group's L-curve
-        window), ``"chi2"`` (a dataset fitted too badly), ``"outlier"``
+        window), ``"diverged"`` (a non-finite χ²: the fit failed), ``"chi2"``
+        (a dataset fitted too badly), ``"outlier"``
         (total χ² far above the others) or ``"mean"`` (adding it made the
         mean fit a dataset worse). ``None`` if kept.
     """
@@ -561,7 +562,8 @@ def combine(data, groups, *, spec=None, star=True):
 
     1. In each group, keep the weights from the L-curve's corner up to
        ``spec.window_dex`` above it.
-    2. Keep members whose raw χ² per data point is below
+    2. Drop members whose fit diverged (a non-finite χ²), then keep
+       members whose raw χ² per data point is below
        ``spec.max_chi2_red`` and within ``spec.chi2_ratio`` of the best
        member's on every dataset, then drop total-χ² outliers by their
        median absolute deviation (``spec.mad_cut``).
@@ -632,7 +634,16 @@ def combine(data, groups, *, spec=None, star=True):
     live = [i for i, m in enumerate(members) if m.reason is None]
     if not live:
         raise ValueError("No member lies in its group's L-curve window.")
+    # A fit that diverged (a NaN or infinite chi2) is dropped first, and so
+    # cannot set the best chi2 that the others are judged against: NaN
+    # propagates through min, which would reject every member.
     chi2 = onp.array([members[i].chi2_red for i in live])
+    finite = onp.all(onp.isfinite(chi2), axis=1)
+    drop([i for i, f in zip(live, finite) if not f], "diverged")
+    live = [i for i, f in zip(live, finite) if f]
+    if not live:
+        raise ValueError("Every member's fit diverged (non-finite chi2).")
+    chi2 = chi2[finite]
     best = chi2.min(axis=0)
     good = onp.all(
         (chi2 <= spec.max_chi2_red) & (chi2 <= spec.chi2_ratio * best),
