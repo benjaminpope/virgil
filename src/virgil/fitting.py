@@ -11,7 +11,8 @@ prior's support, in float64 by default. A parameter whose prior is uniform in
 some coordinate (a log-uniform scale, an isotropic inclination) is fitted in
 that flat coordinate, where its prior adds nothing to the loss, so that
 Levenberg–Marquardt works with the Jeffreys priors. To sample the same
-posterior, pass the same arguments to ``numpyro_model``.
+posterior, pass the same arguments to ``numpyro_model``, which samples in
+the same coordinates.
 """
 
 import dataclasses
@@ -27,6 +28,7 @@ import numpy as onp
 import optax
 import optimistix as optx
 
+from ._flat import _base, _flat_coordinate, _FlatBijection
 from ._precision import cast_tree, run_in
 from ._utils import _per_dataset, _reference, is_flux_param
 from .angles import is_angle_vector, vector_angle, vector_site
@@ -47,70 +49,6 @@ def _bijection(distribution):
     from numpyro.distributions.transforms import biject_to
 
     return biject_to(distribution.support)
-
-
-def _base(distribution):
-    """``distribution`` without ``.expand(...)`` and ``.to_event(...)``.
-
-    They change the shape, not the density's form (a flat prior stays flat,
-    a Normal stays Normal).
-    """
-    import numpyro.distributions as dist
-
-    while isinstance(
-        distribution, (dist.Independent, dist.ExpandedDistribution)
-    ):
-        distribution = distribution.base_dist
-    return distribution
-
-
-def _flat_coordinate(distribution):
-    """The coordinate in which a prior is uniform, or None.
-
-    Returns ``(to_flat, from_flat, low, high)``: a monotonic map ``u =
-    to_flat(x)`` of the parameter, its inverse, and the interval ``[low,
-    high]`` of ``u`` on which the prior's density is constant. Such a prior
-    is an invariant measure written in a coordinate where it is not flat:
-
-    * ``LogUniform(a, b)``: ``u = log x`` on ``[log a, log b]``;
-    * any prior with a ``flat_coordinate()`` method returning that tuple,
-      such as an isotropic inclination (``u = cos i``) or latitude (``u =
-      sin(lat)``).
-
-    ``Uniform`` is its own flat coordinate (the identity) and keeps
-    numpyro's bijection; Normal and other priors have none and are
-    evaluated in the model's own parameters.
-    """
-    import numpyro.distributions as dist
-
-    base = _base(distribution)
-    if isinstance(base, dist.LogUniform):
-        return np.log, np.exp, np.log(base.low), np.log(base.high)
-    declared = getattr(base, "flat_coordinate", None)
-    if callable(declared):
-        return declared()
-    return None
-
-
-class _FlatBijection:
-    """Unconstrained z to a parameter uniform in ``u = to_flat(x)``.
-
-    ``x = from_flat(lo + (hi - lo) sigmoid(z))``: numpyro's bijection of the
-    flat coordinate's interval, followed by the map back to the parameter.
-    """
-
-    def __init__(self, to_flat, from_flat, low, high):
-        from numpyro.distributions import constraints
-        from numpyro.distributions.transforms import biject_to
-
-        self.to_flat, self.from_flat = to_flat, from_flat
-        self.interval = biject_to(constraints.interval(low, high))
-
-    def __call__(self, z):
-        return self.from_flat(self.interval(z))
-
-    def inv(self, x):
-        return self.interval.inv(self.to_flat(x))
 
 
 def _prior_residuals(path, distribution, value):
@@ -184,9 +122,11 @@ class _Objective(eqx.Module):
     With ``flat=True`` (for ``fit``), a parameter whose prior has a flat
     coordinate (``_flat_coordinate``: LogUniform, isotropic angles) is
     unconstrained through that coordinate, where its prior is constant and
-    adds nothing to the loss. With ``flat=False`` (for
-    ``gauss_newton_mass``), every parameter uses numpyro's bijection of its
-    prior's support, the coordinates NUTS samples.
+    adds nothing to the loss; ``numpyro_model`` samples the same
+    coordinates (``_flat.flat_sampled``). With ``flat=False`` (for
+    ``gauss_newton_mass(flat_coordinates=False)``), every parameter uses
+    numpyro's bijection of its prior's support, as ``numpyro_model(...,
+    flat_coordinates=False)`` samples.
     """
 
     model: object
@@ -881,7 +821,9 @@ def _at_bound(problem, values):
     return tuple(found)
 
 
-def gauss_newton_mass(model, priors, data, values, *, likelihoods=()):
+def gauss_newton_mass(
+    model, priors, data, values, *, likelihoods=(), flat_coordinates=True
+):
     """A dense NUTS mass matrix from the Gauss–Newton curvature at a fit.
 
     Near the maximum a posteriori, the posterior is close to a Gaussian
@@ -912,10 +854,12 @@ def gauss_newton_mass(model, priors, data, values, *, likelihoods=()):
         flat ones (Uniform, ImproperUniform, LogUniform and the other
         priors with a flat coordinate). Flat priors add no curvature, as
         for Uniform. An angle vector's block is keyed by its site,
-        ``"<path>_vec"``. The matrix is in numpyro's unconstrained
-        coordinates (``biject_to`` of each prior's support), which NUTS
-        samples, not in ``fit``'s flat coordinates: for ``LogUniform(a,
-        b)`` that is the logit of ``(x - a) / (b - a)``, not of ``log x``.
+        ``"<path>_vec"``. The matrix is in the unconstrained coordinates
+        NUTS samples for
+        [`numpyro_model`][virgil.likelihood.numpyro_model] with the same
+        ``flat_coordinates``: by default ``fit``'s flat coordinates (for
+        ``LogUniform(a, b)`` the logit of ``log x`` on ``[log a, log
+        b]``), else numpyro's bijection of each prior's support.
     values : dict
         The parameter values at which to take the curvature, normally
         ``fit(model, priors, data).values``.
@@ -928,6 +872,9 @@ def gauss_newton_mass(model, priors, data, values, *, likelihoods=()):
         no residuals, so its
         curvature is left out: the matrix is a preconditioner, so that
         costs efficiency, not correctness.
+    flat_coordinates : bool, optional
+        Whether the sampler moves in the priors' flat coordinates, as for
+        ``numpyro_model`` (default ``True``). Pass the same value to both.
 
     Returns
     -------
@@ -946,11 +893,15 @@ def gauss_newton_mass(model, priors, data, values, *, likelihoods=()):
     ...               **gauss_newton_mass(scene, priors, data, result.values))  # doctest: +SKIP
     """
     with run_in("float64"):
-        # NUTS samples numpyro's unconstrained coordinates, so the
-        # curvature is taken in those, not in fit's flat coordinates.
+        # The curvature is taken in the unconstrained coordinates NUTS
+        # samples: numpyro_model's, flat or not as it is told.
         problem = cast_tree(
             _Objective(
-                model, priors, data, likelihoods=likelihoods, flat=False
+                model,
+                priors,
+                data,
+                likelihoods=likelihoods,
+                flat=flat_coordinates,
             ),
             "float64",
         )

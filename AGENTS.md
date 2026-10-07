@@ -136,10 +136,11 @@ see that repository's `PLAN.md` for the boundary.
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve`; for a `DetectionMC`, `plot_null_distribution`, `plot_roc` and `plot_completeness` (duck-typed: `plotting` does not import `detection`) |
 | `_elr.py` | Espinosa Lara & Rieutord (2011) Roche shape and gravity darkening on a triangle mesh, ported from S. Dholakia's jax-interferometry (private; used by the gravity-darkened star model) |
 | `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
+| `_flat.py` | flat coordinates of priors (`_flat_coordinate`, `_FlatBijection`), shared by `fit` and `numpyro_model`; `flat_sampled` makes numpyro's `biject_to` use them, so NUTS samples in them (private; imports nothing from virgil); see `design/sampler_flat_coordinates.md` |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |
 
-Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_closure`
+Imports flow one way: `_utils`/`_geometry`/`_precision`/`_flat` → `oifits`/`amigo`/`_closure`
 → `oidata` → `coverage`; `gains` → `observables` → `oidata`. Separately, `_utils` → `spectra` and `fields`, and
 `_elr`/`spectra` → `models` → `likelihood` → `fitting` (which also imports `fields`) →
 `imaging` (which imports `fitting`, `fields`, `likelihood` and `models`). `likelihood` →

@@ -24,11 +24,11 @@ log-uniform hyperpriors.
 
 Both classes are numpyro distributions, so they work as entries of the
 ``priors`` of [`fit`][virgil.fitting.fit] and
-[`numpyro_model`][virgil.likelihood.numpyro_model]: their support is an
-interval, which both map to unconstrained coordinates with numpyro's
-``biject_to``. ``fit`` optimises them in their flat coordinate (cos i or
-sin(lat), through ``flat_coordinate()``), where the prior is constant, so
-Levenberg–Marquardt applies and is ``fit``'s automatic choice.
+[`numpyro_model`][virgil.likelihood.numpyro_model]. ``fit`` optimises
+them in their flat coordinate (cos i or sin(lat), through
+``flat_coordinate()``), where the prior is constant, so
+Levenberg–Marquardt applies and is ``fit``'s automatic choice;
+``numpyro_model`` samples them in the same coordinate.
 """
 
 import dataclasses
@@ -72,6 +72,16 @@ def _check_range(name, low, high, limit, unit):
             f"{name}: the range must lie within [{lo_limit}, {lim_high}], "
             f"got [{low}, {high}]."
         )
+
+
+def _clip_through(x, low, high):
+    """``x`` clipped to ``[low, high]`` with the derivative of ``x``.
+
+    The clip only absorbs rounding at the bounds; a sampler that
+    differentiates the quantile function (``virgil._flat``) needs its true
+    slope there, not a clip's 0 or 1/2.
+    """
+    return x + jax.lax.stop_gradient(jnp.clip(x, low, high) - x)
 
 
 class _InverseCDFPrior(Distribution):
@@ -170,12 +180,17 @@ class IsotropicInclination(_InverseCDFPrior):
         south = jnp.sin(0.5 * a) ** 2 + qs  # sin^2(i/2)
         north = jnp.cos(0.5 * a) ** 2 - qs  # cos^2(i/2)
         near_zero = jnp.clip(south, 0.0, 1.0) <= 0.5
+        # The branch not taken gets a safe argument (0.25), so that its
+        # infinite derivative at a pole does not make the gradient NaN
+        # (samplers differentiate this map; see virgil._flat).
+        south = jnp.where(near_zero, south, 0.25)
+        north = jnp.where(near_zero, 0.25, north)
         half = jnp.where(
             near_zero,
             jnp.arcsin(jnp.sqrt(jnp.clip(south, 0.0, 1.0))),
             jnp.arccos(jnp.sqrt(jnp.clip(north, 0.0, 1.0))),
         )
-        return jnp.clip(jnp.rad2deg(2.0 * half), self.low, self.high)
+        return _clip_through(jnp.rad2deg(2.0 * half), self.low, self.high)
 
     def cdf(self, value):
         a, b = self._radians
@@ -250,13 +265,17 @@ class IsotropicLatitude(_InverseCDFPrior):
         # South pole: sin^2((pi/2 + x)/2) = sin^2(pi/4 + a/2) + qs.
         south = jnp.sin(quarter + 0.5 * self.low) ** 2 + qs
         use_north = jnp.sin(self.low) + 2.0 * qs >= 0.0
+        # A safe argument for the branch not taken, as in
+        # IsotropicInclination.icdf.
+        north = jnp.where(use_north, north, 0.25)
+        south = jnp.where(use_north, 0.25, south)
         half_pi = 0.5 * jnp.pi
         x = jnp.where(
             use_north,
             half_pi - 2.0 * jnp.arcsin(jnp.sqrt(jnp.clip(north, 0.0, 1.0))),
             2.0 * jnp.arcsin(jnp.sqrt(jnp.clip(south, 0.0, 1.0))) - half_pi,
         )
-        return jnp.clip(x, self.low, self.high)
+        return _clip_through(x, self.low, self.high)
 
     def cdf(self, value):
         a = self.low

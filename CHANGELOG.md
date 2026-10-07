@@ -41,6 +41,18 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **NUTS samples each prior in its flat coordinate, as `fit` optimises
+  it.** `numpyro_model` now maps a `LogUniform` scale to NUTS's
+  unconstrained coordinate through log x, an `IsotropicInclination`
+  through cos i and an `IsotropicLatitude` through sin(lat), for
+  parameters and `noise=` terms alike, where the prior is a logistic
+  density. Sites keep their names, samples are the model's own
+  parameters, and the posterior is unchanged; only the coordinate NUTS
+  moves in differs, so it now matches `fit`'s and `gauss_newton_mass`
+  (which defaults to the same coordinates). Pass
+  `flat_coordinates=False` to both for the 0.3 coordinates (numpyro's
+  bijection of each prior's support), e.g. to reuse saved unconstrained
+  `init_params`. See `design/sampler_flat_coordinates.md`.
 - **Orbit starts are scale-aware (#268).** `epoch_positions` now scores
   its grid on the scale-marginalized surface m = -Σ_b (ν_b/2) ln χ²_b,
   in which each dataset's V² and closure-phase error scales are
@@ -74,6 +86,11 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **Isotropic priors have finite gradients at the poles in float32.**
+  `IsotropicInclination.icdf` and `IsotropicLatitude.icdf` gave a NaN
+  derivative within about 1e-8 of a pole (the branch not taken of a
+  `where` had an infinite slope), and their final clip a slope of 1/2 at
+  the bounds; both now keep the true derivative.
 - **`epoch_positions` no longer commits to a peak before refining it.**
   It refined only the best grid point, which is not always the best peak
   once refined: fringe peaks are often narrower than the grid step, and

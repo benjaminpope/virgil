@@ -22,6 +22,7 @@ from numpyro.infer import MCMC, NUTS
 from numpyro.infer.util import potential_energy
 from scipy import stats
 
+from virgil._flat import flat_sampled
 from virgil.coverage import nrm_oidata, vlti_oidata
 from virgil.detection import _log_prior_weights, detection_statistics
 from virgil.fields import GaussianField
@@ -111,14 +112,15 @@ def test_numpyro_model_with_no_data_samples_the_priors():
 
 
 def test_numpyro_model_potential_is_prior_plus_jacobian():
-    """The density NUTS sees is log p(x) + log|dx/dz| of each bijection."""
+    """The density NUTS sees is log p(x) + log|dx/dz| of each bijection:
+    numpyro's of the support, or the flat coordinate's (LogUniform)."""
     model = numpyro_model(_function_model, PRIORS, ())
     rng = onp.random.default_rng(3)
     z = {k: jnp.asarray(rng.normal(size=())) for k in PRIORS}
     potential = potential_energy(model, (), {}, z)
     expected = 0.0
     for site, prior in PRIORS.items():
-        bijection = biject_to(prior.support)
+        bijection = biject_to(flat_sampled(prior).support)
         x = bijection(z[site])
         expected += float(
             prior.log_prob(x) + bijection.log_abs_det_jacobian(z[site], x)
