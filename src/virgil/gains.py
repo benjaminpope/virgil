@@ -77,7 +77,8 @@ class GainModes(eqx.Module):
     ----------
     rows : jax.Array
         ``(n_block, n_row)`` int32: the visibility observables of each block
-        (rows of ``OIData.vis``), padded with ``n_vis`` (out of range).
+        (rows of ``OIData.vis``), padded with ``n_vis`` (out of range). If
+        every mode spans frames, one empty block of padding.
     shapes : jax.Array
         ``(n_block, n_row, n_mode)``: each mode's shape on log |V| for unit
         width, zero on padding.
@@ -382,11 +383,14 @@ def _pack(columns, groups, widths, frame):
     block_rows = [
         onp.unique(onp.concatenate([local[k][1] for k in ks])) for ks in blocks
     ]
-    n_row = max((r.size for r in block_rows), default=0)
-    n_mode = max((len(ks) for ks in blocks), default=0)
-    rows = onp.full((len(blocks), n_row), n_vis, dtype=onp.int32)
-    shapes = onp.zeros((len(blocks), n_row, n_mode))
-    group = onp.zeros((len(blocks), n_mode), dtype=onp.int32)
+    # With no blocks, keep one empty block (rows out of range, zero shapes,
+    # adding log(1 + 0) = 0) rather than zero-size arrays, which jax.pmap
+    # cannot compile (see GainModes.spanning).
+    n_row = max((r.size for r in block_rows), default=1)
+    n_mode = max((len(ks) for ks in blocks), default=1)
+    rows = onp.full((max(len(blocks), 1), n_row), n_vis, dtype=onp.int32)
+    shapes = onp.zeros((max(len(blocks), 1), n_row, n_mode))
+    group = onp.zeros((max(len(blocks), 1), n_mode), dtype=onp.int32)
     for b, (ks, r) in enumerate(zip(blocks, block_rows)):
         rows[b, : r.size] = r
         for j, k in enumerate(ks):

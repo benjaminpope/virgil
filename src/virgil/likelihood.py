@@ -717,7 +717,9 @@ def _host_devices():
     """The number of local devices, without initialising the backend.
 
     Once JAX's backend starts, ``XLA_FLAGS`` can no longer set the number
-    of host devices, so before that read the flag instead.
+    of host devices, so before that read the flag instead. Before the
+    backend starts, several GPUs are not counted: the crash is only
+    confirmed on CPU.
     """
     try:
         from jax._src import xla_bridge
@@ -725,7 +727,7 @@ def _host_devices():
         if xla_bridge.backends_are_initialized():
             return jax.local_device_count()
     except (ImportError, AttributeError):
-        return 1
+        pass  # private API moved: fall back to the flag
     flag = re.search(
         r"xla_force_host_platform_device_count=(\d+)",
         os.environ.get("XLA_FLAGS", ""),
