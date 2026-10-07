@@ -141,8 +141,9 @@ def test_several_times_per_epoch_equal_the_split_with_a_tied_scale():
     assert abs(snapshot - expect) > 1.0
 
 
-def _brute(epochs, orbit, log_f, beta=(0.0,), wavel0=None):
-    """The summed marginal_loglike on a dense (ln f, β) grid (float64)."""
+def _brute(epochs, orbit, log_f, beta=(0.0,), wavel0=None, s_max=None):
+    """The summed marginal_loglike on a dense (ln f, β) grid (float64), one
+    β at a time (to keep memory small)."""
     with jax.enable_x64(True):
         positions = [
             [float(x) for x in _f64(orbit).relative(onp.mean(d.mjd))[:2]]
@@ -160,11 +161,16 @@ def _brute(epochs, orbit, log_f, beta=(0.0,), wavel0=None):
             out = 0.0
             for p, d, r in zip(positions, datasets, ratios):
                 f = jax.numpy.exp(lf) * r**b
-                out = out + marginal_loglike(BinaryModelCartesian(*p, f), d)
+                out = out + marginal_loglike(
+                    BinaryModelCartesian(*p, f), d, s_max=s_max
+                )
             return out
 
-        grid = jax.vmap(jax.vmap(total, (None, 0)), (0, None))
-        return onp.asarray(grid(onp.asarray(log_f), onp.asarray(beta)))
+        column = jax.jit(jax.vmap(total, (0, None)))
+        log_f = onp.asarray(log_f)
+        return onp.stack(
+            [onp.asarray(column(log_f, b)) for b in onp.asarray(beta)], axis=1
+        )
 
 
 def _log_mean_exp(values, x, axis=-1):
@@ -418,6 +424,31 @@ def test_s_max_bounds_a_small_dof_block_driven_to_zero_chi2():
     reference = _summed_bounded(noisy, TRUTH, 0.4, s_max)
     assert bounded.score[0] < reference + 3 * onp.log(s_max) + 5.0
     assert free.score[0] > bounded.score[0] + 30.0
+
+
+def test_bounded_flux_and_slope_marginal_matches_quadrature():
+    # Kept small (one night, V² only, a coarse grid, 8 nodes per side):
+    # differentiating the s_max integral inside the 2-D marginal compiles
+    # to a large program.
+    (night,) = _epochs(
+        flux=0.33, nights=NIGHTS[:1], sigma_v2=0.1, sigma_cp_deg=10.0
+    ).data
+    epochs = Epochs({"n0": night.select(observables=("vis",))})
+    wavel0, s_max = 2.2e-6, 10.0
+    shared = SharedFlux(
+        (0.01, 1.0, 5), slope=(-2.0, 2.0, 3), wavel0=wavel0, order=8, newton=4
+    )
+    scores = score_orbits(
+        epochs, OrbitalBinary, [TRUTH], shared=shared, s_max=s_max
+    )
+    assert not scores.fallback[0, 0]
+    # The whole prior: bounded scales leave the tails (a faint companion
+    # fitted with large scales) only a few nats down.
+    log_f = onp.linspace(onp.log(0.01), 0.0, 801)
+    beta = onp.linspace(-2.0, 2.0, 201)
+    values = _brute(epochs, TRUTH, log_f, beta, wavel0, s_max=s_max)
+    expect = _log_mean_exp(_log_mean_exp(values, beta, axis=1), log_f)
+    assert scores.score[0] == pytest.approx(expect, abs=0.05)
 
 
 def test_profiled_gain_matches_a_fitted_v2_scale():

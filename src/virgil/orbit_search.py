@@ -573,22 +573,27 @@ def _nodes(f, x, fx, scale, lo, hi, order):
     t, w = (
         np.asarray(v, x.dtype) for v in onp.polynomial.legendre.leggauss(order)
     )
-    nodes, log_w = [], []
-    for side, room in ((-1.0, x - lo), (1.0, hi - x)):
-        length = np.minimum(2.0 * scale, room)
-        for _ in range(_DOUBLINGS):
-            drop = fx - f(x + side * length)
-            grow = ~(drop >= _DEPTH) & (length < room)
-            length = np.where(grow, np.minimum(2.0 * length, room), length)
-        # x = x̂ ± L u³ crowds the nodes near the peak, so that a narrow
-        # spike on a broad shoulder (a block whose χ² nearly vanishes) is
-        # resolved together with the shoulder.
-        u = 0.5 * (t + 1.0)
-        nodes.append(x + side * length * u**_POWER)
-        log_w.append(
-            np.log(0.5 * w * _POWER * u ** (_POWER - 1)) + np.log(length)
-        )
-    return np.concatenate(nodes), np.concatenate(log_w)
+    side = np.asarray([-1.0, 1.0], x.dtype)
+    room = np.stack([x - lo, hi - x])
+
+    def double(_, length):
+        drop = fx - jax.vmap(f)(x + side * length)
+        grow = ~(drop >= _DEPTH) & (length < room)
+        return np.where(grow, np.minimum(2.0 * length, room), length)
+
+    # Both sides at once, in a rolled loop (one compiled evaluation).
+    length = jax.lax.fori_loop(
+        0, _DOUBLINGS, double, np.minimum(2.0 * scale, room)
+    )
+    # x = x̂ ± L u³ crowds the nodes near the peak, so that a narrow spike
+    # on a broad shoulder (a block whose χ² nearly vanishes) is resolved
+    # together with the shoulder.
+    u = 0.5 * (t + 1.0)
+    nodes = x + (side * length)[:, None] * u**_POWER
+    log_w = (
+        np.log(0.5 * w * _POWER * u ** (_POWER - 1)) + np.log(length)[:, None]
+    )
+    return nodes.ravel(), log_w.ravel()
 
 
 def _marginal_1d(f, x0, lo, hi, delta, shared):
