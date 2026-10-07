@@ -84,10 +84,19 @@ anything before 1.0 may change between minor versions.
   position, and measures `gap_marginal` against its best refined rival
   (with the grid as a floor). The new `EpochPositions.peaks` holds each
   dataset's catalogue (`EpochPeaks`: positions, fluxes, quoted and
-  marginal scores, weights ∝ exp(m − max m), and an `edge` flag; also
-  `EpochPositions.edge`). The quoted `gap` stays the grid quantity for
+  marginal scores, weights, an `edge` flag and a `laplace` flag; also
+  `EpochPositions.edge`). The weights are each peak's Laplace mass
+  exp(m) det(H)^(-1/2) over (dra, ddec, flux), normalized, falling back
+  to the height exp(m) where `laplace` is false (no refinement, or a
+  Hessian that is not positive definite). Refined peaks within `gap_mas`
+  of a higher one are dropped, so two grid cells that refine to one
+  maximum are counted once. The quoted `gap` stays the grid quantity for
   its last release. The cost of the refinement grows linearly with
-  `n_peaks`. `start_from_positions(n_peaks=)` passes it on, and
+  `n_peaks`, which must be an integer of at least 1 (a `ValueError`
+  otherwise). The edge warning now fires when either the best grid point
+  or the best refined peak's starting cell is on the grid edge, with a
+  message for each case; before, only the best grid point was tested.
+  `start_from_positions(n_peaks=)` passes it on, and
   `OrbitStart.seeded` and `OrbitStart.ambiguous` name the datasets that
   seeded the orbits and those left out (with a `UserWarning`), so that no
   night is dropped silently.

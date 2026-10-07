@@ -541,7 +541,8 @@ def test_the_catalogue_holds_scored_peaks_with_weights():
             Epochs({"night": data}), COARSE, refine=False, n_peaks=4
         )
     peaks = found.peaks[0]
-    assert len(peaks) == 4
+    n = len(peaks)
+    assert 2 <= n <= 4
     # Best first, and the best is the fitted position.
     assert onp.all(onp.diff(peaks.marginal) <= 0.0)
     assert (peaks.dra[0], peaks.ddec[0], peaks.flux[0]) == (
@@ -549,29 +550,47 @@ def test_the_catalogue_holds_scored_peaks_with_weights():
         found.ddec[0],
         found.flux[0],
     )
-    # Distinct peaks, each scored on the data directly.
+    # Distinct refined peaks (more than λ/B apart), each scored on the
+    # data directly.
     xy = onp.stack([peaks.dra, peaks.ddec], -1)
     apart = onp.hypot(*(xy[:, None] - xy[None]).transpose(2, 0, 1))
-    assert onp.all(apart[onp.triu_indices(4, 1)] > 0.5)
+    resolution = Epochs({"night": data}).resolution_mas
+    assert onp.all(apart[onp.triu_indices(n, 1)] > resolution)
+    log_mass = []
     with jax.enable_x64(True):
         d64 = cast_tree(data, "float64")
-        for k in range(4):
-            model = BinaryModelCartesian(
-                peaks.dra[k], peaks.ddec[k], peaks.flux[k]
-            )
+
+        def negative(x):
+            return -marginal_loglike(BinaryModelCartesian(*x), d64)
+
+        for k in range(n):
+            x = jnp.array([peaks.dra[k], peaks.ddec[k], peaks.flux[k]])
+            model = BinaryModelCartesian(*x)
             assert float(marginal_loglike(model, d64)) == pytest.approx(
                 peaks.marginal[k], abs=1e-6
             )
             assert float(model_loglike(model, d64)) == pytest.approx(
                 peaks.loglike[k], abs=1e-6
             )
-    weight = onp.exp(peaks.marginal - peaks.marginal.max())
-    onp.testing.assert_allclose(peaks.weight, weight / weight.sum())
+            hess = onp.asarray(jax.hessian(negative)(x))
+            positive = bool(onp.all(onp.linalg.eigvalsh(hess) > 0))
+            assert peaks.laplace[k] == positive
+            log_mass.append(
+                peaks.marginal[k]
+                - (0.5 * onp.linalg.slogdet(hess)[1] if positive else 0.0)
+            )
+    # The weights are the Laplace masses, normalized.
+    weight = onp.exp(onp.array(log_mass) - max(log_mass))
+    onp.testing.assert_allclose(peaks.weight, weight / weight.sum(), rtol=1e-6)
     assert peaks.weight.sum() == pytest.approx(1.0)
+    assert peaks.laplace[0]
     assert not found.edge[0]
-    # Without refinement the peaks are grid points, and the position the
-    # best of them, as before.
+    # Without refinement the peaks are grid points, weighted by height,
+    # and the position the best of them, as before.
     assert grid.peaks[0].dra[0] == grid.dra[0]
+    assert not grid.peaks[0].laplace.any()
+    height = onp.exp(grid.peaks[0].marginal - grid.peaks[0].marginal.max())
+    onp.testing.assert_allclose(grid.peaks[0].weight, height / height.sum())
     assert grid.dra[0] in COARSE["dra"] and grid.ddec[0] in COARSE["ddec"]
 
 
@@ -611,7 +630,7 @@ def test_peak_selection_and_reranking_on_a_synthetic_surface():
         return values - 1.0, values
 
     best, loglike, marginal, order = _rank_peaks(
-        points, [score[c] for c in cells], refine, stub_score
+        points, [score[c] for c in cells], refine, stub_score, 2.0
     )
     onp.testing.assert_allclose(best[0], [-1.7, 5.0, 0.5])
     onp.testing.assert_allclose(best[2], [10.0, -10.0, 0.5])
@@ -627,3 +646,56 @@ def test_peak_selection_and_reranking_on_a_synthetic_surface():
     assert _refined_gap(
         best, marginal, floor, xx, yy, rival=2.0
     ) == pytest.approx(2.9)
+
+
+def test_grid_peaks_that_refine_to_one_maximum_are_counted_once():
+    from virgil.epochs import _rank_peaks
+
+    # Three grid peaks, the first two in one basin: the stub refinement
+    # takes both to (0, 0).
+    points = [[-2.0, 0.0, 0.5], [2.0, 0.0, 0.5], [8.0, 0.0, 0.5]]
+    targets = {-2.0: [0.0, 0.0, 0.5], 2.0: [0.0, 0.0, 0.5]}
+
+    def refine(x0):
+        if x0[0] in targets:
+            return onp.array(targets[x0[0]]), 5.0
+        return x0, 1.0
+
+    def stub_score(x):
+        m = onp.array([5.0 if p[0] == 0.0 else 1.0 for p in x])
+        return m, m
+
+    best, _, marginal, order = _rank_peaks(
+        points, [1.0, 1.0, 1.0], refine, stub_score, 2.0
+    )
+    onp.testing.assert_allclose(best[:, 0], [0.0, 8.0])
+    onp.testing.assert_allclose(marginal, [5.0, 1.0])
+    assert list(order) == [0, 2]
+
+
+def test_peaks_of_equal_height_are_weighted_by_their_volumes():
+    from virgil.epochs import _peak_weights
+
+    # Two Gaussian peaks of equal height with widths σ and 2σ in each of
+    # (dra, ddec, flux): their masses are in the ratio of their volumes,
+    # 1 : 2³.
+    narrow = onp.diag([1.0, 1.0, 1.0]) / 0.3**2
+    broad = onp.diag([1.0, 1.0, 1.0]) / 0.6**2
+    weight, laplace = _peak_weights([4.0, 4.0], [narrow, broad])
+    onp.testing.assert_allclose(weight, [1.0 / 9.0, 8.0 / 9.0])
+    assert laplace.all()
+    # A Hessian that is not positive definite, or none, falls back to
+    # the height.
+    flat = onp.diag([1.0, 1.0, 0.0])
+    weight, laplace = _peak_weights([4.0, 4.0, 3.0], [narrow, flat, None])
+    assert list(laplace) == [True, False, False]
+    expected = onp.array([4.0 + 3.0 * onp.log(0.3), 4.0, 3.0])
+    expected = onp.exp(expected - expected.max())
+    onp.testing.assert_allclose(weight, expected / expected.sum())
+
+
+@pytest.mark.parametrize("n_peaks", [0, -1, 2.5, True, "3"])
+def test_n_peaks_must_be_a_positive_integer(n_peaks):
+    data = Epochs({"night": _night(VLTI_UTS[:3], 1)})
+    with pytest.raises(ValueError, match="n_peaks"):
+        epoch_positions(data, GRID, n_peaks=n_peaks)

@@ -953,12 +953,19 @@ class EpochPeaks:
         ([`marginal_loglike`][virgil.epochs.marginal_loglike]); the peaks
         are sorted by it, highest first.
     weight : numpy.ndarray
-        Relative weights ∝ exp(m - max m), summing to 1: how much each
-        peak counts as the companion's position in this dataset alone.
+        The posterior mass of each peak in this dataset alone, summing
+        to 1: the Laplace approximation w ∝ exp(m) det(H)^(-1/2), with H
+        the Hessian of -m at the peak over (dra, ddec, flux), so that a
+        broad peak outweighs a narrow one of the same height. Where
+        ``laplace`` is false the peak's height exp(m) stands in.
     edge : numpy.ndarray
         Whether each peak started from a grid point on the edge of the
         position grid. A best peak at the edge may stand for a companion
         outside the grid: treat that dataset as ambiguous.
+    laplace : numpy.ndarray
+        Whether each peak's weight is its Laplace mass: false without
+        ``refine``, or where the Hessian is not positive definite (a
+        peak on a bound, or a flat direction).
     """
 
     dra: onp.ndarray
@@ -968,6 +975,7 @@ class EpochPeaks:
     marginal: onp.ndarray
     weight: onp.ndarray
     edge: onp.ndarray
+    laplace: onp.ndarray
 
     def __len__(self):
         return len(self.marginal)
@@ -1137,6 +1145,17 @@ def _gap(score, xx, yy, rival):
     return (i, j, int(onp.argmax(score[i, j]))), float(gap)
 
 
+def _check_n_peaks(n_peaks):
+    if (
+        isinstance(n_peaks, bool)
+        or not isinstance(n_peaks, (int, onp.integer))
+        or n_peaks < 1
+    ):
+        raise ValueError(
+            f"n_peaks must be an integer of at least 1, not {n_peaks!r}."
+        )
+
+
 def _grid_peaks(score, xx, yy, rival, n_peaks):
     """The ``(i, j, k)`` cells of up to ``n_peaks`` local maxima of a
     (dra, ddec, flux) grid of scores, highest first, each more than
@@ -1165,14 +1184,16 @@ def _grid_peaks(score, xx, yy, rival, n_peaks):
     return chosen
 
 
-def _rank_peaks(grid_points, grid_marginal, refine, score):
+def _rank_peaks(grid_points, grid_marginal, refine, score, rival):
     """Refine each grid peak and rank the peaks by their marginal score.
 
     ``refine(x0)`` returns a refined point and its marginal score, kept
     only when it is no worse than the grid point's; ``score(points)``
     returns the quoted log likelihood and the marginal score of each
-    point. Returns the points, quoted and marginal scores, best first,
-    and the order (indices into ``grid_points``).
+    point. Two grid peaks can refine to one maximum, so a peak within
+    ``rival`` of a higher one is dropped. Returns the points, quoted and
+    marginal scores, best first, and the order (indices into
+    ``grid_points``).
     """
     points = onp.array(grid_points, dtype=float)
     if refine is not None:
@@ -1185,8 +1206,39 @@ def _rank_peaks(grid_points, grid_marginal, refine, score):
     marginal = onp.where(
         onp.isfinite(marginal), onp.asarray(marginal, dtype=float), -onp.inf
     )
-    order = onp.argsort(-marginal, kind="stable")
+    order = []
+    for n in onp.argsort(-marginal, kind="stable"):
+        if all(
+            onp.hypot(*(points[n, :2] - points[k, :2])) > rival for k in order
+        ):
+            order.append(int(n))
+    order = onp.array(order, dtype=int)
     return points[order], loglike[order], marginal[order], order
+
+
+def _peak_weights(marginal, hessians):
+    """Normalized Laplace masses of the peaks, and whether each is one.
+
+    log w_k = m_k - ½ log det H_k, with H_k the Hessian of -m at peak k
+    over (dra, ddec, flux). A peak whose Hessian is missing (``None``)
+    or not positive definite falls back to its height m_k.
+    """
+    log_w, laplace = [], []
+    for m, hess in zip(marginal, hessians):
+        hess = None if hess is None else onp.asarray(hess, dtype=float)
+        positive = (
+            hess is not None
+            and bool(onp.all(onp.isfinite(hess)))
+            and bool(onp.all(onp.linalg.eigvalsh(hess) > 0))
+        )
+        log_w.append(m - 0.5 * onp.linalg.slogdet(hess)[1] if positive else m)
+        laplace.append(positive)
+    log_w = onp.asarray(log_w, dtype=float)
+    top = onp.max(log_w)
+    weight = (
+        onp.exp(log_w - top) if onp.isfinite(top) else onp.ones(len(log_w))
+    )
+    return weight / weight.sum(), onp.array(laplace, dtype=bool)
 
 
 def _refined_gap(points, marginal, grid_score, xx, yy, rival):
@@ -1310,6 +1362,7 @@ def epoch_positions(
     """
     if not isinstance(data, Epochs):
         raise TypeError(f"data must be an Epochs, not {type(data).__name__}.")
+    _check_n_peaks(n_peaks)
     missing = {"dra", "ddec", "flux"} - set(grid)
     if missing:
         raise ValueError(f"grid needs the axes {sorted(missing)}.")
@@ -1327,7 +1380,7 @@ def epoch_positions(
     ]
     bounds = [(a.min() - s, a.max() + s) for a, s in zip(axes[:2], steps)]
     bounds.append((0.1 * float(axes[2].min()), 1.0))
-    rows, inflated, edge = [], [], []
+    rows, inflated, edge_grid, edge_peak = [], [], [], []
     for index, (name, d) in enumerate(zip(data.dataset_names, data.data)):
         surface = _Surface(d, s_max)
         dof_k = _check_dof(_dof_for(dof, data, index))
@@ -1371,43 +1424,49 @@ def epoch_positions(
             [marginal[c] for c in cells],
             refine_one if refine else None,
             score,
+            rival,
         )
         if refine:
             gap_marginal = _refined_gap(
                 peaks, peak_marginal, marginal, xx, yy, rival
             )
-        on_edge = onp.array(
-            [
-                cells[n][0] in (0, xx.shape[0] - 1)
-                or cells[n][1] in (0, xx.shape[1] - 1)
-                for n in order
-            ],
-            dtype=bool,
-        )
-        if on_edge[0]:
-            edge.append(name)
-        weight = (
-            onp.exp(peak_marginal - peak_marginal[0])
-            if onp.isfinite(peak_marginal[0])
-            else onp.ones(len(peak_marginal))
-        )
+        at_edge = [
+            a in (0, xx.shape[0] - 1) or b in (0, xx.shape[1] - 1)
+            for a, b, _ in cells
+        ]
+        on_edge = onp.array([at_edge[n] for n in order], dtype=bool)
+        if at_edge[0]:
+            edge_grid.append(name)
+        elif on_edge[0]:
+            edge_peak.append(name)
+        hessians = [None] * len(peaks)
+        if refine:
+            with run_in("float64"):
+                hessians = [
+                    onp.asarray(
+                        _negative_marginal_hessian(
+                            np.asarray(x), dof64, d64, surface
+                        ),
+                        dtype=float,
+                    )
+                    for x in peaks
+                ]
+        weight, laplace = _peak_weights(peak_marginal, hessians)
         catalogue = EpochPeaks(
             dra=peaks[:, 0],
             ddec=peaks[:, 1],
             flux=peaks[:, 2],
             loglike=peak_loglike,
             marginal=peak_marginal,
-            weight=weight / weight.sum(),
+            weight=weight,
             edge=on_edge,
+            laplace=laplace,
         )
         best = peaks[0]
         cov = max(steps) ** 2 * onp.eye(2)
         with run_in("float64"):
             if refine:
-                hess = _negative_marginal_hessian(
-                    np.asarray(best), dof64, d64, surface
-                )
-                full = onp.linalg.pinv(onp.asarray(hess, dtype=float))
+                full = onp.linalg.pinv(hessians[0])
                 if onp.all(onp.isfinite(full)) and onp.all(
                     onp.linalg.eigvalsh(full[:2, :2]) > 0
                 ):
@@ -1435,10 +1494,19 @@ def epoch_positions(
             UserWarning,
             stacklevel=2,
         )
-    if edge:
+    if edge_grid:
         warnings.warn(
-            f"The best grid position of {', '.join(edge)} is at the edge of "
-            "the grid: the companion may lie outside it. Widen the grid.",
+            f"The best grid position of {', '.join(edge_grid)} is at the "
+            "edge of the grid: the companion may lie outside it. Widen the "
+            "grid.",
+            UserWarning,
+            stacklevel=2,
+        )
+    if edge_peak:
+        warnings.warn(
+            f"The best refined peak of {', '.join(edge_peak)} started from "
+            "the edge of the grid: the companion may lie outside it. Widen "
+            "the grid.",
             UserWarning,
             stacklevel=2,
         )
@@ -1680,6 +1748,7 @@ def start_from_positions(
         If every refinement fit raised an error (chained to the last).
     """
     scales = _check_scales(scales, "start_from_positions")
+    _check_n_peaks(n_peaks)
     positions = epoch_positions(
         data,
         grid,
