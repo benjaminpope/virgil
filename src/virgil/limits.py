@@ -193,7 +193,8 @@ def chi2ppf(p, df):
     p = jnp.clip(p, eps, 1.0 - eps)
 
     a = jnp.asarray(df, dtype=p.dtype) / 2.0
-    return 2.0 * _gammaincinv(a, p)
+    x = _gammaincinv(jnp.where(a > 0.0, a, 1.0), p)
+    return jnp.where(a > 0.0, 2.0 * x, jnp.nan)
 
 
 def _gammaincinv_guess(a, p):
