@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import re
 
 STATUSES = ("pass", "warn", "fail")
 
@@ -392,3 +393,159 @@ def worst_status(checks):
     """The worst status among ``checks`` (``"pass"`` if there are none)."""
     rank = {status: i for i, status in enumerate(STATUSES)}
     return max((c.status for c in checks), key=rank.get, default="pass")
+
+
+# --- checks from the warnings raised inside stages ----------------------------
+
+# Warnings of these categories are recorded but raise no check: they say
+# something about the software environment, not about the result.
+_BENIGN_CATEGORIES = (
+    "DeprecationWarning",
+    "PendingDeprecationWarning",
+    "ImportWarning",
+    "ResourceWarning",
+)
+
+
+def _numbers(pattern, text):
+    match = re.search(pattern, text)
+    return [float(g) for g in match.groups()] if match else None
+
+
+def convergence(records):
+    """Optimizer non-convergence reported by the grid functions.
+
+    Parameters
+    ----------
+    records : list of dict
+        The recorded warnings that mention non-convergence ("the optimizer
+        did not converge at N of M grid positions"). The one with the worst
+        fraction N/M is reported; grids of different sizes can appear.
+    """
+    worst, total = 0.0, 0.0
+    for record in records:
+        counts = _numbers(r"(\d+)\s+of\s+(\d+)", record["message"])
+        if (
+            counts
+            and counts[1]
+            and (not total or counts[0] / counts[1] > worst / total)
+        ):
+            worst, total = counts
+    if not total:
+        return Check(
+            "convergence",
+            "warn",
+            None,
+            None,
+            "The optimizer did not converge at some grid positions; values "
+            "there may be inaccurate.",
+        )
+    return Check(
+        "convergence",
+        "warn",
+        worst / total,
+        0.0,
+        f"The optimizer did not converge at {worst:.0f} of {total:.0f} grid "
+        f"positions ({100 * worst / total:.2g} per cent): values there may "
+        "be inaccurate.",
+    )
+
+
+def flux_axis_resolution(records, *, minimum=2.0):
+    """The flux axis does not resolve the likelihood peak."""
+    steps = []
+    for r in records:
+        found = _numbers(r"([\d.]+(?:e[-+]?\d+)?)\s+steps", r["message"])
+        if found:
+            steps.append(found[0])
+    value = min(steps) if steps else None
+    detail = f" ({value:.2g} steps across its FWHM)" if steps else ""
+    return Check(
+        "flux_axis_resolution",
+        "warn",
+        value,
+        minimum,
+        f"The flux axis does not resolve the likelihood peak{detail}: "
+        "log_bayes_factor is inaccurate; use a finer flux axis (n_flux).",
+    )
+
+
+def limits_clipped(records):
+    """Contrast limits clipped to the flux bounds."""
+    counts = []
+    for r in records:
+        found = _numbers(r"(\d+)\s+limits", r["message"])
+        if found:
+            counts.append(found[0])
+    value = max(counts) if counts else None
+    which = f"{value:.0f} limits" if counts else "Some limits"
+    return Check(
+        "limits_clipped",
+        "warn",
+        value,
+        0,
+        f"{which} fell outside the flux bounds and were clipped to the "
+        "nearer bound: those limits are not the true limits; widen "
+        "flux_range.",
+    )
+
+
+def stage_warnings(records):
+    """Warnings no other rule recognizes, summarized in one check."""
+    shown = "; ".join(r["message"] for r in records[:3])
+    more = f" (and {len(records) - 3} more)" if len(records) > 3 else ""
+    return Check(
+        "stage_warnings",
+        "warn",
+        len(records),
+        0,
+        f"{len(records)} warning(s) were raised inside the stages: "
+        f"{shown}{more}. See the 'warnings' list of summary.json.",
+    )
+
+
+def _classify(message):
+    text = message.lower()
+    if "converge" in text and "optimizer" in text:
+        return "convergence"
+    if "resolve" in text and "peak" in text:
+        return "flux_axis_resolution"
+    if "clipped" in text or "flux_bounds" in text:
+        return "limits_clipped"
+    return None
+
+
+_RULES = {
+    "convergence": convergence,
+    "flux_axis_resolution": flux_axis_resolution,
+    "limits_clipped": limits_clipped,
+}
+
+
+def stage_warning_checks(warning_records):
+    """Checks for the warnings recorded inside the stages.
+
+    Known messages map to specific checks (``convergence``,
+    ``flux_axis_resolution``, ``limits_clipped``), matched by keywords so
+    that rewording a message does not break the mapping; any other
+    warning, except deprecation notices, goes to one ``stage_warnings``
+    check. No warnings give no checks.
+
+    Parameters
+    ----------
+    warning_records : list of dict
+        Each with ``stage``, ``category`` and ``message``.
+    """
+    grouped, other = {}, []
+    for record in warning_records:
+        rule = _classify(record["message"])
+        if rule:
+            grouped.setdefault(rule, []).append(record)
+        elif record["category"] not in _BENIGN_CATEGORIES:
+            other.append(record)
+    checks = [
+        fn(grouped[name]) for name, fn in _RULES.items() if name in grouped
+    ]
+    if other:
+        checks.append(stage_warnings(other))
+    return checks
