@@ -1324,7 +1324,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         Examples
         --------
-        >>> import numpy as np
+        >>> import numpy as onp
         >>> data = OIData({"u": [1.0, 2.0], "v": [0.0, 1.0], "wavel": 1e-6,
         ...                "vis": [0.9, 0.5], "d_vis": [0.001, 0.02]})
         >>> floored = data.with_error_floor(relative={"vis": 0.01})

@@ -19,8 +19,8 @@ from typing import NamedTuple
 
 import equinox as eqx
 import jax
-import jax.numpy as jnp
-import numpy as np
+import jax.numpy as np
+import numpy as onp
 import numpyro.distributions as dist
 import optimistix as optx
 
@@ -42,9 +42,9 @@ def _best_grid_flux(loglike_im, grid, params, flux_key):
     """Best flux on a full likelihood grid, and its log likelihood, at every
     position (``loglike_im`` has one axis per key of ``params``)."""
     flux_axis = params.index(flux_key)
-    best_index = jnp.nanargmax(loglike_im, axis=flux_axis)
-    best_flux = jnp.asarray(grid[flux_key])[best_index]
-    return best_flux, jnp.nanmax(loglike_im, axis=flux_axis)
+    best_index = np.nanargmax(loglike_im, axis=flux_axis)
+    best_flux = np.asarray(grid[flux_key])[best_index]
+    return best_flux, np.nanmax(loglike_im, axis=flux_axis)
 
 
 @eqx.filter_jit
@@ -110,20 +110,20 @@ def _refine_flux_grid(
     def newton_step(flux, coord_vals):
         grad = jax.grad(flux_loglike)(flux, coord_vals)
         curvature = jax.grad(jax.grad(flux_loglike))(flux, coord_vals)
-        step = jnp.where(curvature < 0.0, grad / curvature, 0.0)
+        step = np.where(curvature < 0.0, grad / curvature, 0.0)
         # Keep the step only if it improves the fit: far from quadratic
         # regions a Newton step can overshoot.
         trial = flux - step
         improved = flux_loglike(trial, coord_vals) >= flux_loglike(
             flux, coord_vals
         )
-        return jnp.where(improved, trial, flux)
+        return np.where(improved, trial, flux)
 
     def refine(flux0, coord_vals, loglike0):
-        scale = jnp.where(jnp.abs(flux0) > 0.0, jnp.abs(flux0), 1.0)
+        scale = np.where(np.abs(flux0) > 0.0, np.abs(flux0), 1.0)
         result = optx.compat.minimize(
             objective,
-            x0=jnp.array([flux0 / scale]),
+            x0=np.array([flux0 / scale]),
             args=(coord_vals, scale, loglike0),
             method="BFGS",
             options={"maxiter": 100},
@@ -140,7 +140,7 @@ def _refine_flux_grid(
         grad = jax.grad(flux_loglike)(flux, coord_vals)
         curvature = jax.grad(jax.grad(flux_loglike))(flux, coord_vals)
         converged = (curvature < 0.0) & (
-            jnp.abs(grad) < 0.25 * jnp.sqrt(jnp.abs(curvature))
+            np.abs(grad) < 0.25 * np.sqrt(np.abs(curvature))
         )
         return flux, flux_loglike(flux, coord_vals), converged
 
@@ -364,46 +364,46 @@ def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
     bounds, within the decay length of the nearer bound), so a narrow peak
     inside wide bounds is resolved. Returns ``(log_B, mean, sd)``.
     """
-    d = jnp.maximum(f_min - f_hat, f_hat - f_max)  # > 0 outside the bounds
+    d = np.maximum(f_min - f_hat, f_hat - f_max)  # > 0 outside the bounds
     outside = d > sigma
-    width = jnp.where(
+    width = np.where(
         outside,
-        _TAIL_SIGMA * sigma * (sigma / jnp.maximum(d, sigma)),
+        _TAIL_SIGMA * sigma * (sigma / np.maximum(d, sigma)),
         _WINDOW_SIGMA * sigma,
     )
     above = outside & (f_hat > f_max)
-    centre = jnp.clip(f_hat, f_min, f_max)
-    lo = jnp.clip(centre - width, f_min, f_max)
-    hi = jnp.clip(centre + width, f_min, f_max)
+    centre = np.clip(f_hat, f_min, f_max)
+    lo = np.clip(centre - width, f_min, f_max)
+    hi = np.clip(centre + width, f_min, f_max)
     # The window is f = f0 * exp(sgn * delta), delta in [0, span]: anchored at
     # the bound nearest f_hat when f_hat is outside, so that a window much
     # narrower than f (float32!) is still resolved, and f - f_hat is formed
     # from offsets rather than from two nearly equal fluxes.
-    tail = jnp.minimum(width, f_max - f_min)
-    f0 = jnp.where(above, f_max, lo)
-    sgn = jnp.where(above, -1.0, 1.0)
-    span = jnp.where(
+    tail = np.minimum(width, f_max - f_min)
+    f0 = np.where(above, f_max, lo)
+    sgn = np.where(above, -1.0, 1.0)
+    span = np.where(
         outside,
-        jnp.where(above, -jnp.log1p(-tail / f_max), jnp.log1p(tail / f_min)),
-        jnp.log(hi) - jnp.log(lo),
+        np.where(above, -np.log1p(-tail / f_max), np.log1p(tail / f_min)),
+        np.log(hi) - np.log(lo),
     )
-    x, w = np.polynomial.legendre.leggauss(_N_NODES)
-    delta = 0.5 * span * (jnp.asarray(x) + 1.0)
-    wd = 0.5 * span * jnp.asarray(w)
-    offset = f0 * jnp.expm1(sgn * delta)  # f - f0
+    x, w = onp.polynomial.legendre.leggauss(_N_NODES)
+    delta = 0.5 * span * (np.asarray(x) + 1.0)
+    wd = 0.5 * span * np.asarray(w)
+    offset = f0 * np.expm1(sgn * delta)  # f - f0
     # (f - f_hat)^2 - f_hat^2 with f = f0 + offset, expanded so that nothing
     # large cancels: f0 (f0 - 2 f_hat) + 2 (f0 - f_hat) offset + offset^2.
     h = -(
         f0 * (f0 - 2.0 * f_hat) + 2.0 * (f0 - f_hat) * offset + offset**2
     ) / (2.0 * sigma**2)
-    m = jnp.max(h)
-    wt = wd * jnp.exp(h - m)
-    s0 = jnp.sum(wt)
-    mean_offset = jnp.sum(wt * offset) / s0
-    var = jnp.sum(wt * (offset - mean_offset) ** 2) / s0
+    m = np.max(h)
+    wt = wd * np.exp(h - m)
+    s0 = np.sum(wt)
+    mean_offset = np.sum(wt * offset) / s0
+    var = np.sum(wt * (offset - mean_offset) ** 2) / s0
     mean = f0 + mean_offset
-    log_b = m + jnp.log(s0) - jnp.log(jnp.log(f_max) - jnp.log(f_min))
-    return log_b, mean, jnp.sqrt(var)
+    log_b = m + np.log(s0) - np.log(np.log(f_max) - np.log(f_min))
+    return log_b, mean, np.sqrt(var)
 
 
 def _as_prior(prior):
@@ -439,14 +439,14 @@ def _as_prior(prior):
         raise ValueError(f"LogUniform needs 0 < f_min < f_max, got ({a}, {b})")
     if isinstance(prior, Gaussian) and not b > 0.0:
         raise ValueError(f"Gaussian needs sd > 0, got sd = {b}")
-    return type(prior)(jnp.asarray(a), jnp.asarray(b))
+    return type(prior)(np.asarray(a), np.asarray(b))
 
 
 def _scalar_params(d, names):
     """Scalar float parameters of a numpyro distribution, or a clear error."""
     out = []
     for name in names:
-        v = np.asarray(getattr(d, name))
+        v = onp.asarray(getattr(d, name))
         if v.ndim != 0:
             raise ValueError(
                 f"linear_flux_grid needs scalar {type(d).__name__} "
@@ -462,12 +462,12 @@ class LinearFluxGrid(NamedTuple):
     The last three fields are ``None`` unless a ``prior`` was given.
     """
 
-    flux: jnp.ndarray
-    flux_error: jnp.ndarray
-    snr: jnp.ndarray
-    posterior_mean: jnp.ndarray | None = None
-    posterior_sd: jnp.ndarray | None = None
-    log_bayes_factor: jnp.ndarray | None = None
+    flux: np.ndarray
+    flux_error: np.ndarray
+    snr: np.ndarray
+    posterior_mean: np.ndarray | None = None
+    posterior_sd: np.ndarray | None = None
+    log_bayes_factor: np.ndarray | None = None
 
 
 @eqx.filter_jit
@@ -495,34 +495,34 @@ def _linear_flux_grid(
             r, g = jax.jvp(
                 lambda f: residuals(f, coord_vals),
                 (flux,),
-                (jnp.ones(()),),
+                (np.ones(()),),
             )
-            curvature = jnp.sum(g * g)
+            curvature = np.sum(g * g)
             # Gauss-Newton step: the minimiser of the model linear about f_n.
-            return flux - jnp.sum(g * r) / curvature, curvature
+            return flux - np.sum(g * r) / curvature, curvature
 
-        flux, curvature = linearise(jnp.zeros(()))
+        flux, curvature = linearise(np.zeros(()))
         # Relinearise at the current estimate; a fixed trip count keeps this
         # jit- and vmap-friendly. The last g is the one sigma_f comes from.
         flux, curvature = jax.lax.fori_loop(
             0, n_iter, lambda _, c: linearise(c[0]), (flux, curvature)
         )
         ok = curvature > 0.0
-        flux = jnp.where(ok, flux, jnp.nan)
-        sigma = jnp.where(ok, 1.0 / jnp.sqrt(curvature), jnp.nan)
+        flux = np.where(ok, flux, np.nan)
+        sigma = np.where(ok, 1.0 / np.sqrt(curvature), np.nan)
         if prior is None:
             return flux, sigma, None, None, None
         if isinstance(prior, LogUniform):
-            safe = jnp.where(ok, curvature, 1.0)
+            safe = np.where(ok, curvature, 1.0)
             log_bf, post_mean, post_sd = _log_uniform_evidence(
-                flux, 1.0 / jnp.sqrt(safe), prior.f_min, prior.f_max
+                flux, 1.0 / np.sqrt(safe), prior.f_min, prior.f_max
             )
             return (
                 flux,
                 sigma,
-                jnp.where(ok, post_mean, jnp.nan),
-                jnp.where(ok, post_sd, jnp.nan),
-                jnp.where(ok, log_bf, jnp.nan),
+                np.where(ok, post_mean, np.nan),
+                np.where(ok, post_sd, np.nan),
+                np.where(ok, log_bf, np.nan),
             )
         # Gaussian: the likelihood is exp(-curvature (f - flux)^2 / 2) up to a
         # constant in the linear model about the final point. With a
@@ -532,16 +532,16 @@ def _linear_flux_grid(
         b = curvature * flux  # g . (g flux), whitened
         post_mean = (b + mean / sd**2) / precision
         log_bf = (
-            -0.5 * jnp.log(sd**2 * precision)
+            -0.5 * np.log(sd**2 * precision)
             + (b + mean / sd**2) ** 2 / (2.0 * precision)
             - mean**2 / (2.0 * sd**2)
         )
         return (
             flux,
             sigma,
-            jnp.where(ok, post_mean, jnp.nan),
-            jnp.where(ok, precision**-0.5, jnp.nan),
-            jnp.where(ok, log_bf, jnp.nan),
+            np.where(ok, post_mean, np.nan),
+            np.where(ok, precision**-0.5, np.nan),
+            np.where(ok, log_bf, np.nan),
         )
 
     out = map_points(solve, coords, batch_size=batch_size)
@@ -708,15 +708,15 @@ def linear_flux_grid(
     Examples
     --------
     >>> grid = {
-    ...     "dra": jnp.linspace(-300.0, 300.0, 61),
-    ...     "ddec": jnp.linspace(-300.0, 300.0, 61),
-    ...     "flux": jnp.array([1e-3]),  # ignored: only names the parameter
+    ...     "dra": np.linspace(-300.0, 300.0, 61),
+    ...     "ddec": np.linspace(-300.0, 300.0, 61),
+    ...     "flux": np.array([1e-3]),  # ignored: only names the parameter
     ... }
     >>> res = linear_flux_grid(
     ...     BinaryModelCartesian, data, grid
     ... )  # doctest: +SKIP
-    >>> i, j = jnp.unravel_index(
-    ...     jnp.nanargmax(res.snr), res.snr.shape
+    >>> i, j = np.unravel_index(
+    ...     np.nanargmax(res.snr), res.snr.shape
     ... )  # doctest: +SKIP
     """
     params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
@@ -789,7 +789,7 @@ def laplace_flux_uncertainty_grid(
             batch_size=batch_size,
         )
     return _laplace_flux_uncertainty_grid(
-        jnp.asarray(flux),
+        np.asarray(flux),
         data,
         model,
         grid,
@@ -815,7 +815,7 @@ def _laplace_flux_uncertainty_grid(
     coords, shape = coordinate_points(grid, coord_keys)
 
     def sigma(flux, coord_vals):
-        values = jnp.stack(
+        values = np.stack(
             ordered_values(flux, coord_vals, params, coord_keys, flux_key)
         )
         return laplace_parameter_uncertainty(
@@ -848,13 +848,13 @@ def best_grid_point(loglike_grid, grid):
     dict[str, float]
         ``{name: value}`` at the maximum, in the order of ``grid``.
     """
-    shape = jnp.shape(loglike_grid)
+    shape = np.shape(loglike_grid)
     if len(shape) != len(grid):
         raise ValueError(
             f"loglike_grid has {len(shape)} axes but grid has "
             f"{len(grid)} keys; pass the full likelihood_grid output."
         )
-    index = np.unravel_index(int(jnp.nanargmax(loglike_grid)), shape)
+    index = onp.unravel_index(int(np.nanargmax(loglike_grid)), shape)
     return {
         key: float(values[i]) for (key, values), i in zip(grid.items(), index)
     }

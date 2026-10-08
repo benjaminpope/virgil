@@ -41,6 +41,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **One import convention (#306).** `import jax.numpy as np` and `import numpy as onp` everywhere in `src`, `tests`, `examples`, `scripts` and `design/sketches` (six `src` modules and three tests had the two swapped, so code moved between files silently changed backend). Ruff's `ICN001` now enforces it; notebooks keep their old aliases until they are next re-executed.
 - **Orbit starts are scale-aware (#268).** `epoch_positions` now scores
   its grid on the scale-marginalized surface m = -Σ_b (ν_b/2) ln χ²_b,
   in which each dataset's V² and closure-phase error scales are
