@@ -183,7 +183,7 @@ def test_total_spectrum_sums_the_components():
 
 def test_tabulated_is_deprecated_but_unchanged():
     nodes = onp.array([2.0e-6, 2.1e-6, 2.2e-6])
-    with pytest.warns(DeprecationWarning, match="Nodes"):
+    with pytest.warns(FutureWarning, match="Nodes"):
         old = Tabulated([0.2, 0.4, 0.1], nodes)
     new = Nodes([0.2, 0.4, 0.1], nodes)
     wavel = onp.linspace(1.9e-6, 2.3e-6, 11)

@@ -289,8 +289,8 @@ def test_the_batched_jacobian_matches_jax(n):
     onp.testing.assert_allclose(jac, onp.asarray(full), rtol=1e-10, atol=1e-12)
 
 
-def test_plain_data_have_no_marginal_log_normaliser():
-    # The evidence of plain data is unchanged by the marginal normaliser:
+def test_plain_data_have_no_marginal_log_normalizer():
+    # The evidence of plain data is unchanged by the marginal normalizer:
     # it is exactly zero without gains, offsets or extra observables.
     from virgil.imaging import _log_norm
 
@@ -336,12 +336,12 @@ def test_the_evidence_with_gains_matches_model_loglike():
     with run_in("float64"):
         m, g, p = cast_tree((model, gains, plain), "float64")
         exact = float(model_loglike(m, g))
-        # The documented constant: the normalisation of the same data
+        # The documented constant: the normalization of the same data
         # without gains, which depends only on the quoted errors.
         r = whitened_residuals(m, p)
         constant = float(model_loglike(m, p) + 0.5 * np.sum(r**2))
     assert likelihood_term == pytest.approx(exact - constant, abs=1e-6)
-    # The gains' normaliser is not negligible here: without it the two
+    # The gains' normalizer is not negligible here: without it the two
     # would differ.
     r = onp.asarray(_residual_jacobian(model, gains, path)[0])
     assert abs(-0.5 * float(r @ r) - (exact - constant)) > 1.0
@@ -357,15 +357,15 @@ def test_the_evidence_prefers_the_simulated_gain_width():
     from virgil.imaging import _log_norm
 
     start = _small_scene(onp.zeros((NG, NG)))
-    evidence, normaliser = {}, {}
+    evidence, normalizer = {}, {}
     for trial in (0.005, width, 0.5):
         trial_data = data.with_gains(baseline=trial)
         result = fit(start, image_priors(start), trial_data)
         evidence[trial] = log_evidence(result.model, trial_data)
-        normaliser[trial] = _log_norm(result.model, trial_data)
+        normalizer[trial] = _log_norm(result.model, trial_data)
     assert max(evidence, key=evidence.get) == width
-    # Without the gains' normaliser, wider gains would always win.
-    bare = {t: evidence[t] + normaliser[t] for t in evidence}
+    # Without the gains' normalizer, wider gains would always win.
+    bare = {t: evidence[t] + normalizer[t] for t in evidence}
     assert max(bare, key=bare.get) == 0.5
 
 
@@ -491,10 +491,10 @@ def test_block_error_scales_recover_different_miscalibrations():
     # truth: 90 V² scatter by ~8%, and the draw (which depends on the
     # dtype under JAX_ENABLE_X64) can sit 20% below 1.
     m_vis = onp.asarray(noisy.model(truth))[: noisy.vis.size]
-    realised = onp.sqrt(
+    realized = onp.sqrt(
         onp.mean(((onp.asarray(noisy.vis) - m_vis) / noisy.d_vis) ** 2)
     )
-    assert scales["vis"] == pytest.approx(3.0 * realised, rel=0.12)
+    assert scales["vis"] == pytest.approx(3.0 * realized, rel=0.12)
     # 45 independent closure phases: s_phi scatters by ~13%.
     assert 0.35 < scales["phi"] < 0.7
     single = error_scale(model, quoted)

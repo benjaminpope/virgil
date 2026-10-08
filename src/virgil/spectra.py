@@ -42,7 +42,7 @@ import jax.numpy as np
 import numpy as onp
 import zodiax as zx
 
-from ._utils import concrete
+from ._utils import check_part_name, concrete
 
 
 __all__ = [
@@ -152,7 +152,7 @@ class PowerLaw(Spectrum):
 class BlackBody(Spectrum):
     """Planck spectrum ``ratio * B_λ(T, λ) / B_λ(T, wavel0)``.
 
-    The shape of a blackbody at ``temperature`` in F_λ, normalised to
+    The shape of a blackbody at ``temperature`` in F_λ, normalized to
     ``ratio`` at ``wavel0``, as SPARCO uses for dust and companions (e.g.
     Hillen et al. 2016). At long wavelengths (``hc/λkT`` small) it tends to
     the Rayleigh-Jeans ``PowerLaw`` with index -4.
@@ -491,7 +491,13 @@ class Sum(Spectrum):
         if not parts:
             raise ValueError("Sum needs at least one spectrum.")
         for name, part in parts.items():
-            _check_part_name(name)
+            check_part_name(
+                name,
+                Sum,
+                "Sum part",
+                "flux.brg.amplitude",
+                "a Sum attribute or method",
+            )
             if not isinstance(part, Spectrum):
                 raise TypeError(f"Part '{name}' is not a Spectrum: {part!r}")
         self.names = tuple(parts)
@@ -582,7 +588,7 @@ class Tabulated(Spectrum):
         warnings.warn(
             "Tabulated is deprecated; use virgil.spectra.Nodes (with wavel0 "
             "for the reference flux).",
-            DeprecationWarning,
+            FutureWarning,
             stacklevel=2,
         )
         self.ratio = np.asarray(ratio, dtype=float)
@@ -659,29 +665,6 @@ def _planck_ratio(wavel, temperature, wavel0, temperature0):
         - np.log(-np.expm1(-x))
     )
     return np.exp(log_ratio)
-
-
-def _check_part_name(name):
-    """Reject Sum part names that are not parameter-path safe or clash.
-
-    The same rule as a [`System`][virgil.models.System] component name
-    (which `models` owns, and imports this module).
-    """
-    if not isinstance(name, str) or not name.isidentifier():
-        raise ValueError(
-            f"Sum part name {name!r} must be a valid Python identifier, so "
-            "that it can be used in parameter paths such as "
-            "'flux.brg.amplitude'."
-        )
-    if (
-        name.startswith("_")
-        or name in {"names", "parts", "wavel0", "components"}
-        or hasattr(Sum, name)
-    ):
-        raise ValueError(
-            f"'{name}' cannot be a Sum part name because it clashes with a "
-            "Sum attribute or method; choose another name."
-        )
 
 
 def _spline_moments(nodes, values):

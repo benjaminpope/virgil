@@ -11,7 +11,7 @@ smallest that exercise each function: the 7-hole mask and a 2 x 2 grid.
 import warnings
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import matplotlib
 
 matplotlib.use("Agg")
@@ -43,6 +43,9 @@ from virgil.inference import (  # noqa: E402
 )
 from virgil.likelihood import (  # noqa: E402
     flux_scale_posterior,
+    inflated_errors,
+    joint_data,
+    joint_errors,
     joint_loglike,
     joint_prediction,
     loglike,
@@ -62,9 +65,9 @@ DATA = nrm_oidata().with_model(
     BinaryModelCartesian(60.0, -40.0, 5e-3), key=jax.random.PRNGKey(0)
 )
 GRID = {
-    "dra": jnp.array([40.0, 80.0]),
-    "ddec": jnp.array([-60.0, -20.0]),
-    "flux": jnp.array([1e-3, 1e-2]),
+    "dra": np.array([40.0, 80.0]),
+    "ddec": np.array([-60.0, -20.0]),
+    "flux": np.array([1e-3, 1e-2]),
 }
 
 GRID_TOOLS = [
@@ -218,7 +221,7 @@ def test_grid_rename_in_best_point_and_plots():
 # --- Values-first and joint likelihoods (argument-order PR 3) -------------
 
 PARAMS = ["dra", "ddec", "flux"]
-VALUES = jnp.array([60.0, -40.0, 5e-3])
+VALUES = np.array([60.0, -40.0, 5e-3])
 DATA2 = nrm_oidata(rotation_deg=30.0).with_model(
     BinaryModelCartesian(60.0, -40.0, 5e-3), key=jax.random.PRNGKey(1)
 )
@@ -308,8 +311,49 @@ def test_numpyro_model_and_posterior_summary_accept_data_obj():
     template = BinaryModelCartesian(60.0, -40.0, 5e-3)
     with pytest.warns(FutureWarning, match="data_obj="):
         numpyro_model(template, priors, data_obj=DATA)
-    samples = {"flux": jnp.array([4e-3, 5e-3, 6e-3])}
+    samples = {"flux": np.array([4e-3, 5e-3, 6e-3])}
     new = _new_order(posterior_predictive_summary, samples, template, DATA)
     with pytest.warns(FutureWarning, match="data_obj="):
         old = posterior_predictive_summary(samples, template, data_obj=DATA)
+    _assert_same(old, new)
+
+
+def test_numpyro_model_accepts_the_old_regularisers_keyword():
+    with pytest.warns(FutureWarning, match="regularisers="):
+        numpyro_model(MODEL, {}, DATA, regularisers=())
+
+
+def test_oidata_methods_and_joint_helpers_accept_their_old_names():
+    scene = BinaryModelCartesian(*VALUES)
+    new = DATA.model(scene)
+    with pytest.warns(FutureWarning, match="model_object="):
+        old = DATA.model(model_object=scene)
+    _assert_same(old, new)
+    with pytest.warns(FutureWarning, match="model_object="):
+        refit = DATA.with_model(model_object=scene)
+    _assert_same(refit.vis, DATA.with_model(scene).vis)
+    prediction = new
+    with pytest.warns(FutureWarning, match="data_obj="):
+        errors = inflated_errors(data_obj=DATA, prediction=prediction)
+    _assert_same(errors, inflated_errors(DATA, prediction))
+    with pytest.warns(FutureWarning, match="observations="):
+        joint = joint_data(observations=[DATA])
+    _assert_same(joint, joint_data([DATA]))
+    with pytest.warns(FutureWarning, match="observations="):
+        joint = joint_errors(observations=[DATA])
+    _assert_same(joint, joint_errors([DATA]))
+
+
+def test_observable_block_predict_accepts_model_object():
+    from virgil.observables import VisibilityAmplitude
+
+    scene = BinaryModelCartesian(*VALUES)
+    cvis = DATA._cvis(scene)
+    n = cvis.size
+    block = VisibilityAmplitude(
+        onp.ones(2), onp.ones(2), onp.array([0, n - 1], dtype=onp.int32)
+    )
+    new = block.predict(scene, cvis)
+    with pytest.warns(FutureWarning, match="model_object="):
+        old = block.predict(model_object=scene, cvis=cvis)
     _assert_same(old, new)

@@ -12,7 +12,7 @@ Modules:
 * [`likelihood`][virgil.likelihood]: likelihoods and numpyro models.
 * [`fitting`][virgil.fitting]: `fit`, maximum a posteriori fits with
   Levenberg–Marquardt, L-BFGS or Adam.
-* [`imaging`][virgil.imaging]: regularisers and helpers for image
+* [`imaging`][virgil.imaging]: regularizers and helpers for image
   reconstruction; [`scenes`][virgil.scenes]: synthetic truth images;
   [`metrics`][virgil.metrics]: image-recovery scores;
   [`ensemble`][virgil.ensemble]: averaged ensembles of reconstructions;
@@ -22,7 +22,7 @@ Modules:
 * [`limits`][virgil.limits]: contrast limits and flux/contrast/Δmag
   conversions.
 * [`detection`][virgil.detection]: detection statistics (Δχ², the
-  grid-marginalised Bayes factor, the best SNR) for ROC curves.
+  grid-marginalized Bayes factor, the best SNR) for ROC curves.
 * [`spectra`][virgil.spectra]: wavelength-dependent fluxes.
 * [`gains`][virgil.gains]: calibration gains correlated across channels.
 * [`priors`][virgil.priors]: isotropic-orientation priors (inclination,
@@ -31,6 +31,9 @@ Modules:
   named epochs of data, one snapshot of a moving scene per dataset.
 * [`simulate`][virgil.simulate]: simulated observations and bias tests.
 * [`plotting`][virgil.plotting]: figures.
+* [`pipeline`][virgil.pipeline]: stable, scriptable pipelines with
+  standard output folders (imported on first use; needs the ``pipeline``
+  extra).
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
 """
@@ -151,6 +154,15 @@ from .spectra import (  # noqa: E402
     PowerLaw,
     Sum,
 )
+
+
+def __getattr__(name):
+    # virgil.pipeline is imported on first use, not by `import virgil`.
+    if name == "pipeline":
+        import importlib
+
+        return importlib.import_module(".pipeline", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

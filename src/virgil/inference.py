@@ -201,26 +201,26 @@ def _unpack(values, shapes):
 
 
 @eqx.filter_jit
-def _neg_loglike_hessian(values, params, data_obj, model, shapes=None):
+def _neg_loglike_hessian(values, params, data, model, shapes=None):
     return hessian_matrix(
-        lambda x: -loglike(_unpack(x, shapes), params, model, data_obj),
+        lambda x: -loglike(_unpack(x, shapes), params, model, data),
         values,
     )
 
 
 @eqx.filter_jit
-def _neg_loglike_curvature(values, idx, params, data_obj, model, shapes=None):
+def _neg_loglike_curvature(values, idx, params, data, model, shapes=None):
     """``d² -log L / d values[idx]²``, the others held fixed."""
 
     def objective(x):
         return -loglike(
-            _unpack(values.at[idx].set(x), shapes), params, model, data_obj
+            _unpack(values.at[idx].set(x), shapes), params, model, data
         )
 
     return jax.grad(jax.grad(objective))(values[idx])
 
 
-def _hessian_then(finish, values, params, data_obj, model, dtype):
+def _hessian_then(finish, values, params, data, model, dtype):
     """``finish(H)`` for the Hessian ``H`` of ``-log L``, computed in ``dtype``.
 
     As in [`fit`][virgil.fitting.fit], the inputs are cast to ``dtype``
@@ -230,12 +230,10 @@ def _hessian_then(finish, values, params, data_obj, model, dtype):
     ambient = "float64" if jax.config.jax_enable_x64 else "float32"
     shapes = _leaf_shapes(params, model)
     with run_in(dtype):
-        values, data_obj, model = cast_tree(
-            (np.asarray(values, dtype=float), data_obj, model), dtype
+        values, data, model = cast_tree(
+            (np.asarray(values, dtype=float), data, model), dtype
         )
-        hess = _neg_loglike_hessian(
-            values, tuple(params), data_obj, model, shapes
-        )
+        hess = _neg_loglike_hessian(values, tuple(params), data, model, shapes)
         result = finish(hess)
     return cast_tree(result, ambient)
 

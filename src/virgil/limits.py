@@ -21,9 +21,9 @@ import warnings
 
 import equinox as eqx
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import jax.scipy as jsp
-import numpy as np
+import numpy as onp
 
 from ._deprecate import old_order
 from ._grid import (
@@ -68,12 +68,12 @@ def flux_to_contrast(flux):
     >>> float(flux_to_contrast(0.01))
     100.0
     """
-    return 1.0 / np.maximum(np.asarray(flux, dtype=float), _TINY_FLUX)
+    return 1.0 / onp.maximum(onp.asarray(flux, dtype=float), _TINY_FLUX)
 
 
 def contrast_to_flux(contrast):
     """Companion/primary flux ratio of a contrast (primary/companion)."""
-    return 1.0 / np.asarray(contrast, dtype=float)
+    return 1.0 / onp.asarray(contrast, dtype=float)
 
 
 def flux_to_delta_mag(flux):
@@ -82,12 +82,12 @@ def flux_to_delta_mag(flux):
     >>> float(flux_to_delta_mag(0.01))
     5.0
     """
-    return 2.5 * np.log10(flux_to_contrast(flux))
+    return 2.5 * onp.log10(flux_to_contrast(flux))
 
 
 def delta_mag_to_flux(delta_mag):
     """Companion/primary flux ratio of a magnitude difference."""
-    return 10.0 ** (-0.4 * np.asarray(delta_mag, dtype=float))
+    return 10.0 ** (-0.4 * onp.asarray(delta_mag, dtype=float))
 
 
 # === RADIAL PROFILES ===
@@ -118,38 +118,38 @@ def radial_profile(values, dra, ddec, center=(0.0, 0.0), r_max=None, bins=20):
         ``q16``, ``q84`` and ``count`` per annulus. Non-finite values are
         ignored; empty annuli are NaN.
     """
-    xx, yy = np.meshgrid(np.asarray(dra), np.asarray(ddec), indexing="ij")
-    values = np.asarray(values, dtype=float)
+    xx, yy = onp.meshgrid(onp.asarray(dra), onp.asarray(ddec), indexing="ij")
+    values = onp.asarray(values, dtype=float)
     if values.shape != xx.shape:
         raise ValueError(
             f"values has shape {values.shape}; expected "
             f"(len(dra), len(ddec)) = {xx.shape}."
         )
-    rr = np.hypot(xx - float(center[0]), yy - float(center[1]))
+    rr = onp.hypot(xx - float(center[0]), yy - float(center[1]))
     if r_max is None:
         r_max = float(rr.max())
-    edges = np.linspace(0.0, float(r_max), int(bins) + 1)
+    edges = onp.linspace(0.0, float(r_max), int(bins) + 1)
     stats = {key: [] for key in ("mean", "std", "median", "q16", "q84")}
     counts = []
     for k, (low, high) in enumerate(zip(edges[:-1], edges[1:])):
         # Annuli are [low, high), except the last, which includes r_max.
         upper = rr <= high if k == len(edges) - 2 else rr < high
-        inside = (rr >= low) & upper & np.isfinite(values)
+        inside = (rr >= low) & upper & onp.isfinite(values)
         vals = values[inside]
         counts.append(vals.size)
         if vals.size == 0:
             for key in stats:
-                stats[key].append(np.nan)
+                stats[key].append(onp.nan)
             continue
         stats["mean"].append(vals.mean())
         stats["std"].append(vals.std())
-        stats["median"].append(np.median(vals))
-        stats["q16"].append(np.percentile(vals, 16))
-        stats["q84"].append(np.percentile(vals, 84))
+        stats["median"].append(onp.median(vals))
+        stats["q16"].append(onp.percentile(vals, 16))
+        stats["q84"].append(onp.percentile(vals, 84))
     return {
         "r": 0.5 * (edges[:-1] + edges[1:]),
-        **{key: np.asarray(val) for key, val in stats.items()},
-        "count": np.asarray(counts),
+        **{key: onp.asarray(val) for key, val in stats.items()},
+        "count": onp.asarray(counts),
     }
 
 
@@ -187,34 +187,34 @@ def chi2ppf(p, df):
     small tail probabilities, use [`nsigma`][virgil.limits.nsigma], which works with the upper
     tail directly.
     """
-    p = jnp.asarray(p, dtype=float)
-    eps = jnp.finfo(p.dtype).eps
-    p = jnp.clip(p, eps, 1.0 - eps)
+    p = np.asarray(p, dtype=float)
+    eps = np.finfo(p.dtype).eps
+    p = np.clip(p, eps, 1.0 - eps)
 
-    a = jnp.asarray(df, dtype=p.dtype) / 2.0
-    x = _gammaincinv(jnp.where(a > 0.0, a, 1.0), p)
-    return jnp.where(a > 0.0, 2.0 * x, jnp.nan)
+    a = np.asarray(df, dtype=p.dtype) / 2.0
+    x = _gammaincinv(np.where(a > 0.0, a, 1.0), p)
+    return np.where(a > 0.0, 2.0 * x, np.nan)
 
 
 def _gammaincinv_guess(a, p):
     """Starting point for :func:`_gammaincinv` (Numerical Recipes, 3rd ed.,
     §6.2.1): Wilson–Hilferty for ``a > 1``, a power law in the lower tail
     and an exponential in the upper tail otherwise."""
-    tiny = jnp.finfo(p.dtype).tiny
-    pp = jnp.where(p < 0.5, p, 1.0 - p)
-    t = jnp.sqrt(-2.0 * jnp.log(pp))
+    tiny = np.finfo(p.dtype).tiny
+    pp = np.where(p < 0.5, p, 1.0 - p)
+    t = np.sqrt(-2.0 * np.log(pp))
     z = (2.30753 + t * 0.27061) / (1.0 + t * (0.99229 + t * 0.04481)) - t
-    z = jnp.where(p < 0.5, -z, z)
-    a_big = jnp.maximum(a, 1.0)
-    wh = a_big * (1.0 - 1.0 / (9.0 * a_big) - z / (3.0 * jnp.sqrt(a_big))) ** 3
-    wh = jnp.maximum(1e-3, wh)
+    z = np.where(p < 0.5, -z, z)
+    a_big = np.maximum(a, 1.0)
+    wh = a_big * (1.0 - 1.0 / (9.0 * a_big) - z / (3.0 * np.sqrt(a_big))) ** 3
+    wh = np.maximum(1e-3, wh)
 
-    a_small = jnp.clip(a, tiny, 1.0)
+    a_small = np.clip(a, tiny, 1.0)
     t = 1.0 - a_small * (0.253 + a_small * 0.12)
-    lower = jnp.exp(jnp.log(jnp.maximum(p, tiny) / t) / a_small)
-    upper = 1.0 - jnp.log1p(-jnp.minimum((p - t) / (1.0 - t), 1.0 - 1e-16))
-    small = jnp.where(p < t, lower, upper)
-    return jnp.where(a > 1.0, wh, small)
+    lower = np.exp(np.log(np.maximum(p, tiny) / t) / a_small)
+    upper = 1.0 - np.log1p(-np.minimum((p - t) / (1.0 - t), 1.0 - 1e-16))
+    small = np.where(p < t, lower, upper)
+    return np.where(a > 1.0, wh, small)
 
 
 @jax.custom_jvp
@@ -226,25 +226,25 @@ def _gammaincinv(a, p):
     The derivative is from the implicit function theorem, so this is
     differentiable in ``a`` and ``p`` and does not unroll the iterations.
     """
-    a, p = jnp.broadcast_arrays(a, p)
+    a, p = np.broadcast_arrays(a, p)
     q = 1.0 - p
     upper_tail = p > 0.5
     log_gamma_a = jsp.special.gammaln(a)
 
     def step(_, x):
-        err = jnp.where(
+        err = np.where(
             upper_tail,
             q - jsp.special.gammaincc(a, x),
             jsp.special.gammainc(a, x) - p,
         )
-        log_x = jnp.log(x)
-        density = jnp.exp((a - 1.0) * log_x - x - log_gamma_a)
+        log_x = np.log(x)
+        density = np.exp((a - 1.0) * log_x - x - log_gamma_a)
         u = err / density
-        halley = u / (1.0 - 0.5 * jnp.minimum(1.0, u * ((a - 1.0) / x - 1.0)))
+        halley = u / (1.0 - 0.5 * np.minimum(1.0, u * ((a - 1.0) / x - 1.0)))
         new = x - halley
-        new = jnp.where(new <= 0.0, 0.5 * x, new)
-        converged = (density == 0.0) | ~jnp.isfinite(u)
-        return jnp.where(converged, x, new)
+        new = np.where(new <= 0.0, 0.5 * x, new)
+        converged = (density == 0.0) | ~np.isfinite(u)
+        return np.where(converged, x, new)
 
     return jax.lax.fori_loop(0, 20, step, _gammaincinv_guess(a, p))
 
@@ -254,7 +254,7 @@ def _gammaincinv_jvp(primals, tangents):
     a, p = primals
     da, dp = tangents
     x = _gammaincinv(a, p)
-    density = jnp.exp((a - 1.0) * jnp.log(x) - x - jsp.special.gammaln(a))
+    density = np.exp((a - 1.0) * np.log(x) - x - jsp.special.gammaln(a))
     # gammainc(a, x(a, p)) = p, so dx = (dp - ∂_a gammainc da) / density.
     _, dpda = jax.jvp(lambda a_: jsp.special.gammainc(a_, x), (a,), (da,))
     return x, (dp - dpda) / density
@@ -293,7 +293,7 @@ def nsigma(chi2r_test, chi2r_true, ndof):
     half_tail = 0.5 * jax.scipy.special.gammaincc(ndof / 2.0, x / 2.0)
     # Floor at the smallest normal number, so the result saturates (about
     # 13σ in float32, 37σ in float64) instead of becoming infinite.
-    half_tail = jnp.maximum(half_tail, jnp.finfo(half_tail.dtype).tiny)
+    half_tail = np.maximum(half_tail, np.finfo(half_tail.dtype).tiny)
     return -jax.scipy.special.ndtri(half_tail)
 
 
@@ -343,25 +343,25 @@ def ruffio_upperlimit(mean, sigma, percentile):
     ``z = sqrt(a**2 - 2 log(1 - percentile))`` (``a = -mean / sigma``) is the
     starting point, and two Newton steps on ``log Q(z)`` polish the result.
     """
-    mean, sigma = jnp.broadcast_arrays(jnp.asarray(mean), jnp.asarray(sigma))
-    percentile = jnp.asarray(percentile)
+    mean, sigma = np.broadcast_arrays(np.asarray(mean), np.asarray(sigma))
+    percentile = np.asarray(percentile)
     expand = (...,) + (None,) * percentile.ndim
     mean, sigma = mean[expand], sigma[expand]
 
     a = -mean / sigma
-    log_tail = jnp.log1p(-percentile) + jsp.special.log_ndtr(-a)
-    z_tail = -jsp.special.ndtri(jnp.exp(log_tail))
-    z_asymptotic = jnp.sqrt(a**2 - 2.0 * jnp.log1p(-percentile))
-    z = jnp.where(jnp.isfinite(z_tail), z_tail, z_asymptotic)
+    log_tail = np.log1p(-percentile) + jsp.special.log_ndtr(-a)
+    z_tail = -jsp.special.ndtri(np.exp(log_tail))
+    z_asymptotic = np.sqrt(a**2 - 2.0 * np.log1p(-percentile))
+    z = np.where(np.isfinite(z_tail), z_tail, z_asymptotic)
 
     # Newton steps on log Q(z) = log_tail polish either starting point.
     def newton(z, _):
         log_q = jsp.special.log_ndtr(-z)
-        log_pdf = -0.5 * z**2 - 0.5 * jnp.log(2.0 * jnp.pi)
-        return z + (log_q - log_tail) * jnp.exp(log_q - log_pdf), None
+        log_pdf = -0.5 * z**2 - 0.5 * np.log(2.0 * np.pi)
+        return z + (log_q - log_tail) * np.exp(log_q - log_pdf), None
 
     z, _ = jax.lax.scan(newton, z, None, length=2)
-    return jnp.maximum(mean + sigma * z, 0.0)
+    return np.maximum(mean + sigma * z, 0.0)
 
 
 @old_order("data", "model", "grid", data="data")
@@ -414,10 +414,9 @@ def absil_limits(
         positive value of the flux axis, e.g. for
         [`System`][virgil.models.System] weights that may exceed 1.
     batch_size : int, optional
-        Number of grid points evaluated at once. By default, enough for
-        about 2**20 model visibilities on a CPU and 2**23 on other backends
-        (GPU, TPU), and at least 256. Larger can be faster for small data;
-        smaller bounds memory for large models.
+        Number of grid points evaluated at once, by default enough for
+        a fixed number of model visibilities; see
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
 
     Returns
     -------
@@ -433,7 +432,7 @@ def absil_limits(
     The limit is the first flux, going up from the start of the search, at
     which the significance reaches ``sigma``: the flux is stepped by
     decades until it does, and that decade is bisected in log flux. For a
-    normalised scene the significance falls again once the companion
+    normalized scene the significance falls again once the companion
     outshines the primary (flux well above 1), so an unbounded search
     should start below that.
     """
@@ -508,8 +507,9 @@ def injection_limits(
         axis, e.g. for [`System`][virgil.models.System] weights that may
         exceed 1.
     batch_size : int, optional
-        Number of grid points evaluated at once; see
-        [`absil_limits`][virgil.limits.absil_limits].
+        Number of grid points evaluated at once, by default enough for
+        a fixed number of model visibilities; see
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
 
     Returns
     -------
@@ -523,7 +523,7 @@ def injection_limits(
     which the significance reaches ``sigma``, found as in ``absil_limits``.
     The significance rises with flux once the signal exceeds the noise, but
     the cross term can make it dip at very faint fluxes, and for a
-    normalised scene it falls again once the companion outshines the
+    normalized scene it falls again once the companion outshines the
     primary (flux well above 1), so an unbounded search should start below
     that.
 
@@ -537,13 +537,13 @@ def injection_limits(
 
     Examples
     --------
-    >>> import jax.numpy as jnp
+    >>> import jax.numpy as np
     >>> from virgil import PointSource, System, UniformDisk, injection_limits
     >>> template = System(star=UniformDisk(0.8), comp=PointSource(0.01))
     >>> grid = {
-    ...     "comp.dra": jnp.linspace(-10, 10, 21),
-    ...     "comp.ddec": jnp.linspace(-10, 10, 21),
-    ...     "comp.flux": jnp.array([0.01]),
+    ...     "comp.dra": np.linspace(-10, 10, 21),
+    ...     "comp.ddec": np.linspace(-10, 10, 21),
+    ...     "comp.flux": np.array([0.01]),
     ... }
     >>> limits = injection_limits(template, data, grid, 3.0)  # doctest: +SKIP
     >>> limits.shape  # doctest: +SKIP
@@ -575,8 +575,8 @@ _MAX_BRACKET_DECADES = 40
 
 def _significance_ceiling():
     """Largest significance `nsigma` represents in the default float type."""
-    tiny = jnp.finfo(jnp.result_type(float)).tiny
-    return float(-jax.scipy.special.ndtri(jnp.asarray(tiny)))
+    tiny = np.finfo(np.result_type(float)).tiny
+    return float(-jax.scipy.special.ndtri(np.asarray(tiny)))
 
 
 def _limits(
@@ -601,7 +601,7 @@ def _limits(
         )
     ceiling = _significance_ceiling()
     if not float(sigma) < ceiling:
-        dtype = jnp.result_type(float).name
+        dtype = np.result_type(float).name
         raise ValueError(
             f"sigma={sigma} exceeds the largest significance {dtype} can "
             f"represent ({ceiling:.4g} sigma), where nsigma saturates. Enable "
@@ -609,39 +609,39 @@ def _limits(
             "about 37 sigma), or use a lower sigma."
         )
     if flux_bounds is None:
-        fluxes = np.asarray(grid[flux_key], dtype=float)
-        if not np.any(fluxes > 0.0):
+        fluxes = onp.asarray(grid[flux_key], dtype=float)
+        if not onp.any(fluxes > 0.0):
             raise ValueError(
                 f"With flux_bounds=None, the flux axis {flux_key!r} needs at "
                 "least one positive value to start the limit search from."
             )
-        start = float(np.min(fluxes[fluxes > 0.0]))
-        max_steps = int(np.ceil(_MAX_BRACKET_DECADES / _STEP_DECADES))
-        search = (start, -np.inf, np.inf, max_steps)
+        start = float(onp.min(fluxes[fluxes > 0.0]))
+        max_steps = int(onp.ceil(_MAX_BRACKET_DECADES / _STEP_DECADES))
+        search = (start, -onp.inf, onp.inf, max_steps)
     else:
         low, high = (float(b) for b in flux_bounds)
-        if not (np.isfinite(low) and np.isfinite(high) and 0.0 < low < high):
+        if not (onp.isfinite(low) and onp.isfinite(high) and 0.0 < low < high):
             raise ValueError(
                 "flux_bounds must be finite with 0 < low < high (the search "
                 f"is in log flux), got {tuple(flux_bounds)}."
             )
         # Every step but the last moves a whole step.
-        steps = int(np.ceil(np.log10(high / low) / _STEP_DECADES))
-        search = (low, np.log10(low), np.log10(high), steps)
+        steps = int(onp.ceil(onp.log10(high / low) / _STEP_DECADES))
+        search = (low, onp.log10(low), onp.log10(high), steps)
     start, log_low, log_high, max_steps = search
     limits, crossed = solver(
         grid,
         data,
         model,
-        jnp.asarray(sigma, dtype=float),
-        jnp.asarray([np.log10(start), log_low, log_high], dtype=float),
+        np.asarray(sigma, dtype=float),
+        np.asarray([onp.log10(start), log_low, log_high], dtype=float),
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
         max_steps=max_steps,
         batch_size=batch_size_or_default(batch_size, data),
     )
-    missed = int(np.sum(~np.asarray(crossed, dtype=bool)))
+    missed = int(onp.sum(~onp.asarray(crossed, dtype=bool)))
     if missed and flux_bounds is not None:
         warnings.warn(
             f"{caller}(): {missed} limits fell outside flux_bounds="
@@ -654,7 +654,7 @@ def _limits(
         warnings.warn(
             f"{caller}(): the significance did not cross sigma={sigma} "
             f"within {_MAX_BRACKET_DECADES} decades of the starting flux "
-            f"{start:g} at {missed} of {np.size(crossed)} grid positions; "
+            f"{start:g} at {missed} of {onp.size(crossed)} grid positions; "
             "the limits there are where the search stopped.",
             RuntimeWarning,
             stacklevel=3,
@@ -724,7 +724,7 @@ def _absil_limits(
 
     def reduced_chi2(values):
         source = build_model(model, params, values)
-        return jnp.sum(whitened_residuals(source, data) ** 2) / ndof
+        return np.sum(whitened_residuals(source, data) ** 2) / ndof
 
     chi2_null = reduced_chi2([0.0] * len(params))
 
@@ -772,7 +772,7 @@ def _injection_limits(
         # each block (visibilities, phases, every extra) whitened as by
         # `whitened_residuals`.
         whitened, _ = _whiten(data, prediction, reference, errors, {}, {})
-        return jnp.sum(whitened**2) / ndof
+        return np.sum(whitened**2) / ndof
 
     def significance(values):
         # Add the companion's signal to every observable, and compare the

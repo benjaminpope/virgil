@@ -9,8 +9,8 @@ from virgil.fitting import fit
 from virgil.likelihood import model_loglike, whitened_residuals
 from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData
+from tests._shared import PAIRS
 
-PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
 TRUTH = BinaryModelCartesian(dra=3.0, ddec=-2.0, flux=0.3)
 
 

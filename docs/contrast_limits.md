@@ -98,7 +98,8 @@ opt_flux = optimized_flux_grid(BinaryModelCartesian, oidata_sim, samples)
 ```
 
 ```text
-RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+virgil/_deprecate.py:150: RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+  return fn(*args, **kwargs)
 ```
 
 ## Ruffio Contrast Limits
@@ -142,7 +143,8 @@ plot_grid_map(absil_map, samples, kind="limit", units="delta_mag", sigma=2.0);
 ```
 
 ```text
-RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
+virgil/_deprecate.py:150: RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
+  return fn(*args, **kwargs)
 ```
 
 ![contrast_limits output 11.2](generated/contrast_limits_cell011_out02.png)
@@ -163,3 +165,63 @@ ax.set_title("Radial contrast limits: Ruffio vs Absil");
 ```
 
 ![contrast_limits output 13.1](generated/contrast_limits_cell013_out01.png)
+
+## As a pipeline
+
+The search grid, the Absil limits and their contrast curve are the `search` and `limits` stages of [`BinaryPipeline`](pipeline.md), so running the pipeline `through="limits"` stops before the fit and the sampler, which a non-detection does not need. The cell below uses the same $\pm 250$ mas grid of 61 points per axis, the same flux axis and $\sigma = 2$. The pipeline blanks the grid points inside the resolution limit, where separation and flux are degenerate, so its limit map is compared with the hand-computed Absil map where it is defined. Its contrast curve is one of the pipeline's plots.
+
+```python
+from tempfile import mkdtemp
+
+from IPython.display import Image, display
+
+from virgil.pipeline import BinaryPipeline
+
+res = BinaryPipeline(
+    oidata_sim,
+    BinaryModelCartesian(dra=0.0, ddec=0.0, flux=1e-3),
+    output=f"{mkdtemp()}/limits_run",
+    sigma=2.0,
+    max_sep_mas=250.0,
+    grid_step_mas=8.34,  # 61 points from -250 to 250 mas
+    flux_range=[1e-5, 10**-1.5],
+    n_flux=50,
+).run(through="limits")
+print(res.describe())
+display(Image(filename=str(res.path / "plots" / "limits_contrast_curve.png")))
+```
+
+```text
+BinaryPipeline run in /tmp/tmpq4i2jyqe/limits_run: partial
+  data.n_vis = 21
+  data.n_phi = 35
+  data.n_independent = 36
+  data.wavel_min_m = 4.817e-06
+  data.wavel_max_m = 4.817e-06
+  data.baseline_min_m = 1.32
+  data.baseline_max_m = 5.28001
+  data.resolution_mas = 94.0887
+  data.fov_mas = 752.71
+  chi2.n_independent = 36
+  chi2.null_reduced = 0.614164
+  search.delta_chi2 = 7.05621
+  search.log_bayes_factor = -0.349726
+  search.max_snr = 2.65709
+  search.local_nsigma = 2.65635
+  search.global_nsigma = 1.91805
+  search.n_trials = 7.06001
+  search.dra_mas = -100
+  search.ddec_mas = -175
+  search.flux = 8.28444e-05
+  search.max_sep_mas = 250
+  limits.sigma = 2
+  limits.deepest_delta_mag = 9.6868
+  [pass] chi2: χ²/N = 0.614 for the star alone on quoted errors: consistent with the quoted errors.
+  [warn] detection: No companion above 3σ (2.66σ local): the fit and posterior describe the highest noise peak; quote the contrast limits instead.
+  [pass] grid_edge: The grid peak lies inside the searched grid.
+  [warn] convergence: The optimizer did not converge at 1 of 3721 grid positions (0.027 per cent): values there may be inaccurate.
+  [warn] limits_clipped: 1 limits fell outside the flux bounds and were clipped to the nearer bound: those limits are not the true limits; widen flux_range.
+  4 warning(s) recorded in the limits, search stage(s) (see the checks, or Result.summary['warnings'])
+```
+
+![contrast_limits output 15.2](generated/contrast_limits_cell015_out02.png)

@@ -1,4 +1,4 @@
-"""linear_flux_grid: closed-form linearised flux map (fouriever ``lincmap``)."""
+"""linear_flux_grid: closed-form linearized flux map (fouriever ``lincmap``)."""
 
 import warnings
 
@@ -103,7 +103,7 @@ def test_snr_peaks_at_true_position(faint):
 
 
 def test_bright_companion_is_biased():
-    # Documented limitation: for f ~ 0.3 the linearisation underestimates
+    # Documented limitation: for f ~ 0.3 the linearization underestimates
     # the flux (measured 0.20 for a true 0.30, with the optimizer at 0.30),
     # so we only check the sign and the size of the bias, not agreement.
     data = _simulate(0.3, noise_scale=0.01)
@@ -159,7 +159,7 @@ def test_gauss_newton_fixes_bright_companion():
 
 
 @pytest.mark.parametrize("noise_scale", [0.1, 30.0])
-def test_prior_matches_numerical_marginalisation(noise_scale):
+def test_prior_matches_numerical_marginalization(noise_scale):
     """Closed form against quadrature over f, in the linear regime (f=1e-3).
 
     noise_scale=0.1 is a strong detection (log B ~ 5e4) and 30 a marginal

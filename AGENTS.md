@@ -82,9 +82,10 @@ see that repository's `PLAN.md` for the boundary.
 - Ruff is pinned to **0.11.0**; `[tool.ruff] required-version`, the `.pre-commit-config.yaml`
   rev, and `RUFF_VERSION` in the workflows must always match. A different ruff version will
   reformat files differently and fail CI.
-- Line length 79, double quotes, rules `E` + `F` (see `pyproject.toml` for ignores).
+- Line length 79, double quotes, rules `E` + `F` + `ICN` (see `pyproject.toml` for ignores).
+- Import `jax.numpy as np` and `numpy as onp` (ruff ICN001; notebooks are exempt until re-executed).
 - virgil does not enable float64: library code must work in JAX's default float32
-  (e.g. use `jnp.finfo(x.dtype)`, not `np.finfo(float)`). Tests run in float32 unless
+  (e.g. use `np.finfo(x.dtype)`, not `onp.finfo(float)`). Tests run in float32 unless
   they opt in locally with `with jax.enable_x64(True):` (as `tests/test_utils.py` does);
   never set `jax_enable_x64` globally at import time in a test module.
   Forward-model code must pass in both float32 and float64. Fourier transforms and
@@ -117,18 +118,19 @@ see that repository's `PLAN.md` for the boundary.
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
 | `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
 | `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `chain_init_params` (numpyro `init_params`, one start per chain), `posterior_predictive_summary` |
-| `fitting.py` | `fit(model, priors, data, regularisers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
-| `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
+| `fitting.py` | `fit(model, priors, data, regularizers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
+| `imaging.py` | regularizers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `injection_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
-| `detection.py` | `detection_statistics` (Δχ², grid-marginalised log Bayes factor, max SNR; traceable in the data for `lax.map` over simulations) and `local_nsigma`; null simulators (`gaussian_null`, `bootstrap_null`, `rescale_errors`), `injection_grid`, the Monte Carlo driver `injection_recovery` (one compiled kernel over draws) and its NumPy result `DetectionMC` (FAP, thresholds, ROC/AUC, completeness, contrast curves, save/load/concatenate); see `design/detection_roc.md` |
+| `detection.py` | `detection_statistics` (Δχ², grid-marginalized log Bayes factor, max SNR; traceable in the data for `lax.map` over simulations) and `local_nsigma`; null simulators (`gaussian_null`, `bootstrap_null`, `rescale_errors`), `injection_grid`, the Monte Carlo driver `injection_recovery` (one compiled kernel over draws) and its NumPy result `DetectionMC` (FAP, thresholds, ROC/AUC, completeness, contrast curves, save/load/concatenate); see `design/detection_roc.md` |
 | `fields.py` | Gaussian-process log-brightness for an `Image` (`GaussianField`, a DCT field with a Matérn-like spectrum) |
-| `observables.py` | extra observable blocks after `vis`/`phi` in `OIData`: OI_FLUX spectra with marginalised grey scales (`FluxSpectrum`), \|V\|, T3AMP, and continuum-normalised differential phases (`DifferentialPhase`, closure-free beside closure phases); `continuum_operator` |
+| `observables.py` | extra observable blocks after `vis`/`phi` in `OIData`: OI_FLUX spectra with marginalized grey scales (`FluxSpectrum`), \|V\|, T3AMP, and continuum-normalized differential phases (`DifferentialPhase`, closure-free beside closure phases); `continuum_operator` |
 | `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, `GaussianLine`, `LorentzianLine`, `Nodes` for a free flux per channel, and `Sum`; `Tabulated` is deprecated for `Nodes`) accepted as a component's `flux` (SPARCO) |
 | `angles.py` | `AngleVector`: an angle prior sampled as a 2-D vector (site `<path>_vec`, ring and von Mises chord residuals), recognised by `fit`, `gauss_newton_mass` and `numpyro_model`; imports nothing from virgil |
 | `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
 | `epochs.py` | `Epochs`: datasets grouped into named epochs, one snapshot of a time-dependent scene per dataset (or epoch), name-keyed per-dataset `noise`, and the model function, data and summed log likelihood for multi-epoch orbit fits; starting them: `rank_orbits` (trial orbits ranked by the data), `chain_starts` (distinct modes, one per chain), `epoch_positions` (per-dataset positions on the scale-marginalized surface, `marginal_loglike`; `gap_marginal`, `chi2_raw`, `scale`) and `start_from_positions` (positions → `starting_orbits` → ranking with `scales=` → `fit` from distinct starts, as an `OrbitStart`); see `design/visibility_orbits.md` |
+| `orbit_search.py` | `score_orbits`: candidate orbits scored exactly on all epochs with shared nuisances (one flux per band with an optional chromatic slope, integrated on a log-uniform grid and also profiled; scale-marginalized per dataset; gains and closure offsets profiled; extra `RVData`/`PositionData` terms), positions at sample times, a work-unit budget; `SharedFlux`, `OrbitScores`, `rank_scores` (quantized, index-broken ties) |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `ensemble.py` | PYRA/MYTHRA-style reconstruction ensembles: `EnsembleSpec`, `draw_groups`, `run_group` (one L-curve per geometry group), `combine` (selection and the iterative mean) and `ensemble`, returning an `Ensemble` (mean `Image`, per-pixel σ, raw χ²/N per dataset) |
@@ -137,6 +139,7 @@ see that repository's `PLAN.md` for the boundary.
 | `_elr.py` | Espinosa Lara & Rieutord (2011) Roche shape and gravity darkening on a triangle mesh, ported from S. Dholakia's jax-interferometry (private; used by the gravity-darkened star model) |
 | `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
+| `pipeline/` | `virgil.pipeline`, loaded lazily and needing the `pipeline` extra: stable, scriptable pipelines (`BinaryPipeline`, `StarPipeline`) that run fixed stages, resume, and write a run folder (`run.json`, `summary.json`, HDF5 grids and samples, plots, processed OIFITS, an executed quicklook notebook) with deterministic quality checks; `_core` (`_Pipeline`, `Stage`, `ConfigMismatchError`), `_io` (atomic writes, `Result`, `load`, model specs without pickles), `_checks` (`Check`), `_quicklook`, `binary`, `star` (with a registry of models by short name), `cli` (`virgil-pipeline`); public docs in `docs/pipeline.md`, design in `design/pipeline.md` |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |
 
 Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_closure`
@@ -147,7 +150,7 @@ Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_c
 `_grid`, which imports only `_utils`, and do not import each other; `limits` →
 `plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `ensemble` imports `imaging`, `metrics` and `models`. `angles` imports nothing from virgil, and
 `likelihood`, `fitting` and `orbits` import it. `orbits` imports only `_utils` and `angles`
-(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached` and `OrbitalBinary`). `epochs` imports `likelihood`, `fitting`, `models` and `orbits`. `simulate` imports `fitting`.
+(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached` and `OrbitalBinary`). `epochs` imports `likelihood`, `fitting`, `models` and `orbits`; `orbit_search` imports `epochs`, `likelihood`, `models` and `orbits`. `simulate` imports `fitting`.
 
 ## Flux and contrast
 
@@ -231,8 +234,7 @@ to that test.
   (`System`, the binaries, `HarmonixModel`) are whole normalized skies with
   weight 1 inside a `System`, unless they carry their own `flux` weight as
   `System` does.
-- `flux` means a relative weight. The binaries' companion/primary `flux` (and
-  `contrast`) is a legacy exception; no new model may use `flux` as a ratio.
+- `flux` means a relative weight. The binaries' companion/primary `flux` is a legacy exception; no new model may use `flux` as a ratio.
 - Components never contain a built-in star; compose one with
   `System(star=PointSource(), ...)`. New shapes subclass `Component` and
   implement `_centred_cvis` and `_centred_image`. Anything that can be drawn

@@ -1,5 +1,4 @@
 import pytest
-from pathlib import Path
 
 import equinox as eqx
 import jax
@@ -12,10 +11,9 @@ from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData
 
 from ._test_data import oidata_sim, true_values
+from tests._shared import CALIBRATED_VISIBILITY  # noqa: E402
 
-PRODUCT = (
-    Path(__file__).resolve().parents[1] / "data" / "calibrated_visibility.npy"
-)
+PRODUCT = CALIBRATED_VISIBILITY
 TRUTH = BinaryModelCartesian(*true_values)
 
 
@@ -93,7 +91,7 @@ def test_phase_term_is_von_mises_and_smooth_across_pi():
 )
 def test_model_loglike_is_gaussian_in_whitened_residuals():
     model = BinaryModelCartesian(240.0, 160.0, 6e-4)
-    # The errors that normalise the likelihood: the visibilities' own, and
+    # The errors that normalize the likelihood: the visibilities' own, and
     # for the correlated closure phases the Cholesky diagonal of their
     # covariance, whose log-sum is half its log-determinant.
     _, raw = oidata_sim.flatten_data()
@@ -103,7 +101,7 @@ def test_model_loglike_is_gaussian_in_whitened_residuals():
     )
     errors = np.concatenate([raw[:n_vis], phase_errors])
     r = whitened_residuals(model, oidata_sim)
-    # The periodic penalty rows (after the whitened ones) are normalised
+    # The periodic penalty rows (after the whitened ones) are normalized
     # to nothing: they take no part in the density's constant.
     n_density = errors.size
     assert r.size == oidata_sim.n_residuals
@@ -153,8 +151,8 @@ def _absolute_phase_data(n, phase_offsets, phase_error, seed=0):
     "virgil.likelihood.model_loglike",
     roots=["self-consistency"],
 )
-def test_uncorrelated_phase_likelihood_is_normalised_on_the_circle():
-    # Review 1.2: with the Gaussian normaliser -log σ the von Mises
+def test_uncorrelated_phase_likelihood_is_normalized_on_the_circle():
+    # Review 1.2: with the Gaussian normalizer -log σ the von Mises
     # "density" integrated to 1.17 over the circle at σ = 1.
     deltas = np.linspace(-np.pi, np.pi, 4000, endpoint=False)
     for sigma in (0.1, 0.5, 1.0, 2.0, 5.0):
@@ -173,7 +171,7 @@ def test_uncorrelated_phase_likelihood_is_normalised_on_the_circle():
 
 
 def test_fitted_phase_error_scale_recovers_large_noise():
-    # Review 1.2: with the Gaussian normaliser, the maximum-likelihood
+    # Review 1.2: with the Gaussian normalizer, the maximum-likelihood
     # phase-error scale for von Mises noise of σ = 1.8 rad came out as 1.31.
     sigma = 1.8
     rng = onp.random.default_rng(2)
@@ -187,7 +185,7 @@ def test_fitted_phase_error_scale_recovers_large_noise():
     assert abs(best - sigma) < 0.15, best
 
 
-def test_small_phase_errors_keep_the_gaussian_normaliser():
+def test_small_phase_errors_keep_the_gaussian_normalizer():
     data = _absolute_phase_data(20, onp.full(20, 0.01), 1e-2)
     r = whitened_residuals(TRUTH, data)
     _, errors = data.flatten_data()

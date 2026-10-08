@@ -1,4 +1,4 @@
-"""Isotropic-orientation priors: normalisation, sampling, and use in fit/numpyro."""
+"""Isotropic-orientation priors: normalization, sampling, and use in fit/numpyro."""
 
 import jax
 import jax.numpy as np
@@ -102,10 +102,10 @@ def test_numpyro_model_with_only_the_prior_reproduces_it():
 
 
 def test_fit_with_a_flat_likelihood_is_not_pulled_by_the_prior():
-    # fit optimises the inclination in its flat coordinate (cos i), where
+    # fit optimizes the inclination in its flat coordinate (cos i), where
     # the prior is constant, so with a flat likelihood nothing moves it.
     # (Before fit used flat coordinates, the MAP was the mode of sin i in
-    # i, 90 degrees, which depends on the parametrisation.)
+    # i, 90 degrees, which depends on the parametrization.)
     def term(values):
         return 0.0 * np.atleast_1d(values["inc"])
 

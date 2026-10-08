@@ -71,7 +71,7 @@ The sections in the sidebar hold worked examples on simulated and bundled data:
 - **Data Handling:** [reading OIFITS files into `OIData`](data_io.md), and [AMIGO's DISCO data from JWST aperture masking](amigo_disco.md), and [spectro-interferometric observables](spectro_observables.md) (OI_FLUX spectra, differential phases and calibration nuisances).
 - **Binaries:** [searching for companions](binary_search.md), [detection limits](contrast_limits.md), [detection ROC curves](detection_roc.md) calibrated by injection and recovery, [fitting several datasets together](hierarchical_inference.md), and [orbits from interferometric epochs](orbit_fitting.md) (needs the `[orbits]` extra).
 - **Sources:** [visibility models](model_syntax.md), [extended sources](source_models.md), [composing scenes](composition.md), [spotted stars](harmonix.md), [limb-darkened stars](limb_darkening.md) and [gravity-darkened stars](gravity_darkened_star.md).
-- **Imaging:** image reconstruction in six parts: [simulating data](imaging_ami.md), [regularised maximum likelihood](imaging_rml.md), [Gaussian-process priors](imaging_gp.md), [a ring around a binary](imaging_composite.md), [sampling the posterior](imaging_sampling.md) and [sparse images and CLEAN](imaging_clean.md).
+- **Imaging:** image reconstruction in six parts: [simulating data](imaging_ami.md), [regularized maximum likelihood](imaging_rml.md), [Gaussian-process priors](imaging_gp.md), [a ring around a binary](imaging_composite.md), [sampling the posterior](imaging_sampling.md) and [sparse images and CLEAN](imaging_clean.md).
 - **[API Reference](api/index.md)** documents every public class and function.
 
 The documentation is built with Zensical. Local docs check:

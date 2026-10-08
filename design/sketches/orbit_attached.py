@@ -19,14 +19,14 @@ position angle (North through East) of the node where the secondary recedes.
 
 import equinox as eqx
 import jax
-import jax.numpy as jnp
-import numpy as np
+import jax.numpy as np
+import numpy as onp
 from jaxoplanet.orbits.keplerian import Body, Central, OrbitalBody
 
 from virgil.models import ModulatedGaussianRim, PointSource, System
 
 jax.config.update("jax_enable_x64", True)
-DEG = np.pi / 180.0
+DEG = onp.pi / 180.0
 YEAR = 365.25
 
 
@@ -68,16 +68,16 @@ class KeplerOrbit(eqx.Module):
     def frame(self, t):
         """Angles of the binary frame at MJD t, in degrees."""
         dra, ddec, dz = self.relative(t)
-        line_pa = jnp.degrees(jnp.arctan2(dra, ddec))
+        line_pa = np.degrees(np.arctan2(dra, ddec))
         return dict(
             line_pa=line_pa,  # primary -> secondary
             towards_primary=line_pa + 180.0,
-            line_tilt=jnp.degrees(jnp.arctan2(dz, jnp.hypot(dra, ddec))),
+            line_tilt=np.degrees(np.arctan2(dz, np.hypot(dra, ddec))),
             node_pa=self.Omega + 0.0 * line_pa,
             inc=self.inc + 0.0 * line_pa,  # physical, 0-180
             # The projected tilt, for components whose inc is apparent (0-90).
-            apparent_inc=jnp.degrees(
-                jnp.arccos(jnp.abs(jnp.cos(self.inc * DEG)))
+            apparent_inc=np.degrees(
+                np.arccos(np.abs(np.cos(self.inc * DEG)))
             )
             + 0.0 * line_pa,
         )
@@ -102,7 +102,7 @@ class Attached(eqx.Module):
     ):
         self.component, self.orbit, self.anchor = component, orbit, anchor
         self.bind = tuple(bind.items())
-        self.offsets = {k: jnp.asarray(0.0) for k, _ in self.bind} | dict(
+        self.offsets = {k: np.asarray(0.0) for k, _ in self.bind} | dict(
             offsets or {}
         )
 
@@ -122,7 +122,7 @@ class Attached(eqx.Module):
             value = frame[quantity] + self.offsets[attr]
             if attr == "az_pas":
                 value = _disc_angle(value, out.pa, out.inc)
-            new = jnp.broadcast_to(value, jnp.shape(old))
+            new = np.broadcast_to(value, np.shape(old))
             out = eqx.tree_at(lambda c: getattr(c, attr), out, new)
         return out
 
@@ -135,20 +135,20 @@ def _disc_angle(sky_pa, pa, inc):
     deprojected first, or a modulation aimed at the primary misses it.
     """
     d = (sky_pa - pa) * DEG
-    return pa + jnp.degrees(
-        jnp.arctan2(jnp.sin(d) / jnp.cos(inc * DEG), jnp.cos(d))
+    return pa + np.degrees(
+        np.arctan2(np.sin(d) / np.cos(inc * DEG), np.cos(d))
     )
 
 
 T_REF = 60500.0
 orbit = KeplerOrbit(
-    period=jnp.asarray(2.0 * YEAR),
-    dt_peri=jnp.asarray(-100.0),  # periastron at MJD T_REF - 100
-    ecc=jnp.asarray(0.3),
-    inc=jnp.asarray(50.0),
-    omega=jnp.asarray(60.0),
-    Omega=jnp.asarray(120.0),
-    a_mas=jnp.asarray(20.0),
+    period=np.asarray(2.0 * YEAR),
+    dt_peri=np.asarray(-100.0),  # periastron at MJD T_REF - 100
+    ecc=np.asarray(0.3),
+    inc=np.asarray(50.0),
+    omega=np.asarray(60.0),
+    Omega=np.asarray(120.0),
+    a_mas=np.asarray(20.0),
     t_ref=T_REF,
 )
 disc = Attached(
@@ -170,19 +170,19 @@ def scene_at(t):
 
 
 # Per-sample evaluation: each sample has its own MJD (one per frame).
-rng = np.random.default_rng(1)
+rng = onp.random.default_rng(1)
 n = 300
 length = rng.uniform(10.0, 130.0, n)
-angle = rng.uniform(0.0, np.pi, n)
-u, v = length * np.sin(angle), length * np.cos(angle)
-wavel = np.full(n, 2.2e-6)
+angle = rng.uniform(0.0, onp.pi, n)
+u, v = length * onp.sin(angle), length * onp.cos(angle)
+wavel = onp.full(n, 2.2e-6)
 mjd = T_REF + rng.choice([0.0, 120.0, 240.0], n) + rng.uniform(0, 0.2, n)
 
 cvis = jax.vmap(lambda t, u, v, w: scene_at(t).model(u, v, w))(
     mjd, u, v, wavel
 )
 print(f"{n} samples evaluated at their own MJDs; |V| in", end=" ")
-print(f"[{float(jnp.min(jnp.abs(cvis))):.3f}, 1]")
+print(f"[{float(np.min(np.abs(cvis))):.3f}, 1]")
 
 print("MJD - t_ref   sep    PA   tilt   disc pa  inc  bright side")
 for dt in (0.0, 120.0, 240.0):
@@ -191,7 +191,7 @@ for dt in (0.0, 120.0, 240.0):
     frame = orbit.frame(t)
     attached = disc.at(t)
     print(
-        f"{dt:10.0f}  {float(jnp.hypot(dra, ddec)):5.2f}"
+        f"{dt:10.0f}  {float(np.hypot(dra, ddec)):5.2f}"
         f"  {float(frame['line_pa']) % 360:5.1f}"
         f"  {float(frame['line_tilt']):5.1f}"
         f"  {float(attached.pa) % 360:7.1f}"
@@ -204,21 +204,21 @@ for dt in (0.0, 120.0, 240.0):
 # sky angle by up to ~13° (the table above), so binding the sky angle to
 # az_pas directly would aim the modulation that far off.
 npix, fov = 128, 8.0
-xs = (np.arange(npix) - npix / 2 + 0.5) * fov / npix
+xs = (onp.arange(npix) - npix / 2 + 0.5) * fov / npix
 for dt in (0.0, 120.0, 240.0):
     t = T_REF + dt
     attached = disc.at(t)
     centred = eqx.tree_at(lambda c: (c.dra, c.ddec), attached, (0.0, 0.0))
-    image = np.asarray(centred.render(npix, fov))
+    image = onp.asarray(centred.render(npix, fov))
     # render(): column 0 is the most positive dra (East left), row 0 North.
     # The flux-weighted centroid of a ring modulated as 1 + a cos(θ - φ)
     # points along the projection of φ (projection is linear). The brightest
     # pixel does too, since the rim is blurred in its own plane, but only to
     # the nearest pixel, so the centroid is the sharper check.
-    dra = (-xs)[None, :] * np.ones((npix, 1))
-    ddec = (-xs)[:, None] * np.ones((1, npix))
+    dra = (-xs)[None, :] * onp.ones((npix, 1))
+    ddec = (-xs)[:, None] * onp.ones((1, npix))
     bright_pa = (
-        np.degrees(np.arctan2(np.sum(image * dra), np.sum(image * ddec))) % 360
+        onp.degrees(onp.arctan2(onp.sum(image * dra), onp.sum(image * ddec))) % 360
     )
     want = float(orbit.frame(t)["towards_primary"]) % 360
     miss = (bright_pa - want + 180) % 360 - 180

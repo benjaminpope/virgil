@@ -11,7 +11,7 @@ tiny: a few hundred draws, short NUTS runs, small grids.
 import warnings
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import numpyro
 import numpyro.distributions as dist
@@ -114,7 +114,7 @@ def test_numpyro_model_potential_is_prior_plus_jacobian():
     """The density NUTS sees is log p(x) + log|dx/dz| of each bijection."""
     model = numpyro_model(_function_model, PRIORS, ())
     rng = onp.random.default_rng(3)
-    z = {k: jnp.asarray(rng.normal(size=())) for k in PRIORS}
+    z = {k: np.asarray(rng.normal(size=())) for k in PRIORS}
     potential = potential_energy(model, (), {}, z)
     expected = 0.0
     for site, prior in PRIORS.items():
@@ -311,7 +311,7 @@ def test_gp_field_covariance_is_the_stated_kernel_exactly():
         )
 
     n = SHAPE[0] * SHAPE[1]
-    jac = onp.asarray(jax.jacfwd(pixels)(jnp.zeros(n)), float)
+    jac = onp.asarray(jax.jacfwd(pixels)(np.zeros(n)), float)
     expected = _kernel()
     tol = 1e-9 if jax.config.jax_enable_x64 else 1e-5
     assert (
@@ -344,7 +344,7 @@ def test_gp_latents_sample_standard_normal():
         assert abs(x.var() - 1.0) < 5 * onp.sqrt(2 / min(ess_x2, len(x)))
 
 
-def test_gp_kernel_helper_is_the_documented_normalisation():
+def test_gp_kernel_helper_is_the_documented_normalization():
     assert onp.trace(_kernel()) / (SHAPE[0] * SHAPE[1]) == pytest.approx(
         SIGMA**2
     )
@@ -381,7 +381,7 @@ def _uninformative_rv(instrument=None):
 
 
 def test_rv_zero_point_with_no_data_is_the_prior(rv_params):
-    term = _empty_rv().term(rv_params, marginalise_offsets=(12.0, 3.0))
+    term = _empty_rv().term(rv_params, marginalize_offsets=(12.0, 3.0))
     mean, cov = term.posterior({})
     assert onp.allclose(mean, [12.0], atol=1e-10)
     assert onp.allclose(cov, [[9.0]], atol=1e-10)
@@ -389,7 +389,7 @@ def test_rv_zero_point_with_no_data_is_the_prior(rv_params):
 
 def test_rv_zero_points_without_information_are_the_priors(rv_params):
     data = _uninformative_rv(instrument=["a", "b", "a", "b"])
-    term = data.term(rv_params, marginalise_offsets=([10.0, -5.0], [3.0, 7.0]))
+    term = data.term(rv_params, marginalize_offsets=([10.0, -5.0], [3.0, 7.0]))
     mean, cov = term.posterior({})
     assert onp.allclose(mean, [10.0, -5.0], atol=1e-6)
     assert onp.allclose(cov, onp.diag([9.0, 49.0]), atol=1e-6)
@@ -409,12 +409,12 @@ def test_rv_jitter_with_no_data_is_its_prior(empty, rv_params):
     _assert_marginal(samples, "jitter", JITTER)
 
 
-def test_rv_jitter_with_marginalised_zero_points_is_its_prior(rv_params):
+def test_rv_jitter_with_marginalized_zero_points_is_its_prior(rv_params):
     data = _uninformative_rv(instrument=["a", "b", "a", "b"])
     term = data.term(
         rv_params,
         jitter="jitter",
-        marginalise_offsets=([0.0, 0.0], [5.0, 5.0]),
+        marginalize_offsets=([0.0, 0.0], [5.0, 5.0]),
     )
     model = numpyro_model(
         _function_model, {"jitter": JITTER}, (), likelihoods=[term]
@@ -446,7 +446,7 @@ class _PointTemplate:
     """A model with a flat total spectrum, so the template is all ones."""
 
     def total_spectrum(self, wavel):
-        return jnp.ones_like(wavel)
+        return np.ones_like(wavel)
 
 
 def _flux_posterior(level, scale):
@@ -479,7 +479,7 @@ def test_flux_scale_prior_does_not_depend_on_the_data():
 
 @pytest.mark.parametrize("shape", [(5,), (3, 4), (3, 3, 6), (1, 5), (2, 2)])
 def test_grid_prior_weights_integrate_to_one(shape):
-    weights = onp.exp(onp.asarray(_log_prior_weights(shape, jnp.float32)))
+    weights = onp.exp(onp.asarray(_log_prior_weights(shape, np.float32)))
     assert weights.sum() == pytest.approx(1.0, rel=1e-6)
     assert weights.shape == shape
 
@@ -487,16 +487,23 @@ def test_grid_prior_weights_integrate_to_one(shape):
 @pytest.mark.parametrize("axis", ["linear", "log"])
 def test_log_bayes_factor_without_information_is_zero(axis):
     flux = (
-        jnp.linspace(0.0, 0.02, 6)
+        np.linspace(0.0, 0.02, 6)
         if axis == "linear"
-        else jnp.geomspace(1e-4, 0.05, 6)
+        else np.geomspace(1e-4, 0.05, 6)
     )
     grid = {
-        "dra": jnp.linspace(-100.0, 100.0, 3),
-        "ddec": jnp.linspace(-100.0, 100.0, 3),
+        "dra": np.linspace(-100.0, 100.0, 3),
+        "ddec": np.linspace(-100.0, 100.0, 3),
         "flux": flux,
     }
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         result = detection_statistics(BinaryModelCartesian, _flat_data(), grid)
     assert float(result["log_bayes_factor"]) == pytest.approx(0.0, abs=1e-8)
+
+
+def test_rv_term_accepts_the_old_marginalise_offsets_keyword(rv_params):
+    new = _empty_rv().term(rv_params, marginalize_offsets=(12.0, 3.0))
+    with pytest.warns(FutureWarning, match="marginalise_offsets="):
+        old = _empty_rv().term(rv_params, marginalise_offsets=(12.0, 3.0))
+    assert onp.allclose(old.posterior({})[0], new.posterior({})[0])

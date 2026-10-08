@@ -40,12 +40,14 @@ from ._geometry import (
     image_visibilities,
     offset_phase,
     pixel_offsets,
+    separation_pa,
     rotate,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
 from . import _elr
-from ._utils import concrete, dtor, mas2rad
+from ._deprecate import renamed
+from ._utils import FWHM_PER_SIGMA, check_part_name, concrete, dtor, mas2rad
 from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
@@ -378,7 +380,7 @@ class GaussianDisk(Component):
     ----------
     sigma : float or array-like
         Standard deviation of the Gaussian in milliarcseconds
-        (FWHM = 2.3548 ``sigma``).
+        (FWHM = 2.3548 ``sigma``, ``FWHM_PER_SIGMA``).
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a [`System`][virgil.models.System],
         or a spectrum from [`virgil.spectra`][virgil.spectra]
@@ -587,8 +589,8 @@ class GaussianArc(Component):
 
     def curve(self):
         """Points along the arc (mas, East and North of the centre) and
-        their normalised trapezoidal-rule weights."""
-        sigma = self.length / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        their normalized trapezoidal-rule weights."""
+        sigma = self.length / FWHM_PER_SIGMA
         # Out to 6σ (a flux loss of 2e-9), or once round the circle if the
         # arc is longer: then both ends sit at the antipode of pa, and their
         # half weights add to one full trapezoidal weight.
@@ -606,7 +608,11 @@ class GaussianArc(Component):
         x, y, weight = self.curve()
         shape = np.shape(uu)
         uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
-        curve = offset_phase(uu, vv, x[None, :], y[None, :]) @ weight
+        curve = np.matmul(
+            offset_phase(uu, vv, x[None, :], y[None, :]),
+            weight,
+            precision=jax.lax.Precision.HIGHEST,
+        )
         envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
         return np.reshape(curve * envelope, shape)
 
@@ -627,7 +633,7 @@ class TruncatedCone(Component):
     distance ``s0`` from the apex along the walls and falls off as
     ``exp(-(s - s0) / length)``, and the shell has a Gaussian thickness of
     FWHM ``width``. It is optically thin, so the sign of the tilt does not
-    change the image.
+    change the image of an unmodulated cone.
 
     The cone is a stack of rings about its axis. A ring of radius ρ in the
     plane perpendicular to an axis tilted β out of the sky projects to an
@@ -639,6 +645,28 @@ class TruncatedCone(Component):
     weighted by the area element (∝ ρ) and the emissivity, and integrated
     over ``s`` from ``s0`` to ``s0 + 5 length`` (the last 0.7 % of the
     flux is dropped) by the midpoint rule on ``n_rings`` rings.
+
+    **Azimuthal modulation.** ``az_amps`` and ``az_pas`` brighten one side
+    of the walls, e.g. the leading edge of a colliding-wind shock that the
+    orbit sweeps round. Every ring's brightness is multiplied by
+    ``1 + Σ_m A_m cos(m (φ - φ_m))`` in its own azimuth φ, with ``A_m`` in
+    ``az_amps`` and ``φ_m`` in ``az_pas``, the same modulation along the
+    whole length of the cone. Like those of
+    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim], the
+    azimuths are measured in the plane of the ring, in the same sense as
+    position angle. ``φ = pa + 90`` and ``pa - 90`` are the two walls seen
+    across the projected axis, at those position angles on the sky.
+    ``φ = pa`` is the side of each ring that projects towards ``pa`` on the
+    sky when ``tilt > 0`` (towards ``pa + 180`` when ``tilt < 0``). The
+    modulation stays analytic: by the Jacobi-Anger expansion a ring adds
+    ``A_m (-i)^m J_m(2π ρ q) cos(m (θ - φ_m))`` to ``J0``, with θ the
+    direction of the spatial frequency in the ring's plane. A modulated cone
+    no longer looks the same at ``tilt`` and ``-tilt``: the image at
+    ``-tilt`` is the one at ``tilt`` with ``az_pas`` mirrored to
+    ``2 pa + 180 - az_pas``. That leaves the walls (``pa ± 90``) unchanged.
+    Bound to an orbit's frame by [`Attached`][virgil.models.Attached]
+    (``bind={"az_pas": ...}``), a sky position angle is deprojected into
+    the rings' azimuth, so the bright side points at it on the sky.
 
     **Choosing ``n_rings``.** The quadrature is second order: once the rings
     are fine enough to resolve the fringes, the error in the visibility falls
@@ -695,11 +723,28 @@ class TruncatedCone(Component):
         Quadrature rings along the walls, at least 2 (default 32). The
         visibility error falls as ``1 / n_rings**2``; check convergence by
         doubling it (see above).
+    az_amps : float or array-like, optional
+        Amplitudes of the cosine azimuthal modulations of the walls, from
+        the first order up (see above). A scalar gives a single first-order
+        modulation, and the default (empty) an unmodulated cone. The
+        brightness must stay non-negative, which ``sum(abs(az_amps)) <= 1``
+        guarantees. Concrete values are checked when the model is built.
+    az_pas : float or array-like, optional
+        Azimuths of the modulations in degrees, one per entry of
+        ``az_amps``, in the plane of the rings (see above): ``pa + 90`` and
+        ``pa - 90`` are the walls at those position angles on the sky.
 
     Examples
     --------
     >>> cone = TruncatedCone(tip=5.0, alpha=30.0, s0=4.0, length=10.0,
     ...                      width=1.0, tilt=20.0, pa=90.0)
+
+    A cone brighter on its southern wall (PA 180), half as bright on the
+    northern one:
+
+    >>> lopsided = TruncatedCone(tip=5.0, alpha=30.0, s0=4.0, length=10.0,
+    ...                          width=1.0, tilt=20.0, pa=90.0,
+    ...                          az_amps=1 / 3, az_pas=180.0)
     """
 
     tip: jax.Array
@@ -710,6 +755,10 @@ class TruncatedCone(Component):
     tilt: jax.Array
     pa: jax.Array
     ratio: jax.Array
+    # None when unmodulated, not an empty array: zero-size leaves crash
+    # pmapped samplers (see #282).
+    az_amps: jax.Array | None
+    az_pas: jax.Array | None
     n_rings: int = eqx.field(static=True)
 
     def __init__(
@@ -726,6 +775,8 @@ class TruncatedCone(Component):
         dra=0.0,
         ddec=0.0,
         n_rings=32,
+        az_amps=(),
+        az_pas=(),
     ):
         self.tip = np.asarray(tip, dtype=float)
         self.alpha = np.asarray(alpha, dtype=float)
@@ -743,6 +794,18 @@ class TruncatedCone(Component):
                 f"n_rings must be an integer >= 2, got {n_rings}."
             )
         self.n_rings = int(n_rings)
+        amps = _modulation_array(az_amps, "az_amps")
+        pas = _modulation_array(az_pas, "az_pas")
+        if amps.shape != pas.shape:
+            raise ValueError(
+                f"az_amps has {amps.size} entries but az_pas has "
+                f"{pas.size}; give one azimuth per modulation."
+            )
+        if amps.size:
+            _check_non_negative_modulation(amps, pas)
+            self.az_amps, self.az_pas = amps, pas
+        else:
+            self.az_amps = self.az_pas = None
 
     def __check_init__(self):
         super().__check_init__()
@@ -778,11 +841,53 @@ class TruncatedCone(Component):
             & np.all(self.length > 0.0)
             & np.all(self.width > 0.0)
             & np.all(self.ratio > 0.0)
+            & (
+                True
+                if self.az_amps is None
+                else np.asarray(
+                    check_az_prof_nonnegative(self.az_amps, self.az_pas)
+                )
+            )
         )
+
+    def _orders(self):
+        """Orders, amplitudes and in-ring phases (radians) of the
+        modulations, with the phase measured like the ring angle of
+        ``_centred_image`` (0 on the wall at ``pa + 90``, increasing towards
+        the side projected along ``pa``)."""
+        orders = range(1, self.az_amps.size + 1)
+        phases = (self.pa + 90.0 - self.az_pas) * dtor
+        return orders, self.az_amps, phases
+
+    def _modulation(self, angles):
+        """Brightness factor of the walls at ring angles ``angles``."""
+        if self.az_amps is None:
+            return np.ones_like(angles)
+        orders, amps, phases = self._orders()
+        return 1.0 + sum(
+            amps[m - 1] * np.cos(m * (angles - phases[m - 1])) for m in orders
+        )
+
+    def _ring_angle(self, sky_pa):
+        """The ring azimuth whose projection points at ``sky_pa``.
+
+        A ring point at azimuth ``az`` lies ``cos φ`` across and
+        ``ratio sin(tilt) sin φ`` along the projected axis, with
+        ``φ = pa + 90 - az``, so a sky angle is deprojected by that squash
+        (its sign included). Seen edge-on (``tilt = 0``), every direction
+        off the walls is the near or far side of the ring.
+        """
+        squash = self.ratio * np.sin(self.tilt * dtor)
+        squash = np.where(squash < 0.0, -1.0, 1.0) * np.maximum(
+            np.abs(squash), 1e-8
+        )
+        d = (sky_pa - self.pa) * dtor
+        phi = np.arctan2(np.cos(d) / squash, np.sin(d))
+        return self.pa + 90.0 - phi / dtor
 
     def rings(self):
         """Radius, sky offset of the centre along the projected axis (mas)
-        and normalised weight of each ring."""
+        and normalized weight of each ring."""
         t = (np.arange(self.n_rings) + 0.5) / self.n_rings * 5.0
         s = self.s0 + t * self.length
         rho = s * np.sin(self.alpha * dtor)
@@ -809,9 +914,28 @@ class TruncatedCone(Component):
         )
         sin_pa, cos_pa = np.sin(self.pa * dtor), np.cos(self.pa * dtor)
         shift = offset_phase(uu, vv, along * sin_pa, along * cos_pa)
-        rings = j0(2.0 * np.pi * mas2rad * rho * q) * shift
+        x = 2.0 * np.pi * mas2rad * rho * q
+        if self.az_amps is None:
+            rings = j0(x)
+        else:
+            # e^{iθ}, θ the direction of the spatial frequency in the ring
+            # angle of _modulation; it multiplies J_m, which vanishes at
+            # q = 0, so the guard in q is enough.
+            squash = self.ratio * np.sin(self.tilt * dtor)
+            turn = (q_perp + 1j * squash * q_par) / q
+            orders, amps, phases = self._orders()
+            bessel = bessel_jn(len(orders), x)
+            rings = bessel[0] + sum(
+                amps[m - 1]
+                * (-1j) ** m
+                * np.real(turn**m * np.exp(-1j * m * phases[m - 1]))
+                * bessel[m]
+                for m in orders
+            )
+        rings = rings * shift
         envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
-        return np.reshape((rings @ weight) * envelope, shape)
+        rings = np.matmul(rings, weight, precision=jax.lax.Precision.HIGHEST)
+        return np.reshape(rings * envelope, shape)
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
         rho, along, weight = self.rings()
@@ -831,6 +955,7 @@ class TruncatedCone(Component):
             needed = float(np.max(circumference)) / (float(np.min(blur)) / 3.0)
             n_blocks = int(min(max(onp.ceil(needed / block), 1), 128))
         phi = np.linspace(0.0, 2.0 * np.pi, n_blocks * block, endpoint=False)
+        modulation = self._modulation(phi)
 
         def ring_points(radius, centre, angles):
             par = centre + radius * np.sin(angles) * squash
@@ -859,7 +984,9 @@ class TruncatedCone(Component):
                 g_col = np.exp(-k * (e_col @ e_col) * (cols - s_col) ** 2)
                 g_row = np.exp(-k * (e_row @ e_row) * (rows - s_row) ** 2)
                 ring = np.matmul(
-                    g_row, g_col.T, precision=jax.lax.Precision.HIGHEST
+                    g_row * modulation,
+                    g_col.T,
+                    precision=jax.lax.Precision.HIGHEST,
                 )
                 return image + w * ring / phi.size, None
 
@@ -875,6 +1002,7 @@ class TruncatedCone(Component):
                     x, y = ring_points(radius, centre, angles)
                     d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
                     spots = np.exp(-4.0 * np.log(2.0) * d2 / width**2)
+                    spots = spots * self._modulation(angles)
                     return image + w * np.sum(spots, -1) / phi.size, None
 
                 image, _ = jax.lax.scan(add_block, image, blocks)
@@ -1024,7 +1152,7 @@ class LimbDarkenedDisk(_LimbDarkenedDisk):
     The visibility is analytic (Quirrenbach et al. 1996, eq. 3; see
     [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk]).
     harmonix ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433))
-    generalises the same result to limb-darkened spherical-harmonic maps.
+    generalizes the same result to limb-darkened spherical-harmonic maps.
 
     Parameters
     ----------
@@ -1376,7 +1504,7 @@ class GravityDarkenedStar(Component):
         the grey model; a value switches on the chromatic model (see Notes).
     wavel0 : float or array-like, optional
         Reference wavelength in metres (default 1.65e-6, H band), at which
-        the star's spectrum is normalised to ``flux`` and which
+        the star's spectrum is normalized to ``flux`` and which
         [`render`][virgil.models.SourceModel.render] shows. Only used
         when ``t_pole`` is set.
 
@@ -1554,7 +1682,7 @@ class GravityDarkenedStar(Component):
 
     def _planck_intensity(self, teff, wavel):
         """``B_λ(T) / B_λ(t_pole)`` at ``wavel`` for triangles of ``teff``."""
-        # the pole, theta = 0, through the jitted vectorised solver
+        # the pole, theta = 0, through the jitted vectorized solver
         teff_pole = _elr.solve_ELR_vec(self.omega, np.zeros(1))[1][0]
         temperature = self.t_pole * teff / teff_pole
         wavel = np.asarray(wavel)[..., None]
@@ -1589,11 +1717,11 @@ class GravityDarkenedStar(Component):
         x, y, w, _ = self._surface()
         return _elr.visibilities(x, y, w, uu, vv)
 
-    # sub-pixel samples per pixel side when rasterising the image
+    # sub-pixel samples per pixel side when rasterizing the image
     _image_oversample = 4
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
-        """Rasterise the faceted surface, flat-shaded per triangle.
+        """Rasterize the faceted surface, flat-shaded per triangle.
 
         Each pixel averages ``_image_oversample`` squared sub-pixel samples
         of the surface brightness, so the limb is anti-aliased. A sample
@@ -1806,6 +1934,10 @@ class ModulatedGaussianRim(Component):
             check_az_prof_nonnegative(self.az_amps, self.az_pas)
         )
 
+    def _ring_angle(self, sky_pa):
+        """The in-plane azimuth whose projection points at ``sky_pa``."""
+        return _rim_angle(sky_pa, self.pa, self.inc)
+
     def _centred_cvis(self, uu, vv):
         return _cvis_centred_rim(
             uu,
@@ -1845,9 +1977,7 @@ class ModulatedGaussianRim(Component):
         npix = xx.shape[0]
         nker = npix + 1 - npix % 2
         kx, ky = image_coordinates(nker, nker * pixel_scale_mas)
-        sigma_mas = np.maximum(
-            self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0))), 1e-9
-        )
+        sigma_mas = np.maximum(self.fwhm / FWHM_PER_SIGMA, 1e-9)
         # Gaussian kernel that is isotropic in the rim plane: on the sky it
         # has sigma_mas along the major axis and sigma_mas * stretch along
         # the minor axis. The stretch is floored so that the sky-plane
@@ -1899,7 +2029,7 @@ def circular_support(npix, pixel_scale_mas, radius_mas, inner_radius_mas=0.0):
 def _pixel_visibilities(
     fluxes, pixel_scale_mas, rotation_deg, u, v, wavel, grid=None
 ):
-    """Fourier transform of pixel fluxes centred on the origin, unnormalised.
+    """Fourier transform of pixel fluxes centred on the origin, unnormalized.
 
     Uses the exact matrix Fourier transform when the samples lie on a uv
     ``grid`` whose rotation matches the pixels' (and there is a single
@@ -2265,7 +2395,7 @@ class FlaredDisk(Component):
         r = np.sqrt(np.maximum(r2, tiny))
 
         # Skewed Gaussian ring (Eqs. 4-5) times the azimuthal term (Eq. 9).
-        sigma = self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        sigma = self.fwhm / FWHM_PER_SIGMA
         offset = (r - self.radius) / sigma
         ring = (
             np.exp(-0.5 * offset**2)
@@ -2520,7 +2650,13 @@ class System(SourceModel):
         if not components:
             raise ValueError("System needs at least one component.")
         for name, component in components.items():
-            _check_component_name(name)
+            check_part_name(
+                name,
+                System,
+                "Component",
+                "comp.flux",
+                "a System attribute or method",
+            )
             if not isinstance(component, SourceModel):
                 raise TypeError(
                     f"Component '{name}' is not a SourceModel: {component!r}"
@@ -2645,13 +2781,13 @@ class Rotated(SourceModel):
     --------
     A companion to the North, rotated by 90°, lands to the East:
 
-    >>> import jax.numpy as jnp
+    >>> import jax.numpy as np
     >>> from virgil.models import GaussianDisk, Rotated, System
     >>> north = System(a=GaussianDisk(1.0), b=GaussianDisk(1.0, ddec=10.0))
     >>> east = System(a=GaussianDisk(1.0), b=GaussianDisk(1.0, dra=10.0))
-    >>> u, v = jnp.array([3.0, 5.0]), jnp.array([1.0, -2.0])
+    >>> u, v = np.array([3.0, 5.0]), np.array([1.0, -2.0])
     >>> rotated = Rotated(north, 90.0).model(u, v, 1e-6)
-    >>> bool(jnp.allclose(rotated, east.model(u, v, 1e-6), atol=1e-6))
+    >>> bool(np.allclose(rotated, east.model(u, v, 1e-6), atol=1e-6))
     True
     """
 
@@ -2765,6 +2901,15 @@ class Attached(SourceModel):
                     f"Unknown frame angle {angle!r}; use one of "
                     f"{', '.join(_FRAME_ANGLES)}."
                 )
+        if "az_pas" in bind and (
+            not hasattr(component, "_ring_angle")
+            or component.az_pas is None
+            or onp.size(component.az_pas) == 0
+        ):
+            raise ValueError(
+                f"{type(component).__name__} has no azimuthal modulation to "
+                "bind az_pas to; give it az_amps and az_pas when building it."
+            )
         offsets = dict(offsets or {})
         unknown = set(offsets) - set(bind)
         if unknown:
@@ -2776,7 +2921,7 @@ class Attached(SourceModel):
         self.component = component
         self.orbit = orbit
         self.anchor = anchor
-        # az_pas last: it is deprojected with the bound pa and inc.
+        # az_pas last: it is deprojected with the bound orientation.
         self.bind = tuple(sorted(bind.items(), key=lambda b: b[0] == "az_pas"))
         self.offsets = {
             attr: np.asarray(offsets.get(attr, 0.0), dtype=float)
@@ -2803,7 +2948,7 @@ class Attached(SourceModel):
         for attr, angle in self.bind:
             value = frame[angle] + self.offsets[attr]
             if attr == "az_pas":
-                value = _rim_angle(value, out.pa, out.inc)
+                value = out._ring_angle(value)
             old = getattr(out, attr)
             out = eqx.tree_at(
                 lambda c: getattr(c, attr),
@@ -2919,28 +3064,6 @@ def _rim_angle(sky_pa, pa, inc):
     )
 
 
-_RESERVED_COMPONENT_NAMES = frozenset({"components", "names", "parts"})
-
-
-def _check_component_name(name):
-    """Reject component names that cannot be used as parameter paths."""
-    if not isinstance(name, str) or not name.isidentifier():
-        raise ValueError(
-            f"Component name {name!r} must be a valid Python identifier, "
-            "so that it can be used in parameter paths such as 'comp.flux'."
-        )
-    if (
-        name.startswith("_")
-        or name in _RESERVED_COMPONENT_NAMES
-        or name in {"flux", "dra", "ddec"}
-        or hasattr(System, name)
-    ):
-        raise ValueError(
-            f"'{name}' cannot be a component name because it clashes with a "
-            "System attribute or method; choose another name."
-        )
-
-
 class BinaryModelAngular(SourceModel):
     """
     A primary star and a point-source companion, in polar coordinates.
@@ -3028,8 +3151,7 @@ class BinaryModelCartesian(SourceModel):
 
     def to_angular(self):
         """Return the equivalent [`BinaryModelAngular`][virgil.models.BinaryModelAngular]."""
-        sep = np.sqrt(self.dra**2 + self.ddec**2)
-        pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
+        sep, pa = separation_pa(self.dra, self.ddec)
         return BinaryModelAngular(sep, pa, self.flux)
 
     def total_spectrum(self, wavel):
@@ -3226,11 +3348,12 @@ def cvis_binary(u, v, dra, ddec, flux):
     return primary + companion * offset_phase(u, v, dra, ddec)
 
 
-def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
+@renamed()
+def cvis_uniform_disk(u, v, diam, dra=0.0, ddec=0.0):
     """Compute complex visibilities for a uniform (tophat) disk.
 
     The visibility amplitude follows the classic uniform-disk form
-    ``2 * J1(x) / x``, with ``x = pi * ud_rad * base_norm`` the product of
+    ``2 * J1(x) / x``, with ``x = pi * diam_rad * base_norm`` the product of
     the disk diameter (in radians) and the baseline length in wavelength
     units (``base_norm = hypot(u, v)``, i.e. baseline length divided by
     wavelength).
@@ -3241,7 +3364,7 @@ def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
         Baseline ``u`` coordinates in wavelength units (cycles / rad).
     v : array-like
         Baseline ``v`` coordinates in wavelength units (cycles / rad).
-    ud : float or array-like
+    diam : float or array-like
         Diameter of the uniform disk in milliarcseconds.
     dra : float or array-like
         Right-ascension offset in milliarcseconds.
@@ -3253,9 +3376,9 @@ def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
     array-like
         Complex visibility samples.
     """
-    ud_rad = mas2rad * ud
+    diam_rad = mas2rad * diam
     base_norm = np.hypot(u, v)
-    kernel = np.pi * base_norm * ud_rad
+    kernel = np.pi * base_norm * diam_rad
 
     # Keep 0 out of the division so the unused branch has finite gradients.
     at_zero = kernel == 0
@@ -3288,7 +3411,7 @@ def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
     needs order $5/4$, from jaxbessel's ``bessel_jv_over_xv``, which takes
     orders up to 12, so $-2 < \nu \le 22$ (the lower limit keeps the flux
     finite). harmonix
-    ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalises
+    ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalizes
     the result to polynomial limb darkening of spherical-harmonic maps.
 
     Parameters

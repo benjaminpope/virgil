@@ -3,7 +3,7 @@
 import itertools
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import pytest
 from scipy.optimize import brentq
@@ -315,7 +315,7 @@ def test_position_likelihood_matches_a_gaussian():
 def test_out_of_domain_orbits_are_rejected(changes, match):
     with pytest.raises(ValueError, match=match):
         _orbit(**changes)
-    # Traced values are not checked (they may be mid-optimisation).
+    # Traced values are not checked (they may be mid-optimization).
     jax.jit(lambda p: _orbit(period=p).period)(0.0)
 
 
@@ -462,7 +462,7 @@ def test_total_mass_and_distance_are_inverse():
     ) == pytest.approx(123.0)
 
 
-def test_axial_von_mises_is_a_normalised_prior_with_period_180():
+def test_axial_von_mises_is_a_normalized_prior_with_period_180():
     from virgil.orbits import AxialVonMises
 
     prior = AxialVonMises(100.0, 4.0)
@@ -608,7 +608,7 @@ def test_numpyro_model_adds_a_position_term_to_the_prior():
     values = {"a_mas": 19.0, "ecc": 0.35}
     log_prior = sum(float(priors[k].log_prob(v)) for k, v in values.items())
     chi2 = float(onp.sum(positions.whitened_residuals(orbit(values)) ** 2))
-    # Matching constant: the data's own normalisation, from ``loglike``.
+    # Matching constant: the data's own normalization, from ``loglike``.
     constant = float(positions.loglike(orbit(values))) + 0.5 * chi2
     assert _log_density(model, values) == pytest.approx(
         log_prior - 0.5 * chi2 + constant, rel=1e-5
@@ -708,7 +708,7 @@ def test_rv_jitter_zero_matches_the_plain_term():
     assert term.has_log_norm and not plain.has_log_norm
 
 
-def test_numpyro_model_includes_the_rv_jitter_normalisation():
+def test_numpyro_model_includes_the_rv_jitter_normalization():
     import numpyro.distributions as dist
 
     from virgil.likelihood import numpyro_model
@@ -781,7 +781,7 @@ def test_fit_recovers_an_injected_rv_jitter():
     assert float(result.values["gamma"]) == pytest.approx(3.0, abs=0.6)
 
 
-# -- analytic marginalisation of the instrument zero points ----------------
+# -- analytic marginalization of the instrument zero points ----------------
 
 
 def _two_instruments(n=12, jitter=0.4, seed=5):
@@ -817,7 +817,7 @@ def _marginal_term(truth, rvs, mean, sd):
     return rvs.term(
         lambda v: (truth, 0.5, 0.0, 50.0),
         jitter="rv_jitter",
-        marginalise_offsets=(mean, sd),
+        marginalize_offsets=(mean, sd),
     )
 
 
@@ -861,7 +861,7 @@ def test_zero_point_posterior_matches_dense_conditioning():
         )
 
 
-def test_marginalised_fit_recovers_the_orbit_like_free_offsets():
+def test_marginalized_fit_recovers_the_orbit_like_free_offsets():
     import numpyro.distributions as dist
 
     from virgil.fitting import fit
@@ -897,7 +897,7 @@ def test_marginalised_fit_recovers_the_orbit_like_free_offsets():
             likelihoods=[
                 rvs.term(
                     lambda v: (truth, 0.5, 0.0, v["dist"]),
-                    marginalise_offsets=(0.0, 100.0),
+                    marginalize_offsets=(0.0, 100.0),
                 )
             ],
         )
@@ -913,7 +913,7 @@ def test_single_instrument_tiny_prior_is_a_fixed_gamma():
         term = rvs.term(
             lambda v: (truth, 0.5, 0.0, 50.0),
             jitter="rv_jitter",
-            marginalise_offsets=(2.5, 1e-6),
+            marginalize_offsets=(2.5, 1e-6),
         )
         fixed = _rv_term(truth, rvs)
         values = {"rv_jitter": 0.7, "gamma": 2.5}
@@ -929,17 +929,17 @@ def test_single_instrument_tiny_prior_is_a_fixed_gamma():
 def test_true_zero_point_prior_is_an_error_and_flat_prior_is_rejected():
     truth, rvs = _rv_setup(n=8)
     with pytest.raises(ValueError, match=r"state the .*prior.*\(mean, sd\)"):
-        rvs.term(lambda v: (truth, 0.5, 0.0, 50.0), marginalise_offsets=True)
+        rvs.term(lambda v: (truth, 0.5, 0.0, 50.0), marginalize_offsets=True)
     with pytest.raises(ValueError, match="finite sd"):
         rvs.term(
             lambda v: (truth, 0.5, 0.0, 50.0),
-            marginalise_offsets=(0.0, onp.inf),
+            marginalize_offsets=(0.0, onp.inf),
         )
     for bad in (onp.nan, onp.inf):
         with pytest.raises(ValueError, match="finite mean"):
             rvs.term(
                 lambda v: (truth, 0.5, 0.0, 50.0),
-                marginalise_offsets=(bad, 10.0),
+                marginalize_offsets=(bad, 10.0),
             )
 
 
@@ -1130,7 +1130,7 @@ def test_position_angle_jacobian_matches_finite_differences():
 def test_theta_weighted_by_the_jacobian_is_uniform_in_mean_anomaly():
     # Monte Carlo: θ uniform, weighted by |∂M/∂θ|, gives uniform M; θ
     # uniform alone does not (so the term matters), and the weights
-    # average to 1 (the prior stays normalised).
+    # average to 1 (the prior stays normalized).
     from virgil.orbits import position_angle_log_jacobian
 
     el = dict(ecc=0.7, inc=130.0, omega=75.0, Omega=200.0)
@@ -1456,12 +1456,12 @@ def test_total_mass_and_distance_are_finite_in_float32(a_au, period_yr):
     # Julian year used here). SI-sized intermediates would overflow float32.
     gaussian_year = 365.256898
     with jax.enable_x64(False):
-        f32 = jnp.float32
+        f32 = np.float32
         orbit = _orbit(
-            period=jnp.asarray(period_yr * gaussian_year, f32),
-            a_mas=jnp.asarray(a_au * 1000.0, f32),
+            period=np.asarray(period_yr * gaussian_year, f32),
+            a_mas=np.asarray(a_au * 1000.0, f32),
         )
-        mass = total_mass(orbit, jnp.asarray(1.0, f32))
+        mass = total_mass(orbit, np.asarray(1.0, f32))
         assert mass.dtype == f32
         assert onp.isfinite(float(mass))
         assert float(mass) == pytest.approx(1.0, rel=1e-4)

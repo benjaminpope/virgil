@@ -11,7 +11,7 @@ import os
 import sys
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import pytest
 
@@ -72,20 +72,20 @@ def test_the_csv_format_has_one_row_per_measurement(tmp_path):
 
 def test_the_recompile_detector_sees_a_shape_change():
     f = jax.jit(lambda x: x * 2.0)
-    f(jnp.ones(3))
+    f(np.ones(3))
     with harness.count_compiles() as same:
-        f(jnp.ones(3)).block_until_ready()
+        f(np.ones(3)).block_until_ready()
     with harness.count_compiles() as new:
-        f(jnp.ones(5)).block_until_ready()
+        f(np.ones(5)).block_until_ready()
     assert same["n"] == 0 and new["n"] >= 1
     with pytest.raises(harness.RecompileError, match="compiled"):
-        harness.assert_no_compiles("f", f, jnp.ones(7))
-    harness.assert_no_compiles("f", f, jnp.ones(7))  # now cached
+        harness.assert_no_compiles("f", f, np.ones(7))
+    harness.assert_no_compiles("f", f, np.ones(7))  # now cached
 
 
 def test_measure_separates_the_first_call_from_warm_calls():
-    f = jax.jit(lambda x: jnp.sin(x).sum())
-    x = jnp.arange(10.0)
+    f = jax.jit(lambda x: np.sin(x).sum())
+    x = np.arange(10.0)
     m = harness.measure(lambda: f(x), repeats=3)
     assert m.n_compiles_first == 1 and m.n_compiles_warm == 0
     assert m.first_s > m.run_s

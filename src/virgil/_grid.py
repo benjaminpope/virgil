@@ -8,8 +8,8 @@ depends on the other's internals.
 import warnings
 
 import jax
-import jax.numpy as jnp
-import numpy as np
+import jax.numpy as np
+import numpy as onp
 
 from ._utils import concrete, is_flux_param, resolve_flux_param
 
@@ -47,7 +47,7 @@ def batch_size_or_default(batch_size, data):
     batch, and at least ``MIN_BATCH_SIZE`` grid points.
     """
     if batch_size is None:
-        n_vis = max(np.size(data.u), np.size(data.wavel), 1)
+        n_vis = max(onp.size(data.u), onp.size(data.wavel), 1)
         return max(MIN_BATCH_SIZE, batch_visibilities() // n_vis)
     batch_size = int(batch_size)
     if batch_size < 1:
@@ -70,7 +70,7 @@ def check_flux_axes(grid, flux_param=None):
         if not (is_flux_param(key) or key == flux_param):
             continue
         values = concrete(values)
-        if values is not None and np.any(values < 0.0):
+        if values is not None and onp.any(values < 0.0):
             raise ValueError(
                 f"The grid axis {key!r} contains negative values, but fluxes "
                 "must be non-negative."
@@ -91,19 +91,10 @@ def resolve_grid_keys(grid, flux_param=None):
     return params, coord_keys, flux_key
 
 
-def meshgrid_vectors(grid, params):
-    """Build flattened meshgrid vectors with axis order matching ``params``."""
-    samples = [jnp.asarray(grid[param]) for param in params]
-    grid_shape = tuple(sample.shape[0] for sample in samples)
-    grids = jnp.meshgrid(*samples, indexing="ij")
-    vals_vec = jnp.stack([g.reshape(-1) for g in grids], axis=1)
-    return vals_vec, grid_shape
-
-
 def ordered_values(flux, coord_vals, params, coord_keys, flux_key):
     """Build parameter values in ``params`` order without traced dict objects."""
-    flux_value = jnp.asarray(flux).reshape(-1)[0]
-    coord_vals = jnp.asarray(coord_vals)
+    flux_value = np.asarray(flux).reshape(-1)[0]
+    coord_vals = np.asarray(coord_vals)
     return [
         flux_value
         if param == flux_key
@@ -134,8 +125,8 @@ def first_crossing(
     end.
     """
     above = reached(log_start)
-    direction = jnp.where(above, -step, step)
-    edge = jnp.where(above, log_low, log_high)
+    direction = np.where(above, -step, step)
+    edge = np.where(above, log_low, log_high)
 
     def keep_going(state):
         _, log_flux, same_side, n = state
@@ -143,11 +134,11 @@ def first_crossing(
 
     def advance(state):
         _, log_flux, _, n = state
-        new = jnp.clip(log_flux + direction, log_low, log_high)
+        new = np.clip(log_flux + direction, log_low, log_high)
         return log_flux, new, reached(new) == above, n + 1
 
     near, stop, same_side, _ = jax.lax.while_loop(
-        keep_going, advance, (log_start, log_start, jnp.asarray(True), 0)
+        keep_going, advance, (log_start, log_start, np.asarray(True), 0)
     )
 
     # `near` is on the starting side of the target and `far` on the other.
@@ -155,11 +146,11 @@ def first_crossing(
         near, far = edges
         mid = 0.5 * (near + far)
         same = reached(mid) == above
-        return jnp.where(same, mid, near), jnp.where(same, far, mid)
+        return np.where(same, mid, near), np.where(same, far, mid)
 
     near, far = jax.lax.fori_loop(0, bisections, bisect, (near, stop))
     crossed = ~same_side
-    return jnp.where(crossed, 0.5 * (near + far), stop), crossed
+    return np.where(crossed, 0.5 * (near + far), stop), crossed
 
 
 def coordinate_points(grid, coord_keys):
@@ -168,21 +159,21 @@ def coordinate_points(grid, coord_keys):
     The grid uses ``indexing="ij"``: axis ``k`` follows ``coord_keys[k]``,
     so for ``(dra, ddec)`` axis 0 is ``dra``.
     """
-    coord_grids = jnp.meshgrid(
-        *[jnp.asarray(grid[key]) for key in coord_keys],
+    coord_grids = np.meshgrid(
+        *[np.asarray(grid[key]) for key in coord_keys],
         indexing="ij",
     )
-    points = jnp.stack([g.reshape(-1) for g in coord_grids], axis=1)
+    points = np.stack([g.reshape(-1) for g in coord_grids], axis=1)
     return points, coord_grids[0].shape
 
 
 def warn_unconverged(success, caller):
     """Warn if an optimizer failed to converge at some grid positions."""
-    failed = int(np.sum(~np.asarray(success, dtype=bool)))
+    failed = int(onp.sum(~onp.asarray(success, dtype=bool)))
     if failed:
         warnings.warn(
             f"{caller}(): the optimizer did not converge at {failed} of "
-            f"{np.size(success)} grid positions; values there may be "
+            f"{onp.size(success)} grid positions; values there may be "
             "inaccurate.",
             RuntimeWarning,
             # user -> public function -> here

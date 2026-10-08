@@ -41,6 +41,10 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **Warnings and precision (#306).** `Tabulated` now warns with `FutureWarning` (as every other deprecation does) instead of the default-hidden `DeprecationWarning`; the four warnings that set no category (`Ensemble` too few members kept, every closure phase flagged, unmatched T3 legs, `t_ref = 0` with MJD times) now say `UserWarning`. `cvis_uniform_disk` takes `diam` like the other disks (`ud=` still works with a `FutureWarning`). The two pixel-sum matmuls in `GaussianArc`/`TruncatedCone` use `Precision.HIGHEST`, as the rest of the forward model does (TF32 on A100/H100 otherwise). The AMIGO covariance check takes its tiny-number floor from the array's dtype. `tests/_test_data.py` finds `data/` from its own location, not the working directory.
+- **Oxford -ize spelling in names (#306).** `fit`, `numpyro_model` and `diagnose` take `regularizers` (not `regularisers`), `RVData.term` takes `marginalize_offsets` (not `marginalise_offsets`), and the numpyro factor sites for regularizers are named `regularizer_<i>`. The old keywords still work with a `FutureWarning` until 0.5 (`_deprecate.renamed`). Private names (`_linear.standardize`, `_diagonalized`, `_summarize`, `_normalize`) and the spelling in docstrings, comments and the hand-written docs follow. `barycenter` and the already -ize public names (`regularized_inverse`, `optimized_*`, `standardize_model`, `Image(normalize=)`) are unchanged.
+- **Deprecated parameter names are gone from public signatures (#306).** `OIData.model`, `OIData.with_model` and every `observables.*.predict` take `model` (not `model_object`), `inflated_errors` takes `data` (not `data_obj`), and `joint_data` / `joint_errors` take `data` (not `observations`). The old keywords still work with a `FutureWarning` until 0.5, through the same `_deprecate.renamed` path as the other functions. Private helpers in `likelihood`, `inference` and `oidata` were renamed to match.
+- **One import convention (#306).** `import jax.numpy as np` and `import numpy as onp` everywhere in `src`, `tests`, `examples`, `scripts` and `design/sketches` (six `src` modules and three tests had the two swapped, so code moved between files silently changed backend). Ruff's `ICN001` now enforces it; notebooks keep their old aliases until they are next re-executed.
 - **Orbit starts are scale-aware (#268).** `epoch_positions` now scores
   its grid on the scale-marginalized surface m = -Σ_b (ν_b/2) ln χ²_b,
   in which each dataset's V² and closure-phase error scales are
@@ -72,7 +76,81 @@ anything before 1.0 may change between minor versions.
   ranking. The default stays `"quoted"` in 0.4, with a `FutureWarning`
   when `scales` is not given; it will become `"marginal"`.
 
+- **Duplicated and dead code removed (part of #310; no behaviour change).**
+  `legacy.oifits_implaneia.GetWavelength`, `Format_STAINDEX_V2`,
+  `Format_STAINDEX_T3`, `rad2mas` and the `cp_indices` re-export are
+  deprecated (`FutureWarning`; removal in 0.6), since nothing uses them.
+  Internally: `epochs` and `pipeline.binary` use the `_utils` unit
+  constants; `FWHM_PER_SIGMA` moved to `_utils` (still importable from
+  `detection`) and replaces the hand-written `2.3548` and
+  `2*sqrt(2 ln 2)` (the two literal `2.3548`s in `imaging` now use the
+  exact value, a 1e-5 relative change in an envelope-fit starting width);
+  `coverage` uses `_geometry.rotate` (which now stays in NumPy for NumPy inputs); `meshgrid_vectors` is
+  `coordinate_points`; one `_unit_sum`; `pipeline.cli` uses
+  `_io.read_json` and `_io.sha256_file`; `pipeline.binary` takes skewness
+  and kurtosis from `scipy.stats`; the `batch_size` and noise-term
+  "Priors" docstrings are stated once and referred to. Unused
+  `_utils.i2pi` removed.
+
 ### Fixed
+
+- **Drifted copies unified (part of #310).**
+  - **Pipeline resume fingerprint.** `pipeline._io.data_fingerprint` now
+    hashes every field of the `OIData` (it is `detection._fingerprint`),
+    not twelve arrays and three flags, so a change to the stations,
+    `t_ref`, `dt`, frames, gains, closure offsets, extra observables or
+    uv grid is noticed on resume. **This changes every fingerprint: run
+    folders written by earlier versions no longer match, so resuming one
+    raises a `ConfigMismatchError` ("the data differ"), and their cached
+    stages are recomputed once you start it over with `run(resume=False)`
+    (`--fresh`) or in a new folder.**
+  - **Zero errors.** `OIData` now drops V² and phase samples with a zero
+    (or negative) error, as it already did for extra observables
+    (`OI_FLUX`, `|V|`, `T3AMP`); a zero error gives an infinite whitened
+    residual, which made every likelihood and fit non-finite. Flagged
+    and non-finite samples were already dropped.
+  - **Orbit ranking.** `rank_orbits` (and so `start_from_positions`)
+    orders orbits with `orbit_search.rank_scores`, as
+    `score_orbits(...).order()` does: scores within 1e-3 nat tie and
+    rank by index, and non-finite ones rank last. Orbits whose scores
+    differ by less than that can come out in a different order than
+    before.
+  - **Field of view.** `imaging.field_of_view`, `nyquist_pixel_scale`,
+    `Epochs.resolution_mas` and the pipeline's `fov_mas`,
+    `resolution_mas` and `lambda_over_b_mas` share
+    `_geometry.fringe_scales`: per-sample `B/λ` over non-zero baselines.
+    The pipeline used the longest wavelength over the shortest baseline,
+    which are not observed together when the uv sampling differs between
+    channels, so its `fov_mas` can be smaller (and its default
+    `max_sep`, a fraction of it).
+  - **Position angles.** One `_geometry.position_angle` /
+    `separation_pa` (North through East, `[0, 360)`) serves the models,
+    orbits, plotting and the pipeline. `KeplerOrbit.frame(...)["line_pa"]`
+    was in (-180, 180]; it is now in `[0, 360)` (equal modulo 360, and
+    `towards_primary` is still `line_pa + 180`).
+  - **Phase units** (`oifits` columns and `OIData` records) go through
+    one parser, with one error message; a blank `TUNIT` or `phi_unit` now
+    means the default unit in both. One check for the names of
+    `System` components and `Sum` parts (derived from the class's own
+    fields), one `wrap_phase`, and the pipeline's prior-bound fractions
+    use `fitting._bound_fraction` (a prior with a flat coordinate, such
+    as `IsotropicInclination`, no longer counts its poles as bounds).
+- **`virgil.ensemble` default selection.** The L-curve window now keeps
+  the weights from `window_dex` below the corner up to the corner (MYTHRA's
+  "just before the turnover"), not the over-regularised side above it. The
+  default weight ranges reach a decade lower (`tsv` 0.1–10⁴, the others
+  10⁻⁴–10 per data point), set from the corners of the 60 datasets of
+  virgil-validation's contest bench, and each sweep draws one log-uniform
+  weight per equal bin of `log w`, so it spans its range. The default
+  `field_factors` are now (1, 2, 4) times `field_of_view(data)`, and a
+  field too large for `max_npix` keeps its size with coarser pixels instead
+  of being cropped, down to Nyquist pixels; on a uv lattice (AMI) the factors are capped at 1. The
+  iterative mean now admits a member if every dataset's χ² stays within
+  `mean_rtol` of the best member's, by default each dataset's χ²/N noise
+  √(2/N) (was: no rise at all, judged against the running mean), and
+  `combine` warns when fewer than `min_kept` (3) members are kept. The
+  default `n_weights` is 8. On the bench the old defaults kept 1 of 72
+  members on 44 of 60 datasets and gave the worst images of any arm.
 
 - **`read_oifits` reads closure triangles whose leg has no visibility
   row** ([#299](https://github.com/benjaminpope/virgil/issues/299)). A
@@ -159,6 +237,41 @@ anything before 1.0 may change between minor versions.
   all epochs with per-epoch error scales integrated out, with Laplace and
   importance-sampling evidences, band probabilities and posterior samples.
 
+
+- **Orbit-search scorer.** `virgil.orbit_search.score_orbits(epochs,
+  model, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
+  scores a stack of candidate orbits on all epochs in one compiled,
+  `lax.map`-batched kernel. The companion flux is shared: one flux per
+  band (optionally f₀(λ/λ₀)^β), at most 1 in a reference band, integrated
+  out under a log-uniform prior and also reported profiled, with an
+  uncertainty from the curvature. The coarse grid only seeds Newton steps
+  to the profiled peak; Gauss–Legendre nodes on each side, out to a 12-nat
+  drop or the prior's bound, then integrate it, so the marginal is within
+  0.05 nat of brute-force quadrature wherever the peak falls (a coarse-grid
+  fallback is flagged in `OrbitScores.fallback`). Each dataset's error scales are
+  marginalized as in `marginal_loglike`, bounded by default to
+  [1/5, 5] (`s_max=5`; `s_max=None` for the unbounded closed form). The
+  scale each dataset needs at the profiled flux is reported in
+  `OrbitScores.scale`, and `OrbitScores.scale_at_bound` flags candidates
+  whose scale posterior presses against `s_max`. Gains (`OIData.with_gains`) and
+  closure-phase offsets (`OIData.with_closure_offsets`), which
+  `marginal_loglike` refuses, are profiled analytically, at one degree of
+  freedom each. `RVData`/`PositionData` terms or callables are added.
+  Positions are evaluated at every sample's own time, and the visibility
+  of a unit companion is computed once per candidate, with every flux
+  point cheap arithmetic on it. `max_evaluations` refuses a run whose
+  predicted cost (candidates × datasets × score evaluations) is over budget.
+  `rank_scores` / `OrbitScores.order` rank with ties broken on quantized
+  scores, then by index.
+
+- **Azimuthally modulated cones.** `TruncatedCone(..., az_amps=, az_pas=)`
+  multiplies every ring's brightness by `1 + Σ A_m cos(m (φ - φ_m))` in
+  its own azimuth, e.g. for a colliding-wind shock brighter on its
+  leading edge. The azimuths follow `ModulatedGaussianRim`'s convention
+  (in the ring's plane, in the sense of position angle, `pa ± 90` on the
+  walls). The visibilities stay analytic (one `J_m` per ring and order)
+  and the render matches them. Unmodulated cones are unchanged and carry
+  no empty leaves.
 - **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and
   L-BFGS run in chunks of steps, check the wall clock between them and
   stop, unconverged, with `info["stop"] == "time"` (L-BFGS carries its

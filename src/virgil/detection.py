@@ -7,7 +7,7 @@ data prefer a companion to none:
 - ``delta_chi2``, the profile likelihood ratio 2 [max log L − log L₀] over
   the grid, with the companion flux constrained to be non-negative;
 - ``log_bayes_factor``, the log evidence ratio of "a companion somewhere on
-  the grid" to "no companion", marginalised over the grid;
+  the grid" to "no companion", marginalized over the grid;
 - ``max_snr``, the largest best-fit flux over its Laplace uncertainty, the
   significance map of the composition tutorial.
 
@@ -51,8 +51,8 @@ import warnings
 
 import equinox as eqx
 import jax
-import jax.numpy as jnp
-import numpy as np
+import jax.numpy as np
+import numpy as onp
 
 from ._deprecate import old_order
 from ._grid import (
@@ -62,7 +62,7 @@ from ._grid import (
     resolve_grid_keys,
     warn_unconverged,
 )
-from ._utils import concrete
+from ._utils import FWHM_PER_SIGMA, concrete, wrap_phase
 from .grid_fit import (
     _best_grid_flux,
     _laplace_flux_uncertainty_grid,
@@ -92,7 +92,6 @@ STATISTICS = ("delta_chi2", "log_bayes_factor", "max_snr")
 # relative: ~1e-6 at two steps per FWHM (s = 1.18 sigma), but 20% at
 # s = 3 sigma.
 MIN_PEAK_STEPS = 2.0
-FWHM_PER_SIGMA = 2.0 * np.sqrt(2.0 * np.log(2.0))
 
 
 @old_order("data", "model", "grid", data="data")
@@ -245,7 +244,7 @@ def local_nsigma(delta_chi2):
         Local significance in Gaussian sigma (``sqrt(delta_chi2)`` up to
         rounding; it saturates at about 13σ in float32).
     """
-    delta_chi2 = jnp.maximum(jnp.asarray(delta_chi2, dtype=float), 0.0)
+    delta_chi2 = np.maximum(np.asarray(delta_chi2, dtype=float), 0.0)
     return nsigma(delta_chi2, 1.0, 1)
 
 
@@ -292,14 +291,12 @@ def _detection_statistics(
     profile, profile_flux = _constrained_profile(
         grid_flux, grid_loglike, opt_flux, opt_loglike, loglike0
     )
-    best = jnp.argmax(profile.reshape(-1))
+    best = np.argmax(profile.reshape(-1))
     delta_chi2 = 2.0 * (profile.reshape(-1)[best] - loglike0)
     best_flux = profile_flux.reshape(-1)[best]
 
-    # Grid-marginalised evidence ratio over the trapezoid-weighted prior.
-    log_ratio = jnp.where(
-        jnp.isnan(loglike_im), -jnp.inf, loglike_im - loglike0
-    )
+    # Grid-marginalized evidence ratio over the trapezoid-weighted prior.
+    log_ratio = np.where(np.isnan(loglike_im), -np.inf, loglike_im - loglike0)
     log_bayes_factor = jax.nn.logsumexp(
         log_ratio + _log_prior_weights(loglike_im.shape, log_ratio.dtype)
     )
@@ -314,7 +311,7 @@ def _detection_statistics(
         flux_key,
         batch_size,
     )
-    max_snr = jnp.nanmax(opt_flux / sigma)
+    max_snr = np.nanmax(opt_flux / sigma)
 
     stats = {
         "delta_chi2": delta_chi2,
@@ -346,37 +343,37 @@ def _constrained_profile(
     the null gets the null's log likelihood and flux 0.
     """
     use_opt = (opt_flux >= 0.0) & (opt_loglike >= grid_loglike)
-    alt_loglike = jnp.where(use_opt, opt_loglike, grid_loglike)
-    alt_flux = jnp.where(use_opt, opt_flux, grid_flux)
+    alt_loglike = np.where(use_opt, opt_loglike, grid_loglike)
+    alt_flux = np.where(use_opt, opt_flux, grid_flux)
     improves = (alt_flux > 0.0) & (alt_loglike > loglike0)
     return (
-        jnp.where(improves, alt_loglike, loglike0),
-        jnp.where(improves, alt_flux, 0.0),
+        np.where(improves, alt_loglike, loglike0),
+        np.where(improves, alt_flux, 0.0),
     )
 
 
 def _log_prior_weights(shape, dtype):
-    """Log trapezoid weights in the grid index, normalised to sum to 1.
+    """Log trapezoid weights in the grid index, normalized to sum to 1.
 
     Along each axis the weights are 1 inside and ½ at the two ends (1 for
     an axis of one point); the grid's weight is their outer product.
     """
-    log_w = jnp.zeros(shape, dtype)
+    log_w = np.zeros(shape, dtype)
     for axis, n in enumerate(shape):
-        w = np.ones(n)
+        w = onp.ones(n)
         if n > 1:
             w[[0, -1]] = 0.5
-        w = np.log(w / w.sum())
+        w = onp.log(w / w.sum())
         log_w = log_w + w.reshape((-1,) + (1,) * (len(shape) - axis - 1))
     return log_w
 
 
 def _flux_step(flux_axis, flux):
     """Spacing of ``flux_axis`` around ``flux`` (0 for a single point)."""
-    axis = jnp.sort(jnp.asarray(flux_axis).reshape(-1))
+    axis = np.sort(np.asarray(flux_axis).reshape(-1))
     if axis.size < 2:
-        return jnp.zeros((), axis.dtype)
-    i = jnp.clip(jnp.searchsorted(axis, flux), 1, axis.size - 1)
+        return np.zeros((), axis.dtype)
+    i = np.clip(np.searchsorted(axis, flux), 1, axis.size - 1)
     return axis[i] - axis[i - 1]
 
 
@@ -387,7 +384,7 @@ def _warn_if_concrete(stats, success, grid, flux_key):
         return
     warn_unconverged(success, "detection_statistics")
     flux = float(concrete(stats[flux_key]))
-    top = float(np.max(np.asarray(grid[flux_key])))
+    top = float(onp.max(onp.asarray(grid[flux_key])))
     if flux > top:
         warnings.warn(
             f"detection_statistics(): the best flux {flux:.3g} lies above "
@@ -512,7 +509,7 @@ def gaussian_null(null_scene, template, *, error_scale=1.0):
     >>> data = simulate(jax.random.PRNGKey(0))  # doctest: +SKIP
     """
     error_scale = float(error_scale)
-    if not (np.isfinite(error_scale) and error_scale >= 0.0):
+    if not (onp.isfinite(error_scale) and error_scale >= 0.0):
         raise ValueError(
             f"error_scale must be finite and non-negative, not {error_scale}."
         )
@@ -555,20 +552,20 @@ def rescale_errors(null_scene, data):
     ``null_scene``; with few data and several fitted parameters, the
     factors are biased low by about ``p / (2n)``.
     """
-    r = np.asarray(whitened_residuals(null_scene, data))
-    n_vis = int(np.size(data.vis))
-    n_phi = int(np.size(data.phi))
+    r = onp.asarray(whitened_residuals(null_scene, data))
+    n_vis = int(onp.size(data.vis))
+    n_phi = int(onp.size(data.phi))
     if data._phases_wrap and data.cp_noise is not None:
         rows_phi, dof_phi = data.cp_noise.size + n_phi, data.cp_noise.size
     else:
         rows_phi, dof_phi = n_phi, n_phi
-    s_vis = math.sqrt(float(np.sum(r[:n_vis] ** 2)) / n_vis) if n_vis else 1.0
+    s_vis = math.sqrt(float(onp.sum(r[:n_vis] ** 2)) / n_vis) if n_vis else 1.0
     s_phi = 1.0
     if dof_phi:
-        chi2_phi = float(np.sum(r[n_vis : n_vis + rows_phi] ** 2))
+        chi2_phi = float(onp.sum(r[n_vis : n_vis + rows_phi] ** 2))
         s_phi = math.sqrt(chi2_phi / dof_phi)
     for name, s in (("vis", s_vis), ("phi", s_phi)):
-        if not (np.isfinite(s) and s > 0.0):
+        if not (onp.isfinite(s) and s > 0.0):
             raise ValueError(
                 f"rescale_errors(): the {name} scale factor is {s}; the "
                 "null scene fits that block perfectly or not at all."
@@ -670,13 +667,13 @@ def bootstrap_null(null_scene, data, *, method="sign_flip"):
             "per sample. Use gaussian_null instead."
         )
     prediction = data.model(null_scene)
-    n_vis = int(np.size(data.vis))
-    n_phase = n_vis + int(np.size(data.phi))
+    n_vis = int(onp.size(data.vis))
+    n_phase = n_vis + int(onp.size(data.phi))
     resid = data.flatten_data()[0][:n_phase] - prediction[:n_phase]
     vis_white = resid[:n_vis] / data.d_vis
     phi = resid[n_vis:]
     if data._phases_wrap:
-        phi = jnp.mod(phi + jnp.pi, 2.0 * jnp.pi) - jnp.pi
+        phi = wrap_phase(phi)
         if data.cp_noise is not None:
             phi_white = data.cp_noise.whiten(phi, data.d_phi)[0]
         else:
@@ -719,21 +716,21 @@ def injection_grid(separations, fluxes, n_pa, key):
         from North through East, ``dra = sep sin PA`` (East positive),
         ``ddec = sep cos PA`` (North positive).
     """
-    sep = np.asarray(separations, dtype=float).reshape(-1)
-    flux = np.asarray(fluxes, dtype=float).reshape(-1)
+    sep = onp.asarray(separations, dtype=float).reshape(-1)
+    flux = onp.asarray(fluxes, dtype=float).reshape(-1)
     n_pa = int(n_pa)
     if n_pa < 1:
         raise ValueError(f"n_pa must be positive; got {n_pa}.")
-    if np.any(sep < 0.0) or np.any(flux < 0.0):
+    if onp.any(sep < 0.0) or onp.any(flux < 0.0):
         raise ValueError("separations and fluxes must be non-negative.")
     shape = (sep.size, flux.size, n_pa)
     pa = jax.random.uniform(_as_key(key), shape, maxval=360.0)
-    pa = np.radians(np.asarray(pa, dtype=float))
-    sep_grid = np.broadcast_to(sep[:, None, None], shape)
+    pa = onp.radians(onp.asarray(pa, dtype=float))
+    sep_grid = onp.broadcast_to(sep[:, None, None], shape)
     return {
-        "dra": (sep_grid * np.sin(pa)).reshape(-1),
-        "ddec": (sep_grid * np.cos(pa)).reshape(-1),
-        "flux": np.broadcast_to(flux[None, :, None], shape).reshape(-1),
+        "dra": (sep_grid * onp.sin(pa)).reshape(-1),
+        "ddec": (sep_grid * onp.cos(pa)).reshape(-1),
+        "flux": onp.broadcast_to(flux[None, :, None], shape).reshape(-1),
     }
 
 
@@ -813,7 +810,7 @@ def injection_recovery(
     flux_param : str, optional
         The flux key of ``grid``, as for the grid tools.
     draw_batch : int, optional
-        Draws evaluated together (vectorised) within ``jax.lax.map``. When
+        Draws evaluated together (vectorized) within ``jax.lax.map``. When
         ``batch_size`` is omitted, it is capped at the default grid batch
         size, so that ``draw_batch`` searches of at least one grid point
         each never exceed the budget of one search.
@@ -843,9 +840,9 @@ def injection_recovery(
 
     Examples
     --------
-    >>> grid = {"dra": jnp.linspace(-150, 150, 16),
-    ...         "ddec": jnp.linspace(-150, 150, 16),
-    ...         "flux": jnp.geomspace(1e-4, 0.03, 32)}
+    >>> grid = {"dra": np.linspace(-150, 150, 16),
+    ...         "ddec": np.linspace(-150, 150, 16),
+    ...         "flux": np.geomspace(1e-4, 0.03, 32)}
     >>> injections = injection_grid([60, 100], [1e-3, 3e-3], 100, 1)
     >>> mc = injection_recovery(
     ...     BinaryModelCartesian, BinaryModelCartesian(0, 0, 0), template,
@@ -863,7 +860,7 @@ def injection_recovery(
         raise ValueError(f"draw_batch must be positive; got {draw_batch}.")
     if match_radius is not None:
         match_radius = float(match_radius)
-        if not (np.isfinite(match_radius) and match_radius >= 0.0):
+        if not (onp.isfinite(match_radius) and match_radius >= 0.0):
             raise ValueError(
                 "match_radius must be finite and non-negative, not "
                 f"{match_radius}."
@@ -906,26 +903,26 @@ def injection_recovery(
             # last chunk); by default the last chunk is compiled at its own
             # length rather than padded with discarded draws.
             width = chunk if chunk_size is not None else part.shape[0]
-            padded = np.zeros((width, len(params)), dtype=np.float32)
+            padded = onp.zeros((width, len(params)), dtype=onp.float32)
             padded[: part.shape[0]] = part
             stats = _simulated_statistics(
                 simulator,
                 model,
                 grid,
                 base_key,
-                np.arange(start, start + width, dtype=np.int32),
+                onp.arange(start, start + width, dtype=onp.int32),
                 padded,
                 **static,
             )
             out.append(
-                {k: np.asarray(v)[: part.shape[0]] for k, v in stats.items()}
+                {k: onp.asarray(v)[: part.shape[0]] for k, v in stats.items()}
             )
             if bar is not None:
                 bar.update(1)
         return _gather(out, params, names)
 
     try:
-        null = run(0, np.zeros((n_null, len(params)), dtype=np.float32))
+        null = run(0, onp.zeros((n_null, len(params)), dtype=onp.float32))
         injected = run(1, inj_values)
     finally:
         if bar is not None:
@@ -933,9 +930,9 @@ def injection_recovery(
     for k in params:
         # The injected values at full precision.
         injected[names[k]] = (
-            np.zeros(0)
+            onp.zeros(0)
             if injections is None
-            else np.asarray(
+            else onp.asarray(
                 _lookup(injections, k, names[k]), dtype=float
             ).reshape(-1)
         )
@@ -949,7 +946,7 @@ def injection_recovery(
         "flux_param": flux_key,
         "names": {k: names[k] for k in params},
         "grid": {
-            k: np.asarray(v, dtype=float).reshape(-1).tolist()
+            k: onp.asarray(v, dtype=float).reshape(-1).tolist()
             for k, v in grid.items()
         },
         "model": _describe(model),
@@ -994,7 +991,7 @@ def _simulated_statistics(
             batch_size=batch_size,
         )
         stats = dict(stats)
-        stats["converged_fraction"] = jnp.mean(converged.astype(row.dtype))
+        stats["converged_fraction"] = np.mean(converged.astype(row.dtype))
         return stats
 
     return jax.lax.map(one, (index, values), batch_size=draw_batch)
@@ -1026,7 +1023,7 @@ _COMPATIBLE = (
 
 def _as_key(key):
     """A PRNG key from a key or an integer seed."""
-    if isinstance(key, (int, np.integer)):
+    if isinstance(key, (int, onp.integer)):
         return jax.random.PRNGKey(int(key))
     return key
 
@@ -1035,14 +1032,14 @@ def _raw_key(key):
     """Raw uint32 key data (typed keys are unwrapped)."""
     if jax.dtypes.issubdtype(getattr(key, "dtype", None), jax.dtypes.prng_key):
         return jax.random.key_data(key)
-    return jnp.asarray(key)
+    return np.asarray(key)
 
 
 def _seed_record(key):
     """JSON description of ``key``, to tell array jobs apart."""
-    if isinstance(key, (int, np.integer)):
+    if isinstance(key, (int, onp.integer)):
         return {"seed": int(key)}
-    return {"key": np.asarray(_raw_key(key)).reshape(-1).tolist()}
+    return {"key": onp.asarray(_raw_key(key)).reshape(-1).tolist()}
 
 
 def _canonical_names(params, flux_key):
@@ -1079,17 +1076,17 @@ def _lookup(injections, key, name):
 def _injection_values(injections, params, names):
     """``(n, len(params))`` float32 injection values in ``params`` order."""
     if injections is None:
-        return np.zeros((0, len(params)), dtype=np.float32)
+        return onp.zeros((0, len(params)), dtype=onp.float32)
     columns = {
-        k: np.asarray(_lookup(injections, k, names[k]), dtype=float).ravel()
+        k: onp.asarray(_lookup(injections, k, names[k]), dtype=float).ravel()
         for k in params
     }
     if len({c.size for c in columns.values()}) != 1:
         raise ValueError("The injection arrays must all have one length.")
     flux = [c for k, c in columns.items() if names[k] == "flux"][0]
-    if np.any(flux < 0.0):
+    if onp.any(flux < 0.0):
         raise ValueError("Injected fluxes must be non-negative.")
-    return np.stack([columns[k] for k in params], axis=1).astype(np.float32)
+    return onp.stack([columns[k] for k in params], axis=1).astype(onp.float32)
 
 
 def _chunk_size(chunk_size, draw_batch, n_max):
@@ -1153,7 +1150,7 @@ def _check_same_prediction(template, a, b, name_a, name_b, tol=1e-3):
     """Refuse two scenes whose predictions differ by more than tol σ."""
     errors = template.flatten_data()[1]
     diff = template.residuals(template.model(a), template.model(b)) / errors
-    worst = float(np.max(np.abs(np.asarray(diff))))
+    worst = float(onp.max(onp.abs(onp.asarray(diff))))
     if not worst <= tol:
         raise ValueError(
             f"{name_a} and {name_b} predict different data (by up to "
@@ -1183,8 +1180,8 @@ def _gather(chunks, params, names):
 
 def _concat(arrays):
     if not arrays:
-        return np.zeros(0)
-    return np.concatenate(arrays).astype(float)
+        return onp.zeros(0)
+    return onp.concatenate(arrays).astype(float)
 
 
 class _Unfingerprintable(Exception):
@@ -1214,9 +1211,9 @@ def _feed(h, obj):
     """Add ``obj`` to the hash ``h`` (see :func:`_fingerprint`)."""
     if obj is None or isinstance(obj, (bool, int, float, complex, str)):
         h.update(f"{type(obj).__name__}:{obj!r};".encode())
-    elif isinstance(obj, (jax.Array, np.ndarray, np.generic)):
+    elif isinstance(obj, (jax.Array, onp.ndarray, onp.generic)):
         try:
-            a = np.ascontiguousarray(np.asarray(obj))
+            a = onp.ascontiguousarray(onp.asarray(obj))
         except TypeError as err:  # e.g. typed PRNG keys
             raise _Unfingerprintable from err
         if a.dtype == object:
@@ -1255,8 +1252,8 @@ def _qualname(obj):
 def _fingerprint_data(data):
     """Shape and hash of the whole template (see :func:`_fingerprint`)."""
     return {
-        "n_vis": int(np.size(data.vis)),
-        "n_phi": int(np.size(data.phi)),
+        "n_vis": int(onp.size(data.vis)),
+        "n_phi": int(onp.size(data.phi)),
         "hash": _fingerprint(data),
     }
 
@@ -1292,7 +1289,7 @@ class DetectionMC:
         The same per injected draw, plus the injected values under their
         names (e.g. ``dra``, ``ddec``, ``flux``).
     meta : dict
-        JSON-serialisable: the grid, fingerprints (hashes of every field,
+        JSON-serializable: the grid, fingerprints (hashes of every field,
         static or not) of the model, the null scene and the template, the
         noise model,
         ``match_radius``, the numbers of draws, the seeds and the virgil
@@ -1328,20 +1325,20 @@ class DetectionMC:
     @property
     def n_null(self):
         """Number of null draws."""
-        return int(np.size(self.null["delta_chi2"]))
+        return int(onp.size(self.null["delta_chi2"]))
 
     @property
     def n_injected(self):
         """Number of injected draws."""
-        return int(np.size(self.injected["delta_chi2"]))
+        return int(onp.size(self.injected["delta_chi2"]))
 
     def _scores(self, part, stat):
         if stat not in STATISTICS:
             raise ValueError(
                 f"stat must be one of {STATISTICS}, not {stat!r}."
             )
-        x = np.asarray(part[stat], dtype=float)
-        return np.where(np.isnan(x), -np.inf, x)
+        x = onp.asarray(part[stat], dtype=float)
+        return onp.where(onp.isnan(x), -onp.inf, x)
 
     def _null_scores(self, stat):
         x = self._scores(self.null, stat)
@@ -1355,9 +1352,9 @@ class DetectionMC:
         if f"{prefix}dra" in part and f"{prefix}ddec" in part:
             return part[f"{prefix}dra"], part[f"{prefix}ddec"]
         if f"{prefix}sep" in part and f"{prefix}pa" in part:
-            sep = np.asarray(part[f"{prefix}sep"], dtype=float)
-            pa = np.radians(np.asarray(part[f"{prefix}pa"], dtype=float))
-            return sep * np.sin(pa), sep * np.cos(pa)
+            sep = onp.asarray(part[f"{prefix}sep"], dtype=float)
+            pa = onp.radians(onp.asarray(part[f"{prefix}pa"], dtype=float))
+            return sep * onp.sin(pa), sep * onp.cos(pa)
         raise ValueError(
             "The injections have neither 'dra' and 'ddec' nor 'sep' and "
             f"'pa'; they have {sorted(part)}."
@@ -1370,8 +1367,8 @@ class DetectionMC:
         for angular ones (``sep``, ``pa`` in degrees).
         """
         if "dra" not in self.injected and "sep" in self.injected:
-            return np.asarray(self.injected["sep"], dtype=float)
-        return np.hypot(*self._positions())
+            return onp.asarray(self.injected["sep"], dtype=float)
+        return onp.hypot(*self._positions())
 
     def matched(self):
         """Whether each injection's best position is within match_radius.
@@ -1381,9 +1378,9 @@ class DetectionMC:
         """
         radius = self.meta.get("match_radius")
         if radius is None:
-            return np.ones(self.n_injected, dtype=bool)
+            return onp.ones(self.n_injected, dtype=bool)
         (x, y), (bx, by) = self._positions(), self._positions("best_")
-        return np.hypot(bx - x, by - y) <= radius
+        return onp.hypot(bx - x, by - y) <= radius
 
     def false_alarm_probability(self, stat, value, *, confidence=0.95):
         """Empirical false-alarm probability of ``value``, with an interval.
@@ -1408,16 +1405,16 @@ class DetectionMC:
         """
         from scipy import stats as sstats
 
-        null = np.sort(self._null_scores(stat))
+        null = onp.sort(self._null_scores(stat))
         n = null.size
-        value = np.asarray(value, dtype=float)
-        k = n - np.searchsorted(null, value, side="left")
+        value = onp.asarray(value, dtype=float)
+        k = n - onp.searchsorted(null, value, side="left")
         alpha = 1.0 - float(confidence)
-        with np.errstate(invalid="ignore"):
-            lower = np.where(
+        with onp.errstate(invalid="ignore"):
+            lower = onp.where(
                 k > 0, sstats.beta.ppf(alpha / 2, k, n - k + 1), 0.0
             )
-            upper = np.where(
+            upper = onp.where(
                 k < n, sstats.beta.ppf(1 - alpha / 2, k + 1, n - k), 1.0
             )
         return (k + 1.0) / (n + 1.0), lower, upper
@@ -1458,7 +1455,7 @@ class DetectionMC:
         """
         null, value = self._threshold(stat, fap)
         q = 1.0 - float(fap)
-        rng = np.random.default_rng(seed)
+        rng = onp.random.default_rng(seed)
         n_boot = int(n_boot)
         rows = max(1, _BOOT_VALUES // null.size)
         quantiles = []
@@ -1466,8 +1463,10 @@ class DetectionMC:
             boot = rng.choice(
                 null, size=(min(rows, n_boot - start), null.size)
             )
-            quantiles.append(np.quantile(boot, q, axis=1))
-        error = float(np.std(np.concatenate(quantiles))) if n_boot else np.nan
+            quantiles.append(onp.quantile(boot, q, axis=1))
+        error = (
+            float(onp.std(onp.concatenate(quantiles))) if n_boot else onp.nan
+        )
         return value, error
 
     def _threshold(self, stat, fap):
@@ -1484,7 +1483,7 @@ class DetectionMC:
                 RuntimeWarning,
                 stacklevel=3,
             )
-        return null, float(np.quantile(null, 1.0 - fap))
+        return null, float(onp.quantile(null, 1.0 - fap))
 
     def detected(self, stat, fap):
         """Whether each injection is detected at false-alarm probability fap.
@@ -1499,11 +1498,11 @@ class DetectionMC:
         return (scores > threshold) & self.matched()
 
     def _select(self, flux=None, sep_bin=None):
-        keep = np.ones(self.n_injected, dtype=bool)
+        keep = onp.ones(self.n_injected, dtype=bool)
         if flux is not None:
             f = self.injected["flux"]
-            if np.ndim(flux) == 0:
-                keep &= np.isclose(f, float(flux), rtol=1e-6, atol=0.0)
+            if onp.ndim(flux) == 0:
+                keep &= onp.isclose(f, float(flux), rtol=1e-6, atol=0.0)
             else:
                 lo, hi = flux
                 keep &= (f >= lo) & (f < hi)
@@ -1535,16 +1534,16 @@ class DetectionMC:
             with a statistic ≥ ``t`` (and matched, with
             ``match_radius``). ``fpr`` rises from 0 to 1.
         """
-        null = np.sort(self._null_scores(stat))
+        null = onp.sort(self._null_scores(stat))
         keep = self._select(flux, sep_bin)
-        if not np.any(keep):
+        if not onp.any(keep):
             raise ValueError("No injections match the selection.")
         scores = self._scores(self.injected, stat)[keep]
-        hits = np.sort(scores[self.matched()[keep]])
-        values = np.unique(np.concatenate([null, scores]))[::-1]
-        thresholds = np.concatenate([[np.inf], values])
-        fpr = 1.0 - np.searchsorted(null, thresholds, "left") / null.size
-        tpr = (hits.size - np.searchsorted(hits, thresholds, "left")) / (
+        hits = onp.sort(scores[self.matched()[keep]])
+        values = onp.unique(onp.concatenate([null, scores]))[::-1]
+        thresholds = onp.concatenate([[onp.inf], values])
+        fpr = 1.0 - onp.searchsorted(null, thresholds, "left") / null.size
+        tpr = (hits.size - onp.searchsorted(hits, thresholds, "left")) / (
             scores.size
         )
         return fpr, tpr, thresholds
@@ -1552,7 +1551,7 @@ class DetectionMC:
     def auc(self, stat, flux=None, sep_bin=None):
         """Area under the :meth:`roc` curve (0.5 for no discrimination)."""
         fpr, tpr, _ = self.roc(stat, flux=flux, sep_bin=sep_bin)
-        return float(np.trapezoid(tpr, fpr))
+        return float(onp.trapezoid(tpr, fpr))
 
     def completeness(self, stat, fap, sep_bins=None, flux_bins=None):
         """Detection fraction of the injections by separation and flux.
@@ -1583,12 +1582,12 @@ class DetectionMC:
         flux_idx, flux = _bin(self.injected["flux"], flux_bins, True)
         shape = (sep.size, flux.size)
         ok = (sep_idx >= 0) & (flux_idx >= 0)
-        flat = np.ravel_multi_index((sep_idx[ok], flux_idx[ok]), shape)
+        flat = onp.ravel_multi_index((sep_idx[ok], flux_idx[ok]), shape)
         size = sep.size * flux.size
-        n = np.bincount(flat, minlength=size).reshape(shape)
-        hits = np.bincount(flat, detected[ok], minlength=size).reshape(shape)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            fraction = np.where(n > 0, hits / n, np.nan)
+        n = onp.bincount(flat, minlength=size).reshape(shape)
+        hits = onp.bincount(flat, detected[ok], minlength=size).reshape(shape)
+        with onp.errstate(invalid="ignore", divide="ignore"):
+            fraction = onp.where(n > 0, hits / n, onp.nan)
         return {
             "completeness": fraction,
             "n": n,
@@ -1632,11 +1631,11 @@ class DetectionMC:
         target = float(completeness)
         result = self.completeness(stat, fap, sep_bins, flux_bins)
         flux = result["flux"]
-        out = np.full(result["sep"].size, np.nan)
+        out = onp.full(result["sep"].size, onp.nan)
         for i, row in enumerate(result["completeness"]):
-            ok = (flux > 0.0) & np.isfinite(row)
-            f, c = flux[ok], np.maximum.accumulate(row[ok])
-            above = np.flatnonzero(c >= target)
+            ok = (flux > 0.0) & onp.isfinite(row)
+            f, c = flux[ok], onp.maximum.accumulate(row[ok])
+            above = onp.flatnonzero(c >= target)
             if above.size == 0:
                 continue
             j = above[0]
@@ -1645,21 +1644,21 @@ class DetectionMC:
                     out[i] = f[0]
                 continue
             t = (target - c[j - 1]) / (c[j] - c[j - 1])
-            out[i] = np.exp(np.log(f[j - 1]) + t * np.log(f[j] / f[j - 1]))
+            out[i] = onp.exp(onp.log(f[j - 1]) + t * onp.log(f[j] / f[j - 1]))
         return result["sep"], out
 
     def save(self, path):
         """Write to ``path``, an ``.npz`` with the metadata as JSON."""
-        arrays = {f"null__{k}": np.asarray(v) for k, v in self.null.items()}
+        arrays = {f"null__{k}": onp.asarray(v) for k, v in self.null.items()}
         for k, v in self.injected.items():
-            arrays[f"injected__{k}"] = np.asarray(v)
-        arrays["meta"] = np.array(json.dumps(self.meta))
-        np.savez(path, **arrays)
+            arrays[f"injected__{k}"] = onp.asarray(v)
+        arrays["meta"] = onp.array(json.dumps(self.meta))
+        onp.savez(path, **arrays)
 
     @classmethod
     def load(cls, path):
         """Read a file written by :meth:`save`."""
-        with np.load(path, allow_pickle=False) as f:
+        with onp.load(path, allow_pickle=False) as f:
             meta = json.loads(str(f["meta"]))
             parts = {"null": {}, "injected": {}}
             for name in f.files:
@@ -1733,7 +1732,7 @@ class DetectionMC:
                     f"Cannot concatenate: the {part} fields differ."
                 )
             return {
-                k: np.concatenate([getattr(r, part)[k] for r in results])
+                k: onp.concatenate([getattr(r, part)[k] for r in results])
                 for k in keys
             }
 
@@ -1746,24 +1745,24 @@ class DetectionMC:
 
 def _round_sig(x, digits=6):
     """``x`` rounded to ``digits`` significant figures (0 stays 0)."""
-    x = np.asarray(x, dtype=float)
-    with np.errstate(divide="ignore"):
-        mag = np.where(x == 0.0, 0.0, np.floor(np.log10(np.abs(x))))
+    x = onp.asarray(x, dtype=float)
+    with onp.errstate(divide="ignore"):
+        mag = onp.where(x == 0.0, 0.0, onp.floor(onp.log10(onp.abs(x))))
     scale = 10.0 ** (digits - 1 - mag)
-    return np.round(x * scale) / scale
+    return onp.round(x * scale) / scale
 
 
 def _bin(values, edges, geometric):
     """Bin indices (-1 outside) and labels: distinct values or centres."""
     if edges is None:
-        labels, index = np.unique(_round_sig(values), return_inverse=True)
+        labels, index = onp.unique(_round_sig(values), return_inverse=True)
         return index.reshape(-1), labels
-    edges = np.asarray(edges, dtype=float)
-    index = np.searchsorted(edges, values, side="right") - 1
-    index = np.where((index >= 0) & (index < edges.size - 1), index, -1)
+    edges = onp.asarray(edges, dtype=float)
+    index = onp.searchsorted(edges, values, side="right") - 1
+    index = onp.where((index >= 0) & (index < edges.size - 1), index, -1)
     lo, hi = edges[:-1], edges[1:]
     labels = 0.5 * (lo + hi)
     if geometric:
         positive = (lo > 0.0) & (hi > 0.0)
-        labels = np.where(positive, np.sqrt(np.abs(lo * hi)), labels)
+        labels = onp.where(positive, onp.sqrt(onp.abs(lo * hi)), labels)
     return index, labels
