@@ -90,3 +90,32 @@ def test_sanitize_text_strips_machine_paths():
     other = "/home/me/.venv/lib/x.py:3: DeprecationWarning: old"
     assert module._sanitize_text(other) == "x.py:3: DeprecationWarning: old"
     assert module._sanitize_text("plain /Users/x/y") == "plain /Users/x/y"
+
+
+def test_remove_cell_tag_hides_cell_from_docs(tmp_path):
+    import json
+
+    module = _load_sync_module(Path(__file__).resolve().parents[1])
+    (tmp_path / "notebooks").mkdir()
+    nb_path = tmp_path / "notebooks" / "toy.ipynb"
+    cells = [
+        {"cell_type": "markdown", "metadata": {}, "source": ["Shown prose"]},
+        {
+            "cell_type": "code",
+            "metadata": {},
+            "outputs": [],
+            "source": ["visible = 1"],
+        },
+        {
+            "cell_type": "code",
+            "metadata": {"tags": ["remove-cell"]},
+            "outputs": [
+                {"output_type": "stream", "name": "stdout", "text": ["secret"]}
+            ],
+            "source": ["assert hidden_check"],
+        },
+    ]
+    nb_path.write_text(json.dumps({"cells": cells}))
+    rendered = module.render_notebook_markdown(nb_path)
+    assert "visible = 1" in rendered
+    assert "hidden_check" not in rendered and "secret" not in rendered
