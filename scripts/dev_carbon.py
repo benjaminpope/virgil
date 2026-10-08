@@ -157,10 +157,13 @@ def page(fragment, summary):
 
 
 def write_badge(summary):
+    # Markers go on their own lines: a line starting with an HTML comment is
+    # raw HTML to Markdown, so the badge on that line would render as text.
     badge = (
-        "<!-- dev-carbon-badge -->"
+        "<!-- dev-carbon-badge -->\n"
         f"[![{summary['badge']['text']}]({summary['badge']['url']})]"
-        f"({PAGE_URL})<!-- /dev-carbon-badge -->"
+        f"({PAGE_URL})\n"
+        "<!-- /dev-carbon-badge -->"
     )
     text = README.read_text("utf-8")
     if BADGE.search(text):
