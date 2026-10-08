@@ -318,6 +318,11 @@ def test_numpyro_model_and_posterior_summary_accept_data_obj():
     _assert_same(old, new)
 
 
+def test_numpyro_model_accepts_the_old_regularisers_keyword():
+    with pytest.warns(FutureWarning, match="regularisers="):
+        numpyro_model(MODEL, {}, DATA, regularisers=())
+
+
 def test_oidata_methods_and_joint_helpers_accept_their_old_names():
     scene = BinaryModelCartesian(*VALUES)
     new = DATA.model(scene)

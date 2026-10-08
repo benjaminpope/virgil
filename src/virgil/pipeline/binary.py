@@ -375,8 +375,8 @@ class BinaryPipeline(_Pipeline):
             Stage("quicklook", _quicklook, ("quicklook.ipynb",)),
         )
 
-    def _summarise(self, reports):
-        return _summarise(self.settings, reports)
+    def _summarize(self, reports):
+        return _summarize(self.settings, reports)
 
 
 # === STAGES ===
@@ -871,7 +871,7 @@ def _companion(params, source):
     return out
 
 
-def _summarise(settings, reports):
+def _summarize(settings, reports):
     sections, checks = {}, []
     load = reports.get("load")
     if load:

@@ -260,7 +260,7 @@ def test_draws_are_reproducible_and_grouped_by_geometry():
         low, high = spec.weight_ranges[d.family]
         assert all(low * n_data <= w <= high * n_data for w in d.weights)
         assert list(d.weights) == sorted(d.weights, reverse=True)
-    with pytest.raises(ValueError, match="Unknown regulariser"):
+    with pytest.raises(ValueError, match="Unknown regularizer"):
         EnsembleSpec(families=("l2",))
 
 

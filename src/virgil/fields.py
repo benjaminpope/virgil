@@ -5,10 +5,10 @@ A [`GaussianField`][virgil.fields.GaussianField] can stand in for the
 log-brightness is then a stationary Gaussian process with a Matérn-like
 spectrum, written in its whitened form: independent standard-normal
 ``latent`` coefficients on the image's cosine (DCT-II) basis. This is the
-basis that diagonalises the Laplacian with reflecting boundaries. Fitting the
+basis that diagonalizes the Laplacian with reflecting boundaries. Fitting the
 latents under a standard-normal prior (from
 [`image_priors`][virgil.imaging.image_priors]) is MAP estimation with a
-GP prior, and the same parameterisation suits sampling.
+GP prior, and the same parameterization suits sampling.
 """
 
 import equinox as eqx

@@ -587,7 +587,7 @@ class GaussianArc(Component):
 
     def curve(self):
         """Points along the arc (mas, East and North of the centre) and
-        their normalised trapezoidal-rule weights."""
+        their normalized trapezoidal-rule weights."""
         sigma = self.length / (2.0 * np.sqrt(2.0 * np.log(2.0)))
         # Out to 6σ (a flux loss of 2e-9), or once round the circle if the
         # arc is longer: then both ends sit at the antipode of pa, and their
@@ -881,7 +881,7 @@ class TruncatedCone(Component):
 
     def rings(self):
         """Radius, sky offset of the centre along the projected axis (mas)
-        and normalised weight of each ring."""
+        and normalized weight of each ring."""
         t = (np.arange(self.n_rings) + 0.5) / self.n_rings * 5.0
         s = self.s0 + t * self.length
         rho = s * np.sin(self.alpha * dtor)
@@ -1145,7 +1145,7 @@ class LimbDarkenedDisk(_LimbDarkenedDisk):
     The visibility is analytic (Quirrenbach et al. 1996, eq. 3; see
     [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk]).
     harmonix ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433))
-    generalises the same result to limb-darkened spherical-harmonic maps.
+    generalizes the same result to limb-darkened spherical-harmonic maps.
 
     Parameters
     ----------
@@ -1497,7 +1497,7 @@ class GravityDarkenedStar(Component):
         the grey model; a value switches on the chromatic model (see Notes).
     wavel0 : float or array-like, optional
         Reference wavelength in metres (default 1.65e-6, H band), at which
-        the star's spectrum is normalised to ``flux`` and which
+        the star's spectrum is normalized to ``flux`` and which
         [`render`][virgil.models.SourceModel.render] shows. Only used
         when ``t_pole`` is set.
 
@@ -1675,7 +1675,7 @@ class GravityDarkenedStar(Component):
 
     def _planck_intensity(self, teff, wavel):
         """``B_λ(T) / B_λ(t_pole)`` at ``wavel`` for triangles of ``teff``."""
-        # the pole, theta = 0, through the jitted vectorised solver
+        # the pole, theta = 0, through the jitted vectorized solver
         teff_pole = _elr.solve_ELR_vec(self.omega, np.zeros(1))[1][0]
         temperature = self.t_pole * teff / teff_pole
         wavel = np.asarray(wavel)[..., None]
@@ -1710,11 +1710,11 @@ class GravityDarkenedStar(Component):
         x, y, w, _ = self._surface()
         return _elr.visibilities(x, y, w, uu, vv)
 
-    # sub-pixel samples per pixel side when rasterising the image
+    # sub-pixel samples per pixel side when rasterizing the image
     _image_oversample = 4
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
-        """Rasterise the faceted surface, flat-shaded per triangle.
+        """Rasterize the faceted surface, flat-shaded per triangle.
 
         Each pixel averages ``_image_oversample`` squared sub-pixel samples
         of the surface brightness, so the limb is anti-aliased. A sample
@@ -2024,7 +2024,7 @@ def circular_support(npix, pixel_scale_mas, radius_mas, inner_radius_mas=0.0):
 def _pixel_visibilities(
     fluxes, pixel_scale_mas, rotation_deg, u, v, wavel, grid=None
 ):
-    """Fourier transform of pixel fluxes centred on the origin, unnormalised.
+    """Fourier transform of pixel fluxes centred on the origin, unnormalized.
 
     Uses the exact matrix Fourier transform when the samples lie on a uv
     ``grid`` whose rotation matches the pixels' (and there is a single
@@ -3422,7 +3422,7 @@ def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
     needs order $5/4$, from jaxbessel's ``bessel_jv_over_xv``, which takes
     orders up to 12, so $-2 < \nu \le 22$ (the lower limit keeps the flux
     finite). harmonix
-    ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalises
+    ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalizes
     the result to polynomial limb darkening of spherical-harmonic maps.
 
     Parameters

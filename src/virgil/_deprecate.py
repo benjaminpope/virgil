@@ -25,6 +25,9 @@ NAME_ALIASES = {
     "model_object": "model",
     "model_fn": "model",
     "samples_dict": "grid",
+    # Oxford -ize spelling (0.4)
+    "regularisers": "regularizers",
+    "marginalise_offsets": "marginalize_offsets",
 }
 
 

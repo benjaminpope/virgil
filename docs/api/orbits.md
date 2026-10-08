@@ -10,12 +10,12 @@ Kepler's equation is solved by jaxoplanet, installed with
 
 Radial velocities from several spectrographs can share an orbit fit without
 fitting their zero points: `RVData(..., instrument=labels)` with
-`RVData.term(params, marginalise_offsets=(mean, sd))` marginalises one velocity
+`RVData.term(params, marginalize_offsets=(mean, sd))` marginalizes one velocity
 zero point per instrument analytically (Luger, Foreman-Mackey & Hogg 2017,
 arXiv:1710.11136), and `term.posterior(values)` reports them after the fit.
 With a broad prior this is the profile likelihood plus a log-determinant
 correction; only a finite prior width is supported. The prior must be
-stated: `marginalise_offsets=True` is an error, not a default of N(0, 1000²)
+stated: `marginalize_offsets=True` is an error, not a default of N(0, 1000²)
 km/s.
 
 **Angles without a wrap.** `orientation_priors()` samples the node and
@@ -56,7 +56,7 @@ the `noise=` terms `north_angle` and `wavel_scale`
 JAX successor to exoplanet (Foreman-Mackey et al. 2021, JOSS 6, 3285); please
 cite it with virgil when you fit orbits. The Thiele–Innes solve in
 `starting_orbits` is the classical method (Thiele 1883, AN 104, 245;
-Hartkopf, McAlister & Franz 1989, AJ 98, 1014). Analytic marginalisation of RV
+Hartkopf, McAlister & Franz 1989, AJ 98, 1014). Analytic marginalization of RV
 zero points is also done by orvara (Brandt et al. 2021, AJ 162, 186). For
 orbit fits to relative and absolute astrometry and RVs without an
 interferometric scene, mature codes exist:

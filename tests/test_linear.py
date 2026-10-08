@@ -1,4 +1,4 @@
-"""Analytic marginalisation of linear parameters (virgil._linear)."""
+"""Analytic marginalization of linear parameters (virgil._linear)."""
 
 import jax
 import jax.numpy as np
@@ -101,7 +101,7 @@ def test_the_prior_must_be_stated_and_finite():
         LinearMarginal(design, 0.0, prior_sd=1.0, method="eigh")
 
 
-def test_standardised_posterior_is_the_prior_without_data():
+def test_standardized_posterior_is_the_prior_without_data():
     # No information (zero columns): the posterior of ω is the prior N(0, I).
     mean, cov = posterior(np.zeros(6), np.zeros((6, 3)))
     onp.testing.assert_allclose(mean, 0.0)

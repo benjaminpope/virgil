@@ -152,7 +152,7 @@ class PowerLaw(Spectrum):
 class BlackBody(Spectrum):
     """Planck spectrum ``ratio * B_λ(T, λ) / B_λ(T, wavel0)``.
 
-    The shape of a blackbody at ``temperature`` in F_λ, normalised to
+    The shape of a blackbody at ``temperature`` in F_λ, normalized to
     ``ratio`` at ``wavel0``, as SPARCO uses for dust and companions (e.g.
     Hillen et al. 2016). At long wavelengths (``hc/λkT`` small) it tends to
     the Rayleigh-Jeans ``PowerLaw`` with index -4.
