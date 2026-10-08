@@ -202,11 +202,13 @@ def build_notebook(path):
             "import warnings\n\n"
             "import matplotlib.pyplot as plt\n"
             "from IPython.display import Image, display\n\n"
-            "with warnings.catch_warnings():  # third-party docstring escapes\n"
-            '    warnings.simplefilter("ignore", SyntaxWarning)\n'
-            "    import virgil.pipeline as vp\n"
-            "    from virgil import plotting\n"
-            "    from virgil.likelihood import posterior_predictive_summary\n\n"
+            "# Third-party import and load-time warnings would add a stderr\n"
+            "# output to this cell; virgil's own warnings still show.\n"
+            'warnings.simplefilter("ignore")\n'
+            'warnings.filterwarnings("default", module="virgil")\n\n'
+            "import virgil.pipeline as vp\n"
+            "from virgil import plotting\n"
+            "from virgil.likelihood import posterior_predictive_summary\n\n"
             'res = vp.load(".")\n'
             "print(res.describe())"
         ),
