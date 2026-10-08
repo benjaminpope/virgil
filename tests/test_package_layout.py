@@ -102,3 +102,15 @@ def test_oidata_overview_has_three_panels():
     assert len(axes) == 3
     assert axes[2].get_ylabel() == "Closure phase (deg)"
     plt.close(fig)
+
+
+def test_uv_coverage_puts_east_left_and_mirrors_points():
+    from virgil.plotting import plot_uv_coverage
+
+    fig, ax = plot_uv_coverage(oidata)
+    left, right = ax.get_xlim()
+    assert left > right  # positive u (East) to the left
+    offsets = onp.vstack([c.get_offsets() for c in ax.collections])
+    assert len(offsets) == 2 * onp.asarray(oidata.u).size
+    onp.testing.assert_allclose(offsets.sum(axis=0), 0.0, atol=1e-9)
+    plt.close(fig)

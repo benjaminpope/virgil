@@ -6,7 +6,7 @@ NUTS runs. Each test runs with flat coordinates on and off, since
 """
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import numpyro.distributions as dist
 import pytest
@@ -58,23 +58,23 @@ class _GaussianInZ:
                 z, x
             )
             zs.append(z)
-        return jnp.stack(zs), log_prior
+        return np.stack(zs), log_prior
 
     def __call__(self, values):
         z, _ = self._z(values)
         return jax.scipy.linalg.solve_triangular(
-            jnp.asarray(self.chol, z.dtype), z - MU, lower=True
+            np.asarray(self.chol, z.dtype), z - MU, lower=True
         )
 
     def loglike(self, values):
         _, log_prior = self._z(values)
-        return -0.5 * jnp.sum(self(values) ** 2) - log_prior
+        return -0.5 * np.sum(self(values) ** 2) - log_prior
 
 
 def _in_site_order(guide, loc, tril):
     """The guide's centre and covariance in the order of PRIORS, through
     the guide's own map from its latent vector to sites."""
-    latent = guide._unpack_latent(jnp.arange(guide.latent_dim, dtype=float))
+    latent = guide._unpack_latent(np.arange(guide.latent_dim, dtype=float))
     index = [int(latent[name]) for name in PRIORS]
     cov = tril @ tril.T
     return loc[index], cov[onp.ix_(index, index)]
@@ -85,7 +85,7 @@ def _x_of_z(z, flat):
     for i, name in enumerate(PRIORS):
         prior = PRIORS[name]
         support = (flat_sampled(prior) if flat else prior).support
-        out[name] = biject_to(support)(jnp.asarray(z[..., i]))
+        out[name] = biject_to(support)(np.asarray(z[..., i]))
     return out
 
 
@@ -187,7 +187,7 @@ def test_laplace_guide_covariance_matches_gauss_newton(flat):
     laplace = tril @ tril.T
     # Sites in the order of the guide's latent vector, from its own map.
     n = vi.guide.latent_dim
-    latent = vi.guide._unpack_latent(jnp.arange(n, dtype=float))
+    latent = vi.guide._unpack_latent(np.arange(n, dtype=float))
     order = sorted(latent, key=lambda site: float(latent[site]))
     mass = gauss_newton_mass(
         BINARY, BINARY_PRIORS, data, result.values, flat_coordinates=flat
@@ -303,7 +303,7 @@ def test_default_flow_follows_a_banana():
     priors = {"x": dist.Uniform(-10.0, 10.0), "y": dist.Uniform(-10.0, 10.0)}
 
     def banana(v):
-        return jnp.stack([v["x"], (v["y"] - 0.5 * v["x"] ** 2) / 0.3])
+        return np.stack([v["x"], (v["y"] - 0.5 * v["x"] ** 2) / 0.3])
 
     common = dict(
         likelihoods=[banana],

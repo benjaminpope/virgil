@@ -82,9 +82,10 @@ see that repository's `PLAN.md` for the boundary.
 - Ruff is pinned to **0.11.0**; `[tool.ruff] required-version`, the `.pre-commit-config.yaml`
   rev, and `RUFF_VERSION` in the workflows must always match. A different ruff version will
   reformat files differently and fail CI.
-- Line length 79, double quotes, rules `E` + `F` (see `pyproject.toml` for ignores).
+- Line length 79, double quotes, rules `E` + `F` + `ICN` (see `pyproject.toml` for ignores).
+- Import `jax.numpy as np` and `numpy as onp` (ruff ICN001; notebooks are exempt until re-executed).
 - virgil does not enable float64: library code must work in JAX's default float32
-  (e.g. use `jnp.finfo(x.dtype)`, not `np.finfo(float)`). Tests run in float32 unless
+  (e.g. use `np.finfo(x.dtype)`, not `onp.finfo(float)`). Tests run in float32 unless
   they opt in locally with `with jax.enable_x64(True):` (as `tests/test_utils.py` does);
   never set `jax_enable_x64` globally at import time in a test module.
   Forward-model code must pass in both float32 and float64. Fourier transforms and
@@ -130,6 +131,7 @@ see that repository's `PLAN.md` for the boundary.
 | `angles.py` | `AngleVector`: an angle prior sampled as a 2-D vector (site `<path>_vec`, ring and von Mises chord residuals), recognised by `fit`, `gauss_newton_mass` and `numpyro_model`; imports nothing from virgil |
 | `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
 | `epochs.py` | `Epochs`: datasets grouped into named epochs, one snapshot of a time-dependent scene per dataset (or epoch), name-keyed per-dataset `noise`, and the model function, data and summed log likelihood for multi-epoch orbit fits; starting them: `rank_orbits` (trial orbits ranked by the data), `chain_starts` (distinct modes, one per chain), `epoch_positions` (per-dataset positions on the scale-marginalized surface, `marginal_loglike`; `gap_marginal`, `chi2_raw`, `scale`) and `start_from_positions` (positions → `starting_orbits` → ranking with `scales=` → `fit` from distinct starts, as an `OrbitStart`); see `design/visibility_orbits.md` |
+| `orbit_search.py` | `score_orbits`: candidate orbits scored exactly on all epochs with shared nuisances (one flux per band with an optional chromatic slope, integrated on a log-uniform grid and also profiled; scale-marginalized per dataset; gains and closure offsets profiled; extra `RVData`/`PositionData` terms), positions at sample times, a work-unit budget; `SharedFlux`, `OrbitScores`, `rank_scores` (quantized, index-broken ties) |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `ensemble.py` | PYRA/MYTHRA-style reconstruction ensembles: `EnsembleSpec`, `draw_groups`, `run_group` (one L-curve per geometry group), `combine` (selection and the iterative mean) and `ensemble`, returning an `Ensemble` (mean `Image`, per-pixel σ, raw χ²/N per dataset) |
@@ -139,6 +141,7 @@ see that repository's `PLAN.md` for the boundary.
 | `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
 | `_flat.py` | flat coordinates of priors (`_flat_coordinate`, `_FlatBijection`), shared by `fit` and `numpyro_model`; `flat_sampled` makes numpyro's `biject_to` use them, so NUTS samples in them (private; imports nothing from virgil); see `design/sampler_flat_coordinates.md` |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
+| `pipeline/` | `virgil.pipeline`, loaded lazily and needing the `pipeline` extra: stable, scriptable pipelines (`BinaryPipeline`) that run fixed stages, resume, and write a run folder (`run.json`, `summary.json`, HDF5 grids and samples, plots, processed OIFITS, an executed quicklook notebook) with deterministic quality checks; `_core` (`_Pipeline`, `Stage`, `ConfigMismatchError`), `_io` (atomic writes, `Result`, `load`, model specs without pickles), `_checks` (`Check`), `_quicklook`, `binary`, `cli` (`virgil-pipeline`); public docs in `docs/pipeline.md`, design in `design/pipeline.md` |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |
 
 Imports flow one way: `_utils`/`_geometry`/`_precision`/`_flat` → `oifits`/`amigo`/`_closure`
@@ -149,7 +152,7 @@ Imports flow one way: `_utils`/`_geometry`/`_precision`/`_flat` → `oifits`/`am
 `_grid`, which imports only `_utils`, and do not import each other; `limits` →
 `plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `ensemble` imports `imaging`, `metrics` and `models`. `angles` imports nothing from virgil, and
 `likelihood`, `fitting` and `orbits` import it. `orbits` imports only `_utils` and `angles`
-(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached` and `OrbitalBinary`). `epochs` imports `likelihood`, `fitting`, `models` and `orbits`. `svi` imports `fitting` and `likelihood`. `simulate` imports `fitting`.
+(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached` and `OrbitalBinary`). `epochs` imports `likelihood`, `fitting`, `models` and `orbits`; `orbit_search` imports `epochs`, `likelihood`, `models` and `orbits`. `svi` imports `fitting` and `likelihood`. `simulate` imports `fitting`.
 
 ## Flux and contrast
 

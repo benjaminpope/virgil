@@ -8,7 +8,7 @@ physics checks below are independent of that fixture.
 import pathlib
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import pytest
 from scipy.special import j1
@@ -66,9 +66,9 @@ def test_golden_solver_float64(x64):
     omegas, thetas = _GOLD["omegas"], _GOLD["thetas"]
     for i, om in enumerate(omegas):
         rtw, teff, flux = _elr.solve_ELR_vec(
-            jnp.float64(om), jnp.asarray(thetas)
+            np.float64(om), np.asarray(thetas)
         )
-        assert rtw.dtype == jnp.float64
+        assert rtw.dtype == np.float64
         onp.testing.assert_allclose(rtw, _GOLD["solver_rtw"][i], rtol=1e-8)
         onp.testing.assert_allclose(
             teff, _GOLD["solver_teff_ratio"][i], rtol=1e-8
@@ -80,7 +80,7 @@ def test_golden_solver_float64(x64):
 
 @pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
 def test_golden_eq32_float64(x64):
-    got = onp.array([_elr.eq32(jnp.float64(o)) for o in _GOLD["omegas"]])
+    got = onp.array([_elr.eq32(np.float64(o)) for o in _GOLD["omegas"]])
     onp.testing.assert_allclose(got, _GOLD["eq32"], rtol=1e-12)
 
 
@@ -103,9 +103,9 @@ def test_golden_mesh():
 def test_golden_surface_and_visibilities_float64(x64, k):
     om, req, inc, obl = _GOLD["vis_params"][k]
     x, y, w, t = _elr.surface(
-        jnp.float64(om), jnp.float64(req), jnp.float64(inc), jnp.float64(obl)
+        np.float64(om), np.float64(req), np.float64(inc), np.float64(obl)
     )
-    assert x.dtype == jnp.float64
+    assert x.dtype == np.float64
     oi, gi = _common_triangles()
     assert len(oi) >= len(x) - 32
     for got, key in (
@@ -118,15 +118,15 @@ def test_golden_surface_and_visibilities_float64(x64, k):
             onp.asarray(got)[oi], _GOLD[key][k][gi], rtol=1e-8, atol=1e-10
         )
     uu, vv = _uv()
-    uu, vv = jnp.asarray(uu), jnp.asarray(vv)
+    uu, vv = np.asarray(uu), np.asarray(vv)
     # His DFT, exactly: our visibilities of his own barycentres and weights.
     cv = _elr.visibilities(
         _GOLD["bary_x"][k], _GOLD["bary_y"][k], _GOLD["weight"][k], uu, vv
     )
-    assert cv.dtype == jnp.complex128
+    assert cv.dtype == np.complex128
     onp.testing.assert_allclose(cv, _GOLD["cvis"][k], rtol=1e-9, atol=1e-9)
     onp.testing.assert_allclose(
-        jnp.abs(cv) ** 2, _GOLD["vis2"][k], rtol=1e-9, atol=1e-9
+        np.abs(cv) ** 2, _GOLD["vis2"][k], rtol=1e-9, atol=1e-9
     )
     # The whole model: qhull splits the near-cospherical equatorial quads
     # differently across platforms and versions, which moves the
@@ -142,9 +142,9 @@ def test_golden_surface_and_visibilities_float64(x64, k):
 def test_golden_solver_float32():
     for i, om in enumerate(_GOLD["omegas"]):
         rtw, teff, flux = _elr.solve_ELR_vec(
-            jnp.float32(om), jnp.asarray(_GOLD["thetas"], jnp.float32)
+            np.float32(om), np.asarray(_GOLD["thetas"], np.float32)
         )
-        assert rtw.dtype == flux.dtype == jnp.float32
+        assert rtw.dtype == flux.dtype == np.float32
         onp.testing.assert_allclose(rtw, _GOLD["solver_rtw"][i], rtol=1e-4)
         onp.testing.assert_allclose(
             teff, _GOLD["solver_teff_ratio"][i], rtol=2e-5
@@ -156,7 +156,7 @@ def test_golden_solver_float32():
 
 @pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
 def test_golden_eq32_float32():
-    got = onp.array([_elr.eq32(jnp.float32(o)) for o in _GOLD["omegas"]])
+    got = onp.array([_elr.eq32(np.float32(o)) for o in _GOLD["omegas"]])
     onp.testing.assert_allclose(got, _GOLD["eq32"], rtol=1e-5)
 
 
@@ -166,7 +166,7 @@ def test_golden_surface_and_visibilities_float32(k):
     om, req, inc, obl = _GOLD["vis_params"][k]
     x, y, w, t = _elr.surface(om, req, inc, obl)
     # float32 unless the run has enabled x64 globally
-    assert x.dtype == w.dtype == t.dtype == jnp.asarray(1.0).dtype
+    assert x.dtype == w.dtype == t.dtype == np.asarray(1.0).dtype
     oi, gi = _common_triangles()
     scale = _GOLD["weight"][k].max()
     onp.testing.assert_allclose(
@@ -185,10 +185,10 @@ def test_golden_surface_and_visibilities_float32(k):
         onp.asarray(t)[oi], _GOLD["teff_tri"][k][gi], rtol=2e-5
     )
     uu, vv = _uv()
-    cv = _elr.visibilities(x, y, w, jnp.asarray(uu), jnp.asarray(vv))
-    assert cv.dtype == jnp.asarray(1j).dtype
+    cv = _elr.visibilities(x, y, w, np.asarray(uu), np.asarray(vv))
+    assert cv.dtype == np.asarray(1j).dtype
     onp.testing.assert_allclose(cv, _GOLD["cvis"][k], atol=1e-4)
-    onp.testing.assert_allclose(jnp.abs(cv) ** 2, _GOLD["vis2"][k], atol=1e-4)
+    onp.testing.assert_allclose(np.abs(cv) ** 2, _GOLD["vis2"][k], atol=1e-4)
 
 
 # ------------------------------------------------------------- 3. physics
@@ -198,7 +198,7 @@ THETAS = onp.linspace(0.05, onp.pi - 0.05, 41)
 
 
 def test_omega_zero_is_a_sphere():
-    rtw, teff, flux = _elr.solve_ELR_vec(0.0, jnp.asarray(THETAS, jnp.float32))
+    rtw, teff, flux = _elr.solve_ELR_vec(0.0, np.asarray(THETAS, np.float32))
     for a in (rtw, teff, flux):
         assert onp.all(onp.isfinite(a))
         onp.testing.assert_allclose(a, 1.0, atol=1e-4)
@@ -207,10 +207,10 @@ def test_omega_zero_is_a_sphere():
 @pytest.mark.parametrize("omega", [0.3, 0.7, 0.95])
 def test_equatorial_teff_ratio_matches_eq32(omega):
     # Teff_ratio is normalised arbitrarily; eq32 is Teff(equator)/Teff(pole)
-    _, t_eq, _ = _elr.solve_ELR(jnp.float32(omega), jnp.float32(onp.pi / 2))
-    _, t_pole, _ = _elr.solve_ELR(jnp.float32(omega), jnp.float32(0.0))
+    _, t_eq, _ = _elr.solve_ELR(np.float32(omega), np.float32(onp.pi / 2))
+    _, t_pole, _ = _elr.solve_ELR(np.float32(omega), np.float32(0.0))
     onp.testing.assert_allclose(
-        t_eq / t_pole, _elr.eq32(jnp.float32(omega)), rtol=1e-5
+        t_eq / t_pole, _elr.eq32(np.float32(omega)), rtol=1e-5
     )
 
 
@@ -218,10 +218,10 @@ def test_equatorial_teff_ratio_matches_eq32(omega):
 @pytest.mark.parametrize("omega", [0.1, 0.5, 0.95])
 def test_polar_radius_is_roche(omega):
     # theta -> 0: R_pole / R_eq = 1 / (1 + omega^2 / 2)
-    rtw, _, _ = _elr.solve_ELR(jnp.float32(omega), jnp.float32(1e-4))
+    rtw, _, _ = _elr.solve_ELR(np.float32(omega), np.float32(1e-4))
     onp.testing.assert_allclose(rtw, 1 / (1 + omega**2 / 2), rtol=1e-4)
     # equator: rtw = 1 by construction of the normalisation
-    req, _, _ = _elr.solve_ELR(jnp.float32(omega), jnp.float32(onp.pi / 2))
+    req, _, _ = _elr.solve_ELR(np.float32(omega), np.float32(onp.pi / 2))
     onp.testing.assert_allclose(req, 1.0, rtol=1e-4)
 
 
@@ -230,7 +230,7 @@ def test_polar_radius_is_roche(omega):
 def test_closed_form_roche_radius(omega):
     th = THETAS[(omega * onp.sin(THETAS)) > 0.1]
     rtw, _, _ = _elr.solve_ELR_vec(
-        jnp.float32(omega), jnp.asarray(th, jnp.float32)
+        np.float32(omega), np.asarray(th, np.float32)
     )
     # Closed form in units of R_pole, with omega_c = Omega/Omega_crit
     # (critical: R_eq = 1.5 R_pole); rtw is in units of R_eq, and
@@ -247,7 +247,7 @@ def test_closed_form_roche_radius(omega):
 @pytest.mark.parametrize("omega", [0.3, 0.7, 0.95])
 def test_gravity_darkening(omega):
     _, teff, flux = _elr.solve_ELR_vec(
-        jnp.float32(omega), jnp.asarray(THETAS, jnp.float32)
+        np.float32(omega), np.asarray(THETAS, np.float32)
     )
     assert flux[0] > flux[THETAS.size // 2]
     assert teff[0] > teff[THETAS.size // 2]
@@ -255,9 +255,9 @@ def test_gravity_darkening(omega):
 
 
 def test_solver_north_south_symmetry():
-    th = jnp.asarray(THETAS, jnp.float32)
+    th = np.asarray(THETAS, np.float32)
     a = _elr.solve_ELR_vec(0.8, th)
-    b = _elr.solve_ELR_vec(0.8, jnp.pi - th)
+    b = _elr.solve_ELR_vec(0.8, np.pi - th)
     for p, q in zip(a, b):
         onp.testing.assert_allclose(p, q, rtol=1e-4)
 
@@ -267,7 +267,7 @@ def test_solver_north_south_symmetry():
 
 def _vis(omega, req, inc, obl, uu, vv, n_lat=32):
     x, y, w, _ = _elr.surface(omega, req, inc, obl, n_lat=n_lat)
-    return _elr.visibilities(x, y, w, jnp.asarray(uu), jnp.asarray(vv))
+    return _elr.visibilities(x, y, w, np.asarray(uu), np.asarray(vv))
 
 
 def test_visibility_at_zero_baseline_is_one():
@@ -312,19 +312,19 @@ _VV = onp.array([1e7, -5e7, 9e7, 6e7])
 
 def _loss(p):
     v = _vis(p[0], p[1], p[2], p[3], _UU, _VV)
-    return jnp.sum(jnp.abs(v) ** 2)
+    return np.sum(np.abs(v) ** 2)
 
 
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("omega", [0.0, 0.5, 0.95])
 def test_gradients_are_finite(dtype, omega):
     def run():
-        p = jnp.asarray([omega, 0.4, 0.6, 0.5], dtype)
+        p = np.asarray([omega, 0.4, 0.6, 0.5], dtype)
         g = jax.grad(_loss)(p)
         assert g.dtype == dtype
         assert onp.all(onp.isfinite(g)), g
 
-    if dtype == jnp.float64:
+    if dtype == np.float64:
         with jax.enable_x64(True):
             run()
     else:
@@ -332,7 +332,7 @@ def test_gradients_are_finite(dtype, omega):
 
 
 def test_gradients_under_jit():
-    p = jnp.asarray([0.5, 0.4, 0.6, 0.5], jnp.float32)
+    p = np.asarray([0.5, 0.4, 0.6, 0.5], np.float32)
     g = jax.jit(jax.grad(_loss))(p)
     assert onp.all(onp.isfinite(g))
     onp.testing.assert_allclose(g, jax.grad(_loss)(p), rtol=5e-3, atol=1e-4)
@@ -345,9 +345,9 @@ def test_radius_gradient_matches_uniform_disk():
     q = onp.hypot(uu, vv)
 
     def loss(r):
-        return jnp.sum(jnp.abs(_vis(0.0, r, 0.0, 0.0, uu, vv)) ** 2)
+        return np.sum(np.abs(_vis(0.0, r, 0.0, 0.0, uu, vv)) ** 2)
 
-    got = float(jax.grad(loss)(jnp.float32(req)))
+    got = float(jax.grad(loss)(np.float32(req)))
     h = 1e-4
     ref = (
         onp.sum(_ud_amp(req + h, q) ** 2) - onp.sum(_ud_amp(req - h, q) ** 2)
@@ -382,7 +382,7 @@ def test_switching_x64_mode_reuses_the_mesh():
     # The cached mesh is shared by every call. JAX 0.10 caches the
     # canonical (x64-dependent) copy of a NumPy array by identity while it
     # is alive, so a 64-bit mesh index array used in one mode came back
-    # with the wrong width in the other, and a compiled jnp.repeat
+    # with the wrong width in the other, and a compiled np.repeat
     # rejected it. Alternate the modes with the mesh in use throughout.
     def use():
         x, y, weight, teff = _elr.surface(0.7, 1.0, 0.6, 0.3)
@@ -393,6 +393,6 @@ def test_switching_x64_mode_reuses_the_mesh():
         with jax.enable_x64(x64):
             held.append(jax.jit(use))
             held[-1]()
-            dtype = jnp.float64 if x64 else jnp.float32
+            dtype = np.float64 if x64 else np.float32
             assert use().dtype == dtype
             assert use().dtype == dtype

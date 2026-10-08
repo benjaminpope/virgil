@@ -8,7 +8,7 @@ Everything here is tiny: scalar priors, short NUTS runs.
 """
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import numpyro
 import numpyro.distributions as dist
@@ -42,9 +42,9 @@ def test_flat_transform_round_trips(name, x64):
     with jax.enable_x64(x64):
         prior = FLAT_PRIORS[name]
         transform = biject_to(flat_sampled(prior).support)
-        z = jnp.linspace(-8.0, 8.0, 33)
+        z = np.linspace(-8.0, 8.0, 33)
         x = transform(z)
-        assert bool(jnp.all(prior.support(x)))
+        assert bool(np.all(prior.support(x)))
         tol = 1e-9 if x64 else 2e-3
         onp.testing.assert_allclose(transform.inv(x), z, atol=tol)
         # The same map as fit's (one implementation, _FlatBijection).
@@ -57,10 +57,10 @@ def test_flat_transform_round_trips(name, x64):
 def test_flat_transform_jacobian_matches_autodiff(name, x64):
     with jax.enable_x64(x64):
         transform = biject_to(flat_sampled(FLAT_PRIORS[name]).support)
-        z = jnp.linspace(-6.0, 6.0, 13)
+        z = np.linspace(-6.0, 6.0, 13)
         x = transform(z)
         slope = jax.vmap(jax.grad(transform))(z)
-        expected = jnp.log(jnp.abs(slope))
+        expected = np.log(np.abs(slope))
         got = transform.log_abs_det_jacobian(z, x)
         onp.testing.assert_allclose(got, expected, rtol=1e-4, atol=1e-4)
 
@@ -73,7 +73,7 @@ def test_potential_of_a_flat_prior_is_logistic(x64):
     with jax.enable_x64(x64):
         model = numpyro_model(_no_model, FLAT_PRIORS, ())
         for z0 in (-24.0, -18.0, -3.0, 0.0, 2.5, 18.0, 24.0):
-            z = {k: jnp.asarray(z0) for k in FLAT_PRIORS}
+            z = {k: np.asarray(z0) for k in FLAT_PRIORS}
             potential, grad = jax.value_and_grad(
                 lambda w: potential_energy(model, (), {}, w)
             )(z)
@@ -82,7 +82,7 @@ def test_potential_of_a_flat_prior_is_logistic(x64):
             assert float(potential) == pytest.approx(expected, rel=1e-3)
             for site, g in grad.items():
                 assert float(g) == pytest.approx(
-                    float(jnp.tanh(z0 / 2)), abs=2e-3
+                    float(np.tanh(z0 / 2)), abs=2e-3
                 ), (site, z0)
 
 
@@ -124,7 +124,7 @@ def test_init_to_value_and_chain_init_params_use_the_flat_coordinate():
     z = chain_init_params(model, [start, start])
     for site, prior in FLAT_PRIORS.items():
         expected = _FlatBijection(*_flat_coordinate(prior)).inv(
-            jnp.asarray(start[site])
+            np.asarray(start[site])
         )
         onp.testing.assert_allclose(z[site], [expected] * 2, rtol=1e-5)
 
@@ -158,7 +158,7 @@ def test_expanded_and_independent_priors_are_sampled_flat():
     model = numpyro_model(_no_model, {"v": prior}, ())
     trace = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
     assert trace["v"]["value"].shape == (3,)
-    z = {"v": jnp.zeros(3)}
+    z = {"v": np.zeros(3)}
     expected = -3 * float(jax.nn.log_sigmoid(0.0) * 2)
     assert float(potential_energy(model, (), {}, z)) == pytest.approx(
         expected, rel=1e-5

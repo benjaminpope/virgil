@@ -79,6 +79,8 @@ nav:
       - "5. Sampling the posterior": imaging_sampling.md
       - "6. Sparse images and CLEAN": imaging_clean.md
       - "7. Ensembles": imaging_ensemble.md
+  - Pipelines:
+      - "Pipelines and their stability": pipeline.md
   - API Reference:
       - Overview: api/index.md
       - OIData: api/oidata.md
@@ -110,11 +112,13 @@ nav:
       - Spectra: api/spectra.md
       - Orbits: api/orbits.md
       - Epochs: api/epochs.md
+      - Orbit Search: api/orbit_search.md
       - Fields: api/fields.md
       - Scenes: api/scenes.md
       - Metrics: api/metrics.md
       - Ensemble: api/ensemble.md
       - Coverage: api/coverage.md
+      - Pipeline: api/pipeline.md
       - Simulate: api/simulate.md
       - Plotting: api/plotting.md
       - Legacy: api/legacy.md

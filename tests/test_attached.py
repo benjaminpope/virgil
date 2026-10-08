@@ -15,6 +15,7 @@ from virgil.models import (  # noqa: E402
     ModulatedGaussianRim,
     PointSource,
     System,
+    TruncatedCone,
 )
 from virgil.oidata import OIData, cp_indices  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
@@ -145,6 +146,65 @@ def test_a_disc_in_the_orbital_plane_brightens_towards_the_primary():
             )
             want = float(ORBIT.frame(T_REF + dt)["towards_primary"])
             assert abs((bright - want + 180) % 360 - 180) < 2.0
+
+
+@pytest.mark.parametrize("tilt", [30.0, -30.0])
+def test_a_cone_bound_to_the_frame_brightens_towards_the_bound_angle(tilt):
+    # The cone deprojects a bound sky angle into its rings' azimuth (not the
+    # rim's cos(inc) mapping): the bright side lies towards the primary.
+    cone = Attached(
+        TruncatedCone(
+            tip=0.0,
+            alpha=40.0,
+            s0=2.0,
+            length=2.0,
+            width=0.3,
+            tilt=tilt,
+            pa=0.0,
+            az_amps=0.9,
+            az_pas=0.0,
+        ),
+        ORBIT,
+        bind={"pa": "line_pa", "az_pas": "towards_primary"},
+    )
+    npix, fov = 128, 24.0
+    xs = (onp.arange(npix) - npix / 2 + 0.5) * fov / npix
+    dra = (-xs)[None, :] * onp.ones((npix, 1))  # East left
+    ddec = (-xs)[:, None] * onp.ones((1, npix))  # North up
+    plain = Attached(
+        TruncatedCone(
+            tip=0.0, alpha=40.0, s0=2.0, length=2.0, width=0.3, tilt=tilt
+        ),
+        ORBIT,
+        bind={"pa": "line_pa"},
+    )
+    with jax.enable_x64(True):
+        for dt in (0.0, 200.0):
+            centred = [
+                eqx.tree_at(
+                    lambda c: (c.dra, c.ddec), m.at(T_REF + dt), (0.0, 0.0)
+                )
+                for m in (cone, plain)
+            ]
+            excess = onp.asarray(centred[0].render(npix, fov)) - onp.asarray(
+                centred[1].render(npix, fov)
+            )
+            bright = onp.degrees(
+                onp.arctan2(onp.sum(excess * dra), onp.sum(excess * ddec))
+            )
+            want = float(ORBIT.frame(T_REF + dt)["towards_primary"])
+            assert abs((bright - want + 180) % 360 - 180) < 3.0
+
+
+def test_binding_the_azimuth_needs_a_modulation():
+    with pytest.raises(ValueError, match="no azimuthal modulation"):
+        Attached(
+            TruncatedCone(tip=0.0, alpha=40.0, s0=2.0, length=2.0, width=0.3),
+            ORBIT,
+            bind={"az_pas": "towards_primary"},
+        )
+    with pytest.raises(ValueError, match="no attribute 'az_pas'"):
+        Attached(PointSource(), ORBIT, bind={"az_pas": "towards_primary"})
 
 
 def test_anchors_and_offsets():

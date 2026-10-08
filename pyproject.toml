@@ -45,6 +45,9 @@ classifiers=[
     "Operating System :: OS Independent",
 ]
 
+[project.scripts]
+virgil-pipeline = "virgil.pipeline.cli:main"
+
 [build-system]
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
@@ -68,11 +71,20 @@ orbits = [
 integrations = [
   "virgil-astro[orbits]",
 ]
+# virgil.pipeline: HDF5 outputs and the executed quicklook notebook (and
+# the corner plots of the plots extra).
+pipeline = [
+  "h5py>=3.11",  # first release built against numpy 2
+  "nbformat>=5.9",
+  "nbclient>=0.9",
+  "ipykernel>=6.25",
+  "virgil-astro[plots]",
+]
 test = [
   "pytest>=8.0",
   "pytest-xdist>=3.5",
   "pyoifits>=0.4.10",
-  "virgil-astro[plots]",
+  "virgil-astro[plots,pipeline]",
 ]
 notebooks = [
   "tqdm>=4.66",
@@ -105,10 +117,17 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F"]
+select = ["E", "F", "ICN"]
 ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
 
+[tool.ruff.lint.flake8-import-conventions]
+# jax.numpy is `np` and plain NumPy is `onp` throughout (AGENTS.md).
+aliases = { "jax.numpy" = "np", "numpy" = "onp" }
+
 [tool.ruff.lint.per-file-ignores]
+# Notebooks keep their old aliases until they are next re-executed: editing
+# a code cell invalidates the stamped outputs (see AGENTS.md).
+"notebooks/**/*.ipynb" = ["ICN001"]
 "src/virgil/__init__.py" = ["F401"]
 "notebooks/contrast_limits.ipynb" = ["E702"]
 
