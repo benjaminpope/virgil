@@ -138,6 +138,7 @@ see that repository's `PLAN.md` for the boundary.
 | `_elr.py` | Espinosa Lara & Rieutord (2011) Roche shape and gravity darkening on a triangle mesh, ported from S. Dholakia's jax-interferometry (private; used by the gravity-darkened star model) |
 | `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
+| `pipeline/` | `virgil.pipeline`, loaded lazily and needing the `pipeline` extra: stable, scriptable pipelines (`BinaryPipeline`) that run fixed stages, resume, and write a run folder (`run.json`, `summary.json`, HDF5 grids and samples, plots, processed OIFITS, an executed quicklook notebook) with deterministic quality checks; `_core` (`_Pipeline`, `Stage`, `ConfigMismatchError`), `_io` (atomic writes, `Result`, `load`, model specs without pickles), `_checks` (`Check`), `_quicklook`, `binary`, `cli` (`virgil-pipeline`); public docs in `docs/pipeline.md`, design in `design/pipeline.md` |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |
 
 Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_closure`
