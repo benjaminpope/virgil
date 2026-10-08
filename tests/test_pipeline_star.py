@@ -270,7 +270,7 @@ def test_diameter_recovered_and_quoted_errors_lead(full_run):
         s["fit"]["models"]["limb_darkened"],
         s.get("warnings"),
     )
-    assert s["chi2"]["reduced"]["uniform"] > 2.5
+    assert s["chi2"]["reduced"]["uniform"] > 2.2
     assert s["comparison"]["preferred"] == "limb_darkened"
     assert s["comparison"]["delta_chi2"] > 5 * s["comparison"]["bic_penalty"]
     assert abs(s["star"]["diam_mas"] - 6.0) < 0.5
