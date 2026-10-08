@@ -45,6 +45,7 @@ from ._geometry import (
     undo_elliptical_transf_spat_freq,
 )
 from . import _elr
+from ._deprecate import renamed
 from ._utils import FWHM_PER_SIGMA, concrete, dtor, mas2rad
 from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
@@ -587,7 +588,7 @@ class GaussianArc(Component):
 
     def curve(self):
         """Points along the arc (mas, East and North of the centre) and
-        their normalised trapezoidal-rule weights."""
+        their normalized trapezoidal-rule weights."""
         sigma = self.length / FWHM_PER_SIGMA
         # Out to 6σ (a flux loss of 2e-9), or once round the circle if the
         # arc is longer: then both ends sit at the antipode of pa, and their
@@ -606,7 +607,11 @@ class GaussianArc(Component):
         x, y, weight = self.curve()
         shape = np.shape(uu)
         uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
-        curve = offset_phase(uu, vv, x[None, :], y[None, :]) @ weight
+        curve = np.matmul(
+            offset_phase(uu, vv, x[None, :], y[None, :]),
+            weight,
+            precision=jax.lax.Precision.HIGHEST,
+        )
         envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
         return np.reshape(curve * envelope, shape)
 
@@ -881,7 +886,7 @@ class TruncatedCone(Component):
 
     def rings(self):
         """Radius, sky offset of the centre along the projected axis (mas)
-        and normalised weight of each ring."""
+        and normalized weight of each ring."""
         t = (np.arange(self.n_rings) + 0.5) / self.n_rings * 5.0
         s = self.s0 + t * self.length
         rho = s * np.sin(self.alpha * dtor)
@@ -928,7 +933,8 @@ class TruncatedCone(Component):
             )
         rings = rings * shift
         envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
-        return np.reshape((rings @ weight) * envelope, shape)
+        rings = np.matmul(rings, weight, precision=jax.lax.Precision.HIGHEST)
+        return np.reshape(rings * envelope, shape)
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
         rho, along, weight = self.rings()
@@ -1145,7 +1151,7 @@ class LimbDarkenedDisk(_LimbDarkenedDisk):
     The visibility is analytic (Quirrenbach et al. 1996, eq. 3; see
     [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk]).
     harmonix ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433))
-    generalises the same result to limb-darkened spherical-harmonic maps.
+    generalizes the same result to limb-darkened spherical-harmonic maps.
 
     Parameters
     ----------
@@ -1497,7 +1503,7 @@ class GravityDarkenedStar(Component):
         the grey model; a value switches on the chromatic model (see Notes).
     wavel0 : float or array-like, optional
         Reference wavelength in metres (default 1.65e-6, H band), at which
-        the star's spectrum is normalised to ``flux`` and which
+        the star's spectrum is normalized to ``flux`` and which
         [`render`][virgil.models.SourceModel.render] shows. Only used
         when ``t_pole`` is set.
 
@@ -1675,7 +1681,7 @@ class GravityDarkenedStar(Component):
 
     def _planck_intensity(self, teff, wavel):
         """``B_λ(T) / B_λ(t_pole)`` at ``wavel`` for triangles of ``teff``."""
-        # the pole, theta = 0, through the jitted vectorised solver
+        # the pole, theta = 0, through the jitted vectorized solver
         teff_pole = _elr.solve_ELR_vec(self.omega, np.zeros(1))[1][0]
         temperature = self.t_pole * teff / teff_pole
         wavel = np.asarray(wavel)[..., None]
@@ -1710,11 +1716,11 @@ class GravityDarkenedStar(Component):
         x, y, w, _ = self._surface()
         return _elr.visibilities(x, y, w, uu, vv)
 
-    # sub-pixel samples per pixel side when rasterising the image
+    # sub-pixel samples per pixel side when rasterizing the image
     _image_oversample = 4
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
-        """Rasterise the faceted surface, flat-shaded per triangle.
+        """Rasterize the faceted surface, flat-shaded per triangle.
 
         Each pixel averages ``_image_oversample`` squared sub-pixel samples
         of the surface brightness, so the limb is anti-aliased. A sample
@@ -2022,7 +2028,7 @@ def circular_support(npix, pixel_scale_mas, radius_mas, inner_radius_mas=0.0):
 def _pixel_visibilities(
     fluxes, pixel_scale_mas, rotation_deg, u, v, wavel, grid=None
 ):
-    """Fourier transform of pixel fluxes centred on the origin, unnormalised.
+    """Fourier transform of pixel fluxes centred on the origin, unnormalized.
 
     Uses the exact matrix Fourier transform when the samples lie on a uv
     ``grid`` whose rotation matches the pixels' (and there is a single
@@ -3358,11 +3364,12 @@ def cvis_binary(u, v, dra, ddec, flux):
     return primary + companion * offset_phase(u, v, dra, ddec)
 
 
-def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
+@renamed()
+def cvis_uniform_disk(u, v, diam, dra=0.0, ddec=0.0):
     """Compute complex visibilities for a uniform (tophat) disk.
 
     The visibility amplitude follows the classic uniform-disk form
-    ``2 * J1(x) / x``, with ``x = pi * ud_rad * base_norm`` the product of
+    ``2 * J1(x) / x``, with ``x = pi * diam_rad * base_norm`` the product of
     the disk diameter (in radians) and the baseline length in wavelength
     units (``base_norm = hypot(u, v)``, i.e. baseline length divided by
     wavelength).
@@ -3373,7 +3380,7 @@ def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
         Baseline ``u`` coordinates in wavelength units (cycles / rad).
     v : array-like
         Baseline ``v`` coordinates in wavelength units (cycles / rad).
-    ud : float or array-like
+    diam : float or array-like
         Diameter of the uniform disk in milliarcseconds.
     dra : float or array-like
         Right-ascension offset in milliarcseconds.
@@ -3385,9 +3392,9 @@ def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
     array-like
         Complex visibility samples.
     """
-    ud_rad = mas2rad * ud
+    diam_rad = mas2rad * diam
     base_norm = np.hypot(u, v)
-    kernel = np.pi * base_norm * ud_rad
+    kernel = np.pi * base_norm * diam_rad
 
     # Keep 0 out of the division so the unused branch has finite gradients.
     at_zero = kernel == 0
@@ -3420,7 +3427,7 @@ def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
     needs order $5/4$, from jaxbessel's ``bessel_jv_over_xv``, which takes
     orders up to 12, so $-2 < \nu \le 22$ (the lower limit keeps the flux
     finite). harmonix
-    ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalises
+    ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalizes
     the result to polynomial limb darkening of spherical-harmonic maps.
 
     Parameters

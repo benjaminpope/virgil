@@ -60,7 +60,7 @@ def mask_transfer(
     """The modulus of an aperture mask's optical transfer function.
 
     The autocorrelation of the pupil, for circular holes of the given
-    diameter, normalised to one at zero baseline: each hole pair gives a
+    diameter, normalized to one at zero baseline: each hole pair gives a
     "splodge" around its baseline and the opposite one, and all holes
     together the central splodge.
 

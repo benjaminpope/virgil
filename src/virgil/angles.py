@@ -22,7 +22,7 @@ unprojected phase residuals (see
 [`whitened_residuals`][virgil.likelihood.whitened_residuals]). Every term has
 a least-squares form, so Levenberg–Marquardt and
 [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] take it unchanged,
-and the density is normalised in ℝ², so evidences stay normalised.
+and the density is normalized in ℝ², so evidences stay normalized.
 
 The construction follows Octofitter's ``UniformCircular`` (Thompson et al.
 2023, AJ 166, 164) and exoplanet's ``Angle`` (Foreman-Mackey et al. 2021,
@@ -57,7 +57,7 @@ def vector_angle(vector):
 
 
 def _log_radial_norm(width):
-    """log ∫₀^∞ r exp(-(r - 1)²/2s²) dr, the ring's normaliser."""
+    """log ∫₀^∞ r exp(-(r - 1)²/2s²) dr, the ring's normalizer."""
     return np.log(
         width**2 * np.exp(-0.5 / width**2)
         + width * np.sqrt(2.0 * np.pi) * ndtr(1.0 / width)

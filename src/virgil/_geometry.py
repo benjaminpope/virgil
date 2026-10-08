@@ -51,7 +51,7 @@ def image_visibilities(brightness, uu, vv, pixel_scale_mas):
     ----------
     brightness : array-like, shape (nrow, ncol)
         Pixel fluxes in the orientation of :func:`pixel_offsets` (East left,
-        North up). Not normalised here.
+        North up). Not normalized here.
     uu, vv : array-like
         Spatial frequencies, baseline / wavelength (per radian), of
         broadcastable shapes.

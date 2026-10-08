@@ -206,7 +206,7 @@ def test_omega_zero_is_a_sphere():
 
 @pytest.mark.parametrize("omega", [0.3, 0.7, 0.95])
 def test_equatorial_teff_ratio_matches_eq32(omega):
-    # Teff_ratio is normalised arbitrarily; eq32 is Teff(equator)/Teff(pole)
+    # Teff_ratio is normalized arbitrarily; eq32 is Teff(equator)/Teff(pole)
     _, t_eq, _ = _elr.solve_ELR(np.float32(omega), np.float32(onp.pi / 2))
     _, t_pole, _ = _elr.solve_ELR(np.float32(omega), np.float32(0.0))
     onp.testing.assert_allclose(
@@ -220,7 +220,7 @@ def test_polar_radius_is_roche(omega):
     # theta -> 0: R_pole / R_eq = 1 / (1 + omega^2 / 2)
     rtw, _, _ = _elr.solve_ELR(np.float32(omega), np.float32(1e-4))
     onp.testing.assert_allclose(rtw, 1 / (1 + omega**2 / 2), rtol=1e-4)
-    # equator: rtw = 1 by construction of the normalisation
+    # equator: rtw = 1 by construction of the normalization
     req, _, _ = _elr.solve_ELR(np.float32(omega), np.float32(onp.pi / 2))
     onp.testing.assert_allclose(req, 1.0, rtol=1e-4)
 

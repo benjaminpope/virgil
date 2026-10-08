@@ -76,7 +76,7 @@ def test_laplacian_matches_the_five_point_stencil():
     )
 
 
-def test_starlet_l1_matches_its_definition_and_penalises_noise():
+def test_starlet_l1_matches_its_definition_and_penalizes_noise():
     blob = _image(gaussian_blob(NPIX, SCALE, 20.0))
     reg = StarletL1(2.0, scales=3, epsilon=1e-2)
     details, _ = starlet(blob.brightness, 3)
@@ -111,14 +111,14 @@ def test_log_sum_counts_bright_pixels():
 
 @pytest.mark.filterwarnings("ignore:fit\\(method=:RuntimeWarning")
 @pytest.mark.parametrize(
-    "regulariser, method",
+    "regularizer, method",
     [
         (Laplacian(1e2), "lm"),
         (StarletL1(1e-1), "lbfgs"),
         (LogSum(1e-3), "lbfgs"),
     ],
 )
-def test_sparsity_regularisers_fit(regulariser, method):
+def test_sparsity_regularizers_fit(regularizer, method):
     truth = _image(gaussian_blob(NPIX, SCALE, 25.0))
     data = DATA.with_model(truth, key=jax.random.PRNGKey(4))
     start = _image(np.ones((NPIX, NPIX)))
@@ -126,7 +126,7 @@ def test_sparsity_regularisers_fit(regulariser, method):
         start,
         image_priors(start),
         data,
-        [regulariser],
+        [regularizer],
         method=method,
         max_steps=20,
     )

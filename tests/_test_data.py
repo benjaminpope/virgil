@@ -1,4 +1,5 @@
 import warnings
+from pathlib import Path
 
 import jax.numpy as np
 import jax.scipy as jsp
@@ -9,7 +10,7 @@ from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData
 
 fname = "NuHor_F480M.oifits"
-ddir = "./data/"
+ddir = str(Path(__file__).resolve().parents[1] / "data") + "/"
 
 data = oifits.open(ddir + fname)
 

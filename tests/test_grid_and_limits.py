@@ -501,7 +501,7 @@ def test_first_crossing_finds_the_first_crossing_from_below():
 def test_unbounded_limits_match_bounded_limits():
     """Regression (B1): ``flux_bounds=None`` found the top of its bracket.
 
-    For a normalised scene the significance falls again once the
+    For a normalized scene the significance falls again once the
     "companion" outshines the primary: at flux 1000 the scene mirrors one
     at flux 1e-3, below the limit (about 3e-3 with these errors). So
     ``injection_limits`` with ``flux_bounds=None`` returned 1000 everywhere,

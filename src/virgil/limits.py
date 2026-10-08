@@ -432,7 +432,7 @@ def absil_limits(
     The limit is the first flux, going up from the start of the search, at
     which the significance reaches ``sigma``: the flux is stepped by
     decades until it does, and that decade is bisected in log flux. For a
-    normalised scene the significance falls again once the companion
+    normalized scene the significance falls again once the companion
     outshines the primary (flux well above 1), so an unbounded search
     should start below that.
     """
@@ -523,7 +523,7 @@ def injection_limits(
     which the significance reaches ``sigma``, found as in ``absil_limits``.
     The significance rises with flux once the signal exceeds the noise, but
     the cross term can make it dip at very faint fluxes, and for a
-    normalised scene it falls again once the companion outshines the
+    normalized scene it falls again once the companion outshines the
     primary (flux well above 1), so an unbounded search should start below
     that.
 

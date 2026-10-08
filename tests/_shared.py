@@ -16,7 +16,7 @@ _H, _C, _K = 6.62607015e-34, 299792458.0, 1.380649e-23
 
 
 def planck(wavel, temperature):
-    """Unnormalised Planck B_λ, written from scratch."""
+    """Unnormalized Planck B_λ, written from scratch."""
     return wavel**-5.0 / onp.expm1(_H * _C / (wavel * _K * temperature))
 
 

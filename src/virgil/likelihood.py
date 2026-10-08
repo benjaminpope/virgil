@@ -38,23 +38,23 @@ from .gains import GAIN_GROUPS, OFFSET_GROUPS
 from .models import SourceModel
 
 
-def _gain_jacobian(data_obj, vis_prediction):
+def _gain_jacobian(data, vis_prediction):
     """dObs/dlog|V| of the model's visibility observables."""
-    if data_obj.vis_mode == "v2":
+    if data.vis_mode == "v2":
         return 2.0 * vis_prediction
-    if data_obj.vis_mode == "amp":
+    if data.vis_mode == "amp":
         return vis_prediction
     return np.ones_like(vis_prediction)
 
 
-def _whiten_vis(data_obj, prediction, resid, errors, gain_terms):
+def _whiten_vis(data, prediction, resid, errors, gain_terms):
     """Whitened visibility residuals, their effective errors, and the log
-    normalisation of the marginalised gains (``Σ extra``, 0 without)."""
+    normalization of the marginalized gains (``Σ extra``, 0 without)."""
     whitened = resid / errors
-    if data_obj.gains is None:
+    if data.gains is None:
         return whitened, errors, np.zeros((), errors.dtype)
-    gains = data_obj.gains
-    jacobian = _gain_jacobian(data_obj, prediction) / errors
+    gains = data.gains
+    jacobian = _gain_jacobian(data, prediction) / errors
     whitened, extra = gains.whiten(
         whitened, jacobian, gains.widths_for(gain_terms)
     )
@@ -62,38 +62,38 @@ def _whiten_vis(data_obj, prediction, resid, errors, gain_terms):
 
 
 def _whiten(
-    data_obj, prediction, reference, errors, gain_terms=None, offset_terms=None
+    data, prediction, reference, errors, gain_terms=None, offset_terms=None
 ):
-    """Whitened residuals, and the errors that normalise their likelihood.
+    """Whitened residuals, and the errors that normalize their likelihood.
 
     Returns ``(whitened, errors_out)``; see ``_whiten_with_log_norm``.
     """
     return _whiten_with_log_norm(
-        data_obj, prediction, reference, errors, gain_terms, offset_terms
+        data, prediction, reference, errors, gain_terms, offset_terms
     )[:2]
 
 
 def _whiten_with_log_norm(
-    data_obj, prediction, reference, errors, gain_terms=None, offset_terms=None
+    data, prediction, reference, errors, gain_terms=None, offset_terms=None
 ):
-    """Whitened residuals, effective errors, and the marginal log-normaliser.
+    """Whitened residuals, effective errors, and the marginal log-normalizer.
 
     Returns ``(whitened, errors_out, log_norm)``. ``log_norm`` is the part
-    of ``Σ log errors_out`` that comes from marginalised linear nuisances
+    of ``Σ log errors_out`` that comes from marginalized linear nuisances
     and so may depend on the model: ½ log det of the gains' and the
     closure offsets' covariance factors (``Σ extra`` of
     [`GainModes.whiten`][virgil.gains.GainModes.whiten] and
     [`ClosureOffsets.whiten`][virgil.gains.ClosureOffsets.whiten]), and
     for each extra observable block ``Σ log(errors_out / errors)``. It is
     zero for visibilities and phases without gains or offsets. The rest of
-    the normaliser (the quoted errors, the von Mises and correlated
+    the normalizer (the quoted errors, the von Mises and correlated
     closure-phase terms) depends only on the data and error terms.
 
     Residuals are
     ``(prediction - reference) / errors``, except:
 
     - With gains (``OIData.gains``), the visibility residuals are whitened
-      by their covariance with the gains marginalised (see
+      by their covariance with the gains marginalized (see
       [`virgil.gains`][virgil.gains]), with widths from ``gain_terms``
       (``vis_gain_<group>``) or the defaults. ``errors_out`` then holds
       effective errors whose log-sum is ½ log of that covariance's
@@ -102,10 +102,10 @@ def _whiten_with_log_norm(
     - An unprojected phase residual Δ becomes 2 sin(Δ/2). Its square,
       2(1 - cos Δ), equals Δ² to fourth order, repeats every 2π and is
       smooth at ±π, so the Gaussian likelihood built on it is a von Mises
-      likelihood with concentration κ = 1/σ². Its exact normaliser,
+      likelihood with concentration κ = 1/σ². Its exact normalizer,
       -log(2π I₀(κ)) + κ = -log 2π - log i0e(κ), is returned as the
       effective error √(2π) i0e(κ), so that ``_gaussian_loglike`` gives a
-      density normalised on the circle; for σ ≪ 1 this is σ. Projected
+      density normalized on the circle; for σ ≪ 1 this is σ. Projected
       (kernel or DISCO) phases are linear combinations that are not
       wrapped, and are left as Δ.
     - Closure phases from four or more telescopes are correlated, and only
@@ -123,10 +123,10 @@ def _whiten_with_log_norm(
       O(Δ⁴/σ²). At Δ = π the sines vanish, which alone would be a false
       minimum; the penalty there is (2/σ)², which removes it. The
       penalty rows carry the effective error 1/√(2π), so that they add
-      nothing to the normalisation (their ``-log σ - ½ log 2π`` is zero);
+      nothing to the normalization (their ``-log σ - ½ log 2π`` is zero);
       ``errors_out`` for the whitened rows holds effective errors whose
       log-sum is ½ log of the covariance's pseudo-determinant, keeping the
-      Gaussian normaliser (a correlated von Mises density has no
+      Gaussian normalizer (a correlated von Mises density has no
       closed-form one, and the Gaussian is its limit for σ ≪ 1).
       With closure-phase offsets (``OIData.phase_offsets``), the whitened
       sines are whitened again for the offsets' covariance (see
@@ -139,19 +139,19 @@ def _whiten_with_log_norm(
     prediction = np.asarray(prediction)
     resid = prediction - np.asarray(reference)
     errors = np.asarray(errors)
-    n_vis = np.asarray(data_obj.vis).size
-    n_phase = n_vis + np.asarray(data_obj.phi).size
+    n_vis = np.asarray(data.vis).size
+    n_phase = n_vis + np.asarray(data.phi).size
     vis, vis_errors, vis_norm = _whiten_vis(
-        data_obj, prediction[:n_vis], resid[:n_vis], errors[:n_vis], gain_terms
+        data, prediction[:n_vis], resid[:n_vis], errors[:n_vis], gain_terms
     )
     phase, phase_errors, phase_norm = _whiten_phases(
-        data_obj, resid[n_vis:n_phase], errors[n_vis:n_phase], offset_terms
+        data, resid[n_vis:n_phase], errors[n_vis:n_phase], offset_terms
     )
     whitened, effective = [vis, phase], [vis_errors, phase_errors]
     log_norm = vis_norm + phase_norm
     reference = np.asarray(reference)
     offset = n_phase
-    for block in data_obj.extras:
+    for block in data.extras:
         # Extra observables (OI_FLUX, T3AMP, VISAMP, VISPHI) whiten their
         # own blocks: see virgil.observables.
         end = offset + int(block.data().size)
@@ -165,25 +165,25 @@ def _whiten_with_log_norm(
     return np.concatenate(whitened), np.concatenate(effective), log_norm
 
 
-def _whiten_phases(data_obj, resid, errors, offset_terms=None):
+def _whiten_phases(data, resid, errors, offset_terms=None):
     """Whitened phase residuals, their effective errors and the closure
-    offsets' log normalisation (see ``_whiten_with_log_norm``)."""
+    offsets' log normalization (see ``_whiten_with_log_norm``)."""
     zero = np.zeros((), errors.dtype)
-    if not data_obj._phases_wrap:
+    if not data._phases_wrap:
         return resid / errors, errors, zero
-    if data_obj.cp_noise is None:
+    if data.cp_noise is None:
         von_mises = np.sqrt(2.0 * np.pi) * i0e(1.0 / errors**2)
         return 2.0 * np.sin(0.5 * resid) / errors, von_mises, zero
     # Correlated closure phases mix their residuals, so each sign matters,
     # and a chord's sign flips under 2π. Whiten the (smooth, periodic) sines
     # and append the periodic penalty 2 sin²(Δ/2)/σ = (1 - cos Δ)/σ, which
     # removes the false minimum at Δ = π.
-    whitened, whitened_errors = data_obj.cp_noise.whiten(np.sin(resid), errors)
-    offsets = data_obj.phase_offsets
+    whitened, whitened_errors = data.cp_noise.whiten(np.sin(resid), errors)
+    offsets = data.phase_offsets
     log_norm = zero
     if offsets is not None:
         whitened, extra = offsets.whiten(
-            data_obj.cp_noise,
+            data.cp_noise,
             whitened,
             errors,
             offsets.widths_for(offset_terms),
@@ -233,8 +233,9 @@ NOISE_TERMS = (
 )
 
 
+@renamed()
 def inflated_errors(
-    data_obj,
+    data,
     prediction,
     vis_error_rel=None,
     phi_error=None,
@@ -257,7 +258,7 @@ def inflated_errors(
 
     Parameters
     ----------
-    data_obj : OIData
+    data : OIData
         Data whose uncertainties are inflated.
     prediction : array-like
         Model vector, e.g. from [`OIData.model`][virgil.oidata.OIData.model].
@@ -285,11 +286,11 @@ def inflated_errors(
     array-like
         Uncertainties matching [`flatten_data`][virgil.oidata.OIData.flatten_data].
     """
-    data, errors = data_obj.flatten_data()
+    values, errors = data.flatten_data()
     terms = (vis_error_rel, phi_error, vis_scale, phi_scale, vis_error)
     if all(term is None for term in terms):
         return errors
-    projected = data_obj.vis_mat is not None or data_obj.phi_mat is not None
+    projected = data.vis_mat is not None or data.phi_mat is not None
     added = (vis_error_rel, phi_error, vis_error)
     if projected and any(term is not None for term in added):
         raise ValueError(
@@ -299,9 +300,9 @@ def inflated_errors(
         )
     if where not in ("model", "data"):
         raise ValueError(f"where must be 'model' or 'data', not {where!r}.")
-    reference = data if where == "data" else np.asarray(prediction)
-    n_vis = np.asarray(data_obj.vis).size
-    n_phase = n_vis + np.asarray(data_obj.phi).size
+    reference = values if where == "data" else np.asarray(prediction)
+    n_vis = np.asarray(data.vis).size
+    n_phase = n_vis + np.asarray(data.phi).size
     d_vis = inflate_errors(
         errors[:n_vis],
         reference[:n_vis],
@@ -408,41 +409,41 @@ def noise_for(sites, values, index):
     }
 
 
-def _whitened_and_errors(model_object, data_obj, noise):
+def _whitened_and_errors(model, data, noise):
     """Whitened residuals and effective errors (see ``_whiten``)."""
-    return _whitened_errors_and_log_norm(model_object, data_obj, noise)[:2]
+    return _whitened_errors_and_log_norm(model, data, noise)[:2]
 
 
-def _whitened_and_log_norm(model_object, data_obj, noise=None):
-    """Whitened residuals and the marginal nuisances' log-normaliser.
+def _whitened_and_log_norm(model, data, noise=None):
+    """Whitened residuals and the marginal nuisances' log-normalizer.
 
     ``model_loglike`` is ``-½ Σ r² - log_norm`` plus a term that depends
     only on the data and the error terms (``-Σ log σ - ½ n log 2π`` and
     its von Mises and correlated-closure-phase forms), where ``log_norm``
-    is ½ log det of the covariance factors of marginalised gains and
+    is ½ log det of the covariance factors of marginalized gains and
     closure offsets, which may depend on the model (see
     ``_whiten_with_log_norm``). Without them it is zero.
     """
     whitened, _, log_norm = _whitened_errors_and_log_norm(
-        model_object, data_obj, {} if noise is None else noise
+        model, data, {} if noise is None else noise
     )
     return whitened, log_norm
 
 
-def _whitened_errors_and_log_norm(model_object, data_obj, noise):
+def _whitened_errors_and_log_norm(model, data, noise):
     unknown = set(noise) - set(NOISE_TERMS)
     if unknown:
         raise TypeError(
             f"Unknown error terms {sorted(unknown)}; use {NOISE_TERMS}."
         )
     gain_terms = {k: v for k, v in noise.items() if k in GAIN_TERMS}
-    if gain_terms and data_obj.gains is None:
+    if gain_terms and data.gains is None:
         raise ValueError(
             f"Error terms {sorted(gain_terms)} need gain modes: add them with "
             "OIData.with_gains."
         )
     offset_terms = {k: v for k, v in noise.items() if k in OFFSET_TERMS}
-    if offset_terms and data_obj.phase_offsets is None:
+    if offset_terms and data.phase_offsets is None:
         raise ValueError(
             f"Error terms {sorted(offset_terms)} need closure-phase offsets: "
             "add them with OIData.with_closure_offsets."
@@ -460,17 +461,17 @@ def _whitened_errors_and_log_norm(model_object, data_obj, noise):
         and k not in WAVEL_TERMS
         and k not in NORTH_TERMS
     }
-    observed = data_obj
+    observed = data
     if wavel_terms:
-        data_obj = data_obj.with_wavelength_scale(**wavel_terms)
+        data = data.with_wavelength_scale(**wavel_terms)
     if "north_angle" in noise:
-        data_obj = data_obj.with_north_angle(noise["north_angle"])
-    prediction = data_obj.model(model_object)
-    data_obj = observed
-    errors = inflated_errors(data_obj, prediction, **inflation)
-    data = data_obj.flatten_data()[0]
+        data = data.with_north_angle(noise["north_angle"])
+    prediction = data.model(model)
+    data = observed
+    errors = inflated_errors(data, prediction, **inflation)
+    values = data.flatten_data()[0]
     return _whiten_with_log_norm(
-        data_obj, prediction, data, errors, gain_terms, offset_terms
+        data, prediction, values, errors, gain_terms, offset_terms
     )
 
 
@@ -480,7 +481,7 @@ def whitened_residuals(model, data, **noise):
 
     This is the one residual vector behind every likelihood in virgil:
     ``model_loglike`` is ``-0.5 * sum(whitened_residuals**2)`` plus the
-    Gaussian normalisation, and least-squares fits minimise its sum of
+    Gaussian normalization, and least-squares fits minimize its sum of
     squares.
 
     Visibility and projected-phase (kernel or DISCO) residuals are
@@ -488,7 +489,7 @@ def whitened_residuals(model, data, **noise):
     ``2 sin(Δ/2) / σ``: equal to Δ/σ for small Δ, but smooth where Δ wraps
     at ±π, so that a χ² surface has no kinks there. The resulting
     likelihood is a von Mises distribution with concentration 1/σ²,
-    normalised exactly on the circle.
+    normalized exactly on the circle.
 
     Closure phases from four or more telescopes are the exception: they are
     correlated, so the sines sin Δ of the residuals are whitened together
@@ -540,14 +541,14 @@ def model_loglike(model, data, *, reject_unphysical=False, **noise):
 
     This is ``-0.5 * sum(r**2)`` for the residuals ``r`` of
     [`whitened_residuals`][virgil.likelihood.whitened_residuals], plus
-    each density's normalisation: Gaussian in visibilities and projected
+    each density's normalization: Gaussian in visibilities and projected
     phases, ``-log σ - ½ log 2π``; von Mises with concentration
     κ = 1/σ² in uncorrelated unprojected phases, ``-log 2π - log i0e(κ)``,
-    which is the Gaussian one for σ ≪ 1 but stays a normalised density
+    which is the Gaussian one for σ ≪ 1 but stays a normalized density
     on the circle when σ is large (e.g. a fitted ``phi_error``).
     Correlated closure phases (``OIData.cp_noise``) keep the Gaussian
-    normalisation, their small-σ limit, since a correlated circular
-    density has no closed-form normaliser; their periodic penalty
+    normalization, their small-σ limit, since a correlated circular
+    density has no closed-form normalizer; their periodic penalty
     residuals add nothing to it.
 
     Parameters
@@ -571,7 +572,7 @@ def model_loglike(model, data, *, reject_unphysical=False, **noise):
         Gaussian normalization uses the inflated errors. For data with
         gains ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
         ``vis_gain_<group>`` sets the width of a group of gains, which are
-        marginalised: the normalisation then includes the log-determinant
+        marginalized: the normalization then includes the log-determinant
         of the visibility covariance. ``phi_offset_<group>`` does the same
         for closure-phase offsets ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
         ``wavel_scale`` and ``wavel_offset`` evaluate the model at corrected
@@ -601,17 +602,19 @@ def joint_prediction(params, model, data):
     )
 
 
-def joint_data(observations):
+@renamed()
+def joint_data(data):
     """Concatenate observed vectors in the same order as ``joint_prediction``."""
     return np.concatenate(
-        [observation.flatten_data()[0] for observation in observations]
+        [observation.flatten_data()[0] for observation in data]
     )
 
 
-def joint_errors(observations):
+@renamed()
+def joint_errors(data):
     """Concatenate uncertainty vectors in the same order as ``joint_prediction``."""
     return np.concatenate(
-        [observation.flatten_data()[1] for observation in observations]
+        [observation.flatten_data()[1] for observation in data]
     )
 
 
@@ -695,9 +698,9 @@ def _term_loglike(term, values):
     """Log density of one ``likelihoods=`` term at the fitted ``values``.
 
     A term built by ``PositionData.term`` or ``RVData.term`` wraps its data,
-    so its full normalised ``loglike`` is used, matching the OIData terms.
+    so its full normalized ``loglike`` is used, matching the OIData terms.
     A plain callable returning whitened residuals has no known
-    normalisation, so it contributes ``-0.5 * sum(r**2)`` only.
+    normalization, so it contributes ``-0.5 * sum(r**2)`` only.
     """
     if hasattr(term, "loglike"):
         return term.loglike(values)
@@ -714,7 +717,7 @@ def _sample(numpyro, path, prior):
 
 
 def _host_devices():
-    """The number of local devices, without initialising the backend.
+    """The number of local devices, without initializing the backend.
 
     Once JAX's backend starts, ``XLA_FLAGS`` can no longer set the number
     of host devices, so before that read the flag instead. Before the
@@ -767,7 +770,7 @@ def numpyro_model(
     model,
     priors,
     data,
-    regularisers=(),
+    regularizers=(),
     noise=None,
     likelihoods=(),
     **options,
@@ -787,7 +790,7 @@ def numpyro_model(
         list of models, one per dataset in ``data``, sharing
         parameters: for example binaries at two epochs with one flux
         ratio and a position each. Model ``i`` is compared with dataset
-        ``i``, and regularisers act on the first model only.
+        ``i``, and regularizers act on the first model only.
     priors : dict[str, numpyro.distributions.Distribution]
         Mapping from parameter path (e.g. ``"comp.flux"``) or function
         argument name to prior; each key is also used as the numpyro
@@ -800,7 +803,7 @@ def numpyro_model(
     data : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
         May be ``()`` when ``likelihoods`` holds all the data.
-    regularisers : sequence, optional
+    regularizers : sequence, optional
         Log-prior terms on the model, e.g. a
         [`Centroid`][virgil.imaging.Centroid] prior, added with
         ``numpyro.factor``. Only genuine prior densities
@@ -836,7 +839,7 @@ def numpyro_model(
         residuals, such as ``PositionData.term(orbit_fn)`` or
         ``RVData.term(params_fn)``. Term ``i`` is added with
         ``numpyro.factor`` as site ``"likelihood_<i>"``. Those two built-in
-        terms add their full normalised Gaussian log density, like the OIData
+        terms add their full normalized Gaussian log density, like the OIData
         terms; a plain callable adds ``-0.5 * sum(r**2)`` only.
     **options
         Fixed error terms and ``reject_unphysical``, passed to
@@ -879,11 +882,11 @@ def numpyro_model(
     for path in paths:
         if is_flux_param(path):
             _check_positive_flux_prior(path, priors[path])
-    penalties = [type(r).__name__ for r in regularisers if not r.probabilistic]
+    penalties = [type(r).__name__ for r in regularizers if not r.probabilistic]
     if penalties:
         raise ValueError(
             f"{', '.join(penalties)} are penalties, not log prior densities, "
-            "so they cannot be sampled; use fit for regularised MAP images."
+            "so they cannot be sampled; use fit for regularized MAP images."
         )
     observations = tuple(data) if isinstance(data, (list, tuple)) else (data,)
     _warn_zero_size_for_parallel_chains(observations)
@@ -918,9 +921,9 @@ def numpyro_model(
             )
         for i, term in enumerate(likelihoods):
             numpyro.factor(f"likelihood_{i}", _term_loglike(term, fitted))
-        for i, regulariser in enumerate(regularisers):
+        for i, regularizer in enumerate(regularizers):
             numpyro.factor(
-                f"regulariser_{i}", -regulariser.value(_reference(source))
+                f"regularizer_{i}", -regularizer.value(_reference(source))
             )
 
     return numpyro_fn
@@ -1031,7 +1034,7 @@ def flux_scale_posterior(model, data):
     """The grey scales of the extra spectra, given a model.
 
     The scales (and polynomial coefficients) of OI_FLUX spectra and
-    correlated fluxes are marginalised in the likelihood (see
+    correlated fluxes are marginalized in the likelihood (see
     [`FluxSpectrum`][virgil.observables.FluxSpectrum]); this is their
     Gaussian posterior conditional on ``model``, for reporting.
 
@@ -1048,8 +1051,8 @@ def flux_scale_posterior(model, data):
         Per kind (``"flux"``, ``"nflux"``, ``"corrflux"``): ``mean``
         ``(n_group, p)`` and ``cov`` ``(n_group, p, p)`` of the weights,
         whose first is the scale k multiplying the model's template
-        (normalised to a mean of 1 per group); and ``scale``, the scale of
-        ``total_spectrum`` itself (k over the template's normalisation),
+        (normalized to a mean of 1 per group); and ``scale``, the scale of
+        ``total_spectrum`` itself (k over the template's normalization),
         for ``"flux"`` and ``"corrflux"``: data ≈ scale × model. ``groups``
         gives each sample's group.
     """
