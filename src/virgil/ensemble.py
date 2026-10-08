@@ -785,6 +785,7 @@ def combine(data, groups, *, spec=None, star=True):
             f"(fewer than min_kept={spec.min_kept}), so the spread is not "
             "a useful map. Look at Ensemble.summary() for where they were "
             "dropped.",
+            UserWarning,
             stacklevel=2,
         )
 

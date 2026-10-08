@@ -134,6 +134,7 @@ def _warn_if_mjd_without_t_ref(orbit_t_ref, dt):
             f"like MJDs (up to {onp.max(onp.abs(days)):.0f} d): its "
             "dt_peri is then counted from MJD 0. Give the orbit a t_ref "
             "near the data (e.g. KeplerOrbit(..., t_ref=60500.0)).",
+            UserWarning,
             stacklevel=3,
         )
 

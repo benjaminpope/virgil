@@ -809,6 +809,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
             "that time, in either orientation. Each is placed at the OI_T3 "
             "table's own (u, v) as a flagged sample: the closure phases are "
             "fitted, but the V² coverage of this file is incomplete.",
+            UserWarning,
             stacklevel=4,
         )
     if extra["u"]:

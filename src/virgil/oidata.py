@@ -331,6 +331,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 warnings.warn(
                     "Every closure phase is flagged (or not finite): using "
                     "the visibilities alone.",
+                    UserWarning,
                     stacklevel=2,
                 )
                 cp_flag, indices = False, None

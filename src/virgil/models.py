@@ -45,6 +45,7 @@ from ._geometry import (
     undo_elliptical_transf_spat_freq,
 )
 from . import _elr
+from ._deprecate import renamed
 from ._utils import concrete, dtor, mas2rad
 from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
@@ -606,7 +607,11 @@ class GaussianArc(Component):
         x, y, weight = self.curve()
         shape = np.shape(uu)
         uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
-        curve = offset_phase(uu, vv, x[None, :], y[None, :]) @ weight
+        curve = np.matmul(
+            offset_phase(uu, vv, x[None, :], y[None, :]),
+            weight,
+            precision=jax.lax.Precision.HIGHEST,
+        )
         envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
         return np.reshape(curve * envelope, shape)
 
@@ -928,7 +933,8 @@ class TruncatedCone(Component):
             )
         rings = rings * shift
         envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
-        return np.reshape((rings @ weight) * envelope, shape)
+        rings = np.matmul(rings, weight, precision=jax.lax.Precision.HIGHEST)
+        return np.reshape(rings * envelope, shape)
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
         rho, along, weight = self.rings()
@@ -3360,11 +3366,12 @@ def cvis_binary(u, v, dra, ddec, flux):
     return primary + companion * offset_phase(u, v, dra, ddec)
 
 
-def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
+@renamed()
+def cvis_uniform_disk(u, v, diam, dra=0.0, ddec=0.0):
     """Compute complex visibilities for a uniform (tophat) disk.
 
     The visibility amplitude follows the classic uniform-disk form
-    ``2 * J1(x) / x``, with ``x = pi * ud_rad * base_norm`` the product of
+    ``2 * J1(x) / x``, with ``x = pi * diam_rad * base_norm`` the product of
     the disk diameter (in radians) and the baseline length in wavelength
     units (``base_norm = hypot(u, v)``, i.e. baseline length divided by
     wavelength).
@@ -3375,7 +3382,7 @@ def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
         Baseline ``u`` coordinates in wavelength units (cycles / rad).
     v : array-like
         Baseline ``v`` coordinates in wavelength units (cycles / rad).
-    ud : float or array-like
+    diam : float or array-like
         Diameter of the uniform disk in milliarcseconds.
     dra : float or array-like
         Right-ascension offset in milliarcseconds.
@@ -3387,9 +3394,9 @@ def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
     array-like
         Complex visibility samples.
     """
-    ud_rad = mas2rad * ud
+    diam_rad = mas2rad * diam
     base_norm = np.hypot(u, v)
-    kernel = np.pi * base_norm * ud_rad
+    kernel = np.pi * base_norm * diam_rad
 
     # Keep 0 out of the division so the unused branch has finite gradients.
     at_zero = kernel == 0

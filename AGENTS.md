@@ -234,8 +234,7 @@ to that test.
   (`System`, the binaries, `HarmonixModel`) are whole normalized skies with
   weight 1 inside a `System`, unless they carry their own `flux` weight as
   `System` does.
-- `flux` means a relative weight. The binaries' companion/primary `flux` (and
-  `contrast`) is a legacy exception; no new model may use `flux` as a ratio.
+- `flux` means a relative weight. The binaries' companion/primary `flux` is a legacy exception; no new model may use `flux` as a ratio.
 - Components never contain a built-in star; compose one with
   `System(star=PointSource(), ...)`. New shapes subclass `Component` and
   implement `_centred_cvis` and `_centred_image`. Anything that can be drawn
