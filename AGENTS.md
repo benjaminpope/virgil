@@ -118,17 +118,17 @@ see that repository's `PLAN.md` for the boundary.
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
 | `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
 | `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `chain_init_params` (numpyro `init_params`, one start per chain), `posterior_predictive_summary` |
-| `fitting.py` | `fit(model, priors, data, regularisers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
+| `fitting.py` | `fit(model, priors, data, regularizers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
 | `svi.py` | `variational`: numpyro SVI on `numpyro_model`'s posterior, guides (BNAF/IAF flows, Gaussian, Laplace) started at a fit and its `gauss_newton_mass` covariance, `VariationalResult` (draws keyed like NUTS's, losses, PSIS k̂); see `design/sampler_flat_coordinates.md` |
-| `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
+| `imaging.py` | regularizers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `injection_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
-| `detection.py` | `detection_statistics` (Δχ², grid-marginalised log Bayes factor, max SNR; traceable in the data for `lax.map` over simulations) and `local_nsigma`; null simulators (`gaussian_null`, `bootstrap_null`, `rescale_errors`), `injection_grid`, the Monte Carlo driver `injection_recovery` (one compiled kernel over draws) and its NumPy result `DetectionMC` (FAP, thresholds, ROC/AUC, completeness, contrast curves, save/load/concatenate); see `design/detection_roc.md` |
+| `detection.py` | `detection_statistics` (Δχ², grid-marginalized log Bayes factor, max SNR; traceable in the data for `lax.map` over simulations) and `local_nsigma`; null simulators (`gaussian_null`, `bootstrap_null`, `rescale_errors`), `injection_grid`, the Monte Carlo driver `injection_recovery` (one compiled kernel over draws) and its NumPy result `DetectionMC` (FAP, thresholds, ROC/AUC, completeness, contrast curves, save/load/concatenate); see `design/detection_roc.md` |
 | `fields.py` | Gaussian-process log-brightness for an `Image` (`GaussianField`, a DCT field with a Matérn-like spectrum) |
-| `observables.py` | extra observable blocks after `vis`/`phi` in `OIData`: OI_FLUX spectra with marginalised grey scales (`FluxSpectrum`), \|V\|, T3AMP, and continuum-normalised differential phases (`DifferentialPhase`, closure-free beside closure phases); `continuum_operator` |
+| `observables.py` | extra observable blocks after `vis`/`phi` in `OIData`: OI_FLUX spectra with marginalized grey scales (`FluxSpectrum`), \|V\|, T3AMP, and continuum-normalized differential phases (`DifferentialPhase`, closure-free beside closure phases); `continuum_operator` |
 | `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, `GaussianLine`, `LorentzianLine`, `Nodes` for a free flux per channel, and `Sum`; `Tabulated` is deprecated for `Nodes`) accepted as a component's `flux` (SPARCO) |
-| `angles.py` | `AngleVector`: an angle prior sampled as a 2-D vector (site `<path>_vec`, ring and von Mises chord residuals), recognised by `fit`, `gauss_newton_mass` and `numpyro_model`; imports nothing from virgil |
+| `angles.py` | `AngleVector`: an angle prior sampled as a 2-D vector (site `<path>_vec`, ring and von Mises chord residuals), recognized by `fit`, `gauss_newton_mass` and `numpyro_model`; imports nothing from virgil |
 | `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
 | `epochs.py` | `Epochs`: datasets grouped into named epochs, one snapshot of a time-dependent scene per dataset (or epoch), name-keyed per-dataset `noise`, and the model function, data and summed log likelihood for multi-epoch orbit fits; starting them: `rank_orbits` (trial orbits ranked by the data), `chain_starts` (distinct modes, one per chain), `epoch_positions` (per-dataset positions on the scale-marginalized surface, `marginal_loglike`; `gap_marginal`, `chi2_raw`, `scale`) and `start_from_positions` (positions → `starting_orbits` → ranking with `scales=` → `fit` from distinct starts, as an `OrbitStart`); see `design/visibility_orbits.md` |
 | `orbit_search.py` | `score_orbits`: candidate orbits scored exactly on all epochs with shared nuisances (one flux per band with an optional chromatic slope, integrated on a log-uniform grid and also profiled; scale-marginalized per dataset; gains and closure offsets profiled; extra `RVData`/`PositionData` terms), positions at sample times, a work-unit budget; `SharedFlux`, `OrbitScores`, `rank_scores` (quantized, index-broken ties) |
@@ -236,8 +236,7 @@ to that test.
   (`System`, the binaries, `HarmonixModel`) are whole normalized skies with
   weight 1 inside a `System`, unless they carry their own `flux` weight as
   `System` does.
-- `flux` means a relative weight. The binaries' companion/primary `flux` (and
-  `contrast`) is a legacy exception; no new model may use `flux` as a ratio.
+- `flux` means a relative weight. The binaries' companion/primary `flux` is a legacy exception; no new model may use `flux` as a ratio.
 - Components never contain a built-in star; compose one with
   `System(star=PointSource(), ...)`. New shapes subclass `Component` and
   implement `_centred_cvis` and `_centred_image`. Anything that can be drawn

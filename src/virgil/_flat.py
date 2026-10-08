@@ -5,7 +5,7 @@ not uniform (a log-uniform scale, an isotropic inclination) is uniform in
 some other coordinate of its parameter, its *flat coordinate*:
 ``_flat_coordinate`` finds it. ``_FlatBijection`` maps the real line onto
 the parameter through that coordinate. [`fit`][virgil.fitting.fit]
-optimises in it, and [`numpyro_model`][virgil.likelihood.numpyro_model]
+optimizes in it, and [`numpyro_model`][virgil.likelihood.numpyro_model]
 samples in it: ``flat_sampled`` wraps a prior so that numpyro's
 ``biject_to`` of its support is the same bijection, with its Jacobian,
 while the site keeps its name, its value (the parameter) and its density.
@@ -157,7 +157,7 @@ class _FlatPrior(dist.Distribution):
     """``prior`` with a support whose bijection is its flat coordinate.
 
     The density, samples, shapes and moments are ``prior``'s; only the
-    unconstrained coordinates in which numpyro's NUTS and initialisation
+    unconstrained coordinates in which numpyro's NUTS and initialization
     work change, to ``_FlatBijection``'s (the same as ``fit``'s).
     """
 

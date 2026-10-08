@@ -3,7 +3,7 @@
 [`variational`][virgil.svi.variational] takes the same arguments as
 [`fit`][virgil.fitting.fit] and
 [`numpyro_model`][virgil.likelihood.numpyro_model], and fits a guide (an
-approximate posterior) to ``numpyro_model``'s posterior by maximising the
+approximate posterior) to ``numpyro_model``'s posterior by maximizing the
 evidence lower bound (ELBO) with numpyro's ``SVI``. The guide works in the
 unconstrained coordinates NUTS samples (the priors' flat coordinates by
 default), and starts at the Laplace approximation: its centre at a
@@ -14,7 +14,7 @@ A Gaussian guide (``guide="mvn"``) is close to that Laplace approximation
 for a well-behaved posterior: use
 [`laplace_cov`][virgil.inference.laplace_cov] or the Gauss–Newton
 covariance if a Gaussian is all you need. The default guide is a
-normalising flow (a block neural autoregressive flow) after the Laplace
+normalizing flow (a block neural autoregressive flow) after the Laplace
 affine map, which can bend and skew the Gaussian to follow curved ridges,
 skewed scales and parameters pressed against a prior bound. Every guide
 covers one mode.
@@ -249,7 +249,7 @@ def variational(
     model,
     priors,
     data,
-    regularisers=(),
+    regularizers=(),
     *,
     noise=None,
     likelihoods=(),
@@ -273,7 +273,7 @@ def variational(
 
     The guide is fitted to the posterior of
     [`numpyro_model`][virgil.likelihood.numpyro_model] with the same
-    arguments, by maximising the ELBO (``Trace_ELBO``) with Adam. It works
+    arguments, by maximizing the ELBO (``Trace_ELBO``) with Adam. It works
     in the unconstrained coordinates NUTS samples, and starts at the Laplace
     approximation at ``start``: its centre at the fitted values and, by
     default, its width from
@@ -281,7 +281,7 @@ def variational(
 
     **Which guide.** ``"mvn"`` is a Gaussian with a dense covariance. For a
     well-behaved posterior it is close to the Laplace approximation that
-    ``start`` and ``gauss_newton_mass`` already give (SVI minimises the
+    ``start`` and ``gauss_newton_mass`` already give (SVI minimizes the
     KL divergence over the whole posterior, Laplace uses the curvature at
     the mode, and for a near-Gaussian posterior the two agree), so if a
     Gaussian is all you need, use
@@ -314,7 +314,7 @@ def variational(
 
     Parameters
     ----------
-    model, priors, data, regularisers, noise, likelihoods
+    model, priors, data, regularizers, noise, likelihoods
         As for [`numpyro_model`][virgil.likelihood.numpyro_model]
         (and [`fit`][virgil.fitting.fit]).
     start : FitResult or dict, optional
@@ -325,8 +325,8 @@ def variational(
         ``"bnaf"`` (default), ``"iaf"``, ``"mvn"`` or ``"laplace"``; see
         above.
     steps : int, optional
-        Optimisation steps (default 3000).
-    optimizer : numpyro or optax optimiser, optional
+        Optimization steps (default 3000).
+    optimizer : numpyro or optax optimizer, optional
         Default ``optax.adam(learning_rate)``.
     learning_rate : float, optional
         Adam's step size when ``optimizer`` is not given (default 3e-3).
@@ -348,8 +348,8 @@ def variational(
         Start the guide's width from the Gauss–Newton covariance at
         ``start`` (default ``True``). That covariance is the data's and
         the priors' curvature at the nominal errors: it leaves out
-        ``regularisers``, fitted error terms in ``noise`` and fixed ones
-        in ``**options``. With regularisers (whose absence can leave the
+        ``regularizers``, fitted error terms in ``noise`` and fixed ones
+        in ``**options``. With regularizers (whose absence can leave the
         curvature singular, as for an image) the dense start is skipped,
         with a warning. With error terms it is kept: an inflated error
         makes the start too narrow, which the guide learns away at the
@@ -404,7 +404,7 @@ def variational(
             model_c,
             priors_c,
             data_c,
-            regularisers,
+            regularizers,
             noise_c,
             likelihoods,
             flat_coordinates=flat_coordinates,
@@ -433,16 +433,16 @@ def variational(
             guide_obj,
             (autoguide.AutoDelta, autoguide.AutoLaplaceApproximation),
         )
-        if dense_start and regularisers and values_c is not None:
-            # gauss_newton_mass takes no regularisers: without them an
+        if dense_start and regularizers and values_c is not None:
+            # gauss_newton_mass takes no regularizers: without them an
             # image's curvature is singular, so start at init_scale.
             warnings.warn(
-                "The Gauss–Newton starting width leaves out regularisers; "
+                "The Gauss–Newton starting width leaves out regularizers; "
                 f"with them, the guide starts with width "
                 f"init_scale={init_scale}.",
                 stacklevel=2,
             )
-        use_dense = dense_start and not regularisers
+        use_dense = dense_start and not regularizers
         if hasattr(guide_obj, "start_tril"):  # started at the Laplace frame
             guide_obj.start_tril, dense = _start_scale(
                 guide_obj,
@@ -492,7 +492,7 @@ def variational(
 def _khat(key, params, posterior, guide, num_samples, point_mass):
     """PSIS k̂ of the guide's importance weights, or None.
 
-    Undefined for the Laplace guide (a point mass while it is optimised)
+    Undefined for the Laplace guide (a point mass while it is optimized)
     and for numpyro releases without ``psis_diagnostic``.
     """
     if point_mass:

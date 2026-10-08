@@ -13,7 +13,7 @@ Modules:
 * [`fitting`][virgil.fitting]: `fit`, maximum a posteriori fits with
   Levenberg–Marquardt, L-BFGS or Adam; [`svi`][virgil.svi]:
   `variational`, variational inference started from a fit.
-* [`imaging`][virgil.imaging]: regularisers and helpers for image
+* [`imaging`][virgil.imaging]: regularizers and helpers for image
   reconstruction; [`scenes`][virgil.scenes]: synthetic truth images;
   [`metrics`][virgil.metrics]: image-recovery scores;
   [`ensemble`][virgil.ensemble]: averaged ensembles of reconstructions;
@@ -23,7 +23,7 @@ Modules:
 * [`limits`][virgil.limits]: contrast limits and flux/contrast/Δmag
   conversions.
 * [`detection`][virgil.detection]: detection statistics (Δχ², the
-  grid-marginalised Bayes factor, the best SNR) for ROC curves.
+  grid-marginalized Bayes factor, the best SNR) for ROC curves.
 * [`spectra`][virgil.spectra]: wavelength-dependent fluxes.
 * [`gains`][virgil.gains]: calibration gains correlated across channels.
 * [`priors`][virgil.priors]: isotropic-orientation priors (inclination,

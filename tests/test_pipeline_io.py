@@ -179,3 +179,40 @@ def test_core_import_does_not_need_the_extra(monkeypatch):
     monkeypatch.setitem(sys.modules, "h5py", None)
     with pytest.raises(ImportError, match=r"virgil-astro\[pipeline\]"):
         BinaryPipeline(OIData(NUHOR))
+
+
+def test_data_fingerprint_covers_every_field():
+    """The resume check must notice any change to the data, not just to the
+    observables (the old fingerprint hashed twelve arrays and three flags)."""
+    import copy
+
+    import jax.numpy as np
+    from virgil.coverage import vlti_oidata
+
+    def replace(data, **fields):
+        other = copy.copy(data)
+        for name, value in fields.items():
+            object.__setattr__(other, name, value)
+        return other
+
+    def build():
+        return vlti_oidata(
+            hour_angles_h=(-1.0, 0.0),
+            wavelengths_m=onp.linspace(2.0e-6, 2.4e-6, 3),
+        )
+
+    data = build()
+    assert data.stations is not None
+    base = _io.data_fingerprint(data)
+    assert _io.data_fingerprint(build()) == base
+
+    changed = {
+        "stations": replace(data, stations=data.stations + 1),
+        "t_ref": replace(data, t_ref=(data.t_ref or 0.0) + 1.0),
+        "dt": replace(data, dt=np.full(data.u.shape, 0.5)),
+        "frame": replace(data, frame=data.frame + 1),
+        "gains": data.with_gains(telescope=0.01),
+        "phase_offsets": data.with_closure_offsets(baseline=0.01),
+    }
+    for name, other in changed.items():
+        assert _io.data_fingerprint(other) != base, name

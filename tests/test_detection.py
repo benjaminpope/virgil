@@ -201,7 +201,7 @@ def test_log_bayes_factor_is_stable_under_grid_refinement():
     "virgil.detection.detection_statistics",
     roots=["self-consistency"],
 )
-def test_log_bayes_factor_matches_a_brute_force_marginalisation():
+def test_log_bayes_factor_matches_a_brute_force_marginalization():
     grid = {
         "dra": onp.array([30.0, 60.0, 90.0]),
         "ddec": onp.array([-60.0, -40.0, -20.0]),
@@ -402,7 +402,7 @@ def test_monte_carlo_is_reproducible_and_independent_of_chunking():
     )
 
 
-def test_draw_batch_vectorises_the_same_draws():
+def test_draw_batch_vectorizes_the_same_draws():
     # draw_batch > 1 vmaps the search over draws (the tutorial uses it to
     # amortise the flux optimizer's loop); draw i keeps its key.
     inj = injection_grid([60.0], [1e-2], 4, 1)

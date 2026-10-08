@@ -2,13 +2,13 @@
 
 Status: implemented on `sampler-flat-coords` (0.4.0 backlog, "sampler
 health"). Follows the 2026-10-05 decision in `imaging_plan.md` (standing
-decision 9) that `fit` optimises each prior in its flat coordinate.
+decision 9) that `fit` optimizes each prior in its flat coordinate.
 
 ## Problem
 
 A Jeffreys prior on a scale (`LogUniform(a, b)`) or an orientation
 (`IsotropicInclination`, `IsotropicLatitude`) is uniform in some coordinate
-u of its parameter x: u = log x, cos i, sin(lat). `fit` has optimised in u
+u of its parameter x: u = log x, cos i, sin(lat). `fit` has optimized in u
 since #226. `numpyro_model` still let numpyro map each site to NUTS's
 unconstrained z with `biject_to(prior.support)`, the logit of the
 *linear* position of x in its interval, so `fit`, `gauss_newton_mass` and
@@ -27,7 +27,7 @@ the clean logistic density that `fit`'s coordinate gives.
 | `gauss_newton_mass` | `src/virgil/fitting.py:824` | `_Objective(flat=False)`: numpyro's coordinates | `flat=flat_coordinates` (default flat), matching NUTS |
 | `fit`, `bias_test`, `OrbitStart` (MAP, not sampling) | `src/virgil/fitting.py:432`, `src/virgil/simulate.py:72`, `src/virgil/epochs.py:1662` | flat (since #226) | unchanged |
 | `laplace_samples` | `src/virgil/imaging.py:1936` | Gaussian in a field's latents (Normal priors) | unchanged: no flat-coordinate prior |
-| grid marginalisation (`linear_flux_grid(prior=LogUniform)`, detection log Bayes factor) | `src/virgil/grid_fit.py:556`, `src/virgil/detection.py:358` | closed-form/quadrature in log f | unchanged: not a sampler |
+| grid marginalization (`linear_flux_grid(prior=LogUniform)`, detection log Bayes factor) | `src/virgil/grid_fit.py:556`, `src/virgil/detection.py:358` | closed-form/quadrature in log f | unchanged: not a sampler |
 
 ## Reparametrization
 
@@ -147,7 +147,7 @@ including the poles of the isotropic priors.
 ## Variational inference (numpyro SVI): implemented (virgil#12)
 
 **Status: implemented** as `virgil.svi.variational(model, priors, data,
-regularisers=(), *, noise, likelihoods, start, guide="bnaf", steps=3000,
+regularizers=(), *, noise, likelihoods, start, guide="bnaf", steps=3000,
 optimizer, learning_rate=3e-3, num_particles=8, num_samples=2000, key,
 flat_coordinates=True, dense_start=True, init_scale=0.1, window, psis=True,
 dtype="float64", **options)`, returning a `VariationalResult` (`samples`
@@ -168,7 +168,7 @@ Gaussian guide (reverse KL over the whole posterior) and the Laplace
 approximation (curvature at the mode) nearly agree, and virgil already
 has the latter (`gauss_newton_mass`, `laplace_cov`, `laplace_samples`).
 SVI earns its keep only with a guide that can capture non-Gaussian
-shape, so the default is a normalising flow; `"mvn"` is kept and
+shape, so the default is a normalizing flow; `"mvn"` is kept and
 documented as ≈ Laplace.
 
 **Starting at the Laplace approximation (the Laplace frame).** numpyro's

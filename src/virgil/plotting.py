@@ -30,6 +30,7 @@ import numpy as onp
 from matplotlib.ticker import FuncFormatter
 
 from ._deprecate import renamed
+from ._geometry import separation_pa
 from ._utils import is_flux_param, resolve_flux_param
 from .limits import flux_to_contrast, flux_to_delta_mag, radial_profile
 
@@ -592,10 +593,7 @@ def diagnostics_table_from_samples(
     flux = onp.power(10.0, flux_raw) if log10_flux else flux_raw
 
     df = pd.DataFrame({"dra": dra, "ddec": ddec, "flux": flux})
-    df["sep"] = onp.sqrt(df["dra"] ** 2 + df["ddec"] ** 2)
-    df["pa"] = (
-        onp.degrees(onp.arctan2(df["dra"], df["ddec"])) + 360.0
-    ) % 360.0
+    df["sep"], df["pa"] = separation_pa(dra, ddec)
     return df
 
 
@@ -618,17 +616,10 @@ def truth_cartesian_and_polar(truth):
         "ddec": float(truth["ddec"]),
         "flux": float(truth["flux"]),
     }
+    sep, pa = separation_pa(truth_cart["dra"], truth_cart["ddec"])
     truth_polar = {
-        "sep": float(
-            onp.sqrt(truth_cart["dra"] ** 2 + truth_cart["ddec"] ** 2)
-        ),
-        "pa": float(
-            (
-                onp.degrees(onp.arctan2(truth_cart["dra"], truth_cart["ddec"]))
-                + 360.0
-            )
-            % 360.0
-        ),
+        "sep": float(sep),
+        "pa": float(pa),
         "flux": truth_cart["flux"],
     }
     return truth_cart, truth_polar

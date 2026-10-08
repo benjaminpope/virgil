@@ -41,7 +41,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
-- **NUTS samples each prior in its flat coordinate, as `fit` optimises
+- **NUTS samples each prior in its flat coordinate, as `fit` optimizes
   it.** `numpyro_model` now maps a `LogUniform` scale to NUTS's
   unconstrained coordinate through log x, an `IsotropicInclination`
   through cos i and an `IsotropicLatitude` through sin(lat), for
@@ -54,6 +54,9 @@ anything before 1.0 may change between minor versions.
   bijection of each prior's support), e.g. to reuse saved unconstrained
   `init_params`. See `design/sampler_flat_coordinates.md`.
 
+- **Warnings and precision (#306).** `Tabulated` now warns with `FutureWarning` (as every other deprecation does) instead of the default-hidden `DeprecationWarning`; the four warnings that set no category (`Ensemble` too few members kept, every closure phase flagged, unmatched T3 legs, `t_ref = 0` with MJD times) now say `UserWarning`. `cvis_uniform_disk` takes `diam` like the other disks (`ud=` still works with a `FutureWarning`). The two pixel-sum matmuls in `GaussianArc`/`TruncatedCone` use `Precision.HIGHEST`, as the rest of the forward model does (TF32 on A100/H100 otherwise). The AMIGO covariance check takes its tiny-number floor from the array's dtype. `tests/_test_data.py` finds `data/` from its own location, not the working directory.
+- **Oxford -ize spelling in names (#306).** `fit`, `numpyro_model` and `diagnose` take `regularizers` (not `regularisers`), `RVData.term` takes `marginalize_offsets` (not `marginalise_offsets`), and the numpyro factor sites for regularizers are named `regularizer_<i>`. The old keywords still work with a `FutureWarning` until 0.5 (`_deprecate.renamed`). Private names (`_linear.standardize`, `_diagonalized`, `_summarize`, `_normalize`) and the spelling in docstrings, comments and the hand-written docs follow. `barycenter` and the already -ize public names (`regularized_inverse`, `optimized_*`, `standardize_model`, `Image(normalize=)`) are unchanged.
+- **Deprecated parameter names are gone from public signatures (#306).** `OIData.model`, `OIData.with_model` and every `observables.*.predict` take `model` (not `model_object`), `inflated_errors` takes `data` (not `data_obj`), and `joint_data` / `joint_errors` take `data` (not `observations`). The old keywords still work with a `FutureWarning` until 0.5, through the same `_deprecate.renamed` path as the other functions. Private helpers in `likelihood`, `inference` and `oidata` were renamed to match.
 - **One import convention (#306).** `import jax.numpy as np` and `import numpy as onp` everywhere in `src`, `tests`, `examples`, `scripts` and `design/sketches` (six `src` modules and three tests had the two swapped, so code moved between files silently changed backend). Ruff's `ICN001` now enforces it; notebooks keep their old aliases until they are next re-executed.
 - **Orbit starts are scale-aware (#268).** `epoch_positions` now scores
   its grid on the scale-marginalized surface m = -Σ_b (ν_b/2) ln χ²_b,
@@ -86,6 +89,22 @@ anything before 1.0 may change between minor versions.
   ranking. The default stays `"quoted"` in 0.4, with a `FutureWarning`
   when `scales` is not given; it will become `"marginal"`.
 
+- **Duplicated and dead code removed (part of #310; no behaviour change).**
+  `legacy.oifits_implaneia.GetWavelength`, `Format_STAINDEX_V2`,
+  `Format_STAINDEX_T3`, `rad2mas` and the `cp_indices` re-export are
+  deprecated (`FutureWarning`; removal in 0.6), since nothing uses them.
+  Internally: `epochs` and `pipeline.binary` use the `_utils` unit
+  constants; `FWHM_PER_SIGMA` moved to `_utils` (still importable from
+  `detection`) and replaces the hand-written `2.3548` and
+  `2*sqrt(2 ln 2)` (the two literal `2.3548`s in `imaging` now use the
+  exact value, a 1e-5 relative change in an envelope-fit starting width);
+  `coverage` uses `_geometry.rotate` (which now stays in NumPy for NumPy inputs); `meshgrid_vectors` is
+  `coordinate_points`; one `_unit_sum`; `pipeline.cli` uses
+  `_io.read_json` and `_io.sha256_file`; `pipeline.binary` takes skewness
+  and kurtosis from `scipy.stats`; the `batch_size` and noise-term
+  "Priors" docstrings are stated once and referred to. Unused
+  `_utils.i2pi` removed.
+
 ### Fixed
 
 - **Isotropic priors have finite gradients at the poles in float32.**
@@ -94,9 +113,50 @@ anything before 1.0 may change between minor versions.
   `where` had an infinite slope), and their final clip a slope of 1/2 at
   the bounds; both now keep the true derivative.
 
+- **Drifted copies unified (part of #310).**
+  - **Pipeline resume fingerprint.** `pipeline._io.data_fingerprint` now
+    hashes every field of the `OIData` (it is `detection._fingerprint`),
+    not twelve arrays and three flags, so a change to the stations,
+    `t_ref`, `dt`, frames, gains, closure offsets, extra observables or
+    uv grid is noticed on resume. **This changes every fingerprint: run
+    folders written by earlier versions no longer match, so resuming one
+    raises a `ConfigMismatchError` ("the data differ"), and their cached
+    stages are recomputed once you start it over with `run(resume=False)`
+    (`--fresh`) or in a new folder.**
+  - **Zero errors.** `OIData` now drops V² and phase samples with a zero
+    (or negative) error, as it already did for extra observables
+    (`OI_FLUX`, `|V|`, `T3AMP`); a zero error gives an infinite whitened
+    residual, which made every likelihood and fit non-finite. Flagged
+    and non-finite samples were already dropped.
+  - **Orbit ranking.** `rank_orbits` (and so `start_from_positions`)
+    orders orbits with `orbit_search.rank_scores`, as
+    `score_orbits(...).order()` does: scores within 1e-3 nat tie and
+    rank by index, and non-finite ones rank last. Orbits whose scores
+    differ by less than that can come out in a different order than
+    before.
+  - **Field of view.** `imaging.field_of_view`, `nyquist_pixel_scale`,
+    `Epochs.resolution_mas` and the pipeline's `fov_mas`,
+    `resolution_mas` and `lambda_over_b_mas` share
+    `_geometry.fringe_scales`: per-sample `B/λ` over non-zero baselines.
+    The pipeline used the longest wavelength over the shortest baseline,
+    which are not observed together when the uv sampling differs between
+    channels, so its `fov_mas` can be smaller (and its default
+    `max_sep`, a fraction of it).
+  - **Position angles.** One `_geometry.position_angle` /
+    `separation_pa` (North through East, `[0, 360)`) serves the models,
+    orbits, plotting and the pipeline. `KeplerOrbit.frame(...)["line_pa"]`
+    was in (-180, 180]; it is now in `[0, 360)` (equal modulo 360, and
+    `towards_primary` is still `line_pa + 180`).
+  - **Phase units** (`oifits` columns and `OIData` records) go through
+    one parser, with one error message; a blank `TUNIT` or `phi_unit` now
+    means the default unit in both. One check for the names of
+    `System` components and `Sum` parts (derived from the class's own
+    fields), one `wrap_phase`, and the pipeline's prior-bound fractions
+    use `fitting._bound_fraction` (a prior with a flat coordinate, such
+    as `IsotropicInclination`, no longer counts its poles as bounds).
 - **`virgil.ensemble` default selection.** The L-curve window now keeps
   the weights from `window_dex` below the corner up to the corner (MYTHRA's
-  "just before the turnover"), not the over-regularised side above it. The
+  "just before the turnover"), not the over-regularized side above it. The
   default weight ranges reach a decade lower (`tsv` 0.1–10⁴, the others
   10⁻⁴–10 per data point), set from the corners of the 60 datasets of
   virgil-validation's contest bench, and each sweep draws one log-uniform
@@ -165,7 +225,7 @@ anything before 1.0 may change between minor versions.
   inputs when no `beam` is given (the docstring already said so); a beam
   with arrays and no pixel scale still raises a clear `ValueError`.
 - The `lawson_sigma_over_peak` docstring now states that both images are
-  normalised over the whole array, so flux in empty sky does affect σ.
+  normalized over the whole array, so flux in empty sky does affect σ.
   Values are unchanged.
 - `limits.chi2ppf` works for any number of degrees of freedom on a
   standard install. For `df != 1` it called numpyro's `gammaincinv`,
@@ -197,8 +257,8 @@ anything before 1.0 may change between minor versions.
   the model's parameters under NUTS's site names, the loss history, the
   guide and its parameters, a convergence flag and the PSIS k̂. Every guide
   starts at the Laplace approximation (the fit and its Gauss–Newton
-  covariance, at the nominal errors and without regularisers; with
-  regularisers it starts at `init_scale` instead) and learns in units of
+  covariance, at the nominal errors and without regularizers; with
+  regularizers it starts at `init_scale` instead) and learns in units of
   its widths. The default is a block
   neural autoregressive flow (`"bnaf"`), which follows curved, skewed and
   bounded posteriors; `"iaf"`, `"mvn"` (a Gaussian, ≈ Laplace) and
@@ -299,7 +359,7 @@ analysis or warn:
 
 - **`fit` with a `LogUniform` prior now returns the MAP in `log x`.** This
   covers priors on parameters and on `noise=` terms (#226). Each prior is
-  optimised in its flat coordinate (`LogUniform(a, b)` in `log x`; isotropic
+  optimized in its flat coordinate (`LogUniform(a, b)` in `log x`; isotropic
   priors in `cos i` or `sin(lat)`), where it is constant, so the fit is the
   maximum of the likelihood inside the prior's range. In 0.2.0 it was the mode
   of likelihood × `1/x` in `x`, which pulled scales towards small values, so
@@ -331,7 +391,7 @@ analysis or warn:
   find the first crossing from below. Bounded results agree with 0.2.0 to
   about 1e-4.
 - **L-BFGS keeps 50 past steps** (`fit(lbfgs_memory=50)`, was optax's 10),
-  so L-BFGS fits, regularised images especially, change slightly.
+  so L-BFGS fits, regularized images especially, change slightly.
 - **`total_mass` and `distance_pc` use GM☉** instead of a³/P² in Julian
   years, which raises masses by 3.8e-5 (relative).
 - **`Tabulated` is deprecated** in favour of `virgil.spectra.Nodes`: it
@@ -349,7 +409,7 @@ analysis or warn:
   0.005 and closure phases 0.49). `OIData.with_error_scale` accepts the
   returned dictionary of factors per kind. Data whose covariance includes
   nuisance terms that do not scale with the quoted errors (gains, closure
-  offsets, marginalised flux scales, differential phases with a finite
+  offsets, marginalized flux scales, differential phases with a finite
   `prior_width`) raise a `ValueError`. The default single scale is unchanged.
 
 - **Hierarchical error scales and tied `noise=` terms.** A `noise=` entry of
@@ -387,7 +447,7 @@ analysis or warn:
   An optional `scale_bias` favours small scales; it is off by default.
 
 - **`fit(lbfgs_memory=50)`.** L-BFGS now keeps 50 past steps (optax's default
-  is 10). On regularised images, 10 stopped short of the optimum at many
+  is 10). On regularized images, 10 stopped short of the optimum at many
   weights; 50 reached lower losses (lower χ² and lower penalty together) and
   converged in 2–3× fewer steps for StarletL1, at a higher cost per step.
   L-BFGS fits therefore change slightly from earlier versions.
@@ -424,7 +484,7 @@ analysis or warn:
   A ring prior on the radius keeps MAP fits off the origin; von Mises and
   axial von Mises priors are chords √κ (v̂ − m̂), the same form as the phase
   residuals, so `fit`'s Levenberg–Marquardt and `gauss_newton_mass` take
-  them (`fit` used to reject `VonMises`). The density is normalised in the
+  them (`fit` used to reject `VonMises`). The density is normalized in the
   plane. For orbits, `orientation_priors` samples 2Ω and ϖ = Ω + ω (or Ω
   and ϖ with RVs), and `KeplerOrbit.from_varpi` builds the orbit. After
   Octofitter's `UniformCircular` and exoplanet's `Angle`.
@@ -442,9 +502,9 @@ analysis or warn:
   closure phases. They are off by default, so existing analyses are
   unchanged. The new `virgil.observables` blocks follow the phases in the data
   vector. Spectra are predicted from `total_spectrum`, with the grey scale
-  (and optionally a polynomial in λ) marginalised analytically under a broad
+  (and optionally a polynomial in λ) marginalized analytically under a broad
   Gaussian prior; `likelihood.flux_scale_posterior` reports it. Differential
-  phases use the exact arg V, with the continuum normalisation (offset and
+  phases use the exact arg V, with the continuum normalization (offset and
   delay over continuum channels) applied as a linear operator and its
   propagated covariance N D Nᵀ. Beside closure phases, only their
   closure-free part in the line windows is used, so nothing is counted
@@ -459,7 +519,7 @@ analysis or warn:
 - **Detection statistics for ROC curves (`virgil.detection`).**
   `detection_statistics(data, model, samples_dict)` returns, from one
   companion grid search, the profile likelihood ratio `delta_chi2` (flux >= 0),
-  a grid-marginalised `log_bayes_factor` against no companion (trapezoid prior
+  a grid-marginalized `log_bayes_factor` against no companion (trapezoid prior
   weights, uniform in position and following the flux axis's spacing), the
   largest flux/σ `max_snr`, and the best position and flux. It is traceable in
   the data, so it compiles once under `jax.lax.map` over simulated datasets;
@@ -517,10 +577,10 @@ analysis or warn:
   `log_norm(values)`, the `Σ log σ_eff` that a fitted error makes
   non-constant: `fit` adds it to the loss, defaults to L-BFGS (as for
   `noise=`), and raises `TypeError` for `method="lm"`. `numpyro_model` needs
-  no change, since the term's `loglike` is already normalised.
+  no change, since the term's `loglike` is already normalized.
 
 - **Marginalised RV zero points.** `RVData(..., instrument=labels)` and
-  `RVData.term(params, marginalise_offsets=(mean, sd))` marginalise one
+  `RVData.term(params, marginalise_offsets=(mean, sd))` marginalize one
   velocity zero point per instrument analytically (Luger, Foreman-Mackey &
   Hogg 2017), in O(N k²) by the Woodbury identity and the matrix-determinant
   lemma, with the jitter-dependent log-determinant in `log_norm`.
@@ -543,7 +603,7 @@ analysis or warn:
 - **Closure-phase offsets per frame** (Stage 6d).
   `OIData.with_closure_offsets(baseline=, triangle=, modes=)` adds closure-phase
   offsets common to a frame's channels (per baseline, as T·e; per triangle; or
-  supplied modes), marginalised analytically on the whitened closure phases,
+  supplied modes), marginalized analytically on the whitened closure phases,
   with widths `phi_offset_baseline`, `phi_offset_triangle` and
   `phi_offset_modes`. Four or more telescopes; off by default.
 
@@ -574,7 +634,7 @@ analysis or warn:
   `OIData.with_gains(telescope=, baseline=, chromatic=, modes=)` adds gains
   on log |V| per frame: per telescope, per baseline, a chromatic coherence
   loss, or supplied modes such as a calibrator PCA's. The likelihood
-  marginalises them analytically (`virgil.gains`), and their widths can be
+  marginalizes them analytically (`virgil.gains`), and their widths can be
   fitted or sampled with the noise terms `vis_gain_telescope`,
   `vis_gain_baseline`, `vis_gain_chromatic` and `vis_gain_modes`.
   `OIData.stations` holds each sample's station pair, read from `STA_INDEX`.
@@ -595,7 +655,7 @@ analysis or warn:
   takes (`PositionData.term`, `RVData.term`, or a callable returning whitened
   residuals) can now be sampled: term `i` is added as the site
   `likelihood_<i>`, and `data_obj` may be `()`. Only `PositionData` and
-  `RVData` terms are fully normalised Gaussian log densities (like the OIData
+  `RVData` terms are fully normalized Gaussian log densities (like the OIData
   terms); a plain callable of whitened residuals adds `-0.5 * sum(r**2)` only.
 
 - **`TruncatedCone`.** A thin, optically thin conical shell truncated near its
@@ -694,7 +754,7 @@ analysis or warn:
   closure phases go from 10/130 to 130/130, and every χ² from them changes.
   Files with a constant `TIME` group as before, and epochs and model times
   still come from `MJD`.
-- **`fit` optimises each prior in its flat coordinate.** A prior that is
+- **`fit` optimizes each prior in its flat coordinate.** A prior that is
   uniform in some coordinate of its parameter, `LogUniform(a, b)` in
   `log x`, or any prior with a `flat_coordinate()` method (isotropic
   inclinations in `cos i`, latitudes in `sin(lat)`), is fitted in that
@@ -711,7 +771,7 @@ analysis or warn:
   width and flux (flux bounds 1e-4 to 100), so the starting point may differ
   slightly.
 
-- **One home for analytic marginalisation of linear parameters.**
+- **One home for analytic marginalization of linear parameters.**
   `virgil._linear` holds the shared algebra: `LinearMarginal(design,
   prior_mean, prior_sd | prior_cov, method)`, the successive rank-one and
   dense-Cholesky whitenings, and the conditional posterior. The gains,
@@ -740,7 +800,7 @@ analysis or warn:
   (`design/codebase_review_2026-10b.md`, B1, B2, S2 and S5).
   - `injection_limits(flux_bounds=None)` returned 1000, the top of its search
     range, at every position whose limit was above about 1e-3. For a
-    normalised scene the significance falls again once the companion
+    normalized scene the significance falls again once the companion
     outshines the primary, and the bisection ended at that top. Both limit
     functions now find the *first* crossing from below: they step up by
     quarter decades (CANDID steps by 1.4) and then bisect the last step in
@@ -779,12 +839,12 @@ analysis or warn:
   one call (default off, so existing callers are unchanged).
 
 - **`log_evidence` with calibration gains or closure offsets** now includes
-  the likelihood's model-dependent normalisation, ½ log det of the
-  marginalised nuisances' covariance factor (and, for extra observable
-  blocks, their effective-error normaliser), exactly as `model_loglike`
+  the likelihood's model-dependent normalization, ½ log det of the
+  marginalized nuisances' covariance factor (and, for extra observable
+  blocks, their effective-error normalizer), exactly as `model_loglike`
   evaluates it. Before, it used the whitened χ² alone, so wider gains
   always looked better. Values for plain data are unchanged; the evidence
-  still omits the data-only normalisation (`-Σ log σ - ½ n log 2π`).
+  still omits the data-only normalization (`-Σ log σ - ½ n log 2π`).
 
 - **`log_evidence` and `clean` on high signal-to-noise data (#214).** The
   evidence takes `log det(I + JᵀJ)` from the singular values of the Jacobian,
@@ -904,7 +964,7 @@ analysis or warn:
 - **Image reconstruction.** An `Image` component (a pixel map in a `System`,
   with an exact DFT, and an exact matrix Fourier transform on the uv lattices of
   AMIGO DISCO data), `fit` (Levenberg-Marquardt, L-BFGS or Adam, in float64 by
-  default), the regularisers `MaxEntropy`, `TSV`, `TV` and `Centroid`,
+  default), the regularizers `MaxEntropy`, `TSV`, `TV` and `Centroid`,
   `l_curve` with corner, discrepancy and classic MaxEnt weights,
   `GaussianField` Gaussian-process pixels, `log_evidence`, `error_scale`
   (MacKay's re-estimate of the error bars), `dirty_image`, `beam`,
@@ -927,7 +987,7 @@ analysis or warn:
 ### Fixed and improved
 
 - One likelihood (`likelihood.whitened_residuals`) for fitting, grids, limits
-  and sampling, with normalised Gaussian log-likelihoods.
+  and sampling, with normalized Gaussian log-likelihoods.
 - The image coordinate convention (East left, North up, position angle North
   to East) is applied everywhere, including a position-angle bug in
   `BinaryModelAngular` and the orientation of plots.
@@ -940,7 +1000,7 @@ analysis or warn:
 
 - The rim's non-negativity check (`ModulatedGaussianRim`, `is_physical`) no
   longer passes negative brightness when the top azimuthal order is zero.
-- Independent phases use the exact von Mises normaliser, so fitted phase
+- Independent phases use the exact von Mises normalizer, so fitted phase
   errors are no longer biased at large sigma (a true 1.8 rad used to fit as
   1.3 rad). Small-sigma likelihoods are unchanged.
 - Converting V^2 to amplitudes or log-amplitudes floors the data at their own

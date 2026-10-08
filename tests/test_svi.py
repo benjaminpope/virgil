@@ -103,7 +103,7 @@ def test_a_posterior_gaussian_in_z_is_recovered_exactly(flat):
     """With the posterior exactly Gaussian in z, the Gaussian guide is
     exact. Started at the fit's values, the Gauss–Newton width is exact:
     log q - log p is then the same constant for every draw, the
-    normalisation 0.5 log det(2πΣ), so the loss is exactly that. (The
+    normalization 0.5 log det(2πΣ), so the loss is exactly that. (The
     gradient's score term still has zero mean but not zero variance, which
     Adam would follow, so that check uses a negligible step size.) Started
     at a unit width, the guide converges to the posterior."""
@@ -121,9 +121,9 @@ def test_a_posterior_gaussian_in_z_is_recovered_exactly(flat):
     onp.testing.assert_allclose(loc, MU, atol=1e-8)
     onp.testing.assert_allclose(cov, COV, atol=1e-8)
     assert exact.info["dense_start"]
-    normalisation = 0.5 * onp.log(onp.linalg.det(2 * onp.pi * COV))
+    normalization = 0.5 * onp.log(onp.linalg.det(2 * onp.pi * COV))
     # PRIORS are float32 inside the term, float64 in the model: 1e-7.
-    onp.testing.assert_allclose(exact.losses, -normalisation, atol=1e-6)
+    onp.testing.assert_allclose(exact.losses, -normalization, atol=1e-6)
 
     learnt = variational(
         _no_model,

@@ -7,7 +7,7 @@ data prefer a companion to none:
 - ``delta_chi2``, the profile likelihood ratio 2 [max log L − log L₀] over
   the grid, with the companion flux constrained to be non-negative;
 - ``log_bayes_factor``, the log evidence ratio of "a companion somewhere on
-  the grid" to "no companion", marginalised over the grid;
+  the grid" to "no companion", marginalized over the grid;
 - ``max_snr``, the largest best-fit flux over its Laplace uncertainty, the
   significance map of the composition tutorial.
 
@@ -62,7 +62,7 @@ from ._grid import (
     resolve_grid_keys,
     warn_unconverged,
 )
-from ._utils import concrete
+from ._utils import FWHM_PER_SIGMA, concrete, wrap_phase
 from .grid_fit import (
     _best_grid_flux,
     _laplace_flux_uncertainty_grid,
@@ -92,7 +92,6 @@ STATISTICS = ("delta_chi2", "log_bayes_factor", "max_snr")
 # relative: ~1e-6 at two steps per FWHM (s = 1.18 sigma), but 20% at
 # s = 3 sigma.
 MIN_PEAK_STEPS = 2.0
-FWHM_PER_SIGMA = 2.0 * onp.sqrt(2.0 * onp.log(2.0))
 
 
 @old_order("data", "model", "grid", data="data")
@@ -296,7 +295,7 @@ def _detection_statistics(
     delta_chi2 = 2.0 * (profile.reshape(-1)[best] - loglike0)
     best_flux = profile_flux.reshape(-1)[best]
 
-    # Grid-marginalised evidence ratio over the trapezoid-weighted prior.
+    # Grid-marginalized evidence ratio over the trapezoid-weighted prior.
     log_ratio = np.where(np.isnan(loglike_im), -np.inf, loglike_im - loglike0)
     log_bayes_factor = jax.nn.logsumexp(
         log_ratio + _log_prior_weights(loglike_im.shape, log_ratio.dtype)
@@ -354,7 +353,7 @@ def _constrained_profile(
 
 
 def _log_prior_weights(shape, dtype):
-    """Log trapezoid weights in the grid index, normalised to sum to 1.
+    """Log trapezoid weights in the grid index, normalized to sum to 1.
 
     Along each axis the weights are 1 inside and ½ at the two ends (1 for
     an axis of one point); the grid's weight is their outer product.
@@ -674,7 +673,7 @@ def bootstrap_null(null_scene, data, *, method="sign_flip"):
     vis_white = resid[:n_vis] / data.d_vis
     phi = resid[n_vis:]
     if data._phases_wrap:
-        phi = np.mod(phi + np.pi, 2.0 * np.pi) - np.pi
+        phi = wrap_phase(phi)
         if data.cp_noise is not None:
             phi_white = data.cp_noise.whiten(phi, data.d_phi)[0]
         else:
@@ -811,7 +810,7 @@ def injection_recovery(
     flux_param : str, optional
         The flux key of ``grid``, as for the grid tools.
     draw_batch : int, optional
-        Draws evaluated together (vectorised) within ``jax.lax.map``. When
+        Draws evaluated together (vectorized) within ``jax.lax.map``. When
         ``batch_size`` is omitted, it is capped at the default grid batch
         size, so that ``draw_batch`` searches of at least one grid point
         each never exceed the budget of one search.
@@ -1290,7 +1289,7 @@ class DetectionMC:
         The same per injected draw, plus the injected values under their
         names (e.g. ``dra``, ``ddec``, ``flux``).
     meta : dict
-        JSON-serialisable: the grid, fingerprints (hashes of every field,
+        JSON-serializable: the grid, fingerprints (hashes of every field,
         static or not) of the model, the null scene and the template, the
         noise model,
         ``match_radius``, the numbers of draws, the seeds and the virgil

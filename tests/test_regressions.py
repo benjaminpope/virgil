@@ -196,6 +196,24 @@ def test_oifits_phase_units_convert_values_and_uncertainties_to_radians():
         assert np.allclose(oidata.d_phi, expected_d_phi)
 
 
+def test_an_unsupported_phase_unit_is_refused_alike_from_dict_and_fits():
+    """Both readers share one unit parser, so one message names the unit and
+    where it came from (they used to say different things)."""
+    data = _base_dict(cp_flag=False, i_cps1=None, i_cps2=None, i_cps3=None)
+    data["phi"] = np.array([0.0, 1.0, 2.0])
+    data["d_phi"] = np.array([1.0, 2.0, 3.0])
+    data["phi_unit"] = "turns"
+    with pytest.raises(ValueError, match="Unsupported phase unit 'turns'"):
+        OIData(data)
+    fits_input = _make_fake_oifits_phase_input(
+        "OI_VIS", onp.array([10.0, -20.0]), onp.array([1.0, 2.0]), "TURNS"
+    )
+    with pytest.raises(
+        ValueError, match="Unsupported phase unit 'TURNS' for VISPHI"
+    ):
+        OIData(fits_input)
+
+
 def test_cp_flag_inferred_from_indices_when_missing():
     data = _base_dict(
         cp_flag=False,

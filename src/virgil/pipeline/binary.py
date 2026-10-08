@@ -5,14 +5,35 @@ from __future__ import annotations
 import math
 
 import numpy as onp
+from scipy import stats
 
 from . import _checks, _io
+from .._geometry import separation_pa
 from ._core import Stage, _Pipeline
-
-MAS_PER_RAD = 180.0 / math.pi * 3600.0 * 1000.0
 
 # Fraction of a prior's range, at either end, counted as "at the bound".
 _BOUND_FRACTION = 0.01
+
+
+def _bound_samples(prior, samples):
+    """Fraction of ``samples`` in the outer ``_BOUND_FRACTION`` of the
+    prior's finite range at either end, or ``None`` if it has no edges.
+
+    The range is the one ``fit`` reports (``fitting._bound_fraction``): a
+    LogUniform's in log x, an interval support's, and none for tied terms,
+    angle vectors, or priors with a flat coordinate (their ends are poles).
+    """
+    from ..fitting import _bound_fraction
+
+    x = onp.asarray(samples, dtype=float).ravel()
+    fraction = _bound_fraction(prior, x)
+    if fraction is None:
+        return None
+    return float(
+        onp.mean(
+            (fraction < _BOUND_FRACTION) | (fraction > 1 - _BOUND_FRACTION)
+        )
+    )
 
 
 def _close(fig):
@@ -29,22 +50,26 @@ def _save(fig, path):
 
 def _geometry(data):
     """Baseline and resolution figures of ``data`` (metres, mas)."""
+    from .._geometry import fringe_scales
+
     u = onp.asarray(data.u, dtype=float)
     v = onp.asarray(data.v, dtype=float)
     wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
     baseline = onp.hypot(u, v)
     positive = baseline > 0
-    b_min, b_max = baseline[positive].min(), baseline[positive].max()
+    finest, coarsest = fringe_scales(data)
     return {
-        "baseline_min_m": float(b_min),
-        "baseline_max_m": float(b_max),
+        "baseline_min_m": float(baseline[positive].min()),
+        "baseline_max_m": float(baseline[positive].max()),
         "wavel_min_m": float(wavel.min()),
         "wavel_max_m": float(wavel.max()),
-        # Half of λ/B_max: inside it, separation and flux are degenerate.
-        "resolution_mas": float(0.5 * wavel.min() / b_max * MAS_PER_RAD),
-        # λ/B_min: the field over which the coverage is unambiguous.
-        "fov_mas": float(wavel.max() / b_min * MAS_PER_RAD),
-        "lambda_over_b_mas": float(wavel.min() / b_max * MAS_PER_RAD),
+        # Half of the finest λ/B: inside it, separation and flux are
+        # degenerate.
+        "resolution_mas": float(0.5 * finest),
+        # The coarsest λ/B: the field over which the coverage is
+        # unambiguous.
+        "fov_mas": float(coarsest),
+        "lambda_over_b_mas": float(finest),
     }
 
 
@@ -57,8 +82,9 @@ def _chi2(model, data, **noise):
 
 def _moments(r):
     r = onp.asarray(r, dtype=float)
-    z = (r - r.mean()) / (r.std() or 1.0)
-    return float(onp.mean(z**3)), float(onp.mean(z**4) - 3.0)
+    if r.std() <= 1e-12 * max(abs(r.mean()), 1.0):
+        return 0.0, -3.0  # scipy gives NaN for (near-)constant residuals
+    return float(stats.skew(r)), float(stats.kurtosis(r))
 
 
 GLOBAL_NSIGMA_METHOD = "Sidak estimate, not a simulated FAP"
@@ -309,11 +335,9 @@ class BinaryPipeline(_Pipeline):
 
         if not isinstance(self.model, BinaryModelAngular):
             return BinaryModelCartesian(0.0, 0.0, 0.0)
-        import jax.numpy as np
 
         def model(dra, ddec, flux):
-            sep = np.hypot(dra, ddec)
-            pa = np.degrees(np.arctan2(dra, ddec)) % 360.0
+            sep, pa = separation_pa(dra, ddec)
             return BinaryModelAngular(sep, pa, flux)
 
         return model
@@ -375,8 +399,8 @@ class BinaryPipeline(_Pipeline):
             Stage("quicklook", _quicklook, ("quicklook.ipynb",)),
         )
 
-    def _summarise(self, reports):
-        return _summarise(self.settings, reports)
+    def _summarize(self, reports):
+        return _summarize(self.settings, reports)
 
 
 # === STAGES ===
@@ -719,9 +743,8 @@ def _posterior(p):
     sampled = dict(samples)
     if angular:
         # The model's own parameters, derived from the sampled offsets.
-        samples["sep"] = onp.hypot(sampled["dra"], sampled["ddec"])
-        samples["pa"] = _wrap(
-            onp.degrees(onp.arctan2(sampled["dra"], sampled["ddec"]))
+        samples["sep"], samples["pa"] = separation_pa(
+            sampled["dra"], sampled["ddec"]
         )
     extra = mcmc.get_extra_fields(group_by_chain=True)
     stats = {
@@ -788,15 +811,9 @@ def _posterior(p):
         }
     bound = {}
     for k in params:
-        prior = priors[k]
-        if not hasattr(prior, "low"):
-            continue
-        lo, hi = float(prior.low), float(prior.high)
-        x = onp.asarray(samples[k], dtype=float).ravel()
-        if type(prior).__name__ == "LogUniform":
-            lo, hi, x = math.log(lo), math.log(hi), onp.log(x)
-        edge = _BOUND_FRACTION * (hi - lo)
-        bound[k] = float(onp.mean((x < lo + edge) | (x > hi - edge)))
+        fraction = _bound_samples(priors[k], samples[k])
+        if fraction is not None:
+            bound[k] = fraction
     divergent = float(onp.mean(stats["diverging"]))
 
     flat = {k: onp.asarray(samples[k], dtype=float).ravel() for k in reported}
@@ -855,10 +872,11 @@ def _companion(params, source):
     else:
         (dra, _), (ddec, _) = q("dra"), q("ddec")
         out.update(dra_mas=dra, ddec_mas=ddec)
+        sep, pa = separation_pa(dra, ddec)
         out.update(
-            sep_mas=math.hypot(dra, ddec),
+            sep_mas=float(sep),
             sep_err_mas=None,
-            pa_deg=float(_wrap(math.degrees(math.atan2(dra, ddec)))),
+            pa_deg=float(pa),
             pa_err_deg=None,
         )
     flux, flux_err = q("flux")
@@ -871,7 +889,7 @@ def _companion(params, source):
     return out
 
 
-def _summarise(settings, reports):
+def _summarize(settings, reports):
     sections, checks = {}, []
     load = reports.get("load")
     if load:
