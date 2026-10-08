@@ -128,6 +128,33 @@ def rotate(x, y, rotation_deg):
     return c * x + s * y, -s * x + c * y
 
 
+def _numpy_inputs(*values):
+    """Whether every value is a Python number or NumPy: not JAX or traced."""
+    concrete = (int, float, onp.ndarray, onp.generic)
+    return all(isinstance(a, concrete) for a in values)
+
+
+def position_angle(dra, ddec):
+    """Position angle in degrees of the offset ``(dra, ddec)``, in [0, 360).
+
+    ``dra`` is the offset East and ``ddec`` North (mas, or any common
+    unit), and the angle runs from North through East, so ``(0, 1)`` is 0°,
+    ``(1, 0)`` is 90° and ``(-1, 0)`` is 270°. This is the inverse of
+    ``(sep sin pa, sep cos pa)``. NumPy inputs are computed in NumPy,
+    anything else in JAX.
+    """
+    xp = onp if _numpy_inputs(dra, ddec) else np
+    return xp.mod(xp.rad2deg(xp.arctan2(dra, ddec)), 360.0)
+
+
+def separation_pa(dra, ddec):
+    """``(sep, pa)`` of the offset ``(dra, ddec)``: its length, and its
+    position angle as for [`position_angle`][virgil._geometry.position_angle]
+    (degrees, in [0, 360))."""
+    xp = onp if _numpy_inputs(dra, ddec) else np
+    return xp.hypot(dra, ddec), position_angle(dra, ddec)
+
+
 def fringe_scales(data):
     """The finest and coarsest fringe spacings of ``data``, in mas.
 

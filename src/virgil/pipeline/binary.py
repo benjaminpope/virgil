@@ -7,6 +7,7 @@ import math
 import numpy as np
 
 from . import _checks, _io
+from .._geometry import separation_pa
 from ._core import Stage, _Pipeline
 
 # Fraction of a prior's range, at either end, counted as "at the bound".
@@ -331,11 +332,9 @@ class BinaryPipeline(_Pipeline):
 
         if not isinstance(self.model, BinaryModelAngular):
             return BinaryModelCartesian(0.0, 0.0, 0.0)
-        import jax.numpy as jnp
 
         def model(dra, ddec, flux):
-            sep = jnp.hypot(dra, ddec)
-            pa = jnp.degrees(jnp.arctan2(dra, ddec)) % 360.0
+            sep, pa = separation_pa(dra, ddec)
             return BinaryModelAngular(sep, pa, flux)
 
         return model
@@ -739,9 +738,8 @@ def _posterior(p):
     sampled = dict(samples)
     if angular:
         # The model's own parameters, derived from the sampled offsets.
-        samples["sep"] = np.hypot(sampled["dra"], sampled["ddec"])
-        samples["pa"] = _wrap(
-            np.degrees(np.arctan2(sampled["dra"], sampled["ddec"]))
+        samples["sep"], samples["pa"] = separation_pa(
+            sampled["dra"], sampled["ddec"]
         )
     extra = mcmc.get_extra_fields(group_by_chain=True)
     stats = {
@@ -869,10 +867,11 @@ def _companion(params, source):
     else:
         (dra, _), (ddec, _) = q("dra"), q("ddec")
         out.update(dra_mas=dra, ddec_mas=ddec)
+        sep, pa = separation_pa(dra, ddec)
         out.update(
-            sep_mas=math.hypot(dra, ddec),
+            sep_mas=float(sep),
             sep_err_mas=None,
-            pa_deg=float(_wrap(math.degrees(math.atan2(dra, ddec)))),
+            pa_deg=float(pa),
             pa_err_deg=None,
         )
     flux, flux_err = q("flux")

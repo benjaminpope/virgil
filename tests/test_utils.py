@@ -136,3 +136,29 @@ def test_check_az_prof_nonnegative_under_jit():
     check = jax.jit(check_az_prof_nonnegative)
     assert not bool(check(np.array([1.2, 0.0]), np.array([45.0, 0.0])))
     assert bool(check(np.array([0.5, 0.3]), np.array([10.0, 70.0])))
+
+
+def test_position_angle_is_north_through_east_in_zero_to_360():
+    import jax.numpy as jnp
+    from virgil._geometry import position_angle, separation_pa
+
+    dra = onp.array([0.0, 1.0, 0.0, -1.0, -1.0, 3.0])
+    ddec = onp.array([1.0, 0.0, -1.0, 0.0, 1.0, 4.0])
+    expected = [0.0, 90.0, 180.0, 270.0, 315.0, onp.degrees(onp.arctan(0.75))]
+    got = position_angle(dra, ddec)
+    assert isinstance(got, onp.ndarray)
+    assert onp.allclose(got, expected)
+    assert onp.all((got >= 0.0) & (got < 360.0))
+    # The same in JAX, traced, and for a scalar, and the inverse of
+    # (sep sin pa, sep cos pa).
+    assert onp.allclose(
+        position_angle(jnp.asarray(dra), ddec), expected, atol=1e-4
+    )
+    traced = jax.jit(lambda a, b: separation_pa(a, b))(dra, ddec)
+    sep, pa = traced
+    assert onp.allclose(sep, onp.hypot(dra, ddec), atol=1e-5)
+    assert onp.allclose(pa, expected, atol=1e-4)
+    assert onp.isclose(position_angle(-2.0, 0.0), 270.0)
+    th = onp.radians(got)
+    assert onp.allclose(onp.hypot(dra, ddec) * onp.sin(th), dra, atol=1e-12)
+    assert onp.allclose(onp.hypot(dra, ddec) * onp.cos(th), ddec, atol=1e-12)

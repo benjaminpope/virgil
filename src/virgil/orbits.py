@@ -38,6 +38,7 @@ import zodiax as zx
 from numpyro.distributions import constraints
 
 from ._linear import LinearMarginal
+from ._geometry import position_angle, separation_pa
 from ._utils import concrete
 from .angles import AngleVector
 from .priors import IsotropicInclination
@@ -377,7 +378,7 @@ class KeplerOrbit(zx.Base):
 
     def _frame(self, dt):
         dra, ddec, dz = self._relative(dt)
-        line_pa = np.rad2deg(np.arctan2(dra, ddec))
+        line_pa = position_angle(dra, ddec)
         constant = np.zeros_like(line_pa)
         return {
             "line_pa": line_pa,
@@ -411,8 +412,7 @@ class KeplerOrbit(zx.Base):
         """Separation (mas) and position angle (degrees, North through East,
         in [0, 360)) of the secondary from the primary."""
         dra, ddec, _ = self.relative(mjd)
-        pa = np.mod(np.rad2deg(np.arctan2(dra, ddec)), 360.0)
-        return np.hypot(dra, ddec), pa
+        return separation_pa(dra, ddec)
 
     def to_thiele_innes(self):
         """The same sky orbit as a :class:`ThieleInnesOrbit`."""
@@ -1479,7 +1479,7 @@ class _PositionAnglePrior(eqx.Module):
     def _log_jacobian(self, values):
         orbit = self.orbit_fn(values)
         dra, ddec, _ = orbit._relative(np.zeros(()))
-        theta = np.rad2deg(np.arctan2(dra, ddec))
+        theta = position_angle(dra, ddec)
         return position_angle_log_jacobian(
             theta, orbit.ecc, orbit.inc, orbit.omega, orbit.Omega
         )

@@ -40,6 +40,7 @@ from ._geometry import (
     image_visibilities,
     offset_phase,
     pixel_offsets,
+    separation_pa,
     rotate,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
@@ -3146,8 +3147,7 @@ class BinaryModelCartesian(SourceModel):
 
     def to_angular(self):
         """Return the equivalent [`BinaryModelAngular`][virgil.models.BinaryModelAngular]."""
-        sep = np.sqrt(self.dra**2 + self.ddec**2)
-        pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
+        sep, pa = separation_pa(self.dra, self.ddec)
         return BinaryModelAngular(sep, pa, self.flux)
 
     def total_spectrum(self, wavel):
