@@ -479,3 +479,10 @@ def test_residual_normality_passes_on_truth_noise(data):
     skew, kurt = _moments(r[:n])
     check = _checks.residual_normality(skew, kurt, n)
     assert check.status == "pass", check.message
+
+
+def test_moments_of_constant_residuals_are_finite():
+    from virgil.pipeline.binary import _moments
+
+    assert _moments(onp.full(10, 0.1)) == (0.0, -3.0)
+    assert _moments(onp.zeros(5)) == (0.0, -3.0)

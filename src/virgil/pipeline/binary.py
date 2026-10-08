@@ -57,8 +57,8 @@ def _chi2(model, data, **noise):
 
 def _moments(r):
     r = np.asarray(r, dtype=float)
-    if not r.std():
-        return 0.0, -3.0  # scipy would give NaN for constant residuals
+    if r.std() <= 1e-12 * max(abs(r.mean()), 1.0):
+        return 0.0, -3.0  # scipy gives NaN for (near-)constant residuals
     return float(stats.skew(r)), float(stats.kurtosis(r))
 
 
