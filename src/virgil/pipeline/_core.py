@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import _io
-from ._checks import worst_status
+from ._checks import stage_warning_checks, worst_status
 
 SCHEMA = _io.SCHEMA
 
@@ -27,6 +27,7 @@ _OWNED = (
     "grids.h5",
     "samples.h5",
     "quicklook.ipynb",
+    "quicklook.log",
     "data",
     "models",
     "plots",
@@ -58,6 +59,32 @@ class Stage:
     name: str
     run: Callable
     outputs: tuple = ()
+
+
+def _record_warnings(stage, caught):
+    """Caught warnings as ``{"stage", "category", "message"}``, one per message.
+
+    ``ResourceWarning`` is dropped: it is raised when the garbage collector
+    finalizes an unclosed file or socket, so it reports whichever object
+    happened to be collected during the stage (often a handle leaked by a
+    third-party library or an earlier caller), not anything the stage did.
+    """
+    seen, out = set(), []
+    for w in caught:
+        if issubclass(w.category, ResourceWarning):
+            continue
+        message = str(w.message)
+        if message in seen:
+            continue
+        seen.add(message)
+        out.append(
+            {
+                "stage": stage,
+                "category": w.category.__name__,
+                "message": message,
+            }
+        )
+    return out
 
 
 def _now():
@@ -348,8 +375,14 @@ class _Pipeline:
                 # analysis is complete; a failure here still marks it failed.
                 record["status"] = "complete"
             self._write_record(record)
+            caught = []
             try:
-                report = stage.run(self) or {}
+                # Warnings raised inside a stage are recorded, not printed:
+                # they land in the report, the summary and its checks.
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    report = stage.run(self) or {}
+                report = dict(report, warnings=_record_warnings(name, caught))
                 _io.write_json(
                     self.output / "stages" / name / "report.json", report
                 )
@@ -363,6 +396,8 @@ class _Pipeline:
                     "type": type(err).__name__,
                     "message": str(err),
                     "traceback": traceback.format_exc(),
+                    # The warnings often explain the failure.
+                    "warnings": _record_warnings(name, caught),
                 }
                 self._write_record(record)
                 raise
@@ -404,7 +439,10 @@ class _Pipeline:
         return reports
 
     def _write_summary(self, record):
-        sections, checks = self._summarize(self._reports())
+        reports = self._reports()
+        sections, checks = self._summarize(reports)
+        caught = [w for r in reports.values() for w in r.get("warnings", [])]
+        checks = list(checks) + stage_warning_checks(caught)
         summary = {
             "schema": SCHEMA,
             "pipeline": self.NAME,
@@ -412,6 +450,7 @@ class _Pipeline:
             "status": record["status"],
             "worst_check": worst_status(checks),
             **sections,
+            "warnings": caught,
             "checks": [c.to_dict() for c in checks],
         }
         _io.write_json(self.output / "summary.json", summary)

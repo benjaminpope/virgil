@@ -63,8 +63,6 @@ nav:
       - "Detection ROC curves": detection_roc.md
       - "Hierarchical inference across filters": hierarchical_inference.md
       - "Orbits from interferometric data": orbit_fitting.md
-  - Pipelines:
-      - "Pipelines and their stability": pipeline.md
   - Sources:
       - "Visibility models": model_syntax.md
       - "Extended source models": source_models.md
@@ -80,6 +78,8 @@ nav:
       - "5. Sampling the posterior": imaging_sampling.md
       - "6. Sparse images and CLEAN": imaging_clean.md
       - "7. Ensembles": imaging_ensemble.md
+  - Pipelines:
+      - "Pipelines and their stability": pipeline.md
   - API Reference:
       - Overview: api/index.md
       - OIData: api/oidata.md
@@ -116,6 +116,7 @@ nav:
       - Metrics: api/metrics.md
       - Ensemble: api/ensemble.md
       - Coverage: api/coverage.md
+      - Pipeline: api/pipeline.md
       - Simulate: api/simulate.md
       - Plotting: api/plotting.md
       - Legacy: api/legacy.md

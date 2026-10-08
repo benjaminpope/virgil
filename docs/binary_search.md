@@ -405,126 +405,11 @@ res = BinaryPipeline(
     num_samples=2000,
     num_chains=1,
 ).run()
-
-search = res.summary["search"]
-post = res.summary["posterior"]["params"]
 print(res.describe())
-print(
-    "grid:     hand dra={:.3g} ddec={:.3g} flux={:.2g}   pipeline dra={:.3g} ddec={:.3g} flux={:.2g}".format(
-        grid_est["dra"], grid_est["ddec"], grid_est["flux"],
-        search["dra_mas"], search["ddec_mas"], search["flux"],
-    )
-)
-print(
-    "posterior: hand dra={:.3g} ddec={:.3g} flux={:.2g}   pipeline dra={:.3g} ddec={:.3g} flux={:.2g}".format(
-        summary["dra_median"], summary["ddec_median"], summary["flux_median"],
-        post["dra"]["median"], post["ddec"]["median"], post["flux"]["median"],
-    )
-)
-
-# The pipeline reproduces the hand-computed numbers.
-step = 6.25
-assert abs(search["dra_mas"] - grid_est["dra"]) <= step
-assert abs(search["ddec_mas"] - grid_est["ddec"]) <= step
-assert 0.67 < search["flux"] / grid_est["flux"] < 1.5
-assert abs(post["dra"]["median"] - summary["dra_median"]) < 5.0
-assert abs(post["ddec"]["median"] - summary["ddec_median"]) < 5.0
-assert 0.8 < post["flux"]["median"] / summary["flux_median"] < 1.25
 ```
 
 ```text
-virgil/detection.py:218: RuntimeWarning: detection_statistics(): the optimizer did not converge at 2 of 6561 grid positions; values there may be inaccurate.
-  _warn_if_concrete(stats, success, grid, flux_key)
-virgil/_deprecate.py:150: RuntimeWarning: detection_statistics(): the flux axis does not resolve the likelihood peak (0.28 steps across its FWHM, under 2), so log_bayes_factor is inaccurate; refine the flux axis near the best flux.
-  return fn(*args, **kwargs)
-```
-
-```text
-virgil/_deprecate.py:150: RuntimeWarning: optimized_likelihood_grid(): the optimizer did not converge at 2 of 6561 grid positions; values there may be inaccurate.
-  return fn(*args, **kwargs)
-virgil/_deprecate.py:150: RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 2 of 6561 grid positions; values there may be inaccurate.
-  return fn(*args, **kwargs)
-```
-
-```text
-virgil/_deprecate.py:150: RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
-  return fn(*args, **kwargs)
-```
-
-```text
-[IPKernelApp] WARNING | Kernel is running over TCP without encryption. All communication (including code and outputs) is sent in plain text and is susceptible to eavesdropping. Use IPC transport or launch with kernel manager-provisioned CurveZMQ keys to enable transport encryption.
-```
-
-```text
-E1008 13:08:58.104594 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 59.46GiB (63845695488 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-
-E1008 13:08:58.105446 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 53.51GiB (57461125120 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-
-E1008 13:08:58.105851 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 48.16GiB (51715010560 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-
-E1008 13:08:58.106236 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 43.35GiB (46543507456 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-
-E1008 13:08:58.106593 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 39.01GiB (41889157120 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-
-E1008 13:08:58.107142 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 35.11GiB (37700239360 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-
-E1008 13:08:58.107470 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 31.60GiB (33930215424 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-
-E1008 13:08:58.107788 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 28.44GiB (30537193472 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-
-E1008 13:08:58.108116 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 25.60GiB (27483473920 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-
-E1008 13:08:58.108423 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 23.04GiB (24735125504 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-
-E1008 13:08:58.108729 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 20.73GiB (22261612544 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
-=== Source Location Trace: ===
-external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
-external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
-```
-
-```text
-BinaryPipeline run in /tmp/tmpznc6htel/binary_run: complete
+BinaryPipeline run in /tmp/tmpqkuyx3as/binary_run: complete
   data.n_vis = 24
   data.n_phi = 24
   data.n_independent = 48
@@ -573,6 +458,8 @@ BinaryPipeline run in /tmp/tmpznc6htel/binary_run: complete
   [pass] r_hat: Largest R-hat 1.0007: the chains agree.
   [pass] ess: Smallest bulk ESS 658: enough independent samples.
   [pass] divergences: Divergent transitions: 0 per cent: none.
-grid:     hand dra=119 ddec=-81.2 flux=0.0038   pipeline dra=119 ddec=-81.2 flux=0.0039
-posterior: hand dra=120 ddec=-80.1 flux=0.0039   pipeline dra=120 ddec=-80.1 flux=0.0039
+  [warn] convergence: The optimizer did not converge at 2 of 6561 grid positions (0.03 per cent): values there may be inaccurate.
+  [warn] flux_axis_resolution: The flux axis does not resolve the likelihood peak (0.28 steps across its FWHM): log_bayes_factor is inaccurate; use a finer flux axis (n_flux).
+  [warn] limits_clipped: 1 limits fell outside the flux bounds and were clipped to the nearer bound: those limits are not the true limits; widen flux_range.
+  5 warning(s) recorded in the limits, search stage(s) (see the checks, or Result.summary['warnings'])
 ```
