@@ -49,6 +49,7 @@ except _metadata.PackageNotFoundError:
     __version__ = "unknown"
 
 from . import (  # noqa: E402
+    aliases,
     amigo,
     coverage,
     detection,

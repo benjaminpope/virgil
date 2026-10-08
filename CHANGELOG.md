@@ -232,6 +232,11 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`virgil.aliases.fit_orbit_aliases`.** Orbits whose epochs undersample the
+  period: alias bands `N = round(T/P)`, each fitted to the closure phases of
+  all epochs with per-epoch error scales integrated out, with Laplace and
+  importance-sampling evidences, band probabilities and posterior samples.
+
 - **Orbit-search scorer.** `virgil.orbit_search.score_orbits(epochs,
   model, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
   scores a stack of candidate orbits on all epochs in one compiled,
