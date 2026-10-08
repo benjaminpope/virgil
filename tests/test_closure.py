@@ -69,7 +69,7 @@ def test_indices_are_int32_and_whiten_in_either_precision():
 )
 def test_whitening_matches_the_dense_pseudo_inverse():
     # Equal errors give baseline variances σ²/3, so C = (σ²/3) T Tᵀ, of
-    # rank 3 per frame; χ² is Δᵀ C⁺ Δ and the normalisation its pseudo-det.
+    # rank 3 per frame; χ² is Δᵀ C⁺ Δ and the normalization its pseudo-det.
     data = _four_telescopes()
     t = _incidence(data)
     sigma = onp.asarray(data.d_phi)
@@ -254,7 +254,7 @@ def test_unequal_errors_are_kept_and_simulation_matches_whitening():
     assert onp.all(onp.linalg.eigvalsh(cov) > -1e-12)
 
     keys = jax.random.split(jax.random.PRNGKey(4), 4000)
-    # Vectorised over the draws: a Python loop over 4000 keys is dominated
+    # Vectorized over the draws: a Python loop over 4000 keys is dominated
     # by per-call dispatch.
     noise = jax.vmap(lambda k: data.cp_noise.sample(k, data.d_phi, 4))(keys)
     noise = onp.asarray(noise)

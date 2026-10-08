@@ -85,7 +85,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ``gains`` holds calibration gains correlated across channels
     ([`GainModes`][virgil.gains.GainModes], set with
     [`with_gains`][virgil.oidata.OIData.with_gains]), which the likelihood
-    marginalises; ``None`` by default. ``phase_offsets`` likewise holds
+    marginalizes; ``None`` by default. ``phase_offsets`` likewise holds
     closure-phase offsets per frame
     ([`ClosureOffsets`][virgil.gains.ClosureOffsets], set with
     [`with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
@@ -849,7 +849,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         return operator @ np.asarray(values, dtype=float).reshape(-1)
 
     @classmethod
-    def _diagonalised(cls, operator, channel_sigma, correlation=None):
+    def _diagonalized(cls, operator, channel_sigma, correlation=None):
         """An operator whose outputs are independent, and their errors.
 
         Projected outputs are linear combinations of the input angles and
@@ -992,7 +992,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                     self._validate_diagonal_covariance(
                         vis_sigma, self.vis_mat, "disco_vis_mat"
                     )
-                self.vis_mat, self.d_vis = self._diagonalised(
+                self.vis_mat, self.d_vis = self._diagonalized(
                     self.vis_mat, vis_sigma
                 )
                 self.vis = self._apply_linear_operator(
@@ -1008,7 +1008,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             correlation = (
                 None if closure is None else closure.correlation(n_phi)
             )
-            self.phi_mat, self.d_phi = self._diagonalised(
+            self.phi_mat, self.d_phi = self._diagonalized(
                 self.phi_mat, phi_sigma, correlation
             )
             self.phi = self._apply_linear_operator(self.phi, self.phi_mat)
@@ -1091,7 +1091,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     @property
     def has_model_covariance(self):
         """Whether the likelihood's covariance depends on the model: with
-        gains, or with marginalised flux scales (``extras``). Least squares
+        gains, or with marginalized flux scales (``extras``). Least squares
         then does not give the likelihood, so ``fit`` uses L-BFGS."""
         return self.gains is not None or any(
             b.model_dependent_covariance for b in self.extras
@@ -1399,8 +1399,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ):
         """A copy with the continuum and line windows of the extra spectra.
 
-        They set how differential phases (``"visphi"``) and normalised
-        spectra (``"nflux"``) are normalised: see
+        They set how differential phases (``"visphi"``) and normalized
+        spectra (``"nflux"``) are normalized: see
         [`DifferentialPhase`][virgil.observables.DifferentialPhase].
 
         Parameters
@@ -1408,12 +1408,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         continuum, lines : sequence of (lo, hi), optional
             Wavelength ranges (metres). Differential phases are fitted over
             the continuum and kept in the lines (each defaults to the
-            complement of the other); normalised spectra use the continuum.
+            complement of the other); normalized spectra use the continuum.
         order : int, optional
             The continuum polynomial in wavenumber: 1 (a mean and a slope)
             by default for differential phases, 0 (a mean) for spectra.
         prior_width : float or (float, float), optional
-            For differential phases: marginalise each baseline and frame's
+            For differential phases: marginalize each baseline and frame's
             offset (and slope) under Gaussian priors of these widths
             (radians), using the channels of both windows, instead of
             projecting them out as the pipeline does (the default). See
@@ -1421,14 +1421,14 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         Examples
         --------
-        Keep the differential phase across Brγ, normalised on either side:
+        Keep the differential phase across Brγ, normalized on either side:
         ``data.with_continuum([(2.150e-6, 2.162e-6), (2.170e-6, 2.180e-6)],
         lines=[(2.163e-6, 2.169e-6)])``.
         """
         kinds = {b.kind for b in self.extras} & {"visphi", "nflux"}
         if not kinds:
             raise ValueError(
-                "These data have no differential phases or normalised "
+                "These data have no differential phases or normalized "
                 "spectra; read them with extras=('visphi',) or ('nflux',)."
             )
         out = self
@@ -1465,7 +1465,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         """A copy with new grey-scale nuisances for the extra spectra.
 
         Each spectrum (OI_FLUX, or correlated fluxes) is known up to a
-        scale, marginalised analytically under a Gaussian prior that you
+        scale, marginalized analytically under a Gaussian prior that you
         state (see [`FluxSpectrum`][virgil.observables.FluxSpectrum]). It
         is never taken from the data, and it is a proposal for the scale's
         Jeffreys prior 1/k (see [`virgil.observables`][virgil.observables]).
@@ -1485,7 +1485,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             correlated fluxes). Fibre injection varies per telescope and
             exposure, so per row is the safest for uncalibrated spectra.
         poly_order : int, optional
-            Also marginalise a polynomial in λ of this order times the
+            Also marginalize a polynomial in λ of this order times the
             model spectrum (a chromatic calibration).
         poly_width : float, optional
             Prior width of each polynomial coefficient, relative to the
@@ -1600,7 +1600,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         """A copy of the data with closure-phase offsets per frame.
 
         Calibration can leave closure phases that do not close. The
-        likelihood then marginalises offsets common to the channels of a
+        likelihood then marginalizes offsets common to the channels of a
         frame analytically (see
         [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with these widths
         unless they are fitted as the noise terms ``phi_offset_baseline``,
@@ -1612,7 +1612,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         This is a small-offset approximation: an offset δ changes the
         whitened sine sin Δ by about δ cos Δ, which is treated as linear in
         δ. It holds while the offsets (and the residuals) are small, about
-        δ ≲ 0.3 rad (17°); larger widths are not marginalised exactly.
+        δ ≲ 0.3 rad (17°); larger widths are not marginalized exactly.
 
         Parameters
         ----------
@@ -1645,7 +1645,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ):
         """A copy of the data with calibration gains correlated across channels.
 
-        The likelihood then marginalises gains on log |V| per frame
+        The likelihood then marginalizes gains on log |V| per frame
         analytically (see [`virgil.gains`][virgil.gains]), with these widths
         unless they are fitted as the noise terms ``vis_gain_telescope``,
         ``vis_gain_baseline``, ``vis_gain_chromatic`` or ``vis_gain_modes``
@@ -1860,7 +1860,7 @@ def _build_extras(data, obj, legs):
     if record is not None:
         if frame is None:
             raise ValueError(
-                "Differential phases are normalised per frame: give 'frame' "
+                "Differential phases are normalized per frame: give 'frame' "
                 "(or 'mjd') per sample."
             )
         closure_free = bool(obj.cp_flag)

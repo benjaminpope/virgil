@@ -26,7 +26,7 @@ Both classes are numpyro distributions, so they work as entries of the
 ``priors`` of [`fit`][virgil.fitting.fit] and
 [`numpyro_model`][virgil.likelihood.numpyro_model]: their support is an
 interval, which both map to unconstrained coordinates with numpyro's
-``biject_to``. ``fit`` optimises them in their flat coordinate (cos i or
+``biject_to``. ``fit`` optimizes them in their flat coordinate (cos i or
 sin(lat), through ``flat_coordinate()``), where the prior is constant, so
 Levenberg–Marquardt applies and is ``fit``'s automatic choice.
 """
@@ -101,7 +101,7 @@ class _InverseCDFPrior(Distribution):
         affine in cos i (inclination) or sin(lat) (latitude), so it is that
         flat coordinate, rescaled. Using the CDF rather than cos i itself
         keeps the cancellation-resistant formulas above, which matter for
-        narrow ranges and ranges at a pole. ``fit`` optimises the angle in
+        narrow ranges and ranges at a pole. ``fit`` optimizes the angle in
         this coordinate, where the prior adds nothing to the loss (see
         "Priors and the MAP" in the conventions).
         """
@@ -369,7 +369,7 @@ def hierarchical_scales(name, n, median=None, spread=None, centred=True):
         Prior on the standard deviation of log s (default
         ``LogUniform(0.01, 1)``: from 1% to a factor of e).
     centred : bool, optional
-        The parameterisation (see above).
+        The parameterization (see above).
 
     Returns
     -------

@@ -3,9 +3,9 @@
 [`fit`][virgil.fitting.fit] takes the same arguments as
 [`numpyro_model`][virgil.likelihood.numpyro_model]: a model (a template,
 or a function of the parameters), a dict of numpyro priors whose keys are the
-free parameters, and the data, plus optional regularisers (see
+free parameters, and the data, plus optional regularizers (see
 [`virgil.imaging`][virgil.imaging]). It finds the maximum a
-posteriori parameters with Levenberg–Marquardt, L-BFGS or Adam, optimising
+posteriori parameters with Levenberg–Marquardt, L-BFGS or Adam, optimizing
 each parameter in unconstrained coordinates through the bijection to its
 prior's support, in float64 by default. A parameter whose prior is uniform in
 some coordinate (a log-uniform scale, an isotropic inclination) is fitted in
@@ -27,6 +27,7 @@ import numpy as onp
 import optax
 import optimistix as optx
 
+from ._deprecate import renamed
 from ._precision import cast_tree, run_in
 from ._utils import _per_dataset, _reference, is_flux_param
 from .angles import is_angle_vector, vector_angle, vector_site
@@ -118,7 +119,7 @@ def _prior_residuals(path, distribution, value):
 
     ``None`` means the prior adds nothing to a least-squares objective:
     it is flat on its support (Uniform, ImproperUniform), or flat in the
-    coordinate ``fit`` optimises it in (LogUniform and the other priors with
+    coordinate ``fit`` optimizes it in (LogUniform and the other priors with
     a flat coordinate; see ``_flat_coordinate``).
     """
     import numpyro.distributions as dist
@@ -177,7 +178,7 @@ class _Objective(eqx.Module):
 
     ``residuals(z)`` is a vector whose half sum of squares is ``loss(z)``
     (up to a constant), for least-squares solvers; it raises ``TypeError``
-    if a regulariser or prior has no least-squares form, or if error terms
+    if a regularizer or prior has no least-squares form, or if error terms
     are fitted. ``z`` are the unconstrained coordinates of the parameters
     and of any error terms (keyed by their ``noise`` sites).
 
@@ -192,7 +193,7 @@ class _Objective(eqx.Module):
     model: object
     data: tuple
     priors: dict
-    regularisers: tuple
+    regularizers: tuple
     noise: dict
     likelihoods: tuple
     flat: bool = eqx.field(static=True)
@@ -202,7 +203,7 @@ class _Objective(eqx.Module):
         model,
         priors,
         data,
-        regularisers=(),
+        regularizers=(),
         noise=None,
         likelihoods=(),
         flat=True,
@@ -212,7 +213,7 @@ class _Objective(eqx.Module):
         self.data = tuple(data) if isinstance(data, (list, tuple)) else (data,)
         self.likelihoods = tuple(likelihoods)
         self.priors = {path: _traced(p) for path, p in priors.items()}
-        self.regularisers = tuple(regularisers)
+        self.regularizers = tuple(regularizers)
         self.noise = {
             site: (prior if is_tied(prior) else _traced(prior), datasets, term)
             for site, (prior, datasets, term) in noise_sites(
@@ -231,7 +232,7 @@ class _Objective(eqx.Module):
     @property
     def _has_gains(self):
         """Whether any dataset's covariance depends on the model: gains, or
-        marginalised flux scales (``OIData.has_model_covariance``)."""
+        marginalized flux scales (``OIData.has_model_covariance``)."""
         return any(
             getattr(d, "has_model_covariance", False) for d in self.data
         )
@@ -369,18 +370,18 @@ class _Objective(eqx.Module):
     def residuals(self, z):
         """Residual vector whose half sum of squares is ``loss(z)`` + const.
 
-        Raises ``TypeError`` if a regulariser or prior has no least-squares
+        Raises ``TypeError`` if a regularizer or prior has no least-squares
         form (then use L-BFGS or Adam).
         """
         if self.noise:
             raise TypeError(
                 "Fitted error terms have no least-squares form (the "
-                "likelihood's normalisation depends on them); fit with "
+                "likelihood's normalization depends on them); fit with "
                 "method='lbfgs' or 'adam'."
             )
         if self._has_gains:
             raise TypeError(
-                "Data with gains or marginalised flux scales have no "
+                "Data with gains or marginalized flux scales have no "
                 "least-squares form (their covariance, and its determinant, "
                 "depend on the model); fit "
                 "with method='lbfgs' or 'adam'."
@@ -395,13 +396,13 @@ class _Objective(eqx.Module):
             )
         parts = self.data_residuals(model)
         parts += [term(values) for term in self.likelihoods]
-        for regulariser in self.regularisers:
-            if not hasattr(regulariser, "residuals"):
+        for regularizer in self.regularizers:
+            if not hasattr(regularizer, "residuals"):
                 raise TypeError(
-                    f"{type(regulariser).__name__} has no least-squares "
+                    f"{type(regularizer).__name__} has no least-squares "
                     "form; fit with method='lbfgs' or 'adam'."
                 )
-            parts.append(np.ravel(regulariser.residuals(_reference(model))))
+            parts.append(np.ravel(regularizer.residuals(_reference(model))))
         for path, prior in self.priors.items():
             r = _prior_residuals(path, prior, self._prior_value(values, path))
             if r is not None:
@@ -423,7 +424,7 @@ class _Objective(eqx.Module):
         whitened = self._whitened(model, values)
         chi2 = sum(np.sum(w**2) for w, _ in whitened)
         chi2 = chi2 + sum(np.sum(t(values) ** 2) for t in self.likelihoods)
-        # With fitted error terms, the normalisation of the Gaussian
+        # With fitted error terms, the normalization of the Gaussian
         # likelihood, sum(log σ), is no longer a constant.
         log_norm = sum(np.sum(np.log(e)) for _, e in whitened)
         log_norm = log_norm if self.noise or self._has_gains else 0.0
@@ -433,7 +434,7 @@ class _Objective(eqx.Module):
             for t in self.likelihoods
             if getattr(t, "has_log_norm", False)
         )
-        penalty = sum(r.value(_reference(model)) for r in self.regularisers)
+        penalty = sum(r.value(_reference(model)) for r in self.regularizers)
         log_prior = sum(
             np.sum(prior.log_prob(self._prior_value(values, path)))
             for path, prior in self.priors.items()
@@ -489,11 +490,12 @@ class FitResult:
     info: dict
 
 
+@renamed()
 def fit(
     model,
     priors,
     data,
-    regularisers=(),
+    regularizers=(),
     *,
     noise=None,
     init=None,
@@ -520,9 +522,9 @@ def fit(
         [`numpyro_model`][virgil.likelihood.numpyro_model]. The function
         may return a list of models, one per dataset, sharing parameters:
         for example a scene and a [`Rotated`][virgil.models.Rotated]
-        copy of it, for two epochs between which it turns. Regularisers
+        copy of it, for two epochs between which it turns. Regularizers
         then act on the first model only: an Image that appears only in a
-        later model is not regularised.
+        later model is not regularized.
     priors : dict[str, numpyro.distributions.Distribution]
         A prior for each free parameter, keyed by its path (e.g.
         ``"comp.flux"`` or ``"env.log_brightness"``; see
@@ -533,7 +535,7 @@ def fit(
         a least-squares form.
 
         A prior that is uniform in some coordinate of its parameter has a
-        *flat coordinate*, and ``fit`` optimises the parameter in it:
+        *flat coordinate*, and ``fit`` optimizes the parameter in it:
         ``LogUniform(a, b)`` is uniform in ``log x`` on ``[log a, log b]``,
         an isotropic inclination in ``cos i`` and an isotropic latitude in
         ``sin(lat)`` (any prior with a ``flat_coordinate()`` method), and
@@ -543,7 +545,7 @@ def fit(
         Levenberg–Marquardt applies. This is the maximum a posteriori in the
         coordinates in which the invariant (Jeffreys) prior is uniform, the
         choice consistent with virgil's prior rule; a mode in ``x`` itself
-        would depend on the parametrisation (for ``LogUniform``, the density
+        would depend on the parametrization (for ``LogUniform``, the density
         ``1/x`` would pull every scale towards ``a``). Other priors, such as
         ``Normal``, ``Beta`` or ``HalfNormal``, are evaluated in the model's
         own parameters, without the Jacobian of the bijection, as before.
@@ -552,7 +554,7 @@ def fit(
     data : OIData or sequence of OIData
         The data, fitted jointly. May be empty (``()``) when
         ``likelihoods`` holds all the data.
-    regularisers : sequence, optional
+    regularizers : sequence, optional
         Penalties added to the loss, e.g. from
         [`virgil.imaging`][virgil.imaging].
     noise : dict or list of dict, optional
@@ -633,9 +635,9 @@ def fit(
         their own units, so raise this if they must move far.
     lbfgs_memory : int, optional
         Number of past steps L-BFGS keeps to model the curvature (default
-        50; optax's own default is 10). On regularised images, 10 left the
+        50; optax's own default is 10). On regularized images, 10 left the
         fits short of their optimum at many weights, and weakly
-        regularised ones running to the step limit; 50 found lower losses
+        regularized ones running to the step limit; 50 found lower losses
         and converged in fewer steps, at a higher cost per step.
     learning_rate : float, optional
         Adam's learning rate, in unconstrained coordinates.
@@ -658,8 +660,8 @@ def fit(
         positions and radial velocities. Their χ² follow the datasets' in
         ``info``.
     time_limit : float, optional
-        Wall-clock budget (seconds) for the optimiser, for LM and L-BFGS.
-        The optimiser then runs in chunks of steps, and stops after the
+        Wall-clock budget (seconds) for the optimizer, for LM and L-BFGS.
+        The optimizer then runs in chunks of steps, and stops after the
         first chunk that ends past the limit, unconverged, with
         ``info["stop"] == "time"`` and a warning; the time to compile the
         first chunk counts. L-BFGS carries its whole state from chunk to
@@ -685,7 +687,7 @@ def fit(
 
         ``info["grad_norm"]`` is the infinity norm (largest absolute
         component) of the gradient of the loss per data point at the
-        returned point, in the unconstrained coordinates the optimiser
+        returned point, in the unconstrained coordinates the optimizer
         works in: the quantity LM and L-BFGS compare with their tolerance
         (see ``gtol``). It is computed the same way for every method, so a
         fit that stopped early (at ``max_steps``, or after Adam's fixed
@@ -704,12 +706,12 @@ def fit(
     budget = _Budget(time_limit, progress)
     with run_in(dtype):
         problem = cast_tree(
-            _Objective(model, priors, data, regularisers, noise, likelihoods),
+            _Objective(model, priors, data, regularizers, noise, likelihoods),
             dtype,
         )
         z0 = problem.init(cast_tree(init, dtype))
         method = method or ("lm" if _has_residuals(problem, z0) else "lbfgs")
-        # Optimisers see the loss per data point, so step sizes and
+        # Optimizers see the loss per data point, so step sizes and
         # tolerances do not depend on the size of the dataset.
         ndata = [d.n_independent for d in problem.data]
         # A term's size is the length of its residuals at the start.
@@ -808,7 +810,7 @@ class _Budget:
 
     @property
     def chunked(self):
-        """Whether the optimiser must stop between chunks of steps."""
+        """Whether the optimizer must stop between chunks of steps."""
         return self.time_limit is not None or self.progress is not None
 
     def check(self, steps, loss_and_gradient):
@@ -1115,7 +1117,7 @@ def _tolerance(gradient, gtol):
     over the starting residuals: up to ~1e-4 in float32 (eps ≈ 1.2e-7),
     where a fixed ``gtol = 1e-4`` was out of reach and LM ran all its
     steps. The √eps floor (3.5e-4 in float32, 1.5e-8 in float64) clears
-    it, and is the usual stopping limit for finite-precision optimisers.
+    it, and is the usual stopping limit for finite-precision optimizers.
     Neither part is allowed below ``1e-6 * gtol``.
     """
     largest = _largest(gradient)
@@ -1253,7 +1255,7 @@ def _capped_lbfgs(max_step_size, memory):
 def _lbfgs_loop(problem, carry, scale, stop_at, tolerance, step_size, memory):
     """L-BFGS steps from ``carry`` until step ``stop_at`` or a stop.
 
-    ``carry`` is ``(count, z, optimiser state, loss, gradient, moved)``,
+    ``carry`` is ``(count, z, optimizer state, loss, gradient, moved)``,
     the loss per data point and the largest component of its gradient
     being those at the point before the last step. The loop stops at
     ``stop_at`` steps, when the gradient is within ``tolerance``, when a
@@ -1262,7 +1264,7 @@ def _lbfgs_loop(problem, carry, scale, stop_at, tolerance, step_size, memory):
     ``stop_at`` is traced, so a fit run in chunks (see ``_lbfgs``) compiles
     the loop once.
     """
-    optimiser = _capped_lbfgs(step_size, memory)
+    optimizer = _capped_lbfgs(step_size, memory)
     loss = _scaled_loss(problem, scale)
     value_and_grad = optax.value_and_grad_from_state(loss)
 
@@ -1274,7 +1276,7 @@ def _lbfgs_loop(problem, carry, scale, stop_at, tolerance, step_size, memory):
     def step(carry):
         count, z, state, _, _, _ = carry
         value, grad = value_and_grad(z, state=state)
-        updates, state = optimiser.update(
+        updates, state = optimizer.update(
             grad, state, z, value=value, grad=grad, value_fn=loss
         )
         new = optax.apply_updates(z, updates)
@@ -1363,7 +1365,7 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
     gradient); it is ``None`` when the fit converged.
 
     With a time limit or progress report (``budget.chunked``), the loop runs
-    ``_LBFGS_CHUNK`` steps per jitted call, carrying the whole optimiser
+    ``_LBFGS_CHUNK`` steps per jitted call, carrying the whole optimizer
     state, so that the path is the one an unchunked run takes, and checks
     the clock between calls.
     """
@@ -1408,16 +1410,16 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
 
 @eqx.filter_jit
 def _adam_run(problem, z0, scale, learning_rate, steps):
-    optimiser = optax.adam(learning_rate)
+    optimizer = optax.adam(learning_rate)
     grad = jax.grad(_scaled_loss(problem, scale))
 
     def step(carry, _):
         z, state = carry
-        updates, state = optimiser.update(grad(z), state, z)
+        updates, state = optimizer.update(grad(z), state, z)
         return (optax.apply_updates(z, updates), state), None
 
     (z, _), _ = jax.lax.scan(
-        step, (z0, optimiser.init(z0)), None, length=steps
+        step, (z0, optimizer.init(z0)), None, length=steps
     )
     return z
 

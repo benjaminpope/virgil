@@ -21,8 +21,8 @@ circle, so that maximum a posteriori fits stay away from the origin, where
 θ is undefined. A von Mises prior enters as the chord √κ (v̂ − m̂), the same
 form as virgil's unprojected phase residuals (2 sin(Δ/2)/σ, with κ = 1/σ²),
 so every term has a least-squares form and Levenberg–Marquardt takes it. The
-density is normalised in the plane (with the von Mises normaliser on the
-circle, through `i0e`), so evidences stay normalised. The default, a uniform
+density is normalized in the plane (with the von Mises normalizer on the
+circle, through `i0e`), so evidences stay normalized. The default, a uniform
 angle, is the invariant prior; a von Mises prior is strong information from
 an external measurement.
 

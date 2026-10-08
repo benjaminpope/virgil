@@ -7,7 +7,7 @@ data prefer a companion to none:
 - ``delta_chi2``, the profile likelihood ratio 2 [max log L − log L₀] over
   the grid, with the companion flux constrained to be non-negative;
 - ``log_bayes_factor``, the log evidence ratio of "a companion somewhere on
-  the grid" to "no companion", marginalised over the grid;
+  the grid" to "no companion", marginalized over the grid;
 - ``max_snr``, the largest best-fit flux over its Laplace uncertainty, the
   significance map of the composition tutorial.
 
@@ -296,7 +296,7 @@ def _detection_statistics(
     delta_chi2 = 2.0 * (profile.reshape(-1)[best] - loglike0)
     best_flux = profile_flux.reshape(-1)[best]
 
-    # Grid-marginalised evidence ratio over the trapezoid-weighted prior.
+    # Grid-marginalized evidence ratio over the trapezoid-weighted prior.
     log_ratio = jnp.where(
         jnp.isnan(loglike_im), -jnp.inf, loglike_im - loglike0
     )
@@ -356,7 +356,7 @@ def _constrained_profile(
 
 
 def _log_prior_weights(shape, dtype):
-    """Log trapezoid weights in the grid index, normalised to sum to 1.
+    """Log trapezoid weights in the grid index, normalized to sum to 1.
 
     Along each axis the weights are 1 inside and ½ at the two ends (1 for
     an axis of one point); the grid's weight is their outer product.
@@ -813,7 +813,7 @@ def injection_recovery(
     flux_param : str, optional
         The flux key of ``grid``, as for the grid tools.
     draw_batch : int, optional
-        Draws evaluated together (vectorised) within ``jax.lax.map``. When
+        Draws evaluated together (vectorized) within ``jax.lax.map``. When
         ``batch_size`` is omitted, it is capped at the default grid batch
         size, so that ``draw_batch`` searches of at least one grid point
         each never exceed the budget of one search.
@@ -1292,7 +1292,7 @@ class DetectionMC:
         The same per injected draw, plus the injected values under their
         names (e.g. ``dra``, ``ddec``, ``flux``).
     meta : dict
-        JSON-serialisable: the grid, fingerprints (hashes of every field,
+        JSON-serializable: the grid, fingerprints (hashes of every field,
         static or not) of the model, the null scene and the template, the
         noise model,
         ``match_radius``, the numbers of draws, the seeds and the virgil

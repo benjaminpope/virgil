@@ -37,9 +37,9 @@ Visibilities (n_sets=5, n_baselines=40, T triangles)
   vis_u, vis_v        (40,)    baselines in metres (default_rng(0), uniform in disk of radius 330 m)
   vis_wavel           ()       0.7e-6 m
   vis2                (5, 40)  his ELR_Model.__call__ output, |V|^2
-  cvis                (5, 40)  complex128; normalised complex visibility before |.|^2
+  cvis                (5, 40)  complex128; normalized complex visibility before |.|^2
   bary_x, bary_y      (5, T)   triangle barycentre x, y (mas) after his rotation
-  weight              (5, T)   intensity*heaviside(cos)*cos (before normalisation)
+  weight              (5, T)   intensity*heaviside(cos)*cos (before normalization)
   teff_tri            (5, T)   mean Teff ratio at triangle corners (as in his ``plot``)
 """
 

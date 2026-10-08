@@ -313,3 +313,15 @@ def test_numpyro_model_and_posterior_summary_accept_data_obj():
     with pytest.warns(FutureWarning, match="data_obj="):
         old = posterior_predictive_summary(samples, template, data_obj=DATA)
     _assert_same(old, new)
+
+
+def test_fit_and_numpyro_model_accept_the_old_regularisers_keyword():
+    import inspect
+
+    from virgil.fitting import fit
+
+    for fn in (fit, numpyro_model):
+        wrapped = inspect.signature(fn).parameters
+        assert "regularizers" in wrapped and "regularisers" not in wrapped
+    with pytest.warns(FutureWarning, match="regularisers="):
+        numpyro_model(MODEL, {}, DATA, regularisers=())

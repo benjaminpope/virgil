@@ -57,7 +57,7 @@ def test_fit_recovers_a_binary(method):
 
 
 @pytest.mark.validates("virgil.fitting.fit", roots=["self-consistency"])
-def test_optimisers_agree_on_a_binary():
+def test_optimizers_agree_on_a_binary():
     lm = fit(START, PRIORS, DATA, method="lm")
     lbfgs = fit(START, PRIORS, DATA, method="lbfgs")
     for path in PRIORS:
@@ -92,12 +92,12 @@ def test_float32_and_float64_fits_agree():
 
 def test_lm_and_lbfgs_agree_on_a_tsv_image():
     start, priors, data = _image_fit()
-    regularisers = [TSV(1e3, path="env")]
+    regularizers = [TSV(1e3, path="env")]
     # A tight tolerance, so that this tests the solution, not the stopping
     # rule (at the default tolerance their losses can differ by ~2%).
     options = {"gtol": 1e-7, "max_steps": 20_000}
-    lm = fit(start, priors, data, regularisers, method="lm", **options)
-    lbfgs = fit(start, priors, data, regularisers, method="lbfgs", **options)
+    lm = fit(start, priors, data, regularizers, method="lm", **options)
+    lbfgs = fit(start, priors, data, regularizers, method="lbfgs", **options)
     assert np.isclose(lm.info["loss"], lbfgs.info["loss"], rtol=2e-3)
     a, b = lm.model.env.brightness, lbfgs.model.env.brightness
     a, b = a - a.mean(), b - b.mean()
@@ -134,11 +134,11 @@ def test_normal_priors_are_least_squares_terms():
 
 def test_non_least_squares_objectives_default_to_lbfgs():
     start, priors, data = _image_fit()
-    regularisers = [MaxEntropy(1.0, path="env")]
-    objective = _Objective(start, priors, data, regularisers)
+    regularizers = [MaxEntropy(1.0, path="env")]
+    objective = _Objective(start, priors, data, regularizers)
     with pytest.raises(TypeError, match="lbfgs"):
         objective.residuals(objective.init())
-    result = fit(start, priors, data, regularisers, max_steps=50)
+    result = fit(start, priors, data, regularizers, max_steps=50)
     assert result.info["method"] == "lbfgs"
     # A prior with no least-squares form (here a Beta flux) also falls back.
     beta = dict(PRIORS, flux=dist.Beta(1.0, 20.0))
@@ -149,7 +149,7 @@ def test_non_least_squares_objectives_default_to_lbfgs():
     assert fit(START, log_uniform, DATA).info["method"] == "lm"
 
 
-def test_numpyro_model_accepts_prior_regularisers_only():
+def test_numpyro_model_accepts_prior_regularizers_only():
     start, _, data = _image_fit()
     pixels = dist.Normal(np.zeros((16, 16)), 3.0).to_event(2)
     priors = {"env.log_brightness": pixels}
@@ -159,7 +159,7 @@ def test_numpyro_model_accepts_prior_regularisers_only():
     trace = numpyro.handlers.trace(
         numpyro.handlers.seed(model, jax.random.PRNGKey(0))
     ).get_trace()
-    assert {"loglike", "regulariser_0"} <= set(trace)
+    assert {"loglike", "regularizer_0"} <= set(trace)
 
 
 def test_fit_rejects_bad_paths_flux_priors_and_methods():
@@ -304,7 +304,7 @@ def test_chunked_lbfgs_takes_the_unchunked_path(monkeypatch):
 @pytest.mark.parametrize("method, chunk", [("lbfgs", 2), ("lm", 1)])
 def test_a_fit_stops_at_its_time_limit(monkeypatch, method, chunk):
     # A start that runs for hours must not block the starts after it: the
-    # optimiser stops after the first chunk past the time limit.
+    # optimizer stops after the first chunk past the time limit.
     import virgil.fitting
 
     monkeypatch.setattr(virgil.fitting, "_LBFGS_CHUNK", chunk)
@@ -364,10 +364,10 @@ def test_fits_report_parameters_at_a_prior_bound():
 @pytest.mark.filterwarnings("ignore:fit.*did not converge")
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
 def test_a_cold_maxent_fit_does_not_collapse(dtype):
-    # From a flat image, a weakly regularised fit once took a first
+    # From a flat image, a weakly regularized fit once took a first
     # quasi-Newton step of ~10 in log-brightness, switching most pixels
     # off for good (their gradients vanish with their flux): it stopped on
-    # a few bright pixels with χ² ≈ 1330, where a strongly regularised fit
+    # a few bright pixels with χ² ≈ 1330, where a strongly regularized fit
     # reaches ≈ 245. A weaker penalty must fit the data at least as well.
     # (In float32 the line search runs out of precision near the minimum,
     # so that fit may stop unconverged.)
@@ -384,7 +384,7 @@ def test_a_cold_maxent_fit_does_not_collapse(dtype):
 @pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
 def test_repeated_fits_do_not_recompile(method):
     # The solvers are jitted once at module level, so a second fit of a
-    # problem with the same structure (another start, regulariser weight
+    # problem with the same structure (another start, regularizer weight
     # or dataset of the same size) reuses the compilation. When they were
     # defined inside each call, every fit recompiled, which took most of
     # its time.

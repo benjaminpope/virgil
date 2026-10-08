@@ -41,6 +41,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **Oxford -ize spelling in names (#306).** `fit`, `numpyro_model` and `diagnose` take `regularizers` (not `regularisers`), `RVData.term` takes `marginalize_offsets` (not `marginalise_offsets`), and the numpyro factor sites for regularizers are named `regularizer_<i>`. The old keywords still work with a `FutureWarning` until 0.5 (`_deprecate.renamed`). Private names (`_linear.standardize`, `_diagonalized`, `_summarize`, `_normalize`) and the spelling in docstrings, comments and the hand-written docs follow. `barycenter` and the already -ize public names (`regularized_inverse`, `optimized_*`, `standardize_model`, `Image(normalize=)`) are unchanged.
 - **Orbit starts are scale-aware (#268).** `epoch_positions` now scores
   its grid on the scale-marginalized surface m = -Σ_b (ν_b/2) ln χ²_b,
   in which each dataset's V² and closure-phase error scales are

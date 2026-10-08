@@ -43,7 +43,7 @@ def _model(model, u, v, wavel):
 
 
 def _planck(wavel, temp):
-    """Unnormalised Planck B_λ, written from scratch."""
+    """Unnormalized Planck B_λ, written from scratch."""
     return wavel**-5 / onp.expm1(_H * _C / (wavel * _K * temp))
 
 
