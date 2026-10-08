@@ -135,6 +135,7 @@ SUMMARY_KEYS = {
         "max_snr",
         "local_nsigma",
         "global_nsigma",
+        "global_nsigma_method",
         "n_trials",
         "dra_mas",
         "ddec_mas",
@@ -307,6 +308,13 @@ def test_quoted_errors_lead_and_companion_found(full_run):
     assert s["chi2"]["null_reduced"] > s["chi2"]["companion_reduced"]
     sep = onp.hypot(TRUTH.dra, TRUTH.ddec)
     assert abs(s["companion"]["sep_mas"] - sep) < 5.0
+    # Orientation: PA is East of North, dra = sep sin(PA), ddec = sep cos(PA).
+    pa = float(onp.degrees(onp.arctan2(TRUTH.dra, TRUTH.ddec)))
+    assert abs(s["companion"]["pa_deg"] - pa) < 3.0
+    assert abs(s["companion"]["dra_mas"] - TRUTH.dra) < 5.0
+    assert abs(s["companion"]["ddec_mas"] - TRUTH.ddec) < 5.0
+    assert abs(s["search"]["dra_mas"] - TRUTH.dra) < 40.0
+    assert abs(s["search"]["ddec_mas"] - TRUTH.ddec) < 40.0
     assert abs(s["companion"]["flux"] - 0.01) < 2e-3
 
 
@@ -428,3 +436,44 @@ def test_cli_binary_run_from_oifits(full_run, tmp_path, capsys):
     assert run["inputs"]["files"][0]["path"] == str(path.resolve())
     assert run["config"]["max_grid"] == 13
     assert "search.delta_chi2" in capsys.readouterr().out
+
+
+def test_templates_share_one_prior_on_the_sky(data):
+    """Angular and Cartesian templates sample the same dra, ddec box."""
+    from virgil import BinaryModelAngular
+
+    angular = BinaryPipeline(data, **TINY)
+    cartesian = BinaryPipeline(data, BinaryModelCartesian(0.0, 0.0, 0.0), **TINY)
+    pa, pc = angular._priors(300.0), cartesian._priors(300.0)
+    assert list(pa) == list(pc) == ["dra", "ddec", "flux"]
+    for k in pa:
+        assert type(pa[k]) is type(pc[k])
+        assert float(pa[k].low) == float(pc[k].low)
+        assert float(pa[k].high) == float(pc[k].high)
+    key = jax.random.PRNGKey(0)
+    dra = onp.asarray(pa["dra"].sample(key, (4000,)))
+    ddec = onp.asarray(pa["ddec"].sample(jax.random.PRNGKey(1), (4000,)))
+    assert onp.all(onp.abs(dra) <= 300.0) and onp.all(onp.abs(ddec) <= 300.0)
+    # Uniform in position: as much mass at small as at large radius per area.
+    inner = onp.mean(onp.hypot(dra, ddec) < 100.0)
+    assert abs(inner - onp.pi * 100.0**2 / 600.0**2) < 0.03
+    # The Angular template derives sep and PA from the same offsets.
+    m = angular._sampled_model()(120.0, 80.0, 0.01)
+    assert isinstance(m, BinaryModelAngular)
+    onp.testing.assert_allclose(float(m.sep), onp.hypot(120.0, 80.0))
+    onp.testing.assert_allclose(
+        float(m.pa), onp.degrees(onp.arctan2(120.0, 80.0))
+    )
+
+
+def test_residual_normality_passes_on_truth_noise(data):
+    """The check uses the independent whitened residuals, not the CP penalty."""
+    from virgil.likelihood import whitened_residuals
+    from virgil.pipeline import _checks
+    from virgil.pipeline.binary import _moments
+
+    r = onp.asarray(whitened_residuals(TRUTH, data))
+    n = int(data.n_independent)
+    skew, kurt = _moments(r[:n])
+    check = _checks.residual_normality(skew, kurt, n)
+    assert check.status == "pass", check.message

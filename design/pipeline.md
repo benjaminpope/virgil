@@ -130,3 +130,11 @@ tutorial asserts that it does.
   `virgil/__init__.py` to stop importing it eagerly.
 - Multi-file inputs with different instruments: one `OIData` per file, or
   joint fits through `joint_*` likelihoods (a later, additive setting).
+- Before the first stable release, settle `global_nsigma`. It is a Šidák
+  estimate with a nominal number of resolution elements, not a simulated
+  false-alarm probability: grid maxima are correlated and the resolution
+  element is anisotropic, so the true trial count may be far off. It is
+  labelled as an approximation in `summary.json`
+  (`global_nsigma_method`), the `detection` message and the docs, which
+  point to `injection_recovery` and `gaussian_null`. Either calibrate it by
+  simulation or drop it from the frozen summary keys and check.

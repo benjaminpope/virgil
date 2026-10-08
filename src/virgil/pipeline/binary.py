@@ -61,6 +61,9 @@ def _moments(r):
     return float(np.mean(z**3)), float(np.mean(z**4) - 3.0)
 
 
+GLOBAL_NSIGMA_METHOD = "Sidak estimate, not a simulated FAP"
+
+
 def _wrap(angle):
     return (np.asarray(angle) + 360.0) % 360.0
 
@@ -279,24 +282,40 @@ class BinaryPipeline(_Pipeline):
         }, max_sep
 
     def _priors(self, max_sep):
+        """Priors on ``dra``, ``ddec`` (uniform on the box) and ``flux``.
+
+        Both templates sample these, so they share one prior on the sky:
+        uniform in position is the translation-invariant choice, and a
+        uniform ``sep`` would put p(dra, ddec) proportional to 1/sep.
+        """
         import numpyro.distributions as dist
 
-        from ..angles import AngleVector
-        from ..models import BinaryModelAngular
-
         lo, hi = self.settings["flux_range"]
-        flux = dist.LogUniform(lo, hi)
-        if isinstance(self.model, BinaryModelAngular):
-            return {
-                "sep": dist.Uniform(0.0, math.sqrt(2.0) * max_sep),
-                "pa": AngleVector(),
-                "flux": flux,
-            }
         return {
             "dra": dist.Uniform(-max_sep, max_sep),
             "ddec": dist.Uniform(-max_sep, max_sep),
-            "flux": flux,
+            "flux": dist.LogUniform(lo, hi),
         }
+
+    def _sampled_model(self):
+        """The template as a function of the sampled ``dra``, ``ddec``, ``flux``.
+
+        A ``BinaryModelAngular`` template gets its ``sep`` and ``pa`` from
+        the offsets, so that its fit and posterior have the same prior as a
+        ``BinaryModelCartesian`` one.
+        """
+        from ..models import BinaryModelAngular, BinaryModelCartesian
+
+        if not isinstance(self.model, BinaryModelAngular):
+            return BinaryModelCartesian(0.0, 0.0, 0.0)
+        import jax.numpy as jnp
+
+        def model(dra, ddec, flux):
+            sep = jnp.hypot(dra, ddec)
+            pa = jnp.degrees(jnp.arctan2(dra, ddec)) % 360.0
+            return BinaryModelAngular(sep, pa, flux)
+
+        return model
 
     def _noise(self):
         import numpyro.distributions as dist
@@ -491,6 +510,7 @@ def _search(p):
         "flux": float(stats["flux"]),
         "local_nsigma": local,
         "global_nsigma": global_sigma,
+        "global_nsigma_method": GLOBAL_NSIGMA_METHOD,
         "n_trials": n_trials,
         "max_sep_mas": max_sep,
         "grid_shape": [len(axes["dra"]), len(axes["ddec"]), len(axes["flux"])],
@@ -577,33 +597,48 @@ def _fit(p):
     priors = p._priors(max_sep)
     lo, hi = s["flux_range"]
     flux0 = min(max(search["flux"], 2.0 * lo), 0.5 * hi)
-    dra, ddec = search["dra_mas"], search["ddec_mas"]
-    if isinstance(p.model, BinaryModelAngular):
-        sep0 = max(math.hypot(dra, ddec), 1e-3)
-        start = {
-            "sep": sep0,
-            "pa": float(_wrap(math.degrees(math.atan2(dra, ddec)))),
-            "flux": flux0,
-        }
-    else:
-        start = {"dra": dra, "ddec": ddec, "flux": flux0}
+    start = {
+        "dra": search["dra_mas"],
+        "ddec": search["ddec_mas"],
+        "flux": flux0,
+    }
     params = list(priors)
-    template = p.model.set(
-        params, [np.asarray(start[k], dtype=float) for k in params]
-    )
+    angular = isinstance(p.model, BinaryModelAngular)
+    template = p._sampled_model()
+    if angular:
+        init = {k: np.asarray(v, dtype=float) for k, v in start.items()}
+    else:
+        template = template.set(
+            params, [np.asarray(start[k], dtype=float) for k in params]
+        )
+        init = None
     noise = p._noise()
-    result = fit(template, priors, data, noise=noise)
+    result = fit(template, priors, data, noise=noise, init=init)
     values = {k: np.asarray(v) for k, v in result.values.items()}
-    _io.save_model(p.output / "models" / "best", result.model, values, params)
+    if angular:
+        # The model's own parameters, derived from the fitted offsets.
+        m = result.model
+        values.update(
+            sep=np.asarray(m.sep), pa=np.asarray(m.pa)
+        )
+    reported = ["sep", "pa", "flux"] if angular else params
+    _io.save_model(
+        p.output / "models" / "best", result.model, values, reported
+    )
     _io.write_json(
         p.output / "models" / "best" / "info.json",
         _io.clean_json(dict(result.info)),
     )
 
     chi2, resid = _chi2(result.model, data)
+    # The periodic penalty terms of correlated closure phases are not
+    # meant to be normal: test only the independent whitened residuals.
+    resid = resid[: int(data.n_independent)]
     skew, kurt = _moments(resid)
     one = {k: np.asarray([float(values[k])]) for k in params}
-    pred = posterior_predictive_summary(one, result.model, data, params)
+    pred = posterior_predictive_summary(
+        one, p._sampled_model() if angular else result.model, data, params
+    )
     fig = plot_data_model_correlation(data, {"MAP fit": pred})
     fig = fig[0] if isinstance(fig, tuple) else fig
     _save(fig, p.output / "plots" / "fit_correlation.png")
@@ -613,7 +648,7 @@ def _fit(p):
         if k.startswith("noise.")
     }
     return {
-        "params": {k: float(values[k]) for k in params},
+        "params": {k: float(values[k]) for k in reported},
         "converged": result.info.get("converged"),
         "chi2": chi2,
         "n_independent": int(data.n_independent),
@@ -638,13 +673,18 @@ def _posterior(p):
 
     data, s = p.processed, p.settings
     fit_report = p._report("fit")
-    params = list(fit_report["params"])
     _, max_sep = p._grid()
     priors = p._priors(max_sep)
-    model = _io.load_model(p.output / "models" / "best")
+    params = list(priors)
+    reported = list(fit_report["params"])
+    angular = reported != params
+    model = p._sampled_model()
+    if not angular:
+        model = _io.load_model(p.output / "models" / "best")
     start = {
         k: np.asarray(v)
         for k, v in _io.load_model_values(p.output / "models" / "best").items()
+        if k in params
     }
     posterior = numpyro_model(model, priors, data, noise=p._noise())
     key = jax.random.PRNGKey(s["seed"])
@@ -675,6 +715,13 @@ def _posterior(p):
         k: np.asarray(v)
         for k, v in mcmc.get_samples(group_by_chain=True).items()
     }
+    sampled = dict(samples)
+    if angular:
+        # The model's own parameters, derived from the sampled offsets.
+        samples["sep"] = np.hypot(sampled["dra"], sampled["ddec"])
+        samples["pa"] = _wrap(
+            np.degrees(np.arctan2(sampled["dra"], sampled["ddec"]))
+        )
     extra = mcmc.get_extra_fields(group_by_chain=True)
     stats = {
         ("step_size" if k == "adapt_state.step_size" else k): np.asarray(v)
@@ -686,7 +733,7 @@ def _posterior(p):
         attrs={
             "/": {
                 "schema": _io.SCHEMA,
-                "params": params,
+                "params": reported,
                 "priors": fit_report["priors"],
                 "sampler": {
                     k: s[k]
@@ -702,18 +749,41 @@ def _posterior(p):
         },
     )
 
-    sites = [k for k in samples if k + "_vec" not in samples]
+    sites = [k for k in sampled if k + "_vec" not in sampled]
     diagnostics = {}
     for site in sites:
         x = samples[site]
         rhat = float(np.nanmax(np.asarray(split_gelman_rubin(x))))
         n_eff = float(np.nanmin(np.asarray(effective_sample_size(x))))
         diagnostics[site] = {"r_hat": rhat, "ess_bulk": n_eff}
+    derived = {}
+    if angular:
+        # Diagnostics of sep and pa; an angle through its sine and cosine.
+        parts = {
+            "sep": [samples["sep"]],
+            "pa": [
+                np.sin(np.radians(samples["pa"])),
+                np.cos(np.radians(samples["pa"])),
+            ],
+        }
+        for k, xs in parts.items():
+            derived[k] = {
+                "r_hat": max(
+                    float(np.nanmax(np.asarray(split_gelman_rubin(x))))
+                    for x in xs
+                ),
+                "ess_bulk": min(
+                    float(np.nanmin(np.asarray(effective_sample_size(x))))
+                    for x in xs
+                ),
+            }
     summary = {}
-    for k in params:
+    for k in reported:
         summary[k] = {
             **_quantiles(samples[k], angle=(k == "pa")),
-            **diagnostics.get(k + "_vec", diagnostics.get(k, {})),
+            **derived.get(
+                k, diagnostics.get(k + "_vec", diagnostics.get(k, {}))
+            ),
         }
     bound = {}
     for k in params:
@@ -728,10 +798,10 @@ def _posterior(p):
         bound[k] = float(np.mean((x < lo + edge) | (x > hi - edge)))
     divergent = float(np.mean(stats["diverging"]))
 
-    flat = {k: np.asarray(samples[k], dtype=float).ravel() for k in params}
+    flat = {k: np.asarray(samples[k], dtype=float).ravel() for k in reported}
     fig_corner = fig_walk = None
     _, fig_corner, fig_walk = plot_chainconsumer_diagnostics(
-        {"posterior": pd.DataFrame(flat)}, columns=params
+        {"posterior": pd.DataFrame(flat)}, columns=reported
     )
     _save(fig_corner, p.output / "plots" / "posterior_corner.png")
     _save(fig_walk, p.output / "plots" / "posterior_trace.png")
@@ -839,6 +909,7 @@ def _summarise(settings, reports):
                 "max_snr",
                 "local_nsigma",
                 "global_nsigma",
+                "global_nsigma_method",
                 "n_trials",
                 "dra_mas",
                 "ddec_mas",
@@ -854,10 +925,11 @@ def _summarise(settings, reports):
             )
         )
         checks.append(
+            # The flux axis only seeds the optimizer: not a search boundary.
             _checks.grid_edge(
-                search["peak_index"],
-                search["grid_shape"],
-                ("dra", "ddec", "flux"),
+                search["peak_index"][:2],
+                search["grid_shape"][:2],
+                ("dra", "ddec"),
             )
         )
         if not fit:

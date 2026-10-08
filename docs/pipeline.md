@@ -39,13 +39,13 @@ A run resumes by default: a completed stage whose outputs exist is skipped, and 
 | --- | --- | --- |
 | `load` | Applies `wavel_range` and `error_floor`, and writes the data that are fitted | `OIData.select`, `OIData.with_error_floor`, `write_oifits` |
 | `overview` | Plots the data and the uv coverage | `plot_oidata_overview`, `plot_uv_coverage` |
-| `search` | Delta chi-squared, best flux and SNR maps on a point-companion grid, with the significance of the peak before and after a look-elsewhere correction | `detection_statistics`, `optimized_likelihood_grid`, `local_nsigma` |
+| `search` | Delta chi-squared, best flux and SNR maps on a point-companion grid, with the significance of the peak before and after an approximate look-elsewhere correction (a Šidák estimate, not a simulated false-alarm probability) | `detection_statistics`, `optimized_likelihood_grid`, `local_nsigma` |
 | `limits` | Contrast limits at `sigma` and their radial profile | `absil_limits`, `radial_profile` |
 | `fit` | MAP fit of the model template from the best grid point | `fit` |
 | `posterior` | NUTS from the fit | `numpyro_model`, `chain_init_params` |
 | `quicklook` | Writes and executes `quicklook.ipynb` | `load` |
 
-The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per independent datum is always reported on the quoted errors. Priors are group-invariant: uniform in position and angle (position angle as an `AngleVector`, with no wrap at 0 or 360 degrees) and log-uniform in flux and in error scales. Their ranges are settings (`max_sep_mas`, `flux_range`).
+The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per independent datum is always reported on the quoted errors. Priors are group-invariant: uniform in position (`dra` and `ddec` on a box of half-width `max_sep_mas`) and log-uniform in flux and in error scales. Both templates sample the same `dra`, `ddec` and `flux`, so they give the same prior on the sky; a `BinaryModelAngular` template reports `sep` and `pa` derived from them, with no wrap at 0 or 360 degrees in the fit. The flux range is a setting (`flux_range`).
 
 The search and the limits always use a point companion in Cartesian offsets; the model template (`BinaryModelAngular` or `BinaryModelCartesian`) sets the parameters of the fit and the posterior.
 
@@ -87,15 +87,15 @@ Checks are pure functions of plain numbers. The same run always gives the same c
 
 | Check | Warns | Fails |
 | --- | --- | --- |
-| `chi2` (on the quoted errors) | above 2 | above 5 |
+| `chi2` (on the quoted errors) | above 2 (errors likely underestimated) or below 0.5 (errors likely overestimated) | above 5 (the model does not describe the data, or the errors are much too small) |
 | `error_scale` (with `error_scale="fit"`) | a scale above 2 | a scale above 5, a failed fit rather than a calibration |
-| `detection` (look-elsewhere-corrected significance against `detection_sigma`) | below the threshold | |
-| `grid_edge` (peak on the edge of the search grid) | at the edge | |
+| `detection` (approximate look-elsewhere-corrected significance against `detection_sigma`; use `injection_recovery` or `gaussian_null` for a calibrated threshold) | below the threshold | |
+| `grid_edge` (peak on the edge of the `dra` or `ddec` axis; the flux axis is not a search boundary) | at the edge | |
 | `prior_bound` (posterior mass within 1% of a prior bound) | above 5% | |
 | `r_hat` | above 1.01 | above 1.05 |
 | `ess` (smallest bulk effective sample size) | below 400 | below 100 |
 | `divergences` | any | above 1% of transitions |
-| `residual_normality` (skewness and excess kurtosis of the residuals) | beyond three standard errors | |
+| `residual_normality` (skewness and excess kurtosis of the independent whitened residuals, without the periodic closure-phase penalty terms) | beyond three standard errors | |
 | `field_of_view` (companion inside the resolution limit or beyond the field) | outside | |
 
 ## Stability

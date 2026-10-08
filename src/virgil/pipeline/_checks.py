@@ -151,6 +151,11 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
     of searching a grid. A clear detection passes; one significant only
     locally warns; no detection warns too, since the fit and posterior
     stages then describe the highest noise peak.
+
+    ``global_sigma`` is an approximate Šidák estimate, not a simulated
+    false-alarm probability: for a calibrated threshold use
+    [`injection_recovery`][virgil.detection.injection_recovery] or
+    [`gaussian_null`][virgil.detection.gaussian_null].
     """
     value = [local_sigma, global_sigma]
     if _finite(global_sigma) and global_sigma >= threshold:
@@ -159,8 +164,9 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
             "pass",
             value,
             threshold,
-            f"Companion detected at {global_sigma:.2f}σ after the "
-            f"look-elsewhere correction ({local_sigma:.2f}σ local).",
+            f"Companion detected at {global_sigma:.2f}σ after an approximate "
+            f"look-elsewhere correction ({local_sigma:.2f}σ local); for a "
+            "calibrated threshold use injection_recovery or gaussian_null.",
         )
     if _finite(local_sigma) and local_sigma >= threshold:
         return Check(
@@ -169,8 +175,8 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
             value,
             threshold,
             f"Marginal: {local_sigma:.2f}σ local but {global_sigma:.2f}σ "
-            "after the look-elsewhere correction; confirm it with "
-            "simulated nulls.",
+            "after an approximate look-elsewhere correction; confirm it "
+            "with simulated nulls (injection_recovery or gaussian_null).",
         )
     return Check(
         "detection",
