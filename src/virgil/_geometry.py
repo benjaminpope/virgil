@@ -128,6 +128,38 @@ def rotate(x, y, rotation_deg):
     return c * x + s * y, -s * x + c * y
 
 
+def fringe_scales(data):
+    """The finest and coarsest fringe spacings of ``data``, in mas.
+
+    ``data`` is an ``OIData`` or a sequence of them. Each sample ``k`` has
+    a spatial frequency ``B_k / λ_k`` (its own baseline over its own
+    wavelength), and the finest fringes are ``1 / max(B/λ)`` and the
+    coarsest ``1 / min(B/λ)``, over the samples with a non-zero baseline
+    (a zero baseline measures no fringe, and would make the coarsest
+    infinite). This is not ``λ_max / B_min``, which pairs a baseline with a
+    wavelength it may not have been observed at.
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(finest, coarsest)``.
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    rho = onp.concatenate(
+        [
+            onp.ravel(
+                onp.hypot(onp.asarray(d.u, float), onp.asarray(d.v, float))
+                / onp.asarray(d.wavel, float)
+            )
+            for d in observations
+        ]
+    )
+    rho = rho[rho > 0]
+    if rho.size == 0:
+        raise ValueError("The data have no sample with a non-zero baseline.")
+    return 1.0 / (rho.max() * mas2rad), 1.0 / (rho.min() * mas2rad)
+
+
 class UVGrid(eqx.Module):
     """uv samples that lie on a regular lattice, possibly rotated on the sky.
 

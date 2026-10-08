@@ -9,8 +9,6 @@ import numpy as np
 from . import _checks, _io
 from ._core import Stage, _Pipeline
 
-MAS_PER_RAD = 180.0 / math.pi * 3600.0 * 1000.0
-
 # Fraction of a prior's range, at either end, counted as "at the bound".
 _BOUND_FRACTION = 0.01
 
@@ -30,7 +28,9 @@ def _bound_samples(prior, samples):
     if fraction is None:
         return None
     return float(
-        np.mean((fraction < _BOUND_FRACTION) | (fraction > 1 - _BOUND_FRACTION))
+        np.mean(
+            (fraction < _BOUND_FRACTION) | (fraction > 1 - _BOUND_FRACTION)
+        )
     )
 
 
@@ -48,22 +48,26 @@ def _save(fig, path):
 
 def _geometry(data):
     """Baseline and resolution figures of ``data`` (metres, mas)."""
+    from .._geometry import fringe_scales
+
     u = np.asarray(data.u, dtype=float)
     v = np.asarray(data.v, dtype=float)
     wavel = np.broadcast_to(np.asarray(data.wavel, dtype=float), u.shape)
     baseline = np.hypot(u, v)
     positive = baseline > 0
-    b_min, b_max = baseline[positive].min(), baseline[positive].max()
+    finest, coarsest = fringe_scales(data)
     return {
-        "baseline_min_m": float(b_min),
-        "baseline_max_m": float(b_max),
+        "baseline_min_m": float(baseline[positive].min()),
+        "baseline_max_m": float(baseline[positive].max()),
         "wavel_min_m": float(wavel.min()),
         "wavel_max_m": float(wavel.max()),
-        # Half of λ/B_max: inside it, separation and flux are degenerate.
-        "resolution_mas": float(0.5 * wavel.min() / b_max * MAS_PER_RAD),
-        # λ/B_min: the field over which the coverage is unambiguous.
-        "fov_mas": float(wavel.max() / b_min * MAS_PER_RAD),
-        "lambda_over_b_mas": float(wavel.min() / b_max * MAS_PER_RAD),
+        # Half of the finest λ/B: inside it, separation and flux are
+        # degenerate.
+        "resolution_mas": float(0.5 * finest),
+        # The coarsest λ/B: the field over which the coverage is
+        # unambiguous.
+        "fov_mas": float(coarsest),
+        "lambda_over_b_mas": float(finest),
     }
 
 

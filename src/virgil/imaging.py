@@ -57,7 +57,7 @@ import numpy as onp
 from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
-from ._geometry import pixel_offsets, rotate
+from ._geometry import fringe_scales, pixel_offsets, rotate
 from ._utils import _reference, mas2rad
 from ._precision import cast_tree, run_in
 from .fitting import FitResult, fit
@@ -483,11 +483,7 @@ def nyquist_pixel_scale(data):
     over all samples of ``data`` (an OIData or a sequence of them).
     Reconstructions normally use pixels 2–4 times smaller.
     """
-    observations = data if isinstance(data, (list, tuple)) else [data]
-    longest = max(
-        float(np.max(np.hypot(d.u, d.v) / d.wavel)) for d in observations
-    )
-    return 1.0 / (2.0 * longest * mas2rad)
+    return 0.5 * fringe_scales(data)[0]
 
 
 def field_of_view(data, largest_mas=500.0):
@@ -501,15 +497,7 @@ def field_of_view(data, largest_mas=500.0):
     [`nyquist_pixel_scale`][virgil.imaging.nyquist_pixel_scale] to
     choose the image's size and pixels.
     """
-    observations = data if isinstance(data, (list, tuple)) else [data]
-    shortest = min(
-        float(onp.min(rho[rho > 0]))
-        for rho in (
-            onp.ravel(onp.asarray(onp.hypot(d.u, d.v) / d.wavel))
-            for d in observations
-        )
-    )
-    return min(float(largest_mas), 1.0 / (shortest * mas2rad))
+    return min(float(largest_mas), fringe_scales(data)[1])
 
 
 def _complex_visibilities(d):

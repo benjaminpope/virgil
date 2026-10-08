@@ -49,6 +49,7 @@ import jax.numpy as np
 import numpy as onp
 from jax.scipy.special import i0e
 
+from ._geometry import fringe_scales
 from ._precision import cast_tree, run_in
 from .fitting import fit
 from .likelihood import (
@@ -78,8 +79,6 @@ __all__ = [
     "rank_orbits",
     "start_from_positions",
 ]
-
-_MAS = onp.pi / 180.0 / 3.6e6  # radians per milliarcsecond
 
 _AT = ("dataset", "epoch")
 
@@ -237,16 +236,7 @@ class Epochs:
         much, so starting orbits closer together than a fraction of it are
         one mode.
         """
-        finest = onp.inf
-        for d in self.data:
-            baseline = onp.hypot(onp.asarray(d.u), onp.asarray(d.v))
-            wavel, baseline = onp.broadcast_arrays(
-                onp.asarray(d.wavel, dtype=float), baseline
-            )
-            ok = baseline > 0
-            if ok.any():
-                finest = min(finest, float(onp.min(wavel[ok] / baseline[ok])))
-        return finest / _MAS
+        return float(fringe_scales(list(self.data))[0])
 
     def index(self, name):
         """The position of dataset ``name`` in ``data`` (and in ``noise``).
