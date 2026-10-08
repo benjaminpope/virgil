@@ -346,7 +346,11 @@ class BinaryPipeline(_Pipeline):
             Stage(
                 "posterior",
                 _posterior,
-                ("samples.h5", "plots/posterior_corner.png"),
+                (
+                    "samples.h5",
+                    "plots/posterior_corner.png",
+                    "plots/posterior_trace.png",
+                ),
             ),
             Stage("quicklook", _quicklook, ("quicklook.ipynb",)),
         )
