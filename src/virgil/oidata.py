@@ -1755,9 +1755,7 @@ def _valid_samples(values, errors):
     fit non-finite. Such samples are dropped, as flagged ones are.
     """
     return (
-        onp.isfinite(values)
-        & onp.isfinite(errors)
-        & (onp.asarray(errors) > 0)
+        onp.isfinite(values) & onp.isfinite(errors) & (onp.asarray(errors) > 0)
     )
 
 

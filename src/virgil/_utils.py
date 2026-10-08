@@ -1,6 +1,8 @@
 """Small helpers shared across virgil: unit constants, traced-value
 checks, and the rules for naming flux parameters."""
 
+import dataclasses
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -13,6 +15,29 @@ mas2rad = np.pi / 180.0 / 3600.0 / 1000.0  # convert mas to rad
 dtor = np.pi / 180.0  # convert deg to rad
 
 i2pi = 1j * 2.0 * np.pi
+
+
+def check_part_name(name, owner, kind, example, clashes_with):
+    """Reject the name of a part of a container that cannot be a path step.
+
+    The names of a ``System``'s components and of a ``Sum``'s parts become
+    attributes (``system.star``) and parameter paths (``'comp.flux'``), so
+    they must be identifiers that do not start with an underscore and do
+    not clash with the container's own fields, properties and methods
+    (found on ``owner``, so a new field is protected automatically).
+    """
+    if not isinstance(name, str) or not name.isidentifier():
+        raise ValueError(
+            f"{kind[0].upper()}{kind[1:]} name {name!r} must be a valid "
+            "Python identifier, so "
+            f"that it can be used in parameter paths such as {example!r}."
+        )
+    fields = {f.name for f in dataclasses.fields(owner)}
+    if name.startswith("_") or name in fields or hasattr(owner, name):
+        raise ValueError(
+            f"'{name}' cannot be a {kind} name because it clashes "
+            f"with {clashes_with}; choose another name."
+        )
 
 
 # === TRACED VALUES ===

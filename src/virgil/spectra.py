@@ -42,7 +42,7 @@ import jax.numpy as np
 import numpy as onp
 import zodiax as zx
 
-from ._utils import concrete
+from ._utils import check_part_name, concrete
 
 
 __all__ = [
@@ -491,7 +491,13 @@ class Sum(Spectrum):
         if not parts:
             raise ValueError("Sum needs at least one spectrum.")
         for name, part in parts.items():
-            _check_part_name(name)
+            check_part_name(
+                name,
+                Sum,
+                "Sum part",
+                "flux.brg.amplitude",
+                "a Sum attribute or method",
+            )
             if not isinstance(part, Spectrum):
                 raise TypeError(f"Part '{name}' is not a Spectrum: {part!r}")
         self.names = tuple(parts)
@@ -659,29 +665,6 @@ def _planck_ratio(wavel, temperature, wavel0, temperature0):
         - np.log(-np.expm1(-x))
     )
     return np.exp(log_ratio)
-
-
-def _check_part_name(name):
-    """Reject Sum part names that are not parameter-path safe or clash.
-
-    The same rule as a [`System`][virgil.models.System] component name
-    (which `models` owns, and imports this module).
-    """
-    if not isinstance(name, str) or not name.isidentifier():
-        raise ValueError(
-            f"Sum part name {name!r} must be a valid Python identifier, so "
-            "that it can be used in parameter paths such as "
-            "'flux.brg.amplitude'."
-        )
-    if (
-        name.startswith("_")
-        or name in {"names", "parts", "wavel0", "components"}
-        or hasattr(Sum, name)
-    ):
-        raise ValueError(
-            f"'{name}' cannot be a Sum part name because it clashes with a "
-            "Sum attribute or method; choose another name."
-        )
 
 
 def _spline_moments(nodes, values):
