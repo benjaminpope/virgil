@@ -15,6 +15,8 @@ import warnings
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
+
 from . import _io
 from ._checks import worst_status
 
@@ -117,6 +119,7 @@ class _Pipeline:
         self.data = data
         self.model = self._default_model() if model is None else model
         self.output = Path(output)
+        self._processed = None
         self.settings = self._resolve(settings)
         _io.require_extra("h5py")
         self.inputs = getattr(self, "_input_paths", None)
@@ -210,6 +213,35 @@ class _Pipeline:
         if not Path(output).is_absolute() and "output" in config:
             output = path.parent / output
         return cls.from_oifits(paths, model, output=output, **settings)
+
+    # --- shared state, rebuilt on demand so that resume works ------------
+
+    @property
+    def processed(self):
+        """The data after the ``wavel_range`` and ``error_floor`` settings."""
+        if self._processed is None:
+            data = self.data
+            s = self.settings
+            if s["wavel_range"] is not None:
+                data = data.select(*s["wavel_range"])
+            if s["error_floor"] is not None:
+                data = data.with_error_floor(absolute=s["error_floor"])
+            self._processed = data
+        return self._processed
+
+    def _noise(self):
+        """Log-uniform error-scale priors with ``error_scale="fit"``, else None."""
+        import numpyro.distributions as dist
+
+        if self.settings["error_scale"] != "fit":
+            return None
+        noise = {"vis_scale": dist.LogUniform(0.1, 10.0)}
+        if np.asarray(self.processed.phi).size:
+            noise["phi_scale"] = dist.LogUniform(0.1, 10.0)
+        return noise
+
+    def _report(self, stage):
+        return _io.read_json(self.output / "stages" / stage / "report.json")
 
     # --- running --------------------------------------------------------
 

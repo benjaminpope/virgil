@@ -388,6 +388,144 @@ def field_of_view(sep, resolution, fov):
     )
 
 
+# θB/λ of the first zero of a uniform disk's visibility, j_{1,1} / π.
+FIRST_NULL = 1.2196699
+
+
+def resolution_regime(diam_mas, freq_max, *, unresolved=0.15):
+    """Whether the baselines reach the first null of the visibility.
+
+    A disk of angular diameter θ has its first null at θB/λ = 1.22, so the
+    fraction ``x = θ f_max / 1.22`` of the way there, with ``f_max`` the
+    longest spatial frequency B/λ, says what the data can measure.
+
+    Parameters
+    ----------
+    diam_mas : float
+        Fitted angular diameter (mas).
+    freq_max : float
+        Longest spatial frequency B/λ in the data (cycles per radian).
+    unresolved : float, optional
+        Fraction of the first null below which the star is unresolved and
+        its diameter is an upper limit.
+    """
+    ratio = float(diam_mas) * math.pi / 180.0 / 3.6e6 * float(freq_max)
+    ratio /= FIRST_NULL
+    if not _finite(ratio):
+        return Check(
+            "resolution", "fail", ratio, 1.0, "The resolution is not finite."
+        )
+    if ratio < unresolved:
+        status, meaning = (
+            "fail",
+            "the star is unresolved and its diameter is an upper limit",
+        )
+    elif ratio < 1.0:
+        status, meaning = (
+            "warn",
+            "the baselines stop short of the first null, so the diameter "
+            "is measured but limb darkening is degenerate with it",
+        )
+    else:
+        status, meaning = (
+            "pass",
+            "the baselines reach the first null, so the diameter is "
+            "well measured and limb darkening can be constrained",
+        )
+    return Check(
+        "resolution",
+        status,
+        ratio,
+        1.0,
+        f"The longest baseline reaches {ratio:.3g} of the first null: "
+        f"{meaning}.",
+    )
+
+
+def model_gain(
+    name, chi2_simple, chi2_complex, n, *, n_extra, simple, complex_
+):
+    """Whether a richer model improves the fit by more than its BIC penalty.
+
+    Both χ² values are on the quoted errors. The richer model contains the
+    simpler one, so a negative gain means that one of the fits did not
+    converge.
+
+    Parameters
+    ----------
+    name : str
+        Check name.
+    chi2_simple, chi2_complex : float
+        χ² of the simpler and richer model.
+    n : int
+        Number of independent observables.
+    n_extra : int
+        Extra parameters of the richer model.
+    simple, complex_ : str
+        Their names, for the message.
+    """
+    gain = float(chi2_simple) - float(chi2_complex)
+    penalty = n_extra * math.log(max(int(n), 2))
+    if not _finite(gain):
+        return Check(name, "fail", gain, penalty, "The χ² gain is not finite.")
+    if gain < -1.0:
+        status = "warn"
+        message = (
+            f"The {complex_} model fits worse than the {simple} model it "
+            f"contains (Δχ² = {gain:.3g}): a fit did not converge."
+        )
+    elif gain > penalty:
+        status = "pass"
+        message = (
+            f"Δχ² = {gain:.3g} for {n_extra} extra parameters exceeds the "
+            f"BIC penalty {penalty:.3g}: the {complex_} model is preferred."
+        )
+    else:
+        status = "pass"
+        message = (
+            f"Δχ² = {gain:.3g} for {n_extra} extra parameters does not "
+            f"exceed the BIC penalty {penalty:.3g}: the {simple} model is "
+            "adequate."
+        )
+    return Check(name, status, gain, penalty, message)
+
+
+def prior_constrained(name, ratios, *, warn=0.8):
+    """Whether parameters are constrained by the data or by their priors.
+
+    Parameters
+    ----------
+    name : str
+        Check name.
+    ratios : dict[str, float]
+        For each parameter, the posterior standard deviation divided by the
+        standard deviation of its prior.
+    warn : float, optional
+        Ratio at or above which the prior dominates.
+    """
+    bad = [k for k, v in ratios.items() if not _finite(v) or v >= warn]
+    worst = max(ratios.values(), default=0.0)
+    listing = ", ".join(f"{k} {v:.2f}" for k, v in ratios.items())
+    if bad:
+        return Check(
+            name,
+            "warn",
+            worst,
+            warn,
+            f"The posterior is as wide as the prior for {', '.join(bad)} "
+            f"(σ_posterior/σ_prior: {listing}): the data do not constrain "
+            "them.",
+        )
+    return Check(
+        name,
+        "pass",
+        worst,
+        warn,
+        f"The data constrain every parameter (σ_posterior/σ_prior: "
+        f"{listing}).",
+    )
+
+
 def worst_status(checks):
     """The worst status among ``checks`` (``"pass"`` if there are none)."""
     rank = {status: i for i, status in enumerate(STATUSES)}

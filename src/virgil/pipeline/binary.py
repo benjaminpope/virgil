@@ -208,7 +208,6 @@ class BinaryPipeline(_Pipeline):
                 "BinaryPipeline fits a BinaryModelAngular or "
                 f"BinaryModelCartesian template; got {type(self.model).__name__}."
             )
-        self._processed = None
 
     def _default_model(self):
         from ..models import BinaryModelAngular
@@ -250,19 +249,6 @@ class BinaryPipeline(_Pipeline):
             raise ValueError("error_floor must be a dict of absolute floors.")
 
     # --- shared state, rebuilt on demand so that resume works ------------
-
-    @property
-    def processed(self):
-        """The data after ``wavel_range`` and ``error_floor``."""
-        if self._processed is None:
-            data = self.data
-            s = self.settings
-            if s["wavel_range"] is not None:
-                data = data.select(*s["wavel_range"])
-            if s["error_floor"] is not None:
-                data = data.with_error_floor(absolute=s["error_floor"])
-            self._processed = data
-        return self._processed
 
     def _grid(self):
         import jax.numpy as jnp
@@ -316,19 +302,6 @@ class BinaryPipeline(_Pipeline):
             return BinaryModelAngular(sep, pa, flux)
 
         return model
-
-    def _noise(self):
-        import numpyro.distributions as dist
-
-        if self.settings["error_scale"] != "fit":
-            return None
-        noise = {"vis_scale": dist.LogUniform(0.1, 10.0)}
-        if np.asarray(self.processed.phi).size:
-            noise["phi_scale"] = dist.LogUniform(0.1, 10.0)
-        return noise
-
-    def _report(self, stage):
-        return _io.read_json(self.output / "stages" / stage / "report.json")
 
     def _stages(self):
         return (

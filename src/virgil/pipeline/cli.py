@@ -2,6 +2,8 @@
 
     virgil-pipeline binary DATA... --output DIR [--through S] [--fresh]
                                    [--set key=value ...]
+    virgil-pipeline star DATA... --output DIR [--model uniform|limb_darkened]
+                                 [--through S] [--fresh] [--set key=value ...]
     virgil-pipeline info DIR
     virgil-pipeline quicklook DIR [--no-execute]
     virgil-pipeline validate DIR
@@ -17,7 +19,10 @@ import json
 import sys
 from pathlib import Path
 
-_PIPELINES = {"binary": ("virgil.pipeline.binary", "BinaryPipeline")}
+_PIPELINES = {
+    "binary": ("virgil.pipeline.binary", "BinaryPipeline"),
+    "star": ("virgil.pipeline.star", "StarPipeline"),
+}
 
 
 def _parse_value(text):
@@ -43,7 +48,10 @@ def _run(args):
     module, name = _PIPELINES[args.command]
     cls = getattr(importlib.import_module(module), name)
     pipeline = cls.from_oifits(
-        args.data, output=args.output, **_settings(args.set)
+        args.data,
+        getattr(args, "model", None),
+        output=args.output,
+        **_settings(args.set),
     )
     res = pipeline.run(through=args.through, resume=not args.fresh)
     print(res.describe())
@@ -153,6 +161,12 @@ def build_parser():
             metavar="KEY=VALUE",
             help="override a setting (VALUE is parsed as JSON if it can be)",
         )
+        if name == "star":
+            p.add_argument(
+                "--model",
+                help='fit one model, e.g. "uniform" or "limb_darkened" '
+                "(default: both, compared)",
+            )
         p.set_defaults(func=_run)
     p = sub.add_parser("info", help="print a run's status and checks")
     p.add_argument("dir")

@@ -614,49 +614,76 @@ class Result:
             )
         return OIData(path)
 
-    def model(self):
-        """The best-fit model, a real virgil object with its values set."""
-        return load_model(self._stage_file("models/best", "fit"))
+    def model(self, name=None):
+        """A fitted model, a real virgil object with its values set.
 
-    def model_values(self):
-        """The best-fit parameter values, as path → numpy array."""
-        return load_model_values(self._stage_file("models/best", "fit"))
+        Parameters
+        ----------
+        name : str, optional
+            For a run that fitted several models (``StarPipeline``), the
+            model to rebuild; by default the preferred one, ``"best"``.
+        """
+        return load_model(self._model_folder(name))
 
-    def samples(self, group_by_chain=True):
-        """Posterior samples by site, shaped ``(chain, draw)`` (or flat)."""
+    def model_values(self, name=None):
+        """The fitted parameter values, as path → numpy array (see ``model``)."""
+        return load_model_values(self._model_folder(name))
+
+    def samples(self, group_by_chain=True, name=None):
+        """Posterior samples by site, shaped ``(chain, draw)`` (or flat).
+
+        ``name`` selects one of several fitted models, as in ``model``.
+        """
         samples = read_h5(
-            self._stage_file("samples.h5", "posterior"), "posterior"
+            self._stage_file("samples.h5", "posterior"),
+            self._group("posterior", name),
         )
         if group_by_chain:
             return samples
         return {k: v.reshape((-1,) + v.shape[2:]) for k, v in samples.items()}
 
-    def sample_stats(self):
+    def sample_stats(self, name=None):
         """NUTS diagnostics per transition, shaped ``(chain, draw)``."""
         return read_h5(
-            self._stage_file("samples.h5", "posterior"), "sample_stats"
+            self._stage_file("samples.h5", "posterior"),
+            self._group("sample_stats", name),
         )
 
     def grid(self):
         """Grid results: ``"axes"`` (usable as ``grid=``) plus one map per name."""
-        path = self._stage_file("grids.h5", "search")
+        stage = "fit" if self.run["pipeline"] == "star" else "search"
+        path = self._stage_file("grids.h5", stage)
         out = {"axes": read_h5(path, "axes")}
-        for group in ("search", "limits"):
+        for group in ("search", "limits", "scan"):
             out.update(read_h5(path, group))
         order = read_h5_attrs(path).get("axis_order")
         if order:
             out["axes"] = {k: out["axes"][k] for k in order}
         return out
 
-    def fit_result(self):
-        """The MAP fit as a virgil ``FitResult``, e.g. to continue with ``fit``."""
+    def fit_result(self, name=None):
+        """The MAP fit as a virgil ``FitResult``, e.g. to continue with ``fit``.
+
+        ``name`` selects one of several fitted models, as in ``model``.
+        """
         from ..fitting import FitResult
 
-        folder = self._stage_file("models/best", "fit")
+        folder = self._model_folder(name)
         info = read_json(Path(folder) / "info.json")
         return FitResult(
-            model=self.model(), values=self.model_values(), info=info
+            model=load_model(folder),
+            values=load_model_values(folder),
+            info=info,
         )
+
+    def _model_folder(self, name):
+        return self._stage_file(
+            "models/best" if name is None else f"models/{name}", "fit"
+        )
+
+    @staticmethod
+    def _group(group, name):
+        return group if name is None else f"{group}_{name}"
 
     def _stage_file(self, relative, stage):
         path = self.path / relative
