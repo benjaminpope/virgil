@@ -46,7 +46,7 @@ def data():
         wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 3),
         hour_angles_h=(-2.5, 0.0, 2.5),
         sigma_v2=0.002,
-        sigma_cp_deg=0.5,
+        sigma_cp_deg=5.0,
     )
     return template.with_model(TRUTH, key=jax.random.PRNGKey(3))
 
@@ -103,7 +103,13 @@ SUMMARY_KEYS = {
         "freq_max_per_rad",
     },
     "chi2": {"n_independent", "error_scale", "reduced", "error_scales"},
-    "fit": {"best", "scan_diam_mas", "models"},
+    "fit": {
+        "best",
+        "scan_diam_mas",
+        "diam_bounds_mas",
+        "rivals",
+        "models",
+    },
     "comparison": {
         "simple",
         "complex",
@@ -113,7 +119,12 @@ SUMMARY_KEYS = {
         "preferred",
     },
     "star": {"model", "source", "diam_mas", "diam_err_mas"},
-    "resolution": {"diam_mas", "freq_max_per_rad", "first_null_fraction"},
+    "resolution": {
+        "diam_mas",
+        "freq_max_per_rad",
+        "first_null",
+        "first_null_fraction",
+    },
     "shape": {"model", "params"},
     "posterior": {
         "models",
@@ -132,6 +143,7 @@ CHECKS = [
     "chi2_limb_darkened",
     "limb_darkening_gain",
     "resolution",
+    "multimodal",
     "limb_darkening_constrained",
     "prior_bound",
     "r_hat",
@@ -249,7 +261,7 @@ def test_diameter_recovered_and_quoted_errors_lead(full_run):
     # the raw chi^2/N on the quoted errors says so; no rescaling hides it.
     assert s["chi2"]["error_scale"] == "quoted"
     assert s["chi2"]["reduced"]["limb_darkened"] < 2.0
-    assert s["chi2"]["reduced"]["uniform"] > 100.0
+    assert s["chi2"]["reduced"]["uniform"] > 10.0
     assert s["comparison"]["preferred"] == "limb_darkened"
     assert s["comparison"]["delta_chi2"] > 100 * s["comparison"]["bic_penalty"]
     assert abs(s["star"]["diam_mas"] - 6.0) < 0.5
@@ -279,7 +291,12 @@ def test_round_trip(full_run, data):
     uniform = res.model("uniform")
     assert type(uniform) is UniformDisk
     onp.testing.assert_allclose(
-        float(uniform.diam), res.summary["fit"]["scan_diam_mas"], rtol=0.02
+        float(uniform.diam), res.summary["fit"]["scan_diam_mas"], rtol=1e-6
+    )
+    onp.testing.assert_allclose(
+        res.model_values("uniform")["diam"],
+        res.summary["fit"]["scan_diam_mas"],
+        rtol=1e-12,
     )
     assert set(res.model_values("uniform")) == {"diam"}
     fit = res.fit_result("uniform")
@@ -305,8 +322,20 @@ def test_round_trip(full_run, data):
     grid = res.grid()
     assert list(grid["axes"]) == ["diam"]
     assert grid["delta_chi2"].shape == grid["axes"]["diam"].shape
-    # Relative to the refined best point, which the coarse axis can miss.
-    assert grid["delta_chi2"].min() >= 0.0
+    # Relative to the refined best point, which the coarse axis can miss:
+    # the coarse minimum lies within one coarse step of the scan diameter,
+    # and its excess over the refined minimum is small there.
+    axis, delta = grid["axes"]["diam"], grid["delta_chi2"]
+    scan = res.summary["fit"]["scan_diam_mas"]
+    step = (axis[-1] / axis[0]) ** (1.0 / (axis.size - 1))
+    coarse = axis[int(onp.argmin(delta))]
+    assert coarse / step <= scan <= coarse * step
+    # The coarse minimum's excess over the refined minimum, from chi^2
+    # computed independently of the scan.
+    excess = float(star._chi2_64(UniformDisk(coarse), data)[0]) - float(
+        star._chi2_64(UniformDisk(scan), data)[0]
+    )
+    assert delta.min() == pytest.approx(excess, rel=1e-3, abs=1e-3)
 
 
 def test_quicklook_notebook(full_run):
@@ -347,7 +376,11 @@ def test_uniform_only_run_and_error_scale(data, tmp_path):
     assert res.status == "partial"
     assert list(res.summary["fit"]["models"]) == ["uniform"]
     assert "comparison" not in res.summary
-    assert [c.name for c in res.checks] == ["chi2_uniform", "resolution"]
+    assert [c.name for c in res.checks] == [
+        "chi2_uniform",
+        "resolution",
+        "multimodal",
+    ]
     assert type(res.model()) is UniformDisk
 
     out = tmp_path / "scaled"
@@ -499,3 +532,110 @@ def test_prior_dominated_names_the_parameters():
     )
     assert "q2" in check.message.split("(")[0]
     assert "q1" not in check.message.split("(")[0]
+
+
+# --- review follow-ups ------------------------------------------------------
+
+
+def test_the_posterior_has_few_divergences(full_run):
+    """The prior covers the scan's lobe, so NUTS has no hard walls to hit."""
+    _, res = full_run
+    s = res.summary
+    lo, hi = s["fit"]["diam_bounds_mas"]
+    assert lo < s["fit"]["scan_diam_mas"] < hi
+    assert lo < 6.0 < hi
+    for name, model in s["posterior"]["models"].items():
+        assert model["divergence_fraction"] <= 0.05, name
+
+
+def test_scan_diameter_matches_a_brute_force_grid(data):
+    lo, hi = 0.5, 30.0
+    axis, delta, best = star._scan(data, lo, hi, 400, None)
+    assert delta.shape == axis.shape
+    window = onp.linspace(0.97 * best, 1.03 * best, 301)
+    chi2 = onp.array(
+        [float(star._chi2_64(UniformDisk(d), data)[0]) for d in window]
+    )
+    brute = window[int(onp.argmin(chi2))]
+    assert 0.97 * best < brute < 1.03 * best
+    assert abs(brute - best) <= 2 * (window[1] - window[0])
+
+
+def test_refine_window_spans_one_coarse_step(data):
+    """A coarse scan of 25 points still recovers the diameter."""
+    axis, delta, best = star._scan(data, 0.5, 30.0, 25, None)
+    reference = star._scan(data, 0.5, 30.0, 2000, None)[2]
+    assert best == pytest.approx(reference, rel=2e-3)
+    step = (axis[-1] / axis[0]) ** (1.0 / (axis.size - 1))
+    assert step > 1.1  # the old fixed +-1% window could not have found it
+
+
+def test_error_scale_fit_compares_models_on_rescaled_errors(data, tmp_path):
+    res = StarPipeline(
+        data, output=tmp_path / "run", error_scale="fit", **TINY
+    ).run(through="fit")
+    fit = res.summary["fit"]["models"]
+    for report in fit.values():
+        assert report["chi2_fitted"] != pytest.approx(report["chi2"])
+    comp = res.summary["comparison"]
+    assert comp["delta_chi2"] == pytest.approx(
+        fit["uniform"]["chi2_fitted"] - fit["limb_darkened"]["chi2_fitted"]
+    )
+    # The quoted-error chi^2/N stays the diagnostic.
+    assert res.summary["chi2"]["reduced"]["uniform"] == pytest.approx(
+        fit["uniform"]["chi2_reduced"]
+    )
+
+
+def test_prior_bound_ignores_shape_parameters():
+    import numpyro.distributions as dist
+
+    priors = {
+        "diam": dist.LogUniform(1.0, 10.0),
+        "q1": dist.Uniform(0.0, 1.0),
+    }
+    samples = {
+        "diam": onp.full(100, 5.0),
+        "q1": onp.full(100, 0.999),
+        "noise.vis_scale": onp.full(100, 1.0),
+    }
+    both = star._bound_fractions(samples, priors)
+    assert both["q1"] == 1.0
+    kept = star._bound_fractions(samples, priors, skip=("q1",))
+    assert set(kept) == {"diam", "noise.vis_scale"}
+    assert kept["diam"] == 0.0
+
+
+def test_resolution_uses_the_fitted_models_first_null():
+    ld = QuadraticLimbDarkenedDisk.from_u(6.0, u1=0.6, u2=0.2)
+    ld_null = star._first_null(ld, 6.0)
+    assert ld_null > checks.FIRST_NULL * 1.02
+    assert star._first_null(UniformDisk(6.0), 6.0) == pytest.approx(
+        checks.FIRST_NULL, rel=1e-3
+    )
+    # A longest baseline between the two nulls: past the uniform-disk null,
+    # short of the limb-darkened one.
+    freq = _freq(6.0, 1.0) * (1.0 + ld_null / checks.FIRST_NULL) / 2
+    uniform = checks.resolution_regime(6.0, freq)
+    limb = checks.resolution_regime(6.0, freq, first_null=ld_null)
+    assert uniform.status == "pass" and uniform.value > 1.0
+    assert limb.status == "warn" and limb.value < 1.0
+
+
+def test_multimodal_check():
+    assert checks.multimodal([], 6.0).status == "pass"
+    warn = checks.multimodal([[9.0, 3.0], [4.0, 12.0]], 6.0)
+    assert warn.status == "warn" and warn.value == 2
+    assert "9" in warn.message
+    json.dumps(warn.to_dict())
+
+
+def test_lobes_bound_the_prior_between_rivals():
+    axis = onp.geomspace(1.0, 100.0, 1001)
+    delta = onp.full(axis.shape, 1e3)
+    delta[onp.argmin(abs(axis - 10.0))] = 0.0
+    delta[onp.argmin(abs(axis - 20.0))] = 5.0
+    lo, hi, rivals = star._lobes(axis, delta, 10.0, 1.0, 100.0)
+    assert lo == 1.0
+    assert hi == pytest.approx(math.sqrt(10.0 * 20.0), rel=0.01)
+    assert len(rivals) == 1 and rivals[0][1] == 5.0

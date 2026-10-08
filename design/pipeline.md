@@ -133,8 +133,13 @@ Decisions:
   magnitude. NUTS runs in the ambient precision, as in the tutorials and
   `BinaryPipeline`.
 - Observing a star past its first null makes the closure-phase likelihood
-  discontinuous, so NUTS can diverge there. The sampler checks report
-  that; they are not hidden.
+  a union of thin slivers (a 180 degree flip costs (180/sigma)^2 in chi^2),
+  and NUTS diverges at the walls whatever the precision or mass matrix.
+  The fit and posterior therefore run in float64, the diameter prior is
+  bounded to the scan's lobe (midpoints to the nearest alias, recorded as
+  `diam_bounds_mas`), a `multimodal` check reports comparable aliases, and
+  the limb-darkened fit starts from a grid of diameters as well as the scan.
+  Residual divergences are still reported, not hidden.
 - `processed`, `_noise` and `_report` moved from `BinaryPipeline` into the
   base class, since every pipeline needs them.
 

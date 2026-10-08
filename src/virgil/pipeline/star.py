@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import types
 from typing import Callable
 
 import numpy as np
@@ -463,6 +464,24 @@ def _freq_max(data):
     return float(np.max(np.hypot(u, v) / wavel))
 
 
+def _first_null(model, diam_mas, n=4000):
+    """θB/λ at the first sign change of the model visibility.
+
+    The visibility is evaluated on a one-dimensional grid of B/λ out to
+    four times the uniform-disk null. Falls back to the uniform-disk value
+    when the model has no null in range.
+    """
+    scale = 3.6e6 * 180.0 / math.pi / float(diam_mas)  # f for θf = 1
+    grid = np.linspace(1e-3, 4.0, n) * scale
+    vis = np.real(np.asarray(model.model(grid, 0.0 * grid, 1.0)))
+    flips = np.flatnonzero(np.sign(vis[1:]) * np.sign(vis[:-1]) < 0)
+    if not flips.size:
+        return _checks.FIRST_NULL
+    i = int(flips[0])
+    frac = vis[i] / (vis[i] - vis[i + 1])
+    return float((grid[i] + frac * (grid[i + 1] - grid[i])) / scale)
+
+
 def _load(p):
     from ..oifits import write_oifits
 
@@ -517,8 +536,8 @@ def _float64(function):
 
 
 @_float64
-def _chi2_64(model, data):
-    return _chi2(model, data)
+def _chi2_64(model, data, **noise):
+    return _chi2(model, data, **noise)
 
 
 @_float64
@@ -535,13 +554,49 @@ def _scan(data, lo, hi, n_scan, batch_size):
         likelihood_grid(UniformDisk, data, {"diam": jnp.asarray(coarse)}, **kw)
     )
     best = float(coarse[int(np.nanargmax(ll))])
-    fine = np.geomspace(max(lo, 0.99 * best), min(hi, 1.01 * best), 201)
+    # One coarse step either side of the coarse optimum.
+    step = (hi / lo) ** (1.0 / (n_scan - 1))
+    fine = np.geomspace(max(lo, best / step), min(hi, best * step), 201)
     ll_fine = np.asarray(
         likelihood_grid(UniformDisk, data, {"diam": jnp.asarray(fine)}, **kw)
     )
     best = float(fine[int(np.nanargmax(ll_fine))])
     ll_top = float(max(np.nanmax(ll), np.nanmax(ll_fine)))
     return coarse, 2.0 * (ll_top - ll), best
+
+
+def _lobes(axis, delta, best, lo, hi, *, threshold=25.0, separation=0.05):
+    """The scan's lobe around ``best``: prior bounds and rival minima.
+
+    Past the first null the squared visibility repeats in lobes, so other
+    diameters can fit nearly as well. Points of the scan more than
+    ``separation`` (fractionally) from ``best`` with a Δχ² below
+    ``threshold`` are rivals; the bounds are the geometric midpoints
+    between ``best`` and the nearest rival on each side (``lo`` and ``hi``
+    where there is none).
+
+    Returns
+    -------
+    tuple
+        ``(bound_lo, bound_hi, rivals)``, with ``rivals`` a list of
+        ``[diameter, delta_chi2]`` (the best point of each rival run).
+    """
+    log_ratio = np.log(axis / best)
+    near = delta <= threshold
+    far = near & (np.abs(log_ratio) > separation)
+    rivals, run = [], []
+    for i in list(np.flatnonzero(far)) + [None]:
+        if run and (i is None or i != run[-1] + 1):
+            j = run[int(np.argmin(delta[run]))]
+            rivals.append([float(axis[j]), float(delta[j])])
+            run = []
+        if i is not None:
+            run.append(i)
+    below = [d for d, _ in rivals if d < best]
+    above = [d for d, _ in rivals if d > best]
+    bound_lo = math.sqrt(best * max(below)) if below else lo
+    bound_hi = math.sqrt(best * min(above)) if above else hi
+    return float(bound_lo), float(bound_hi), rivals
 
 
 def _fit_model(p, entry, priors, best_diam, noise):
@@ -558,7 +613,28 @@ def _fit_model(p, entry, priors, best_diam, noise):
             "n_scan": p.settings["n_scan"],
         }
         return template, values, info
-    result = fit(template, priors, p.processed, noise=noise)
+    # A limb-darkened star seen past its first null has closure phases that
+    # flip at visibility nulls, so chi^2 is a union of thin slivers and a
+    # local fit started on the wrong one stalls at a huge chi^2. Start from
+    # the scan diameter and from the best of a small grid of diameters with
+    # the starting shape, and keep the better fit.
+    low, high = float(priors["diam"].low), float(priors["diam"].high)
+    grid = np.geomspace(
+        max(low, 0.75 * best_diam), min(high, 1.25 * best_diam), 201
+    )
+    chi2 = [
+        float(_chi2_64(entry.build({**start, "diam": d}), p.processed)[0])
+        for d in grid
+    ]
+    starts = [best_diam, float(grid[int(np.nanargmin(chi2))])]
+    best = None
+    for diam in dict.fromkeys(starts):
+        tmpl = entry.build({**start, "diam": diam})
+        result = fit(tmpl, priors, p.processed, noise=noise)
+        score = float(_chi2_64(result.model, p.processed)[0])
+        if best is None or score < best[0]:
+            best = (score, result)
+    result = best[1]
     values = {k: np.asarray(v) for k, v in result.values.items()}
     return result.model, values, _io.clean_json(dict(result.info))
 
@@ -580,11 +656,14 @@ def _fit(p):
         attrs={"/": {"axis_order": ["diam"], "schema": _io.SCHEMA}},
     )
 
+    # The prior covers the scan's lobe: a bounded, group-invariant
+    # (log-uniform) prior, with the bounds recorded in the summary.
+    lo_b, hi_b, rivals = _lobes(axis, delta, best_diam, lo, hi)
     noise = p._noise()
     fitted, reports = {}, {}
     for name in p.names:
         entry = registry[name]
-        priors = entry.priors(lo, hi)
+        priors = entry.priors(lo_b, hi_b)
         model, values, info = _fit_model(p, entry, priors, best_diam, noise)
         chi2, resid = _chi2_64(model, data)
         # Test only the independent whitened residuals: the periodic penalty
@@ -606,6 +685,13 @@ def _fit(p):
             for k, v in values.items()
             if k.startswith("noise.")
         }
+        # With fitted error scales, the model comparison uses χ² on the
+        # rescaled errors; χ²/N on the quoted errors stays the diagnostic.
+        chi2_fitted = chi2
+        if scales:
+            chi2_fitted, _ = _chi2_64(
+                model, data, **{k: np.asarray(v) for k, v in scales.items()}
+            )
         _io.save_model(
             p.output / "models" / name, model, values, list(entry.params)
         )
@@ -615,6 +701,8 @@ def _fit(p):
             "params": reported,
             "converged": info.get("converged"),
             "chi2": chi2,
+            "chi2_fitted": float(chi2_fitted),
+            "first_null": _first_null(model, float(values["diam"])),
             "chi2_reduced": chi2 / data.n_independent,
             "error_scales": scales or None,
             "residual_skew": skew,
@@ -632,8 +720,8 @@ def _fit(p):
     for name in p.names:
         entry = registry[name]
         if entry.parent in reports:
-            simple = reports[entry.parent]["chi2"]
-            gain = simple - reports[name]["chi2"]
+            simple = reports[entry.parent]["chi2_fitted"]
+            gain = simple - reports[name]["chi2_fitted"]
             n_extra = entry.n_params - registry[entry.parent].n_params
             penalty = n_extra * math.log(max(n, 2))
             comparison = {
@@ -675,27 +763,44 @@ def _fit(p):
         "best": best,
         "n_independent": n,
         "diam_range_mas": [lo, hi],
+        "diam_bounds_mas": [lo_b, hi_b],
+        "rivals": rivals,
         "scan_diam_mas": best_diam,
         "models": reports,
         "comparison": comparison,
     }
 
 
-def _bound_fractions(samples, priors):
-    """Fraction of samples within 1% of the range of either prior bound."""
+_NOISE_BOUNDS = (0.1, 10.0)  # the fitted error scales' LogUniform range
+
+
+def _bound_fractions(samples, priors, skip=()):
+    """Fraction of samples within 1% of the range of either prior bound.
+
+    Covers the sampled priors except ``skip`` (the shape parameters, whose
+    priors are meant to matter and are judged by
+    ``limb_darkening_constrained`` instead), and every fitted error scale
+    ``noise.<term>``.
+    """
     bound = {}
-    for k, prior in priors.items():
-        if not hasattr(prior, "low"):
+    scales = {
+        k: types.SimpleNamespace(low=_NOISE_BOUNDS[0], high=_NOISE_BOUNDS[1])
+        for k in samples
+        if k.startswith("noise.")
+    }
+    for k, prior in {**priors, **scales}.items():
+        if k in skip or not hasattr(prior, "low"):
             continue
         lo, hi = float(prior.low), float(prior.high)
         x = np.asarray(samples[k], dtype=float).ravel()
-        if type(prior).__name__ == "LogUniform":
+        if type(prior).__name__ in ("LogUniform", "SimpleNamespace"):
             lo, hi, x = math.log(lo), math.log(hi), np.log(x)
         edge = _BOUND_FRACTION * (hi - lo)
         bound[k] = float(np.mean((x < lo + edge) | (x > hi - edge)))
     return bound
 
 
+@_float64
 def _nuts(model, data, p, name, priors, start):
     """NUTS for one fitted model: ``(samples, stats, summary)``."""
     import jax
@@ -776,7 +881,9 @@ def _nuts(model, data, p, name, priors, start):
             "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
             "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
             "divergence_fraction": float(np.mean(stats["diverging"])),
-            "prior_bound_fraction": _bound_fractions(samples, priors),
+            "prior_bound_fraction": _bound_fractions(
+                samples, priors, skip=entry.shape
+            ),
         },
     )
 
@@ -788,7 +895,7 @@ def _posterior(p):
 
     s = p.settings
     fit_report = p._report("fit")
-    lo, hi = fit_report["diam_range_mas"]
+    lo, hi = fit_report["diam_bounds_mas"]
     best = fit_report["best"]
     groups, per_model, params_attr = {}, {}, {}
     for name in p.names:
@@ -909,10 +1016,19 @@ def _summarise(settings, reports):
     sections["fit"] = {
         "best": best,
         "scan_diam_mas": fit["scan_diam_mas"],
+        "diam_bounds_mas": fit["diam_bounds_mas"],
+        "rivals": fit["rivals"],
         "models": {
             k: {
                 f: fit["models"][k][f]
-                for f in ("params", "converged", "chi2_reduced", "at_bound")
+                for f in (
+                    "params",
+                    "converged",
+                    "chi2",
+                    "chi2_fitted",
+                    "chi2_reduced",
+                    "at_bound",
+                )
             }
             for k in names
         },
@@ -931,8 +1047,8 @@ def _summarise(settings, reports):
         checks.append(
             _checks.model_gain(
                 "limb_darkening_gain",
-                fit["models"][comparison["simple"]]["chi2"],
-                fit["models"][comparison["complex"]]["chi2"],
+                fit["models"][comparison["simple"]]["chi2_fitted"],
+                fit["models"][comparison["complex"]]["chi2_fitted"],
                 n,
                 n_extra=comparison["n_extra_params"],
                 simple=registry[comparison["simple"]].label,
@@ -966,9 +1082,14 @@ def _summarise(settings, reports):
             "diam_mas": diam,
             "freq_max_per_rad": load["freq_max_per_rad"],
         }
-        check = _checks.resolution_regime(diam, load["freq_max_per_rad"])
+        null = fit["models"][best]["first_null"]
+        sections["resolution"]["first_null"] = null
+        check = _checks.resolution_regime(
+            diam, load["freq_max_per_rad"], first_null=null
+        )
         sections["resolution"]["first_null_fraction"] = check.value
         checks.append(check)
+    checks.append(_checks.multimodal(fit["rivals"], fit["scan_diam_mas"]))
     if post:
         entry = registry[best]
         if entry.shape:

@@ -392,11 +392,14 @@ def field_of_view(sep, resolution, fov):
 FIRST_NULL = 1.2196699
 
 
-def resolution_regime(diam_mas, freq_max, *, unresolved=0.15):
+def resolution_regime(
+    diam_mas, freq_max, *, unresolved=0.15, first_null=FIRST_NULL
+):
     """Whether the baselines reach the first null of the visibility.
 
-    A disk of angular diameter θ has its first null at θB/λ = 1.22, so the
-    fraction ``x = θ f_max / 1.22`` of the way there, with ``f_max`` the
+    A uniform disk of angular diameter θ has its first null at
+    θB/λ = 1.22 (more for a limb-darkened star), so the
+    fraction ``x = θ f_max / first_null`` of the way there, with ``f_max`` the
     longest spatial frequency B/λ, says what the data can measure.
 
     Parameters
@@ -408,9 +411,12 @@ def resolution_regime(diam_mas, freq_max, *, unresolved=0.15):
     unresolved : float, optional
         Fraction of the first null below which the star is unresolved and
         its diameter is an upper limit.
+    first_null : float, optional
+        θB/λ of the first null of the fitted model's visibility; the
+        uniform-disk value by default.
     """
     ratio = float(diam_mas) * math.pi / 180.0 / 3.6e6 * float(freq_max)
-    ratio /= FIRST_NULL
+    ratio /= float(first_null)
     if not _finite(ratio):
         return Check(
             "resolution", "fail", ratio, 1.0, "The resolution is not finite."
@@ -439,6 +445,44 @@ def resolution_regime(diam_mas, freq_max, *, unresolved=0.15):
         1.0,
         f"The longest baseline reaches {ratio:.3g} of the first null: "
         f"{meaning}.",
+    )
+
+
+def multimodal(rivals, best, *, threshold=25.0):
+    """Whether other diameters fit nearly as well as the best one.
+
+    Parameters
+    ----------
+    rivals : list
+        ``[diameter, delta_chi2]`` of each rival minimum of the diameter
+        scan (separated from the best diameter, ``delta_chi2`` below the
+        scan's threshold).
+    best : float
+        Best diameter of the scan (mas).
+    threshold : float, optional
+        The Δχ² below which a rival counts as comparable.
+    """
+    rivals = [list(r) for r in rivals]
+    if not rivals:
+        return Check(
+            "multimodal",
+            "pass",
+            0,
+            0,
+            "No other diameter fits within the Δχ² threshold of the best "
+            f"one ({best:.4g} mas).",
+        )
+    closest = min(rivals, key=lambda r: r[1])
+    return Check(
+        "multimodal",
+        "warn",
+        len(rivals),
+        0,
+        f"{len(rivals)} other diameter(s) fit nearly as well as "
+        f"{best:.4g} mas (best rival {closest[0]:.4g} mas, "
+        f"Δχ² = {closest[1]:.3g} < {threshold:g}). The diameter prior is "
+        "bounded to the lobe around the best one; the aliases are not "
+        "excluded by the data.",
     )
 
 

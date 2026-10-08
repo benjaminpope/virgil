@@ -287,6 +287,21 @@ res = StarPipeline(
 ).run()
 
 print(res.describe())
+```
+
+```python
+import matplotlib.pyplot as plt
+
+from virgil.pipeline.star import plot_v2_models
+
+plot_v2_models(
+    data,
+    {"uniform disk": res.model("uniform"), "limb-darkened": res.model("limb_darkened")},
+)
+plt.show()
+```
+
+```python
 fit = res.summary["fit"]["models"]
 hand_ud = float(ud_model.diam)
 hand_ld = float(ld.model.diam)
