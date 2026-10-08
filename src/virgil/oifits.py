@@ -24,6 +24,8 @@ import warnings
 import numpy as onp
 from astropy.io import fits
 
+from ._utils import dtor
+
 
 __all__ = ["build_hdulist", "read_oifits", "write_oifits"]
 
@@ -401,16 +403,28 @@ def _exposure_time(hdu, mask):
     return 0.0
 
 
+def _phase_unit_scale(unit, default, name="phase"):
+    """Factor converting a phase in ``unit`` to radians.
+
+    ``unit`` is a FITS ``TUNIT`` or a record's ``phi_unit``; a missing or
+    blank one means ``default`` (degrees in OIFITS, radians in a record).
+    """
+    raw = default if unit is None or not str(unit).strip() else unit
+    name_ = str(raw).strip().lower()
+    if name_ in {"rad", "radian", "radians"}:
+        return 1.0
+    if name_ in {"deg", "degree", "degrees"}:
+        return dtor
+    raise ValueError(
+        f"Unsupported phase unit {raw!r} for {name}; expected degrees or "
+        "radians."
+    )
+
+
 def _phase_scale(hdu, column):
     """Factor converting a phase column to radians, from its TUNIT."""
-    unit = hdu.columns[column].unit or _DEFAULT_PHASE_UNIT
-    unit = str(unit).strip().lower()
-    if unit in {"rad", "radian", "radians"}:
-        return 1.0
-    if unit in {"deg", "degree", "degrees"}:
-        return onp.pi / 180.0
-    raise ValueError(
-        f"Unsupported unit {unit!r} for {column}; expected degrees or radians."
+    return _phase_unit_scale(
+        hdu.columns[column].unit, _DEFAULT_PHASE_UNIT, column
     )
 
 

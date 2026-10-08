@@ -22,7 +22,7 @@ from .observables import (
 from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from ._geometry import rotate
 from .amigo import is_mixed_disco_record, mixed_disco_fields
-from .oifits import read_oifits
+from .oifits import _phase_unit_scale, read_oifits
 
 
 __all__ = ["OIData", "closure_phases", "cp_indices"]
@@ -801,23 +801,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             )
         return bool(value)
 
-    @staticmethod
-    def _phase_unit_scale(unit, default_unit):
-        """Return multiplicative factor converting the provided phase unit to rad."""
-        raw_unit = default_unit if unit is None else unit
-        unit_name = str(raw_unit).strip().lower()
-        if unit_name in {"rad", "radian", "radians"}:
-            return 1.0
-        if unit_name in {"deg", "degree", "degrees"}:
-            return np.pi / 180.0
-        raise ValueError(
-            f"Unsupported phase unit '{raw_unit}'. Expected radians or degrees."
-        )
-
     @classmethod
     def _phase_to_radians(cls, phi, d_phi, unit, default_unit):
         """Convert phase observables and uncertainties to radians."""
-        scale = cls._phase_unit_scale(unit, default_unit)
+        scale = _phase_unit_scale(unit, default_unit, "phi_unit")
         return np.asarray(phi, dtype=float) * scale, np.asarray(
             d_phi, dtype=float
         ) * np.abs(scale)
