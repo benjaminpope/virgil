@@ -29,7 +29,6 @@ from ._grid import (
     check_flux_axes,
     coordinate_points,
     map_points,
-    meshgrid_vectors,
     ordered_values,
     resolve_grid_keys,
     warn_unconverged,
@@ -207,7 +206,7 @@ def likelihood_grid(model, data, grid, *, batch_size=None):
 def _likelihood_grid(data, model, grid, params, batch_size):
     """Jitted implementation of [`likelihood_grid`][virgil.grid_fit.likelihood_grid]."""
 
-    vals_vec, grid_shape = meshgrid_vectors(grid, params)
+    vals_vec, grid_shape = coordinate_points(grid, params)
 
     return map_points(
         lambda values: loglike(values, params, model, data),
@@ -237,10 +236,9 @@ _OPTIMIZED_PARAMS_DOC = """
         position, e.g. ``"comp.flux"``. By default, the one key whose last
         part is ``flux``.
     batch_size : int, optional
-        Number of grid points evaluated at once. By default, enough for
-        about 2**20 model visibilities on a CPU and 2**23 on other backends
-        (GPU, TPU), and at least 256. Larger can be faster for small data;
-        smaller bounds memory for large models.
+        Number of grid points evaluated at once, by default enough for
+        a fixed number of model visibilities; see
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
 """
 
 
@@ -633,9 +631,9 @@ def linear_flux_grid(
         The key of ``grid`` holding the flux, e.g. ``"comp.flux"``.
         By default, the one key whose last part is ``flux``.
     batch_size : int, optional
-        Number of grid points evaluated at once. By default, enough for
-        about 2**20 model visibilities on a CPU and 2**23 on other backends
-        (GPU, TPU), and at least 256.
+        Number of grid points evaluated at once, by default enough for
+        a fixed number of model visibilities; see
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
     n_iter : int, optional
         Number of Gauss–Newton refinement steps after the first
         linearization at ``f = 0`` (default 0, the closed-form result).
@@ -770,10 +768,9 @@ def laplace_flux_uncertainty_grid(
         The key of ``grid`` holding the flux. By default, the one key
         whose last part is ``flux``.
     batch_size : int, optional
-        Number of grid points evaluated at once. By default, enough for
-        about 2**20 model visibilities on a CPU and 2**23 on other backends
-        (GPU, TPU), and at least 256. Larger can be faster for small data;
-        smaller bounds memory for large models.
+        Number of grid points evaluated at once, by default enough for
+        a fixed number of model visibilities; see
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
 
     Returns
     -------

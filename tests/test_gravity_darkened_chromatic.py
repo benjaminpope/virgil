@@ -27,10 +27,10 @@ from virgil import (  # noqa: E402
 from virgil._geometry import image_coordinates  # noqa: E402
 from virgil.coverage import vlti_oidata  # noqa: E402
 from virgil.likelihood import model_loglike  # noqa: E402
+from tests._shared import float_leaves, planck  # noqa: E402
 
 # Independent constants (not imported from virgil).
 _MAS2RAD = onp.pi / 180.0 / 3600.0 / 1000.0
-_H, _C, _K = 6.62607015e-34, 299792458.0, 1.380649e-23
 
 U = onp.array([20.0, -35.0, 50.0, 8.0, -60.0, 70.0])
 V = onp.array([15.0, 40.0, -25.0, 62.0, 10.0, -45.0])
@@ -40,11 +40,6 @@ WAVES = onp.array([0.6e-6, 1.1e-6, 1.6e-6, 2.2e-6, 3.0e-6, 1.65e-6])
 @eqx.filter_jit
 def _model(model, u, v, wavel):
     return model.model(u, v, wavel)
-
-
-def _planck(wavel, temp):
-    """Unnormalized Planck B_λ, written from scratch."""
-    return wavel**-5 / onp.expm1(_H * _C / (wavel * _K * temp))
 
 
 def _hand_surface(omega, diam_eq, inc, pa, t_pole, n_lat=32):
@@ -142,12 +137,12 @@ def test_matches_independent_recomputation(omega, inc, pa):
             diam, omega, inc, pa, flux=flux, t_pole=t_pole, wavel0=wavel0
         )
         x, y, area, temp, _ = _hand_surface(omega, diam, inc, pa, t_pole)
-        weights = area[None] * _planck(WAVES[:, None], temp[None])
+        weights = area[None] * planck(WAVES[:, None], temp[None])
         expected = _hand_vis(x, y, weights, U, V, WAVES)
         got = onp.asarray(_model(star, U, V, WAVES))
         onp.testing.assert_allclose(got, expected, rtol=1e-8, atol=1e-10)
 
-        sed = lambda w: (area * _planck(w, temp)).sum()  # noqa: E731
+        sed = lambda w: (area * planck(w, temp)).sum()  # noqa: E731
         expected_w = flux * onp.array([sed(w) for w in WAVES]) / sed(wavel0)
         onp.testing.assert_allclose(
             onp.asarray(star._weight(WAVES)), expected_w, rtol=1e-8
@@ -283,21 +278,13 @@ def test_system_with_blackbody_companion_is_hand_mix():
 # --- 7. gradients --------------------------------------------------------
 
 
-def _float_leaves(grads):
-    return [
-        leaf
-        for leaf in jax.tree_util.tree_leaves(grads)
-        if hasattr(leaf, "dtype") and np.issubdtype(leaf.dtype, np.floating)
-    ]
-
-
 def _check_grads(omega):
     data = _data()
     truth = GravityDarkenedStar(1.0, 0.5, 60.0, 20.0, t_pole=8000.0)
     data = data.with_model(truth, key=jax.random.PRNGKey(0))
     model = GravityDarkenedStar(1.0, omega, 55.0, 15.0, t_pole=8500.0)
     grads = eqx.filter_jit(eqx.filter_grad(model_loglike))(model, data)
-    leaves = _float_leaves(grads)
+    leaves = float_leaves(grads)
     assert len(leaves) >= 8
     for leaf in leaves:
         assert onp.all(onp.isfinite(onp.asarray(leaf)))
@@ -324,7 +311,7 @@ def test_system_gradients_finite_with_chromatic_star():
     )
     data = data.with_model(scene, key=jax.random.PRNGKey(1))
     grads = eqx.filter_jit(eqx.filter_grad(model_loglike))(scene, data)
-    for leaf in _float_leaves(grads):
+    for leaf in float_leaves(grads):
         assert onp.all(onp.isfinite(onp.asarray(leaf)))
 
 

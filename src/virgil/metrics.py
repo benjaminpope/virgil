@@ -28,6 +28,7 @@ import jax.numpy as np
 import numpy as onp
 from jax.scipy.ndimage import map_coordinates
 
+from ._utils import _unit_sum
 from .imaging import convolve_beam
 
 
@@ -43,10 +44,6 @@ def _array_and_scale(image, pixel_scale_mas):
     if pixel_scale_mas is None:
         raise ValueError("Give pixel_scale_mas for an array (not an Image).")
     return np.asarray(image), float(pixel_scale_mas)
-
-
-def _unit_sum(image):
-    return image / np.sum(image)
 
 
 def _check_same_shape(a, b):

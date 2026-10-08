@@ -40,7 +40,15 @@ import jax.numpy as np
 import numpy as onp
 
 from ._precision import cast_tree, run_in
-from .epochs import Epochs, _check_dof, _dof_for, _Surface
+from .epochs import (
+    _SCALES,
+    Epochs,
+    _check_dof,
+    _dof_for,
+    _orbit_list,
+    _stack,
+    _Surface,
+)
 from .likelihood import _gain_jacobian, _whiten, inflated_errors
 from .models import SourceModel
 from .orbits import _Term
@@ -52,7 +60,6 @@ __all__ = [
     "score_orbits",
 ]
 
-_SCALES = ("quoted", "marginal")
 
 # Default score quantum (nats) for breaking ties: scores closer than this
 # rank by index, not by floating-point accident.
@@ -794,8 +801,6 @@ def _term_function(term):
 def _candidates(orbits):
     """The candidates stacked along a leading axis, and their number."""
     if isinstance(orbits, (list, tuple)):
-        from .epochs import _orbit_list, _stack
-
         stacked = _stack(_orbit_list(orbits))
     else:
         stacked = orbits

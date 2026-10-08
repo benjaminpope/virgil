@@ -46,7 +46,7 @@ from ._geometry import (
 )
 from . import _elr
 from ._deprecate import renamed
-from ._utils import concrete, dtor, mas2rad
+from ._utils import FWHM_PER_SIGMA, concrete, dtor, mas2rad
 from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
@@ -379,7 +379,7 @@ class GaussianDisk(Component):
     ----------
     sigma : float or array-like
         Standard deviation of the Gaussian in milliarcseconds
-        (FWHM = 2.3548 ``sigma``).
+        (FWHM = 2.3548 ``sigma``, ``FWHM_PER_SIGMA``).
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a [`System`][virgil.models.System],
         or a spectrum from [`virgil.spectra`][virgil.spectra]
@@ -589,7 +589,7 @@ class GaussianArc(Component):
     def curve(self):
         """Points along the arc (mas, East and North of the centre) and
         their normalized trapezoidal-rule weights."""
-        sigma = self.length / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        sigma = self.length / FWHM_PER_SIGMA
         # Out to 6σ (a flux loss of 2e-9), or once round the circle if the
         # arc is longer: then both ends sit at the antipode of pa, and their
         # half weights add to one full trapezoidal weight.
@@ -1976,9 +1976,7 @@ class ModulatedGaussianRim(Component):
         npix = xx.shape[0]
         nker = npix + 1 - npix % 2
         kx, ky = image_coordinates(nker, nker * pixel_scale_mas)
-        sigma_mas = np.maximum(
-            self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0))), 1e-9
-        )
+        sigma_mas = np.maximum(self.fwhm / FWHM_PER_SIGMA, 1e-9)
         # Gaussian kernel that is isotropic in the rim plane: on the sky it
         # has sigma_mas along the major axis and sigma_mas * stretch along
         # the minor axis. The stretch is floored so that the sky-plane
@@ -2396,7 +2394,7 @@ class FlaredDisk(Component):
         r = np.sqrt(np.maximum(r2, tiny))
 
         # Skewed Gaussian ring (Eqs. 4-5) times the azimuthal term (Eq. 9).
-        sigma = self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        sigma = self.fwhm / FWHM_PER_SIGMA
         offset = (r - self.radius) / sigma
         ring = (
             np.exp(-0.5 * offset**2)

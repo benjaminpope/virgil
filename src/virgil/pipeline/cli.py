@@ -17,6 +17,8 @@ import json
 import sys
 from pathlib import Path
 
+from ._io import read_json, sha256_file
+
 _PIPELINES = {"binary": ("virgil.pipeline.binary", "BinaryPipeline")}
 
 
@@ -50,13 +52,9 @@ def _run(args):
     return 0
 
 
-def _read(path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
 def _info(args):
     folder = Path(args.dir)
-    run = _read(folder / "run.json")
+    run = read_json(folder / "run.json")
     print(f"{run['class']} ({run['stability']}), schema {run['schema']}")
     print(f"status: {run['status']}")
     if run.get("error"):
@@ -70,19 +68,17 @@ def _info(args):
         )
     summary_file = folder / "summary.json"
     if summary_file.exists():
-        summary = _read(summary_file)
+        summary = read_json(summary_file)
         for check in summary.get("checks", []):
             print(f"  [{check['status']}] {check['name']}: {check['message']}")
     return 0
 
 
 def _validate(args):
-    import hashlib
-
     folder = Path(args.dir)
     problems = []
     try:
-        run = _read(folder / "run.json")
+        run = read_json(folder / "run.json")
     except (OSError, ValueError) as err:
         print(f"invalid: cannot read run.json ({err})")
         return 1
@@ -94,7 +90,7 @@ def _validate(args):
         if key not in run:
             problems.append(f"run.json lacks {key!r}")
     try:
-        summary = _read(folder / "summary.json")
+        summary = read_json(folder / "summary.json")
         if summary.get("schema") != run.get("schema"):
             problems.append("summary.json schema differs from run.json")
     except (OSError, ValueError) as err:
@@ -110,7 +106,7 @@ def _validate(args):
         if not path.exists():
             problems.append(f"missing {rel}")
             continue
-        h = hashlib.sha256(path.read_bytes()).hexdigest()
+        h = sha256_file(path)
         if h != digest:
             problems.append(f"{rel} changed since the run")
     if problems:

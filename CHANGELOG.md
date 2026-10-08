@@ -76,6 +76,22 @@ anything before 1.0 may change between minor versions.
   ranking. The default stays `"quoted"` in 0.4, with a `FutureWarning`
   when `scales` is not given; it will become `"marginal"`.
 
+- **Duplicated and dead code removed (part of #310; no behaviour change).**
+  `legacy.oifits_implaneia.GetWavelength`, `Format_STAINDEX_V2`,
+  `Format_STAINDEX_T3`, `rad2mas` and the `cp_indices` re-export are
+  deprecated (`FutureWarning`; removal in 0.6), since nothing uses them.
+  Internally: `epochs` and `pipeline.binary` use the `_utils` unit
+  constants; `FWHM_PER_SIGMA` moved to `_utils` (still importable from
+  `detection`) and replaces the hand-written `2.3548` and
+  `2*sqrt(2 ln 2)` (the two literal `2.3548`s in `imaging` now use the
+  exact value, a 1e-5 relative change in an envelope-fit starting width);
+  `coverage` uses `_geometry.rotate` (which now stays in NumPy for NumPy inputs); `meshgrid_vectors` is
+  `coordinate_points`; one `_unit_sum`; `pipeline.cli` uses
+  `_io.read_json` and `_io.sha256_file`; `pipeline.binary` takes skewness
+  and kurtosis from `scipy.stats`; the `batch_size` and noise-term
+  "Priors" docstrings are stated once and referred to. Unused
+  `_utils.i2pi` removed.
+
 ### Fixed
 
 - **`virgil.ensemble` default selection.** The L-curve window now keeps

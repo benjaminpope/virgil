@@ -20,6 +20,7 @@ from virgil._geometry import image_coordinates  # noqa: E402
 from virgil.coverage import nrm_oidata  # noqa: E402
 from virgil.likelihood import model_loglike  # noqa: E402
 from virgil.models import PointSource, System, UniformDisk  # noqa: E402
+from tests._shared import float_leaves  # noqa: E402
 
 # Independent reference constant (not imported from virgil).
 _MAS2RAD_REF = onp.pi / 180.0 / 3600.0 / 1000.0
@@ -275,17 +276,9 @@ def _data_for_gradients():
     )
 
 
-def _float_leaves(grads):
-    return [
-        leaf
-        for leaf in jax.tree_util.tree_leaves(grads)
-        if hasattr(leaf, "dtype") and np.issubdtype(leaf.dtype, np.floating)
-    ]
-
-
 def _check_grads(model, data):
     grads = eqx.filter_jit(eqx.filter_grad(model_loglike))(model, data)
-    leaves = _float_leaves(grads)
+    leaves = float_leaves(grads)
     assert len(leaves) >= 6
     for leaf in leaves:
         assert onp.all(onp.isfinite(onp.asarray(leaf)))
@@ -311,7 +304,7 @@ def test_gradient_of_model_traced_under_jit():
     assert onp.isfinite(float(value))
     # gradient is nonzero for a model mismatched with the data
     grads = eqx.filter_grad(model_loglike)(star, data)
-    assert any(onp.any(onp.asarray(g) != 0) for g in _float_leaves(grads))
+    assert any(onp.any(onp.asarray(g) != 0) for g in float_leaves(grads))
 
 
 # --- 7. composition ------------------------------------------------------

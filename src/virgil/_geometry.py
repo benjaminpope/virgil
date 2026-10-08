@@ -122,9 +122,17 @@ def rotate(x, y, rotation_deg):
     Returns the sky coordinates of the point ``(x, y)`` of a frame whose
     "up" axis points at position angle ``rotation_deg``: the frame's
     ``(0, 1)`` lands at ``(sin θ, cos θ)``. The same matrix maps
-    frequencies, and ``rotate(..., -rotation_deg)`` inverts it.
+    frequencies, and ``rotate(..., -rotation_deg)`` inverts it. NumPy
+    inputs (and Python numbers) are rotated in NumPy, at their own
+    precision; anything else, JAX arrays and traced values, in JAX.
     """
-    c, s = np.cos(rotation_deg * dtor), np.sin(rotation_deg * dtor)
+    concrete = (int, float, onp.ndarray, onp.generic)
+    xp = (
+        onp
+        if all(isinstance(a, concrete) for a in (x, y, rotation_deg))
+        else np
+    )
+    c, s = xp.cos(rotation_deg * dtor), xp.sin(rotation_deg * dtor)
     return c * x + s * y, -s * x + c * y
 
 
