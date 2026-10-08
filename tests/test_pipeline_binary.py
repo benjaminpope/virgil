@@ -515,6 +515,8 @@ def test_stage_warnings_are_recorded_not_emitted(data, tmp_path, monkeypatch):
                 RuntimeWarning,
             )
         warnings.warn("something odd happened", UserWarning)
+        # Interpreter noise from a collected unclosed file is not recorded.
+        warnings.warn("unclosed file <_io.BufferedReader>", ResourceWarning)
         return original(p)
 
     monkeypatch.setattr(binary, "_overview", noisy)

@@ -62,9 +62,17 @@ class Stage:
 
 
 def _record_warnings(stage, caught):
-    """Caught warnings as ``{"stage", "category", "message"}``, one per message."""
+    """Caught warnings as ``{"stage", "category", "message"}``, one per message.
+
+    ``ResourceWarning`` is dropped: it is raised when the garbage collector
+    finalizes an unclosed file or socket, so it reports whichever object
+    happened to be collected during the stage (often a handle leaked by a
+    third-party library or an earlier caller), not anything the stage did.
+    """
     seen, out = set(), []
     for w in caught:
+        if issubclass(w.category, ResourceWarning):
+            continue
         message = str(w.message)
         if message in seen:
             continue
