@@ -658,6 +658,9 @@ class TruncatedCone(Component):
     no longer looks the same at ``tilt`` and ``-tilt``: the image at
     ``-tilt`` is the one at ``tilt`` with ``az_pas`` mirrored to
     ``2 pa + 180 - az_pas``. That leaves the walls (``pa ± 90``) unchanged.
+    Bound to an orbit's frame by [`Attached`][virgil.models.Attached]
+    (``bind={"az_pas": ...}``), a sky position angle is deprojected into
+    the rings' azimuth, so the bright side points at it on the sky.
 
     **Choosing ``n_rings``.** The quadrature is second order: once the rings
     are fine enough to resolve the fringes, the error in the visibility falls
@@ -858,6 +861,23 @@ class TruncatedCone(Component):
         return 1.0 + sum(
             amps[m - 1] * np.cos(m * (angles - phases[m - 1])) for m in orders
         )
+
+    def _ring_angle(self, sky_pa):
+        """The ring azimuth whose projection points at ``sky_pa``.
+
+        A ring point at azimuth ``az`` lies ``cos φ`` across and
+        ``ratio sin(tilt) sin φ`` along the projected axis, with
+        ``φ = pa + 90 - az``, so a sky angle is deprojected by that squash
+        (its sign included). Seen edge-on (``tilt = 0``), every direction
+        off the walls is the near or far side of the ring.
+        """
+        squash = self.ratio * np.sin(self.tilt * dtor)
+        squash = np.where(squash < 0.0, -1.0, 1.0) * np.maximum(
+            np.abs(squash), 1e-8
+        )
+        d = (sky_pa - self.pa) * dtor
+        phi = np.arctan2(np.cos(d) / squash, np.sin(d))
+        return self.pa + 90.0 - phi / dtor
 
     def rings(self):
         """Radius, sky offset of the centre along the projected axis (mas)
@@ -1907,6 +1927,10 @@ class ModulatedGaussianRim(Component):
             check_az_prof_nonnegative(self.az_amps, self.az_pas)
         )
 
+    def _ring_angle(self, sky_pa):
+        """The in-plane azimuth whose projection points at ``sky_pa``."""
+        return _rim_angle(sky_pa, self.pa, self.inc)
+
     def _centred_cvis(self, uu, vv):
         return _cvis_centred_rim(
             uu,
@@ -2866,6 +2890,15 @@ class Attached(SourceModel):
                     f"Unknown frame angle {angle!r}; use one of "
                     f"{', '.join(_FRAME_ANGLES)}."
                 )
+        if "az_pas" in bind and (
+            not hasattr(component, "_ring_angle")
+            or component.az_pas is None
+            or onp.size(component.az_pas) == 0
+        ):
+            raise ValueError(
+                f"{type(component).__name__} has no azimuthal modulation to "
+                "bind az_pas to; give it az_amps and az_pas when building it."
+            )
         offsets = dict(offsets or {})
         unknown = set(offsets) - set(bind)
         if unknown:
@@ -2877,7 +2910,7 @@ class Attached(SourceModel):
         self.component = component
         self.orbit = orbit
         self.anchor = anchor
-        # az_pas last: it is deprojected with the bound pa and inc.
+        # az_pas last: it is deprojected with the bound orientation.
         self.bind = tuple(sorted(bind.items(), key=lambda b: b[0] == "az_pas"))
         self.offsets = {
             attr: np.asarray(offsets.get(attr, 0.0), dtype=float)
@@ -2904,7 +2937,7 @@ class Attached(SourceModel):
         for attr, angle in self.bind:
             value = frame[angle] + self.offsets[attr]
             if attr == "az_pas":
-                value = _rim_angle(value, out.pa, out.inc)
+                value = out._ring_angle(value)
             old = getattr(out, attr)
             out = eqx.tree_at(
                 lambda c: getattr(c, attr),
