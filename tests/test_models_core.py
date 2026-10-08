@@ -162,7 +162,7 @@ def _reference_logpdf(data_obj, prediction, reference):
 
     Visibilities are independent; closure phases enter as sin Δ,
     whitened as correlated groups (see test_closure), plus the periodic
-    penalty 2 sin²(Δ/2)/σ per closure phase, which has no normalisation.
+    penalty 2 sin²(Δ/2)/σ per closure phase, which has no normalization.
     """
     _, errors = data_obj.flatten_data()
     n_vis = data_obj.vis.size

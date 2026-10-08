@@ -73,12 +73,12 @@ def test_the_ring_prior_leaves_the_angle_uniform():
     ],
     ids=["uniform", "von-mises", "axial"],
 )
-def test_chords_give_the_right_marginals_and_a_normalised_density(
+def test_chords_give_the_right_marginals_and_a_normalized_density(
     prior, density
 ):
     # §4.1 test 2: integrate the vector density over r on a polar grid;
     # the angle's marginal is the von Mises (or axial von Mises) density,
-    # with the normaliser on the circle, and the whole is normalised.
+    # with the normalizer on the circle, and the whole is normalized.
     r, theta, grid_r, v = _polar_grid()
     with jax.enable_x64(True):
         log_p = onp.asarray(prior.log_prob(np.asarray(v)))

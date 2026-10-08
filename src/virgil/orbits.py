@@ -37,7 +37,9 @@ import numpyro.distributions as dist
 import zodiax as zx
 from numpyro.distributions import constraints
 
+from ._deprecate import renamed
 from ._linear import LinearMarginal
+from ._geometry import position_angle, separation_pa
 from ._utils import concrete
 from .angles import AngleVector
 from .priors import IsotropicInclination
@@ -133,6 +135,7 @@ def _warn_if_mjd_without_t_ref(orbit_t_ref, dt):
             f"like MJDs (up to {onp.max(onp.abs(days)):.0f} d): its "
             "dt_peri is then counted from MJD 0. Give the orbit a t_ref "
             "near the data (e.g. KeplerOrbit(..., t_ref=60500.0)).",
+            UserWarning,
             stacklevel=3,
         )
 
@@ -377,7 +380,7 @@ class KeplerOrbit(zx.Base):
 
     def _frame(self, dt):
         dra, ddec, dz = self._relative(dt)
-        line_pa = np.rad2deg(np.arctan2(dra, ddec))
+        line_pa = position_angle(dra, ddec)
         constant = np.zeros_like(line_pa)
         return {
             "line_pa": line_pa,
@@ -411,8 +414,7 @@ class KeplerOrbit(zx.Base):
         """Separation (mas) and position angle (degrees, North through East,
         in [0, 360)) of the secondary from the primary."""
         dra, ddec, _ = self.relative(mjd)
-        pa = np.mod(np.rad2deg(np.arctan2(dra, ddec)), 360.0)
-        return np.hypot(dra, ddec), pa
+        return separation_pa(dra, ddec)
 
     def to_thiele_innes(self):
         """The same sky orbit as a :class:`ThieleInnesOrbit`."""
@@ -693,7 +695,7 @@ class PositionData(zx.Base):
             should come from the instrument's astrometric calibration.
             Per-dataset plate-scale and North-angle terms follow
             Octofitter (Thompson et al. 2023, AJ 166, 164). They do not
-            change the likelihood's normalisation, so a least-squares
+            change the likelihood's normalization, so a least-squares
             fit keeps its form.
         """
         if north_angle is None and plate_scale is None:
@@ -1032,7 +1034,7 @@ class StateVectorOrbit(zx.Base):
         return self.to_kepler().relative(mjd)
 
 
-# Default sd (km/s) of the zero-point prior when marginalising with ``True``.
+# Default sd (km/s) of the zero-point prior when marginalizing with ``True``.
 
 # km/s per (mas/day at 1 pc): 1 mas at 1 pc is 1e-3 au.
 _KMS_PER_MAS_DAY_PC = _AU_M * 1e-6 / _DAY_S  # 1 mas at 1 pc is 1e-3 au
@@ -1058,7 +1060,7 @@ class RVData(zx.Base):
         Reference time (MJD, static float64); by default the first epoch.
     instrument : array-like, optional
         One label per epoch naming the spectrograph. Only used when
-        [`term`][virgil.orbits.RVData.term] marginalises the zero points;
+        [`term`][virgil.orbits.RVData.term] marginalizes the zero points;
         by default there is a single instrument.
     """
 
@@ -1133,7 +1135,7 @@ class RVData(zx.Base):
         """Gaussian log-likelihood of the velocities.
 
         ``jitter`` (km/s) adds an extra scatter in quadrature to every error;
-        the normalisation then depends on it.
+        the normalization then depends on it.
         """
         resid = self.whitened_residuals(orbit, q, gamma, distance_pc, jitter)
         return (
@@ -1142,16 +1144,16 @@ class RVData(zx.Base):
             - resid.size / 2 * np.log(2 * np.pi)
         )
 
-    # -- analytic marginalisation of the instrument zero points ----------
+    # -- analytic marginalization of the instrument zero points ----------
 
     def _prior(self, prior):
         """``(mean, sd)`` arrays of length ``len(self.instruments)``."""
         k = len(self.instruments)
         if prior is True:
             raise ValueError(
-                "marginalise_offsets=True is not supported: state the "
+                "marginalize_offsets=True is not supported: state the "
                 "zero-point prior explicitly as (mean, sd) in km/s (scalars "
-                "or one per instrument), e.g. marginalise_offsets=(0.0, 50.0)."
+                "or one per instrument), e.g. marginalize_offsets=(0.0, 50.0)."
             )
         mean, sd = prior
         mean = onp.broadcast_to(onp.asarray(mean, dtype=float), (k,))
@@ -1179,7 +1181,7 @@ class RVData(zx.Base):
     def marginal_whitened_residuals(
         self, orbit, q, gamma, distance_pc, jitter=0.0, prior=None
     ):
-        """Whitened residuals of the zero-point-marginalised Gaussian.
+        """Whitened residuals of the zero-point-marginalized Gaussian.
 
         The data are ``d ~ N(m + Aμ, C + AΛAᵀ)`` with ``m`` the Keplerian
         model (``gamma`` included), ``A`` the indicator matrix of the
@@ -1198,7 +1200,7 @@ class RVData(zx.Base):
     def marginal_log_norm(self, jitter=0.0, prior=None):
         """``½ log det(C + AΛAᵀ)``.
 
-        This is the normalisation that depends on the jitter, in the same
+        This is the normalization that depends on the jitter, in the same
         convention as the plain ``Σ log σ_eff``.
         """
         sigma = self.errors(jitter)
@@ -1207,7 +1209,7 @@ class RVData(zx.Base):
     def marginal_loglike(
         self, orbit, q, gamma, distance_pc, jitter=0.0, prior=None
     ):
-        """Normalised log density of the zero-point-marginalised Gaussian.
+        """Normalized log density of the zero-point-marginalized Gaussian.
 
         Equal to a dense ``N(m + Aμ, C + AΛAᵀ)`` log density, computed in
         O(N k²). A flat prior is the limit ``Λ → ∞`` only up to a constant
@@ -1230,7 +1232,8 @@ class RVData(zx.Base):
         resid = self.rv - self.model(orbit, q, gamma, distance_pc)
         return self._marginal(prior).posterior(resid, self.errors(jitter))
 
-    def term(self, params, jitter=None, marginalise_offsets=None):
+    @renamed()
+    def term(self, params, jitter=None, marginalize_offsets=None):
         """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
 
         Parameters
@@ -1240,7 +1243,7 @@ class RVData(zx.Base):
         jitter : str, optional
             Path of a fitted value holding an RV jitter ``s`` (km/s), which
             inflates the errors to ``sqrt(d_rv² + s²)``. As with fitted
-            ``noise=`` terms, the likelihood's normalisation ``Σ log σ_eff``
+            ``noise=`` terms, the likelihood's normalization ``Σ log σ_eff``
             then depends on a parameter, so the term reports it
             (``log_norm``) and ``fit`` adds it to the loss, defaulting to
             L-BFGS (no least-squares form). Give ``jitter`` a prior with
@@ -1250,12 +1253,12 @@ class RVData(zx.Base):
             largest). ``dist.HalfNormal`` is a deliberate informative choice
             (scale about the expected scatter, a few km/s for a spotted
             star). The likelihood depends on ``s²`` only.
-        marginalise_offsets : (mean, sd), optional
-            Analytically marginalise one velocity zero point per instrument
+        marginalize_offsets : (mean, sd), optional
+            Analytically marginalize one velocity zero point per instrument
             (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136). The model
             is ``m_kepler + A w`` with ``A`` the indicator matrix of
             ``instrument=`` and ``w_j ~ N(mean_j, sd_j²)``. One zero point
-            per instrument, with no separate γ, is the parameterisation
+            per instrument, with no separate γ, is the parameterization
             without a degeneracy: ``w_j`` is the systemic velocity as
             measured by instrument ``j``, and offsets are differences
             ``w_j - w_0``. Return ``gamma = 0`` from ``params`` (a nonzero
@@ -1273,11 +1276,11 @@ class RVData(zx.Base):
             ``term.posterior(values)`` returns the zero points' conditional
             mean and covariance, to report after a fit.
         """
-        if marginalise_offsets not in (None, False):
-            marginalise_offsets = self._prior(marginalise_offsets)
+        if marginalize_offsets not in (None, False):
+            marginalize_offsets = self._prior(marginalize_offsets)
         else:
-            marginalise_offsets = None
-        return _Term(self, params, jitter, marginalise_offsets)
+            marginalize_offsets = None
+        return _Term(self, params, jitter, marginalize_offsets)
 
 
 class _Term(eqx.Module):
@@ -1302,20 +1305,20 @@ class _Term(eqx.Module):
         return np.ravel(self.data.whitened_residuals(*self._args(values)))
 
     def posterior(self, values):
-        """``(mean, cov)`` of the marginalised zero points given ``values``."""
+        """``(mean, cov)`` of the marginalized zero points given ``values``."""
         if self.prior is None:
-            raise ValueError("the term does not marginalise zero points.")
+            raise ValueError("the term does not marginalize zero points.")
         return self.data.zero_point_posterior(
             *self._args(values), prior=self.prior
         )
 
     @property
     def has_log_norm(self):
-        """Whether the normalisation depends on fitted values."""
+        """Whether the normalization depends on fitted values."""
         return self.jitter is not None
 
     def log_norm(self, values):
-        """``Σ log σ_eff`` (``½ log det Σ`` when marginalising), which
+        """``Σ log σ_eff`` (``½ log det Σ`` when marginalizing), which
         ``fit`` adds to the loss with a fitted jitter."""
         if self.prior is not None:
             jit = values[self.jitter] if self.jitter is not None else 0.0
@@ -1323,7 +1326,7 @@ class _Term(eqx.Module):
         return np.sum(np.log(self.data.errors(values[self.jitter])))
 
     def loglike(self, values):
-        """The data's normalised Gaussian log density, for ``numpyro_model``."""
+        """The data's normalized Gaussian log density, for ``numpyro_model``."""
         if self.prior is not None:
             return self.data.marginal_loglike(
                 *self._args(values), prior=self.prior
@@ -1450,7 +1453,7 @@ def position_angle_log_jacobian(theta, ecc, inc, omega, Omega):
 
     from dM/df = (1 - e²)^{3/2}/(1 + e cos f)² and du/dφ = cos i /
     (cos²φ cos²i + sin²φ). Over a full turn of θ it integrates to 2π, so
-    the prior stays normalised. It diverges at i = 90° (see
+    the prior stays normalized. It diverges at i = 90° (see
     [`KeplerOrbit.from_position_angle`][virgil.orbits.KeplerOrbit.from_position_angle]).
     All angles in degrees.
     """
@@ -1479,7 +1482,7 @@ class _PositionAnglePrior(eqx.Module):
     def _log_jacobian(self, values):
         orbit = self.orbit_fn(values)
         dra, ddec, _ = orbit._relative(np.zeros(()))
-        theta = np.rad2deg(np.arctan2(dra, ddec))
+        theta = position_angle(dra, ddec)
         return position_angle_log_jacobian(
             theta, orbit.ecc, orbit.inc, orbit.omega, orbit.Omega
         )
@@ -1547,7 +1550,7 @@ class AxialVonMises(dist.Distribution):
 
     For a node position angle from a source whose convention is in doubt:
     the density is a von Mises in 2θ, so θ and θ + 180° are equally likely,
-    ``exp(kappa cos 2(θ - mean))``, normalised over [0, 360).
+    ``exp(kappa cos 2(θ - mean))``, normalized over [0, 360).
 
     Parameters
     ----------

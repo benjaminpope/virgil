@@ -8,7 +8,8 @@ import equinox as eqx
 import zodiax as zx
 
 from ._closure import ClosureNoise
-from ._utils import inflate_errors
+from ._deprecate import renamed
+from ._utils import inflate_errors, wrap_phase
 from .gains import ClosureOffsets, GainModes, closure_offsets, gain_modes
 from .observables import (
     KINDS,
@@ -22,7 +23,7 @@ from .observables import (
 from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from ._geometry import rotate
 from .amigo import is_mixed_disco_record, mixed_disco_fields
-from .oifits import read_oifits
+from .oifits import _phase_unit_scale, read_oifits
 
 
 __all__ = ["OIData", "closure_phases", "cp_indices"]
@@ -85,7 +86,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ``gains`` holds calibration gains correlated across channels
     ([`GainModes`][virgil.gains.GainModes], set with
     [`with_gains`][virgil.oidata.OIData.with_gains]), which the likelihood
-    marginalises; ``None`` by default. ``phase_offsets`` likewise holds
+    marginalizes; ``None`` by default. ``phase_offsets`` likewise holds
     closure-phase offsets per frame
     ([`ClosureOffsets`][virgil.gains.ClosureOffsets], set with
     [`with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
@@ -328,8 +329,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             phi, d_phi = phi[keep], d_phi[keep]
             if cp_flag and phi.size == 0:
                 warnings.warn(
-                    "Every closure phase is flagged (or not finite): using "
+                    "Every closure phase is flagged (or not finite, or has no "
+                    "positive error): using "
                     "the visibilities alone.",
+                    UserWarning,
                     stacklevel=2,
                 )
                 cp_flag, indices = False, None
@@ -341,7 +344,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if vis.size == 0 and phi.size == 0 and not has_extras:
             raise ValueError(
                 "No unflagged data: every visibility and every phase is "
-                "flagged (or not finite), or there are none."
+                "flagged (or not finite, or has no positive error), or there are none."
             )
 
         self.u = np.asarray(u)
@@ -800,23 +803,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             )
         return bool(value)
 
-    @staticmethod
-    def _phase_unit_scale(unit, default_unit):
-        """Return multiplicative factor converting the provided phase unit to rad."""
-        raw_unit = default_unit if unit is None else unit
-        unit_name = str(raw_unit).strip().lower()
-        if unit_name in {"rad", "radian", "radians"}:
-            return 1.0
-        if unit_name in {"deg", "degree", "degrees"}:
-            return np.pi / 180.0
-        raise ValueError(
-            f"Unsupported phase unit '{raw_unit}'. Expected radians or degrees."
-        )
-
     @classmethod
     def _phase_to_radians(cls, phi, d_phi, unit, default_unit):
         """Convert phase observables and uncertainties to radians."""
-        scale = cls._phase_unit_scale(unit, default_unit)
+        scale = _phase_unit_scale(unit, default_unit, "phi_unit")
         return np.asarray(phi, dtype=float) * scale, np.asarray(
             d_phi, dtype=float
         ) * np.abs(scale)
@@ -849,7 +839,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         return operator @ np.asarray(values, dtype=float).reshape(-1)
 
     @classmethod
-    def _diagonalised(cls, operator, channel_sigma, correlation=None):
+    def _diagonalized(cls, operator, channel_sigma, correlation=None):
         """An operator whose outputs are independent, and their errors.
 
         Projected outputs are linear combinations of the input angles and
@@ -992,7 +982,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                     self._validate_diagonal_covariance(
                         vis_sigma, self.vis_mat, "disco_vis_mat"
                     )
-                self.vis_mat, self.d_vis = self._diagonalised(
+                self.vis_mat, self.d_vis = self._diagonalized(
                     self.vis_mat, vis_sigma
                 )
                 self.vis = self._apply_linear_operator(
@@ -1008,7 +998,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             correlation = (
                 None if closure is None else closure.correlation(n_phi)
             )
-            self.phi_mat, self.d_phi = self._diagonalised(
+            self.phi_mat, self.d_phi = self._diagonalized(
                 self.phi_mat, phi_sigma, correlation
             )
             self.phi = self._apply_linear_operator(self.phi, self.phi_mat)
@@ -1091,7 +1081,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     @property
     def has_model_covariance(self):
         """Whether the likelihood's covariance depends on the model: with
-        gains, or with marginalised flux scales (``extras``). Least squares
+        gains, or with marginalized flux scales (``extras``). Least squares
         then does not give the likelihood, so ``fit`` uses L-BFGS."""
         return self.gains is not None or any(
             b.model_dependent_covariance for b in self.extras
@@ -1133,7 +1123,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             return resid
         n_vis = np.asarray(self.vis).size
         n_phase = n_vis + np.asarray(self.phi).size
-        phase = np.mod(resid[n_vis:n_phase] + np.pi, 2.0 * np.pi) - np.pi
+        phase = wrap_phase(resid[n_vis:n_phase])
         return np.concatenate([resid[:n_vis], phase, resid[n_phase:]])
 
     def standardize_model(self, cvis):
@@ -1176,7 +1166,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 phases = phases[self.phi_index]
         return self._apply_linear_operator(phases, self.phi_mat)
 
-    def model(self, model_object):
+    @renamed()
+    def model(self, model):
         """
         Compute the model visibilities and phases for the given model object.
 
@@ -1186,25 +1177,23 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         direct Fourier transform: a ``uv_grid`` (AMIGO DISCO data, which
         carry no times) is not used for it.
         """
-        cvis = self._cvis(model_object)
+        cvis = self._cvis(model)
         prediction = self.standardize_model(cvis)
         if not self.extras:
             return prediction
         return np.concatenate(
-            [prediction] + [b.predict(model_object, cvis) for b in self.extras]
+            [prediction] + [b.predict(model, cvis) for b in self.extras]
         )
 
-    def _cvis(self, model_object):
+    def _cvis(self, model):
         """The model's complex visibility at every sample."""
-        if getattr(model_object, "time_dependent", False):
-            return self._cvis_in_time(model_object)
+        if getattr(model, "time_dependent", False):
+            return self._cvis_in_time(model)
         if self.uv_grid is None:
-            return model_object.model(self.u, self.v, self.wavel)
-        return model_object.model_on_grid(
-            self.u, self.v, self.wavel, self.uv_grid
-        )
+            return model.model(self.u, self.v, self.wavel)
+        return model.model_on_grid(self.u, self.v, self.wavel, self.uv_grid)
 
-    def _cvis_in_time(self, model_object):
+    def _cvis_in_time(self, model):
         """Complex visibilities with every sample at its own time."""
         if self.dt is None:
             raise ValueError(
@@ -1214,7 +1203,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         wavel = np.broadcast_to(self.wavel, np.shape(self.u))
 
         def one(dt, u, v, w):
-            scene = model_object.at(dt, self.t_ref)
+            scene = model.at(dt, self.t_ref)
             return scene.model(u[None], v[None], w[None])[0]
 
         # A compiled loop over samples, not vmap: with JAX 0.11, vmapping
@@ -1399,8 +1388,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ):
         """A copy with the continuum and line windows of the extra spectra.
 
-        They set how differential phases (``"visphi"``) and normalised
-        spectra (``"nflux"``) are normalised: see
+        They set how differential phases (``"visphi"``) and normalized
+        spectra (``"nflux"``) are normalized: see
         [`DifferentialPhase`][virgil.observables.DifferentialPhase].
 
         Parameters
@@ -1408,12 +1397,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         continuum, lines : sequence of (lo, hi), optional
             Wavelength ranges (metres). Differential phases are fitted over
             the continuum and kept in the lines (each defaults to the
-            complement of the other); normalised spectra use the continuum.
+            complement of the other); normalized spectra use the continuum.
         order : int, optional
             The continuum polynomial in wavenumber: 1 (a mean and a slope)
             by default for differential phases, 0 (a mean) for spectra.
         prior_width : float or (float, float), optional
-            For differential phases: marginalise each baseline and frame's
+            For differential phases: marginalize each baseline and frame's
             offset (and slope) under Gaussian priors of these widths
             (radians), using the channels of both windows, instead of
             projecting them out as the pipeline does (the default). See
@@ -1421,14 +1410,14 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         Examples
         --------
-        Keep the differential phase across Brγ, normalised on either side:
+        Keep the differential phase across Brγ, normalized on either side:
         ``data.with_continuum([(2.150e-6, 2.162e-6), (2.170e-6, 2.180e-6)],
         lines=[(2.163e-6, 2.169e-6)])``.
         """
         kinds = {b.kind for b in self.extras} & {"visphi", "nflux"}
         if not kinds:
             raise ValueError(
-                "These data have no differential phases or normalised "
+                "These data have no differential phases or normalized "
                 "spectra; read them with extras=('visphi',) or ('nflux',)."
             )
         out = self
@@ -1465,7 +1454,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         """A copy with new grey-scale nuisances for the extra spectra.
 
         Each spectrum (OI_FLUX, or correlated fluxes) is known up to a
-        scale, marginalised analytically under a Gaussian prior that you
+        scale, marginalized analytically under a Gaussian prior that you
         state (see [`FluxSpectrum`][virgil.observables.FluxSpectrum]). It
         is never taken from the data, and it is a proposal for the scale's
         Jeffreys prior 1/k (see [`virgil.observables`][virgil.observables]).
@@ -1485,7 +1474,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             correlated fluxes). Fibre injection varies per telescope and
             exposure, so per row is the safest for uncalibrated spectra.
         poly_order : int, optional
-            Also marginalise a polynomial in λ of this order times the
+            Also marginalize a polynomial in λ of this order times the
             model spectrum (a chromatic calibration).
         poly_width : float, optional
             Prior width of each polynomial coefficient, relative to the
@@ -1600,7 +1589,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         """A copy of the data with closure-phase offsets per frame.
 
         Calibration can leave closure phases that do not close. The
-        likelihood then marginalises offsets common to the channels of a
+        likelihood then marginalizes offsets common to the channels of a
         frame analytically (see
         [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with these widths
         unless they are fitted as the noise terms ``phi_offset_baseline``,
@@ -1612,7 +1601,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         This is a small-offset approximation: an offset δ changes the
         whitened sine sin Δ by about δ cos Δ, which is treated as linear in
         δ. It holds while the offsets (and the residuals) are small, about
-        δ ≲ 0.3 rad (17°); larger widths are not marginalised exactly.
+        δ ≲ 0.3 rad (17°); larger widths are not marginalized exactly.
 
         Parameters
         ----------
@@ -1645,7 +1634,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ):
         """A copy of the data with calibration gains correlated across channels.
 
-        The likelihood then marginalises gains on log |V| per frame
+        The likelihood then marginalizes gains on log |V| per frame
         analytically (see [`virgil.gains`][virgil.gains]), with these widths
         unless they are fitted as the noise terms ``vis_gain_telescope``,
         ``vis_gain_baseline``, ``vis_gain_chromatic`` or ``vis_gain_modes``
@@ -1675,7 +1664,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             lambda d: d.gains, self, gains, is_leaf=lambda x: x is None
         )
 
-    def with_model(self, model_object, key=None, noise_scale=1.0):
+    @renamed()
+    def with_model(self, model, key=None, noise_scale=1.0):
         """Return a copy populated from a model with optional Gaussian noise.
 
         Sampling, uncertainties, conventions, closure indices, and linear
@@ -1687,7 +1677,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if noise_scale < 0.0:
             raise ValueError("noise_scale must be non-negative.")
 
-        prediction = self.model(model_object)
+        prediction = self.model(model)
         n_vis = self.vis.size
         n_phase = n_vis + self.phi.size
         vis = prediction[:n_vis]
@@ -1720,7 +1710,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         out = self.set(["vis", "phi"], [vis, phi])
         if not self.extras:
             return out
-        cvis = self._cvis(model_object)
+        cvis = self._cvis(model)
         extras, offset = [], n_phase
         for i, block in enumerate(self.extras):
             n = int(block.data().size)
@@ -1759,11 +1749,23 @@ def _positive_factor(factor):
     return factor
 
 
+def _valid_samples(values, errors):
+    """Mask of finite samples with a finite, positive error.
+
+    A zero (or negative) error cannot be used: the whitened residual
+    ``r / σ`` is infinite, and one such sample makes every likelihood and
+    fit non-finite. Such samples are dropped, as flagged ones are.
+    """
+    return (
+        onp.isfinite(values) & onp.isfinite(errors) & (onp.asarray(errors) > 0)
+    )
+
+
 def _good(record):
-    """Unflagged, finite entries of an extra observable's record."""
+    """Unflagged, usable entries of an extra observable's record."""
     value = onp.asarray(record["value"], float).reshape(-1)
     error = onp.asarray(record["error"], float).reshape(-1)
-    good = onp.isfinite(value) & onp.isfinite(error) & (error > 0)
+    good = _valid_samples(value, error)
     if record.get("flag") is not None:
         good &= ~onp.asarray(record["flag"], bool).reshape(-1)
     return good, value, error
@@ -1860,7 +1862,7 @@ def _build_extras(data, obj, legs):
     if record is not None:
         if frame is None:
             raise ValueError(
-                "Differential phases are normalised per frame: give 'frame' "
+                "Differential phases are normalized per frame: give 'frame' "
                 "(or 'mjd') per sample."
             )
         closure_free = bool(obj.cp_flag)
@@ -1931,7 +1933,7 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
         + phases[np.asarray(index_cps2)]
         - phases[np.asarray(index_cps3)]
     )
-    return np.mod(cp + np.pi, 2.0 * np.pi) - np.pi
+    return wrap_phase(cp)
 
 
 def cp_indices(vis_sta_index, cp_sta_index):
@@ -2022,7 +2024,10 @@ def _expand_channels(u, v, wavel, vis, indices):
 
 
 def _good_samples(values, errors, flag, n_samples, name):
-    """Mask of unflagged, finite samples, or ``None`` if all are good.
+    """Mask of unflagged, usable samples, or ``None`` if all are good.
+
+    Usable is as for [`_valid_samples`][virgil.oidata._valid_samples]:
+    finite, with a finite, positive error.
 
     Data whose size is not ``n_samples`` are already projected and are not
     checked.
@@ -2034,7 +2039,7 @@ def _good_samples(values, errors, flag, n_samples, name):
                 f"for {n_samples} samples (it looks already projected)."
             )
         return None
-    bad = ~(onp.isfinite(values) & onp.isfinite(errors))
+    bad = ~_valid_samples(values, errors)
     if flag is not None:
         flag = onp.asarray(flag, dtype=bool).reshape(-1)
         if flag.size != n_samples:

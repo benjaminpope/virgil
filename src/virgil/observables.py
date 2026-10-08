@@ -12,8 +12,8 @@ whitened residual vector:
   ``F(λ) = k Σ fᵢ(λ)`` from
   [`total_spectrum`][virgil.models.SourceModel.total_spectrum]
   ([`FluxSpectrum`][virgil.observables.FluxSpectrum]);
-* ``"nflux"``: ``OI_FLUX`` normalised to its continuum, F(λ)/F_c(λ), the
-  same with the model normalised over the continuum channels;
+* ``"nflux"``: ``OI_FLUX`` normalized to its continuum, F(λ)/F_c(λ), the
+  same with the model normalized over the continuum channels;
 * ``"corrflux"``: correlated fluxes (``VISAMP`` with ``AMPTYP =
   'correlated flux'``), k |Σ fᵢ(λ) Vᵢ|, up to a grey scale;
 * ``"visamp"``: |V| (``VISAMP``, ``AMPTYP = 'absolute'``) beside V²
@@ -21,10 +21,10 @@ whitened residual vector:
 * ``"t3amp"``: triple amplitudes |V_ab V_bc V_ac|
   ([`TripleAmplitude`][virgil.observables.TripleAmplitude]);
 * ``"visphi"``: differential phases, the exact arg V(λ) with the
-  pipeline's continuum normalisation applied as a linear operator
+  pipeline's continuum normalization applied as a linear operator
   ([`DifferentialPhase`][virgil.observables.DifferentialPhase]).
 
-**Grey scales are marginalised, not fitted.** A spectrum's scale k (and an
+**Grey scales are marginalized, not fitted.** A spectrum's scale k (and an
 optional polynomial in λ times the spectrum) enters linearly, so with a
 Gaussian prior it integrates out in closed form (Luger, Foreman-Mackey &
 Hogg 2017; ``virgil._linear``): the data are Gaussian with covariance
@@ -36,14 +36,14 @@ posterior of k is
 
 **The prior on k is stated, never taken from the data.** Give it as
 ``scale=(mean, sd)`` in the data's units (e.g. Jy), with
-[`OIData.with_flux_scale`][virgil.oidata.OIData.with_flux_scale]. Normalised
+[`OIData.with_flux_scale`][virgil.oidata.OIData.with_flux_scale]. Normalized
 spectra (``"nflux"``) default to ``(1, 0.1)``. The Gaussian is a
 *proposal*: k is a positive scale, whose Jeffreys prior is 1/k on stated
 bounds. The two differ by about σ_k/k, which is negligible for a
 well-measured spectrum. For the Jeffreys posterior, reweight samples of k
 from the conditional posterior by ``1 / (k N(k; mean, sd²))`` within the
 bounds, or sample log k under a log-uniform prior directly, as a model
-parameter rather than marginalised. Make no evidence claims that depend
+parameter rather than marginalized. Make no evidence claims that depend
 on the Gaussian's width.
 
 **Differential phases.** A pipeline's differential phase is arg V minus a
@@ -52,9 +52,9 @@ baseline and frame. That fit is a linear operator N = I − L on the phases
 of one row (``continuum_operator``), so virgil applies the same N to the
 exact model phase, never the photocentre approximation, which fails for
 resolved structure. If our basis contains the pipeline's, N N_pipe = N, so
-the data may be re-normalised safely. Their covariance is N D Nᵀ, which is
+the data may be re-normalized safely. Their covariance is N D Nᵀ, which is
 whitened as a dense block per frame. Projecting out a linear basis is the
-flat-prior limit of marginalising those nuisances: the likelihood of N d
+flat-prior limit of marginalizing those nuisances: the likelihood of N d
 with covariance N D Nᵀ is the same whichever projection with that null
 space is used (restricted maximum likelihood).
 
@@ -76,7 +76,9 @@ import jax.numpy as np
 import jax.scipy.linalg as jsl
 import numpy as onp
 
+from ._deprecate import renamed
 from ._linear import posterior, whiten_blocks
+from ._utils import wrap_phase
 
 __all__ = [
     "DifferentialPhase",
@@ -138,7 +140,7 @@ def continuum_operator(wavel, continuum, order=1):
     numpy.ndarray
         ``L`` of shape ``(n, n)``: ``L @ x`` is the least-squares fit of the
         polynomial to ``x`` over the continuum channels, evaluated at every
-        channel. A differential phase is ``(I - L) @ φ``; a normalised
+        channel. A differential phase is ``(I - L) @ φ``; a normalized
         spectrum is ``F / (L @ F)``.
     """
     wavel = onp.asarray(wavel, float).reshape(-1)
@@ -189,7 +191,7 @@ class _Block(eqx.Module):
         return self.values
 
     def data_errors(self):
-        """Uncertainties of :meth:`data`, for display and normalisation."""
+        """Uncertainties of :meth:`data`, for display and normalization."""
         return self.errors
 
     @property
@@ -225,7 +227,8 @@ class VisibilityAmplitude(_Block):
     sample: onp.ndarray
     kind: str = eqx.field(static=True, default="visamp")
 
-    def predict(self, model_object, cvis):
+    @renamed()
+    def predict(self, model, cvis):
         return np.abs(cvis)[self.sample]
 
     def subset(self, keep, new_index, flux_keep=None):
@@ -245,7 +248,8 @@ class TripleAmplitude(_Block):
     i3: onp.ndarray
     kind: str = eqx.field(static=True, default="t3amp")
 
-    def predict(self, model_object, cvis):
+    @renamed()
+    def predict(self, model, cvis):
         amp = np.abs(cvis)
         return amp[self.i1] * amp[self.i2] * amp[self.i3]
 
@@ -269,13 +273,13 @@ class FluxSpectrum(_Block):
     with t the model's template: the total spectrum Σ fᵢ(λ)
     (``"flux"``), the same divided by its continuum fit per row
     (``"nflux"``), or the total spectrum times |V| (``"corrflux"``),
-    normalised to a mean of 1 per scale group (except ``"nflux"``, which
-    is already normalised). x is λ scaled to [-1, 1] across the group, so
+    normalized to a mean of 1 per scale group (except ``"nflux"``, which
+    is already normalized). x is λ scaled to [-1, 1] across the group, so
     w_0 = k is the grey scale and w_j (j ≥ 1) an optional polynomial.
     ``(μ, s)`` is the stated prior on k, in the data's units (the same for
     every group; ``(1, 0.1)`` by default for ``"nflux"``), and τ the
     polynomial's widths relative to μ. The prior is a proposal for the
-    Jeffreys 1/k (see the module notes). The weights are marginalised
+    Jeffreys 1/k (see the module notes). The weights are marginalized
     analytically.
 
     **Choice of prior.** k is a scale parameter. Under rescaling of k the
@@ -288,7 +292,7 @@ class FluxSpectrum(_Block):
     other parameters are insensitive to the choice. Evidence comparisons
     need a proper prior: finite positive bounds [k_min, k_max], with density
     1 / (k ln(k_max/k_min)). With such bounds, that log-uniform prior is the
-    Jeffreys choice under the rule for scale groups. Marginalising in log k
+    Jeffreys choice under the rule for scale groups. Marginalizing in log k
     is not linear and is not done here (a follow-up).
 
     Build with :meth:`build`; change the prior, groups and widths with
@@ -363,14 +367,14 @@ class FluxSpectrum(_Block):
             ``"flux"`` and ``"corrflux"`` before the likelihood is
             evaluated; ``(1, 0.1)`` by default for ``"nflux"``.
         poly_order : int, optional
-            Also marginalise a polynomial in λ of this order times the
+            Also marginalize a polynomial in λ of this order times the
             template (default 0: a grey scale only).
         poly_width : float, optional
             Prior width of each polynomial coefficient, relative to the
             scale's prior mean.
         continuum : sequence of (lo, hi), optional
             For ``"nflux"``: the continuum ranges (metres) its model is
-            normalised over, per row (default: every channel).
+            normalized over, per row (default: every channel).
         continuum_order : int, optional
             For ``"nflux"``: 0 (a mean, the default) or 1 (a mean and a
             slope in wavenumber).
@@ -493,9 +497,9 @@ class FluxSpectrum(_Block):
             return eqx.tree_at(lambda b: b.sample, out, sample)
         return self.rebuild(keep=flux_keep)
 
-    def _template(self, model_object, cvis):
+    def _template(self, model, cvis):
         """The model's spectral template t (see the class notes)."""
-        base = model_object.total_spectrum(np.asarray(self.wavel))
+        base = model.total_spectrum(np.asarray(self.wavel))
         base = np.broadcast_to(base, self.wavel.shape)
         if self.kind == "corrflux":
             base = base * np.abs(cvis)[self.sample]
@@ -521,13 +525,14 @@ class FluxSpectrum(_Block):
                 "not taken from the data (see virgil.observables)."
             )
 
-    def predict(self, model_object, cvis):
+    @renamed()
+    def predict(self, model, cvis):
         self._require_prior()
         mu = np.asarray(self.mu)[self.group]
-        return mu * self._template(model_object, cvis)
+        return mu * self._template(model, cvis)
 
     def _columns(self, prediction, errors):
-        """The whitened marginalised modes, ``(n, p)``: τ_j μ t xʲ / σ."""
+        """The whitened marginalized modes, ``(n, p)``: τ_j μ t xʲ / σ."""
         widths = np.asarray(self.widths, prediction.dtype)
         poly = np.asarray(self.poly, prediction.dtype)
         return prediction[:, None] * poly * widths / errors[:, None]
@@ -550,7 +555,7 @@ class FluxSpectrum(_Block):
         Gaussian prior is a proposal for k's Jeffreys prior (see the
         module notes).
         """
-        # In the standardised form of virgil._linear: x about the prior
+        # In the standardized form of virgil._linear: x about the prior
         # mean A μ (the prediction is μ t), U the whitened columns, per
         # group; padding has zero rows, which change nothing.
         x = (data - prediction) / errors
@@ -612,7 +617,7 @@ def _row_continuum(wavel, row, continuum, order):
 
 
 class DifferentialPhase(_Block):
-    """Continuum-normalised phases (``VISPHI``, ``"visphi"``).
+    """Continuum-normalized phases (``VISPHI``, ``"visphi"``).
 
     ``values`` and ``errors`` are the per-sample phases (radians, in the
     orientation of the visibility samples) and their uncertainties, as
@@ -630,7 +635,7 @@ class DifferentialPhase(_Block):
     [`OIData.with_continuum`][virgil.oidata.OIData.with_continuum].
 
     With ``prior_width``, the offset and slope of every baseline and frame
-    are instead marginalised under a finite Gaussian prior (the
+    are instead marginalized under a finite Gaussian prior (the
     projection is its flat limit): W keeps the channels of both windows
     unchanged, each channel's closure-free combinations are whitened for
     their covariance Qᵀ D Q, and the offsets and slopes are whitened out as
@@ -708,7 +713,7 @@ class DifferentialPhase(_Block):
             phases, orthogonal to the closure phases (default True; use it
             whenever the data have closure phases).
         prior_width : float or (float, float), optional
-            Marginalise the offset (and slope, per unit of the scaled
+            Marginalize the offset (and slope, per unit of the scaled
             wavenumber, which spans 1 across the channels) of each
             baseline and frame under Gaussian priors of these widths
             (radians), over the channels of both windows, instead of
@@ -885,11 +890,12 @@ class DifferentialPhase(_Block):
     def data(self):
         phases = np.asarray(self.values)[self.grid]
         steps = np.diff(phases, axis=-1)
-        steps = np.mod(steps + np.pi, 2.0 * np.pi) - np.pi
+        steps = wrap_phase(steps)
         anchor = np.arctan2(np.sin(phases[..., :1]), np.cos(phases[..., :1]))
         return self._project(self._unwrap(steps, anchor))
 
-    def predict(self, model_object, cvis):
+    @renamed()
+    def predict(self, model, cvis):
         vis = np.asarray(cvis)[self.sample][self.grid]
         phases = np.angle(vis)
         steps = np.angle(vis[..., 1:] * np.conj(vis[..., :-1]))
@@ -983,7 +989,7 @@ class DifferentialPhase(_Block):
         )
 
     def _whiten_with_prior(self, resid):
-        """Whitened residuals with offsets and slopes marginalised."""
+        """Whitened residuals with offsets and slopes marginalized."""
         n_f, k, r = self.valid.shape
         y = np.zeros(n_f * k * r, resid.dtype).at[self.keep].set(resid)
         y = y.reshape(n_f, k, r).transpose(0, 2, 1)  # (F, R, K)

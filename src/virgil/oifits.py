@@ -24,6 +24,8 @@ import warnings
 import numpy as onp
 from astropy.io import fits
 
+from ._utils import dtor
+
 
 __all__ = ["build_hdulist", "read_oifits", "write_oifits"]
 
@@ -83,7 +85,7 @@ def read_oifits(
 
         * ``"flux"``: ``OI_FLUX`` as a spectrum known up to a grey scale
           (``FLUXDATA``, or GRAVITY's ``FLUX``);
-        * ``"nflux"``: ``OI_FLUX`` as a spectrum normalised to its
+        * ``"nflux"``: ``OI_FLUX`` as a spectrum normalized to its
           continuum (choose one of ``"flux"`` and ``"nflux"``);
         * ``"t3amp"``: the triple amplitudes ``T3AMP`` of ``OI_T3``;
         * ``"visamp"``: ``OI_VIS`` ``VISAMP`` beside ``OI_VIS2``, as the
@@ -208,7 +210,7 @@ def _check_extras(extras):
     if "flux" in extras and "nflux" in extras:
         raise ValueError(
             "Read OI_FLUX either as 'flux' (up to a grey scale) or as "
-            "'nflux' (normalised to its continuum), not both."
+            "'nflux' (normalized to its continuum), not both."
         )
     return extras
 
@@ -401,16 +403,28 @@ def _exposure_time(hdu, mask):
     return 0.0
 
 
+def _phase_unit_scale(unit, default, name="phase"):
+    """Factor converting a phase in ``unit`` to radians.
+
+    ``unit`` is a FITS ``TUNIT`` or a record's ``phi_unit``; a missing or
+    blank one means ``default`` (degrees in OIFITS, radians in a record).
+    """
+    raw = default if unit is None or not str(unit).strip() else unit
+    name_ = str(raw).strip().lower()
+    if name_ in {"rad", "radian", "radians"}:
+        return 1.0
+    if name_ in {"deg", "degree", "degrees"}:
+        return dtor
+    raise ValueError(
+        f"Unsupported phase unit {raw!r} for {name}; expected degrees or "
+        "radians."
+    )
+
+
 def _phase_scale(hdu, column):
     """Factor converting a phase column to radians, from its TUNIT."""
-    unit = hdu.columns[column].unit or _DEFAULT_PHASE_UNIT
-    unit = str(unit).strip().lower()
-    if unit in {"rad", "radian", "radians"}:
-        return 1.0
-    if unit in {"deg", "degree", "degrees"}:
-        return onp.pi / 180.0
-    raise ValueError(
-        f"Unsupported unit {unit!r} for {column}; expected degrees or radians."
+    return _phase_unit_scale(
+        hdu.columns[column].unit, _DEFAULT_PHASE_UNIT, column
     )
 
 
@@ -539,7 +553,7 @@ def _check_amptyp(hdu):
     if amptyp != "absolute":
         raise ValueError(
             f"VISAMP in this OI_VIS table has AMPTYP = {amptyp!r}, not "
-            "'absolute'. A differential visibility is normalised across "
+            "'absolute'. A differential visibility is normalized across "
             "the band and a correlated flux is in flux units (e.g. MATISSE "
             "products reduced with corrFlux=TRUE), so neither can be fitted "
             "as a visibility amplitude. Calibrate the amplitudes into "
@@ -809,6 +823,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
             "that time, in either orientation. Each is placed at the OI_T3 "
             "table's own (u, v) as a flagged sample: the closure phases are "
             "fitted, but the V² coverage of this file is incomplete.",
+            UserWarning,
             stacklevel=4,
         )
     if extra["u"]:

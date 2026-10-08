@@ -36,7 +36,7 @@ per-baseline phase errors, so the data do not allow better.
 channel each). It whitens residuals r by dividing by σ, projecting onto an
 orthonormal basis Q of the column space of T (the independent combinations)
 and solving with the Cholesky factor of M = Q R Qᵀ, which is fixed. For r in
-the column space of C this is exactly rᵀ C⁺ r, and the normalisation is
+the column space of C this is exactly rᵀ C⁺ r, and the normalization is
 ½ log pdet C = ½ (log det M + log det Q D Qᵀ).
 """
 
@@ -164,7 +164,7 @@ class ClosureNoise(eqx.Module):
         """Whitened independent combinations, and their effective errors.
 
         ``residuals`` and ``sigma`` have one entry per closure phase. The
-        returned errors give the Gaussian normalisation: their log-sum is
+        returned errors give the Gaussian normalization: their log-sum is
         ½ log of the pseudo-determinant of the covariance.
         """
         sigma = np.asarray(sigma)[self.groups]

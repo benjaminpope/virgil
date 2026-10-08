@@ -19,6 +19,7 @@ from virgil.models import (  # noqa: E402
 )
 from virgil.oidata import OIData, cp_indices  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
+from tests._shared import PAIRS, TRIANGLES  # noqa: E402
 
 T_REF = 60500.0
 ORBIT = KeplerOrbit(
@@ -32,8 +33,6 @@ ORBIT = KeplerOrbit(
     t_ref=T_REF,
 )
 STATIONS = onp.array([[0.0, 0.0], [60.0, 5.0], [25.0, 70.0], [-40.0, 45.0]])
-PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
-TRIANGLES = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
 
 
 def _epochs(mjds, wavel=2.2e-6):
@@ -224,6 +223,17 @@ def test_anchors_and_offsets():
     ).at(mjd)
     line_pa = float(ORBIT.frame(mjd)["line_pa"])
     assert float(skewed.pa) == pytest.approx(line_pa + 5.0, abs=1e-4)
+
+
+def test_frame_line_pa_is_the_separation_pa_convention():
+    """``frame()['line_pa']`` was left in (-180, 180], while
+    ``separation_pa`` wraps to [0, 360): one convention now."""
+    mjds = T_REF + onp.linspace(0.0, 730.0, 40)
+    pas = onp.array([float(ORBIT.frame(m)["line_pa"]) for m in mjds])
+    assert onp.all((pas >= 0.0) & (pas < 360.0))
+    assert (pas > 180.0).any()  # the orbit does visit the western side
+    for m, pa in zip(mjds, pas):
+        assert float(ORBIT.separation_pa(m)[1]) == pytest.approx(pa, abs=1e-4)
 
 
 def test_clear_errors():

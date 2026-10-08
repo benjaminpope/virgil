@@ -32,7 +32,7 @@ sys.path.insert(0, str(root / "src"))
 
 import jax
 import matplotlib.pyplot as plt
-import numpy as np
+import numpy as onp
 import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS, init_to_value
 
@@ -59,26 +59,26 @@ stars = {
     ),
 }
 profiles = {
-    "uniform": lambda mu: np.ones_like(mu),
+    "uniform": lambda mu: onp.ones_like(mu),
     "linear, u = 0.6": lambda mu: 1 - 0.6 * (1 - mu),
     "quadratic, u = (0.35, 0.25)": lambda mu: 1
     - 0.35 * (1 - mu)
     - 0.25 * (1 - mu) ** 2,
     "square root, (c, d) = (0.1, 0.6)": lambda mu: 1
     - 0.1 * (1 - mu)
-    - 0.6 * (1 - np.sqrt(mu)),
+    - 0.6 * (1 - onp.sqrt(mu)),
 }
 
 # x = pi theta B / lambda, so baselines in wavelengths are x / (pi theta)
-mas = np.pi / 180 / 3600e3
-x = np.linspace(1e-3, 14.0, 1000)
-spatial_frequency = x / (np.pi * diam * mas)
-r = np.linspace(0.0, 1.0, 400)
+mas = onp.pi / 180 / 3600e3
+x = onp.linspace(1e-3, 14.0, 1000)
+spatial_frequency = x / (onp.pi * diam * mas)
+r = onp.linspace(0.0, 1.0, 400)
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 for name, star in stars.items():
-    ax1.plot(r, profiles[name](np.sqrt(1 - r**2)), label=name)
+    ax1.plot(r, profiles[name](onp.sqrt(1 - r**2)), label=name)
     vis = star.model(spatial_frequency, 0 * spatial_frequency, 1.0)
-    ax2.semilogy(x, np.abs(np.asarray(vis)) ** 2)
+    ax2.semilogy(x, onp.abs(onp.asarray(vis)) ** 2)
 ax1.set(xlabel="r / R", ylabel="I / I(centre)", title="Brightness profile")
 ax1.legend(fontsize=8)
 ax2.set(
@@ -124,20 +124,20 @@ so that uniform priors on $q_1$ and $q_2$ sample every physical quadratic law, a
 Below, uniform draws in $(q_1, q_2)$ fill exactly the physical triangle in $(u_1, u_2)$ (left), and every one of the corresponding profiles is positive and falls towards the limb (right, a random subset).
 
 ```python
-rng = np.random.default_rng(0)
+rng = onp.random.default_rng(0)
 q1, q2 = rng.uniform(size=(2, 3000))
 star = QuadraticLimbDarkenedDisk(diam, q1=q1, q2=q2)
-u1, u2 = np.asarray(star.u1), np.asarray(star.u2)
+u1, u2 = onp.asarray(star.u1), onp.asarray(star.u2)
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 ax1.scatter(u1, u2, s=2, alpha=0.4)
-grid = np.linspace(-0.2, 2.2, 2)
+grid = onp.linspace(-0.2, 2.2, 2)
 ax1.plot(grid, 1 - grid, "k--", lw=1, label="$u_1 + u_2 = 1$")
 ax1.plot(grid, -grid / 2, "k:", lw=1, label="$u_1 + 2u_2 = 0$")
 ax1.axvline(0, color="k", lw=1, ls="-.", label="$u_1 = 0$")
 ax1.set(xlabel="$u_1$", ylabel="$u_2$", title="Uniform in $(q_1, q_2)$")
 ax1.legend(fontsize=8)
-mu = np.sqrt(1 - r**2)
+mu = onp.sqrt(1 - r**2)
 for a, b in zip(u1[:60], u2[:60]):
     ax2.plot(r, 1 - a * (1 - mu) - b * (1 - mu) ** 2, lw=0.8, alpha=0.6)
 ax2.set(xlabel="r / R", ylabel="I / I(centre)", title="Sampled profiles")
@@ -154,7 +154,7 @@ To measure limb darkening the data have to reach beyond the first null. `vlti_oi
 ```python
 truth = QuadraticLimbDarkenedDisk.from_u(diam, u1=0.35, u2=0.25)
 template = vlti_oidata(
-    wavelengths_m=np.linspace(1.6e-6, 2.4e-6, 6),
+    wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 6),
     hour_angles_h=(-2.5, 0.0, 2.5),
     sigma_v2=0.002,
     sigma_cp_deg=0.5,
@@ -164,9 +164,9 @@ data = template.with_model(truth, key=jax.random.PRNGKey(3))
 # A uniform disk's closure phases flip between 0 and 180 degrees at each null,
 # so its chi-squared jumps as the diameter changes: fit its one parameter
 # with a fine scan.
-diams = np.linspace(4.0, 8.0, 2001)
-chi2 = [np.sum(whitened_residuals(UniformDisk(d), data) ** 2) for d in diams]
-ud_model = UniformDisk(diams[np.argmin(chi2)])
+diams = onp.linspace(4.0, 8.0, 2001)
+chi2 = [onp.sum(whitened_residuals(UniformDisk(d), data) ** 2) for d in diams]
+ud_model = UniformDisk(diams[onp.argmin(chi2)])
 
 priors = {
     "diam": dist.LogUniform(2.0, 10.0),
@@ -175,10 +175,10 @@ priors = {
 }
 ld = fit(QuadraticLimbDarkenedDisk(5.0, q1=0.5, q2=0.5), priors, data)
 for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
-    residuals = np.asarray(whitened_residuals(model, data))
+    residuals = onp.asarray(whitened_residuals(model, data))
     print(
         f"{name:>13}: diam = {float(model.diam):.3f} mas, "
-        f"chi2 per point {np.mean(residuals**2):.2f} ({residuals.size} points)"
+        f"chi2 per point {onp.mean(residuals**2):.2f} ({residuals.size} points)"
     )
 ```
 
@@ -210,10 +210,10 @@ derived = {
 }
 print(f"{'':>6}{'truth':>8}{'posterior':>18}")
 for name, values in derived.items():
-    values = np.asarray(values)
+    values = onp.asarray(values)
     print(
         f"{name:>6}{float(getattr(truth, name)):8.3f}"
-        f"{np.median(values):11.3f} ± {np.std(values):.3f}"
+        f"{onp.median(values):11.3f} ± {onp.std(values):.3f}"
     )
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
@@ -224,7 +224,7 @@ ax1.set(xlim=(0, 1), ylim=(0, 1), xlabel="$q_1$", ylabel="$q_2$",
 ax1.legend()
 ax2.scatter(samples.u1, samples.u2, s=2, alpha=0.3)
 ax2.plot(truth.u1, truth.u2, "r*", ms=12, label="truth")
-grid = np.linspace(0.0, 1.2, 2)
+grid = onp.linspace(0.0, 1.2, 2)
 ax2.plot(grid, 1 - grid, "k--", lw=1)
 ax2.plot(grid, -grid / 2, "k:", lw=1)
 ax2.set(xlabel="$u_1$", ylabel="$u_2$", title="Posterior, quadratic coefficients")
@@ -248,13 +248,13 @@ The squared visibilities against spatial frequency show where the difference lie
 
 ```python
 n_vis = data.vis.size
-frequency = np.hypot(np.asarray(data.u), np.asarray(data.v)) / np.asarray(data.wavel)
-order = np.argsort(frequency)
+frequency = onp.hypot(onp.asarray(data.u), onp.asarray(data.v)) / onp.asarray(data.wavel)
+order = onp.argsort(frequency)
 fig, ax = plt.subplots(figsize=(7, 4))
-ax.errorbar(frequency / 1e6, np.asarray(data.vis), np.asarray(data.d_vis),
+ax.errorbar(frequency / 1e6, onp.asarray(data.vis), onp.asarray(data.d_vis),
             fmt=".", color="0.4", label="simulated data")
 for model, label in [(ud_model, "uniform disk fit"), (ld.model, "limb-darkened fit")]:
-    model_v2 = np.asarray(data.model(model))[:n_vis]
+    model_v2 = onp.asarray(data.model(model))[:n_vis]
     ax.plot(frequency[order] / 1e6, model_v2[order], label=label)
 ax.set(yscale="log", ylim=(1e-4, 1.2), xlabel="Spatial frequency (Mλ)",
        ylabel="$V^2$")

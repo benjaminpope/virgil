@@ -122,7 +122,7 @@ data = OIData(
 
 ## How `OIData.model(...)` builds comparable vectors
 
-`OIData.model(model_object)` evaluates complex visibilities through the model and converts them to the configured observables (`V²` and phases here), then flattens to match `OIData.flatten_data()`.
+`OIData.model(model)` evaluates complex visibilities through the model and converts them to the configured observables (`V²` and phases here), then flattens to match `OIData.flatten_data()`.
 
 ```python
 model_vector = data.model(model_cart_true)

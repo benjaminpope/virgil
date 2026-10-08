@@ -41,6 +41,9 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **Warnings and precision (#306).** `Tabulated` now warns with `FutureWarning` (as every other deprecation does) instead of the default-hidden `DeprecationWarning`; the four warnings that set no category (`Ensemble` too few members kept, every closure phase flagged, unmatched T3 legs, `t_ref = 0` with MJD times) now say `UserWarning`. `cvis_uniform_disk` takes `diam` like the other disks (`ud=` still works with a `FutureWarning`). The two pixel-sum matmuls in `GaussianArc`/`TruncatedCone` use `Precision.HIGHEST`, as the rest of the forward model does (TF32 on A100/H100 otherwise). The AMIGO covariance check takes its tiny-number floor from the array's dtype. `tests/_test_data.py` finds `data/` from its own location, not the working directory.
+- **Oxford -ize spelling in names (#306).** `fit`, `numpyro_model` and `diagnose` take `regularizers` (not `regularisers`), `RVData.term` takes `marginalize_offsets` (not `marginalise_offsets`), and the numpyro factor sites for regularizers are named `regularizer_<i>`. The old keywords still work with a `FutureWarning` until 0.5 (`_deprecate.renamed`). Private names (`_linear.standardize`, `_diagonalized`, `_summarize`, `_normalize`) and the spelling in docstrings, comments and the hand-written docs follow. `barycenter` and the already -ize public names (`regularized_inverse`, `optimized_*`, `standardize_model`, `Image(normalize=)`) are unchanged.
+- **Deprecated parameter names are gone from public signatures (#306).** `OIData.model`, `OIData.with_model` and every `observables.*.predict` take `model` (not `model_object`), `inflated_errors` takes `data` (not `data_obj`), and `joint_data` / `joint_errors` take `data` (not `observations`). The old keywords still work with a `FutureWarning` until 0.5, through the same `_deprecate.renamed` path as the other functions. Private helpers in `likelihood`, `inference` and `oidata` were renamed to match.
 - **One import convention (#306).** `import jax.numpy as np` and `import numpy as onp` everywhere in `src`, `tests`, `examples`, `scripts` and `design/sketches` (six `src` modules and three tests had the two swapped, so code moved between files silently changed backend). Ruff's `ICN001` now enforces it; notebooks keep their old aliases until they are next re-executed.
 - **Orbit starts are scale-aware (#268).** `epoch_positions` now scores
   its grid on the scale-marginalized surface m = -Σ_b (ν_b/2) ln χ²_b,
@@ -73,8 +76,65 @@ anything before 1.0 may change between minor versions.
   ranking. The default stays `"quoted"` in 0.4, with a `FutureWarning`
   when `scales` is not given; it will become `"marginal"`.
 
+- **Duplicated and dead code removed (part of #310; no behaviour change).**
+  `legacy.oifits_implaneia.GetWavelength`, `Format_STAINDEX_V2`,
+  `Format_STAINDEX_T3`, `rad2mas` and the `cp_indices` re-export are
+  deprecated (`FutureWarning`; removal in 0.6), since nothing uses them.
+  Internally: `epochs` and `pipeline.binary` use the `_utils` unit
+  constants; `FWHM_PER_SIGMA` moved to `_utils` (still importable from
+  `detection`) and replaces the hand-written `2.3548` and
+  `2*sqrt(2 ln 2)` (the two literal `2.3548`s in `imaging` now use the
+  exact value, a 1e-5 relative change in an envelope-fit starting width);
+  `coverage` uses `_geometry.rotate` (which now stays in NumPy for NumPy inputs); `meshgrid_vectors` is
+  `coordinate_points`; one `_unit_sum`; `pipeline.cli` uses
+  `_io.read_json` and `_io.sha256_file`; `pipeline.binary` takes skewness
+  and kurtosis from `scipy.stats`; the `batch_size` and noise-term
+  "Priors" docstrings are stated once and referred to. Unused
+  `_utils.i2pi` removed.
+
 ### Fixed
 
+- **Drifted copies unified (part of #310).**
+  - **Pipeline resume fingerprint.** `pipeline._io.data_fingerprint` now
+    hashes every field of the `OIData` (it is `detection._fingerprint`),
+    not twelve arrays and three flags, so a change to the stations,
+    `t_ref`, `dt`, frames, gains, closure offsets, extra observables or
+    uv grid is noticed on resume. **This changes every fingerprint: run
+    folders written by earlier versions no longer match, so resuming one
+    raises a `ConfigMismatchError` ("the data differ"), and their cached
+    stages are recomputed once you start it over with `run(resume=False)`
+    (`--fresh`) or in a new folder.**
+  - **Zero errors.** `OIData` now drops V² and phase samples with a zero
+    (or negative) error, as it already did for extra observables
+    (`OI_FLUX`, `|V|`, `T3AMP`); a zero error gives an infinite whitened
+    residual, which made every likelihood and fit non-finite. Flagged
+    and non-finite samples were already dropped.
+  - **Orbit ranking.** `rank_orbits` (and so `start_from_positions`)
+    orders orbits with `orbit_search.rank_scores`, as
+    `score_orbits(...).order()` does: scores within 1e-3 nat tie and
+    rank by index, and non-finite ones rank last. Orbits whose scores
+    differ by less than that can come out in a different order than
+    before.
+  - **Field of view.** `imaging.field_of_view`, `nyquist_pixel_scale`,
+    `Epochs.resolution_mas` and the pipeline's `fov_mas`,
+    `resolution_mas` and `lambda_over_b_mas` share
+    `_geometry.fringe_scales`: per-sample `B/λ` over non-zero baselines.
+    The pipeline used the longest wavelength over the shortest baseline,
+    which are not observed together when the uv sampling differs between
+    channels, so its `fov_mas` can be smaller (and its default
+    `max_sep`, a fraction of it).
+  - **Position angles.** One `_geometry.position_angle` /
+    `separation_pa` (North through East, `[0, 360)`) serves the models,
+    orbits, plotting and the pipeline. `KeplerOrbit.frame(...)["line_pa"]`
+    was in (-180, 180]; it is now in `[0, 360)` (equal modulo 360, and
+    `towards_primary` is still `line_pa + 180`).
+  - **Phase units** (`oifits` columns and `OIData` records) go through
+    one parser, with one error message; a blank `TUNIT` or `phi_unit` now
+    means the default unit in both. One check for the names of
+    `System` components and `Sum` parts (derived from the class's own
+    fields), one `wrap_phase`, and the pipeline's prior-bound fractions
+    use `fitting._bound_fraction` (a prior with a flat coordinate, such
+    as `IsotropicInclination`, no longer counts its poles as bounds).
 - **`virgil.ensemble` default selection.** The L-curve window now keeps
   the weights from `window_dex` below the corner up to the corner (MYTHRA's
   "just before the turnover"), not the over-regularised side above it. The

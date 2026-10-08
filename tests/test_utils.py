@@ -136,3 +136,70 @@ def test_check_az_prof_nonnegative_under_jit():
     check = jax.jit(check_az_prof_nonnegative)
     assert not bool(check(np.array([1.2, 0.0]), np.array([45.0, 0.0])))
     assert bool(check(np.array([0.5, 0.3]), np.array([10.0, 70.0])))
+
+
+def test_wrap_phase_maps_to_minus_pi_inclusive_pi_exclusive():
+    from virgil._utils import wrap_phase
+
+    pi = onp.pi
+    values = np.array([0.0, pi, -pi, 3 * pi, 2 * pi, 0.5, -3.0 - 2 * pi])
+    got = onp.asarray(wrap_phase(values))
+    assert onp.allclose(got, [0.0, -pi, -pi, -pi, 0.0, 0.5, -3.0], atol=1e-5)
+    assert onp.all((got >= -pi - 1e-6) & (got < pi))
+
+
+def test_position_angle_is_north_through_east_in_zero_to_360():
+    from virgil._geometry import position_angle, separation_pa
+
+    dra = onp.array([0.0, 1.0, 0.0, -1.0, -1.0, 3.0])
+    ddec = onp.array([1.0, 0.0, -1.0, 0.0, 1.0, 4.0])
+    expected = [0.0, 90.0, 180.0, 270.0, 315.0, onp.degrees(onp.arctan(0.75))]
+    got = position_angle(dra, ddec)
+    assert isinstance(got, onp.ndarray)
+    assert onp.allclose(got, expected)
+    assert onp.all((got >= 0.0) & (got < 360.0))
+    # The same in JAX, traced, and for a scalar, and the inverse of
+    # (sep sin pa, sep cos pa).
+    assert onp.allclose(
+        position_angle(np.asarray(dra), ddec), expected, atol=1e-4
+    )
+    traced = jax.jit(lambda a, b: separation_pa(a, b))(dra, ddec)
+    sep, pa = traced
+    assert onp.allclose(sep, onp.hypot(dra, ddec), atol=1e-5)
+    assert onp.allclose(pa, expected, atol=1e-4)
+    assert onp.isclose(position_angle(-2.0, 0.0), 270.0)
+    th = onp.radians(got)
+    assert onp.allclose(onp.hypot(dra, ddec) * onp.sin(th), dra, atol=1e-12)
+    assert onp.allclose(onp.hypot(dra, ddec) * onp.cos(th), ddec, atol=1e-12)
+
+
+def test_fwhm_per_sigma_is_the_gaussian_ratio():
+    from virgil._utils import FWHM_PER_SIGMA
+
+    assert np.isclose(FWHM_PER_SIGMA, 2.0 * np.sqrt(2.0 * np.log(2.0)))
+    assert np.isclose(FWHM_PER_SIGMA, 2.3548, atol=1e-4)
+
+
+def test_rotate_keeps_numpy_inputs_in_numpy_precision():
+    from virgil._geometry import rotate
+
+    u, v = onp.array([1.0, 2.0]), onp.array([3.0, -1.0])
+    x, y = rotate(u, v, 30.0)
+    assert isinstance(x, onp.ndarray) and x.dtype == onp.float64
+    c, s = onp.cos(onp.radians(30.0)), onp.sin(onp.radians(30.0))
+    assert onp.allclose(x, c * u + s * v, rtol=1e-15)
+    assert onp.allclose(y, -s * u + c * v, rtol=1e-15)
+
+
+def test_legacy_helpers_are_deprecated():
+    from virgil.legacy import oifits_implaneia as legacy
+
+    with pytest.warns(FutureWarning, match="removed in virgil 0.6"):
+        assert legacy.GetWavelength("JWST", "F480M")[0] == pytest.approx(
+            4.817e-6
+        )
+    with pytest.warns(FutureWarning, match="virgil.oidata"):
+        from virgil.legacy.oifits_implaneia import cp_indices
+    from virgil.oidata import cp_indices as original
+
+    assert cp_indices is original

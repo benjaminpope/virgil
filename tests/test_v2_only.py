@@ -20,9 +20,9 @@ from virgil.likelihood import model_loglike, whitened_residuals
 from virgil.models import BinaryModelCartesian, UniformDisk
 from virgil.oidata import OIData
 from virgil.oifits import read_oifits, write_oifits
+from tests._shared import PAIRS  # noqa: E402
 
 STATIONS = onp.array([[0.0, 0.0], [32.0, 2.0], [14.0, 26.0], [-11.0, 18.0]])
-PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
 WAVES = onp.array([1.6e-6, 1.8e-6, 2.0e-6])
 DISK = UniformDisk(2.5)
 
@@ -151,6 +151,22 @@ def test_all_closure_phases_flagged_is_the_same_as_no_phases(tmp_path):
     assert onp.isclose(
         model_loglike(probe, flagged), model_loglike(probe, plain)
     )
+
+
+def test_a_zero_error_sample_is_dropped_like_a_flagged_one():
+    """A sample with error 0 has an infinite whitened residual, so it is
+    dropped (as extra observables already were), not kept to make every
+    likelihood non-finite."""
+    model = BinaryModelCartesian(4.0, -3.0, 0.1)
+    record = _v2_dict(model)
+    d_vis = onp.array(record["d_vis"], float)
+    d_vis[0, 0] = 0.0
+    record["d_vis"] = d_vis
+    data = OIData(record)
+    assert data.vis.size == d_vis.size - 1
+    assert 0 not in onp.asarray(data.vis_index)
+    probe = BinaryModelCartesian(5.0, -2.0, 0.08)
+    assert onp.isfinite(model_loglike(probe, data))
 
 
 def test_a_grid_search_runs_on_v2_alone():

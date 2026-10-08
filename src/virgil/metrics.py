@@ -4,7 +4,7 @@ The image-recovery figures of merit used by the interferometric imaging
 contests, written from their published definitions:
 
 * the 2004 Beauty Contest, Lawson et al. (2004, Proc. SPIE 5491, 886),
-  Eq. 2: the flux-weighted rms of the normalised difference, over the
+  Eq. 2: the flux-weighted rms of the normalized difference, over the
   peak ([`lawson_sigma_over_peak`][virgil.metrics.lawson_sigma_over_peak]);
 * the 2008-2012 contests (Cotton et al. 2008, Proc. SPIE 7013; Malbet et
   al. 2010, Proc. SPIE 7734; Baron et al. 2012, Proc. SPIE 8445): the rms
@@ -12,7 +12,7 @@ contests, written from their published definitions:
   ([`rms_convolved`][virgil.metrics.rms_convolved]);
 * the 2024 contest's ``ImageMetrics`` L1 score
   ([`l1_score`][virgil.metrics.l1_score]);
-* the normalised cross-correlation ([`ncc`][virgil.metrics.ncc]).
+* the normalized cross-correlation ([`ncc`][virgil.metrics.ncc]).
 
 [`score`][virgil.metrics.score] resamples, aligns and evaluates all of them.
 Images are in the virgil orientation (row 0 North, column 0 East, centre at
@@ -28,6 +28,7 @@ import jax.numpy as np
 import numpy as onp
 from jax.scipy.ndimage import map_coordinates
 
+from ._utils import _unit_sum
 from .imaging import convolve_beam
 
 
@@ -43,10 +44,6 @@ def _array_and_scale(image, pixel_scale_mas):
     if pixel_scale_mas is None:
         raise ValueError("Give pixel_scale_mas for an array (not an Image).")
     return np.asarray(image), float(pixel_scale_mas)
-
-
-def _unit_sum(image):
-    return image / np.sum(image)
 
 
 def _check_same_shape(a, b):
@@ -119,7 +116,7 @@ def _shift(arr, drow, dcol):
 
 
 def ncc(image, truth):
-    """Normalised cross-correlation of two images at zero shift.
+    """Normalized cross-correlation of two images at zero shift.
 
     The zero-mean form, ``Σ (e - ē)(r - r̄) / sqrt(Σ (e - ē)² Σ (r - r̄)²)``
     for the image ``e`` and truth ``r``: 1 for identical images up to a
@@ -182,7 +179,7 @@ def rms_convolved(
 ):
     """The rms difference of two images, after convolving with a beam.
 
-    The metric of the 2008-2012 contests: both images are normalised to unit
+    The metric of the 2008-2012 contests: both images are normalized to unit
     flux, convolved with a Gaussian beam (the data's resolution, so that
     structure the data cannot resolve does not count against the
     reconstruction), and the rms of their difference is taken. With no beam
@@ -228,12 +225,12 @@ def rms_convolved(
 def lawson_sigma_over_peak(image, truth):
     """The 2004 Beauty Contest figure of merit, σ over the peak.
 
-    Lawson et al. (2004), Eq. 2: with both images normalised to unit flux,
+    Lawson et al. (2004), Eq. 2: with both images normalized to unit flux,
     σ is the root of the mean squared difference weighted by the true flux,
     ``σ² = Σ r (e - r)² / Σ r``, and the score is σ divided by the peak of
     the truth. Smaller is better; 0 is a perfect reconstruction.
 
-    Both images are normalised to unit sum over the whole array, and only
+    Both images are normalized to unit sum over the whole array, and only
     then is the rms weighted by the truth. The weighting means pixels where
     the truth is zero are not scored directly, but flux the reconstruction
     puts in empty sky changes its flux on the source (the sum is fixed), so
@@ -258,7 +255,7 @@ def lawson_sigma_over_peak(image, truth):
 
 
 def align(image, truth, max_shift_mas, pixel_scale_mas=None):
-    """Shift an image to best match the truth, by maximising the NCC.
+    """Shift an image to best match the truth, by maximizing the NCC.
 
     Interferometric data do not fix the absolute position, so a
     reconstruction can sit anywhere in the field. The shift is found by an
@@ -337,7 +334,7 @@ def score(
 
     The image is resampled onto the truth's grid if the grids differ
     ([`resample`][virgil.metrics.resample]), aligned to the truth
-    ([`align`][virgil.metrics.align]) and normalised to unit flux, then
+    ([`align`][virgil.metrics.align]) and normalized to unit flux, then
     scored.
 
     Parameters

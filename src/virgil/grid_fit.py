@@ -29,7 +29,6 @@ from ._grid import (
     check_flux_axes,
     coordinate_points,
     map_points,
-    meshgrid_vectors,
     ordered_values,
     resolve_grid_keys,
     warn_unconverged,
@@ -207,7 +206,7 @@ def likelihood_grid(model, data, grid, *, batch_size=None):
 def _likelihood_grid(data, model, grid, params, batch_size):
     """Jitted implementation of [`likelihood_grid`][virgil.grid_fit.likelihood_grid]."""
 
-    vals_vec, grid_shape = meshgrid_vectors(grid, params)
+    vals_vec, grid_shape = coordinate_points(grid, params)
 
     return map_points(
         lambda values: loglike(values, params, model, data),
@@ -237,10 +236,9 @@ _OPTIMIZED_PARAMS_DOC = """
         position, e.g. ``"comp.flux"``. By default, the one key whose last
         part is ``flux``.
     batch_size : int, optional
-        Number of grid points evaluated at once. By default, enough for
-        about 2**20 model visibilities on a CPU and 2**23 on other backends
-        (GPU, TPU), and at least 256. Larger can be faster for small data;
-        smaller bounds memory for large models.
+        Number of grid points evaluated at once, by default enough for
+        a fixed number of model visibilities; see
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
 """
 
 
@@ -338,7 +336,7 @@ class LogUniform(NamedTuple):
     ``p(f) = 1 / (f ln(f_max / f_min))`` on ``f_min <= f <= f_max``. The flux
     ratio is a scale parameter spanning decades, so this is the invariant
     measure of the scaling group (the Jeffreys prior under that group
-    action), not the root-Fisher-information prior of the linearised
+    action), not the root-Fisher-information prior of the linearized
     likelihood, which has constant Fisher information in ``f`` and so would
     be flat. It is improper without bounds, so the evidence needs
     ``0 < f_min < f_max`` (finite), in the units of
@@ -492,7 +490,7 @@ def _linear_flux_grid(
         return whitened_residuals(build_model(model, params, values), data)
 
     def solve(coord_vals):
-        def linearise(flux):
+        def linearize(flux):
             # r(f_n) and g = dr/df at f_n, exactly (forward mode).
             r, g = jax.jvp(
                 lambda f: residuals(f, coord_vals),
@@ -500,14 +498,14 @@ def _linear_flux_grid(
                 (np.ones(()),),
             )
             curvature = np.sum(g * g)
-            # Gauss-Newton step: the minimiser of the model linear about f_n.
+            # Gauss-Newton step: the minimizer of the model linear about f_n.
             return flux - np.sum(g * r) / curvature, curvature
 
-        flux, curvature = linearise(np.zeros(()))
-        # Relinearise at the current estimate; a fixed trip count keeps this
+        flux, curvature = linearize(np.zeros(()))
+        # Relinearize at the current estimate; a fixed trip count keeps this
         # jit- and vmap-friendly. The last g is the one sigma_f comes from.
         flux, curvature = jax.lax.fori_loop(
-            0, n_iter, lambda _, c: linearise(c[0]), (flux, curvature)
+            0, n_iter, lambda _, c: linearize(c[0]), (flux, curvature)
         )
         ok = curvature > 0.0
         flux = np.where(ok, flux, np.nan)
@@ -563,7 +561,7 @@ def linear_flux_grid(
     n_iter=0,
     prior=None,
 ):
-    """Linearised best-fit companion flux at every grid position, in closed form.
+    """Linearized best-fit companion flux at every grid position, in closed form.
 
     A fast first pass for companion searches, beside the iterative
     [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid], and the
@@ -591,13 +589,13 @@ def linear_flux_grid(
     ``lincmap`` returns the *variance* ``1 / (g . g)`` (and warns not to
     trust it), ``sigma_f`` here is the standard deviation.
 
-    **Limitation, and ``n_iter``.** With ``n_iter=0`` the linearisation
+    **Limitation, and ``n_iter``.** With ``n_iter=0`` the linearization
     holds only for ``f`` much smaller than 1. The
     closure phase of a binary scales as ``f`` only to first order, with
     corrections of order ``f**2`` (and ``f`` times the |V| change for
     amplitudes), so for a bright companion (for example ``f ~ 0.3``)
     ``f_hat`` is biased, by tens of percent, and ``sigma_f`` is
-    unreliable. ``n_iter`` Gauss–Newton steps soften this: each relinearises
+    unreliable. ``n_iter`` Gauss–Newton steps soften this: each relinearizes
     at the current ``f_hat`` per pixel (``g = dr/df`` at ``f_hat``, then
     ``f_hat <- f_hat - (g . r(f_hat)) / (g . g)``), and ``sigma_f`` comes
     from the final ``g``, so a few steps (3 at ``f ~ 0.3``) reach
@@ -633,23 +631,23 @@ def linear_flux_grid(
         The key of ``grid`` holding the flux, e.g. ``"comp.flux"``.
         By default, the one key whose last part is ``flux``.
     batch_size : int, optional
-        Number of grid points evaluated at once. By default, enough for
-        about 2**20 model visibilities on a CPU and 2**23 on other backends
-        (GPU, TPU), and at least 256.
+        Number of grid points evaluated at once, by default enough for
+        a fixed number of model visibilities; see
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
     n_iter : int, optional
         Number of Gauss–Newton refinement steps after the first
-        linearisation at ``f = 0`` (default 0, the closed-form result).
+        linearization at ``f = 0`` (default 0, the closed-form result).
     prior : numpyro LogUniform or Normal, optional
         Prior on the flux ratio ``f``. By default none, and the posterior
         and Bayes-factor fields of the result are ``None``. With a prior
         they hold the posterior mean and sd and the marginal-likelihood
         detection map ``log_bayes_factor`` (see Returns); ``log B > 0``
         favours a companion at that pixel. All of
-        these hold in the linear model about the final linearisation point,
+        these hold in the linear model about the final linearization point,
         i.e. exactly only where the residuals are linear in ``f`` over the
         posterior (``f`` much smaller than 1, or after enough ``n_iter`` for
         the point to sit near the posterior); the position is not
-        marginalised. Give numpyro's ``dist.LogUniform(low, high)`` or
+        marginalized. Give numpyro's ``dist.LogUniform(low, high)`` or
         ``dist.Normal(mean, sd)`` with scalar parameters (the ``LogUniform``
         and ``Gaussian`` named tuples of this module are still accepted); a
         bare ``(mean, sd)`` tuple is an error.
@@ -658,7 +656,7 @@ def linear_flux_grid(
         (Jeffreys, under the scaling group) prior for a flux ratio,
         ``p(f) = 1 / (f ln(f_max / f_min))``. The flux ratio is a scale
         parameter spanning decades, so the prior is the invariant measure of
-        the scaling group, not the root-Fisher prior of the linearised
+        the scaling group, not the root-Fisher prior of the linearized
         likelihood (which would be flat). It is improper without bounds, and the evidence needs a
         proper prior, so both bounds are required (``0 < f_min < f_max``).
         The Bayes factor depends on them, as it must for a scale prior: for
@@ -770,10 +768,9 @@ def laplace_flux_uncertainty_grid(
         The key of ``grid`` holding the flux. By default, the one key
         whose last part is ``flux``.
     batch_size : int, optional
-        Number of grid points evaluated at once. By default, enough for
-        about 2**20 model visibilities on a CPU and 2**23 on other backends
-        (GPU, TPU), and at least 256. Larger can be faster for small data;
-        smaller bounds memory for large models.
+        Number of grid points evaluated at once, by default enough for
+        a fixed number of model visibilities; see
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
 
     Returns
     -------

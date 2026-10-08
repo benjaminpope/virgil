@@ -414,10 +414,9 @@ def absil_limits(
         positive value of the flux axis, e.g. for
         [`System`][virgil.models.System] weights that may exceed 1.
     batch_size : int, optional
-        Number of grid points evaluated at once. By default, enough for
-        about 2**20 model visibilities on a CPU and 2**23 on other backends
-        (GPU, TPU), and at least 256. Larger can be faster for small data;
-        smaller bounds memory for large models.
+        Number of grid points evaluated at once, by default enough for
+        a fixed number of model visibilities; see
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
 
     Returns
     -------
@@ -433,7 +432,7 @@ def absil_limits(
     The limit is the first flux, going up from the start of the search, at
     which the significance reaches ``sigma``: the flux is stepped by
     decades until it does, and that decade is bisected in log flux. For a
-    normalised scene the significance falls again once the companion
+    normalized scene the significance falls again once the companion
     outshines the primary (flux well above 1), so an unbounded search
     should start below that.
     """
@@ -508,8 +507,9 @@ def injection_limits(
         axis, e.g. for [`System`][virgil.models.System] weights that may
         exceed 1.
     batch_size : int, optional
-        Number of grid points evaluated at once; see
-        [`absil_limits`][virgil.limits.absil_limits].
+        Number of grid points evaluated at once, by default enough for
+        a fixed number of model visibilities; see
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
 
     Returns
     -------
@@ -523,7 +523,7 @@ def injection_limits(
     which the significance reaches ``sigma``, found as in ``absil_limits``.
     The significance rises with flux once the signal exceeds the noise, but
     the cross term can make it dip at very faint fluxes, and for a
-    normalised scene it falls again once the companion outshines the
+    normalized scene it falls again once the companion outshines the
     primary (flux well above 1), so an unbounded search should start below
     that.
 

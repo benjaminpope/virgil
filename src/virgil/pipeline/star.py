@@ -42,7 +42,7 @@ class StarModel:
     label : str
         Human-readable name, for plots and messages.
     classes : tuple of type
-        Virgil classes recognised as templates of this entry, so that a
+        Virgil classes recognized as templates of this entry, so that a
         model instance can be passed instead of the name.
     build : callable
         ``build(values) -> model``: the model for a dict of parameter
@@ -405,8 +405,8 @@ class StarPipeline(_Pipeline):
             Stage("quicklook", _quicklook, ("quicklook.ipynb",)),
         )
 
-    def _summarise(self, reports):
-        return _summarise(self.settings, reports)
+    def _summarize(self, reports):
+        return _summarize(self.settings, reports)
 
 
 # === PLOTS ===
@@ -1153,7 +1153,7 @@ _DATA_KEYS = (
 )
 
 
-def _summarise(settings, reports):
+def _summarize(settings, reports):
     registry = models()
     sections, checks = {}, []
     load, fit, post = (

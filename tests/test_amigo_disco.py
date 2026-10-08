@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import jax.numpy as np
 import numpy as onp
 import pytest
@@ -8,11 +6,10 @@ from virgil.amigo import load_oi_data
 from virgil.likelihood import model_loglike
 from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData
+from tests._shared import CALIBRATED_VISIBILITY
 
 
-PRODUCT = (
-    Path(__file__).resolve().parents[1] / "data" / "calibrated_visibility.npy"
-)
+PRODUCT = CALIBRATED_VISIBILITY
 
 
 def _small_mixed_record():

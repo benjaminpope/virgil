@@ -83,6 +83,24 @@ def test_invalid_component_names_are_rejected(name):
         System({name: PointSource(), "star": PointSource()})
 
 
+def test_no_container_field_can_be_a_part_name():
+    """System and Sum share one name check, derived from their fields, so
+    a field added to either is reserved without editing a list."""
+    import dataclasses
+
+    from virgil._utils import check_part_name
+    from virgil.spectra import PowerLaw, Sum
+
+    for owner in (System, Sum):
+        for field in dataclasses.fields(owner):
+            with pytest.raises(ValueError, match="cannot be a"):
+                check_part_name(field.name, owner, "part", "a.b", "a field")
+    with pytest.raises(ValueError, match="cannot be a"):
+        System({"parts": PointSource(), "star": PointSource()})
+    with pytest.raises(ValueError, match="cannot be a"):
+        Sum({"wavel0": PowerLaw(1.0, wavel0=2.2e-6)})
+
+
 def test_unknown_component_error_lists_components():
     with pytest.raises(AttributeError, match=r"\['star', 'comp'\]"):
         _composed_binary().planet

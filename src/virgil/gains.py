@@ -1,4 +1,4 @@
-"""Calibration gains correlated across channels, marginalised analytically.
+"""Calibration gains correlated across channels, marginalized analytically.
 
 The calibration of spectro-interferometric data (the transfer function, its
 drift between calibrators, injection and piston losses) multiplies every
@@ -23,7 +23,7 @@ For small gains (τ ≲ 0.2) the observable changes linearly, by
 J m_j with J = dObs/dlog|V| = 2V² for squared visibilities, |V| for
 amplitudes and 1 for log-amplitudes, taken from the *model* (so the
 covariance does not depend on the noisy data; Lachaume 2021). The gains
-are then Gaussian and are marginalised analytically: the visibility
+are then Gaussian and are marginalized analytically: the visibility
 covariance becomes
 
     C = D + U Uᵀ,   U = J τ m  (one column per mode),
@@ -33,7 +33,7 @@ independent, so C is block diagonal, one block per connected group of
 modes (one per frame, for the built-in groups).
 
 **Whitening.** Each block is whitened by successive rank-one steps, the
-shared machinery for linear marginalisation in ``virgil._linear``
+shared machinery for linear marginalization in ``virgil._linear``
 (``whiten_blocks``). Only square roots of scalars appear, so the gradients
 stay smooth, also where modes are degenerate and where widths go to zero.
 """
@@ -415,7 +415,7 @@ OFFSET_GROUPS = ("baseline", "triangle", "modes")
 
 
 class ClosureOffsets(eqx.Module):
-    """Closure-phase offsets common to the channels of a frame, marginalised.
+    """Closure-phase offsets common to the channels of a frame, marginalized.
 
     Built by [`closure_offsets`][virgil.gains.closure_offsets] (or
     [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
@@ -426,7 +426,7 @@ class ClosureOffsets(eqx.Module):
     ``OIData.cp_noise`` (see ``likelihood._whiten``). The offsets add
     τ² m mᵀ to that covariance: a small-phase approximation, since an
     offset δ changes sin Δ by about δ cos Δ. It holds for offsets (and
-    residuals) below about 0.3 rad; larger widths are not marginalised
+    residuals) below about 0.3 rad; larger widths are not marginalized
     exactly. Each mode is
     whitened the same way, one closure-phase group (frame and channel) at
     a time, and the modes of a frame then form one block of the rank-one

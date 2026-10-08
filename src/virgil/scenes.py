@@ -12,11 +12,7 @@ conventions.
 import jax.numpy as np
 
 from ._geometry import image_coordinates, undo_elliptical_transf_coord
-from ._utils import dtor
-
-
-def _unit_sum(image):
-    return image / image.sum()
+from ._utils import _unit_sum, dtor
 
 
 def ring(
