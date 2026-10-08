@@ -11,7 +11,7 @@ tiny: a few hundred draws, short NUTS runs, small grids.
 import warnings
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import numpyro
 import numpyro.distributions as dist
@@ -114,7 +114,7 @@ def test_numpyro_model_potential_is_prior_plus_jacobian():
     """The density NUTS sees is log p(x) + log|dx/dz| of each bijection."""
     model = numpyro_model(_function_model, PRIORS, ())
     rng = onp.random.default_rng(3)
-    z = {k: jnp.asarray(rng.normal(size=())) for k in PRIORS}
+    z = {k: np.asarray(rng.normal(size=())) for k in PRIORS}
     potential = potential_energy(model, (), {}, z)
     expected = 0.0
     for site, prior in PRIORS.items():
@@ -311,7 +311,7 @@ def test_gp_field_covariance_is_the_stated_kernel_exactly():
         )
 
     n = SHAPE[0] * SHAPE[1]
-    jac = onp.asarray(jax.jacfwd(pixels)(jnp.zeros(n)), float)
+    jac = onp.asarray(jax.jacfwd(pixels)(np.zeros(n)), float)
     expected = _kernel()
     tol = 1e-9 if jax.config.jax_enable_x64 else 1e-5
     assert (
@@ -446,7 +446,7 @@ class _PointTemplate:
     """A model with a flat total spectrum, so the template is all ones."""
 
     def total_spectrum(self, wavel):
-        return jnp.ones_like(wavel)
+        return np.ones_like(wavel)
 
 
 def _flux_posterior(level, scale):
@@ -479,7 +479,7 @@ def test_flux_scale_prior_does_not_depend_on_the_data():
 
 @pytest.mark.parametrize("shape", [(5,), (3, 4), (3, 3, 6), (1, 5), (2, 2)])
 def test_grid_prior_weights_integrate_to_one(shape):
-    weights = onp.exp(onp.asarray(_log_prior_weights(shape, jnp.float32)))
+    weights = onp.exp(onp.asarray(_log_prior_weights(shape, np.float32)))
     assert weights.sum() == pytest.approx(1.0, rel=1e-6)
     assert weights.shape == shape
 
@@ -487,13 +487,13 @@ def test_grid_prior_weights_integrate_to_one(shape):
 @pytest.mark.parametrize("axis", ["linear", "log"])
 def test_log_bayes_factor_without_information_is_zero(axis):
     flux = (
-        jnp.linspace(0.0, 0.02, 6)
+        np.linspace(0.0, 0.02, 6)
         if axis == "linear"
-        else jnp.geomspace(1e-4, 0.05, 6)
+        else np.geomspace(1e-4, 0.05, 6)
     )
     grid = {
-        "dra": jnp.linspace(-100.0, 100.0, 3),
-        "ddec": jnp.linspace(-100.0, 100.0, 3),
+        "dra": np.linspace(-100.0, 100.0, 3),
+        "ddec": np.linspace(-100.0, 100.0, 3),
         "flux": flux,
     }
     with warnings.catch_warnings():

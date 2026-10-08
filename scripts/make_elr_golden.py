@@ -49,7 +49,7 @@ import sys
 import tempfile
 import urllib.request
 
-import numpy as np
+import numpy as onp
 
 SHA = "70689ed3dba338d59c98d02e8126a07a3b4e86da"
 RAW = "https://raw.githubusercontent.com/shashankdholakia/jax-interferometry/%s/core/%s"
@@ -73,14 +73,14 @@ def main():
     ELR = importlib.import_module("core.ELR")
     utils = importlib.import_module("core.utils")
     import jax
-    import jax.numpy as jnp
+    import jax.numpy as np
 
     assert jax.config.jax_enable_x64
 
-    omegas = np.array([0.1, 0.3, 0.5, 0.7, 0.9, 0.95])
-    mesh_th = jnp.linspace(1e-4, jnp.pi - 1e-4, 32)
-    thetas = jnp.concatenate(
-        [mesh_th, jnp.array([0.05, 0.3, 0.8, 1.2, 1.5, 1.6, 2.5])]
+    omegas = onp.array([0.1, 0.3, 0.5, 0.7, 0.9, 0.95])
+    mesh_th = np.linspace(1e-4, np.pi - 1e-4, 32)
+    thetas = np.concatenate(
+        [mesh_th, np.array([0.05, 0.3, 0.8, 1.2, 1.5, 1.6, 2.5])]
     )
     rtw_a, t_a, f_a = [], [], []
     for om in omegas:
@@ -88,16 +88,16 @@ def main():
         rtw_a.append(r)
         t_a.append(t)
         f_a.append(f)
-    eq32 = np.array([float(ELR.eq32(o)) for o in omegas])
+    eq32 = onp.array([float(ELR.eq32(o)) for o in omegas])
 
-    rng = np.random.default_rng(0)
+    rng = onp.random.default_rng(0)
     nb = 40
-    rad = 330.0 * np.sqrt(rng.uniform(size=nb))
-    ang = rng.uniform(0, 2 * np.pi, nb)
-    u, v = rad * np.cos(ang), rad * np.sin(ang)
-    uv = jnp.asarray(np.stack([u, v], axis=1))
+    rad = 330.0 * onp.sqrt(rng.uniform(size=nb))
+    ang = rng.uniform(0, 2 * onp.pi, nb)
+    u, v = rad * onp.cos(ang), rad * onp.sin(ang)
+    uv = np.asarray(onp.stack([u, v], axis=1))
     wavel = 0.7e-6
-    params = np.array(
+    params = onp.array(
         [
             (0.5, 0.4, 0.3, 0.4),
             (0.9, 0.4, 1.0, 2.0),
@@ -115,52 +115,52 @@ def main():
         rtw, T, F = (a.repeat(model.n) for a in (rtws, Ts, Fs))
         theta = model.thetas.repeat(model.n)
         x, y, z = utils.spherical_to_cartesian(rtw, theta, model.phi)
-        pts = r_eq * jnp.stack([x, y, z], axis=1)
+        pts = r_eq * np.stack([x, y, z], axis=1)
         pr = utils.rotate_point_cloud(pts, -inc, obl)
         normals = utils.triangle_normals(pr, model.triangulation)
         bary = utils.barycenter(pr, model.triangulation)
-        intensity = jnp.mean(F[model.triangulation], axis=1)
-        cosine = jnp.dot(jnp.array([0, 0, 1]), normals.T)
-        weight = intensity * jnp.heaviside(cosine, 0) * cosine
+        intensity = np.mean(F[model.triangulation], axis=1)
+        cosine = np.dot(np.array([0, 0, 1]), normals.T)
+        weight = intensity * np.heaviside(cosine, 0) * cosine
         dftm = ELR.compute_DFTM1(bary[:, 0], bary[:, 1], model.uv, model.wavel)
         ft = ELR.apply_DFTM1(weight, dftm)
         ref = model(omega, r_eq, inc, obl)
-        np.testing.assert_allclose(
-            np.abs(ft) ** 2, ref, rtol=1e-12, atol=1e-14
+        onp.testing.assert_allclose(
+            onp.abs(ft) ** 2, ref, rtol=1e-12, atol=1e-14
         )
         vis2.append(ref)
         cvis.append(ft)
         bx.append(bary[:, 0])
         by.append(bary[:, 1])
         wt.append(weight)
-        tt.append(jnp.mean(T[model.triangulation], axis=1))
+        tt.append(np.mean(T[model.triangulation], axis=1))
 
     out = dict(
         omegas=omegas,
-        thetas=np.asarray(thetas),
-        solver_rtw=np.array(rtw_a),
-        solver_teff_ratio=np.array(t_a),
-        solver_flux_ratio=np.array(f_a),
+        thetas=onp.asarray(thetas),
+        solver_rtw=onp.array(rtw_a),
+        solver_teff_ratio=onp.array(t_a),
+        solver_flux_ratio=onp.array(f_a),
         eq32=eq32,
-        mesh_thetas=np.asarray(model.thetas),
-        mesh_n=np.asarray(model.n),
-        mesh_phi=np.asarray(model.phi),
-        mesh_triangulation=np.asarray(model.triangulation),
+        mesh_thetas=onp.asarray(model.thetas),
+        mesh_n=onp.asarray(model.n),
+        mesh_phi=onp.asarray(model.phi),
+        mesh_triangulation=onp.asarray(model.triangulation),
         vis_params=params,
         vis_u=u,
         vis_v=v,
-        vis_wavel=np.float64(wavel),
-        vis2=np.array(vis2),
-        cvis=np.array(cvis),
-        bary_x=np.array(bx),
-        bary_y=np.array(by),
-        weight=np.array(wt),
-        teff_tri=np.array(tt),
+        vis_wavel=onp.float64(wavel),
+        vis2=onp.array(vis2),
+        cvis=onp.array(cvis),
+        bary_x=onp.array(bx),
+        bary_y=onp.array(by),
+        weight=onp.array(wt),
+        teff_tri=onp.array(tt),
     )
     for k, a in out.items():
-        assert np.all(np.isfinite(a)), k
+        assert onp.all(onp.isfinite(a)), k
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    np.savez_compressed(OUT, **out)
+    onp.savez_compressed(OUT, **out)
     print("wrote", OUT, os.path.getsize(OUT), "bytes")
 
 

@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Any
 
 import jax
-import jax.numpy as jnp
-import numpy as np
+import jax.numpy as np
+import numpy as onp
 import numpyro
 import numpyro.distributions as dist
 from jax.flatten_util import ravel_pytree
@@ -34,9 +34,9 @@ class RecoverySummary:
 
 
 def _array_geometry() -> tuple[
-    jnp.ndarray, jnp.ndarray, np.ndarray, np.ndarray
+    np.ndarray, np.ndarray, onp.ndarray, onp.ndarray
 ]:
-    station_xy = np.array(
+    station_xy = onp.array(
         [
             [0.0, 0.0],
             [3.2, 0.2],
@@ -45,7 +45,7 @@ def _array_geometry() -> tuple[
         ]
     )
 
-    baseline_pairs = np.array(
+    baseline_pairs = onp.array(
         [
             [1, 2],
             [1, 3],
@@ -57,7 +57,7 @@ def _array_geometry() -> tuple[
         dtype=int,
     )
 
-    triangles = np.array(
+    triangles = onp.array(
         [
             [1, 2, 3],
             [1, 2, 4],
@@ -76,12 +76,12 @@ def _array_geometry() -> tuple[
         ucoord.append(delta[0])
         vcoord.append(delta[1])
 
-    return jnp.array(ucoord), jnp.array(vcoord), baseline_pairs, triangles
+    return np.array(ucoord), np.array(vcoord), baseline_pairs, triangles
 
 
 def _triangle_uv(
-    station_xy: np.ndarray, triangles: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    station_xy: onp.ndarray, triangles: onp.ndarray
+) -> tuple[onp.ndarray, onp.ndarray, onp.ndarray, onp.ndarray]:
     u1, v1, u2, v2 = [], [], [], []
     for a, b, c in triangles:
         pa = station_xy[a - 1]
@@ -93,7 +93,7 @@ def _triangle_uv(
         v1.append(d1[1])
         u2.append(d2[0])
         v2.append(d2[1])
-    return np.array(u1), np.array(v1), np.array(u2), np.array(v2)
+    return onp.array(u1), onp.array(v1), onp.array(u2), onp.array(v2)
 
 
 def _build_synthetic_oifits_dict(
@@ -107,11 +107,11 @@ def _build_synthetic_oifits_dict(
     channels in this helper are written in degrees (``VISPHI``, ``T3PHI``) so
     they match the standard OIFITS convention expected by downstream readers.
     """
-    rng = np.random.default_rng(seed)
+    rng = onp.random.default_rng(seed)
     wavel = 4.8e-6
 
     ucoord, vcoord, baseline_pairs, triangles = _array_geometry()
-    station_xy = np.array(
+    station_xy = onp.array(
         [
             [0.0, 0.0],
             [3.2, 0.2],
@@ -123,19 +123,19 @@ def _build_synthetic_oifits_dict(
 
     truth = {"dra": 110.0, "ddec": -70.0, "flux": 3.2e-3}
     model = BinaryModelCartesian(**truth)
-    cvis = model.model(ucoord, vcoord, jnp.array([wavel]))
+    cvis = model.model(ucoord, vcoord, np.array([wavel]))
 
-    visamp = jnp.abs(cvis)
-    visphi = jnp.rad2deg(jnp.angle(cvis))
+    visamp = np.abs(cvis)
+    visphi = np.rad2deg(np.angle(cvis))
     vis2 = visamp**2
 
     i1, i2, i3 = cp_indices(baseline_pairs, triangles)
-    cp = jnp.rad2deg(closure_phases(cvis, i1, i2, i3))
+    cp = np.rad2deg(closure_phases(cvis, i1, i2, i3))
 
-    visamp_scale = jnp.maximum(jnp.median(visamp), 1e-6)
-    visphi_scale = jnp.maximum(jnp.median(jnp.abs(visphi)), 5.0)
-    vis2_scale = jnp.maximum(jnp.median(vis2), 1e-6)
-    cp_scale = jnp.maximum(jnp.median(jnp.abs(cp)), 5.0)
+    visamp_scale = np.maximum(np.median(visamp), 1e-6)
+    visphi_scale = np.maximum(np.median(np.abs(visphi)), 5.0)
+    vis2_scale = np.maximum(np.median(vis2), 1e-6)
+    cp_scale = np.maximum(np.median(np.abs(cp)), 5.0)
 
     noise_settings = {
         "visamp_err_frac": 0.002,
@@ -145,30 +145,26 @@ def _build_synthetic_oifits_dict(
     }
 
     visamp_err = (
-        noise_settings["visamp_err_frac"]
-        * visamp_scale
-        * jnp.ones_like(visamp)
+        noise_settings["visamp_err_frac"] * visamp_scale * np.ones_like(visamp)
     )
     visphi_err = (
-        noise_settings["visphi_err_frac"]
-        * visphi_scale
-        * jnp.ones_like(visphi)
+        noise_settings["visphi_err_frac"] * visphi_scale * np.ones_like(visphi)
     )
     vis2_err = (
-        noise_settings["vis2_err_frac"] * vis2_scale * jnp.ones_like(vis2)
+        noise_settings["vis2_err_frac"] * vis2_scale * np.ones_like(vis2)
     )
-    cp_err = noise_settings["cp_err_frac"] * cp_scale * jnp.ones_like(cp)
+    cp_err = noise_settings["cp_err_frac"] * cp_scale * np.ones_like(cp)
 
-    visamp_obs = np.array(
-        visamp + visamp_err * jnp.array(rng.normal(size=visamp.shape))
+    visamp_obs = onp.array(
+        visamp + visamp_err * np.array(rng.normal(size=visamp.shape))
     )
-    visphi_obs = np.array(
-        visphi + visphi_err * jnp.array(rng.normal(size=visphi.shape))
+    visphi_obs = onp.array(
+        visphi + visphi_err * np.array(rng.normal(size=visphi.shape))
     )
-    vis2_obs = np.array(
-        vis2 + vis2_err * jnp.array(rng.normal(size=vis2.shape))
+    vis2_obs = onp.array(
+        vis2 + vis2_err * np.array(rng.normal(size=vis2.shape))
     )
-    cp_obs = np.array(cp + cp_err * jnp.array(rng.normal(size=cp.shape)))
+    cp_obs = onp.array(cp + cp_err * np.array(rng.normal(size=cp.shape)))
 
     n_bl = len(baseline_pairs)
     n_cp = len(triangles)
@@ -202,13 +198,13 @@ def _build_synthetic_oifits_dict(
             "MJD": 61000.0,
             "INT_TIME": 1.0,
             "VISAMP": visamp_obs,
-            "VISAMPERR": np.array(visamp_err),
+            "VISAMPERR": onp.array(visamp_err),
             "VISPHI": visphi_obs,
-            "VISPHIERR": np.array(visphi_err),
-            "UCOORD": np.array(ucoord),
-            "VCOORD": np.array(vcoord),
+            "VISPHIERR": onp.array(visphi_err),
+            "UCOORD": onp.array(ucoord),
+            "VCOORD": onp.array(vcoord),
             "STA_INDEX": baseline_pairs,
-            "FLAG": np.zeros(n_bl, dtype=bool),
+            "FLAG": onp.zeros(n_bl, dtype=bool),
         },
         "OI_VIS2": {
             "TARGET_ID": 1,
@@ -216,27 +212,27 @@ def _build_synthetic_oifits_dict(
             "MJD": 61000.0,
             "INT_TIME": 1.0,
             "VIS2DATA": vis2_obs,
-            "VIS2ERR": np.array(vis2_err),
-            "UCOORD": np.array(ucoord),
-            "VCOORD": np.array(vcoord),
+            "VIS2ERR": onp.array(vis2_err),
+            "UCOORD": onp.array(ucoord),
+            "VCOORD": onp.array(vcoord),
             "STA_INDEX": baseline_pairs,
-            "FLAG": np.zeros(n_bl, dtype=bool),
+            "FLAG": onp.zeros(n_bl, dtype=bool),
         },
         "OI_T3": {
             "TARGET_ID": 1,
             "TIME": 0.0,
             "MJD": 61000.0,
             "INT_TIME": 1.0,
-            "T3AMP": np.ones(n_cp),
-            "T3AMPERR": np.ones(n_cp),
+            "T3AMP": onp.ones(n_cp),
+            "T3AMPERR": onp.ones(n_cp),
             "T3PHI": cp_obs,
-            "T3PHIERR": np.array(cp_err),
+            "T3PHIERR": onp.array(cp_err),
             "U1COORD": u1,
             "V1COORD": v1,
             "U2COORD": u2,
             "V2COORD": v2,
             "STA_INDEX": triangles,
-            "FLAG": np.zeros(n_cp, dtype=bool),
+            "FLAG": onp.zeros(n_cp, dtype=bool),
         },
     }
     return dic, truth, noise_settings
@@ -244,12 +240,12 @@ def _build_synthetic_oifits_dict(
 
 def _recover_grid(oidata: OIData) -> dict[str, float]:
     samples = {
-        "dra": jnp.linspace(-220.0, 220.0, 41),
-        "ddec": jnp.linspace(-220.0, 220.0, 41),
-        "flux": 10 ** jnp.linspace(-4.5, -1.5, 36),
+        "dra": np.linspace(-220.0, 220.0, 41),
+        "ddec": np.linspace(-220.0, 220.0, 41),
+        "flux": 10 ** np.linspace(-4.5, -1.5, 36),
     }
     ll = likelihood_grid(BinaryModelCartesian, oidata, samples)
-    best = jnp.unravel_index(jnp.argmax(ll), ll.shape)
+    best = np.unravel_index(np.argmax(ll), ll.shape)
     return {
         "dra": float(samples["dra"][best[0]]),
         "ddec": float(samples["ddec"][best[1]]),
@@ -286,7 +282,7 @@ def _recover_hmc(
         init_values = {
             "dra": float(init["dra"]),
             "ddec": float(init["ddec"]),
-            "log10_flux": float(np.log10(max(init["flux"], 1e-12))),
+            "log10_flux": float(onp.log10(max(init["flux"], 1e-12))),
         }
 
     kernel = NUTS(model_hmc, init_strategy=init_to_value(values=init_values))
@@ -303,14 +299,14 @@ def _recover_hmc(
     flux_samples = 10.0 ** s["log10_flux"]
 
     median = {
-        "dra": float(jnp.median(s["dra"])),
-        "ddec": float(jnp.median(s["ddec"])),
-        "flux": float(jnp.median(flux_samples)),
+        "dra": float(np.median(s["dra"])),
+        "ddec": float(np.median(s["ddec"])),
+        "flux": float(np.median(flux_samples)),
     }
     std = {
-        "dra": float(jnp.std(s["dra"])),
-        "ddec": float(jnp.std(s["ddec"])),
-        "flux": float(jnp.std(flux_samples)),
+        "dra": float(np.std(s["dra"])),
+        "ddec": float(np.std(s["ddec"])),
+        "flux": float(np.std(flux_samples)),
     }
     return median, std
 
@@ -327,14 +323,14 @@ def _recover_hmc_fisher(
     x0_dict = {
         "dra": float(init["dra"]),
         "ddec": float(init["ddec"]),
-        "log10_flux": float(np.log10(max(init["flux"], 1e-12))),
+        "log10_flux": float(onp.log10(max(init["flux"], 1e-12))),
     }
     x0, unravel = ravel_pytree(x0_dict)
 
     def objective(x):
         xdict = unravel(x)
         flux = 10.0 ** xdict["log10_flux"]
-        values = jnp.array([xdict["dra"], xdict["ddec"], flux])
+        values = np.array([xdict["dra"], xdict["ddec"], flux])
         return -loglike(values, params, BinaryModelCartesian, oidata)
 
     fmat = hessian_matrix(objective, x0)
@@ -346,7 +342,7 @@ def _recover_hmc_fisher(
             dist.Normal(0.0, 1.0).expand([x0.shape[0]]).to_event(1),
         )
         log_q_u = dist.Normal(0.0, 1.0).log_prob(u).sum()
-        x = x0 + jnp.dot(proj, u)
+        x = x0 + np.dot(proj, u)
         xdict = unravel(x)
 
         dra = xdict["dra"]
@@ -380,14 +376,14 @@ def _recover_hmc_fisher(
     s = mcmc.get_samples()
 
     median = {
-        "dra": float(jnp.median(s["dra"])),
-        "ddec": float(jnp.median(s["ddec"])),
-        "flux": float(jnp.median(s["flux"])),
+        "dra": float(np.median(s["dra"])),
+        "ddec": float(np.median(s["ddec"])),
+        "flux": float(np.median(s["flux"])),
     }
     std = {
-        "dra": float(jnp.std(s["dra"])),
-        "ddec": float(jnp.std(s["ddec"])),
-        "flux": float(jnp.std(s["flux"])),
+        "dra": float(np.std(s["dra"])),
+        "ddec": float(np.std(s["ddec"])),
+        "flux": float(np.std(s["flux"])),
     }
     return median, std
 

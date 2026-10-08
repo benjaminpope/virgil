@@ -2,8 +2,8 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
 
-import jax.numpy as jnp
-import numpy as np
+import jax.numpy as np
+import numpy as onp
 
 from virgil.legacy import oifits_implaneia
 from virgil.models import BinaryModelCartesian
@@ -32,18 +32,18 @@ def test_synthetic_docs_builder_writes_closure_phases_in_degrees():
 
     ucoord, vcoord, baseline_pairs, triangles = module._array_geometry()
     cvis = BinaryModelCartesian(**truth).model(
-        ucoord, vcoord, jnp.array([4.8e-6])
+        ucoord, vcoord, np.array([4.8e-6])
     )
     i1, i2, i3 = cp_indices(baseline_pairs, triangles)
-    cp_rad = np.array(closure_phases(cvis, i1, i2, i3))
-    cp_deg = np.rad2deg(cp_rad)
+    cp_rad = onp.array(closure_phases(cvis, i1, i2, i3))
+    cp_deg = onp.rad2deg(cp_rad)
 
-    observed_cp = np.asarray(dic["OI_T3"]["T3PHI"])
-    mean_abs_err_deg = float(np.mean(np.abs(observed_cp - cp_deg)))
-    mean_abs_err_rad = float(np.mean(np.abs(observed_cp - cp_rad)))
+    observed_cp = onp.asarray(dic["OI_T3"]["T3PHI"])
+    mean_abs_err_deg = float(onp.mean(onp.abs(observed_cp - cp_deg)))
+    mean_abs_err_rad = float(onp.mean(onp.abs(observed_cp - cp_rad)))
 
     assert mean_abs_err_deg < mean_abs_err_rad
-    assert np.max(np.abs(observed_cp)) > np.max(np.abs(cp_rad))
+    assert onp.max(onp.abs(observed_cp)) > onp.max(onp.abs(cp_rad))
 
 
 def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):

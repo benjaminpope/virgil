@@ -16,7 +16,7 @@ and interpolation, with the disk diameter fixed at 0.8 mas.
 from pathlib import Path
 
 import equinox as eqx
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import pytest
 
@@ -60,9 +60,9 @@ def template():
 
 def one_point(dra, ddec, fluxes=(0.01,)):
     return {
-        "comp.dra": jnp.array([dra]),
-        "comp.ddec": jnp.array([ddec]),
-        "comp.flux": jnp.asarray(fluxes),
+        "comp.dra": np.array([dra]),
+        "comp.ddec": np.array([ddec]),
+        "comp.flux": np.asarray(fluxes),
     }
 
 
@@ -129,9 +129,9 @@ def test_injection_limit_depends_on_the_chi2_ratio_only(data, template):
 
 def test_injection_limits_grid_shape_and_bounds(data, template):
     samples = {
-        "comp.dra": jnp.array([-6.0, 0.0, 6.0]),
-        "comp.ddec": jnp.array([-4.0, 4.0]),
-        "comp.flux": jnp.array([0.01]),
+        "comp.dra": np.array([-6.0, 0.0, 6.0]),
+        "comp.ddec": np.array([-4.0, 4.0]),
+        "comp.flux": np.array([0.01]),
     }
     limits = injection_limits(template, data, samples, 3.0)
     assert limits.shape == (3, 2)
