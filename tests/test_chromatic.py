@@ -124,7 +124,7 @@ def _toon_loglike(model, data_obj, vis_error_rel, phi_error):
     # original used Δ). The original also treated the four closure phases
     # of each frame and channel as independent, counting them 4/3 times;
     # they are whitened as correlated groups instead (OIData.cp_noise; see
-    # test_closure). The penalty rows add nothing to the normalisation.
+    # test_closure). The penalty rows add nothing to the normalization.
     resid = model_data - data
     phase, phase_errors = data_obj.cp_noise.whiten(
         np.sin(resid[n_vis:]), errors_phi
@@ -240,7 +240,7 @@ def _planck(wavel, temperature):
 
 
 @pytest.mark.parametrize("temperature", [1120.0, 2400.0, 7250.0])
-def test_black_body_is_a_planck_spectrum_normalised_at_wavel0(temperature):
+def test_black_body_is_a_planck_spectrum_normalized_at_wavel0(temperature):
     spectrum = BlackBody(0.3, temperature, 1.65e-6)
     expected = (
         0.3 * _planck(WAVES, temperature) / _planck(1.65e-6, temperature)
@@ -272,11 +272,11 @@ def test_black_body_rejects_non_positive_temperature():
 def test_sparco_fractions_and_temperatures_match_the_published_formula():
     # Hillen et al. (2016), eq. 1: V = Σ f_i Λ_i V_i / Σ f_i Λ_i, with
     # Σ f_i = 1 and every Λ_i = 1 at 1.65 µm. Relative ratios that are not
-    # normalised give the same visibilities.
+    # normalized give the same visibilities.
     fractions = {"pri": 0.597, "sec": 0.039, "ring": 0.209, "back": 0.155}
     temperatures = {"sec": 4000.0, "ring": 1120.0, "back": 2400.0}
     rim = ModulatedGaussianRim(14.15, 3.2, 19.0, 6.0, az_amps=0.4, az_pas=60.0)
-    scale = 2.0  # unnormalised ratios
+    scale = 2.0  # unnormalized ratios
     scene = System(
         pri=PointSource(flux=PowerLaw(scale * fractions["pri"], -4.0)),
         sec=PointSource(

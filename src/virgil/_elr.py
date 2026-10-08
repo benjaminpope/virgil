@@ -15,7 +15,7 @@ his; the changes made in this port are:
   valid and differentiable; the root is unchanged.
 - The pole and equator special cases of ``solve_ELR`` use the double-``where``
   trick, so the branch not taken yields neither NaN values nor NaN gradients.
-- No global ``jax_enable_x64``. The vectorised solver ``solve_ELR_vec`` is
+- No global ``jax_enable_x64``. The vectorized solver ``solve_ELR_vec`` is
   jitted once at module level, because run eagerly its bisection loops are
   slow; inside an outer jit that is a no-op.
 - The mesh is built once per ``n_lat`` in pure NumPy and cached, instead of in
@@ -361,7 +361,7 @@ def surface(omega, r_eq, inc, obl, n_lat=32, return_mesh=False):
 
     With ``return_mesh=True`` a fifth item is returned, for plotting:
     ``(points_rotated, triangulation, cosine, intensity)``, the rotated
-    vertices (n_vertices, 3), triangle vertex indices, the (unnormalised)
+    vertices (n_vertices, 3), triangle vertex indices, the (unnormalized)
     z component of each normal (visible where positive) and the flux ratio
     of each triangle.
     """
@@ -396,7 +396,7 @@ def surface(omega, r_eq, inc, obl, n_lat=32, return_mesh=False):
     # intensity at the corners of the triangle)
     intensity = np.mean(F[triangulation], axis=1)
     teff_ratio = np.mean(T[triangulation], axis=1)
-    # his normals are unnormalised (|n| = 2 x triangle area), so cosine
+    # his normals are unnormalized (|n| = 2 x triangle area), so cosine
     # already carries the projected area of each triangle: keep that.
     cosine = normals[:, 2]
     # apply a step function weight along with the contribution of flux
@@ -419,13 +419,13 @@ def visibilities(x, y, weight, uu, vv):
     His ``compute_DFTM1`` + ``apply_DFTM1``. ``uu``, ``vv`` are spatial
     frequencies in cycles per radian (any equal shape; virgil passes
     ``u / wavel``) and ``x``, ``y`` are in mas. The phase sign is that of
-    ``virgil._geometry.offset_phase``. Normalised by ``weight.sum()``.
+    ``virgil._geometry.offset_phase``. Normalized by ``weight.sum()``.
     Returns an array of shape ``uu.shape``.
 
     ``weight`` is 1D (one weight per triangle, shared by all samples) or 2D
     with shape ``(n, n_tri)`` or ``(1, n_tri)``, where ``n = uu.size`` (a
     weight per flattened sample, e.g. one spectrum per wavelength); each row
-    is normalised by its own sum.
+    is normalized by its own sum.
     """
     dtype = np.result_type(float, x, y, weight, uu, vv)
     uu = np.asarray(uu, dtype)

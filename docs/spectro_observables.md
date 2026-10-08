@@ -29,12 +29,12 @@ data = OIData(
 
 | `extras` | Table and column | Model |
 |---|---|---|
-| `"flux"` | OI_FLUX `FLUXDATA` (or `FLUX`) | k Σ fᵢ(λ), k marginalised |
-| `"nflux"` | the same, as a normalised spectrum | Σ fᵢ(λ) / continuum, a scale near 1 marginalised |
+| `"flux"` | OI_FLUX `FLUXDATA` (or `FLUX`) | k Σ fᵢ(λ), k marginalized |
+| `"nflux"` | the same, as a normalized spectrum | Σ fᵢ(λ) / continuum, a scale near 1 marginalized |
 | `"visamp"` | OI_VIS `VISAMP`, `AMPTYP='absolute'` | \|V\| |
-| `"visamp"` | OI_VIS `VISAMP`, `AMPTYP='correlated flux'` | k \|Σ fᵢ(λ) Vᵢ\|, k marginalised (kind `"corrflux"`) |
+| `"visamp"` | OI_VIS `VISAMP`, `AMPTYP='correlated flux'` | k \|Σ fᵢ(λ) Vᵢ\|, k marginalized (kind `"corrflux"`) |
 | `"t3amp"` | OI_T3 `T3AMP` | \|V_ab V_bc V_ac\| |
-| `"visphi"` | OI_VIS `VISPHI`, any `PHITYP` | continuum-normalised arg V (below) |
+| `"visphi"` | OI_VIS `VISPHI`, any `PHITYP` | continuum-normalized arg V (below) |
 
 Choose one of `"flux"` and `"nflux"`: they are two readings of the same
 table. V² and |V| of one measurement are not independent, so read both only
@@ -91,9 +91,9 @@ The scale is linear, so virgil does not fit it: it integrates it out
 analytically, under a Gaussian prior that **you state**, in the data's
 units, with `with_flux_scale(scale=(mean, sd))` (Luger, Foreman-Mackey &
 Hogg 2017). The prior is never taken from the data, and for `"flux"` and
-correlated fluxes the likelihood raises until it is given. Normalised
+correlated fluxes the likelihood raises until it is given. Normalized
 spectra (`"nflux"`) default to `(1, 0.1)`. This is the same low-rank
-marginalisation as the calibration gains of `OIData.with_gains`, which share its linear-algebra code. The likelihood
+marginalization as the calibration gains of `OIData.with_gains`, which share its linear-algebra code. The likelihood
 keeps the log-determinant, which depends on the model's spectral shape.
 
 The Gaussian is a *proposal*: k is a positive scale, whose Jeffreys prior is
@@ -115,13 +115,13 @@ Change the prior and the grouping with
 [`with_flux_scale`][virgil.oidata.OIData.with_flux_scale]. Use
 `per="row"` (one scale per spectrum) or `per="station"` (per telescope)
 when the injection differs between telescopes and exposures, as it does
-for uncalibrated GRAVITY spectra. `poly_order=1` also marginalises a slope
+for uncalibrated GRAVITY spectra. `poly_order=1` also marginalizes a slope
 in λ times the spectrum, for a chromatic calibration error.
 
 `"nflux"` divides the model spectrum by its continuum fit per row, over the
 continuum ranges set with
 [`with_continuum`][virgil.oidata.OIData.with_continuum]. The same helper,
-[`continuum_operator`][virgil.observables.continuum_operator], normalises
+[`continuum_operator`][virgil.observables.continuum_operator], normalizes
 the differential phases. A small scale, with a prior width of 10%, absorbs
 the difference between the pipeline's continuum and ours.
 
@@ -139,7 +139,7 @@ continuum channels, per baseline and frame: a mean and a slope in
 wavenumber, that is, an offset and a delay. virgil applies the same
 operator, N = I − L, to the **exact** model phase arg V(λ), unwrapped
 along wavelength. Its covariance is N D Nᵀ. If our basis contains the
-pipeline's, then N N_pipe = N, so re-normalising the data does no harm.
+pipeline's, then N N_pipe = N, so re-normalizing the data does no harm.
 
 ```python
 data = data.with_continuum(
@@ -159,8 +159,8 @@ structure is unresolved (|Δp| ≪ λ/B). For a binary much wider than λ/B with
 a line in one star, it is wrong by much more than typical errors. virgil
 always uses arg V (tested in `tests/test_observables.py`).
 
-**Projection is marginalisation.** Removing a linear basis (offset and
-delay) per baseline and frame is the flat-prior limit of marginalising those
+**Projection is marginalization.** Removing a linear basis (offset and
+delay) per baseline and frame is the flat-prior limit of marginalizing those
 nuisances. The likelihood of N d, with covariance N D Nᵀ, does not depend on
 which projection with that null space is used (restricted maximum
 likelihood). The finite-prior version is an option:
@@ -169,12 +169,12 @@ likelihood). The finite-prior version is an option:
 data = data.with_continuum(continuum, lines=line, prior_width=(0.5, 2.0))
 ```
 
-It marginalises each baseline and frame's offset (and slope, per unit of
+It marginalizes each baseline and frame's offset (and slope, per unit of
 wavenumber scaled to span 1 across the channels) under Gaussian priors of
 these widths, in radians. Then every channel of both windows is kept. This
-works whether or not the pipeline has already normalised the data, because
+works whether or not the pipeline has already normalized the data, because
 the pipeline's subtraction only shifts the offset and slope that are
-marginalised. It reuses the low-rank whitening of the 6d gains. As the
+marginalized. It reuses the low-rank whitening of the 6d gains. As the
 widths grow, its χ² tends to the projection's when every channel is used
 (tested). The projection remains the default, because it matches what the
 pipeline did.
@@ -182,7 +182,7 @@ pipeline did.
 ### Closure phases and differential phases together
 
 When VISPHI and T3PHI come from one frame, the closure of the differential
-phases is the continuum-normalised closure phase. Fitting both would count
+phases is the continuum-normalized closure phase. Fitting both would count
 it twice. The default is:
 
 * closure phases in every channel;
@@ -229,7 +229,7 @@ relative to the *model*. Both use one rule, `_utils.inflate_errors`, which
 [`inflated_errors`][virgil.likelihood.inflated_errors] exposes with
 `where=` and `combine=`. Closure phases from four or more telescopes are
 floored before they are whitened. Their periodic penalty rows keep the
-effective error 1/√(2π), so the floor never enters the normalisation
+effective error 1/√(2π), so the floor never enters the normalization
 twice. The `noise=` terms act on V² and closure phases only; the extra
 observables take fixed floors.
 

@@ -1,7 +1,7 @@
-"""Ensembles of randomised image reconstructions, averaged into one image.
+"""Ensembles of randomized image reconstructions, averaged into one image.
 
-A single regularised reconstruction depends on choices the data do not fix:
-the regulariser and its weight, the pixel size, the field and the starting
+A single regularized reconstruction depends on choices the data do not fix:
+the regularizer and its weight, the pixel size, the field and the starting
 image. Drevon et al. (2025, arXiv:2609.15365), who won the 2024
 interferometric imaging contest, run many reconstructions with these
 choices drawn at random (their PYRA), keep those that fit the data, and
@@ -15,7 +15,7 @@ The work is split so that a cluster can run it in parallel:
 
 1. [`draw_groups`][virgil.ensemble.draw_groups] draws the reconstruction
    settings. Each *group* has one geometry (pixel size and number of
-   pixels), one regulariser family, one starting image and several
+   pixels), one regularizer family, one starting image and several
    weights.
 2. [`run_group`][virgil.ensemble.run_group] fits one group, as an
    [`l_curve`][virgil.imaging.l_curve] over its weights. The weights are
@@ -62,7 +62,7 @@ from ._precision import cast_tree, run_in
 from .metrics import align, resample
 from .models import Image, PointSource, System
 
-# The regulariser families, by the names used in EnsembleSpec.
+# The regularizer families, by the names used in EnsembleSpec.
 FAMILIES = {"tv": TV, "tsv": TSV, "maxent": MaxEntropy, "starlet": StarletL1}
 
 
@@ -93,7 +93,7 @@ class EnsembleSpec:
     Attributes
     ----------
     families : tuple of str
-        Regulariser families to draw from, uniformly: ``"tv"``
+        Regularizer families to draw from, uniformly: ``"tv"``
         ([`TV`][virgil.imaging.TV]), ``"tsv"``
         ([`TSV`][virgil.imaging.TSV]), ``"maxent"``
         ([`MaxEntropy`][virgil.imaging.MaxEntropy]) and ``"starlet"``
@@ -187,7 +187,7 @@ class EnsembleSpec:
         unknown = set(self.families) - set(FAMILIES)
         if unknown:
             raise ValueError(
-                f"Unknown regulariser families {sorted(unknown)}; choose "
+                f"Unknown regularizer families {sorted(unknown)}; choose "
                 f"from {sorted(FAMILIES)}."
             )
         missing = set(self.families) - set(self.weight_ranges)
@@ -209,7 +209,7 @@ class Draw:
     index : int
         Position of the group in the ensemble.
     family : str
-        The regulariser family.
+        The regularizer family.
     npix : int
         Pixels on a side.
     pixel_scale_mas : float
@@ -217,7 +217,7 @@ class Draw:
     start : str
         The starting image.
     weights : tuple of float
-        The regulariser weights, largest first.
+        The regularizer weights, largest first.
     """
 
     index: int
@@ -259,7 +259,7 @@ class Member:
     draw : Draw
         The settings of its group.
     weight : float
-        Its regulariser weight.
+        Its regularizer weight.
     result : FitResult
         The fit.
     chi2_red : tuple of float
@@ -373,7 +373,7 @@ def _datasets(data):
 def draw_groups(data, n_groups, key, spec=None):
     """Draw the settings of ``n_groups`` groups of reconstructions.
 
-    Each group draws a regulariser family, a pixel size (the Nyquist scale
+    Each group draws a regularizer family, a pixel size (the Nyquist scale
     over one of ``spec.oversample``), a field (``field_of_view(data)``
     times one of ``spec.field_factors``, at most 1 on a uv lattice; beyond
     ``spec.max_npix`` pixels the pixels are coarsened to fit it, down to
@@ -571,7 +571,7 @@ def _member_image(model, shift, star):
 
 
 def _mixture(images, fractions, chosen, star):
-    """The mean of the ``chosen`` members' normalised scenes.
+    """The mean of the ``chosen`` members' normalized scenes.
 
     Each image keeps its own grid, so the visibilities are exactly the mean
     of the members'. The others carry zero flux: every subset has the same
@@ -622,7 +622,7 @@ def combine(data, groups, *, spec=None, star=True):
        to the common grid smooths them, which on precise data can raise
        χ² several-fold and so let worse members through.
 
-    With a star, the mean is of the whole normalised sky, star included:
+    With a star, the mean is of the whole normalized sky, star included:
     the star's fraction of the flux is the members' mean, and the image's
     pixels the mean of their fluxes.
 
@@ -807,7 +807,7 @@ def combine(data, groups, *, spec=None, star=True):
 
 
 def ensemble(data, n_groups, key, *, spec=None, star=True, **fit_options):
-    """Run, select and average an ensemble of randomised reconstructions.
+    """Run, select and average an ensemble of randomized reconstructions.
 
     [`draw_groups`][virgil.ensemble.draw_groups], then
     [`run_group`][virgil.ensemble.run_group] for each group in turn, then

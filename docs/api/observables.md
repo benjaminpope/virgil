@@ -2,8 +2,8 @@
 
 Spectro-interferometric observables that follow the visibilities and phases
 in an [`OIData`][virgil.oidata.OIData] data vector: OI_FLUX spectra (absolute
-up to a grey scale, or normalised), correlated fluxes, |V| beside V², triple
-amplitudes, and continuum-normalised differential phases. Read them with
+up to a grey scale, or normalized), correlated fluxes, |V| beside V², triple
+amplitudes, and continuum-normalized differential phases. Read them with
 `read_oifits(..., extras=...)` or `OIData(path, extras=...)`; the guide is
 [Spectro-interferometric observables](../spectro_observables.md).
 

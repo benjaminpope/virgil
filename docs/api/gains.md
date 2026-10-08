@@ -1,7 +1,7 @@
 # `virgil.gains`
 
 Calibration gains correlated across the channels of a frame, as low-rank
-blocks of the visibility covariance that the likelihood marginalises
+blocks of the visibility covariance that the likelihood marginalizes
 analytically. Add them with
 [`OIData.with_gains`][virgil.oidata.OIData.with_gains], and fit their widths
 with the noise terms `vis_gain_telescope`, `vis_gain_baseline`,

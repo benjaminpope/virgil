@@ -120,7 +120,7 @@ def provenance():
     }
 
 
-def _normalise(settings):
+def _normalize(settings):
     """Settings as JSON would return them (tuples become lists)."""
     return json.loads(json.dumps(_io.clean_json(settings)))
 
@@ -131,7 +131,7 @@ class _Pipeline:
     A subclass sets ``NAME``, ``STABILITY``, ``STAGES``, ``_DEFAULTS`` and
     implements ``_stages()`` (one [`Stage`][virgil.pipeline.Stage] per
     name in ``STAGES``), ``_validate(settings)``, ``_default_model()`` and
-    ``_summarise(reports)``.
+    ``_summarize(reports)``.
     """
 
     NAME = ""
@@ -176,7 +176,7 @@ class _Pipeline:
             )
         settings = cls.defaults()
         settings.update(overrides)
-        settings = _normalise(settings)
+        settings = _normalize(settings)
         cls._validate(settings)
         return settings
 
@@ -246,7 +246,7 @@ class _Pipeline:
     def _default_model(self):
         raise NotImplementedError
 
-    def _summarise(self, reports):
+    def _summarize(self, reports):
         """``(sections, checks)`` from the stage reports so far."""
         raise NotImplementedError
 
@@ -269,7 +269,7 @@ class _Pipeline:
     def _check_resume(self, record):
         stored = self.defaults()
         stored.update(record.get("config", {}))
-        stored = _normalise(stored)
+        stored = _normalize(stored)
         diffs = [
             f"{key}: stored {stored.get(key)!r}, now {self.settings.get(key)!r}"
             for key in sorted(set(stored) | set(self.settings))
@@ -440,7 +440,7 @@ class _Pipeline:
 
     def _write_summary(self, record):
         reports = self._reports()
-        sections, checks = self._summarise(reports)
+        sections, checks = self._summarize(reports)
         caught = [w for r in reports.values() for w in r.get("warnings", [])]
         checks = list(checks) + stage_warning_checks(caught)
         summary = {

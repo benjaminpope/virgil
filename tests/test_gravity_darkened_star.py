@@ -400,7 +400,7 @@ def test_plot_surface_returns_artist():
     plt.close("all")
 
 
-# --- 5. rasterised image ------------------------------------------------
+# --- 5. rasterized image ------------------------------------------------
 
 
 def _outline_radii(star):

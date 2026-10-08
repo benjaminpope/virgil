@@ -119,3 +119,12 @@ def test_a_mirrored_fit_warns():
     diagnosis = diagnose(mirrored, DATA)
     assert diagnosis.checks["flip_dchi2"] < -1.0
     assert any("mirrored" in w for w in diagnosis.warnings)
+
+
+def test_diagnose_accepts_the_old_regularisers_keyword():
+    import pytest
+
+    new = diagnose(TRUTH, DATA, regularizers=[Centroid(10.0)])
+    with pytest.warns(FutureWarning, match="regularisers="):
+        old = diagnose(TRUTH, DATA, regularisers=[Centroid(10.0)])
+    assert old.warnings == new.warnings
