@@ -154,6 +154,14 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Azimuthally modulated cones.** `TruncatedCone(..., az_amps=, az_pas=)`
+  multiplies every ring's brightness by `1 + Σ A_m cos(m (φ - φ_m))` in
+  its own azimuth, e.g. for a colliding-wind shock brighter on its
+  leading edge. The azimuths follow `ModulatedGaussianRim`'s convention
+  (in the ring's plane, in the sense of position angle, `pa ± 90` on the
+  walls). The visibilities stay analytic (one `J_m` per ring and order)
+  and the render matches them. Unmodulated cones are unchanged and carry
+  no empty leaves.
 - **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and
   L-BFGS run in chunks of steps, check the wall clock between them and
   stop, unconverged, with `info["stop"] == "time"` (L-BFGS carries its

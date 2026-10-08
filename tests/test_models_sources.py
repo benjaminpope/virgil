@@ -1329,3 +1329,172 @@ def test_cone_quadrature_converges_and_tilt_is_checked_after_set():
     good = TruncatedCone(**cone)
     assert bool(good.is_physical())
     assert not bool(good.set("tilt", 120.0).is_physical())
+
+
+_MODULATED_CONE = dict(
+    tip=5.0, alpha=40.0, s0=4.0, length=6.0, width=0.3, tilt=35.0, pa=70.0
+)
+
+
+def _cone_uv(seed, n=24, qmax=0.3, wavel=2.2e-6):
+    rng = onp.random.default_rng(seed)
+    q = rng.uniform(0.01, qmax, n) / _MAS2RAD_REF  # cycles/rad
+    theta = rng.uniform(0.0, 2.0 * onp.pi, n)
+    return q * onp.sin(theta) * wavel, q * onp.cos(theta) * wavel, wavel
+
+
+def _brute_force_cone(
+    u,
+    v,
+    wavel,
+    az_amps,
+    az_pas,
+    tip,
+    alpha,
+    s0,
+    length,
+    width,
+    tilt,
+    pa,
+    ratio=1.0,
+    n_rings=32,
+    n_phi=720,
+):
+    # The cone built in 3-D from its definition, as rings of points
+    # weighted by the modulation, with no Bessel functions. Sky axes are
+    # (East, North); a ring's in-plane azimuth az is a position-angle-like
+    # angle, az = pa + 90 on the wall across the projected axis.
+    a, b, p = onp.radians(alpha), onp.radians(tilt), onp.radians(pa)
+    axis_sky = onp.array([onp.sin(p), onp.cos(p)]) * onp.cos(b)
+    e1 = onp.array([onp.cos(p), -onp.sin(p)])  # sky direction pa + 90
+    e2 = onp.array([onp.sin(p), onp.cos(p)]) * onp.sin(b) * ratio
+    t = (onp.arange(n_rings) + 0.5) / n_rings * 5.0
+    s = s0 + t * length
+    rho = s * onp.sin(a)
+    weight = rho * onp.exp(-(s - s0) / length)
+    weight /= weight.sum()
+    phi = onp.arange(n_phi) * 2.0 * onp.pi / n_phi
+    az = onp.radians(pa + 90.0) - phi
+    mod = onp.ones_like(phi) + sum(
+        amp * onp.cos(m * (az - onp.radians(pa_m)))
+        for m, (amp, pa_m) in enumerate(zip(az_amps, az_pas), start=1)
+    )
+    centre = (s * onp.cos(a) - tip)[:, None, None] * axis_sky
+    points = centre + rho[:, None, None] * (
+        onp.cos(phi)[:, None] * e1 + onp.sin(phi)[:, None] * e2
+    )  # (ring, phi, 2)
+    uv = onp.stack([u, v], -1) / wavel * _MAS2RAD_REF  # cycles per mas
+    phase = onp.exp(-2j * onp.pi * onp.einsum("kd,rpd->krp", uv, points))
+    vis = onp.einsum("krp,p,r->k", phase, mod, weight) / n_phi
+    q2 = onp.sum(uv**2, -1)
+    return vis * onp.exp(-(onp.pi**2) * width**2 * q2 / (4.0 * onp.log(2.0)))
+
+
+@pytest.mark.parametrize(
+    "az_amps, az_pas",
+    [((0.6,), (160.0,)), ((0.4, 0.3), (-20.0, 75.0))],
+)
+def test_modulated_cone_matches_a_brute_force_ring_sum(az_amps, az_pas):
+    u, v, wavel = _cone_uv(11)
+    cone = TruncatedCone(**_MODULATED_CONE, az_amps=az_amps, az_pas=az_pas)
+    expected = _brute_force_cone(
+        u, v, wavel, az_amps, az_pas, **_MODULATED_CONE
+    )
+    got = onp.asarray(cone.model(u, v, wavel))
+    assert onp.max(onp.abs(got - expected)) < 1e-6
+    # ... and it is not the unmodulated cone.
+    plain = onp.asarray(TruncatedCone(**_MODULATED_CONE).model(u, v, wavel))
+    assert onp.max(onp.abs(got - plain)) > 1e-2
+
+
+def test_unmodulated_cone_is_unchanged_and_has_no_empty_leaves():
+    u, v, wavel = _cone_uv(12)
+    plain = TruncatedCone(**_MODULATED_CONE)
+    assert plain.az_amps is None and plain.az_pas is None
+    # Zero-size leaves crash pmapped samplers (#282).
+    assert all(onp.size(leaf) > 0 for leaf in jax.tree_util.tree_leaves(plain))
+    zero = TruncatedCone(**_MODULATED_CONE, az_amps=0.0, az_pas=10.0)
+    assert onp.allclose(
+        zero.model(u, v, wavel), plain.model(u, v, wavel), atol=1e-12
+    )
+    assert onp.allclose(
+        plain.model(u, v, wavel),
+        _brute_force_cone(u, v, wavel, (), (), **_MODULATED_CONE),
+        atol=1e-6,
+    )
+
+
+def test_modulated_cone_mirrors_its_azimuths_with_the_tilt():
+    # Optically thin: flipping the tilt mirrors the rings' azimuths about
+    # the walls, az -> 2 pa + 180 - az.
+    u, v, wavel = _cone_uv(13)
+    cone = {**_MODULATED_CONE, "pa": 70.0}
+    up = TruncatedCone(**cone, az_amps=(0.5, 0.2), az_pas=(100.0, 30.0))
+    down = TruncatedCone(
+        **{**cone, "tilt": -cone["tilt"]},
+        az_amps=(0.5, 0.2),
+        az_pas=(2 * 70.0 + 180.0 - 100.0, 2 * 70.0 + 180.0 - 30.0),
+    )
+    assert onp.allclose(
+        up.model(u, v, wavel), down.model(u, v, wavel), atol=1e-9
+    )
+
+
+def test_a_cone_brightened_on_its_southern_wall_renders_brighter_there():
+    # Seen side on (tilt 0) and opening East, a first-order modulation
+    # towards PA 180 puts the light on the southern wall, and the render
+    # agrees with the visibilities.
+    cone = TruncatedCone(
+        tip=0.0,
+        alpha=30.0,
+        s0=6.0,
+        length=3.0,
+        width=0.5,
+        tilt=0.0,
+        pa=90.0,
+        az_amps=0.8,
+        az_pas=180.0,
+    )
+    npix, fov_mas, wavel = 256, 64.0, 2.2e-6
+    image = onp.asarray(cone.render(npix=npix, fov_mas=fov_mas))
+    xx, yy = (onp.asarray(a) for a in _image_coordinates(npix, fov_mas))
+    south, north = image[yy < 0].sum(), image[yy > 0].sum()
+    # Edge-on rings: each wall collects half a ring, the integral of
+    # 1 + 0.8 cos over a half-turn.
+    assert south / north == pytest.approx(
+        (onp.pi + 1.6) / (onp.pi - 1.6), rel=0.02
+    )
+    u, v, _ = _cone_uv(14, n=8, qmax=0.1, wavel=wavel)
+    phase = onp.exp(
+        -2j
+        * onp.pi
+        * _MAS2RAD_REF
+        * (onp.outer(u, xx.ravel()) + onp.outer(v, yy.ravel()))
+        / wavel
+    )
+    rendered = phase @ image.ravel() / image.sum()
+    assert (
+        onp.max(onp.abs(rendered - onp.asarray(cone.model(u, v, wavel))))
+        < 0.01
+    )
+
+
+def test_cone_modulation_is_checked_and_differentiable():
+    with pytest.raises(ValueError, match="non-negative"):
+        TruncatedCone(**_MODULATED_CONE, az_amps=1.5, az_pas=0.0)
+    with pytest.raises(ValueError, match="one azimuth per modulation"):
+        TruncatedCone(**_MODULATED_CONE, az_amps=(0.2, 0.1), az_pas=0.0)
+    cone = TruncatedCone(**_MODULATED_CONE, az_amps=0.5, az_pas=0.0)
+    assert bool(cone.is_physical())
+    assert not bool(cone.set("az_amps", np.array([1.5])).is_physical())
+    # Traced amplitudes (no concrete check) and the zero baseline, where
+    # the direction of the spatial frequency is undefined.
+    u = np.array([0.0, 3.0, -2.0])
+    v = np.array([0.0, 1.0, 4.0])
+
+    def loss(amp):
+        model = cone.set("az_amps", np.atleast_1d(amp))
+        return np.sum(np.abs(model.model(u, v, 1e-6)) ** 2)
+
+    grad = jax.jit(jax.grad(loss))(0.5)
+    assert onp.isfinite(grad)
