@@ -31,6 +31,9 @@ Modules:
   named epochs of data, one snapshot of a moving scene per dataset.
 * [`simulate`][virgil.simulate]: simulated observations and bias tests.
 * [`plotting`][virgil.plotting]: figures.
+* [`pipeline`][virgil.pipeline]: stable, scriptable pipelines with
+  standard output folders (imported on first use; needs the ``pipeline``
+  extra).
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
 """
@@ -150,6 +153,15 @@ from .spectra import (  # noqa: E402
     PowerLaw,
     Sum,
 )
+
+
+def __getattr__(name):
+    # virgil.pipeline is imported on first use, not by `import virgil`.
+    if name == "pipeline":
+        import importlib
+
+        return importlib.import_module(".pipeline", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
