@@ -216,6 +216,8 @@ def _star_cells(run, summary, path):
             if reach
             else ""
         )
+        lobes = _io.lobe_text(summary)
+        reach += f" Diameter lobes: {lobes}." if lobes else ""
         names = list(fit["models"])
         cells.append(
             (

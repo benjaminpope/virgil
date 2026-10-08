@@ -243,6 +243,10 @@ class StarPipeline(_Pipeline):
           on every baseline).
         - ``n_scan`` (2000): points of the log-spaced diameter scan; a
           second scan of 201 points over ±1% then refines it.
+        - ``max_lobes`` (5): the most diameter lobes (separate minima of
+          the scan) fitted for each model. The best lobe gives the fit
+          and bounds the posterior's diameter prior; the table of lobes
+          is in ``summary["fit"]["models"][name]["lobes"]``.
         - ``wavel_range`` (None): ``[min, max]`` wavelengths to keep (m).
         - ``error_floor`` (None): absolute error floors by observable,
           e.g. ``{"vis": 0.01, "phi": 0.005}``, as
@@ -268,6 +272,7 @@ class StarPipeline(_Pipeline):
     _DEFAULTS = {
         "diam_range_mas": None,
         "n_scan": 2000,
+        "max_lobes": 5,
         "wavel_range": None,
         "error_floor": None,
         "error_scale": "quoted",
@@ -326,6 +331,8 @@ class StarPipeline(_Pipeline):
                 )
         if not (isinstance(s["n_scan"], int) and s["n_scan"] >= 20):
             raise ValueError("n_scan must be an integer >= 20.")
+        if not (isinstance(s["max_lobes"], int) and s["max_lobes"] >= 1):
+            raise ValueError("max_lobes must be an integer >= 1.")
         for name in ("num_samples", "num_chains"):
             if not (isinstance(s[name], int) and s[name] >= 1):
                 raise ValueError(f"{name} must be an integer >= 1.")
@@ -565,38 +572,66 @@ def _scan(data, lo, hi, n_scan, batch_size):
     return coarse, 2.0 * (ll_top - ll), best
 
 
-def _lobes(axis, delta, best, lo, hi, *, threshold=25.0, separation=0.05):
-    """The scan's lobe around ``best``: prior bounds and rival minima.
+def _find_lobes(axis, delta, lo, hi, cap, *, separation=0.05):
+    """The scan's lobes: separate minima of the diameter scan.
 
-    Past the first null the squared visibility repeats in lobes, so other
-    diameters can fit nearly as well. Points of the scan more than
-    ``separation`` (fractionally) from ``best`` with a Δχ² below
-    ``threshold`` are rivals; the bounds are the geometric midpoints
-    between ``best`` and the nearest rival on each side (``lo`` and ``hi``
-    where there is none).
+    Past the first null the squared visibility repeats in lobes (and
+    closure phases flip at its zeros), so the scan has several separate
+    minima. A point is a minimum if it is the lowest within ``separation``
+    (fractionally) either side; the ``cap`` lowest are kept, and the lobe
+    boundaries are the geometric midpoints between neighbouring minima
+    (``lo`` and ``hi`` at the ends).
 
     Returns
     -------
-    tuple
-        ``(bound_lo, bound_hi, rivals)``, with ``rivals`` a list of
-        ``[diameter, delta_chi2]`` (the best point of each rival run).
+    list[dict]
+        By increasing diameter: ``{"diam": scan minimum, "scan_delta_chi2":
+        its excess over the best, "bounds": (low, high)}``.
     """
-    log_ratio = np.log(axis / best)
-    near = delta <= threshold
-    far = near & (np.abs(log_ratio) > separation)
-    rivals, run = [], []
-    for i in list(np.flatnonzero(far)) + [None]:
-        if run and (i is None or i != run[-1] + 1):
-            j = run[int(np.argmin(delta[run]))]
-            rivals.append([float(axis[j]), float(delta[j])])
-            run = []
-        if i is not None:
-            run.append(i)
-    below = [d for d, _ in rivals if d < best]
-    above = [d for d, _ in rivals if d > best]
-    bound_lo = math.sqrt(best * max(below)) if below else lo
-    bound_hi = math.sqrt(best * min(above)) if above else hi
-    return float(bound_lo), float(bound_hi), rivals
+    n = axis.size
+    dlog = math.log(axis[-1] / axis[0]) / (n - 1)
+    half = max(1, int(round(separation / dlog)))
+    delta = np.where(np.isfinite(delta), delta, np.inf)
+    minima = []
+    for i in range(n):
+        window = delta[max(0, i - half) : i + half + 1]
+        if np.isfinite(delta[i]) and delta[i] <= window.min():
+            if not minima or i - minima[-1] > half:
+                minima.append(i)
+            elif delta[i] < delta[minima[-1]]:
+                minima[-1] = i
+    keep = sorted(sorted(minima, key=lambda i: delta[i])[:cap])
+    centres = [float(axis[i]) for i in keep]
+    edges = [lo] + [math.sqrt(a * b) for a, b in zip(centres, centres[1:])]
+    edges.append(hi)
+    return [
+        {
+            "diam": c,
+            "scan_delta_chi2": float(delta[i]),
+            "bounds": (float(edges[k]), float(edges[k + 1])),
+        }
+        for k, (c, i) in enumerate(zip(centres, keep))
+    ]
+
+
+@_float64
+def _refine(data, centre, lo, hi, step, batch_size):
+    """The uniform-disk diameter of best likelihood within one coarse step."""
+    import jax.numpy as jnp
+
+    from ..grid_fit import likelihood_grid
+    from ..models import UniformDisk
+
+    fine = np.geomspace(max(lo, centre / step), min(hi, centre * step), 201)
+    ll = np.asarray(
+        likelihood_grid(
+            UniformDisk,
+            data,
+            {"diam": jnp.asarray(fine)},
+            batch_size=batch_size,
+        )
+    )
+    return float(fine[int(np.nanargmax(ll))])
 
 
 def _fit_model(p, entry, priors, best_diam, noise):
@@ -656,16 +691,70 @@ def _fit(p):
         attrs={"/": {"axis_order": ["diam"], "schema": _io.SCHEMA}},
     )
 
-    # The prior covers the scan's lobe: a bounded, group-invariant
-    # (log-uniform) prior, with the bounds recorded in the summary.
-    lo_b, hi_b, rivals = _lobes(axis, delta, best_diam, lo, hi)
+    # The scan's lobes. Each is fitted for each model; the best lobe gives
+    # the model's fit and (in the posterior) its bounded, group-invariant
+    # log-uniform diameter prior. The lobe table is recorded in the summary.
+    lobes = _find_lobes(axis, delta, lo, hi, s["max_lobes"])
+    step = (hi / lo) ** (1.0 / (s["n_scan"] - 1))
+    for lobe in lobes:
+        lobe["diam"] = _refine(
+            data, lobe["diam"], lo, hi, step, s["batch_size"]
+        )
     noise = p._noise()
     fitted, reports = {}, {}
     for name in p.names:
         entry = registry[name]
-        priors = entry.priors(lo_b, hi_b)
-        model, values, info = _fit_model(p, entry, priors, best_diam, noise)
-        chi2, resid = _chi2_64(model, data)
+        candidates = []
+        for lobe in lobes:
+            b0, b1 = lobe["bounds"]
+            priors = entry.priors(b0, b1)
+            model, values, info = _fit_model(
+                p, entry, priors, lobe["diam"], noise
+            )
+            chi2, resid = _chi2_64(model, data)
+            scales = {
+                k.split(".", 1)[1]: float(v)
+                for k, v in values.items()
+                if k.startswith("noise.")
+            }
+            # With fitted error scales, lobes and models are compared on
+            # chi^2 with the rescaled errors; chi^2/N on the quoted errors
+            # stays the diagnostic.
+            chi2_fitted = chi2
+            if scales:
+                chi2_fitted, _ = _chi2_64(
+                    model,
+                    data,
+                    **{k: np.asarray(v) for k, v in scales.items()},
+                )
+            candidates.append(
+                (
+                    float(chi2_fitted),
+                    model,
+                    values,
+                    info,
+                    chi2,
+                    resid,
+                    scales,
+                    priors,
+                    lobe,
+                )
+            )
+        top = min(c[0] for c in candidates)
+        table = [
+            {
+                "diam_bounds_mas": list(c[8]["bounds"]),
+                "diam_mas": float(np.asarray(c[2]["diam"])),
+                "chi2": float(c[4]),
+                "chi2_reduced": float(c[4]) / data.n_independent,
+                "delta_chi2": c[0] - top,
+            }
+            for c in candidates
+        ]
+        chosen = min(candidates, key=lambda c: c[0])
+        chi2_fitted, model, values, info, chi2, resid, scales, priors, lobe = (
+            chosen
+        )
         # Test only the independent whitened residuals: the periodic penalty
         # terms of correlated closure phases are not meant to be normal.
         resid = resid[: int(data.n_independent)]
@@ -680,18 +769,6 @@ def _fit(p):
                     ).items()
                 }
             )
-        scales = {
-            k.split(".", 1)[1]: float(v)
-            for k, v in values.items()
-            if k.startswith("noise.")
-        }
-        # With fitted error scales, the model comparison uses χ² on the
-        # rescaled errors; χ²/N on the quoted errors stays the diagnostic.
-        chi2_fitted = chi2
-        if scales:
-            chi2_fitted, _ = _chi2_64(
-                model, data, **{k: np.asarray(v) for k, v in scales.items()}
-            )
         _io.save_model(
             p.output / "models" / name, model, values, list(entry.params)
         )
@@ -703,6 +780,8 @@ def _fit(p):
             "chi2": chi2,
             "chi2_fitted": float(chi2_fitted),
             "first_null": _first_null(model, float(values["diam"])),
+            "diam_bounds_mas": list(lobe["bounds"]),
+            "lobes": table,
             "chi2_reduced": chi2 / data.n_independent,
             "error_scales": scales or None,
             "residual_skew": skew,
@@ -763,8 +842,12 @@ def _fit(p):
         "best": best,
         "n_independent": n,
         "diam_range_mas": [lo, hi],
-        "diam_bounds_mas": [lo_b, hi_b],
-        "rivals": rivals,
+        "diam_bounds_mas": reports[best]["diam_bounds_mas"],
+        "rivals": [
+            [row["diam_mas"], row["delta_chi2"]]
+            for row in reports[best]["lobes"]
+            if row["delta_chi2"] > 0 and row["delta_chi2"] <= 25.0
+        ],
         "scan_diam_mas": best_diam,
         "models": reports,
         "comparison": comparison,
@@ -895,12 +978,11 @@ def _posterior(p):
 
     s = p.settings
     fit_report = p._report("fit")
-    lo, hi = fit_report["diam_bounds_mas"]
     best = fit_report["best"]
     groups, per_model, params_attr = {}, {}, {}
     for name in p.names:
         entry = models()[name]
-        priors = entry.priors(lo, hi)
+        priors = entry.priors(*fit_report["models"][name]["diam_bounds_mas"])
         start = {
             k: np.asarray(v)
             for k, v in _io.load_model_values(
@@ -1027,6 +1109,8 @@ def _summarise(settings, reports):
                     "chi2",
                     "chi2_fitted",
                     "chi2_reduced",
+                    "diam_bounds_mas",
+                    "lobes",
                     "at_bound",
                 )
             }
@@ -1089,7 +1173,7 @@ def _summarise(settings, reports):
         )
         sections["resolution"]["first_null_fraction"] = check.value
         checks.append(check)
-    checks.append(_checks.multimodal(fit["rivals"], fit["scan_diam_mas"]))
+    checks.append(_checks.multimodal(fit["models"][best]["lobes"]))
     if post:
         entry = registry[best]
         if entry.shape:

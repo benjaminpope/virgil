@@ -121,7 +121,7 @@ Checks are pure functions of plain numbers. The same run always gives the same c
 | `chi2_uniform`, `chi2_limb_darkened` (`StarPipeline`; as `chi2`) | as `chi2` | as `chi2` |
 | `limb_darkening_gain` (delta chi-squared of the limb-darkened over the uniform fit, against a BIC penalty of 2 ln N for two parameters) | the limb-darkened model fits worse than the uniform disk it contains | |
 | `resolution` (the longest B/λ against the first null of the fitted model's visibility, θB/λ = 1.22 for a uniform disk) | below the first null (limb darkening is degenerate with the diameter) | below 0.15 of it (unresolved: an upper limit) |
-| `multimodal` (other diameters of the scan fitting within Δχ² of 25 of the best one, as past the first null) | comparable aliases exist; the diameter prior is bounded to the best lobe, `fit.diam_bounds_mas` | |
+| `multimodal` (the per-lobe table of the preferred model, `fit.models.<name>.lobes`: the next-best diameter lobe against a Δχ² of 25) | the next-best lobe is within Δχ² of 25; the message gives its diameter | |
 | `limb_darkening_constrained` (posterior against prior standard deviation of `q1`, `q2`) | a ratio of 0.8 or more | |
 
 ## Stability

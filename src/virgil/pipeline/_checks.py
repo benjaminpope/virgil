@@ -448,41 +448,48 @@ def resolution_regime(
     )
 
 
-def multimodal(rivals, best, *, threshold=25.0):
-    """Whether other diameters fit nearly as well as the best one.
+def multimodal(lobes, *, threshold=25.0):
+    """Whether another lobe of the diameter fits nearly as well as the best.
 
     Parameters
     ----------
-    rivals : list
-        ``[diameter, delta_chi2]`` of each rival minimum of the diameter
-        scan (separated from the best diameter, ``delta_chi2`` below the
-        scan's threshold).
-    best : float
-        Best diameter of the scan (mas).
+    lobes : list[dict]
+        The per-lobe table of the preferred model: each row has
+        ``diam_mas``, ``diam_bounds_mas`` and ``delta_chi2`` (zero for the
+        best lobe).
     threshold : float, optional
-        The Δχ² below which a rival counts as comparable.
+        The Δχ² of the next-best lobe above which the best lobe is
+        unambiguous.
     """
-    rivals = [list(r) for r in rivals]
-    if not rivals:
+    rows = sorted(lobes, key=lambda r: r["delta_chi2"])
+    if len(rows) < 2:
         return Check(
             "multimodal",
             "pass",
-            0,
-            0,
-            "No other diameter fits within the Δχ² threshold of the best "
-            f"one ({best:.4g} mas).",
+            None,
+            threshold,
+            "Only one diameter lobe was found.",
         )
-    closest = min(rivals, key=lambda r: r[1])
+    best, other = rows[0], rows[1]
+    gap = float(other["delta_chi2"])
+    if gap > threshold:
+        return Check(
+            "multimodal",
+            "pass",
+            gap,
+            threshold,
+            f"The best lobe ({best['diam_mas']:.4g} mas) beats the next "
+            f"({other['diam_mas']:.4g} mas) by Δχ² = {gap:.3g}.",
+        )
     return Check(
         "multimodal",
         "warn",
-        len(rivals),
-        0,
-        f"{len(rivals)} other diameter(s) fit nearly as well as "
-        f"{best:.4g} mas (best rival {closest[0]:.4g} mas, "
-        f"Δχ² = {closest[1]:.3g} < {threshold:g}). The diameter prior is "
-        "bounded to the lobe around the best one; the aliases are not "
-        "excluded by the data.",
+        gap,
+        threshold,
+        f"Another lobe fits nearly as well: {other['diam_mas']:.4g} mas "
+        f"against the best {best['diam_mas']:.4g} mas, Δχ² = {gap:.3g} < "
+        f"{threshold:g}. The posterior is bounded to the best lobe; the "
+        "alias is not excluded by the data.",
     )
 
 

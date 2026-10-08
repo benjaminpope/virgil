@@ -525,6 +525,23 @@ def oidata_tables(data):
 # === RESULTS ===
 
 
+def lobe_text(summary):
+    """The preferred model's diameter lobes in one line, or ``None``.
+
+    Each lobe is its fitted diameter and its Δχ² over the best lobe.
+    """
+    fit = summary.get("fit") or {}
+    rows = (fit.get("models", {}).get(fit.get("best"), {})).get("lobes")
+    if not rows:
+        return None
+    rows = sorted(rows, key=lambda r: r["delta_chi2"])
+    return "; ".join(
+        f"{r['diam_mas']:.4g} mas "
+        + ("(best)" if i == 0 else f"(Δχ² {r['delta_chi2']:.3g})")
+        for i, r in enumerate(rows)
+    )
+
+
 class Result:
     """The outputs of a pipeline run, reloaded from its folder.
 
@@ -585,6 +602,9 @@ class Result:
                     continue
                 if isinstance(value, (int, float)):
                     lines.append(f"  {section}.{key} = {value:.6g}")
+        lobes = lobe_text(self.summary)
+        if lobes:
+            lines.append(f"  lobes: {lobes}")
         for check in self.checks:
             lines.append(f"  [{check.status}] {check.name}: {check.message}")
         return "\n".join(lines)

@@ -136,9 +136,13 @@ Decisions:
   a union of thin slivers (a 180 degree flip costs (180/sigma)^2 in chi^2),
   and NUTS diverges at the walls whatever the precision or mass matrix.
   The fit and posterior therefore run in float64, the diameter prior is
-  bounded to the scan's lobe (midpoints to the nearest alias, recorded as
-  `diam_bounds_mas`), a `multimodal` check reports comparable aliases, and
-  the limb-darkened fit starts from a grid of diameters as well as the scan.
+  bounded to the best lobe. The scan's separate minima (at most
+  `max_lobes`) are fitted lobe by lobe for each model, with lobe bounds at
+  the midpoints between minima; the table is `fit.models.<name>.lobes`
+  (`diam_bounds_mas`, `diam_mas`, `chi2`, `chi2_reduced`, `delta_chi2`),
+  and the `multimodal` check cites it. NUTS runs on the best lobe only;
+  lobe evidence is left to nested sampling (virgil#309). The limb-darkened
+  fit starts from a grid of diameters as well as the scan.
   Residual divergences are still reported, not hidden.
 - `processed`, `_noise` and `_report` moved from `BinaryPipeline` into the
   base class, since every pipeline needs them.
