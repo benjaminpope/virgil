@@ -18,7 +18,7 @@ import os
 import tempfile
 from pathlib import Path
 
-import numpy as np
+import numpy as onp
 
 from ._checks import Check
 
@@ -62,14 +62,14 @@ def atomic_path(path):
 
 
 def _json_default(value):
-    if isinstance(value, (np.integer,)):
+    if isinstance(value, (onp.integer,)):
         return int(value)
-    if isinstance(value, (np.floating,)):
+    if isinstance(value, (onp.floating,)):
         return _clean_float(float(value))
-    if isinstance(value, np.bool_):
+    if isinstance(value, onp.bool_):
         return bool(value)
     if hasattr(value, "tolist"):
-        return clean_json(np.asarray(value).tolist())
+        return clean_json(onp.asarray(value).tolist())
     if isinstance(value, Path):
         return str(value)
     raise TypeError(f"{type(value).__name__} is not JSON serialisable.")
@@ -87,8 +87,10 @@ def clean_json(value):
         return {str(k): clean_json(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [clean_json(v) for v in value]
-    if isinstance(value, (np.ndarray, np.generic)) or hasattr(value, "tolist"):
-        return clean_json(np.asarray(value).tolist())
+    if isinstance(value, (onp.ndarray, onp.generic)) or hasattr(
+        value, "tolist"
+    ):
+        return clean_json(onp.asarray(value).tolist())
     return value
 
 
@@ -139,7 +141,7 @@ def data_fingerprint(data):
         value = getattr(data, name, None)
         h.update(name.encode())
         if value is not None:
-            array = np.ascontiguousarray(np.asarray(value, dtype=float))
+            array = onp.ascontiguousarray(onp.asarray(value, dtype=float))
             h.update(str(array.shape).encode())
             h.update(array.tobytes())
     h.update(f"{data.vis_mode}|{data.v2_flag}|{data.cp_flag}".encode())
@@ -166,7 +168,7 @@ def write_h5(path, groups, attrs=None):
                     meta = {}
                     if isinstance(value, tuple):
                         value, meta = value
-                    ds = group.create_dataset(name, data=np.asarray(value))
+                    ds = group.create_dataset(name, data=onp.asarray(value))
                     for key, item in meta.items():
                         ds.attrs[key] = _h5_attr(item)
             for group_name, items in (attrs or {}).items():
@@ -178,7 +180,7 @@ def write_h5(path, groups, attrs=None):
 
 
 def _h5_attr(value):
-    if isinstance(value, (str, int, float, bool, np.number)):
+    if isinstance(value, (str, int, float, bool, onp.number)):
         return value
     return json.dumps(clean_json(value), default=_json_default)
 
@@ -189,7 +191,7 @@ def read_h5(path, group):
     with h5py.File(path, "r") as f:
         if group not in f:
             return {}
-        return {name: np.asarray(ds) for name, ds in f[group].items()}
+        return {name: onp.asarray(ds) for name, ds in f[group].items()}
 
 
 def read_h5_attrs(path, group="/"):
@@ -204,7 +206,7 @@ def read_h5_attrs(path, group="/"):
             if isinstance(value, str):
                 with contextlib.suppress(ValueError):
                     value = json.loads(value)
-            elif isinstance(value, np.generic):
+            elif isinstance(value, onp.generic):
                 value = value.item()
             out[key] = value
         return out
@@ -273,17 +275,17 @@ def model_spec(model):
                 raise ModelSpecError("only dicts with string keys are stored.")
             return {"$dict": {k: encode(v) for k, v in value.items()}}
         if (
-            isinstance(value, (np.ndarray, np.generic))
+            isinstance(value, (onp.ndarray, onp.generic))
             or hasattr(value, "__jax_array__")
             or type(value).__module__.startswith("jax")
         ):
             name = f"leaf_{len(arrays)}"
             kind = (
                 "numpy"
-                if isinstance(value, (np.ndarray, np.generic))
+                if isinstance(value, (onp.ndarray, onp.generic))
                 else "jax"
             )
-            arrays[name] = np.asarray(value)
+            arrays[name] = onp.asarray(value)
             return {"$array": name, "kind": kind}
         raise ModelSpecError(
             f"cannot store a {type(value).__name__} in a model spec."
@@ -296,7 +298,7 @@ def model_from_spec(spec, arrays):
     """Rebuild a model from :func:`model_spec` output."""
     import dataclasses
 
-    import jax.numpy as jnp
+    import jax.numpy as np
 
     def decode(node):
         if not isinstance(node, dict):
@@ -318,8 +320,8 @@ def model_from_spec(spec, arrays):
                 object.__setattr__(obj, name, decode(value))
             return obj
         if "$array" in node:
-            array = np.asarray(arrays[node["$array"]])
-            return jnp.asarray(array) if node.get("kind") == "jax" else array
+            array = onp.asarray(arrays[node["$array"]])
+            return np.asarray(array) if node.get("kind") == "jax" else array
         if "$float" in node:
             return float(node["$float"])
         if "$tuple" in node:
@@ -338,7 +340,7 @@ def spec_digest(spec, arrays):
     h = hashlib.sha256(json.dumps(spec, sort_keys=True).encode())
     for name in sorted(arrays):
         h.update(name.encode())
-        h.update(np.ascontiguousarray(arrays[name]).tobytes())
+        h.update(onp.ascontiguousarray(arrays[name]).tobytes())
     return h.hexdigest()
 
 
@@ -366,17 +368,17 @@ def save_model(folder, model, values, params):
         "error": error,
     }
     store = {f"spec/{k}": v for k, v in arrays.items()}
-    store.update({f"param/{k}": np.asarray(v) for k, v in values.items()})
+    store.update({f"param/{k}": onp.asarray(v) for k, v in values.items()})
     with atomic_path(folder / "values.npz") as tmp:
-        np.savez(tmp, **store)
+        onp.savez(tmp, **store)
     write_json(folder / "manifest.json", manifest)
 
 
 def load_model_values(folder):
     """The stored parameter values of a saved model, as path → array."""
-    with np.load(Path(folder) / "values.npz", allow_pickle=False) as f:
+    with onp.load(Path(folder) / "values.npz", allow_pickle=False) as f:
         return {
-            k[len("param/") :]: np.asarray(f[k])
+            k[len("param/") :]: onp.asarray(f[k])
             for k in f.files
             if k.startswith("param/")
         }
@@ -392,9 +394,9 @@ def load_model(folder):
             f"({manifest['error']}); its parameter values are available "
             "from Result.model_values()."
         )
-    with np.load(folder / "values.npz", allow_pickle=False) as f:
+    with onp.load(folder / "values.npz", allow_pickle=False) as f:
         arrays = {
-            k[len("spec/") :]: np.asarray(f[k])
+            k[len("spec/") :]: onp.asarray(f[k])
             for k in f.files
             if k.startswith("spec/")
         }
@@ -425,39 +427,39 @@ def oidata_tables(data):
         return None, "flagged samples"
     if not data.v2_flag or data.vis_mode != "v2":
         return None, "visibility amplitudes rather than V²"
-    u = np.asarray(data.u, dtype=float)
-    v = np.asarray(data.v, dtype=float)
+    u = onp.asarray(data.u, dtype=float)
+    v = onp.asarray(data.v, dtype=float)
     n = u.size
-    wavel = np.broadcast_to(np.asarray(data.wavel, dtype=float), u.shape)
-    waves = np.asarray(list(dict.fromkeys(wavel.tolist())))
+    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
+    waves = onp.asarray(list(dict.fromkeys(wavel.tolist())))
     n_w = waves.size
     if n % n_w:
         return None, "irregular wavelength layout"
     n_b = n // n_w
     grid = wavel.reshape(n_b, n_w)
     if not (
-        np.all(grid == waves[None, :])
-        and np.all(u.reshape(n_b, n_w) == u.reshape(n_b, n_w)[:, :1])
-        and np.all(v.reshape(n_b, n_w) == v.reshape(n_b, n_w)[:, :1])
+        onp.all(grid == waves[None, :])
+        and onp.all(u.reshape(n_b, n_w) == u.reshape(n_b, n_w)[:, :1])
+        and onp.all(v.reshape(n_b, n_w) == v.reshape(n_b, n_w)[:, :1])
     ):
         return None, "irregular wavelength layout"
     ub, vb = u.reshape(n_b, n_w)[:, 0], v.reshape(n_b, n_w)[:, 0]
-    vis = np.asarray(data.vis, dtype=float)
+    vis = onp.asarray(data.vis, dtype=float)
     if vis.size != n:
         return None, "visibilities do not match the samples"
     if data.stations is not None:
-        stations = np.asarray(data.stations, dtype=int).reshape(n_b, n_w, 2)[
+        stations = onp.asarray(data.stations, dtype=int).reshape(n_b, n_w, 2)[
             :, 0
         ]
     elif data.cp_flag:
         return None, "closure phases without station indices"
     else:
-        stations = np.stack(
-            [2 * np.arange(n_b) + 1, 2 * np.arange(n_b) + 2], axis=1
+        stations = onp.stack(
+            [2 * onp.arange(n_b) + 1, 2 * onp.arange(n_b) + 2], axis=1
         )
     mjd = None
     if data.dt is not None and data.t_ref is not None:
-        mjd = (np.asarray(data.dt, dtype=float) + data.t_ref).reshape(
+        mjd = (onp.asarray(data.dt, dtype=float) + data.t_ref).reshape(
             n_b, n_w
         )[:, 0]
     tables = {
@@ -465,7 +467,7 @@ def oidata_tables(data):
         "OI_WAVELENGTH": {"EFF_WAVE": waves, "EFF_BAND": 0.0},
         "OI_VIS2": {
             "VIS2DATA": vis.reshape(n_b, n_w),
-            "VIS2ERR": np.asarray(data.d_vis, float).reshape(n_b, n_w),
+            "VIS2ERR": onp.asarray(data.d_vis, float).reshape(n_b, n_w),
             "UCOORD": ub,
             "VCOORD": vb,
             "STA_INDEX": stations,
@@ -474,8 +476,8 @@ def oidata_tables(data):
     if mjd is not None:
         tables["OI_VIS2"]["MJD"] = mjd
         tables["info"]["MJD"] = float(mjd[0])
-    phi = np.rad2deg(np.asarray(data.phi, dtype=float))
-    d_phi = np.rad2deg(np.asarray(data.d_phi, dtype=float))
+    phi = onp.rad2deg(onp.asarray(data.phi, dtype=float))
+    d_phi = onp.rad2deg(onp.asarray(data.d_phi, dtype=float))
     if phi.size == 0:
         return tables, None
     if not data.cp_flag:
@@ -484,8 +486,8 @@ def oidata_tables(data):
         tables["OI_VIS"] = {
             "VISPHI": phi.reshape(n_b, n_w),
             "VISPHIERR": d_phi.reshape(n_b, n_w),
-            "VISAMP": np.full((n_b, n_w), np.nan),
-            "VISAMPERR": np.full((n_b, n_w), np.nan),
+            "VISAMP": onp.full((n_b, n_w), onp.nan),
+            "VISAMPERR": onp.full((n_b, n_w), onp.nan),
             "UCOORD": ub,
             "VCOORD": vb,
             "STA_INDEX": stations,
@@ -493,19 +495,19 @@ def oidata_tables(data):
         if mjd is not None:
             tables["OI_VIS"]["MJD"] = mjd
         return tables, None
-    legs = [np.asarray(i, dtype=int) for i in (data.i_cps1, data.i_cps2)]
+    legs = [onp.asarray(i, dtype=int) for i in (data.i_cps1, data.i_cps2)]
     if phi.size % n_w:
         return None, "irregular closure-phase layout"
     n_t = phi.size // n_w
     rows = [leg.reshape(n_t, n_w) // n_w for leg in legs]
     cols = [leg.reshape(n_t, n_w) % n_w for leg in legs]
     if not all(
-        np.all(r == r[:, :1]) and np.all(c == np.arange(n_w)[None, :])
+        onp.all(r == r[:, :1]) and onp.all(c == onp.arange(n_w)[None, :])
         for r, c in zip(rows, cols)
     ):
         return None, "irregular closure-phase layout"
     b1, b2 = rows[0][:, 0], rows[1][:, 0]
-    triangles = np.stack(
+    triangles = onp.stack(
         [stations[b1, 0], stations[b1, 1], stations[b2, 1]], axis=1
     )
     tables["OI_T3"] = {

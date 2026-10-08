@@ -15,7 +15,7 @@ import warnings
 from pathlib import Path
 from typing import Callable
 
-import numpy as np
+import numpy as onp
 
 from . import _io
 from ._checks import stage_warning_checks, worst_status
@@ -263,7 +263,7 @@ class _Pipeline:
         if self.settings["error_scale"] != "fit":
             return None
         noise = {"vis_scale": dist.LogUniform(0.1, 10.0)}
-        if np.asarray(self.processed.phi).size:
+        if onp.asarray(self.processed.phi).size:
             noise["phi_scale"] = dist.LogUniform(0.1, 10.0)
         return noise
 

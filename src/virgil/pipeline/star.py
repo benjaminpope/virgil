@@ -8,7 +8,7 @@ import types
 import warnings
 from typing import Callable
 
-import numpy as np
+import numpy as onp
 
 from . import _checks, _io
 from ._core import Stage, _Pipeline
@@ -108,7 +108,7 @@ def _quadratic_derived(samples):
     star = QuadraticLimbDarkenedDisk(
         samples["diam"], q1=samples["q1"], q2=samples["q2"]
     )
-    return {"u1": np.asarray(star.u1), "u2": np.asarray(star.u2)}
+    return {"u1": onp.asarray(star.u1), "u2": onp.asarray(star.u2)}
 
 
 def _diam_prior(lo, hi):
@@ -305,7 +305,7 @@ class StarPipeline(_Pipeline):
             names = [entry.name]
             template = model
             starts[entry.name] = {
-                k: float(np.asarray(getattr(model, k)))
+                k: float(onp.asarray(getattr(model, k)))
                 for k in entry.params
                 if k != "diam"
             }
@@ -434,23 +434,23 @@ def plot_v2_models(data, fitted, ax=None, curves=400):
 
     if ax is None:
         _, ax = plt.subplots(figsize=(7, 4))
-    u, v = np.asarray(data.u, dtype=float), np.asarray(data.v, dtype=float)
-    wavel = np.broadcast_to(np.asarray(data.wavel, dtype=float), u.shape)
-    freq = np.hypot(u, v) / wavel
+    u, v = onp.asarray(data.u, dtype=float), onp.asarray(data.v, dtype=float)
+    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
+    freq = onp.hypot(u, v) / wavel
     power = 2 if data.v2_flag else 1
     ax.errorbar(
         freq / 1e6,
-        np.asarray(data.vis),
-        np.asarray(data.d_vis),
+        onp.asarray(data.vis),
+        onp.asarray(data.d_vis),
         fmt=".",
         color="0.4",
         label="data",
     )
-    grid = np.linspace(1e-3, 1.05 * freq.max(), curves)
+    grid = onp.linspace(1e-3, 1.05 * freq.max(), curves)
     for label, model in fitted.items():
-        vis = np.abs(np.asarray(model.model(grid, 0.0 * grid, 1.0)))
+        vis = onp.abs(onp.asarray(model.model(grid, 0.0 * grid, 1.0)))
         ax.plot(grid / 1e6, vis**power, label=label)
-    positive = np.asarray(data.vis)[np.asarray(data.vis) > 0]
+    positive = onp.asarray(data.vis)[onp.asarray(data.vis) > 0]
     floor = min(1e-4, float(positive.min()) / 3.0) if positive.size else 1e-4
     ax.set(
         yscale="log",
@@ -467,9 +467,9 @@ def plot_v2_models(data, fitted, ax=None, curves=400):
 
 def _freq_max(data):
     """The longest spatial frequency B/λ in the data (cycles per radian)."""
-    u, v = np.asarray(data.u, dtype=float), np.asarray(data.v, dtype=float)
-    wavel = np.broadcast_to(np.asarray(data.wavel, dtype=float), u.shape)
-    return float(np.max(np.hypot(u, v) / wavel))
+    u, v = onp.asarray(data.u, dtype=float), onp.asarray(data.v, dtype=float)
+    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
+    return float(onp.max(onp.hypot(u, v) / wavel))
 
 
 def _first_null(model, diam_mas, n=4000):
@@ -480,9 +480,9 @@ def _first_null(model, diam_mas, n=4000):
     when the model has no null in range.
     """
     scale = 3.6e6 * 180.0 / math.pi / float(diam_mas)  # f for θf = 1
-    grid = np.linspace(1e-3, 4.0, n) * scale
-    vis = np.real(np.asarray(model.model(grid, 0.0 * grid, 1.0)))
-    flips = np.flatnonzero(np.sign(vis[1:]) * np.sign(vis[:-1]) < 0)
+    grid = onp.linspace(1e-3, 4.0, n) * scale
+    vis = onp.real(onp.asarray(model.model(grid, 0.0 * grid, 1.0)))
+    flips = onp.flatnonzero(onp.sign(vis[1:]) * onp.sign(vis[:-1]) < 0)
     if not flips.size:
         return _checks.FIRST_NULL
     i = int(flips[0])
@@ -496,8 +496,8 @@ def _load(p):
     data = p.processed
     tables, reason = _io.oidata_tables(data)
     report = {
-        "n_vis": int(np.asarray(data.vis).size),
-        "n_phi": int(np.asarray(data.phi).size),
+        "n_vis": int(onp.asarray(data.vis).size),
+        "n_phi": int(onp.asarray(data.phi).size),
         "n_independent": int(data.n_independent),
         "closure_phases": bool(data.cp_flag),
         **_geometry(data),
@@ -551,25 +551,25 @@ def _chi2_64(model, data, **noise):
 @_float64
 def _scan(data, lo, hi, n_scan, batch_size):
     """Uniform-disk log-likelihood over the diameter: coarse, then refined."""
-    import jax.numpy as jnp
+    import jax.numpy as np
 
     from ..grid_fit import likelihood_grid
     from ..models import UniformDisk
 
     kw = {"batch_size": batch_size}
-    coarse = np.geomspace(lo, hi, n_scan)
-    ll = np.asarray(
-        likelihood_grid(UniformDisk, data, {"diam": jnp.asarray(coarse)}, **kw)
+    coarse = onp.geomspace(lo, hi, n_scan)
+    ll = onp.asarray(
+        likelihood_grid(UniformDisk, data, {"diam": np.asarray(coarse)}, **kw)
     )
-    best = float(coarse[int(np.nanargmax(ll))])
+    best = float(coarse[int(onp.nanargmax(ll))])
     # One coarse step either side of the coarse optimum.
     step = (hi / lo) ** (1.0 / (n_scan - 1))
-    fine = np.geomspace(max(lo, best / step), min(hi, best * step), 201)
-    ll_fine = np.asarray(
-        likelihood_grid(UniformDisk, data, {"diam": jnp.asarray(fine)}, **kw)
+    fine = onp.geomspace(max(lo, best / step), min(hi, best * step), 201)
+    ll_fine = onp.asarray(
+        likelihood_grid(UniformDisk, data, {"diam": np.asarray(fine)}, **kw)
     )
-    best = float(fine[int(np.nanargmax(ll_fine))])
-    ll_top = float(max(np.nanmax(ll), np.nanmax(ll_fine)))
+    best = float(fine[int(onp.nanargmax(ll_fine))])
+    ll_top = float(max(onp.nanmax(ll), onp.nanmax(ll_fine)))
     return coarse, 2.0 * (ll_top - ll), best
 
 
@@ -592,11 +592,11 @@ def _find_lobes(axis, delta, lo, hi, cap, *, separation=0.05):
     n = axis.size
     dlog = math.log(axis[-1] / axis[0]) / (n - 1)
     half = max(1, int(round(separation / dlog)))
-    delta = np.where(np.isfinite(delta), delta, np.inf)
+    delta = onp.where(onp.isfinite(delta), delta, onp.inf)
     minima = []
     for i in range(n):
         window = delta[max(0, i - half) : i + half + 1]
-        if np.isfinite(delta[i]) and delta[i] <= window.min():
+        if onp.isfinite(delta[i]) and delta[i] <= window.min():
             if not minima or i - minima[-1] > half:
                 minima.append(i)
             elif delta[i] < delta[minima[-1]]:
@@ -618,21 +618,21 @@ def _find_lobes(axis, delta, lo, hi, cap, *, separation=0.05):
 @_float64
 def _refine(data, centre, lo, hi, step, batch_size):
     """The uniform-disk diameter of best likelihood within one coarse step."""
-    import jax.numpy as jnp
+    import jax.numpy as np
 
     from ..grid_fit import likelihood_grid
     from ..models import UniformDisk
 
-    fine = np.geomspace(max(lo, centre / step), min(hi, centre * step), 201)
-    ll = np.asarray(
+    fine = onp.geomspace(max(lo, centre / step), min(hi, centre * step), 201)
+    ll = onp.asarray(
         likelihood_grid(
             UniformDisk,
             data,
-            {"diam": jnp.asarray(fine)},
+            {"diam": np.asarray(fine)},
             batch_size=batch_size,
         )
     )
-    return float(fine[int(np.nanargmax(ll))])
+    return float(fine[int(onp.nanargmax(ll))])
 
 
 def _fit_model(p, entry, priors, best_diam, noise):
@@ -642,7 +642,7 @@ def _fit_model(p, entry, priors, best_diam, noise):
     start = {"diam": best_diam, **p._starts[entry.name]}
     template = entry.build(start)
     if entry.scan and noise is None:
-        values = {"diam": np.asarray(best_diam)}
+        values = {"diam": onp.asarray(best_diam)}
         info = {
             "method": "scan",
             "converged": True,
@@ -655,14 +655,14 @@ def _fit_model(p, entry, priors, best_diam, noise):
     # the scan diameter and from the best of a small grid of diameters with
     # the starting shape, and keep the better fit.
     low, high = float(priors["diam"].low), float(priors["diam"].high)
-    grid = np.geomspace(
+    grid = onp.geomspace(
         max(low, 0.75 * best_diam), min(high, 1.25 * best_diam), 201
     )
     chi2 = [
         float(_chi2_64(entry.build({**start, "diam": d}), p.processed)[0])
         for d in grid
     ]
-    starts = [best_diam, float(grid[int(np.nanargmin(chi2))])]
+    starts = [best_diam, float(grid[int(onp.nanargmin(chi2))])]
     best = None
     for diam in dict.fromkeys(starts):
         tmpl = entry.build({**start, "diam": diam})
@@ -674,7 +674,7 @@ def _fit_model(p, entry, priors, best_diam, noise):
             best = (score, result, caught)
     result = best[1]
     _rewarn(best[2])
-    values = {k: np.asarray(v) for k, v in result.values.items()}
+    values = {k: onp.asarray(v) for k, v in result.values.items()}
     return result.model, values, _io.clean_json(dict(result.info))
 
 
@@ -731,7 +731,7 @@ def _fit(p):
                 chi2_fitted, _ = _chi2_64(
                     model,
                     data,
-                    **{k: np.asarray(v) for k, v in scales.items()},
+                    **{k: onp.asarray(v) for k, v in scales.items()},
                 )
             candidates.append(
                 (
@@ -751,7 +751,7 @@ def _fit(p):
         table = [
             {
                 "diam_bounds_mas": list(c[8]["bounds"]),
-                "diam_mas": float(np.asarray(c[2]["diam"])),
+                "diam_mas": float(onp.asarray(c[2]["diam"])),
                 "chi2": float(c[4]),
                 "chi2_reduced": float(c[4]) / data.n_independent,
                 "delta_chi2": c[0] - top,
@@ -778,13 +778,13 @@ def _fit(p):
         # terms of correlated closure phases are not meant to be normal.
         resid = resid[: int(data.n_independent)]
         skew, kurt = _moments(resid)
-        reported = {k: float(np.asarray(values[k])) for k in entry.params}
+        reported = {k: float(onp.asarray(values[k])) for k in entry.params}
         if entry.derived:
             reported.update(
                 {
                     k: float(v)
                     for k, v in entry.derived(
-                        {k: np.asarray(values[k]) for k in entry.params}
+                        {k: onp.asarray(values[k]) for k in entry.params}
                     ).items()
                 }
             )
@@ -809,7 +809,7 @@ def _fit(p):
             "at_bound": list(info.get("at_bound", []) or []),
             "priors": {k: repr(v) for k, v in priors.items()},
             "prior_std": {
-                k: float(np.sqrt(priors[k].variance)) for k in entry.shape
+                k: float(onp.sqrt(priors[k].variance)) for k in entry.shape
             },
         }
 
@@ -843,7 +843,7 @@ def _fit(p):
     _io.write_json(p.output / "models" / "best" / "info.json", info)
 
     one = {
-        k: np.asarray([float(np.asarray(values[k]))])
+        k: onp.asarray([float(onp.asarray(values[k]))])
         for k in registry[best].params
     }
     pred = posterior_predictive_summary(
@@ -894,11 +894,11 @@ def _bound_fractions(samples, priors, skip=()):
         if k in skip or not hasattr(prior, "low"):
             continue
         lo, hi = float(prior.low), float(prior.high)
-        x = np.asarray(samples[k], dtype=float).ravel()
+        x = onp.asarray(samples[k], dtype=float).ravel()
         if type(prior).__name__ in ("LogUniform", "SimpleNamespace"):
-            lo, hi, x = math.log(lo), math.log(hi), np.log(x)
+            lo, hi, x = math.log(lo), math.log(hi), onp.log(x)
         edge = _BOUND_FRACTION * (hi - lo)
-        bound[k] = float(np.mean((x < lo + edge) | (x > hi - edge)))
+        bound[k] = float(onp.mean((x < lo + edge) | (x > hi - edge)))
     return bound
 
 
@@ -932,15 +932,15 @@ def _wall_probe(entry, data, samples, priors, n=40, radius=2.0, seed=0):
         the ``n`` valid steps that hit a wall.
     """
     names = list(entry.params)
-    flat = {k: np.asarray(samples[k], dtype=float).ravel() for k in names}
-    sd = np.array([flat[k].std() for k in names])
-    rng = np.random.default_rng(seed)
+    flat = {k: onp.asarray(samples[k], dtype=float).ravel() for k in names}
+    sd = onp.array([flat[k].std() for k in names])
+    rng = onp.random.default_rng(seed)
     draws = rng.choice(flat[names[0]].size, size=n, replace=True)
     hits = valid = 0
     for i in draws:
-        base = np.array([flat[k][i] for k in names])
+        base = onp.array([flat[k][i] for k in names])
         direction = rng.normal(size=len(names))
-        trial = base + radius * sd * direction / np.linalg.norm(direction)
+        trial = base + radius * sd * direction / onp.linalg.norm(direction)
         inside = all(
             float(priors[k].low) < v < float(priors[k].high)
             for k, v in zip(names, trial)
@@ -996,18 +996,20 @@ def _nuts(model, data, p, name, priors, start):
         ),
     )
     samples = {
-        k: np.asarray(v)
+        k: onp.asarray(v)
         for k, v in mcmc.get_samples(group_by_chain=True).items()
     }
     extra = mcmc.get_extra_fields(group_by_chain=True)
     stats = {
-        ("step_size" if k == "adapt_state.step_size" else k): np.asarray(v)
+        ("step_size" if k == "adapt_state.step_size" else k): onp.asarray(v)
         for k, v in extra.items()
     }
     diagnostics = {
         site: {
-            "r_hat": float(np.nanmax(np.asarray(split_gelman_rubin(x)))),
-            "ess_bulk": float(np.nanmin(np.asarray(effective_sample_size(x)))),
+            "r_hat": float(onp.nanmax(onp.asarray(split_gelman_rubin(x)))),
+            "ess_bulk": float(
+                onp.nanmin(onp.asarray(effective_sample_size(x)))
+            ),
         }
         for site, x in samples.items()
     }
@@ -1020,10 +1022,10 @@ def _nuts(model, data, p, name, priors, start):
     )
     summary = {}
     for k in reported:
-        flat = np.asarray(samples[k], dtype=float).ravel()
+        flat = onp.asarray(samples[k], dtype=float).ravel()
         summary[k] = {
             **_quantiles(flat),
-            "std": float(np.std(flat)),
+            "std": float(onp.std(flat)),
             **diagnostics.get(k, {}),
         }
     noise_sites = {
@@ -1039,7 +1041,7 @@ def _nuts(model, data, p, name, priors, start):
             "noise": noise_sites or None,
             "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
             "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
-            "divergence_fraction": float(np.mean(stats["diverging"])),
+            "divergence_fraction": float(onp.mean(stats["diverging"])),
             "wall_probe": _wall_probe(entry, data, samples, priors),
             "prior_bound_fraction": _bound_fractions(
                 samples, priors, skip=entry.shape
@@ -1061,7 +1063,7 @@ def _posterior(p):
         entry = models()[name]
         priors = entry.priors(*fit_report["models"][name]["diam_bounds_mas"])
         start = {
-            k: np.asarray(v)
+            k: onp.asarray(v)
             for k, v in _io.load_model_values(
                 p.output / "models" / name
             ).items()
@@ -1104,7 +1106,7 @@ def _posterior(p):
 
     sampled = list(models()[best].params)
     frame = {
-        k: np.asarray(groups["posterior"][k], dtype=float).ravel()
+        k: onp.asarray(groups["posterior"][k], dtype=float).ravel()
         for k in sampled
     }
     _, fig_corner, fig_walk = plot_chainconsumer_diagnostics(
