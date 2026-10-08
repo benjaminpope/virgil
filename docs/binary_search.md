@@ -431,3 +431,148 @@ assert abs(post["dra"]["median"] - summary["dra_median"]) < 5.0
 assert abs(post["ddec"]["median"] - summary["ddec_median"]) < 5.0
 assert 0.8 < post["flux"]["median"] / summary["flux_median"] < 1.25
 ```
+
+```text
+virgil/detection.py:218: RuntimeWarning: detection_statistics(): the optimizer did not converge at 2 of 6561 grid positions; values there may be inaccurate.
+  _warn_if_concrete(stats, success, grid, flux_key)
+virgil/_deprecate.py:150: RuntimeWarning: detection_statistics(): the flux axis does not resolve the likelihood peak (0.28 steps across its FWHM, under 2), so log_bayes_factor is inaccurate; refine the flux axis near the best flux.
+  return fn(*args, **kwargs)
+```
+
+```text
+virgil/_deprecate.py:150: RuntimeWarning: optimized_likelihood_grid(): the optimizer did not converge at 2 of 6561 grid positions; values there may be inaccurate.
+  return fn(*args, **kwargs)
+virgil/_deprecate.py:150: RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 2 of 6561 grid positions; values there may be inaccurate.
+  return fn(*args, **kwargs)
+```
+
+```text
+virgil/_deprecate.py:150: RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
+  return fn(*args, **kwargs)
+```
+
+```text
+[IPKernelApp] WARNING | Kernel is running over TCP without encryption. All communication (including code and outputs) is sent in plain text and is susceptible to eavesdropping. Use IPC transport or launch with kernel manager-provisioned CurveZMQ keys to enable transport encryption.
+```
+
+```text
+E1008 13:08:58.104594 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 59.46GiB (63845695488 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+E1008 13:08:58.105446 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 53.51GiB (57461125120 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+E1008 13:08:58.105851 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 48.16GiB (51715010560 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+E1008 13:08:58.106236 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 43.35GiB (46543507456 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+E1008 13:08:58.106593 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 39.01GiB (41889157120 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+E1008 13:08:58.107142 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 35.11GiB (37700239360 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+E1008 13:08:58.107470 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 31.60GiB (33930215424 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+E1008 13:08:58.107788 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 28.44GiB (30537193472 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+E1008 13:08:58.108116 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 25.60GiB (27483473920 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+E1008 13:08:58.108423 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 23.04GiB (24735125504 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+E1008 13:08:58.108729 1294712 cuda_executor.cc:1365] [0] Failed to allocate device memory of 20.73GiB (22261612544 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+```
+
+```text
+BinaryPipeline run in /tmp/tmpznc6htel/binary_run: complete
+  data.n_vis = 24
+  data.n_phi = 24
+  data.n_independent = 48
+  data.wavel_min_m = 4.8e-06
+  data.wavel_max_m = 4.8e-06
+  data.baseline_min_m = 4.6616
+  data.baseline_max_m = 30.72
+  data.resolution_mas = 16.1145
+  data.fov_mas = 212.389
+  chi2.n_independent = 48
+  chi2.null_reduced = 102.337
+  chi2.companion_reduced = 0.403879
+  search.delta_chi2 = 4851.02
+  search.log_bayes_factor = 2411.46
+  search.max_snr = 69.3432
+  search.local_nsigma = 12.95
+  search.global_nsigma = 12.522
+  search.n_trials = 240.685
+  search.dra_mas = 118.75
+  search.ddec_mas = -81.25
+  search.flux = 0.0039317
+  search.max_sep_mas = 250
+  limits.sigma = 3
+  limits.deepest_delta_mag = 5.53316
+  fit.chi2_reduced = 0.403879
+  companion.dra_mas = 119.705
+  companion.ddec_mas = -80.1269
+  companion.sep_mas = 144.048
+  companion.pa_deg = 123.797
+  companion.flux = 0.00392694
+  companion.flux_err = 5.76492e-05
+  companion.contrast = 254.651
+  companion.delta_mag = 6.01486
+  posterior.num_chains = 1
+  posterior.num_samples = 2000
+  posterior.num_warmup = 800
+  posterior.r_hat_max = 1.00066
+  posterior.ess_bulk_min = 658.361
+  posterior.divergence_fraction = 0
+  [warn] chi2: χ²/N = 0.404 for the best-fit binary (star alone: 102) on quoted errors: errors likely overestimated.
+  [pass] detection: Companion detected at 12.52σ after an approximate look-elsewhere correction (12.95σ local); for a calibrated threshold use injection_recovery or gaussian_null.
+  [pass] grid_edge: The grid peak lies inside the searched grid.
+  [pass] residual_normality: Whitened residuals look normal (skew 0.38, excess kurtosis 0.07).
+  [pass] field_of_view: Separation 144 mas lies between the resolution limit and the field of view.
+  [pass] prior_bound: No posterior mass piles up at a prior bound.
+  [pass] r_hat: Largest R-hat 1.0007: the chains agree.
+  [pass] ess: Smallest bulk ESS 658: enough independent samples.
+  [pass] divergences: Divergent transitions: 0 per cent: none.
+grid:     hand dra=119 ddec=-81.2 flux=0.0038   pipeline dra=119 ddec=-81.2 flux=0.0039
+posterior: hand dra=120 ddec=-80.1 flux=0.0039   pipeline dra=120 ddec=-80.1 flux=0.0039
+```

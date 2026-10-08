@@ -98,7 +98,8 @@ opt_flux = optimized_flux_grid(BinaryModelCartesian, oidata_sim, samples)
 ```
 
 ```text
-RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+virgil/_deprecate.py:150: RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+  return fn(*args, **kwargs)
 ```
 
 ## Ruffio Contrast Limits
@@ -142,7 +143,8 @@ plot_grid_map(absil_map, samples, kind="limit", units="delta_mag", sigma=2.0);
 ```
 
 ```text
-RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
+virgil/_deprecate.py:150: RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
+  return fn(*args, **kwargs)
 ```
 
 ![contrast_limits output 11.2](generated/contrast_limits_cell011_out02.png)
@@ -202,3 +204,43 @@ display(Image(filename=str(res.path / "plots" / "limits_contrast_curve.png")))
 assert ok.any()
 assert onp.allclose(lim[ok], onp.asarray(absil_map)[ok], rtol=1e-3)
 ```
+
+```text
+virgil/detection.py:218: RuntimeWarning: detection_statistics(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+  _warn_if_concrete(stats, success, grid, flux_key)
+virgil/_deprecate.py:150: RuntimeWarning: optimized_likelihood_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+  return fn(*args, **kwargs)
+```
+
+```text
+BinaryPipeline run in /tmp/tmp5oed9ktv/limits_run: partial
+  data.n_vis = 21
+  data.n_phi = 35
+  data.n_independent = 36
+  data.wavel_min_m = 4.817e-06
+  data.wavel_max_m = 4.817e-06
+  data.baseline_min_m = 1.32
+  data.baseline_max_m = 5.28001
+  data.resolution_mas = 94.0887
+  data.fov_mas = 752.71
+  chi2.n_independent = 36
+  chi2.null_reduced = 0.614164
+  search.delta_chi2 = 7.05621
+  search.log_bayes_factor = -0.349726
+  search.max_snr = 2.65709
+  search.local_nsigma = 2.65635
+  search.global_nsigma = 1.91805
+  search.n_trials = 7.06001
+  search.dra_mas = -100
+  search.ddec_mas = -175
+  search.flux = 8.28444e-05
+  search.max_sep_mas = 250
+  limits.sigma = 2
+  limits.deepest_delta_mag = 9.6868
+  [pass] chi2: χ²/N = 0.614 for the star alone on quoted errors: consistent with the quoted errors.
+  [warn] detection: No companion above 3σ (2.66σ local): the fit and posterior describe the highest noise peak; quote the contrast limits instead.
+  [pass] grid_edge: The grid peak lies inside the searched grid.
+pipeline median dmag 9.61, deepest 9.69; hand-computed Absil median dmag 9.62 (whole map)
+```
+
+![contrast_limits output 15.3](generated/contrast_limits_cell015_out03.png)
