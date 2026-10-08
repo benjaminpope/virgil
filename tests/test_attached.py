@@ -225,6 +225,17 @@ def test_anchors_and_offsets():
     assert float(skewed.pa) == pytest.approx(line_pa + 5.0, abs=1e-4)
 
 
+def test_frame_line_pa_is_the_separation_pa_convention():
+    """``frame()['line_pa']`` was left in (-180, 180], while
+    ``separation_pa`` wraps to [0, 360): one convention now."""
+    mjds = T_REF + onp.linspace(0.0, 730.0, 40)
+    pas = onp.array([float(ORBIT.frame(m)["line_pa"]) for m in mjds])
+    assert onp.all((pas >= 0.0) & (pas < 360.0))
+    assert (pas > 180.0).any()  # the orbit does visit the western side
+    for m, pa in zip(mjds, pas):
+        assert float(ORBIT.separation_pa(m)[1]) == pytest.approx(pa, abs=1e-4)
+
+
 def test_clear_errors():
     data = _epochs(T_REF + onp.array([0.0]))
     timeless = OIData({k: v for k, v in _dict(data).items() if k != "mjd"})

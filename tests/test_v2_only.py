@@ -153,6 +153,22 @@ def test_all_closure_phases_flagged_is_the_same_as_no_phases(tmp_path):
     )
 
 
+def test_a_zero_error_sample_is_dropped_like_a_flagged_one():
+    """A sample with error 0 has an infinite whitened residual, so it is
+    dropped (as extra observables already were), not kept to make every
+    likelihood non-finite."""
+    model = BinaryModelCartesian(4.0, -3.0, 0.1)
+    record = _v2_dict(model)
+    d_vis = onp.array(record["d_vis"], float)
+    d_vis[0, 0] = 0.0
+    record["d_vis"] = d_vis
+    data = OIData(record)
+    assert data.vis.size == d_vis.size - 1
+    assert 0 not in onp.asarray(data.vis_index)
+    probe = BinaryModelCartesian(5.0, -2.0, 0.08)
+    assert onp.isfinite(model_loglike(probe, data))
+
+
 def test_a_grid_search_runs_on_v2_alone():
     """V² alone cannot tell a companion from its mirror image, but a
     likelihood grid still runs and peaks at one of the two."""

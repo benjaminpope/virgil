@@ -9,7 +9,7 @@ import zodiax as zx
 
 from ._closure import ClosureNoise
 from ._deprecate import renamed
-from ._utils import inflate_errors
+from ._utils import inflate_errors, wrap_phase
 from .gains import ClosureOffsets, GainModes, closure_offsets, gain_modes
 from .observables import (
     KINDS,
@@ -23,7 +23,7 @@ from .observables import (
 from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from ._geometry import rotate
 from .amigo import is_mixed_disco_record, mixed_disco_fields
-from .oifits import read_oifits
+from .oifits import _phase_unit_scale, read_oifits
 
 
 __all__ = ["OIData", "closure_phases", "cp_indices"]
@@ -329,7 +329,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             phi, d_phi = phi[keep], d_phi[keep]
             if cp_flag and phi.size == 0:
                 warnings.warn(
-                    "Every closure phase is flagged (or not finite): using "
+                    "Every closure phase is flagged (or not finite, or has no "
+                    "positive error): using "
                     "the visibilities alone.",
                     UserWarning,
                     stacklevel=2,
@@ -343,7 +344,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if vis.size == 0 and phi.size == 0 and not has_extras:
             raise ValueError(
                 "No unflagged data: every visibility and every phase is "
-                "flagged (or not finite), or there are none."
+                "flagged (or not finite, or has no positive error), or there are none."
             )
 
         self.u = np.asarray(u)
@@ -802,23 +803,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             )
         return bool(value)
 
-    @staticmethod
-    def _phase_unit_scale(unit, default_unit):
-        """Return multiplicative factor converting the provided phase unit to rad."""
-        raw_unit = default_unit if unit is None else unit
-        unit_name = str(raw_unit).strip().lower()
-        if unit_name in {"rad", "radian", "radians"}:
-            return 1.0
-        if unit_name in {"deg", "degree", "degrees"}:
-            return np.pi / 180.0
-        raise ValueError(
-            f"Unsupported phase unit '{raw_unit}'. Expected radians or degrees."
-        )
-
     @classmethod
     def _phase_to_radians(cls, phi, d_phi, unit, default_unit):
         """Convert phase observables and uncertainties to radians."""
-        scale = cls._phase_unit_scale(unit, default_unit)
+        scale = _phase_unit_scale(unit, default_unit, "phi_unit")
         return np.asarray(phi, dtype=float) * scale, np.asarray(
             d_phi, dtype=float
         ) * np.abs(scale)
@@ -1135,7 +1123,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             return resid
         n_vis = np.asarray(self.vis).size
         n_phase = n_vis + np.asarray(self.phi).size
-        phase = np.mod(resid[n_vis:n_phase] + np.pi, 2.0 * np.pi) - np.pi
+        phase = wrap_phase(resid[n_vis:n_phase])
         return np.concatenate([resid[:n_vis], phase, resid[n_phase:]])
 
     def standardize_model(self, cvis):
@@ -1761,11 +1749,23 @@ def _positive_factor(factor):
     return factor
 
 
+def _valid_samples(values, errors):
+    """Mask of finite samples with a finite, positive error.
+
+    A zero (or negative) error cannot be used: the whitened residual
+    ``r / σ`` is infinite, and one such sample makes every likelihood and
+    fit non-finite. Such samples are dropped, as flagged ones are.
+    """
+    return (
+        onp.isfinite(values) & onp.isfinite(errors) & (onp.asarray(errors) > 0)
+    )
+
+
 def _good(record):
-    """Unflagged, finite entries of an extra observable's record."""
+    """Unflagged, usable entries of an extra observable's record."""
     value = onp.asarray(record["value"], float).reshape(-1)
     error = onp.asarray(record["error"], float).reshape(-1)
-    good = onp.isfinite(value) & onp.isfinite(error) & (error > 0)
+    good = _valid_samples(value, error)
     if record.get("flag") is not None:
         good &= ~onp.asarray(record["flag"], bool).reshape(-1)
     return good, value, error
@@ -1933,7 +1933,7 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
         + phases[np.asarray(index_cps2)]
         - phases[np.asarray(index_cps3)]
     )
-    return np.mod(cp + np.pi, 2.0 * np.pi) - np.pi
+    return wrap_phase(cp)
 
 
 def cp_indices(vis_sta_index, cp_sta_index):
@@ -2024,7 +2024,10 @@ def _expand_channels(u, v, wavel, vis, indices):
 
 
 def _good_samples(values, errors, flag, n_samples, name):
-    """Mask of unflagged, finite samples, or ``None`` if all are good.
+    """Mask of unflagged, usable samples, or ``None`` if all are good.
+
+    Usable is as for [`_valid_samples`][virgil.oidata._valid_samples]:
+    finite, with a finite, positive error.
 
     Data whose size is not ``n_samples`` are already projected and are not
     checked.
@@ -2036,7 +2039,7 @@ def _good_samples(values, errors, flag, n_samples, name):
                 f"for {n_samples} samples (it looks already projected)."
             )
         return None
-    bad = ~(onp.isfinite(values) & onp.isfinite(errors))
+    bad = ~_valid_samples(values, errors)
     if flag is not None:
         flag = onp.asarray(flag, dtype=bool).reshape(-1)
         if flag.size != n_samples:

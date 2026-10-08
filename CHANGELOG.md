@@ -94,6 +94,47 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **Drifted copies unified (part of #310).**
+  - **Pipeline resume fingerprint.** `pipeline._io.data_fingerprint` now
+    hashes every field of the `OIData` (it is `detection._fingerprint`),
+    not twelve arrays and three flags, so a change to the stations,
+    `t_ref`, `dt`, frames, gains, closure offsets, extra observables or
+    uv grid is noticed on resume. **This changes every fingerprint: run
+    folders written by earlier versions no longer match, so resuming one
+    raises a `ConfigMismatchError` ("the data differ"), and their cached
+    stages are recomputed once you start it over with `run(resume=False)`
+    (`--fresh`) or in a new folder.**
+  - **Zero errors.** `OIData` now drops V² and phase samples with a zero
+    (or negative) error, as it already did for extra observables
+    (`OI_FLUX`, `|V|`, `T3AMP`); a zero error gives an infinite whitened
+    residual, which made every likelihood and fit non-finite. Flagged
+    and non-finite samples were already dropped.
+  - **Orbit ranking.** `rank_orbits` (and so `start_from_positions`)
+    orders orbits with `orbit_search.rank_scores`, as
+    `score_orbits(...).order()` does: scores within 1e-3 nat tie and
+    rank by index, and non-finite ones rank last. Orbits whose scores
+    differ by less than that can come out in a different order than
+    before.
+  - **Field of view.** `imaging.field_of_view`, `nyquist_pixel_scale`,
+    `Epochs.resolution_mas` and the pipeline's `fov_mas`,
+    `resolution_mas` and `lambda_over_b_mas` share
+    `_geometry.fringe_scales`: per-sample `B/λ` over non-zero baselines.
+    The pipeline used the longest wavelength over the shortest baseline,
+    which are not observed together when the uv sampling differs between
+    channels, so its `fov_mas` can be smaller (and its default
+    `max_sep`, a fraction of it).
+  - **Position angles.** One `_geometry.position_angle` /
+    `separation_pa` (North through East, `[0, 360)`) serves the models,
+    orbits, plotting and the pipeline. `KeplerOrbit.frame(...)["line_pa"]`
+    was in (-180, 180]; it is now in `[0, 360)` (equal modulo 360, and
+    `towards_primary` is still `line_pa + 180`).
+  - **Phase units** (`oifits` columns and `OIData` records) go through
+    one parser, with one error message; a blank `TUNIT` or `phi_unit` now
+    means the default unit in both. One check for the names of
+    `System` components and `Sum` parts (derived from the class's own
+    fields), one `wrap_phase`, and the pipeline's prior-bound fractions
+    use `fitting._bound_fraction` (a prior with a flat coordinate, such
+    as `IsotropicInclination`, no longer counts its poles as bounds).
 - **`virgil.ensemble` default selection.** The L-curve window now keeps
   the weights from `window_dex` below the corner up to the corner (MYTHRA's
   "just before the turnover"), not the over-regularised side above it. The

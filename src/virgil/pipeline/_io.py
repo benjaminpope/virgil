@@ -122,30 +122,23 @@ def sha256_file(path):
 
 
 def data_fingerprint(data):
-    """SHA-256 of the arrays that define an ``OIData``'s observables."""
-    h = hashlib.sha256()
-    for name in (
-        "u",
-        "v",
-        "wavel",
-        "vis",
-        "d_vis",
-        "phi",
-        "d_phi",
-        "i_cps1",
-        "i_cps2",
-        "i_cps3",
-        "vis_mat",
-        "phi_mat",
-    ):
-        value = getattr(data, name, None)
-        h.update(name.encode())
-        if value is not None:
-            array = onp.ascontiguousarray(onp.asarray(value, dtype=float))
-            h.update(str(array.shape).encode())
-            h.update(array.tobytes())
-    h.update(f"{data.vis_mode}|{data.v2_flag}|{data.cp_flag}".encode())
-    return h.hexdigest()
+    """Hash of every field of an ``OIData``, for the resume check.
+
+    This is ``detection._fingerprint`` (arrays by dtype, shape and bytes,
+    every static field, the class of every node), so a change to the
+    stations, ``t_ref``, ``dt``, gains, closure offsets, extra
+    observables or uv grid is noticed as well as one to the observables.
+    """
+    from ..detection import _fingerprint  # lazy: pulls in JAX
+
+    digest = _fingerprint(data)
+    if digest is None:
+        raise ValueError(
+            "The data cannot be fingerprinted (a field holds an object "
+            "that cannot be hashed reproducibly), so a pipeline run "
+            "cannot check that it resumes on the same data."
+        )
+    return digest
 
 
 # === HDF5 ===

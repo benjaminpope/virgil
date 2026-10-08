@@ -78,6 +78,7 @@ import numpy as onp
 
 from ._deprecate import renamed
 from ._linear import posterior, whiten_blocks
+from ._utils import wrap_phase
 
 __all__ = [
     "DifferentialPhase",
@@ -889,7 +890,7 @@ class DifferentialPhase(_Block):
     def data(self):
         phases = np.asarray(self.values)[self.grid]
         steps = np.diff(phases, axis=-1)
-        steps = np.mod(steps + np.pi, 2.0 * np.pi) - np.pi
+        steps = wrap_phase(steps)
         anchor = np.arctan2(np.sin(phases[..., :1]), np.cos(phases[..., :1]))
         return self._project(self._unwrap(steps, anchor))
 

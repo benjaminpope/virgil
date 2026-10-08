@@ -49,8 +49,8 @@ import jax.numpy as np
 import numpy as onp
 from jax.scipy.special import i0e
 
+from ._geometry import fringe_scales
 from ._precision import cast_tree, run_in
-from ._utils import rad2mas
 from .fitting import fit
 from .likelihood import (
     _gaussian_loglike,
@@ -236,16 +236,7 @@ class Epochs:
         much, so starting orbits closer together than a fraction of it are
         one mode.
         """
-        finest = onp.inf
-        for d in self.data:
-            baseline = onp.hypot(onp.asarray(d.u), onp.asarray(d.v))
-            wavel, baseline = onp.broadcast_arrays(
-                onp.asarray(d.wavel, dtype=float), baseline
-            )
-            ok = baseline > 0
-            if ok.any():
-                finest = min(finest, float(onp.min(wavel[ok] / baseline[ok])))
-        return finest * rad2mas
+        return float(fringe_scales(list(self.data))[0])
 
     def index(self, name):
         """The position of dataset ``name`` in ``data`` (and in ``noise``).
@@ -822,7 +813,11 @@ class RankedOrbits:
 
 
 def _ranked(orbits, loglike, data):
-    order = onp.argsort(-loglike, kind="stable")
+    # The same deterministic order as score_orbits(...).order(). Imported
+    # here because orbit_search imports this module.
+    from .orbit_search import rank_scores
+
+    order = rank_scores(loglike)
     return RankedOrbits(
         orbits=tuple(orbits[k] for k in order),
         loglike=loglike[order],

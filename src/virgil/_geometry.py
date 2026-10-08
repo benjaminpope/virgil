@@ -136,6 +136,65 @@ def rotate(x, y, rotation_deg):
     return c * x + s * y, -s * x + c * y
 
 
+def _numpy_inputs(*values):
+    """Whether every value is a Python number or NumPy: not JAX or traced."""
+    concrete = (int, float, onp.ndarray, onp.generic)
+    return all(isinstance(a, concrete) for a in values)
+
+
+def position_angle(dra, ddec):
+    """Position angle in degrees of the offset ``(dra, ddec)``, in [0, 360).
+
+    ``dra`` is the offset East and ``ddec`` North (mas, or any common
+    unit), and the angle runs from North through East, so ``(0, 1)`` is 0°,
+    ``(1, 0)`` is 90° and ``(-1, 0)`` is 270°. This is the inverse of
+    ``(sep sin pa, sep cos pa)``. NumPy inputs are computed in NumPy,
+    anything else in JAX.
+    """
+    xp = onp if _numpy_inputs(dra, ddec) else np
+    return xp.mod(xp.rad2deg(xp.arctan2(dra, ddec)), 360.0)
+
+
+def separation_pa(dra, ddec):
+    """``(sep, pa)`` of the offset ``(dra, ddec)``: its length, and its
+    position angle as for [`position_angle`][virgil._geometry.position_angle]
+    (degrees, in [0, 360))."""
+    xp = onp if _numpy_inputs(dra, ddec) else np
+    return xp.hypot(dra, ddec), position_angle(dra, ddec)
+
+
+def fringe_scales(data):
+    """The finest and coarsest fringe spacings of ``data``, in mas.
+
+    ``data`` is an ``OIData`` or a sequence of them. Each sample ``k`` has
+    a spatial frequency ``B_k / λ_k`` (its own baseline over its own
+    wavelength), and the finest fringes are ``1 / max(B/λ)`` and the
+    coarsest ``1 / min(B/λ)``, over the samples with a non-zero baseline
+    (a zero baseline measures no fringe, and would make the coarsest
+    infinite). This is not ``λ_max / B_min``, which pairs a baseline with a
+    wavelength it may not have been observed at.
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(finest, coarsest)``.
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    rho = onp.concatenate(
+        [
+            onp.ravel(
+                onp.hypot(onp.asarray(d.u, float), onp.asarray(d.v, float))
+                / onp.asarray(d.wavel, float)
+            )
+            for d in observations
+        ]
+    )
+    rho = rho[rho > 0]
+    if rho.size == 0:
+        raise ValueError("The data have no sample with a non-zero baseline.")
+    return 1.0 / (rho.max() * mas2rad), 1.0 / (rho.min() * mas2rad)
+
+
 class UVGrid(eqx.Module):
     """uv samples that lie on a regular lattice, possibly rotated on the sky.
 

@@ -497,6 +497,49 @@ def test_residual_normality_passes_on_truth_noise(data):
     assert check.status == "pass", check.message
 
 
+def test_prior_bound_fraction_is_the_one_fit_reports():
+    """The pipeline reads prior edges with ``fitting._bound_fraction``: a
+    LogUniform's in log x, an interval's, and none for a prior whose range
+    ends are poles of its flat coordinate (it used to count them)."""
+    import numpyro.distributions as dist
+    from virgil.pipeline.binary import _bound_samples
+    from virgil.priors import IsotropicInclination
+
+    uniform = dist.Uniform(0.0, 10.0)
+    assert _bound_samples(uniform, [0.0, 0.05, 5.0, 9.95]) == 0.75
+    log = dist.LogUniform(1e-4, 1.0)
+    # 1e-4 and 1.00 are the two edges; 1e-2 is the middle of the log range.
+    assert _bound_samples(log, [1e-4, 1e-2, 0.999]) == pytest.approx(2 / 3)
+    assert _bound_samples(dist.Normal(0.0, 1.0), [0.0, 1.0]) is None
+    assert _bound_samples(IsotropicInclination(), [0.0, 90.0, 180.0]) is None
+
+
+def test_field_of_view_uses_each_sample_own_baseline_and_wavelength():
+    """The longest wavelength was paired with the shortest baseline even
+    where they were not observed together (λ_max / B_min), and a zero
+    baseline must not set the field."""
+    from types import SimpleNamespace
+
+    from virgil._utils import mas2rad
+    from virgil.imaging import field_of_view, nyquist_pixel_scale
+    from virgil.pipeline.binary import _geometry
+
+    # 10 m at 1 µm and 100 m at 2 µm, plus a zero baseline at 3 µm.
+    data = SimpleNamespace(
+        u=onp.array([10.0, 100.0, 0.0]),
+        v=onp.zeros(3),
+        wavel=onp.array([1e-6, 2e-6, 3e-6]),
+    )
+    coarsest = 1e-6 / 10.0 / mas2rad  # not 2e-6 / 10 m
+    finest = 2e-6 / 100.0 / mas2rad
+    geo = _geometry(data)
+    assert geo["fov_mas"] == pytest.approx(coarsest)
+    assert geo["resolution_mas"] == pytest.approx(0.5 * finest)
+    assert geo["lambda_over_b_mas"] == pytest.approx(finest)
+    assert field_of_view(data, largest_mas=onp.inf) == pytest.approx(coarsest)
+    assert nyquist_pixel_scale(data) == pytest.approx(0.5 * finest)
+
+
 def test_moments_of_constant_residuals_are_finite():
     from virgil.pipeline.binary import _moments
 

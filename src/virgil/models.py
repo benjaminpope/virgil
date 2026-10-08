@@ -40,13 +40,14 @@ from ._geometry import (
     image_visibilities,
     offset_phase,
     pixel_offsets,
+    separation_pa,
     rotate,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
 from . import _elr
 from ._deprecate import renamed
-from ._utils import FWHM_PER_SIGMA, concrete, dtor, mas2rad
+from ._utils import FWHM_PER_SIGMA, check_part_name, concrete, dtor, mas2rad
 from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
@@ -2649,7 +2650,13 @@ class System(SourceModel):
         if not components:
             raise ValueError("System needs at least one component.")
         for name, component in components.items():
-            _check_component_name(name)
+            check_part_name(
+                name,
+                System,
+                "Component",
+                "comp.flux",
+                "a System attribute or method",
+            )
             if not isinstance(component, SourceModel):
                 raise TypeError(
                     f"Component '{name}' is not a SourceModel: {component!r}"
@@ -3057,28 +3064,6 @@ def _rim_angle(sky_pa, pa, inc):
     )
 
 
-_RESERVED_COMPONENT_NAMES = frozenset({"components", "names", "parts"})
-
-
-def _check_component_name(name):
-    """Reject component names that cannot be used as parameter paths."""
-    if not isinstance(name, str) or not name.isidentifier():
-        raise ValueError(
-            f"Component name {name!r} must be a valid Python identifier, "
-            "so that it can be used in parameter paths such as 'comp.flux'."
-        )
-    if (
-        name.startswith("_")
-        or name in _RESERVED_COMPONENT_NAMES
-        or name in {"flux", "dra", "ddec"}
-        or hasattr(System, name)
-    ):
-        raise ValueError(
-            f"'{name}' cannot be a component name because it clashes with a "
-            "System attribute or method; choose another name."
-        )
-
-
 class BinaryModelAngular(SourceModel):
     """
     A primary star and a point-source companion, in polar coordinates.
@@ -3166,8 +3151,7 @@ class BinaryModelCartesian(SourceModel):
 
     def to_angular(self):
         """Return the equivalent [`BinaryModelAngular`][virgil.models.BinaryModelAngular]."""
-        sep = np.sqrt(self.dra**2 + self.ddec**2)
-        pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
+        sep, pa = separation_pa(self.dra, self.ddec)
         return BinaryModelAngular(sep, pa, self.flux)
 
     def total_spectrum(self, wavel):
