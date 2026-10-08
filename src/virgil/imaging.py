@@ -1,11 +1,11 @@
-"""Regularisers and helpers for image reconstruction.
+"""Regularizers and helpers for image reconstruction.
 
 An image fit is a call to [`fit`][virgil.fitting.fit] whose model contains an
 [`Image`][virgil.models.Image], with a prior on its ``log_brightness``
-(see :func:`image_priors`) and usually a regulariser, which adds a penalty
+(see :func:`image_priors`) and usually a regularizer, which adds a penalty
 on the pixel fluxes ``b`` to the loss:
 
-| Regulariser | Penalty | Least squares (LM)? | A prior density? |
+| Regularizer | Penalty | Least squares (LM)? | A prior density? |
 | --- | --- | --- | --- |
 | [`TSV`][virgil.imaging.TSV] | ``w Σ (Δx b)² + (Δy b)²`` | yes | no |
 | [`TV`][virgil.imaging.TV] | ``w Σ √((Δx b)² + (Δy b)² + ε²)`` | no | no |
@@ -16,7 +16,7 @@ on the pixel fluxes ``b`` to the loss:
 | [`Centroid`][virgil.imaging.Centroid] | ``½ |centroid / σ|²`` | yes | yes |
 
 Differences ``Δ`` are between neighbouring pixels, with zeros beyond the
-edges, so edge pixels are penalised too. TSV (total squared variation) and
+edges, so edge pixels are penalized too. TSV (total squared variation) and
 the Laplacian favour smooth images, TV (total variation) piecewise-flat ones,
 and maximum entropy images close to a default ``q``. The weight ``w``
 depends on the scene and the data; :func:`l_curve` sweeps it.
@@ -36,10 +36,10 @@ for any data, including closure and DISCO phases. With ``scales_mas`` the
 components can also be Gaussians of several widths (multi-scale CLEAN).
 
 When [`fit`][virgil.fitting.fit]'s model function returns one model per
-dataset, every regulariser acts on the **first model only**. That is right
+dataset, every regularizer acts on the **first model only**. That is right
 when the later models are transformed copies of the same scene (e.g. a
 [`Rotated`][virgil.models.Rotated] epoch), but an Image that appears only in
-a later model is not regularised at all.
+a later model is not regularized at all.
 
 Closure, kernel and DISCO phases do not fix an image's position. Something
 must: an analytic star at the origin, a [`Centroid`][virgil.imaging.Centroid]
@@ -58,7 +58,8 @@ from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
 from ._geometry import fringe_scales, pixel_offsets, rotate
-from ._utils import _reference, mas2rad
+from ._utils import FWHM_PER_SIGMA, _reference, mas2rad
+from ._deprecate import renamed
 from ._precision import cast_tree, run_in
 from .fitting import FitResult, fit
 from .spectra import flux_at
@@ -84,7 +85,7 @@ class _ImageRegulariser(eqx.Module):
     path: str | None = eqx.field(static=True)
 
     def image(self, model):
-        """The regularised [`Image`][virgil.models.Image] in ``model``."""
+        """The regularized [`Image`][virgil.models.Image] in ``model``."""
         image = model if self.path is None else model.get(self.path)
         if not isinstance(image, Image):
             raise TypeError(
@@ -194,7 +195,7 @@ class MaxEntropy(_ImageRegulariser):
         Strength of the penalty.
     prior : array-like, optional
         The default image ``q``, with the image's shape and positive where
-        the image's support is; normalised here. Default: flat over the
+        the image's support is; normalized here. Default: flat over the
         support.
     path : str, optional
         Path of the Image in the model.
@@ -317,7 +318,7 @@ class StarletL1(_ImageRegulariser):
     An L1 norm favours few non-zero coefficients, so the image is built
     from few compact structures, of any size: a sparse image in the
     wavelet sense. The coarse plane, which carries the flux, is not
-    penalised. ``ε`` smooths the penalty near zero, so that it is
+    penalized. ``ε`` smooths the penalty near zero, so that it is
     differentiable.
 
     Parameters
@@ -441,10 +442,10 @@ def image_priors(scene):
     Returns a priors dict for [`fit`][virgil.fitting.fit]. An Image with
     a plain log-brightness array gets a flat prior,
     ``{"env.log_brightness": ImproperUniform(...)}``, so that its pixels are
-    constrained only by the data and the regularisers. An Image with a
+    constrained only by the data and the regularizers. An Image with a
     [`GaussianField`][virgil.fields.GaussianField] gets standard-normal
     priors on the field's latents, ``{"env.log_brightness.latent":
-    Normal(0, 1)}``: the Gaussian-process prior, which needs no regulariser.
+    Normal(0, 1)}``: the Gaussian-process prior, which needs no regularizer.
     Add priors for any other free parameters (fluxes, offsets) to the dict.
     """
     import numpyro.distributions as dist
@@ -523,7 +524,7 @@ def _complex_visibilities(d):
         ) > 1e-3 * information.max()
         # The modes are blind to the total flux, so the log-amplitudes have
         # an arbitrary offset: fix it so that |V| = 1 on average on the
-        # shortest informed baselines, as for any normalised source.
+        # shortest informed baselines, as for any normalized source.
         rho = onp.hypot(onp.asarray(d.u), onp.asarray(d.v))[informed]
         shortest = rho <= onp.quantile(rho, 0.1)
         logv[:n] -= onp.mean(logv[:n][informed][shortest])
@@ -551,7 +552,7 @@ def _complex_visibilities(d):
 
 
 def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
-    """The dirty image: direct synthesis of the visibilities, unregularised.
+    """The dirty image: direct synthesis of the visibilities, unregularized.
 
     ``I(x) = Σ_k w_k Re[V_k exp(+2πi u_k · x)] / Σ_k w_k``, summing over the
     samples (each standing for itself and its conjugate) with uniform
@@ -559,7 +560,7 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     plus noise. It peaks at one for a lone point source. For AMIGO DISCO
     data the visibilities are the least-squares estimate from the modes;
     since the modes are blind to the total flux, the estimate is
-    normalised to |V| = 1 on average on the shortest baselines.
+    normalized to |V| = 1 on average on the shortest baselines.
 
     Parameters
     ----------
@@ -576,7 +577,7 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
         subtracting the best-fitting point source at the origin (the
         weighted mean of the visibilities), then scaling by
         ``(1 + flux_ratio) / flux_ratio``. That is robust to the
-        normalisation of the visibilities, which matters because subtracting
+        normalization of the visibilities, which matters because subtracting
         a bright star amplifies any error in it by ``1 / flux_ratio``.
 
     Returns
@@ -628,7 +629,7 @@ def starting_image(
       (it already has the right shape) and worse when it is sparse (its
       sidelobes dominate).
 
-    Fit it with ``fit(start, image_priors(start), data, regularisers)``,
+    Fit it with ``fit(start, image_priors(start), data, regularizers)``,
     adding a prior on the image's flux, ``"env.flux"`` (or ``"flux"`` with
     ``star=False``), to fit it too: with a star, this stops the fit from
     parking excess flux next to it.
@@ -668,7 +669,7 @@ def starting_image(
     widest = field_of_view(data, largest_mas=onp.inf)
     best = None
     for width in (0.25 * resolution, resolution, 4.0 * resolution):
-        sigma = min(width, widest / 6.0) / 2.3548
+        sigma = min(width, widest / 6.0) / FWHM_PER_SIGMA
         if star:
             model = System(
                 star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
@@ -684,7 +685,7 @@ def starting_image(
         if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
             best = result
     envelope = best.model.env if star else best.model
-    fwhm = 2.3548 * float(envelope.sigma)
+    fwhm = FWHM_PER_SIGMA * float(envelope.sigma)
     fov = min(max(500.0, 6.0 * fwhm), widest)
     if largest_mas is not None:
         fov = min(fov, float(largest_mas))
@@ -773,7 +774,7 @@ def beam(data):
     m = onp.array([[w @ (u * u), w @ (u * v)], [w @ (u * v), w @ (v * v)]])
     covariance = onp.linalg.inv(m / onp.sum(w)) / (4 * onp.pi**2)
     variance, axes = onp.linalg.eigh(covariance)
-    fwhm = 2.0 * onp.sqrt(2.0 * onp.log(2.0) * variance)
+    fwhm = FWHM_PER_SIGMA * onp.sqrt(variance)
     x, y = axes[:, 1]  # the major axis, in (East, North)
     pa = onp.degrees(onp.arctan2(x, y)) % 180.0
     return Beam(float(fwhm[1]), float(fwhm[0]), float(pa))
@@ -782,7 +783,7 @@ def beam(data):
 def convolve_beam(image, pixel_scale_mas, beam):
     """An image convolved with a Gaussian beam: the image at the data's resolution.
 
-    Reconstructed images are super-resolved. A regularised image can put
+    Reconstructed images are super-resolved. A regularized image can put
     structure on scales finer than the beam, where the data constrain it
     only weakly, so it often looks clumpy or streaky. Convolved with the
     beam (the "restored" image of radio astronomy), it shows only what the
@@ -790,7 +791,7 @@ def convolve_beam(image, pixel_scale_mas, beam):
     reconstruction with a model: convolve both.
 
     The kernel is an elliptical Gaussian with the beam's FWHMs and position
-    angle (North to East), normalised to unit sum. It is sampled on an odd
+    angle (North to East), normalized to unit sum. It is sampled on an odd
     grid centred on a pixel, so the convolution does not shift the image.
     Flux beyond the edge of the image is taken to be zero, and the result
     is cropped to the image, so the total flux is kept only for structure
@@ -836,12 +837,11 @@ def convolve_beam(image, pixel_scale_mas, beam):
     pa = np.deg2rad(beam.pa_deg)
     along = x * np.sin(pa) + y * np.cos(pa)  # the major axis is (sin, cos)
     across = x * np.cos(pa) - y * np.sin(pa)
-    fwhm_per_sigma = 2.0 * onp.sqrt(2.0 * onp.log(2.0))
     kernel = np.exp(
         -0.5
         * (
-            (along * fwhm_per_sigma / beam.major_mas) ** 2
-            + (across * fwhm_per_sigma / beam.minor_mas) ** 2
+            (along * FWHM_PER_SIGMA / beam.major_mas) ** 2
+            + (across * FWHM_PER_SIGMA / beam.minor_mas) ** 2
         )
     ).astype(image.dtype)
     return fftconvolve(image, kernel / np.sum(kernel), mode="same")
@@ -920,7 +920,7 @@ def _scale_shapes(scales_mas, support, pixel_scale_mas):
         if s == 0.0:
             shapes.append(None)
             continue
-        sigma = s / (2.0 * onp.sqrt(2.0 * onp.log(2.0)) * pixel_scale_mas)
+        sigma = s / (FWHM_PER_SIGMA * pixel_scale_mas)
         kernel = onp.exp(
             -0.5 * ((offsets[:, None] - offsets[None, :]) / sigma) ** 2
         )
@@ -1033,7 +1033,7 @@ def _clean_columns(parts, observations, fluxes, indices, scale, rotation):
 def _refit(fixed, fluxes, chi2, scale, rotation):
     """A major cycle: refit the fluxes of the components, keeping them >= 0.
 
-    Linearises the residuals about the current fluxes over the components
+    Linearizes the residuals about the current fluxes over the components
     (one Jacobian–vector product each), solves the non-negative least
     squares problem for their fluxes, and backtracks along the step until
     χ² falls. Components it sets to zero are removed. Returns the new
@@ -1078,7 +1078,7 @@ def _refit(fixed, fluxes, chi2, scale, rotation):
 def _clean_model(base, components, pixel_scale_mas, rotation_deg, spectrum):
     """The base with the components as an Image: the model ``clean`` returns.
 
-    ``components`` are the fluxes on the grid (unnormalised without a
+    ``components`` are the fluxes on the grid (unnormalized without a
     base). With no flux in them, the base alone.
     """
     components = onp.asarray(components, float)
@@ -1164,7 +1164,7 @@ class CleanResult:
     components : array, shape (npix, npix)
         The components' total flux in each pixel of the grid,
         ``Σ_s G_s * F_s`` summed over the scales, relative to the base
-        scene's weight (without a base scene, normalised to unit sum).
+        scene's weight (without a base scene, normalized to unit sum).
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
     chi2_red : array
@@ -1237,10 +1237,10 @@ def clean(
     times that step, ``-g_p / (2 |J e_p|²)``. This is matching pursuit; for
     linear data, where ``|J e_p|`` is the same everywhere, it is exactly
     Högbom's CLEAN. The norms ``|J e_p|`` are computed once, at the start,
-    with one Jacobian–vector product per pixel. Normalising by them matters
+    with one Jacobian–vector product per pixel. Normalizing by them matters
     next to an analytic star, where flux in a pixel is nearly the same as
     the star's: the gradient there is small, but so is ``|J e_p|``, and an
-    unnormalised search would pile flux beside the star.
+    unnormalized search would pile flux beside the star.
 
     Components are added to a fixed ``base`` scene, usually an analytic
     star at flux 1; fit its parameters first. Their fluxes are relative to
@@ -1258,7 +1258,7 @@ def clean(
     be undone by later ones. Every ``refit_every`` iterations a **major
     cycle** (as in Clark and Cotton–Schwab CLEAN) refits the fluxes of all
     the components at once, by non-negative least squares on the
-    linearised residuals: flux can move between components, and components
+    linearized residuals: flux can move between components, and components
     whose flux falls to zero are removed. The fluxes stay non-negative.
     A last major cycle runs when CLEAN stops at the target or at
     ``max_iterations``, so that the fluxes it returns are refitted even when
@@ -1280,7 +1280,7 @@ def clean(
     same score ``g² / |J e|²``, and the major cycles refit the components
     at all scales together. An extended source then takes a few broad
     components instead of many points. Each shape is cut to the
-    ``support`` and renormalised there, so a component's flux is the flux
+    ``support`` and renormalized there, so a component's flux is the flux
     it puts in the image. Cornwell multiplies the peak residual at each
     scale by a bias ``1 - 0.6 s / s_max`` that favours small scales,
     because the peak of a smoothed residual grows with the scale's area.
@@ -1367,7 +1367,7 @@ def clean(
     CleanResult
         The model, components and χ² history. The model can be polished
         with [`fit`][virgil.fitting.fit] on the components' support, used
-        as a starting image for a regularised fit, or restored with the
+        as a starting image for a regularized fit, or restored with the
         beam.
     """
     observations = tuple(data) if isinstance(data, (list, tuple)) else (data,)
@@ -1485,7 +1485,7 @@ def clean(
             # A pixel whose flux cannot change the model has |J e_p| = 0
             # exactly, but rounding leaves ~eps |J e|max there: without a
             # base scene the seed pixel is such a pixel (flux added to the
-            # only component leaves the normalised image unchanged), and
+            # only component leaves the normalized image unchanged), and
             # on an even grid its phase factors are not exactly 1. Its
             # score 1/|J e_p|² would be ~1e24 and, on any noise in the
             # gradient, win the search and take an infinite step. Pixels
@@ -1591,13 +1591,13 @@ class LCurve:
     Attributes
     ----------
     weights : array
-        The regularisation weights, in the order fitted (largest first).
+        The regularization weights, in the order fitted (largest first).
     chi2 : array
         Total χ² of each fit.
     chi2_red : array, shape (n_weights, n_datasets)
         χ² per data point of each dataset.
     penalty : array
-        The unweighted regulariser, ``value / weight``, of each fit.
+        The unweighted regularizer, ``value / weight``, of each fit.
     results : list of FitResult
         The fits.
     """
@@ -1611,7 +1611,7 @@ class LCurve:
     def corner(self):
         """The weight at the L-curve's corner, where it bends most sharply.
 
-        The curve is ``(log χ², log penalty)`` parametrised by ``log w``;
+        The curve is ``(log χ², log penalty)`` parametrized by ``log w``;
         the corner is the interior point of largest curvature (Hansen &
         O'Leary 1993). Check it by eye: the curvature of a sparse or noisy
         sweep is itself noisy, and a smooth curve has no clear corner.
@@ -1635,14 +1635,14 @@ class LCurve:
     def discrepancy(self, target=1.0):
         """The weight at which χ² per data point reaches ``target``.
 
-        This is Morozov's discrepancy principle: regularise as strongly as
+        This is Morozov's discrepancy principle: regularize as strongly as
         the data allow. With several datasets, the binding one (the largest
         χ² per point) must reach the target, so that a well-fitted dataset
         cannot hide a badly fitted one. It interpolates linearly in ``log w`` between the
         fitted weights, and returns ``None`` if the sweep never crosses the
         target. The truth itself has χ² per point of 1 ± √(2/N), so the
         default target of 1 is the natural one. It relies on correct error
-        bars; with underestimated errors it over-regularises.
+        bars; with underestimated errors it over-regularizes.
         """
         binding = np.max(
             np.reshape(self.chi2_red, (len(self.weights), -1)), axis=1
@@ -1682,7 +1682,7 @@ class LCurve:
         data : OIData or sequence of OIData
             The data the sweep was fitted to.
         path : str, optional
-            Path of the regularised Image in the model (default ``"env"``).
+            Path of the regularized Image in the model (default ``"env"``).
 
         References
         ----------
@@ -1821,12 +1821,12 @@ def _single_model(model, caller):
 
 @eqx.filter_jit
 def _jitted_log_norm(model, datasets):
-    """The marginal nuisances' log-normaliser, summed over datasets."""
+    """The marginal nuisances' log-normalizer, summed over datasets."""
     return sum(_whitened_and_log_norm(model, d)[1] for d in datasets)
 
 
 def _log_norm(model, data):
-    """``_whitened_and_log_norm``'s log-normaliser at ``model``, in float64."""
+    """``_whitened_and_log_norm``'s log-normalizer at ``model``, in float64."""
     datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
     with run_in("float64"):
         model, datasets = cast_tree((model, datasets), "float64")
@@ -1862,19 +1862,19 @@ def log_evidence(model, data, path="env"):
     does not support fits with ``noise=`` terms, nor fits with one model
     per dataset.
 
-    **Normalisation.** ``-½ χ² - L`` is
+    **Normalization.** ``-½ χ² - L`` is
     [`model_loglike`][virgil.likelihood.model_loglike] at the MAP less
-    its data-only normalisation, ``-Σ log σ - ½ n log 2π`` (in its von
+    its data-only normalization, ``-Σ log σ - ½ n log 2π`` (in its von
     Mises form for unprojected phases, and with the correlated closure
     phases' determinant), which is the same for every model and
     hyperparameter on a given dataset and so cancels in differences of
     ``log Z``, the only meaningful quantity. For plain data ``L = 0``.
-    ``L`` is the rest of the likelihood's normaliser, which can depend on
+    ``L`` is the rest of the likelihood's normalizer, which can depend on
     the model and on nuisance widths: for data with calibration gains
     ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]) or closure
     offsets
     ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]),
-    which the likelihood marginalises, it is ½ log det of their covariance
+    which the likelihood marginalizes, it is ½ log det of their covariance
     factor, and for extra observables (``OIData.extras``) the log ratio of
     their effective to quoted errors. It is evaluated at the MAP exactly
     as the likelihood evaluates it, so that evidences for data with
@@ -2128,9 +2128,9 @@ def _check_scalable_blocks(datasets):
 
     The block fixed point assumes that scaling a block's quoted errors by
     ``s_b`` divides its whitened residuals and Jacobian rows by ``s_b``.
-    That fails where the likelihood marginalises a nuisance with its own
+    That fails where the likelihood marginalizes a nuisance with its own
     width, ``s_b² D + U Λ Uᵀ``: calibration gains, closure-phase offsets,
-    flux spectra's marginalised scales, and differential phases with a
+    flux spectra's marginalized scales, and differential phases with a
     finite ``prior_width``. ``with_error_scale`` scales only ``D``, so the
     returned scales would not be the evidence optimum for the rescaled data.
     """
@@ -2142,7 +2142,7 @@ def _check_scalable_blocks(datasets):
             reasons.append("closure-phase offsets (with_closure_offsets)")
         for b in d.extras:
             if b.model_dependent_covariance:
-                reasons.append(f"a marginalised {b.kind} block")
+                reasons.append(f"a marginalized {b.kind} block")
             elif getattr(b, "prior_width", None) is not None:
                 reasons.append(f"a {b.kind} block with a finite prior_width")
         if reasons:
@@ -2166,7 +2166,7 @@ def error_scale(model, data, path="env", *, by_observable=False):
     a hyperparameter, like the prior's ``sigma`` and ``length_mas``. Write
     the noise precision as β = 1/s², so that the likelihood is
     ``exp(-β χ²/2)``, with χ² computed with the quoted errors. The
-    Laplace-approximated evidence, as a function of β, is maximised when
+    Laplace-approximated evidence, as a function of β, is maximized when
 
     $$\frac{1}{\beta} = s^2 = \frac{\chi^2}{N - \gamma},
     \qquad \gamma = \sum_i \frac{\beta\lambda_i}{1 + \beta\lambda_i}.$$
@@ -2186,7 +2186,7 @@ def error_scale(model, data, path="env", *, by_observable=False):
     ``N`` residuals, only ``N − γ`` are free to scatter, and an honest error
     bar gives χ² ≈ N − γ, not N. The ordinary "χ² per point" estimate,
     ``s² = χ²/N``, is biased low for the same reason as the 1/N estimate of
-    a sample variance; this is its Bayesian, nonlinear generalisation. It is
+    a sample variance; this is its Bayesian, nonlinear generalization. It is
     MacKay's re-estimation formula for β (MacKay 1992, eq. 4.10, with γ
     from eq. 4.9; Bishop 2006, eqs. 3.91–3.95).
 
@@ -2197,7 +2197,7 @@ def error_scale(model, data, path="env", *, by_observable=False):
     fitting and rescaling is a fixed-point iteration; in practice one
     rescaling usually suffices. Error bars that are too large make the
     discrepancy principle, classic MaxEnt and the evidence all
-    over-regularise, so rescale before choosing hyperparameters with any of
+    over-regularize, so rescale before choosing hyperparameters with any of
     them. The estimate assumes the model is adequate: if the data contain
     structure the model cannot fit, ``s`` absorbs it.
 
@@ -2215,7 +2215,7 @@ def error_scale(model, data, path="env", *, by_observable=False):
     phases underweighted. With ``by_observable=True`` each kind of
     observable ``b`` (``"vis"``, ``"phi"`` and each kind in ``extras``,
     pooled over the datasets) gets its own precision β_b on its own rows
-    of the residual vector. The evidence is then maximised where, for
+    of the residual vector. The evidence is then maximized where, for
     every block,
 
     $$\frac{1}{\beta_b} = s_b^2 = \frac{\chi^2_b}{N_b - \gamma_b},
@@ -2235,7 +2235,7 @@ def error_scale(model, data, path="env", *, by_observable=False):
     cannot oscillate) from ``β_b = N_b/χ²_b`` to a relative change of
     1e-10. With one block it reproduces the single scale. The blocks'
     covariances must be ``s_b² D``: data with calibration gains,
-    closure-phase offsets, marginalised flux scales or differential phases
+    closure-phase offsets, marginalized flux scales or differential phases
     with a finite ``prior_width`` add nuisance covariance that does not
     scale with the quoted errors, and raise a ``ValueError`` (the single
     scale makes the same assumption, so treat it with care for such data).
@@ -2334,19 +2334,19 @@ def l_curve(
     model,
     priors,
     data,
-    regulariser,
+    regularizer,
     weights,
     others=(),
     *,
     warm_start=True,
     **fit_options,
 ):
-    """Fit a model over a range of weights for one regulariser.
+    """Fit a model over a range of weights for one regularizer.
 
     The weights are fitted from largest to smallest, each starting from the
     previous solution, which is faster and more stable than starting every
     fit afresh. Plot ``penalty`` against ``chi2`` (both on log axes) to see
-    the trade-off between fitting the data and regularising the image, and
+    the trade-off between fitting the data and regularizing the image, and
     compare [`LCurve.corner`][virgil.imaging.LCurve.corner] and
     [`LCurve.discrepancy`][virgil.imaging.LCurve.discrepancy] with
     the images either side: there is usually a wide range of good weights.
@@ -2355,13 +2355,13 @@ def l_curve(
     ----------
     model, priors, data
         As for [`fit`][virgil.fitting.fit].
-    regulariser : TSV, TV, MaxEntropy, Laplacian, StarletL1 or LogSum
-        The regulariser whose ``weight`` is swept (its own weight is
+    regularizer : TSV, TV, MaxEntropy, Laplacian, StarletL1 or LogSum
+        The regularizer whose ``weight`` is swept (its own weight is
         ignored).
     weights : sequence of float
         The weights to try.
     others : sequence, optional
-        Further regularisers kept fixed, e.g. a
+        Further regularizers kept fixed, e.g. a
         [`Centroid`][virgil.imaging.Centroid] prior.
     warm_start : bool, optional
         Start each fit from the previous, stronger one (default), or every
@@ -2386,7 +2386,7 @@ def l_curve(
     start = init = fit_options.pop("init", None)
     for weight in weights:
         weighted = eqx.tree_at(
-            lambda r: r.weight, regulariser, np.asarray(weight, dtype=float)
+            lambda r: r.weight, regularizer, np.asarray(weight, dtype=float)
         )
         result = fit(
             model, priors, data, [weighted, *others], init=init, **fit_options
@@ -2494,12 +2494,13 @@ def _chi2(model, observations):
     return [float(c) for c in _jitted_chi2(model, tuple(observations))]
 
 
-def diagnose(model, data, regularisers=()):
+@renamed()
+def diagnose(model, data, regularizers=()):
     """Check a model and its data for common imaging pitfalls.
 
     Nothing is printed or warned: print the returned
     [`Diagnosis`][virgil.imaging.Diagnosis] to read it. Run it on the
-    fitted model, with the regularisers used in the fit.
+    fitted model, with the regularizers used in the fit.
 
     Parameters
     ----------
@@ -2509,8 +2510,8 @@ def diagnose(model, data, regularisers=()):
         otherwise).
     data : OIData or sequence of OIData
         The data.
-    regularisers : sequence, optional
-        The regularisers of the fit; a
+    regularizers : sequence, optional
+        The regularizers of the fit; a
         [`Centroid`][virgil.imaging.Centroid] fixes the position.
 
     Returns
@@ -2544,13 +2545,13 @@ def diagnose(model, data, regularisers=()):
         elif red < 0.5:
             warns.append(
                 f"Dataset {i} has chi2 per point {red:.2f} < 0.5: the model "
-                "over-fits or the errors are overestimated; regularise more "
+                "over-fits or the errors are overestimated; regularize more "
                 "or check the error bars."
             )
 
     checks["anchored"] = (
         any(isinstance(part, PointSource) for _, part in parts)
-        or any(isinstance(r, Centroid) for r in regularisers)
+        or any(isinstance(r, Centroid) for r in regularizers)
         or any(
             d.observable_kind == "split"
             and not d.cp_flag

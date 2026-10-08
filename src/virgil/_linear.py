@@ -1,4 +1,4 @@
-"""Analytic marginalisation of parameters that enter the model linearly.
+"""Analytic marginalization of parameters that enter the model linearly.
 
 The data are ``d = m + A w + n``: a model m, a design A (n × k) times
 linear parameters w, and noise ``n ~ N(0, D)``, ``D = diag(σ²)``. With a
@@ -12,7 +12,7 @@ In whitened coordinates, ``x = D^-½ (d - m - A μ)`` and
 ``I + U Uᵀ``. Everything here works on ``(x, U)``. It returns a whitened
 residual of the same length as x, so the likelihood keeps one residual
 vector, and the log-determinant ``½ log det(I + UᵀU)``, kept as effective
-errors or a log-normalisation.
+errors or a log-normalization.
 
 **Rules**:
 
@@ -48,8 +48,8 @@ errors or a log-normalisation.
 
 [`LinearMarginal`][virgil._linear.LinearMarginal] wraps either for one
 design with a stated prior. The Laplace covariance of a fit's latent
-parameters (``fitting._laplace_covariance``) uses the same Woodbury
-identity, but to invert a curvature, not to marginalise a likelihood, so
+parameters (``fitting._gauss_newton_covariance``) uses the same Woodbury
+identity, but to invert a curvature, not to marginalize a likelihood, so
 it is not built on this module.
 """
 
@@ -168,7 +168,7 @@ def whiten_cholesky(x, U):
 
 
 def posterior(x, U):
-    """Conditional posterior of the standardised parameters ω.
+    """Conditional posterior of the standardized parameters ω.
 
     With ``w = μ + Λ^½ ω``, the prior is ``ω ~ N(0, I)``. Given
     ``x = D^-½ (d - m - A μ)``, the posterior is ``ω ~ N(S⁻¹ Uᵀ x, S⁻¹)``,
@@ -188,7 +188,7 @@ def posterior(x, U):
 
 
 class LinearMarginal(eqx.Module):
-    """A design ``A`` whose parameters w are marginalised under a stated prior.
+    """A design ``A`` whose parameters w are marginalized under a stated prior.
 
     Parameters
     ----------
@@ -268,7 +268,7 @@ class LinearMarginal(eqx.Module):
         self.prior_root = root
         self.method = method
 
-    def standardise(self, resid, sigma):
+    def standardize(self, resid, sigma):
         """``(x, U)`` for residuals ``resid = d - m`` and errors ``sigma``."""
         sigma = np.asarray(sigma)
         x = (np.asarray(resid) - self.design @ self.prior_mean) / sigma
@@ -276,7 +276,7 @@ class LinearMarginal(eqx.Module):
         return x, U
 
     def whiten(self, resid, sigma):
-        """Whitened residuals and the log-normalisation.
+        """Whitened residuals and the log-normalization.
 
         Returns
         -------
@@ -284,7 +284,7 @@ class LinearMarginal(eqx.Module):
             ``u`` with ``uᵀu = rᵀ(D + AΛAᵀ)⁻¹r`` (``r = d - m - Aμ``), and
             ``½ log det(D + AΛAᵀ) = Σ log σ + ½ log det(I + UᵀU)``.
         """
-        x, U = self.standardise(resid, sigma)
+        x, U = self.standardize(resid, sigma)
         whiten = (
             whiten_cholesky if self.method == "cholesky" else whiten_rank_one
         )
@@ -292,13 +292,13 @@ class LinearMarginal(eqx.Module):
         return u, np.sum(np.log(np.asarray(sigma))) + half_logdet
 
     def loglike(self, resid, sigma):
-        """The normalised Gaussian log density of the marginalised data."""
+        """The normalized Gaussian log density of the marginalized data."""
         u, log_norm = self.whiten(resid, sigma)
         return -0.5 * u @ u - log_norm - 0.5 * u.size * np.log(2.0 * np.pi)
 
     def posterior(self, resid, sigma):
         """Conditional posterior of w: ``(mean, cov)``, in w's own units."""
-        x, U = self.standardise(resid, sigma)
+        x, U = self.standardize(resid, sigma)
         mean, cov = posterior(x, U)
         root = self.prior_root
         return self.prior_mean + root @ mean, root @ cov @ root.T

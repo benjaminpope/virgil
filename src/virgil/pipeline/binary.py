@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import numpy as onp
+from scipy import stats
 
 from . import _checks, _io
 from .._geometry import separation_pa
@@ -81,8 +82,9 @@ def _chi2(model, data, **noise):
 
 def _moments(r):
     r = onp.asarray(r, dtype=float)
-    z = (r - r.mean()) / (r.std() or 1.0)
-    return float(onp.mean(z**3)), float(onp.mean(z**4) - 3.0)
+    if r.std() <= 1e-12 * max(abs(r.mean()), 1.0):
+        return 0.0, -3.0  # scipy gives NaN for (near-)constant residuals
+    return float(stats.skew(r)), float(stats.kurtosis(r))
 
 
 GLOBAL_NSIGMA_METHOD = "Sidak estimate, not a simulated FAP"
@@ -397,8 +399,8 @@ class BinaryPipeline(_Pipeline):
             Stage("quicklook", _quicklook, ("quicklook.ipynb",)),
         )
 
-    def _summarise(self, reports):
-        return _summarise(self.settings, reports)
+    def _summarize(self, reports):
+        return _summarize(self.settings, reports)
 
 
 # === STAGES ===
@@ -887,7 +889,7 @@ def _companion(params, source):
     return out
 
 
-def _summarise(settings, reports):
+def _summarize(settings, reports):
     sections, checks = {}, []
     load = reports.get("load")
     if load:

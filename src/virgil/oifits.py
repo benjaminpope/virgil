@@ -85,7 +85,7 @@ def read_oifits(
 
         * ``"flux"``: ``OI_FLUX`` as a spectrum known up to a grey scale
           (``FLUXDATA``, or GRAVITY's ``FLUX``);
-        * ``"nflux"``: ``OI_FLUX`` as a spectrum normalised to its
+        * ``"nflux"``: ``OI_FLUX`` as a spectrum normalized to its
           continuum (choose one of ``"flux"`` and ``"nflux"``);
         * ``"t3amp"``: the triple amplitudes ``T3AMP`` of ``OI_T3``;
         * ``"visamp"``: ``OI_VIS`` ``VISAMP`` beside ``OI_VIS2``, as the
@@ -210,7 +210,7 @@ def _check_extras(extras):
     if "flux" in extras and "nflux" in extras:
         raise ValueError(
             "Read OI_FLUX either as 'flux' (up to a grey scale) or as "
-            "'nflux' (normalised to its continuum), not both."
+            "'nflux' (normalized to its continuum), not both."
         )
     return extras
 
@@ -553,7 +553,7 @@ def _check_amptyp(hdu):
     if amptyp != "absolute":
         raise ValueError(
             f"VISAMP in this OI_VIS table has AMPTYP = {amptyp!r}, not "
-            "'absolute'. A differential visibility is normalised across "
+            "'absolute'. A differential visibility is normalized across "
             "the band and a correlated flux is in flux units (e.g. MATISSE "
             "products reduced with corrFlux=TRUE), so neither can be fitted "
             "as a visibility amplitude. Calibrate the amplitudes into "
@@ -823,6 +823,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
             "that time, in either orientation. Each is placed at the OI_T3 "
             "table's own (u, v) as a flagged sample: the closure phases are "
             "fitted, but the V² coverage of this file is incomplete.",
+            UserWarning,
             stacklevel=4,
         )
     if extra["u"]:

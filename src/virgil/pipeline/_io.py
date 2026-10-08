@@ -72,7 +72,7 @@ def _json_default(value):
         return clean_json(onp.asarray(value).tolist())
     if isinstance(value, Path):
         return str(value)
-    raise TypeError(f"{type(value).__name__} is not JSON serialisable.")
+    raise TypeError(f"{type(value).__name__} is not JSON serializable.")
 
 
 def _clean_float(value):

@@ -1,6 +1,6 @@
 # Imaging, part 7: ensembles of reconstructions
 
-Every reconstruction in parts 2–6 rests on choices the data do not make: the regulariser, its weight, the pixel size, the field and the starting image. Part 2 chose them carefully, with L-curves and the discrepancy principle, but a different careful choice would give a somewhat different image. Which features survive any reasonable choice, and which belong to one choice alone?
+Every reconstruction in parts 2–6 rests on choices the data do not make: the regularizer, its weight, the pixel size, the field and the starting image. Part 2 chose them carefully, with L-curves and the discrepancy principle, but a different careful choice would give a somewhat different image. Which features survive any reasonable choice, and which belong to one choice alone?
 
 Drevon et al. (2025, [arXiv:2609.15365](https://arxiv.org/abs/2609.15365)) won the 2024 interferometric imaging contest by not choosing. Their PYRA runs thousands of reconstructions with these settings drawn at random, and their MYTHRA keeps the ones that fit the data and averages them, adding members only while the average still fits. The mean is less sensitive to any one choice than a single reconstruction is, and the spread of the members shows where the image depends on the choices. [`virgil.ensemble`](api/ensemble.md) does the same with virgil's own fits. It is written from the paper's description, not from their code.
 
@@ -11,7 +11,7 @@ Drevon et al. (2025, [arXiv:2609.15365](https://arxiv.org/abs/2609.15365)) won t
 
 An [`EnsembleSpec`](api/ensemble.md#virgil.ensemble.EnsembleSpec) says what to draw. Each **group** of reconstructions draws:
 
-- a regulariser family: total variation, total squared variation, maximum entropy or the starlet L1 norm of part 6;
+- a regularizer family: total variation, total squared variation, maximum entropy or the starlet L1 norm of part 6;
 - a pixel size, the Nyquist scale over 2, 3 or 4;
 - a field, 1, 2 or 4 times `field_of_view(data)`, so that the image can hold flux the shortest baselines resolve out (on a uv lattice, as for AMI, a field above 1 would alias, so there the factors are capped at 1); a field too large for `max_npix` pixels takes coarser pixels, down to the Nyquist scale, beyond which it is cropped;
 - a starting image: the Gaussian envelope of `starting_image`, or a flat one (or, for data with phases, the dirty image);
@@ -30,7 +30,7 @@ The group is then one L-curve ([`l_curve`](api/imaging.md#virgil.imaging.l_curve
 3. **A common grid.** Resample the survivors to the finest pixels and the largest field among them, conserving flux ([`metrics.resample`](api/metrics.md#virgil.metrics.resample)). Without a star, recentre each on the best member ([`metrics.align`](api/metrics.md#virgil.metrics.align)); with one, the star fixes the position.
 4. **The iterative mean.** In order of χ², add members to a running mean one at a time, keeping each only if, on every dataset, the mean's χ² stays within `mean_rtol` of the best member's: by default the χ²/N noise √(2/N), so the mean fits as well as the best member up to the noise. It is judged against the best member, not the running mean, so the tolerance cannot compound. The mean is judged as the mixture of the members' images on their own grids, which is exact; the common grid of step 3 is for display, since resampling smooths the images and on precise data can raise their χ² several-fold. `mean_rtol=0` never lets the mean's χ² rise; on data the best member already fits to the noise, that strict rule often keeps the best member alone, and the spread is then zero (`combine` warns when fewer than `min_kept` members are kept). Give the squared visibilities and closure phases as separate datasets, and each is judged on its own, as in the paper.
 
-With a star, the members are averaged as whole normalised skies: the star's share of the flux is their mean, and the image's pixels the mean of their fluxes.
+With a star, the members are averaged as whole normalized skies: the star's share of the flux is their mean, and the image's pixels the mean of their fluxes.
 
 ## A small example
 
@@ -79,11 +79,11 @@ plt.tight_layout()
 print(score(result.mean, truth.env, max_shift_mas=resolution.major_mas))
 ```
 
-[`metrics.score`](api/metrics.md#virgil.metrics.score) compares the mean with the truth: it resamples it onto the truth's grid and reports the normalised cross-correlation, the 2024 contest's L1 score and the older contests' metrics.
+[`metrics.score`](api/metrics.md#virgil.metrics.score) compares the mean with the truth: it resamples it onto the truth's grid and reports the normalized cross-correlation, the 2024 contest's L1 score and the older contests' metrics.
 
 ## Ensemble spread is not a posterior
 
-The standard deviation map answers "how much does the image change between reasonable reconstruction choices?" It is large where the regularisers disagree and nearly zero where every choice agrees. It does not include the noise in the data: an ensemble of reconstructions of noiseless data still has a spread, and one of very noisy data can have little if every regulariser smooths the noise the same way.
+The standard deviation map answers "how much does the image change between reasonable reconstruction choices?" It is large where the regularizers disagree and nearly zero where every choice agrees. It does not include the noise in the data: an ensemble of reconstructions of noiseless data still has a spread, and one of very noisy data can have little if every regularizer smooths the noise the same way.
 
 The posterior standard deviation of [part 5](imaging_sampling.md) answers a different question: given one prior, how uncertain is the image because of the noise? The two are complementary. A feature that is significant in the posterior but absent from many ensemble members depends on the prior; a feature present in every member but with a broad posterior is robust to the method but not well measured.
 
@@ -118,7 +118,7 @@ Group tasks that share a geometry each compile it once. JAX's persistent compila
 
 ## Summary
 
-- **`ensemble`** draws regulariser families, weights, pixel sizes, fields and starts, fits each group as an L-curve, and selects and averages the members (PYRA and MYTHRA, Drevon et al. 2025).
+- **`ensemble`** draws regularizer families, weights, pixel sizes, fields and starts, fits each group as an L-curve, and selects and averages the members (PYRA and MYTHRA, Drevon et al. 2025).
 - **Selection** keeps each group's L-curve window, drops members that fit any dataset badly and χ² outliers, and adds members to the mean only while no dataset's χ² rises.
 - **The result** is a mean image, a per-pixel standard deviation across the kept members, and the raw χ² per data point of the mean on each dataset.
 - **Compilation** is per geometry and family, not per fit; on a cluster, use `draw_groups`, `run_group` and `combine`.

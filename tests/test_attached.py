@@ -19,6 +19,7 @@ from virgil.models import (  # noqa: E402
 )
 from virgil.oidata import OIData, cp_indices  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
+from tests._shared import PAIRS, TRIANGLES  # noqa: E402
 
 T_REF = 60500.0
 ORBIT = KeplerOrbit(
@@ -32,8 +33,6 @@ ORBIT = KeplerOrbit(
     t_ref=T_REF,
 )
 STATIONS = onp.array([[0.0, 0.0], [60.0, 5.0], [25.0, 70.0], [-40.0, 45.0]])
-PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
-TRIANGLES = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
 
 
 def _epochs(mjds, wavel=2.2e-6):

@@ -22,10 +22,9 @@ from virgil.oidata import OIData, cp_indices
 from virgil.oifits import build_hdulist, read_oifits, write_oifits
 from virgil.spectra import GaussianLine, PowerLaw, Sum
 from virgil._utils import mas2rad
+from tests._shared import PAIRS, TRIANGLES  # noqa: E402
 
 STATIONS = onp.array([[0.0, 0.0], [32.0, 2.0], [14.0, 26.0], [-11.0, 18.0]])
-PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
-TRIANGLES = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
 WAVES = onp.linspace(2.150e-6, 2.180e-6, 12)
 LINE = (2.163e-6, 2.169e-6)
 
@@ -416,7 +415,7 @@ def test_visphi_whitening_matches_a_dense_covariance():
 # === SPECTRA ===
 
 
-def test_flux_grey_scale_is_recovered_and_marginalised():
+def test_flux_grey_scale_is_recovered_and_marginalized():
     data = OIData(read_oifits(build_hdulist(_tables()), extras=("flux",)))
     data = data.with_flux_scale(scale=SCALE_PRIOR)
     (block,) = [b for b in data.extras if b.kind == "flux"]
@@ -477,7 +476,7 @@ def eqx_values(block, values):
     return block.rebuild(values=onp.asarray(values))
 
 
-def test_nflux_is_the_continuum_normalised_total_spectrum():
+def test_nflux_is_the_continuum_normalized_total_spectrum():
     data = OIData(read_oifits(build_hdulist(_tables()), extras=("nflux",)))
     cont = [(2.150e-6, 2.160e-6), (2.172e-6, 2.180e-6)]
     data = data.with_continuum(cont)
@@ -633,7 +632,7 @@ def test_error_scales_per_observable_cover_the_extras():
         assert changed.size and set(changed) <= set(rows[kind])
 
 
-def test_fit_refuses_least_squares_with_a_marginalised_scale():
+def test_fit_refuses_least_squares_with_a_marginalized_scale():
     import numpyro.distributions as dist
 
     from virgil.fitting import fit
@@ -800,7 +799,7 @@ def test_the_grey_scale_prior_is_stated_not_taken_from_the_data():
     onp.testing.assert_array_equal(louder.mu, block.mu)
 
 
-def test_with_model_draws_the_marginalised_modes_at_their_widths():
+def test_with_model_draws_the_marginalized_modes_at_their_widths():
     # The grey scale and the finite-prior VISPHI offsets are drawn from
     # their priors, so simulations have the likelihood's covariance.
     data = OIData(

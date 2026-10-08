@@ -20,9 +20,9 @@ from virgil.likelihood import model_loglike, whitened_residuals
 from virgil.models import BinaryModelCartesian, UniformDisk
 from virgil.oidata import OIData
 from virgil.oifits import read_oifits, write_oifits
+from tests._shared import PAIRS  # noqa: E402
 
 STATIONS = onp.array([[0.0, 0.0], [32.0, 2.0], [14.0, 26.0], [-11.0, 18.0]])
-PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
 WAVES = onp.array([1.6e-6, 1.8e-6, 2.0e-6])
 DISK = UniformDisk(2.5)
 

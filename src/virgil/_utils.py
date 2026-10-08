@@ -13,8 +13,13 @@ import numpy as onp
 rad2mas = 180.0 / np.pi * 3600.0 * 1000.0  # convert rad to mas
 mas2rad = np.pi / 180.0 / 3600.0 / 1000.0  # convert mas to rad
 dtor = np.pi / 180.0  # convert deg to rad
+# FWHM of a Gaussian over its standard deviation, 2 sqrt(2 ln 2)
+FWHM_PER_SIGMA = float(2.0 * onp.sqrt(2.0 * onp.log(2.0)))
 
-i2pi = 1j * 2.0 * np.pi
+
+def _unit_sum(image):
+    """``image`` scaled to sum to one."""
+    return image / np.sum(image)
 
 
 def check_part_name(name, owner, kind, example, clashes_with):
@@ -121,7 +126,7 @@ def inflate_errors(
 
 
 def _reference(model):
-    """The model regularisers act on: the first if there is one per dataset."""
+    """The model regularizers act on: the first if there is one per dataset."""
     return model[0] if isinstance(model, (list, tuple)) else model
 
 

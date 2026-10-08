@@ -38,16 +38,16 @@ def _image(brightness, **kwargs):
     return Image.from_brightness(brightness, SCALE, **kwargs)
 
 
-def test_tsv_and_tv_penalise_edges_and_structure():
+def test_tsv_and_tv_penalize_edges_and_structure():
     flat = _image(np.ones((NPIX, NPIX)))
     blob = _image(gaussian_blob(NPIX, SCALE, 15.0))
     # A flat image only has steps at its (zero-padded) edges.
     b = flat.brightness
     assert np.isclose(TSV(1.0).value(flat), 4 * NPIX * b[0, 0] ** 2, rtol=1e-4)
-    for regulariser in (TSV(2.0), TV(2.0)):
-        assert regulariser.value(blob) > 0.0
+    for regularizer in (TSV(2.0), TV(2.0)):
+        assert regularizer.value(blob) > 0.0
         assert np.isclose(
-            regulariser.value(blob), 2.0 * type(regulariser)(1.0).value(blob)
+            regularizer.value(blob), 2.0 * type(regularizer)(1.0).value(blob)
         )
     tsv = TSV(3.0)
     assert np.isclose(0.5 * np.sum(tsv.residuals(blob) ** 2), tsv.value(blob))
@@ -85,7 +85,7 @@ def test_centroid_measures_sky_offsets_with_rotation():
     )
 
 
-def test_regularisers_find_the_image_by_path():
+def test_regularizers_find_the_image_by_path():
     scene = System(star=PointSource(), env=_image(np.ones((NPIX, NPIX))))
     assert np.isclose(
         TSV(1.0, path="env").value(scene), TSV(1.0).value(scene.env)
@@ -390,7 +390,7 @@ def test_dirty_image_finds_a_companion_once_the_star_is_removed():
 
 
 def test_removing_the_star_leaves_no_residual_point_at_the_centre():
-    # DISCO data are normalised on the shortest baselines, where a resolved
+    # DISCO data are normalized on the shortest baselines, where a resolved
     # ring makes |V| < 1. Subtracting the best-fitting point source keeps
     # the star's residual small, although 1/flux_ratio amplifies any error.
     from virgil.scenes import ring
@@ -449,7 +449,7 @@ def test_a_dirty_start_is_a_positive_image():
 
 @pytest.mark.filterwarnings("ignore:fit\\(method=:RuntimeWarning")
 @pytest.mark.parametrize(
-    "regularisers, method",
+    "regularizers, method",
     [
         (lambda v: [TSV(1e2), Centroid(v)], "lm"),
         (lambda v: [TV(1e2, epsilon=v * 1e-3), Centroid(5.0)], "lbfgs"),
@@ -458,7 +458,7 @@ def test_a_dirty_start_is_a_positive_image():
     ],
 )
 def test_new_centroid_widths_and_tv_smoothing_do_not_recompile(
-    regularisers, method
+    regularizers, method
 ):
     # sigma_mas and epsilon are arrays, like weight, so they are traced:
     # a new value reuses the fit's compilation. As Python floats they were
@@ -473,7 +473,7 @@ def test_new_centroid_widths_and_tv_smoothing_do_not_recompile(
             start,
             priors,
             data,
-            regularisers(value),
+            regularizers(value),
             method=method,
             max_steps=5,
         )

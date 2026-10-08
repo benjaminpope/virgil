@@ -540,6 +540,13 @@ def test_field_of_view_uses_each_sample_own_baseline_and_wavelength():
     assert nyquist_pixel_scale(data) == pytest.approx(0.5 * finest)
 
 
+def test_moments_of_constant_residuals_are_finite():
+    from virgil.pipeline.binary import _moments
+
+    assert _moments(onp.full(10, 0.1)) == (0.0, -3.0)
+    assert _moments(onp.zeros(5)) == (0.0, -3.0)
+
+
 # --- warnings raised inside stages --------------------------------------------
 
 
