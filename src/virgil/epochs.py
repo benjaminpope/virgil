@@ -823,7 +823,11 @@ class RankedOrbits:
 
 
 def _ranked(orbits, loglike, data):
-    order = onp.argsort(-loglike, kind="stable")
+    # The same deterministic order as score_orbits(...).order(). Imported
+    # here because orbit_search imports this module.
+    from .orbit_search import rank_scores
+
+    order = rank_scores(loglike)
     return RankedOrbits(
         orbits=tuple(orbits[k] for k in order),
         loglike=loglike[order],

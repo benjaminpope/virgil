@@ -325,6 +325,21 @@ def test_float32_agrees_with_float64_and_ties_rank_by_index():
     ]
 
 
+def test_rank_orbits_orders_near_ties_like_score_orbits():
+    """epochs._ranked used a plain argsort, so orbits whose log likelihoods
+    differ by rounding error ranked differently from ``.order()``."""
+    from types import SimpleNamespace
+
+    from virgil.epochs import _ranked
+
+    loglike = onp.array([1.0, 1.0 + 4e-4, onp.nan, 1.0 - 4e-4, -onp.inf])
+    stub = SimpleNamespace(times=[0.0], resolution_mas=1.0)
+    ranked = _ranked(list("abcde"), loglike, stub)
+    assert ranked.order.tolist() == rank_scores(loglike).tolist()
+    assert ranked.order.tolist() == [0, 1, 3, 2, 4]
+    assert ranked.orbits == tuple("abdce")
+
+
 def _through(t0, r0, t1, r1, period=300.0, dt_peri=50.0, ecc=0.3):
     """The orbit through positions r0 at t0 and r1 at t1 (Thiele–Innes)."""
     with jax.enable_x64(True):
