@@ -580,6 +580,13 @@ class Result:
                     lines.append(f"  {section}.{key} = {value:.6g}")
         for check in self.checks:
             lines.append(f"  [{check.status}] {check.name}: {check.message}")
+        caught = self.summary.get("warnings", [])
+        if caught:
+            stages = ", ".join(sorted({w["stage"] for w in caught}))
+            lines.append(
+                f"  {len(caught)} warning(s) recorded in the {stages} "
+                "stage(s) (see the checks, or Result.summary['warnings'])"
+            )
         return "\n".join(lines)
 
     @property

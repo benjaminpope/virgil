@@ -243,8 +243,21 @@ def _without_mplbackend():
             os.environ["MPLBACKEND"] = saved
 
 
+# The quicklook is light: the kernel runs on the CPU, so it neither fights
+# the parent process for the GPU nor preallocates its memory.
+_KERNEL_ENV = {
+    "JAX_PLATFORMS": "cpu",
+    "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+}
+
+
 def execute_notebook(nb, path, timeout=600):
-    """Execute ``nb`` in a fresh kernel of this Python, with cwd ``path``."""
+    """Execute ``nb`` in a fresh kernel of this Python, with cwd ``path``.
+
+    The kernel runs on the CPU, and its own stderr (the ``IPKernelApp``
+    banner, XLA logging) is written to ``quicklook.log`` in ``path``
+    instead of the caller's terminal.
+    """
     nbclient = _io.require_extra("nbclient")
     _io.require_extra("ipykernel")
     from jupyter_client.kernelspec import KernelSpecManager
@@ -280,7 +293,9 @@ def execute_notebook(nb, path, timeout=600):
             timeout=timeout,
             resources={"metadata": {"path": str(path)}},
         )
-        client.execute()
+        env = {**os.environ, **_KERNEL_ENV}
+        with open(Path(path) / "quicklook.log", "wb") as log:
+            client.execute(env=env, stderr=log)
     nb.metadata["kernelspec"] = {
         "name": "python3",
         "display_name": "Python 3",
