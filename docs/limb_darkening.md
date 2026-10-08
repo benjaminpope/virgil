@@ -235,11 +235,11 @@ plt.show()
 
 ```text
          truth         posterior
-  diam   6.000      6.037 ± 0.054
-    q1   0.360      0.536 ± 0.215
-    q2   0.292      0.150 ± 0.117
-    u1   0.350      0.219 ± 0.110
-    u2   0.250      0.519 ± 0.248
+  diam   6.000      6.025 ± 0.052
+    q1   0.360      0.488 ± 0.199
+    q2   0.292      0.174 ± 0.116
+    u1   0.350      0.241 ± 0.104
+    u2   0.250      0.458 ± 0.235
 ```
 
 ![limb_darkening output 11.2](generated/limb_darkening_cell011_out02.png)
@@ -288,6 +288,48 @@ res = StarPipeline(
 print(res.describe())
 ```
 
+```text
+StarPipeline run in /tmp/tmpcjftioud/star_run: complete
+  data.n_vis = 108
+  data.n_phi = 72
+  data.n_independent = 162
+  data.wavel_min_m = 1.6e-06
+  data.wavel_max_m = 2.4e-06
+  data.baseline_min_m = 36.51
+  data.baseline_max_m = 129.562
+  data.resolution_mas = 1.27361
+  data.fov_mas = 13.5589
+  data.freq_max_per_rad = 8.09765e+07
+  chi2.n_independent = 162
+  fit.scan_diam_mas = 5.68753
+  comparison.delta_chi2 = 105401
+  comparison.n_extra_params = 2
+  comparison.bic_penalty = 10.1752
+  star.diam_mas = 6.03562
+  star.diam_err_mas = 0.0614547
+  resolution.diam_mas = 6.03562
+  resolution.freq_max_per_rad = 8.09765e+07
+  resolution.first_null = 1.30315
+  resolution.first_null_fraction = 1.81827
+  posterior.num_chains = 4
+  posterior.num_samples = 1000
+  posterior.num_warmup = 1000
+  posterior.r_hat_max = 1.0474
+  posterior.ess_bulk_min = 112.585
+  posterior.divergence_fraction = 0.50775
+  lobes: 6.022 mas (best); 7.028 mas (Δχ² 6.31e+05); 9.108 mas (Δχ² 2.43e+06)
+  [fail] chi2_uniform: χ²/N = 652 for the uniform disk on quoted errors: the model does not describe the data, or the errors are much too small.
+  [pass] chi2_limb_darkened: χ²/N = 1.14 for the limb-darkened disk on quoted errors: consistent with the quoted errors.
+  [pass] limb_darkening_gain: Δχ² = 1.05e+05 for 2 extra parameters exceeds the BIC penalty 10.2: the limb-darkened disk model is preferred.
+  [pass] resolution: The longest baseline reaches 1.82 of the first null: the baselines reach the first null, so the diameter is well measured and limb darkening can be constrained.
+  [pass] multimodal: The best lobe (6.022 mas) beats the next (7.028 mas) by Δχ² = 6.31e+05.
+  [pass] limb_darkening_constrained: The data constrain every parameter (σ_posterior/σ_prior: q1 0.74, q2 0.40).
+  [pass] prior_bound: No posterior mass piles up at a prior bound.
+  [warn] r_hat: Largest R-hat 1.0474: run longer chains to be sure.
+  [warn] ess: Smallest bulk ESS 113: quantiles in the tails are noisy.
+  [warn] divergences: Divergent transitions: 51 per cent: 48 per cent of steps of 2 posterior standard deviations hit a hard wall of the likelihood (a closure-phase sign flip), so NUTS rejects the trajectories that cross it; the draws are expected to follow the truncated posterior, with reduced efficiency (see the ESS). A bispectrum likelihood would remove the walls (virgil#309).
+```
+
 ```python
 import matplotlib.pyplot as plt
 
@@ -299,3 +341,5 @@ plot_v2_models(
 )
 plt.show()
 ```
+
+![limb_darkening output 17.1](generated/limb_darkening_cell017_out01.png)
