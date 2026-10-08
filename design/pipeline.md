@@ -1,6 +1,6 @@
 # Pipelines: a stable contract over virgil's analyses
 
-Status: **BinaryPipeline built** (2026-10-08). `StarPipeline` (stable),
+Status: **BinaryPipeline and StarPipeline built** (2026-10-08).
 `OrbitPipeline` and `ImagingPipeline` (both provisional) follow as stacked
 PRs.
 
@@ -121,9 +121,58 @@ is recorded here.
 | Pipeline | CLI | Tier | Stages |
 | --- | --- | --- | --- |
 | `BinaryPipeline` | `binary` | stable | load, overview, search, limits, fit, posterior, quicklook |
-| `StarPipeline` | `star` | stable (planned) | load, overview, fit, posterior, quicklook; `model=` takes a model or a short name |
+| `StarPipeline` | `star` | stable | load, overview, fit, posterior, quicklook; `model=` takes a model or a short name |
 | `OrbitPipeline` | `orbit` | provisional (planned) | multi-epoch positions, orbit search, fit, posterior |
 | `ImagingPipeline` | `imaging` | provisional (planned) | regularised images, weight selection, uncertainty |
+
+## StarPipeline and its model registry
+
+`StarPipeline(data, model=None)` fits stellar diameters. `model` is a short
+name or a model instance, and the pipeline looks it up in a registry of
+`StarModel` entries (`virgil.pipeline.star.models()`): each entry says how
+to build the model from a dict of values, its parameter paths, starting
+values, group-invariant priors, whether it is fitted by a diameter scan,
+which parameters shape the star (their posterior widths are compared with
+their prior widths), derived quantities, and the simpler model it contains
+(for the Δχ² comparison). PR 5 adds `"gravity_darkened"`, `"harmonix"` and
+the other limb-darkened laws as entries, with no new class and no new
+stage; model-specific checks are appended to the end of the check list.
+
+Decisions:
+
+- The default fits `uniform` and `limb_darkened` and compares them by Δχ²
+  against a BIC penalty (2 ln N for two extra parameters). The preferred
+  model is saved as `models/best`; `Result.model(name)` and the other
+  accessors take `name=` (an additive change to `Result`).
+- A uniform disk is fitted by a scan of the diameter (coarse, then ±1%),
+  not by `fit`: closure phases flip by 180° at each null, so χ² is
+  discontinuous. The scan also seeds the other models' diameters, and its
+  Δχ² curve is written to `grids.h5` (`Result.grid()["delta_chi2"]`).
+- χ² and the scan are evaluated in float64: in float32, a closure phase at
+  a visibility near zero can flip, and χ² then jumps by orders of
+  magnitude. NUTS runs in the ambient precision, as in the tutorials and
+  `BinaryPipeline`.
+- Observing a star past its first null makes the closure-phase likelihood
+  a union of thin slivers (a 180 degree flip costs (180/sigma)^2 in chi^2),
+  and NUTS diverges at the walls whatever the precision or mass matrix.
+  The fit and posterior therefore run in float64, the diameter prior is
+  bounded to the best lobe. The scan's separate minima (at most
+  `max_lobes`) are fitted lobe by lobe for each model, with lobe bounds at
+  the midpoints between minima; the table is `fit.models.<name>.lobes`
+  (`diam_bounds_mas`, `diam_mas`, `chi2`, `chi2_reduced`, `delta_chi2`),
+  and the `multimodal` check cites it. NUTS runs on the best lobe only;
+  lobe evidence is left to nested sampling (virgil#309). The limb-darkened
+  fit starts from a grid of diameters as well as the scan.
+  Residual divergences are still reported, not hidden: within the best
+  lobe the posterior is a cell with hard walls in the diameter and in
+  q1, q2 (a limb-darkened null moves with q), and NUTS rejects the
+  trajectories that cross them. A wall probe (steps of two posterior
+  standard deviations that raise chi^2 by more than 1000) confirms them,
+  and then `divergences` warns instead of failing and names the walls. The
+  draws match a brute-force grid posterior on the tutorial star, with a
+  reduced ESS. A bispectrum likelihood (virgil#309) would remove the walls.
+- `processed`, `_noise` and `_report` moved from `BinaryPipeline` into the
+  base class, since every pipeline needs them.
 
 ## Dependencies
 

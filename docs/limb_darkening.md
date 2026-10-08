@@ -32,7 +32,7 @@ sys.path.insert(0, str(root / "src"))
 
 import jax
 import matplotlib.pyplot as plt
-import numpy as np
+import numpy as onp
 import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS, init_to_value
 
@@ -59,26 +59,26 @@ stars = {
     ),
 }
 profiles = {
-    "uniform": lambda mu: np.ones_like(mu),
+    "uniform": lambda mu: onp.ones_like(mu),
     "linear, u = 0.6": lambda mu: 1 - 0.6 * (1 - mu),
     "quadratic, u = (0.35, 0.25)": lambda mu: 1
     - 0.35 * (1 - mu)
     - 0.25 * (1 - mu) ** 2,
     "square root, (c, d) = (0.1, 0.6)": lambda mu: 1
     - 0.1 * (1 - mu)
-    - 0.6 * (1 - np.sqrt(mu)),
+    - 0.6 * (1 - onp.sqrt(mu)),
 }
 
 # x = pi theta B / lambda, so baselines in wavelengths are x / (pi theta)
-mas = np.pi / 180 / 3600e3
-x = np.linspace(1e-3, 14.0, 1000)
-spatial_frequency = x / (np.pi * diam * mas)
-r = np.linspace(0.0, 1.0, 400)
+mas = onp.pi / 180 / 3600e3
+x = onp.linspace(1e-3, 14.0, 1000)
+spatial_frequency = x / (onp.pi * diam * mas)
+r = onp.linspace(0.0, 1.0, 400)
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 for name, star in stars.items():
-    ax1.plot(r, profiles[name](np.sqrt(1 - r**2)), label=name)
+    ax1.plot(r, profiles[name](onp.sqrt(1 - r**2)), label=name)
     vis = star.model(spatial_frequency, 0 * spatial_frequency, 1.0)
-    ax2.semilogy(x, np.abs(np.asarray(vis)) ** 2)
+    ax2.semilogy(x, onp.abs(onp.asarray(vis)) ** 2)
 ax1.set(xlabel="r / R", ylabel="I / I(centre)", title="Brightness profile")
 ax1.legend(fontsize=8)
 ax2.set(
@@ -124,20 +124,20 @@ so that uniform priors on $q_1$ and $q_2$ sample every physical quadratic law, a
 Below, uniform draws in $(q_1, q_2)$ fill exactly the physical triangle in $(u_1, u_2)$ (left), and every one of the corresponding profiles is positive and falls towards the limb (right, a random subset).
 
 ```python
-rng = np.random.default_rng(0)
+rng = onp.random.default_rng(0)
 q1, q2 = rng.uniform(size=(2, 3000))
 star = QuadraticLimbDarkenedDisk(diam, q1=q1, q2=q2)
-u1, u2 = np.asarray(star.u1), np.asarray(star.u2)
+u1, u2 = onp.asarray(star.u1), onp.asarray(star.u2)
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 ax1.scatter(u1, u2, s=2, alpha=0.4)
-grid = np.linspace(-0.2, 2.2, 2)
+grid = onp.linspace(-0.2, 2.2, 2)
 ax1.plot(grid, 1 - grid, "k--", lw=1, label="$u_1 + u_2 = 1$")
 ax1.plot(grid, -grid / 2, "k:", lw=1, label="$u_1 + 2u_2 = 0$")
 ax1.axvline(0, color="k", lw=1, ls="-.", label="$u_1 = 0$")
 ax1.set(xlabel="$u_1$", ylabel="$u_2$", title="Uniform in $(q_1, q_2)$")
 ax1.legend(fontsize=8)
-mu = np.sqrt(1 - r**2)
+mu = onp.sqrt(1 - r**2)
 for a, b in zip(u1[:60], u2[:60]):
     ax2.plot(r, 1 - a * (1 - mu) - b * (1 - mu) ** 2, lw=0.8, alpha=0.6)
 ax2.set(xlabel="r / R", ylabel="I / I(centre)", title="Sampled profiles")
@@ -154,7 +154,7 @@ To measure limb darkening the data have to reach beyond the first null. `vlti_oi
 ```python
 truth = QuadraticLimbDarkenedDisk.from_u(diam, u1=0.35, u2=0.25)
 template = vlti_oidata(
-    wavelengths_m=np.linspace(1.6e-6, 2.4e-6, 6),
+    wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 6),
     hour_angles_h=(-2.5, 0.0, 2.5),
     sigma_v2=0.002,
     sigma_cp_deg=0.5,
@@ -164,9 +164,9 @@ data = template.with_model(truth, key=jax.random.PRNGKey(3))
 # A uniform disk's closure phases flip between 0 and 180 degrees at each null,
 # so its chi-squared jumps as the diameter changes: fit its one parameter
 # with a fine scan.
-diams = np.linspace(4.0, 8.0, 2001)
-chi2 = [np.sum(whitened_residuals(UniformDisk(d), data) ** 2) for d in diams]
-ud_model = UniformDisk(diams[np.argmin(chi2)])
+diams = onp.linspace(4.0, 8.0, 2001)
+chi2 = [onp.sum(whitened_residuals(UniformDisk(d), data) ** 2) for d in diams]
+ud_model = UniformDisk(diams[onp.argmin(chi2)])
 
 priors = {
     "diam": dist.LogUniform(2.0, 10.0),
@@ -175,10 +175,10 @@ priors = {
 }
 ld = fit(QuadraticLimbDarkenedDisk(5.0, q1=0.5, q2=0.5), priors, data)
 for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
-    residuals = np.asarray(whitened_residuals(model, data))
+    residuals = onp.asarray(whitened_residuals(model, data))
     print(
         f"{name:>13}: diam = {float(model.diam):.3f} mas, "
-        f"chi2 per point {np.mean(residuals**2):.2f} ({residuals.size} points)"
+        f"chi2 per point {onp.mean(residuals**2):.2f} ({residuals.size} points)"
     )
 ```
 
@@ -210,10 +210,10 @@ derived = {
 }
 print(f"{'':>6}{'truth':>8}{'posterior':>18}")
 for name, values in derived.items():
-    values = np.asarray(values)
+    values = onp.asarray(values)
     print(
         f"{name:>6}{float(getattr(truth, name)):8.3f}"
-        f"{np.median(values):11.3f} ± {np.std(values):.3f}"
+        f"{onp.median(values):11.3f} ± {onp.std(values):.3f}"
     )
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
@@ -224,7 +224,7 @@ ax1.set(xlim=(0, 1), ylim=(0, 1), xlabel="$q_1$", ylabel="$q_2$",
 ax1.legend()
 ax2.scatter(samples.u1, samples.u2, s=2, alpha=0.3)
 ax2.plot(truth.u1, truth.u2, "r*", ms=12, label="truth")
-grid = np.linspace(0.0, 1.2, 2)
+grid = onp.linspace(0.0, 1.2, 2)
 ax2.plot(grid, 1 - grid, "k--", lw=1)
 ax2.plot(grid, -grid / 2, "k:", lw=1)
 ax2.set(xlabel="$u_1$", ylabel="$u_2$", title="Posterior, quadratic coefficients")
@@ -235,11 +235,11 @@ plt.show()
 
 ```text
          truth         posterior
-  diam   6.000      6.037 ± 0.054
-    q1   0.360      0.536 ± 0.215
-    q2   0.292      0.150 ± 0.117
-    u1   0.350      0.219 ± 0.110
-    u2   0.250      0.519 ± 0.248
+  diam   6.000      6.025 ± 0.052
+    q1   0.360      0.488 ± 0.199
+    q2   0.292      0.174 ± 0.116
+    u1   0.350      0.241 ± 0.104
+    u2   0.250      0.458 ± 0.235
 ```
 
 ![limb_darkening output 11.2](generated/limb_darkening_cell011_out02.png)
@@ -248,13 +248,13 @@ The squared visibilities against spatial frequency show where the difference lie
 
 ```python
 n_vis = data.vis.size
-frequency = np.hypot(np.asarray(data.u), np.asarray(data.v)) / np.asarray(data.wavel)
-order = np.argsort(frequency)
+frequency = onp.hypot(onp.asarray(data.u), onp.asarray(data.v)) / onp.asarray(data.wavel)
+order = onp.argsort(frequency)
 fig, ax = plt.subplots(figsize=(7, 4))
-ax.errorbar(frequency / 1e6, np.asarray(data.vis), np.asarray(data.d_vis),
+ax.errorbar(frequency / 1e6, onp.asarray(data.vis), onp.asarray(data.d_vis),
             fmt=".", color="0.4", label="simulated data")
 for model, label in [(ud_model, "uniform disk fit"), (ld.model, "limb-darkened fit")]:
-    model_v2 = np.asarray(data.model(model))[:n_vis]
+    model_v2 = onp.asarray(data.model(model))[:n_vis]
     ax.plot(frequency[order] / 1e6, model_v2[order], label=label)
 ax.set(yscale="log", ylim=(1e-4, 1.2), xlabel="Spatial frequency (Mλ)",
        ylabel="$V^2$")
@@ -267,3 +267,79 @@ plt.show()
 ## Summary
 
 virgil's limb-darkened disks give analytic, differentiable visibilities for any law that is a sum of powers of $\mu$, through Quirrenbach et al.'s (1996) result, which harmonix generalises to spotted stars. Use `LimbDarkenedDisk` with a jaxoplanet-style `u` for polynomial laws of any order, and `QuadraticLimbDarkenedDisk` or `SquareRootLimbDarkenedDisk` to fit two-parameter laws with Kipping's (2013) $q_1, q_2$, whose Uniform(0, 1) priors cover exactly the physical profiles. Limb darkening is only measurable with baselines that reach the first null or beyond; at shorter baselines it is degenerate with the diameter. Laws that are not sums of powers of $\mu$, such as the logarithmic and exponential laws, are not included.
+
+## As a pipeline
+
+Everything in the fit above can be run in one call with [`StarPipeline`](pipeline.md), which fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its input and the `load` stage; the uniform-disk scan and the `fit` of `QuadraticLimbDarkenedDisk` are its `fit` stage, which also compares the two fits; the NUTS chains are its `posterior` stage; and the $V^2$ plot is the main cell of its quicklook notebook. The cell below sets only the choices made in this notebook: the same $(2, 10)$ mas diameter prior and the same warmup, with the default four chains of 1000 draws. Its priors are the pipeline's group-invariant defaults (log-uniform diameter, uniform $q_1$ and $q_2$), so the posterior agrees with the hand-written one to within the sampling noise, not exactly. The pipeline reports $\chi^2/N$ on the quoted errors for both models, so the uniform disk's failure is visible there too. The data's closure-phase errors are 0.5 degrees, so a closure phase that flips at a visibility null costs about $10^5$ in $\chi^2$: the posterior sits in a cell with hard walls, in the diameter and in $q_1, q_2$ (a limb-darkened null moves with $q$). NUTS rejects the trajectories that cross a wall and flags them as divergent, so the `divergences` check reports a warning that names the walls rather than a failure; the draws agree with a brute-force grid posterior, but with a reduced effective sample size.
+
+```python
+from tempfile import mkdtemp
+
+from virgil.pipeline import StarPipeline
+
+res = StarPipeline(
+    data,
+    output=f"{mkdtemp()}/star_run",
+    diam_range_mas=[2.0, 10.0],
+    num_warmup=1000,
+    num_samples=1000,
+).run()
+
+print(res.describe())
+```
+
+```text
+StarPipeline run in /tmp/tmpcjftioud/star_run: complete
+  data.n_vis = 108
+  data.n_phi = 72
+  data.n_independent = 162
+  data.wavel_min_m = 1.6e-06
+  data.wavel_max_m = 2.4e-06
+  data.baseline_min_m = 36.51
+  data.baseline_max_m = 129.562
+  data.resolution_mas = 1.27361
+  data.fov_mas = 13.5589
+  data.freq_max_per_rad = 8.09765e+07
+  chi2.n_independent = 162
+  fit.scan_diam_mas = 5.68753
+  comparison.delta_chi2 = 105401
+  comparison.n_extra_params = 2
+  comparison.bic_penalty = 10.1752
+  star.diam_mas = 6.03562
+  star.diam_err_mas = 0.0614547
+  resolution.diam_mas = 6.03562
+  resolution.freq_max_per_rad = 8.09765e+07
+  resolution.first_null = 1.30315
+  resolution.first_null_fraction = 1.81827
+  posterior.num_chains = 4
+  posterior.num_samples = 1000
+  posterior.num_warmup = 1000
+  posterior.r_hat_max = 1.0474
+  posterior.ess_bulk_min = 112.585
+  posterior.divergence_fraction = 0.50775
+  lobes: 6.022 mas (best); 7.028 mas (Δχ² 6.31e+05); 9.108 mas (Δχ² 2.43e+06)
+  [fail] chi2_uniform: χ²/N = 652 for the uniform disk on quoted errors: the model does not describe the data, or the errors are much too small.
+  [pass] chi2_limb_darkened: χ²/N = 1.14 for the limb-darkened disk on quoted errors: consistent with the quoted errors.
+  [pass] limb_darkening_gain: Δχ² = 1.05e+05 for 2 extra parameters exceeds the BIC penalty 10.2: the limb-darkened disk model is preferred.
+  [pass] resolution: The longest baseline reaches 1.82 of the first null: the baselines reach the first null, so the diameter is well measured and limb darkening can be constrained.
+  [pass] multimodal: The best lobe (6.022 mas) beats the next (7.028 mas) by Δχ² = 6.31e+05.
+  [pass] limb_darkening_constrained: The data constrain every parameter (σ_posterior/σ_prior: q1 0.74, q2 0.40).
+  [pass] prior_bound: No posterior mass piles up at a prior bound.
+  [warn] r_hat: Largest R-hat 1.0474: run longer chains to be sure.
+  [warn] ess: Smallest bulk ESS 113: quantiles in the tails are noisy.
+  [warn] divergences: Divergent transitions: 51 per cent: 48 per cent of steps of 2 posterior standard deviations hit a hard wall of the likelihood (a closure-phase sign flip), so NUTS rejects the trajectories that cross it; the draws are expected to follow the truncated posterior, with reduced efficiency (see the ESS). A bispectrum likelihood would remove the walls (virgil#309).
+```
+
+```python
+import matplotlib.pyplot as plt
+
+from virgil.pipeline.star import plot_v2_models
+
+plot_v2_models(
+    data,
+    {"uniform disk": res.model("uniform"), "limb-darkened": res.model("limb_darkened")},
+)
+plt.show()
+```
+
+![limb_darkening output 17.1](generated/limb_darkening_cell017_out01.png)

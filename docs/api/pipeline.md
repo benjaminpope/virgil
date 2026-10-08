@@ -6,6 +6,8 @@ folder, the checks and the stability policy, see
 
 ::: virgil.pipeline.binary.BinaryPipeline
 
+::: virgil.pipeline.star.StarPipeline
+
 ::: virgil.pipeline.load
 
 ::: virgil.pipeline.Result
