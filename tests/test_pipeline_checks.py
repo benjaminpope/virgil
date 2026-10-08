@@ -178,3 +178,24 @@ def test_stage_warning_checks_tolerate_rewording_and_unknowns():
     assert other.name == "stage_warnings" and other.value == 1
     assert stage_warning_checks([_w("old api", "DeprecationWarning")]) == []
     assert stage_warning_checks([]) == []
+
+
+def test_convergence_reports_worst_fraction_across_grid_sizes():
+    found = checks.convergence(
+        [
+            _w("the optimizer did not converge at 5 of 6561 grid positions"),
+            _w("the optimizer did not converge at 3 of 10 grid positions"),
+        ]
+    )
+    assert found.value == pytest.approx(0.3)
+
+
+def test_flux_axis_resolution_reads_exponent_notation():
+    found = checks.flux_axis_resolution(
+        [
+            _w(
+                "the flux axis does not resolve the likelihood peak (3e-05 steps across its FWHM, under 2)"
+            )
+        ]
+    )
+    assert found.value == pytest.approx(3e-5)

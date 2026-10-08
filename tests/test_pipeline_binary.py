@@ -7,6 +7,7 @@ the contract, not the science.
 
 import inspect
 import json
+import warnings
 import shutil
 
 import jax
@@ -400,6 +401,7 @@ def test_fresh_run_and_failure_record(data, tmp_path, monkeypatch):
     import virgil.pipeline.binary as binary
 
     def boom(p):
+        warnings.warn("grid went NaN first", RuntimeWarning, stacklevel=1)
         raise RuntimeError("overview exploded")
 
     monkeypatch.setattr(binary, "_overview", boom)
@@ -411,6 +413,9 @@ def test_fresh_run_and_failure_record(data, tmp_path, monkeypatch):
     assert run["status"] == "failed" and run["config"]["sigma"] == 5.0
     assert run["error"]["stage"] == "overview"
     assert run["error"]["type"] == "RuntimeError"
+    assert [w["message"] for w in run["error"]["warnings"]] == [
+        "grid went NaN first"
+    ]
     assert run["stages"]["overview"]["status"] == "failed"
     assert run["stages"]["load"]["status"] == "complete"
 

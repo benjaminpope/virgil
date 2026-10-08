@@ -419,13 +419,17 @@ def convergence(records):
     ----------
     records : list of dict
         The recorded warnings that mention non-convergence ("the optimizer
-        did not converge at N of M grid positions"). The worst one is
-        reported: the same grid is optimized by several functions.
+        did not converge at N of M grid positions"). The one with the worst
+        fraction N/M is reported; grids of different sizes can appear.
     """
     worst, total = 0.0, 0.0
     for record in records:
         counts = _numbers(r"(\d+)\s+of\s+(\d+)", record["message"])
-        if counts and counts[0] > worst:
+        if (
+            counts
+            and counts[1]
+            and (not total or counts[0] / counts[1] > worst / total)
+        ):
             worst, total = counts
     if not total:
         return Check(
@@ -451,7 +455,7 @@ def flux_axis_resolution(records, *, minimum=2.0):
     """The flux axis does not resolve the likelihood peak."""
     steps = []
     for r in records:
-        found = _numbers(r"([\d.]+)\s+steps", r["message"])
+        found = _numbers(r"([\d.]+(?:e[-+]?\d+)?)\s+steps", r["message"])
         if found:
             steps.append(found[0])
     value = min(steps) if steps else None

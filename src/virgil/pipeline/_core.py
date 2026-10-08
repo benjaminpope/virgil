@@ -367,6 +367,7 @@ class _Pipeline:
                 # analysis is complete; a failure here still marks it failed.
                 record["status"] = "complete"
             self._write_record(record)
+            caught = []
             try:
                 # Warnings raised inside a stage are recorded, not printed:
                 # they land in the report, the summary and its checks.
@@ -387,6 +388,8 @@ class _Pipeline:
                     "type": type(err).__name__,
                     "message": str(err),
                     "traceback": traceback.format_exc(),
+                    # The warnings often explain the failure.
+                    "warnings": _record_warnings(name, caught),
                 }
                 self._write_record(record)
                 raise
