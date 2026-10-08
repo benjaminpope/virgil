@@ -2777,13 +2777,13 @@ class Rotated(SourceModel):
     --------
     A companion to the North, rotated by 90°, lands to the East:
 
-    >>> import jax.numpy as jnp
+    >>> import jax.numpy as np
     >>> from virgil.models import GaussianDisk, Rotated, System
     >>> north = System(a=GaussianDisk(1.0), b=GaussianDisk(1.0, ddec=10.0))
     >>> east = System(a=GaussianDisk(1.0), b=GaussianDisk(1.0, dra=10.0))
-    >>> u, v = jnp.array([3.0, 5.0]), jnp.array([1.0, -2.0])
+    >>> u, v = np.array([3.0, 5.0]), np.array([1.0, -2.0])
     >>> rotated = Rotated(north, 90.0).model(u, v, 1e-6)
-    >>> bool(jnp.allclose(rotated, east.model(u, v, 1e-6), atol=1e-6))
+    >>> bool(np.allclose(rotated, east.model(u, v, 1e-6), atol=1e-6))
     True
     """
 

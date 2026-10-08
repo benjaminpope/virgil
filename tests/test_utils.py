@@ -149,7 +149,6 @@ def test_wrap_phase_maps_to_minus_pi_inclusive_pi_exclusive():
 
 
 def test_position_angle_is_north_through_east_in_zero_to_360():
-    import jax.numpy as jnp
     from virgil._geometry import position_angle, separation_pa
 
     dra = onp.array([0.0, 1.0, 0.0, -1.0, -1.0, 3.0])
@@ -162,7 +161,7 @@ def test_position_angle_is_north_through_east_in_zero_to_360():
     # The same in JAX, traced, and for a scalar, and the inverse of
     # (sep sin pa, sep cos pa).
     assert onp.allclose(
-        position_angle(jnp.asarray(dra), ddec), expected, atol=1e-4
+        position_angle(np.asarray(dra), ddec), expected, atol=1e-4
     )
     traced = jax.jit(lambda a, b: separation_pa(a, b))(dra, ddec)
     sep, pa = traced

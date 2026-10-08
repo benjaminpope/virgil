@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
+import numpy as onp
 
 from . import _checks, _io
 from .._geometry import separation_pa
@@ -24,12 +24,12 @@ def _bound_samples(prior, samples):
     """
     from ..fitting import _bound_fraction
 
-    x = np.asarray(samples, dtype=float).ravel()
+    x = onp.asarray(samples, dtype=float).ravel()
     fraction = _bound_fraction(prior, x)
     if fraction is None:
         return None
     return float(
-        np.mean(
+        onp.mean(
             (fraction < _BOUND_FRACTION) | (fraction > 1 - _BOUND_FRACTION)
         )
     )
@@ -51,10 +51,10 @@ def _geometry(data):
     """Baseline and resolution figures of ``data`` (metres, mas)."""
     from .._geometry import fringe_scales
 
-    u = np.asarray(data.u, dtype=float)
-    v = np.asarray(data.v, dtype=float)
-    wavel = np.broadcast_to(np.asarray(data.wavel, dtype=float), u.shape)
-    baseline = np.hypot(u, v)
+    u = onp.asarray(data.u, dtype=float)
+    v = onp.asarray(data.v, dtype=float)
+    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
+    baseline = onp.hypot(u, v)
     positive = baseline > 0
     finest, coarsest = fringe_scales(data)
     return {
@@ -75,38 +75,39 @@ def _geometry(data):
 def _chi2(model, data, **noise):
     from ..likelihood import whitened_residuals
 
-    r = np.asarray(whitened_residuals(model, data, **noise), dtype=float)
-    return float(np.sum(r**2)), r
+    r = onp.asarray(whitened_residuals(model, data, **noise), dtype=float)
+    return float(onp.sum(r**2)), r
 
 
 def _moments(r):
-    r = np.asarray(r, dtype=float)
+    r = onp.asarray(r, dtype=float)
     z = (r - r.mean()) / (r.std() or 1.0)
-    return float(np.mean(z**3)), float(np.mean(z**4) - 3.0)
+    return float(onp.mean(z**3)), float(onp.mean(z**4) - 3.0)
 
 
 GLOBAL_NSIGMA_METHOD = "Sidak estimate, not a simulated FAP"
 
 
 def _wrap(angle):
-    return (np.asarray(angle) + 360.0) % 360.0
+    return (onp.asarray(angle) + 360.0) % 360.0
 
 
 def _quantiles(x, angle=False):
     """Median, 16th and 84th percentiles; angles about their mean direction."""
-    x = np.asarray(x, dtype=float).ravel()
+    x = onp.asarray(x, dtype=float).ravel()
     if angle:
         mean = math.degrees(
             math.atan2(
-                np.mean(np.sin(np.radians(x))), np.mean(np.cos(np.radians(x)))
+                onp.mean(onp.sin(onp.radians(x))),
+                onp.mean(onp.cos(onp.radians(x))),
             )
         )
         dev = (x - mean + 180.0) % 360.0 - 180.0
-        q = np.percentile(dev, [50, 16, 84])
+        q = onp.percentile(dev, [50, 16, 84])
         median = float(_wrap(q[0] + mean))
-        q = np.array([median, median + q[1] - q[0], median + q[2] - q[0]])
+        q = onp.array([median, median + q[1] - q[0], median + q[2] - q[0]])
     else:
-        q = np.percentile(x, [50, 16, 84])
+        q = onp.percentile(x, [50, 16, 84])
     return {"median": float(q[0]), "q16": float(q[1]), "q84": float(q[2])}
 
 
@@ -289,7 +290,7 @@ class BinaryPipeline(_Pipeline):
         return self._processed
 
     def _grid(self):
-        import jax.numpy as jnp
+        import jax.numpy as np
 
         s = self.settings
         geo = _geometry(self.processed)
@@ -297,12 +298,12 @@ class BinaryPipeline(_Pipeline):
         step = s["grid_step_mas"] or 0.25 * geo["lambda_over_b_mas"]
         n = 2 * math.ceil(max_sep / step) + 1
         n = min(n, s["max_grid"] if s["max_grid"] % 2 else s["max_grid"] + 1)
-        axis = jnp.linspace(-max_sep, max_sep, n)
+        axis = np.linspace(-max_sep, max_sep, n)
         lo, hi = s["flux_range"]
         return {
             "dra": axis,
             "ddec": axis,
-            "flux": jnp.logspace(math.log10(lo), math.log10(hi), s["n_flux"]),
+            "flux": np.logspace(math.log10(lo), math.log10(hi), s["n_flux"]),
         }, max_sep
 
     def _priors(self, max_sep):
@@ -345,7 +346,7 @@ class BinaryPipeline(_Pipeline):
         if self.settings["error_scale"] != "fit":
             return None
         noise = {"vis_scale": dist.LogUniform(0.1, 10.0)}
-        if np.asarray(self.processed.phi).size:
+        if onp.asarray(self.processed.phi).size:
             noise["phi_scale"] = dist.LogUniform(0.1, 10.0)
         return noise
 
@@ -410,8 +411,8 @@ def _load(p):
     geo = _geometry(data)
     tables, reason = _io.oidata_tables(data)
     report = {
-        "n_vis": int(np.asarray(data.vis).size),
-        "n_phi": int(np.asarray(data.phi).size),
+        "n_vis": int(onp.asarray(data.vis).size),
+        "n_phi": int(onp.asarray(data.phi).size),
         "n_independent": int(data.n_independent),
         "closure_phases": bool(data.cp_flag),
         **geo,
@@ -436,7 +437,7 @@ def _overview(p):
 
 
 def _search(p):
-    import jax.numpy as jnp
+    import jax.numpy as np
 
     from ..detection import detection_statistics, local_nsigma
     from ..grid_fit import (
@@ -453,30 +454,30 @@ def _search(p):
     grid, max_sep = p._grid()
     kw = {"batch_size": s["batch_size"]}
     stats = detection_statistics(BinaryModelCartesian, data, grid, **kw)
-    loglike = np.asarray(
+    loglike = onp.asarray(
         optimized_likelihood_grid(BinaryModelCartesian, data, grid, **kw)
     )
-    flux = np.asarray(
+    flux = onp.asarray(
         optimized_flux_grid(BinaryModelCartesian, data, grid, **kw)
     )
-    sigma = np.asarray(
+    sigma = onp.asarray(
         laplace_flux_uncertainty_grid(
-            BinaryModelCartesian, data, grid, flux=jnp.asarray(flux), **kw
+            BinaryModelCartesian, data, grid, flux=np.asarray(flux), **kw
         )
     )
     null = BinaryModelCartesian(0.0, 0.0, 0.0)
     ll0 = float(model_loglike(null, data))
-    delta_chi2 = np.where(
-        flux > 0, np.maximum(2.0 * (loglike - ll0), 0.0), 0.0
+    delta_chi2 = onp.where(
+        flux > 0, onp.maximum(2.0 * (loglike - ll0), 0.0), 0.0
     )
     snr = flux / sigma
-    peak = np.unravel_index(int(np.nanargmax(delta_chi2)), delta_chi2.shape)
-    flux_axis = np.asarray(grid["flux"])
+    peak = onp.unravel_index(int(onp.nanargmax(delta_chi2)), delta_chi2.shape)
+    flux_axis = onp.asarray(grid["flux"])
     flux_index = int(
-        np.argmin(
-            np.abs(
-                np.log(flux_axis)
-                - np.log(max(float(stats["flux"]), flux_axis[0]))
+        onp.argmin(
+            onp.abs(
+                onp.log(flux_axis)
+                - onp.log(max(float(stats["flux"]), flux_axis[0]))
             )
         )
     )
@@ -490,7 +491,7 @@ def _search(p):
     global_sigma = float(norm.isf(p_global)) if p_global > 0 else local
     chi2_null, _ = _chi2(null, data)
 
-    axes = {k: np.asarray(v) for k, v in grid.items()}
+    axes = {k: onp.asarray(v) for k, v in grid.items()}
     _io.write_h5(
         p.output / "grids.h5",
         {
@@ -549,7 +550,7 @@ def _limits(p):
 
     data, s = p.processed, p.settings
     grid, max_sep = p._grid()
-    limit = np.asarray(
+    limit = onp.asarray(
         absil_limits(
             BinaryModelCartesian,
             data,
@@ -559,10 +560,10 @@ def _limits(p):
         )
     )
     geo = _geometry(data)
-    dra, ddec = np.asarray(grid["dra"]), np.asarray(grid["ddec"])
-    r = np.hypot(*np.meshgrid(dra, ddec, indexing="ij"))
+    dra, ddec = onp.asarray(grid["dra"]), onp.asarray(grid["ddec"])
+    r = onp.hypot(*onp.meshgrid(dra, ddec, indexing="ij"))
     # Inside the resolution limit separation and flux are degenerate.
-    limit = np.where(r < geo["resolution_mas"], np.nan, limit)
+    limit = onp.where(r < geo["resolution_mas"], onp.nan, limit)
     profile = radial_profile(
         limit, dra, ddec, r_max=max_sep, bins=s["limit_bins"]
     )
@@ -596,14 +597,16 @@ def _limits(p):
     _save(fig, p.output / "plots" / "limits_map.png")
     fig, _ = plot_contrast_curve(profile, sigma=s["sigma"])
     _save(fig, p.output / "plots" / "limits_contrast_curve.png")
-    median = np.asarray(profile["median"], dtype=float)
+    median = onp.asarray(profile["median"], dtype=float)
     return {
         "sigma": s["sigma"],
         "method": "absil",
         "r_mas": profile["r"],
         "median_flux": median,
-        "median_delta_mag": np.asarray(flux_to_delta_mag(median), dtype=float),
-        "deepest_delta_mag": float(np.nanmax(flux_to_delta_mag(median))),
+        "median_delta_mag": onp.asarray(
+            flux_to_delta_mag(median), dtype=float
+        ),
+        "deepest_delta_mag": float(onp.nanmax(flux_to_delta_mag(median))),
     }
 
 
@@ -628,19 +631,19 @@ def _fit(p):
     angular = isinstance(p.model, BinaryModelAngular)
     template = p._sampled_model()
     if angular:
-        init = {k: np.asarray(v, dtype=float) for k, v in start.items()}
+        init = {k: onp.asarray(v, dtype=float) for k, v in start.items()}
     else:
         template = template.set(
-            params, [np.asarray(start[k], dtype=float) for k in params]
+            params, [onp.asarray(start[k], dtype=float) for k in params]
         )
         init = None
     noise = p._noise()
     result = fit(template, priors, data, noise=noise, init=init)
-    values = {k: np.asarray(v) for k, v in result.values.items()}
+    values = {k: onp.asarray(v) for k, v in result.values.items()}
     if angular:
         # The model's own parameters, derived from the fitted offsets.
         m = result.model
-        values.update(sep=np.asarray(m.sep), pa=np.asarray(m.pa))
+        values.update(sep=onp.asarray(m.sep), pa=onp.asarray(m.pa))
     reported = ["sep", "pa", "flux"] if angular else params
     _io.save_model(
         p.output / "models" / "best", result.model, values, reported
@@ -655,7 +658,7 @@ def _fit(p):
     # meant to be normal: test only the independent whitened residuals.
     resid = resid[: int(data.n_independent)]
     skew, kurt = _moments(resid)
-    one = {k: np.asarray([float(values[k])]) for k in params}
+    one = {k: onp.asarray([float(values[k])]) for k in params}
     pred = posterior_predictive_summary(
         one, p._sampled_model() if angular else result.model, data, params
     )
@@ -702,7 +705,7 @@ def _posterior(p):
     if not angular:
         model = _io.load_model(p.output / "models" / "best")
     start = {
-        k: np.asarray(v)
+        k: onp.asarray(v)
         for k, v in _io.load_model_values(p.output / "models" / "best").items()
         if k in params
     }
@@ -732,7 +735,7 @@ def _posterior(p):
         ),
     )
     samples = {
-        k: np.asarray(v)
+        k: onp.asarray(v)
         for k, v in mcmc.get_samples(group_by_chain=True).items()
     }
     sampled = dict(samples)
@@ -743,7 +746,7 @@ def _posterior(p):
         )
     extra = mcmc.get_extra_fields(group_by_chain=True)
     stats = {
-        ("step_size" if k == "adapt_state.step_size" else k): np.asarray(v)
+        ("step_size" if k == "adapt_state.step_size" else k): onp.asarray(v)
         for k, v in extra.items()
     }
     _io.write_h5(
@@ -772,8 +775,8 @@ def _posterior(p):
     diagnostics = {}
     for site in sites:
         x = samples[site]
-        rhat = float(np.nanmax(np.asarray(split_gelman_rubin(x))))
-        n_eff = float(np.nanmin(np.asarray(effective_sample_size(x))))
+        rhat = float(onp.nanmax(onp.asarray(split_gelman_rubin(x))))
+        n_eff = float(onp.nanmin(onp.asarray(effective_sample_size(x))))
         diagnostics[site] = {"r_hat": rhat, "ess_bulk": n_eff}
     derived = {}
     if angular:
@@ -781,18 +784,18 @@ def _posterior(p):
         parts = {
             "sep": [samples["sep"]],
             "pa": [
-                np.sin(np.radians(samples["pa"])),
-                np.cos(np.radians(samples["pa"])),
+                onp.sin(onp.radians(samples["pa"])),
+                onp.cos(onp.radians(samples["pa"])),
             ],
         }
         for k, xs in parts.items():
             derived[k] = {
                 "r_hat": max(
-                    float(np.nanmax(np.asarray(split_gelman_rubin(x))))
+                    float(onp.nanmax(onp.asarray(split_gelman_rubin(x))))
                     for x in xs
                 ),
                 "ess_bulk": min(
-                    float(np.nanmin(np.asarray(effective_sample_size(x))))
+                    float(onp.nanmin(onp.asarray(effective_sample_size(x))))
                     for x in xs
                 ),
             }
@@ -809,9 +812,9 @@ def _posterior(p):
         fraction = _bound_samples(priors[k], samples[k])
         if fraction is not None:
             bound[k] = fraction
-    divergent = float(np.mean(stats["diverging"]))
+    divergent = float(onp.mean(stats["diverging"]))
 
-    flat = {k: np.asarray(samples[k], dtype=float).ravel() for k in reported}
+    flat = {k: onp.asarray(samples[k], dtype=float).ravel() for k in reported}
     fig_corner = fig_walk = None
     _, fig_corner, fig_walk = plot_chainconsumer_diagnostics(
         {"posterior": pd.DataFrame(flat)}, columns=reported

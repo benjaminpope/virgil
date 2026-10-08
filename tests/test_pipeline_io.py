@@ -186,7 +186,7 @@ def test_data_fingerprint_covers_every_field():
     observables (the old fingerprint hashed twelve arrays and three flags)."""
     import copy
 
-    import jax.numpy as jnp
+    import jax.numpy as np
     from virgil.coverage import vlti_oidata
 
     def replace(data, **fields):
@@ -209,7 +209,7 @@ def test_data_fingerprint_covers_every_field():
     changed = {
         "stations": replace(data, stations=data.stations + 1),
         "t_ref": replace(data, t_ref=(data.t_ref or 0.0) + 1.0),
-        "dt": replace(data, dt=jnp.full(data.u.shape, 0.5)),
+        "dt": replace(data, dt=np.full(data.u.shape, 0.5)),
         "frame": replace(data, frame=data.frame + 1),
         "gains": data.with_gains(telescope=0.01),
         "phase_offsets": data.with_closure_offsets(baseline=0.01),
