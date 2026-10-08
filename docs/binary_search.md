@@ -383,3 +383,51 @@ plt.show()
 ```
 
 ![binary_search output 23.1](generated/binary_search_cell023_out01.png)
+
+## As a pipeline
+
+Everything above can be run in one call with [`BinaryPipeline`](pipeline.md), which fixes the order of the steps and writes a run folder that reloads without recomputing. The grid search and the maps of the previous sections are its `search` stage, the maximum-likelihood point is the start of its `fit` stage, and the HMC chains are its `posterior` stage. The cell below sets only the choices made in this notebook: the same $\pm 250$ mas grid of 81 points per axis, the same flux range over 60 points and the same sampler length. Its priors are the pipeline's group-invariant defaults (uniform in position, log-uniform in flux), so the posterior agrees with the hand-written one to within the sampling noise, not exactly.
+
+```python
+from tempfile import mkdtemp
+
+from virgil.pipeline import BinaryPipeline
+
+res = BinaryPipeline(
+    data,
+    BinaryModelCartesian(dra=100.0, ddec=-100.0, flux=1e-3),
+    output=f"{mkdtemp()}/binary_run",
+    max_sep_mas=250.0,
+    grid_step_mas=6.25,  # 81 points from -250 to 250 mas
+    flux_range=[10**-4.5, 10**-1.5],
+    n_flux=60,
+    num_warmup=800,
+    num_samples=2000,
+    num_chains=1,
+).run()
+
+search = res.summary["search"]
+post = res.summary["posterior"]["params"]
+print(res.describe())
+print(
+    "grid:     hand dra={:.3g} ddec={:.3g} flux={:.2g}   pipeline dra={:.3g} ddec={:.3g} flux={:.2g}".format(
+        grid_est["dra"], grid_est["ddec"], grid_est["flux"],
+        search["dra_mas"], search["ddec_mas"], search["flux"],
+    )
+)
+print(
+    "posterior: hand dra={:.3g} ddec={:.3g} flux={:.2g}   pipeline dra={:.3g} ddec={:.3g} flux={:.2g}".format(
+        summary["dra_median"], summary["ddec_median"], summary["flux_median"],
+        post["dra"]["median"], post["ddec"]["median"], post["flux"]["median"],
+    )
+)
+
+# The pipeline reproduces the hand-computed numbers.
+step = 6.25
+assert abs(search["dra_mas"] - grid_est["dra"]) <= step
+assert abs(search["ddec_mas"] - grid_est["ddec"]) <= step
+assert 0.67 < search["flux"] / grid_est["flux"] < 1.5
+assert abs(post["dra"]["median"] - summary["dra_median"]) < 5.0
+assert abs(post["ddec"]["median"] - summary["ddec_median"]) < 5.0
+assert 0.8 < post["flux"]["median"] / summary["flux_median"] < 1.25
+```

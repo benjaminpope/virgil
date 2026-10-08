@@ -163,3 +163,42 @@ ax.set_title("Radial contrast limits: Ruffio vs Absil");
 ```
 
 ![contrast_limits output 13.1](generated/contrast_limits_cell013_out01.png)
+
+## As a pipeline
+
+The search grid, the Absil limits and their contrast curve are the `search` and `limits` stages of [`BinaryPipeline`](pipeline.md), so running the pipeline `through="limits"` stops before the fit and the sampler, which a non-detection does not need. The cell below uses the same $\pm 250$ mas grid of 61 points per axis, the same flux axis and $\sigma = 2$. The pipeline blanks the grid points inside the resolution limit, where separation and flux are degenerate, so its limit map is compared with the hand-computed Absil map where it is defined. Its contrast curve is one of the pipeline's plots.
+
+```python
+from tempfile import mkdtemp
+
+from IPython.display import Image, display
+
+from virgil.pipeline import BinaryPipeline
+
+res = BinaryPipeline(
+    oidata_sim,
+    BinaryModelCartesian(dra=0.0, ddec=0.0, flux=1e-3),
+    output=f"{mkdtemp()}/limits_run",
+    sigma=2.0,
+    max_sep_mas=250.0,
+    grid_step_mas=8.34,  # 61 points from -250 to 250 mas
+    flux_range=[1e-5, 10**-1.5],
+    n_flux=50,
+).run(through="limits")
+
+lim = onp.asarray(res.grid()["limit_flux"])
+ok = onp.isfinite(lim)
+print(res.describe())
+print(
+    "pipeline median dmag {:.2f}, deepest {:.2f}; hand-computed Absil median dmag {:.2f} (whole map)".format(
+        float(onp.nanmedian(res.summary["limits"]["median_delta_mag"])),
+        res.summary["limits"]["deepest_delta_mag"],
+        float(jnp.nanmedian(flux_to_delta_mag(absil_map))),
+    )
+)
+display(Image(filename=str(res.path / "plots" / "limits_contrast_curve.png")))
+
+# Where the pipeline defines a limit, it equals the hand-computed Absil map.
+assert ok.any()
+assert onp.allclose(lim[ok], onp.asarray(absil_map)[ok], rtol=1e-3)
+```

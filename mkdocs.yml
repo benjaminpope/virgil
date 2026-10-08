@@ -63,6 +63,8 @@ nav:
       - "Detection ROC curves": detection_roc.md
       - "Hierarchical inference across filters": hierarchical_inference.md
       - "Orbits from interferometric data": orbit_fitting.md
+  - Pipelines:
+      - "Pipelines and their stability": pipeline.md
   - Sources:
       - "Visibility models": model_syntax.md
       - "Extended source models": source_models.md
