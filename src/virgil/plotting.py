@@ -26,7 +26,7 @@ import functools
 
 import matplotlib
 import matplotlib.pyplot as plt
-import numpy as np
+import numpy as onp
 from matplotlib.ticker import FuncFormatter
 
 from ._deprecate import renamed
@@ -101,7 +101,7 @@ def _centres_to_extent(x_axis, y_axis):
     """
 
     def _edges(axis):
-        axis = np.asarray(axis, dtype=float).reshape(-1)
+        axis = onp.asarray(axis, dtype=float).reshape(-1)
         half = 0.5 * (axis[1] - axis[0]) if axis.size > 1 else 0.5
         return float(axis[0] - half), float(axis[-1] + half)
 
@@ -121,7 +121,7 @@ def _image_axes(grid, coord_keys):
     Otherwise the first two keys are used. Returns
     ``(x_key, y_key, image, is_sky)``.
     """
-    grid = np.asarray(grid)
+    grid = onp.asarray(grid)
     if grid.ndim != 2 or len(coord_keys) != 2:
         raise ValueError(
             f"Expected a 2D grid with two coordinate keys; got shape "
@@ -148,12 +148,12 @@ def _range_aware_float_formatter(
 ):
     """Tick formatter whose significant figures adapt to the axis span."""
     span = abs(float(vmax) - float(vmin)) * abs(float(scale))
-    if not np.isfinite(span) or span <= 0:
+    if not onp.isfinite(span) or span <= 0:
         sigfigs = min_sigfigs + 1
     else:
         sigfigs = int(
-            np.clip(
-                np.ceil(-np.log10(span)) + 2,
+            onp.clip(
+                onp.ceil(-onp.log10(span)) + 2,
                 min_sigfigs,
                 max_sigfigs,
             )
@@ -227,10 +227,10 @@ def plot_data_model_correlation(
         default_label = "V2, %" if vis_mode == "v2" else "amplitude, %"
     if vis_label is None:
         vis_label = default_label
-    vis_data = np.asarray(oidata.vis).reshape(-1)
-    phi_data = np.asarray(oidata.phi).reshape(-1)
-    d_vis_data = np.asarray(oidata.d_vis).reshape(-1)
-    d_phi_data = np.asarray(oidata.d_phi).reshape(-1)
+    vis_data = onp.asarray(oidata.vis).reshape(-1)
+    phi_data = onp.asarray(oidata.phi).reshape(-1)
+    d_vis_data = onp.asarray(oidata.d_vis).reshape(-1)
+    d_phi_data = onp.asarray(oidata.d_phi).reshape(-1)
 
     if colors is None:
         colors = [f"C{i}" for i in range(max(1, len(predictions_by_label)))]
@@ -248,9 +248,9 @@ def plot_data_model_correlation(
         color = colors[idx % len(colors)]
         ax1.errorbar(
             vis_data,
-            np.asarray(pred["vis_mean"]).reshape(-1),
+            onp.asarray(pred["vis_mean"]).reshape(-1),
             xerr=d_vis_data,
-            yerr=np.asarray(pred["vis_std"]).reshape(-1),
+            yerr=onp.asarray(pred["vis_std"]).reshape(-1),
             fmt="o",
             markersize=4,
             alpha=0.45,
@@ -260,14 +260,14 @@ def plot_data_model_correlation(
             label=label,
         )
         if not has_phase:
-            vis_low.append(np.asarray(pred["vis_mean"]).min())
-            vis_high.append(np.asarray(pred["vis_mean"]).max())
+            vis_low.append(onp.asarray(pred["vis_mean"]).min())
+            vis_high.append(onp.asarray(pred["vis_mean"]).max())
             continue
         ax2.errorbar(
             phi_data,
-            np.asarray(pred["phi_mean"]).reshape(-1),
+            onp.asarray(pred["phi_mean"]).reshape(-1),
             xerr=d_phi_data,
-            yerr=np.asarray(pred["phi_std"]).reshape(-1),
+            yerr=onp.asarray(pred["phi_std"]).reshape(-1),
             fmt="o",
             markersize=4,
             alpha=0.45,
@@ -276,18 +276,18 @@ def plot_data_model_correlation(
             color=color,
             label=label,
         )
-        vis_low.append(np.asarray(pred["vis_mean"]).min())
-        vis_high.append(np.asarray(pred["vis_mean"]).max())
-        phi_low.append(np.asarray(pred["phi_mean"]).min())
-        phi_high.append(np.asarray(pred["phi_mean"]).max())
+        vis_low.append(onp.asarray(pred["vis_mean"]).min())
+        vis_high.append(onp.asarray(pred["vis_mean"]).max())
+        phi_low.append(onp.asarray(pred["phi_mean"]).min())
+        phi_high.append(onp.asarray(pred["phi_mean"]).max())
 
-    vis_pad = float(np.median(d_vis_data)) if d_vis_data.size else 0.0
-    phi_pad = float(np.median(d_phi_data)) if d_phi_data.size else 0.0
+    vis_pad = float(onp.median(d_vis_data)) if d_vis_data.size else 0.0
+    phi_pad = float(onp.median(d_phi_data)) if d_phi_data.size else 0.0
 
     vis_min = min(vis_low) - vis_pad
     vis_max = max(vis_high) + vis_pad
 
-    vis_line = np.linspace(vis_min, vis_max, 200)
+    vis_line = onp.linspace(vis_min, vis_max, 200)
     vis_formatter = _range_aware_float_formatter(
         vis_min, vis_max, scale=vis_scale
     )
@@ -307,7 +307,7 @@ def plot_data_model_correlation(
     if has_phase:
         phi_min = min(phi_low) - phi_pad
         phi_max = max(phi_high) + phi_pad
-        phi_line = np.linspace(phi_min, phi_max, 200)
+        phi_line = onp.linspace(phi_min, phi_max, 200)
         phi_formatter = _range_aware_float_formatter(phi_min, phi_max)
         ax2.plot(phi_line, phi_line, "k--", lw=1)
         ax2.set_xlim(phi_min, phi_max)
@@ -386,8 +386,8 @@ def plot_model(
         from .imaging import convolve_beam
 
         image = convolve_beam(image, float(fov_mas) / npix, beam)
-    image = np.asarray(image)
-    vmax = None if saturate is None else np.quantile(image, saturate)
+    image = onp.asarray(image)
+    vmax = None if saturate is None else onp.quantile(image, saturate)
     half = float(fov_mas) / 2.0
     ax.imshow(
         image,
@@ -468,12 +468,12 @@ def plot_residual_map(
     """
     if ax is None:
         _, ax = plt.subplots(figsize=(5, 4))
-    values = np.asarray(residual, dtype=float)
+    values = onp.asarray(residual, dtype=float)
     label = "residual"
     if sigma is not None:
-        values = values / np.asarray(sigma, dtype=float)
+        values = values / onp.asarray(sigma, dtype=float)
         label = "z-score"
-    limit = float(np.nanmax(np.abs(values))) or 1.0
+    limit = float(onp.nanmax(onp.abs(values))) or 1.0
     half = float(fov_mas) / 2.0
     mappable = ax.imshow(
         values,
@@ -586,14 +586,16 @@ def diagnostics_table_from_samples(
         Table with ``dra``, ``ddec``, ``flux``, ``sep``, and ``pa`` columns.
     """
     pd = _require_plots_extra("pandas")
-    dra = np.asarray(samples[dra_key], dtype=float)
-    ddec = np.asarray(samples[ddec_key], dtype=float)
-    flux_raw = np.asarray(samples[flux_key], dtype=float)
-    flux = np.power(10.0, flux_raw) if log10_flux else flux_raw
+    dra = onp.asarray(samples[dra_key], dtype=float)
+    ddec = onp.asarray(samples[ddec_key], dtype=float)
+    flux_raw = onp.asarray(samples[flux_key], dtype=float)
+    flux = onp.power(10.0, flux_raw) if log10_flux else flux_raw
 
     df = pd.DataFrame({"dra": dra, "ddec": ddec, "flux": flux})
-    df["sep"] = np.sqrt(df["dra"] ** 2 + df["ddec"] ** 2)
-    df["pa"] = (np.degrees(np.arctan2(df["dra"], df["ddec"])) + 360.0) % 360.0
+    df["sep"] = onp.sqrt(df["dra"] ** 2 + df["ddec"] ** 2)
+    df["pa"] = (
+        onp.degrees(onp.arctan2(df["dra"], df["ddec"])) + 360.0
+    ) % 360.0
     return df
 
 
@@ -618,11 +620,11 @@ def truth_cartesian_and_polar(truth):
     }
     truth_polar = {
         "sep": float(
-            np.sqrt(truth_cart["dra"] ** 2 + truth_cart["ddec"] ** 2)
+            onp.sqrt(truth_cart["dra"] ** 2 + truth_cart["ddec"] ** 2)
         ),
         "pa": float(
             (
-                np.degrees(np.arctan2(truth_cart["dra"], truth_cart["ddec"]))
+                onp.degrees(onp.arctan2(truth_cart["dra"], truth_cart["ddec"]))
                 + 360.0
             )
             % 360.0
@@ -719,12 +721,12 @@ def _resolve_limit_label(label=None, percentile=None, sigma=None):
     if percentile is not None and sigma is not None:
         raise ValueError("Provide only one of percentile or sigma.")
     if percentile is not None:
-        value = np.asarray(percentile, dtype=float).reshape(-1)
+        value = onp.asarray(percentile, dtype=float).reshape(-1)
         if value.size != 1:
             raise ValueError("percentile must be a scalar or length-1 array.")
         return f"{_format_sigma_or_percent_value(value[0] * 100)}% upper limit"
     if sigma is not None:
-        value = np.asarray(sigma, dtype=float).reshape(-1)
+        value = onp.asarray(sigma, dtype=float).reshape(-1)
         if value.size != 1:
             raise ValueError("sigma must be a scalar or length-1 array.")
         return f"{_format_sigma_or_percent_value(value[0])}$\\sigma$ limit"
@@ -759,11 +761,11 @@ _UNIT_LABELS = {
 def _convert_flux(values, units):
     """Companion/primary flux ratios in the requested display units."""
     if units == "flux":
-        return np.asarray(values, dtype=float)
+        return onp.asarray(values, dtype=float)
     if units == "contrast":
-        return np.asarray(flux_to_contrast(values))
+        return onp.asarray(flux_to_contrast(values))
     if units == "delta_mag":
-        return np.asarray(flux_to_delta_mag(values))
+        return onp.asarray(flux_to_delta_mag(values))
     raise ValueError(
         f"units must be 'flux', 'contrast' or 'delta_mag'; got {units!r}."
     )
@@ -776,7 +778,7 @@ def _grid_axes(values, grid, kind, flux_param):
     ``grid`` (a full grid), or one per key except the flux. A full
     log-likelihood grid is reduced to its maximum over the flux axis.
     """
-    values = np.asarray(values, dtype=float)
+    values = onp.asarray(values, dtype=float)
     keys = list(grid)
     if values.ndim == len(keys):
         try:
@@ -788,7 +790,7 @@ def _grid_axes(values, grid, kind, flux_param):
                 f"values has an axis for {flux_key!r}; only kind='loglike' "
                 "grids are reduced over the flux automatically."
             )
-        values = np.nanmax(values, axis=keys.index(flux_key))
+        values = onp.nanmax(values, axis=keys.index(flux_key))
         return values, [key for key in keys if key != flux_key]
     if values.ndim == len(keys) - 1:
         flux_key = resolve_flux_param(keys, flux_param)
@@ -923,7 +925,7 @@ def plot_grid_map(
 
     if values.ndim == 1:
         x_key = coord_keys[0]
-        ax.plot(np.asarray(grid[x_key]), values, color="C0", lw=2)
+        ax.plot(onp.asarray(grid[x_key]), values, color="C0", lw=2)
         if truth is not None:
             ax.axvline(
                 _coord_value(truth, x_key, coord_keys),
@@ -948,9 +950,9 @@ def plot_grid_map(
         return fig, ax
 
     x_key, y_key, image, is_sky = _image_axes(values, coord_keys)
-    finite = image[np.isfinite(image)]
+    finite = image[onp.isfinite(image)]
     norm = None
-    if log and finite.size and np.all(finite > 0):
+    if log and finite.size and onp.all(finite > 0):
         norm = matplotlib.colors.LogNorm()
     im = ax.imshow(
         image,
@@ -1014,10 +1016,10 @@ def _sky_map(values, grid):
         raise ValueError(
             f"A sky map needs exactly two coordinate keys; got {keys}."
         )
-    values = np.asarray(values, dtype=float)
+    values = onp.asarray(values, dtype=float)
     if keys.index(found[0]) == 1:
         values = values.T
-    dra, ddec = (np.asarray(grid[key]) for key in found)
+    dra, ddec = (onp.asarray(grid[key]) for key in found)
     return values, dra, ddec
 
 
@@ -1088,7 +1090,7 @@ def plot_contrast_curve(
         profile = radial_profile(
             sky_values, dra, ddec, center=center, r_max=r_max, bins=bins
         )
-    r = np.asarray(profile["r"])
+    r = onp.asarray(profile["r"])
     median = _convert_flux(profile["median"], units)
     low = _convert_flux(profile["q16"], units)
     high = _convert_flux(profile["q84"], units)
@@ -1104,7 +1106,7 @@ def plot_contrast_curve(
     if truth is not None:
         true_dra, true_ddec, true_flux = truth
         ax.plot(
-            np.hypot(true_dra, true_ddec),
+            onp.hypot(true_dra, true_ddec),
             _convert_flux(true_flux, units),
             marker="*",
             c="k",
@@ -1169,7 +1171,7 @@ def _one_sided_fap(n_sigma):
 def _format_probability(p):
     """A probability as a short percentage, or as a power of ten if tiny."""
     p = float(p)
-    if not np.isfinite(p):
+    if not onp.isfinite(p):
         return str(p)
     if p >= 1e-3:
         return f"{100.0 * p:.3g}%"
@@ -1187,8 +1189,8 @@ def _selections(value):
     """
     if value is None:
         return [None]
-    if isinstance(value, np.ndarray) and value.ndim >= 1:
-        return [tuple(v) if np.ndim(v) else float(v) for v in value]
+    if isinstance(value, onp.ndarray) and value.ndim >= 1:
+        return [tuple(v) if onp.ndim(v) else float(v) for v in value]
     if isinstance(value, list):
         return list(value)
     return [value]
@@ -1197,7 +1199,7 @@ def _selections(value):
 def _flux_selection_label(flux):
     if flux is None:
         return None
-    if np.ndim(flux) == 0:
+    if onp.ndim(flux) == 0:
         flux = float(flux)
         if flux <= 0.0:
             return "flux 0"
@@ -1235,7 +1237,7 @@ def _rates_at(fpr, tpr, thresholds, value):
     ``thresholds`` decrease from ``+inf`` through every distinct score, so
     the smallest one at or above ``value`` has the same rates as ``value``.
     """
-    i = int(np.count_nonzero(np.asarray(thresholds) >= value)) - 1
+    i = int(onp.count_nonzero(onp.asarray(thresholds) >= value)) - 1
     return float(fpr[i]), float(tpr[i])
 
 
@@ -1377,9 +1379,9 @@ def plot_roc(
                 )
 
     chance = (
-        np.geomspace(fpr_min, 1.0, 200)
+        onp.geomspace(fpr_min, 1.0, 200)
         if log_fpr
-        else np.linspace(0.0, 1.0, 200)
+        else onp.linspace(0.0, 1.0, 200)
     )
     ax.plot(chance, chance, color="grey", lw=1, label="chance (TPR = FPR)")
     for k, n_sigma in enumerate(marks):
@@ -1440,18 +1442,18 @@ def plot_roc(
 
 def _cell_edges(centres, log):
     """Edges of cells centred on sorted ``centres`` (in log space if log)."""
-    c = np.asarray(centres, dtype=float)
+    c = onp.asarray(centres, dtype=float)
     if log:
-        c = np.log(c)
+        c = onp.log(c)
     if c.size == 1:
         half = 0.2 if log else max(0.5, 0.1 * abs(c[0]))
-        edges = np.array([c[0] - half, c[0] + half])
+        edges = onp.array([c[0] - half, c[0] + half])
     else:
         mid = 0.5 * (c[1:] + c[:-1])
-        edges = np.concatenate(
+        edges = onp.concatenate(
             [[c[0] - (mid[0] - c[0])], mid, [c[-1] + (c[-1] - mid[-1])]]
         )
-    return np.exp(edges) if log else edges
+    return onp.exp(edges) if log else edges
 
 
 @_styled
@@ -1547,7 +1549,7 @@ def plot_completeness(
     result = mc.completeness(stat, fap, sep_bins, flux_bins)
     sep, flux = result["sep"], result["flux"]
     positive = flux > 0.0
-    if sep.size == 0 or not np.any(positive):
+    if sep.size == 0 or not onp.any(positive):
         raise ValueError(
             "plot_completeness needs injections with positive fluxes."
         )
@@ -1597,7 +1599,7 @@ def plot_completeness(
     if units != "delta_mag":
         ax.set_yscale("log")
     ax.set_xlim(x_edges[0], x_edges[-1])
-    ax.set_ylim(np.min(y_edges), np.max(y_edges))
+    ax.set_ylim(onp.min(y_edges), onp.max(y_edges))
     # Fainter companions lower down, as in plot_contrast_curve.
     if units != "flux" and not ax.yaxis_inverted():
         ax.invert_yaxis()
@@ -1685,13 +1687,13 @@ def plot_null_distribution(
     from scipy.stats import norm
 
     label = _stat_label(stat)
-    null = np.asarray(mc.null[stat], dtype=float)
+    null = onp.asarray(mc.null[stat], dtype=float)
     n = null.size
     if n == 0:
         raise ValueError("The DetectionMC has no null draws.")
-    x = np.sort(np.where(np.isnan(null), -np.inf, null))
-    exceed = (n - np.arange(n)) / n  # P(null >= x[i])
-    finite = np.isfinite(x)
+    x = onp.sort(onp.where(onp.isnan(null), -onp.inf, null))
+    exceed = (n - onp.arange(n)) / n  # P(null >= x[i])
+    finite = onp.isfinite(x)
 
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -1705,7 +1707,7 @@ def plot_null_distribution(
         lw=2,
         label=f"grid search, {n} null simulations",
     )
-    right = [x[finite].max() if np.any(finite) else 1.0]
+    right = [x[finite].max() if onp.any(finite) else 1.0]
     bottom = 0.5 / n
 
     if fap is not None:
@@ -1747,12 +1749,12 @@ def plot_null_distribution(
             ),
         )
 
-    left = min(0.0, x[finite].min()) if np.any(finite) else 0.0
+    left = min(0.0, x[finite].min()) if onp.any(finite) else 0.0
     xmax = 1.1 * max(right) if max(right) > 0 else 1.0
     if reference and stat != "log_bayes_factor":
-        grid = np.linspace(max(left, 0.0), xmax, 400)
+        grid = onp.linspace(max(left, 0.0), xmax, 400)
         if stat == "delta_chi2":
-            ref = norm.sf(np.sqrt(grid))  # = ½ P(χ²₁ ≥ x)
+            ref = norm.sf(onp.sqrt(grid))  # = ½ P(χ²₁ ≥ x)
             ref_label = r"one position fixed in advance, $\frac{1}{2}\chi^2_1$"
         else:
             ref = norm.sf(grid)
@@ -1776,10 +1778,10 @@ def plot_null_distribution(
 def _orbit_tracks(orbits, n_points):
     """``(dra, ddec)`` over one period of each orbit, shape (n, n_points)."""
     import jax
-    import jax.numpy as jnp
+    import jax.numpy as np
 
-    batched = jax.tree_util.tree_map(jnp.atleast_1d, orbits)
-    phase = jnp.linspace(0.0, 1.0, n_points)
+    batched = jax.tree_util.tree_map(np.atleast_1d, orbits)
+    phase = np.linspace(0.0, 1.0, n_points)
 
     def track(orbit):
         # Times relative to the orbit's t_ref, from one periastron to the
@@ -1788,13 +1790,13 @@ def _orbit_tracks(orbits, n_points):
         return dra, ddec
 
     dra, ddec = jax.vmap(track)(batched)
-    return np.asarray(dra), np.asarray(ddec)
+    return onp.asarray(dra), onp.asarray(ddec)
 
 
 def _position_covariances(positions):
     """The ``(n, 2, 2)`` covariances of a ``PositionData``'s positions."""
-    chol = np.linalg.inv(np.asarray(positions.whitener, dtype=float))
-    return chol @ np.swapaxes(chol, -1, -2)
+    chol = onp.linalg.inv(onp.asarray(positions.whitener, dtype=float))
+    return chol @ onp.swapaxes(chol, -1, -2)
 
 
 @_styled
@@ -1861,10 +1863,10 @@ def plot_orbit_ensemble(
 
     dra, ddec = _orbit_tracks(orbits, n_points)
     if alpha is None:
-        alpha = float(np.clip(8.0 / len(dra), 0.03, 0.8))
+        alpha = float(onp.clip(8.0 / len(dra), 0.03, 0.8))
     ax.add_collection(
         LineCollection(
-            np.stack([dra, ddec], -1),
+            onp.stack([dra, ddec], -1),
             colors=color,
             linewidths=0.7,
             alpha=alpha,
@@ -1889,9 +1891,9 @@ def plot_orbit_ensemble(
     labels.append("primary")
 
     if positions is not None:
-        mjd = positions.t_ref + np.asarray(positions.dt, dtype=float)
-        x = np.asarray(positions.dra, dtype=float)
-        y = np.asarray(positions.ddec, dtype=float)
+        mjd = positions.t_ref + onp.asarray(positions.dt, dtype=float)
+        x = onp.asarray(positions.dra, dtype=float)
+        y = onp.asarray(positions.ddec, dtype=float)
         norm = matplotlib.colors.Normalize(
             mjd.min(), max(mjd.max(), mjd.min() + 1)
         )
@@ -1899,9 +1901,11 @@ def plot_orbit_ensemble(
         for xi, yi, cov, c in zip(
             x, y, _position_covariances(positions), colours
         ):
-            values, vectors = np.linalg.eigh(cov)
-            angle = np.degrees(np.arctan2(vectors[1, -1], vectors[0, -1]))
-            width, height = 2 * n_sigma * np.sqrt(np.maximum(values[::-1], 0))
+            values, vectors = onp.linalg.eigh(cov)
+            angle = onp.degrees(onp.arctan2(vectors[1, -1], vectors[0, -1]))
+            width, height = (
+                2 * n_sigma * onp.sqrt(onp.maximum(values[::-1], 0))
+            )
             ax.add_patch(
                 Ellipse(
                     (xi, yi),
@@ -1977,19 +1981,19 @@ def plot_uv_coverage(data, ax=None, cmap="viridis", figsize=(6, 5.5)):
     tuple
         ``(fig, ax)``.
     """
-    u = np.asarray(data.u, dtype=float)
-    v = np.asarray(data.v, dtype=float)
-    wavel = np.broadcast_to(np.asarray(data.wavel, dtype=float), u.shape)
+    u = onp.asarray(data.u, dtype=float)
+    v = onp.asarray(data.v, dtype=float)
+    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
     uu, vv = u / wavel / 1e6, v / wavel / 1e6
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
     else:
         fig = ax.figure
-    if np.unique(wavel).size > 1:
-        colour = np.concatenate([wavel, wavel]) * 1e6
+    if onp.unique(wavel).size > 1:
+        colour = onp.concatenate([wavel, wavel]) * 1e6
         points = ax.scatter(
-            np.concatenate([uu, -uu]),
-            np.concatenate([vv, -vv]),
+            onp.concatenate([uu, -uu]),
+            onp.concatenate([vv, -vv]),
             c=colour,
             cmap=cmap,
             s=10,
@@ -1999,7 +2003,7 @@ def plot_uv_coverage(data, ax=None, cmap="viridis", figsize=(6, 5.5)):
         ax.scatter(uu, vv, s=12, c="C0", label="(u, v)")
         ax.scatter(-uu, -vv, s=12, c="C1", label="(−u, −v)")
         ax.legend(loc="upper right", fontsize="small")
-    limit = 1.05 * float(np.max(np.hypot(uu, vv))) if uu.size else 1.0
+    limit = 1.05 * float(onp.max(onp.hypot(uu, vv))) if uu.size else 1.0
     ax.set_xlim(limit, -limit)  # East (positive u) to the left
     ax.set_ylim(-limit, limit)
     ax.set_aspect("equal")
@@ -2025,10 +2029,10 @@ def plot_oidata_overview(oidata, figsize=(15, 4.5)):
     tuple
         ``(fig, (ax_uv, ax_vis, ax_phi))``.
     """
-    uu = np.asarray(oidata.u / oidata.wavel) / 1e6
-    vv = np.asarray(oidata.v / oidata.wavel) / 1e6
-    uu, vv = np.broadcast_arrays(uu, vv)
-    baseline = np.hypot(uu, vv)
+    uu = onp.asarray(oidata.u / oidata.wavel) / 1e6
+    vv = onp.asarray(oidata.v / oidata.wavel) / 1e6
+    uu, vv = onp.broadcast_arrays(uu, vv)
+    baseline = onp.hypot(uu, vv)
     fig, (ax_uv, ax_vis, ax_phi) = plt.subplots(1, 3, figsize=figsize)
 
     ax_uv.scatter(uu, vv, s=12, c="C0")
@@ -2037,13 +2041,13 @@ def plot_oidata_overview(oidata, figsize=(15, 4.5)):
     ax_uv.set_aspect("equal")
     ax_uv.invert_xaxis()  # East to the left
 
-    vis = np.asarray(oidata.vis)
-    d_vis = np.asarray(oidata.d_vis)
+    vis = onp.asarray(oidata.vis)
+    d_vis = onp.asarray(oidata.d_vis)
     if oidata.vis_mat is None and vis.size:
         index = (
-            np.arange(baseline.size)
+            onp.arange(baseline.size)
             if oidata.vis_index is None
-            else np.asarray(oidata.vis_index)
+            else onp.asarray(oidata.vis_index)
         )
         ax_vis.errorbar(
             baseline[index], vis, yerr=d_vis, fmt=".", ms=6, elinewidth=0.6
@@ -2052,31 +2056,31 @@ def plot_oidata_overview(oidata, figsize=(15, 4.5)):
         ax_vis.set_ylabel(name.get(oidata.vis_mode, "visibility"))
         ax_vis.set_xlabel("Baseline (Mλ)")
     else:
-        ax_vis.errorbar(np.arange(vis.size), vis, yerr=d_vis, fmt=".")
+        ax_vis.errorbar(onp.arange(vis.size), vis, yerr=d_vis, fmt=".")
         ax_vis.set(xlabel="Observable index", ylabel="Projected visibility")
     ax_vis.set_title("Visibilities")
 
-    phi = np.rad2deg(np.asarray(oidata.phi))
-    d_phi = np.rad2deg(np.asarray(oidata.d_phi))
+    phi = onp.rad2deg(onp.asarray(oidata.phi))
+    d_phi = onp.rad2deg(onp.asarray(oidata.d_phi))
     if oidata.phi_mat is None and phi.size:
         if oidata.cp_flag:
-            legs = [np.asarray(i) for i in (oidata.i_cps1, oidata.i_cps2)]
-            legs.append(np.asarray(oidata.i_cps3))
-            x = np.max([baseline[leg] for leg in legs], axis=0)
+            legs = [onp.asarray(i) for i in (oidata.i_cps1, oidata.i_cps2)]
+            legs.append(onp.asarray(oidata.i_cps3))
+            x = onp.max([baseline[leg] for leg in legs], axis=0)
             ax_phi.set_xlabel("Longest baseline (Mλ)")
             ax_phi.set_ylabel("Closure phase (deg)")
         else:
             index = (
-                np.arange(baseline.size)
+                onp.arange(baseline.size)
                 if oidata.phi_index is None
-                else np.asarray(oidata.phi_index)
+                else onp.asarray(oidata.phi_index)
             )
             x = baseline[index]
             ax_phi.set_xlabel("Baseline (Mλ)")
             ax_phi.set_ylabel("Phase (deg)")
         ax_phi.errorbar(x, phi, yerr=d_phi, fmt=".", ms=6, elinewidth=0.6)
     else:
-        ax_phi.errorbar(np.arange(phi.size), phi, yerr=d_phi, fmt=".")
+        ax_phi.errorbar(onp.arange(phi.size), phi, yerr=d_phi, fmt=".")
         ax_phi.set(xlabel="Observable index", ylabel="Projected phase")
     ax_phi.set_title("Phases")
     fig.tight_layout()

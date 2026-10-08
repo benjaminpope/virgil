@@ -127,7 +127,7 @@ class Epochs:
 
     Examples
     --------
-    >>> import numpy as np
+    >>> import numpy as onp
     >>> from virgil.epochs import Epochs
     >>> from virgil.oidata import OIData
     >>> def night(mjd):
