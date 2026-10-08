@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import math
 import types
+import warnings
 from typing import Callable
 
 import numpy as np
@@ -665,11 +666,14 @@ def _fit_model(p, entry, priors, best_diam, noise):
     best = None
     for diam in dict.fromkeys(starts):
         tmpl = entry.build({**start, "diam": diam})
-        result = fit(tmpl, priors, p.processed, noise=noise)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = fit(tmpl, priors, p.processed, noise=noise)
         score = float(_chi2_64(result.model, p.processed)[0])
         if best is None or score < best[0]:
-            best = (score, result)
+            best = (score, result, caught)
     result = best[1]
+    _rewarn(best[2])
     values = {k: np.asarray(v) for k, v in result.values.items()}
     return result.model, values, _io.clean_json(dict(result.info))
 
@@ -708,9 +712,11 @@ def _fit(p):
         for lobe in lobes:
             b0, b1 = lobe["bounds"]
             priors = entry.priors(b0, b1)
-            model, values, info = _fit_model(
-                p, entry, priors, lobe["diam"], noise
-            )
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                model, values, info = _fit_model(
+                    p, entry, priors, lobe["diam"], noise
+                )
             chi2, resid = _chi2_64(model, data)
             scales = {
                 k.split(".", 1)[1]: float(v)
@@ -738,6 +744,7 @@ def _fit(p):
                     scales,
                     priors,
                     lobe,
+                    caught,
                 )
             )
         top = min(c[0] for c in candidates)
@@ -752,9 +759,21 @@ def _fit(p):
             for c in candidates
         ]
         chosen = min(candidates, key=lambda c: c[0])
-        chi2_fitted, model, values, info, chi2, resid, scales, priors, lobe = (
-            chosen
-        )
+        (
+            chi2_fitted,
+            model,
+            values,
+            info,
+            chi2,
+            resid,
+            scales,
+            priors,
+            lobe,
+            caught,
+        ) = chosen
+        # Only the best lobe's fit warns: a fit that stalls in an alias lobe,
+        # whose chi^2 is thousands above the best, is not a problem.
+        _rewarn(caught)
         # Test only the independent whitened residuals: the periodic penalty
         # terms of correlated closure phases are not meant to be normal.
         resid = resid[: int(data.n_independent)]
@@ -883,6 +902,63 @@ def _bound_fractions(samples, priors, skip=()):
     return bound
 
 
+def _rewarn(caught):
+    """Re-raise the recorded warnings of the fit that was kept."""
+    for w in caught:
+        warnings.warn_explicit(
+            w.message, w.category, w.filename, w.lineno, source=w.source
+        )
+
+
+_WALL_JUMP = 1000.0  # Δχ² of a closure-phase flip at the data's precision
+
+
+def _wall_probe(entry, data, samples, priors, n=40, radius=2.0, seed=0):
+    """How much of the posterior's surroundings is a hard wall.
+
+    A closure phase of a centrosymmetric star flips by π wherever a model
+    visibility changes sign, which costs about 4/σ² in χ² (5e4 at 0.5°).
+    The likelihood is then exact-zero outside a cell of the parameters, and
+    NUTS integrators that cross its wall are rejected and flagged
+    divergent. This probes it: from ``n`` posterior draws it steps
+    ``radius`` posterior standard deviations in a random direction, and
+    counts the steps that raise χ² by more than ``_WALL_JUMP``, which in a
+    smooth posterior would raise it by a few.
+
+    Returns
+    -------
+    dict
+        ``{"radius_sd", "n", "exposed"}``, with ``exposed`` the fraction of
+        the ``n`` valid steps that hit a wall.
+    """
+    names = list(entry.params)
+    flat = {k: np.asarray(samples[k], dtype=float).ravel() for k in names}
+    sd = np.array([flat[k].std() for k in names])
+    rng = np.random.default_rng(seed)
+    draws = rng.choice(flat[names[0]].size, size=n, replace=True)
+    hits = valid = 0
+    for i in draws:
+        base = np.array([flat[k][i] for k in names])
+        direction = rng.normal(size=len(names))
+        trial = base + radius * sd * direction / np.linalg.norm(direction)
+        inside = all(
+            float(priors[k].low) < v < float(priors[k].high)
+            for k, v in zip(names, trial)
+            if hasattr(priors.get(k), "low")
+        )
+        if not inside:
+            continue
+        chi0 = _chi2(entry.build(dict(zip(names, base))), data)[0]
+        chi1 = _chi2(entry.build(dict(zip(names, trial))), data)[0]
+        valid += 1
+        hits += bool(float(chi1 - chi0) > _WALL_JUMP)
+    return {
+        "radius_sd": radius,
+        "n": valid,
+        "exposed": hits / valid if valid else 0.0,
+    }
+
+
 @_float64
 def _nuts(model, data, p, name, priors, start):
     """NUTS for one fitted model: ``(samples, stats, summary)``."""
@@ -964,6 +1040,7 @@ def _nuts(model, data, p, name, priors, start):
             "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
             "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
             "divergence_fraction": float(np.mean(stats["diverging"])),
+            "wall_probe": _wall_probe(entry, data, samples, priors),
             "prior_bound_fraction": _bound_fractions(
                 samples, priors, skip=entry.shape
             ),
@@ -1223,5 +1300,12 @@ def _summarise(settings, reports):
         )
         checks.append(_checks.r_hat(post["r_hat_max"]))
         checks.append(_checks.ess(post["ess_bulk_min"]))
-        checks.append(_checks.divergences(post["divergence_fraction"]))
+        worst = max(
+            post["models"].values(), key=lambda m: m["divergence_fraction"]
+        )
+        checks.append(
+            _checks.divergences(
+                post["divergence_fraction"], walls=worst.get("wall_probe")
+            )
+        )
     return sections, checks

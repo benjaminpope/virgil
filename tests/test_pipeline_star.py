@@ -726,3 +726,80 @@ def test_max_lobes_caps_the_fits(tmp_path, data):
     assert len(res.summary["fit"]["models"]["uniform"]["lobes"]) <= 2
     with pytest.raises(ValueError, match="max_lobes"):
         StarPipeline(data, max_lobes=0)
+
+
+# --- hard walls of the closure-phase likelihood -------------------------------
+
+
+@pytest.fixture(scope="module")
+def tutorial_data():
+    """The limb-darkening tutorial's star: 108 V2, 72 closure phases, 0.5 deg."""
+    template = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 6),
+        hour_angles_h=(-2.5, 0.0, 2.5),
+        sigma_v2=0.002,
+        sigma_cp_deg=0.5,
+    )
+    return template.with_model(TRUTH, key=jax.random.PRNGKey(3))
+
+
+def test_divergences_at_hard_walls_are_explained_not_hidden(
+    tutorial_data, tmp_path
+):
+    """At 0.5 deg closure-phase errors a flip costs ~1e5 in chi^2, so the
+    posterior is a cell with hard walls in diameter and in q1, q2 (a
+    limb-darkened null moves with q). NUTS rejects trajectories at the walls
+    and flags them; the draws still match a brute-force grid posterior
+    (diameter 6.039 +- 0.060, q1 0.56 +- 0.23).
+    """
+    res = StarPipeline(
+        tutorial_data,
+        output=tmp_path / "run",
+        num_warmup=300,
+        num_samples=300,
+        num_chains=2,
+        quicklook_execute=False,
+    ).run(through="posterior")
+    post = res.summary["posterior"]["models"]["limb_darkened"]
+    assert post["wall_probe"]["exposed"] >= 0.05
+    assert abs(post["params"]["diam"]["median"] - 6.04) < 0.15
+    by_name = {c.name: c for c in res.checks}
+    assert by_name["chi2_limb_darkened"].status == "pass"
+    if post["divergence_fraction"] > 0.01:
+        div = by_name["divergences"]
+        assert div.status == "warn" and "hard wall" in div.message
+
+
+def test_wall_probe_finds_no_wall_in_a_smooth_posterior(data):
+    entry = star.models()["limb_darkened"]
+    rng = onp.random.default_rng(0)
+    samples = {
+        "diam": 6.0 + 0.01 * rng.normal(size=200),
+        "q1": 0.5 + 0.01 * rng.normal(size=200),
+        "q2": 0.2 + 0.01 * rng.normal(size=200),
+    }
+    priors = entry.priors(3.0, 12.0)
+    probe = star._wall_probe(entry, data, samples, priors, n=10)
+    assert probe["exposed"] == 0.0 and probe["n"] > 0
+
+
+@pytest.mark.parametrize(
+    "fraction, exposed, status",
+    [(0.0, 0.0, "pass"), (0.4, 0.0, "fail"), (0.4, 0.5, "warn")],
+)
+def test_divergences_check_with_walls(fraction, exposed, status):
+    walls = {"radius_sd": 2.0, "n": 40, "exposed": exposed}
+    check = checks.divergences(fraction, walls=walls)
+    assert check.status == status
+    assert ("hard wall" in check.message) == (status == "warn" and exposed > 0)
+    json.dumps(check.to_dict())
+
+
+def test_unconverged_lm_message_says_why():
+    from virgil import fitting
+
+    failed = fitting._not_converged("lm", "failed", 0, 1000, "float32", None)
+    assert "0 steps, before its limit of 1000" in failed
+    assert "no step lowered the loss" in failed
+    limit = fitting._not_converged("lm", "limit", 1000, 1000, "float32", None)
+    assert "step limit" in limit

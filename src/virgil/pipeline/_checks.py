@@ -290,14 +290,34 @@ def ess(value, *, warn=400.0, fail=100.0):
     )
 
 
-def divergences(fraction, *, warn=0.0, fail=0.01):
-    """Fraction of divergent NUTS transitions."""
+def divergences(fraction, *, walls=None, warn=0.0, fail=0.01, exposed=0.05):
+    """Fraction of divergent NUTS transitions.
+
+    ``walls`` is the posterior's wall probe (``{"radius_sd", "n",
+    "exposed"}``, see ``StarPipeline``): when at least ``exposed`` of the
+    steps of a few posterior standard deviations hit a hard wall of the
+    likelihood (a closure-phase flip, which costs thousands in χ²), the
+    divergences are NUTS trajectories rejected at that wall, so the check
+    warns instead of failing and says so. The ESS and R-hat checks still
+    judge the draws.
+    """
     if fraction > fail:
         status, meaning = "fail", "the posterior is not reliable"
     elif fraction > warn:
         status, meaning = "warn", "inspect where they occur"
     else:
         status, meaning = "pass", "none"
+    if status == "fail" and walls and walls.get("exposed", 0.0) >= exposed:
+        status = "warn"
+        meaning = (
+            f"{100 * walls['exposed']:.2g} per cent of steps of "
+            f"{walls['radius_sd']:g} posterior standard deviations hit a "
+            "hard wall of the likelihood (a closure-phase sign flip), so "
+            "NUTS rejects the trajectories that cross it; the draws are "
+            "expected to follow the truncated posterior, with reduced "
+            "efficiency (see the ESS). A bispectrum likelihood would "
+            "remove the walls (virgil#309)"
+        )
     return Check(
         "divergences",
         status,

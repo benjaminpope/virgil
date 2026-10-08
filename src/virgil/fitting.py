@@ -1338,6 +1338,21 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
         )
     if method == "lbfgs":
         return _lbfgs_not_converged(method, stop, steps, limit, dtype)
+    if stop == "failed":
+        # The solver gave up before its step limit: no damping found a step
+        # that lowers the loss, as at a minimum with a discontinuous or
+        # flat loss, or when started on one.
+        return (
+            f"fit(method={method!r}) did not converge: the solver stopped "
+            f"after {steps} steps, before its limit of {limit}, because no "
+            "step lowered the loss (the start may already be at a minimum "
+            "of a loss with jumps, such as a closure-phase flip)."
+        )
+    if stop == "limit":
+        return (
+            f"fit(method={method!r}) did not converge in {steps} steps, the "
+            "step limit; raise max_steps."
+        )
     return f"fit(method={method!r}) did not converge in {steps} steps."
 
 

@@ -116,7 +116,7 @@ Checks are pure functions of plain numbers. The same run always gives the same c
 | `prior_bound` (posterior mass within 1% of a prior bound) | above 5% | |
 | `r_hat` | above 1.01 | above 1.05 |
 | `ess` (smallest bulk effective sample size) | below 400 | below 100 |
-| `divergences` | any | above 1% of transitions |
+| `divergences` | any | above 1% of transitions (a warning instead, naming the walls, when `StarPipeline`'s wall probe finds hard closure-phase walls around the posterior) |
 | `residual_normality` (skewness and excess kurtosis of the independent whitened residuals, without the periodic closure-phase penalty terms) | beyond three standard errors | |
 | `field_of_view` (companion inside the resolution limit or beyond the field) | outside | |
 | `chi2_uniform`, `chi2_limb_darkened` (`StarPipeline`; as `chi2`) | as `chi2` | as `chi2` |
