@@ -1,5 +1,7 @@
 """Period aliases of an undersampled orbit: bands, window and evidences."""
 
+import json
+
 import jax
 import numpy as onp
 import pytest
@@ -90,10 +92,9 @@ def test_position_profile_has_a_chi2_per_band():
     assert all(onp.isfinite(r["chi2"]) for r in rows)
 
 
-@pytest.mark.slow
-def test_injected_alias_wins_in_closure_phases():
-    jax.config.update("jax_enable_x64", True)
-    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+def _synthetic(period):
+    truth = {**TRUTH, "period": period}
+    orbit = KeplerOrbit(**truth, t_ref=T_REF)
     scene = OrbitalBinary(orbit, FLUX)
     key = jax.random.PRNGKey(3)
     data = [
@@ -111,6 +112,21 @@ def test_injected_alias_wins_in_closure_phases():
         onp.tile(0.04 * onp.eye(2), (len(EPOCHS), 1, 1)),
         t_ref=T_REF,
     )
+    return data, pos
+
+
+def test_alias_bands_include_the_long_period_band():
+    bands = alias_bands([0.0, 100.0], (50.0, 500.0))
+    assert (
+        bands[0].n == 0 and bands[0].p_lo == 200.0 and bands[0].p_hi == 500.0
+    )
+
+
+# 12.38 d sits mid-band N = 20; 12.1 d is 0.05 cycles from the N = 20/21 edge.
+@pytest.mark.slow
+@pytest.mark.parametrize("period", [12.38, 12.1])
+def test_injected_alias_wins_in_closure_phases(period, tmp_path):
+    data, pos = _synthetic(period)
     result = fit_orbit_aliases(
         data,
         (11.3, 12.9),
@@ -122,13 +138,37 @@ def test_injected_alias_wins_in_closure_phases():
         n_samples=50,
         k=3.0,
     )
-    n_true = round(float(onp.ptp(result.times)) / TRUTH["period"])
+    n_true = round(float(onp.ptp(result.times)) / period)
     assert result.best.n == n_true
     assert result.best.p > 0.9
-    assert abs(result.best.best["period"] - TRUTH["period"]) < 0.05
+    assert abs(result.best.best["period"] - period) < 0.05
     assert result.best.chi2_red < 3.0  # raw χ²/ν on the quoted errors
     assert (
         n_true in result.samples
         and len(result.samples[n_true]["period"]) == 50
     )
-    assert result.table()[0]["n"] == n_true
+    s = result.samples[n_true]
+    assert onp.all((s["Omega"] >= 0) & (s["Omega"] < 180))  # mirror folded
+    row = result.table()[0]
+    assert row["n"] == n_true and "flags" in row
+    result.to_json(tmp_path / "bands.json", n_samples=5)
+    json.loads(
+        (tmp_path / "bands.json").read_text()
+    )  # strict JSON: no Infinity
+
+
+@pytest.mark.slow
+def test_random_starts_and_s_max_without_positions():
+    data, _ = _synthetic(12.38)
+    result = fit_orbit_aliases(
+        data,
+        (12.1, 12.7),
+        t_ref=T_REF,
+        n_random=300,
+        n_refine=4,
+        n_is=200,
+        n_samples=20,
+        s_max=50.0,
+    )
+    # Random starts rarely find a narrow ridge in 8-D: only check that it runs.
+    assert result.bands and all(b.flags is not None for b in result.bands)

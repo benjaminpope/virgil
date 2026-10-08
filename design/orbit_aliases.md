@@ -41,13 +41,16 @@ deduplicated by their tracks at the epochs.
 coordinates; the priors are uniform there, so they add only a constant),
 and an importance-sampling estimate from a Student-t proposal with the
 Laplace covariance. The band evidence is the sum over its distinct modes.
-Report ESS; flag the band when the two estimates differ by more than 1 nat
-or the ESS is below 50 (then the IS estimate is not trustworthy either).
-Modes with a non-positive-definite Hessian, or within 3σ of a hard prior
-bound (e.g. e ≈ 0), are flagged. The band probability is
+The IS estimate uses the deterministic mixture of the modes' proposals, so
+overlapping tails are not counted twice. A mode within 3σ of a hard prior
+bound (a period edge between bands, or e ≈ 0) has a cut-off Gaussian, so
+its IS value (which truncates the target) replaces its Laplace value. Report
+ESS and a `flags` list: `near-prior-bound`, `not-converged`,
+`hessian-not-positive-definite`, `laplace-is-differ` (more than 1 nat),
+`low-ess` (below 50), `no-valid-mode`. The band probability is
 `p_N ∝ Z_N` under the log-uniform prior on P over the whole range.
 
-**Posterior samples.** Importance resampling from the modes' proposals, in
+**Posterior samples.** Importance resampling with the mixture weights, mirror folded, in
 the winning band and in every band with `p_N > 0.01`.
 
 **Reporting.** Lead with the raw χ²/ν on the quoted errors (before any
