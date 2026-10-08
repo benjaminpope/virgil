@@ -8,6 +8,7 @@ import equinox as eqx
 import zodiax as zx
 
 from ._closure import ClosureNoise
+from ._deprecate import renamed
 from ._utils import inflate_errors
 from .gains import ClosureOffsets, GainModes, closure_offsets, gain_modes
 from .observables import (
@@ -1176,7 +1177,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 phases = phases[self.phi_index]
         return self._apply_linear_operator(phases, self.phi_mat)
 
-    def model(self, model_object):
+    @renamed()
+    def model(self, model):
         """
         Compute the model visibilities and phases for the given model object.
 
@@ -1186,25 +1188,23 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         direct Fourier transform: a ``uv_grid`` (AMIGO DISCO data, which
         carry no times) is not used for it.
         """
-        cvis = self._cvis(model_object)
+        cvis = self._cvis(model)
         prediction = self.standardize_model(cvis)
         if not self.extras:
             return prediction
         return np.concatenate(
-            [prediction] + [b.predict(model_object, cvis) for b in self.extras]
+            [prediction] + [b.predict(model, cvis) for b in self.extras]
         )
 
-    def _cvis(self, model_object):
+    def _cvis(self, model):
         """The model's complex visibility at every sample."""
-        if getattr(model_object, "time_dependent", False):
-            return self._cvis_in_time(model_object)
+        if getattr(model, "time_dependent", False):
+            return self._cvis_in_time(model)
         if self.uv_grid is None:
-            return model_object.model(self.u, self.v, self.wavel)
-        return model_object.model_on_grid(
-            self.u, self.v, self.wavel, self.uv_grid
-        )
+            return model.model(self.u, self.v, self.wavel)
+        return model.model_on_grid(self.u, self.v, self.wavel, self.uv_grid)
 
-    def _cvis_in_time(self, model_object):
+    def _cvis_in_time(self, model):
         """Complex visibilities with every sample at its own time."""
         if self.dt is None:
             raise ValueError(
@@ -1214,7 +1214,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         wavel = np.broadcast_to(self.wavel, np.shape(self.u))
 
         def one(dt, u, v, w):
-            scene = model_object.at(dt, self.t_ref)
+            scene = model.at(dt, self.t_ref)
             return scene.model(u[None], v[None], w[None])[0]
 
         # A compiled loop over samples, not vmap: with JAX 0.11, vmapping
@@ -1675,7 +1675,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             lambda d: d.gains, self, gains, is_leaf=lambda x: x is None
         )
 
-    def with_model(self, model_object, key=None, noise_scale=1.0):
+    @renamed()
+    def with_model(self, model, key=None, noise_scale=1.0):
         """Return a copy populated from a model with optional Gaussian noise.
 
         Sampling, uncertainties, conventions, closure indices, and linear
@@ -1687,7 +1688,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if noise_scale < 0.0:
             raise ValueError("noise_scale must be non-negative.")
 
-        prediction = self.model(model_object)
+        prediction = self.model(model)
         n_vis = self.vis.size
         n_phase = n_vis + self.phi.size
         vis = prediction[:n_vis]
@@ -1720,7 +1721,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         out = self.set(["vis", "phi"], [vis, phi])
         if not self.extras:
             return out
-        cvis = self._cvis(model_object)
+        cvis = self._cvis(model)
         extras, offset = [], n_phase
         for i, block in enumerate(self.extras):
             n = int(block.data().size)

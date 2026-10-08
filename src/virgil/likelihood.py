@@ -38,23 +38,23 @@ from .gains import GAIN_GROUPS, OFFSET_GROUPS
 from .models import SourceModel
 
 
-def _gain_jacobian(data_obj, vis_prediction):
+def _gain_jacobian(data, vis_prediction):
     """dObs/dlog|V| of the model's visibility observables."""
-    if data_obj.vis_mode == "v2":
+    if data.vis_mode == "v2":
         return 2.0 * vis_prediction
-    if data_obj.vis_mode == "amp":
+    if data.vis_mode == "amp":
         return vis_prediction
     return np.ones_like(vis_prediction)
 
 
-def _whiten_vis(data_obj, prediction, resid, errors, gain_terms):
+def _whiten_vis(data, prediction, resid, errors, gain_terms):
     """Whitened visibility residuals, their effective errors, and the log
     normalisation of the marginalised gains (``Σ extra``, 0 without)."""
     whitened = resid / errors
-    if data_obj.gains is None:
+    if data.gains is None:
         return whitened, errors, np.zeros((), errors.dtype)
-    gains = data_obj.gains
-    jacobian = _gain_jacobian(data_obj, prediction) / errors
+    gains = data.gains
+    jacobian = _gain_jacobian(data, prediction) / errors
     whitened, extra = gains.whiten(
         whitened, jacobian, gains.widths_for(gain_terms)
     )
@@ -62,19 +62,19 @@ def _whiten_vis(data_obj, prediction, resid, errors, gain_terms):
 
 
 def _whiten(
-    data_obj, prediction, reference, errors, gain_terms=None, offset_terms=None
+    data, prediction, reference, errors, gain_terms=None, offset_terms=None
 ):
     """Whitened residuals, and the errors that normalise their likelihood.
 
     Returns ``(whitened, errors_out)``; see ``_whiten_with_log_norm``.
     """
     return _whiten_with_log_norm(
-        data_obj, prediction, reference, errors, gain_terms, offset_terms
+        data, prediction, reference, errors, gain_terms, offset_terms
     )[:2]
 
 
 def _whiten_with_log_norm(
-    data_obj, prediction, reference, errors, gain_terms=None, offset_terms=None
+    data, prediction, reference, errors, gain_terms=None, offset_terms=None
 ):
     """Whitened residuals, effective errors, and the marginal log-normaliser.
 
@@ -139,19 +139,19 @@ def _whiten_with_log_norm(
     prediction = np.asarray(prediction)
     resid = prediction - np.asarray(reference)
     errors = np.asarray(errors)
-    n_vis = np.asarray(data_obj.vis).size
-    n_phase = n_vis + np.asarray(data_obj.phi).size
+    n_vis = np.asarray(data.vis).size
+    n_phase = n_vis + np.asarray(data.phi).size
     vis, vis_errors, vis_norm = _whiten_vis(
-        data_obj, prediction[:n_vis], resid[:n_vis], errors[:n_vis], gain_terms
+        data, prediction[:n_vis], resid[:n_vis], errors[:n_vis], gain_terms
     )
     phase, phase_errors, phase_norm = _whiten_phases(
-        data_obj, resid[n_vis:n_phase], errors[n_vis:n_phase], offset_terms
+        data, resid[n_vis:n_phase], errors[n_vis:n_phase], offset_terms
     )
     whitened, effective = [vis, phase], [vis_errors, phase_errors]
     log_norm = vis_norm + phase_norm
     reference = np.asarray(reference)
     offset = n_phase
-    for block in data_obj.extras:
+    for block in data.extras:
         # Extra observables (OI_FLUX, T3AMP, VISAMP, VISPHI) whiten their
         # own blocks: see virgil.observables.
         end = offset + int(block.data().size)
@@ -165,25 +165,25 @@ def _whiten_with_log_norm(
     return np.concatenate(whitened), np.concatenate(effective), log_norm
 
 
-def _whiten_phases(data_obj, resid, errors, offset_terms=None):
+def _whiten_phases(data, resid, errors, offset_terms=None):
     """Whitened phase residuals, their effective errors and the closure
     offsets' log normalisation (see ``_whiten_with_log_norm``)."""
     zero = np.zeros((), errors.dtype)
-    if not data_obj._phases_wrap:
+    if not data._phases_wrap:
         return resid / errors, errors, zero
-    if data_obj.cp_noise is None:
+    if data.cp_noise is None:
         von_mises = np.sqrt(2.0 * np.pi) * i0e(1.0 / errors**2)
         return 2.0 * np.sin(0.5 * resid) / errors, von_mises, zero
     # Correlated closure phases mix their residuals, so each sign matters,
     # and a chord's sign flips under 2π. Whiten the (smooth, periodic) sines
     # and append the periodic penalty 2 sin²(Δ/2)/σ = (1 - cos Δ)/σ, which
     # removes the false minimum at Δ = π.
-    whitened, whitened_errors = data_obj.cp_noise.whiten(np.sin(resid), errors)
-    offsets = data_obj.phase_offsets
+    whitened, whitened_errors = data.cp_noise.whiten(np.sin(resid), errors)
+    offsets = data.phase_offsets
     log_norm = zero
     if offsets is not None:
         whitened, extra = offsets.whiten(
-            data_obj.cp_noise,
+            data.cp_noise,
             whitened,
             errors,
             offsets.widths_for(offset_terms),
@@ -233,8 +233,9 @@ NOISE_TERMS = (
 )
 
 
+@renamed()
 def inflated_errors(
-    data_obj,
+    data,
     prediction,
     vis_error_rel=None,
     phi_error=None,
@@ -257,7 +258,7 @@ def inflated_errors(
 
     Parameters
     ----------
-    data_obj : OIData
+    data : OIData
         Data whose uncertainties are inflated.
     prediction : array-like
         Model vector, e.g. from [`OIData.model`][virgil.oidata.OIData.model].
@@ -285,11 +286,11 @@ def inflated_errors(
     array-like
         Uncertainties matching [`flatten_data`][virgil.oidata.OIData.flatten_data].
     """
-    data, errors = data_obj.flatten_data()
+    values, errors = data.flatten_data()
     terms = (vis_error_rel, phi_error, vis_scale, phi_scale, vis_error)
     if all(term is None for term in terms):
         return errors
-    projected = data_obj.vis_mat is not None or data_obj.phi_mat is not None
+    projected = data.vis_mat is not None or data.phi_mat is not None
     added = (vis_error_rel, phi_error, vis_error)
     if projected and any(term is not None for term in added):
         raise ValueError(
@@ -299,9 +300,9 @@ def inflated_errors(
         )
     if where not in ("model", "data"):
         raise ValueError(f"where must be 'model' or 'data', not {where!r}.")
-    reference = data if where == "data" else np.asarray(prediction)
-    n_vis = np.asarray(data_obj.vis).size
-    n_phase = n_vis + np.asarray(data_obj.phi).size
+    reference = values if where == "data" else np.asarray(prediction)
+    n_vis = np.asarray(data.vis).size
+    n_phase = n_vis + np.asarray(data.phi).size
     d_vis = inflate_errors(
         errors[:n_vis],
         reference[:n_vis],
@@ -408,12 +409,12 @@ def noise_for(sites, values, index):
     }
 
 
-def _whitened_and_errors(model_object, data_obj, noise):
+def _whitened_and_errors(model, data, noise):
     """Whitened residuals and effective errors (see ``_whiten``)."""
-    return _whitened_errors_and_log_norm(model_object, data_obj, noise)[:2]
+    return _whitened_errors_and_log_norm(model, data, noise)[:2]
 
 
-def _whitened_and_log_norm(model_object, data_obj, noise=None):
+def _whitened_and_log_norm(model, data, noise=None):
     """Whitened residuals and the marginal nuisances' log-normaliser.
 
     ``model_loglike`` is ``-½ Σ r² - log_norm`` plus a term that depends
@@ -424,25 +425,25 @@ def _whitened_and_log_norm(model_object, data_obj, noise=None):
     ``_whiten_with_log_norm``). Without them it is zero.
     """
     whitened, _, log_norm = _whitened_errors_and_log_norm(
-        model_object, data_obj, {} if noise is None else noise
+        model, data, {} if noise is None else noise
     )
     return whitened, log_norm
 
 
-def _whitened_errors_and_log_norm(model_object, data_obj, noise):
+def _whitened_errors_and_log_norm(model, data, noise):
     unknown = set(noise) - set(NOISE_TERMS)
     if unknown:
         raise TypeError(
             f"Unknown error terms {sorted(unknown)}; use {NOISE_TERMS}."
         )
     gain_terms = {k: v for k, v in noise.items() if k in GAIN_TERMS}
-    if gain_terms and data_obj.gains is None:
+    if gain_terms and data.gains is None:
         raise ValueError(
             f"Error terms {sorted(gain_terms)} need gain modes: add them with "
             "OIData.with_gains."
         )
     offset_terms = {k: v for k, v in noise.items() if k in OFFSET_TERMS}
-    if offset_terms and data_obj.phase_offsets is None:
+    if offset_terms and data.phase_offsets is None:
         raise ValueError(
             f"Error terms {sorted(offset_terms)} need closure-phase offsets: "
             "add them with OIData.with_closure_offsets."
@@ -460,17 +461,17 @@ def _whitened_errors_and_log_norm(model_object, data_obj, noise):
         and k not in WAVEL_TERMS
         and k not in NORTH_TERMS
     }
-    observed = data_obj
+    observed = data
     if wavel_terms:
-        data_obj = data_obj.with_wavelength_scale(**wavel_terms)
+        data = data.with_wavelength_scale(**wavel_terms)
     if "north_angle" in noise:
-        data_obj = data_obj.with_north_angle(noise["north_angle"])
-    prediction = data_obj.model(model_object)
-    data_obj = observed
-    errors = inflated_errors(data_obj, prediction, **inflation)
-    data = data_obj.flatten_data()[0]
+        data = data.with_north_angle(noise["north_angle"])
+    prediction = data.model(model)
+    data = observed
+    errors = inflated_errors(data, prediction, **inflation)
+    values = data.flatten_data()[0]
     return _whiten_with_log_norm(
-        data_obj, prediction, data, errors, gain_terms, offset_terms
+        data, prediction, values, errors, gain_terms, offset_terms
     )
 
 
@@ -601,17 +602,19 @@ def joint_prediction(params, model, data):
     )
 
 
-def joint_data(observations):
+@renamed()
+def joint_data(data):
     """Concatenate observed vectors in the same order as ``joint_prediction``."""
     return np.concatenate(
-        [observation.flatten_data()[0] for observation in observations]
+        [observation.flatten_data()[0] for observation in data]
     )
 
 
-def joint_errors(observations):
+@renamed()
+def joint_errors(data):
     """Concatenate uncertainty vectors in the same order as ``joint_prediction``."""
     return np.concatenate(
-        [observation.flatten_data()[1] for observation in observations]
+        [observation.flatten_data()[1] for observation in data]
     )
 
 
