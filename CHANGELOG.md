@@ -154,6 +154,11 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`virgil.aliases.fit_orbit_aliases`.** Orbits whose epochs undersample the
+  period: alias bands `N = round(T/P)`, each fitted to the closure phases of
+  all epochs with per-epoch error scales integrated out, with Laplace and
+  importance-sampling evidences, band probabilities and posterior samples.
+
 - **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and
   L-BFGS run in chunks of steps, check the wall clock between them and
   stop, unconverged, with `info["stop"] == "time"` (L-BFGS carries its
