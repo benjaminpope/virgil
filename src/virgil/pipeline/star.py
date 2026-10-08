@@ -570,9 +570,7 @@ def _fit(p):
     data, s = p.processed, p.settings
     lo, hi = p._diam_range()
     registry = models()
-    axis, delta, best_diam = _scan(
-        data, lo, hi, s["n_scan"], s["batch_size"]
-    )
+    axis, delta, best_diam = _scan(data, lo, hi, s["n_scan"], s["batch_size"])
     _io.write_h5(
         p.output / "grids.h5",
         {
@@ -752,7 +750,9 @@ def _nuts(model, data, p, name, priors, start):
     if entry.derived:
         samples.update(entry.derived(samples))
     reported = list(entry.params) + list(
-        k for k in samples if k not in entry.params and not k.startswith("noise.")
+        k
+        for k in samples
+        if k not in entry.params and not k.startswith("noise.")
     )
     summary = {}
     for k in reported:

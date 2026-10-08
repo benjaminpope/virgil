@@ -267,3 +267,41 @@ plt.show()
 ## Summary
 
 virgil's limb-darkened disks give analytic, differentiable visibilities for any law that is a sum of powers of $\mu$, through Quirrenbach et al.'s (1996) result, which harmonix generalises to spotted stars. Use `LimbDarkenedDisk` with a jaxoplanet-style `u` for polynomial laws of any order, and `QuadraticLimbDarkenedDisk` or `SquareRootLimbDarkenedDisk` to fit two-parameter laws with Kipping's (2013) $q_1, q_2$, whose Uniform(0, 1) priors cover exactly the physical profiles. Limb darkening is only measurable with baselines that reach the first null or beyond; at shorter baselines it is degenerate with the diameter. Laws that are not sums of powers of $\mu$, such as the logarithmic and exponential laws, are not included.
+
+## As a pipeline
+
+Everything in the fit above can be run in one call with [`StarPipeline`](pipeline.md), which fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its input and the `load` stage; the uniform-disk scan and the `fit` of `QuadraticLimbDarkenedDisk` are its `fit` stage, which also compares the two fits; the NUTS chains are its `posterior` stage; and the $V^2$ plot is the main cell of its quicklook notebook. The cell below sets only the choices made in this notebook: the same $(2, 10)$ mas diameter prior and the same sampler length. Its priors are the pipeline's group-invariant defaults (log-uniform diameter, uniform $q_1$ and $q_2$), so the posterior agrees with the hand-written one to within the sampling noise, not exactly. The pipeline reports $\chi^2/N$ on the quoted errors for both models, so the uniform disk's failure is visible there too.
+
+```python
+from tempfile import mkdtemp
+
+from virgil.pipeline import StarPipeline
+
+res = StarPipeline(
+    data,
+    output=f"{mkdtemp()}/star_run",
+    diam_range_mas=[2.0, 10.0],
+    num_warmup=1000,
+    num_samples=2000,
+    num_chains=1,
+).run()
+
+print(res.describe())
+fit = res.summary["fit"]["models"]
+hand_ud = float(ud_model.diam)
+hand_ld = float(ld.model.diam)
+hand_post = float(np.median(posterior["diam"]))
+pipe_post = res.summary["posterior"]["models"]["limb_darkened"]["params"]
+print(
+    f"uniform disk:  hand diam={hand_ud:.3f}   pipeline diam={fit['uniform']['params']['diam']:.3f}\n"
+    f"limb-darkened: hand diam={hand_ld:.3f}   pipeline diam={fit['limb_darkened']['params']['diam']:.3f}\n"
+    f"posterior:     hand diam={hand_post:.3f}   pipeline diam={pipe_post['diam']['median']:.3f}"
+)
+
+# The pipeline reproduces the hand-computed numbers.
+assert abs(fit["uniform"]["params"]["diam"] - hand_ud) < 0.02
+assert abs(fit["limb_darkened"]["params"]["diam"] - hand_ld) < 0.05
+assert abs(pipe_post["diam"]["median"] - hand_post) < 0.1
+assert res.summary["fit"]["best"] == "limb_darkened"
+assert fit["uniform"]["chi2_reduced"] > 100 > 2 > fit["limb_darkened"]["chi2_reduced"]
+```

@@ -297,7 +297,10 @@ def test_round_trip(full_run, data):
         onp.median(flat["diam"]), median["diam"]["median"], rtol=1e-5
     )
     stats = res.sample_stats("uniform")
-    assert stats["diverging"].shape == (TINY["num_chains"], TINY["num_samples"])
+    assert stats["diverging"].shape == (
+        TINY["num_chains"],
+        TINY["num_samples"],
+    )
 
     grid = res.grid()
     assert list(grid["axes"]) == ["diam"]
@@ -443,9 +446,9 @@ def test_resolution_message_names_the_regime():
     short = checks.resolution_regime(6.0, _freq(6.0, 0.5))
     assert "limb darkening is degenerate" in short.message
     assert "0.5 of the first null" in short.message
-    assert "unresolved" in checks.resolution_regime(
-        6.0, _freq(6.0, 0.05)
-    ).message
+    assert (
+        "unresolved" in checks.resolution_regime(6.0, _freq(6.0, 0.05)).message
+    )
     assert checks.resolution_regime(float("nan"), 1e7).status == "fail"
 
 
