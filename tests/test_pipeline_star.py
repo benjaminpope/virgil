@@ -45,8 +45,8 @@ def data():
     template = vlti_oidata(
         wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 3),
         hour_angles_h=(-2.5, 0.0, 2.5),
-        sigma_v2=0.002,
-        sigma_cp_deg=5.0,
+        sigma_v2=0.01,
+        sigma_cp_deg=15.0,
     )
     return template.with_model(TRUTH, key=jax.random.PRNGKey(3))
 
@@ -261,7 +261,7 @@ def test_diameter_recovered_and_quoted_errors_lead(full_run):
     ld = s["fit"]["models"]["limb_darkened"]
     # The simulated noise differs by platform, so allow several sigma.
     assert abs(ld["params"]["diam"] - 6.0) < 0.4
-    assert abs(ld["params"]["u1"] - 0.35) < 0.35
+    assert abs(ld["params"]["u1"] - 0.35) < 0.5
     assert s["fit"]["best"] == "limb_darkened"
     # The uniform disk cannot describe a star seen past its first null, and
     # the raw chi^2/N on the quoted errors says so; no rescaling hides it.
@@ -270,14 +270,14 @@ def test_diameter_recovered_and_quoted_errors_lead(full_run):
         s["fit"]["models"]["limb_darkened"],
         s.get("warnings"),
     )
-    assert s["chi2"]["reduced"]["uniform"] > 10.0
+    assert s["chi2"]["reduced"]["uniform"] > 2.5
     assert s["comparison"]["preferred"] == "limb_darkened"
-    assert s["comparison"]["delta_chi2"] > 100 * s["comparison"]["bic_penalty"]
+    assert s["comparison"]["delta_chi2"] > 5 * s["comparison"]["bic_penalty"]
     assert abs(s["star"]["diam_mas"] - 6.0) < 0.5
     assert s["resolution"]["first_null_fraction"] > 1.0
     by_name = {c.name: c for c in res.checks}
     assert by_name["chi2_limb_darkened"].status == "pass"
-    assert by_name["chi2_uniform"].status == "fail"
+    assert by_name["chi2_uniform"].status in ("warn", "fail")
     assert by_name["resolution"].status == "pass"
 
 

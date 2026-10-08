@@ -608,9 +608,10 @@ def worst_status(checks):
 
 # Warnings of these categories are recorded but raise no check: they say
 # something about the software environment, not about the result.
+# The match is by suffix: libraries subclass these, such as pyparsing's
+# ``PyparsingDeprecationWarning``.
 _BENIGN_CATEGORIES = (
     "DeprecationWarning",
-    "PendingDeprecationWarning",
     "ImportWarning",
     "ResourceWarning",
 )
@@ -750,7 +751,7 @@ def stage_warning_checks(warning_records):
         rule = _classify(record["message"])
         if rule:
             grouped.setdefault(rule, []).append(record)
-        elif record["category"] not in _BENIGN_CATEGORIES:
+        elif not record["category"].endswith(_BENIGN_CATEGORIES):
             other.append(record)
     checks = [
         fn(grouped[name]) for name, fn in _RULES.items() if name in grouped
