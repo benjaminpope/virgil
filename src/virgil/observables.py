@@ -76,6 +76,7 @@ import jax.numpy as np
 import jax.scipy.linalg as jsl
 import numpy as onp
 
+from ._deprecate import renamed
 from ._linear import posterior, whiten_blocks
 
 __all__ = [
@@ -225,7 +226,8 @@ class VisibilityAmplitude(_Block):
     sample: onp.ndarray
     kind: str = eqx.field(static=True, default="visamp")
 
-    def predict(self, model_object, cvis):
+    @renamed()
+    def predict(self, model, cvis):
         return np.abs(cvis)[self.sample]
 
     def subset(self, keep, new_index, flux_keep=None):
@@ -245,7 +247,8 @@ class TripleAmplitude(_Block):
     i3: onp.ndarray
     kind: str = eqx.field(static=True, default="t3amp")
 
-    def predict(self, model_object, cvis):
+    @renamed()
+    def predict(self, model, cvis):
         amp = np.abs(cvis)
         return amp[self.i1] * amp[self.i2] * amp[self.i3]
 
@@ -493,9 +496,9 @@ class FluxSpectrum(_Block):
             return eqx.tree_at(lambda b: b.sample, out, sample)
         return self.rebuild(keep=flux_keep)
 
-    def _template(self, model_object, cvis):
+    def _template(self, model, cvis):
         """The model's spectral template t (see the class notes)."""
-        base = model_object.total_spectrum(np.asarray(self.wavel))
+        base = model.total_spectrum(np.asarray(self.wavel))
         base = np.broadcast_to(base, self.wavel.shape)
         if self.kind == "corrflux":
             base = base * np.abs(cvis)[self.sample]
@@ -521,10 +524,11 @@ class FluxSpectrum(_Block):
                 "not taken from the data (see virgil.observables)."
             )
 
-    def predict(self, model_object, cvis):
+    @renamed()
+    def predict(self, model, cvis):
         self._require_prior()
         mu = np.asarray(self.mu)[self.group]
-        return mu * self._template(model_object, cvis)
+        return mu * self._template(model, cvis)
 
     def _columns(self, prediction, errors):
         """The whitened marginalized modes, ``(n, p)``: τ_j μ t xʲ / σ."""
@@ -889,7 +893,8 @@ class DifferentialPhase(_Block):
         anchor = np.arctan2(np.sin(phases[..., :1]), np.cos(phases[..., :1]))
         return self._project(self._unwrap(steps, anchor))
 
-    def predict(self, model_object, cvis):
+    @renamed()
+    def predict(self, model, cvis):
         vis = np.asarray(cvis)[self.sample][self.grid]
         phases = np.angle(vis)
         steps = np.angle(vis[..., 1:] * np.conj(vis[..., :-1]))

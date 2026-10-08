@@ -43,6 +43,9 @@ from virgil.inference import (  # noqa: E402
 )
 from virgil.likelihood import (  # noqa: E402
     flux_scale_posterior,
+    inflated_errors,
+    joint_data,
+    joint_errors,
     joint_loglike,
     joint_prediction,
     loglike,
@@ -318,3 +321,39 @@ def test_numpyro_model_and_posterior_summary_accept_data_obj():
 def test_numpyro_model_accepts_the_old_regularisers_keyword():
     with pytest.warns(FutureWarning, match="regularisers="):
         numpyro_model(MODEL, {}, DATA, regularisers=())
+
+
+def test_oidata_methods_and_joint_helpers_accept_their_old_names():
+    scene = BinaryModelCartesian(*VALUES)
+    new = DATA.model(scene)
+    with pytest.warns(FutureWarning, match="model_object="):
+        old = DATA.model(model_object=scene)
+    _assert_same(old, new)
+    with pytest.warns(FutureWarning, match="model_object="):
+        refit = DATA.with_model(model_object=scene)
+    _assert_same(refit.vis, DATA.with_model(scene).vis)
+    prediction = new
+    with pytest.warns(FutureWarning, match="data_obj="):
+        errors = inflated_errors(data_obj=DATA, prediction=prediction)
+    _assert_same(errors, inflated_errors(DATA, prediction))
+    with pytest.warns(FutureWarning, match="observations="):
+        joint = joint_data(observations=[DATA])
+    _assert_same(joint, joint_data([DATA]))
+    with pytest.warns(FutureWarning, match="observations="):
+        joint = joint_errors(observations=[DATA])
+    _assert_same(joint, joint_errors([DATA]))
+
+
+def test_observable_block_predict_accepts_model_object():
+    from virgil.observables import VisibilityAmplitude
+
+    scene = BinaryModelCartesian(*VALUES)
+    cvis = DATA._cvis(scene)
+    n = cvis.size
+    block = VisibilityAmplitude(
+        onp.ones(2), onp.ones(2), onp.array([0, n - 1], dtype=onp.int32)
+    )
+    new = block.predict(scene, cvis)
+    with pytest.warns(FutureWarning, match="model_object="):
+        old = block.predict(model_object=scene, cvis=cvis)
+    _assert_same(old, new)
