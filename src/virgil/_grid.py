@@ -91,15 +91,6 @@ def resolve_grid_keys(grid, flux_param=None):
     return params, coord_keys, flux_key
 
 
-def meshgrid_vectors(grid, params):
-    """Build flattened meshgrid vectors with axis order matching ``params``."""
-    samples = [jnp.asarray(grid[param]) for param in params]
-    grid_shape = tuple(sample.shape[0] for sample in samples)
-    grids = jnp.meshgrid(*samples, indexing="ij")
-    vals_vec = jnp.stack([g.reshape(-1) for g in grids], axis=1)
-    return vals_vec, grid_shape
-
-
 def ordered_values(flux, coord_vals, params, coord_keys, flux_key):
     """Build parameter values in ``params`` order without traced dict objects."""
     flux_value = jnp.asarray(flux).reshape(-1)[0]

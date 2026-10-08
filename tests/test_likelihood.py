@@ -1,5 +1,4 @@
 import pytest
-from pathlib import Path
 
 import equinox as eqx
 import jax
@@ -12,10 +11,9 @@ from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData
 
 from ._test_data import oidata_sim, true_values
+from tests._shared import CALIBRATED_VISIBILITY  # noqa: E402
 
-PRODUCT = (
-    Path(__file__).resolve().parents[1] / "data" / "calibrated_visibility.npy"
-)
+PRODUCT = CALIBRATED_VISIBILITY
 TRUTH = BinaryModelCartesian(*true_values)
 
 

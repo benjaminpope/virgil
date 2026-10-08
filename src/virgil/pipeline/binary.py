@@ -5,11 +5,11 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from scipy import stats
 
 from . import _checks, _io
+from .._utils import rad2mas
 from ._core import Stage, _Pipeline
-
-MAS_PER_RAD = 180.0 / math.pi * 3600.0 * 1000.0
 
 # Fraction of a prior's range, at either end, counted as "at the bound".
 _BOUND_FRACTION = 0.01
@@ -41,10 +41,10 @@ def _geometry(data):
         "wavel_min_m": float(wavel.min()),
         "wavel_max_m": float(wavel.max()),
         # Half of λ/B_max: inside it, separation and flux are degenerate.
-        "resolution_mas": float(0.5 * wavel.min() / b_max * MAS_PER_RAD),
+        "resolution_mas": float(0.5 * wavel.min() / b_max * rad2mas),
         # λ/B_min: the field over which the coverage is unambiguous.
-        "fov_mas": float(wavel.max() / b_min * MAS_PER_RAD),
-        "lambda_over_b_mas": float(wavel.min() / b_max * MAS_PER_RAD),
+        "fov_mas": float(wavel.max() / b_min * rad2mas),
+        "lambda_over_b_mas": float(wavel.min() / b_max * rad2mas),
     }
 
 
@@ -57,8 +57,9 @@ def _chi2(model, data, **noise):
 
 def _moments(r):
     r = np.asarray(r, dtype=float)
-    z = (r - r.mean()) / (r.std() or 1.0)
-    return float(np.mean(z**3)), float(np.mean(z**4) - 3.0)
+    if not r.std():
+        return 0.0, -3.0  # scipy would give NaN for constant residuals
+    return float(stats.skew(r)), float(stats.kurtosis(r))
 
 
 GLOBAL_NSIGMA_METHOD = "Sidak estimate, not a simulated FAP"

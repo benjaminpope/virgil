@@ -10,15 +10,12 @@ files with [`OIData`][virgil.oidata.OIData] and plot them with
 
 import copy
 import os
+import warnings
 
 import numpy as np
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-
-
-# cp_indices is re-exported here for existing imports.
-from ..oidata import cp_indices  # noqa: F401
 
 
 # astroquery is imported only when save() queries SIMBAD; tests may replace
@@ -46,8 +43,32 @@ def _scalar(value):
     return np.ravel(np.asarray(value))[0]
 
 
+def _deprecated(name, instead):
+    warnings.warn(
+        f"virgil.legacy.oifits_implaneia.{name} is unused by virgil and "
+        f"will be removed in virgil 0.6; {instead}",
+        FutureWarning,
+        stacklevel=3,
+    )
+
+
+def __getattr__(name):
+    # ``cp_indices`` used to be re-exported here for existing imports.
+    if name == "cp_indices":
+        _deprecated("cp_indices", "import it from virgil.oidata instead.")
+        from ..oidata import cp_indices
+
+        return cp_indices
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def rad2mas(rad):
-    """Convert radians to milliarcseconds."""
+    """Convert radians to milliarcseconds.
+
+    Deprecated: multiply by ``virgil._utils.rad2mas``, or use
+    ``astropy.units``.
+    """
+    _deprecated("rad2mas", "use astropy.units instead.")
     return rad / u.milliarcsec.to(u.rad)
 
 
@@ -55,7 +76,10 @@ def GetWavelength(ins, filt):
     """Return ``(wavelength, bandwidth)`` in metres for an instrument filter.
 
     Only JWST NIRISS AMI filters (``ins="JWST"``) are tabulated.
+
+    Deprecated: nothing in virgil uses this table.
     """
+    _deprecated("GetWavelength", "keep your own filter table.")
     dic_filt = {
         "JWST": {
             "F277W": [2.776, 0.715],
@@ -75,7 +99,10 @@ def Format_STAINDEX_V2(tab):
     """Return baseline station pairs as 1-based ``(n, 2)`` integers.
 
     Zero-based indices (any 0 present) are shifted up by one.
+
+    Deprecated: nothing in virgil uses this helper.
     """
+    _deprecated("Format_STAINDEX_V2", "inline the shift.")
     tab = np.asarray(tab, dtype=int).reshape(-1, 2)
     return tab + 1 if tab.min() == 0 else tab  # RAC 2/2021
 
@@ -84,7 +111,10 @@ def Format_STAINDEX_T3(tab):
     """Return triangle station triplets as 1-based ``(n, 3)`` integers.
 
     Zero-based indices (any 0 present) are shifted up by one.
+
+    Deprecated: nothing in virgil uses this helper.
     """
+    _deprecated("Format_STAINDEX_T3", "inline the shift.")
     tab = np.asarray(tab, dtype=int).reshape(-1, 3)
     return tab + 1 if tab.min() == 0 else tab
 

@@ -62,7 +62,7 @@ from ._grid import (
     resolve_grid_keys,
     warn_unconverged,
 )
-from ._utils import concrete
+from ._utils import FWHM_PER_SIGMA, concrete
 from .grid_fit import (
     _best_grid_flux,
     _laplace_flux_uncertainty_grid,
@@ -92,7 +92,6 @@ STATISTICS = ("delta_chi2", "log_bayes_factor", "max_snr")
 # relative: ~1e-6 at two steps per FWHM (s = 1.18 sigma), but 20% at
 # s = 3 sigma.
 MIN_PEAK_STEPS = 2.0
-FWHM_PER_SIGMA = 2.0 * np.sqrt(2.0 * np.log(2.0))
 
 
 @old_order("data", "model", "grid", data="data")

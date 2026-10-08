@@ -26,6 +26,7 @@ from virgil.likelihood import (
     model_loglike,
     numpyro_model,
 )
+from tests._shared import planck
 from tests.test_oifits import TRUTH, _tables
 
 WAVES = onp.array([1.55e-6, 1.65e-6, 1.75e-6])
@@ -232,19 +233,12 @@ def test_power_law_reference_wavelength_must_be_positive():
 
 
 # Planck's law written out independently of virgil.spectra.
-_H, _C, _K = 6.62607015e-34, 2.99792458e8, 1.380649e-23
-
-
-def _planck(wavel, temperature):
-    return wavel**-5.0 / onp.expm1(_H * _C / (wavel * _K * temperature))
 
 
 @pytest.mark.parametrize("temperature", [1120.0, 2400.0, 7250.0])
 def test_black_body_is_a_planck_spectrum_normalised_at_wavel0(temperature):
     spectrum = BlackBody(0.3, temperature, 1.65e-6)
-    expected = (
-        0.3 * _planck(WAVES, temperature) / _planck(1.65e-6, temperature)
-    )
+    expected = 0.3 * planck(WAVES, temperature) / planck(1.65e-6, temperature)
     assert onp.allclose(onp.asarray(spectrum(WAVES)), expected, rtol=1e-5)
     assert float(spectrum(None)) == pytest.approx(0.3)
 
@@ -291,7 +285,7 @@ def test_sparco_fractions_and_temperatures_match_the_published_formula():
     for wavel in WAVES:
         lam = {"pri": (wavel / 1.65e-6) ** -4.0}
         for name, temperature in temperatures.items():
-            lam[name] = _planck(wavel, temperature) / _planck(
+            lam[name] = planck(wavel, temperature) / planck(
                 1.65e-6, temperature
             )
         unit = {

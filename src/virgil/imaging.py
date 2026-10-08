@@ -58,7 +58,7 @@ from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
 from ._geometry import pixel_offsets, rotate
-from ._utils import _reference, mas2rad
+from ._utils import FWHM_PER_SIGMA, _reference, mas2rad
 from ._precision import cast_tree, run_in
 from .fitting import FitResult, fit
 from .spectra import flux_at
@@ -680,7 +680,7 @@ def starting_image(
     widest = field_of_view(data, largest_mas=onp.inf)
     best = None
     for width in (0.25 * resolution, resolution, 4.0 * resolution):
-        sigma = min(width, widest / 6.0) / 2.3548
+        sigma = min(width, widest / 6.0) / FWHM_PER_SIGMA
         if star:
             model = System(
                 star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
@@ -696,7 +696,7 @@ def starting_image(
         if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
             best = result
     envelope = best.model.env if star else best.model
-    fwhm = 2.3548 * float(envelope.sigma)
+    fwhm = FWHM_PER_SIGMA * float(envelope.sigma)
     fov = min(max(500.0, 6.0 * fwhm), widest)
     if largest_mas is not None:
         fov = min(fov, float(largest_mas))
@@ -785,7 +785,7 @@ def beam(data):
     m = onp.array([[w @ (u * u), w @ (u * v)], [w @ (u * v), w @ (v * v)]])
     covariance = onp.linalg.inv(m / onp.sum(w)) / (4 * onp.pi**2)
     variance, axes = onp.linalg.eigh(covariance)
-    fwhm = 2.0 * onp.sqrt(2.0 * onp.log(2.0) * variance)
+    fwhm = FWHM_PER_SIGMA * onp.sqrt(variance)
     x, y = axes[:, 1]  # the major axis, in (East, North)
     pa = onp.degrees(onp.arctan2(x, y)) % 180.0
     return Beam(float(fwhm[1]), float(fwhm[0]), float(pa))
@@ -848,12 +848,11 @@ def convolve_beam(image, pixel_scale_mas, beam):
     pa = np.deg2rad(beam.pa_deg)
     along = x * np.sin(pa) + y * np.cos(pa)  # the major axis is (sin, cos)
     across = x * np.cos(pa) - y * np.sin(pa)
-    fwhm_per_sigma = 2.0 * onp.sqrt(2.0 * onp.log(2.0))
     kernel = np.exp(
         -0.5
         * (
-            (along * fwhm_per_sigma / beam.major_mas) ** 2
-            + (across * fwhm_per_sigma / beam.minor_mas) ** 2
+            (along * FWHM_PER_SIGMA / beam.major_mas) ** 2
+            + (across * FWHM_PER_SIGMA / beam.minor_mas) ** 2
         )
     ).astype(image.dtype)
     return fftconvolve(image, kernel / np.sum(kernel), mode="same")
@@ -932,7 +931,7 @@ def _scale_shapes(scales_mas, support, pixel_scale_mas):
         if s == 0.0:
             shapes.append(None)
             continue
-        sigma = s / (2.0 * onp.sqrt(2.0 * onp.log(2.0)) * pixel_scale_mas)
+        sigma = s / (FWHM_PER_SIGMA * pixel_scale_mas)
         kernel = onp.exp(
             -0.5 * ((offsets[:, None] - offsets[None, :]) / sigma) ** 2
         )

@@ -22,10 +22,9 @@ from virgil.oidata import OIData, cp_indices
 from virgil.oifits import build_hdulist, read_oifits, write_oifits
 from virgil.spectra import GaussianLine, PowerLaw, Sum
 from virgil._utils import mas2rad
+from tests._shared import PAIRS, TRIANGLES  # noqa: E402
 
 STATIONS = onp.array([[0.0, 0.0], [32.0, 2.0], [14.0, 26.0], [-11.0, 18.0]])
-PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
-TRIANGLES = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
 WAVES = onp.linspace(2.150e-6, 2.180e-6, 12)
 LINE = (2.163e-6, 2.169e-6)
 

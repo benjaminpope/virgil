@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -18,12 +16,12 @@ from virgil.models import (
     circular_support,
 )
 from virgil.oidata import OIData, cp_indices
+from tests._shared import PAIRS, TRIANGLES  # noqa: E402
+from tests._shared import CALIBRATED_VISIBILITY  # noqa: E402
 
 MAS2RAD = onp.pi / 180.0 / 3600.0 / 1000.0
 WAVEL = 4.8e-6
-DISCO_PRODUCT = (
-    Path(__file__).resolve().parents[1] / "data" / "calibrated_visibility.npy"
-)
+DISCO_PRODUCT = CALIBRATED_VISIBILITY
 
 
 def _baselines(n=60, max_m=6.5, seed=0):
@@ -158,8 +156,6 @@ def test_dft_accuracy_at_long_baselines(x64):
         assert onp.max(onp.abs(got - expected)) < tol
 
 
-PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
-TRIANGLES = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
 STATIONS = onp.array([[0.0, 0.0], [3.2, 0.2], [1.4, 2.6], [-1.1, 1.8]])
 
 

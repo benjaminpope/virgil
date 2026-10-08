@@ -48,7 +48,7 @@ errors or a log-normalisation.
 
 [`LinearMarginal`][virgil._linear.LinearMarginal] wraps either for one
 design with a stated prior. The Laplace covariance of a fit's latent
-parameters (``fitting._laplace_covariance``) uses the same Woodbury
+parameters (``fitting._gauss_newton_covariance``) uses the same Woodbury
 identity, but to invert a curvature, not to marginalise a likelihood, so
 it is not built on this module.
 """

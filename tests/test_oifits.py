@@ -11,11 +11,10 @@ from virgil.likelihood import loglike, model_loglike, whitened_residuals
 from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData, closure_phases, cp_indices
 from virgil.oifits import read_oifits, write_oifits
+from tests._shared import PAIRS, TRIANGLES  # noqa: E402
 
 
 STATIONS = onp.array([[0.0, 0.0], [3.2, 0.2], [1.4, 2.6], [-1.1, 1.8]])
-PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
-TRIANGLES = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
 TRUTH = BinaryModelCartesian(dra=60.0, ddec=-40.0, flux=0.05)
 
 

@@ -136,3 +136,35 @@ def test_check_az_prof_nonnegative_under_jit():
     check = jax.jit(check_az_prof_nonnegative)
     assert not bool(check(np.array([1.2, 0.0]), np.array([45.0, 0.0])))
     assert bool(check(np.array([0.5, 0.3]), np.array([10.0, 70.0])))
+
+
+def test_fwhm_per_sigma_is_the_gaussian_ratio():
+    from virgil._utils import FWHM_PER_SIGMA
+
+    assert np.isclose(FWHM_PER_SIGMA, 2.0 * np.sqrt(2.0 * np.log(2.0)))
+    assert np.isclose(FWHM_PER_SIGMA, 2.3548, atol=1e-4)
+
+
+def test_rotate_keeps_numpy_inputs_in_numpy_precision():
+    from virgil._geometry import rotate
+
+    u, v = onp.array([1.0, 2.0]), onp.array([3.0, -1.0])
+    x, y = rotate(u, v, 30.0)
+    assert isinstance(x, onp.ndarray) and x.dtype == onp.float64
+    c, s = onp.cos(onp.radians(30.0)), onp.sin(onp.radians(30.0))
+    assert onp.allclose(x, c * u + s * v, rtol=1e-15)
+    assert onp.allclose(y, -s * u + c * v, rtol=1e-15)
+
+
+def test_legacy_helpers_are_deprecated():
+    from virgil.legacy import oifits_implaneia as legacy
+
+    with pytest.warns(FutureWarning, match="removed in virgil 0.6"):
+        assert legacy.GetWavelength("JWST", "F480M")[0] == pytest.approx(
+            4.817e-6
+        )
+    with pytest.warns(FutureWarning, match="virgil.oidata"):
+        from virgil.legacy.oifits_implaneia import cp_indices
+    from virgil.oidata import cp_indices as original
+
+    assert cp_indices is original

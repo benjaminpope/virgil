@@ -50,6 +50,7 @@ import numpy as onp
 from jax.scipy.special import i0e
 
 from ._precision import cast_tree, run_in
+from ._utils import rad2mas
 from .fitting import fit
 from .likelihood import (
     _gaussian_loglike,
@@ -78,8 +79,6 @@ __all__ = [
     "rank_orbits",
     "start_from_positions",
 ]
-
-_MAS = onp.pi / 180.0 / 3.6e6  # radians per milliarcsecond
 
 _AT = ("dataset", "epoch")
 
@@ -246,7 +245,7 @@ class Epochs:
             ok = baseline > 0
             if ok.any():
                 finest = min(finest, float(onp.min(wavel[ok] / baseline[ok])))
-        return finest / _MAS
+        return finest * rad2mas
 
     def index(self, name):
         """The position of dataset ``name`` in ``data`` (and in ``noise``).
