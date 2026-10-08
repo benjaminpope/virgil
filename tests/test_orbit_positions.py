@@ -12,7 +12,7 @@ the data do not depend on the JAX version.
 import warnings
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import numpyro.distributions as dist
 import pytest
@@ -138,7 +138,7 @@ def test_the_covariance_is_the_analytic_curvature_of_the_marginal_surface():
     # -m = Σ_b (ν_b/2) ln χ²_b is Σ_b [H_b/(2ŝ_b²) - (ν_b/2) g_b g_bᵀ/χ_b⁴].
     data = _night(VLTI_UTS[:3], 1, s_vis=2.0, s_phi=4.0)
     found = _positions(data)
-    x = jnp.asarray([found.dra[0], found.ddec[0], found.flux[0]])
+    x = np.asarray([found.dra[0], found.ddec[0], found.flux[0]])
     with jax.enable_x64(True):
         d64 = cast_tree(data, "float64")
         reference, errors = d64.flatten_data()
@@ -147,8 +147,8 @@ def test_the_covariance_is_the_analytic_curvature_of_the_marginal_surface():
         def chi2(v, block):
             r = d64.model(BinaryModelCartesian(*v)) - reference
             if block == "vis":
-                return jnp.sum((r[:n_vis] / errors[:n_vis]) ** 2)
-            return jnp.sum((2 * jnp.sin(r[n_vis:] / 2) / errors[n_vis:]) ** 2)
+                return np.sum((r[:n_vis] / errors[:n_vis]) ** 2)
+            return np.sum((2 * np.sin(r[n_vis:] / 2) / errors[n_vis:]) ** 2)
 
         curvature = 0.0
         for block, nu in (("vis", n_vis), ("phi", reference.size - n_vis)):
@@ -254,7 +254,7 @@ def test_bounded_marginal_is_the_incomplete_gamma_integral(
     surface.nu = onp.array([nu], dtype=float)
     surface.s_max = s_max
     with jax.enable_x64(True):
-        got = float(surface.score(jnp.asarray([chi2]), dof, None))
+        got = float(surface.score(np.asarray([chi2]), dof, None))
     want = _bounded_gaussian_marginal(chi2, nu, dof, s_max)
     assert got == pytest.approx(want, abs=1e-6)
 
@@ -287,7 +287,7 @@ def test_bounded_marginal_gradient_matches_finite_difference(
     with jax.enable_x64(True):
         grad = float(
             jax.grad(lambda c: surface.score(c, dof, None))(
-                jnp.asarray([chi2])
+                np.asarray([chi2])
             )[0]
         )
     h = 1e-4 * chi2
@@ -301,7 +301,7 @@ def test_bounded_marginal_gradient_matches_finite_difference(
 def test_bounded_marginal_steep_edge_in_float32():
     chi2, nu, dof, s_max = 1787.0, 60, 1.0, 1.2
     surface = _bounded_surface(nu, s_max)
-    got = float(surface.score(jnp.asarray([chi2], jnp.float32), dof, None))
+    got = float(surface.score(np.asarray([chi2], np.float32), dof, None))
     want = _bounded_gaussian_marginal(chi2, nu, dof, s_max)
     print(f"float32 steep-edge error: {got - want:.3e} on {want:.3f}")
     assert got == pytest.approx(want, rel=1e-3)
@@ -461,8 +461,8 @@ def test_weak_closure_phases_use_the_bounded_numerical_marginal():
     data = _night(VLTI_UTS[:3], 5, sigma_cp_deg=sigma, hours=(-1.0, 1.0))
     axis = onp.arange(-12.0, 12.01, 1.0)
     xx, yy, ff = onp.meshgrid(axis, axis, [0.3, 0.6], indexing="ij")
-    points = jnp.asarray(onp.stack([xx.ravel(), yy.ravel(), ff.ravel()], -1))
-    log_s = jnp.linspace(-onp.log(10.0), onp.log(10.0), 161)
+    points = np.asarray(onp.stack([xx.ravel(), yy.ravel(), ff.ravel()], -1))
+    log_s = np.linspace(-onp.log(10.0), onp.log(10.0), 161)
     with jax.enable_x64(True):
         d64 = cast_tree(data, "float64")
 
@@ -479,8 +479,8 @@ def test_weak_closure_phases_use_the_bounded_numerical_marginal():
                 return model_loglike(m, d64, vis_scale=v, phi_scale=p)
 
             base = at(1.0, 1.0)
-            vis = jax.vmap(lambda u: at(jnp.exp(u), 1.0))(log_s).max()
-            phi = jax.vmap(lambda u: at(1.0, jnp.exp(u)))(log_s).max()
+            vis = jax.vmap(lambda u: at(np.exp(u), 1.0))(log_s).max()
+            phi = jax.vmap(lambda u: at(1.0, np.exp(u)))(log_s).max()
             return vis + phi - base
 
         score = onp.asarray(jax.lax.map(bounded, points, batch_size=256))
@@ -518,7 +518,7 @@ def _reference(data, starts=(), half=16.0, step=0.25, n_peaks=10):
     points = onp.stack([xx.ravel(), yy.ravel(), ff.ravel()], -1)
     with jax.enable_x64(True):
         loglike = onp.asarray(
-            _quoted_loglike(jnp.asarray(points), cast_tree(data, "float64"))
+            _quoted_loglike(np.asarray(points), cast_tree(data, "float64"))
         ).reshape(xx.shape)
     by_position = loglike.max(2)
     peaks = onp.argwhere(
@@ -711,7 +711,7 @@ def test_the_catalogue_holds_scored_peaks_with_weights():
             return -marginal_loglike(BinaryModelCartesian(*x), d64)
 
         for k in range(n):
-            x = jnp.array([peaks.dra[k], peaks.ddec[k], peaks.flux[k]])
+            x = np.array([peaks.dra[k], peaks.ddec[k], peaks.flux[k]])
             model = BinaryModelCartesian(*x)
             assert float(marginal_loglike(model, d64)) == pytest.approx(
                 peaks.marginal[k], abs=1e-6
