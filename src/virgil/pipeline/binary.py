@@ -618,9 +618,7 @@ def _fit(p):
     if angular:
         # The model's own parameters, derived from the fitted offsets.
         m = result.model
-        values.update(
-            sep=np.asarray(m.sep), pa=np.asarray(m.pa)
-        )
+        values.update(sep=np.asarray(m.sep), pa=np.asarray(m.pa))
     reported = ["sep", "pa", "flux"] if angular else params
     _io.save_model(
         p.output / "models" / "best", result.model, values, reported

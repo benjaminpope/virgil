@@ -443,7 +443,9 @@ def test_templates_share_one_prior_on_the_sky(data):
     from virgil import BinaryModelAngular
 
     angular = BinaryPipeline(data, **TINY)
-    cartesian = BinaryPipeline(data, BinaryModelCartesian(0.0, 0.0, 0.0), **TINY)
+    cartesian = BinaryPipeline(
+        data, BinaryModelCartesian(0.0, 0.0, 0.0), **TINY
+    )
     pa, pc = angular._priors(300.0), cartesian._priors(300.0)
     assert list(pa) == list(pc) == ["dra", "ddec", "flux"]
     for k in pa:
