@@ -74,7 +74,7 @@ integrations = [
 # virgil.pipeline: HDF5 outputs and the executed quicklook notebook (and
 # the corner plots of the plots extra).
 pipeline = [
-  "h5py>=3.10",
+  "h5py>=3.11",  # first release built against numpy 2
   "nbformat>=5.9",
   "nbclient>=0.9",
   "ipykernel>=6.25",
