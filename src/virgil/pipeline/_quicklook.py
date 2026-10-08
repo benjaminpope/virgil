@@ -200,6 +200,7 @@ def build_notebook(path):
         v4.new_markdown_cell(_intro(run, summary)),
         v4.new_code_cell(
             "import warnings\n\n"
+            "%matplotlib inline\n"
             "import matplotlib.pyplot as plt\n"
             "from IPython.display import Image, display\n\n"
             "# Third-party import and load-time warnings would add a stderr\n"
