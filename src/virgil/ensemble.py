@@ -36,6 +36,7 @@ choices, not the noise in the data; for the posterior, sample an image
 """
 
 import dataclasses
+import warnings
 
 import jax
 import numpy as onp
@@ -68,12 +69,20 @@ FAMILIES = {"tv": TV, "tsv": TSV, "maxent": MaxEntropy, "starlet": StarletL1}
 def _default_weight_ranges():
     # Weight per data point. The penalties of a unit-sum image are O(1) for
     # TV, maximum entropy and the starlet L1 norm, and much smaller for
-    # TSV, whose steps are squared.
+    # TSV, whose steps are squared. On the 60 datasets of virgil-validation's
+    # contest bench (12 groups each), the L-curve corners per data point
+    # fell (5th to 95th percentile) at 0.003-1.6 for TV, 0.004-1.9 for
+    # maximum entropy, 0.003-1.2 for the starlet L1 norm and 3-2000 for
+    # TSV, with no trend with the number of pixels; most of the scatter is
+    # within a dataset, from the sparse sweeps. Each range reaches a decade
+    # below the lowest of these, so that the window below a corner (one
+    # decade by default) is sampled, and half a decade or more above the
+    # highest, so that the corner is an interior point of the sweep.
     return {
-        "tv": (1e-3, 1e1),
-        "tsv": (1e0, 1e4),
-        "maxent": (1e-3, 1e1),
-        "starlet": (1e-3, 1e1),
+        "tv": (1e-4, 1e1),
+        "tsv": (1e-1, 1e4),
+        "maxent": (1e-4, 1e1),
+        "starlet": (1e-4, 1e1),
     }
 
 
@@ -93,8 +102,11 @@ class EnsembleSpec:
         For each family, the range ``(low, high)`` of the weight per data
         point (the weight divided by the total number of independent data).
         Weights are drawn log-uniformly in it, the invariant prior for a
-        scale. The defaults are deliberately wide; if the L-curve corners
-        fall at the edges, move the range.
+        scale, one in each of ``n_weights`` equal bins of ``log w`` so that
+        every sweep spans the range. The defaults are wide enough to hold
+        the corners of the contest bench's datasets with a window's width
+        to spare below them; if the L-curve corners fall at the edges, move
+        the range.
     n_weights : int
         Weights per group, at least three (the L-curve's corner needs
         them).
@@ -104,19 +116,27 @@ class EnsembleSpec:
         drawn uniformly.
     field_factors : tuple of float
         The field is ``field_of_view(data)`` times one of these, drawn
-        uniformly. Above 1 the field exceeds the interferometric field of
-        view, which on a uv lattice (AMI) aliases.
+        uniformly. A field larger than the interferometric field of view
+        lets the image hold flux the shortest baselines resolve out, which
+        on the contest bench gave better images than a field of 1 or less
+        (field 4 was the best of its arms). On a uv lattice (AMI, data
+        with a ``uv_grid``) a field above 1 aliases, so there the factors
+        are capped at 1.
     starts : tuple of str
         Starting images, drawn uniformly: ``"moments"`` and ``"dirty"``
         (see [`starting_image`][virgil.imaging.starting_image]; a dirty
         start needs data with phases) and ``"flat"``.
     max_npix : int
-        Largest number of pixels on a side; larger fields are cut to it.
+        Largest number of pixels on a side. A field that would need more
+        keeps its size and takes coarser pixels instead, so its pixels per
+        Nyquist pixel fall below ``oversample``, but never below one: if
+        even Nyquist pixels cannot cover it, the field is cropped.
     window_dex : float
-        Width of the window of weights kept in each group, in dex, from the
-        L-curve's corner up to ``corner * 10**window_dex``: the
-        regularisation runs from the corner, where the fit to the data
-        stops improving, to somewhat stronger.
+        Width of the window of weights kept in each group, in dex, from
+        ``corner / 10**window_dex`` up to the L-curve's corner: as in
+        MYTHRA, the weights just before the turnover, where the fit to the
+        data has stopped improving but the image is not yet over-smoothed.
+        Stronger weights, past the corner, trade fit for smoothness fast.
     max_chi2_red : float
         Drop a member if the raw χ² per data point of any dataset exceeds
         this.
@@ -133,22 +153,26 @@ class EnsembleSpec:
         Without a star, the members are recentred on the best one, searching
         shifts up to this (default: the beam's major axis). With a star,
         the star fixes the position and they are not shifted.
-    mean_rtol : float
-        A member joins the mean if no dataset's χ² rises by more than this
-        fraction: only enough to forgive rounding, since the mean of
-        identical images is not always bit-identical to them. On data that
-        the best member fits to the noise, so strict a rule may keep that
-        member alone (and the spread is then zero); a value of order the
-        χ²/N noise, √(2/N), keeps more.
+    mean_rtol : float or None
+        A member joins the mean if, on every dataset, the mean's χ² stays
+        within this fraction of the best member's. The default, ``None``,
+        is each dataset's χ²/N noise, √(2/N): a mean that fits as well as
+        the best member, up to the noise. ``0`` keeps the mean's χ² at or
+        below the best member's, which on data the best member fits to the
+        noise often keeps that member alone (and the spread is then zero);
+        on the contest bench it kept 1 of 72 members on most datasets.
+    min_kept : int
+        [`combine`][virgil.ensemble.combine] warns if fewer members than
+        this are kept.
     """
 
     families: tuple = ("tv", "tsv", "maxent", "starlet")
     weight_ranges: dict = dataclasses.field(
         default_factory=_default_weight_ranges
     )
-    n_weights: int = 6
+    n_weights: int = 8
     oversample: tuple = (2.0, 3.0, 4.0)
-    field_factors: tuple = (0.5, 0.75, 1.0)
+    field_factors: tuple = (1.0, 2.0, 4.0)
     starts: tuple = ("moments", "flat")
     max_npix: int = 128
     window_dex: float = 1.0
@@ -156,7 +180,8 @@ class EnsembleSpec:
     chi2_ratio: float = 2.0
     mad_cut: float = 5.0
     max_shift_mas: float | None = None
-    mean_rtol: float = 1e-9
+    mean_rtol: float | None = None
+    min_kept: int = 3
 
     def __post_init__(self):
         unknown = set(self.families) - set(FAMILIES)
@@ -288,7 +313,8 @@ class Ensemble:
         Raw χ² per data point of the mean scene on each dataset.
     trace : list of tuple
         ``chi2_red`` of the running mean after each accepted member, from
-        the best member alone; it never rises on any dataset.
+        the best member alone; on every dataset it stays within
+        ``spec.mean_rtol`` of the first entry.
     members : list of Member
         Every reconstruction, kept or not.
     groups : list of Group
@@ -349,8 +375,11 @@ def draw_groups(data, n_groups, key, spec=None):
 
     Each group draws a regulariser family, a pixel size (the Nyquist scale
     over one of ``spec.oversample``), a field (``field_of_view(data)``
-    times one of ``spec.field_factors``, cut at ``spec.max_npix`` pixels), a
-    starting image and ``spec.n_weights`` log-uniform weights. The draws
+    times one of ``spec.field_factors``, at most 1 on a uv lattice; beyond
+    ``spec.max_npix`` pixels the pixels are coarsened to fit it, down to
+    the Nyquist scale), a starting image and
+    ``spec.n_weights`` log-uniform weights, one in each equal bin of the
+    family's range in ``log w``. The draws
     depend only on ``key`` and ``spec``, so every task of a cluster array
     can draw them all and run its own.
 
@@ -378,15 +407,26 @@ def draw_groups(data, n_groups, key, spec=None):
     nyquist = nyquist_pixel_scale(data)
     field = field_of_view(data)
     n_data = sum(d.n_independent for d in _datasets(data))
+    # On a uv lattice (AMI) a field beyond field_of_view aliases.
+    lattice = any(d.uv_grid is not None for d in _datasets(data))
     draws = []
     for index in range(int(n_groups)):
         family = spec.families[rng.integers(len(spec.families))]
         scale = nyquist / spec.oversample[rng.integers(len(spec.oversample))]
         factor = spec.field_factors[rng.integers(len(spec.field_factors))]
-        npix = min(int(onp.ceil(factor * field / scale)), spec.max_npix)
+        if lattice:
+            factor = min(factor, 1.0)
+        npix = int(onp.ceil(factor * field / scale))
+        if npix > spec.max_npix:
+            # Keep the field and coarsen the pixels, but never beyond the
+            # Nyquist scale: past that, crop the field instead.
+            npix = spec.max_npix
+            scale = min(factor * field / npix, nyquist)
         start = spec.starts[rng.integers(len(spec.starts))]
         low, high = onp.log(spec.weight_ranges[family]) + onp.log(n_data)
-        weights = onp.exp(rng.uniform(low, high, spec.n_weights))
+        # Stratified: one log-uniform weight in each of n_weights equal bins.
+        edges = onp.linspace(low, high, spec.n_weights + 1)
+        weights = onp.exp(rng.uniform(edges[:-1], edges[1:]))
         draws.append(
             Draw(
                 index,
@@ -560,8 +600,9 @@ def combine(data, groups, *, spec=None, star=True):
 
     The selection follows MYTHRA (Drevon et al. 2025):
 
-    1. In each group, keep the weights from the L-curve's corner up to
-       ``spec.window_dex`` above it.
+    1. In each group, keep the weights from ``spec.window_dex`` below the
+       L-curve's corner up to the corner: the weights just before the
+       turnover.
     2. Drop members whose fit diverged (a non-finite χ²), then keep
        members whose raw χ² per data point is below
        ``spec.max_chi2_red`` and within ``spec.chi2_ratio`` of the best
@@ -572,9 +613,11 @@ def combine(data, groups, *, spec=None, star=True):
        recentre each on the best member
        ([`align`][virgil.metrics.align]).
     4. In order of total χ², add members to a running mean one at a time,
-       keeping each only if the mean's χ² does not rise on any dataset (so
-       visibilities and closure phases, given as separate datasets, are
-       judged separately). The running mean is judged as the mixture of
+       keeping each only if the mean's χ² on every dataset stays within
+       ``spec.mean_rtol`` (by default the χ²/N noise, √(2/N)) of the best
+       member's (so visibilities and closure phases, given as separate
+       datasets, are judged separately). Judging against the best member,
+       not the running mean, keeps the tolerance from compounding. The running mean is judged as the mixture of
        the members' images on their own grids, which is exact; resampling
        to the common grid smooths them, which on precise data can raise
        χ² several-fold and so let worse members through.
@@ -613,9 +656,9 @@ def combine(data, groups, *, spec=None, star=True):
                 for c, n in zip(info["chi2"][: len(datasets)], info["ndata"])
             )
             inside = corner is None or (
-                corner * (1 - 1e-9)
+                corner * 10**-spec.window_dex * (1 - 1e-9)
                 <= float(weight)
-                <= corner * 10**spec.window_dex * (1 + 1e-9)
+                <= corner * (1 + 1e-9)
             )
             members.append(
                 Member(
@@ -712,12 +755,16 @@ def combine(data, groups, *, spec=None, star=True):
         chosen = [0]
         current = chi2_red(chosen)
         trace = [current]
+        if spec.mean_rtol is None:
+            rtol = [onp.sqrt(2.0 / d.n_independent) for d in datasets]
+        else:
+            rtol = [spec.mean_rtol] * len(datasets)
+        # Rounding: the mean of identical images is not always
+        # bit-identical to them.
+        bound = [b * (1.0 + r + 1e-9) for b, r in zip(current, rtol)]
         for k in range(1, len(live)):
             candidate = chi2_red(chosen + [k])
-            if all(
-                c <= b * (1.0 + spec.mean_rtol)
-                for c, b in zip(candidate, current)
-            ):
+            if all(c <= b for c, b in zip(candidate, bound)):
                 chosen, current = chosen + [k], candidate
                 trace.append(current)
             else:
@@ -731,6 +778,14 @@ def combine(data, groups, *, spec=None, star=True):
     for k in chosen:
         members[live[k]] = dataclasses.replace(
             members[live[k]], kept=True, reason=None
+        )
+    if len(chosen) < spec.min_kept:
+        warnings.warn(
+            f"Only {len(chosen)} of {len(members)} members were kept "
+            f"(fewer than min_kept={spec.min_kept}), so the spread is not "
+            "a useful map. Look at Ensemble.summary() for where they were "
+            "dropped.",
+            stacklevel=2,
         )
 
     stack = onp.stack([weighted[j] for j in chosen])

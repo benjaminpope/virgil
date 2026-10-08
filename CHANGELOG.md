@@ -74,6 +74,36 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **`virgil.ensemble` default selection.** The L-curve window now keeps
+  the weights from `window_dex` below the corner up to the corner (MYTHRA's
+  "just before the turnover"), not the over-regularised side above it. The
+  default weight ranges reach a decade lower (`tsv` 0.1–10⁴, the others
+  10⁻⁴–10 per data point), set from the corners of the 60 datasets of
+  virgil-validation's contest bench, and each sweep draws one log-uniform
+  weight per equal bin of `log w`, so it spans its range. The default
+  `field_factors` are now (1, 2, 4) times `field_of_view(data)`, and a
+  field too large for `max_npix` keeps its size with coarser pixels instead
+  of being cropped, down to Nyquist pixels; on a uv lattice (AMI) the factors are capped at 1. The
+  iterative mean now admits a member if every dataset's χ² stays within
+  `mean_rtol` of the best member's, by default each dataset's χ²/N noise
+  √(2/N) (was: no rise at all, judged against the running mean), and
+  `combine` warns when fewer than `min_kept` (3) members are kept. The
+  default `n_weights` is 8. On the bench the old defaults kept 1 of 72
+  members on 44 of 60 datasets and gave the worst images of any arm.
+
+- **`read_oifits` reads closure triangles whose leg has no visibility
+  row** ([#299](https://github.com/benjaminpope/virgil/issues/299)). A
+  triangle leg stored in no `OI_VIS2`/`OI_VIS` row in either orientation
+  raised a `ValueError`, so MIRC-X files and some ESO phase-3 PIONIER
+  products (which omit a baseline's V²) could not be read. `OI_T3` is
+  self-contained in the OIFITS standard, so such a leg now gets a flagged
+  sample at the T3 row's own coordinates (`(U1COORD, V1COORD)`,
+  `(U2COORD, V2COORD)` or their sum), shared by later triangles of the
+  same frame, as reversed legs already were. One `UserWarning` per file
+  gives the number of legs placed this way. The `ValueError` remains when
+  those coordinates are NaN or zero, or disagree with the triangle's other
+  legs (a table written with the opposite baseline direction).
+
 - **`epoch_positions` no longer commits to a peak before refining it.**
   It refined only the best grid point, which is not always the best peak
   once refined: fringe peaks are often narrower than the grid step, and
@@ -167,6 +197,14 @@ anything before 1.0 may change between minor versions.
   `rank_scores` / `OrbitScores.order` rank with ties broken on quantized
   scores, then by index.
 
+- **Azimuthally modulated cones.** `TruncatedCone(..., az_amps=, az_pas=)`
+  multiplies every ring's brightness by `1 + Σ A_m cos(m (φ - φ_m))` in
+  its own azimuth, e.g. for a colliding-wind shock brighter on its
+  leading edge. The azimuths follow `ModulatedGaussianRim`'s convention
+  (in the ring's plane, in the sense of position angle, `pa ± 90` on the
+  walls). The visibilities stay analytic (one `J_m` per ring and order)
+  and the render matches them. Unmodulated cones are unchanged and carry
+  no empty leaves.
 - **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and
   L-BFGS run in chunks of steps, check the wall clock between them and
   stop, unconverged, with `info["stop"] == "time"` (L-BFGS carries its
