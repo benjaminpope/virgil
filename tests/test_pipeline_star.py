@@ -89,6 +89,7 @@ SUMMARY_KEYS = {
     "stability": None,
     "status": None,
     "worst_check": None,
+    "warnings": None,
     "checks": None,
     "data": {
         "n_vis",
@@ -188,7 +189,10 @@ def test_summary_keys_snapshot(full_run):
         for k, v in res.summary.items()
     }
     assert keys == SUMMARY_KEYS
-    assert [c.name for c in res.checks] == CHECKS
+    # stage_warnings appears only when a stage warned (e.g. a fit that did
+    # not converge on the tiny data).
+    names = [c.name for c in res.checks if c.name != "stage_warnings"]
+    assert names == CHECKS
     assert all(isinstance(c, Check) for c in res.checks)
 
 

@@ -48,7 +48,27 @@ A pipeline class
 | `models/<name>/` | `manifest.json` (a field spec of public virgil classes) and `values.npz`, enough to rebuild the model without a pickle |
 | `grids.h5`, `samples.h5` | grid maps and posterior samples, with axis names and units as attributes |
 | `plots/*.png` | the figures |
+| `quicklook.log` | stderr of the quicklook kernel |
 | `quicklook.ipynb` | an executed notebook that reloads the folder with `virgil.pipeline.load` and shows the figures and checks |
+
+Warnings raised inside a stage are captured, not printed. The runner
+wraps each stage in `warnings.catch_warnings(record=True)` with
+`simplefilter("always")` and stores each distinct message once, as
+`{stage, category, message}`, in the stage's `report.json` and in the
+`warnings` list of `summary.json` (an additive schema change).
+`Result.describe()` gives one line counting them. Pure functions in
+`_checks.py` map the known messages to checks, by keywords rather than
+exact text: optimizer non-convergence to `convergence` (value: worst
+fraction of grid positions), an unresolved flux peak to
+`flux_axis_resolution`, clipped absil limits to `limits_clipped`; any other
+non-deprecation warning goes to one generic `stage_warnings` check. All
+are `warn` and appear, after the fixed checks, only when the warning
+occurred. The default `n_flux` is unchanged: the peak of a high-SNR dataset
+can be under one step wide on a 40-point log axis, and resolving it by
+brute force costs several times the search, so the check reports it
+instead. The quicklook kernel runs with `JAX_PLATFORMS=cpu` and
+`XLA_PYTHON_CLIENT_PREALLOCATE=false` and its stderr goes to
+`quicklook.log` in the run folder.
 
 `virgil.pipeline.load(path)` returns a `Result` that reads all of these;
 `virgil-pipeline validate` checks a folder against `run.json`'s hashes.

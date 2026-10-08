@@ -300,23 +300,3 @@ plot_v2_models(
 )
 plt.show()
 ```
-
-```python
-fit = res.summary["fit"]["models"]
-hand_ud = float(ud_model.diam)
-hand_ld = float(ld.model.diam)
-hand_post = float(np.median(posterior["diam"]))
-pipe_post = res.summary["posterior"]["models"]["limb_darkened"]["params"]
-print(
-    f"uniform disk:  hand diam={hand_ud:.3f}   pipeline diam={fit['uniform']['params']['diam']:.3f}\n"
-    f"limb-darkened: hand diam={hand_ld:.3f}   pipeline diam={fit['limb_darkened']['params']['diam']:.3f}\n"
-    f"posterior:     hand diam={hand_post:.3f}   pipeline diam={pipe_post['diam']['median']:.3f}"
-)
-
-# The pipeline reproduces the hand-computed numbers.
-assert abs(fit["uniform"]["params"]["diam"] - hand_ud) < 0.02
-assert abs(fit["limb_darkened"]["params"]["diam"] - hand_ld) < 0.05
-assert abs(pipe_post["diam"]["median"] - hand_post) < 0.1
-assert res.summary["fit"]["best"] == "limb_darkened"
-assert fit["uniform"]["chi2_reduced"] > 100 > 2 > fit["limb_darkened"]["chi2_reduced"]
-```

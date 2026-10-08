@@ -75,13 +75,14 @@ Priors are group-invariant: log-uniform in the diameter over `diam_range_mas` (b
 | Path | Contents |
 | --- | --- |
 | `run.json` | Schema, class, stability tier, status (`running`, `partial`, `complete` or `failed`), resolved settings, inputs and their sha256, provenance, per-stage status and timings, the error of a failed run, and the sha256 of every file |
-| `summary.json` | The key numbers by section, the checks, and the worst check status |
-| `stages/<name>/report.json` | Each stage's own numbers |
+| `summary.json` | The key numbers by section, the checks, the worst check status, and the `warnings` raised inside the stages |
+| `stages/<name>/report.json` | Each stage's own numbers, and its `warnings` |
 | `data/processed.oifits` | The data as fitted. It is skipped, with the reason recorded in the load report, when the layout cannot be written as OIFITS |
 | `models/<name>/` | `manifest.json` and `values.npz`: enough to rebuild the model without a pickle |
 | `grids.h5`, `samples.h5` | Grid maps and posterior samples, with axis names and units as attributes |
 | `plots/*.png` | The figures |
 | `quicklook.ipynb` | An executed notebook that reloads the folder and shows the figures and checks |
+| `quicklook.log` | The stderr of the quicklook's kernel, kept out of the terminal |
 
 Everything is JSON, HDF5, NumPy `.npz`, PNG, OIFITS or one notebook, with no pickles. Each file is written atomically, so a crash never leaves a half-written file under its final name, and nothing is written outside the run folder.
 
@@ -94,7 +95,7 @@ Everything is JSON, HDF5, NumPy `.npz`, PNG, OIFITS or one notebook, with no pic
 | `run`, `summary` | The contents of `run.json` and `summary.json` |
 | `status` | `"running"`, `"partial"`, `"complete"` or `"failed"` |
 | `checks` | The quality checks, as `Check` objects |
-| `describe()` | The key numbers and the checks as short text |
+| `describe()` | The key numbers, the checks and a one-line count of recorded warnings, as short text |
 | `plots` | Paths of the plots, sorted by name |
 | `data()` | The fitted data, as an `OIData` |
 | `model()`, `model_values()` | The best-fit model (`name=` picks one of several) with its values set, or the values as arrays |
@@ -123,6 +124,19 @@ Checks are pure functions of plain numbers. The same run always gives the same c
 | `resolution` (the longest B/λ against the first null of the fitted model's visibility, θB/λ = 1.22 for a uniform disk) | below the first null (limb darkening is degenerate with the diameter) | below 0.15 of it (unresolved: an upper limit) |
 | `multimodal` (the per-lobe table of the preferred model, `fit.models.<name>.lobes`: the next-best diameter lobe against a Δχ² of 25) | the next-best lobe is within Δχ² of 25; the message gives its diameter | |
 | `limb_darkening_constrained` (posterior against prior standard deviation of `q1`, `q2`) | a ratio of 0.8 or more | |
+
+### Warnings raised inside stages
+
+A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised by a virgil function inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and always warn:
+
+| Check | Raised by | Meaning |
+| --- | --- | --- |
+| `convergence` | the optimizer did not converge at some grid positions | value: the worst fraction of positions; values there may be inaccurate |
+| `flux_axis_resolution` | the flux axis does not resolve the likelihood peak (fewer than 2 steps across its FWHM) | `log_bayes_factor` is inaccurate; use a larger `n_flux` |
+| `limits_clipped` | contrast limits fell outside the flux bounds | value: the number of clipped limits; widen `flux_range` |
+| `stage_warnings` | any other warning, except deprecation notices | value: the number of warnings; the message quotes the first three |
+
+Deprecation notices are recorded in `warnings` but raise no check. The quicklook notebook's own kernel runs on the CPU (`JAX_PLATFORMS=cpu`, no memory preallocation), so it does not compete with the run for a GPU, and its stderr goes to `quicklook.log`.
 
 ## Stability
 
@@ -163,14 +177,4 @@ virgil-pipeline quicklook runs/hd1234   # rebuild the quicklook notebook
 
 ## API reference
 
-::: virgil.pipeline.binary.BinaryPipeline
-
-::: virgil.pipeline.star.StarPipeline
-
-::: virgil.pipeline.load
-
-::: virgil.pipeline.Result
-
-::: virgil.pipeline.Check
-
-::: virgil.pipeline.ConfigMismatchError
+The classes and functions are documented on the [pipeline API page](api/pipeline.md).
