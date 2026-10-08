@@ -328,7 +328,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             phi, d_phi = phi[keep], d_phi[keep]
             if cp_flag and phi.size == 0:
                 warnings.warn(
-                    "Every closure phase is flagged (or not finite): using "
+                    "Every closure phase is flagged (or not finite, or has no "
+                    "positive error): using "
                     "the visibilities alone.",
                     stacklevel=2,
                 )
@@ -341,7 +342,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if vis.size == 0 and phi.size == 0 and not has_extras:
             raise ValueError(
                 "No unflagged data: every visibility and every phase is "
-                "flagged (or not finite), or there are none."
+                "flagged (or not finite, or has no positive error), or there are none."
             )
 
         self.u = np.asarray(u)
@@ -1759,11 +1760,25 @@ def _positive_factor(factor):
     return factor
 
 
+def _valid_samples(values, errors):
+    """Mask of finite samples with a finite, positive error.
+
+    A zero (or negative) error cannot be used: the whitened residual
+    ``r / σ`` is infinite, and one such sample makes every likelihood and
+    fit non-finite. Such samples are dropped, as flagged ones are.
+    """
+    return (
+        onp.isfinite(values)
+        & onp.isfinite(errors)
+        & (onp.asarray(errors) > 0)
+    )
+
+
 def _good(record):
-    """Unflagged, finite entries of an extra observable's record."""
+    """Unflagged, usable entries of an extra observable's record."""
     value = onp.asarray(record["value"], float).reshape(-1)
     error = onp.asarray(record["error"], float).reshape(-1)
-    good = onp.isfinite(value) & onp.isfinite(error) & (error > 0)
+    good = _valid_samples(value, error)
     if record.get("flag") is not None:
         good &= ~onp.asarray(record["flag"], bool).reshape(-1)
     return good, value, error
@@ -2022,7 +2037,10 @@ def _expand_channels(u, v, wavel, vis, indices):
 
 
 def _good_samples(values, errors, flag, n_samples, name):
-    """Mask of unflagged, finite samples, or ``None`` if all are good.
+    """Mask of unflagged, usable samples, or ``None`` if all are good.
+
+    Usable is as for [`_valid_samples`][virgil.oidata._valid_samples]:
+    finite, with a finite, positive error.
 
     Data whose size is not ``n_samples`` are already projected and are not
     checked.
@@ -2034,7 +2052,7 @@ def _good_samples(values, errors, flag, n_samples, name):
                 f"for {n_samples} samples (it looks already projected)."
             )
         return None
-    bad = ~(onp.isfinite(values) & onp.isfinite(errors))
+    bad = ~_valid_samples(values, errors)
     if flag is not None:
         flag = onp.asarray(flag, dtype=bool).reshape(-1)
         if flag.size != n_samples:
