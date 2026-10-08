@@ -40,6 +40,11 @@ def check_part_name(name, owner, kind, example, clashes_with):
         )
 
 
+def wrap_phase(phase):
+    """``phase`` (radians) wrapped to ``[-π, π)``."""
+    return np.mod(phase + np.pi, 2.0 * np.pi) - np.pi
+
+
 # === TRACED VALUES ===
 
 

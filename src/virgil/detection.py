@@ -62,7 +62,7 @@ from ._grid import (
     resolve_grid_keys,
     warn_unconverged,
 )
-from ._utils import concrete
+from ._utils import concrete, wrap_phase
 from .grid_fit import (
     _best_grid_flux,
     _laplace_flux_uncertainty_grid,
@@ -676,7 +676,7 @@ def bootstrap_null(null_scene, data, *, method="sign_flip"):
     vis_white = resid[:n_vis] / data.d_vis
     phi = resid[n_vis:]
     if data._phases_wrap:
-        phi = jnp.mod(phi + jnp.pi, 2.0 * jnp.pi) - jnp.pi
+        phi = wrap_phase(phi)
         if data.cp_noise is not None:
             phi_white = data.cp_noise.whiten(phi, data.d_phi)[0]
         else:

@@ -138,6 +138,16 @@ def test_check_az_prof_nonnegative_under_jit():
     assert bool(check(np.array([0.5, 0.3]), np.array([10.0, 70.0])))
 
 
+def test_wrap_phase_maps_to_minus_pi_inclusive_pi_exclusive():
+    from virgil._utils import wrap_phase
+
+    pi = onp.pi
+    values = np.array([0.0, pi, -pi, 3 * pi, 2 * pi, 0.5, -3.0 - 2 * pi])
+    got = onp.asarray(wrap_phase(values))
+    assert onp.allclose(got, [0.0, -pi, -pi, -pi, 0.0, 0.5, -3.0], atol=1e-5)
+    assert onp.all((got >= -pi - 1e-6) & (got < pi))
+
+
 def test_position_angle_is_north_through_east_in_zero_to_360():
     import jax.numpy as jnp
     from virgil._geometry import position_angle, separation_pa

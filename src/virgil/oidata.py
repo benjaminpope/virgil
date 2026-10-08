@@ -8,7 +8,7 @@ import equinox as eqx
 import zodiax as zx
 
 from ._closure import ClosureNoise
-from ._utils import inflate_errors
+from ._utils import inflate_errors, wrap_phase
 from .gains import ClosureOffsets, GainModes, closure_offsets, gain_modes
 from .observables import (
     KINDS,
@@ -1121,7 +1121,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             return resid
         n_vis = np.asarray(self.vis).size
         n_phase = n_vis + np.asarray(self.phi).size
-        phase = np.mod(resid[n_vis:n_phase] + np.pi, 2.0 * np.pi) - np.pi
+        phase = wrap_phase(resid[n_vis:n_phase])
         return np.concatenate([resid[:n_vis], phase, resid[n_phase:]])
 
     def standardize_model(self, cvis):
@@ -1931,7 +1931,7 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
         + phases[np.asarray(index_cps2)]
         - phases[np.asarray(index_cps3)]
     )
-    return np.mod(cp + np.pi, 2.0 * np.pi) - np.pi
+    return wrap_phase(cp)
 
 
 def cp_indices(vis_sta_index, cp_sta_index):
