@@ -337,3 +337,18 @@ def test_oidata_methods_and_joint_helpers_accept_their_old_names():
     with pytest.warns(FutureWarning, match="observations="):
         joint = joint_errors(observations=[DATA])
     _assert_same(joint, joint_errors([DATA]))
+
+
+def test_observable_block_predict_accepts_model_object():
+    from virgil.observables import VisibilityAmplitude
+
+    scene = BinaryModelCartesian(*VALUES)
+    cvis = DATA._cvis(scene)
+    n = cvis.size
+    block = VisibilityAmplitude(
+        onp.ones(2), onp.ones(2), onp.array([0, n - 1], dtype=onp.int32)
+    )
+    new = block.predict(scene, cvis)
+    with pytest.warns(FutureWarning, match="model_object="):
+        old = block.predict(model_object=scene, cvis=cvis)
+    _assert_same(old, new)
