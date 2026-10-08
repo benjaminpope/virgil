@@ -126,3 +126,45 @@ def test_worst_status():
 
 def test_checks_are_deterministic():
     assert checks.detection(4.0, 2.0) == checks.detection(4.0, 2.0)
+
+
+def _w(message, category="RuntimeWarning", stage="search"):
+    return {"stage": stage, "category": category, "message": message}
+
+
+def test_stage_warning_checks_map_known_messages():
+    from virgil.pipeline._checks import stage_warning_checks
+
+    checks = {
+        c.name: c
+        for c in stage_warning_checks(
+            [
+                _w("f(): the optimizer did not converge at 2 of 6561 grid positions"),
+                _w("g(): the optimizer did not converge at 5 of 6561 grid positions"),
+                _w(
+                    "detection_statistics(): the flux axis does not resolve the "
+                    "likelihood peak (0.28 steps across its FWHM, under 2), so "
+                    "log_bayes_factor is inaccurate"
+                ),
+                _w("absil_limits(): 1 limits fell outside flux_bounds=(1, 2) and were clipped"),
+            ]
+        )
+    }
+    assert list(checks) == ["convergence", "flux_axis_resolution", "limits_clipped"]
+    assert checks["convergence"].value == pytest.approx(5 / 6561)
+    assert checks["flux_axis_resolution"].value == pytest.approx(0.28)
+    assert checks["limits_clipped"].value == 1
+    assert all(c.status == "warn" for c in checks.values())
+
+
+def test_stage_warning_checks_tolerate_rewording_and_unknowns():
+    from virgil.pipeline._checks import stage_warning_checks
+
+    (reworded,) = stage_warning_checks(
+        [_w("the optimizer failed to converge somewhere")]
+    )
+    assert reworded.name == "convergence" and reworded.value is None
+    (other,) = stage_warning_checks([_w("surprise", "UserWarning")])
+    assert other.name == "stage_warnings" and other.value == 1
+    assert stage_warning_checks([_w("old api", "DeprecationWarning")]) == []
+    assert stage_warning_checks([]) == []

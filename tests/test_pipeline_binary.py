@@ -110,6 +110,7 @@ SUMMARY_KEYS = {
     "status": None,
     "worst_check": None,
     "checks": None,
+    "warnings": None,
     "data": {
         "n_vis",
         "n_phi",
@@ -186,6 +187,12 @@ CHECKS = [
     "ess",
     "divergences",
 ]
+WARNING_CHECKS = {
+    "convergence",
+    "flux_axis_resolution",
+    "limits_clipped",
+    "stage_warnings",
+}
 
 
 def _signature(path):
@@ -219,7 +226,11 @@ def test_summary_keys_snapshot(full_run):
         for k, v in res.summary.items()
     }
     assert keys == SUMMARY_KEYS
-    assert [c.name for c in res.checks] == CHECKS
+    # Checks mapped from stage warnings come after the fixed ones, and only
+    # when the warning occurred.
+    assert [
+        c.name for c in res.checks if c.name not in WARNING_CHECKS
+    ] == CHECKS
     assert all(isinstance(c, Check) for c in res.checks)
 
 
@@ -479,3 +490,50 @@ def test_residual_normality_passes_on_truth_noise(data):
     skew, kurt = _moments(r[:n])
     check = _checks.residual_normality(skew, kurt, n)
     assert check.status == "pass", check.message
+
+
+# --- warnings raised inside stages --------------------------------------------
+
+
+def test_stage_warnings_are_recorded_not_emitted(data, tmp_path, monkeypatch):
+    import warnings
+
+    import virgil.pipeline.binary as binary
+
+    original = binary._overview
+
+    def noisy(p):
+        for _ in range(2):  # duplicates are recorded once
+            warnings.warn(
+                "detection_statistics(): the optimizer did not converge at "
+                "2 of 169 grid positions; values there may be inaccurate.",
+                RuntimeWarning,
+            )
+        warnings.warn("something odd happened", UserWarning)
+        return original(p)
+
+    monkeypatch.setattr(binary, "_overview", noisy)
+    settings = dict(TINY, quicklook_execute=False)
+    pipeline = BinaryPipeline(data, output=tmp_path / "run", **settings)
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        res = pipeline.run(through="limits")
+    assert not [w for w in emitted if issubclass(w.category, RuntimeWarning)]
+    assert not [w for w in emitted if "something odd" in str(w.message)]
+
+    report = json.loads(
+        (tmp_path / "run/stages/overview/report.json").read_text()
+    )
+    assert [w["category"] for w in report["warnings"]] == [
+        "RuntimeWarning",
+        "UserWarning",
+    ]
+    assert {w["stage"] for w in report["warnings"]} == {"overview"}
+    assert {w["message"] for w in report["warnings"]} <= {
+        w["message"] for w in res.summary["warnings"]
+    }
+    names = [c.name for c in res.checks]
+    assert "convergence" in names and "stage_warnings" in names
+    check = {c.name: c for c in res.checks}["convergence"]
+    assert check.status == "warn" and check.value >= 2 / 169 - 1e-12
+    assert "warning(s) recorded" in res.describe()

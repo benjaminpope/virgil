@@ -122,6 +122,10 @@ def render_notebook_markdown(
 
     for cell_index, cell in enumerate(nb.get("cells", []), start=1):
         cell_type = cell.get("cell_type")
+        # Cells tagged "remove-cell" still run in the notebook (so their
+        # asserts guard it) but are left out of the published page.
+        if "remove-cell" in cell.get("metadata", {}).get("tags", []):
+            continue
         source = _to_md_source(cell.get("source", []))
         if not source.strip():
             continue
