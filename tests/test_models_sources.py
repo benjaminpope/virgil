@@ -81,14 +81,14 @@ def test_gaussian_disk_render_remains_finite_for_narrow_shifted_disk():
 def test_cvis_uniform_disk_is_well_behaved():
     uu = oidata.u / oidata.wavel
     vv = oidata.v / oidata.wavel
-    cvis = cvis_uniform_disk(uu, vv, ud=5.0, dra=5.0, ddec=-3.0)
+    cvis = cvis_uniform_disk(uu, vv, diam=5.0, dra=5.0, ddec=-3.0)
     assert cvis.shape == uu.shape
     assert np.all(np.isfinite(cvis))
     assert np.all(np.abs(cvis) <= 1.0 + 1e-12)
 
 
 def test_cvis_uniform_disk_zero_baseline_is_unity():
-    cvis = cvis_uniform_disk(np.array([0.0]), np.array([0.0]), ud=10.0)
+    cvis = cvis_uniform_disk(np.array([0.0]), np.array([0.0]), diam=10.0)
     assert np.allclose(cvis, 1.0 + 0j)
 
 
@@ -128,7 +128,7 @@ def test_cvis_uniform_disk_vanishes_at_first_airy_null():
 def test_cvis_uniform_disk_converges_to_point_source_for_small_ud():
     uu = oidata.u / oidata.wavel
     vv = oidata.v / oidata.wavel
-    cvis = cvis_uniform_disk(uu, vv, ud=1e-6)
+    cvis = cvis_uniform_disk(uu, vv, diam=1e-6)
     assert np.allclose(cvis, 1.0 + 0j, atol=1e-6)
 
 
@@ -1498,3 +1498,11 @@ def test_cone_modulation_is_checked_and_differentiable():
 
     grad = jax.jit(jax.grad(loss))(0.5)
     assert onp.isfinite(grad)
+
+
+def test_cvis_uniform_disk_accepts_the_old_ud_keyword():
+    uu, vv = np.array([1e7, 2e7]), np.array([0.0, 1e7])
+    new = cvis_uniform_disk(uu, vv, diam=5.0)
+    with pytest.warns(FutureWarning, match="ud="):
+        old = cvis_uniform_disk(uu, vv, ud=5.0)
+    assert onp.allclose(old, new)

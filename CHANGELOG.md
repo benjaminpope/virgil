@@ -41,6 +41,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **Warnings and precision (#306).** `Tabulated` now warns with `FutureWarning` (as every other deprecation does) instead of the default-hidden `DeprecationWarning`; the four warnings that set no category (`Ensemble` too few members kept, every closure phase flagged, unmatched T3 legs, `t_ref = 0` with MJD times) now say `UserWarning`. `cvis_uniform_disk` takes `diam` like the other disks (`ud=` still works with a `FutureWarning`). The two pixel-sum matmuls in `GaussianArc`/`ModulatedGaussianRim` use `Precision.HIGHEST`, as the rest of the forward model does (TF32 on A100/H100 otherwise). The AMIGO covariance check takes its tiny-number floor from the array's dtype. `tests/_test_data.py` finds `data/` from its own location, not the working directory.
 - **Orbit starts are scale-aware (#268).** `epoch_positions` now scores
   its grid on the scale-marginalized surface m = -Σ_b (ν_b/2) ln χ²_b,
   in which each dataset's V² and closure-phase error scales are

@@ -25,6 +25,7 @@ NAME_ALIASES = {
     "model_object": "model",
     "model_fn": "model",
     "samples_dict": "grid",
+    "ud": "diam",
 }
 
 

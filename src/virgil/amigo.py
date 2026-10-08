@@ -97,7 +97,7 @@ def _check_diagonal_covariance(covariance, sigma):
         raise ValueError("AMIGO DISCO arrays must be finite.")
     covariance_scale = max(
         float(onp.max(onp.abs(onp.diag(covariance)))),
-        onp.finfo(float).tiny,
+        onp.finfo(covariance.dtype).tiny,
     )
     off_diagonal = covariance - onp.diag(onp.diag(covariance))
     relative_off_diagonal = float(

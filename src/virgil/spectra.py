@@ -582,7 +582,7 @@ class Tabulated(Spectrum):
         warnings.warn(
             "Tabulated is deprecated; use virgil.spectra.Nodes (with wavel0 "
             "for the reference flux).",
-            DeprecationWarning,
+            FutureWarning,
             stacklevel=2,
         )
         self.ratio = np.asarray(ratio, dtype=float)
