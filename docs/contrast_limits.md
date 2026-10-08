@@ -191,7 +191,7 @@ ok = onp.isfinite(lim)
 print(res.describe())
 print(
     "pipeline median dmag {:.2f}, deepest {:.2f}; hand-computed Absil median dmag {:.2f} (whole map)".format(
-        float(onp.nanmedian(res.summary["limits"]["median_delta_mag"])),
+        float(onp.nanmedian(onp.asarray(res.summary["limits"]["median_delta_mag"], dtype=float))),
         res.summary["limits"]["deepest_delta_mag"],
         float(jnp.nanmedian(flux_to_delta_mag(absil_map))),
     )
