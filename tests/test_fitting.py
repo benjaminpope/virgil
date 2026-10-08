@@ -683,3 +683,10 @@ def test_expanded_priors_recover_the_rim():
     assert result.info["method"] == "lm"
     assert onp.isclose(result.model.get("rim.diam"), 6.0, rtol=0.05)
     assert onp.allclose(result.model.get("rim.az_amps"), [0.5], atol=0.1)
+
+
+def test_fit_accepts_the_old_regularisers_keyword():
+    new = fit(START, PRIORS, DATA, regularizers=())
+    with pytest.warns(FutureWarning, match="regularisers="):
+        old = fit(START, PRIORS, DATA, regularisers=())
+    assert abs(old.values["dra"] - new.values["dra"]) < 1e-6

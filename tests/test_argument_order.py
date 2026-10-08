@@ -315,13 +315,6 @@ def test_numpyro_model_and_posterior_summary_accept_data_obj():
     _assert_same(old, new)
 
 
-def test_fit_and_numpyro_model_accept_the_old_regularisers_keyword():
-    import inspect
-
-    from virgil.fitting import fit
-
-    for fn in (fit, numpyro_model):
-        wrapped = inspect.signature(fn).parameters
-        assert "regularizers" in wrapped and "regularisers" not in wrapped
+def test_numpyro_model_accepts_the_old_regularisers_keyword():
     with pytest.warns(FutureWarning, match="regularisers="):
         numpyro_model(MODEL, {}, DATA, regularisers=())
