@@ -479,3 +479,20 @@ def test_residual_normality_passes_on_truth_noise(data):
     skew, kurt = _moments(r[:n])
     check = _checks.residual_normality(skew, kurt, n)
     assert check.status == "pass", check.message
+
+
+def test_prior_bound_fraction_is_the_one_fit_reports():
+    """The pipeline reads prior edges with ``fitting._bound_fraction``: a
+    LogUniform's in log x, an interval's, and none for a prior whose range
+    ends are poles of its flat coordinate (it used to count them)."""
+    import numpyro.distributions as dist
+    from virgil.pipeline.binary import _bound_samples
+    from virgil.priors import IsotropicInclination
+
+    uniform = dist.Uniform(0.0, 10.0)
+    assert _bound_samples(uniform, [0.0, 0.05, 5.0, 9.95]) == 0.75
+    log = dist.LogUniform(1e-4, 1.0)
+    # 1e-4 and 1.00 are the two edges; 1e-2 is the middle of the log range.
+    assert _bound_samples(log, [1e-4, 1e-2, 0.999]) == pytest.approx(2 / 3)
+    assert _bound_samples(dist.Normal(0.0, 1.0), [0.0, 1.0]) is None
+    assert _bound_samples(IsotropicInclination(), [0.0, 90.0, 180.0]) is None

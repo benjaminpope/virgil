@@ -15,6 +15,25 @@ MAS_PER_RAD = 180.0 / math.pi * 3600.0 * 1000.0
 _BOUND_FRACTION = 0.01
 
 
+def _bound_samples(prior, samples):
+    """Fraction of ``samples`` in the outer ``_BOUND_FRACTION`` of the
+    prior's finite range at either end, or ``None`` if it has no edges.
+
+    The range is the one ``fit`` reports (``fitting._bound_fraction``): a
+    LogUniform's in log x, an interval support's, and none for tied terms,
+    angle vectors, or priors with a flat coordinate (their ends are poles).
+    """
+    from ..fitting import _bound_fraction
+
+    x = np.asarray(samples, dtype=float).ravel()
+    fraction = _bound_fraction(prior, x)
+    if fraction is None:
+        return None
+    return float(
+        np.mean((fraction < _BOUND_FRACTION) | (fraction > 1 - _BOUND_FRACTION))
+    )
+
+
 def _close(fig):
     import matplotlib.pyplot as plt
 
@@ -785,15 +804,9 @@ def _posterior(p):
         }
     bound = {}
     for k in params:
-        prior = priors[k]
-        if not hasattr(prior, "low"):
-            continue
-        lo, hi = float(prior.low), float(prior.high)
-        x = np.asarray(samples[k], dtype=float).ravel()
-        if type(prior).__name__ == "LogUniform":
-            lo, hi, x = math.log(lo), math.log(hi), np.log(x)
-        edge = _BOUND_FRACTION * (hi - lo)
-        bound[k] = float(np.mean((x < lo + edge) | (x > hi - edge)))
+        fraction = _bound_samples(priors[k], samples[k])
+        if fraction is not None:
+            bound[k] = fraction
     divergent = float(np.mean(stats["diverging"]))
 
     flat = {k: np.asarray(samples[k], dtype=float).ravel() for k in reported}

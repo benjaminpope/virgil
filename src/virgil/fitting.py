@@ -836,7 +836,7 @@ class _Budget:
 _AT_BOUND = 1e-3
 
 
-def _bound_fraction(problem, prior, value):
+def _bound_fraction(prior, value, flat=True):
     """Where ``value`` lies in its prior's finite interval, as a fraction.
 
     Only genuine edges of the support count: a LogUniform's (in log x,
@@ -844,13 +844,15 @@ def _bound_fraction(problem, prior, value):
     Uniform's. ``None`` for priors with an unbounded side, angle vectors,
     tied terms and other priors with a flat coordinate: the ends of an
     isotropic inclination's (face-on) or latitude's (the poles) are poles
-    of the coordinates, not edges of the prior.
+    of the coordinates, not edges of the prior. ``flat`` says whether a
+    LogUniform is fitted (or, for samples, read) in its flat coordinate,
+    log x.
     """
     if is_tied(prior) or is_angle_vector(prior):
         return None
     import numpyro.distributions as dist
 
-    if isinstance(_base(prior), dist.LogUniform) and problem.flat:
+    if isinstance(_base(prior), dist.LogUniform) and flat:
         to_flat, _, low, high = _flat_coordinate(prior)
         value = to_flat(value)
     elif _flat_coordinate(prior) is not None:
@@ -873,7 +875,7 @@ def _at_bound(problem, values):
     priors.update({site: p for site, (p, _, _) in problem.noise.items()})
     found = []
     for site, prior in priors.items():
-        fraction = _bound_fraction(problem, prior, values[site])
+        fraction = _bound_fraction(prior, values[site], problem.flat)
         if fraction is not None and onp.any(
             (fraction < _AT_BOUND) | (fraction > 1 - _AT_BOUND)
         ):
