@@ -110,6 +110,7 @@ nav:
       - Spectra: api/spectra.md
       - Orbits: api/orbits.md
       - Epochs: api/epochs.md
+      - Orbit Search: api/orbit_search.md
       - Fields: api/fields.md
       - Scenes: api/scenes.md
       - Metrics: api/metrics.md

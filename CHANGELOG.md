@@ -74,6 +74,23 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **`virgil.ensemble` default selection.** The L-curve window now keeps
+  the weights from `window_dex` below the corner up to the corner (MYTHRA's
+  "just before the turnover"), not the over-regularised side above it. The
+  default weight ranges reach a decade lower (`tsv` 0.1–10⁴, the others
+  10⁻⁴–10 per data point), set from the corners of the 60 datasets of
+  virgil-validation's contest bench, and each sweep draws one log-uniform
+  weight per equal bin of `log w`, so it spans its range. The default
+  `field_factors` are now (1, 2, 4) times `field_of_view(data)`, and a
+  field too large for `max_npix` keeps its size with coarser pixels instead
+  of being cropped, down to Nyquist pixels; on a uv lattice (AMI) the factors are capped at 1. The
+  iterative mean now admits a member if every dataset's χ² stays within
+  `mean_rtol` of the best member's, by default each dataset's χ²/N noise
+  √(2/N) (was: no rise at all, judged against the running mean), and
+  `combine` warns when fewer than `min_kept` (3) members are kept. The
+  default `n_weights` is 8. On the bench the old defaults kept 1 of 72
+  members on 44 of 60 datasets and gave the worst images of any arm.
+
 - **`read_oifits` reads closure triangles whose leg has no visibility
   row** ([#299](https://github.com/benjaminpope/virgil/issues/299)). A
   triangle leg stored in no `OI_VIS2`/`OI_VIS` row in either orientation
@@ -154,6 +171,40 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Orbit-search scorer.** `virgil.orbit_search.score_orbits(epochs,
+  model, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
+  scores a stack of candidate orbits on all epochs in one compiled,
+  `lax.map`-batched kernel. The companion flux is shared: one flux per
+  band (optionally f₀(λ/λ₀)^β), at most 1 in a reference band, integrated
+  out under a log-uniform prior and also reported profiled, with an
+  uncertainty from the curvature. The coarse grid only seeds Newton steps
+  to the profiled peak; Gauss–Legendre nodes on each side, out to a 12-nat
+  drop or the prior's bound, then integrate it, so the marginal is within
+  0.05 nat of brute-force quadrature wherever the peak falls (a coarse-grid
+  fallback is flagged in `OrbitScores.fallback`). Each dataset's error scales are
+  marginalized as in `marginal_loglike`, bounded by default to
+  [1/5, 5] (`s_max=5`; `s_max=None` for the unbounded closed form). The
+  scale each dataset needs at the profiled flux is reported in
+  `OrbitScores.scale`, and `OrbitScores.scale_at_bound` flags candidates
+  whose scale posterior presses against `s_max`. Gains (`OIData.with_gains`) and
+  closure-phase offsets (`OIData.with_closure_offsets`), which
+  `marginal_loglike` refuses, are profiled analytically, at one degree of
+  freedom each. `RVData`/`PositionData` terms or callables are added.
+  Positions are evaluated at every sample's own time, and the visibility
+  of a unit companion is computed once per candidate, with every flux
+  point cheap arithmetic on it. `max_evaluations` refuses a run whose
+  predicted cost (candidates × datasets × score evaluations) is over budget.
+  `rank_scores` / `OrbitScores.order` rank with ties broken on quantized
+  scores, then by index.
+
+- **Azimuthally modulated cones.** `TruncatedCone(..., az_amps=, az_pas=)`
+  multiplies every ring's brightness by `1 + Σ A_m cos(m (φ - φ_m))` in
+  its own azimuth, e.g. for a colliding-wind shock brighter on its
+  leading edge. The azimuths follow `ModulatedGaussianRim`'s convention
+  (in the ring's plane, in the sense of position angle, `pa ± 90` on the
+  walls). The visibilities stay analytic (one `J_m` per ring and order)
+  and the render matches them. Unmodulated cones are unchanged and carry
+  no empty leaves.
 - **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and
   L-BFGS run in chunks of steps, check the wall clock between them and
   stop, unconverged, with `info["stop"] == "time"` (L-BFGS carries its
