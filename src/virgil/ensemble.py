@@ -36,6 +36,7 @@ choices, not the noise in the data; for the posterior, sample an image
 """
 
 import dataclasses
+import warnings
 
 import jax
 import numpy as onp
@@ -66,15 +67,12 @@ FAMILIES = {"tv": TV, "tsv": TSV, "maxent": MaxEntropy, "starlet": StarletL1}
 
 
 def _default_weight_ranges():
-    # Weight per data point. The penalties of a unit-sum image are O(1) for
-    # TV, maximum entropy and the starlet L1 norm, and much smaller for
-    # TSV, whose steps are squared.
-    return {
-        "tv": (1e-3, 1e1),
-        "tsv": (1e0, 1e4),
-        "maxent": (1e-3, 1e1),
-        "starlet": (1e-3, 1e1),
-    }
+    # In units of each group's weight scale (see weight_scale), which
+    # already carries the family, the pixel size and the number of data:
+    # on 60 synthetic contest datasets the L-curve corners fell between
+    # 1e-4 and 3 times it for every family, while per data point the TSV
+    # corners lay three to four decades above the others.
+    return {family: (1e-5, 1e1) for family in FAMILIES}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -90,14 +88,22 @@ class EnsembleSpec:
         ([`MaxEntropy`][virgil.imaging.MaxEntropy]) and ``"starlet"``
         ([`StarletL1`][virgil.imaging.StarletL1]).
     weight_ranges : dict
-        For each family, the range ``(low, high)`` of the weight per data
-        point (the weight divided by the total number of independent data).
-        Weights are drawn log-uniformly in it, the invariant prior for a
-        scale. The defaults are deliberately wide; if the L-curve corners
-        fall at the edges, move the range.
+        For each family, the range ``(low, high)`` of the weight in units
+        of the group's weight scale
+        ([`weight_scale`][virgil.ensemble.weight_scale]): the weight at
+        which the regulariser of the starting Gaussian envelope, on the
+        group's grid, costs as much as a χ² of one per data point. A
+        weight is a scale, so the weights are evenly spaced in its
+        logarithm, with a random offset (log-uniform on average, the
+        invariant prior for a scale). The default, 1e-5 to 10 for every
+        family, holds the corners seen on synthetic contest data (1e-4 to
+        3) with room below them for the window; if
+        [`combine`][virgil.ensemble.combine] warns that corners fall at the
+        edges, move the range.
     n_weights : int
         Weights per group, at least three (the L-curve's corner needs
-        them).
+        them). The default of 8 spaces the default range at 0.75 dex, so
+        that the window holds the corner and two weaker weights.
     oversample : tuple of float
         Pixels per Nyquist pixel
         ([`nyquist_pixel_scale`][virgil.imaging.nyquist_pixel_scale]),
@@ -113,10 +119,11 @@ class EnsembleSpec:
     max_npix : int
         Largest number of pixels on a side; larger fields are cut to it.
     window_dex : float
-        Width of the window of weights kept in each group, in dex, from the
-        L-curve's corner up to ``corner * 10**window_dex``: the
-        regularisation runs from the corner, where the fit to the data
-        stops improving, to somewhat stronger.
+        Width of the window of weights kept in each group, in dex, from
+        ``corner * 10**-window_dex`` up to the L-curve's corner: as in
+        MYTHRA, the region just before the turnover, where the fit to the
+        data has stopped improving much but the regulariser has not yet
+        taken over. Stronger weights are over-regularised.
     max_chi2_red : float
         Drop a member if the raw χ² per data point of any dataset exceeds
         this.
@@ -133,30 +140,35 @@ class EnsembleSpec:
         Without a star, the members are recentred on the best one, searching
         shifts up to this (default: the beam's major axis). With a star,
         the star fixes the position and they are not shifted.
-    mean_rtol : float
-        A member joins the mean if no dataset's χ² rises by more than this
-        fraction: only enough to forgive rounding, since the mean of
-        identical images is not always bit-identical to them. On data that
-        the best member fits to the noise, so strict a rule may keep that
-        member alone (and the spread is then zero); a value of order the
-        χ²/N noise, √(2/N), keeps more.
+    mean_rtol : float or None
+        A member joins the mean if, on every dataset, the mean's χ² stays
+        within this fraction of the best member's. The default, ``None``,
+        is the χ²/N noise of each dataset, √(2/N): a mean that fits as
+        well as the best member up to the noise. ``0`` keeps the mean's χ²
+        at or below the best member's, which on data the best member fits
+        to the noise often keeps that member alone (and the spread is then
+        zero).
+    min_kept : int
+        [`combine`][virgil.ensemble.combine] warns if fewer members than
+        this are kept.
     """
 
     families: tuple = ("tv", "tsv", "maxent", "starlet")
     weight_ranges: dict = dataclasses.field(
         default_factory=_default_weight_ranges
     )
-    n_weights: int = 6
+    n_weights: int = 8
     oversample: tuple = (2.0, 3.0, 4.0)
-    field_factors: tuple = (0.5, 0.75, 1.0)
+    field_factors: tuple = (1.0, 2.0, 4.0)
     starts: tuple = ("moments", "flat")
     max_npix: int = 128
-    window_dex: float = 1.0
+    window_dex: float = 2.0
     max_chi2_red: float = onp.inf
     chi2_ratio: float = 2.0
     mad_cut: float = 5.0
     max_shift_mas: float | None = None
-    mean_rtol: float = 1e-9
+    mean_rtol: float | None = None
+    min_kept: int = 3
 
     def __post_init__(self):
         unknown = set(self.families) - set(FAMILIES)
@@ -193,6 +205,10 @@ class Draw:
         The starting image.
     weights : tuple of float
         The regulariser weights, largest first.
+    scale : float or None
+        The group's weight scale
+        ([`weight_scale`][virgil.ensemble.weight_scale]), which
+        ``spec.weight_ranges`` multiplies.
     """
 
     index: int
@@ -201,6 +217,7 @@ class Draw:
     pixel_scale_mas: float
     start: str
     weights: tuple
+    scale: float | None = None
 
     @property
     def geometry(self):
@@ -288,7 +305,8 @@ class Ensemble:
         Raw χ² per data point of the mean scene on each dataset.
     trace : list of tuple
         ``chi2_red`` of the running mean after each accepted member, from
-        the best member alone; it never rises on any dataset.
+        the best member alone; on every dataset it stays within
+        ``spec.mean_rtol`` of the first entry.
     members : list of Member
         Every reconstruction, kept or not.
     groups : list of Group
@@ -312,16 +330,22 @@ class Ensemble:
         """A short table: the groups, what was kept, and the mean's fit."""
         lines = [
             f"{'group':>5} {'family':>8} {'npix':>4} {'scale':>7} "
-            f"{'start':>8} {'corner':>9} {'kept':>6}"
+            f"{'start':>8} {'corner':>9} {'/scale':>8} {'kept':>6}"
         ]
         for group in self.groups:
             d = group.draw
             members = [m for m in self.members if m.draw.index == d.index]
             corner = _corner(group.curve)
+            relative = (
+                "-"
+                if corner is None or not d.scale
+                else f"{corner / d.scale:.3g}"
+            )
             lines.append(
                 f"{d.index:>5} {d.family:>8} {d.npix:>4} "
                 f"{d.pixel_scale_mas:>7.3g} {d.start:>8} "
                 f"{'-' if corner is None else f'{corner:.3g}':>9} "
+                f"{relative:>8} "
                 f"{sum(m.kept for m in members):>2}/{len(members):<3}"
             )
         reasons = {}
@@ -344,15 +368,61 @@ def _datasets(data):
     return list(data) if isinstance(data, (list, tuple)) else [data]
 
 
-def draw_groups(data, n_groups, key, spec=None):
+def weight_scale(data, draw, reference, star=True):
+    """The natural regulariser weight of a group: ``N / R``.
+
+    ``N`` is the number of independent data and ``R`` the group's
+    regulariser, at weight one, of ``reference`` (the Gaussian envelope of
+    [`starting_image`][virgil.imaging.starting_image]) resampled to the
+    group's grid. At this weight the regulariser of an image as smooth as
+    the envelope costs as much as a fit with χ² of one per data point.
+    It carries how the penalty scales with the family and the pixel size
+    (TSV, of squared steps, grows as the pixels shrink), which a weight
+    per data point does not; on synthetic contest data the L-curve corners
+    fell within a few decades of it for every family. It is a scale only,
+    not a choice of weight: ``spec.weight_ranges`` spans several decades
+    either side.
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        The data.
+    draw : Draw
+        The group; only its family and geometry are used.
+    reference : Image
+        The reference image, ``reference_starts(data, star)["moments"]``.
+    star : bool, optional
+        As for [`run_group`][virgil.ensemble.run_group].
+
+    Returns
+    -------
+    float
+    """
+    n_data = sum(d.n_independent for d in _datasets(data))
+    model = _start_model(reference, draw, star)
+    regulariser = FAMILIES[draw.family](1.0, path="env" if star else None)
+    penalty = float(regulariser.value(model))
+    if not (onp.isfinite(penalty) and penalty > 0):
+        warnings.warn(
+            f"The {draw.family} penalty of the reference image is "
+            f"{penalty:.3g}; using a weight scale of one per data point.",
+            stacklevel=2,
+        )
+        return float(n_data)
+    return float(n_data / penalty)
+
+
+def draw_groups(data, n_groups, key, spec=None, *, star=True, starts=None):
     """Draw the settings of ``n_groups`` groups of reconstructions.
 
     Each group draws a regulariser family, a pixel size (the Nyquist scale
     over one of ``spec.oversample``), a field (``field_of_view(data)``
     times one of ``spec.field_factors``, cut at ``spec.max_npix`` pixels), a
-    starting image and ``spec.n_weights`` log-uniform weights. The draws
-    depend only on ``key`` and ``spec``, so every task of a cluster array
-    can draw them all and run its own.
+    starting image and ``spec.n_weights`` weights, evenly spaced in log
+    over ``spec.weight_ranges[family]`` times the group's
+    [`weight_scale`][virgil.ensemble.weight_scale], with a random offset.
+    The draws depend only on the data, ``key`` and ``spec``, so every task
+    of a cluster array can draw them all and run its own.
 
     Parameters
     ----------
@@ -364,6 +434,12 @@ def draw_groups(data, n_groups, key, spec=None):
         The random key.
     spec : EnsembleSpec, optional
         What to draw (default ``EnsembleSpec()``).
+    star : bool, optional
+        As for [`run_group`][virgil.ensemble.run_group]; the weight scales
+        depend on it.
+    starts : dict, optional
+        From [`reference_starts`][virgil.ensemble.reference_starts]; its
+        ``"moments"`` image sets the weight scales. Fitted here if absent.
 
     Returns
     -------
@@ -372,12 +448,14 @@ def draw_groups(data, n_groups, key, spec=None):
         after the other.
     """
     spec = EnsembleSpec() if spec is None else spec
+    if starts is None or "moments" not in starts:
+        starts = reference_starts(data, star, ("moments",))
+    reference = starts["moments"]
     rng = onp.random.default_rng(
         int(jax.random.randint(key, (), 0, 2**31 - 1))
     )
     nyquist = nyquist_pixel_scale(data)
     field = field_of_view(data)
-    n_data = sum(d.n_independent for d in _datasets(data))
     draws = []
     for index in range(int(n_groups)):
         family = spec.families[rng.integers(len(spec.families))]
@@ -385,18 +463,15 @@ def draw_groups(data, n_groups, key, spec=None):
         factor = spec.field_factors[rng.integers(len(spec.field_factors))]
         npix = min(int(onp.ceil(factor * field / scale)), spec.max_npix)
         start = spec.starts[rng.integers(len(spec.starts))]
-        low, high = onp.log(spec.weight_ranges[family]) + onp.log(n_data)
-        weights = onp.exp(rng.uniform(low, high, spec.n_weights))
-        draws.append(
-            Draw(
-                index,
-                family,
-                npix,
-                float(scale),
-                start,
-                tuple(sorted((float(w) for w in weights), reverse=True)),
-            )
-        )
+        draw = Draw(index, family, npix, float(scale), start, ())
+        w0 = weight_scale(data, draw, reference, star)
+        # Evenly spaced in log w, which an L-curve's corner (a curvature
+        # in log w) needs, with a random offset of up to one step.
+        low, high = onp.log(spec.weight_ranges[family]) + onp.log(w0)
+        step = (high - low) / spec.n_weights
+        logs = low + step * (onp.arange(spec.n_weights) + rng.uniform())
+        weights = tuple(float(w) for w in onp.exp(logs[::-1]))
+        draws.append(dataclasses.replace(draw, weights=weights, scale=w0))
     draws.sort(key=lambda d: (d.geometry, d.index))
     return draws
 
@@ -500,6 +575,26 @@ def _corner(curve):
         return None
 
 
+def _at_edge(curve, corner):
+    """Whether ``corner`` is the strongest or weakest interior weight.
+
+    The corner is never an end point (its curvature needs neighbours on
+    both sides), so one at the first interior weight may belong beyond the
+    sampled range.
+    """
+    weights = onp.asarray(curve.weights, dtype=float)
+    ok = onp.isfinite(onp.asarray(curve.chi2)) & onp.isfinite(
+        onp.asarray(curve.penalty)
+    )
+    weights = onp.sort(weights[ok])
+    if weights.size < 4:
+        # One interior weight: the corner cannot be placed at all.
+        return False
+    return bool(
+        onp.isclose(corner, weights[1]) or onp.isclose(corner, weights[-2])
+    )
+
+
 def _parts(model, star):
     """(unit-sum image pixels, the image's fraction of the total flux)."""
     if not star:
@@ -560,8 +655,11 @@ def combine(data, groups, *, spec=None, star=True):
 
     The selection follows MYTHRA (Drevon et al. 2025):
 
-    1. In each group, keep the weights from the L-curve's corner up to
-       ``spec.window_dex`` above it.
+    1. In each group, keep the weights from ``spec.window_dex`` below the
+       L-curve's corner up to the corner: the under-regularised side,
+       just before the turnover. A corner at the strongest or weakest
+       interior weight may lie outside the sampled range, which a
+       warning reports.
     2. Drop members whose fit diverged (a non-finite χ²), then keep
        members whose raw χ² per data point is below
        ``spec.max_chi2_red`` and within ``spec.chi2_ratio`` of the best
@@ -572,9 +670,10 @@ def combine(data, groups, *, spec=None, star=True):
        recentre each on the best member
        ([`align`][virgil.metrics.align]).
     4. In order of total χ², add members to a running mean one at a time,
-       keeping each only if the mean's χ² does not rise on any dataset (so
-       visibilities and closure phases, given as separate datasets, are
-       judged separately). The running mean is judged as the mixture of
+       keeping each only if the mean's χ² on every dataset stays within
+       ``spec.mean_rtol`` (by default the χ²/N noise, √(2/N)) of the best
+       member's (so visibilities and closure phases, given as separate
+       datasets, are judged separately). The running mean is judged as the mixture of
        the members' images on their own grids, which is exact; resampling
        to the common grid smooths them, which on precise data can raise
        χ² several-fold and so let worse members through.
@@ -597,15 +696,24 @@ def combine(data, groups, *, spec=None, star=True):
     Returns
     -------
     Ensemble
+
+    Warns
+    -----
+    UserWarning
+        If a group's L-curve corner lies at the edge of its weights, or
+        fewer than ``spec.min_kept`` members are kept.
     """
     spec = EnsembleSpec() if spec is None else spec
     datasets = _datasets(data)
     groups = sorted(groups, key=lambda g: g.draw.index)
 
     members = []
+    edge = []
     for group in groups:
         curve = group.curve
         corner = _corner(curve)
+        if corner is not None and _at_edge(curve, corner):
+            edge.append(group.draw.index)
         for weight, result in zip(curve.weights, curve.results):
             info = result.info
             chi2_red = tuple(
@@ -613,9 +721,9 @@ def combine(data, groups, *, spec=None, star=True):
                 for c, n in zip(info["chi2"][: len(datasets)], info["ndata"])
             )
             inside = corner is None or (
-                corner * (1 - 1e-9)
+                corner * 10**-spec.window_dex * (1 - 1e-9)
                 <= float(weight)
-                <= corner * 10**spec.window_dex * (1 + 1e-9)
+                <= corner * (1 + 1e-9)
             )
             members.append(
                 Member(
@@ -626,6 +734,15 @@ def combine(data, groups, *, spec=None, star=True):
                     reason=None if inside else "window",
                 )
             )
+
+    if edge:
+        warnings.warn(
+            f"The L-curve corner of {len(edge)} of {len(groups)} groups "
+            f"(groups {edge}) is at the strongest or weakest interior "
+            "weight, so it may lie outside the sampled range: widen "
+            "EnsembleSpec.weight_ranges.",
+            stacklevel=2,
+        )
 
     def drop(indices, reason):
         for i in indices:
@@ -712,12 +829,16 @@ def combine(data, groups, *, spec=None, star=True):
         chosen = [0]
         current = chi2_red(chosen)
         trace = [current]
+        if spec.mean_rtol is None:
+            rtol = [onp.sqrt(2.0 / d.n_independent) for d in datasets]
+        else:
+            rtol = [spec.mean_rtol] * len(datasets)
+        # Rounding: the mean of identical images is not always
+        # bit-identical to them.
+        bound = [b * (1.0 + r + 1e-9) for b, r in zip(current, rtol)]
         for k in range(1, len(live)):
             candidate = chi2_red(chosen + [k])
-            if all(
-                c <= b * (1.0 + spec.mean_rtol)
-                for c, b in zip(candidate, current)
-            ):
+            if all(c <= b for c, b in zip(candidate, bound)):
                 chosen, current = chosen + [k], candidate
                 trace.append(current)
             else:
@@ -733,6 +854,14 @@ def combine(data, groups, *, spec=None, star=True):
             members[live[k]], kept=True, reason=None
         )
 
+    if len(chosen) < spec.min_kept:
+        warnings.warn(
+            f"Only {len(chosen)} of {len(members)} members were kept "
+            f"(fewer than min_kept={spec.min_kept}), so the spread is not "
+            "a useful map. Look at Ensemble.summary() for where they were "
+            "dropped.",
+            stacklevel=2,
+        )
     stack = onp.stack([weighted[j] for j in chosen])
     fraction = float(onp.mean([fractions[j] for j in chosen]))
     mean = stack.mean(axis=0)
@@ -781,8 +910,10 @@ def ensemble(data, n_groups, key, *, spec=None, star=True, **fit_options):
     Ensemble
     """
     spec = EnsembleSpec() if spec is None else spec
-    draws = draw_groups(data, n_groups, key, spec)
-    starts = reference_starts(data, star, sorted({d.start for d in draws}))
+    starts = reference_starts(
+        data, star, sorted(set(spec.starts) | {"moments"})
+    )
+    draws = draw_groups(data, n_groups, key, spec, star=star, starts=starts)
     groups = [
         run_group(data, d, star=star, starts=starts, **fit_options)
         for d in draws

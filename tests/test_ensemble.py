@@ -1,3 +1,6 @@
+import dataclasses
+import warnings
+
 import jax
 import numpy as onp
 import pytest
@@ -13,6 +16,7 @@ from virgil.ensemble import (
     reference_starts,
     _mixture,
     run_group,
+    weight_scale,
 )
 from virgil.fitting import FitResult
 from virgil.imaging import LCurve, _chi2
@@ -64,14 +68,14 @@ def _group(index, models):
 
 
 def test_selection_drops_a_member_that_fits_badly():
-    # The window keeps the two strongest weights of each group (the corner
+    # The window keeps the two weakest weights of each group (the corner
     # of a three-point L-curve is its middle point).
     good = _group(0, [_scene(38.0), _scene(42.0), _scene(40.0)])
     bad = _group(1, [_scene(40.0), _scene(dra=-48.0), _scene(40.0)])
     result = combine(DATASETS, [good, bad])
     reasons = [(m.draw.index, m.weight, m.reason) for m in result.members]
     assert (1, 1e2, "chi2") in reasons
-    assert all(m.reason == "window" for m in result.members if m.weight == 10)
+    assert all(m.reason == "window" for m in result.members if m.weight == 1e3)
     assert all(m.kept for m in result.members if m.reason is None)
     assert 1 <= len(result.kept) <= 3
 
@@ -103,12 +107,12 @@ def test_a_diverged_member_is_dropped_and_does_not_move_the_corner():
     models = [_scene(s) for s in sigmas]
     weights = [1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
     penalty = [1.0, 1.1, 1.4, 2.5, 6.0, 20.0]
-    spec = EnsembleSpec(window_dex=2, chi2_ratio=1e9, mean_rtol=1e9)
+    spec = EnsembleSpec(window_dex=3, chi2_ratio=1e9, mean_rtol=1e9)
 
-    # The fit at weight 1e5 diverged: the same sweep without it is the
+    # The fit at weight 1 diverged: the same sweep without it is the
     # reference for where the corner and the window should be.
-    diverged = _sweep(models, weights, penalty, diverged=(0,))
-    keep = [1, 2, 3, 4, 5]
+    diverged = _sweep(models, weights, penalty, diverged=(5,))
+    keep = [0, 1, 2, 3, 4]
     reference = _sweep(
         [models[i] for i in keep],
         [weights[i] for i in keep],
@@ -120,8 +124,8 @@ def test_a_diverged_member_is_dropped_and_does_not_move_the_corner():
     result = combine(DATASETS, [diverged], spec=spec)
     expected = combine(DATASETS, [reference], spec=spec)
     assert corner == 1e3
-    assert result.members[0].reason == "diverged"
-    assert not result.members[0].kept
+    assert result.members[5].reason == "diverged"
+    assert not result.members[5].kept
     windowed = {m.weight for m in result.members if m.reason == "window"}
     assert windowed == {
         m.weight for m in expected.members if m.reason == "window"
@@ -130,18 +134,75 @@ def test_a_diverged_member_is_dropped_and_does_not_move_the_corner():
     assert all(onp.isfinite(m.chi2_red).all() for m in result.kept)
 
 
-def test_iterative_mean_never_raises_any_datasets_chi2():
+@pytest.mark.parametrize("rtol", [0.0, None])
+def test_iterative_mean_stays_within_mean_rtol_of_the_best(rtol):
     groups = [
         _group(0, [_scene(36.0), _scene(44.0), _scene(40.0)]),
         _group(1, [_scene(40.0, flux=0.25), _scene(dra=40.0), TRUTH]),
     ]
-    result = combine(DATASETS, groups, spec=EnsembleSpec(chi2_ratio=1e3))
+    spec = EnsembleSpec(chi2_ratio=1e3, mean_rtol=rtol)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = combine(DATASETS, groups, spec=spec)
     trace = onp.array(result.trace)
-    # Never higher, up to the rounding that mean_rtol forgives.
-    assert onp.all(onp.diff(trace, axis=0) <= 1e-9 * trace[:-1])
-    assert onp.all(onp.array(result.chi2_red) <= trace[0] * (1 + 1e-6))
+    noise = onp.array([onp.sqrt(2 / d.n_independent) for d in DATASETS])
+    bound = trace[0] * (1 + (noise if rtol is None else rtol) + 1e-9)
+    assert onp.all(trace <= bound)
+    assert onp.all(onp.array(result.chi2_red) <= bound * (1 + 1e-6))
     assert len(trace) == len(result.kept)
     assert "raw chi2/N per dataset" in result.summary()
+
+
+def _l_curve_sweep(corner=1e3):
+    """Six fits, weights 1e5 to 1e0, on an L-curve bending at ``corner``.
+
+    ``chi2 = 1 + w / corner`` and ``penalty = 1 + corner / w`` is
+    symmetric in log about ``w = corner``, where it bends most sharply.
+    """
+    sigmas = [37.0, 38.0, 39.0, 40.0, 41.0, 42.0]
+    weights = onp.array([1e5, 1e4, 1e3, 1e2, 1e1, 1e0])
+    group = _sweep([_scene(s) for s in sigmas], weights, 1 + corner / weights)
+    curve = dataclasses.replace(group.curve, chi2=1 + weights / corner)
+    return Group(group.draw, curve)
+
+
+def test_window_keeps_the_under_regularised_side():
+    group = _l_curve_sweep(1e3)
+    assert group.curve.corner() == 1e3
+    spec = EnsembleSpec(window_dex=1, chi2_ratio=1e9, mean_rtol=1e9)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = combine(DATASETS, [group], spec=spec)
+    windowed = {m.weight for m in result.members if m.reason != "window"}
+    # The corner and one decade weaker; never the stronger weights.
+    assert windowed == {1e3, 1e2}
+
+
+def test_combine_warns_on_an_edge_corner_and_few_members():
+    group = _l_curve_sweep(1e4)
+    assert group.curve.corner() == 1e4
+    with pytest.warns(UserWarning, match="strongest or weakest interior"):
+        combine(DATASETS, [group], spec=EnsembleSpec(min_kept=1))
+    spec = EnsembleSpec(min_kept=10)
+    groups = [_group(i, [TRUTH, TRUTH, TRUTH]) for i in range(2)]
+    with pytest.warns(UserWarning, match="fewer than min_kept=10"):
+        combine(DATASETS, groups, spec=spec)
+
+
+def test_a_toy_ensemble_keeps_more_than_one_member():
+    # Reconstructions that differ by less than the data can tell apart: a
+    # mean held to the best member's chi2 exactly keeps one of them, but
+    # within the chi2/N noise (the default) it keeps several.
+    groups = [
+        _group(i, [_scene(40.0 + d) for d in (-1.5, -0.5, 0.5)])
+        for i in range(3)
+    ]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        strict = combine(DATASETS, groups, spec=EnsembleSpec(mean_rtol=0.0))
+    result = combine(DATASETS, groups, spec=EnsembleSpec(min_kept=2))
+    assert len(result.kept) > 1
+    assert len(result.kept) >= len(strict.kept)
 
 
 def test_identical_members_have_zero_spread():
@@ -214,17 +275,21 @@ def test_mixture_is_the_mean_of_the_members_scenes():
 
 def test_draws_are_reproducible_and_grouped_by_geometry():
     spec = EnsembleSpec(n_weights=4)
-    a = draw_groups(DATA, 8, jax.random.PRNGKey(3), spec)
-    b = draw_groups(DATA, 8, jax.random.PRNGKey(3), spec)
+    starts = reference_starts(DATA, True, ("moments",))
+    a = draw_groups(DATA, 8, jax.random.PRNGKey(3), spec, starts=starts)
+    b = draw_groups(DATA, 8, jax.random.PRNGKey(3), spec, starts=starts)
     assert a == b
     assert [d.geometry for d in a] == sorted(d.geometry for d in a)
     assert sorted(d.index for d in a) == list(range(8))
-    n_data = DATA.n_independent
     for d in a:
         assert d.npix <= spec.max_npix
+        assert d.scale == weight_scale(DATA, d, starts["moments"])
         low, high = spec.weight_ranges[d.family]
-        assert all(low * n_data <= w <= high * n_data for w in d.weights)
+        assert all(low * d.scale <= w <= high * d.scale for w in d.weights)
         assert list(d.weights) == sorted(d.weights, reverse=True)
+        # Evenly spaced in log w, one n_weights-th of the range apart.
+        steps = -onp.diff(onp.log10(d.weights))
+        assert onp.allclose(steps, onp.log10(high / low) / spec.n_weights)
     with pytest.raises(ValueError, match="Unknown regulariser"):
         EnsembleSpec(families=("l2",))
 
