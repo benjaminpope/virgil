@@ -15,7 +15,7 @@ from virgil.ensemble import (
     run_group,
 )
 from virgil.fitting import FitResult
-from virgil.imaging import LCurve, _chi2
+from virgil.imaging import LCurve, _chi2, field_of_view
 from virgil.metrics import score
 from virgil.models import Image, PointSource, System
 from virgil.oidata import OIData
@@ -64,14 +64,14 @@ def _group(index, models):
 
 
 def test_selection_drops_a_member_that_fits_badly():
-    # The window keeps the two strongest weights of each group (the corner
+    # The window keeps the two weakest weights of each group (the corner
     # of a three-point L-curve is its middle point).
     good = _group(0, [_scene(38.0), _scene(42.0), _scene(40.0)])
     bad = _group(1, [_scene(40.0), _scene(dra=-48.0), _scene(40.0)])
     result = combine(DATASETS, [good, bad])
     reasons = [(m.draw.index, m.weight, m.reason) for m in result.members]
     assert (1, 1e2, "chi2") in reasons
-    assert all(m.reason == "window" for m in result.members if m.weight == 10)
+    assert all(m.reason == "window" for m in result.members if m.weight == 1e3)
     assert all(m.kept for m in result.members if m.reason is None)
     assert 1 <= len(result.kept) <= 3
 
@@ -105,10 +105,11 @@ def test_a_diverged_member_is_dropped_and_does_not_move_the_corner():
     penalty = [1.0, 1.1, 1.4, 2.5, 6.0, 20.0]
     spec = EnsembleSpec(window_dex=2, chi2_ratio=1e9, mean_rtol=1e9)
 
-    # The fit at weight 1e5 diverged: the same sweep without it is the
-    # reference for where the corner and the window should be.
-    diverged = _sweep(models, weights, penalty, diverged=(0,))
-    keep = [1, 2, 3, 4, 5]
+    # The fit at weight 1e1, inside the window, diverged: the same sweep
+    # without it is the reference for where the corner and the window
+    # should be.
+    diverged = _sweep(models, weights, penalty, diverged=(4,))
+    keep = [0, 1, 2, 3, 5]
     reference = _sweep(
         [models[i] for i in keep],
         [weights[i] for i in keep],
@@ -120,14 +121,28 @@ def test_a_diverged_member_is_dropped_and_does_not_move_the_corner():
     result = combine(DATASETS, [diverged], spec=spec)
     expected = combine(DATASETS, [reference], spec=spec)
     assert corner == 1e3
-    assert result.members[0].reason == "diverged"
-    assert not result.members[0].kept
+    assert result.members[4].reason == "diverged"
+    assert not result.members[4].kept
     windowed = {m.weight for m in result.members if m.reason == "window"}
     assert windowed == {
         m.weight for m in expected.members if m.reason == "window"
     }
     assert result.kept
     assert all(onp.isfinite(m.chi2_red).all() for m in result.kept)
+
+
+def test_window_keeps_the_weights_just_below_the_corner():
+    sigmas = [37.0, 38.0, 40.0, 44.0, 52.0, 64.0]
+    weights = [1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
+    penalty = [1.0, 1.05, 1.2, 2.5, 6.0, 20.0]
+    group = _sweep([_scene(s) for s in sigmas], weights, penalty)
+    corner = group.curve.corner()
+    assert 1e0 < corner < 1e5
+    spec = EnsembleSpec(window_dex=1, chi2_ratio=1e9, mean_rtol=1e9)
+    result = combine(DATASETS, [group], spec=spec)
+    inside = {m.weight for m in result.members if m.reason != "window"}
+    # MYTHRA: from a decade below the corner up to it, never above it.
+    assert inside == {corner, corner / 10}
 
 
 def test_iterative_mean_never_raises_any_datasets_chi2():
@@ -229,6 +244,45 @@ def test_draws_are_reproducible_and_grouped_by_geometry():
         EnsembleSpec(families=("l2",))
 
 
+def test_draws_span_each_range_and_keep_the_field():
+    spec = EnsembleSpec(field_factors=(4.0,), max_npix=16)
+    n_data = DATA.n_independent
+    field = field_of_view(DATA)
+    for d in draw_groups(DATA, 8, jax.random.PRNGKey(0), spec):
+        # One weight in each equal bin of log w.
+        low, high = onp.log(spec.weight_ranges[d.family]) + onp.log(n_data)
+        edges = onp.linspace(low, high, spec.n_weights + 1)
+        bins = onp.digitize(onp.log(d.weights), edges[1:-1])
+        assert sorted(bins) == list(range(spec.n_weights))
+        # Too big for max_npix: the field is kept, the pixels coarsened.
+        assert d.npix == 16
+        assert onp.isclose(d.npix * d.pixel_scale_mas, 4.0 * field)
+
+
+@pytest.mark.parametrize("family", ["tsv", "tv", "maxent", "starlet"])
+def test_default_weight_ranges_hold_the_corner_with_room_below(family):
+    data = DATASETS[0]
+    spec = EnsembleSpec()
+    n_data = data.n_independent
+    low, high = spec.weight_ranges[family]
+    weights = tuple(
+        float(w) for w in onp.geomspace(high * n_data, low * n_data, 11)
+    )
+    starts = reference_starts(data, True, ("flat",))
+    method = "lm" if family == "tsv" else "lbfgs"
+    group = run_group(
+        data,
+        Draw(0, family, NPIX, SCALE, "flat", weights),
+        starts=starts,
+        method=method,
+        max_steps=200,
+    )
+    corner = group.curve.corner() / n_data
+    # The whole window below the corner lies inside the range.
+    assert low * 10**spec.window_dex <= corner * (1 + 1e-9)
+    assert corner < high
+
+
 SMALL = EnsembleSpec(
     families=("tsv",),
     n_weights=3,
@@ -277,7 +331,7 @@ def test_without_a_star_members_are_recentred_on_the_best():
     weights = onp.array([1e3, 1e2, 1e1])
     results = [
         FitResult(m, {}, {"chi2": _chi2(m, data), "ndata": [220]})
-        for m in (image(0.0), image(SCALE), image(-SCALE))
+        for m in (image(-SCALE), image(0.0), image(SCALE))
     ]
     curve = LCurve(
         weights,
@@ -313,7 +367,9 @@ def test_ensemble_recovers_two_blobs():
         env=Image.from_brightness(blobs, scale, flux=0.5),
     )
     data = DATA.with_model(truth, key=jax.random.PRNGKey(7))
-    result = ensemble(data, 8, jax.random.PRNGKey(1))
+    # AMI's uv lattice aliases a field larger than field_of_view(data).
+    spec = EnsembleSpec(field_factors=(0.5, 0.75, 1.0))
+    result = ensemble(data, 8, jax.random.PRNGKey(1), spec=spec)
     best = min(result.kept, key=lambda m: m.total_chi2_red)
     assert all(
         c <= b * (1 + 1e-6) for c, b in zip(result.chi2_red, result.trace[0])

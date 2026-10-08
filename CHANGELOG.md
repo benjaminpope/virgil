@@ -74,6 +74,19 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **`virgil.ensemble` default selection.** The L-curve window now keeps
+  the weights from `window_dex` below the corner up to the corner (MYTHRA's
+  "just before the turnover"), not the over-regularised side above it. The
+  default weight ranges reach a decade lower (`tsv` 0.1–10⁴, the others
+  10⁻⁴–10 per data point), set from the corners of the 60 datasets of
+  virgil-validation's contest bench, and each sweep draws one log-uniform
+  weight per equal bin of `log w`, so it spans its range. The default
+  `field_factors` are now (1, 2, 4) times `field_of_view(data)`, and a
+  field too large for `max_npix` keeps its size with coarser pixels instead
+  of being cropped; on a uv lattice (AMI) pass factors of at most 1. On the
+  bench the old defaults kept 1 of 72 members on 44 of 60 datasets and gave
+  the worst images of any arm.
+
 - **`read_oifits` reads closure triangles whose leg has no visibility
   row** ([#299](https://github.com/benjaminpope/virgil/issues/299)). A
   triangle leg stored in no `OI_VIS2`/`OI_VIS` row in either orientation

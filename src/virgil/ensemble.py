@@ -68,12 +68,20 @@ FAMILIES = {"tv": TV, "tsv": TSV, "maxent": MaxEntropy, "starlet": StarletL1}
 def _default_weight_ranges():
     # Weight per data point. The penalties of a unit-sum image are O(1) for
     # TV, maximum entropy and the starlet L1 norm, and much smaller for
-    # TSV, whose steps are squared.
+    # TSV, whose steps are squared. On the 60 datasets of virgil-validation's
+    # contest bench (12 groups each), the L-curve corners per data point
+    # fell (5th to 95th percentile) at 0.003-1.6 for TV, 0.004-1.9 for
+    # maximum entropy, 0.003-1.2 for the starlet L1 norm and 3-2000 for
+    # TSV, with no trend with the number of pixels; most of the scatter is
+    # within a dataset, from the sparse sweeps. Each range reaches a decade
+    # below the lowest of these, so that the window below a corner (one
+    # decade by default) is sampled, and half a decade or more above the
+    # highest, so that the corner is an interior point of the sweep.
     return {
-        "tv": (1e-3, 1e1),
-        "tsv": (1e0, 1e4),
-        "maxent": (1e-3, 1e1),
-        "starlet": (1e-3, 1e1),
+        "tv": (1e-4, 1e1),
+        "tsv": (1e-1, 1e4),
+        "maxent": (1e-4, 1e1),
+        "starlet": (1e-4, 1e1),
     }
 
 
@@ -93,8 +101,11 @@ class EnsembleSpec:
         For each family, the range ``(low, high)`` of the weight per data
         point (the weight divided by the total number of independent data).
         Weights are drawn log-uniformly in it, the invariant prior for a
-        scale. The defaults are deliberately wide; if the L-curve corners
-        fall at the edges, move the range.
+        scale, one in each of ``n_weights`` equal bins of ``log w`` so that
+        every sweep spans the range. The defaults are wide enough to hold
+        the corners of the contest bench's datasets with a window's width
+        to spare below them; if the L-curve corners fall at the edges, move
+        the range.
     n_weights : int
         Weights per group, at least three (the L-curve's corner needs
         them).
@@ -104,19 +115,25 @@ class EnsembleSpec:
         drawn uniformly.
     field_factors : tuple of float
         The field is ``field_of_view(data)`` times one of these, drawn
-        uniformly. Above 1 the field exceeds the interferometric field of
-        view, which on a uv lattice (AMI) aliases.
+        uniformly. A field larger than the interferometric field of view
+        lets the image hold flux the shortest baselines resolve out, which
+        on the contest bench gave better images than a field of 1 or less
+        (field 4 was the best of its arms). On a uv lattice (AMI) a field
+        above 1 aliases: pass factors of at most 1 there.
     starts : tuple of str
         Starting images, drawn uniformly: ``"moments"`` and ``"dirty"``
         (see [`starting_image`][virgil.imaging.starting_image]; a dirty
         start needs data with phases) and ``"flat"``.
     max_npix : int
-        Largest number of pixels on a side; larger fields are cut to it.
+        Largest number of pixels on a side. A field that would need more
+        keeps its size and takes coarser pixels instead, so its pixels per
+        Nyquist pixel fall below ``oversample``.
     window_dex : float
-        Width of the window of weights kept in each group, in dex, from the
-        L-curve's corner up to ``corner * 10**window_dex``: the
-        regularisation runs from the corner, where the fit to the data
-        stops improving, to somewhat stronger.
+        Width of the window of weights kept in each group, in dex, from
+        ``corner / 10**window_dex`` up to the L-curve's corner: as in
+        MYTHRA, the weights just before the turnover, where the fit to the
+        data has stopped improving but the image is not yet over-smoothed.
+        Stronger weights, past the corner, trade fit for smoothness fast.
     max_chi2_red : float
         Drop a member if the raw χ² per data point of any dataset exceeds
         this.
@@ -148,7 +165,7 @@ class EnsembleSpec:
     )
     n_weights: int = 6
     oversample: tuple = (2.0, 3.0, 4.0)
-    field_factors: tuple = (0.5, 0.75, 1.0)
+    field_factors: tuple = (1.0, 2.0, 4.0)
     starts: tuple = ("moments", "flat")
     max_npix: int = 128
     window_dex: float = 1.0
@@ -349,8 +366,10 @@ def draw_groups(data, n_groups, key, spec=None):
 
     Each group draws a regulariser family, a pixel size (the Nyquist scale
     over one of ``spec.oversample``), a field (``field_of_view(data)``
-    times one of ``spec.field_factors``, cut at ``spec.max_npix`` pixels), a
-    starting image and ``spec.n_weights`` log-uniform weights. The draws
+    times one of ``spec.field_factors``; beyond ``spec.max_npix`` pixels
+    the pixels are coarsened to fit it), a starting image and
+    ``spec.n_weights`` log-uniform weights, one in each equal bin of the
+    family's range in ``log w``. The draws
     depend only on ``key`` and ``spec``, so every task of a cluster array
     can draw them all and run its own.
 
@@ -383,10 +402,16 @@ def draw_groups(data, n_groups, key, spec=None):
         family = spec.families[rng.integers(len(spec.families))]
         scale = nyquist / spec.oversample[rng.integers(len(spec.oversample))]
         factor = spec.field_factors[rng.integers(len(spec.field_factors))]
-        npix = min(int(onp.ceil(factor * field / scale)), spec.max_npix)
+        npix = int(onp.ceil(factor * field / scale))
+        if npix > spec.max_npix:
+            # Keep the field and coarsen the pixels.
+            npix = spec.max_npix
+            scale = factor * field / npix
         start = spec.starts[rng.integers(len(spec.starts))]
         low, high = onp.log(spec.weight_ranges[family]) + onp.log(n_data)
-        weights = onp.exp(rng.uniform(low, high, spec.n_weights))
+        # Stratified: one log-uniform weight in each of n_weights equal bins.
+        edges = onp.linspace(low, high, spec.n_weights + 1)
+        weights = onp.exp(rng.uniform(edges[:-1], edges[1:]))
         draws.append(
             Draw(
                 index,
@@ -560,8 +585,9 @@ def combine(data, groups, *, spec=None, star=True):
 
     The selection follows MYTHRA (Drevon et al. 2025):
 
-    1. In each group, keep the weights from the L-curve's corner up to
-       ``spec.window_dex`` above it.
+    1. In each group, keep the weights from ``spec.window_dex`` below the
+       L-curve's corner up to the corner: the weights just before the
+       turnover.
     2. Drop members whose fit diverged (a non-finite χ²), then keep
        members whose raw χ² per data point is below
        ``spec.max_chi2_red`` and within ``spec.chi2_ratio`` of the best
@@ -613,9 +639,9 @@ def combine(data, groups, *, spec=None, star=True):
                 for c, n in zip(info["chi2"][: len(datasets)], info["ndata"])
             )
             inside = corner is None or (
-                corner * (1 - 1e-9)
+                corner * 10**-spec.window_dex * (1 - 1e-9)
                 <= float(weight)
-                <= corner * 10**spec.window_dex * (1 + 1e-9)
+                <= corner * (1 + 1e-9)
             )
             members.append(
                 Member(
