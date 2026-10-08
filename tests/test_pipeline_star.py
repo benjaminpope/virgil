@@ -266,7 +266,10 @@ def test_diameter_recovered_and_quoted_errors_lead(full_run):
     # The uniform disk cannot describe a star seen past its first null, and
     # the raw chi^2/N on the quoted errors says so; no rescaling hides it.
     assert s["chi2"]["error_scale"] == "quoted"
-    assert s["chi2"]["reduced"]["limb_darkened"] < 2.0
+    assert s["chi2"]["reduced"]["limb_darkened"] < 2.0, (
+        s["fit"]["models"]["limb_darkened"],
+        s.get("warnings"),
+    )
     assert s["chi2"]["reduced"]["uniform"] > 10.0
     assert s["comparison"]["preferred"] == "limb_darkened"
     assert s["comparison"]["delta_chi2"] > 100 * s["comparison"]["bic_penalty"]
@@ -386,7 +389,7 @@ def test_uniform_only_run_and_error_scale(data, tmp_path):
         "chi2_uniform",
         "resolution",
         "multimodal",
-    ]
+    ], res.summary.get("warnings")
     assert type(res.model()) is UniformDisk
 
     out = tmp_path / "scaled"
@@ -707,6 +710,8 @@ def test_two_lobe_star_reports_the_alias(tmp_path):
     assert low < 10.0 < high
     alias = [r for r in rows if r["diam_mas"] > 15.0 and r["delta_chi2"] < 25]
     assert alias, rows
+    # The check names the closest rival; the noise decides which lobe that is.
+    alias.sort(key=lambda r: r["delta_chi2"])
     assert not low < alias[0]["diam_mas"] < high
     assert any(
         r[0] == pytest.approx(alias[0]["diam_mas"]) for r in fit["rivals"]
