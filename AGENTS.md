@@ -118,6 +118,7 @@ see that repository's `PLAN.md` for the boundary.
 | `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
 | `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `chain_init_params` (numpyro `init_params`, one start per chain), `posterior_predictive_summary` |
 | `fitting.py` | `fit(model, priors, data, regularisers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
+| `svi.py` | `variational`: numpyro SVI on `numpyro_model`'s posterior, guides (BNAF/IAF flows, Gaussian, Laplace) started at a fit and its `gauss_newton_mass` covariance, `VariationalResult` (draws keyed like NUTS's, losses, PSIS k̂); see `design/sampler_flat_coordinates.md` |
 | `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
@@ -148,7 +149,7 @@ Imports flow one way: `_utils`/`_geometry`/`_precision`/`_flat` → `oifits`/`am
 `_grid`, which imports only `_utils`, and do not import each other; `limits` →
 `plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `ensemble` imports `imaging`, `metrics` and `models`. `angles` imports nothing from virgil, and
 `likelihood`, `fitting` and `orbits` import it. `orbits` imports only `_utils` and `angles`
-(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached` and `OrbitalBinary`). `epochs` imports `likelihood`, `fitting`, `models` and `orbits`. `simulate` imports `fitting`.
+(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached` and `OrbitalBinary`). `epochs` imports `likelihood`, `fitting`, `models` and `orbits`. `svi` imports `fitting` and `likelihood`. `simulate` imports `fitting`.
 
 ## Flux and contrast
 

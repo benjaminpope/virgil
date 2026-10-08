@@ -144,70 +144,116 @@ coordinates, so the mass matrix computed at the MAP is the one NUTS
 needs) and a well-defined prior potential at the ends of the range,
 including the poles of the isotropic priors.
 
-## Variational inference (numpyro SVI): assessment for virgil#12
+## Variational inference (numpyro SVI): implemented (virgil#12)
 
-**What already works.** `numpyro_model` is an ordinary numpyro model, so
-SVI runs on it today with no virgil code. A tiny test (binary on a 7-hole
-mask, float32, `optax.adam(1e-2)`, 2000 steps, guides started with
-`init_loc_fn=init_to_value(values=fit(...).values)`) ran in under a second
-per guide after compilation:
+**Status: implemented** as `virgil.svi.variational(model, priors, data,
+regularisers=(), *, noise, likelihoods, start, guide="bnaf", steps=3000,
+optimizer, learning_rate=3e-3, num_particles=8, num_samples=2000, key,
+flat_coordinates=True, dense_start=True, init_scale=0.1, window, psis=True,
+dtype="float64", **options)`, returning a `VariationalResult` (`samples`
+keyed like NUTS's, `losses`, `guide`, `params`, `converged`, `info` with
+the ELBO, PSIS k̂, time and whether the start was dense). Tests:
+`tests/test_svi.py`.
 
-| Guide | σ(dra) | σ(ddec) | σ(flux) |
-| --- | --- | --- | --- |
-| `AutoNormal` | 1.03 | 0.94 | 0.0010 |
-| `AutoMultivariateNormal` | 1.49 | 1.24 | 0.0017 |
-| `AutoLaplaceApproximation` | 1.71 | 1.25 | 0.0021 |
+**Guides in the flat coordinates.** AutoGuides build their Gaussian in
+`biject_to(site.support)`, so with this change they are Gaussian in the
+flat coordinate z = logit((log x − log a)/(log b − log a)) for a
+LogUniform, not in log x. `fit`, the Gauss–Newton covariance, NUTS and
+the guide share one coordinate system, so a guide can start from the MAP
+and its curvature directly. `flat_coordinates` is passed through to
+`numpyro_model` and `gauss_newton_mass` and tested both ways.
 
-The posterior means agree with the fit; the mean-field guide underestimates
-the widths of correlated parameters, as expected. `guide.sample_posterior`
-returns the model's own parameters under the same site names.
+**A Gaussian guide is ≈ Laplace.** For a well-behaved posterior, a dense
+Gaussian guide (reverse KL over the whole posterior) and the Laplace
+approximation (curvature at the mode) nearly agree, and virgil already
+has the latter (`gauss_newton_mass`, `laplace_cov`, `laplace_samples`).
+SVI earns its keep only with a guide that can capture non-Gaussian
+shape, so the default is a normalising flow; `"mvn"` is kept and
+documented as ≈ Laplace.
 
-**What is missing.**
+**Starting at the Laplace approximation (the Laplace frame).** numpyro's
+flow guides (`AutoIAFNormal`, `AutoBNAFNormal`) start near a standard
+normal in z and ignore `init_loc_fn` beyond the prototype, and its
+Gaussian guides learn loc and scale in raw z, whose scales differ by
+orders of magnitude (a position known to 3 mas on an 800 mas Uniform
+range has σ_z ≈ 0.016). Adam's step is absolute, so a learning rate of
+3e-3 jittered a binary's means by 0.2σ. Every virgil guide is therefore
+z = z0 + L0 (shift + L · flow(ε)), with z0 and L0 fixed at the fit and the
+Cholesky factor of its Gauss–Newton covariance, and `shift` (from 0), `L`
+(from I) and the flow learnt: everything is learnt in units of the
+Laplace widths. Without a flow this is exactly the GN Laplace Gaussian at
+step 0. After the change the binary's means agreed with NUTS to 0.07σ
+(`"mvn"`) and 0.16σ (`"bnaf"`). numpyro's IAF default hidden width
+(latent_dim) is too narrow in 2–3 dimensions to bend a banana; virgil uses
+max(16, latent_dim).
 
-- *Guides in the flat coordinates*: none needed. AutoGuides build their
-  Gaussian in `biject_to(site.support)`, so with this change they are
-  Gaussian in the flat coordinate z = logit((log x − log a)/(log b −
-  log a)), not in log x. Away from the bounds z is close to an affine
-  function of log x, so a LogUniform scale's posterior is close to
-  log-normal in x there; near a bound the logit stretches it. This was
-  the main obstacle.
-- *Start from a fit*: `init_to_value(values=FitResult.values)` works now.
-  A helper could also set the initial scale of an `AutoMultivariateNormal`
-  from `gauss_newton_mass`'s covariance, which is in the same coordinates
-  (`init_scale` takes one number; a dense start needs a custom guide or
-  setting the `scale_tril` parameter).
-- *Angle vectors*: an `AngleVector` site is a 2-D vector on a ring; a
-  Gaussian guide on it works but is a poor approximation for wide angles.
-- *Outputs*: a thin `virgil` wrapper (say `variational(model, priors, data,
-  guide="mvn", start=result)`) returning draws keyed like NUTS's, plus
-  the ELBO, would make it one call. Optional.
-- *Tests*: no-data SVI with `AutoMultivariateNormal` reproduces nothing
-  exactly (a logistic is not Gaussian), so test (i) that a posterior
-  that is Gaussian in z is recovered by `AutoNormal` (a likelihood
-  Gaussian in z, so that the logistic prior is not in the way, or a
-  narrow posterior far from the bounds, where the prior is locally flat
-  in z up to a small tilt, so the match is approximate, not exact), (ii) that
-  `AutoLaplaceApproximation` matches `gauss_newton_mass` at the MAP, and
-  (iii) agreement of means and widths with a short NUTS run on a binary,
-  in float32 and x64.
+**Guide comparison** (laptop, x64, 3000 steps, Adam 3e-3, 8 particles,
+20 000 draws; NUTS 2000 warmup + 20 000 draws, one chain; times include
+compilation). Each cell is mean ± σ [5%, 95%]. `GN-Laplace` is the
+Gauss–Newton Gaussian at the fit, without SVI.
 
-**Effort.** S for documentation and a tutorial cell (it works now); M for
-a wrapper with fit-started guides, a dense initial scale from
-`gauss_newton_mass` and the tests above.
+*Banana*: x ~ N(0, 1), y | x ~ N(x²/2, 0.3²) (Uniform priors).
 
-**Risks.** Multimodality: Gaussian guides find one mode, so orbits
-(Ω/ω degeneracies, period aliases) and images need several starts
-(`OrbitStart.chain_values` gives them) or importance weighting of the
-guide's draws with PSIS k̂ as the check, as the priors rule already asks
-for reweighting. High-dimensional images: an `AutoMultivariateNormal` over
-thousands of pixels is a dense Cholesky per step; `AutoLowRankMultivariateNormal`
-or the Laplace approximation (`laplace_samples`) fit better. float32: the
-ELBO's Monte Carlo gradient is noisy and the Cholesky of a badly
-conditioned scale can fail; the flat coordinates and the logistic prior
-potential help, but SVI should run in x64 like `fit` by default.
+| Method | time | k̂ | x | y |
+| --- | --- | --- | --- | --- |
+| NUTS | 1.2 s | | 0.02 ± 0.96 [−1.57, 1.61] | 0.46 ± 0.67 [−0.34, 1.87] |
+| GN-Laplace | 0.1 s | | −0.01 ± 0.99 [−1.63, 1.63] | 0.00 ± 0.30 [−0.49, 0.49] |
+| mvn | 1.7 s | 0.70 | 0.03 ± 0.52 [−0.83, 0.88] | 0.13 ± 0.30 [−0.36, 0.62] |
+| iaf | 1.7 s | 0.41 | 0.04 ± 0.80 [−1.30, 1.32] | 0.32 ± 0.58 [−0.37, 1.40] |
+| bnaf | 3.7 s | 0.63 | 0.01 ± 0.88 [−1.42, 1.54] | 0.46 ± 0.57 [−0.31, 1.58] |
+| laplace | 1.1 s | | 0.00 ± 0.98 [−1.62, 1.59] | 0.00 ± 0.30 [−0.50, 0.49] |
 
-**Does the flat-coordinate work help?** Yes: it is what makes the
-standard AutoGuides sensible for virgil's Jeffreys priors (Gaussian in the logit of the
-flat coordinate, log x or cos i, rather than in the logit of x itself), and it puts `fit`, the
-Gauss–Newton covariance, NUTS and any guide in one coordinate system, so a
-guide can be started from the MAP and its curvature directly.
+*Curved ridge*: a, b ~ LogUniform(0.01, 100), a·b = 1 ± 0.05, log a = 0 ± 1.5.
+
+| Method | time | k̂ | a | b |
+| --- | --- | --- | --- | --- |
+| NUTS | 2.0 s | | 2.92 ± 6.21 [0.082, 11.9] | 3.00 ± 6.68 [0.084, 12.0] |
+| GN-Laplace | 0.1 s | | 2.39 ± 3.84 [0.104, 9.5] | 2.42 ± 3.87 [0.106, 9.6] |
+| mvn | 0.5 s | 0.75 | 2.59 ± 4.17 [0.099, 10.5] | 2.45 ± 4.04 [0.096, 10.1] |
+| iaf | 0.5 s | 2.25 | 2.86 ± 4.82 [0.087, 11.8] | 2.66 ± 4.72 [0.085, 11.4] |
+| bnaf | 0.6 s | 2.18 | 2.86 ± 4.21 [0.111, 11.6] | 2.14 ± 3.34 [0.087, 9.0] |
+| laplace | 0.4 s | | 1.92 ± 2.66 [0.142, 6.8] | 1.95 ± 2.73 [0.147, 7.0] |
+
+*Bounded scale*: s ~ LogUniform(1e-3, 1) measured as 0.03 ± 0.03 (a
+tail in log s down to the bound), m ~ Uniform(−1, 1) with m + 3s = 0.3 ± 0.1.
+
+| Method | time | k̂ | s | m |
+| --- | --- | --- | --- | --- |
+| NUTS | 0.7 s | | 0.0183 ± 0.0190 [0.0013, 0.058] | 0.246 ± 0.113 [0.056, 0.429] |
+| GN-Laplace | 0.0 s | | 0.0461 ± 0.0477 [0.0066, 0.140] | 0.205 ± 0.133 [−0.021, 0.419] |
+| mvn | 0.3 s | 0.89 | 0.0177 ± 0.0196 [0.0034, 0.054] | 0.251 ± 0.114 [0.056, 0.432] |
+| iaf | 0.6 s | 0.50 | 0.0164 ± 0.0173 [0.0013, 0.053] | 0.243 ± 0.122 [0.049, 0.449] |
+| bnaf | 0.6 s | 0.65 | 0.0178 ± 0.0193 [0.0013, 0.058] | 0.256 ± 0.117 [0.058, 0.445] |
+| laplace | 0.2 s | | 0.0439 ± 0.0406 [0.0080, 0.124] | 0.198 ± 0.126 [−0.016, 0.398] |
+
+**Choice of default: `"bnaf"`.** It is the only guide that reproduces the
+banana (y's mean, width and 95% quantile), and the bounded scale's 5%
+quantile (the Gaussians stop at 0.003, a factor 2.5 above NUTS's 0.0013).
+On the ridge, whose a·b tail is heavy (NUTS's σ is 6, dominated by rare
+draws), every guide underestimates σ; the flows' 95% quantiles are
+closest. IAF is close behind and cheaper, but bent the banana only
+partly. At a learning rate of 1e-2 the flows were noisier on the ridge
+and the bounded scale, and with numpyro's IAF width (2 units) IAF failed
+on the banana (σ_x = 0.41) at every setting tried (1e-3 to 1e-2, 8 or 32
+particles, 2000 to 10 000 steps). Settings follow H. McDougall's
+numpyro SVI notes (Adam ~1e-3, several particles per step, check that the
+loss plateaus). AutoDAIS was not tried: those notes found it ~10 times
+slower with fragile convergence. On a 7-hole-mask binary (a near-Gaussian
+posterior) `"mvn"` and `"bnaf"` both agreed with NUTS (0.07σ and 0.16σ in
+the means, widths within 10%), as expected when Gaussian ≈ Laplace.
+
+**PSIS k̂** (`numpyro.infer.importance.psis_diagnostic`, numpyro ≥ 0.20;
+`None` otherwise) is reported but is a rough guide on these toys: on the
+bounded scale BNAF matched NUTS's quantiles while k̂ ranged 0.6–1.5 between
+runs, and on the ridge the flows' k̂ ≈ 2 flags the missed tail.
+
+**Risks and open items.** Multimodality: every guide covers one mode, so
+orbits (Ω/ω flips, period aliases) and images need several starts
+(`OrbitStart.chain_values`) or importance reweighting with k̂ as the check.
+High-dimensional images: a flow costs O(d²) per layer, and a dense
+Gaussian a d × d Cholesky; use the Laplace approximation
+(`laplace_samples`) there. A fair comparison at tens of parameters (a
+binary with error terms, a short orbit) is a candidate OzSTAR job; the
+comparison script is not in the repository. Angle vectors: a Gaussian or
+flow guide on a ring works but approximates wide angles poorly.
+float32 runs (tested on the binary) but x64 is the default, as for `fit`.

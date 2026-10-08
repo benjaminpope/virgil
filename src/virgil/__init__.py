@@ -11,7 +11,8 @@ Modules:
 * [`models`][virgil.models]: source models and their visibilities.
 * [`likelihood`][virgil.likelihood]: likelihoods and numpyro models.
 * [`fitting`][virgil.fitting]: `fit`, maximum a posteriori fits with
-  Levenberg–Marquardt, L-BFGS or Adam.
+  Levenberg–Marquardt, L-BFGS or Adam; [`svi`][virgil.svi]:
+  `variational`, variational inference started from a fit.
 * [`imaging`][virgil.imaging]: regularisers and helpers for image
   reconstruction; [`scenes`][virgil.scenes]: synthetic truth images;
   [`metrics`][virgil.metrics]: image-recovery scores;
@@ -69,6 +70,7 @@ from . import (  # noqa: E402
     scenes,
     simulate,
     spectra,
+    svi,
 )
 from ._geometry import pixel_offsets  # noqa: E402
 from .detection import detection_statistics  # noqa: E402
