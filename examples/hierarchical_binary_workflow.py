@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import optimistix as optx
 from jax.flatten_util import ravel_pytree
 
@@ -18,7 +18,7 @@ from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData
 
 
-WAVELENGTHS = jnp.array([800e-9, 1.0e-6, 1.2e-6])
+WAVELENGTHS = np.array([800e-9, 1.0e-6, 1.2e-6])
 FILTER_LABELS = ("800 nm", "1.0 micron", "1.2 microns")
 
 
@@ -45,10 +45,10 @@ def binary_model(params, observation_index):
 
 def build_template_observations():
     """Build three observations with common baselines and distinct wavelengths."""
-    angles = jnp.linspace(0.0, 2.0 * jnp.pi, 18, endpoint=False)
-    lengths = jnp.linspace(1.5, 6.0, angles.size)
-    u = lengths * jnp.cos(angles)
-    v = lengths * jnp.sin(angles)
+    angles = np.linspace(0.0, 2.0 * np.pi, 18, endpoint=False)
+    lengths = np.linspace(1.5, 6.0, angles.size)
+    u = lengths * np.cos(angles)
+    v = lengths * np.sin(angles)
 
     observations = []
     for wavelength in WAVELENGTHS:
@@ -57,11 +57,11 @@ def build_template_observations():
                 {
                     "u": u,
                     "v": v,
-                    "wavel": jnp.array([wavelength]),
-                    "vis": jnp.ones_like(u),
-                    "d_vis": jnp.full_like(u, 3e-4),
-                    "phi": jnp.zeros_like(u),
-                    "d_phi": jnp.full_like(u, 0.04),
+                    "wavel": np.array([wavelength]),
+                    "vis": np.ones_like(u),
+                    "d_vis": np.full_like(u, 3e-4),
+                    "phi": np.zeros_like(u),
+                    "d_phi": np.full_like(u, 0.04),
                     "phi_unit": "deg",
                     "v2_flag": False,
                     "cp_flag": False,
@@ -74,9 +74,9 @@ def build_template_observations():
 def simulate_observations(seed=7, noise_scale=1.0):
     """Simulate three binary observations with shared astrometry."""
     truth = {
-        "dra": jnp.array(18.0),
-        "ddec": jnp.array(-12.0),
-        "log10_flux": jnp.log10(jnp.array([0.015, 0.010, 0.007])),
+        "dra": np.array(18.0),
+        "ddec": np.array(-12.0),
+        "log10_flux": np.log10(np.array([0.015, 0.010, 0.007])),
     }
     templates = build_template_observations()
     keys = jax.random.split(jax.random.key(seed), len(templates))
@@ -93,28 +93,28 @@ def simulate_observations(seed=7, noise_scale=1.0):
 
 def observation_errors(observations):
     """Concatenate uncertainties in joint-prediction order."""
-    return jnp.concatenate(
+    return np.concatenate(
         [observation.flatten_data()[1] for observation in observations]
     )
 
 
 def reduced_chi2(params, observations):
     """Return reduced chi-squared for the five-parameter joint model."""
-    data = jnp.concatenate(
+    data = np.concatenate(
         [observation.flatten_data()[0] for observation in observations]
     )
     model = joint_prediction(params, binary_model, observations)
     errors = observation_errors(observations)
-    return jnp.sum(((data - model) / errors) ** 2) / (data.size - 5)
+    return np.sum(((data - model) / errors) ** 2) / (data.size - 5)
 
 
 def fit_hierarchical_binary(observations, initial=None, max_steps=256):
     """Fit shared astrometry and three fluxes using Fisher coordinates."""
     if initial is None:
         initial = {
-            "dra": jnp.array(15.0),
-            "ddec": jnp.array(-9.0),
-            "log10_flux": jnp.log10(jnp.array([0.012, 0.012, 0.012])),
+            "dra": np.array(15.0),
+            "ddec": np.array(-9.0),
+            "log10_flux": np.log10(np.array([0.012, 0.012, 0.012])),
         }
 
     prediction = lambda params: joint_prediction(
@@ -138,7 +138,7 @@ def fit_hierarchical_binary(observations, initial=None, max_steps=256):
     solution = optx.minimise(
         latent_objective,
         solver,
-        jnp.zeros_like(initial_vector),
+        np.zeros_like(initial_vector),
         max_steps=max_steps,
         throw=False,
     )
@@ -160,9 +160,9 @@ def run_hierarchical_binary_demo(seed=7, noise_scale=1.0):
     """Run the complete simulation, fit, and local uncertainty calculation."""
     observations, truth = simulate_observations(seed, noise_scale)
     initial = {
-        "dra": jnp.array(15.0),
-        "ddec": jnp.array(-9.0),
-        "log10_flux": jnp.log10(jnp.array([0.012, 0.012, 0.012])),
+        "dra": np.array(15.0),
+        "ddec": np.array(-9.0),
+        "log10_flux": np.log10(np.array([0.012, 0.012, 0.012])),
     }
     recovered, expected, observed, covariance = fit_hierarchical_binary(
         observations, initial

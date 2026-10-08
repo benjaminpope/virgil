@@ -11,7 +11,7 @@ smallest that exercise each function: the 7-hole mask and a 2 x 2 grid.
 import warnings
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import matplotlib
 
 matplotlib.use("Agg")
@@ -62,9 +62,9 @@ DATA = nrm_oidata().with_model(
     BinaryModelCartesian(60.0, -40.0, 5e-3), key=jax.random.PRNGKey(0)
 )
 GRID = {
-    "dra": jnp.array([40.0, 80.0]),
-    "ddec": jnp.array([-60.0, -20.0]),
-    "flux": jnp.array([1e-3, 1e-2]),
+    "dra": np.array([40.0, 80.0]),
+    "ddec": np.array([-60.0, -20.0]),
+    "flux": np.array([1e-3, 1e-2]),
 }
 
 GRID_TOOLS = [
@@ -218,7 +218,7 @@ def test_grid_rename_in_best_point_and_plots():
 # --- Values-first and joint likelihoods (argument-order PR 3) -------------
 
 PARAMS = ["dra", "ddec", "flux"]
-VALUES = jnp.array([60.0, -40.0, 5e-3])
+VALUES = np.array([60.0, -40.0, 5e-3])
 DATA2 = nrm_oidata(rotation_deg=30.0).with_model(
     BinaryModelCartesian(60.0, -40.0, 5e-3), key=jax.random.PRNGKey(1)
 )
@@ -308,7 +308,7 @@ def test_numpyro_model_and_posterior_summary_accept_data_obj():
     template = BinaryModelCartesian(60.0, -40.0, 5e-3)
     with pytest.warns(FutureWarning, match="data_obj="):
         numpyro_model(template, priors, data_obj=DATA)
-    samples = {"flux": jnp.array([4e-3, 5e-3, 6e-3])}
+    samples = {"flux": np.array([4e-3, 5e-3, 6e-3])}
     new = _new_order(posterior_predictive_summary, samples, template, DATA)
     with pytest.warns(FutureWarning, match="data_obj="):
         old = posterior_predictive_summary(samples, template, data_obj=DATA)

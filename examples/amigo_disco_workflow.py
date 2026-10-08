@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import jax.numpy as jnp
+import jax.numpy as np
 
 from virgil.amigo import load_oi_data
 from virgil.likelihood import model_loglike
@@ -57,7 +57,7 @@ def summarize_amigo_disco_product(
     return AmigoDiscoSummary(
         filters=filters,
         single_filter=single_filter,
-        n_observables=int(jnp.asarray(observations[single_filter].vis).size),
+        n_observables=int(np.asarray(observations[single_filter].vis).size),
         single_filter_loglike=single_filter_loglike,
         joint_loglike=float(joint_loglike),
     )

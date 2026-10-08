@@ -10,7 +10,7 @@ Dotter's GDit. Function names, structure and ELR11 equation references are
 his; the changes made in this port are:
 
 - ``jaxopt.Bisection`` is replaced by ``optimistix`` bisection, with brackets
-  and tolerances taken from ``jnp.finfo`` so it runs in float32 and float64.
+  and tolerances taken from ``np.finfo`` so it runs in float32 and float64.
 - ``eq30`` is multiplied through by ``omega**2`` so that ``omega = 0`` is
   valid and differentiable; the root is unchanged.
 - The pole and equator special cases of ``solve_ELR`` use the double-``where``
@@ -35,8 +35,8 @@ import functools
 from typing import NamedTuple
 
 import jax
-import jax.numpy as jnp
-import numpy as np
+import jax.numpy as np
+import numpy as onp
 import optimistix as optx
 
 from ._utils import mas2rad
@@ -55,18 +55,18 @@ def _cos_plus_log_tan_half(angle):
     ``c = cos(a)``, summed as a series where ``c`` is small. Near the pole,
     where ``c -> 1`` and ``atanh`` overflows, the original form is used.
     """
-    c = jnp.cos(angle)
-    near_equator = jnp.abs(c) < 0.3
+    c = np.cos(angle)
+    near_equator = np.abs(c) < 0.3
     # double-where: each branch only ever sees inputs where it is finite
-    c_eq = jnp.where(near_equator, c, 0.0)
+    c_eq = np.where(near_equator, c, 0.0)
     c2 = c_eq * c_eq
-    series = jnp.zeros_like(c_eq)
+    series = np.zeros_like(c_eq)
     for k in range(15, 0, -1):  # atanh(c) - c = sum_k c**(2k+1) / (2k+1)
         series = c2 * (1.0 / (2 * k + 1) + series)
     series = c_eq * series
-    angle_pole = jnp.where(near_equator, 0.25 * jnp.pi, angle)
-    direct = jnp.cos(angle_pole) + jnp.log(jnp.tan(0.5 * angle_pole))
-    return jnp.where(near_equator, -series, direct)
+    angle_pole = np.where(near_equator, 0.25 * np.pi, angle)
+    direct = np.cos(angle_pole) + np.log(np.tan(0.5 * angle_pole))
+    return np.where(near_equator, -series, direct)
 
 
 # ELR11 equations
@@ -75,7 +75,7 @@ def eq24(phi, theta, omega, rtw):
     # cos(x) + log(tan(x / 2)) is evaluated without cancellation near the
     # equator (see _cos_plus_log_tan_half); the equation is unchanged.
     tau = (
-        jnp.power(omega, 2) * jnp.power(rtw * jnp.cos(theta), 3)
+        np.power(omega, 2) * np.power(rtw * np.cos(theta), 3)
     ) / 3.0 + _cos_plus_log_tan_half(theta)
     return _cos_plus_log_tan_half(phi) - tau
 
@@ -86,16 +86,16 @@ def eq30(rtw, theta, omega):
     # but no 1/omega**2, so omega = 0 is valid (root rtw = 1) and
     # differentiable.
     return (1.0 / rtw - 1.0) + 0.5 * omega**2 * (
-        (rtw * jnp.sin(theta)) ** 2 - 1.0
+        (rtw * np.sin(theta)) ** 2 - 1.0
     )
 
 
 # ratio of equatorial to polar Teff
 def eq32(omega):
     return (
-        jnp.sqrt(2.0 / (2.0 + omega**2))
+        np.sqrt(2.0 / (2.0 + omega**2))
         * (1.0 - omega**2) ** (1.0 / 12.0)
-        * jnp.exp(-(4.0 / 3.0) * omega**2 / (2 + omega**2) ** 3)
+        * np.exp(-(4.0 / 3.0) * omega**2 / (2 + omega**2) ** 3)
     )
 
 
@@ -108,12 +108,12 @@ def _bisect(fn, lower, upper, args, dtype, flip):
     default 'detect' raises when the root sits exactly on a bracket end
     (eq. 30 at omega = 0 has ``fn(upper) == 0``), even with ``throw=False``.
     """
-    eps = jnp.finfo(dtype).eps
+    eps = np.finfo(dtype).eps
     # Fixed iteration count that covers any bracket of width <~ 2: log2(1/eps)
     # halvings, plus slack.
-    max_steps = int(np.ceil(-np.log2(float(eps)))) + 8
-    lower = jnp.asarray(lower, dtype)
-    upper = jnp.asarray(upper, dtype)
+    max_steps = int(onp.ceil(-onp.log2(float(eps)))) + 8
+    lower = np.asarray(lower, dtype)
+    upper = np.asarray(upper, dtype)
     y0 = 0.5 * (lower + upper)
     sol = optx.root_find(
         fn,
@@ -134,11 +134,11 @@ def solve_ELR(omega, theta):  # eq.26, 27, 28; solve the ELR11 equations
     calculates r~, Teff_ratio, and Flux_ratio
     Can be vmapped to solve for an array of thetas (done below)
     """
-    dtype = jnp.result_type(float, omega, theta)
-    omega = jnp.asarray(omega, dtype)
-    theta = jnp.asarray(theta, dtype)
-    pi = jnp.asarray(np.pi, dtype)
-    eps = jnp.finfo(dtype).eps
+    dtype = np.result_type(float, omega, theta)
+    omega = np.asarray(omega, dtype)
+    theta = np.asarray(theta, dtype)
+    pi = np.asarray(onp.pi, dtype)
+    eps = np.finfo(dtype).eps
 
     # theta is the polar angle.
     # this routine calculates values for 0 <= theta <= pi/2
@@ -147,15 +147,15 @@ def solve_ELR(omega, theta):  # eq.26, 27, 28; solve the ELR11 equations
     # theta = pi/2 at the equator
     # -pi/2 < theta < 0: theta -> abs(theta)
     #  pi/2 > theta > pi: theta -> pi - theta
-    theta = jnp.where(
-        jnp.logical_and(theta > pi / 2, theta <= pi),  # if
+    theta = np.where(
+        np.logical_and(theta > pi / 2, theta <= pi),  # if
         pi - theta,  # then
         theta,  # else
     )
 
-    theta = jnp.where(
-        jnp.logical_and(theta >= -pi / 2, theta < 0),
-        jnp.abs(theta),
+    theta = np.where(
+        np.logical_and(theta >= -pi / 2, theta < 0),
+        np.abs(theta),
         theta,
     )
 
@@ -180,15 +180,15 @@ def solve_ELR(omega, theta):  # eq.26, 27, 28; solve the ELR11 equations
     # NaN values or NaN gradients.
     is_pole = theta == 0
     is_equator = theta == 0.5 * pi
-    special = jnp.logical_or(is_pole, is_equator)
-    safe_theta = jnp.where(special, pi / 4, theta)
-    safe_rtw = jnp.where(special, 1.0, rtw)
+    special = np.logical_or(is_pole, is_equator)
+    safe_theta = np.where(special, pi / 4, theta)
+    safe_rtw = np.where(special, 1.0, rtw)
 
     # phi lies in (0, pi/2). In float32 his upper bound pi/2 - 1e-10 rounds
     # to above pi/2 (tan < 0, log NaN), so use dtype-aware interior bounds:
     # a few ulps inside pi/2, and the smallest bound with log(tan(phi/2))
     # still finite at the bottom.
-    phi_lo = jnp.sqrt(jnp.finfo(dtype).tiny)
+    phi_lo = np.sqrt(np.finfo(dtype).tiny)
     phi_hi = 0.5 * pi * (1.0 - 8.0 * eps)
     phi = _bisect(
         lambda p, args: eq24(p, *args),
@@ -198,12 +198,12 @@ def solve_ELR(omega, theta):  # eq.26, 27, 28; solve the ELR11 equations
         dtype,
         flip=False,  # eq24 -> -inf as phi -> 0 and is positive near pi/2
     )
-    Fw_generic = (jnp.tan(phi) / jnp.tan(safe_theta)) ** 2
+    Fw_generic = (np.tan(phi) / np.tan(safe_theta)) ** 2
 
-    Fw = jnp.where(
+    Fw = np.where(
         is_pole,  # if
-        jnp.exp(f23 * w2r3),  # then
-        jnp.where(
+        np.exp(f23 * w2r3),  # then
+        np.where(
             is_equator,  # elsif
             (1.0 - w2r3) ** (-f23),  # then
             Fw_generic,
@@ -212,9 +212,9 @@ def solve_ELR(omega, theta):  # eq.26, 27, 28; solve the ELR11 equations
 
     # equation 31 and similar for Fw
     term1 = rtw ** (-4)
-    term2 = omega**4 * (rtw * jnp.sin(theta)) ** 2
-    term3 = -2 * (omega * jnp.sin(theta)) ** 2 / rtw
-    gterm = jnp.sqrt(term1 + term2 + term3)
+    term2 = omega**4 * (rtw * np.sin(theta)) ** 2
+    term3 = -2 * (omega * np.sin(theta)) ** 2 / rtw
+    gterm = np.sqrt(term1 + term2 + term3)
     Flux_ratio = Fw * gterm
     Teff_ratio = Flux_ratio**0.25
     return rtw, Teff_ratio, Flux_ratio
@@ -230,47 +230,47 @@ solve_ELR_vec = jax.jit(jax.vmap(solve_ELR, in_axes=[None, 0]))
 
 
 def closest_polygon(thetas):
-    # NumPy, not jnp: it only ever runs on the static mesh latitudes.
-    thetas = np.asarray(thetas, dtype=float)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        arg = np.pi / (2 * (len(thetas)) * np.sin(thetas))
-        # arcsin is NaN for arg > 1 (rings near the poles); his jnp version
+    # NumPy, not np: it only ever runs on the static mesh latitudes.
+    thetas = onp.asarray(thetas, dtype=float)
+    with onp.errstate(invalid="ignore", divide="ignore"):
+        arg = onp.pi / (2 * (len(thetas)) * onp.sin(thetas))
+        # arcsin is NaN for arg > 1 (rings near the poles); his np version
         # cast NaN to int 0 and then set 0 -> 1. Made explicit here.
         valid = arg <= 1
-        n = np.rint(np.pi / np.arcsin(np.where(valid, arg, 1.0)))
-    n = np.where(valid, n, 1).astype(int)
-    n = np.where(n == 0, 1, n)
+        n = onp.rint(onp.pi / onp.arcsin(onp.where(valid, arg, 1.0)))
+    n = onp.where(valid, n, 1).astype(int)
+    n = onp.where(n == 0, 1, n)
     return n
 
 
 def spherical_to_cartesian(r, theta, phi):
-    x = r * jnp.sin(theta) * jnp.cos(phi)
-    y = r * jnp.cos(theta)
-    z = r * jnp.sin(theta) * jnp.sin(phi)
-    return jnp.array([x, y, z])
+    x = r * np.sin(theta) * np.cos(phi)
+    y = r * np.cos(theta)
+    z = r * np.sin(theta) * np.sin(phi)
+    return np.array([x, y, z])
 
 
 def rotate_point_cloud(points, inclination, obliquity):
     # define the rotation matrices
-    R_x = jnp.array(
+    R_x = np.array(
         [
             [1, 0, 0],
-            [0, jnp.cos(inclination), -jnp.sin(inclination)],
-            [0, jnp.sin(inclination), jnp.cos(inclination)],
+            [0, np.cos(inclination), -np.sin(inclination)],
+            [0, np.sin(inclination), np.cos(inclination)],
         ]
     )
-    R_z = jnp.array(
+    R_z = np.array(
         [
-            [jnp.cos(obliquity), -jnp.sin(obliquity), 0],
-            [jnp.sin(obliquity), jnp.cos(obliquity), 0],
+            [np.cos(obliquity), -np.sin(obliquity), 0],
+            [np.sin(obliquity), np.cos(obliquity), 0],
             [0, 0, 1],
         ]
     )
     # rotate the point cloud
     # precision=HIGHEST: GPU default matmul precision is TF32 (AGENTS.md)
     hi = jax.lax.Precision.HIGHEST
-    points_rotated = jnp.dot(points, R_x, precision=hi)
-    points_rotated = jnp.dot(points_rotated, R_z, precision=hi)
+    points_rotated = np.dot(points, R_x, precision=hi)
+    points_rotated = np.dot(points_rotated, R_z, precision=hi)
     return points_rotated
 
 
@@ -279,12 +279,12 @@ def triangle_normals(points, triangulation):
     b = points[triangulation[:, 1], :]
     c = points[triangulation[:, 2], :]
     # compute the normal vectors
-    normals = jnp.cross(b - a, c - a)
+    normals = np.cross(b - a, c - a)
     # compute the center of the triangle
     center = (a + b + c) / 3
     # reverse the normal vector if the dot product is negative
     normals = (
-        normals * jnp.sign(jnp.sum(normals * center, axis=1))[:, jnp.newaxis]
+        normals * np.sign(np.sum(normals * center, axis=1))[:, np.newaxis]
     )
     return normals
 
@@ -295,11 +295,11 @@ def barycenter(points, triangulation):
     y = points[triangulation, 1]
     z = points[triangulation, 2]
     # compute the barycenter coordinates
-    x_barycenter = jnp.mean(x, axis=1)
-    y_barycenter = jnp.mean(y, axis=1)
-    z_barycenter = jnp.mean(z, axis=1)
+    x_barycenter = np.mean(x, axis=1)
+    y_barycenter = np.mean(y, axis=1)
+    z_barycenter = np.mean(z, axis=1)
     # stack the barycenter coordinates into an array
-    barycenters = jnp.stack((x_barycenter, y_barycenter, z_barycenter), axis=1)
+    barycenters = np.stack((x_barycenter, y_barycenter, z_barycenter), axis=1)
     return barycenters
 
 
@@ -309,34 +309,34 @@ def barycenter(points, triangulation):
 class Mesh(NamedTuple):
     """Static triangulated unit-sphere mesh (read-only NumPy arrays)."""
 
-    thetas: np.ndarray  # (n_lat,) polar angles of the rings
-    n: np.ndarray  # (n_lat,) vertices per ring
-    phi: np.ndarray  # (n_vertices,) azimuths
-    triangulation: np.ndarray  # (n_triangles, 3) vertex indices
+    thetas: onp.ndarray  # (n_lat,) polar angles of the rings
+    n: onp.ndarray  # (n_lat,) vertices per ring
+    phi: onp.ndarray  # (n_vertices,) azimuths
+    triangulation: onp.ndarray  # (n_triangles, 3) vertex indices
 
 
 @functools.lru_cache(maxsize=None)
 def mesh(n_lat):
     """Mirror of his ``ELR_Model.__init__`` mesh construction.
 
-    Pure NumPy, with no jnp anywhere: this may first be called while jax is
+    Pure NumPy, with no np anywhere: this may first be called while jax is
     tracing, and caching a tracer would leak it.
     """
     from scipy.spatial import ConvexHull  # lazy: only needed to build
 
     n_lat = int(n_lat)
     tol = 1e-4
-    thetas = np.linspace(tol, np.pi - tol, n_lat)
+    thetas = onp.linspace(tol, onp.pi - tol, n_lat)
     ns = closest_polygon(thetas)
-    phi = np.concatenate(
-        [np.linspace(tol, 2 * np.pi - tol, n, endpoint=False) for n in ns]
+    phi = onp.concatenate(
+        [onp.linspace(tol, 2 * onp.pi - tol, n, endpoint=False) for n in ns]
     )
     theta = thetas.repeat(ns)
-    points = np.stack(
+    points = onp.stack(
         [
-            np.sin(theta) * np.cos(phi),
-            np.cos(theta),
-            np.sin(theta) * np.sin(phi),
+            onp.sin(theta) * onp.cos(phi),
+            onp.cos(theta),
+            onp.sin(theta) * onp.sin(phi),
         ],
         axis=1,
     )
@@ -345,7 +345,7 @@ def mesh(n_lat):
     # identity whatever the x64 mode it was made in (JAX 0.10), and int32
     # is the same in both modes. The floats are cast at use.
     out = Mesh(
-        thetas, ns.astype(np.int32), phi, triangulation.astype(np.int32)
+        thetas, ns.astype(onp.int32), phi, triangulation.astype(onp.int32)
     )
     for a in out:
         a.setflags(write=False)
@@ -366,9 +366,9 @@ def surface(omega, r_eq, inc, obl, n_lat=32, return_mesh=False):
     of each triangle.
     """
     m = mesh(n_lat)
-    dtype = jnp.result_type(float, omega, r_eq, inc, obl)
-    thetas = jnp.asarray(m.thetas, dtype)
-    phi = jnp.asarray(m.phi, dtype)
+    dtype = np.result_type(float, omega, r_eq, inc, obl)
+    thetas = np.asarray(m.thetas, dtype)
+    phi = np.asarray(m.phi, dtype)
     triangulation = m.triangulation
     n_vert = int(m.n.sum())
 
@@ -376,7 +376,7 @@ def surface(omega, r_eq, inc, obl, n_lat=32, return_mesh=False):
 
     # concrete numpy repeats + total_repeat_length keep this jit-safe
     def rep(a):
-        return jnp.repeat(a, m.n, total_repeat_length=n_vert)
+        return np.repeat(a, m.n, total_repeat_length=n_vert)
 
     rtw = rep(rtws)
     T = rep(Ts)
@@ -384,7 +384,7 @@ def surface(omega, r_eq, inc, obl, n_lat=32, return_mesh=False):
     theta = rep(thetas)
 
     x, y, z = spherical_to_cartesian(rtw, theta, phi)
-    points = r_eq * jnp.stack([x, y, z], axis=1)
+    points = r_eq * np.stack([x, y, z], axis=1)
 
     points_rotated = rotate_point_cloud(points, -inc, obl)
     # compute the normal vectors
@@ -394,14 +394,14 @@ def surface(omega, r_eq, inc, obl, n_lat=32, return_mesh=False):
     bary = barycenter(points_rotated, triangulation)
     # find the intensity of the star at each barycenter (mean of the
     # intensity at the corners of the triangle)
-    intensity = jnp.mean(F[triangulation], axis=1)
-    teff_ratio = jnp.mean(T[triangulation], axis=1)
+    intensity = np.mean(F[triangulation], axis=1)
+    teff_ratio = np.mean(T[triangulation], axis=1)
     # his normals are unnormalized (|n| = 2 x triangle area), so cosine
     # already carries the projected area of each triangle: keep that.
     cosine = normals[:, 2]
     # apply a step function weight along with the contribution of flux
     # towards the observer; zeroes the non-visible portion of the star
-    weight = jnp.heaviside(cosine, 0) * cosine * intensity
+    weight = np.heaviside(cosine, 0) * cosine * intensity
     if return_mesh:
         return (
             bary[:, 0],
@@ -427,28 +427,28 @@ def visibilities(x, y, weight, uu, vv):
     weight per flattened sample, e.g. one spectrum per wavelength); each row
     is normalized by its own sum.
     """
-    dtype = jnp.result_type(float, x, y, weight, uu, vv)
-    uu = jnp.asarray(uu, dtype)
-    vv = jnp.asarray(vv, dtype)
+    dtype = np.result_type(float, x, y, weight, uu, vv)
+    uu = np.asarray(uu, dtype)
+    vv = np.asarray(vv, dtype)
     shape = uu.shape
     u = uu.reshape(-1)
     v = vv.reshape(-1)
-    x = jnp.asarray(x, dtype) * mas2rad
-    y = jnp.asarray(y, dtype) * mas2rad
+    x = np.asarray(x, dtype) * mas2rad
+    y = np.asarray(y, dtype) * mas2rad
 
     # exp(-2j pi (u x + v y)) as separate cos / sin so the contraction over
     # triangles is a real matmul at HIGHEST precision
-    arg = 2.0 * jnp.pi * (jnp.outer(u, x) + jnp.outer(v, y))
-    w = jnp.asarray(weight, dtype)
+    arg = 2.0 * np.pi * (np.outer(u, x) + np.outer(v, y))
+    w = np.asarray(weight, dtype)
     if w.ndim == 2 and w.shape[0] == 1:
         w = w[0]
     hi = jax.lax.Precision.HIGHEST
     if w.ndim == 1:
         w = w / w.sum()
-        re = jnp.dot(jnp.cos(arg), w, precision=hi)
-        im = -jnp.dot(jnp.sin(arg), w, precision=hi)
+        re = np.dot(np.cos(arg), w, precision=hi)
+        im = -np.dot(np.sin(arg), w, precision=hi)
     else:
         w = w / w.sum(axis=1, keepdims=True)
-        re = jnp.einsum("nt,nt->n", jnp.cos(arg), w, precision=hi)
-        im = -jnp.einsum("nt,nt->n", jnp.sin(arg), w, precision=hi)
+        re = np.einsum("nt,nt->n", np.cos(arg), w, precision=hi)
+        im = -np.einsum("nt,nt->n", np.sin(arg), w, precision=hi)
     return jax.lax.complex(re, im).reshape(shape)

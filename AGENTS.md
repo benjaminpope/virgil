@@ -82,9 +82,10 @@ see that repository's `PLAN.md` for the boundary.
 - Ruff is pinned to **0.11.0**; `[tool.ruff] required-version`, the `.pre-commit-config.yaml`
   rev, and `RUFF_VERSION` in the workflows must always match. A different ruff version will
   reformat files differently and fail CI.
-- Line length 79, double quotes, rules `E` + `F` (see `pyproject.toml` for ignores).
+- Line length 79, double quotes, rules `E` + `F` + `ICN` (see `pyproject.toml` for ignores).
+- Import `jax.numpy as np` and `numpy as onp` (ruff ICN001; notebooks are exempt until re-executed).
 - virgil does not enable float64: library code must work in JAX's default float32
-  (e.g. use `jnp.finfo(x.dtype)`, not `np.finfo(float)`). Tests run in float32 unless
+  (e.g. use `np.finfo(x.dtype)`, not `onp.finfo(float)`). Tests run in float32 unless
   they opt in locally with `with jax.enable_x64(True):` (as `tests/test_utils.py` does);
   never set `jax_enable_x64` globally at import time in a test module.
   Forward-model code must pass in both float32 and float64. Fourier transforms and

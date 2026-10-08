@@ -10,7 +10,7 @@ import warnings
 
 import equinox as eqx
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import pytest
 from scipy import special, stats
@@ -56,9 +56,9 @@ def _data(flux, seed, position=POSITION):
 def _box(n_pos, n_flux, flux_max=0.015):
     """A box of positions around POSITION and a linear flux axis from 0."""
     return {
-        "dra": jnp.linspace(0.0, 120.0, n_pos),
-        "ddec": jnp.linspace(-100.0, 20.0, n_pos),
-        "flux": jnp.linspace(0.0, flux_max, n_flux),
+        "dra": np.linspace(0.0, 120.0, n_pos),
+        "ddec": np.linspace(-100.0, 20.0, n_pos),
+        "flux": np.linspace(0.0, flux_max, n_flux),
     }
 
 
@@ -71,9 +71,9 @@ def _quiet(fn, *args, **kwargs):
 
 def test_delta_chi2_is_non_negative_and_at_least_the_grid_maximum():
     grid = {
-        "dra": jnp.linspace(-120.0, 120.0, 5),
-        "ddec": jnp.linspace(-120.0, 120.0, 5),
-        "flux": jnp.geomspace(1e-4, 0.05, 12),
+        "dra": np.linspace(-120.0, 120.0, 5),
+        "ddec": np.linspace(-120.0, 120.0, 5),
+        "flux": np.geomspace(1e-4, 0.05, 12),
     }
     for flux, seed in [(0.0, 0), (0.0, 1), (0.0, 2), (3e-3, 3)]:
         data = _data(flux, seed)
@@ -81,8 +81,8 @@ def test_delta_chi2_is_non_negative_and_at_least_the_grid_maximum():
         assert float(result["delta_chi2"]) >= 0.0
         # The flux optimizer only improves on the best grid point.
         grid_ll = likelihood_grid(BinaryModelCartesian, data, grid)
-        loglike0 = loglike(jnp.array([0.0, 0.0, 0.0]), *_args(data))
-        grid_delta = 2.0 * float(jnp.max(grid_ll) - loglike0)
+        loglike0 = loglike(np.array([0.0, 0.0, 0.0]), *_args(data))
+        grid_delta = 2.0 * float(np.max(grid_ll) - loglike0)
         assert float(result["delta_chi2"]) >= grid_delta - 1e-3
         assert float(result["flux"]) >= 0.0
         if float(result["delta_chi2"]) == 0.0:
@@ -104,9 +104,9 @@ def test_one_point_null_delta_chi2_follows_the_chernoff_mixture():
     # below by 0, so delta_chi2 is 0 half the time and chi-squared with
     # one degree of freedom otherwise (Chernoff 1954).
     grid = {
-        "dra": jnp.array([POSITION[0]]),
-        "ddec": jnp.array([POSITION[1]]),
-        "flux": jnp.geomspace(1e-5, 0.3, 40),
+        "dra": np.array([POSITION[0]]),
+        "ddec": np.array([POSITION[1]]),
+        "flux": np.geomspace(1e-5, 0.3, 40),
     }
 
     @jax.jit
@@ -217,13 +217,13 @@ def test_log_bayes_factor_matches_a_brute_force_marginalization():
         return w / (n - 1)
 
     args = _args(data)
-    loglike0 = float(loglike(jnp.array([0.0, 0.0, 0.0]), *args))
+    loglike0 = float(loglike(np.array([0.0, 0.0, 0.0]), *args))
     weights = [trapezoid(len(values)) for values in grid.values()]
     terms = []
     for (i, dra), (j, ddec), (k, flux) in itertools.product(
         *(enumerate(values) for values in grid.values())
     ):
-        log_l = float(loglike(jnp.array([dra, ddec, flux]), *args))
+        log_l = float(loglike(np.array([dra, ddec, flux]), *args))
         weight = weights[0][i] * weights[1][j] * weights[2][k]
         terms.append(log_l - loglike0 + onp.log(weight))
     expected = special.logsumexp(terms)
@@ -236,9 +236,9 @@ def test_system_template_with_paths_matches_the_binary_class():
     # The null keeps every other parameter of a template (here only the
     # star); the statistics depend on the model, not on how it is built.
     grid = {
-        "dra": jnp.linspace(0.0, 120.0, 4),
-        "ddec": jnp.linspace(-100.0, 20.0, 4),
-        "flux": jnp.geomspace(1e-4, 0.03, 30),
+        "dra": np.linspace(0.0, 120.0, 4),
+        "ddec": np.linspace(-100.0, 20.0, 4),
+        "flux": np.geomspace(1e-4, 0.03, 30),
     }
     data = _data(5e-3, 11)
     binary = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
@@ -289,18 +289,18 @@ def test_one_compile_across_simulated_draws():
 
 def test_unresolved_flux_peak_and_flux_beyond_the_axis_warn():
     data = _data(1e-2, 5)
-    position = {"dra": jnp.array([60.0]), "ddec": jnp.array([-40.0])}
-    coarse = {**position, "flux": jnp.geomspace(1e-4, 0.1, 5)}
+    position = {"dra": np.array([60.0]), "ddec": np.array([-40.0])}
+    coarse = {**position, "flux": np.geomspace(1e-4, 0.1, 5)}
     with pytest.warns(RuntimeWarning, match="does not resolve"):
         result = detection_statistics(BinaryModelCartesian, data, coarse)
     assert float(result["flux_peak_steps"]) < 2.0
-    short = {**position, "flux": jnp.linspace(0.0, 3e-3, 20)}
+    short = {**position, "flux": np.linspace(0.0, 3e-3, 20)}
     with pytest.warns(RuntimeWarning, match="above the flux axis"):
         detection_statistics(BinaryModelCartesian, data, short)
 
 
 def test_statistic_names_cannot_be_grid_keys():
-    grid = {**_box(2, 3), "max_snr": jnp.array([1.0])}
+    grid = {**_box(2, 3), "max_snr": np.array([1.0])}
     with pytest.raises(ValueError, match="clash"):
         detection_statistics(BinaryModelCartesian, _data(0.0, 0), grid)
 
@@ -309,10 +309,10 @@ def test_constrained_profile_keeps_positive_grid_points():
     # Positions: (0) refinement worse than the grid but with a negative
     # flux; (1) refinement better but at a negative flux; (2) refinement
     # NaN; (3) a valid positive refinement; (4) nothing beats the null.
-    grid_flux = jnp.array([0.2, 0.3, 0.1, 0.1, 0.1])
-    grid_loglike = jnp.array([5.0, 4.0, 3.0, 2.0, -1.0])
-    opt_flux = jnp.array([-0.1, -0.2, jnp.nan, 0.15, 0.1])
-    opt_loglike = jnp.array([4.0, 9.0, jnp.nan, 6.0, -0.5])
+    grid_flux = np.array([0.2, 0.3, 0.1, 0.1, 0.1])
+    grid_loglike = np.array([5.0, 4.0, 3.0, 2.0, -1.0])
+    opt_flux = np.array([-0.1, -0.2, np.nan, 0.15, 0.1])
+    opt_loglike = np.array([4.0, 9.0, np.nan, 6.0, -0.5])
     profile, flux = _constrained_profile(
         grid_flux, grid_loglike, opt_flux, opt_loglike, 0.0
     )
@@ -328,14 +328,14 @@ def test_constrained_profile_keeps_positive_grid_points():
 # statistical tests (shared through a module fixture: 64 null and
 # 2 x 4 x 12 = 96 injected draws).
 TINY = {
-    "dra": jnp.linspace(0.0, 120.0, 3),
-    "ddec": jnp.linspace(-100.0, 20.0, 3),
-    "flux": jnp.geomspace(1e-3, 3e-2, 6),
+    "dra": np.linspace(0.0, 120.0, 3),
+    "ddec": np.linspace(-100.0, 20.0, 3),
+    "flux": np.geomspace(1e-3, 3e-2, 6),
 }
 SEARCH = {
-    "dra": jnp.linspace(-120.0, 120.0, 7),
-    "ddec": jnp.linspace(-120.0, 120.0, 7),
-    "flux": jnp.geomspace(5e-4, 5e-2, 8),
+    "dra": np.linspace(-120.0, 120.0, 7),
+    "ddec": np.linspace(-120.0, 120.0, 7),
+    "flux": np.geomspace(5e-4, 5e-2, 8),
 }
 
 
@@ -675,7 +675,7 @@ def test_match_radius_in_the_driver(search_mc):
     # but rarely within a hundredth of a mas, since they lie off the grid.
     with pytest.raises(ValueError, match="match_radius"):
         _recover(
-            {"sep": jnp.array([60.0]), "flux": jnp.geomspace(1e-3, 1e-2, 4)},
+            {"sep": np.array([60.0]), "flux": np.geomspace(1e-3, 1e-2, 4)},
             n_null=1,
             match_radius=5.0,
         )
@@ -691,7 +691,7 @@ def test_match_radius_in_the_driver(search_mc):
 def test_grid_names_may_not_overwrite_stored_outputs():
     # A key's last part names its outputs (<name>, best_<name>), which must
     # not replace a statistic, a diagnostic or another key's best position.
-    flux = jnp.geomspace(1e-3, 1e-2, 4)
+    flux = np.geomspace(1e-3, 1e-2, 4)
     for grid in (
         {"comp.dra": TINY["dra"], "comp.max_snr": TINY["ddec"]},
         {"a.converged_fraction": TINY["dra"], "ddec": TINY["ddec"]},
@@ -764,9 +764,9 @@ def test_angular_injections_give_separations_and_match_on_the_sky():
     assert mc.matched().tolist() == [True, True, False, True]
     # The driver accepts match_radius on an angular grid.
     angular = {
-        "sep": jnp.array([60.0, 80.0]),
-        "pa": jnp.array([0.0, 90.0]),
-        "flux": jnp.geomspace(1e-3, 1e-2, 4),
+        "sep": np.array([60.0, 80.0]),
+        "pa": np.array([0.0, 90.0]),
+        "flux": np.geomspace(1e-3, 1e-2, 4),
     }
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)

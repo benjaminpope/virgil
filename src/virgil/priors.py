@@ -34,7 +34,7 @@ Levenberg–Marquardt applies and is ``fit``'s automatic choice.
 import dataclasses
 
 import jax
-import jax.numpy as jnp
+import jax.numpy as np
 import numpy as onp
 import numpyro.distributions as dist
 from numpyro.distributions import Distribution, constraints
@@ -59,8 +59,8 @@ def _check_range(name, low, high, limit, unit):
         low_v, high_v = onp.asarray(low, float), onp.asarray(high, float)
         limits = []
         for bound in (low, high):
-            dtype = jnp.asarray(bound).dtype
-            limits.append(float(onp.asarray(jnp.asarray(limit, dtype))))
+            dtype = np.asarray(bound).dtype
+            limits.append(float(onp.asarray(np.asarray(limit, dtype))))
     except (TypeError, jax.errors.TracerArrayConversionError):
         return
     lim_low, lim_high = limits
@@ -87,7 +87,7 @@ class _InverseCDFPrior(Distribution):
     def _init(self, low, high, validate_args):
         low, high = promote_shapes(low, high)
         self.low, self.high = low, high
-        batch_shape = jax.lax.broadcast_shapes(jnp.shape(low), jnp.shape(high))
+        batch_shape = jax.lax.broadcast_shapes(np.shape(low), np.shape(high))
         super().__init__(batch_shape=batch_shape, validate_args=validate_args)
 
     def sample(self, key, sample_shape=()):
@@ -156,50 +156,50 @@ class IsotropicInclination(_InverseCDFPrior):
 
     @property
     def _radians(self):
-        return jnp.deg2rad(self.low), jnp.deg2rad(self.high)
+        return np.deg2rad(self.low), np.deg2rad(self.high)
 
     @property
     def _half_norm(self):
         a, b = self._radians
-        return jnp.sin(0.5 * (a + b)) * jnp.sin(0.5 * (b - a))
+        return np.sin(0.5 * (a + b)) * np.sin(0.5 * (b - a))
 
     def icdf(self, q):
         """Quantile function: cos i is uniform, inverted near the nearer pole."""
         a, b = self._radians
         qs = q * self._half_norm
-        south = jnp.sin(0.5 * a) ** 2 + qs  # sin^2(i/2)
-        north = jnp.cos(0.5 * a) ** 2 - qs  # cos^2(i/2)
-        near_zero = jnp.clip(south, 0.0, 1.0) <= 0.5
-        half = jnp.where(
+        south = np.sin(0.5 * a) ** 2 + qs  # sin^2(i/2)
+        north = np.cos(0.5 * a) ** 2 - qs  # cos^2(i/2)
+        near_zero = np.clip(south, 0.0, 1.0) <= 0.5
+        half = np.where(
             near_zero,
-            jnp.arcsin(jnp.sqrt(jnp.clip(south, 0.0, 1.0))),
-            jnp.arccos(jnp.sqrt(jnp.clip(north, 0.0, 1.0))),
+            np.arcsin(np.sqrt(np.clip(south, 0.0, 1.0))),
+            np.arccos(np.sqrt(np.clip(north, 0.0, 1.0))),
         )
-        return jnp.clip(jnp.rad2deg(2.0 * half), self.low, self.high)
+        return np.clip(np.rad2deg(2.0 * half), self.low, self.high)
 
     def cdf(self, value):
         a, b = self._radians
-        x = jnp.deg2rad(jnp.clip(value, self.low, self.high))
-        num = jnp.sin(0.5 * (a + x)) * jnp.sin(0.5 * (x - a))
-        return jnp.clip(num / self._half_norm, 0.0, 1.0)
+        x = np.deg2rad(np.clip(value, self.low, self.high))
+        num = np.sin(0.5 * (a + x)) * np.sin(0.5 * (x - a))
+        return np.clip(num / self._half_norm, 0.0, 1.0)
 
     def log_prob(self, value):
         # The density is per degree: d(cos i)/di carries pi/180. sin i is
         # evaluated from the distance to the nearer pole, so that it is
         # exactly 0 at 0 and 180 degrees even if the angle rounds past pi.
-        distance = jnp.clip(jnp.minimum(value, 180.0 - value), 0.0, None)
-        log_sin = jnp.log(jnp.sin(jnp.deg2rad(distance)))
-        log_norm = jnp.log(2.0 * self._half_norm * 180.0 / jnp.pi)
+        distance = np.clip(np.minimum(value, 180.0 - value), 0.0, None)
+        log_sin = np.log(np.sin(np.deg2rad(distance)))
+        log_norm = np.log(2.0 * self._half_norm * 180.0 / np.pi)
         inside = (value >= self.low) & (value <= self.high)
-        return jnp.where(inside, log_sin - log_norm, -jnp.inf)
+        return np.where(inside, log_sin - log_norm, -np.inf)
 
     @property
     def mean(self):
         a, b = self._radians
-        c_a, c_b = jnp.cos(a), jnp.cos(b)
-        num = (jnp.sin(b) - b * c_b) - (jnp.sin(a) - a * c_a)
-        mean = jnp.rad2deg(num / (2.0 * self._half_norm))
-        return jnp.clip(mean, self.low, self.high)
+        c_a, c_b = np.cos(a), np.cos(b)
+        num = (np.sin(b) - b * c_b) - (np.sin(a) - a * c_a)
+        mean = np.rad2deg(num / (2.0 * self._half_norm))
+        return np.clip(mean, self.low, self.high)
 
 
 class IsotropicLatitude(_InverseCDFPrior):
@@ -226,9 +226,7 @@ class IsotropicLatitude(_InverseCDFPrior):
     True
     """
 
-    def __init__(
-        self, low=-jnp.pi / 2, high=jnp.pi / 2, *, validate_args=None
-    ):
+    def __init__(self, low=-np.pi / 2, high=np.pi / 2, *, validate_args=None):
         _check_range("IsotropicLatitude", low, high, onp.pi / 2, "lat")
         self._init(low, high, validate_args)
 
@@ -238,50 +236,48 @@ class IsotropicLatitude(_InverseCDFPrior):
 
     @property
     def _half_norm(self):
-        return jnp.cos(0.5 * (self.low + self.high)) * jnp.sin(
+        return np.cos(0.5 * (self.low + self.high)) * np.sin(
             0.5 * (self.high - self.low)
         )
 
     def icdf(self, q):
         qs = q * self._half_norm
-        quarter = 0.25 * jnp.pi
+        quarter = 0.25 * np.pi
         # North pole: sin^2((pi/2 - x)/2) = sin^2(pi/4 - a/2) - qs.
-        north = jnp.sin(quarter - 0.5 * self.low) ** 2 - qs
+        north = np.sin(quarter - 0.5 * self.low) ** 2 - qs
         # South pole: sin^2((pi/2 + x)/2) = sin^2(pi/4 + a/2) + qs.
-        south = jnp.sin(quarter + 0.5 * self.low) ** 2 + qs
-        use_north = jnp.sin(self.low) + 2.0 * qs >= 0.0
-        half_pi = 0.5 * jnp.pi
-        x = jnp.where(
+        south = np.sin(quarter + 0.5 * self.low) ** 2 + qs
+        use_north = np.sin(self.low) + 2.0 * qs >= 0.0
+        half_pi = 0.5 * np.pi
+        x = np.where(
             use_north,
-            half_pi - 2.0 * jnp.arcsin(jnp.sqrt(jnp.clip(north, 0.0, 1.0))),
-            2.0 * jnp.arcsin(jnp.sqrt(jnp.clip(south, 0.0, 1.0))) - half_pi,
+            half_pi - 2.0 * np.arcsin(np.sqrt(np.clip(north, 0.0, 1.0))),
+            2.0 * np.arcsin(np.sqrt(np.clip(south, 0.0, 1.0))) - half_pi,
         )
-        return jnp.clip(x, self.low, self.high)
+        return np.clip(x, self.low, self.high)
 
     def cdf(self, value):
         a = self.low
-        x = jnp.clip(value, self.low, self.high)
-        num = jnp.sin(0.5 * (x - a)) * jnp.cos(0.5 * (x + a))
-        return jnp.clip(num / self._half_norm, 0.0, 1.0)
+        x = np.clip(value, self.low, self.high)
+        num = np.sin(0.5 * (x - a)) * np.cos(0.5 * (x + a))
+        return np.clip(num / self._half_norm, 0.0, 1.0)
 
     def log_prob(self, value):
         # cos(lat) from the distance to the nearer pole, in the dtype of
         # value, so it is exactly 0 at the (rounded) endpoints, not negative.
-        half_pi = jnp.asarray(jnp.pi / 2, jnp.result_type(value, float))
-        distance = jnp.clip(half_pi - jnp.abs(value), 0.0, None)
-        log_cos = jnp.log(jnp.sin(distance))
-        log_norm = jnp.log(2.0 * self._half_norm)
+        half_pi = np.asarray(np.pi / 2, np.result_type(value, float))
+        distance = np.clip(half_pi - np.abs(value), 0.0, None)
+        log_cos = np.log(np.sin(distance))
+        log_norm = np.log(2.0 * self._half_norm)
         inside = (value >= self.low) & (value <= self.high)
-        return jnp.where(inside, log_cos - log_norm, -jnp.inf)
+        return np.where(inside, log_cos - log_norm, -np.inf)
 
     @property
     def mean(self):
         lo, hi = self.low, self.high
-        num = (jnp.cos(hi) + hi * jnp.sin(hi)) - (
-            jnp.cos(lo) + lo * jnp.sin(lo)
-        )
-        mean = num / (jnp.sin(hi) - jnp.sin(lo))
-        return jnp.clip(mean, lo, hi)
+        num = (np.cos(hi) + hi * np.sin(hi)) - (np.cos(lo) + lo * np.sin(lo))
+        mean = num / (np.sin(hi) - np.sin(lo))
+        return np.clip(mean, lo, hi)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -312,19 +308,19 @@ class PopulationScale:
 
     def __call__(self, values):
         if self.centred:
-            return jnp.exp(values[f"{self.name}_log"][..., self.index])
+            return np.exp(values[f"{self.name}_log"][..., self.index])
         median, spread = self._hyper(values)
         z = values[f"{self.name}_z"][..., self.index]
-        return median * jnp.exp(spread * z)
+        return median * np.exp(spread * z)
 
     def log_prior(self, values):
         """The member's population log density (zero when non-centred,
         where the standard normal prior on z_k carries it)."""
         if not self.centred:
-            return jnp.zeros(())
+            return np.zeros(())
         median, spread = self._hyper(values)
         log_scale = values[f"{self.name}_log"][..., self.index]
-        return dist.Normal(jnp.log(median), spread).log_prob(log_scale)
+        return dist.Normal(np.log(median), spread).log_prob(log_scale)
 
 
 def hierarchical_scales(name, n, median=None, spread=None, centred=True):
@@ -387,7 +383,7 @@ def hierarchical_scales(name, n, median=None, spread=None, centred=True):
     ['cp_scale_log', 'cp_scale_median', 'cp_scale_spread']
     >>> noise = [{"phi_scale": s} for s in scales]
     >>> values = {"cp_scale_median": 2.0, "cp_scale_spread": 0.5,
-    ...           "cp_scale_log": jnp.log(jnp.array([1.0, 2.0, 4.0]))}
+    ...           "cp_scale_log": np.log(np.array([1.0, 2.0, 4.0]))}
     >>> round(float(scales[1](values)), 6)
     2.0
     """
