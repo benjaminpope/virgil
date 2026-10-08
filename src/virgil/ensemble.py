@@ -36,6 +36,7 @@ choices, not the noise in the data; for the posterior, sample an image
 """
 
 import dataclasses
+import warnings
 
 import jax
 import numpy as onp
@@ -150,20 +151,24 @@ class EnsembleSpec:
         Without a star, the members are recentred on the best one, searching
         shifts up to this (default: the beam's major axis). With a star,
         the star fixes the position and they are not shifted.
-    mean_rtol : float
-        A member joins the mean if no dataset's χ² rises by more than this
-        fraction: only enough to forgive rounding, since the mean of
-        identical images is not always bit-identical to them. On data that
-        the best member fits to the noise, so strict a rule may keep that
-        member alone (and the spread is then zero); a value of order the
-        χ²/N noise, √(2/N), keeps more.
+    mean_rtol : float or None
+        A member joins the mean if, on every dataset, the mean's χ² stays
+        within this fraction of the best member's. The default, ``None``,
+        is each dataset's χ²/N noise, √(2/N): a mean that fits as well as
+        the best member, up to the noise. ``0`` keeps the mean's χ² at or
+        below the best member's, which on data the best member fits to the
+        noise often keeps that member alone (and the spread is then zero);
+        on the contest bench it kept 1 of 72 members on most datasets.
+    min_kept : int
+        [`combine`][virgil.ensemble.combine] warns if fewer members than
+        this are kept.
     """
 
     families: tuple = ("tv", "tsv", "maxent", "starlet")
     weight_ranges: dict = dataclasses.field(
         default_factory=_default_weight_ranges
     )
-    n_weights: int = 6
+    n_weights: int = 8
     oversample: tuple = (2.0, 3.0, 4.0)
     field_factors: tuple = (1.0, 2.0, 4.0)
     starts: tuple = ("moments", "flat")
@@ -173,7 +178,8 @@ class EnsembleSpec:
     chi2_ratio: float = 2.0
     mad_cut: float = 5.0
     max_shift_mas: float | None = None
-    mean_rtol: float = 1e-9
+    mean_rtol: float | None = None
+    min_kept: int = 3
 
     def __post_init__(self):
         unknown = set(self.families) - set(FAMILIES)
@@ -305,7 +311,8 @@ class Ensemble:
         Raw χ² per data point of the mean scene on each dataset.
     trace : list of tuple
         ``chi2_red`` of the running mean after each accepted member, from
-        the best member alone; it never rises on any dataset.
+        the best member alone; on every dataset it stays within
+        ``spec.mean_rtol`` of the first entry.
     members : list of Member
         Every reconstruction, kept or not.
     groups : list of Group
@@ -598,9 +605,11 @@ def combine(data, groups, *, spec=None, star=True):
        recentre each on the best member
        ([`align`][virgil.metrics.align]).
     4. In order of total χ², add members to a running mean one at a time,
-       keeping each only if the mean's χ² does not rise on any dataset (so
-       visibilities and closure phases, given as separate datasets, are
-       judged separately). The running mean is judged as the mixture of
+       keeping each only if the mean's χ² on every dataset stays within
+       ``spec.mean_rtol`` (by default the χ²/N noise, √(2/N)) of the best
+       member's (so visibilities and closure phases, given as separate
+       datasets, are judged separately). Judging against the best member,
+       not the running mean, keeps the tolerance from compounding. The running mean is judged as the mixture of
        the members' images on their own grids, which is exact; resampling
        to the common grid smooths them, which on precise data can raise
        χ² several-fold and so let worse members through.
@@ -738,12 +747,16 @@ def combine(data, groups, *, spec=None, star=True):
         chosen = [0]
         current = chi2_red(chosen)
         trace = [current]
+        if spec.mean_rtol is None:
+            rtol = [onp.sqrt(2.0 / d.n_independent) for d in datasets]
+        else:
+            rtol = [spec.mean_rtol] * len(datasets)
+        # Rounding: the mean of identical images is not always
+        # bit-identical to them.
+        bound = [b * (1.0 + r + 1e-9) for b, r in zip(current, rtol)]
         for k in range(1, len(live)):
             candidate = chi2_red(chosen + [k])
-            if all(
-                c <= b * (1.0 + spec.mean_rtol)
-                for c, b in zip(candidate, current)
-            ):
+            if all(c <= b for c, b in zip(candidate, bound)):
                 chosen, current = chosen + [k], candidate
                 trace.append(current)
             else:
@@ -757,6 +770,14 @@ def combine(data, groups, *, spec=None, star=True):
     for k in chosen:
         members[live[k]] = dataclasses.replace(
             members[live[k]], kept=True, reason=None
+        )
+    if len(chosen) < spec.min_kept:
+        warnings.warn(
+            f"Only {len(chosen)} of {len(members)} members were kept "
+            f"(fewer than min_kept={spec.min_kept}), so the spread is not "
+            "a useful map. Look at Ensemble.summary() for where they were "
+            "dropped.",
+            stacklevel=2,
         )
 
     stack = onp.stack([weighted[j] for j in chosen])

@@ -145,18 +145,32 @@ def test_window_keeps_the_weights_just_below_the_corner():
     assert inside == {corner, corner / 10}
 
 
-def test_iterative_mean_never_raises_any_datasets_chi2():
+@pytest.mark.parametrize("mean_rtol", [None, 0.0])
+def test_iterative_mean_stays_within_mean_rtol_of_the_best(mean_rtol):
     groups = [
         _group(0, [_scene(36.0), _scene(44.0), _scene(40.0)]),
         _group(1, [_scene(40.0, flux=0.25), _scene(dra=40.0), TRUTH]),
     ]
-    result = combine(DATASETS, groups, spec=EnsembleSpec(chi2_ratio=1e3))
+    spec = EnsembleSpec(chi2_ratio=1e3, mean_rtol=mean_rtol, min_kept=1)
+    result = combine(DATASETS, groups, spec=spec)
     trace = onp.array(result.trace)
-    # Never higher, up to the rounding that mean_rtol forgives.
-    assert onp.all(onp.diff(trace, axis=0) <= 1e-9 * trace[:-1])
-    assert onp.all(onp.array(result.chi2_red) <= trace[0] * (1 + 1e-6))
+    if mean_rtol is None:
+        rtol = onp.sqrt(2.0 / onp.array([d.n_independent for d in DATASETS]))
+    else:
+        rtol = onp.zeros(len(DATASETS))
+    # Judged against the best member, up to rounding, so the tolerance
+    # cannot compound.
+    assert onp.all(trace <= trace[0] * (1 + rtol + 1e-9))
+    assert onp.all(onp.array(result.chi2_red) <= trace[0] * (1 + rtol + 1e-6))
     assert len(trace) == len(result.kept)
     assert "raw chi2/N per dataset" in result.summary()
+
+
+def test_too_few_members_warns():
+    groups = [_group(0, [_scene(36.0), _scene(dra=-48.0), _scene(40.0)])]
+    spec = EnsembleSpec(chi2_ratio=1.01, mean_rtol=0.0, min_kept=3)
+    with pytest.warns(UserWarning, match="min_kept"):
+        combine(DATASETS, groups, spec=spec)
 
 
 def test_identical_members_have_zero_spread():

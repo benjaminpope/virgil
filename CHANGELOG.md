@@ -83,9 +83,13 @@ anything before 1.0 may change between minor versions.
   weight per equal bin of `log w`, so it spans its range. The default
   `field_factors` are now (1, 2, 4) times `field_of_view(data)`, and a
   field too large for `max_npix` keeps its size with coarser pixels instead
-  of being cropped; on a uv lattice (AMI) pass factors of at most 1. On the
-  bench the old defaults kept 1 of 72 members on 44 of 60 datasets and gave
-  the worst images of any arm.
+  of being cropped; on a uv lattice (AMI) pass factors of at most 1. The
+  iterative mean now admits a member if every dataset's χ² stays within
+  `mean_rtol` of the best member's, by default each dataset's χ²/N noise
+  √(2/N) (was: no rise at all, judged against the running mean), and
+  `combine` warns when fewer than `min_kept` (3) members are kept. The
+  default `n_weights` is 8. On the bench the old defaults kept 1 of 72
+  members on 44 of 60 datasets and gave the worst images of any arm.
 
 - **`read_oifits` reads closure triangles whose leg has no visibility
   row** ([#299](https://github.com/benjaminpope/virgil/issues/299)). A
