@@ -1952,6 +1952,62 @@ def plot_orbit_ensemble(
 
 
 @_styled
+def plot_uv_coverage(data, ax=None, cmap="viridis", figsize=(6, 5.5)):
+    """Plot the uv coverage of data, coloured by wavelength.
+
+    Each sample is drawn at ``(u, v)`` and at its mirror ``(-u, -v)``
+    (the visibility there is the conjugate), in units of millions of
+    wavelengths, with East (positive ``u``) to the left as on the sky.
+
+    Parameters
+    ----------
+    data : OIData
+        Data to show. Flagged samples are drawn too: the coverage is
+        that of the observation.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on; a new figure is made if omitted.
+    cmap : str, optional
+        Colour map of the wavelength, used when the data have more than
+        one wavelength (one colour otherwise).
+    figsize : tuple, optional
+        Size of a new figure.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)``.
+    """
+    u = np.asarray(data.u, dtype=float)
+    v = np.asarray(data.v, dtype=float)
+    wavel = np.broadcast_to(np.asarray(data.wavel, dtype=float), u.shape)
+    uu, vv = u / wavel / 1e6, v / wavel / 1e6
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+    if np.unique(wavel).size > 1:
+        colour = np.concatenate([wavel, wavel]) * 1e6
+        points = ax.scatter(
+            np.concatenate([uu, -uu]),
+            np.concatenate([vv, -vv]),
+            c=colour,
+            cmap=cmap,
+            s=10,
+        )
+        fig.colorbar(points, ax=ax, label="Wavelength (µm)", pad=0.01)
+    else:
+        ax.scatter(uu, vv, s=12, c="C0", label="(u, v)")
+        ax.scatter(-uu, -vv, s=12, c="C1", label="(−u, −v)")
+        ax.legend(loc="upper right", fontsize="small")
+    limit = 1.05 * float(np.max(np.hypot(uu, vv))) if uu.size else 1.0
+    ax.set_xlim(limit, -limit)  # East (positive u) to the left
+    ax.set_ylim(-limit, limit)
+    ax.set_aspect("equal")
+    ax.set(xlabel="u (Mλ)", ylabel="v (Mλ)", title="uv coverage")
+    return fig, ax
+
+
+@_styled
 def plot_oidata_overview(oidata, figsize=(15, 4.5)):
     """Plot uv coverage, visibilities and phases of an OIData object.
 

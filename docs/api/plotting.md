@@ -12,6 +12,7 @@
         - plot_orbit_ensemble
         - plot_model
         - plot_residual_map
+        - plot_uv_coverage
         - plot_oidata_overview
         - plot_data_model_correlation
         - plot_chainconsumer_diagnostics
