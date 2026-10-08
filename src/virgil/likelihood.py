@@ -862,14 +862,14 @@ def numpyro_model(
     --------
     Sample an orbit from measured positions alone, with no OIData:
 
-    >>> import numpy as np
+    >>> import numpy as onp
     >>> import numpyro.distributions as dist
     >>> from virgil.likelihood import numpyro_model
     >>> from virgil.orbits import KeplerOrbit, PositionData
-    >>> mjd = 60500.0 + np.array([0.0, 100.0, 200.0, 300.0])
+    >>> mjd = 60500.0 + onp.array([0.0, 100.0, 200.0, 300.0])
     >>> truth = KeplerOrbit(400.0, 30.0, 0.4, 60.0, 40.0, 110.0, 20.0, t_ref=60500.0)
-    >>> dra, ddec, _ = (np.asarray(x) for x in truth.relative(mjd))
-    >>> cov = np.broadcast_to(0.05**2 * np.eye(2), (4, 2, 2))
+    >>> dra, ddec, _ = (onp.asarray(x) for x in truth.relative(mjd))
+    >>> cov = onp.broadcast_to(0.05**2 * onp.eye(2), (4, 2, 2))
     >>> positions = PositionData(mjd, dra, ddec, cov)
     >>> priors = {"a_mas": dist.LogUniform(5.0, 50.0), "ecc": dist.Uniform(0.0, 0.9)}
     >>> def orbit_fn(v):
@@ -881,7 +881,7 @@ def numpyro_model(
     ... )
     >>> from numpyro.infer.util import log_density
     >>> values = {"a_mas": 20.0, "ecc": 0.4}
-    >>> bool(np.isfinite(float(log_density(model, (), {}, values)[0])))
+    >>> bool(onp.isfinite(float(log_density(model, (), {}, values)[0])))
     True
     """
     import numpyro
