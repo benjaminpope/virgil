@@ -13,7 +13,7 @@ An [`EnsembleSpec`](api/ensemble.md#virgil.ensemble.EnsembleSpec) says what to d
 
 - a regulariser family: total variation, total squared variation, maximum entropy or the starlet L1 norm of part 6;
 - a pixel size, the Nyquist scale over 2, 3 or 4;
-- a field, 1, 2 or 4 times `field_of_view(data)`, so that the image can hold flux the shortest baselines resolve out (on a uv lattice, as for AMI, a field above 1 aliases: pass `field_factors` of at most 1); a field too large for `max_npix` pixels takes coarser pixels;
+- a field, 1, 2 or 4 times `field_of_view(data)`, so that the image can hold flux the shortest baselines resolve out (on a uv lattice, as for AMI, a field above 1 would alias, so there the factors are capped at 1); a field too large for `max_npix` pixels takes coarser pixels, down to the Nyquist scale, beyond which it is cropped;
 - a starting image: the Gaussian envelope of `starting_image`, or a flat one (or, for data with phases, the dirty image);
 - several weights, log-uniform over a range per data point, one in each equal bin of `log w` so that every sweep spans the range. A weight is a scale, so log-uniform is the invariant (Jeffreys) choice. The default ranges hold the L-curve corners of the 60 datasets of virgil-validation's contest bench, with a decade to spare below them for the window.
 
@@ -59,8 +59,7 @@ truth = System(
 template = OIData(ami_grid_record(wavelength_m=4.8e-6, rotation_deg=-6.9))
 data = template.with_model(truth, key=jax.random.PRNGKey(7))
 
-# AMI's uv lattice aliases a field larger than field_of_view(data).
-spec = EnsembleSpec(field_factors=(0.5, 0.75, 1.0))
+spec = EnsembleSpec()
 result = ensemble(data, 8, jax.random.PRNGKey(1), spec=spec)
 print(result.summary())
 ```

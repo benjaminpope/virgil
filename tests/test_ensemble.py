@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import numpy as onp
 import pytest
@@ -15,7 +16,12 @@ from virgil.ensemble import (
     run_group,
 )
 from virgil.fitting import FitResult
-from virgil.imaging import LCurve, _chi2, field_of_view
+from virgil.imaging import (
+    LCurve,
+    _chi2,
+    field_of_view,
+    nyquist_pixel_scale,
+)
 from virgil.metrics import score
 from virgil.models import Image, PointSource, System
 from virgil.oidata import OIData
@@ -259,18 +265,38 @@ def test_draws_are_reproducible_and_grouped_by_geometry():
 
 
 def test_draws_span_each_range_and_keep_the_field():
-    spec = EnsembleSpec(field_factors=(4.0,), max_npix=16)
-    n_data = DATA.n_independent
-    field = field_of_view(DATA)
-    for d in draw_groups(DATA, 8, jax.random.PRNGKey(0), spec):
+    # Sparse uv coverage: the same samples without the AMI lattice.
+    sparse = eqx.tree_at(
+        lambda d: d.uv_grid, DATA, None, is_leaf=lambda x: x is None
+    )
+    n_data = sparse.n_independent
+    field = field_of_view(sparse)
+    nyquist = nyquist_pixel_scale(sparse)
+    spec = EnsembleSpec(field_factors=(4.0,), max_npix=32)
+    for d in draw_groups(sparse, 8, jax.random.PRNGKey(0), spec):
         # One weight in each equal bin of log w.
         low, high = onp.log(spec.weight_ranges[d.family]) + onp.log(n_data)
         edges = onp.linspace(low, high, spec.n_weights + 1)
         bins = onp.digitize(onp.log(d.weights), edges[1:-1])
         assert sorted(bins) == list(range(spec.n_weights))
-        # Too big for max_npix: the field is kept, the pixels coarsened.
-        assert d.npix == 16
+        # Too big for max_npix: the field is kept, the pixels coarsened,
+        # but not beyond Nyquist.
+        assert d.npix == 32
         assert onp.isclose(d.npix * d.pixel_scale_mas, 4.0 * field)
+        assert d.pixel_scale_mas <= nyquist
+    # Even Nyquist pixels cannot cover it: the field is cropped instead.
+    spec = EnsembleSpec(field_factors=(4.0,), max_npix=16)
+    for d in draw_groups(sparse, 4, jax.random.PRNGKey(0), spec):
+        assert d.npix == 16
+        assert onp.isclose(d.pixel_scale_mas, nyquist)
+
+
+def test_fields_are_capped_at_one_on_a_uv_lattice():
+    assert DATA.uv_grid is not None
+    spec = EnsembleSpec(field_factors=(4.0,), max_npix=1024)
+    field = field_of_view(DATA)
+    for d in draw_groups(DATA, 4, jax.random.PRNGKey(0), spec):
+        assert d.npix * d.pixel_scale_mas <= field + d.pixel_scale_mas
 
 
 @pytest.mark.parametrize("family", ["tsv", "tv", "maxent", "starlet"])
@@ -381,9 +407,7 @@ def test_ensemble_recovers_two_blobs():
         env=Image.from_brightness(blobs, scale, flux=0.5),
     )
     data = DATA.with_model(truth, key=jax.random.PRNGKey(7))
-    # AMI's uv lattice aliases a field larger than field_of_view(data).
-    spec = EnsembleSpec(field_factors=(0.5, 0.75, 1.0))
-    result = ensemble(data, 8, jax.random.PRNGKey(1), spec=spec)
+    result = ensemble(data, 8, jax.random.PRNGKey(1))
     best = min(result.kept, key=lambda m: m.total_chi2_red)
     assert all(
         c <= b * (1 + 1e-6) for c, b in zip(result.chi2_red, result.trace[0])

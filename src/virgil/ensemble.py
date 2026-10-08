@@ -119,8 +119,9 @@ class EnsembleSpec:
         uniformly. A field larger than the interferometric field of view
         lets the image hold flux the shortest baselines resolve out, which
         on the contest bench gave better images than a field of 1 or less
-        (field 4 was the best of its arms). On a uv lattice (AMI) a field
-        above 1 aliases: pass factors of at most 1 there.
+        (field 4 was the best of its arms). On a uv lattice (AMI, data
+        with a ``uv_grid``) a field above 1 aliases, so there the factors
+        are capped at 1.
     starts : tuple of str
         Starting images, drawn uniformly: ``"moments"`` and ``"dirty"``
         (see [`starting_image`][virgil.imaging.starting_image]; a dirty
@@ -128,7 +129,8 @@ class EnsembleSpec:
     max_npix : int
         Largest number of pixels on a side. A field that would need more
         keeps its size and takes coarser pixels instead, so its pixels per
-        Nyquist pixel fall below ``oversample``.
+        Nyquist pixel fall below ``oversample``, but never below one: if
+        even Nyquist pixels cannot cover it, the field is cropped.
     window_dex : float
         Width of the window of weights kept in each group, in dex, from
         ``corner / 10**window_dex`` up to the L-curve's corner: as in
@@ -373,8 +375,9 @@ def draw_groups(data, n_groups, key, spec=None):
 
     Each group draws a regulariser family, a pixel size (the Nyquist scale
     over one of ``spec.oversample``), a field (``field_of_view(data)``
-    times one of ``spec.field_factors``; beyond ``spec.max_npix`` pixels
-    the pixels are coarsened to fit it), a starting image and
+    times one of ``spec.field_factors``, at most 1 on a uv lattice; beyond
+    ``spec.max_npix`` pixels the pixels are coarsened to fit it, down to
+    the Nyquist scale), a starting image and
     ``spec.n_weights`` log-uniform weights, one in each equal bin of the
     family's range in ``log w``. The draws
     depend only on ``key`` and ``spec``, so every task of a cluster array
@@ -404,16 +407,21 @@ def draw_groups(data, n_groups, key, spec=None):
     nyquist = nyquist_pixel_scale(data)
     field = field_of_view(data)
     n_data = sum(d.n_independent for d in _datasets(data))
+    # On a uv lattice (AMI) a field beyond field_of_view aliases.
+    lattice = any(d.uv_grid is not None for d in _datasets(data))
     draws = []
     for index in range(int(n_groups)):
         family = spec.families[rng.integers(len(spec.families))]
         scale = nyquist / spec.oversample[rng.integers(len(spec.oversample))]
         factor = spec.field_factors[rng.integers(len(spec.field_factors))]
+        if lattice:
+            factor = min(factor, 1.0)
         npix = int(onp.ceil(factor * field / scale))
         if npix > spec.max_npix:
-            # Keep the field and coarsen the pixels.
+            # Keep the field and coarsen the pixels, but never beyond the
+            # Nyquist scale: past that, crop the field instead.
             npix = spec.max_npix
-            scale = factor * field / npix
+            scale = min(factor * field / npix, nyquist)
         start = spec.starts[rng.integers(len(spec.starts))]
         low, high = onp.log(spec.weight_ranges[family]) + onp.log(n_data)
         # Stratified: one log-uniform weight in each of n_weights equal bins.

@@ -83,7 +83,7 @@ anything before 1.0 may change between minor versions.
   weight per equal bin of `log w`, so it spans its range. The default
   `field_factors` are now (1, 2, 4) times `field_of_view(data)`, and a
   field too large for `max_npix` keeps its size with coarser pixels instead
-  of being cropped; on a uv lattice (AMI) pass factors of at most 1. The
+  of being cropped, down to Nyquist pixels; on a uv lattice (AMI) the factors are capped at 1. The
   iterative mean now admits a member if every dataset's χ² stays within
   `mean_rtol` of the best member's, by default each dataset's χ²/N noise
   √(2/N) (was: no rise at all, judged against the running mean), and
