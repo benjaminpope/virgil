@@ -46,7 +46,9 @@ overlapping tails are not counted twice. A mode within 3σ of a hard prior
 bound (a period edge between bands, or e ≈ 0) has a cut-off Gaussian, so
 its IS value (which truncates the target) replaces its Laplace value. Report
 ESS and a `flags` list: `near-prior-bound`, `not-converged`,
-`hessian-not-positive-definite`, `laplace-is-differ` (more than 1 nat),
+`hessian-not-positive-definite`, `hessian-singular`, `band-failed` (an
+exception in the band, kept in `error`; the other bands are unaffected),
+`laplace-is-differ` (more than 1 nat),
 `low-ess` (below 50), `no-valid-mode`. The band probability is
 `p_N ∝ Z_N` under the log-uniform prior on P over the whole range.
 

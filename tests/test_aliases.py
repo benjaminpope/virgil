@@ -226,24 +226,42 @@ def test_band_checkpoint_roundtrip_and_key(tmp_path):
     assert aliases._load_band(None, band, key) is None
 
 
-def test_a_failing_band_is_kept_and_not_checkpointed(monkeypatch, tmp_path):
+@pytest.mark.slow
+def test_one_failing_band_is_isolated_checkpointed_and_not_refit(
+    monkeypatch, tmp_path
+):
     data, _ = _synthetic(12.38)
+    first = alias_bands(EPOCHS, (12.1, 12.7))[0].n
+    calls = []
+    real = aliases._Problem.set_band
 
-    def boom(self, band):
-        raise RuntimeError("boom")
+    def set_band(self, band):
+        calls.append(band.n)
+        if band.n == first:
+            raise RuntimeError("boom")
+        return real(self, band)
 
-    monkeypatch.setattr(aliases._Problem, "set_band", boom)
+    monkeypatch.setattr(aliases._Problem, "set_band", set_band)
+    kw = dict(t_ref=T_REF, n_random=20, n_refine=1, max_steps=3, n_is=20, n_samples=5, checkpoint_dir=tmp_path)
     seen = []
-    result = fit_orbit_aliases(
-        data, (12.1, 12.7), t_ref=T_REF, n_random=2, n_is=10,
-        checkpoint_dir=tmp_path, on_band=seen.append,
-    )  # fmt: skip
-    assert result.bands and all(
-        b.flags == ["band-failed"] for b in result.bands
-    )
-    assert "boom" in result.bands[0].error and len(seen) == len(result.bands)
-    assert not list(
-        tmp_path.glob("band_*.pkl")
-    )  # a failed band is retried on rerun
+    result = fit_orbit_aliases(data, (12.1, 12.7), on_band=seen.append, **kw)
+    assert len(seen) == len(result.bands) > 1
+    bad = [b for b in result.bands if b.flags == ["band-failed"]]
+    assert [b.n for b in bad] == [first] and "boom" in bad[0].error
+    others = [b for b in result.bands if b.n != first]
+    assert {p.name for p in tmp_path.glob("band_*.pkl")} == {
+        f"band_{b.n}.pkl" for b in others
+    }
+    assert not (
+        tmp_path / f"band_{first}.pkl"
+    ).exists()  # a failed band is retried
     result.to_json(tmp_path / "bands.json")
     json.loads((tmp_path / "bands.json").read_text())
+    # A rerun with the same arguments loads the good bands and refits only the failed one.
+    calls.clear()
+    fit_orbit_aliases(data, (12.1, 12.7), **kw)
+    assert calls == [first]
+    # A changed setting (s_max) invalidates the checkpoints.
+    calls.clear()
+    fit_orbit_aliases(data, (12.1, 12.7), s_max=50.0, **kw)
+    assert len(calls) == len(result.bands)

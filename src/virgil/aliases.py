@@ -20,6 +20,7 @@ See ``fit_orbit_aliases`` for the entry point.
 
 import dataclasses
 import functools
+import hashlib
 import json
 import math
 import pathlib
@@ -482,6 +483,21 @@ def _clean(v):
     return v
 
 
+def _fingerprint(obj):
+    """A hash of every array in ``obj`` (data or positions), to tell a checkpoint's data from new data."""
+    if obj is None:
+        return None
+    h = hashlib.sha256()
+    for leaf in jax.tree_util.tree_leaves(obj):
+        try:
+            a = onp.asarray(leaf)
+        except Exception:  # noqa: BLE001 - not an array: hash its repr
+            h.update(repr(leaf).encode())
+            continue
+        h.update(str(a.shape).encode() + str(a.dtype).encode() + a.tobytes())
+    return h.hexdigest()
+
+
 def _band_files(directory, band):
     d = pathlib.Path(directory)
     return d / f"band_{band.n}.pkl", d / f"band_{band.n}.json"
@@ -754,7 +770,7 @@ def fit_orbit_aliases(
     checkpoint_dir : path-like, optional
         Each finished band is written here (``band_<N>.pkl`` for reuse and
         ``band_<N>.json`` to read) before the next starts. A rerun with the
-        same data, ranges and settings loads the finished bands instead of
+        same data, positions, ranges and settings loads the finished bands instead of
         refitting them; a band that raised is not saved, so it is retried.
     on_band : callable, optional
         Called with each band's
@@ -808,7 +824,6 @@ def fit_orbit_aliases(
     bands = alias_bands(mean_times, p_range)
     if not bands:
         raise ValueError("No alias band lies within p_range.")
-    rng = onp.random.default_rng(seed)
     profile = (
         position_profile(positions, bands, k=k, n_best=n_candidates, eccs=eccs)
         if positions is not None
@@ -824,7 +839,16 @@ def fit_orbit_aliases(
     )
     key = dict(
         edges=[[bd.p_lo, bd.p_hi] for bd in bands],
-        n_epochs=len(data),
+        data=_fingerprint(data),
+        positions=_fingerprint(positions),
+        times=mean_times.tolist(),
+        s_max=s_max,
+        k=k,
+        eccs=None if eccs is None else list(onp.asarray(eccs, float)),
+        max_steps=max_steps,
+        min_distance_mas=min_distance_mas,
+        flag_nats=flag_nats,
+        ess_min=ess_min,
         ecc_max=ecc_max,
         a_range=list(a_range),
         flux_range=list(flux_range),
@@ -837,6 +861,8 @@ def fit_orbit_aliases(
     )
 
     def fit_band(index, band):
+        # Its own stream: a band does not depend on which bands were fitted or loaded before it.
+        rng = onp.random.default_rng([seed, band.n])
         problem.set_band(band)
         pool = []
         if profile is not None:
@@ -999,7 +1025,9 @@ def fit_orbit_aliases(
         if xs is None or not onp.any(onp.isfinite(lw)):
             continue
         w = onp.exp(lw - onp.max(lw))
-        pick = rng.choice(len(xs), size=n_samples, p=w / w.sum())
+        pick = onp.random.default_rng([seed, 2**31, b.n]).choice(
+            len(xs), size=n_samples, p=w / w.sum()
+        )
         samples[b.n] = _physical(xs[pick], t_ref)
     return AliasResult(
         t_ref,
