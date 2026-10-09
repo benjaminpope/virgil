@@ -242,7 +242,15 @@ def test_one_failing_band_is_isolated_checkpointed_and_not_refit(
         return real(self, band)
 
     monkeypatch.setattr(aliases._Problem, "set_band", set_band)
-    kw = dict(t_ref=T_REF, n_random=20, n_refine=1, max_steps=3, n_is=20, n_samples=5, checkpoint_dir=tmp_path)
+    kw = dict(
+        t_ref=T_REF,
+        n_random=20,
+        n_refine=1,
+        max_steps=3,
+        n_is=20,
+        n_samples=5,
+        checkpoint_dir=tmp_path,
+    )
     seen = []
     result = fit_orbit_aliases(data, (12.1, 12.7), on_band=seen.append, **kw)
     assert len(seen) == len(result.bands) > 1
