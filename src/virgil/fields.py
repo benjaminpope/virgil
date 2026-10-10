@@ -15,7 +15,7 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
-import zodiax as zx
+import zodiax as zdx
 from jax.scipy.fft import idctn
 
 from ._utils import concrete
@@ -91,7 +91,7 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
     return sigma**2 * spectrum * spectrum.size / np.sum(spectrum)
 
 
-class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
+class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     r"""A Gaussian-process log-brightness for an [`Image`][virgil.models.Image].
 
     The log-brightness is

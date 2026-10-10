@@ -28,7 +28,7 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
-import zodiax as zx
+import zodiax as zdx
 from jax.scipy.ndimage import map_coordinates
 from jax.scipy.signal import fftconvolve
 from jaxbessel import bessel_jn, bessel_jv_over_xv, j0
@@ -152,7 +152,7 @@ def _concrete_sum(values):
     return float(sum(onp.sum(v) for v in values))
 
 
-class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
+class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     """Base class for sky-brightness source models.
 
     There are two kinds of source model.

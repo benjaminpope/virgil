@@ -34,7 +34,7 @@ import numpy as onp
 
 import equinox as eqx
 import numpyro.distributions as dist
-import zodiax as zx
+import zodiax as zdx
 from numpyro.distributions import constraints
 
 from ._deprecate import renamed
@@ -197,7 +197,7 @@ def _velocity(position, dt):
     return jax.jvp(position, (dt,), (np.ones_like(dt),))[1]
 
 
-class KeplerOrbit(zx.Base):
+class KeplerOrbit(zdx.Base):
     """A Keplerian orbit of the secondary relative to the primary.
 
     Parameters
@@ -472,7 +472,7 @@ class KeplerOrbit(zx.Base):
         )
 
 
-class ThieleInnesOrbit(zx.Base):
+class ThieleInnesOrbit(zdx.Base):
     """A sky orbit in Thiele–Innes form: linear in ``A``, ``B``, ``F``, ``G``.
 
     ``ddec = A X + F Y`` and ``dra = B X + G Y``, with ``X = cos E - e`` and
@@ -562,7 +562,7 @@ class ThieleInnesOrbit(zx.Base):
         )
 
 
-class PositionData(zx.Base):
+class PositionData(zdx.Base):
     """Measured positions of the secondary relative to the primary.
 
     For starting orbits from per-epoch binary fits, and for published
@@ -865,7 +865,7 @@ def starting_orbits(positions, periods, eccs=None, n_phase=36, n_best=5):
     ]
 
 
-class StateVectorOrbit(zx.Base):
+class StateVectorOrbit(zdx.Base):
     """An orbit given by the relative position and velocity at ``t_ref``.
 
     For short arcs, where the measured quantities (the position and its
@@ -1040,7 +1040,7 @@ class StateVectorOrbit(zx.Base):
 _KMS_PER_MAS_DAY_PC = _AU_M * 1e-6 / _DAY_S  # 1 mas at 1 pc is 1e-3 au
 
 
-class RVData(zx.Base):
+class RVData(zdx.Base):
     """Radial velocities of one star of the binary.
 
     Radial velocities are the only data that fix the node absolutely: from
