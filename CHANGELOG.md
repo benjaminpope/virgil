@@ -41,6 +41,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+<<<<<<< HEAD
 - **NUTS samples each prior in its flat coordinate, as `fit` optimizes
   it.** `numpyro_model` now maps a `LogUniform` scale to NUTS's
   unconstrained coordinate through log x, an `IsotropicInclination`
@@ -54,6 +55,12 @@ anything before 1.0 may change between minor versions.
   bijection of each prior's support), e.g. to reuse saved unconstrained
   `init_params`. See `design/sampler_flat_coordinates.md`.
 
+=======
+- **`AliasResult.table()["scales"]` is now flat (#321).** It was one entry per
+  epoch, each a list of per-block scales; it is now one float per epoch and
+  block, so `row["scales"][i]` no longer means epoch `i`. The per-epoch
+  nesting is the new `epoch_scales` key.
+>>>>>>> origin/main
 - **Warnings and precision (#306).** `Tabulated` now warns with `FutureWarning` (as every other deprecation does) instead of the default-hidden `DeprecationWarning`; the four warnings that set no category (`Ensemble` too few members kept, every closure phase flagged, unmatched T3 legs, `t_ref = 0` with MJD times) now say `UserWarning`. `cvis_uniform_disk` takes `diam` like the other disks (`ud=` still works with a `FutureWarning`). The two pixel-sum matmuls in `GaussianArc`/`TruncatedCone` use `Precision.HIGHEST`, as the rest of the forward model does (TF32 on A100/H100 otherwise). The AMIGO covariance check takes its tiny-number floor from the array's dtype. `tests/_test_data.py` finds `data/` from its own location, not the working directory.
 - **Oxford -ize spelling in names (#306).** `fit`, `numpyro_model` and `diagnose` take `regularizers` (not `regularisers`), `RVData.term` takes `marginalize_offsets` (not `marginalise_offsets`), and the numpyro factor sites for regularizers are named `regularizer_<i>`. The old keywords still work with a `FutureWarning` until 0.5 (`_deprecate.renamed`). Private names (`_linear.standardize`, `_diagonalized`, `_summarize`, `_normalize`) and the spelling in docstrings, comments and the hand-written docs follow. `barycenter` and the already -ize public names (`regularized_inverse`, `optimized_*`, `standardize_model`, `Image(normalize=)`) are unchanged.
 - **Deprecated parameter names are gone from public signatures (#306).** `OIData.model`, `OIData.with_model` and every `observables.*.predict` take `model` (not `model_object`), `inflated_errors` takes `data` (not `data_obj`), and `joint_data` / `joint_errors` take `data` (not `observations`). The old keywords still work with a `FutureWarning` until 0.5, through the same `_deprecate.renamed` path as the other functions. Private helpers in `likelihood`, `inference` and `oidata` were renamed to match.
@@ -251,6 +258,7 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+<<<<<<< HEAD
 - **Variational inference** (virgil#12). `virgil.svi.variational(model,
   priors, data, ..., start=fit_result)` fits a guide to `numpyro_model`'s
   posterior with numpyro's SVI and returns a `VariationalResult`: draws in
@@ -264,6 +272,21 @@ anything before 1.0 may change between minor versions.
   bounded posteriors; `"iaf"`, `"mvn"` (a Gaussian, ≈ Laplace) and
   `"laplace"` are the alternatives. float64 by default, as for `fit`;
   `flat_coordinates` is passed through. New page: Variational inference.
+=======
+- **Per-band checkpoints and failure isolation in `fit_orbit_aliases` (#321).**
+  `checkpoint_dir=` writes each band (`band_<N>.pkl`, `band_<N>.json`) as
+  soon as it is fitted, and a rerun with the same data, positions and
+  settings loads it instead of refitting; `on_band=` is called with each
+  `AliasBandResult`. Each band has its own random stream, so a resumed run
+  reproduces an uninterrupted one. A band that raises becomes a row with the
+  flag `band-failed` and `AliasBandResult.error`; a singular or
+  ill-conditioned Hessian gets the flag `hessian-singular` instead of
+  raising `LinAlgError`.
+- **`virgil.aliases.fit_orbit_aliases`.** Orbits whose epochs undersample the
+  period: alias bands `N = round(T/P)`, each fitted to the closure phases of
+  all epochs with per-epoch error scales integrated out, with Laplace and
+  importance-sampling evidences, band probabilities and posterior samples.
+>>>>>>> origin/main
 
 - **Orbit-search scorer.** `virgil.orbit_search.score_orbits(epochs,
   model, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`

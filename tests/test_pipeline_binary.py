@@ -65,12 +65,13 @@ API = {
     "load": "(path)",
     "Result": "(path)",
     "Result.data": "(self)",
-    "Result.model": "(self)",
-    "Result.model_values": "(self)",
-    "Result.samples": "(self, group_by_chain=True)",
-    "Result.sample_stats": "(self)",
+    # name= (additive, with StarPipeline) picks one of several fitted models.
+    "Result.model": "(self, name=None)",
+    "Result.model_values": "(self, name=None)",
+    "Result.samples": "(self, group_by_chain=True, name=None)",
+    "Result.sample_stats": "(self, name=None)",
     "Result.grid": "(self)",
-    "Result.fit_result": "(self)",
+    "Result.fit_result": "(self, name=None)",
     "Result.describe": "(self)",
     "Check": "(name, status, value, threshold, message)",
 }

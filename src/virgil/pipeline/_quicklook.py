@@ -186,7 +186,124 @@ def _binary_cells(run, summary, path):
     return cells
 
 
-_SECTIONS = {"binary": _binary_cells}
+def _star_cells(run, summary, path):
+    done = {
+        n for n, e in run["stages"].items() if e.get("status") == "complete"
+    }
+    has_data = (path / "data" / "processed.oifits").exists()
+    cells = []
+    if "overview" in done:
+        cells.append(
+            (
+                "## Data\n\nThe overview shows the uv coverage, the visibilities "
+                "and the phases of the data that were fitted, after any "
+                "wavelength selection and error floor.",
+                "data = res.data()\nfig, _ = plotting.plot_oidata_overview(data)"
+                if has_data
+                else 'display(Image("plots/overview_data.png"))',
+            )
+        )
+    if "fit" in done:
+        fit, star = summary["fit"], summary["star"]
+        chi2 = ", ".join(
+            f"{k.replace('_', ' ')} {v:.3g}"
+            for k, v in summary["chi2"]["reduced"].items()
+        )
+        reach = summary.get("resolution")
+        reach = (
+            f" The longest baseline reaches {reach['first_null_fraction']:.3g} "
+            "of the first null."
+            if reach
+            else ""
+        )
+        lobes = _io.lobe_text(summary)
+        reach += f" Diameter lobes: {lobes}." if lobes else ""
+        names = list(fit["models"])
+        cells.append(
+            (
+                "## Result\n\n"
+                "The squared visibilities against spatial frequency, with the "
+                "fitted model curves. On the quoted errors, χ²/N is "
+                f"{chi2}, over N = {summary['chi2']['n_independent']} "
+                "independent observables. The preferred model is "
+                f"`{fit['best']}`, with a diameter of {star['diam_mas']:.4g} "
+                f"mas (from the {star['source']}).{reach}",
+                "import virgil.pipeline.star as star\n\n"
+                "data = res.data()\n"
+                f"fitted = {{name: res.model(name) for name in {names!r}}}\n"
+                "fig = star.plot_v2_models(data, fitted)"
+                if has_data
+                else 'display(Image("plots/fit_v2.png"))',
+            )
+        )
+        source = "posterior" if "posterior" in done else "fit"
+        if source == "posterior":
+            draws = (
+                'params = list(res.summary["posterior"]["sampled"])\n'
+                "samples = res.samples(group_by_chain=False)\n"
+                "step = max(1, samples[params[0]].size // 100)\n"
+                "draws = {p: samples[p][::step] for p in params}\n"
+            )
+        else:
+            draws = (
+                'params = [p for p in fit.values if not p.startswith("noise.")]\n'
+                "draws = {p: [fit.values[p]] for p in params}\n"
+            )
+        cells.append(
+            (
+                "## Fit quality\n\n"
+                "The correlation plot compares the preferred model "
+                f"({source} predictive mean) with the data.",
+                "data = res.data()\n"
+                "fit = res.fit_result()\n"
+                f"{draws}"
+                "pred = posterior_predictive_summary(draws, fit.model, data, params)\n"
+                f'fig = plotting.plot_data_model_correlation(data, {{"{source}": pred}})'
+                if has_data
+                else 'display(Image("plots/fit_correlation.png"))',
+            )
+        )
+    if "posterior" in done:
+        post = summary["posterior"]
+        cells.append(
+            (
+                "## Posterior\n\n"
+                f"NUTS drew {post['num_samples']} samples in each of "
+                f"{post['num_chains']} chains after {post['num_warmup']} warm-up "
+                "steps, for each fitted model. The corner plot shows the "
+                f"preferred model, `{post['best']}`.",
+                "import pandas as pd\n\n"
+                'params = list(res.summary["posterior"]["sampled"])\n'
+                "samples = res.samples(group_by_chain=False)\n"
+                "frame = pd.DataFrame({p: samples[p].astype(float) for p in params})\n"
+                '_, corner, walks = plotting.plot_chainconsumer_diagnostics({"posterior": frame}, columns=params)\n'
+                "plt.close(walks)",
+            )
+        )
+        cells.append(
+            (
+                "The sampler diagnostics per model and parameter: median with "
+                "its 16th and 84th percentiles, split R-hat and bulk effective "
+                "sample size (derived quantities have none), with "
+                f"{100 * post['divergence_fraction']:.2g} per cent divergent "
+                "transitions in the worst model.",
+                'for model, rows in res.summary["posterior"]["models"].items():\n'
+                '    for name, row in rows["params"].items():\n'
+                "        diag = (\n"
+                "            f\"R-hat {row['r_hat']:.4f}  ESS {row['ess_bulk']:.0f}\"\n"
+                "            if 'r_hat' in row\n"
+                "            else 'derived'\n"
+                "        )\n"
+                "        print(\n"
+                "            f\"{model:>13} {name:>5}: {row['median']:.5g} \"\n"
+                "            f\"[{row['q16']:.5g}, {row['q84']:.5g}]  {diag}\"\n"
+                "        )",
+            )
+        )
+    return cells
+
+
+_SECTIONS = {"binary": _binary_cells, "star": _star_cells}
 
 
 def build_notebook(path):

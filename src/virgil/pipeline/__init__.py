@@ -26,7 +26,7 @@ from ._checks import Check
 from ._core import ConfigMismatchError, Stage
 from ._io import SCHEMA, Result, load
 
-_LAZY = {"BinaryPipeline": ".binary"}
+_LAZY = {"BinaryPipeline": ".binary", "StarPipeline": ".star"}
 
 __all__ = [
     "SCHEMA",
@@ -35,6 +35,7 @@ __all__ = [
     "ConfigMismatchError",
     "Result",
     "Stage",
+    "StarPipeline",
     "load",
 ]
 

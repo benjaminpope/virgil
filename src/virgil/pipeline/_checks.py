@@ -290,14 +290,34 @@ def ess(value, *, warn=400.0, fail=100.0):
     )
 
 
-def divergences(fraction, *, warn=0.0, fail=0.01):
-    """Fraction of divergent NUTS transitions."""
+def divergences(fraction, *, walls=None, warn=0.0, fail=0.01, exposed=0.05):
+    """Fraction of divergent NUTS transitions.
+
+    ``walls`` is the posterior's wall probe (``{"radius_sd", "n",
+    "exposed"}``, see ``StarPipeline``): when at least ``exposed`` of the
+    steps of a few posterior standard deviations hit a hard wall of the
+    likelihood (a closure-phase flip, which costs thousands in χ²), the
+    divergences are NUTS trajectories rejected at that wall, so the check
+    warns instead of failing and says so. The ESS and R-hat checks still
+    judge the draws.
+    """
     if fraction > fail:
         status, meaning = "fail", "the posterior is not reliable"
     elif fraction > warn:
         status, meaning = "warn", "inspect where they occur"
     else:
         status, meaning = "pass", "none"
+    if status == "fail" and walls and walls.get("exposed", 0.0) >= exposed:
+        status = "warn"
+        meaning = (
+            f"{100 * walls['exposed']:.2g} per cent of steps of "
+            f"{walls['radius_sd']:g} posterior standard deviations hit a "
+            "hard wall of the likelihood (a closure-phase sign flip), so "
+            "NUTS rejects the trajectories that cross it; the draws are "
+            "expected to follow the truncated posterior, with reduced "
+            "efficiency (see the ESS). A bispectrum likelihood would "
+            "remove the walls (virgil#309)"
+        )
     return Check(
         "divergences",
         status,
@@ -389,6 +409,195 @@ def field_of_view(sep, resolution, fov):
     )
 
 
+# θB/λ of the first zero of a uniform disk's visibility, j_{1,1} / π.
+FIRST_NULL = 1.2196699
+
+
+def resolution_regime(
+    diam_mas, freq_max, *, unresolved=0.15, first_null=FIRST_NULL
+):
+    """Whether the baselines reach the first null of the visibility.
+
+    A uniform disk of angular diameter θ has its first null at
+    θB/λ = 1.22 (more for a limb-darkened star), so the
+    fraction ``x = θ f_max / first_null`` of the way there, with ``f_max`` the
+    longest spatial frequency B/λ, says what the data can measure.
+
+    Parameters
+    ----------
+    diam_mas : float
+        Fitted angular diameter (mas).
+    freq_max : float
+        Longest spatial frequency B/λ in the data (cycles per radian).
+    unresolved : float, optional
+        Fraction of the first null below which the star is unresolved and
+        its diameter is an upper limit.
+    first_null : float, optional
+        θB/λ of the first null of the fitted model's visibility; the
+        uniform-disk value by default.
+    """
+    ratio = float(diam_mas) * math.pi / 180.0 / 3.6e6 * float(freq_max)
+    ratio /= float(first_null)
+    if not _finite(ratio):
+        return Check(
+            "resolution", "fail", ratio, 1.0, "The resolution is not finite."
+        )
+    if ratio < unresolved:
+        status, meaning = (
+            "fail",
+            "the star is unresolved and its diameter is an upper limit",
+        )
+    elif ratio < 1.0:
+        status, meaning = (
+            "warn",
+            "the baselines stop short of the first null, so the diameter "
+            "is measured but limb darkening is degenerate with it",
+        )
+    else:
+        status, meaning = (
+            "pass",
+            "the baselines reach the first null, so the diameter is "
+            "well measured and limb darkening can be constrained",
+        )
+    return Check(
+        "resolution",
+        status,
+        ratio,
+        1.0,
+        f"The longest baseline reaches {ratio:.3g} of the first null: "
+        f"{meaning}.",
+    )
+
+
+def multimodal(lobes, *, threshold=25.0):
+    """Whether another lobe of the diameter fits nearly as well as the best.
+
+    Parameters
+    ----------
+    lobes : list[dict]
+        The per-lobe table of the preferred model: each row has
+        ``diam_mas``, ``diam_bounds_mas`` and ``delta_chi2`` (zero for the
+        best lobe).
+    threshold : float, optional
+        The Δχ² of the next-best lobe above which the best lobe is
+        unambiguous.
+    """
+    rows = sorted(lobes, key=lambda r: r["delta_chi2"])
+    if len(rows) < 2:
+        return Check(
+            "multimodal",
+            "pass",
+            None,
+            threshold,
+            "Only one diameter lobe was found.",
+        )
+    best, other = rows[0], rows[1]
+    gap = float(other["delta_chi2"])
+    if gap > threshold:
+        return Check(
+            "multimodal",
+            "pass",
+            gap,
+            threshold,
+            f"The best lobe ({best['diam_mas']:.4g} mas) beats the next "
+            f"({other['diam_mas']:.4g} mas) by Δχ² = {gap:.3g}.",
+        )
+    return Check(
+        "multimodal",
+        "warn",
+        gap,
+        threshold,
+        f"Another lobe fits nearly as well: {other['diam_mas']:.4g} mas "
+        f"against the best {best['diam_mas']:.4g} mas, Δχ² = {gap:.3g} < "
+        f"{threshold:g}. The posterior is bounded to the best lobe; the "
+        "alias is not excluded by the data.",
+    )
+
+
+def model_gain(
+    name, chi2_simple, chi2_complex, n, *, n_extra, simple, complex_
+):
+    """Whether a richer model improves the fit by more than its BIC penalty.
+
+    Both χ² values are on the quoted errors. The richer model contains the
+    simpler one, so a negative gain means that one of the fits did not
+    converge.
+
+    Parameters
+    ----------
+    name : str
+        Check name.
+    chi2_simple, chi2_complex : float
+        χ² of the simpler and richer model.
+    n : int
+        Number of independent observables.
+    n_extra : int
+        Extra parameters of the richer model.
+    simple, complex_ : str
+        Their names, for the message.
+    """
+    gain = float(chi2_simple) - float(chi2_complex)
+    penalty = n_extra * math.log(max(int(n), 2))
+    if not _finite(gain):
+        return Check(name, "fail", gain, penalty, "The χ² gain is not finite.")
+    if gain < -1.0:
+        status = "warn"
+        message = (
+            f"The {complex_} model fits worse than the {simple} model it "
+            f"contains (Δχ² = {gain:.3g}): a fit did not converge."
+        )
+    elif gain > penalty:
+        status = "pass"
+        message = (
+            f"Δχ² = {gain:.3g} for {n_extra} extra parameters exceeds the "
+            f"BIC penalty {penalty:.3g}: the {complex_} model is preferred."
+        )
+    else:
+        status = "pass"
+        message = (
+            f"Δχ² = {gain:.3g} for {n_extra} extra parameters does not "
+            f"exceed the BIC penalty {penalty:.3g}: the {simple} model is "
+            "adequate."
+        )
+    return Check(name, status, gain, penalty, message)
+
+
+def prior_constrained(name, ratios, *, warn=0.8):
+    """Whether parameters are constrained by the data or by their priors.
+
+    Parameters
+    ----------
+    name : str
+        Check name.
+    ratios : dict[str, float]
+        For each parameter, the posterior standard deviation divided by the
+        standard deviation of its prior.
+    warn : float, optional
+        Ratio at or above which the prior dominates.
+    """
+    bad = [k for k, v in ratios.items() if not _finite(v) or v >= warn]
+    worst = max(ratios.values(), default=0.0)
+    listing = ", ".join(f"{k} {v:.2f}" for k, v in ratios.items())
+    if bad:
+        return Check(
+            name,
+            "warn",
+            worst,
+            warn,
+            f"The posterior is as wide as the prior for {', '.join(bad)} "
+            f"(σ_posterior/σ_prior: {listing}): the data do not constrain "
+            "them.",
+        )
+    return Check(
+        name,
+        "pass",
+        worst,
+        warn,
+        f"The data constrain every parameter (σ_posterior/σ_prior: "
+        f"{listing}).",
+    )
+
+
 def worst_status(checks):
     """The worst status among ``checks`` (``"pass"`` if there are none)."""
     rank = {status: i for i, status in enumerate(STATUSES)}
@@ -399,9 +608,10 @@ def worst_status(checks):
 
 # Warnings of these categories are recorded but raise no check: they say
 # something about the software environment, not about the result.
+# The match is by suffix: libraries subclass these, such as pyparsing's
+# ``PyparsingDeprecationWarning``.
 _BENIGN_CATEGORIES = (
     "DeprecationWarning",
-    "PendingDeprecationWarning",
     "ImportWarning",
     "ResourceWarning",
 )
@@ -541,7 +751,7 @@ def stage_warning_checks(warning_records):
         rule = _classify(record["message"])
         if rule:
             grouped.setdefault(rule, []).append(record)
-        elif record["category"] not in _BENIGN_CATEGORIES:
+        elif not record["category"].endswith(_BENIGN_CATEGORIES):
             other.append(record)
     checks = [
         fn(grouped[name]) for name, fn in _RULES.items() if name in grouped

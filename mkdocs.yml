@@ -111,6 +111,7 @@ nav:
       - Detection: api/detection.md
       - Spectra: api/spectra.md
       - Orbits: api/orbits.md
+      - Orbit aliases: api/aliases.md
       - Epochs: api/epochs.md
       - Orbit Search: api/orbit_search.md
       - Fields: api/fields.md
