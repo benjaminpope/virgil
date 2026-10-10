@@ -11,6 +11,7 @@ is tiny: a binary on a 7-hole mask, an 8×8 Gaussian-field image.
 import jax
 import jax.numpy as np
 import numpy as onp
+import numpyro
 import numpyro.distributions as dist
 import pytest
 from numpyro.distributions.transforms import biject_to
@@ -21,6 +22,7 @@ from virgil.fields import GaussianField
 from virgil.fitting import _Objective, fit, gauss_newton_mass
 from virgil.imaging import image_priors
 from virgil.inference import laplace_cov
+from virgil.likelihood import numpyro_model
 from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
@@ -175,13 +177,18 @@ def test_no_data_map_and_laplace_covariance_transform(method):
     assert var_x == pytest.approx(x**2 * s**2, rel=1e-5)
 
 
-def test_gauss_newton_mass_is_in_numpyros_coordinates():
+@pytest.mark.parametrize("flat", [True, False])
+def test_gauss_newton_mass_is_in_numpyros_coordinates(flat):
     """The mass matrix is the natural-coordinate Laplace covariance
-    carried into numpyro's z by the delta method, Σ_z = T⁻¹ Σ_x T⁻¹ with
-    T = dx/dz, for a LogUniform flux as for Uniform positions."""
+    carried into the z that numpyro_model samples by the delta method,
+    Σ_z = T⁻¹ Σ_x T⁻¹ with T = dx/dz, for a LogUniform flux as for Uniform
+    positions: fit's flat coordinates by default, numpyro's bijection of
+    the support with flat_coordinates=False."""
     data = nrm_oidata(sigma_v2=0.005, sigma_cp_deg=0.3).with_model(TRUTH)
     values = {"dra": 60.0, "ddec": -40.0, "flux": 0.05}
-    mass = gauss_newton_mass(TRUTH, LOG_UNIFORM, data, values)
+    mass = gauss_newton_mass(
+        TRUTH, LOG_UNIFORM, data, values, flat_coordinates=flat
+    )
     (paths,) = mass["inverse_mass_matrix"]
     (covariance,) = mass["inverse_mass_matrix"].values()
     # Noiseless data: the Gauss–Newton matrix is the Hessian at the truth.
@@ -190,17 +197,15 @@ def test_gauss_newton_mass_is_in_numpyros_coordinates():
             onp.array([values[p] for p in paths]), list(paths), TRUTH, data
         )
     )
+    model = numpyro_model(TRUTH, LOG_UNIFORM, data, flat_coordinates=flat)
+    trace = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
     with jax.enable_x64(True):
-        t = onp.array(
-            [
-                jax.grad(biject_to(LOG_UNIFORM[p].support))(
-                    biject_to(LOG_UNIFORM[p].support).inv(
-                        np.asarray(values[p], float)
-                    )
-                )
-                for p in paths
-            ]
-        )
+        t = []
+        for p in paths:
+            bijection = biject_to(trace[p]["fn"].support)
+            z = bijection.inv(np.asarray(values[p], float))
+            t.append(jax.grad(bijection)(z))
+        t = onp.array(t)
     expected = sigma_x / onp.outer(t, t)
     assert onp.allclose(covariance, expected, rtol=1e-4)
 

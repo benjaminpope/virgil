@@ -84,7 +84,7 @@ This is why σ and ℓ are fixed here: JᵀJ depends on them, so a matrix comput
 ```python
 t0 = time.time()
 mcmc = MCMC(
-    NUTS(numpyro_model(result.model, priors, data), init_strategy=init_to_value(values=result.values), **gauss_newton_mass(scene, priors, data, result.values)),
+    NUTS(numpyro_model(result.model, priors, data, flat_coordinates=True), init_strategy=init_to_value(values=result.values), **gauss_newton_mass(scene, priors, data, result.values, flat_coordinates=True)),
     num_warmup=300,
     num_samples=300,
     progress_bar=False,
@@ -96,7 +96,7 @@ print(f"300 warmup + 300 draws in {time.time() - t0:.0f} s; median {onp.median(s
 ```
 
 ```text
-300 warmup + 300 draws in 550 s; median 63 leapfrog steps per draw (at most 1023); 0 divergences
+300 warmup + 300 draws in 67 s; median 127 leapfrog steps per draw (at most 1023); 0 divergences
 ```
 
 ## Are the draws trustworthy?
@@ -112,7 +112,7 @@ print(f"flux {mid:.4f} (90%: {low:.4f}–{high:.4f}; truth 0.05), ESS {float(eff
 ```
 
 ```text
-flux 0.0507 (90%: 0.0503–0.0511; truth 0.05), ESS 179; latent ESS: 5th percentile 183, median 293 of 300
+flux 0.0507 (90%: 0.0504–0.0512; truth 0.05), ESS 346; latent ESS: 5th percentile 373, median 596 of 300
 ```
 
 ## The posterior mean and standard deviation
