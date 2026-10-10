@@ -5,7 +5,7 @@ import jax.numpy as np
 import numpy as onp
 
 import equinox as eqx
-import zodiax as zx
+import zodiax as zdx
 
 from ._closure import ClosureNoise
 from ._deprecate import renamed
@@ -29,7 +29,7 @@ from .oifits import _phase_unit_scale, read_oifits
 __all__ = ["OIData", "closure_phases", "cp_indices"]
 
 
-class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
+class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     """
     Store and transform optical-interferometry observables.
 

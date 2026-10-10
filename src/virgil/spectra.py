@@ -40,7 +40,7 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
-import zodiax as zx
+import zodiax as zdx
 
 from ._utils import check_part_name, concrete
 
@@ -59,7 +59,7 @@ __all__ = [
 ]
 
 
-class Spectrum(zx.Base):  # type: ignore[reportGeneralTypeIssues]
+class Spectrum(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     """Base class for component spectra.
 
     Subclasses implement ``_at(wavel)``, the flux at ``wavel`` (metres, any
