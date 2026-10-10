@@ -118,9 +118,7 @@ def test_sites_values_and_density_are_unchanged():
 
 
 def test_init_to_value_and_chain_init_params_use_the_flat_coordinate():
-    model = numpyro_model(
-            _no_model, FLAT_PRIORS, (), flat_coordinates=True
-        )
+    model = numpyro_model(_no_model, FLAT_PRIORS, (), flat_coordinates=True)
     start = {"scale": 1e-2, "inc": 30.0, "pole": 5.0, "lat": 0.3}
     info = initialize_model(
         jax.random.PRNGKey(0), model, init_strategy=init_to_value(values=start)
