@@ -1,4 +1,6 @@
-"""numpyro_model samples each prior in its flat coordinate, as fit does.
+"""numpyro_model(flat_coordinates=True) samples each prior in its flat coordinate, as fit does.
+
+Off by default: SBC showed no efficiency gain (virgil#301).
 
 A LogUniform scale is sampled through log x, an isotropic inclination
 through cos i, an isotropic latitude through sin(lat)
@@ -71,7 +73,9 @@ def test_potential_of_a_flat_prior_is_logistic(x64):
     logistic density log σ(z) + log σ(-z), with finite gradients out to
     |z| = 24, also in float32 and at the poles of the isotropic priors."""
     with jax.enable_x64(x64):
-        model = numpyro_model(_no_model, FLAT_PRIORS, ())
+        model = numpyro_model(
+            _no_model, FLAT_PRIORS, (), flat_coordinates=True
+        )
         for z0 in (-24.0, -18.0, -3.0, 0.0, 2.5, 18.0, 24.0):
             z = {k: np.asarray(z0) for k in FLAT_PRIORS}
             potential, grad = jax.value_and_grad(
@@ -114,7 +118,9 @@ def test_sites_values_and_density_are_unchanged():
 
 
 def test_init_to_value_and_chain_init_params_use_the_flat_coordinate():
-    model = numpyro_model(_no_model, FLAT_PRIORS, ())
+    model = numpyro_model(
+            _no_model, FLAT_PRIORS, (), flat_coordinates=True
+        )
     start = {"scale": 1e-2, "inc": 30.0, "pole": 5.0, "lat": 0.3}
     info = initialize_model(
         jax.random.PRNGKey(0), model, init_strategy=init_to_value(values=start)
@@ -155,7 +161,7 @@ def test_coordinates_match_fit():
 
 def test_expanded_and_independent_priors_are_sampled_flat():
     prior = dist.LogUniform(1e-3, 1.0).expand([3]).to_event(1)
-    model = numpyro_model(_no_model, {"v": prior}, ())
+    model = numpyro_model(_no_model, {"v": prior}, (), flat_coordinates=True)
     trace = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
     assert trace["v"]["value"].shape == (3,)
     z = {"v": np.zeros(3)}
@@ -180,8 +186,21 @@ def test_no_data_nuts_reproduces_the_flat_priors(x64):
     ESS-thinned draws), parameters and an error term alike."""
     noise = {"vis_scale": dist.LogUniform(0.1, 10.0)}
     with jax.enable_x64(x64):
-        model = numpyro_model(_no_model, FLAT_PRIORS, (), noise=noise)
+        model = numpyro_model(
+            _no_model, FLAT_PRIORS, (), noise=noise, flat_coordinates=True
+        )
         samples = _nuts(model, num_samples=1500, num_warmup=400)
     for site, prior in FLAT_PRIORS.items():
         _assert_marginal(samples, site, prior)
     _assert_marginal(samples, "noise.vis_scale", noise["vis_scale"])
+
+
+def test_flat_coordinates_are_off_by_default():
+    """The default is numpyro's bijection of each support (virgil#301)."""
+    default = numpyro_model(_no_model, FLAT_PRIORS, ())
+    off = numpyro_model(_no_model, FLAT_PRIORS, (), flat_coordinates=False)
+    z = {k: np.asarray(0.3) for k in FLAT_PRIORS}
+    assert float(potential_energy(default, (), {}, z)) == pytest.approx(
+        float(potential_energy(off, (), {}, z)), rel=1e-6
+    )
+    assert _Objective(_no_model, FLAT_PRIORS, (), flat=False, likelihoods=())

@@ -28,7 +28,8 @@ Both classes are numpyro distributions, so they work as entries of the
 them in their flat coordinate (cos i or sin(lat), through
 ``flat_coordinate()``), where the prior is constant, so
 Levenberg–Marquardt applies and is ``fit``'s automatic choice;
-``numpyro_model`` samples them in the same coordinate.
+``numpyro_model(..., flat_coordinates=True)`` samples them in the same
+coordinate.
 """
 
 import dataclasses

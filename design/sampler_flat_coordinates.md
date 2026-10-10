@@ -1,7 +1,13 @@
 # Sampling in the priors' flat coordinates
 
 Status: implemented on `sampler-flat-coords` (0.4.0 backlog, "sampler
-health"). Follows the 2026-10-05 decision in `imaging_plan.md` (standing
+health") as an **opt-in** (`flat_coordinates=True`; the default is numpyro's
+bijection). SBC (virgil#301, 1000 replicates each, 4afc5b8 vs 39979e9) showed
+no gain in ESS per second (flat 3–8% lower), divergences (41 per replicate
+both) or rank uniformity; the 62² imaging notebook with `gauss_newton_mass`
+ran in 67 s flat against 550 s, so the tutorials that sample images opt in.
+Where this note says "default" or "now" below, read "with
+`flat_coordinates=True`". Follows the 2026-10-05 decision in `imaging_plan.md` (standing
 decision 9) that `fit` optimizes each prior in its flat coordinate.
 
 ## Problem
@@ -149,7 +155,7 @@ including the poles of the isotropic priors.
 **Status: implemented** as `virgil.svi.variational(model, priors, data,
 regularizers=(), *, noise, likelihoods, start, guide="bnaf", steps=3000,
 optimizer, learning_rate=3e-3, num_particles=8, num_samples=2000, key,
-flat_coordinates=True, dense_start=True, init_scale=0.1, window, psis=True,
+flat_coordinates=False, dense_start=True, init_scale=0.1, window, psis=True,
 dtype="float64", **options)`, returning a `VariationalResult` (`samples`
 keyed like NUTS's, `losses`, `guide`, `params`, `converged`, `info` with
 the ELBO, PSIS k̂, time and whether the start was dense). Tests:

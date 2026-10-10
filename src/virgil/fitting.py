@@ -11,8 +11,8 @@ prior's support, in float64 by default. A parameter whose prior is uniform in
 some coordinate (a log-uniform scale, an isotropic inclination) is fitted in
 that flat coordinate, where its prior adds nothing to the loss, so that
 Levenberg–Marquardt works with the Jeffreys priors. To sample the same
-posterior, pass the same arguments to ``numpyro_model``, which samples in
-the same coordinates.
+posterior, pass the same arguments to ``numpyro_model``; it samples in numpyro's
+coordinates unless told ``flat_coordinates=True``.
 """
 
 import dataclasses
@@ -123,11 +123,11 @@ class _Objective(eqx.Module):
     With ``flat=True`` (for ``fit``), a parameter whose prior has a flat
     coordinate (``_flat_coordinate``: LogUniform, isotropic angles) is
     unconstrained through that coordinate, where its prior is constant and
-    adds nothing to the loss; ``numpyro_model`` samples the same
-    coordinates (``_flat.flat_sampled``). With ``flat=False`` (for
-    ``gauss_newton_mass(flat_coordinates=False)``), every parameter uses
-    numpyro's bijection of its prior's support, as ``numpyro_model(...,
-    flat_coordinates=False)`` samples.
+    adds nothing to the loss; ``numpyro_model(..., flat_coordinates=True)``
+    samples the same coordinates (``_flat.flat_sampled``). With
+    ``flat=False`` (for ``gauss_newton_mass``'s default), every parameter
+    uses numpyro's bijection of its prior's support, as ``numpyro_model``
+    samples by default.
     """
 
     model: object
@@ -826,7 +826,7 @@ def _at_bound(problem, values):
 
 
 def gauss_newton_mass(
-    model, priors, data, values, *, likelihoods=(), flat_coordinates=True
+    model, priors, data, values, *, likelihoods=(), flat_coordinates=False
 ):
     """A dense NUTS mass matrix from the Gauss–Newton curvature at a fit.
 
@@ -861,9 +861,10 @@ def gauss_newton_mass(
         ``"<path>_vec"``. The matrix is in the unconstrained coordinates
         NUTS samples for
         [`numpyro_model`][virgil.likelihood.numpyro_model] with the same
-        ``flat_coordinates``: by default ``fit``'s flat coordinates (for
-        ``LogUniform(a, b)`` the logit of ``log x`` on ``[log a, log
-        b]``), else numpyro's bijection of each prior's support.
+        ``flat_coordinates``: by default numpyro's bijection of each prior's
+        support, or with ``flat_coordinates=True`` ``fit``'s flat coordinates
+        (for ``LogUniform(a, b)`` the logit of ``log x`` on ``[log a, log
+        b]``).
     values : dict
         The parameter values at which to take the curvature, normally
         ``fit(model, priors, data).values``.
@@ -878,7 +879,7 @@ def gauss_newton_mass(
         costs efficiency, not correctness.
     flat_coordinates : bool, optional
         Whether the sampler moves in the priors' flat coordinates, as for
-        ``numpyro_model`` (default ``True``). Pass the same value to both.
+        ``numpyro_model`` (default ``False``). Pass the same value to both.
 
     Returns
     -------

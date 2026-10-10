@@ -84,7 +84,7 @@ This is why σ and ℓ are fixed here: JᵀJ depends on them, so a matrix comput
 ```python
 t0 = time.time()
 mcmc = MCMC(
-    NUTS(numpyro_model(result.model, priors, data), init_strategy=init_to_value(values=result.values), **gauss_newton_mass(scene, priors, data, result.values)),
+    NUTS(numpyro_model(result.model, priors, data, flat_coordinates=True), init_strategy=init_to_value(values=result.values), **gauss_newton_mass(scene, priors, data, result.values, flat_coordinates=True)),
     num_warmup=300,
     num_samples=300,
     progress_bar=False,
@@ -151,5 +151,5 @@ Holding σ and ℓ at the evidence's choice ignores their own uncertainty. Part 
 
 ## Summary
 - **NUTS on a Gaussian-field image** samples the field's standard-normal latents with `numpyro_model`, starting at the MAP from `fit`.
-- **Large images need a mass matrix.** `gauss_newton_mass` turns the MAP's Gauss–Newton curvature into a dense mass matrix. On this 62² image it cut the cost from 1023 to about a hundred leapfrog steps per draw. Use it with σ and ℓ fixed, and keep every sampled parameter, flux included, in `priors`.
+- **Large images need a mass matrix.** `gauss_newton_mass` turns the MAP's Gauss–Newton curvature into a dense mass matrix. On this 62² image it cut the cost from 1023 to tens of leapfrog steps per draw. Use it with σ and ℓ fixed, and keep every sampled parameter, flux included, in `priors`.
 - **The posterior mean and standard deviation** summarise the image and its uncertainty pixel by pixel, and make residuals into z-scores.

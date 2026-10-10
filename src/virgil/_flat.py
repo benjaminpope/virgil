@@ -6,7 +6,8 @@ some other coordinate of its parameter, its *flat coordinate*:
 ``_flat_coordinate`` finds it. ``_FlatBijection`` maps the real line onto
 the parameter through that coordinate. [`fit`][virgil.fitting.fit]
 optimizes in it, and [`numpyro_model`][virgil.likelihood.numpyro_model]
-samples in it: ``flat_sampled`` wraps a prior so that numpyro's
+samples in it when asked (``flat_coordinates=True``; off by default, as the
+SBC showed no gain): ``flat_sampled`` wraps a prior so that numpyro's
 ``biject_to`` of its support is the same bijection, with its Jacobian,
 while the site keeps its name, its value (the parameter) and its density.
 See ``design/sampler_flat_coordinates.md``.

@@ -41,18 +41,20 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
-- **NUTS samples each prior in its flat coordinate, as `fit` optimizes
-  it.** `numpyro_model` now maps a `LogUniform` scale to NUTS's
+- **NUTS can sample each prior in its flat coordinate (opt-in,
+  `flat_coordinates=True`, #301).** `numpyro_model(...,
+  flat_coordinates=True)` maps a `LogUniform` scale to NUTS's
   unconstrained coordinate through log x, an `IsotropicInclination`
   through cos i and an `IsotropicLatitude` through sin(lat), for
-  parameters and `noise=` terms alike, where the prior is a logistic
-  density. Sites keep their names, samples are the model's own
-  parameters, and the posterior is unchanged; only the coordinate NUTS
-  moves in differs, so it now matches `fit`'s and `gauss_newton_mass`
-  (which defaults to the same coordinates). Pass
-  `flat_coordinates=False` to both for the 0.3 coordinates (numpyro's
-  bijection of each prior's support), e.g. to reuse saved unconstrained
-  `init_params`. See `design/sampler_flat_coordinates.md`.
+  parameters and `noise=` terms alike, as `fit` optimizes them. Sites keep
+  their names, samples are the model's own parameters, and the posterior
+  is unchanged. It is off by default: simulation-based calibration (1000
+  replicates) showed no gain in effective sample size per second or in
+  divergences, and rank uniformity was the same. The 62² imaging notebook,
+  with `gauss_newton_mass`, ran in 67 s instead of 550 s with it, so the
+  tutorials that sample large images pass `flat_coordinates=True`. Pass
+  the same value to `gauss_newton_mass`, `variational` and
+  `chain_init_params`' model. See `design/sampler_flat_coordinates.md`.
 
 
 - **`AliasResult.table()["scales"]` is now flat (#321).** It was one entry per

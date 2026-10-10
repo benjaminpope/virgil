@@ -2,7 +2,7 @@
 
 Everything here is tiny: two- or three-parameter posteriors, short SVI and
 NUTS runs. Each test runs with flat coordinates on and off, since
-``numpyro_model``'s default may change (design/sampler_flat_coordinates.md).
+``flat_coordinates`` is opt-in (design/sampler_flat_coordinates.md).
 """
 
 import jax

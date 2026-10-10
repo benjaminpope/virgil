@@ -261,7 +261,7 @@ def variational(
     num_particles=8,
     num_samples=2000,
     key=None,
-    flat_coordinates=True,
+    flat_coordinates=False,
     dense_start=True,
     init_scale=0.1,
     window=None,
@@ -341,9 +341,9 @@ def variational(
         Random key (default ``PRNGKey(0)``).
     flat_coordinates : bool, optional
         Passed to ``numpyro_model`` and ``gauss_newton_mass`` (default
-        ``True``): the coordinates the guide is defined in. A Gaussian guide
+        ``False``): the coordinates the guide is defined in. A Gaussian guide
         is Gaussian in them, e.g. in the logit of ``log x`` on ``[log a,
-        log b]`` for a ``LogUniform(a, b)``.
+        log b]`` for a ``LogUniform(a, b)`` with ``flat_coordinates=True``.
     dense_start : bool, optional
         Start the guide's width from the Gauss–Newton covariance at
         ``start`` (default ``True``). That covariance is the data's and

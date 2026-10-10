@@ -378,7 +378,10 @@ A sampler should reproduce its prior when there are no data, Jacobians included.
 
 ```python
 prior_model = numpyro_model(
-    scene_fn, {**orbit_priors, "flux": priors["flux"]}, ()
+    scene_fn,
+    {**orbit_priors, "flux": priors["flux"]},
+    (),
+    flat_coordinates=True,
 )
 prior = run_nuts(prior_model, seed=1, num_warmup=500, num_samples=4000)
 draws = {k: np.asarray(v) for k, v in prior.get_samples().items()}
@@ -547,7 +550,11 @@ Afterwards we check the sampler: the number of divergent transitions (it must be
 ```python
 NUM_WARMUP, NUM_SAMPLES, NUM_CHAINS = 1000, 1000, 4
 posterior_model = numpyro_model(
-    data.model_fn(scene_fn), priors, data.data, noise=noise
+    data.model_fn(scene_fn),
+    priors,
+    data.data,
+    noise=noise,
+    flat_coordinates=True,
 )
 mcmc = run_nuts(
     posterior_model,
@@ -872,6 +879,7 @@ positions_model = numpyro_model(
     orbit_priors,
     (),
     likelihoods=[measured.term(orbit_from)],
+    flat_coordinates=True,
 )
 two_step = run_nuts(
     positions_model,
