@@ -8,7 +8,10 @@ import pytest
 
 pytest.importorskip("jaxoplanet")
 
+from virgil import aliases  # noqa: E402
 from virgil.aliases import (  # noqa: E402
+    AliasBandResult,
+    AliasResult,
     alias_bands,
     fit_orbit_aliases,
     position_profile,
@@ -172,3 +175,101 @@ def test_random_starts_and_s_max_without_positions():
     )
     # Random starts rarely find a narrow ridge in 8-D: only check that it runs.
     assert result.bands and all(b.flags is not None for b in result.bands)
+
+
+# --- robustness: the failures of OzSTAR job 18296568 ----------------------------------
+
+
+def _band(n, epochs, **kw):
+    return AliasBandResult(
+        n=n, p_lo=1.0, p_hi=2.0, modes=[], log_z=-1.0, log_z_is=-1.0, ess=10.0,
+        flagged=False, epochs=epochs, **kw
+    )  # fmt: skip
+
+
+def test_table_scales_are_flat_floats_for_multi_block_epochs():
+    # An epoch with V2 and closure-phase blocks has one scale per block (a list).
+    epochs = [dict(scale=[1.0, 2.5]), dict(scale=[1.5])]
+    res = AliasResult(0.0, onp.zeros(2), 1.0, [_band(3, epochs)], {})
+    row = res.table()[0]
+    assert row["scales"] == [1.0, 2.5, 1.5]
+    assert row["epoch_scales"] == [[1.0, 2.5], [1.5]]
+    assert f"{min(row['scales']):>6.2f}" and f"{max(row['scales']):>6.2f}"
+
+
+def test_singular_hessian_is_flagged_not_raised():
+    class Flat:
+        def hessian(self, x):
+            return -onp.diag([1.0, 1.0, 1e-20, 1.0, 1.0, 1.0, 1.0, 1.0])
+
+    x = onp.zeros(8)
+    rec, draw = aliases._mode_evidence(
+        Flat(), x, -1.0, 10, onp.random.default_rng(0)
+    )
+    assert draw is None and rec["flags"] == ["hessian-singular"]
+    assert rec["log_z_laplace"] == -onp.inf
+
+
+def test_band_checkpoint_roundtrip_and_key(tmp_path):
+    band = alias_bands([0.0, 100.0, 413.89], (10.0, 14.0))[0]
+    key = dict(n_is=10, edges=[[1.0, 2.0]])
+    done = (
+        _band(band.n, [dict(scale=[1.0])]),
+        (onp.ones((3, 2)), onp.zeros(3)),
+    )
+    assert aliases._load_band(tmp_path, band, key) is None
+    aliases._save_band(tmp_path, band, key, done)
+    json.loads((tmp_path / f"band_{band.n}.json").read_text())
+    got = aliases._load_band(tmp_path, band, key)
+    assert got[0].n == band.n and got[1][0].shape == (3, 2)
+    assert aliases._load_band(tmp_path, band, {**key, "n_is": 11}) is None
+    assert aliases._load_band(None, band, key) is None
+
+
+@pytest.mark.slow
+def test_one_failing_band_is_isolated_checkpointed_and_not_refit(
+    monkeypatch, tmp_path
+):
+    data, _ = _synthetic(12.38)
+    first = alias_bands(EPOCHS, (12.1, 12.7))[0].n
+    calls = []
+    real = aliases._Problem.set_band
+
+    def set_band(self, band):
+        calls.append(band.n)
+        if band.n == first:
+            raise RuntimeError("boom")
+        return real(self, band)
+
+    monkeypatch.setattr(aliases._Problem, "set_band", set_band)
+    kw = dict(
+        t_ref=T_REF,
+        n_random=20,
+        n_refine=1,
+        max_steps=3,
+        n_is=20,
+        n_samples=5,
+        checkpoint_dir=tmp_path,
+    )
+    seen = []
+    result = fit_orbit_aliases(data, (12.1, 12.7), on_band=seen.append, **kw)
+    assert len(seen) == len(result.bands) > 1
+    bad = [b for b in result.bands if b.flags == ["band-failed"]]
+    assert [b.n for b in bad] == [first] and "boom" in bad[0].error
+    others = [b for b in result.bands if b.n != first]
+    assert {p.name for p in tmp_path.glob("band_*.pkl")} == {
+        f"band_{b.n}.pkl" for b in others
+    }
+    assert not (
+        tmp_path / f"band_{first}.pkl"
+    ).exists()  # a failed band is retried
+    result.to_json(tmp_path / "bands.json")
+    json.loads((tmp_path / "bands.json").read_text())
+    # A rerun with the same arguments loads the good bands and refits only the failed one.
+    calls.clear()
+    fit_orbit_aliases(data, (12.1, 12.7), **kw)
+    assert calls == [first]
+    # A changed setting (s_max) invalidates the checkpoints.
+    calls.clear()
+    fit_orbit_aliases(data, (12.1, 12.7), s_max=50.0, **kw)
+    assert len(calls) == len(result.bands)

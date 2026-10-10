@@ -20,8 +20,11 @@ See ``fit_orbit_aliases`` for the entry point.
 
 import dataclasses
 import functools
+import hashlib
 import json
 import math
+import pathlib
+import pickle
 
 import jax
 import jax.numpy as np
@@ -354,12 +357,13 @@ def _mode_evidence(problem, x, value, n_is, rng, df=5.0, bound_sigma=3.0):
     The importance proposal is a multivariate Student-t (``df``) with the
     Laplace covariance. The hard prior bounds truncate the target; angles
     are periodic and are kept within half a turn of the mode. A mode whose
-    Hessian is not positive definite has no proposal: both evidences are
+    Hessian is not positive definite, or is singular, has no proposal: both evidences are
     ``-inf`` and it is dropped.
     """
     h = -onp.asarray(problem.hessian(np.asarray(x)), float)
     h = 0.5 * (h + h.T)
-    eig = onp.linalg.eigvalsh(h)
+    finite = bool(onp.all(onp.isfinite(h)))
+    eig = onp.linalg.eigvalsh(h) if finite else onp.array([-onp.inf])
     out = dict(
         x=x.tolist(),
         loglike=value,
@@ -368,10 +372,20 @@ def _mode_evidence(problem, x, value, n_is, rng, df=5.0, bound_sigma=3.0):
         ess=0.0,
         flags=[],
     )
-    if not (onp.all(onp.isfinite(h)) and eig.min() > 0):
+    if not (finite and eig.min() > 0):
         out["flags"].append("hessian-not-positive-definite")
         return out, None
-    cov = onp.linalg.inv(h)
+    if eig.min() <= 1e-13 * eig.max():
+        # Positive, but too ill-conditioned to invert: a flat direction.
+        out["flags"].append("hessian-singular")
+        return out, None
+    try:
+        cov = onp.linalg.inv(h)
+        chol = onp.linalg.cholesky(cov)
+        l_inv = onp.linalg.inv(chol)
+    except onp.linalg.LinAlgError:
+        out["flags"].append("hessian-singular")
+        return out, None
     sd = onp.sqrt(onp.diag(cov))
     d = len(x)
     logdet = float(onp.linalg.slogdet(cov)[1])
@@ -392,7 +406,6 @@ def _mode_evidence(problem, x, value, n_is, rng, df=5.0, bound_sigma=3.0):
     if onp.any(onp.abs(grad[free]) * sd[free] > 0.1):
         out["flags"].append("not-converged")
     # Student-t proposal.
-    chol = onp.linalg.cholesky(cov)
     z = rng.standard_normal((n_is, d))
     g = rng.chisquare(df, n_is) / df
     xs = x + (z @ chol.T) / onp.sqrt(g)[:, None]
@@ -421,7 +434,7 @@ def _mode_evidence(problem, x, value, n_is, rng, df=5.0, bound_sigma=3.0):
         else onp.zeros(n_is)
     )
     out["ess"] = float(w.sum() ** 2 / max((w**2).sum(), 1e-300))
-    proposal = (x, onp.linalg.inv(chol), logdet, df)
+    proposal = (x, l_inv, logdet, df)
     return out, (xs, log_t, log_w, proposal)
 
 
@@ -457,6 +470,68 @@ def _mixture_weights(draws):
 # ---------------------------------------------------------------------------
 
 
+def _clean(v):
+    """``v`` as strict JSON: arrays to lists, inf and nan to None."""
+    if isinstance(v, dict):
+        return {k: _clean(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_clean(x) for x in v]
+    if hasattr(v, "tolist"):
+        return _clean(v.tolist())
+    if isinstance(v, float) and not math.isfinite(v):
+        return None  # JSON has no inf or nan
+    return v
+
+
+def _fingerprint(obj):
+    """A hash of every array in ``obj`` (data or positions), to tell a checkpoint's data from new data."""
+    if obj is None:
+        return None
+    h = hashlib.sha256()
+    for leaf in jax.tree_util.tree_leaves(obj):
+        try:
+            a = onp.asarray(leaf)
+        except Exception:  # noqa: BLE001 - not an array: hash its repr
+            h.update(repr(leaf).encode())
+            continue
+        h.update(str(a.shape).encode() + str(a.dtype).encode() + a.tobytes())
+    return h.hexdigest()
+
+
+def _band_files(directory, band):
+    d = pathlib.Path(directory)
+    return d / f"band_{band.n}.pkl", d / f"band_{band.n}.json"
+
+
+def _load_band(directory, band, key):
+    """A band's checkpoint, or None if there is none or it is for other settings."""
+    if directory is None:
+        return None
+    pkl, _ = _band_files(directory, band)
+    try:
+        with open(pkl, "rb") as f:
+            saved_key, done = pickle.load(f)
+    except Exception:  # noqa: BLE001 - missing or truncated: refit
+        return None
+    return done if saved_key == _clean(key) else None
+
+
+def _save_band(directory, band, key, done):
+    """Write a band's checkpoint atomically (pickle to reload, JSON to read)."""
+    if directory is None:
+        return
+    pkl, js = _band_files(directory, band)
+    pkl.parent.mkdir(parents=True, exist_ok=True)
+    tmp = pkl.with_suffix(".tmp")
+    with open(tmp, "wb") as f:
+        pickle.dump((_clean(key), done), f)
+    tmp.replace(pkl)
+    with open(js, "w") as f:
+        json.dump(
+            _clean(dataclasses.asdict(done[0])), f, indent=1, default=str
+        )
+
+
 @dataclasses.dataclass
 class AliasBandResult:
     """The fit of one alias band (see [`AliasResult`][virgil.aliases.AliasResult])."""
@@ -478,6 +553,7 @@ class AliasBandResult:
     epochs: list = dataclasses.field(
         default_factory=list
     )  # per-epoch raw χ²/ν and scales
+    error: str = ""  # the exception, if the band failed (flag ``band-failed``)
 
 
 @dataclasses.dataclass
@@ -516,8 +592,9 @@ class AliasResult:
         return self.bands[0]
 
     def table(self):
-        """One row per band: raw χ²/ν, per-epoch error scales, log Z (Laplace
-        and IS), p, ESS and the flag."""
+        """One row per band: raw χ²/ν, error scales (``scales`` flat over
+        epochs and blocks; ``epoch_scales`` one list per epoch), log Z
+        (Laplace and IS), p, ESS and the flags."""
         return [
             dict(
                 n=b.n,
@@ -525,7 +602,12 @@ class AliasResult:
                 p_hi=b.p_hi,
                 period=b.best.get("period"),
                 chi2_red=b.chi2_red,
-                scales=[e["scale"] for e in b.epochs],
+                scales=[
+                    v
+                    for e in b.epochs
+                    for v in onp.atleast_1d(e["scale"]).tolist()
+                ],
+                epoch_scales=[e["scale"] for e in b.epochs],
                 log_z=b.log_z,
                 log_z_is=b.log_z_is,
                 p=b.p,
@@ -553,19 +635,8 @@ class AliasResult:
             else {},
         )
 
-        def clean(v):
-            if isinstance(v, dict):
-                return {k: clean(x) for k, x in v.items()}
-            if isinstance(v, (list, tuple)):
-                return [clean(x) for x in v]
-            if hasattr(v, "tolist"):
-                return clean(v.tolist())
-            if isinstance(v, float) and not math.isfinite(v):
-                return None  # JSON has no inf or nan
-            return v
-
         with open(path, "w") as f:
-            json.dump(clean(payload), f, indent=1, default=str)
+            json.dump(_clean(payload), f, indent=1, default=str)
 
 
 def _physical(x, t_ref):
@@ -643,6 +714,8 @@ def fit_orbit_aliases(
     flag_nats=1.0,
     ess_min=50.0,
     seed=0,
+    checkpoint_dir=None,
+    on_band=None,
 ):
     """Weigh the period aliases of an undersampled orbit with the observables.
 
@@ -694,12 +767,25 @@ def fit_orbit_aliases(
         A band gets the flag ``laplace-is-differ`` when its Laplace and
         importance-sampling log evidences differ by more than this.
 
+    checkpoint_dir : path-like, optional
+        Each finished band is written here (``band_<N>.pkl`` for reuse and
+        ``band_<N>.json`` to read) before the next starts. A rerun with the
+        same data, positions, ranges and settings loads the finished bands instead of
+        refitting them; a band that raised is not saved, so it is retried.
+    on_band : callable, optional
+        Called with each band's
+        [`AliasBandResult`][virgil.aliases.AliasBandResult] as soon as it is
+        fitted or loaded (``p`` is not yet set: it needs all bands).
+
     Returns
     -------
     AliasResult
 
     Notes
     -----
+    A band that raises is kept as a ``band-failed`` row (``error`` holds the
+    exception) with ``log_z = -inf``; the other bands are unaffected.
+
     The band evidence ``log_z`` is the sum, over the band's distinct fitted
     modes (both senses of motion; the (Ω+180, ω+180) mirror is folded
     away by ``Ω < 180``), of the Laplace approximation to the marginal
@@ -714,7 +800,8 @@ def fit_orbit_aliases(
 
     ``flags`` lists why a band should not be trusted:
     ``near-prior-bound``, ``not-converged`` (the optimizer stopped more
-    than 0.1σ from a stationary point), ``hessian-not-positive-definite``,
+    than 0.1σ from a stationary point), ``hessian-not-positive-definite``, ``hessian-singular``,
+    ``band-failed`` (an exception in the band; the others are unaffected),
     ``laplace-is-differ``, ``low-ess`` (best mode's ESS below ``ess_min``)
     and ``no-valid-mode``. ``chi2_red`` is the raw χ²/ν on the quoted errors
     at the best mode, before any error scale.
@@ -737,7 +824,6 @@ def fit_orbit_aliases(
     bands = alias_bands(mean_times, p_range)
     if not bands:
         raise ValueError("No alias band lies within p_range.")
-    rng = onp.random.default_rng(seed)
     profile = (
         position_profile(positions, bands, k=k, n_best=n_candidates, eccs=eccs)
         if positions is not None
@@ -751,8 +837,32 @@ def fit_orbit_aliases(
     problem = _Problem(
         data, t_ref, p_range, a_range, flux_range, ecc_max, s_max
     )
-    results, store = [], {}
-    for index, band in enumerate(bands):
+    key = dict(
+        edges=[[bd.p_lo, bd.p_hi] for bd in bands],
+        data=_fingerprint(data),
+        positions=_fingerprint(positions),
+        times=mean_times.tolist(),
+        s_max=s_max,
+        k=k,
+        eccs=None if eccs is None else list(onp.asarray(eccs, float)),
+        max_steps=max_steps,
+        min_distance_mas=min_distance_mas,
+        flag_nats=flag_nats,
+        ess_min=ess_min,
+        ecc_max=ecc_max,
+        a_range=list(a_range),
+        flux_range=list(flux_range),
+        n_candidates=n_candidates,
+        n_refine=n_refine,
+        n_random=n_extra,
+        n_is=n_is,
+        seed=seed,
+        t_ref=t_ref,
+    )
+
+    def fit_band(index, band):
+        # Its own stream: a band does not depend on which bands were fitted or loaded before it.
+        rng = onp.random.default_rng([seed, band.n])
         problem.set_band(band)
         pool = []
         if profile is not None:
@@ -849,23 +959,51 @@ def fit_orbit_aliases(
             flags.append("low-ess")
         if best_mode is None:
             flags.append("no-valid-mode")
-        results.append(
-            AliasBandResult(
-                n=band.n,
-                p_lo=band.p_lo,
-                p_hi=band.p_hi,
-                modes=modes,
-                log_z=z_lap,
-                log_z_is=z_is,
-                ess=best_mode["ess"] if best_mode else 0.0,
-                flagged=bool(flags),
-                flags=flags,
-                best=best,
-                chi2_red=chi2_red,
-                epochs=epochs,
-            )
+        result = AliasBandResult(
+            n=band.n,
+            p_lo=band.p_lo,
+            p_hi=band.p_hi,
+            modes=modes,
+            log_z=z_lap,
+            log_z_is=z_is,
+            ess=best_mode["ess"] if best_mode else 0.0,
+            flagged=bool(flags),
+            flags=flags,
+            best=best,
+            chi2_red=chi2_red,
+            epochs=epochs,
         )
-        store[band.n] = (xs_pool, lw_pool)
+        return result, (xs_pool, lw_pool)
+
+    results, store = [], {}
+    for index, band in enumerate(bands):
+        done = _load_band(checkpoint_dir, band, key)
+        if done is None:
+            try:
+                done = fit_band(index, band)
+            except Exception as err:  # noqa: BLE001 - one band must not lose the rest
+                done = (
+                    AliasBandResult(
+                        n=band.n,
+                        p_lo=band.p_lo,
+                        p_hi=band.p_hi,
+                        modes=[],
+                        log_z=-onp.inf,
+                        log_z_is=-onp.inf,
+                        ess=0.0,
+                        flagged=True,
+                        flags=["band-failed"],
+                        error=f"{type(err).__name__}: {err}",
+                    ),
+                    (None, None),
+                )
+            else:
+                _save_band(checkpoint_dir, band, key, done)
+        result, pool = done
+        results.append(result)
+        store[band.n] = pool
+        if on_band is not None:
+            on_band(result)
 
     log_z = onp.array([b.log_z for b in results])
     finite = onp.isfinite(log_z)
@@ -887,7 +1025,9 @@ def fit_orbit_aliases(
         if xs is None or not onp.any(onp.isfinite(lw)):
             continue
         w = onp.exp(lw - onp.max(lw))
-        pick = rng.choice(len(xs), size=n_samples, p=w / w.sum())
+        pick = onp.random.default_rng([seed, 2**31, b.n]).choice(
+            len(xs), size=n_samples, p=w / w.sum()
+        )
         samples[b.n] = _physical(xs[pick], t_ref)
     return AliasResult(
         t_ref,
