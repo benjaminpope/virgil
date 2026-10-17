@@ -45,8 +45,11 @@ jobs:
     name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}${{ matrix.canary && ' canary' || '' }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }}
     needs: matrix
     runs-on: ${{ matrix.os }}
-    # Fail a hung job instead of holding a runner for GitHub's 6 hours.
-    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.nightly) && 90 || github.event_name == 'pull_request' && !matrix.slow && !matrix.orbit_slow && 30 || 45 }}
+    # Fail a hung job instead of holding a runner for GitHub's 6 hours. The
+    # 30 minutes are for the pull-request gate's shards (about 10); the
+    # unsharded full-tier jobs (macOS, py3.13, the floors) run the whole
+    # suite on one runner, which py3.13 takes over 30 minutes for.
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.nightly) && 90 || github.event_name == 'pull_request' && matrix.shard && !matrix.slow && !matrix.orbit_slow && 30 || 45 }}
     strategy: {fail-fast: false, matrix: "${{ fromJSON(needs.matrix.outputs.matrix) }}"}
     env: {JAX_ENABLE_X64: "${{ matrix.x64 }}", UV_PYTHON: "${{ matrix.python-version }}"}
     steps:

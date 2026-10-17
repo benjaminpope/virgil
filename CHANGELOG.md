@@ -7,280 +7,749 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
-### Stability
+## 0.4.0 (2026-10-DD)
 
-virgil 0.4.0 has two tiers (see the [Stability page](docs/stability.md)).
-**Stable**: a change needs a deprecation cycle. **Provisional**: may change
-in any 0.4.x release without a deprecation, so that new features can settle.
-Everything public that is not listed here is stable. Nothing warns at
-runtime; provisional pages and API entries carry a "Provisional" notice, and
-each module lists its provisional names in `__provisional__`, which
-`tests/test_stability.py` checks. New public features start provisional.
+Everything listed as new was added after 0.3.0, which is on PyPI.
 
-Provisional in 0.4:
+### Highlights
 
-- the modules `virgil.epochs`, `virgil.aliases`, `virgil.orbit_search` and
-  `virgil.tempering` (the orbit fitting, aliases and search);
-- the `MultipoleDisk` family in `virgil.models`: `MultipoleDisk`, `ThinRing`,
-  `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`,
-  `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `Harmonics`,
-  `VonMises`, `Cone`, `PowerLawHeight`, `multipole_disk_cvis` and `gp_priors`;
-  and in `virgil.fields`, `MultipoleField` and `multipole_field_priors`;
-- the Gaussian-process members of `virgil.ensemble`: `evidence_grid`,
-  `gp_members`, `GPFit` and `EvidenceGrid`;
-- `virgil.svi` (`variational`);
-- all of `virgil.pipeline`: `BinaryPipeline` and `StarPipeline` were
-  documented as stable and are now provisional, to be promoted after a
-  release of use (`global_nsigma` is to be settled first). The run schema
-  `virgil-pipeline-run-v1` is unchanged, and a provisional pipeline no
-  longer emits a `FutureWarning`;
-- `virgil.imaging.clean` and `CleanResult`;
-- `virgil.metrics`.
+- **Stability tiers.** virgil now says what may change. Everything public is
+  **stable** (a change needs a deprecation cycle) except the features listed
+  under [Provisional](#provisional), which may change in any 0.4.x release.
+  See the [Stability page](docs/stability.md).
+- **One argument order: model before data.** The grid, limit, detection and
+  likelihood tools are all `f(model, data, ...)`, as `fit` already was, and
+  each argument has one name (`model`, `data`, `grid`). Calls in the 0.3
+  order work with a `FutureWarning` until 0.5.
+- **Orbit fitting to multi-epoch visibilities** (provisional). `Epochs` and
+  `OrbitalBinary` model a binary on its orbit with one snapshot per dataset;
+  `epoch_positions`, `start_from_positions`, `score_orbits` and
+  `fit_orbit_aliases` find the orbit, including aliased periods, with
+  evidences tempered for correlated spectral channels.
+- **The `MultipoleDisk` family** (provisional). Inclined, rotated disks built
+  from radial profiles (rings, power laws, tails, gaps and Gaussian
+  processes), azimuthal multipoles (positive `Harmonics`, `VonMises`),
+  height, a spectral index and a residual `MultipoleField`.
+- **Pipelines** (provisional). `BinaryPipeline` and `StarPipeline` (and
+  `DiskPipeline`) run named stages on public virgil functions and write a
+  resumable run folder.
+- **Imaging that sizes itself.** The image field comes from the data, the
+  reconstruction ensemble (`virgil.ensemble`) sweeps it, and
+  `gauss_newton_mass` and `variational` (SVI, `virgil.svi`) start NUTS and
+  guides from the data's curvature.
+- **Faster and steadier.** Orbit scoring, the evidence helpers, `dirty_image`,
+  `fit(method="lm")` and several builders compile once or avoid quadratic
+  passes; results are unchanged up to rounding.
+- **Correctness fixes**: projected correlated closure phases in float32, a
+  zero-error sample, `GaussianArc` and `TruncatedCone` quadrature, the
+  `SharedFlux` grid, differential-phase wrapping, and parallel NUTS chains
+  with gains.
+
+### Migration from 0.3
+
+Each 0.3 call below still works until 0.5 unless noted, with a
+`FutureWarning` that names the new call. To find the remaining 0.3-order
+calls in your own code, add `"error:.*stops working in virgil
+0.5:FutureWarning"` to your pytest `filterwarnings` (as virgil's own tests do),
+or run `pytest -W error::FutureWarning`. A message regex given to `-W` on
+the command line is matched literally, so it would not catch them.
+
+**Argument order and names**
+
+- `likelihood_grid(data, model, grid)` → `likelihood_grid(model, data=...,
+  grid=...)`. Only the model is positional; any positional call other than the
+  0.3 order raises a `TypeError` naming the keyword call. The shim recognizes
+  data by type and rebinds the arguments.
+- `optimized_likelihood_grid`, `optimized_flux_grid`, `linear_flux_grid`,
+  `laplace_flux_uncertainty_grid`, `absil_limits`, `injection_limits` and
+  `detection_statistics` take `(model, data, grid, ...)`; `gaussian_null`,
+  `rescale_errors` and `bootstrap_null` take the null scene first;
+  `injection_recovery` is `(model, null_scene, template, grid, key, ...)`.
+- `loglike`, `laplace_cov`, `laplace_parameter_uncertainty` and `fisher` are
+  `f(values, params, model, data, ...)`; `joint_prediction` and `joint_loglike`
+  are `f(params, model, data)`.
+- `model_object=`, `model_fn=`, `data_obj=`, `observations=` → `model=` and
+  `data=` (`whitened_residuals`, `model_loglike`, `flux_scale_posterior`,
+  `numpyro_model`, `posterior_predictive_summary`, `OIData.model`,
+  `OIData.with_model`, every `observables.*.predict`, `inflated_errors`,
+  `joint_data`, `joint_errors`).
+- `samples_dict=` → `grid=` in these functions and in `best_grid_point`,
+  `plot_grid_map` and `plot_contrast_curve`.
+- `starting_image(data, star, oversample, largest_mas, start, hole_mas)` →
+  everything after `data` by keyword (`oversample=`, `largest_mas=`, ...).
+  `field_fwhms`, `inner_elements` and `aperture_mas` are keyword-only
+  outright.
+- `cvis_uniform_disk(..., ud=)` → `diam=`.
+- Oxford spelling: `regularisers=` → `regularizers=` (`fit`,
+  `numpyro_model`, `diagnose`), `regulariser=` → `regularizer=`
+  (`imaging.l_curve`), `marginalise_offsets=` → `marginalize_offsets=`
+  (`RVData.term`). The numpyro factor sites are now `regularizer_<i>`.
+
+**Renamed**
+
+- `virgil.inference`: `fisher` → `observed_information` (also
+  `virgil.observed_information`; the Hessian of -log L), `gaussian_fisher` →
+  `expected_fisher`, `laplace_covariance` → `objective_laplace_covariance`.
+  `laplace_cov` keeps its name. `virgil.inference` has an `__all__`.
+- `OIData.observable_kind` → `OIData.vis_encoding` (`"split"` or
+  `"mixed_log_complex"`), so it is not mistaken for the record key
+  `vis_mode`. The old attribute still reads, with a `FutureWarning` outside
+  virgil.
+- `legacy.oifits_implaneia.GetWavelength`, `Format_STAINDEX_V2`,
+  `Format_STAINDEX_T3`, `rad2mas` and the `cp_indices` re-export are
+  deprecated (`FutureWarning`; removal in 0.6).
+
+**Results that change for the same call**
+
+- **`GaussianArc` has a different shape.** The weight is now a von Mises arc
+  rather than a Gaussian in arc length. Refits of long arcs change (about
+  1e-2 in V at a fifth of the semicircle, more for longer arcs); no warning
+  is given. See Changed.
+- **`TruncatedCone` shifts numerically.** Its default `n_rings` goes from 32
+  to 48 and its quadrature is Gauss–Legendre, so a 0.3 fit rerun gives a
+  different χ² and best fit.
+- **`fit_orbit_aliases` tempers by default** (`temper=True`), so evidences,
+  band probabilities and posteriors are not comparable with untempered 0.3
+  runs on correlated channels; `temper=False` reproduces them. Its other new
+  defaults (`p_range`, `sign_free`, `primary_diam="auto"`, `vis_amp`,
+  `skip_flagged`, `flip_flux`) are listed under Changed; `p_range=`,
+  `sign_free=False`, `primary_diam=None` or `vis_amp=None` restores the old
+  behaviour. Checkpoints of earlier versions are refitted.
+- **Image fields and flagged samples.** The default `starting_image` field
+  now comes from the data (`image_field`), the ensemble sweeps `(0.75, 1.0,
+  1.5)` times it, and `beam`, `fringe_scales`, `nyquist_pixel_scale`,
+  `field_of_view` and `Epochs.resolution_mas` ignore flagged samples. Data
+  without flags are unchanged.
+- **Dense mass limit.** `gauss_newton_mass` returns the diagonal, with a
+  `UserWarning`, above 4096 coordinates (was 8192); `variational` with
+  `"bnaf"`, `"iaf"`, `"mvn"` or `"laplace"` raises `ValueError` above it. Use
+  `laplace_samples` or a diagonal guide such as `autoguide.AutoNormal`.
+- **`laplace_samples` with a given `key`** returns different draws (the
+  singular vectors' signs differ between host and device SVDs); the
+  distribution is the same.
+- **`laplace_parameter_uncertainty`** computes in float64 by default.
+- **Zero errors.** `OIData` drops V² and phase samples with a zero or negative
+  error (a zero error gave non-finite likelihoods and fits).
+- **Array fields.** The numeric prior fields of `FluxSpectrum` (`widths`,
+  `scale`, `poly_width`) and `DifferentialPhase.prior_width` are NumPy arrays;
+  read them with `tuple(...)` where you compared them with a tuple.
+- **`line_pa`.** `KeplerOrbit.frame(...)["line_pa"]` is in `[0, 360)` (was
+  `(-180, 180]`).
+- **`DetectionMC.load`** raises `ValueError` for a file format other than 1
+  (a file without `format` reads as 1).
+- **Warnings.** Four warnings that set no category now say `UserWarning`. A
+  pipeline no longer emits a `FutureWarning` (it is provisional).
+
+**`Tabulated` is removed in 0.4.0**, as the 0.3.0 entry promised:
+`Tabulated(ratio, wavel)` → `Nodes(ratio, wavel)`, with the free values at
+`flux.values` (see Removed). The other deprecations wait for 0.5.
 
 ### Added
 
+**Orbits** (provisional; see the orbit-fitting page)
+
+- **`Epochs` and `OrbitalBinary`**: a binary on its orbit, observed as one
+  snapshot per dataset (the default for orbits whose motion within a night
+  is negligible). `Epochs.resolution_mas` gives the data's finest λ/B.
+- **`epoch_positions`** fits the companion's position and covariance in each
+  dataset on the scale-marginalized surface `m = -Σ_b (ν_b/2) ln χ²_b`, in
+  which each dataset's V² and closure-phase error scales are integrated out
+  under their Jeffreys priors (`epochs.marginal_loglike`; `s_max=` bounds the
+  scale, matching `scipy.integrate.quad` to about 1e-11, and `dof=` sets an
+  effective-dof fraction). Positions, covariances and
+  `EpochPositions.gap_marginal` therefore do not change when one dataset's
+  errors are rescaled. It refines the top `n_peaks=5` distinct local maxima
+  (`EpochPositions.peaks`, a catalogue of `EpochPeaks`), measures
+  `gap_marginal` against the best refined rival, and records raw χ²/N and the
+  profiled scales (`chi2_raw`, `scale`), with a `UserWarning` for datasets
+  with raw χ²/N > 4. Data with gains, closure-phase offsets or a
+  model-dependent covariance raise `NotImplementedError`. `decisive`,
+  `positions(min_gap=...)` and `start_from_positions(min_gap=...)` compare
+  `gap_marginal`.
+- **Night flags and UD-aware seeds.** `epoch_positions` flags nights that
+  should not seed an orbit (`alias-peaks`, `low-gap`, `chi2-high`,
+  `sep-below-resolution`, `flux-at-bound`), each with a reason (`NightFlag`,
+  `EpochPositions.flags`, `.flagged`, `.flag_codes()`), with the keywords
+  `flag_nights`, `flag_alias_nats`, `flag_min_gap`, `flag_chi2_factor`,
+  `flag_sep_fraction` and `flag_flux_tol`. `primary_diam=` fits the
+  per-night companion beside a uniform-disc primary (also
+  `start_from_positions(primary_diam=, flag_options=)`).
+- **Starting orbit fits**, all model first: `rank_orbits(model, data, orbits)`
+  ranks trial orbits (e.g. from `starting_orbits`) by the log likelihood of
+  all epochs; `chain_starts` picks the best distinct orbits, one per chain;
+  `start_from_positions(model, priors, data, start_values, ...)` chains
+  positions, starting orbits, ranking and `fit` into an `OrbitStart`, whose
+  `chain_values` give one start per distinct mode, `.seeded` and `.ambiguous`
+  name the datasets that seeded the orbits and those left out (with a
+  `UserWarning`), and `.failed` records refinements that raised;
+  `likelihood.chain_init_params` turns one start per chain into numpyro's
+  `init_params`. `rank_orbits` and `start_from_positions` take `scales="quoted"
+  | "marginal"` (default `"marginal"`, as in `score_orbits`); rankings use
+  `orbit_search.rank_scores` (ties within 1e-3 nat broken by index,
+  non-finite scores last). `start_from_positions` forwards `time_limit` and
+  keeps going when one refinement fit raises (a `TypeError` or `ValueError`,
+  such as a misspelt option, still raises at once).
+- `starting_orbits(batch_size=)` bounds the memory of the grid solve, and
+  `sign_free=True` seeds from positions known only up to a sign.
+  `orbits.period_grid(times, p_min, p_max, k=9)` gives trial periods uniform
+  in frequency with δP ≤ P²/(kT) over the baseline T, finer than ARMADA's
+  and The Joker's rules; `start_from_positions` warns when its `periods` are
+  coarser than that over the seeding datasets.
+- **`score_orbits`** (`virgil.orbit_search`): `score_orbits(model, epochs,
+  orbits, shared=SharedFlux(...), terms=(...), scales="marginal")` scores a
+  stack of candidate orbits on all epochs in one compiled, `lax.map`-batched
+  kernel (`model(orbit, flux)`; `rank_orbits` takes `model(orbit)`). The
+  companion flux is shared (one per band, optionally f₀(λ/λ₀)^β, at most 1 in a
+  reference band), integrated out under a log-uniform prior and also reported
+  profiled with an uncertainty from the curvature. The coarse grid seeds
+  Newton steps to the profiled peak, and Gauss–Legendre nodes then integrate
+  it, so the marginal is within 0.05 nat of brute-force quadrature (a
+  coarse-grid fallback is flagged in `OrbitScores.fallback`). Each dataset's
+  error scales are marginalized as in `marginal_loglike`, bounded by default
+  to [1/5, 5] (`s_max=5`; `None` for the unbounded closed form), and the
+  scale needed at the profiled flux is reported in `OrbitScores.scale`
+  (`scale_at_bound` flags those pressing on `s_max`). Gains and
+  closure-phase offsets are profiled analytically; `RVData` and
+  `PositionData` terms or callables are added. `max_evaluations` refuses a run
+  whose predicted cost is over budget, and `rank_scores` /
+  `OrbitScores.order` rank with ties broken on quantized scores.
+- **`fit_orbit_aliases`** (`virgil.aliases`) fits orbits whose epochs
+  undersample the period: alias bands `N = round(T/P)`, each fitted to the
+  closure phases of all epochs with per-epoch error scales integrated out,
+  with Laplace and importance-sampling evidences, band probabilities and
+  posterior samples. `AliasResult.table()` gives one row per band;
+  `AliasResult.save` writes a `format` field (1) and `load` refuses a newer
+  one. `checkpoint_dir=` writes each band as soon as it is fitted and a rerun
+  with the same data, positions and settings loads it (each band has its own
+  random stream, so a resumed run reproduces an uninterrupted one);
+  `on_band=` is called with each `AliasBandResult`. Failures are rows, not
+  crashes: `band-failed`, `hessian-singular`, `no-valid-mode`, `starts-failed`
+  (`AliasBandResult.error`, `.n_starts_failed`); a `RuntimeError` is raised
+  only when every band fails, and the likelihood and gradient are evaluated
+  once before any band, so a misconfiguration raises there. `AliasResult`
+  also records `labels_free`, `period_bound`, `period_at_lower_bound`,
+  `window_capped`, `p_range`, `primary_fit` and `unseeded`.
+  - **Near-equal binaries.** `sign_free=True` adds sign-free seeds beside the
+    signed ones (closure phases cannot tell `(dra, ddec)` from `(-dra,
+    -ddec)` epoch by epoch at flux ratios of 0.9–1, and the wrong sign mix
+    landed on the wrong alias); fluxes are also seeded near the top of
+    `flux_range`.
+  - **Resolved primary, contrast loss, bright companion.** `primary_diam` gives
+    the primary a uniform disk (fixed, or `"fit"`/`"auto"` for one shared
+    log-uniform diameter); `vis_amp=(lo, hi)` gives every epoch's V² its own
+    profiled amplitude; `flip_flux` refits a mode whose flux ratio is pinned at
+    the top of `flux_range` with the stars' labels swapped
+    (`AliasBandResult.flipped`); `init=` is a warm start always refined in the
+    band holding its period.
+  - **Tempered evidence for correlated spectral channels.** `temper=True`
+    divides every block's log likelihood by the effective-channel factor
+    `f = N / N_eff`, estimated as the empirical within-chain covariance factor
+    `sum (sum_chain z)^2 / sum z^2` of the residuals of each night's best static
+    fit, over the chains of consecutive channels of a baseline or triangle.
+    It is exact for AR(1) and common-mode correlation alike, is 1 for white
+    noise, at most the channel count, used as `max(f, 1)` (tempering never
+    sharpens). On 20 seeds of strongly correlated noise the median sky-plane
+    offset/spread is 1.1 and 1.3 tempered against 2.6 and 3.0 untempered.
+    `temper=False` is the old behaviour and a finite float ≥ 1 a fixed `f`
+    (which also tempers the `primary_diam="auto"` resolution test).
+    `AliasResult.temper_f`, `.temper_blocks`, `.temper_rho` and `.tempering`
+    record it; `block_dof()` gives the block-keyed `dof` for later stages. New
+    module `virgil.tempering` (`channel_chains`, `estimate_factors`,
+    `ChannelFactors`), with `marginal_loglike(block_dof=)` and
+    `estimate_primary_diameter(block_dof=)`.
+  - `period_window` computes a default `p_range` from the data (a Nyquist-style
+    sampling limit at the bottom, 4 times the span at the top, capped at
+    `n_bands_max=200` bands with a warning); `estimate_primary_diameter` and
+    `PrimaryDiameter` are new. L-BFGS is followed by Levenberg–Marquardt
+    polishing, aimed at the `not-converged` and
+    `hessian-not-positive-definite` flags.
+- **Tutorial**: the orbit tutorial fits one snapshot per night with `Epochs`
+  and `OrbitalBinary`, starts from `start_from_positions`, and starts one
+  NUTS chain per distinct mode.
+
+**`MultipoleDisk` family** (provisional; follows the ideas of frank, Jennings
+et al. 2020, and vis-r, Kennedy 2025, credited in the docstrings and on the
+contributors page; no code was copied)
+
+- **`MultipoleDisk`**: an inclined, rotated disk with a radial profile
+  (`ThinRing`, `GaussianRing`, `RadialPowerLaw` with sharp or soft edges,
+  `ExpTail`, `Gap`, `RadialSum`) and an optional Gaussian blur, built on
+  `multipole_disk_cvis`, a Hankel transform by quadrature (Gauss–Legendre, or
+  Gauss–Laguerre for an exponential tail). A weight belongs to a term of the
+  sum, as `RadialSum(a, (b, 0.3))` or `RadialSum(core=ring, halo=(tail,
+  0.2))`. `ExpTail(cutoff=)` uses a Gauss–Legendre rule on a finite tail.
+- **Height and harmonics.** `height=` takes `Cone(alpha, tip)` or
+  `PowerLawHeight(h_ref, r_ref, psi)` (each ring is lifted along the disk's
+  normal), and `harmonics=` takes `Harmonics(c=, s=)` of Cartesian
+  coefficients, constants or functions of the radius (`RadialLinear`,
+  `RadialPower`). `min_intensity()` reports where the image would go
+  negative. `multipole_disk_cvis` takes `c`, `s`, `height` and `stretch`.
+- **Positive azimuthal harmonics, `VonMises` and `virgil.harmonics`.**
+  `Harmonics(degree=M)` (or `w=`, `re=`, `im=`) is the *positive* form by
+  default: brightness `|h(e^{i theta})|^2` normalized to the azimuthal mean,
+  with `h` the minimum-phase polynomial of complex reflection coefficients
+  from unconstrained latents. Every non-negative image of degree `M` is
+  reachable (Fejér–Riesz), the image is positive for every parameter value,
+  and the root-flip multimodality is removed. The linear form (`c=`, `s=`) is
+  unchanged and chosen whenever `c` or `s` is given. `VonMises(kappa, theta0,
+  degree=M)` is an arc with analytic harmonics (`truncation_power()` reports
+  the dropped power). `virgil.harmonics` converts every form to and from the
+  image harmonics (`to_image_harmonics`, `from_image_harmonics`,
+  `Harmonics.convert`, and the legacy `az_amps`/`az_pas` conventions via
+  `from_legacy` and `to_legacy`). Credited to Dumitrescu 2007 and
+  Barndorff-Nielsen & Schou 1973.
+- **Gaussian-process profiles.** `RadialGP(r_in, r_out, ...)` is a whitened
+  Matérn profile (positive, $\exp g$) and `RadialGPFunction` the same process
+  as a radial function $g(r)$ (a spectral index or a harmonic coefficient);
+  `MultipoleKernel` is a prior over the harmonic coefficients
+  (`Harmonics(degree=M, prior=...)`); `MultipoleDisk` takes `spectral_index=`
+  (number, function or `RadialGPFunction`) with `wavel0=`; `gp_priors` builds
+  the priors, and `fit`, `numpyro_model` (NUTS, flat coordinates) and
+  `imaging.log_evidence` (Laplace over the latents) support them.
+  `freeze_geometry(data)` caches the Bessel matrices. After FRAP (Yoshida et
+  al. 2026), credited in the docstrings, the contributors page and the
+  bibliography.
+- **`MultipoleField`**: a residual field for an `Image`, a Gaussian process
+  on a polar grid in a disk's frame (`MultipoleField.from_disk` copies the
+  geometry, or `geometry_from="disk"` ties it to the sibling disk;
+  `System.resolved()` bakes the ties in), with the Matérn kernel of
+  `RadialGP` in radius and the azimuthal spectrum of `MultipoleKernel`
+  (`nu` up to infinity, `nu_theta`). Whitened latents, so `image_priors`,
+  `fit`, `log_evidence` and `numpyro_model` work as for `GaussianField`;
+  `multipole_field_priors` gives bounded log-uniform priors on `sigma`,
+  `length_r` and `length_theta`. After FRAP and frank's polar representation.
+  `FlaredDisk*` is unchanged.
+- **Names** follow the stable conventions: `radius`, `sigma` (a standard
+  deviation), `inc`/`pa` in degrees, `r_ref`/`h_ref` for reference values.
+  `Harmonics(c, s, *, degree, form, re, im, w, prior)` takes everything after
+  `s` by keyword, and `ExpTail(r_in, scale_length, *, cutoff)` is
+  keyword-only for `cutoff`.
+- **Tutorial**: *a planet in a gap between inclined rings*
+  (`notebooks/multipole_disk_rings.ipynb`) simulates chromatic VLTI-like V²
+  and closure phases of a star, three coplanar blackbody rings (one
+  lopsided) and a planet in the gap; fits the parametric family with
+  invariant priors (MAP, Laplace covariance and evidence); then recovers the
+  rings, their colours and the planet with one `MultipoleDisk` whose
+  profile, spectral index and harmonics are Gaussian processes.
+- **`TruncatedCone`, `ModulatedGaussianRim` and `GaussianArc` run on the
+  `MultipoleDisk` engine** with the same names and parameters (see Changed
+  for what shifts). `TruncatedCone(..., az_amps=, az_pas=)` multiplies every
+  ring's brightness by `1 + Σ A_m cos(m (φ - φ_m))` in its own azimuth
+  (analytic visibilities, matching render); unmodulated cones are unchanged.
+  Credits carry over from the earlier cone code, `frank` and `vis-r`.
+
+**Pipelines** (`virgil.pipeline`, the `pipeline` extra; provisional)
+
+- `BinaryPipeline` (companion search, contrast limits, fit and NUTS
+  posterior) and `StarPipeline` (angular diameter and limb darkening, with
+  a registry of models by short name) run fixed, named stages on public
+  virgil functions and write a run folder: `run.json`, `summary.json`, HDF5
+  grids and samples, plots, the processed OIFITS and an executed quicklook
+  notebook, with deterministic quality checks (`Check`). Runs resume; a run
+  folder whose settings, data or template differ raises
+  `ConfigMismatchError`; re-running a stage deletes every later stage's
+  outputs. `load` reloads a run as a `Result`, which serves only complete
+  stages; `run.json` records provenance per stage; and the `virgil-pipeline`
+  command runs a pipeline and prints, validates (a run left `running` fails)
+  or re-renders the quicklook. `import virgil` does not import the
+  pipelines. See the Pipelines page.
+- `StarPipeline` compares diameter lobes and models on −2 log L
+  (`model_loglike`, so with `error_scale="fit"` each candidate is scored at
+  its own maximum-likelihood error scales), walks the registry's parent chain
+  with a BIC penalty (`summary["comparison"]` decides, `summary["comparisons"]`
+  lists all), and keeps the uniform disk's diameter scan with its scales
+  profiled. The look-elsewhere significance is computed in log space, so it
+  stays finite for large searches.
+- **`DiskPipeline`** fits a `MultipoleDisk` around one star. `model="gp"`
+  (the default) fits one `RadialGP` profile with low-degree harmonics and,
+  with enough channels, a Gaussian-process spectral index, keeping the
+  length scale of largest Laplace evidence from `ell_halffringes`;
+  `model="rings"` adds `GaussianRing` profiles that share the inclination
+  and position angle one at a time until the BIC stops improving, re-placing
+  each ring after every fit (a count with two rings too close to tell apart
+  is one ring fitted as two and is left out of the comparison, a ring whose
+  removal lowers the BIC is pruned, and the `ring_count` check warns when
+  such a count had the lower BIC). The geometry is found from a single-ring grid
+  over inclination (uniform in cos *i*) and position angle, never from one
+  local start; `companion=True` searches the residuals for a point source
+  and fits a detection jointly with the disk (the residuals are always
+  searched, to check that the disk has not absorbed one). Priors are
+  group-invariant. Stages are `geometry`, `profile`, `compare`, an opt-in
+  `posterior` (NUTS with the geometry released) and `quicklook`. See the
+  Pipelines page.
+
+**Imaging, inference and data**
+
+- **`image_field`, `second_moment_fwhm` and `OIData.unflagged`.**
+  `image_field(data)` is `field_fwhms` (6) times the source's FWHM, at least
+  `inner_elements` (4) resolution elements λ/(2 B_max) across, and at most
+  `field_of_view(data)`; the FWHM is `second_moment_fwhm(data)`, a
+  straight-line fit of −ln V² against (B/λ)² on the unflagged samples with
+  V² ≥ 0.3 (or the FWHM you give). `OIData.unflagged` is the mask of the
+  samples an observable uses. `field_of_view` takes `aperture_mas` and stops
+  at the bandwidth-smearing field R λ/B_max when the data carry channel
+  widths. `starting_image` takes `field_fwhms`, `inner_elements` and
+  `aperture_mas`; `EnsembleSpec` takes `field_mas` and `aperture_mas`;
+  `reference_starts` takes `aperture_mas`.
+- **`virgil.ensemble`**: PYRA/MYTHRA-style reconstruction ensembles.
+  `EnsembleSpec`, `draw_groups`, `run_group` (one L-curve per geometry group),
+  `combine` and `ensemble` return an `Ensemble` (mean `Image`, per-pixel σ,
+  raw χ²/N per dataset). The L-curve window keeps the weights from
+  `window_dex` below the corner up to it; the default weight ranges (`tsv`
+  0.1–10⁴, the others 10⁻⁴–10 per data point) were set from the corners of the
+  60 datasets of virgil-validation's contest bench, and each sweep draws one
+  log-uniform weight per equal bin of `log w`. The iterative mean admits a
+  member if every dataset's χ² stays within `mean_rtol` (by default each
+  dataset's χ²/N noise √(2/N)) of the best member's; diverged members are
+  dropped with `reason="diverged"`, and `combine` warns when fewer than
+  `min_kept` (3) are kept. A field too large for `max_npix` keeps its size
+  with coarser pixels.
+- **`virgil.metrics`**: scores for a reconstructed image against a known
+  truth from the imaging contests' published definitions:
+  `lawson_sigma_over_peak`, `rms_convolved` (after a Gaussian beam;
+  `pixel_scale_mas` is needed only with a beam), `l1_score` and `ncc`.
+- **Variational inference.** `virgil.svi.variational(model, priors, data,
+  ..., start=fit_result)` fits a guide to `numpyro_model`'s posterior with
+  numpyro's SVI and returns a `VariationalResult`: draws under NUTS's site
+  names, the loss history, the guide and its parameters, a convergence flag
+  and the PSIS k̂. Every guide starts at the Laplace approximation and
+  learns in units of its widths. The default is a block neural autoregressive
+  flow (`"bnaf"`), which follows curved, skewed and bounded posteriors;
+  `"iaf"`, `"mvn"` (a Gaussian, ≈ Laplace) and `"laplace"` are the
+  alternatives. float64 by default, as for `fit`; `flat_coordinates` is passed
+  through. New page: Variational inference.
+- **`gauss_newton_mass(..., noise=...)`** takes the fitted error terms of
+  `fit` and `numpyro_model` under their numpyro site names
+  (`"noise.vis_scale"`); for Gaussian data the matrix is the Fisher
+  information with rows √2 log σ for each visibility and phase error. It
+  accepts data with gains, any elementwise prior (HalfNormal, Beta, Uniform
+  and so on, each with the curvature of the sampler's transform), and
+  likelihood terms with a `log_norm`. Above 4096 coordinates it returns the
+  diagonal with a `UserWarning`. The result's `condition` is the condition
+  number of its correlation matrix. `SingularCurvature` now means a
+  direction that neither the data nor a proper prior constrains, or a matrix
+  that is not positive definite: a parameter under a bounded prior no
+  longer raises. A prior with no diagonal curvature (`MultivariateNormal`,
+  `Dirichlet`) raises `NoLeastSquaresForm`.
+- **NUTS in flat coordinates (opt-in).** `numpyro_model(...,
+  flat_coordinates=True)` maps a `LogUniform` scale to NUTS's unconstrained
+  coordinate through log x, an `IsotropicInclination` through cos i and an
+  `IsotropicLatitude` through sin(lat), for parameters and `noise=` terms
+  alike, as `fit` optimizes them. Sites keep their names, samples are the
+  model's own parameters, and the posterior is unchanged. It is off by
+  default: simulation-based calibration (1000 replicates) showed no gain in
+  effective sample size per second or in divergences. The 62² imaging
+  notebook, with `gauss_newton_mass`, ran in 67 s instead of 550 s with it, so
+  the tutorials that sample large images pass it. Pass the same value to
+  `gauss_newton_mass`, `variational` and `chain_init_params`' model;
+  `chain_init_params(..., mass=)` raises if they differ.
+- **Evidence helpers take several field Images.** `log_evidence`, `error_scale`
+  and `laplace_samples` accept `path=None` (every Image whose log-brightness
+  is a `GaussianField`) or a tuple of paths, with the Jacobian over all those
+  latents together, so a compact and an extended GP Image in one `System`
+  get a joint Laplace evidence. `laplace_samples` then returns `"latents"` as
+  a dict keyed by Image path. The default `path="env"` is unchanged.
+- **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and L-BFGS
+  run in chunks of steps, check the wall clock between them and stop,
+  unconverged, with `info["stop"] == "time"`; `progress` reports steps, loss,
+  gradient norm and elapsed time between chunks and when the fit finishes.
+  `info["stop"]` gives every unconverged fit's reason (`"limit"`, `"time"`,
+  `"stalled"`, `"non-finite"`, `"failed"`), a fit by any method that ends on
+  a non-finite loss is marked unconverged, and `info["at_bound"]` lists
+  parameters that ended at a genuine edge of an interval prior.
+- **Opt-in bandwidth smearing.** `OIData(path, bandwidth=True)` (or
+  `read_oifits(..., bandwidth=True)`) keeps `EFF_BAND` as `OIData.bandwidth`
+  (`with_bandwidth(dlambda)` sets it for simulated data); models are then
+  smeared over boxcar channels by a `sinc` envelope on each component offset
+  (`models.smeared_model`). Off by default.
+- **`spectra.Scaled(template, ratio)`**: a fixed spectral shape with one free
+  reference flux (`ratio` at the template's `wavel0`), so any spectrum (a
+  library SED, a `Sum` with lines) can be a companion in the grids, limits and
+  detection statistics, with `comp.flux.ratio` as the flux axis. Regression
+  tests run every grid, limit and detection tool on a WR + OB system, and
+  show a differential-phase-only detection of a 0.1 mas companion that a grey
+  V²/T3 fit misses. Tutorial: *Chromatic companion search*.
 - `OIData(..., insname=)` selects the instrument table(s) when reading an
   OIFITS file, as `read_oifits` does; the GRAVITY fringe-tracker/science
   error message already told users to pass it.
-
-- `starting_orbits(batch_size=)` bounds the memory of the grid solve (the
-  grid is solved in fixed-size batches).
-
-- **Tempered orbit evidence for correlated spectral channels.**
-  `fit_orbit_aliases(temper=True)` (default) divides every block's log
-  likelihood by the effective-channel factor `f = N / N_eff`, estimated as
-  the empirical within-chain covariance factor
-  `sum (sum_chain z)^2 / sum z^2` of the residuals of each night's best
-  static fit, over the chains of consecutive channels of a baseline or
-  triangle. It is exact for AR(1) and for common-mode (shared calibration)
-  correlation alike, where a lag-1 AR(1) estimate undercounts the latter
-  (8 channels, c = 0.6: 3.2 for a truth of 5.2); it is 1 for white noise,
-  at most the channel count, used as `max(f, 1)` (tempering never sharpens;
-  no significance threshold, a slight upward bias that is the safe
-  direction). The lag-1 and lag-2 correlations are kept as diagnostics
-  (`AliasResult.temper_rho`); a flat signature (rho2 well above rho1^2) warns
-  and sets `tempering`. Tempering by 1/f is exact for signals flat across
-  channels (a position) and conservative for chromatic templates. The
-  untempered evidence gave the best alias band p = 1.000 at chi2/N 12 and
-  posteriors far too narrow; on 20 seeds of such noise (AR(1) 0.85 and
-  common mode 0.6) the median sky-plane offset/spread is 1.1 and 1.3
-  tempered, 2.6 and 3.0 untempered. `temper=False` is the old behaviour and
-  a finite float >= 1 a fixed `f`, which also tempers the
-  `primary_diam="auto"` resolution test. `AliasResult.temper_f`,
-  `.temper_blocks`, `.temper_rho` and `.tempering` (largest block `f` above
-  2, raw `f` below 0.5, or a flat correlation) record it; `save` and `load`
-  keep them (older files load with `temper_f=None`), and
-  `AliasResult.block_dof()` / `virgil.tempering.block_dof` give the
-  block-keyed `dof` for later stages. New module `virgil.tempering`
-  (`channel_chains`, `estimate_factors`, `ChannelFactors`); the block score
-  takes a per-block `dof`: `marginal_loglike(block_dof=)` and
-  `estimate_primary_diameter(block_dof=)` (keyed by block, unlike the
-  dataset-keyed `epoch_positions(dof=)`). `LABELS_FREE_NATS` (3) and
-  `RESOLVE_NATS` (5) keep their values and are now in tempered nats.
-
-- **Night flags and UD-aware seeds for orbit starts.** `epoch_positions`
-  flags nights that should not seed an orbit (`alias-peaks`, `low-gap`,
-  `chi2-high`, `sep-below-resolution`, `flux-at-bound`), each with a
-  reason (`NightFlag`, `EpochPositions.flags`, `.flagged`,
-  `.flag_codes()`), with the keywords `flag_nights`, `flag_alias_nats`,
-  `flag_min_gap`, `flag_chi2_factor`, `flag_sep_fraction` and
-  `flag_flux_tol`. `primary_diam=` fits the per-night companion beside a
-  uniform-disc primary (also `start_from_positions(primary_diam=,
-  flag_options=)`). `AliasResult.unseeded` records the nights that seeded
-  nothing, and is kept by `save` and `load`.
-
-
-- **`image_field`, `second_moment_fwhm` and `OIData.unflagged`.** The image
-  field is now set by the data. `image_field(data)` is `field_fwhms` (6)
-  times the source's FWHM, at least `inner_elements` (4) resolution
-  elements λ/(2 B_max) across, and at most `field_of_view(data)`; the
-  FWHM is `second_moment_fwhm(data)`, a straight-line fit of −ln V² against
-  (B/λ)² on the unflagged samples with V² ≥ 0.3 (or the FWHM you give).
-  `OIData.unflagged` is the mask of the samples an observable uses: a
-  flagged sample keeps its u, v in the data but measures nothing.
-  `field_of_view` also takes `aperture_mas` (a telescope's field), and
-  stops at the bandwidth-smearing field R λ/B_max when the data carry
-  channel widths. `starting_image` takes `field_fwhms`, `inner_elements`
-  and `aperture_mas`; `EnsembleSpec` takes `field_mas` (the field that the
-  factors multiply) and `aperture_mas`.
-- **`gauss_newton_mass(..., noise=...)`** takes the fitted error terms of
-  `fit` and `numpyro_model` and covers them in the matrix, under their
-  numpyro site names (`"noise.vis_scale"`). For Gaussian data the matrix
-  is the Fisher information, with the extra rows √2 log σ for each
-  visibility and phase error. It now also accepts data with gains, any
-  elementwise prior (HalfNormal, Beta, Uniform and so on, each with the
-  curvature of the sampler's transform) and likelihood terms with a
-  `log_norm`. With more than 4096 coordinates it returns the diagonal of
-  the covariance, with a `UserWarning`, instead of an n² matrix.
-  `SingularCurvature` now means a direction that neither the data nor a
-  proper prior constrains (an `ImproperUniform` or flat-in-coordinate
-  parameter the data do not fix), or a matrix that is not positive
-  definite: a parameter under a bounded prior no longer raises. The
-  result's `condition` attribute is the condition number of its
-  correlation matrix. The matrix checks positive definiteness on the
-  covariance itself, which a float32 Woodbury result could fail while
-  the old check passed. A prior that is neither elementwise nor an
-  angle vector (`MultivariateNormal`, `Dirichlet`) raises
-  `NoLeastSquaresForm`, as its curvature is not diagonal.
+- `OIData.select` takes `ranges=` (a union of wavelength windows), `exclude=`
+  (windows to drop, such as a line) and `observables=` (`"vis"`, `"phi"` and
+  the extra observables' kinds), so closure-phase-only or line-free subsets
+  need no hand-flagged records. Dropping the closure phases rebuilds
+  differential phases with their closure part, and gains go with the
+  visibilities.
 
 ### Changed
 
-- `score_orbits`, `rank_orbits` and `chain_starts` compile their kernel once
-  per layout of the data instead of on every call. Results are unchanged.
-  `epoch_positions(batch_size=)` now defaults from the data's size, as the
-  other grid functions do (it was 4096), and `batch_size=0` raises.
-
-- **Imaging and metrics performance.** The evidence helpers (`log_evidence`,
-  `error_scale`, `laplace_samples`, `chi2_by_observable`, `classic_maxent`)
-  take the Jacobian's SVD on the device in float64, QR-reduced when it is
-  far from square, instead of NumPy's SVD on the host (#328). `dirty_image`
-  sums the visibilities in chunks of samples, so its memory no longer grows
-  as samples x pixels. `metrics.align` sweeps its shift table in one
-  compiled `lax.map` instead of a call per shift. Results are unchanged up to
-  rounding, except that `laplace_samples` with a given `key` returns
-  different draws than before (the singular vectors' signs differ between
-  the host and device SVDs); they have the same distribution.
-- **One naming scheme for the `MultipoleDisk` family** (new since 0.3.0, so
-  there are no shims). The classes are `MultipoleDisk`, `MultipoleKernel`
-  and `MultipoleField` (were `PolarDisk`, `PolarKernel`, `PolarField`),
-  with `multipole_disk_cvis` and `multipole_field_priors` for
-  `polar_disk_cvis` and `polar_field_priors`: the disk is a sum of
-  azimuthal multipoles, and "polar" now means only polar coordinates.
-  Names follow the stable conventions: `radius`,
-  `sigma` (a standard deviation, as `GaussianDisk`), `inc`/`pa` in degrees,
-  a unit suffix nowhere else. Renames:
-  `ThinRing(r0)` is `ThinRing(radius)`; `GaussianRing(r0, sigma, weight)`
-  is `GaussianRing(radius, sigma)`; `RadialPowerLaw(edge=)` is
-  `edge_sigma=`; `ExpTail(r0, scale, weight, cutoff)` is `ExpTail(r_in,
-  scale_length, *, cutoff)` (`cutoff` is keyword-only, so an old
-  `ExpTail(r0, L, w)` raises instead of cutting the tail); `Gap(base, r0, width, depth, weight)` is
-  `Gap(base, radius, sigma, depth)`; `RadialLinear`, `RadialPower`,
-  `PowerLawHeight` and `MultipoleKernel` take the reference radius `r_ref`
-  (was `r0`), and `PowerLawHeight` its height `h_ref` (was `h0`). The
-  profile `weight` is gone: a weight belongs to a term of the sum, as
-  `RadialSum(a, (b, 0.3))` or `RadialSum(core=ring, halo=(tail, 0.2))`
-  (paths `profile.halo.radius`, `profile.halo.weight`), and
-  `RadialSum` takes no `weight=` of its own. `RadialGP` splits in two:
-  `RadialGP(r_in, r_out, ...)` is the profile only, and the new
-  `RadialGPFunction` is the process as a callable function (spectral
-  index, harmonic coefficients, `MultipoleKernel` radial part); both share the
-  fit, prior and `draws` machinery. `Harmonics(c, s, *, degree, form, re,
-  im, w, prior)` takes everything after `s` by keyword. `_multipole_disks`
-  (used by `freeze_geometry`, `gp_priors` and `log_evidence`) now finds
-  the `MultipoleDisk` inside an `Attached` component. The profile
-  parametrization is unchanged.
-
-- The dense-matrix limit `fitting._DENSE_MASS_MAX` is 4096 coordinates
-  (was 8192; a dense 8192 × 8192 matrix is 537 MB in float64, and its
-  eigendecomposition for `GaussNewtonMass.condition` is slower still). For
-  4096 < n ≤ 8192 (images of 65² to 90²) `gauss_newton_mass` now returns
-  the diagonal, with `condition=None` and a `UserWarning`, where it gave a
-  dense mass: NUTS started from it has no dense mass. `variational` with
-  `"bnaf"`, `"iaf"`, `"mvn"` (an n × n Cholesky factor) or `"laplace"` (an
-  n × n Hessian) raises `ValueError` above the limit, before allocating:
-  use `laplace_samples` or a diagonal guide such as `autoguide.AutoNormal`.
-- `fit(method="lm")` compiles its step kernel once for every chunk and
-  every `max_steps`: the step bound is traced, so the short last chunk no
-  longer recompiles. Results are unchanged.
-- `fit_orbit_aliases` now tempers by default, so its evidences, band
-  probabilities and posteriors are not comparable with those of earlier
-  untempered runs on data with correlated channels (pass `temper=False` to
-  reproduce them). It warns when data with several channels have no
-  `EpochPositions` to estimate `f` from, when a block takes the pooled `f`
-  for want of chains of its own, and when `f` is outside the range or flat
-  across channels (`AliasResult.tempering`). Checkpoints of earlier
-  versions are refitted (format 4).
-
+- **`GaussianArc` is a von Mises arc (a change of shape).** The weight along
+  the arc is `exp(kappa cos(angle - pa))` with `kappa = (2 sqrt(2 ln 2)
+  radius / length)^2`, where it was a Gaussian in arc length taken once round
+  the circle and cut off at the antipode of `pa`. `length` is still the FWHM
+  along the arc and the parameter names are unchanged; the two shapes agree
+  to about 1e-3 in V for arcs with `length` below a tenth of the semicircle
+  (1e-2 at a fifth) but differ for long arcs. The visibility is analytic (a
+  `ThinRing` with `VonMises` harmonics and a blur); `degree` (default chosen
+  from the starting `radius` and `length`) replaces `nodes` for the
+  visibility, and `nodes` only samples the rendered image. Arcs narrower than
+  256 harmonics allow (`length / radius` below about 0.05) are integrated
+  along the arc at `nodes` points, as before (`quadrature=True`);
+  `is_physical` is false when the series drops more than 1e-4 of its power.
+- **`TruncatedCone` changes numerically.** Its default `n_rings` goes from 32
+  to 48, since too few Gauss–Legendre nodes fail sharply at long baselines,
+  and its visibilities at fixed parameters shift by the old midpoint rule's
+  error (about 8e-4 at the old default, worth Δ log L of about 4 per GRAVITY
+  epoch). Gauss–Legendre converges spectrally: for the Apep-like cone
+  (edge-on, baselines to 130 m at 2.2 µm) 40 nodes agree with a converged
+  midpoint stack to 1e-6, where 64 midpoint rings are off by 5e-4. The cost
+  per call at the default rises (48 nodes against 32 rings); it is lower
+  only at equal accuracy. `rings()` and `render()` use the same nodes as
+  `model()`. `ModulatedGaussianRim` agrees with the old code to rounding.
 - **`fit_orbit_aliases` needs no per-system arguments.** The defaults
-  changed, so results change: `p_range` is optional and defaults to a
-  window computed from the data by `period_window` (a Nyquist-style
-  sampling limit at the bottom: the companion moves less than half the
-  resolution during the longest night, with the median unflagged separation
-  as the field, or λ/B_min without positions; 4 times the span at the top;
-  no published period; capped at `n_bands_max=200` bands with a warning);
-  `sign_free=True` (sign-free seeds are added to the signed ones, so the
-  label swap is always explored, and a twin sets `labels_free`); `primary_diam="auto"` (a first pass fits a shared
-  uniform-disc diameter to the per-night positions, resolved at a gain of
-  5 nats over a point primary, then the diameter is fitted and the seeds
-  are refined with it; a point primary otherwise, and also without
-  `EpochPositions`); `vis_amp=True` (a per-night V² amplitude in 0.5 to
-  1.2 for squared-visibility data, none otherwise); `flip_flux` stays on.
-  Pass `p_range=`, `sign_free=False`, `primary_diam=None` or
-  `vis_amp=None` for the old behaviour. `AliasResult` gains `labels_free`,
-  `period_bound` (the best period is at the top of the window, or its
-  σ(log P) is wide: a short arc), `period_at_lower_bound`, `window_capped`,
-  `p_range` and `primary_fit`, all kept by `save` and `load`. New:
-  `period_window`, `estimate_primary_diameter` and `PrimaryDiameter`.
-
-- **Seeding skips flagged nights by default.** `fit_orbit_aliases`
-  accepts the `EpochPositions` of `epoch_positions` and, with
-  `skip_flagged=True` (default), a flagged night seeds nothing, though
-  its data still count in the likelihood; fewer than two seeding nights
-  fall back to random starts with a warning, and seeds from three or
-  fewer nights keep random candidates beside them.
-  `EpochPositions.positions` and `start_from_positions` also skip flagged
-  nights by default (`skip_flagged=False` restores the old behaviour).
-
+  changed, so results change: `p_range` is optional (computed by
+  `period_window`); `sign_free=True`; `primary_diam="auto"` (a first pass fits
+  a shared uniform-disc diameter, resolved at a gain of 5 nats over a point
+  primary, then fits it and refines the seeds; a point primary otherwise);
+  `vis_amp=True` (a per-night V² amplitude in 0.5 to 1.2 for squared-visibility
+  data); `flip_flux=True`, which can add a mode to a band's evidence;
+  `temper=True` (see Migration). It warns when data with several channels
+  have no `EpochPositions` to estimate `f` from, when a block takes the
+  pooled `f` for want of chains of its own, and when `f` is outside the
+  range or flat across channels (`AliasResult.tempering`). These settings
+  are in the checkpoint key, so existing `checkpoint_dir`s are refit
+  (format 4).
+- **Seeding skips flagged nights by default** (`skip_flagged=True` in
+  `fit_orbit_aliases`, `EpochPositions.positions` and `start_from_positions`;
+  `False` restores the old behaviour). A flagged night's data still count in
+  the likelihood; fewer than two seeding nights fall back to random starts
+  with a warning, and seeds from three or fewer nights keep random
+  candidates beside them.
+- **`fit_orbit_aliases` and `epoch_positions` optimize with damped Newton
+  steps.** Each start and each peak refinement runs Levenberg–Marquardt on the
+  iteratively-reweighted curvature of the scale-marginalized likelihood,
+  instead of L-BFGS-B with restarts and a Newton polish; L-BFGS-B remains the
+  fallback. It reaches the same optima (positions agree to 1e-4 mas) and is
+  faster, though which local optimum a start far from the ridge reaches can
+  differ. `max_steps=` caps the kernel's iterations (rejected steps count) and
+  the fallback's, and a refinement of `epoch_positions` that does not
+  converge keeps its grid point.
 - **The default image field comes from the data, not from λ/B_min.**
   `starting_image` took `min(max(500 mas, 6 FWHM), λ/B_min)`; the 500 mas
-  was a holdover from one system, and since λ/B_min is 14 to 80 mas for
-  every VLTI or CHARA dataset, the field was always λ/B_min and the size of
-  the source made no difference (2.9 mas sources on 58 mas fields). It is
-  now six FWHMs of the envelope (or of the short baselines' second moment,
-  if larger), between four resolution elements across and the
-  interferometric field of view; for a 2.9 mas Gaussian seen by 130 m
-  baselines at 2.2 µm that is 17 mas. Pass `field_fwhms` to change the
-  six.
+  was a holdover from one system, and since λ/B_min is 14 to 80 mas for every
+  VLTI or CHARA dataset, the source's size made no difference (2.9 mas
+  sources on 58 mas fields). It is now six FWHMs of the envelope (or of the
+  short baselines' second moment, if larger), between four resolution
+  elements across and the interferometric field of view; for a 2.9 mas
+  Gaussian seen by 130 m baselines at 2.2 µm that is 17 mas. Pass
+  `field_fwhms` to change the six.
 - **Resolution and field use unflagged samples only.** `beam`,
-  `fringe_scales`, `nyquist_pixel_scale`, `field_of_view`, `Epochs.resolution_mas`
-  and the pipelines' geometry report no longer count flagged samples,
-  whose u, v stay in the data (for example, the provider flags 59 to 95%
-  of V² of the 2024 contest's Obj1 GRAVITY at SNR < 1, which gave a beam of
-  4.3 × 3.3 mas against 11.6 × 8.1 mas from the unflagged data). Data
-  without flags, and projected (kernel, DISCO) data, are unchanged.
+  `fringe_scales`, `nyquist_pixel_scale`, `field_of_view`,
+  `Epochs.resolution_mas` and the pipelines' geometry report no longer count
+  flagged samples, whose u, v stay in the data (the provider flags 59 to 95% of
+  V² of the 2024 contest's Obj1 GRAVITY at SNR < 1, which gave a beam of 4.3 ×
+  3.3 mas against 11.6 × 8.1 mas from the unflagged data). Data without
+  flags, and projected (kernel, DISCO) data, are unchanged.
 - **The ensemble sweeps the data's field.** `EnsembleSpec.field_factors`
   defaults to `(0.75, 1.0, 1.5)` times `image_field(data)` (or `field_mas`),
-  never beyond `field_of_view(data)`, instead of `(1, 2, 4)` times
-  λ/B_min, which gave fields beyond what the data constrain. The field is
-  sized from the envelope fit of `starting_image` (`envelope_fwhm`), so a
-  bright star does not shrink it. Every field is now capped at
-  `field_of_view(data)` (λ/B_min at most), `field_mas` included, so the
-  old 2× and 4× λ/B_min fields are no longer possible; `field_factors`
-  above 1 only reach the ceiling. `reference_starts` takes `aperture_mas`.
-- **`variational` starts error terms and gains data at their
-  Gauss–Newton width.** The start passes `noise=` to `gauss_newton_mass`,
-  so fitted error terms get widths from the curvature instead of
-  `init_scale`; data with gains, and priors without a least-squares form
-  (HalfNormal, Beta), now get a Gauss–Newton start rather than
-  `init_scale`. The posterior is unchanged; only the starting width, so
-  the number of steps to converge.
-- A bounded elementwise prior (`Uniform`, `LogUniform` and so on) now adds
-  the curvature of the sampler's transform to `gauss_newton_mass`'s
-  matrix, where `Uniform` added none before. The matrix is a
-  preconditioner, so this changes the efficiency of NUTS with it, not its
-  samples.
-- The builders of `gain_modes`, `ClosureNoise`, `DifferentialPhase` and the
-  OIFITS reader's frame grouping sort once instead of passing over all
-  samples per group (quadratic before); their output is identical. The
-  numeric prior fields of `FluxSpectrum` (`widths`, `scale`, `poly_width`)
-  and `DifferentialPhase.prior_width` are now NumPy arrays that jit traces,
-  so scanning a prior width does not recompile. Read them with `tuple(...)`
-  where you compared them with a tuple.
+  never beyond `field_of_view(data)`, instead of `(1, 2, 4)` times λ/B_min,
+  which gave fields beyond what the data constrain. The field is sized from
+  the envelope fit of `starting_image` (`envelope_fwhm`), so a bright star
+  does not shrink it; every field is capped at `field_of_view(data)`, so
+  `field_factors` above 1 only reach the ceiling.
+- **`variational` starts error terms and gains data at their Gauss–Newton
+  width** (`noise=` is passed to `gauss_newton_mass`), and priors without a
+  least-squares form (HalfNormal, Beta) get a Gauss–Newton start rather than
+  `init_scale`. The posterior is unchanged; only the starting width.
+- **Bounded elementwise priors** (`Uniform`, `LogUniform` and so on) add the
+  curvature of the sampler's transform to `gauss_newton_mass`'s matrix,
+  where `Uniform` added none. The matrix is a preconditioner, so this
+  changes the efficiency of NUTS, not its samples.
+- **Dense-matrix limit.** `fitting._DENSE_MASS_MAX` is 4096 coordinates (was
+  8192; a dense 8192 × 8192 matrix is 537 MB in float64, and its
+  eigendecomposition is slower still). For 4096 < n ≤ 8192 (images of 65² to
+  90²) `gauss_newton_mass` returns the diagonal, with `condition=None` and a
+  `UserWarning`. `variational` with `"bnaf"`, `"iaf"`, `"mvn"` or
+  `"laplace"` raises `ValueError` above the limit, before allocating.
+- **Performance** (results unchanged up to rounding unless noted):
+  - `score_orbits`, `rank_orbits` and `chain_starts` compile their kernel once
+    per layout of the data, and repeated refinements in
+    `start_from_positions` compile once. `epoch_positions(batch_size=)`
+    defaults from the data's size (it was 4096) and `batch_size=0` raises.
+  - The evidence helpers (`log_evidence`, `error_scale`, `laplace_samples`,
+    `chi2_by_observable`, `classic_maxent`) take the Jacobian's SVD on the
+    device in float64, QR-reduced when it is far from square, instead of
+    NumPy's SVD on the host. `laplace_samples` with a given `key` returns
+    different draws (same distribution).
+  - `dirty_image` sums the visibilities in chunks of samples, so its memory no
+    longer grows as samples × pixels; `metrics.align` sweeps its shift table in
+    one compiled `lax.map`.
+  - `fit(method="lm")` compiles its step kernel once for every chunk and
+    every `max_steps`: the step bound is traced.
+  - The builders of `gain_modes`, `ClosureNoise`, `DifferentialPhase` and the
+    OIFITS reader's frame grouping sort once instead of passing over all
+    samples per group (quadratic before); the numeric prior fields of
+    `FluxSpectrum` and `DifferentialPhase.prior_width` are NumPy arrays that
+    jit traces, so scanning a prior width does not recompile.
 - **Models simplification (no numerical change).** The long derivations and
   accuracy notes in the docstrings of `virgil.models` and
   `virgil.fields.MultipoleField` moved to the new
   [model notes page](docs/api/models/notes.md); the docstrings keep the
-  summary, parameters and an example. The class shape checks
-  (`__check_init__` and `is_physical`) share one definition, and the ring
-  splatting of `TruncatedCone` and `MultipoleDisk` and the in-plane blur of
-  `ModulatedGaussianRim` and `MultipoleDisk` each share one helper. Results
-  are unchanged to rounding.
+  summary, parameters and an example. The class shape checks and the ring
+  splatting and in-plane blur of the disk models each share one definition.
+  Results are unchanged to rounding.
+- **`fit` falls back to L-BFGS only when the objective has no least-squares
+  form** (`fitting.NoLeastSquaresForm`), and `variational` starts at
+  `init_scale` only for that, a singular curvature
+  (`fitting.SingularCurvature`) or a parameter with no starting value
+  (`fitting.NoStartingValue`, a `ValueError`); other errors propagate
+  instead of being taken for one of these. `gauss_newton_mass` raises
+  `NoLeastSquaresForm` for data with gains, as `fit`'s Gauss–Newton path does.
+- **Warnings name the caller's line** and say their category. Deprecation
+  `FutureWarning`s and virgil's other warnings are attributed to the first
+  frame outside virgil, not to a fixed depth that pointed into equinox's
+  method wrappers or the shim; frames of JAX, numpyro and the optimizers are
+  looked through. Shim messages name methods as `Class.method`.
+- **Precision.** The limb-darkening coefficient matmul (binomials up to C(22,
+  11) with alternating signs), the `RadialGP` and `MultipoleKernel`
+  contractions, the DISCO operator application, `Centroid` and the two
+  pixel-sum matmuls in `GaussianArc` and `TruncatedCone` request
+  `Precision.HIGHEST`, as the other forward-model matmuls do (TF32 on A100/H100
+  loses the cancellation otherwise). The AMIGO covariance check takes its
+  tiny-number floor from the array's dtype.
+- **Geometry.** `_geometry.position_angle` never returns exactly 360, and
+  `KeplerOrbit.frame()["towards_primary"]` is wrapped to `[0, 360)`; the
+  geometry helpers compute lists and array-likes (such as a pandas Series) in
+  NumPy float64. One `position_angle` / `separation_pa` (North through East,
+  `[0, 360)`) serves the models, orbits and plotting.
+- **One field-of-view computation.** `field_of_view`, `nyquist_pixel_scale`,
+  `Epochs.resolution_mas` and the pipelines use per-sample `B/λ` over non-zero
+  baselines, rather than a longest wavelength and a shortest baseline that
+  are not observed together when the uv sampling differs between channels.
+- Differential-phase steps and anchors use one wrap, `[-π, π)`, in data and
+  model alike. Phase units go through one parser with one error message; a
+  blank `TUNIT` or `phi_unit` means the default unit in both.
+- The `oifits` module no longer imports JAX itself (`import virgil` still
+  does). `FWHM_PER_SIGMA` replaces the hand-written `2.3548` (a 1e-5
+  relative change in an envelope-fit starting width).
+- The orbit API settled before release: `score_orbits(model, epochs, orbits,
+  ...)` is model first (the order `score_orbits(epochs, model, ...)` works
+  with a `FutureWarning` for one release), `EpochPositions.gap` is gone
+  (`gap_marginal` is the gap), `UNRECORDED` is no longer in
+  `virgil.aliases.__all__`, and `aliases.spectral_window` is removed (unused;
+  `|mean exp(2πi f t)|²` is one line of numpy).
+- A private `virgil._deprecate` module implements the 0.4 change to a single
+  argument order and the renamed keywords: `old_order` accepts calls in the
+  0.3 positional order, recognized by which argument is the `OIData`, with a
+  `FutureWarning` that names the new call (a `TypeError` once `removed=True`,
+  in 0.5); `old_order` and `renamed` accept the old keyword names with a
+  `FutureWarning`, and passing an old name with its new one is a
+  `TypeError`.
+- **The `optimistix` floor is 0.1.0** (was 0.0.11): `fit(method="lm")` needs a
+  loop that stops on an unsuccessful result, which 0.0.11 did not.
+- Tests and tooling: `import jax.numpy as np` and `import numpy as onp`
+  everywhere in `src`, `tests`, `examples` and `scripts`, enforced by Ruff's
+  `ICN001` (six `src` modules had the two swapped, so code moved between
+  files silently changed backend); CI is faster and steadier, with the
+  slowest tests sharing fixtures, one pull-request job running the slow
+  tests, and the `dev` extra including `orbits`; releases are gated on a
+  full-tier test run of the tagged commit.
+
+### Fixed
+
+- **The pipelines no longer fail with numpyro's "Cannot find valid initial
+  parameters" on a non-detection.** With no companion the fitted flux runs to
+  the lower end of its prior (and an unresolved star's diameter to the edge of
+  `diam_range_mas`); NUTS then started exactly on the bound, where the
+  unconstrained value is infinite. `BinaryPipeline`, `StarPipeline` and
+  `DiskPipeline` now start the chains at least 1e-3 of the prior's width
+  inside any bound (so a start within 0.1% of a bound, which `fit` reports in
+  `at_bound`, moves slightly and gives different draws for the same seed); a
+  start that is still not finite raises a `ValueError` naming the start
+  values instead of numpyro's `RuntimeError`; and `BinaryPipeline` and
+  `StarPipeline` add a `start_at_bound` warning check when the best fit sits
+  at a bound.
+- **Projected correlated closure phases keep only their real directions in
+  float32.** When an operator (a kernel-phase or DISCO phase projection) is
+  applied to closure phases with four or more telescopes, their correlation
+  matrix is singular, and `OIData` rotates the operator onto the
+  eigenvectors of the projected covariance with a cut at 1e-10 of the
+  largest eigenvalue. That is below float32 eps, so the numerically zero
+  directions were kept (33 to 36 outputs where 30 are real, for ten
+  four-telescope frames), with a weight 10⁶ times that of a real one. The
+  covariance and its `eigh` are now computed on the host in float64.
+  Operators that already whiten the covariance (as DISCO operators do) are
+  unchanged.
+- **`OIData` drops samples with a zero error** (see Migration): a zero error
+  gave an infinite whitened residual and made every likelihood and fit
+  non-finite. A zero *projected* error raises a `ValueError`, also when a
+  correlating operator would otherwise drop that direction silently.
+- **`MultipoleDisk.is_physical` works with a `VonMises` azimuthal model.** It
+  read `harmonics.prior`, so `model_loglike(..., reject_unphysical=True)` and
+  `System.is_physical` raised `AttributeError` on any scene containing one.
+- **`SharedFlux` grids are no longer misread as `(lo, hi, n)`.** A three-value
+  tuple was a range whenever its last element was at least 1, so
+  `SharedFlux(grid=(0.01, 0.1, 1.0))` became the single flux 0.01. The
+  `(lo, hi, n)` form now needs an integer `n`; a list, an array or a tuple
+  whose last element is a float is a list of flux values (the same for
+  `slope`).
+- **Bandwidth smearing for binaries, rotated scenes and resolved
+  backgrounds.** With `bandwidth` set, `BinaryModelCartesian`,
+  `BinaryModelAngular`, `Rotated` scenes and `System(star, bg=Resolved())`
+  raised a `TypeError` saying only that Systems of Components are supported.
+  They are now smeared, and an unsupported model, such as an `OrbitalBinary`
+  that is not a snapshot, raises a `TypeError` that names it.
+- **`fit(method="lbfgs")` restarts a round that crawls.** L-BFGS runs in
+  rounds of 2000 steps and restarts from the last point with fresh curvature
+  memory while a round that used all its steps still gains in the loss, instead
+  of spending all 20 000 steps with a memory spoilt by a parameter running
+  into a bound. On macOS the limb-darkened `StarPipeline(error_scale="fit")`
+  fit crawled to the step limit with χ² at the fitted scales 94 against N =
+  81; Linux converged in under 700 steps. Fits that converge, stall or time
+  out within 2000 steps are unchanged, and `info["steps"]` is the total.
+- **Alias fits reach the likelihood ridge.** The L-BFGS-B refinement stopped on
+  its relative-reduction test 50–800 nats short of the optimum on a
+  many-cycle orbit's narrow ridge, so about one noise draw in four settled in
+  a neighbouring alias. Each start now restarts from its own optimum until
+  it stops improving, and a winning band with χ²/ν above 10 on the quoted
+  errors (a missed ridge gives 65–800) is flagged `poor-fit` with a
+  `UserWarning`; errors underestimated by more than 3× also trip it.
+- **Differential-phase steps near ±π wrap the same in data and model.** A step
+  of exactly π wrapped to -π in the data but, one ulp lower from `arctan2` on
+  macOS, to +π in the model, a 2π disagreement. The model's steps are now
+  wrapped to within π of the data's.
+- **Isotropic priors have finite gradients at the poles in float32.**
+  `IsotropicInclination.icdf` and `IsotropicLatitude.icdf` gave a NaN
+  derivative within about 1e-8 of a pole, and their final clip a slope of 1/2
+  at the bounds; both now keep the true derivative.
+- **`read_oifits` reads closure triangles whose leg has no visibility row**
+  ([#299](https://github.com/benjaminpope/virgil/issues/299)). A triangle
+  leg stored in no `OI_VIS2`/`OI_VIS` row in either orientation raised a
+  `ValueError`, so MIRC-X files and some ESO phase-3 PIONIER products could
+  not be read. `OI_T3` is self-contained in the OIFITS standard, so such a
+  leg now gets a flagged sample at the T3 row's own coordinates, shared by
+  later triangles of the same frame. One `UserWarning` per file gives the
+  number of legs placed this way. The `ValueError` remains when those
+  coordinates are NaN or zero, or disagree with the triangle's other legs.
+- **Parallel numpyro chains** (`chain_method="parallel"`) on data with
+  `with_gains` no longer segfault: `GainModes` held zero-size arrays when no
+  mode spans frames, and XLA's Shardy pass crashes compiling a `jax.pmap` that
+  captures one (JAX 0.11.2). `GainModes.spanning` and `spanning_group` are
+  `None` then. `numpyro_model` warns, suggesting `chain_method="vectorized"`,
+  when the data still hold zero-size arrays (such as no closure phases) and
+  more than one device is visible.
+- **`limits.chi2ppf` works for any number of degrees of freedom on a standard
+  install.** For `df != 1` it called numpyro's `gammaincinv`, which needs
+  `tensorflow_probability`, not a virgil dependency. It now inverts
+  `jax.scipy.special.gammainc` by Halley's method for every `df`, matching
+  `scipy.stats.chi2.ppf` to about 1e-14 relative in float64 for p in [1e-10, 1
+  - 1e-10], and stays differentiable and `jit`-able. It returns NaN for `df <=
+  0`. Found by virgil-validation.
+- **`DetectionMC.load` checks the file format** (see Migration).
 
 ### Removed
 
 - **`virgil.spectra.Tabulated`.** The 0.3.0 entry promised its removal in
-  0.4.0. Replace `Tabulated(ratio, wavel)` with `Nodes(ratio, wavel)`:
-  the flux at every wavelength is the same (identical between the end nodes,
+  0.4.0. Replace `Tabulated(ratio, wavel)` with `Nodes(ratio, wavel)`: the
+  flux at every wavelength is the same (identical between the end nodes,
   within an ulp beyond them). Two things change. The free values are
   `flux.values`, not `flux.ratio` (fit and prior paths such as
   `"comp.flux.ratio"` become `"comp.flux.values"`), and the reference flux
@@ -289,613 +758,47 @@ Provisional in 0.4:
   `wavel0=` to set it. Negative values now pass the constructor and are
   checked on the total flux, as for every other spectrum. Priors on
   `comp.flux.values` are therefore not checked for non-negative support (as
-  `comp.flux.ratio` was): keep a non-negative prior (e.g. a log-uniform
+  `comp.flux.ratio` was): keep a non-negative prior (such as a log-uniform
   scale) if every channel must stay positive, and pass `flux_param=` where a
   grid or plot auto-detected the old key.
 
-### Migration from 0.3.0
+Nothing else is removed from the released 0.3 API in 0.4: every other
+deprecation above works with a `FutureWarning` until 0.5 (the
+`legacy.oifits_implaneia` helpers until 0.6). Dead and duplicated internals
+are gone with no behaviour change.
 
-- **`GaussianArc` has a different shape.** Fits of long arcs made with 0.3.0
-  change when refitted: the weight is now a von Mises arc, not a Gaussian
-  in arc length (about 1e-2 in V at a fifth of the semicircle, more for
-  longer arcs; no warning is given). See Changed.
-- **`likelihood_grid` takes `data` and `grid` by keyword.** It is
-  `likelihood_grid(model, data=..., grid=...)`: only the model is
-  positional, so no positional call can swap the model, the data and the
-  grid axes. A 0.3-order call, `likelihood_grid(data, model, grid)`, still
-  works with a `FutureWarning` until 0.5; any other positional call (such
-  as `likelihood_grid(model, data, grid)`) raises a `TypeError` naming the
-  keyword call. The 0.4 order change was never silent: the shim recognizes
-  data by type and rebinds the arguments, and any other permutation failed
-  with an `AttributeError`; the keyword form makes the failure a clear one
-  (`virgil-validation` finding F21).
-- **Model before data in the grid, limit and detection tools.**
-  `likelihood_grid`, `optimized_likelihood_grid`, `optimized_flux_grid`,
-  `linear_flux_grid`, `laplace_flux_uncertainty_grid`, `absil_limits`,
-  `injection_limits` and `detection_statistics` are now `f(model, data,
-  grid, ...)`, as `fit` already was; `gaussian_null`, `rescale_errors`
-  and `bootstrap_null` take the null scene first; `injection_recovery`
-  is `(model, null_scene, template, grid, key, ...)`. Calls in the 0.3
-  order still work, with a `FutureWarning` naming the new call; from 0.5
-  they raise a `TypeError` naming it.
-- **Model before data in the likelihoods.** `loglike`, `laplace_cov`,
-  `laplace_parameter_uncertainty` and `fisher` are now `f(values, params,
-  model, data, ...)`, and `joint_prediction` and `joint_loglike` are
-  `f(params, model, data)`, with the same `FutureWarning` for the 0.3
-  order until 0.5.
-- **One name for each argument.** The model is `model` and the data
-  `data` everywhere: `whitened_residuals`, `model_loglike`,
-  `flux_scale_posterior`, `numpyro_model` and
-  `posterior_predictive_summary` (whose order was already right) and the
-  reordered functions accept `model_object=`, `model_fn=`, `data_obj=`
-  and `observations=` with a `FutureWarning` until 0.5.
-- **`samples_dict` is now `grid`** in these functions and in
-  `best_grid_point`, `plot_grid_map` and `plot_contrast_curve`, and their
-  data argument is `data`. `samples_dict=` and `data_obj=` still work
-  with a `FutureWarning` until 0.5.
-- **Curvature tools are named for what they compute (`virgil.inference`).**
-  `fisher` was the observed information (the Hessian of -log L), while
-  `gaussian_fisher` was the expected Fisher matrix, and `laplace_cov` (model
-  and data) sat beside `laplace_covariance` (a flat objective). They are now
-  `observed_information` (also `virgil.observed_information`),
-  `expected_fisher` and `objective_laplace_covariance`; `laplace_cov` keeps
-  its name. The old names `fisher`, `gaussian_fisher` and
-  `laplace_covariance` still work with a `FutureWarning` until 0.5.
-  `laplace_parameter_uncertainty` takes `dtype=` like `laplace_cov` and
-  `observed_information` and now computes in float64 by default (it used
-  the ambient float32, whose second derivatives are noisy); the grid tools
-  keep the ambient precision. `virgil.inference` has an `__all__`.
-- **`starting_image` takes everything after `data` by keyword.**
-  `starting_image(data, star, oversample, largest_mas, start, hole_mas)`
-  in the 0.3 positional form still works with a `FutureWarning` until 0.5;
-  `field_fwhms`, `inner_elements` and `aperture_mas` (new in 0.4) are keyword-only outright.
-  `clean` already took its options by keyword.
-- **`OIData.observable_kind` is now `OIData.vis_encoding`** (`"split"` or
-  `"mixed_log_complex"`), so that it is not mistaken for the record key
-  `vis_mode`, which sets the visibility channel (`"auto"`, `"v2"`, `"amp"`,
-  `"logamp"`; the docstring wrongly called `observable_kind` an alias of it).
-  The old attribute still reads, with a `FutureWarning` outside virgil, until 0.5.
-- **`DetectionMC.load` checks the file format.** `meta["format"]` (1) was
-  written but never read; `load` now raises a `ValueError` for any other
-  version and reads a file without it as version 1.
-- **`Tabulated` is removed in 0.4.0**, as the 0.3.0 entry promised (see
-  Removed above); the other deprecations wait for 0.5.
-- To find the remaining 0.3-order calls in your own code before 0.5, add
-  `"error:.*stops working in virgil 0.5:FutureWarning"` to your pytest
-  `filterwarnings` (as virgil's own test suite now does), or run
-  `pytest -W error::FutureWarning`. A message regex given to `-W` on the
-  command line is matched literally, so it would not catch them.
+### Provisional
 
-### Added
+virgil 0.4 has two tiers (see the [Stability page](docs/stability.md)).
+**Stable**: a change needs a deprecation cycle. **Provisional**: may change in
+any 0.4.x release without a deprecation, so that new features can settle.
+Everything public that is not listed here is stable. Nothing warns at
+runtime; provisional pages and API entries carry a "Provisional" notice, and
+each module lists its provisional names in `__provisional__`, which
+`tests/test_stability.py` checks. New public features start provisional.
 
-- **Opt-in bandwidth smearing.** `OIData(path, bandwidth=True)` (or `read_oifits(..., bandwidth=True)`) keeps `EFF_BAND`
-  as `OIData.bandwidth` (`with_bandwidth(dlambda)` sets it for simulated data);
-  models are then smeared over boxcar channels by a `sinc` envelope on each
-  component offset (`models.smeared_model`). Off by default: results are
-  unchanged.
+Provisional in 0.4:
 
-- **Tutorial: a planet in a gap between inclined rings (stage P5).**
-  `notebooks/multipole_disk_rings.ipynb` (docs page `multipole_disk_rings.md`)
-  simulates chromatic VLTI-like V² and closure phases of a star, three
-  coplanar blackbody rings (the outer one lopsided) and a planet in the
-  gap; fits the parametric family with invariant priors (MAP, Laplace
-  covariance and evidence); then recovers the rings, their colours, the
-  lopsidedness and the planet with one `MultipoleDisk` whose profile, spectral
-  index and harmonics are Gaussian processes, and compares the Laplace
-  evidences and the prior and posterior of the profile and index.
-- **`RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `spectral_index` and
-  `freeze_geometry` (stage P4).** `RadialGP` is a whitened Matérn
-  Gaussian-process profile (positive, $\exp g$) and `RadialGPFunction` the
-  same process as a radial function $g(r)$ (a spectral index or a harmonic
-  coefficient), each with latents `z`; `MultipoleKernel` is a prior over the
-  harmonic coefficients (`Harmonics(degree=M, prior=...)`); `MultipoleDisk` takes
-  `spectral_index=` (number, function or `RadialGPFunction`) with `wavel0=`;
-  `freeze_geometry(data)` caches the Bessel matrices; `gp_priors` builds the
-  priors, and `fit`, `numpyro_model` (NUTS, flat coordinates) and
-  `imaging.log_evidence` (Laplace over the latents) support them. The
-  Gaussian-process idea follows FRAP (Yoshida et al. 2026), now credited in
-  the `RadialGP` docstring, the contributors page and the bibliography.
-- **`MultipoleField` (stage P6).** A multipole-kernel residual field for an `Image`:
-  a Gaussian process on a polar grid in a disk's frame (`inc`, `pa`, centre;
-  `MultipoleField.from_disk` copies them, or with `geometry_from="disk"` the field
-  takes the geometry of its sibling disk whenever the `System` is evaluated,
-  with no geometry parameters of its own; `System.resolved()` bakes the ties
-  in), with the Matérn kernel of `RadialGP`/`RadialGPFunction` in radius and the azimuthal
-  spectrum of `MultipoleKernel` (one shared definition, `nu` up to infinity,
-  `nu_theta`), interpolated onto the pixels. Whitened latents,
-  so `image_priors`, `fit`, `log_evidence` and `numpyro_model` work as for
-  `GaussianField`; `multipole_field_priors` gives bounded log-uniform priors on
-  `sigma`, `length_r` and `length_theta`. After the whitened latents of FRAP
-  (Yoshida et al. 2026) and frank's polar representation (Jennings et al.
-  2020). `FlaredDisk*` is unchanged: its comparison with `MultipoleDisk` is
-  tested in `tests/test_flared_vs_multipole_disk.py`.
-
-- **Positive azimuthal harmonics, `VonMises` and `virgil.harmonics` (stage P3).**
-  `Harmonics(degree=M)` (or `Harmonics(w=...)` / `re=`, `im=`) is now the
-  *positive* form by default: brightness `|h(e^{i theta})|^2` normalized to the
-  azimuthal mean, with `h(z) = 1 + h_1 z + ... + h_M z^M` the minimum-phase
-  polynomial of complex reflection coefficients `k_j = w_j tanh|w_j| / |w_j|`
-  (unconstrained Cartesian latents `w_j`, a Levinson step-up recursion).
-  Every non-negative image of degree `M` is reachable (Fejér-Riesz), the image
-  is positive for every parameter value, its degree is exactly `M`, and the
-  root-flip multimodality of `|h|^2` is removed. Value and gradient are finite
-  at `w = 0`. The linear form (`c=`, `s=`) is unchanged and is still chosen
-  whenever `c` or `s` is given. `VonMises(kappa, theta0, degree=M)` is a
-  `MultipoleDisk` arc with analytic harmonics (a small FFT), and
-  `truncation_power()` reports the dropped power. The new module
-  `virgil.harmonics` converts every form to and from the image harmonics
-  (`to_image_harmonics`, `from_image_harmonics`, `Harmonics.convert`), including
-  image-to-positive by spectral factorization, and the legacy `az_amps`/`az_pas`
-  conventions of `ModulatedGaussianRim` and `TruncatedCone` (`from_legacy`,
-  `to_legacy`). The positive form is credited to Dumitrescu 2007 and
-  Barndorff-Nielsen & Schou 1973 in the docstrings and `references/`.
-
-- **`spectra.Scaled(template, ratio)`**: a fixed spectral shape with one
-  free reference flux (`ratio` at the template's `wavel0`), so any spectrum (a library SED, a `Sum` with lines) can be a
-  companion in the grids, limits and detection statistics, with
-  `comp.flux.ratio` as the flux axis; the template's parameters get no
-  gradient. Regression tests (`tests/test_chromatic_search.py`) run
-  `likelihood_grid`, `linear_flux_grid`, `injection_limits`, `absil_limits`,
-  `detection_statistics` and `injection_recovery` on a WR + OB system with V²,
-  closure phases, differential phases and a flux spectrum, and show a
-  differential-phase-only detection of a 0.1 mas companion that a grey V²/T3 fit
-  misses. Tutorial: *Chromatic companion search*.
-- **`MultipoleDisk` height and harmonics (stage P2).** `height=` takes `Cone(alpha,
-  tip)` or `PowerLawHeight(h_ref, r_ref, psi)` (each ring is lifted along the disk's
-  normal: a shift of `h sin(inc)` on the sky), and `harmonics=` takes the
-  linear-form `Harmonics(c=, s=)` of Cartesian coefficients, constants or
-  functions of the radius (`RadialLinear`, `RadialPower`). `min_intensity()`
-  reports where the image would go negative. `ExpTail` gains `cutoff=` (a
-  Gauss-Legendre rule on a finite tail). `multipole_disk_cvis` takes `c`, `s`,
-  `height` and `stretch`.
-- **`TruncatedCone` runs on the `MultipoleDisk` engine** with the same name and
-  parameters. Its quadrature along the walls is Gauss-Legendre, which
-  converges spectrally instead of as `1 / n_rings**2`: for the Apep-like cone
-  (edge-on, baselines to 130 m at 2.2 µm) 40 nodes agree with a converged
-  midpoint stack to 1e-6, where 64 midpoint rings are off by 5e-4 and 256 by
-  3e-5, at less than half the cost. The model is unchanged (the tail is still
-  cut at five lengths). The released behaviour changes: see Changed.
-  Credits carry over from the earlier cone code, `frank` and `vis-r`.
-- **`MultipoleDisk`**: an axisymmetric disk with a radial profile (`ThinRing`,
-  `GaussianRing`, `RadialPowerLaw` with sharp or soft edges, `ExpTail`, `Gap`
-  and `RadialSum`), inclined and rotated, with an optional Gaussian blur,
-  built on `multipole_disk_cvis`, a Hankel transform by quadrature that each
-  profile owns the nodes of (Gauss-Legendre, or Gauss-Laguerre for an
-  exponential tail). It follows the ideas of frank (Jennings et al. 2020) and
-  vis-r (Kennedy 2025), which are credited in the docstrings and on the
-  contributors page; no code was copied. This first stage is the
-  azimuthally symmetric disk (degree 0).
-- **`fit_orbit_aliases` handles a resolved primary, contrast loss and a
-  bright companion.** `primary_diam` gives the primary a uniform disk (fixed
-  or `"fit"`, one shared log-uniform diameter); `vis_amp=(lo, hi)` gives every
-  epoch's V² its own profiled amplitude (a contrast loss independent of
-  baseline and wavelength); `flip_flux` (default) refits a mode whose flux
-  ratio is pinned at the top of `flux_range` with the stars' labels swapped
-  (`AliasBandResult.flipped`); `init=` is a warm start that is always refined
-  in the band holding its period.
-- **Alias fit for near-equal binaries.** `fit_orbit_aliases(...,
-  sign_free=True)` and `starting_orbits(..., sign_free=True)` seed from
-  positions known only up to a sign: with flux ratios of 0.9-1 the closure
-  phases cannot tell `(dra, ddec)` from `(-dra, -ddec)` epoch by epoch, and
-  seeding with the wrong sign mix landed on the wrong alias (AL Dor, HD 41255,
-  HD 188088). The fit also seeds fluxes near the top of `flux_range`.
-  L-BFGS is now followed by Levenberg-Marquardt polishing, aimed at the
-  `not-converged` and `hessian-not-positive-definite` flags.
-
-- **Variational inference** (virgil#12). `virgil.svi.variational(model,
-  priors, data, ..., start=fit_result)` fits a guide to `numpyro_model`'s
-  posterior with numpyro's SVI and returns a `VariationalResult`: draws in
-  the model's parameters under NUTS's site names, the loss history, the
-  guide and its parameters, a convergence flag and the PSIS k̂. Every guide
-  starts at the Laplace approximation (the fit and its Gauss–Newton
-  covariance, at the nominal errors and without regularizers; with
-  regularizers it starts at `init_scale` instead) and learns in units of
-  its widths. The default is a block
-  neural autoregressive flow (`"bnaf"`), which follows curved, skewed and
-  bounded posteriors; `"iaf"`, `"mvn"` (a Gaussian, ≈ Laplace) and
-  `"laplace"` are the alternatives. float64 by default, as for `fit`;
-  `flat_coordinates` is passed through. New page: Variational inference.
-- **`virgil.aliases.fit_orbit_aliases`.** Orbits whose epochs undersample the
-  period: alias bands `N = round(T/P)`, each fitted to the closure phases of
-  all epochs with per-epoch error scales integrated out, with Laplace and
-  importance-sampling evidences, band probabilities and posterior samples.
-  `AliasResult.table()` gives one row per band (`scales` flat over epochs
-  and blocks, `epoch_scales` per epoch). `checkpoint_dir=` writes each band
-  (`band_<N>.pkl`, `band_<N>.json`) as soon as it is fitted, and a rerun
-  with the same data, positions and settings loads it instead of
-  refitting; `on_band=` is called with each `AliasBandResult`. Each band
-  has its own random stream, so a resumed run reproduces an uninterrupted
-  one. A band that raises becomes a row with the flag `band-failed` and
-  `AliasBandResult.error`, and a singular or ill-conditioned Hessian gets
-  the flag `hessian-singular`. The checkpoint key hashes every field of
-  the data and positions, static ones included. The likelihood and its
-  gradient are evaluated once before any band is fitted, so a
-  misconfiguration raises there; afterwards only a `TypeError` propagates.
-  Other failed optimizer starts are counted (`starts-failed`,
-  `AliasBandResult.n_starts_failed`), a band with no finite mode is a
-  `no-valid-mode` row, and a `RuntimeError` is raised when every band
-  fails. The likelihood compiles once per data shape, not once per mode.
-- **Orbit API tidy-up before release.** `score_orbits(model, epochs,
-  orbits, ...)` takes the model before the data like the rest of the
-  package (the order `score_orbits(epochs, model, ...)` works with a
-  `FutureWarning` for one release); `score_orbits` takes `model(orbit,
-  flux)` and `rank_orbits` takes `model(orbit)`. `rank_orbits` and
-  `start_from_positions` default to `scales="marginal"`, without a
-  warning, and `EpochPositions.gap` is gone (`gap_marginal` is the gap).
-  `AliasResult.save` writes a `format` field (1); `load` reads files
-  without it and refuses a newer format; `UNRECORDED` is no longer in
-  `virgil.aliases.__all__`. `aliases.spectral_window` is removed (unused;
-  `|mean exp(2πi f t)|²` is one line of numpy).
-- **Orbit-search scorer.** `virgil.orbit_search.score_orbits(model,
-  epochs, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
-  scores a stack of candidate orbits on all epochs in one compiled,
-  `lax.map`-batched kernel. The companion flux is shared: one flux per
-  band (optionally f₀(λ/λ₀)^β), at most 1 in a reference band, integrated
-  out under a log-uniform prior and also reported profiled, with an
-  uncertainty from the curvature. The coarse grid only seeds Newton steps
-  to the profiled peak; Gauss–Legendre nodes on each side, out to a 12-nat
-  drop or the prior's bound, then integrate it, so the marginal is within
-  0.05 nat of brute-force quadrature wherever the peak falls (a coarse-grid
-  fallback is flagged in `OrbitScores.fallback`). Each dataset's error scales are
-  marginalized as in `marginal_loglike`, bounded by default to
-  [1/5, 5] (`s_max=5`; `s_max=None` for the unbounded closed form). The
-  scale each dataset needs at the profiled flux is reported in
-  `OrbitScores.scale`, and `OrbitScores.scale_at_bound` flags candidates
-  whose scale posterior presses against `s_max`. Gains (`OIData.with_gains`) and
-  closure-phase offsets (`OIData.with_closure_offsets`), which
-  `marginal_loglike` refuses, are profiled analytically, at one degree of
-  freedom each. `RVData`/`PositionData` terms or callables are added.
-  Positions are evaluated at every sample's own time, and the visibility
-  of a unit companion is computed once per candidate, with every flux
-  point cheap arithmetic on it. `max_evaluations` refuses a run whose
-  predicted cost (candidates × datasets × score evaluations) is over budget.
-  `rank_scores` / `OrbitScores.order` rank with ties broken on quantized
-  scores, then by index.
-- **Pipelines (`virgil.pipeline`, the `pipeline` extra).**
-  `BinaryPipeline` (companion search, contrast limits, fit and NUTS
-  posterior) and `StarPipeline` (angular diameter and limb darkening,
-  with a registry of models by short name) run fixed, named stages on
-  public virgil functions and write a run folder: `run.json`,
-  `summary.json`, HDF5 grids and samples, plots, the processed OIFITS and
-  an executed quicklook notebook, with deterministic quality checks
-  (`Check`). Runs resume; a run folder whose settings, data or template
-  differ raises `ConfigMismatchError`. `load` reloads a run as a `Result`,
-  and the `virgil-pipeline` command runs a pipeline and prints, validates
-  or re-renders the quicklook of a run folder.
-  `import virgil` does not import the pipelines. See the Pipelines page.
-  `StarPipeline` compares diameter lobes and models on −2 log L
-  (`model_loglike`, so with `error_scale="fit"` each candidate is scored
-  at its own maximum-likelihood error scales, not on a χ² that those
-  scales make equal to N), walks the registry's parent chain with a BIC
-  penalty (`summary["comparison"]` decides, `summary["comparisons"]` lists
-  all), and keeps the uniform disk's diameter scan with its scales
-  profiled, refining the best diameter between grid points. Re-running a
-  stage deletes every later stage's outputs, and `Result` serves only
-  files and grid groups of complete stages; `run.json` records provenance
-  per stage, and `virgil-pipeline validate` fails a run left `running`. The look-elsewhere significance is computed in log
-  space, so it stays finite for large searches.
-- **`virgil.ensemble`**: PYRA/MYTHRA-style reconstruction ensembles.
-  `EnsembleSpec`, `draw_groups`, `run_group` (one L-curve per geometry
-  group), `combine` (selection and the iterative mean) and `ensemble`
-  return an `Ensemble` (mean `Image`, per-pixel σ, raw χ²/N per dataset).
-  The L-curve window keeps the weights from `window_dex` below the corner
-  up to it; the default weight ranges (`tsv` 0.1–10⁴, the others 10⁻⁴–10
-  per data point) were set from the corners of the 60 datasets of
-  virgil-validation's contest bench, and each sweep draws one log-uniform
-  weight per equal bin of `log w`. The default `field_factors` are
-  (1, 2, 4) times `field_of_view(data)`, capped at 1 on a uv lattice, and
-  a field too large for `max_npix` keeps its size with coarser pixels.
-  The iterative mean admits a member if every dataset's χ² stays within
-  `mean_rtol` (by default each dataset's χ²/N noise √(2/N)) of the best
-  member's; members whose fit diverged are dropped with
-  `reason="diverged"`, and `combine` warns when fewer than `min_kept` (3)
-  are kept.
-- **`virgil.metrics`**: scores for a reconstructed image against a known
-  truth, from the imaging contests' published definitions:
-  `lawson_sigma_over_peak` (both images normalized over the whole array),
-  `rms_convolved` (after a Gaussian beam; `pixel_scale_mas` is needed only
-  with a beam), `l1_score` and `ncc`.
-- **Azimuthally modulated cones.** `TruncatedCone(..., az_amps=, az_pas=)`
-  multiplies every ring's brightness by `1 + Σ A_m cos(m (φ - φ_m))` in
-  its own azimuth, e.g. for a colliding-wind shock brighter on its
-  leading edge. The azimuths follow `ModulatedGaussianRim`'s convention
-  (in the ring's plane, in the sense of position angle, `pa ± 90` on the
-  walls). The visibilities stay analytic (one `J_m` per ring and order)
-  and the render matches them. Unmodulated cones are unchanged and carry
-  no empty leaves.
-- **Fit budgets and guards.** `fit(..., time_limit=, progress=)`: LM and
-  L-BFGS run in chunks of steps, check the wall clock between them and
-  stop, unconverged, with `info["stop"] == "time"` (L-BFGS carries its
-  whole state across chunks, so its path is unchanged; LM restarts each
-  chunk with its damping reset); `progress` reports steps, loss, gradient
-  norm and elapsed time between chunks. `info["stop"]` gives every
-  unconverged fit's reason (`"limit"`, `"time"`, `"stalled"`,
-  `"non-finite"`, `"failed"`), a non-finite loss now stops L-BFGS, a fit
-  by any method (Adam included) that ends on a non-finite loss is now
-  marked unconverged, and `info["at_bound"]` lists parameters that ended
-  at a genuine edge of a Uniform, LogUniform or other interval prior
-  (not at the poles of isotropic inclinations or latitudes).
-  `start_from_positions` forwards `time_limit`, keeps going when one
-  refinement fit raises (recorded in `OrbitStart.failed`; a `TypeError`
-  or `ValueError`, such as a misspelt option, still raises at once, and
-  if every fit fails the `RuntimeError` is chained to the last error),
-  sorts non-finite losses last and leaves them out of `modes()`.
-- `orbits.period_grid(times, p_min, p_max, k=9)`: trial periods uniform
-  in frequency with δP ≤ P²/(kT) over the baseline T, finer than
-  ARMADA's and The Joker's rules; `start_from_positions` warns when its
-  `periods` are coarser than that over the seeding datasets.
-- `OIData.select` takes `ranges=` (a union of wavelength windows),
-  `exclude=` (windows to drop, e.g. a line) and `observables=` (`"vis"`,
-  `"phi"` and the extra observables' kinds), so closure-phase-only or
-  line-free subsets need no hand-flagged records. Dropping the closure
-  phases rebuilds differential phases with their closure part, and gains
-  go with the visibilities.
-- Starting and sampling orbit fits to multi-epoch visibilities
-  (`design/visibility_orbits.md`, stage 2), all model first:
-  `rank_orbits(model, data, orbits)` ranks trial orbits (e.g. from
-  `starting_orbits`) by the log likelihood of all the epochs, one snapshot
-  per dataset; `chain_starts` picks the best distinct orbits (modes judged
-  by the companion's positions at the epochs), one per chain;
-  `epoch_positions` fits the companion's position and covariance in each
-  dataset; `start_from_positions(model, priors, data, start_values, ...)`
-  chains these into a start (positions, starting orbits, ranking, `fit`
-  from distinct orbits) returned as an `OrbitStart`, whose `chain_values`
-  give one start per distinct mode; and `likelihood.chain_init_params`
-  turns one start per chain into numpyro's `init_params`.
-  `Epochs.resolution_mas` gives the data's finest λ/B.
-  - `Epochs` and `OrbitalBinary` (a binary on its orbit, observed as one
-    snapshot per dataset; `design/visibility_orbits.md`, stage 1).
-  - `epoch_positions` scores its grid on the scale-marginalized surface
-    m = -Σ_b (ν_b/2) ln χ²_b, in which each dataset's V² and
-    closure-phase error scales are integrated out under their Jeffreys
-    priors (`epochs.marginal_loglike`; `s_max=` integrates each block's
-    scale adaptively in ln s over a bounded range, matching
-    `scipy.integrate.quad` to about 1e-11, and `dof=` sets an
-    effective-dof fraction). Positions, covariances and
-    `EpochPositions.gap_marginal` therefore do not change when one
-    dataset's errors are rescaled. It refines the top `n_peaks=5` distinct
-    local maxima of the grid, takes the best refined one, and measures
-    `gap_marginal` against its best refined rival; `EpochPositions.peaks`
-    holds each dataset's catalogue (`EpochPeaks`: positions, fluxes,
-    scores, Laplace-mass weights, `edge` and `laplace` flags). `decisive`, `positions(min_gap=...)` and
-    `start_from_positions(min_gap=...)` compare `gap_marginal`. Raw χ²/N
-    and the profiled scales are recorded (`chi2_raw`, `scale`), with a
-    `UserWarning` naming datasets with raw χ²/N > 4. Data with gains,
-    closure-phase offsets or a model-dependent covariance raise
-    `NotImplementedError` on the marginalized surface.
-  - `rank_orbits` and `start_from_positions` take `scales="quoted" |
-    "marginal"`; `"marginal"` integrates each dataset's error scales out,
-    so the worst-calibrated nights do not dominate the ranking, and is the
-    default (as in `score_orbits`). Rankings use
-    `orbit_search.rank_scores` (ties within 1e-3 nat broken by index,
-    non-finite scores last). `OrbitStart.seeded` and `.ambiguous` name the
-    datasets that seeded the orbits and those left out (with a
-    `UserWarning`).
-- The orbit tutorial now fits one snapshot per night with `Epochs` and
-  `OrbitalBinary` (the default for orbits whose motion within a night is
-  negligible), starts from `start_from_positions`, and starts one NUTS
-  chain per distinct mode.
-- A private `virgil._deprecate` module implements the 0.4 change to a
-  single model-before-data argument order and the renamed keywords (see
-  "Migration from 0.3.0"): `old_order` accepts calls in the 0.3
-  positional order, recognized by which argument is the `OIData`, with a
-  `FutureWarning` that names the new call (with `removed=True`, for 0.5,
-  a `TypeError`); `old_order` and `renamed` accept the old keyword names
-  with a `FutureWarning`, and passing an old name with its new one is a
-  `TypeError`.
-
-### Changed
-
-- **`GaussianArc` is a von Mises arc (a change of shape).** The weight along
-  the arc is now `exp(kappa cos(angle - pa))` with `kappa = (2 sqrt(2 ln 2)
-  radius / length)^2`, where it was a Gaussian in arc length taken once round
-  the circle and cut off at the antipode of `pa`. `length` is still the FWHM
-  along the arc and the parameter names and paths are unchanged, and the two
-  shapes agree to about 1e-3 in V for arcs with `length` below a tenth of the
-  semicircle (1e-2 at a fifth) but differ for long arcs, so refit if you rely
-  on those. The visibility is analytic (a `ThinRing` with `VonMises` harmonics
-  and a blur on the `MultipoleDisk` engine); `degree` (default chosen from the
-  starting `radius` and `length`) replaces `nodes` for the visibility, and
-  `nodes` only samples the rendered image. Arcs narrower than 256 harmonics
-  allow (`length / radius` below about 0.05) are integrated along the arc
-  with the von Mises weight, at `nodes` points, as before (`quadrature=True`),
-  so their cost does not grow; `is_physical` is false when the series drops
-  more than 1e-4 of its power. The shape differs from the one released
-  in 0.3.0, and building a `GaussianArc` gives no warning (see Migration
-  from 0.3.0).
-- **`ModulatedGaussianRim` runs on the `MultipoleDisk` engine** (a `ThinRing`,
-  linear harmonics converted from `az_amps`/`az_pas`, and the blur), with the
-  same name and parameters; it agrees with the old code to rounding.
-- **`fit_orbit_aliases` and `epoch_positions` optimize with damped Newton
-  steps.** Each start of the alias search, and each peak refinement of
-  `epoch_positions`, now runs Levenberg–Marquardt on the
-  iteratively-reweighted curvature of the scale-marginalized likelihood,
-  instead of L-BFGS-B with restarts and a Newton polish; L-BFGS-B remains
-  the fallback for a start that does not converge. It reaches the same
-  optima (positions agree to 1e-4 mas) and is faster. Which local
-  optimum a start far from the ridge reaches can differ, so a band's modes
-  and evidence can change for such starts. `fit_orbit_aliases(max_steps=)`
-  now caps the kernel's iterations (rejected steps count) and the
-  L-BFGS-B fallback's, instead of each L-BFGS-B run's; a refinement of
-  `epoch_positions` that does not converge keeps its grid point.
-  `_Surface.weights` is new
-  (private).
-- **`TruncatedCone` (released in 0.3.0) changes numerically.** Its default
-  `n_rings` goes from 32 to 48, since too few Gauss-Legendre nodes fail
-  sharply at long baselines, and its visibilities at fixed parameters shift
-  by the old midpoint rule's error (about 8e-4 at the old default, worth
-  Delta log L of about 4 per GRAVITY epoch), so a 0.3 fit rerun gives a
-  different chi-squared and best fit with no API change. The per-call cost
-  at the default rises (48 Gauss-Legendre nodes against 32 midpoint rings);
-  it is lower only at equal accuracy. `rings()` and `render()` now use the
-  same Gauss-Legendre nodes as `model()`.
-- **`fit_orbit_aliases` flips a pinned flux ratio by default** (`flip_flux=True`): a mode at the top of
-  `flux_range` is refit with the stars' labels swapped, which can add a mode to a band's evidence. It also adds
-  settings to the checkpoint key, so existing `checkpoint_dir`s are refit. `flip_flux=False` restores the old fits.
-- **The evidence helpers take several field Images.** `log_evidence`,
-  `error_scale` and `laplace_samples` accept `path=None` (every Image whose
-  log-brightness is a `GaussianField`) or a tuple of paths, and take the
-  Jacobian over all those latents together, so a compact and an extended
-  GP Image in one `System` get a joint Laplace evidence. `laplace_samples`
-  returns `"latents"` as a dict keyed by Image path when it draws more than
-  one. Single-Image results and the default `path="env"` are unchanged.
-
-- **NUTS can sample each prior in its flat coordinate (opt-in,
-  `flat_coordinates=True`, #301).** `numpyro_model(...,
-  flat_coordinates=True)` maps a `LogUniform` scale to NUTS's
-  unconstrained coordinate through log x, an `IsotropicInclination`
-  through cos i and an `IsotropicLatitude` through sin(lat), for
-  parameters and `noise=` terms alike, as `fit` optimizes them. Sites keep
-  their names, samples are the model's own parameters, and the posterior
-  is unchanged. It is off by default: simulation-based calibration (1000
-  replicates) showed no gain in effective sample size per second or in
-  divergences, and rank uniformity was the same. The 62² imaging notebook,
-  with `gauss_newton_mass`, ran in 67 s instead of 550 s with it, so the
-  tutorials that sample large images pass `flat_coordinates=True`. Pass
-  the same value to `gauss_newton_mass`, `variational` and
-  `chain_init_params`' model. See `design/sampler_flat_coordinates.md`.
-- **Warnings and precision (#306).** `Tabulated` now warns with `FutureWarning` (as every other deprecation does) instead of the default-hidden `DeprecationWarning`; the four warnings that set no category (`Ensemble` too few members kept, every closure phase flagged, unmatched T3 legs, `t_ref = 0` with MJD times) now say `UserWarning`. `cvis_uniform_disk` takes `diam` like the other disks (`ud=` still works with a `FutureWarning`). The two pixel-sum matmuls in `GaussianArc`/`TruncatedCone` use `Precision.HIGHEST`, as the rest of the forward model does (TF32 on A100/H100 otherwise). The AMIGO covariance check takes its tiny-number floor from the array's dtype. `tests/_test_data.py` finds `data/` from its own location, not the working directory.
-- **Oxford -ize spelling in names (#306).** `fit`, `numpyro_model` and `diagnose` take `regularizers` (not `regularisers`), `imaging.l_curve` takes `regularizer` (not `regulariser`), `RVData.term` takes `marginalize_offsets` (not `marginalise_offsets`), and the numpyro factor sites for regularizers are named `regularizer_<i>`. The old keywords still work with a `FutureWarning` until 0.5 (`_deprecate.renamed`). Private names (`_linear.standardize`, `_diagonalized`, `_summarize`, `_normalize`) and the spelling in docstrings, comments and the hand-written docs follow. `barycenter` and the already -ize public names (`regularized_inverse`, `optimized_*`, `standardize_model`, `Image(normalize=)`) are unchanged.
-- **Deprecated parameter names are gone from public signatures (#306).** `OIData.model`, `OIData.with_model` and every `observables.*.predict` take `model` (not `model_object`), `inflated_errors` takes `data` (not `data_obj`), and `joint_data` / `joint_errors` take `data` (not `observations`). The old keywords still work with a `FutureWarning` until 0.5, through the same `_deprecate.renamed` path as the other functions. Private helpers in `likelihood`, `inference` and `oidata` were renamed to match.
-- **One import convention (#306).** `import jax.numpy as np` and `import numpy as onp` everywhere in `src`, `tests`, `examples`, `scripts` and `design/sketches` (six `src` modules and three tests had the two swapped, so code moved between files silently changed backend). Ruff's `ICN001` now enforces it; notebooks keep their old aliases until they are next re-executed.
-- **Duplicated and dead code removed (part of #310; no behaviour change).**
-  `legacy.oifits_implaneia.GetWavelength`, `Format_STAINDEX_V2`,
-  `Format_STAINDEX_T3`, `rad2mas` and the `cp_indices` re-export are
-  deprecated (`FutureWarning`; removal in 0.6), since nothing uses them.
-  Internally: `FWHM_PER_SIGMA` moved to `_utils` (still importable from
-  `detection`) and replaces the hand-written `2.3548` and
-  `2*sqrt(2 ln 2)` (the two literal `2.3548`s in `imaging` now use the
-  exact value, a 1e-5 relative change in an envelope-fit starting width);
-  `coverage` uses `_geometry.rotate` (which now stays in NumPy for NumPy inputs); `meshgrid_vectors` is
-  `coordinate_points`; one `_unit_sum`; the `batch_size` and noise-term
-  "Priors" docstrings are stated once and referred to. Unused
-  `_utils.i2pi` removed.
-- **Warnings name the caller's line.** Deprecation `FutureWarning`s and
-  virgil's other warnings are attributed to the first frame outside virgil
-  (`_deprecate.external_stacklevel`), not to a fixed depth, which pointed
-  into equinox's method wrappers (`OIData.model`, `with_model`,
-  `observables.*.predict`, `RVData.term`, `Tabulated`) or into the
-  `renamed` wrapper (`fit`'s own warnings); frames of JAX, numpyro and
-  the optimizers are looked through too. Shim messages name methods as
-  `Class.method`, and a new name passed positionally beside its old
-  keyword raises the shim's "got both" `TypeError`.
-- `_geometry.position_angle` never returns exactly 360 (it did for tiny
-  negative offsets; a scalar input still gives a NumPy scalar),
-  `KeplerOrbit.frame()["towards_primary"]` is wrapped to `[0, 360)`, and
-  the geometry helpers compute lists and array-likes (e.g. a pandas
-  Series) in NumPy float64 rather than JAX float32.
-- Differential-phase steps and anchors use one wrap, `[-π, π)`, in data
-  and model alike (a step of exactly ±π used to wrap differently).
-- `Centroid` sums over pixels at `Precision.HIGHEST`; the `oifits` module
-  no longer imports JAX itself (`import virgil` still does).
-- `fit` falls back to L-BFGS only when the objective has no least-squares
-  form (`fitting.NoLeastSquaresForm`), and `variational` starts at
-  `init_scale` only for that, a singular curvature
-  (`fitting.SingularCurvature`) or a parameter with no starting value
-  (`fitting.NoStartingValue`, a `ValueError`); other errors propagate
-  instead of being taken for one of these. `gauss_newton_mass` raises
-  `NoLeastSquaresForm` for data with gains, as `fit`'s Gauss–Newton path
-  does, instead of ignoring them. SVI warnings state their category. `fit(progress=)`
-  also reports when the fit finishes, and `fitting._bound_fraction` gives
-  a LogUniform's fraction in x when `flat=False`.
-- `numpyro_model`'s function and `gauss_newton_mass`'s result record
-  `flat_coordinates`, and `chain_init_params(..., mass=)` raises if they
-  differ (a mass matrix in the other coordinates is never adapted). The
-  docs now describe flat-coordinate sampling as opt-in.
-
-### Fixed
-
-- **The pipelines no longer fail with numpyro's "Cannot find valid initial parameters" on a non-detection.** With no companion the fitted flux runs to the lower end of its prior (and an unresolved star's diameter to the edge of `diam_range_mas`); NUTS then started exactly on the bound, where the unconstrained value is infinite. `BinaryPipeline`, `StarPipeline` and `DiskPipeline` now start the chains at least 1e-3 of the prior's width inside any bound (so a start within 0.1% of a bound, which `fit` reports in `at_bound`, moves slightly and gives different draws for the same seed), a start that is still not finite raises a `ValueError` naming the start values instead of numpyro's `RuntimeError`, and `BinaryPipeline` and `StarPipeline` add a `start_at_bound` warning check when the best fit sits at a bound.
-
-- **Projected correlated closure phases keep only their real directions in float32.** When an operator (a kernel-phase or DISCO phase projection) is applied to closure phases with four or more telescopes, their correlation matrix is singular, and `OIData` rotates the operator onto the eigenvectors of the projected covariance with a cut at 1e-10 of the largest eigenvalue. That is below float32 eps, so the numerically zero directions were kept (33 to 36 outputs where 30 are real, for ten four-telescope frames, in float32), with errors of 1e-5 against 1e-2 and so a weight 10⁶ times that of a real one. The covariance and its `eigh` are now computed on the host in float64, as this runs once at construction and is never traced; the arrays returned are in the default dtype. Operators that already whiten the covariance (as DISCO operators do) take the unchanged diagonal branch.
-
-- **`MultipoleDisk.is_physical` works with a `VonMises` azimuthal model.** It read `harmonics.prior`, which `VonMises` does not have, so `model_loglike(..., reject_unphysical=True)` and `System.is_physical` raised `AttributeError` on any scene containing one.
-
-- **`SharedFlux` grids are no longer misread as `(lo, hi, n)`.** A three-value tuple was a range whenever its last element was at least 1, so `SharedFlux(grid=(0.01, 0.1, 1.0))` became the single flux 0.01. The `(lo, hi, n)` form now needs a tuple with an integer `n` (Python or NumPy); a list, an array or a tuple whose last element is a float is a list of flux values (the same for `slope`).
-
-- **`Precision.HIGHEST` in more contractions.** The limb-darkening coefficient matmul (binomials up to C(22, 11) with alternating signs), the `RadialGP` and `MultipoleKernel` contractions and the DISCO operator application now request full precision, as the other forward-model matmuls do; on A100/H100 the default (TF32) loses the cancellation.
-
-- **Bandwidth smearing for binaries, rotated scenes and resolved backgrounds.** With `bandwidth` set, `BinaryModelCartesian`, `BinaryModelAngular`, `Rotated` scenes and `System(star, bg=Resolved())` raised a `TypeError` saying only that Systems of Components are supported. They are now smeared (binaries as their `to_system()`, `Resolved` has no offset to smear, `Rotated` rotates the baselines), and an unsupported model, such as an `OrbitalBinary` that is not a snapshot, raises a `TypeError` that names it and lists the supported ones.
-
-- **`fit(method="lbfgs")` restarts a round that crawls.** L-BFGS now runs in rounds of 2000 steps and restarts from the last point with fresh curvature memory (keeping the first round's gradient tolerance) while a round that used all its steps still gains in the loss, and runs the rest of `max_steps` as one last round once it does not, instead of spending all 20 000 steps with a memory spoilt by a parameter running into a bound. On macOS the limb-darkened `StarPipeline(error_scale="fit")` fit crawled to the step limit with χ² at the fitted scales 94 against N = 81; Linux converged in under 700 steps. Fits that converge, stall or time out within 2000 steps are unchanged, and `info["steps"]` is the total over the rounds.
-
-- **Alias fits reach the likelihood ridge.** `fit_orbit_aliases`'
-  L-BFGS-B refinement stopped on its relative-reduction test 50-800 nats
-  short of the optimum on a many-cycle orbit's narrow ridge, so about one
-  noise draw in four settled in a neighbouring alias. Each start now
-  restarts from its own optimum until it stops improving, and a winning
-  band with χ²/ν above 10 on the quoted errors (a missed ridge gives
-  65-800) is flagged `poor-fit` with a `UserWarning` instead of being
-  reported silently; errors underestimated by more than 3x also trip it.
-- **Differential-phase steps near ±π wrap the same in data and model.**
-  A step of exactly π wrapped to -π in the data but, one ulp lower from
-  `arctan2` on macOS, to +π in the model, a 2π disagreement. The model's
-  steps are now wrapped to within π of the data's, as its anchor already
-  was, so no cut can separate them.
-- **Repeated refinements in `start_from_positions` compile once.**
-- **Faster, steadier CI.** The slowest tests share their expensive
-  fixtures (kept on one xdist worker with `--dist loadgroup`) and use
-  smaller problems; one pull-request job runs the slow tests, so they no
-  longer fail first on main; the `dev` extra includes `orbits`, so the
-  orbit tests run locally rather than skipping.
-- **Isotropic priors have finite gradients at the poles in float32.**
-  `IsotropicInclination.icdf` and `IsotropicLatitude.icdf` gave a NaN
-  derivative within about 1e-8 of a pole (the branch not taken of a
-  `where` had an infinite slope), and their final clip a slope of 1/2 at
-  the bounds; both now keep the true derivative.
-- **Drifted copies unified (part of #310).**
-  - **Zero errors.** `OIData` now drops V² and phase samples with a zero
-    (or negative) error, as it already did for extra observables
-    (`OI_FLUX`, `|V|`, `T3AMP`); a zero error gives an infinite whitened
-    residual, which made every likelihood and fit non-finite. Flagged
-    and non-finite samples were already dropped. Raw errors that
-    `vis_mat`/`phi_mat` project may still be zero; a zero *projected*
-    error raises a `ValueError`, also when a correlating operator would
-    otherwise drop that direction silently.
-  - **Field of view.** `imaging.field_of_view` and `nyquist_pixel_scale`
-    (and the new `Epochs.resolution_mas` and pipelines) share
-    `_geometry.fringe_scales`: per-sample `B/λ` over non-zero baselines,
-    rather than a longest wavelength and a shortest baseline that are not
-    observed together when the uv sampling differs between channels.
-  - **Position angles.** One `_geometry.position_angle` /
-    `separation_pa` (North through East, `[0, 360)`) serves the models,
-    orbits and plotting. `KeplerOrbit.frame(...)["line_pa"]`
-    was in (-180, 180]; it is now in `[0, 360)` (equal modulo 360, and
-    `towards_primary` is still `line_pa + 180`).
-  - **Phase units** (`oifits` columns and `OIData` records) go through
-    one parser, with one error message; a blank `TUNIT` or `phi_unit` now
-    means the default unit in both. One check for the names of
-    `System` components and `Sum` parts (derived from the class's own
-    fields) and one `wrap_phase`.
-- **`read_oifits` reads closure triangles whose leg has no visibility
-  row** ([#299](https://github.com/benjaminpope/virgil/issues/299)). A
-  triangle leg stored in no `OI_VIS2`/`OI_VIS` row in either orientation
-  raised a `ValueError`, so MIRC-X files and some ESO phase-3 PIONIER
-  products (which omit a baseline's V²) could not be read. `OI_T3` is
-  self-contained in the OIFITS standard, so such a leg now gets a flagged
-  sample at the T3 row's own coordinates (`(U1COORD, V1COORD)`,
-  `(U2COORD, V2COORD)` or their sum), shared by later triangles of the
-  same frame, as reversed legs already were. One `UserWarning` per file
-  gives the number of legs placed this way. The `ValueError` remains when
-  those coordinates are NaN or zero, or disagree with the triangle's other
-  legs (a table written with the opposite baseline direction).
-- Parallel numpyro chains (`chain_method="parallel"`) on data with
-  `with_gains` no longer segfault. `GainModes` held zero-size arrays when
-  no mode spans frames, and XLA's Shardy pass crashes compiling a
-  `jax.pmap` that captures one (JAX 0.11.2). `GainModes.spanning` and
-  `spanning_group` are now `None` then. `numpyro_model` warns, suggesting
-  `chain_method="vectorized"`, when the data still hold zero-size arrays
-  (e.g. no closure phases) and more than one device is visible.
-- `limits.chi2ppf` works for any number of degrees of freedom on a
-  standard install. For `df != 1` it called numpyro's `gammaincinv`,
-  which needs `tensorflow_probability`, not a virgil dependency; it now
-  inverts `jax.scipy.special.gammainc` by Halley's method for every `df`,
-  matching `scipy.stats.chi2.ppf` to about 1e-14 relative in float64
-  for p in [1e-10, 1 - 1e-10], and stays differentiable and `jit`-able.
-  `df = 1` also uses it, gaining precision at small p. It returns NaN
-  for `df <= 0`, and no longer needs `tensorflow_probability`. This
-  supersedes the removal of `chi2ppf` in #293, which is reverted. Found
-  by virgil-validation (F17).
+- the modules `virgil.epochs`, `virgil.aliases`, `virgil.orbit_search` and
+  `virgil.tempering` (the orbit fitting, aliases and search; `orbit_search`
+  ships provisional because orbit search is a core feature whose names are
+  still settling);
+- the `MultipoleDisk` family in `virgil.models`: `MultipoleDisk`, `ThinRing`,
+  `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`,
+  `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`,
+  `MultipoleKernel`, `Harmonics`, `VonMises`, `Cone`, `PowerLawHeight`,
+  `multipole_disk_cvis` and `gp_priors`; and in `virgil.fields`,
+  `MultipoleField` and `multipole_field_priors`;
+- the Gaussian-process members of `virgil.ensemble`: `evidence_grid`,
+  `gp_members`, `GPFit` and `EvidenceGrid`;
+- `virgil.svi` (`variational`);
+- all of `virgil.pipeline`: `BinaryPipeline`, `StarPipeline` and
+  `DiskPipeline`. `BinaryPipeline` and `StarPipeline` were documented as
+  stable and are now provisional, to be promoted after a release of use
+  (`global_nsigma` is to be settled first). The run schema
+  `virgil-pipeline-run-v1` is unchanged;
+- `virgil.imaging.clean` and `CleanResult`;
+- `virgil.metrics`.
 
 ## 0.3.0 (2026-10-06)
 

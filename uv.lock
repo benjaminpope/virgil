@@ -3807,7 +3807,7 @@ wheels = [
 
 [[package]]
 name = "virgil-astro"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "astropy" },
@@ -3924,7 +3924,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "numpyro", specifier = ">=0.19.0" },
     { name = "optax", specifier = ">=0.2.6" },
-    { name = "optimistix", specifier = ">=0.0.11" },
+    { name = "optimistix", specifier = ">=0.1.0" },
     { name = "pandas", marker = "extra == 'plots'", specifier = ">=2.2.2" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pyoifits", marker = "extra == 'test'", specifier = ">=0.4.10" },
