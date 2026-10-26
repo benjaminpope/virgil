@@ -23,7 +23,7 @@ verified_via = "ads"
 
 [ref.dorito]
 authors = "Charles et al."
-year = 2025
+year = 2026
 title = "Image reconstruction with the JWST Interferometer"
 how = "ported"
 used_in = ["virgil.imaging:Image", "virgil.imaging:starting_image", "virgil.fitting:fit"]

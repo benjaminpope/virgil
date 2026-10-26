@@ -159,7 +159,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `(module)` | [Kingma & Ba (2014)](#kingma2015), [arXiv:1412.6980](https://arxiv.org/abs/1412.6980), [ADS](https://ui.adsabs.harvard.edu/abs/2014arXiv1412.6980K/abstract) | after |
 | `(module)` | [Liu & Nocedal (1989)](#liu1989), [ADS](https://ui.adsabs.harvard.edu/abs/1989MatPr..45..503L/abstract), [doi:10.1007/BF01589116](https://doi.org/10.1007/BF01589116) | after |
-| `fit` | [Charles et al. (2025)](#dorito), [arXiv:2510.10924](https://arxiv.org/abs/2510.10924), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASA...43...48C/abstract) | ported |
+| `fit` | [Charles et al. (2026)](#dorito), [arXiv:2510.10924](https://arxiv.org/abs/2510.10924), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASA...43...48C/abstract) | ported |
 | `fit` | [Hutchinson (1989)](#hutchinson1989), [ADS](https://ui.adsabs.harvard.edu/abs/1989CoSSC..18.1059H/abstract), [doi:10.1080/03610918908812806](https://doi.org/10.1080/03610918908812806) | after |
 | `fit` | [Skilling & Bryan (1984)](#skillingbryan1984), [ADS](https://ui.adsabs.harvard.edu/abs/1984MNRAS.211..111S/abstract) | after |
 | `gauss_newton_diag` | [Bekas, Kokiopoulou & Saad (2007)](#bekas2007), [ADS](https://ui.adsabs.harvard.edu/abs/2007ApNM...57.1214B/abstract), [doi:10.1016/j.apnum.2007.01.003](https://doi.org/10.1016/j.apnum.2007.01.003) | after |
@@ -195,7 +195,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | Symbol | Source | Relation |
 |---|---|---|
 | `(module)` | [Tiede et al. (2025)](#tiede2025), [arXiv:2511.17706](https://arxiv.org/abs/2511.17706), [ADS](https://ui.adsabs.harvard.edu/abs/2026ApJ...997..262T/abstract) | after |
-| `Image` | [Charles et al. (2025)](#dorito), [arXiv:2510.10924](https://arxiv.org/abs/2510.10924), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASA...43...48C/abstract) | ported |
+| `Image` | [Charles et al. (2026)](#dorito), [arXiv:2510.10924](https://arxiv.org/abs/2510.10924), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASA...43...48C/abstract) | ported |
 | `LCurve.classic_maxent` | [Gull (1989)](#gull1989), [doi:10.1007/978-94-015-7860-8_4](https://doi.org/10.1007/978-94-015-7860-8_4) | after |
 | `LCurve.classic_maxent` | [Skilling (1989)](#skilling1989), [doi:10.1007/978-94-015-7860-8_3](https://doi.org/10.1007/978-94-015-7860-8_3) | after |
 | `Laplacian` | [Thiébaut & Young (2017)](#thiebaut2017), [arXiv:1708.08390](https://arxiv.org/abs/1708.08390), [ADS](https://ui.adsabs.harvard.edu/abs/2017JOSAA..34..904T/abstract) | after |
@@ -219,7 +219,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `log_evidence` | [MacKay (1992)](#mackay1992), [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415) | after |
 | `short_baseline_residual` | [Ireland, Monnier & Thureau (2006)](#ireland2006), [ADS](https://ui.adsabs.harvard.edu/abs/2006SPIE.6268E..1TI/abstract), [doi:10.1117/12.670940](https://doi.org/10.1117/12.670940) | after |
 | `starlet` | [Starck, Murtagh & Fadili (2010)](#starck2010) | after |
-| `starting_image` | [Charles et al. (2025)](#dorito), [arXiv:2510.10924](https://arxiv.org/abs/2510.10924), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASA...43...48C/abstract) | ported |
+| `starting_image` | [Charles et al. (2026)](#dorito), [arXiv:2510.10924](https://arxiv.org/abs/2510.10924), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASA...43...48C/abstract) | ported |
 
 ### `virgil.inference`
 
@@ -468,7 +468,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="candes2008"></a>**Candès, Wakin & Boyd (2007)**. Enhancing Sparsity by Reweighted L1 Minimization. [arXiv:0711.1612](https://arxiv.org/abs/0711.1612), [ADS](https://ui.adsabs.harvard.edu/abs/2008JFAA...14..877C/abstract). J. Fourier Anal. Appl. 14, 877 (2008).
 - <a id="casa_tclean"></a>**CASA Team (2022)**. CASAdocs, Synthesis Imaging: Iteration Control (stopping criteria and stop codes). [link](https://casadocs.readthedocs.io/en/stable/notebooks/synthesis_imaging.html). Iteration Control, global stopping criteria: divergence 1 is (PeakRes - PrevPeakRes) / PrevPeakRes > 3.0, divergence 2 is (PeakRes - MinPeakRes) / MinPeakRes > 3.0, both over the whole image ignoring the mask (stop codes 5 and 6); minor cycle: (currentPeak - prevPeak) / prevPeak > 0.1, stop code 4 saying 'from minimum'. The page is inconsistent on the minor-cycle reference; virgil uses the running minimum per scale (virgil's choice). Read 2026-10-24. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="chael2018"></a>**Chael et al. (2018)**. Interferometric Imaging Directly with Closure Phases and Closure Amplitudes. [arXiv:1803.07088](https://arxiv.org/abs/1803.07088), [ADS](https://ui.adsabs.harvard.edu/abs/2018ApJ...857...23C/abstract), [doi:10.3847/1538-4357/aab6a8](https://doi.org/10.3847/1538-4357/aab6a8), [GitHub](https://github.com/achael/eht-imaging). ApJ 857, 23; eht-imaging.
-- <a id="dorito"></a>**Charles et al. (2025)**. Image reconstruction with the JWST Interferometer. [arXiv:2510.10924](https://arxiv.org/abs/2510.10924), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASA...43...48C/abstract). PASA 43, e048 (2026); fit(post_step=): they convolve the log-parameter image with a Gaussian (sigma ~0.25 pix) and renormalise every fitting epoch, to stop flux collapsing into a few pixels.
+- <a id="dorito"></a>**Charles et al. (2026)**. Image reconstruction with the JWST Interferometer. [arXiv:2510.10924](https://arxiv.org/abs/2510.10924), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASA...43...48C/abstract). PASA 43, e048 (2026); fit(post_step=): they convolve the log-parameter image with a Gaussian (sigma ~0.25 pix) and renormalise every fitting epoch, to stop flux collapsing into a few pixels.
 - <a id="chavez2026"></a>**Chavez et al. (2026)**. Multifrequency Synthesis via CHIBI: Colorful Hierarchical Interferometric Bayesian Imaging. [arXiv:2606.04094](https://arxiv.org/abs/2606.04094), [ADS](https://ui.adsabs.harvard.edu/abs/2026ApJ..1005..132C/abstract).
 - <a id="chernoff1954"></a>**Chernoff (1954)**. On the Distribution of the Likelihood Ratio. [ADS](https://ui.adsabs.harvard.edu/abs/1954AnnMS..25..573C/abstract), [doi:10.1214/aoms/1177728725](https://doi.org/10.1214/aoms/1177728725).
 - <a id="clark1980"></a>**Clark (1980)**. An efficient implementation of the algorithm 'CLEAN'. [ADS](https://ui.adsabs.harvard.edu/abs/1980A&A....89..377C/abstract). A&A 89, 377; bibcode 1980A&A....89..377C; PSF-window minor cycles and the cycle threshold. *Not yet verified against arXiv, Crossref or ADS.*
