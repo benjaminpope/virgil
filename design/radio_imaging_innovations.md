@@ -310,6 +310,16 @@ marked *(unverified)*. Corrections are listed at the end.
 - **Prior art:** Hudson & Larkin 1994, IEEE Trans. Med. Imaging 13, 601 (`1994ITMI...13..601H`); SVRG, Johnson &
   Zhang 2013, NeurIPS 26, 315–323 (no DOI; papers.nips.cc/paper/2013/hash/ac1dd209cbcc5e5d1c6e28598e8cbbe8-Abstract.html).
 
+### B8a. Per-step projection hook for Adam (`fit(post_step=)`)
+- **What:** a jax-traceable map of the free parameters applied after every Adam update, so the next gradient sees
+  the projected parameters; the caller supplies the map (e.g. a subpixel blur of an image's log-brightness).
+  Adam moments are left as they are; not available for L-BFGS, whose curvature pairs a projection breaks.
+- **Status:** established. Post-step smoothing of the image parameters is the published recipe of dorito
+  (Charles et al. 2026, PASA 43, 48, `2026PASA...43...48C`: Gaussian σ ≈ 0.25 pix on the linear image, then
+  renormalised, each epoch).
+- **Traceability:** `tests/test_fitting.py::test_post_step_none_and_identity_are_bit_identical`,
+  `::test_post_step_clip_holds_at_every_step`, `::test_post_step_needs_plain_adam`. vv check: none yet.
+
 ### B9. Validation discipline
 - Every comparison leads with raw χ²/N.
 - The comparison with MPoL is made on the shared objective, the same data (26 of 26 spectral windows

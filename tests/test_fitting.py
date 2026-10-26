@@ -1483,3 +1483,30 @@ def test_fit_passes_the_resolved_lbfgs_memory_to_the_optimizer(monkeypatch):
     fit(START, PRIORS, DATA, method="lbfgs", lbfgs_memory=7, max_steps=5)
     assert seen[0] == 100
     assert seen[-1] == 7
+
+
+def test_post_step_none_and_identity_are_bit_identical():
+    plain, same = _adam(), _adam(post_step=lambda z: z)
+    for path, value in plain.values.items():
+        assert same.values[path] == value
+    assert (same.info["loss_history"] == plain.info["loss_history"]).all()
+    assert (plain.info["post_step"], same.info["post_step"]) == (False, True)
+
+
+def test_post_step_clip_holds_at_every_step():
+    free = _adam(max_steps=40).values["dra"]
+    assert free > START.dra  # the data pull dra up, so the clip binds
+    top = _Objective(START, PRIORS, (DATA,)).init(None)["dra"]
+    clip = lambda z: {**z, "dra": np.minimum(z["dra"], top)}  # noqa: E731
+    for steps in (1, 5, 40):
+        got = _adam(max_steps=steps, post_step=clip).values["dra"]
+        assert got <= START.dra * (1 + 1e-5)
+    assert got > START.dra * (1 - 1e-5)  # held at the clip, not below
+
+
+def test_post_step_needs_plain_adam():
+    for kw in ({"method": "lbfgs"}, {"method": "lm"}, {}):
+        with pytest.raises(ValueError, match="post_step"):
+            fit(START, PRIORS, DATA, post_step=lambda z: z, **kw)
+    with pytest.raises(ValueError, match="post_step"):
+        _adam(post_step=lambda z: z, precondition="diag")

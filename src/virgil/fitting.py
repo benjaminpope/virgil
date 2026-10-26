@@ -665,6 +665,7 @@ def fit(
     adam_eps=1e-8,
     ftol_abs=None,
     ftol_window=100,
+    post_step=None,
 ):
     """Find the maximum a posteriori parameters of a model given data.
 
@@ -707,6 +708,9 @@ def fit(
         ``ftol_window`` steps have run, at the first step ``t`` where
         ``loss[t - ftol_window] - loss[t] < ftol_abs`` (the unscaled loss;
         off if ``None``).
+    post_step : callable, optional
+        Adam only: a jax-traceable map of the free parameters (a dict by path)
+        applied after every update; Adam's moments are unchanged. Source: [Charles et al. (2026)](../references.md#dorito).
     precondition : {None, "diag"}, optional
         ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
         diagonal for L-BFGS and Adam (provisional); see
@@ -741,6 +745,11 @@ def fit(
             f"precondition must be None or 'diag', not {precondition!r}."
         )
     precondition = bool(precondition)
+    if post_step is not None and (method != "adam" or precondition):
+        raise ValueError(
+            "post_step needs method='adam' without precondition: a projection "
+            "breaks L-BFGS's curvature pairs and the preconditioner's metric."
+        )
     budget = _Budget(time_limit, progress)
     with run_in(dtype):
         problem = cast_tree(
@@ -827,6 +836,7 @@ def fit(
                 (ftol_abs, ftol_window),
                 budget,
                 None if metric is None else metric.normalized(),
+                post_step,
             )
         z = _recentre(problem, z)
         model = problem.build(z)
@@ -862,6 +872,7 @@ def fit(
             "chi2_red": sum(chi2) / scale,
             "grad_norm": float(grad_norm),
             **({"loss_history": history} if method == "adam" else {}),
+            "post_step": post_step is not None,
             "precondition": "diag"
             if precondition and method != "lm"
             else None,
@@ -2131,7 +2142,9 @@ _ADAM_CHUNK = 200
 
 
 @eqx.filter_jit
-def _adam(problem, carry, scale, rates, count, chunk, metric=None):
+def _adam(
+    problem, carry, scale, rates, count, chunk, metric=None, post_step=None
+):
     """``count`` (at most ``chunk``, the buffer's static length) Adam steps from ``carry = (z, state)``:
     the new carry and the unscaled loss before each step (NaN after ``count``)."""
     # With a metric, Adam runs in its scaled coordinates: its rms divisor
@@ -2148,16 +2161,19 @@ def _adam(problem, carry, scale, rates, count, chunk, metric=None):
         (z, opt), losses = state
         loss, grad = value_and_grad(z)
         updates, opt = optimizer.update(grad, opt, z)
-        return (optax.apply_updates(z, updates), opt), losses.at[i].set(
-            loss * scale
-        )
+        z = optax.apply_updates(z, updates)
+        if post_step is not None:
+            z = post_step(z)
+        return (z, opt), losses.at[i].set(loss * scale)
 
     losses = np.full(chunk, np.nan, dtype=np.result_type(scale))
     return jax.lax.fori_loop(0, count, step, (carry, losses))
 
 
 # deliberate: the chunk loop of ``fit``, kept out of its already long body
-def _adam_run(problem, z0, scale, rates, limit, ftol, budget, metric):
+def _adam_run(
+    problem, z0, scale, rates, limit, ftol, budget, metric, post_step=None
+):
     """``(z, steps, converged, stop, loss_history)`` of Adam in jitted chunks.
 
     ``converged`` is ``True`` if the plateau stop ``ftol = (abs, window)``
@@ -2183,6 +2199,7 @@ def _adam_run(problem, z0, scale, rates, limit, ftol, budget, metric):
             np.asarray(count),
             _ADAM_CHUNK,
             metric,
+            post_step,
         )
         new_losses = onp.asarray(losses)[:count] + float(problem.loss_constant)
         if ftol_abs is not None:
@@ -2202,6 +2219,7 @@ def _adam_run(problem, z0, scale, rates, limit, ftol, budget, metric):
                         np.asarray(fired - steps),
                         _ADAM_CHUNK,
                         metric,
+                        post_step,
                     )
                 budget.finish(
                     fired, lambda: (float(losses_so_far[fired]), nan)

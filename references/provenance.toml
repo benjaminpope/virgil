@@ -26,8 +26,8 @@ authors = "Charles et al."
 year = 2025
 title = "Image reconstruction with the JWST Interferometer"
 how = "ported"
-used_in = ["virgil.imaging:Image", "virgil.imaging:starting_image"]
-note = "PASA 43, e048 (2026)"
+used_in = ["virgil.imaging:Image", "virgil.imaging:starting_image", "virgil.fitting:fit"]
+note = "PASA 43, e048 (2026); fit(post_step=): they convolve the log-parameter image with a Gaussian (sigma ~0.25 pix) and renormalise every fitting epoch, to stop flux collapsing into a few pixels"
 bibcode = "2026PASA...43...48C"
 arxiv = "2510.10924"
 verified = true
