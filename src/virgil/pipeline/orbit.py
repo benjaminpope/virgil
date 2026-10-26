@@ -1246,20 +1246,24 @@ def _numpyro_order(sites):
     return onp.argsort(onp.asarray(sites))
 
 
-def _run_summary(stats, seconds, cap, kind, exhausted):
-    """The sampler's own report of one band: step size, tree depth, cost."""
+# deliberate: named step
+def _run_summary(stats, seconds, cap, kind, exhausted, adapted):
+    """The sampler's own report of one band: step size, tree depth, cost.
+    The counts are of the post-warm-up draws only."""
     steps = onp.asarray(stats["num_steps"])
     return {
         "mass": kind,
+        "mass_adapted": bool(adapted),
         "step_size": float(onp.median(onp.asarray(stats["step_size"])[:, -1])),
         "tree_depth_max": int(onp.ceil(onp.log2(steps.max() + 1.0))),
         "tree_depth_cap_fraction": float(onp.mean(steps >= 2**cap - 1)),
-        "n_gradients": int(steps.sum()),
+        "n_gradients_sampling": int(steps.sum()),
         "seconds": float(seconds),
         "budget_exhausted": bool(exhausted),
     }
 
 
+# deliberate: named step
 def _converged(band):
     """Whether a band's chains ran to the end and pass the R-hat and ESS
     checks' failure thresholds."""
@@ -1311,6 +1315,14 @@ def _sample_band(  # deliberate: named step
         hi,
         onp.array([at[k] for k in sites], float),
     )
+    # The Laplace matrix is kept fixed only where it describes the posterior:
+    # a positive-definite Hessian at a mode off the prior bounds. Otherwise
+    # (clipped, or a start pulled off a bound, where the posterior is no
+    # Gaussian) it is the warm-up's starting value.
+    moved = onp.any(
+        onp.abs(onp.array([at[k] for k in sites]) - x0) > 1e-9 * (hi - lo)
+    )
+    adapt = inverse_mass is None or kind != "laplace" or bool(moved)
     if inverse_mass is not None:
         order = _numpyro_order(sites)
         inverse_mass = inverse_mass[onp.ix_(order, order)]
@@ -1343,7 +1355,7 @@ def _sample_band(  # deliberate: named step
         inverse_mass=inverse_mass,
         jitter=jitter,
         max_tree_depth=cap,
-        adapt_mass=inverse_mass is None,
+        adapt_mass=adapt,
     )
     seconds = time.monotonic() - t0
     exhausted = late or (deadline is not None and time.monotonic() > deadline)
@@ -1355,7 +1367,9 @@ def _sample_band(  # deliberate: named step
     }
     summary = _band_summary(n, physical, drawn, stats, priors, bounds)
     summary["optimum_gap"] = _optimum_gap(problem, flat, x0)
-    summary["sampler"] = _run_summary(stats, seconds, cap, kind, exhausted)
+    summary["sampler"] = _run_summary(
+        stats, seconds, cap, kind, exhausted, adapt
+    )
     summary["converged"] = _converged(summary)
     return physical, stats, summary
 

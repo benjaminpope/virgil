@@ -1,7 +1,5 @@
 """The orbit posterior's NUTS preconditioner, start and time budget."""
 
-import time
-
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -29,9 +27,9 @@ SETTINGS = {
 }
 
 
-def _precision(scale=(0.01, 0.02, 0.005), rho=0.95):
+def _precision(scale=(0.01, 0.02, 0.005)):
     sd = onp.array(scale)
-    corr = onp.full((3, 3), rho) + (1 - rho) * onp.eye(3)
+    corr = onp.array([[1, 0.97, 0.2], [0.97, 1, 0.4], [0.2, 0.4, 1.0]])
     return onp.linalg.inv(corr * sd[:, None] * sd[None, :])
 
 
@@ -89,32 +87,20 @@ def _correlated_model(precision):
     return model
 
 
-def test_chains_start_at_the_mode_with_the_dense_mass_and_reach_the_ess(
-    monkeypatch,
-):
-    """Strong correlation, scales 1e-2 in a unit box: NUTS from the Laplace
-    mass reaches ESS 100 in a few hundred gradients per draw."""
-    h = _precision()
+def _run(h, permute=True, spy=None):
+    """The toy posterior (sites c, a, b; numpyro orders them a, b, c) run
+    with the Laplace mass, in numpyro's order or, wrongly, in the model's."""
     mass, chol, _ = orbit_module._laplace_mass(-h, LO, HI, X)
-    order = orbit_module._numpyro_order(list("cab"))  # the model's site order
-    seen = {}
-    import numpyro.infer as infer
-
-    real = infer.NUTS
-
-    def spy(*a, **k):
-        seen.update(k)
-        return real(*a, **k)
-
-    monkeypatch.setattr(infer, "NUTS", spy)
+    order = orbit_module._numpyro_order(list("cab"))
+    if not permute:
+        order = onp.arange(3)
     priors = {
         k: dist.Uniform(float(a), float(b)) for k, a, b in zip("cab", LO, HI)
     }
-    start = dict(zip("cab", X))
     mcmc = _run_chains(
         _correlated_model(h),
         SETTINGS,
-        start,
+        dict(zip("cab", X)),
         dense_mass=True,
         priors=priors,
         inverse_mass=mass[onp.ix_(order, order)],
@@ -122,14 +108,48 @@ def test_chains_start_at_the_mode_with_the_dense_mass_and_reach_the_ess(
         max_tree_depth=6,
         adapt_mass=False,
     )
-    assert seen["inverse_mass_matrix"].shape == (3, 3)
-    assert seen["max_tree_depth"] == 6
-    assert seen["adapt_mass_matrix"] is False
     drawn, stats = _draws(mcmc)
-    ess = _diagnostics(list(drawn.values()))["ess_bulk"]
+    return (
+        _diagnostics(list(drawn.values()))["ess_bulk"],
+        int(onp.sum(stats["num_steps"])),
+        mass,
+    )
+
+
+def test_dense_mass_reaches_the_ess_in_budget_and_its_order_matters():
+    """Correlated posterior, scales 1e-2 in a unit box: the Laplace mass in
+    numpyro's site order reaches ESS 100 in a few gradients per draw; the
+    same matrix in the wrong order does not."""
+    h = _precision()
+    ess, grads, _ = _run(h)
     assert ess >= 100
-    assert onp.asarray(stats["num_steps"]).max() <= 2**6 - 1
-    assert onp.sum(stats["num_steps"]) <= 300 * 2 * 20  # the gradient budget
+    assert grads <= 300 * 2 * 12  # the gradient budget
+    ess_bad, grads_bad, _ = _run(h, permute=False)
+    assert grads_bad > 1.5 * grads or ess_bad < 0.5 * ess
+
+
+def test_chains_start_at_the_mode_and_the_others_are_jittered(monkeypatch):
+    import numpyro.infer as infer
+
+    seen = {}
+
+    class Spy(infer.MCMC):
+        def run(self, rng_key, *args, init_params=None, **kwargs):
+            seen["init"] = init_params
+            return super().run(
+                rng_key, *args, init_params=init_params, **kwargs
+            )
+
+    monkeypatch.setattr(infer, "MCMC", Spy)
+    _, _, mass = _run(_precision())
+    init = onp.stack([onp.asarray(seen["init"][k]) for k in "abc"], axis=1)
+    s = (X - LO) / (HI - LO)  # the mode, in the logit coordinates of a, b, c
+    mode = onp.log(s / (1 - s))[[1, 2, 0]]
+    sd = onp.sqrt(onp.diag(mass))[[1, 2, 0]]
+    assert onp.allclose(init[0], mode, atol=1e-6)
+    gap = onp.abs(init[1] - mode)
+    assert onp.all(gap > 0)  # jittered ...
+    assert onp.all(gap < 2 * sd)  # ... by a fraction of the posterior width
 
 
 def test_a_passed_deadline_drains_the_chains_at_once(monkeypatch):
@@ -153,9 +173,16 @@ def test_a_passed_deadline_drains_the_chains_at_once(monkeypatch):
     assert diverging.mean() > 0.5  # nearly every transition after the deadline
 
 
-def test_the_clock_is_not_read_before_the_deadline():
-    @jax.jit
-    def alive(x):
-        return _deadline_factor(time.monotonic() + 3600.0, x)
+def test_the_clock_is_read_inside_the_compiled_function(monkeypatch):
+    now = [0.0]
 
+    class Clock:
+        @staticmethod
+        def monotonic():
+            return now[0]
+
+    monkeypatch.setattr("virgil.pipeline._common.time", Clock)
+    alive = jax.jit(lambda x: _deadline_factor(5.0, x))
     assert float(alive(np.asarray(0.0))) == 0.0
+    now[0] = 10.0  # the same compiled function, after the deadline
+    assert float(alive(np.asarray(0.0))) == -np.inf
