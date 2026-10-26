@@ -710,7 +710,7 @@ def fit(
         off if ``None``).
     post_step : callable, optional
         Adam only: a jax-traceable map of the free parameters (a dict by path)
-        applied after every update; Adam's moments are unchanged. Source: [Charles et al. (2025)](../references.md#dorito).
+        applied after every update; Adam's moments are unchanged. Source: [Charles et al. (2026)](../references.md#dorito).
     precondition : {None, "diag"}, optional
         ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
         diagonal for L-BFGS and Adam (provisional); see
