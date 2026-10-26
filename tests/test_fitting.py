@@ -389,9 +389,10 @@ def test_adam_ftol_stops_at_the_first_plateau_step(monkeypatch):
     monkeypatch.setattr(virgil.fitting, "_ADAM_CHUNK", 7)
     full = _adam(max_steps=120).info["loss_history"]
     window = 10
-    gaps = full[:-window] - full[window:]
-    ftol = float(onp.sort(gaps)[len(gaps) // 2])  # fires about halfway
-    t = window + int(onp.flatnonzero(gaps < ftol)[0])
+    ts = onp.arange(2 * window - 1, len(full))
+    ftol = float(onp.sort(onp.abs(full[ts] - full[ts - window]))[len(ts) // 2])
+    hits = virgil.fitting._plateau(full, ts, window, ftol)
+    t = int(ts[hits[0]])
     result = _adam(max_steps=120, ftol_abs=ftol, ftol_window=window)
     assert result.info["steps"] == t and t % 7 != 0  # mid-chunk
     assert result.info["converged"] is True and result.info["stop"] is None
@@ -428,12 +429,46 @@ def test_adam_ftol_with_a_time_limit(monkeypatch):
         time_limit=1e6,
         progress=reports.append,
     )
-    assert result.info["steps"] == 10 and result.info["converged"] is True
+    assert result.info["steps"] == 19 and result.info["converged"] is True
     assert result.info["stop"] is None
-    assert reports[-1]["steps"] == 10  # the final report is at the stop
+    assert reports[-1]["steps"] == 19  # the final report is at the stop
     # an expired budget stops first, at the end of the first chunk
     late = _adam(max_steps=120, ftol_abs=1e-30, ftol_window=10, time_limit=0.0)
     assert late.info["stop"] == "time" and late.info["steps"] == 7
+
+
+def _stops(loss, window=100, tol=0.1):
+    from virgil.fitting import _plateau
+
+    t = onp.arange(2 * window - 1, len(loss))
+    return t[_plateau(loss, t, window, tol)[:1]].tolist()
+
+
+def test_the_window_test_ignores_oscillation_and_drift():
+    t = onp.arange(2000.0)
+    assert _stops(100 + 5 * onp.sin(2 * onp.pi * t / 100)) == []
+    assert _stops(1e5 - t) == []  # drifting by 1 per step
+    noise = 1e-3 * onp.random.default_rng(0).standard_normal(2000)
+    assert _stops(100 + noise) == [199]
+    assert _adam(max_steps=250, ftol_abs=None).info["steps"] == 250
+
+
+@jax.enable_x64(True)
+def test_adam_learning_rate_schedule():
+    import optax
+
+    constant = _adam(learning_rate=1e-2)
+    decay = optax.exponential_decay(1e-2, 1, 0.8)
+    scheduled = _adam(learning_rate=decay)
+    assert not onp.allclose(
+        scheduled.values["dra"], constant.values["dra"], rtol=1e-6
+    )
+    same = _adam(learning_rate=optax.constant_schedule(1e-2))
+    onp.testing.assert_allclose(
+        same.values["dra"], constant.values["dra"], rtol=1e-12
+    )
+    step = lambda r: abs(r.values["dra"] - START.dra)  # noqa: E731
+    assert step(scheduled) < step(constant)
 
 
 def test_bad_ftol_abs_is_rejected():

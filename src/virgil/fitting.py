@@ -612,7 +612,7 @@ class FitResult:
         its path and its vector at ``"<path>_vec"``, so that ``values`` can
         start numpyro (``init_to_value``).
     info : dict
-        ``method``; ``converged`` (Adam: the ``ftol_abs`` stop fired or
+        ``method``; ``converged`` (Adam: the ``ftol_abs`` window stop fired or
         ``grad_norm <= gtol``); ``steps``; ``loss_history`` (Adam: the unscaled
         loss before each step); ``loss`` (the unscaled negative log posterior);
         ``chi2`` and ``ndata``, per dataset then per likelihood term (a Toeplitz
@@ -694,7 +694,8 @@ def fit(
         tolerance and L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
     lbfgs_memory, cg_steps, learning_rate : int, int and float, optional
         L-BFGS history (default 100, cut to keep it under 1 GiB); CG steps
-        per LM step (above 200 coordinates); Adam's rate.
+        per LM step (above 200 coordinates); Adam's rate: a float or an optax
+        schedule (a callable of the step).
     dtype : {"float64", "float32"}, optional
         Precision; see [common arguments](../common_arguments.md#dtype).
     likelihoods, time_limit, progress : sequence, float and callable, optional
@@ -704,10 +705,10 @@ def fit(
         ``time_limit`` that runs out on Adam's or LM's last chunk reports
         ``"limit"``, not ``"time"``.
     adam_eps, ftol_abs, ftol_window : float, float and int, optional
-        Adam only: ``optax.adam``'s ``eps``; and a plateau stop once at least
-        ``ftol_window`` steps have run, at the first step ``t`` where
-        ``loss[t - ftol_window] - loss[t] < ftol_abs`` (the unscaled loss;
-        off if ``None``).
+        Adam only: ``optax.adam``'s ``eps``; and a plateau stop after
+        ``2 * ftol_window`` steps, at the first step where the last window's
+        loss range is below ``ftol_abs`` and its mean is not lower than the
+        previous window's by ``ftol_abs`` or more (unscaled; off if ``None``).
     post_step : callable, optional
         Adam only: a jax-traceable map of the free parameters (a dict by path)
         applied after every update; Adam's moments are unchanged. Source: [Charles et al. (2026)](../references.md#dorito).
@@ -831,7 +832,12 @@ def fit(
                 problem,
                 z0,
                 traced_scale,
-                (np.asarray(learning_rate), np.asarray(adam_eps)),
+                (
+                    learning_rate
+                    if callable(learning_rate)
+                    else np.asarray(learning_rate),
+                    np.asarray(adam_eps),
+                ),
                 limit,
                 (ftol_abs, ftol_window),
                 budget,
@@ -2141,6 +2147,21 @@ def _lbfgs_round(
 _ADAM_CHUNK = 200
 
 
+# deliberate: the window test of ``_adam_run``, kept out of its loop
+def _plateau(losses, t, window, tol):
+    """Indices into ``t`` where the last ``window`` losses up to ``t`` span
+    less than ``tol`` and their mean is not below the previous window's by
+    ``tol`` or more (the test of virgil-validation's ``convergence_window``)."""
+    if not t.size:
+        return t
+    view = onp.lib.stride_tricks.sliding_window_view(losses, window)
+    last, prev = view[t - window + 1], view[t - 2 * window + 1]
+    flat = last.max(axis=1) - last.min(axis=1) < tol
+    return onp.flatnonzero(
+        flat & (last.mean(axis=1) > prev.mean(axis=1) - tol)
+    )
+
+
 @eqx.filter_jit
 def _adam(
     problem, carry, scale, rates, count, chunk, metric=None, post_step=None
@@ -2176,7 +2197,7 @@ def _adam_run(
 ):
     """``(z, steps, converged, stop, loss_history)`` of Adam in jitted chunks.
 
-    ``converged`` is ``True`` if the plateau stop ``ftol = (abs, window)``
+    ``converged`` is ``True`` if the window stop ``ftol = (abs, window)``
     fired, else ``None`` (``fit`` tests the gradient); ``stop`` is ``"limit"``,
     ``"time"`` or ``"non-finite"`` or ``None``.
     """
@@ -2184,7 +2205,7 @@ def _adam_run(
     nan = float("nan")  # deliberate: Adam's progress reports no gradient norm
     start = z0 if metric is None else jax.tree.map(np.zeros_like, z0)
     carry, history, steps, stop = (
-        (start, optax.adam(0.0).init(start)),
+        (start, optax.adam(rates[0]).init(start)),
         [],
         0,
         None,
@@ -2203,11 +2224,10 @@ def _adam_run(
         )
         new_losses = onp.asarray(losses)[:count] + float(problem.loss_constant)
         if ftol_abs is not None:
-            # exact: the first step t at which the plateau test holds
+            # exact: the first step t at which the window test holds
             losses_so_far = onp.concatenate([*history, new_losses])
-            t = onp.arange(max(window, steps), steps + count)
-            gap = losses_so_far[t - window] - losses_so_far[t]
-            hit = onp.flatnonzero(gap < ftol_abs)
+            t = onp.arange(max(2 * window - 1, steps), steps + count)
+            hit = _plateau(losses_so_far, t, window, ftol_abs)
             if hit.size:
                 fired = int(t[hit[0]])
                 if fired > steps:  # re-run the chunk's first steps only
