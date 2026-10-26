@@ -84,6 +84,11 @@ leave under 1% dead pixels, and recover the CLEAN flux to 10%. The last run reac
 2.7062, but its image fails: dead pixels left by the Gaussian start leave edge arcs and a ripple across the disk.
 The Adam arms are pending.
 
+The dead-pixel criterion is judged on the 30 mas tapered image, the image the regulariser acts on and the one MPoL
+exports. The untapered base image's dead-pixel count is logged alongside it. The base image can collapse into dots
+because the taper multiplies only the model, so lowering the regularization weight deconvolves the taper under
+positivity.
+
 > Gate result: _to be filled in before the tag._
 
 ## Known issues
