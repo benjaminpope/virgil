@@ -106,6 +106,8 @@ DEFAULTS = {
     "num_samples": 1000,
     "num_chains": 4,
     "chain_method": "vectorized",
+    "posterior_max_tree_depth": 8,
+    "posterior_max_hours": 12.0,
     "seed": 0,
     "quicklook_execute": True,
 }
