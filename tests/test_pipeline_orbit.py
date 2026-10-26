@@ -263,6 +263,8 @@ def _fake_reports():
                     "prior_bound_fraction": {"ecc": 0.0},
                 }
             ],
+            "converged": True,
+            "budget_exhausted": False,
             "num_chains": 2,
             "num_samples": 10,
             "num_warmup": 10,

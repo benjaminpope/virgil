@@ -167,6 +167,8 @@ class OrbitPipeline(_Pipeline):
         "num_samples": 1000,
         "num_chains": 4,
         "chain_method": "vectorized",
+        "posterior_max_tree_depth": 8,
+        "posterior_max_hours": 12.0,
         "seed": 0,
         "quicklook_execute": True,
     }
@@ -297,6 +299,9 @@ class OrbitPipeline(_Pipeline):
                 "vis_amp must be a bool or (lo, hi), 0 < lo < hi."
             )
         _validate_sampler(s)
+        _integer(s, "posterior_max_tree_depth", 1)
+        if not s["posterior_max_hours"] > 0:
+            raise ValueError("posterior_max_hours must be positive.")
         if not isinstance(s["exclude"], dict):
             raise ValueError("exclude must be a {name: reason} dict.")
 
@@ -1207,15 +1212,85 @@ def _plot_sky(p, result, epochs):  # deliberate: named step: one figure
 # --- posterior ---
 
 
-def _sample_band(p, result, data, n):  # deliberate: named step
-    """NUTS over band ``n``: ``(samples, stats, summary)``."""
+def _laplace_mass(hessian, lo, hi, x):
+    """``(inverse_mass, jitter, kind)``: the Laplace covariance at the mode
+    as NUTS's dense inverse mass matrix, and its Cholesky factor.
+
+    ``hessian`` is the log-likelihood's Hessian at ``x`` in the sampled
+    coordinates; the covariance is carried to numpyro's unconstrained
+    (logit of the box ``lo``, ``hi``) coordinates and ordered as numpyro
+    orders them (sites sorted by name; ``order`` indexes ``_SITES``). A
+    Hessian that is not positive definite has its eigenvalues replaced by
+    their absolute values, floored at 1e-10 of the largest (``laplace-clipped``);
+    a non-finite one gives ``(None, None, "adaptive")``: numpyro's own warm-up.
+    """
+    h = onp.asarray(hessian, float)
+    h = -0.5 * (h + h.T)
+    if not onp.all(onp.isfinite(h)):
+        return None, None, "adaptive"
+    w, v = onp.linalg.eigh(h)
+    floor = 1e-10 * onp.max(onp.abs(w))
+    if not floor > 0:
+        return None, None, "adaptive"
+    kind = "laplace" if w.min() > floor else "laplace-clipped"
+    w = onp.maximum(onp.abs(w), floor)
+    cov = (v / w) @ v.T
+    s = (x - lo) / (hi - lo)
+    g = 1.0 / ((hi - lo) * s * (1.0 - s))  # dz/dx of z = logit(s)
+    cov = g[:, None] * cov * g[None, :]
+    return cov, onp.linalg.cholesky(cov), kind
+
+
+def _numpyro_order(sites):
+    """The indices of ``sites`` in numpyro's flattened (sorted) order."""
+    return onp.argsort(onp.asarray(sites))
+
+
+def _run_summary(stats, seconds, cap, kind, exhausted):
+    """The sampler's own report of one band: step size, tree depth, cost."""
+    steps = onp.asarray(stats["num_steps"])
+    return {
+        "mass": kind,
+        "step_size": float(onp.median(onp.asarray(stats["step_size"])[:, -1])),
+        "tree_depth_max": int(onp.ceil(onp.log2(steps.max() + 1.0))),
+        "tree_depth_cap_fraction": float(onp.mean(steps >= 2**cap - 1)),
+        "n_gradients": int(steps.sum()),
+        "seconds": float(seconds),
+        "budget_exhausted": bool(exhausted),
+    }
+
+
+def _converged(band):
+    """Whether a band's chains ran to the end and pass the R-hat and ESS
+    checks' failure thresholds."""
+    return bool(
+        not band["sampler"]["budget_exhausted"]
+        and _checks.r_hat(band["r_hat_max"]).status != "fail"
+        and _checks.ess(band["ess_bulk_min"]).status != "fail"
+    )
+
+
+def _sample_band(  # deliberate: named step
+    p, result, data, n, *, deadline=None
+):
+    """NUTS over band ``n``: ``(samples, stats, summary)``. The chains start
+    at the mode, preconditioned by its Laplace covariance, and stop at
+    ``deadline`` (a ``time.monotonic()`` value; ``None``: no limit)."""
+    import time
+
     import jax.numpy as np
     import numpyro
     import numpyro.distributions as dist
 
+    from ._common import _deadline_factor, _interior_start
+
     from ..aliases import _band_target, _loglike, _physical
 
     s = p.settings
+    late = deadline is not None and time.monotonic() >= deadline
+    if late:  # the budget went to earlier bands: a token run, for the report
+        s = {**s, "num_warmup": 0, "num_samples": 8}
+        deadline = None
     problem, bounds, x0, _ = _band_target(result, data, n)
     sites = _SITES[: len(x0)]
     # The sampling box of the mode: the band's finite prior bounds, and for
@@ -1229,6 +1304,17 @@ def _sample_band(p, result, data, n):  # deliberate: named step
         for name, a, b in zip(sites, lo, hi)
     }
     start = {k: onp.asarray(v) for k, v in zip(sites, x0)}
+    at = _interior_start(priors, start)
+    inverse_mass, jitter, kind = _laplace_mass(
+        problem.hessian(np.asarray(x0)),
+        lo,
+        hi,
+        onp.array([at[k] for k in sites], float),
+    )
+    if inverse_mass is not None:
+        order = _numpyro_order(sites)
+        inverse_mass = inverse_mass[onp.ix_(order, order)]
+        jitter = jitter[onp.ix_(order, order)]
 
     def model():  # uniform priors, tempered scale-marginalized likelihood
         x = np.stack([numpyro.sample(k, d) for k, d in priors.items()])
@@ -1243,8 +1329,24 @@ def _sample_band(p, result, data, n):  # deliberate: named step
                 problem.mix,
             ),
         )
+        if deadline is not None:
+            numpyro.factor("deadline", _deadline_factor(deadline, x))
 
-    mcmc = _run_chains(model, s, start, dense_mass=True, priors=priors)
+    cap = s["posterior_max_tree_depth"]
+    t0 = time.monotonic()
+    mcmc = _run_chains(
+        model,
+        s,
+        start,
+        dense_mass=True,
+        priors=priors,
+        inverse_mass=inverse_mass,
+        jitter=jitter,
+        max_tree_depth=cap,
+        adapt_mass=inverse_mass is None,
+    )
+    seconds = time.monotonic() - t0
+    exhausted = late or (deadline is not None and time.monotonic() > deadline)
     drawn, stats = _draws(mcmc)
     shape = drawn[sites[0]].shape
     flat = onp.stack([drawn[k].reshape(-1) for k in sites], axis=-1)
@@ -1253,6 +1355,8 @@ def _sample_band(p, result, data, n):  # deliberate: named step
     }
     summary = _band_summary(n, physical, drawn, stats, priors, bounds)
     summary["optimum_gap"] = _optimum_gap(problem, flat, x0)
+    summary["sampler"] = _run_summary(stats, seconds, cap, kind, exhausted)
+    summary["converged"] = _converged(summary)
     return physical, stats, summary
 
 
@@ -1345,8 +1449,19 @@ def _posterior(p):
     result = _load_result(p)
     data = list(p.data.data)
     groups, summaries = {}, []
-    for n in modes["sampled"]:
-        physical, stats, summary = _sample_band(p, result, data, n)
+    import time
+
+    start = time.monotonic()
+    budget = 3600.0 * s["posterior_max_hours"]
+    for k, n in enumerate(modes["sampled"]):
+        # Each band gets an equal share of the time that is left.
+        left = budget - (time.monotonic() - start)
+        deadline = time.monotonic() + max(left, 0.0) / (
+            len(modes["sampled"]) - k
+        )
+        physical, stats, summary = _sample_band(
+            p, result, data, n, deadline=deadline
+        )
         groups[f"posterior_n{n}"] = physical
         groups[f"sample_stats_n{n}"] = stats
         summaries.append(summary)
@@ -1360,6 +1475,10 @@ def _posterior(p):
     )
     return {
         "modes": summaries,
+        "converged": all(m["converged"] for m in summaries),
+        "budget_exhausted": any(
+            m["sampler"]["budget_exhausted"] for m in summaries
+        ),
         **_sampler_report(s, summaries),
         # NaN-propagating: a band that could not be scored must show.
         "optimum_gap_max": float(
@@ -1418,6 +1537,8 @@ _MODES_KEYS = (
 )
 _POSTERIOR_KEYS = (
     "modes",
+    "converged",
+    "budget_exhausted",
     "num_chains",
     "num_samples",
     "num_warmup",
