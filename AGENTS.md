@@ -93,6 +93,54 @@ Novel or experimental methods are opt-in, never defaults, until virgil-validatio
 validated them. The rule binds new entries; gaps in existing ones are listed in the register
 as to-do. Public docs do not link `design/` notes.
 
+## Anti-reward-hacking & scientific integrity (mandatory for all AI agents)
+
+AI agents (Claude, Argon/Antigravity, Copilot, Codex) must never game release
+gates, test assertions, or linter rules at the expense of mathematical
+validity, generalizability, or code legibility:
+
+1. **No target-specific heuristics or rescue cascades.** Never add a heuristic,
+   magic threshold, fallback pass, or mode-grouping rule to push a specific
+   benchmark target (e.g. Gl 229, ι Peg, AL Dor, AK For, HD 9312, HD 142527,
+   IW Car, PS Gem, or an Imaging Beauty Contest dataset) across a gate. If a
+   benchmark fails:
+   - First check whether the posterior is genuinely multimodal or
+     underdetermined in the published literature (e.g. Gl 229 without RVs).
+   - If a heuristic you added breaks another case, **delete or redesign the
+     heuristic**—never stack a second compensating heuristic (such as post-hoc
+     polish, readmission passes for excluded bands, or dividing a gate by
+     `temper_f` to disable the feature on the target it was built for).
+2. **No tautological, self-referential, or weakened tests.**
+   - Never copy-paste the implementation formula (or call private helpers under
+     test) into a test to compute the expected value. Test against analytical
+     solutions, dense numerical quadrature (`scipy.integrate`), finite
+     differences, or `virgil-validation`.
+   - Never pin floating-point outputs copied from running `virgil` itself as a
+     ground-truth oracle, and never delete a regressing case (e.g. a failing
+     alias band) from a test dictionary.
+   - Never widen a test tolerance (`atol`, `rtol`, eigenvalue bounds) or mark a
+     failing test `@pytest.mark.xfail` to make CI green without explicit
+     sign-off from Ben in the PR description.
+   - Never build unphysical synthetic test data (such as negating closure
+     phases while keeping V², collapsing frame timestamps to hide orbital
+     motion, or shrinking an injected source because default pipeline settings
+     truncate it).
+   - Never assert vacuous conditions guaranteed by parameter transforms (such
+     as `0 <= val < 0.2` on a `Uniform(0, 0.2)` sigmoid-mapped parameter).
+3. **Never silence sampler or optimizer failures.** Never add code that
+   automatically downgrades MCMC divergences, non-convergence, or high R-hat
+   from `"fail"` to `"warn"` (such as probing random directions for steep
+   walls).
+4. **Never game code-shape or docstring gates.**
+   - Do not inline multi-step logic into >120-line monolithic functions to pass
+     `scripts/code_shape.py`, and do not stamp generic
+     `# deliberate: test seam`, `# deliberate: a named step`, or
+     `# deliberate: stage callable` on single-use functions. Extract genuinely
+     reusable helpers or cohesive domain stages.
+   - Never delete load-bearing parameter contracts (coordinate spaces,
+     incompatibilities, units) or cram >4 unrelated parameters onto one
+     numpydoc header line to stay under the docstring line limit.
+
 ## Instrument-specific work
 
 Calibration and error models specific to the VLTI instruments (GRAVITY,
@@ -167,15 +215,20 @@ and writing history into docstrings. So:
 7. **Make growth visible.** CI comments each PR's net `src`/`tests` line change.
    Above +1,000 `src` lines, the PR description says what the size buys and what
    it supersedes.
-8. **No single-use private helpers.** CI fails a PR that adds a private def
-   (module-level, nested or method) called exactly once in the package, at any
-   size: inline it. Exempt: a `# deliberate: <reason>` comment on the def line or
-   the line above; `jit`/`filter_jit` kernels; `custom_jvp`/`custom_vjp` functions
-   and their `.defjvp`/`.defvjp` rules; `singledispatch` `.register` functions;
-   callbacks (a def passed as a value, e.g. to `lax.scan`, `vmap`, `grad`,
-   `map`); and names used in `tests/`. Only additions fail, measured against the
-   PR base (`python scripts/code_shape.py --since origin/main`). The base branch's
-   copy of the script decides, so a PR cannot weaken the gate.
+8. **No single-use private helpers or oversized monoliths.** CI fails a PR that
+   adds a private def (module-level, nested or method) called exactly once in
+   the package, at any size: inline it or share it across callers. Exempt: a
+   specific `# deliberate: <reason>` comment on the def line or the line above
+   (generic rubber-stamp reasons such as `# deliberate: named step`,
+   `# deliberate: test seam`, and `# deliberate: stage callable` are rejected);
+   `jit`/`filter_jit` kernels; `custom_jvp`/`custom_vjp` functions and their
+   `.defjvp`/`.defvjp` rules; `singledispatch` `.register` functions; callbacks
+   (a def passed as a value, e.g. to `lax.scan`, `vmap`, `grad`, `map`); and
+   names imported from that module in `tests/`. Newly added or grown functions
+   over `MAX_FUNC_LINES = 120` body lines (excluding the docstring) also fail
+   `python scripts/code_shape.py --since origin/main`, preventing destructive
+   inlining into monoliths. The base branch's copy of the script decides, so a
+   PR cannot weaken the gate.
 
 ## Docstring style
 
@@ -183,7 +236,8 @@ Ben is surprised how long some docstrings are. Keep them short.
 
 - **Public docstring:** a one-line summary; at most about five lines of
   description; numpydoc `Parameters`, `Returns` and `Raises`; at most one short
-  `Example`. Aim for 40 lines or fewer. Over 60 is a defect.
+  `Example`. Aim for 40 lines or fewer. Over 60 is a defect (80 for functions
+  or classes with >= 10 documented parameters).
 - **Notes:** only the formula a user needs to call the function correctly.
 - **Leave out:** derivations, design history, plan or "problem N" numbers,
   PR/issue numbers and named science targets. Put a derivation in a docs page
@@ -211,9 +265,11 @@ Ben is surprised how long some docstrings are. Keep them short.
   it is checked on the arXiv abstract page (`scripts/fetch_references.py`
   resolves entries against ADS). `scripts/sync_references_page.py --by-module`
   and `--unverified` give the census.
-- **The gate:** `tests/lint/test_docstring_length.py` fails on any docstring
-  over 60 lines, with no allowlist: shorten the docstring, and put
-  derivations in `docs/` and design history in `design/`.
+- **The gate:** `tests/lint/test_docstring_length.py` allows up to 80 lines for
+  functions or classes with >= 10 documented parameters (60 lines otherwise)
+  and forbids cramming > 4 parameter names onto a single numpydoc header line:
+  shorten the docstring, and put derivations in `docs/` and design history in
+  `design/`.
 - **Comprehension check:** every docstring-rewrite PR runs one. Give a fresh
   subagent only the signature and the new docstring of each rewritten public
   function. It writes a correct call for a stated task and lists anything it
@@ -285,13 +341,13 @@ phase of the orbit-consolidation plan adds it (virgil-validation's
 | Problem | Fix | Where | Test |
 |---|---|---|---|
 | Integer orbit count (alias band N = round(T/P)) | band scan over the period range, mode-keeping, evidence per band | `aliases.fit_orbit_aliases`, `alias_bands` | `test_aliases.py::test_injected_alias_wins_in_closure_phases` |
-| Single-night alias peaks (Gl 229 2024-02-27, 2024-03-28) | flag the night (`alias-peaks`, `low-gap`, `chi2-high`, ...): it seeds no position, its data still count | `epochs.epoch_positions` (`EpochPositions.flags`), `aliases.fit_orbit_aliases(skip_flagged=True)`, `start_from_positions`, `AliasResult.unseeded` | `test_epochs.py::test_epoch_positions_flags_each_night_with_a_code_and_a_reason`, `test_aliases.py::test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band` |
+| Single-night alias peaks (Gl 229 2024-02-27, 2024-03-28) | flag the night (`alias-peaks`, `low-gap`, `chi2-high` pooled across nights when a spectral mode has `< 3` nights, ...): it seeds no position, its data still count | `epochs.epoch_positions` (`EpochPositions.flags`), `aliases.fit_orbit_aliases(skip_flagged=True)`, `start_from_positions`, `AliasResult.unseeded` | `test_epochs.py::test_epoch_positions_flags_each_night_with_a_code_and_a_reason`, `test_aliases.py::test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band` |
 | Separation below λ/2B_max | flag (`sep-below-resolution`), reported only (seeds unless `flag_sep_blocks`) | `epochs.epoch_positions` | `test_epochs.py::test_epoch_positions_flags_each_night_with_a_code_and_a_reason` |
 | Flux at its bound (twin / label swap) | flag (`flux-at-bound`) | `epochs.epoch_positions` | same test |
 | Resolved primary (ι Peg, 1.05 mas) | uniform-disc primary in the per-night seeds | `epochs.epoch_positions(primary_diam=)` (a fixed diameter or None) | `test_epochs.py::test_ud_seeds_are_unbiased_for_a_resolved_primary` |
 | Resolved primary in the orbit fit, automatically (problem 10) | `primary_diam="auto"` (default): a first pass fits a shared UD diameter to the per-night positions; resolved when it gains 5 nats over a point primary, then the engine fits the diameter and the seeds are refined with it | `epochs.estimate_primary_diameter`, `aliases._auto_primary`, `AliasResult.primary_fit` | `test_epochs.py::test_a_resolved_primary_is_estimated_and_an_unresolved_one_is_a_point`, `test_aliases.py::test_auto_primary_reseeds_with_the_diameter_it_fits`, `test_aliases.py::test_a_resolved_primary_is_fitted_and_an_unresolved_one_is_a_point`, `test_aliases.py::test_a_fixed_diameter_seeds_are_kept_with_a_warning_when_unresolved`, `test_aliases.py::test_a_diameter_estimate_at_the_grid_edge_is_recorded` |
 | Resolved primary in the orbit fit | `primary_diam` fixed or `"fit"` | `aliases.fit_orbit_aliases` | `test_aliases.py::test_a_fitted_diameter_is_recovered` |
-| Cycle counts from short arcs (Gl 229: 160 bands in the window, N=34 the truth) | `short_arcs=True` by default: night velocities from the two halves of each night; nights joined shortest gap first, each step keeping the periods whose Thiele–Innes fit to positions + velocities (profiled over e, τ and the constants) is within `arc_delta_chi2` of the best, with a position floor `arc_jitter` λ/B_max; excluded bands readmitted when their seeds beat the kept bands; arc seeds are *added* to a kept band's position-profile seeds, never replace them (the true band once fell from log Z -253 to -511); too few data keep the whole window; **tempered**: the sign gate uses `gap_marginal / f` and the cut's position and velocity covariances are × `f` (`cov_scale`), because a night's untempered gap is overconfident under correlated channels (Gl 229, f = 41: spurious far peaks with gaps of 44 and 8.6 nats cut the true band N=34 at dcf1db8) | `arcs.night_motion`, `arcs.unwrap_cycles`, `arcs.arc_profile`, `aliases._short_arc_bands`, `AliasResult.short_arc` | `test_arcs.py::test_the_true_cycle_count_survives`, `test_arcs.py::test_too_few_data_keep_the_whole_window`, `test_arcs.py::test_errors_underestimated_sixfold_keep_the_true_cycle_count`, `test_aliases.py::test_the_sign_gate_tempers_the_gaps_like_the_evidence`, `test_tempering.py::test_the_short_arcs_see_the_tempered_gaps_and_errors`, `test_arcs.py::test_unwrapping_and_seeds_are_deterministic`, `test_aliases.py::test_a_cold_seasonal_gap_fit_ranks_the_true_alias_first`, `test_aliases.py::test_an_excluded_band_that_beats_the_kept_ones_is_readmitted`, `test_aliases.py::test_short_arc_seeds_come_beside_the_position_seeds` |
+| Cycle counts from short arcs (opt-in) | `short_arcs`: night velocities from the two halves of each night; nights joined shortest gap first, each step keeping the periods whose Thiele–Innes fit to positions + velocities (profiled over e, τ and the constants) is within `arc_delta_chi2` of the best, with a position floor `arc_jitter` λ/B_max; arc seeds are *added* to a kept band's position-profile seeds, never replace them; too few data keep the whole window | `arcs.night_motion`, `arcs.unwrap_cycles`, `arcs.arc_profile`, `aliases._short_arc_bands`, `AliasResult.short_arc` | `test_arcs.py::test_the_true_cycle_count_survives`, `test_arcs.py::test_too_few_data_keep_the_whole_window`, `test_arcs.py::test_errors_underestimated_sixfold_keep_the_true_cycle_count`, `test_arcs.py::test_unwrapping_and_seeds_are_deterministic`, `test_aliases.py::test_short_arc_seeds_come_beside_the_position_seeds` |
 | Label swap (twins, AL Dor; problem 8) | `sign_free=True` by default: sign-free seeds are added to the signed ones; `labels_free` when a point-reflected mode is within 3 nats of the best and the tracks match within a fraction of the resolution | `aliases.fit_orbit_aliases`, `aliases._labels_free`, `LABELS_FREE_NATS`, `AliasResult.labels_free` | `test_aliases.py::test_a_twin_is_labels_free_and_a_contrast_pair_is_not`, `test_aliases.py::test_a_twin_fit_is_labels_free_with_default_arguments`, `test_aliases.py::test_sign_free_seeds_add_to_the_signed_ones_and_keep_the_true_orbit`, `test_aliases.py::test_labels_free_tolerance_is_a_fraction_of_the_resolution` |
 | Period window from the data (problem 5) | `p_range=None` (default): `period_window`: a Nyquist-style sampling limit at the bottom (the companion moves less than half the resolution within the longest night, field = median unflagged separation, a documented λ/B_min without positions, never a published period) and 4 x the span at the top; capped at `n_bands_max` bands with a warning and `window_capped`; `period_bound` when the best period is at the top or σ(log P) is wide (short arc: P unconstrained), `period_at_lower_bound` when it is at the bottom (the limit may have cut the truth) | `aliases.period_window`, `aliases._night_length`, `aliases._field_mas`, `aliases._cap_bands`, `AliasResult.period_bound`, `AliasResult.period_at_lower_bound`, `AliasResult.window_capped` | `test_aliases.py::test_period_window_limits_on_simple_inputs`, `test_aliases.py::test_without_p_range_the_window_comes_from_the_data`, `test_aliases.py::test_a_best_period_at_the_top_of_the_window_is_period_bound`, `test_aliases.py::test_a_short_arc_fit_is_period_bound_with_default_arguments`, `test_aliases.py::test_the_night_is_measured_from_frame_gaps_not_the_dataset_span`, `test_aliases.py::test_the_window_field_is_the_median_unflagged_separation`, `test_aliases.py::test_a_default_window_with_too_many_bands_is_capped_and_says_so`, `test_aliases.py::test_a_flat_period_likelihood_is_period_bound_wherever_the_best_is`, `test_aliases.py::test_a_best_period_just_above_the_bottom_is_at_the_lower_bound` |
 | Flux flip (companion brighter than the primary; problem 9) | `flip_flux` refit with the labels swapped (the default) | `aliases.fit_orbit_aliases` | `test_aliases.py::test_the_flip_acts_only_on_a_flux_pinned_at_the_top`, `test_aliases.py::test_a_brighter_companion_is_found_by_the_flux_flip` |

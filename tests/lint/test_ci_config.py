@@ -242,3 +242,13 @@ def test_label_job_can_label_pull_requests():
     perms = job[job.index("permissions:") :].split("steps:")[0]
     assert "pull-requests: write" in perms
     assert "issues: write" in perms
+
+
+def test_test_budget_stays_active_when_shard_packing_changes():
+    """Adding or renaming a test file must not disable VIRGIL_TEST_BUDGET."""
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    line = next(x for x in tests.splitlines() if "VIRGIL_TEST_BUDGET:" in x)
+    assert "steps.key.outputs.prefix" not in line
+    assert (
+        "format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax)" in line
+    )

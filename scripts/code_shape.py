@@ -205,21 +205,31 @@ def _shingles(body):
     return set(zip(lines, lines[1:]))
 
 
+MAX_FUNC_LINES = 120
 _EXEMPT_DECORATOR = re.compile(
     r"jit|custom_(jvp|vjp)|\.def(jvp|vjp)(\(.*\))?$|\.register(\(.*\))?$"
 )
+_GENERIC_DELIBERATE = re.compile(
+    r"#\s*deliberate:\s*(a\s+)?(named\s+step|test\s+seam|stage\s+callable)\b",
+    re.I,
+)
 
 
-def _private_defs(tree):
-    """``(qualname, node)`` of every private def: module-level, nested, method."""
+def _valid_deliberate(line):
+    if "# deliberate:" not in line or _GENERIC_DELIBERATE.search(line):
+        return False
+    return bool(line.split("# deliberate:", 1)[1].strip())
+
+
+def _all_defs(tree):
+    """``(qualname, node)`` of every def: module-level, nested, method."""
     out = []
 
     def walk(node, prefix):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 q = prefix + child.name
-                if _private(child.name):
-                    out.append((q, child))
+                out.append((q, child))
                 walk(child, q + ".")
             elif isinstance(child, ast.ClassDef):
                 walk(child, prefix + child.name + ".")
@@ -228,6 +238,19 @@ def _private_defs(tree):
 
     walk(tree, "")
     return out
+
+
+def _private_defs(tree):
+    """``(qualname, node)`` of every private def: module-level, nested, method."""
+    return [(q, n) for q, n in _all_defs(tree) if _private(n.name)]
+
+
+def _func_body_lines(node):
+    """Line span of a function's body excluding its docstring."""
+    body = _strip_doc(node.body)
+    if not body:
+        return 0
+    return node.end_lineno - body[0].lineno + 1
 
 
 def _module_uses(tree):
@@ -275,13 +298,38 @@ def _reach(table, name, own, imported):
 
 
 def _test_names(tests_text):
-    """Names tests import or take as attributes (``mod._name``), not locals."""
+    """Names tests import or take as attributes (``mod._name``), qualified by module when known."""
+    tree = ast.parse(tests_text)
     names = set()
-    for n in ast.walk(ast.parse(tests_text)):
+    mod_aliases = {}
+    for n in ast.walk(tree):
         if isinstance(n, ast.ImportFrom):
-            names.update(al.name for al in n.names)
-        elif isinstance(n, ast.Attribute):
-            names.add(n.attr)
+            if n.module == "virgil":
+                for al in n.names:
+                    mod_aliases[al.asname or al.name] = f"{al.name}.py"
+            elif n.module and n.module.startswith("virgil."):
+                rel = (
+                    n.module.removeprefix("virgil.").replace(".", "/") + ".py"
+                )
+                for al in n.names:
+                    names.add((rel, al.name))
+            else:
+                names.update(al.name for al in n.names)
+        elif isinstance(n, ast.Import):
+            for al in n.names:
+                if al.name.startswith("virgil."):
+                    rel = (
+                        al.name.removeprefix("virgil.").replace(".", "/")
+                        + ".py"
+                    )
+                    key = al.asname or al.name.split(".")[-1]
+                    mod_aliases[key] = rel
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute):
+            if isinstance(n.value, ast.Name) and n.value.id in mod_aliases:
+                names.add((mod_aliases[n.value.id], n.attr))
+            else:
+                names.add(n.attr)
     return names
 
 
@@ -306,7 +354,7 @@ def find_single_use(head, base, tests_text=""):
         lines = head[path].splitlines()
         for q, node in _private_defs(tree):
             name = node.name
-            if (path, q) in old or name in tested:
+            if (path, q) in old or (path, name) in tested or name in tested:
                 continue
             if path not in base and q in moved:  # a moved module
                 continue
@@ -328,9 +376,38 @@ def find_single_use(head, base, tests_text=""):
             near = (
                 lines[top - 2 : top - 1] + lines[node.lineno - 1 : node.lineno]
             )
-            if any("# deliberate:" in x for x in near):
+            if any(_valid_deliberate(x) for x in near):
                 continue
             found.append(f"{path}:{node.lineno} {q}")
+    return found
+
+
+def find_oversized_functions(head, base, max_lines=MAX_FUNC_LINES):
+    """Functions in ``head`` that are new or grew vs ``base`` and exceed ``max_lines`` body lines."""
+    trees = {p: ast.parse(t) for p, t in head.items()}
+    base_trees = {p: ast.parse(t) for p, t in base.items()}
+    old_sizes = {
+        (p, q): _func_body_lines(n)
+        for p, t in base_trees.items()
+        for q, n in _all_defs(t)
+    }
+    moved_sizes = {}
+    for (_, q), sz in old_sizes.items():
+        moved_sizes[q] = max(moved_sizes.get(q, 0), sz)
+    found = []
+    for path, tree in trees.items():
+        for q, node in _all_defs(tree):
+            n_lines = _func_body_lines(node)
+            if n_lines <= max_lines:
+                continue
+            old_lines = old_sizes.get(
+                (path, q), moved_sizes.get(q) if path not in base else None
+            )
+            if old_lines is not None and n_lines <= old_lines:
+                continue
+            found.append(
+                f"{path}:{node.lineno} {q} ({n_lines} lines > {max_lines})"
+            )
     return found
 
 
@@ -373,11 +450,19 @@ def main():
             for p in (ROOT / "tests").rglob("*.py")
             if "lint" not in p.parts
         )
-        found = find_single_use(_read_tree(), _read_tree(a.since), tests)
+        head, base = _read_tree(), _read_tree(a.since)
+        found = find_single_use(head, base, tests)
+        oversized = find_oversized_functions(head, base)
         print(f"single-use private defs added since {a.since}: {len(found)}")
         for f in found:
             print(f"  {f}")
-        raise SystemExit(bool(found))
+        if oversized:
+            print(
+                f"functions over {MAX_FUNC_LINES} body lines added/grown since {a.since}: {len(oversized)}"
+            )
+            for f in oversized:
+                print(f"  {f}")
+        raise SystemExit(bool(found or oversized))
     defs, modules = collect()
     extra = grep_extra(
         {d["name"] for d in defs},
