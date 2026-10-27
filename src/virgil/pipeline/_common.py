@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import numbers
+import time
 
 import equinox as eqx
 import jax
@@ -390,16 +391,36 @@ def _interior_start(priors, start, inset=_START_INSET):
     return out
 
 
-def _run_chains(posterior, settings, start, *, dense_mass, priors=None):
-    """Run NUTS from ``start`` (one jittered start per chain); the finished MCMC.
+def _run_chains(
+    posterior,
+    settings,
+    start,
+    *,
+    dense_mass,
+    priors=None,
+    inverse_mass=None,
+    jitter=None,
+    max_tree_depth=10,
+    adapt_mass=True,
+):
+    """Run NUTS from ``start`` (one start per chain); the finished MCMC.
 
     With ``priors`` (by sample site), the start is first pulled just inside
     any bound it sits on (``_interior_start``). If numpyro still finds no
     finite log-density at the start, a ``ValueError`` says which values sit
     on a bound, instead of numpyro's own message.
+
+    ``inverse_mass`` is the initial dense inverse mass matrix, in numpyro's
+    order of the unconstrained sites (``ravel_pytree``: sorted by name);
+    ``adapt_mass=False`` keeps it fixed (warm-up windows of a few hundred
+    draws estimate a worse matrix than a Laplace one). ``jitter`` (a matrix ``L`` in the same order) starts
+    chain ``k > 0`` at ``0.3 L ε`` from the start, ``ε`` standard normal, when
+    the log-density is finite there; chain 0 starts at ``start``.
     """
     import jax
+    from jax.flatten_util import ravel_pytree
     from numpyro.infer import MCMC, NUTS
+    from numpyro.infer.util import potential_energy
 
     from ..likelihood import chain_init_params
 
@@ -421,8 +442,30 @@ def _run_chains(posterior, settings, start, *, dense_mass, priors=None):
             )
             + ". Check that the fitted model and its priors agree."
         ) from error
+    n = settings["num_chains"]
+    if jitter is not None and n > 1:
+        z0 = jax.tree_util.tree_map(lambda a: a[0], init)
+        flat, unravel = ravel_pytree(z0)
+        eps = onp.random.default_rng(settings["seed"]).standard_normal(
+            (n, len(flat))
+        )
+        chains = [z0]
+        for k in range(1, n):
+            z = unravel(flat + 0.3 * np.asarray(jitter) @ eps[k])
+            ok = onp.isfinite(float(potential_energy(posterior, (), {}, z)))
+            chains.append(z if ok else z0)
+        init = jax.tree_util.tree_map(lambda *a: np.stack(a), *chains)
+    kwargs = (
+        {} if inverse_mass is None else {"inverse_mass_matrix": inverse_mass}
+    )
     mcmc = MCMC(
-        NUTS(posterior, dense_mass=dense_mass),
+        NUTS(
+            posterior,
+            dense_mass=dense_mass,
+            max_tree_depth=max_tree_depth,
+            adapt_mass_matrix=adapt_mass,
+            **kwargs,
+        ),
         num_warmup=settings["num_warmup"],
         num_samples=settings["num_samples"],
         num_chains=settings["num_chains"],
@@ -431,6 +474,21 @@ def _run_chains(posterior, settings, start, *, dense_mass, priors=None):
     )
     mcmc.run(run_key, init_params=init, extra_fields=_NUTS_FIELDS)
     return mcmc
+
+
+def _deadline_factor(deadline, x):
+    """A log-density term: 0 until ``time.monotonic()`` passes ``deadline``,
+    then ``-inf``, so that every NUTS transition diverges at once and a
+    stalled run drains in moments. ``x`` (not differentiated) keeps the
+    clock read inside the compiled function, once per gradient."""
+    # pure_callback: an io_callback cannot sit in a while_loop under vmap.
+    expired = jax.pure_callback(
+        lambda _: onp.asarray(time.monotonic() > deadline),
+        jax.ShapeDtypeStruct((), bool),
+        jax.lax.stop_gradient(x),
+        vmap_method="sequential",
+    )
+    return np.where(expired, -np.inf, 0.0)
 
 
 def _diagnostics(arrays):

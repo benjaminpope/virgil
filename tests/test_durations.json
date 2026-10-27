@@ -73,6 +73,7 @@
  "tests/test_observables.py": 28.2,
  "tests/test_oifits.py": 14.9,
  "tests/test_orbit_positions.py": 157.8,
+ "tests/test_orbit_posterior_mass.py": 8.0,
  "tests/test_orbit_search.py": 265.5,
  "tests/test_orbits.py": 63.8,
  "tests/test_pa_round_trip.py": 19.2,

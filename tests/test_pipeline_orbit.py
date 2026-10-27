@@ -106,6 +106,8 @@ DEFAULTS = {
     "num_samples": 1000,
     "num_chains": 4,
     "chain_method": "vectorized",
+    "posterior_max_tree_depth": 8,
+    "posterior_max_hours": 12.0,
     "seed": 0,
     "quicklook_execute": True,
 }
@@ -263,6 +265,8 @@ def _fake_reports():
                     "prior_bound_fraction": {"ecc": 0.0},
                 }
             ],
+            "converged": True,
+            "budget_exhausted": False,
             "num_chains": 2,
             "num_samples": 10,
             "num_warmup": 10,
