@@ -347,7 +347,7 @@ def test_taper_is_a_gaussian_convolution():
         offsets=False,
         sigmas=False,
         alpha=False,
-        taper_fwhm_mas=theta,
+        blur_fwhm_mas=theta,
     )
     values = _values(nuis, **{"cal.flux": 1.0})
     sigma = theta / (2 * onp.sqrt(2 * onp.log(2)))
@@ -947,7 +947,7 @@ def _big_term_problem(n=200_000):
         ddid=ddid,
         obs=onp.array([0, 0, 1])[ddid],
     )
-    nuis = CalibrationNuisance(data, taper_fwhm_mas=50.0)
+    nuis = CalibrationNuisance(data, blur_fwhm_mas=50.0)
     values = _values(nuis)
 
     def scene(v):
