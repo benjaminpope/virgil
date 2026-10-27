@@ -901,7 +901,7 @@ def test_old_taper_name_gives_identical_toeplitz_and_direct_losses():
     losses = []
     for kw in ({"blur_fwhm_mas": 3.0}, {"taper_fwhm_mas": 3.0}):
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
+            warnings.simplefilter("ignore", FutureWarning)
             nuis = CalibrationNuisance(data, alpha=0.7, offsets=False, **kw)
         tdata = data.toeplitz(template, nuis)
         values = _values(nuis, flux=0.8)

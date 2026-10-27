@@ -42,7 +42,7 @@ from ._geometry import (
     offset_phase,
     pixel_offsets,
 )
-from ._deprecate import blur_alias
+from ._deprecate import renamed
 from ._utils import mas2rad, rad2mas
 from .models import Image, SourceModel
 
@@ -1171,6 +1171,7 @@ class CalibrationNuisance:
         Site-name prefix.
     """
 
+    @renamed({"taper_fwhm_mas": "blur_fwhm_mas"})
     def __init__(
         self,
         data,
@@ -1189,14 +1190,7 @@ class CalibrationNuisance:
         gain_phase_width=0.5,
         fit_gain_widths=False,
         gain_steps=5,
-        taper_fwhm_mas=None,
     ):
-        blur_fwhm_mas = blur_alias(
-            "CalibrationNuisance",
-            "taper_fwhm_mas",
-            taper_fwhm_mas,
-            blur_fwhm_mas,
-        )
         self.n_obs = len(data.obs_ids)
         self.n_ddid = len(data.ddid_ids)
         if not 0 <= int(ref_obs) < self.n_obs:

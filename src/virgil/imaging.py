@@ -94,8 +94,8 @@ class _ImageRegulariser(eqx.Module):
         if image.blur_fwhm_mas is not None:
             warnings.warn(
                 "smoothed=True penalizes the blurred image, so the base "
-                "image is unregularized (MPoL's convention); penalize the "
-                "raw pixels to regularize it.",
+                "image is unregularized unless another regularizer "
+                "penalizes the raw pixels (MPoL's convention).",
                 UserWarning,
                 stacklevel=external_stacklevel(),
             )

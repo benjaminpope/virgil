@@ -53,7 +53,7 @@ from ._geometry import (
     undo_elliptical_transf_spat_freq,
 )
 from . import _elr
-from ._deprecate import blur_alias, renamed
+from ._deprecate import renamed
 from .harmonics import cone_coefficients, rim_coefficients
 from ._utils import (
     FWHM_PER_SIGMA,
@@ -1881,6 +1881,7 @@ class Image(Component):
     ft: str = eqx.field(static=True)
     blur_fwhm_mas: float | None = eqx.field(static=True)
 
+    @renamed({"smooth_fwhm_mas": "blur_fwhm_mas"})
     def __init__(
         self,
         log_brightness,
@@ -1892,11 +1893,7 @@ class Image(Component):
         rotation_deg=0.0,
         ft="auto",
         blur_fwhm_mas=None,
-        smooth_fwhm_mas=None,
     ):
-        blur_fwhm_mas = blur_alias(
-            "Image", "smooth_fwhm_mas", smooth_fwhm_mas, blur_fwhm_mas
-        )
         if blur_fwhm_mas is not None and not (
             onp.isfinite(blur_fwhm_mas) and blur_fwhm_mas > 0.0
         ):

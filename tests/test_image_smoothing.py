@@ -231,7 +231,7 @@ def test_double_taper_warns():
 
 
 def test_old_names_are_deprecated_aliases():
-    with pytest.warns(DeprecationWarning, match="blur_fwhm_mas"):
+    with pytest.warns(FutureWarning, match="blur_fwhm_mas"):
         old = _blob(smooth_fwhm_mas=8.0)
     new = _blob(blur_fwhm_mas=8.0)
     assert old.blur_fwhm_mas == old.smooth_fwhm_mas == 8.0
@@ -240,7 +240,7 @@ def test_old_names_are_deprecated_aliases():
         old.model(uu, vv, 1.0), new.model(uu, vv, 1.0)
     )
     data, nuis, start = _problem(None, taper=10.0)
-    with pytest.warns(DeprecationWarning, match="blur_fwhm_mas"):
+    with pytest.warns(FutureWarning, match="blur_fwhm_mas"):
         old_nuis = CalibrationNuisance(
             data,
             gains=False,
@@ -273,5 +273,5 @@ def test_smoothed_regulariser_on_a_blurred_image_warns(smoothed, blur, warns):
     with warnings.catch_warnings(record=True) as caught:
         warnings.filterwarnings("always")
         reg.value(img)
-    hits = [w for w in caught if "unregularized" in str(w.message)]
+    hits = [w for w in caught if "unregularized unless" in str(w.message)]
     assert bool(hits) == warns

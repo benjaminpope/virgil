@@ -17,13 +17,7 @@ import inspect
 import sys
 import warnings
 
-__all__ = [
-    "blur_alias",
-    "deprecated_name",
-    "keyword_only",
-    "old_order",
-    "renamed",
-]
+__all__ = ["deprecated_name", "keyword_only", "old_order", "renamed"]
 
 #: Old keyword names accepted until 0.5, mapped to their 0.4 names.
 NAME_ALIASES = {
@@ -337,24 +331,3 @@ def old_order(*old_names, data, aliases=None, removed=False, keywords=()):
         return wrapper
 
     return decorate
-
-
-def blur_alias(owner, old, old_value, blur_fwhm_mas):
-    """``blur_fwhm_mas``, or the deprecated ``old`` keyword's value.
-
-    Warns (``DeprecationWarning``) when ``old`` is given and raises when
-    both are.
-    """
-    if old_value is None:
-        return blur_fwhm_mas
-    if blur_fwhm_mas is not None:
-        raise TypeError(
-            f"{owner} got both blur_fwhm_mas= and {old}=; use blur_fwhm_mas="
-        )
-    warnings.warn(
-        f"{owner}({old}=...) is now {owner}(blur_fwhm_mas=...); "
-        f"{old}= stops working in virgil 0.5.",
-        DeprecationWarning,
-        stacklevel=external_stacklevel(),
-    )
-    return old_value
