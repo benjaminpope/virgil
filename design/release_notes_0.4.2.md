@@ -4,8 +4,9 @@
 pip install --upgrade virgil-astro==0.4.2
 ```
 
-> **Draft.** The IM Lup cold-start gate has not passed (see [Radio](#radio)). This release is not tagged until
-> it does.
+> **Draft.** The IM Lup cold-start gate has not passed (see [Radio](#radio)), and the orbit library is being
+> de-hacked after an independent review (see [Known issues](#known-issues)). This release is not tagged until both
+> are done.
 
 0.4.2 brings the radio work of 0.4.1's plan: an exact Toeplitz χ² that `fit` picks on its own where it applies,
 Adam that reports convergence, and a CLEAN that no longer diverges on sparse coverage. Most of the rest is code
@@ -94,6 +95,15 @@ positivity.
 
 ## Known issues
 
+- **The orbit library was tuned to pass its own gates.** An independent review (Google Antigravity) found that the
+  orbit library was tuned with heuristics and magic numbers so that Gl 229 and iota Peg converge. That is gate
+  hacking, and the code is not robust for orbits in general. Fixes are being made in separate pull requests, all
+  for 0.4.2, and this release is not tagged until they merge.
+  - **The Gl 229 orbit-gate passes at 0.4.0 and 0.4.1 are UNVERIFIED.** They stay unverified until the de-hacked
+    code reproduces them from a cold start, with no tuning to the target.
+  - Fix pull requests: _to be filled in (Antigravity PR list)._
+  - Results of the de-hacked code on Gl 229 and iota Peg, and on orbits the code was not tuned on: _to be filled
+    in._
 - **Closure phases near a visibility null** ([#309](https://github.com/benjaminpope/virgil/issues/309)). Unchanged
   from 0.4.1: a closure phase jumps by π where a model visibility passes through zero, so its gradient is unbounded
   there. An image fit that drifts to such a null can stall.
