@@ -483,7 +483,7 @@ def test_binary_render_is_available():
                 0.5,
                 dra=6.0,
                 ddec=-3.0,
-                smooth_fwhm_mas=2.0,
+                blur_fwhm_mas=2.0,
             ),
             2e-3,
         ),

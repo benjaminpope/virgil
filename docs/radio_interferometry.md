@@ -244,41 +244,40 @@ Source: Blackburn et al. (2020), [references](references.md#blackburn2020);
 Broderick et al. (2020), [references](references.md#broderick2020); Arras et
 al. (2019), [references](references.md#arras2019).
 
-## Smoothing: `Image(smooth_fwhm_mas=...)` or the nuisance taper
+## Blurring kernel: `blur_fwhm_mas`
 
-Two Gaussian blurs are available, for different jobs.
+`Image(..., blur_fwhm_mas=...)` and `CalibrationNuisance(blur_fwhm_mas=...)`
+put a fixed Gaussian blurring kernel of that FWHM (mas) **in the forward
+model**: the data are compared with the blurred model, not with a blurred
+copy afterwards. The fit then recovers the *unblurred* sky, and a kernel
+wider than the true structure is deconvolved, which can leave dots. The
+default is `None`, which is recommended: fit the underlying image, regularize
+it, and blur for display after the reconstruction. (Formerly `smooth_fwhm_mas`
+and `taper_fwhm_mas`, deprecated aliases until 0.5. This is not CASA's
+`uvtaper`, the data weighting of `dirty_image`.)
 
-- `CalibrationNuisance(taper_fwhm_mas=...)` multiplies the visibilities of
-  **any** scene (a parametric model, an `Image`, a `System`) by the Gaussian
-  `exp(-π² θ² q² / (4 ln 2))`. It is a uv-plane factor, so a regulariser,
-  which acts on pixels, never sees it.
-- `Image(..., smooth_fwhm_mas=...)` declares that the sky the data see is the
-  image's pixels convolved with a fixed Gaussian, as in MPoL's
-  `GaussConvFourier`. Its visibilities are the same factor times the pixel
-  transform (exact at any uv point for every `ft`), and
+- `CalibrationNuisance` multiplies the visibilities of **any** scene (a
+  parametric model, an `Image`, a `System`) by `exp(-π² θ² q² / (4 ln 2))`.
+  It is a uv-plane factor, so a regulariser, which acts on pixels, never
+  sees it.
+- `Image` declares that the sky the data see is its pixels convolved with the
+  Gaussian, as in MPoL's `GaussConvFourier` (Czekala et al. 2025,
+  [references](references.md#mpol)). The visibilities are the same factor
+  times the pixel transform (exact at any uv point for every `ft`), and
   `Image.smoothed()` returns the convolved pixels by an FFT on a
-  zero-padded grid. Regularisers then penalize either the raw pixels (the
-  default) or the smoothed ones, with their `smoothed=True` option:
+  zero-padded grid. A regulariser's `smoothed=True` option penalizes those
+  pixels instead of the raw ones; the base image is then unregularized, so
+  `fit` warns (`UserWarning`). MPoL does this; virgil's default does not.
 
 ```python
-env = Image(eta, 5.0, smooth_fwhm_mas=30.0)
+env = Image(eta, 5.0, blur_fwhm_mas=30.0)
 reg = MaxEntropy(w, smoothed=True)  # entropy of the blurred image
 ```
 
-The regulariser option, rather than a model-level switch, keeps the default
-(raw pixels) untouched and lets you mix: entropy on the smoothed image with
-total variation on the raw one. `smoothed=True` clips FFT round-off at zero;
-`MaxEntropy` and `LogSum` then use a flat default over all pixels, since
-smoothing spreads flux beyond the `support`.
-
-MPoL's chain `BaseCube` (softplus) → `GaussConvFourier` (FWHM 30 mas) →
-`ImageCube` → NuFFT, with entropy on the smoothed cube, is
-`Image(eta, scale, smooth_fwhm_mas=30.0)` with `MaxEntropy(w, smoothed=True)`.
-
-Use the nuisance taper for a scene that is not an `Image`, or to blur a
-parametric model; use `smooth_fwhm_mas` when the blur belongs to the image
-model and regularisers should see it. Setting both blurs the model twice, so `fit` and
-`data.term` warn (`UserWarning`) when they meet.
+`smoothed=True` clips FFT round-off at zero; `MaxEntropy` and `LogSum` then
+use a flat default over all pixels, since blurring spreads flux beyond the
+`support`. Setting both blurs the model twice, so `fit` and `data.term` warn
+(`UserWarning`) when they meet.
 
 **Accuracy.** `smoothed()` crops its result to the image, so flux spreading
 past the edges is lost (keep the emission clear of them). For a kernel of at
@@ -351,7 +350,7 @@ covariance raise `NoLeastSquaresForm`). With `precondition="diag"` the pixel,
 flux and gain diagonal is the exact Gauss–Newton one of the direct term; the
 offsets and error scales take the diagonal of the loss Hessian.
 
-- **What it covers.** Per-observation gains, the flux, the nuisance taper, `Image(smooth_fwhm_mas=...)`, a mask, and fixed, fitted or
+- **What it covers.** Per-observation gains, the flux, the nuisance blur, `Image(blur_fwhm_mas=...)`, a mask, and fixed, fitted or
   profiled error scales. The image layout (shape, pixel scale, rotation,
   smoothing) is fixed at the precompute; the scene must return that layout,
   alone or as the only part of a `System`, at the template's `dra`, `ddec`

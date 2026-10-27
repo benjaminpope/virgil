@@ -42,6 +42,7 @@ from ._geometry import (
     offset_phase,
     pixel_offsets,
 )
+from ._deprecate import blur_alias
 from ._utils import mas2rad, rad2mas
 from .models import Image, SourceModel
 
@@ -513,7 +514,7 @@ class ComplexVisData(eqx.Module):
         ----------
         image : Image
             The layout (shape, ``pixel_scale_mas``, ``rotation_deg``,
-            ``smooth_fwhm_mas``) and a fixed ``dra``, ``ddec`` (folded into
+            ``blur_fwhm_mas``) and a fixed ``dra``, ``ddec`` (folded into
             the visibilities); its pixels are not used.
         nuisance : CalibrationNuisance
             Its taper, ``nu0_hz`` and fixed ``alpha`` are folded in;
@@ -1160,8 +1161,12 @@ class CalibrationNuisance:
     nu0_hz : float, optional
         Reference frequency of the spectral index; default the
         weight-averaged frequency of ``data``.
-    taper_fwhm_mas : float, optional
-        FWHM of a Gaussian taper (a convolution), in mas.
+    blur_fwhm_mas : float, optional
+        FWHM (mas) of a Gaussian blurring kernel in the forward model: the
+        data are compared with the blurred model. Default ``None``,
+        recommended; blur for display afterwards. Not ``uvtaper``. Source:
+        Czekala et al. (2025), [references](../references.md#mpol).
+        Formerly ``taper_fwhm_mas``, a deprecated alias.
     prefix : str
         Site-name prefix.
     """
@@ -1175,7 +1180,7 @@ class CalibrationNuisance:
         sigmas=True,
         alpha=True,
         nu0_hz=None,
-        taper_fwhm_mas=None,
+        blur_fwhm_mas=None,
         prefix="cal",
         offset_beams=3.0,
         antenna_gains=False,
@@ -1184,7 +1189,14 @@ class CalibrationNuisance:
         gain_phase_width=0.5,
         fit_gain_widths=False,
         gain_steps=5,
+        taper_fwhm_mas=None,
     ):
+        blur_fwhm_mas = blur_alias(
+            "CalibrationNuisance",
+            "taper_fwhm_mas",
+            taper_fwhm_mas,
+            blur_fwhm_mas,
+        )
         self.n_obs = len(data.obs_ids)
         self.n_ddid = len(data.ddid_ids)
         if not 0 <= int(ref_obs) < self.n_obs:
@@ -1233,8 +1245,8 @@ class CalibrationNuisance:
         )
         self.offset_unit_mas = rad2mas / (2.0 * onp.pi * q_max)
         self.offset_beams = float(offset_beams)
-        self.taper_fwhm_mas = (
-            None if taper_fwhm_mas is None else float(taper_fwhm_mas)
+        self.blur_fwhm_mas = (
+            None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
         self.prefix = prefix
         self.antenna_gains = bool(antenna_gains)
@@ -1393,10 +1405,15 @@ class CalibrationNuisance:
         alpha = values[site("alpha")] if self.alpha else self.alpha_fixed
         return values[site("flux")], gain, offset, sigma, alpha
 
-    def _taper(self, u, v):
-        if self.taper_fwhm_mas is None:
+    @property
+    def taper_fwhm_mas(self):
+        """Deprecated alias of ``blur_fwhm_mas``."""
+        return self.blur_fwhm_mas
+
+    def _blur(self, u, v):
+        if self.blur_fwhm_mas is None:
             return 1.0
-        return gaussian_taper(u * u + v * v, self.taper_fwhm_mas)
+        return gaussian_taper(u * u + v * v, self.blur_fwhm_mas)
 
 
 def _no_antenna_gains(nuisance):
@@ -1413,7 +1430,7 @@ def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
     vis = scene.model(u * lam, v * lam, lam)
     ramp = offset_phase(u, v, offset[obs, 0], offset[obs, 1])
     spectral = (freq / nuisance.nu0_hz) ** alpha
-    return flux * gain[obs] * spectral * ramp * nuisance._taper(u, v) * vis
+    return flux * gain[obs] * spectral * ramp * nuisance._blur(u, v) * vis
 
 
 # ----------------------------------------------------------------------
@@ -1421,17 +1438,17 @@ def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
 # ----------------------------------------------------------------------
 
 
-def _warn_double_taper(scene, nuisance):
-    if nuisance.taper_fwhm_mas is None:
+def _warn_double_blur(scene, nuisance):
+    if nuisance.blur_fwhm_mas is None:
         return
     images = jax.tree_util.tree_leaves(
         scene, is_leaf=lambda x: isinstance(x, Image)
     )
     if any(
-        isinstance(x, Image) and x.smooth_fwhm_mas is not None for x in images
+        isinstance(x, Image) and x.blur_fwhm_mas is not None for x in images
     ):
         warnings.warn(
-            "CalibrationNuisance.taper_fwhm_mas and Image.smooth_fwhm_mas "
+            "CalibrationNuisance.blur_fwhm_mas and Image.blur_fwhm_mas "
             "are both set; the two Gaussians compound, blurring the model "
             "twice. Use one of them.",
             UserWarning,
@@ -1626,7 +1643,7 @@ class _RadioTerm(eqx.Module):
         unpacked = nuis._unpack(values)
         sigma = unpacked[3]
         scene = self.scene(values)
-        _warn_double_taper(scene, nuis)
+        _warn_double_blur(scene, nuis)
 
         def model(a):
             return _model_points(

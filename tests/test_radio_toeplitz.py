@@ -149,7 +149,7 @@ def _check_against_direct(data, npix, sigmas, offsets, rotation, seed, **kw):
     rng = onp.random.default_rng(seed)
     mask = rng.uniform(size=len(data)) > 0.1
     nuis = CalibrationNuisance(
-        data, sigmas=sigmas, offsets=offsets, alpha=0.7, taper_fwhm_mas=3.0
+        data, sigmas=sigmas, offsets=offsets, alpha=0.7, blur_fwhm_mas=3.0
     )
     scene, template = _scene(npix, rotation)
     tdata = data.toeplitz(
@@ -272,7 +272,7 @@ def test_scene_variants(kind):
     data = _data(1000, 12, seed=7)
     nuis = CalibrationNuisance(data, sigmas="profile", alpha=0.7)
     if kind == "smoothed":
-        scene, template = _scene(12, 10.0, smooth_fwhm_mas=2.5)
+        scene, template = _scene(12, 10.0, blur_fwhm_mas=2.5)
     elif (
         kind == "half_pixel"
     ):  # a fixed image offset, as MPoL's map convention
@@ -502,7 +502,7 @@ def test_refuses_what_it_cannot_do(small):
     tdata = data.toeplitz(template, nuis, offsets="spread")
     with pytest.raises(ValueError, match="differs from the one"):
         tdata.term(
-            scene, CalibrationNuisance(data, alpha=0.7, taper_fwhm_mas=5.0)
+            scene, CalibrationNuisance(data, alpha=0.7, blur_fwhm_mas=5.0)
         )
     no_offsets = data.toeplitz(
         template, CalibrationNuisance(data, alpha=0.7, offsets=False)
@@ -893,3 +893,24 @@ def test_adam_with_auto_picks_toeplitz_and_matches_direct(auto_always):
         out["direct"].info["loss_history"],
         rtol=1e-10,
     )
+
+
+def test_old_taper_name_gives_identical_toeplitz_and_direct_losses():
+    data = _data(300, 12, seed=7)
+    scene, template = _scene(12)
+    losses = []
+    for kw in ({"blur_fwhm_mas": 3.0}, {"taper_fwhm_mas": 3.0}):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            nuis = CalibrationNuisance(data, alpha=0.7, offsets=False, **kw)
+        tdata = data.toeplitz(template, nuis)
+        values = _values(nuis, flux=0.8)
+        values["eta"] = np.asarray(
+            onp.random.default_rng(1).normal(size=(12, 12))
+        )
+        term = tdata.term(scene, nuis)
+        direct = tdata.direct_term(scene, nuis)
+        r, _ = direct.residuals_and_log_norm(values)
+        losses.append((term.chi2_and_log_norm(values)[0], np.sum(r**2)))
+    assert losses[0][0] == losses[1][0]
+    assert losses[0][1] == losses[1][1]

@@ -53,7 +53,7 @@ from ._geometry import (
     undo_elliptical_transf_spat_freq,
 )
 from . import _elr
-from ._deprecate import renamed
+from ._deprecate import blur_alias, renamed
 from .harmonics import cone_coefficients, rim_coefficients
 from ._utils import (
     FWHM_PER_SIGMA,
@@ -1857,10 +1857,16 @@ class Image(Component):
     ft : {"auto", "dft", "nufft"}, optional
         Transform for irregular uv points (default ``"auto"``, whichever is
         faster; see [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
+    blur_fwhm_mas : float, optional
+        FWHM in mas of a fixed (not fitted) Gaussian blurring kernel in the
+        forward model: the data are compared with the blurred image, so the
+        pixels are the unblurred sky. Default ``None``, recommended; blur
+        for display after the fit (``smoothed()`` gives the blurred pixels).
+        Compounds with ``CalibrationNuisance.blur_fwhm_mas``. Source: MPoL's
+        Gaussian base layer, Czekala et al. (2025),
+        [references](../references.md#mpol).
     smooth_fwhm_mas : float, optional
-        FWHM in mas of a fixed (not fitted) Gaussian smoothing kernel applied
-        to the visibilities (default none; ``smoothed()`` gives the pixels);
-        compounds with ``CalibrationNuisance.taper_fwhm_mas``.
+        Deprecated alias of ``blur_fwhm_mas``.
 
     Examples
     --------
@@ -1873,7 +1879,7 @@ class Image(Component):
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
     ft: str = eqx.field(static=True)
-    smooth_fwhm_mas: float | None = eqx.field(static=True)
+    blur_fwhm_mas: float | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -1885,17 +1891,21 @@ class Image(Component):
         ddec=0.0,
         rotation_deg=0.0,
         ft="auto",
+        blur_fwhm_mas=None,
         smooth_fwhm_mas=None,
     ):
-        if smooth_fwhm_mas is not None and not (
-            onp.isfinite(smooth_fwhm_mas) and smooth_fwhm_mas > 0.0
+        blur_fwhm_mas = blur_alias(
+            "Image", "smooth_fwhm_mas", smooth_fwhm_mas, blur_fwhm_mas
+        )
+        if blur_fwhm_mas is not None and not (
+            onp.isfinite(blur_fwhm_mas) and blur_fwhm_mas > 0.0
         ):
             raise ValueError(
-                "smooth_fwhm_mas must be None or finite and positive, "
-                f"not {smooth_fwhm_mas}."
+                "blur_fwhm_mas must be None or finite and positive, "
+                f"not {blur_fwhm_mas}."
             )
-        self.smooth_fwhm_mas = (
-            None if smooth_fwhm_mas is None else float(smooth_fwhm_mas)
+        self.blur_fwhm_mas = (
+            None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
         self.ft = _check_ft(ft)
         if not hasattr(log_brightness, "evaluate"):
@@ -1987,8 +1997,13 @@ class Image(Component):
         flat = jax.nn.softmax(eta.ravel(), where=where)
         return flat.reshape(eta.shape)
 
+    @property
+    def smooth_fwhm_mas(self):
+        """Deprecated alias of ``blur_fwhm_mas``."""
+        return self.blur_fwhm_mas
+
     def smoothed(self):
-        """The pixels convolved with the Gaussian of ``smooth_fwhm_mas``.
+        """The pixels convolved with the Gaussian of ``blur_fwhm_mas``.
 
         Returns ``brightness`` itself when there is no smoothing. Otherwise
         an FFT convolution on a zero-padded grid, cropped to the image, so
@@ -1996,24 +2011,24 @@ class Image(Component):
         ``virgil._geometry.gaussian_smooth`` for how closely
         its transform matches the analytic Gaussian taper.
         """
-        if self.smooth_fwhm_mas is None:
+        if self.blur_fwhm_mas is None:
             return self.brightness
         return gaussian_smooth(
-            self.brightness, self.smooth_fwhm_mas / self.pixel_scale_mas
+            self.brightness, self.blur_fwhm_mas / self.pixel_scale_mas
         )
 
-    def _smoothing(self, u, v):
+    def _blur(self, u, v):
         # Unrotated baselines in wavelengths: the taper is isotropic.
-        if self.smooth_fwhm_mas is None:
+        if self.blur_fwhm_mas is None:
             return 1.0
-        return gaussian_taper(u * u + v * v, self.smooth_fwhm_mas)
+        return gaussian_taper(u * u + v * v, self.blur_fwhm_mas)
 
     def _centred_cvis(self, uu, vv):
         uu, vv = rotate(uu, vv, -self.rotation_deg)
         vis = image_visibilities(
             self.brightness, uu, vv, self.pixel_scale_mas, self.ft
         )
-        return vis * self._smoothing(uu, vv)
+        return vis * self._blur(uu, vv)
 
     def model_on_grid(self, u, v, wavel, grid):
         vis = _pixel_visibilities(
@@ -2026,7 +2041,7 @@ class Image(Component):
             grid,
             self.ft,
         )
-        vis = vis * self._smoothing(u / wavel, v / wavel)
+        vis = vis * self._blur(u / wavel, v / wavel)
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
