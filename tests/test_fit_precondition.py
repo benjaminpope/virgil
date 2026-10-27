@@ -248,8 +248,8 @@ def test_adam_ftol_with_a_metric():
         ftol_abs=1e30,
         ftol_window=5,
     )
-    assert result.info["steps"] == 5 and result.info["converged"] is True
-    assert result.info["loss_history"].shape == (5,)
+    assert result.info["steps"] == 9 and result.info["converged"] is True
+    assert result.info["loss_history"].shape == (9,)
 
 
 def test_the_optimum_and_the_gradient_norm_are_unchanged():

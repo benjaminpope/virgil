@@ -1,0 +1,1 @@
+fit(ftol_abs=, ftol_window=): Adam now stops on a window test (range of the last window below ftol_abs, mean no lower than the previous window's by ftol_abs) instead of a two-point difference, which an oscillating loss could pass by chance; `learning_rate` also takes an optax schedule
