@@ -237,6 +237,7 @@ A run that interrupts resumes: the bands already fitted are read back from their
 | `drop_outlier_night` (`True`) | Refit the search without the night of highest raw χ²/N (skipped below 3 nights) and compare the verdict (the `night_dropped` check); it costs a second search (about twice the search time; `False` skips it). |
 | `posterior_p_min` (0.05), `max_modes` (3) | Bands sampled by NUTS besides the winner. |
 | `num_warmup`, `num_samples`, `num_chains` (1000, 1000, 4), `chain_method` (`"vectorized"`), `seed` (0) | NUTS. |
+| `posterior_max_tree_depth` (8), `posterior_max_hours` (12) | NUTS uses each mode's Laplace covariance as the dense mass matrix, fixed in warm-up (adapted only if the Hessian was clipped or the mode is on a prior bound; raising `num_warmup` then changes only the step size). A band that exceeds the time left reports `converged: false`, `budget_exhausted: true`, its step size, tree depth and post-warm-up gradient count (`n_gradients_sampling`). |
 | `quicklook_execute` (`True`) | Execute the quicklook notebook. |
 
 ## The run folder
