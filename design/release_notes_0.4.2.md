@@ -37,6 +37,7 @@ shape: the package is shorter to read, with 193 fewer single-use private helpers
 | fits one radio `Image` with enough data | `fit` uses the Toeplitz χ² (exact; agrees with the direct term to about 1e-13 of the loss). | Pass `chi2="direct"` to `term` for the old path. |
 | passes `CalibrationNuisance(alpha=1)` | it raises: an integer used to fit α. | Write `alpha=True` to fit or `alpha=1.0` to fix. |
 | uses `MultipoleField` with the default `r_min_mas=0` | order `m` is scaled by `tanh(r/spacing)^|m|`, so only `m = 0` survives at the centre. The default prior changes near the centre, so MAP fits and evidences move. | Refit; nothing to change in code. |
+| passes `Image(smooth_fwhm_mas=)` or `CalibrationNuisance(taper_fwhm_mas=)` ([#565](https://github.com/benjaminpope/virgil/pull/565)) | both are now `blur_fwhm_mas=`. The old names are deprecated aliases until 0.5 and raise a `DeprecationWarning`. Results are bit-identical. | Rename the keyword. |
 | reads `fit(...).values["...log_brightness"]` of a free-pixel `Image` | it is the log of the pixel fluxes (`Σ exp = 1`), the same on every platform. Images, χ² and penalties are unchanged to rounding. | Nothing, unless you compared raw log-brightness across runs. |
 
 Everything else runs unchanged.
