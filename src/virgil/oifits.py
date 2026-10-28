@@ -568,30 +568,38 @@ def _read_visibilities(tables, wavelengths, target_id, extras=()):
 
 
 # deliberate: a named step: the T3 coordinate error messages, away from the leg loop
-def _check_t3_coordinates(legs_uv, founds, record, k, ins, triangle, mjd):
+def _check_t3_coordinates(legs_uv, founds, record, ins, triangle, mjd):
     """Refuse T3 leg coordinates that are NaN, zero or inconsistent with V2."""
-    uu, vv = legs_uv[k]
     where = (
         f"Closure-phase triangle {tuple(int(x) for x in triangle)} (INSNAME "
         f"{ins[1]!r}, ARRNAME {ins[0]!r}, MJD {mjd})"
     )
-    if not (onp.isfinite(uu) and onp.isfinite(vv)) or (uu == 0 and vv == 0):
-        raise ValueError(
-            f"{where} has a leg with no visibility row, and its OI_T3 "
-            f"coordinates ({uu}, {vv}) are NaN or zero, so the leg cannot "
-            "be placed."
-        )
+    for k, found in enumerate(founds):
+        if found is None:
+            uu, vv = legs_uv[k]
+            if not (onp.isfinite(uu) and onp.isfinite(vv)) or (
+                uu == 0 and vv == 0
+            ):
+                raise ValueError(
+                    f"{where} has a leg with no visibility row, and its OI_T3 "
+                    f"coordinates ({uu}, {vv}) are NaN or zero, so the leg "
+                    "cannot be placed."
+                )
     for j, found in enumerate(founds):
-        if j == k or found is None or found[0] >= record["u"].size:
+        if found is None or found[0] >= record["u"].size:
             continue
         ut, vt = legs_uv[j]
+        if not (onp.isfinite(ut) and onp.isfinite(vt)) or (
+            ut == 0 and vt == 0
+        ):
+            continue
         us, vs = record["u"][found[0]], record["v"][found[0]]
         if onp.hypot(us - ut, vs - vt) > 0.1 * max(onp.hypot(us, vs), 1.0):
             raise ValueError(
-                f"{where} has a leg with no visibility row, and its OI_T3 "
-                f"coordinates disagree with the visibility table for leg "
-                f"{j + 1}: ({ut}, {vt}) against ({us}, {vs}). The table may "
-                "use the opposite baseline direction."
+                f"{where} has OI_T3 coordinates that disagree with the "
+                f"visibility table for leg {j + 1}: ({ut}, {vt}) against "
+                f"({us}, {vs}). The table may use the opposite baseline "
+                "direction."
             )
 
 
@@ -621,7 +629,14 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
         time = _time(hdu, mask)
         ins = _lookup_key(hdu)
         channels = onp.arange(nwave)
-        coords = None  # the legs' (u, v), read only if a leg is unmatched
+        coords = (
+            [
+                _column(hdu, name, mask)
+                for name in ("U1COORD", "V1COORD", "U2COORD", "V2COORD")
+            ]
+            if "U1COORD" in hdu.columns.names
+            else None
+        )
         for row, (a, b, c) in enumerate(sta_index):
             starts = []
             pairs = ((a, b), (b, c), (a, c))
@@ -631,6 +646,23 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
                 if found is not None and found[1] != nwave:
                     found = None
                 founds.append(found)
+            legs_uv = None
+            if coords is not None or None in founds:
+                if coords is None:
+                    coords = [
+                        _column(hdu, name, mask)
+                        for name in (
+                            "U1COORD",
+                            "V1COORD",
+                            "U2COORD",
+                            "V2COORD",
+                        )
+                    ]
+                u1, v1, u2, v2 = (x[row] for x in coords)
+                legs_uv = ((u1, v1), (u2, v2), (u1 + u2, v1 + v2))
+                _check_t3_coordinates(
+                    legs_uv, founds, record, ins, (a, b, c), mjd[row]
+                )
             for k, (leg, pair) in enumerate(zip(i_cps, pairs)):
                 found = founds[k]
                 if found is None:
@@ -639,22 +671,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
                     )
                     if reverse is None or reverse[1] != nwave:
                         n_unmatched += 1
-                    if coords is None:
-                        coords = [
-                            _column(hdu, name, mask)
-                            for name in (
-                                "U1COORD",
-                                "V1COORD",
-                                "U2COORD",
-                                "V2COORD",
-                            )
-                        ]
-                    u1, v1, u2, v2 = (x[row] for x in coords)
-                    legs_uv = ((u1, v1), (u2, v2), (u1 + u2, v1 + v2))
                     uu, vv = legs_uv[k]
-                    _check_t3_coordinates(
-                        legs_uv, founds, record, k, ins, (a, b, c), mjd[row]
-                    )
                     lookup.add(
                         ins,
                         pair,
@@ -1255,11 +1272,12 @@ def write_oifits(data, filename, overwrite=True):
     An `OIData` is written as `OI_VIS2` with `OI_T3` or `OI_VIS` phases, and
     read back by [`read_oifits`][virgil.oifits.read_oifits] to the same
     observables, errors, flags, frames, wavelengths and (u, v), and the times
-    if any (else MJD 0). Frames at one `MJD` get distinct `TIME`s so they stay
-    apart; closure phases without station indices get placeholder stations
-    (`STAPLACE`). Wavelengths are float32 (relative error 6e-8). A dictionary
-    of tables (columns as in [writing OIFITS](../oifits_files.md#writing),
-    upper-case OIFITS names) has phases in **degrees**.
+    if any (else MJD 0). Wavelengths are float32 (relative error 6e-8); frames
+    at one `MJD` get distinct `TIME`s so they stay apart; closure phases
+    without station indices get placeholder stations (`STAPLACE`). A
+    dictionary of tables (columns as in
+    [writing OIFITS](../oifits_files.md#writing), upper-case OIFITS names) has
+    phases in **degrees**.
     Source: Duvert et al. (2015), [references](../references.md#duvert2017).
 
     Parameters
@@ -1582,8 +1600,6 @@ def _oidata_tables(data):
         return None, "extra observables"
     if data.gains is not None or data.phase_offsets is not None:
         return None, "calibration gains or closure offsets"
-    if data.cp_flag and data.phi_index is not None:
-        return None, "flagged closure phases"
     if not data.v2_flag or data.vis_mode != "v2":
         return None, "visibility amplitudes rather than V²"
     layout, reason = _baseline_layout(data)
@@ -1628,10 +1644,12 @@ def _oidata_tables(data):
     d_phi = onp.rad2deg(onp.asarray(data.d_phi, dtype=float))
     if data.cp_flag:
         stations = layout["stations"]
-        baselines = _closure_baselines(data, n_w)
-        if baselines is None or phi.size != baselines[0].size * n_w:
+        closures = _closure_baselines(data, n_w)
+        if closures is None:
             return None, _IRREGULAR_CP
-        b1, b2, b3 = baselines
+        (b1, b2, b3), slots = closures
+        if phi.size != slots.size:
+            return None, _IRREGULAR_CP
         # virgil's closure phase is φ[i_cps1] + φ[i_cps2] - φ[i_cps3], i.e. the
         # baselines AB, BC and AC of the triangle ABC that OI_T3 stores.
         if not (
@@ -1640,10 +1658,16 @@ def _oidata_tables(data):
             and onp.all(stations[b3, 1] == stations[b2, 1])
         ):
             return None, _IRREGULAR_CP
+        n_t = b1.size
+        t3 = {}
+        if slots.size < n_t * n_w:
+            phi = _scattered(phi, slots, n_t * n_w)
+            d_phi = _scattered(d_phi, slots, n_t * n_w)
+            t3["FLAG"] = onp.isnan(phi).reshape(n_t, n_w)
         ub, vb = layout["ub"], layout["vb"]
         table = {
-            "T3PHI": phi.reshape(-1, n_w),
-            "T3PHIERR": d_phi.reshape(-1, n_w),
+            "T3PHI": phi.reshape(n_t, n_w),
+            "T3PHIERR": d_phi.reshape(n_t, n_w),
             "U1COORD": ub[b1],
             "V1COORD": vb[b1],
             "U2COORD": ub[b2],
@@ -1651,6 +1675,7 @@ def _oidata_tables(data):
             "STA_INDEX": onp.stack(
                 [stations[b1, 0], stations[b1, 1], stations[b2, 1]], axis=1
             ),
+            **t3,
         }
         table["TIME"] = layout["time"][b1]
         if layout["mjd"] is not None:
@@ -1787,10 +1812,10 @@ def _baseline_layout(data):
 
 def _stations_from_triangles(data, n_b, n_w):
     """Placeholder stations chaining the triangles, or a reason."""
-    legs = _closure_baselines(data, n_w)
-    if legs is None:
+    closures = _closure_baselines(data, n_w)
+    if closures is None:
         return None, _IRREGULAR_CP
-    b1, b2, b3 = legs
+    b1, b2, b3 = closures[0]
     # Each baseline has two ends; a triangle identifies end B of AB with end B
     # of BC, end A of AB with end A of AC, and end C of BC with end C of AC.
     # Each class of identified ends is one station, numbered from 1.
@@ -1831,22 +1856,37 @@ def _scattered(values, index, n):
 
 
 def _closure_baselines(data, n_w):
-    """Baseline of each leg of every triangle, or ``None`` if irregular.
+    """Baselines ``(b1, b2, b3)`` of each triangle and flat slots, or ``None``.
 
     Each leg indexes the flat samples as ``baseline * n_w + channel`` and
-    must run through the channels in order within one baseline.
+    must run through increasing channels within one baseline triplet.
     """
     legs = [
         onp.asarray(i, dtype=int)
         for i in (data.i_cps1, data.i_cps2, data.i_cps3)
     ]
-    if legs[0].size % n_w:
-        return None
-    legs = [leg.reshape(-1, n_w) for leg in legs]
-    rows, cols = [leg // n_w for leg in legs], [leg % n_w for leg in legs]
-    if not all(
-        onp.all(r == r[:, :1]) and onp.all(c == onp.arange(n_w)[None, :])
-        for r, c in zip(rows, cols)
+    n_samples = onp.asarray(data.u).size
+    if not legs[0].size or any(
+        leg.size != legs[0].size or onp.any((leg < 0) | (leg >= n_samples))
+        for leg in legs
     ):
         return None
-    return [r[:, 0] for r in rows]
+    rows, cols = [leg // n_w for leg in legs], [leg % n_w for leg in legs]
+    if not (
+        onp.array_equal(cols[0], cols[1]) and onp.array_equal(cols[0], cols[2])
+    ):
+        return None
+    triangles, slots, prev_c = [], [], n_w
+    for t, c in zip(zip(*(r.tolist() for r in rows)), cols[0].tolist()):
+        if not triangles or t != triangles[-1]:
+            triangles.append(t)
+        elif c <= prev_c:
+            return None
+        slots.append((len(triangles) - 1) * n_w + c)
+        prev_c = c
+    if len(set(triangles)) < len(triangles):
+        return None
+    return (
+        [onp.array(b, dtype=int) for b in zip(*triangles)],
+        onp.array(slots, dtype=int),
+    )

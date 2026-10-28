@@ -1376,7 +1376,7 @@ def _binary(x, diam=None):
     (``None`` is an empty pytree, so it never triggers a recompilation)."""
     if diam is None:
         return BinaryModelCartesian(x[0], x[1], x[2])
-    # Resolved primaries (AGENTS.md, "Resolved primary" row): a point
+    # Resolved primaries (orbit_solved_problems.md, "Resolved primary" row): a point
     # primary biases the per-night seeds.
     return System(
         primary=UniformDisk(diam),
@@ -1817,7 +1817,7 @@ def _flag_one_night(  # deliberate: 85 lines, tested directly
     added by [`_flag_chi2`][virgil.epochs._flag_chi2]."""
     flags = []
     best = float(catalogue.marginal[0])
-    # AGENTS.md, "Single-night alias peaks" row: a night whose catalogue
+    # orbit_solved_problems.md, "Single-night alias peaks" row: a night whose catalogue
     # holds another peak within a few nats of the best must not seed orbits.
     rivals = catalogue.marginal[1:]
     close = (
@@ -2446,7 +2446,7 @@ def epoch_positions(
     )
 
 
-# Resolved primary (AGENTS.md, "Resolved primary in the orbit fit" row). The
+# Resolved primary (orbit_solved_problems.md, "Resolved primary in the orbit fit" row). The
 # data resolve the primary when a shared uniform-disk diameter improves the
 # summed scale-marginalized score of the nights by this many nats over a
 # point primary: one extra parameter, so 5 nats is Δχ² ≈ 10, about 3σ.
