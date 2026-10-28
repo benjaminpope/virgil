@@ -64,7 +64,8 @@ Priorities, in order: principled; reliable for orbits in general; lean
   - (F) one cycle-count rule with a stated pruned-mass bound and no
     re-admission.
 
-  One decisive threshold replaces four.
+  One decisive threshold replaces four (its value pending Ben's
+  calibration decision).
 - **Expected size: about 11,950 → 6,900 lines** (−42%). `orbit_search.py`
   is retired and `arcs.py` is folded into seeding. `fit_orbit_aliases`
   becomes about 60 lines over seven named stages.
@@ -108,7 +109,7 @@ o = orbits.py, t = tempering.py, p = pipeline/orbit.py, c = pipeline/_checks.py.
 | `drop_outlier_night`, `_robustness`, `_outlying_night` | p:1042-1150 | DELETE | A: a jackknife that costs a full search, made redundant by the mixture | none |
 | `_POOR_FIT_CHI2_RED` 10 ("χ²/ν of 65–800", uncited) and `_INADEQUATE_F` 3 | a:2159, a:2596 | MERGE | `tempering.FLAG_RANGE`, plus raw χ²/N reported first | Gl 229 *f* = 41 passed regardless |
 | `_WIDEN` 1.5, `_MAX_WIDEN` 5 box-widening loop | p:48-49 | REPLACE | prior support a_max(1+e_max) sets the box once | none |
-| `alias_nats` 10, `no_orbit_nats` 10, `LABELS_FREE_NATS` 3, `RESOLVE_NATS` 5 | p, a:120, e:2453 | MERGE | one `DECISIVE_NATS` = 5 | none |
+| `alias_nats` 10, `no_orbit_nats` 10, `LABELS_FREE_NATS` 3, `RESOLVE_NATS` 5 | p, a:120, e:2453 | MERGE | one `DECISIVE_NATS`, value pending (decision 4: calibrated at Ben's α) | none |
 | `posterior_p_min` 0.05, `max_modes` 3, engine `p_min_samples` 0.01 | p, a | MERGE | sample bands until the remaining mass < 0.01 | none |
 | `_WARN_P_MIN_NIGHTS` 5 | a:141 | DELETE | the window's lower end is reported; the gate's data-sufficiency table covers the rest | none |
 | `n_refine × 4` keep in `_refine` | a:1169 | DELETE | ranking by mixture likelihood, top `n_refine` distinct | none |
@@ -129,8 +130,8 @@ o = orbits.py, t = tempering.py, p = pipeline/orbit.py, c = pipeline/_checks.py.
 | `_N_PHASE` 36, *e* step 0.05 | r, o:835 | | Efficiency, as for k: 10° in phase and 0.05 in *e* are well inside a basin (¼ cycle; Δe ≈ 0.1 at the default span). M4 measures misses. |
 | Student-t df 5 in the IS proposal | a:975 | 5 | Efficiency only. Any proposal positive on the support gives an unbiased estimator; heavier tails than the target give finite variance. The reported SE bounds the effect (C). |
 | memory constants (`_HESSIAN_COPIES`, `_TABLE_COPIES`, budgets) | a:533, e:1415 | measured | Efficiency only. The two planners merge (§1.3). |
-| `period_window` | a:211 | | The method's domain statement. Lower end: the companion moves less than ½ λ/B_max (E) within the longest night. Upper end: `span_factor` × span. **Decision for Ben:** `span_factor` = 4 has no derivation. The proposal is to set the upper end by the evidence, since bands beyond the span merge into one long-period band whose evidence is computed like any other, and to keep *n* bands as a reported resource cap. |
-| `_VIS_AMP_DEFAULT` | a:144 | (0.5, 1.2) | **No citation.** It needs one (a GRAVITY/PIONIER calibration-loss reference) or a decision for Ben. |
+| `period_window` | a:211 | | The method's domain statement. Lower end: the companion moves less than ½ λ/B_max (E) within the longest night. Upper end (Ben, 2026-10-28): `span_factor` is deleted; periods beyond the span form **one long-period band** [span, P_max] whose evidence is computed like any other. P_max is where the orbit stops being distinguishable from a static companion: the motion over the span, ≈ 2π a_max · span / P, falls below the smallest per-night position error σ_min, so P_max = 2π a_max · span / σ_min (a data-derived domain limit, reported). `n_bands_max` stays a reported resource cap. |
+| `_VIS_AMP_DEFAULT` | a:144 | (0.5, 1.2) | **Moves to the instrument layer** (Ben, 2026-10-28): the per-epoch V² amplitude range is supplied with the prepared data by virgil-vlti and the other instrument packages (pipeline/instrument boundary). The engine has no default; with none supplied, the amplitude is fixed at 1. No citation is invented. |
 | `n_bands_max` | a:138 | 200 | A resource limit, stated as one, with `window_capped` reported. |
 
 ### 1.3 Duplicates (one path per job)
@@ -246,20 +247,25 @@ per orbit, which is negligible beside ℓ_k.
 - **One likelihood for every stage:** search, refinement, evidence, NUTS
   and the null. No "plain" variant exists, and nothing has to be
   polished.
-- **The null** (no companion). Two options, **decision for Ben**:
-  - (i) recommended: the null is a single star on every night, with no
-    mixture (its scale marginal already absorbs a noise-scale error). The
-    null stays "a single star". The orbit model's ½ ln(πK) Occam cost then
-    does not cancel against the null; it is paid honestly by the model
-    that has the extra freedom.
-  - (ii) the null carries the same mixture with b_k as its outlier
-    component. Then, as ε → 1 (Beta(½, ½) puts mass there), the null
-    becomes "a companion at a free position every night", i.e. a binary
-    with no orbit, and at K = 4–5 nights a real orbit's Occam factor can
-    lose to it. Not recommended.
+- **The null** (no companion). A null with no mixture is rejected (Ben,
+  2026-10-28): on a single star with one bad night the orbit model can
+  call that night an outlier while the null pays its full χ², so bad
+  nights make false orbits. Two candidates, chosen between by the rule
+  pre-registered in orbit_gate_042.md §3.6 (run on unscored stratum D
+  before any scored run; must pass both M6 and M8):
+  - (ii) shared mixture: the null carries the same mixture with b_k as
+    its outlier component. Risk: as ε → 1 the null becomes "a companion
+    at a free position every night", which can beat a real orbit at
+    K = 4–5 (M8 counts this).
+  - (iii) shared noise inflation: in both models the outlier component
+    is the model's own night likelihood with its noise scale inflated,
+    ln ∫ L_k(σ s) π(s) ds, *s* log-uniform on [1, s_max] (the engine's
+    existing scale bound). The null stays a single star; an outlier
+    night costs both models alike. Under (iii), b_k is used only by the
+    seeding mixture (§2B), not by the likelihood.
 
-  Either way the gate counts false no-orbit verdicts on real binaries
-  (gate M8), not only false orbits on nulls (M6).
+  Stage 2 implements both behind a setting; the PR that sets the
+  default per the rule deletes the other.
 
 **The local-optimum risk.** 52c7013 split search from mixture because
 the mixture flattened a wrong start's bad nights, so L-BFGS stopped 108
@@ -290,7 +296,10 @@ predict, so it is an outlier under A. An explicit sign-flip component
 with its own Dirichlet rate is possible, but **not recommended for
 0.4.2**: it adds a parameter for a calibration error that A already
 absorbs, and the gate reports how A does on injected sign-error nights.
-**Decision for Ben.**
+**Accepted (Ben, 2026-10-28), conditional** on the gate reporting the
+sign-error-night ROC (outlier probability of injected sign-error nights
+against the rest) and on M5 passing. If either fails, an explicit sign
+component comes back to Ben as a proposal.
 
 **Level 2: seeding uses per-night peak mixtures.** `epoch_positions`
 already produces, for each night, refined peaks j with:
@@ -353,8 +362,9 @@ the same domain. So `flip_flux`, `_flip_modes`, `_flipped` and
 
 With a resolved primary the label is physical (the disc belongs to one
 star), so the flux upper bound must exceed 1 to allow a brighter point
-companion. Proposal: `flux_range` top = 10 when θ is fitted.
-**Decision for Ben.**
+companion. **PENDING (decision 5):** Ben rejects an invented top (10 was
+proposed); the bound is to be derived. Options are with Ben via the
+coordinator; this paragraph is held until he decides.
 
 `labels_free` asks a different question from the exact symmetry above
 (which would make any such ratio identically ½). Let M x be the orbit
@@ -433,7 +443,7 @@ curved ridge along ω + 2πτ/P = const as √e → 0. The standard choice
 (Ford 2006; Eastman et al. 2013) pairs (h, k) with the mean longitude at
 a reference epoch, λ_ref = M(t_ref) + ω, which replaces τ (uniform on
 [0, 2π), the same prior as uniform τ for fixed P and e, since the map
-τ ↦ λ_ref is a shift). **Decision for Ben**: (h, k, λ_ref) together; it
+τ ↦ λ_ref is a shift). **Accepted (Ben, 2026-10-28)**: (h, k, λ_ref) together; it
 changes the packed vector and the NUTS sites.
 
 **Tests:**
@@ -456,7 +466,8 @@ changes the packed vector and the NUTS sites.
 
 **Departure: uniform rather than log-uniform.** A log-uniform prior,
 the Jeffreys default for scales, needs an arbitrary lower bound and does
-not nest the point star. **Decision for Ben.**
+not nest the point star. **Accepted (Ben, 2026-10-28)**, and logged in
+the methods register (§2H) as a departure from the Jeffreys default.
 
 **Verdict.** The "resolved" verdict is the Savage–Dickey density ratio
 (Dickey 1971; Verdinelli & Wasserman 1995):
@@ -533,17 +544,22 @@ Under the surrogate, the pruned posterior mass is then
 relative to the best band. Nothing is re-admitted, which deletes the
 re-admission step, `_seed_scores` and `_N_CHECK`. `ARC_DELTA_CHI2` goes.
 
-The bound is only as good as the surrogate. M4 measures truth-band
-pruning. **If M4 shows any truth-band pruning attributable to F, short
-arcs default to off** (every band in the window is fitted) until the
-surrogate is fixed. This is a pre-stated decision, not a re-tune.
+The bound is only as good as the surrogate. **F is opt-in and
+experimental (Ben, 2026-10-28): short arcs default to off**, so every
+band in the window is fitted by default. F stays behind its setting,
+reported against the all-bands search on stratum D, until vv validates
+it.
 
 The pruned count and the bound are reported in the summary.
 
 ### G. Thresholds and posterior sampling
 
-- **One decisive threshold:** `DECISIVE_NATS` = 5, i.e. 2 ln B = 10,
-  "very strong" on Kass & Raftery's (1995) scale. It is used for:
+- **One decisive threshold** — **PENDING (decision 4).** Ben rejects a
+  convention-scale number. The threshold is to come from frequentist
+  calibration: Ben fixes the error rate α, and the nats follow from a
+  calibration population held out from the scored strata. Options are
+  with Ben via the coordinator; the 5-nat proposal below is held, not
+  adopted. It is used for:
   - the alias verdict (best band against runner-up);
   - orbit against null;
   - labels;
@@ -551,7 +567,7 @@ The pruned count and the bound are reported in the summary.
 
   It replaces `alias_nats` 10, `no_orbit_nats` 10, `LABELS_FREE_NATS` 3
   and `RESOLVE_NATS` 5. It matches the gate's M6, where the Ville/Royall
-  bound gives a false-orbit rate ≤ e⁻⁵. **Decision for Ben**, since this
+  bound gives a false-orbit rate ≤ e⁻⁵. Held pending decision 4, since this
   lowers alias and no-orbit from 10.
 - **Posterior sampling:** sample bands in decreasing *p* until the
   remaining mass is below δ_post = 0.01. This merges
@@ -576,11 +592,17 @@ by the stage that introduces each):
 | truncated defensive-mixture IS with adaptive n | established | Owen & Zhou 2000 | §2C tests |
 | uniform-θ primary with Savage–Dickey verdict | derived | Dickey 1971; Verdinelli & Wasserman 1995 | §2D tests |
 | (h, k, λ_ref) parameterisation | established | Ford 2006; Eastman et al. 2013 | §2C test |
+| uniform θ on [0, θ_max] for the primary diameter | departure from the Jeffreys log-uniform default (nests the point star) | Dickey 1971 | §2D tests |
+| null-model outlier component (ii or iii) | novel / experimental until chosen on D | orbit_gate_042 §3.6 | gate M6, M8 |
 
-**Rollout:** each stage lands its method behind a setting, off by
-default, plus its register entry. The gate is run with it on. The
-default flips in a separate one-line PR only after that stage's gate
-passes against the baseline and a vv check covers it; for the two
+**Rollout:** all of Stages 0–6 ship in 0.4.2 (Ben, 2026-10-28). Each
+stage lands its method behind a setting, off by default, plus its
+register entry. The gate is run with it on. The default flips in a
+separate PR only after that stage's gate passes against the baseline
+and a vv check covers it, and **the PR that flips a default deletes the
+old path in that same PR** (no period with two live paths after a
+flip). F is the exception: it stays opt-in and its flip is not planned
+for 0.4.2; for the two
 novel entries that check is the gate's stratum-D comparison against
 the brute-force (all-bands) search. Each cited reference goes into
 `references/provenance.toml` with the code that cites it
@@ -627,9 +649,10 @@ code, because named-target tests are replaced by constructed ones (§4).
 
 - **Seeding becomes the cheap tier.** The gallery's two-tier idea
   (cheap per-night screening of the top-K peaks, then full fits for the
-  top few bands) is §2B + §2F. The full fits run only on bands within
-  ln(N/δ) ≈ 12 nats of the best, against every band in the window today
-  when short arcs are off (Gl 229: all bands).
+  top few bands) is §2B + §2F. With F opt-in and off by default, every
+  band in the window is fitted, seeded by §2B, so the default's cost is
+  the all-bands cost; F (opt-in) cuts it to bands within ln(N/δ) ≈ 12
+  nats of the best.
 - **No polish pass and no flip refits.** That roughly halves the
   optimiser calls per band. There is also no jackknife (`_robustness`
   re-ran a full search per outlying night).
@@ -703,7 +726,11 @@ Ben's.
 in gate §8, with hash checking, seeding and aggregator tests on a toy
 summary. Ben runs the baseline on `main`. No virgil changes.
 
-**Stage 2: mixture (A).**
+Every default flip deletes the path it replaces in the same PR (§2H).
+
+**Stage 2: mixture (A).** Includes both null candidates (§2A) behind a
+setting; Ben runs gate §3.6 on D, and the PR that sets the chosen
+default deletes the other.
 - Files: `aliases.py` (`_with_outlier` → `_mixture_loglike`; delete
   `_plain`, the polish and `_NO_OUTLIER`), `epochs.broad_loglike`
   (extent from the prior), `pipeline/orbit.py` (delete `_robustness`,
@@ -727,7 +754,10 @@ summary. Ben runs the baseline on `main`. No virgil changes.
   `_pilot_diameter` and `estimate_primary_diameter`), `DECISIVE_NATS`,
   and pipeline sampling by remaining mass.
 - Tests: §2C, §2D, §2F and §2G.
-- Default changes: "auto" → "fit"; thresholds 10 → 5; band sampling.
+- Default changes: "auto" → "fit"; band sampling; short arcs off (F
+  opt-in); `span_factor` deleted (long-period band); `vis_amp` range
+  taken from the data's instrument package. Thresholds wait for
+  decision 4.
 
 **Stage 5: structure (§1.3, §1.4, §3).** The seven stages, `_Layout`,
 the one scene→score path, one PD/covariance helper, one batch planner,
@@ -776,40 +806,40 @@ number):
 10. **Efficiency.** Wall time and memory on stratum D against baseline;
     any slowdown is above 20% explained.
 
-## 8. Decisions for Ben
+## 8. Decisions (Ben, 2026-10-28)
 
-1. **Uniform θ** on [0, 1.2197 λ/B_max] for the primary (nests the
-   point star) instead of the Jeffreys log-uniform default.
-2. **The null:** a single star with no mixture (recommended), or the
-   same mixture as the orbit model (risks no-orbit verdicts on real
-   binaries at small K; gate M8 counts them).
-3. **No explicit sign component** at the likelihood level; sign errors
-   are outliers under A.
-4. **`DECISIVE_NATS` = 5** for alias, no-orbit, labels and resolved
-   (alias and no-orbit are 10 today).
-5. **Flux upper bound above 1** (proposed 10) when the primary is
-   resolved.
+Accepted:
+1. **Uniform θ** on [0, 1.2197 λ_min/B_max]; registered as a departure
+   from the Jeffreys default (§2H).
+3. **No explicit sign component**, conditional on the sign-error ROC
+   being reported and M5 passing (§2B).
 6. **Close #572, trim #569** to its tempering fix.
-7. **Short arcs** stay on only while M4 shows no truth-band pruning
-   attributable to F; otherwise they default to off.
 8. **Delete `drop_outlier_night`** and the jackknife.
-9. **Deprecation timeline:** `estimate_primary_diameter` is removed now
-   (no external callers). `start_from_positions`, `rank_orbits`,
-   `chain_starts` and `orbit_search` are deprecated in 0.4.2 and removed
-   in 0.5, with migration notes for the `~/data/eso_binaries` scripts
-   and vv.
-10. **(√e cos ω, √e sin ω, λ_ref) parameterisation** for orbits and
-    NUTS (mean longitude at a reference epoch replaces τ).
-11. **`_VIS_AMP_DEFAULT`** (0.5, 1.2) needs a citation or your call.
-12. **`a_range` in resolution units** (it is [1, 30] mas today, which is
-    wrong for AMI's 100 mas resolution).
-13. **`span_factor` = 4** has no derivation: let one long-period band
-    take everything beyond the span, or keep 4 as a stated domain limit.
-14. **Gate sizes and thresholds** in orbit_gate_042.md §5–6, including
-    the misspecification contaminant added after the gallery results
-    (before any run).
-15. **Scope of 0.4.2:** all stages, or Stages 0–4 with the Stage 5
-    structure in 0.4.3.
+9. **Deprecation timeline:** `estimate_primary_diameter` removed now;
+   `start_from_positions`, `rank_orbits`, `chain_starts` and
+   `orbit_search` deprecated in 0.4.2, removed in 0.5.
+10. **(√e cos ω, √e sin ω, λ_ref) parameterisation.**
+12. **`a_range` in resolution units.**
+
+Changed:
+2. **The null:** a no-mixture null is rejected. Candidates (ii) shared
+   mixture and (iii) shared noise inflation are chosen between on
+   stratum D by the pre-registered rule (gate §3.6).
+7. **Short arcs default off;** F is opt-in and experimental.
+11. **`_VIS_AMP_DEFAULT` moves to the instrument layer**; no invented
+    citation.
+13. **`span_factor` deleted;** one long-period band takes everything
+    beyond the span (§1.2).
+14. **Gate approved** with: misspecified nulls in N; B's misspecification
+    rate 0.3 and M3b must-hold on that subset; the null-choice rule.
+15. **All stages (0–6) in 0.4.2;** the PR that flips a default deletes
+    the old path in the same PR.
+
+Pending (held until Ben chooses among the coordinator's options):
+4. **The decisive threshold:** from frequentist calibration at an α Ben
+   fixes, on a held-out calibration population; no convention number.
+5. **The flux upper bound** with a resolved primary: to be derived, not
+   chosen.
 
 ## References
 

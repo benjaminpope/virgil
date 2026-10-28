@@ -141,7 +141,7 @@ modes the heuristics were built for.
     closure-phase noise drawn 4× larger than its quoted error;
   - **sign error** (probability 0.1): one night, uniform among all but
     the first, has every closure phase negated (a convention error);
-  - **misspecified model** (probability 0.15): an unmodelled third
+  - **misspecified model** (probability 0.3): an unmodelled third
     point source, fixed on the sky, at separation uniform on
     [2, 6] λ/B_max, position angle uniform, flux ratio uniform on
     [0.02, 0.08] of the primary. The engine fits a binary, so χ²/N on the
@@ -160,10 +160,58 @@ companion is a static binary, not a null); no companion. 30 of them (the first 3
 (diameter as in B); the bad-night probability is raised to 0.4 so that the
 null sample contains enough of them to test the outlier model.
 
+Misspecified nulls: independently, with probability 0.3, the single star
+carries something the engine's models (point or uniform-disc primary plus
+point companion) cannot describe, chosen with equal probability:
+- **extended emission**: a circular Gaussian halo centred on the star,
+  flux fraction uniform on [0.02, 0.10], FWHM uniform on [1, 3] λ/B_max;
+- **elongated primary**: an elliptical uniform disc, major-axis diameter
+  uniform on [0.3, 0.8] λ/B_max, axis ratio uniform on [0.6, 0.9],
+  position angle uniform.
+
+Both lower V² on some baselines in a way an orbiting point companion can
+partly mimic; M6 counts the false orbits they cause, and the subset is
+also reported alone.
+
 ### 3.5 Stratum D: development (not scored)
 
-60 systems drawn as B with stratum code 4. Workers may inspect them
-freely. They never enter a gate number.
+120 systems with stratum code 4: indices 0–59 drawn as B, 60–119 drawn
+as N. Workers may inspect them freely. They never enter a scored gate
+number. D's only pre-registered use is the null-model choice below.
+
+### 3.6 Null-model choice rule (run on D before any scored run)
+
+The orbit model carries the night-outlier mixture (orbit_dehack §2A). A
+null with no mixture is flawed: on a single star with one bad night the
+orbit model can call that night an outlier while the null pays its full
+χ², so bad nights make false orbits. Two candidates are pre-registered:
+
+- **(ii) shared mixture:** the null carries the same ε-marginalised
+  mixture, its outlier component being b_k (a companion at a free
+  position that night);
+- **(iii) shared noise inflation:** in *both* models (orbit and null),
+  the outlier component of night *k* is that model's own night
+  likelihood with the noise scale inflated, ln ∫ L_k(σ s) π(s) ds,
+  *s* log-uniform on [1, s_max] with s_max the engine's existing scale
+  bound (no new constant). The null then stays a single star, and an
+  outlier night costs both models the same.
+
+**Rule.** At the virgil commit that implements both (Stage 2), run
+both on all of D with every other setting at its default. For each
+candidate compute M6 on D's nulls (limit scaled to 60 systems: the
+same per-system rate) and M8 on D's binaries. Then:
+1. if exactly one candidate passes both, it is the default;
+2. if both pass, the one with the smaller sum of the two observed error
+   rates (false orbits on nulls + false no-orbit on binaries) is the
+   default; an exact tie goes to (iii), whose null is a single star;
+3. if neither passes, no default is chosen: the result goes to Ben, and
+   no scored run happens until he decides.
+
+The decisive threshold used is the one fixed by decision 4 of
+orbit_dehack §8 (pending at registration). The choice, both candidates'
+D numbers and the commit are entered in the change log before the first
+scored run; the losing candidate's code is deleted in the PR that sets
+the default.
 
 ## 4. Runs
 
@@ -210,7 +258,9 @@ posterior; any departure is a bug, a mis-tempering or a missed mode.
 - (b) Confident errors: among systems with *p*_MAP ≥ 0.99, the number
   whose MAP band is wrong must not exceed the 99th percentile of
   Binomial(*n*_conf, 0.01). A calibrated engine is wrong at most 1% of
-  the time when it claims 99%.
+  the time when it claims 99%. Must hold twice: on all of B, and on the
+  misspecified subset of B alone (about 72 systems at rate 0.3), where
+  the blind gallery runs were confidently wrong.
 - The recovery rate itself, by stratum cell (schedule × *K* × contrast
   bin), is **reported**, with a Wilson 95% interval, and compared between
   stages. It has no absolute floor: the population contains systems whose
@@ -284,7 +334,7 @@ true orbit (NN Del's four nights over 62 days is the case it describes).
 version: 1
 registered: 2026-10-28
 master_seed: 20261028
-strata: {A: {code: 1, n: 200}, B: {code: 2, n: 240}, N: {code: 3, n: 100}, D: {code: 4, n: 60, scored: false}}
+strata: {A: {code: 1, n: 200}, B: {code: 2, n: 240}, N: {code: 3, n: 100}, D: {code: 4, n: 120, scored: false}}
 family_alpha: 0.01
 tests:
   M1_band_calibration: {levels: [0.68, 0.95], stratum: A, sided: two}
@@ -292,7 +342,8 @@ tests:
   M3a_recovery_calibration: {stratum: B, sided: fewer_than_claimed}
   M5_coverage_contaminated: {params: [period, ecc, a_mas], interval: 0.95, condition: p_true_band_ge_0.5, stratum: B, sided: under}
 must_hold:
-  M3b_confident_errors: {p_map_min: 0.99, max: binomial_q99(n_conf, 0.01)}
+  M3b_confident_errors: {p_map_min: 0.99, max: binomial_q99(n_conf, 0.01), subsets: [B_all, B_misspecified]}
+null_choice: {stratum: D, candidates: [shared_mixture, shared_noise_inflation], must_pass: [M6, M8], tie: shared_noise_inflation}
   M4_search_misses: {nats: 1.0, plus_se_multiple: 3, max_fraction: 0.02, stratum: B}
   M6_false_orbits: {stratum: N, max_count_at_lnB5: 2, max_count_at_lnB10: 1}
   M8_false_no_orbit: {stratum: B, oracle_lnB_min: 10, max_fraction: 0.02}
@@ -334,6 +385,7 @@ them cold.
 | 2026-10-28 | registered (draft for approval) | Claude (Opus), for Ben | no |
 | 2026-10-28 | B: misspecification contaminant (p 0.15) and a reported data-sufficiency table, from the blind gallery runs (high χ²/N ↔ wrong alias); still a draft, no harness run yet | Claude (Opus), for Ben | no |
 | 2026-10-28 | Review fixes before any run: A fitted with `temper=False` and thinned NUTS ranks; M4 miss threshold adds 3× the combined IS SE; M6 presented as a guided limit, not a derived rate; new M8 (false no-orbit on B); B's *a* draws kept inside the default `a_range` | Claude (Opus), for Ben | no |
+| 2026-10-28 | Ben's decisions: misspecified nulls in N (p 0.3: extended emission or elongated primary); B misspecification rate 0.15 → 0.3 and M3b must-hold on that subset; D enlarged to 60 B-like + 60 N-like; §3.6 null-model choice rule run on D. Decisive threshold left pending (decision 4) | Claude (Opus), for Ben | no |
 
 ## References
 
