@@ -362,6 +362,26 @@ def test_alt_years_say_why():
     assert not bad, f"alt_years needs alt_years_note: {bad}"
 
 
+_UNVERIFIED_NOTE = re.compile(
+    r"from memory|not checked|check pending|cited in the audit",
+    re.I,
+)
+
+
+def test_verified_entries_have_no_unverified_notes():
+    bad = [
+        k
+        for k, e in REFS.items()
+        if e.get("verified") is True
+        and _UNVERIFIED_NOTE.search(
+            f"{e.get('note', '')} {e.get('notes', '')}"
+        )
+    ]
+    assert not bad, (
+        f"verified = true entries carry unverified/audit notes: {bad}"
+    )
+
+
 def _cited_keys() -> set[str]:
     """Keys of the entries that something in the scanned files cites."""
     cited = set()

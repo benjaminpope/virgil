@@ -45,12 +45,15 @@ def test_existing_helper_passes():
 
 def test_deliberate_comment_on_line_or_above_passes():
     call = "\n\ndef f():\n    return _h()\n"
-    above = "# deliberate: named step\ndef _h():\n    return 1\n" + call
-    same = "def _h():  # deliberate: named step\n    return 1\n" + call
+    above = "# deliberate: custom JVP helper\ndef _h():\n    return 1\n" + call
+    same = "def _h():  # deliberate: custom JVP helper\n    return 1\n" + call
     assert _found(above) == [] and _found(same) == []
     assert _found(
         "# deliberate\ndef _h():\n    return 1\n" + call
     )  # no reason
+    assert _found(
+        "# deliberate:   \ndef _h():\n    return 1\n" + call
+    )  # empty reason
 
 
 def test_jit_kernels_pass():
@@ -125,3 +128,52 @@ def test_cross_module_import_counts_as_a_second_call():
 def test_test_local_name_does_not_exempt():
     src = "def _h():\n    return 1\n\n\ndef f():\n    return _h()\n"
     assert _found(src, tests="def _h():\n    return 0\n") == ["m.py:1 _h"]
+
+
+def test_qualified_test_import_only_exempts_that_module():
+    src = "def _h():\n    return 1\n\n\ndef f():\n    return _h()\n"
+    got = shape.find_single_use(
+        {"a.py": src, "b.py": src},
+        {"a.py": "", "b.py": ""},
+        "from virgil.a import _h\n",
+    )
+    assert got == ["b.py:1 _h"]
+    # Package __init__.py and submodule attribute accesses via package import are also module-qualified.
+    got_pkg = shape.find_single_use(
+        {
+            "pipeline/__init__.py": src,
+            "pipeline/_checks.py": src,
+            "other.py": src,
+        },
+        {},
+        "from virgil.pipeline import _h, _checks\n_checks._h()\nsome_obj._h()\n",
+    )
+    assert got_pkg == ["other.py:1 _h"]
+
+
+def test_find_oversized_functions():
+    body = "".join(f"    x{i} = {i}\n" for i in range(125))
+    big = f'def f():\n    """Docstring."""\n{body}    return x0\n'
+    small = "def f():\n    return 1\n"
+    assert shape.find_oversized_functions({"m.py": big}, {"m.py": small}) == [
+        "m.py:1 f (126 lines > 120)"
+    ]
+    # Unchanged oversized function in base does not fail, nor one with a long docstring only.
+    assert shape.find_oversized_functions({"m.py": big}, {"m.py": big}) == []
+    long_doc = 'def f():\n    """' + "line\n" * 130 + '"""\n    return 1\n'
+    assert (
+        shape.find_oversized_functions({"m.py": long_doc}, {"m.py": ""}) == []
+    )
+    # A new function in a new module sharing a name with a base function that still exists is flagged.
+    big_other = f"def f():\n{body}    return x0 + 1\n"
+    assert shape.find_oversized_functions(
+        {"old.py": big, "new.py": big_other}, {"old.py": big}
+    ) == ["new.py:1 f (126 lines > 120)"]
+    # Moving an oversized function from old.py to existing.py passes.
+    assert (
+        shape.find_oversized_functions(
+            {"old.py": "", "existing.py": big_other},
+            {"old.py": big, "existing.py": ""},
+        )
+        == []
+    )

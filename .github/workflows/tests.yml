@@ -76,10 +76,10 @@ jobs:
 
       # The JAX compilation cache is keyed on the job, JAX version, this
       # shard's file list and ISO week. The first push or nightly of a week saves it
-      # from an empty cache; pull requests restore the latest match. A new
-      # file list means a new cache, and the per-test budget stays off until
-      # then; a file added to another shard changes nothing here (the
-      # nightly deletes older weeks' caches).
+      # from an empty cache; pull requests restore the latest match (falling back
+      # to any cache for this job and JAX version when the shard's file list
+      # changes, keeping the 30 s per-test budget active; the nightly deletes
+      # older weeks' caches).
       - name: JAX version, week and packing
         id: key
         shell: bash
@@ -127,10 +127,10 @@ jobs:
           # The float64 jobs skip the dtype-independent files (conftest.py).
           VIRGIL_SKIP_DTYPE_INDEPENDENT: ${{ matrix.x64 }}
           VIRGIL_SLOW_FILES: ${{ matrix.orbit_slow }}
-          # Seconds per test not marked slow (tests/conftest.py), only with a
-          # warm cache for this job, JAX and
-          # shard files. Fast tests peak near 25 s.
-          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, steps.key.outputs.prefix) && '30' || '' }}
+          # Seconds per test not marked slow (tests/conftest.py), whenever any
+          # warm cache for this job and JAX version is restored (including
+          # when PR file changes fall back to the job+JAX restore-key).
+          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax)) && '30' || '' }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             nproc; free -m; df -h .

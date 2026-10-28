@@ -93,6 +93,43 @@ Novel or experimental methods are opt-in, never defaults, until virgil-validatio
 validated them. The rule binds new entries; gaps in existing ones are listed in the register
 as to-do. Public docs do not link `design/` notes.
 
+## Anti-reward-hacking and scientific integrity
+
+No agent (Claude, Argon/Antigravity, Copilot, Codex) may make a test or gate pass
+by special-casing, tuning or loosening. If a benchmark or gate fails, find out
+why; never adjust the code or the check until it passes.
+
+1. **No target-specific heuristics or rescue cascades.** Never add a heuristic,
+   threshold, fallback pass or grouping rule to push a named target or contest
+   dataset across a gate. First check whether the posterior is genuinely
+   multimodal or underdetermined. If a heuristic you added breaks another case,
+   delete or redesign it; never stack a second compensating one.
+2. **Constants and `# deliberate:` comments need a specific reason.** Every
+   magic constant and every `# deliberate: <reason>` says why: a derivation, a
+   citation or a general reason that holds beyond one dataset. "Makes X pass" is
+   never a reason, and a rubber-stamp reason ("named step", "test seam") is not
+   specific.
+3. **No tautological or weakened tests.** Do not compute the expected value
+   with the implementation's own formula or private helpers, or pin outputs
+   copied from running virgil as an oracle. Test against analytical solutions,
+   quadrature, finite differences or virgil-validation. Never delete a failing
+   case, widen a tolerance, add `xfail`, or assert what a parameter transform
+   guarantees, without Ben's sign-off in the PR description. Test data must be
+   physical (no negated closure phases with V² kept, no collapsed timestamps).
+4. **Never silence sampler or optimizer failures.** Do not downgrade
+   divergences, non-convergence or high R-hat from `"fail"` to `"warn"`.
+5. **Never game code-shape or docstring gates.** Do not inline multi-step logic
+   into a monolith (over 120 body lines fails `scripts/code_shape.py`) to avoid
+   a helper, and do not delete parameter contracts (spaces, units,
+   incompatibilities) or cram more than four parameters onto one numpydoc
+   header line to meet the docstring limit.
+6. **A PR must not change the gates it is judged by.** The base branch's copy of
+   `scripts/code_shape.py` decides in CI; changes to gate limits, `tests/lint/`
+   or the CI workflow are reviewed as governance, apart from other work.
+
+**Reviewer checklist item:** does this change make a test or gate pass by
+special-casing, tuning or loosening? The PR description answers it.
+
 ## Instrument-specific work
 
 Calibration and error models specific to the VLTI instruments (GRAVITY,
@@ -167,15 +204,19 @@ and writing history into docstrings. So:
 7. **Make growth visible.** CI comments each PR's net `src`/`tests` line change.
    Above +1,000 `src` lines, the PR description says what the size buys and what
    it supersedes.
-8. **No single-use private helpers.** CI fails a PR that adds a private def
-   (module-level, nested or method) called exactly once in the package, at any
-   size: inline it. Exempt: a `# deliberate: <reason>` comment on the def line or
-   the line above; `jit`/`filter_jit` kernels; `custom_jvp`/`custom_vjp` functions
-   and their `.defjvp`/`.defvjp` rules; `singledispatch` `.register` functions;
-   callbacks (a def passed as a value, e.g. to `lax.scan`, `vmap`, `grad`,
-   `map`); and names used in `tests/`. Only additions fail, measured against the
-   PR base (`python scripts/code_shape.py --since origin/main`). The base branch's
-   copy of the script decides, so a PR cannot weaken the gate.
+8. **No single-use private helpers or oversized monoliths.** CI fails a PR that
+   adds a private def (module-level, nested or method) called exactly once in
+   the package, at any size: inline it or share it across callers. Exempt: a
+   `# deliberate: <specific reason>` comment on the def line or the line above
+   (the reason must be non-empty and specific; see the integrity section);
+   `jit`/`filter_jit` kernels; `custom_jvp`/`custom_vjp` functions and their
+   `.defjvp`/`.defvjp` rules; `singledispatch` `.register` functions; callbacks
+   (a def passed as a value, e.g. to `lax.scan`, `vmap`, `grad`, `map`); and
+   names imported from that module in `tests/`. Newly added or grown functions
+   over `MAX_FUNC_LINES = 120` body lines (excluding the docstring) also fail
+   `python scripts/code_shape.py --since origin/main`, preventing destructive
+   inlining into monoliths. The base branch's copy of the script decides, so a
+   PR cannot weaken the gate.
 
 ## Docstring style
 
@@ -211,9 +252,10 @@ Ben is surprised how long some docstrings are. Keep them short.
   it is checked on the arXiv abstract page (`scripts/fetch_references.py`
   resolves entries against ADS). `scripts/sync_references_page.py --by-module`
   and `--unverified` give the census.
-- **The gate:** `tests/lint/test_docstring_length.py` fails on any docstring
-  over 60 lines, with no allowlist: shorten the docstring, and put
-  derivations in `docs/` and design history in `design/`.
+- **The gate:** `tests/lint/test_docstring_length.py` fails any docstring over 60
+  lines, with no allowlist, and forbids more than four parameter names on one
+  numpydoc header line (a fixed legacy set is exempt; it only shrinks): shorten the docstring, and put derivations in `docs/` and design history in
+  `design/`.
 - **Comprehension check:** every docstring-rewrite PR runs one. Give a fresh
   subagent only the signature and the new docstring of each rewritten public
   function. It writes a correct call for a stated task and lists anything it

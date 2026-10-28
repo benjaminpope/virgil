@@ -205,21 +205,28 @@ def _shingles(body):
     return set(zip(lines, lines[1:]))
 
 
+MAX_FUNC_LINES = 120
 _EXEMPT_DECORATOR = re.compile(
     r"jit|custom_(jvp|vjp)|\.def(jvp|vjp)(\(.*\))?$|\.register(\(.*\))?$"
 )
 
 
-def _private_defs(tree):
-    """``(qualname, node)`` of every private def: module-level, nested, method."""
+def _valid_deliberate(line):
+    """A ``# deliberate:`` comment with a non-empty reason (specificity is for review)."""
+    return "# deliberate:" in line and bool(
+        line.split("# deliberate:", 1)[1].strip()
+    )
+
+
+def _all_defs(tree):
+    """``(qualname, node)`` of every def: module-level, nested, method."""
     out = []
 
     def walk(node, prefix):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 q = prefix + child.name
-                if _private(child.name):
-                    out.append((q, child))
+                out.append((q, child))
                 walk(child, q + ".")
             elif isinstance(child, ast.ClassDef):
                 walk(child, prefix + child.name + ".")
@@ -228,6 +235,19 @@ def _private_defs(tree):
 
     walk(tree, "")
     return out
+
+
+def _private_defs(tree):
+    """``(qualname, node)`` of every private def: module-level, nested, method."""
+    return [(q, n) for q, n in _all_defs(tree) if _private(n.name)]
+
+
+def _func_body_lines(node):
+    """Line span of a function's body excluding its docstring."""
+    body = _strip_doc(node.body)
+    if not body:
+        return 0
+    return node.end_lineno - body[0].lineno + 1
 
 
 def _module_uses(tree):
@@ -274,14 +294,60 @@ def _reach(table, name, own, imported):
     return table["ext"][name] + (table["name"][name] if imported else 0)
 
 
+def _attr_chain(node):
+    """Dotted identifier chain ``['a', 'b', 'c']`` for ``a.b.c``, else ``None``."""
+    parts = []
+    cur = node
+    while isinstance(cur, ast.Attribute):
+        parts.append(cur.attr)
+        cur = cur.value
+    if isinstance(cur, ast.Name):
+        parts.append(cur.id)
+        return parts[::-1]
+    return None
+
+
+def _add_qualified(names, rel_prefix, attr):
+    names.add((f"{rel_prefix}.py", attr))
+    names.add((f"{rel_prefix}/__init__.py", attr))
+
+
 def _test_names(tests_text):
-    """Names tests import or take as attributes (``mod._name``), not locals."""
+    """Names tests import or take as attributes (``mod._name``), qualified by module when known."""
+    tree = ast.parse(tests_text)
     names = set()
-    for n in ast.walk(ast.parse(tests_text)):
+    mod_aliases = {}
+    for n in ast.walk(tree):
         if isinstance(n, ast.ImportFrom):
-            names.update(al.name for al in n.names)
-        elif isinstance(n, ast.Attribute):
-            names.add(n.attr)
+            if n.module == "virgil":
+                for al in n.names:
+                    mod_aliases[al.asname or al.name] = al.name
+                    names.add(("__init__.py", al.name))
+            elif n.module and n.module.startswith("virgil."):
+                rel = n.module.removeprefix("virgil.").replace(".", "/")
+                for al in n.names:
+                    _add_qualified(names, rel, al.name)
+                    mod_aliases[al.asname or al.name] = f"{rel}/{al.name}"
+            else:
+                names.update(al.name for al in n.names)
+        elif isinstance(n, ast.Import):
+            for al in n.names:
+                if al.name.startswith("virgil."):
+                    rel = al.name.removeprefix("virgil.").replace(".", "/")
+                    key = al.asname or al.name.split(".")[-1]
+                    mod_aliases[key] = rel
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute):
+            chain = _attr_chain(n)
+            if not chain:
+                continue
+            if chain[0] == "virgil" and len(chain) >= 3:
+                _add_qualified(names, "/".join(chain[1:-1]), chain[-1])
+            elif chain[0] in mod_aliases:
+                prefix = "/".join([mod_aliases[chain[0]], *chain[1:-1]])
+                _add_qualified(names, prefix, chain[-1])
+            elif len(chain) == 2:
+                _add_qualified(names, chain[0], chain[1])
     return names
 
 
@@ -306,7 +372,7 @@ def find_single_use(head, base, tests_text=""):
         lines = head[path].splitlines()
         for q, node in _private_defs(tree):
             name = node.name
-            if (path, q) in old or name in tested:
+            if (path, q) in old or (path, name) in tested or name in tested:
                 continue
             if path not in base and q in moved:  # a moved module
                 continue
@@ -328,9 +394,38 @@ def find_single_use(head, base, tests_text=""):
             near = (
                 lines[top - 2 : top - 1] + lines[node.lineno - 1 : node.lineno]
             )
-            if any("# deliberate:" in x for x in near):
+            if any(_valid_deliberate(x) for x in near):
                 continue
             found.append(f"{path}:{node.lineno} {q}")
+    return found
+
+
+def find_oversized_functions(head, base, max_lines=MAX_FUNC_LINES):
+    """Functions in ``head`` that are new or grew vs ``base`` and exceed ``max_lines`` body lines."""
+    trees = {p: ast.parse(t) for p, t in head.items()}
+    base_trees = {p: ast.parse(t) for p, t in base.items()}
+    head_defs = {(p, q): n for p, t in trees.items() for q, n in _all_defs(t)}
+    old_sizes = {
+        (p, q): _func_body_lines(n)
+        for p, t in base_trees.items()
+        for q, n in _all_defs(t)
+    }
+    moved_sizes = {}
+    for (old_p, q), sz in old_sizes.items():
+        if (old_p, q) not in head_defs:
+            moved_sizes[q] = max(moved_sizes.get(q, 0), sz)
+    found = []
+    for path, tree in trees.items():
+        for q, node in _all_defs(tree):
+            n_lines = _func_body_lines(node)
+            if n_lines <= max_lines:
+                continue
+            old_lines = old_sizes.get((path, q), moved_sizes.get(q))
+            if old_lines is not None and n_lines <= old_lines:
+                continue
+            found.append(
+                f"{path}:{node.lineno} {q} ({n_lines} lines > {max_lines})"
+            )
     return found
 
 
@@ -373,11 +468,19 @@ def main():
             for p in (ROOT / "tests").rglob("*.py")
             if "lint" not in p.parts
         )
-        found = find_single_use(_read_tree(), _read_tree(a.since), tests)
+        head, base = _read_tree(), _read_tree(a.since)
+        found = find_single_use(head, base, tests)
+        oversized = find_oversized_functions(head, base)
         print(f"single-use private defs added since {a.since}: {len(found)}")
         for f in found:
             print(f"  {f}")
-        raise SystemExit(bool(found))
+        if oversized:
+            print(
+                f"functions over {MAX_FUNC_LINES} body lines added/grown since {a.since}: {len(oversized)}"
+            )
+            for f in oversized:
+                print(f"  {f}")
+        raise SystemExit(bool(found or oversized))
     defs, modules = collect()
     extra = grep_extra(
         {d["name"] for d in defs},
