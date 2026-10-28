@@ -187,7 +187,7 @@ def auto_von_mises_degree(kappa, tol=1e-6, cap=256, minimum=1):
     return max(degree, minimum)
 
 
-# --- spectral factorization and step-down ------------------------------------
+# --- spectral factorization (numpy, not differentiated) ----------------------
 
 
 def step_down(h, clip=_CLIP):
@@ -200,37 +200,23 @@ def step_down(h, clip=_CLIP):
 
     Returns
     -------
-    k : array-like
+    k : ndarray
         Complex ``k_1 .. k_M``.
-    clipped : bool or jax.Array
+    clipped : bool
     """
-    cur = np.asarray(h)
-    dtype = np.finfo(np.result_type(cur.real, float)).dtype
-    eps = np.finfo(dtype).eps
-    ctype = np.result_type(dtype, 1j)
-    cur = cur.astype(ctype)
+    cur = onp.asarray(h, dtype=complex)
     cur = cur / cur[0]
-    top = cur.shape[0] - 1
-    ks = []
-    clipped = np.asarray(False)
-    max_k = 1.0 - clip
+    top = len(cur) - 1
+    k = onp.zeros(top, dtype=complex)
+    clipped = False
     for j in range(top, 0, -1):
         kj = cur[j]
-        abs_kj2 = np.real(kj * np.conj(kj))
-        nonzero = abs_kj2 > 0.0
-        safe_abs = np.sqrt(np.where(nonzero, abs_kj2, 1.0))
-        abs_kj = np.where(nonzero, safe_abs, 0.0)
-        over = abs_kj > max_k
-        kj = np.where(over, kj / safe_abs * max_k, kj)
-        clipped = clipped | over
-        kj2 = np.real(kj * np.conj(kj))
-        denom = np.maximum(1.0 - kj2, eps) if clip > 0.0 else 1.0 - kj2
-        lower = (cur[:j] - kj * np.conj(cur[j:0:-1])) / denom
-        ks.append(kj)
+        if abs(kj) > 1.0 - clip:
+            kj = kj / abs(kj) * (1.0 - clip)
+            clipped = True
+        lower = (cur[:j] - kj * onp.conj(cur[j:0:-1])) / (1.0 - abs(kj) ** 2)
+        k[j - 1] = kj
         cur = lower / lower[0]
-    k = np.stack(ks[::-1]) if ks else np.zeros((0,), dtype=ctype)
-    if not isinstance(clipped, jax.core.Tracer):
-        clipped = bool(clipped)
     return k, clipped
 
 

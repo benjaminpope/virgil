@@ -407,7 +407,9 @@ def test_disco_operator_requires_diagonal_propagated_covariance():
         (models.FlaredDiskPowerLaw, {"n": 3.0}),
     ],
 )
-def test_flared_disk_edge_on_visibilities_and_gradients_are_finite(cls, kw):
+def test_flared_disk_edge_on_is_rejected_not_silently_dark(cls, kw):
+    """Edge-on cannot be deprojected: ``is_physical`` is False and the model
+    returns NaN, never a zero-flux disk that dilutes a ``System``."""
     common = dict(
         radius=40.0,
         fwhm=15.0,
@@ -419,22 +421,11 @@ def test_flared_disk_edge_on_visibilities_and_gradients_are_finite(cls, kw):
         ft="dft",
         **kw,
     )
+    zero = (np.zeros(1), np.zeros(1), oidata.wavel[:1])
     near = cls(inc=89.5, **common)
     assert bool(near.is_physical())
-    v0 = near.model(np.zeros(1), np.zeros(1), oidata.wavel[:1])
-    assert np.allclose(np.abs(v0), 1.0, atol=1e-5)
+    assert np.allclose(np.abs(near.model(*zero)), 1.0, atol=1e-5)
 
-    disk = cls(inc=90.0, **common)
-    assert not bool(disk.is_physical())
-    v0_edge = disk.model(np.zeros(1), np.zeros(1), oidata.wavel[:1])
-    assert np.allclose(np.abs(v0_edge), 1.0, atol=1e-5)
-    vis = disk.model(oidata.u[:8], oidata.v[:8], oidata.wavel)
-    assert np.all(np.isfinite(vis))
-    grads = jax.grad(
-        lambda m: np.sum(
-            np.abs(m.model(oidata.u[:8], oidata.v[:8], oidata.wavel)) ** 2
-        )
-    )(disk)
-    assert all(
-        bool(np.all(np.isfinite(leaf))) for leaf in jax.tree.leaves(grads)
-    )
+    edge = cls(inc=90.0, **common)
+    assert not bool(edge.is_physical())
+    assert np.all(np.isnan(edge.model(*zero)))

@@ -982,8 +982,7 @@ def _splat_rings(xx, yy, width, rings, ring_points, weights):
     return image
 
 
-# deliberate: monkeypatched in tests/test_models_sources.py to force the irregular-grid path
-def _orthogonal_grid(xx, yy):
+def _orthogonal_grid(xx, yy):  # deliberate: test seam (tests monkeypatch it)
     """Origin and column and row steps of a regular grid, or ``None``.
 
     The grid may be shifted and rotated (as ``Component._image`` and
@@ -2110,16 +2109,7 @@ class _PixelRendered(Component):
         if rotation_deg != 0.0:
             xx, yy = rotate(xx, yy, rotation_deg)
         pixels = self._centred_image(xx, yy, self.pixel_scale_mas)
-        total = np.sum(pixels)
-        # An unphysical trial state (e.g. inc = 90°, rejected by is_physical)
-        # can miss every pixel centre on an even grid; fall back to uniform
-        # unit-sum pixels rather than 0 / 0 so V(0, 0) = 1 and gradients stay
-        # finite during line searches.
-        return np.where(
-            total > 0.0,
-            pixels / np.where(total > 0.0, total, 1.0),
-            1.0 / pixels.size,
-        )
+        return pixels / np.sum(pixels)
 
     def _centred_cvis(self, uu, vv):
         rotation = self._frame(None)
@@ -2256,7 +2246,7 @@ class FlaredDisk(_PixelRendered):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         # Mid-plane coordinates: x along the major axis, y along the minor
         # axis (towards the near side, at pa + 90), deprojected.
-        cos_inc = np.maximum(np.cos(self.inc * dtor), 1e-6)
+        cos_inc = np.maximum(np.cos(self.inc * dtor), 1e-8)
         y, x = undo_elliptical_transf_coord(xx, yy, self.pa, cos_inc)
 
         # Flared surface (Eq. 2) and apparent radius (Eq. 3). The floors
@@ -5074,8 +5064,7 @@ class System(SourceModel):
             u, v, wavel, lambda c: c.model_on_grid(u, v, wavel, grid)
         )
 
-    # deliberate: resolves MultipoleField sibling geometry in the Image grid frame
-    def _tied(self, part):
+    def _tied(self, part):  # deliberate: one named step per part
         """``part`` with its field's geometry taken from the sibling it names."""
         field = part.log_brightness if isinstance(part, Image) else None
         name = getattr(field, "geometry_from", None)
