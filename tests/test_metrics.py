@@ -51,7 +51,10 @@ def test_subpixel_shift_is_recovered():
 def test_l1_and_ncc_are_flux_scale_invariant():
     truth = _scene()
     image = truth + 0.3 * gaussian_blob(NPIX, SCALE, 3.0, dra=1.0)
-    ref = metrics.l1_score(image, truth), metrics.ncc(image, truth)
+    ref = (
+        float(metrics.l1_score(image, truth)),
+        float(metrics.ncc(image, truth)),
+    )
     for factor in (0.01, 7.0):
         assert metrics.l1_score(factor * image, truth) == pytest.approx(
             ref[0], abs=1e-5
