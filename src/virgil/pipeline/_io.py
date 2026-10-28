@@ -214,7 +214,8 @@ def _public_class(obj):
     ):
         raise ModelSpecError(
             f"{module}.{getattr(cls, '__qualname__', name)} is not a public "
-            "virgil class."
+            "virgil model class (a zodiax.Base subclass from the model "
+            "modules)."
         )
     if getattr(importlib.import_module(module), name, None) is not cls:
         raise ModelSpecError(
@@ -299,7 +300,8 @@ def model_from_spec(spec, arrays):
                 or name.startswith("_")
             ):
                 raise ModelSpecError(
-                    f"{module}.{name} is not a public virgil class."
+                    f"{module}.{name} is not in the allowed virgil model "
+                    f"modules {_MODEL_MODULES}."
                 )
             cls = getattr(importlib.import_module(module), name, None)
             _public_class(cls)

@@ -377,3 +377,25 @@ def test_padding_a_dirty_start_keeps_the_centre():
     assert padded.shape == (9, 9)
     assert padded[2:7, 2:7].tolist() == image.tolist()
     assert padded.sum() == image.sum()
+
+
+def test_unflagged_of_flux_only_data_counts_every_sample():
+    # No V² or phase block uses a sample, so nothing is flagged by a block:
+    # every sample counts (never an all-False mask), and `beam` is finite.
+    data = OIData(
+        {
+            "u": onp.array([10.0, 20.0, 30.0]),
+            "v": onp.array([0.0, 5.0, 0.0]),
+            "wavel": WAVEL,
+            "vis": onp.ones(3),
+            "d_vis": onp.full(3, 0.01),
+            "vis_flag": onp.ones(3, dtype=bool),
+            "flux": {
+                "value": onp.ones(2),
+                "error": onp.full(2, 0.1),
+                "wavel": onp.full(2, 2e-6),
+            },
+        }
+    )
+    assert data.unflagged.all()
+    assert onp.all(onp.isfinite(beam(data).major_mas))

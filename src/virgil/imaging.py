@@ -1023,6 +1023,8 @@ def beam(data):
             weight = (information > 1e-3 * information.max()).astype(float)
         u.append(fu), v.append(fv), w.append(weight)
     u, v, w = (onp.concatenate(x) for x in (u, v, w))
+    if not onp.sum(w) > 0:
+        raise ValueError("beam needs at least one sample that is used.")
     m = onp.array([[w @ (u * u), w @ (u * v)], [w @ (u * v), w @ (v * v)]])
     covariance = onp.linalg.inv(m / onp.sum(w)) / (4 * onp.pi**2)
     variance, axes = onp.linalg.eigh(covariance)
