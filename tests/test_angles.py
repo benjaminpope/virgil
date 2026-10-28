@@ -115,7 +115,31 @@ def test_residuals_are_the_negative_log_density(prior):
         )
         log_p = onp.asarray(prior.log_prob(np.asarray(v)))
     total = half_chi2 + log_p
-    onp.testing.assert_allclose(total, total[0], atol=1e-5)  # float32 μ, κ
+    onp.testing.assert_allclose(total, total[0], atol=1e-12)
+
+
+def test_angle_vector_constructed_in_float32_evaluates_in_float64():
+    with jax.enable_x64(False):
+        prior = AngleVector(30.0, 2.0)
+    v = onp.random.default_rng(7).normal(size=(25, 2))
+    with jax.enable_x64(True):
+        res = prior.residuals(np.asarray(v[0], dtype=np.float64))
+        log_p = prior.log_prob(np.asarray(v, dtype=np.float64))
+        half_chi2 = onp.array(
+            [
+                0.5
+                * onp.sum(
+                    onp.asarray(
+                        prior.residuals(np.asarray(x, dtype=np.float64))
+                    )
+                    ** 2
+                )
+                for x in v
+            ]
+        )
+    assert res.dtype == np.float64 and log_p.dtype == np.float64
+    total = half_chi2 + onp.asarray(log_p)
+    onp.testing.assert_allclose(total, total[0], atol=1e-12)
 
 
 def test_bad_arguments_are_rejected():

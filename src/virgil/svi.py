@@ -294,8 +294,11 @@ def variational(
 
     Parameters
     ----------
-    model, priors, data, regularizers, noise, likelihoods
-        As for [`numpyro_model`][virgil.likelihood.numpyro_model]; see
+    model, priors, data
+        Scene, priors and data as for
+        [`numpyro_model`][virgil.likelihood.numpyro_model].
+    regularizers, noise, likelihoods : optional
+        Regularizers, noise priors and extra likelihoods; see
         [Common arguments](../common_arguments.md).
     start : FitResult or dict, optional
         Where the guide starts: a fit or its ``values`` (default: the priors'
@@ -308,10 +311,12 @@ def variational(
         [`laplace_samples`][virgil.imaging.laplace_samples] for images).
     steps, num_particles, num_samples : int, optional
         Steps (3000), draws per ELBO estimate (8), draws returned (2000).
-    optimizer, learning_rate, key, flat_coordinates, dtype : optional
-        Optimizer (default ``optax.adam``), its step size (3e-3), the PRNG key
-        (default ``PRNGKey(0)``), ``flat_coordinates`` as for ``numpyro_model``,
-        and the precision (default ``"float64"``, as for ``fit``).
+    optimizer, learning_rate, key : optional
+        Optimizer (default ``optax.adam``), its step size (3e-3), and the
+        PRNG key (default ``PRNGKey(0)``).
+    flat_coordinates, dtype : optional
+        ``flat_coordinates`` as for ``numpyro_model``, and the precision
+        (default ``"float64"``, as for ``fit``).
     dense_start, init_scale : optional
         Start the width at the Gauss–Newton covariance (default ``True``;
         skipped, with a warning, given ``regularizers``). ``init_scale``
@@ -344,17 +349,24 @@ def variational(
     values = start.values if isinstance(start, FitResult) else start
     tic = time.perf_counter()
     with run_in(dtype):
-        model_c, priors_c, data_c, noise_c = cast_tree(
-            (model, priors, data, noise), dtype
+        (
+            model_c,
+            priors_c,
+            data_c,
+            noise_c,
+            regularizers_c,
+            likelihoods_c,
+        ) = cast_tree(
+            (model, priors, data, noise, regularizers, likelihoods), dtype
         )
         values_c = None if values is None else cast_tree(dict(values), dtype)
         posterior = numpyro_model(
             model_c,
             priors_c,
             data_c,
-            regularizers,
+            regularizers_c,
             noise_c,
-            likelihoods,
+            likelihoods_c,
             flat_coordinates=flat_coordinates,
             **options,
         )
@@ -399,7 +411,7 @@ def variational(
                 priors_c,
                 data_c,
                 values_c if use_dense else None,
-                likelihoods,
+                likelihoods_c,
                 noise_c,
                 flat_coordinates,
                 init_scale,

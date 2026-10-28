@@ -90,9 +90,21 @@ class AngleVector(dist.Distribution):
                 raise ValueError(f"AngleVector: {name} must be a scalar.")
         if kappa is not None and not bool(np.all(np.asarray(kappa) >= 0)):
             raise ValueError("AngleVector: kappa must be non-negative.")
-        self.mean_deg = None if mean is None else np.asarray(mean, float)
-        self.kappa = None if kappa is None else np.asarray(kappa, float)
-        self.ring_width = np.asarray(ring_width, float)
+        self.mean_deg = (
+            None
+            if mean is None
+            else (mean if isinstance(mean, jax.Array) else float(mean))
+        )
+        self.kappa = (
+            None
+            if kappa is None
+            else (kappa if isinstance(kappa, jax.Array) else float(kappa))
+        )
+        self.ring_width = (
+            ring_width
+            if isinstance(ring_width, jax.Array)
+            else float(ring_width)
+        )
         self.axial = bool(axial)
         super().__init__(
             batch_shape=(), event_shape=(2,), validate_args=validate_args
@@ -105,9 +117,11 @@ class AngleVector(dist.Distribution):
 
     def _directions(self, vector):
         """(v̂ or its doubled direction, m̂ or its doubled mean)."""
+        vector = np.asarray(vector, dtype=np.result_type(vector, float))
+        dtype = vector.dtype
         x, y = vector[..., 0], vector[..., 1]
         r2 = x**2 + y**2
-        mean = np.deg2rad(self.mean_deg)
+        mean = np.deg2rad(np.asarray(self.mean_deg, dtype))
         if self.axial:
             unit = np.stack([(x**2 - y**2) / r2, 2.0 * x * y / r2], -1)
             mean = 2.0 * mean
@@ -121,18 +135,21 @@ class AngleVector(dist.Distribution):
         The ring, (r - 1)/s, then, for a von Mises prior, the chord
         √κ (v̂ - m̂) (two more rows).
         """
-        vector = np.asarray(vector)
+        vector = np.asarray(vector, dtype=np.result_type(vector, float))
+        dtype = vector.dtype
         r = np.sqrt(np.sum(vector**2, axis=-1))
-        ring = np.atleast_1d((r - 1.0) / self.ring_width)
+        ring = np.atleast_1d((r - 1.0) / np.asarray(self.ring_width, dtype))
         if self.uniform:
             return ring
         unit, mean = self._directions(vector)
-        return np.concatenate([ring, np.sqrt(self.kappa) * (unit - mean)])
+        kappa = np.asarray(self.kappa, dtype)
+        return np.concatenate([ring, np.sqrt(kappa) * (unit - mean)])
 
     def log_prob(self, value):
-        value = np.asarray(value)
+        value = np.asarray(value, dtype=np.result_type(value, float))
+        dtype = value.dtype
         r = np.sqrt(np.sum(value**2, axis=-1))
-        w = self.ring_width
+        w = np.asarray(self.ring_width, dtype)
         # log ∫₀^∞ r exp(-(r - 1)²/2s²) dr, the ring's normalizer.
         log_norm = np.log(
             w**2 * np.exp(-0.5 / w**2)
@@ -142,15 +159,16 @@ class AngleVector(dist.Distribution):
         if self.uniform:
             return log_p
         unit, mean = self._directions(value)
+        kappa = np.asarray(self.kappa, dtype)
         chord2 = np.sum((unit - mean) ** 2, axis=-1)
-        return log_p - 0.5 * self.kappa * chord2 - np.log(i0e(self.kappa))
+        return log_p - 0.5 * kappa * chord2 - np.log(i0e(kappa))
 
     def _sample_radius(
         self, key, shape
     ):  # deliberate: 32-line sampler with nested loop fns; inlined it would bury sample
         """Draws of r ∝ r exp(-(r - 1)²/2s²), by rejection from a Normal
         at its mode r* = (1 + √(1 + 4s²))/2 (the ratio is log-concave)."""
-        s = self.ring_width
+        s = np.asarray(self.ring_width, float)
         mode = 0.5 * (1.0 + np.sqrt(1.0 + 4.0 * s**2))
 
         def log_ratio(r):
@@ -185,11 +203,12 @@ class AngleVector(dist.Distribution):
         if self.uniform:
             theta = jax.random.uniform(k_theta, shape, maxval=2.0 * np.pi)
         else:
-            mean = np.deg2rad(self.mean_deg)
+            mean = np.deg2rad(np.asarray(self.mean_deg, float))
+            kappa = np.asarray(self.kappa, float)
             if self.axial:
-                doubled = dist.VonMises(0.0, self.kappa).sample(k_theta, shape)
+                doubled = dist.VonMises(0.0, kappa).sample(k_theta, shape)
                 flip = np.pi * jax.random.bernoulli(k_flip, 0.5, shape)
                 theta = mean + 0.5 * doubled + flip
             else:
-                theta = dist.VonMises(mean, self.kappa).sample(k_theta, shape)
+                theta = dist.VonMises(mean, kappa).sample(k_theta, shape)
         return np.stack([r * np.cos(theta), r * np.sin(theta)], axis=-1)

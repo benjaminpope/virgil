@@ -40,27 +40,35 @@ class _GaussianInZ:
     ``loglike`` is the Gaussian in z minus the prior's density in z (the
     prior times the Jacobian of z → x), so the product is the Gaussian.
     ``__call__`` gives its whitened residuals, for ``gauss_newton_mass``.
-    ``gauss_newton_mass`` adds the curvature P of the priors' transforms to
-    JᵀJ, so the residuals carry what is left of the precision,
-    JᵀJ = COV⁻¹ - diag(P), and the Gauss–Newton matrix is exactly COV.
+    When ``subtract_p=True``, ``gauss_newton_mass`` adds the curvature P of
+    the priors' transforms to JᵀJ, so the residuals carry what is left of
+    the precision, JᵀJ = COV⁻¹ - diag(P), and the Gauss–Newton matrix is
+    exactly COV; when ``subtract_p=False``, ``__call__`` uses ``COV⁻¹``
+    directly so ``gauss_newton_mass`` starts at ``(COV⁻¹ + diag(P))⁻¹ ≠ COV``.
     """
 
-    def __init__(self, flat):
+    def __init__(self, flat, subtract_p=True):
         self.flat = flat
         self.chol = onp.linalg.cholesky(COV)
-        with run_in("float64"):
-            problem = cast_tree(
-                _Objective(_no_model, PRIORS, (), flat=flat), "float64"
+        if subtract_p:
+            with run_in("float64"):
+                problem = cast_tree(
+                    _Objective(_no_model, PRIORS, (), flat=flat), "float64"
+                )
+                z = {k: np.asarray(m, float) for k, m in zip(PRIORS, MU)}
+                # (The problem's coordinates are in sorted order.)
+                by_key = dict(
+                    zip(
+                        problem.coordinate_keys,
+                        problem.curvature_diag(z, True),
+                    )
+                )
+                p = onp.array([float(by_key[k]) for k in PRIORS])
+            self.row_chol = onp.linalg.cholesky(
+                onp.linalg.inv(onp.linalg.inv(COV) - onp.diag(p))
             )
-            z = {k: np.asarray(m, float) for k, m in zip(PRIORS, MU)}
-            # (The problem's coordinates are in sorted order.)
-            by_key = dict(
-                zip(problem.coordinate_keys, problem.curvature_diag(z, True))
-            )
-            p = onp.array([float(by_key[k]) for k in PRIORS])
-        self.row_chol = onp.linalg.cholesky(
-            onp.linalg.inv(onp.linalg.inv(COV) - onp.diag(p))
-        )
+        else:
+            self.row_chol = self.chol
 
     def _z(self, values):
         zs, log_prior = [], 0.0
@@ -126,10 +134,15 @@ def test_a_posterior_gaussian_in_z_is_recovered_exactly(flat):
     normalization 0.5 log det(2πΣ), so the loss is exactly that. (The
     gradient's score term still has zero mean but not zero variance, which
     Adam would follow, so that check uses a negligible step size.) Started
-    at a unit width, the guide converges to the posterior."""
+    from a shifted mean with uncompensated ``(COV⁻¹ + diag(P))⁻¹`` preload or
+    from unit width, SVI converges to the posterior."""
     term = _GaussianInZ(flat)
     with jax.enable_x64(True):
         start = {k: float(v) for k, v in _x_of_z(MU, flat).items()}
+        shifted = {
+            k: float(v)
+            for k, v in _x_of_z(MU + onp.array([0.25, -0.2]), flat).items()
+        }
     common = dict(
         likelihoods=[term], start=start, guide="mvn", flat_coordinates=flat
     )
@@ -144,6 +157,27 @@ def test_a_posterior_gaussian_in_z_is_recovered_exactly(flat):
     normalization = 0.5 * onp.log(onp.linalg.det(2 * onp.pi * COV))
     # PRIORS are float32 inside the term, float64 in the model: 1e-7.
     onp.testing.assert_allclose(exact.losses, -normalization, atol=1e-6)
+
+    preloaded = variational(
+        _no_model,
+        PRIORS,
+        (),
+        steps=500,
+        num_particles=32,
+        learning_rate=1e-2,
+        likelihoods=[_GaussianInZ(flat, subtract_p=False)],
+        start=shifted,
+        guide="mvn",
+        flat_coordinates=flat,
+    )
+    loc, tril = map(onp.asarray, preloaded.guide.gaussian(preloaded.params))
+    loc, cov = _in_site_order(preloaded.guide, loc, tril)
+    onp.testing.assert_allclose(loc, MU, atol=0.02)
+    onp.testing.assert_allclose(cov, COV, rtol=0.1, atol=5e-3)
+    assert preloaded.info["dense_start"]
+    onp.testing.assert_allclose(
+        preloaded.losses[-50:].mean(), -normalization, atol=0.02
+    )
 
     learnt = variational(
         _no_model,

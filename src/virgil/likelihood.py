@@ -107,6 +107,8 @@ def _whiten_with_log_norm(
     errors = np.asarray(errors)
     if frozen:
         errors = jax.lax.stop_gradient(errors)
+        gain_terms = jax.lax.stop_gradient(gain_terms)
+        offset_terms = jax.lax.stop_gradient(offset_terms)
     n_vis = np.asarray(data.vis).size
     n_phase = n_vis + np.asarray(data.phi).size
     vis, vis_errors, vis_norm = _whiten_vis(
@@ -465,22 +467,44 @@ def _curvature_rows(model, data, noise):
         frozen=True,
     )[0]
     rows = [mean]
+    root2 = np.sqrt(2.0)
+    n_vis = np.asarray(data.vis).size
+    n_phase = n_vis + np.asarray(data.phi).size
+    resid = np.asarray(prediction) - values
     fitted = any(
         k not in GAIN_TERMS + OFFSET_TERMS + WAVEL_TERMS + NORTH_TERMS
         for k in noise
     )
     if fitted:
-        root2 = np.sqrt(2.0)
-        n_vis = np.asarray(data.vis).size
-        n_phase = n_vis + np.asarray(data.phi).size
         rows.append(root2 * np.log(errors[:n_vis]))
         phase_errors = errors[n_vis:n_phase]
         if data._phases_wrap and data.cp_noise is not None:
-            resid = (
-                np.asarray(prediction)[n_vis:n_phase] - values[n_vis:n_phase]
-            )
-            phase_errors = data.cp_noise.whiten(np.sin(resid), phase_errors)[1]
+            phase_errors = data.cp_noise.whiten(
+                np.sin(resid[n_vis:n_phase]), phase_errors
+            )[1]
         rows.append(root2 * np.log(phase_errors))
+    if gain_terms:
+        pred_vis = jax.lax.stop_gradient(prediction[:n_vis])
+        err_vis = jax.lax.stop_gradient(errors[:n_vis])
+        jacobian = _gain_jacobian(data, pred_vis) / err_vis
+        extra_vis = data.gains.whiten(
+            jax.lax.stop_gradient(resid[:n_vis]) / err_vis,
+            jacobian,
+            data.gains.widths_for(gain_terms),
+        )[1]
+        rows.append(root2 * extra_vis)
+    if offset_terms:
+        err_phi = jax.lax.stop_gradient(errors[n_vis:n_phase])
+        whitened_phi = data.cp_noise.whiten(
+            jax.lax.stop_gradient(np.sin(resid[n_vis:n_phase])), err_phi
+        )[0]
+        extra_phi = data.phase_offsets.whiten(
+            data.cp_noise,
+            whitened_phi,
+            err_phi,
+            data.phase_offsets.widths_for(offset_terms),
+        )[1]
+        rows.append(root2 * extra_phi)
     return np.concatenate(rows)
 
 

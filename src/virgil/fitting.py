@@ -471,6 +471,15 @@ class _Objective(eqx.Module):
             for path, prior in self.priors.items()
             if is_angle_vector(prior)
         ]
+        seen = []
+        for spec, _, _ in self.noise.values():
+            if (
+                is_tied(spec)
+                and hasattr(spec, "curvature_rows")
+                and spec not in seen
+            ):
+                seen.append(spec)
+                rows.append(np.ravel(spec.curvature_rows(values)))
         return np.concatenate(rows) if rows else np.zeros(0)
 
     def _no_prior_curvature(self, prior, jacobian):
@@ -710,16 +719,16 @@ def fit(
         loss range is below ``ftol_abs`` and its mean is not lower than the
         previous window's by ``ftol_abs`` or more (unscaled; off if ``None``).
     post_step : callable, optional
-        Adam only: a jax-traceable map of the free parameters (a dict by path)
-        applied after every update; Adam's moments are unchanged. Source: [Charles et al. (2026)](../references.md#dorito).
+        Adam only, not with ``precondition``: a jax-traceable ``post_step(z) -> z``
+        on the unconstrained coordinates ``z`` (a dict by path, not ``values``),
+        applied after each update. Source: [Charles et al. (2026)](../references.md#dorito).
     precondition : {None, "diag"}, optional
         ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
         diagonal for L-BFGS and Adam (provisional); see
         [conventions](../conventions.md#preconditioning-image-fits).
         ``info["precondition_rounds"]`` records the spread per round. With a
         maximum-entropy regularizer at weak weights float32 can stall: use float64.
-        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
-        [Hutchinson (1989)](../references.md#hutchinson1989).
+        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984), [Hutchinson (1989)](../references.md#hutchinson1989).
 
     Returns
     -------
@@ -955,24 +964,19 @@ _AT_BOUND = 1e-3
 def _bound_fraction(prior, value, flat=True):
     """Where ``value`` lies in its prior's finite interval, as a fraction.
 
-    Only genuine edges of the support count (a LogUniform's, in log x if ``flat``,
-    or an interval support's); ``None`` for unbounded priors, angle vectors, tied
-    terms and other priors with a flat coordinate, whose ends are coordinate poles.
+    Only genuine edges of the support count (in the flat coordinate when ``flat``,
+    except at sphere coordinate poles); ``None`` for unbounded priors, angle
+    vectors, and tied terms.
     """
     if is_tied(prior) or is_angle_vector(prior):
         return None
-    import numpyro.distributions as dist
-
-    if isinstance(_base(prior), dist.LogUniform):
-        if flat:
-            to_flat, _, low, high = _flat_coordinate(prior)
-            value = to_flat(value)
-        else:
-            low, high = _base(prior).low, _base(prior).high
-    elif _flat_coordinate(prior) is not None:
-        return None
+    base = _base(prior)
+    fc = _flat_coordinate(prior)
+    if flat and fc is not None:
+        to_flat, _, low, high = fc
+        value = to_flat(value)
     else:
-        support = _base(prior).support
+        support = base.support
         low = getattr(support, "lower_bound", None)
         high = getattr(support, "upper_bound", None)
         if low is None or high is None:
@@ -980,7 +984,23 @@ def _bound_fraction(prior, value, flat=True):
     low, high = onp.asarray(low, float), onp.asarray(high, float)
     if not (onp.all(onp.isfinite(low)) and onp.all(onp.isfinite(high))):
         return None
-    return (onp.asarray(value, float) - low) / (high - low)
+    fraction = onp.asarray((onp.asarray(value, float) - low) / (high - low))
+    poles = getattr(base, "_poles", None)
+    if poles is not None:
+        # An end at a coordinate pole (a float32 copy of pi/2 is off by ~1e-7
+        # relative) is not a prior bound: no fraction there (NaN never
+        # compares below or above a threshold).
+        lo_pole = onp.isclose(onp.asarray(base.low, float), poles[0], 1e-6, 0)
+        hi_pole = onp.isclose(onp.asarray(base.high, float), poles[1], 1e-6, 0)
+        if onp.all(lo_pole & hi_pole):
+            return None
+        fraction = onp.where(
+            lo_pole & (fraction < _AT_BOUND), onp.nan, fraction
+        )
+        fraction = onp.where(
+            hi_pole & (fraction > 1 - _AT_BOUND), onp.nan, fraction
+        )
+    return fraction
 
 
 # deliberate: test seam (tests/test_fitting.py)
