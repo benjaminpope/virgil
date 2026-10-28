@@ -87,7 +87,9 @@ would make the prior depend on the data and break the guarantee).
 - log *P* uniform on `p_range`; τ (as a phase) uniform; *e* uniform on
   [0, 0.9]; cos *i* uniform on [−1, 1]; ω uniform on [0°, 360°); Ω uniform
   on [0°, 180°); log *a* uniform on `a_range = (0.3, 10) × λ/B_max`;
-  log flux uniform on `flux_range = (0.01, 1)`.
+  log flux uniform on `flux_range = (0.01, 1)`, a fixed explicit floor
+  (orbit_dehack §2I: a floor from the data would make the prior depend
+  on the data and break SBC).
 - Noise: white within each channel, *c* = 0 (the tempering factor should
   come out near 1: this stratum also checks that tempering does not break
   a calibrated likelihood); σ(V²) log-uniform on [0.005, 0.05] and
@@ -135,7 +137,13 @@ modes the heuristics were built for.
   probability 0.1 the system is replaced by a near-twin with Δmag uniform
   on [0, 0.1] (the label-swap case).
 - Primary: point with probability 0.7, else a uniform disc of diameter
-  uniform on [0.2, 0.8] λ/B_max.
+  uniform on [0.2, 0.8] λ/B_max; when a disc, it is on the brighter or
+  the fainter star with probability ½ each (orbit_dehack §2B label).
+- Flux floor: B, N and the decision-4 calibration population run with
+  the default floor from the data (orbit_dehack §2I). The number of B
+  truths whose flux ratio lies below their own system's floor is
+  reported; those systems stay in every metric and count as misses in
+  M9 (no exclusion).
 - Noise: as in A, and *c* uniform on {0, 0.3, 0.6} (correlated channels:
   the tempering case).
 - Contaminants, drawn independently:
@@ -442,6 +450,7 @@ them cold.
 | 2026-10-28 | Ben's decisions: misspecified nulls in N (p 0.3: extended emission or elongated primary); B misspecification rate 0.15 → 0.3 and M3b must-hold on that subset; D enlarged to 60 B-like + 60 N-like; §3.6 null-model choice rule run on D. Decisive threshold left pending (decision 4) | Claude (Opus), for Ben | no |
 | 2026-10-28 | Ben's criterion: new must-hold M9 (one-sided 95% band credible-set coverage on B and on its misspecified subset), the headline orbit criterion; per-band IS SE carried, and a credible set containing an evidence-noisy/failed band fails M7 | Ben (encoded by Claude, Opus) | no |
 | 2026-10-28 | Ben's change: misspecified nulls widened (WR-like Gaussian/ring envelopes, log-uniform fraction and size, no named-target parameters; elongated primary; faint background source); third template T3 (CHARA, ~330 m) drawn uniformly in all strata; M6 must hold on the misspecified-null subset too; false orbits reported by template, kind and envelope fraction | Ben (encoded by Claude, Opus) | no |
+| 2026-10-28 | Ben's decision 5: flux in (lo, 1] with no upper number, disc-on-brighter/fainter label enumerated (B draws the disc on either star); lo from the data's 2σ Ruffio contrast curve by default (A keeps its fixed floor; B/N/calibration use the default; B truths below floor reported and count as M9 misses) | Ben (encoded by Claude, Opus) | no |
 
 ## References
 

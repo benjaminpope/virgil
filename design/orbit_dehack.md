@@ -361,10 +361,15 @@ the same domain. So `flip_flux`, `_flip_modes`, `_flipped` and
 `_flip_is_relabelling` are deleted.
 
 With a resolved primary the label is physical (the disc belongs to one
-star), so the flux upper bound must exceed 1 to allow a brighter point
-companion. **PENDING (decision 5):** Ben rejects an invented top (10 was
-proposed); the bound is to be derived. Options are with Ben via the
-coordinator; this paragraph is held until he decides.
+star). **Decision 5 (Ben, 2026-10-28): no upper number.** Flux stays the
+faint-to-bright ratio in (lo, 1]. When θ is fitted, one discrete label
+d ∈ {disc on the brighter star, disc on the fainter star} is added and
+**both are enumerated** (prior ½ each), instead of widening the flux
+range. Each band's evidence is Z_n = ½ (Z_n,bright + Z_n,faint); the
+summary reports p(disc on the brighter star) with its IS SE. At θ = 0
+the two labels are the same model, so the label is enumerated only when
+θ is fitted, and the Savage–Dickey verdict (§2D) decides whether it is
+reported. The flux lower bound lo is §2I.
 
 `labels_free` asks a different question from the exact symmetry above
 (which would make any such ratio identically ½). Let M x be the orbit
@@ -584,6 +589,56 @@ The pruned count and the bound are reported in the summary.
   the stratum size.
 - **Random starts** are drawn from the prior, as one `n_random`.
 
+### I. Flux prior bounds (decision 5, Ben 2026-10-28)
+
+The flux ratio prior is log-uniform on (lo, 1]. The upper end is 1 by
+construction (§2B, with the disc label for a resolved primary). The
+lower end is a meaningful prior bound — the faintest companion the
+search is for — and it has two sources:
+
+- **Default: a contrast-curve floor from the data.** Using existing
+  code only (no new contrast machinery):
+  1. per night *k*, the single-companion grid fit
+     (`grid_fit.optimized_flux_grid` and
+     `grid_fit.laplace_flux_uncertainty_grid`) gives the Laplace flux
+     error σ_k(p) at each grid position p;
+  2. a coherent orbit fit accumulates S/N over nights, so the combined
+     error at separation ρ is σ(ρ) = (Σ_k ⟨σ_k(p)⁻²⟩_{|p|=ρ})^{-1/2},
+     the azimuthal mean taken over the grid ring at ρ;
+  3. the 2σ-equivalent limit is
+     `limits.ruffio_upperlimit(0, σ(ρ), 0.9545)` (Ruffio et al. 2018,
+     already in `references/provenance.toml`; verified on ADS:
+     2018AJ....156..196R). The mean is set to 0, the no-detection case,
+     so a detected companion never raises its own floor;
+  4. lo is the geometric mean of that limit over the separation grid
+     inside the prior's support (|p| ≤ a_max(1 + e_max), a ≥ a_min).
+     Geometric, because the flux prior is log-uniform.
+- **Override: the user's search domain.** An explicit `flux_range` (or
+  `flux_min`) states the domain: e.g. the faintest companion reported in
+  the literature for this class, rounded down a decade, or orders of
+  magnitude lower when searching for planets. The docs call this a
+  science choice. The summary records which source set lo and its value.
+
+**Why it is principled.** Below the floor the likelihood is flat in
+flux (the companion is undetectable), so the posterior shape does not
+depend on lo; only the Occam term, ln(1/lo) per unit of log-flux prior
+width, does. The floor therefore sets the prior volume of "a companion
+the data could see", which is what the orbit-against-null comparison
+should weigh.
+
+**Consequences, stated because the prior depends on the data:**
+- gate stratum A keeps a fixed, explicit floor (SBC requires the prior
+  not to depend on the data);
+- strata B, N and the decision-4 calibration population use the default
+  rule, so the calibrated threshold includes its Occam term;
+- B truths below their system's floor are counted and reported, and
+  count as misses in M9 (no exclusion).
+
+**Tests:** on constructed single-star data the floor matches
+`ruffio_upperlimit` on the analytically combined σ to 10⁻⁶; doubling the
+number of identical nights lowers lo by √2; an explicit `flux_range`
+overrides it and is recorded.
+
 ### H. Methods register and opt-in
 
 AGENTS.md ("Methods beyond published practice") requires every
@@ -600,6 +655,8 @@ by the stage that introduces each):
 | truncated defensive-mixture IS with adaptive n | established | Owen & Zhou 2000 | §2C tests |
 | uniform-θ primary with Savage–Dickey verdict | derived | Dickey 1971; Verdinelli & Wasserman 1995 | §2D tests |
 | (h, k, λ_ref) parameterisation | established | Ford 2006; Eastman et al. 2013 | §2C test |
+| flux floor from the data's contrast curve (2σ Ruffio limit, geometric mean over separations) | derived, default; justification: below the floor the likelihood is flat, so only the Occam term ln(1/lo) depends on it | Ruffio et al. 2018 | §2I tests; gate (c) of §2I |
+| disc-label enumeration for a resolved primary | derived (exact enumeration of a binary latent) | — | §2D, §2B tests |
 | uniform θ on [0, θ_max] for the primary diameter | departure from the Jeffreys log-uniform default (nests the point star) | Dickey 1971 | §2D tests |
 | null-model outlier component (ii or iii) | novel / experimental until chosen on D | orbit_gate_042 §3.6 | gate M6, M8 |
 
@@ -762,7 +819,9 @@ default deletes the other.
   `_pilot_diameter` and `estimate_primary_diameter`), `DECISIVE_NATS`,
   and pipeline sampling by remaining mass.
 - Tests: §2C, §2D, §2F and §2G.
-- Default changes: "auto" → "fit"; band sampling; short arcs off (F
+- Also §2I: flux floor from the contrast curve (reusing `grid_fit` and
+  `limits.ruffio_upperlimit`) and the disc label.
+- Default changes: "auto" → "fit"; flux floor from the data; band sampling; short arcs off (F
   opt-in); `span_factor` deleted (long-period band); `vis_amp` range
   taken from the data's instrument package. Thresholds wait for
   decision 4.
@@ -847,11 +906,14 @@ Changed:
 15. **All stages (0–6) in 0.4.2;** the PR that flips a default deletes
     the old path in the same PR.
 
+5. **Flux bounds:** no upper number; flux in (lo, 1] with the
+   disc-on-brighter/fainter label enumerated for a resolved primary.
+   Lower bound lo from the data's 2σ contrast curve by default, or the
+   user's stated search domain (§2I).
+
 Pending (held until Ben chooses among the coordinator's options):
 4. **The decisive threshold:** from frequentist calibration at an α Ben
    fixes, on a held-out calibration population; no convention number.
-5. **The flux upper bound** with a resolved primary: to be derived, not
-   chosen.
 
 ## References
 
@@ -868,4 +930,6 @@ Pending (held until Ben chooses among the coordinator's options):
 - Owen & Zhou 2000, JASA 95, 135 (defensive mixture importance
   sampling).
 - Rucinski 1992, AJ 103, 960 (contact-binary short-period limit).
+- Ruffio et al. 2018, AJ 156, 196 (2018AJ....156..196R; Bayesian
+  upper limits for non-detections).
 - Royall 2000, JASA 95, 760 (the bound on misleading evidence).
