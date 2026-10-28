@@ -958,7 +958,7 @@ authors = "Jeffreys"
 year = 1946
 title = "An invariant form for the prior probability in estimation problems"
 doi = "10.1098/rspa.1946.0056"
-used_in = ["virgil.priors", "virgil.grid_fit", "virgil.aliases"]
+used_in = ["virgil.priors", "virgil.grid_fit", "virgil.aliases", "virgil.likelihood:group_outlier_mixture"]
 bibcode = "1946RSPSA.186..453J"
 verified = true
 verified_via = "ads"
@@ -1620,3 +1620,12 @@ used_in = ["virgil.radio:ComplexVisData"]
 note = "Oxford University Press (book); the profile likelihood of the noise scale, sigma_hat = sqrt(chi2 / 2N). Not on ADS: checked on Crossref"
 verified = true
 verified_via = "crossref"
+
+[ref.abramowitz1964]
+authors = "Abramowitz & Stegun"
+year = 1964
+title = "Handbook of Mathematical Functions"
+url = "https://nvlpubs.nist.gov/nistpubs/Legacy/MP/nbsmiscellaneouspub346.pdf"
+used_in = ["virgil.likelihood:group_outlier_mixture"]
+role = "context"
+note = "25.4.38: Gauss-Chebyshev quadrature (first kind), exact for polynomials of degree 2n-1."

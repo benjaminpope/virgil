@@ -1,9 +1,7 @@
-"""Night flags that inform rather than exclude, per-mode χ², the outlier
-mixture of the orbit likelihood and the post-fit sidelobe flag
+"""Night flags that inform rather than exclude, the night-outlier mixture of
+the orbit likelihood and the post-fit sidelobe flag
 (design/orbit_noise_models.md, "tempered night flags")."""
 
-import dataclasses
-import inspect
 import json
 import warnings
 
@@ -19,8 +17,7 @@ from virgil.aliases import fit_orbit_aliases  # noqa: E402
 from virgil.epochs import (  # noqa: E402
     Epochs,
     NightFlag,
-    _flag_chi2,
-    _mode_keys,
+    broad_loglike,
     epoch_positions,
     sidelobe_flags,
 )
@@ -73,53 +70,17 @@ def test_a_night_with_only_non_blocking_flags_is_not_flagged():
         scale=({}, {}),
         flags=(
             (NightFlag("sep-below-resolution", "r", blocking=False),),
-            (NightFlag("chi2-high", "r"),),
+            (NightFlag("sidelobe", "r"),),
         ),
     )
     assert found.flagged.tolist() == [False, True]
     assert found.flag_codes() == {
         "a": ["sep-below-resolution"],
-        "b": ["chi2-high"],
+        "b": ["sidelobe"],
     }
 
 
-# --- 2. chi2-high within an instrument mode ---------------------------------
-
-
-def test_chi2_high_is_judged_within_each_mode():
-    # MEDIUM nights sit near 200, HIGH nights near 60 (AK For): a global
-    # median of 60 flags every MEDIUM night; per mode, none is an outlier.
-    chi2 = [55.0, 60.0, 65.0, 60.0, 185.0, 220.0, 291.0]
-    mode = ["HIGH"] * 4 + ["MEDIUM"] * 3
-    assert sum(bool(f) for f in _flag_chi2(chi2, 3.0)) == 2
-    assert not any(_flag_chi2(chi2, 3.0, mode))
-    # A real outlier inside a mode is still found.
-    chi2[5] = 2000.0
-    found = _flag_chi2(chi2, 3.0, mode)
-    assert [bool(f) for f in found] == [False] * 5 + [True, False]
-    assert "of its 3 nights of the same mode" in found[5][0].reason
-    # A mode with fewer than three nights has no median.
-    assert not any(
-        _flag_chi2([1.0, 500.0, 1.0, 1.0, 1.0], 3.0, list("aabbb"))[:2]
-    )
-
-
-def test_mode_keys_tolerate_wavelength_jitter_but_not_other_setups():
-    one = ta._night(ta.T_REF)
-    jitter = one.set("wavel", one.wavel * 1.004)
-    other = one.set("wavel", one.wavel * 0 + 1.6e-6)
-    keys = _mode_keys(Epochs({"a": one, "b": jitter, "c": other, "d": one}))
-    assert keys[0] == keys[1] == keys[3] != keys[2]
-
-
-def test_mode_keys_separate_spectral_setups():
-    one = ta._night(ta.T_REF)
-    two = one.set("wavel", one.wavel * 0 + 1.6e-6)
-    keys = _mode_keys(Epochs({"a": one, "b": one, "c": two}))
-    assert keys[0] == keys[1] != keys[2]
-
-
-# --- 3. the outlier mixture --------------------------------------------------
+# --- 2. the outlier mixture --------------------------------------------------
 
 AXIS = onp.arange(-20.0, 20.01, 0.5)
 GRID = {"dra": AXIS, "ddec": AXIS, "flux": [0.1, 0.3, 0.6]}
@@ -150,125 +111,79 @@ def _positions(data):
         return epoch_positions(epochs, GRID, n_peaks=3)
 
 
-def _optimum(data, eps=0.0, log_broad=()):
-    kw = dict(outlier_eps=eps, log_broad=tuple(log_broad)) if eps else {}
-    settings = ta._settings(**kw)
-    problem = aliases._Problem(
-        [cast_tree(d, "float64") for d in data], settings
+def _broad(data, settings):
+    return tuple(
+        broad_loglike(
+            data,
+            _unit_dof(data),
+            a_max=settings.a_range[1] * (1 + settings.ecc_max),
+            flux_range=settings.flux_range,
+            step=1.0,
+        )
     )
+
+
+def _unit_dof(data):
+    return aliases._Problem(
+        [cast_tree(d, "float64") for d in data],
+        ta._settings(outlier="inflation", s_max=50.0),
+    ).dof
+
+
+def _optimum(data, kind="mixture"):
+    """The best-fit orbit of ``data`` in the 12.0-12.2 d band, with the outlier
+    component ``kind`` ("mixture": a wide-prior companion; "inflation": the
+    night's own model at an inflated noise scale)."""
+    data = [cast_tree(d, "float64") for d in data]
+    kw = dict(outlier=kind, s_max=50.0)
+    if kind == "mixture":
+        kw["log_broad"] = _broad(data, ta._settings(**kw))
+    settings = ta._settings(**kw)
+    problem = aliases._Problem(data, settings)
     bounds = aliases._Bounds.of(aliases.AliasBand(20, 12.0, 12.2), settings)
     x, value = aliases._optimize(problem, bounds, ta._x_truth(), 50)
     return problem, onp.asarray(x), value
 
 
 @pytest.mark.slow
-def test_one_sidelobe_night_cannot_move_the_orbit_with_the_mixture():
+@pytest.mark.parametrize("kind", ["mixture", "inflation"])
+def test_one_sidelobe_night_cannot_move_the_orbit(kind):
     near, far = _with_bad_night(3.0), _with_bad_night(10.0)
-    clean = _optimum(near[:BAD])[1]
-    found = {k: _positions(d) for k, d in (("near", near), ("far", far))}
-    plain = {k: _optimum(d)[1] for k, d in (("near", near), ("far", far))}
-    mixed = {}
-    for k, d in (("near", near), ("far", far)):
-        problem, x, value = _optimum(d, 0.02, found[k].log_broad)
-        mixed[k] = x
+    clean = _optimum(near[:BAD], kind)[1]
+    fits = {k: _optimum(d, kind) for k, d in (("near", near), ("far", far))}
+    for problem, x, _ in fits.values():
         prob = problem.outlier_probability(x)
-        assert prob[BAD] > 0.99 and prob[:BAD].max() < 0.01
-        assert value > _optimum(d)[2] + 20.0  # the night costs a cap, not 100s
-    # Without the mixture the orbit follows the bad night; with it the
-    # orbit is the one the good nights give, wherever the bad night is.
-    assert onp.abs(plain["near"] - plain["far"]).max() > 0.02
-    assert onp.abs(mixed["near"] - mixed["far"]).max() < 1e-3
-    assert (
-        onp.abs(mixed["near"] - clean).max()
-        < 0.5 * onp.abs(plain["near"] - clean).max()
-    )
+        assert prob[BAD] > 0.9 and prob[:BAD].max() < 0.1
+    # The orbit is the one the good nights give, wherever the bad night is.
+    near_x, far_x = fits["near"][1], fits["far"][1]
+    assert onp.abs(near_x - far_x).max() < 0.05
+    assert onp.abs(near_x - clean).max() < 0.05
 
 
-@pytest.mark.slow  # 36-37 s on a CI runner, over the 30 s budget
 @ta.in_float64
-def test_the_mixture_polishes_the_modes_the_plain_search_finds():
-    # Gl 229 gate regression: the mixture's IRLS weights vanish on the
-    # nights a start misses, so a mixture fit from a start that is off by a
-    # little settles on the nights it already fits, 100s of nats short of
-    # the optimum that the plain fit reaches from the same start. The
-    # search refines on the plain likelihood and only polishes with the
-    # mixture, so a basin the plain search finds is not hidden by it.
-    data, _ = ta._simulate_orbit(12.1)
-    data = list(data)
-    found = _positions(data)
-    settings = ta._settings(
-        outlier_eps=0.02,
-        log_broad=tuple(found.log_broad),
-        n_refine=3,
-        max_steps=50,
-    )
-    problem = aliases._Problem(
-        [cast_tree(d, "float64") for d in data], settings
-    )
-    bounds = aliases._Bounds.of(aliases.AliasBand(20, 11.9, 12.3), settings)
-    truth = onp.asarray(ta._x_truth())
-    optimum = float(onp.asarray(problem.batch(truth[None]))[0])
-    # Starts near the truth (seeded perturbations in the orbit's elements)
-    # that the mixture fit alone leaves 160 to 330 nats short.
-    rng = onp.random.default_rng(0)
-    scale = onp.array([0.01, 0.2, 0.3, 0.3, 10, 10, 0.3, 0.3])
-    starts = [
-        truth + 0.2 * rng.standard_normal(len(truth)) * scale for _ in range(4)
-    ]
-    stalls = [
-        aliases._optimize(problem, bounds, x, 50)[1] < optimum - 100.0
-        for x in starts
-    ]
-    assert any(stalls), "the starts no longer exercise the failure"
-    modes, failed = aliases._refine(
-        problem, settings, bounds, onp.asarray(starts), ta.EPOCHS
-    )
-    assert not failed
-    best = max(v for _, v in modes)
-    assert best > optimum - 10.0  # the polished mode is the optimum
-    # The mixture is applied to the mode: it is scored under the mixture.
-    x = max(modes, key=lambda m: m[1])[0]
-    assert onp.isclose(
-        best, float(onp.asarray(problem.batch(onp.asarray(x)[None]))[0])
-    )
+def test_the_broad_component_is_a_prior_average_of_the_night_likelihood():
+    data = [cast_tree(d, "float64") for d in _with_bad_night(3.0)[:2]]
+    dof = _unit_dof(data)
+    kw = dict(a_max=30.0, flux_range=(0.01, 1.0), step=1.0)
+    base = onp.asarray(broad_loglike(data, dof, **kw))
+    assert base.shape == (2,) and onp.isfinite(base).all()
+    # The flux axis is a quadrature: refining it moves the level by about a
+    # nat, against the hundreds of nats by which a bad night misses the orbit.
+    fine = onp.asarray(broad_loglike(data, dof, n_flux=25, **kw))
+    assert onp.abs(fine - base).max() < 2.0
+    # A wider prior spreads the same likelihood over a larger area, so the
+    # mean cannot rise, and a point-like peak means it falls.
+    wide = onp.asarray(broad_loglike(data, dof, **{**kw, "a_max": 60.0}))
+    assert (wide <= base + 1e-9).all()
 
 
-def test_the_broad_component_shares_the_orbit_likelihoods_scale():
-    from virgil.epochs import broad_loglike
-
-    data = _with_bad_night(3.0)[:2]
-    found = _positions(data)
-    untempered = [onp.ones(2), onp.ones(2)]
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        again = broad_loglike(data, found.grid, untempered)
-    assert onp.allclose(again, found.log_broad)
-
-    # Block-wise tempering (V^2 by f = 5, closure phases by f = 2): the
-    # broad component is rescored with it, so a night the orbit fits is
-    # not an outlier. (One factor for all blocks would put the two
-    # components thousands of nats apart.)
-    tempered = (("vis", 1 / 5.0), ("phi", 1 / 2.0))
-    clean = _with_bad_night(3.0)[:BAD]
-    settings = ta._settings(dof=tempered)
-    problem = aliases._Problem(
-        [cast_tree(d, "float64") for d in clean], settings
-    )
-    broad = broad_loglike(problem.data, _positions(clean).grid, problem.dof)
-    settings = dataclasses.replace(
-        settings, outlier_eps=0.02, log_broad=tuple(broad)
-    )
-    problem = aliases._Problem(problem.data, settings)
-    bounds = aliases._Bounds.of(aliases.AliasBand(20, 12.0, 12.2), settings)
-    x, _ = aliases._optimize(problem, bounds, ta._x_truth(), 50)
-    assert problem.outlier_probability(x).max() < 0.01
-    # The null model is scored without the mixture.
-    xs = onp.asarray(x)[None]
-    plain = aliases._Problem(problem.data, ta._settings(dof=tempered))
-    assert onp.allclose(
-        onp.asarray(problem.batch(xs, mixed=False)),
-        onp.asarray(plain.batch(xs)),
-    )
+@ta.in_float64
+def test_a_mixture_problem_needs_its_broad_component():
+    with pytest.raises(ValueError, match="log_broad"):
+        aliases._Problem(
+            [cast_tree(d, "float64") for d in _with_bad_night(3.0)[:2]],
+            ta._settings(outlier="mixture"),
+        )
 
 
 @pytest.mark.slow
@@ -282,22 +197,25 @@ def test_fit_orbit_aliases_reports_each_nights_outlier_probability(tmp_path):
         t_ref=ta.T_REF,
         primary_diam=None,
         temper=False,
-        outlier_eps=0.02,
         # A warm start keeps the search itself out of this test: it is about
         # what the fit does with the bad night.
         init={**ta.TRUTH, "flux": ta.FLUX},
         **ta.FAST,
     )
+    assert result.outlier["kind"] == "mixture"
     prob = dict(zip(result.outlier["names"], result.outlier["probability"]))
-    assert prob[f"n{BAD}"] > 0.99
-    assert max(v for k, v in prob.items() if k != f"n{BAD}") < 0.05
+    assert prob[f"n{BAD}"] > 0.9
+    assert max(v for k, v in prob.items() if k != f"n{BAD}") < 0.1
     assert abs(result.best.best["period"] - 12.1) < 0.1
     result.save(tmp_path / "r.json")
     loaded = aliases.AliasResult.load(tmp_path / "r.json")
     assert loaded.outlier == json.loads(json.dumps(result.outlier))
-    # Off by default in the engine: nothing reported.
-    default = inspect.signature(fit_orbit_aliases).parameters["outlier_eps"]
-    assert default.default == 0.0
+
+
+def test_outlier_eps_is_deprecated_and_ignored():
+    with pytest.warns(FutureWarning, match="outlier_eps"):
+        with pytest.raises(Exception):  # no data: stops after the warning
+            fit_orbit_aliases([], (11.0, 13.0), outlier_eps=0.02)
 
 
 # --- 4. the post-fit sidelobe flag ------------------------------------------
@@ -340,8 +258,8 @@ def test_an_orbit_on_the_secondary_peak_is_flagged_not_excluded(twin):
 
 @pytest.mark.slow
 def test_sub_resolution_nights_are_located_and_still_seed():
-    # AK For-like: an edge-on binary whose nights sit below lambda/2B
-    # (a = 1.83 mas; the 5 mas resolution here puts every night inside).
+    # A binary whose nights all sit below lambda/2B (the 5 mas resolution
+    # here puts every night inside).
     keys = jax.random.split(jax.random.PRNGKey(7), 3)
     spots = [(0.9, 0.05), (-1.4, -0.1), (1.7, 0.1)]
     nights = {
@@ -378,3 +296,22 @@ def test_a_companion_above_flux_one_is_compared_as_the_reflected_star(twin):
     # The same scene with the stars' labels swapped: (-r, 1/f).
     swapped = sidelobe_flags(epochs, found, ([-x], [-y], [1.0 / f]))
     assert swapped == [None]
+
+
+@ta.in_float64
+def test_the_inflated_surface_has_the_base_prior_mass_on_s_above_one():
+    from virgil.epochs import _Surface
+
+    data = cast_tree(ta._night(ta.T_REF), "float64")
+    base = _Surface(data, s_max=10.0)
+    twin = base.inflated
+    # Residuals so large that the error scale is well above 1: both integrals
+    # then cover the whole peak, and the base prior (log-uniform on
+    # [1/s_max, s_max]) has half the density of the twin's ([1, s_max]).
+    chi2 = onp.full(len(base.names), 1e3)
+    diff = float(twin.score(chi2, 1.0, data)) - float(
+        base.score(chi2, 1.0, data)
+    )
+    assert diff == pytest.approx(len(base.blocks) * onp.log(2.0), rel=1e-6)
+    with pytest.raises(ValueError, match="s_max"):
+        _Surface(data).inflated

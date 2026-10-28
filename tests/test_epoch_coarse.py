@@ -168,11 +168,11 @@ def test_grouped_hessian_sums_to_the_fused_one():
     with run_in("float64"):
         from tests.test_aliases import _settings
 
-        settings = _settings(outlier_eps=0.1, log_broad=(-50.0,) * 2)
+        settings = _settings(log_broad=(-50.0,) * 2)
         data = [cast_tree(d, "float64") for d in nights]
         fused = _Problem(data, settings)
         chunked = _Problem(data, settings, memory_budget=1)
-        assert fused.mix is not None
+        assert fused.log_broad is not None
         assert len(fused.hessian_groups) == 1
         assert len(chunked.hessian_groups) == 2
         x = np.asarray([onp.log(12.1), 0.3, 0.3, 0.2, 1.0, 1.0, 1.5, -1.0])

@@ -22,3 +22,5 @@ Likelihoods of source models given data, and numpyro models.
         - numpyro_model
         - chain_init_params
         - posterior_predictive_summary
+        - group_outlier_mixture
+        - group_outlier_probabilities

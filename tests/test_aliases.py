@@ -12,6 +12,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 import pytest
+from scipy.special import gammaln
 
 pytest.importorskip("jaxoplanet")
 
@@ -737,6 +738,9 @@ def test_band_evidences_are_no_lower_than_with_the_old_optimizer():
 
 
 def _problem(data, **kw):
+    kw.setdefault(
+        "log_broad", (-1e6,) * len(data)
+    )  # no outliers: a pure Occam factor
     settings = _settings(**kw)
     return settings, aliases._Problem(
         [cast_tree(d, "float64") for d in data], settings
@@ -973,7 +977,9 @@ def _objective(data, x, primary_diam=DIAM):
 
 
 def _score(data, nights, primary_diam=DIAM):
-    """The same log likelihood from ``chi2_per_night``'s ``chi2_fit``."""
+    """The same log likelihood from ``chi2_per_night``'s ``chi2_fit``, with
+    the mixture's Occam factor Γ(K + ½) / (Γ(K + 1) √π) for K nights (the
+    outlier level is -1e6, so no night is an outlier)."""
     with jax.enable_x64(True):
         data = [cast_tree(d, "float64") for d in data]
         _, problem = _problem(data, primary_diam=primary_diam, vis_amp=VIS_AMP)
@@ -983,7 +989,10 @@ def _score(data, nights, primary_diam=DIAM):
                 [row["blocks"][n]["chi2_fit"] for n in s.names]
             )
             total += float(s.score(chi2, 1.0, d))
-        return total
+        k = len(data)
+        return total + float(
+            gammaln(k + 0.5) - gammaln(k + 1.0) - 0.5 * onp.log(onp.pi)
+        )
 
 
 def _same_epochs(a, b):

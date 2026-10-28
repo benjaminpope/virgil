@@ -239,6 +239,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
+| `group_outlier_mixture` | [Jeffreys (1946)](#jeffreys1946), [ADS](https://ui.adsabs.harvard.edu/abs/1946RSPSA.186..453J/abstract), [doi:10.1098/rspa.1946.0056](https://doi.org/10.1098/rspa.1946.0056) | after |
 | `inflated_errors` | [Hogg, Bovy & Lang (2010)](#hogg2010recipes), [arXiv:1008.4686](https://arxiv.org/abs/1008.4686), [ADS](https://ui.adsabs.harvard.edu/abs/2010arXiv1008.4686H/abstract) | after |
 
 ### `virgil.limits`
@@ -405,6 +406,7 @@ Cited in the documentation as motivation or terminology; not a source of virgil'
 
 | Source | Note |
 |---|---|
+| [Abramowitz & Stegun (1964)](#abramowitz1964), [link](https://nvlpubs.nist.gov/nistpubs/Legacy/MP/nbsmiscellaneouspub346.pdf) | 25.4.38: Gauss-Chebyshev quadrature (first kind), exact for polynomials of degree 2n-1. |
 | [Bishop (2006)](#bishop2006) | Springer textbook, section 3.5 (evidence approximation for regularization weights) |
 | [Born & Wolf (1999)](#born1999), [doi:10.1017/CBO9781139644181](https://doi.org/10.1017/CBO9781139644181) | section 9.2: Zernike radial polynomials, R_n^m(r) ~ r^\|m\|, the regularity of a smooth field at the origin |
 | [Currie et al. (2019)](#currie2019), [arXiv:1905.04322](https://arxiv.org/abs/1905.04322), [ADS](https://ui.adsabs.harvard.edu/abs/2019ApJ...877L...3C/abstract), [doi:10.3847/2041-8213/ab1b42](https://doi.org/10.3847/2041-8213/ab1b42) | ApJL 877, L3; motivates fitting a disk and a planet together |
@@ -443,6 +445,7 @@ Cited by the paper, not a source of virgil's methods.
 
 Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<bibkey>`.
 
+- <a id="abramowitz1964"></a>**Abramowitz & Stegun (1964)**. Handbook of Mathematical Functions. [link](https://nvlpubs.nist.gov/nistpubs/Legacy/MP/nbsmiscellaneouspub346.pdf). 25.4.38: Gauss-Chebyshev quadrature (first kind), exact for polynomials of degree 2n-1. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="absil2011"></a>**Absil et al. (2011)**. Searching for faint companions with VLTI/PIONIER. I. Method and first results. [arXiv:1110.1178](https://arxiv.org/abs/1110.1178), [ADS](https://ui.adsabs.harvard.edu/abs/2011A&A...535A..68A/abstract).
 - <a id="akiyama2017"></a>**Akiyama et al. (2017)**. Imaging the Schwarzschild-radius-scale Structure of M87 with the Event Horizon Telescope using Sparse Modeling. [arXiv:1702.07361](https://arxiv.org/abs/1702.07361), [ADS](https://ui.adsabs.harvard.edu/abs/2017ApJ...838....1A/abstract). ApJ 838, 1.
 - <a id="arras2019"></a>**Arras et al. (2019)**. Unified Radio Interferometric Calibration and Imaging with Joint Uncertainty Quantification. [arXiv:1903.11169](https://arxiv.org/abs/1903.11169). A&A 627, A134 (2019); joint calibration and imaging (resolve), gain priors.
