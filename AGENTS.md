@@ -239,8 +239,8 @@ The table of orbit problems already solved (alias bands, flagged nights, resolve
 primaries, short arcs, label swaps, period windows, flux flips, tempering, the blind
 pipeline and more), each with its fix, code and pinning test, is in
 [design/orbit_solved_problems.md](design/orbit_solved_problems.md). **Read it before
-working on `aliases`, `arcs`, `epochs`, `tempering`, `orbit_search` or
-`pipeline/orbit`, or before reporting an orbit-fitting symptom.** Never re-derive a
+working on `aliases`, `arcs`, `epochs`, `tempering`, `orbit_search`, `pipeline/orbit`
+or the orbit checks in `pipeline/_checks`, or before reporting an orbit-fitting symptom.** Never re-derive a
 listed problem or report its symptom as an open one. A new fix gets a comment at the
 code that handles it, a docstring paragraph, a test and a row in that table
 (virgil-validation's `AGENTS.md` has the matching table for the comparison side).
