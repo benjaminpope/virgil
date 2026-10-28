@@ -91,6 +91,14 @@ class _ImageRegulariser(eqx.Module):
         image = self.image(model)
         if not self.smoothed:
             return image.brightness
+        if image.blur_fwhm_mas is not None:
+            warnings.warn(
+                "smoothed=True penalizes the blurred image, so the base "
+                "image is unregularized unless another regularizer "
+                "penalizes the raw pixels (MPoL's convention).",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
         b = image.smoothed()
         return np.maximum(b, np.finfo(b.dtype).tiny)
 
@@ -135,7 +143,7 @@ class TSV(_ImageRegulariser):
         Path of the Image in the model (e.g. ``"env"``); ``None`` if the model
         is the Image itself.
     smoothed : bool, optional
-        Penalize the Image's ``smoothed()`` pixels (see ``smooth_fwhm_mas``)
+        Penalize the Image's ``smoothed()`` pixels (see ``blur_fwhm_mas``)
         instead of the raw ones. Default ``False``.
     """
 
@@ -1780,7 +1788,7 @@ class LCurve:
             image = model.get(path)
             if _whitened_field(image.log_brightness):
                 raise TypeError("classic_maxent needs a pixel Image.")
-            if image.smooth_fwhm_mas is not None:
+            if image.blur_fwhm_mas is not None:
                 raise ValueError(
                     "classic_maxent does not support a smoothed Image: its "
                     "entropy metric uses the raw pixels."

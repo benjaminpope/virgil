@@ -44,7 +44,7 @@ from . import _nufft_spread as grid
 from ._geometry import gaussian_taper, offset_phase, rotate
 from ._utils import mas2rad
 from .models import Image, SourceModel, System
-from .radio import _warn_double_taper
+from .radio import _warn_double_blur
 
 __provisional__ = ("*",)
 
@@ -75,7 +75,7 @@ def _signature(nuisance):
     return (
         nuisance.n_obs,
         nuisance.n_ddid,
-        nuisance.taper_fwhm_mas,
+        nuisance.blur_fwhm_mas,
         nuisance.nu0_hz,
         nuisance.alpha_fixed,
     )
@@ -177,7 +177,7 @@ class ToeplitzVisData(eqx.Module):
     data : ComplexVisData
     mask : (N,) bool
         Points used.
-    npix, pixel_scale_mas, rotation_deg, smooth_fwhm_mas
+    npix, pixel_scale_mas, rotation_deg, blur_fwhm_mas
         The Image layout the precompute is for.
     image_offset_mas : (float, float)
         The template's fixed ``(dra, ddec)``, folded into the visibilities.
@@ -202,7 +202,7 @@ class ToeplitzVisData(eqx.Module):
     npix: int = eqx.field(static=True)
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
-    smooth_fwhm_mas: float | None = eqx.field(static=True)
+    blur_fwhm_mas: float | None = eqx.field(static=True)
     image_offset_mas: tuple = eqx.field(static=True)
     free_offsets: bool = eqx.field(static=True)
     max_shift_pix: float = eqx.field(static=True)
@@ -275,10 +275,10 @@ class ToeplitzVisData(eqx.Module):
         scale = 2.0 * onp.pi * mas2rad * pix
         tx, ty = scale * uu, scale * vv
         h = (freq / nuisance.nu0_hz) ** nuisance.alpha_fixed
-        h = h * onp.asarray(nuisance._taper(u, v))
-        if image.smooth_fwhm_mas is not None:
+        h = h * onp.asarray(nuisance._blur(u, v))
+        if image.blur_fwhm_mas is not None:
             h = h * onp.asarray(
-                gaussian_taper(u * u + v * v, image.smooth_fwhm_mas)
+                gaussian_taper(u * u + v * v, image.blur_fwhm_mas)
             )
         tau = float(onp.max(onp.maximum(onp.abs(tx), onp.abs(ty))) / onp.pi)
         # A fixed image offset is a phase on the model; move it to the data.
@@ -334,7 +334,7 @@ class ToeplitzVisData(eqx.Module):
         self.npix = npix
         self.pixel_scale_mas = float(pix)
         self.rotation_deg = float(image.rotation_deg)
-        self.smooth_fwhm_mas = image.smooth_fwhm_mas
+        self.blur_fwhm_mas = image.blur_fwhm_mas
         self.image_offset_mas = (dra, ddec)
         self.free_offsets = free
         self.max_shift_pix = float(bound)
@@ -364,12 +364,12 @@ class ToeplitzVisData(eqx.Module):
 
     @property
     def layout(self):
-        """``(shape, pixel_scale_mas, rotation_deg, smooth_fwhm_mas)``."""
+        """``(shape, pixel_scale_mas, rotation_deg, blur_fwhm_mas)``."""
         return (
             (self.npix, self.npix),
             self.pixel_scale_mas,
             self.rotation_deg,
-            self.smooth_fwhm_mas,
+            self.blur_fwhm_mas,
         )
 
     def rebuild(self, vis, weight):
@@ -411,7 +411,7 @@ class ToeplitzVisData(eqx.Module):
         if _signature(nuisance) != self.signature:
             raise ValueError(
                 "nuisance differs from the one of the precompute (n_obs, "
-                "n_ddid, taper_fwhm_mas, nu0_hz or alpha); rebuild it."
+                "n_ddid, blur_fwhm_mas, nu0_hz or alpha); rebuild it."
             )
         if nuisance.offsets and not self.free_offsets:
             raise ValueError(
@@ -549,18 +549,18 @@ class _ToeplitzTerm(eqx.Module):
 
     def _image(self, values):
         scene = self.scene(values)
-        _warn_double_taper(scene, self.nuisance)
+        _warn_double_blur(scene, self.nuisance)
         image, offsets = _single_image(scene)
         layout = (
             image.eta.shape,
             image.pixel_scale_mas,
             image.rotation_deg,
-            image.smooth_fwhm_mas,
+            image.blur_fwhm_mas,
         )
         if layout != self.layout:
             raise ValueError(
                 f"The scene's Image (shape, pixel_scale_mas, rotation_deg, "
-                f"smooth_fwhm_mas) = {layout} differs from the precompute's "
+                f"blur_fwhm_mas) = {layout} differs from the precompute's "
                 f"{self.layout}."
             )
         dra, ddec = sum(offsets[0::2]), sum(offsets[1::2])
