@@ -408,10 +408,9 @@ def test_disco_operator_requires_diagonal_propagated_covariance():
     ],
 )
 def test_flared_disk_edge_on_visibilities_and_gradients_are_finite(cls, kw):
-    disk = cls(
+    common = dict(
         radius=40.0,
         fwhm=15.0,
-        inc=90.0,
         pa=25.0,
         npix=32,
         pixel_scale_mas=4.0,
@@ -420,6 +419,13 @@ def test_flared_disk_edge_on_visibilities_and_gradients_are_finite(cls, kw):
         ft="dft",
         **kw,
     )
+    near = cls(inc=89.5, **common)
+    assert bool(near.is_physical())
+    v0 = near.model(np.zeros(1), np.zeros(1), oidata.wavel[:1])
+    assert np.allclose(np.abs(v0), 1.0, atol=1e-5)
+
+    disk = cls(inc=90.0, **common)
+    assert not bool(disk.is_physical())
     vis = disk.model(oidata.u[:8], oidata.v[:8], oidata.wavel)
     assert np.all(np.isfinite(vis))
     grads = jax.grad(

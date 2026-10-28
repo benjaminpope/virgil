@@ -836,14 +836,20 @@ def test_render_gradients_are_finite_with_a_pixel_on_the_origin(inc, kind):
         assert bool(np.all(np.isfinite(leaf)))
 
 
-@pytest.mark.parametrize("clip", [H._CLIP, 0.0])
 @pytest.mark.parametrize("mag", [1.0 - 1e-6, 1.0 - 1e-7, 1.0])
-def test_step_down_and_gradient_are_finite_at_unit_modulus_boundary(clip, mag):
+def test_step_down_and_gradient_are_finite_at_unit_modulus_boundary(mag):
+    interior = np.array([0.3, 0.9], dtype=np.float32)
+    k_int, clipped_int = H.step_down(H.step_up(interior))
+    assert not clipped_int
+    assert np.allclose(k_int, interior, atol=1e-5)
+
     k_in = np.array([0.3, mag], dtype=np.float32)
     h = H.step_up(k_in)
-    k_out, _ = H.step_down(h, clip=clip)
+    k_out, clipped = H.step_down(h)
+    assert clipped == (mag > 1.0 - H._CLIP)
     assert np.all(np.isfinite(k_out))
-    grad = jax.grad(
-        lambda x: np.sum(np.real(H.step_down(H.step_up(x), clip=clip)[0]))
-    )(k_in)
+    assert np.isclose(np.abs(k_out[1]), 1.0 - H._CLIP, atol=1e-6)
+    grad = jax.grad(lambda x: np.sum(np.real(H.step_down(H.step_up(x))[0])))(
+        k_in
+    )
     assert np.all(np.isfinite(grad))

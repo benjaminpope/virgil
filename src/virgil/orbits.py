@@ -339,9 +339,8 @@ class KeplerOrbit(zdx.Base):
         dt = _days_since(mjd, self.t_ref)
         return tuple(_velocity(self._relative, dt))
 
-    def _frame(
-        self, dt
-    ):  # deliberate: called by Attached.at in models.py on already-offset dt
+    # deliberate: called by Attached.at in models.py on already-offset dt
+    def _frame(self, dt):
         dra, ddec, dz = self._relative(dt)
         line_pa = position_angle(dra, ddec)
         constant = np.zeros_like(line_pa)
@@ -710,10 +709,9 @@ def _thiele_innes_fit(  # deliberate: jit boundary vmapped by _fit_batch
 _N_SIGN_PAIRS = 16  # epoch pairs tried per grid point by the sign-free fit
 
 
+# deliberate: jit kernel vmapped by _fit_batch for sign-free grid fits
 @jax.jit
-def _thiele_innes_fit_sign_free(  # deliberate: jit kernel vmapped by _fit_batch for sign-free grid fits
-    dt, dra, ddec, whitener, period, dt_peri, ecc
-):
+def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
     """Thiele–Innes fit when each position is known only up to a sign.
 
     For each of the best-conditioned pairs of epochs and both relative signs,
@@ -920,10 +918,9 @@ def starting_orbits(
     ]
 
 
+# deliberate: jit kernel converting Cartesian state vectors to Keplerian elements
 @jax.jit  # one dispatch per eager call, as for ``_thiele_innes_angles``
-def _state_elements(  # deliberate: jit kernel converting Cartesian state vectors to Keplerian elements
-    dra, ddec, dz, vra, vdec, vz, mu
-):
+def _state_elements(dra, ddec, dz, vra, vdec, vz, mu):
     """``(period, dt_peri, ecc, inc, omega, Omega, a_mas)`` of a state vector."""
     r = np.stack([dra, ddec, dz])  # (East, North, away)
     v = np.stack([vra, vdec, vz])

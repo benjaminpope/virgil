@@ -2111,6 +2111,9 @@ class _PixelRendered(Component):
             xx, yy = rotate(xx, yy, rotation_deg)
         pixels = self._centred_image(xx, yy, self.pixel_scale_mas)
         total = np.sum(pixels)
+        # An unphysical trial state (e.g. inc = 90°, rejected by is_physical)
+        # can miss every pixel centre on an even grid; return zero flux rather
+        # than 0 / 0 so line searches and gradients stay finite.
         return pixels / np.where(total > 0.0, total, 1.0)
 
     def _centred_cvis(self, uu, vv):
