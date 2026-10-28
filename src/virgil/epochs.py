@@ -1996,19 +1996,19 @@ def _flag_chi2(chi2_all, factor, groups=None):
     """The ``chi2-high`` flag of each night: raw χ²/N more than ``factor``
     times the median of the nights of its own ``groups`` entry (one
     instrument mode: modes differ in χ²/N by their error models, so a
-    global median would flag a whole mode). None disables it; fewer than
-    three nights in a group have no meaningful median, so they are never
-    flagged."""
+    global median would flag a whole mode), falling back to the pooled
+    median across all nights when a mode has fewer than three nights
+    (provided there are at least three nights in total). None disables it."""
     chi2_all = onp.asarray(chi2_all, dtype=float)
     out = [[] for _ in chi2_all]
-    if factor is None:
+    if factor is None or len(chi2_all) < 3:
         return out
     groups = [0] * len(chi2_all) if groups is None else list(groups)
     for g in dict.fromkeys(groups):
         idx = [k for k, x in enumerate(groups) if x == g]
-        if len(idx) < 3:
-            continue
-        median = float(onp.median(chi2_all[idx]))
+        median = float(
+            onp.median(chi2_all[idx] if len(idx) >= 3 else chi2_all)
+        )
         # A night whose chi2 stands far above the others of its mode (a
         # bad night, a triple, extra light) fits no binary well, so its
         # position is not a trustworthy seed whatever its peaks look like.
@@ -2027,7 +2027,7 @@ def _flag_chi2(chi2_all, factor, groups=None):
                         f"({factor:g} x max(median night {median:.1f}, 1)"
                         + (
                             f" of its {len(idx)} nights of the same mode"
-                            if len(set(groups)) > 1
+                            if len(set(groups)) > 1 and len(idx) >= 3
                             else ""
                         )
                         + ")",

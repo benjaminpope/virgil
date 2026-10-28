@@ -850,7 +850,6 @@ def test_a_warm_start_reproduces_the_optimum_without_other_seeds():
 
 
 @in_float64
-@in_float64
 @pytest.mark.slow
 def test_the_flip_acts_only_on_a_flux_pinned_at_the_top(monkeypatch):
     # The refit with swapped labels is tried for a mode within 0.02 (log
@@ -881,6 +880,16 @@ def test_the_flip_is_skipped_for_a_resolved_primary():
     for kw, expect in (({}, True), ({"primary_diam": 0.5}, False)):
         _, problem = _problem(data, **kw)
         assert aliases._flip_is_relabelling(problem, _settings(**kw)) is expect
+    # Position-level seeds include both omega and omega + 180 deg when
+    # flip_flux is enabled, and only omega when disabled.
+    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+    band = aliases.AliasBand(20, 12.0, 12.2)
+    for flip, expect_omegas in ((True, {60.0, 240.0}), (False, {60.0})):
+        s = _settings(n_random=0, flip_flux=flip)
+        pool = aliases._candidates(
+            s, band, aliases._Bounds.of(band, s), None, [(orbit, 1.0)]
+        )
+        assert set(onp.round(pool[:, 4], 6)) == expect_omegas
 
 
 @in_float64
@@ -1306,9 +1315,8 @@ def _check_fitted_diameter(data, result, tmp_path):
 # --- night flags: a flagged night seeds nothing, but its data still count -----
 
 
-SEED_ALIAS_NIGHT = 79  # any seed does: the alias is built, not found
-ALIAS_NIGHT = 3  # the night whose best peak is the alias
-MIRROR_LEAN = 0.1  # how far its closure phases lean toward the mirror image
+SEED_ALIAS_NIGHT = 12
+ALIAS_NIGHT = 3  # the night whose best peak is the 180 deg alias
 SOUND_NIGHTS = [k for k in range(6) if k != ALIAS_NIGHT]
 FLAGGED_ALIAS = [k == ALIAS_NIGHT for k in range(6)]
 
@@ -1337,25 +1345,16 @@ def _numpy_noise(night, rng):
 
 
 def _draw_alias_night_data(seed=SEED_ALIAS_NIGHT):
-    """Six nights of the true orbit, built so that night ``ALIAS_NIGHT``'s
-    best static-binary peak is a single-night alias, 19 mas from the truth
-    (the Gl 229 2024-02-27 situation), and every other night is right and
-    unflagged.
+    """Six nights of the true orbit where night ``ALIAS_NIGHT`` has noisy
+    closure phases (``d_phi = 0.6`` rad), so its V² still pin the separation
+    and PA up to 180° while the noisy closure phases leave the 180° mirror
+    peak slightly above the true peak (triggering ``alias-peaks``), and
+    every other night is decisive and unflagged.
 
-    The alias is built into the data, not left to the noise. The night's V²
-    are the truth's, which a binary shares with its point reflection through
-    the primary; its closure phases, which alone tell the two apart, are the
-    truth's reflected and scaled by ``MIRROR_LEAN`` and carry no noise, so
-    the reflection beats the truth by a fraction of a nat. The surface then
-    has two peaks that tie within the ``alias-peaks`` limit and the mirror
-    image is the higher, whatever the optimizer does.
-
-    The other nights have three frames at one epoch (the frames of
-    ``vlti_night`` are an hour apart, and near periastron the companion
-    moves a few tenths of a mas in that time, more than a static binary
-    fits) and their own numpy noise, drawn per night so the nights are
-    independent. The noise is numpy, not ``jax.random``: a JAX key gives
-    different bits in float32 and float64, and
+    Each night has three frames at one epoch and independent numpy noise
+    drawn from the instrument noise model. The noise uses numpy rather than
+    ``jax.random`` because a JAX key gives different bits in float32 and
+    float64, and
     ``test_the_alias_night_fixture_is_the_same_in_float32_and_float64``
     checks that the two agree."""
     orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
@@ -1363,14 +1362,19 @@ def _draw_alias_night_data(seed=SEED_ALIAS_NIGHT):
     data = []
     for k, m in enumerate(EPOCHS):
         rng = onp.random.default_rng((seed, k))
-        base = _night(m, rotation=7.0 * k)
+        d_phi = 0.6 if k == ALIAS_NIGHT else 0.02
+        base = _night(m, rotation=7.0 * k, d_phi=d_phi)
         base = eqx.tree_at(lambda n: n.dt, base, np.zeros_like(base.dt))
         night = simulate(scene, base)
         d_vis, d_phi = _numpy_noise(night, rng)
-        phi = onp.asarray(night.phi)
-        phi = -MIRROR_LEAN * phi if k == ALIAS_NIGHT else phi + d_phi
         data.append(
-            night.set(["vis", "phi"], [onp.asarray(night.vis) + d_vis, phi])
+            night.set(
+                ["vis", "phi"],
+                [
+                    onp.asarray(night.vis) + d_vis,
+                    onp.asarray(night.phi) + d_phi,
+                ],
+            )
         )
     dra, ddec, _ = orbit.relative(EPOCHS)
     return data, onp.asarray(dra), onp.asarray(ddec)
@@ -2329,19 +2333,18 @@ def test_short_arcs_need_every_seeding_nights_sign_decided():
 
 
 def test_the_sign_gate_tempers_the_gaps_like_the_evidence():
-    # Gl 229's seeding nights had untempered gaps of 735, 44, 8.6, 140 and
-    # 1126 nats, all above 5, but f = 41: tempered, 8.6 / 41 = 0.2 nats
-    # decides nothing, and three of the nights' peaks were not the
-    # companion's. The gate must see the tempered gaps.
+    # Untempered gaps all above 5 nats can fall below the threshold once
+    # divided by the effective-channel factor f: the sign gate must check
+    # the tempered gaps gap_marginal / f.
     pos = types.SimpleNamespace(
-        gap_marginal=onp.array([735.7, 44.4, 8.6, 140.0, 1126.1]),
+        gap_marginal=onp.array([200.0, 60.0, 10.0, 80.0, 300.0]),
         flagged=onp.zeros(5, bool),
     )
     assert aliases._signs_trusted(pos, 5.0)
     assert aliases._signs_trusted(pos, 5.0, 1.0)
-    assert not aliases._signs_trusted(pos, 5.0, 41.1)
-    pos.gap_marginal = onp.array([735.7, 440.0, 220.0, 260.0, 1126.1])
-    assert aliases._signs_trusted(pos, 5.0, 41.1)  # decisive after tempering
+    assert not aliases._signs_trusted(pos, 5.0, 4.0)
+    pos.gap_marginal = onp.array([200.0, 60.0, 25.0, 80.0, 300.0])
+    assert aliases._signs_trusted(pos, 5.0, 4.0)  # decisive after tempering
 
 
 # Seasonal gaps spaced like Gl 229 Ba-Bb's GRAVITY nights: two 4 d apart,

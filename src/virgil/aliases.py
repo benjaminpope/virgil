@@ -1103,17 +1103,21 @@ def _mixture_weights(draws):
 
 def _candidates(settings, band, bounds, rng, orbits):
     """The band's seed pool: position-level ``orbits`` (``[(KeplerOrbit,
-    χ²), ...]`` or None) at several fluxes and both senses of motion, then
-    ``n_random`` random orbits."""
+    χ²), ...]`` or None) at several fluxes, both senses of motion and (with
+    ``flip_flux``) both ω conjugates, then ``n_random`` random orbits."""
     s = settings
     diam = s.diam_seed if s.fit_diam else None
+    omegas = (0.0, 180.0) if s.flip_flux else (0.0,)
     pool = []
     for orbit, _ in orbits or ():
         for flux in s.flux_scan:
             x = _start_vector(orbit, flux, s.t_ref, band, bounds, diam)
-            other = onp.array(x)  # the other sense of motion (i -> 180 - i)
-            other[3] = -other[3]
-            pool += [x, other]
+            for d_omega in omegas:
+                for sign_i in (1.0, -1.0):
+                    y = onp.array(x)
+                    y[3] *= sign_i
+                    y[4] = (y[4] + d_omega) % 360.0
+                    pool.append(y)
     pool.extend(_init_starts(s, band, bounds))
     for _ in range(s.n_random):
         pool.append(
@@ -1197,16 +1201,34 @@ def _distinct(modes, times, t_ref, min_distance_mas):
     return [modes[k] for k in _distinct_tracks(tracks, min_distance_mas)]
 
 
-# deliberate: 63 lines and patched by tests/test_night_flags.py; a named stage of _fit_band
+def _fit_start(problem, search, bounds, x0, max_steps):
+    """Optimize ``x0`` on the plain likelihood and polish under ``problem``."""
+    x, value = _optimize(search, bounds, x0, max_steps)
+    if search is problem or not onp.isfinite(value):
+        return x, value
+    try:
+        px, pv = _optimize(problem, bounds, x, max_steps)
+    except TypeError:
+        raise
+    except Exception:  # noqa: BLE001 - the plain mode stands
+        px, pv = x, -onp.inf
+    if not onp.isfinite(pv):
+        px = x
+        pv = float(onp.asarray(problem.batch(np.asarray(x)[None]))[0])
+    return px, pv
+
+
+# deliberate: patched by tests/test_night_flags.py; a named stage of _fit_band
 def _refine(problem, settings, bounds, pool, times, forced=()):
     """Rank the candidates by the observables and refine the best distinct
     few into modes.
 
-    The ranking and the refinement use the plain likelihood; a problem with
-    the outlier mixture only polishes the modes found (see
+    The pool ranking and the final mode values use ``problem`` (including the
+    outlier mixture when enabled); each start is first refined on the plain
+    likelihood and then polished under ``problem`` (see
     [`_Problem.without_mixture`][virgil.aliases._Problem.without_mixture]),
-    so that the mixture can down-weight a night of a basin the search found
-    but cannot hide the basin.
+    so that the mixture can down-weight an outlier night without stalling a
+    start that initially misses several nights.
 
     Returns the distinct modes ``[(x, loglike), ...]`` (the log likelihood
     of the problem given) and the number of starts that failed. Only a
@@ -1217,7 +1239,7 @@ def _refine(problem, settings, bounds, pool, times, forced=()):
     """
     s = settings
     search = _plain(problem)
-    score = _score_pool(search, s, pool)
+    score = _score_pool(problem, s, pool)
     keep = onp.argsort(-score, kind="stable")[: 4 * s.n_refine]
     ranked = _distinct(
         [(pool[i], score[i]) for i in keep],
@@ -1231,7 +1253,7 @@ def _refine(problem, settings, bounds, pool, times, forced=()):
     fitted, n_failed, error = [], 0, None
     for x0 in seeds:
         try:
-            x, value = _optimize(search, bounds, x0, s.max_steps)
+            x, value = _fit_start(problem, search, bounds, x0, s.max_steps)
         except TypeError:
             raise
         except Exception as caught:  # noqa: BLE001 - one bad start
@@ -1243,24 +1265,7 @@ def _refine(problem, settings, bounds, pool, times, forced=()):
         raise RuntimeError(
             f"Every one of the {n_failed} optimizer starts failed."
         ) from error
-    modes = _distinct(fitted, times, s.t_ref, s.min_distance_mas)
-    if search is not problem:
-        polished = []  # each mode refit under the outlier mixture
-        for x, _ in modes:
-            try:
-                px, value = _optimize(problem, bounds, x, s.max_steps)
-            except TypeError:
-                raise
-            except Exception:  # noqa: BLE001 - the plain mode stands
-                px, value = x, -onp.inf
-            if not onp.isfinite(value):
-                px = x
-                value = float(
-                    onp.asarray(problem.batch(np.asarray(x)[None]))[0]
-                )
-            polished.append((px, value))
-        modes = _distinct(polished, times, s.t_ref, s.min_distance_mas)
-    return modes, n_failed
+    return _distinct(fitted, times, s.t_ref, s.min_distance_mas), n_failed
 
 
 def _plain(problem):
@@ -1355,7 +1360,7 @@ def _band_result(problem, settings, band, modes, z_lap, z_is, n_failed):
     )
 
 
-# deliberate: 44 lines and a named stage of _fit_band
+# deliberate: 45 lines and a named stage of _fit_band
 def _flip_modes(problem, settings, bounds, modes_xy, times):
     """Refit each mode whose flux ratio sits at the top of ``flux_range``
     from the same orbit with the stars' labels swapped (the ratio is then
@@ -1365,14 +1370,16 @@ def _flip_modes(problem, settings, bounds, modes_xy, times):
     modes of a relabelled pair come in pairs even when the search found only
     one of them well. Returns the modes with the refits (distinct ones), the
     refits on tracks no mode had, and the number that failed."""
+    search = _plain(problem)
     flips, refits, n_failed = [], [], 0
     queue = list(modes_xy)
     for x, _ in queue:
         if not x[7] >= bounds.upper[7] - 0.02:  # not pinned at the flux top
             continue
         try:
-            xf, vf = _optimize(
+            xf, vf = _fit_start(
                 problem,
+                search,
                 bounds,
                 _flipped(x, settings, bounds),
                 settings.max_steps,
@@ -1492,18 +1499,39 @@ def _fit_band(problem, settings, band, orbits, times):
     result = _band_result(
         problem, settings, band, modes, z_lap, z_is, n_failed
     )
-    live = [m for m in result.modes if onp.isfinite(m["log_z"])]
-    if flips and live:  # is the best mode one of the relabelled refits?
-        best = onp.array(max(live, key=lambda m: m["log_z"])["x"])
-        tracks = [
-            _track(x, settings.t_ref, times)
-            for x in [best] + [f[0] for f in flips]
-        ]
-        result.flipped = any(
-            onp.max(onp.hypot(*(tracks[0] - t).T)) <= settings.min_distance_mas
-            for t in tracks[1:]
-        )
     result.labels_free = _labels_free(result, settings, times)
+    live = [m for m in result.modes if onp.isfinite(m["log_z"])]
+    if live:  # is the best mode on a label-swapped track?
+        best = _track(
+            onp.array(max(live, key=lambda m: m["log_z"])["x"]),
+            settings.t_ref,
+            times,
+        )
+        result.flipped = any(
+            onp.max(onp.hypot(*(best - _track(f, settings.t_ref, times)).T))
+            <= settings.min_distance_mas
+            for f, _ in flips
+        )
+        if (
+            not result.flipped
+            and settings.flip_flux
+            and _flip_is_relabelling(problem, settings)
+            and not result.labels_free
+            and orbits
+        ):
+            seeded = [
+                onp.stack(
+                    [
+                        onp.asarray(o.relative(np.asarray(times))[0]),
+                        onp.asarray(o.relative(np.asarray(times))[1]),
+                    ],
+                    -1,
+                )
+                for o, _ in orbits[: settings.n_candidates]
+            ]
+            d_flip = min(onp.max(onp.hypot(*(best + t).T)) for t in seeded)
+            d_same = min(onp.max(onp.hypot(*(best - t).T)) for t in seeded)
+            result.flipped = bool(d_flip < 0.5 * d_same)
     if result.flipped:
         _LOG.info(
             "band N=%d: the best mode has the stars' labels swapped "
@@ -2345,7 +2373,6 @@ def _seed_scores(problem, settings, bands, seeds):
     position-level orbits (at every seed flux and both senses, unrefined):
     a cheap check of the whole window."""
     s = dataclasses.replace(settings, n_random=0, init=None)
-    search = _plain(problem)
     pools = [
         _candidates(s, b, _Bounds.of(b, s), None, seeds[b.n][:_N_CHECK])
         for b in bands
@@ -2354,7 +2381,7 @@ def _seed_scores(problem, settings, bands, seeds):
     xs, size = onp.concatenate(pools), settings.pool_size
     score = onp.concatenate(
         [
-            _score_pool(search, settings, xs[i : i + size])
+            _score_pool(problem, settings, xs[i : i + size])
             for i in range(0, len(xs), size)
         ]
     )
@@ -3101,7 +3128,6 @@ def fit_orbit_aliases(
             f_raw=float(temper),
         )
     can_estimate = estimate_f and isinstance(positions, EpochPositions)
-    piloted = False
     primary_fit = None
     diam_seed = 0.5
     if isinstance(primary_diam, str) and primary_diam == "auto":
@@ -3116,8 +3142,7 @@ def fit_orbit_aliases(
             vis_amp,
             block_dof=factors.block_dof() if fixed_f else None,
         )
-        if can_estimate:
-            piloted = True
+        if can_estimate and estimate.resolved:
             factors = _temper_factors(
                 data,
                 positions,
@@ -3125,18 +3150,12 @@ def fit_orbit_aliases(
                 vis_amp,
                 names,
             )
-            if estimate.resolved and factors.f > 1.0:
+            if factors.f > 1.0:
                 primary_diam, positions, estimate, primary_fit = _auto_primary(
                     data, positions_in, vis_amp, block_dof=factors.block_dof()
                 )
                 if not estimate.resolved:  # tempered away: a point primary
-                    factors = _temper_factors(
-                        data,
-                        positions,
-                        _pilot_diameter(positions, None),
-                        vis_amp,
-                        names,
-                    )
+                    factors = None
         if primary_diam == "fit":
             if diam_range is None:
                 diam_range = (
@@ -3153,7 +3172,7 @@ def fit_orbit_aliases(
             )
     if diam_range is None:
         diam_range = (0.05, 5.0)
-    if can_estimate and not piloted:
+    if can_estimate and factors is None:
         factors = _temper_factors(
             data,
             positions,
@@ -3285,7 +3304,8 @@ def fit_orbit_aliases(
     n_scan = _N_FLUX + (2 if sign_free else 0)
     # (with sign_free the signed and the sign-free orbits both seed)
     n_orbits = n_candidates * (2 if sign_free else 1)
-    n_seeded = 0 if positions is None else 2 * n_scan * n_orbits
+    n_senses = 4 if flip_flux else 2
+    n_seeded = 0 if positions is None else n_senses * n_scan * n_orbits
     if counts is not None:  # the arc seeds come beside the position seeds
         n_seeded *= 2
     n_pool = n_random + n_seeded + (1 if init else 0)  # senses, fluxes, init

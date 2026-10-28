@@ -87,21 +87,24 @@ def test_a_night_with_only_non_blocking_flags_is_not_flagged():
 
 
 def test_chi2_high_is_judged_within_each_mode():
-    # MEDIUM nights sit near 200, HIGH nights near 60 (AK For): a global
-    # median of 60 flags every MEDIUM night; per mode, none is an outlier.
-    chi2 = [55.0, 60.0, 65.0, 60.0, 185.0, 220.0, 291.0]
-    mode = ["HIGH"] * 4 + ["MEDIUM"] * 3
-    assert sum(bool(f) for f in _flag_chi2(chi2, 3.0)) == 2
+    # Two instrument modes with different baseline chi2/N (around 10 vs 40):
+    # a global median of 10 flags the second mode, whereas within each mode
+    # (>= 3 nights) none is an outlier.
+    chi2 = [9.0, 10.0, 11.0, 10.0, 35.0, 40.0, 45.0]
+    mode = ["A"] * 4 + ["B"] * 3
+    assert sum(bool(f) for f in _flag_chi2(chi2, 3.0)) == 3
     assert not any(_flag_chi2(chi2, 3.0, mode))
     # A real outlier inside a mode is still found.
-    chi2[5] = 2000.0
+    chi2[5] = 400.0
     found = _flag_chi2(chi2, 3.0, mode)
     assert [bool(f) for f in found] == [False] * 5 + [True, False]
     assert "of its 3 nights of the same mode" in found[5][0].reason
-    # A mode with fewer than three nights has no median.
-    assert not any(
-        _flag_chi2([1.0, 500.0, 1.0, 1.0, 1.0], 3.0, list("aabbb"))[:2]
-    )
+    # A mode with fewer than three nights falls back to the pooled median
+    # across all nights, so a corrupted night in a 1- or 2-night mode is
+    # still caught while normal nights pass.
+    pooled = _flag_chi2([1.0, 500.0, 1.0, 1.0, 1.0], 3.0, list("aabbb"))
+    assert [bool(f) for f in pooled] == [False, True, False, False, False]
+    assert "of the same mode" not in pooled[1][0].reason
 
 
 def test_mode_keys_tolerate_wavelength_jitter_but_not_other_setups():
