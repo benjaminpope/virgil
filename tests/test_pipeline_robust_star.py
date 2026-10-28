@@ -434,6 +434,38 @@ def test_golden_default_model_set_recovers_the_star_without_failing_checks(
     assert res.summary["comparison"]["preferred"] == "uniform"
 
 
+def test_a_failing_model_that_was_not_selected_is_a_warning_not_hidden(
+    completed,
+):
+    import copy
+
+    reports = {s: completed._report(s) for s in ("load", "fit", "posterior")}
+    best = reports["fit"]["best"]
+    # TINY chains do not converge: give the selected model healthy chains.
+    reports["posterior"]["models"][best].update(
+        r_hat_max=1.0, ess_bulk_min=1e3, divergence_fraction=0.0
+    )
+    bad = copy.deepcopy(reports["posterior"]["models"][best])
+    bad.update(r_hat_max=4.0, ess_bulk_min=2.0, divergence_fraction=0.5)
+    reports["posterior"]["models"]["rival"] = bad
+
+    _, checks = completed._summarize(reports)
+    by_name = {c.name: c for c in checks}
+    for name in ("r_hat", "ess", "divergences"):
+        assert by_name[name].status == "warn", name
+        assert "rival (not selected)" in by_name[name].message
+
+    # The selected model's failures stay failures.
+    reports["posterior"]["models"][best].update(
+        r_hat_max=4.0, ess_bulk_min=2.0
+    )
+    _, checks = completed._summarize(reports)
+    by_name = {c.name: c for c in checks}
+    assert (
+        by_name["r_hat"].status == "fail" and by_name["ess"].status == "fail"
+    )
+
+
 # The shared full run costs ~15 s warm and over 30 s on a cold CI runner, so
 # the tests that build on it (``completed``, ``stubbed``, ``unconverged``)
 # belong to the slow tier; the rest of the module stays in the fast one.

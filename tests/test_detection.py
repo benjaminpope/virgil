@@ -13,7 +13,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 import pytest
-from scipy import stats
+from scipy import special, stats
 
 from tests._compiles import count_compiles
 from virgil.coverage import nrm_oidata
@@ -202,31 +202,69 @@ def test_log_bayes_factor_is_stable_under_grid_refinement():
     roots=["self-consistency"],
 )
 def test_log_bayes_factor_matches_a_brute_force_marginalization():
-    from scipy.integrate import trapezoid
-
     grid = {
-        "dra": onp.array([30.0, 50.0, 90.0]),
+        "dra": onp.array([30.0, 60.0, 90.0]),
         "ddec": onp.array([-60.0, -40.0, -20.0]),
         "flux": onp.geomspace(1e-3, 1e-2, 4),
     }
     data = _data(4e-3, 7)
     result = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
 
-    # Uniform in position, and in log flux, between the axes' ends.
+    def trapezoid(n):
+        # Uniform in position, and in log flux, between the axes' ends.
+        w = onp.ones(n)
+        w[[0, -1]] = 0.5
+        return w / (n - 1)
+
     args = _args(data)
     loglike0 = float(loglike(np.array([0.0, 0.0, 0.0]), *args))
-    axes = [onp.asarray(v, dtype=float) for v in grid.values()]
-    coords = [axes[0], axes[1], onp.log(axes[2])]
-    cube = onp.empty([len(a) for a in axes], dtype=float)
+    weights = [trapezoid(len(values)) for values in grid.values()]
+    terms = []
     for (i, dra), (j, ddec), (k, flux) in itertools.product(
-        *(enumerate(a) for a in axes)
+        *(enumerate(values) for values in grid.values())
     ):
-        cube[i, j, k] = float(loglike(np.array([dra, ddec, flux]), *args))
-    shift = float(onp.max(cube))
+        log_l = float(loglike(np.array([dra, ddec, flux]), *args))
+        weight = weights[0][i] * weights[1][j] * weights[2][k]
+        terms.append(log_l - loglike0 + onp.log(weight))
+    expected = special.logsumexp(terms)
+    assert float(result["log_bayes_factor"]) == pytest.approx(
+        expected, abs=2e-3
+    )
+
+
+@pytest.mark.parametrize("spacing", ["geometric", "linear"])
+def test_log_bayes_factor_prior_is_uniform_in_log_flux_or_flux(spacing):
+    from scipy.integrate import trapezoid
+
+    # The prior follows the axis: uniform in log flux on a geometric axis (the
+    # scale-invariant default) and in flux on a linear one. The reference
+    # integrates the likelihood ratio over those coordinates directly.
+    flux = (
+        onp.geomspace(1e-3, 1e-2, 5)
+        if spacing == "geometric"
+        else onp.linspace(1e-3, 1e-2, 5)
+    )
+    grid = {
+        "dra": onp.array([30.0, 60.0, 90.0]),
+        "ddec": onp.array([-60.0, -40.0, -20.0]),
+        "flux": flux,
+    }
+    data = _data(4e-3, 7)
+    result = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
+    args = _args(data)
+    loglike0 = float(loglike(np.array([0.0, 0.0, 0.0]), *args))
+    cube = onp.empty([len(v) for v in grid.values()])
+    for (i, dra), (j, ddec), (k, f) in itertools.product(
+        *(enumerate(v) for v in grid.values())
+    ):
+        cube[i, j, k] = float(loglike(np.array([dra, ddec, f]), *args))
+    coords = [grid["dra"], grid["ddec"]]
+    coords.append(onp.log(flux) if spacing == "geometric" else flux)
+    shift = float(cube.max())
     integral = onp.exp(cube - shift)
     for axis, x in reversed(list(enumerate(coords))):
         integral = trapezoid(integral, x=x, axis=axis)
-    volume = float(onp.prod([abs(x[-1] - x[0]) for x in coords]))
+    volume = float(onp.prod([x[-1] - x[0] for x in coords]))
     expected = shift - loglike0 + float(onp.log(integral / volume))
     assert float(result["log_bayes_factor"]) == pytest.approx(
         expected, abs=2e-3

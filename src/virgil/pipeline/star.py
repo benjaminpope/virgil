@@ -1101,7 +1101,7 @@ def _posterior(p):  # deliberate: stage function, stubbed by tests
         "models": per_model,
         "best": best,
         "sampled": sampled,
-        **_sampler_report(p.settings, [per_model[best]]),
+        **_sampler_report(p.settings, per_model.values()),
     }
 
 

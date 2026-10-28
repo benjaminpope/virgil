@@ -2208,7 +2208,8 @@ def laplace_samples(
 
     The whitened latents ``z`` are drawn from ``N(z₀, (I + JᵀJ)⁻¹)`` about the
     MAP ``z₀``, the approximation of [`log_evidence`][virgil.imaging.log_evidence].
-    With ``priors``, free non-pixel parameters are included in ``z`` and ``J``.
+    With ``priors``, the latents' covariance is the marginal one of the full
+    Hessian ``diag(I, 0) + JᵀJ``, with the other parameters' columns in ``J``.
     Exact only for a linear model, assumes correct error bars, uses the quoted
     errors and is conditional on the hyperparameters held in ``model`` (or sample
     them, as for [`log_evidence`][virgil.imaging.log_evidence]).
@@ -2232,7 +2233,8 @@ def laplace_samples(
         [`SourceModel.render`][virgil.models.SourceModel.render]); one alone
         raises ``ValueError``.
     priors : dict or sequence of str, optional
-        Free parameter priors or paths; non-pixel parameters enter ``z`` and ``J``.
+        Free parameters (priors or paths) besides the latents; they enter the
+        Hessian through ``JᵀJ``, with no unit-Gaussian prior.
     regularizers : sequence, optional
         Fit regularizers; probabilistic ones (``Centroid``) enter ``J``.
 
@@ -2461,7 +2463,8 @@ def error_scale(
         gains, closure-phase offsets or other covariance that does not scale
         with the errors raise ``ValueError``.
     priors : dict or sequence of str, optional
-        Free parameter priors or paths; non-pixel parameters enter ``J``.
+        Free parameters (priors or paths) besides the latents; they enter
+        through their ``JᵀJ`` block, with no unit-Gaussian prior.
     regularizers : sequence, optional
         Fit regularizers; probabilistic ones (``Centroid``) enter ``J``.
 
