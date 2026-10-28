@@ -373,6 +373,33 @@ def test_select_keeps_labels():
     assert len(data.select(obs=[4])) == int((onp.asarray(data.obs) == 1).sum())
 
 
+def test_empty_obs_and_ddid_groups_after_subset_produce_no_nan():
+    """After ``subset`` drops all rows of an observation and a ddid,
+    ``CalibrationNuisance`` priors, ``sigma_hat`` and ``term`` stay finite."""
+    data = _data(n=600, n_obs=3, ddids_per_obs=(1, 1, 1), seed=7)
+    # Drop observation 1 (and its ddid 1) completely via subset.
+    sub = data.subset(onp.asarray(data.obs) != 1)
+    assert len(sub.obs_ids) == 3
+    for sigmas in (True, "profile"):
+        nuis = CalibrationNuisance(sub, sigmas=sigmas, alpha=0.7)
+        assert onp.all(onp.isfinite(nuis.offset_unit_mas))
+        for bounds in ({}, {"offset": (-20.0, 20.0)}):
+            priors = nuis.priors(**bounds)
+            assert onp.all(onp.isfinite(onp.asarray(priors["cal.offset"].low)))
+            assert onp.all(
+                onp.isfinite(onp.asarray(priors["cal.offset"].high))
+            )
+        values = _values(nuis)
+        scene = PointSource()
+        shat = sub.sigma_hat(scene, values, nuis)
+        assert onp.all(onp.isfinite(shat))
+        if sigmas == "profile":
+            assert shat[1] == 1.0
+        term = sub.term(lambda v: scene, nuis, chi2="direct")
+        r, log_norm = term.residuals_and_log_norm(values)
+        assert onp.all(onp.isfinite(r)) and onp.isfinite(log_norm)
+
+
 # ----------------------------------------------------------------------
 # A synthetic measurement set from CASA's simulator (needs casatools)
 # ----------------------------------------------------------------------
