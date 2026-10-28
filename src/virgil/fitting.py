@@ -987,22 +987,16 @@ def _bound_fraction(prior, value, flat=True):
     fraction = onp.asarray((onp.asarray(value, float) - low) / (high - low))
     poles = getattr(base, "_poles", None)
     if poles is not None:
-        raw_lo = onp.asarray(base.low, float)
-        raw_hi = onp.asarray(base.high, float)
-        if onp.any(onp.isclose(raw_lo, poles[0], atol=1e-5)):
-            fraction = onp.where(
-                onp.isclose(raw_lo, poles[0], atol=1e-5)
-                & (fraction < _AT_BOUND),
-                0.5,
-                fraction,
-            )
-        if onp.any(onp.isclose(raw_hi, poles[1], atol=1e-5)):
-            fraction = onp.where(
-                onp.isclose(raw_hi, poles[1], atol=1e-5)
-                & (fraction > 1.0 - _AT_BOUND),
-                0.5,
-                fraction,
-            )
+        lo_pole = onp.isclose(
+            onp.asarray(base.low, float), poles[0], atol=1e-5
+        )
+        hi_pole = onp.isclose(
+            onp.asarray(base.high, float), poles[1], atol=1e-5
+        )
+        if onp.all(lo_pole & hi_pole):
+            return None
+        fraction = onp.where(lo_pole & (fraction < 0.5), 0.5, fraction)
+        fraction = onp.where(hi_pole & (fraction > 0.5), 0.5, fraction)
     return fraction
 
 

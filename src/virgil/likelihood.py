@@ -149,30 +149,21 @@ def _whiten_phases(data, resid, errors, offset_terms=None):
         return 2.0 * np.sin(0.5 * resid) / errors, von_mises, zero
     # Correlated closure phases mix their residuals, so each sign matters,
     # and a chord's sign flips under 2π. Whiten the (smooth, periodic) sines
-    # and the periodic penalty 2 sin²(Δ/2) = 1 - cos Δ, which removes the
-    # false minimum at Δ = π.
-    half = 2.0 * np.sin(0.5 * resid) ** 2
+    # and append the periodic penalty 2 sin²(Δ/2)/σ = (1 - cos Δ)/σ, which
+    # removes the false minimum at Δ = π.
     whitened, whitened_errors = data.cp_noise.whiten(np.sin(resid), errors)
-    penalty = data.cp_noise.whiten(half, errors)[0]
     offsets = data.phase_offsets
     log_norm = zero
     if offsets is not None:
-        widths = offsets.widths_for(offset_terms)
         whitened, extra = offsets.whiten(
             data.cp_noise,
             whitened,
             errors,
-            widths,
+            offsets.widths_for(offset_terms),
         )
-        penalty = offsets.whiten(
-            data.cp_noise,
-            penalty,
-            errors,
-            widths,
-        )[0]
         whitened_errors = whitened_errors * np.exp(extra)
         log_norm = np.sum(extra)
-    penalty = np.pad(penalty, (0, resid.size - penalty.size))
+    penalty = 2.0 * np.sin(0.5 * resid) ** 2 / errors
     penalty_errors = np.full(penalty.shape, 1.0 / np.sqrt(2.0 * np.pi))
     return (
         np.concatenate([whitened, penalty]),

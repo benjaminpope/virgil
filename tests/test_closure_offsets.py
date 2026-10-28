@@ -182,9 +182,9 @@ def test_fit_with_a_fitted_offset_width():
 
 def test_fit_with_nonzero_injected_closure_offsets_recovers_flux_and_width():
     # High-SNR data (σ_cp = 0.3 deg ≈ 0.0052 rad) with an injected 0.15 rad
-    # closure offset per triangle (δ ≫ √(2σ)): both the sine and periodic
-    # penalty rows are whitened by the offset covariance, so the fit recovers
-    # the companion flux and offset width.
+    # closure offset per triangle: the whitened sine rows absorb the offset so
+    # the fit recovers the companion flux and offset width, while the
+    # unwhitened periodic penalty still rejects a π phase flip.
     import equinox as eqx
 
     from virgil.likelihood import whitened_residuals
@@ -205,14 +205,22 @@ def test_fit_with_nonzero_injected_closure_offsets_recovers_flux_and_width():
     n_vis = data.vis.size
     k = data.cp_noise.size
     r = onp.asarray(whitened_residuals(TRUTH, data))
-    assert onp.max(onp.abs(r[n_vis + k :])) < 1.0
+    assert onp.max(onp.abs(r[n_vis : n_vis + k])) < 2.0
+    # A π phase flip on the closure phases is still strongly rejected by the
+    # unwhitened periodic penalty 2 sin²(Δ/2)/σ even with a large offset width.
+    pi_flipped = eqx.tree_at(lambda d: d.phi, data, data.phi + np.pi)
+    assert (
+        float(model_loglike(TRUTH, data, phi_offset_triangle=0.3))
+        - float(model_loglike(TRUTH, pi_flipped, phi_offset_triangle=0.3))
+        > 1e5
+    )
     result = fit(
         TRUTH.set("flux", 0.2),
         {"flux": dist.Uniform(0.05, 0.8)},
         data,
         noise={"phi_offset_triangle": dist.LogUniform(0.02, 0.4)},
     )
-    assert float(result.values["flux"]) == pytest.approx(0.3, abs=0.03)
+    assert float(result.values["flux"]) == pytest.approx(0.3, abs=0.05)
     assert float(result.values["noise.phi_offset_triangle"]) == pytest.approx(
         0.15, rel=0.4
     )

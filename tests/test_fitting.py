@@ -500,17 +500,33 @@ def test_poles_of_isotropic_priors_are_not_prior_bounds():
         noise={},
         flat=True,
     )
-    values = {"inc": np.asarray(0.5), "lat": np.asarray(89.9), "ecc": 0.4}
+    values = {
+        "inc": np.asarray(0.5),
+        "lat": np.asarray(0.5 * onp.pi - 1e-4),
+        "ecc": 0.4,
+    }
     assert _at_bound(problem, values) == ()
     assert _at_bound(problem, dict(values, ecc=0.8999)) == ("ecc",)
     # A truncated isotropic range has a genuine non-pole bound.
     capped = SimpleNamespace(
-        priors={"inc": IsotropicInclination(0.0, 30.0)},
+        priors={
+            "inc": IsotropicInclination(0.0, 30.0),
+            "lat": IsotropicLatitude(-0.5 * onp.pi, 1.0),
+        },
         noise={},
         flat=True,
     )
-    assert _at_bound(capped, {"inc": np.asarray(0.5)}) == ()
-    assert _at_bound(capped, {"inc": np.asarray(29.999)}) == ("inc",)
+    near_poles = {
+        "inc": np.asarray(0.5),
+        "lat": np.asarray(-0.5 * onp.pi + 1e-4),
+    }
+    assert _at_bound(capped, near_poles) == ()
+    assert _at_bound(capped, dict(near_poles, inc=np.asarray(29.999))) == (
+        "inc",
+    )
+    assert _at_bound(capped, dict(near_poles, lat=np.asarray(0.9999))) == (
+        "lat",
+    )
 
 
 @pytest.mark.filterwarnings("ignore:fit.*did not converge")
