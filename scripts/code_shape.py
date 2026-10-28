@@ -297,6 +297,24 @@ def _reach(table, name, own, imported):
     return table["ext"][name] + (table["name"][name] if imported else 0)
 
 
+def _attr_chain(node):
+    """Dotted identifier chain ``['a', 'b', 'c']`` for ``a.b.c``, else ``None``."""
+    parts = []
+    cur = node
+    while isinstance(cur, ast.Attribute):
+        parts.append(cur.attr)
+        cur = cur.value
+    if isinstance(cur, ast.Name):
+        parts.append(cur.id)
+        return parts[::-1]
+    return None
+
+
+def _add_qualified(names, rel_prefix, attr):
+    names.add((f"{rel_prefix}.py", attr))
+    names.add((f"{rel_prefix}/__init__.py", attr))
+
+
 def _test_names(tests_text):
     """Names tests import or take as attributes (``mod._name``), qualified by module when known."""
     tree = ast.parse(tests_text)
@@ -306,30 +324,33 @@ def _test_names(tests_text):
         if isinstance(n, ast.ImportFrom):
             if n.module == "virgil":
                 for al in n.names:
-                    mod_aliases[al.asname or al.name] = f"{al.name}.py"
+                    mod_aliases[al.asname or al.name] = al.name
+                    names.add(("__init__.py", al.name))
             elif n.module and n.module.startswith("virgil."):
-                rel = (
-                    n.module.removeprefix("virgil.").replace(".", "/") + ".py"
-                )
+                rel = n.module.removeprefix("virgil.").replace(".", "/")
                 for al in n.names:
-                    names.add((rel, al.name))
+                    _add_qualified(names, rel, al.name)
+                    mod_aliases[al.asname or al.name] = f"{rel}/{al.name}"
             else:
                 names.update(al.name for al in n.names)
         elif isinstance(n, ast.Import):
             for al in n.names:
                 if al.name.startswith("virgil."):
-                    rel = (
-                        al.name.removeprefix("virgil.").replace(".", "/")
-                        + ".py"
-                    )
+                    rel = al.name.removeprefix("virgil.").replace(".", "/")
                     key = al.asname or al.name.split(".")[-1]
                     mod_aliases[key] = rel
     for n in ast.walk(tree):
         if isinstance(n, ast.Attribute):
-            if isinstance(n.value, ast.Name) and n.value.id in mod_aliases:
-                names.add((mod_aliases[n.value.id], n.attr))
-            else:
-                names.add(n.attr)
+            chain = _attr_chain(n)
+            if not chain:
+                continue
+            if chain[0] == "virgil" and len(chain) >= 3:
+                _add_qualified(names, "/".join(chain[1:-1]), chain[-1])
+            elif chain[0] in mod_aliases:
+                prefix = "/".join([mod_aliases[chain[0]], *chain[1:-1]])
+                _add_qualified(names, prefix, chain[-1])
+            elif len(chain) == 2:
+                _add_qualified(names, chain[0], chain[1])
     return names
 
 
@@ -386,23 +407,23 @@ def find_oversized_functions(head, base, max_lines=MAX_FUNC_LINES):
     """Functions in ``head`` that are new or grew vs ``base`` and exceed ``max_lines`` body lines."""
     trees = {p: ast.parse(t) for p, t in head.items()}
     base_trees = {p: ast.parse(t) for p, t in base.items()}
+    head_defs = {(p, q): n for p, t in trees.items() for q, n in _all_defs(t)}
     old_sizes = {
         (p, q): _func_body_lines(n)
         for p, t in base_trees.items()
         for q, n in _all_defs(t)
     }
     moved_sizes = {}
-    for (_, q), sz in old_sizes.items():
-        moved_sizes[q] = max(moved_sizes.get(q, 0), sz)
+    for (old_p, q), sz in old_sizes.items():
+        if (old_p, q) not in head_defs:
+            moved_sizes[q] = max(moved_sizes.get(q, 0), sz)
     found = []
     for path, tree in trees.items():
         for q, node in _all_defs(tree):
             n_lines = _func_body_lines(node)
             if n_lines <= max_lines:
                 continue
-            old_lines = old_sizes.get(
-                (path, q), moved_sizes.get(q) if path not in base else None
-            )
+            old_lines = old_sizes.get((path, q), moved_sizes.get(q))
             if old_lines is not None and n_lines <= old_lines:
                 continue
             found.append(

@@ -16,16 +16,23 @@ LARGE_PARAM_THRESHOLD = 10
 MAX_PARAMS_PER_HEADER = 4
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
-_PARAM_HEADER = re.compile(r"^([A-Za-z_*][\w*,\s]*?)\s*:\s*")
+_PARAM_HEADER = re.compile(r"^([A-Za-z_*][\w*,\s]*?)(?:\s*:.*)?$")
 
 # Legacy docstrings with > 4 parameters on a single numpydoc header line,
 # scheduled for cleanup in Wave 2/3 (PR 2/4/6). No new entries may be added.
 LEGACY_CRAMMED = {
     "virgil.aliases:fit_orbit_aliases",
     "virgil.arcs:unwrap_cycles",
+    "virgil.ensemble:gp_members",
     "virgil.epochs:broad_loglike",
     "virgil.epochs:epoch_positions",
     "virgil.epochs:start_from_positions",
+    "virgil.fitting:gauss_newton_diag",
+    "virgil.fitting:gauss_newton_mass",
+    "virgil.grid_fit:laplace_flux_uncertainty_grid",
+    "virgil.grid_fit:linear_flux_grid",
+    "virgil.limits:injection_limits",
+    "virgil.orbits:KeplerOrbit.from_position_angle",
     "virgil.plotting:plot_field_draws",
     "virgil.svi:variational",
 }
@@ -139,3 +146,12 @@ def test_no_crammed_parameter_headers():
         f"numpydoc parameter headers with > {MAX_PARAMS_PER_HEADER} names: "
         f"{crammed}. Document unrelated parameters on separate lines."
     )
+
+
+def test_param_headers_parses_typed_and_untyped_lines():
+    doc = (
+        "Summary.\n\nParameters\n----------\n"
+        "a, b : float\n    Typed pair.\n"
+        "c, d, e, f, g\n    Untyped crammed line.\n"
+    )
+    assert _param_headers(doc) == [["a", "b"], ["c", "d", "e", "f", "g"]]

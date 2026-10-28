@@ -76,10 +76,10 @@ jobs:
 
       # The JAX compilation cache is keyed on the job, JAX version, this
       # shard's file list and ISO week. The first push or nightly of a week saves it
-      # from an empty cache; pull requests restore the latest match. A new
-      # file list means a new cache, and the per-test budget stays off until
-      # then; a file added to another shard changes nothing here (the
-      # nightly deletes older weeks' caches).
+      # from an empty cache; pull requests restore the latest match (falling back
+      # to any cache for this job and JAX version when the shard's file list
+      # changes, keeping the 30 s per-test budget active; the nightly deletes
+      # older weeks' caches).
       - name: JAX version, week and packing
         id: key
         shell: bash

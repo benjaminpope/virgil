@@ -144,6 +144,17 @@ def test_qualified_test_import_only_exempts_that_module():
         "from virgil.a import _h\n",
     )
     assert got == ["b.py:1 _h"]
+    # Package __init__.py and submodule attribute accesses via package import are also module-qualified.
+    got_pkg = shape.find_single_use(
+        {
+            "pipeline/__init__.py": src,
+            "pipeline/_checks.py": src,
+            "other.py": src,
+        },
+        {},
+        "from virgil.pipeline import _h, _checks\n_checks._h()\nsome_obj._h()\n",
+    )
+    assert got_pkg == ["other.py:1 _h"]
 
 
 def test_find_oversized_functions():
@@ -158,4 +169,17 @@ def test_find_oversized_functions():
     long_doc = 'def f():\n    """' + "line\n" * 130 + '"""\n    return 1\n'
     assert (
         shape.find_oversized_functions({"m.py": long_doc}, {"m.py": ""}) == []
+    )
+    # A new function in a new module sharing a name with a base function that still exists is flagged.
+    big_other = f"def f():\n{body}    return x0 + 1\n"
+    assert shape.find_oversized_functions(
+        {"old.py": big, "new.py": big_other}, {"old.py": big}
+    ) == ["new.py:1 f (126 lines > 120)"]
+    # Moving an oversized function from old.py to existing.py passes.
+    assert (
+        shape.find_oversized_functions(
+            {"old.py": "", "existing.py": big_other},
+            {"old.py": big, "existing.py": ""},
+        )
+        == []
     )
