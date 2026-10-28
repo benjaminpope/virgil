@@ -992,24 +992,7 @@ def _null_verdict(result, data, s):  # deliberate: test seam (monkeypatched)
         near = onp.linspace(
             grid[max(k - 1, 0)], grid[min(k + 1, len(grid) - 1)], _N_DIAM_NULL
         )
-        ll_near = best(near)
-        peak = float(max(onp.max(ll), onp.max(ll_near)))
-        m = int(onp.clip(onp.argmax(ll_near), 1, len(near) - 2))
-        du = float(near[1] - near[0])
-        h_uu = -float(ll_near[m + 1] - 2.0 * ll_near[m] + ll_near[m - 1]) / (
-            du**2
-        )
-        d_min, d_max = map(float, settings.diam_range)
-        occam = (
-            min(
-                0.0,
-                0.5 * float(onp.log(2.0 * onp.pi / h_uu))
-                - float(onp.log(onp.log(d_max / d_min))),
-            )
-            if h_uu > 0.0 and d_max > d_min > 0.0
-            else 0.0
-        )
-        null = peak + occam
+        null = float(max(onp.max(ll), onp.max(best(near))))
     delta = float(result.best.log_z - null)
     return {
         "delta_log_z": delta,
