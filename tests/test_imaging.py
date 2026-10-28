@@ -601,11 +601,24 @@ def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
 
     ev_fixed = float(log_evidence(result, data, priors=base_priors))
     ev_free = float(log_evidence(result, data, priors=full_priors))
-    # Default priors on a FitResult uses all fitted keys in result.values.
-    assert float(log_evidence(result, data)) == pytest.approx(ev_free)
-    # Freeing env.flux adds a positive-definite column to J^T J, increasing
-    # log|I + J^T J| and lowering the Laplace log-evidence.
+    # Freeing env.flux under a wide LogUniform prior adds an Occam penalty.
     assert ev_free < ev_fixed
+    # Unit-rescaling invariance: scaling both star.flux and env.flux by 10
+    # (with a 10x LogUniform prior on env.flux) leaves the evidence and
+    # error_scale invariant.
+    scaled_model = result.model.set(
+        ["star.flux", "env.flux"],
+        [10.0, 10.0 * float(result.model.env.flux)],
+    )
+    scaled_priors = base_priors | {"env.flux": dist.LogUniform(1e-2, 100.0)}
+    assert float(
+        log_evidence(scaled_model, data, priors=scaled_priors)
+    ) == pytest.approx(ev_free, rel=1e-6)
+    assert float(
+        error_scale(scaled_model, data, priors=scaled_priors)
+    ) == pytest.approx(
+        float(error_scale(result, data, priors=full_priors)), rel=1e-6
+    )
     assert float(
         error_scale(result, data, priors=full_priors)
     ) != pytest.approx(float(error_scale(result, data, priors=base_priors)))

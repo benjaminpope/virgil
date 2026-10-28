@@ -2041,10 +2041,9 @@ def _field_images(model, path, caller):
     return paths
 
 
-def _evidence_latents(model, path, caller, priors=None):
+def _evidence_latents(model, path, caller):
     """The paths of every whitened latent that ``path`` selects: those of Images
-    with a GaussianField and the Gaussian-process latents of MultipoleDisks,
-    plus any free non-pixel parameter paths in ``priors``.
+    with a GaussianField and the Gaussian-process latents of MultipoleDisks.
     ``path`` is a path or tuple of paths, or ``None`` for all in ``model``.
     """
     from .models import MultipoleDisk, _multipole_disks
@@ -2082,9 +2081,6 @@ def _evidence_latents(model, path, caller, priors=None):
     latents = [_latent_path(p) for p in images]
     for prefix, disk in disks:
         latents.extend(f"{prefix}{rel}.z" for rel in disk.gp_sites())
-    for p in priors or ():
-        if p not in latents and not p.endswith("_vec"):
-            latents.append(p)
     return tuple(latents)
 
 
@@ -2094,15 +2090,15 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     At the MAP ``model``, ``log Z ≈ -½ χ² - L - ½ |z|² - ½ log det(I + JᵀJ)``
     up to a data-only constant, with ``z`` the whitened latents of the Image's
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
-    of a [`MultipoleDisk`][virgil.models.MultipoleDisk]) and any free non-pixel
-    parameters in ``priors``, ``J`` their Jacobian and ``L`` the likelihood
-    normalizer. Compare it across hyperparameters: it is conditional on those held
-    in ``model`` (or sample them: log-uniform priors from
-    [`gp_priors`][virgil.models.gp_priors] for a ``MultipoleDisk``, your own
-    log-uniform priors on a field's ``sigma`` and ``length_mas`` for an Image).
-    Exact only for a linear model, and it assumes correct error bars (see
-    [`error_scale`][virgil.imaging.error_scale]) and uses the quoted errors, so
-    no ``noise=`` terms or per-dataset models. See
+    of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
+    ``L`` the likelihood normalizer; extra priors in ``priors`` enter through
+    their ``log_prob`` at the MAP and their ``JᵀJ`` block of the Hessian. Compare
+    it across hyperparameters: it is conditional on those held in ``model`` (or
+    sample them: log-uniform priors from [`gp_priors`][virgil.models.gp_priors]
+    for a ``MultipoleDisk``, your own log-uniform priors on a field's ``sigma``
+    and ``length_mas`` for an Image). Exact only for a linear model, and it
+    assumes correct error bars (see [`error_scale`][virgil.imaging.error_scale])
+    and uses the quoted errors, so no ``noise=`` terms or per-dataset models. See
     [Evidence](../imaging_gp.md#choosing-and-l-from-the-evidence).
     Source: MacKay (1992), [references](../references.md#mackay1992).
 
@@ -2117,8 +2113,9 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     path : str or tuple of str or None, optional
         Path of the Image (default ``"env"``), a tuple of paths, or ``None`` for
         every such Image and disk (``TypeError`` if there is none).
-    priors : dict or sequence of str, optional
-        Free parameter priors or paths; non-pixel parameters enter ``z`` and ``J``.
+    priors : dict, optional
+        Priors of free parameters; non-latent parameters enter via ``log_prob``
+        and their ``JᵀJ`` block of the Hessian.
     regularizers : sequence, optional
         Fit regularizers; probabilistic ones (``Centroid``) enter ``χ²`` and ``J``.
 
@@ -2126,12 +2123,16 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     -------
     float
     """
-    if priors is None and isinstance(model, FitResult):
-        priors = model.values
     model = _single_model(model, "log_evidence")
-    latent_paths = _evidence_latents(model, path, "log_evidence", priors)
+    latent_paths = _evidence_latents(model, path, "log_evidence")
+    extra_paths = tuple(
+        p
+        for p in (priors or ())
+        if p not in latent_paths and not p.endswith("_vec")
+    )
+    all_paths = latent_paths + extra_paths
     r, jac = _residual_jacobian(
-        model, data, latent_paths, on_device=True, regularizers=regularizers
+        model, data, all_paths, on_device=True, regularizers=regularizers
     )
     chi2 = float(r @ r)
     log_norm = _log_norm(model, data)
@@ -2139,11 +2140,32 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
         onp.sum(onp.asarray(model.get(latent), dtype=float) ** 2)
         for latent in latent_paths
     )
-    # log det(I + JᵀJ) = Σ log(1 + s²); the singular values avoid forming
-    # the Gram matrix (see "Evidence" in docs/api/imaging.md).
-    singular = _singular_values(jac)
+    if not extra_paths:
+        # log det(I + JᵀJ) = Σ log(1 + s²); the singular values avoid forming
+        # the Gram matrix (see "Evidence" in docs/api/imaging.md).
+        singular = _singular_values(jac)
+        logdet = float(onp.sum(onp.log1p(singular**2)))
+        return float(-0.5 * chi2 - log_norm - 0.5 * z2 - 0.5 * logdet)
+    n_z = sum(int(onp.size(model.get(latent))) for latent in latent_paths)
+    jac_z = jac[:, :n_z]
+    jac_extra = onp.asarray(jac[:, n_z:], dtype=float)
+    singular, vt = _svd(jac_z)
     logdet = float(onp.sum(onp.log1p(singular**2)))
-    return float(-0.5 * chi2 - log_norm - 0.5 * z2 - 0.5 * logdet)
+    c = vt @ (onp.asarray(jac_z, dtype=float).T @ jac_extra)
+    schur = jac_extra.T @ jac_extra - (c.T / (1.0 + singular**2)) @ c
+    sign, logdet_extra = onp.linalg.slogdet(schur)
+    if sign <= 0:
+        return float(-onp.inf)
+    log_prior = sum(
+        float(onp.sum(onp.asarray(priors[p].log_prob(model.get(p)), float)))
+        for p in extra_paths
+    )
+    extra_term = (
+        log_prior
+        + 0.5 * jac_extra.shape[1] * float(onp.log(2.0 * onp.pi))
+        - 0.5 * float(logdet_extra)
+    )
+    return float(-0.5 * chi2 - log_norm - 0.5 * z2 - 0.5 * logdet + extra_term)
 
 
 @eqx.filter_jit
@@ -2223,8 +2245,6 @@ def laplace_samples(
         raise ValueError(
             "laplace_samples renders images only given both npix and fov_mas."
         )
-    if priors is None and isinstance(model, FitResult):
-        priors = model.values
     model = _single_model(model, "laplace_samples")
     fields = tuple(
         (p, _latent_path(p))
@@ -2242,14 +2262,28 @@ def laplace_samples(
     )
     zs = [onp.asarray(model.get(p), dtype=float) for p in all_paths]
     z = onp.concatenate([x.ravel() for x in zs])
-    singular, vt = _svd(jac)
+    n_z = sum(x.size for x in zs[: len(fields)])
+    jac_z = jac[:, :n_z]
+    singular, vt = _svd(jac_z)
     first, second = jax.random.split(key)
     e1 = onp.asarray(jax.random.normal(first, (n, singular.size)), float)
-    e2 = onp.asarray(jax.random.normal(second, (n, z.size)), float)
+    e2 = onp.asarray(jax.random.normal(second, (n, n_z)), float)
     # V diag((1+s²)^-½) ε₁ along the data's directions, and ε₂ projected
     # off them, (I - VVᵀ) ε₂, along the prior's.
     draws = (e1 / onp.sqrt(1.0 + singular**2)) @ vt
     draws += e2 - (e2 @ vt.T) @ vt
+    if extra_paths:
+        jac_extra = onp.asarray(jac[:, n_z:], dtype=float)
+        c = vt @ (onp.asarray(jac_z, dtype=float).T @ jac_extra)
+        a_inv_b = vt.T @ (c / (1.0 + singular[:, None] ** 2))
+        schur = jac_extra.T @ jac_extra - (c.T / (1.0 + singular**2)) @ c
+        _, third = jax.random.split(second)
+        e3 = onp.asarray(
+            jax.random.normal(third, (n, jac_extra.shape[1])), float
+        )
+        chol = onp.linalg.cholesky(onp.linalg.inv(schur))
+        draws_extra = e3 @ chol.T
+        draws = onp.hstack([draws - draws_extra @ a_inv_b.T, draws_extra])
     flat = z + draws
     edges = onp.cumsum([0] + [x.size for x in zs])
     pieces = [
@@ -2437,13 +2471,30 @@ def error_scale(
         ``OIData.with_error_scale``. A warning is issued if the block scales do
         not converge.
     """
-    if priors is None and isinstance(model, FitResult):
-        priors = model.values
     model = _single_model(model, "error_scale")
-    latent_paths = _evidence_latents(model, path, "error_scale", priors)
-    r, jac = _residual_jacobian(
-        model, data, latent_paths, on_device=True, regularizers=regularizers
+    latent_paths = _evidence_latents(model, path, "error_scale")
+    extra_paths = tuple(
+        p
+        for p in (priors or ())
+        if p not in latent_paths and not p.endswith("_vec")
     )
+    all_paths = latent_paths + extra_paths
+    r, jac = _residual_jacobian(
+        model, data, all_paths, on_device=True, regularizers=regularizers
+    )
+    n_z = sum(int(onp.size(model.get(p))) for p in latent_paths)
+    if extra_paths:
+        jac_z = onp.asarray(jac[:, :n_z], dtype=float)
+        u_extra, s_extra, _ = onp.linalg.svd(
+            onp.asarray(jac[:, n_z:], dtype=float), full_matrices=False
+        )
+        keep = s_extra > (1e-12 * s_extra[0] if s_extra.size else 0.0)
+        q = u_extra[:, keep]
+        r_extra = int(q.shape[1])
+        jac_z = jac_z - q @ (q.T @ jac_z)
+    else:
+        jac_z = jac
+        r_extra = 0
     datasets = _as_list(data)
     if by_observable:
         # Refuse data whose covariance is not s_b² D per block: their nuisance
@@ -2470,12 +2521,12 @@ def error_scale(
                 )
         rows, counts = _observable_blocks(datasets)
         # The block fixed point factors on the host (NumPy QR).
-        beta = _block_precisions(r, onp.asarray(jac), rows, counts)
+        beta = _block_precisions(r, onp.asarray(jac_z), rows, counts)
         return {k: float(1.0 / onp.sqrt(b)) for k, b in beta.items()}
     chi2 = float(r @ r)
     # Independent data, not residuals: penalty rows are not observations.
-    n_data = sum(d.n_independent for d in datasets)
-    lam = _singular_values(jac) ** 2
+    n_data = sum(d.n_independent for d in datasets) - r_extra
+    lam = _singular_values(jac_z) ** 2
     # Newton on g(β) = β χ² + γ(β) − N, increasing and concave: monotone from 0.
     beta = 0.0
     for _ in range(100):
