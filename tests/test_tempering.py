@@ -981,3 +981,18 @@ def test_the_short_arcs_see_the_tempered_gaps_and_errors(monkeypatch):
     assert seen == [4.0]
     run(12.0, 1.0)  # untempered: as before
     assert seen == [4.0, 1.0]
+
+
+def test_temper_factors_normalizes_by_night_scale():
+    # Night 0 has white noise inflated 20x; night 1 has correlated channels
+    # (rho = 0.85) at scale 1. Per-night scale normalization prevents the
+    # high-chi2 white night from drowning out night 1's correlation.
+    (d_white, _), _ = _nights(0.0, scale=20.0, seed=10, n=2)
+    (_, d_corr), pos = _nights(0.85, scale=1.0, seed=11, n=2)
+    with jax.enable_x64(True):
+        data = [cast_tree(d_white, "float64"), cast_tree(d_corr, "float64")]
+        factors = aliases._temper_factors(
+            data, pos, None, None, ["vis", "phi"]
+        )
+    assert factors.f > 2.0
+    assert factors.blocks["vis"] > 2.0 and factors.blocks["phi"] > 2.0

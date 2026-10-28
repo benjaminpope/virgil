@@ -947,7 +947,13 @@ class _Proposal:
     def log_pdf(self, xs, mahal=None):
         """Log density at ``xs`` (``mahal`` if already known)."""
         if mahal is None:
-            mahal = onp.sum(((xs - self.x) @ self.l_inv.T) ** 2, axis=1)
+            diff = onp.array(xs - self.x, float)
+            for k, period in _PERIODIC.items():
+                if k < diff.shape[-1]:
+                    diff[..., k] = (
+                        diff[..., k] + 0.5 * period
+                    ) % period - 0.5 * period
+            mahal = onp.sum((diff @ self.l_inv.T) ** 2, axis=-1)
         d, df = len(self.x), self.df
         return (
             -0.5 * (df + d) * onp.log1p(mahal / df)
@@ -2569,23 +2575,36 @@ def _temper_factors(data, positions, diam, vis_amp, names):
             if not onp.isfinite(value):  # no improvement: keep the position
                 x = x0
             model = _binary(np.asarray(x), dm)
+            r = onp.asarray(_amp_residuals(model, d, surface, amp), float)
+            chi2 = onp.asarray(surface.block_chi2(np.asarray(r)), float)
+            scales = dict(
+                zip(
+                    surface.names,
+                    onp.sqrt(onp.maximum(chi2 / surface.nu, 1e-12)),
+                )
+            )
             z = {}
             n_vis = int(onp.size(d.vis))
             n_phi = int(onp.size(d.phi))
             if n_vis:
                 # whitened (and V² amplitude profiled, as in the fit)
-                z["vis"] = onp.asarray(
-                    _amp_residuals(model, d, surface, amp)[:n_vis], float
-                )
+                z["vis"] = r[:n_vis] / scales["vis"]
             if n_phi and d.phase_offsets is None:
-                # the display residual: whitened closure phases lose the
-                # triangle layout the channel chains index. With
-                # ``with_closure_offsets`` the likelihood marginalizes an
+                # With ``with_closure_offsets`` the likelihood marginalizes an
                 # offset that this residual would show as channel-shared:
                 # that block takes the pooled f instead.
-                err = onp.asarray(d.flatten_data()[1], float)
-                r = onp.asarray(d.residuals(d.model(model)), float)
-                z["phi"] = (r / err)[n_vis : n_vis + n_phi]
+                if d.cp_noise is None:
+                    phi_r = r[n_vis : n_vis + n_phi]
+                else:
+                    cp = d.cp_noise
+                    flat = onp.zeros(cp.valid.size)
+                    flat[cp.keep] = r[n_vis : n_vis + cp.size]
+                    proj = onp.einsum(
+                        "gkm,gk->gm", cp.basis, flat.reshape(cp.valid.shape)
+                    )
+                    phi_r = onp.zeros(n_phi)
+                    onp.add.at(phi_r, cp.groups, onp.where(cp.mask, proj, 0.0))
+                z["phi"] = phi_r / scales["phi"]
             residuals.append(z)
             used.append(chains[i])
     return estimate_factors(residuals, used, names)

@@ -2438,3 +2438,18 @@ def test_short_arc_seeds_come_beside_the_position_seeds():
     log_z = lambda r, n: next(b.log_z for b in r.bands if b.n == n)  # noqa: E731
     # within a kept band the arcs never seed worse than the positions alone
     assert log_z(with_arcs, n_true) > log_z(without, n_true) - 5.0
+
+
+def test_proposal_log_pdf_wraps_periodic_angles():
+    x = onp.array([2.5, 0.01, 0.2, 0.5, 1.0, 1.0, 2.0, -1.0])
+    eye = onp.eye(len(x))
+    prop = aliases._Proposal(x, eye, eye, 0.0, 5.0)
+    delta = onp.array([0.0, -0.02, 0.0, 0.0, -2.0, -1.0, 0.0, 0.0])
+    unwrapped = (x + delta)[None, :]
+    wrapped = unwrapped.copy()
+    wrapped[0, 1] += 1.0
+    wrapped[0, 4] += 360.0
+    wrapped[0, 5] += 180.0
+    assert float(prop.log_pdf(wrapped)[0]) == pytest.approx(
+        float(prop.log_pdf(unwrapped)[0]), rel=1e-12
+    )
