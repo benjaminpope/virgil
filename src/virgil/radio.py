@@ -1231,9 +1231,12 @@ class CalibrationNuisance:
         # b_k = 1/(2π q_max,k) in mas, the natural unit of observation k's
         # offset; the reference observation has no offset site.
         obs = onp.asarray(data.obs)
+        q_default = float(q[q > 0].max()) if onp.any(q > 0) else 1.0
         q_max = onp.array(
             [
-                q[obs == k].max() if onp.any(obs == k) else onp.nan
+                float(q[(obs == k) & (q > 0)].max())
+                if onp.any((obs == k) & (q > 0))
+                else q_default
                 for k in range(self.n_obs)
             ]
         )

@@ -192,18 +192,36 @@ class ModelSpecError(ValueError):
     """A model cannot be stored as, or rebuilt from, a spec of public classes."""
 
 
+_MODEL_MODULES = (
+    "virgil.models",
+    "virgil.orbits",
+    "virgil.spectra",
+    "virgil.fields",
+)
+
+
 def _public_class(obj):
-    cls = type(obj)
-    module = cls.__module__
-    if not module.startswith("virgil.") or cls.__name__.startswith("_"):
+    import zodiax as zdx
+
+    cls = obj if isinstance(obj, type) else type(obj)
+    module = getattr(cls, "__module__", "")
+    name = getattr(cls, "__name__", "")
+    if (
+        not isinstance(cls, type)
+        or not issubclass(cls, zdx.Base)
+        or module not in _MODEL_MODULES
+        or name.startswith("_")
+    ):
         raise ModelSpecError(
-            f"{module}.{cls.__qualname__} is not a public virgil class."
+            f"{module}.{getattr(cls, '__qualname__', name)} is not a public "
+            "virgil model class (a zodiax.Base subclass from the model "
+            "modules)."
         )
-    if getattr(importlib.import_module(module), cls.__name__, None) is not cls:
+    if getattr(importlib.import_module(module), name, None) is not cls:
         raise ModelSpecError(
             f"{module}.{cls.__qualname__} is not importable by name."
         )
-    return {"module": module, "class": cls.__name__}
+    return {"module": module, "class": name}
 
 
 def model_spec(model):
@@ -274,9 +292,19 @@ def model_from_spec(spec, arrays):
             return node
         if "$module" in node:
             info = node["$module"]
-            cls = getattr(
-                importlib.import_module(info["module"]), info["class"]
-            )
+            module, name = info.get("module", ""), info.get("class", "")
+            if (
+                not isinstance(module, str)
+                or not isinstance(name, str)
+                or module not in _MODEL_MODULES
+                or name.startswith("_")
+            ):
+                raise ModelSpecError(
+                    f"{module}.{name} is not in the allowed virgil model "
+                    f"modules {_MODEL_MODULES}."
+                )
+            cls = getattr(importlib.import_module(module), name, None)
+            _public_class(cls)
             fields = {f.name for f in dataclasses.fields(cls)}
             stored = set(info["fields"])
             if fields != stored:
