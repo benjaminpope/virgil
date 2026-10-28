@@ -1061,7 +1061,13 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 used[:] = True
             else:
                 used[onp.asarray(self.phi_index)] = True
-        return used if used.any() else onp.ones(n, dtype=bool)
+        for block in self.extras:
+            if isinstance(block, TripleAmplitude):
+                for leg in (block.i1, block.i2, block.i3):
+                    used[onp.asarray(leg)] = True
+            elif block.sample is not None:
+                used[onp.asarray(block.sample)] = True
+        return used
 
     @property
     def has_phases(self):

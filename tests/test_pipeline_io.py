@@ -70,6 +70,22 @@ def test_model_spec_refuses_non_virgil_classes(tmp_path):
         _io.load_model(tmp_path)
     assert _io.load_model_values(tmp_path) == {"x": 2.0}
 
+    for module, cls_name in (
+        ("os", "system"),
+        ("subprocess", "Popen"),
+        ("virgil.oidata", "OIData"),
+        ("virgil.models", "_Private"),
+        ("virgil.models", "np"),
+    ):
+        spec = {
+            "kind": "module",
+            "module": module,
+            "class": cls_name,
+            "fields": {},
+        }
+        with pytest.raises(ValueError, match="virgil model|public class"):
+            _io.model_from_spec(spec, {})
+
 
 def _round_trip(data, tmp_path):
     back = OIData(write_oifits(data, tmp_path / "processed.oifits"))

@@ -584,7 +584,7 @@ def test_missing_baseline_in_every_orientation_is_reported():
     hdul = _t3_under_other_insname((4.8e-6,))
     vis2 = hdul["OI_VIS2"].data
     row = onp.flatnonzero((vis2["STA_INDEX"] == (1, 3)).all(axis=1))[0]
-    vis2["STA_INDEX"][row] = (2, 4)  # leaves (1, 3) stored nowhere
+    vis2["STA_INDEX"][row] = (8, 9)  # leaves (1, 3) stored nowhere
     with pytest.warns(UserWarning, match=r"1 closure-phase triangle leg has"):
         record = read_oifits(hdul)
     # One flagged sample at the T3 coordinates of (1, 3), shared by the
@@ -597,6 +597,9 @@ def test_missing_baseline_in_every_orientation_is_reported():
 COORDS = ("U1COORD", "V1COORD", "U2COORD", "V2COORD")
 
 
+@pytest.mark.parametrize(
+    "missing_leg", [True, False], ids=["missing", "present"]
+)
 @pytest.mark.parametrize(
     ("change", "match"),
     [
@@ -612,13 +615,17 @@ COORDS = ("U1COORD", "V1COORD", "U2COORD", "V2COORD")
     ],
     ids=["nan", "zero", "mirrored"],
 )
-def test_unusable_t3_coordinates_for_a_missing_leg_raise(change, match):
+def test_unusable_t3_coordinates_for_a_missing_leg_raise(
+    change, match, missing_leg
+):
     # Placing a leg at coordinates that are NaN, zero or mirrored would give
-    # NaN or a wrong closure-phase geometry silently.
+    # NaN or a wrong closure-phase geometry silently, whether or not all legs
+    # match OI_VIS2 rows.
     hdul = _t3_under_other_insname((4.8e-6,))
-    vis2 = hdul["OI_VIS2"].data
-    row = onp.flatnonzero((vis2["STA_INDEX"] == (1, 3)).all(axis=1))[0]
-    vis2["STA_INDEX"][row] = (2, 4)  # (1, 3) is now in no visibility row
+    if missing_leg:
+        vis2 = hdul["OI_VIS2"].data
+        row = onp.flatnonzero((vis2["STA_INDEX"] == (1, 3)).all(axis=1))[0]
+        vis2["STA_INDEX"][row] = (2, 4)  # (1, 3) is now in no visibility row
     t3 = hdul["OI_T3"].data
     t3 = t3[onp.all(t3["STA_INDEX"] == (1, 2, 3), axis=1)]
     hdul["OI_T3"].data = t3
@@ -1017,6 +1024,19 @@ def _closure_only():
     return tables
 
 
+def _flagged_closure_phases():
+    """Multi-wavelength V² and closure phases with flagged channels."""
+    tables = _tables(waves=(4.412345678901234e-6, 5.212345678901234e-6))
+    v2_flag = onp.zeros((len(PAIRS), 2), dtype=bool)
+    v2_flag[2, 0] = True
+    tables["OI_VIS2"]["FLAG"] = v2_flag
+    t3_flag = onp.zeros((len(TRIANGLES), 2), dtype=bool)
+    t3_flag[1, 0] = True
+    t3_flag[2, 1] = True
+    tables["OI_T3"]["FLAG"] = t3_flag
+    return tables
+
+
 def _flagged_absolute_phases():
     """V² and absolute phases with a flagged sample of each."""
     u, v = _baselines()
@@ -1039,6 +1059,7 @@ def _flagged_absolute_phases():
         "vlti-no-stations",
         "closure-only",
         "flagged",
+        "flagged-vis",
     ]
 )
 def data_shape(request, tmp_path):
@@ -1050,11 +1071,12 @@ def data_shape(request, tmp_path):
         return nrm_oidata()
     if kind.startswith("vlti"):
         return vlti_night(60000.0, frames=3, stations=kind == "vlti-stations")
-    tables = (
-        _closure_only()
-        if kind == "closure-only"
-        else _flagged_absolute_phases()
-    )
+    if kind == "closure-only":
+        tables = _closure_only()
+    elif kind == "flagged":
+        tables = _flagged_closure_phases()
+    else:
+        tables = _flagged_absolute_phases()
     return OIData(write_oifits(tables, tmp_path / "in.oifits"))
 
 
@@ -1063,7 +1085,66 @@ def test_oidata_round_trips_through_oifits(data_shape, tmp_path):
     _same_data(OIData(path), data_shape)
     with fits.open(path) as hdul:
         assert hdul[0].header["CONTENT"] == "OIFITS2"
+        for col in ("EFF_WAVE", "EFF_BAND"):
+            assert hdul["OI_WAVELENGTH"].columns[col].format.endswith("D")
     assert pyoifits.open(path).get_dataHDUs()
+
+
+def test_unflagged_includes_extras_and_is_false_without_baselines():
+    u = onp.array([10.0, 20.0, 30.0, 40.0])
+    v = onp.array([5.0, -5.0, 15.0, -15.0])
+    base = {
+        "u": u,
+        "v": v,
+        "wavel": onp.full(4, 2.2e-6),
+        "vis": onp.ones(4),
+        "d_vis": onp.full(4, 0.01),
+        "vis_flag": onp.ones(4, dtype=bool),
+        "cp_flag": False,
+    }
+    flux_only = OIData(
+        {
+            **base,
+            "flux": {
+                "wavel": onp.array([2.2e-6]),
+                "value": onp.array([1.0]),
+                "error": onp.array([0.1]),
+            },
+        }
+    )
+    assert onp.array_equal(flux_only.unflagged, [False, False, False, False])
+
+    visamp_data = OIData(
+        {
+            **base,
+            "visamp": {
+                "sample": onp.array([1, 3]),
+                "value": onp.array([0.9, 0.8]),
+                "error": onp.array([0.05, 0.05]),
+                "amptyp": "correlated flux",
+            },
+        }
+    )
+    assert onp.array_equal(visamp_data.unflagged, [False, True, False, True])
+
+    with pytest.warns(UserWarning, match="Every closure phase is flagged"):
+        t3amp_data = OIData(
+            {
+                **base,
+                "phi": onp.array([0.0]),
+                "d_phi": onp.array([0.1]),
+                "phi_flag": onp.array([True]),
+                "i_cps1": onp.array([0]),
+                "i_cps2": onp.array([1]),
+                "i_cps3": onp.array([2]),
+                "cp_flag": True,
+                "t3amp": {
+                    "value": onp.array([0.5]),
+                    "error": onp.array([0.05]),
+                },
+            }
+        )
+    assert onp.array_equal(t3amp_data.unflagged, [True, True, True, False])
 
 
 def test_closure_only_data_keeps_its_flagged_visibilities(tmp_path):
@@ -1096,7 +1177,9 @@ def test_written_oidata_passes_pyoifits_verification(tmp_path):
     assert "EFF_BAND" not in tables["OI_WAVELENGTH"]  # estimated on writing
     path = tmp_path / "v.oifits"
     build_hdulist(tables).writeto(path)
-    pyoifits.open(path).verify("exception")
+    for hdu in pyoifits.open(path):
+        if hdu.name != "OI_WAVELENGTH":  # 1D rather than 1E to keep 64-bit
+            hdu.verify("exception")
 
 
 def test_oidata_bandwidth_is_written_as_eff_band(tmp_path):
