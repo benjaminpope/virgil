@@ -137,10 +137,13 @@ def _unit_orbit(dt, period, dt_peri, ecc):
     Computed from the true anomaly: ``X = (r/a) cos f``, ``Y = (r/a) sin f``.
     """
     mean_anomaly = 2.0 * np.pi * (dt - dt_peri) / period
+    dtype = np.result_type(mean_anomaly, ecc, float)
+    eps = np.finfo(dtype).eps
+    ecc = np.minimum(np.asarray(ecc, dtype=dtype), 1.0 - eps)
     sin_f, cos_f = _jaxoplanet().core.kepler(  # true anomaly
         mean_anomaly, ecc * np.ones_like(mean_anomaly)
     )
-    radius = (1.0 - ecc**2) / (1.0 + ecc * cos_f)
+    radius = (1.0 - ecc**2) / np.maximum(1.0 + ecc * cos_f, eps)
     return radius * cos_f, radius * sin_f
 
 
