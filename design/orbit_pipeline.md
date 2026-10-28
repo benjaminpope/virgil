@@ -64,8 +64,8 @@ Earlier rulings still hold:
 4. **Published information reaches only the comparison stage**, enforced by tests.
 5. **Self-documenting fixes, under virgil's growth rules (2026-10-16).** Every solved problem has:
    - a **named test** that pins it;
-   - **one row** in the "Binary orbits: solved problems" table in AGENTS.md (both repos), naming that test. Named targets (Gl 229 nights, AL Dor, ι Peg) and design history live here or in design notes, never in public docstrings;
-   - a **one-line comment** at the code that handles it, pointing at the row (e.g. `# Solved problem: single-night alias peaks (AGENTS.md table)`), not an essay.
+   - **one row** in the "Binary orbits: solved problems" table (`design/orbit_solved_problems.md` here, `AGENTS.md` in virgil-validation), naming that test. Named targets (Gl 229 nights, AL Dor, ι Peg) and design history live here or in design notes, never in public docstrings;
+   - a **one-line comment** at the code that handles it, pointing at the row (e.g. `# Solved problem: single-night alias peaks (orbit_solved_problems.md)`), not an essay.
 
    Public docstrings say only what a function does: a summary, parameters, returns and one short example, about 40 lines at most (over 60 counts as a defect). Derivations and the reasons behind defaults go in docs pages (`docs/orbit_fitting.md`, `docs/pipeline.md`).
 

@@ -617,7 +617,7 @@ def arc_profile(
             )
             for i in best
         ]
-        if sign_free:  # AGENTS.md, "Label swap" row
+        if sign_free:  # orbit_solved_problems.md, "Label swap" row
             found = found + starting_orbits(
                 positions
                 if not jitter_mas and cov_scale == 1.0
