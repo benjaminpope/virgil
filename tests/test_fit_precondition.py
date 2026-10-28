@@ -470,7 +470,11 @@ def test_the_fitted_log_brightness_is_gauge_fixed_for_every_method(
         assert onp.all(onp.isfinite(x))
         # deliberate: the gauge is exact only up to rounding in the working
         # dtype (one float32 ulp, about 2e-7, under float32).
-        tol = 1e-9 if x.dtype == onp.float64 else 8 * onp.finfo(x.dtype).eps
+        tol = (
+            1e-9
+            if x.dtype == onp.float64
+            else float(8 * onp.finfo(x.dtype).eps)
+        )
         assert float(jax.nn.logsumexp(x)) == pytest.approx(0.0, abs=tol)
         assert x[_lit(x, 1e-8)].min() > -25.0  # ln(1e-8 / 64 pixels) is -22.6
         onp.testing.assert_allclose(
