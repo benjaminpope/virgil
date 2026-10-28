@@ -1067,7 +1067,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                     used[onp.asarray(leg)] = True
             elif block.sample is not None:
                 used[onp.asarray(block.sample)] = True
-        return used
+        return used if used.any() else onp.ones(n, dtype=bool)
 
     @property
     def has_phases(self):

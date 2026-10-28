@@ -598,9 +598,6 @@ COORDS = ("U1COORD", "V1COORD", "U2COORD", "V2COORD")
 
 
 @pytest.mark.parametrize(
-    "missing_leg", [True, False], ids=["missing", "present"]
-)
-@pytest.mark.parametrize(
     ("change", "match"),
     [
         (lambda t3: t3.__setitem__("U1COORD", onp.nan), "NaN or zero"),
@@ -615,23 +612,35 @@ COORDS = ("U1COORD", "V1COORD", "U2COORD", "V2COORD")
     ],
     ids=["nan", "zero", "mirrored"],
 )
-def test_unusable_t3_coordinates_for_a_missing_leg_raise(
-    change, match, missing_leg
-):
+def test_unusable_t3_coordinates_for_a_missing_leg_raise(change, match):
     # Placing a leg at coordinates that are NaN, zero or mirrored would give
-    # NaN or a wrong closure-phase geometry silently, whether or not all legs
-    # match OI_VIS2 rows.
+    # NaN or a wrong closure-phase geometry silently.
     hdul = _t3_under_other_insname((4.8e-6,))
-    if missing_leg:
-        vis2 = hdul["OI_VIS2"].data
-        row = onp.flatnonzero((vis2["STA_INDEX"] == (1, 3)).all(axis=1))[0]
-        vis2["STA_INDEX"][row] = (2, 4)  # (1, 3) is now in no visibility row
+    vis2 = hdul["OI_VIS2"].data
+    row = onp.flatnonzero((vis2["STA_INDEX"] == (1, 3)).all(axis=1))[0]
+    vis2["STA_INDEX"][row] = (2, 4)  # (1, 3) is now in no visibility row
     t3 = hdul["OI_T3"].data
     t3 = t3[onp.all(t3["STA_INDEX"] == (1, 2, 3), axis=1)]
     hdul["OI_T3"].data = t3
     change(t3)
     with pytest.raises(ValueError, match=match):
         read_oifits(hdul)
+
+
+def test_mirrored_t3_coordinates_raise_even_when_all_legs_match():
+    # Even when every leg matches OI_VIS2, finite non-zero OI_T3 coordinates
+    # in the opposite baseline direction are rejected, while legacy zero/NaN
+    # OI_T3 coordinates still load cleanly from OI_VIS2.
+    hdul = _t3_under_other_insname((4.8e-6,))
+    t3 = hdul["OI_T3"].data
+    for n in COORDS:
+        t3[n] = -t3[n]
+    with pytest.raises(ValueError, match="opposite baseline direction"):
+        read_oifits(hdul)
+    for val in (0.0, onp.nan):
+        for n in COORDS:
+            t3[n] = val
+        assert read_oifits(hdul)["phi"].size == len(TRIANGLES)
 
 
 def _without_v2_of(pair, waves):
@@ -1088,7 +1097,7 @@ def test_oidata_round_trips_through_oifits(data_shape, tmp_path):
     assert pyoifits.open(path).get_dataHDUs()
 
 
-def test_unflagged_includes_extras_and_is_false_without_baselines():
+def test_unflagged_includes_extras():
     u = onp.array([10.0, 20.0, 30.0, 40.0])
     v = onp.array([5.0, -5.0, 15.0, -15.0])
     base = {
@@ -1110,7 +1119,7 @@ def test_unflagged_includes_extras_and_is_false_without_baselines():
             },
         }
     )
-    assert onp.array_equal(flux_only.unflagged, [False, False, False, False])
+    assert onp.array_equal(flux_only.unflagged, [True, True, True, True])
 
     visamp_data = OIData(
         {

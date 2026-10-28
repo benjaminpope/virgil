@@ -574,18 +574,25 @@ def _check_t3_coordinates(legs_uv, founds, record, ins, triangle, mjd):
         f"Closure-phase triangle {tuple(int(x) for x in triangle)} (INSNAME "
         f"{ins[1]!r}, ARRNAME {ins[0]!r}, MJD {mjd})"
     )
-    for uu, vv in legs_uv:
-        if not (onp.isfinite(uu) and onp.isfinite(vv)) or (
-            uu == 0 and vv == 0
-        ):
-            raise ValueError(
-                f"{where} has OI_T3 coordinates ({uu}, {vv}) that are NaN "
-                "or zero."
-            )
+    for k, found in enumerate(founds):
+        if found is None:
+            uu, vv = legs_uv[k]
+            if not (onp.isfinite(uu) and onp.isfinite(vv)) or (
+                uu == 0 and vv == 0
+            ):
+                raise ValueError(
+                    f"{where} has a leg with no visibility row, and its OI_T3 "
+                    f"coordinates ({uu}, {vv}) are NaN or zero, so the leg "
+                    "cannot be placed."
+                )
     for j, found in enumerate(founds):
         if found is None or found[0] >= record["u"].size:
             continue
         ut, vt = legs_uv[j]
+        if not (onp.isfinite(ut) and onp.isfinite(vt)) or (
+            ut == 0 and vt == 0
+        ):
+            continue
         us, vs = record["u"][found[0]], record["v"][found[0]]
         if onp.hypot(us - ut, vs - vt) > 0.1 * max(onp.hypot(us, vs), 1.0):
             raise ValueError(

@@ -78,12 +78,13 @@ def test_model_spec_refuses_non_virgil_classes(tmp_path):
         ("virgil.models", "np"),
     ):
         spec = {
-            "kind": "module",
-            "module": module,
-            "class": cls_name,
-            "fields": {},
+            "$module": {
+                "module": module,
+                "class": cls_name,
+                "fields": {},
+            }
         }
-        with pytest.raises(ValueError, match="virgil model|public class"):
+        with pytest.raises(_io.ModelSpecError, match="public virgil class"):
             _io.model_from_spec(spec, {})
 
 
