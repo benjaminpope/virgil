@@ -422,7 +422,7 @@ _BRANCHES = [
         lambda: checks.divergences(
             0.1, walls={"radius_sd": 3.0, "exposed": 0.4}
         ),
-        "warn",
+        "fail",
     ),
     (
         "div-walls-barely-exposed",
@@ -831,6 +831,14 @@ def test_every_branch_returns_its_named_status_and_a_json_ready_check(
     assert isinstance(check.message, str) and check.message.strip()
     record = json.loads(json.dumps(check.to_dict(), allow_nan=False))
     assert Check.from_dict(record).to_dict() == record
+
+
+def test_a_stray_wall_hit_is_not_blamed_for_the_divergences():
+    few = checks.divergences(0.1, walls={"radius_sd": 3, "exposed": 0.01})
+    many = checks.divergences(0.1, walls={"radius_sd": 3, "exposed": 0.4})
+    assert few.status == many.status == "fail"
+    assert "hard wall" not in few.message
+    assert "hard wall" in many.message
 
 
 @pytest.mark.parametrize(

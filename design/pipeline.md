@@ -169,16 +169,16 @@ Decisions:
   the midpoints between minima; the table is `fit.models.<name>.lobes`
   (`diam_bounds_mas`, `diam_mas`, `chi2`, `chi2_reduced`, `delta_chi2`),
   and the `multimodal` check cites it. NUTS runs on the best lobe only;
-  lobe evidence is left to nested sampling (virgil#309). The limb-darkened
+  lobe evidence is left to nested sampling (virgil#578). The limb-darkened
   fit starts from a grid of diameters as well as the scan.
   Residual divergences are still reported, not hidden: within the best
   lobe the posterior is a cell with hard walls in the diameter and in
   q1, q2 (a limb-darkened null moves with q), and NUTS rejects the
   trajectories that cross them. A wall probe (steps of two posterior
   standard deviations that raise chi^2 by more than 1000) confirms them,
-  and then `divergences` warns instead of failing and names the walls. The
-  draws match a brute-force grid posterior on the tutorial star, with a
-  reduced ESS. A bispectrum likelihood (virgil#309) would remove the walls.
+  and `divergences` still fails but names the walls as the probable cause.
+  The draws match a brute-force grid posterior on the tutorial star, with a
+  reduced ESS. A bispectrum likelihood (virgil#578) would remove the walls.
 - `processed`, `_noise` and `_report` moved from `BinaryPipeline` into the
   base class, since every pipeline needs them.
 
