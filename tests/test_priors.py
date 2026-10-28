@@ -314,3 +314,70 @@ def test_hierarchical_scales_no_data_reproduce_the_population():
     # assumes independent ones. Fixed [::10] thinning would throw away most
     # of the power of the 1500 draws.
     assert stats.ks_2samp(thinned(log_s), direct).pvalue > 1e-3
+
+
+def test_centred_hierarchical_scales_have_positive_definite_curvature():
+    from virgil.fitting import (
+        NoLeastSquaresForm,
+        fit,
+        gauss_newton_diag,
+        gauss_newton_mass,
+    )
+
+    population, scales = hierarchical_scales("s", 3, centred=True)
+    target = np.log(np.array([0.8, 1.1, 1.5]))
+
+    def term(values):
+        return (values["s_log"] - target) / 0.1
+
+    init = {"s_median": 1.0, "s_spread": 0.3, "s_log": np.zeros(3)}
+    noise = {
+        "vis_scale": scales[0],
+        "phi_scale": scales[1],
+        "vis_error": scales[2],
+    }
+    with pytest.raises(NoLeastSquaresForm):
+        fit(
+            lambda **_: None,
+            population,
+            (),
+            noise=noise,
+            likelihoods=[term],
+            init=init,
+            method="lm",
+        )
+    result = fit(
+        lambda **_: None,
+        population,
+        (),
+        noise=noise,
+        likelihoods=[term],
+        init=init,
+    )
+    assert result.info["method"] == "lbfgs" and result.info["converged"]
+    assert float(result.values["s_median"]) == pytest.approx(
+        float(np.exp(np.mean(target))), rel=0.05
+    )
+    diag = gauss_newton_diag(
+        lambda **_: None,
+        population,
+        (),
+        result.values,
+        noise=noise,
+        likelihoods=[term],
+    )
+    assert all(onp.all(onp.asarray(v) > 0.0) for v in diag.values())
+    for flat in (True, False):
+        mass = gauss_newton_mass(
+            lambda **_: None,
+            population,
+            (),
+            result.values,
+            noise=noise,
+            likelihoods=[term],
+            flat_coordinates=flat,
+        )
+        ((sites, cov),) = mass["inverse_mass_matrix"].items()
+        assert {"s_median", "s_spread", "s_log"} <= set(sites)
+        eig = onp.linalg.eigvalsh(onp.asarray(cov))
+        assert onp.all(onp.isfinite(eig)) and eig.min() > 0.0
