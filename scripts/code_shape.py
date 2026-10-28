@@ -1,7 +1,8 @@
 """Measure the shape of ``src/virgil``: private helpers, wrappers, duplicates.
 
 Usage: ``python scripts/code_shape.py [--json out.json] [--extra DIR ...]
-[--max-stmts 3] [--since REF]``.
+[--max-stmts 3] [--since REF]``;
+``--audit-stamps src/virgil`` lists every existing stamp as vacuous or kept.
 
 Reads only. Prints a per-module table and the candidate lists of
 ``design/code_shape_audit.md``:
@@ -22,7 +23,8 @@ private name.
 ``--since REF`` is the CI gate (rule 8 in AGENTS.md): it prints each private
 def (module-level, nested or method) that the tree adds relative to ``REF``
 and that is called exactly once in the package, and exits 1 if there is any.
-Exempt: a ``# deliberate: <reason>`` comment on the def line or the line above;
+Exempt: a ``# deliberate: <reason>`` comment on the def line or the line above
+(a reason that starts with a ``_VACUOUS_STEMS`` stem is rejected, for added or changed stamps);
 jit / custom_jvp / custom_vjp / ``.defjvp`` / ``.defvjp`` / ``.register``
 decorators; a def referenced as a value (a callback); a name tests import or take as an attribute
 (``tests/lint`` excluded). Calls count in the defining module plus other modules
@@ -211,11 +213,47 @@ _EXEMPT_DECORATOR = re.compile(
 )
 
 
-def _valid_deliberate(line):
-    """A ``# deliberate:`` comment with a non-empty reason (specificity is for review)."""
-    return "# deliberate:" in line and bool(
-        line.split("# deliberate:", 1)[1].strip()
+_VACUOUS_STEMS = (
+    "jit boundary",
+    "named step",
+    "test seam",
+    "tested directly",
+    "unit-tested",
+    "stage function",
+    "stubbed by tests",
+    "imported by",
+    "readability",
+    "tests probe",
+    "tests score",
+    "tests call",
+)
+
+
+def _reason(line):
+    """The text after ``# deliberate:`` on ``line`` (``None`` if absent)."""
+    if "# deliberate:" not in line:
+        return None
+    return line.split("# deliberate:", 1)[1].strip()
+
+
+def _normal(text):
+    """Lower-case ``text`` with hyphens, underscores and runs of space as single spaces, minus a leading article."""
+    t = re.sub(r"[\s_-]+", " ", text.lower().lstrip("\"'`([ "))
+    return re.sub(r"^(a|an|the) ", "", t)
+
+
+def _vacuous(reason):
+    """A reason that starts with a ``_VACUOUS_STEMS`` stem (or ``named <word> step``) after normalizing."""
+    t = _normal(reason)
+    return t.startswith(tuple(map(_normal, _VACUOUS_STEMS))) or bool(
+        re.match(r"named \w+ step", t)
     )
+
+
+def _valid_deliberate(line):
+    """A ``# deliberate:`` comment with a non-empty, non-vacuous reason."""
+    reason = _reason(line)
+    return bool(reason) and not _vacuous(reason)
 
 
 def _all_defs(tree):
@@ -400,6 +438,30 @@ def find_single_use(head, base, tests_text=""):
     return found
 
 
+def _stamps(head):
+    """``[(path, line, reason, qualname)]`` of every ``# deliberate:`` stamp on a def (its line or the one above)."""
+    out = []
+    for path, text in head.items():
+        lines = text.splitlines()
+        for q, node in _all_defs(ast.parse(text)):
+            top = min([node.lineno] + [d.lineno for d in node.decorator_list])
+            for i in {top - 2, node.lineno - 1}:
+                reason = _reason(lines[i]) if 0 <= i < len(lines) else None
+                if reason is not None:
+                    out.append((path, i + 1, reason, q))
+    return sorted(set(out))
+
+
+def find_vacuous_stamps(head, base):
+    """Vacuous or empty stamps in ``head`` that are not already on the same-named def in ``base``."""
+    old = {(q, r) for _, _, r, q in _stamps(base)}
+    return [
+        f"{path}:{line} # deliberate: {reason}"
+        for path, line, reason, q in _stamps(head)
+        if (q, reason) not in old and (not reason or _vacuous(reason))
+    ]
+
+
 def find_oversized_functions(head, base, max_lines=MAX_FUNC_LINES):
     """Functions in ``head`` that are new or grew vs ``base`` and exceed ``max_lines`` body lines."""
     trees = {p: ast.parse(t) for p, t in head.items()}
@@ -461,7 +523,27 @@ def main():
     ap.add_argument("--extra", nargs="*", default=[])
     ap.add_argument("--max-stmts", type=int, default=3)
     ap.add_argument("--since")
+    ap.add_argument("--audit-stamps", metavar="DIR")
     a = ap.parse_args()
+    if a.audit_stamps:
+        root = pathlib.Path(a.audit_stamps)
+        stamps = _stamps(
+            {
+                str(f.relative_to(root)): f.read_text()
+                for f in root.rglob("*.py")
+            }
+        )
+        bad = [x for x in stamps if not x[2] or _vacuous(x[2])]
+        print(
+            f"stamps: {len(stamps)}; vacuous {len(bad)}; kept {len(stamps) - len(bad)}"
+        )
+        for tag, group in (
+            ("vacuous", bad),
+            ("kept", [x for x in stamps if x not in bad]),
+        ):
+            for path, line, reason, _ in group:
+                print(f"{tag:8s} {a.audit_stamps}/{path}:{line} {reason}")
+        return
     if a.since:
         tests = "\n".join(
             p.read_text()
@@ -471,6 +553,7 @@ def main():
         head, base = _read_tree(), _read_tree(a.since)
         found = find_single_use(head, base, tests)
         oversized = find_oversized_functions(head, base)
+        stamps = find_vacuous_stamps(head, base)
         print(f"single-use private defs added since {a.since}: {len(found)}")
         for f in found:
             print(f"  {f}")
@@ -480,7 +563,13 @@ def main():
             )
             for f in oversized:
                 print(f"  {f}")
-        raise SystemExit(bool(found or oversized))
+        if stamps:
+            print(
+                f"vacuous # deliberate: stamps added/changed since {a.since}: {len(stamps)}"
+            )
+            for f in stamps:
+                print(f"  {f}")
+        raise SystemExit(bool(found or oversized or stamps))
     defs, modules = collect()
     extra = grep_extra(
         {d["name"] for d in defs},
