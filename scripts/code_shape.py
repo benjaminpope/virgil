@@ -526,7 +526,13 @@ def main():
     ap.add_argument("--audit-stamps", metavar="DIR")
     a = ap.parse_args()
     if a.audit_stamps:
-        stamps = _stamps(_read_tree())
+        root = pathlib.Path(a.audit_stamps)
+        stamps = _stamps(
+            {
+                str(f.relative_to(root)): f.read_text()
+                for f in root.rglob("*.py")
+            }
+        )
         bad = [x for x in stamps if not x[2] or _vacuous(x[2])]
         print(
             f"stamps: {len(stamps)}; vacuous {len(bad)}; kept {len(stamps) - len(bad)}"
@@ -547,9 +553,7 @@ def main():
         head, base = _read_tree(), _read_tree(a.since)
         found = find_single_use(head, base, tests)
         oversized = find_oversized_functions(head, base)
-        found += [
-            f"{x} (vacuous stamp)" for x in find_vacuous_stamps(head, base)
-        ]
+        stamps = find_vacuous_stamps(head, base)
         print(f"single-use private defs added since {a.since}: {len(found)}")
         for f in found:
             print(f"  {f}")
@@ -559,7 +563,13 @@ def main():
             )
             for f in oversized:
                 print(f"  {f}")
-        raise SystemExit(bool(found or oversized))
+        if stamps:
+            print(
+                f"vacuous # deliberate: stamps added/changed since {a.since}: {len(stamps)}"
+            )
+            for f in stamps:
+                print(f"  {f}")
+        raise SystemExit(bool(found or oversized or stamps))
     defs, modules = collect()
     extra = grep_extra(
         {d["name"] for d in defs},
