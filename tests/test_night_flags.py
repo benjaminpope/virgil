@@ -94,6 +94,9 @@ def test_chi2_high_is_judged_within_each_mode():
     mode = ["A"] * 4 + ["B"] * 3
     assert sum(bool(f) for f in _flag_chi2(chi2, 3.0)) == 3
     assert not any(_flag_chi2(chi2, 3.0, mode))
+    # Even when mode B has only 2 well-fitted nights (>= 3x mode A's), its
+    # lower night floors the fallback median so neither is flagged.
+    assert not any(_flag_chi2(chi2[:-1], 3.0, mode[:-1]))
     # A real outlier inside a mode is still found.
     chi2[5] = 400.0
     found = _flag_chi2(chi2, 3.0, mode)
@@ -104,7 +107,7 @@ def test_chi2_high_is_judged_within_each_mode():
     # still caught while normal nights pass.
     pooled = _flag_chi2([1.0, 500.0, 1.0, 1.0, 1.0], 3.0, list("aabbb"))
     assert [bool(f) for f in pooled] == [False, True, False, False, False]
-    assert "of the same mode" not in pooled[1][0].reason
+    assert "pooled across 5 nights" in pooled[1][0].reason
 
 
 def test_mode_keys_tolerate_wavelength_jitter_but_not_other_setups():

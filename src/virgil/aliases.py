@@ -779,10 +779,10 @@ class _Settings:
     @property
     def flux_scan(self):
         """The fluxes tried for each position-level candidate: log-spaced
-        inside the range, and, for near-equal fluxes (``sign_free``), also
-        0.7 and 0.95 of its upper end."""
+        inside the range, and, for near-equal fluxes (``sign_free`` or
+        ``flip_flux``), also 0.7 and 0.95 of its upper end."""
         scan = onp.geomspace(*self.flux_range, _N_FLUX + 2)[1:-1]
-        if self.sign_free:
+        if self.sign_free or self.flip_flux:
             top = onp.array([0.7, 0.95]) * self.flux_range[1]
             scan = onp.append(scan, top[top >= self.flux_range[0]])
         return scan
@@ -1104,10 +1104,10 @@ def _mixture_weights(draws):
 def _candidates(settings, band, bounds, rng, orbits):
     """The band's seed pool: position-level ``orbits`` (``[(KeplerOrbit,
     χ²), ...]`` or None) at several fluxes, both senses of motion and (with
-    ``flip_flux``) both ω conjugates, then ``n_random`` random orbits."""
+    ``sign_free``) both ω reflections, then ``n_random`` random orbits."""
     s = settings
     diam = s.diam_seed if s.fit_diam else None
-    omegas = (0.0, 180.0) if s.flip_flux else (0.0,)
+    omegas = (0.0, 180.0) if s.sign_free else (0.0,)
     pool = []
     for orbit, _ in orbits or ():
         for flux in s.flux_scan:
@@ -1223,12 +1223,11 @@ def _refine(problem, settings, bounds, pool, times, forced=()):
     """Rank the candidates by the observables and refine the best distinct
     few into modes.
 
-    The pool ranking and the final mode values use ``problem`` (including the
-    outlier mixture when enabled); each start is first refined on the plain
-    likelihood and then polished under ``problem`` (see
+    The ranking and initial refinement use the plain likelihood; each refined
+    start is then polished under ``problem`` before deduplication (see
     [`_Problem.without_mixture`][virgil.aliases._Problem.without_mixture]),
-    so that the mixture can down-weight an outlier night without stalling a
-    start that initially misses several nights.
+    so that the mixture can down-weight a night of a basin the search found
+    but cannot hide the basin.
 
     Returns the distinct modes ``[(x, loglike), ...]`` (the log likelihood
     of the problem given) and the number of starts that failed. Only a
@@ -1239,7 +1238,7 @@ def _refine(problem, settings, bounds, pool, times, forced=()):
     """
     s = settings
     search = _plain(problem)
-    score = _score_pool(problem, s, pool)
+    score = _score_pool(search, s, pool)
     keep = onp.argsort(-score, kind="stable")[: 4 * s.n_refine]
     ranked = _distinct(
         [(pool[i], score[i]) for i in keep],
@@ -1499,39 +1498,18 @@ def _fit_band(problem, settings, band, orbits, times):
     result = _band_result(
         problem, settings, band, modes, z_lap, z_is, n_failed
     )
-    result.labels_free = _labels_free(result, settings, times)
     live = [m for m in result.modes if onp.isfinite(m["log_z"])]
-    if live:  # is the best mode on a label-swapped track?
-        best = _track(
-            onp.array(max(live, key=lambda m: m["log_z"])["x"]),
-            settings.t_ref,
-            times,
-        )
+    if flips and live:  # is the best mode one of the relabelled refits?
+        best = onp.array(max(live, key=lambda m: m["log_z"])["x"])
+        tracks = [
+            _track(x, settings.t_ref, times)
+            for x in [best] + [f[0] for f in flips]
+        ]
         result.flipped = any(
-            onp.max(onp.hypot(*(best - _track(f, settings.t_ref, times)).T))
-            <= settings.min_distance_mas
-            for f, _ in flips
+            onp.max(onp.hypot(*(tracks[0] - t).T)) <= settings.min_distance_mas
+            for t in tracks[1:]
         )
-        if (
-            not result.flipped
-            and settings.flip_flux
-            and _flip_is_relabelling(problem, settings)
-            and not result.labels_free
-            and orbits
-        ):
-            seeded = [
-                onp.stack(
-                    [
-                        onp.asarray(o.relative(np.asarray(times))[0]),
-                        onp.asarray(o.relative(np.asarray(times))[1]),
-                    ],
-                    -1,
-                )
-                for o, _ in orbits[: settings.n_candidates]
-            ]
-            d_flip = min(onp.max(onp.hypot(*(best + t).T)) for t in seeded)
-            d_same = min(onp.max(onp.hypot(*(best - t).T)) for t in seeded)
-            result.flipped = bool(d_flip < 0.5 * d_same)
+    result.labels_free = _labels_free(result, settings, times)
     if result.flipped:
         _LOG.info(
             "band N=%d: the best mode has the stars' labels swapped "
@@ -2373,6 +2351,7 @@ def _seed_scores(problem, settings, bands, seeds):
     position-level orbits (at every seed flux and both senses, unrefined):
     a cheap check of the whole window."""
     s = dataclasses.replace(settings, n_random=0, init=None)
+    search = _plain(problem)
     pools = [
         _candidates(s, b, _Bounds.of(b, s), None, seeds[b.n][:_N_CHECK])
         for b in bands
@@ -2381,7 +2360,7 @@ def _seed_scores(problem, settings, bands, seeds):
     xs, size = onp.concatenate(pools), settings.pool_size
     score = onp.concatenate(
         [
-            _score_pool(problem, settings, xs[i : i + size])
+            _score_pool(search, settings, xs[i : i + size])
             for i in range(0, len(xs), size)
         ]
     )
@@ -3304,7 +3283,7 @@ def fit_orbit_aliases(
     n_scan = _N_FLUX + (2 if sign_free else 0)
     # (with sign_free the signed and the sign-free orbits both seed)
     n_orbits = n_candidates * (2 if sign_free else 1)
-    n_senses = 4 if flip_flux else 2
+    n_senses = 4 if sign_free else 2
     n_seeded = 0 if positions is None else n_senses * n_scan * n_orbits
     if counts is not None:  # the arc seeds come beside the position seeds
         n_seeded *= 2

@@ -881,11 +881,11 @@ def test_the_flip_is_skipped_for_a_resolved_primary():
         _, problem = _problem(data, **kw)
         assert aliases._flip_is_relabelling(problem, _settings(**kw)) is expect
     # Position-level seeds include both omega and omega + 180 deg when
-    # flip_flux is enabled, and only omega when disabled.
+    # sign_free is enabled, and only omega when disabled.
     orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
     band = aliases.AliasBand(20, 12.0, 12.2)
-    for flip, expect_omegas in ((True, {60.0, 240.0}), (False, {60.0})):
-        s = _settings(n_random=0, flip_flux=flip)
+    for sf, expect_omegas in ((True, {60.0, 240.0}), (False, {60.0})):
+        s = _settings(n_random=0, sign_free=sf)
         pool = aliases._candidates(
             s, band, aliases._Bounds.of(band, s), None, [(orbit, 1.0)]
         )
@@ -1315,7 +1315,7 @@ def _check_fitted_diameter(data, result, tmp_path):
 # --- night flags: a flagged night seeds nothing, but its data still count -----
 
 
-SEED_ALIAS_NIGHT = 12
+SEED_ALIAS_NIGHT = 12  # chosen so the d_phi = 0.6 rad draw tips the mirror peak ahead on ALIAS_NIGHT
 ALIAS_NIGHT = 3  # the night whose best peak is the 180 deg alias
 SOUND_NIGHTS = [k for k in range(6) if k != ALIAS_NIGHT]
 FLAGGED_ALIAS = [k == ALIAS_NIGHT for k in range(6)]
@@ -1346,10 +1346,10 @@ def _numpy_noise(night, rng):
 
 def _draw_alias_night_data(seed=SEED_ALIAS_NIGHT):
     """Six nights of the true orbit where night ``ALIAS_NIGHT`` has noisy
-    closure phases (``d_phi = 0.6`` rad), so its V² still pin the separation
-    and PA up to 180° while the noisy closure phases leave the 180° mirror
-    peak slightly above the true peak (triggering ``alias-peaks``), and
-    every other night is decisive and unflagged.
+    closure phases (``d_phi = 0.6`` rad); ``SEED_ALIAS_NIGHT = 12`` is chosen
+    so that this noise draw leaves the 180° mirror peak slightly above the
+    true peak (triggering ``alias-peaks``), while every other night is
+    decisive and unflagged.
 
     Each night has three frames at one epoch and independent numpy noise
     drawn from the instrument noise model. The noise uses numpy rather than
@@ -2232,22 +2232,27 @@ def test_a_poor_point_primary_fit_does_not_resolve_a_diameter():
 
 
 @pytest.mark.slow
-def test_a_brighter_companion_is_found_by_the_flux_flip():
-    # The companion is the brighter star (1.4). The seeds are *unflipped*
-    # (the true track, a fainter companion), so only the flux flip can reach
-    # the reflected track with the ratio 1/1.4 that fits the data.
+def test_a_brighter_companion_is_found_by_the_flux_flip(monkeypatch):
+    # The companion is the brighter star (1.4). With sign_free=False the
+    # seeds are unflipped (the true track, a fainter companion), so only
+    # the flux flip (_flipped) can reach the reflected track with the ratio
+    # 1/1.4 that fits the data.
     orbit, data, times = _short_arc(1.4)
     positions = _arc_positions(orbit, times, 1 / 1.4)
+    flipped, orig = [], aliases._flipped
+    monkeypatch.setattr(
+        aliases, "_flipped", lambda *a: flipped.append(1) or orig(*a)
+    )
     result = fit_orbit_aliases(
         data, positions=positions, t_ref=T_REF, primary_diam=None,
-        **FAST_DEFAULTS,
+        sign_free=False, **FAST_DEFAULTS,
     )  # fmt: skip
-    assert result.best.flipped
+    assert flipped and result.best.flipped
     assert result.best.chi2_red < 3.0
     assert result.best.best["flux"] == pytest.approx(1 / 1.4, rel=0.15)
     stuck = fit_orbit_aliases(
         data, positions=positions, t_ref=T_REF, primary_diam=None,
-        flip_flux=False, **FAST_DEFAULTS,
+        sign_free=False, flip_flux=False, **FAST_DEFAULTS,
     )  # fmt: skip
     assert not stuck.best.flipped
     assert stuck.best.chi2_red > result.best.chi2_red

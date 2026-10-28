@@ -1997,8 +1997,9 @@ def _flag_chi2(chi2_all, factor, groups=None):
     times the median of the nights of its own ``groups`` entry (one
     instrument mode: modes differ in χ²/N by their error models, so a
     global median would flag a whole mode), falling back to the pooled
-    median across all nights when a mode has fewer than three nights
-    (provided there are at least three nights in total). None disables it."""
+    median across all nights (floored at a two-night mode's lower night)
+    when a mode has fewer than three nights and there are at least three
+    nights in total. None disables it."""
     chi2_all = onp.asarray(chi2_all, dtype=float)
     out = [[] for _ in chi2_all]
     if factor is None or len(chi2_all) < 3:
@@ -2006,9 +2007,12 @@ def _flag_chi2(chi2_all, factor, groups=None):
     groups = [0] * len(chi2_all) if groups is None else list(groups)
     for g in dict.fromkeys(groups):
         idx = [k for k, x in enumerate(groups) if x == g]
-        median = float(
-            onp.median(chi2_all[idx] if len(idx) >= 3 else chi2_all)
-        )
+        if len(idx) >= 3:
+            median = float(onp.median(chi2_all[idx]))
+        elif len(idx) == 2:
+            median = float(max(onp.median(chi2_all), onp.min(chi2_all[idx])))
+        else:
+            median = float(onp.median(chi2_all))
         # A night whose chi2 stands far above the others of its mode (a
         # bad night, a triple, extra light) fits no binary well, so its
         # position is not a trustworthy seed whatever its peaks look like.
@@ -2020,16 +2024,17 @@ def _flag_chi2(chi2_all, factor, groups=None):
         for k in idx:
             c = chi2_all[k]
             if c > limit:
+                scope = (
+                    f" of its {len(idx)} nights of the same mode"
+                    if len(idx) >= 3
+                    else f" pooled across {len(chi2_all)} nights"
+                )
                 out[k].append(
                     NightFlag(
                         "chi2-high",
                         f"raw chi2/N {c:.1f} exceeds {limit:.1f} "
                         f"({factor:g} x max(median night {median:.1f}, 1)"
-                        + (
-                            f" of its {len(idx)} nights of the same mode"
-                            if len(set(groups)) > 1 and len(idx) >= 3
-                            else ""
-                        )
+                        + (scope if len(set(groups)) > 1 else "")
                         + ")",
                     )
                 )
