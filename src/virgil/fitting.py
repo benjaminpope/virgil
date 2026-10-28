@@ -719,18 +719,16 @@ def fit(
         loss range is below ``ftol_abs`` and its mean is not lower than the
         previous window's by ``ftol_abs`` or more (unscaled; off if ``None``).
     post_step : callable, optional
-        Adam only (incompatible with ``precondition``): a jax-traceable map
-        ``post_step(z) -> z`` on the unconstrained solver coordinates ``z`` (a
-        dict by path, not ``values``), applied after each update.
-        Source: [Charles et al. (2026)](../references.md#dorito).
+        Adam only, not with ``precondition``: a jax-traceable ``post_step(z) -> z``
+        on the unconstrained coordinates ``z`` (a dict by path, not ``values``),
+        applied after each update. Source: [Charles et al. (2026)](../references.md#dorito).
     precondition : {None, "diag"}, optional
         ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
         diagonal for L-BFGS and Adam (provisional); see
         [conventions](../conventions.md#preconditioning-image-fits).
         ``info["precondition_rounds"]`` records the spread per round. With a
         maximum-entropy regularizer at weak weights float32 can stall: use float64.
-        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
-        [Hutchinson (1989)](../references.md#hutchinson1989).
+        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984), [Hutchinson (1989)](../references.md#hutchinson1989).
 
     Returns
     -------
@@ -994,7 +992,9 @@ def _bound_fraction(prior, value, flat=True):
         # compares below or above a threshold).
         lo_pole = onp.isclose(onp.asarray(base.low, float), poles[0], 1e-6, 0)
         hi_pole = onp.isclose(onp.asarray(base.high, float), poles[1], 1e-6, 0)
-        fraction = onp.where(lo_pole & (fraction < _AT_BOUND), onp.nan, fraction)
+        fraction = onp.where(
+            lo_pole & (fraction < _AT_BOUND), onp.nan, fraction
+        )
         fraction = onp.where(
             hi_pole & (fraction > 1 - _AT_BOUND), onp.nan, fraction
         )
