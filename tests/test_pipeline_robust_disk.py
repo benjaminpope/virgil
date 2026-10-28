@@ -467,12 +467,6 @@ def test_a_ring_on_the_outer_bound_is_reported(rings_at_bound):
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    reason="at_bound skips priors with a flat coordinate, which includes "
-    "IsotropicInclination(0, inc_max_deg): an inclination pinned at "
-    "inc_max_deg passes the check",
-)
 def test_an_inclination_on_its_upper_bound_is_reported(tiny, tmp_path):
     pipeline = DiskPipeline(
         tiny, "rings", output=tmp_path / "run", **{**TINY, "inc_max_deg": 30.0}

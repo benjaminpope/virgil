@@ -927,10 +927,10 @@ def test_divergences_at_hard_walls_are_explained_not_hidden(
     assert abs(post["params"]["diam"]["median"] - 6.04) < 0.15
     by_name = {c.name: c for c in res.checks}
     assert by_name["chi2_limb_darkened"].status == "pass"
-    # The probe finds walls, so divergences are explained and never fail.
+    # The probe finds walls: divergences are explained, and still fail.
     div = by_name["divergences"]
-    assert div.status != "fail"
-    assert ("hard wall" in div.message) == (post["divergence_fraction"] > 0.01)
+    assert (div.status == "fail") == (post["divergence_fraction"] > 0.01)
+    assert ("hard wall" in div.message) == (div.status == "fail")
 
 
 def _wall_samples(spread):
@@ -957,13 +957,13 @@ def test_wall_probe_separates_narrow_from_wide_posteriors(tutorial_data):
 
 @pytest.mark.parametrize(
     "fraction, exposed, status",
-    [(0.0, 0.0, "pass"), (0.4, 0.0, "fail"), (0.4, 0.5, "warn")],
+    [(0.0, 0.0, "pass"), (0.4, 0.0, "fail"), (0.4, 0.5, "fail")],
 )
 def test_divergences_check_with_walls(fraction, exposed, status):
     walls = {"radius_sd": 2.0, "n": 40, "exposed": exposed}
     check = checks.divergences(fraction, walls=walls)
     assert check.status == status
-    assert ("hard wall" in check.message) == (status == "warn" and exposed > 0)
+    assert ("hard wall" in check.message) == (status == "fail" and exposed > 0)
     json.dumps(check.to_dict())
 
 

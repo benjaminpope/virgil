@@ -422,7 +422,7 @@ _BRANCHES = [
         lambda: checks.divergences(
             0.1, walls={"radius_sd": 3.0, "exposed": 0.4}
         ),
-        "warn",
+        "fail",
     ),
     (
         "div-walls-barely-exposed",

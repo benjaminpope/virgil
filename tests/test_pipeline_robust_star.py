@@ -422,13 +422,11 @@ def test_golden_default_settings_recover_a_uniform_disk(tmp_path):
 
 @pytest.mark.slow
 @pytest.mark.xfail(
-    strict=False,
-    reason="with the default model set the limb-darkened NUTS chains do not "
-    "mix on a simple injected star: r_hat 4 and ESS 2 here (250 + 250 draws); "
-    "the limb-darkened star alone at the default 1000 + 1000 draws gives "
-    "r_hat 2.4, ESS 2.5 (400 s), so the failing sampler checks are real, "
-    "not an artefact of the short chains. They are now warnings for a model "
-    "that is not selected; Ben decides whether to drop this xfail",
+    strict=True,
+    reason="virgil#580: limb-darkened star NUTS chains do not mix (r_hat 2.4-4, "
+    "ESS 2.5 at 1000 + 1000 draws); the failing sampler checks of a model "
+    "that is not selected are reported as failures; Ben decides whether to "
+    "keep this xfail",
 )
 @pytest.mark.timeout(900)
 def test_golden_default_model_set_recovers_the_star_without_failing_checks(
@@ -443,7 +441,7 @@ def test_golden_default_model_set_recovers_the_star_without_failing_checks(
     assert res.summary["comparison"]["preferred"] == "uniform"
 
 
-def test_a_failing_model_that_was_not_selected_is_a_warning_not_hidden(
+def test_a_failing_model_that_was_not_selected_still_fails_and_is_named(
     completed,
 ):
     import copy
@@ -461,7 +459,7 @@ def test_a_failing_model_that_was_not_selected_is_a_warning_not_hidden(
     _, checks = completed._summarize(reports)
     by_name = {c.name: c for c in checks}
     for name in ("r_hat", "ess", "divergences"):
-        assert by_name[name].status == "warn", name
+        assert by_name[name].status == "fail", name
         assert "rival (not selected)" in by_name[name].message
 
     # The selected model's failures stay failures.

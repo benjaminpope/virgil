@@ -356,7 +356,7 @@ StarPipeline run in /tmp/tmp_qzc0x2u/star_run: complete
   [pass] prior_bound: No posterior mass piles up at a prior bound.
   [pass] r_hat: Largest R-hat 1.0091: the chains agree.
   [warn] ess: Smallest bulk ESS 253: quantiles in the tails are noisy.
-  [warn] divergences: Divergent transitions: 51 per cent: 48 per cent of steps of 2 posterior standard deviations hit a hard wall of the likelihood (a closure-phase sign flip), so NUTS rejects the trajectories that cross it; the draws are expected to follow the truncated posterior, with reduced efficiency (see the ESS). A bispectrum likelihood would remove the walls (virgil#309).
+  [fail] divergences: Divergent transitions: 51 per cent: the posterior is not reliable; 48 per cent of steps of 2 posterior standard deviations hit a hard wall of the likelihood (a closure-phase sign flip), where NUTS rejects trajectories: a probable cause, not an excuse (a bispectrum likelihood would remove the walls, virgil#578).
 ```
 
 ```python

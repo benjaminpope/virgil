@@ -5,6 +5,7 @@ import sys
 import jax.numpy as np
 import numpy as onp
 import pytest
+from scipy.stats import norm
 
 from virgil.legacy import oifits_implaneia
 from virgil.models import BinaryModelCartesian
@@ -77,21 +78,22 @@ def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
     assert summary.hmc_std["ddec"] < 30.0
     assert summary.hmc_std["flux"] < 0.0015
 
-    # The toy geometry can put one parameter slightly outside 2σ for a fixed RNG seed;
-    # require broad agreement while still enforcing informative posteriors.
-    assert sum(checks.values()) >= 2, (
-        f"Too many HMC parameters exceed 2σ bounds: {checks}; summary={summary}"
-    )
+    # Every parameter must agree with the truth at a stated family-wise false-alarm
+    # rate: for a correct posterior each |z| is half-normal, so a Bonferroni limit
+    # over the n parameters at alpha = 0.01 is z = isf(alpha / (2 n)) (2.94 for n = 3).
+    # The seed is fixed; the limit does not depend on it.
+    n_param = len(checks)
+    z_limit = float(norm.isf(0.01 / (2 * n_param)))
+    for key in checks:
+        sigma = max(summary.hmc_std[key], 1e-12)
+        z = abs(summary.hmc_median[key] - summary.truth[key]) / sigma
+        assert z < z_limit, (
+            f"HMC {key} is {z:.3f} sigma from truth, over the family-wise "
+            f"alpha = 0.01 limit {z_limit:.3f}; summary={summary}"
+        )
     assert all(fisher_checks.values()), (
         f"Fisher-HMC recovered parameters exceed 3σ bounds: {fisher_checks}; summary={summary}"
     )
-
-    for key in ("dra", "ddec", "flux"):
-        sigma = max(summary.hmc_std[key], 1e-12)
-        z = abs(summary.hmc_median[key] - summary.truth[key]) / sigma
-        assert z < 3.0, (
-            f"HMC {key} is too far from truth in z-space ({z:.3f}); summary={summary}"
-        )
 
 
 def test_synthetic_oifits_save_skips_simbad_for_unknown_target(

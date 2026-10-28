@@ -494,7 +494,6 @@ class StarPipeline(_Pipeline):
                 sampler_checks = [
                     dataclasses.replace(
                         oc,
-                        status="warn",
                         message=f"{name} (not selected): {oc.message}",
                     )
                     if bc.status == "pass" and oc.status != "pass"
