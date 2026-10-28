@@ -996,20 +996,17 @@ def _null_verdict(result, data, s):  # deliberate: test seam (monkeypatched)
         peak = float(max(onp.max(ll), onp.max(ll_near)))
         m = int(onp.clip(onp.argmax(ll_near), 1, len(near) - 2))
         du = float(near[1] - near[0])
-        d_hat = float(onp.exp(near[m]))
-        d1 = float(ll_near[m + 1] - ll_near[m - 1]) / (2.0 * du)
-        d2 = float(ll_near[m + 1] - 2.0 * ll_near[m] + ll_near[m - 1]) / (
+        h_uu = -float(ll_near[m + 1] - 2.0 * ll_near[m] + ll_near[m - 1]) / (
             du**2
         )
-        h_dd = -(d2 - d1) / (d_hat**2)
         d_min, d_max = map(float, settings.diam_range)
         occam = (
             min(
                 0.0,
-                0.5 * float(onp.log(2.0 * onp.pi / h_dd))
-                - float(onp.log(d_max - d_min)),
+                0.5 * float(onp.log(2.0 * onp.pi / h_uu))
+                - float(onp.log(onp.log(d_max / d_min))),
             )
-            if h_dd > 0.0 and d_max > d_min
+            if h_uu > 0.0 and d_max > d_min > 0.0
             else 0.0
         )
         null = peak + occam

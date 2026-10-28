@@ -35,7 +35,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 from scipy import optimize
-from scipy.special import logsumexp
+from scipy.special import logsumexp, ndtr
 
 from . import _gauss_newton
 from ._deprecate import external_stacklevel
@@ -994,23 +994,31 @@ def _mode_evidence(
     h = 0.5 * (h + h.T)
     finite = bool(onp.all(onp.isfinite(h)))
     eig = onp.linalg.eigvalsh(h) if finite else onp.array([-onp.inf])
-    grad = (
-        onp.asarray(problem.value_and_grad(np.asarray(x))[1], float)
-        if hasattr(problem, "value_and_grad")
-        else None
-    )
-    on_bound = (x - bounds.lower < 1e-4) | (bounds.upper - x < 1e-4)
+    on_bound = (x - bounds.lower <= 1e-6) | (bounds.upper - x <= 1e-6)
+    grad = None
     if (
         finite
+        and eig.min() <= 0
         and onp.any(on_bound)
-        and grad is not None
-        and (eig.min() <= 0 or onp.any(onp.abs(grad[on_bound]) > 1e-6))
+        and hasattr(problem, "value_and_grad")
     ):
+        grad = onp.asarray(problem.value_and_grad(np.asarray(x))[1], float)
+        f_idx = onp.flatnonzero(~on_bound)
+        h_ff = h[onp.ix_(f_idx, f_idx)] if len(f_idx) else None
+        ff_pd = h_ff is not None and bool(
+            onp.all(onp.linalg.eigvalsh(h_ff) > 0)
+        )
         for i in onp.flatnonzero(on_bound):
-            if eig.min() <= 0 or h[i, i] <= 0 or abs(grad[i]) > 1e-6:
-                denom = math.sqrt(
-                    float(grad[i]) ** 2 + max(float(h[i, i]), 0.0)
+            if eig.min() <= 0 or h[i, i] <= 0:
+                schur = (
+                    float(
+                        h[i, i]
+                        - h[i, f_idx] @ onp.linalg.solve(h_ff, h[f_idx, i])
+                    )
+                    if ff_pd
+                    else float(h[i, i])
                 )
+                denom = math.sqrt(float(grad[i]) ** 2 + max(schur, 0.0))
                 span = float(bounds.upper[i] - bounds.lower[i])
                 scale_i = min(span, 1.0 / denom) if denom > 0 else span
                 if onp.isfinite(scale_i) and scale_i > 0:
@@ -1054,11 +1062,13 @@ def _mode_evidence(
     if onp.any(distance < bound_sigma):
         out["flags"].append("near-prior-bound")
     out["sigma"] = sd.tolist()
+    p_coord = ndtr((bounds.upper - x) / sd) - ndtr((bounds.lower - x) / sd)
+    out["p_in"] = float(onp.clip(onp.prod(p_coord), 1e-6, 1.0))
     # Newton step in units of sigma, over the coordinates not on a bound:
     # large means L-BFGS stopped short of a stationary point.
     if grad is None:
         grad = onp.asarray(problem.value_and_grad(np.asarray(x))[1], float)
-    free = (x - bounds.lower > 1e-6) & (bounds.upper - x > 1e-6)
+    free = ~on_bound
     if onp.any(onp.abs(grad[free]) * sd[free] > 0.1):
         out["flags"].append("not-converged")
     xs, mahal = proposal.draw(n_is, rng)
@@ -1067,7 +1077,6 @@ def _mode_evidence(
     ok = bounds.inside(xs)
     for k, width in _PERIODIC.items():
         ok &= onp.abs(xs[:, k] - x[k]) < width / 2.0
-    out["p_in"] = max(float(onp.mean(ok)), 1e-6)
     values = onp.asarray(problem.batch(np.asarray(bounds.clip(xs))), float)
     log_t = onp.where(ok, values, -onp.inf) + problem.log_prior
     log_w = log_t - log_q
@@ -1281,8 +1290,9 @@ def _band_evidence(problem, settings, bounds, modes_xy, rng):
 
     Where a mode sits on a prior bound (a period edge between bands, say)
     the Gaussian is cut off, so that mode's ``log_z`` is its
-    importance-sampling value, which truncates the target; elsewhere it is
-    the Laplace value.
+    importance-sampling value when its ESS reaches ``ess_min``, and its
+    Laplace value truncated by the Gaussian in-bounds mass ``p_in``
+    otherwise; elsewhere it is the Laplace value.
 
     Returns ``(modes, z_lap, z_is, pool)``, with ``pool`` the pooled draws
     and their mixture log weights (``(None, None)`` without any).
@@ -2924,7 +2934,7 @@ def fit_orbit_aliases(
     k=9.0,
     eccs=None,
     sign_free=True,  # deliberate: a label swap of near-equal stars must be found
-    min_distance_mas=0.5,
+    min_distance_mas=None,
     max_steps=200,
     n_is=2000,
     n_samples=1000,
@@ -2971,10 +2981,10 @@ def fit_orbit_aliases(
     n_candidates, n_refine, n_random, n_is, n_samples, seed, init : optional
         Search effort, sampling and a warm start.
     min_distance_mas, max_steps, p_min_samples, flag_nats, ess_min : optional
-        Modes closer than ``min_distance_mas`` (mas, along the orbit) are one;
-        optimizer steps per start; bands with ``p`` above ``p_min_samples`` also
-        get posterior samples; evidence margin (nats) and importance-sample size
-        below which a band is flagged.
+        Modes closer than ``min_distance_mas`` (mas, default ``min(0.5, 0.5 *
+        resolution_mas)``) are one; optimizer steps per start; bands with ``p``
+        above ``p_min_samples`` get posterior samples; evidence margin (nats)
+        and importance-sample size below which a band is flagged.
     checkpoint_dir, on_band : optional
         Bands finished in ``checkpoint_dir`` are reloaded; ``on_band`` is called
         with each band's result.
@@ -3185,8 +3195,10 @@ def fit_orbit_aliases(
     )
     profile, counts, motion = None, None, None
     resolution_mas = float(fringe_scales(data)[0])
-    if min_distance_mas is None or min_distance_mas == 0.5:
+    if min_distance_mas is None:
         min_distance_mas = min(0.5, 0.5 * resolution_mas)
+    else:
+        min_distance_mas = float(min_distance_mas)
     arc_jitter_mas = float(arc_jitter) * resolution_mas
     # The positions' gaps and covariances come from the untempered surface:
     # the cut uses them tempered, as the evidence is. The gap sums the

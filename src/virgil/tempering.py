@@ -304,10 +304,9 @@ def estimate_factors(residuals, chains, names=()):
     -------
     ChannelFactors
         ``f_b = Σ (Σ_chain z)² / Σ z²`` pooled over the chains of block
-        ``b`` (an unbiased chain-sum estimator of ``1 + 2 Σ (1 - k/n) ρ_k``,
-        recovering the exact ``1 + (n - 1) c`` for common-mode correlation
-        ``c``; see `docs/api/tempering.md`); the pooled ``f`` sums all
-        blocks. ρ1 and ρ2 are kept as diagnostics.
+        ``b`` (the chain-sum estimator of ``1 + 2 Σ (1 - k/n) ρ_k``, and for
+        common-mode ``c``, ``1 + (n - 1) c``; see `docs/api/tempering.md`);
+        the pooled ``f`` sums all blocks. ρ1 and ρ2 are kept as diagnostics.
 
     Examples
     --------
