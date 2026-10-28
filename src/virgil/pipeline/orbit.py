@@ -580,8 +580,8 @@ def _night_positions(p):  # deliberate: named step
     ``_WIDEN`` until no best peak is on its edge."""
     from ..epochs import epoch_positions
 
-    # The grid widens until no best peak is on its edge (AGENTS.md, "Binary
-    # orbits: solved problems"; test_pipeline_orbit.py::
+    # The grid widens until no best peak is on its edge
+    # (design/orbit_solved_problems.md; test_pipeline_orbit.py::
     # test_the_position_grid_widens_until_no_peak_is_on_its_edge).
     s = p.settings
     geometry = _geometry(list(p.data.data))
