@@ -914,7 +914,11 @@ default deletes the other.
 - Files: `aliases.py` (`_with_outlier` → `_mixture_loglike`; delete
   `_plain`, the polish and `_NO_OUTLIER`), `epochs.broad_loglike`
   (extent from the prior), `pipeline/orbit.py` (delete `_robustness`,
-  `_outlying_night`, `drop_outlier_night`, `_WIDEN`), `epochs._flag_chi2`.
+  `_outlying_night`, `drop_outlier_night`, `_WIDEN`), `epochs._flag_chi2`
+  (including its mode grouping, which disables flagging for a mode with
+  `len(idx) < 3` at `epochs.py:2009`, and its AK For-shaped test at
+  `tests/test_night_flags.py:90`); the broad `except Exception` clauses
+  of `aliases.py` at 1211, 1228, 1352, 1543, 2799 and 3356 (at `0c20064`).
 - Tests: §2A's four.
 - Default change: every fit carries the mixture; `outlier_eps`
   deprecated.
@@ -924,7 +928,10 @@ default deletes the other.
   copy); delete `_thiele_innes_fit_sign_free`, `_signs_trusted`, flips,
   the sign doubling, `_N_FLUX`, the flag machinery in `epoch_positions`,
   `sidelobe_flags` and `skip_flagged`.
-- Tests: §2B and §2E, plus the constructed flipped night.
+- Tests: §2B and §2E, plus the constructed flipped night. The
+  seed-scanned `AMBIGUOUS` fixtures (`tests/test_orbit_positions.py:86-91`,
+  seeds 27 and 65, "found by a scan of seeds 0-140") become constructed
+  cases.
 - Default changes: `sign_free`, `flip_flux` and `skip_flagged`
   deprecated; `labels_free` becomes p_label.
 
@@ -935,6 +942,9 @@ default deletes the other.
   nats threshold (§2G), the empirical-FAP detection with a user-statistic
   hook in `DetectionMC`, and pipeline sampling by remaining mass.
 - Tests: §2C, §2D, §2F and §2G.
+- Also the absolute default `fit_orbit_aliases(min_distance_mas=0.5)`
+  (`aliases.py:2891`), which becomes resolution-scaled as in
+  `epochs.py:1168` (E, distances).
 - Also §2I: flux floor from the contrast curve (reusing `grid_fit` and
   `limits.ruffio_upperlimit`) and the disc label.
 - Default changes: "auto" → "fit"; flux floor from the data; band sampling; short arcs off (F
