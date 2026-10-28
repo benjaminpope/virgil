@@ -346,7 +346,10 @@ class _Objective(eqx.Module):
         """
         import numpyro.distributions as dist
 
-        if self.noise:
+        if any(
+            not (is_tied(p) and hasattr(p, "residuals"))
+            for p, _, _ in self.noise.values()
+        ):
             raise NoLeastSquaresForm(
                 "Fitted error terms have no least-squares form (the "
                 "likelihood's normalization depends on them); fit with "
@@ -378,7 +381,25 @@ class _Objective(eqx.Module):
                 )
         model = self.build(z)
         values = self.constrain(z)
-        parts = self.data_residuals(model)
+        if self.noise:
+            whitened = self._whitened(model, values)
+            parts = [w for w, _ in whitened]
+            parts += [
+                np.atleast_1d(
+                    np.sqrt(
+                        2.0
+                        * np.maximum(0.0, np.sum(np.log(e)) + 100.0 * e.size)
+                    )
+                )
+                for _, e in whitened
+            ]
+            seen = []
+            for spec, _, _ in self.noise.values():
+                if spec not in seen:
+                    seen.append(spec)
+                    parts.append(np.ravel(spec.residuals(values)))
+        else:
+            parts = self.data_residuals(model)
         parts += [term(values) for term in self.likelihoods]
         for regularizer in self.regularizers:
             parts.append(np.ravel(regularizer.residuals(_reference(model))))
@@ -471,6 +492,15 @@ class _Objective(eqx.Module):
             for path, prior in self.priors.items()
             if is_angle_vector(prior)
         ]
+        seen = []
+        for spec, _, _ in self.noise.values():
+            if (
+                is_tied(spec)
+                and hasattr(spec, "curvature_rows")
+                and spec not in seen
+            ):
+                seen.append(spec)
+                rows.append(np.ravel(spec.curvature_rows(values)))
         return np.concatenate(rows) if rows else np.zeros(0)
 
     def _no_prior_curvature(self, prior, jacobian):
@@ -710,22 +740,22 @@ def fit(
         loss range is below ``ftol_abs`` and its mean is not lower than the
         previous window's by ``ftol_abs`` or more (unscaled; off if ``None``).
     post_step : callable, optional
-        Adam only: a jax-traceable map of the free parameters (a dict by path)
-        applied after every update; Adam's moments are unchanged. Source: [Charles et al. (2026)](../references.md#dorito).
+        Adam only (incompatible with ``precondition``): a jax-traceable map
+        ``post_step(z) -> z`` on the unconstrained solver coordinates ``z`` (a
+        dict by path, not ``values``), applied after each update.
+        Source: [Charles et al. (2026)](../references.md#dorito).
     precondition : {None, "diag"}, optional
         ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
         diagonal for L-BFGS and Adam (provisional); see
-        [conventions](../conventions.md#preconditioning-image-fits).
-        ``info["precondition_rounds"]`` records the spread per round. With a
-        maximum-entropy regularizer at weak weights float32 can stall: use float64.
-        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
-        [Hutchinson (1989)](../references.md#hutchinson1989).
+        [conventions](../conventions.md#preconditioning-image-fits). Use float64
+        with weak maximum-entropy weights. Source: [Skilling & Bryan
+        (1984)](../references.md#skillingbryan1984), [Hutchinson
+        (1989)](../references.md#hutchinson1989).
 
     Returns
     -------
     FitResult
-        Model, values and diagnostics; warns if LM, L-BFGS or Adam did not converge
-        (``info["stop"]`` gives the reason, ``info["grad_norm"]`` the gradient).
+        Model, values and diagnostics; warns if not converged (``info["stop"]``).
     """
     if not math.isfinite(max_step_size) or max_step_size <= 0:
         raise ValueError(
@@ -766,7 +796,8 @@ def fit(
             else:
                 method = (
                     "lbfgs"
-                    if any(
+                    if problem.noise
+                    or any(
                         getattr(r, "prefers_lbfgs", False)
                         for r in problem.regularizers
                     )
@@ -955,24 +986,19 @@ _AT_BOUND = 1e-3
 def _bound_fraction(prior, value, flat=True):
     """Where ``value`` lies in its prior's finite interval, as a fraction.
 
-    Only genuine edges of the support count (a LogUniform's, in log x if ``flat``,
-    or an interval support's); ``None`` for unbounded priors, angle vectors, tied
-    terms and other priors with a flat coordinate, whose ends are coordinate poles.
+    Only genuine edges of the support count (in the flat coordinate when ``flat``,
+    except at sphere coordinate poles); ``None`` for unbounded priors, angle
+    vectors, and tied terms.
     """
     if is_tied(prior) or is_angle_vector(prior):
         return None
-    import numpyro.distributions as dist
-
-    if isinstance(_base(prior), dist.LogUniform):
-        if flat:
-            to_flat, _, low, high = _flat_coordinate(prior)
-            value = to_flat(value)
-        else:
-            low, high = _base(prior).low, _base(prior).high
-    elif _flat_coordinate(prior) is not None:
-        return None
+    base = _base(prior)
+    fc = _flat_coordinate(prior)
+    if flat and fc is not None:
+        to_flat, _, low, high = fc
+        value = to_flat(value)
     else:
-        support = _base(prior).support
+        support = base.support
         low = getattr(support, "lower_bound", None)
         high = getattr(support, "upper_bound", None)
         if low is None or high is None:
@@ -980,7 +1006,26 @@ def _bound_fraction(prior, value, flat=True):
     low, high = onp.asarray(low, float), onp.asarray(high, float)
     if not (onp.all(onp.isfinite(low)) and onp.all(onp.isfinite(high))):
         return None
-    return (onp.asarray(value, float) - low) / (high - low)
+    fraction = onp.asarray((onp.asarray(value, float) - low) / (high - low))
+    poles = getattr(base, "_poles", None)
+    if poles is not None:
+        raw_lo = onp.asarray(base.low, float)
+        raw_hi = onp.asarray(base.high, float)
+        if onp.any(onp.isclose(raw_lo, poles[0], atol=1e-5)):
+            fraction = onp.where(
+                onp.isclose(raw_lo, poles[0], atol=1e-5)
+                & (fraction < _AT_BOUND),
+                0.5,
+                fraction,
+            )
+        if onp.any(onp.isclose(raw_hi, poles[1], atol=1e-5)):
+            fraction = onp.where(
+                onp.isclose(raw_hi, poles[1], atol=1e-5)
+                & (fraction > 1.0 - _AT_BOUND),
+                0.5,
+                fraction,
+            )
+    return fraction
 
 
 # deliberate: test seam (tests/test_fitting.py)

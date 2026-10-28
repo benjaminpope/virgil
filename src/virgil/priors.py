@@ -119,6 +119,8 @@ class IsotropicInclination(_InverseCDFPrior):
     True
     """
 
+    _poles = (0.0, 180.0)
+
     def __init__(self, low=0.0, high=180.0, *, validate_args=None):
         _check_range("IsotropicInclination", low, high, 180.0, "inc")
         self._init(low, high, validate_args)
@@ -205,6 +207,8 @@ class IsotropicLatitude(_InverseCDFPrior):
     >>> bool((abs(samples) <= 3.1416 / 2).all())
     True
     """
+
+    _poles = (-onp.pi / 2, onp.pi / 2)
 
     def __init__(self, low=-np.pi / 2, high=np.pi / 2, *, validate_args=None):
         _check_range("IsotropicLatitude", low, high, onp.pi / 2, "lat")
@@ -298,6 +302,33 @@ class PopulationScale:
         median, spread = self._hyper(values)
         log_scale = values[f"{self.name}_log"][..., self.index]
         return dist.Normal(np.log(median), spread).log_prob(log_scale)
+
+    def residuals(self, values):
+        """Residuals whose half sum of squares is ``-log_prior(values)`` + const."""
+        if not self.centred:
+            return np.zeros(0)
+        median, spread = self._hyper(values)
+        log_scale = values[f"{self.name}_log"][..., self.index]
+        shift = 100.0  # keeps log(spread) + shift > 0 across float range
+        return np.array(
+            [
+                (log_scale - np.log(median)) / spread,
+                np.sqrt(2.0 * np.maximum(0.0, np.log(spread) + shift)),
+            ]
+        )
+
+    def curvature_rows(self, values):
+        """Mean and normalizer curvature rows of the centred population prior."""
+        if not self.centred:
+            return np.zeros(0)
+        median, spread = self._hyper(values)
+        log_scale = values[f"{self.name}_log"][..., self.index]
+        return np.array(
+            [
+                (log_scale - np.log(median)) / jax.lax.stop_gradient(spread),
+                np.sqrt(2.0) * np.log(spread),
+            ]
+        )
 
 
 def hierarchical_scales(name, n, median=None, spread=None, centred=True):

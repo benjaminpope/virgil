@@ -305,7 +305,8 @@ def test_parallel_chains_compile_with_gains(gains):
     import sys
 
     script = f"""
-import os
+import os, sys
+sys.path.insert(0, "src")
 os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=2"
 import jax, jax.numpy as jnp, numpy as onp
 from virgil.coverage import vlti_oidata

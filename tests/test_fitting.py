@@ -503,6 +503,14 @@ def test_poles_of_isotropic_priors_are_not_prior_bounds():
     values = {"inc": np.asarray(0.5), "lat": np.asarray(89.9), "ecc": 0.4}
     assert _at_bound(problem, values) == ()
     assert _at_bound(problem, dict(values, ecc=0.8999)) == ("ecc",)
+    # A truncated isotropic range has a genuine non-pole bound.
+    capped = SimpleNamespace(
+        priors={"inc": IsotropicInclination(0.0, 30.0)},
+        noise={},
+        flat=True,
+    )
+    assert _at_bound(capped, {"inc": np.asarray(0.5)}) == ()
+    assert _at_bound(capped, {"inc": np.asarray(29.999)}) == ("inc",)
 
 
 @pytest.mark.filterwarnings("ignore:fit.*did not converge")
@@ -730,6 +738,32 @@ def test_fit_with_hierarchical_error_scales():
     # float32 and x64), but they stay clearly separated.
     assert 1.5 < ratio(result) <= ratio(unpooled) * (1 + 1e-3)
     assert abs(result.values["dra"] - 150.0) < 5.0
+    # Centred hierarchical scales also support method="lm" and gauss_newton_mass
+    # under flat_coordinates=True.
+    from virgil.fitting import gauss_newton_mass
+
+    lm_res = fit(
+        _binary_fn,
+        priors,
+        [quiet, noisy],
+        noise=[{"vis_scale": s} for s in scales],
+        init=init,
+        method="lm",
+    )
+    assert lm_res.info["method"] == "lm"
+    assert abs(lm_res.values["dra"] - 150.0) < 5.0
+    mass = gauss_newton_mass(
+        _binary_fn,
+        priors,
+        [quiet, noisy],
+        result.values,
+        noise=[{"vis_scale": s} for s in scales],
+        flat_coordinates=True,
+    )
+    ((sites, cov),) = mass["inverse_mass_matrix"].items()
+    assert {"v2_median", "v2_spread", "v2_log"} <= set(sites)
+    eig = onp.linalg.eigvalsh(onp.asarray(cov))
+    assert onp.all(onp.isfinite(eig)) and eig.min() > 0.0
 
 
 def test_numpyro_model_adds_each_population_density_once():
@@ -1097,10 +1131,10 @@ def test_fitted_gain_widths_and_scales_stay_positive_definite():
     assert eigenvalues.max() < GAIN_WIDTH_BOUNDS[1], eigenvalues
 
 
-# Measured: eig(F⁻¹H) = 0.0058, 0.996, 1.000, 1.011, 1.93. The three parameter
-# directions are exact (0.996 to 1.011, as without the width) and the scale 1.93;
-# the gain width's F, from the whitening alone, is some 170 times its true
-# curvature (the plan expected [0.3, 3]). The cost is efficiency in that one
+# Measured: eig(F⁻¹H) = 0.0058, 0.996, 1.000, 1.011, 1.44. The three parameter
+# directions are exact (0.996 to 1.011, as without the width) and the gain width
+# is 1.44; the scale's F is 2 n_vis while its true curvature is swamped by the
+# gains (the plan expected [0.3, 3]). The cost is efficiency in that one
 # coordinate, not correctness.
 GAIN_WIDTH_BOUNDS = (0.003, 3.0)
 

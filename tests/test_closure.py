@@ -87,9 +87,13 @@ def test_whitening_matches_the_dense_pseudo_inverse():
     k = data.cp_noise.size
     chi2_phase = onp.sum(whitened[n_vis : n_vis + k] ** 2)
     assert chi2_phase == pytest.approx(chi2_dense, rel=1e-5)
-    # then one periodic penalty 2 sin²(Δ/2)/σ per closure phase
-    penalty = 2.0 * onp.sin(0.5 * delta) ** 2 / sigma
-    assert onp.allclose(whitened[n_vis + k :], penalty, rtol=1e-4, atol=1e-6)
+    # then the whitened periodic penalty 2 sin²(Δ/2), padded with zeros
+    half = 2.0 * onp.sin(0.5 * delta) ** 2
+    penalty = data.cp_noise.whiten(np.asarray(half), data.d_phi)[0]
+    assert onp.allclose(
+        whitened[n_vis + k : n_vis + 2 * k], penalty, rtol=1e-4, atol=1e-6
+    )
+    assert onp.all(whitened[n_vis + 2 * k :] == 0.0)
     _, errors = data.cp_noise.whiten(np.asarray(chord), data.d_phi)
     assert 2.0 * onp.sum(onp.log(errors)) == pytest.approx(
         logdet_dense, rel=1e-5

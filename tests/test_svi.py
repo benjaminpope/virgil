@@ -17,7 +17,7 @@ from virgil._flat import flat_sampled
 from virgil._precision import cast_tree, run_in
 from virgil.angles import AngleVector
 from virgil.coverage import nrm_oidata
-from virgil.fitting import _Objective, fit, gauss_newton_mass
+from virgil.fitting import fit, gauss_newton_mass
 from virgil.likelihood import numpyro_model
 from virgil.models import BinaryModelAngular, BinaryModelCartesian
 from virgil.svi import variational
@@ -34,33 +34,19 @@ def _no_model(**_):
 
 
 class _GaussianInZ:
-    """A likelihood that makes the posterior exactly N(MU, COV) in the
-    unconstrained coordinates z of the sampler.
+    """A likelihood that makes the posterior N(MU, COV) in the unconstrained
+    coordinates z of the sampler.
 
     ``loglike`` is the Gaussian in z minus the prior's density in z (the
     prior times the Jacobian of z → x), so the product is the Gaussian.
-    ``__call__`` gives its whitened residuals, for ``gauss_newton_mass``.
-    ``gauss_newton_mass`` adds the curvature P of the priors' transforms to
-    JᵀJ, so the residuals carry what is left of the precision,
-    JᵀJ = COV⁻¹ - diag(P), and the Gauss–Newton matrix is exactly COV.
+    ``__call__`` gives the whitened residuals of the Gaussian term, so
+    ``gauss_newton_mass`` starts at ``(COV⁻¹ + diag(P))⁻¹ ≠ COV`` and SVI
+    must optimize from that starting covariance to ``COV``.
     """
 
     def __init__(self, flat):
         self.flat = flat
         self.chol = onp.linalg.cholesky(COV)
-        with run_in("float64"):
-            problem = cast_tree(
-                _Objective(_no_model, PRIORS, (), flat=flat), "float64"
-            )
-            z = {k: np.asarray(m, float) for k, m in zip(PRIORS, MU)}
-            # (The problem's coordinates are in sorted order.)
-            by_key = dict(
-                zip(problem.coordinate_keys, problem.curvature_diag(z, True))
-            )
-            p = onp.array([float(by_key[k]) for k in PRIORS])
-        self.row_chol = onp.linalg.cholesky(
-            onp.linalg.inv(onp.linalg.inv(COV) - onp.diag(p))
-        )
 
     def _z(self, values):
         zs, log_prior = [], 0.0
@@ -84,7 +70,7 @@ class _GaussianInZ:
         return white, log_prior
 
     def __call__(self, values):
-        return self._whitened(values, self.row_chol)[0]
+        return self._whitened(values, self.chol)[0]
 
     def loglike(self, values):
         white, log_prior = self._whitened(values, self.chol)
@@ -120,30 +106,36 @@ def _z_of_x(samples, flat):
 
 @pytest.mark.parametrize("flat", [True, False])
 def test_a_posterior_gaussian_in_z_is_recovered_exactly(flat):
-    """With the posterior exactly Gaussian in z, the Gaussian guide is
-    exact. Started at the fit's values, the Gauss–Newton width is exact:
-    log q - log p is then the same constant for every draw, the
-    normalization 0.5 log det(2πΣ), so the loss is exactly that. (The
-    gradient's score term still has zero mean but not zero variance, which
-    Adam would follow, so that check uses a negligible step size.) Started
-    at a unit width, the guide converges to the posterior."""
+    """Starting away from the true mean and covariance (both with the
+    Gauss–Newton preload ``(COV⁻¹ + diag(P))⁻¹ ≠ COV`` and from unit scale),
+    SVI with ``learning_rate=1e-2`` and ``steps=500`` recovers ``(MU, COV)``."""
     term = _GaussianInZ(flat)
     with jax.enable_x64(True):
-        start = {k: float(v) for k, v in _x_of_z(MU, flat).items()}
+        start = {
+            k: float(v)
+            for k, v in _x_of_z(MU + onp.array([0.25, -0.2]), flat).items()
+        }
     common = dict(
         likelihoods=[term], start=start, guide="mvn", flat_coordinates=flat
     )
-    exact = variational(
-        _no_model, PRIORS, (), steps=20, learning_rate=1e-12, **common
+    preloaded = variational(
+        _no_model,
+        PRIORS,
+        (),
+        steps=500,
+        num_particles=32,
+        learning_rate=1e-2,
+        **common,
     )
-    loc, tril = map(onp.asarray, exact.guide.gaussian(exact.params))
-    loc, cov = _in_site_order(exact.guide, loc, tril)
-    onp.testing.assert_allclose(loc, MU, atol=1e-8)
-    onp.testing.assert_allclose(cov, COV, atol=1e-8)
-    assert exact.info["dense_start"]
+    loc, tril = map(onp.asarray, preloaded.guide.gaussian(preloaded.params))
+    loc, cov = _in_site_order(preloaded.guide, loc, tril)
+    onp.testing.assert_allclose(loc, MU, atol=0.02)
+    onp.testing.assert_allclose(cov, COV, rtol=0.1, atol=5e-3)
+    assert preloaded.info["dense_start"]
     normalization = 0.5 * onp.log(onp.linalg.det(2 * onp.pi * COV))
-    # PRIORS are float32 inside the term, float64 in the model: 1e-7.
-    onp.testing.assert_allclose(exact.losses, -normalization, atol=1e-6)
+    onp.testing.assert_allclose(
+        preloaded.losses[-50:].mean(), -normalization, atol=0.02
+    )
 
     learnt = variational(
         _no_model,

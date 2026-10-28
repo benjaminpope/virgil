@@ -68,8 +68,9 @@ def test_phase_term_is_von_mises_and_smooth_across_pi():
         data = _shift_phases(oidata_sim, shift)
         r = whitened_residuals(TRUTH, data)[n_vis:]
         assert np.allclose(r[:k], np.sin(-shift) * unit, rtol=1e-4, atol=1e-3)
-        penalty = 2.0 * np.sin(0.5 * shift) ** 2 / sigma
-        assert np.allclose(r[k:], penalty, rtol=1e-4, atol=1e-6)
+        penalty = 2.0 * np.sin(0.5 * shift) ** 2 * unit
+        assert np.allclose(r[k : 2 * k], penalty, rtol=1e-4, atol=1e-3)
+        assert np.all(r[2 * k :] == 0.0)
 
     def loglike(shift):
         return model_loglike(TRUTH, _shift_phases(oidata_sim, shift))
