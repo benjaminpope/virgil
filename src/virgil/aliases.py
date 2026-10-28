@@ -692,22 +692,21 @@ class _Problem:
             self.surfaces, x, self.data, self.cfg, self.dof, self.log_broad
         )
 
-    def _group(self, g):
-        """Arguments of the kernels for the epochs ``g``."""
-        return (
-            self.surfaces[g],
-            tuple(self.data[g]),
-            self.cfg,
-            self.dof[g],
-            None if self.log_broad is None else self.log_broad[g],
-        )
-
     def hessian(self, x):
         """The Hessian of ``_loglike``. The mixture couples the epochs
         through ``ε``, so by the chain rule it is ``Σ_m F_m ∇²φ_m +
         Jᵀ F_uu J`` over the epochs' terms ``φ = (ell, bad)``: ``∇²φ_m`` one
         memory-sized group of epochs at a time, ``J`` the Jacobian of ``φ``."""
-        calls = [self._group(g) for g in self.hessian_groups]
+        calls = [  # the kernels' arguments for each group of epochs
+            (
+                self.surfaces[g],
+                tuple(self.data[g]),
+                self.cfg,
+                self.dof[g],
+                None if self.log_broad is None else self.log_broad[g],
+            )
+            for g in self.hessian_groups
+        ]
         found = [_terms_jac(a[0], x, *a[1:]) for a in calls]
         ell = np.concatenate([e for _, (e, _) in found])
         bad = np.concatenate([b for _, (_, b) in found])
@@ -2782,17 +2781,18 @@ def _night_diagnostics(problem, settings, result, positions, data, t_ref):
     that band's flags."""
     best = result.best
     live = [m for m in best.modes if onp.isfinite(m["log_z"])]
-    if not best.best or not live:
-        return None, None
-    x = onp.asarray(max(live, key=lambda m: m["log_z"])["x"], float)
-    outlier = dict(
+    outlier = dict(  # the component is recorded whatever the modes are
         kind=settings.outlier,
         log_broad=list(settings.log_broad),
         names=[f"{k}" for k in range(len(data))]
         if not isinstance(positions, EpochPositions)
         else list(positions.names),
-        probability=problem.outlier_probability(x).tolist(),
+        probability=None,
     )
+    if not best.best or not live:
+        return outlier, None
+    x = onp.asarray(max(live, key=lambda m: m["log_z"])["x"], float)
+    outlier["probability"] = problem.outlier_probability(x).tolist()
     if not isinstance(positions, EpochPositions):
         return outlier, None
     try:
@@ -2830,11 +2830,11 @@ def _band_target(result, data, n=None):
     band = (
         result.best if n is None else next(b for b in result.bands if b.n == n)
     )
-    if result.prior is None or result.outlier is None:
+    if result.prior is None or "kind" not in (result.outlier or {}):
         raise ValueError(
             "This AliasResult did not record its prior ranges or its "
-            "outlier component (it was saved by an older virgil): refit it "
-            "to sample its posterior."
+            "outlier component (it was saved by an older virgil, whose "
+            "likelihood differs): refit it to sample its posterior."
         )
     live = [m for m in band.modes if onp.isfinite(m["log_z"])]
     if not live:
@@ -2864,8 +2864,8 @@ def _band_target(result, data, n=None):
         diam_range=tuple(prior["diam_range"]),
         vis_amp=result.vis_amp,
         dof=_dof_of_blocks(result.temper_blocks),
-        outlier=(result.outlier or {}).get("kind", "mixture"),
-        log_broad=tuple((result.outlier or {}).get("log_broad", ())),
+        outlier=result.outlier["kind"],
+        log_broad=tuple(result.outlier["log_broad"]),
     )
     problem = _Problem(cast_tree(list(data), "float64"), settings)
     return (

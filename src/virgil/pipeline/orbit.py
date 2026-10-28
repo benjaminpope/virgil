@@ -876,7 +876,9 @@ def _search(p):
         if result.outlier is None
         else {
             "kind": result.outlier["kind"],
-            "probability": dict(
+            "probability": None
+            if result.outlier["probability"] is None
+            else dict(
                 zip(result.outlier["names"], result.outlier["probability"])
             ),
         },
