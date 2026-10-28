@@ -853,3 +853,6 @@ def test_step_down_and_gradient_are_finite_at_unit_modulus_boundary(mag):
         k_in
     )
     assert np.all(np.isfinite(grad))
+    if mag == 1.0:
+        k_unclipped, _ = H.step_down(h, clip=0.0)
+        assert not bool(np.all(np.isfinite(k_unclipped)))
