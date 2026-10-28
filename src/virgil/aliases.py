@@ -947,7 +947,13 @@ class _Proposal:
     def log_pdf(self, xs, mahal=None):
         """Log density at ``xs`` (``mahal`` if already known)."""
         if mahal is None:
-            mahal = onp.sum(((xs - self.x) @ self.l_inv.T) ** 2, axis=1)
+            diff = onp.array(xs - self.x, float)
+            for k, period in _PERIODIC.items():
+                if k < diff.shape[-1]:
+                    diff[..., k] = (
+                        diff[..., k] + 0.5 * period
+                    ) % period - 0.5 * period
+            mahal = onp.sum((diff @ self.l_inv.T) ** 2, axis=-1)
         d, df = len(self.x), self.df
         return (
             -0.5 * (df + d) * onp.log1p(mahal / df)
@@ -988,6 +994,30 @@ def _mode_evidence(
     h = 0.5 * (h + h.T)
     finite = bool(onp.all(onp.isfinite(h)))
     eig = onp.linalg.eigvalsh(h) if finite else onp.array([-onp.inf])
+    grad = (
+        onp.asarray(problem.value_and_grad(np.asarray(x))[1], float)
+        if hasattr(problem, "value_and_grad")
+        else None
+    )
+    on_bound = (x - bounds.lower < 1e-4) | (bounds.upper - x < 1e-4)
+    if (
+        finite
+        and onp.any(on_bound)
+        and grad is not None
+        and (eig.min() <= 0 or onp.any(onp.abs(grad[on_bound]) > 1e-6))
+    ):
+        for i in onp.flatnonzero(on_bound):
+            if eig.min() <= 0 or h[i, i] <= 0 or abs(grad[i]) > 1e-6:
+                denom = math.sqrt(
+                    float(grad[i]) ** 2 + max(float(h[i, i]), 0.0)
+                )
+                span = float(bounds.upper[i] - bounds.lower[i])
+                scale_i = min(span, 1.0 / denom) if denom > 0 else span
+                if onp.isfinite(scale_i) and scale_i > 0:
+                    h[i, :] = 0.0
+                    h[:, i] = 0.0
+                    h[i, i] = 1.0 / (scale_i**2)
+        eig = onp.linalg.eigvalsh(h)
     proposal, flag = None, None
     if not (finite and eig.min() > 0):
         flag = "hessian-not-positive-definite"
@@ -1026,7 +1056,8 @@ def _mode_evidence(
     out["sigma"] = sd.tolist()
     # Newton step in units of sigma, over the coordinates not on a bound:
     # large means L-BFGS stopped short of a stationary point.
-    grad = onp.asarray(problem.value_and_grad(np.asarray(x))[1], float)
+    if grad is None:
+        grad = onp.asarray(problem.value_and_grad(np.asarray(x))[1], float)
     free = (x - bounds.lower > 1e-6) & (bounds.upper - x > 1e-6)
     if onp.any(onp.abs(grad[free]) * sd[free] > 0.1):
         out["flags"].append("not-converged")
@@ -1036,6 +1067,7 @@ def _mode_evidence(
     ok = bounds.inside(xs)
     for k, width in _PERIODIC.items():
         ok &= onp.abs(xs[:, k] - x[k]) < width / 2.0
+    out["p_in"] = max(float(onp.mean(ok)), 1e-6)
     values = onp.asarray(problem.batch(np.asarray(bounds.clip(xs))), float)
     log_t = onp.where(ok, values, -onp.inf) + problem.log_prior
     log_w = log_t - log_q
@@ -1260,10 +1292,14 @@ def _band_evidence(problem, settings, bounds, modes_xy, rng):
         if draw is not None:
             draws.append(draw)
     for m in modes:
-        edge = (
-            "near-prior-bound" in m["flags"] and m["ess"] >= settings.ess_min
-        )
-        m["log_z"] = m["log_z_is"] if edge else m["log_z_laplace"]
+        if "near-prior-bound" in m["flags"]:
+            m["log_z"] = (
+                m["log_z_is"]
+                if m["ess"] >= settings.ess_min
+                else m["log_z_laplace"] + float(onp.log(m.get("p_in", 1.0)))
+            )
+        else:
+            m["log_z"] = m["log_z_laplace"]
     z_lap = (
         float(logsumexp([m["log_z"] for m in modes])) if modes else -onp.inf
     )
@@ -2569,23 +2605,36 @@ def _temper_factors(data, positions, diam, vis_amp, names):
             if not onp.isfinite(value):  # no improvement: keep the position
                 x = x0
             model = _binary(np.asarray(x), dm)
+            r = onp.asarray(_amp_residuals(model, d, surface, amp), float)
+            chi2 = onp.asarray(surface.block_chi2(np.asarray(r)), float)
+            scales = dict(
+                zip(
+                    surface.names,
+                    onp.sqrt(onp.maximum(chi2 / surface.nu, 1e-12)),
+                )
+            )
             z = {}
             n_vis = int(onp.size(d.vis))
             n_phi = int(onp.size(d.phi))
             if n_vis:
                 # whitened (and V² amplitude profiled, as in the fit)
-                z["vis"] = onp.asarray(
-                    _amp_residuals(model, d, surface, amp)[:n_vis], float
-                )
+                z["vis"] = r[:n_vis] / scales["vis"]
             if n_phi and d.phase_offsets is None:
-                # the display residual: whitened closure phases lose the
-                # triangle layout the channel chains index. With
-                # ``with_closure_offsets`` the likelihood marginalizes an
+                # With ``with_closure_offsets`` the likelihood marginalizes an
                 # offset that this residual would show as channel-shared:
                 # that block takes the pooled f instead.
-                err = onp.asarray(d.flatten_data()[1], float)
-                r = onp.asarray(d.residuals(d.model(model)), float)
-                z["phi"] = (r / err)[n_vis : n_vis + n_phi]
+                if d.cp_noise is None:
+                    phi_r = r[n_vis : n_vis + n_phi]
+                else:
+                    cp = d.cp_noise
+                    flat = onp.zeros(cp.valid.size)
+                    flat[cp.keep] = r[n_vis : n_vis + cp.size]
+                    proj = onp.einsum(
+                        "gkm,gk->gm", cp.basis, flat.reshape(cp.valid.shape)
+                    )
+                    phi_r = onp.zeros(n_phi)
+                    onp.add.at(phi_r, cp.groups, onp.where(cp.mask, proj, 0.0))
+                z["phi"] = phi_r / scales["phi"]
             residuals.append(z)
             used.append(chains[i])
     return estimate_factors(residuals, used, names)
@@ -3138,6 +3187,8 @@ def fit_orbit_aliases(
     )
     profile, counts, motion = None, None, None
     resolution_mas = float(fringe_scales(data)[0])
+    if min_distance_mas is None or min_distance_mas == 0.5:
+        min_distance_mas = min(0.5, 0.5 * resolution_mas)
     arc_jitter_mas = float(arc_jitter) * resolution_mas
     # The positions' gaps and covariances come from the untempered surface:
     # the cut uses them tempered, as the evidence is. The gap sums the

@@ -950,3 +950,37 @@ def test_an_empty_period_window_names_the_pipeline_setting(monkeypatch):
     )
     with pytest.raises(ValueError, match="Set period_range"):
         orbit_module._alias_search(pipeline, [], None, None, None)
+
+
+def test_null_verdict_applies_laplace_occam_factor_for_fitted_primary_diam(
+    monkeypatch,
+):
+    import math
+    import virgil.aliases as aliases
+
+    d0, h_dd = 1.0, 400.0
+    d_range = (0.1, 5.0)
+
+    class Problem:
+        def batch(self, xs, mixed=False):
+            d = onp.exp(onp.asarray(xs)[:, 8])
+            return -0.5 * h_dd * (d - d0) ** 2
+
+    monkeypatch.setattr(
+        aliases,
+        "_band_target",
+        lambda res, data: (
+            Problem(),
+            None,
+            onp.zeros(9),
+            SimpleNamespace(diam_range=d_range),
+        ),
+    )
+    res = SimpleNamespace(best=SimpleNamespace(log_z=0.0))
+    verdict = orbit_module._null_verdict(res, [], {"no_orbit_nats": 5.0})
+    expected_occam = 0.5 * math.log(2.0 * math.pi / h_dd) - math.log(
+        d_range[1] - d_range[0]
+    )
+    assert verdict["log_like_single_star"] == pytest.approx(
+        expected_occam, rel=0.05
+    )

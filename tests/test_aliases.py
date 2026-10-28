@@ -2438,3 +2438,66 @@ def test_short_arc_seeds_come_beside_the_position_seeds():
     log_z = lambda r, n: next(b.log_z for b in r.bands if b.n == n)  # noqa: E731
     # within a kept band the arcs never seed worse than the positions alone
     assert log_z(with_arcs, n_true) > log_z(without, n_true) - 5.0
+
+
+def test_proposal_log_pdf_wraps_periodic_angles():
+    x = onp.array([2.5, 0.01, 0.2, 0.5, 1.0, 1.0, 2.0, -1.0])
+    eye = onp.eye(len(x))
+    prop = aliases._Proposal(x, eye, eye, 0.0, 5.0)
+    delta = onp.array([0.0, -0.02, 0.0, 0.0, -2.0, -1.0, 0.0, 0.0])
+    unwrapped = (x + delta)[None, :]
+    wrapped = unwrapped.copy()
+    wrapped[0, 1] += 1.0
+    wrapped[0, 4] += 360.0
+    wrapped[0, 5] += 180.0
+    assert float(prop.log_pdf(wrapped)[0]) == pytest.approx(
+        float(prop.log_pdf(unwrapped)[0]), rel=1e-12
+    )
+
+
+def test_boundary_mode_regularizes_hessian_and_truncates_laplace_fallback():
+    class BoundaryProblem:
+        log_prior = -5.0
+
+        def hessian(self, x):
+            h = onp.diag([10.0, 10.0, -2.0, 10.0, 10.0, 10.0, 10.0, 10.0])
+            return -h
+
+        def value_and_grad(self, x):
+            g = onp.zeros(8)
+            g[2] = -5.0  # pushes toward lower bound at x[2] = 0
+            return -1.0, g
+
+        def batch(self, xs):
+            return -onp.ones(len(xs))
+
+    x = onp.zeros(8)
+    bounds = _bounds()
+    rec, draw = aliases._mode_evidence(
+        BoundaryProblem(), bounds, x, -1.0, 200, onp.random.default_rng(0)
+    )
+    assert draw is not None and onp.isfinite(rec["log_z_laplace"])
+    assert "near-prior-bound" in rec["flags"]
+    assert 0.2 < rec["p_in"] < 0.8
+    # When ESS is below ess_min, _band_evidence falls back to truncated Laplace
+    settings = _settings(n_is=20, ess_min=1e9)
+    modes, z_lap, _, _ = aliases._band_evidence(
+        BoundaryProblem(),
+        settings,
+        bounds,
+        [(x, -1.0)],
+        onp.random.default_rng(0),
+    )
+    assert z_lap == pytest.approx(
+        modes[0]["log_z_laplace"] + float(onp.log(modes[0]["p_in"]))
+    )
+
+
+def test_default_min_distance_mas_scales_with_sub_mas_resolution(monkeypatch):
+    monkeypatch.setattr(aliases, "fringe_scales", lambda d: (0.4, 4.0))
+    s_default = _spy_settings(monkeypatch, p_range=(12.1, 12.7))["settings"]
+    assert s_default.min_distance_mas == pytest.approx(0.2)
+    s_explicit = _spy_settings(
+        monkeypatch, p_range=(12.1, 12.7), min_distance_mas=0.3
+    )["settings"]
+    assert s_explicit.min_distance_mas == pytest.approx(0.3)
