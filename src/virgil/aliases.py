@@ -2739,9 +2739,16 @@ _BROAD_STEP = 0.25
 _OUTLIERS = ("mixture", "inflation")
 
 
-def _broad_components(data, settings, diam, resolution, **batching):
+def _broad_components(
+    data, settings, primary_diam, diam_seed, resolution, **batching
+):
     """``settings`` with the mixture's outlier component ``log_broad`` (its
     own ``s_max``, tempering and primary); unchanged for ``inflation``."""
+    if settings.outlier not in _OUTLIERS:
+        raise ValueError(
+            f"outlier must be one of {_OUTLIERS}, got {settings.outlier!r}."
+        )
+    diam = diam_seed if primary_diam == "fit" else primary_diam
     if settings.outlier == "inflation":
         if settings.s_max is None:
             raise ValueError("outlier='inflation' needs s_max.")
@@ -2986,10 +2993,6 @@ def fit_orbit_aliases(
         If no band lies in ``p_range``, or ``checkpoint_dir`` data cannot be hashed.
         Preflight likelihood errors propagate unchanged.
     """
-    if outlier not in _OUTLIERS:
-        raise ValueError(
-            f"outlier must be one of {_OUTLIERS}, got {outlier!r}."
-        )
     if outlier_eps is not None:
         warnings.warn(
             "fit_orbit_aliases(outlier_eps=) is ignored: the outlier rate is "
@@ -3324,17 +3327,9 @@ def fit_orbit_aliases(
             ),
         )
     settings = _broad_components(
-        data,
-        settings,
-        None
-        if primary_diam is None
-        else diam_seed
-        if primary_diam == "fit"
-        else primary_diam,
-        resolution_mas,
-        batch_size=batch_size,
-        memory_budget=memory_budget,
-    )
+        data, settings, primary_diam, diam_seed, resolution_mas,
+        batch_size=batch_size, memory_budget=memory_budget,
+    )  # fmt: skip
     problem = _Problem(data, settings, batch_size, memory_budget)
     _preflight(problem, settings, bands[0])
     key = (

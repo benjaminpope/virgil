@@ -321,11 +321,18 @@ def test_the_inflated_surface_has_the_base_prior_mass_on_s_above_one():
 def test_the_outlier_component_is_built_per_kind_and_must_be_finite():
     data = [cast_tree(d, "float64") for d in _with_bad_night(3.0)[:2]]
     mixture = ta._settings(outlier="mixture", s_max=50.0)
-    built = aliases._broad_components(data, mixture, None, 4.0)
+    built = aliases._broad_components(data, mixture, None, None, 4.0)
     assert len(built.log_broad) == 2 and onp.isfinite(built.log_broad).all()
     inflation = ta._settings(outlier="inflation", s_max=50.0)
-    assert aliases._broad_components(data, inflation, None, 4.0) is inflation
+    assert (
+        aliases._broad_components(data, inflation, None, None, 4.0)
+        is inflation
+    )
     with pytest.raises(ValueError, match="s_max"):
         aliases._broad_components(
-            data, ta._settings(outlier="inflation"), None, 4.0
+            data, ta._settings(outlier="inflation"), None, None, 4.0
+        )
+    with pytest.raises(ValueError, match="outlier must be"):
+        aliases._broad_components(
+            data, ta._settings(outlier="none"), None, None, 4.0
         )
