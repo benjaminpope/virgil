@@ -63,6 +63,7 @@ def spread(tx, ty, c, nf, kp):
 
     ``tx``, ``ty`` (rad per pixel) and ``c`` are 1-D; the grid is (nf, nf).
     """
+    c = np.asarray(c, dtype=np.result_type(c, 1j))
     return _nufftax()[2](tx, ty, c, nf, nf, kp)
 
 
