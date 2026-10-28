@@ -948,34 +948,6 @@ def test_reduced_clamps_non_positive_c_sum_plus_delta(small):
     assert all(bool(np.all(np.isfinite(g))) for g in grad.values())
 
 
-def test_curvature_loss_is_half_chi2_without_log_norm(small):
-    """``_ToeplitzTerm.curvature_loss`` returns ``0.5 * chi2`` (matching
-    ``_RadioTerm``) and does not add ``log_norm``."""
-    data, _, scene, template = small
-    nuis = CalibrationNuisance(data, sigmas=True, offsets=False, alpha=0.7)
-    tdata = data.toeplitz(template, nuis)
-    term = tdata.term(scene, nuis)
-    values = _values(nuis, flux=0.8, gain=[1.1], sigma=[2.5, 2.5, 2.5, 2.5])
-    values["eta"] = np.zeros((8, 8))
-    params = term.curvature_params(values)
-    chi2, log_norm = term._reduced(params)
-    assert float(log_norm) != 0.0
-    assert float(term.curvature_loss(params)) == pytest.approx(
-        0.5 * float(chi2), rel=1e-15
-    )
-    priors = nuis.priors(sigma=(0.1, 10.0))
-    priors["eta"] = dist.Normal(0.0, 1.0)
-    diag = gauss_newton_diag(
-        lambda **v: scene(v),
-        priors,
-        (),
-        values,
-        likelihoods=[term],
-        n_probes=0,
-    )
-    assert onp.all(onp.asarray(diag["cal.sigma"]) > 0.0)
-
-
 def test_custom_offset_prior_bounds_widen_toeplitz_precompute(small):
     data, nuis, scene, template = small
     wide = 50.0

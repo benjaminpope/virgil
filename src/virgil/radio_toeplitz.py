@@ -694,9 +694,9 @@ class _ToeplitzTerm(eqx.Module):
         return self._reduced(self.curvature_params(values))
 
     def curvature_loss(self, params):
-        """``½χ²`` (less constants) of ``curvature_params``."""
-        chi2, _ = self._reduced(params)
-        return 0.5 * chi2
+        """``½χ² + log_norm`` (less constants) of ``curvature_params``."""
+        chi2, log_norm = self._reduced(params)
+        return 0.5 * chi2 + log_norm
 
     @property
     def chi2_constant(self):

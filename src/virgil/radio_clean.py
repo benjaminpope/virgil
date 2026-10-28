@@ -132,11 +132,10 @@ def restore(model, residual, beam, pixel_scale_mas):
     pixel_scale_mas : float
     """
     n0, n1 = model.shape
-    r, c = (n0 - 1) // 2, (n1 - 1) // 2  # the kernel's centre is the origin
     bmaj, bmin, pa = beam
     kernel = _gaussian(
         model.shape,
-        (r, c),
+        ((n0 - 1) / 2, (n1 - 1) / 2),
         bmaj / pixel_scale_mas,
         bmin / pixel_scale_mas,
         pa,
@@ -145,6 +144,7 @@ def restore(model, residual, beam, pixel_scale_mas):
     conv = sfft.irfft2(
         sfft.rfft2(model, s=pad) * sfft.rfft2(kernel, s=pad), s=pad
     )
+    r, c = (n0 - 1) // 2, (n1 - 1) // 2  # the kernel's centre is the origin
     return conv[r : r + n0, c : c + n1] + residual
 
 
@@ -490,13 +490,13 @@ def clean(
     Source: Högbom (1974), Clark (1980), Schwab (1984), Cornwell (2008), CASA.
 
     Unlike [`virgil.imaging.clean`][virgil.imaging.clean] it takes complex
-    visibilities. Provisional (new in 0.4.1).
+    visibilities and an **odd** ``npix``. Provisional (new in 0.4.1).
 
     Parameters
     ----------
     data : ComplexVisData
     npix : int
-        Image side in pixels (at least 2).
+        Odd image side, so the PSF peaks on a pixel (``Image`` wants even).
     pixel_scale_mas : float
     deconvolver : {"hogbom", "multiscale"}
         Point components or Gaussians (every minor cycle is Clark's windowed
@@ -537,8 +537,8 @@ def clean(
     if not isinstance(data, ComplexVisData):
         raise TypeError("data must be a ComplexVisData.")
     npix = int(npix)
-    if npix < 2:
-        raise ValueError("npix must be at least 2.")
+    if npix % 2 == 0:
+        raise ValueError("npix must be odd, so the PSF peaks on a pixel.")
     if deconvolver == "clark":
         raise ValueError(
             "deconvolver='clark' was identical to 'hogbom' and is removed; "
