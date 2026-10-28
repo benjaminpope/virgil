@@ -258,6 +258,8 @@ class ToeplitzVisData(eqx.Module):
             # The largest image-frame shift (pixels) of the offsets' prior box.
             shift_mas = max_offset_mas
             if shift_mas is None:
+                shift_mas = getattr(nuisance, "_max_offset_mas", None)
+            if shift_mas is None:
                 free_obs = onp.arange(nuisance.n_obs) != nuisance.ref_obs
                 theta = nuisance.offset_beams * 2.0 * onp.pi
                 shift_mas = float(
@@ -654,22 +656,27 @@ class _ToeplitzTerm(eqx.Module):
         """``ŝ_d² = (C_d + Δ_d) / 2N_d`` (1 without points), held."""
         c_sum, count = self.arrays["c_sum"], self.arrays["count"]
         s2 = (c_sum + delta) / (2.0 * np.maximum(count, 1.0))
-        s2 = np.where(count > 0, np.maximum(s2, np.finfo(s2.dtype).tiny), 1.0)
+        floor = np.sqrt(np.finfo(s2.dtype).tiny)
+        s2 = np.where(count > 0, np.maximum(s2, floor), 1.0)
         return jax.lax.stop_gradient(s2)
 
     def _reduced(self, params):
         c_sum, count = self.arrays["c_sum"], self.arrays["count"]
         if self._profiled:
             delta = self._deltas(params)
-            r = delta / self._profile(delta)
+            r = (delta - jax.lax.stop_gradient(delta)) / self._profile(delta)
             ok = (count > 0) & (c_sum > 0)
             ratio = delta / np.where(ok, c_sum, 1.0)
-            log_norm = np.sum(
-                np.where(
-                    ok, count * jax.lax.stop_gradient(np.log1p(ratio)), 0.0
-                )
+            tiny = np.finfo(c_sum.dtype).tiny
+            log1p = np.where(
+                ratio > -0.5,
+                np.log1p(np.maximum(ratio, -0.5)),
+                np.log(np.maximum(1.0 + ratio, tiny)),
             )
-            return np.sum(r - jax.lax.stop_gradient(r)), log_norm
+            log_norm = np.sum(
+                np.where(ok, count * jax.lax.stop_gradient(log1p), 0.0)
+            )
+            return np.sum(r), log_norm
         sigma = params[3] if self.sigma_fixed is None else self.sigma_fixed
         image, shift, g, _ = params
         c = 1.0 / sigma**2
@@ -687,9 +694,9 @@ class _ToeplitzTerm(eqx.Module):
         return self._reduced(self.curvature_params(values))
 
     def curvature_loss(self, params):
-        """``½χ² + log_norm`` (less constants) of ``curvature_params``."""
-        chi2, log_norm = self._reduced(params)
-        return 0.5 * chi2 + log_norm
+        """``½χ²`` (less constants) of ``curvature_params``."""
+        chi2, _ = self._reduced(params)
+        return 0.5 * chi2
 
     @property
     def chi2_constant(self):

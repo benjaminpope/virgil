@@ -914,3 +914,71 @@ def test_old_taper_name_gives_identical_toeplitz_and_direct_losses():
         losses.append((term.chi2_and_log_norm(values)[0], np.sum(r**2)))
     assert losses[0][0] == losses[1][0]
     assert losses[0][1] == losses[1][1]
+
+
+def test_reduced_clamps_non_positive_c_sum_plus_delta(small):
+    """When ``c_sum + delta <= 0`` (e.g. from NUFFT tolerance or an extreme
+    exploratory step), ``_reduced`` and its gradient stay finite."""
+    import equinox as eqx
+
+    data, _, scene, template = small
+    nuis = CalibrationNuisance(
+        data, sigmas="profile", offsets=False, alpha=0.7
+    )
+    tdata = data.toeplitz(template, nuis)
+    # Force c_sum small and cross positive so c_sum + delta < 0.
+    arrays = dict(
+        tdata.arrays,
+        c_sum=np.full_like(tdata.arrays["c_sum"], 1e-30),
+        cross=np.full_like(tdata.arrays["cross"], 1e6),
+    )
+    tdata_neg = eqx.tree_at(lambda t: t.arrays, tdata, arrays)
+    term = tdata_neg.term(scene, nuis)
+    values = _values(nuis, flux=1.0, gain=[1.0])
+    values["eta"] = np.zeros((8, 8))
+    params = term.curvature_params(values)
+    assert bool(np.all(term.arrays["c_sum"] + term._deltas(params) < 0.0))
+
+    def loss(v):
+        chi2, log_norm = term.chi2_and_log_norm(v)
+        return 0.5 * chi2 + log_norm
+
+    val, grad = jax.value_and_grad(loss)(values)
+    assert np.isfinite(val)
+    assert all(bool(np.all(np.isfinite(g))) for g in grad.values())
+
+
+def test_curvature_loss_is_half_chi2_without_log_norm(small):
+    """``_ToeplitzTerm.curvature_loss`` returns ``0.5 * chi2`` (matching
+    ``_RadioTerm``) and does not add ``log_norm``."""
+    data, _, scene, template = small
+    nuis = CalibrationNuisance(data, sigmas=True, offsets=False, alpha=0.7)
+    tdata = data.toeplitz(template, nuis)
+    term = tdata.term(scene, nuis)
+    values = _values(nuis, flux=0.8, gain=[1.1], sigma=[2.5, 2.5, 2.5, 2.5])
+    values["eta"] = np.zeros((8, 8))
+    params = term.curvature_params(values)
+    chi2, log_norm = term._reduced(params)
+    assert float(log_norm) != 0.0
+    assert float(term.curvature_loss(params)) == pytest.approx(
+        0.5 * float(chi2), rel=1e-15
+    )
+    priors = nuis.priors(sigma=(0.1, 10.0))
+    priors["eta"] = dist.Normal(0.0, 1.0)
+    diag = gauss_newton_diag(
+        lambda **v: scene(v),
+        priors,
+        (),
+        values,
+        likelihoods=[term],
+        n_probes=0,
+    )
+    assert onp.all(onp.asarray(diag["cal.sigma"]) > 0.0)
+
+
+def test_custom_offset_prior_bounds_widen_toeplitz_precompute(small):
+    data, nuis, scene, template = small
+    wide = 50.0
+    nuis.priors(offset=(-wide, wide))
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    assert tdata.max_shift_pix * PIXEL == pytest.approx(wide, rel=1e-12)
