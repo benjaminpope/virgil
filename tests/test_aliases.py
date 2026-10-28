@@ -2278,7 +2278,7 @@ def test_a_resolved_primary_is_fitted_and_an_unresolved_one_is_a_point():
 
 
 def test_an_excluded_band_that_beats_the_kept_ones_is_readmitted(monkeypatch):
-    # AGENTS.md, "Cycle counts from short arcs" row: the cheap check never
+    # orbit_solved_problems.md, "Cycle counts from short arcs" row: the cheap check never
     # lets the short arcs silently drop a band whose seeds fit better.
     from virgil.arcs import CycleCounts
 

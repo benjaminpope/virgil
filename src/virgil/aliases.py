@@ -116,11 +116,11 @@ UNRECORDED = "unrecorded"
 _RESULT_FORMAT = 1  # AliasResult JSON; a file without the field is format 0
 # The labels are *free* when a point-reflected mode's evidence is within this
 # many nats (tempered; odds of 1 to 20) of the best mode's. Why 3: docs/
-# orbit_fitting.md, "Alias search"; AGENTS.md, "Label swap" row.
+# orbit_fitting.md, "Alias search"; orbit_solved_problems.md, "Label swap" row.
 LABELS_FREE_NATS = 3.0
 # ...and the reflected track matches within this fraction of λ/B_max.
 _LABELS_FREE_RES_FRACTION = 0.25
-# Where a period is "at a bound" of the window (AGENTS.md, "Period window from
+# Where a period is "at a bound" of the window (orbit_solved_problems.md, "Period window from
 # the data" row): the best period within this fraction of ``p_range[1]`` (a likelihood that is flat
 # towards long periods, as for a short arc, is maximized at the edge) or
 # within this factor of ``p_range[0]``.
@@ -139,7 +139,7 @@ _N_BANDS_MAX = 200
 # A lower end above this many nights' length is reported (a Nyquist-style
 # sampling limit that excludes short periods is the user's to see).
 _WARN_P_MIN_NIGHTS = 5.0
-# Default per-epoch V² amplitude range (AGENTS.md, "V² amplitude" row): a contrast loss from
+# Default per-epoch V² amplitude range (orbit_solved_problems.md, "V² amplitude" row): a contrast loss from
 # seeing or calibration; above 1 only for a calibration that overshoots.
 _VIS_AMP_DEFAULT = (0.5, 1.2)
 # Where a fitted diameter may reach with ``primary_diam="auto"`` (problem
@@ -322,7 +322,7 @@ def position_profile(
             positions, periods, eccs=eccs, n_best=n_best, sign_free=False
         )
         if sign_free:
-            # AGENTS.md, "Label swap" row: the sign-free orbits are *added*
+            # orbit_solved_problems.md, "Label swap" row: the sign-free orbits are *added*
             # to the signed ones, which keep the signs closure phases fix.
             found = found + starting_orbits(
                 positions, periods, eccs=eccs, n_best=n_best, sign_free=True
@@ -1449,7 +1449,7 @@ def _fit_band(problem, settings, band, orbits, times):
         problem, settings, bounds, pool, times, forced
     )
     flips = []
-    # AGENTS.md, "Flux flip" row: a fit pinned at the prior's top flux is
+    # orbit_solved_problems.md, "Flux flip" row: a fit pinned at the prior's top flux is
     # refit with the stars' labels swapped.
     if settings.flip_flux and _flip_is_relabelling(problem, settings):
         modes_xy, flips, n_flip_failed = _flip_modes(
@@ -2983,7 +2983,7 @@ def fit_orbit_aliases(
         if t_ref is None
         else float(t_ref)
     )
-    # AGENTS.md, "Period window from the data" row: without p_range, the
+    # orbit_solved_problems.md, "Period window from the data" row: without p_range, the
     # window follows from the data alone.
     window_capped = None
     if p_range is None:
@@ -3035,7 +3035,7 @@ def fit_orbit_aliases(
     bands = alias_bands(mean_times, p_range)
     if not bands:
         raise ValueError("No alias band lies within p_range.")
-    # AGENTS.md, "V² amplitude" row: per-night contrast loss, profiled; shared
+    # orbit_solved_problems.md, "V² amplitude" row: per-night contrast loss, profiled; shared
     # by the first pass of ``primary_diam="auto"``.
     if isinstance(vis_amp, (bool, onp.bool_)):
         vis_amp = _default_vis_amp(data) if vis_amp else None
@@ -3046,9 +3046,9 @@ def fit_orbit_aliases(
         vis_amp = tuple(map(float, vis_amp))
         if not 0 < vis_amp[0] < vis_amp[1]:
             raise ValueError("vis_amp must be (lo, hi) with 0 < lo < hi.")
-    # AGENTS.md, "Resolved primary in the orbit fit, automatically" row: a
+    # orbit_solved_problems.md, "Resolved primary in the orbit fit, automatically" row: a
     # first pass estimates the diameter and reseeds the positions with it.
-    # AGENTS.md, "Untempered evidence" row: the factors f come from the
+    # orbit_solved_problems.md, "Untempered evidence" row: the factors f come from the
     # residuals of the per-night fits at the primary finally chosen.
     factors, names = None, sorted({n for d in data for n in _Surface(d).names})
     estimate_f, fixed_f = False, False
@@ -3149,7 +3149,7 @@ def fit_orbit_aliases(
             UserWarning,
             stacklevel=external_stacklevel(),
         )
-    # AGENTS.md, "Single-night alias peaks" row: a flagged night must not
+    # orbit_solved_problems.md, "Single-night alias peaks" row: a flagged night must not
     # seed the bands; ``data`` keeps it, so the likelihood still sees it.
     seed_positions = positions
     positions, unseeded, fell_back = _seeding_positions(
@@ -3180,7 +3180,7 @@ def fit_orbit_aliases(
             arc_min_gap,
         )
     if arcs_decided:
-        # AGENTS.md, "Cycle counts from short arcs" row: the nights' motion
+        # orbit_solved_problems.md, "Cycle counts from short arcs" row: the nights' motion
         # narrows the bands and seeds each one. The cut fits signed
         # positions, so it needs every seeding night's sign decided: by
         # the flags and its gap over its reflection (a label swap). Other
@@ -3203,7 +3203,7 @@ def fit_orbit_aliases(
             sign_free=sign_free,
         )
     elif positions is not None:
-        # AGENTS.md, "Label swap" row: sign_free seeds both labelings.
+        # orbit_solved_problems.md, "Label swap" row: sign_free seeds both labelings.
         profile = position_profile(
             positions,
             bands,
@@ -3416,7 +3416,7 @@ def fit_orbit_aliases(
             len(xs), size=n_samples, p=w / w.sum()
         )
         samples[b.n] = _physical(xs[pick])
-    # AGENTS.md, "Period window from the data" row: a short arc is flat
+    # orbit_solved_problems.md, "Period window from the data" row: a short arc is flat
     # towards long periods, so P is unconstrained (``period_bound``).
     # It is also flagged when the best mode's σ(log P) is a quarter of the
     # window; and ``period_at_lower`` when P is near the bottom, where the
