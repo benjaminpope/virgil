@@ -496,7 +496,8 @@ class StarPipeline(_Pipeline):
                         oc,
                         message=f"{name} (not selected): {oc.message}",
                     )
-                    if bc.status == "pass" and oc.status != "pass"
+                    if _checks.STATUSES.index(oc.status)
+                    > _checks.STATUSES.index(bc.status)
                     else bc
                     for bc, oc in zip(sampler_checks, other_checks)
                 ]

@@ -307,15 +307,16 @@ def ess(value, *, warn=400.0, fail=100.0):
     )
 
 
-def divergences(fraction, *, walls=None, warn=0.0, fail=0.01):
+def divergences(fraction, *, walls=None, warn=0.0, fail=0.01, exposed=0.05):
     """Fraction of divergent NUTS transitions.
 
     ``walls`` is the posterior's wall probe (``{"radius_sd", "n",
-    "exposed"}``, see ``StarPipeline``). A failure is never downgraded: if
-    steps of a few posterior standard deviations hit a hard wall of the
-    likelihood (a closure-phase flip, which costs thousands in χ²), the
-    message says that NUTS rejects trajectories at the wall, which is the
-    probable cause, and the check still fails.
+    "exposed"}``, see ``StarPipeline``). A failure is never downgraded. If at
+    least ``exposed`` of the steps of a few posterior standard deviations hit a
+    hard wall of the likelihood (a closure-phase flip, which costs thousands
+    in χ²), the message names NUTS rejecting trajectories at the wall as a
+    probable cause; the check still fails. The threshold only guards the
+    diagnosis: with about 40 probe steps, 0.05 is two hits, not a stray one.
     """
     if not _finite(fraction):
         return Check(
@@ -331,7 +332,7 @@ def divergences(fraction, *, walls=None, warn=0.0, fail=0.01):
         status, meaning = "warn", "inspect where they occur"
     else:
         status, meaning = "pass", "none"
-    if status == "fail" and walls and walls.get("exposed", 0.0) > 0:
+    if status == "fail" and walls and walls.get("exposed", 0.0) >= exposed:
         meaning += (
             f"; {100 * walls['exposed']:.2g} per cent of steps of "
             f"{walls['radius_sd']:g} posterior standard deviations hit a "

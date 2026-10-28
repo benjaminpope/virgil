@@ -49,7 +49,9 @@ def test_synthetic_docs_builder_writes_closure_phases_in_degrees():
 
 
 @pytest.mark.slow
-def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
+def test_synthetic_docs_binary_recovery_within_a_family_wise_limit(
+    tmp_path: Path,
+):
     module = _load_synthetic_module()
 
     run_synthetic_binary_demo = module.run_synthetic_binary_demo
@@ -62,7 +64,7 @@ def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
         output, num_warmup=300, num_samples=500
     )
 
-    checks = within_two_sigma(summary)
+    params = tuple(within_two_sigma(summary))
     fisher_checks = fisher_within_three_sigma(summary)
 
     assert output.exists()
@@ -82,9 +84,9 @@ def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
     # rate: for a correct posterior each |z| is half-normal, so a Bonferroni limit
     # over the n parameters at alpha = 0.01 is z = isf(alpha / (2 n)) (2.94 for n = 3).
     # The seed is fixed; the limit does not depend on it.
-    n_param = len(checks)
+    n_param = len(params)
     z_limit = float(norm.isf(0.01 / (2 * n_param)))
-    for key in checks:
+    for key in params:
         sigma = max(summary.hmc_std[key], 1e-12)
         z = abs(summary.hmc_median[key] - summary.truth[key]) / sigma
         assert z < z_limit, (
