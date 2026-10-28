@@ -726,15 +726,17 @@ def fit(
     precondition : {None, "diag"}, optional
         ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
         diagonal for L-BFGS and Adam (provisional); see
-        [conventions](../conventions.md#preconditioning-image-fits). Use float64
-        with weak maximum-entropy weights. Source: [Skilling & Bryan
-        (1984)](../references.md#skillingbryan1984), [Hutchinson
-        (1989)](../references.md#hutchinson1989).
+        [conventions](../conventions.md#preconditioning-image-fits).
+        ``info["precondition_rounds"]`` records the spread per round. With a
+        maximum-entropy regularizer at weak weights float32 can stall: use float64.
+        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
+        [Hutchinson (1989)](../references.md#hutchinson1989).
 
     Returns
     -------
     FitResult
-        Model, values and diagnostics; warns if not converged (``info["stop"]``).
+        Model, values and diagnostics; warns if LM, L-BFGS or Adam did not converge
+        (``info["stop"]`` gives the reason, ``info["grad_norm"]`` the gradient).
     """
     if not math.isfinite(max_step_size) or max_step_size <= 0:
         raise ValueError(
@@ -987,16 +989,15 @@ def _bound_fraction(prior, value, flat=True):
     fraction = onp.asarray((onp.asarray(value, float) - low) / (high - low))
     poles = getattr(base, "_poles", None)
     if poles is not None:
-        lo_pole = onp.isclose(
-            onp.asarray(base.low, float), poles[0], atol=1e-5
+        # An end at a coordinate pole (a float32 copy of pi/2 is off by ~1e-7
+        # relative) is not a prior bound: no fraction there (NaN never
+        # compares below or above a threshold).
+        lo_pole = onp.isclose(onp.asarray(base.low, float), poles[0], 1e-6, 0)
+        hi_pole = onp.isclose(onp.asarray(base.high, float), poles[1], 1e-6, 0)
+        fraction = onp.where(lo_pole & (fraction < _AT_BOUND), onp.nan, fraction)
+        fraction = onp.where(
+            hi_pole & (fraction > 1 - _AT_BOUND), onp.nan, fraction
         )
-        hi_pole = onp.isclose(
-            onp.asarray(base.high, float), poles[1], atol=1e-5
-        )
-        if onp.all(lo_pole & hi_pole):
-            return None
-        fraction = onp.where(lo_pole & (fraction < 0.5), 0.5, fraction)
-        fraction = onp.where(hi_pole & (fraction > 0.5), 0.5, fraction)
     return fraction
 
 
