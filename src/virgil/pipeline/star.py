@@ -471,16 +471,13 @@ class StarPipeline(_Pipeline):
                     _checks.prior_constrained(entry.constrained_check, ratios)
                 )
             sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
-            worst = max(
-                post["models"].values(), key=lambda m: m["divergence_fraction"]
-            )
+            chosen = post["models"][best]
             bounds = {
-                f"{n}.{k}": v
-                for n, m in post["models"].items()
-                for k, v in m["prior_bound_fraction"].items()
+                f"{best}.{k}": v
+                for k, v in chosen["prior_bound_fraction"].items()
             }
             checks += _sampler_checks(
-                post, bounds=bounds, walls=worst.get("wall_probe")
+                post, bounds=bounds, walls=chosen.get("wall_probe")
             )
         return sections, checks
 
@@ -1014,6 +1011,12 @@ def _nuts(model, data, p, name, priors, start):  # deliberate: float64 boundary
 
     entry = models()[name]
     noise = p._noise()
+    start = dict(start)
+    for k in entry.shape:
+        if k in start:
+            val = float(onp.asarray(start[k]))
+            if val < 0.02 or val > 0.98:
+                start[k] = onp.asarray(onp.clip(val, 0.05, 0.95))
     posterior = numpyro_model(model, priors, data, noise=noise)
     mcmc = _run_chains(
         posterior, p.settings, start, dense_mass=True, priors=priors
@@ -1081,7 +1084,7 @@ def _posterior(p):  # deliberate: stage function, stubbed by tests
         "models": per_model,
         "best": best,
         "sampled": sampled,
-        **_sampler_report(p.settings, per_model.values()),
+        **_sampler_report(p.settings, [per_model[best]]),
     }
 
 

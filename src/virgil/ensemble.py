@@ -806,8 +806,15 @@ def evidence_grid(
                 **fit_options,
             )
             previous = result
-            # The Centroid penalty of a star-free fit is not in the evidence.
-            z = float(log_evidence(result, data, "env" if star else None))
+            z = float(
+                log_evidence(
+                    result,
+                    data,
+                    "env" if star else None,
+                    priors=image_priors(model) | extra,
+                    regularizers=others,
+                )
+            )
             fits[name, length, sigma] = GPFit(name, length, sigma, z, result)
             return z
 
@@ -893,6 +900,23 @@ def _corner(curve):
 
 
 # deliberate: test seam (tests/test_ensemble.py)
+# deliberate: test seam (tests/test_ensemble.py)
+def _register(p, ref, shift, scale, v2_only):
+    """Align ``p`` (and its 180° inversion under ``v2_only``) to ``ref``."""
+    p0, s0 = (p, (0.0, 0.0)) if shift is None else align(p, ref, shift, scale)
+    p0 = onp.asarray(p0)
+    if not v2_only:
+        return p0, s0, False
+    inv = p[::-1, ::-1]
+    p1, s1 = (
+        (inv, (0.0, 0.0)) if shift is None else align(inv, ref, shift, scale)
+    )
+    p1 = onp.asarray(p1)
+    if onp.sum(onp.abs(p1 - ref)) < onp.sum(onp.abs(p0 - ref)):
+        return p1, s1, True
+    return p0, s0, False
+
+
 def _on_common_grid(image, npix, scale):
     """The image's pixels on the common grid, flux conserved.
 
@@ -1059,31 +1083,48 @@ def combine(data, groups, *, spec=None, star=True):
         image, fraction = _parts(members[i].result.model, star)
         pixels.append(_on_common_grid(image, npix, scale))
         fractions.append(fraction)
+    v2_only = not any(d.has_phases for d in datasets)
+    shift = (
+        None
+        if star
+        else (
+            beam(data).major_mas
+            if spec.max_shift_mas is None
+            else spec.max_shift_mas
+        )
+    )
     shifts = [(0.0, 0.0)] * len(live)
-    if not star:
-        shift = spec.max_shift_mas
-        if shift is None:
-            shift = beam(data).major_mas
-        aligned = [align(p, pixels[0], shift, scale) for p in pixels[1:]]
-        pixels = [pixels[0]] + [onp.asarray(a[0]) for a in aligned]
+    flips = [False] * len(live)
+    if not star or v2_only:
+        aligned = [
+            _register(p, pixels[0], shift, scale, v2_only) for p in pixels[1:]
+        ]
+        pixels = [pixels[0]] + [a[0] for a in aligned]
         shifts = [(0.0, 0.0)] + [a[1] for a in aligned]
+        flips = [False] + [a[2] for a in aligned]
     # A member's image carries its fraction of the total flux; float64, so
     # that averaging identical images returns them unchanged.
     pixels = [onp.asarray(p, dtype=float) for p in pixels]
     weighted = [f * p / p.sum() for p, f in zip(pixels, fractions)]
-    # Each member's Image on its own grid, moved by its shift (dra, ddec).
-    images = [
-        members[i].result.model.env
-        if star
-        else members[i].result.model.set(
-            ["dra", "ddec"],
-            [
-                members[i].result.model.dra + float(s[0]),
-                members[i].result.model.ddec + float(s[1]),
-            ],
-        )
-        for i, s in zip(live, shifts)
-    ]
+    # Each member's Image on its own grid, moved by its shift (dra, ddec)
+    # and flipped by 180° when _register selected the inverted orientation.
+    images = []
+    for i, s, flip in zip(live, shifts, flips):
+        im = members[i].result.model.env if star else members[i].result.model
+        if flip:
+            im = dataclasses.replace(
+                im,
+                log_brightness=im.eta[::-1, ::-1],
+                support=None if im.support is None else im.support[::-1, ::-1],
+                dra=-im.dra,
+                ddec=-im.ddec,
+            )
+        if not star:
+            im = im.set(
+                ["dra", "ddec"],
+                [im.dra + float(s[0]), im.ddec + float(s[1])],
+            )
+        images.append(im)
 
     # The iterative mean, from the best member, judged in float64 so that
     # rounding cannot reject a member that changes nothing. It is judged as

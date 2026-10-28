@@ -229,7 +229,8 @@ def _detection_statistics(
     # A grid point whose evaluation failed (NaN) carries no evidence.
     log_ratio = np.where(np.isnan(loglike_im), -np.inf, loglike_im - loglike0)
     log_bayes_factor = jax.nn.logsumexp(
-        log_ratio + _log_prior_weights(loglike_im.shape, log_ratio.dtype)
+        log_ratio
+        + _log_prior_weights(tuple(grid[k] for k in params), log_ratio.dtype)
     )
 
     sigma = _laplace_flux_uncertainty_grid(
@@ -289,19 +290,31 @@ def _constrained_profile(
 
 
 # deliberate: test seam: unit-tested directly
-def _log_prior_weights(shape, dtype):
-    """Log trapezoid weights in the grid index, normalized to sum to 1.
+def _log_prior_weights(axes, dtype):
+    """Log trapezoid weights over ``axes``, normalized to sum to 1.
 
-    Along each axis the weights are 1 inside and ½ at the two ends (1 for
-    an axis of one point); the grid's weight is their outer product.
+    Along each axis the weights are the 1-D trapezoid differentials ``dx``
+    normalized by total axis length (or uniform index weights when ``axes``
+    is a shape tuple); the grid's weight is their outer product.
     """
+    if isinstance(axes, dict):
+        axes = tuple(axes.values())
+    shape = tuple(a if isinstance(a, int) else len(a) for a in axes)
     log_w = np.zeros(shape, dtype)
-    for axis, n in enumerate(shape):
-        w = onp.ones(n)
-        if n > 1:
-            w[[0, -1]] = 0.5
-        w = onp.log(w / w.sum())
-        log_w = log_w + w.reshape((-1,) + (1,) * (len(shape) - axis - 1))
+    for axis, a in enumerate(axes):
+        n = a if isinstance(a, int) else len(a)
+        if n <= 1:
+            continue
+        if isinstance(a, int):
+            w = np.ones(n, dtype).at[0].set(0.5).at[-1].set(0.5)
+        else:
+            dx = np.abs(np.diff(np.asarray(a, dtype).reshape(-1)))
+            w = np.zeros(n, dtype).at[:-1].add(0.5 * dx).at[1:].add(0.5 * dx)
+        total = np.sum(w)
+        w = np.where(total > 0, w / total, np.full(n, 1.0 / n, dtype))
+        log_w = log_w + np.log(w).reshape(
+            (-1,) + (1,) * (len(shape) - axis - 1)
+        )
     return log_w
 
 

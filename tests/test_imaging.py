@@ -583,3 +583,44 @@ def test_a_dirty_start_padded_beyond_the_field_keeps_the_natural_block():
     margin = (m - n) // 2
     centre = wide.env.log_brightness[margin : margin + n, margin : margin + n]
     assert np.allclose(centre, natural.env.log_brightness, atol=1e-6)
+
+
+def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
+    import numpyro.distributions as dist
+
+    from virgil.fields import GaussianField
+    from virgil.imaging import error_scale, laplace_samples, log_evidence
+
+    n = 8
+    field = GaussianField(onp.zeros((n, n)), 1.5, 24.0)
+    scene = System(star=PointSource(), env=Image(field, SCALE, flux=0.3))
+    data = DATA.with_model(scene, key=jax.random.PRNGKey(9))
+    base_priors = image_priors(scene)
+    full_priors = base_priors | {"env.flux": dist.LogUniform(1e-3, 10.0)}
+    result = fit(scene, full_priors, data, max_steps=5)
+
+    ev_fixed = float(log_evidence(result, data, priors=base_priors))
+    ev_free = float(log_evidence(result, data, priors=full_priors))
+    # Default priors on a FitResult uses all fitted keys in result.values.
+    assert float(log_evidence(result, data)) == pytest.approx(ev_free)
+    # Freeing env.flux adds a positive-definite column to J^T J, increasing
+    # log|I + J^T J| and lowering the Laplace log-evidence.
+    assert ev_free < ev_fixed
+    assert float(
+        error_scale(result, data, priors=full_priors)
+    ) != pytest.approx(float(error_scale(result, data, priors=base_priors)))
+    draws = laplace_samples(
+        result, data, 6, jax.random.PRNGKey(0), priors=full_priors
+    )
+    assert draws["latents"].shape == (6, n, n) and onp.all(
+        onp.isfinite(draws["latents"])
+    )
+
+    # Probabilistic regularizer (Centroid) contributes to log_evidence.
+    img = Image(GaussianField(onp.zeros((n, n)), 1.5, 24.0), SCALE)
+    fit_img = fit(img, image_priors(img), data, [Centroid(5.0)], max_steps=5)
+    ev_no_reg = float(log_evidence(fit_img, data, path=None))
+    ev_reg = float(
+        log_evidence(fit_img, data, path=None, regularizers=(Centroid(5.0),))
+    )
+    assert ev_reg < ev_no_reg

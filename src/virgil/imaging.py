@@ -1834,20 +1834,20 @@ _JACOBIAN_BATCH = 64
 
 
 @eqx.filter_jit
-def _jitted_residual_jacobian(model, datasets, path):
+def _jitted_residual_jacobian(model, datasets, path, regularizers=()):
     """Jitted body of ``_residual_jacobian``; ``path`` is one leaf's path or a tuple
     of paths, whose concatenated raveled leaves the Jacobian is taken with
     respect to.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
     if len(paths) == 1:
-        leaf = model.get(paths[0])
+        leaf = np.asarray(model.get(paths[0]), dtype=float)
 
         def with_leaf(x):
             return model.set(paths[0], x)
 
     else:
-        leaves = [model.get(p) for p in paths]
+        leaves = [np.asarray(model.get(p), dtype=float) for p in paths]
         shapes = [np.shape(x) for x in leaves]
         edges = onp.cumsum([0] + [int(onp.prod(s)) for s in shapes])
         leaf = np.concatenate([np.ravel(x) for x in leaves])
@@ -1864,11 +1864,13 @@ def _jitted_residual_jacobian(model, datasets, path):
 
     def residuals(x):
         changed = with_leaf(x)
-        return np.concatenate(
-            [whitened_residuals(changed, d) for d in datasets]
-        )
+        parts = [whitened_residuals(changed, d) for d in datasets]
+        parts += [np.ravel(reg.residuals(changed)) for reg in regularizers]
+        return np.concatenate(parts)
 
-    n_data = sum(d.n_residuals for d in datasets)
+    n_data = sum(d.n_residuals for d in datasets) + sum(
+        int(np.size(reg.residuals(model))) for reg in regularizers
+    )
     n_leaf = np.size(leaf)
     # Rows (reverse mode) or columns (forward mode), whichever are fewer, in
     # batches: jacrev/jacfwd push every basis vector through at once, and the
@@ -1896,19 +1898,24 @@ def _jitted_residual_jacobian(model, datasets, path):
     return r, jac.reshape(n_data, -1)
 
 
-def _residual_jacobian(model, data, path, on_device=False):
+def _residual_jacobian(model, data, path, on_device=False, regularizers=()):
     """All the whitened residuals, and their Jacobian with respect to leaves.
 
     ``path`` is one leaf's path or a tuple of paths. Returns NumPy
     ``(residuals, jacobian)``, float64; ``on_device=True`` leaves the
-    Jacobian a JAX array.
+    Jacobian a JAX array. Probabilistic regularizers in ``regularizers``
+    (such as ``Centroid``) append their ``residuals(model)`` to the residual
+    vector and Jacobian.
     """
     datasets = tuple(_as_list(data))
+    probs = tuple(
+        r for r in (regularizers or ()) if getattr(r, "probabilistic", False)
+    )
     if not isinstance(path, str):
         path = tuple(path)
     with run_in("float64"):
-        model, datasets = cast_tree((model, datasets), "float64")
-        r, jac = _jitted_residual_jacobian(model, datasets, path)
+        model, datasets, probs = cast_tree((model, datasets, probs), "float64")
+        r, jac = _jitted_residual_jacobian(model, datasets, path, probs)
         r = onp.asarray(r, dtype=float)
         return r, (jac if on_device else onp.asarray(jac, dtype=float))
 
@@ -2034,9 +2041,10 @@ def _field_images(model, path, caller):
     return paths
 
 
-def _evidence_latents(model, path, caller):
+def _evidence_latents(model, path, caller, priors=None):
     """The paths of every whitened latent that ``path`` selects: those of Images
-    with a GaussianField and the Gaussian-process latents of MultipoleDisks.
+    with a GaussianField and the Gaussian-process latents of MultipoleDisks,
+    plus any free non-pixel parameter paths in ``priors``.
     ``path`` is a path or tuple of paths, or ``None`` for all in ``model``.
     """
     from .models import MultipoleDisk, _multipole_disks
@@ -2074,19 +2082,23 @@ def _evidence_latents(model, path, caller):
     latents = [_latent_path(p) for p in images]
     for prefix, disk in disks:
         latents.extend(f"{prefix}{rel}.z" for rel in disk.gp_sites())
+    for p in priors or ():
+        if p not in latents and not p.endswith("_vec"):
+            latents.append(p)
     return tuple(latents)
 
 
-def log_evidence(model, data, path="env"):
+def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     """Laplace-approximated log evidence of a Gaussian-process fit.
 
     At the MAP ``model``, ``log Z ≈ -½ χ² - L - ½ |z|² - ½ log det(I + JᵀJ)``
     up to a data-only constant, with ``z`` the whitened latents of the Image's
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
-    of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
-    ``L`` the likelihood normalizer. Compare it across hyperparameters: it is
-    conditional on those held in ``model`` (or sample them: log-uniform priors
-    from [`gp_priors`][virgil.models.gp_priors] for a ``MultipoleDisk``, your own
+    of a [`MultipoleDisk`][virgil.models.MultipoleDisk]) and any free non-pixel
+    parameters in ``priors``, ``J`` their Jacobian and ``L`` the likelihood
+    normalizer. Compare it across hyperparameters: it is conditional on those held
+    in ``model`` (or sample them: log-uniform priors from
+    [`gp_priors`][virgil.models.gp_priors] for a ``MultipoleDisk``, your own
     log-uniform priors on a field's ``sigma`` and ``length_mas`` for an Image).
     Exact only for a linear model, and it assumes correct error bars (see
     [`error_scale`][virgil.imaging.error_scale]) and uses the quoted errors, so
@@ -2105,14 +2117,22 @@ def log_evidence(model, data, path="env"):
     path : str or tuple of str or None, optional
         Path of the Image (default ``"env"``), a tuple of paths, or ``None`` for
         every such Image and disk (``TypeError`` if there is none).
+    priors : dict or sequence of str, optional
+        Free parameter priors or paths; non-pixel parameters enter ``z`` and ``J``.
+    regularizers : sequence, optional
+        Fit regularizers; probabilistic ones (``Centroid``) enter ``χ²`` and ``J``.
 
     Returns
     -------
     float
     """
+    if priors is None and isinstance(model, FitResult):
+        priors = model.values
     model = _single_model(model, "log_evidence")
-    latent_paths = _evidence_latents(model, path, "log_evidence")
-    r, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
+    latent_paths = _evidence_latents(model, path, "log_evidence", priors)
+    r, jac = _residual_jacobian(
+        model, data, latent_paths, on_device=True, regularizers=regularizers
+    )
     chi2 = float(r @ r)
     log_norm = _log_norm(model, data)
     z2 = sum(
@@ -2148,16 +2168,26 @@ def _render_latents(
     return jax.vmap(lambda x: put(x).render(npix, fov_mas))(latents)
 
 
-def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
+def laplace_samples(
+    model,
+    data,
+    n,
+    key,
+    path="env",
+    npix=None,
+    fov_mas=None,
+    *,
+    priors=None,
+    regularizers=(),
+):
     """Draws from the Laplace posterior of a Gaussian-field image.
 
     The whitened latents ``z`` are drawn from ``N(z₀, (I + JᵀJ)⁻¹)`` about the
     MAP ``z₀``, the approximation of [`log_evidence`][virgil.imaging.log_evidence].
-    Only the latents vary, so the spread is narrower than the full posterior's
-    where other parameters correlate with the image. Exact only for a linear
-    model, assumes correct error bars, uses the quoted errors and is conditional
-    on the hyperparameters held in ``model`` (or sample them, as for
-    [`log_evidence`][virgil.imaging.log_evidence]).
+    With ``priors``, free non-pixel parameters are included in ``z`` and ``J``.
+    Exact only for a linear model, assumes correct error bars, uses the quoted
+    errors and is conditional on the hyperparameters held in ``model`` (or sample
+    them, as for [`log_evidence`][virgil.imaging.log_evidence]).
 
     Parameters
     ----------
@@ -2177,6 +2207,10 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
         Together, also render the whole model for each draw (see
         [`SourceModel.render`][virgil.models.SourceModel.render]); one alone
         raises ``ValueError``.
+    priors : dict or sequence of str, optional
+        Free parameter priors or paths; non-pixel parameters enter ``z`` and ``J``.
+    regularizers : sequence, optional
+        Fit regularizers; probabilistic ones (``Centroid``) enter ``J``.
 
     Returns
     -------
@@ -2189,16 +2223,24 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
         raise ValueError(
             "laplace_samples renders images only given both npix and fov_mas."
         )
+    if priors is None and isinstance(model, FitResult):
+        priors = model.values
     model = _single_model(model, "laplace_samples")
     fields = tuple(
         (p, _latent_path(p))
         for p in _field_images(model, path, "laplace_samples")
     )
     latent_paths = tuple(latent for _, latent in fields)
-    _, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
-    zs = [
-        onp.asarray(model.get(latent), dtype=float) for latent in latent_paths
-    ]
+    extra_paths = tuple(
+        p
+        for p in (priors or ())
+        if p not in latent_paths and not p.endswith("_vec")
+    )
+    all_paths = latent_paths + extra_paths
+    _, jac = _residual_jacobian(
+        model, data, all_paths, on_device=True, regularizers=regularizers
+    )
+    zs = [onp.asarray(model.get(p), dtype=float) for p in all_paths]
     z = onp.concatenate([x.ravel() for x in zs])
     singular, vt = _svd(jac)
     first, second = jax.random.split(key)
@@ -2214,22 +2256,23 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
         flat[:, edges[i] : edges[i + 1]].reshape((n,) + x.shape)
         for i, x in enumerate(zs)
     ]
-    if len(pieces) == 1:
-        out = {"latents": pieces[0]}
+    latent_pieces = pieces[: len(fields)]
+    if len(latent_pieces) == 1:
+        out = {"latents": latent_pieces[0]}
     else:
         out = {
             "latents": {
                 "" if image is None else image: piece
-                for (image, _), piece in zip(fields, pieces)
+                for (image, _), piece in zip(fields, latent_pieces)
             }
         }
     if npix is not None and fov_mas is not None:
-        dtypes = [model.get(latent).dtype for latent in latent_paths]
+        dtypes = [np.asarray(model.get(p)).dtype for p in all_paths]
         if len(pieces) == 1:
-            where = latent_paths[0]
+            where = all_paths[0]
             values = np.asarray(pieces[0], dtype=dtypes[0])
         else:
-            where = latent_paths
+            where = all_paths
             values = tuple(
                 np.asarray(piece, dtype=dtype)
                 for piece, dtype in zip(pieces, dtypes)
@@ -2345,7 +2388,15 @@ def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
     return dict(zip(kinds, beta))
 
 
-def error_scale(model, data, path="env", *, by_observable=False):
+def error_scale(
+    model,
+    data,
+    path="env",
+    *,
+    by_observable=False,
+    priors=None,
+    regularizers=(),
+):
     r"""Re-estimate the scale of the error bars from a Gaussian-field fit.
 
     Returns the factor ``s`` to multiply every error bar by for consistency with
@@ -2373,6 +2424,10 @@ def error_scale(model, data, path="env", *, by_observable=False):
         One scale per kind of observable instead of one for all. Data with
         gains, closure-phase offsets or other covariance that does not scale
         with the errors raise ``ValueError``.
+    priors : dict or sequence of str, optional
+        Free parameter priors or paths; non-pixel parameters enter ``J``.
+    regularizers : sequence, optional
+        Fit regularizers; probabilistic ones (``Centroid``) enter ``J``.
 
     Returns
     -------
@@ -2382,9 +2437,13 @@ def error_scale(model, data, path="env", *, by_observable=False):
         ``OIData.with_error_scale``. A warning is issued if the block scales do
         not converge.
     """
+    if priors is None and isinstance(model, FitResult):
+        priors = model.values
     model = _single_model(model, "error_scale")
-    latent_paths = _evidence_latents(model, path, "error_scale")
-    r, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
+    latent_paths = _evidence_latents(model, path, "error_scale", priors)
+    r, jac = _residual_jacobian(
+        model, data, latent_paths, on_device=True, regularizers=regularizers
+    )
     datasets = _as_list(data)
     if by_observable:
         # Refuse data whose covariance is not s_b² D per block: their nuisance

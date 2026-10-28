@@ -13,7 +13,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 import pytest
-from scipy import special, stats
+from scipy import stats
 
 from tests._compiles import count_compiles
 from virgil.coverage import nrm_oidata
@@ -202,31 +202,31 @@ def test_log_bayes_factor_is_stable_under_grid_refinement():
     roots=["self-consistency"],
 )
 def test_log_bayes_factor_matches_a_brute_force_marginalization():
+    from scipy.integrate import trapezoid
+
     grid = {
-        "dra": onp.array([30.0, 60.0, 90.0]),
+        "dra": onp.array([30.0, 50.0, 90.0]),
         "ddec": onp.array([-60.0, -40.0, -20.0]),
         "flux": onp.geomspace(1e-3, 1e-2, 4),
     }
     data = _data(4e-3, 7)
     result = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
 
-    def trapezoid(n):
-        # Uniform in position, and in log flux, between the axes' ends.
-        w = onp.ones(n)
-        w[[0, -1]] = 0.5
-        return w / (n - 1)
-
     args = _args(data)
     loglike0 = float(loglike(np.array([0.0, 0.0, 0.0]), *args))
-    weights = [trapezoid(len(values)) for values in grid.values()]
-    terms = []
+    axes = [onp.asarray(v, dtype=float) for v in grid.values()]
+    cube = onp.empty([len(a) for a in axes], dtype=float)
     for (i, dra), (j, ddec), (k, flux) in itertools.product(
-        *(enumerate(values) for values in grid.values())
+        *(enumerate(a) for a in axes)
     ):
-        log_l = float(loglike(np.array([dra, ddec, flux]), *args))
-        weight = weights[0][i] * weights[1][j] * weights[2][k]
-        terms.append(log_l - loglike0 + onp.log(weight))
-    expected = special.logsumexp(terms)
+        cube[i, j, k] = float(loglike(np.array([dra, ddec, flux]), *args))
+    shift = float(onp.max(cube))
+    integral = cube - shift
+    integral = onp.exp(integral)
+    for axis, coords in reversed(list(enumerate(axes))):
+        integral = trapezoid(integral, x=coords, axis=axis)
+    volume = float(onp.prod([abs(a[-1] - a[0]) for a in axes]))
+    expected = shift - loglike0 + float(onp.log(integral / volume))
     assert float(result["log_bayes_factor"]) == pytest.approx(
         expected, abs=2e-3
     )
