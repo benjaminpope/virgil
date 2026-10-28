@@ -916,41 +916,60 @@ def test_old_taper_name_gives_identical_toeplitz_and_direct_losses():
     assert losses[0][1] == losses[1][1]
 
 
-def test_reduced_clamps_non_positive_c_sum_plus_delta(small):
-    """When ``c_sum + delta <= 0`` (e.g. from NUFFT tolerance or an extreme
-    exploratory step), ``_reduced`` and its gradient stay finite and match
-    the relative ``eps * c_sum`` floor."""
-    import equinox as eqx
-
-    data, _, scene, template = small
+def _noise_free_term(seed=1, n=300):
+    """A profiled term on noise-free data from a known image and gains, and
+    the true values: at them C_d + Δ_d is the Toeplitz approximation error
+    plus round-off, of either sign."""
+    rng = onp.random.default_rng(seed)
+    ddid = rng.integers(0, len(DDID_OBS), n)
+    obs = onp.asarray(DDID_OBS)[ddid]
+    freq = CENTRES[ddid] * (1.0 + rng.uniform(-0.01, 0.01, n))
+    u, v = _uv(n, 0.45, rng)
+    weight = rng.uniform(0.5, 2.0, n) * 1e2
+    kw = dict(ddid=ddid + 5, obs=obs + 2)
+    blank = ComplexVisData.from_arrays(
+        u, v, onp.zeros(n, complex), weight, freq, **kw
+    )
     nuis = CalibrationNuisance(
-        data, sigmas="profile", offsets=False, alpha=0.7
+        blank, sigmas="profile", offsets=False, alpha=0.7
     )
-    tdata = data.toeplitz(template, nuis)
-    # Force cross positive so c_sum + delta < 0.
-    arrays = dict(
-        tdata.arrays,
-        cross=np.full_like(tdata.arrays["cross"], 1e6),
-    )
-    tdata_neg = eqx.tree_at(lambda t: t.arrays, tdata, arrays)
-    term = tdata_neg.term(scene, nuis)
-    values = _values(nuis, flux=1.0, gain=[1.0])
-    values["eta"] = np.zeros((8, 8))
-    params = term.curvature_params(values)
-    assert bool(np.all(term.arrays["c_sum"] + term._deltas(params) < 0.0))
+    eta = rng.normal(size=(8, 8))
+    values = _values(nuis, flux=0.9, gain=[1.15])
+    values["eta"] = eta
+    scene, template = _scene(8)
+    model = onp.asarray(blank.model(scene(values), values, nuis))
+    data = ComplexVisData.from_arrays(u, v, model, weight, freq, **kw)
+    term = data.toeplitz(template, nuis).term(scene, nuis)
+    return term, values
 
-    chi2, log_norm = term.chi2_and_log_norm(values)
-    eps = np.finfo(term.arrays["c_sum"].dtype).eps
-    expected_log_norm = float(
-        np.sum(term.arrays["count"] * np.log1p(eps - 1.0))
-    )
-    assert float(chi2) == 0.0
-    assert float(log_norm) == pytest.approx(expected_log_norm, rel=1e-15)
+
+def test_profiled_loss_floors_value_and_gradient_together():
+    """Where C_d + Δ_d is round-off (the model reproduces noise-free data),
+    the profiled loss and its gradient are finite and are those of
+    ``N ln max(1 + Δ/C, eps)``: value and gradient floor at the same place.
+    Above the floor the Toeplitz term matches the direct term."""
+    term, values = _noise_free_term()
+    c_sum, count = term.arrays["c_sum"], term.arrays["count"]
+    eps = np.finfo(c_sum.dtype).eps
 
     def loss(v):
-        c, ln = term.chi2_and_log_norm(v)
-        return 0.5 * c + ln
+        chi2, log_norm = term.chi2_and_log_norm(v)
+        return 0.5 * chi2 + log_norm
 
-    val, grad = jax.value_and_grad(loss)(values)
-    assert float(val) == pytest.approx(expected_log_norm, rel=1e-15)
-    assert all(bool(np.all(np.isfinite(g))) for g in grad.values())
+    def floored(v):
+        delta = term._deltas(term.curvature_params(v))
+        return np.sum(count * np.log(np.maximum(1.0 + delta / c_sum, eps)))
+
+    for scale in (1.0, 0.99, 1.01):
+        v = {**values, "eta": values["eta"] * scale}
+        val, grad = jax.value_and_grad(loss)(v)
+        ref_val, ref_grad = jax.value_and_grad(floored)(v)
+        assert onp.isfinite(float(val))
+        assert float(val) == pytest.approx(float(ref_val), abs=1e-12)
+        for k in grad:
+            assert onp.all(onp.isfinite(grad[k]))
+            onp.testing.assert_allclose(
+                grad[k], ref_grad[k], rtol=1e-7, atol=1e-9
+            )
+    # the depth of the floor is bounded: N ln(eps) per ddid, not N ln(tiny)
+    assert float(floored(values)) >= float(np.sum(count)) * np.log(eps)

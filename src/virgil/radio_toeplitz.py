@@ -662,10 +662,18 @@ class _ToeplitzTerm(eqx.Module):
         c_sum, count = self.arrays["c_sum"], self.arrays["count"]
         if self._profiled:
             delta = self._deltas(params)
-            r = (delta - jax.lax.stop_gradient(delta)) / self._profile(delta)
             ok = (count > 0) & (c_sum > 0)
             ratio = delta / np.where(ok, c_sum, 1.0)
             eps = np.finfo(c_sum.dtype).eps
+            # Σ r is zero in value and has gradient ∇Δ/ŝ² (ŝ² is held), the
+            # same gradient and Hessian as Σ Δ/ŝ²; the loss's value is the
+            # held log_norm. Below the floor both are flat: no gradient.
+            live = ratio > eps - 1.0
+            r = np.where(
+                live,
+                (delta - jax.lax.stop_gradient(delta)) / self._profile(delta),
+                0.0,
+            )
             log1p = np.log1p(np.maximum(ratio, eps - 1.0))
             log_norm = np.sum(
                 np.where(ok, count * jax.lax.stop_gradient(log1p), 0.0)
