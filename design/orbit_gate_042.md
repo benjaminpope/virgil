@@ -51,18 +51,21 @@ with stratum codes A = 1, B = 2, N = 3, D = 4. Draws are made in the order
 listed below, one call per quantity, so that adding a stratum never
 changes another stratum's systems.
 
-### 3.1 Instrument templates (both strata)
+### 3.1 Instrument templates (all strata)
 
-| | T1 "K-band, 4 large telescopes" | T2 "H-band, 4 small telescopes" |
-|---|---|---|
-| stations | VLTI UT1–UT4 (ENU from the ESO station table) | VLTI A0-G1-J2-K0 |
-| channels | 12, 2.00–2.40 µm | 6, 1.53–1.77 µm |
-| snapshots per night | 4–8 (uniform integer), hour angles uniform in [−3, +3] h, sorted | same |
-| closure-phase noise | `phase_noise="baseline"` (triangles sharing a baseline correlate) | same |
-| V² channel correlation | a per-baseline, per-snapshot multiplicative term common to all channels, of variance fraction *c* | same |
+| | T1 "K-band, 4 large telescopes" | T2 "H-band, 4 small telescopes" | T3 "H-band, long baselines" |
+|---|---|---|---|
+| stations | VLTI UT1–UT4 (ENU from the ESO station table) | VLTI A0-G1-J2-K0 | CHARA S1-S2-E1-E2-W1-W2 (positions from the published CHARA station table, ten Brummelaar et al. 2005); B_max ≈ 330 m |
+| channels | 12, 2.00–2.40 µm | 6, 1.53–1.77 µm | 8, 1.50–1.75 µm |
+| snapshots per night | 4–8 (uniform integer), hour angles uniform in [−3, +3] h, sorted | same | same |
+| closure-phase noise | `phase_noise="baseline"` (triangles sharing a baseline correlate) | same | same |
+| V² channel correlation | a per-baseline, per-snapshot multiplicative term common to all channels, of variance fraction *c* | same | same |
 
-Each system draws its template with probability ½. Declination is uniform
-in sin δ over [−70°, +20°].
+Each system draws its template uniformly among the three, so the
+long-baseline case is covered in every stratum, not weighted in.
+Declination is uniform in sin δ over [−70°, +20°] for T1/T2 and over
+[−20°, +80°] for T3 (CHARA at latitude +34°). Resolution units below
+are always the drawn template's λ_min/B_max.
 
 ### 3.2 Stratum A: calibration (200 binaries, drawn from the engine's prior)
 
@@ -161,17 +164,34 @@ companion is a static binary, not a null); no companion. 30 of them (the first 3
 null sample contains enough of them to test the outlier model.
 
 Misspecified nulls: independently, with probability 0.3, the single star
-carries something the engine's models (point or uniform-disc primary plus
-point companion) cannot describe, chosen with equal probability:
-- **extended emission**: a circular Gaussian halo centred on the star,
-  flux fraction uniform on [0.02, 0.10], FWHM uniform on [1, 3] λ/B_max;
+is single but not simple: it carries something the engine's models
+(point or uniform-disc primary plus point companion) cannot describe.
+Ben (2026-10-28): these are where real false orbits come from, likely
+for Wolf–Rayet stars and on the longest-baseline data sets. The kind is
+chosen with equal probability among:
+- **extended envelope** (WR-like: a compact star in a wind or dust
+  envelope): the primary as drawn, plus, with probability ½ each, a
+  circular Gaussian (size = FWHM) or a ring of fractional width 0.2
+  (size = diameter), centred on the star. Envelope flux fraction
+  log-uniform on [0.01, 0.5] and size log-uniform on [0.3, 10] res.
+  The ranges are generic and broad; no parameter is taken from a named
+  system (Apep, WR 140 or any other);
 - **elongated primary**: an elliptical uniform disc, major-axis diameter
-  uniform on [0.3, 0.8] λ/B_max, axis ratio uniform on [0.6, 0.9],
-  position angle uniform.
+  uniform on [0.3, 0.8] res, axis ratio uniform on [0.6, 0.9], position
+  angle uniform;
+- **faint background source**: an unrelated point source, fixed on the
+  sky, flux ratio log-uniform on [0.005, 0.05], separation uniform on
+  [2, 6] res, position angle uniform. Because a fixed source could be
+  fitted as a very slow orbit, a false orbit here is an `orbit` verdict
+  whose winning band is not the long-period band (orbit_dehack §1.2,
+  `period_window`); a long-period-band verdict is counted and reported
+  separately as "static companion".
 
-Both lower V² on some baselines in a way an orbiting point companion can
-partly mimic; M6 counts the false orbits they cause, and the subset is
-also reported alone.
+These lower V² or shift closure phases on some baselines in ways an
+orbiting point companion can partly mimic. The misspecified nulls are a
+must-hold subset of their own under M6. False orbits are also reported
+(never pass/fail) by template, by kind, and against envelope flux
+fraction (binned in thirds of its log range).
 
 ### 3.5 Stratum D: development (not scored)
 
@@ -288,7 +308,10 @@ nominal coverage is not guaranteed; over-coverage is conservative and
 allowed. Under-coverage is the overconfidence that bad nights, sign
 errors and correlated channels cause, and it fails.
 
-**M6. False orbits (N).** A false orbit is an `orbit` verdict
+**M6. False orbits (N).** Must hold on all of N **and**, separately,
+on its misspecified subset (about 30 systems), whose limit is ≤ 1 at
+the same per-system guide rate (P(≥ 2) ≈ 2% at 0.67%). A false orbit is
+an `orbit` verdict
 (`modes.no_orbit` evidence at or above the pipeline's decisive threshold)
 on a null. Pass if the count is ≤ 2 of 100.
 *Why:* 2 of 100 is a **pre-registered limit chosen with a bound as a
@@ -363,6 +386,7 @@ true orbit (NN Del's four nights over 62 days is the case it describes).
 version: 1
 registered: 2026-10-28
 master_seed: 20261028
+templates: [T1_VLTI_UT_K, T2_VLTI_AT_H, T3_CHARA_H]
 strata: {A: {code: 1, n: 200}, B: {code: 2, n: 240}, N: {code: 3, n: 100}, D: {code: 4, n: 120, scored: false}}
 family_alpha: 0.01
 tests:
@@ -374,7 +398,7 @@ must_hold:
   M3b_confident_errors: {p_map_min: 0.99, max: binomial_q99(n_conf, 0.01), subsets: [B_all, B_misspecified]}
 null_choice: {stratum: D, candidates: [shared_mixture, shared_noise_inflation], must_pass: [M6, M8], tie: shared_noise_inflation}
   M4_search_misses: {nats: 1.0, plus_se_multiple: 3, max_fraction: 0.02, stratum: B}
-  M6_false_orbits: {stratum: N, max_count_at_lnB5: 2, max_count_at_lnB10: 1}
+  M6_false_orbits: {stratum: N, max_count_at_lnB5: 2, max_count_at_lnB10: 1, subsets: {N_misspecified: {max_count: 1}}, report: [by_template, by_kind, by_envelope_fraction]}
   M8_false_no_orbit: {stratum: B, oracle_lnB_min: 10, max_fraction: 0.02}
   M7_complete: {no_crash: true, credible_set_accurate: {m: 0.95, fail_flags: [evidence-noisy, evidence-failed], failed_band_in_window_fails: true}}
   M9_band_credible_set: {m: 0.95, sided: under, subsets: [B_all, B_misspecified], report: [set_size_median, set_size_q90, realised_mass]}
@@ -417,6 +441,7 @@ them cold.
 | 2026-10-28 | Review fixes before any run: A fitted with `temper=False` and thinned NUTS ranks; M4 miss threshold adds 3× the combined IS SE; M6 presented as a guided limit, not a derived rate; new M8 (false no-orbit on B); B's *a* draws kept inside the default `a_range` | Claude (Opus), for Ben | no |
 | 2026-10-28 | Ben's decisions: misspecified nulls in N (p 0.3: extended emission or elongated primary); B misspecification rate 0.15 → 0.3 and M3b must-hold on that subset; D enlarged to 60 B-like + 60 N-like; §3.6 null-model choice rule run on D. Decisive threshold left pending (decision 4) | Claude (Opus), for Ben | no |
 | 2026-10-28 | Ben's criterion: new must-hold M9 (one-sided 95% band credible-set coverage on B and on its misspecified subset), the headline orbit criterion; per-band IS SE carried, and a credible set containing an evidence-noisy/failed band fails M7 | Ben (encoded by Claude, Opus) | no |
+| 2026-10-28 | Ben's change: misspecified nulls widened (WR-like Gaussian/ring envelopes, log-uniform fraction and size, no named-target parameters; elongated primary; faint background source); third template T3 (CHARA, ~330 m) drawn uniformly in all strata; M6 must hold on the misspecified-null subset too; false orbits reported by template, kind and envelope fraction | Ben (encoded by Claude, Opus) | no |
 
 ## References
 
@@ -427,3 +452,5 @@ them cold.
 - Royall 2000, JASA 95, 760 (the universal bound on misleading evidence).
 - Raghavan et al. 2010, ApJS 190, 1; Moe & Di Stefano 2017, ApJS 230, 15
   (eccentricity distributions of short-period binaries).
+- ten Brummelaar et al. 2005, ApJ 628, 453 (CHARA Array station
+  positions).
