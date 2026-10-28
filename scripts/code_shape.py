@@ -236,9 +236,18 @@ def _reason(line):
     return line.split("# deliberate:", 1)[1].strip()
 
 
+def _normal(text):
+    """Lower-case ``text`` with hyphens, underscores and runs of space as single spaces, minus a leading article."""
+    t = re.sub(r"[\s_-]+", " ", text.lower().lstrip("\"'`([ "))
+    return re.sub(r"^(a|an|the) ", "", t)
+
+
 def _vacuous(reason):
-    """A reason that only restates a structural fact: it starts with a stem in ``_VACUOUS_STEMS``."""
-    return reason.lower().lstrip("\"'`([ ").startswith(_VACUOUS_STEMS)
+    """A reason that starts with a ``_VACUOUS_STEMS`` stem (or ``named <word> step``) after normalizing."""
+    t = _normal(reason)
+    return t.startswith(tuple(map(_normal, _VACUOUS_STEMS))) or bool(
+        re.match(r"named \w+ step", t)
+    )
 
 
 def _valid_deliberate(line):
@@ -430,26 +439,26 @@ def find_single_use(head, base, tests_text=""):
 
 
 def _stamps(head):
-    """``[(path, line, reason)]`` of every ``# deliberate:`` stamp on a def (its line or the one above)."""
+    """``[(path, line, reason, qualname)]`` of every ``# deliberate:`` stamp on a def (its line or the one above)."""
     out = []
     for path, text in head.items():
         lines = text.splitlines()
-        for _, node in _all_defs(ast.parse(text)):
+        for q, node in _all_defs(ast.parse(text)):
             top = min([node.lineno] + [d.lineno for d in node.decorator_list])
             for i in {top - 2, node.lineno - 1}:
                 reason = _reason(lines[i]) if 0 <= i < len(lines) else None
                 if reason is not None:
-                    out.append((path, i + 1, reason))
+                    out.append((path, i + 1, reason, q))
     return sorted(set(out))
 
 
 def find_vacuous_stamps(head, base):
-    """Vacuous or empty stamps in ``head`` whose reason is not already a stamp in ``base``."""
-    old = {r for _, _, r in _stamps(base)}
+    """Vacuous or empty stamps in ``head`` that are not already on the same-named def in ``base``."""
+    old = {(q, r) for _, _, r, q in _stamps(base)}
     return [
         f"{path}:{line} # deliberate: {reason}"
-        for path, line, reason in _stamps(head)
-        if reason not in old and (not reason or _vacuous(reason))
+        for path, line, reason, q in _stamps(head)
+        if (q, reason) not in old and (not reason or _vacuous(reason))
     ]
 
 
@@ -526,7 +535,7 @@ def main():
             ("vacuous", bad),
             ("kept", [x for x in stamps if x not in bad]),
         ):
-            for path, line, reason in group:
+            for path, line, reason, _ in group:
                 print(f"{tag:8s} {a.audit_stamps}/{path}:{line} {reason}")
         return
     if a.since:

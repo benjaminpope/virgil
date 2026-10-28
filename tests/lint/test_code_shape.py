@@ -184,7 +184,14 @@ _STAMPED = "# deliberate: {}\ndef _h():\n    return 1\n\n\ndef f():\n    return 
 
 def test_each_vacuous_stem_is_rejected():
     for stem in shape._VACUOUS_STEMS:
-        for reason in (stem, f"{stem.upper()}: unit-tested directly"):
+        for reason in (
+            stem,
+            f"{stem.upper()}: unit-tested directly",
+            f"the {stem}",
+            f"A {stem}",
+            stem.replace(" ", "-"),
+            stem.replace(" ", "  "),
+        ):
             assert _found(_STAMPED.format(reason)) == ["m.py:2 _h"], reason
 
 
@@ -211,4 +218,18 @@ def test_changed_old_stamp_is_judged_and_untouched_is_not():
 def test_audit_counts_vacuous_and_kept():
     src = _STAMPED.format("test seam") + _STAMPED.format("a lax.scan body")
     got = shape._stamps({"m.py": src})
-    assert [bool(shape._vacuous(r)) for _, _, r in got] == [True, False]
+    assert [bool(shape._vacuous(r)) for _, _, r, _ in got] == [True, False]
+
+
+def test_named_word_step_is_rejected():
+    assert shape._vacuous("named pipeline step")
+
+
+def test_common_reason_on_another_def_does_not_hide_a_new_stamp():
+    other = "# deliberate: named step\ndef _g():\n    return 2\n\n\ndef k():\n    return _g() + _g()\n\n\n"
+    old = other + _STAMPED.format("a lax.scan body")
+    new = other + _STAMPED.format("named step")
+    assert shape.find_vacuous_stamps({"m.py": new}, {"m.py": old}) == [
+        "m.py:10 # deliberate: named step"
+    ]
+    assert shape.find_vacuous_stamps({"m.py": old}, {"m.py": old}) == []
