@@ -1,4 +1,4 @@
-"""No docstring in ``src/virgil`` may exceed 60 lines (80 for >= 10 parameters).
+"""No docstring in ``src/virgil`` may exceed 60 lines.
 
 Derivations belong in ``docs/`` and design history in ``design/``. See
 "Docstring style" in AGENTS.md.
@@ -11,15 +11,13 @@ import re
 from pathlib import Path
 
 MAX_LINES = 60
-MAX_LINES_LARGE = 80
-LARGE_PARAM_THRESHOLD = 10
 MAX_PARAMS_PER_HEADER = 4
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 _PARAM_HEADER = re.compile(r"^([A-Za-z_*][\w*,\s]*?)(?:\s*:.*)?$")
 
-# Legacy docstrings with > 4 parameters on a single numpydoc header line,
-# scheduled for cleanup in Wave 2/3 (PR 2/4/6). No new entries may be added.
+# Existing docstrings with > 4 parameters on one numpydoc header line.
+# No new entries may be added: shrink this set, never grow it.
 LEGACY_CRAMMED = {
     "virgil.aliases:fit_orbit_aliases",
     "virgil.arcs:unwrap_cycles",
@@ -115,22 +113,15 @@ def docstring_lengths() -> dict[str, int]:
     return {key: len(doc.splitlines()) for key, doc in _docstrings().items()}
 
 
-def _line_limit(doc: str) -> int:
-    n_params = sum(len(names) for names in _param_headers(doc))
-    return MAX_LINES_LARGE if n_params >= LARGE_PARAM_THRESHOLD else MAX_LINES
-
-
 def test_no_docstring_is_over_the_limit():
-    over = []
-    for key, doc in sorted(_docstrings().items()):
-        n = len(doc.splitlines())
-        limit = _line_limit(doc)
-        if n > limit:
-            over.append(f"{key} ({n} lines > {limit})")
+    over = sorted(
+        f"{key} ({n} lines)"
+        for key, n in docstring_lengths().items()
+        if n > MAX_LINES
+    )
     assert not over, (
-        f"docstrings over the limit ({MAX_LINES} lines, or {MAX_LINES_LARGE} "
-        f"for >= {LARGE_PARAM_THRESHOLD} parameters): {over}. Shorten them "
-        "(derivations go in docs/, history in design/)."
+        f"docstrings over {MAX_LINES} lines: {over}. Shorten them (derivations "
+        "go in docs/, history in design/)."
     )
 
 

@@ -70,6 +70,23 @@ def test_model_spec_refuses_non_virgil_classes(tmp_path):
         _io.load_model(tmp_path)
     assert _io.load_model_values(tmp_path) == {"x": 2.0}
 
+    def refused(module, cls_name, match):
+        spec = {"$module": {"module": module, "class": cls_name, "fields": {}}}
+        with pytest.raises(_io.ModelSpecError, match=match):
+            _io.model_from_spec(spec, {})
+
+    # Modules outside the allow-list are refused before anything is imported.
+    for module, cls_name in (
+        ("os", "system"),
+        ("subprocess", "Popen"),
+        ("virgil.oidata", "OIData"),
+        ("virgil.models", "_Private"),
+    ):
+        refused(module, cls_name, "allowed virgil model modules")
+    # Allowed module, but the name is not a model class.
+    refused("virgil.models", "Any", "public virgil model class")
+    refused("virgil.models", "np", "public virgil model class")
+
 
 def _round_trip(data, tmp_path):
     back = OIData(write_oifits(data, tmp_path / "processed.oifits"))

@@ -343,3 +343,27 @@ def test_laplace_samples_agree_between_transforms(choose):
     # The draws themselves depend on an eigen-decomposition's signs; compare
     # the Jacobian they come from.
     assert np.max(np.abs(out[0] - out[1])) < 1e-3 * np.max(np.abs(out[0]))
+
+
+def test_spread_accepts_real_and_complex_weights():
+    from virgil import _nufft_spread as spread_grid
+
+    with jax.enable_x64(True):
+        rng = onp.random.default_rng(7)
+        tx, ty = rng.uniform(-0.5, 0.5, (2, 100)) * onp.pi
+        w_real = np.asarray(rng.uniform(0.1, 1.0, 100), dtype=np.float64)
+        w_cplx = w_real.astype(np.complex128)
+        kp = spread_grid.kernel(1e-12)
+        nf = spread_grid.grid_size(8, kp)
+        b_real = spread_grid.spread(
+            np.asarray(tx), np.asarray(ty), w_real, nf, kp
+        )
+        b_cplx = spread_grid.spread(
+            np.asarray(tx), np.asarray(ty), w_cplx, nf, kp
+        )
+        m = onp.arange(-4, 4)
+        onp.testing.assert_allclose(
+            spread_grid.evaluate(b_real, m, 0.2, m, -0.1, kp),
+            spread_grid.evaluate(b_cplx, m, 0.2, m, -0.1, kp),
+            rtol=1e-14,
+        )

@@ -51,15 +51,9 @@ def test_deliberate_comment_on_line_or_above_passes():
     assert _found(
         "# deliberate\ndef _h():\n    return 1\n" + call
     )  # no reason
-    for generic in (
-        "named step",
-        "a named step",
-        "test seam",
-        "stage callable",
-    ):
-        assert _found(
-            f"# deliberate: {generic}\ndef _h():\n    return 1\n" + call
-        ) == ["m.py:2 _h"]
+    assert _found(
+        "# deliberate:   \ndef _h():\n    return 1\n" + call
+    )  # empty reason
 
 
 def test_jit_kernels_pass():

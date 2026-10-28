@@ -2151,7 +2151,11 @@ class FlaredDisk(_PixelRendered):
     planets: compose them in a [`System`][virgil.models.System]. The
     visibilities are the exact Fourier transform of the brightness on a fixed
     ``npix`` x ``npix`` grid, which must cover the disk and resolve its inner
-    edge ([Model notes](../notes.md#flareddisk)).
+    edge ([Model notes](../notes.md#flareddisk)); it follows the empirical
+    $\sin i$ surface projection of Blakely et al. (2024), whereas
+    [`MultipoleDisk`][virgil.models.MultipoleDisk] with
+    [`PowerLawHeight`][virgil.models.PowerLawHeight] uses the exact $\tan i$
+    thin-surface projection.
 
     Source: Blakely et al. (2024), §III,
     [references](../../../references.md#blakely2024).

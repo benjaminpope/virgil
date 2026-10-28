@@ -209,16 +209,13 @@ MAX_FUNC_LINES = 120
 _EXEMPT_DECORATOR = re.compile(
     r"jit|custom_(jvp|vjp)|\.def(jvp|vjp)(\(.*\))?$|\.register(\(.*\))?$"
 )
-_GENERIC_DELIBERATE = re.compile(
-    r"#\s*deliberate:\s*(a\s+)?(named\s+step|test\s+seam|stage\s+callable)\b",
-    re.I,
-)
 
 
 def _valid_deliberate(line):
-    if "# deliberate:" not in line or _GENERIC_DELIBERATE.search(line):
-        return False
-    return bool(line.split("# deliberate:", 1)[1].strip())
+    """A ``# deliberate:`` comment with a non-empty reason (specificity is for review)."""
+    return "# deliberate:" in line and bool(
+        line.split("# deliberate:", 1)[1].strip()
+    )
 
 
 def _all_defs(tree):

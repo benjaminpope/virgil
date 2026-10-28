@@ -914,3 +914,62 @@ def test_old_taper_name_gives_identical_toeplitz_and_direct_losses():
         losses.append((term.chi2_and_log_norm(values)[0], np.sum(r**2)))
     assert losses[0][0] == losses[1][0]
     assert losses[0][1] == losses[1][1]
+
+
+def _noise_free_term(seed=1, n=300):
+    """A profiled term on noise-free data from a known image and gains, and
+    the true values: at them C_d + Δ_d is the Toeplitz approximation error
+    plus round-off, of either sign."""
+    rng = onp.random.default_rng(seed)
+    ddid = rng.integers(0, len(DDID_OBS), n)
+    obs = onp.asarray(DDID_OBS)[ddid]
+    freq = CENTRES[ddid] * (1.0 + rng.uniform(-0.01, 0.01, n))
+    u, v = _uv(n, 0.45, rng)
+    weight = rng.uniform(0.5, 2.0, n) * 1e2
+    kw = dict(ddid=ddid + 5, obs=obs + 2)
+    blank = ComplexVisData.from_arrays(
+        u, v, onp.zeros(n, complex), weight, freq, **kw
+    )
+    nuis = CalibrationNuisance(
+        blank, sigmas="profile", offsets=False, alpha=0.7
+    )
+    eta = rng.normal(size=(8, 8))
+    values = _values(nuis, flux=0.9, gain=[1.15])
+    values["eta"] = eta
+    scene, template = _scene(8)
+    model = onp.asarray(blank.model(scene(values), values, nuis))
+    data = ComplexVisData.from_arrays(u, v, model, weight, freq, **kw)
+    term = data.toeplitz(template, nuis).term(scene, nuis)
+    return term, values
+
+
+def test_profiled_loss_floors_value_and_gradient_together():
+    """Where C_d + Δ_d is round-off (the model reproduces noise-free data),
+    the profiled loss and its gradient are finite and are those of
+    ``N ln max(1 + Δ/C, eps)``: value and gradient floor at the same place.
+    Above the floor the Toeplitz term matches the direct term."""
+    term, values = _noise_free_term()
+    c_sum, count = term.arrays["c_sum"], term.arrays["count"]
+    eps = np.finfo(c_sum.dtype).eps
+
+    def loss(v):
+        chi2, log_norm = term.chi2_and_log_norm(v)
+        return 0.5 * chi2 + log_norm
+
+    def floored(v):
+        delta = term._deltas(term.curvature_params(v))
+        return np.sum(count * np.log(np.maximum(1.0 + delta / c_sum, eps)))
+
+    for scale in (1.0, 0.99, 1.01):
+        v = {**values, "eta": values["eta"] * scale}
+        val, grad = jax.value_and_grad(loss)(v)
+        ref_val, ref_grad = jax.value_and_grad(floored)(v)
+        assert onp.isfinite(float(val))
+        assert float(val) == pytest.approx(float(ref_val), abs=1e-12)
+        for k in grad:
+            assert onp.all(onp.isfinite(grad[k]))
+            onp.testing.assert_allclose(
+                grad[k], ref_grad[k], rtol=1e-7, atol=1e-9
+            )
+    # the depth of the floor is bounded: N ln(eps) per ddid, not N ln(tiny)
+    assert float(floored(values)) >= float(np.sum(count)) * np.log(eps)
