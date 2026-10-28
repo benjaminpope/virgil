@@ -634,15 +634,17 @@ def test_profiled_scales_maximize_the_likelihood(data):
     }
     blocks = _common._scale_blocks(data, noise)
     assert [b[0] for b in blocks] == ["vis_scale", "phi_scale"]
-    scales = _common._profiled_scales(model, data, blocks)
-    best = _common._m2loglike(
+    _, scales = _common._profiled_m2loglike(
+        lambda _: model, {}, data, 0.0, blocks
+    )
+    best = _common._m2loglike_64(
         model, data, **{k: float(v) for k, v in scales.items()}
     )
     for key in scales:
         for factor in (0.9, 1.1):
             trial = {k: float(v) for k, v in scales.items()}
             trial[key] *= factor
-            assert _common._m2loglike(model, data, **trial) > best, key
+            assert _common._m2loglike_64(model, data, **trial) > best, key
 
 
 def test_scanned_fit_refines_the_diameter_between_grid_points():

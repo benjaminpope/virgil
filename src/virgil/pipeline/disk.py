@@ -616,7 +616,8 @@ def _star(ctx):
     return PointSource(flux=flux)
 
 
-def _star_report(settings):  # deliberate: test seam: the summary entry alone
+# deliberate: summary entry for the star spectrum, checked by test_star_is_a_point_source_until_given_a_size_or_a_spectrum without a run
+def _star_report(settings):
     """What the star is, for the summary: the disk's colour is relative to it."""
     if settings["star_temperature_k"] is not None:
         spectrum = f"blackbody {settings['star_temperature_k']:g} K"
@@ -794,7 +795,7 @@ def _finish(model, values, info, priors, data):
     )
 
 
-# deliberate: test seam: pulls starts inside the support
+# deliberate: pulls only out-of-support starts; pinned by test_inside_priors_pulls_only_values_outside_a_bound on bare priors
 def _inside_priors(priors, start):
     """``start`` with any value outside its prior's support pulled just inside."""
     from .._flat import _base
@@ -894,7 +895,8 @@ def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
     )
 
 
-def _grid_minima(delta, inc_deg):  # deliberate: test seam: pure NumPy logic
+# deliberate: periodic-pa local-minimum search on a bare array; pinned by test_grid_minima_wrap_the_position_angle
+def _grid_minima(delta, inc_deg):
     """Local minima of the geometry map ``delta[inc, pa]`` (``pa`` is periodic)."""
     n_inc, n_pa = delta.shape
     minima = []
@@ -914,7 +916,7 @@ def _grid_minima(delta, inc_deg):  # deliberate: test seam: pure NumPy logic
     return sorted(minima)
 
 
-# deliberate: test seam: formula checked directly
+# deliberate: clipped GP sigma formula; pinned at both clip ends by test_dynamic_range_sigma_is_clipped
 def _dynamic_range_sigma(ctx, r0, sigma):
     """The Gaussian process's σ: ln of the single ring's peak-to-mean contrast."""
     contrast = (ctx.r_out**2 - ctx.r_in**2) / (
@@ -1132,7 +1134,7 @@ def _ring_start(ctx, held, n, new):
     return start
 
 
-# deliberate: jit boundary: stable cache key via functools.partial
+# Module-level so functools.partial(_scan_model, ...) gives a stable jit cache key.
 def _scan_model(ctx, shape, base, *, rnew, fnew):
     v = dict(base)
     i = shape.n
@@ -1171,7 +1173,7 @@ def _bic(fit, n):
     return score + fit.n_free * math.log(n)
 
 
-# deliberate: test seam: the ring-and-planet loop
+# deliberate: ring fit plus planet search; test_rings_leave_out_an_unresolved_count_and_go_on wraps it to record the ring counts tried
 def _fit_with_planet(p, shape, start, backfit=False):
     """Fit ``shape``, search the residuals, refit with a planet if found.
 
@@ -1282,7 +1284,8 @@ def _backfit(p, shape, fit):
     return fit, steps
 
 
-def _prune(p, shape, fit):  # deliberate: test seam: ring pruning
+# deliberate: greedy BIC ring pruning; test_prune_drops_a_ring_that_carries_no_light drives it on a padded fit
+def _prune(p, shape, fit):
     """Drop the ring whose removal lowers the BIC most, repeatedly: ``(fit, shape, dropped)``."""
     ctx, n_data = p._ctx(), int(p.processed.n_independent)
     dropped = []
@@ -1562,7 +1565,7 @@ def _gp_fit(p, ell, planet, geo, degree=None, release=False, max_steps=None):
     return _finish(model, values, info, priors, data), priors
 
 
-# deliberate: test seam: fold of GP harmonics
+# deliberate: turns latent harmonics with pa folded to [0, 180); pinned by test_fold_gp_values_turns_the_harmonics
 def _fold_gp_values(ctx, values, degree=None):
     """``_fold_fit`` for the Gaussian process: ``pa`` in [0°, 180°), latents turned."""
     pa = float(onp.asarray(values["disk.pa"]))
@@ -1582,7 +1585,8 @@ def _fold_gp_values(ctx, values, degree=None):
     return out
 
 
-def _geometry_search(p, geo, ell):  # deliberate: test seam: start selection
+# deliberate: start selection by frozen-geometry chi2; test_geometry_search_leaves_a_wrong_mode scores it directly
+def _geometry_search(p, geo, ell):
     """The start with the lowest frozen-geometry χ²: ``(geometry, fit, rows)``."""
     n_data = int(p.processed.n_independent)
     best, rows = None, []
@@ -1900,7 +1904,7 @@ def _compare_rings(p):
     return report
 
 
-# deliberate: test seam: evidence spread and profile correlation
+# deliberate: loads each ell candidate to correlate radial profiles; kept out of the already long GP compare callback
 def _stability(p, rows):
     """The evidence spread across ℓ and the smallest correlation between
     the radial profiles of the fits at each ℓ (None when not computable)."""
@@ -1920,7 +1924,8 @@ def _stability(p, rows):
     return spread, float(onp.min(corr))
 
 
-def _render_stats(p, model):  # deliberate: test seam: the render check
+# deliberate: pixel-render chi2 check; test_gp_render_check_runs_and_passes_on_a_well_sampled_disc re-runs it on a model
+def _render_stats(p, model):
     """χ²/N of the model and of its disk rendered to pixels (None if not computable)."""
     import equinox as eqx
     import jax.numpy as np
@@ -2193,7 +2198,7 @@ def _plot_summary_file(p, model):
 # === STAGE: POSTERIOR ===
 
 
-# deliberate: test seam: pa folding
+# deliberate: fold about the MAP, harmonics flipped by parity; pinned by test_fold_pa_keeps_the_disk
 def _fold_pa(samples, pa_site, parity, centre):
     """``pa`` folded to within 90° of ``centre``, the ``parity``-signed harmonics flipped."""
     pa = onp.asarray(samples[pa_site], dtype=float)

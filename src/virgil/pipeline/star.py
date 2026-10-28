@@ -561,7 +561,8 @@ def plot_v2_models(data, fitted, ax=None, curves=400):
 # === STAGES ===
 
 
-def _first_null(model, diam_mas, n=_NULL_POINTS):  # deliberate: test seam
+# deliberate: first visibility sign change of a model; test_resolution_uses_the_fitted_models_first_null checks it against the disk
+def _first_null(model, diam_mas, n=_NULL_POINTS):
     """θB/λ at the model's first visibility sign change (else uniform-disk)."""
     scale = float(rad2mas) / float(diam_mas)  # f for θf = 1
     grid = onp.linspace(1e-3, _NULL_REACH, n) * scale
@@ -574,7 +575,7 @@ def _first_null(model, diam_mas, n=_NULL_POINTS):  # deliberate: test seam
     return float((grid[i] + frac * (grid[i + 1] - grid[i])) / scale)
 
 
-def _load_star(p):  # deliberate: stage function, stubbed by tests
+def _load_star(p):
     from .._geometry import fringe_scales
 
     # The longest spatial frequency B/λ in the data (cycles per radian).
@@ -717,7 +718,8 @@ class LobeFit:
     warnings: list
 
 
-def _fit_scanned(p, entry, start, grid, noise):  # deliberate: test seam
+# deliberate: scan-model fit by golden-section diameter refinement; test_scanned_fit_refines_the_diameter_between_grid_points
+def _fit_scanned(p, entry, start, grid, noise):
     """A scan model's fit: the lobe's diameter (scales profiled)."""
     info = {
         "method": "scan",
@@ -821,7 +823,8 @@ def _finite_or(value, default):
     return value if math.isfinite(value) else default
 
 
-def _fit_in_lobes(p, entry, lobes, noise):  # deliberate: named step of _fit
+# deliberate: per-model loop body of _fit (best lobe, report dict); runs once per registry model
+def _fit_in_lobes(p, entry, lobes, noise):
     """Fit ``entry`` in every lobe: ``(best LobeFit, report)``."""
     n = int(p.processed.n_independent)
     fits = [_fit_lobe(p, entry, lobe, noise) for lobe in lobes]
@@ -887,7 +890,8 @@ def _compare(registry, reports, child, n):
     }
 
 
-def _choose_model(reports, registry, n):  # deliberate: test seam
+# deliberate: walks the parent chain of models; test_model_choice_walks_the_chain_of_parents feeds it canned reports
+def _choose_model(reports, registry, n):
     """Walk down the chain of parents to ``(best, decisive, comparisons)``."""
     comparisons = [
         _compare(registry, reports, name, n)
@@ -916,7 +920,7 @@ def _choose_model(reports, registry, n):  # deliberate: test seam
 # --- the fit stage ---
 
 
-def _fit(p):  # deliberate: stage function, stubbed by tests
+def _fit(p):
     data, s = p.processed, p.settings
     lo, hi = p._diam_range()
     registry = models()
@@ -976,7 +980,8 @@ def _fit(p):  # deliberate: stage function, stubbed by tests
     }
 
 
-def _bound_fractions(entry, priors, noise, samples):  # deliberate: test seam
+# deliberate: excludes shape priors from the bound check; test_prior_bound_ignores_shape_parameters
+def _bound_fractions(entry, priors, noise, samples):
     """Fraction of samples within 1% of either prior bound."""
     # Shape priors are meant to matter; the ``constrained`` check judges them.
     sampled = {k: v for k, v in priors.items() if k not in entry.shape}
@@ -992,7 +997,8 @@ def _rewarn(caught):
         )
 
 
-def _wall_probe(  # deliberate: test seam
+# deliberate: random-step chi2-wall probe, run under in_float64 by test_wall_probe_separates_narrow_from_wide_posteriors
+def _wall_probe(
     entry, data, samples, priors, n=_WALL_DRAWS, radius=_WALL_RADIUS, seed=0
 ):
     """Fraction of random steps of ``radius`` posterior sd that hit a χ² wall.
@@ -1065,7 +1071,7 @@ def _nuts(model, data, p, name, priors, start):  # deliberate: float64 boundary
     )
 
 
-def _posterior(p):  # deliberate: stage function, stubbed by tests
+def _posterior(p):
     fit_report = p._report("fit")
     best = fit_report["best"]
     groups, per_model, params_attr = {}, {}, {}
@@ -1146,7 +1152,8 @@ _POSTERIOR_KEYS = (
 )
 
 
-def _fit_checks(fit, registry):  # deliberate: named step of _summarize
+# deliberate: fit-stage checks; inlined they take _summarize past MAX_FUNC_LINES (120)
+def _fit_checks(fit, registry):
     """Checks on the fits: χ²/N, model gains and the fitted error scales."""
     reports = fit["models"]
     checks = [
