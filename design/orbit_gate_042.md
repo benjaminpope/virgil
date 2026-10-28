@@ -437,7 +437,13 @@ them cold.
   `draw` (simulate and write OIFITS plus truth JSON), `fit` (one system),
   `oracle` (one B system), `aggregate`; criteria read from this file at
   a pinned virgil commit. Tests in vv check the hash, the seeding and the
-  aggregator on a toy summary. Built in Track 2 Stage 1.
+  aggregator on a toy summary. Built in Track 2 Stage 1 on the existing
+  infrastructure (orbit_dehack §6 Stage 1): `detection_campaign.py`'s
+  hashed criteria and Holm aggregate, `sbc_v2.py`'s SBC ranks for A/M2,
+  and `virgil.detection` (`DetectionMC`) for the no-orbit FAP.
+- **Prerequisite:** detection v3 (OzSTAR job 18467928) is pulled and
+  reported before any scored run, since the no-orbit FAP trusts
+  `virgil.detection`, tails included.
 - **Cluster:** an OzSTAR array job (one task per system, GPU nodes; CPU
   JAX jobs abort with LLVM allocation errors) submitted, watched and
   pulled back **by Ben** with `ozstar_scripts`. Agents never touch the
@@ -462,6 +468,7 @@ them cold.
 | 2026-10-28 | Ben's decision 4: no nats thresholds; alias/label/resolved verdicts are probabilities with 95% credible sets; detection by per-data-set empirical FAP < α = 0.01 (`virgil.detection` simulators, stratum-N-like nulls); M6 limits now binomial q99 at α = 0.01 (N ≤ 4 of 100, misspecified subset at its own *n*); M8 qualifying systems by oracle FAP at the MC floor; no separate calibration stratum | Ben (encoded by Claude, Opus) | no |
 | 2026-10-28 | Ben's amendment: WR-like envelopes are chromatic (a line in a random contiguous channel block, generic enhancement, width and optional size change), in gate draws and FAP nulls | Ben (encoded by Claude, Opus) | no |
 | 2026-10-28 | Ben accepts the contrast-curve flux floor (register entry records his empirical-Bayes framing); stratum A's fixed floor and the below-floor M9 misses stay | Ben (encoded by Claude, Opus) | no |
+| 2026-10-28 | Ben: the harness reuses the existing injection–recovery stack (detection_campaign, sbc_v2, `virgil.detection`); detection v3 (job 18467928) pulled and reported first | Ben (encoded by Claude, Opus) | no |
 
 ## References
 

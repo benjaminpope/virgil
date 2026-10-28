@@ -67,8 +67,14 @@ Priorities, in order: principled; reliable for orbits in general; lean
   No nats threshold survives: alias, label and resolved verdicts are
   probabilities with 95% credible sets, and detection (orbit against no
   orbit) is an empirical false-alarm probability below α = 0.01.
-- **Expected size: about 11,950 → 6,900 lines** (−42%). `orbit_search.py`
-  is retired and `arcs.py` is folded into seeding. `fit_orbit_aliases`
+- **Expected size:** the orbit files go from about 11,480 to about 5,350
+  lines; the whole package changes by about −5,100 (11,950 → 6,870 for
+  the scope above), because about 1,060 generic lines move to or are
+  added in core modules (§1.5, §3.2). `orbit_search.py` is retired and
+  `arcs.py` is folded into seeding.
+- **No orbit-local forks of generic fitting code** (Ben, 2026-10-28):
+  optimiser, evidence, importance sampling, NUTS, marginals, mixtures,
+  covariance and I/O live in core modules usable by any fit (§1.5). `fit_orbit_aliases`
   becomes about 60 lines over seven named stages.
 
 ## 1. Inventory
@@ -154,6 +160,48 @@ o = orbits.py, t = tempering.py, p = pipeline/orbit.py, c = pipeline/_checks.py.
 | night grouping | `OIData.epochs`, `_night_length` (ignores `gap_days`), `_read_nights` | `OIData.epochs(gap_days)` only; `gap_days` is threaded through |
 | night-outlier logic | `_flag_chi2`, `_outlying_night`, `_with_outlier`, `_flag_one_night` | the mixture's posterior outlier probability (A) |
 | JSON | `AliasResult.save` (not atomic), `_checkpoint`, `pipeline._io` | `_io.write_json` (atomic, strict) |
+
+### 1.5 Generic operations: one core home (no orbit-local forks)
+
+Ben (2026-10-28): "we want this orbits code to be clean and to
+consolidate as many generic fitting functions into one place as
+possible, rather than it having a whole bunch of ad hoc forks or
+reimplementations of the same idea." Orbit files keep only orbit
+physics (Kepler and Thiele–Innes, epochs, band and alias enumeration,
+seeding) plus the stage driver. Everything else uses, or moves to, a
+core module.
+
+| generic operation | orbit-side implementation(s) now | existing core home | verdict |
+|---|---|---|---|
+| optimiser loops, restarts, convergence | `aliases._optimize` (Gauss–Newton + L-BFGS-B fallback), `_refine`, `_flip_modes`; `epochs._refine_marginal`; `start_from_positions` refinements; `orbits._fit_batch` | `fitting.fit` (LM, L-BFGS, trust region, budgets), `_gauss_newton.solve` | **use core**: one batched multi-start wrapper `fitting.multistart(objective, starts, …)` (new, in `fitting`) over `_gauss_newton.solve`; the try/except-count-failure pattern lives there once |
+| Laplace evidence and covariance | `aliases._mode_evidence`; `pipeline/orbit._laplace_mass`; three Hessian→cov routines | `inference.laplace_cov`, `regularized_inverse`, `objective_laplace_covariance`; `fitting.gauss_newton_mass` | **use core** (`inference`); `_laplace_mass` becomes `fitting.gauss_newton_mass` plus the `_Layout` transform |
+| importance-sampled evidence (truncated, defensive mixture, adaptive n, SE) | `aliases._mode_evidence` IS branch, `_band_evidence` | none (`svi` has PSIS diagnostics only) | **move to core**: new `virgil/evidence.py` (`importance_evidence(logpost, modes, covs, in_support, …)` → (ln Ẑ, SE, ESS, p̂_in)) |
+| Savage–Dickey ratio | `epochs.estimate_primary_diameter` (gain test) | none | **move to core**: `evidence.savage_dickey(draws, cond_loglike, grid)` |
+| NUTS setup, mass matrix, chains, deadline | `pipeline/orbit._sample_band`, `_laplace_mass`, `_numpyro_order`, `_SITES` | `pipeline/_common._run_chains`, `_interior_start`, `_diagnostics`; `fitting` NUTS kwargs | **use core** (`pipeline/_common`); orbit supplies only its `_Layout` sites |
+| tempering | `aliases._temper_factors`, `_dof_pairs` | `tempering.estimate_factors`, `block_dof` | **use core**; `_temper_factors` keeps only the per-night fit call |
+| scale (noise) marginal | `epochs._Surface` (closed form, numeric, gain table), `orbit_search._Scorer`/`_band_marginal`/`_newton` | `_marginal.log_integral`, `_linear.LinearMarginal`/`whiten_*`, `likelihood._whiten*` | **move to core**: `_Surface` → `_marginal.BlockScaleMarginal` (generic block-scaled residuals); `orbit_search` copies deleted; gains integrated via `_linear` |
+| flux marginal (log-uniform) | `orbit_search._band_marginal`; `epoch_positions` third grid axis | `grid_fit._log_uniform_evidence`, `LinearFluxGrid` | **use core** (`grid_fit`) |
+| PD checks, covariance regularisation | seven `eigvalsh` sites (epochs ×3, arcs, aliases, …) | `inference.regularized_inverse`, `_add_ridge` | **use core**: one `inference.psd_inverse(H) -> (cov, ok)` replaces them (extend `regularized_inverse`) |
+| prior transforms, flat coordinates | `aliases._Bounds`, `_fold`, `_PERIODIC`, `_start_vector`; pipeline `_SITES`/`_numpyro_order`/hard-coded periodic half-widths | `_flat` (`_FlatBijection`, `flat_sampled`), `priors` | **use core**: `_Layout` is a thin orbit table of names, bounds and periods built on `_flat`; the (h, k, λ_ref) map is orbit-specific, because it is orbital geometry |
+| mixture likelihood (per-group outliers, ε marginal) | `aliases._with_outlier`, `_night_diagnostics`; `epochs._flag_chi2`; pipeline `_outlying_night` | none (`ensemble._mixture` mixes images, unrelated) | **move to core**: `likelihood.group_outlier_mixture(loglikes, outlier_loglikes)` with the exact Gauss–Chebyshev ε marginal and posterior outlier probabilities |
+| empirical FAP / null simulation | none yet (`no_orbit_nats`) | `detection` (`gaussian_null`, `bootstrap_null`, `rescale_errors`, `injection_recovery`, `DetectionMC`) | **use core**; one new hook: a user-supplied statistic in `injection_recovery` |
+| contrast-curve floor | none yet | `grid_fit.optimized_flux_grid`, `laplace_flux_uncertainty_grid`; `limits.ruffio_upperlimit`, `radial_profile` | **use core** (`limits.flux_floor`, a ~20-line composition, new in `limits`) |
+| grid search, batching, memory planning | `epochs._grid_scores`, own `meshgrid`s, `_grid_batch`, `aliases._hessian_groups`, `_candidate_batch`, `arcs._BATCH`, pad-batch ×6 | `_grid.map_points`, `coordinate_points`, `batch_size_or_default` | **use core** (`_grid`); one `_grid.plan_batches(per_item, budget)` replaces the planners |
+| mode dedup | `epochs._distinct_tracks`, `_distinct`, `aliases._distinct`, inlined ×2, `OrbitStart.modes`, `_mode_keys` | none | **orbit-specific, because** the distance is between sky tracks over the observed epochs (§2E); one function in `epochs` |
+| EM over per-night peak mixtures | `arcs` (none yet) | none | **orbit-specific, because** the M-step is the Thiele–Innes linear fit; lives in `_seeding` |
+| JSON I/O, atomic writes, checkpoints | `AliasResult.to_json/save/load`, `_checkpoint`, `pipeline/orbit._positions_json` | `pipeline/_io.write_json`, `read_json`, `atomic_path` | **use core** (`pipeline/_io`); checkpoints via `write_json` + `atomic_path` |
+| metrics, image scores | none in orbit code | `metrics` | n/a |
+| precision, stability | `aliases` float64 wrappers | `_precision.in_float64`, `run_in`; `_stability` | **use core** (`_precision`) |
+
+New generic code goes only in: `virgil/evidence.py` (new: importance
+evidence, Savage–Dickey), `likelihood.py` (group outlier mixture),
+`fitting.py` (multistart), `inference.py` (`psd_inverse`),
+`_marginal.py` (`BlockScaleMarginal`), `_grid.py` (`plan_batches`),
+`limits.py` (`flux_floor`) and `detection.py` (statistic hook). Each
+gets its own unit tests independent of orbits, and at least one
+non-orbit caller or a written reason (e.g. `evidence.importance_evidence`
+is also the natural evidence for `pipeline/star` and `grid_fit` modes;
+`group_outlier_mixture` for any multi-epoch fit).
 
 ### 1.4 Dead and constant paths
 
@@ -723,19 +771,32 @@ loop, widening, robustness jackknife and band-sampling rules go.
 
 ### 3.2 Module layout (after Stage 5)
 
+Orbit files (orbit physics and the driver only):
+
 | module | holds | lines now → after |
 |---|---|---|
-| `orbits.py` | orbit classes, `thiele_innes` (one), `period_grid`, `_Layout` | 1,568 → 1,450 |
-| `epochs.py` | `Epochs`, `_Surface`, `epoch_positions` (peaks only, no flags), `night_loglikes`, `broad_loglike` | 3,016 → 1,800 |
-| `aliases.py` | the seven stages, mixture (A), evidence (C), `AliasResult` | 3,459 → 1,800 |
+| `orbits.py` | orbit classes, `thiele_innes` (one), `period_grid`, `_Layout`, (h, k, λ_ref) map | 1,568 → 1,450 |
+| `epochs.py` | `Epochs`, `epoch_positions` (peaks only, no flags), `night_loglikes`, `broad_loglike`, track dedup | 3,016 → 1,200 |
+| `aliases.py` | band enumeration, the seven-stage driver, `AliasResult` | 3,459 → 1,400 |
 | `_seeding.py` (new, from `arcs.py`) | peak mixtures, EM, `seed_profile`, `select_bands` | 645 → 300 |
 | `orbit_search.py` | retired (deprecated in 0.4.2, removed in 0.5) | 1,110 → 0 (0.5) |
-| `tempering.py` | unchanged except `block_dof` callers | 399 → 380 |
-| `pipeline/orbit.py` | I/O, checks, figures, NUTS | 1,678 → 1,150 |
-| `_marginal.py` | `log_integral` | 77 → 77 |
+| `pipeline/orbit.py` | I/O, checks, figures; NUTS via `pipeline/_common` | 1,678 → 1,000 |
+| **orbit total** | | **11,476 → 5,350** |
 
-The total goes from about 11,950 to about 6,960. Tests shrink with the
-code, because named-target tests are replaced by constructed ones (§4).
+Core modules (generic, §1.5):
+
+| module | change | lines |
+|---|---|---|
+| `evidence.py` (new) | importance evidence, Savage–Dickey | +300 |
+| `_marginal.py` | `BlockScaleMarginal` (from `epochs._Surface`) | 77 → 680 |
+| `likelihood.py` | `group_outlier_mixture` | +120 |
+| `fitting.py`, `inference.py`, `_grid.py`, `limits.py`, `detection.py` | multistart, `psd_inverse`, `plan_batches`, `flux_floor`, statistic hook | about +60 net (each replaces orbit copies) |
+| `tempering.py` | callers only | 399 → 380 |
+
+Package total for the scope: about 11,950 → 6,870 (−5,080). Tests
+shrink with the code, because named-target tests are replaced by
+constructed ones (§4), and the moved core pieces get their own
+orbit-independent tests.
 
 ### 3.3 Efficiency
 
@@ -815,8 +876,35 @@ moves into Stage 3 as a constructed case. The decision on both PRs is
 Ben's.
 
 **Stage 1: harness and baseline (vv).** `scripts/orbit_population.py` as
-in gate §8, with hash checking, seeding and aggregator tests on a toy
-summary. Ben runs the baseline on `main`. No virgil changes.
+in gate §8, **built on the existing injection–recovery infrastructure,
+not a new stack** (Ben, 2026-10-28):
+- the hashed criteria file and Holm aggregate pattern of
+  `scripts/detection_campaign.py` (`criteria_hash`, `design_hash`,
+  `virgil_commit`, `aggregate`);
+- the SBC rank machinery of `scripts/sbc_v2.py` (`analyse`,
+  `unhealthy`, chain-health rules) for stratum A and M2;
+- `virgil.detection` (`gaussian_null`, `rescale_errors`,
+  `bootstrap_null`, `injection_recovery`, `DetectionMC` with its
+  fingerprints and save/load/concatenate) for the per-data-set no-orbit
+  FAP;
+- `scripts/pull_campaign.py` and `benchmarks/polar_disk/v4_injection_recovery.py`
+  as models for pulling and per-system array tasks.
+
+Genuinely new, with reasons: the orbit population draws (strata A, B,
+N, D, templates T1–T3, contaminants), since no existing generator
+draws multi-epoch orbits; the oracle (`init=` truth) runs and M4/M8,
+since no campaign has a search-completeness metric; the band
+credible-set metrics M1/M9, since existing campaigns score single
+detections. Tests check the hash, the seeding and the aggregator on a
+toy summary. Ben runs the baseline on `main`. No virgil changes.
+
+**Prerequisite (before Stage 4's detection rule):** pull and report
+detection v3 (OzSTAR job 18467928, submitted 2026-10-12; criteria
+registered in vv 099b418/82e6e43, with the tail primary
+`crosscheck.tails`; `~/code/ozstar_scripts/results/detection_v3` is
+still empty). The no-orbit FAP relies on `virgil.detection` being
+trusted, including in its tails. Ben pulls the results; an agent then
+aggregates and reports them raw.
 
 Every default flip deletes the path it replaces in the same PR (§2H).
 
@@ -855,7 +943,10 @@ default deletes the other.
   and credible sets; detection at FAP < α = 0.01 (the `alpha` setting
   replaces `alias_nats`/`no_orbit_nats`, which warn and are ignored).
 
-**Stage 5: structure (§1.3, §1.4, §3).** The seven stages, `_Layout`,
+**Stage 5: structure (§1.3, §1.4, §1.5, §3).** Generic pieces move to
+their core homes (§1.5); stages 2–4 already write new generic code
+(mixture, IS evidence, Savage–Dickey, flux floor) directly in core,
+never in an orbit file. The seven stages, `_Layout`,
 the one scene→score path, one PD/covariance helper, one batch planner,
 atomic JSON, `gap_days` threaded through, and the `orbit_search` and
 `start_from_positions` deprecations with migration notes. It must not
@@ -916,6 +1007,15 @@ number):
    reference at the tolerance §2 states?
 10. **Efficiency.** Wall time and memory on stratum D against baseline;
     any slowdown is above 20% explained.
+11. **No orbit-local generic code.** This grep returns nothing (run on
+    the orbit modules after Stage 5):
+    `grep -nE "def .*(optimi[sz]e|minimi[sz]e|lbfgs|newton|evidence|importance|laplace|nuts|mcmc|hessian_inv|cholesky|logsumexp_mixture|write_json)" src/virgil/{orbits,epochs,aliases,_seeding}.py src/virgil/pipeline/orbit.py`;
+    and no `NUTS(`, `MCMC(` or `json.dump(` appears in those files.
+12. **Moved functions have callers.** The Stage 5 Opus equivalence
+    review checks that each function moved to core (§1.5) is used by
+    both orbit and non-orbit callers, or carries a written reason, and
+    that its behaviour is unchanged (same outputs within tolerance on
+    stratum D).
 
 ## 8. Decisions (Ben, 2026-10-28)
 
