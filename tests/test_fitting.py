@@ -738,20 +738,32 @@ def test_fit_with_hierarchical_error_scales():
     # float32 and x64), but they stay clearly separated.
     assert 1.5 < ratio(result) <= ratio(unpooled) * (1 + 1e-3)
     assert abs(result.values["dra"] - 150.0) < 5.0
-    # Centred hierarchical scales also support method="lm" and gauss_newton_mass
-    # under flat_coordinates=True.
-    from virgil.fitting import gauss_newton_mass
+    # Centred hierarchical scales support gauss_newton_mass and
+    # gauss_newton_diag under flat_coordinates=True, while method="lm" raises
+    # NoLeastSquaresForm.
+    from virgil.fitting import (
+        NoLeastSquaresForm,
+        gauss_newton_diag,
+        gauss_newton_mass,
+    )
 
-    lm_res = fit(
+    with pytest.raises(NoLeastSquaresForm):
+        fit(
+            _binary_fn,
+            priors,
+            [quiet, noisy],
+            noise=[{"vis_scale": s} for s in scales],
+            init=init,
+            method="lm",
+        )
+    diag = gauss_newton_diag(
         _binary_fn,
         priors,
         [quiet, noisy],
+        result.values,
         noise=[{"vis_scale": s} for s in scales],
-        init=init,
-        method="lm",
     )
-    assert lm_res.info["method"] == "lm"
-    assert abs(lm_res.values["dra"] - 150.0) < 5.0
+    assert all(onp.all(onp.asarray(v) > 0.0) for v in diag.values())
     mass = gauss_newton_mass(
         _binary_fn,
         priors,

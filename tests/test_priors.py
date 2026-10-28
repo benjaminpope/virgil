@@ -317,7 +317,12 @@ def test_hierarchical_scales_no_data_reproduce_the_population():
 
 
 def test_centred_hierarchical_scales_have_positive_definite_curvature():
-    from virgil.fitting import fit, gauss_newton_mass
+    from virgil.fitting import (
+        NoLeastSquaresForm,
+        fit,
+        gauss_newton_diag,
+        gauss_newton_mass,
+    )
 
     population, scales = hierarchical_scales("s", 3, centred=True)
     target = np.log(np.array([0.8, 1.1, 1.5]))
@@ -331,6 +336,16 @@ def test_centred_hierarchical_scales_have_positive_definite_curvature():
         "phi_scale": scales[1],
         "vis_error": scales[2],
     }
+    with pytest.raises(NoLeastSquaresForm):
+        fit(
+            lambda **_: None,
+            population,
+            (),
+            noise=noise,
+            likelihoods=[term],
+            init=init,
+            method="lm",
+        )
     result = fit(
         lambda **_: None,
         population,
@@ -338,12 +353,20 @@ def test_centred_hierarchical_scales_have_positive_definite_curvature():
         noise=noise,
         likelihoods=[term],
         init=init,
-        method="lm",
     )
-    assert result.info["method"] == "lm" and result.info["converged"]
+    assert result.info["method"] == "lbfgs" and result.info["converged"]
     assert float(result.values["s_median"]) == pytest.approx(
         float(np.exp(np.mean(target))), rel=0.05
     )
+    diag = gauss_newton_diag(
+        lambda **_: None,
+        population,
+        (),
+        result.values,
+        noise=noise,
+        likelihoods=[term],
+    )
+    assert all(onp.all(onp.asarray(v) > 0.0) for v in diag.values())
     for flat in (True, False):
         mass = gauss_newton_mass(
             lambda **_: None,

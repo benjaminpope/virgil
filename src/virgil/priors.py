@@ -303,20 +303,6 @@ class PopulationScale:
         log_scale = values[f"{self.name}_log"][..., self.index]
         return dist.Normal(np.log(median), spread).log_prob(log_scale)
 
-    def residuals(self, values):
-        """Residuals whose half sum of squares is ``-log_prior(values)`` + const."""
-        if not self.centred:
-            return np.zeros(0)
-        median, spread = self._hyper(values)
-        log_scale = values[f"{self.name}_log"][..., self.index]
-        shift = 100.0  # keeps log(spread) + shift > 0 across float range
-        return np.array(
-            [
-                (log_scale - np.log(median)) / spread,
-                np.sqrt(2.0 * np.maximum(0.0, np.log(spread) + shift)),
-            ]
-        )
-
     def curvature_rows(self, values):
         """Mean and normalizer curvature rows of the centred population prior."""
         if not self.centred:

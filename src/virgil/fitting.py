@@ -346,10 +346,7 @@ class _Objective(eqx.Module):
         """
         import numpyro.distributions as dist
 
-        if any(
-            not (is_tied(p) and hasattr(p, "residuals"))
-            for p, _, _ in self.noise.values()
-        ):
+        if self.noise:
             raise NoLeastSquaresForm(
                 "Fitted error terms have no least-squares form (the "
                 "likelihood's normalization depends on them); fit with "
@@ -381,25 +378,7 @@ class _Objective(eqx.Module):
                 )
         model = self.build(z)
         values = self.constrain(z)
-        if self.noise:
-            whitened = self._whitened(model, values)
-            parts = [w for w, _ in whitened]
-            parts += [
-                np.atleast_1d(
-                    np.sqrt(
-                        2.0
-                        * np.maximum(0.0, np.sum(np.log(e)) + 100.0 * e.size)
-                    )
-                )
-                for _, e in whitened
-            ]
-            seen = []
-            for spec, _, _ in self.noise.values():
-                if spec not in seen:
-                    seen.append(spec)
-                    parts.append(np.ravel(spec.residuals(values)))
-        else:
-            parts = self.data_residuals(model)
+        parts = self.data_residuals(model)
         parts += [term(values) for term in self.likelihoods]
         for regularizer in self.regularizers:
             parts.append(np.ravel(regularizer.residuals(_reference(model))))
@@ -796,8 +775,7 @@ def fit(
             else:
                 method = (
                     "lbfgs"
-                    if problem.noise
-                    or any(
+                    if any(
                         getattr(r, "prefers_lbfgs", False)
                         for r in problem.regularizers
                     )
