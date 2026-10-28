@@ -653,23 +653,32 @@ class _ToeplitzTerm(eqx.Module):
     def _profile(self, delta):
         """``ŝ_d² = (C_d + Δ_d) / 2N_d`` (1 without points), held."""
         c_sum, count = self.arrays["c_sum"], self.arrays["count"]
-        s2 = (c_sum + delta) / (2.0 * np.maximum(count, 1.0))
-        s2 = np.where(count > 0, np.maximum(s2, np.finfo(s2.dtype).tiny), 1.0)
+        eps = np.finfo(c_sum.dtype).eps
+        num = np.maximum(c_sum + delta, eps * np.maximum(c_sum, eps))
+        s2 = np.where(count > 0, num / (2.0 * np.maximum(count, 1.0)), 1.0)
         return jax.lax.stop_gradient(s2)
 
     def _reduced(self, params):
         c_sum, count = self.arrays["c_sum"], self.arrays["count"]
         if self._profiled:
             delta = self._deltas(params)
-            r = delta / self._profile(delta)
             ok = (count > 0) & (c_sum > 0)
             ratio = delta / np.where(ok, c_sum, 1.0)
-            log_norm = np.sum(
-                np.where(
-                    ok, count * jax.lax.stop_gradient(np.log1p(ratio)), 0.0
-                )
+            eps = np.finfo(c_sum.dtype).eps
+            # Σ r is zero in value and has gradient ∇Δ/ŝ² (ŝ² is held), the
+            # same gradient and Hessian as Σ Δ/ŝ²; the loss's value is the
+            # held log_norm. Below the floor both are flat: no gradient.
+            live = ratio > eps - 1.0
+            r = np.where(
+                live,
+                (delta - jax.lax.stop_gradient(delta)) / self._profile(delta),
+                0.0,
             )
-            return np.sum(r - jax.lax.stop_gradient(r)), log_norm
+            log1p = np.log1p(np.maximum(ratio, eps - 1.0))
+            log_norm = np.sum(
+                np.where(ok, count * jax.lax.stop_gradient(log1p), 0.0)
+            )
+            return np.sum(r), log_norm
         sigma = params[3] if self.sigma_fixed is None else self.sigma_fixed
         image, shift, g, _ = params
         c = 1.0 / sigma**2
