@@ -982,7 +982,8 @@ def _splat_rings(xx, yy, width, rings, ring_points, weights):
     return image
 
 
-def _orthogonal_grid(xx, yy):  # deliberate: test seam (tests monkeypatch it)
+# deliberate: monkeypatched in tests/test_models_sources.py to force the irregular-grid path
+def _orthogonal_grid(xx, yy):
     """Origin and column and row steps of a regular grid, or ``None``.
 
     The grid may be shifted and rotated (as ``Component._image`` and
@@ -2109,7 +2110,8 @@ class _PixelRendered(Component):
         if rotation_deg != 0.0:
             xx, yy = rotate(xx, yy, rotation_deg)
         pixels = self._centred_image(xx, yy, self.pixel_scale_mas)
-        return pixels / np.sum(pixels)
+        total = np.sum(pixels)
+        return pixels / np.where(total > 0.0, total, 1.0)
 
     def _centred_cvis(self, uu, vv):
         rotation = self._frame(None)
@@ -2151,7 +2153,11 @@ class FlaredDisk(_PixelRendered):
     planets: compose them in a [`System`][virgil.models.System]. The
     visibilities are the exact Fourier transform of the brightness on a fixed
     ``npix`` x ``npix`` grid, which must cover the disk and resolve its inner
-    edge ([Model notes](../notes.md#flareddisk)).
+    edge ([Model notes](../notes.md#flareddisk)); it follows the empirical
+    $\sin i$ surface projection of Blakely et al. (2024), whereas
+    [`MultipoleDisk`][virgil.models.MultipoleDisk] with
+    [`PowerLawHeight`][virgil.models.PowerLawHeight] uses the exact $\tan i$
+    thin-surface projection.
 
     Source: Blakely et al. (2024), §III,
     [references](../../../references.md#blakely2024).
@@ -2242,7 +2248,7 @@ class FlaredDisk(_PixelRendered):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         # Mid-plane coordinates: x along the major axis, y along the minor
         # axis (towards the near side, at pa + 90), deprojected.
-        cos_inc = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        cos_inc = np.maximum(np.cos(self.inc * dtor), 1e-6)
         y, x = undo_elliptical_transf_coord(xx, yy, self.pa, cos_inc)
 
         # Flared surface (Eq. 2) and apparent radius (Eq. 3). The floors
@@ -5060,7 +5066,8 @@ class System(SourceModel):
             u, v, wavel, lambda c: c.model_on_grid(u, v, wavel, grid)
         )
 
-    def _tied(self, part):  # deliberate: one named step per part
+    # deliberate: resolves MultipoleField sibling geometry in the Image grid frame
+    def _tied(self, part):
         """``part`` with its field's geometry taken from the sibling it names."""
         field = part.log_brightness if isinstance(part, Image) else None
         name = getattr(field, "geometry_from", None)

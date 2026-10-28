@@ -1598,3 +1598,18 @@ def test_towards_primary_is_wrapped_to_zero_360():
         line = onp.asarray(frame["line_pa"])
         assert onp.all((toward >= 0.0) & (toward < 360.0))
         assert onp.allclose((toward - line) % 360.0, 180.0, atol=1e-3)
+
+
+def test_unit_orbit_and_gradients_are_finite_at_parabolic_boundary():
+    from virgil.orbits import _unit_orbit
+
+    dt = np.array([0.0, 10.0, 200.0])
+    x, y = _unit_orbit(dt, 400.0, 0.0, 1.0)
+    assert np.all(np.isfinite(x)) and np.all(np.isfinite(y))
+    grad_ecc = jax.grad(
+        lambda e: np.sum(np.stack(_unit_orbit(dt, 400.0, 0.0, e)) ** 2)
+    )(1.0)
+    grad_dt = jax.grad(
+        lambda t: np.sum(np.stack(_unit_orbit(t, 400.0, 0.0, 1.0)) ** 2)
+    )(dt)
+    assert np.isfinite(grad_ecc) and np.all(np.isfinite(grad_dt))

@@ -204,8 +204,39 @@ def step_down(h, clip=_CLIP):
         Complex ``k_1 .. k_M``.
     clipped : bool
     """
+    if isinstance(h, jax.Array):
+        dtype = np.finfo(np.result_type(h.real, float)).dtype
+        eps = np.finfo(dtype).eps
+        ctype = np.result_type(dtype, 1j)
+        cur = h.astype(ctype)
+        cur = cur / np.where(np.abs(cur[0]) > eps, cur[0], 1.0)
+        top = cur.shape[0] - 1
+        ks = []
+        clipped = np.asarray(False)
+        max_k = 1.0 - clip
+        for j in range(top, 0, -1):
+            kj = cur[j]
+            abs_kj2 = np.real(kj * np.conj(kj))
+            nonzero = abs_kj2 > 0.0
+            safe_abs = np.sqrt(np.where(nonzero, abs_kj2, 1.0))
+            abs_kj = np.where(nonzero, safe_abs, 0.0)
+            over = abs_kj > max_k
+            kj = np.where(over, kj / safe_abs * max_k, kj)
+            clipped = clipped | over
+            kj2 = np.real(kj * np.conj(kj))
+            denom = np.where(
+                clip >= 0.0, np.maximum(1.0 - kj2, eps), 1.0 - kj2
+            )
+            lower = (cur[:j] - kj * np.conj(cur[j:0:-1])) / denom
+            ks.append(kj)
+            cur = lower / np.where(np.abs(lower[0]) > eps, lower[0], 1.0)
+        k = np.stack(ks[::-1]) if ks else np.zeros((0,), dtype=ctype)
+        if not isinstance(clipped, jax.core.Tracer):
+            clipped = bool(clipped)
+        return k, clipped
     cur = onp.asarray(h, dtype=complex)
-    cur = cur / cur[0]
+    eps = float(onp.finfo(cur.real.dtype).eps)
+    cur = cur / (cur[0] if abs(cur[0]) > eps else 1.0)
     top = len(cur) - 1
     k = onp.zeros(top, dtype=complex)
     clipped = False
@@ -214,9 +245,12 @@ def step_down(h, clip=_CLIP):
         if abs(kj) > 1.0 - clip:
             kj = kj / abs(kj) * (1.0 - clip)
             clipped = True
-        lower = (cur[:j] - kj * onp.conj(cur[j:0:-1])) / (1.0 - abs(kj) ** 2)
+        denom = 1.0 - abs(kj) ** 2
+        if clip >= 0.0:
+            denom = max(denom, eps)
+        lower = (cur[:j] - kj * onp.conj(cur[j:0:-1])) / denom
         k[j - 1] = kj
-        cur = lower / lower[0]
+        cur = lower / (lower[0] if abs(lower[0]) > eps else 1.0)
     return k, clipped
 
 

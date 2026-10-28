@@ -137,10 +137,13 @@ def _unit_orbit(dt, period, dt_peri, ecc):
     Computed from the true anomaly: ``X = (r/a) cos f``, ``Y = (r/a) sin f``.
     """
     mean_anomaly = 2.0 * np.pi * (dt - dt_peri) / period
+    dtype = np.result_type(mean_anomaly, ecc, float)
+    eps = np.finfo(dtype).eps
+    ecc = np.minimum(np.asarray(ecc, dtype=dtype), 1.0 - eps)
     sin_f, cos_f = _jaxoplanet().core.kepler(  # true anomaly
         mean_anomaly, ecc * np.ones_like(mean_anomaly)
     )
-    radius = (1.0 - ecc**2) / (1.0 + ecc * cos_f)
+    radius = (1.0 - ecc**2) / np.maximum(1.0 + ecc * cos_f, eps)
     return radius * cos_f, radius * sin_f
 
 
@@ -336,7 +339,9 @@ class KeplerOrbit(zdx.Base):
         dt = _days_since(mjd, self.t_ref)
         return tuple(_velocity(self._relative, dt))
 
-    def _frame(self, dt):  # deliberate: also called by models.py
+    def _frame(
+        self, dt
+    ):  # deliberate: called by Attached.at in models.py on already-offset dt
         dra, ddec, dz = self._relative(dt)
         line_pa = position_angle(dra, ddec)
         constant = np.zeros_like(line_pa)
@@ -706,7 +711,7 @@ _N_SIGN_PAIRS = 16  # epoch pairs tried per grid point by the sign-free fit
 
 
 @jax.jit
-def _thiele_innes_fit_sign_free(  # deliberate: jit/vmap boundary, 59 lines
+def _thiele_innes_fit_sign_free(  # deliberate: jit kernel vmapped by _fit_batch for sign-free grid fits
     dt, dra, ddec, whitener, period, dt_peri, ecc
 ):
     """Thiele–Innes fit when each position is known only up to a sign.
@@ -916,7 +921,7 @@ def starting_orbits(
 
 
 @jax.jit  # one dispatch per eager call, as for ``_thiele_innes_angles``
-def _state_elements(  # deliberate: jit boundary
+def _state_elements(  # deliberate: jit kernel converting Cartesian state vectors to Keplerian elements
     dra, ddec, dz, vra, vdec, vz, mu
 ):
     """``(period, dt_peri, ecc, inc, omega, Omega, a_mas)`` of a state vector."""

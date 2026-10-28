@@ -397,3 +397,36 @@ def test_disco_operator_requires_diagonal_propagated_covariance():
         {**base, "vis_mat": np.array([[1.0, 0.0], [1.0, 1.0]])}
     )
     assert correlated_generic.vis.shape == (2,)
+
+
+@pytest.mark.parametrize(
+    "cls,kw",
+    [
+        (models.FlaredDiskHG, {"g": 0.3}),
+        (models.FlaredDiskGaussian, {"sigma_theta": 60.0}),
+        (models.FlaredDiskPowerLaw, {"n": 3.0}),
+    ],
+)
+def test_flared_disk_edge_on_visibilities_and_gradients_are_finite(cls, kw):
+    disk = cls(
+        radius=40.0,
+        fwhm=15.0,
+        inc=90.0,
+        pa=25.0,
+        npix=32,
+        pixel_scale_mas=4.0,
+        aspect=0.1,
+        skew=1.0,
+        ft="dft",
+        **kw,
+    )
+    vis = disk.model(oidata.u[:8], oidata.v[:8], oidata.wavel)
+    assert np.all(np.isfinite(vis))
+    grads = jax.grad(
+        lambda m: np.sum(
+            np.abs(m.model(oidata.u[:8], oidata.v[:8], oidata.wavel)) ** 2
+        )
+    )(disk)
+    assert all(
+        bool(np.all(np.isfinite(leaf))) for leaf in jax.tree.leaves(grads)
+    )
