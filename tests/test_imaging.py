@@ -583,3 +583,276 @@ def test_a_dirty_start_padded_beyond_the_field_keeps_the_natural_block():
     margin = (m - n) // 2
     centre = wide.env.log_brightness[margin : margin + n, margin : margin + n]
     assert np.allclose(centre, natural.env.log_brightness, atol=1e-6)
+
+
+def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
+    import numpyro.distributions as dist
+
+    from virgil.fields import GaussianField
+    from virgil.imaging import error_scale, laplace_samples, log_evidence
+    from virgil.likelihood import whitened_residuals
+
+    n = 8
+    field = GaussianField(onp.zeros((n, n)), 1.5, 24.0)
+    scene = System(star=PointSource(), env=Image(field, SCALE, flux=0.3))
+    data = DATA.with_model(scene, key=jax.random.PRNGKey(9))
+    base_priors = image_priors(scene)
+    full_priors = base_priors | {"env.flux": dist.LogUniform(1e-3, 10.0)}
+    result = fit(scene, full_priors, data, max_steps=5)
+
+    ev_fixed = float(log_evidence(result, data, priors=base_priors))
+    ev_free = float(log_evidence(result, data, priors=full_priors))
+    # Freeing env.flux under a wide LogUniform prior adds an Occam penalty.
+    assert ev_free < ev_fixed
+    # Pin the exact Laplace formula (-½χ² - L - ½|z|² + log π(f̂) + ½ log det 2πΣ)
+    # against an explicit full-block Hessian H = diag(I_k, 0) + JᵀJ in float64.
+    with jax.enable_x64(True):
+        m64 = jax.tree_util.tree_map(
+            lambda x: (
+                np.asarray(x, np.float64)
+                if hasattr(x, "dtype")
+                and onp.issubdtype(x.dtype, onp.floating)
+                else x
+            ),
+            result.model,
+        )
+        d64 = jax.tree_util.tree_map(
+            lambda x: (
+                np.asarray(x, np.float64)
+                if hasattr(x, "dtype")
+                and onp.issubdtype(x.dtype, onp.floating)
+                else x
+            ),
+            data,
+        )
+        z0 = m64.get("env.log_brightness.latent").reshape(-1)
+        f0 = np.asarray([m64.get("env.flux")], np.float64)
+        theta0 = np.concatenate([z0, f0])
+
+        def resid_zf(theta):
+            m = m64.set(
+                ["env.log_brightness.latent", "env.flux"],
+                [theta[: n * n].reshape(n, n), theta[n * n]],
+            )
+            return whitened_residuals(m, d64)
+
+        r0 = onp.asarray(resid_zf(theta0), float)
+        jac = onp.asarray(jax.jacfwd(resid_zf)(theta0), float)
+    prior_prec = onp.diag([1.0] * (n * n) + [0.0])
+    hess = prior_prec + jac.T @ jac
+    log_pi_f = float(full_priors["env.flux"].log_prob(float(f0[0])))
+    expected_ev_free = (
+        ev_fixed
+        + 0.5
+        * float(
+            onp.linalg.slogdet(
+                onp.eye(n * n) + jac[:, : n * n].T @ jac[:, : n * n]
+            )[1]
+        )
+        + log_pi_f
+        + 0.5 * float(onp.log(2.0 * onp.pi))
+        - 0.5 * float(onp.linalg.slogdet(hess)[1])
+    )
+    assert ev_free == pytest.approx(expected_ev_free, rel=1e-10)
+    scale_free = float(error_scale(result, data, priors=full_priors))
+    beta = 1.0 / scale_free**2
+    gamma_beta = float(
+        onp.trace(
+            onp.linalg.solve(
+                prior_prec + beta * (jac.T @ jac), beta * (jac.T @ jac)
+            )
+        )
+    )
+    assert beta * float(r0 @ r0) + gamma_beta == pytest.approx(
+        float(data.n_independent), rel=1e-10
+    )
+    # Unit-rescaling invariance: scaling both star.flux and env.flux by 10
+    # (with a 10x LogUniform prior on env.flux) leaves the evidence and
+    # error_scale invariant.
+    scaled_model = result.model.set(
+        ["star.flux", "env.flux"],
+        [10.0, 10.0 * float(result.model.env.flux)],
+    )
+    scaled_priors = base_priors | {"env.flux": dist.LogUniform(1e-2, 100.0)}
+    assert float(
+        log_evidence(scaled_model, data, priors=scaled_priors)
+    ) == pytest.approx(ev_free, rel=1e-6)
+    assert float(
+        error_scale(scaled_model, data, priors=scaled_priors)
+    ) == pytest.approx(scale_free, rel=1e-6)
+    assert scale_free != pytest.approx(
+        float(error_scale(result, data, priors=base_priors))
+    )
+    draws = laplace_samples(
+        result, data, 6, jax.random.PRNGKey(0), priors=full_priors
+    )
+    assert draws["latents"].shape == (6, n, n) and onp.all(
+        onp.isfinite(draws["latents"])
+    )
+
+    # Probabilistic regularizer (Centroid) contributes to log_evidence:
+    # check against explicit augmented residual and Jacobian in float64.
+    reg = Centroid(5.0)
+    img = Image(GaussianField(onp.zeros((n, n)), 1.5, 24.0), SCALE)
+    fit_img = fit(img, image_priors(img), data, [reg], max_steps=5)
+    ev_no_reg = float(log_evidence(fit_img, data, path=None))
+    ev_reg = float(log_evidence(fit_img, data, path=None, regularizers=(reg,)))
+    assert ev_reg < ev_no_reg
+    with jax.enable_x64(True):
+        im64 = jax.tree_util.tree_map(
+            lambda x: (
+                np.asarray(x, np.float64)
+                if hasattr(x, "dtype")
+                and onp.issubdtype(x.dtype, onp.floating)
+                else x
+            ),
+            fit_img.model,
+        )
+        z_im = im64.get("log_brightness.latent").reshape(-1)
+
+        def resid_c(z):
+            m = im64.set("log_brightness.latent", z.reshape(n, n))
+            return np.concatenate(
+                [whitened_residuals(m, d64), reg.residuals(m)]
+            )
+
+        rc = onp.asarray(resid_c(z_im), float)
+        jc = onp.asarray(jax.jacfwd(resid_c)(z_im), float)
+    rc_data = rc[:-2]
+    jc_data = jc[:-2]
+    jc_reg = jc[-2:]
+    expected_diff = -0.5 * float(rc @ rc - rc_data @ rc_data) - 0.5 * float(
+        onp.linalg.slogdet(onp.eye(n * n) + jc.T @ jc)[1]
+        - onp.linalg.slogdet(onp.eye(n * n) + jc_data.T @ jc_data)[1]
+    )
+    assert (ev_reg - ev_no_reg) == pytest.approx(expected_diff, rel=1e-10)
+    scale_reg = float(
+        error_scale(fit_img, data, path=None, regularizers=(reg,))
+    )
+    beta_reg = 1.0 / scale_reg**2
+    gamma_reg = float(
+        onp.trace(
+            onp.linalg.solve(
+                onp.eye(n * n)
+                + jc_reg.T @ jc_reg
+                + beta_reg * (jc_data.T @ jc_data),
+                beta_reg * (jc_data.T @ jc_data),
+            )
+        )
+    )
+    assert beta_reg * float(rc_data @ rc_data) + gamma_reg == pytest.approx(
+        float(data.n_independent), rel=1e-10
+    )
+
+
+def _tiny_gp_scene():
+    """A 1×2 latent field plus a free envelope flux: three parameters."""
+    import numpyro.distributions as dist
+
+    from virgil.coverage import vlti_oidata
+    from virgil.fields import GaussianField
+
+    def scene(latent):
+        field = GaussianField(latent, 1.0, 12.0)
+        return System(star=PointSource(), env=Image(field, 6.0, flux=3.0))
+
+    template = vlti_oidata(
+        hour_angles_h=(-1.0, 1.0),
+        wavelengths_m=[3.5e-6],
+        sigma_v2=0.03,
+        sigma_cp_deg=3.0,
+    )
+    data = template.with_model(
+        scene(onp.array([[0.8, -0.5]])), key=jax.random.PRNGKey(1)
+    )
+    model = scene(onp.zeros((1, 2)))
+    priors = image_priors(model) | {"env.flux": dist.LogUniform(1e-2, 1e2)}
+    return fit(model, priors, data, max_steps=200), data, priors
+
+
+def test_log_evidence_matches_numerical_integration_with_a_free_flux():
+    from scipy.integrate import trapezoid
+
+    from virgil._precision import cast_tree, run_in
+    from virgil.imaging import _log_norm, log_evidence
+    from virgil.likelihood import whitened_residuals
+
+    result, data, priors = _tiny_gp_scene()
+    laplace = float(log_evidence(result, data, priors=priors))
+    paths = ["env.log_brightness.latent", "env.flux"]
+    with run_in("float64"):
+        model, data64 = cast_tree((result.model, data), "float64")
+
+        def chi2(theta):
+            m = model.set(paths, [theta[:2].reshape(1, 2), np.exp(theta[2])])
+            return np.sum(whitened_residuals(m, data64) ** 2)
+
+        def neg_log_post(theta):
+            return 0.5 * chi2(theta) + 0.5 * np.sum(theta[:2] ** 2)
+
+        z = onp.asarray(model.get(paths[0]), float).ravel()
+        theta0 = np.array([z[0], z[1], onp.log(float(model.get(paths[1])))])
+        # Grid: ±8 posterior standard deviations in (z, log flux) about the MAP.
+        sd = onp.sqrt(
+            onp.diag(
+                onp.linalg.inv(onp.asarray(jax.hessian(neg_log_post)(theta0)))
+            )
+        )
+        axes = [
+            onp.linspace(theta0[i] - 8 * sd[i], theta0[i] + 8 * sd[i], 21)
+            for i in range(3)
+        ]
+        cube = onp.meshgrid(*axes, indexing="ij")
+        points = np.asarray(onp.stack([c.ravel() for c in cube], 1))
+        chi2s = onp.asarray(jax.vmap(chi2)(points)).reshape(cube[0].shape)
+        log_norm = _log_norm(model, data64)
+    low, high = 1e-2, 1e2
+    # N(z; 0, I) × LogUniform(f) df, with df = f d(log f).
+    log_prior = (
+        -0.5 * (cube[0] ** 2 + cube[1] ** 2)
+        - onp.log(2.0 * onp.pi)
+        - onp.log(onp.log(high / low))
+    )
+    log_integrand = -0.5 * chi2s - log_norm + log_prior
+    shift = log_integrand.max()
+    integral = onp.exp(log_integrand - shift)
+    for axis, x in reversed(list(enumerate(axes))):
+        integral = trapezoid(integral, x, axis=axis)
+    exact = shift + float(onp.log(integral))
+    # The Laplace error is the posterior's non-Gaussianity: 0.012 nats here.
+    # Putting the flux in the unit-Gaussian latents instead gives 1.9 nats off.
+    assert laplace == pytest.approx(exact, abs=0.05)
+
+
+def test_laplace_samples_have_the_marginal_covariance_of_the_full_hessian():
+    from virgil.imaging import laplace_samples
+    from virgil.likelihood import whitened_residuals
+
+    result, data, priors = _tiny_gp_scene()
+    paths = ["env.log_brightness.latent", "env.flux"]
+    with jax.enable_x64(True):
+        model = result.model
+
+        def residuals(theta):
+            m = model.set(paths, [theta[:2].reshape(1, 2), theta[2]])
+            return whitened_residuals(m, data)
+
+        z = onp.asarray(model.get(paths[0]), float).ravel()
+        theta0 = np.array([z[0], z[1], float(model.get(paths[1]))])
+        jac = onp.asarray(jax.jacfwd(residuals)(theta0), float)
+    hessian = onp.diag([1.0, 1.0, 0.0]) + jac.T @ jac
+    marginal = onp.linalg.inv(hessian)[:2, :2]
+    conditional = onp.linalg.inv(hessian[:2, :2])
+    n = 40000
+    draws = onp.asarray(
+        laplace_samples(result, data, n, jax.random.PRNGKey(0), priors=priors)[
+            "latents"
+        ]
+    ).reshape(n, 2)
+    sample = onp.cov(draws.T)
+    # The sampling error of a variance is √(2/n) = 0.7%; the flux's
+    # correlation with the field moves the variance by 4.5%.
+    onp.testing.assert_allclose(
+        onp.diag(sample), onp.diag(marginal), rtol=0.025
+    )
+    assert abs(sample[1, 1] / conditional[1, 1] - 1.0) > 0.025

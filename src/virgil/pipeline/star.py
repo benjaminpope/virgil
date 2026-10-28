@@ -471,17 +471,37 @@ class StarPipeline(_Pipeline):
                     _checks.prior_constrained(entry.constrained_check, ratios)
                 )
             sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
-            worst = max(
-                post["models"].values(), key=lambda m: m["divergence_fraction"]
+            chosen = post["models"][best]
+            sampler_checks = _sampler_checks(
+                chosen,
+                bounds={
+                    f"{best}.{k}": v
+                    for k, v in chosen["prior_bound_fraction"].items()
+                },
+                walls=chosen.get("wall_probe"),
             )
-            bounds = {
-                f"{n}.{k}": v
-                for n, m in post["models"].items()
-                for k, v in m["prior_bound_fraction"].items()
-            }
-            checks += _sampler_checks(
-                post, bounds=bounds, walls=worst.get("wall_probe")
-            )
+            for name, other in post["models"].items():
+                if name == best:
+                    continue
+                other_checks = _sampler_checks(
+                    other,
+                    bounds={
+                        f"{name}.{k}": v
+                        for k, v in other["prior_bound_fraction"].items()
+                    },
+                    walls=other.get("wall_probe"),
+                )
+                sampler_checks = [
+                    dataclasses.replace(
+                        oc,
+                        status="warn",
+                        message=f"{name} (not selected): {oc.message}",
+                    )
+                    if bc.status == "pass" and oc.status != "pass"
+                    else bc
+                    for bc, oc in zip(sampler_checks, other_checks)
+                ]
+            checks += sampler_checks
         return sections, checks
 
 

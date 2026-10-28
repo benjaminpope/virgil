@@ -425,6 +425,44 @@ def test_without_a_star_members_are_recentred_on_the_best():
     assert onp.abs(moved - best).max() < 0.01
 
 
+def test_v2_only_combine_registers_point_inverted_members():
+    from virgil.coverage import vlti_oidata
+
+    blob = gaussian_blob(NPIX, SCALE, 30.0, dra=36.0, ddec=-24.0) + 0.4 * (
+        gaussian_blob(NPIX, SCALE, 25.0, dra=-24.0, ddec=24.0)
+    )
+    ref = Image.from_brightness(blob, SCALE)
+    inverted = Image.from_brightness(blob[::-1, ::-1], SCALE)
+    v2_data = [
+        vlti_oidata(hour_angles_h=(-1.0, 1.0), wavelengths_m=[3.5e-6])
+        .with_model(ref, key=jax.random.PRNGKey(2))
+        .select(observables="vis")
+    ]
+    weights = onp.array([1e3, 1e2, 1e1])
+    results = [
+        FitResult(m, {}, {"chi2": _chi2(m, v2_data), "ndata": [18]})
+        for m in (ref, ref, inverted)
+    ]
+    curve = LCurve(
+        weights,
+        onp.array([sum(r.info["chi2"]) for r in results]),
+        onp.array([[r.info["chi2"][0] / 18] for r in results]),
+        onp.array([1.0, 2.0, 4.0]),
+        results,
+    )
+    group = Group(Draw(0, "tsv", NPIX, SCALE, "flat", tuple(weights)), curve)
+    spec = EnsembleSpec(window_dex=3, chi2_ratio=1e9, mean_rtol=1e9)
+    result = combine(v2_data, [group], star=False, spec=spec)
+    assert len(result.kept) == 2
+    peak = float(result.mean.brightness.max())
+    assert onp.abs(result.std).max() < 0.02 * peak
+    onp.testing.assert_allclose(
+        result.model.member1.brightness,
+        result.model.member0.brightness,
+        atol=1e-5,
+    )
+
+
 @pytest.mark.slow
 def test_ensemble_recovers_two_blobs():
     npix, scale = 24, 19.0

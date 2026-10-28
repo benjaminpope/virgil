@@ -232,6 +232,45 @@ def test_log_bayes_factor_matches_a_brute_force_marginalization():
     )
 
 
+@pytest.mark.parametrize("spacing", ["geometric", "linear"])
+def test_log_bayes_factor_prior_is_uniform_in_log_flux_or_flux(spacing):
+    from scipy.integrate import trapezoid
+
+    # The prior follows the axis: uniform in log flux on a geometric axis (the
+    # scale-invariant default) and in flux on a linear one. The reference
+    # integrates the likelihood ratio over those coordinates directly.
+    flux = (
+        onp.geomspace(1e-3, 1e-2, 5)
+        if spacing == "geometric"
+        else onp.linspace(1e-3, 1e-2, 5)
+    )
+    grid = {
+        "dra": onp.array([30.0, 60.0, 90.0]),
+        "ddec": onp.array([-60.0, -40.0, -20.0]),
+        "flux": flux,
+    }
+    data = _data(4e-3, 7)
+    result = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
+    args = _args(data)
+    loglike0 = float(loglike(np.array([0.0, 0.0, 0.0]), *args))
+    cube = onp.empty([len(v) for v in grid.values()])
+    for (i, dra), (j, ddec), (k, f) in itertools.product(
+        *(enumerate(v) for v in grid.values())
+    ):
+        cube[i, j, k] = float(loglike(np.array([dra, ddec, f]), *args))
+    coords = [grid["dra"], grid["ddec"]]
+    coords.append(onp.log(flux) if spacing == "geometric" else flux)
+    shift = float(cube.max())
+    integral = onp.exp(cube - shift)
+    for axis, x in reversed(list(enumerate(coords))):
+        integral = trapezoid(integral, x=x, axis=axis)
+    volume = float(onp.prod([x[-1] - x[0] for x in coords]))
+    expected = shift - loglike0 + float(onp.log(integral / volume))
+    assert float(result["log_bayes_factor"]) == pytest.approx(
+        expected, abs=2e-3
+    )
+
+
 def test_system_template_with_paths_matches_the_binary_class():
     # The null keeps every other parameter of a template (here only the
     # star); the statistics depend on the model, not on how it is built.

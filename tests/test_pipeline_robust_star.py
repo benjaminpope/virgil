@@ -427,7 +427,8 @@ def test_golden_default_settings_recover_a_uniform_disk(tmp_path):
     "mix on a simple injected star: r_hat 4 and ESS 2 here (250 + 250 draws); "
     "the limb-darkened star alone at the default 1000 + 1000 draws gives "
     "r_hat 2.4, ESS 2.5 (400 s), so the failing sampler checks are real, "
-    "not an artefact of the short chains",
+    "not an artefact of the short chains. They are now warnings for a model "
+    "that is not selected; Ben decides whether to drop this xfail",
 )
 @pytest.mark.timeout(900)
 def test_golden_default_model_set_recovers_the_star_without_failing_checks(
@@ -440,6 +441,38 @@ def test_golden_default_model_set_recovers_the_star_without_failing_checks(
     res = _golden(truth, tmp_path, num_warmup=250, num_samples=250)
     _assert_golden(res, truth)
     assert res.summary["comparison"]["preferred"] == "uniform"
+
+
+def test_a_failing_model_that_was_not_selected_is_a_warning_not_hidden(
+    completed,
+):
+    import copy
+
+    reports = {s: completed._report(s) for s in ("load", "fit", "posterior")}
+    best = reports["fit"]["best"]
+    # TINY chains do not converge: give the selected model healthy chains.
+    reports["posterior"]["models"][best].update(
+        r_hat_max=1.0, ess_bulk_min=1e3, divergence_fraction=0.0
+    )
+    bad = copy.deepcopy(reports["posterior"]["models"][best])
+    bad.update(r_hat_max=4.0, ess_bulk_min=2.0, divergence_fraction=0.5)
+    reports["posterior"]["models"]["rival"] = bad
+
+    _, checks = completed._summarize(reports)
+    by_name = {c.name: c for c in checks}
+    for name in ("r_hat", "ess", "divergences"):
+        assert by_name[name].status == "warn", name
+        assert "rival (not selected)" in by_name[name].message
+
+    # The selected model's failures stay failures.
+    reports["posterior"]["models"][best].update(
+        r_hat_max=4.0, ess_bulk_min=2.0
+    )
+    _, checks = completed._summarize(reports)
+    by_name = {c.name: c for c in checks}
+    assert (
+        by_name["r_hat"].status == "fail" and by_name["ess"].status == "fail"
+    )
 
 
 # The shared full run costs ~15 s warm and over 30 s on a cold CI runner, so

@@ -616,3 +616,23 @@ def test_injection_limits_with_oi_flux_reach_sigma_on_injected_data():
         assert float(nsigma(chi2[0], chi2[1], ndof)) == pytest.approx(
             3.0, abs=1e-2
         )
+
+
+def test_limits_null_evaluation_uses_grid_coordinates_not_zeros():
+    from virgil.limits import injection_limits
+
+    def radial_scaled_binary(dra, ddec, flux):
+        r = np.hypot(dra, ddec)
+        # Setting dra=0, ddec=0 in the null evaluation would divide 0/0 -> NaN.
+        return BinaryModelCartesian(dra, ddec, flux * (r / r))
+
+    samples = {
+        "dra": np.array([60.0]),
+        "ddec": np.array([-40.0]),
+        "flux": np.array([1e-3]),
+    }
+    for limit_fn in (absil_limits, injection_limits):
+        lim = limit_fn(radial_scaled_binary, oidata_sim, samples, 3.0)
+        assert onp.all(onp.isfinite(lim))
+        expected = limit_fn(BinaryModelCartesian, oidata_sim, samples, 3.0)
+        onp.testing.assert_allclose(lim, expected, rtol=1e-5)
