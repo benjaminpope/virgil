@@ -91,6 +91,15 @@ would make the prior depend on the data and break the guarantee).
   σ(CP) log-uniform on [0.2°, 3°].
 - No contaminants (a bad night has no generative model inside the
   engine's prior, so it cannot enter an SBC stratum).
+- Fitted with tempering off (`temper=False`): the noise is white, so
+  *f* = 1 is the truth, and the estimated max(f̂, 1) is biased above 1
+  (scatter √(2/C)), which would over-cover and fail a two-sided test for
+  a correct posterior. A tests the likelihood; the f̂ distribution on A
+  is reported separately.
+- NUTS draws are thinned to near-independence (every ⌈n/ESS_min⌉-th
+  draw, ESS_min the smallest bulk ESS over the ranked parameters) before
+  the SBC ranks are formed (Talts et al. 2018): correlated draws give
+  non-uniform rank histograms.
 
 ### 3.3 Stratum B: blind default runs (240 binaries, realistic)
 
@@ -113,7 +122,12 @@ modes the heuristics were built for.
   method's stated domain without selecting on difficulty.
 - *e* uniform on [0, 0.8] (roughly flat for P below about 1000 d:
   Raghavan et al. 2010; Moe & Di Stefano 2017); cos *i*, ω, Ω, τ as in A.
-- Semi-major axis: *a* / (λ/B_max) log-uniform on [0.5, 10].
+- Semi-major axis: *a* / (λ/B_max) log-uniform on [0.5, 10], with
+  λ/B_max the finest scale (λ_min). A draw outside the engine's default
+  `a_range` (1–30 mas today; on T1, 10 res ≈ 32 mas) is redrawn like
+  *P* and counted, so no truth lies outside the prior the default run
+  can reach. This clause lapses if decision 12 (`a_range` in resolution
+  units) lands, recorded in the change log.
 - Contrast: Δmag uniform on [0, 4.5]; then, independently, with
   probability 0.1 the system is replaced by a near-twin with Δmag uniform
   on [0, 0.1] (the label-swap case).
@@ -205,7 +219,10 @@ posterior; any departure is a bug, a mis-tempering or a missed mode.
   likelihood holds) together with M3a (it does not claim more).
 
 **M4. Search completeness (B).** A miss is a system whose blind run's
-log Z for the true band is more than 1 nat below the oracle run's. Pass
+log Z for the true band is more than 1 nat + 3√(SE_blind² + SE_oracle²)
+below the oracle run's, using each run's reported IS standard error
+(two independent estimates differ by noise alone; ln Ẑ is also biased
+low at small ESS). Pass
 if misses ≤ 2% of B (at most 4 of 240).
 *Why 1 nat:* a 1-nat shortfall changes that band's odds by a factor e,
 the smallest change that moves a reported *p* noticeably. *Why 2%:* the
@@ -224,14 +241,29 @@ errors and correlated channels cause, and it fails.
 **M6. False orbits (N).** A false orbit is an `orbit` verdict
 (`modes.no_orbit` evidence at or above the pipeline's decisive threshold)
 on a null. Pass if the count is ≤ 2 of 100.
-*Why:* for a correct likelihood the Bayes factor *B* of any alternative
-against the true null obeys P(*B* ≥ *k*) ≤ 1/*k* (Markov's inequality on
-E_null[*B*] = 1; Royall 2000). At the recommended decisive threshold
-ln *B* = 5 (Kass & Raftery 1995, "very strong"), the false-orbit rate is
-at most e⁻⁵ = 0.67%: 0.67 expected in 100, and P(≥ 3) = 3%, so a correct
-engine fails this by chance 3% of the time. If Ben keeps the current
+*Why:* 2 of 100 is a **pre-registered limit chosen with a bound as a
+guide**, not a derived false-alarm rate. For an untempered likelihood
+and nulls drawn from the engine's own null prior, the Bayes factor *B*
+obeys P(*B* ≥ *k*) ≤ 1/*k* (Markov's inequality on E_null[*B*] = 1;
+Royall 2000), which at ln *B* = 5 (Kass & Raftery 1995, "very strong")
+gives at most 0.67 expected in 100 and P(≥ 3) = 3%. None of those
+conditions holds exactly here: the likelihood is tempered (∫L^{1/f}π is
+not a likelihood ratio), the nulls' diameters and bad-night rate are
+not drawn from the engine's null prior, and contaminated nights are
+only approximated by the mixture. The false-orbit rate on stratum D's
+nulls is reported before the first scored run, as a check that the
+limit is not routinely failed by a correct engine. If Ben keeps the current
 `no_orbit_nats = 10`, the bound is 4.5 × 10⁻⁵ and the limit becomes
 ≤ 1 of 100 (P(≥ 2) < 10⁻⁴).
+
+**M8. False no-orbit verdicts (B).** A system of B whose oracle run
+has ln *B*(orbit : null) ≥ 10 but whose blind run returns a `no-orbit`
+verdict is a lost detection. Must hold: ≤ 2% of the qualifying systems
+(the same resolution argument as M4); the count is also reported by *K*.
+*Why:* M6 alone rewards a null that is too easy to win; a null model
+with too much freedom (e.g. the outlier mixture applied to the null,
+orbit_dehack §2A) would lose real detections at small *K*, and only
+this metric sees it.
 
 **M7. Must hold (all strata).** Every run ends with a result or a
 recorded failure (no hang, no crash without a record); the summary
@@ -261,8 +293,9 @@ tests:
   M5_coverage_contaminated: {params: [period, ecc, a_mas], interval: 0.95, condition: p_true_band_ge_0.5, stratum: B, sided: under}
 must_hold:
   M3b_confident_errors: {p_map_min: 0.99, max: binomial_q99(n_conf, 0.01)}
-  M4_search_misses: {nats: 1.0, max_fraction: 0.02, stratum: B}
+  M4_search_misses: {nats: 1.0, plus_se_multiple: 3, max_fraction: 0.02, stratum: B}
   M6_false_orbits: {stratum: N, max_count_at_lnB5: 2, max_count_at_lnB10: 1}
+  M8_false_no_orbit: {stratum: B, oracle_lnB_min: 10, max_fraction: 0.02}
   M7_complete: true
 ```
 
@@ -300,6 +333,7 @@ them cold.
 |---|---|---|---|
 | 2026-10-28 | registered (draft for approval) | Claude (Opus), for Ben | no |
 | 2026-10-28 | B: misspecification contaminant (p 0.15) and a reported data-sufficiency table, from the blind gallery runs (high χ²/N ↔ wrong alias); still a draft, no harness run yet | Claude (Opus), for Ben | no |
+| 2026-10-28 | Review fixes before any run: A fitted with `temper=False` and thinned NUTS ranks; M4 miss threshold adds 3× the combined IS SE; M6 presented as a guided limit, not a derived rate; new M8 (false no-orbit on B); B's *a* draws kept inside the default `a_range` | Claude (Opus), for Ben | no |
 
 ## References
 

@@ -127,7 +127,7 @@ o = orbits.py, t = tempering.py, p = pipeline/orbit.py, c = pipeline/_checks.py.
 | `_DTOL` | a:869 | 1e-9 nats | Newton-decrement convergence, far below any reported precision (the gate resolves 1 nat). |
 | `k` (phase coherence) | o:773 | 9 | Efficiency. The phase drift across a band is at most 1/k cycle, while a χ² basin's half-width is about ¼ cycle, so k ≥ 4 keeps every basin sampled. Nine is 2× margin; M4 measures any miss. |
 | `_N_PHASE` 36, *e* step 0.05 | r, o:835 | | Efficiency, as for k: 10° in phase and 0.05 in *e* are well inside a basin (¼ cycle; Δe ≈ 0.1 at the default span). M4 measures misses. |
-| Student-t df 5 in the IS proposal | a:975 | 5 | Efficiency only. Any proposal with heavier tails than the target gives an unbiased estimator. The reported SE bounds the effect (C). |
+| Student-t df 5 in the IS proposal | a:975 | 5 | Efficiency only. Any proposal positive on the support gives an unbiased estimator; heavier tails than the target give finite variance. The reported SE bounds the effect (C). |
 | memory constants (`_HESSIAN_COPIES`, `_TABLE_COPIES`, budgets) | a:533, e:1415 | measured | Efficiency only. The two planners merge (§1.3). |
 | `period_window` | a:211 | | The method's domain statement. Lower end: the companion moves less than ½ λ/B_max (E) within the longest night. Upper end: `span_factor` × span. **Decision for Ben:** `span_factor` = 4 has no derivation. The proposal is to set the upper end by the evidence, since bands beyond the span merge into one long-period band whose evidence is computed like any other, and to keep *n* bands as a reported resource cap. |
 | `_VIS_AMP_DEFAULT` | a:144 | (0.5, 1.2) | **No citation.** It needs one (a GRAVITY/PIONIER calibration-loss reference) or a decision for Ben. |
@@ -185,7 +185,9 @@ o = orbits.py, t = tempering.py, p = pipeline/orbit.py, c = pipeline/_checks.py.
 Notation:
 - *K* nights *k*; ℓ_k(x) is the tempered, scale-marginalised log-likelihood
   of night *k* under orbit vector x (`_night_loglikes`, block dof = 1/f_b);
-- res = λ/B_max;
+- res = λ_min/B_max = 1/max|u|, the finest fringe scale over all
+  channels (what `Epochs.resolution_mas` already returns; `prepare` uses
+  that property, never a central or reference λ);
 - δ = 10⁻³ is the precision to which band probabilities are reported
   (three decimals in the summary table).
 
@@ -232,8 +234,8 @@ per orbit, which is negligible beside ℓ_k.
 **Consequences.**
 - **Occam factor.** With all nights good (b_k ≪ ℓ_k), L = e^{Σℓ} ·
   Γ(K + ½)/(Γ(K + 1)√π) ≈ e^{Σℓ}/√(πK): the mixture costs ½ ln(πK) nats,
-  1.6 nats at K = 8. It applies identically to every band and to the null
-  (below), so it cancels in band ratios.
+  1.6 nats at K = 8. It applies identically to every band, so it cancels in band
+  ratios; for the null see below.
 - **Posterior outlier probability of night *k*:**
 
   q_k(x) = Σ_j W_j ε_j e^{b_k} / [(1 − ε_j) e^{ℓ_k} + ε_j e^{b_k}],
@@ -244,11 +246,20 @@ per orbit, which is negligible beside ℓ_k.
 - **One likelihood for every stage:** search, refinement, evidence, NUTS
   and the null. No "plain" variant exists, and nothing has to be
   polished.
-- **The null** (no companion) uses the same mixture, with the
-  single-star night likelihood in place of ℓ_k. The outlier component is
-  then "a companion at an unpredicted position", so a null night with a
-  real companion is an outlier. This keeps the Bayes factor symmetric.
-  **Decision for Ben.**
+- **The null** (no companion). Two options, **decision for Ben**:
+  - (i) recommended: the null is a single star on every night, with no
+    mixture (its scale marginal already absorbs a noise-scale error). The
+    null stays "a single star". The orbit model's ½ ln(πK) Occam cost then
+    does not cancel against the null; it is paid honestly by the model
+    that has the extra freedom.
+  - (ii) the null carries the same mixture with b_k as its outlier
+    component. Then, as ε → 1 (Beta(½, ½) puts mass there), the null
+    becomes "a companion at a free position every night", i.e. a binary
+    with no orbit, and at K = 4–5 nights a real orbit's Occam factor can
+    lose to it. Not recommended.
+
+  Either way the gate counts false no-orbit verdicts on real binaries
+  (gate M8), not only false orbits on nulls (M6).
 
 **The local-optimum risk.** 52c7013 split search from mixture because
 the mixture flattened a wrong start's bad nights, so L-BFGS stopped 108
@@ -290,28 +301,31 @@ already produces, for each night, refined peaks j with:
 - a velocity v_kj from the two half-nights, when the shift is under
   `_MAX_SHIFT`.
 
-The night's position likelihood is approximated as the mixture
+The night's likelihood as a function of the companion position is
+approximated, in likelihood units like A (no per-night normalisation, so
+nothing depends on the length unit), by its peaks:
 
-  g_k(p) = Σ_j π_kj N(p; p_kj, C_kj) + π_k0 U(p),
+  e^{ℓ_k(p)} ≈ G_k(p) = Σ_j e^{h_kj} exp(−½ (p − p_kj)ᵀ C_kj⁻¹ (p − p_kj)).
 
-where:
-- π_kj ∝ e^{h_kj} |2πC_kj|^{1/2}: each peak's Laplace mass;
-- π_k0 ∝ e^{b_k}: the broad component, with U uniform on the prior
-  disc;
-- the weights are normalised per night.
+Seeding then scores an orbit with A's own mixture, G_k in place of
+e^{ℓ_k} and the same e^{b_k} outlier term and ε nodes:
 
-For a near-equal pair, the reflected peak is one of the j, with nearly
-equal mass. That is the whole sign and label story at this level: no
+  ln L_seed = logsumexp_j [ −ln n + Σ_k logaddexp(ln(1 − ε_j) + ln G_k, ln ε_j + b_k) ],
+
+so seeding and the full likelihood judge a night's outlier status the
+same way. For a near-equal pair, the reflected peak is one of the j,
+with nearly equal height. That is the whole sign and label story at this level: no
 `sign_free` doubling and no sign gate.
 
 **The fit.** For fixed (P, e, τ), the position is linear in the
 Thiele–Innes constants θ = (A, B, F, G): p(t) = M(t) θ. Velocity rows
 add Ṁ(t) θ = v. Seeding maximises
 
-  S(P, e, τ) = max_θ Σ_k ln g_k(M_k θ)    (+ velocity terms where present)
+  S(P, e, τ) = max_θ ln L_seed(M θ)    (+ velocity terms where present)
 
-by EM (Dempster, Laird & Rubin 1977). The E-step computes
-responsibilities r_kj. The M-step is one weighted least squares in θ.
+by EM (Dempster, Laird & Rubin 1977), treating the peak index j and the
+inlier/outlier label as the latent assignment. The E-step computes
+responsibilities r_kj (and the outlier responsibility). The M-step is one weighted least squares in θ.
 EM increases S monotonically. It stops when the gain is below 10⁻³ nats,
 i.e. δ, the reporting precision; a non-converged count is reported.
 
@@ -342,10 +356,15 @@ star), so the flux upper bound must exceed 1 to allow a brighter point
 companion. Proposal: `flux_range` top = 10 when θ is fitted.
 **Decision for Ben.**
 
-`labels_free` is reported as p_label = Z_x/(Z_x + Z_Rx): the posterior
-probability of the label, computed from the two band evidences, the
-reflected one evaluated at Rx. A flag is raised when
-|ln(Z_x/Z_Rx)| < DECISIVE_NATS. This replaces `LABELS_FREE_NATS` and
+`labels_free` asks a different question from the exact symmetry above
+(which would make any such ratio identically ½). Let M x be the orbit
+with the companion reflected through the primary (ω + 180°) and the
+**flux kept**, as `labels_free` compares today. M x differs from x in
+closure-phase sign for a contrast pair and coincides with Rx for a
+twin. The verdict is p_label = Z_x/(Z_x + Z_Mx), Z_Mx being the
+evidence of the mode refined from M x. A flag is raised when
+|ln(Z_x/Z_Mx)| < DECISIVE_NATS: for a contrast pair this ratio is
+large, for a twin it is ≈ 0. This replaces `LABELS_FREE_NATS` and
 `_LABELS_FREE_RES_FRACTION`.
 
 **Tests:**
@@ -353,7 +372,8 @@ reflected one evaluated at Rx. A flag is raised when
   assignments, for K ≤ 6, J = 2. EM must reach the best hard assignment's
   mixture likelihood to within 10⁻³ nats.
 - A constructed twin (Δmag 0.05) with one night's peaks swapped: the
-  true orbit is seeded, and p_label ≈ ½ ± SE.
+  true orbit is seeded, and p_label ≈ ½ ± SE; a contrast pair
+  (Δmag 2) is not `labels_free`.
 - A constructed sign-error night: it is assigned to π_k0 or to its
   mirror peak, and the period is unchanged.
 
@@ -380,12 +400,17 @@ Laplace-then-logsumexp does. The variance-based standard error is
 
   SE(ln Ẑ) ≈ √(1/ESS − 1/n), where ESS = (Σw)²/Σw².
 
-n starts at `n_is` and doubles until SE ≤ ½ nat, up to `n_is_max`. ½
-nat keeps a 2σ error inside the gate's 1-nat resolution (M4). A band
-still above ½ at `n_is_max` is reported with its SE and flagged
-`evidence-noisy`; no Laplace substitution is made. Laplace × p̂_in
-remains only as the fallback when every draw falls outside the box
-(p̂_in = 0), flagged `evidence-laplace`.
+n starts at `n_is` and doubles until SE ≤ 0.2 nat, up to `n_is_max`.
+Two independent estimates (blind and oracle, or two bands) then differ
+by an SD of at most √2 × 0.2 ≈ 0.28 nat, so the gate's 1-nat miss
+threshold sits beyond 3σ; the gate also adds the reported SEs to the
+threshold (gate M4). ln Ẑ is biased low at small ESS (Jensen), another
+reason for the tight target. A band still above 0.2 at `n_is_max` is
+reported with its SE and flagged `evidence-noisy`; no Laplace
+substitution is made. When every draw falls outside the box (p̂_in = 0)
+the band is recorded as `evidence-failed`, with no number and a
+warning, and is listed separately from the band probabilities; it is
+never silently given p = 0.
 
 **What this deletes:**
 - `ess_min` and `flag_nats`;
@@ -400,17 +425,24 @@ disc h² + k² ≤ e_max instead of (e, ω). The map has Jacobian
 |∂(h,k)/∂(e,ω)| = ½, so uniform on the disc is uniform in e on
 [0, e_max] times uniform ω: the prior is unchanged. The e = 0 boundary,
 where most circular orbits pile up against a bound, disappears. The disc
-edge at e_max is handled by the indicator. This is the standard choice
-(Ford 2006; Eastman et al. 2013). **Decision for Ben** (it changes the
-packed vector and the NUTS sites).
+edge at e_max is handled by the indicator.
+
+(h, k) alone is not enough: near e = 0 the likelihood depends only on
+ω + 2π(t − τ)/P, so with the periastron time τ kept, (h, k, τ) has a
+curved ridge along ω + 2πτ/P = const as √e → 0. The standard choice
+(Ford 2006; Eastman et al. 2013) pairs (h, k) with the mean longitude at
+a reference epoch, λ_ref = M(t_ref) + ω, which replaces τ (uniform on
+[0, 2π), the same prior as uniform τ for fixed P and e, since the map
+τ ↦ λ_ref is a shift). **Decision for Ben**: (h, k, λ_ref) together; it
+changes the packed vector and the NUTS sites.
 
 **Tests:**
 - a 2-D Gaussian truncated by a box with the mode on the bound and off
   it: Ẑ against the closed form (erf products), to within 3 SE;
 - SE calibration over 200 seeds: the empirical z-scores have standard
   deviation in [0.8, 1.25];
-- a mode at e = 0: Ẑ in (h, k) equals Ẑ in (e, ω) by quadrature, to
-  within 3 SE.
+- a mode at e = 0: Ẑ in (h, k, λ_ref) equals Ẑ in (e, ω, τ) by
+  quadrature, to within 3 SE, with ESS/n no worse than at e = 0.5.
 
 ### D. Primary diameter
 
@@ -527,6 +559,32 @@ The pruned count and the bound are reported in the summary.
   binomial resolution of the gate's coverage tests: 1/√240 ≈ 0.065 at
   the stratum size.
 - **Random starts** are drawn from the prior, as one `n_random`.
+
+### H. Methods register and opt-in
+
+AGENTS.md ("Methods beyond published practice") requires every
+departure to be registered with a status, references and pinning tests,
+and keeps novel or experimental methods opt-in until virgil-validation
+validates them. The register entries (to be added to AGENTS.md's table
+by the stage that introduces each):
+
+| method | status | references | pinned by |
+|---|---|---|---|
+| night-outlier mixture, ε ~ Beta(½, ½), exact Gauss–Chebyshev | derived (mixture: Hogg, Bovy & Lang 2010; quadrature: exact for polynomials) | Jeffreys 1946; Hogg et al. 2010 | §2A tests |
+| peak-mixture EM seeding with RANSAC starts | novel / experimental | Dempster et al. 1977; Fischler & Bolles 1981 | §2B brute-force test |
+| ln(N/δ) band-pruning rule | novel / experimental | — (derived bound, §2F) | §2F test, gate M4 |
+| truncated defensive-mixture IS with adaptive n | established | Owen & Zhou 2000 | §2C tests |
+| uniform-θ primary with Savage–Dickey verdict | derived | Dickey 1971; Verdinelli & Wasserman 1995 | §2D tests |
+| (h, k, λ_ref) parameterisation | established | Ford 2006; Eastman et al. 2013 | §2C test |
+
+**Rollout:** each stage lands its method behind a setting, off by
+default, plus its register entry. The gate is run with it on. The
+default flips in a separate one-line PR only after that stage's gate
+passes against the baseline and a vv check covers it; for the two
+novel entries that check is the gate's stratum-D comparison against
+the brute-force (all-bands) search. Each cited reference goes into
+`references/provenance.toml` with the code that cites it
+(`test_provenance` does not scan `design/`).
 
 ## 3. Target architecture
 
@@ -722,8 +780,9 @@ number):
 
 1. **Uniform θ** on [0, 1.2197 λ/B_max] for the primary (nests the
    point star) instead of the Jeffreys log-uniform default.
-2. **The null carries the same outlier mixture** as the orbit model, so
-   the Bayes factor is symmetric.
+2. **The null:** a single star with no mixture (recommended), or the
+   same mixture as the orbit model (risks no-orbit verdicts on real
+   binaries at small K; gate M8 counts them).
 3. **No explicit sign component** at the likelihood level; sign errors
    are outliers under A.
 4. **`DECISIVE_NATS` = 5** for alias, no-orbit, labels and resolved
@@ -739,7 +798,8 @@ number):
    `chain_starts` and `orbit_search` are deprecated in 0.4.2 and removed
    in 0.5, with migration notes for the `~/data/eso_binaries` scripts
    and vv.
-10. **(√e cos ω, √e sin ω) parameterisation** for orbits and NUTS.
+10. **(√e cos ω, √e sin ω, λ_ref) parameterisation** for orbits and
+    NUTS (mean longitude at a reference epoch replaces τ).
 11. **`_VIS_AMP_DEFAULT`** (0.5, 1.2) needs a citation or your call.
 12. **`a_range` in resolution units** (it is [1, 30] mas today, which is
     wrong for AMI's 100 mas resolution).
@@ -759,6 +819,8 @@ number):
 - Eastman, Gaudi & Agol 2013, PASP 125, 83; Ford 2006, ApJ 642, 505
   ((√e cos ω, √e sin ω) parameterisation).
 - Fischler & Bolles 1981, Comm. ACM 24, 381 (RANSAC).
+- Hogg, Bovy & Lang 2010, arXiv:1008.4686 (mixture models for
+  outliers).
 - Jeffreys 1946, Proc. R. Soc. A 186, 453 (Beta(½, ½) for a rate).
 - Kass & Raftery 1995, JASA 90, 773 (Bayes factor scale).
 - Owen & Zhou 2000, JASA 95, 135 (defensive mixture importance
