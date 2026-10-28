@@ -315,9 +315,38 @@ with too much freedom (e.g. the outlier mixture applied to the null,
 orbit_dehack §2A) would lose real detections at small *K*, and only
 this metric sees it.
 
+**M9. Band credible-set coverage (B) — the headline orbit criterion.**
+Criterion set by Ben (2026-10-28, before any run): a multimodal
+posterior is reported honestly, as long as it is computed accurately;
+in practice only RV data or astrometry at other epochs can break such a
+tie. So the gate passes when a high-probability band is the true one
+*and* the band probabilities are calibrated.
+- For system *i*, C_i(m) is the smallest set of bands, by decreasing
+  *p*, whose total probability *m_i* ≥ m. At m = 0.95, the number of
+  systems whose true band is in C_i(0.95) is compared with the
+  Poisson-binomial on the claimed masses (mean Σ *m_i*, variance
+  Σ *m_i*(1 − *m_i*)), as in M1, **one-sided for under-coverage**.
+- Must hold twice: on all of B, and on the misspecified subset of B
+  alone.
+- Reported with it, so that hedging is visible: the sharpness of the
+  sets (median and 90th percentile of |C_i(0.95)|) and the realised mass
+  Σ *m_i* / *n*. Blanket hedging is guarded against by A's two-sided M1;
+  M3a (MAP recovery calibration) stays.
+
+**Accuracy of the band probabilities.** Every band in C_i carries its
+importance-sampling standard error SE(ln Ẑ_n), and its probability's
+error by the delta method,
+SE(ln p_n)² ≈ (1 − p_n)² SE_n² + Σ_{m≠n} p_m² SE_m².
+A system whose C_i(0.95) contains a band flagged `evidence-noisy` or
+`evidence-failed` counts as a **failure for that system under M7**:
+its credible set is not computed accurately. So does a system with an
+`evidence-failed` band anywhere in its window, since that band's mass is
+unknown and could belong in C_i.
+
 **M7. Must hold (all strata).** Every run ends with a result or a
-recorded failure (no hang, no crash without a record); the summary
-records the commit, this file's hash and the counts.
+recorded failure (no hang, no crash without a record), and no system
+fails the accuracy rule above; the summary records the commit, this
+file's hash and the counts.
 
 **Reported, never pass/fail.** Recovery by cell (M3); the outlier
 probability the fit gives each injected bad night and sign-error night
@@ -347,7 +376,8 @@ null_choice: {stratum: D, candidates: [shared_mixture, shared_noise_inflation], 
   M4_search_misses: {nats: 1.0, plus_se_multiple: 3, max_fraction: 0.02, stratum: B}
   M6_false_orbits: {stratum: N, max_count_at_lnB5: 2, max_count_at_lnB10: 1}
   M8_false_no_orbit: {stratum: B, oracle_lnB_min: 10, max_fraction: 0.02}
-  M7_complete: true
+  M7_complete: {no_crash: true, credible_set_accurate: {m: 0.95, fail_flags: [evidence-noisy, evidence-failed], failed_band_in_window_fails: true}}
+  M9_band_credible_set: {m: 0.95, sided: under, subsets: [B_all, B_misspecified], report: [set_size_median, set_size_q90, realised_mass]}
 ```
 
 ## 7. Showcases (reported raw, never a gate)
@@ -386,6 +416,7 @@ them cold.
 | 2026-10-28 | B: misspecification contaminant (p 0.15) and a reported data-sufficiency table, from the blind gallery runs (high χ²/N ↔ wrong alias); still a draft, no harness run yet | Claude (Opus), for Ben | no |
 | 2026-10-28 | Review fixes before any run: A fitted with `temper=False` and thinned NUTS ranks; M4 miss threshold adds 3× the combined IS SE; M6 presented as a guided limit, not a derived rate; new M8 (false no-orbit on B); B's *a* draws kept inside the default `a_range` | Claude (Opus), for Ben | no |
 | 2026-10-28 | Ben's decisions: misspecified nulls in N (p 0.3: extended emission or elongated primary); B misspecification rate 0.15 → 0.3 and M3b must-hold on that subset; D enlarged to 60 B-like + 60 N-like; §3.6 null-model choice rule run on D. Decisive threshold left pending (decision 4) | Claude (Opus), for Ben | no |
+| 2026-10-28 | Ben's criterion: new must-hold M9 (one-sided 95% band credible-set coverage on B and on its misspecified subset), the headline orbit criterion; per-band IS SE carried, and a credible set containing an evidence-noisy/failed band fails M7 | Ben (encoded by Claude, Opus) | no |
 
 ## References
 

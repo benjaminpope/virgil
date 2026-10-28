@@ -569,6 +569,14 @@ The pruned count and the bound are reported in the summary.
   and `RESOLVE_NATS` 5. It matches the gate's M6, where the Ville/Royall
   bound gives a false-orbit rate ≤ e⁻⁵. Held pending decision 4, since this
   lowers alias and no-orbit from 10.
+- **Multimodal results are a first-class outcome.** The summary
+  never forces a single winner. It lists the 95% credible set of bands
+  C(0.95) (smallest set by decreasing *p* with total ≥ 0.95), each with
+  *p*, its IS standard error, *P* and its interval. When |C(0.95)| = 1
+  and the alias verdict is decisive the verdict is the band; otherwise
+  it is "ambiguous: *k* modes", with the note that RV data or
+  astrometry at other epochs is needed to break the tie. The gate's
+  headline criterion (M9) is the calibration of exactly this set.
 - **Posterior sampling:** sample bands in decreasing *p* until the
   remaining mass is below δ_post = 0.01. This merges
   `posterior_p_min`, `max_modes` and `p_min_samples`. 0.01 is below the
@@ -624,7 +632,7 @@ contract.
 | `select_bands` | S_n → bands to fit, pruned-mass bound | §2F rule; no re-admission |
 | `fit_band` | band, seeds, random prior draws → distinct modes, Laplace covariances | mixture likelihood (A) only; dedup by E |
 | `band_evidence` | modes → Ẑ_n, SE, edge mass, flags | §2C |
-| `assemble` | bands → `AliasResult` (p_n, verdicts by G, q_k, p_label, Savage–Dickey) | no fitting; JSON via `_io.write_json` |
+| `assemble` | bands → `AliasResult` (p_n with SE, the 95% credible set of bands, verdicts by G incl. "ambiguous: k modes", q_k, p_label, Savage–Dickey) | no fitting; JSON via `_io.write_json` |
 
 `OrbitPipeline` keeps its I/O, checks, figures and NUTS; its own search
 loop, widening, robustness jackknife and band-sampling rules go.
@@ -769,6 +777,10 @@ bit-for-bit or within IS SE of Stage 4. Opus equivalence review.
 **Stage 6: docs.**
 - Update `docs/orbit_fitting.md`, `docs/orbit_methods.md`,
   `which_orbit_tool.md` and AGENTS.md (the "Label swap" row).
+- State that a multimodal result is reported, not resolved: the
+  summary gives the 95% credible set of bands with *p*, its SE, *P* and
+  its interval, and only RV data or astrometry at other epochs breaks
+  the tie.
 - Add a Known issues entry: evidence is overconfident when χ²/N on the
   quoted errors is well above *f*. Lead every summary with raw χ²/N.
 - The tutorial notebook. Public docs never link `design/`.
