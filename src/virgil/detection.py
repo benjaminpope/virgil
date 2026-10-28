@@ -228,9 +228,17 @@ def _detection_statistics(
     # Grid-marginalized evidence ratio over the trapezoid-weighted prior.
     # A grid point whose evaluation failed (NaN) carries no evidence.
     log_ratio = np.where(np.isnan(loglike_im), -np.inf, loglike_im - loglike0)
+    axes = []
+    for k in params:
+        a = np.asarray(grid[k], log_ratio.dtype)
+        pos = np.all(a > 0)
+        axes.append(
+            np.where(pos, np.log(np.where(pos, a, 1.0)), a)
+            if k == flux_key
+            else a
+        )
     log_bayes_factor = jax.nn.logsumexp(
-        log_ratio
-        + _log_prior_weights(tuple(grid[k] for k in params), log_ratio.dtype)
+        log_ratio + _log_prior_weights(tuple(axes), log_ratio.dtype)
     )
 
     sigma = _laplace_flux_uncertainty_grid(

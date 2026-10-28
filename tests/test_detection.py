@@ -212,20 +212,21 @@ def test_log_bayes_factor_matches_a_brute_force_marginalization():
     data = _data(4e-3, 7)
     result = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
 
+    # Uniform in position, and in log flux, between the axes' ends.
     args = _args(data)
     loglike0 = float(loglike(np.array([0.0, 0.0, 0.0]), *args))
     axes = [onp.asarray(v, dtype=float) for v in grid.values()]
+    coords = [axes[0], axes[1], onp.log(axes[2])]
     cube = onp.empty([len(a) for a in axes], dtype=float)
     for (i, dra), (j, ddec), (k, flux) in itertools.product(
         *(enumerate(a) for a in axes)
     ):
         cube[i, j, k] = float(loglike(np.array([dra, ddec, flux]), *args))
     shift = float(onp.max(cube))
-    integral = cube - shift
-    integral = onp.exp(integral)
-    for axis, coords in reversed(list(enumerate(axes))):
-        integral = trapezoid(integral, x=coords, axis=axis)
-    volume = float(onp.prod([abs(a[-1] - a[0]) for a in axes]))
+    integral = onp.exp(cube - shift)
+    for axis, x in reversed(list(enumerate(coords))):
+        integral = trapezoid(integral, x=x, axis=axis)
+    volume = float(onp.prod([abs(x[-1] - x[0]) for x in coords]))
     expected = shift - loglike0 + float(onp.log(integral / volume))
     assert float(result["log_bayes_factor"]) == pytest.approx(
         expected, abs=2e-3

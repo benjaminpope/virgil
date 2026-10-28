@@ -900,23 +900,6 @@ def _corner(curve):
 
 
 # deliberate: test seam (tests/test_ensemble.py)
-# deliberate: test seam (tests/test_ensemble.py)
-def _register(p, ref, shift, scale, v2_only):
-    """Align ``p`` (and its 180° inversion under ``v2_only``) to ``ref``."""
-    p0, s0 = (p, (0.0, 0.0)) if shift is None else align(p, ref, shift, scale)
-    p0 = onp.asarray(p0)
-    if not v2_only:
-        return p0, s0, False
-    inv = p[::-1, ::-1]
-    p1, s1 = (
-        (inv, (0.0, 0.0)) if shift is None else align(inv, ref, shift, scale)
-    )
-    p1 = onp.asarray(p1)
-    if onp.sum(onp.abs(p1 - ref)) < onp.sum(onp.abs(p0 - ref)):
-        return p1, s1, True
-    return p0, s0, False
-
-
 def _on_common_grid(image, npix, scale):
     """The image's pixels on the common grid, flux conserved.
 
@@ -1083,25 +1066,29 @@ def combine(data, groups, *, spec=None, star=True):
         image, fraction = _parts(members[i].result.model, star)
         pixels.append(_on_common_grid(image, npix, scale))
         fractions.append(fraction)
-    v2_only = not any(d.has_phases for d in datasets)
-    shift = (
-        None
-        if star
-        else (
+    shifts = [(0.0, 0.0)] * len(live)
+    flips = [False] * len(live)
+    if not star:
+        v2_only = not any(
+            d.has_phases or any(b.kind == "dphi" for b in d.extras)
+            for d in datasets
+        )
+        shift = (
             beam(data).major_mas
             if spec.max_shift_mas is None
             else spec.max_shift_mas
         )
-    )
-    shifts = [(0.0, 0.0)] * len(live)
-    flips = [False] * len(live)
-    if not star or v2_only:
-        aligned = [
-            _register(p, pixels[0], shift, scale, v2_only) for p in pixels[1:]
-        ]
-        pixels = [pixels[0]] + [a[0] for a in aligned]
-        shifts = [(0.0, 0.0)] + [a[1] for a in aligned]
-        flips = [False] + [a[2] for a in aligned]
+        ref = pixels[0]
+        for k, p in enumerate(pixels[1:], start=1):
+            p0, s0 = align(p, ref, shift, scale)
+            p0 = onp.asarray(p0)
+            if v2_only:
+                p1, s1 = align(p[::-1, ::-1], ref, shift, scale)
+                p1 = onp.asarray(p1)
+                if onp.sum(onp.abs(p1 - ref)) < onp.sum(onp.abs(p0 - ref)):
+                    pixels[k], shifts[k], flips[k] = p1, s1, True
+                    continue
+            pixels[k], shifts[k] = p0, s0
     # A member's image carries its fraction of the total flux; float64, so
     # that averaging identical images returns them unchanged.
     pixels = [onp.asarray(p, dtype=float) for p in pixels]

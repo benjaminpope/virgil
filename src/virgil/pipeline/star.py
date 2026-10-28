@@ -472,13 +472,36 @@ class StarPipeline(_Pipeline):
                 )
             sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
             chosen = post["models"][best]
-            bounds = {
-                f"{best}.{k}": v
-                for k, v in chosen["prior_bound_fraction"].items()
-            }
-            checks += _sampler_checks(
-                post, bounds=bounds, walls=chosen.get("wall_probe")
+            sampler_checks = _sampler_checks(
+                chosen,
+                bounds={
+                    f"{best}.{k}": v
+                    for k, v in chosen["prior_bound_fraction"].items()
+                },
+                walls=chosen.get("wall_probe"),
             )
+            for name, other in post["models"].items():
+                if name == best:
+                    continue
+                other_checks = _sampler_checks(
+                    other,
+                    bounds={
+                        f"{name}.{k}": v
+                        for k, v in other["prior_bound_fraction"].items()
+                    },
+                    walls=other.get("wall_probe"),
+                )
+                sampler_checks = [
+                    dataclasses.replace(
+                        oc,
+                        status="warn",
+                        message=f"{name} (not selected): {oc.message}",
+                    )
+                    if bc.status == "pass" and oc.status != "pass"
+                    else bc
+                    for bc, oc in zip(sampler_checks, other_checks)
+                ]
+            checks += sampler_checks
         return sections, checks
 
 
@@ -1011,12 +1034,6 @@ def _nuts(model, data, p, name, priors, start):  # deliberate: float64 boundary
 
     entry = models()[name]
     noise = p._noise()
-    start = dict(start)
-    for k in entry.shape:
-        if k in start:
-            val = float(onp.asarray(start[k]))
-            if val < 0.02 or val > 0.98:
-                start[k] = onp.asarray(onp.clip(val, 0.05, 0.95))
     posterior = numpyro_model(model, priors, data, noise=noise)
     mcmc = _run_chains(
         posterior, p.settings, start, dense_mass=True, priors=priors

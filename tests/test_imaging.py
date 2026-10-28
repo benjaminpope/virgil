@@ -590,6 +590,7 @@ def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
 
     from virgil.fields import GaussianField
     from virgil.imaging import error_scale, laplace_samples, log_evidence
+    from virgil.likelihood import whitened_residuals
 
     n = 8
     field = GaussianField(onp.zeros((n, n)), 1.5, 24.0)
@@ -603,6 +604,68 @@ def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
     ev_free = float(log_evidence(result, data, priors=full_priors))
     # Freeing env.flux under a wide LogUniform prior adds an Occam penalty.
     assert ev_free < ev_fixed
+    # Pin the exact Laplace formula (-½χ² - L - ½|z|² + log π(f̂) + ½ log det 2πΣ)
+    # against an explicit full-block Hessian H = diag(I_k, 0) + JᵀJ in float64.
+    with jax.enable_x64(True):
+        m64 = jax.tree_util.tree_map(
+            lambda x: (
+                np.asarray(x, np.float64)
+                if hasattr(x, "dtype")
+                and onp.issubdtype(x.dtype, onp.floating)
+                else x
+            ),
+            result.model,
+        )
+        d64 = jax.tree_util.tree_map(
+            lambda x: (
+                np.asarray(x, np.float64)
+                if hasattr(x, "dtype")
+                and onp.issubdtype(x.dtype, onp.floating)
+                else x
+            ),
+            data,
+        )
+        z0 = m64.get("env.log_brightness.latent").reshape(-1)
+        f0 = np.asarray([m64.get("env.flux")], np.float64)
+        theta0 = np.concatenate([z0, f0])
+
+        def resid_zf(theta):
+            m = m64.set(
+                ["env.log_brightness.latent", "env.flux"],
+                [theta[: n * n].reshape(n, n), theta[n * n]],
+            )
+            return whitened_residuals(m, d64)
+
+        r0 = onp.asarray(resid_zf(theta0), float)
+        jac = onp.asarray(jax.jacfwd(resid_zf)(theta0), float)
+    prior_prec = onp.diag([1.0] * (n * n) + [0.0])
+    hess = prior_prec + jac.T @ jac
+    log_pi_f = float(full_priors["env.flux"].log_prob(float(f0[0])))
+    expected_ev_free = (
+        ev_fixed
+        + 0.5
+        * float(
+            onp.linalg.slogdet(
+                onp.eye(n * n) + jac[:, : n * n].T @ jac[:, : n * n]
+            )[1]
+        )
+        + log_pi_f
+        + 0.5 * float(onp.log(2.0 * onp.pi))
+        - 0.5 * float(onp.linalg.slogdet(hess)[1])
+    )
+    assert ev_free == pytest.approx(expected_ev_free, rel=1e-10)
+    scale_free = float(error_scale(result, data, priors=full_priors))
+    beta = 1.0 / scale_free**2
+    gamma_beta = float(
+        onp.trace(
+            onp.linalg.solve(
+                prior_prec + beta * (jac.T @ jac), beta * (jac.T @ jac)
+            )
+        )
+    )
+    assert beta * float(r0 @ r0) + gamma_beta == pytest.approx(
+        float(data.n_independent), rel=1e-10
+    )
     # Unit-rescaling invariance: scaling both star.flux and env.flux by 10
     # (with a 10x LogUniform prior on env.flux) leaves the evidence and
     # error_scale invariant.
@@ -616,12 +679,10 @@ def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
     ) == pytest.approx(ev_free, rel=1e-6)
     assert float(
         error_scale(scaled_model, data, priors=scaled_priors)
-    ) == pytest.approx(
-        float(error_scale(result, data, priors=full_priors)), rel=1e-6
+    ) == pytest.approx(scale_free, rel=1e-6)
+    assert scale_free != pytest.approx(
+        float(error_scale(result, data, priors=base_priors))
     )
-    assert float(
-        error_scale(result, data, priors=full_priors)
-    ) != pytest.approx(float(error_scale(result, data, priors=base_priors)))
     draws = laplace_samples(
         result, data, 6, jax.random.PRNGKey(0), priors=full_priors
     )
@@ -629,11 +690,38 @@ def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
         onp.isfinite(draws["latents"])
     )
 
-    # Probabilistic regularizer (Centroid) contributes to log_evidence.
+    # Probabilistic regularizer (Centroid) contributes to log_evidence:
+    # check against explicit augmented residual and Jacobian in float64.
+    reg = Centroid(5.0)
     img = Image(GaussianField(onp.zeros((n, n)), 1.5, 24.0), SCALE)
-    fit_img = fit(img, image_priors(img), data, [Centroid(5.0)], max_steps=5)
+    fit_img = fit(img, image_priors(img), data, [reg], max_steps=5)
     ev_no_reg = float(log_evidence(fit_img, data, path=None))
-    ev_reg = float(
-        log_evidence(fit_img, data, path=None, regularizers=(Centroid(5.0),))
-    )
+    ev_reg = float(log_evidence(fit_img, data, path=None, regularizers=(reg,)))
     assert ev_reg < ev_no_reg
+    with jax.enable_x64(True):
+        im64 = jax.tree_util.tree_map(
+            lambda x: (
+                np.asarray(x, np.float64)
+                if hasattr(x, "dtype")
+                and onp.issubdtype(x.dtype, onp.floating)
+                else x
+            ),
+            fit_img.model,
+        )
+        z_im = im64.get("log_brightness.latent").reshape(-1)
+
+        def resid_c(z):
+            m = im64.set("log_brightness.latent", z.reshape(n, n))
+            return np.concatenate(
+                [whitened_residuals(m, d64), reg.residuals(m)]
+            )
+
+        rc = onp.asarray(resid_c(z_im), float)
+        jc = onp.asarray(jax.jacfwd(resid_c)(z_im), float)
+    rc_data = rc[:-2]
+    jc_data = jc[:-2]
+    expected_diff = -0.5 * float(rc @ rc - rc_data @ rc_data) - 0.5 * float(
+        onp.linalg.slogdet(onp.eye(n * n) + jc.T @ jc)[1]
+        - onp.linalg.slogdet(onp.eye(n * n) + jc_data.T @ jc_data)[1]
+    )
+    assert (ev_reg - ev_no_reg) == pytest.approx(expected_diff, rel=1e-10)
