@@ -720,8 +720,26 @@ def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
         jc = onp.asarray(jax.jacfwd(resid_c)(z_im), float)
     rc_data = rc[:-2]
     jc_data = jc[:-2]
+    jc_reg = jc[-2:]
     expected_diff = -0.5 * float(rc @ rc - rc_data @ rc_data) - 0.5 * float(
         onp.linalg.slogdet(onp.eye(n * n) + jc.T @ jc)[1]
         - onp.linalg.slogdet(onp.eye(n * n) + jc_data.T @ jc_data)[1]
     )
     assert (ev_reg - ev_no_reg) == pytest.approx(expected_diff, rel=1e-10)
+    scale_reg = float(
+        error_scale(fit_img, data, path=None, regularizers=(reg,))
+    )
+    beta_reg = 1.0 / scale_reg**2
+    gamma_reg = float(
+        onp.trace(
+            onp.linalg.solve(
+                onp.eye(n * n)
+                + jc_reg.T @ jc_reg
+                + beta_reg * (jc_data.T @ jc_data),
+                beta_reg * (jc_data.T @ jc_data),
+            )
+        )
+    )
+    assert beta_reg * float(rc_data @ rc_data) + gamma_reg == pytest.approx(
+        float(data.n_independent), rel=1e-10
+    )

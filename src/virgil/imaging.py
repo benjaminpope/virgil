@@ -2482,20 +2482,30 @@ def error_scale(
     r, jac = _residual_jacobian(
         model, data, all_paths, on_device=True, regularizers=regularizers
     )
+    datasets = _as_list(data)
+    n_data_rows = sum(d.n_residuals for d in datasets)
+    r_data = r[:n_data_rows]
+    jac_data = jac[:n_data_rows]
+    jac_reg = jac[n_data_rows:]
     n_z = sum(int(onp.size(model.get(p))) for p in latent_paths)
+    jac_z = onp.asarray(jac_data[:, :n_z], dtype=float)
+    if jac_reg.shape[0]:
+        # Probabilistic regularizers (e.g. Centroid) add prior precision
+        # J_reg^T J_reg on the latents, which does not scale with β; whiten
+        # the latent columns by (I + J_reg^T J_reg)^(-1/2).
+        s_reg, vt_reg = _svd(jac_reg[:, :n_z])
+        scale_reg = 1.0 / onp.sqrt(1.0 + s_reg**2) - 1.0
+        jac_z = jac_z + ((jac_z @ vt_reg.T) * scale_reg) @ vt_reg
     if extra_paths:
-        jac_z = onp.asarray(jac[:, :n_z], dtype=float)
         u_extra, s_extra, _ = onp.linalg.svd(
-            onp.asarray(jac[:, n_z:], dtype=float), full_matrices=False
+            onp.asarray(jac_data[:, n_z:], dtype=float), full_matrices=False
         )
         keep = s_extra > (1e-12 * s_extra[0] if s_extra.size else 0.0)
         q = u_extra[:, keep]
         r_extra = int(q.shape[1])
         jac_z = jac_z - q @ (q.T @ jac_z)
     else:
-        jac_z = jac
         r_extra = 0
-    datasets = _as_list(data)
     if by_observable:
         # Refuse data whose covariance is not s_b² D per block: their nuisance
         # widths do not scale with the quoted errors.
@@ -2521,9 +2531,9 @@ def error_scale(
                 )
         rows, counts = _observable_blocks(datasets)
         # The block fixed point factors on the host (NumPy QR).
-        beta = _block_precisions(r, onp.asarray(jac_z), rows, counts)
+        beta = _block_precisions(r_data, onp.asarray(jac_z), rows, counts)
         return {k: float(1.0 / onp.sqrt(b)) for k, b in beta.items()}
-    chi2 = float(r @ r)
+    chi2 = float(r_data @ r_data)
     # Independent data, not residuals: penalty rows are not observations.
     n_data = sum(d.n_independent for d in datasets) - r_extra
     lam = _singular_values(jac_z) ** 2
