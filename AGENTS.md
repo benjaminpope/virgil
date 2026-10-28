@@ -277,7 +277,11 @@ is `docs/conventions.md`; keep the two in step.
 names the user chose (`"comp.flux"`), and there is deliberately no `+`/`*` sugar. No
 new model may use `flux` as a ratio (the binaries' companion/primary `flux` is a legacy
 exception), and new models are added to
-`test_render_fourier_transform_matches_model_visibilities`. The
+`test_render_fourier_transform_matches_model_visibilities`. Jitted kernels keep the
+template's arrays traced: never add static templates or value-dependent paths (such as
+skipping work when a value is zero), which bake constants into the HLO and recompile for
+every value. `BinaryModelCartesian`/`BinaryModelAngular` stay dedicated classes; the core
+binary-fitting path must not change or slow down. The
 rules on stars, fluxes, `flux_param=`, tied parameters, traced grid templates and the
 binary classes are in [design/model_composition.md](design/model_composition.md):
 **read it before adding or changing a `SourceModel`, `System` or a grid tool's
