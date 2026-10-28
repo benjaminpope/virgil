@@ -2456,47 +2456,115 @@ def test_proposal_log_pdf_wraps_periodic_angles():
 
 
 def test_boundary_mode_regularizes_hessian_and_truncates_laplace_fallback():
-    class BoundaryProblem:
+    import math
+    from scipy import integrate
+
+    # 1. PD correlated Gaussian peaked at the bound x[2] = 0: the truncated
+    # Laplace fallback matches the exact half-space Gaussian integral, and
+    # the Schur complement of the correlated block is preserved untouched.
+    h_pd = onp.diag([10.0, 10.0, 25.0, 10.0, 10.0, 10.0, 10.0, 10.0])
+    h_pd[0, 2] = h_pd[2, 0] = 12.0  # strong coupling (r = 0.76)
+
+    class CorrelatedEdgeProblem:
         log_prior = -5.0
 
         def hessian(self, x):
-            h = onp.diag([10.0, 10.0, -2.0, 10.0, 10.0, 10.0, 10.0, 10.0])
-            return -h
+            return -h_pd
 
         def value_and_grad(self, x):
             g = onp.zeros(8)
-            g[2] = -5.0  # pushes toward lower bound at x[2] = 0
+            g[2] = -3.0  # outward KKT gradient at x[2] = 0
             return -1.0, g
 
         def batch(self, xs):
-            return -onp.ones(len(xs))
+            dx = onp.asarray(xs, float)
+            return -1.0 - 0.5 * onp.einsum("ni,ij,nj->n", dx, h_pd, dx)
 
     x = onp.zeros(8)
-    bounds = _bounds()
-    rec, draw = aliases._mode_evidence(
-        BoundaryProblem(), bounds, x, -1.0, 200, onp.random.default_rng(0)
+    bounds = _bounds(
+        lower=[
+            -onp.inf,
+            -onp.inf,
+            0.0,
+            -onp.inf,
+            -onp.inf,
+            -onp.inf,
+            -onp.inf,
+            -onp.inf,
+        ],
+        upper=[
+            onp.inf,
+            onp.inf,
+            0.9,
+            onp.inf,
+            onp.inf,
+            onp.inf,
+            onp.inf,
+            onp.inf,
+        ],
     )
-    assert draw is not None and onp.isfinite(rec["log_z_laplace"])
-    assert "near-prior-bound" in rec["flags"]
-    assert 0.2 < rec["p_in"] < 0.8
-    # When ESS is below ess_min, _band_evidence falls back to truncated Laplace
     settings = _settings(n_is=20, ess_min=1e9)
     modes, z_lap, _, _ = aliases._band_evidence(
-        BoundaryProblem(),
+        CorrelatedEdgeProblem(),
         settings,
         bounds,
         [(x, -1.0)],
         onp.random.default_rng(0),
     )
-    assert z_lap == pytest.approx(
-        modes[0]["log_z_laplace"] + float(onp.log(modes[0]["p_in"]))
+    # Independent 1-D numerical integral over x[2] in [0, 0.9] after integrating
+    # out the 7 unconstrained coordinates (marginal precision is the Schur complement)
+    h_ff = h_pd[onp.ix_([0, 1, 3, 4, 5, 6, 7], [0, 1, 3, 4, 5, 6, 7])]
+    h_fb = h_pd[[0, 1, 3, 4, 5, 6, 7], 2]
+    schur_2 = float(h_pd[2, 2] - h_fb @ onp.linalg.solve(h_ff, h_fb))
+    val_1d, _ = integrate.quad(
+        lambda u: math.exp(-1.0 - 0.5 * schur_2 * u**2), 0.0, 0.9
     )
+    exact_log_z = (
+        CorrelatedEdgeProblem.log_prior
+        + 0.5 * 7 * math.log(2.0 * math.pi)
+        - 0.5 * float(onp.linalg.slogdet(h_ff)[1])
+        + math.log(val_1d)
+    )
+    assert z_lap == pytest.approx(exact_log_z, abs=1e-6)
+    # Untruncated Laplace is off by ~ln(2) ≈ 0.693 nats
+    assert modes[0]["log_z_laplace"] - exact_log_z == pytest.approx(
+        math.log(2.0), abs=1e-2
+    )
+
+    # 2. Non-PD Hessian at the boundary (h[2, 2] < 0) with inward gradient:
+    # regularized via the Schur complement + gradient scale.
+    class NonPDBoundaryProblem:
+        log_prior = -5.0
+
+        def hessian(self, x):
+            h = h_pd.copy()
+            h[2, 2] = -2.0
+            return -h
+
+        def value_and_grad(self, x):
+            g = onp.zeros(8)
+            g[2] = -5.0
+            return -1.0, g
+
+        def batch(self, xs):
+            return -onp.ones(len(xs))
+
+    rec, draw = aliases._mode_evidence(
+        NonPDBoundaryProblem(), bounds, x, -1.0, 200, onp.random.default_rng(0)
+    )
+    assert draw is not None and onp.isfinite(rec["log_z_laplace"])
+    assert "near-prior-bound" in rec["flags"]
+    assert rec["p_in"] == pytest.approx(0.5, abs=1e-2)
 
 
 def test_default_min_distance_mas_scales_with_sub_mas_resolution(monkeypatch):
     monkeypatch.setattr(aliases, "fringe_scales", lambda d: (0.4, 4.0))
     s_default = _spy_settings(monkeypatch, p_range=(12.1, 12.7))["settings"]
     assert s_default.min_distance_mas == pytest.approx(0.2)
+    s_half = _spy_settings(
+        monkeypatch, p_range=(12.1, 12.7), min_distance_mas=0.5
+    )["settings"]
+    assert s_half.min_distance_mas == pytest.approx(0.5)
     s_explicit = _spy_settings(
         monkeypatch, p_range=(12.1, 12.7), min_distance_mas=0.3
     )["settings"]

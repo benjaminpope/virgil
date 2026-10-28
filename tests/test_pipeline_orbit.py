@@ -955,11 +955,11 @@ def test_an_empty_period_window_names_the_pipeline_setting(monkeypatch):
 def test_null_verdict_applies_laplace_occam_factor_for_fitted_primary_diam(
     monkeypatch,
 ):
-    import math
+    from scipy import integrate
     import virgil.aliases as aliases
 
-    d0, h_dd = 1.0, 400.0
-    d_range = (0.1, 5.0)
+    d0, h_dd = 0.2, 2500.0
+    d_range = (0.05, 5.0)
 
     class Problem:
         def batch(self, xs, mixed=False):
@@ -978,9 +978,15 @@ def test_null_verdict_applies_laplace_occam_factor_for_fitted_primary_diam(
     )
     res = SimpleNamespace(best=SimpleNamespace(log_z=0.0))
     verdict = orbit_module._null_verdict(res, [], {"no_orbit_nats": 5.0})
-    expected_occam = 0.5 * math.log(2.0 * math.pi / h_dd) - math.log(
-        d_range[1] - d_range[0]
+    # Independent numerical quadrature of ∫ L(u) du / ln(D_max / D_min)
+    # under the orbit model's log-uniform prior on D
+    u_lo, u_hi = onp.log(d_range[0]), onp.log(d_range[1])
+    integral, _ = integrate.quad(
+        lambda u: float(onp.exp(-0.5 * h_dd * (onp.exp(u) - d0) ** 2)),
+        u_lo,
+        u_hi,
     )
+    expected_log_z = float(onp.log(integral / (u_hi - u_lo)))
     assert verdict["log_like_single_star"] == pytest.approx(
-        expected_occam, rel=0.05
+        expected_log_z, abs=0.05
     )
