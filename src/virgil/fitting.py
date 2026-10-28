@@ -992,6 +992,8 @@ def _bound_fraction(prior, value, flat=True):
         # compares below or above a threshold).
         lo_pole = onp.isclose(onp.asarray(base.low, float), poles[0], 1e-6, 0)
         hi_pole = onp.isclose(onp.asarray(base.high, float), poles[1], 1e-6, 0)
+        if onp.all(lo_pole & hi_pole):
+            return None
         fraction = onp.where(
             lo_pole & (fraction < _AT_BOUND), onp.nan, fraction
         )
