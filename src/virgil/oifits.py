@@ -1265,9 +1265,10 @@ def write_oifits(data, filename, overwrite=True):
     An `OIData` is written as `OI_VIS2` with `OI_T3` or `OI_VIS` phases, and
     read back by [`read_oifits`][virgil.oifits.read_oifits] to the same
     observables, errors, flags, frames, wavelengths and (u, v), and the times
-    if any (else MJD 0). Frames at one `MJD` get distinct `TIME`s so they stay
-    apart; closure phases without station indices get placeholder stations
-    (`STAPLACE`). A dictionary of tables (columns as in
+    if any (else MJD 0). Wavelengths are float32 (relative error 6e-8); frames
+    at one `MJD` get distinct `TIME`s so they stay apart; closure phases
+    without station indices get placeholder stations (`STAPLACE`). A
+    dictionary of tables (columns as in
     [writing OIFITS](../oifits_files.md#writing), upper-case OIFITS names) has
     phases in **degrees**.
     Source: Duvert et al. (2015), [references](../references.md#duvert2017).
@@ -1418,8 +1419,8 @@ def build_hdulist(tables):
     )
     wave_hdu = fits.BinTableHDU.from_columns(
         [
-            fits.Column("EFF_WAVE", "1D", unit="m", array=eff_wave),
-            fits.Column("EFF_BAND", "1D", unit="m", array=eff_band),
+            fits.Column("EFF_WAVE", "1E", unit="m", array=eff_wave),
+            fits.Column("EFF_BAND", "1E", unit="m", array=eff_band),
         ]
     )
     _set_table_header(wave_hdu, "OI_WAVELENGTH", insname=insname)

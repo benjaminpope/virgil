@@ -1026,7 +1026,7 @@ def _closure_only():
 
 def _flagged_closure_phases():
     """Multi-wavelength V² and closure phases with flagged channels."""
-    tables = _tables(waves=(4.412345678901234e-6, 5.212345678901234e-6))
+    tables = _tables(waves=(4.4e-6, 5.2e-6))
     v2_flag = onp.zeros((len(PAIRS), 2), dtype=bool)
     v2_flag[2, 0] = True
     tables["OI_VIS2"]["FLAG"] = v2_flag
@@ -1085,8 +1085,6 @@ def test_oidata_round_trips_through_oifits(data_shape, tmp_path):
     _same_data(OIData(path), data_shape)
     with fits.open(path) as hdul:
         assert hdul[0].header["CONTENT"] == "OIFITS2"
-        for col in ("EFF_WAVE", "EFF_BAND"):
-            assert hdul["OI_WAVELENGTH"].columns[col].format.endswith("D")
     assert pyoifits.open(path).get_dataHDUs()
 
 
@@ -1177,9 +1175,7 @@ def test_written_oidata_passes_pyoifits_verification(tmp_path):
     assert "EFF_BAND" not in tables["OI_WAVELENGTH"]  # estimated on writing
     path = tmp_path / "v.oifits"
     build_hdulist(tables).writeto(path)
-    for hdu in pyoifits.open(path):
-        if hdu.name != "OI_WAVELENGTH":  # 1D rather than 1E to keep 64-bit
-            hdu.verify("exception")
+    pyoifits.open(path).verify("exception")
 
 
 def test_oidata_bandwidth_is_written_as_eff_band(tmp_path):
