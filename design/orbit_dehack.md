@@ -64,8 +64,9 @@ Priorities, in order: principled; reliable for orbits in general; lean
   - (F) one cycle-count rule with a stated pruned-mass bound and no
     re-admission.
 
-  One decisive threshold replaces four (its value pending Ben's
-  calibration decision).
+  No nats threshold survives: alias, label and resolved verdicts are
+  probabilities with 95% credible sets, and detection (orbit against no
+  orbit) is an empirical false-alarm probability below α = 0.01.
 - **Expected size: about 11,950 → 6,900 lines** (−42%). `orbit_search.py`
   is retired and `arcs.py` is folded into seeding. `fit_orbit_aliases`
   becomes about 60 lines over seven named stages.
@@ -109,7 +110,7 @@ o = orbits.py, t = tempering.py, p = pipeline/orbit.py, c = pipeline/_checks.py.
 | `drop_outlier_night`, `_robustness`, `_outlying_night` | p:1042-1150 | DELETE | A: a jackknife that costs a full search, made redundant by the mixture | none |
 | `_POOR_FIT_CHI2_RED` 10 ("χ²/ν of 65–800", uncited) and `_INADEQUATE_F` 3 | a:2159, a:2596 | MERGE | `tempering.FLAG_RANGE`, plus raw χ²/N reported first | Gl 229 *f* = 41 passed regardless |
 | `_WIDEN` 1.5, `_MAX_WIDEN` 5 box-widening loop | p:48-49 | REPLACE | prior support a_max(1+e_max) sets the box once | none |
-| `alias_nats` 10, `no_orbit_nats` 10, `LABELS_FREE_NATS` 3, `RESOLVE_NATS` 5 | p, a:120, e:2453 | MERGE | one `DECISIVE_NATS`, value pending (decision 4: calibrated at Ben's α) | none |
+| `alias_nats` 10, `no_orbit_nats` 10, `LABELS_FREE_NATS` 3, `RESOLVE_NATS` 5 | p, a:120, e:2453 | DELETE | G: probabilities and 95% credible sets; detection by empirical FAP < α = 0.01 | none |
 | `posterior_p_min` 0.05, `max_modes` 3, engine `p_min_samples` 0.01 | p, a | MERGE | sample bands until the remaining mass < 0.01 | none |
 | `_WARN_P_MIN_NIGHTS` 5 | a:141 | DELETE | the window's lower end is reported; the gate's data-sufficiency table covers the rest | none |
 | `n_refine × 4` keep in `_refine` | a:1169 | DELETE | ranking by mixture likelihood, top `n_refine` distinct | none |
@@ -377,9 +378,10 @@ with the companion reflected through the primary (ω + 180°) and the
 **flux kept**, as `labels_free` compares today. M x differs from x in
 closure-phase sign for a contrast pair and coincides with Rx for a
 twin. The verdict is p_label = Z_x/(Z_x + Z_Mx), Z_Mx being the
-evidence of the mode refined from M x. A flag is raised when
-|ln(Z_x/Z_Mx)| < DECISIVE_NATS: for a contrast pair this ratio is
-large, for a twin it is ≈ 0. This replaces `LABELS_FREE_NATS` and
+evidence of the mode refined from M x. The label is decided when its
+95% credible set has one member (p_label ≥ 0.95 or ≤ 0.05); otherwise
+it is reported as `labels_free` with p_label. A contrast pair is
+decided, a twin is not. This replaces `LABELS_FREE_NATS` and
 `_LABELS_FREE_RES_FRACTION`.
 
 **Tests:**
@@ -480,8 +482,10 @@ the methods register (§2H) as a departure from the Jeffreys default.
   B_point/disc = p(θ = 0 | D) / π(θ = 0) = θ_max · E_post[ L(0, ψ) / ∫₀^{θ_max} L(θ, ψ) dθ ].
 
 The conditional ∫dθ is a 1-D Gauss–Legendre integral per posterior draw
-(Rao–Blackwellised). It is resolved when ln B_disc/point ≥
-DECISIVE_NATS.
+(Rao–Blackwellised). With prior odds 1 between point and disc, the
+summary reports p(disc) = B_disc/point / (1 + B_disc/point); the primary
+is "resolved" when p(disc) ≥ 0.95, "point" when ≤ 0.05, and otherwise
+both are reported.
 
 **Tempering.** *f* comes from the per-night fits with θ free, which is
 the nesting model. This is one pass, with no point/disc ping-pong.
@@ -559,26 +563,48 @@ The pruned count and the bound are reported in the summary.
 
 ### G. Thresholds and posterior sampling
 
-- **One decisive threshold** — **PENDING (decision 4).** Ben rejects a
-  convention-scale number. The threshold is to come from frequentist
-  calibration: Ben fixes the error rate α, and the nats follow from a
-  calibration population held out from the scored strata. Options are
-  with Ben via the coordinator; the 5-nat proposal below is held, not
-  adopted. It is used for:
-  - the alias verdict (best band against runner-up);
-  - orbit against null;
-  - labels;
-  - resolved primary.
+Decision 4 (Ben, 2026-10-28). `alias_nats` 10, `no_orbit_nats` 10,
+`LABELS_FREE_NATS` 3 and `RESOLVE_NATS` 5 are all deleted, and no
+`DECISIVE_NATS` replaces them.
 
-  It replaces `alias_nats` 10, `no_orbit_nats` 10, `LABELS_FREE_NATS` 3
-  and `RESOLVE_NATS` 5. It matches the gate's M6, where the Ville/Royall
-  bound gives a false-orbit rate ≤ e⁻⁵. Held pending decision 4, since this
-  lowers alias and no-orbit from 10.
+- **Alias, label and resolved verdicts: no threshold in nats.** They are
+  reported as probabilities with their 95% credible sets. "Decisive"
+  means only that the 95% credible set has one member. Whether these
+  probabilities are honest is what the gate's M1 and M9 check by
+  injection–recovery.
+- **Detection (orbit against no orbit): an empirical false-alarm
+  probability.** Theory is unreliable here: the detection tutorial
+  found the empirical 3σ threshold at Δχ² 15.2 ± 0.9 where Wilks gives
+  9. So for each data set:
+  1. the statistic T is the cheap-tier detection statistic,
+     T = max_n S_n − S_null (the seed profile of §2B/§2F against the
+     single-star fit, no search over full fits);
+  2. null data sets are simulated on the target's own coverage and
+     errors with the existing `virgil.detection` simulators
+     (`gaussian_null` with `rescale_errors`, or `bootstrap_null`),
+     including bad nights and the misspecified single-star kinds drawn
+     as in gate stratum N (envelopes with chromatic line features, an
+     elongated primary, a faint background source);
+  3. FAP = (1 + #{T_null ≥ T_obs}) / (1 + n_null), the `DetectionMC`
+     convention, with its binomial MC error reported. n_null is raised
+     until the FAP's 95% interval excludes α or reaches a stated cap,
+     in which case the result is "inconclusive" (n_null ≥ 1/α · 10 =
+     1000 at α = 0.01 resolves FAP to ±0.003);
+  4. an orbit is reported only if FAP < α.
+
+  Any statistic gives a valid FAP; T is chosen because one value costs
+  one seeding pass, not a full search. The full search runs only once,
+  on the real data. How powerful T is gets checked by M8 (lost
+  detections). The `DetectionMC` hook needed is a user statistic in
+  place of the grid statistic; nothing else in `virgil.detection` is
+  new.
+- **α = 0.01 (Ben)** is the single user-facing number, stated as a
+  false-alarm probability (1e-3 and 3σ judged too conservative).
 - **Multimodal results are a first-class outcome.** The summary
   never forces a single winner. It lists the 95% credible set of bands
   C(0.95) (smallest set by decreasing *p* with total ≥ 0.95), each with
   *p*, its IS standard error, *P* and its interval. When |C(0.95)| = 1
-  and the alias verdict is decisive the verdict is the band; otherwise
+  the verdict is the band; otherwise
   it is "ambiguous: *k* modes", with the note that RV data or
   astrometry at other epochs is needed to break the tie. The gate's
   headline criterion (M9) is the calibration of exactly this set.
@@ -629,8 +655,8 @@ should weigh.
 **Consequences, stated because the prior depends on the data:**
 - gate stratum A keeps a fixed, explicit floor (SBC requires the prior
   not to depend on the data);
-- strata B, N and the decision-4 calibration population use the default
-  rule, so the calibrated threshold includes its Occam term;
+- strata B and N, and the per-data-set null simulations of the
+  detection FAP (§2G), use the default rule;
 - B truths below their system's floor are counted and reported, and
   count as misses in M9 (no exclusion).
 
@@ -655,7 +681,8 @@ by the stage that introduces each):
 | truncated defensive-mixture IS with adaptive n | established | Owen & Zhou 2000 | §2C tests |
 | uniform-θ primary with Savage–Dickey verdict | derived | Dickey 1971; Verdinelli & Wasserman 1995 | §2D tests |
 | (h, k, λ_ref) parameterisation | established | Ford 2006; Eastman et al. 2013 | §2C test |
-| flux floor from the data's contrast curve (2σ Ruffio limit, geometric mean over separations) | derived, default; justification: below the floor the likelihood is flat, so only the Occam term ln(1/lo) depends on it | Ruffio et al. 2018 | §2I tests; gate (c) of §2I |
+| flux floor from the data's contrast curve (2σ Ruffio limit, geometric mean over separations) | derived, default (accepted by Ben, 2026-10-28). Ben's framing: it represents the range of stellar companion fluxes; for a large enough data set it is an approximate empirical-Bayes (hierarchical) prior, "a bit of a dodgy hierarchical inference". Justification: below the floor the likelihood is flat, so only the Occam term ln(1/lo) depends on it | Ruffio et al. 2018 | §2I tests; gate (c) of §2I |
+| detection by per-data-set empirical FAP < α = 0.01 | established (Monte Carlo test; the `virgil.detection` convention) | Fawcett 2006 (as `DetectionMC`) | gate M6, M8 |
 | disc-label enumeration for a resolved primary | derived (exact enumeration of a binary latent) | — | §2D, §2B tests |
 | uniform θ on [0, θ_max] for the primary diameter | departure from the Jeffreys log-uniform default (nests the point star) | Dickey 1971 | §2D tests |
 | null-model outlier component (ii or iii) | novel / experimental until chosen on D | orbit_gate_042 §3.6 | gate M6, M8 |
@@ -755,7 +782,7 @@ library. Each takes a `FutureWarning` in 0.4.2 and is removed in 0.5.
 |---|---|---|---|
 | `fit_orbit_aliases(sign_free, flip_flux, short_arcs, outlier_eps, skip_flagged)` | vv `oidb_fit.py:564,666`, `reanalyse_orbits.py:785`; tests | accepted and ignored, with a `FutureWarning` naming the replacement (A/B/F) | drop the kwarg |
 | `fit_orbit_aliases(primary_diam="auto")` | pipeline default; vv | alias of `"fit"`, warns | `"fit"` |
-| `OrbitPipeline` settings `drop_outlier_night`, `alias_nats`, `no_orbit_nats`, `posterior_p_min`, `max_modes`, `outlier_eps` | vv configs | warn and ignore; `decisive_nats` replaces the two nats | |
+| `OrbitPipeline` settings `drop_outlier_night`, `alias_nats`, `no_orbit_nats`, `posterior_p_min`, `max_modes`, `outlier_eps` | vv configs | warn and ignore; `alpha` (FAP, default 0.01) replaces the two nats | |
 | `estimate_primary_diameter` | tests, notebook only | removed (no external caller) | `fit_orbit_aliases(primary_diam="fit")` |
 | `start_from_positions`, `OrbitStart`, `rank_orbits`, `chain_starts` | vv `test_epochs.py`, `oidb_fit.py:456`; `~/data/eso_binaries/gravity/scripts/fit_orbit.py`; `benchmarks/orbits/run_bench.py`; tutorial notebook | deprecated | `fit_orbit_aliases`, then `AliasResult` modes; notes for each script in the Stage 5 PR |
 | `orbit_search.score_orbits`, `SharedFlux`, `OrbitScores` | `~/data/eso_binaries/gravity/scripts/{score_modes,refine_modes,nested_modes}.py` | deprecated (not exported; warn on import) | `fit_orbit_aliases(p_range=…, init=…)` |
@@ -816,15 +843,17 @@ default deletes the other.
 **Stage 4: bands and evidence (C, F, D, G).**
 - Files: `aliases._band_evidence` (truncated IS, adaptive n), the (h, k)
   layout, `select_bands`, the diameter (delete `_auto_primary`,
-  `_pilot_diameter` and `estimate_primary_diameter`), `DECISIVE_NATS`,
-  and pipeline sampling by remaining mass.
+  `_pilot_diameter` and `estimate_primary_diameter`), deletion of every
+  nats threshold (§2G), the empirical-FAP detection with a user-statistic
+  hook in `DetectionMC`, and pipeline sampling by remaining mass.
 - Tests: §2C, §2D, §2F and §2G.
 - Also §2I: flux floor from the contrast curve (reusing `grid_fit` and
   `limits.ruffio_upperlimit`) and the disc label.
 - Default changes: "auto" → "fit"; flux floor from the data; band sampling; short arcs off (F
   opt-in); `span_factor` deleted (long-period band); `vis_amp` range
-  taken from the data's instrument package. Thresholds wait for
-  decision 4.
+  taken from the data's instrument package; verdicts as probabilities
+  and credible sets; detection at FAP < α = 0.01 (the `alpha` setting
+  replaces `alias_nats`/`no_orbit_nats`, which warn and are ignored).
 
 **Stage 5: structure (§1.3, §1.4, §3).** The seven stages, `_Layout`,
 the one scene→score path, one PD/covariance helper, one batch planner,
@@ -840,6 +869,17 @@ bit-for-bit or within IS SE of Stage 4. Opus equivalence review.
   summary gives the 95% credible set of bands with *p*, its SE, *P* and
   its interval, and only RV data or astrometry at other epochs breaks
   the tie.
+- Explain M9 plainly, **Bayesian language first** (Ben found it
+  "reasonable, if confusingly stated in frequentist terms"): what a
+  band probability means (the posterior probability that the true
+  period lies in that alias band, given the data and the priors); what
+  "the true orbit lies in the 95% credible set" means; and why
+  injection–recovery checks that these probabilities are honest (over
+  many simulated systems, sets that claim 95% must contain the truth
+  about 95% of the time). Only then the frequentist coverage reading.
+- Explain detection as a false-alarm probability against simulated
+  single stars like this one, at α = 0.01, and why it is simulated
+  rather than taken from Wilks' theorem.
 - Add a Known issues entry: evidence is overconfident when χ²/N on the
   quoted errors is well above *f*. Lead every summary with raw χ²/N.
 - The tutorial notebook. Public docs never link `design/`.
@@ -911,9 +951,12 @@ Changed:
    Lower bound lo from the data's 2σ contrast curve by default, or the
    user's stated search domain (§2I).
 
-Pending (held until Ben chooses among the coordinator's options):
-4. **The decisive threshold:** from frequentist calibration at an α Ben
-   fixes, on a held-out calibration population; no convention number.
+4. **Thresholds:** no nats anywhere. Alias, label and resolved verdicts
+   are probabilities with 95% credible sets (calibrated by M1 and M9);
+   detection is an empirical per-data-set FAP < α = 0.01 using the
+   `virgil.detection` simulators with stratum-N-like nulls (§2G).
+
+All 15 decisions are settled.
 
 ## References
 
@@ -926,10 +969,10 @@ Pending (held until Ben chooses among the coordinator's options):
 - Hogg, Bovy & Lang 2010, arXiv:1008.4686 (mixture models for
   outliers).
 - Jeffreys 1946, Proc. R. Soc. A 186, 453 (Beta(½, ½) for a rate).
-- Kass & Raftery 1995, JASA 90, 773 (Bayes factor scale).
 - Owen & Zhou 2000, JASA 95, 135 (defensive mixture importance
   sampling).
 - Rucinski 1992, AJ 103, 960 (contact-binary short-period limit).
 - Ruffio et al. 2018, AJ 156, 196 (2018AJ....156..196R; Bayesian
   upper limits for non-detections).
-- Royall 2000, JASA 95, 760 (the bound on misleading evidence).
+- Fawcett 2006, Pattern Recognit. Lett. 27, 861 (ROC analysis; the
+  `DetectionMC` source).

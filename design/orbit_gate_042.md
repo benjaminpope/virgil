@@ -139,7 +139,7 @@ modes the heuristics were built for.
 - Primary: point with probability 0.7, else a uniform disc of diameter
   uniform on [0.2, 0.8] λ/B_max; when a disc, it is on the brighter or
   the fainter star with probability ½ each (orbit_dehack §2B label).
-- Flux floor: B, N and the decision-4 calibration population run with
+- Flux floor: B and N, and the per-data-set FAP null simulations, run with
   the default floor from the data (orbit_dehack §2I). The number of B
   truths whose flux ratio lies below their own system's floor is
   reported; those systems stay in every metric and count as misses in
@@ -182,8 +182,16 @@ chosen with equal probability among:
   circular Gaussian (size = FWHM) or a ring of fractional width 0.2
   (size = diameter), centred on the star. Envelope flux fraction
   log-uniform on [0.01, 0.5] and size log-uniform on [0.3, 10] res.
-  The ranges are generic and broad; no parameter is taken from a named
-  system (Apep, WR 140 or any other);
+  **Chromatic** (Ben: WR envelopes "might have spectral line
+  features"): the envelope flux fraction depends on channel. A line
+  occupies a random contiguous block of channels, its width uniform
+  over integers in [1, ⌈N_ch/2⌉] and its start uniform; inside it the
+  envelope flux is multiplied by an enhancement factor log-uniform on
+  [1.5, 10], and, with probability ½, the envelope size is multiplied
+  by a factor log-uniform on [0.5, 3]. The ranges are generic and
+  broad; no parameter is taken from a named system (Apep, WR 140 or any
+  other). The same draws are used for the gate and for the detection
+  FAP's null simulations (orbit_dehack §2G);
 - **elongated primary**: an elliptical uniform disc, major-axis diameter
   uniform on [0.3, 0.8] res, axis ratio uniform on [0.6, 0.9], position
   angle uniform;
@@ -235,8 +243,8 @@ same per-system rate) and M8 on D's binaries. Then:
 3. if neither passes, no default is chosen: the result goes to Ben, and
    no scored run happens until he decides.
 
-The decisive threshold used is the one fixed by decision 4 of
-orbit_dehack §8 (pending at registration). The choice, both candidates'
+Verdicts use the detection rule of decision 4 (orbit_dehack §2G):
+an orbit is reported only if its per-data-set empirical FAP < α = 0.01. The choice, both candidates'
 D numbers and the commit are entered in the change log before the first
 scored run; the losing candidate's code is deleted in the PR that sets
 the default.
@@ -316,30 +324,30 @@ nominal coverage is not guaranteed; over-coverage is conservative and
 allowed. Under-coverage is the overconfidence that bad nights, sign
 errors and correlated channels cause, and it fails.
 
-**M6. False orbits (N).** Must hold on all of N **and**, separately,
-on its misspecified subset (about 30 systems), whose limit is ≤ 1 at
-the same per-system guide rate (P(≥ 2) ≈ 2% at 0.67%). A false orbit is
-an `orbit` verdict
-(`modes.no_orbit` evidence at or above the pipeline's decisive threshold)
-on a null. Pass if the count is ≤ 2 of 100.
-*Why:* 2 of 100 is a **pre-registered limit chosen with a bound as a
-guide**, not a derived false-alarm rate. For an untempered likelihood
-and nulls drawn from the engine's own null prior, the Bayes factor *B*
-obeys P(*B* ≥ *k*) ≤ 1/*k* (Markov's inequality on E_null[*B*] = 1;
-Royall 2000), which at ln *B* = 5 (Kass & Raftery 1995, "very strong")
-gives at most 0.67 expected in 100 and P(≥ 3) = 3%. None of those
-conditions holds exactly here: the likelihood is tempered (∫L^{1/f}π is
-not a likelihood ratio), the nulls' diameters and bad-night rate are
-not drawn from the engine's null prior, and contaminated nights are
-only approximated by the mixture. The false-orbit rate on stratum D's
-nulls is reported before the first scored run, as a check that the
-limit is not routinely failed by a correct engine. If Ben keeps the current
-`no_orbit_nats = 10`, the bound is 4.5 × 10⁻⁵ and the limit becomes
-≤ 1 of 100 (P(≥ 2) < 10⁻⁴).
+**M6. False orbits (N).** A false orbit is an `orbit` verdict on a
+null, i.e. an empirical FAP < α = 0.01 (orbit_dehack §2G; decision 4,
+Ben 2026-10-28). If the FAP is calibrated, the false-orbit count on *n*
+nulls is at most Binomial(*n*, α). Must hold: the count does not exceed
+the 99th percentile of Binomial(*n*, 0.01), on all of N and, separately,
+on the misspecified-null subset at its own *n*:
 
-**M8. False no-orbit verdicts (B).** A system of B whose oracle run
-has ln *B*(orbit : null) ≥ 10 but whose blind run returns a `no-orbit`
-verdict is a lost detection. Must hold: ≤ 2% of the qualifying systems
+| *n* | 2–15 | 16–44 | 45–83 | 84–129 |
+|---|---|---|---|---|
+| limit | 1 | 2 | 3 | 4 |
+
+So N as a whole (*n* = 100) allows at most 4, and the misspecified
+subset (about 30) at most 2. A correct engine fails each by chance with
+probability below 1% (0.34% at *n* = 100, 0.33% at *n* = 30).
+*Why this is now derived:* the FAP is computed per data set by
+simulating nulls like that target (its coverage, errors, bad nights and
+misspecified kinds), so P(FAP < α | null) ≤ α holds by construction for
+null draws from that simulator. The gate checks that it still holds for
+N's nulls, which the simulator only approximates.
+
+**M8. False no-orbit verdicts (B).** A system of B whose oracle run's
+detection statistic exceeds every one of its null draws (FAP at the
+Monte Carlo floor, 1/(1 + n_null): clearly detectable) but whose blind
+run returns a `no-orbit` verdict is a lost detection. Must hold: ≤ 2% of the qualifying systems
 (the same resolution argument as M4); the count is also reported by *K*.
 *Why:* M6 alone rewards a null that is too easy to win; a null model
 with too much freedom (e.g. the outlier mixture applied to the null,
@@ -406,8 +414,8 @@ must_hold:
   M3b_confident_errors: {p_map_min: 0.99, max: binomial_q99(n_conf, 0.01), subsets: [B_all, B_misspecified]}
 null_choice: {stratum: D, candidates: [shared_mixture, shared_noise_inflation], must_pass: [M6, M8], tie: shared_noise_inflation}
   M4_search_misses: {nats: 1.0, plus_se_multiple: 3, max_fraction: 0.02, stratum: B}
-  M6_false_orbits: {stratum: N, max_count_at_lnB5: 2, max_count_at_lnB10: 1, subsets: {N_misspecified: {max_count: 1}}, report: [by_template, by_kind, by_envelope_fraction]}
-  M8_false_no_orbit: {stratum: B, oracle_lnB_min: 10, max_fraction: 0.02}
+  M6_false_orbits: {stratum: N, alpha: 0.01, max_count: binomial_q99(n, 0.01), limits_by_n: {'2-15': 1, '16-44': 2, '45-83': 3, '84-129': 4}, N_all: {n: 100, max_count: 4}, subsets: {N_misspecified: {max_count: binomial_q99(n_subset, 0.01)}}, report: [by_template, by_kind, by_envelope_fraction]}
+  M8_false_no_orbit: {stratum: B, qualifying: oracle_fap_at_mc_floor, max_fraction: 0.02}
   M7_complete: {no_crash: true, credible_set_accurate: {m: 0.95, fail_flags: [evidence-noisy, evidence-failed], failed_band_in_window_fails: true}}
   M9_band_credible_set: {m: 0.95, sided: under, subsets: [B_all, B_misspecified], report: [set_size_median, set_size_q90, realised_mass]}
 ```
@@ -451,14 +459,15 @@ them cold.
 | 2026-10-28 | Ben's criterion: new must-hold M9 (one-sided 95% band credible-set coverage on B and on its misspecified subset), the headline orbit criterion; per-band IS SE carried, and a credible set containing an evidence-noisy/failed band fails M7 | Ben (encoded by Claude, Opus) | no |
 | 2026-10-28 | Ben's change: misspecified nulls widened (WR-like Gaussian/ring envelopes, log-uniform fraction and size, no named-target parameters; elongated primary; faint background source); third template T3 (CHARA, ~330 m) drawn uniformly in all strata; M6 must hold on the misspecified-null subset too; false orbits reported by template, kind and envelope fraction | Ben (encoded by Claude, Opus) | no |
 | 2026-10-28 | Ben's decision 5: flux in (lo, 1] with no upper number, disc-on-brighter/fainter label enumerated (B draws the disc on either star); lo from the data's 2σ Ruffio contrast curve by default (A keeps its fixed floor; B/N/calibration use the default; B truths below floor reported and count as M9 misses) | Ben (encoded by Claude, Opus) | no |
+| 2026-10-28 | Ben's decision 4: no nats thresholds; alias/label/resolved verdicts are probabilities with 95% credible sets; detection by per-data-set empirical FAP < α = 0.01 (`virgil.detection` simulators, stratum-N-like nulls); M6 limits now binomial q99 at α = 0.01 (N ≤ 4 of 100, misspecified subset at its own *n*); M8 qualifying systems by oracle FAP at the MC floor; no separate calibration stratum | Ben (encoded by Claude, Opus) | no |
+| 2026-10-28 | Ben's amendment: WR-like envelopes are chromatic (a line in a random contiguous channel block, generic enhancement, width and optional size change), in gate draws and FAP nulls | Ben (encoded by Claude, Opus) | no |
+| 2026-10-28 | Ben accepts the contrast-curve flux floor (register entry records his empirical-Bayes framing); stratum A's fixed floor and the below-floor M9 misses stay | Ben (encoded by Claude, Opus) | no |
 
 ## References
 
 - Cook, Gelman & Rubin 2006, J. Comput. Graph. Stat. 15, 675 (validation
   of Bayesian software by simulation).
 - Talts et al. 2018, arXiv:1804.06788 (simulation-based calibration).
-- Kass & Raftery 1995, JASA 90, 773 (Bayes factor scale).
-- Royall 2000, JASA 95, 760 (the universal bound on misleading evidence).
 - Raghavan et al. 2010, ApJS 190, 1; Moe & Di Stefano 2017, ApJS 230, 15
   (eccentricity distributions of short-period binaries).
 - ten Brummelaar et al. 2005, ApJ 628, 453 (CHARA Array station
