@@ -1242,7 +1242,6 @@ class CalibrationNuisance:
         )
         self.offset_unit_mas = rad2mas / (2.0 * onp.pi * q_max)
         self.offset_beams = float(offset_beams)
-        self._max_offset_mas = None
         self.blur_fwhm_mas = (
             None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
@@ -1321,16 +1320,12 @@ class CalibrationNuisance:
             theta = self.offset_beams * 2.0 * onp.pi * unit
             if "offset" in bounds:
                 lo, hi = bounds["offset"]
-                self._max_offset_mas = float(
-                    onp.max(onp.abs([onp.asarray(lo), onp.asarray(hi)]))
-                )
+                lo, hi = lo + 0.0 * theta, hi + 0.0 * theta
             else:
-                self._max_offset_mas = None
                 lo, hi = -theta, theta
             shape = (k, 2)
             out[self._site("offset")] = dist.Uniform(
-                np.broadcast_to(np.asarray(lo, float), shape),
-                np.broadcast_to(np.asarray(hi, float), shape),
+                np.broadcast_to(lo, shape), np.broadcast_to(hi, shape)
             )
         if self.sigmas is True:
             if "sigma" in bounds:

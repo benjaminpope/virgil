@@ -918,7 +918,8 @@ def test_old_taper_name_gives_identical_toeplitz_and_direct_losses():
 
 def test_reduced_clamps_non_positive_c_sum_plus_delta(small):
     """When ``c_sum + delta <= 0`` (e.g. from NUFFT tolerance or an extreme
-    exploratory step), ``_reduced`` and its gradient stay finite."""
+    exploratory step), ``_reduced`` and its gradient stay finite and match
+    the relative ``eps * c_sum`` floor."""
     import equinox as eqx
 
     data, _, scene, template = small
@@ -926,10 +927,9 @@ def test_reduced_clamps_non_positive_c_sum_plus_delta(small):
         data, sigmas="profile", offsets=False, alpha=0.7
     )
     tdata = data.toeplitz(template, nuis)
-    # Force c_sum small and cross positive so c_sum + delta < 0.
+    # Force cross positive so c_sum + delta < 0.
     arrays = dict(
         tdata.arrays,
-        c_sum=np.full_like(tdata.arrays["c_sum"], 1e-30),
         cross=np.full_like(tdata.arrays["cross"], 1e6),
     )
     tdata_neg = eqx.tree_at(lambda t: t.arrays, tdata, arrays)
@@ -939,18 +939,18 @@ def test_reduced_clamps_non_positive_c_sum_plus_delta(small):
     params = term.curvature_params(values)
     assert bool(np.all(term.arrays["c_sum"] + term._deltas(params) < 0.0))
 
+    chi2, log_norm = term.chi2_and_log_norm(values)
+    eps = np.finfo(term.arrays["c_sum"].dtype).eps
+    expected_log_norm = float(
+        np.sum(term.arrays["count"] * np.log1p(eps - 1.0))
+    )
+    assert float(chi2) == 0.0
+    assert float(log_norm) == pytest.approx(expected_log_norm, rel=1e-15)
+
     def loss(v):
-        chi2, log_norm = term.chi2_and_log_norm(v)
-        return 0.5 * chi2 + log_norm
+        c, ln = term.chi2_and_log_norm(v)
+        return 0.5 * c + ln
 
     val, grad = jax.value_and_grad(loss)(values)
-    assert np.isfinite(val)
+    assert float(val) == pytest.approx(expected_log_norm, rel=1e-15)
     assert all(bool(np.all(np.isfinite(g))) for g in grad.values())
-
-
-def test_custom_offset_prior_bounds_widen_toeplitz_precompute(small):
-    data, nuis, scene, template = small
-    wide = 50.0
-    nuis.priors(offset=(-wide, wide))
-    tdata = data.toeplitz(template, nuis, offsets="spread")
-    assert tdata.max_shift_pix * PIXEL == pytest.approx(wide, rel=1e-12)

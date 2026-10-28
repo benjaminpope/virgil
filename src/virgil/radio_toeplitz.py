@@ -258,8 +258,6 @@ class ToeplitzVisData(eqx.Module):
             # The largest image-frame shift (pixels) of the offsets' prior box.
             shift_mas = max_offset_mas
             if shift_mas is None:
-                shift_mas = getattr(nuisance, "_max_offset_mas", None)
-            if shift_mas is None:
                 free_obs = onp.arange(nuisance.n_obs) != nuisance.ref_obs
                 theta = nuisance.offset_beams * 2.0 * onp.pi
                 shift_mas = float(
@@ -655,9 +653,9 @@ class _ToeplitzTerm(eqx.Module):
     def _profile(self, delta):
         """``ŝ_d² = (C_d + Δ_d) / 2N_d`` (1 without points), held."""
         c_sum, count = self.arrays["c_sum"], self.arrays["count"]
-        s2 = (c_sum + delta) / (2.0 * np.maximum(count, 1.0))
-        floor = np.sqrt(np.finfo(s2.dtype).tiny)
-        s2 = np.where(count > 0, np.maximum(s2, floor), 1.0)
+        eps = np.finfo(c_sum.dtype).eps
+        num = np.maximum(c_sum + delta, eps * np.maximum(c_sum, eps))
+        s2 = np.where(count > 0, num / (2.0 * np.maximum(count, 1.0)), 1.0)
         return jax.lax.stop_gradient(s2)
 
     def _reduced(self, params):
@@ -667,12 +665,8 @@ class _ToeplitzTerm(eqx.Module):
             r = (delta - jax.lax.stop_gradient(delta)) / self._profile(delta)
             ok = (count > 0) & (c_sum > 0)
             ratio = delta / np.where(ok, c_sum, 1.0)
-            tiny = np.finfo(c_sum.dtype).tiny
-            log1p = np.where(
-                ratio > -0.5,
-                np.log1p(np.maximum(ratio, -0.5)),
-                np.log(np.maximum(1.0 + ratio, tiny)),
-            )
+            eps = np.finfo(c_sum.dtype).eps
+            log1p = np.log1p(np.maximum(ratio, eps - 1.0))
             log_norm = np.sum(
                 np.where(ok, count * jax.lax.stop_gradient(log1p), 0.0)
             )

@@ -379,7 +379,7 @@ def test_empty_obs_and_ddid_groups_after_subset_produce_no_nan():
     data = _data(n=600, n_obs=3, ddids_per_obs=(1, 1, 1), seed=7)
     # Drop observation 1 (and its ddid 1) completely via subset.
     sub = data.subset(onp.asarray(data.obs) != 1)
-    assert sub.n_obs if hasattr(sub, "n_obs") else len(sub.obs_ids) == 3
+    assert len(sub.obs_ids) == 3
     for sigmas in (True, "profile"):
         nuis = CalibrationNuisance(sub, sigmas=sigmas, alpha=0.7)
         assert onp.all(onp.isfinite(nuis.offset_unit_mas))
