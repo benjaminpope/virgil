@@ -209,7 +209,7 @@ def test_select_keeps_whole_triangles_in_a_wavelength_range():
     parts = model_loglike(TRUTH, noisy.select(wavel_min=2.15e-6)) + (
         model_loglike(TRUTH, noisy.select(wavel_max=2.15e-6))
     )
-    assert parts == pytest.approx(whole, rel=1e-5)
+    assert parts == pytest.approx(float(whole), rel=1e-5)
     assert upper.n_independent + lower.n_independent == data.n_independent
     with pytest.raises(ValueError, match="No samples"):
         data.select(3.0e-6)
@@ -293,7 +293,7 @@ def test_select_ranges_and_exclude_split_the_likelihood():
     inner = noisy.select(ranges=window)
     whole = model_loglike(TRUTH, noisy)
     parts = model_loglike(TRUTH, excluded) + model_loglike(TRUTH, inner)
-    assert parts == pytest.approx(whole, rel=1e-5)
+    assert parts == pytest.approx(float(whole), rel=1e-5)
     with pytest.raises(ValueError, match="not both"):
         noisy.select(2.0e-6, ranges=window)
     with pytest.raises(ValueError, match="No samples"):
@@ -317,7 +317,7 @@ def test_select_observables_keeps_closure_phases_or_visibilities():
     parts = model_loglike(TRUTH, vis_only) + model_loglike(
         TRUTH, noisy.select(observables="phi")
     )
-    assert parts == pytest.approx(whole, rel=1e-5)
+    assert parts == pytest.approx(float(whole), rel=1e-5)
     assert (
         cp_only.n_independent + vis_only.select(2.05e-6, 2.25e-6).n_independent
         == middle.n_independent

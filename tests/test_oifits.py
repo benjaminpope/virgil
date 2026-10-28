@@ -784,7 +784,7 @@ def test_split_by_epoch_partitions_the_likelihood(tmp_path):
     model = BinaryModelCartesian(dra=55.0, ddec=-35.0, flux=0.04)
     whole = model_loglike(model, noisy)
     assert sum(model_loglike(model, p) for p in parts) == pytest.approx(
-        whole, rel=1e-5
+        float(whole), rel=1e-5
     )
 
 
