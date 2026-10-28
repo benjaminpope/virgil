@@ -44,7 +44,7 @@ Each triangle $(a, b, c)$ is matched to the visibility baselines $(a, b)$, $(b, 
 
 A leg with no such visibility row, or stored only reversed as $(b, a)$, gets an extra flagged sample at its own $(u, v)$ from the `OI_T3` row (`U1COORD` to `V2COORD`: $(a, b)$ at $(U1, V1)$, $(b, c)$ at $(U2, V2)$ and $(a, c)$ at their sum), since the standard makes `OI_T3` self-contained; for a reversed leg the model visibility there is the conjugate of the stored one. Legs with no visibility row in either orientation (incomplete V² coverage, as in some MIRC-X and ESO phase-3 files) give one warning with their number.
 
-The reader raises unless those coordinates are finite and non-zero (older AMI and legacy writers leave them NaN or 0) and agree within 10% with the triangle's legs that do have a visibility row; otherwise a table written with the opposite baseline direction would fit a mirrored closure phase.
+For a triangle with a leg that has no visibility row, the reader raises unless those coordinates are finite and non-zero (older AMI and legacy writers leave them NaN or 0). Whenever they are finite and non-zero they must agree within 10% with the triangle's legs that do have a visibility row, since a table written with the opposite baseline direction would fit a mirrored closure phase; NaN or zero coordinates on a fully matched triangle are ignored.
 
 ## Frames and times {#frames}
 
