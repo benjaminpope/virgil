@@ -243,6 +243,10 @@ Notation:
 
 ### A. One night-outlier mixture, ε marginalised
 
+> Revised by [orbit_mixture_v2.md](orbit_mixture_v2.md) (2026-10-29, draft
+> for Ben): global noise scales in place of per-night ones, ε-continuation
+> in the search, an exact outlier integral, and candidate (iii′).
+
 **Model.** Each night is either described by the orbit, or it is an
 outlier: a night whose data come from the same binary but whose
 companion position is not predicted by the orbit. A miscalibrated or
