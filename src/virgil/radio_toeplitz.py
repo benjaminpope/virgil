@@ -43,8 +43,14 @@ import numpy as onp
 from . import _nufft_spread as grid
 from ._geometry import gaussian_taper, offset_phase, rotate
 from ._utils import mas2rad
-from .models import Image, SourceModel, System
-from .radio import _warn_double_blur
+from .models import Image, System
+from .radio import (
+    _checked_sigma,
+    _require_function,
+    _scene_function,
+    _TermBase,
+    _warn_double_blur,
+)
 
 __provisional__ = ("*",)
 
@@ -402,11 +408,7 @@ class ToeplitzVisData(eqx.Module):
         part of a [`System`][virgil.models.System]) at the template's fixed
         ``dra``, ``ddec``; the observations' offsets are ``cal.offset``.
         """
-        if isinstance(scene, SourceModel):
-            raise TypeError(
-                "scene must be a function of the fitted values, e.g. "
-                "`lambda values: model`, not a model instance."
-            )
+        _require_function(scene)
         _refuse_nuisance(nuisance)
         if _signature(nuisance) != self.signature:
             raise ValueError(
@@ -430,7 +432,7 @@ class ToeplitzVisData(eqx.Module):
     def chi2_by_ddid(self, scene, values, nuisance):
         """``(chi2, n)`` per ddid, as
         [`ComplexVisData.chi2_by_ddid`][virgil.radio.ComplexVisData.chi2_by_ddid]."""
-        term = self.term(_as_function(scene), nuisance)
+        term = self.term(_scene_function(scene), nuisance)
         chi2 = term.chi2_by_ddid(values)
         return onp.asarray(chi2), onp.asarray(self.arrays["count"], int)
 
@@ -442,7 +444,7 @@ class ToeplitzVisData(eqx.Module):
         ``loss_direct`` (``½χ² + log_norm``), ``max_rel``. ``chunk_size`` is
         the direct term's.
         """
-        scene = _as_function(scene)
+        scene = _scene_function(scene)
         chi2 = self.chi2_by_ddid(scene, values, nuisance)[0]
         direct = self.data.chi2_by_ddid(
             scene, values, nuisance, self.mask, chunk_size=chunk_size
@@ -463,13 +465,6 @@ class ToeplitzVisData(eqx.Module):
             loss_direct=loss_direct,
             max_rel=float(max(rel.max(), rel_loss)),
         )
-
-
-def _as_function(scene):
-    if isinstance(scene, SourceModel):
-        model = scene
-        return lambda values: model  # noqa: E731
-    return scene
 
 
 # ----------------------------------------------------------------------
@@ -499,14 +494,10 @@ def _single_image(scene):
     return model, offsets + [model.dra, model.ddec]
 
 
-class _ToeplitzTerm(eqx.Module):
+class _ToeplitzTerm(_TermBase):
     """χ² and log-normalization of a `ToeplitzVisData` with calibration
     nuisances, less constants (``chi2_constant``, ``log_norm_constant``)."""
 
-    arrays: dict
-    sigma_fixed: object
-    scene: object = eqx.field(static=True)
-    nuisance: object = eqx.field(static=True)
     layout: tuple = eqx.field(static=True)
     image_offset_mas: tuple = eqx.field(static=True)
     ddid_obs: tuple = eqx.field(static=True)
@@ -516,15 +507,7 @@ class _ToeplitzTerm(eqx.Module):
     n_data: int = eqx.field(static=True)
 
     def __init__(self, tdata, scene, nuisance, sigma=None):
-        if sigma is not None:
-            if nuisance.sigmas != "profile":
-                raise ValueError("sigma= needs sigmas='profile'.")
-            sigma = np.asarray(sigma, dtype=np.float64)
-            if sigma.shape != (nuisance.n_ddid,):
-                raise ValueError(
-                    f"sigma must have shape ({nuisance.n_ddid},)."
-                )
-        self.sigma_fixed = sigma
+        self.sigma_fixed = _checked_sigma(sigma, nuisance)
         self.arrays = tdata.arrays
         self.scene = scene
         self.nuisance = nuisance
@@ -536,10 +519,6 @@ class _ToeplitzTerm(eqx.Module):
         self.kp = tdata.kp
         # As ComplexVisData.term: two numbers per point, masked or not.
         self.n_data = 2 * len(tdata.data)
-
-    @property
-    def has_log_norm(self):
-        return bool(self.nuisance.sigmas)
 
     @property
     def _profiled(self):
@@ -749,12 +728,6 @@ class _ToeplitzTerm(eqx.Module):
             return self.sigma_fixed
         return self.nuisance._unpack(values)[3]
 
-    def derived(self, values):
-        """Quantities of the fit that are not sites: the profiled ``ŝ``."""
-        if self.nuisance.sigmas != "profile":
-            return {}
-        return {self.nuisance._site("sigma"): self.sigma_hat(values)}
-
     def chi2_by_ddid(self, values):
         """``(C_d + Δ_d) / s_d²`` per ddid."""
         params = self.curvature_params(values)
@@ -767,9 +740,11 @@ class _ToeplitzTerm(eqx.Module):
             ) ** 2
         return (self.arrays["c_sum"] + delta) / s2
 
-    def loglike(self, values):
-        """Normalized Gaussian log density of the unmasked points."""
+    def full_chi2_and_log_norm(self, values):
+        """``(χ², log_norm)`` of all unmasked points, constants included."""
         chi2, log_norm = self.chi2_and_log_norm(values)
-        chi2 = chi2 + self.chi2_constant
-        log_norm = log_norm + self.log_norm_constant
-        return -0.5 * chi2 - log_norm - self.arrays["logw"]
+        return chi2 + self.chi2_constant, log_norm + self.log_norm_constant
+
+    @property
+    def _log_2pi_w(self):
+        return self.arrays["logw"]
