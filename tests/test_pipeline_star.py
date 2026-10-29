@@ -806,7 +806,9 @@ def test_model_choice_is_invalid_with_the_parent_diameter_on_the_lower_edge(
         "comparisons": [comparison],
         "n_independent": 81,
     }
-    check = next(c for c in star._fit_checks(fit, registry) if "gain" in c.name)
+    check = next(
+        c for c in star._fit_checks(fit, registry) if "gain" in c.name
+    )
     assert check.status == status
     assert ("unidentified" in check.message) == (
         unidentified and status == "pass"

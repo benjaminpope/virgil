@@ -884,20 +884,6 @@ def _fit_in_lobes(p, entry, lobes, noise):
 # --- choosing between models ---
 
 
-def _on_lower_range_edge(report):
-    """Whether the best lobe's diameter is at the lower edge of the whole
-    diameter range, not at an upper or an inner lobe edge."""
-    lobes = report.get("lobes")
-    if "diam" not in (report.get("at_bound") or ()) or not lobes:
-        return False
-    low = min(row["diam_bounds_mas"][0] for row in lobes)
-    lobe_low, lobe_high = report["diam_bounds_mas"]
-    diam = report["params"]["diam"]
-    return lobe_low == low and math.log(diam / lobe_low) < math.log(
-        lobe_high / diam
-    )
-
-
 def _compare(registry, reports, child, n):
     """The comparison of a model with its parent: gain against BIC penalty.
 
@@ -914,7 +900,17 @@ def _compare(registry, reports, child, n):
     gain = reports[parent]["m2loglike"] - reports[child]["m2loglike"]
     n_extra = registry[child].n_params - registry[parent].n_params
     penalty = _checks.bic_penalty(n_extra, n)
-    unidentified = _on_lower_range_edge(reports[parent])
+    # The best lobe's diameter is at the lower edge of the whole range, not at
+    # an upper or an inner lobe edge.
+    lobes = reports[parent].get("lobes")
+    unidentified = False
+    if "diam" in (reports[parent].get("at_bound") or ()) and lobes:
+        low = min(row["diam_bounds_mas"][0] for row in lobes)
+        lobe_low, lobe_high = reports[parent]["diam_bounds_mas"]
+        lobe_diam = reports[parent]["params"]["diam"]
+        unidentified = lobe_low == low and math.log(
+            lobe_diam / lobe_low
+        ) < math.log(lobe_high / lobe_diam)
     return {
         "simple": parent,
         "complex": child,
