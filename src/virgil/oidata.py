@@ -1799,7 +1799,7 @@ def _good(record):
     return good, value, error
 
 
-# deliberate: builds the flux, nflux and visamp blocks of extra observables from the reader records, in KINDS order
+# deliberate: builds and validates every extra-observable block (flux, nflux, visamp/corrflux, t3amp, visphi) from the reader records, in KINDS order
 def _build_extras(data, obj, legs):
     """The blocks of extra observables of a record, in ``KINDS`` order."""
     n = onp.size(obj.u)

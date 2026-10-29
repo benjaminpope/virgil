@@ -601,7 +601,7 @@ def _check_t3_coordinates(legs_uv, founds, record, ins, triangle, mjd):
             )
 
 
-# deliberate: matches each T3 triangle leg to a visibility sample and appends flagged samples for legs with no row; also called by the T3AMP extras reader
+# deliberate: matches each T3 triangle leg to a visibility sample, appending flagged samples for legs with no row and registering them in the lookup that the phase and extras readers use
 def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
     """Closure phases, with the sample index of each triangle leg.
 
