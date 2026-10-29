@@ -459,7 +459,7 @@ class ComplexVisData(eqx.Module):
             (``fit(...).info["derived"]["cal.sigma"]``): profiling its own
             ``ŝ`` is not a predictive score.
         chi2 : {"auto", "direct", "toeplitz"}, optional
-            ``"auto"`` uses the dirty-beam form of
+            How ``fit`` evaluates χ². ``"auto"`` uses the dirty-beam form of
             [`toeplitz`][virgil.radio.ComplexVisData.toeplitz] when it is
             exact (one fixed ``Image``, no ``antenna_gains``, fitted
             ``alpha`` or ``offsets``, float64, ``method="lbfgs"`` or
@@ -1509,6 +1509,8 @@ class _TermBase(eqx.Module):
 
     @property
     def has_log_norm(self):
+        # A Toeplitz term never has antenna gains (_refuse_nuisance), so for
+        # it this is bool(sigmas).
         return bool(self.nuisance.sigmas) or self.nuisance.antenna_gains
 
     def derived(self, values):

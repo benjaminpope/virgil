@@ -396,13 +396,54 @@ EXPECTED = {
 }
 
 
+EXPECTED_MORE = {
+    "unscaled": {
+        "direct_loglike": [-26330.532038026737],
+        "direct_sigma_hat": [1.0, 1.0, 1.0, 1.0],
+        "direct_derived": [],
+        "direct_has_log_norm": 0.0,
+        "toeplitz_loglike": [-26330.532038026755],
+        "toeplitz_sigma_hat": [1.0, 1.0, 1.0, 1.0],
+        "toeplitz_derived": [],
+        "toeplitz_has_log_norm": 0.0,
+    },
+    "masked_fixed": {
+        "direct_loglike": [-18783.843745488193],
+        "direct_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "direct_derived": [0.9, 1.1, 1.2, 0.8],
+        "direct_has_log_norm": 1.0,
+        "toeplitz_loglike": [-18783.843745488197],
+        "toeplitz_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "toeplitz_derived": [0.9, 1.1, 1.2, 0.8],
+        "toeplitz_has_log_norm": 1.0,
+    },
+    "antenna_gains": {
+        "direct_loglike": [-672.6086315850758],
+        "direct_sigma_hat": [
+            9.261466431437464,
+            8.569883895810879,
+            10.258057002660196,
+            9.528978465751774,
+        ],
+        "direct_derived": [
+            0.07850359847177373,
+            9.261466431437464,
+            8.569883895810879,
+            10.258057002660196,
+            9.528978465751774,
+        ],
+        "direct_has_log_norm": 1.0,
+    },
+}  # as EXPECTED, for ``CASES``
+
+
 @pytest.fixture(autouse=True)
 def float64():
     with jax.enable_x64(True):
         yield
 
 
-def _data(n=240, seed=3):
+def _data(n=240, seed=3, antennas=False):
     rng = onp.random.default_rng(seed)
     ddid = rng.integers(0, 4, n)
     obs = onp.asarray(DDID_OBS)[ddid]
@@ -416,14 +457,25 @@ def _data(n=240, seed=3):
     u, v = q * onp.cos(phi), q * onp.sin(phi)
     weight = rng.uniform(0.5, 2.0, n) * 1e2
     vis = rng.normal(size=n) + 1j * rng.normal(size=n)
+    extra = {}
+    if antennas:  # drawn last, so the other cases' data are unchanged
+        a1 = rng.integers(0, 4, n)
+        extra = dict(
+            ant1=a1,
+            ant2=a1 + rng.integers(1, 3, n),
+            time=onp.sort(rng.uniform(0, 100, n)),
+            scan=rng.integers(0, 3, n),
+        )
     return ComplexVisData.from_arrays(
-        u, v, vis, weight, freq, ddid=ddid + 5, obs=obs + 2
+        u, v, vis, weight, freq, ddid=ddid + 5, obs=obs + 2, **extra
     )
 
 
-def _setup(sigmas):
-    data = _data()
-    nuis = CalibrationNuisance(data, alpha=0.7, sigmas=sigmas)
+def _setup(sigmas, antennas=False):
+    data = _data(antennas=antennas)
+    nuis = CalibrationNuisance(
+        data, alpha=0.7, sigmas=sigmas, antenna_gains=antennas
+    )
     rng = onp.random.default_rng(11)
     values = {k: np.asarray(x) for k, x in nuis.defaults().items()}
     values["cal.flux"] = np.asarray(0.9)
@@ -494,15 +546,87 @@ def _numbers(sigmas):
     return out
 
 
-@pytest.mark.parametrize("sigmas", ["profile", True])
-def test_numbers_unchanged(sigmas):
-    got = _numbers(sigmas)
-    for key, want in EXPECTED[str(sigmas)].items():
+CASES = {
+    "unscaled": dict(sigmas=False),
+    "masked_fixed": dict(sigmas="profile", masked=True, fixed=True),
+    "antenna_gains": dict(sigmas="profile", antennas=True),
+}
+
+
+def _cases(sigmas, masked=False, fixed=False, antennas=False):
+    """The shared-base paths of ``_numbers`` does not reach: no σ, a mask
+    with fixed ``sigma=``, and antenna gains (direct only)."""
+    data, nuis, values, template = _setup(sigmas, antennas)
+    mask = onp.arange(len(data)) % 3 != 0 if masked else None
+    sigma = np.asarray([0.9, 1.1, 1.2, 0.8]) if fixed else None
+    terms = {
+        "direct": data.term(
+            _scene, nuis, mask=mask, sigma=sigma, chi2="direct"
+        )
+    }
+    if not antennas:
+        tdata = data.toeplitz(template, nuis, mask=mask, offsets="spread")
+        terms["toeplitz"] = tdata.term(_scene, nuis, sigma=sigma)
+    out = {}
+    for name, term in terms.items():
+        out[f"{name}_loglike"] = _flat(term.loglike(values))
+        out[f"{name}_sigma_hat"] = _flat(term.sigma_hat(values))
+        out[f"{name}_derived"] = _flat(
+            dict(sorted(term.derived(values).items()))
+        )
+        out[f"{name}_has_log_norm"] = onp.asarray(term.has_log_norm, float)
+    return out
+
+
+def _check(got, expected):
+    for key, want in expected.items():
         want = onp.asarray(want)
         scale = onp.max(onp.abs(want), initial=0.0)
         onp.testing.assert_allclose(
             got[key], want, rtol=RTOL, atol=RTOL * scale, err_msg=key
         )
+
+
+@pytest.mark.parametrize("sigmas", ["profile", True])
+def test_numbers_unchanged(sigmas):
+    _check(_numbers(sigmas), EXPECTED[str(sigmas)])
+
+
+@pytest.mark.parametrize("case", list(CASES))
+def test_more_paths_unchanged(case):
+    _check(_cases(**CASES[case]), EXPECTED_MORE[case])
+
+
+def test_toeplitz_never_carries_antenna_gains():
+    data, nuis, _, template = _setup("profile", antennas=True)
+    with pytest.raises(ValueError, match="antenna gains"):
+        data.toeplitz(template, nuis)
+
+
+@pytest.mark.parametrize("sigmas", ["profile", True, False])
+def test_has_log_norm_agrees(sigmas):
+    data, nuis, _, template = _setup(sigmas)
+    direct = data.term(_scene, nuis, chi2="direct")
+    toeplitz = data.toeplitz(template, nuis, offsets="spread").term(
+        _scene, nuis
+    )
+    assert direct.has_log_norm == toeplitz.has_log_norm == bool(sigmas)
+
+
+@pytest.mark.parametrize("branch", ["direct", "toeplitz"])
+def test_fixed_sigma_errors(branch):
+    def term(nuis, data, template, **kw):
+        if branch == "direct":
+            return data.term(_scene, nuis, **kw)
+        tdata = data.toeplitz(template, nuis, offsets="spread")
+        return tdata.term(_scene, nuis, **kw)
+
+    data, nuis, _, template = _setup(True)
+    with pytest.raises(ValueError, match="needs sigmas='profile'"):
+        term(nuis, data, template, sigma=[1.0] * 4)
+    data, nuis, _, template = _setup("profile")
+    with pytest.raises(ValueError, match="sigma must have shape"):
+        term(nuis, data, template, sigma=[1.0, 2.0])
 
 
 def test_taper_fwhm_mas_property_warns():
@@ -548,7 +672,7 @@ def test_explicit_toeplitz_raises_without_the_spreader(monkeypatch):
 if __name__ == "__main__":
     jax.config.update("jax_enable_x64", True)
     result = {
-        str(s): {k: v.tolist() for k, v in _numbers(s).items()}
-        for s in ("profile", True)
+        name: {k: v.tolist() for k, v in _cases(**kw).items()}
+        for name, kw in CASES.items()
     }
-    print(repr(result))
+    print(repr(result))  # paste as EXPECTED_MORE, from the base commit
