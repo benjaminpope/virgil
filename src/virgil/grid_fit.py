@@ -439,17 +439,13 @@ def _linear_flux_grid(
             s0 = np.sum(wt)
             mean_offset = np.sum(wt * offset) / s0
             var = np.sum(wt * (offset - mean_offset) ** 2) / s0
-            mean = f0 + mean_offset
-            log_b = (
+            post_mean = f0 + mean_offset
+            post_sd = np.sqrt(var)
+            log_bf = (
                 m
                 + np.log(s0)
                 - np.log(np.log(prior.f_max) - np.log(prior.f_min))
             )
-            log_bf, post_mean, post_sd = (
-                log_b,
-                mean,
-                np.sqrt(var),
-            )  # (log B, mean, sd)
             return (
                 flux,
                 sigma,
