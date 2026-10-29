@@ -485,6 +485,36 @@ def test_taper_fwhm_mas_property_warns():
         assert nuis.blur_fwhm_mas == 2.0
 
 
+def _resolve(monkeypatch, chi2):
+    from virgil import _nufft_spread
+    from virgil._geometry import _FT_DEFAULTS
+
+    def broken():
+        raise ImportError("nufftax moved its spreader")
+
+    monkeypatch.setattr(_nufft_spread, "_nufftax", broken)
+    monkeypatch.setitem(_FT_DEFAULTS, "toeplitz_min_points", 0)
+    monkeypatch.setitem(_FT_DEFAULTS, "toeplitz_points_per_pixel", 0)
+    data = _data()
+    nuis = CalibrationNuisance(data, alpha=0.7, offsets=False)
+    values = {k: np.asarray(x) for k, x in nuis.defaults().items()}
+    values["eta"] = np.zeros((NPIX, NPIX))
+    term = data.term(_scene, nuis, chi2=chi2)
+    return term, term.resolve(values, False)
+
+
+def test_auto_falls_back_to_direct_without_the_spreader(monkeypatch):
+    with pytest.warns(UserWarning, match="nufftax moved") as caught:
+        term, (resolved, form) = _resolve(monkeypatch, "auto")
+    assert len(caught) == 1
+    assert resolved is term and form.startswith("direct (auto)")
+
+
+def test_explicit_toeplitz_raises_without_the_spreader(monkeypatch):
+    with pytest.raises(ImportError, match="nufftax moved"):
+        _resolve(monkeypatch, "toeplitz")
+
+
 if __name__ == "__main__":
     jax.config.update("jax_enable_x64", True)
     result = {

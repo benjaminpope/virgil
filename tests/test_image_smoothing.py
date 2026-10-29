@@ -249,7 +249,8 @@ def test_old_names_are_deprecated_aliases():
             alpha=False,
             taper_fwhm_mas=10.0,
         )
-    assert old_nuis.taper_fwhm_mas == old_nuis.blur_fwhm_mas == 10.0
+    with pytest.warns(FutureWarning, match="blur_fwhm_mas"):
+        assert old_nuis.taper_fwhm_mas == old_nuis.blur_fwhm_mas == 10.0
     values = {k: np.asarray(v) for k, v in nuis.defaults().items()}
     loss = [data.term(lambda v: start, n)(values) for n in (nuis, old_nuis)]
     onp.testing.assert_array_equal(loss[0], loss[1])

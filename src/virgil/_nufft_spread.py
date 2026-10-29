@@ -24,8 +24,15 @@ _NODES = 160  # Gauss–Legendre nodes of ψ̂: 4e-14 at 64² with 20 px shifts
 def _nufftax():
     """nufftax's private spreader and kernel parameters, version-checked."""
     import nufftax
-    from nufftax.core.kernel import compute_kernel_params, es_kernel
-    from nufftax.core.spread import _spread_2d_dispatch
+
+    try:
+        from nufftax.core.kernel import compute_kernel_params, es_kernel
+        from nufftax.core.spread import _spread_2d_dispatch
+    except ImportError as err:
+        raise ImportError(
+            f"nufftax {nufftax.__version__} no longer has the private "
+            f"spreader the Toeplitz radio term uses ({err})."
+        ) from err
 
     # leading digits of each field, so "0.7rc1" reads as (0, 7)
     version = tuple(

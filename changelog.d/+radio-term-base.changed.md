@@ -1,0 +1,1 @@
+`virgil.radio`: the direct and Toeplitz terms share one base class (no change to any loss, gradient or ŝ); `CalibrationNuisance.taper_fwhm_mas` now warns (`FutureWarning`, removed in 0.5); `chi2="auto"` falls back to the direct term, with one warning, when nufftax's private spreader cannot be imported
