@@ -471,8 +471,12 @@ def test_offset_with_gains_is_pinned_by_the_phase_prior():
         init={**nuis.defaults(), "x": 2.0},
         method="lbfgs",
     )
-    # With two intervals per observation the gains absorb most of the ramp:
-    # x is known only through τ_φ, to about 0.6 mas (the start is 1 mas off),
-    # and no more than that moves into cal.offset.
+    # The noise (sigma 0.01) is far too small to set these bounds: the error is
+    # the prior's. With two intervals per observation the gains absorb most of
+    # the ramp, so x is known only through τ_φ = 0.5 rad (measured |x - 3| =
+    # 0.58 mas from a start 1 mas off; |cal.offset| = 0.73 mas at most, a
+    # fraction of the prior box). Bounds of 0.8 leave 1.4x and 1.1x over the
+    # deterministic fit; a drift to the old 1.0 would hide the gains absorbing
+    # the source offset.
     assert float(result.values["x"]) == pytest.approx(3.0, abs=0.8)
     assert onp.all(onp.abs(onp.asarray(result.values["cal.offset"])) < 0.8)
