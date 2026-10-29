@@ -322,6 +322,13 @@ def test_temper_false_reproduces_the_untempered_evidence():
         assert float(temp) == pytest.approx(float(old) / f, rel=1e-12)
 
 
+def _no_broad_grid(data, settings, *args, **kwargs):
+    """Stands in for ``aliases._broad_components`` in tests that stop at the
+    pre-flight and read only the settings: the outlier mixture's position grid
+    runs before it and costs tens of seconds."""
+    return dataclasses.replace(settings, log_broad=(-50.0,) * len(data))
+
+
 def _ell_sum(surfaces, x, data, cfg, dof):
     """The night terms' sum: the likelihood before the outlier mixture, which
     adds a rate-marginalized outlier component that tempering does not scale."""
@@ -367,6 +374,7 @@ def test_the_dof_argument_is_f_one_or_a_fixed_f(monkeypatch):
         seen["settings"] = settings
         raise Stop
 
+    monkeypatch.setattr(aliases, "_broad_components", _no_broad_grid)
     monkeypatch.setattr(aliases, "_preflight", preflight)
     monkeypatch.setattr(
         aliases,
@@ -414,6 +422,7 @@ def test_correlated_channels_are_tempered_by_default(monkeypatch):
         seen["settings"] = settings
         raise Stop
 
+    monkeypatch.setattr(aliases, "_broad_components", _no_broad_grid)
     monkeypatch.setattr(aliases, "_preflight", preflight)
     monkeypatch.setattr(
         aliases,
@@ -714,6 +723,7 @@ def _stub_fit(monkeypatch, data, positions, **kw):
         seen["settings"] = settings
         raise _Stop
 
+    monkeypatch.setattr(aliases, "_broad_components", _no_broad_grid)
     monkeypatch.setattr(aliases, "_preflight", preflight)
     monkeypatch.setattr(
         aliases,
