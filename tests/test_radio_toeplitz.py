@@ -976,17 +976,17 @@ def test_profiled_loss_floors_value_and_gradient_together():
 
 
 def test_toeplitz_matches_the_direct_term_on_noise_free_data_above_the_floor():
-    """Independent of the term's own ``_deltas``: on noise-free data a model
+    """On noise-free data a model
     well away from the truth leaves C + Δ far above round-off, and the
-    Toeplitz loss and gradient equal the direct term's (the visibility-space
-    sum), which shares none of the Toeplitz arithmetic."""
+    Toeplitz loss and gradient equal the direct term's; the comparison shares
+    none of the Toeplitz arithmetic."""
     term, values, direct = _noise_free_term()
     c_sum = term.arrays["c_sum"]
     for scale in (0.0, 0.5, 1.5):
         v = {**values, "eta": values["eta"] * scale}
-        # above the floor: Δ/C is order one, not the round-off of the truth
+        # above the floor: C + Δ is a finite fraction of C, not round-off
         delta = term._deltas(term.curvature_params(v))
-        assert float(np.min(np.abs(delta / c_sum))) > 1e-3
+        assert float(np.min((c_sum + delta) / c_sum)) > 1e-3
         t_val, t_grad = jax.value_and_grad(term.loglike)(v)
         d_val, d_grad = jax.value_and_grad(direct.loglike)(v)
         assert float(t_val) == pytest.approx(float(d_val), rel=1e-10)
@@ -1015,8 +1015,8 @@ def test_custom_offset_prior_bounds_widen_toeplitz_precompute(small):
     "0.5*chi2 = 88.49 (virgil#590)",
 )
 def test_curvature_loss_is_half_chi2_without_log_norm(small):
-    """``_ToeplitzTerm.curvature_loss`` returns ``0.5 * chi2`` (matching
-    ``_RadioTerm``) and does not add ``log_norm``."""
+    """If virgil#590 decides ``_ToeplitzTerm.curvature_loss`` should drop
+    ``log_norm``, it returns ``0.5 * chi2``. Today it adds ``log_norm``."""
     data, _, scene, template = small
     nuis = CalibrationNuisance(data, sigmas=True, offsets=False, alpha=0.7)
     tdata = data.toeplitz(template, nuis)
