@@ -939,8 +939,8 @@ def _noise_free_term(seed=1, n=300):
     scene, template = _scene(8)
     model = onp.asarray(blank.model(scene(values), values, nuis))
     data = ComplexVisData.from_arrays(u, v, model, weight, freq, **kw)
-    term = data.toeplitz(template, nuis).term(scene, nuis)
-    return term, values
+    tdata = data.toeplitz(template, nuis)
+    return tdata.term(scene, nuis), values, tdata.direct_term(scene, nuis)
 
 
 def test_profiled_loss_floors_value_and_gradient_together():
@@ -948,7 +948,7 @@ def test_profiled_loss_floors_value_and_gradient_together():
     the profiled loss and its gradient are finite and are those of
     ``N ln max(1 + Δ/C, eps)``: value and gradient floor at the same place.
     Above the floor the Toeplitz term matches the direct term."""
-    term, values = _noise_free_term()
+    term, values, _ = _noise_free_term()
     c_sum, count = term.arrays["c_sum"], term.arrays["count"]
     eps = np.finfo(c_sum.dtype).eps
 
@@ -973,3 +973,59 @@ def test_profiled_loss_floors_value_and_gradient_together():
             )
     # the depth of the floor is bounded: N ln(eps) per ddid, not N ln(tiny)
     assert float(floored(values)) >= float(np.sum(count)) * np.log(eps)
+
+
+def test_toeplitz_matches_the_direct_term_on_noise_free_data_above_the_floor():
+    """On noise-free data a model
+    well away from the truth leaves C + Δ far above round-off, and the
+    Toeplitz loss and gradient equal the direct term's; the comparison shares
+    none of the Toeplitz arithmetic."""
+    term, values, direct = _noise_free_term()
+    c_sum = term.arrays["c_sum"]
+    for scale in (0.0, 0.5, 1.5):
+        v = {**values, "eta": values["eta"] * scale}
+        # above the floor: C + Δ is a finite fraction of C, not round-off
+        delta = term._deltas(term.curvature_params(v))
+        assert float(np.min((c_sum + delta) / c_sum)) > 1e-3
+        t_val, t_grad = jax.value_and_grad(term.loglike)(v)
+        d_val, d_grad = jax.value_and_grad(direct.loglike)(v)
+        assert float(t_val) == pytest.approx(float(d_val), rel=1e-10)
+        for k in d_grad:
+            onp.testing.assert_allclose(
+                t_grad[k], d_grad[k], rtol=1e-8, atol=1e-8
+            )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="max_shift_pix ignores nuis.priors(offset=...) since fa53dce: "
+    "26.73 mas, not 50 (virgil#589)",
+)
+def test_custom_offset_prior_bounds_widen_toeplitz_precompute(small):
+    data, nuis, scene, template = small
+    wide = 50.0
+    nuis.priors(offset=(-wide, wide))
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    assert tdata.max_shift_pix * PIXEL == pytest.approx(wide, rel=1e-12)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="curvature_loss is 0.5*chi2 + log_norm since b9e7be9: 638.27 vs "
+    "0.5*chi2 = 88.49 (virgil#590)",
+)
+def test_curvature_loss_is_half_chi2_without_log_norm(small):
+    """If virgil#590 decides ``_ToeplitzTerm.curvature_loss`` should drop
+    ``log_norm``, it returns ``0.5 * chi2``. Today it adds ``log_norm``."""
+    data, _, scene, template = small
+    nuis = CalibrationNuisance(data, sigmas=True, offsets=False, alpha=0.7)
+    tdata = data.toeplitz(template, nuis)
+    term = tdata.term(scene, nuis)
+    values = _values(nuis, flux=0.8, gain=[1.1], sigma=[2.5, 2.5, 2.5, 2.5])
+    values["eta"] = np.zeros((8, 8))
+    params = term.curvature_params(values)
+    chi2, log_norm = term._reduced(params)
+    assert float(log_norm) != 0.0
+    assert float(term.curvature_loss(params)) == pytest.approx(
+        0.5 * float(chi2), rel=1e-15
+    )
