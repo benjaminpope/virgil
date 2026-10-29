@@ -180,7 +180,7 @@ def _laplace_started(base):
     return Guide
 
 
-# deliberate: named step: guide selection by name or callable
+# deliberate: guide dispatch by name or callable, raising on an unknown name; inlined it takes variational to 149 lines
 def _make_guide(guide, posterior, init_loc_fn):
     if callable(guide) and not isinstance(guide, str):
         return guide(posterior, init_loc_fn=init_loc_fn)
@@ -200,7 +200,7 @@ def _make_guide(guide, posterior, init_loc_fn):
     )
 
 
-# deliberate: named step: the guide's Gauss–Newton starting width
+# deliberate: Gauss-Newton starting width of the guide; inlined it takes variational to 175 lines
 def _start_scale(
     guide_obj,
     model,

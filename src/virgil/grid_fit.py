@@ -318,7 +318,7 @@ _WINDOW_SIGMA = 12.0  # half-width of the integration window, in sigma_f
 _TAIL_SIGMA = 40.0  # decay lengths kept when f_hat is outside the bounds
 
 
-# deliberate: named step: the quadrature, documented as a unit
+# deliberate: log-uniform quadrature of the evidence over the grid, shared by the scan and the solve paths
 def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
     """Evidence, posterior mean and sd of f under ``LogUniform(f_min, f_max)``.
 
@@ -397,7 +397,6 @@ class LinearFluxGrid(NamedTuple):
     log_bayes_factor: np.ndarray | None = None
 
 
-# deliberate: jit boundary
 @eqx.filter_jit
 def _linear_flux_grid(
     data,

@@ -49,7 +49,7 @@ def _gain_jacobian(data, vis_prediction):
     return np.ones_like(vis_prediction)
 
 
-# deliberate: named step of the whitening, with its gain branch
+# deliberate: visibility branch of the whitening: with marginalized gains it returns widened errors and the log normalization
 def _whiten_vis(data, prediction, resid, errors, gain_terms):
     """Whitened visibility residuals, their effective errors, and the log
     normalization of the marginalized gains (``Σ extra``, 0 without)."""
@@ -137,7 +137,7 @@ def _whiten_with_log_norm(
     return np.concatenate(whitened), np.concatenate(effective), log_norm
 
 
-# deliberate: named step of the whitening, with three return paths
+# deliberate: closure-phase branch of the whitening: diagonal, correlated and offset-marginalized return paths
 def _whiten_phases(data, resid, errors, offset_terms=None):
     """Whitened phase residuals, their effective errors and the closure
     offsets' log normalization (see ``_whiten_with_log_norm``)."""
@@ -678,7 +678,7 @@ def _check_positive_flux_prior(name, distribution):
         )
 
 
-# deliberate: test seam (tests/test_gains.py monkeypatches it)
+# deliberate: number of host devices; test_numpyro_model_warns_of_zero_size_arrays_with_parallel_chains monkeypatches it
 def _host_devices():
     """The number of local devices, without initializing the backend (by reading
     ``XLA_FLAGS`` first; several GPUs are not counted before the backend starts).

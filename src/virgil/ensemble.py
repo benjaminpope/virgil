@@ -615,7 +615,7 @@ def _extend(axis, best, limits):
     return True
 
 
-# deliberate: test seam (tests/test_ensemble.py)
+# deliberate: grows a scan grid toward an off-edge optimum and stops at limits; pinned by test_grid_grows_toward_an_optimum_off_the_edge_and_stops_at_limits
 def _grow_grid(
     evaluate, lengths, sigmas, length_limits, sigma_limits, growths
 ):
@@ -649,7 +649,7 @@ def _grow_grid(
     return ls, ss, values
 
 
-# deliberate: test seam (tests/test_ensemble.py)
+# deliberate: axis ratio and angle of the data; pinned by test_elongated_data_fall_below_the_axis_ratio_that_adds_the_variant
 def _elongation(data, star, field_mas):
     """Axis ratio and position angle (deg) of an elliptical-Gaussian fit.
 
@@ -680,7 +680,7 @@ def _elongation(data, star, field_mas):
     return best[1], best[2]
 
 
-# deliberate: test seam (tests/test_ensemble.py)
+# deliberate: rotated template renders back onto the sky template; pinned by test_oriented_template_renders_back_onto_the_sky_template
 def _oriented(template, pa_deg, pixel_scale_mas):
     """``template`` on a grid whose "up" axis points at ``pa_deg``.
 
@@ -899,7 +899,7 @@ def _corner(curve):
         return None
 
 
-# deliberate: test seam (tests/test_ensemble.py)
+# deliberate: renders a rotated member onto the common grid without cropping; pinned by test_rotated_member_is_rendered_onto_the_common_grid_without_cropping
 def _on_common_grid(image, npix, scale):
     """The image's pixels on the common grid, flux conserved.
 
