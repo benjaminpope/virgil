@@ -12,6 +12,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 import pytest
+from scipy.special import gammaln
 
 pytest.importorskip("jaxoplanet")
 
@@ -638,7 +639,15 @@ def test_gaussian_evidence_laplace_exact_and_importance_sampling_close():
 
 # The log likelihood at the optimum of each near start below, from main's
 # L-BFGS-B-with-restarts ``_optimize`` (commit 5f600a3); all six reach it.
-_OLD_NEAR = [-193.286626] * 6
+# The fit now carries the mixture's Occam factor for its six nights
+# (``_occam(6)``; the outlier level of ``_problem`` is -1e6), which is the
+# only change from that value.
+def _occam(k):
+    """ln Γ(K + ½) / (Γ(K + 1) √π): the Beta(½, ½) mean of (1 - ε)^K."""
+    return float(gammaln(k + 0.5) - gammaln(k + 1.0) - 0.5 * onp.log(onp.pi))
+
+
+_OLD_NEAR = [-193.286626 + _occam(6)] * 6
 
 
 @in_float64
@@ -704,7 +713,7 @@ def test_a_kernel_that_stalls_falls_back_to_lbfgs_and_then_the_kernel(
     monkeypatch.setattr(_gauss_newton, "solve", truncate_first)
     x, value = aliases._optimize(problem, bounds, x0, 200)
     assert len(calls) == 2  # the kernel (cut short), L-BFGS-B, the kernel
-    assert value == pytest.approx(-193.286626, abs=0.01)
+    assert value == pytest.approx(-193.286626 + _occam(6), abs=0.01)
 
 
 # Band log evidences (Laplace) of the fit below from main's optimizer (commit
@@ -729,14 +738,21 @@ def test_band_evidences_are_no_lower_than_with_the_old_optimizer():
         n_samples=50,
     )
     by_n = {b.n: b for b in result.bands}
+    # The old values have no outlier mixture. It can only add to the
+    # likelihood (its outlier terms are positive), and without any outlier it
+    # costs the Occam factor of its K nights: so no lower than old + _occam(K).
+    shift = _occam(len(data))
     for n, old in _OLD_LOG_Z.items():
-        assert by_n[n].log_z >= old - 0.05
+        assert by_n[n].log_z >= old + shift - 0.05
 
 
 # --- UD primary, V² amplitudes, the flux flip and the warm start -----------------------
 
 
 def _problem(data, **kw):
+    kw.setdefault(
+        "log_broad", (-1e6,) * len(data)
+    )  # no outliers: a pure Occam factor
     settings = _settings(**kw)
     return settings, aliases._Problem(
         [cast_tree(d, "float64") for d in data], settings
@@ -973,7 +989,9 @@ def _objective(data, x, primary_diam=DIAM):
 
 
 def _score(data, nights, primary_diam=DIAM):
-    """The same log likelihood from ``chi2_per_night``'s ``chi2_fit``."""
+    """The same log likelihood from ``chi2_per_night``'s ``chi2_fit``, with
+    the mixture's Occam factor Γ(K + ½) / (Γ(K + 1) √π) for K nights (the
+    outlier level is -1e6, so no night is an outlier)."""
     with jax.enable_x64(True):
         data = [cast_tree(d, "float64") for d in data]
         _, problem = _problem(data, primary_diam=primary_diam, vis_amp=VIS_AMP)
@@ -983,7 +1001,10 @@ def _score(data, nights, primary_diam=DIAM):
                 [row["blocks"][n]["chi2_fit"] for n in s.names]
             )
             total += float(s.score(chi2, 1.0, d))
-        return total
+        k = len(data)
+        return total + float(
+            gammaln(k + 0.5) - gammaln(k + 1.0) - 0.5 * onp.log(onp.pi)
+        )
 
 
 def _same_epochs(a, b):

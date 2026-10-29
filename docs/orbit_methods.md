@@ -43,7 +43,6 @@ The map is **singular at $i = 90°$**, where the position angle takes only two v
 |---|---|---|
 | `alias-peaks` | another peak is within this many nats of the best | `flag_alias_nats` (2) |
 | `low-gap` | `gap_marginal` is below this many nats | `flag_min_gap` (5) |
-| `chi2-high` | raw $\chi^2/N$ exceeds this multiple of the median of nights with the same label | `flag_chi2_factor` (3), `flag_chi2_groups` (instrument mode) |
 | `sep-below-resolution` | the separation is below this fraction of the night's resolution $\lambda/2B_{\max}$ | `flag_sep_fraction` (0.5) |
 | `flux-at-bound` | the flux is within this fraction of a flux bound | `flag_flux_tol` (0.02) |
 

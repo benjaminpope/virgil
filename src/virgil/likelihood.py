@@ -39,6 +39,8 @@ from .gains import GAIN_GROUPS, OFFSET_GROUPS
 from .models import SourceModel
 from ._deprecate import external_stacklevel
 
+__provisional__ = ("group_outlier_mixture", "group_outlier_probabilities")
+
 
 def _gain_jacobian(data, vis_prediction):
     """dObs/dlog|V| of the model's visibility observables."""
@@ -1015,3 +1017,67 @@ def flux_scale_posterior(model, data):
             entry["scale"] = mean[:, 0] / norm
         out[block.kind] = entry
     return out
+
+
+def _outlier_terms(loglikes, outlier_loglikes):
+    """``(terms, log_eps)``: per ε node ``j`` and group ``k``,
+    ``ln[(1 - ε_j) L_k + ε_j B_k]``, and ``ln ε_j``."""
+    ell = np.asarray(loglikes)
+    bad = np.broadcast_to(np.asarray(outlier_loglikes, ell.dtype), ell.shape)
+    n = ell.shape[-1] + 1  # exact from ceil((K + 1) / 2); one node of margin
+    theta = (2.0 * onp.arange(1, n + 1) - 1.0) * onp.pi / (2.0 * n)
+    eps = 0.5 * (1.0 - onp.cos(theta))
+    log_eps = np.asarray(onp.log(eps), ell.dtype)[:, None]
+    log_keep = np.asarray(onp.log1p(-eps), ell.dtype)[:, None]
+    return np.logaddexp(log_keep + ell, log_eps + bad), log_eps, bad
+
+
+def group_outlier_mixture(loglikes, outlier_loglikes):
+    """Log likelihood of groups that may each be outliers, the outlier rate
+    marginalized exactly.
+
+    Group ``k`` has likelihood ``(1 - ε) L_k + ε B_k``, with ``ε`` shared by
+    all groups and Jeffreys prior Beta(½, ½). The integral over ``ε`` is a
+    polynomial in ``cos θ``, so Gauss–Chebyshev quadrature with ``K + 1``
+    nodes is exact. Differentiable.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    Parameters
+    ----------
+    loglikes : array, shape (K,)
+        ``ln L_k``, each group's log likelihood under the model.
+    outlier_loglikes : array, shape (K,) or scalar
+        ``ln B_k``, each group's log likelihood as an outlier.
+
+    Returns
+    -------
+    jax.Array
+        ``ln ∫ Π_k [(1 - ε) L_k + ε B_k] π(ε) dε``.
+
+    Notes
+    -----
+    Source: Gauss–Chebyshev quadrature, Abramowitz & Stegun (1964) 25.4.38 ([references](../references.md#abramowitz1964));
+    ε prior, Jeffreys (1946), [references](../references.md#jeffreys1946).
+    """
+    terms, _, _ = _outlier_terms(loglikes, outlier_loglikes)
+    return jax.nn.logsumexp(np.sum(terms, axis=-1)) - np.log(terms.shape[0])
+
+
+def group_outlier_probabilities(loglikes, outlier_loglikes):
+    """Each group's posterior probability of being an outlier, with ``ε``
+    marginalized as in [`group_outlier_mixture`][virgil.likelihood.group_outlier_mixture].
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    Returns
+    -------
+    jax.Array, shape (K,)
+        ``q_k = Σ_j W_j ε_j B_k / [(1 - ε_j) L_k + ε_j B_k]``, with ``W_j`` the
+        posterior weights of the ε nodes.
+    """
+    terms, log_eps, bad = _outlier_terms(loglikes, outlier_loglikes)
+    weight = jax.nn.softmax(np.sum(terms, axis=-1))
+    return np.sum(weight[:, None] * np.exp(log_eps + bad - terms), axis=0)

@@ -1,0 +1,1 @@
+`outlier_eps` (`fit_orbit_aliases`, `OrbitPipeline`) and `drop_outlier_night` (`OrbitPipeline`) are ignored with a `FutureWarning`: the outlier rate is marginalized and no night is dropped by a heuristic.
