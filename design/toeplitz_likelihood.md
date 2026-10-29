@@ -156,7 +156,7 @@ How `fit` builds the loss from terms (`fitting.py`):
 * numpyro uses `term.loglike` (`likelihood.py:813-821`), so `loglike` carries over unchanged.
 * Preconditioning: `fit(precondition="diag")` → `_fisher_diagonal` (`:1485-1522`): `_gn_diagonal`
   (`:1430`, exact JVP per coordinate if n ≤ 1024, else 16 Rademacher probes, each a full vjp through
-  the 42 M-point model), plus prior and regulariser curvature (`_hessian_diagonal`, `:1461`); a regulariser
+  the 42 M-point model), plus prior and regulariser curvature (the regularizer Hessian diagonal in `_fisher_diagonal`); a regulariser
   with `metric_rows` (`MaxEntropy`, `imaging.py:202, 269`) supplies its own positive curvature `w·b` that
   *replaces* the data JᵀJ on the pixel coordinates.
 
@@ -358,7 +358,7 @@ through all 42 M points (8–16 s per refresh). With the Toeplitz term:
 * Nuisance diagonals: `(JᵀJ)_{g_e g_e} = Q_e` (already computed), flux the same sum, `δ_e` needs the
   second moments of the beam (`B_uu, B_uv, B_vv`, three more kernels per observation), `s_d` and α
   are closed form from `Q_d, L_d, C_d`. Simplest first version: estimate these few from
-  `_hessian_diagonal` (`v ⊙ H v`, `fitting.py:1461`) on the Toeplitz loss, floored at zero as for
+  the regularizer Hessian diagonal of `_fisher_diagonal` (`v ⊙ H v`) on the Toeplitz loss, floored at zero as for
   regularizers: 16 probes now cost ~0.3 s.
 * The term must therefore provide either `curvature_rows` (impossible: no residual vector) or a
   `curvature_diag(values, probes)` hook; `_fisher_diagonal` (`:1485`) calls the hook for terms without

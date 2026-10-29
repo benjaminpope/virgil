@@ -1,1 +1,1 @@
-Fitting, inference and likelihood modules: the vacuous `# deliberate:` stamps are replaced by specific reasons, and removed where the lint already exempts the def (`eqx.filter_jit` kernels)
+Fitting, inference and likelihood modules: the vacuous `# deliberate:` stamps are replaced by specific reasons or removed; `_log_uniform_evidence`, `_hessian_diagonal`, `_gn_params_diagonal`, `_whiten_vis` and `_group_curves` are inlined into their single callers

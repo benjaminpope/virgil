@@ -918,7 +918,7 @@ def _batch_sizes(batch_size, template, draw_batch):
     return draw_batch, default // draw_batch
 
 
-# deliberate: builds and validates the simulator against the template; inlined it adds 30 lines to the 169-line injection_recovery
+# deliberate: injection_recovery is already past the 120-line cap, so growing it fails code_shape
 def _simulator(noise, template, null_scene):
     if isinstance(noise, _SIMULATORS):
         # The null check, batch sizing and metadata use ``template``, so

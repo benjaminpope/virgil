@@ -49,21 +49,6 @@ def _gain_jacobian(data, vis_prediction):
     return np.ones_like(vis_prediction)
 
 
-# deliberate: visibility branch of the whitening: with marginalized gains it returns widened errors and the log normalization
-def _whiten_vis(data, prediction, resid, errors, gain_terms):
-    """Whitened visibility residuals, their effective errors, and the log
-    normalization of the marginalized gains (``Σ extra``, 0 without)."""
-    whitened = resid / errors
-    if data.gains is None:
-        return whitened, errors, np.zeros((), errors.dtype)
-    gains = data.gains
-    jacobian = _gain_jacobian(data, prediction) / errors
-    whitened, extra = gains.whiten(
-        whitened, jacobian, gains.widths_for(gain_terms)
-    )
-    return whitened, errors * np.exp(extra), np.sum(extra)
-
-
 def _whiten(
     data, prediction, reference, errors, gain_terms=None, offset_terms=None
 ):
@@ -111,9 +96,13 @@ def _whiten_with_log_norm(
         offset_terms = jax.lax.stop_gradient(offset_terms)
     n_vis = np.asarray(data.vis).size
     n_phase = n_vis + np.asarray(data.phi).size
-    vis, vis_errors, vis_norm = _whiten_vis(
-        data, prediction[:n_vis], resid[:n_vis], errors[:n_vis], gain_terms
-    )
+    vis, vis_errors = resid[:n_vis] / errors[:n_vis], errors[:n_vis]
+    vis_norm = np.zeros((), errors.dtype)
+    if data.gains is not None:  # marginalize the visibility gains
+        gains = data.gains
+        jacobian = _gain_jacobian(data, prediction[:n_vis]) / vis_errors
+        vis, extra = gains.whiten(vis, jacobian, gains.widths_for(gain_terms))
+        vis_errors, vis_norm = vis_errors * np.exp(extra), np.sum(extra)
     phase, phase_errors, phase_norm = _whiten_phases(
         data, resid[n_vis:n_phase], errors[n_vis:n_phase], offset_terms
     )
@@ -137,7 +126,7 @@ def _whiten_with_log_norm(
     return np.concatenate(whitened), np.concatenate(effective), log_norm
 
 
-# deliberate: closure-phase branch of the whitening: diagonal, correlated and offset-marginalized return paths
+# deliberate: three exits (wrapped-off, von Mises, correlated with offsets) that flags would replace in _whiten_with_log_norm
 def _whiten_phases(data, resid, errors, offset_terms=None):
     """Whitened phase residuals, their effective errors and the closure
     offsets' log normalization (see ``_whiten_with_log_norm``)."""

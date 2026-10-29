@@ -425,39 +425,38 @@ def aggregate(records, larger_is_simpler=True):
         last = len(settings) - 1
         out["edge"] = bool({best, one_se} & {0, last})
     if "group_labels" in records[0]:
-        out.update(_group_curves(records, index, find, shape[0]))
+        glabels = sorted({g for r in records for g in r["group_labels"]})
+        gcol = {g: i for i, g in enumerate(glabels)}
+        gscore = onp.zeros((shape[0], len(glabels)))
+        gchi2 = onp.zeros((shape[0], len(glabels)))
+        gcount = onp.zeros((shape[0], len(glabels)), dtype=int)
+        has_chi2 = all(
+            r["group_chi2"] and None not in r["group_chi2"] for r in records
+        )
+        for r in records:
+            i = index[json.dumps(r["setting"])]
+            for g, s, c, m in zip(
+                r["group_labels"],
+                r["group_score"],
+                r["group_chi2"],
+                r["group_n"],
+            ):
+                gscore[i, gcol[g]] += s
+                gchi2[i, gcol[g]] += c if has_chi2 else 0.0
+                gcount[i, gcol[g]] += m
+        out.update(
+            {
+                "groups": glabels,
+                "group_score": gscore,
+                "group_chi2": gchi2 if has_chi2 else None,
+                "group_n": gcount,
+                "group_best": onp.where(
+                    onp.isnan(gscore).all(axis=0),
+                    -1,
+                    onp.argmin(
+                        onp.where(onp.isnan(gscore), onp.inf, gscore), axis=0
+                    ),
+                ),
+            }
+        )
     return out
-
-
-# deliberate: optional per-group block of aggregate, built only for records with group_labels; inlined it takes aggregate to 110 lines
-def _group_curves(records, index, find, n_settings):
-    labels = sorted({g for r in records for g in r["group_labels"]})
-    col = {g: i for i, g in enumerate(labels)}
-    score = onp.zeros((n_settings, len(labels)))
-    chi2 = onp.zeros((n_settings, len(labels)))
-    count = onp.zeros((n_settings, len(labels)), dtype=int)
-    has_chi2 = all(
-        r["group_chi2"] and None not in r["group_chi2"] for r in records
-    )
-    for r in records:
-        i = index[json.dumps(r["setting"])]
-        for g, s, c, m in zip(
-            r["group_labels"],
-            r["group_score"],
-            r["group_chi2"],
-            r["group_n"],
-        ):
-            score[i, col[g]] += s
-            chi2[i, col[g]] += c if has_chi2 else 0.0
-            count[i, col[g]] += m
-    return {
-        "groups": labels,
-        "group_score": score,
-        "group_chi2": chi2 if has_chi2 else None,
-        "group_n": count,
-        "group_best": onp.where(
-            onp.isnan(score).all(axis=0),
-            -1,
-            onp.argmin(onp.where(onp.isnan(score), onp.inf, score), axis=0),
-        ),
-    }

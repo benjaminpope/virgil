@@ -37,7 +37,7 @@ def _merge(n, links):
     return onp.array([find(i) for i in range(n)])
 
 
-# deliberate: closure-relation grouping, compared with the per-row loop by test_incidence_equals_the_per_row_loop
+# deliberate: test_incidence_equals_the_per_row_loop builds the groups with it for both incidence implementations
 def _groups(i1, i2, i3):
     """Triangles connected through shared baseline samples, as index lists."""
     n = len(i1)
