@@ -391,12 +391,14 @@ def test_the_minor_cycle_psf_agrees_with_the_image_sized_one():
 def test_the_returned_psf_and_beam_match_stored_reference_values():
     # A regression pin, not an independent check: the values came from
     # clean() itself, before the minor cycle got its own PSF. Measured drift
-    # on macOS is 0; Linux was reported to differ by about 3e-8 (rel 1e-7).
+    # on macOS is 0; ubuntu x64 CI differs by 4.5e-8 absolute on psf[10, 50]
+    # (the NUFFT error is absolute against the unit peak, so the two PSF
+    # elements are pinned with abs=1e-7; the sums and beam keep rel=1e-7).
     res = clean(_sparse_track_data(), 65, 4.0, niter=0)
     assert res.beam == pytest.approx(
         (49.0283201406404, 45.953434550067186, 130.89339973020668), rel=1e-7
     )
     assert res.psf.sum() == pytest.approx(570.4904774509284, rel=1e-7)
     assert (res.psf**2).sum() == pytest.approx(137.9294823556553, rel=1e-7)
-    assert res.psf[32, 32] == pytest.approx(0.9999999550513774, rel=1e-7)
-    assert res.psf[10, 50] == pytest.approx(0.11298123905795, rel=1e-7)
+    assert res.psf[32, 32] == pytest.approx(0.9999999550513774, abs=1e-7)
+    assert res.psf[10, 50] == pytest.approx(0.11298123905795, abs=1e-7)
