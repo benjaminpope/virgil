@@ -999,7 +999,7 @@ def test_toeplitz_matches_the_direct_term_on_noise_free_data_above_the_floor():
 @pytest.mark.xfail(
     strict=True,
     reason="max_shift_pix ignores nuis.priors(offset=...) since fa53dce: "
-    "26.73 mas, not 50 (issue pending, see PR)",
+    "26.73 mas, not 50 (virgil#589)",
 )
 def test_custom_offset_prior_bounds_widen_toeplitz_precompute(small):
     data, nuis, scene, template = small
@@ -1012,7 +1012,7 @@ def test_custom_offset_prior_bounds_widen_toeplitz_precompute(small):
 @pytest.mark.xfail(
     strict=True,
     reason="curvature_loss is 0.5*chi2 + log_norm since b9e7be9: 638.27 vs "
-    "0.5*chi2 = 88.49 (issue pending, see PR)",
+    "0.5*chi2 = 88.49 (virgil#590)",
 )
 def test_curvature_loss_is_half_chi2_without_log_norm(small):
     """``_ToeplitzTerm.curvature_loss`` returns ``0.5 * chi2`` (matching
