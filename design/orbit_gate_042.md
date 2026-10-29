@@ -93,7 +93,7 @@ would make the prior depend on the data and break the guarantee).
 - Noise: white within each channel, *c* = 0 (the tempering factor should
   come out near 1: this stratum also checks that tempering does not break
   a calibrated likelihood); quoted σ(V²) log-uniform on [0.005, 0.05] and
-  quoted σ(CP) log-uniform on [0.2°, 3°]. Proposed 2026-10-29
+  quoted σ(CP) log-uniform on [0.2°, 3°]. Approved by Ben 2026-10-29
   ([orbit_mixture_v2.md](orbit_mixture_v2.md) §8): the noise drawn is
   s_g times the quoted σ, with ln s_g uniform on [−ln s_max, ln s_max],
   one draw per calibration group, because the fit infers s_g under that
@@ -230,8 +230,8 @@ orbit model can call that night an outlier while the null pays its full
 - **(ii) shared mixture:** the null carries the same ε-marginalised
   mixture, its outlier component being b_k (a companion at a free
   position that night);
-- **(iii′) global-scale inflation** (proposed 2026-10-29, replacing (iii);
-  awaiting Ben's approval, see [orbit_mixture_v2.md](orbit_mixture_v2.md)
+- **(iii′) global-scale inflation** (approved by Ben 2026-10-29, replacing (iii);
+  see [orbit_mixture_v2.md](orbit_mixture_v2.md)
   §5): the inlier of each model (orbit and null) has one fitted noise
   scale s_g per calibration group, shared by all nights. The outlier
   component of night *k* is that model's own night likelihood with each
@@ -480,9 +480,9 @@ them cold.
 | 2026-10-28 | Ben's amendment: WR-like envelopes are chromatic (a line in a random contiguous channel block, generic enhancement, width and optional size change), in gate draws and FAP nulls | Ben (encoded by Claude, Opus) | no |
 | 2026-10-28 | Ben accepts the contrast-curve flux floor (register entry records his empirical-Bayes framing); stratum A's fixed floor and the below-floor M9 misses stay | Ben (encoded by Claude, Opus) | no |
 | 2026-10-28 | Ben: the harness reuses the existing injection–recovery stack (detection_campaign, sbc_v2, `virgil.detection`); detection v3 (job 18467928) pulled and reported first | Ben (encoded by Claude, Opus) | no |
-| 2026-10-29 | **Proposed, awaiting Ben:** §3.6 candidate (iii) replaced by (iii′) global-scale inflation (orbit_mixture_v2 §5); YAML name `shared_noise_inflation` → `global_scale_inflation` | Claude (Opus), for Ben | yes: the #586 strict xfail showed (iii) cannot separate any night |
+| 2026-10-29 | §3.6 candidate (iii) replaced by (iii′) global-scale inflation (orbit_mixture_v2 §5); YAML name `shared_noise_inflation` → `global_scale_inflation` | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | yes: the #586 strict xfail showed (iii) cannot separate any night |
 | 2026-10-29 | YAML repair: `null_choice` moved to top level; it sat between two `must_hold` entries and the block did not parse (`yaml.safe_load` fails at `M4_search_misses`); no criterion changed, hash changes | Claude (Opus), for Ben | no |
-| 2026-10-29 | **Proposed, awaiting Ben:** stratum A draws each global noise scale s_g from the fit's log-uniform prior (SBC exactness under orbit_mixture_v2 §2); s_g ranks reported, not tested; showcases report ŝ_g after raw χ²/N | Claude (Opus), for Ben | no |
+| 2026-10-29 | stratum A draws each global noise scale s_g from the fit's log-uniform prior (SBC exactness under orbit_mixture_v2 §2); s_g ranks reported, not tested; showcases report ŝ_g after raw χ²/N | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | no |
 
 ## References
 

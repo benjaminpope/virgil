@@ -1,7 +1,7 @@
 # Orbit night-outlier mixture, v2: global scale, continuation, exact outlier integral
 
-Status: **draft for Ben's approval.** Written 2026-10-29 (Opus design
-pass, approved by Ben in chat that day). No code changes until he approves.
+Status: **approved by Ben 2026-10-29** (in chat, with option (a) of §7 PR D as recommended). Written 2026-10-29 (Opus design
+pass). Coding may start.
 Sonnet pr-workers do the coding (§7).
 
 Base: `main` at 99067b6. Stage 2 (#586, merged at 2011949) introduced the
