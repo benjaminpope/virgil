@@ -460,6 +460,12 @@ resid = data.dirty_image(
 )  # image of data - model, in Jy/beam
 ```
 
+![uv coverage, dirty beam and dirty image of a simulated ring](figures/radio_dirty_trio.png)
+
+The simulated observation of the [CLEAN guide](radio_clean.md) (a ring and a clump, marked `+`,
+North-East of the centre): the uv coverage with its Hermitian mirror, the Briggs dirty beam
+and the dirty image, with the beam ellipse in the lower left.
+
 The image is `Σ wₖ Re[Vₖ e^{+2πi(uₖx + vₖy)}] / Σ wₖ`, computed with the
 adjoint (type-1) NUFFT of nufftax at the raw (u, v) (nothing is gridded onto
 cell centres; the accuracy is that of
