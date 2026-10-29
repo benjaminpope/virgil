@@ -211,9 +211,9 @@ The [orbit tutorial](orbit_fitting.md) runs this on synthetic two-season data, r
 | Stage | What it does | Reuses |
 | --- | --- | --- |
 | `load` | Groups the data into nights as given and records the nights | `OIData.split_by_epoch`, `Epochs` |
-| `epochs` | The companion's position on every night, on a grid widened until no best peak is on its edge; flags the nights that cannot seed an orbit (aliased peaks, a low gap, a high χ², a separation below the resolution, a flux at its bound) | `epoch_positions` |
+| `epochs` | The companion's position on every night, on one grid that holds the prior's disc; flags the nights that cannot seed an orbit (aliased peaks, a low gap, a separation below the resolution, a flux at its bound) | `epoch_positions` |
 | `search` | The alias search with the engine's defaults, band by band, checkpointed in `stages/search/bands`: the period window from the data, the primary's diameter estimated, the V² amplitude fitted per night, the labels free, the likelihood tempered | `fit_orbit_aliases` |
-| `modes` | Ranks the bands; the winner's margin over the runner-up; the band probabilities; the best orbit against a single star (`no-orbit`); the same search refitted without the night of highest raw χ²/N, to see whether the verdict survives (`drop_outlier_night`, skipped below 3 nights) | `AliasResult` |
+| `modes` | Ranks the bands; the winner's margin over the runner-up; the band probabilities; the best orbit against a single star (`no-orbit`) | `AliasResult` |
 | `posterior` | NUTS in the winning band and in every band with a probability of at least `posterior_p_min` (at most `max_modes` besides the winner), on the engine's own posterior, so the tempering and the V² amplitude are those of the search | `AliasResult`, `chain_init_params` |
 | `quicklook` | Writes and executes `quicklook.ipynb` | `load` |
 
@@ -226,15 +226,14 @@ A run that interrupts resumes: the bands already fitted are read back from their
 | `gap_days` (0.5) | Frames further apart than this are in different nights (`from_oifits`). |
 | `exclude` (`{}`) | `{file, night or dataset: reason}` left out; a ruling recorded in `run.json`. |
 | `flag_nights` (`True`), `flag_sep_blocks` (`False`) | Flag the nights that cannot seed an orbit; whether a separation below λ/2B also keeps a night from seeding (reported either way). |
-| `outlier_eps` (0.02) | Prior outlier probability of each night in the orbit fit, whose likelihood is `(1 - eps) L + eps L_broad`, with `L_broad` the night's mean likelihood over the position grid, so one bad night (a sidelobe) cannot move the orbit. `0 <= eps < 1`; 0 turns it off. The posterior outlier probability of each night is in the search report, with the `orbit-prefers-secondary` flags (reported only: no night is ever excluded). The no-orbit null is scored without the mixture, since its broad component is a companion elsewhere, which a single star must not have. |
+| `outlier` (`"mixture"`) | The night-outlier component of the orbit likelihood, of which the fit marginalizes one rate $\epsilon$ shared by all nights (Beta(½, ½), exactly: `group_outlier_mixture`). `"mixture"`: the outlier component is a companion anywhere in the field, the night's mean likelihood over the prior's disc; `"inflation"`: it is the night's own model with its errors inflated by a scale in $[1,$ `s_max`$]$ (needs `s_max`). The default is the nearest continuation of the previous behaviour, not a verdict between the two: the choice rests on the no-orbit test on constructed data. The no-orbit null carries the same component. The posterior outlier probability of each night is in the search report, with the `orbit-prefers-secondary` flags (reported only: no night is ever excluded). |
 | `batch_size` (`None`), `memory_budget` (`None`, bytes), `coarse_nats` (30) | Grid points and candidate orbits scored together (by default what fits in the budget, 1 GiB on a CPU); for data with gains or offsets, the nats below the best within which the position grid integrates the error scale in full (`None`: every point). See `epoch_positions`. None of the three is a prior range. |
-| `n_peaks` (5), `max_sep_mas` (`None`), `grid_step_mas` (`None`), `max_grid` (201) | The position search; the step is by default a quarter of the finest λ/B (coarsened to `max_grid` points) and the half-width the coarsest λ/B, widened to at most `a_range[1] (1 + ecc_max)` and limited on lattice coverage (aperture masks, DISCO) to the alias cell. |
+| `n_peaks` (5), `max_sep_mas` (`None`), `grid_step_mas` (`None`), `max_grid` (201) | The position search; the step is by default a quarter of the finest λ/B (coarsened to `max_grid` points) and the half-width `a_range[1] (1 + ecc_max)`, the prior's reach, limited on lattice coverage (aperture masks, DISCO) to the alias cell. |
 | `period_range` (`None`) | `[min, max]` days; by default from the data (see `fit_orbit_aliases`). |
 | `a_range` ([1, 30]), `flux_range` ([0.01, 1]), `ecc_max` (0.9), `s_max` (`None`) | The engine's prior ranges (mas; flux ratio at most 1; eccentricity; error-scale bound). |
 | `primary_diam` (`"auto"`), `vis_amp`, `sign_free`, `flip_flux`, `temper` (`True`) | As for the engine. |
 | `n_bands_max`, `n_candidates`, `n_refine`, `max_steps`, `n_is` | Search effort; the defaults are those of `fit_orbit_aliases`, the one place to raise them (the `mode_converged` check says when to). |
 | `alias_nats` (10), `no_orbit_nats` (10) | Thresholds of the `alias_ambiguity` and `no_orbit` checks. |
-| `drop_outlier_night` (`True`) | Refit the search without the night of highest raw χ²/N (skipped below 3 nights) and compare the verdict (the `night_dropped` check); it costs a second search (about twice the search time; `False` skips it). |
 | `posterior_p_min` (0.05), `max_modes` (3) | Bands sampled by NUTS besides the winner. |
 | `num_warmup`, `num_samples`, `num_chains` (1000, 1000, 4), `chain_method` (`"vectorized"`), `seed` (0) | NUTS. |
 | `posterior_max_tree_depth` (8), `posterior_max_hours` (12) | NUTS uses each mode's Laplace covariance as the dense mass matrix, fixed in warm-up (adapted only if the Hessian was clipped or the mode is on a prior bound; raising `num_warmup` then changes only the step size). A band that exceeds the time left reports `converged: false`, `budget_exhausted: true`, its step size, tree depth and post-warm-up gradient count (`n_gradients_sampling`). |
@@ -312,8 +311,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `mode_converged` (`OrbitPipeline`: the best sampled point against the search's best mode) | over 1 nat: the search stopped short of the optimum; raise `n_candidates`, `n_refine` or `max_steps` | |
 | `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
 | `primary_resolved` (`OrbitPipeline`) | the primary is resolved and its diameter is the largest tried | |
-| `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's likelihood, `no_orbit_nats`) | under 10 nats | under 0: no orbit is detected |
-| `night_dropped` (`OrbitPipeline`: the verdict, orbit or not and the winning alias band, after dropping the night of highest raw χ²/N; recorded in `modes.robustness`) | the verdict changes: one night decides the result | |
+| `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's, `no_orbit_nats`; both carry the night-outlier component, so under `"mixture"` the single star may have an unrelated companion on any night and the check asks whether the positions follow an orbit) | under 10 nats | under 0: no orbit is detected |
 | `period_bound` (`OrbitPipeline`) | the best period is at the top of the window (a short arc) or at its bottom (the sampling limit) | |
 
 ### Warnings raised inside stages

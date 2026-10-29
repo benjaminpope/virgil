@@ -168,14 +168,56 @@ def test_grouped_hessian_sums_to_the_fused_one():
     with run_in("float64"):
         from tests.test_aliases import _settings
 
-        settings = _settings(outlier_eps=0.1, log_broad=(-50.0,) * 2)
+        settings = _settings(log_broad=(-50.0,) * 2)
         data = [cast_tree(d, "float64") for d in nights]
         fused = _Problem(data, settings)
         chunked = _Problem(data, settings, memory_budget=1)
-        assert fused.mix is not None
+        assert fused.log_broad is not None
         assert len(fused.hessian_groups) == 1
         assert len(chunked.hessian_groups) == 2
         x = np.asarray([onp.log(12.1), 0.3, 0.3, 0.2, 1.0, 1.0, 1.5, -1.0])
         onp.testing.assert_allclose(
             chunked.hessian(x), fused.hessian(x), rtol=1e-9, atol=1e-9
         )
+
+
+@pytest.mark.slow  # compiles the Hessian twice, in one and in several groups
+@pytest.mark.timeout(900)
+@pytest.mark.parametrize("kind", ["mixture", "inflation"])
+def test_the_chain_rule_hessian_is_the_autodiff_hessian(kind):
+    """With a live mixture (outlier probabilities well inside (0, 1)) the
+    joint-ε Hessian equals ``jax.hessian`` of the full log likelihood, in one
+    group and in several."""
+    import dataclasses
+
+    import jax
+
+    from virgil.aliases import _loglike, _Problem, _night_terms
+    from tests.test_aliases import _settings
+
+    nights = [_night(True, seed=k, mjd=60000.0 + k) for k in range(3)]
+    with run_in("float64"):
+        data = [cast_tree(d, "float64") for d in nights]
+        settings = _settings(outlier=kind, s_max=20.0, log_broad=(0.0,) * 3)
+        x = np.asarray([onp.log(12.1), 0.3, 0.3, 0.2, 1.0, 1.0, 1.5, -1.0])
+        if kind == "mixture":
+            # Put each night's outlier level near its own likelihood.
+            probe = _Problem(data, settings)
+            ell, _ = _night_terms(
+                probe.surfaces, x, tuple(data), probe.cfg, probe.dof,
+                np.zeros(3),
+            )  # fmt: skip
+            settings = dataclasses.replace(
+                settings, log_broad=tuple(float(v) for v in ell)
+            )
+        for budget in (None, 1):
+            problem = _Problem(data, settings, memory_budget=budget)
+            want = jax.hessian(
+                lambda y: _loglike(
+                    problem.surfaces, y, tuple(problem.data), problem.cfg,
+                    problem.dof, problem.log_broad,
+                )
+            )(x)  # fmt: skip
+            onp.testing.assert_allclose(
+                problem.hessian(x), want, rtol=1e-6, atol=1e-6
+            )

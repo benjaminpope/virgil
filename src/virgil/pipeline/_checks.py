@@ -1670,49 +1670,6 @@ def no_orbit(delta, *, threshold=10.0):
     )
 
 
-def night_dropped(report):
-    """Whether the verdict survives dropping the most outlying night.
-
-    Parameters
-    ----------
-    report : dict
-        ``modes["robustness"]``: ``{"skipped": reason}``, or the night, its
-        raw χ²/N, and the ``full`` and ``dropped`` verdicts (``verdict``,
-        the winning band's ``n``; the refit's ``same_band``).
-    """
-    if "skipped" in report:
-        return Check(
-            "night_dropped",
-            "pass",
-            None,
-            None,
-            f"Skipped: {report['skipped']}.",
-        )
-    full, dropped = report["full"], report["dropped"]
-    same = full["verdict"] == dropped["verdict"] and (
-        full["verdict"] != "orbit" or dropped["same_band"]
-    )
-    where = f"night {report['night']} (raw χ²/N = {report['chi2_per_n']:.3g})"
-    detail = (
-        f"{full['verdict']} (N = {full['n']}) with it, "
-        f"{dropped['verdict']} (N = {dropped['n']}) without it"
-    )
-    if same:
-        message = f"Dropping {where} leaves the verdict: {detail}."
-    else:
-        message = (
-            f"Dropping {where} changes the verdict: {detail}. One night "
-            "decides the result; check it before trusting the orbit."
-        )
-    return Check(
-        "night_dropped",
-        "pass" if same else "warn",
-        report["chi2_per_n"],
-        None,
-        message,
-    )
-
-
 def period_bound(bound, lower, p_range):
     """Whether the period is at an end of its window.
 

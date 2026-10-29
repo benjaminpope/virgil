@@ -27,6 +27,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Rendered disks on uv lattices | the `rotation_deg` argument of `FlaredDisk*` and its `"grid"` default; the lattice tolerance for DISCO dictionaries |
 | Diagnostic plots ([`virgil.plotting`](api/plotting.md)) | `plot_field_draws` |
 | Preconditioned fits ([`virgil.fitting`](api/fitting.md)) | `gauss_newton_diag` and the `precondition` argument of `fit` |
+| Night-outlier mixture ([`virgil.likelihood`](api/likelihood.md)) | `group_outlier_mixture`, `group_outlier_probabilities` |
 | Radio interferometry | the module [`virgil.radio`](api/radio.md) (`ComplexVisData`, `CalibrationNuisance`, `primary_beam`, `dartboard_folds`; site names, default priors and the measurement-set convention) |
 | Radio Toeplitz χ² | the module [`virgil.radio_toeplitz`](api/radio_toeplitz.md) (`ToeplitzVisData`), `ComplexVisData.toeplitz`, and the scalar-term protocol of `fit` (`chi2_and_log_norm`, `curvature_params`, `curvature_loss`) |
 | Radio CLEAN | the module [`virgil.radio_clean`](api/radio_clean.md) (`clean`, `RadioCleanResult`, `fit_beam`, `restore`) and the `uvtaper` argument of `ComplexVisData.dirty_image` and `dirty_beam` |

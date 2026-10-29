@@ -75,6 +75,10 @@ EXPECTED = {
     "virgil.imaging": {"clean", "CleanResult"},
     "virgil.fitting": {"gauss_newton_diag"},
     "virgil.plotting": {"plot_field_draws"},
+    "virgil.likelihood": {
+        "group_outlier_mixture",
+        "group_outlier_probabilities",
+    },
 }
 
 
