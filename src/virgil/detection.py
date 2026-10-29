@@ -268,7 +268,7 @@ def _detection_statistics(
     return stats, converged
 
 
-# deliberate: test seam: unit-tested directly
+# deliberate: profile over positive-flux grid points only; test_constrained_profile_keeps_positive_grid_points feeds it a bare grid
 def _constrained_profile(
     grid_flux, grid_loglike, opt_flux, opt_loglike, loglike0
 ):
@@ -288,7 +288,7 @@ def _constrained_profile(
     )
 
 
-# deliberate: test seam: unit-tested directly
+# deliberate: grid prior weights; test_grid_prior_weights_integrate_to_one checks they sum to one on a bare shape
 def _log_prior_weights(shape, dtype):
     """Log trapezoid weights in the grid index, normalized to sum to 1.
 
@@ -818,7 +818,6 @@ def injection_recovery(
     return DetectionMC(null=null, injected=injected, meta=meta)
 
 
-# deliberate: jit boundary (eqx.filter_jit); compile-count tests monkeypatch it
 @eqx.filter_jit
 def _simulated_statistics(
     simulator,
@@ -904,7 +903,7 @@ def _lookup(injections, key, name):
     )
 
 
-# deliberate: test seam: unit-tested directly
+# deliberate: splits the grid batch size among draw batches; pinned by test_default_grid_batch_size_is_split_among_draw_batch
 def _batch_sizes(batch_size, template, draw_batch):
     """``(draw_batch, grid batch size)`` for ``injection_recovery``.
 
@@ -919,7 +918,7 @@ def _batch_sizes(batch_size, template, draw_batch):
     return draw_batch, default // draw_batch
 
 
-# deliberate: named step: validates a simulator against the template
+# deliberate: resolves the noise simulator ('gaussian' or 'bootstrap') and checks the data fingerprint and null scene against the template
 def _simulator(noise, template, null_scene):
     if isinstance(noise, _SIMULATORS):
         # The null check, batch sizing and metadata use ``template``, so

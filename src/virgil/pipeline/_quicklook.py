@@ -400,22 +400,6 @@ def _orbit_cells(run, summary, path):  # deliberate: dispatch-table callable
         modes = summary["modes"]
         win, null = modes["winner"], modes["no_orbit"]
         gap = modes["delta_log_z"]
-        # what dropping the most outlying night does to the verdict
-        r = modes.get("robustness", {"skipped": "not run (older run)"})
-        if "skipped" in r:
-            robust = f"The night-dropped refit was skipped ({r['skipped']})."
-        else:
-            d = r["dropped"]
-            band = (
-                "the same alias band"
-                if d["same_band"]
-                else "another alias band"
-            )
-            robust = (
-                f"Without night {r['night']} (raw χ²/N = "
-                f"{r['chi2_per_n']:.3g}) the verdict is {d['verdict']} in "
-                f"{band} (N = {d['n']})."
-            )
         margin = (
             "there is no other band"
             if gap is None
@@ -427,7 +411,7 @@ def _orbit_cells(run, summary, path):  # deliberate: dispatch-table callable
                 f"The winner is the band of N = {win['n']} orbits "
                 f"(probability {win['p']:.3g}); {margin}. Against a single "
                 f"star it gains {null['delta_log_z']:.4g} nats "
-                f"(verdict: {null['verdict']}). {robust} "
+                f"(verdict: {null['verdict']}). "
                 "The sky plot shows the best "
                 "orbit, each night's position and error ellipse (hollow if "
                 "flagged), and the orbit at the nights.",

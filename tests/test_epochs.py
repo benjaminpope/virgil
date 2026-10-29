@@ -762,14 +762,9 @@ def _binary_night(mjd, position, flux, key, **options):
 
 
 def _flag_epochs():
-    """Four nights: a clean one, a twin (flux 1, whose mirror peak ties:
-    a perfect single-night alias), a companion inside λ/2B_max, and a
-    night whose quoted errors are 5x too small."""
-    keys = jax.random.split(jax.random.PRNGKey(4), 4)
-    bad = _binary_night(
-        T_REF + 3, (5.0, -3.0), 0.25, keys[3], d_vis=0.01, d_phi=0.02
-    )
-    bad = bad.set(["d_vis", "d_phi"], [bad.d_vis / 5.0, bad.d_phi / 5.0])
+    """Three nights: a clean one, a twin (flux 1, whose mirror peak ties:
+    a perfect single-night alias) and a companion inside λ/2B_max."""
+    keys = jax.random.split(jax.random.PRNGKey(4), 3)
     return Epochs(
         {
             "clean": _binary_night(
@@ -781,7 +776,6 @@ def _flag_epochs():
             "close": _binary_night(
                 T_REF + 2, (0.2, 0.1), 0.25, keys[2], d_vis=0.01, d_phi=0.02
             ),
-            "bad": bad,
         }
     )
 
@@ -807,7 +801,6 @@ def test_epoch_positions_flags_each_night_with_a_code_and_a_reason(
     # ties with it, and its flux sits at the top of the range.
     assert {"alias-peaks", "flux-at-bound"} <= codes["twin"]
     assert "sep-below-resolution" in codes["close"]
-    assert "chi2-high" in codes["bad"]
     assert codes["clean"] == set()
     # A sub-resolution separation is reported, never blocking (V^2 and
     # closure phases locate a companion below lambda/2B). Whether "close"
@@ -817,8 +810,8 @@ def test_epoch_positions_flags_each_night_with_a_code_and_a_reason(
     assert [f.blocking for f in close if f.code == "sep-below-resolution"] == [
         False
     ]
-    assert found.flagged[[0, 1, 3]].tolist() == [False, True, True]
-    assert set(found.flag_codes()) == {"twin", "close", "bad"}
+    assert found.flagged[[0, 1]].tolist() == [False, True]
+    assert set(found.flag_codes()) == {"twin", "close"}
     for fl in found.flags:
         for f in fl:
             assert f.reason and f.reason != f.code  # a human sentence
@@ -864,7 +857,7 @@ def test_skip_flagged_positions_drop_the_flagged_nights(flagged_positions):
     keep = ~found.flagged
     assert kept.dra.shape == (int(keep.sum()),) and keep[0]
     onp.testing.assert_allclose(kept.dra, found.dra[keep])
-    assert found.positions(t_ref=T_REF, skip_flagged=False).dra.shape == (4,)
+    assert found.positions(t_ref=T_REF, skip_flagged=False).dra.shape == (3,)
     every = dataclasses.replace(
         found, flags=tuple(found.flags[1:2] * len(found.names))
     )
@@ -907,22 +900,6 @@ def test_ud_seeds_are_unbiased_for_a_resolved_primary():
     assert zero.primary_diam is None
     with pytest.raises(ValueError, match="primary_diam"):
         epoch_positions(epochs, grid, primary_diam=-1.0)
-
-
-def test_chi2_high_is_outlier_detection_with_a_floor_of_one():
-    from virgil.epochs import _flag_chi2
-
-    # Median 0.3 (errors overestimated): a night at 1.0 is a fair fit,
-    # not an outlier; the limit is 3 x max(median, 1) = 3.
-    assert _flag_chi2([0.3, 0.3, 0.3, 1.0], 3.0) == [[], [], [], []]
-    flagged = _flag_chi2([0.3, 0.3, 0.3, 4.0], 3.0)
-    assert [bool(f) for f in flagged] == [False, False, False, True]
-    assert flagged[3][0].code == "chi2-high"
-    # It cannot catch a uniform failure or a majority of bad nights.
-    assert not any(_flag_chi2([20.0, 20.0, 20.0, 20.0], 3.0))
-    assert not any(_flag_chi2([20.0, 20.0, 20.0, 1.0], 3.0)[:3])
-    # Fewer than three nights have no meaningful median.
-    assert _flag_chi2([1.0, 50.0], 3.0) == [[], []]
 
 
 def test_a_fitted_primary_is_not_supported_by_epoch_positions_yet():

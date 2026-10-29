@@ -7,6 +7,7 @@ residuals of neighbouring channels (``virgil.tempering``) and the likelihood
 is tempered by 1/f in ``fit_orbit_aliases``.
 """
 
+import dataclasses
 import functools
 import json
 import types
@@ -312,13 +313,22 @@ def test_temper_false_reproduces_the_untempered_evidence():
             for s, d in zip(surfaces, data)
         )
         ones = tuple(onp.ones(len(s.names)) for s in surfaces)
-        new = aliases._loglike(surfaces, x, tuple(data), _cfg(), ones)
+        new = _ell_sum(surfaces, x, data, _cfg(), ones)
         assert float(new) == pytest.approx(float(old), rel=1e-12)
         # a dof of 1/f in every block divides the log likelihood by f
         f = 12.0
         dof = tuple(onp.full(len(s.names), 1.0 / f) for s in surfaces)
-        temp = aliases._loglike(surfaces, x, tuple(data), _cfg(), dof)
+        temp = _ell_sum(surfaces, x, data, _cfg(), dof)
         assert float(temp) == pytest.approx(float(old) / f, rel=1e-12)
+
+
+def _ell_sum(surfaces, x, data, cfg, dof):
+    """The night terms' sum: the likelihood before the outlier mixture, which
+    adds a rate-marginalized outlier component that tempering does not scale."""
+    ell, _ = aliases._night_terms(
+        surfaces, x, tuple(data), cfg, dof, onp.full(len(data), -50.0)
+    )
+    return float(ell.sum())
 
 
 def test_the_problem_value_is_the_untempered_value_over_f():
@@ -328,7 +338,9 @@ def test_the_problem_value_is_the_untempered_value_over_f():
         settings = _settings_stub(
             dof=() if f == 1 else (("phi", 1 / f), ("vis", 1 / f))
         )
-        return aliases._Problem(data, settings)
+        return aliases._Problem(
+            data, dataclasses.replace(settings, log_broad=(-50.0,) * len(data))
+        )
 
     with jax.enable_x64(True):
         data = [cast_tree(d, "float64") for d in data]
@@ -338,12 +350,8 @@ def test_the_problem_value_is_the_untempered_value_over_f():
             KeplerOrbit(**TRUTH, t_ref=T_REF), FLUX, T_REF, band, free
         )
         a, b = value(1), value(4.0)
-        va = float(
-            aliases._loglike(a.surfaces, x, tuple(a.data), a.cfg, a.dof)
-        )
-        vb = float(
-            aliases._loglike(b.surfaces, x, tuple(b.data), b.cfg, b.dof)
-        )
+        va = _ell_sum(a.surfaces, x, a.data, a.cfg, a.dof)
+        vb = _ell_sum(b.surfaces, x, b.data, b.cfg, b.dof)
         assert vb == pytest.approx(va / 4.0, rel=1e-10)
 
 
@@ -609,7 +617,9 @@ def _offset(result, truth_xy, epoch):
     """The sky-plane offset of the posterior mean of the position at
     ``epoch`` from the truth, in standard deviations of the posterior (a
     2-D Mahalanobis distance: about 1.2 for a calibrated posterior)."""
-    s = result.samples[result.bands[0].n]
+    s = result.samples.get(result.bands[0].n)
+    if s is None:  # no valid mode: infinitely far
+        return float("inf")
     keys = ("period", "dt_peri", "ecc", "inc", "omega", "Omega", "a_mas")
     xy = onp.array(
         [
@@ -665,7 +675,10 @@ def test_the_tempered_posterior_is_calibrated_and_the_untempered_one_is_not(
     # rho = 0.85, one common-mode set at c = 0.6). The sky-plane offset of
     # the posterior mean from the truth, over the posterior spread, has a
     # median near 1.2 when calibrated. The untempered posterior is too
-    # narrow by sqrt(f) (2.2 to 2.3): its median offset is well above 2.
+    # narrow by sqrt(f) (2.2 to 2.3): its median offset is well above 2. With
+    # the night-outlier mixture it can be worse: at chi2/N ~ 12 the orbit
+    # scores below the diffuse outlier component on every night, the weights
+    # flatten the likelihood and the band has no valid mode (offset inf).
     med = _median_offsets(common, rho)
     print(f"median offset/spread: tempered {med[True]:.2f}, "
           f"untempered {med[False]:.2f}")  # fmt: skip

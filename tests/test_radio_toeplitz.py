@@ -1014,23 +1014,48 @@ def test_narrow_offset_prior_bound_shrinks_toeplitz_precompute(small):
     assert tdata.max_shift_pix < default
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="curvature_loss is 0.5*chi2 + log_norm since b9e7be9: 638.27 vs "
-    "0.5*chi2 = 88.49 (virgil#590)",
-)
-def test_curvature_loss_is_half_chi2_without_log_norm(small):
-    """If virgil#590 decides ``_ToeplitzTerm.curvature_loss`` should drop
-    ``log_norm``, it returns ``0.5 * chi2``. Today it adds ``log_norm``."""
+def test_curvature_loss_log_norm_is_analytic(small):
+    """With free σ the log-normaliser in ``curvature_loss`` is ``2 N log σ``
+    for ``N`` complex points (virgil#590): its σ-dependence is ``2 N`` per
+    unit ``log σ``, with ``N`` the data's size."""
+    data, _, scene, template = small
+    nuis = CalibrationNuisance(data, sigmas=True, offsets=False, alpha=0.7)
+    term = data.toeplitz(template, nuis).term(scene, nuis)
+    n = 300  # points in ``_data(300, ...)``, none masked
+
+    def loss(sigma):
+        values = _values(nuis, flux=0.8, gain=[1.1], sigma=[sigma] * 4)
+        values["eta"] = np.zeros((8, 8))
+        chi2, _ = term.chi2_and_log_norm(values)
+        full = term.curvature_loss(term.curvature_params(values))
+        return float(full - 0.5 * chi2)
+
+    assert loss(2.5) - loss(1.7) == pytest.approx(
+        2.0 * n * onp.log(2.5 / 1.7), rel=1e-12
+    )
+
+
+def test_curvature_loss_matches_the_direct_term_with_free_sigma(small):
+    """Both terms give the same loss ``½χ² + log_norm`` (constants restored),
+    and the σ-dependence of ``curvature_loss`` is the direct term's
+    (virgil#590): the loss at two σ differs by the same amount."""
     data, _, scene, template = small
     nuis = CalibrationNuisance(data, sigmas=True, offsets=False, alpha=0.7)
     tdata = data.toeplitz(template, nuis)
-    term = tdata.term(scene, nuis)
-    values = _values(nuis, flux=0.8, gain=[1.1], sigma=[2.5, 2.5, 2.5, 2.5])
-    values["eta"] = np.zeros((8, 8))
-    params = term.curvature_params(values)
-    chi2, log_norm = term._reduced(params)
-    assert float(log_norm) != 0.0
-    assert float(term.curvature_loss(params)) == pytest.approx(
-        0.5 * float(chi2), rel=1e-15
-    )
+    term, direct = tdata.term(scene, nuis), tdata.direct_term(scene, nuis)
+    eta = np.asarray(onp.random.default_rng(3).normal(size=(8, 8)))
+
+    def both(sigma):
+        values = _values(nuis, flux=0.8, gain=[1.1], sigma=[sigma] * 4)
+        values["eta"] = eta
+        loss = term.curvature_loss(term.curvature_params(values))
+        chi2, log_norm = direct.full_chi2_and_log_norm(values)
+        return (
+            float(loss + term.loss_constant),
+            float(0.5 * chi2 + log_norm),
+        )
+
+    (t1, d1), (t2, d2) = both(2.5), both(1.7)
+    assert t1 == pytest.approx(d1, rel=1e-12)
+    assert t2 == pytest.approx(d2, rel=1e-12)
+    assert t1 - t2 == pytest.approx(d1 - d2, rel=1e-10)
