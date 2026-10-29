@@ -586,8 +586,9 @@ def model_gain(
     simple, complex_ : str
         Their names, for the message.
     unidentified : bool
-        The simpler model's diameter is on its prior bound: the comparison is
-        not valid and the simpler model is kept.
+        The simpler model's diameter is on the lower edge of the diameter
+        range: the comparison is not valid and the simpler model is kept (a
+        fit that did not converge still warns).
     """
     gain = float(m2loglike_simple) - float(m2loglike_complex)
     penalty = bic_penalty(n_extra, n)
@@ -595,19 +596,19 @@ def model_gain(
         return Check(
             name, "fail", gain, penalty, "The −2 log L gain is not finite."
         )
-    if unidentified:
-        status = "pass"
-        message = (
-            f"Δ(−2 log L) = {gain:.3g} for {n_extra} extra parameters, but "
-            f"the {simple} diameter is at its prior bound, so the "
-            f"{complex_} shape is unidentified and the {simple} model is kept."
-        )
     # The richer model contains the simpler: a fit did not converge.
-    elif gain < -1.0:
+    if gain < -1.0:
         status = "warn"
         message = (
             f"The {complex_} model fits worse than the {simple} model it "
             f"contains (Δ(−2 log L) = {gain:.3g}): a fit did not converge."
+        )
+    elif unidentified:
+        status = "pass"
+        message = (
+            f"Δ(−2 log L) = {gain:.3g} for {n_extra} extra parameters, but "
+            f"the {simple} diameter is at the lower edge of its range, so the "
+            f"{complex_} shape is unidentified and the {simple} model is kept."
         )
     elif gain > penalty:
         status = "pass"

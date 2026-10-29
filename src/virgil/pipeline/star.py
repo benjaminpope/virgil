@@ -884,13 +884,29 @@ def _fit_in_lobes(p, entry, lobes, noise):
 # --- choosing between models ---
 
 
+def _on_lower_range_edge(report):
+    """Whether the best lobe's diameter is at the lower edge of the whole
+    diameter range, not at an upper or an inner lobe edge."""
+    lobes = report.get("lobes")
+    if "diam" not in (report.get("at_bound") or ()) or not lobes:
+        return False
+    low = min(row["diam_bounds_mas"][0] for row in lobes)
+    lobe_low, lobe_high = report["diam_bounds_mas"]
+    diam = report["params"]["diam"]
+    return lobe_low == low and math.log(diam / lobe_low) < math.log(
+        lobe_high / diam
+    )
+
+
 def _compare(registry, reports, child, n):
     """The comparison of a model with its parent: gain against BIC penalty.
 
-    The comparison is not valid when the parent's diameter sits on its prior
-    bound (an unresolved star): the likelihood-ratio regularity conditions fail
-    there and the child's shape parameters are unidentified, so the parent is
-    kept and ``"unidentified"`` is true.
+    The comparison is not valid when the parent's diameter sits on the lower
+    edge of the diameter range (an unresolved star): the likelihood-ratio
+    regularity conditions fail there and the child's shape parameters are
+    unidentified, so the parent is kept and ``"unidentified"`` is true. The
+    upper edge (an over-resolved star) and the inner lobe edges are not
+    boundaries of the parameter space and do not count.
 
     Source: Chernoff (1954), Self & Liang (1987) ([references](../../references.md#chernoff1954), [Self & Liang](../../references.md#selfliang1987)).
     """
@@ -898,7 +914,7 @@ def _compare(registry, reports, child, n):
     gain = reports[parent]["m2loglike"] - reports[child]["m2loglike"]
     n_extra = registry[child].n_params - registry[parent].n_params
     penalty = _checks.bic_penalty(n_extra, n)
-    unidentified = "diam" in (reports[parent].get("at_bound") or ())
+    unidentified = _on_lower_range_edge(reports[parent])
     return {
         "simple": parent,
         "complex": child,

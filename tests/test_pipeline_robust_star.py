@@ -384,10 +384,11 @@ def test_pure_noise_around_one_gives_flags_not_a_confident_diameter(
     # delta_chi2 < 0 was never true: the shape's gain (17.8 here) is real but
     # is the diameter's lower prior edge, not limb darkening, so it is unidentified.
     assert s["comparison"]["unidentified"]
+    assert "shape is unidentified" in res.describe()
     assert "[fail] resolution" in res.describe()
 
 
-def test_the_shape_is_unidentified_for_an_unresolved_star_at_any_noise(
+def test_the_shape_is_unidentified_for_an_unresolved_star_on_a_second_realization(
     tmp_path,
 ):
     # A second realization, independent of null_data: the limb-darkened disk
@@ -398,9 +399,10 @@ def test_the_shape_is_unidentified_for_an_unresolved_star_at_any_noise(
         data, output=tmp_path / "run", quicklook_execute=False, **TINY
     ).run(through="fit")
     comparison = res.summary["comparison"]
-    assert "diam" in res.summary["fit"]["models"]["uniform"]["at_bound"]
-    assert comparison["unidentified"]
     assert comparison["preferred"] == "uniform"
+    assert comparison["unidentified"]
+    assert "[pass] limb_darkening_gain" in res.describe()
+    assert "unidentified" in res.describe()
 
 
 # --- (c) a golden synthetic case ---------------------------------------------
