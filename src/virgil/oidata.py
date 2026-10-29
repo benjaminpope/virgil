@@ -1799,7 +1799,7 @@ def _good(record):
     return good, value, error
 
 
-# deliberate: a named step: validates and packs the extra observables.
+# deliberate: builds the flux, nflux and visamp blocks of extra observables from the reader records, in KINDS order
 def _build_extras(data, obj, legs):
     """The blocks of extra observables of a record, in ``KINDS`` order."""
     n = onp.size(obj.u)

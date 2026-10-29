@@ -982,7 +982,7 @@ def _splat_rings(xx, yy, width, rings, ring_points, weights):
     return image
 
 
-def _orthogonal_grid(xx, yy):  # deliberate: test seam (tests monkeypatch it)
+def _orthogonal_grid(xx, yy):
     """Origin and column and row steps of a regular grid, or ``None``.
 
     The grid may be shifted and rotated (as ``Component._image`` and

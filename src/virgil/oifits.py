@@ -159,7 +159,6 @@ def _insname(hdu):
     return None if value is None else str(value).strip()
 
 
-# deliberate: a test seam (tests build tables directly)
 def _collect_tables(hdul):
     """Group the OI_* tables of ``hdul`` by EXTNAME, in file order."""
     tables = {}
@@ -173,7 +172,6 @@ def _collect_tables(hdul):
 _INSNAME_TABLES = ("OI_WAVELENGTH", "OI_VIS", "OI_VIS2", "OI_T3", "OI_FLUX")
 
 
-# deliberate: a test seam (tests call it on hand-built tables)
 def _select_insname(tables, insname):
     """Keep the tables with the chosen ``INSNAME`` (see ``read_oifits``)."""
     names = sorted(
@@ -430,7 +428,7 @@ def _amptyp(hdu):
     return str(hdu.header.get("AMPTYP", "absolute")).strip().lower()
 
 
-# deliberate: a named step: the visibility table and its baseline lookup
+# deliberate: reads OI_VIS2, OI_VIS or the T3 legs into the record and returns the baseline lookup that the closure-phase, phase and extras readers share
 def _read_visibilities(tables, wavelengths, target_id, extras=()):
     if "OI_VIS2" in tables:
         names = ("OI_VIS2", "VIS2DATA", "VIS2ERR")
@@ -567,7 +565,7 @@ def _read_visibilities(tables, wavelengths, target_id, extras=()):
     return record, lookup
 
 
-# deliberate: a named step: the T3 coordinate error messages, away from the leg loop
+# deliberate: the NaN, zero and V2-inconsistent T3 leg coordinate refusals with their triangle, INSNAME, ARRNAME and MJD context; run once per T3 row before its legs are matched
 def _check_t3_coordinates(legs_uv, founds, record, ins, triangle, mjd):
     """Refuse T3 leg coordinates that are NaN, zero or inconsistent with V2."""
     where = (
@@ -603,7 +601,7 @@ def _check_t3_coordinates(legs_uv, founds, record, ins, triangle, mjd):
             )
 
 
-# deliberate: a named step: matches T3 legs to samples and appends the unmatched
+# deliberate: matches each T3 triangle leg to a visibility sample and appends flagged samples for legs with no row; also called by the T3AMP extras reader
 def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
     """Closure phases, with the sample index of each triangle leg.
 
@@ -727,7 +725,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
     }
 
 
-# deliberate: a named step: the OI_VIS phase branch of the reader
+# deliberate: absolute phases (VISPHI) from OI_VIS rows aligned to the visibility samples, for files whose phases are not closure phases
 def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
     phi = onp.zeros(n_samples)
     d_phi = onp.ones(n_samples)
@@ -781,7 +779,7 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
     }
 
 
-# deliberate: a named step: the extra observables, read after the main record
+# deliberate: reads the requested extra observables into the finished record, whose sample order they must follow
 def _read_extras(tables, wavelengths, target_id, lookup, record, extras):
     """Read the requested extra observables into ``record`` (in place)."""
     if not extras:
@@ -1113,7 +1111,7 @@ def _read_hdulist(
     return record
 
 
-# deliberate: a named step: the multi-file reader's whole merge
+# deliberate: sample-by-sample merge of single-file records with the check that all files hold the same kinds of visibility and phase observables
 def _concat_records(records):
     """Concatenate single-file records, sample by sample."""
     first = records[0]
@@ -1464,7 +1462,7 @@ def _set_table_header(hdu, extname, insname=None, arrname=None, date_obs=None):
         hdu.header["INSNAME"] = insname
 
 
-# deliberate: a named step: the OI_ARRAY table with its two input forms
+# deliberate: builds OI_ARRAY from either STAXYZ or STAXY station positions, defaulting the other columns
 def _array_hdu(array, info, arrname, tables, data_tables):
     if array is not None:
         # Station positions are required; the other columns default, so an
@@ -1527,7 +1525,7 @@ def _array_hdu(array, info, arrname, tables, data_tables):
     return hdu
 
 
-# deliberate: a named step: one data table's columns, shared by every table
+# deliberate: builds the columns of one OI_VIS2, OI_VIS, OI_T3 or OI_FLUX table from its column spec, so every data table shares the defaults and shapes
 def _data_hdu(name, table, info, nwave):
     specs = _TABLE_COLUMNS[name]
     nrow = (
