@@ -37,7 +37,6 @@ def _merge(n, links):
     return onp.array([find(i) for i in range(n)])
 
 
-# deliberate: test seam: unit-tested directly
 def _groups(i1, i2, i3):
     """Triangles connected through shared baseline samples, as index lists."""
     n = len(i1)
@@ -58,7 +57,7 @@ def _groups(i1, i2, i3):
     return onp.split(order, starts[1:])
 
 
-# deliberate: test seam: unit-tested directly
+# deliberate: vectorised incidence matrix; test_closure_noise_is_unchanged swaps in the per-row loop (_slow_incidence) to prove equivalence
 def _incidence(group, i1, i2, i3):
     """The group's triangle-by-baseline matrix T."""
     legs = onp.stack([i1[group], i2[group], i3[group]], axis=1)
