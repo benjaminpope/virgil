@@ -596,7 +596,7 @@ def clean(
         model = onp.zeros(shape)
         use = mask.copy() if usemask == "user" else onp.zeros(shape, bool)
         history, total, stop = [], 0, "niter"
-        prev, lowest_whole = onp.inf, onp.inf
+        lowest_whole = onp.inf
         while True:
             if total:
                 resid = dirty(
@@ -640,11 +640,10 @@ def clean(
                 stop = "nsigma" if nsigma * rms > threshold else "threshold"
                 break
             whole = float(onp.abs(resid).max())
-            # a relative rise above _MAJOR_RISE, written to avoid dividing by 0
-            if whole > (1 + _MAJOR_RISE) * min(prev, lowest_whole):
+            if whole > (1 + _MAJOR_RISE) * lowest_whole:
                 stop = "diverged"
                 break
-            prev, lowest_whole = whole, min(lowest_whole, whole)
+            lowest_whole = min(lowest_whole, whole)
             if total >= niter:
                 break
             if time_limit and time.time() - t0 > time_limit:
@@ -671,14 +670,10 @@ def clean(
             comps += inc
             total += n
             sm = _Smoother(shape)
-            model = onp.zeros(
-                shape
-            )  # Jy per pixel: Σ_s B_s ⊛ comps_s, B_s peak 1
-            for c, s in zip(comps, scales):
+            model = onp.zeros(shape)  # Jy/pixel: Σ_s B_s ⊛ comps_s, B_s peak 1
+            for c, g in zip(comps, onp.array(scales) * FWHM_TO_SIGMA):
                 if onp.any(c):
-                    model += _area(s * FWHM_TO_SIGMA) * sm(
-                        c, s * FWHM_TO_SIGMA
-                    )
+                    model += _area(g) * sm(c, g)
     if restoringbeam is not None:
         beam = tuple(float(b) for b in restoringbeam)
     image = restore(model, resid, beam, pixel_scale_mas)
