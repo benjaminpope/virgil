@@ -201,6 +201,19 @@ EXPECTED = {
             11.180212533412085,
             10.82207044342614,
         ],
+        "direct_derived": [
+            9.731072580498958,
+            10.59512187297509,
+            11.180212533412082,
+            10.82207044342614,
+        ],
+        "has_log_norm": [1.0, 1.0],
+        "toeplitz_fixed_loglike": [-27451.35899972333],
+        "toeplitz_fixed_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "toeplitz_fixed_derived": [0.9, 1.1, 1.2, 0.8],
+        "direct_fixed_loglike": [-27451.358999723314],
+        "direct_fixed_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "direct_fixed_derived": [0.9, 1.1, 1.2, 0.8],
     },
     "True": {
         "toeplitz_loss": [28155.03506956227],
@@ -377,6 +390,8 @@ EXPECTED = {
             19763.5289651681,
         ],
         "derived": [],
+        "direct_derived": [],
+        "has_log_norm": [1.0, 1.0],
     },
 }
 
@@ -461,6 +476,21 @@ def _numbers(sigmas):
         tdata.chi2_by_ddid(_scene, values, nuis)[0]
     )
     out["derived"] = _flat(dict(sorted(ttrm.derived(values).items())))
+    out["direct_derived"] = _flat(dict(sorted(dtrm.derived(values).items())))
+    out["has_log_norm"] = onp.asarray(
+        [ttrm.has_log_norm, dtrm.has_log_norm], dtype=float
+    )
+    if sigmas == "profile":
+        # fixed error scales through term(sigma=): the held-out path
+        fixed = np.asarray([0.9, 1.1, 1.2, 0.8])
+        tfix = tdata.term(_scene, nuis, sigma=fixed)
+        dfix = data.term(_scene, nuis, chi2="direct", sigma=fixed)
+        for name, term in (("toeplitz", tfix), ("direct", dfix)):
+            out[f"{name}_fixed_loglike"] = _flat(term.loglike(values))
+            out[f"{name}_fixed_sigma_hat"] = _flat(term.sigma_hat(values))
+            out[f"{name}_fixed_derived"] = _flat(
+                dict(sorted(term.derived(values).items()))
+            )
     return out
 
 

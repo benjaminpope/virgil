@@ -1106,8 +1106,6 @@ class CalibrationNuisance:
     Static configuration: which nuisances are fitted. The sites
     (``prefix="cal"``) are keys of the fit's ``priors``; a function model must
     accept them. See [Radio interferometry](../radio_interferometry.md#a-model-with-calibration-nuisances).
-    Source: reference-observation gauge of
-    [Cornwell & Wilkinson (1981)](../references.md#cornwellwilkinson1981).
 
     ===============  ================  ==========================  =============
     Site             Shape             Default prior               Not fitted
@@ -1138,8 +1136,7 @@ class CalibrationNuisance:
         ``alpha`` fixes the spectral index (a non-zero integer is refused:
         ``alpha=1`` used to mean "fit").
     offset_beams : float, optional
-        Half-width of the default offset prior, in beams; default 3.
-        Provisional, as the module.
+        Default offset prior half-width in beams (3). Provisional, as the module.
     antenna_gains : bool
         Marginalize a complex gain per antenna and solution interval ([antenna
         gains](../radio_interferometry.md#antenna-based-gains)); needs
@@ -1153,8 +1150,8 @@ class CalibrationNuisance:
     gain_steps : int
         Gauss–Newton steps of the gain solution.
     nu0_hz : float, optional
-        Reference frequency of the spectral index; default the
-        weight-averaged frequency of ``data``.
+        Reference frequency of the spectral index (default: the
+        weight-averaged frequency of ``data``).
     blur_fwhm_mas : float, optional
         FWHM (mas) of a Gaussian blurring kernel in the forward model: the
         data are compared with the blurred model. Default ``None``,
@@ -1501,7 +1498,7 @@ class _Precompute:
 class _TermBase(eqx.Module):
     """What the direct and Toeplitz likelihood terms share (private).
 
-    A subclass defines ``sigma_hat``, ``_full_chi2_and_log_norm`` and
+    A subclass defines ``sigma_hat``, ``full_chi2_and_log_norm`` and
     ``_log_2pi_w`` (``Σ_k m_k ln(2π/w_k)`` of the unmasked points).
     """
 
@@ -1522,7 +1519,7 @@ class _TermBase(eqx.Module):
 
     def loglike(self, values):
         """Normalized Gaussian log density of the unmasked points."""
-        chi2, log_norm = self._full_chi2_and_log_norm(values)
+        chi2, log_norm = self.full_chi2_and_log_norm(values)
         return -0.5 * chi2 - log_norm - self._log_2pi_w
 
 
@@ -1670,7 +1667,7 @@ class _RadioTerm(_TermBase):
             warnings.warn(
                 f"chi2='auto' uses the direct term: {err}",
                 UserWarning,
-                stacklevel=2,
+                stacklevel=external_stacklevel(),
             )
             return self, "direct (auto): the nufftax spreader is unavailable"
         shifts = [float(x) for x in shifts]
@@ -1852,7 +1849,8 @@ class _RadioTerm(_TermBase):
         a = self.arrays
         return r, 2.0 * np.sum(a["m"] * np.log(sigma[a["ddid"]])) + norm
 
-    def _full_chi2_and_log_norm(self, values):
+    def full_chi2_and_log_norm(self, values):
+        """``(χ², log_norm)`` of all unmasked points, constants included."""
         r, log_norm = self.residuals_and_log_norm(values)
         return np.sum(r**2), log_norm
 

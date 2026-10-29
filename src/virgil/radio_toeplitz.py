@@ -740,7 +740,8 @@ class _ToeplitzTerm(_TermBase):
             ) ** 2
         return (self.arrays["c_sum"] + delta) / s2
 
-    def _full_chi2_and_log_norm(self, values):
+    def full_chi2_and_log_norm(self, values):
+        """``(χ², log_norm)`` of all unmasked points, constants included."""
         chi2, log_norm = self.chi2_and_log_norm(values)
         return chi2 + self.chi2_constant, log_norm + self.log_norm_constant
 
