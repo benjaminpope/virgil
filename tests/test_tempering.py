@@ -673,13 +673,17 @@ def _median_offsets(common, rho, temper, n_seeds=20):
 
 # Each outlier-mixture fit scores a position grid on every night, so the 20
 # seeds of one case take minutes: the tempered and the untempered half are
-# separate tests, each under the 300 s test timeout on a CI runner.
+# separate tests, each under the 300 s test timeout on a CI runner. They are
+# full_only: a pull request editing this file would otherwise run them (a CI
+# runner is over 5x slower than the laptop). Orbit mixture v2 PR A makes the
+# outlier integral cheaper, after which they may return to the PR tier.
 CALIBRATION_CASES = pytest.mark.parametrize(
     "common, rho", [(False, 0.85), (True, 0.6)], ids=["ar1-0.85", "common-0.6"]
 )
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @CALIBRATION_CASES
 def test_the_tempered_posterior_is_calibrated(common, rho):
     # 20 seeds of correlated noise at chi2/N about 12 (one AR(1) set at
@@ -699,6 +703,7 @@ def test_the_tempered_posterior_is_calibrated(common, rho):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @CALIBRATION_CASES
 def test_the_untempered_posterior_is_not_calibrated(common, rho):
     # The untempered posterior is too narrow by sqrt(f) (2.2 to 2.3): its
