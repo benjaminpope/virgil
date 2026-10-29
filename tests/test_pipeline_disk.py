@@ -646,6 +646,7 @@ def test_smoke_rings_runs_through_profile_and_loads(tiny, tmp_path):
     assert isinstance(loaded.model("rings_1"), System)
 
 
+@pytest.mark.slow
 def test_smoke_gp_runs_through_profile(tiny, tmp_path, monkeypatch):
     # No lattice starts: the geometry search keeps the single ring's geometry
     # and the grid's rivals.
