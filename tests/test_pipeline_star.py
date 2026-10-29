@@ -133,6 +133,7 @@ SUMMARY_KEYS = {
         "delta_m2loglike",
         "n_extra_params",
         "bic_penalty",
+        "unidentified",
         "preferred",
     },
     "comparisons": None,
@@ -271,6 +272,9 @@ def test_diameter_recovered_and_quoted_errors_lead(full_run):
     )
     assert s["chi2"]["reduced"]["uniform"] > 2.2
     assert s["comparison"]["preferred"] == "limb_darkened"
+    # Positive control: a resolved star's diameter is off its bound, so the
+    # comparison is valid.
+    assert not s["comparison"]["unidentified"]
     assert s["comparison"]["delta_chi2"] > 5 * s["comparison"]["bic_penalty"]
     assert s["comparison"]["delta_m2loglike"] == s["comparison"]["delta_chi2"]
     assert s["comparisons"] == [s["comparison"]]
@@ -753,6 +757,35 @@ def test_model_choice_with_a_single_model_has_no_comparison():
         {"b": {"m2loglike": 5.0}}, registry, 81
     )
     assert (best, comparison, comparisons) == ("b", None, [])
+
+
+@pytest.mark.parametrize(
+    "at_bound, preferred, unidentified",
+    [
+        # Positive control: a gain of 50 beats ln 81 x 2 = 8.8 off the bound.
+        ([], "b", False),
+        # The same gain with the parent's diameter on its prior bound is not
+        # a valid likelihood-ratio test: the parent is kept.
+        (["diam"], "a", True),
+        # A shape parameter on its bound does not invalidate the parent.
+        (["p0"], "b", False),
+    ],
+)
+def test_model_choice_is_invalid_with_the_parent_diameter_on_its_bound(
+    at_bound, preferred, unidentified
+):
+    registry = _fake_models({"a": (None, 1), "b": ("a", 3)})
+    reports = {
+        "a": {"m2loglike": 300.0, "at_bound": at_bound},
+        "b": {"m2loglike": 250.0, "at_bound": []},
+    }
+    best, comparison, _ = star._choose_model(reports, registry, 81)
+    assert (best, comparison["unidentified"]) == (preferred, unidentified)
+    check = checks.model_gain(
+        "gain", 300.0, 250.0, 81, n_extra=2, simple="a", complex_="b",
+        unidentified=unidentified,
+    )  # fmt: skip
+    assert ("unidentified" in check.message) == unidentified
 
 
 def test_prior_bound_ignores_shape_parameters():

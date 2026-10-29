@@ -557,7 +557,15 @@ def multimodal(lobes, *, threshold=RIVAL_DELTA_CHI2):
 
 
 def model_gain(
-    name, m2loglike_simple, m2loglike_complex, n, *, n_extra, simple, complex_
+    name,
+    m2loglike_simple,
+    m2loglike_complex,
+    n,
+    *,
+    n_extra,
+    simple,
+    complex_,
+    unidentified=False,
 ):
     """Whether a richer model improves the fit by more than its BIC penalty.
 
@@ -577,6 +585,9 @@ def model_gain(
         Extra parameters of the richer model.
     simple, complex_ : str
         Their names, for the message.
+    unidentified : bool
+        The simpler model's diameter is on its prior bound: the comparison is
+        not valid and the simpler model is kept.
     """
     gain = float(m2loglike_simple) - float(m2loglike_complex)
     penalty = bic_penalty(n_extra, n)
@@ -584,8 +595,15 @@ def model_gain(
         return Check(
             name, "fail", gain, penalty, "The −2 log L gain is not finite."
         )
+    if unidentified:
+        status = "pass"
+        message = (
+            f"Δ(−2 log L) = {gain:.3g} for {n_extra} extra parameters, but "
+            f"the {simple} diameter is at its prior bound, so the "
+            f"{complex_} shape is unidentified and the {simple} model is kept."
+        )
     # The richer model contains the simpler: a fit did not converge.
-    if gain < -1.0:
+    elif gain < -1.0:
         status = "warn"
         message = (
             f"The {complex_} model fits worse than the {simple} model it "

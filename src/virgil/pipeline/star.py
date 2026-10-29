@@ -775,8 +775,8 @@ def _fit_lobe(p, entry, lobe, noise):
             # Two starts: past a null chi-squared is a union of thin
             # slivers, and a local fit started on the wrong one stalls.
             starts = [
-                start["diam"],
-                float(grid[int(onp.nanargmin(m2loglike))]),
+                _inside(start["diam"], low, high),
+                _inside(float(grid[int(onp.nanargmin(m2loglike))]), low, high),
             ]
             best = None
             for diam in dict.fromkeys(starts):
@@ -817,6 +817,17 @@ def _fit_lobe(p, entry, lobe, noise):
         lobe=lobe,
         warnings=caught,
     )
+
+
+def _inside(diam, low, high):
+    """``diam`` at least the at-bound fraction of the log range off either
+    bound: ``fit`` maps a bound of the diameter prior to an infinite
+    coordinate, so a start on it is NaN."""
+    from ..fitting import _AT_BOUND
+
+    lo, hi = math.log(low), math.log(high)
+    pad = _AT_BOUND * (hi - lo)
+    return math.exp(min(max(math.log(diam), lo + pad), hi - pad))
 
 
 def _finite_or(value, default):
@@ -874,11 +885,20 @@ def _fit_in_lobes(p, entry, lobes, noise):
 
 
 def _compare(registry, reports, child, n):
-    """The comparison of a model with its parent: gain against BIC penalty."""
+    """The comparison of a model with its parent: gain against BIC penalty.
+
+    The comparison is not valid when the parent's diameter sits on its prior
+    bound (an unresolved star): the likelihood-ratio regularity conditions fail
+    there and the child's shape parameters are unidentified, so the parent is
+    kept and ``"unidentified"`` is true.
+
+    Source: Chernoff (1954), Self & Liang (1987) ([references](../../references.md#chernoff1954), [Self & Liang](../../references.md#selfliang1987)).
+    """
     parent = registry[child].parent
     gain = reports[parent]["m2loglike"] - reports[child]["m2loglike"]
     n_extra = registry[child].n_params - registry[parent].n_params
     penalty = _checks.bic_penalty(n_extra, n)
+    unidentified = "diam" in (reports[parent].get("at_bound") or ())
     return {
         "simple": parent,
         "complex": child,
@@ -886,7 +906,8 @@ def _compare(registry, reports, child, n):
         "delta_chi2": gain,
         "n_extra_params": n_extra,
         "bic_penalty": penalty,
-        "preferred": child if gain > penalty else parent,
+        "unidentified": unidentified,
+        "preferred": child if gain > penalty and not unidentified else parent,
     }
 
 
@@ -1175,6 +1196,7 @@ def _fit_checks(fit, registry):
                 n_extra=comparison["n_extra_params"],
                 simple=registry[simple].label,
                 complex_=registry[complex_].label,
+                unidentified=comparison.get("unidentified", False),
             )
         )
     scales = {

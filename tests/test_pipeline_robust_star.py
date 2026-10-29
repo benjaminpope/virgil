@@ -381,8 +381,26 @@ def test_pure_noise_around_one_gives_flags_not_a_confident_diameter(
     assert s["worst_check"] == "fail"
     # Limb darkening is not claimed for a star that is not resolved.
     assert s["comparison"]["preferred"] == "uniform"
-    assert s["comparison"]["delta_chi2"] < 0
+    # delta_chi2 < 0 was never true: the shape's gain (17.8 here) is real but
+    # is the diameter's lower prior edge, not limb darkening, so it is unidentified.
+    assert s["comparison"]["unidentified"]
     assert "[fail] resolution" in res.describe()
+
+
+def test_the_shape_is_unidentified_for_an_unresolved_star_at_any_noise(
+    tmp_path,
+):
+    # A second realization, independent of null_data: the limb-darkened disk
+    # can emulate a diameter below the prior's lower edge, so a gain over the
+    # uniform disk at that edge is not evidence of limb darkening.
+    data = _template().with_model(PointSource(), key=jax.random.PRNGKey(11))
+    res = StarPipeline(
+        data, output=tmp_path / "run", quicklook_execute=False, **TINY
+    ).run(through="fit")
+    comparison = res.summary["comparison"]
+    assert "diam" in res.summary["fit"]["models"]["uniform"]["at_bound"]
+    assert comparison["unidentified"]
+    assert comparison["preferred"] == "uniform"
 
 
 # --- (c) a golden synthetic case ---------------------------------------------

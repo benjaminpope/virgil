@@ -929,7 +929,7 @@ authors = "Chernoff"
 year = 1954
 title = "On the Distribution of the Likelihood Ratio"
 doi = "10.1214/aoms/1177728725"
-used_in = ["virgil.detection:local_nsigma"]
+used_in = ["virgil.detection:local_nsigma", "virgil.pipeline.star:_compare"]
 bibcode = "1954AnnMS..25..573C"
 verified = true
 verified_via = "ads"
@@ -1629,4 +1629,13 @@ url = "https://nvlpubs.nist.gov/nistpubs/Legacy/MP/nbsmiscellaneouspub346.pdf"
 used_in = ["virgil.likelihood:group_outlier_mixture"]
 role = "context"
 note = "25.4.38: Gauss-Chebyshev quadrature (first kind), exact for polynomials of degree 2n-1."
+verified = false
+
+[ref.selfliang1987]
+authors = "Self & Liang"
+year = 1987
+title = "Asymptotic properties of maximum likelihood estimators and likelihood ratio tests under nonstandard conditions"
+doi = "10.1080/01621459.1987.10478472"
+used_in = ["virgil.pipeline.star:_compare"]
+note = "Nonstandard conditions: a parameter on the boundary, or a nuisance parameter unidentified under the null."
 verified = false

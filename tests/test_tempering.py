@@ -635,60 +635,68 @@ def _offset(result, truth_xy, epoch):
     return float(onp.sqrt(d @ onp.linalg.solve(onp.cov(xy.T), d)))
 
 
-def _median_offsets(common, rho, n_seeds=20):
-    """Median offset over seeds of the tempered and the untempered fit of
-    noise at chi2/N about 12 (eight channels, noise 3.5 times the errors)."""
+def _median_offsets(common, rho, temper, n_seeds=20):
+    """``(median offset, median f)`` over seeds of the fit of noise at chi2/N
+    about 12 (eight channels, noise 3.5 times the errors); ``f`` is ``None``
+    untempered."""
     truth = onp.array(
         KeplerOrbit(**{**TRUTH, "period": 12.1}, t_ref=T_REF).relative(
             EPOCHS[0]
         )[:2]
     ).ravel()
-    out, fs = {True: [], False: []}, []
+    offsets, fs = [], []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for seed in range(n_seeds):
             data, positions = _nights(
                 rho, seed=seed, period=12.1, common=common
             )
-            for temper in out:
-                result = aliases.fit_orbit_aliases(
-                    data, (11.95, 12.25), positions=positions, t_ref=T_REF,
-                    n_candidates=3, n_refine=1, n_is=100, n_samples=40,
-                    primary_diam=None, temper=temper,
-                )  # fmt: skip
-                out[temper].append(_offset(result, truth, EPOCHS[0]))
-                if temper:
-                    fs.append(result.temper_f)
-    med = {k: float(onp.median(v)) for k, v in out.items()}
-    med["f"] = float(onp.median(fs))
-    return med
+            result = aliases.fit_orbit_aliases(
+                data, (11.95, 12.25), positions=positions, t_ref=T_REF,
+                n_candidates=3, n_refine=1, n_is=100, n_samples=40,
+                primary_diam=None, temper=temper,
+            )  # fmt: skip
+            offsets.append(_offset(result, truth, EPOCHS[0]))
+            if temper:
+                fs.append(result.temper_f)
+    return float(onp.median(offsets)), float(onp.median(fs)) if fs else None
+
+
+# Each outlier-mixture fit scores a position grid on every night, so the 20
+# seeds of one case take minutes: the tempered and the untempered half are
+# separate tests, each under the 300 s test timeout on a CI runner.
+CALIBRATION_CASES = pytest.mark.parametrize(
+    "common, rho", [(False, 0.85), (True, 0.6)], ids=["ar1-0.85", "common-0.6"]
+)
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize(
-    "common, rho", [(False, 0.85), (True, 0.6)], ids=["ar1-0.85", "common-0.6"]
-)
-def test_the_tempered_posterior_is_calibrated_and_the_untempered_one_is_not(
-    common, rho
-):
+@CALIBRATION_CASES
+def test_the_tempered_posterior_is_calibrated(common, rho):
     # 20 seeds of correlated noise at chi2/N about 12 (one AR(1) set at
     # rho = 0.85, one common-mode set at c = 0.6). The sky-plane offset of
     # the posterior mean from the truth, over the posterior spread, has a
-    # median near 1.2 when calibrated. The untempered posterior is too
-    # narrow by sqrt(f) (2.2 to 2.3): its median offset is well above 2. With
-    # the night-outlier mixture it can be worse: at chi2/N ~ 12 the orbit
-    # scores below the diffuse outlier component on every night, the weights
-    # flatten the likelihood and the band has no valid mode (offset inf).
-    med = _median_offsets(common, rho)
-    print(f"median offset/spread: tempered {med[True]:.2f}, "
-          f"untempered {med[False]:.2f}")  # fmt: skip
+    # median near 1.2 when calibrated. With the night-outlier mixture it can
+    # be worse: at chi2/N ~ 12 the orbit scores below the diffuse outlier
+    # component on every night, the weights flatten the likelihood and the
+    # band has no valid mode (offset inf).
+    med, f = _median_offsets(common, rho, True)
+    print(f"median offset/spread {med:.2f}, median f {f:.2f}")
     # the estimated f must be the true one (a lag-1 AR(1) estimate gives
     # 3.2 for common mode, truth 5.2, and a median offset near 1.5)
     truth_f = 1 + 7 * rho if common else _chain_factor(rho, 8)
-    print(f"median f {med['f']:.2f}, truth {truth_f:.2f}")
-    assert med["f"] == pytest.approx(truth_f, rel=0.25)
-    assert med[True] < 1.45
-    assert med[False] > 2.0
+    assert f == pytest.approx(truth_f, rel=0.25)
+    assert med < 1.45
+
+
+@pytest.mark.slow
+@CALIBRATION_CASES
+def test_the_untempered_posterior_is_not_calibrated(common, rho):
+    # The untempered posterior is too narrow by sqrt(f) (2.2 to 2.3): its
+    # median offset is well above 2.
+    med, _ = _median_offsets(common, rho, False)
+    print(f"median offset/spread {med:.2f}")
+    assert med > 2.0
 
 
 # --- the fit's use of the factors --------------------------------------------

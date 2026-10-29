@@ -319,6 +319,13 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `starting_orbits` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
 | `starting_orbits` | [Price-Whelan et al. (2017)](#pricewhelan2017), [arXiv:1610.07602](https://arxiv.org/abs/1610.07602), [ADS](https://ui.adsabs.harvard.edu/abs/2017ApJ...837...20P/abstract) | after |
 
+### `virgil.pipeline.star`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `_compare` | [Chernoff (1954)](#chernoff1954), [ADS](https://ui.adsabs.harvard.edu/abs/1954AnnMS..25..573C/abstract), [doi:10.1214/aoms/1177728725](https://doi.org/10.1214/aoms/1177728725) | after |
+| `_compare` | [Self & Liang (1987)](#selfliang1987), [doi:10.1080/01621459.1987.10478472](https://doi.org/10.1080/01621459.1987.10478472) | after |
+
 ### `virgil.priors`
 
 | Symbol | Source | Relation |
@@ -571,6 +578,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="sallum2015"></a>**Sallum et al. (2015)**. Accreting protoplanets in the LkCa 15 transition disk. [arXiv:1511.07456](https://arxiv.org/abs/1511.07456), [ADS](https://ui.adsabs.harvard.edu/abs/2015Natur.527..342S/abstract), [doi:10.1038/nature15761](https://doi.org/10.1038/nature15761). Nature 527, 342; motivates fitting a disk and a planet together.
 - <a id="schraudolph2002"></a>**Schraudolph (2002)**. Fast Curvature Matrix-Vector Products for Second-Order Gradient Descent. [doi:10.1162/08997660260028683](https://doi.org/10.1162/08997660260028683). Neural Comput. 14, 1723; Gauss-Newton matrix-vector products by forward-mode differentiation. Not on ADS: checked on Crossref.
 - <a id="schwab1984"></a>**Schwab (1984)**. Relaxing the isoplanatism assumption in self-calibration; applications to low-frequency radio interferometry. [ADS](https://ui.adsabs.harvard.edu/abs/1984AJ.....89.1076S/abstract). AJ 89, 1076; bibcode 1984AJ.....89.1076S; the Cotton-Schwab major cycle (residual from the visibilities). Cotton is cited there as a private communication. *Not yet verified against arXiv, Crossref or ADS.*
+- <a id="selfliang1987"></a>**Self & Liang (1987)**. Asymptotic properties of maximum likelihood estimators and likelihood ratio tests under nonstandard conditions. [doi:10.1080/01621459.1987.10478472](https://doi.org/10.1080/01621459.1987.10478472). Nonstandard conditions: a parameter on the boundary, or a nuisance parameter unidentified under the null. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="selig2013"></a>**Selig et al. (2013)**. NIFTY - Numerical Information Field Theory - a versatile Python library for signal inference. [arXiv:1301.4499](https://arxiv.org/abs/1301.4499), [ADS](https://ui.adsabs.harvard.edu/abs/2013A&A...554A..26S/abstract).
 - <a id="sivaramakrishnan2023"></a>**Sivaramakrishnan et al. (2022)**. The Near Infrared Imager and Slitless Spectrograph for the James Webb Space Telescope. IV. Aperture Masking Interferometry. [arXiv:2210.17434](https://arxiv.org/abs/2210.17434), [ADS](https://ui.adsabs.harvard.edu/abs/2023PASP..135a5003S/abstract). PASP 135, 015003 (2023).
 - <a id="skilling1989"></a>**Skilling (1989)**. Classic Maximum Entropy. [doi:10.1007/978-94-015-7860-8_3](https://doi.org/10.1007/978-94-015-7860-8_3). Maximum Entropy and Bayesian Methods, Cambridge 1988. docs/contributors.md links its Skilling 1989 entry to DOI ..._4, which Crossref gives as the Gull 1989 chapter.
