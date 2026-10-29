@@ -33,5 +33,7 @@ def test_no_components_still_restorable():
     assert res.iterations == 0
     assert res.model.shape == (N, N) and not res.model.any()
     assert onp.isfinite(res.image).all()
-    assert onp.allclose(res.image, res.residual)  # empty model: image = residual
+    assert onp.allclose(
+        res.image, res.residual
+    )  # empty model: image = residual
     assert res.model_visibilities(_data()).shape == (500,)

@@ -177,8 +177,7 @@ def _area(sigma_pix):
     return 1.0 if sigma_pix == 0 else 2.0 * onp.pi * sigma_pix**2
 
 
-# deliberate: tests/test_radio_clean.py checks this rule against synthetic
-# residuals without a full run, and imports it by name
+# deliberate: tests call the masking rule directly
 def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
     """A simplified ``auto-multithresh``: the connected regions of the
     beam-smoothed residual above ``low`` × rms that hold a pixel above
@@ -672,10 +671,14 @@ def clean(
             comps += inc
             total += n
             sm = _Smoother(shape)
-            model = onp.zeros(shape)  # Jy per pixel: Σ_s B_s ⊛ comps_s, B_s peak 1
+            model = onp.zeros(
+                shape
+            )  # Jy per pixel: Σ_s B_s ⊛ comps_s, B_s peak 1
             for c, s in zip(comps, scales):
                 if onp.any(c):
-                    model += _area(s * FWHM_TO_SIGMA) * sm(c, s * FWHM_TO_SIGMA)
+                    model += _area(s * FWHM_TO_SIGMA) * sm(
+                        c, s * FWHM_TO_SIGMA
+                    )
     if restoringbeam is not None:
         beam = tuple(float(b) for b in restoringbeam)
     image = restore(model, resid, beam, pixel_scale_mas)
