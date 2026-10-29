@@ -1020,7 +1020,9 @@ def test_offset_prior_bound_survives_sites_and_resets_on_default_priors(small):
     nuis.sites
     tdata = data.toeplitz(template, nuis, offsets="spread")
     assert tdata.max_shift_pix * PIXEL == pytest.approx(50.0, rel=1e-12)
-    default = data.toeplitz(template, nuis, offsets="spread", max_offset_mas=1.0)
+    default = data.toeplitz(
+        template, nuis, offsets="spread", max_offset_mas=1.0
+    )
     nuis.priors()
     tdata = data.toeplitz(template, nuis, offsets="spread")
     assert tdata.max_shift_pix < 50.0 / PIXEL
