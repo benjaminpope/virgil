@@ -523,7 +523,9 @@ def _started(out):
 @pytest.fixture(scope="module")
 def epochs_run(nights, tmp_path_factory):
     out = tmp_path_factory.mktemp("orbit") / "run"
-    pipeline = OrbitPipeline(nights, output=out, **TINY)
+    # max_sep_mas: the default box is the prior's disc (57 mas), which TINY's
+    # 25-point axes cannot resolve; this fixture is about the stage's files.
+    pipeline = OrbitPipeline(nights, output=out, max_sep_mas=14.0, **TINY)
     return pipeline, pipeline.run(through="epochs")
 
 
@@ -565,14 +567,17 @@ def test_positions_round_trip_exactly(epochs_run):
     assert onp.allclose(onp.hypot(found.dra, found.ddec), sep, rtol=0.15)
 
 
-def test_the_position_grid_is_one_box_set_by_the_prior(epochs_run):
-    _, res = epochs_run
+def test_the_position_grid_is_one_box_set_by_the_prior(nights, tmp_path):
+    pipeline = OrbitPipeline(
+        nights, output=tmp_path / "box", **{**TINY, "max_grid": 121}
+    )
+    res = pipeline.run(through="epochs")
     report = json.loads(
         (res.path / "stages" / "epochs" / "report.json").read_text()
     )
     assert report["edge_nights"] == []
     # a_max (1 + e_max): the box needs no widening because it holds the prior.
-    assert report["half_width_mas"] <= 30.0 * 1.9
+    assert report["half_width_mas"] == pytest.approx(30.0 * 1.9)
     assert report["grid_step_mas"] <= report["grid_step_wanted_mas"] * 1.001
 
 
@@ -580,6 +585,17 @@ def test_a_positional_output_warns_and_still_works(nights, tmp_path):
     with pytest.warns(FutureWarning, match="output"):
         pipeline = OrbitPipeline(nights, tmp_path / "pos", **TINY)
     assert pipeline.output == tmp_path / "pos"
+
+
+@pytest.mark.parametrize("name", ["outlier_eps", "drop_outlier_night"])
+def test_a_removed_outlier_setting_warns_and_is_ignored(
+    nights, tmp_path, name
+):
+    with pytest.warns(FutureWarning, match=name):
+        pipeline = OrbitPipeline(
+            nights, output=tmp_path / "gone", **TINY, **{name: 0.02}
+        )
+    assert name not in pipeline.settings
 
 
 def test_resume_skips_completed_stages(nights, tmp_path, monkeypatch):

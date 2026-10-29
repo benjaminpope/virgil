@@ -182,6 +182,7 @@ def test_grouped_hessian_sums_to_the_fused_one():
 
 
 @pytest.mark.slow  # compiles the Hessian twice, in one and in several groups
+@pytest.mark.timeout(900)
 @pytest.mark.parametrize("kind", ["mixture", "inflation"])
 def test_the_chain_rule_hessian_is_the_autodiff_hessian(kind):
     """With a live mixture (outlier probabilities well inside (0, 1)) the

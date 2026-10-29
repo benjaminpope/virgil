@@ -738,8 +738,12 @@ def test_band_evidences_are_no_lower_than_with_the_old_optimizer():
         n_samples=50,
     )
     by_n = {b.n: b for b in result.bands}
+    # The old values have no outlier mixture. It can only add to the
+    # likelihood (its outlier terms are positive), and without any outlier it
+    # costs the Occam factor of its K nights: so no lower than old + _occam(K).
+    shift = _occam(len(data))
     for n, old in _OLD_LOG_Z.items():
-        assert by_n[n].log_z >= old - 0.05
+        assert by_n[n].log_z >= old + shift - 0.05
 
 
 # --- UD primary, V² amplitudes, the flux flip and the warm start -----------------------

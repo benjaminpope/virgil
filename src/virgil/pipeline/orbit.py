@@ -1203,7 +1203,7 @@ def _sample_band(  # deliberate: named step
                 problem.data,
                 problem.cfg,
                 problem.dof,
-                problem.mix,
+                problem.log_broad,
             ),
         )
         if deadline is not None:

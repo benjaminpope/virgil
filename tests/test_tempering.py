@@ -617,7 +617,9 @@ def _offset(result, truth_xy, epoch):
     """The sky-plane offset of the posterior mean of the position at
     ``epoch`` from the truth, in standard deviations of the posterior (a
     2-D Mahalanobis distance: about 1.2 for a calibrated posterior)."""
-    s = result.samples[result.bands[0].n]
+    s = result.samples.get(result.bands[0].n)
+    if s is None:  # no valid mode: infinitely far
+        return float("inf")
     keys = ("period", "dt_peri", "ecc", "inc", "omega", "Omega", "a_mas")
     xy = onp.array(
         [
@@ -673,7 +675,10 @@ def test_the_tempered_posterior_is_calibrated_and_the_untempered_one_is_not(
     # rho = 0.85, one common-mode set at c = 0.6). The sky-plane offset of
     # the posterior mean from the truth, over the posterior spread, has a
     # median near 1.2 when calibrated. The untempered posterior is too
-    # narrow by sqrt(f) (2.2 to 2.3): its median offset is well above 2.
+    # narrow by sqrt(f) (2.2 to 2.3): its median offset is well above 2. With
+    # the night-outlier mixture it can be worse: at chi2/N ~ 12 the orbit
+    # scores below the diffuse outlier component on every night, the weights
+    # flatten the likelihood and the band has no valid mode (offset inf).
     med = _median_offsets(common, rho)
     print(f"median offset/spread: tempered {med[True]:.2f}, "
           f"untempered {med[False]:.2f}")  # fmt: skip

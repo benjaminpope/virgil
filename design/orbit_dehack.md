@@ -256,6 +256,15 @@ where:
   the orbit prior's positions;
 - f_c is log-uniform on `flux_range`.
 
+The uniform density on the disc is a choice, not derived: the orbit prior
+induces a non-uniform density on p (it piles up towards a, set by the
+eccentricity and phase), which would need an integral over the orbit prior
+per night. The outlier component stands for "somewhere in the prior's
+support", and a flat density there is the plain reading of that. The grid is
+capped at 201 points per axis (the step coarsens on a long baseline), and
+the flux average uses 13 nodes: ln B_k is converged to about 1 nat, small
+against the tens of nats that separate an outlier night.
+
 This is `broad_loglike` with its extent taken from the prior. The
 `_WIDEN`/`_MAX_WIDEN` loop goes, because the extent is no longer
 data-chosen.

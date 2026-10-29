@@ -1629,3 +1629,4 @@ url = "https://nvlpubs.nist.gov/nistpubs/Legacy/MP/nbsmiscellaneouspub346.pdf"
 used_in = ["virgil.likelihood:group_outlier_mixture"]
 role = "context"
 note = "25.4.38: Gauss-Chebyshev quadrature (first kind), exact for polynomials of degree 2n-1."
+verified = false

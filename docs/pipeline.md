@@ -211,7 +211,7 @@ The [orbit tutorial](orbit_fitting.md) runs this on synthetic two-season data, r
 | Stage | What it does | Reuses |
 | --- | --- | --- |
 | `load` | Groups the data into nights as given and records the nights | `OIData.split_by_epoch`, `Epochs` |
-| `epochs` | The companion's position on every night, on a grid widened until no best peak is on its edge; flags the nights that cannot seed an orbit (aliased peaks, a low gap, a high χ², a separation below the resolution, a flux at its bound) | `epoch_positions` |
+| `epochs` | The companion's position on every night, on one grid that holds the prior's disc; flags the nights that cannot seed an orbit (aliased peaks, a low gap, a separation below the resolution, a flux at its bound) | `epoch_positions` |
 | `search` | The alias search with the engine's defaults, band by band, checkpointed in `stages/search/bands`: the period window from the data, the primary's diameter estimated, the V² amplitude fitted per night, the labels free, the likelihood tempered | `fit_orbit_aliases` |
 | `modes` | Ranks the bands; the winner's margin over the runner-up; the band probabilities; the best orbit against a single star (`no-orbit`) | `AliasResult` |
 | `posterior` | NUTS in the winning band and in every band with a probability of at least `posterior_p_min` (at most `max_modes` besides the winner), on the engine's own posterior, so the tempering and the V² amplitude are those of the search | `AliasResult`, `chain_init_params` |

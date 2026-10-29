@@ -443,7 +443,11 @@ def _refuse_amp_with_gains(
 # steps that find its peak, and the bound that ln s takes when the caller
 # gives none (a numeric integral needs one).
 _LN2 = math.log(2.0)
-_N_FLUX = 13  # log-spaced flux nodes of the position grids (as OrbitPipeline)
+# Log-spaced flux nodes of the position grids (as OrbitPipeline). The flux
+# average of ln B_k is converged only to ~1 nat at 13 nodes, far below the
+# nats by which an outlier night is separated, so it is not refined.
+_N_FLUX = 13
+_MAX_AXIS = 201  # grid points per axis of the outlier component's disc
 _N_NODES = 32
 _WINDOW = 9.0
 _N_CENTRE = 4
@@ -1937,7 +1941,7 @@ def broad_loglike(
         One vector of block ``1/f_b`` per night.
     a_max, flux_range, step : float or tuple
         Disc radius (mas; ``a_range[1] (1 + ecc_max)``), flux range and grid
-        step (mas).
+        step (mas), coarsened to keep at most 201 points per axis.
     s_max, primary_diam, batch_size, memory_budget, coarse_nats, coarse_margin : optional
         As for ``epoch_positions``.
     n_flux : int, optional
@@ -1947,7 +1951,9 @@ def broad_loglike(
     -------
     numpy.ndarray
     """
-    n = 2 * math.ceil(a_max / step) + 1
+    # At most _MAX_AXIS**2 * n_flux points a night: a long baseline coarsens
+    # the step instead of growing the grid.
+    n = min(2 * math.ceil(a_max / step) + 1, _MAX_AXIS)
     axis = onp.linspace(-a_max, a_max, n)
     xx, yy, ff = onp.meshgrid(
         axis, axis, onp.geomspace(*flux_range, n_flux), indexing="ij"

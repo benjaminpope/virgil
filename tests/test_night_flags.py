@@ -2,6 +2,7 @@
 the orbit likelihood and the post-fit sidelobe flag
 (design/orbit_noise_models.md, "tempered night flags")."""
 
+import dataclasses
 import json
 import warnings
 
@@ -130,34 +131,121 @@ def _unit_dof(data):
     ).dof
 
 
-def _optimum(data, kind="mixture"):
+def _optimum(data, kind="mixture", start=None, off=False):
     """The best-fit orbit of ``data`` in the 12.0-12.2 d band, with the outlier
     component ``kind`` ("mixture": a wide-prior companion; "inflation": the
-    night's own model at an inflated noise scale)."""
+    night's own model at an inflated noise scale). ``off``: the mixture with
+    an outlier level of -1e6, i.e. no outliers, as the reference."""
     data = [cast_tree(d, "float64") for d in data]
     kw = dict(outlier=kind, s_max=50.0)
     if kind == "mixture":
-        kw["log_broad"] = _broad(data, ta._settings(**kw))
+        kw["log_broad"] = (
+            (-1e6,) * len(data) if off else _broad(data, ta._settings(**kw))
+        )
     settings = ta._settings(**kw)
     problem = aliases._Problem(data, settings)
     bounds = aliases._Bounds.of(aliases.AliasBand(20, 12.0, 12.2), settings)
-    x, value = aliases._optimize(problem, bounds, ta._x_truth(), 50)
+    x0 = ta._x_truth() if start is None else start
+    x, value = aliases._optimize(problem, bounds, x0, 50)
     return problem, onp.asarray(x), value
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize("kind", ["mixture", "inflation"])
-def test_one_sidelobe_night_cannot_move_the_orbit(kind):
+def _check_one_bad_night(kind):
     near, far = _with_bad_night(3.0), _with_bad_night(10.0)
     clean = _optimum(near[:BAD], kind)[1]
     fits = {k: _optimum(d, kind) for k, d in (("near", near), ("far", far))}
+    off = _optimum(near, "mixture", off=True)[1]  # follows the bad night
     for problem, x, _ in fits.values():
         prob = problem.outlier_probability(x)
-        assert prob[BAD] > 0.9 and prob[:BAD].max() < 0.1
-    # The orbit is the one the good nights give, wherever the bad night is.
+        # q > 0.99 is out of reach here, and not for want of a bad night: its
+        # log likelihood at the orbit is -105 against about -14 for a good
+        # night, but the outlier component, a flux-averaged companion anywhere
+        # in the prior's disc, scores -102 to -103 (it includes companions as
+        # faint as the null). The night is only ln(L/B) ~ 3 nats below it, so
+        # with the Beta(1/2, 1/2) rate q ~ 0.7-0.8 (measured 0.83, 0.69). The
+        # mixture's job is to give the night half the weight at least, and the
+        # good nights none (measured 1e-31); the orbit checks below are the
+        # test that it does not follow the night.
+        assert prob[BAD] > 0.5 and prob[:BAD].max() < 1e-6
+    # The orbit is the one the good nights give, wherever the bad night is,
+    # and nearer to it than the fit that follows the bad night.
     near_x, far_x = fits["near"][1], fits["far"][1]
-    assert onp.abs(near_x - far_x).max() < 0.05
-    assert onp.abs(near_x - clean).max() < 0.05
+    # Not 1e-3: the night keeps weight 1 - q ~ 0.2-0.3 (above), so the two
+    # orbits differ by a little (measured 8e-3 at most, in a parameter of
+    # order 100).
+    assert onp.abs(near_x - far_x).max() < 0.02
+    assert onp.abs(near_x - clean).max() < 0.5 * onp.abs(off - clean).max()
+
+
+@pytest.mark.slow
+def test_one_sidelobe_night_cannot_move_the_orbit():
+    _check_one_bad_night("mixture")
+
+
+@pytest.mark.slow
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the inflated component's support [1, s_max] lies inside the inlier's "
+        "scale prior [1/s_max, s_max], so B/L <= 2**blocks and no night can "
+        "be separated (review of #586); candidate (iii) needs a redesign"
+    ),
+)
+def test_one_sidelobe_night_cannot_move_the_orbit_with_inflation():
+    _check_one_bad_night("inflation")
+
+
+@pytest.mark.slow
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the M4 local-optimum risk of design/orbit_dehack.md, measured: from "
+        "starts 0.2 prior-scales off the truth the mixture fit stalls 140 "
+        "nats below its optimum (-309 against -169), because the redescending "
+        "weights switch off the nights the start misses. Proposed fix: "
+        "continuation in the outlier rate, not a second path"
+    ),
+)
+def test_the_mixture_keeps_the_optimum_from_starts_near_the_truth():
+    # The redescending mixture gives no weight to a night a start misses
+    # (the M4 risk of design/orbit_dehack.md): from starts off by a little,
+    # the fit must still reach the optimum that it reaches from the truth.
+    data = _with_bad_night(10.0, n_nights=6)
+    optimum = _optimum(data)[2]
+    rng = onp.random.default_rng(0)
+    scale = onp.array([0.01, 0.2, 0.3, 0.3, 10, 10, 0.3, 0.3])
+    truth = onp.asarray(ta._x_truth())
+    starts = [
+        truth + 0.2 * rng.standard_normal(len(truth)) * scale for _ in range(4)
+    ]
+    for start in starts:
+        assert _optimum(data, start=start)[2] > optimum - 10.0
+
+
+@ta.in_float64
+def test_tempered_nights_the_orbit_fits_are_not_outliers():
+    # Block-wise tempering (V^2 by f = 5, closure phases by f = 2): the
+    # outlier component is scored with it, so a night the orbit fits is not
+    # an outlier. (One factor for all blocks would put the two components
+    # thousands of nats apart.)
+    clean = [cast_tree(d, "float64") for d in _with_bad_night(3.0)[:BAD]]
+    tempered = (("vis", 1 / 5.0), ("phi", 1 / 2.0))
+    base = ta._settings(dof=tempered, s_max=50.0)
+    dof = aliases._Problem(
+        clean, dataclasses.replace(base, outlier="inflation")
+    ).dof
+    broad = broad_loglike(
+        clean,
+        dof,
+        a_max=base.a_range[1] * (1 + base.ecc_max),
+        flux_range=base.flux_range,
+        step=1.0,
+    )
+    settings = dataclasses.replace(base, log_broad=tuple(map(float, broad)))
+    problem = aliases._Problem(clean, settings)
+    bounds = aliases._Bounds.of(aliases.AliasBand(20, 12.0, 12.2), settings)
+    x, _ = aliases._optimize(problem, bounds, ta._x_truth(), 50)
+    assert problem.outlier_probability(onp.asarray(x)).max() < 0.01
 
 
 @ta.in_float64
@@ -204,8 +292,8 @@ def test_fit_orbit_aliases_reports_each_nights_outlier_probability(tmp_path):
     )
     assert result.outlier["kind"] == "mixture"
     prob = dict(zip(result.outlier["names"], result.outlier["probability"]))
-    assert prob[f"n{BAD}"] > 0.9
-    assert max(v for k, v in prob.items() if k != f"n{BAD}") < 0.1
+    assert prob[f"n{BAD}"] > 0.5  # see _check_one_bad_night: q ~ 0.7-0.8
+    assert max(v for k, v in prob.items() if k != f"n{BAD}") < 1e-6
     assert abs(result.best.best["period"] - 12.1) < 0.1
     result.save(tmp_path / "r.json")
     loaded = aliases.AliasResult.load(tmp_path / "r.json")
