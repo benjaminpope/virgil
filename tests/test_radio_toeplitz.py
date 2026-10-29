@@ -1014,6 +1014,19 @@ def test_narrow_offset_prior_bound_shrinks_toeplitz_precompute(small):
     assert tdata.max_shift_pix < default
 
 
+def test_offset_prior_bound_survives_sites_and_resets_on_default_priors(small):
+    data, nuis, scene, template = small
+    nuis.priors(offset=(-50.0, 50.0))
+    nuis.sites
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    assert tdata.max_shift_pix * PIXEL == pytest.approx(50.0, rel=1e-12)
+    default = data.toeplitz(template, nuis, offsets="spread", max_offset_mas=1.0)
+    nuis.priors()
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    assert tdata.max_shift_pix < 50.0 / PIXEL
+    assert default.max_shift_pix * PIXEL == pytest.approx(1.0, rel=1e-12)
+
+
 def test_curvature_loss_log_norm_is_analytic(small):
     """With free σ the log-normaliser in ``curvature_loss`` is ``2 N log σ``
     for ``N`` complex points (virgil#590): its σ-dependence is ``2 N`` per

@@ -388,7 +388,7 @@ tdata = data.toeplitz(template, nuis, offsets="spread")
 It refuses baselines past `tdata.margin` of the pixel Nyquist limit
 (`tdata.nyquist_fraction` is `max |t|/π`; use smaller pixels or mask the
 longest baselines), and offsets beyond the precompute's bound
-(`max_offset_mas`, by default that of `nuis.priors()`) raise at run time.
+(`max_offset_mas`, by default the last `nuis.priors(offset=...)` bound, so call it first) raise at run time.
 Without it, `B_d` and `D_d` need only integer lags and are exact at any
 baseline.
 

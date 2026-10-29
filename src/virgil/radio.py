@@ -524,8 +524,9 @@ class ComplexVisData(eqx.Module):
         eps : float, optional
             Tolerance of the spreading kernel.
         max_offset_mas : float, optional
-            Largest offset of any observation, in mas (default the bound
-            of ``nuisance.priors()``).
+            Largest offset of any observation, in mas (default the
+            largest bound of the last ``nuisance.priors(offset=...)`` call,
+            else the default ``offset_beams`` box).
         chunk_size : int, optional
             Points spread at a time, bounding memory.
         """
