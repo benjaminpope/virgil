@@ -98,6 +98,7 @@
  "tests/test_radial_gp.py": 128.4,
  "tests/test_radio.py": 38.0,
  "tests/test_radio_clean.py": 9.7,
+ "tests/test_radio_clean_edges.py": 4.0,
  "tests/test_radio_conditioning.py": 31.2,
  "tests/test_radio_gains.py": 90.0,
  "tests/test_radio_refactor.py": 30.0,

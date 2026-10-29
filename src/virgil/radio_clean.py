@@ -484,13 +484,11 @@ def clean(
 
     Major cycles image the exact residual ``V − M`` (NUFFT model); minor
     cycles clean it with a window of the PSF. Arguments are named as in
-    ``tclean``; see the [guide](../radio_clean.md) for the algorithm and the
-    WSClean equivalents.
+    ``tclean``; see the [guide](../radio_clean.md). Unlike
+    [`virgil.imaging.clean`][virgil.imaging.clean] it takes complex
+    visibilities and an **odd** ``npix``. Provisional (new in 0.4.1).
 
     Source: Högbom (1974), Clark (1980), Schwab (1984), Cornwell (2008), CASA.
-
-    Unlike [`virgil.imaging.clean`][virgil.imaging.clean] it takes complex
-    visibilities and an **odd** ``npix``. Provisional (new in 0.4.1).
 
     Parameters
     ----------
@@ -524,7 +522,9 @@ def clean(
         ``"auto-multithresh"`` adds regions of the beam-smoothed residual
         (a simplified CASA version, see the guide).
     restoringbeam : (bmaj_mas, bmin_mas, pa_deg), optional
-        Default: fitted to the PSF above ``psfcutoff``.
+        Default: fitted to the PSF above ``psfcutoff``. A given beam changes
+        only the restoring kernel: the residual stays in dirty-beam Jy/beam,
+        as in CASA.
     uv_cell, chunk_size, time_limit, verbose
         Density cell in wavelengths (default ``1/FoV``); visibilities
         transformed at a time; seconds after which no further major cycle
@@ -596,7 +596,7 @@ def clean(
         model = onp.zeros(shape)
         use = mask.copy() if usemask == "user" else onp.zeros(shape, bool)
         history, total, stop = [], 0, "niter"
-        prev, lowest_whole = onp.inf, onp.inf
+        lowest_whole = onp.inf
         while True:
             if total:
                 resid = dirty(
@@ -636,16 +636,14 @@ def clean(
                     f"{peak:.3e}, rms {rms:.3e}, model {model.sum():.5f} Jy"
                 )
             floor = max(threshold, nsigma * rms)
-            if peak < floor:
+            if peak <= floor:  # <=: all-zero data stops at threshold=0
                 stop = "nsigma" if nsigma * rms > threshold else "threshold"
                 break
             whole = float(onp.abs(resid).max())
-            if (whole - prev) / prev > _MAJOR_RISE or (
-                whole - lowest_whole
-            ) / lowest_whole > _MAJOR_RISE:
+            if whole > (1 + _MAJOR_RISE) * lowest_whole:
                 stop = "diverged"
                 break
-            prev, lowest_whole = whole, min(lowest_whole, whole)
+            lowest_whole = min(lowest_whole, whole)
             if total >= niter:
                 break
             if time_limit and time.time() - t0 > time_limit:
@@ -672,11 +670,10 @@ def clean(
             comps += inc
             total += n
             sm = _Smoother(shape)
-            model = sum(  # Jy per pixel: Σ_s B_s ⊛ comps_s, B_s of peak 1
-                _area(s * FWHM_TO_SIGMA) * sm(c, s * FWHM_TO_SIGMA)
-                for c, s in zip(comps, scales)
-                if onp.any(c)
-            )
+            model = onp.zeros(shape)  # Jy/pixel: Σ_s B_s ⊛ comps_s, B_s peak 1
+            for c, g in zip(comps, onp.array(scales) * FWHM_TO_SIGMA):
+                if onp.any(c):
+                    model += _area(g) * sm(c, g)
     if restoringbeam is not None:
         beam = tuple(float(b) for b in restoringbeam)
     image = restore(model, resid, beam, pixel_scale_mas)
