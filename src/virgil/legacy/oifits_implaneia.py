@@ -23,22 +23,6 @@ from astropy.io import fits
 Simbad = None
 
 
-# deliberate: a test seam (tests stand in for astroquery and check the hint)
-def _simbad():
-    """The astroquery ``Simbad`` class, imported on first use."""
-    if Simbad is not None:
-        return Simbad
-    try:
-        from astroquery.simbad import Simbad as simbad_class
-    except ImportError as err:
-        raise ImportError(
-            "Looking targets up in SIMBAD needs astroquery, which is not "
-            "installed. Install it with: pip install 'virgil-astro[legacy]'"
-        ) from err
-
-    return simbad_class
-
-
 def _deprecated(name, instead):
     warnings.warn(
         f"virgil.legacy.oifits_implaneia.{name} is unused by virgil and "
@@ -217,7 +201,16 @@ def _query_simbad(name):
     """
     unknown = [0], [0], ["unknown"], [0], [0], [0]
     mas_to_deg = 1.0 / 3.6e6
-    simbad = _simbad()
+    if Simbad is not None:
+        simbad = Simbad
+    else:
+        try:
+            from astroquery.simbad import Simbad as simbad
+        except ImportError as err:
+            raise ImportError(
+                "Looking targets up in SIMBAD needs astroquery, which is not "
+                "installed. Install it with: pip install 'virgil-astro[legacy]'"
+            ) from err
     try:
         custom_simbad = simbad()
         custom_simbad.add_votable_fields(

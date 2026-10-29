@@ -323,20 +323,6 @@ class Laplacian(_ImageRegulariser):
 _B3_SPLINE = (1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16)
 
 
-def _smooth(image, step):  # deliberate: named step of starlet
-    """The B3-spline smoothing of the starlet, with taps ``step`` apart."""
-    for axis in (0, 1):
-        n = image.shape[axis]
-        width = [(0, 0), (0, 0)]
-        width[axis] = (2 * step, 2 * step)
-        padded = np.pad(image, width)
-        image = sum(
-            tap * jax.lax.slice_in_dim(padded, k * step, k * step + n, 1, axis)
-            for k, tap in enumerate(_B3_SPLINE)
-        )
-    return image
-
-
 def starlet(image, scales=4):
     """The starlet (isotropic undecimated wavelet) transform of an image.
 
@@ -366,7 +352,19 @@ def starlet(image, scales=4):
     smooth = np.asarray(image)
     details = []
     for j in range(int(scales)):
-        smoother = _smooth(smooth, 2**j)
+        # B3-spline smoothing with the taps 2**j pixels apart, one axis at a time.
+        step = 2**j
+        smoother = smooth
+        for axis in (0, 1):
+            n = smoother.shape[axis]
+            width = [(0, 0), (0, 0)]
+            width[axis] = (2 * step, 2 * step)
+            padded = np.pad(smoother, width)
+            smoother = sum(
+                tap
+                * jax.lax.slice_in_dim(padded, k * step, k * step + n, 1, axis)
+                for k, tap in enumerate(_B3_SPLINE)
+            )
         details.append(smooth - smoother)
         smooth = smoother
     return np.stack(details), smooth
@@ -575,36 +573,6 @@ def field_of_view(data, largest_mas=500.0, *, aperture_mas=None):
     return ceiling
 
 
-def _squared_visibilities(d):  # deliberate: named step of second_moment_fwhm
-    """Spatial frequency (cycles per radian), V² and error of the unflagged
-    visibilities, as flat arrays; empty for data without amplitudes of their own.
-    """
-    empty = onp.zeros(0)
-    if (
-        d.vis_encoding != "split"
-        or d.vis_mat is not None
-        or d.uv_grid is not None
-        or onp.size(d.vis) == 0
-    ):
-        return empty, empty, empty
-    amplitude = onp.asarray(d.vis, float)
-    error = onp.asarray(d.d_vis, float)
-    if d.vis_mode == "v2":
-        v2, sigma = amplitude, error
-    elif d.vis_mode == "logamp":
-        v2 = onp.exp(2.0 * amplitude)
-        sigma = 2.0 * v2 * error
-    else:
-        v2, sigma = amplitude**2, 2.0 * onp.abs(amplitude) * error
-    u = onp.ravel(onp.asarray(d.u, float))
-    v = onp.ravel(onp.asarray(d.v, float))
-    wavel = onp.broadcast_to(onp.ravel(onp.asarray(d.wavel, float)), u.shape)
-    rho = onp.hypot(u, v) / wavel
-    if d.vis_index is not None:
-        rho = rho[onp.asarray(d.vis_index)]
-    return rho, v2, sigma
-
-
 def second_moment_fwhm(data, v2_min=0.3):
     """The FWHM (mas) of the Gaussian that the short baselines see.
 
@@ -633,7 +601,39 @@ def second_moment_fwhm(data, v2_min=0.3):
         ``V² ≥ v2_min``.
     """
     observations = _as_list(data)
-    parts = [_squared_visibilities(d) for d in observations]
+    parts = []
+    for d in observations:
+        # Spatial frequency (cycles per radian), V² and error of the
+        # unflagged visibilities; nothing for data without amplitudes of
+        # their own.
+        if (
+            d.vis_encoding != "split"
+            or d.vis_mat is not None
+            or d.uv_grid is not None
+            or onp.size(d.vis) == 0
+        ):
+            continue
+        amplitude = onp.asarray(d.vis, float)
+        error = onp.asarray(d.d_vis, float)
+        if d.vis_mode == "v2":
+            part_v2, part_sigma = amplitude, error
+        elif d.vis_mode == "logamp":
+            part_v2 = onp.exp(2.0 * amplitude)
+            part_sigma = 2.0 * part_v2 * error
+        else:
+            part_v2 = amplitude**2
+            part_sigma = 2.0 * onp.abs(amplitude) * error
+        u = onp.ravel(onp.asarray(d.u, float))
+        v = onp.ravel(onp.asarray(d.v, float))
+        wavel = onp.broadcast_to(
+            onp.ravel(onp.asarray(d.wavel, float)), u.shape
+        )
+        part_rho = onp.hypot(u, v) / wavel
+        if d.vis_index is not None:
+            part_rho = part_rho[onp.asarray(d.vis_index)]
+        parts.append((part_rho, part_v2, part_sigma))
+    if not parts:
+        return None
     rho, v2, sigma = (onp.concatenate(x) for x in zip(*parts))
     use = onp.isfinite(v2) & onp.isfinite(sigma) & (v2 >= v2_min) & (rho > 0)
     if use.sum() < 2:
@@ -699,53 +699,6 @@ def image_field(
     return float(min(ceiling, max(floor, wanted)))
 
 
-def _complex_visibilities(d):  # deliberate: named step of dirty_image
-    """Visibility estimates at a dataset's uv samples and their 0/1 weights: the
-    least-squares estimate from the modes for DISCO data, the visibilities
-    themselves for amplitudes with absolute phases.
-    """
-    if d.vis_encoding == "mixed_log_complex":
-        sigma = onp.asarray(d.d_vis)[:, None]
-        operator = onp.concatenate(
-            [onp.asarray(d.vis_mat), onp.asarray(d.phi_mat)], axis=1
-        )
-        logv = onp.linalg.lstsq(
-            operator / sigma, onp.asarray(d.vis) / sigma[:, 0], rcond=1e-8
-        )[0]
-        n = operator.shape[1] // 2
-        information = onp.sum((operator / sigma) ** 2, axis=0)
-        informed = (
-            information[:n] + information[n:]
-        ) > 1e-3 * information.max()
-        # The modes are blind to the total flux, so the log-amplitudes have
-        # an arbitrary offset: fix it so that |V| = 1 on average on the
-        # shortest informed baselines, as for any normalized source.
-        rho = onp.hypot(onp.asarray(d.u), onp.asarray(d.v))[informed]
-        shortest = rho <= onp.quantile(rho, 0.1)
-        logv[:n] -= onp.mean(logv[:n][informed][shortest])
-        return onp.exp(logv[:n] + 1j * logv[n:]), informed.astype(float)
-    if (
-        d.vis_encoding == "split"
-        and not d.cp_flag
-        and d.phi_mat is None
-        and d.vis_mat is None
-        and d.vis_index is None
-        and d.phi_index is None
-    ):
-        amplitude = onp.asarray(d.vis)
-        if d.vis_mode == "v2":
-            amplitude = onp.sqrt(onp.maximum(amplitude, 0.0))
-        elif d.vis_mode == "logamp":
-            amplitude = onp.exp(amplitude)
-        vis = amplitude * onp.exp(1j * onp.asarray(d.phi))
-        return vis, onp.ones(vis.size)
-    raise ValueError(
-        "A dirty image needs complex visibilities: AMIGO DISCO data, or "
-        "amplitudes with absolute phases for every sample (closure phases "
-        "do not give the phases, and visibility-only data have none)."
-    )
-
-
 # Samples per chunk in ``dirty_image``: ~16 MB per complex128 phase matrix at
 # npix = 256.
 _DIRTY_BATCH = 4096
@@ -785,7 +738,52 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     offsets = onp.asarray(pixel_offsets(int(npix), float(pixel_scale_mas)))
     image, total = onp.zeros((int(npix), int(npix))), 0.0
     for d in observations:
-        vis, weight = _complex_visibilities(d)
+        # Visibility estimates at the uv samples and their 0/1 weights: the
+        # least-squares estimate from the modes for DISCO data, the
+        # visibilities themselves for amplitudes with absolute phases.
+        if d.vis_encoding == "mixed_log_complex":
+            sigma = onp.asarray(d.d_vis)[:, None]
+            operator = onp.concatenate(
+                [onp.asarray(d.vis_mat), onp.asarray(d.phi_mat)], axis=1
+            )
+            logv = onp.linalg.lstsq(
+                operator / sigma, onp.asarray(d.vis) / sigma[:, 0], rcond=1e-8
+            )[0]
+            n = operator.shape[1] // 2
+            information = onp.sum((operator / sigma) ** 2, axis=0)
+            informed = (
+                information[:n] + information[n:]
+            ) > 1e-3 * information.max()
+            # The modes are blind to the total flux, so the log-amplitudes
+            # have an arbitrary offset: fix it so that |V| = 1 on average on
+            # the shortest informed baselines, as for any normalized source.
+            rho = onp.hypot(onp.asarray(d.u), onp.asarray(d.v))[informed]
+            shortest = rho <= onp.quantile(rho, 0.1)
+            logv[:n] -= onp.mean(logv[:n][informed][shortest])
+            vis = onp.exp(logv[:n] + 1j * logv[n:])
+            weight = informed.astype(float)
+        elif (
+            d.vis_encoding == "split"
+            and not d.cp_flag
+            and d.phi_mat is None
+            and d.vis_mat is None
+            and d.vis_index is None
+            and d.phi_index is None
+        ):
+            amplitude = onp.asarray(d.vis)
+            if d.vis_mode == "v2":
+                amplitude = onp.sqrt(onp.maximum(amplitude, 0.0))
+            elif d.vis_mode == "logamp":
+                amplitude = onp.exp(amplitude)
+            vis = amplitude * onp.exp(1j * onp.asarray(d.phi))
+            weight = onp.ones(vis.size)
+        else:
+            raise ValueError(
+                "A dirty image needs complex visibilities: AMIGO DISCO data, "
+                "or amplitudes with absolute phases for every sample (closure "
+                "phases do not give the phases, and visibility-only data have "
+                "none)."
+            )
         if flux_ratio is not None:
             star = onp.sum(weight * onp.real(vis)) / onp.sum(weight)
             vis = (vis - star) * (1.0 + flux_ratio) / flux_ratio
@@ -1328,7 +1326,8 @@ def _clean_model(base, components, pixel_scale_mas, rotation_deg, spectrum):
     return System(base=base, clean=image)
 
 
-def _joint_refit(  # deliberate: named step of clean
+# deliberate: one joint fit of the base's free parameters and the component fluxes, so neither absorbs the other's error
+def _joint_refit(
     base, components, observations, priors, geometry, spectrum, dtype
 ):
     """Fit the base's free parameters (``priors``, keyed by paths in the base) and

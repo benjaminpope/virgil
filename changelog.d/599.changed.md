@@ -1,0 +1,1 @@
+Stamp purge, imaging, OIFITS I/O, plotting and models: the vacuous `# deliberate:` stamps are replaced by specific reasons or removed; `_smooth`, `_squared_visibilities`, `_complex_visibilities` and `_simbad` are inlined into their single callers, and `second_moment_fwhm` returns `None` instead of raising on an empty list of observations.
