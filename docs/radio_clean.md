@@ -43,7 +43,7 @@ figure on this page in about a minute on a laptop CPU.
 from virgil.radio_clean import clean
 
 sigma = 1 / onp.sqrt(onp.sum(onp.asarray(data.weight)))  # thermal noise of the natural image
-res = clean(data, npix=65, pixel_scale_mas=4.0, deconvolver="hogbom",
+res = clean(data, npix=65, pixel_scale_mas=4.0, deconvolver="hogbom", weighting="briggs", robust=0.5,
             threshold=3 * sigma, usemask="auto-multithresh")
 res.image, res.model, res.residual   # Jy/beam, Jy/pixel, Jy/beam
 model_vis = res.model_visibilities(data)   # the model at the data's (u, v)
@@ -53,7 +53,7 @@ model_vis = res.model_visibilities(data)   # the model at the data's (u, v)
 
 The dirty image is the data convolved with the dirty beam. CLEAN replaces it by a sparse model
 (second panel); restored through the Gaussian beam (white ellipse), the model plus residual
-gives the third. The residual is on a symmetric scale centred on zero, at about 1 per cent of
+gives the third. The residual is on a symmetric scale centred on zero, at a small fraction of
 the peak. Every sky image on this page has North up and East left.
 
 **CLEAN against RML.** The same data, fitted instead as a pixel `Image` with a `MaxEntropy`
@@ -62,7 +62,7 @@ difference from the truth on one scale:
 
 ![CLEAN and RML against the truth](figures/radio_clean_vs_rml.png)
 
-Both reach χ²/N ≈ 1 on the quoted errors, and both differ from the truth by about 0.2–0.3 per
+Both reach χ²/N ≈ 1 on the quoted errors, and both differ from the truth by about 0.2 per
 cent of its peak. CLEAN is a greedy sparse model that needs no optimizer and no prior; the
 fit is a nonlinear optimization with a prior, which is what lets it carry constraints beyond
 the data (positivity, a regularizer, nuisance parameters). On this scene, one seed, neither
