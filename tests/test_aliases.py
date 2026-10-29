@@ -639,7 +639,15 @@ def test_gaussian_evidence_laplace_exact_and_importance_sampling_close():
 
 # The log likelihood at the optimum of each near start below, from main's
 # L-BFGS-B-with-restarts ``_optimize`` (commit 5f600a3); all six reach it.
-_OLD_NEAR = [-193.286626] * 6
+# The fit now carries the mixture's Occam factor for its six nights
+# (``_occam(6)``; the outlier level of ``_problem`` is -1e6), which is the
+# only change from that value.
+def _occam(k):
+    """ln Γ(K + ½) / (Γ(K + 1) √π): the Beta(½, ½) mean of (1 - ε)^K."""
+    return float(gammaln(k + 0.5) - gammaln(k + 1.0) - 0.5 * onp.log(onp.pi))
+
+
+_OLD_NEAR = [-193.286626 + _occam(6)] * 6
 
 
 @in_float64
@@ -705,7 +713,7 @@ def test_a_kernel_that_stalls_falls_back_to_lbfgs_and_then_the_kernel(
     monkeypatch.setattr(_gauss_newton, "solve", truncate_first)
     x, value = aliases._optimize(problem, bounds, x0, 200)
     assert len(calls) == 2  # the kernel (cut short), L-BFGS-B, the kernel
-    assert value == pytest.approx(-193.286626, abs=0.01)
+    assert value == pytest.approx(-193.286626 + _occam(6), abs=0.01)
 
 
 # Band log evidences (Laplace) of the fit below from main's optimizer (commit
