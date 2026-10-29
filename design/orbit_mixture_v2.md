@@ -107,7 +107,9 @@ nodes, resolution 4.21 mas:
 | 0.0625 | −61.97 | −90.23 | −74.68 | −107.27 |
 | 0.04 | −62.05 | −90.23 | −74.61 | −107.30 |
 
-The value converges only at step ≲ res/67. The default step,
+The value settles to about 0.1 nat only at step ≲ res/67. The last two
+rows still differ by 0.07–0.08 nats, non-monotonically, so convergence
+below 0.1 nat is not shown. The default step,
 `_BROAD_STEP` × res ≈ 1.05 mas, is wrong by 26, 14, 8 and 12 nats, and the
 error is not monotone (night 2 at steps 2.0 and 1.0). The flux axis was
 held at 13 nodes, so flux convergence is not tested by this table. At
@@ -169,7 +171,9 @@ is a reported failure (`scale-at-bound` when the posterior median of ln s_g
 is within 3 posterior sd of ±ln s_max), never silent.
 
 Default: s_max = 10, the engine's existing bound (`_NUMERIC_S_MAX`), so
-there is no new constant. It covers χ²/N up to 100. The user can raise it.
+there is no new constant. Today both `fit_orbit_aliases` and
+`OrbitPipeline` default to `s_max=None`, so PR A changes both defaults,
+and the seeding pass with them, and records the change in the CHANGELOG. It covers χ²/N up to 100. The user can raise it.
 
 **Where s_max does matter: the outlier's own scales.** Under (ii) the
 outlier component keeps one free scale per group per night, on the same
@@ -265,18 +269,23 @@ night k's outlier responsibility is r_k = σ(Δ_k − T), with
 1. **ε = 0**: optimize from the seed to (x₀, s₀). This is a plain Gaussian
    fit with global scales. Its residuals are not redescending, so the
    basin is the least-squares basin.
-2. **Enter**: T₁ = max_k Δ_k(x₀, s₀) + W, where W = ln(1/δ) = 6.9 nats and
-   δ = 10⁻³ is the reporting precision (orbit_dehack §2). At T₁ every
+2. **Enter**: T₁ = max(max_k Δ_k(x₀, s₀) + W, T_end), where
+   W = ln(1/δ) = 6.9 nats, δ = 10⁻³ is the reporting precision
+   (orbit_dehack §2), and T_end is defined in step 5. At T₁ every
    r_k ≤ δ, so the first fixed-ε objective differs from ε = 0 by less than
-   the reported precision.
+   the reported precision. When every night fits (all Δ_k + W < T_end),
+   T₁ = T_end and the schedule goes straight to step 5.
 3. **Step**: while some night has |Δ_k(x_i, s_i) − T_i| ≤ W, set
-   T_{i+1} = T_i − h with **h = 1 nat**, and re-optimize from (x_i, s_i).
+   T_{i+1} = max(T_i − h, T_end) with **h = 1 nat**, and re-optimize from
+   (x_i, s_i).
 4. **Jump**: if no night is within W of T_i, set
-   T_{i+1} = max{Δ_k : Δ_k < T_i − W} + W, the next night to enter
-   transition, or T_end if there is none. No responsibility changes by
-   more than δ across a jump.
-5. **End**: stop at T_end = ln(2K − 1), i.e. ε* = 1/(2K). Then optimize
-   the target (marginal) once, warm-started.
+   T_{i+1} = max(max{Δ_k : Δ_k < T_i − W} + W, T_end): the next night to
+   enter transition, or T_end if there is none. No responsibility changes
+   by more than δ across a jump.
+5. **End**: when T_i = T_end = ln(2K − 1), i.e. ε* = 1/(2K), optimize the
+   target (marginal) once, warm-started.
+
+T therefore never increases and never passes T_end.
 
 **Why h = 1 nat.** dr/dT ≤ ¼, so one step changes any night's weight by at
 most ¼. Taking a night from inlier (r ≤ ¼) to outlier (r ≥ ¾) needs
@@ -291,12 +300,25 @@ are equal at ε = 1/(2K). The last fixed-ε stage therefore has the
 target's half-weight point. When there are more outliers, the final
 marginal solve moves the effective ε.
 
-**Bound on work.** Each night's transition window has width 2W, so it
-takes at most ⌈2W/h⌉ + 1 = 15 steps. That is at most 15K short solves per
-start in the worst case (K = 12: 180) and two to three typically (one solve
-at ε = 0, one jump to the end). Each step is a warm-started Gauss–Newton
-solve on an already compiled kernel. The cost is measured against the
-targets in §6.
+**Bound on work, and the cap.** If each Δ_k were fixed, every night's
+transition window (width 2W) would take at most ⌈2W/h⌉ + 1 = 15 steps,
+so there would be at most 15K steps in all. But Δ_k is recomputed after
+every solve. A night whose Δ_k falls with T (for example a good night
+while ŝ relaxes) can stay in its window. In that case no bound follows
+from the schedule alone, and the worst case is (T₁ − T_end)/h, which is
+about 10⁴ for a sidelobe night.
+
+Therefore **N_cap = 15K steps**, the static bound itself. A start that
+reaches N_cap with T > T_end jumps to T_end, runs step 5, and is flagged
+`continuation-capped`. The flag is counted in the band's result and in the
+summary, and is never silent. The cap is not tuned: exceeding the static
+bound means a night's status is still tracking the fit, i.e.
+continuation has not settled, and that is exactly what the flag reports.
+M4 measures whether capped starts cost search completeness.
+
+Typical cost is two to three solves (ε = 0, one jump, the target). Each
+step is a warm-started Gauss–Newton solve on an already compiled kernel,
+measured against the targets in §6.
 
 **Worked case (the sidelobe fixture).** At ε = 0 the orbit follows the bad
 night partway, and the global scale inflates to fit it: ŝ ≈ √(26 806/108)
@@ -437,15 +459,36 @@ cannot integrate it (§1.2). The replacement:
   `_BROAD_STEP`, with 13 log-flux nodes) over the disc, as boxes in
   (x, y, ln f). The 201-per-axis cap is **deleted**: on long baselines it
   coarsened the step past the fringe Nyquist rate.
-- **Refine**: a box whose midpoint value is within W_b = 30 nats of the
-  running maximum is split 2 × 2 × 2. Its error estimate is the
-  difference between its midpoint rule and the sum of its children's.
-  Refinement continues until the total estimated error is ≤ 4δ = 0.004
-  nats. **Why 4δ:** |dq/dΔ| ≤ ¼, so a b_k error of 4δ moves any q by at
-  most δ. **Why 30 nats:** the level-0 grid has at most
-  (2 × 57/1.05)² × 13 ≈ 1.6 × 10⁵ ≈ e^{12} boxes, and boxes more than 30
-  nats down sum to at most e^{12 − 30} = e^{−18} of the peak,
-  far below 4δ.
+- **Find every peak first.** A midpoint value is not a bound on a box's
+  integral: a peak of width res/100 can sit about 680 nats above the
+  midpoint of its own res/4 box (§1.2 shows the effect). Refinement is
+  therefore seeded from peaks, not from midpoints. The χ² of each block
+  is smooth on the fringe scale: V² of a point companion is a sum of
+  cos(2π u·p) with |u| ≤ 1/res, so it is band-limited, and the res/4
+  step samples it at twice its Nyquist rate. Every local minimum of χ²
+  then lies within one cell of a local minimum of the level-0 grid
+  (3 × 3 × 3 neighbourhood). Newton on the night's score, started from
+  each such grid minimum (the peak catalogue `epoch_positions` already
+  builds), finds every peak. For CP, which is smooth but not strictly
+  band-limited, this is checked by a planted-peak test (§7, PR A), not
+  assumed.
+- **Integrate each peak** by adaptive midpoint cubature in its
+  Laplace-whitened coordinates. The cubature box is ±9 Laplace sd, the
+  `_WINDOW` already used for the scale integral. Boxes are split 2 × 2 × 2
+  until the difference between a box's midpoint rule and its children's
+  sum, totalled over the night, is ≤ 4δ = 0.004 nats.
+- **Background**: the level-0 boxes outside every peak's ±9 sd box, by
+  their midpoints. The χ² gradient bound (Bernstein's inequality for the
+  band-limited V² part: |∇χ²| ≤ (2π/res)·max|χ² − χ̄²| over the box's
+  neighbours) bounds each box's maximum. A background box whose bound lies
+  within W_b = 30 nats of the largest peak is also refined.
+- **Why 4δ:** |dq/dΔ| ≤ ¼, so a b_k error of 4δ moves any q by at most δ.
+  **Why 30 nats:** the level-0 grid has at most
+  (2 × 57/1.05)² × 13 ≈ 1.6 × 10⁵ ≈ e^{12} boxes. Background boxes whose
+  whole-box bound is more than 30 nats down sum to at most
+  e^{12 − 30} = e^{−18} of the peak, far below 4δ.
+- **The guarantee is conditional** on the peak catalogue being complete.
+  The planted-peak test checks completeness and reports any miss raw.
 - **Source:** adaptive subdivision cubature (Genz & Malik 1980, J. Comput.
   Appl. Math. 6, 295), restricted to midpoint rules so it runs on the
   existing batched scorer (`_grid_scores`). It needs a provenance entry.
@@ -464,12 +507,25 @@ cannot integrate it (§1.2). The replacement:
    a_max(1 + e_max).
 2. **Cache b_k per fingerprint** within a process, so a resume, an oracle
    run and the null's (ii) component do not recompute it.
-3. **Closed-form own-scale marginal** for Gaussian blocks of b_k. The
-   bounded log-uniform scale integral of a Gaussian is an incomplete gamma:
-   ½(2/χ²)^{ν/2} Γ(ν/2)[P(ν/2, χ²/(2a²)) − P(ν/2, χ²/(2b²))], evaluated in
-   logs, with a = 1/s_max and b = s_max. This replaces the numeric
-   `log_integral` per grid point. von Mises and numeric blocks keep
-   theirs.
+3. **Closed-form own-scale marginal** for Gaussian blocks of b_k. This
+   replaces the numeric `log_integral` per grid point; von Mises and
+   numeric blocks keep theirs. For a block tempered by d = dof_b (so
+   L^d has ν′ = dν and χ′² = dχ²), with the prior normalized on
+   [a, b] = [1/s_max, s_max], u = χ′²/(2s²) and x_a = χ′²/(2a²),
+   x_b = χ′²/(2b²):
+
+     ln ∫ L^d π(s) ds = −d(Σ ln σ + (ν/2) ln 2π) − ln(2 ln s_max)
+                        + ln ½ + ln Γ(ν′/2) + (ν′/2) ln(2/χ′²)
+                        + ln[Q(ν′/2, x_b) − Q(ν′/2, x_a)].
+
+   The last term is evaluated without cancellation:
+   - when x_b > ν′/2, as ln Q_b + log1p(−Q_a/Q_b);
+   - otherwise as ln P_a + log1p(−P_b/P_a).
+
+   For a badly missed grid point (the sidelobe V²: χ² = 24 096, ν = 18,
+   x_b ≈ 120 ≫ 9) both P round to 1 and the naive difference is −∞. If
+   Q_b underflows (float32), ln Q comes from its large-x asymptotic
+   series (Abramowitz & Stegun 6.5.32).
 
 ### 6.3 Pre-registered targets
 
@@ -505,22 +561,41 @@ or xfailed without Ben's sign-off.
 - **Files:** `src/virgil/epochs.py` (`broad_loglike` → adaptive cubature;
   delete `_MAX_AXIS`; closed-form own-scale marginal; level-0 disc sum in
   the `epoch_positions` pass with its fingerprint); `src/virgil/aliases.py`
-  (`_broad_components` reuses or caches by fingerprint;
-  `s_max is None` raises for `outlier="mixture"`);
-  `src/virgil/pipeline/orbit.py` (grid field ≥ a_max(1 + e_max));
+  (`_broad_components` reuses or caches by fingerprint; the default
+  `s_max` of `fit_orbit_aliases` becomes `_NUMERIC_S_MAX`, and an explicit
+  `s_max=None` raises for `outlier="mixture"`);
+  `src/virgil/pipeline/orbit.py` (default `s_max` = `_NUMERIC_S_MAX`, also
+  for the seeding `epoch_positions` pass, so the level-0 fingerprint
+  matches; grid field ≥ a_max(1 + e_max)); `CHANGELOG.md` (seeding scores
+  and summaries change for every caller who does not pass `s_max`);
   `scripts/time_orbit_mixture.py` (new); `references/provenance.toml`
   (Genz & Malik 1980).
 - **Tests to add:**
   - `test_the_broad_component_converges_to_a_fine_grid`: on a small disc
-    (a_max = 12 mas, the §1.2 fixture), a midpoint grid at steps h and h/2
-    (h = res/64) with Richardson extrapolation (4I_{h/2} − I_h)/3 is the
-    oracle, written in the test with numpy from the surface's public score.
-    Assert |b_k − oracle| ≤ 0.004 nats per night.
+    (a_max = 6 mas, one night simulated with its companion at 3 mas), the
+    oracle is written in the test with numpy from the surface's public
+    score. It uses midpoint grids at h, h/2 and h/4 (h = res/64), with the
+    flux axis integrated by Gauss–Legendre in ln f, doubling nodes until a
+    change < δ/10. The test first asserts the oracle's own Richardson error
+    estimate |R(h/2, h/4) − R(h, h/2)| ≤ δ, where
+    R(h, h/2) = (4I_{h/2} − I_h)/3. Only then does it assert
+    |b_k − R(h/2, h/4)| ≤ 4δ = 0.004 nats. If the oracle check fails, the
+    test fails and is reported, never loosened. (§1.2's last rows differ by
+    0.07–0.08 nats non-monotonically, so a two-level oracle is not enough.)
+  - `test_a_planted_narrow_peak_is_found`: a night whose companion sits at
+    the corner of a level-0 box (the worst case), at SNR giving
+    σ_p ≈ res/200. Assert that the catalogue contains it and that b_k
+    matches the oracle above.
+  - `test_default_calls_use_a_bounded_scale`: `fit_orbit_aliases` and
+    `OrbitPipeline` with no `s_max` run with `_NUMERIC_S_MAX`, and
+    `s_max=None` with the mixture raises.
   - `test_the_broad_component_does_not_depend_on_the_grid_origin`: shift
     the level-0 grid by half a step and assert the same b_k to 0.004 nats.
     This is the aliasing lottery of §1.2, closed.
   - `test_the_own_scale_marginal_matches_quadrature`: the incomplete-gamma
-    form against `scipy.integrate.quad` over ln s, to 10⁻¹⁰ relative.
+    form against `scipy.integrate.quad` over ln s, to 10⁻¹⁰ relative, with
+    cases χ² ≈ ν, χ² ≫ ν s_max² (finite, not −∞), and dof ≠ 1; plus a
+    float32 case at the underflow end.
   - `test_the_level_zero_sum_is_reused_only_on_a_matching_fingerprint`.
 - **Unchanged and must pass:** `tests/test_group_outlier.py` (all three);
   `test_the_broad_component_is_a_prior_average_of_the_night_likelihood`
@@ -595,9 +670,13 @@ or xfailed without Ben's sign-off.
 - **Tests to add:**
   - `test_the_fixed_eps_mixture_is_the_one_node_case`: ε = 0 equals Σℓ_k
     with a finite gradient; fixed ε against direct evaluation.
-  - `test_the_schedule_is_deterministic_and_bounded`: on random (ℓ, b),
-    T decreases monotonically, ends at ln(2K − 1), takes at most 15K steps,
-    and repeated calls give identical sequences.
+  - `test_the_schedule_is_deterministic_and_bounded`: on random static
+    (ℓ, b), including the all-good case where T₁ = T_end, assert that T is
+    non-increasing, never below T_end, ends at ln(2K − 1), takes at most
+    15K steps, and repeats identically.
+  - `test_a_drifting_night_hits_the_cap_and_is_flagged`: a constructed
+    problem whose Δ_k falls by h per solve stops at N_cap = 15K, runs the
+    target, and carries `continuation-capped`.
   - `test_eps_star_matches_the_marginal_single_outlier_odds`: at
     ε = 1/(2K), the fixed-ε q equals §4.1's closed form for every Δ.
   - `test_only_the_target_value_ranks_modes`: a mode's reported log L
