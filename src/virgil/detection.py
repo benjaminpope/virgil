@@ -918,7 +918,7 @@ def _batch_sizes(batch_size, template, draw_batch):
     return draw_batch, default // draw_batch
 
 
-# deliberate: injection_recovery is already past the 120-line cap, so growing it fails code_shape
+# deliberate: resolves the noise simulator ('gaussian' or 'bootstrap') and checks the data fingerprint and null scene against the template
 def _simulator(noise, template, null_scene):
     if isinstance(noise, _SIMULATORS):
         # The null check, batch sizing and metadata use ``template``, so

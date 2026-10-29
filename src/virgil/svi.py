@@ -180,7 +180,7 @@ def _laplace_started(base):
     return Guide
 
 
-# deliberate: variational is already past the 120-line cap, so growing it fails code_shape
+# deliberate: maps the guide name or callable to its autoguide class, Laplace-started for the flow and mvn families
 def _make_guide(guide, posterior, init_loc_fn):
     if callable(guide) and not isinstance(guide, str):
         return guide(posterior, init_loc_fn=init_loc_fn)
@@ -200,7 +200,7 @@ def _make_guide(guide, posterior, init_loc_fn):
     )
 
 
-# deliberate: variational is already past the 120-line cap, so growing it fails code_shape
+# deliberate: starting guide scales from the Gauss-Newton curvature on active latent sites, init_scale widths on the rest
 def _start_scale(
     guide_obj,
     model,

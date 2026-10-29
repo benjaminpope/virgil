@@ -318,6 +318,57 @@ _WINDOW_SIGMA = 12.0  # half-width of the integration window, in sigma_f
 _TAIL_SIGMA = 40.0  # decay lengths kept when f_hat is outside the bounds
 
 
+# deliberate: Gauss-Legendre quadrature in ln f, anchored at the bound nearest the peak so float32 resolves a window far narrower than f
+def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
+    """Evidence, posterior mean and sd of f under ``LogUniform(f_min, f_max)``.
+
+    The Gaussian likelihood of ``f`` (mean ``f_hat``, sd ``sigma``) relative to
+    ``f = 0`` is integrated by Gauss-Legendre quadrature in ``ln f`` over the
+    part of the bounds where it is not negligible. Returns
+    ``(log_B, mean, sd)``.
+    """
+    d = np.maximum(f_min - f_hat, f_hat - f_max)  # > 0 outside the bounds
+    outside = d > sigma
+    width = np.where(
+        outside,
+        _TAIL_SIGMA * sigma * (sigma / np.maximum(d, sigma)),
+        _WINDOW_SIGMA * sigma,
+    )
+    above = outside & (f_hat > f_max)
+    centre = np.clip(f_hat, f_min, f_max)
+    lo = np.clip(centre - width, f_min, f_max)
+    hi = np.clip(centre + width, f_min, f_max)
+    # The window is f = f0 * exp(sgn * delta), delta in [0, span]: anchored at
+    # the bound nearest f_hat when f_hat is outside, so that a window much
+    # narrower than f (float32!) is still resolved, and f - f_hat is formed
+    # from offsets rather than from two nearly equal fluxes.
+    tail = np.minimum(width, f_max - f_min)
+    f0 = np.where(above, f_max, lo)
+    sgn = np.where(above, -1.0, 1.0)
+    span = np.where(
+        outside,
+        np.where(above, -np.log1p(-tail / f_max), np.log1p(tail / f_min)),
+        np.log(hi) - np.log(lo),
+    )
+    x, w = gauss_legendre(_N_NODES)
+    delta = 0.5 * span * (x + 1.0)
+    wd = 0.5 * span * w
+    offset = f0 * np.expm1(sgn * delta)  # f - f0
+    # (f - f_hat)^2 - f_hat^2 with f = f0 + offset, expanded so that nothing
+    # large cancels: f0 (f0 - 2 f_hat) + 2 (f0 - f_hat) offset + offset^2.
+    h = -(
+        f0 * (f0 - 2.0 * f_hat) + 2.0 * (f0 - f_hat) * offset + offset**2
+    ) / (2.0 * sigma**2)
+    m = np.max(h)
+    wt = wd * np.exp(h - m)
+    s0 = np.sum(wt)
+    mean_offset = np.sum(wt * offset) / s0
+    var = np.sum(wt * (offset - mean_offset) ** 2) / s0
+    mean = f0 + mean_offset
+    log_b = m + np.log(s0) - np.log(np.log(f_max) - np.log(f_min))
+    return log_b, mean, np.sqrt(var)
+
+
 def _scalar_params(d, names):
     """Scalar float parameters of a numpyro distribution, or a clear error."""
     out = []
@@ -391,60 +442,8 @@ def _linear_flux_grid(
             return flux, sigma, None, None, None
         if isinstance(prior, LogUniform):
             safe = np.where(ok, curvature, 1.0)
-            # Evidence, posterior mean and sd of f under LogUniform(f_min,
-            # f_max): the Gaussian likelihood of f (mean flux, sd sig)
-            # relative to f = 0, integrated by Gauss-Legendre quadrature in
-            # ln f over the part of the bounds where it is not negligible.
-            sig = 1.0 / np.sqrt(safe)
-            gap = np.maximum(
-                prior.f_min - flux, flux - prior.f_max
-            )  # > 0 outside the bounds
-            outside = gap > sig
-            width = np.where(
-                outside,
-                _TAIL_SIGMA * sig * (sig / np.maximum(gap, sig)),
-                _WINDOW_SIGMA * sig,
-            )
-            above = outside & (flux > prior.f_max)
-            centre = np.clip(flux, prior.f_min, prior.f_max)
-            lo = np.clip(centre - width, prior.f_min, prior.f_max)
-            hi = np.clip(centre + width, prior.f_min, prior.f_max)
-            # The window is f = f0 * exp(sgn * delta), delta in [0, span]: anchored at
-            # the bound nearest flux when flux is outside, so that a window much
-            # narrower than f (float32!) is still resolved, and f - flux is formed
-            # from offsets rather than from two nearly equal fluxes.
-            tail = np.minimum(width, prior.f_max - prior.f_min)
-            f0 = np.where(above, prior.f_max, lo)
-            sgn = np.where(above, -1.0, 1.0)
-            span = np.where(
-                outside,
-                np.where(
-                    above,
-                    -np.log1p(-tail / prior.f_max),
-                    np.log1p(tail / prior.f_min),
-                ),
-                np.log(hi) - np.log(lo),
-            )
-            x, w = gauss_legendre(_N_NODES)
-            delta = 0.5 * span * (x + 1.0)
-            wd = 0.5 * span * w
-            offset = f0 * np.expm1(sgn * delta)  # f - f0
-            # (f - flux)^2 - flux^2 with f = f0 + offset, expanded so that nothing
-            # large cancels: f0 (f0 - 2 flux) + 2 (f0 - flux) offset + offset^2.
-            h = -(
-                f0 * (f0 - 2.0 * flux) + 2.0 * (f0 - flux) * offset + offset**2
-            ) / (2.0 * sig**2)
-            m = np.max(h)
-            wt = wd * np.exp(h - m)
-            s0 = np.sum(wt)
-            mean_offset = np.sum(wt * offset) / s0
-            var = np.sum(wt * (offset - mean_offset) ** 2) / s0
-            post_mean = f0 + mean_offset
-            post_sd = np.sqrt(var)
-            log_bf = (
-                m
-                + np.log(s0)
-                - np.log(np.log(prior.f_max) - np.log(prior.f_min))
+            log_bf, post_mean, post_sd = _log_uniform_evidence(
+                flux, 1.0 / np.sqrt(safe), prior.f_min, prior.f_max
             )
             return (
                 flux,

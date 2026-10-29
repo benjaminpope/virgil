@@ -667,7 +667,6 @@ def _check_positive_flux_prior(name, distribution):
         )
 
 
-# deliberate: number of host devices; test_numpyro_model_warns_of_zero_size_arrays_with_parallel_chains monkeypatches it
 def _host_devices():
     """The number of local devices, without initializing the backend (by reading
     ``XLA_FLAGS`` first; several GPUs are not counted before the backend starts).

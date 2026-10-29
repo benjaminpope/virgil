@@ -228,7 +228,6 @@ class GainModes(eqx.Module):
         return False
 
 
-# deliberate: the per-frame reference _slow_gain_modes in test_gain_modes_equals_the_per_frame_loop calls it
 def _frames_and_stations(data, need_stations):
     """Frame and station pair of each visibility observable."""
     if data.frame is None:
@@ -378,7 +377,6 @@ def _mode_blocks(touched, n_item):
     return list(by_label.values())
 
 
-# deliberate: the per-frame reference _slow_gain_modes in test_gain_modes_equals_the_per_frame_loop calls it
 def _pack(columns, groups, widths, frame):
     """Sort columns into blocks within frames (connected by shared rows,
     padded to a common size) and columns spanning frames."""

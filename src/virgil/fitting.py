@@ -1553,6 +1553,62 @@ def _gn_diagonal(rows, x, probes, key=None):
     return np.mean(jax.lax.map(squared, keys), axis=0)
 
 
+# deliberate: Hutchinson estimate of the Hessian diagonal (mean of v*Hv over Rademacher v), exact by unit vectors when probes is None
+def _hessian_diagonal(f, x, probes, key=None):
+    """The diagonal of the Hessian of ``f`` at ``x``: exact (``probes=None``) or
+    the mean of ``v ⊙ Hv`` over Rademacher ``v``."""
+    n = x.size
+    grad = jax.grad(f)
+
+    def product(v):
+        return jax.jvp(grad, (x,), (v,))[1]
+
+    if probes is None:
+
+        def entry(i):
+            return product(np.zeros(n, x.dtype).at[i].set(1.0))[i]
+
+        return jax.lax.map(entry, np.arange(n))
+
+    def estimate(key):
+        v = jax.random.rademacher(key, (n,), x.dtype)
+        return v * product(v)
+
+    keys = jax.random.split(jax.random.fold_in(key, 1), probes)
+    return np.mean(jax.lax.map(estimate, keys), axis=0)
+
+
+# deliberate: Gauss-Newton curvature JtHJ of a loss quadratic in its parameters, by linearize and Rademacher probes or exact unit vectors
+def _gn_params_diagonal(params, loss, x, probes, key=None):
+    """The diagonal of JᵀHJ, J the Jacobian of ``params(x)`` and H the Hessian
+    of ``loss`` at ``params(x)``: the Gauss–Newton curvature of a loss that is
+    quadratic in its parameters. Exact (``probes=None``) or the mean of
+    ``u ⊙ JᵀHJu`` over Rademacher ``u``."""
+    n = x.size
+    theta, push = jax.linearize(params, x)
+    grad = jax.grad(loss)
+
+    def product(v):
+        return jax.jvp(grad, (theta,), (v,))[1]
+
+    if probes is None:
+
+        def entry(i):
+            v = push(np.zeros(n, x.dtype).at[i].set(1.0))
+            leaves = jax.tree.leaves(jax.tree.map(np.vdot, v, product(v)))
+            return np.real(sum(leaves))
+
+        return jax.lax.map(entry, np.arange(n))
+    pull = jax.linear_transpose(push, x)
+
+    def estimate(key):
+        u = jax.random.rademacher(key, (n,), x.dtype)
+        return u * pull(product(push(u)))[0]
+
+    keys = jax.random.split(jax.random.fold_in(key, 2), probes)
+    return np.mean(jax.lax.map(estimate, keys), axis=0)
+
+
 @eqx.filter_jit
 def _fisher_diagonal(problem, z, probes, round=0):
     """The diagonal of the Gauss–Newton curvature of ``problem.loss`` at ``z``,
@@ -1584,64 +1640,19 @@ def _fisher_diagonal(problem, z, probes, round=0):
         def loss(theta):
             return sum(t.curvature_loss(p) for t, p in zip(scalar, theta))
 
-        # The Gauss-Newton curvature of a loss quadratic in its parameters:
-        # the diagonal of JtHJ, J the Jacobian of params(x) and H the Hessian
-        # of loss, exact (probes=None) or the mean of u * JtHJu over
-        # Rademacher u.
-        theta, push = jax.linearize(params, flat)
-        grad = jax.grad(loss)
-
-        def product(v):
-            return jax.jvp(grad, (theta,), (v,))[1]
-
-        if probes is None:
-
-            def entry(i):
-                v = push(np.zeros(flat.size, flat.dtype).at[i].set(1.0))
-                leaves = jax.tree.leaves(jax.tree.map(np.vdot, v, product(v)))
-                return np.real(sum(leaves))
-
-            curvature = jax.lax.map(entry, np.arange(flat.size))
-        else:
-            pull = jax.linear_transpose(push, flat)
-
-            def estimate(k):
-                u = jax.random.rademacher(k, (flat.size,), flat.dtype)
-                return u * pull(product(push(u)))[0]
-
-            keys = jax.random.split(jax.random.fold_in(key, 2), probes)
-            curvature = np.mean(jax.lax.map(estimate, keys), axis=0)
+        curvature = _gn_params_diagonal(params, loss, flat, probes, key)
         diagonal = diagonal + np.maximum(curvature, 0.0)
     metric = [r for r in problem.regularizers if hasattr(r, "metric_rows")]
     plain = [r for r in problem.regularizers if not hasattr(r, "metric_rows")]
     if plain:
-        # The Hessian diagonal of the regularizers, exact (probes=None) or
-        # the mean of v * Hv over Rademacher v.
-        def regularizers(x):
-            model = _reference(problem.build(unravel(x)))
-            return sum(r.value(model) for r in plain)
-
-        reg_grad = jax.grad(regularizers)
-
-        def reg_product(v):
-            return jax.jvp(reg_grad, (flat,), (v,))[1]
-
-        if probes is None:
-
-            def reg_entry(i):
-                return reg_product(
-                    np.zeros(flat.size, flat.dtype).at[i].set(1.0)
-                )[i]
-
-            penalty = jax.lax.map(reg_entry, np.arange(flat.size))
-        else:
-
-            def reg_estimate(k):
-                v = jax.random.rademacher(k, (flat.size,), flat.dtype)
-                return v * reg_product(v)
-
-            keys = jax.random.split(jax.random.fold_in(key, 1), probes)
-            penalty = np.mean(jax.lax.map(reg_estimate, keys), axis=0)
+        penalty = _hessian_diagonal(
+            lambda x: sum(
+                r.value(_reference(problem.build(unravel(x)))) for r in plain
+            ),
+            flat,
+            probes,
+            key,
+        )
         diagonal = diagonal + np.maximum(penalty, 0.0)
     if metric:
 
@@ -2014,7 +2025,6 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
     return f"fit(method={method!r}) did not converge in {steps} steps."
 
 
-# deliberate: test_probes_are_redrawn_each_round_and_a_new_round_does_not_recompile calls it with two metrics and asserts one _lbfgs_run compile
 def _lbfgs(
     problem,
     z0,
