@@ -1003,7 +1003,7 @@ def _bound_fraction(prior, value, flat=True):
     return fraction
 
 
-# deliberate: test seam (tests/test_fitting.py)
+# deliberate: poles of isotropic priors are not bounds; pinned by test_poles_of_isotropic_priors_are_not_prior_bounds
 def _at_bound(problem, values):
     """The paths and noise sites within ``_AT_BOUND`` of a prior bound."""
     priors = dict(problem.priors)
@@ -1491,7 +1491,7 @@ _LBFGS_MEMORY = 100
 _LBFGS_MIN_MEMORY = 5
 
 
-# deliberate: test seam (tests/test_fitting.py)
+# deliberate: history length 100 capped at 1 GiB by the widest leaf; pinned by the two test_the_lbfgs_history_* tests
 def _lbfgs_memory(memory, z):
     """``memory`` if given, else 100 cut so that the tree ``z`` fits the budget."""
     if memory is not None:
@@ -1553,7 +1553,7 @@ def _gn_diagonal(rows, x, probes, key=None):
     return np.mean(jax.lax.map(squared, keys), axis=0)
 
 
-# deliberate: named numerical step, traced inside the jitted _fisher_diagonal
+# deliberate: Hutchinson estimate of the Hessian diagonal (mean of v*Hv over Rademacher v), exact by unit vectors when probes is None
 def _hessian_diagonal(f, x, probes, key=None):
     """The diagonal of the Hessian of ``f`` at ``x``: exact (``probes=None``) or
     the mean of ``v ⊙ Hv`` over Rademacher ``v``."""
@@ -1578,7 +1578,7 @@ def _hessian_diagonal(f, x, probes, key=None):
     return np.mean(jax.lax.map(estimate, keys), axis=0)
 
 
-# deliberate: named numerical step, traced inside the jitted _fisher_diagonal
+# deliberate: Gauss-Newton curvature JtHJ of a loss quadratic in its parameters, by linearize and Rademacher probes or exact unit vectors
 def _gn_params_diagonal(params, loss, x, probes, key=None):
     """The diagonal of JᵀHJ, J the Jacobian of ``params(x)`` and H the Hessian
     of ``loss`` at ``params(x)``: the Gauss–Newton curvature of a loss that is
@@ -1983,7 +1983,7 @@ def _lbfgs_run(
     return carry, tolerance
 
 
-# deliberate: test seam (tests/test_pipeline_star.py)
+# deliberate: message for an unconverged fit saying why; test_unconverged_lm_message_says_why calls it with raw stop codes
 def _not_converged(method, stop, steps, limit, dtype, time_limit):
     """The warning for an unconverged fit, saying why it stopped."""
     if stop == "time":
@@ -2025,7 +2025,6 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
     return f"fit(method={method!r}) did not converge in {steps} steps."
 
 
-# deliberate: test seam (tests/test_fit_precondition.py)
 def _lbfgs(
     problem,
     z0,
@@ -2078,7 +2077,7 @@ def _lbfgs(
             size = limit  # little progress: the rest as one last round
 
 
-# deliberate: named step of the restart loop, with its own chunked state
+# deliberate: four exits (non-finite, converged, time, limit or stalled) that flags would replace in the restart loop
 def _lbfgs_round(
     problem,
     z0,

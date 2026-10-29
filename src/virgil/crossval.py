@@ -429,7 +429,7 @@ def aggregate(records, larger_is_simpler=True):
     return out
 
 
-# deliberate: named step of aggregate: the per-group curves
+# deliberate: sums the per-fold group scores into per-setting, per-group tables and picks each group's best setting
 def _group_curves(records, index, find, n_settings):
     labels = sorted({g for r in records for g in r["group_labels"]})
     col = {g: i for i, g in enumerate(labels)}

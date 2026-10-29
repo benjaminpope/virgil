@@ -440,7 +440,7 @@ _BISECTIONS = 22
 _MAX_BRACKET_DECADES = 40
 
 
-# deliberate: test seam: used by test_grid_and_limits
+# deliberate: largest sigma representable in the working float; test_limits_reject_sigma_beyond_float_precision uses it as the bound
 def _significance_ceiling():
     """Largest significance `nsigma` represents in the default float type."""
     tiny = np.finfo(np.result_type(float)).tiny
@@ -571,7 +571,6 @@ def _solve_limits(
     return limits.reshape(shape), crossed.reshape(shape)
 
 
-# deliberate: jit boundary
 @eqx.filter_jit
 def _absil_limits(
     grid,
@@ -615,7 +614,6 @@ def _absil_limits(
     )
 
 
-# deliberate: jit boundary
 @eqx.filter_jit
 def _injection_limits(
     grid,
