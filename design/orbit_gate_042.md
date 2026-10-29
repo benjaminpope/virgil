@@ -92,8 +92,13 @@ would make the prior depend on the data and break the guarantee).
   on the data and break SBC).
 - Noise: white within each channel, *c* = 0 (the tempering factor should
   come out near 1: this stratum also checks that tempering does not break
-  a calibrated likelihood); σ(V²) log-uniform on [0.005, 0.05] and
-  σ(CP) log-uniform on [0.2°, 3°].
+  a calibrated likelihood); quoted σ(V²) log-uniform on [0.005, 0.05] and
+  quoted σ(CP) log-uniform on [0.2°, 3°]. Approved by Ben 2026-10-29
+  ([orbit_mixture_v2.md](orbit_mixture_v2.md) §8): the noise drawn is
+  s_g times the quoted σ, with ln s_g uniform on [−ln s_max, ln s_max],
+  one draw per calibration group, because the fit infers s_g under that
+  prior and SBC needs every inferred parameter drawn from it. s_g's SBC
+  ranks are reported, not tested.
 - No contaminants (a bad night has no generative model inside the
   engine's prior, so it cannot enter an SBC stratum).
 - Fitted with tempering off (`temper=False`): the noise is white, so
@@ -225,12 +230,18 @@ orbit model can call that night an outlier while the null pays its full
 - **(ii) shared mixture:** the null carries the same ε-marginalised
   mixture, its outlier component being b_k (a companion at a free
   position that night);
-- **(iii) shared noise inflation:** in *both* models (orbit and null),
-  the outlier component of night *k* is that model's own night
-  likelihood with the noise scale inflated, ln ∫ L_k(σ s) π(s) ds,
-  *s* log-uniform on [1, s_max] with s_max the engine's existing scale
-  bound (no new constant). The null then stays a single star, and an
-  outlier night costs both models the same.
+- **(iii′) global-scale inflation** (approved by Ben 2026-10-29, replacing (iii);
+  see [orbit_mixture_v2.md](orbit_mixture_v2.md)
+  §5): the inlier of each model (orbit and null) has one fitted noise
+  scale s_g per calibration group, shared by all nights. The outlier
+  component of night *k* is that model's own night likelihood with each
+  group's scale inflated beyond the global one,
+  Σ_g ln ∫ L_kg(σ s_g t) π(t) dt, with *t* log-uniform on [1, s_max] and
+  s_max the engine's existing scale bound (no new constant). The null
+  then stays a single star, and an outlier night costs both models the
+  same. The registered (iii) applied the same inflation on top of
+  per-night scales whose prior already contained it, so it could not
+  separate any night (#586, strict xfail).
 
 **Rule.** At the virgil commit that implements both (Stage 2), run
 both on all of D with every other setting at its default. For each
@@ -239,7 +250,7 @@ same per-system rate) and M8 on D's binaries. Then:
 1. if exactly one candidate passes both, it is the default;
 2. if both pass, the one with the smaller sum of the two observed error
    rates (false orbits on nulls + false no-orbit on binaries) is the
-   default; an exact tie goes to (iii), whose null is a single star;
+   default; an exact tie goes to (iii′), whose null is a single star;
 3. if neither passes, no default is chosen: the result goes to Ben, and
    no scored run happens until he decides.
 
@@ -410,9 +421,9 @@ tests:
   M2_parameter_coverage: {params: [period, ecc, a_mas, cos_inc, flux], intervals: [0.68, 0.95], rank_ks: true, stratum: A, sided: two}
   M3a_recovery_calibration: {stratum: B, sided: fewer_than_claimed}
   M5_coverage_contaminated: {params: [period, ecc, a_mas], interval: 0.95, condition: p_true_band_ge_0.5, stratum: B, sided: under}
+null_choice: {stratum: D, candidates: [shared_mixture, global_scale_inflation], must_pass: [M6, M8], tie: global_scale_inflation}
 must_hold:
   M3b_confident_errors: {p_map_min: 0.99, max: binomial_q99(n_conf, 0.01), subsets: [B_all, B_misspecified]}
-null_choice: {stratum: D, candidates: [shared_mixture, shared_noise_inflation], must_pass: [M6, M8], tie: shared_noise_inflation}
   M4_search_misses: {nats: 1.0, plus_se_multiple: 3, max_fraction: 0.02, stratum: B}
   M6_false_orbits: {stratum: N, alpha: 0.01, max_count: binomial_q99(n, 0.01), limits_by_n: {'2-15': 1, '16-44': 2, '45-83': 3, '84-129': 4}, N_all: {n: 100, max_count: 4}, subsets: {N_misspecified: {max_count: binomial_q99(n_subset, 0.01)}}, report: [by_template, by_kind, by_envelope_fraction]}
   M8_false_no_orbit: {stratum: B, qualifying: oracle_fap_at_mc_floor, max_fraction: 0.02}
@@ -425,7 +436,7 @@ null_choice: {stratum: D, candidates: [shared_mixture, shared_noise_inflation], 
 Gl 229 Ba–Bb (GRAVITY, two seasons) and ι Peg are run with `OrbitPipeline`
 defaults at each stage's commit. The report gives, raw: the winning band
 *N* and its *p*, the period, χ²/N on the quoted errors (lead with it), the
-tempering factor, the posterior summary, and the published values beside
+fitted global noise scales ŝ_g, the tempering factor, the posterior summary, and the published values beside
 them. A worse showcase is reported as worse, never fixed by a heuristic,
 a target-specific setting or a re-tuned constant. The 0.4.0/0.4.1 Gl 229
 passes are recorded as **unverified** until the de-hacked code reproduces
@@ -469,6 +480,9 @@ them cold.
 | 2026-10-28 | Ben's amendment: WR-like envelopes are chromatic (a line in a random contiguous channel block, generic enhancement, width and optional size change), in gate draws and FAP nulls | Ben (encoded by Claude, Opus) | no |
 | 2026-10-28 | Ben accepts the contrast-curve flux floor (register entry records his empirical-Bayes framing); stratum A's fixed floor and the below-floor M9 misses stay | Ben (encoded by Claude, Opus) | no |
 | 2026-10-28 | Ben: the harness reuses the existing injection–recovery stack (detection_campaign, sbc_v2, `virgil.detection`); detection v3 (job 18467928) pulled and reported first | Ben (encoded by Claude, Opus) | no |
+| 2026-10-29 | §3.6 candidate (iii) replaced by (iii′) global-scale inflation (orbit_mixture_v2 §5); YAML name `shared_noise_inflation` → `global_scale_inflation` | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | yes: the #586 strict xfail showed (iii) cannot separate any night |
+| 2026-10-29 | YAML repair: `null_choice` moved to top level; it sat between two `must_hold` entries and the block did not parse (`yaml.safe_load` fails at `M4_search_misses`); no criterion changed, hash changes | Claude (Opus), for Ben | no |
+| 2026-10-29 | stratum A draws each global noise scale s_g from the fit's log-uniform prior (SBC exactness under orbit_mixture_v2 §2); s_g ranks reported, not tested; showcases report ŝ_g after raw χ²/N | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | no |
 
 ## References
 
