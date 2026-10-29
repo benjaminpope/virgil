@@ -1009,21 +1009,24 @@ def test_custom_offset_prior_bounds_widen_toeplitz_precompute(small):
     assert tdata.max_shift_pix * PIXEL == pytest.approx(wide, rel=1e-12)
 
 
-def test_curvature_loss_is_the_loss_including_log_norm(small):
-    """``curvature_loss`` is ``½χ² + log_norm`` (virgil#590): with free σ the
-    log-normaliser is part of the loss whose curvature in σ the preconditioner
-    takes, as in ``fit``'s loss and the direct term's normalizer rows."""
+def test_curvature_loss_log_norm_is_analytic(small):
+    """With free σ the log-normaliser in ``curvature_loss`` is ``2 N log σ``
+    for ``N`` complex points (virgil#590): its σ-dependence is ``2 N`` per
+    unit ``log σ``, with ``N`` the data's size."""
     data, _, scene, template = small
     nuis = CalibrationNuisance(data, sigmas=True, offsets=False, alpha=0.7)
-    tdata = data.toeplitz(template, nuis)
-    term = tdata.term(scene, nuis)
-    values = _values(nuis, flux=0.8, gain=[1.1], sigma=[2.5, 2.5, 2.5, 2.5])
-    values["eta"] = np.zeros((8, 8))
-    params = term.curvature_params(values)
-    chi2, log_norm = term.chi2_and_log_norm(values)
-    assert float(log_norm) != 0.0
-    assert float(term.curvature_loss(params)) == pytest.approx(
-        0.5 * float(chi2) + float(log_norm), rel=1e-15
+    term = data.toeplitz(template, nuis).term(scene, nuis)
+    n = 300  # points in ``_data(300, ...)``, none masked
+
+    def loss(sigma):
+        values = _values(nuis, flux=0.8, gain=[1.1], sigma=[sigma] * 4)
+        values["eta"] = np.zeros((8, 8))
+        chi2, _ = term.chi2_and_log_norm(values)
+        full = term.curvature_loss(term.curvature_params(values))
+        return float(full - 0.5 * chi2)
+
+    assert loss(2.5) - loss(1.7) == pytest.approx(
+        2.0 * n * onp.log(2.5 / 1.7), rel=1e-12
     )
 
 
