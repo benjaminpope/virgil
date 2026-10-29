@@ -534,7 +534,7 @@ def _combine(p):  # deliberate: stage callable
     }
 
 
-# deliberate: test seam: checks of the stages that ran
+# deliberate: orders the checks of the stages that ran; test_summary_orders_the_checks feeds it partial reports
 def _run_checks(settings, reports):
     """The checks of the stages that ran, in the order of ``CHECKS``."""
     load, star = reports.get("load"), reports.get("star")

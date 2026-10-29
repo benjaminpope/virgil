@@ -23,7 +23,7 @@ from . import _checks, _io
 _BOUND_FRACTION = 0.01
 
 
-def _bound_samples(prior, samples):  # deliberate: test seam
+def _bound_samples(prior, samples):
     """Fraction of ``samples`` in the outer ``_BOUND_FRACTION`` of the
     prior's finite range at either end, or ``None`` if it has no edges.
 
@@ -114,17 +114,6 @@ def _chi2(model, data, **noise):
     return float(onp.sum(r**2)), r
 
 
-def _m2loglike(model, data, **noise):  # deliberate: test seam
-    """−2 log L of ``model``, including the error terms' normalization.
-
-    This is the score for comparing models and lobes when error scales are
-    fitted: at each candidate's own scales χ²/N is 1 by construction, but
-    −2 log L keeps the −N log s term that penalizes inflated errors. On
-    the quoted errors it differs from χ² by a constant.
-    """
-    return -2.0 * float(model_loglike(model, data, **noise))
-
-
 def _overview_plots(p, data):
     """Save the overview of ``data`` and its (u, v) coverage."""
     from ..plotting import plot_oidata_overview, plot_uv_coverage
@@ -163,7 +152,14 @@ def _chi2_64(model, data, **noise):
 
 @in_float64
 def _m2loglike_64(model, data, **noise):
-    return _m2loglike(model, data, **noise)
+    """−2 log L of ``model``, including the error terms' normalization.
+
+    This is the score for comparing models and lobes when error scales are
+    fitted: at each candidate's own scales χ²/N is 1 by construction, but
+    −2 log L keeps the −N log s term that penalizes inflated errors. On
+    the quoted errors it differs from χ² by a constant.
+    """
+    return -2.0 * float(model_loglike(model, data, **noise))
 
 
 def _scale_blocks(data, noise):
@@ -205,22 +201,25 @@ def _golden_max(f, lo, hi, steps=_GOLDEN_STEPS):
     return 0.5 * (a + b)
 
 
-def _profiled_scales(model, data, blocks):  # deliberate: test seam
-    """The error scales that maximize the likelihood of ``model``.
+def _profiled_m2loglike(build, start, data, diam, blocks):
+    """``(−2 log L, scales)`` of ``build({**start, "diam": diam})`` at its
+    profiled error scales. Traceable.
 
-    Each scale multiplies the errors of one block of ``_scale_blocks`` and
-    enters only that block's terms of ``model_loglike``, so each is
+    The profiled scales are the ones that maximize the likelihood of the
+    model. Each scale multiplies the errors of one block of ``_scale_blocks``
+    and enters only that block's terms of ``model_loglike``, so each is
     maximized on its own, in ln s over its prior range. The block's log
     likelihood is unimodal in ln s: ``-χ²/(2s²) - N ln s`` for Gaussian
     blocks, and concave in the concentration κ = 1/(sσ)² for von Mises
-    phases, whose maximum is not at ``sqrt(χ²/N)``. Traceable.
+    phases, whose maximum is not at ``sqrt(χ²/N)``.
     """
     from ..likelihood import whitened_residuals
 
+    model = build({**start, "diam": diam})
     r = whitened_residuals(model, data)
     scales = {
-        key: np.clip(np.sqrt(np.sum(r[start : start + n] ** 2) / n), low, high)
-        for key, start, n, low, high in blocks
+        key: np.clip(np.sqrt(np.sum(r[i : i + n] ** 2) / n), low, high)
+        for key, i, n, low, high in blocks
     }
     for key, _, _, low, high in blocks:
 
@@ -229,21 +228,11 @@ def _profiled_scales(model, data, blocks):  # deliberate: test seam
 
         bounds = np.log(np.asarray([low, high], r.dtype))
         scales[key] = np.exp(_golden_max(loglike, bounds[0], bounds[1]))
-    return scales
-
-
-def _profiled_m2loglike(build, start, data, diam, blocks):
-    """``(−2 log L, scales)`` of ``build({**start, "diam": diam})`` at its
-    profiled error scales. Traceable."""
-    model = build({**start, "diam": diam})
-    scales = _profiled_scales(model, data, blocks)
     return -2.0 * model_loglike(model, data, **scales), scales
 
 
 @eqx.filter_jit
-def _m2loglike_grid_jit(
-    build, start, data, diams, blocks, batch_size
-):  # deliberate: jit boundary
+def _m2loglike_grid_jit(build, start, data, diams, blocks, batch_size):
     def one(diam):
         return _profiled_m2loglike(build, start, data, diam, blocks)
 
@@ -251,9 +240,7 @@ def _m2loglike_grid_jit(
 
 
 @eqx.filter_jit
-def _refine_diameter_jit(
-    build, start, data, low, high, blocks
-):  # deliberate: jit boundary
+def _refine_diameter_jit(build, start, data, low, high, blocks):
     def loglike(log_diam):
         m2, _ = _profiled_m2loglike(
             build, start, data, np.exp(log_diam), blocks
@@ -271,7 +258,7 @@ def _m2loglike_grid(  # deliberate: float64 wrapper of the jit entry, test seam
 
     One batched, jitted evaluation in float64. With ``noise`` (the
     pipeline's error-scale priors) the scales are profiled at every
-    diameter (``_profiled_scales``) and the likelihood is evaluated at
+    diameter (``_profiled_m2loglike``) and the likelihood is evaluated at
     them. ``build`` should be a module-level function, so that the compiled
     function is reused between calls; ``start`` holds the other parameters.
 
@@ -516,7 +503,8 @@ def _noise_quantiles(samples):
     return noise or None
 
 
-def _moments(r):  # deliberate: test seam
+# deliberate: constant-residual fallback (scipy gives NaN), pinned by test_moments_of_constant_residuals_are_finite
+def _moments(r):
     r = onp.asarray(r, dtype=float)
     if r.std() <= 1e-12 * max(abs(r.mean()), 1.0):
         return 0.0, -3.0  # scipy gives NaN for (near-)constant residuals

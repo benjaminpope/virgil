@@ -462,7 +462,8 @@ class _Pipeline:
         self._write_summary(record)
         self._write_record(record)
 
-    def _discard(self, stage):  # deliberate: test seam
+    # deliberate: stale-output rule, applied to one stage by test_band_checkpoints_survive_a_rerun_but_not_a_fresh_run
+    def _discard(self, stage):
         """Delete a stage's report and declared outputs (they are stale)."""
         report = self.output / "stages" / stage.name / "report.json"
         for path in (report, *(self.output / p for p in stage.outputs)):

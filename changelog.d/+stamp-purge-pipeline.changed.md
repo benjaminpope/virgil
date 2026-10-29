@@ -1,0 +1,1 @@
+Pipeline modules: the vacuous `# deliberate:` stamps (test seam, jit boundary, stage function) are removed where the lint already exempts the def, or replaced by the specific reason; `_m2loglike` and `_profiled_scales` are merged into their single callers
