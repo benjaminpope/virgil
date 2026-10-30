@@ -1286,7 +1286,7 @@ year = 2006
 title = "Monte-Carlo imaging for optical interferometry"
 doi = "10.1117/12.670940"
 used_in = ["virgil.imaging:short_baseline_residual"]
-note = "Proc. SPIE 6268; MACIM, whose test of the shortest baselines the large-scale residual check follows"
+note = "Proc. SPIE 6268 (arXiv posting dated 2020, id checked in ADS); MACIM, whose test of the shortest baselines the large-scale residual check follows"
 
 
 # background literature cited in the docs, not a source of virgil's methods
@@ -1667,5 +1667,5 @@ authors = "virgil (own design)"
 year = 2026
 title = "Period-alias band search for sparsely sampled orbits"
 used_in = ["virgil.aliases:fit_orbit_aliases"]
-note = "No published source. The search over cycle-count bands, its nats thresholds and its night-outlier mixture (marginalized rate, Beta(1/2, 1/2)) are virgil's own design, provisional and not independently validated end to end."
+note = "No published source. The search over cycle-count bands, its nats thresholds and its night-outlier mixture (marginalized rate, Beta(1/2, 1/2) (Jeffreys)) are virgil's own design, provisional and not independently validated end to end."
 verified = false
