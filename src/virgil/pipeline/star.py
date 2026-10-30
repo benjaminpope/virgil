@@ -897,7 +897,8 @@ def _compare(registry, reports, child, n):
     The expected ``shape_ratio`` of the child's parameters is recorded
     (`_shape_ratios`); it does not change the preference, which the
     likelihood gain decides, but a child the data cannot constrain is not
-    sampled when it is not selected (`_unconstrained_shapes`).
+    sampled when it is not selected: ``"constrained"`` is false when any
+    ratio is at or above `_checks.PRIOR_DOMINATES` (or not finite).
 
     Source: Chernoff (1954), Self & Liang (1987) ([references](../../references.md#chernoff1954), [Self & Liang](../../references.md#selfliang1987)).
     """
@@ -926,6 +927,10 @@ def _compare(registry, reports, child, n):
         "bic_penalty": penalty,
         "unidentified": unidentified,
         "shape_ratio": ratios,
+        "constrained": all(
+            math.isfinite(r) and r < _checks.PRIOR_DOMINATES
+            for r in ratios.values()
+        ),
         "preferred": child if gain > penalty and not unidentified else parent,
     }
 
@@ -933,13 +938,28 @@ def _compare(registry, reports, child, n):
 def _shape_ratios(data, entry, diam, prior_std):
     """Expected σ_posterior/σ_prior of a model's shape parameters.
 
-    The Fisher information of the V² (the closure phase of a centrosymmetric
-    disk is 0 or π and carries no shape) on the quoted errors, at the parent's
-    diameter and the prior centre of the shape, marginalized over the
-    diameter. A ratio at or above `_checks.PRIOR_DOMINATES` means the data
-    cannot constrain that parameter: it is set by its prior, and the model
-    is a thin, curved ridge in the diameter that NUTS cannot sample. The
-    threshold is the one the posterior's ``*_constrained`` check applies.
+    This is the ratio the posterior's ``*_constrained`` check measures after
+    sampling, predicted from the data before it. Moving a shape parameter
+    by one prior standard deviation changes the V² by ``ΔV²_i`` at each
+    sample; the expected Δχ² is ``Σ (ΔV²_i / σ_i)²`` (the UD/LD difference
+    over the quoted error), after the diameter has absorbed what it can.
+    Its linear form is the Fisher information of the V² (the closure phase
+    of a centrosymmetric disk is 0 or π and carries no shape) at the
+    parent's diameter and the prior centre of the shape, marginalized over
+    the diameter, with the prior's precision ``1 / σ_prior²`` added to the
+    shape block (a Gaussian stand-in for the uniform prior). A ratio near
+    1 means the likelihood adds nothing to the prior; at
+    `_checks.PRIOR_DOMINATES` = 0.8 the likelihood alone has
+    σ_L = 1.33 σ_prior, so a prior-sized change of the shape moves χ² by
+    1 / 1.33² = 0.56: not detectable. Below it the shape is measured; far
+    above (the golden 4 mas star: a ratio of 1.00, from σ_L ≈ 70 σ_prior)
+    it lies on a thin ridge with the diameter that NUTS cannot sample.
+
+    Limitation: the Fisher matrix is linear at the prior centre, so it can
+    mis-call a curved ridge or a shape that is constrained only away from
+    the centre, and it ignores the closure phases and the error-scale
+    nuisance. The ratio is a gate on sampling an unselected model, not an
+    estimate of the posterior width.
     """
     import jax
     import jax.numpy as np
@@ -953,22 +973,12 @@ def _shape_ratios(data, entry, diam, prior_std):
         return data.model(entry.build(values))[:n]
 
     jac = jax.jacfwd(v2)(centre) / np.asarray(data.d_vis)[:, None]
-    sd = onp.sqrt(onp.diag(onp.linalg.pinv(onp.asarray(jac.T @ jac))))
+    precision = onp.asarray(jac.T @ jac) + onp.diag(
+        [0.0, *(1.0 / prior_std[k] ** 2 for k in entry.shape)]
+    )
+    sd = onp.sqrt(onp.diag(onp.linalg.pinv(precision)))
     return {
         k: float(sd[i + 1] / prior_std[k]) for i, k in enumerate(entry.shape)
-    }
-
-
-def _unconstrained_shapes(comparisons):
-    """The children whose shape the data cannot constrain: they are fitted
-    and compared, but an unselected one is not sampled (virgil#580)."""
-    return {
-        c["complex"]
-        for c in comparisons
-        if any(
-            r is None or not r < _checks.PRIOR_DOMINATES  # None: not finite
-            for r in (c.get("shape_ratio") or {}).values()
-        )
     }
 
 
@@ -1166,7 +1176,14 @@ def _posterior(p):
     fit_report = p._report("fit")
     best = fit_report["best"]
     groups, per_model, params_attr = {}, {}, {}
-    skipped = _unconstrained_shapes(fit_report["comparisons"]) - {best}
+    # A child whose shape the data cannot constrain is a thin curved ridge
+    # NUTS does not mix on (virgil#580): it is fitted, compared and reported
+    # (the ``*_unconstrained`` check) but not sampled unless selected.
+    skipped = {
+        c["complex"]
+        for c in fit_report["comparisons"]
+        if not c["constrained"] and c["complex"] != best
+    }
     names = [k for k in p.names if k not in skipped]
     for name in names:
         folder = p.output / "models" / name
@@ -1271,6 +1288,22 @@ def _fit_checks(fit, registry):
                 unidentified=comparison.get("unidentified", False),
             )
         )
+        if not comparison["constrained"] and complex_ != fit["best"]:
+            ratios = comparison["shape_ratio"]
+            listing = ", ".join(f"{k} {v:.3g}" for k, v in ratios.items())
+            checks.append(
+                _checks.Check(
+                    f"{registry[complex_].check_stem or complex_}_not_sampled",
+                    "warn",
+                    max(ratios.values(), default=0.0),
+                    _checks.PRIOR_DOMINATES,
+                    f"The {registry[complex_].label} is not sampled: the "
+                    "data cannot constrain its shape (expected "
+                    f"σ_posterior/σ_prior: {listing}), so it lies on a thin "
+                    f"ridge with the diameter; the {registry[simple].label} "
+                    "is used.",
+                )
+            )
     scales = {
         f"{k}.{kk}": v
         for k in fit["names"]

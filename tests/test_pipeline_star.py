@@ -135,6 +135,7 @@ SUMMARY_KEYS = {
         "bic_penalty",
         "unidentified",
         "shape_ratio",
+        "constrained",
         "preferred",
     },
     "comparisons": None,
@@ -814,6 +815,50 @@ def test_model_choice_is_invalid_with_the_parent_diameter_on_the_lower_edge(
     assert ("unidentified" in check.message) == (
         unidentified and status == "pass"
     )
+
+
+@pytest.mark.parametrize(
+    "ratios, constrained",
+    [
+        ({"p0": 0.1, "p1": 0.2}, True),
+        # Between 0.5 and 1: the threshold is the posterior check's 0.8.
+        ({"p0": 0.55, "p1": 0.7}, True),
+        ({"p0": 0.55, "p1": 0.85}, False),
+        ({"p0": 1.0, "p1": 1.0}, False),
+        ({"p0": float("nan"), "p1": 0.1}, False),
+        ({}, True),
+    ],
+)
+def test_a_child_is_constrained_only_if_every_shape_ratio_is_below_the_threshold(
+    ratios, constrained
+):
+    registry = _fake_models({"a": (None, 1), "b": ("a", 3)})
+    reports = {
+        "a": _report(300.0, 3.0, []),
+        "b": {"m2loglike": 250.0, "at_bound": [], "shape_ratio": ratios},
+    }
+    best, comparison, _ = star._choose_model(reports, registry, 81)
+    assert comparison["constrained"] is constrained
+    # The likelihood gain alone still decides the preference.
+    assert best == "b"
+    fit = {
+        "names": ["a", "b"],
+        "best": best,
+        "models": {
+            k: {**v, "chi2_reduced": 1.0, "error_scales": None}
+            for k, v in reports.items()
+        },
+        "comparisons": [comparison],
+        "n_independent": 81,
+    }
+    assert not any(
+        "not_sampled" in c.name for c in star._fit_checks(fit, registry)
+    )
+    fit["best"] = "a"
+    notes = [
+        c for c in star._fit_checks(fit, registry) if "not_sampled" in c.name
+    ]
+    assert bool(notes) is (not constrained)
 
 
 def test_prior_bound_ignores_shape_parameters():
