@@ -201,7 +201,7 @@ No target name or published period appears in `aliases.py`, `arcs.py`, `epochs.p
 - **Why it matters:** a systematic failure at long period, for example, removes that alias from the posterior and promotes the rest. The reported p of the winner is then wrong, not merely uncertain.
 - **Fix:**
   - Narrow the catch to the numerical errors expected (`FloatingPointError`, `LinAlgError`, the solver's own non-convergence).
-  - Make a failed band **fail** an `alias_bands` check, and leave `p = NaN` (not renormalized) when any band failed.
+  - Make the existing `bands_failed` check (`pipeline/_checks.py:1477`, wired at `pipeline/orbit.py:1475`) return **fail** instead of `warn`, and leave `p = NaN` (not renormalized) when any band failed. The failure is already reported by a named check; the defect is that the check stops at `warn`.
   - **Size:** S (engine) + S (check).
 
 ### OR-10 [S, Dehack-4] Band evidence ranks by Laplace even when importance sampling disagrees
@@ -352,7 +352,7 @@ No target name or published period appears in `aliases.py`, `arcs.py`, `epochs.p
 ### CO-8 [S, Ben] Most checks cannot fail; χ² thresholds ignore N
 
 - **Where:**
-  - `_two_way` (`pipeline/_checks.py:1739`) returns only pass or warn. About 35 of about 48 checks use it, including `detection`, `prior_bound`, `multimodal`, `star_decision`, `tempering` and `convergence`.
+  - About 35 of about 45 public checks can return only pass or warn. Seven do so through `_two_way` (`pipeline/_checks.py:1739`: `quoted_errors`, `effective_parameters`, `star_decision`, `orientation`, `edges`, `ensemble_kept`, `ensemble_spread`). The rest build their `Check` by hand, including `detection`, `prior_bound`, `multimodal`, `tempering` and `convergence`. Changing `_two_way` alone does not fix this.
   - `chi2_reduced` and `error_scale` warn at 2 and fail at 5 for any N (`:90`, `:129`), unchanged since ffb97a8 and 1ee26df.
 - **Why it matters:**
   - A run whose headline conclusion is unsupported can still report `warn`.
@@ -728,7 +728,7 @@ Prose in `src/` is well hedged: a grep for strong words found nothing that makes
 
 ### DC-15 [N] Stray -ise spellings
 
-- **Where:** "renormalized", "normalised", "minimise" and "discretisation" in `tempering.py` and a few docs. This report also uses "parameterization" and "renormalized".
+- **Where:** "normalised", "minimise" and "discretisation" in `tempering.py`, a few docs and `AGENTS.md:169`.
 - **Fix:** convert to -ize. **Size:** S.
 
 ---
@@ -743,7 +743,7 @@ Each package owns the files listed. Packages that share a file are marked "after
 | **WP-2** Remaining gates in the registry | vv | VV-6, VV-7 (CI diff check) | `scripts/trackb_fit.py`, `scripts/sbc_numpyro.py`, `design/oidb_binaries_criteria.md`, `.github/workflows/*`; registry entries **after WP-1** | M | VV-7 policy (D2) |
 | **WP-3** vv trust and showcase hygiene | vv | VV-5 (test), VV-11, VV-12, VV-13, DC-12 (vv side) | `scripts/pull_campaign.py`, `tests/test_pull_campaign*.py`, `scripts/trust.py`, `trust/not_covered.md`, `scripts/reanalyse_orbits.py`, `scripts/orbit_gallery.py`, `src/virgil_bridge/alma_start.py` (docstring only) | S–M | D3 for VV-4 wording |
 | **WP-4** Release evidence pin | vv + OzSTAR | VV-14, VV-5 rerun | release checklist in `CONTRIBUTING.md` (virgil), vv `docs/method/index.md` | S + runs | Ben runs jobs |
-| **WP-5** Orbit pipeline honesty | virgil | OR-5 (interim wording), OR-6, OR-9, OR-11 (once decided), OR-12 (pipeline text), OR-13 (orbit message rewrite) | `src/virgil/pipeline/orbit.py`, the orbit checks in `pipeline/_checks.py` (`alias_ambiguity`, `no_orbit`, `tempering`, a new `alias_bands`), `tests/test_pipeline_orbit*.py` | M | D5, D6 |
+| **WP-5** Orbit pipeline honesty | virgil | OR-5 (interim wording), OR-6, OR-9, OR-11 (once decided), OR-12 (pipeline text), OR-13 (orbit message rewrite) | `src/virgil/pipeline/orbit.py`, the orbit checks in `pipeline/_checks.py` (`alias_ambiguity`, `no_orbit`, `tempering`, `bands_failed`), `tests/test_pipeline_orbit*.py` | M | D5, D6 |
 | **WP-5b** Engine band failure | virgil | OR-9 (engine side: narrow catches, `p = NaN`) | `src/virgil/aliases.py` lines 1250-1380 and 3370-3410 only, **or folded into Dehack-4** if that stage is next | S | no |
 | **WP-6** Generic pipeline checks | virgil | CO-8, CO-9/OR-13 (typed warnings), CO-6 (`_common` side) | `pipeline/_checks.py` (generic parts) **after WP-5**, `pipeline/_common.py`, `fitting.py` (`_AT_BOUND` only), `tests/test_checks*.py` | M | D8 |
 | **WP-7** DiskPipeline fallbacks | virgil | CO-1, CO-2, CO-3, CO-4, CO-12 (provenance table) | `pipeline/disk.py`, `inference.py`, `tests/test_pipeline_disk*.py`, `tests/test_inference*.py` | S–M | no |
