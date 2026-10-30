@@ -779,6 +779,27 @@ Each package owns the files listed. Packages that share a file are marked "after
 | D13 | Gl 229 retirement wording; carbon badge wording | DC-5, DC-14 |
 | D14 | `a_range` in resolution units (decision 12, pending) | OR-7 |
 
+## 7a. Decisions (Ben, 2026-10-30)
+
+On 2026-10-30 Ben replied "approve recommendations" to the 0.4.2 coordinator's recommendations on D1–D14. These rulings replace the open questions in §7. Where they differ from this audit's own suggestion, the ruling stands. For D1, this audit had suggested making vv the authoritative copy.
+
+| ID | Ruling |
+|---|---|
+| D1 | virgil main's `design/orbit_gate_042.md` is authoritative. vv keeps a byte-identical copy, registered by hash, and CI fails if the two diverge. (iii′) is accepted as a post-hoc change, signed off on 2026-10-29. WP-1 follows this. |
+| D2 | Yes: CI fails a PR that re-pins a criteria file without a post-hoc log entry (WP-2). |
+| D3 | The move of IM Lup gate (d) to the tapered image is disclosed in the release notes and on the trust page. |
+| D4 | Limb darkening is fitted only when the star is well resolved. This is Ben's rule, and #580 is implementing it (TS-3). |
+| D5 | The no-orbit verdict is worded "uncalibrated", not a Bayes factor, until the null test runs. |
+| D6 | Tempering is opt-in until 0.5, and it fails above a derived *f* (OR-11, DC-7). |
+| D7 | ε-continuation lands before 0.4.2 (mixture v2 PR B) (TS-1, TS-2). |
+| D8 | χ² thresholds become N-aware, and some checks may fail. "Detected" uses a simulated null, not 3σ Šidák (CO-7, CO-8). |
+| D9 | Sub-σ visibilities are not floored; they raise a warning instead (CO-5). |
+| D10 | The ensemble weight ranges are kept, labelled as contest-tuned. `max_chi2_red` becomes relative (CO-10, CO-15). |
+| D11 | The orbit tutorial gets a seed sweep, with the recovery fraction quoted (DC-6). |
+| D12 | The float32 L-curve case becomes a strict xfail, with an issue (TS-5). |
+| D13 | The wording is plain: the 0.4.0 and 0.4.1 Gl 229 passes are "unverified" (DC-5, DC-14). |
+| D14 | `a_range` is given in resolution units (de-hack stage 4) (OR-7). |
+
 ## 8. Not covered by this audit
 
 - No test suite was run. Calibration-test status on main/nightly since #586 is unverified (TS notes).
