@@ -91,6 +91,14 @@ class _ImageRegulariser(eqx.Module):
         image = self.image(model)
         if not self.smoothed:
             return image.brightness
+        if image.blur_fwhm_mas is not None:
+            warnings.warn(
+                "smoothed=True penalizes the blurred image, so the base "
+                "image is unregularized unless another regularizer "
+                "penalizes the raw pixels (MPoL's convention).",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
         b = image.smoothed()
         return np.maximum(b, np.finfo(b.dtype).tiny)
 
@@ -135,7 +143,7 @@ class TSV(_ImageRegulariser):
         Path of the Image in the model (e.g. ``"env"``); ``None`` if the model
         is the Image itself.
     smoothed : bool, optional
-        Penalize the Image's ``smoothed()`` pixels (see ``smooth_fwhm_mas``)
+        Penalize the Image's ``smoothed()`` pixels (see ``blur_fwhm_mas``)
         instead of the raw ones. Default ``False``.
     """
 
@@ -315,20 +323,6 @@ class Laplacian(_ImageRegulariser):
 _B3_SPLINE = (1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16)
 
 
-def _smooth(image, step):  # deliberate: named step of starlet
-    """The B3-spline smoothing of the starlet, with taps ``step`` apart."""
-    for axis in (0, 1):
-        n = image.shape[axis]
-        width = [(0, 0), (0, 0)]
-        width[axis] = (2 * step, 2 * step)
-        padded = np.pad(image, width)
-        image = sum(
-            tap * jax.lax.slice_in_dim(padded, k * step, k * step + n, 1, axis)
-            for k, tap in enumerate(_B3_SPLINE)
-        )
-    return image
-
-
 def starlet(image, scales=4):
     """The starlet (isotropic undecimated wavelet) transform of an image.
 
@@ -358,7 +352,19 @@ def starlet(image, scales=4):
     smooth = np.asarray(image)
     details = []
     for j in range(int(scales)):
-        smoother = _smooth(smooth, 2**j)
+        # B3-spline smoothing with the taps 2**j pixels apart, one axis at a time.
+        step = 2**j
+        smoother = smooth
+        for axis in (0, 1):
+            n = smoother.shape[axis]
+            width = [(0, 0), (0, 0)]
+            width[axis] = (2 * step, 2 * step)
+            padded = np.pad(smoother, width)
+            smoother = sum(
+                tap
+                * jax.lax.slice_in_dim(padded, k * step, k * step + n, 1, axis)
+                for k, tap in enumerate(_B3_SPLINE)
+            )
         details.append(smooth - smoother)
         smooth = smoother
     return np.stack(details), smooth
@@ -567,36 +573,6 @@ def field_of_view(data, largest_mas=500.0, *, aperture_mas=None):
     return ceiling
 
 
-def _squared_visibilities(d):  # deliberate: named step of second_moment_fwhm
-    """Spatial frequency (cycles per radian), V² and error of the unflagged
-    visibilities, as flat arrays; empty for data without amplitudes of their own.
-    """
-    empty = onp.zeros(0)
-    if (
-        d.vis_encoding != "split"
-        or d.vis_mat is not None
-        or d.uv_grid is not None
-        or onp.size(d.vis) == 0
-    ):
-        return empty, empty, empty
-    amplitude = onp.asarray(d.vis, float)
-    error = onp.asarray(d.d_vis, float)
-    if d.vis_mode == "v2":
-        v2, sigma = amplitude, error
-    elif d.vis_mode == "logamp":
-        v2 = onp.exp(2.0 * amplitude)
-        sigma = 2.0 * v2 * error
-    else:
-        v2, sigma = amplitude**2, 2.0 * onp.abs(amplitude) * error
-    u = onp.ravel(onp.asarray(d.u, float))
-    v = onp.ravel(onp.asarray(d.v, float))
-    wavel = onp.broadcast_to(onp.ravel(onp.asarray(d.wavel, float)), u.shape)
-    rho = onp.hypot(u, v) / wavel
-    if d.vis_index is not None:
-        rho = rho[onp.asarray(d.vis_index)]
-    return rho, v2, sigma
-
-
 def second_moment_fwhm(data, v2_min=0.3):
     """The FWHM (mas) of the Gaussian that the short baselines see.
 
@@ -625,7 +601,39 @@ def second_moment_fwhm(data, v2_min=0.3):
         ``V² ≥ v2_min``.
     """
     observations = _as_list(data)
-    parts = [_squared_visibilities(d) for d in observations]
+    parts = []
+    for d in observations:
+        # Spatial frequency (cycles per radian), V² and error of the
+        # unflagged visibilities; nothing for data without amplitudes of
+        # their own.
+        if (
+            d.vis_encoding != "split"
+            or d.vis_mat is not None
+            or d.uv_grid is not None
+            or onp.size(d.vis) == 0
+        ):
+            continue
+        amplitude = onp.asarray(d.vis, float)
+        error = onp.asarray(d.d_vis, float)
+        if d.vis_mode == "v2":
+            part_v2, part_sigma = amplitude, error
+        elif d.vis_mode == "logamp":
+            part_v2 = onp.exp(2.0 * amplitude)
+            part_sigma = 2.0 * part_v2 * error
+        else:
+            part_v2 = amplitude**2
+            part_sigma = 2.0 * onp.abs(amplitude) * error
+        u = onp.ravel(onp.asarray(d.u, float))
+        v = onp.ravel(onp.asarray(d.v, float))
+        wavel = onp.broadcast_to(
+            onp.ravel(onp.asarray(d.wavel, float)), u.shape
+        )
+        part_rho = onp.hypot(u, v) / wavel
+        if d.vis_index is not None:
+            part_rho = part_rho[onp.asarray(d.vis_index)]
+        parts.append((part_rho, part_v2, part_sigma))
+    if not parts:
+        return None
     rho, v2, sigma = (onp.concatenate(x) for x in zip(*parts))
     use = onp.isfinite(v2) & onp.isfinite(sigma) & (v2 >= v2_min) & (rho > 0)
     if use.sum() < 2:
@@ -691,53 +699,6 @@ def image_field(
     return float(min(ceiling, max(floor, wanted)))
 
 
-def _complex_visibilities(d):  # deliberate: named step of dirty_image
-    """Visibility estimates at a dataset's uv samples and their 0/1 weights: the
-    least-squares estimate from the modes for DISCO data, the visibilities
-    themselves for amplitudes with absolute phases.
-    """
-    if d.vis_encoding == "mixed_log_complex":
-        sigma = onp.asarray(d.d_vis)[:, None]
-        operator = onp.concatenate(
-            [onp.asarray(d.vis_mat), onp.asarray(d.phi_mat)], axis=1
-        )
-        logv = onp.linalg.lstsq(
-            operator / sigma, onp.asarray(d.vis) / sigma[:, 0], rcond=1e-8
-        )[0]
-        n = operator.shape[1] // 2
-        information = onp.sum((operator / sigma) ** 2, axis=0)
-        informed = (
-            information[:n] + information[n:]
-        ) > 1e-3 * information.max()
-        # The modes are blind to the total flux, so the log-amplitudes have
-        # an arbitrary offset: fix it so that |V| = 1 on average on the
-        # shortest informed baselines, as for any normalized source.
-        rho = onp.hypot(onp.asarray(d.u), onp.asarray(d.v))[informed]
-        shortest = rho <= onp.quantile(rho, 0.1)
-        logv[:n] -= onp.mean(logv[:n][informed][shortest])
-        return onp.exp(logv[:n] + 1j * logv[n:]), informed.astype(float)
-    if (
-        d.vis_encoding == "split"
-        and not d.cp_flag
-        and d.phi_mat is None
-        and d.vis_mat is None
-        and d.vis_index is None
-        and d.phi_index is None
-    ):
-        amplitude = onp.asarray(d.vis)
-        if d.vis_mode == "v2":
-            amplitude = onp.sqrt(onp.maximum(amplitude, 0.0))
-        elif d.vis_mode == "logamp":
-            amplitude = onp.exp(amplitude)
-        vis = amplitude * onp.exp(1j * onp.asarray(d.phi))
-        return vis, onp.ones(vis.size)
-    raise ValueError(
-        "A dirty image needs complex visibilities: AMIGO DISCO data, or "
-        "amplitudes with absolute phases for every sample (closure phases "
-        "do not give the phases, and visibility-only data have none)."
-    )
-
-
 # Samples per chunk in ``dirty_image``: ~16 MB per complex128 phase matrix at
 # npix = 256.
 _DIRTY_BATCH = 4096
@@ -777,7 +738,52 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     offsets = onp.asarray(pixel_offsets(int(npix), float(pixel_scale_mas)))
     image, total = onp.zeros((int(npix), int(npix))), 0.0
     for d in observations:
-        vis, weight = _complex_visibilities(d)
+        # Visibility estimates at the uv samples and their 0/1 weights: the
+        # least-squares estimate from the modes for DISCO data, the
+        # visibilities themselves for amplitudes with absolute phases.
+        if d.vis_encoding == "mixed_log_complex":
+            sigma = onp.asarray(d.d_vis)[:, None]
+            operator = onp.concatenate(
+                [onp.asarray(d.vis_mat), onp.asarray(d.phi_mat)], axis=1
+            )
+            logv = onp.linalg.lstsq(
+                operator / sigma, onp.asarray(d.vis) / sigma[:, 0], rcond=1e-8
+            )[0]
+            n = operator.shape[1] // 2
+            information = onp.sum((operator / sigma) ** 2, axis=0)
+            informed = (
+                information[:n] + information[n:]
+            ) > 1e-3 * information.max()
+            # The modes are blind to the total flux, so the log-amplitudes
+            # have an arbitrary offset: fix it so that |V| = 1 on average on
+            # the shortest informed baselines, as for any normalized source.
+            rho = onp.hypot(onp.asarray(d.u), onp.asarray(d.v))[informed]
+            shortest = rho <= onp.quantile(rho, 0.1)
+            logv[:n] -= onp.mean(logv[:n][informed][shortest])
+            vis = onp.exp(logv[:n] + 1j * logv[n:])
+            weight = informed.astype(float)
+        elif (
+            d.vis_encoding == "split"
+            and not d.cp_flag
+            and d.phi_mat is None
+            and d.vis_mat is None
+            and d.vis_index is None
+            and d.phi_index is None
+        ):
+            amplitude = onp.asarray(d.vis)
+            if d.vis_mode == "v2":
+                amplitude = onp.sqrt(onp.maximum(amplitude, 0.0))
+            elif d.vis_mode == "logamp":
+                amplitude = onp.exp(amplitude)
+            vis = amplitude * onp.exp(1j * onp.asarray(d.phi))
+            weight = onp.ones(vis.size)
+        else:
+            raise ValueError(
+                "A dirty image needs complex visibilities: AMIGO DISCO data, "
+                "or amplitudes with absolute phases for every sample (closure "
+                "phases do not give the phases, and visibility-only data have "
+                "none)."
+            )
         if flux_ratio is not None:
             star = onp.sum(weight * onp.real(vis)) / onp.sum(weight)
             vis = (vis - star) * (1.0 + flux_ratio) / flux_ratio
@@ -1015,6 +1021,8 @@ def beam(data):
             weight = (information > 1e-3 * information.max()).astype(float)
         u.append(fu), v.append(fv), w.append(weight)
     u, v, w = (onp.concatenate(x) for x in (u, v, w))
+    if not onp.sum(w) > 0:
+        raise ValueError("beam needs at least one sample that is used.")
     m = onp.array([[w @ (u * u), w @ (u * v)], [w @ (u * v), w @ (v * v)]])
     covariance = onp.linalg.inv(m / onp.sum(w)) / (4 * onp.pi**2)
     variance, axes = onp.linalg.eigh(covariance)
@@ -1318,7 +1326,8 @@ def _clean_model(base, components, pixel_scale_mas, rotation_deg, spectrum):
     return System(base=base, clean=image)
 
 
-def _joint_refit(  # deliberate: named step of clean
+# deliberate: one joint fit of the base's free parameters and the component fluxes, so neither absorbs the other's error
+def _joint_refit(
     base, components, observations, priors, geometry, spectrum, dtype
 ):
     """Fit the base's free parameters (``priors``, keyed by paths in the base) and
@@ -1780,7 +1789,7 @@ class LCurve:
             image = model.get(path)
             if _whitened_field(image.log_brightness):
                 raise TypeError("classic_maxent needs a pixel Image.")
-            if image.smooth_fwhm_mas is not None:
+            if image.blur_fwhm_mas is not None:
                 raise ValueError(
                     "classic_maxent does not support a smoothed Image: its "
                     "entropy metric uses the raw pixels."
@@ -1826,20 +1835,20 @@ _JACOBIAN_BATCH = 64
 
 
 @eqx.filter_jit
-def _jitted_residual_jacobian(model, datasets, path):
+def _jitted_residual_jacobian(model, datasets, path, regularizers=()):
     """Jitted body of ``_residual_jacobian``; ``path`` is one leaf's path or a tuple
     of paths, whose concatenated raveled leaves the Jacobian is taken with
     respect to.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
     if len(paths) == 1:
-        leaf = model.get(paths[0])
+        leaf = np.asarray(model.get(paths[0]), dtype=float)
 
         def with_leaf(x):
             return model.set(paths[0], x)
 
     else:
-        leaves = [model.get(p) for p in paths]
+        leaves = [np.asarray(model.get(p), dtype=float) for p in paths]
         shapes = [np.shape(x) for x in leaves]
         edges = onp.cumsum([0] + [int(onp.prod(s)) for s in shapes])
         leaf = np.concatenate([np.ravel(x) for x in leaves])
@@ -1856,11 +1865,13 @@ def _jitted_residual_jacobian(model, datasets, path):
 
     def residuals(x):
         changed = with_leaf(x)
-        return np.concatenate(
-            [whitened_residuals(changed, d) for d in datasets]
-        )
+        parts = [whitened_residuals(changed, d) for d in datasets]
+        parts += [np.ravel(reg.residuals(changed)) for reg in regularizers]
+        return np.concatenate(parts)
 
-    n_data = sum(d.n_residuals for d in datasets)
+    n_data = sum(d.n_residuals for d in datasets) + sum(
+        int(np.size(reg.residuals(model))) for reg in regularizers
+    )
     n_leaf = np.size(leaf)
     # Rows (reverse mode) or columns (forward mode), whichever are fewer, in
     # batches: jacrev/jacfwd push every basis vector through at once, and the
@@ -1888,19 +1899,24 @@ def _jitted_residual_jacobian(model, datasets, path):
     return r, jac.reshape(n_data, -1)
 
 
-def _residual_jacobian(model, data, path, on_device=False):
+def _residual_jacobian(model, data, path, on_device=False, regularizers=()):
     """All the whitened residuals, and their Jacobian with respect to leaves.
 
     ``path`` is one leaf's path or a tuple of paths. Returns NumPy
     ``(residuals, jacobian)``, float64; ``on_device=True`` leaves the
-    Jacobian a JAX array.
+    Jacobian a JAX array. Probabilistic regularizers in ``regularizers``
+    (such as ``Centroid``) append their ``residuals(model)`` to the residual
+    vector and Jacobian.
     """
     datasets = tuple(_as_list(data))
+    probs = tuple(
+        r for r in (regularizers or ()) if getattr(r, "probabilistic", False)
+    )
     if not isinstance(path, str):
         path = tuple(path)
     with run_in("float64"):
-        model, datasets = cast_tree((model, datasets), "float64")
-        r, jac = _jitted_residual_jacobian(model, datasets, path)
+        model, datasets, probs = cast_tree((model, datasets, probs), "float64")
+        r, jac = _jitted_residual_jacobian(model, datasets, path, probs)
         r = onp.asarray(r, dtype=float)
         return r, (jac if on_device else onp.asarray(jac, dtype=float))
 
@@ -2069,20 +2085,21 @@ def _evidence_latents(model, path, caller):
     return tuple(latents)
 
 
-def log_evidence(model, data, path="env"):
+def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     """Laplace-approximated log evidence of a Gaussian-process fit.
 
     At the MAP ``model``, ``log Z ≈ -½ χ² - L - ½ |z|² - ½ log det(I + JᵀJ)``
     up to a data-only constant, with ``z`` the whitened latents of the Image's
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
     of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
-    ``L`` the likelihood normalizer. Compare it across hyperparameters: it is
-    conditional on those held in ``model`` (or sample them: log-uniform priors
-    from [`gp_priors`][virgil.models.gp_priors] for a ``MultipoleDisk``, your own
-    log-uniform priors on a field's ``sigma`` and ``length_mas`` for an Image).
-    Exact only for a linear model, and it assumes correct error bars (see
-    [`error_scale`][virgil.imaging.error_scale]) and uses the quoted errors, so
-    no ``noise=`` terms or per-dataset models. See
+    ``L`` the likelihood normalizer; extra priors in ``priors`` enter through
+    their ``log_prob`` at the MAP and their ``JᵀJ`` block of the Hessian. Compare
+    it across hyperparameters: it is conditional on those held in ``model`` (or
+    sample them: log-uniform priors from [`gp_priors`][virgil.models.gp_priors]
+    for a ``MultipoleDisk``, your own log-uniform priors on a field's ``sigma``
+    and ``length_mas`` for an Image). Exact only for a linear model, and it
+    assumes correct error bars (see [`error_scale`][virgil.imaging.error_scale])
+    and uses the quoted errors, so no ``noise=`` terms or per-dataset models. See
     [Evidence](../imaging_gp.md#choosing-and-l-from-the-evidence).
     Source: MacKay (1992), [references](../references.md#mackay1992).
 
@@ -2097,6 +2114,11 @@ def log_evidence(model, data, path="env"):
     path : str or tuple of str or None, optional
         Path of the Image (default ``"env"``), a tuple of paths, or ``None`` for
         every such Image and disk (``TypeError`` if there is none).
+    priors : dict, optional
+        Priors of free parameters; non-latent parameters enter via ``log_prob``
+        and their ``JᵀJ`` block of the Hessian.
+    regularizers : sequence, optional
+        Fit regularizers; probabilistic ones (``Centroid``) enter ``χ²`` and ``J``.
 
     Returns
     -------
@@ -2104,18 +2126,47 @@ def log_evidence(model, data, path="env"):
     """
     model = _single_model(model, "log_evidence")
     latent_paths = _evidence_latents(model, path, "log_evidence")
-    r, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
+    extra_paths = tuple(
+        p
+        for p in (priors or ())
+        if p not in latent_paths and not p.endswith("_vec")
+    )
+    all_paths = latent_paths + extra_paths
+    r, jac = _residual_jacobian(
+        model, data, all_paths, on_device=True, regularizers=regularizers
+    )
     chi2 = float(r @ r)
     log_norm = _log_norm(model, data)
     z2 = sum(
         onp.sum(onp.asarray(model.get(latent), dtype=float) ** 2)
         for latent in latent_paths
     )
-    # log det(I + JᵀJ) = Σ log(1 + s²); the singular values avoid forming
-    # the Gram matrix (see "Evidence" in docs/api/imaging.md).
-    singular = _singular_values(jac)
+    if not extra_paths:
+        # log det(I + JᵀJ) = Σ log(1 + s²); the singular values avoid forming
+        # the Gram matrix (see "Evidence" in docs/api/imaging.md).
+        singular = _singular_values(jac)
+        logdet = float(onp.sum(onp.log1p(singular**2)))
+        return float(-0.5 * chi2 - log_norm - 0.5 * z2 - 0.5 * logdet)
+    n_z = sum(int(onp.size(model.get(latent))) for latent in latent_paths)
+    jac_z = jac[:, :n_z]
+    jac_extra = onp.asarray(jac[:, n_z:], dtype=float)
+    singular, vt = _svd(jac_z)
     logdet = float(onp.sum(onp.log1p(singular**2)))
-    return float(-0.5 * chi2 - log_norm - 0.5 * z2 - 0.5 * logdet)
+    c = vt @ (onp.asarray(jac_z, dtype=float).T @ jac_extra)
+    schur = jac_extra.T @ jac_extra - (c.T / (1.0 + singular**2)) @ c
+    sign, logdet_extra = onp.linalg.slogdet(schur)
+    if sign <= 0:
+        return float(-onp.inf)
+    log_prior = sum(
+        float(onp.sum(onp.asarray(priors[p].log_prob(model.get(p)), float)))
+        for p in extra_paths
+    )
+    extra_term = (
+        log_prior
+        + 0.5 * jac_extra.shape[1] * float(onp.log(2.0 * onp.pi))
+        - 0.5 * float(logdet_extra)
+    )
+    return float(-0.5 * chi2 - log_norm - 0.5 * z2 - 0.5 * logdet + extra_term)
 
 
 @eqx.filter_jit
@@ -2140,16 +2191,27 @@ def _render_latents(
     return jax.vmap(lambda x: put(x).render(npix, fov_mas))(latents)
 
 
-def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
+def laplace_samples(
+    model,
+    data,
+    n,
+    key,
+    path="env",
+    npix=None,
+    fov_mas=None,
+    *,
+    priors=None,
+    regularizers=(),
+):
     """Draws from the Laplace posterior of a Gaussian-field image.
 
     The whitened latents ``z`` are drawn from ``N(z₀, (I + JᵀJ)⁻¹)`` about the
     MAP ``z₀``, the approximation of [`log_evidence`][virgil.imaging.log_evidence].
-    Only the latents vary, so the spread is narrower than the full posterior's
-    where other parameters correlate with the image. Exact only for a linear
-    model, assumes correct error bars, uses the quoted errors and is conditional
-    on the hyperparameters held in ``model`` (or sample them, as for
-    [`log_evidence`][virgil.imaging.log_evidence]).
+    With ``priors``, the latents' covariance is the marginal one of the full
+    Hessian ``diag(I, 0) + JᵀJ``, with the other parameters' columns in ``J``.
+    Exact only for a linear model, assumes correct error bars, uses the quoted
+    errors and is conditional on the hyperparameters held in ``model`` (or sample
+    them, as for [`log_evidence`][virgil.imaging.log_evidence]).
 
     Parameters
     ----------
@@ -2169,6 +2231,11 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
         Together, also render the whole model for each draw (see
         [`SourceModel.render`][virgil.models.SourceModel.render]); one alone
         raises ``ValueError``.
+    priors : dict or sequence of str, optional
+        Free parameters (priors or paths) besides the latents; they enter the
+        Hessian through ``JᵀJ``, with no unit-Gaussian prior.
+    regularizers : sequence, optional
+        Fit regularizers; probabilistic ones (``Centroid``) enter ``J``.
 
     Returns
     -------
@@ -2187,41 +2254,62 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
         for p in _field_images(model, path, "laplace_samples")
     )
     latent_paths = tuple(latent for _, latent in fields)
-    _, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
-    zs = [
-        onp.asarray(model.get(latent), dtype=float) for latent in latent_paths
-    ]
+    extra_paths = tuple(
+        p
+        for p in (priors or ())
+        if p not in latent_paths and not p.endswith("_vec")
+    )
+    all_paths = latent_paths + extra_paths
+    _, jac = _residual_jacobian(
+        model, data, all_paths, on_device=True, regularizers=regularizers
+    )
+    zs = [onp.asarray(model.get(p), dtype=float) for p in all_paths]
     z = onp.concatenate([x.ravel() for x in zs])
-    singular, vt = _svd(jac)
+    n_z = sum(x.size for x in zs[: len(fields)])
+    jac_z = jac[:, :n_z]
+    singular, vt = _svd(jac_z)
     first, second = jax.random.split(key)
     e1 = onp.asarray(jax.random.normal(first, (n, singular.size)), float)
-    e2 = onp.asarray(jax.random.normal(second, (n, z.size)), float)
+    e2 = onp.asarray(jax.random.normal(second, (n, n_z)), float)
     # V diag((1+s²)^-½) ε₁ along the data's directions, and ε₂ projected
     # off them, (I - VVᵀ) ε₂, along the prior's.
     draws = (e1 / onp.sqrt(1.0 + singular**2)) @ vt
     draws += e2 - (e2 @ vt.T) @ vt
+    if extra_paths:
+        jac_extra = onp.asarray(jac[:, n_z:], dtype=float)
+        c = vt @ (onp.asarray(jac_z, dtype=float).T @ jac_extra)
+        a_inv_b = vt.T @ (c / (1.0 + singular[:, None] ** 2))
+        schur = jac_extra.T @ jac_extra - (c.T / (1.0 + singular**2)) @ c
+        _, third = jax.random.split(second)
+        e3 = onp.asarray(
+            jax.random.normal(third, (n, jac_extra.shape[1])), float
+        )
+        chol = onp.linalg.cholesky(onp.linalg.inv(schur))
+        draws_extra = e3 @ chol.T
+        draws = onp.hstack([draws - draws_extra @ a_inv_b.T, draws_extra])
     flat = z + draws
     edges = onp.cumsum([0] + [x.size for x in zs])
     pieces = [
         flat[:, edges[i] : edges[i + 1]].reshape((n,) + x.shape)
         for i, x in enumerate(zs)
     ]
-    if len(pieces) == 1:
-        out = {"latents": pieces[0]}
+    latent_pieces = pieces[: len(fields)]
+    if len(latent_pieces) == 1:
+        out = {"latents": latent_pieces[0]}
     else:
         out = {
             "latents": {
                 "" if image is None else image: piece
-                for (image, _), piece in zip(fields, pieces)
+                for (image, _), piece in zip(fields, latent_pieces)
             }
         }
     if npix is not None and fov_mas is not None:
-        dtypes = [model.get(latent).dtype for latent in latent_paths]
+        dtypes = [np.asarray(model.get(p)).dtype for p in all_paths]
         if len(pieces) == 1:
-            where = latent_paths[0]
+            where = all_paths[0]
             values = np.asarray(pieces[0], dtype=dtypes[0])
         else:
-            where = latent_paths
+            where = all_paths
             values = tuple(
                 np.asarray(piece, dtype=dtype)
                 for piece, dtype in zip(pieces, dtypes)
@@ -2337,7 +2425,15 @@ def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
     return dict(zip(kinds, beta))
 
 
-def error_scale(model, data, path="env", *, by_observable=False):
+def error_scale(
+    model,
+    data,
+    path="env",
+    *,
+    by_observable=False,
+    priors=None,
+    regularizers=(),
+):
     r"""Re-estimate the scale of the error bars from a Gaussian-field fit.
 
     Returns the factor ``s`` to multiply every error bar by for consistency with
@@ -2365,6 +2461,11 @@ def error_scale(model, data, path="env", *, by_observable=False):
         One scale per kind of observable instead of one for all. Data with
         gains, closure-phase offsets or other covariance that does not scale
         with the errors raise ``ValueError``.
+    priors : dict or sequence of str, optional
+        Free parameters (priors or paths) besides the latents; they enter
+        through their ``JᵀJ`` block, with no unit-Gaussian prior.
+    regularizers : sequence, optional
+        Fit regularizers; probabilistic ones (``Centroid``) enter ``J``.
 
     Returns
     -------
@@ -2376,8 +2477,44 @@ def error_scale(model, data, path="env", *, by_observable=False):
     """
     model = _single_model(model, "error_scale")
     latent_paths = _evidence_latents(model, path, "error_scale")
-    r, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
+    extra_paths = tuple(
+        p
+        for p in (priors or ())
+        if p not in latent_paths and not p.endswith("_vec")
+    )
+    all_paths = latent_paths + extra_paths
+    r, jac = _residual_jacobian(
+        model, data, all_paths, on_device=True, regularizers=regularizers
+    )
     datasets = _as_list(data)
+    n_data_rows = sum(d.n_residuals for d in datasets)
+    r_data = r[:n_data_rows]
+    if not extra_paths and jac.shape[0] == n_data_rows:
+        jac_z = jac
+        r_extra = 0
+    else:
+        jac = onp.asarray(jac, dtype=float)
+        jac_data = jac[:n_data_rows]
+        jac_reg = jac[n_data_rows:]
+        n_z = sum(int(onp.size(model.get(p))) for p in latent_paths)
+        jac_z = jac_data[:, :n_z]
+        if jac_reg.shape[0]:
+            # Probabilistic regularizers (e.g. Centroid) add prior precision
+            # J_reg^T J_reg on the latents, which does not scale with β; whiten
+            # the latent columns by (I + J_reg^T J_reg)^(-1/2).
+            s_reg, vt_reg = _svd(jac_reg[:, :n_z])
+            scale_reg = 1.0 / onp.sqrt(1.0 + s_reg**2) - 1.0
+            jac_z = jac_z + ((jac_z @ vt_reg.T) * scale_reg) @ vt_reg
+        if extra_paths:
+            u_extra, s_extra, _ = onp.linalg.svd(
+                jac_data[:, n_z:], full_matrices=False
+            )
+            keep = s_extra > (1e-12 * s_extra[0] if s_extra.size else 0.0)
+            q = u_extra[:, keep]
+            r_extra = int(q.shape[1])
+            jac_z = jac_z - q @ (q.T @ jac_z)
+        else:
+            r_extra = 0
     if by_observable:
         # Refuse data whose covariance is not s_b² D per block: their nuisance
         # widths do not scale with the quoted errors.
@@ -2403,12 +2540,12 @@ def error_scale(model, data, path="env", *, by_observable=False):
                 )
         rows, counts = _observable_blocks(datasets)
         # The block fixed point factors on the host (NumPy QR).
-        beta = _block_precisions(r, onp.asarray(jac), rows, counts)
+        beta = _block_precisions(r_data, onp.asarray(jac_z), rows, counts)
         return {k: float(1.0 / onp.sqrt(b)) for k, b in beta.items()}
-    chi2 = float(r @ r)
+    chi2 = float(r_data @ r_data)
     # Independent data, not residuals: penalty rows are not observations.
-    n_data = sum(d.n_independent for d in datasets)
-    lam = _singular_values(jac) ** 2
+    n_data = sum(d.n_independent for d in datasets) - r_extra
+    lam = _singular_values(jac_z) ** 2
     # Newton on g(β) = β χ² + γ(β) − N, increasing and concave: monotone from 0.
     beta = 0.0
     for _ in range(100):

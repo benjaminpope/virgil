@@ -11,6 +11,7 @@ from virgil.radio_clean import (
     _minor_cycle,
     clean,
     fit_beam,
+    restore,
 )
 
 S = 40.0  # mas per pixel
@@ -150,7 +151,7 @@ def test_taper_beam_peaks_at_one_and_matches_dirty_beam():
     data = _data([(1.0, C, C)])
     res = clean(data, N, S, niter=0, uvtaper=300.0)
     ref = data.dirty_beam(N, S, uvtaper=300.0)
-    onp.testing.assert_allclose(res.psf, ref, atol=1e-5)
+    onp.testing.assert_allclose(res.psf, ref, atol=2e-6)  # measured 7.4e-7
     assert ref[int(C), int(C)] == pytest.approx(1.0)
 
 
@@ -225,6 +226,40 @@ def test_errors():
         clean(data, N, S, deconvolver="mtmfs")
     with pytest.raises(TypeError):
         clean(object(), N, S)
+
+
+def test_off_axis_point_source_cleans_and_restores_to_its_true_pixel():
+    """An off-axis point source cleaned on an odd grid restores to its true
+    sky coordinates without a half-pixel shift (even grids are rejected)."""
+    npix = 65
+    c = 0.5 * (npix - 1)
+    row_true, col_true = 20, 41
+    dra_true = (c - col_true) * S
+    ddec_true = (c - row_true) * S
+    # restore alone has no shift on a single pixel component
+    model = onp.zeros((npix, npix))
+    model[row_true, col_true] = 1.5
+    restored = restore(
+        model, onp.zeros_like(model), (4.0 * S, 3.0 * S, 25.0), S
+    )
+    assert onp.unravel_index(onp.argmax(restored), restored.shape) == (
+        row_true,
+        col_true,
+    )
+    assert restored[row_true, col_true] == pytest.approx(1.5, rel=1e-12)
+    # the full clean: the centroid of the cleaned component
+    u, v = _uv(seed=4)
+    vis = 1.5 * onp.exp(
+        -2j * onp.pi * (u * dra_true + v * ddec_true) * mas2rad
+    )
+    data = ComplexVisData.from_arrays(u, v, vis, 1.0, 230e9)
+    res = clean(data, npix, S, niter=400, threshold=1e-3)
+    assert res.stop == "threshold"
+    rr, cc = onp.indices((npix, npix), dtype=float)
+    box = (onp.abs(rr - row_true) <= 4) & (onp.abs(cc - col_true) <= 4)
+    w = onp.where(box, onp.maximum(res.image, 0.0), 0.0)
+    assert abs(float(onp.sum(w * rr) / onp.sum(w)) - row_true) < 0.05
+    assert abs(float(onp.sum(w * cc) / onp.sum(w)) - col_true) < 0.05
 
 
 def _sparse_track_data(n=65, scale=4.0):
@@ -350,17 +385,20 @@ def test_the_minor_cycle_psf_agrees_with_the_image_sized_one():
     large = data._adjoint(ones, w, 2 * n - 1, 4.0, 10**6)
     assert onp.unravel_index(large.argmax(), large.shape) == (n - 1, n - 1)
     overlap = large[n // 2 : n // 2 + n, n // 2 : n // 2 + n]
-    assert onp.abs(overlap - small).max() < 1e-5
+    assert onp.abs(overlap - small).max() < 7e-6  # measured 3.7e-6
 
 
 def test_the_returned_psf_and_beam_match_stored_reference_values():
-    # values from clean() on main, before the minor cycle got its own PSF
-    # (rel 1e-5: the NUFFT differs by about 3e-8 across platforms)
+    # A regression pin, not an independent check: the values came from
+    # clean() itself, before the minor cycle got its own PSF. Measured drift
+    # on macOS is 0; ubuntu x64 CI differs by 4.5e-8 absolute on psf[10, 50]
+    # (the NUFFT error is absolute against the unit peak, so the two PSF
+    # elements are pinned with abs=1e-7; the sums and beam keep rel=1e-7).
     res = clean(_sparse_track_data(), 65, 4.0, niter=0)
     assert res.beam == pytest.approx(
-        (49.0283201406404, 45.953434550067186, 130.89339973020668), rel=1e-5
+        (49.0283201406404, 45.953434550067186, 130.89339973020668), rel=1e-7
     )
-    assert res.psf.sum() == pytest.approx(570.4904774509284, rel=1e-5)
-    assert (res.psf**2).sum() == pytest.approx(137.9294823556553, rel=1e-5)
-    assert res.psf[32, 32] == pytest.approx(0.9999999550513774, rel=1e-5)
-    assert res.psf[10, 50] == pytest.approx(0.11298123905795, rel=1e-5)
+    assert res.psf.sum() == pytest.approx(570.4904774509284, rel=1e-7)
+    assert (res.psf**2).sum() == pytest.approx(137.9294823556553, rel=1e-7)
+    assert res.psf[32, 32] == pytest.approx(0.9999999550513774, abs=1e-7)
+    assert res.psf[10, 50] == pytest.approx(0.11298123905795, abs=1e-7)

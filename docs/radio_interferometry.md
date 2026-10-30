@@ -244,41 +244,40 @@ Source: Blackburn et al. (2020), [references](references.md#blackburn2020);
 Broderick et al. (2020), [references](references.md#broderick2020); Arras et
 al. (2019), [references](references.md#arras2019).
 
-## Smoothing: `Image(smooth_fwhm_mas=...)` or the nuisance taper
+## Blurring kernel: `blur_fwhm_mas`
 
-Two Gaussian blurs are available, for different jobs.
+`Image(..., blur_fwhm_mas=...)` and `CalibrationNuisance(blur_fwhm_mas=...)`
+put a fixed Gaussian blurring kernel of that FWHM (mas) **in the forward
+model**: the data are compared with the blurred model, not with a blurred
+copy afterwards. The fit then recovers the *unblurred* sky, and a kernel
+wider than the true structure is deconvolved, which can leave dots. The
+default is `None`, which is recommended: fit the underlying image, regularize
+it, and blur for display after the reconstruction. (Formerly `smooth_fwhm_mas`
+and `taper_fwhm_mas`, deprecated aliases until 0.5. This is not CASA's
+`uvtaper`, the data weighting of `dirty_image`.)
 
-- `CalibrationNuisance(taper_fwhm_mas=...)` multiplies the visibilities of
-  **any** scene (a parametric model, an `Image`, a `System`) by the Gaussian
-  `exp(-π² θ² q² / (4 ln 2))`. It is a uv-plane factor, so a regulariser,
-  which acts on pixels, never sees it.
-- `Image(..., smooth_fwhm_mas=...)` declares that the sky the data see is the
-  image's pixels convolved with a fixed Gaussian, as in MPoL's
-  `GaussConvFourier`. Its visibilities are the same factor times the pixel
-  transform (exact at any uv point for every `ft`), and
+- `CalibrationNuisance` multiplies the visibilities of **any** scene (a
+  parametric model, an `Image`, a `System`) by `exp(-π² θ² q² / (4 ln 2))`.
+  It is a uv-plane factor, so a regularizer, which acts on pixels, never
+  sees it.
+- `Image` declares that the sky the data see is its pixels convolved with the
+  Gaussian, as in MPoL's `GaussConvFourier` (Czekala et al. 2025,
+  [references](references.md#mpol)). The visibilities are the same factor
+  times the pixel transform (exact at any uv point for every `ft`), and
   `Image.smoothed()` returns the convolved pixels by an FFT on a
-  zero-padded grid. Regularisers then penalize either the raw pixels (the
-  default) or the smoothed ones, with their `smoothed=True` option:
+  zero-padded grid. A regularizer's `smoothed=True` option penalizes those
+  pixels instead of the raw ones; the base image is then unregularized, so
+  `fit` warns (`UserWarning`). MPoL does this; virgil's default does not.
 
 ```python
-env = Image(eta, 5.0, smooth_fwhm_mas=30.0)
+env = Image(eta, 5.0, blur_fwhm_mas=30.0)
 reg = MaxEntropy(w, smoothed=True)  # entropy of the blurred image
 ```
 
-The regulariser option, rather than a model-level switch, keeps the default
-(raw pixels) untouched and lets you mix: entropy on the smoothed image with
-total variation on the raw one. `smoothed=True` clips FFT round-off at zero;
-`MaxEntropy` and `LogSum` then use a flat default over all pixels, since
-smoothing spreads flux beyond the `support`.
-
-MPoL's chain `BaseCube` (softplus) → `GaussConvFourier` (FWHM 30 mas) →
-`ImageCube` → NuFFT, with entropy on the smoothed cube, is
-`Image(eta, scale, smooth_fwhm_mas=30.0)` with `MaxEntropy(w, smoothed=True)`.
-
-Use the nuisance taper for a scene that is not an `Image`, or to blur a
-parametric model; use `smooth_fwhm_mas` when the blur belongs to the image
-model and regularisers should see it. Setting both blurs the model twice, so `fit` and
-`data.term` warn (`UserWarning`) when they meet.
+`smoothed=True` clips FFT round-off at zero; `MaxEntropy` and `LogSum` then
+use a flat default over all pixels, since blurring spreads flux beyond the
+`support`. Setting both blurs the model twice, so `fit` and `data.term` warn
+(`UserWarning`) when they meet.
 
 **Accuracy.** `smoothed()` crops its result to the image, so flux spreading
 past the edges is lost (keep the emission clear of them). For a kernel of at
@@ -351,7 +350,7 @@ covariance raise `NoLeastSquaresForm`). With `precondition="diag"` the pixel,
 flux and gain diagonal is the exact Gauss–Newton one of the direct term; the
 offsets and error scales take the diagonal of the loss Hessian.
 
-- **What it covers.** Per-observation gains, the flux, the nuisance taper, `Image(smooth_fwhm_mas=...)`, a mask, and fixed, fitted or
+- **What it covers.** Per-observation gains, the flux, the nuisance blur, `Image(blur_fwhm_mas=...)`, a mask, and fixed, fitted or
   profiled error scales. The image layout (shape, pixel scale, rotation,
   smoothing) is fixed at the precompute; the scene must return that layout,
   alone or as the only part of a `System`, at the template's `dra`, `ddec`
@@ -389,26 +388,13 @@ tdata = data.toeplitz(template, nuis, offsets="spread")
 It refuses baselines past `tdata.margin` of the pixel Nyquist limit
 (`tdata.nyquist_fraction` is `max |t|/π`; use smaller pixels or mask the
 longest baselines), and offsets beyond the precompute's bound
-(`max_offset_mas`, by default that of `nuis.priors()`) raise at run time.
+(`max_offset_mas`, by default the last `nuis.priors(offset=...)` bound, so call it first) raise at run time.
 Without it, `B_d` and `D_d` need only integer lags and are exact at any
 baseline.
 
 ### Performance
 
-Time of one value-and-gradient evaluation of χ² for a pixel `Image`, by path. The full table
-comes from a benchmark job (the simulated problem of the [radio imaging tutorial](radio_tutorial.md)
-at several sizes, CPU and GPU, exact path with `offsets=False`); only the cells with a sourced
-measurement are filled, and they do not all share one setup.
-
-| Path | CPU | GPU (A100) |
-| --- | --- | --- |
-| direct, exact DFT (`ft="dft"`) | — | — |
-| direct, nufftax backend (`ft="nufft"`, eps 1e-6) | — | 735 ms |
-| Toeplitz (`chi2="toeplitz"`), exact path | — | — |
-| Toeplitz with free offsets (`offsets="spread"`) | — | 21.8 ms (34× the nufftax cell) |
-
-The two GPU cells are from one independent check on a real ALMA data set (virgil-validation, float64): 42.4 M points,
-26 ddids, 1028² pixels of 5 mas, with gain and offset gradients.
+No benchmark in the repository reproduces a timing table yet, so none is given. One independent check on a real ALMA data set (virgil-validation, float64, A100 GPU; 42.4 M points, 26 ddids, 1028² pixels of 5 mas, with gain and offset gradients) measured one value-and-gradient evaluation of χ² at 735 ms through the nufftax backend (`ft="nufft"`, eps 1e-6) and 21.8 ms through the Toeplitz path with free offsets (`offsets="spread"`). The two figures are not shown to share one setup, so their ratio is not a speed-up claim.
 
 ## Diagnostics
 
@@ -460,6 +446,12 @@ resid = data.dirty_image(
     use_sigma=True,
 )  # image of data - model, in Jy/beam
 ```
+
+![uv coverage, dirty beam and dirty image of a simulated ring](figures/radio_dirty_trio.png)
+
+The simulated observation of the [CLEAN guide](radio_clean.md) (a ring and a clump, marked `+`,
+North-East of the centre): the uv coverage with its Hermitian mirror, the Briggs dirty beam
+and the dirty image, with the beam ellipse in the lower left.
 
 The image is `Σ wₖ Re[Vₖ e^{+2πi(uₖx + vₖy)}] / Σ wₖ`, computed with the
 adjoint (type-1) NUFFT of nufftax at the raw (u, v) (nothing is gridded onto

@@ -432,7 +432,8 @@ def _write_grids(output, grid, **groups):
     )
 
 
-def _peak_index(grid, best):  # deliberate: tests call it directly
+# deliberate: log-flux nearest-point rule with out-of-axis clamp; test_refined_flux_is_the_two_public_grids_from_one_pass pins both
+def _peak_index(grid, best):
     """Grid index of ``best`` on each axis (the flux is matched in log)."""
     index = []
     for key in _AXIS_ORDER:
@@ -614,7 +615,8 @@ def _fit_start(
     return template.set(list(priors), list(start.values())), None
 
 
-def _require_finite(values, info):  # deliberate: tests call it directly
+# deliberate: raises at the fit with stop/loss in the message; test_a_non_finite_fit_is_reported_at_the_fit_not_in_the_summary pins it
+def _require_finite(values, info):
     """Raise, at the fit, if it returned a NaN or infinite parameter."""
     bad = [k for k, v in values.items() if not onp.all(onp.isfinite(v))]
     if bad:

@@ -1,0 +1,678 @@
+"""Equivalence of the radio-term refactor: loss, gradient and ŝ unchanged.
+
+``EXPECTED`` was generated from origin/main 90ae756 (before the shared term
+base class), by ``python -m tests.test_radio_refactor``. These are
+self-snapshots, not oracles: they pin that the refactor changed no number;
+correctness against independent references stays in ``test_radio*.py`` and
+virgil-validation.
+"""
+
+import warnings
+
+import jax
+import jax.numpy as np
+import numpy as onp
+import pytest
+
+from virgil import CalibrationNuisance, ComplexVisData, Image
+
+PIXEL = 2.0  # mas
+NPIX = 8
+DDID_OBS = (0, 0, 1, 1)
+CENTRES = onp.array([230e9, 232e9, 240e9, 242e9])
+RTOL = 1e-12
+
+# case -> quantity -> flat values; filled by ``python -m tests.test_radio_refactor``
+EXPECTED = {
+    "profile": {
+        "toeplitz_loss": [1372.5499493273255],
+        "toeplitz_grad": [
+            31.396971663088046,
+            12.392082901065905,
+            -0.2043954426819029,
+            -0.4685274260479855,
+            -0.09110783012003577,
+            0.37285960099065685,
+            0.3537700509930403,
+            -0.06673241680388602,
+            -0.28340680760281695,
+            -0.28567014686808756,
+            -0.6262320332205549,
+            -0.13148291645625762,
+            -0.24747557977742735,
+            0.016688235655453947,
+            0.7765108163629881,
+            0.01603023314005401,
+            -0.330210198741821,
+            -0.188202405848081,
+            -0.08201614860575664,
+            -0.05488852767658386,
+            -0.4445816237343537,
+            0.013647692713816518,
+            0.06120979365926712,
+            -0.049197715490873956,
+            -0.04955630516487782,
+            -0.02082767180092178,
+            -0.015512740895564415,
+            -0.011630078043317683,
+            -0.02712869790231626,
+            -0.01655468491453909,
+            -0.03370404631019407,
+            -0.050266561282276676,
+            -0.0479906890469318,
+            -0.14020829191843193,
+            -0.10639600465093547,
+            -0.07629177754417871,
+            -0.0039915048873376945,
+            0.0828315995370899,
+            -0.1161540555355029,
+            -0.16285728530479487,
+            -0.4564829907052623,
+            -0.4743685047307893,
+            -0.060248439616084455,
+            -0.06134236948905048,
+            0.3090809068542391,
+            0.29344364614584956,
+            0.21173262729241102,
+            -0.029205258872679364,
+            -0.07472149884400227,
+            -0.02284186976788393,
+            0.002796807193702123,
+            -0.07755340109645059,
+            0.43002535092297955,
+            0.12565685916482647,
+            0.6073792213890699,
+            0.10391829566304907,
+            0.09334451159609203,
+            0.19445916291018045,
+            0.3915859518031909,
+            0.007655295647490703,
+            -0.02653487549163234,
+            0.04561488463659845,
+            0.003198971521336127,
+            0.04272139910743337,
+            0.07524928246989564,
+            0.3535156479680339,
+            0.08273747035463362,
+            -0.024090360930888514,
+        ],
+        "direct_loss": [1372.5499493273253],
+        "direct_grad": [
+            31.396971663087765,
+            12.39208290106579,
+            -0.2043954426819016,
+            -0.46852742604798203,
+            -0.0911078301200354,
+            0.3728596009906513,
+            0.35377005099303616,
+            -0.06673241680388556,
+            -0.28340680760281456,
+            -0.2856701468680851,
+            -0.6262320332205492,
+            -0.13148291645625582,
+            -0.24747557977742518,
+            0.01668823565545377,
+            0.7765108163629824,
+            0.01603023314005369,
+            -0.3302101987418179,
+            -0.1882024058480794,
+            -0.08201614860575583,
+            -0.05488852767658282,
+            -0.44458162373434995,
+            0.013647692713816195,
+            0.06120979365926671,
+            -0.04919771549087274,
+            -0.049556305164877267,
+            -0.02082767180092155,
+            -0.015512740895563619,
+            -0.011630078043317497,
+            -0.027128697902315976,
+            -0.016554684914538976,
+            -0.033704046310193594,
+            -0.05026656128227615,
+            -0.04799068904693134,
+            -0.1402082919184305,
+            -0.10639600465093375,
+            -0.07629177754417789,
+            -0.003991504887337395,
+            0.08283159953708938,
+            -0.1161540555355011,
+            -0.16285728530479326,
+            -0.456482990705258,
+            -0.4743685047307846,
+            -0.06024843961608358,
+            -0.06134236948904969,
+            0.30908090685423695,
+            0.2934436461458473,
+            0.2117326272924098,
+            -0.029205258872679007,
+            -0.0747214988440017,
+            -0.022841869767883806,
+            0.0027968071937021586,
+            -0.07755340109644929,
+            0.43002535092297606,
+            0.12565685916482552,
+            0.607379221389067,
+            0.10391829566304782,
+            0.09334451159609064,
+            0.19445916291017798,
+            0.39158595180318767,
+            0.007655295647490695,
+            -0.026534875491632717,
+            0.045614884636597915,
+            0.0031989715213361874,
+            0.0427213991074333,
+            0.07524928246989492,
+            0.35351564796803103,
+            0.08273747035463298,
+            -0.02409036093088816,
+        ],
+        "toeplitz_loglike": [-668.873879488384],
+        "direct_loglike": [-668.873879488384],
+        "toeplitz_sigma_hat": [
+            9.731072580498955,
+            10.595121872975097,
+            11.180212533412085,
+            10.82207044342614,
+        ],
+        "direct_sigma_hat": [
+            9.731072580498958,
+            10.59512187297509,
+            11.180212533412082,
+            10.82207044342614,
+        ],
+        "data_sigma_hat": [
+            9.731072580498958,
+            10.59512187297509,
+            11.180212533412082,
+            10.82207044342614,
+        ],
+        "toeplitz_chi2_by_ddid": [118.0, 118.0, 136.0, 108.0],
+        "data_chi2_by_ddid": [
+            118.0,
+            117.99999999999994,
+            136.0,
+            107.99999999999999,
+        ],
+        "tdata_chi2_by_ddid": [118.0, 118.0, 136.0, 108.0],
+        "derived": [
+            9.731072580498955,
+            10.595121872975097,
+            11.180212533412085,
+            10.82207044342614,
+        ],
+        "direct_derived": [
+            9.731072580498958,
+            10.59512187297509,
+            11.180212533412082,
+            10.82207044342614,
+        ],
+        "has_log_norm": [1.0, 1.0],
+        "toeplitz_fixed_loglike": [-27451.35899972333],
+        "toeplitz_fixed_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "toeplitz_fixed_derived": [0.9, 1.1, 1.2, 0.8],
+        "direct_fixed_loglike": [-27451.358999723314],
+        "direct_fixed_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "direct_fixed_derived": [0.9, 1.1, 1.2, 0.8],
+    },
+    "True": {
+        "toeplitz_loss": [28155.03506956227],
+        "toeplitz_grad": [
+            3428.2061326948415,
+            1549.882655496961,
+            -8.056381446368745,
+            -2.1480526836243587,
+            -15196.550453907752,
+            -9844.853257232942,
+            -9724.405504483793,
+            -24569.411206460125,
+            2.6148700613015645,
+            82.51477926675224,
+            66.90212409553952,
+            -4.382378618734035,
+            -29.838600718069475,
+            -31.06648029438472,
+            -64.5784730595112,
+            -8.591319535224951,
+            -6.941048745643132,
+            2.805876543372973,
+            100.61535734137158,
+            2.494301475412998,
+            -37.99768871940914,
+            -21.68217091577868,
+            -8.688222137405019,
+            -1.4800299766555982,
+            -49.69373017157886,
+            -1.7217124118492018,
+            2.1842154509770357,
+            -15.154714209276799,
+            -7.191533734439465,
+            -3.081425592904732,
+            -5.964376125208373,
+            -2.437920191543065,
+            -4.464213587441344,
+            -7.286121233297893,
+            -10.601475165100169,
+            -7.903022962527357,
+            -6.5214569466281045,
+            -20.80325360744824,
+            -26.021249444461336,
+            -13.47445907958161,
+            -6.190873128397287,
+            -9.213101506382857,
+            -31.56809628838967,
+            -21.688302130818172,
+            -56.07525597492058,
+            -65.25520350191745,
+            -11.948641542988947,
+            -9.86497725254348,
+            25.499764980448962,
+            25.914833040848393,
+            19.062651159162705,
+            -2.8617051965022533,
+            -7.917963209412091,
+            -3.6112938969622252,
+            -0.5254949780304136,
+            -12.53790378707109,
+            49.38627354413139,
+            15.10002291114218,
+            86.94930262027526,
+            23.217469769005845,
+            14.012784049291046,
+            18.414145309655954,
+            36.02888197295642,
+            1.2496579726634534,
+            1.7043664713739122,
+            11.048516217769802,
+            1.0229814599053855,
+            7.497457744673812,
+            6.386154933458639,
+            26.328160731186006,
+            6.638944063063705,
+            1.2319963926981474,
+        ],
+        "direct_loss": [28155.035069562255],
+        "direct_grad": [
+            3428.2061326948087,
+            1549.8826554969453,
+            -8.056381446368745,
+            -2.1480526836244125,
+            -15196.550453907765,
+            -9844.853257232928,
+            -9724.405504483791,
+            -24569.41120646012,
+            2.6148700613015663,
+            82.51477926675139,
+            66.90212409553877,
+            -4.382378618734007,
+            -29.83860071806923,
+            -31.066480294384434,
+            -64.5784730595105,
+            -8.59131953522483,
+            -6.941048745643135,
+            2.8058765433729542,
+            100.61535734137063,
+            2.494301475412991,
+            -37.99768871940875,
+            -21.682170915778475,
+            -8.688222137404912,
+            -1.4800299766554639,
+            -49.69373017157837,
+            -1.721712411849195,
+            2.1842154509770197,
+            -15.154714209276584,
+            -7.1915337344393775,
+            -3.0814255929046923,
+            -5.9643761252082115,
+            -2.4379201915430104,
+            -4.464213587441297,
+            -7.286121233297802,
+            -10.601475165100055,
+            -7.903022962527281,
+            -6.521456946628039,
+            -20.80325360744804,
+            -26.021249444460977,
+            -13.474459079581463,
+            -6.190873128397202,
+            -9.213101506382682,
+            -31.568096288389327,
+            -21.688302130817974,
+            -56.07525597492004,
+            -65.25520350191678,
+            -11.948641542988781,
+            -9.864977252543367,
+            25.49976498044877,
+            25.914833040848176,
+            19.062651159162503,
+            -2.8617051965022218,
+            -7.917963209412014,
+            -3.6112938969621853,
+            -0.525494978030396,
+            -12.537903787070887,
+            49.38627354413094,
+            15.100022911142077,
+            86.94930262027451,
+            23.21746976900565,
+            14.012784049290849,
+            18.414145309655805,
+            36.028881972956306,
+            1.249657972663459,
+            1.7043664713738875,
+            11.048516217769688,
+            1.0229814599053766,
+            7.497457744673759,
+            6.386154933458583,
+            26.32816073118579,
+            6.638944063063703,
+            1.2319963926981652,
+        ],
+        "toeplitz_loglike": [-27451.35899972333],
+        "direct_loglike": [-27451.358999723314],
+        "toeplitz_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "direct_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "data_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "toeplitz_chi2_by_ddid": [
+            13794.895408516979,
+            10947.338582956238,
+            11805.286605380554,
+            19763.5289651681,
+        ],
+        "data_chi2_by_ddid": [
+            13794.895408516986,
+            10947.338582956223,
+            11805.286605380546,
+            19763.528965168098,
+        ],
+        "tdata_chi2_by_ddid": [
+            13794.895408516979,
+            10947.338582956238,
+            11805.286605380554,
+            19763.5289651681,
+        ],
+        "derived": [],
+        "direct_derived": [],
+        "has_log_norm": [1.0, 1.0],
+    },
+}
+
+
+EXPECTED_MORE = {
+    "unscaled": {
+        "direct_loglike": [-26330.532038026737],
+        "direct_sigma_hat": [1.0, 1.0, 1.0, 1.0],
+        "direct_derived": [],
+        "direct_has_log_norm": 0.0,
+        "toeplitz_loglike": [-26330.532038026755],
+        "toeplitz_sigma_hat": [1.0, 1.0, 1.0, 1.0],
+        "toeplitz_derived": [],
+        "toeplitz_has_log_norm": 0.0,
+    },
+    "masked_fixed": {
+        "direct_loglike": [-18783.843745488193],
+        "direct_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "direct_derived": [0.9, 1.1, 1.2, 0.8],
+        "direct_has_log_norm": 1.0,
+        "toeplitz_loglike": [-18783.843745488197],
+        "toeplitz_sigma_hat": [0.9, 1.1, 1.2, 0.8],
+        "toeplitz_derived": [0.9, 1.1, 1.2, 0.8],
+        "toeplitz_has_log_norm": 1.0,
+    },
+    "antenna_gains": {
+        "direct_loglike": [-672.6086315850758],
+        "direct_sigma_hat": [
+            9.261466431437464,
+            8.569883895810879,
+            10.258057002660196,
+            9.528978465751774,
+        ],
+        "direct_derived": [
+            0.07850359847177373,
+            9.261466431437464,
+            8.569883895810879,
+            10.258057002660196,
+            9.528978465751774,
+        ],
+        "direct_has_log_norm": 1.0,
+    },
+}  # as EXPECTED, for ``CASES``
+
+
+@pytest.fixture(autouse=True)
+def float64():
+    with jax.enable_x64(True):
+        yield
+
+
+def _data(n=240, seed=3, antennas=False):
+    rng = onp.random.default_rng(seed)
+    ddid = rng.integers(0, 4, n)
+    obs = onp.asarray(DDID_OBS)[ddid]
+    freq = CENTRES[ddid] * (1.0 + rng.uniform(-0.01, 0.01, n))
+    q = (
+        0.4
+        / (2.0 * 4.848136811095360e-9 * PIXEL)
+        * onp.sqrt(rng.uniform(0, 1, n))
+    )
+    phi = rng.uniform(0, 2 * onp.pi, n)
+    u, v = q * onp.cos(phi), q * onp.sin(phi)
+    weight = rng.uniform(0.5, 2.0, n) * 1e2
+    vis = rng.normal(size=n) + 1j * rng.normal(size=n)
+    extra = {}
+    if antennas:  # drawn last, so the other cases' data are unchanged
+        a1 = rng.integers(0, 4, n)
+        extra = dict(
+            ant1=a1,
+            ant2=a1 + rng.integers(1, 3, n),
+            time=onp.sort(rng.uniform(0, 100, n)),
+            scan=rng.integers(0, 3, n),
+        )
+    return ComplexVisData.from_arrays(
+        u, v, vis, weight, freq, ddid=ddid + 5, obs=obs + 2, **extra
+    )
+
+
+def _setup(sigmas, antennas=False):
+    data = _data(antennas=antennas)
+    nuis = CalibrationNuisance(
+        data, alpha=0.7, sigmas=sigmas, antenna_gains=antennas
+    )
+    rng = onp.random.default_rng(11)
+    values = {k: np.asarray(x) for k, x in nuis.defaults().items()}
+    values["cal.flux"] = np.asarray(0.9)
+    values["cal.gain"] = np.asarray([1.15])
+    values["cal.offset"] = np.asarray([[0.4, -0.7]])
+    if sigmas is True:
+        values["cal.sigma"] = np.asarray([0.9, 1.1, 1.2, 0.8])
+    values["eta"] = np.asarray(rng.normal(size=(NPIX, NPIX)))
+    template = Image(np.zeros((NPIX, NPIX)), PIXEL)
+    return data, nuis, values, template
+
+
+def _scene(values):
+    return Image(values["eta"], PIXEL, ft="dft")
+
+
+def _flat(tree):
+    leaves = [onp.ravel(onp.asarray(x)) for x in jax.tree.leaves(tree)]
+    return onp.concatenate(leaves) if leaves else onp.zeros(0)
+
+
+def _numbers(sigmas):
+    data, nuis, values, template = _setup(sigmas)
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    ttrm = tdata.term(_scene, nuis)
+    dtrm = data.term(_scene, nuis, chi2="direct")
+
+    def toeplitz_loss(v):
+        chi2, log_norm = ttrm.chi2_and_log_norm(v)
+        return 0.5 * chi2 + log_norm + ttrm.loss_constant
+
+    def direct_loss(v):
+        r, log_norm = dtrm.residuals_and_log_norm(v)
+        return 0.5 * np.sum(r**2) + log_norm
+
+    out = {}
+    for name, f in (("toeplitz", toeplitz_loss), ("direct", direct_loss)):
+        out[f"{name}_loss"] = _flat(f(values))
+        out[f"{name}_grad"] = _flat(jax.grad(f)(values))
+    out["toeplitz_loglike"] = _flat(ttrm.loglike(values))
+    out["direct_loglike"] = _flat(dtrm.loglike(values))
+    out["toeplitz_sigma_hat"] = _flat(ttrm.sigma_hat(values))
+    out["direct_sigma_hat"] = _flat(dtrm.sigma_hat(values))
+    out["data_sigma_hat"] = _flat(data.sigma_hat(_scene, values, nuis))
+    out["toeplitz_chi2_by_ddid"] = _flat(ttrm.chi2_by_ddid(values))
+    out["data_chi2_by_ddid"] = _flat(
+        data.chi2_by_ddid(_scene, values, nuis)[0]
+    )
+    out["tdata_chi2_by_ddid"] = _flat(
+        tdata.chi2_by_ddid(_scene, values, nuis)[0]
+    )
+    out["derived"] = _flat(dict(sorted(ttrm.derived(values).items())))
+    out["direct_derived"] = _flat(dict(sorted(dtrm.derived(values).items())))
+    out["has_log_norm"] = onp.asarray(
+        [ttrm.has_log_norm, dtrm.has_log_norm], dtype=float
+    )
+    if sigmas == "profile":
+        # fixed error scales through term(sigma=): the held-out path
+        fixed = np.asarray([0.9, 1.1, 1.2, 0.8])
+        tfix = tdata.term(_scene, nuis, sigma=fixed)
+        dfix = data.term(_scene, nuis, chi2="direct", sigma=fixed)
+        for name, term in (("toeplitz", tfix), ("direct", dfix)):
+            out[f"{name}_fixed_loglike"] = _flat(term.loglike(values))
+            out[f"{name}_fixed_sigma_hat"] = _flat(term.sigma_hat(values))
+            out[f"{name}_fixed_derived"] = _flat(
+                dict(sorted(term.derived(values).items()))
+            )
+    return out
+
+
+CASES = {
+    "unscaled": dict(sigmas=False),
+    "masked_fixed": dict(sigmas="profile", masked=True, fixed=True),
+    "antenna_gains": dict(sigmas="profile", antennas=True),
+}
+
+
+def _cases(sigmas, masked=False, fixed=False, antennas=False):
+    """The shared-base paths of ``_numbers`` does not reach: no σ, a mask
+    with fixed ``sigma=``, and antenna gains (direct only)."""
+    data, nuis, values, template = _setup(sigmas, antennas)
+    mask = onp.arange(len(data)) % 3 != 0 if masked else None
+    sigma = np.asarray([0.9, 1.1, 1.2, 0.8]) if fixed else None
+    terms = {
+        "direct": data.term(
+            _scene, nuis, mask=mask, sigma=sigma, chi2="direct"
+        )
+    }
+    if not antennas:
+        tdata = data.toeplitz(template, nuis, mask=mask, offsets="spread")
+        terms["toeplitz"] = tdata.term(_scene, nuis, sigma=sigma)
+    out = {}
+    for name, term in terms.items():
+        out[f"{name}_loglike"] = _flat(term.loglike(values))
+        out[f"{name}_sigma_hat"] = _flat(term.sigma_hat(values))
+        out[f"{name}_derived"] = _flat(
+            dict(sorted(term.derived(values).items()))
+        )
+        out[f"{name}_has_log_norm"] = onp.asarray(term.has_log_norm, float)
+    return out
+
+
+def _check(got, expected):
+    for key, want in expected.items():
+        want = onp.asarray(want)
+        scale = onp.max(onp.abs(want), initial=0.0)
+        onp.testing.assert_allclose(
+            got[key], want, rtol=RTOL, atol=RTOL * scale, err_msg=key
+        )
+
+
+@pytest.mark.parametrize("sigmas", ["profile", True])
+def test_numbers_unchanged(sigmas):
+    _check(_numbers(sigmas), EXPECTED[str(sigmas)])
+
+
+@pytest.mark.parametrize("case", list(CASES))
+def test_more_paths_unchanged(case):
+    _check(_cases(**CASES[case]), EXPECTED_MORE[case])
+
+
+def test_toeplitz_never_carries_antenna_gains():
+    data, nuis, _, template = _setup("profile", antennas=True)
+    with pytest.raises(ValueError, match="antenna gains"):
+        data.toeplitz(template, nuis)
+
+
+@pytest.mark.parametrize("sigmas", ["profile", True, False])
+def test_has_log_norm_agrees(sigmas):
+    data, nuis, _, template = _setup(sigmas)
+    direct = data.term(_scene, nuis, chi2="direct")
+    toeplitz = data.toeplitz(template, nuis, offsets="spread").term(
+        _scene, nuis
+    )
+    assert direct.has_log_norm == toeplitz.has_log_norm == bool(sigmas)
+
+
+@pytest.mark.parametrize("branch", ["direct", "toeplitz"])
+def test_fixed_sigma_errors(branch):
+    def term(nuis, data, template, **kw):
+        if branch == "direct":
+            return data.term(_scene, nuis, **kw)
+        tdata = data.toeplitz(template, nuis, offsets="spread")
+        return tdata.term(_scene, nuis, **kw)
+
+    data, nuis, _, template = _setup(True)
+    with pytest.raises(ValueError, match="needs sigmas='profile'"):
+        term(nuis, data, template, sigma=[1.0] * 4)
+    data, nuis, _, template = _setup("profile")
+    with pytest.raises(ValueError, match="sigma must have shape"):
+        term(nuis, data, template, sigma=[1.0, 2.0])
+
+
+def test_taper_fwhm_mas_property_warns():
+    data = _data()
+    nuis = CalibrationNuisance(data, blur_fwhm_mas=2.0)
+    with pytest.warns(FutureWarning, match="blur_fwhm_mas"):
+        assert nuis.taper_fwhm_mas == 2.0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert nuis.blur_fwhm_mas == 2.0
+
+
+def _resolve(monkeypatch, chi2):
+    from virgil import _nufft_spread
+    from virgil._geometry import _FT_DEFAULTS
+
+    def broken():
+        raise ImportError("nufftax moved its spreader")
+
+    monkeypatch.setattr(_nufft_spread, "_nufftax", broken)
+    monkeypatch.setitem(_FT_DEFAULTS, "toeplitz_min_points", 0)
+    monkeypatch.setitem(_FT_DEFAULTS, "toeplitz_points_per_pixel", 0)
+    data = _data()
+    nuis = CalibrationNuisance(data, alpha=0.7, offsets=False)
+    values = {k: np.asarray(x) for k, x in nuis.defaults().items()}
+    values["eta"] = np.zeros((NPIX, NPIX))
+    term = data.term(_scene, nuis, chi2=chi2)
+    return term, term.resolve(values, False)
+
+
+def test_auto_falls_back_to_direct_without_the_spreader(monkeypatch):
+    with pytest.warns(UserWarning, match="nufftax moved") as caught:
+        term, (resolved, form) = _resolve(monkeypatch, "auto")
+    assert len(caught) == 1
+    assert resolved is term and form.startswith("direct (auto)")
+
+
+def test_explicit_toeplitz_raises_without_the_spreader(monkeypatch):
+    with pytest.raises(ImportError, match="nufftax moved"):
+        _resolve(monkeypatch, "toeplitz")
+
+
+if __name__ == "__main__":
+    jax.config.update("jax_enable_x64", True)
+    result = {
+        name: {k: v.tolist() for k, v in _cases(**kw).items()}
+        for name, kw in CASES.items()
+    }
+    print(repr(result))  # paste as EXPECTED_MORE, from the base commit

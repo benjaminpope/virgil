@@ -471,17 +471,37 @@ class StarPipeline(_Pipeline):
                     _checks.prior_constrained(entry.constrained_check, ratios)
                 )
             sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
-            worst = max(
-                post["models"].values(), key=lambda m: m["divergence_fraction"]
+            chosen = post["models"][best]
+            sampler_checks = _sampler_checks(
+                chosen,
+                bounds={
+                    f"{best}.{k}": v
+                    for k, v in chosen["prior_bound_fraction"].items()
+                },
+                walls=chosen.get("wall_probe"),
             )
-            bounds = {
-                f"{n}.{k}": v
-                for n, m in post["models"].items()
-                for k, v in m["prior_bound_fraction"].items()
-            }
-            checks += _sampler_checks(
-                post, bounds=bounds, walls=worst.get("wall_probe")
-            )
+            for name, other in post["models"].items():
+                if name == best:
+                    continue
+                other_checks = _sampler_checks(
+                    other,
+                    bounds={
+                        f"{name}.{k}": v
+                        for k, v in other["prior_bound_fraction"].items()
+                    },
+                    walls=other.get("wall_probe"),
+                )
+                sampler_checks = [
+                    dataclasses.replace(
+                        oc,
+                        message=f"{name} (not selected): {oc.message}",
+                    )
+                    if _checks.STATUSES.index(oc.status)
+                    > _checks.STATUSES.index(bc.status)
+                    else bc
+                    for bc, oc in zip(sampler_checks, other_checks)
+                ]
+            checks += sampler_checks
         return sections, checks
 
 
@@ -541,7 +561,8 @@ def plot_v2_models(data, fitted, ax=None, curves=400):
 # === STAGES ===
 
 
-def _first_null(model, diam_mas, n=_NULL_POINTS):  # deliberate: test seam
+# deliberate: first visibility sign change of a model; test_resolution_uses_the_fitted_models_first_null checks it against the disk
+def _first_null(model, diam_mas, n=_NULL_POINTS):
     """θB/λ at the model's first visibility sign change (else uniform-disk)."""
     scale = float(rad2mas) / float(diam_mas)  # f for θf = 1
     grid = onp.linspace(1e-3, _NULL_REACH, n) * scale
@@ -554,7 +575,7 @@ def _first_null(model, diam_mas, n=_NULL_POINTS):  # deliberate: test seam
     return float((grid[i] + frac * (grid[i + 1] - grid[i])) / scale)
 
 
-def _load_star(p):  # deliberate: stage function, stubbed by tests
+def _load_star(p):
     from .._geometry import fringe_scales
 
     # The longest spatial frequency B/λ in the data (cycles per radian).
@@ -697,7 +718,8 @@ class LobeFit:
     warnings: list
 
 
-def _fit_scanned(p, entry, start, grid, noise):  # deliberate: test seam
+# deliberate: scan-model fit by golden-section diameter refinement; test_scanned_fit_refines_the_diameter_between_grid_points
+def _fit_scanned(p, entry, start, grid, noise):
     """A scan model's fit: the lobe's diameter (scales profiled)."""
     info = {
         "method": "scan",
@@ -753,8 +775,8 @@ def _fit_lobe(p, entry, lobe, noise):
             # Two starts: past a null chi-squared is a union of thin
             # slivers, and a local fit started on the wrong one stalls.
             starts = [
-                start["diam"],
-                float(grid[int(onp.nanargmin(m2loglike))]),
+                _inside(start["diam"], low, high),
+                _inside(float(grid[int(onp.nanargmin(m2loglike))]), low, high),
             ]
             best = None
             for diam in dict.fromkeys(starts):
@@ -797,11 +819,23 @@ def _fit_lobe(p, entry, lobe, noise):
     )
 
 
+def _inside(diam, low, high):
+    """``diam`` at least the at-bound fraction of the log range off either
+    bound: ``fit`` maps a bound of the diameter prior to an infinite
+    coordinate, so a start on it is NaN."""
+    from ..fitting import _AT_BOUND
+
+    lo, hi = math.log(low), math.log(high)
+    pad = _AT_BOUND * (hi - lo)
+    return math.exp(min(max(math.log(diam), lo + pad), hi - pad))
+
+
 def _finite_or(value, default):
     return value if math.isfinite(value) else default
 
 
-def _fit_in_lobes(p, entry, lobes, noise):  # deliberate: named step of _fit
+# deliberate: per-model loop body of _fit (best lobe, report dict); runs once per registry model
+def _fit_in_lobes(p, entry, lobes, noise):
     """Fit ``entry`` in every lobe: ``(best LobeFit, report)``."""
     n = int(p.processed.n_independent)
     fits = [_fit_lobe(p, entry, lobe, noise) for lobe in lobes]
@@ -851,11 +885,39 @@ def _fit_in_lobes(p, entry, lobes, noise):  # deliberate: named step of _fit
 
 
 def _compare(registry, reports, child, n):
-    """The comparison of a model with its parent: gain against BIC penalty."""
+    """The comparison of a model with its parent: gain against BIC penalty.
+
+    The comparison is not valid when the parent's diameter sits on the lower
+    edge of the diameter range (an unresolved star): the likelihood-ratio
+    regularity conditions fail there and the child's shape parameters are
+    unidentified, so the parent is kept and ``"unidentified"`` is true. The
+    upper edge (an over-resolved star) and the inner lobe edges are not
+    boundaries of the parameter space and do not count.
+
+    The expected ``shape_ratio`` of the child's parameters is recorded
+    (`_shape_ratios`); it does not change the preference, which the
+    likelihood gain decides, but a child the data cannot constrain is not
+    sampled when it is not selected: ``"constrained"`` is false when any
+    ratio is at or above `_checks.PRIOR_DOMINATES` (or not finite).
+
+    Source: Chernoff (1954), Self & Liang (1987) ([references](../../references.md#chernoff1954), [Self & Liang](../../references.md#selfliang1987)).
+    """
     parent = registry[child].parent
     gain = reports[parent]["m2loglike"] - reports[child]["m2loglike"]
     n_extra = registry[child].n_params - registry[parent].n_params
     penalty = _checks.bic_penalty(n_extra, n)
+    # The best lobe's diameter is at the lower edge of the whole range, not at
+    # an upper or an inner lobe edge.
+    lobes = reports[parent].get("lobes")
+    unidentified = False
+    if "diam" in (reports[parent].get("at_bound") or ()) and lobes:
+        low = min(row["diam_bounds_mas"][0] for row in lobes)
+        lobe_low, lobe_high = reports[parent]["diam_bounds_mas"]
+        lobe_diam = reports[parent]["params"]["diam"]
+        unidentified = lobe_low == low and math.log(
+            lobe_diam / lobe_low
+        ) < math.log(lobe_high / lobe_diam)
+    ratios = reports[child].get("shape_ratio") or {}
     return {
         "simple": parent,
         "complex": child,
@@ -863,11 +925,66 @@ def _compare(registry, reports, child, n):
         "delta_chi2": gain,
         "n_extra_params": n_extra,
         "bic_penalty": penalty,
-        "preferred": child if gain > penalty else parent,
+        "unidentified": unidentified,
+        "shape_ratio": ratios,
+        "constrained": all(
+            math.isfinite(r) and r < _checks.PRIOR_DOMINATES
+            for r in ratios.values()
+        ),
+        "preferred": child if gain > penalty and not unidentified else parent,
     }
 
 
-def _choose_model(reports, registry, n):  # deliberate: test seam
+def _shape_ratios(data, entry, diam, prior_std):
+    """Expected σ_posterior/σ_prior of a model's shape parameters.
+
+    This is the ratio the posterior's ``*_constrained`` check measures after
+    sampling, predicted from the data before it. Moving a shape parameter
+    by one prior standard deviation changes the V² by ``ΔV²_i`` at each
+    sample; the expected Δχ² is ``Σ (ΔV²_i / σ_i)²`` (the UD/LD difference
+    over the quoted error), after the diameter has absorbed what it can.
+    Its linear form is the Fisher information of the V² (the closure phase
+    of a centrosymmetric disk is 0 or π and carries no shape) at the
+    parent's diameter and the prior centre of the shape, marginalized over
+    the diameter, with the prior's precision ``1 / σ_prior²`` added to the
+    shape block (a Gaussian stand-in for the uniform prior). A ratio near
+    1 means the likelihood adds nothing to the prior; at
+    `_checks.PRIOR_DOMINATES` = 0.8 the likelihood alone has
+    σ_L = 1.33 σ_prior, so a prior-sized change of the shape moves χ² by
+    1 / 1.33² = 0.56: not detectable. Below it the shape is measured; far
+    above (the 4 mas star observed with 3 wavelengths × 3 hour angles at
+    σ(V²) = 0.01: 0.92 and 0.88, the marginal σ_L being about 80 σ_prior)
+    it lies on a thin ridge with the diameter that NUTS cannot sample.
+
+    Limitation: the Fisher matrix is linear at the prior centre, so it can
+    mis-call a curved ridge or a shape that is constrained only away from
+    the centre, and it ignores the closure phases and the error-scale
+    nuisance. The ratio is a gate on sampling an unselected model, not an
+    estimate of the posterior width.
+    """
+    import jax
+    import jax.numpy as np
+
+    n = data.vis.size
+    names = ("diam", *entry.shape)
+    centre = np.asarray([diam, *(entry.start[k] for k in entry.shape)])
+
+    def v2(theta):
+        values = dict(zip(names, theta))
+        return data.model(entry.build(values))[:n]
+
+    jac = jax.jacfwd(v2)(centre) / np.asarray(data.d_vis)[:, None]
+    precision = onp.asarray(jac.T @ jac) + onp.diag(
+        [0.0, *(1.0 / prior_std[k] ** 2 for k in entry.shape)]
+    )
+    sd = onp.sqrt(onp.diag(onp.linalg.pinv(precision)))
+    return {
+        k: float(sd[i + 1] / prior_std[k]) for i, k in enumerate(entry.shape)
+    }
+
+
+# deliberate: walks the parent chain of models; test_model_choice_walks_the_chain_of_parents feeds it canned reports
+def _choose_model(reports, registry, n):
     """Walk down the chain of parents to ``(best, decisive, comparisons)``."""
     comparisons = [
         _compare(registry, reports, name, n)
@@ -896,7 +1013,7 @@ def _choose_model(reports, registry, n):  # deliberate: test seam
 # --- the fit stage ---
 
 
-def _fit(p):  # deliberate: stage function, stubbed by tests
+def _fit(p):
     data, s = p.processed, p.settings
     lo, hi = p._diam_range()
     registry = models()
@@ -926,6 +1043,15 @@ def _fit(p):  # deliberate: stage function, stubbed by tests
             p.output / "models" / name, fits[name], list(registry[name].params)
         )
     n = int(data.n_independent)
+    for name in p.names:
+        parent = registry[name].parent
+        if parent in reports:
+            reports[name]["shape_ratio"] = _shape_ratios(
+                data,
+                registry[name],
+                reports[parent]["params"]["diam"],
+                reports[name]["prior_std"],
+            )
     best, decisive, comparisons = _choose_model(reports, registry, n)
     _save_fit(
         p.output / "models" / "best", fits[best], list(registry[best].params)
@@ -956,7 +1082,8 @@ def _fit(p):  # deliberate: stage function, stubbed by tests
     }
 
 
-def _bound_fractions(entry, priors, noise, samples):  # deliberate: test seam
+# deliberate: excludes shape priors from the bound check; test_prior_bound_ignores_shape_parameters
+def _bound_fractions(entry, priors, noise, samples):
     """Fraction of samples within 1% of either prior bound."""
     # Shape priors are meant to matter; the ``constrained`` check judges them.
     sampled = {k: v for k, v in priors.items() if k not in entry.shape}
@@ -972,7 +1099,8 @@ def _rewarn(caught):
         )
 
 
-def _wall_probe(  # deliberate: test seam
+# deliberate: random-step chi2-wall probe, run under in_float64 by test_wall_probe_separates_narrow_from_wide_posteriors
+def _wall_probe(
     entry, data, samples, priors, n=_WALL_DRAWS, radius=_WALL_RADIUS, seed=0
 ):
     """Fraction of random steps of ``radius`` posterior sd that hit a χ² wall.
@@ -1045,11 +1173,20 @@ def _nuts(model, data, p, name, priors, start):  # deliberate: float64 boundary
     )
 
 
-def _posterior(p):  # deliberate: stage function, stubbed by tests
+def _posterior(p):
     fit_report = p._report("fit")
     best = fit_report["best"]
     groups, per_model, params_attr = {}, {}, {}
-    for name in p.names:
+    # A child whose shape the data cannot constrain is a thin curved ridge
+    # NUTS does not mix on (virgil#580): it is fitted, compared and reported
+    # (the ``*_unconstrained`` check) but not sampled unless selected.
+    skipped = {
+        c["complex"]
+        for c in fit_report["comparisons"]
+        if not c["constrained"] and c["complex"] != best
+    }
+    names = [k for k in p.names if k not in skipped]
+    for name in names:
         folder = p.output / "models" / name
         priors = models()[name].priors(
             *fit_report["models"][name]["diam_bounds_mas"]
@@ -1073,7 +1210,7 @@ def _posterior(p):  # deliberate: stage function, stubbed by tests
         groups,
         best=best,
         params=params_attr,
-        priors={n: fit_report["models"][n]["priors"] for n in p.names},
+        priors={n: fit_report["models"][n]["priors"] for n in names},
     )
     sampled = list(models()[best].params)
     _corner_trace(p.output, groups["posterior"], sampled)
@@ -1126,7 +1263,8 @@ _POSTERIOR_KEYS = (
 )
 
 
-def _fit_checks(fit, registry):  # deliberate: named step of _summarize
+# deliberate: fit-stage checks; inlined they take _summarize past MAX_FUNC_LINES (120)
+def _fit_checks(fit, registry):
     """Checks on the fits: χ²/N, model gains and the fitted error scales."""
     reports = fit["models"]
     checks = [
@@ -1148,8 +1286,25 @@ def _fit_checks(fit, registry):  # deliberate: named step of _summarize
                 n_extra=comparison["n_extra_params"],
                 simple=registry[simple].label,
                 complex_=registry[complex_].label,
+                unidentified=comparison.get("unidentified", False),
             )
         )
+        if not comparison["constrained"] and complex_ != fit["best"]:
+            ratios = comparison["shape_ratio"]
+            listing = ", ".join(f"{k} {v:.3g}" for k, v in ratios.items())
+            checks.append(
+                _checks.Check(
+                    f"{registry[complex_].check_stem or complex_}_not_sampled",
+                    "warn",
+                    max(ratios.values(), default=0.0),
+                    _checks.PRIOR_DOMINATES,
+                    f"The {registry[complex_].label} is not sampled: the "
+                    "data cannot constrain its shape (expected "
+                    f"σ_posterior/σ_prior: {listing}), so it lies on a thin "
+                    f"ridge with the diameter; the {registry[simple].label} "
+                    "is used.",
+                )
+            )
     scales = {
         f"{k}.{kk}": v
         for k in fit["names"]

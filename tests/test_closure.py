@@ -303,7 +303,7 @@ def test_a_phase_shifted_by_two_pi_gives_the_same_likelihood():
         atol=1e-4,
     )
     assert model_loglike(MODEL, data) == pytest.approx(
-        model_loglike(MODEL, shifted), rel=1e-5
+        float(model_loglike(MODEL, shifted)), rel=1e-5
     )
 
 

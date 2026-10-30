@@ -169,16 +169,16 @@ Decisions:
   the midpoints between minima; the table is `fit.models.<name>.lobes`
   (`diam_bounds_mas`, `diam_mas`, `chi2`, `chi2_reduced`, `delta_chi2`),
   and the `multimodal` check cites it. NUTS runs on the best lobe only;
-  lobe evidence is left to nested sampling (virgil#309). The limb-darkened
+  lobe evidence is left to nested sampling (virgil#578). The limb-darkened
   fit starts from a grid of diameters as well as the scan.
   Residual divergences are still reported, not hidden: within the best
   lobe the posterior is a cell with hard walls in the diameter and in
   q1, q2 (a limb-darkened null moves with q), and NUTS rejects the
   trajectories that cross them. A wall probe (steps of two posterior
   standard deviations that raise chi^2 by more than 1000) confirms them,
-  and then `divergences` warns instead of failing and names the walls. The
-  draws match a brute-force grid posterior on the tutorial star, with a
-  reduced ESS. A bispectrum likelihood (virgil#309) would remove the walls.
+  and `divergences` still fails but names the walls as the probable cause.
+  The draws match a brute-force grid posterior on the tutorial star, with a
+  reduced ESS. A bispectrum likelihood (virgil#578) would remove the walls.
 - `processed`, `_noise` and `_report` moved from `BinaryPipeline` into the
   base class, since every pipeline needs them.
 
@@ -556,6 +556,34 @@ Absil contrast map is `limits`, the LM fit is `fit`, and the NUTS chains
 are `posterior`. `BinaryPipeline(data, BinaryModelCartesian(...),
 max_sep_mas=250, ...).run()` reproduces the tutorial's numbers, and the
 tutorial asserts that it does.
+
+## DiskPipeline defaults provenance
+
+The `DiskPipeline` defaults are choices made during development, not
+derived values. The table gives the commit that introduced each one (found
+with `git log -S`) and what checks it. No commit message records a data set
+for these constants, so none is claimed. Commit 1ee26dfe09d96a10f991ced9f8a791b32d302756
+(2026-10-18, "defaults from imaging nine PIONIER post-AGB discs") revised the
+pipeline on those discs and added `ell_floor_halffringes`; the others are
+unchanged by it. Until a held-out check is recorded, treat each default as a
+starting point for a new target, not a result. (Audit CO-12,
+`design/integrity_audit_2026-10-30_opus.md`.)
+
+| Default | Value | Introduced in | Held-out check |
+|---|---|---|---|
+| `ell_halffringes` | 1, 2, 4 | 464b97a1f7e9f6964612741ed717822d2cbf551e | none recorded; the grid extends once if its best ℓ is on an edge, and `length_scale` warns |
+| `ell_floor_halffringes` | 0.5 | 1ee26dfe09d96a10f991ced9f8a791b32d302756 | none recorded |
+| `max_rings` | 4 | 464b97a1f7e9f6964612741ed717822d2cbf551e | none recorded; `ring_count` flags a count at the limit |
+| `_HARMONIC_SCALE` | 0.4 | 4557480be38a0ef3e7f5386333765d4a9df730a2 | none recorded |
+| `_GP_SIGMA_BOUNDS` | (0.5, 5) of the single ring's dynamic range | 464b97a1f7e9f6964612741ed717822d2cbf551e | none recorded; `at_bound` flags a parameter on its bound |
+| `length_scale_nats`, `ring_count_nats` | 3 | 464b97a1f7e9f6964612741ed717822d2cbf551e | none recorded |
+| `companion_min_delta_chi2` | 25 | 464b97a1f7e9f6964612741ed717822d2cbf551e | none recorded |
+| other thresholds in `_DEFAULTS` (`inner_edge_*`, `outer_edge_fraction`, `inclination_min_deg`, `render_tolerance`, `unconstrained_correlation`) | see `_DEFAULTS` | not traced | none recorded |
+
+The Fourier-transform backend rule in `_geometry.py` is justified by IM Lup
+timings on an A100. It is a performance threshold, not an accuracy one: it
+changes speed, not results. The job IDs behind it belong here, not in a code
+comment, once recorded.
 
 ## Open questions
 

@@ -7,6 +7,7 @@ residuals of neighbouring channels (``virgil.tempering``) and the likelihood
 is tempered by 1/f in ``fit_orbit_aliases``.
 """
 
+import dataclasses
 import functools
 import json
 import types
@@ -312,13 +313,29 @@ def test_temper_false_reproduces_the_untempered_evidence():
             for s, d in zip(surfaces, data)
         )
         ones = tuple(onp.ones(len(s.names)) for s in surfaces)
-        new = aliases._loglike(surfaces, x, tuple(data), _cfg(), ones)
+        new = _ell_sum(surfaces, x, data, _cfg(), ones)
         assert float(new) == pytest.approx(float(old), rel=1e-12)
         # a dof of 1/f in every block divides the log likelihood by f
         f = 12.0
         dof = tuple(onp.full(len(s.names), 1.0 / f) for s in surfaces)
-        temp = aliases._loglike(surfaces, x, tuple(data), _cfg(), dof)
+        temp = _ell_sum(surfaces, x, data, _cfg(), dof)
         assert float(temp) == pytest.approx(float(old) / f, rel=1e-12)
+
+
+def _no_broad_grid(data, settings, *args, **kwargs):
+    """Stands in for ``aliases._broad_components`` in tests that stop at the
+    pre-flight and read only the settings: the outlier mixture's position grid
+    runs before it and costs tens of seconds."""
+    return dataclasses.replace(settings, log_broad=(-50.0,) * len(data))
+
+
+def _ell_sum(surfaces, x, data, cfg, dof):
+    """The night terms' sum: the likelihood before the outlier mixture, which
+    adds a rate-marginalized outlier component that tempering does not scale."""
+    ell, _ = aliases._night_terms(
+        surfaces, x, tuple(data), cfg, dof, onp.full(len(data), -50.0)
+    )
+    return float(ell.sum())
 
 
 def test_the_problem_value_is_the_untempered_value_over_f():
@@ -328,7 +345,9 @@ def test_the_problem_value_is_the_untempered_value_over_f():
         settings = _settings_stub(
             dof=() if f == 1 else (("phi", 1 / f), ("vis", 1 / f))
         )
-        return aliases._Problem(data, settings)
+        return aliases._Problem(
+            data, dataclasses.replace(settings, log_broad=(-50.0,) * len(data))
+        )
 
     with jax.enable_x64(True):
         data = [cast_tree(d, "float64") for d in data]
@@ -338,12 +357,8 @@ def test_the_problem_value_is_the_untempered_value_over_f():
             KeplerOrbit(**TRUTH, t_ref=T_REF), FLUX, T_REF, band, free
         )
         a, b = value(1), value(4.0)
-        va = float(
-            aliases._loglike(a.surfaces, x, tuple(a.data), a.cfg, a.dof)
-        )
-        vb = float(
-            aliases._loglike(b.surfaces, x, tuple(b.data), b.cfg, b.dof)
-        )
+        va = _ell_sum(a.surfaces, x, a.data, a.cfg, a.dof)
+        vb = _ell_sum(b.surfaces, x, b.data, b.cfg, b.dof)
         assert vb == pytest.approx(va / 4.0, rel=1e-10)
 
 
@@ -359,6 +374,7 @@ def test_the_dof_argument_is_f_one_or_a_fixed_f(monkeypatch):
         seen["settings"] = settings
         raise Stop
 
+    monkeypatch.setattr(aliases, "_broad_components", _no_broad_grid)
     monkeypatch.setattr(aliases, "_preflight", preflight)
     monkeypatch.setattr(
         aliases,
@@ -406,6 +422,7 @@ def test_correlated_channels_are_tempered_by_default(monkeypatch):
         seen["settings"] = settings
         raise Stop
 
+    monkeypatch.setattr(aliases, "_broad_components", _no_broad_grid)
     monkeypatch.setattr(aliases, "_preflight", preflight)
     monkeypatch.setattr(
         aliases,
@@ -609,7 +626,9 @@ def _offset(result, truth_xy, epoch):
     """The sky-plane offset of the posterior mean of the position at
     ``epoch`` from the truth, in standard deviations of the posterior (a
     2-D Mahalanobis distance: about 1.2 for a calibrated posterior)."""
-    s = result.samples[result.bands[0].n]
+    s = result.samples.get(result.bands[0].n)
+    if s is None:  # no valid mode: infinitely far
+        return float("inf")
     keys = ("period", "dt_peri", "ecc", "inc", "omega", "Omega", "a_mas")
     xy = onp.array(
         [
@@ -625,57 +644,73 @@ def _offset(result, truth_xy, epoch):
     return float(onp.sqrt(d @ onp.linalg.solve(onp.cov(xy.T), d)))
 
 
-def _median_offsets(common, rho, n_seeds=20):
-    """Median offset over seeds of the tempered and the untempered fit of
-    noise at chi2/N about 12 (eight channels, noise 3.5 times the errors)."""
+def _median_offsets(common, rho, temper, n_seeds=20):
+    """``(median offset, median f)`` over seeds of the fit of noise at chi2/N
+    about 12 (eight channels, noise 3.5 times the errors); ``f`` is ``None``
+    untempered."""
     truth = onp.array(
         KeplerOrbit(**{**TRUTH, "period": 12.1}, t_ref=T_REF).relative(
             EPOCHS[0]
         )[:2]
     ).ravel()
-    out, fs = {True: [], False: []}, []
+    offsets, fs = [], []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for seed in range(n_seeds):
             data, positions = _nights(
                 rho, seed=seed, period=12.1, common=common
             )
-            for temper in out:
-                result = aliases.fit_orbit_aliases(
-                    data, (11.95, 12.25), positions=positions, t_ref=T_REF,
-                    n_candidates=3, n_refine=1, n_is=100, n_samples=40,
-                    primary_diam=None, temper=temper,
-                )  # fmt: skip
-                out[temper].append(_offset(result, truth, EPOCHS[0]))
-                if temper:
-                    fs.append(result.temper_f)
-    med = {k: float(onp.median(v)) for k, v in out.items()}
-    med["f"] = float(onp.median(fs))
-    return med
+            result = aliases.fit_orbit_aliases(
+                data, (11.95, 12.25), positions=positions, t_ref=T_REF,
+                n_candidates=3, n_refine=1, n_is=100, n_samples=40,
+                primary_diam=None, temper=temper,
+            )  # fmt: skip
+            offsets.append(_offset(result, truth, EPOCHS[0]))
+            if temper:
+                fs.append(result.temper_f)
+    return float(onp.median(offsets)), float(onp.median(fs)) if fs else None
+
+
+# Each outlier-mixture fit scores a position grid on every night, so the 20
+# seeds of one case take minutes: the tempered and the untempered half are
+# separate tests, each under the 300 s test timeout on a CI runner. They are
+# full_only: a pull request editing this file would otherwise run them (a CI
+# runner is over 5x slower than the laptop). Orbit mixture v2 PR A makes the
+# outlier integral cheaper, after which they may return to the PR tier.
+CALIBRATION_CASES = pytest.mark.parametrize(
+    "common, rho", [(False, 0.85), (True, 0.6)], ids=["ar1-0.85", "common-0.6"]
+)
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize(
-    "common, rho", [(False, 0.85), (True, 0.6)], ids=["ar1-0.85", "common-0.6"]
-)
-def test_the_tempered_posterior_is_calibrated_and_the_untempered_one_is_not(
-    common, rho
-):
+@pytest.mark.full_only
+@CALIBRATION_CASES
+def test_the_tempered_posterior_is_calibrated(common, rho):
     # 20 seeds of correlated noise at chi2/N about 12 (one AR(1) set at
     # rho = 0.85, one common-mode set at c = 0.6). The sky-plane offset of
     # the posterior mean from the truth, over the posterior spread, has a
-    # median near 1.2 when calibrated. The untempered posterior is too
-    # narrow by sqrt(f) (2.2 to 2.3): its median offset is well above 2.
-    med = _median_offsets(common, rho)
-    print(f"median offset/spread: tempered {med[True]:.2f}, "
-          f"untempered {med[False]:.2f}")  # fmt: skip
+    # median near 1.2 when calibrated. With the night-outlier mixture it can
+    # be worse: at chi2/N ~ 12 the orbit scores below the diffuse outlier
+    # component on every night, the weights flatten the likelihood and the
+    # band has no valid mode (offset inf).
+    med, f = _median_offsets(common, rho, True)
+    print(f"median offset/spread {med:.2f}, median f {f:.2f}")
     # the estimated f must be the true one (a lag-1 AR(1) estimate gives
     # 3.2 for common mode, truth 5.2, and a median offset near 1.5)
     truth_f = 1 + 7 * rho if common else _chain_factor(rho, 8)
-    print(f"median f {med['f']:.2f}, truth {truth_f:.2f}")
-    assert med["f"] == pytest.approx(truth_f, rel=0.25)
-    assert med[True] < 1.45
-    assert med[False] > 2.0
+    assert f == pytest.approx(truth_f, rel=0.25)
+    assert med < 1.45
+
+
+@pytest.mark.slow
+@pytest.mark.full_only
+@CALIBRATION_CASES
+def test_the_untempered_posterior_is_not_calibrated(common, rho):
+    # The untempered posterior is too narrow by sqrt(f) (2.2 to 2.3): its
+    # median offset is well above 2.
+    med, _ = _median_offsets(common, rho, False)
+    print(f"median offset/spread {med:.2f}")
+    assert med > 2.0
 
 
 # --- the fit's use of the factors --------------------------------------------
@@ -693,6 +728,7 @@ def _stub_fit(monkeypatch, data, positions, **kw):
         seen["settings"] = settings
         raise _Stop
 
+    monkeypatch.setattr(aliases, "_broad_components", _no_broad_grid)
     monkeypatch.setattr(aliases, "_preflight", preflight)
     monkeypatch.setattr(
         aliases,
@@ -981,3 +1017,18 @@ def test_the_short_arcs_see_the_tempered_gaps_and_errors(monkeypatch):
     assert seen == [4.0]
     run(12.0, 1.0)  # untempered: as before
     assert seen == [4.0, 1.0]
+
+
+def test_temper_factors_normalizes_by_night_scale():
+    # Night 0 has white noise inflated 20x; night 1 has correlated channels
+    # (rho = 0.85) at scale 1. Per-night scale normalization prevents the
+    # high-chi2 white night from drowning out night 1's correlation.
+    (d_white, _), _ = _nights(0.0, scale=20.0, seed=10, n=2)
+    (_, d_corr), pos = _nights(0.85, scale=1.0, seed=11, n=2)
+    with jax.enable_x64(True):
+        data = [cast_tree(d_white, "float64"), cast_tree(d_corr, "float64")]
+        factors = aliases._temper_factors(
+            data, pos, None, None, ["vis", "phi"]
+        )
+    assert factors.f > 2.0
+    assert factors.blocks["vis"] > 2.0 and factors.blocks["phi"] > 2.0

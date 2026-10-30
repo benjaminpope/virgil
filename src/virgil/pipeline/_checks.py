@@ -273,8 +273,15 @@ def prior_bound(fractions, *, warn=0.05):
     )
 
 
-def r_hat(value, *, warn=1.01, fail=1.05):
-    """Largest split R-hat over the sampled parameters."""
+def r_hat(value, *, ess=None, warn=1.01, fail=1.05, min_ess=400.0):
+    """Largest split R-hat over the sampled parameters.
+
+    A low R-hat from too few effective samples is chance, so a pass becomes a
+    warning when ``ess`` (the smallest bulk ESS) is below ``min_ess``: 100 per
+    chain for the default four chains, as for the ``ess`` check.
+
+    Source: Vehtari et al. 2021.
+    """
     if not _finite(value):
         return Check("r_hat", "fail", value, warn, "R-hat is not finite.")
     if value > fail:
@@ -283,6 +290,8 @@ def r_hat(value, *, warn=1.01, fail=1.05):
         status, meaning = "warn", "run longer chains to be sure"
     else:
         status, meaning = "pass", "the chains agree"
+    if status == "pass" and _finite(ess) and ess < min_ess:
+        status, meaning = "warn", "too few effective samples to trust it"
     return Check(
         "r_hat", status, value, warn, f"Largest R-hat {value:.4f}: {meaning}."
     )
@@ -311,12 +320,12 @@ def divergences(fraction, *, walls=None, warn=0.0, fail=0.01, exposed=0.05):
     """Fraction of divergent NUTS transitions.
 
     ``walls`` is the posterior's wall probe (``{"radius_sd", "n",
-    "exposed"}``, see ``StarPipeline``): when at least ``exposed`` of the
-    steps of a few posterior standard deviations hit a hard wall of the
-    likelihood (a closure-phase flip, which costs thousands in χ²), the
-    divergences are NUTS trajectories rejected at that wall, so the check
-    warns instead of failing and says so. The ESS and R-hat checks still
-    judge the draws.
+    "exposed"}``, see ``StarPipeline``). A failure is never downgraded. If at
+    least ``exposed`` of the steps of a few posterior standard deviations hit a
+    hard wall of the likelihood (a closure-phase flip, which costs thousands
+    in χ²), the message names NUTS rejecting trajectories at the wall as a
+    probable cause; the check still fails. The threshold only guards the
+    diagnosis: with about 40 probe steps, 0.05 is two hits, not a stray one.
     """
     if not _finite(fraction):
         return Check(
@@ -333,15 +342,12 @@ def divergences(fraction, *, walls=None, warn=0.0, fail=0.01, exposed=0.05):
     else:
         status, meaning = "pass", "none"
     if status == "fail" and walls and walls.get("exposed", 0.0) >= exposed:
-        status = "warn"
-        meaning = (
-            f"{100 * walls['exposed']:.2g} per cent of steps of "
+        meaning += (
+            f"; {100 * walls['exposed']:.2g} per cent of steps of "
             f"{walls['radius_sd']:g} posterior standard deviations hit a "
-            "hard wall of the likelihood (a closure-phase sign flip), so "
-            "NUTS rejects the trajectories that cross it; the draws are "
-            "expected to follow the truncated posterior, with reduced "
-            "efficiency (see the ESS). A bispectrum likelihood would "
-            "remove the walls (virgil#309)"
+            "hard wall of the likelihood (a closure-phase sign flip), where "
+            "NUTS rejects trajectories: a probable cause, not an excuse "
+            "(a bispectrum likelihood would remove the walls, virgil#578)"
         )
     return Check(
         "divergences",
@@ -560,7 +566,15 @@ def multimodal(lobes, *, threshold=RIVAL_DELTA_CHI2):
 
 
 def model_gain(
-    name, m2loglike_simple, m2loglike_complex, n, *, n_extra, simple, complex_
+    name,
+    m2loglike_simple,
+    m2loglike_complex,
+    n,
+    *,
+    n_extra,
+    simple,
+    complex_,
+    unidentified=False,
 ):
     """Whether a richer model improves the fit by more than its BIC penalty.
 
@@ -580,6 +594,10 @@ def model_gain(
         Extra parameters of the richer model.
     simple, complex_ : str
         Their names, for the message.
+    unidentified : bool
+        The simpler model's diameter is on the lower edge of the diameter
+        range: the comparison is not valid and the simpler model is kept (a
+        fit that did not converge still warns).
     """
     gain = float(m2loglike_simple) - float(m2loglike_complex)
     penalty = bic_penalty(n_extra, n)
@@ -593,6 +611,13 @@ def model_gain(
         message = (
             f"The {complex_} model fits worse than the {simple} model it "
             f"contains (Δ(−2 log L) = {gain:.3g}): a fit did not converge."
+        )
+    elif unidentified:
+        status = "pass"
+        message = (
+            f"Δ(−2 log L) = {gain:.3g} for {n_extra} extra parameters, but "
+            f"the {simple} diameter is at the lower edge of its range, so the "
+            f"{complex_} shape is unidentified and the {simple} model is kept."
         )
     elif gain > penalty:
         status = "pass"
@@ -611,7 +636,11 @@ def model_gain(
     return Check(name, status, gain, penalty, message)
 
 
-def prior_constrained(name, ratios, *, warn=0.8):
+# σ_posterior/σ_prior at or above which a parameter is set by its prior.
+PRIOR_DOMINATES = 0.8
+
+
+def prior_constrained(name, ratios, *, warn=PRIOR_DOMINATES):
     """Whether parameters are constrained by the data or by their priors.
 
     Parameters
@@ -1670,49 +1699,6 @@ def no_orbit(delta, *, threshold=10.0):
         float(delta),
         threshold,
         f"The best orbit beats a single star by {delta:.3g} nats: {meaning}.",
-    )
-
-
-def night_dropped(report):
-    """Whether the verdict survives dropping the most outlying night.
-
-    Parameters
-    ----------
-    report : dict
-        ``modes["robustness"]``: ``{"skipped": reason}``, or the night, its
-        raw χ²/N, and the ``full`` and ``dropped`` verdicts (``verdict``,
-        the winning band's ``n``; the refit's ``same_band``).
-    """
-    if "skipped" in report:
-        return Check(
-            "night_dropped",
-            "pass",
-            None,
-            None,
-            f"Skipped: {report['skipped']}.",
-        )
-    full, dropped = report["full"], report["dropped"]
-    same = full["verdict"] == dropped["verdict"] and (
-        full["verdict"] != "orbit" or dropped["same_band"]
-    )
-    where = f"night {report['night']} (raw χ²/N = {report['chi2_per_n']:.3g})"
-    detail = (
-        f"{full['verdict']} (N = {full['n']}) with it, "
-        f"{dropped['verdict']} (N = {dropped['n']}) without it"
-    )
-    if same:
-        message = f"Dropping {where} leaves the verdict: {detail}."
-    else:
-        message = (
-            f"Dropping {where} changes the verdict: {detail}. One night "
-            "decides the result; check it before trusting the orbit."
-        )
-    return Check(
-        "night_dropped",
-        "pass" if same else "warn",
-        report["chi2_per_n"],
-        None,
-        message,
     )
 
 

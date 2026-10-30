@@ -50,6 +50,11 @@ def pytest_configure(config):
     # them (.github/scripts/ci_matrix.py).
     config.addinivalue_line(
         "markers",
+        "full_only: slow tests too heavy for the orbit-PR slow run; only main, "
+        "the full-ci label and the nightly run them",
+    )
+    config.addinivalue_line(
+        "markers",
         "slow: heaviest, compile-dominated tests; skipped on pull requests "
         "(-m 'not slow'; a pull request touching the orbit modules still runs "
         "the orbit test files) but run on main, with the full-ci label and "
@@ -119,7 +124,10 @@ def pytest_collection_modifyitems(config, items):
             item
             for item in items
             if item.get_closest_marker("slow")
-            and not any(item.path.match(g) for g in globs)
+            and (
+                item.get_closest_marker("full_only")
+                or not any(item.path.match(g) for g in globs)
+            )
         ]
         items[:] = [item for item in items if item not in drop]
         config.hook.pytest_deselected(items=drop)

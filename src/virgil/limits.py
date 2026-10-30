@@ -440,7 +440,7 @@ _BISECTIONS = 22
 _MAX_BRACKET_DECADES = 40
 
 
-# deliberate: test seam: used by test_grid_and_limits
+# deliberate: largest sigma representable in the working float; test_limits_reject_sigma_beyond_float_precision uses it as the bound
 def _significance_ceiling():
     """Largest significance `nsigma` represents in the default float type."""
     tiny = np.finfo(np.result_type(float)).tiny
@@ -571,7 +571,6 @@ def _solve_limits(
     return limits.reshape(shape), crossed.reshape(shape)
 
 
-# deliberate: jit boundary
 @eqx.filter_jit
 def _absil_limits(
     grid,
@@ -590,12 +589,14 @@ def _absil_limits(
     Returns the limits and whether each was bracketed.
     """
     ndof = data.n_independent
+    coords, _ = coordinate_points(grid, coord_keys)
+    null_values = ordered_values(0.0, coords[0], params, coord_keys, flux_key)
 
     def reduced_chi2(values):
         source = build_model(model, params, values)
         return np.sum(whitened_residuals(source, data) ** 2) / ndof
 
-    chi2_null = reduced_chi2([0.0] * len(params))
+    chi2_null = reduced_chi2(null_values)
 
     def significance(values):
         return nsigma(reduced_chi2(values), chi2_null, ndof)
@@ -613,7 +614,6 @@ def _absil_limits(
     )
 
 
-# deliberate: jit boundary
 @eqx.filter_jit
 def _injection_limits(
     grid,
@@ -632,7 +632,9 @@ def _injection_limits(
     Returns the limits and whether each was bracketed.
     """
     ndof = data.n_independent
-    null_source = build_model(model, params, [0.0] * len(params))
+    coords, _ = coordinate_points(grid, coord_keys)
+    null_values = ordered_values(0.0, coords[0], params, coord_keys, flux_key)
+    null_source = build_model(model, params, null_values)
     null_prediction = data.model(null_source)
     data_vector = data.flatten_data()[0]
     errors = inflated_errors(data, null_prediction)

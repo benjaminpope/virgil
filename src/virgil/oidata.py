@@ -1061,6 +1061,12 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 used[:] = True
             else:
                 used[onp.asarray(self.phi_index)] = True
+        for block in self.extras:
+            if isinstance(block, TripleAmplitude):
+                for leg in (block.i1, block.i2, block.i3):
+                    used[onp.asarray(leg)] = True
+            elif block.sample is not None:
+                used[onp.asarray(block.sample)] = True
         return used if used.any() else onp.ones(n, dtype=bool)
 
     @property
@@ -1793,7 +1799,7 @@ def _good(record):
     return good, value, error
 
 
-# deliberate: a named step: validates and packs the extra observables.
+# deliberate: builds and validates every extra-observable block (flux, nflux, visamp/corrflux, t3amp, visphi) from the reader records, in KINDS order
 def _build_extras(data, obj, legs):
     """The blocks of extra observables of a record, in ``KINDS`` order."""
     n = onp.size(obj.u)

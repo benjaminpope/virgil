@@ -43,8 +43,11 @@ correlation, with no model of its shape. It is exact for AR(1) chains
 calibration error shared by all channels, correlation `c` at every lag:
 `f = 1 + (n - 1) c`) alike; an AR(1) estimate from the lag-1 correlation
 alone undercounts common-mode correlation (n = 8, c = 0.6: 3.2 for a truth
-of 5.2). It is scale free (inflating the errors cancels) and never
-exceeds `n`. White noise has `f = 1` on average.
+of 5.2). A single scale shared by all chains cancels; when pooling across
+nights of different error scales, `fit_orbit_aliases` divides each night's
+block residuals by its empirical scale $\sqrt{\chi^2_{k,b}/\nu_{k,b}}$ first
+so a high-$\chi^2$ night does not dominate. It never exceeds `n`. White noise
+has `f = 1` on average.
 
 ## Biased up on purpose
 

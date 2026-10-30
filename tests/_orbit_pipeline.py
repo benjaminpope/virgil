@@ -73,7 +73,6 @@ CHECKS = [
     "tempering",
     "primary_resolved",
     "no_orbit",
-    "night_dropped",
     "period_bound",
     "prior_bound",
     "r_hat",

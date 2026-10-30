@@ -130,6 +130,7 @@ CHECKS = (
     "absorbed_companion",
     "render_consistency",
     "at_bound",
+    "laplace_pd",
 )
 
 _MODELS = None
@@ -155,6 +156,7 @@ def models():
                         "inclination",
                         "absorbed_companion",
                         "at_bound",
+                        "laplace_pd",
                     ),
                     candidate="rings",
                 ),
@@ -174,6 +176,7 @@ def models():
                         "absorbed_companion",
                         "render_consistency",
                         "at_bound",
+                        "laplace_pd",
                     ),
                     candidate="gp",
                 ),
@@ -344,11 +347,24 @@ class DiskPipeline(_Pipeline):
         if self.error_mode != "rescale":
             return 1.0
         if self._error_factor is _UNSET:
+            # The rescaled errors are the profile stage's result: without it
+            # every chi-squared, evidence and width would be on the wrong
+            # errors, so a missing or unreadable report is an error, not 1.0.
             try:
                 value = self._report("profile").get("error_scale_factor")
-            except (OSError, ValueError, KeyError):
-                value = None
-            self._error_factor = 1.0 if value is None else float(value)
+            except (OSError, ValueError, KeyError, AttributeError) as err:
+                raise RuntimeError(
+                    'error_scale="rescale" needs the error scale the profile '
+                    f"stage estimated, but its report could not be read ({err}); "
+                    "rerun the profile stage."
+                ) from err
+            if value is None:
+                raise RuntimeError(
+                    'error_scale="rescale" but the profile report has no '
+                    "error_scale_factor (it was made with another error_scale); "
+                    "rerun the profile stage."
+                )
+            self._error_factor = float(value)
         return self._error_factor
 
     def _default_model(self):
@@ -616,7 +632,8 @@ def _star(ctx):
     return PointSource(flux=flux)
 
 
-def _star_report(settings):  # deliberate: test seam: the summary entry alone
+# deliberate: summary entry for the star spectrum, checked by test_star_is_a_point_source_until_given_a_size_or_a_spectrum without a run
+def _star_report(settings):
     """What the star is, for the summary: the disk's colour is relative to it."""
     if settings["star_temperature_k"] is not None:
         spectrum = f"blackbody {settings['star_temperature_k']:g} K"
@@ -794,7 +811,7 @@ def _finish(model, values, info, priors, data):
     )
 
 
-# deliberate: test seam: pulls starts inside the support
+# deliberate: pulls only out-of-support starts; pinned by test_inside_priors_pulls_only_values_outside_a_bound on bare priors
 def _inside_priors(priors, start):
     """``start`` with any value outside its prior's support pulled just inside."""
     from .._flat import _base
@@ -894,7 +911,8 @@ def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
     )
 
 
-def _grid_minima(delta, inc_deg):  # deliberate: test seam: pure NumPy logic
+# deliberate: periodic-pa local-minimum search on a bare array; pinned by test_grid_minima_wrap_the_position_angle
+def _grid_minima(delta, inc_deg):
     """Local minima of the geometry map ``delta[inc, pa]`` (``pa`` is periodic)."""
     n_inc, n_pa = delta.shape
     minima = []
@@ -914,7 +932,7 @@ def _grid_minima(delta, inc_deg):  # deliberate: test seam: pure NumPy logic
     return sorted(minima)
 
 
-# deliberate: test seam: formula checked directly
+# deliberate: clipped GP sigma formula; pinned at both clip ends by test_dynamic_range_sigma_is_clipped
 def _dynamic_range_sigma(ctx, r0, sigma):
     """The Gaussian process's σ: ln of the single ring's peak-to-mean contrast."""
     contrast = (ctx.r_out**2 - ctx.r_in**2) / (
@@ -1024,21 +1042,37 @@ def _geometry_stage(p):  # deliberate: stage callable, patched by tests
 
 def _laplace(ctx, shape, names, values, data):
     """``(sd, cov)``: Laplace standard deviations of the ring scene's scalar
-    parameters and their covariance (``None`` where it failed)."""
+    parameters and their covariance.
+
+    A parameter whose variance is not positive and finite (the Hessian is
+    not positive definite there: the point is not a likelihood maximum, or
+    the parameter is unconstrained) has ``sd`` ``None``, never 0, and
+    ``cov`` is ``None`` unless the whole matrix is positive definite, since
+    a Laplace evidence needs that. A failed computation gives all ``None``.
+    """
     from ..inference import laplace_cov
 
     try:
         x = onp.array([values[k] for k in names], dtype=float)
         cov = onp.asarray(laplace_cov(x, names, _builder(ctx, shape), data))
-        sd = onp.sqrt(onp.clip(onp.diag(cov), 0.0, None))
-    except Exception as err:  # noqa: BLE001 - a Laplace failure is a result
+    except (FloatingPointError, onp.linalg.LinAlgError) as err:
         warnings.warn(
             f"The Laplace covariance could not be computed ({err}).",
             RuntimeWarning,
             stacklevel=2,
         )
         return {k: None for k in names}, None
-    return {k: float(v) for k, v in zip(names, sd)}, cov
+    var = onp.diag(cov)
+    good = onp.isfinite(var) & (var > 0.0)
+    pd = bool(
+        onp.all(onp.isfinite(cov))
+        and onp.all(onp.linalg.eigvalsh(0.5 * (cov + cov.T)) > 0.0)
+    )
+    sd = {
+        k: float(onp.sqrt(v)) if g else None
+        for k, v, g in zip(names, var, good)
+    }
+    return sd, (cov if pd else None)
 
 
 # === POINT-SOURCE SEARCH ON RESIDUALS ===
@@ -1132,7 +1166,7 @@ def _ring_start(ctx, held, n, new):
     return start
 
 
-# deliberate: jit boundary: stable cache key via functools.partial
+# Module-level so functools.partial(_scan_model, ...) gives a stable jit cache key.
 def _scan_model(ctx, shape, base, *, rnew, fnew):
     v = dict(base)
     i = shape.n
@@ -1171,7 +1205,7 @@ def _bic(fit, n):
     return score + fit.n_free * math.log(n)
 
 
-# deliberate: test seam: the ring-and-planet loop
+# deliberate: ring fit plus planet search; test_rings_leave_out_an_unresolved_count_and_go_on wraps it to record the ring counts tried
 def _fit_with_planet(p, shape, start, backfit=False):
     """Fit ``shape``, search the residuals, refit with a planet if found.
 
@@ -1282,7 +1316,8 @@ def _backfit(p, shape, fit):
     return fit, steps
 
 
-def _prune(p, shape, fit):  # deliberate: test seam: ring pruning
+# deliberate: greedy BIC ring pruning; test_prune_drops_a_ring_that_carries_no_light drives it on a padded fit
+def _prune(p, shape, fit):
     """Drop the ring whose removal lowers the BIC most, repeatedly: ``(fit, shape, dropped)``."""
     ctx, n_data = p._ctx(), int(p.processed.n_independent)
     dropped = []
@@ -1562,7 +1597,7 @@ def _gp_fit(p, ell, planet, geo, degree=None, release=False, max_steps=None):
     return _finish(model, values, info, priors, data), priors
 
 
-# deliberate: test seam: fold of GP harmonics
+# deliberate: turns latent harmonics with pa folded to [0, 180); pinned by test_fold_gp_values_turns_the_harmonics
 def _fold_gp_values(ctx, values, degree=None):
     """``_fold_fit`` for the Gaussian process: ``pa`` in [0°, 180°), latents turned."""
     pa = float(onp.asarray(values["disk.pa"]))
@@ -1582,7 +1617,8 @@ def _fold_gp_values(ctx, values, degree=None):
     return out
 
 
-def _geometry_search(p, geo, ell):  # deliberate: test seam: start selection
+# deliberate: start selection by frozen-geometry chi2; test_geometry_search_leaves_a_wrong_mode scores it directly
+def _geometry_search(p, geo, ell):
     """The start with the lowest frozen-geometry χ²: ``(geometry, fit, rows)``."""
     n_data = int(p.processed.n_independent)
     best, rows = None, []
@@ -1625,7 +1661,7 @@ def _score_ell(p, ell, planet, geo, k):
     _save_fit(p.output / "models" / name, fit, list(priors))
     try:
         log_z = float(log_evidence(fit.model, p.processed, path="disk"))
-    except Exception as err:  # noqa: BLE001 - reported as a missing evidence
+    except (FloatingPointError, onp.linalg.LinAlgError) as err:
         warnings.warn(
             f"The evidence at ℓ = {ell:.3g} mas could not be computed "
             f"({err}).",
@@ -1900,7 +1936,7 @@ def _compare_rings(p):
     return report
 
 
-# deliberate: test seam: evidence spread and profile correlation
+# deliberate: loads each ell candidate to correlate radial profiles; kept out of the already long GP compare callback
 def _stability(p, rows):
     """The evidence spread across ℓ and the smallest correlation between
     the radial profiles of the fits at each ℓ (None when not computable)."""
@@ -1920,7 +1956,8 @@ def _stability(p, rows):
     return spread, float(onp.min(corr))
 
 
-def _render_stats(p, model):  # deliberate: test seam: the render check
+# deliberate: pixel-render chi2 check; test_gp_render_check_runs_and_passes_on_a_well_sampled_disc re-runs it on a model
+def _render_stats(p, model):
     """χ²/N of the model and of its disk rendered to pixels (None if not computable)."""
     import equinox as eqx
     import jax.numpy as np
@@ -1957,7 +1994,7 @@ def _render_stats(p, model):  # deliberate: test seam: the render check
         out["chi2_model"] = _chi2_64(model, channel)[0] / n
         out["chi2_render"] = _chi2_64(swapped, channel)[0] / n
         out["npix"] = npix
-    except Exception as err:  # noqa: BLE001 - reported by the check
+    except (FloatingPointError, onp.linalg.LinAlgError) as err:
         warnings.warn(
             f"The render check could not run ({err}).",
             RuntimeWarning,
@@ -2193,7 +2230,7 @@ def _plot_summary_file(p, model):
 # === STAGE: POSTERIOR ===
 
 
-# deliberate: test seam: pa folding
+# deliberate: fold about the MAP, harmonics flipped by parity; pinned by test_fold_pa_keeps_the_disk
 def _fold_pa(samples, pa_site, parity, centre):
     """``pa`` folded to within 90° of ``centre``, the ``parity``-signed harmonics flipped."""
     pa = onp.asarray(samples[pa_site], dtype=float)
@@ -2427,6 +2464,30 @@ def _fit_checks(entry, settings, overview, geometry, compare):
         minimum=settings["inclination_min_deg"],
     )
     by["at_bound"] = _checks.at_bound(compare["at_bound"])
+    # The Laplace widths behind the position-angle spread (and the ring
+    # evidences) need a positive-definite Hessian: say which are missing.
+    sds = {f"geometry.{k}": v for k, v in geometry["laplace_sd"].items()}
+    for row in rows:
+        if row["name"] == compare["best"]:
+            sds.update(
+                {f"{row['name']}.{k}": v for k, v in row.get("sd", {}).items()}
+            )
+    missing = sorted(k for k, v in sds.items() if v is None)
+    by["laplace_pd"] = _checks.Check(
+        "laplace_pd",
+        "warn" if missing else "pass",
+        len(missing),
+        0,
+        (
+            "The Laplace covariance is not positive definite for "
+            + ", ".join(missing)
+            + ": those parameters are unconstrained or the fit is not at a "
+            "likelihood maximum, so they have no width (not a width of zero), "
+            "and an evidence that needs the covariance is missing."
+            if missing
+            else "The Laplace covariance is positive definite."
+        ),
+    )
     raised = compare["raised_search"]
     by["absorbed_companion"] = _checks.absorbed_companion(
         compare["residual_search"]["delta_chi2"],

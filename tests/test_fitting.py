@@ -500,9 +500,33 @@ def test_poles_of_isotropic_priors_are_not_prior_bounds():
         noise={},
         flat=True,
     )
-    values = {"inc": np.asarray(0.5), "lat": np.asarray(89.9), "ecc": 0.4}
+    values = {
+        "inc": np.asarray(0.5),
+        "lat": np.asarray(0.5 * onp.pi - 1e-4),
+        "ecc": 0.4,
+    }
     assert _at_bound(problem, values) == ()
     assert _at_bound(problem, dict(values, ecc=0.8999)) == ("ecc",)
+    # A truncated isotropic range has a genuine non-pole bound.
+    capped = SimpleNamespace(
+        priors={
+            "inc": IsotropicInclination(0.0, 30.0),
+            "lat": IsotropicLatitude(-0.5 * onp.pi, 1.0),
+        },
+        noise={},
+        flat=True,
+    )
+    near_poles = {
+        "inc": np.asarray(0.5),
+        "lat": np.asarray(-0.5 * onp.pi + 1e-4),
+    }
+    assert _at_bound(capped, near_poles) == ()
+    assert _at_bound(capped, dict(near_poles, inc=np.asarray(29.999))) == (
+        "inc",
+    )
+    assert _at_bound(capped, dict(near_poles, lat=np.asarray(0.9999))) == (
+        "lat",
+    )
 
 
 @pytest.mark.filterwarnings("ignore:fit.*did not converge")
@@ -730,6 +754,44 @@ def test_fit_with_hierarchical_error_scales():
     # float32 and x64), but they stay clearly separated.
     assert 1.5 < ratio(result) <= ratio(unpooled) * (1 + 1e-3)
     assert abs(result.values["dra"] - 150.0) < 5.0
+    # Centred hierarchical scales support gauss_newton_mass and
+    # gauss_newton_diag under flat_coordinates=True, while method="lm" raises
+    # NoLeastSquaresForm.
+    from virgil.fitting import (
+        NoLeastSquaresForm,
+        gauss_newton_diag,
+        gauss_newton_mass,
+    )
+
+    with pytest.raises(NoLeastSquaresForm):
+        fit(
+            _binary_fn,
+            priors,
+            [quiet, noisy],
+            noise=[{"vis_scale": s} for s in scales],
+            init=init,
+            method="lm",
+        )
+    diag = gauss_newton_diag(
+        _binary_fn,
+        priors,
+        [quiet, noisy],
+        result.values,
+        noise=[{"vis_scale": s} for s in scales],
+    )
+    assert all(onp.all(onp.asarray(v) > 0.0) for v in diag.values())
+    mass = gauss_newton_mass(
+        _binary_fn,
+        priors,
+        [quiet, noisy],
+        result.values,
+        noise=[{"vis_scale": s} for s in scales],
+        flat_coordinates=True,
+    )
+    ((sites, cov),) = mass["inverse_mass_matrix"].items()
+    assert {"v2_median", "v2_spread", "v2_log"} <= set(sites)
+    eig = onp.linalg.eigvalsh(onp.asarray(cov))
+    assert onp.all(onp.isfinite(eig)) and eig.min() > 0.0
 
 
 def test_numpyro_model_adds_each_population_density_once():
@@ -1097,10 +1159,10 @@ def test_fitted_gain_widths_and_scales_stay_positive_definite():
     assert eigenvalues.max() < GAIN_WIDTH_BOUNDS[1], eigenvalues
 
 
-# Measured: eig(F⁻¹H) = 0.0058, 0.996, 1.000, 1.011, 1.93. The three parameter
-# directions are exact (0.996 to 1.011, as without the width) and the scale 1.93;
-# the gain width's F, from the whitening alone, is some 170 times its true
-# curvature (the plan expected [0.3, 3]). The cost is efficiency in that one
+# Measured: eig(F⁻¹H) = 0.0058, 0.996, 1.000, 1.011, 1.44. The three parameter
+# directions are exact (0.996 to 1.011, as without the width) and the gain width
+# is 1.44; the scale's F is 2 n_vis while its true curvature is swamped by the
+# gains (the plan expected [0.3, 3]). The cost is efficiency in that one
 # coordinate, not correctness.
 GAIN_WIDTH_BOUNDS = (0.003, 3.0)
 
@@ -1545,3 +1607,34 @@ def test_post_step_needs_plain_adam():
             fit(START, PRIORS, DATA, post_step=lambda z: z, **kw)
     with pytest.raises(ValueError, match="post_step"):
         _adam(post_step=lambda z: z, precondition="diag")
+
+
+def test_regularizers_raise_for_a_model_per_dataset():
+    def two(dra, ddec, flux, **_):
+        model = BinaryModelCartesian(dra, ddec, flux)
+        return [model, model]
+
+    init = {"dra": 55.0, "ddec": -35.0, "flux": 0.03}
+    with pytest.raises(ValueError, match="one model per dataset"):
+        fit(
+            two,
+            PRIORS,
+            [DATA, DATA],
+            init=init,
+            regularizers=[TV(1.0, path="env")],
+        )
+    fit(two, PRIORS, [DATA, DATA], init=init, max_steps=1)  # none: fine
+
+
+def test_numpyro_model_raises_for_a_model_per_dataset_with_regularizers():
+    def two(dra, ddec, flux, **_):
+        model = BinaryModelCartesian(dra, ddec, flux)
+        return [model, model]
+
+    model = numpyro_model(
+        two, PRIORS, [DATA, DATA], [Centroid(10.0, path="env")]
+    )
+    with pytest.raises(ValueError, match="one model per dataset"):
+        numpyro.handlers.trace(
+            numpyro.handlers.seed(model, jax.random.PRNGKey(0))
+        ).get_trace()

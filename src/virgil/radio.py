@@ -35,13 +35,14 @@ import numpy as onp
 import numpyro.distributions as dist
 from numpyro.distributions import constraints
 
-from . import _antenna_gains
+from . import _antenna_gains, _nufft_spread
 from ._geometry import (
     _FT_DEFAULTS,
     gaussian_taper,
     offset_phase,
     pixel_offsets,
 )
+from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
 from .models import Image, SourceModel
 
@@ -240,12 +241,11 @@ class ComplexVisData(eqx.Module):
 
         Cross-correlations only; one sample per (row, channel), kept if the
         row and both parallel-hand polarizations (XX, YY or RR, LL) are
-        unflagged and both weights positive. The two polarizations are
-        averaged with their weights (Stokes I for equal weights) and the
-        weight is their sum. ``WEIGHT_SPECTRUM`` is used when present and
-        non-empty, else ``WEIGHT``. ``u = UVW[0] ν / c``, ``v = UVW[1] ν / c``
-        per channel. One ddid is read at a time, so memory is that of the
-        largest ddid at the given ``stride``.
+        unflagged and both weights positive. The polarizations are averaged
+        with their weights (Stokes I for equal weights); the weight is their
+        sum (``WEIGHT_SPECTRUM`` if present and non-empty, else ``WEIGHT``).
+        ``u = UVW[0] ν / c``, ``v = UVW[1] ν / c`` per channel. One ddid is
+        read at a time: memory is that of the largest ddid at ``stride``.
 
         Parameters
         ----------
@@ -444,20 +444,20 @@ class ComplexVisData(eqx.Module):
         ----------
         scene : callable
             Maps the fitted values (a dict by site name) to a
-            [`SourceModel`][virgil.models.SourceModel]; a function of the
-            values, not a model instance.
+            [`SourceModel`][virgil.models.SourceModel]; a function, not a
+            model instance.
         nuisance : CalibrationNuisance
-            The calibration model; its sites are keys of the fit's priors.
+            Its sites are keys of the fit's priors.
         mask : (N,) bool, optional
             Points to use (default all); masked points change neither χ²
             nor the normalization.
         chunk_size : int, optional
             Points evaluated at a time, bounding memory.
         sigma : (n_ddid,) array, optional
-            With ``sigmas="profile"``, fixed error scales instead of the
-            ``ŝ`` of this term's own points. Score held-out data at the
-            training fit's ``ŝ`` (``fit(...).info["derived"]["cal.sigma"]``):
-            profiling its own ``ŝ`` is not a predictive score.
+            With ``sigmas="profile"``, fixed error scales instead of this
+            term's own ``ŝ``. Score held-out data at the training fit's ``ŝ``
+            (``fit(...).info["derived"]["cal.sigma"]``): profiling its own
+            ``ŝ`` is not a predictive score.
         chi2 : {"auto", "direct", "toeplitz"}, optional
             How ``fit`` evaluates χ². ``"auto"`` uses the dirty-beam form of
             [`toeplitz`][virgil.radio.ComplexVisData.toeplitz] when it is
@@ -477,15 +477,11 @@ class ComplexVisData(eqx.Module):
         In your own jitted code pass the term as an argument with
         ``eqx.filter_jit``; a ``jax.jit`` closure bakes the data in as
         constants (see the radio interferometry page).
+
+        Source: [Zawadzki et al. (2023)](../references.md#zawadzki2023);
+        [Pawitan (2001)](../references.md#pawitan2001) for the profiled ``ŝ``.
         """
-        # deliberate: points are padded with zero weight to a multiple of
-        # chunk_size and mapped with lax.map (never vmap-ed); a function (not a
-        # model instance) keeps arrays out of the jit as compile-time constants
-        if isinstance(scene, SourceModel):
-            raise TypeError(
-                "scene must be a function of the fitted values, e.g. "
-                "`lambda values: model`, not a model instance."
-            )
+        _require_function(scene)
         if chi2 not in ("auto", "direct", "toeplitz"):
             raise ValueError(
                 f"chi2 must be 'auto', 'direct' or 'toeplitz', not {chi2!r}."
@@ -513,7 +509,7 @@ class ComplexVisData(eqx.Module):
         ----------
         image : Image
             The layout (shape, ``pixel_scale_mas``, ``rotation_deg``,
-            ``smooth_fwhm_mas``) and a fixed ``dra``, ``ddec`` (folded into
+            ``blur_fwhm_mas``) and a fixed ``dra``, ``ddec`` (folded into
             the visibilities); its pixels are not used.
         nuisance : CalibrationNuisance
             Its taper, ``nu0_hz`` and fixed ``alpha`` are folded in;
@@ -528,8 +524,9 @@ class ComplexVisData(eqx.Module):
         eps : float, optional
             Tolerance of the spreading kernel.
         max_offset_mas : float, optional
-            Largest offset of any observation, in mas (default the bound
-            of ``nuisance.priors()``).
+            Largest offset of any observation, in mas (default the
+            largest bound of the last ``nuisance.priors(offset=...)`` call,
+            else the default ``offset_beams`` box).
         chunk_size : int, optional
             Points spread at a time, bounding memory.
         """
@@ -551,10 +548,7 @@ class ComplexVisData(eqx.Module):
         """The error scales ``s_d`` per ddid at ``values``: the profiled ``ŝ``
         of ``CalibrationNuisance(sigmas="profile")``, the fitted ``cal.sigma``
         with ``sigmas=True``, ones otherwise. Provisional, as the module."""
-        if isinstance(scene, SourceModel):
-            model = scene
-            scene = lambda values: model  # noqa: E731
-        term = self.term(scene, nuisance, mask=mask)
+        term = self.term(_scene_function(scene), nuisance, mask=mask)
         return onp.asarray(term.sigma_hat(values))
 
     def chi2_by_ddid(
@@ -566,9 +560,7 @@ class ComplexVisData(eqx.Module):
         number of unmasked points of each ddid (χ² sums two terms per point).
         ``chunk_size`` is that of [`term`][virgil.radio.ComplexVisData.term].
         """
-        if isinstance(scene, SourceModel):
-            model = scene
-            scene = lambda values: model  # noqa: E731
+        scene = _scene_function(scene)
         term = self.term(scene, nuisance, mask=mask, chunk_size=chunk_size)
         re, im = term._evaluate(values)[:2]
         r2 = term._flat(re) ** 2 + term._flat(im) ** 2
@@ -591,13 +583,13 @@ class ComplexVisData(eqx.Module):
 
         Samples of one baseline, channel and scan (and ddid label) are paired
         in time order without overlap; ``ŝ²`` is the mean over pairs of
-        ``ΔRe² / (1/w_i + 1/w_j)``, likewise for Im, and ``ŝ`` averages the two.
+        ``ΔRe² / (1/w_i + 1/w_j)``, likewise for Im, and ``ŝ`` averages the
+        two. Samples without a partner are not used.
 
         **This is an upper bound.** Sky, gain or phase change within a pair
-        adds to ``|ΔV|²``, so ``ŝ`` is biased high for rapidly varying data
-        (long gaps, atmospheric phase), exact only if the signal is constant.
-        Samples without a partner are not used. Needs the ``time``, ``ant1``,
-        ``ant2`` and ``scan`` fields filled by
+        adds to ``|ΔV|²``: ``ŝ`` is biased high for rapidly varying data
+        (long gaps, atmospheric phase), exact only for constant signal.
+        Needs the ``time``, ``ant1``, ``ant2`` and ``scan`` fields filled by
         [`read_ms`][virgil.radio.ComplexVisData.read_ms]; with ``stride > 1``
         the rows read are no longer adjacent.
 
@@ -611,12 +603,11 @@ class ComplexVisData(eqx.Module):
         -------
         SigmaScale
             Group labels, pair counts, and ``s``, ``s_re``, ``s_im`` with
-            standard errors. ``lag_ratio`` well above 1 means the sky varies
-            (``ŝ`` is conservative); near 1 means constant data or a time
-            order that does not follow the data (a scrambled time column):
-            check ``ŝ``.
+            standard errors. ``lag_ratio`` well above 1: the sky varies
+            (``ŝ`` is conservative); near 1: constant data or a scrambled time
+            column (check ``ŝ``).
         """
-        # deliberate: Var(ΔRe) = s²(1/w_i + 1/w_j) for σ² = s²/w; the error of
+        # Var(ΔRe) = s²(1/w_i + 1/w_j) for σ² = s²/w; the error of
         # ŝ² is the sample standard error of the mean (no Gaussian assumption),
         # se(ŝ) = se(ŝ²) / (2ŝ); channels are identified by their frequency.
         missing = [
@@ -821,7 +812,8 @@ class ComplexVisData(eqx.Module):
             wrap = lambda t: t - 2.0 * onp.pi * onp.round(  # noqa: E731
                 t / (2.0 * onp.pi)
             )
-            # deliberate: nufftax type-1 at float64; the real part adds the Hermitian partners
+            # nufftax type-1 at float64; the real part adds the Hermitian
+            # partners
             f = nufft2d1(
                 np.asarray(wrap(t_col)),
                 np.asarray(wrap(t_row)),
@@ -1025,7 +1017,6 @@ class SigmaScale:
     lag_ratio: onp.ndarray
 
 
-# deliberate: tests read one ddid's samples directly
 def _read_ddid(sub, pair, chan_freq, stride, column, conjugate, u_sign):
     """The samples of one ddid's cross-correlation query, or None."""
     data = sub.getcol(column, 0, -1, stride)  # (ncorr, nchan, nrow)
@@ -1137,14 +1128,14 @@ class CalibrationNuisance:
         Index of the reference observation.
     gains, offsets, sigmas, alpha : bool (``alpha`` also a float)
         Which nuisances are fitted (the flux always is); gains and offsets
-        need more than one observation; a nuisance not fitted takes the table's last column.
-        ``sigmas="profile"`` sets the error scales at every evaluation (see
+        need more than one observation; a nuisance not fitted takes the
+        table's last column. ``sigmas="profile"`` sets the error scales at
+        every evaluation (see
         [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]). A float
         ``alpha`` fixes the spectral index (a non-zero integer is refused:
         ``alpha=1`` used to mean "fit").
     offset_beams : float, optional
-        Half-width of the default offset prior, in beams; default 3.
-        Provisional, as the module.
+        Default offset prior half-width in beams (3). Provisional, as the module.
     antenna_gains : bool
         Marginalize a complex gain per antenna and solution interval ([antenna
         gains](../radio_interferometry.md#antenna-based-gains)); needs
@@ -1158,14 +1149,19 @@ class CalibrationNuisance:
     gain_steps : int
         Gauss–Newton steps of the gain solution.
     nu0_hz : float, optional
-        Reference frequency of the spectral index; default the
-        weight-averaged frequency of ``data``.
-    taper_fwhm_mas : float, optional
-        FWHM of a Gaussian taper (a convolution), in mas.
+        Reference frequency of the spectral index (default: the
+        weight-averaged frequency of ``data``).
+    blur_fwhm_mas : float, optional
+        FWHM (mas) of a Gaussian blurring kernel in the forward model: the
+        data are compared with the blurred model. Default ``None``,
+        recommended; blur for display afterwards. Not ``uvtaper``. Source:
+        Czekala et al. (2025), [references](../references.md#mpol).
+        Formerly ``taper_fwhm_mas``, a deprecated alias.
     prefix : str
         Site-name prefix.
     """
 
+    @renamed({"taper_fwhm_mas": "blur_fwhm_mas"})
     def __init__(
         self,
         data,
@@ -1175,7 +1171,7 @@ class CalibrationNuisance:
         sigmas=True,
         alpha=True,
         nu0_hz=None,
-        taper_fwhm_mas=None,
+        blur_fwhm_mas=None,
         prefix="cal",
         offset_beams=3.0,
         antenna_gains=False,
@@ -1225,16 +1221,20 @@ class CalibrationNuisance:
         # b_k = 1/(2π q_max,k) in mas, the natural unit of observation k's
         # offset; the reference observation has no offset site.
         obs = onp.asarray(data.obs)
+        q_default = float(q[q > 0].max()) if onp.any(q > 0) else 1.0
         q_max = onp.array(
             [
-                q[obs == k].max() if onp.any(obs == k) else onp.nan
+                float(q[(obs == k) & (q > 0)].max())
+                if onp.any((obs == k) & (q > 0))
+                else q_default
                 for k in range(self.n_obs)
             ]
         )
         self.offset_unit_mas = rad2mas / (2.0 * onp.pi * q_max)
         self.offset_beams = float(offset_beams)
-        self.taper_fwhm_mas = (
-            None if taper_fwhm_mas is None else float(taper_fwhm_mas)
+        self._max_offset_mas = None
+        self.blur_fwhm_mas = (
+            None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
         self.prefix = prefix
         self.antenna_gains = bool(antenna_gains)
@@ -1267,7 +1267,7 @@ class CalibrationNuisance:
     @property
     def sites(self):
         """Names of the fitted sites."""
-        return tuple(self.priors())
+        return tuple(self._priors({}))
 
     def priors(self, **bounds):
         """Default priors of the fitted sites, a dict for ``fit``.
@@ -1283,7 +1283,20 @@ class CalibrationNuisance:
         ``q_min`` the shortest baseline (``offset_bound_mas``), is the old
         default: a shift of the phase centre beyond that is less than half a
         turn of phase on every baseline.
+
+        The largest ``|offset|`` bound of the last call is what
+        ``ComplexVisData.toeplitz`` sizes its shift precompute from (unless
+        ``max_offset_mas`` is given), so call this before ``toeplitz``.
         """
+        lo_hi = bounds.get("offset")
+        self._max_offset_mas = (
+            None
+            if lo_hi is None
+            else float(onp.max(onp.abs(onp.asarray(lo_hi, float))))
+        )
+        return self._priors(bounds)
+
+    def _priors(self, bounds):
         unknown = set(bounds) - {
             "flux",
             "gain",
@@ -1393,10 +1406,22 @@ class CalibrationNuisance:
         alpha = values[site("alpha")] if self.alpha else self.alpha_fixed
         return values[site("flux")], gain, offset, sigma, alpha
 
-    def _taper(self, u, v):
-        if self.taper_fwhm_mas is None:
+    @property
+    def taper_fwhm_mas(self):
+        """Deprecated alias of ``blur_fwhm_mas``."""
+        warnings.warn(
+            "CalibrationNuisance.taper_fwhm_mas is now "
+            "CalibrationNuisance.blur_fwhm_mas; taper_fwhm_mas stops "
+            "working in virgil 0.5.",
+            FutureWarning,
+            stacklevel=external_stacklevel(),
+        )
+        return self.blur_fwhm_mas
+
+    def _blur(self, u, v):
+        if self.blur_fwhm_mas is None:
             return 1.0
-        return gaussian_taper(u * u + v * v, self.taper_fwhm_mas)
+        return gaussian_taper(u * u + v * v, self.blur_fwhm_mas)
 
 
 def _no_antenna_gains(nuisance):
@@ -1413,7 +1438,7 @@ def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
     vis = scene.model(u * lam, v * lam, lam)
     ramp = offset_phase(u, v, offset[obs, 0], offset[obs, 1])
     spectral = (freq / nuisance.nu0_hz) ** alpha
-    return flux * gain[obs] * spectral * ramp * nuisance._taper(u, v) * vis
+    return flux * gain[obs] * spectral * ramp * nuisance._blur(u, v) * vis
 
 
 # ----------------------------------------------------------------------
@@ -1421,17 +1446,45 @@ def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
 # ----------------------------------------------------------------------
 
 
-def _warn_double_taper(scene, nuisance):
-    if nuisance.taper_fwhm_mas is None:
+def _require_function(scene):
+    if isinstance(scene, SourceModel):
+        raise TypeError(
+            "scene must be a function of the fitted values, e.g. "
+            "`lambda values: model`, not a model instance."
+        )
+
+
+def _scene_function(scene):
+    """``scene`` as a function of the fitted values."""
+    if isinstance(scene, SourceModel):
+        model = scene
+        return lambda values: model  # noqa: E731
+    return scene
+
+
+def _checked_sigma(sigma, nuisance):
+    """The fixed error scales ``sigma`` of a term, validated, or None."""
+    if sigma is None:
+        return None
+    if nuisance.sigmas != "profile":
+        raise ValueError("sigma= needs sigmas='profile'.")
+    sigma = np.asarray(sigma, dtype=np.float64)
+    if sigma.shape != (nuisance.n_ddid,):
+        raise ValueError(f"sigma must have shape ({nuisance.n_ddid},).")
+    return sigma
+
+
+def _warn_double_blur(scene, nuisance):
+    if nuisance.blur_fwhm_mas is None:
         return
     images = jax.tree_util.tree_leaves(
         scene, is_leaf=lambda x: isinstance(x, Image)
     )
     if any(
-        isinstance(x, Image) and x.smooth_fwhm_mas is not None for x in images
+        isinstance(x, Image) and x.blur_fwhm_mas is not None for x in images
     ):
         warnings.warn(
-            "CalibrationNuisance.taper_fwhm_mas and Image.smooth_fwhm_mas "
+            "CalibrationNuisance.blur_fwhm_mas and Image.blur_fwhm_mas "
             "are both set; the two Gaussians compound, blurring the model "
             "twice. Use one of them.",
             UserWarning,
@@ -1455,14 +1508,40 @@ class _Precompute:
         return 0
 
 
-class _RadioTerm(eqx.Module):
-    """Whitened residuals of a `ComplexVisData` with calibration nuisances."""
+class _TermBase(eqx.Module):
+    """What the direct and Toeplitz likelihood terms share (private).
+
+    A subclass defines ``sigma_hat``, ``full_chi2_and_log_norm`` and
+    ``_log_2pi_w`` (``Σ_k m_k ln(2π/w_k)`` of the unmasked points).
+    """
 
     arrays: dict
     scene: object = eqx.field(static=True)
     nuisance: object = eqx.field(static=True)
+    sigma_fixed: object
+
+    @property
+    def has_log_norm(self):
+        # A Toeplitz term never has antenna gains (_refuse_nuisance), so for
+        # it this is bool(sigmas).
+        return bool(self.nuisance.sigmas) or self.nuisance.antenna_gains
+
+    def derived(self, values):
+        """Quantities of the fit that are not sites: the profiled ``ŝ``."""
+        if self.nuisance.sigmas != "profile":
+            return {}
+        return {self.nuisance._site("sigma"): self.sigma_hat(values)}
+
+    def loglike(self, values):
+        """Normalized Gaussian log density of the unmasked points."""
+        chi2, log_norm = self.full_chi2_and_log_norm(values)
+        return -0.5 * chi2 - log_norm - self._log_2pi_w
+
+
+class _RadioTerm(_TermBase):
+    """Whitened residuals of a `ComplexVisData` with calibration nuisances."""
+
     n: int = eqx.field(static=True)
-    sigma_fixed: object = None
     gain_index: object = eqx.field(static=True, default=None)
     chi2: str = eqx.field(static=True, default="direct")
     precompute: object = eqx.field(static=True, default=None)
@@ -1477,21 +1556,16 @@ class _RadioTerm(eqx.Module):
         sigma=None,
         chi2="direct",
     ):
-        if sigma is not None:
-            if nuisance.sigmas != "profile":
-                raise ValueError("sigma= needs sigmas='profile'.")
-            sigma = np.asarray(sigma, dtype=np.float64)
-            if sigma.shape != (nuisance.n_ddid,):
-                raise ValueError(
-                    f"sigma must have shape ({nuisance.n_ddid},)."
-                )
-        self.sigma_fixed = sigma
+        self.sigma_fixed = _checked_sigma(sigma, nuisance)
         n = len(data)
         if mask is None:
             mask = onp.ones(n, dtype=bool)
         mask = onp.asarray(mask, dtype=bool)
         if mask.shape != (n,):
             raise ValueError(f"mask has shape {mask.shape}, not ({n},).")
+        # Points are padded with zero weight to a multiple of chunk_size and
+        # mapped with lax.map (never vmap-ed); the scene is a function (not a
+        # model instance) so that arrays stay out of the jit as constants.
         chunk = max(1, min(int(chunk_size), n))
         pad = (-n) % chunk
 
@@ -1600,6 +1674,17 @@ class _RadioTerm(eqx.Module):
             raise ValueError(
                 "chi2='toeplitz' is not exact here: " + "; ".join(unmet) + "."
             )
+        try:
+            _nufft_spread._nufftax()  # the private spreader may have moved
+        except ImportError as err:
+            if not auto:
+                raise
+            warnings.warn(
+                f"chi2='auto' uses the direct term: {err}",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
+            return self, "direct (auto): the nufftax spreader is unavailable"
         shifts = [float(x) for x in shifts]
         layout = eqx.tree_at(
             lambda i: (i.dra, i.ddec),
@@ -1608,10 +1693,6 @@ class _RadioTerm(eqx.Module):
         )
         tdata = self.precompute.build(layout)
         return tdata.term(self.scene, nuis, self.sigma_fixed), "toeplitz"
-
-    @property
-    def has_log_norm(self):
-        return bool(self.nuisance.sigmas) or self.nuisance.antenna_gains
 
     @property
     def _profiled(self):
@@ -1626,7 +1707,7 @@ class _RadioTerm(eqx.Module):
         unpacked = nuis._unpack(values)
         sigma = unpacked[3]
         scene = self.scene(values)
-        _warn_double_taper(scene, nuis)
+        _warn_double_blur(scene, nuis)
 
         def model(a):
             return _model_points(
@@ -1735,10 +1816,9 @@ class _RadioTerm(eqx.Module):
         return self._evaluate(values)[2]
 
     def derived(self, values):
-        """Quantities of the fit that are not sites: the profiled ``ŝ``."""
-        out = {}
-        if self._profiled:
-            out[self.nuisance._site("sigma")] = self.sigma_hat(values)
+        """Quantities of the fit that are not sites: the profiled ``ŝ`` and,
+        with antenna gains, the last Gauss–Newton step."""
+        out = super().derived(values)
         if self.gain_index is not None:
             out[self.nuisance._site("gain_step")] = self.gain_step(values)
         return out
@@ -1784,12 +1864,15 @@ class _RadioTerm(eqx.Module):
         a = self.arrays
         return r, 2.0 * np.sum(a["m"] * np.log(sigma[a["ddid"]])) + norm
 
-    def loglike(self, values):
-        """Normalized Gaussian log density of the unmasked points."""
-        a = self.arrays
+    def full_chi2_and_log_norm(self, values):
+        """``(χ², log_norm)`` of all unmasked points, constants included."""
         r, log_norm = self.residuals_and_log_norm(values)
-        const = np.sum(a["m"] * (np.log(2.0 * np.pi) - np.log(a["w"])))
-        return -0.5 * np.sum(r**2) - log_norm - const
+        return np.sum(r**2), log_norm
+
+    @property
+    def _log_2pi_w(self):
+        a = self.arrays
+        return np.sum(a["m"] * (np.log(2.0 * np.pi) - np.log(a["w"])))
 
 
 # ----------------------------------------------------------------------

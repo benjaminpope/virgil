@@ -584,7 +584,7 @@ def test_missing_baseline_in_every_orientation_is_reported():
     hdul = _t3_under_other_insname((4.8e-6,))
     vis2 = hdul["OI_VIS2"].data
     row = onp.flatnonzero((vis2["STA_INDEX"] == (1, 3)).all(axis=1))[0]
-    vis2["STA_INDEX"][row] = (2, 4)  # leaves (1, 3) stored nowhere
+    vis2["STA_INDEX"][row] = (8, 9)  # leaves (1, 3) stored nowhere
     with pytest.warns(UserWarning, match=r"1 closure-phase triangle leg has"):
         record = read_oifits(hdul)
     # One flagged sample at the T3 coordinates of (1, 3), shared by the
@@ -625,6 +625,22 @@ def test_unusable_t3_coordinates_for_a_missing_leg_raise(change, match):
     change(t3)
     with pytest.raises(ValueError, match=match):
         read_oifits(hdul)
+
+
+def test_mirrored_t3_coordinates_raise_even_when_all_legs_match():
+    # Even when every leg matches OI_VIS2, finite non-zero OI_T3 coordinates
+    # in the opposite baseline direction are rejected, while legacy zero/NaN
+    # OI_T3 coordinates still load cleanly from OI_VIS2.
+    hdul = _t3_under_other_insname((4.8e-6,))
+    t3 = hdul["OI_T3"].data
+    for n in COORDS:
+        t3[n] = -t3[n]
+    with pytest.raises(ValueError, match="opposite baseline direction"):
+        read_oifits(hdul)
+    for val in (0.0, onp.nan):
+        for n in COORDS:
+            t3[n] = val
+        assert read_oifits(hdul)["phi"].size == len(TRIANGLES)
 
 
 def _without_v2_of(pair, waves):
@@ -768,7 +784,7 @@ def test_split_by_epoch_partitions_the_likelihood(tmp_path):
     model = BinaryModelCartesian(dra=55.0, ddec=-35.0, flux=0.04)
     whole = model_loglike(model, noisy)
     assert sum(model_loglike(model, p) for p in parts) == pytest.approx(
-        whole, rel=1e-5
+        float(whole), rel=1e-5
     )
 
 
@@ -1017,6 +1033,19 @@ def _closure_only():
     return tables
 
 
+def _flagged_closure_phases():
+    """Multi-wavelength V² and closure phases with flagged channels."""
+    tables = _tables(waves=(4.4e-6, 5.2e-6))
+    v2_flag = onp.zeros((len(PAIRS), 2), dtype=bool)
+    v2_flag[2, 0] = True
+    tables["OI_VIS2"]["FLAG"] = v2_flag
+    t3_flag = onp.zeros((len(TRIANGLES), 2), dtype=bool)
+    t3_flag[1, 0] = True
+    t3_flag[2, 1] = True
+    tables["OI_T3"]["FLAG"] = t3_flag
+    return tables
+
+
 def _flagged_absolute_phases():
     """V² and absolute phases with a flagged sample of each."""
     u, v = _baselines()
@@ -1039,6 +1068,7 @@ def _flagged_absolute_phases():
         "vlti-no-stations",
         "closure-only",
         "flagged",
+        "flagged-vis",
     ]
 )
 def data_shape(request, tmp_path):
@@ -1050,11 +1080,12 @@ def data_shape(request, tmp_path):
         return nrm_oidata()
     if kind.startswith("vlti"):
         return vlti_night(60000.0, frames=3, stations=kind == "vlti-stations")
-    tables = (
-        _closure_only()
-        if kind == "closure-only"
-        else _flagged_absolute_phases()
-    )
+    if kind == "closure-only":
+        tables = _closure_only()
+    elif kind == "flagged":
+        tables = _flagged_closure_phases()
+    else:
+        tables = _flagged_absolute_phases()
     return OIData(write_oifits(tables, tmp_path / "in.oifits"))
 
 
@@ -1064,6 +1095,63 @@ def test_oidata_round_trips_through_oifits(data_shape, tmp_path):
     with fits.open(path) as hdul:
         assert hdul[0].header["CONTENT"] == "OIFITS2"
     assert pyoifits.open(path).get_dataHDUs()
+
+
+def test_unflagged_includes_extras():
+    u = onp.array([10.0, 20.0, 30.0, 40.0])
+    v = onp.array([5.0, -5.0, 15.0, -15.0])
+    base = {
+        "u": u,
+        "v": v,
+        "wavel": onp.full(4, 2.2e-6),
+        "vis": onp.ones(4),
+        "d_vis": onp.full(4, 0.01),
+        "vis_flag": onp.ones(4, dtype=bool),
+        "cp_flag": False,
+    }
+    flux_only = OIData(
+        {
+            **base,
+            "flux": {
+                "wavel": onp.array([2.2e-6]),
+                "value": onp.array([1.0]),
+                "error": onp.array([0.1]),
+            },
+        }
+    )
+    assert onp.array_equal(flux_only.unflagged, [True, True, True, True])
+
+    visamp_data = OIData(
+        {
+            **base,
+            "visamp": {
+                "sample": onp.array([1, 3]),
+                "value": onp.array([0.9, 0.8]),
+                "error": onp.array([0.05, 0.05]),
+                "amptyp": "correlated flux",
+            },
+        }
+    )
+    assert onp.array_equal(visamp_data.unflagged, [False, True, False, True])
+
+    with pytest.warns(UserWarning, match="Every closure phase is flagged"):
+        t3amp_data = OIData(
+            {
+                **base,
+                "phi": onp.array([0.0]),
+                "d_phi": onp.array([0.1]),
+                "phi_flag": onp.array([True]),
+                "i_cps1": onp.array([0]),
+                "i_cps2": onp.array([1]),
+                "i_cps3": onp.array([2]),
+                "cp_flag": True,
+                "t3amp": {
+                    "value": onp.array([0.5]),
+                    "error": onp.array([0.05]),
+                },
+            }
+        )
+    assert onp.array_equal(t3amp_data.unflagged, [True, True, True, False])
 
 
 def test_closure_only_data_keeps_its_flagged_visibilities(tmp_path):

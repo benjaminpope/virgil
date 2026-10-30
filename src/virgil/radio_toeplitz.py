@@ -43,8 +43,14 @@ import numpy as onp
 from . import _nufft_spread as grid
 from ._geometry import gaussian_taper, offset_phase, rotate
 from ._utils import mas2rad
-from .models import Image, SourceModel, System
-from .radio import _warn_double_taper
+from .models import Image, System
+from .radio import (
+    _checked_sigma,
+    _require_function,
+    _scene_function,
+    _TermBase,
+    _warn_double_blur,
+)
 
 __provisional__ = ("*",)
 
@@ -75,7 +81,7 @@ def _signature(nuisance):
     return (
         nuisance.n_obs,
         nuisance.n_ddid,
-        nuisance.taper_fwhm_mas,
+        nuisance.blur_fwhm_mas,
         nuisance.nu0_hz,
         nuisance.alpha_fixed,
     )
@@ -177,7 +183,7 @@ class ToeplitzVisData(eqx.Module):
     data : ComplexVisData
     mask : (N,) bool
         Points used.
-    npix, pixel_scale_mas, rotation_deg, smooth_fwhm_mas
+    npix, pixel_scale_mas, rotation_deg, blur_fwhm_mas
         The Image layout the precompute is for.
     image_offset_mas : (float, float)
         The template's fixed ``(dra, ddec)``, folded into the visibilities.
@@ -202,7 +208,7 @@ class ToeplitzVisData(eqx.Module):
     npix: int = eqx.field(static=True)
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
-    smooth_fwhm_mas: float | None = eqx.field(static=True)
+    blur_fwhm_mas: float | None = eqx.field(static=True)
     image_offset_mas: tuple = eqx.field(static=True)
     free_offsets: bool = eqx.field(static=True)
     max_shift_pix: float = eqx.field(static=True)
@@ -256,13 +262,11 @@ class ToeplitzVisData(eqx.Module):
         bound = 0.0
         if free:
             # The largest image-frame shift (pixels) of the offsets' prior box.
-            shift_mas = max_offset_mas
+            shift_mas = max_offset_mas or nuisance._max_offset_mas
             if shift_mas is None:
                 free_obs = onp.arange(nuisance.n_obs) != nuisance.ref_obs
-                theta = nuisance.offset_beams * 2.0 * onp.pi
-                shift_mas = float(
-                    onp.max(theta * nuisance.offset_unit_mas[free_obs])
-                )
+                unit = nuisance.offset_unit_mas[free_obs]
+                shift_mas = nuisance.offset_beams * 2.0 * onp.pi * unit.max()
             angle = onp.deg2rad(image.rotation_deg)
             spread = abs(onp.cos(angle)) + abs(onp.sin(angle))
             bound = float(shift_mas) * spread / pix
@@ -275,10 +279,10 @@ class ToeplitzVisData(eqx.Module):
         scale = 2.0 * onp.pi * mas2rad * pix
         tx, ty = scale * uu, scale * vv
         h = (freq / nuisance.nu0_hz) ** nuisance.alpha_fixed
-        h = h * onp.asarray(nuisance._taper(u, v))
-        if image.smooth_fwhm_mas is not None:
+        h = h * onp.asarray(nuisance._blur(u, v))
+        if image.blur_fwhm_mas is not None:
             h = h * onp.asarray(
-                gaussian_taper(u * u + v * v, image.smooth_fwhm_mas)
+                gaussian_taper(u * u + v * v, image.blur_fwhm_mas)
             )
         tau = float(onp.max(onp.maximum(onp.abs(tx), onp.abs(ty))) / onp.pi)
         # A fixed image offset is a phase on the model; move it to the data.
@@ -334,7 +338,7 @@ class ToeplitzVisData(eqx.Module):
         self.npix = npix
         self.pixel_scale_mas = float(pix)
         self.rotation_deg = float(image.rotation_deg)
-        self.smooth_fwhm_mas = image.smooth_fwhm_mas
+        self.blur_fwhm_mas = image.blur_fwhm_mas
         self.image_offset_mas = (dra, ddec)
         self.free_offsets = free
         self.max_shift_pix = float(bound)
@@ -364,12 +368,12 @@ class ToeplitzVisData(eqx.Module):
 
     @property
     def layout(self):
-        """``(shape, pixel_scale_mas, rotation_deg, smooth_fwhm_mas)``."""
+        """``(shape, pixel_scale_mas, rotation_deg, blur_fwhm_mas)``."""
         return (
             (self.npix, self.npix),
             self.pixel_scale_mas,
             self.rotation_deg,
-            self.smooth_fwhm_mas,
+            self.blur_fwhm_mas,
         )
 
     def rebuild(self, vis, weight):
@@ -402,16 +406,12 @@ class ToeplitzVisData(eqx.Module):
         part of a [`System`][virgil.models.System]) at the template's fixed
         ``dra``, ``ddec``; the observations' offsets are ``cal.offset``.
         """
-        if isinstance(scene, SourceModel):
-            raise TypeError(
-                "scene must be a function of the fitted values, e.g. "
-                "`lambda values: model`, not a model instance."
-            )
+        _require_function(scene)
         _refuse_nuisance(nuisance)
         if _signature(nuisance) != self.signature:
             raise ValueError(
                 "nuisance differs from the one of the precompute (n_obs, "
-                "n_ddid, taper_fwhm_mas, nu0_hz or alpha); rebuild it."
+                "n_ddid, blur_fwhm_mas, nu0_hz or alpha); rebuild it."
             )
         if nuisance.offsets and not self.free_offsets:
             raise ValueError(
@@ -430,7 +430,7 @@ class ToeplitzVisData(eqx.Module):
     def chi2_by_ddid(self, scene, values, nuisance):
         """``(chi2, n)`` per ddid, as
         [`ComplexVisData.chi2_by_ddid`][virgil.radio.ComplexVisData.chi2_by_ddid]."""
-        term = self.term(_as_function(scene), nuisance)
+        term = self.term(_scene_function(scene), nuisance)
         chi2 = term.chi2_by_ddid(values)
         return onp.asarray(chi2), onp.asarray(self.arrays["count"], int)
 
@@ -442,7 +442,7 @@ class ToeplitzVisData(eqx.Module):
         ``loss_direct`` (``½χ² + log_norm``), ``max_rel``. ``chunk_size`` is
         the direct term's.
         """
-        scene = _as_function(scene)
+        scene = _scene_function(scene)
         chi2 = self.chi2_by_ddid(scene, values, nuisance)[0]
         direct = self.data.chi2_by_ddid(
             scene, values, nuisance, self.mask, chunk_size=chunk_size
@@ -463,13 +463,6 @@ class ToeplitzVisData(eqx.Module):
             loss_direct=loss_direct,
             max_rel=float(max(rel.max(), rel_loss)),
         )
-
-
-def _as_function(scene):
-    if isinstance(scene, SourceModel):
-        model = scene
-        return lambda values: model  # noqa: E731
-    return scene
 
 
 # ----------------------------------------------------------------------
@@ -499,14 +492,10 @@ def _single_image(scene):
     return model, offsets + [model.dra, model.ddec]
 
 
-class _ToeplitzTerm(eqx.Module):
+class _ToeplitzTerm(_TermBase):
     """χ² and log-normalization of a `ToeplitzVisData` with calibration
     nuisances, less constants (``chi2_constant``, ``log_norm_constant``)."""
 
-    arrays: dict
-    sigma_fixed: object
-    scene: object = eqx.field(static=True)
-    nuisance: object = eqx.field(static=True)
     layout: tuple = eqx.field(static=True)
     image_offset_mas: tuple = eqx.field(static=True)
     ddid_obs: tuple = eqx.field(static=True)
@@ -516,15 +505,7 @@ class _ToeplitzTerm(eqx.Module):
     n_data: int = eqx.field(static=True)
 
     def __init__(self, tdata, scene, nuisance, sigma=None):
-        if sigma is not None:
-            if nuisance.sigmas != "profile":
-                raise ValueError("sigma= needs sigmas='profile'.")
-            sigma = np.asarray(sigma, dtype=np.float64)
-            if sigma.shape != (nuisance.n_ddid,):
-                raise ValueError(
-                    f"sigma must have shape ({nuisance.n_ddid},)."
-                )
-        self.sigma_fixed = sigma
+        self.sigma_fixed = _checked_sigma(sigma, nuisance)
         self.arrays = tdata.arrays
         self.scene = scene
         self.nuisance = nuisance
@@ -538,10 +519,6 @@ class _ToeplitzTerm(eqx.Module):
         self.n_data = 2 * len(tdata.data)
 
     @property
-    def has_log_norm(self):
-        return bool(self.nuisance.sigmas)
-
-    @property
     def _profiled(self):
         return self.nuisance.sigmas == "profile" and self.sigma_fixed is None
 
@@ -549,18 +526,18 @@ class _ToeplitzTerm(eqx.Module):
 
     def _image(self, values):
         scene = self.scene(values)
-        _warn_double_taper(scene, self.nuisance)
+        _warn_double_blur(scene, self.nuisance)
         image, offsets = _single_image(scene)
         layout = (
             image.eta.shape,
             image.pixel_scale_mas,
             image.rotation_deg,
-            image.smooth_fwhm_mas,
+            image.blur_fwhm_mas,
         )
         if layout != self.layout:
             raise ValueError(
                 f"The scene's Image (shape, pixel_scale_mas, rotation_deg, "
-                f"smooth_fwhm_mas) = {layout} differs from the precompute's "
+                f"blur_fwhm_mas) = {layout} differs from the precompute's "
                 f"{self.layout}."
             )
         dra, ddec = sum(offsets[0::2]), sum(offsets[1::2])
@@ -653,23 +630,32 @@ class _ToeplitzTerm(eqx.Module):
     def _profile(self, delta):
         """``ŝ_d² = (C_d + Δ_d) / 2N_d`` (1 without points), held."""
         c_sum, count = self.arrays["c_sum"], self.arrays["count"]
-        s2 = (c_sum + delta) / (2.0 * np.maximum(count, 1.0))
-        s2 = np.where(count > 0, np.maximum(s2, np.finfo(s2.dtype).tiny), 1.0)
+        eps = np.finfo(c_sum.dtype).eps
+        num = np.maximum(c_sum + delta, eps * np.maximum(c_sum, eps))
+        s2 = np.where(count > 0, num / (2.0 * np.maximum(count, 1.0)), 1.0)
         return jax.lax.stop_gradient(s2)
 
     def _reduced(self, params):
         c_sum, count = self.arrays["c_sum"], self.arrays["count"]
         if self._profiled:
             delta = self._deltas(params)
-            r = delta / self._profile(delta)
             ok = (count > 0) & (c_sum > 0)
             ratio = delta / np.where(ok, c_sum, 1.0)
-            log_norm = np.sum(
-                np.where(
-                    ok, count * jax.lax.stop_gradient(np.log1p(ratio)), 0.0
-                )
+            eps = np.finfo(c_sum.dtype).eps
+            # Σ r is zero in value and has gradient ∇Δ/ŝ² (ŝ² is held), the
+            # same gradient and Hessian as Σ Δ/ŝ²; the loss's value is the
+            # held log_norm. Below the floor both are flat: no gradient.
+            live = ratio > eps - 1.0
+            r = np.where(
+                live,
+                (delta - jax.lax.stop_gradient(delta)) / self._profile(delta),
+                0.0,
             )
-            return np.sum(r - jax.lax.stop_gradient(r)), log_norm
+            log1p = np.log1p(np.maximum(ratio, eps - 1.0))
+            log_norm = np.sum(
+                np.where(ok, count * jax.lax.stop_gradient(log1p), 0.0)
+            )
+            return np.sum(r), log_norm
         sigma = params[3] if self.sigma_fixed is None else self.sigma_fixed
         image, shift, g, _ = params
         c = 1.0 / sigma**2
@@ -740,12 +726,6 @@ class _ToeplitzTerm(eqx.Module):
             return self.sigma_fixed
         return self.nuisance._unpack(values)[3]
 
-    def derived(self, values):
-        """Quantities of the fit that are not sites: the profiled ``ŝ``."""
-        if self.nuisance.sigmas != "profile":
-            return {}
-        return {self.nuisance._site("sigma"): self.sigma_hat(values)}
-
     def chi2_by_ddid(self, values):
         """``(C_d + Δ_d) / s_d²`` per ddid."""
         params = self.curvature_params(values)
@@ -758,9 +738,11 @@ class _ToeplitzTerm(eqx.Module):
             ) ** 2
         return (self.arrays["c_sum"] + delta) / s2
 
-    def loglike(self, values):
-        """Normalized Gaussian log density of the unmasked points."""
+    def full_chi2_and_log_norm(self, values):
+        """``(χ², log_norm)`` of all unmasked points, constants included."""
         chi2, log_norm = self.chi2_and_log_norm(values)
-        chi2 = chi2 + self.chi2_constant
-        log_norm = log_norm + self.log_norm_constant
-        return -0.5 * chi2 - log_norm - self.arrays["logw"]
+        return chi2 + self.chi2_constant, log_norm + self.log_norm_constant
+
+    @property
+    def _log_2pi_w(self):
+        return self.arrays["logw"]

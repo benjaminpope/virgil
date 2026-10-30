@@ -3,7 +3,6 @@ multi-epoch binary orbit."""
 
 from __future__ import annotations
 
-import dataclasses
 import functools
 import hashlib
 import inspect
@@ -43,10 +42,6 @@ from .._precision import run_in
 # Grid step of the per-night position search, as a fraction of the finest
 # fringe spacing λ/B_max (Nyquist is one half).
 _STEP_FRACTION = 0.25
-# The search box is widened by this factor, up to _MAX_WIDEN times, while a
-# night's best peak sits on its edge.
-_WIDEN = 1.5
-_MAX_WIDEN = 5
 # Engine coordinates of the sampled orbit, in the order of ``aliases._physical``.
 _SITES = (
     "log_period",
@@ -116,9 +111,8 @@ class OrbitPipeline(_Pipeline):
         (days, 0.5; the gap that splits nights), ``exclude`` (a dict whose
         keys are a file name, night or dataset name and values the reason,
         recorded in ``run.json``), ``period_range``
-        (default from the data), ``outlier_eps`` (0.02), ``max_modes`` (3),
-        ``drop_outlier_night`` (True; the refit without the worst night about
-        doubles the search time).
+        (default from the data), ``outlier`` (``"mixture"`` or ``"inflation"``: what a
+        night that the orbit does not predict is scored as), ``max_modes`` (3).
         Priors and errors: [conventions](../conventions.md).
 
     Examples
@@ -132,12 +126,17 @@ class OrbitPipeline(_Pipeline):
     STABILITY = "provisional"
     STAGES = ("load", "epochs", "search", "modes", "posterior", "quicklook")
     _SECOND_KEY = "metadata"
+    _IGNORED = {
+        "outlier_eps": "the night-outlier rate is marginalized; drop it.",
+        "drop_outlier_night": "each night carries an outlier probability; "
+        "drop it.",
+    }
     _DEFAULTS = {
         "gap_days": 0.5,
         "exclude": {},
         "flag_nights": True,
         "flag_sep_blocks": False,
-        "outlier_eps": 0.02,
+        "outlier": "mixture",
         "batch_size": None,
         "memory_budget": None,
         "coarse_nats": 30.0,
@@ -160,7 +159,6 @@ class OrbitPipeline(_Pipeline):
         ),
         "alias_nats": 10.0,
         "no_orbit_nats": 10.0,
-        "drop_outlier_night": True,
         "posterior_p_min": 0.05,
         "max_modes": 3,
         "num_warmup": 1000,
@@ -272,8 +270,8 @@ class OrbitPipeline(_Pipeline):
             _pair(s, "period_range")
         if not 0 < s["ecc_max"] < 1:
             raise ValueError("ecc_max must be between 0 and 1.")
-        if not 0 <= s["outlier_eps"] < 1:
-            raise ValueError("outlier_eps must be in [0, 1).")
+        if s["outlier"] not in ("mixture", "inflation"):
+            raise ValueError('outlier must be "mixture" or "inflation".')
         if not 0 <= s["posterior_p_min"] <= 1:
             raise ValueError("posterior_p_min must be in [0, 1].")
         diam = s["primary_diam"]
@@ -576,55 +574,40 @@ def _load(p):
 
 
 def _night_positions(p):  # deliberate: named step
-    """``(EpochPositions, info)``: each night's peaks on a grid widened by
-    ``_WIDEN`` until no best peak is on its edge."""
+    """``(EpochPositions, info)``: each night's peaks on a grid that covers
+    the orbit prior's support, a_max (1 + e_max)."""
     from ..epochs import epoch_positions
 
-    # The grid widens until no best peak is on its edge (AGENTS.md, "Binary
-    # orbits: solved problems"; test_pipeline_orbit.py::
-    # test_the_position_grid_widens_until_no_peak_is_on_its_edge).
     s = p.settings
     geometry = _geometry(list(p.data.data))
-    finest, coarsest = geometry["lambda_over_b_mas"], geometry["fov_mas"]
+    finest = geometry["lambda_over_b_mas"]
     cap = s["a_range"][1] * (1.0 + s["ecc_max"])  # the largest separation
     # Deliberate: lattice coverage (aperture masks, DISCO) repeats beyond one
     # alias cell, so the default box stops there; ``max_sep_mas`` overrides.
     limits = [lattice_alias_limit(night) for night in p.data.data]
-    cap = min([cap] + [x for x in limits if x is not None])
-    half = s["max_sep_mas"] or min(coarsest, cap)
-    halves = []
-    for _ in range(_MAX_WIDEN + 1):
-        wanted = s["grid_step_mas"] or _STEP_FRACTION * finest
-        most = s["max_grid"] - (1 - s["max_grid"] % 2)  # the odd number
-        n = min(2 * math.ceil(half / wanted) + 1, most)
-        axis = onp.linspace(-half, half, n)
-        lo, hi = s["flux_range"]
-        grid = {
-            "dra": axis,
-            "ddec": axis,
-            "flux": onp.geomspace(lo, hi, 13),
-        }
-        step = (
-            2 * half / (n - 1)
-        )  # max_grid coarsens beyond ``wanted`` (the report says so)
-        # Only the last pass's warnings (an edge, say) describe the result.
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            found = epoch_positions(
-                p.data,
-                grid,
-                n_peaks=s["n_peaks"],
-                s_max=s["s_max"],
-                flag_nights=s["flag_nights"],
-                flag_sep_blocks=s["flag_sep_blocks"],
-                batch_size=s["batch_size"],
-                memory_budget=s["memory_budget"],
-                coarse_nats=s["coarse_nats"],
-            )
-        halves.append(float(half))
-        if not found.edge.any() or s["max_sep_mas"] or half >= cap:
-            break
-        half = min(_WIDEN * half, cap)  # a companion may lie beyond the box
+    half = s["max_sep_mas"] or min(
+        [cap] + [x for x in limits if x is not None]
+    )
+    wanted = s["grid_step_mas"] or _STEP_FRACTION * finest
+    most = s["max_grid"] - (1 - s["max_grid"] % 2)  # the odd number
+    n = min(2 * math.ceil(half / wanted) + 1, most)
+    axis = onp.linspace(-half, half, n)
+    lo, hi = s["flux_range"]
+    grid = {"dra": axis, "ddec": axis, "flux": onp.geomspace(lo, hi, 13)}
+    step = 2 * half / (n - 1)  # max_grid coarsens beyond ``wanted``
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        found = epoch_positions(
+            p.data,
+            grid,
+            n_peaks=s["n_peaks"],
+            s_max=s["s_max"],
+            flag_nights=s["flag_nights"],
+            flag_sep_blocks=s["flag_sep_blocks"],
+            batch_size=s["batch_size"],
+            memory_budget=s["memory_budget"],
+            coarse_nats=s["coarse_nats"],
+        )
     for w in caught:
         warnings.warn(w.message, w.category, stacklevel=external_stacklevel())
     if step > wanted * (1 + 1e-9):
@@ -636,7 +619,7 @@ def _night_positions(p):  # deliberate: named step
             stacklevel=external_stacklevel(),
         )
     info = {
-        "half_widths_mas": halves,
+        "half_width_mas": float(half),
         "grid_points": int(n),
         "grid_step_mas": float(step),
         "grid_step_wanted_mas": float(wanted),
@@ -813,7 +796,7 @@ def _alias_search(  # deliberate: test seam
                 flip_flux=s["flip_flux"],
                 n_bands_max=s["n_bands_max"],
                 temper=s["temper"],
-                outlier_eps=s["outlier_eps"],
+                outlier=s["outlier"],
                 batch_size=s["batch_size"],
                 memory_budget=s["memory_budget"],
             )
@@ -892,8 +875,10 @@ def _search(p):
         "outliers": None
         if result.outlier is None
         else {
-            "eps": result.outlier["eps"],
-            "probability": dict(
+            "kind": result.outlier["kind"],
+            "probability": None
+            if result.outlier["probability"] is None
+            else dict(
                 zip(result.outlier["names"], result.outlier["probability"])
             ),
         },
@@ -970,21 +955,14 @@ def _null_verdict(result, data, s):  # deliberate: test seam (monkeypatched)
     x = onp.array(x, float)
     x[7] = _NO_COMPANION
 
-    # Deliberate: the null is scored without the outlier mixture (mixed=False)
-    # while the orbit modes use it. The mixture's broad component is a
-    # companion elsewhere, which a single star must not have; test_a_single_
-    # star_is_no_orbit pins the verdict. See docs/orbit_fitting.md.
+    # The null carries the same night-outlier mixture as the orbit.
     def best(logd):
         xs = onp.tile(x, (len(logd), 1))
         xs[:, 8] = logd
-        return onp.asarray(problem.batch(np.asarray(xs), mixed=False))
+        return onp.asarray(problem.batch(np.asarray(xs)))
 
     if len(x) <= 8:
-        null = float(
-            onp.max(
-                onp.asarray(problem.batch(np.asarray(x[None]), mixed=False))
-            )
-        )
+        null = float(onp.max(onp.asarray(problem.batch(np.asarray(x[None])))))
     else:
         grid = onp.log(onp.geomspace(*settings.diam_range, _N_DIAM_NULL))
         ll = best(grid)
@@ -1033,121 +1011,8 @@ def _modes(p):
         "delta_log_z": delta,
         "labels_free": bool(result.labels_free),
         "no_orbit": no_orbit,
-        "robustness": _robustness(p, result, no_orbit["verdict"]),
         "sampled": [int(n) for n in sampled],
         "table": _band_rows(result)[: max(_BAND_ROWS, len(sampled))],
-    }
-
-
-def _outlying_night(epochs, nights):  # deliberate: test seam
-    """``(night, indices, chi2_per_n)`` of the night with the highest raw
-    χ²/N at the best orbit (``nights``: the search report's per-dataset
-    table), the indices being its datasets'; ``None`` if no night has data."""
-    pooled = {}
-    for k, (name, night) in enumerate(
-        zip(epochs.dataset_names, epochs.epoch_of)
-    ):
-        row = nights[name]
-        total = pooled.setdefault(night, [0.0, 0, []])
-        total[0] += row["chi2"]
-        total[1] += row["n"]
-        total[2].append(k)
-    ratio = {
-        night: chi2 / n
-        for night, (chi2, n, _) in pooled.items()
-        if n > 0 and math.isfinite(chi2)
-    }
-    if not ratio:
-        return None
-    night = max(ratio, key=ratio.get)
-    return night, pooled[night][2], ratio[night]
-
-
-def _robustness(p, result, verdict):  # deliberate: test seam
-    """Whether the verdict survives dropping the night of highest χ²/N.
-
-    Returns ``{"skipped": reason}`` when it is not run.
-    """
-    s = p.settings
-    epochs = p.data
-    if not s["drop_outlier_night"]:
-        return {"skipped": "drop_outlier_night is off"}
-    if len(epochs.names) < 3:  # the refit needs two nights; one has none
-        return {"skipped": "fewer than 3 nights"}
-    nights = p._report("search")["chi2"]["nights"]
-    outlier = _outlying_night(epochs, nights)
-    if outlier is None:
-        return {"skipped": "no night has data"}
-    night, drop, chi2_per_n = outlier
-    keep = [k for k in range(len(epochs.data)) if k not in drop]
-    data = [epochs.data[k] for k in keep]
-    found = _read_positions(p)
-    kept = [k for k in range(len(found.names)) if k not in drop]
-
-    def pick(value):
-        if value is None:
-            return None
-        if isinstance(value, tuple):
-            return tuple(value[k] for k in kept)
-        return value[kept]
-
-    # The datasets of the dropped night leave every per-dataset field.
-    positions = dataclasses.replace(
-        found,
-        **{
-            f: pick(getattr(found, f))
-            for f in (
-                "names",
-                "mjd",
-                "dra",
-                "ddec",
-                "cov",
-                "flux",
-                "gap_marginal",
-                "chi2_raw",
-                "scale",
-                "peaks",
-                "flags",
-                "log_broad",
-                "exact_fraction",
-            )
-        },
-    )
-    if int((~positions.flagged).sum()) < 2:  # flagged nights seed nothing
-        return {"skipped": "fewer than 2 usable nights after the drop"}
-    best = result.best
-    try:
-        refit = _alias_search(
-            p,
-            data,
-            positions,
-            epochs.times[keep],
-            _band_checkpoints(p).with_name("bands_drop"),
-        )
-        verdict_drop = _null_verdict(refit, data, s)["verdict"]
-    except (
-        Exception
-    ) as err:  # deliberate: a failed refit must not stop `modes`
-        return {"skipped": f"the refit failed ({type(err).__name__}: {err})"}
-    period = refit.best.best.get("period")
-    # The same alias: the periods differ by less than half a cycle over the
-    # full span (band numbers shift when the dropped night ends the arc, so
-    # the two fits' bands are not compared).
-    span = float(onp.ptp(epochs.times))
-    same_band = bool(
-        period is not None
-        and span * abs(1.0 / period - 1.0 / best.best["period"]) < 0.5
-    )
-    return {
-        "night": night,
-        "chi2_per_n": chi2_per_n,
-        "full": {"verdict": verdict, "n": int(best.n)},
-        "dropped": {
-            "verdict": verdict_drop,
-            "n": int(refit.best.n),
-            "period": period,
-            "same_band": same_band,
-        },
     }
 
 
@@ -1338,7 +1203,7 @@ def _sample_band(  # deliberate: named step
                 problem.data,
                 problem.cfg,
                 problem.dof,
-                problem.mix,
+                problem.log_broad,
             ),
         )
         if deadline is not None:
@@ -1545,7 +1410,6 @@ _MODES_KEYS = (
     "delta_log_z",
     "labels_free",
     "no_orbit",
-    "robustness",
     "sampled",
     "table",
 )
@@ -1637,12 +1501,6 @@ def _summarize(settings, reports):
                 threshold=settings["no_orbit_nats"],
             )
         )
-        # A modes report from before the check (a resumed run folder) says it
-        # was not run.
-        robustness = modes.get(
-            "robustness", {"skipped": "not run (older run)"}
-        )
-        checks.append(_checks.night_dropped(robustness))
     if search:
         checks.append(
             _checks.period_bound(

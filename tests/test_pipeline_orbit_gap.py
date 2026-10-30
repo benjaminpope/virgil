@@ -55,13 +55,6 @@ def test_blind_search_resolves_the_two_season_gap_alias(tmp_path, monkeypatch):
     assert abs(modes["winner"]["elements"]["period"] - TRUTH["period"]) < 0.05
     assert modes["delta_log_z"] > 10.0  # the runner-up is ruled out
     assert modes["no_orbit"]["verdict"] == "orbit"
-    robust = modes["robustness"]  # the refit without the worst night
-    assert robust["full"]["n"] == n_true and robust["night"].startswith("n")
-    # Six well-sampled nights: the verdict survives the refit of five.
-    assert robust["dropped"]["verdict"] == "orbit"
-    assert robust["dropped"]["same_band"]
-    status = {c.name: c.status for c in res.checks}
-    assert status["night_dropped"] == "pass"
     arcs = res.summary["search"]["short_arc"]  # the engine's default stage
     assert arcs is not None and n_true in arcs["kept"]
     assert res.aliases().short_arc["kept"] == arcs["kept"]

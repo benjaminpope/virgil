@@ -982,7 +982,7 @@ def _splat_rings(xx, yy, width, rings, ring_points, weights):
     return image
 
 
-def _orthogonal_grid(xx, yy):  # deliberate: test seam (tests monkeypatch it)
+def _orthogonal_grid(xx, yy):
     """Origin and column and row steps of a regular grid, or ``None``.
 
     The grid may be shifted and rotated (as ``Component._image`` and
@@ -1857,10 +1857,16 @@ class Image(Component):
     ft : {"auto", "dft", "nufft"}, optional
         Transform for irregular uv points (default ``"auto"``, whichever is
         faster; see [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
+    blur_fwhm_mas : float, optional
+        FWHM in mas of a fixed (not fitted) Gaussian blurring kernel in the
+        forward model: the data are compared with the blurred image, so the
+        pixels are the unblurred sky. Default ``None``, recommended; blur
+        for display after the fit (``smoothed()`` gives the blurred pixels).
+        Compounds with ``CalibrationNuisance.blur_fwhm_mas``. Source: MPoL's
+        Gaussian base layer, Czekala et al. (2025),
+        [references](../references.md#mpol).
     smooth_fwhm_mas : float, optional
-        FWHM in mas of a fixed (not fitted) Gaussian smoothing kernel applied
-        to the visibilities (default none; ``smoothed()`` gives the pixels);
-        compounds with ``CalibrationNuisance.taper_fwhm_mas``.
+        Deprecated alias of ``blur_fwhm_mas``.
 
     Examples
     --------
@@ -1873,8 +1879,9 @@ class Image(Component):
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
     ft: str = eqx.field(static=True)
-    smooth_fwhm_mas: float | None = eqx.field(static=True)
+    blur_fwhm_mas: float | None = eqx.field(static=True)
 
+    @renamed({"smooth_fwhm_mas": "blur_fwhm_mas"})
     def __init__(
         self,
         log_brightness,
@@ -1885,17 +1892,17 @@ class Image(Component):
         ddec=0.0,
         rotation_deg=0.0,
         ft="auto",
-        smooth_fwhm_mas=None,
+        blur_fwhm_mas=None,
     ):
-        if smooth_fwhm_mas is not None and not (
-            onp.isfinite(smooth_fwhm_mas) and smooth_fwhm_mas > 0.0
+        if blur_fwhm_mas is not None and not (
+            onp.isfinite(blur_fwhm_mas) and blur_fwhm_mas > 0.0
         ):
             raise ValueError(
-                "smooth_fwhm_mas must be None or finite and positive, "
-                f"not {smooth_fwhm_mas}."
+                "blur_fwhm_mas must be None or finite and positive, "
+                f"not {blur_fwhm_mas}."
             )
-        self.smooth_fwhm_mas = (
-            None if smooth_fwhm_mas is None else float(smooth_fwhm_mas)
+        self.blur_fwhm_mas = (
+            None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
         self.ft = _check_ft(ft)
         if not hasattr(log_brightness, "evaluate"):
@@ -1987,8 +1994,13 @@ class Image(Component):
         flat = jax.nn.softmax(eta.ravel(), where=where)
         return flat.reshape(eta.shape)
 
+    @property
+    def smooth_fwhm_mas(self):
+        """Deprecated alias of ``blur_fwhm_mas``."""
+        return self.blur_fwhm_mas
+
     def smoothed(self):
-        """The pixels convolved with the Gaussian of ``smooth_fwhm_mas``.
+        """The pixels convolved with the Gaussian of ``blur_fwhm_mas``.
 
         Returns ``brightness`` itself when there is no smoothing. Otherwise
         an FFT convolution on a zero-padded grid, cropped to the image, so
@@ -1996,24 +2008,24 @@ class Image(Component):
         ``virgil._geometry.gaussian_smooth`` for how closely
         its transform matches the analytic Gaussian taper.
         """
-        if self.smooth_fwhm_mas is None:
+        if self.blur_fwhm_mas is None:
             return self.brightness
         return gaussian_smooth(
-            self.brightness, self.smooth_fwhm_mas / self.pixel_scale_mas
+            self.brightness, self.blur_fwhm_mas / self.pixel_scale_mas
         )
 
-    def _smoothing(self, u, v):
+    def _blur(self, u, v):
         # Unrotated baselines in wavelengths: the taper is isotropic.
-        if self.smooth_fwhm_mas is None:
+        if self.blur_fwhm_mas is None:
             return 1.0
-        return gaussian_taper(u * u + v * v, self.smooth_fwhm_mas)
+        return gaussian_taper(u * u + v * v, self.blur_fwhm_mas)
 
     def _centred_cvis(self, uu, vv):
         uu, vv = rotate(uu, vv, -self.rotation_deg)
         vis = image_visibilities(
             self.brightness, uu, vv, self.pixel_scale_mas, self.ft
         )
-        return vis * self._smoothing(uu, vv)
+        return vis * self._blur(uu, vv)
 
     def model_on_grid(self, u, v, wavel, grid):
         vis = _pixel_visibilities(
@@ -2026,7 +2038,7 @@ class Image(Component):
             grid,
             self.ft,
         )
-        vis = vis * self._smoothing(u / wavel, v / wavel)
+        vis = vis * self._blur(u / wavel, v / wavel)
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
@@ -2139,7 +2151,11 @@ class FlaredDisk(_PixelRendered):
     planets: compose them in a [`System`][virgil.models.System]. The
     visibilities are the exact Fourier transform of the brightness on a fixed
     ``npix`` x ``npix`` grid, which must cover the disk and resolve its inner
-    edge ([Model notes](../notes.md#flareddisk)).
+    edge ([Model notes](../notes.md#flareddisk)); it follows the empirical
+    $\sin i$ surface projection of Blakely et al. (2024), whereas
+    [`MultipoleDisk`][virgil.models.MultipoleDisk] with
+    [`PowerLawHeight`][virgil.models.PowerLawHeight] uses the exact $\tan i$
+    thin-surface projection.
 
     Source: Blakely et al. (2024), §III,
     [references](../../../references.md#blakely2024).
@@ -5157,8 +5173,8 @@ def smeared_model(model, u, v, wavel, bandwidth):
     snapshot, as `OIData` does), raise ``TypeError`` naming the model.
     [`OIData`][virgil.oidata.OIData] calls this when its ``bandwidth`` is set
     (read from ``EFF_BAND``, or by
-    [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]). See [Model
-    notes](../notes.md#bandwidth-smearing).
+    [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]). See [Bandwidth
+    smearing](../spectro_observables.md#bandwidth-smearing).
 
     Parameters
     ----------

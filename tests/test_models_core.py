@@ -397,3 +397,35 @@ def test_disco_operator_requires_diagonal_propagated_covariance():
         {**base, "vis_mat": np.array([[1.0, 0.0], [1.0, 1.0]])}
     )
     assert correlated_generic.vis.shape == (2,)
+
+
+@pytest.mark.parametrize(
+    "cls,kw",
+    [
+        (models.FlaredDiskHG, {"g": 0.3}),
+        (models.FlaredDiskGaussian, {"sigma_theta": 60.0}),
+        (models.FlaredDiskPowerLaw, {"n": 3.0}),
+    ],
+)
+def test_flared_disk_edge_on_is_rejected_not_silently_dark(cls, kw):
+    """Edge-on cannot be deprojected: ``is_physical`` is False and the model
+    returns NaN, never a zero-flux disk that dilutes a ``System``."""
+    common = dict(
+        radius=40.0,
+        fwhm=15.0,
+        pa=25.0,
+        npix=32,
+        pixel_scale_mas=4.0,
+        aspect=0.1,
+        skew=1.0,
+        ft="dft",
+        **kw,
+    )
+    zero = (np.zeros(1), np.zeros(1), oidata.wavel[:1])
+    near = cls(inc=89.5, **common)
+    assert bool(near.is_physical())
+    assert np.allclose(np.abs(near.model(*zero)), 1.0, atol=1e-5)
+
+    edge = cls(inc=90.0, **common)
+    assert not bool(edge.is_physical())
+    assert np.all(np.isnan(edge.model(*zero)))

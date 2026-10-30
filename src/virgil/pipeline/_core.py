@@ -17,6 +17,7 @@ from typing import Callable
 
 import numpy as onp
 
+from .._deprecate import external_stacklevel
 from . import _io
 from ._checks import stage_warning_checks, worst_status
 
@@ -136,12 +137,20 @@ class _Pipeline:
     # The config key that fills the second argument of ``from_oifits`` when
     # that is not the model (the orbit pipeline's ``metadata``).
     _SECOND_KEY = None
+    _IGNORED = {}  # removed settings: name -> what to do (warn, then drop)
 
     def __init__(self, data, model=None, *, output="run", **settings):
         self.data = data
         self.model = self._default_model() if model is None else model
         self.output = Path(output)
         self._processed = None
+        for name in sorted(set(settings) & set(self._IGNORED)):
+            warnings.warn(
+                f"The {name!r} setting is ignored: {self._IGNORED[name]}",
+                FutureWarning,
+                stacklevel=external_stacklevel(),
+            )
+            del settings[name]
         unknown = sorted(set(settings) - set(self._DEFAULTS))
         if unknown:
             raise TypeError(
@@ -462,7 +471,8 @@ class _Pipeline:
         self._write_summary(record)
         self._write_record(record)
 
-    def _discard(self, stage):  # deliberate: test seam
+    # deliberate: stale-output rule, applied to one stage by test_band_checkpoints_survive_a_rerun_but_not_a_fresh_run
+    def _discard(self, stage):
         """Delete a stage's report and declared outputs (they are stale)."""
         report = self.output / "stages" / stage.name / "report.json"
         for path in (report, *(self.output / p for p in stage.outputs)):

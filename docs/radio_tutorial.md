@@ -135,7 +135,7 @@ All panels are seen through the CLEAN beam, in Jy/beam. The last two are the CLE
 
 ![radio_tutorial output 14.1](generated/radio_tutorial_cell014_out01.png)
 
-## Diagnostics
+## Fit statistics
 
 The fit statistic is the raw χ² per datum on the quoted errors, `Σ w |V − M|² / (2N)` (two real numbers per visibility), which should be near 1 for a model that fits noise-limited data; it is not rescaled. We also report the flux and the rms difference from the truth through the beam, relative to the truth's peak.
 
