@@ -43,7 +43,7 @@ from .._geometry import lattice_alias_limit, separation_pa
 from ._core import Stage, _Pipeline
 from .._deprecate import external_stacklevel
 
-GLOBAL_NSIGMA_METHOD = "Sidak estimate, not a simulated FAP"
+GLOBAL_NSIGMA_METHOD = "simulated null: Gaussian noise at the quoted errors"
 
 # Default grid step, as a fraction of the finest λ/B (Nyquist is one half).
 _STEP_FRACTION = 0.25
@@ -74,20 +74,35 @@ class _Axis(NamedTuple):
         return self.step > self.wanted * (1 + _STEP_TOLERANCE)
 
 
-def _global_nsigma(
-    local_nsigma, n_trials
-):  # deliberate: tests pin the look-elsewhere values
-    """Look-elsewhere (Sidak) significance of ``local_nsigma`` over
-    ``n_trials`` (NaN if not finite)."""
-    from scipy.special import ndtri_exp
+def _null_nsigma(data, grid, batch_size, n_null, seed, delta_chi2):
+    """Global significance of ``delta_chi2`` from ``n_null`` companion-free
+    searches, and its false-alarm probability.
+
+    The searches repeat the real one on Gaussian noise at the quoted errors.
+    The probability is ``(k + 1) / (n_null + 1)`` for ``k`` null maxima at
+    or above ``delta_chi2``, so it is an upper bound and the significance a
+    lower bound; both are NaN if ``delta_chi2`` is not finite."""
     from scipy.stats import norm
 
-    if not math.isfinite(local_nsigma):
-        return float("nan")
-    p_local = float(norm.sf(local_nsigma))
-    # Log space keeps this finite when n_trials * p is large.
-    sigma = float(ndtri_exp(n_trials * math.log1p(-p_local)))
-    return min(sigma, local_nsigma)  # not above the local value
+    from ..detection import gaussian_null, injection_recovery
+    from ..models import BinaryModelCartesian
+
+    if not math.isfinite(delta_chi2):
+        return float("nan"), float("nan")
+    mc = injection_recovery(
+        BinaryModelCartesian,
+        _null_model(),
+        data,
+        grid,
+        seed,
+        n_null=n_null,
+        noise=gaussian_null(_null_model(), data),
+        batch_size=batch_size,
+        progress=False,
+    )
+    fap = float(mc.false_alarm_probability("delta_chi2", delta_chi2)[0])
+    # A FAP of 1 (every null peaks higher) would give -inf, which JSON rejects.
+    return float(norm.isf(min(fap, n_null / (n_null + 1.0)))), fap
 
 
 class BinaryPipeline(_Pipeline):
@@ -148,6 +163,7 @@ class BinaryPipeline(_Pipeline):
     _DEFAULTS = {
         "sigma": 3.0,
         "detection_sigma": 3.0,
+        "n_null": 1000,
         "max_sep_mas": None,
         "fov_fraction": 1.0,
         "grid_step_mas": None,
@@ -192,6 +208,7 @@ class BinaryPipeline(_Pipeline):
             if s[name] is not None:
                 _positive(s, name)
         _integer(s, "limit_bins", 1)
+        _integer(s, "n_null", 1)
         _integer(s, "max_grid", 3)
         _integer(s, "n_flux", 2)
         _pair(s, "flux_range")
@@ -352,7 +369,7 @@ def _search(p):
     _save(fig, p.output / "plots" / "search_delta_chi2.png")
     fig, _ = plot_grid_map(maps["snr"], grid, kind="snr", best=best)
     _save(fig, p.output / "plots" / "search_snr.png")
-    return _search_report(data, grid, axis, detection)
+    return _search_report(data, grid, axis, detection, s)
 
 
 def _refined_flux(
@@ -448,13 +465,18 @@ def _peak_index(grid, best):
     return index
 
 
-def _search_report(data, grid, axis, detection):
+def _search_report(data, grid, axis, detection, settings):
     from ..detection import local_nsigma
 
     local = float(local_nsigma(float(detection["delta_chi2"])))
-    # Resolution elements in the search box, at least one.
-    lambda_over_b = _geometry(data)["lambda_over_b_mas"]
-    n_trials = max(1.0, (2.0 * axis.max_sep / lambda_over_b) ** 2)
+    global_nsigma, fap = _null_nsigma(
+        data,
+        grid,
+        settings["batch_size"],
+        settings["n_null"],
+        settings["seed"],
+        float(detection["delta_chi2"]),
+    )
     chi2_null, _ = _chi2(_null_model(), data)
     return {
         "delta_chi2": float(detection["delta_chi2"]),
@@ -464,9 +486,10 @@ def _search_report(data, grid, axis, detection):
         "ddec_mas": float(detection["ddec"]),
         "flux": float(detection["flux"]),
         "local_nsigma": local,
-        "global_nsigma": _global_nsigma(local, n_trials),
+        "global_nsigma": global_nsigma,
         "global_nsigma_method": GLOBAL_NSIGMA_METHOD,
-        "n_trials": n_trials,
+        "false_alarm_probability": fap,
+        "n_null": settings["n_null"],
         "max_sep_mas": axis.max_sep,
         "alias_cap_mas": axis.alias_cap,
         "grid_step_mas": axis.step,
@@ -713,7 +736,8 @@ _SEARCH_KEYS = (
     "local_nsigma",
     "global_nsigma",
     "global_nsigma_method",
-    "n_trials",
+    "false_alarm_probability",
+    "n_null",
     "dra_mas",
     "ddec_mas",
     "flux",

@@ -97,8 +97,8 @@ def _binary_cells(run, summary, path):  # deliberate: dispatch-table callable
                 f"peaking at Δχ² = {search['delta_chi2']:.3g} "
                 f"({format_sigma(search['local_nsigma'])} local, "
                 f"{format_sigma(search['global_nsigma'])} after the "
-                f"look-elsewhere correction for {search['n_trials']:.0f} "
-                f"resolution elements).{capped} "
+                f"comparison with {search['n_null']} simulated companion-free "
+                f"searches).{capped} "
                 f"The right panel is the {limits['sigma']:g}σ contrast curve "
                 "(Absil method), the median limit in annuli about the star.",
                 "grid = res.grid()\n"

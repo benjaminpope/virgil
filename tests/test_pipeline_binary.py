@@ -38,6 +38,7 @@ pytestmark = pytest.mark.xdist_group("pipeline_binary")
 TINY = {
     "max_sep_mas": 300.0,
     "max_grid": 13,
+    "n_null": 50,
     "n_flux": 6,
     "flux_range": [1e-4, 0.2],
     "num_warmup": 30,
@@ -96,6 +97,7 @@ STAGES = (
 DEFAULTS = {
     "sigma": 3.0,
     "detection_sigma": 3.0,
+    "n_null": 1000,
     "max_sep_mas": None,
     "fov_fraction": 1.0,
     "grid_step_mas": None,
@@ -148,7 +150,8 @@ SUMMARY_KEYS = {
         "local_nsigma",
         "global_nsigma",
         "global_nsigma_method",
-        "n_trials",
+        "false_alarm_probability",
+        "n_null",
         "dra_mas",
         "ddec_mas",
         "flux",
@@ -459,23 +462,40 @@ def test_grid_leaves_out_the_limits_of_an_unfinished_limits_stage(
     assert "snr" in grid and "limit_flux" not in grid
 
 
-def test_global_nsigma_is_finite_for_huge_trial_numbers():
+def test_global_nsigma_is_the_simulated_false_alarm_probability(data):
     from scipy.stats import norm
-    from virgil.pipeline.binary import _global_nsigma
+    from virgil.pipeline.binary import _null_nsigma
 
-    assert _global_nsigma(5.0, 1.0) == pytest.approx(5.0, abs=1e-6)
-    # Sidak: p_global = 1 - (1 - p)^n.
-    p = float(norm.sf(4.0))
-    expected = float(norm.isf(1.0 - (1.0 - p) ** 100))
-    assert _global_nsigma(4.0, 100.0) == pytest.approx(expected, abs=1e-6)
-    previous = _global_nsigma(4.0, 1.0)
-    for n in (1e2, 1e4, 1e6, 1e9, 1e12):
-        sigma = _global_nsigma(4.0, n)  # n * p >> 37: p_global rounds to 1
-        assert math.isfinite(sigma) and sigma < previous
-        previous = sigma
-    assert _global_nsigma(4.0, 1e12) < 0.0
-    assert _global_nsigma(40.0, 1e4) == pytest.approx(40.0, abs=1e-3)
-    assert math.isnan(_global_nsigma(float("nan"), 10.0))
+    pipeline = BinaryPipeline(data, **TINY)
+    grid = pipeline._grid()
+    n_null = 20
+    # A peak above every null maximum: FAP = 1 / (n_null + 1), the floor.
+    sigma, fap = _null_nsigma(data, grid, None, n_null, 0, 1e12)
+    assert fap == pytest.approx(1.0 / (n_null + 1))
+    assert sigma == pytest.approx(float(norm.isf(fap)))
+    # A peak below every null maximum: FAP = 1, finite and negative.
+    sigma, fap = _null_nsigma(data, grid, None, n_null, 0, -1.0)
+    assert fap == 1.0 and math.isfinite(sigma) and sigma < 0.0
+    sigma, fap = _null_nsigma(data, grid, None, n_null, 0, float("nan"))
+    assert math.isnan(sigma) and math.isnan(fap)
+
+
+def test_search_report_uses_the_simulated_null(full_run):
+    from scipy.stats import norm
+
+    _, result = full_run
+    search = result.summary["search"]
+    assert "n_trials" not in search
+    assert search["n_null"] == TINY["n_null"]
+    n = search["n_null"]
+    fap = search["false_alarm_probability"]
+    # (k + 1) / (n + 1): a whole number of null maxima at or above the peak.
+    assert (fap * (n + 1)) == pytest.approx(round(fap * (n + 1)))
+    assert 1.0 / (n + 1) <= fap <= 1.0
+    assert search["global_nsigma"] == pytest.approx(
+        float(norm.isf(min(fap, n / (n + 1.0))))
+    )
+    assert "simulated" in search["global_nsigma_method"]
 
 
 def test_grid_is_capped_at_an_odd_number_and_the_step_reported(data, tmp_path):
