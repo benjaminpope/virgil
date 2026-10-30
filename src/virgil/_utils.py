@@ -144,8 +144,18 @@ def inflate_errors(
 
 
 def _reference(model):
-    """The model regularizers act on: the first if there is one per dataset."""
-    return model[0] if isinstance(model, (list, tuple)) else model
+    """The model regularizers act on; raises for a model per dataset.
+
+    A regularizer has no dataset to belong to, so a list of models would
+    silently regularize only the first.
+    """
+    if isinstance(model, (list, tuple)):
+        raise ValueError(
+            "Regularizers cannot be used with a model function that returns "
+            "one model per dataset: they would act on the first only. Put the "
+            "penalty in the priors, or fit with a single model."
+        )
+    return model
 
 
 def _per_dataset(model, n_data):

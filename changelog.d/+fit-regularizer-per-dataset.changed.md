@@ -1,0 +1,1 @@
+Fitting with `regularizers` and a model function that returns one model per dataset now raises `ValueError`; it used to regularize the first model only and ignore the rest. Documented fit-numerics constants (`_DIAG_FLOOR`, `_P_FLOOR`, `_AT_BOUND`, chunk sizes) now carry their derivation or say they are conventions; no numerical default changes.
