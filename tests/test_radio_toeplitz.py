@@ -996,17 +996,37 @@ def test_toeplitz_matches_the_direct_term_on_noise_free_data_above_the_floor():
             )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="max_shift_pix ignores nuis.priors(offset=...) since fa53dce: "
-    "26.73 mas, not 50 (virgil#589)",
-)
 def test_custom_offset_prior_bounds_widen_toeplitz_precompute(small):
     data, nuis, scene, template = small
     wide = 50.0
     nuis.priors(offset=(-wide, wide))
     tdata = data.toeplitz(template, nuis, offsets="spread")
     assert tdata.max_shift_pix * PIXEL == pytest.approx(wide, rel=1e-12)
+
+
+def test_narrow_offset_prior_bound_shrinks_toeplitz_precompute(small):
+    data, nuis, scene, template = small
+    default = data.toeplitz(template, nuis, offsets="spread").max_shift_pix
+    narrow = 5.0
+    nuis.priors(offset=(-narrow, narrow))
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    assert tdata.max_shift_pix * PIXEL == pytest.approx(narrow, rel=1e-12)
+    assert tdata.max_shift_pix < default
+
+
+def test_offset_prior_bound_survives_sites_and_resets_on_default_priors(small):
+    data, nuis, scene, template = small
+    nuis.priors(offset=(-50.0, 50.0))
+    nuis.sites
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    assert tdata.max_shift_pix * PIXEL == pytest.approx(50.0, rel=1e-12)
+    default = data.toeplitz(
+        template, nuis, offsets="spread", max_offset_mas=1.0
+    )
+    nuis.priors()
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    assert tdata.max_shift_pix < 50.0 / PIXEL
+    assert default.max_shift_pix * PIXEL == pytest.approx(1.0, rel=1e-12)
 
 
 def test_curvature_loss_log_norm_is_analytic(small):

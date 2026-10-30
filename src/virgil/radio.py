@@ -524,8 +524,9 @@ class ComplexVisData(eqx.Module):
         eps : float, optional
             Tolerance of the spreading kernel.
         max_offset_mas : float, optional
-            Largest offset of any observation, in mas (default the bound
-            of ``nuisance.priors()``).
+            Largest offset of any observation, in mas (default the
+            largest bound of the last ``nuisance.priors(offset=...)`` call,
+            else the default ``offset_beams`` box).
         chunk_size : int, optional
             Points spread at a time, bounding memory.
         """
@@ -1233,6 +1234,7 @@ class CalibrationNuisance:
         )
         self.offset_unit_mas = rad2mas / (2.0 * onp.pi * q_max)
         self.offset_beams = float(offset_beams)
+        self._max_offset_mas = None
         self.blur_fwhm_mas = (
             None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
@@ -1267,7 +1269,7 @@ class CalibrationNuisance:
     @property
     def sites(self):
         """Names of the fitted sites."""
-        return tuple(self.priors())
+        return tuple(self._priors({}))
 
     def priors(self, **bounds):
         """Default priors of the fitted sites, a dict for ``fit``.
@@ -1283,7 +1285,20 @@ class CalibrationNuisance:
         ``q_min`` the shortest baseline (``offset_bound_mas``), is the old
         default: a shift of the phase centre beyond that is less than half a
         turn of phase on every baseline.
+
+        The largest ``|offset|`` bound of the last call is what
+        ``ComplexVisData.toeplitz`` sizes its shift precompute from (unless
+        ``max_offset_mas`` is given), so call this before ``toeplitz``.
         """
+        lo_hi = bounds.get("offset")
+        self._max_offset_mas = (
+            None
+            if lo_hi is None
+            else float(onp.max(onp.abs(onp.asarray(lo_hi, float))))
+        )
+        return self._priors(bounds)
+
+    def _priors(self, bounds):
         unknown = set(bounds) - {
             "flux",
             "gain",
