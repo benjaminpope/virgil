@@ -5,7 +5,7 @@
 [![integration](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml)
 [![Documentation](https://github.com/benjaminpope/virgil/actions/workflows/zensical-pages.yml/badge.svg)](https://benjaminpope.github.io/virgil/)
 <!-- dev-carbon-badge -->
-[![dev carbon | 328 kg CO2e](https://img.shields.io/endpoint?url=https%3A%2F%2Fbenjaminpope.github.io%2Fvirgil%2Fgenerated%2Fdev_carbon_badge.json)](dev_carbon.md)
+[![dev carbon | 337 kg CO2e](https://img.shields.io/endpoint?url=https%3A%2F%2Fbenjaminpope.github.io%2Fvirgil%2Fgenerated%2Fdev_carbon_badge.json)](dev_carbon.md)
 <!-- /dev-carbon-badge -->
 
 The badge is an estimate with a range, not a measurement; it covers AI assistants, continuous integration and cluster jobs for development, and not data analysis ([details](dev_carbon.md)).
