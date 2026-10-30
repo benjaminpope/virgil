@@ -1181,3 +1181,9 @@ def test_at_bound_with_start_is_the_start_at_bound_check():
     assert found.value == ["flux", "sep"]
     assert "NUTS starts just inside the bound" in found.message
     assert not hasattr(checks, "start_at_bound")
+
+
+def test_r_hat_cannot_pass_without_enough_effective_samples():
+    assert checks.r_hat(0.99, ess=500.0).status == "pass"
+    assert checks.r_hat(0.99, ess=20.0).status == "warn"
+    assert checks.r_hat(1.2, ess=20.0).status == "fail"
