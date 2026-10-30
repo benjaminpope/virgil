@@ -149,6 +149,21 @@ def science_section(summary):
     )
 
 
+GEMINI_CAVEAT = (
+    "- **Gemini (Google Antigravity)** has been used since 2026-10-27 for "
+    "pull-request reviews and code audits (Gemini 4 Argon, with Gemini Flash "
+    "for some calls). Token counts per model call come from Antigravity's "
+    "local conversation databases. Reviews and audits of virgil and "
+    "virgil-validation count; each conversation is attributed by the "
+    "repository its review or audit names, else its workspace. Google "
+    "publishes no per-token energy, so Argon is assumed Opus class and Flash "
+    "Haiku class, with a range across the neighbouring classes. Google's "
+    "measured 0.24 Wh for the median Gemini Apps text prompt (Elsworth et al. "
+    "2025) is far below the per-call figure here, as review calls carry "
+    "contexts of 10⁴–10⁵ tokens."
+)
+
+
 def caveats(summary):
     cal = summary.get("copilot_calibration") or {}
     per = cal.get("credits_per_mtok", 0)
@@ -176,18 +191,7 @@ def caveats(summary):
             "class (e.g. GPT-5.6 Sol and Terra and GPT-5.5 as Opus class, "
             "GPT-5.6 Luna and GPT-5.3-Codex as Sonnet class), with a range "
             "across the neighbouring classes.",
-            "- **Gemini (Google Antigravity)** has been used since "
-            "2026-10-27 for pull-request reviews and code audits (Gemini 4 "
-            "Argon, with Gemini Flash for some calls). Token counts per "
-            "model call come from Antigravity's local conversation "
-            "databases. Reviews and audits of virgil and virgil-validation "
-            "count; each conversation is attributed by the repository its "
-            "review or audit names, else its workspace. Google publishes no "
-            "per-token energy, so Argon is assumed Opus class and Flash "
-            "Haiku class, with a range across the neighbouring classes. "
-            "Google's measured 0.24 Wh for the median Gemini Apps text "
-            "prompt (Elsworth et al. 2025) is far below the per-call "
-            "figure here, as review calls carry contexts of 10⁴–10⁵ tokens.",
+            *([GEMINI_CAVEAT] if "gemini" in summary.get("by_source", {}) else []),
             "- **Copilot cloud agent and code review** expose no token "
             "counts. Their billed AI Credits are converted to tokens at the "
             f"rate measured on the local chat logs ({per:,.0f} credits per "
