@@ -1631,7 +1631,9 @@ def test_numpyro_model_raises_for_a_model_per_dataset_with_regularizers():
         model = BinaryModelCartesian(dra, ddec, flux)
         return [model, model]
 
-    model = numpyro_model(two, PRIORS, [DATA, DATA], [Centroid(10.0, path="env")])
+    model = numpyro_model(
+        two, PRIORS, [DATA, DATA], [Centroid(10.0, path="env")]
+    )
     with pytest.raises(ValueError, match="one model per dataset"):
         numpyro.handlers.trace(
             numpyro.handlers.seed(model, jax.random.PRNGKey(0))
