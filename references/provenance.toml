@@ -839,6 +839,17 @@ arxiv = "1606.04934"
 verified = true
 verified_via = "ads"
 
+[ref.vehtari2021]
+authors = "Vehtari et al."
+year = 2021
+title = "Rank-normalization, folding, and localization: An improved R-hat for assessing convergence of MCMC"
+used_in = ["virgil.pipeline._checks:r_hat"]
+note = "Bayesian Analysis 16, 667; R-hat is trusted only with bulk ESS above 100 per chain"
+bibcode = "2021BayAn..16..667V"
+arxiv = "1903.08008"
+verified = true
+verified_via = "ads"
+
 [ref.vehtari2024]
 authors = "Vehtari et al."
 year = 2015

@@ -326,6 +326,12 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `starting_orbits` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
 | `starting_orbits` | [Price-Whelan et al. (2017)](#pricewhelan2017), [arXiv:1610.07602](https://arxiv.org/abs/1610.07602), [ADS](https://ui.adsabs.harvard.edu/abs/2017ApJ...837...20P/abstract) | after |
 
+### `virgil.pipeline._checks`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `r_hat` | [Vehtari et al. (2021)](#vehtari2021), [arXiv:1903.08008](https://arxiv.org/abs/1903.08008), [ADS](https://ui.adsabs.harvard.edu/abs/2021BayAn..16..667V/abstract) | after |
+
 ### `virgil.pipeline.star`
 
 | Symbol | Source | Relation |
@@ -606,6 +612,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="vanhamme1993"></a>**van Hamme (1993)**. New Limb-Darkening Coefficients for Modeling Binary Star Light Curves. [ADS](https://ui.adsabs.harvard.edu/abs/1993AJ....106.2096V/abstract), [doi:10.1086/116788](https://doi.org/10.1086/116788). AJ 106, 2096; the quadratic law the square-root law is compared with.
 - <a id="vanderplas2018"></a>**VanderPlas (2017)**. Understanding the Lomb-Scargle Periodogram. [arXiv:1703.09824](https://arxiv.org/abs/1703.09824), [ADS](https://ui.adsabs.harvard.edu/abs/2018ApJS..236...16V/abstract). ApJS 236, 16 (2018).
 - <a id="vehtari2024"></a>**Vehtari et al. (2015)**. Pareto Smoothed Importance Sampling. [arXiv:1507.02646](https://arxiv.org/abs/1507.02646), [ADS](https://ui.adsabs.harvard.edu/abs/2015arXiv150702646V/abstract). JMLR 25, 72 (2024).
+- <a id="vehtari2021"></a>**Vehtari et al. (2021)**. Rank-normalization, folding, and localization: An improved R-hat for assessing convergence of MCMC. [arXiv:1903.08008](https://arxiv.org/abs/1903.08008), [ADS](https://ui.adsabs.harvard.edu/abs/2021BayAn..16..667V/abstract). Bayesian Analysis 16, 667; R-hat is trusted only with bulk ESS above 100 per chain.
 - <a id="virgil_tempering"></a>**virgil (own design) (2026)**. Tempering an evidence for correlated spectral channels. No published source. The effective-channel factor from neighbouring-channel residual covariance is virgil's own method; provisional, and no test checks that tempered evidences are calibrated. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="virgil_short_arcs"></a>**virgil (own design) (2026)**. Short-arc motion constraints for the orbit period search. No published source. Provisional; not independently validated. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="virgil_alias_search"></a>**virgil (own design) (2026)**. Period-alias band search for sparsely sampled orbits. No published source. The search over cycle-count bands, its nats thresholds and its night-outlier mixture (marginalized rate, Beta(1/2, 1/2) (Jeffreys)) are virgil's own design, provisional and not independently validated end to end. *Not yet verified against arXiv, Crossref or ADS.*

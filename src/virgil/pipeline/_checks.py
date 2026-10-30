@@ -273,8 +273,15 @@ def prior_bound(fractions, *, warn=0.05):
     )
 
 
-def r_hat(value, *, warn=1.01, fail=1.05):
-    """Largest split R-hat over the sampled parameters."""
+def r_hat(value, *, ess=None, warn=1.01, fail=1.05, min_ess=400.0):
+    """Largest split R-hat over the sampled parameters.
+
+    A low R-hat from too few effective samples is chance, so a pass becomes a
+    warning when ``ess`` (the smallest bulk ESS) is below ``min_ess``: 100 per
+    chain for the default four chains, as for the ``ess`` check.
+
+    Source: Vehtari et al. 2021.
+    """
     if not _finite(value):
         return Check("r_hat", "fail", value, warn, "R-hat is not finite.")
     if value > fail:
@@ -283,6 +290,8 @@ def r_hat(value, *, warn=1.01, fail=1.05):
         status, meaning = "warn", "run longer chains to be sure"
     else:
         status, meaning = "pass", "the chains agree"
+    if status == "pass" and _finite(ess) and ess < min_ess:
+        status, meaning = "warn", "too few effective samples to trust it"
     return Check(
         "r_hat", status, value, warn, f"Largest R-hat {value:.4f}: {meaning}."
     )
@@ -627,7 +636,11 @@ def model_gain(
     return Check(name, status, gain, penalty, message)
 
 
-def prior_constrained(name, ratios, *, warn=0.8):
+# σ_posterior/σ_prior at or above which a parameter is set by its prior.
+PRIOR_DOMINATES = 0.8
+
+
+def prior_constrained(name, ratios, *, warn=PRIOR_DOMINATES):
     """Whether parameters are constrained by the data or by their priors.
 
     Parameters

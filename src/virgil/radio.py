@@ -1017,8 +1017,6 @@ class SigmaScale:
     lag_ratio: onp.ndarray
 
 
-# deliberate: the column reads and flag cuts of one ddid, apart from read_ms's
-# selection loop: the only step that touches CASA's table columns
 def _read_ddid(sub, pair, chan_freq, stride, column, conjugate, u_sign):
     """The samples of one ddid's cross-correlation query, or None."""
     data = sub.getcol(column, 0, -1, stride)  # (ncorr, nchan, nrow)
