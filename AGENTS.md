@@ -207,8 +207,8 @@ and writing history into docstrings. So:
 8. **No single-use private helpers or oversized monoliths.** CI fails a PR that
    adds a private def (module-level, nested or method) called exactly once in
    the package, at any size: inline it or share it across callers. Exempt: a
-   `# deliberate: <specific reason>` comment on the def line or the line above
-   (the reason must be non-empty and specific; see the integrity section). A stamp added or changed in a PR is rejected if its reason starts with one of: jit boundary, named step, test seam, tested directly, unit-tested, stage function, stubbed by tests, imported by, readability, tests probe, tests score, tests call; a real reason says why the code is better as a separate def (a custom_jvp, a `lax.scan` body, a public-API seam with a named external caller, a measured compile-time effect);
+   `# deliberate: <specific reason>` comment anywhere from the line above the def (or its first decorator) through the line ending its signature
+   (the reason must be non-empty and specific; see the integrity section). A vacuous reason (one that matches `_VACUOUS_STEMS` or `_VACUOUS_PATTERNS` in `scripts/code_shape.py`: restating a jit/float64 boundary, a callable or callback, a named step, speed or clarity, a bare line count, or pointing at a test or an importer) is rejected. Existing vacuous stamps are listed in `tests/lint/stamp_allowlist.txt`, which may only shrink: fixing a stamp means removing its entry (`python scripts/code_shape.py --write-allowlist` regenerates the list; CI fails a PR that adds an entry). A real reason says why the code is better as a separate def (a custom_jvp, a `lax.scan` body, a public-API seam with a named external caller, a measured compile-time effect);
    `jit`/`filter_jit` kernels; `custom_jvp`/`custom_vjp` functions and their
    `.defjvp`/`.defvjp` rules; `singledispatch` `.register` functions; callbacks
    (a def passed as a value, e.g. to `lax.scan`, `vmap`, `grad`, `map`); and
