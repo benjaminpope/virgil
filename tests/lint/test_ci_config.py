@@ -255,24 +255,10 @@ def test_test_budget_stays_active_when_shard_packing_changes():
 
 
 def test_slow_orbit_tests_are_never_dropped_on_nightly_or_main():
-    """``orbit_slow`` drops the orbit calibration tests from a PR run that
-    touches orbit modules (lean CI); main, dispatch and the nightly run
-    them in the ``slow`` jobs instead, so none of those may set it."""
+    """``orbit_slow`` adds the orbit slow tests to a PR run that touches
+    orbit modules; main, dispatch and the nightly already run every slow
+    test, so none of those sets it."""
     for event in ("push", "schedule", "workflow_dispatch"):
         for orbit_slow in (False, True):
             jobs = _jobs(event, orbit_slow=orbit_slow)
             assert not any(j.get("orbit_slow") for j in jobs), event
-
-
-def test_optional_test_dependencies_import_in_ci():
-    """Test modules skip at module level (``importorskip``) on these, so a
-    CI job without one would pass those files vacuously. Fail there instead."""
-    import os
-
-    if not os.environ.get("CI"):
-        pytest.skip("only enforced in CI; locally the extras are optional")
-    for name in ("h5py", "nbclient", "jaxoplanet"):
-        assert importlib.util.find_spec(name) is not None, (
-            f"{name} is missing from this CI job: tests that importorskip "
-            "it would skip silently"
-        )

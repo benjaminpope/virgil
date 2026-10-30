@@ -154,9 +154,10 @@ def test_injected_alias_wins_in_closure_phases(period, tmp_path):
 @pytest.mark.slow
 @pytest.mark.parametrize("seed", range(5))
 def test_injected_alias_wins_at_reduced_effort_for_every_seed(seed):
-    """The reduced search effort of the fast tests (``n_candidates=10``,
+    """On the 12.38 d synthetic, the reduced search effort (``n_candidates=10``,
     ``n_refine=2``, cut from 30 and 3 for speed) recovers the injected
-    period for every optimizer seed, not for one lucky seed."""
+    period for every candidate-pool seed. The noise draw is fixed by
+    ``_synthetic``; only the pool seed varies."""
     period = 12.38
     data, pos = _synthetic(period)
     result = fit_orbit_aliases(

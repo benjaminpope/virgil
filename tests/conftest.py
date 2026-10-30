@@ -276,3 +276,23 @@ def junk_files(tmp_path):
     (tmp_path / "empty.fits").write_bytes(b"")
     fits.PrimaryHDU().writeto(tmp_path / "no_tables.fits")
     return tmp_path
+
+
+# A module-level ``pytest.importorskip`` (h5py, nbclient, jaxoplanet) skips a
+# whole file when the job's environment lacks the package. In CI that would
+# pass the orbit and pipeline stacks vacuously, so fail the session instead.
+_IMPORT_SKIPS = []
+
+
+def pytest_collectreport(report):
+    if report.skipped and os.environ.get("CI"):
+        text = str(report.longrepr)
+        if "could not import" in text:
+            _IMPORT_SKIPS.append(f"{report.nodeid}: {text}")
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if _IMPORT_SKIPS:
+        print("\nCI: test modules skipped on a missing import:")
+        print("\n".join(_IMPORT_SKIPS))
+        session.exitstatus = 1
