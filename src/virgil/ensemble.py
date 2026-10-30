@@ -1051,9 +1051,7 @@ def combine(data, groups, *, spec=None, star=True):
     chi2 = chi2[finite]
     best = chi2.min(axis=0)
     limit = onp.inf if spec.max_chi2_red is None else spec.max_chi2_red
-    good = onp.all(
-        (chi2 <= limit) & (chi2 <= spec.chi2_ratio * best), axis=1
-    )
+    good = onp.all((chi2 <= limit) & (chi2 <= spec.chi2_ratio * best), axis=1)
     keep(good, "chi2")
     if not live:
         raise ValueError(
