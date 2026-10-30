@@ -952,7 +952,8 @@ def _shape_ratios(data, entry, diam, prior_std):
     `_checks.PRIOR_DOMINATES` = 0.8 the likelihood alone has
     σ_L = 1.33 σ_prior, so a prior-sized change of the shape moves χ² by
     1 / 1.33² = 0.56: not detectable. Below it the shape is measured; far
-    above (the golden 4 mas star: a ratio of 1.00, from σ_L ≈ 70 σ_prior)
+    above (the 4 mas star observed with 3 wavelengths × 3 hour angles at
+    σ(V²) = 0.01: 0.92 and 0.88, the marginal σ_L being about 80 σ_prior)
     it lies on a thin ridge with the diameter that NUTS cannot sample.
 
     Limitation: the Fisher matrix is linear at the prior centre, so it can

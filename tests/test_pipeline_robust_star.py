@@ -494,23 +494,26 @@ def _shape_ratios(data, diam):
 
 
 @pytest.mark.parametrize(
-    "data, diam, constrained",
+    "data, diam, expected, constrained",
     [
-        # The golden star's coverage: the prior alone (ratios 0.92, 0.88).
-        (_template(), 4.0, False),
-        # Just above 0.8 (0.85, 0.74): sampled alone at 500 + 500 draws the
-        # limb-darkened model had r_hat 2.6, ESS 2.6.
-        (_dense(1e-2), 8.0, False),
-        # Just below (0.70, 0.60): r_hat 1.035, ESS 141 at 500 + 500 draws.
-        (_dense(3e-4), 4.0, True),
-        # Well measured (0.14, 0.11).
-        (_dense(1e-4), 8.0, True),
+        # The golden star's coverage (3 wavelengths x 3 hour angles, sigma
+        # 0.01, 4 mas): almost the prior alone.
+        (_template(), 4.0, (0.92, 0.88), False),
+        # Just above 0.8 (4 x 5, sigma 1e-2, 8 mas): sampled alone at
+        # 500 + 500 draws the limb-darkened model had r_hat 2.6, ESS 2.6.
+        (_dense(1e-2), 8.0, (0.85, 0.74), False),
+        # Just below (4 x 5, sigma 3e-4, 4 mas): r_hat 1.035, ESS 141 at
+        # 500 + 500 draws.
+        (_dense(3e-4), 4.0, (0.70, 0.60), True),
+        # Well measured (4 x 5, sigma 1e-4, 8 mas).
+        (_dense(1e-4), 8.0, (0.14, 0.11), True),
     ],
 )
 def test_the_shape_gate_decides_on_both_sides_of_the_threshold(
-    data, diam, constrained
+    data, diam, expected, constrained
 ):
     ratios = _shape_ratios(data, diam)
+    assert tuple(ratios.values()) == pytest.approx(expected, abs=0.02)
     assert all(r < 0.8 for r in ratios.values()) is constrained
 
 
