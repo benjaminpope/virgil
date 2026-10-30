@@ -23,7 +23,8 @@ private name.
 ``--since REF`` is the CI gate (rule 8 in AGENTS.md): it prints each private
 def (module-level, nested or method) that the tree adds relative to ``REF``
 and that is called exactly once in the package, and exits 1 if there is any.
-Exempt: a ``# deliberate: <reason>`` comment on the def line or the line above
+Exempt: a ``# deliberate: <reason>`` comment anywhere from the line above the def (or its first
+decorator) through the line ending its signature
 (a reason that starts with a ``_VACUOUS_STEMS`` stem is rejected; existing vacuous stamps live in
 ``tests/lint/stamp_allowlist.txt``, which may only shrink);
 jit / custom_jvp / custom_vjp / ``.defjvp`` / ``.defvjp`` / ``.register``
