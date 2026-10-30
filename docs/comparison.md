@@ -40,7 +40,8 @@ Which features each package supports natively, checked on 12 October 2026 agains
 
 **virgil**
 
-- Radio visibilities: complex visibilities are fitted, but there is no reader for UVFITS or measurement sets.
+- Radio visibilities: complex visibilities are fitted; measurement sets are read with `ComplexVisData.read_ms` and there is no UVFITS reader.
+- Provisional: the CLEAN, orbit-fitting and variational-inference rows describe features marked provisional in virgil, without independent validation of every path (see [Stability](stability.md)). The table is a snapshot at the commit named above, not at the release.
 
 **PMOIRED**
 

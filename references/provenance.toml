@@ -212,11 +212,11 @@ title = "orbitize!: A Comprehensive Orbit-fitting Software Package for the High-
 used_in = []
 note = "orbitize!; AJ 159, 89 (2020)"
 role = "compared"
+repo = "https://github.com/sblunt/orbitize"
 bibcode = "2020AJ....159...89B"
 arxiv = "1910.01756"
 verified = true
 verified_via = "ads"
-repo = "https://github.com/sblunt/orbitize"
 
 [ref.blunt2024]
 authors = "Blunt et al."
@@ -238,11 +238,11 @@ title = "orvara: An Efficient Code to Fit Orbits using Radial Velocity, Absolute
 used_in = ["virgil.orbits:RVData"]
 note = "orvara; AJ 162, 186"
 role = "compared"
+repo = "https://github.com/t-brandt/orvara"
 bibcode = "2021AJ....162..186B"
 arxiv = "2105.11671"
 verified = true
 verified_via = "ads"
-repo = "https://github.com/t-brandt/orvara"
 
 [ref.thompson2023]
 authors = "Thompson et al."
@@ -251,11 +251,11 @@ title = "Octofitter: Fast, Flexible, and Accurate Orbit Modelling to Detect Exop
 doi = "10.3847/1538-3881/acf5cc"
 used_in = ["virgil.angles:AngleVector", "virgil.orbits:KeplerOrbit.from_position_angle", "virgil.orbits:PositionData.term", "virgil.oidata:OIData.with_north_angle"]
 note = "AJ 166, 164 (2023); the arXiv preprint was posted in February 2024, after publication"
+repo = "https://github.com/sefffal/Octofitter.jl"
 bibcode = "2023AJ....166..164T"
 arxiv = "2402.01971"
 verified = true
 verified_via = "ads"
-repo = "https://github.com/sefffal/Octofitter.jl"
 
 [ref.foreman-mackey2021]
 authors = "Foreman-Mackey et al."
@@ -661,9 +661,9 @@ year = 1995
 title = "High fidelity deconvolution of moderately resolved sources"
 used_in = ["virgil.radio:ComplexVisData._imaging_weights"]
 note = "PhD thesis, New Mexico Institute of Mining and Technology; the robust weighting; ADS 1995PhDT.......238B"
+bibcode = "1995PhDT.......238B"
 verified = true
 verified_via = "ads"
-bibcode = "1995PhDT.......238B"
 
 [ref.arras2021]
 authors = "Arras et al."
@@ -754,18 +754,18 @@ authors = "Chavez et al."
 year = 2026
 title = "Multifrequency Synthesis via CHIBI: Colorful Hierarchical Interferometric Bayesian Imaging"
 used_in = []
+role = "bibliography"
 bibcode = "2026ApJ..1005..132C"
 arxiv = "2606.04094"
 verified = true
 verified_via = "ads"
-role = "bibliography"
 
 [ref.drevon2026]
 authors = "Drevon et al."
 year = 2026
 title = "PYRA and MYTHRA: new statistical analysis for image reconstruction"
 used_in = ["virgil.ensemble:ensemble", "virgil.ensemble:combine"]
-note = "the brief says 2025; arXiv v1 is 2026"
+note = "arXiv v1 is 2026"
 bibcode = "2026arXiv260915365D"
 arxiv = "2609.15365"
 verified = true
@@ -992,22 +992,22 @@ authors = "Hutchinson"
 year = 1989
 title = "A stochastic estimator of the trace of the influence matrix for Laplacian smoothing splines"
 doi = "10.1080/03610918908812806"
-verified = true
-verified_via = "ads"
-bibcode = "1989CoSSC..18.1059H"
 used_in = ["virgil.fitting:gauss_newton_diag", "virgil.fitting:fit"]
 note = "Commun. Statist. Simul. Comput. 18, 1059; the trace estimator whose Rademacher probes the regularizer part of the diagonal follows (the JᵀJ part uses Gaussian (Jᵀu)² sketches)"
+bibcode = "1989CoSSC..18.1059H"
+verified = true
+verified_via = "ads"
 
 [ref.bekas2007]
 authors = "Bekas, Kokiopoulou & Saad"
 year = 2007
 title = "An estimator for the diagonal of a matrix"
 doi = "10.1016/j.apnum.2007.01.003"
-verified = true
-verified_via = "ads"
-bibcode = "2007ApNM...57.1214B"
 used_in = ["virgil.fitting:gauss_newton_diag"]
 note = "Appl. Numer. Math. 57, 1214; the estimator mean(v ⊙ Hv) over Rademacher v for the regularizer Hessian diagonal"
+bibcode = "2007ApNM...57.1214B"
+verified = true
+verified_via = "ads"
 
 [ref.skilling1989]
 authors = "Skilling"
@@ -1033,11 +1033,11 @@ verified_via = "ads"
 authors = "Thiele"
 year = 1883
 title = "Neue Methode zur Berechung von Doppelsternbahnen"
-verified = true
-verified_via = "ads"
-bibcode = "1883AN....104..245T"
 used_in = ["virgil.orbits:_thiele_innes_fit"]
 note = "Astron. Nachr. 104, 245; title as spelled by ADS"
+bibcode = "1883AN....104..245T"
+verified = true
+verified_via = "ads"
 
 [ref.starck2010]
 authors = "Starck, Murtagh & Fadili"
@@ -1250,14 +1250,14 @@ title = "Direct Retrieval of Protoplanetary Disk Dust Properties Using Auto-diff
 repo = "https://github.com/tomyoshida/frap"
 used_in = ["virgil.models:RadialGP", "virgil.models:RadialGPFunction", "virgil.models:MultipoleKernel"]
 note = "ApJ 1007, 198 (2026); github.com/tomyoshida/frap. Ideas only, no code copied: whitened Gaussian-process latents (g = mu + L z) at radial nodes with a dense kernel, sampled by NUTS, and a radial GP per physical quantity."
-bibcode = "2026ApJ..1007..198Y"
-arxiv = "2607.12618"
 doi = "10.3847/1538-4357/ae89ad"
-verified = true
-verified_via = "ads"
 
 
 # cited in the docs or docstrings as a test or formula that was implemented
+bibcode = "2026ApJ..1007..198Y"
+arxiv = "2607.12618"
+verified = true
+verified_via = "ads"
 
 [ref.diazcordoves1992]
 authors = "Díaz-Cordovés & Giménez"
@@ -1278,7 +1278,7 @@ used_in = ["virgil.metrics:lawson_sigma_over_peak"]
 note = "Proc. SPIE 5491, 886; Eq. 2"
 bibcode = "2004SPIE.5491..886L"
 verified = true
-verified_via = "crossref"
+verified_via = "ads"
 
 [ref.cotton2008]
 authors = "Cotton, Monnier & Baron"
@@ -1289,7 +1289,7 @@ used_in = ["virgil.metrics:rms_convolved"]
 note = "Proc. SPIE 7013"
 bibcode = "2008SPIE.7013E..1NC"
 verified = true
-verified_via = "crossref"
+verified_via = "ads"
 
 [ref.ireland2006]
 authors = "Ireland, Monnier & Thureau"
@@ -1297,13 +1297,14 @@ year = 2006
 title = "Monte-Carlo imaging for optical interferometry"
 doi = "10.1117/12.670940"
 used_in = ["virgil.imaging:short_baseline_residual"]
-note = "Proc. SPIE 6268; MACIM, whose test of the shortest baselines the large-scale residual check follows"
-bibcode = "2006SPIE.6268E..1TI"
-verified = true
-verified_via = "crossref"
+note = "Proc. SPIE 6268 (arXiv posting dated 2020, id checked in ADS); MACIM, whose test of the shortest baselines the large-scale residual check follows"
 
 
 # background literature cited in the docs, not a source of virgil's methods
+bibcode = "2006SPIE.6268E..1TI"
+arxiv = "2007.00716"
+verified = true
+verified_via = "ads"
 
 [ref.junklewitz2016]
 authors = "Junklewitz et al."
@@ -1324,9 +1325,9 @@ title = "LkCa 15: A Young Exoplanet Caught at Formation?"
 used_in = []
 note = "ApJ 745, 5; motivates fitting a disk and a planet together"
 role = "context"
+doi = "10.1088/0004-637X/745/1/5"
 bibcode = "2012ApJ...745....5K"
 arxiv = "1110.3808"
-doi = "10.1088/0004-637X/745/1/5"
 verified = true
 verified_via = "ads"
 
@@ -1337,9 +1338,9 @@ title = "Accreting protoplanets in the LkCa 15 transition disk"
 used_in = []
 note = "Nature 527, 342; motivates fitting a disk and a planet together"
 role = "context"
+doi = "10.1038/nature15761"
 bibcode = "2015Natur.527..342S"
 arxiv = "1511.07456"
-doi = "10.1038/nature15761"
 verified = true
 verified_via = "ads"
 
@@ -1350,9 +1351,9 @@ title = "No Clear, Direct Evidence for Multiple Protoplanets Orbiting LkCa 15: L
 used_in = []
 note = "ApJL 877, L3; motivates fitting a disk and a planet together"
 role = "context"
+doi = "10.3847/2041-8213/ab1b42"
 bibcode = "2019ApJ...877L...3C"
 arxiv = "1905.04322"
-doi = "10.3847/2041-8213/ab1b42"
 verified = true
 verified_via = "ads"
 
@@ -1363,9 +1364,9 @@ title = "No Sun-like dynamo on the active star ζ Andromedae from starspot asymm
 used_in = []
 note = "Nature 533, 217; CHARA/MIRC starspot imaging that motivates HarmonixModel"
 role = "context"
+doi = "10.1038/nature17444"
 bibcode = "2016Natur.533..217R"
 arxiv = "1709.10107"
-doi = "10.1038/nature17444"
 verified = true
 verified_via = "ads"
 
@@ -1411,7 +1412,7 @@ doi = "10.1214/088342307000000014"
 used_in = []
 note = "Statistical Science 22, 59; centred and non-centred parameterizations"
 role = "context"
-bibcode = "2007StaSc..22...59P"
+bibcode = "2007StaSc..2200014P"
 verified = true
 verified_via = "ads"
 
@@ -1422,9 +1423,9 @@ title = "WSCLEAN: an implementation of a fast, generic wide-field imager for rad
 used_in = ["virgil.radio_clean:clean"]
 note = "MNRAS 444, 606; bibcode 2014MNRAS.444..606O; the WSClean argument conventions radio_clean follows"
 bibcode = "2014MNRAS.444..606O"
+arxiv = "1407.1943"
 verified = true
 verified_via = "ads"
-arxiv = "1407.1943"
 
 [ref.jaxinterferometry]
 authors = "Dholakia"
@@ -1441,10 +1442,10 @@ authors = "van Hamme"
 year = 1993
 title = "New Limb-Darkening Coefficients for Modeling Binary Star Light Curves"
 doi = "10.1086/116788"
-bibcode = "1993AJ....106.2096V"
 used_in = ["virgil.models:SquareRootLimbDarkenedDisk"]
 note = "AJ 106, 2096; the quadratic law the square-root law is compared with"
 role = "context"
+bibcode = "1993AJ....106.2096V"
 verified = true
 verified_via = "ads"
 
@@ -1453,11 +1454,11 @@ authors = "Monnier et al."
 year = 2007
 title = "Imaging the Surface of Altair"
 doi = "10.1126/science.1143205"
-bibcode = "2007Sci...317..342M"
-arxiv = "0706.0867"
 used_in = ["virgil.models:GravityDarkenedStar"]
 note = "Science 317, 342; the Altair-like truth of notebooks/mwe/mwe_elr_chara.ipynb is inspired by it, not a reproduction"
 role = "context"
+bibcode = "2007Sci...317..342M"
+arxiv = "0706.0867"
 verified = true
 verified_via = "ads"
 
@@ -1467,9 +1468,9 @@ authors = "Lannelongue, Grealey & Inouye"
 year = 2021
 title = "Green Algorithms: Quantifying the Carbon Footprint of Computation"
 doi = "10.1002/advs.202100707"
-bibcode = "2021AdvSc...800707L"
 note = "Advanced Science 8, 2100707; the method behind the development-carbon estimate (docs/dev_carbon.md)"
 role = "context"
+bibcode = "2021AdvSc...800707L"
 verified = true
 verified_via = "ads"
 
@@ -1499,11 +1500,12 @@ verified_via = "crossref"
 authors = "Blackburn et al."
 year = 2020
 title = "Closure statistics in interferometric data"
-arxiv = "1910.02062"
 used_in = ["virgil.radio:CalibrationNuisance"]
 note = "ApJ 894, 31 (2020); closure equivalence with gains marginalized, finite gain priors"
+bibcode = "2020ApJ...894...31B"
+arxiv = "1910.02062"
 verified = true
-verified_via = "arxiv"
+verified_via = "ads"
 
 [ref.broderick2020]
 authors = "Broderick et al."
@@ -1512,18 +1514,20 @@ title = "THEMIS: A Parameter Estimation Framework for the Event Horizon Telescop
 doi = "10.3847/1538-4357/ab91a4"
 used_in = ["virgil.radio:CalibrationNuisance"]
 note = "ApJ 897, 139 (2020); Laplace marginalization of station gains"
+bibcode = "2020ApJ...897..139B"
 verified = true
-verified_via = "crossref"
+verified_via = "ads"
 
 [ref.arras2019]
 authors = "Arras et al."
 year = 2019
 title = "Unified Radio Interferometric Calibration and Imaging with Joint Uncertainty Quantification"
-arxiv = "1903.11169"
 used_in = ["virgil.radio:CalibrationNuisance"]
 note = "A&A 627, A134 (2019); joint calibration and imaging (resolve), gain priors"
+bibcode = "2019A&A...627A.134A"
+arxiv = "1903.11169"
 verified = true
-verified_via = "arxiv"
+verified_via = "ads"
 
 [ref.fessler2005]
 authors = "Fessler et al."
@@ -1534,19 +1538,19 @@ used_in = ["virgil.radio_toeplitz:ToeplitzVisData"]
 note = "IEEE Trans. Signal Process. 53, 3393; the Toeplitz embedding of the normal operator AᴴWA on a 2N grid"
 bibcode = "2005ITSP...53.3393F"
 verified = true
-verified_via = "crossref"
+verified_via = "ads"
 
 [ref.barnett2019]
 authors = "Barnett et al."
 year = 2019
 title = "A parallel nonuniform fast Fourier transform library based on an \"exponential of semicircle\" kernel"
-arxiv = "1808.06736"
 doi = "10.1137/18M120885X"
 used_in = ["virgil._nufft_spread:evaluate", "virgil.radio_toeplitz:ToeplitzVisData"]
 note = "SIAM J. Sci. Comput. 41, C479 (FINUFFT); the ES kernel, and ψ̂ at non-integer frequencies by quadrature (Sect. 3.3)"
 bibcode = "2019SJSC...41C.479B"
+arxiv = "1808.06736"
 verified = true
-verified_via = "crossref"
+verified_via = "ads"
 
 [ref.nufftax]
 authors = "Oudoumanessah & Iollo"
@@ -1563,9 +1567,9 @@ authors = "Lee & Greengard"
 year = 2005
 title = "The type 3 nonuniform FFT and its applications"
 doi = "10.1016/j.jcp.2004.12.004"
-bibcode = "2005JCoPh.206....1L"
 used_in = ["virgil._nufft_spread:evaluate", "virgil.radio_toeplitz:ToeplitzVisData"]
 note = "J. Comput. Phys. 206, 1; a type-1 spread grid evaluated off the integer lattice (the free offsets)"
+bibcode = "2005JCoPh.206....1L"
 verified = true
 verified_via = "ads"
 
@@ -1573,11 +1577,11 @@ verified_via = "ads"
 authors = "Zawadzki et al."
 year = 2023
 title = "Regularized Maximum Likelihood Image Synthesis and Validation for ALMA Continuum Observations of Protoplanetary Disks"
-arxiv = "2209.11813"
 doi = "10.1088/1538-3873/acdf84"
-bibcode = "2023PASP..135f4503Z"
 used_in = ["virgil.radio:ComplexVisData", "virgil.radio:CalibrationNuisance"]
 note = "PASP 135, 064503 (MPoL); the RML objective for ALMA visibilities that virgil.radio reproduces (design register A)"
+bibcode = "2023PASP..135f4503Z"
+arxiv = "2209.11813"
 verified = true
 verified_via = "ads"
 
@@ -1586,9 +1590,9 @@ authors = "Cornwell & Wilkinson"
 year = 1981
 title = "A new method for making maps with unstable radio interferometers"
 doi = "10.1093/mnras/196.4.1067"
-bibcode = "1981MNRAS.196.1067C"
 used_in = ["virgil.radio:CalibrationNuisance"]
 note = "MNRAS 196, 1067; self-calibration with a reference antenna fixing the gauge (the reference observation's gain 1)"
+bibcode = "1981MNRAS.196.1067C"
 verified = true
 verified_via = "ads"
 
@@ -1596,9 +1600,9 @@ verified_via = "ads"
 authors = "Cornwell & Evans"
 year = 1985
 title = "A simple maximum entropy deconvolution algorithm"
-bibcode = "1985A&A...143...77C"
 used_in = ["virgil.fitting:gauss_newton_diag"]
 note = "A&A 143, 77; the entropy metric as the natural preconditioner in MEM. No DOI or arXiv ID: checked on ADS"
+bibcode = "1985A&A...143...77C"
 verified = true
 verified_via = "ads"
 
@@ -1649,4 +1653,30 @@ title = "Asymptotic properties of maximum likelihood estimators and likelihood r
 doi = "10.1080/01621459.1987.10478472"
 used_in = ["virgil.pipeline.star:_compare"]
 note = "Nonstandard conditions: a parameter on the boundary, or a nuisance parameter unidentified under the null."
+bibcode = "1987JASA...82..605S"
+verified = true
+verified_via = "ads"
+
+[ref.virgil_tempering]
+authors = "virgil (own design)"
+year = 2026
+title = "Tempering an evidence for correlated spectral channels"
+used_in = ["virgil.tempering"]
+note = "No published source. The effective-channel factor from neighbouring-channel residual covariance is virgil's own method; provisional, and no test checks that tempered evidences are calibrated."
+verified = false
+
+[ref.virgil_short_arcs]
+authors = "virgil (own design)"
+year = 2026
+title = "Short-arc motion constraints for the orbit period search"
+used_in = ["virgil.arcs"]
+note = "No published source. Provisional; not independently validated."
+verified = false
+
+[ref.virgil_alias_search]
+authors = "virgil (own design)"
+year = 2026
+title = "Period-alias band search for sparsely sampled orbits"
+used_in = ["virgil.aliases:fit_orbit_aliases"]
+note = "No published source. The search over cycle-count bands, its nats thresholds and its night-outlier mixture (marginalized rate, Beta(1/2, 1/2) (Jeffreys)) are virgil's own design, provisional and not independently validated end to end."
 verified = false
