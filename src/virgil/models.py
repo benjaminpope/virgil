@@ -5173,8 +5173,8 @@ def smeared_model(model, u, v, wavel, bandwidth):
     snapshot, as `OIData` does), raise ``TypeError`` naming the model.
     [`OIData`][virgil.oidata.OIData] calls this when its ``bandwidth`` is set
     (read from ``EFF_BAND``, or by
-    [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]). See [Model
-    notes](../notes.md#bandwidth-smearing).
+    [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]). See [Bandwidth
+    smearing](../spectro_observables.md#bandwidth-smearing).
 
     Parameters
     ----------
