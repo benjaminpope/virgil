@@ -111,17 +111,19 @@ def test_invalid_fwhm():
 
 def test_regulariser_on_smoothed_pixels():
     img = _blob(blur_fwhm_mas=8.0)
-    raw = float(TSV(1.0).value(img))
-    smoothed = float(TSV(1.0, smoothed=True).value(img))
+    raw = float(TSV(1.0, beam_mas=PIXEL).value(img))
+    smoothed = float(TSV(1.0, smoothed=True, beam_mas=PIXEL).value(img))
     assert smoothed < raw  # smoothing removes the roughness
     b = onp.pad(onp.asarray(img.smoothed(), dtype=float), 1)
     dx = b[:-1, 1:] - b[:-1, :-1]
     dy = b[1:, :-1] - b[:-1, :-1]
-    hand = 0.5 * 2.0 * (onp.sum(dx**2) + onp.sum(dy**2))
+    hand = (onp.sum(dx**2) + onp.sum(dy**2)) / onp.sum(b) ** 2
     assert smoothed == pytest.approx(hand, rel=1e-4)
     # default: raw pixels, whatever the smoothing
     plain = _blob()
-    assert float(TSV(1.0).value(plain)) == pytest.approx(raw, rel=1e-6)
+    assert float(TSV(1.0, beam_mas=PIXEL).value(plain)) == pytest.approx(
+        raw, rel=1e-6
+    )
 
 
 def test_max_entropy_on_smoothed_pixels_matches_hand_computation():

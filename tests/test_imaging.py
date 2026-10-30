@@ -44,7 +44,10 @@ def test_tsv_and_tv_penalize_edges_and_structure():
     blob = _image(gaussian_blob(NPIX, SCALE, 15.0))
     # A flat image only has steps at its (zero-padded) edges.
     b = flat.brightness
-    assert np.isclose(TSV(1.0).value(flat), 4 * NPIX * b[0, 0] ** 2, rtol=1e-4)
+    # TSV's default beam is the field of view, so its norm is NPIX**-4.
+    assert np.isclose(
+        TSV(1.0).value(flat), 4 * NPIX * b[0, 0] ** 2 * NPIX**4, rtol=1e-4
+    )
     for regularizer in (TSV(2.0), TV(2.0)):
         assert regularizer.value(blob) > 0.0
         assert np.isclose(
@@ -52,6 +55,56 @@ def test_tsv_and_tv_penalize_edges_and_structure():
         )
     tsv = TSV(3.0)
     assert np.isclose(0.5 * np.sum(tsv.residuals(blob) ** 2), tsv.value(blob))
+
+
+def _sky(npix):
+    """The same Gaussian sky on a grid of ``npix`` pixels."""
+    scale = SCALE * NPIX / npix
+    return Image.from_brightness(gaussian_blob(npix, scale, 30.0), scale)
+
+
+@pytest.mark.parametrize("regularizer", [TSV, TV])
+def test_penalty_is_independent_of_grid_size(regularizer):
+    values = [float(regularizer(1.0).value(_sky(n))) for n in (NPIX, 2 * NPIX)]
+    assert values[1] == pytest.approx(values[0], rel=0.03)
+
+
+class _Scaled(TSV):
+    """TSV on pixels carrying total flux 3."""
+
+    def pixels(self, model):
+        return 3.0 * super().pixels(model)
+
+
+class _ScaledTV(TV):
+    def pixels(self, model):
+        return 3.0 * super().pixels(model)
+
+
+def test_penalty_is_independent_of_total_flux():
+    sky = _sky(NPIX)
+    assert float(_Scaled(1.0).value(sky)) == pytest.approx(
+        float(TSV(1.0).value(sky)), rel=1e-5
+    )
+    assert float(_ScaledTV(1.0).value(sky)) == pytest.approx(
+        float(TV(1.0).value(sky)), rel=1e-5
+    )
+
+
+def test_old_weights_convert_exactly():
+    from virgil.imaging import _differences
+
+    sky = _sky(NPIX)
+    old = 7.0
+    dx, dy = _differences(sky.brightness)
+    legacy = old * float(np.sum(dx**2 + dy**2))
+    ratio = 1.0 / NPIX  # p / B with the default beam, the field of view
+    assert float(TSV(old * ratio**4).value(sky)) == pytest.approx(
+        legacy, rel=1e-5
+    )
+    assert float(TSV(old, beam_mas=SCALE * NPIX).value(sky)) == pytest.approx(
+        float(TSV(old).value(sky)), rel=1e-5
+    )
 
 
 def test_tv_has_no_preferred_direction():
@@ -168,7 +221,7 @@ def test_centroid_prior_centres_an_image_only_fit():
         start,
         image_priors(start),
         data,
-        [TSV(1e3), Centroid(1.0)],
+        [TSV(1e3, beam_mas=SCALE), Centroid(1.0)],
         method="lm",
     )
     assert np.all(np.abs(Centroid(1.0).centroid(result.model)) < 3.0)
@@ -189,7 +242,11 @@ def test_a_star_anchors_the_image_position():
         env=Image.from_model(GaussianDisk(40.0), NPIX, SCALE, flux=0.2),
     )
     result = fit(
-        start, image_priors(start), data, [TSV(1e3, path="env")], method="lm"
+        start,
+        image_priors(start),
+        data,
+        [TSV(1e3, path="env", beam_mas=SCALE)],
+        method="lm",
     )
     centroid = Centroid(1.0, path="env").centroid(result.model)
     assert np.allclose(centroid, np.array([36.0, 24.0]), atol=6.0)
@@ -208,7 +265,7 @@ def test_l_curve_trades_chi2_against_the_penalty():
         start,
         image_priors(start),
         data,
-        TSV(1.0, path="env"),
+        TSV(1.0, path="env", beam_mas=SCALE),
         [1e1, 1e3, 1e5],
         method="lm",
     )
@@ -500,8 +557,14 @@ def test_a_dirty_start_is_a_positive_image():
 @pytest.mark.parametrize(
     "regularizers, method",
     [
-        (lambda v: [TSV(1e2), Centroid(v)], "lm"),
-        (lambda v: [TV(1e2, epsilon=v * 1e-3), Centroid(5.0)], "lbfgs"),
+        (lambda v: [TSV(1e2, beam_mas=SCALE), Centroid(v)], "lm"),
+        (
+            lambda v: [
+                TV(1e2, epsilon=v * 1e-3, beam_mas=SCALE),
+                Centroid(5.0),
+            ],
+            "lbfgs",
+        ),
         (lambda v: [StarletL1(1.0, epsilon=v * 1e-3)], "lbfgs"),
         (lambda v: [LogSum(1e-3, epsilon=v * 1e-3)], "lbfgs"),
     ],
@@ -664,7 +727,7 @@ def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
         )
     )
     assert beta * float(r0 @ r0) + gamma_beta == pytest.approx(
-        float(data.n_independent), rel=1e-10
+        float(data.n_independent), rel=1e-5
     )
     # Unit-rescaling invariance: scaling both star.flux and env.flux by 10
     # (with a 10x LogUniform prior on env.flux) leaves the evidence and
@@ -741,7 +804,7 @@ def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
         )
     )
     assert beta_reg * float(rc_data @ rc_data) + gamma_reg == pytest.approx(
-        float(data.n_independent), rel=1e-10
+        float(data.n_independent), rel=1e-5
     )
 
 
