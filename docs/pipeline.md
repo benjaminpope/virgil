@@ -231,7 +231,7 @@ A run that interrupts resumes: the bands already fitted are read back from their
 | `n_peaks` (5), `max_sep_mas` (`None`), `grid_step_mas` (`None`), `max_grid` (201) | The position search; the step is by default a quarter of the finest λ/B (coarsened to `max_grid` points) and the half-width `a_range[1] (1 + ecc_max)`, the prior's reach, limited on lattice coverage (aperture masks, DISCO) to the alias cell. |
 | `period_range` (`None`) | `[min, max]` days; by default from the data (see `fit_orbit_aliases`). |
 | `a_range` ([1, 30]), `flux_range` ([0.01, 1]), `ecc_max` (0.9), `s_max` (`None`) | The engine's prior ranges (mas; flux ratio at most 1; eccentricity; error-scale bound). |
-| `primary_diam` (`"auto"`), `vis_amp`, `sign_free`, `flip_flux`, `temper` (`True`; planned to become opt-in) | As for the engine. |
+| `primary_diam` (`"auto"`), `vis_amp`, `sign_free`, `flip_flux`, `temper` (`True`) | As for the engine. |
 | `n_bands_max`, `n_candidates`, `n_refine`, `max_steps`, `n_is` | Search effort; the defaults are those of `fit_orbit_aliases`, the one place to raise them (the `mode_converged` check says when to). |
 | `alias_nats` (10), `no_orbit_nats` (10) | Thresholds of the `alias_ambiguity` and `no_orbit` checks, in nats and not yet calibrated: the alias, no-orbit, label and resolved verdicts are indications, not Bayes factors, until the null-distribution calibration lands. |
 | `posterior_p_min` (0.05), `max_modes` (3) | Bands sampled by NUTS besides the winner. |
@@ -309,7 +309,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `alias_ambiguity` (`OrbitPipeline`: log Z of the best alias band over the runner-up's, `alias_nats`) | under 10 nats: the runner-up is not excluded | under 1 nat: the period is not determined |
 | `winner_flags` (`OrbitPipeline`: the winning band's evidence flags, such as `not-converged`, `laplace-is-differ`, `low-ess`) | any flag: its log Z is less reliable | |
 | `mode_converged` (`OrbitPipeline`: the best sampled point against the search's best mode) | over 1 nat: the search stopped short of the optimum; raise `n_candidates`, `n_refine` or `max_steps` | |
-| `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood; tempering is virgil's own design, on by default and planned to become opt-in) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
+| `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood; tempering is virgil's own design, on by default) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
 | `primary_resolved` (`OrbitPipeline`) | the primary is resolved and its diameter is the largest tried | |
 | `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's, `no_orbit_nats`, an uncalibrated difference in nats and not a Bayes factor; both carry the night-outlier component, so under `"mixture"` the single star may have an unrelated companion on any night and the check asks whether the positions follow an orbit) | under 10 nats | under 0: no orbit is detected |
 | `period_bound` (`OrbitPipeline`) | the best period is at the top of the window (a short arc) or at its bottom (the sampling limit) | |
