@@ -675,3 +675,25 @@ def test_gp_only_combine_has_no_window():
     )
     assert all(m.reason != "window" for m in result.members)
     assert result.groups[0].curve is None
+
+
+def test_max_chi2_red_is_deprecated():
+    with pytest.warns(FutureWarning, match="chi2_ratio"):
+        EnsembleSpec(max_chi2_red=10.0)
+    assert EnsembleSpec().max_chi2_red is None
+
+
+def test_relative_cut_error_names_chi2_ratio():
+    good = _group(0, [_scene(38.0), _scene(42.0), _scene(40.0)])
+    spec = EnsembleSpec(chi2_ratio=0.5)  # below the best: drops every member
+    with pytest.raises(ValueError, match="chi2_ratio=0.5") as err:
+        combine(DATASETS, [good], spec=spec)
+    assert "max_chi2_red" not in str(err.value)
+
+
+def test_deprecated_absolute_cut_still_applies():
+    good = _group(0, [_scene(38.0), _scene(42.0), _scene(40.0)])
+    with pytest.warns(FutureWarning, match="chi2_ratio"):
+        spec = EnsembleSpec(max_chi2_red=1e-12)
+    with pytest.raises(ValueError, match="max_chi2_red=1e-12"):
+        combine(DATASETS, [good], spec=spec)

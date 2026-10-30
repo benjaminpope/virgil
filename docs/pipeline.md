@@ -64,7 +64,7 @@ The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per 
 | `fov_fraction` (1.0) | See `max_sep_mas`. |
 | `grid_step_mas` (`None`) | Grid spacing; by default a quarter of the finest λ/B of the samples, coarsened so that no axis exceeds `max_grid` points (the search report then records the effective step and warns). |
 | `max_grid` (101) | Most points per position axis; the grid has the largest odd number of points not above it (at least 3). |
-| `flux_range` (`[1e-5, 0.5]`) | Flux axis of the grid and bounds of the log-uniform flux prior (companion/primary). |
+| `flux_range` (`[1e-5, 1]`) | Flux axis of the grid and bounds of the log-uniform flux prior (companion/primary). |
 | `n_flux` (40) | Points on the flux axis. |
 | `wavel_range` (`None`) | `[min, max]` wavelengths to keep, in metres. |
 | `error_floor` (`None`) | Absolute error floors by observable, for example `{"vis": 0.01, "phi": 0.005}` (phases in radians), as [`OIData.with_error_floor`][virgil.oidata.OIData.with_error_floor]. |
@@ -137,7 +137,7 @@ virgil-pipeline image star.oifits -o runs/image --set star=auto
 | --- | --- |
 | `oversample` (3.0), `field_fwhms` (6.0), `field_mas` (`None`), `max_npix` (128) | The grid: pixels per resolution element, the field in beam FWHMs (or `field_mas` in mas), and the most pixels per side. |
 | `star` (`"auto"`), `star_threshold` (5.0) | `True`, `False` or `"auto"`, which compares fits with and without a central point source by log evidence and decides at \|ΔlogZ\| ≥ `star_threshold`. |
-| `sigmas` ([1, 2, 4]), `lengths_beam` ([0.5, 1, 2]), `grid_growths` (2) | The evidence grid for the Gaussian-process amplitude σ and length ℓ (in beams). |
+| `sigmas` ([1, 2, 4]), `lengths_beam` ([0.5, 1, 2]), `grid_growths` (`None`: the engine's 3) | The evidence grid for the Gaussian-process amplitude σ and length ℓ (in beams). |
 | `members` (8), `member_grids` (`False`) | Members fitted at the shared hyperparameters, varying only the start, the pixel scale and the field (1 or 1.5 times). `member_grids=True` gives each its own evidence grid: slow, for cluster runs. |
 | `method` (`None`), `max_steps` (`None`) | The optimizer of [`fit`][virgil.fitting.fit]. |
 | `seed` (0), `wavel_range` (`None`), `error_floor` (`None`), `quicklook_execute` (`True`) | As for `BinaryPipeline`. |
