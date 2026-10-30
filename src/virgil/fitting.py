@@ -1685,9 +1685,9 @@ def _fisher_diagonal(problem, z, probes, round=0):
             return np.concatenate([r.metric_rows(model) for r in metric])
 
         # deliberate: the data JᵀJ and other terms are dropped on these pixels.
-        # Measured 2026-10-30, 8² AMI image, L-BFGS ``precondition="diag"``,
-        # MaxEntropy weights 1e3, 50, 3: 13, 41, 45 steps as coded; 16, 48, 146
-        # with JᵀJ added back. The objective is unchanged either way.
+        # Fewer L-BFGS steps (not timed) on one 8×8 AMI test, ``precondition=
+        # "diag"``, MaxEntropy weights 1e3, 50, 3: 13, 41, 45 as coded; 16, 48,
+        # 146 with JᵀJ added back (2026-10-30). The objective is unchanged.
         curvature = _gn_diagonal(rows, flat, probes, key)
         diagonal = np.where(curvature > 0.0, curvature, diagonal)
     return diagonal

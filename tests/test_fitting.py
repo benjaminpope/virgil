@@ -1624,3 +1624,15 @@ def test_regularizers_raise_for_a_model_per_dataset():
             regularizers=[TV(1.0, path="env")],
         )
     fit(two, PRIORS, [DATA, DATA], init=init, max_steps=1)  # none: fine
+
+
+def test_numpyro_model_raises_for_a_model_per_dataset_with_regularizers():
+    def two(dra, ddec, flux, **_):
+        model = BinaryModelCartesian(dra, ddec, flux)
+        return [model, model]
+
+    model = numpyro_model(two, PRIORS, [DATA, DATA], [Centroid(10.0, path="env")])
+    with pytest.raises(ValueError, match="one model per dataset"):
+        numpyro.handlers.trace(
+            numpyro.handlers.seed(model, jax.random.PRNGKey(0))
+        ).get_trace()
