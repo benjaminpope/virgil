@@ -273,13 +273,15 @@ def prior_bound(fractions, *, warn=0.05):
     )
 
 
-def r_hat(value, *, ess=None, warn=1.01, fail=1.05, min_ess=100.0):
+def r_hat(value, *, ess=None, warn=1.01, fail=1.05, min_ess=400.0):
     """Largest split R-hat over the sampled parameters.
 
-    R-hat is only a trustworthy diagnostic once the chains have enough
-    effective samples (Vehtari et al. 2021: bulk ESS of at least 100 per
-    chain set); with fewer, a low R-hat is chance, so ``ess`` (the smallest
-    bulk ESS) below ``min_ess`` caps a pass at a warning."""
+    A low R-hat from too few effective samples is chance, so a pass becomes a
+    warning when ``ess`` (the smallest bulk ESS) is below ``min_ess``: 100 per
+    chain for the default four chains, as for the ``ess`` check.
+
+    Source: Vehtari et al. 2021.
+    """
     if not _finite(value):
         return Check("r_hat", "fail", value, warn, "R-hat is not finite.")
     if value > fail:
