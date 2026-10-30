@@ -238,9 +238,17 @@ def test_a_nearly_unconstrained_parameter_warns_that_the_ridge_decides():
 
     from virgil.inference import regularized_inverse
 
-    with pytest.warns(RuntimeWarning, match="nearly unconstrained"):
-        cov = regularized_inverse(np.diag(np.array([4.0, 1e-13])))
-    assert np.isfinite(cov).all()
-    with warnings.catch_warnings():  # a well-conditioned Hessian is silent
+    with pytest.warns(RuntimeWarning, match="not positive definite"):
+        cov = regularized_inverse(np.diag(np.array([4.0, 0.0])))
+    assert np.isfinite(cov).all()  # the second variance is set by the ridge
+    with warnings.catch_warnings():  # a positive-definite Hessian is silent
         warnings.simplefilter("error")
-        regularized_inverse(np.diag(np.array([4.0, 1e-3])))
+        regularized_inverse(np.diag(np.array([4.0, 1e-13])))
+
+
+def test_a_positive_definite_hessian_is_inverted_exactly_in_mixed_units():
+    # Curvatures eighteen orders apart: no ridge touches the small one.
+    from virgil.inference import regularized_inverse
+
+    hess = np.diag(np.array([1e8, 1e-10]))
+    assert np.allclose(regularized_inverse(hess), np.diag(1.0 / np.diag(hess)))

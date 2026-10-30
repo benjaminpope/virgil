@@ -1437,17 +1437,82 @@ def test_a_numerical_laplace_failure_warns_and_gives_none(monkeypatch):
     assert sd == {"a": None} and cov is None
 
 
-@pytest.mark.parametrize("missing", ["report", "factor"])
+def _synthetic_compare(name, sd):
+    "Minimal overview, geometry and compare reports for ``_fit_checks``."
+    row = {
+        "name": "best",
+        "n": 1,
+        "bic": 0.0,
+        "ell_mas": 2.0,
+        "log_evidence": -1.0,
+        "sd": sd,
+    }
+    overview = {"resolution_mas": 2.0}
+    geometry = {"laplace_sd": sd, "grid": {"n_minima": 1}}
+    compare = {
+        "best": "best",
+        "rows": [
+            row,
+            {**row, "name": "other", "ell_mas": 4.0, "log_evidence": -9.0},
+        ],
+        "grid": {"on_grid_edge": None, "extended": None},
+        "outer_fraction": 0.0,
+        "inc_deg": 40.0,
+        "pa_sd_deg": sd.get("pa"),
+        "at_bound": [],
+        "raised_search": None,
+        "residual_search": {"delta_chi2": 0.0},
+        "degree": 1,
+        "evidence_spread": 8.0,
+        "profile_correlation": 0.5,
+        "inner_fraction": 0.0,
+        "inner_correlation": 0.0,
+        "render": {"chi2_model": 1.0, "chi2_render": 1.0},
+        "n_best": 1,
+        "split_counts": [],
+    }
+    return overview, geometry, compare
+
+
+@pytest.mark.parametrize("model", ["gp", "rings"])
+def test_a_missing_laplace_width_is_flagged_and_reaches_the_other_checks(
+    model,
+):
+    # A non-positive-definite Hessian leaves sd = None (never 0): the
+    # laplace_pd check warns and names it, and the inclination check, which
+    # reads the position angle's spread, accepts None.
+    settings = dict(DiskPipeline._DEFAULTS)
+    entry = disk.models()[model]
+    for sd, status in (
+        ({"pa": 5.0, "inc": 2.0}, "pass"),
+        ({"pa": None, "inc": 2.0}, "warn"),
+    ):
+        overview, geometry, compare = _synthetic_compare(model, sd)
+        checks = {
+            c.name: c
+            for c in disk._fit_checks(
+                entry, settings, overview, geometry, compare
+            )
+        }
+        assert checks["laplace_pd"].status == status
+        assert checks["inclination"].status in ("pass", "warn", "fail")
+        if status == "warn":
+            assert "geometry.pa" in checks["laplace_pd"].message
+            assert checks["laplace_pd"].value == 2  # geometry and best row
+
+
+@pytest.mark.parametrize("missing", ["report", "factor", "list"])
 def test_a_rescale_run_without_its_profile_scale_raises(
     tiny, tmp_path, missing
 ):
     # error_scale="auto" is the rescale for the GP: a missing or unusable
     # profile report must not fall back to the quoted errors (factor 1.0).
     pipeline = DiskPipeline(tiny, "gp", output=tmp_path / "run", **_TINY)
-    if missing == "factor":
+    if missing != "report":
         folder = pipeline.output / "stages" / "profile"
         folder.mkdir(parents=True)
-        (folder / "report.json").write_text('{"error_scale_factor": null}')
+        text = {"factor": '{"error_scale_factor": null}', "list": "[1, 2]"}
+        (folder / "report.json").write_text(text[missing])
     with pytest.raises(RuntimeError, match="rerun the profile stage"):
         pipeline._rescale_factor()
 

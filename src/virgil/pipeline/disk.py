@@ -352,7 +352,7 @@ class DiskPipeline(_Pipeline):
             # errors, so a missing or unreadable report is an error, not 1.0.
             try:
                 value = self._report("profile").get("error_scale_factor")
-            except (OSError, ValueError, KeyError) as err:
+            except (OSError, ValueError, KeyError, AttributeError) as err:
                 raise RuntimeError(
                     'error_scale="rescale" needs the error scale the profile '
                     f"stage estimated, but its report could not be read ({err}); "
