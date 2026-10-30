@@ -24,7 +24,8 @@ private name.
 def (module-level, nested or method) that the tree adds relative to ``REF``
 and that is called exactly once in the package, and exits 1 if there is any.
 Exempt: a ``# deliberate: <reason>`` comment on the def line or the line above
-(a reason that starts with a ``_VACUOUS_STEMS`` stem is rejected, for added or changed stamps);
+(a reason that starts with a ``_VACUOUS_STEMS`` stem is rejected; existing vacuous stamps live in
+``tests/lint/stamp_allowlist.txt``, which may only shrink);
 jit / custom_jvp / custom_vjp / ``.defjvp`` / ``.defvjp`` / ``.register``
 decorators; a def referenced as a value (a callback); a name tests import or take as an attribute
 (``tests/lint`` excluded). Calls count in the defining module plus other modules
@@ -37,10 +38,12 @@ import collections
 import copy
 import difflib
 import hashlib
+import io
 import json
 import pathlib
 import re
 import subprocess
+import tokenize
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "virgil"
@@ -213,20 +216,53 @@ _EXEMPT_DECORATOR = re.compile(
 )
 
 
+# A stamp must give a reason specific to the def. These start-of-reason stems
+# (normalized: case, hyphens, underscores, articles) name the vacuous kinds:
+# restating the decorator or the call pattern, or pointing at a test.
 _VACUOUS_STEMS = (
     "jit boundary",
+    "jit/vmap boundary",
+    "float64 boundary",
+    "float64 wrapper",
+    "cache boundary",
     "named step",
-    "test seam",
-    "tested directly",
-    "unit-tested",
+    "named check",
+    "named stage",
+    "one named step",
     "stage function",
-    "stubbed by tests",
-    "imported by",
+    "stage callable",
+    "stage callback",
+    "dispatch table callable",
+    "dispatch table function",
+    "registry callback",
+    "registry callable",
+    "argparse callback",
+    "callback",
+    "optx callback",
+    "speed",
+    "performance",
     "readability",
-    "tests probe",
-    "tests score",
-    "tests call",
+    "clarity",
+    "for clarity",
+    "test",
+    "unit tested",
+    "only its direct test",
+    "stubbed by tests",
+    "patched by",
+    "monkeypatched",
+    "imported by",
+    "used by",
+    "also called by",
+    "called by tests",
 )
+# ``named <word> step``; ``N lines`` alone or with only a test reason.
+_VACUOUS_PATTERNS = (
+    re.compile(r"named \w+ step"),
+    re.compile(
+        r"\d+ lines?( and (tests?|patched)\b.*|, (tests?|called by tests|tested)\b.*)?$"
+    ),
+)
+STAMP_ALLOWLIST = ROOT / "tests" / "lint" / "stamp_allowlist.txt"
 
 
 def _reason(line):
@@ -245,9 +281,27 @@ def _normal(text):
 def _vacuous(reason):
     """A reason that starts with a ``_VACUOUS_STEMS`` stem (or ``named <word> step``) after normalizing."""
     t = _normal(reason)
-    return t.startswith(tuple(map(_normal, _VACUOUS_STEMS))) or bool(
-        re.match(r"named \w+ step", t)
+    return t.startswith(tuple(map(_normal, _VACUOUS_STEMS))) or any(
+        r.match(t) for r in _VACUOUS_PATTERNS
     )
+
+
+def _stamp_lines(lines, node):
+    """Indices of the lines that may carry a def's stamp: the one above (or above its first decorator) and
+    every line from the ``def`` line to the one ending the signature, so a stamp on a closing ``):`` counts."""
+    top = min([node.lineno] + [d.lineno for d in node.decorator_list])
+    depth, end = 0, node.lineno
+    src = "\n".join(lines[node.lineno - 1 :]) + "\n"
+    for t in tokenize.generate_tokens(io.StringIO(src).readline):
+        if t.type == tokenize.OP and t.string in "([{":
+            depth += 1
+        elif t.type == tokenize.OP and t.string in ")]}":
+            depth -= 1
+        elif t.type == tokenize.OP and t.string == ":" and depth == 0:
+            end = node.lineno + t.start[0] - 1
+            break
+    idx = [top - 2, *range(node.lineno - 1, end)]
+    return [i for i in idx if 0 <= i < len(lines)]
 
 
 def _valid_deliberate(line):
@@ -428,11 +482,9 @@ def find_single_use(head, base, tests_text=""):
                 for d in node.decorator_list
             ):
                 continue
-            top = min([node.lineno] + [d.lineno for d in node.decorator_list])
-            near = (
-                lines[top - 2 : top - 1] + lines[node.lineno - 1 : node.lineno]
-            )
-            if any(_valid_deliberate(x) for x in near):
+            if any(
+                _valid_deliberate(lines[i]) for i in _stamp_lines(lines, node)
+            ):
                 continue
             found.append(f"{path}:{node.lineno} {q}")
     return found
@@ -444,22 +496,76 @@ def _stamps(head):
     for path, text in head.items():
         lines = text.splitlines()
         for q, node in _all_defs(ast.parse(text)):
-            top = min([node.lineno] + [d.lineno for d in node.decorator_list])
-            for i in {top - 2, node.lineno - 1}:
-                reason = _reason(lines[i]) if 0 <= i < len(lines) else None
+            for i in _stamp_lines(lines, node):
+                reason = _reason(lines[i])
                 if reason is not None:
                     out.append((path, i + 1, reason, q))
     return sorted(set(out))
 
 
-def find_vacuous_stamps(head, base):
-    """Vacuous or empty stamps in ``head`` that are not already on the same-named def in ``base``."""
-    old = {(q, r) for _, _, r, q in _stamps(base)}
-    return [
-        f"{path}:{line} # deliberate: {reason}"
-        for path, line, reason, q in _stamps(head)
-        if (q, reason) not in old and (not reason or _vacuous(reason))
+def _vacuous_keys(head):
+    """``(path, qualname, reason)`` of every empty or vacuous stamp in ``head``, one per stamp."""
+    return sorted(
+        (path, q, reason)
+        for path, _, reason, q in _stamps(head)
+        if not reason or _vacuous(reason)
+    )
+
+
+def read_allowlist(text):
+    """Entries of an allow-list file: ``path :: qualname :: reason`` lines under a ``count: N`` header."""
+    rows = [
+        tuple(x.strip() for x in ln.split(" :: ", 2))
+        for ln in text.splitlines()
+        if ln.strip()
+        and not ln.startswith("#")
+        and not ln.startswith("count:")
     ]
+    n = [ln for ln in text.splitlines() if ln.startswith("count:")]
+    if len(n) != 1 or int(n[0].split(":")[1]) != len(rows):
+        raise ValueError(
+            "allow-list needs one 'count: N' line equal to its entries"
+        )
+    return sorted(rows)
+
+
+def format_allowlist(keys):
+    """The allow-list file text for ``keys`` (see ``read_allowlist``)."""
+    head = (
+        "# Vacuous '# deliberate:' stamps that predate the stamp lint. This list may only\n"
+        "# shrink: the lint fails if a PR adds an entry (WP-18 empties it).\n"
+        "# Regenerate after fixing stamps: python scripts/code_shape.py --write-allowlist\n"
+        f"count: {len(keys)}\n"
+    )
+    return head + "".join(f"{p} :: {q} :: {r}\n" for p, q, r in sorted(keys))
+
+
+def find_vacuous_stamps(head, allowed, base_allowed=None):
+    """Problems with vacuous stamps in ``head`` given its allow-list ``allowed`` (a list of keys).
+
+    A vacuous stamp must be listed; a listed entry with no stamp left must be removed (the list
+    shrinks); and when ``base_allowed`` is given, ``allowed`` may hold no entry that it lacks.
+    """
+    have = collections.Counter(_vacuous_keys(head))
+    listed = collections.Counter(allowed)
+    out = [
+        f"{p} {q} # deliberate: {r}  (vacuous, not on the allow-list)"
+        for (p, q, r), n in sorted(have.items())
+        for _ in range(n - listed[p, q, r])
+    ]
+    out += [
+        f"{p} {q} # deliberate: {r}  (allow-list entry without a stamp: remove it)"
+        for (p, q, r), n in sorted(listed.items())
+        for _ in range(n - have[p, q, r])
+    ]
+    if base_allowed is not None:
+        old = collections.Counter(base_allowed)
+        out += [
+            f"{p} {q} # deliberate: {r}  (allow-list entry added: the list may only shrink)"
+            for (p, q, r), n in sorted(listed.items())
+            for _ in range(n - old[p, q, r])
+        ]
+    return out
 
 
 def find_oversized_functions(head, base, max_lines=MAX_FUNC_LINES):
@@ -524,6 +630,7 @@ def main():
     ap.add_argument("--max-stmts", type=int, default=3)
     ap.add_argument("--since")
     ap.add_argument("--audit-stamps", metavar="DIR")
+    ap.add_argument("--write-allowlist", action="store_true")
     a = ap.parse_args()
     if a.audit_stamps:
         root = pathlib.Path(a.audit_stamps)
@@ -544,6 +651,11 @@ def main():
             for path, line, reason, _ in group:
                 print(f"{tag:8s} {a.audit_stamps}/{path}:{line} {reason}")
         return
+    if a.write_allowlist:
+        STAMP_ALLOWLIST.write_text(
+            format_allowlist(_vacuous_keys(_read_tree()))
+        )
+        return
     if a.since:
         tests = "\n".join(
             p.read_text()
@@ -553,7 +665,18 @@ def main():
         head, base = _read_tree(), _read_tree(a.since)
         found = find_single_use(head, base, tests)
         oversized = find_oversized_functions(head, base)
-        stamps = find_vacuous_stamps(head, base)
+        rel = STAMP_ALLOWLIST.relative_to(ROOT).as_posix()
+        shown = subprocess.run(
+            ["git", "show", f"{a.since}:{rel}"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        stamps = find_vacuous_stamps(
+            head,
+            read_allowlist(STAMP_ALLOWLIST.read_text()),
+            read_allowlist(shown.stdout) if shown.returncode == 0 else None,
+        )
         print(f"single-use private defs added since {a.since}: {len(found)}")
         for f in found:
             print(f"  {f}")
@@ -565,7 +688,7 @@ def main():
                 print(f"  {f}")
         if stamps:
             print(
-                f"vacuous # deliberate: stamps added/changed since {a.since}: {len(stamps)}"
+                f"vacuous # deliberate: stamps off the allow-list or allow-list grown: {len(stamps)}"
             )
             for f in stamps:
                 print(f"  {f}")
