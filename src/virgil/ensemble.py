@@ -1054,8 +1054,11 @@ def combine(data, groups, *, spec=None, star=True):
     good = onp.all((chi2 <= limit) & (chi2 <= spec.chi2_ratio * best), axis=1)
     keep(good, "chi2")
     if not live:
+        cut = f"chi2_ratio={spec.chi2_ratio} times the best"
+        if spec.max_chi2_red is not None:
+            cut += f" and max_chi2_red={spec.max_chi2_red}"
         raise ValueError(
-            f"No member has chi2/N below max_chi2_red={limit} on every dataset."
+            f"No member has chi2/N within {cut} on every dataset."
         )
     total = onp.array([members[i].total_chi2_red for i in live])
     median = onp.median(total)

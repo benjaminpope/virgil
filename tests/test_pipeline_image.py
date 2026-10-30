@@ -554,3 +554,12 @@ def test_the_executed_quicklook(data, tmp_path):
         o["output_type"] != "error" for out in outputs for o in out
     )
     assert "does **not** promise" in "".join(notebook["cells"][0]["source"])
+
+
+def test_grid_growths_none_is_the_engine_default():
+    from virgil.ensemble import EnsembleSpec
+
+    s = dict(image.ImagingPipeline.defaults())
+    assert image._grid_spec(s, None).gp_growths == EnsembleSpec().gp_growths
+    s["grid_growths"] = 1
+    assert image._grid_spec(s, None).gp_growths == 1
