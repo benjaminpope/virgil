@@ -113,11 +113,22 @@ def comparisons_section(summary, home):
     )
 
 
+EXCLUDED_ROWS = {
+    "science": "Excluded data analysis",
+    "other": "Gemini work on other projects",
+    "unattributed": "Gemini work with no project",
+}
+
+
 def science_section(summary):
-    sci = summary["by_class"].get("science")
-    if not sci:
+    rows = [
+        f"| {label} | {g['n']:,} | {g['kwh'][1]:.3g} | {g['kg'][1]:.3g} "
+        f"| {g['kg'][0]:.3g}–{g['kg'][2]:.3g} |"
+        for cls, label in EXCLUDED_ROWS.items()
+        if (g := summary["by_class"].get(cls))
+    ]
+    if not rows:
         return ""
-    kwh, kg = sci["kwh"], sci["kg"]
     return "\n".join(
         [
             "## Excluded data analysis",
@@ -125,12 +136,13 @@ def science_section(summary):
             "Compute for science with virgil (fits to observations, data "
             "reduction and archive downloads), and anything whose purpose "
             "was unclear, is costed the same way but kept out of the total. "
-            "It is shown only in aggregate.",
+            "It is shown only in aggregate. So are Gemini conversations "
+            "about other projects (the website, cluster scripts, tool "
+            "set-up) and the few that name no project.",
             "",
             "| Item | Records | kWh | kg CO₂e | kg range |",
             "|---|---:|---:|---:|---:|",
-            f"| Excluded data analysis | {sci['n']:,} | {kwh[1]:.3g} "
-            f"| {kg[1]:.3g} | {kg[0]:.3g}–{kg[2]:.3g} |",
+            *rows,
             "",
             "",
         ]
@@ -164,6 +176,18 @@ def caveats(summary):
             "class (e.g. GPT-5.6 Sol and Terra and GPT-5.5 as Opus class, "
             "GPT-5.6 Luna and GPT-5.3-Codex as Sonnet class), with a range "
             "across the neighbouring classes.",
+            "- **Gemini (Google Antigravity)** has been used since "
+            "2026-10-27 for pull-request reviews and code audits (Gemini 4 "
+            "Argon, with Gemini Flash for some calls). Token counts per "
+            "model call come from Antigravity's local conversation "
+            "databases. Reviews and audits of virgil and virgil-validation "
+            "count; each conversation is attributed by the repository its "
+            "review or audit names, else its workspace. Google publishes no "
+            "per-token energy, so Argon is assumed Opus class and Flash "
+            "Haiku class, with a range across the neighbouring classes. "
+            "Google's measured 0.24 Wh for the median Gemini Apps text "
+            "prompt (Elsworth et al. 2025) is far below the per-call "
+            "figure here, as review calls carry contexts of 10⁴–10⁵ tokens.",
             "- **Copilot cloud agent and code review** expose no token "
             "counts. Their billed AI Credits are converted to tokens at the "
             f"rate measured on the local chat logs ({per:,.0f} credits per "

@@ -1639,3 +1639,15 @@ doi = "10.1080/01621459.1987.10478472"
 used_in = ["virgil.pipeline.star:_compare"]
 note = "Nonstandard conditions: a parameter on the boundary, or a nuisance parameter unidentified under the null."
 verified = false
+
+[ref.elsworth2025]
+used_in = []
+authors = "Elsworth et al."
+year = 2025
+title = "Measuring the environmental impact of delivering AI at Google Scale"
+arxiv = "2508.15734"
+bibcode = "2025arXiv250815734E"
+note = "Google's measured 0.24 Wh per median Gemini Apps text prompt; a cross-check for the Gemini figure in the development-carbon estimate (docs/dev_carbon.md)"
+role = "context"
+verified = true
+verified_via = "arxiv"

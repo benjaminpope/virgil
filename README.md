@@ -4,7 +4,7 @@
 [![integration](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml)
 [![Documentation](https://github.com/benjaminpope/virgil/actions/workflows/zensical-pages.yml/badge.svg)](https://benjaminpope.github.io/virgil/)
 <!-- dev-carbon-badge -->
-[![dev carbon | 328 kg CO2e](https://img.shields.io/endpoint?url=https%3A%2F%2Fbenjaminpope.github.io%2Fvirgil%2Fgenerated%2Fdev_carbon_badge.json)](https://benjaminpope.github.io/virgil/dev_carbon/)
+[![dev carbon | 337 kg CO2e](https://img.shields.io/endpoint?url=https%3A%2F%2Fbenjaminpope.github.io%2Fvirgil%2Fgenerated%2Fdev_carbon_badge.json)](https://benjaminpope.github.io/virgil/dev_carbon/)
 <!-- /dev-carbon-badge -->
 
 **V**ersatile **I**nterferometric **R**econstruction and **G**radient-based **I**nference **L**ibrary.
