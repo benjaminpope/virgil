@@ -1,0 +1,1 @@
+Erratum to 0.4.1. The "30–40% fewer steps" for maximum-entropy imaging with `precondition="diag"` was measured on two L-curves and no test asserts it. The 0.4.1 highlight that `OrbitPipeline` drops its worst night and refits describes a check removed in 0.4.2 (`night_dropped`); results shown in the showcase that used it have changed.

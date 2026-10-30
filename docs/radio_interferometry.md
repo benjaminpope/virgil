@@ -258,14 +258,14 @@ and `taper_fwhm_mas`, deprecated aliases until 0.5. This is not CASA's
 
 - `CalibrationNuisance` multiplies the visibilities of **any** scene (a
   parametric model, an `Image`, a `System`) by `exp(-π² θ² q² / (4 ln 2))`.
-  It is a uv-plane factor, so a regulariser, which acts on pixels, never
+  It is a uv-plane factor, so a regularizer, which acts on pixels, never
   sees it.
 - `Image` declares that the sky the data see is its pixels convolved with the
   Gaussian, as in MPoL's `GaussConvFourier` (Czekala et al. 2025,
   [references](references.md#mpol)). The visibilities are the same factor
   times the pixel transform (exact at any uv point for every `ft`), and
   `Image.smoothed()` returns the convolved pixels by an FFT on a
-  zero-padded grid. A regulariser's `smoothed=True` option penalizes those
+  zero-padded grid. A regularizer's `smoothed=True` option penalizes those
   pixels instead of the raw ones; the base image is then unregularized, so
   `fit` warns (`UserWarning`). MPoL does this; virgil's default does not.
 
@@ -394,20 +394,7 @@ baseline.
 
 ### Performance
 
-Time of one value-and-gradient evaluation of χ² for a pixel `Image`, by path. The full table
-comes from a benchmark job (the simulated problem of the [radio imaging tutorial](radio_tutorial.md)
-at several sizes, CPU and GPU, exact path with `offsets=False`); only the cells with a sourced
-measurement are filled, and they do not all share one setup.
-
-| Path | CPU | GPU (A100) |
-| --- | --- | --- |
-| direct, exact DFT (`ft="dft"`) | — | — |
-| direct, nufftax backend (`ft="nufft"`, eps 1e-6) | — | 735 ms |
-| Toeplitz (`chi2="toeplitz"`), exact path | — | — |
-| Toeplitz with free offsets (`offsets="spread"`) | — | 21.8 ms (34× the nufftax cell) |
-
-The two GPU cells are from one independent check on a real ALMA data set (virgil-validation, float64): 42.4 M points,
-26 ddids, 1028² pixels of 5 mas, with gain and offset gradients.
+No benchmark in the repository reproduces a timing table yet, so none is given. One independent check on a real ALMA data set (virgil-validation, float64, A100 GPU; 42.4 M points, 26 ddids, 1028² pixels of 5 mas, with gain and offset gradients) measured one value-and-gradient evaluation of χ² at 735 ms through the nufftax backend (`ft="nufft"`, eps 1e-6) and 21.8 ms through the Toeplitz path with free offsets (`offsets="spread"`). The two figures are not shown to share one setup, so their ratio is not a speed-up claim.
 
 ## Diagnostics
 

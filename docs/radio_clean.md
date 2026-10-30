@@ -119,7 +119,7 @@ option). `scales_mas` are in mas, as in `imaging.clean`; `npix` must be odd.
 `1/FoV` (`uv_cell`), with Hermitian partners together. `uvtaper` multiplies the
 weights by the Fourier transform of an image-plane Gaussian of FWHM
 `(bmaj, bmin, pa)` in mas (a number is circular), after the density, and the
-PSF is renormalised to peak 1; the beam widens roughly as `√(b² + t²)`.
+PSF is renormalized to peak 1; the beam widens roughly as `√(b² + t²)`.
 
 **Restoring beam.** The Gaussian fitted to the PSF's main lobe above
 `psfcutoff` (0.35 in CASA); the restored image is the model (Jy/pixel)
