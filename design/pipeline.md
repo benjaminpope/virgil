@@ -557,6 +557,30 @@ are `posterior`. `BinaryPipeline(data, BinaryModelCartesian(...),
 max_sep_mas=250, ...).run()` reproduces the tutorial's numbers, and the
 tutorial asserts that it does.
 
+## DiskPipeline defaults provenance
+
+Several `DiskPipeline` defaults were set while imaging nine PIONIER post-AGB
+discs (commit 1ee26df, 2026-10-18), so they are tuned to that data, not derived. The table says
+which, and what has been checked off that data. Until a held-out check is
+recorded, treat the default as a starting point for a new target, not a
+result. (Audit CO-12, `design/integrity_audit_2026-10-30_opus.md`.)
+
+| Default | Value | Set on | Held-out check |
+|---|---|---|---|
+| `ell_halffringes` | 1, 2, 4 | nine PIONIER post-AGB discs (1ee26df) | none recorded; the grid extends once if its best ℓ is on an edge, and `length_scale` warns |
+| `ell_floor_halffringes` | 0.5 | same | none recorded |
+| `max_rings` | 4 | same | none recorded; `ring_count` flags a count at the limit |
+| `_HARMONIC_SCALE` | 0.4 | same | none recorded |
+| `_GP_SIGMA_BOUNDS` | (0.5, 5) of the single ring's dynamic range | same | none recorded; `at_bound` flags a parameter on its bound |
+| `length_scale_nats`, `ring_count_nats` | 3 | not traced | none recorded |
+| `companion_min_delta_chi2` | 25 | not traced | none recorded |
+| `inner_edge_*`, `outer_edge_fraction`, `inclination_min_deg`, `render_tolerance`, `unconstrained_correlation` | see `_DEFAULTS` | not traced | none recorded |
+
+The Fourier-transform backend rule in `_geometry.py` is justified by IM Lup
+timings on an A100. It is a performance threshold, not an accuracy one: it
+changes speed, not results. The job IDs behind it belong here, not in a code
+comment, once recorded.
+
 ## Open questions
 
 - Whether `info` and `validate` should avoid importing JAX, which needs

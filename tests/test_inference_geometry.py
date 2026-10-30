@@ -220,3 +220,27 @@ def test_safe_azimuth_matches_arctan2_and_has_a_finite_gradient_at_the_origin():
     )
     grad = jax.grad(lambda p: safe_azimuth(p[0], p[1]))(np.zeros(2))
     assert np.all(np.isfinite(grad))
+
+
+def test_the_laplace_ridge_is_relative_to_the_curvature():
+    # The same problem in other units must give the same covariance up to the
+    # unit change: an absolute ridge of 1e-10 did not.
+    from virgil.inference import regularized_inverse
+
+    hess = np.array([[4.0, 1.0], [1.0, 3.0]])
+    small = regularized_inverse(1e-12 * hess)  # far below an absolute 1e-10
+    assert np.allclose(small, regularized_inverse(hess) * 1e12, rtol=1e-6)
+    assert np.allclose(regularized_inverse(hess) @ hess, np.eye(2), atol=1e-8)
+
+
+def test_a_nearly_unconstrained_parameter_warns_that_the_ridge_decides():
+    import warnings
+
+    from virgil.inference import regularized_inverse
+
+    with pytest.warns(RuntimeWarning, match="nearly unconstrained"):
+        cov = regularized_inverse(np.diag(np.array([4.0, 1e-13])))
+    assert np.isfinite(cov).all()
+    with warnings.catch_warnings():  # a well-conditioned Hessian is silent
+        warnings.simplefilter("error")
+        regularized_inverse(np.diag(np.array([4.0, 1e-3])))

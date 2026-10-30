@@ -130,6 +130,7 @@ CHECKS = (
     "absorbed_companion",
     "render_consistency",
     "at_bound",
+    "laplace_pd",
 )
 
 _MODELS = None
@@ -155,6 +156,7 @@ def models():
                         "inclination",
                         "absorbed_companion",
                         "at_bound",
+                        "laplace_pd",
                     ),
                     candidate="rings",
                 ),
@@ -174,6 +176,7 @@ def models():
                         "absorbed_companion",
                         "render_consistency",
                         "at_bound",
+                        "laplace_pd",
                     ),
                     candidate="gp",
                 ),
@@ -344,11 +347,24 @@ class DiskPipeline(_Pipeline):
         if self.error_mode != "rescale":
             return 1.0
         if self._error_factor is _UNSET:
+            # The rescaled errors are the profile stage's result: without it
+            # every chi-squared, evidence and width would be on the wrong
+            # errors, so a missing or unreadable report is an error, not 1.0.
             try:
                 value = self._report("profile").get("error_scale_factor")
-            except (OSError, ValueError, KeyError):
-                value = None
-            self._error_factor = 1.0 if value is None else float(value)
+            except (OSError, ValueError, KeyError) as err:
+                raise RuntimeError(
+                    'error_scale="rescale" needs the error scale the profile '
+                    f"stage estimated, but its report could not be read ({err}); "
+                    "rerun the profile stage."
+                ) from err
+            if value is None:
+                raise RuntimeError(
+                    'error_scale="rescale" but the profile report has no '
+                    "error_scale_factor (it was made with another error_scale); "
+                    "rerun the profile stage."
+                )
+            self._error_factor = float(value)
         return self._error_factor
 
     def _default_model(self):
@@ -1026,21 +1042,37 @@ def _geometry_stage(p):  # deliberate: stage callable, patched by tests
 
 def _laplace(ctx, shape, names, values, data):
     """``(sd, cov)``: Laplace standard deviations of the ring scene's scalar
-    parameters and their covariance (``None`` where it failed)."""
+    parameters and their covariance.
+
+    A parameter whose variance is not positive and finite (the Hessian is
+    not positive definite there: the point is not a likelihood maximum, or
+    the parameter is unconstrained) has ``sd`` ``None``, never 0, and
+    ``cov`` is ``None`` unless the whole matrix is positive definite, since
+    a Laplace evidence needs that. A failed computation gives all ``None``.
+    """
     from ..inference import laplace_cov
 
     try:
         x = onp.array([values[k] for k in names], dtype=float)
         cov = onp.asarray(laplace_cov(x, names, _builder(ctx, shape), data))
-        sd = onp.sqrt(onp.clip(onp.diag(cov), 0.0, None))
-    except Exception as err:  # noqa: BLE001 - a Laplace failure is a result
+    except (FloatingPointError, onp.linalg.LinAlgError) as err:
         warnings.warn(
             f"The Laplace covariance could not be computed ({err}).",
             RuntimeWarning,
             stacklevel=2,
         )
         return {k: None for k in names}, None
-    return {k: float(v) for k, v in zip(names, sd)}, cov
+    var = onp.diag(cov)
+    good = onp.isfinite(var) & (var > 0.0)
+    pd = bool(
+        onp.all(onp.isfinite(cov))
+        and onp.all(onp.linalg.eigvalsh(0.5 * (cov + cov.T)) > 0.0)
+    )
+    sd = {
+        k: float(onp.sqrt(v)) if g else None
+        for k, v, g in zip(names, var, good)
+    }
+    return sd, (cov if pd else None)
 
 
 # === POINT-SOURCE SEARCH ON RESIDUALS ===
@@ -1629,7 +1661,7 @@ def _score_ell(p, ell, planet, geo, k):
     _save_fit(p.output / "models" / name, fit, list(priors))
     try:
         log_z = float(log_evidence(fit.model, p.processed, path="disk"))
-    except Exception as err:  # noqa: BLE001 - reported as a missing evidence
+    except (FloatingPointError, onp.linalg.LinAlgError) as err:
         warnings.warn(
             f"The evidence at ℓ = {ell:.3g} mas could not be computed "
             f"({err}).",
@@ -1962,7 +1994,7 @@ def _render_stats(p, model):
         out["chi2_model"] = _chi2_64(model, channel)[0] / n
         out["chi2_render"] = _chi2_64(swapped, channel)[0] / n
         out["npix"] = npix
-    except Exception as err:  # noqa: BLE001 - reported by the check
+    except (FloatingPointError, onp.linalg.LinAlgError) as err:
         warnings.warn(
             f"The render check could not run ({err}).",
             RuntimeWarning,
@@ -2432,6 +2464,30 @@ def _fit_checks(entry, settings, overview, geometry, compare):
         minimum=settings["inclination_min_deg"],
     )
     by["at_bound"] = _checks.at_bound(compare["at_bound"])
+    # The Laplace widths behind the position-angle spread (and the ring
+    # evidences) need a positive-definite Hessian: say which are missing.
+    sds = {f"geometry.{k}": v for k, v in geometry["laplace_sd"].items()}
+    for row in rows:
+        if row["name"] == compare["best"]:
+            sds.update(
+                {f"{row['name']}.{k}": v for k, v in row.get("sd", {}).items()}
+            )
+    missing = sorted(k for k, v in sds.items() if v is None)
+    by["laplace_pd"] = _checks.Check(
+        "laplace_pd",
+        "warn" if missing else "pass",
+        len(missing),
+        0,
+        (
+            "The Laplace covariance is not positive definite for "
+            + ", ".join(missing)
+            + ": those parameters are unconstrained or the fit is not at a "
+            "likelihood maximum, so they have no width (not a width of zero), "
+            "and an evidence that needs the covariance is missing."
+            if missing
+            else "The Laplace covariance is positive definite."
+        ),
+    )
     raised = compare["raised_search"]
     by["absorbed_companion"] = _checks.absorbed_companion(
         compare["residual_search"]["delta_chi2"],
