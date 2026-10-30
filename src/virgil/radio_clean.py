@@ -177,7 +177,6 @@ def _area(sigma_pix):
     return 1.0 if sigma_pix == 0 else 2.0 * onp.pi * sigma_pix**2
 
 
-# deliberate: tests call the masking rule directly
 def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
     """A simplified ``auto-multithresh``: the connected regions of the
     beam-smoothed residual above ``low`` × rms that hold a pixel above
@@ -201,7 +200,6 @@ def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
 # ----------------------------------------------------------------------
 
 
-# deliberate: the ~100-line minor cycle reads better apart from the major loop
 def _minor_cycle(
     residual, psf, scales, mask, gain, niter, threshold, bias, patch
 ):
