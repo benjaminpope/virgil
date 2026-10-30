@@ -191,7 +191,11 @@ def caveats(summary):
             "class (e.g. GPT-5.6 Sol and Terra and GPT-5.5 as Opus class, "
             "GPT-5.6 Luna and GPT-5.3-Codex as Sonnet class), with a range "
             "across the neighbouring classes.",
-            *([GEMINI_CAVEAT] if "gemini" in summary.get("by_source", {}) else []),
+            *(
+                [GEMINI_CAVEAT]
+                if "gemini" in summary.get("by_source", {})
+                else []
+            ),
             "- **Copilot cloud agent and code review** expose no token "
             "counts. Their billed AI Credits are converted to tokens at the "
             f"rate measured on the local chat logs ({per:,.0f} credits per "
