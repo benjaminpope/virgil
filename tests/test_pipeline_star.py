@@ -133,6 +133,7 @@ SUMMARY_KEYS = {
         "delta_m2loglike",
         "n_extra_params",
         "bic_penalty",
+        "unidentified",
         "preferred",
     },
     "comparisons": None,
@@ -271,6 +272,9 @@ def test_diameter_recovered_and_quoted_errors_lead(full_run):
     )
     assert s["chi2"]["reduced"]["uniform"] > 2.2
     assert s["comparison"]["preferred"] == "limb_darkened"
+    # Positive control: a resolved star's diameter is off its bound, so the
+    # comparison is valid.
+    assert not s["comparison"]["unidentified"]
     assert s["comparison"]["delta_chi2"] > 5 * s["comparison"]["bic_penalty"]
     assert s["comparison"]["delta_m2loglike"] == s["comparison"]["delta_chi2"]
     assert s["comparisons"] == [s["comparison"]]
@@ -753,6 +757,62 @@ def test_model_choice_with_a_single_model_has_no_comparison():
         {"b": {"m2loglike": 5.0}}, registry, 81
     )
     assert (best, comparison, comparisons) == ("b", None, [])
+
+
+def _report(m2loglike, diam, at_bound, lobe=1):
+    """A canned fit report: two lobes, (1, 5) and (5, 50) mas, the best one
+    ``lobe``."""
+    bounds = [(1.0, 5.0), (5.0, 50.0)]
+    return {
+        "m2loglike": m2loglike,
+        "at_bound": at_bound,
+        "params": {"diam": diam},
+        "diam_bounds_mas": list(bounds[lobe - 1]),
+        "lobes": [{"diam_bounds_mas": list(b)} for b in bounds],
+    }
+
+
+@pytest.mark.parametrize(
+    "parent, gain, preferred, unidentified, status",
+    [
+        # Positive control: a gain of 50 beats ln 81 x 2 = 8.8 off the bound.
+        (_report(300.0, 3.0, []), 50.0, "b", False, "pass"),
+        # The same gain with the diameter on the lower edge of the range is
+        # not a valid likelihood-ratio test: the parent is kept.
+        (_report(300.0, 1.0, ["diam"], lobe=1), 50.0, "a", True, "pass"),
+        # A fit that did not converge still warns on the lower edge.
+        (_report(300.0, 1.0, ["diam"], lobe=1), -40.0, "a", True, "warn"),
+        # The upper edge is an over-resolved star, not a parameter boundary.
+        (_report(300.0, 50.0, ["diam"], lobe=2), 50.0, "b", False, "pass"),
+        # The lower edge of an inner lobe is not a boundary either.
+        (_report(300.0, 5.0, ["diam"], lobe=2), 50.0, "b", False, "pass"),
+        # A shape parameter on its bound does not invalidate the parent.
+        (_report(300.0, 3.0, ["p0"]), 50.0, "b", False, "pass"),
+    ],
+)
+def test_model_choice_is_invalid_with_the_parent_diameter_on_the_lower_edge(
+    parent, gain, preferred, unidentified, status
+):
+    registry = _fake_models({"a": (None, 1), "b": ("a", 3)})
+    reports = {"a": parent, "b": {"m2loglike": 300.0 - gain, "at_bound": []}}
+    best, comparison, _ = star._choose_model(reports, registry, 81)
+    assert (best, comparison["unidentified"]) == (preferred, unidentified)
+    fit = {
+        "names": ["a", "b"],
+        "models": {
+            k: {**v, "chi2_reduced": 1.0, "error_scales": None}
+            for k, v in reports.items()
+        },
+        "comparisons": [comparison],
+        "n_independent": 81,
+    }
+    check = next(
+        c for c in star._fit_checks(fit, registry) if "gain" in c.name
+    )
+    assert check.status == status
+    assert ("unidentified" in check.message) == (
+        unidentified and status == "pass"
+    )
 
 
 def test_prior_bound_ignores_shape_parameters():
