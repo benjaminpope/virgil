@@ -119,8 +119,11 @@ class BinaryPipeline(_Pipeline):
         Overrides of ``BinaryPipeline.defaults()``. The most used: ``sigma``
         (significance of the contrast limits, 3.0), ``max_sep_mas`` (search
         half-width in mas; default the coarsest λ/B, capped on lattice
-        coverage), ``grid_step_mas``, ``flux_range``, ``error_scale``
-        (``"quoted"`` or ``"fit"``). Priors and errors:
+        coverage), ``grid_step_mas``, ``flux_range`` (companion/primary, 1e-5 to 1; a
+        brighter companion is the primary under relabelling), ``error_scale``
+        (``"quoted"`` or ``"fit"``; quoted so that detection and limits are
+        judged on the catalogue errors, unlike the disk's Gaussian-process
+        rescale). Priors and errors:
         [conventions](../conventions.md).
 
     Examples
@@ -149,7 +152,7 @@ class BinaryPipeline(_Pipeline):
         "fov_fraction": 1.0,
         "grid_step_mas": None,
         "max_grid": 101,
-        "flux_range": [1e-5, 0.5],
+        "flux_range": [1e-5, 1.0],
         "n_flux": 40,
         "wavel_range": None,
         "error_floor": None,

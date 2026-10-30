@@ -112,7 +112,7 @@ DEFAULTS = {
     "star_threshold": 5.0,
     "sigmas": [1.0, 2.0, 4.0],
     "lengths_beam": [0.5, 1.0, 2.0],
-    "grid_growths": 2,
+    "grid_growths": None,
     "members": 8,
     "member_grids": False,
     "method": None,

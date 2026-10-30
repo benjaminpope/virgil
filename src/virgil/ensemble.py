@@ -101,10 +101,14 @@ class EnsembleSpec:
         Most pixels on a side; larger fields get coarser pixels, then a crop.
     window_dex : float
         A group keeps weights from ``corner / 10**window_dex`` up to the corner.
-    max_chi2_red, chi2_ratio, mad_cut : float
+    chi2_ratio, mad_cut : float
         Drop members whose raw χ² per point on any dataset exceeds
-        ``max_chi2_red`` or ``chi2_ratio`` times the best's, then those more
-        than ``mad_cut`` robust deviations above the median total.
+        ``chi2_ratio`` times the best's, then those more than ``mad_cut``
+        robust deviations above the median total. Both are relative to the
+        members, so if all fit badly all pass: ``summary`` counts the drops
+        per reason, and the pipeline's χ² checks judge the fit itself.
+    max_chi2_red : float or None
+        Deprecated absolute cut; use ``chi2_ratio``.
     max_shift_mas : float or None
         Largest recentring shift without a star (default: beam major axis).
     mean_rtol : float or None
@@ -122,8 +126,9 @@ class EnsembleSpec:
     """
 
     families: tuple = ("tv", "tsv", "maxent", "starlet")
-    # Weight per data point; each range holds the L-curve corners of the
-    # contest bench with a decade to spare below them. See
+    # Weight per data point. Set on the SPIE imaging-contest bench, the data
+    # the ensemble is judged on, with no held-out check: each range holds
+    # that bench's L-curve corners with a decade to spare below them. See
     # docs/imaging_ensemble.md ("What is drawn").
     weight_ranges: dict = dataclasses.field(
         default_factory=lambda: {
@@ -139,7 +144,7 @@ class EnsembleSpec:
     starts: tuple = ("moments", "flat")
     max_npix: int = 128
     window_dex: float = 1.0
-    max_chi2_red: float = onp.inf
+    max_chi2_red: float | None = None
     chi2_ratio: float = 2.0
     mad_cut: float = 5.0
     max_shift_mas: float | None = None
@@ -156,6 +161,13 @@ class EnsembleSpec:
     gp_axis_ratio: float | None = 0.9
 
     def __post_init__(self):
+        if self.max_chi2_red is not None:
+            warnings.warn(
+                "EnsembleSpec.max_chi2_red is deprecated and goes in 0.5; the "
+                "cut is relative to the best member, set chi2_ratio.",
+                FutureWarning,
+                stacklevel=external_stacklevel(),
+            )
         unknown = set(self.families) - set(FAMILIES) - {"gp"}
         if unknown:
             raise ValueError(
@@ -1038,15 +1050,14 @@ def combine(data, groups, *, spec=None, star=True):
         raise ValueError("Every member's fit diverged (non-finite chi2).")
     chi2 = chi2[finite]
     best = chi2.min(axis=0)
+    limit = onp.inf if spec.max_chi2_red is None else spec.max_chi2_red
     good = onp.all(
-        (chi2 <= spec.max_chi2_red) & (chi2 <= spec.chi2_ratio * best),
-        axis=1,
+        (chi2 <= limit) & (chi2 <= spec.chi2_ratio * best), axis=1
     )
     keep(good, "chi2")
     if not live:
         raise ValueError(
-            f"No member has chi2/N below max_chi2_red={spec.max_chi2_red} "
-            "on every dataset."
+            f"No member has chi2/N below max_chi2_red={limit} on every dataset."
         )
     total = onp.array([members[i].total_chi2_red for i in live])
     median = onp.median(total)

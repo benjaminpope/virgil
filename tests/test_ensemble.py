@@ -675,3 +675,9 @@ def test_gp_only_combine_has_no_window():
     )
     assert all(m.reason != "window" for m in result.members)
     assert result.groups[0].curve is None
+
+
+def test_max_chi2_red_is_deprecated():
+    with pytest.warns(FutureWarning, match="chi2_ratio"):
+        EnsembleSpec(max_chi2_red=10.0)
+    assert EnsembleSpec().max_chi2_red is None
