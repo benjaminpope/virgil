@@ -86,27 +86,27 @@ By model or workflow:
 | GitHub Actions CI | .github/workflows/review-response-label.yml | 56 | 0 | 0–0 |
 | GitHub Actions CI | full CI on label | 3 | 0 | 0–0 |
 
-## By feature (top 15 of 482)
+## By feature (top 15 of 485)
 
-Each item is attributed to a pull request through its branch, the commit a job pinned, or the PR a Copilot run served, and labelled with the PR title.
+Each item is attributed to a pull request through its branch, the commit a job pinned, the PR a Copilot run served, or the PR a Gemini review names, and labelled with the PR title. Gemini work with no PR in this repository (audits, reviews of other repositories) is labelled by its project.
 
 | Feature | Items | kg CO₂e | kg range |
 |---|---:|---:|---:|
 | Validation: imaging contests | 2293 | 199 | 198–225 |
-| main / unattributed | 3524 | 52 | 37.6–102 |
+| main / unattributed | 558 | 44 | 33.8–90.4 |
 | [#364](https://github.com/benjaminpope/virgil/pull/364) Fix contributors nesting; drop duplicate docs list from README and index | 96 | 16 | 13.3–27 |
+| Gemini: virgil audits and other work | 2021 | 6.41 | 2.95–9.22 |
 | [#201](https://github.com/benjaminpope/virgil/pull/201) virgil docs minor changes | 29 | 4.1 | 3.2–7.7 |
 | [#401](https://github.com/benjaminpope/virgil/pull/401) Docs examples: fix failing pages and stale outputs from the GPU gate | 82 | 3.65 | 3.58–3.87 |
 | [#435](https://github.com/benjaminpope/virgil/pull/435) Temper the short-arc sign gate and the cut's errors by f (Gl 229 gate) | 109 | 2.71 | 2.68–2.78 |
 | [#399](https://github.com/benjaminpope/virgil/pull/399) Release 0.4.0: version, uv.lock and restructured changelog | 204 | 1.58 | 1.17–2.07 |
 | [#76](https://github.com/benjaminpope/virgil/pull/76) Imaging Stage 3: Problem, fit, regularisers, L-curves and diagnose | 25 | 1.43 | 1.07–2.84 |
+| Gemini: virgil-validation audits and other work | 716 | 1.4 | 0.75–2.14 |
 | Validation: simulation-based calibration | 198 | 1.35 | 1.35–1.35 |
 | [#110](https://github.com/benjaminpope/virgil/pull/110) Imaging Stage 5d: a Gauss–Newton NUTS mass matrix, and the sampling tutorial; plan PMOIRED parity | 10 | 1.34 | 1.07–2.41 |
 | [#91](https://github.com/benjaminpope/virgil/pull/91) Imaging Stage 5c: error-bar scale, sampling basics, and imaging tutorials 2–4 | 13 | 1.28 | 0.977–2.47 |
 | [#292](https://github.com/benjaminpope/virgil/pull/292) Orbit search design (§14 revision) | 65 | 1.2 | 0.994–1.99 |
 | [#369](https://github.com/benjaminpope/virgil/pull/369) Add DiskPipeline (provisional): rings and GP disk models | 150 | 1.03 | 0.847–1.58 |
-| [#516](https://github.com/benjaminpope/virgil/pull/516) radio_toeplitz: dirty-beam (Toeplitz) χ² for one-Image radio fits (PR 1, core) | 60 | 1.02 | 0.865–1.52 |
-| [#347](https://github.com/benjaminpope/virgil/pull/347) PolarDisk P5: tutorial, a planet in a gap between inclined rings | 58 | 0.942 | 0.741–1.63 |
 
 
 ## Copilot cross-check
