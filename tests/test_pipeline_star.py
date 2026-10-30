@@ -134,6 +134,7 @@ SUMMARY_KEYS = {
         "n_extra_params",
         "bic_penalty",
         "unidentified",
+        "shape_ratio",
         "preferred",
     },
     "comparisons": None,

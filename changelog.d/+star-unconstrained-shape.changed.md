@@ -1,0 +1,1 @@
+`StarPipeline` no longer samples an unselected shape model (the limb-darkened disk) whose shape parameters the data cannot constrain: the expected σ_posterior/σ_prior from the Fisher information of the V² (recorded as `comparison["shape_ratio"]`) is at or above 0.8. Its fit and comparison are still reported. Fixes the non-mixing limb-darkened NUTS chains of #580.

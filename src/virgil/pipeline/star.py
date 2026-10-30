@@ -894,6 +894,11 @@ def _compare(registry, reports, child, n):
     upper edge (an over-resolved star) and the inner lobe edges are not
     boundaries of the parameter space and do not count.
 
+    The expected ``shape_ratio`` of the child's parameters is recorded
+    (`_shape_ratios`); it does not change the preference, which the
+    likelihood gain decides, but a child the data cannot constrain is not
+    sampled when it is not selected (`_unconstrained_shapes`).
+
     Source: Chernoff (1954), Self & Liang (1987) ([references](../../references.md#chernoff1954), [Self & Liang](../../references.md#selfliang1987)).
     """
     parent = registry[child].parent
@@ -911,6 +916,7 @@ def _compare(registry, reports, child, n):
         unidentified = lobe_low == low and math.log(
             lobe_diam / lobe_low
         ) < math.log(lobe_high / lobe_diam)
+    ratios = reports[child].get("shape_ratio") or {}
     return {
         "simple": parent,
         "complex": child,
@@ -919,7 +925,50 @@ def _compare(registry, reports, child, n):
         "n_extra_params": n_extra,
         "bic_penalty": penalty,
         "unidentified": unidentified,
+        "shape_ratio": ratios,
         "preferred": child if gain > penalty and not unidentified else parent,
+    }
+
+
+def _shape_ratios(data, entry, diam, prior_std):
+    """Expected σ_posterior/σ_prior of a model's shape parameters.
+
+    The Fisher information of the V² (the closure phase of a centrosymmetric
+    disk is 0 or π and carries no shape) on the quoted errors, at the parent's
+    diameter and the prior centre of the shape, marginalized over the
+    diameter. A ratio at or above `_checks.PRIOR_DOMINATES` means the data
+    cannot constrain that parameter: it is set by its prior, and the model
+    is a thin, curved ridge in the diameter that NUTS cannot sample. The
+    threshold is the one the posterior's ``*_constrained`` check applies.
+    """
+    import jax
+    import jax.numpy as np
+
+    n = data.vis.size
+    names = ("diam", *entry.shape)
+    centre = np.asarray([diam, *(entry.start[k] for k in entry.shape)])
+
+    def v2(theta):
+        values = dict(zip(names, theta))
+        return data.model(entry.build(values))[:n]
+
+    jac = jax.jacfwd(v2)(centre) / np.asarray(data.d_vis)[:, None]
+    sd = onp.sqrt(onp.diag(onp.linalg.pinv(onp.asarray(jac.T @ jac))))
+    return {
+        k: float(sd[i + 1] / prior_std[k]) for i, k in enumerate(entry.shape)
+    }
+
+
+def _unconstrained_shapes(comparisons):
+    """The children whose shape the data cannot constrain: they are fitted
+    and compared, but an unselected one is not sampled (virgil#580)."""
+    return {
+        c["complex"]
+        for c in comparisons
+        if any(
+            r is None or not r < _checks.PRIOR_DOMINATES  # None: not finite
+            for r in (c.get("shape_ratio") or {}).values()
+        )
     }
 
 
@@ -983,6 +1032,15 @@ def _fit(p):
             p.output / "models" / name, fits[name], list(registry[name].params)
         )
     n = int(data.n_independent)
+    for name in p.names:
+        parent = registry[name].parent
+        if parent in reports:
+            reports[name]["shape_ratio"] = _shape_ratios(
+                data,
+                registry[name],
+                reports[parent]["params"]["diam"],
+                reports[name]["prior_std"],
+            )
     best, decisive, comparisons = _choose_model(reports, registry, n)
     _save_fit(
         p.output / "models" / "best", fits[best], list(registry[best].params)
@@ -1108,7 +1166,9 @@ def _posterior(p):
     fit_report = p._report("fit")
     best = fit_report["best"]
     groups, per_model, params_attr = {}, {}, {}
-    for name in p.names:
+    skipped = _unconstrained_shapes(fit_report["comparisons"]) - {best}
+    names = [k for k in p.names if k not in skipped]
+    for name in names:
         folder = p.output / "models" / name
         priors = models()[name].priors(
             *fit_report["models"][name]["diam_bounds_mas"]
@@ -1132,7 +1192,7 @@ def _posterior(p):
         groups,
         best=best,
         params=params_attr,
-        priors={n: fit_report["models"][n]["priors"] for n in p.names},
+        priors={n: fit_report["models"][n]["priors"] for n in names},
     )
     sampled = list(models()[best].params)
     _corner_trace(p.output, groups["posterior"], sampled)

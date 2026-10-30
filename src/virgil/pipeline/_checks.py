@@ -627,7 +627,11 @@ def model_gain(
     return Check(name, status, gain, penalty, message)
 
 
-def prior_constrained(name, ratios, *, warn=0.8):
+# σ_posterior/σ_prior at or above which a parameter is set by its prior.
+PRIOR_DOMINATES = 0.8
+
+
+def prior_constrained(name, ratios, *, warn=PRIOR_DOMINATES):
     """Whether parameters are constrained by the data or by their priors.
 
     Parameters

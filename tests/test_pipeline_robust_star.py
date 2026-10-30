@@ -441,24 +441,67 @@ def test_golden_default_settings_recover_a_uniform_disk(tmp_path):
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    reason="virgil#580: limb-darkened star NUTS chains do not mix (r_hat 2.4-4, "
-    "ESS 2.5 at 1000 + 1000 draws); the failing sampler checks of a model "
-    "that is not selected are reported as failures; Ben decides whether to "
-    "keep this xfail",
-)
 @pytest.mark.timeout(900)
 def test_golden_default_model_set_recovers_the_star_without_failing_checks(
     tmp_path,
 ):
     """The default pipeline (uniform and limb-darkened, compared) on the
-    same star, with the NUTS length reduced to 250 + 250 draws (the
-    default's 1000 + 1000 for both models takes over 10 minutes here)."""
+    same star (virgil#580): the data do not constrain the limb darkening
+    (σ_posterior/σ_prior of q1, q2 far above 0.8), so the unselected model
+    is fitted and compared but not sampled, instead of failing to mix."""
     truth = UniformDisk(4.0)
     res = _golden(truth, tmp_path, num_warmup=250, num_samples=250)
     _assert_golden(res, truth)
-    assert res.summary["comparison"]["preferred"] == "uniform"
+    comparison = res.summary["comparison"]
+    assert comparison["preferred"] == "uniform"
+    assert min(comparison["shape_ratio"].values()) > 1.0
+    assert list(res.summary["posterior"]["models"]) == ["uniform"]
+
+
+def _dense(sigma_v2):
+    return vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 4),
+        hour_angles_h=onp.linspace(-3.0, 3.0, 5),
+        sigma_v2=sigma_v2,
+        sigma_cp_deg=15.0,
+    )
+
+
+def _shape_ratios(data, diam):
+    entry = star.models()["limb_darkened"]
+    prior_std = {"q1": 0.2887, "q2": 0.2887}  # Uniform(0, 1)
+    return star._shape_ratios(data, entry, diam, prior_std)
+
+
+def test_limb_darkening_is_unidentified_when_the_data_cannot_constrain_it():
+    ratios = _shape_ratios(_template(), 4.0)
+    assert min(ratios.values()) > 1.0
+
+
+def test_limb_darkening_is_identified_for_a_well_resolved_precise_star():
+    ratios = _shape_ratios(_dense(1e-4), 8.0)
+    assert max(ratios.values()) < 0.5
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(1800)
+def test_limb_darkening_of_a_well_resolved_star_is_fitted_and_mixes(tmp_path):
+    """A star past the first null whose shape the data constrain (σ(V²) =
+    1e-4, 4 wavelengths, 5 hour angles, 8 mas): the limb-darkened model at
+    the default 1000 + 1000 NUTS draws mixes (virgil#580). (About 10 min.)"""
+    truth = QuadraticLimbDarkenedDisk.from_u(8.0, u1=0.35, u2=0.25)
+    data = _dense(1e-4).with_model(truth, key=jax.random.PRNGKey(3))
+    res = StarPipeline(
+        data,
+        "limb_darkened",
+        output=tmp_path / "run",
+        quicklook_execute=False,
+    ).run()
+    assert res.status == "complete"
+    s = res.summary
+    assert s["resolution"]["first_null_fraction"] > 1.0
+    assert s["posterior"]["r_hat_max"] < 1.01
+    assert s["posterior"]["ess_bulk_min"] > 400
 
 
 def test_a_failing_model_that_was_not_selected_still_fails_and_is_named(
