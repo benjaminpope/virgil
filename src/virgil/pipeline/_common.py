@@ -666,7 +666,7 @@ def _sampler_checks(post, *, bounds=None, walls=None):
         _checks.prior_bound(
             post["prior_bound_fraction"] if bounds is None else bounds
         ),
-        _checks.r_hat(post["r_hat_max"]),
+        _checks.r_hat(post["r_hat_max"], ess=post["ess_bulk_min"]),
         _checks.ess(post["ess_bulk_min"]),
         _checks.divergences(post["divergence_fraction"], walls=walls),
     ]

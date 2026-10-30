@@ -284,7 +284,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `grid_edge` (peak on the edge of the `dra` or `ddec` axis; the flux axis is not a search boundary) | at the edge | |
 | `start_at_bound` (only when triggered: the best fit, where NUTS starts, within 0.1% of a prior bound; typically a non-detection, with the flux or diameter at the edge of its range) | any: NUTS starts just inside the bound and the posterior is prior-dominated | |
 | `prior_bound` (posterior mass within 1% of a prior bound) | above 5% | |
-| `r_hat` | above 1.01 | above 1.05 |
+| `r_hat` | above 1.01, or a pass with the smallest bulk effective sample size below 400 (too few draws to trust it) | above 1.05 |
 | `ess` (smallest bulk effective sample size) | below 400 | below 100 |
 | `divergences` | any | above 1% of transitions (a warning instead, naming the walls, when `StarPipeline`'s wall probe finds hard closure-phase walls around the posterior) |
 | `residual_normality` (skewness and excess kurtosis of the independent whitened residuals, without the periodic closure-phase penalty terms) | beyond three standard errors | |
