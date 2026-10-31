@@ -1,6 +1,6 @@
 """Smooth sampling coordinates for binary sky orbits.
 
-Experimental: not yet used by ``OrbitPipeline`` (see ``design/``).
+Experimental: not yet used by ``OrbitPipeline`` (see ``design/orbit_coordinates.md``).
 
 An orbit is sampled as ``(period, z, zeta)`` at a fixed anchor epoch:
 
