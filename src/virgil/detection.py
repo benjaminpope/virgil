@@ -768,8 +768,7 @@ def injection_recovery(
         for start in range(0, values.shape[0], chunk):
             part = values[start : start + chunk]
             # An explicit chunk_size keeps one compiled shape (padding the
-            # last chunk); by default the last chunk is compiled at its own
-            # length rather than padded with discarded draws.
+            # last chunk); by default the last is compiled at its own length.
             width = chunk if chunk_size is not None else part.shape[0]
             padded = onp.zeros((width, len(params)), dtype=onp.float32)
             padded[: part.shape[0]] = part
