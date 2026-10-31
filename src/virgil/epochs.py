@@ -39,13 +39,15 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
-from jax.scipy.special import i0e
+from jax.scipy.special import gammainc, gammaincc, gammaln, i0e
+from scipy.ndimage import maximum_filter
 
 from . import _gauss_newton
 from ._geometry import fringe_scales
 from ._grid import batch_size_or_default, batch_visibilities
 from ._marginal import gauss_legendre, log_integral
 from ._precision import cast_tree, run_in
+from .detection import _fingerprint
 from .fitting import fit
 from .likelihood import (
     _gaussian_loglike,
@@ -447,11 +449,77 @@ _LN2 = math.log(2.0)
 # average of ln B_k is converged only to ~1 nat at 13 nodes, far below the
 # nats by which an outlier night is separated, so it is not refined.
 _N_FLUX = 13
-_MAX_AXIS = 201  # grid points per axis of the outlier component's disc
 _N_NODES = 32
 _WINDOW = 9.0
 _N_CENTRE = 4
 _NUMERIC_S_MAX = 10.0
+
+
+@jax.custom_jvp
+def _log_gamma_tails(a, x):
+    """``(ln Q(a, x), ln P(a, x))``, the log regularized incomplete gamma
+    functions, finite where ``Q`` or ``P`` underflow (large and small ``x``):
+    each takes its leading asymptotic series there (Abramowitz & Stegun
+    6.5.32 for ``Q``; the power series for ``P``). Differentiable in ``x``
+    only (``a`` is the block's tempered degrees of freedom, never
+    differentiated): ``d ln Q/dx = -x^(a-1) e^-x / (Γ(a) Q)``, in logs, so
+    that the second derivative does not underflow."""
+    tiny = 1e3 * np.finfo(x.dtype).tiny
+    q, p = gammaincc(a, x), gammainc(a, x)
+    big_q = q > tiny
+    xq = np.where(big_q, 1.0, x)  # the series' own argument: never 0 or inf
+    series = 1.0 + (a - 1.0) / xq * (
+        1.0 + (a - 2.0) / xq * (1.0 + (a - 3.0) / xq)
+    )
+    asym_q = (a - 1.0) * np.log(xq) - xq - gammaln(a) + np.log(series)
+    big_p = p > tiny
+    xp = np.where(big_p, 1.0, x)
+    power = 1.0 + xp / (a + 1.0) * (
+        1.0 + xp / (a + 2.0) * (1.0 + xp / (a + 3.0))
+    )
+    asym_p = a * np.log(xp) - xp - gammaln(a + 1.0) + np.log(power)
+    return (
+        np.where(big_q, np.log(np.where(big_q, q, 1.0)), asym_q),
+        np.where(big_p, np.log(np.where(big_p, p, 1.0)), asym_p),
+    )
+
+
+@_log_gamma_tails.defjvp
+def _log_gamma_tails_jvp(primals, tangents):
+    a, x = primals
+    out = _log_gamma_tails(a, x)
+    log_density = (a - 1.0) * np.log(x) - x - gammaln(a)
+    dx = tangents[1]
+    return out, (
+        -np.exp(log_density - out[0]) * dx,
+        np.exp(log_density - out[1]) * dx,
+    )
+
+
+def _log_scale_integral(chi2, nu, dof, low, high):
+    """``ln ∫ exp(dof (-χ²/(2s²) - ν ln s)) d ln s`` over ``ln s`` in
+    ``[low, high]``: a Gaussian block's scale integral in closed form.
+
+    With ``u = dof χ²/(2s²)`` it is ``½ (dof χ²/2)^(-a) Γ(a) [Q(a, u_hi) -
+    Q(a, u_lo)]`` for ``a = dof ν/2``, ``Q`` the regularized upper incomplete
+    gamma function and ``u_lo`` at ``s = e^low``. The bracket is evaluated
+    without cancellation (as ``Q`` or as ``P = 1 - Q``, whichever is
+    small), so a badly missed block stays finite.
+    Source: [DLMF 8.2](https://dlmf.nist.gov/8.2).
+    """
+    a = 0.5 * dof * nu
+    c = np.maximum(0.5 * dof * chi2, np.finfo(chi2.dtype).tiny)
+    u_hi, u_lo = c * np.exp(-2.0 * high), c * np.exp(-2.0 * low)
+    q_hi, p_hi = _log_gamma_tails(a, u_hi)
+    q_lo, p_lo = _log_gamma_tails(a, u_lo)
+    ratio_q = np.exp(np.minimum(q_lo - q_hi, -1e-12))
+    ratio_p = np.exp(np.minimum(p_hi - p_lo, -1e-12))
+    diff = np.where(
+        u_hi > a,  # Q(a, u_hi) is the larger Q and below 1/2
+        q_hi + np.log1p(-ratio_q),
+        p_lo + np.log1p(-ratio_p),
+    )
+    return -_LN2 - a * np.log(c) + gammaln(a) + diff
 
 
 class _Surface:
@@ -711,7 +779,11 @@ class _Surface:
         table = dict(dof)
         return onp.array([float(table.get(n, 1.0)) for n in self.names])
 
-    def score(self, chi2, dof, data):
+    def score(self, chi2, dof, data, closed=False):
+        """The tempered scale-marginalized log likelihood of the blocks'
+        ``chi2``. ``closed`` evaluates a bounded Gaussian block's scale
+        integral in closed form (``_log_scale_integral``), not by
+        quadrature: exact, and faster for the outlier component's grids."""
         if self.numeric:  # ``chi2`` is the table
             n = _N_NODES
             table = chi2
@@ -733,6 +805,11 @@ class _Surface:
         bound = onp.log(self.s_max)
         total = 0.0
         for k, (_, _, _, nu, von_mises) in enumerate(self.blocks):
+            if closed and not von_mises:
+                total = total + _log_scale_integral(
+                    chi2[k], nu, dof[k], self._low, bound
+                )
+                continue
 
             def log_f(log_s, k=k, nu=nu, von_mises=von_mises):
                 loglike = -0.5 * chi2[k] * np.exp(-2.0 * log_s)
@@ -1302,6 +1379,10 @@ class EpochPositions:
     exact_fraction : tuple of float or None
         Fraction of grid points scored with the full scale integral (1 unless
         the coarse pass skipped some; see ``epoch_positions``).
+    level_zero : tuple
+        Per dataset, ``(fingerprint, grid)``: the marginal scores on
+        ``grid``, which [`broad_loglike`][virgil.epochs.broad_loglike] reuses
+        for a night scored with the same data, tempering, ``s_max`` and primary.
     """
 
     names: tuple
@@ -1318,6 +1399,7 @@ class EpochPositions:
     primary_diam: float | None = None
     grid: tuple | None = None
     exact_fraction: tuple | None = None
+    level_zero: tuple = ()
 
     @property
     def flagged(self):
@@ -1425,10 +1507,10 @@ def _grid_scores(points, data, surface, batch_size, diam=None, dof=None):
     return jax.lax.map(one, points, batch_size=batch_size)
 
 
-@functools.partial(jax.jit, static_argnames="surface")
-def _grid_marginal(chi2, dof, data, surface):
+@functools.partial(jax.jit, static_argnames=("surface", "closed"))
+def _grid_marginal(chi2, dof, data, surface, closed=False):
     """The scale-marginalized score of each grid point's block χ²."""
-    return jax.vmap(lambda c: surface.score(c, dof, data))(chi2)
+    return jax.vmap(lambda c: surface.score(c, dof, data, closed))(chi2)
 
 
 # The memory a grid point needs scales with what one whitening holds: the
@@ -1910,6 +1992,368 @@ def _flag_one_night(  # deliberate: 85 lines, tested directly
     return flags
 
 
+# The outlier component's exact integral (design/orbit_mixture_v2.md §6).
+# δ is the precision to which band probabilities are reported
+# (orbit_dehack.md §2); |dq/dΔ| ≤ 1/4, so an error of 4δ in a night's
+# log mean likelihood moves any outlier probability by at most δ.
+_DELTA = 1e-3
+_BROAD_TOL = 4.0 * _DELTA
+# A peak more than this many nats below the best contributes at most
+# e^-30 of it; with at most ~e^12 level-0 points (a 57 mas disc at 1.05 mas
+# and 13 flux nodes) that stays far below _BROAD_TOL.
+_PEAK_NATS = 30.0
+# Peak climbs: candidates per compiled batch, Newton steps per round, rounds,
+# and the Newton decrement (nats) under which a climb has converged: a
+# hundredth of the reporting precision δ, so the unclimbed gain cannot move a
+# result.
+_CLIMB_BATCH = 64
+_CLIMB_STEPS = 6
+_CLIMB_ROUNDS = 12
+_CLIMB_DECREMENT = _DELTA / 100.0
+# Cubature: boxes split at most this many times.
+_CUBE_DEPTH = 10
+_BROAD_CACHE = {}
+
+
+@functools.partial(jax.jit, static_argnames=("surface", "n_steps"))
+def _climb(z, lam, radius, g_range, data, dof, diam, surface, n_steps):
+    """Damped saddle-free Newton ascent of the closed-form marginal score
+    over ``(dra, ddec, ln flux)`` from each row of ``z``, within the disc of
+    ``radius`` and ``g_range`` in ln flux.
+
+    Returns, per row, the point, its damping, value, gradient and Hessian
+    there, and the undamped Newton decrement (nats) over the free
+    coordinates: a climb has converged when it is below ``_CLIMB_DECREMENT``.
+    """
+    tiny = np.finfo(z.dtype).tiny
+
+    def score(p):
+        x = np.stack([p[0], p[1], np.exp(p[2])])
+        chi2 = surface.chi2(_binary(x, diam), data, None, dof)
+        return surface.score(chi2, dof, data, True)
+
+    def project(p):
+        shrink = np.minimum(
+            1.0, radius / np.maximum(np.hypot(p[0], p[1]), tiny)
+        )
+        return np.stack(
+            [p[0] * shrink, p[1] * shrink, np.clip(p[2], *g_range)]
+        )
+
+    def newton(p, damping):
+        g, h = jax.grad(score)(p), jax.hessian(score)(p)
+        # The coordinates a bound holds: the disc's edge (outward gradient
+        # component) and the flux range's ends.
+        unit = p[:2] / np.maximum(np.hypot(p[0], p[1]), tiny)
+        outward = g[:2] @ unit
+        edge = (np.hypot(p[0], p[1]) >= radius * (1 - 1e-9)) & (outward > 0)
+        g = g.at[:2].add(-np.where(edge, outward, 0.0) * unit)
+        ends = ((p[2] <= g_range[0]) & (g[2] < 0)) | (
+            (p[2] >= g_range[1]) & (g[2] > 0)
+        )
+        g = g.at[2].set(np.where(ends, 0.0, g[2]))
+        w, v = np.linalg.eigh(-h)
+        w = np.abs(w)
+        floor = 1e-12 * np.max(w) + np.finfo(g.dtype).tiny
+        step = v @ ((v.T @ g) / (np.maximum(w, floor) + damping * np.max(w)))
+        free = 0.5 * g @ (v @ ((v.T @ g) / np.maximum(w, floor)))
+        return step, free
+
+    def climb(p, damping):
+        def body(carry, _):
+            p, damping, value = carry
+            step, _ = newton(p, damping)
+            trial = project(p + step)
+            new = score(trial)
+            better = np.isfinite(new) & (new > value)
+            return (
+                np.where(better, trial, p),
+                np.where(
+                    better, 0.1 * damping, np.maximum(10.0 * damping, 1e-3)
+                ),
+                np.where(better, new, value),
+            ), None
+
+        (p, damping, value), _ = jax.lax.scan(
+            body, (p, damping, score(p)), None, length=n_steps
+        )
+        return (
+            p,
+            damping,
+            value,
+            jax.grad(score)(p),
+            jax.hessian(score)(p),
+            newton(p, 0.0)[1],
+        )
+
+    return jax.vmap(climb)(z, lam)
+
+
+def _broad_catalogue(  # deliberate: imported by tests (planted-peak check)
+    starts, radius, g_range, data, dof, diam, surface
+):
+    """The peaks of the night's marginal score over ``(dra, ddec, ln f)``
+    reached by climbing from each row of ``starts``.
+
+    Every local maximum of a surface whose Fourier content is bounded lies
+    within one cell of a local maximum of a grid at twice the Nyquist rate,
+    so climbing from every grid maximum finds them all. Returns a dict of
+    the peaks within ``_PEAK_NATS`` of the best, highest first: ``z`` (the
+    position), ``value``, ``sd`` (Laplace standard deviations per axis),
+    ``lo`` and ``hi`` (the cube ±``_WINDOW`` sd, cut to the prior's
+    bounding box), and ``n_open``, the climbs that had not converged. A
+    curvature too small to resolve (a flat direction) is floored so that
+    the cube spans the range.
+    """
+    n = len(starts)
+    z = onp.array(starts, float)
+    lam = onp.zeros(n)
+    value = onp.full(n, -onp.inf)
+    hess = onp.zeros((n, 3, 3))
+    open_ = onp.ones(n, bool)
+    for _ in range(_CLIMB_ROUNDS):
+        todo = onp.flatnonzero(open_)
+        if not len(todo):
+            break
+        for i in range(0, len(todo), _CLIMB_BATCH):
+            rows = todo[i : i + _CLIMB_BATCH]
+            pad = onp.concatenate(
+                [rows, onp.repeat(rows[:1], _CLIMB_BATCH - len(rows))]
+            )
+            out = _climb(
+                np.asarray(z[pad]),
+                np.asarray(lam[pad]),
+                radius,
+                tuple(g_range),
+                data,
+                dof,
+                diam,
+                surface,
+                _CLIMB_STEPS,
+            )
+            p, d, v, _, h, dec = (onp.asarray(o)[: len(rows)] for o in out)
+            z[rows], lam[rows], value[rows], hess[rows] = p, d, v, h
+            open_[rows] = ~(dec < _CLIMB_DECREMENT)
+        # A climb that has converged far below the best cannot catch up.
+        open_ &= ~(value < onp.max(value) - _PEAK_NATS - _DELTA)
+    keep = onp.isfinite(value) & (value >= onp.max(value) - _PEAK_NATS)
+    order = onp.flatnonzero(keep)[onp.argsort(-value[keep])]
+    half = onp.array([radius, radius, 0.5 * (g_range[1] - g_range[0])])
+    box_lo = onp.array([-radius, -radius, g_range[0]])
+    box_hi = onp.array([radius, radius, g_range[1]])
+    peaks = dict(z=[], value=[], sd=[], lo=[], hi=[], n_open=0)
+    for i in order:
+        h = onp.where(onp.isfinite(hess[i]), hess[i], 0.0)
+        w, v = onp.linalg.eigh(-(half[:, None] * h * half[None, :]))
+        w = onp.maximum(onp.abs(w), _WINDOW**2)  # sd ≤ range / _WINDOW
+        sd = half * onp.sqrt(onp.sum(v**2 / w[None, :], axis=1))
+        if any(
+            onp.all(onp.abs(z[i] - c) < 0.5 * s)
+            for c, s in zip(peaks["z"], peaks["sd"])
+        ):
+            continue  # the same maximum, reached from another start
+        peaks["z"].append(z[i])
+        peaks["value"].append(value[i])
+        peaks["sd"].append(sd)
+        peaks["lo"].append(onp.maximum(z[i] - _WINDOW * sd, box_lo))
+        peaks["hi"].append(onp.minimum(z[i] + _WINDOW * sd, box_hi))
+        peaks["n_open"] += int(open_[i])
+    out = {k: (onp.array(v) if k != "n_open" else v) for k, v in peaks.items()}
+    out["box_lo"], out["box_hi"] = _merge_cubes(out["lo"], out["hi"])
+    return out
+
+
+def _merge_cubes(lo, hi):
+    """The disjoint boxes that cover the cubes ``lo`` to ``hi``: overlapping
+    cubes are replaced by their bounding box, until none overlap."""
+    lo, hi = list(lo), list(hi)
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(lo)):
+            for j in range(i + 1, len(lo)):
+                if onp.all(lo[i] < hi[j]) and onp.all(lo[j] < hi[i]):
+                    lo[i], hi[i] = (
+                        onp.minimum(lo[i], lo[j]),
+                        onp.maximum(hi[i], hi[j]),
+                    )
+                    del lo[j], hi[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    return onp.array(lo), onp.array(hi)
+
+
+def _in_cubes(z, peaks):
+    """Whether each row of ``z`` lies in a box of the catalogue ``peaks``."""
+    hit = onp.zeros(len(z), bool)
+    for lo, hi in zip(peaks["box_lo"], peaks["box_hi"]):
+        hit |= onp.all((z >= lo) & (z <= hi), axis=1)
+    return hit
+
+
+def _genz_malik():
+    """The degree-7 rule of Genz & Malik (1980) on [-1, 1]^3 and its
+    embedded degree-5 rule: the 33 offsets and the two weight vectors (of
+    volume 1)."""
+    root = onp.sqrt
+    l2, l3, l5 = root(9 / 70), root(9 / 10), root(9 / 19)
+    axes = onp.eye(3)
+    offsets, kind = [onp.zeros(3)], [0]
+    for k, lam in ((1, l2), (2, l3)):
+        for sign in (-1.0, 1.0):
+            offsets += [sign * lam * axes[i] for i in range(3)]
+            kind += [k] * 3
+    for i, j in ((0, 1), (0, 2), (1, 2)):
+        for si in (-1.0, 1.0):
+            for sj in (-1.0, 1.0):
+                offsets.append(l3 * (si * axes[i] + sj * axes[j]))
+                kind.append(3)
+    for corner in onp.array(onp.meshgrid(*[(-1.0, 1.0)] * 3)).reshape(3, -1).T:
+        offsets.append(l5 * corner)
+        kind.append(4)
+    kind = onp.array(kind)
+    n = 3
+    w7 = onp.array(
+        [
+            (12824 - 9120 * n + 400 * n**2) / 19683,
+            980 / 6561,
+            (1820 - 400 * n) / 19683,
+            200 / 19683,
+            6859 / 19683 / 2**n,
+        ]
+    )
+    w5 = onp.array(
+        [
+            (729 - 950 * n + 50 * n**2) / 729,
+            245 / 486,
+            (265 - 100 * n) / 1458,
+            25 / 729,
+            0.0,
+        ]
+    )
+    return onp.array(offsets), w7[kind], w5[kind]
+
+
+_GM_POINTS, _GM_W7, _GM_W5 = _genz_malik()
+_CORNERS = onp.array(onp.meshgrid(*[(-1.0, 1.0)] * 3)).reshape(3, -1).T
+
+
+def _cubature(log_f, inside, peaks, mref, base):
+    """The integral of ``exp(log_f - mref)`` over the disjoint boxes of the
+    catalogue ``peaks``, by adaptive cubature with the rule of Genz & Malik
+    (1980).
+
+    Each box starts as 3 cells per axis. A cell carries the degree-7
+    value and the difference from the embedded degree-5 value as its error;
+    the boxes with the largest errors, enough to carry half of the total,
+    split in eight, until the errors total at most ``_BROAD_TOL`` of the
+    integral plus ``base`` (the tails already counted), or a box would split
+    more than ``_CUBE_DEPTH`` times.
+    ``log_f(z)`` scores rows of ``z`` (``dra, ddec, ln f``) and
+    ``inside(z)`` says which lie in the prior's support. Returns
+    ``(integral, error, boxes, converged)``.
+    """
+    third = (peaks["box_hi"] - peaks["box_lo"]) / 3.0
+    shifts = onp.array(onp.meshgrid(*[(0.5, 1.5, 2.5)] * 3)).reshape(3, -1).T
+    c = (
+        peaks["box_lo"][:, None, :] + shifts[None] * third[:, None, :]
+    ).reshape(-1, 3)
+    h = onp.repeat(0.5 * third, len(shifts), axis=0)
+    depth = onp.zeros(len(c), int)
+
+    def rule(c, h):
+        """Degree-7 and degree-5 values of each box (zero outside the
+        support)."""
+        z = c[:, None, :] + h[:, None, :] * _GM_POINTS[None]
+        flat = z.reshape(-1, 3)
+        use = inside(flat)
+        f = onp.zeros(len(flat))
+        if use.any():
+            f[use] = onp.exp(log_f(flat[use]) - mref)
+        f = f.reshape(len(c), -1)
+        vol = 8.0 * onp.prod(h, axis=1)
+        return vol * (f @ _GM_W7), vol * (f @ _GM_W5)
+
+    done = None
+    converged = True
+    while True:
+        s, s5 = rule(c, h)
+        new = dict(s=s, e=onp.abs(s - s5), c=c, h=h, d=depth)
+        done = (
+            new
+            if done is None
+            else {k: onp.concatenate([done[k], new[k]]) for k in new}
+        )
+        total, err = done["s"].sum(), done["e"].sum()
+        if err <= _BROAD_TOL * (total + base):
+            break
+        order = onp.argsort(-done["e"])
+        worst = onp.searchsorted(onp.cumsum(done["e"][order]), 0.5 * err) + 1
+        split = onp.zeros(len(order), bool)
+        split[order[:worst]] = True
+        if (done["d"][split] >= _CUBE_DEPTH).any():
+            converged = False
+            break
+        c = (
+            done["c"][split][:, None, :]
+            + 0.5 * done["h"][split][:, None, :] * _CORNERS[None]
+        ).reshape(-1, 3)
+        h = onp.repeat(0.5 * done["h"][split], 8, axis=0)
+        depth = onp.repeat(done["d"][split] + 1, 8)
+        done = {k: v[~split] for k, v in done.items()}
+    return float(total), float(err), len(done["s"]), converged
+
+
+def _padded_scores(
+    points, data, surface, diam, dof, batch_size, memory_budget
+):
+    """The marginal score at each ``(dra, ddec, flux)`` row of ``points``.
+    A short call pads to a power-of-two count, so that calls of different
+    sizes share a few compiled shapes; a long one, to whole batches."""
+    n = len(points)
+    if not n:
+        return onp.zeros(0)
+    batch = _grid_batch(batch_size, memory_budget, data, surface)
+    batch = min(batch, 1 << (n - 1).bit_length())
+    total = math.ceil(n / batch) * batch
+    padded = onp.concatenate([points, onp.repeat(points[:1], total - n, 0)])
+    _, chi2 = _grid_scores(np.asarray(padded), data, surface, batch, diam, dof)
+    return onp.asarray(_grid_marginal(chi2, dof, data, surface, True))[:n]
+
+
+def _scoring_print(data, dof, s_max, diam):
+    """A fingerprint of what fixes a night's marginal scores: its data (float64),
+    the block ``dof``, ``s_max`` and the primary diameter."""
+    d64 = cast_tree(data, "float64")
+    blocks = len(_Surface(data, s_max).nu)
+    dof64 = onp.broadcast_to(onp.asarray(dof, float), (blocks,)).copy()
+    return _fingerprint((d64, dof64, s_max, diam))
+
+
+def _level_zero(positions, k, print_, axis, flux_nodes):
+    """Night ``k``'s level-0 marginal grid from ``positions``, as
+    ``(axis, grid)``, or None when it was not scored as this call would be:
+    the same data, tempering, ``s_max`` and primary (``print_``), a square
+    axis at least as fine and as wide as ``axis``, and the same flux nodes."""
+    stored = getattr(positions, "level_zero", None)
+    if not stored or stored[k] is None or stored[k][0] != print_:
+        return None
+    ax, flux = positions.grid[0], positions.grid[2]
+    fine = onp.ptp(axis) / (axis.size - 1) * (1 + 1e-9)
+    ok = (
+        onp.array_equal(ax, positions.grid[1])
+        and ax.size > 1
+        and ax.min() <= axis.min() + 1e-9
+        and ax.max() >= axis.max() - 1e-9
+        and onp.ptp(ax) / (ax.size - 1) <= fine
+        and flux.shape == flux_nodes.shape
+        and onp.allclose(flux, flux_nodes, rtol=1e-12)
+    )
+    return (ax, stored[k][1]) if ok else None
+
+
 def broad_loglike(
     data,
     dof,
@@ -1924,6 +2368,7 @@ def broad_loglike(
     coarse_nats=30.0,
     coarse_margin=1,
     n_flux=_N_FLUX,
+    positions=None,
 ):
     """Each night's log mean likelihood over the orbit prior's companion
     positions: the outlier component of
@@ -1932,7 +2377,10 @@ def broad_loglike(
     The positions are uniform on the disc ``|p| <= a_max`` and the flux is
     log-uniform on ``flux_range``. The scale-marginalized surface of
     [`epoch_positions`][virgil.epochs.epoch_positions] is scored as the orbit
-    is: pass the fit's block ``dof`` and ``s_max``.
+    is: pass the fit's block ``dof`` and ``s_max``. A grid at ``step`` finds
+    the peaks of each night's surface and adaptive cubature integrates them,
+    to 4e-3 nats ([note](../orbit_methods.md)).
+    Source: Genz & Malik (1980), [references](../references.md#genz1980).
 
     Parameters
     ----------
@@ -1940,64 +2388,131 @@ def broad_loglike(
     dof : sequence of array
         One vector of block ``1/f_b`` per night.
     a_max, flux_range, step : float or tuple
-        Disc radius (mas; ``a_range[1] (1 + ecc_max)``), flux range and grid
-        step (mas), coarsened to keep at most 201 points per axis.
-    s_max, primary_diam, batch_size, memory_budget, coarse_nats, coarse_margin : optional
+        Disc radius (mas; ``a_range[1] (1 + ecc_max)``), flux range and the
+        step (mas) of the peak-finding grid (a fraction of λ/B).
+    s_max : float, optional
+        Bound of each block's scale integral; None takes 10.
+    primary_diam, batch_size, memory_budget, coarse_nats, coarse_margin : optional
         As for ``epoch_positions``.
     n_flux : int, optional
-        Log-spaced flux nodes.
+        Log-spaced flux nodes of the grid.
+    positions : EpochPositions, optional
+        Reuse its grid scores for the nights it scored in the same way.
 
     Returns
     -------
     numpy.ndarray
+
+    Warns
+    -----
+    UserWarning
+        If a peak climb or the cubature did not converge.
     """
-    # At most _MAX_AXIS**2 * n_flux points a night: a long baseline coarsens
-    # the step instead of growing the grid.
-    n = min(2 * math.ceil(a_max / step) + 1, _MAX_AXIS)
-    axis = onp.linspace(-a_max, a_max, n)
-    xx, yy, ff = onp.meshgrid(
-        axis, axis, onp.geomspace(*flux_range, n_flux), indexing="ij"
-    )
-    inside = (xx**2 + yy**2 <= a_max**2).ravel()
-    points = onp.stack([xx.ravel(), yy.ravel(), ff.ravel()], -1)
+    s_max = _NUMERIC_S_MAX if s_max is None else float(s_max)
     diam = None if not primary_diam else float(primary_diam)
-    out = []
-    for d, dof_k in zip(data, dof):
-        surface = _Surface(d, s_max)
+    g_lo, g_hi = (float(onp.log(v)) for v in flux_range)
+    length = g_hi - g_lo
+    axis = onp.linspace(-a_max, a_max, math.ceil(2 * a_max / step) + 1)
+    flux_nodes = onp.geomspace(*flux_range, n_flux)
+    log_flux = onp.log(flux_nodes)
+    node_weight = onp.full(n_flux, length / (n_flux - 1))
+    node_weight[[0, -1]] *= 0.5  # the trapezoid rule in ln f
+    out, open_climbs, loose = [], [], []
+    for k, (d, dof_k) in enumerate(zip(data, dof)):
         with run_in("float64"):
-            d64 = cast_tree(d, "float64")
-            dof64 = np.asarray(dof_k, dtype=np.float64)
+            d64, dof64 = cast_tree(d, "float64"), onp.asarray(dof_k, float)
+            print_ = _scoring_print(d, dof_k, s_max, diam)
+            key = (print_, a_max, tuple(flux_range), step, n_flux)
+            if key in _BROAD_CACHE:
+                value, n_open, converged = _BROAD_CACHE[key]
+                out.append(value)
+                open_climbs += [(k, n_open)] * bool(n_open)
+                loose += [k] * (not converged)
+                continue
+            surface = _Surface(d, s_max)
             diam64 = None if diam is None else np.asarray(diam)
-            if surface.numeric and coarse_nats is not None:
-                m, _ = _coarse_then_exact(
-                    points,
-                    xx.shape,
-                    d64,
-                    surface,
-                    diam64,
-                    dof64,
-                    batch_size,
-                    memory_budget,
-                    float(coarse_nats),
-                    int(coarse_margin),
-                )
-                m = onp.asarray(m)
+            dof_j = np.asarray(dof64)
+            score = functools.partial(
+                _padded_scores,
+                data=d64,
+                surface=surface,
+                diam=diam64,
+                dof=dof_j,
+                batch_size=batch_size,
+                memory_budget=memory_budget,
+            )
+            level = _level_zero(positions, k, print_, axis, flux_nodes)
+            if level is None:
+                ax = axis
+                xx, yy, ff = onp.meshgrid(ax, ax, flux_nodes, indexing="ij")
+                points = onp.stack([xx.ravel(), yy.ravel(), ff.ravel()], -1)
+                if surface.numeric and coarse_nats is not None:
+                    m0, _ = _coarse_then_exact(
+                        points, xx.shape, d64, surface, diam64, dof_j,
+                        batch_size, memory_budget, float(coarse_nats),
+                        int(coarse_margin),
+                    )  # fmt: skip
+                else:
+                    m0 = score(points)
+                m0 = onp.asarray(m0).reshape(xx.shape)
             else:
-                _, chi2 = _grid_scores(
-                    np.asarray(points),
-                    d64,
-                    surface,
-                    min(
-                        _grid_batch(batch_size, memory_budget, d64, surface),
-                        len(points),
-                    ),
-                    diam64,
-                    dof64,
-                )
-                m = onp.asarray(_grid_marginal(chi2, dof64, d64, surface))
-        m = onp.asarray(m).ravel()
-        m = onp.where(onp.isfinite(m) & inside, m, -onp.inf)
-        out.append(float(onp.logaddexp.reduce(m) - onp.log(inside.sum())))
+                ax, m0 = level
+            px, py = onp.meshgrid(ax, ax, indexing="ij")
+            disc = (px**2 + py**2 <= a_max**2)[..., None]
+            m0 = onp.where(onp.isfinite(m0) & disc, m0, -onp.inf)
+            if not onp.isfinite(m0).any():
+                out.append(-onp.inf)
+                continue
+            local = (
+                m0 == maximum_filter(m0, 3, mode="constant", cval=-onp.inf)
+            ) & onp.isfinite(m0)
+            i, j, f = onp.nonzero(local)
+            starts = onp.stack([ax[i], ax[j], log_flux[f]], -1)
+            peaks = _broad_catalogue(
+                starts, a_max, (g_lo, g_hi), d64, dof_j, diam64, surface
+            )
+            mref = float(peaks["value"][0])
+            # The level-0 points outside every cube, as midpoint cells: the
+            # tails the cubes leave. Points further below the best than a
+            # peak _PEAK_NATS down plus the log of their number sum to less
+            # than e^-_PEAK_NATS of it.
+            cut = -_PEAK_NATS - math.log(m0.size)
+            i, j, f = onp.nonzero(m0 - mref > cut)
+            z = onp.stack([ax[i], ax[j], log_flux[f]], -1)
+            tails = ~_in_cubes(z, peaks)
+            cell = (ax[1] - ax[0]) ** 2 * node_weight[f]
+            background = float(
+                onp.sum((onp.exp(m0[i, j, f] - mref) * cell)[tails])
+            )
+            inside = lambda z: (  # noqa: E731
+                (z[:, 0] ** 2 + z[:, 1] ** 2 <= a_max**2)
+                & (z[:, 2] >= g_lo)
+                & (z[:, 2] <= g_hi)
+            )
+            log_f = lambda z: score(  # noqa: E731
+                onp.column_stack([z[:, 0], z[:, 1], onp.exp(z[:, 2])])
+            )
+            mass, _err, _nb, converged = _cubature(
+                log_f, inside, peaks, mref, background
+            )
+
+            value = (
+                mref
+                + math.log(mass + background)
+                - math.log(math.pi * a_max**2 * length)
+            )
+            _BROAD_CACHE[key] = (value, peaks["n_open"], converged)
+        out.append(value)
+        open_climbs += [(k, peaks["n_open"])] * bool(peaks["n_open"])
+        loose += [k] * (not converged)
+    if open_climbs or loose:
+        warnings.warn(
+            "The outlier component is not converged: peak climbs left open "
+            f"(night, number) {open_climbs}; cubature not converged for "
+            f"nights {loose}. Its error may exceed {_BROAD_TOL:g} nats.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
     return onp.array(out)
 
 
@@ -2176,6 +2691,7 @@ def epoch_positions(
     unconverged = {}  # night -> the stop code of its best peak's refinement
     night_flags = []
     exact_share = []
+    level_zero = []
     for index, (name, d) in enumerate(zip(data.dataset_names, data.data)):
         surface = _Surface(d, s_max)
         dof_k = _check_dof(_dof_for(dof, data, index))
@@ -2214,6 +2730,9 @@ def epoch_positions(
                 share = 1.0
         exact_share.append(share)
         marginal = onp.where(onp.isfinite(marginal), marginal, -onp.inf)
+        level_zero.append(
+            (_scoring_print(d64, dof_k, surface.s_max, diam), marginal)
+        )
         rival = (
             Epochs({name: d}).resolution_mas if gap_mas is None else gap_mas
         )
@@ -2391,6 +2910,7 @@ def epoch_positions(
         primary_diam=diam,
         grid=tuple(axes),
         exact_fraction=tuple(exact_share),
+        level_zero=tuple(level_zero),
     )
 
 

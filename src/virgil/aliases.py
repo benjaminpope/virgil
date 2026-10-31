@@ -63,6 +63,7 @@ from .epochs import (
     _distinct_tracks,
     _refine_marginal,
     _refuse_amp_with_gains,
+    _NUMERIC_S_MAX,
     _Surface,
     estimate_primary_diameter,
     broad_loglike,
@@ -2740,10 +2741,17 @@ _OUTLIERS = ("mixture", "inflation")
 
 
 def _broad_components(
-    data, settings, primary_diam, diam_seed, resolution, **batching
+    data,
+    settings,
+    primary_diam,
+    diam_seed,
+    resolution,
+    positions=None,
+    **batching,
 ):
     """``settings`` with the mixture's outlier component ``log_broad`` (its
-    own ``s_max``, tempering and primary); unchanged for ``inflation``."""
+    own ``s_max``, tempering and primary); unchanged for ``inflation``.
+    ``positions`` (EpochPositions) lends its level-0 grid scores."""
     if settings.outlier not in _OUTLIERS:
         raise ValueError(
             f"outlier must be one of {_OUTLIERS}, got {settings.outlier!r}."
@@ -2753,6 +2761,12 @@ def _broad_components(
         if settings.s_max is None:
             raise ValueError("outlier='inflation' needs s_max.")
         return settings
+    if settings.s_max is None:
+        raise ValueError(
+            "outlier='mixture' needs a finite s_max: the outlier component "
+            "is scored on the scale-marginalized surface. Omit s_max for "
+            f"the default ({_NUMERIC_S_MAX:g})."
+        )
     surfaces = [_Surface(d, settings.s_max) for d in data]
     dof = [
         onp.broadcast_to(s.dof_vector(settings.dof), (len(s.names),)).astype(
@@ -2769,6 +2783,7 @@ def _broad_components(
             step=_BROAD_STEP * resolution,
             s_max=settings.s_max,
             primary_diam=diam,
+            positions=positions,
             **batching,
         )
     if not onp.all(onp.isfinite(broad)):
@@ -2899,7 +2914,7 @@ def fit_orbit_aliases(
     a_range=(1.0, 30.0),
     flux_range=(0.01, 1.0),
     ecc_max=0.9,
-    s_max=None,
+    s_max=_NUMERIC_S_MAX,
     n_candidates=100,
     n_refine=6,
     n_random=None,
@@ -2950,7 +2965,8 @@ def fit_orbit_aliases(
         Seeds for the fits (else random orbits).
     times, t_ref, a_range, flux_range, ecc_max, s_max : optional
         Epoch times and ``dt_peri`` reference (MJD; default the mean times),
-        prior ranges (``a_range`` in mas), eccentricity cap.
+        prior ranges (``a_range`` in mas), eccentricity cap; ``s_max``
+        defaults to 10 (``None``: refused for ``outlier="mixture"``).
     n_candidates, n_refine, n_random, n_is, n_samples, seed, init : optional
         Search effort, sampling and a warm start.
     min_distance_mas, max_steps, p_min_samples, flag_nats, ess_min : optional
@@ -3328,7 +3344,7 @@ def fit_orbit_aliases(
         )
     settings = _broad_components(
         data, settings, primary_diam, diam_seed, resolution_mas,
-        batch_size=batch_size, memory_budget=memory_budget,
+        positions=positions, batch_size=batch_size, memory_budget=memory_budget,
     )  # fmt: skip
     problem = _Problem(data, settings, batch_size, memory_budget)
     _preflight(problem, settings, bands[0])

@@ -230,7 +230,7 @@ A run that interrupts resumes: the bands already fitted are read back from their
 | `batch_size` (`None`), `memory_budget` (`None`, bytes), `coarse_nats` (30) | Grid points and candidate orbits scored together (by default what fits in the budget, 1 GiB on a CPU); for data with gains or offsets, the nats below the best within which the position grid integrates the error scale in full (`None`: every point). See `epoch_positions`. None of the three is a prior range. |
 | `n_peaks` (5), `max_sep_mas` (`None`), `grid_step_mas` (`None`), `max_grid` (201) | The position search; the step is by default a quarter of the finest λ/B (coarsened to `max_grid` points) and the half-width `a_range[1] (1 + ecc_max)`, the prior's reach, limited on lattice coverage (aperture masks, DISCO) to the alias cell. |
 | `period_range` (`None`) | `[min, max]` days; by default from the data (see `fit_orbit_aliases`). |
-| `a_range` ([1, 30]), `flux_range` ([0.01, 1]), `ecc_max` (0.9), `s_max` (`None`) | The engine's prior ranges (mas; flux ratio at most 1; eccentricity; error-scale bound). |
+| `a_range` ([1, 30]), `flux_range` ([0.01, 1]), `ecc_max` (0.9), `s_max` (10) | The engine's prior ranges (mas; flux ratio at most 1; eccentricity; error-scale bound). |
 | `primary_diam` (`"auto"`), `vis_amp`, `sign_free`, `flip_flux`, `temper` (`True`) | As for the engine. |
 | `n_bands_max`, `n_candidates`, `n_refine`, `max_steps`, `n_is` | Search effort; the defaults are those of `fit_orbit_aliases`, the one place to raise them (the `mode_converged` check says when to). |
 | `alias_nats` (10), `no_orbit_nats` (10) | Thresholds of the `alias_ambiguity` and `no_orbit` checks. |
