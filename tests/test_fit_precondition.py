@@ -552,20 +552,10 @@ def _l_curve_steps(dtype, npix=41):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize(
-    "dtype",
-    [
-        "float64",
-        pytest.param(
-            "float32",
-            marks=pytest.mark.xfail(
-                reason="converges at memory 100 in one run, but float32 at "
-                "the weakest weight is noisy: see design/fit_preconditioning.md",
-                strict=False,
-            ),
-        ),
-    ],
-)
+# float32 converged at every weight in a local run (strict xfail XPASSed), so
+# the old non-strict xfail is gone. If the slow tier sees it stall on another
+# platform, report that raw and restore a strict xfail conditioned on it.
+@pytest.mark.parametrize("dtype", ["float64", "float32"])
 def test_the_l_curve_converges_at_every_weight(dtype):
     """Stage 7: flat-prior MaxEntropy, w = 0.1 ... 1e4, default step limit."""
     runs = _l_curve_steps(dtype)

@@ -145,6 +145,10 @@ def _optimum(data, kind="mixture", start=None, off=False):
     settings = ta._settings(**kw)
     problem = aliases._Problem(data, settings)
     bounds = aliases._Bounds.of(aliases.AliasBand(20, 12.0, 12.2), settings)
+    # Known limitation: the default fit starts at the truth, and a start
+    # 0.2 prior-scales away stalls 140 nats short (the strict xfail below).
+    # An off-truth variant waits for continuation in the outlier rate
+    # (mixture v2); until then q ~ 0.7 on a -105 log-L night is what is met.
     x0 = ta._x_truth() if start is None else start
     x, value = aliases._optimize(problem, bounds, x0, 50)
     return problem, onp.asarray(x), value
