@@ -22,6 +22,7 @@ Jasra et al. 2011 (see ``references/provenance.toml``).
 
 import dataclasses
 import time
+from typing import NamedTuple
 
 import blackjax
 import jax
@@ -29,7 +30,7 @@ import jax.numpy as np
 import numpy as onp
 from blackjax.mcmc import hmc
 from blackjax.smc import resampling
-from blackjax.smc.pretuning import build_pretune
+from blackjax.smc.pretuning import build_pretune, esjd
 
 __all__ = ["SMCResult", "bridge_smc", "tempered_smc"]
 
@@ -75,9 +76,63 @@ class SMCResult:
     undersampled: bool
 
 
-def _build(logprior, loglike, dtype, d, n_particles, target_ess, steps, tune):
+def _block(particles):
+    """The continuous block HMC moves: ``particles["x"]``, or the array."""
+    return particles["x"] if isinstance(particles, dict) else particles
+
+
+class _Position(NamedTuple):
+    position: object
+
+
+def _build(
+    logprior, loglike, dtype, d, n_particles, target_ess, steps, tune, moves,
+    composite,
+):  # fmt: skip
     """Jitted one-stage function: tune, mutate, reweight."""
     step_size, leapfrogs, alpha = tune
+    if composite:
+        # Tuned HMC on the continuous block, then each of ``moves``.
+        hmc_kernel = hmc.build_kernel()
+
+        def init(position, logdensity_fn):
+            return _Position(position)
+
+        def step(key, state, logdensity_fn, step_size, num_integration_steps,
+                 inverse_mass_matrix):  # fmt: skip
+            keys = jax.random.split(key, len(moves) + 1)
+            p = state.position
+
+            def on_block(x):
+                return logdensity_fn(
+                    {**p, "x": x} if isinstance(p, dict) else x
+                )
+
+            new, info = hmc_kernel(
+                keys[0],
+                hmc.init(_block(p), on_block),
+                on_block,
+                step_size=step_size,
+                inverse_mass_matrix=inverse_mass_matrix,
+                num_integration_steps=num_integration_steps,
+            )
+            p = (
+                {**p, "x": new.position}
+                if isinstance(p, dict)
+                else new.position
+            )
+            for k, move in zip(keys[1:], moves):
+                p, _ = move(k, p, logdensity_fn)
+            return _Position(p), info
+
+        def measure(state):
+            inner = esjd(state.parameter_override["inverse_mass_matrix"][0])
+            return lambda prev, nxt, acc: inner(_block(prev), _block(nxt), acc)
+
+        mcmc_init, mcmc_step = init, step
+        extra = {"performance_of_chain_measure_factory": measure}
+    else:
+        mcmc_init, mcmc_step, extra = hmc.init, hmc.build_kernel(), {}
     initial = {
         "step_size": np.full((n_particles,), step_size, dtype),
         "num_integration_steps": np.full((n_particles,), leapfrogs, int),
@@ -88,20 +143,21 @@ def _build(logprior, loglike, dtype, d, n_particles, target_ess, steps, tune):
         "num_integration_steps": np.asarray(1.0, dtype),
     }
     pretune = build_pretune(
-        hmc.init,
-        hmc.build_kernel(),
+        mcmc_init,
+        mcmc_step,
         alpha=alpha,
         sigma_parameters=sigma,
         n_particles=n_particles,
         natural_parameters=["num_integration_steps"],
         positive_parameters=["step_size"],
+        **extra,
     )
     algorithm = blackjax.pretuning(
         blackjax.adaptive_tempered_smc,
         logprior,
         loglike,
-        hmc.build_kernel(),
-        hmc.init,
+        mcmc_step,
+        mcmc_init,
         resampling.systematic,
         steps,
         initial,
@@ -111,10 +167,8 @@ def _build(logprior, loglike, dtype, d, n_particles, target_ess, steps, tune):
 
     @jax.jit
     def stage(key, state):
-        particles, weights = (
-            state.sampler_state.particles,
-            state.sampler_state.weights,
-        )
+        particles = _block(state.sampler_state.particles)
+        weights = state.sampler_state.weights
         centred = particles - weights @ particles
         cov = (centred * weights[:, None]).T @ centred
         # The jitter keeps the Cholesky in the ESJD finite on a degenerate cloud.
@@ -133,7 +187,7 @@ def _build(logprior, loglike, dtype, d, n_particles, target_ess, steps, tune):
 def _run(key, init, stage, particles, max_stages, deadline):
     """One replicate: ``(particles, weights, log Z, betas, ess, stopped)``."""
     state = init(particles)
-    tol = 8 * float(np.finfo(particles.dtype).eps)
+    tol = 8 * float(np.finfo(_block(particles).dtype).eps)
     log_z, betas, ess = 0.0, [], []
     for key in jax.random.split(key, max_stages):
         if time.monotonic() > deadline:
@@ -157,19 +211,21 @@ def _run(key, init, stage, particles, max_stages, deadline):
 
 def _smc(
     logprior, loglike, starts, key, n_particles, replicates, ess_target,
-    steps, step_size, leapfrogs, alpha, max_stages, max_seconds,
+    steps, step_size, leapfrogs, alpha, max_stages, max_seconds, moves,
 ):  # fmt: skip
     deadline = time.monotonic() + max_seconds
     # Built once: every replicate shares the compiled stage.
     init, stage = _build(
         logprior,
         loglike,
-        starts[0].dtype,
-        starts[0].shape[1],
+        _block(starts[0]).dtype,
+        _block(starts[0]).shape[1],
         n_particles,
         0.5,
         steps,
         (step_size, leapfrogs, alpha),
+        moves,
+        bool(moves) or isinstance(starts[0], dict),
     )
     runs = [
         _run(k, init, stage, start, max_stages, deadline)
@@ -194,7 +250,7 @@ def _smc(
         else onp.nan
     )
     return SMCResult(
-        np.concatenate([run[0] for run in runs]),
+        jax.tree.map(lambda *a: np.concatenate(a), *[run[0] for run in runs]),
         np.concatenate([run[1] for run in runs]) / len(runs),
         log_z,
         error,
@@ -226,6 +282,7 @@ def tempered_smc(
     alpha=1.0,
     max_stages=200,
     max_seconds=float("inf"),
+    moves=(),
 ):
     """Temper the prior to prior × likelihood with adaptive SMC.
 
@@ -234,7 +291,10 @@ def tempered_smc(
     logprior, loglike : callable
         Normalized log prior and log likelihood of one flat parameter vector.
     init_particles : callable
-        ``init_particles(key, n)`` returns ``n`` exact prior draws, ``(n, d)``.
+        ``init_particles(key, n)`` returns ``n`` exact prior draws: an array
+        ``(n, d)``, or a dict with the continuous block under ``"x"`` and
+        auxiliary arrays (for example discrete labels) under other keys.
+        ``logprior`` and ``loglike`` then take the dict.
     key : jax.random.PRNGKey
     n_particles : int
         Particles per replicate.
@@ -252,6 +312,13 @@ def tempered_smc(
         and the ESJD offset of the per-stage tuning (Buchholz et al. 2021).
     max_stages, max_seconds
         Caps; reaching either returns ``stopped=True``.
+    moves : sequence of callable
+        Extra mutations run after the HMC steps of each round, each
+        ``move(key, particle, logdensity) -> (particle, info)`` on one
+        particle, where ``logdensity`` is the tempered log density at the
+        current β. A move must leave that density invariant (a Gibbs update,
+        or Metropolis-Hastings with its own acceptance); HMC moves only the
+        continuous block.
 
     Returns
     -------
@@ -262,11 +329,13 @@ def tempered_smc(
     keys = jax.random.split(key, replicates + 1)
     starts = [init_particles(k, n_particles) for k in keys[1:]]
     step = (
-        _default_step(starts[0].shape[1]) if step_size is None else step_size
+        _default_step(_block(starts[0]).shape[1])
+        if step_size is None
+        else step_size
     )
     return _smc(
         logprior, loglike, starts, keys[0], n_particles, replicates, ess_target,
-        steps, step, leapfrogs, alpha, max_stages, max_seconds,
+        steps, step, leapfrogs, alpha, max_stages, max_seconds, moves,
     )  # fmt: skip
 
 
@@ -287,6 +356,7 @@ def bridge_smc(
     alpha=1.0,
     max_stages=200,
     max_seconds=float("inf"),
+    moves=(),
 ):
     """Bridge prior × L₁ to prior × L₂: ``π_β ∝ prior · L₁^(1-β) · L₂^β``.
 
@@ -302,26 +372,27 @@ def bridge_smc(
 
     Source: Del Moral, Doucet & Jasra 2006; Zhou, Johansen & Aston 2016.
     """
-    particles = np.asarray(particles)
-    m = particles.shape[0]
+    particles = jax.tree.map(np.asarray, particles)
+    block = _block(particles)
+    m = block.shape[0]
     n_particles = m if n_particles is None else n_particles
     w = (
-        np.full((m,), 1.0 / m, particles.dtype)
+        np.full((m,), 1.0 / m, block.dtype)
         if weights is None
         else np.asarray(weights)
     )
     keys = jax.random.split(key, replicates + 1)
     starts = [
-        particles[resampling.systematic(k, w / np.sum(w), n_particles)]
+        (lambda i: jax.tree.map(lambda a: a[i], particles))(
+            resampling.systematic(k, w / np.sum(w), n_particles)
+        )
         for k in keys[1:]
     ]
-    step = (
-        _default_step(particles.shape[1]) if step_size is None else step_size
-    )
+    step = _default_step(block.shape[1]) if step_size is None else step_size
     # prior · L1 · (L2 / L1)^β is a tempering from prior · L1 to prior · L2.
     return _smc(
         lambda x: logprior(x) + loglike1(x),
         lambda x: loglike2(x) - loglike1(x),
         starts, keys[0], n_particles, replicates, ess_target,
-        steps, step, leapfrogs, alpha, max_stages, max_seconds,
+        steps, step, leapfrogs, alpha, max_stages, max_seconds, moves,
     )  # fmt: skip

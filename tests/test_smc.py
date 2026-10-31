@@ -146,3 +146,134 @@ def test_float32():
     assert r.particles.dtype == np.float32 and r.weights.dtype == np.float32
     assert onp.isfinite(r.log_z)
     assert abs(r.log_z - _log_z(mu)) < 4 * r.log_z_error + 0.05
+
+
+def _gaussian_pair():
+    """Correlated 2-d Gaussian target and the Gibbs move on its 2nd block."""
+    cov = onp.array([[1.0, 0.8], [0.8, 2.0]])
+    prec = np.asarray(onp.linalg.inv(cov))
+    cond_sd = float(1 / onp.sqrt(prec[1, 1]))
+
+    def logpdf(x):
+        return -0.5 * x @ prec @ x
+
+    def move(key, x, logdensity):
+        # Propose the linear block from a deliberately too-wide conditional;
+        # the MH correction against the true density keeps it invariant.
+        k1, k2 = jax.random.split(key)
+        mean = -prec[1, 0] / prec[1, 1] * x[0]
+        sd = 1.3 * cond_sd
+
+        def log_q(v):
+            return -0.5 * ((v - mean) / sd) ** 2
+
+        new = mean + sd * jax.random.normal(k1)
+        prop = x.at[1].set(new)
+        log_a = logdensity(prop) - logdensity(x) + log_q(x[1]) - log_q(new)
+        accept = np.log(jax.random.uniform(k2)) < log_a
+        return np.where(accept, prop, x), accept
+
+    return cov, logpdf, move
+
+
+def test_conditional_move_leaves_target_invariant():
+    cov, logpdf, move = _gaussian_pair()
+    x = jax.random.multivariate_normal(
+        jax.random.key(0), np.zeros(2), cov, (20000,)
+    )
+    keys = jax.random.split(jax.random.key(1), 20000)
+    new, accepted = jax.vmap(lambda k, p: move(k, p, logpdf))(keys, x)
+    assert 0.5 < float(accepted.mean()) < 0.99
+    assert onp.allclose(onp.cov(onp.asarray(new).T), cov, atol=0.08)
+    assert onp.allclose(onp.asarray(new).mean(0), 0, atol=0.03)
+
+
+def test_smc_with_conditional_move():
+    cov, _, move = _gaussian_pair()
+    prec = onp.linalg.inv(cov)
+    mu = onp.array([1.0, -1.0])
+
+    def logprior(x):
+        return -0.5 * x @ x / S0**2 - 2 * np.log(S0 * np.sqrt(2 * np.pi))
+
+    def loglike(x):
+        return -0.5 * (x - mu) @ prec @ (x - mu)
+
+    def init(key, n):
+        return S0 * jax.random.normal(key, (n, 2))
+
+    # exact: ∫ N(x; 0, S0² I) exp(-½(x-μ)ᵀP(x-μ)) dx
+    a = onp.eye(2) / S0**2 + prec
+    truth = (
+        -0.5 * mu @ prec @ mu
+        + 0.5 * (prec @ mu) @ onp.linalg.solve(a, prec @ mu)
+        - 0.5 * onp.linalg.slogdet(a)[1]
+        - onp.log(S0**2)
+    )
+    r = tempered_smc(
+        logprior, loglike, init, key=jax.random.key(4), n_particles=500,
+        replicates=4, moves=[move],
+    )  # fmt: skip
+    assert not r.stopped
+    assert abs(r.log_z - truth) < 4 * r.log_z_error + 0.1
+    post_mean = onp.linalg.solve(a, prec @ mu)
+    assert onp.allclose(
+        onp.asarray(r.weights @ r.particles), post_mean, atol=0.1
+    )
+
+
+def test_discrete_labels_match_exact_frequencies():
+    y = onp.array([-1.6, -0.4, 0.3, 1.4, 2.0])
+    shift, w, sd = 1.5, onp.array([0.6, 0.4]), 1.0
+    comp = np.array([-shift, shift])
+    logw = np.log(np.asarray(w))
+
+    def logprior(p):
+        mu_prior = -0.5 * p["x"][0] ** 2 / S0**2 - np.log(
+            S0 * np.sqrt(2 * np.pi)
+        )
+        return mu_prior + np.sum(logw[p["z"]])
+
+    def loglike(p):
+        r = (y - p["x"][0] - comp[p["z"]]) / sd
+        return np.sum(-0.5 * r**2 - np.log(sd * np.sqrt(2 * np.pi)))
+
+    def init(key, n):
+        k1, k2 = jax.random.split(key)
+        z = (jax.random.uniform(k2, (n, y.size)) < w[1]).astype(int)
+        return {"x": S0 * jax.random.normal(k1, (n, 1)), "z": z}
+
+    def gibbs_labels(key, p, logdensity):
+        # Labels are independent given x: draw each from its exact conditional.
+        def logit(i, k):
+            return logdensity({**p, "z": p["z"].at[i].set(k)})
+
+        logits = jax.vmap(
+            lambda i: jax.vmap(lambda k: logit(i, k))(np.arange(2))
+        )(np.arange(y.size))
+        z = jax.random.categorical(key, logits, axis=1)
+        return {**p, "z": z}, None
+
+    # exact p(z_i = 1 | y) and log p(y) by quadrature over the offset
+    grid = onp.linspace(-12, 12, 4001)
+    dens = onp.exp(-0.5 * grid**2 / S0**2) / (S0 * onp.sqrt(2 * onp.pi))
+    pdf = lambda m, c: onp.exp(-0.5 * ((y[:, None] - grid - c) / sd) ** 2) / (
+        sd * onp.sqrt(2 * onp.pi)
+    )
+    comps = onp.stack(
+        [w[k] * pdf(grid, comp[k]) for k in range(2)]
+    )  # (2, n, grid)
+    lik = comps.sum(0)  # (n, grid)
+    joint = dens * onp.prod(lik, axis=0)
+    dz = grid[1] - grid[0]
+    evidence = joint.sum() * dz
+    frac = ((comps[1] / lik) * joint).sum(axis=1) * dz / evidence
+
+    r = tempered_smc(
+        logprior, loglike, init, key=jax.random.key(6), n_particles=1000,
+        replicates=2, moves=[gibbs_labels],
+    )  # fmt: skip
+    assert not r.stopped
+    got = onp.asarray(r.weights @ r.particles["z"])
+    assert onp.allclose(got, frac, atol=0.06)
+    assert abs(r.log_z - onp.log(evidence)) < 4 * r.log_z_error + 0.1
