@@ -39,6 +39,8 @@ TINY = {
     "max_grid": 13,
     "n_flux": 6,
     "flux_range": [1e-4, 0.2],
+    "n_null": 15,
+    "detection_sigma": 1.5,
     "num_warmup": 30,
     "num_samples": 30,
     "num_chains": 2,
