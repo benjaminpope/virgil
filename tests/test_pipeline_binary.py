@@ -38,6 +38,7 @@ pytestmark = pytest.mark.xdist_group("pipeline_binary")
 TINY = {
     "max_sep_mas": 300.0,
     "max_grid": 13,
+    # n_null=15 floors the false-alarm probability at 1/16 (norm.isf = 1.534σ), so detection_sigma must be below it.
     "n_null": 15,
     "detection_sigma": 1.5,
     "n_flux": 6,
@@ -826,6 +827,7 @@ LATTICE_SETTINGS = {
     "max_grid": 41,
     "n_flux": 6,
     "flux_range": [1e-3, 0.2],
+    # n_null=15 floors the false-alarm probability at 1/16 (norm.isf = 1.534σ), so detection_sigma must be below it.
     "n_null": 15,
     "detection_sigma": 1.5,
     "quicklook_execute": False,

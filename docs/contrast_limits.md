@@ -39,6 +39,11 @@ First, the imports.
     set_style()  # the figure style used throughout the docs
     ```
 
+```text
+auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+```
+
 ## Simulate Data
 
 We generate pure-noise data with Fourier sampling similar to the JWST AMI mask.
@@ -99,11 +104,6 @@ samples = {
 opt_flux = optimized_flux_grid(BinaryModelCartesian, oidata_sim, samples)
 ```
 
-```text
-virgil/_deprecate.py:150: RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
-  return fn(*args, **kwargs)
-```
-
 ## Ruffio Contrast Limits
 
 The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) method is Bayesian: infer the Gaussian posterior on a companion's flux, impose a positive-flux prior, and report a chosen percentile as the upper limit, *conditioned on the astrometry being right and a source being there*.
@@ -145,8 +145,7 @@ plot_grid_map(absil_map, samples, kind="limit", units="delta_mag", sigma=2.0);
 ```
 
 ```text
-virgil/_deprecate.py:150: RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
-  return fn(*args, **kwargs)
+RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
 ```
 
 ![contrast_limits output 11.2](generated/contrast_limits_cell011_out02.png)
@@ -194,7 +193,7 @@ display(Image(filename=str(res.path / "plots" / "limits_contrast_curve.png")))
 ```
 
 ```text
-BinaryPipeline run in /tmp/tmpq4i2jyqe/limits_run: partial
+BinaryPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpk6xqpibo/limits_run: partial
   data.n_vis = 21
   data.n_phi = 35
   data.n_independent = 36
@@ -207,11 +206,13 @@ BinaryPipeline run in /tmp/tmpq4i2jyqe/limits_run: partial
   chi2.n_independent = 36
   chi2.null_reduced = 0.614164
   search.delta_chi2 = 7.05621
-  search.log_bayes_factor = -0.349726
+  search.log_bayes_factor = -0.349728
   search.max_snr = 2.65709
   search.local_nsigma = 2.65635
-  search.global_nsigma = 1.91805
-  search.n_trials = 7.06001
+  search.global_nsigma = 1.19582
+  search.false_alarm_probability = 0.115884
+  search.n_null = 1000
+  search.n_null_above = 115
   search.dra_mas = -100
   search.ddec_mas = -175
   search.flux = 8.28444e-05
@@ -221,9 +222,8 @@ BinaryPipeline run in /tmp/tmpq4i2jyqe/limits_run: partial
   [pass] chi2: χ²/N = 0.614 for the star alone on quoted errors: consistent with the quoted errors.
   [warn] detection: No companion above 3σ (2.66σ local): the fit and posterior describe the highest noise peak; quote the contrast limits instead.
   [pass] grid_edge: The grid peak lies inside the searched grid.
-  [warn] convergence: The optimizer did not converge at 1 of 3721 grid positions (0.027 per cent): values there may be inaccurate.
   [warn] limits_clipped: 1 limits fell outside the flux bounds and were clipped to the nearer bound: those limits are not the true limits; widen flux_range.
-  4 warning(s) recorded in the limits, search stage(s) (see the checks, or Result.summary['warnings'])
+  1 warning(s) recorded in the limits stage(s) (see the checks, or Result.summary['warnings'])
 ```
 
 ![contrast_limits output 15.2](generated/contrast_limits_cell015_out02.png)
