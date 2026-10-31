@@ -812,7 +812,7 @@ def decode_particles(result, t_anchor_mjd=0.0):
 
     Returns a dict of arrays with ``period``, ``z``, ``zeta``, ``ln_f``,
     ``ln_s`` and the reporting invariants of
-    [`invariants`][virgil._orbit_coordinates.invariants] (``a``, ``ecc``,
+    ``invariants`` (``a``, ``ecc``,
     ``cos_inc``, ``omega``, ``Omega``).
     """
     if result.particles is None:
