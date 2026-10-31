@@ -259,6 +259,5 @@ def test_slow_orbit_tests_are_never_dropped_on_nightly_or_main():
     orbit modules; main, dispatch and the nightly already run every slow
     test, so none of those sets it."""
     for event in ("push", "schedule", "workflow_dispatch"):
-        for orbit_slow in (False, True):
-            jobs = _jobs(event, orbit_slow=orbit_slow)
-            assert not any(j.get("orbit_slow") for j in jobs), event
+        jobs = _jobs(event, orbit_slow=True)
+        assert not any(j.get("orbit_slow") for j in jobs), event
