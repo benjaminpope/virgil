@@ -1,16 +1,18 @@
 """Per-night, per-peak (position, velocity, flux) summaries at visibility level.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 Each night's companion is fitted peak by peak with linear motion over the whole
 night, ``p(t) = p + v (t - t̄)``, on the visibilities with the noise model of
 the data (gains, closure offsets and spanning gain modes marginalized as in
 [`whitened_residuals`][virgil.likelihood.whitened_residuals]). The summary of a
 peak is the mean and covariance of ``(p, v, ln f)`` at the quoted errors, with
-the per-block counts, minimum χ² and Hessians that rescale it to any error scale
-in closed form. The velocity variance is ``σ_p² / Σ_j (t_j - t̄)²``
-(``12 σ_p² / span²`` for uniform sampling), so a short or faint night's velocity
-carries no weight and no threshold is needed. Design: ``design/orbit_alias_cycles.md`` §5.
-
-Source: Stage 2b of the alias-resolved orbit fit (``design/orbit_alias_cycles.md`` §5).
+the per-block counts, minimum χ² and Hessians that rescale it to another error
+scale in closed form (for data without gains or closure offsets, where a scale
+factors out of the covariance). The velocity variance is
+``σ_p² / Σ_j (t_j - t̄)²`` (``12 σ_p² / span²`` for uniform sampling), so a short
+or faint night's velocity carries no weight and no threshold is needed.
 """
 
 import dataclasses
@@ -25,7 +27,7 @@ from ._geometry import fringe_scales
 from ._precision import cast_tree, run_in
 from .aliases import _epoch_residuals, _UDBinary
 from .epochs import _REFINE_WINDOW, Epochs, _Surface
-from .likelihood import model_loglike
+from .likelihood import model_loglike, whitened_residuals
 from .models import OrbitalBinary
 
 __all__ = [
@@ -64,6 +66,10 @@ class NightPeak:
         minimum χ² on the quoted errors.
     hessian : numpy.ndarray
         ``(blocks, 5, 5)`` Hessians of ``½ χ²`` per block at the peak.
+    rescalable : bool
+        Whether ``precision`` and ``log_scale`` rescale the errors in closed
+        form: false with gains or closure offsets, whose covariance
+        ``s² D + U Uᵀ`` a scale does not factor.
     """
 
     mean: onp.ndarray
@@ -72,29 +78,33 @@ class NightPeak:
     n: onp.ndarray
     chi2: onp.ndarray
     hessian: onp.ndarray
+    rescalable: bool = True
+
+    def _scales(self, scale):
+        scale = onp.broadcast_to(onp.asarray(scale, float), self.n.shape)
+        if not self.rescalable and onp.any(scale != 1.0):
+            raise NotImplementedError(
+                "Closed-form rescaling is not exact for data with gains or "
+                "closure offsets: refit at the new scale."
+            )
+        return scale
 
     def precision(self, scale=1.0):
         """``Σ⁻¹`` with the errors of block ``g`` multiplied by ``scale[g]``
         (a number or one per block)."""
-        scale = onp.broadcast_to(onp.asarray(scale, float), self.n.shape)
-        return onp.einsum("g,gij->ij", scale**-2.0, self.hessian)
+        return onp.einsum(
+            "g,gij->ij", self._scales(scale) ** -2.0, self.hessian
+        )
 
-    def covariance(self, scale=1.0, jitter=0.0, t_ss=0.0):
-        """The covariance at error ``scale``, with ``jitter`` (mas) added in
-        quadrature to the position error; ``t_ss`` is ``NightSummary.t_ss``,
-        which sets the velocity's share (``jitter² / t_ss``)."""
-        cov = _inverse(self.precision(scale))
-        add = onp.zeros(5)
-        add[:2] = jitter**2
-        if jitter:
-            add[2:4] = jitter**2 / t_ss if t_ss > 0 else onp.inf
-        return cov + onp.diag(add)
+    def covariance(self, scale=1.0):
+        """``Σ`` at error ``scale`` (see ``precision``)."""
+        return _inverse(self.precision(scale))
 
     def log_scale(self, scale):
         """``ln L_j(s) - ln L_j(1)`` for block scales ``s``: ``-Σ_g [n_g ln
         s_g + (χ²_g / 2)(s_g⁻² - 1)]`` (the mean is held at its ``s = 1``
         value)."""
-        scale = onp.broadcast_to(onp.asarray(scale, float), self.n.shape)
+        scale = self._scales(scale)
         return -float(
             onp.sum(
                 self.n * onp.log(scale) + 0.5 * self.chi2 * (scale**-2.0 - 1.0)
@@ -112,6 +122,8 @@ class NightSummary:
         The night's reference time ``t̄`` (MJD), the mean frame time.
     t_ss : float
         ``Σ_j (t_j - t̄)²`` over the night's frames (days²); 0 for one frame.
+    n_frames : int
+        Number of frames (exposures) ``t_ss`` sums over.
     blocks : tuple of str
         The error blocks of ``NightPeak.n``, ``"vis"``, ``"phi"``, ...
     peaks : tuple of NightPeak
@@ -122,12 +134,24 @@ class NightSummary:
 
     t_ref: float
     t_ss: float
+    n_frames: int
     blocks: tuple
     peaks: tuple
     loglike_null: float
 
     def __len__(self):
         return len(self.peaks)
+
+    def covariance(self, peak, scale=1.0, jitter=0.0):
+        """``peak``'s covariance at error ``scale`` with a ``jitter`` (mas),
+        independent per frame, added in quadrature to every frame's position
+        error: the night position (at ``t̄``) gains ``jitter² / n_frames`` and
+        the velocity ``jitter² / t_ss`` (infinite for one frame)."""
+        add = onp.zeros(5)
+        if jitter:
+            add[:2] = jitter**2 / self.n_frames
+            add[2:4] = jitter**2 / self.t_ss if self.t_ss > 0 else onp.inf
+        return peak.covariance(scale) + onp.diag(add)
 
 
 def _inverse(precision):
@@ -212,8 +236,17 @@ def _summarize(d, positions, i, diam, amp_range):
         dm = None if not diam else np.asarray(float(diam))
         problem = _Problem(d64, dm, t_ref, surface, amp_range)
         zero = np.zeros(5)
-        null_model = _model(zero.at[4].set(-np.inf), t_ref, dm)
-        loglike_null = float(model_loglike(null_model, d64))
+        rescalable = d.gains is None and d.phase_offsets is None
+
+        def loglike_at(z):
+            """``ln L`` at ``z`` with the amplitude profiled: the
+            likelihood's normalization, the profiled χ²."""
+            model = _model(z, t_ref, dm)
+            plain = np.sum(whitened_residuals(model, d64) ** 2)
+            profiled = np.sum(problem.chi2(z))
+            return float(model_loglike(model, d64) + 0.5 * (plain - profiled))
+
+        loglike_null = loglike_at(zero.at[4].set(-np.inf))
         peaks = []
         window = _REFINE_WINDOW * res
         n = onp.array([b[3] for b in surface.blocks], float)
@@ -232,53 +265,51 @@ def _summarize(d, positions, i, diam, amp_range):
                 [dra - window, ddec - window, -onp.inf, -onp.inf]
             )
             upper = onp.array([dra + window, ddec + window, onp.inf, onp.inf])
+            lo = onp.append(lower, onp.log(_F_MIN))
+            hi = onp.append(upper, 0.0)
             state = _gauss_newton.solve(
-                problem,
-                z0,
-                lower=onp.append(lower, onp.log(_F_MIN)),
-                upper=onp.append(upper, 0.0),
-                dtol=1e-12,
-                max_steps=200,
+                problem, z0, lower=lo, upper=hi, dtol=1e-12, max_steps=200
             )
-            if int(state.stop) != _gauss_newton.CONVERGED or not onp.isfinite(
-                float(state.value)
+            zj = state.z
+            # a peak held on the window or flux bound is not a stationary
+            # point of the unconstrained fit: its Hessian is no covariance
+            held = _gauss_newton._held(zj, state.grad, lo, hi)
+            if (
+                int(state.stop) != _gauss_newton.CONVERGED
+                or not onp.isfinite(float(state.value))
+                or bool(onp.any(held))
             ):
                 continue
-            zj = state.z
-            z = onp.asarray(zj, float)
             hess = onp.asarray(_hessians(problem, zj), float)
             if not onp.all(onp.isfinite(hess)):
                 continue
-            chi2 = onp.asarray(problem.chi2(zj), float)
-            plain = float(
-                np.sum(
-                    _epoch_residuals(
-                        surface, _model(zj, t_ref, dm), d64, None
-                    )[0]
-                    ** 2
-                )
-            )
-            # normalization from the likelihood; the χ² the profiled one
-            loglike = float(
-                model_loglike(_model(zj, t_ref, dm), d64)
-                + 0.5 * (plain - chi2.sum())
-            )
             peak = NightPeak(
-                z, _inverse(onp.sum(hess, 0)), loglike, n, chi2, hess
+                onp.asarray(zj, float),
+                _inverse(onp.sum(hess, 0)),
+                loglike_at(zj),
+                n,
+                onp.asarray(problem.chi2(zj), float),
+                hess,
+                rescalable,
             )
-            # one peak if each is within one standard deviation of the other
-            # in the metric of the broader
-            if not any(
-                (peak.mean - q.mean)
+            # one peak if the means differ by under one standard deviation
+            # (summed covariances); the higher likelihood stands for both
+            same = [
+                k
+                for k, q in enumerate(peaks)
+                if (peak.mean - q.mean)
                 @ onp.linalg.solve(peak.cov + q.cov, peak.mean - q.mean)
                 < 1.0
-                for q in peaks
-            ):
+            ]
+            if not same:
                 peaks.append(peak)
+            elif peak.loglike > peaks[same[0]].loglike:
+                peaks[same[0]] = peak
     peaks.sort(key=lambda p: -p.loglike)
     return NightSummary(
         t_ref,
         t_ss,
+        len(times),
         tuple(b[0] for b in surface.blocks),
         tuple(peaks),
         loglike_null,

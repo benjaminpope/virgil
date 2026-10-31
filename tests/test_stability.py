@@ -36,6 +36,7 @@ EXPECTED = {
     "virgil.epochs": {"*"},
     "virgil.aliases": {"*"},
     "virgil.arcs": {"*"},
+    "virgil.night_summaries": {"*"},
     "virgil.orbit_search": {"*"},
     "virgil.tempering": {"*"},
     "virgil.svi": {"*"},

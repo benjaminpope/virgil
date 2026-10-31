@@ -141,6 +141,7 @@ nav:
       - Orbits: api/orbits.md
       - Orbit aliases: api/aliases.md
       - Short arcs: api/arcs.md
+      - Night summaries: api/night_summaries.md
       - Tempering: api/tempering.md
       - Epochs: api/epochs.md
       - Orbit Search: api/orbit_search.md
