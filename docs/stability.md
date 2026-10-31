@@ -20,6 +20,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | `MultipoleDisk` family ([`virgil.models`](api/models/classes/multipole_disk.md)) | `MultipoleDisk`, `ThinRing`, `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`, `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `Harmonics`, `VonMises`, `Cone`, `PowerLawHeight`, `multipole_disk_cvis`, `gp_priors` |
 | Polar fields ([`virgil.fields`](api/fields.md)) | `MultipoleField`, `multipole_field_priors` |
 | Ensembles' Gaussian-process members ([`virgil.ensemble`](api/ensemble.md)) | `evidence_grid`, `gp_members`, `GPFit`, `EvidenceGrid` |
+| Tempered SMC | the module [`virgil.smc`](api/smc.md) (`tempered_smc`, `bridge_smc`, `SMCResult`) |
 | Variational inference | the module [`virgil.svi`](api/svi.md) (`variational`, `VariationalResult`) |
 | Pipelines | the whole of [`virgil.pipeline`](pipeline.md): `BinaryPipeline`, `StarPipeline`, `OrbitPipeline`, `Result`, `load` and the rest. Promoted to stable after a release of use |
 | Sparse imaging ([`virgil.imaging`](api/imaging.md)) | `clean`, `CleanResult` |
