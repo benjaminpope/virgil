@@ -156,10 +156,12 @@ with motion); "static" is the same score at the truth position at the night's re
 
 Reading it:
 
-- #618's b_k is a fair static density: against the *static* inlier score it sits −7 ± 5 nats below, the Occam factor of
-  p and f. But the fit's inlier ℓ_k has the within-night motion and is 20–40 nats better than its own static score at the
-  truth (the companion moves ≈ 5 mas/d, the peak is ≈ 0.01 mas wide). The outlier component lacks the velocity the inlier
-  has: **the two sides are scored on different data models**. That is the inconsistency the contract repairs.
+- The static row scores ℓ at the truth *position*, not at the static peak, so it does not test whether #618's b_k is a
+  fair static density: on moving data (≈ 5 mas/d over a ≈ 0.01 mas peak) the static model is misspecified and its peak
+  lies above its score at the truth position by an amount not measured here (the Laplace p- and f-Occam factors alone are
+  ≈ −23 nats, below the −7 ± 5 seen). What the table does show is that the fit's inlier ℓ_k has the within-night motion and
+  is 20–40 nats better than its own static score at the truth. The outlier component lacks the velocity the inlier has:
+  **the two sides are scored on different data models**. That is the inconsistency the contract repairs.
 - Adding v with π(v) of §2.2: b_k rises by the motion improvement and falls by the v-Occam. For the fixture
   (σ_p ≈ 0.01 mas, three frames 1 h apart so σ_v ≈ 0.17 mas/d, v̂ ≈ 5 mas/d, π(ln v) ≈ 0.2 over a width of about 8) the
   Laplace estimate is Δ_k^truth ≈ −17 (p) − 8 (v) − 6 (f) ≈ **−31 nats**, against −31 to −59 now. *Estimate, not run:* b_k
@@ -176,10 +178,11 @@ None of π(v), the scales or v = 0 does by itself:
    q = [1 0 0 1 1 1] whose four outlier nights alone cost 209 nats. The reported optima are ≥ 59 nats below the truth
    (float32), ≈ 160 (float64).
 3. Raising b_k by the contract's ≈ +10 nats per outlier night makes a partial optimum with m outlier nights cheaper by
-   ≈ 10 m: the float32 gap shrinks from 59 to ≈ 19 nats at m = 4, and stays positive.
+   ≈ 10 m: the float32 optimum (m = 2 outlier nights) gap shrinks from 59 to ≈ 39 nats, and the float64 optimum (m = 4) gap from
+   ≈ 160 to ≈ 120; both stay positive.
 4. So the failing tests are **search failures** (graduated non-convexity's cliff: a night absorbed at q = 1 stops
    pulling, and the optimizer settles). #618's own diagnosis ("a poor fit is absorbed at cost b_k, so the alias contest
-   loses discriminating power") is true of the *search*, not of the target: the target still prefers the truth by ≥ 19 nats.
+   loses discriminating power") is true of the *search*, not of the target: the target still prefers the truth by ≥ 39 nats (float32) and ≈ 120 (float64).
    Restoring the tests is the job of the tempered search (§5–6), which keeps every mode with its weight and needs no
    optimizer basin.
 
@@ -547,21 +550,14 @@ ADS does not index).
 for b_k with velocity (§2) and the peak keep rule (§5). Each is flagged *derived* in the methods register by its stage and
 checked by a vv-independent test (the check script, the prior-recovery tests, the #618 oracle in 5-D).
 
-## 12. Draft G1 criteria change (awaiting Ben's sign-off; the gate is **not** changed by this PR)
+## 12. G1 criteria change (separate PR; awaiting Ben's sign-off; the gate is **not** changed by this PR)
 
-`design/orbit_gate_042.md` §3.3 draws stratum B truths with *P* log-uniform on [1 d, 3 × span], redrawing any whose orbit
-violates `period_window`'s within-night motion limit. Under the declared prior of §1.3 truths with *P* < P_cut fall
-outside the default prior. Proposed replacement text for the *P* bullet (to be committed to git, as the criteria file,
-before any rerun):
-
-> *P* log-uniform on [P_cut, 3 × span], with P_cut = max(2Δt_min, P_night) computed from the realized epochs of each
-> draw by the same formula as the engine (orbit_alias_cycles §1.3). A draw with *P* < P_cut is redrawn with the next
-> state of the same generator and counted; the redraw count is reported with the within-night-motion redraws. Truths below
-> P_cut are covered by a separate reported stratum B′ (not scored in any must-hold): the same draws re-scored with
-> `p_range` set to [1 d, 3 × span], to show what the declared prior excludes.
-
-Alternative for Ben: score B′ in M3a/M9 (it passes only if `p_range` is honoured), or drop B′ and report the redraw count only. M4's
-`init=` oracle is unchanged. Any further change needs Ben's sign-off and a change-log row in gate §9.
+`design/orbit_gate_042.md` §3.3 draws stratum B truths with *P* log-uniform on [1 d, 3 × span]. Under the declared prior
+of §1.3, truths with *P* < P_cut = max(2Δt_min, P_night) fall outside the default prior. The change is in
+[#625](https://github.com/benjaminpope/virgil/pull/625), not here: the draw is unchanged, truths with *P* < P_cut are
+excluded and counted (stratum B′, reported, not scored; excluding rather than redrawing keeps the generator stream and
+the before/after pairs identical), the baseline stays reported under its own criteria commit, and the rule is
+`aliases.period_cut`, shared by the engine and the vv harness. M4's `init=` oracle is unchanged.
 
 ## 13. Stage consequences
 
