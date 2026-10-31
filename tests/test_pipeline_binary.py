@@ -473,15 +473,27 @@ def test_null_nsigma_bounds_and_nan(data):
     grid = BinaryPipeline(data, **TINY)._grid()
     n_null = 20
     # A peak above every null maximum: k = 0, FAP at the floor 1 / (n + 1).
-    sigma, fap, k = _null_nsigma(data, grid, None, n_null, 0, 1e12)
+    sigma, fap, k, n = _null_nsigma(data, grid, None, n_null, 0, 1e12, 1.5)
     assert k == 0 and fap == pytest.approx(1.0 / (n_null + 1))
     assert sigma == pytest.approx(float(norm.isf(fap)))
     # A peak below every null maximum: FAP = 1, finite and negative.
-    sigma, fap, k = _null_nsigma(data, grid, None, n_null, 0, -1.0)
+    sigma, fap, k, n = _null_nsigma(data, grid, None, n_null, 0, -1.0, 1.5)
     assert k == n_null and fap == 1.0
     assert math.isfinite(sigma) and sigma < 0.0
-    out = _null_nsigma(data, grid, None, n_null, 0, float("nan"))
+    out = _null_nsigma(data, grid, None, n_null, 0, float("nan"), 1.5)
     assert all(math.isnan(x) for x in out)
+
+
+def test_null_draws_stop_once_the_verdict_is_settled(data):
+    from virgil.pipeline.binary import _null_nsigma
+
+    grid = BinaryPipeline(data, **TINY)._grid()
+    # 300 draws in three chunks of 100. Passing at 1.5σ allows no exceeding
+    # null (k <= 0), so a peak below every null settles it after one chunk.
+    sigma, fap, k, n = _null_nsigma(data, grid, None, 300, 0, -1.0, 1.5)
+    assert (k, n) == (100, 100) and sigma < 0.0
+    # A peak above every null can only be shown with all of them.
+    assert _null_nsigma(data, grid, None, 300, 0, 1e12, 1.5)[2:] == (0, 300)
 
 
 # Slow: 8 searches, each against 50 simulated null searches, take about two
@@ -505,7 +517,7 @@ def test_noise_peaks_have_a_roughly_uniform_false_alarm_probability(data):
                 "delta_chi2"
             ]
         )
-        faps.append(_null_nsigma(data, grid, None, 50, 0, peak)[1])
+        faps.append(_null_nsigma(data, grid, None, 50, 0, peak, 1.5)[1])
     assert 0.2 < onp.mean(faps) < 0.8
 
 

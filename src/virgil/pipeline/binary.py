@@ -74,38 +74,63 @@ class _Axis(NamedTuple):
         return self.step > self.wanted * (1 + _STEP_TOLERANCE)
 
 
-def _null_nsigma(data, grid, batch_size, n_null, seed, delta_chi2):
-    """Global significance of ``delta_chi2`` from ``n_null`` companion-free
-    searches, and its false-alarm probability.
+# Null searches per call of the compiled kernel, and draws evaluated together
+# in it (about 25% faster than one at a time on a CPU).
+_NULL_CHUNK = 128
+_NULL_DRAW_BATCH = 32
 
-    The searches repeat the real one on Gaussian noise at the quoted errors.
-    The probability is ``(k + 1) / (n_null + 1)`` for ``k`` null maxima at
-    or above ``delta_chi2``, so it is an upper bound and the significance a
-    lower bound; with ``k = 0`` it sits at the floor ``1 / (n_null + 1)``
-    however strong the peak. Returns ``(sigma, fap, k)``; all NaN if
-    ``delta_chi2`` is not finite."""
+
+def _null_nsigma(
+    data, grid, batch_size, n_null, seed, delta_chi2, detection_sigma
+):
+    """Global significance of ``delta_chi2`` from companion-free searches,
+    its false-alarm probability and the counts behind it.
+
+    The searches repeat the real one on Gaussian noise at the quoted errors,
+    in equal chunks (at least ``n_null`` draws in all). The probability is
+    ``(k + 1) / (n + 1)`` for ``k`` of ``n`` null maxima at or above
+    ``delta_chi2``, so it is an upper bound and the significance a lower
+    bound; with ``k = 0`` it sits at the floor ``1 / (n + 1)`` however strong
+    the peak. Drawing stops early once ``k`` is too large for the probability
+    to reach ``detection_sigma`` even with all ``n_null`` draws: the verdict
+    is then settled and the significance rests on the draws so far.
+    Returns ``(sigma, fap, k, n)``; all NaN if ``delta_chi2`` is not finite."""
+    import jax
     from scipy.stats import norm
 
     from ..detection import gaussian_null, injection_recovery
     from ..models import BinaryModelCartesian
 
     if not math.isfinite(delta_chi2):
-        return float("nan"), float("nan"), float("nan")
-    mc = injection_recovery(
-        BinaryModelCartesian,
-        _null_model(),
-        data,
-        grid,
-        seed,
-        n_null=n_null,
-        noise=gaussian_null(_null_model(), data),
-        batch_size=batch_size,
-        progress=False,
-    )
-    fap = float(mc.false_alarm_probability("delta_chi2", delta_chi2)[0])
+        return (float("nan"),) * 4
+    chunks = -(-n_null // _NULL_CHUNK)
+    size = -(-n_null // chunks)
+    # Passing needs (k + 1) / (n_null + 1) <= the tail beyond detection_sigma.
+    k_pass = math.floor(float(norm.sf(detection_sigma)) * (n_null + 1)) - 1
+    noise = gaussian_null(_null_model(), data)
+    key = jax.random.PRNGKey(seed)
+    k = n = 0
+    for i in range(chunks):
+        mc = injection_recovery(
+            BinaryModelCartesian,
+            _null_model(),
+            data,
+            grid,
+            jax.random.fold_in(key, i),
+            n_null=size,
+            noise=noise,
+            draw_batch=min(_NULL_DRAW_BATCH, size),
+            batch_size=batch_size,
+            progress=False,
+        )
+        fap = float(mc.false_alarm_probability("delta_chi2", delta_chi2)[0])
+        k += round(fap * (size + 1)) - 1
+        n += size
+        if k > k_pass:
+            break
+    fap = (k + 1.0) / (n + 1.0)
     # A FAP of 1 (every null peaks higher) would give -inf, which JSON rejects.
-    k = round(fap * (n_null + 1)) - 1
-    return float(norm.isf(min(fap, n_null / (n_null + 1.0)))), fap, k
+    return float(norm.isf(min(fap, n / (n + 1.0)))), fap, k, n
 
 
 class BinaryPipeline(_Pipeline):
@@ -481,13 +506,14 @@ def _search_report(data, grid, axis, detection, settings):
     from ..detection import local_nsigma
 
     local = float(local_nsigma(float(detection["delta_chi2"])))
-    global_nsigma, fap, n_above = _null_nsigma(
+    global_nsigma, fap, n_above, n_drawn = _null_nsigma(
         data,
         grid,
         settings["batch_size"],
         settings["n_null"],
         settings["seed"],
         float(detection["delta_chi2"]),
+        settings["detection_sigma"],
     )
     chi2_null, _ = _chi2(_null_model(), data)
     return {
@@ -503,7 +529,7 @@ def _search_report(data, grid, axis, detection, settings):
         "false_alarm_probability": fap,
         "n_null_above": n_above,
         "global_nsigma_is_lower_bound": n_above == 0,
-        "n_null": settings["n_null"],
+        "n_null": n_drawn,
         "max_sep_mas": axis.max_sep,
         "alias_cap_mas": axis.alias_cap,
         "grid_step_mas": axis.step,
