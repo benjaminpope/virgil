@@ -128,8 +128,12 @@ modes the heuristics were built for.
   stream are unchanged. A truth with *P* < P_cut = max(2·Δt_min, P_night),
   computed from the draw's realized epochs by `virgil.aliases.period_cut`
   (Δt_min the shortest gap between consecutive nights, P_night the
-  within-night motion bound of `period_window` at the draw's own
-  semi-major axis, which is the `field` argument; orbit_alias_cycles §1.3),
+  within-night motion bound of `period_window`'s lower end with `field` =
+  the truth's semi-major axis *a* (the largest separation the truth reaches),
+  `night_length` the longest simulated night and `resolution` = λ_min/B_max;
+  orbit_alias_cycles §1.3). The engine's default run takes `field` from the
+  fitted positions instead, so P_cut here is a property of the truth and
+  the epochs, not of any fit,
   lies outside the engine's declared prior and is **excluded from every
   scored metric and counted**; the count is reported. The excluded draws form
   a reported stratum B′, not scored in any must-hold: the same draws, scored
@@ -286,6 +290,10 @@ the default.
 - Strata B, N: `OrbitPipeline.from_oifits(paths).run()` with **every
   setting at its default** (the gate tests the defaults as shipped at the
   commit under test).
+- Stratum B′ (reported only): the *excluded* B truths themselves (P < P_cut),
+  simulated as drawn and fitted once with `p_range` = [1 d, 3 × span], the one
+  non-default setting, to show what the declared prior excludes. One extra
+  fit per excluded system; budget for it in the array job.
 - Oracle runs (B only): the same call with `init=` the truth, which forces
   the truth's band to be fitted from the truth as well as from the blind
   seeds. Used only for metric M4.
@@ -338,7 +346,8 @@ log Z for the true band is more than 1 nat + 3√(SE_blind² + SE_oracle²)
 below the oracle run's, using each run's reported IS standard error
 (two independent estimates differ by noise alone; ln Ẑ is also biased
 low at small ESS). Pass
-if misses ≤ 2% of B (at most 4 of 240).
+if misses ≤ 2% of the scored B (at most 4 of 240 when none is excluded; *n* is
+the scored count, after the P_cut exclusion).
 *Why 1 nat:* a 1-nat shortfall changes that band's odds by a factor e,
 the smallest change that moves a reported *p* noticeably. *Why 2%:* the
 binomial standard error of a recovery rate near ½ on 240 systems is
@@ -421,7 +430,8 @@ probability the fit gives each injected bad night and sign-error night
 against the others (ROC area); `labels_free` on near-twins; the
 tempering factor against the injected *c*; the primary diameter against
 the truth; wall time and peak memory per system; the number of redraws
-in B; M3 and M5 split by the misspecification flag; and a data-sufficiency
+in B by reason (within-night motion, semi-major axis range) and the number
+excluded below P_cut, with stratum B′; M3 and M5 split by the misspecification flag; and a data-sufficiency
 table: recovery against the number of nights and the phase coverage of the
 true orbit (NN Del's four nights over 62 days is the case it describes).
 
@@ -503,7 +513,7 @@ them cold.
 | 2026-10-29 | §3.6 candidate (iii) replaced by (iii′) global-scale inflation (orbit_mixture_v2 §5); YAML name `shared_noise_inflation` → `global_scale_inflation` | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | yes: the #586 strict xfail showed (iii) cannot separate any night |
 | 2026-10-29 | YAML repair: `null_choice` moved to top level; it sat between two `must_hold` entries and the block did not parse (`yaml.safe_load` fails at `M4_search_misses`); no criterion changed, hash changes | Claude (Opus), for Ben | no |
 | 2026-10-29 | stratum A draws each global noise scale s_g from the fit's log-uniform prior (SBC exactness under orbit_mixture_v2 §2); s_g ranks reported, not tested; showcases report ŝ_g after raw χ²/N | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | no |
-| 2026-11-01 | §3.3 stratum B: truths with *P* < P_cut = max(2Δt_min, P_night) (`virgil.aliases.period_cut`; orbit_alias_cycles §1.3) are excluded from scored metrics and counted, not redrawn (the draw and its stream are unchanged); reported stratum B′; YAML `population` key added (criteria hash changes); the baseline 19560581/86 stays reported under its own commit, no mixing. Proposed, awaiting Ben's sign-off | Claude (Sonnet), for Ben, on the 0.4.2 coordinator's decisions | no (no G1 aggregate had been seen when written) |
+| 2026-11-01 (Ben's date, Australia) | §3.3 stratum B: truths with *P* < P_cut = max(2Δt_min, P_night) (`virgil.aliases.period_cut`; orbit_alias_cycles §1.3) are excluded from scored metrics and counted, not redrawn (the draw and its stream are unchanged); reported stratum B′; YAML `population` key added (criteria hash changes); the baseline 19560581/86 stays reported under its own commit, no mixing. Proposed, awaiting Ben's sign-off | Claude (Sonnet), for Ben, on the 0.4.2 coordinator's decisions | no: no G1 aggregate and no per-system B truth or fit of 19560581/86 had been inspected when written |
 
 ## References
 
