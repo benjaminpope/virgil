@@ -15,8 +15,15 @@ Two whitenings agree: successive rank-one steps (`whiten_rank_one`,
 offsets and grey scales) and a dense Cholesky (`whiten_cholesky`; a few
 well-conditioned columns). `LinearMarginal` wraps either.
 
+``arrow_problem`` and ``arrow_at`` give the same marginal at any error scale
+``s`` (covariance ``s² D + U Uᵀ``) without whitening again: a Cholesky per
+block and a Schur complement on the spanning columns (Woodbury and the
+determinant lemma). Source: Rasmussen & Williams (2006), [references](../references.md#rasmussen2006).
+
 Derivations and rules: ``design/linear_marginalisation.md``.
 """
+
+from typing import NamedTuple
 
 import equinox as eqx
 import jax
@@ -28,6 +35,8 @@ from ._utils import concrete
 
 __all__ = [
     "LinearMarginal",
+    "arrow_at",
+    "arrow_problem",
     "posterior",
     "whiten_blocks",
     "whiten_cholesky",
@@ -97,6 +106,94 @@ def whiten_blocks(x, rows, local, spanning=None):
         done = done[0]
         extra = extra + 0.5 * np.sum(span_logdets) / n
     return done[:, 0], extra
+
+
+class ArrowProblem(NamedTuple):
+    """A block-arrow ``Ũ`` reduced to the Gram sums ``arrow_at`` needs."""
+
+    x: jax.Array  # (n,) residuals, whitened by D^-½ (s = 1)
+    rows: jax.Array  # (n_block, n_row), padded out of range
+    local: jax.Array  # (n_block, n_row, n_mode)
+    spanning: jax.Array  # (n, n_span), n_span may be 0
+    gram_bb: jax.Array  # (n_block, n_mode, n_mode)
+    gram_bs: jax.Array  # (n_block, n_mode, n_span)
+    gram_ss: jax.Array  # (n_span, n_span)
+    proj_b: jax.Array  # (n_block, n_mode): Ũᵀx
+    proj_s: jax.Array  # (n_span,)
+
+
+def arrow_problem(x, rows, local, spanning=None):
+    """Gram sums of the covariance ``s² I + Ũ Ũᵀ`` in ``whiten_blocks``' layout.
+
+    ``x`` is whitened by ``D^-½`` at ``s = 1``; ``rows`` (n_block, n_row),
+    ``local`` (n_block, n_row, n_mode) and ``spanning`` (n, n_span) are as for
+    ``whiten_blocks``. Evaluate it at any ``s`` with ``arrow_at``.
+    """
+    x, local = np.asarray(x), np.asarray(local)
+    if spanning is None:
+        spanning = np.zeros((x.shape[0], 0), x.dtype)
+    rows = np.asarray(rows)
+    hi = jax.lax.Precision.HIGHEST
+    x_b = x.at[rows].get(mode="fill", fill_value=0)
+    s_b = spanning.at[rows].get(mode="fill", fill_value=0)
+    return ArrowProblem(
+        x,
+        rows,
+        local,
+        spanning,
+        np.einsum("brm,brn->bmn", local, local, precision=hi),
+        np.einsum("brm,brk->bmk", local, s_b, precision=hi),
+        np.matmul(spanning.T, spanning, precision=hi),
+        np.einsum("brm,br->bm", local, x_b, precision=hi),
+        np.matmul(spanning.T, x, precision=hi),
+    )
+
+
+def _solve_spd(chol, rhs):
+    return jsl.cho_solve((chol, True), rhs)
+
+
+def arrow_at(problem, scale2, trace=False):
+    """The marginal of ``arrow_problem`` at the variance scale ``s² = scale2``.
+
+    Returns ``(chi2, norm, r2)``: ``χ² = xᵀ(I + ŨŨᵀ/s²)⁻¹x/s²`` written stably
+    as ``‖x - Ũy‖²/s² + ‖y‖²`` with ``y = (s²I + ŨᵀŨ)⁻¹Ũᵀx``;
+    ``norm = ½ log det(I + ŨᵀŨ/s²)``; and ``r2 = ‖x - Ũy‖²``. With
+    ``trace=True`` also ``tr((s²I + ŨᵀŨ)⁻¹)``, so that ``∂norm/∂ln s =
+    s² tr - K`` and ``∂χ²/∂ln s = -2 r2/s²`` (K the number of columns).
+    """
+    p = problem
+    n_block, n_mode = p.gram_bb.shape[:2]
+    n_span = p.gram_ss.shape[0]
+    eye = np.eye(n_mode, dtype=p.gram_bb.dtype)
+    chol_b = np.linalg.cholesky(p.gram_bb + scale2 * eye)
+    rhs = np.concatenate([p.proj_b[..., None], p.gram_bs], axis=-1)
+    sol = jax.vmap(_solve_spd)(chol_b, rhs)
+    m_g, m_gs = sol[..., 0], sol[..., 1:]
+    eye_s = np.eye(n_span, dtype=p.gram_ss.dtype)
+    schur = (
+        scale2 * eye_s + p.gram_ss - np.einsum("bmk,bml->kl", p.gram_bs, m_gs)
+    )
+    chol_s = np.linalg.cholesky(schur)
+    y_s = _solve_spd(chol_s, p.proj_s - np.einsum("bmk,bm->k", p.gram_bs, m_g))
+    y_b = m_g - np.einsum("bmk,k->bm", m_gs, y_s)
+    fit = (
+        np.zeros_like(p.x)
+        .at[p.rows]
+        .add(np.einsum("brm,bm->br", p.local, y_b), mode="drop")
+    )
+    r2 = np.sum((p.x - fit - p.spanning @ y_s) ** 2)
+    chi2 = r2 / scale2 + np.sum(y_b**2) + np.sum(y_s**2)
+    log_diag = np.sum(np.log(np.diagonal(chol_b, axis1=1, axis2=2)))
+    log_diag = log_diag + np.sum(np.log(np.diagonal(chol_s)))
+    norm = log_diag - 0.5 * (n_block * n_mode + n_span) * np.log(scale2)
+    if not trace:
+        return chi2, norm, r2
+    inv_b = jax.vmap(lambda c: _solve_spd(c, eye))(chol_b)
+    z = np.einsum("bmk,bml->kl", m_gs, m_gs)
+    tr = np.sum(np.diagonal(inv_b, axis1=1, axis2=2))
+    tr = tr + np.trace(_solve_spd(chol_s, z + eye_s))
+    return chi2, norm, r2, tr
 
 
 def whiten_rank_one(x, U):

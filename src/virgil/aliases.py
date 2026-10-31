@@ -54,7 +54,7 @@ from ._grid import batch_size_or_default
 from .epochs import (
     _grid_batch,
     default_memory_budget,
-    _whitening_floats,
+    _table_floats,
     _REFINE_WINDOW,
     EpochPositions,
     _amp_profile,
@@ -571,10 +571,10 @@ def _batch(surfaces, xs, data, cfg, dof, log_broad=None, batch_size=64):
 
 
 # The Hessian of the likelihood (forward over reverse through the scale
-# integral) holds about this many whitenings' floats per night (measured: 6.4k
-# on calibrated GRAVITY-like data); it is a sum over nights, so it is
+# integral) holds one reverse working set per sampled coordinate (``x`` has the
+# orbit's 8 sites and the diameter); it is a sum over nights, so it is
 # accumulated in groups of nights that fit the memory budget.
-_HESSIAN_COPIES = 8000
+_N_SITES = 9
 
 
 # deliberate: tests/test_epoch_coarse.py calls it; memory-budget grouping is not reachable cheaply via the public API
@@ -590,7 +590,7 @@ def _hessian_groups(memory_budget, data, surfaces):
     if not budget > 0:
         raise ValueError(f"memory_budget must be positive, got {budget}.")
     per_night = [
-        8 * _HESSIAN_COPIES * _whitening_floats(d) if s.numeric else 0
+        8 * _N_SITES * _table_floats(d) if s.numeric else 0
         for d, s in zip(data, surfaces)
     ]
     groups, start, used = [], 0, 0
