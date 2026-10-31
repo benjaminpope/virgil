@@ -42,7 +42,7 @@ A run resumes by default: a completed stage whose outputs exist is skipped, and 
 | --- | --- | --- |
 | `load` | Applies `wavel_range` and `error_floor`, and writes the data that are fitted | `OIData.select`, `OIData.with_error_floor`, `write_oifits` |
 | `overview` | Plots the data and the uv coverage | `plot_oidata_overview`, `plot_uv_coverage` |
-| `search` | Delta chi-squared, best flux and SNR maps on a point-companion grid, with the significance of the peak before and after an approximate look-elsewhere correction (a Šidák estimate, not a simulated false-alarm probability) | `detection_statistics`, `optimized_likelihood_grid`, `local_nsigma` |
+| `search` | Delta chi-squared, best flux and SNR maps on a point-companion grid, with the significance of the peak locally and globally (against simulated companion-free searches at the quoted errors, so the look-elsewhere effect is included) | `detection_statistics`, `optimized_likelihood_grid`, `local_nsigma` |
 | `limits` | Contrast limits at `sigma` and their radial profile | `absil_limits`, `radial_profile` |
 | `fit` | MAP fit of the model template from the best grid point | `fit` |
 | `posterior` | NUTS from the fit | `numpyro_model`, `chain_init_params` |
@@ -59,7 +59,8 @@ The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per 
 | Setting (default) | Meaning |
 | --- | --- |
 | `sigma` (3.0) | Significance of the contrast limits. |
-| `detection_sigma` (3.0) | Threshold of the detection check, on the look-elsewhere-corrected significance. |
+| `detection_sigma` (3.0) | Threshold of the detection check, on the global significance: the grid maximum against `n_null` simulated companion-free searches (one-sided Gaussian σ of the false-alarm probability; 3σ is 1.35e-3). |
+| `n_null` (1000) | Companion-free searches simulated for the global significance. The smallest false-alarm probability is 1/(`n_null` + 1), so 1000 resolves 3.09σ; raise it to claim more. |
 | `max_sep_mas` (`None`) | Half-width of the search grid; by default `fov_fraction` times the coarsest λ/B of the samples (each sample's own wavelength over its own baseline, not λ_max/B_min), capped as above on lattice coverage. |
 | `fov_fraction` (1.0) | See `max_sep_mas`. |
 | `grid_step_mas` (`None`) | Grid spacing; by default a quarter of the finest λ/B of the samples, coarsened so that no axis exceeds `max_grid` points (the search report then records the effective step and warns). |
@@ -280,7 +281,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | --- | --- | --- |
 | `chi2` (on the quoted errors) | above 2 (errors likely underestimated) or below 0.5 (errors likely overestimated) | above 5 (the model does not describe the data, or the errors are much too small) |
 | `error_scale` (with `error_scale="fit"`, or the MacKay estimate of `"rescale"`) | a scale above 2 | a scale above 5, a failed fit rather than a calibration |
-| `detection` (approximate look-elsewhere-corrected significance against `detection_sigma`; use `injection_recovery` or `gaussian_null` for a calibrated threshold) | below the threshold | |
+| `detection` (global significance against simulated companion-free searches, compared with `detection_sigma`) | below the threshold | |
 | `grid_edge` (peak on the edge of the `dra` or `ddec` axis; the flux axis is not a search boundary) | at the edge | |
 | `start_at_bound` (only when triggered: the best fit, where NUTS starts, within 0.1% of a prior bound; typically a non-detection, with the flux or diameter at the edge of its range) | any: NUTS starts just inside the bound and the posterior is prior-dominated | |
 | `prior_bound` (posterior mass within 1% of a prior bound) | above 5% | |
@@ -345,7 +346,7 @@ When a pipeline is promoted to stable, it keeps the following within a schema ve
 
 After that, changes are additive: new settings whose defaults keep the old behaviour, new summary keys, new checks appended at the end, and new files. Anything else needs a new schema version. Snapshot tests already pin the signatures, defaults, summary keys and check order, so a change is visible in review; while a pipeline is provisional, updating the snapshot is allowed.
 
-Open before promotion: `global_nsigma` is a Šidák estimate with a nominal number of resolution elements, not a simulated false-alarm probability (the grid maxima are correlated, and the resolution element is anisotropic). It must be calibrated by simulation, or dropped from the summary keys and the `detection` check, before the pipelines become stable. Until then it is labelled an approximation in `summary.json` (`global_nsigma_method`).
+`global_nsigma` is the significance of the false-alarm probability `(k + 1) / (n_null + 1)`, `k` being the simulated companion-free maxima at or above the observed one: an upper bound on the probability, so a lower bound on the significance. The simulation uses Gaussian noise at the quoted errors, so it is anti-conservative if they are underestimated (see the `chi2` and `error_scale` checks). When no null reaches the peak (`n_null_above` is 0, `global_nsigma_is_lower_bound` true) `global_nsigma` sits at the floor `norm.isf(1/(n_null+1))`, 3.09σ by default, however strong the companion: read it as a lower bound (the check prints `≥`) and rank detections by `local_nsigma`. `BinaryPipeline` refuses an `n_null` too small to resolve `detection_sigma`.
 
 | Pipeline | CLI command | Tier |
 | --- | --- | --- |

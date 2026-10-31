@@ -63,6 +63,12 @@ def test_detection(local, glob, status, word):
     assert word in check.message
 
 
+def test_detection_prints_a_lower_bound():
+    check = checks.detection(40.0, 3.09, threshold=3.0, bound=True)
+    assert _status(check) == "pass" and "≥3.09σ" in check.message
+    assert "≥" not in checks.detection(40.0, 3.09, threshold=3.0).message
+
+
 def test_detection_survives_a_missing_global_significance():
     """A global sigma stored as None (not finite) must not break the text."""
     check = checks.detection(14.0, None, threshold=3.0)

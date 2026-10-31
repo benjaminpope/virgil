@@ -38,6 +38,8 @@ pytestmark = pytest.mark.xdist_group("pipeline_binary")
 TINY = {
     "max_sep_mas": 300.0,
     "max_grid": 13,
+    "n_null": 15,
+    "detection_sigma": 1.5,
     "n_flux": 6,
     "flux_range": [1e-4, 0.2],
     "num_warmup": 30,
@@ -96,6 +98,7 @@ STAGES = (
 DEFAULTS = {
     "sigma": 3.0,
     "detection_sigma": 3.0,
+    "n_null": 1000,
     "max_sep_mas": None,
     "fov_fraction": 1.0,
     "grid_step_mas": None,
@@ -148,7 +151,10 @@ SUMMARY_KEYS = {
         "local_nsigma",
         "global_nsigma",
         "global_nsigma_method",
-        "n_trials",
+        "false_alarm_probability",
+        "n_null",
+        "n_null_above",
+        "global_nsigma_is_lower_bound",
         "dra_mas",
         "ddec_mas",
         "flux",
@@ -459,23 +465,71 @@ def test_grid_leaves_out_the_limits_of_an_unfinished_limits_stage(
     assert "snr" in grid and "limit_flux" not in grid
 
 
-def test_global_nsigma_is_finite_for_huge_trial_numbers():
+def test_null_nsigma_bounds_and_nan(data):
     from scipy.stats import norm
-    from virgil.pipeline.binary import _global_nsigma
+    from virgil.pipeline.binary import _null_nsigma
 
-    assert _global_nsigma(5.0, 1.0) == pytest.approx(5.0, abs=1e-6)
-    # Sidak: p_global = 1 - (1 - p)^n.
-    p = float(norm.sf(4.0))
-    expected = float(norm.isf(1.0 - (1.0 - p) ** 100))
-    assert _global_nsigma(4.0, 100.0) == pytest.approx(expected, abs=1e-6)
-    previous = _global_nsigma(4.0, 1.0)
-    for n in (1e2, 1e4, 1e6, 1e9, 1e12):
-        sigma = _global_nsigma(4.0, n)  # n * p >> 37: p_global rounds to 1
-        assert math.isfinite(sigma) and sigma < previous
-        previous = sigma
-    assert _global_nsigma(4.0, 1e12) < 0.0
-    assert _global_nsigma(40.0, 1e4) == pytest.approx(40.0, abs=1e-3)
-    assert math.isnan(_global_nsigma(float("nan"), 10.0))
+    grid = BinaryPipeline(data, **TINY)._grid()
+    n_null = 20
+    # A peak above every null maximum: k = 0, FAP at the floor 1 / (n + 1).
+    sigma, fap, k = _null_nsigma(data, grid, None, n_null, 0, 1e12)
+    assert k == 0 and fap == pytest.approx(1.0 / (n_null + 1))
+    assert sigma == pytest.approx(float(norm.isf(fap)))
+    # A peak below every null maximum: FAP = 1, finite and negative.
+    sigma, fap, k = _null_nsigma(data, grid, None, n_null, 0, -1.0)
+    assert k == n_null and fap == 1.0
+    assert math.isfinite(sigma) and sigma < 0.0
+    out = _null_nsigma(data, grid, None, n_null, 0, float("nan"))
+    assert all(math.isnan(x) for x in out)
+
+
+# Slow: 8 searches, each against 50 simulated null searches, take about two
+# minutes on a CI core; it calibrates the null, which no cheaper run can.
+@pytest.mark.slow
+def test_noise_peaks_have_a_roughly_uniform_false_alarm_probability(data):
+    """Peaks of independent companion-free searches are exchangeable with the
+    simulated null maxima, so their FAPs average 1/2 (sd 0.29 / sqrt(8)); a
+    null that included the companion or ignored the look-elsewhere effect
+    would pin them at the floor or the ceiling."""
+    from virgil.detection import detection_statistics, gaussian_null
+    from virgil.pipeline.binary import _null_model, _null_nsigma
+
+    grid = BinaryPipeline(data, **TINY)._grid()
+    simulate = gaussian_null(_null_model(), data)
+    faps = []
+    for key in range(8):
+        noise = simulate(jax.random.PRNGKey(1000 + key))
+        peak = float(
+            detection_statistics(BinaryModelCartesian, noise, grid)[
+                "delta_chi2"
+            ]
+        )
+        faps.append(_null_nsigma(data, grid, None, 50, 0, peak)[1])
+    assert 0.2 < onp.mean(faps) < 0.8
+
+
+def test_search_report_uses_the_simulated_null(full_run):
+    _, result = full_run
+    search = result.summary["search"]
+    assert "n_trials" not in search
+    n = search["n_null"]
+    assert n == TINY["n_null"]
+    # TRUTH is a ~flux-0.01 companion at hundreds of sigma: no null reaches it.
+    assert search["false_alarm_probability"] == pytest.approx(1.0 / (n + 1))
+    assert search["n_null_above"] == 0
+    assert search["global_nsigma_is_lower_bound"] is True
+    assert search["local_nsigma"] > search["global_nsigma"]
+    assert "simulated" in search["global_nsigma_method"]
+    detection = next(c for c in result.checks if c.name == "detection")
+    assert detection.status == "pass" and "≥" in detection.message
+
+
+def test_n_null_must_resolve_the_detection_threshold(data):
+    with pytest.raises(ValueError, match="n_null=500 cannot resolve"):
+        BinaryPipeline(data, n_null=500)
+    with pytest.raises(ValueError, match="cannot resolve detection_sigma=5"):
+        BinaryPipeline(data, detection_sigma=5.0)
+    BinaryPipeline(data, n_null=740)  # 1 / 741 <= the 3σ tail 1.35e-3
 
 
 def test_grid_is_capped_at_an_odd_number_and_the_step_reported(data, tmp_path):
@@ -772,6 +826,8 @@ LATTICE_SETTINGS = {
     "max_grid": 41,
     "n_flux": 6,
     "flux_range": [1e-3, 0.2],
+    "n_null": 15,
+    "detection_sigma": 1.5,
     "quicklook_execute": False,
 }
 
