@@ -321,6 +321,12 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `read_oifits` | [Pauls et al. (2005)](#pauls2005), [arXiv:astro-ph/0508185](https://arxiv.org/abs/astro-ph/0508185), [ADS](https://ui.adsabs.harvard.edu/abs/2005PASP..117.1255P/abstract), [doi:10.1086/444523](https://doi.org/10.1086/444523) | after |
 | `write_oifits` | [Duvert, Young & Hummel (2015)](#duvert2017), [arXiv:1510.04556](https://arxiv.org/abs/1510.04556), [ADS](https://ui.adsabs.harvard.edu/abs/2017A&A...597A...8D/abstract), [doi:10.1051/0004-6361/201526405](https://doi.org/10.1051/0004-6361/201526405) | after |
 
+### `virgil.orbit_cells`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `position_leg` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
+
 ### `virgil.orbits`
 
 | Symbol | Source | Relation |
