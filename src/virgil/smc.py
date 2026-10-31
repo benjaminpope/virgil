@@ -186,8 +186,10 @@ def _smc(
     log_zs = onp.array([run[2] for run in runs])
     shift = log_zs.max()
     log_z = float(shift + onp.log(onp.mean(onp.exp(log_zs - shift))))
+    # Delta method for log of the mean of the unbiased Z estimates.
+    u = onp.exp(log_zs - shift)
     error = (
-        float(onp.std(log_zs, ddof=1) / onp.sqrt(len(runs)))
+        float(onp.std(u, ddof=1) / (onp.mean(u) * onp.sqrt(len(runs))))
         if len(runs) > 1
         else onp.nan
     )
