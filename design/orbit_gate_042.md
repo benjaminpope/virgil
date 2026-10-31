@@ -124,24 +124,29 @@ modes the heuristics were built for.
     alias problem);
   - S3, a dense run then sparse returns: half the nights within 10 days,
     the rest uniform over 2 years.
-- *P* log-uniform on [P_cut, 3 × span], with P_cut = max(2·Δt_min, P_night)
-  computed from each draw's realized epochs by the engine's own formula
-  (orbit_alias_cycles §1.3: Δt_min the shortest gap between consecutive
-  nights, P_night the within-night motion bound of `period_window`). A draw
-  whose truth has *P* < P_cut, or whose orbit violates the engine's
-  documented domain (the companion moves more than half a resolution
-  element within its longest night, the sampling limit of `period_window`),
-  is redrawn with the next state of the same generator; the number of
-  redraws is reported for each reason. This keeps the population inside the
-  method's stated prior without selecting on difficulty. **Proposed,
-  awaiting Ben's sign-off.** Runs made before this criteria commit (the
-  baselines 19560581 and its oracle 19560586) are re-aggregated under it
-  with no refit: a system whose truth has *P* < P_cut is dropped from every
-  metric by this rule, which uses only the truth and the epochs, and the
-  number dropped is reported. A reported stratum B′ (not scored in any
-  must-hold) lists those truths; for new runs it is the same draws re-scored
+- *P* log-uniform on [1 d, 3 × span], as before: the draw and the generator
+  stream are unchanged. A truth with *P* < P_cut = max(2·Δt_min, P_night),
+  computed from the draw's realized epochs by `virgil.aliases.period_cut`
+  (Δt_min the shortest gap between consecutive nights, P_night the
+  within-night motion bound of `period_window`; orbit_alias_cycles §1.3),
+  lies outside the engine's declared prior and is **excluded from every
+  scored metric and counted**; the count is reported. The excluded draws form
+  a reported stratum B′, not scored in any must-hold: the same draws, scored
   with `p_range` set to [1 d, 3 × span], to show what the declared prior
-  excludes.
+  excludes. Excluding rather than redrawing keeps the stream identical, so
+  runs before and after this commit are paired draw for draw. A draw whose
+  orbit violates the engine's documented domain (the companion moves more
+  than half a resolution element within its longest night, the sampling
+  limit of `period_window`) is still redrawn and counted, as before.
+  The factor 2 in P_cut is a prior choice (Ben, 2026-11-01): above it the
+  closest pair of nights advances by under half a cycle, so the
+  (prograde, retrograde, ν) ≡ (retrograde, prograde, 1/Δt − ν) alias lies
+  outside the domain, at every inclination. **Proposed, awaiting Ben's
+  sign-off.** The baseline (19560581 and its oracle 19560586) stays reported
+  under its own criteria commit as the "before"; runs under this commit are
+  judged on their own. The before/after comparison on the *P* ≥ P_cut subset
+  is a reported diagnostic, never a gate input, and criteria commits are
+  never mixed.
 - *e* uniform on [0, 0.8] (roughly flat for P below about 1000 d:
   Raghavan et al. 2010; Moe & Di Stefano 2017); cos *i*, ω, Ω, τ as in A.
 - Semi-major axis: *a* / (λ/B_max) log-uniform on [0.5, 10], with
@@ -441,6 +446,8 @@ must_hold:
   M8_false_no_orbit: {stratum: B, qualifying: oracle_fap_at_mc_floor, max_fraction: 0.02}
   M7_complete: {no_crash: true, credible_set_accurate: {m: 0.95, fail_flags: [evidence-noisy, evidence-failed], failed_band_in_window_fails: true}}
   M9_band_credible_set: {m: 0.95, sided: under, subsets: [B_all, B_misspecified], report: [set_size_median, set_size_q90, realised_mass]}
+population:
+  B_period: {draw: [1d, 3*span], p_cut: 'max(2*dt_min, P_night)', engine: virgil.aliases.period_cut, below_p_cut: exclude_and_count, report: B_prime, scored_in_must_hold: false}
 ```
 
 ## 7. Showcases (reported raw, never a gate)
@@ -495,7 +502,7 @@ them cold.
 | 2026-10-29 | §3.6 candidate (iii) replaced by (iii′) global-scale inflation (orbit_mixture_v2 §5); YAML name `shared_noise_inflation` → `global_scale_inflation` | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | yes: the #586 strict xfail showed (iii) cannot separate any night |
 | 2026-10-29 | YAML repair: `null_choice` moved to top level; it sat between two `must_hold` entries and the block did not parse (`yaml.safe_load` fails at `M4_search_misses`); no criterion changed, hash changes | Claude (Opus), for Ben | no |
 | 2026-10-29 | stratum A draws each global noise scale s_g from the fit's log-uniform prior (SBC exactness under orbit_mixture_v2 §2); s_g ranks reported, not tested; showcases report ŝ_g after raw χ²/N | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | no |
-| 2026-11-01 | §3.3 stratum B: *P* drawn on [P_cut, 3 × span] with P_cut = max(2Δt_min, P_night) (orbit_alias_cycles §1.3); truths below P_cut redrawn and counted; baselines 19560581/86 re-aggregated under it with no refit; reported stratum B′. Proposed, awaiting Ben's sign-off | Claude (Sonnet), for Ben | no (no G1 aggregate had been seen when written) |
+| 2026-11-01 | §3.3 stratum B: truths with *P* < P_cut = max(2Δt_min, P_night) (`virgil.aliases.period_cut`; orbit_alias_cycles §1.3) are excluded from scored metrics and counted, not redrawn (the draw and its stream are unchanged); reported stratum B′; YAML `population` key added (criteria hash changes); the baseline 19560581/86 stays reported under its own commit, no mixing. Proposed, awaiting Ben's sign-off | Claude (Sonnet), for Ben, on the 0.4.2 coordinator's decisions | no (no G1 aggregate had been seen when written) |
 
 ## References
 
