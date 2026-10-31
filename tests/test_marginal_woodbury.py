@@ -340,7 +340,10 @@ def test_float32_matches_float64_on_the_same_data(case, at_low_edge):
         (chi2, chi2_ref, old[0]),
         (own, own_ref, old[1]),
     ):
-        assert onp.isfinite(new).all()
+        assert onp.isfinite(new).all() and onp.isfinite(rank_one).all()
+        # absolute cap, so a drift shared by both paths still fails: 3e-5
+        # (about 250 float32 ulps) is 3x the worst observed (1.06e-5, Linux CI)
+        assert onp.all(onp.abs(new - ref) <= 3e-5 * onp.abs(ref))
         assert onp.all(
             onp.abs(new - ref)
             <= 2 * onp.abs(rank_one - ref) + ulps * onp.abs(ref)
