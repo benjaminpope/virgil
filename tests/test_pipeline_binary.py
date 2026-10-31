@@ -484,16 +484,20 @@ def test_null_nsigma_bounds_and_nan(data):
     assert all(math.isnan(x) for x in out)
 
 
-def test_null_draws_stop_once_the_verdict_is_settled(data):
-    from virgil.pipeline.binary import _null_nsigma
+def test_null_draws_stop_once_the_verdict_is_settled(data, monkeypatch):
+    from virgil.pipeline import binary
 
+    monkeypatch.setattr(binary, "_NULL_CHUNK", 4)
     grid = BinaryPipeline(data, **TINY)._grid()
-    # 300 draws in three chunks of 100. Passing at 1.5σ allows no exceeding
+    # 12 draws in three chunks of 4. Passing at 1.3σ allows no exceeding
     # null (k <= 0), so a peak below every null settles it after one chunk.
-    sigma, fap, k, n = _null_nsigma(data, grid, None, 300, 0, -1.0, 1.5)
-    assert (k, n) == (100, 100) and sigma < 0.0
+    sigma, fap, k, n = binary._null_nsigma(data, grid, None, 12, 0, -1.0, 1.3)
+    assert (k, n) == (4, 4) and sigma < 0.0
     # A peak above every null can only be shown with all of them.
-    assert _null_nsigma(data, grid, None, 300, 0, 1e12, 1.5)[2:] == (0, 300)
+    assert binary._null_nsigma(data, grid, None, 12, 0, 1e12, 1.3)[2:] == (
+        0,
+        12,
+    )
 
 
 # Slow: 8 searches, each against 50 simulated null searches, take about two
