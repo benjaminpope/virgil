@@ -2965,8 +2965,8 @@ def fit_orbit_aliases(
         Seeds for the fits (else random orbits).
     times, t_ref, a_range, flux_range, ecc_max, s_max : optional
         Epoch times and ``dt_peri`` reference (MJD; default the mean times),
-        prior ranges (``a_range`` in mas), eccentricity cap; ``s_max``
-        defaults to 10 (``None``: refused for ``outlier="mixture"``).
+        prior ranges (``a_range`` in mas), eccentricity cap, ``s_max`` (10;
+        the mixture refuses None).
     n_candidates, n_refine, n_random, n_is, n_samples, seed, init : optional
         Search effort, sampling and a warm start.
     min_distance_mas, max_steps, p_min_samples, flag_nats, ess_min : optional

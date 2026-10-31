@@ -514,6 +514,47 @@ def test_the_broad_component_converges_to_a_fine_grid():
     assert abs(b - (ln_j[2] - _prior_volume(a_max))) <= 4 * DELTA
 
 
+def _check_the_outlier_component_is_not_above_the_truth(n_draws=20):
+    """``b - l(truth)`` over noise draws of one
+    night of a static binary with its quoted errors."""
+    position, flux = (3.0, 0.0), 0.3
+    res = Epochs({"n": _lone_night(position)}).resolution_mas
+    gaps = []
+    for seed in range(n_draws):
+        data = simulate(
+            BinaryModelCartesian(*position, flux),
+            ta._night(ta.EPOCHS[0], rotation=0.0),
+            jax.random.PRNGKey(100 + seed),
+        )
+        dof = _unit_dof([data])
+        b = broad_loglike(
+            [data], dof, a_max=6.0, flux_range=FLUX_RANGE, step=0.25 * res,
+            s_max=10.0,
+        )[0]  # fmt: skip
+        truth = epochs._padded_scores(
+            onp.array([[*position, flux]]), cast_tree(data, "float64"),
+            epochs._Surface(data, 10.0), None, np.asarray(dof[0]), None, None,
+        )[0]  # fmt: skip
+        gaps.append(float(b - truth))
+    gaps = onp.array(gaps)
+    # E[b - l(truth)] = -KL <= 0 (Jensen: E ln mean_prior(L / L_truth) <=
+    # ln E mean_prior(L / L_truth) = ln 1), whatever the normalisation of l,
+    # if b and l share it. A mean above zero beyond its error means they do not.
+    error = gaps.std(ddof=1) / math.sqrt(n_draws)
+    assert gaps.mean() + 3.0 * error <= 0.0, (gaps.mean(), error)
+
+
+@pytest.mark.slow
+@ta.in_float64
+def test_the_outlier_component_is_below_the_truth_in_float64():
+    _check_the_outlier_component_is_not_above_the_truth()
+
+
+@pytest.mark.slow
+def test_the_outlier_component_is_below_the_truth_in_float32():
+    _check_the_outlier_component_is_not_above_the_truth()
+
+
 def test_the_windowed_reference_reproduces_a_gaussian_integral():
     # The reference of the two tests above, on a Gaussian as narrow as the
     # night's peak: ln of (2 pi)^(3/2) sd_x sd_y sd_g, to 1e-9.

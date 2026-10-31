@@ -2104,9 +2104,7 @@ def _climb(z, lam, radius, g_range, data, dof, diam, surface, n_steps):
     return jax.vmap(climb)(z, lam)
 
 
-def _broad_catalogue(  # deliberate: imported by tests (planted-peak check)
-    starts, radius, g_range, data, dof, diam, surface
-):
+def _broad_catalogue(starts, radius, g_range, data, dof, diam, surface):
     """The peaks of the night's marginal score over ``(dra, ddec, ln f)``
     reached by climbing from each row of ``starts``.
 
