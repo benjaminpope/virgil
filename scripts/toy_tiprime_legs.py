@@ -19,7 +19,8 @@ Prints ln Z mean/sd over replicates, steps, cost and variance x cost.
 
     .venv/bin/python scripts/toy_tiprime_legs.py 6.6 15
 
-The arguments are the working scales s_w; ``exact`` prints the reference ln Z.
+The arguments are the working scales s_w; ``--faceon`` uses a nearly face-on truth,
+``--zmove`` adds a z-space random-walk step to each move, ``--moves N`` sets the moves per stage (default 2). Each data seed prints the exact ln Z.
 """
 
 import sys
@@ -31,6 +32,12 @@ K, SIGMA, EPS, A_LO, A_HI = 8, 0.3, 0.1, 1.0, 30.0
 R_OUT = A_HI  # outlier density: uniform on a disc of radius a_hi
 LN_B = -onp.log(onp.pi * R_OUT**2)
 N, REPS, MOVES = 1000, 10, 2
+TRUTH = [
+    4.0,
+    -2.5,
+    1.5,
+    3.0,
+]  # --faceon: a nearly face-on orbit (|V| -> 0, the cusp)
 NORM = onp.log(onp.pi**2 * onp.log(A_HI / A_LO))  # ln of the p_iso constant
 
 
@@ -69,7 +76,7 @@ class Toy:
         self.rng, self.s_w = rng, s_w
         t = onp.sort(rng.uniform(0, 1, K))
         self.h = design(2 * onp.pi * 3.37 * t)  # a few cycles, irregular
-        truth = onp.array([4.0, -2.5, 1.5, 3.0])
+        truth = onp.array(TRUTH)
         self.d = self.h @ truth + SIGMA * rng.normal(size=(K, 2))
         bad = rng.choice(K, 2, replace=False)  # two outlier nights
         self.d[bad] = rng.uniform(-8, 8, (2, 2))
@@ -108,6 +115,28 @@ class Toy:
     def log_work(self, theta):
         return -(theta**2).sum(1) / (2 * self.s_w**2) - 4 * onp.log(
             self.s_w) - 2 * onp.log(2 * onp.pi)  # fmt: skip
+
+
+def ti_to_z(theta):
+    a, b, f, g = theta.T
+    zu, zv = (
+        onp.sqrt((a + g) + 1j * (b - f) + 0j),
+        onp.sqrt((a - g) - 1j * (b + f) + 0j),
+    )
+    return onp.stack([zu.real, zu.imag, zv.real, zv.imag], axis=1)
+
+
+def z_to_ti(z):
+    u, v = (z[:, 0] + 1j * z[:, 1]) ** 2, (z[:, 2] + 1j * z[:, 3]) ** 2
+    return onp.stack(
+        [
+            (u.real + v.real) / 2,
+            (u.imag - v.imag) / 2,
+            (-v.imag - u.imag) / 2,
+            (u.real - v.real) / 2,
+        ],
+        axis=1,
+    )
 
 
 def next_step(log_inc, lo, hi=1.0, target=0.5):
@@ -161,6 +190,22 @@ def smc(toy, prior):
                 theta = onp.where(ok[:, None], prop, theta)
             else:
                 theta = prop
+            if (
+                ZMOVE and gamma == 1.0
+            ):  # symmetric random walk in z: target |z|^-4 x likelihood, the 4:1 cover is exact
+                z = ti_to_z(theta)
+                zp = z + (2.38 / 2.0) * z.std(0).mean() * rng.normal(
+                    size=z.shape
+                )
+                shell = (zp**2).sum(1)
+                ok_shell = (shell >= 2 * A_LO) & (shell <= 2 * A_HI)
+                prop = z_to_ti(zp)
+                lp = toy.log_mix(prop, beta) - 2 * onp.log(shell)
+                lc = toy.log_mix(theta, beta) - 2 * onp.log((z**2).sum(1))
+                ok = ok_shell & (
+                    onp.log(rng.uniform(size=len(theta))) < lp - lc
+                )
+                theta = onp.where(ok[:, None], prop, theta)
         return theta, labels
 
     # stage 1: likelihood tempering (L: under the iso prior via MH; J: under
@@ -232,7 +277,20 @@ def exact_ln_z(toy, n_mc=200_000, seed=0):
 
 
 def main():
-    s_w_values = [float(s) for s in sys.argv[1:]] or [6.6, 15.0]
+    global MOVES, TRUTH, ZMOVE
+    args = sys.argv[1:]
+    # --zmove: one random-walk Metropolis step in the z coordinates after the Luger move
+    ZMOVE = "--zmove" in args
+    if "--faceon" in args:
+        TRUTH = [4.0, -2.5, 2.5, 4.0]
+    if "--moves" in args:
+        MOVES = int(args[args.index("--moves") + 1])
+    nums = [
+        a
+        for i, a in enumerate(args)
+        if not a.startswith("--") and (i == 0 or args[i - 1] != "--moves")
+    ]
+    s_w_values = [float(s) for s in nums] or [6.6, 15.0]
     for data_seed in range(3):
         print(f"data seed {data_seed}")
         ref_toy = Toy(onp.random.default_rng(1000 * data_seed), 1.0)

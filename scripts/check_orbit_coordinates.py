@@ -5,8 +5,9 @@ u = a(1 + cos i) e^{i(w + O)} and V = a(1 - cos i) e^{i(w - O)} from the
 library's Thiele-Innes constants; the Jacobian 32 / |z|^4 of
 z -> (ln a, cos i, w + O, w - O); the normalized TI' density; the
 eccentricity chart k + ih = zeta^2; the anchor change of variables (rotation angle as
-coordinate, unit Jacobian); the radial chart
-z = g(|y|) y / |y|; and prior recovery (cos i, a, e) from z and zeta draws.
+coordinate, unit Jacobian); the ζ chart ζ = √e_max y/√(1+|y|²) (Jacobian e_max(1+|y|²)⁻²);
+the z chart (auxiliary Gaussian direction plus logistic ln a); and prior recovery
+(cos i, a, e) from z and ζ draws.
 
     PYTHONPATH=src .venv/bin/python scripts/check_orbit_coordinates.py
 """
@@ -152,35 +153,43 @@ for _ in range(50):
 results["anchor change of variables |det| - 1"] = err
 results["anchor change of variables, |u|, |V| invariant"] = err_inv
 
-# 6. radial chart z = g(|y|) y/|y|, density g'/(g rho^3) in y -----------
+# 6. charts. z: direction of an auxiliary Gaussian y in R^4 plus a logistic
+# coordinate l for ln a (a smooth chart, no singularity); zeta: zeta =
+# sqrt(e_max) y / sqrt(1 + |y|^2), density (1 + |y|^2)^-2 ---------------------
 r_lo, r_hi = onp.sqrt(2 * a_lo), onp.sqrt(2 * a_hi)
+e_max = 0.9
 
 
-def g(rho):
-    s = 1 / (1 + 1 / rho)  # sigmoid of ln rho: s = rho / (1 + rho)
-    return np.exp(np.log(r_lo) + (np.log(r_hi) - np.log(r_lo)) * s)
-
-
-def y_to_z(y):
-    rho = np.sqrt(np.sum(y**2))
-    return g(rho) * y / rho
+def zeta_chart(y):
+    return onp.sqrt(e_max) * y / np.sqrt(1 + np.sum(y**2))
 
 
 err = 0.0
-dg = jax.grad(g)
-for _ in range(20):
-    y = np.array(rng.normal(size=4) * rng.uniform(0.3, 3))
-    rho = float(np.sqrt(np.sum(y**2)))
-    det = abs(float(np.linalg.det(jax.jacfwd(y_to_z)(y))))
-    pred = float(g(rho)) ** 3 * float(dg(rho)) / rho**3
-    err = max(err, abs(det / pred - 1))
-results["radial chart |det dz/dy| / (g^3 g'/rho^3) - 1"] = err
+for _ in range(50):
+    y = np.array(rng.normal(size=2) * rng.uniform(0.2, 4))
+    det = abs(float(np.linalg.det(jax.jacfwd(zeta_chart)(y))))
+    err = max(err, abs(det / (e_max / (1 + float(y @ y)) ** 2) - 1))
+results["zeta chart |det dzeta/dy| / (e_max (1+|y|^2)^-2) - 1"] = err
 
-# 7. prior recovery: z ~ |z|^-4 on the shell gives cos i ~ U(-1,1),
-# ln a ~ U, phases uniform; zeta ~ U(disc) gives e ~ U(0, e_max) ---------
+# 7. prior recovery: the z chart (y ~ N(0, I_4) direction, l ~ logistic) gives
+# cos i ~ U(-1,1), ln a ~ U, phases uniform; the zeta chart (y ~ density
+# (1+|y|^2)^-2 on R^2, drawn by inverse CDF) gives e ~ U(0, e_max) ---------
 m = 200_000
-lnr = rng.uniform(onp.log(r_lo), onp.log(r_hi), m)
+ell = rng.logistic(size=m)
+lnr = onp.log(r_lo) + (onp.log(r_hi) - onp.log(r_lo)) / (1 + onp.exp(-ell))
 w = rng.normal(size=(m, 4))
+z = onp.exp(lnr)[:, None] * w / onp.linalg.norm(w, axis=1)[:, None]
+zu, zv = z[:, 0] + 1j * z[:, 1], z[:, 2] + 1j * z[:, 3]
+u, v = zu**2, zv**2
+a = (abs(u) + abs(v)) / 2
+cos_i = (abs(u) - abs(v)) / (abs(u) + abs(v))
+# in the chart ln a is uniform only if l ~ U(0, 1) after the logistic map:
+# check the map's density instead (logistic CDF of l is uniform)
+results["KS logistic(l) vs U(0,1) (p-value)"] = stats.kstest(
+    1 / (1 + onp.exp(-ell)), "uniform"
+).pvalue
+
+lnr = rng.uniform(onp.log(r_lo), onp.log(r_hi), m)
 z = onp.exp(lnr)[:, None] * w / onp.linalg.norm(w, axis=1)[:, None]
 zu, zv = z[:, 0] + 1j * z[:, 1], z[:, 2] + 1j * z[:, 3]
 u, v = zu**2, zv**2
@@ -198,11 +207,9 @@ results["KS w + O vs U(-pi, pi) (p-value)"] = stats.kstest(
 results["KS w - O vs U(-pi, pi) (p-value)"] = stats.kstest(
     -onp.angle(onp.conj(v)), stats.uniform(-onp.pi, 2 * onp.pi).cdf
 ).pvalue
-e_max = 0.9
-rho = onp.sqrt(
-    e_max * rng.uniform(size=m)
-)  # uniform on the disc of radius sqrt(e_max)
-e = rho**2
+y = rng.uniform(size=m)
+rho_y = onp.sqrt(y / (1 - y))  # |y| has CDF r^2/(1+r^2)
+e = e_max * rho_y**2 / (1 + rho_y**2)
 results["KS e vs U(0, e_max) (p-value)"] = stats.kstest(
     e / e_max, "uniform"
 ).pvalue
