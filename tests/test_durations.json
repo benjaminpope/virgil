@@ -75,6 +75,7 @@
  "tests/test_nufft.py": 46.7,
  "tests/test_observables.py": 28.2,
  "tests/test_oifits.py": 14.9,
+ "tests/test_orbit_cells.py": 280.0,
  "tests/test_orbit_coordinates.py": 12.2,
  "tests/test_orbit_positions.py": 157.8,
  "tests/test_orbit_posterior_mass.py": 8.0,

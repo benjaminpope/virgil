@@ -1,6 +1,7 @@
 """Cells, period domain and the position-level SMC leg."""
 
 import functools
+import types
 
 import jax
 import jax.numpy as np
@@ -43,13 +44,15 @@ def _state(orbit, t):
     return onp.concatenate([pos.T, vel.T], axis=1)
 
 
-def _summaries(orbit, times, sigma=0.05, ln_f=-2.0, seed=0, sign=1.0):
+def _summaries(
+    orbit, times, sigma=0.05, ln_f=-2.0, seed=0, sign=1.0, sigma_f=0.05
+):
     """Night summaries of ``orbit``: one peak per night at the truth plus a
     draw from the quoted covariance (the Gaussian a visibility fit gives)."""
     rng = onp.random.default_rng(seed)
     truth = _state(orbit, onp.asarray(times, float))
     cov = onp.diag(
-        [sigma**2, sigma**2, sigma**2 / T_SS, sigma**2 / T_SS, 0.05**2]
+        [sigma**2, sigma**2, sigma**2 / T_SS, sigma**2 / T_SS, sigma_f**2]
     )
     out = []
     for t, s in zip(times, truth):
@@ -232,11 +235,13 @@ def test_a_night_without_a_peak_has_a_finite_gradient():
 
 def _space(summaries, cell, dtype=np.float64):
     return oc_cells._Space(
-        oc_cells._Catalogue(summaries, LOG_B), cell, 0.0, TIMES - TIMES[0],
+        oc_cells._Catalogue(summaries, LOG_B), cell, 0.0,
+        onp.array([n.t_ref for n in summaries]) - summaries[0].t_ref,
         (1.0, 30.0), 0.9, 1e-4, 0.0, dtype,
     )  # fmt: skip
 
 
+@pytest.mark.slow
 @x64
 def test_the_prior_through_the_cells_is_the_declared_prior():
     s = _summaries(_orbit(), TIMES)
@@ -296,44 +301,66 @@ def test_the_eccentricity_chart_density_integrates_to_the_disc_measure():
     assert total == pytest.approx(onp.pi, rel=1e-6)
 
 
+def _invariant_stats(space, v):
+    c = space.decode(v)
+    inv = oc.invariants(c["period"], c["z"], c["zeta"])
+    return onp.stack(
+        [
+            onp.asarray(inv["cos_inc"]),
+            onp.log(onp.asarray(inv["a"])),
+            onp.log(onp.asarray(c["period"])),
+        ]
+    )
+
+
 @x64
-def test_the_luger_move_leaves_the_prior_invariant():
-    # At β = 0 the move targets the prior whatever the likelihood: the draws'
-    # invariants keep their distribution, and some proposals are accepted.
+def test_the_luger_move_leaves_the_prior_invariant_over_many_steps():
+    # At β = 0 the move targets the prior whatever the likelihood: after many
+    # steps the invariants keep their distribution, and the state really moves.
     s = _summaries(_orbit(), TIMES)
     _, cells = _cells(s, (6.0, 400.0))
     space = _space(s, cells[2])
     move = oc_cells._luger_move(space)
+    step = jax.jit(jax.vmap(lambda k, p: move(k, p, space.logprior)))
     x = space.sample(jax.random.key(0), 1500)
-    keys = jax.random.split(jax.random.key(1), 1500)
-    new, took = jax.jit(jax.vmap(lambda k, p: move(k, p, space.logprior)))(
-        keys, x
-    )
-    assert 0.05 < float(took.mean()) < 1.0
-
-    def stat(v):
-        c = space.decode(v)
-        inv = oc.invariants(c["period"], c["z"], c["zeta"])
-        return onp.stack(
-            [onp.asarray(inv["cos_inc"]), onp.log(onp.asarray(inv["a"]))]
-        )
-
-    for a, b in zip(stat(x), stat(new)):
+    new, moved = x, onp.zeros(1500, bool)
+    for i in range(20):
+        keys = jax.random.split(jax.random.key(i + 1), 1500)
+        new, took = step(keys, new)
+        moved |= onp.asarray(took, bool)
+    assert moved.mean() > 0.5
+    for a, b in zip(_invariant_stats(space, x), _invariant_stats(space, new)):
         assert stats.ks_2samp(a, b).pvalue > 1e-3
 
 
-# --- the evidence agrees across coordinates ----------------------------------
+@x64
+@pytest.mark.parametrize("beta", [0.5, 1.0])
+def test_the_luger_move_leaves_a_tempered_target_invariant(beta):
+    """Prior draws weighted by ``L^β`` sample ``π_β``: the move must not shift
+    the weighted mean of any invariant, ``E_prior[w (f(x') - f(x))] = 0``."""
+    s = _summaries(_orbit(), TIMES[:3], sigma=30.0, sigma_f=6.0)  # broad
+    _, cells = _cells(s, (6.0, 400.0))
+    space = _space(s, cells[2])
+    move = oc_cells._luger_move(space)
 
+    def logdensity(v):
+        return space.logprior(v) + beta * space.loglike(v)
 
-def _campbell_states(rng, n, cell, a_range, e_max):
-    period = onp.exp(rng.uniform(onp.log(cell.p_lo), onp.log(cell.p_hi), n))
-    a = onp.exp(rng.uniform(onp.log(a_range[0]), onp.log(a_range[1]), n))
-    orbit = KeplerOrbit(
-        period, rng.uniform(0, 1, n) * period, rng.uniform(0, e_max, n),
-        onp.degrees(onp.arccos(rng.uniform(-1, 1, n))),
-        rng.uniform(0, 360, n), rng.uniform(0, 360, n), a,
-    )  # fmt: skip
-    return orbit
+    n = 20000
+    x = space.sample(jax.random.key(0), n)
+    keys = jax.random.split(jax.random.key(1), n)
+    new, took = jax.jit(jax.vmap(lambda k, v: move(k, v, logdensity)))(keys, x)
+    assert float(took.mean()) > 0.05
+    ll = onp.asarray(jax.jit(jax.vmap(space.loglike))(x))
+    w = onp.exp(beta * (ll - ll.max()))
+    assert w.sum() ** 2 / (w**2).sum() > 300  # effective sample size
+    before, after = _invariant_stats(space, x), _invariant_stats(space, new)
+    assert onp.array_equal(before[2], after[2])  # the move never touches P
+    for f in (0, 1):  # cos i and ln a
+        d = after[f] - before[f]
+        mean = onp.sum(w * d) / onp.sum(w)
+        err = onp.sqrt(onp.sum((w * (d - mean)) ** 2)) / onp.sum(w)
+        assert abs(mean) < 4 * err
 
 
 @x64
@@ -513,4 +540,90 @@ def test_the_true_cycle_count_is_in_the_99_percent_set():
         # the position-level cells sum to one and the dropped mass is recorded
         assert out.p_pos.sum() == pytest.approx(1.0)
         assert out.pruned_mass < 1e-3 and not out.pruned.any()
-    assert hits >= runs - 1
+    assert hits == runs
+
+
+# --- review hardening ---------------------------------------------------------
+
+
+def test_the_anchors_differ_and_need_two_nights_with_a_peak():
+    s = list(_summaries(_orbit(), TIMES))
+    empty = lambda n: NightSummary(n.t_ref, n.t_ss, 6, BLOCKS, (), -200.0)  # noqa: E731
+    # peaks only in the first quarter, the best of them the later night
+    few = [s[0], s[1]] + [empty(n) for n in s[2:]]
+    few[1] = NightSummary(
+        s[1].t_ref, s[1].t_ss, 6, BLOCKS, s[1].peaks, s[1].loglike_null
+    )
+    first, last = oc_cells.choose_anchors(few)
+    assert first != last and {first, last} == {0, 1}
+    with pytest.raises(ValueError, match="two nights"):
+        oc_cells.choose_anchors([s[0]] + [empty(n) for n in s[1:]])
+    with pytest.raises(ValueError, match="two nights"):
+        oc_cells.period_domain(
+            [s[0]] + [empty(n) for n in s[1:]],
+            night_length=0.1,
+            resolution=3.0,
+        )
+
+
+def test_a_non_finite_evidence_is_a_failure_not_a_probability():
+    leg = types.SimpleNamespace(
+        stopped=False,
+        log_z=float("nan"),
+        cell=oc_cells.Cell(1, 8.0, 14.0, 0.0),
+    )
+    with pytest.raises(RuntimeError, match="non-finite"):
+        oc_cells._check(leg)
+
+
+def _without_rescaling(night):
+    p = night.peaks[0]
+    peak = NightPeak(
+        p.mean, p.cov, p.loglike, p.n, p.chi2, p.hessian, rescalable=False
+    )
+    return NightSummary(
+        night.t_ref,
+        night.t_ss,
+        night.n_frames,
+        BLOCKS,
+        (peak,),
+        night.loglike_null,
+    )
+
+
+@x64
+def test_gains_and_offsets_fix_the_error_scale_at_one():
+    s = tuple(_without_rescaling(n) for n in _summaries(_orbit(), TIMES))
+    domain, cells = _cells(s, (6.0, 400.0))
+    prior = oc_cells.outlier_prior(domain, n=2**14)
+    b = oc_cells.outlier_log_density(s, prior)  # no NotImplementedError
+    assert onp.all(onp.isfinite(b))
+    space = oc_cells._Space(
+        oc_cells._Catalogue(s, b), cells[2], 0.0, TIMES - TIMES[0],
+        (1.0, 30.0), 0.9, 1e-4, 0.0, np.float64,
+    )  # fmt: skip
+    c = space.decode(space.sample(jax.random.key(0), 8))
+    assert onp.all(onp.asarray(c["ln_s"]) == 0.0)
+
+
+@x64
+def test_the_velocity_marginal_of_the_outlier_prior_integrates_the_velocity():
+    # ∫ π(p, v) d²v on a (ln|v|, ψ) grid equals the position-only density
+    s = _summaries(_orbit(), TIMES)
+    domain, _ = _cells(s, (6.0, 400.0))
+    prior = oc_cells.outlier_prior(domain, n=2**16)
+    mean = onp.array([[3.0, -2.0, 0.0, 0.0, -1.0]])
+    lv = onp.linspace(-14.0, 4.0, 241)
+    psi = onp.linspace(-onp.pi, onp.pi, 181)
+    lvg, psig = onp.meshgrid(lv, psi, indexing="ij")
+    ang = psig + onp.arctan2(mean[0, 1], mean[0, 0])
+    grid = onp.tile(mean, (lvg.size, 1))
+    grid[:, 2] = (onp.exp(lvg) * onp.cos(ang)).ravel()
+    grid[:, 3] = (onp.exp(lvg) * onp.sin(ang)).ravel()
+    dens = onp.exp(prior.log_density(grid)).reshape(lvg.shape)
+    # d²v = |v|² d ln|v| dψ; the density carries π(f), common to both sides
+    total = onp.trapezoid(
+        onp.trapezoid(dens * onp.exp(2 * lvg), psi, axis=1), lv
+    )
+    marginal = float(onp.exp(prior.log_density(mean, velocity=False))[0])
+    assert total == pytest.approx(marginal, rel=0.05)

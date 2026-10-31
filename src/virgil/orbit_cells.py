@@ -131,8 +131,8 @@ def period_domain(
         overridden = True
     else:
         times = onp.array([s.t_ref for s in summaries])
-        sigma = min(_sigma_p(s) for s in summaries)
-        if len(times) < 2 or not onp.isfinite(sigma):
+        sigma = onp.array([_sigma_p(s) for s in summaries])
+        if onp.isfinite(sigma).sum() < 2:
             raise ValueError(
                 "Need two nights with a peak, or pass p_range, to set the "
                 "period domain."
@@ -145,7 +145,7 @@ def period_domain(
             motion_fraction=motion_fraction,
             p_floor=p_floor,
         )
-        hi = 2 * math.pi * a_range[1] * float(onp.ptp(times)) / sigma
+        hi = 2 * math.pi * a_range[1] * float(onp.ptp(times)) / sigma.min()
         overridden = False
     if not 0 < lo < hi:
         raise ValueError(f"The period domain [{lo:.4g}, {hi:.4g}] d is empty.")
@@ -157,27 +157,31 @@ def choose_anchors(summaries):
 
     The night with the smallest best-peak position error among those in the
     first quarter of the span, and likewise in the last; an empty quarter
-    falls back to the first (last) night with a peak. They always differ.
+    falls back to the first (last) night with a peak, and if both choices are
+    one night, to the earliest and latest nights with a peak. They always differ.
     """
     t = onp.array([s.t_ref for s in summaries])
-    if t.size < 2 or not onp.ptp(t) > 0:
-        raise ValueError("Anchors need two nights at different times.")
     sigma = onp.array([_sigma_p(s) for s in summaries])
-    if not onp.isfinite(sigma).any():
-        raise ValueError("No night has a peak: nothing can anchor an orbit.")
+    ok = onp.isfinite(sigma)
+    if ok.sum() < 2 or not onp.ptp(t[ok]) > 0:
+        raise ValueError(
+            "Anchors need two nights with a peak at different times."
+        )
     quarter = onp.ptp(t) / 4
 
     def best(mask, default):
         pool = onp.flatnonzero(mask & onp.isfinite(sigma))
         return int(pool[onp.argmin(sigma[pool])]) if pool.size else default
 
-    ok = onp.isfinite(sigma)
     first = best(
         t <= t.min() + quarter, int(onp.argmin(onp.where(ok, t, onp.inf)))
     )
     last = best(
         t >= t.max() - quarter, int(onp.argmax(onp.where(ok, t, -onp.inf)))
     )
+    if first == last:  # one night is best in both quarters: span the peaks
+        first = int(onp.argmin(onp.where(ok, t, onp.inf)))
+        last = int(onp.argmax(onp.where(ok, t, -onp.inf)))
     return first, last
 
 
@@ -287,27 +291,42 @@ class OutlierPrior:
     bandwidth: onp.ndarray
     ln_f_floor: float
 
-    def log_density(self, mean):
+    def log_density(self, mean, velocity=True):
         """``ln π(p, v) π(f)`` at ``mean = (dra, ddec, vra, vdec, ln f)``,
-        a density in ``(p, v, ln f)``; ``-inf`` outside the flux range."""
+        a density in ``(p, v, ln f)``; ``-inf`` outside the flux range. With
+        ``velocity=False`` the velocity is integrated out: the density in
+        ``(p, ln f)`` (``mean[2:4]`` unused)."""
         mean = onp.atleast_2d(onp.asarray(mean, float))
         p, v = mean[:, :2], mean[:, 2:4]
         lp, lv = onp.log(onp.hypot(*p.T)), onp.log(onp.hypot(*v.T))
         psi = onp.arctan2(v[:, 1], v[:, 0]) - onp.arctan2(p[:, 1], p[:, 0])
         query = onp.stack([lp, lv, psi], axis=1)
-        norm = onp.sum(onp.log(self.bandwidth * math.sqrt(2 * math.pi)))
+        if not velocity:  # the flat kernels ignore these; keep them finite
+            query[:, 1:] = 0.0
+        bandwidth = self.bandwidth if velocity else self.bandwidth.copy()
+        if not velocity:
+            bandwidth[1:] = (
+                onp.inf
+            )  # a flat kernel in ln|v| and ψ: integrates out
+        norm = onp.sum(
+            onp.log(
+                bandwidth[: 1 if not velocity else 3] * math.sqrt(2 * math.pi)
+            )
+        )
         log_g = (
             onp.asarray(
                 _kde_core(
                     np.asarray(self.samples, np.float32),
-                    np.asarray(self.bandwidth, np.float32),
+                    np.asarray(bandwidth, np.float32),
                     np.asarray(query, np.float32),
                 ),
                 float,
             )
             - norm
         )  # Gaussian KDE of the wrapped-angle samples
-        log_pv = log_g - math.log(2 * math.pi) - 2 * lp - 2 * lv
+        log_pv = log_g - math.log(2 * math.pi) - 2 * lp
+        if velocity:
+            log_pv = log_pv - 2 * lv
         in_f = (mean[:, 4] >= self.ln_f_floor) & (mean[:, 4] <= 0.0)
         log_f = onp.where(in_f, -math.log(-self.ln_f_floor), -onp.inf)
         return log_pv + log_f
@@ -389,7 +408,10 @@ def outlier_log_density(summaries, prior, s_max=S_MAX):
 
     ``b_k = ln Σ_peaks L_j (2π)^{5/2} |Σ_j|^{1/2} π_out(m_j)`` with each peak's
     own error scales integrated (log-uniform on ``[1/s_max, s_max]``, by
-    Laplace). A night without a peak gets its no-companion likelihood.
+    Laplace; fixed at 1 for a peak that is not ``rescalable``). On a
+    single-exposure night the velocity is integrated out of ``π_out``, leaving
+    the ``(p, ln f)`` Laplace form. A night without a peak gets its
+    no-companion likelihood.
 
     Parameters
     ----------
@@ -407,7 +429,8 @@ def outlier_log_density(summaries, prior, s_max=S_MAX):
     for s in summaries:
         terms = []
         for p in s.peaks:
-            ok = p.n > 0
+            # a scale does not factor out of gains or closure offsets: unit scale
+            ok = (p.n > 0) & p.rescalable
             hat = onp.clip(
                 onp.sqrt(p.chi2 / onp.where(ok, p.n, 1.0)), 1 / s_max, s_max
             )
@@ -420,14 +443,18 @@ def outlier_log_density(summaries, prior, s_max=S_MAX):
                     0.0,
                 )
             )
-            _, logdet = onp.linalg.slogdet(p.covariance(hat))
+            cov = p.covariance(hat)
+            # a single exposure leaves the velocity unconstrained: integrate
+            # it against its prior instead of taking its (huge) Laplace width
+            dims = [0, 1, 4] if s.t_ss == 0 else [0, 1, 2, 3, 4]
+            _, logdet = onp.linalg.slogdet(cov[onp.ix_(dims, dims)])
             terms.append(
                 p.loglike
                 + p.log_scale(hat)
                 + occam
-                + 2.5 * math.log(2 * math.pi)
+                + 0.5 * len(dims) * math.log(2 * math.pi)
                 + 0.5 * logdet
-                + float(prior.log_density(p.mean)[0])
+                + float(prior.log_density(p.mean, velocity=len(dims) == 5)[0])
             )
         out.append(float(onp_logsumexp(terms)) if terms else s.loglike_null)
     return onp.array(out)
@@ -459,6 +486,7 @@ class _Catalogue:
                 self.mean[i, q], self.hess[i, q] = p.mean, p.hessian
                 self.n[i, q], self.chi2[i, q] = p.n, p.chi2
                 self.loglike[i, q], self.valid[i, q] = p.loglike, True
+        self.rescalable = all(p.rescalable for s in summaries for p in s.peaks)
         self.t_ss = onp.array([s.t_ss for s in summaries])
         self.n_frames = onp.array([s.n_frames for s in summaries], float)
         self.t_ref = onp.array([s.t_ref for s in summaries])
@@ -587,7 +615,11 @@ class _Space:
             "z": direction * np.sqrt(2.0 * a)[..., None],
             "zeta": zeta,
             "ln_f": self.ln_f_floor * (1.0 - jax.nn.sigmoid(x[..., 8])),
-            "ln_s": math.log(S_MAX) * (2.0 * jax.nn.sigmoid(x[..., 9:]) - 1.0),
+            # error scales stay at 1 where a scale does not factor out (gains,
+            # closure offsets): the coordinates remain, with no likelihood
+            "ln_s": float(self.cat.rescalable)
+            * math.log(S_MAX)
+            * (2.0 * jax.nn.sigmoid(x[..., 9:]) - 1.0),
         }
 
     def states(self, period, ti, zeta):
@@ -807,13 +839,12 @@ class LegResult:
     space: object = dataclasses.field(repr=False, default=None)
 
 
-def decode_particles(result, t_anchor_mjd=0.0):
+def decode_particles(result):
     """Orbit coordinates of a leg's particles.
 
     Returns a dict of arrays with ``period``, ``z``, ``zeta``, ``ln_f``,
-    ``ln_s`` and the reporting invariants of
-    ``invariants`` (``a``, ``ecc``,
-    ``cos_inc``, ``omega``, ``Omega``).
+    ``ln_s`` and the reporting invariants ``a``, ``ecc``, ``cos_inc``,
+    ``omega`` and ``Omega`` (invariant under the covers of ``z`` and ``ζ``).
     """
     if result.particles is None:
         raise ValueError("The leg stopped before β = 1: it has no particles.")
@@ -1141,4 +1172,8 @@ def _check(leg):
             f"The leg of cell N={leg.cell.n} reached its time or stage cap "
             "before β = 1; there is no posterior. Raise max_seconds, or use "
             "more particles."
+        )
+    if not onp.isfinite(leg.log_z):
+        raise RuntimeError(
+            f"The leg of cell N={leg.cell.n} returned a non-finite evidence."
         )
