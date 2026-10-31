@@ -137,6 +137,9 @@ def test_cap_is_a_failure(cap):
 
 
 def test_float32():
+    if jax.config.jax_enable_x64:
+        # BlackJAX draws the HMC momentum in the default float width.
+        pytest.skip("float32 particles are only supported with x64 off")
     logprior, init = _gauss_prior(2, np.float32)
     mu = onp.array([1.0, 1.0])
     r = tempered_smc(

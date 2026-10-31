@@ -110,6 +110,7 @@
  "tests/test_sampling.py": 109.5,
  "tests/test_scenes.py": 5.2,
  "tests/test_simulate.py": 3.0,
+ "tests/test_smc.py": 45.0,
  "tests/test_sparse_imaging.py": 89.3,
  "tests/test_spectra_lines.py": 11.4,
  "tests/test_stability.py": 0.6,

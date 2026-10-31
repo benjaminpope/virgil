@@ -15,6 +15,8 @@ step size and trajectory length tuned per stage and the mass matrix set to the
 particle covariance (Buchholz, Chopin & Jacob 2021). A run that reaches the
 time or stage cap has not reached β = 1: it returns ``stopped=True`` and no
 particles. Parameters are a flat vector; the log densities take one.
+With x64 on, use float64 particles: BlackJAX draws the HMC momentum in the
+default float width.
 
 Source: BlackJAX (Cabezas et al. 2024), Del Moral, Doucet & Jasra 2006,
 Jasra et al. 2011 (see ``references/provenance.toml``).
@@ -173,7 +175,9 @@ def _build(
         cov = (centred * weights[:, None]).T @ centred
         # The jitter keeps the Cholesky in the ESJD finite on a degenerate cloud.
         jitter = np.finfo(cov.dtype).eps * (np.trace(cov) + 1.0)
-        cov = cov + jitter * np.eye(d, dtype=cov.dtype)
+        cov = (cov + jitter * np.eye(d, dtype=cov.dtype)).astype(
+            particles.dtype
+        )
         parameters = {
             **state.parameter_override,
             "inverse_mass_matrix": cov[None],
