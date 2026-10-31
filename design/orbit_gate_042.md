@@ -124,12 +124,24 @@ modes the heuristics were built for.
     alias problem);
   - S3, a dense run then sparse returns: half the nights within 10 days,
     the rest uniform over 2 years.
-- *P* log-uniform on [1 d, 3 × span]. A draw whose orbit violates the
-  engine's documented domain (the companion moves more than half a
-  resolution element within its longest night, the sampling limit of
-  `period_window`) is redrawn with the next state of the same generator;
-  the number of redraws is reported. This keeps the population inside the
-  method's stated domain without selecting on difficulty.
+- *P* log-uniform on [P_cut, 3 × span], with P_cut = max(2·Δt_min, P_night)
+  computed from each draw's realized epochs by the engine's own formula
+  (orbit_alias_cycles §1.3: Δt_min the shortest gap between consecutive
+  nights, P_night the within-night motion bound of `period_window`). A draw
+  whose truth has *P* < P_cut, or whose orbit violates the engine's
+  documented domain (the companion moves more than half a resolution
+  element within its longest night, the sampling limit of `period_window`),
+  is redrawn with the next state of the same generator; the number of
+  redraws is reported for each reason. This keeps the population inside the
+  method's stated prior without selecting on difficulty. **Proposed,
+  awaiting Ben's sign-off.** Runs made before this criteria commit (the
+  baselines 19560581 and its oracle 19560586) are re-aggregated under it
+  with no refit: a system whose truth has *P* < P_cut is dropped from every
+  metric by this rule, which uses only the truth and the epochs, and the
+  number dropped is reported. A reported stratum B′ (not scored in any
+  must-hold) lists those truths; for new runs it is the same draws re-scored
+  with `p_range` set to [1 d, 3 × span], to show what the declared prior
+  excludes.
 - *e* uniform on [0, 0.8] (roughly flat for P below about 1000 d:
   Raghavan et al. 2010; Moe & Di Stefano 2017); cos *i*, ω, Ω, τ as in A.
 - Semi-major axis: *a* / (λ/B_max) log-uniform on [0.5, 10], with
@@ -483,6 +495,7 @@ them cold.
 | 2026-10-29 | §3.6 candidate (iii) replaced by (iii′) global-scale inflation (orbit_mixture_v2 §5); YAML name `shared_noise_inflation` → `global_scale_inflation` | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | yes: the #586 strict xfail showed (iii) cannot separate any night |
 | 2026-10-29 | YAML repair: `null_choice` moved to top level; it sat between two `must_hold` entries and the block did not parse (`yaml.safe_load` fails at `M4_search_misses`); no criterion changed, hash changes | Claude (Opus), for Ben | no |
 | 2026-10-29 | stratum A draws each global noise scale s_g from the fit's log-uniform prior (SBC exactness under orbit_mixture_v2 §2); s_g ranks reported, not tested; showcases report ŝ_g after raw χ²/N | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | no |
+| 2026-11-01 | §3.3 stratum B: *P* drawn on [P_cut, 3 × span] with P_cut = max(2Δt_min, P_night) (orbit_alias_cycles §1.3); truths below P_cut redrawn and counted; baselines 19560581/86 re-aggregated under it with no refit; reported stratum B′. Proposed, awaiting Ben's sign-off | Claude (Sonnet), for Ben | no (no G1 aggregate had been seen when written) |
 
 ## References
 
