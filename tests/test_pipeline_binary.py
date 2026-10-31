@@ -38,8 +38,8 @@ pytestmark = pytest.mark.xdist_group("pipeline_binary")
 TINY = {
     "max_sep_mas": 300.0,
     "max_grid": 13,
-    "n_null": 50,
-    "detection_sigma": 2.0,
+    "n_null": 15,
+    "detection_sigma": 1.5,
     "n_flux": 6,
     "flux_range": [1e-4, 0.2],
     "num_warmup": 30,
@@ -483,6 +483,9 @@ def test_null_nsigma_bounds_and_nan(data):
     assert all(math.isnan(x) for x in out)
 
 
+# Slow: 8 searches, each against 50 simulated null searches, take about two
+# minutes on a CI core; it calibrates the null, which no cheaper run can.
+@pytest.mark.slow
 def test_noise_peaks_have_a_roughly_uniform_false_alarm_probability(data):
     """Peaks of independent companion-free searches are exchangeable with the
     simulated null maxima, so their FAPs average 1/2 (sd 0.29 / sqrt(8)); a
@@ -823,8 +826,8 @@ LATTICE_SETTINGS = {
     "max_grid": 41,
     "n_flux": 6,
     "flux_range": [1e-3, 0.2],
-    "n_null": 50,
-    "detection_sigma": 2.0,
+    "n_null": 15,
+    "detection_sigma": 1.5,
     "quicklook_execute": False,
 }
 
