@@ -196,33 +196,13 @@ def _hessians(problem, z):
     return 0.5 * jax.jacfwd(jax.jacrev(problem.chi2))(z)
 
 
-def _frame_times(d):
-    """Mean time of each frame of ``d`` (each time, without frames)."""
+def _summarize(d, positions, i, diam, amp_range):
     mjd = onp.asarray(d.mjd, float)
     if d.frame is None:
-        return onp.unique(mjd)
-    frames, index = onp.unique(onp.asarray(d.frame), return_inverse=True)
-    return onp.bincount(index, weights=mjd) / onp.bincount(index)
-
-
-def _fit_peak(problem, z0, lower, upper):
-    """The refined peak from ``z0``, or None if it does not converge."""
-    state = _gauss_newton.solve(
-        problem, z0, lower=lower, upper=upper, dtol=1e-12, max_steps=200
-    )
-    z = onp.asarray(state.z, float)
-    if int(state.stop) != _gauss_newton.CONVERGED or not onp.isfinite(
-        float(state.value)
-    ):
-        return None
-    hess = onp.asarray(_hessians(problem, state.z), float)
-    if not onp.all(onp.isfinite(hess)):
-        return None
-    return z, hess
-
-
-def _summarize(d, positions, i, diam, amp_range):
-    times = _frame_times(d)
+        times = onp.unique(mjd)
+    else:  # mean time of each frame
+        _, index = onp.unique(onp.asarray(d.frame), return_inverse=True)
+        times = onp.bincount(index, weights=mjd) / onp.bincount(index)
     t_ref = float(onp.mean(times))
     t_ss = float(onp.sum((times - t_ref) ** 2))
     res = float(fringe_scales(d)[0])
@@ -252,16 +232,23 @@ def _summarize(d, positions, i, diam, amp_range):
                 [dra - window, ddec - window, -onp.inf, -onp.inf]
             )
             upper = onp.array([dra + window, ddec + window, onp.inf, onp.inf])
-            fit = _fit_peak(
+            state = _gauss_newton.solve(
                 problem,
                 z0,
-                onp.append(lower, onp.log(_F_MIN)),
-                onp.append(upper, 0.0),
+                lower=onp.append(lower, onp.log(_F_MIN)),
+                upper=onp.append(upper, 0.0),
+                dtol=1e-12,
+                max_steps=200,
             )
-            if fit is None:
+            if int(state.stop) != _gauss_newton.CONVERGED or not onp.isfinite(
+                float(state.value)
+            ):
                 continue
-            z, hess = fit
-            zj = np.asarray(z)
+            zj = state.z
+            z = onp.asarray(zj, float)
+            hess = onp.asarray(_hessians(problem, zj), float)
+            if not onp.all(onp.isfinite(hess)):
+                continue
             chi2 = onp.asarray(problem.chi2(zj), float)
             plain = float(
                 np.sum(
@@ -279,7 +266,14 @@ def _summarize(d, positions, i, diam, amp_range):
             peak = NightPeak(
                 z, _inverse(onp.sum(hess, 0)), loglike, n, chi2, hess
             )
-            if not any(_same(peak, q) for q in peaks):
+            # one peak if each is within one standard deviation of the other
+            # in the metric of the broader
+            if not any(
+                (peak.mean - q.mean)
+                @ onp.linalg.solve(peak.cov + q.cov, peak.mean - q.mean)
+                < 1.0
+                for q in peaks
+            ):
                 peaks.append(peak)
     peaks.sort(key=lambda p: -p.loglike)
     return NightSummary(
@@ -289,14 +283,6 @@ def _summarize(d, positions, i, diam, amp_range):
         tuple(peaks),
         loglike_null,
     )
-
-
-def _same(a, b):
-    """Whether two refined peaks are one: each within one standard
-    deviation of the other, in the metric of the broader."""
-    dz = a.mean - b.mean
-    cov = a.cov + b.cov
-    return bool(dz @ onp.linalg.solve(cov, dz) < 1.0)
 
 
 def night_summaries(data, positions, *, amp_range=None):
