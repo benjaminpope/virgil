@@ -51,10 +51,10 @@ decision 2), and both are carried through this note:
 
 - **(ii), a companion anywhere:** the outlier term is the constant e^{b_k} of §2 (own scales integrated inside b_k).
 - **(iii′), inflation relative to the global scale** (v2 §5.2): the outlier term is
-  e^{o_k(x, s)}, o_k = Σ_g ln ∫₁^{s_max} L_kg(x; s_g t) dt/(t ln s_max), the night's *own* likelihood at the orbit with
-  every group's scale inflated by t. It depends on (x, s), so there is **no constant floor**: an outlier night still pulls
+  e^{o_k(x, s)}, o_k = ln ∫₁^{s_max} Π_g L_kg(x; s_g t) dt/(t ln s_max), the night's *own* likelihood at the orbit with
+  every group's scale inflated by one shared t (the group product is inside the log, so t_k is a single per-night label). It depends on (x, s), so there is **no constant floor**: an outlier night still pulls
   x (weight ≈ 1/s_max²), and the position-level analogue is õ_k(x, s) of §5. Wherever this note says "the floor
-  ε e^{b_k}", read ε e^{o_k(x, s)} under (iii′); §5 and §6 give both forms. The Luger move and the label Gibbs step carry
+  ε e^{b_k}", read ε e^{o_k(x, s)} under (iii′); §5 and §6 give both forms. The Luger move's label draw carries
   t_k as one more per-night label (conditionally Gaussian in TI′ with the inflated variance t_k² σ²).
 
 ### 1.2 Prior
@@ -408,7 +408,7 @@ likelihood with no companion (used in §8).
   ℓ̃_k(x, s) = ln Σ_j L_j(s) exp(−½ (s_k(x) − m_j)ᵀ Σ_j(s)⁻¹ (s_k(x) − m_j)), s_k(x) = (p_k(x), v_k(x), ln f(x)). Under (ii)
   the outlier term is the **same b_k** (§2), so the two legs share the floor that makes the bridge's ratio L_vis/L_pos
   finite wherever the catalogue is complete. Under (iii′) it is
-  õ_k(x, s) = Σ_g ln ∫₁^{s_max} [peak sum at scale s_g t] dt/(t ln s_max), the same inflation integral on the catalogue,
+  õ_k(x, s) = ln ∫₁^{s_max} [peak sum at scales s_g t, all g jointly] dt/(t ln s_max), the same inflation integral on the catalogue,
   evaluated by Gauss–Legendre in ln t (node count in §10), so the two legs again share the structure.
 - **Completeness assumption:** a visibility-level mode absent from the catalogue gets position-level mass only from the
   outlier term and the bridge cannot find it. The planted-peak test of #618 (`test_a_planted_narrow_peak_is_found`) is the
@@ -448,22 +448,25 @@ numbers, and ε is integrated jointly so nights do not factor. The bridge's cond
   are linear in θ = TI′ (p and v are linear in TI′; ln f is in the core; the brighter/fainter sign is linear). A Gaussian
   working prior N(0, s_w² I), s_w² = ⟨a²⟩/3 (the per-component variance of TI′ under the isotropic prior:
   E[A² + B² + F² + G²] = ⟨a²⟩ E[1 + cos² i] = 4⟨a²⟩/3, ⟨a²⟩ = (a_hi² − a_lo²)/(2 ln(a_hi/a_lo))), gives an exact Gaussian
-  conditional G(θ | c, z, β) ∝ N_w(θ) L_G(θ; z)^β, with L_G the labelled position-level Gaussian. Propose from it
+  conditional G(θ | c, z, β) ∝ N_w(θ) L_G(θ; z)^β, with L_G the labelled position-level Gaussian (leg 1 tempers per label,
+  Σ_z L_G(θ; z)^β, as in the toy of §6.5). Propose from it
   (independence proposal).
   - **Leg 1** (target p_iso L_G^β): accept with min{1, [p_iso/N_w](θ′)/[p_iso/N_w](θ)}, p_iso the §3.2 density. This is
     exact only because the tempered likelihood is exactly Gaussian in θ given (c, z).
-  - **Leg 2** (target p_iso L_pos^{1−β} L_vis^β, proposal from G(θ | c, z, 1)): the ratio is
-    [p_iso/N_w](θ′)/[p_iso/N_w](θ) × {[L_vis/L_G](θ′)/[L_vis/L_G](θ)}^β, one extra visibility evaluation per proposal.
+  - **Leg 2** (target p_iso L_pos^{1−β} L_vis^β on θ, labels summed; z drawn from L_G(θ; z)/L_pos(θ), θ′ from
+    G(θ | c, z, 1)): L_G cancels against the proposal and the ratio is
+    [p_iso/N_w](θ′)/[p_iso/N_w](θ) × {[L_vis/L_pos](θ′)/[L_vis/L_pos](θ)}^β, one extra visibility evaluation per proposal
+    (L_pos, not L_G: the two differ wherever there are several peaks or an outlier floor).
     Without the second factor the move would sample the wrong distribution. **The Luger move is used in leg 1 only by
     default;** the leg-2 form is the exact option, to be measured in Stage 3b (its acceptance falls as β → 1 wherever
-    L_vis/L_G varies), and leg 2 otherwise uses HMC and the label Gibbs step.
+    L_vis/L_pos varies), and leg 2 otherwise uses HMC on the label-summed target, with no separate label sweep.
   - A wrong s_w costs acceptance, never correctness. The independence proposal is not uniformly ergodic: the weight
     p_iso/N_w ∝ 1/(|u||V|) is unbounded at |V| → 0 (Mengersen & Tweedie 1996), so it can stick face-on (§6.5, measured).
 - **Labels are summed in the target, drawn only inside the move.** Every discrete label (peak, outlier and t_k under (iii′),
-  brighter/fainter, disc) is summed exactly per night in the target, so particles stay flat vectors. The Luger move draws
+  brighter/fainter, disc) is summed exactly per night in the target, so particles stay flat vectors and there is no label sweep outside the Luger move. The Luger move draws
   the labels from their conditional given θ, proposes θ′ from G(θ | c, z), and accepts on the augmented target; the
   θ-marginal is invariant (a Gibbs-then-Metropolis step, as in the toy §6.5). #623's kernel therefore needs only a
-  composite-mutation hook (custom MH and Gibbs moves), which Stage 3a adds; one label sweep and one Luger move per stage (§10).
+  composite-mutation hook (custom MH and Gibbs moves), which Stage 3a adds; one Luger move per stage (§10).
 
 ### 6.4 The Joker-style collapsed alternative
 
@@ -572,8 +575,10 @@ An empirical false-alarm probability at α = 0.01 (orbit_dehack decision 4, chea
 statistic is **T = max_n S_n − S_null**, where S_n is the seed-profile evidence of the best orbit seed in band n at position
 level and S_null is the same quantity for the single-star model. Both are computed identically on the data and on
 simulated single-star nulls. **Single-star position-level likelihood:** the night likelihood with no companion, L_k⁰
-(§5, at visibility level), enters as the reference, so a peak's gain is ln L_j − ln L_k⁰. S_null is the mixture sum over
-nights with those gains set to zero; orbit statistic and null share the same b_k, so T is the evidence of the gains alone.
+(§5, at visibility level), is an absolute density like the peaks' L_j and b_k. S_n is the seed-profile sum of
+ln[(1 − ε) L_j + ε e^{b_k}] (peak j of the seed's orbit) and **S_null = Σ_k ln[(1 − ε) L_k⁰ + ε e^{b_k}]**, ε-integrated as in §2;
+orbit statistic and null share the same b_k. Under (iii′) the floor is e^{o_k} for the orbit and the single-star analogue
+o_k⁰ = ln ∫₁^{s_max} L_k⁰(s_g t) dt/(t ln s_max) for the null.
 
 **FAP** = (1 + #{T_null ≥ T_obs}) / (1 + n_null) (Phipson & Smyth 2010). The null count is **raised step by step**: 100 → 200 →
 400 → 800, to a cap of 1000 (= 10/α); stop when the 95 % interval of the FAP excludes α (verdict: FAP < α or ≥ α), or at
@@ -595,7 +600,7 @@ Per system, with every symbol a measured quantity (Stage 0 `run.json` counters, 
 |---|---|---|
 | T_compile | XLA compile of the unrolled `_night_terms` (once per shape) | Stage 0 |
 | T_epochs | epochs stage (`epoch_positions`) | Stage 0, per system |
-| T_summ | per-night peak summaries (includes the keep rule's J_k cost, §5) | Stage 2b |
+| T_summ | peak summaries for all K nights of the system (includes the keep rule's J_k cost, §5) | Stage 2b |
 | T_b, K | b_k per night: 5-D (p, v, f) adaptive cubature, cached per fingerprint | #618 / Stage 3c |
 | B, B_keep | bands, bands kept after pruning (B_keep = B while pruning is opt-in) | data |
 | R | replicates per band (2) | budget |
@@ -661,7 +666,7 @@ run; changing one afterwards is a recorded decision.
 | s_w² (Luger move) | ⟨a²⟩/3 | derived | §6.3; a wrong value costs acceptance only |
 | conditional ESS target | ½ | tolerance | Zhou et al. 2016; the adaptive rule |
 | #623 HMC: α, σ_ε, steps, ε₀, L₀, mass, max stages | 1, ε/4, 5, d^{−1/4}, 4, dense, 200 | inherited | `virgil.smc` at 525ba54; §6.3 |
-| label sweeps / Luger moves per stage | 1 / 1 | budget | §6.3 (set in 3a/3b) |
+| Luger moves per stage (label draw inside) | 1 | budget | §6.3 (set in 3a/3b) |
 | Luger move in leg 2 | off (leg 1 only) | budget | §6.3; measured in 3b |
 | particles M | provisional 2048 | budget | set on simulated populations in 3a |
 | moves per stage m | provisional 4 | budget | idem |
