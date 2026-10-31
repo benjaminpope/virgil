@@ -98,41 +98,63 @@ def test_the_covariance_scales_with_the_error_scale():
         onp.abs(scaled - 9.0 * base.cov).max() < 1e-6 * onp.abs(scaled).max()
     )
     assert onp.isclose(base.log_scale(1.0), 0.0)
+    n, chi2 = base.n.sum(), base.chi2.sum()
+    expected = -(n * onp.log(3.0) + 0.5 * chi2 * (1 / 9 - 1))
+    assert onp.isclose(base.log_scale(3.0), expected)
+
+
+def _gains_and_offsets(d):
+    n = int(onp.asarray(d.vis).size)
+    d = d.with_gains(telescope=0.03, modes=onp.ones((1, n)))
+    return d.with_closure_offsets(triangle=0.02)
 
 
 def test_a_night_with_offsets_and_spanning_gain_modes_is_fitted():
-    def post(d):
-        n = int(onp.asarray(d.vis).size)
-        d = d.with_gains(telescope=0.03, modes=onp.ones((1, n)))
-        return d.with_closure_offsets(triangle=0.02)
-
-    data = _night(post=post)
-    peak = _fit(data).peaks[0]
+    peak = _fit(_night(post=_gains_and_offsets)).peaks[0]
     pull = (peak.mean - TRUTH) / onp.sqrt(onp.diag(peak.cov))
     assert onp.all(onp.isfinite(peak.cov)) and onp.abs(pull).max() < 5.0
+    # a scale does not factor out of s² D + U Uᵀ: no closed-form rescaling
+    assert not peak.rescalable
+    assert onp.isclose(peak.log_scale(1.0), 0.0)
+    with pytest.raises(NotImplementedError):
+        peak.covariance(scale=3.0)
 
 
 def test_a_single_exposure_gives_an_uninformative_velocity():
-    data = _night(frames=1)
-    summary = _fit(data)
-    assert summary.t_ss == 0.0
+    summary = _fit(_night(frames=1))
+    assert summary.t_ss == 0.0 and summary.n_frames == 1
     peak = summary.peaks[0]
     # the position is still measured, the velocity carries no weight
     assert onp.sqrt(peak.cov[0, 0]) < 0.1
     assert peak.cov[2, 2] > 1e8 * peak.cov[0, 0]
     assert onp.all(onp.isfinite(peak.cov))
     # the jitter's velocity share is infinite, not a crash
-    assert onp.isinf(peak.covariance(jitter=0.1, t_ss=summary.t_ss)[2, 2])
+    assert onp.isinf(summary.covariance(peak, jitter=0.1)[2, 2])
 
 
-def test_the_jitter_adds_in_quadrature_to_position_and_velocity():
-    data = _night()
-    s = _fit(data)
+def test_the_jitter_is_independent_per_frame():
+    # a per-frame jitter gains σ_J²/N at the night's position (the mean of N
+    # frames) and σ_J²/Σ(t_j − t̄)² in the velocity
+    s = _fit(_night())
     peak = s.peaks[0]
-    extra = peak.covariance(jitter=0.2, t_ss=s.t_ss) - peak.cov
+    extra = s.covariance(peak, jitter=0.2) - peak.cov
+    sj2 = 0.2**2
+    assert s.n_frames == 6
     assert onp.allclose(
-        onp.diag(extra), [0.04, 0.04, 0.04 / s.t_ss] * 1 + [0.04 / s.t_ss, 0.0]
+        onp.diag(extra),
+        [sj2 / 6, sj2 / 6, sj2 / s.t_ss, sj2 / s.t_ss, 0.0],
     )
+    assert onp.allclose(s.covariance(peak), peak.cov)
+
+
+def test_the_null_is_profiled_like_the_peaks():
+    # a contrast loss is fitted by the amplitude for the null and the peaks
+    # alike, so the profile adds to both
+    data = _night()
+    lost = eqx.tree_at(lambda d: d.vis, data, 0.9 * onp.asarray(data.vis))
+    plain, profiled = _fit(lost), _fit(lost, amp_range=(0.5, 1.0))
+    assert profiled.loglike_null > plain.loglike_null + 5.0
+    assert profiled.peaks[0].loglike > plain.peaks[0].loglike + 5.0
 
 
 def test_float32_data_give_the_float64_summary():
@@ -146,19 +168,36 @@ def test_float32_data_give_the_float64_summary():
     assert onp.all(onp.abs(p32.mean - p64.mean) < 0.5 * sigma)
 
 
-def test_peaks_converging_to_one_point_merge_and_a_wrong_one_ranks_last():
+def test_peaks_converging_to_one_point_merge_to_the_best():
     data = _night()
-    starts = [(3.2, -1.8, 0.2), (3.0, -2.2, 0.4), (-3.0, 2.0, 0.3)]
-    peaks = _fit(data, start=starts).peaks
-    assert len(peaks) <= 2
-    assert peaks[0].loglike == max(p.loglike for p in peaks)
+    starts = [(3.2, -1.8, 0.2), (3.0, -2.2, 0.4)]
+    both = _fit(data, start=starts).peaks
+    singles = [_fit(data, start=s).peaks[0] for s in starts]
+    sigma = onp.sqrt(onp.diag(singles[0].cov))
+    near = [p for p in both if onp.all(onp.abs(p.mean - TRUTH) < 6 * sigma)]
+    assert len(near) == 1  # both starts found the truth: one peak
+    assert onp.isclose(near[0].loglike, max(p.loglike for p in singles))
 
 
-def test_the_keep_rule_drops_a_peak_the_outlier_term_dominates():
+def test_peaks_are_never_reported_on_a_bound():
+    # a start far from any companion runs onto the window or flux bound
     data = _night()
-    starts = [(3.2, -1.8, 0.2), (-3.0, 2.0, 0.3)]
-    summaries = (_fit(data, start=starts),)
-    best = summaries[0].peaks[0].loglike
-    kept = ns.keep_peaks(summaries, best - 5.0)[0].peaks
-    assert len(kept) >= 1 and kept[0].loglike == best
-    assert len(ns.keep_peaks(summaries, best + 100.0)[0].peaks) == 0
+    for start in [(25.0, 25.0, 0.3), (3.0, -2.0, 1e-6), (3.0, -2.0, 5.0)]:
+        for p in _fit(data, start=start).peaks:
+            assert 1e-4 * 1.0001 < onp.exp(p.mean[4]) < 1.0 - 1e-6
+
+
+def test_the_keep_rule_threshold_is_derived_from_the_node_count():
+    summary = _fit(_night())
+    best = summary.peaks[0].loglike
+
+    def kept(k, shift):
+        return len(ns.keep_peaks((summary,) * k, best + shift)[0].peaks)
+
+    # K = 1: ε_lo = sin²(π/4) = ½, so a peak stays iff L >= b + ln δ
+    edge = -onp.log(ns.DELTA)
+    assert kept(1, edge - 0.02) == 1 and kept(1, edge + 0.02) == 0
+    # K = 3: n = 2, ε_lo = sin²(π/8): L >= b + ln[δ ε / (1 - ε)]
+    eps = onp.sin(onp.pi / 8) ** 2
+    edge = -onp.log(ns.DELTA * eps / (1 - eps))
+    assert kept(3, edge - 0.02) == 1 and kept(3, edge + 0.02) == 0
