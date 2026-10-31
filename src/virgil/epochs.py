@@ -2436,6 +2436,11 @@ def broad_loglike(
     for k, (d, dof_k) in enumerate(zip(data, dof)):
         with run_in("float64"):
             d64, dof64 = cast_tree(d, "float64"), onp.asarray(dof_k, float)
+            # The night's epoch is static in the pytree (and the static
+            # binary does not use it): zero it, so that one compiled kernel
+            # serves every night of one shape.
+            d64 = copy.copy(d64)
+            object.__setattr__(d64, "t_ref", 0.0)
             print_ = _scoring_print(d, dof_k, s_max, diam)
             key = (print_, a_max, tuple(flux_range), step, n_flux)
             if key in _BROAD_CACHE:
