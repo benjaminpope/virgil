@@ -74,15 +74,6 @@ class SMCResult:
     undersampled: bool
 
 
-def _weighted_covariance(particles, weights):
-    mean = weights @ particles
-    centred = particles - mean
-    cov = (centred * weights[:, None]).T @ centred
-    # The jitter keeps the Cholesky in the ESJD finite on a degenerate cloud.
-    jitter = np.finfo(cov.dtype).eps * (np.trace(cov) + 1.0)
-    return cov + jitter * np.eye(cov.shape[0], dtype=cov.dtype)
-
-
 def _build(logprior, loglike, dtype, d, n_particles, target_ess, steps, tune):
     """Jitted one-stage function: tune, mutate, reweight."""
     step_size, leapfrogs, alpha = tune
@@ -119,9 +110,15 @@ def _build(logprior, loglike, dtype, d, n_particles, target_ess, steps, tune):
 
     @jax.jit
     def stage(key, state):
-        cov = _weighted_covariance(
-            state.sampler_state.particles, state.sampler_state.weights
+        particles, weights = (
+            state.sampler_state.particles,
+            state.sampler_state.weights,
         )
+        centred = particles - weights @ particles
+        cov = (centred * weights[:, None]).T @ centred
+        # The jitter keeps the Cholesky in the ESJD finite on a degenerate cloud.
+        jitter = np.finfo(cov.dtype).eps * (np.trace(cov) + 1.0)
+        cov = cov + jitter * np.eye(d, dtype=cov.dtype)
         parameters = {
             **state.parameter_override,
             "inverse_mass_matrix": cov[None],
@@ -130,10 +127,6 @@ def _build(logprior, loglike, dtype, d, n_particles, target_ess, steps, tune):
         return algorithm.step(key, state)
 
     return algorithm.init, stage
-
-
-def _ess(weights):
-    return float(1.0 / np.sum(weights**2))
 
 
 def _run(key, logprior, loglike, particles, n_particles, *, options):
@@ -160,7 +153,7 @@ def _run(key, logprior, loglike, particles, n_particles, *, options):
         beta = float(state.sampler_state.tempering_param)
         log_z += float(info.log_likelihood_increment)
         betas.append(beta)
-        ess.append(_ess(state.sampler_state.weights))
+        ess.append(float(1.0 / np.sum(state.sampler_state.weights**2)))
         if beta >= 1.0 - tol:
             return (
                 state.sampler_state.particles,
@@ -173,7 +166,16 @@ def _run(key, logprior, loglike, particles, n_particles, *, options):
     return None, None, onp.nan, betas, ess, True
 
 
-def _assemble(runs, n_particles, ess_target):
+def _smc(
+    logprior, loglike, starts, key, n_particles, replicates, ess_target,
+    steps, step_size, leapfrogs, alpha, max_stages, max_seconds,
+):  # fmt: skip
+    deadline = time.monotonic() + max_seconds
+    options = (0.5, steps, (step_size, leapfrogs, alpha), max_stages, deadline)
+    runs = [
+        _run(k, logprior, loglike, start, n_particles, options=options)
+        for k, start in zip(jax.random.split(key, replicates), starts)
+    ]
     stopped = any(run[5] for run in runs)
     betas = [onp.asarray(run[3]) for run in runs]
     ess = [onp.asarray(run[4]) for run in runs]
@@ -201,19 +203,6 @@ def _assemble(runs, n_particles, ess_target):
         False,
         any(e[-1] < ess_target * n_particles for e in ess),
     )
-
-
-def _smc(
-    logprior, loglike, starts, key, n_particles, replicates, ess_target,
-    steps, step_size, leapfrogs, alpha, max_stages, max_seconds,
-):  # fmt: skip
-    deadline = time.monotonic() + max_seconds
-    options = (0.5, steps, (step_size, leapfrogs, alpha), max_stages, deadline)
-    runs = [
-        _run(k, logprior, loglike, start, n_particles, options=options)
-        for k, start in zip(jax.random.split(key, replicates), starts)
-    ]
-    return _assemble(runs, n_particles, ess_target)
 
 
 def _default_step(d):
