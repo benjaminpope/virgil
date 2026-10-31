@@ -451,15 +451,28 @@ def _log_mean_box(data, centre, half, h):
     ± ``half`` in ``(dra, ddec, ln f)``, by a midpoint grid of steps ``h``."""
     surface = epochs._Surface(data, 10.0)
     dof = np.asarray(_unit_dof([data])[0])
+
+    def score(z):
+        return epochs._padded_scores(
+            onp.column_stack([z[:, 0], z[:, 1], onp.exp(z[:, 2])]), data,
+            surface, None, dof, None, None,
+        )  # fmt: skip
+
+    return _log_midpoint_box(score, centre, half, h)
+
+
+def _log_midpoint_box(log_f, centre, half, h):
+    """ln of the integral of ``exp(log_f(z))`` over the box ``centre`` ±
+    ``half`` by a midpoint grid of steps ``h`` (rows of ``z`` are points)."""
     axes = [
         centre[i] + (onp.arange(-n, n) + 0.5) * half[i] / n
         for i, n in enumerate(onp.ceil(half / h).astype(int))
     ]
-    px, py, pg = (a.ravel() for a in onp.meshgrid(*axes, indexing="ij"))
-    score = epochs._padded_scores(
-        onp.column_stack([px, py, onp.exp(pg)]), data, surface, None, dof,
-        None, None,
-    )  # fmt: skip
+    score = log_f(
+        onp.column_stack(
+            [a.ravel() for a in onp.meshgrid(*axes, indexing="ij")]
+        )
+    )
     cell = onp.prod([2.0 * half[i] / len(a) for i, a in enumerate(axes)])
     return float(
         score.max()
@@ -499,6 +512,20 @@ def test_the_broad_component_converges_to_a_fine_grid():
         s_max=10.0,
     )[0]  # fmt: skip
     assert abs(b - (ln_j[2] - _prior_volume(a_max))) <= 4 * DELTA
+
+
+def test_the_windowed_reference_reproduces_a_gaussian_integral():
+    # The reference of the two tests above, on a Gaussian as narrow as the
+    # night's peak: ln of (2 pi)^(3/2) sd_x sd_y sd_g, to 1e-9.
+    sd = onp.array([0.0074, 0.0103, 0.0058])
+    mu = onp.array([3.0, 0.0, -1.2])
+    exact = 1.5 * onp.log(2.0 * onp.pi) + onp.log(sd).sum()
+    for m in (2.0, 3.0):
+        got = _log_midpoint_box(
+            lambda z: -0.5 * onp.sum(((z - mu) / sd) ** 2, axis=1),
+            mu, 10.0 * sd, sd / m,
+        )  # fmt: skip
+        assert abs(got - exact) < 1e-9
 
 
 @pytest.mark.slow
