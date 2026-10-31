@@ -17,7 +17,9 @@ ln Z = ln int p_iso(theta) prod_k L_k(theta) d theta. Cost is the number of
 per-particle theta conditionals (one 4x4 solve) plus likelihood evaluations.
 Prints ln Z mean/sd over replicates, steps, cost and variance x cost.
 
-    ~/.claude/bin/pyslot .venv/bin/python scripts/toy_tiprime_legs.py
+    .venv/bin/python scripts/toy_tiprime_legs.py 6.6 15
+
+The arguments are the working scales s_w; ``exact`` prints the reference ln Z.
 """
 
 import sys
@@ -194,10 +196,47 @@ def smc(toy, prior):
     return ln_z, steps
 
 
+def exact_ln_z(toy, n_mc=200_000, seed=0):
+    """Reference ln Z by enumerating the night labels (no SMC).
+
+    Given the labels, the inlier nights are Gaussian in theta, so
+    Z = sum_z (eps b)^n_out (1-eps)^n_in c_z E_{N(m_z, Lam_z^-1)}[p_iso];
+    the expectation is a plain Monte Carlo average (finite variance: each
+    posterior sits far from the cusp). Label sets with fewer than two
+    inliers leave theta unconstrained and carry weight <~ (eps b)^(K-1),
+    negligible here, and are dropped.
+    """
+    rng = onp.random.default_rng(seed)
+    hh = onp.einsum("kij,kil->kjl", toy.h, toy.h)
+    hd = onp.einsum("kij,ki->kj", toy.h, toy.d)
+    terms = []
+    for mask in range(2**K):
+        inl = onp.array([(mask >> k) & 1 for k in range(K)], bool)
+        n_in = int(inl.sum())
+        if n_in < 2:
+            continue
+        lam = hh[inl].sum(0) / SIGMA**2
+        m = onp.linalg.solve(lam, hd[inl].sum(0) / SIGMA**2)
+        s_min = ((toy.d[inl] - toy.h[inl] @ m) ** 2).sum()
+        ln_c = (-n_in * onp.log(2 * onp.pi * SIGMA**2) - s_min / (2 * SIGMA**2)
+                + 2 * onp.log(2 * onp.pi) - 0.5 * onp.linalg.slogdet(lam)[1])  # fmt: skip
+        theta = (
+            m
+            + rng.normal(size=(n_mc, 4))
+            @ onp.linalg.cholesky(onp.linalg.inv(lam)).T
+        )
+        ln_e = onp.logaddexp.reduce(log_iso(theta)) - onp.log(n_mc)
+        ln_w = (K - n_in) * (onp.log(EPS) + LN_B) + n_in * onp.log(1 - EPS)
+        terms.append(ln_w + ln_c + ln_e)
+    return float(onp.logaddexp.reduce(terms))
+
+
 def main():
-    s_w_values = [float(s) for s in sys.argv[1:]] or [5.0, 15.0]
+    s_w_values = [float(s) for s in sys.argv[1:]] or [6.6, 15.0]
     for data_seed in range(3):
         print(f"data seed {data_seed}")
+        ref_toy = Toy(onp.random.default_rng(1000 * data_seed), 1.0)
+        print(f"  exact ln Z = {exact_ln_z(ref_toy):9.3f}")
         for name, prior in (("L Luger", "iso"), ("J Joker", "work")):
             for s_w in s_w_values:
                 lz, st, cost = [], [], []

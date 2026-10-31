@@ -4,11 +4,11 @@ Checks, each printed as ``name: max error``: the circle amplitudes
 u = a(1 + cos i) e^{i(w + O)} and V = a(1 - cos i) e^{i(w - O)} from the
 library's Thiele-Innes constants; the Jacobian 32 / |z|^4 of
 z -> (ln a, cos i, w + O, w - O); the normalized TI' density; the
-eccentricity chart k + ih = zeta^2; the anchor rotation (a unit-Jacobian
-change of the phase of the eccentricity vector); the radial chart
+eccentricity chart k + ih = zeta^2; the anchor change of variables (rotation angle as
+coordinate, unit Jacobian); the radial chart
 z = g(|y|) y / |y|; and prior recovery (cos i, a, e) from z and zeta draws.
 
-    ~/.claude/bin/pyslot .venv/bin/python scripts/check_orbit_coordinates.py
+    PYTHONPATH=src .venv/bin/python scripts/check_orbit_coordinates.py
 """
 
 import jax
@@ -114,31 +114,43 @@ mass = (
 results["normalized TI' density, integral - 1 (grid)"] = abs(mass - 1)
 
 # 4. eccentricity chart: k + ih = zeta^2, zeta uniform on the disc ------
-zeta = np.array([0.3, -0.4])
 jac_k = jax.jacfwd(
     lambda s: np.array(
         [((s[0] + 1j * s[1]) ** 2).real, ((s[0] + 1j * s[1]) ** 2).imag]
     )
 )
-det = abs(float(np.linalg.det(jac_k(zeta))))
-results["|det d(k,h)/d zeta| / (4|zeta|^2) - 1"] = abs(
-    det / (4 * float(zeta @ zeta)) - 1
-)
+err = 0.0
+for _ in range(50):
+    zeta = np.array(rng.normal(size=2) * rng.uniform(0.2, 1.0))
+    det = abs(float(np.linalg.det(jac_k(zeta))))
+    err = max(err, abs(det / (4 * float(zeta @ zeta)) - 1))
+results["|det d(k,h)/d zeta| / (4|zeta|^2) - 1"] = err
 
 
-# 5. anchor rotation: (u, V, k + ih) -> phases shifted, unit Jacobian ---
-def rotate(x, theta):
-    """TI' and the eccentricity-vector phase after the anchor rotation:
-    u' = e^{i th} u, V' = e^{i th} V (w -> e^{i th} w in p = (i/2)(V w + conj(u) conj(w)))."""
-    ur, ui, vr, vi, th0 = x
-    ph = np.exp(1j * theta)
-    u, v = (ur + 1j * ui) * ph, (vr + 1j * vi) * ph
-    return np.array([u.real, u.imag, v.real, v.imag, th0 + theta])
+# 5. anchor change of variables (M_a, u, V) -> (M_a, u', V', M_a): the
+# rotation angle is itself the new coordinate, so the Jacobian is
+# triangular (rotation block, identity in M_a) and the TI' prior, a function
+# of (|u|, |V|), does not depend on M_a ------------------------------------
+def anchor(x):
+    """x = (Re u, Im u, Re V, Im V, M_a) -> (Re u', Im u', Re V', Im V', M_a)
+    with u' = e^{i M_a} u, V' = e^{i M_a} V."""
+    ph = np.exp(1j * x[4])
+    u, v = (x[0] + 1j * x[1]) * ph, (x[2] + 1j * x[3]) * ph
+    return np.array([u.real, u.imag, v.real, v.imag, x[4]])
 
 
-x0 = np.array([1.2, -0.7, 0.4, 2.0, 0.3])
-det = abs(float(np.linalg.det(jax.jacfwd(rotate)(x0, 0.9))))
-results["anchor rotation |det| - 1 (fixed theta)"] = abs(det - 1)
+err, err_inv = 0.0, 0.0
+for _ in range(50):
+    x = np.array(rng.normal(size=5) * rng.uniform(0.5, 3))
+    err = max(err, abs(abs(float(np.linalg.det(jax.jacfwd(anchor)(x)))) - 1))
+    y = anchor(x)
+    err_inv = max(
+        err_inv,
+        abs(float(np.hypot(y[0], y[1]) - np.hypot(x[0], x[1]))),
+        abs(float(np.hypot(y[2], y[3]) - np.hypot(x[2], x[3]))),
+    )
+results["anchor change of variables |det| - 1"] = err
+results["anchor change of variables, |u|, |V| invariant"] = err_inv
 
 # 6. radial chart z = g(|y|) y/|y|, density g'/(g rho^3) in y -----------
 r_lo, r_hi = onp.sqrt(2 * a_lo), onp.sqrt(2 * a_hi)
@@ -182,6 +194,9 @@ results["KS ln a vs U (p-value)"] = stats.kstest(
 ).pvalue
 results["KS w + O vs U(-pi, pi) (p-value)"] = stats.kstest(
     onp.angle(u), stats.uniform(-onp.pi, 2 * onp.pi).cdf
+).pvalue
+results["KS w - O vs U(-pi, pi) (p-value)"] = stats.kstest(
+    -onp.angle(onp.conj(v)), stats.uniform(-onp.pi, 2 * onp.pi).cdf
 ).pvalue
 e_max = 0.9
 rho = onp.sqrt(

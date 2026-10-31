@@ -377,8 +377,11 @@ Carry the night labels as particle state, so that **given the labels, TI′ marg
 Gaussian working prior (The Joker; Price-Whelan et al. 2017, 2020). Temper likelihood under the working prior (exact moves,
 no rejection), then swap to the isotropic prior by tempering the ratio (p_iso/N_w)^γ with γ: 0 → 1. The face-on ratio
 p_iso/N_w ∝ 1/(|u||V|) has an infinite second moment (∫ d²u/|u|²: logarithmic divergence), so a single step has infinite
-weight variance, and a step γ < 1 has E[w²] ∝ ∫ |u|^{−2γ} d²u, finite iff γ < 1: **the steps must stay below one**, which
-the conditional-ESS rule enforces only empirically (the empirical ESS of finitely many particles cannot see the tail).
+weight variance. After a step to γ_prev the particles follow π_γ ∝ N_w^{1−γ} p_iso^γ L and the next weight is
+(p_iso/N_w)^{Δγ}, so E[w²] ∝ ∫ N_w^{1−γ_prev−2Δγ} p_iso^{γ_prev+2Δγ} L, whose face-on tail is ∝ ∫ |V|^{−(γ_prev+2Δγ)} d²V:
+finite iff γ_prev + 2Δγ < 2. Only the first step (γ_prev = 0) is limited to Δγ < 1; later steps may be larger, and it
+matters only if L puts non-negligible mass near |V| = 0. The conditional-ESS rule sees none of this tail (a finite particle
+set cannot).
 
 ### 6.5 Toy comparison and the choice
 
@@ -405,12 +408,18 @@ to within 25%). s_w = 6.6 is the derived working scale ⟨a²⟩/3 of §6.3 (a �
 | 2 | J | 6.6 | -35.612 | 0.288 | 8.9 | 1.00e6 | 8.3e4 |
 | 2 | J | 15 | -40.121 | 2.578 | 7.3 | 7.7e5 | 5.1e6 |
 
+Reference ln Z, by enumerating the 2⁸ label sets (the inlier nights are Gaussian in θ given the labels; the prior
+expectation of each Gaussian is a Monte Carlo average of 2 × 10⁵ draws; `exact_ln_z` in the script; two MC seeds agree to
+0.002): **−33.342, −34.124, −35.389** for the three data seeds. L agrees with it within its error at both s_w (|Δ| ≤ 0.07 at
+s_w = 6.6, ≤ 0.14 at 15, against a standard error of the mean of 0.1); J at s_w = 6.6 is low by 0.01, 0.27 and 0.22, and at
+15 by 3.2, 2.9 and 4.7. So the J bias is real, not a bug in one path. Its mechanism is not established: the cusp tail of §6.4
+is ≈ 7σ from the posterior here and is not shown to cause it.
+
 (An earlier run at s_w = 5 and 15 gave the same picture: J at 5 agreed with L to 0.2, J at 15 was biased low by 3 to 5.)
 
 Choice: **L (the Luger move), as default**; J stays an opt-in possibility to measure on the full model in Stage 3b.
 Reasons: J's accuracy depends on a working scale the data decide, and when the working prior is broad relative to the
-posterior (s_w = 15 here) it is biased low by ≫ its reported error, which is the infinite-variance tail of §6.4 seen
-through a finite particle set; L is insensitive to s_w (its sd barely moves). At the derived s_w, J's variance × cost is 0.1×, 1.0× and 1.2× L's on
+posterior (s_w = 15 here) it is biased low by ≫ its reported error, for a reason not established (see the reference above); L is insensitive to s_w (its sd barely moves). At the derived s_w, J's variance × cost is 0.1×, 1.0× and 1.2× L's on
 the three seeds, and its mean ln Ẑ sits 0.00, 0.29 and 0.24 below L's (standard error of each difference ≈ 0.13), so J
 is no better where it works and possibly slightly low. The toy fixes the core and the
 labels' enumerability is not used by either method; a real fit has a nonlinear core and ∏(J_k + 1) labels, which only
@@ -418,8 +427,10 @@ increases the cost of J's collapsed label sampling.
 
 ### 6.6 Replicates, errors, failure
 
-- Two independent replicates per band give the Z error (the difference of ln Ẑ over √2) and p(N) ∝ Ẑ_N, with its error
-  propagated; the SMC particles give the posterior.
+- Two independent replicates per band; the band reports their mean ln Ẑ, and p(N) ∝ Ẑ_N uses it. The replicate
+  difference |Δ ln Ẑ| is a diagnostic only: |Δ|/√2 estimates the sd of one replicate (|Δ|/2 that of the mean), with one degree
+  of freedom, so its 95 % interval spans a factor of about 30. It is never propagated into p(N) or the pruning rule, and is
+  reported beside the band. A per-run, genealogy-based variance estimator is a Stage 3a option to replace it. The SMC particles give the posterior.
 - **Hitting the time cap is a failure**: a posterior at β < 1 is never reported. One flag, `band-undersampled`, marks a
   band whose final ESS is below ESS_target; it is information, with no retry. No cascade: one diagnostic, one action, one
   flag.
