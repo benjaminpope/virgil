@@ -39,11 +39,6 @@ First, the imports.
     set_style()  # the figure style used throughout the docs
     ```
 
-```text
-auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
-  from .autonotebook import tqdm as notebook_tqdm
-```
-
 ## Simulate Data
 
 We generate pure-noise data with Fourier sampling similar to the JWST AMI mask.
