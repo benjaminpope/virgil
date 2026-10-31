@@ -3,8 +3,8 @@ message: "If you use this software, please cite it using the metadata below."
 title: "VIRGIL: the Versatile Interferometric Reconstruction and Gradient-based Inference Library"
 abstract: "Modelling and imaging interferometric data in JAX (PyPI distribution virgil-astro)."
 type: software
-version: 0.4.1
-date-released: "2026-10-23"
+version: 0.4.2
+date-released: "2026-10-24"
 license: MIT
 repository-code: "https://github.com/benjaminpope/virgil"
 authors:

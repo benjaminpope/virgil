@@ -7,6 +7,87 @@ anything before 1.0 may change between minor versions.
 
 <!-- towncrier release notes start -->
 
+## 0.4.2 (2026-10-24)
+
+### Changes to default behaviour
+
+- `CalibrationNuisance(alpha=1)` (a non-zero integer) raises. It used to fit α
+  (`bool(1)`), and a float now fixes it. Pass `alpha=True` to fit or
+  `alpha=1.0` to fix; `alpha=0` still gives α = 0. ([#516](https://github.com/benjaminpope/virgil/pull/516))
+
+### Added
+
+- **`virgil.radio_toeplitz`** (provisional): `ComplexVisData.toeplitz`
+  precomputes the dirty beams and images of a one-`Image` radio fit, after
+  Fessler et al. (2005). Its `term` gives the loss, gradient, profiled `ŝ` and
+  `derived` of `ComplexVisData.term` at a cost independent of the number of
+  visibilities. See [Toeplitz χ²](docs/radio_interferometry.md#toeplitz-chi2).
+  - Supported: per-observation gains, flux, taper, smoothing, a mask, and
+    fixed, fitted or profiled error scales; float64 only. The template's
+    fixed `dra`, `ddec` (such as a half-pixel map convention) are folded into
+    the visibilities at the precompute.
+  - Refused: antenna gains, a fitted spectral index and other components.
+  - `crosscheck` compares it with the direct term (about 1e-13 of the loss).
+    `rebuild` repeats the precompute for new weights without recompiling.
+  - Extension, opt-in: `offsets="spread"` fits the per-observation offsets
+    by evaluating the stored nufftax spread grids (nufftax ≥ 0.6.1) at
+    shifted positions. This is a type-3 evaluation (Lee & Greengard 2005;
+    Barnett et al. 2019); we know of no prior use of this combination. It
+    refuses baselines past the kernel's Nyquist margin. Tests:
+    `test_matches_direct_term`, `test_matches_direct_term_at_scale`,
+    `test_refuses_what_it_cannot_do`, `test_runtime_checks` and
+    `test_spread_grid_against_nufftax_and_direct_sums`.
+
+  ([#516](https://github.com/benjaminpope/virgil/pull/516))
+- `fit` accepts likelihood terms with a scalar χ² (`chi2_and_log_norm`, no
+  residual vector). L-BFGS and Adam use them; LM and the Gauss–Newton
+  covariance raise `NoLeastSquaresForm`; `precondition="diag"` takes their
+  Gauss–Newton diagonal through `curvature_params` and `curvature_loss`. ([#516](https://github.com/benjaminpope/virgil/pull/516))
+- `ComplexVisData.chi2_by_ddid` takes `chunk_size` (that of `term`). ([#516](https://github.com/benjaminpope/virgil/pull/516))
+- `CalibrationNuisance(alpha=<float>)` fixes the spectral index at that value. ([#516](https://github.com/benjaminpope/virgil/pull/516))
+- The README development-carbon badge is now a shields.io endpoint badge reading
+  `generated/dev_carbon_badge.json` on the docs site, so the PyPI README shows
+  the current figure, not the one frozen at release. `scripts/dev_carbon.py`
+  writes both. ([#529](https://github.com/benjaminpope/virgil/pull/529))
+- CI fails a PR that adds a private function called exactly once in the package
+  (`scripts/code_shape.py --since`, rule 8 in AGENTS.md; exemptions: `# deliberate:`
+  comment, jit kernels, custom derivatives, callbacks, names used in tests). The size
+  comment also prints before/after code-shape metrics (`scripts/code_shape_metrics.py`). ([#537](https://github.com/benjaminpope/virgil/pull/537))
+
+### Changed
+
+- `MultipoleField` is single-valued at the disk centre when `r_min_mas=0` (the default; #517): order `m` of the field is scaled by `tanh(r / spacing)^|m|` (the `r^|m|` regularity of a smooth 2D field), so only `m = 0` survives at `r = 0`. This changes the default prior: within about five node spacings of the centre the `m >= 1` variance is below `sigma**2`, so MAP fits and evidences move; farther out, and for `r_min_mas > 0`, it is unchanged. ([#518](https://github.com/benjaminpope/virgil/pull/518))
+- The release checklist no longer requires a mutation-testing kill rate. ([#523](https://github.com/benjaminpope/virgil/pull/523))
+- `fit(method="adam")` now runs in jitted chunks of 200 steps (same trajectory, step for step), so `time_limit` and `progress` apply to it, and it reports convergence: `info["converged"]` is `True` if the `ftol_abs` plateau stop fired or `grad_norm <= gtol`, else `False` with `info["stop"]` `"limit"`, `"time"` or `"non-finite"` (it was `None`, so an Adam fit that hits `max_steps` now warns). New keywords: `adam_eps` (`optax.adam`'s `eps`), `ftol_abs` and `ftol_window` (stop when the loss fell by less than `ftol_abs` over the last `ftol_window` steps); `info["loss_history"]` is the unscaled loss before each Adam step. `ftol_window` below 1 raises `ValueError`. ([#534](https://github.com/benjaminpope/virgil/pull/534))
+- Radio innovations register audited (virgil#531): B5 and B7 updated to what is on `main`, a defaults audit
+  and the D13 finding added, six references added to the provenance file with `Source:` lines. The docstrings
+  of `fit(precondition=...)`, `gauss_newton_diag` and `MaxEntropy.metric_rows` now give the entropy metric's
+  diagonal as `weight * b * (1 - b)`, as the code computes it; no behaviour changes. ([#538](https://github.com/benjaminpope/virgil/pull/538))
+- The disk, image and quicklook pipeline modules lose a dozen single-use private helpers and a few docstring lines; no behaviour change. ([#540](https://github.com/benjaminpope/virgil/pull/540))
+- `ComplexVisData.term` takes `chi2="auto"|"direct"|"toeplitz"` (default `"auto"`). `fit` then uses the exact Toeplitz (dirty-beam) χ² where it applies: one fixed `Image`, a fixed `alpha`, `offsets=False`, no `antenna_gains`, float64, `method="lbfgs"` or `"adam"`, and at least `toeplitz_min_points` points and `toeplitz_points_per_pixel` per pixel and ddid (`set_ft_defaults`). Otherwise the direct term is used; `"toeplitz"` raises a `ValueError` naming the unmet condition. The beams take about 24 N² bytes of device memory per ddid; auto stays direct above `toeplitz_max_bytes` (4 GB), and `chi2="direct"` opts out. `FitResult.info["likelihood_forms"]` says what ran (and why auto fell back), and a Toeplitz term's `info["chi2"]` is re-evaluated directly at the result. `numpyro_model` and the training fits of `cross_validate` stay direct. ([#541](https://github.com/benjaminpope/virgil/pull/541))
+- Code shape (#536, batch I): `oifits`, `oidata`, `amigo` and `legacy` inline 23 single-use private helpers in `oifits.py` and 3 elsewhere, and trim long docstrings to the calling contract. Behaviour and OIFITS round trips are unchanged. ([#542](https://github.com/benjaminpope/virgil/pull/542))
+- Code shape: nine refactor batches ([#540](https://github.com/benjaminpope/virgil/pull/540), [#542](https://github.com/benjaminpope/virgil/pull/542), [#543](https://github.com/benjaminpope/virgil/pull/543), [#544](https://github.com/benjaminpope/virgil/pull/544), [#545](https://github.com/benjaminpope/virgil/pull/545), [#546](https://github.com/benjaminpope/virgil/pull/546), [#547](https://github.com/benjaminpope/virgil/pull/547), [#549](https://github.com/benjaminpope/virgil/pull/549), [#550](https://github.com/benjaminpope/virgil/pull/550)) inline single-use private helpers and trim docstrings to the calling contract, with no behaviour change. Measured on `src/virgil` against v0.4.1: private helpers called from one place 418 → 225 (−46%), docstring lines 14,040 → 13,647 (−3%), docstrings over 40 lines 30 → 22, none over 60; source lines 56,790 → 57,813 (+2%, the radio and Adam work).
+
+### Fixed
+
+- `fit` gauge-fixes the log-brightness of a free-pixel `Image`. A constant
+  added to it changes no image, and LM's QR solve drifted along that direction
+  by rounding noise (to 4e5 or 3.6e10, depending on platform). The fitted
+  `log_brightness` is now `log` of the pixel fluxes (`Σ exp = 1`), the same
+  on every platform; images, χ² and penalties are unchanged to rounding.
+  Pixels whose optimum is zero flux still fit towards `-inf`. ([#519](https://github.com/benjaminpope/virgil/pull/519))
+- `test_the_fitted_log_brightness_is_gauge_fixed_for_every_method` holds `logsumexp` to 1e-9 only in float64, and to a few float32 eps otherwise (one ulp was 2.4e-7). ([#539](https://github.com/benjaminpope/virgil/pull/539))
+- `test_fit_reaches_the_direct_optimum` no longer fails on some CI runner CPUs
+  (#528): the fitted `cal.sigma` of two optimiser paths is compared at 1e-6,
+  and the two terms' `sigma` at the same parameters at 1e-12. ([#539](https://github.com/benjaminpope/virgil/pull/539))
+- The `precondition="diag"` example in `docs/conventions.md` is self-contained. ([#539](https://github.com/benjaminpope/virgil/pull/539))
+- `radio_clean.clean` diverged on sparse-coverage problems (#551): the minor cycle used a PSF the size of the image, so its window was clipped at half the image and sidelobes beyond it were never subtracted. The minor cycle's PSF is now computed out to `psfpatch` or the far edge of the image from any component, as in CASA; results on well-behaved problems are unchanged (to 1e-9). `clean` also ends a minor cycle at a 10 per cent rise above its running minimum (per scale; `history[i]["minor_stop"]` records why) and the run with `stop="diverged"` at a relative rise above 3.0 of the whole-image peak residual over the previous major cycle or the minimum so far, as CASA's iteration control does. ([#553](https://github.com/benjaminpope/virgil/pull/553))
+
+### Docs
+
+- New simulated radio imaging tutorial (`docs/radio_tutorial.md`, from `notebooks/radio_tutorial.ipynb`): `ComplexVisData` from arrays, CLEAN start, `fit` of an `Image` with the Toeplitz χ², and diagnostics; a Performance table skeleton in the radio guide. ([#552](https://github.com/benjaminpope/virgil/pull/552))
+
+
 ## 0.4.1 (2026-10-23)
 
 0.4.1 is a consolidation release. It adds no new model families. It makes the
