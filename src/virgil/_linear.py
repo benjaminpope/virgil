@@ -164,6 +164,7 @@ def arrow_at(problem, scale2, trace=False):
     s² tr - K`` and ``∂χ²/∂ln s = -2 r2/s²`` (K the number of columns).
     """
     p = problem
+    hi = jax.lax.Precision.HIGHEST
     n_block, n_mode = p.gram_bb.shape[:2]
     n_span = p.gram_out.shape[0]
     eye = np.eye(n_mode, dtype=p.gram_bb.dtype)
@@ -175,8 +176,7 @@ def arrow_at(problem, scale2, trace=False):
     # S = s²I + ZᵀZ + s²WᵀW with Z = Ũ_s - Ũ_b W: a sum of squares, with
     # none of the cancellation of the Gram difference G_ss - G_bsᵀB⁻¹G_bs.
     s_b = p.spanning.at[p.rows].get(mode="fill", fill_value=0)
-    z = s_b - np.einsum("brm,bmk->brk", p.local, m_gs)
-    hi = jax.lax.Precision.HIGHEST
+    z = s_b - np.einsum("brm,bmk->brk", p.local, m_gs, precision=hi)
     schur = (
         scale2 * eye_s
         + p.gram_out
@@ -189,17 +189,17 @@ def arrow_at(problem, scale2, trace=False):
     fit_b = (
         np.zeros_like(p.x)
         .at[p.rows]
-        .add(np.einsum("brm,bm->br", p.local, m_g), mode="drop")
+        .add(np.einsum("brm,bm->br", p.local, m_g, precision=hi), mode="drop")
     )
     rhs_s = np.matmul(p.spanning.T, p.x - fit_b, precision=hi)
     y_s = _solve_spd(chol_s, rhs_s)
-    y_b = m_g - np.einsum("bmk,k->bm", m_gs, y_s)
+    y_b = m_g - np.einsum("bmk,k->bm", m_gs, y_s, precision=hi)
     fit = (
         np.zeros_like(p.x)
         .at[p.rows]
-        .add(np.einsum("brm,bm->br", p.local, y_b), mode="drop")
+        .add(np.einsum("brm,bm->br", p.local, y_b, precision=hi), mode="drop")
     )
-    r2 = np.sum((p.x - fit - p.spanning @ y_s) ** 2)
+    r2 = np.sum((p.x - fit - np.matmul(p.spanning, y_s, precision=hi)) ** 2)
     chi2 = r2 / scale2 + np.sum(y_b**2) + np.sum(y_s**2)
     log_diag = np.sum(np.log(np.diagonal(chol_b, axis1=1, axis2=2)))
     log_diag = log_diag + np.sum(np.log(np.diagonal(chol_s)))
@@ -207,7 +207,7 @@ def arrow_at(problem, scale2, trace=False):
     if not trace:
         return chi2, norm, r2
     inv_b = jax.vmap(lambda c: _solve_spd(c, eye))(chol_b)
-    z = np.einsum("bmk,bml->kl", m_gs, m_gs)
+    z = np.einsum("bmk,bml->kl", m_gs, m_gs, precision=hi)
     tr = np.sum(np.diagonal(inv_b, axis1=1, axis2=2))
     tr = tr + np.trace(_solve_spd(chol_s, z + eye_s))
     return chi2, norm, r2, tr
