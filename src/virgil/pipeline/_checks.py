@@ -157,7 +157,7 @@ def error_scale(scales, *, warn=2.0, fail=5.0, kind="fitted"):
     )
 
 
-def detection(local_sigma, global_sigma, *, threshold=3.0):
+def detection(local_sigma, global_sigma, *, threshold=3.0, bound=False):
     """Significance of the best companion against a threshold.
 
     ``global_sigma`` is the significance of the grid maximum against
@@ -165,7 +165,10 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
     effect; ``local_sigma`` is that of a single position. A clear detection
     passes; one significant only locally warns; no detection warns too,
     since the fit and posterior stages then describe the highest noise peak.
+    With ``bound`` the global value is a lower bound (no simulated null
+    reached the peak) and is printed as ``≥``.
     """
+    shown = ("≥" if bound else "") + format_sigma(global_sigma)
     value = [local_sigma, global_sigma]
     if _finite(global_sigma) and global_sigma >= threshold:
         return Check(
@@ -173,7 +176,7 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
             "pass",
             value,
             threshold,
-            f"Companion detected at {format_sigma(global_sigma)} against "
+            f"Companion detected at {shown} against "
             f"simulated companion-free searches "
             f"({format_sigma(local_sigma)} local).",
         )
@@ -184,7 +187,7 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
             value,
             threshold,
             f"Marginal: {format_sigma(local_sigma)} local but "
-            f"{format_sigma(global_sigma)} against simulated "
+            f"{shown} against simulated "
             "companion-free searches: noise alone often peaks this high "
             "somewhere on the grid.",
         )

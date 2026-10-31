@@ -81,14 +81,16 @@ def _null_nsigma(data, grid, batch_size, n_null, seed, delta_chi2):
     The searches repeat the real one on Gaussian noise at the quoted errors.
     The probability is ``(k + 1) / (n_null + 1)`` for ``k`` null maxima at
     or above ``delta_chi2``, so it is an upper bound and the significance a
-    lower bound; both are NaN if ``delta_chi2`` is not finite."""
+    lower bound; with ``k = 0`` it sits at the floor ``1 / (n_null + 1)``
+    however strong the peak. Returns ``(sigma, fap, k)``; all NaN if
+    ``delta_chi2`` is not finite."""
     from scipy.stats import norm
 
     from ..detection import gaussian_null, injection_recovery
     from ..models import BinaryModelCartesian
 
     if not math.isfinite(delta_chi2):
-        return float("nan"), float("nan")
+        return float("nan"), float("nan"), float("nan")
     mc = injection_recovery(
         BinaryModelCartesian,
         _null_model(),
@@ -102,7 +104,8 @@ def _null_nsigma(data, grid, batch_size, n_null, seed, delta_chi2):
     )
     fap = float(mc.false_alarm_probability("delta_chi2", delta_chi2)[0])
     # A FAP of 1 (every null peaks higher) would give -inf, which JSON rejects.
-    return float(norm.isf(min(fap, n_null / (n_null + 1.0)))), fap
+    k = round(fap * (n_null + 1)) - 1
+    return float(norm.isf(min(fap, n_null / (n_null + 1.0)))), fap, k
 
 
 class BinaryPipeline(_Pipeline):
@@ -209,6 +212,15 @@ class BinaryPipeline(_Pipeline):
                 _positive(s, name)
         _integer(s, "limit_bins", 1)
         _integer(s, "n_null", 1)
+        from scipy.stats import norm
+
+        # A simulated false-alarm probability is at least 1 / (n_null + 1).
+        need = math.ceil(1.0 / norm.sf(s["detection_sigma"])) - 1
+        if s["n_null"] < need:
+            raise ValueError(
+                f"n_null={s['n_null']} cannot resolve detection_sigma="
+                f"{s['detection_sigma']:g}: need n_null >= {need}."
+            )
         _integer(s, "max_grid", 3)
         _integer(s, "n_flux", 2)
         _pair(s, "flux_range")
@@ -469,7 +481,7 @@ def _search_report(data, grid, axis, detection, settings):
     from ..detection import local_nsigma
 
     local = float(local_nsigma(float(detection["delta_chi2"])))
-    global_nsigma, fap = _null_nsigma(
+    global_nsigma, fap, n_above = _null_nsigma(
         data,
         grid,
         settings["batch_size"],
@@ -489,6 +501,8 @@ def _search_report(data, grid, axis, detection, settings):
         "global_nsigma": global_nsigma,
         "global_nsigma_method": GLOBAL_NSIGMA_METHOD,
         "false_alarm_probability": fap,
+        "n_null_above": n_above,
+        "global_nsigma_is_lower_bound": n_above == 0,
         "n_null": settings["n_null"],
         "max_sep_mas": axis.max_sep,
         "alias_cap_mas": axis.alias_cap,
@@ -738,6 +752,8 @@ _SEARCH_KEYS = (
     "global_nsigma_method",
     "false_alarm_probability",
     "n_null",
+    "n_null_above",
+    "global_nsigma_is_lower_bound",
     "dra_mas",
     "ddec_mas",
     "flux",
@@ -826,6 +842,7 @@ def _summarize(settings, reports):
                 search["local_nsigma"],
                 search["global_nsigma"],
                 threshold=settings["detection_sigma"],
+                bound=search["global_nsigma_is_lower_bound"],
             )
         )
         # The flux axis only seeds the optimizer: not a search boundary.
