@@ -4,7 +4,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 import pytest
-from scipy import stats
+from scipy import integrate, stats
 
 from virgil import _orbit_coordinates as oc
 from virgil.orbits import KeplerOrbit
@@ -111,6 +111,7 @@ def test_jacobian_is_a3_sin2_i():
 
 
 def test_z_prior_recovery():
+    # a and cos i check the sampler; omega and Omega go through the map.
     n = 20000
     z = oc.sample_z(jax.random.key(4), (n,), A_MIN, A_MAX)
     z = onp.asarray(z)
@@ -139,18 +140,37 @@ def test_z_prior_recovery():
     )
 
 
-def test_z_log_prior_normalized_and_matches_density():
-    # ∫ p dz over the shell = 1: a Monte Carlo with the prior's own draws
-    # gives E[1/p * p] trivially, so check against a uniform-in-box estimate.
-    rng = onp.random.default_rng(5)
-    r_max = onp.sqrt(2 * A_MAX)
-    z = rng.uniform(-r_max, r_max, (400000, 4))
-    p = onp.exp(onp.asarray(oc.z_log_prior(z, A_MIN, A_MAX)))
-    # the box holds the whole shell: integral = mean(p) * (2 r_max)^4
-    onp.testing.assert_allclose(p.mean() * (2 * r_max) ** 4, 1.0, rtol=0.05)
+def test_z_log_prior_is_normalized():
+    # radial quadrature of exp(log p) over the shell: ∫ p 2π² r³ dr = 1
+    def density(r):
+        z = np.array([r, 0.0, 0.0, 0.0])
+        return (
+            float(np.exp(oc.z_log_prior(z, A_MIN, A_MAX)))
+            * 2
+            * onp.pi**2
+            * r**3
+        )
+
+    total, _ = integrate.quad(
+        density, onp.sqrt(2 * A_MIN), onp.sqrt(2 * A_MAX)
+    )
+    assert total == pytest.approx(1.0, abs=1e-8)
     assert onp.isneginf(
         oc.z_log_prior(np.array([0.0, 0, 0, 0.01]), A_MIN, A_MAX)
     )
+
+
+def test_z_density_follows_from_the_jacobians():
+    # d⁴(ABFG) = 4 |z_u|² |z_v|² d⁴z, and with d⁴(ABFG) = a³ sin²i da dcos(i)
+    # dω dΩ (above) the isotropic log-uniform prior is ∝ a⁻² ∝ |z|⁻⁴.
+    z = np.array(onp.random.default_rng(11).normal(size=(5, 4)))
+    det = jax.vmap(
+        lambda x: np.linalg.det(
+            jax.jacfwd(lambda y: np.stack(oc.z_to_ti(y)))(x)
+        )
+    )(z)
+    zu2, zv2 = z[:, 0] ** 2 + z[:, 1] ** 2, z[:, 2] ** 2 + z[:, 3] ** 2
+    onp.testing.assert_allclose(abs(det), 4 * zu2 * zv2, rtol=1e-10)
 
 
 def test_zeta_prior_recovery():
@@ -196,15 +216,70 @@ def test_positions_match_kepler_orbit_at_random_epochs():
     sky = oc.coordinates_to_orbit(150.0, z, zeta, T_ANCHOR).sky(t)
     onp.testing.assert_allclose(sky[0], dra, atol=1e-8)
     onp.testing.assert_allclose(sky[1], ddec, atol=1e-8)
-    # TI′ at the anchor is close to the position when the orbit is circular
-    near = np.array([1e-4, 0.0])
-    z0 = np.array([1.2, 0.3, 0.4, -0.2])
-    dra0, ddec0 = oc.coordinates_to_orbit(150.0, z0, near, T_ANCHOR).sky(
-        T_ANCHOR
+
+
+def test_anchor_rotation_direction_and_continuity_at_zero_eccentricity():
+    z = np.array([1.2, 0.3, 0.4, -0.2])
+    eps = 1e-4
+    # (A′, F′) = R(-M_a)(A, F): the circular orbit does not depend on M_a,
+    # so the sky is continuous as zeta -> 0 from every direction
+    skies = [
+        onp.array(
+            oc.coordinates_to_orbit(
+                150.0, z, eps * np.array([np.cos(p), np.sin(p)]), T_ANCHOR
+            ).sky(np.linspace(-200, 200, 9))
+        )
+        for p in (0.0, 0.6, 2.0, -2.5)
+    ]
+    for other in skies[1:]:
+        onp.testing.assert_allclose(other, skies[0], atol=1e-6)
+    # at the anchor the position is (B′, A′), to O(e)
+    m_a = 1.2
+    zeta = eps * np.array([np.cos(m_a / 2), np.sin(m_a / 2)])  # M_a = 1.2
+    sky = oc.coordinates_to_orbit(150.0, z, zeta, T_ANCHOR).sky(T_ANCHOR)
+    a_t, b_t, _, _ = oc.z_to_ti(z)  # z is in TI′: (A′, B′)
+    onp.testing.assert_allclose([sky[1], sky[0]], [a_t, b_t], atol=1e-6)
+
+
+def test_coordinates_match_closed_form_campbell():
+    # z_u = √(2a) cos(i/2) e^{i(ω+M_a+Ω)/2}, z_v = √(2a) sin(i/2) e^{i(ω+M_a-Ω)/2},
+    # zeta = √e e^{iM_a/2}, built by hand from Campbell elements
+    a, ecc, inc, omega, Omega, period, m_a = (
+        7.0,
+        0.4,
+        1.1,
+        0.8,
+        2.3,
+        120.0,
+        0.9,
     )
-    ap, bp, _, _ = oc.anchor_rotate(oc.z_to_ti(z0), 0.0)
-    onp.testing.assert_allclose(ddec0, ap, atol=1e-2)
-    onp.testing.assert_allclose(dra0, bp, atol=1e-2)
+    orbit = KeplerOrbit(
+        period,
+        T_ANCHOR - m_a * period / (2 * onp.pi),
+        ecc,
+        onp.degrees(inc),
+        onp.degrees(omega),
+        onp.degrees(Omega),
+        a,
+    )
+    zu = (
+        onp.sqrt(2 * a)
+        * onp.cos(inc / 2)
+        * onp.exp(0.5j * (omega + m_a + Omega))
+    )
+    zv = (
+        onp.sqrt(2 * a)
+        * onp.sin(inc / 2)
+        * onp.exp(0.5j * (omega + m_a - Omega))
+    )
+    z = np.array([zu.real, zu.imag, zv.real, zv.imag])
+    zeta_c = onp.sqrt(ecc) * onp.exp(0.5j * m_a)
+    zeta = np.array([zeta_c.real, zeta_c.imag])
+    t = onp.random.default_rng(12).uniform(-300, 300, 25)
+    sky = oc.coordinates_to_orbit(period, z, zeta, T_ANCHOR).sky(t)
+    dra, ddec, _ = orbit.relative(t)
+    onp.testing.assert_allclose(sky[0], dra, atol=1e-8)
+    onp.testing.assert_allclose(sky[1], ddec, atol=1e-8)
 
 
 def _sky_sum(z, zeta):
