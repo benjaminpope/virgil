@@ -446,35 +446,6 @@ def _lone_night(position, flux=0.3, **noise):
     return cast_tree(data, "float64")
 
 
-def _log_mean_grid(data, a_max, h, n_nodes, centre=(0.0, 0.0), half=None):
-    """ln of the integral of the night's likelihood by brute force: a midpoint
-    grid of step ``h`` over the disc ``|p| <= a_max`` (or the box of
-    half-width ``half`` about ``centre``) and Gauss-Legendre in ln f. The
-    caller divides by the prior's volume."""
-    surface = epochs._Surface(data, 10.0)
-    dof = np.asarray(_unit_dof([data])[0])
-    g_lo, g_hi = onp.log(FLUX_RANGE)
-    x, w = onp.polynomial.legendre.leggauss(n_nodes)
-    nodes = 0.5 * (g_hi - g_lo) * x + 0.5 * (g_hi + g_lo)
-    weights = 0.5 * (g_hi - g_lo) * w
-    reach = a_max if half is None else half
-    n = int(onp.ceil(reach / h))
-    axis = (onp.arange(-n, n) + 0.5) * h
-    px, py = onp.meshgrid(axis + centre[0], axis + centre[1], indexing="ij")
-    keep = (px**2 + py**2 <= a_max**2).ravel()
-    px, py = px.ravel()[keep], py.ravel()[keep]
-    terms = []
-    for g, wt in zip(nodes, weights):
-        points = onp.column_stack([px, py, onp.full(len(px), onp.exp(g))])
-        score = epochs._padded_scores(
-            points, data, surface, None, dof, None, None
-        )
-        terms.append(score + onp.log(wt))
-    top = onp.max(terms)
-    total = top + onp.log(onp.sum(onp.exp(onp.array(terms) - top)))
-    return float(total + 2.0 * onp.log(h))
-
-
 def _log_mean_box(data, centre, half, h):
     """ln of the integral of the night's likelihood over the box ``centre``
     ± ``half`` in ``(dra, ddec, ln f)``, by a midpoint grid of steps ``h``."""
@@ -497,39 +468,6 @@ def _log_mean_box(data, centre, half, h):
     )
 
 
-def _richardson(coarse, fine):
-    """ln of the Richardson extrapolate ``(4 J(h/2) - J(h)) / 3`` of the
-    midpoint rule, from ln J(h) and ln J(h/2)."""
-    return fine + onp.log((4.0 - onp.exp(coarse - fine)) / 3.0)
-
-
-def _flux_nodes_needed(data, position, start=8):
-    """Gauss-Legendre nodes in ln f at which the flux integral at
-    ``position`` has converged to DELTA/10."""
-    surface = epochs._Surface(data, 10.0)
-    dof = np.asarray(_unit_dof([data])[0])
-    g_lo, g_hi = onp.log(FLUX_RANGE)
-
-    def flux_integral(n):
-        x, w = onp.polynomial.legendre.leggauss(n)
-        g = 0.5 * (g_hi - g_lo) * x + 0.5 * (g_hi + g_lo)
-        points = onp.column_stack(
-            [onp.full(n, position[0]), onp.full(n, position[1]), onp.exp(g)]
-        )
-        score = epochs._padded_scores(
-            points, data, surface, None, dof, None, None
-        )
-        terms = score + onp.log(0.5 * (g_hi - g_lo) * w)
-        return float(terms.max() + onp.log(onp.exp(terms - terms.max()).sum()))
-
-    n, last = start, None
-    while True:
-        value = flux_integral(n)
-        if last is not None and abs(value - last) < DELTA / 10:
-            return n
-        n, last = 2 * n, value
-
-
 def _prior_volume(a_max):
     return onp.log(onp.pi * a_max**2 * onp.log(FLUX_RANGE[1] / FLUX_RANGE[0]))
 
@@ -537,18 +475,30 @@ def _prior_volume(a_max):
 @pytest.mark.slow
 @ta.in_float64
 def test_the_broad_component_converges_to_a_fine_grid():
+    # The night's one peak is ~0.01 mas wide, far below any grid over the
+    # disc that fits the time budget (res/256 is 0.017 mas), so the oracle is
+    # a midpoint grid over ±10 sd of the peak, at sd/2, sd/3 and sd/4.
     data = _lone_night((3.0, 0.0))
     res = Epochs({"n": data}).resolution_mas
-    a_max, h = 6.0, res / 64.0
-    n_nodes = _flux_nodes_needed(data, (3.0, 0.0))
-    ln_j = [_log_mean_grid(data, a_max, h / 2**m, n_nodes) for m in range(3)]
-    oracle = [_richardson(ln_j[0], ln_j[1]), _richardson(ln_j[1], ln_j[2])]
-    assert abs(oracle[1] - oracle[0]) <= DELTA  # the oracle has converged
+    a_max = 6.0
+    surface = epochs._Surface(data, 10.0)
+    dof = _unit_dof([data])
+    peaks = epochs._broad_catalogue(
+        onp.array([[3.0, 0.0, onp.log(0.3)]]), a_max, onp.log(FLUX_RANGE),
+        data, np.asarray(dof[0]), None, surface,
+    )  # fmt: skip
+    assert len(peaks["z"]) == 1  # no other peak within 30 nats
+    sd = peaks["sd"][0]
+    ln_j = [
+        _log_mean_box(data, peaks["z"][0], 10.0 * sd, sd / m)
+        for m in (2.0, 3.0, 4.0)
+    ]
+    assert abs(ln_j[2] - ln_j[1]) <= DELTA / 10  # the oracle has converged
     b = broad_loglike(
-        [data], _unit_dof([data]), a_max=a_max, flux_range=FLUX_RANGE,
-        step=0.25 * res, s_max=10.0,
+        [data], dof, a_max=a_max, flux_range=FLUX_RANGE, step=0.25 * res,
+        s_max=10.0,
     )[0]  # fmt: skip
-    assert abs(b - (oracle[1] - _prior_volume(a_max))) <= 4 * DELTA
+    assert abs(b - (ln_j[2] - _prior_volume(a_max))) <= 4 * DELTA
 
 
 @pytest.mark.slow
