@@ -1033,7 +1033,7 @@ verified_via = "ads"
 authors = "Thiele"
 year = 1883
 title = "Neue Methode zur Berechung von Doppelsternbahnen"
-used_in = ["virgil.orbits:_thiele_innes_fit", "virgil._orbit_coordinates:z_to_ti"]
+used_in = ["virgil.orbits:_thiele_innes_fit"]
 note = "Astron. Nachr. 104, 245; title as spelled by ADS"
 bibcode = "1883AN....104..245T"
 verified = true
@@ -1693,43 +1693,6 @@ role = "context"
 verified = true
 verified_via = "arxiv"
 
-[ref.miles1965]
-authors = "Miles"
-year = 1965
-title = "On random rotations in R^3"
-doi = "10.1093/biomet/52.3-4.636"
-used_in = ["virgil._orbit_coordinates:z_log_prior"]
-note = "Biometrika 52, 636-639; the isotropic (Haar) distribution of rotations: Omega and omega uniform, cos i uniform. Not on ADS: checked on Crossref"
-verified = true
-verified_via = "crossref"
-
-[ref.moran1975]
-authors = "Moran"
-year = 1975
-title = "Quaternions, Haar measure and the estimation of a palaeomagnetic rotation"
-doi = "10.1017/s0021900200047720"
-used_in = ["virgil._orbit_coordinates:sample_z"]
-note = "J. Appl. Prob. 12, 295-301; Haar measure on SO(3) is the uniform measure on S^3, covered 2:1 by unit quaternions. Not on ADS: checked on Crossref"
-verified = true
-verified_via = "crossref"
-
-[ref.goldstein2002]
-authors = "Goldstein, Poole & Safko"
-year = 2002
-title = "Classical Mechanics (3rd ed.)"
-used_in = ["virgil._orbit_coordinates:ti_to_z"]
-note = "Addison-Wesley, section 4.5; the Cayley-Klein parameters of a rotation in Euler angles. A textbook with no DOI or ADS record: unverified"
-verified = false
-
-[ref.ford2006]
-authors = "Ford"
-year = 2006
-title = "Improving the Efficiency of Markov Chain Monte Carlo for Analyzing the Orbits of Extrasolar Planets"
-used_in = ["virgil._orbit_coordinates:zeta_to_eccentricity"]
-note = "ApJ 642, 505; the (sqrt(e) cos omega, sqrt(e) sin omega) parameterization, uniform in e; zeta is its half-angle variant"
-bibcode = "2006ApJ...642..505F"
-arxiv = "astro-ph/0512634"
-doi = "10.1086/500802"
 # Sources of design/orbit_alias_cycles.md (not yet coded): role "bibliography" until a stage sets used_in.
 # The z and ζ maps, the anchor TI' rotation and the velocity-aware outlier contract are derived there (no source).
 
@@ -1745,58 +1708,51 @@ arxiv = "2002.00014"
 verified = true
 verified_via = "ads"
 
-[ref.cabezas2024]
-authors = "Cabezas et al."
-year = 2024
-title = "BlackJAX: Composable Bayesian inference in JAX"
-arxiv = "2402.10797"
-repo = "https://github.com/blackjax-devs/blackjax"
-verified = true
-verified_via = "arxiv"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
-note = "the adaptive tempered SMC, HMC and pretuning kernels (blackjax >= 1.7.1) that virgil.smc wraps"
-
 [ref.delmoral2006]
 authors = "Del Moral, Doucet & Jasra"
 year = 2006
-title = "Sequential Monte Carlo samplers"
+title = "Sequential Monte Carlo Samplers"
 doi = "10.1111/j.1467-9868.2006.00553.x"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "JRSSB 68, 411; SMC samplers and the normalizing-constant estimate, Z as the product of the incremental weights"
+role = "bibliography"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
-note = "JRSSB 68, 411; the SMC sampler and its unbiased normalizing-constant estimate, Z as the product of the incremental weights"
 
 [ref.jasra2011]
 authors = "Jasra, Stephens, Doucet & Tsagaris"
 year = 2011
-title = "Inference for Lévy-driven stochastic volatility models via adaptive sequential Monte Carlo"
+title = "Inference for Lévy-Driven Stochastic Volatility Models via Adaptive Sequential Monte Carlo"
 doi = "10.1111/j.1467-9469.2010.00723.x"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Scand. J. Stat. 38, 1 (online December 2010); ESS-adaptive tempering schedules"
+role = "bibliography"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.smc:tempered_smc"]
-note = "Scand. J. Statist. 38, 1; the tempering schedule chosen adaptively from the ESS"
 
 [ref.zhou2016]
 authors = "Zhou, Johansen & Aston"
 year = 2016
-title = "Toward automatic model comparison: an adaptive sequential Monte Carlo approach"
-arxiv = "1303.3123"
+title = "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
 doi = "10.1080/10618600.2015.1060885"
-verified = true
-verified_via = "arxiv"
 used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
-note = "JCGS 25, 701; the conditional-ESS criterion for the next β (BlackJAX solves the ESS of the incremental weights of the resampled particles, an approximation to it), and bridging between models by SMC"
+note = "JCGS 25, 701; conditional ESS for the next temperature"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
 
 [ref.buchholz2021]
 authors = "Buchholz, Chopin & Jacob"
 year = 2021
-title = "Adaptive tuning of Hamiltonian Monte Carlo within sequential Monte Carlo"
+title = "Adaptive Tuning of Hamiltonian Monte Carlo Within Sequential Monte Carlo"
+doi = "10.1214/20-ba1222"
 arxiv = "1808.07730"
-doi = "10.1214/20-BA1222"
-verified = true
-verified_via = "arxiv"
 used_in = ["virgil.smc:tempered_smc"]
-note = "Bayesian Analysis 16, 745; per-stage tuning of the HMC step size and trajectory length, the mass matrix from the particle covariance (via BlackJAX's pretuning)"
+note = "Bayesian Anal. 16, 745; fixed-L HMC kernels tuned per stage"
+role = "bibliography"
+bibcode = "2018arXiv180807730B"
+verified = true
+verified_via = "ads"
 
 [ref.beskos2013]
 authors = "Beskos, Pillai, Roberts, Sanz-Serna & Stuart"
@@ -1875,3 +1831,77 @@ role = "bibliography"
 bibcode = "2023arXiv230809769S"
 verified = true
 verified_via = "ads"
+
+
+[ref.cabezas2024]
+authors = "Cabezas et al."
+year = 2024
+title = "BlackJAX: Composable Bayesian inference in JAX"
+arxiv = "2402.10797"
+repo = "https://github.com/blackjax-devs/blackjax"
+verified = true
+verified_via = "arxiv"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "the adaptive tempered SMC, HMC and pretuning kernels (blackjax >= 1.7.1) that virgil.smc wraps"
+
+[ref.lee2018]
+authors = "Lee & Whiteley"
+year = 2018
+title = "Variance estimation in the particle filter"
+arxiv = "1509.00394"
+doi = "10.1093/biomet/asy028"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "Biometrika 105, 609; the single-run variance estimator of the normalizing constant from Eve (time-0 ancestor) indices, eq. 4 with phi = 1; needs multinomial resampling"
+
+[ref.du2021]
+authors = "Du & Guyader"
+year = 2021
+title = "Variance estimation in adaptive sequential Monte Carlo"
+arxiv = "1909.13602"
+doi = "10.1214/20-AAP1611"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "Ann. Appl. Probab. 31, 1021; extends the Eve-index variance estimator to SMC whose tempering schedule is chosen adaptively from the particles"
+
+[ref.miles1965]
+authors = "Miles"
+year = 1965
+title = "On random rotations in R^3"
+doi = "10.1093/biomet/52.3-4.636"
+used_in = ["virgil._orbit_coordinates:z_log_prior"]
+note = "Biometrika 52, 636-639; the isotropic (Haar) distribution of rotations: Omega and omega uniform, cos i uniform. Not on ADS: checked on Crossref"
+verified = true
+verified_via = "crossref"
+
+[ref.moran1975]
+authors = "Moran"
+year = 1975
+title = "Quaternions, Haar measure and the estimation of a palaeomagnetic rotation"
+doi = "10.1017/s0021900200047720"
+used_in = ["virgil._orbit_coordinates:sample_z"]
+note = "J. Appl. Prob. 12, 295-301; Haar measure on SO(3) is the uniform measure on S^3, covered 2:1 by unit quaternions. Not on ADS: checked on Crossref"
+verified = true
+verified_via = "crossref"
+
+[ref.goldstein2002]
+authors = "Goldstein, Poole & Safko"
+year = 2002
+title = "Classical Mechanics (3rd ed.)"
+used_in = ["virgil._orbit_coordinates:ti_to_z"]
+note = "Addison-Wesley, section 4.5; the Cayley-Klein parameters of a rotation in Euler angles. A textbook with no DOI or ADS record: unverified"
+verified = false
+
+[ref.ford2006]
+authors = "Ford"
+year = 2006
+title = "Improving the Efficiency of Markov Chain Monte Carlo for Analyzing the Orbits of Extrasolar Planets"
+used_in = ["virgil._orbit_coordinates:zeta_to_eccentricity"]
+note = "ApJ 642, 505; the (sqrt(e) cos omega, sqrt(e) sin omega) parameterization, uniform in e; zeta is its half-angle variant"
+bibcode = "2006ApJ...642..505F"
+arxiv = "astro-ph/0512634"
+doi = "10.1086/500802"
+# Sources of design/orbit_alias_cycles.md (not yet coded): role "bibliography" until a stage sets used_in.
+# The z and ζ maps, the anchor TI' rotation and the velocity-aware outlier contract are derived there (no source).
