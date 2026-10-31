@@ -194,12 +194,32 @@ def arrow_at(problem, scale2, trace=False):
     rhs_s = np.matmul(p.spanning.T, p.x - fit_b, precision=hi)
     y_s = _solve_spd(chol_s, rhs_s)
     y_b = m_g - np.einsum("bmk,k->bm", m_gs, y_s, precision=hi)
-    fit = (
-        np.zeros_like(p.x)
-        .at[p.rows]
-        .add(np.einsum("brm,bm->br", p.local, y_b, precision=hi), mode="drop")
+
+    def residual(y_b, y_s):
+        fit = (
+            np.zeros_like(p.x)
+            .at[p.rows]
+            .add(
+                np.einsum("brm,bm->br", p.local, y_b, precision=hi),
+                mode="drop",
+            )
+        )
+        return p.x - fit - np.matmul(p.spanning, y_s, precision=hi)
+
+    # One step of iterative refinement of (s²I + ŨᵀŨ) y = Ũᵀx with the
+    # residual formed in row space: χ² is stationary in y but amplifies its
+    # error by κ.
+    resid = residual(y_b, y_s)
+    r_b = resid.at[p.rows].get(mode="fill", fill_value=0)
+    g_b = np.einsum("brm,br->bm", p.local, r_b, precision=hi) - scale2 * y_b
+    g_s = np.matmul(p.spanning.T, resid, precision=hi) - scale2 * y_s
+    w_b = jax.vmap(_solve_spd)(chol_b, g_b[..., None])[..., 0]
+    d_s = _solve_spd(
+        chol_s, g_s - np.einsum("bmk,bm->k", p.gram_bs, w_b, precision=hi)
     )
-    r2 = np.sum((p.x - fit - np.matmul(p.spanning, y_s, precision=hi)) ** 2)
+    y_s = y_s + d_s
+    y_b = y_b + w_b - np.einsum("bmk,k->bm", m_gs, d_s, precision=hi)
+    r2 = np.sum(residual(y_b, y_s) ** 2)
     chi2 = r2 / scale2 + np.sum(y_b**2) + np.sum(y_s**2)
     log_diag = np.sum(np.log(np.diagonal(chol_b, axis1=1, axis2=2)))
     log_diag = log_diag + np.sum(np.log(np.diagonal(chol_s)))
