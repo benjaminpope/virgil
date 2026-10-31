@@ -1,0 +1,1 @@
+Test-only: the four tempering calibration tests (20 seeds each, 300-400 s on a CI runner) carry the slow tier's per-test 900 s timeout, as the other long orbit tests do; seeds, sample counts and thresholds are unchanged.
