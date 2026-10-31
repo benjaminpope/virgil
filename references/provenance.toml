@@ -1733,7 +1733,7 @@ doi = "10.1080/10618600.2015.1060885"
 verified = true
 verified_via = "arxiv"
 used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
-note = "JCGS 25, 701; the next β from a conditional ESS target, and bridging between models by SMC"
+note = "JCGS 25, 701; the conditional-ESS criterion for the next β (BlackJAX solves the ESS of the incremental weights of the resampled particles, an approximation to it), and bridging between models by SMC"
 
 [ref.buchholz2021]
 authors = "Buchholz, Chopin & Jacob"

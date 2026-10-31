@@ -8,8 +8,9 @@
 given particles, ``π_β ∝ prior · L₁^(1-β) · L₂^β``. Both return the
 particles, their weights, ``log Z`` (the log evidence, or the log ratio
 ``Z₂/Z₁`` for a bridge) with a Monte Carlo error from independent replicates,
-and the schedule. The next β solves a conditional ESS of one half
-(Zhou, Johansen & Aston 2016). The mutation is fixed-length HMC with the
+and the schedule. The next β solves for an ESS of one half of the incremental
+weights of the (resampled) particles, as in BlackJAX's adaptive tempering
+(Jasra et al. 2011; Zhou, Johansen & Aston 2016). The mutation is fixed-length HMC with the
 step size and trajectory length tuned per stage and the mass matrix set to the
 particle covariance (Buchholz, Chopin & Jacob 2021). A run that reaches the
 time or stage cap has not reached β = 1: it returns ``stopped=True`` and no
@@ -129,20 +130,8 @@ def _build(logprior, loglike, dtype, d, n_particles, target_ess, steps, tune):
     return algorithm.init, stage
 
 
-def _run(key, logprior, loglike, particles, n_particles, *, options):
+def _run(key, init, stage, particles, max_stages, deadline):
     """One replicate: ``(particles, weights, log Z, betas, ess, stopped)``."""
-    target_ess, steps, tune, max_stages, deadline = options
-    d = particles.shape[1]
-    init, stage = _build(
-        logprior,
-        loglike,
-        particles.dtype,
-        d,
-        n_particles,
-        target_ess,
-        steps,
-        tune,
-    )
     state = init(particles)
     tol = 8 * float(np.finfo(particles.dtype).eps)
     log_z, betas, ess = 0.0, [], []
@@ -171,9 +160,19 @@ def _smc(
     steps, step_size, leapfrogs, alpha, max_stages, max_seconds,
 ):  # fmt: skip
     deadline = time.monotonic() + max_seconds
-    options = (0.5, steps, (step_size, leapfrogs, alpha), max_stages, deadline)
+    # Built once: every replicate shares the compiled stage.
+    init, stage = _build(
+        logprior,
+        loglike,
+        starts[0].dtype,
+        starts[0].shape[1],
+        n_particles,
+        0.5,
+        steps,
+        (step_size, leapfrogs, alpha),
+    )
     runs = [
-        _run(k, logprior, loglike, start, n_particles, options=options)
+        _run(k, init, stage, start, max_stages, deadline)
         for k, start in zip(jax.random.split(key, replicates), starts)
     ]
     stopped = any(run[5] for run in runs)
@@ -218,7 +217,7 @@ def tempered_smc(
     key,
     n_particles,
     replicates=2,
-    ess_target=0.5,
+    ess_target=0.25,
     steps=5,
     leapfrogs=4,
     step_size=None,
@@ -238,10 +237,12 @@ def tempered_smc(
     n_particles : int
         Particles per replicate.
     replicates : int
-        Independent runs; ``log_z_error`` needs at least two.
+        Independent runs; ``log_z_error`` needs at least two and has one
+        degree of freedom at two, so it is then only an order of magnitude.
     ess_target : float
         Fraction of ``n_particles`` below which the final ESS sets
-        ``undersampled``.
+        ``undersampled``. It is below the schedule's one half so that a
+        healthy run, whose final ESS scatters about one half, is not flagged.
     steps : int
         HMC mutations per stage.
     leapfrogs, step_size, alpha
@@ -254,7 +255,7 @@ def tempered_smc(
     -------
     SMCResult
 
-    Source: Zhou, Johansen & Aston 2016; Buchholz, Chopin & Jacob 2021.
+    Source: Jasra et al. 2011; Buchholz, Chopin & Jacob 2021.
     """
     keys = jax.random.split(key, replicates + 1)
     starts = [init_particles(k, n_particles) for k in keys[1:]]
@@ -277,7 +278,7 @@ def bridge_smc(
     weights=None,
     n_particles=None,
     replicates=2,
-    ess_target=0.5,
+    ess_target=0.25,
     steps=5,
     leapfrogs=4,
     step_size=None,
@@ -289,7 +290,8 @@ def bridge_smc(
 
     ``particles`` (``(m, d)``, with optional ``weights``) sample prior × L₁;
     each replicate resamples ``n_particles`` of them. ``log_z`` estimates
-    ``log(Z₂ / Z₁)``. Other arguments are those of
+    ``log(Z₂ / Z₁)``. The replicates share the input cloud, so ``log_z_error``
+    excludes the variance of that cloud. Other arguments are those of
     [`tempered_smc`][virgil.smc.tempered_smc].
 
     Returns

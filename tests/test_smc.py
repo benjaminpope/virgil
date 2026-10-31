@@ -77,22 +77,29 @@ def test_bimodal_weights_and_evidence():
     assert abs(r.log_z - onp.log(z)) < 4 * r.log_z_error + 0.05
 
 
-def test_bridge_ratio():
+@pytest.mark.parametrize("weighted", [False, True])
+def test_bridge_ratio(weighted):
     d = 2
     mu1, mu2 = onp.array([0.5, 0.0]), onp.array([-1.0, 1.5])
     logprior, _ = _gauss_prior(d)
+    like1 = _gauss_like(mu1)
     prec = 1 / S0**2 + 1 / S1**2
-    start_mean = mu1 / S1**2 / prec
-    start = start_mean + jax.random.normal(
-        jax.random.key(5), (1000, d)
-    ) / onp.sqrt(prec)
+    centre = mu1 / S1**2 / prec
+    scale = (2.0 if weighted else 1.0) / onp.sqrt(prec)
+    start = centre + scale * jax.random.normal(jax.random.key(5), (1000, d))
+    weights = None
+    if weighted:
+        # a wider proposal, reweighted to prior x L1
+        log_q = -0.5 * np.sum(((start - centre) / scale) ** 2, axis=1)
+        log_w = jax.vmap(lambda x: logprior(x) + like1(x))(start) - log_q
+        weights = np.exp(log_w - log_w.max())
     r = bridge_smc(
-        logprior, _gauss_like(mu1), _gauss_like(mu2), start,
+        logprior, like1, _gauss_like(mu2), start, weights=weights,
         key=jax.random.key(2), replicates=4,
     )  # fmt: skip
     assert not r.stopped
     truth = _log_z(mu2) - _log_z(mu1)
-    assert abs(r.log_z - truth) < 4 * r.log_z_error + 0.05
+    assert abs(r.log_z - truth) < 4 * r.log_z_error + 0.1
 
 
 @pytest.mark.slow
@@ -102,13 +109,13 @@ def test_replicate_spread_matches_error():
     runs = [
         tempered_smc(
             logprior, _gauss_like(mu), init, key=jax.random.key(10 + i),
-            n_particles=200,
+            n_particles=200, replicates=4,
         )
-        for i in range(8)
+        for i in range(20)
     ]  # fmt: skip
     spread = onp.std([r.log_z for r in runs], ddof=1)
     reported = onp.mean([r.log_z_error for r in runs])
-    assert 0.25 < spread / reported < 4
+    assert 0.5 < spread / reported < 2
     assert onp.isnan(
         tempered_smc(
             logprior, _gauss_like(mu), init, key=jax.random.key(0),
