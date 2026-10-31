@@ -1692,3 +1692,109 @@ note = "Google's measured 0.24 Wh per median Gemini Apps text prompt; a cross-ch
 role = "context"
 verified = true
 verified_via = "arxiv"
+
+# Sources of design/orbit_alias_cycles.md (not yet coded): role "bibliography" until a stage sets used_in.
+# The z and ζ maps, the anchor TI' rotation and the velocity-aware outlier contract are derived there (no source).
+
+[ref.pricewhelan2020]
+authors = "Price-Whelan et al."
+year = 2020
+title = "Close Binary Companions to APOGEE DR16 Stars: 20,000 Binary-star Systems Across the Color-Magnitude Diagram"
+used_in = []
+note = "ApJ 895, 2; The Joker at scale (design/orbit_alias_cycles.md §6.4)"
+role = "bibliography"
+bibcode = "2020ApJ...895....2P"
+arxiv = "2002.00014"
+verified = true
+verified_via = "ads"
+
+[ref.delmoral2006]
+authors = "Del Moral, Doucet & Jasra"
+year = 2006
+title = "Sequential Monte Carlo Samplers"
+doi = "10.1111/j.1467-9868.2006.00553.x"
+used_in = []
+note = "JRSSB 68, 411; SMC samplers and the normalizing-constant estimate (design/orbit_alias_cycles.md §6)"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.jasra2011]
+authors = "Jasra, Stephens, Doucet & Tsagaris"
+year = 2011
+title = "Inference for Lévy-Driven Stochastic Volatility Models via Adaptive Sequential Monte Carlo"
+doi = "10.1111/j.1467-9469.2010.00723.x"
+used_in = []
+note = "Scand. J. Stat. 38, 1 (online December 2010); ESS-adaptive tempering schedules"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.zhou2016]
+authors = "Zhou, Johansen & Aston"
+year = 2016
+title = "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
+doi = "10.1080/10618600.2015.1060885"
+used_in = []
+note = "JCGS 25, 701; conditional ESS for the next temperature, and Z error"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.buchholz2021]
+authors = "Buchholz, Chopin & Jacob"
+year = 2021
+title = "Adaptive Tuning of Hamiltonian Monte Carlo Within Sequential Monte Carlo"
+doi = "10.1214/20-ba1222"
+arxiv = "1808.07730"
+used_in = []
+note = "Bayesian Anal. 16, 745; fixed-L HMC kernels tuned per stage"
+role = "bibliography"
+bibcode = "2018arXiv180807730B"
+verified = true
+verified_via = "ads"
+
+[ref.beskos2013]
+authors = "Beskos, Pillai, Roberts, Sanz-Serna & Stuart"
+year = 2013
+title = "Optimal tuning of the hybrid Monte Carlo algorithm"
+doi = "10.3150/12-bej414"
+used_in = []
+note = "Bernoulli 19, 1501; acceptance target 0.651"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.owen2000]
+authors = "Owen & Zhou"
+year = 2000
+title = "Safe and Effective Importance Sampling"
+doi = "10.1080/01621459.2000.10473909"
+used_in = []
+note = "JASA 95, 135; defensive mixtures bound the weights"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.shoemake1992]
+authors = "Shoemake"
+year = 1992
+title = "Uniform Random Rotations"
+doi = "10.1016/b978-0-08-050755-2.50036-1"
+used_in = []
+note = "Graphics Gems III, 124; unit quaternions and the Haar measure of SO(3)"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.surjanovic2023]
+authors = "Surjanovic, Biron-Lattes, Tiede et al."
+year = 2023
+title = "Pigeons.jl: Distributed Sampling From Intractable Distributions"
+arxiv = "2308.09769"
+used_in = []
+note = "parallel tempering prior art next to Octofitter"
+role = "bibliography"
+bibcode = "2023arXiv230809769S"
+verified = true
+verified_via = "ads"
