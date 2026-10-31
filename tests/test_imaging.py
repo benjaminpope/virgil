@@ -63,6 +63,14 @@ def test_tsv_and_tv_penalize_edges_and_structure():
     assert np.isclose(0.5 * np.sum(tsv.residuals(blob) ** 2), tsv.value(blob))
 
 
+@pytest.mark.parametrize("cls", [TSV, TV])
+def test_n_data_multiplies_the_weight(cls):
+    sky = _sky(NPIX)
+    base = float(cls(1.0, beam_mas=BEAM).value(sky))
+    got = float(cls(0.3, beam_mas=BEAM, n_data=40).value(sky))
+    assert got == pytest.approx(0.3 * 40 * base, rel=1e-5)
+
+
 def test_beam_is_required():
     with pytest.raises(TypeError, match="beam_mas"):
         TSV(1.0)

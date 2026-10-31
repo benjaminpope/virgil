@@ -157,10 +157,17 @@ class TSV(_ImageRegulariser):
     beam_mas : float
         The beam ``B`` in mas, a fixed angular scale (eht-imaging's
         ``beam_size``); required. ``B = p`` gives the old unnormalised weight.
+    n_data : float, optional
+        Multiplies the weight (default 1). eht-imaging's data terms are means,
+        ``χ²/N`` (``chisq_vis``, imager_utils.py:453), virgil's ½χ² is a sum,
+        so eht-imaging's weight ``β`` with data weight ``α`` is
+        ``weight=β, n_data=N/(2α)`` for ``N`` real data.
     """
 
-    def __init__(self, weight, path=None, smoothed=False, *, beam_mas):
-        self.weight = np.asarray(weight, dtype=float)
+    def __init__(
+        self, weight, path=None, smoothed=False, *, beam_mas, n_data=1.0
+    ):
+        self.weight = np.asarray(weight * n_data, dtype=float)
         self.path = path
         self.smoothed = bool(smoothed)
         self.beam_mas = beam_mas
@@ -205,14 +212,26 @@ class TV(_ImageRegulariser):
     beam_mas : float
         The beam ``B`` in mas, a fixed angular scale (eht-imaging's
         ``beam_size``); required. ``B = p`` gives the old unnormalised weight.
+    n_data : float, optional
+        Multiplies the weight (default 1). eht-imaging's data terms are means,
+        ``χ²/N`` (``chisq_vis``, imager_utils.py:453), virgil's ½χ² is a sum,
+        so eht-imaging's weight ``β`` with data weight ``α`` is
+        ``weight=β, n_data=N/(2α)`` for ``N`` real data.
     """
 
     epsilon: float
 
     def __init__(
-        self, weight, epsilon=1e-2, path=None, smoothed=False, *, beam_mas
+        self,
+        weight,
+        epsilon=1e-2,
+        path=None,
+        smoothed=False,
+        *,
+        beam_mas,
+        n_data=1.0,
     ):
-        self.weight = np.asarray(weight, dtype=float)
+        self.weight = np.asarray(weight * n_data, dtype=float)
         self.epsilon = np.asarray(epsilon, dtype=float)
         self.path = path
         self.smoothed = bool(smoothed)
