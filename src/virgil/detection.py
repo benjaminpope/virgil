@@ -192,12 +192,21 @@ def _resolve_keys(grid, flux_param):
 
 @eqx.filter_jit
 def _detection_statistics(
-    data, model, grid, params, coord_keys, flux_key, batch_size
+    data,
+    model,
+    grid,
+    params,
+    coord_keys,
+    flux_key,
+    batch_size,
+    uncertainty=True,
 ):
     """Jitted implementation of :func:`detection_statistics`.
 
     Returns ``(stats, converged)``, where ``converged`` is the flux
-    optimizer's convergence at every position.
+    optimizer's convergence at every position. Without ``uncertainty`` the
+    Laplace flux-uncertainty pass is skipped and ``max_snr`` and
+    ``flux_peak_steps`` are NaN; the other statistics are unchanged.
     """
     loglike_im = _likelihood_grid(data, model, grid, params, batch_size)
     grid_flux, grid_loglike = _best_grid_flux(
@@ -232,18 +241,22 @@ def _detection_statistics(
         log_ratio + _log_prior_weights(loglike_im.shape, log_ratio.dtype)
     )
 
-    sigma = _laplace_flux_uncertainty_grid(
-        opt_flux,
-        data,
-        model,
-        grid,
-        params,
-        coord_keys,
-        flux_key,
-        batch_size,
-    )
-    # The unconstrained best flux: a negative flux gives a negative SNR.
-    max_snr = np.nanmax(opt_flux / sigma)
+    if uncertainty:
+        sigma = _laplace_flux_uncertainty_grid(
+            opt_flux,
+            data,
+            model,
+            grid,
+            params,
+            coord_keys,
+            flux_key,
+            batch_size,
+        )
+        # The unconstrained best flux: a negative flux gives a negative SNR.
+        max_snr = np.nanmax(opt_flux / sigma)
+    else:
+        sigma = np.full(opt_flux.shape, np.nan, opt_flux.dtype)
+        max_snr = np.asarray(np.nan, opt_flux.dtype)
 
     stats = {
         "delta_chi2": delta_chi2,
@@ -594,6 +607,7 @@ def injection_recovery(
     draw_batch=1,
     chunk_size=None,
     batch_size=None,
+    uncertainty=True,
     progress=True,
 ):
     """Detection statistics of simulated null and injected observations.
@@ -632,6 +646,10 @@ def injection_recovery(
     draw_batch, chunk_size, batch_size : int, optional
         Draws evaluated together in ``jax.lax.map``; draws per kernel call
         (default min(64, draws)); grid points per search.
+    uncertainty : bool, optional
+        ``False`` skips the Laplace flux-uncertainty pass (about a third of
+        the cost): ``max_snr`` and ``flux_peak_steps`` are then NaN, and
+        every other statistic is unchanged.
     progress : bool, optional
         Show a ``tqdm`` bar.
 
@@ -727,6 +745,7 @@ def injection_recovery(
         "flux_key": flux_key,
         "batch_size": grid_batch,
         "draw_batch": draw_batch if draw_batch > 1 else None,
+        "uncertainty": bool(uncertainty),
     }
     bar = None
     if progress and n_null + n_inj > 0:
@@ -831,6 +850,7 @@ def _simulated_statistics(
     flux_key,
     batch_size,
     draw_batch,
+    uncertainty,
 ):
     """The Monte Carlo kernel: statistics of one chunk of draws."""
 
@@ -846,6 +866,7 @@ def _simulated_statistics(
             coord_keys=coord_keys,
             flux_key=flux_key,
             batch_size=batch_size,
+            uncertainty=uncertainty,
         )
         stats = dict(stats)
         stats["converged_fraction"] = np.mean(converged.astype(row.dtype))

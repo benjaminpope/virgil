@@ -121,6 +121,7 @@ def _null_nsigma(
             noise=noise,
             draw_batch=min(_NULL_DRAW_BATCH, size),
             batch_size=batch_size,
+            uncertainty=False,  # only delta_chi2 is read
             progress=False,
         )
         fap = float(mc.false_alarm_probability("delta_chi2", delta_chi2)[0])
