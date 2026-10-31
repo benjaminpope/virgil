@@ -117,7 +117,7 @@ class ArrowProblem(NamedTuple):
     spanning: jax.Array  # (n, n_span), n_span may be 0
     gram_bb: jax.Array  # (n_block, n_mode, n_mode)
     gram_bs: jax.Array  # (n_block, n_mode, n_span)
-    gram_ss: jax.Array  # (n_span, n_span)
+    gram_out: jax.Array  # (n_span, n_span): spanning rows outside every block
     proj_b: jax.Array  # (n_block, n_mode): Ũᵀx
     proj_s: jax.Array  # (n_span,)
 
@@ -138,6 +138,7 @@ def arrow_problem(x, rows, local, spanning=None):
     hi = jax.lax.Precision.HIGHEST
     x_b = x.at[rows].get(mode="fill", fill_value=0)
     s_b = spanning.at[rows].get(mode="fill", fill_value=0)
+    outside = np.ones(x.shape[0], x.dtype).at[rows].set(0, mode="drop")
     return ArrowProblem(
         x,
         rows,
@@ -145,7 +146,7 @@ def arrow_problem(x, rows, local, spanning=None):
         spanning,
         np.einsum("brm,brn->bmn", local, local, precision=hi),
         np.einsum("brm,brk->bmk", local, s_b, precision=hi),
-        np.matmul(spanning.T, spanning, precision=hi),
+        np.matmul(spanning.T * outside, spanning, precision=hi),
         np.einsum("brm,br->bm", local, x_b, precision=hi),
         np.matmul(spanning.T, x, precision=hi),
     )
@@ -166,15 +167,23 @@ def arrow_at(problem, scale2, trace=False):
     """
     p = problem
     n_block, n_mode = p.gram_bb.shape[:2]
-    n_span = p.gram_ss.shape[0]
+    n_span = p.gram_out.shape[0]
     eye = np.eye(n_mode, dtype=p.gram_bb.dtype)
     chol_b = np.linalg.cholesky(p.gram_bb + scale2 * eye)
     rhs = np.concatenate([p.proj_b[..., None], p.gram_bs], axis=-1)
     sol = jax.vmap(_solve_spd)(chol_b, rhs)
     m_g, m_gs = sol[..., 0], sol[..., 1:]
-    eye_s = np.eye(n_span, dtype=p.gram_ss.dtype)
+    eye_s = np.eye(n_span, dtype=p.gram_out.dtype)
+    # S = s²I + ZᵀZ + s²WᵀW with Z = Ũ_s - Ũ_b W: a sum of squares, with
+    # none of the cancellation of the Gram difference G_ss - G_bsᵀB⁻¹G_bs.
+    s_b = p.spanning.at[p.rows].get(mode="fill", fill_value=0)
+    z = s_b - np.einsum("brm,bmk->brk", p.local, m_gs)
+    hi = jax.lax.Precision.HIGHEST
     schur = (
-        scale2 * eye_s + p.gram_ss - np.einsum("bmk,bml->kl", p.gram_bs, m_gs)
+        scale2 * eye_s
+        + p.gram_out
+        + np.einsum("brk,brl->kl", z, z, precision=hi)
+        + scale2 * np.einsum("bmk,bml->kl", m_gs, m_gs, precision=hi)
     )
     chol_s = np.linalg.cholesky(schur)
     y_s = _solve_spd(chol_s, p.proj_s - np.einsum("bmk,bm->k", p.gram_bs, m_g))

@@ -328,12 +328,8 @@ def test_float32_matches_float64_on_the_same_data(case, at_low_edge):
             for a in surface._at(*args, data32)(log_s.astype("float32"))
         )
     assert chi2.dtype == onp.float32 and onp.isfinite(chi2).all()
-    # The Schur complement comes from Gram sums, so a spanning mode within
-    # 1e-3 of the per-frame span loses digits in float32 (1e-3 in χ², 0.07 in
-    # the normalizer; the rank-one path loses 1e-6); float64 is unaffected.
-    rtol, atol = (5e-3, 0.2) if case == "collinear" else (1e-5, 1e-4)
-    assert onp.allclose(chi2, chi2_ref, rtol=rtol, atol=0)
-    assert onp.allclose(own, own_ref, rtol=1e-5, atol=atol)
+    assert onp.allclose(chi2, chi2_ref, rtol=1e-5, atol=0)
+    assert onp.allclose(own, own_ref, rtol=1e-5, atol=1e-4)
 
 
 def test_arrow_marginal_is_the_dense_cholesky_marginal():
@@ -408,10 +404,6 @@ def test_an_all_padding_block_adds_nothing():
         for s in (0.5, 1.0, 2.0):
             problem = arrow_problem(x / s, rows_j, local_j / s, span / s)
             chi2, norm, _ = arrow_at(problem, 1.0)
-            white, extra = whiten_blocks(
-                x / s, rows_j, local_j / s, span / s
-            )
-            assert float(chi2) == pytest.approx(
-                float(white @ white), rel=1e-9
-            )
+            white, extra = whiten_blocks(x / s, rows_j, local_j / s, span / s)
+            assert float(chi2) == pytest.approx(float(white @ white), rel=1e-9)
             assert float(norm) == pytest.approx(float(extra.sum()), rel=1e-9)

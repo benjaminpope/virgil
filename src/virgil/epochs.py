@@ -465,7 +465,7 @@ def _arrow_term(problem, penalty, log_s, derivs):
         return chi2 + penalty / scale2, norm
     chi2, norm, r2, trace = arrow_at(problem, scale2, trace=True)
     n_col = problem.gram_bb.shape[0] * problem.gram_bb.shape[1]
-    n_col += problem.gram_ss.shape[0]
+    n_col += problem.gram_out.shape[0]
     return (
         chi2 + penalty / scale2,
         norm,
@@ -672,7 +672,9 @@ class _Surface:
                     resid[:n_vis] / e, jac, gains.widths_for(gain_terms)
                 )
                 terms.append(
-                    functools.partial(_arrow_term, problem, np.zeros((), resid.dtype))
+                    functools.partial(
+                        _arrow_term, problem, np.zeros((), resid.dtype)
+                    )
                 )
             elif (
                 name == "phi"
@@ -1568,8 +1570,9 @@ def _table_floats(data):
         # Per node: the Cholesky factor, its input and cotangent (3 · B m²),
         # the solves ``B⁻¹[x, G_bs]`` and their cotangent (2 · B m (1+k)), the
         # Schur complement, its factor and cotangent (3 · k²), the residual
-        # pass (4 · n) and the block and spanning coefficients ``y``.
+        # pass (4 · n), ``Z`` (3 · n k) and the coefficients ``y``.
         node = 3 * n_block * m * m + 2 * n_block * m * (1 + k) + 3 * k * k
+        node += 3 * n * k  # Z = Ũ_s - Ũ_b W and its cotangent
         floats += once + _N_NODES * (node + 4 * n + n_block * m + k)
     return _TABLE_MARGIN * floats
 
