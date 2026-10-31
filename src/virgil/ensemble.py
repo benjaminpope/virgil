@@ -524,11 +524,18 @@ def run_group(data, draw, *, star=True, starts=None, spec=None, **fit_options):
     if star:
         # The image's flux relative to the star is a scale: log-uniform.
         priors["env.flux"] = dist.LogUniform(1e-4, 1e3)
+    # TV and TSV take beam = pixel scale, the unnormalised weights that
+    # ``weight_ranges`` were tuned for.
+    options = (
+        {"beam_mas": draw.pixel_scale_mas}
+        if draw.family in ("tv", "tsv")
+        else {}
+    )
     curve = l_curve(
         model,
         priors,
         data,
-        FAMILIES[draw.family](1.0, path="env" if star else None),
+        FAMILIES[draw.family](1.0, path="env" if star else None, **options),
         draw.weights,
         () if star else (Centroid(draw.pixel_scale_mas),),
         **fit_options,

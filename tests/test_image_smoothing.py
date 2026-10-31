@@ -140,7 +140,7 @@ def test_max_entropy_on_smoothed_pixels_matches_hand_computation():
 @pytest.mark.parametrize(
     "reg",
     [
-        TV(1.0, smoothed=True),
+        TV(1.0, smoothed=True, beam_mas=PIXEL),
         LogSum(1.0, smoothed=True),
         MaxEntropy(1.0, smoothed=True),
     ],

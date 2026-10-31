@@ -115,15 +115,11 @@ class _ImageRegulariser(eqx.Module):
 
     probabilistic = False
 
-    beam_mas: float | None = eqx.field(static=True, default=None)
+    beam_mas: float = eqx.field(static=True, default=None)
 
     def _scale(self, model, b):
         """``p / B`` and the flux ``Σ b``, for the normalised penalties."""
-        psize = self.image(model).pixel_scale_mas
-        beam = self.beam_mas
-        if beam is None:  # the field of view: fixed on the sky, not by npix
-            beam = psize * np.sqrt(b.size)
-        return psize / beam, np.sum(b)
+        return self.image(model).pixel_scale_mas / self.beam_mas, np.sum(b)
 
 
 def _differences(b):
@@ -158,11 +154,12 @@ class TSV(_ImageRegulariser):
     smoothed : bool, optional
         Penalize the Image's ``smoothed()`` pixels (see ``blur_fwhm_mas``)
         instead of the raw ones. Default ``False``.
-    beam_mas : float, optional
-        The beam ``B`` in mas. Default: the field of view, ``√(npix) p``.
+    beam_mas : float
+        The beam ``B`` in mas, a fixed angular scale (eht-imaging's
+        ``beam_size``); required. ``B = p`` gives the old unnormalised weight.
     """
 
-    def __init__(self, weight, path=None, smoothed=False, beam_mas=None):
+    def __init__(self, weight, path=None, smoothed=False, *, beam_mas):
         self.weight = np.asarray(weight, dtype=float)
         self.path = path
         self.smoothed = bool(smoothed)
@@ -205,14 +202,15 @@ class TV(_ImageRegulariser):
     smoothed : bool, optional
         Penalize the Image's ``smoothed()`` pixels instead of the raw ones
         (default ``False``).
-    beam_mas : float, optional
-        The beam ``B`` in mas. Default: the field of view, ``√(npix) p``.
+    beam_mas : float
+        The beam ``B`` in mas, a fixed angular scale (eht-imaging's
+        ``beam_size``); required. ``B = p`` gives the old unnormalised weight.
     """
 
     epsilon: float
 
     def __init__(
-        self, weight, epsilon=1e-2, path=None, smoothed=False, beam_mas=None
+        self, weight, epsilon=1e-2, path=None, smoothed=False, *, beam_mas
     ):
         self.weight = np.asarray(weight, dtype=float)
         self.epsilon = np.asarray(epsilon, dtype=float)
