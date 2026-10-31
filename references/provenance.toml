@@ -1033,7 +1033,7 @@ verified_via = "ads"
 authors = "Thiele"
 year = 1883
 title = "Neue Methode zur Berechung von Doppelsternbahnen"
-used_in = ["virgil.orbits:_thiele_innes_fit"]
+used_in = ["virgil.orbits:_thiele_innes_fit", "virgil._orbit_coordinates:z_to_ti"]
 note = "Astron. Nachr. 104, 245; title as spelled by ADS"
 bibcode = "1883AN....104..245T"
 verified = true
@@ -1692,3 +1692,11 @@ note = "Google's measured 0.24 Wh per median Gemini Apps text prompt; a cross-ch
 role = "context"
 verified = true
 verified_via = "arxiv"
+
+[ref.shoemake1992]
+authors = "Shoemake"
+year = 1992
+title = "Uniform random rotations"
+used_in = ["virgil._orbit_coordinates:z_log_prior", "virgil._orbit_coordinates:sample_z"]
+note = "Graphics Gems III, 124-132; derived: z (u = z_u^2, V = z_v^2) is the quaternion form of SO(3)'s Haar measure, zeta (k + ih = zeta^2) the same square-root map for the eccentricity vector; prior recovery tested in tests/test_orbit_coordinates.py"
+verified = false
