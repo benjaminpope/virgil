@@ -15,7 +15,9 @@ An orbit is sampled as ``(period, z, zeta)`` at a fixed anchor epoch:
   and ``Omega`` are not. Four ``z`` (±``z_u``, ±``z_v``) are the same orbit.
 
 Campbell elements are for reporting only (:func:`invariants`).
-Maps take and return arrays with the coordinates on the last axis.
+``z`` and ``zeta`` are arrays with the coordinates on the last axis; the
+Thiele–Innes constants are tuples ``(A, B, F, G)`` of arrays (also the
+argument of the anchor rotations).
 
 Source: Thiele–Innes constants; the quaternion form of SO(3)'s Haar measure
 (Shoemake 1992) applied to ``u``, ``V``. Derived here, checked by the
@@ -49,14 +51,22 @@ def anchor_unrotate(abfg_prime, mean_anomaly):
 def z_to_ti(z):
     """``(A, B, F, G)`` of ``z = (Re z_u, Im z_u, Re z_v, Im z_v)``."""
     z = np.asarray(z)
-    u = (z[..., 0] + 1j * z[..., 1]) ** 2
-    v = (z[..., 2] + 1j * z[..., 3]) ** 2
+    u_re = z[..., 0] ** 2 - z[..., 1] ** 2
+    u_im = 2 * z[..., 0] * z[..., 1]
+    v_re = z[..., 2] ** 2 - z[..., 3] ** 2
+    v_im = 2 * z[..., 2] * z[..., 3]
     return (
-        (u.real + v.real) / 2,
-        (u.imag - v.imag) / 2,
-        -(u.imag + v.imag) / 2,
-        (u.real - v.real) / 2,
+        (u_re + v_re) / 2,
+        (u_im - v_im) / 2,
+        -(u_im + v_im) / 2,
+        (u_re - v_re) / 2,
     )
+
+
+def _sqrt_pair(re, im):
+    """Principal square root ``(Re, Im)`` of ``re + i im``."""
+    root, half = np.sqrt(np.hypot(re, im)), np.arctan2(im, re) / 2
+    return root * np.cos(half), root * np.sin(half)
 
 
 def ti_to_z(a, b, f, g):
@@ -64,9 +74,9 @@ def ti_to_z(a, b, f, g):
 
     The other three are ``(±z_u, ±z_v)``.
     """
-    u, v = (a + g) + 1j * (b - f), (a - g) - 1j * (b + f)
-    zu, zv = np.sqrt(u), np.sqrt(v)  # principal roots
-    return np.stack([zu.real, zu.imag, zv.real, zv.imag], axis=-1)
+    zu = _sqrt_pair(a + g, b - f)
+    zv = _sqrt_pair(a - g, -(b + f))
+    return np.stack([*zu, *zv], axis=-1)
 
 
 def semimajor(z):
@@ -109,17 +119,20 @@ def sample_z(key, shape, a_min, a_max):
 
 
 def zeta_to_eccentricity(zeta):
-    """``(e, M_a)`` of ``zeta = (Re, Im)``: ``e = |zeta|²``, ``M_a`` in ``(-π, π]``."""
-    zeta = np.asarray(zeta)
-    k_h = (zeta[..., 0] + 1j * zeta[..., 1]) ** 2
-    return np.abs(k_h), np.angle(k_h)
+    """``(e, M_a)`` of ``zeta = (Re, Im)``: ``e = |zeta|²``, ``M_a`` in ``(-π, π]``.
+
+    ``M_a`` is undefined, and its derivative not finite, at ``zeta = 0``.
+    """
+    x, y = np.asarray(zeta)[..., 0], np.asarray(zeta)[..., 1]
+    return x**2 + y**2, np.arctan2(2 * x * y, x**2 - y**2)
 
 
 def eccentricity_to_zeta(ecc, mean_anomaly):
     """The canonical ``zeta`` (``Re zeta >= 0``) of ``(e, M_a)``; ``-zeta`` is the twin."""
-    zeta = np.sqrt(ecc + 0j) * np.exp(0.5j * mean_anomaly)
-    zeta = np.where(zeta.real < 0, -zeta, zeta)
-    return np.stack([zeta.real, zeta.imag], axis=-1)
+    root, half = np.sqrt(ecc), mean_anomaly / 2
+    x, y = root * np.cos(half), root * np.sin(half)
+    sign = np.where(x < 0, -1.0, 1.0)
+    return np.stack([sign * x, sign * y], axis=-1)
 
 
 def zeta_log_prior(zeta):
@@ -154,9 +167,8 @@ def campbell_to_coordinates(orbit, t_anchor):
 
     ``t_anchor`` is in days since ``orbit.t_ref``.
     """
-    mean_anomaly = np.angle(
-        np.exp(2j * np.pi * (t_anchor - orbit.dt_peri) / orbit.period)
-    )
+    phase = 2 * np.pi * (t_anchor - orbit.dt_peri) / orbit.period
+    mean_anomaly = np.arctan2(np.sin(phase), np.cos(phase))
     a, b, f, g, _, _ = orbit.thiele_innes()
     z = ti_to_z(*anchor_rotate((a, b, f, g), mean_anomaly))
     return z, eccentricity_to_zeta(orbit.ecc, mean_anomaly)
@@ -165,7 +177,8 @@ def campbell_to_coordinates(orbit, t_anchor):
 def invariants(period, z, zeta):
     """Reporting summaries, invariant under the covers.
 
-    ``period``, ``a`` (mas), ``ecc``, ``cos_inc`` and the folded Campbell
+    ``period``, ``a`` (mas), ``ecc``, ``mean_anomaly`` (``M_a`` at the
+    anchor, radians), ``cos_inc`` and the folded Campbell
     angles ``omega`` in [0, 360) and ``Omega`` in [0, 180) (degrees), from
     :func:`virgil.orbits._thiele_innes_angles`.
     """
@@ -176,6 +189,7 @@ def invariants(period, z, zeta):
         "period": np.asarray(period) + 0 * ecc,
         "a": semimajor(z),
         "ecc": ecc,
+        "mean_anomaly": mean_anomaly,
         "cos_inc": cos_inclination(z),
         "omega": omega,
         "Omega": Omega,

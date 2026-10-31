@@ -1,5 +1,7 @@
 """Smooth orbit sampling coordinates (TI′, z, zeta): maps, priors, smoothness."""
 
+import functools
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -13,10 +15,15 @@ A_MIN, A_MAX = 0.5, 50.0
 T_ANCHOR = 10.0
 
 
-@pytest.fixture(autouse=True)
-def _x64():
-    with jax.enable_x64(True):
-        yield
+def x64(test):
+    """Run ``test`` in float64 (opted in locally, not globally)."""
+
+    @functools.wraps(test)
+    def wrapper(*args, **kwargs):
+        with jax.enable_x64(True):
+            return test(*args, **kwargs)
+
+    return wrapper
 
 
 def _orbit(seed=0, n=1):
@@ -32,12 +39,14 @@ def _orbit(seed=0, n=1):
     )
 
 
+@x64
 def test_anchor_rotation_round_trip():
     abfg = tuple(onp.random.default_rng(1).normal(size=(4, 5)))
     back = oc.anchor_unrotate(oc.anchor_rotate(abfg, 0.7), 0.7)
     onp.testing.assert_allclose(back, abfg, atol=1e-12)
 
 
+@x64
 def test_z_round_trips():
     z = oc.sample_z(jax.random.key(0), (200,), A_MIN, A_MAX)
     abfg = oc.z_to_ti(z)
@@ -52,6 +61,7 @@ def test_z_round_trips():
         assert any(onp.allclose(z2[i] * q, z[i], atol=1e-8) for q in signs)
 
 
+@x64
 def test_zeta_round_trip():
     zeta = oc.sample_zeta(jax.random.key(1), (200,))
     ecc, m = oc.zeta_to_eccentricity(zeta)
@@ -61,6 +71,7 @@ def test_zeta_round_trip():
     onp.testing.assert_allclose(z2, sign * zeta, atol=1e-10)
 
 
+@x64
 def test_campbell_round_trip():
     orbit = _orbit(2, 50)
     z, zeta = oc.campbell_to_coordinates(orbit, T_ANCHOR)
@@ -86,6 +97,7 @@ def test_campbell_round_trip():
     )
 
 
+@x64
 def test_jacobian_is_a3_sin2_i():
     # dA dB dF dG = a^3 sin^2 i da d(cos i) d(omega) d(Omega)
     rng = onp.random.default_rng(3)
@@ -110,6 +122,7 @@ def test_jacobian_is_a3_sin2_i():
         onp.testing.assert_allclose(abs(det), a**3 * (1 - ci**2), rtol=1e-8)
 
 
+@x64
 def test_z_prior_recovery():
     # a and cos i check the sampler; omega and Omega go through the map.
     n = 20000
@@ -140,6 +153,7 @@ def test_z_prior_recovery():
     )
 
 
+@x64
 def test_z_log_prior_is_normalized():
     # radial quadrature of exp(log p) over the shell: ∫ p 2π² r³ dr = 1
     def density(r):
@@ -160,6 +174,7 @@ def test_z_log_prior_is_normalized():
     )
 
 
+@x64
 def test_z_density_follows_from_the_jacobians():
     # d⁴(ABFG) = 4 |z_u|² |z_v|² d⁴z, and with d⁴(ABFG) = a³ sin²i da dcos(i)
     # dω dΩ (above) the isotropic log-uniform prior is ∝ a⁻² ∝ |z|⁻⁴.
@@ -171,8 +186,11 @@ def test_z_density_follows_from_the_jacobians():
     )(z)
     zu2, zv2 = z[:, 0] ** 2 + z[:, 1] ** 2, z[:, 2] ** 2 + z[:, 3] ** 2
     onp.testing.assert_allclose(abs(det), 4 * zu2 * zv2, rtol=1e-10)
+    a, ci = oc.semimajor(z), oc.cos_inclination(z)
+    onp.testing.assert_allclose(abs(det), 4 * a**2 * (1 - ci**2), rtol=1e-10)
 
 
+@x64
 def test_zeta_prior_recovery():
     n = 20000
     zeta = oc.sample_zeta(jax.random.key(6), (n,))
@@ -192,6 +210,7 @@ def test_zeta_prior_recovery():
     )
 
 
+@x64
 def test_covers_give_identical_sky_orbits():
     z = oc.sample_z(jax.random.key(7), (), A_MIN, A_MAX)
     zeta = oc.sample_zeta(jax.random.key(8), ())
@@ -206,6 +225,7 @@ def test_covers_give_identical_sky_orbits():
     onp.testing.assert_allclose(got, ref, atol=1e-10)
 
 
+@x64
 def test_positions_match_kepler_orbit_at_random_epochs():
     rng = onp.random.default_rng(9)
     z = oc.sample_z(jax.random.key(9), (), A_MIN, A_MAX)
@@ -218,6 +238,7 @@ def test_positions_match_kepler_orbit_at_random_epochs():
     onp.testing.assert_allclose(sky[1], ddec, atol=1e-8)
 
 
+@x64
 def test_anchor_rotation_direction_and_continuity_at_zero_eccentricity():
     z = np.array([1.2, 0.3, 0.4, -0.2])
     eps = 1e-4
@@ -241,6 +262,7 @@ def test_anchor_rotation_direction_and_continuity_at_zero_eccentricity():
     onp.testing.assert_allclose([sky[1], sky[0]], [a_t, b_t], atol=1e-6)
 
 
+@x64
 def test_coordinates_match_closed_form_campbell():
     # z_u = √(2a) cos(i/2) e^{i(ω+M_a+Ω)/2}, z_v = √(2a) sin(i/2) e^{i(ω+M_a-Ω)/2},
     # zeta = √e e^{iM_a/2}, built by hand from Campbell elements
@@ -288,13 +310,14 @@ def _sky_sum(z, zeta):
     return np.sum(dra**2 + ddec**2)
 
 
+@x64
 def test_gradients_finite_face_on_and_near_circular():
     zeta = np.array([0.5, 0.3])
     # face-on: z_v = 0 (cos i = 1), where Campbell's omega and Omega merge
     z_face = np.array([1.5, 0.4, 0.0, 0.0])
     g = jax.grad(_sky_sum)(z_face, zeta)
     assert onp.all(onp.isfinite(g))
-    # the maps themselves are smooth through z_v = 0 and zeta = 0
+    # z_to_ti is smooth through z_v = 0; zeta -> (e, M_a) is singular at 0
     assert onp.all(onp.isfinite(jax.jacfwd(oc.z_to_ti)(z_face)))
     assert onp.all(
         onp.isfinite(jax.jacfwd(oc.zeta_to_eccentricity)(np.array([0.3, 0.1])))
@@ -310,3 +333,23 @@ def test_gradients_finite_face_on_and_near_circular():
             jax.grad(oc.cos_inclination)(np.array([1.0, 0.2, 1e-9, 0.0]))
         )
     )
+
+
+def test_zeta_has_a_coordinate_singularity_at_zero():
+    jac = jax.jacfwd(oc.zeta_to_eccentricity)
+    assert not onp.all(onp.isfinite(jac(np.zeros(2))))
+
+
+def test_float32_round_trips():
+    # the default precision: nothing is promoted to float64 or complex128
+    z = oc.sample_z(jax.random.key(13), (50,), A_MIN, A_MAX)
+    zeta = oc.sample_zeta(jax.random.key(14), (50,))
+    abfg = oc.z_to_ti(z)
+    z2 = oc.ti_to_z(*abfg)
+    ecc, m = oc.zeta_to_eccentricity(zeta)
+    zeta2 = oc.eccentricity_to_zeta(ecc, m)
+    for x in (z, zeta, *abfg, z2, ecc, m, zeta2):
+        assert x.dtype == np.float32
+    onp.testing.assert_allclose(oc.z_to_ti(z2), abfg, atol=1e-4, rtol=1e-4)
+    sign = onp.where(zeta[:, :1] < 0, -1.0, 1.0)
+    onp.testing.assert_allclose(zeta2, sign * zeta, atol=1e-5)

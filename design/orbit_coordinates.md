@@ -50,3 +50,18 @@ prior-recovery check of the pipeline's sampled `(a, cos i, ω, Ω, e)` in vv).
 *Derived*, experimental. Known limit: positions from `ζ` use
 `M_a = arg(ζ²)` and the jaxoplanet Kepler solve, so the gradient is not finite
 at `ζ = 0` exactly; a Kepler solve in `(k, h)` is part of the Stage 2b likelihood.
+
+## Covers and evidence
+
+`z` covers each sky orbit 4:1 and `ζ` 2:1, so 8 preimages share one likelihood.
+The priors above are normalized over all preimages, so `∫ L p dz dζ` is the
+sky-orbit evidence. A Laplace or importance-sampling evidence built around one
+preimage must be multiplied by 8 (equivalently, use the prior restricted to a
+fundamental domain, density × 8); a sampler that visits several preimages
+needs no factor. Report only the invariants (`invariants`).
+
+## Citation
+
+Shoemake (1992) is `verified = false`: Graphics Gems III has no arXiv or DOI
+and is not in ADS. It supports only the quaternion/Haar link; the `u`, `V`
+squares and the `ζ` map are derived here and pinned by the tests.
