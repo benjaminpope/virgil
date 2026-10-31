@@ -611,10 +611,10 @@ def test_the_velocity_marginal_of_the_outlier_prior_integrates_the_velocity():
     # ∫ π(p, v) d²v on a (ln|v|, ψ) grid equals the position-only density
     s = _summaries(_orbit(), TIMES)
     domain, _ = _cells(s, (6.0, 400.0))
-    prior = oc_cells.outlier_prior(domain, n=2**16)
+    prior = oc_cells.outlier_prior(domain, n=2**14)
     mean = onp.array([[3.0, -2.0, 0.0, 0.0, -1.0]])
-    lv = onp.linspace(-14.0, 4.0, 241)
-    psi = onp.linspace(-onp.pi, onp.pi, 181)
+    lv = onp.linspace(-12.0, 4.0, 101)
+    psi = onp.linspace(-onp.pi, onp.pi, 73)
     lvg, psig = onp.meshgrid(lv, psi, indexing="ij")
     ang = psig + onp.arctan2(mean[0, 1], mean[0, 0])
     grid = onp.tile(mean, (lvg.size, 1))

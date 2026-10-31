@@ -297,7 +297,8 @@ class OutlierPrior:
         ``velocity=False`` the velocity is integrated out: the density in
         ``(p, ln f)`` (``mean[2:4]`` unused)."""
         mean = onp.atleast_2d(onp.asarray(mean, float))
-        p, v = mean[:, :2], mean[:, 2:4]
+        p = mean[:, :2]
+        v = mean[:, 2:4] if velocity else onp.ones_like(p)  # unused if not
         lp, lv = onp.log(onp.hypot(*p.T)), onp.log(onp.hypot(*v.T))
         psi = onp.arctan2(v[:, 1], v[:, 0]) - onp.arctan2(p[:, 1], p[:, 0])
         query = onp.stack([lp, lv, psi], axis=1)
