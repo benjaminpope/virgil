@@ -413,7 +413,7 @@ print(res.describe())
 ```
 
 ```text
-BinaryPipeline run in /tmp/tmpqkuyx3as/binary_run: complete
+BinaryPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp59ezaoph/binary_run: complete
   data.n_vis = 24
   data.n_phi = 24
   data.n_independent = 48
@@ -425,45 +425,47 @@ BinaryPipeline run in /tmp/tmpqkuyx3as/binary_run: complete
   data.fov_mas = 212.389
   chi2.n_independent = 48
   chi2.null_reduced = 102.337
-  chi2.companion_reduced = 0.403879
-  search.delta_chi2 = 4851.02
-  search.log_bayes_factor = 2411.46
+  chi2.companion_reduced = 0.403872
+  search.delta_chi2 = 4851
+  search.log_bayes_factor = 2411.45
   search.max_snr = 69.3432
   search.local_nsigma = 12.95
-  search.global_nsigma = 12.522
-  search.n_trials = 240.685
+  search.global_nsigma = 3.09053
+  search.false_alarm_probability = 0.000999001
+  search.n_null = 1000
+  search.n_null_above = 0
   search.dra_mas = 118.75
   search.ddec_mas = -81.25
   search.flux = 0.0039317
   search.max_sep_mas = 250
   limits.sigma = 3
   limits.deepest_delta_mag = 5.53316
-  fit.chi2_reduced = 0.403879
-  companion.dra_mas = 119.705
-  companion.ddec_mas = -80.1269
-  companion.sep_mas = 144.048
-  companion.pa_deg = 123.797
-  companion.flux = 0.00392694
-  companion.flux_err = 5.76492e-05
-  companion.contrast = 254.651
-  companion.delta_mag = 6.01486
+  fit.chi2_reduced = 0.403872
+  companion.sep_mas = 144.052
+  companion.pa_deg = 123.794
+  companion.dra_mas = 119.714
+  companion.ddec_mas = -80.1226
+  companion.flux = 0.00392741
+  companion.flux_err = 5.8359e-05
+  companion.contrast = 254.621
+  companion.delta_mag = 6.01473
   posterior.num_chains = 1
   posterior.num_samples = 2000
   posterior.num_warmup = 800
-  posterior.r_hat_max = 1.00066
-  posterior.ess_bulk_min = 658.361
+  posterior.r_hat_max = 1.00038
+  posterior.ess_bulk_min = 1054.58
   posterior.divergence_fraction = 0
   [warn] chi2: χ²/N = 0.404 for the best-fit binary (star alone: 102) on quoted errors: errors likely overestimated.
-  [pass] detection: Companion detected at 12.52σ after an approximate look-elsewhere correction (12.95σ local); for a calibrated threshold use injection_recovery or gaussian_null.
+  [pass] detection: Companion detected at ≥3.09σ against simulated companion-free searches (12.95σ local).
   [pass] grid_edge: The grid peak lies inside the searched grid.
   [pass] residual_normality: Whitened residuals look normal (skew 0.38, excess kurtosis 0.07).
   [pass] field_of_view: Separation 144 mas lies between the resolution limit and the field of view.
   [pass] prior_bound: No posterior mass piles up at a prior bound.
-  [pass] r_hat: Largest R-hat 1.0007: the chains agree.
-  [pass] ess: Smallest bulk ESS 658: enough independent samples.
+  [pass] r_hat: Largest R-hat 1.0004: the chains agree.
+  [pass] ess: Smallest bulk ESS 1055: enough independent samples.
   [pass] divergences: Divergent transitions: 0 per cent: none.
   [warn] convergence: The optimizer did not converge at 2 of 6561 grid positions (0.03 per cent): values there may be inaccurate.
   [warn] flux_axis_resolution: The flux axis does not resolve the likelihood peak (0.28 steps across its FWHM): log_bayes_factor is inaccurate; use a finer flux axis (n_flux).
   [warn] limits_clipped: 1 limits fell outside the flux bounds and were clipped to the nearer bound: those limits are not the true limits; widen flux_range.
-  5 warning(s) recorded in the limits, search stage(s) (see the checks, or Result.summary['warnings'])
+  4 warning(s) recorded in the limits, search stage(s) (see the checks, or Result.summary['warnings'])
 ```
