@@ -26,7 +26,7 @@ from tests._orbit_pipeline import (  # noqa: E402
     TRUTH,
     _simulate,
 )
-from virgil.epochs import Epochs  # noqa: E402
+from virgil.epochs import _NUMERIC_S_MAX, Epochs  # noqa: E402
 from virgil.oifits import write_oifits  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
 from virgil.pipeline import (  # noqa: E402
@@ -86,7 +86,7 @@ DEFAULTS = {
     "a_range": [1.0, 30.0],
     "flux_range": [0.01, 1.0],
     "ecc_max": 0.9,
-    "s_max": None,
+    "s_max": _NUMERIC_S_MAX,
     "primary_diam": "auto",
     "vis_amp": True,
     "sign_free": True,

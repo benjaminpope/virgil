@@ -38,6 +38,7 @@ from ._core import Stage, _Pipeline
 from .._deprecate import external_stacklevel, keyword_only
 from .._geometry import lattice_alias_limit
 from .._precision import run_in
+from ..epochs import _NUMERIC_S_MAX
 
 # Grid step of the per-night position search, as a fraction of the finest
 # fringe spacing λ/B_max (Nyquist is one half).
@@ -148,7 +149,7 @@ class OrbitPipeline(_Pipeline):
         "a_range": [1.0, 30.0],
         "flux_range": [0.01, 1.0],
         "ecc_max": 0.9,
-        "s_max": None,
+        "s_max": _NUMERIC_S_MAX,
         "primary_diam": "auto",
         "vis_amp": True,
         "sign_free": True,

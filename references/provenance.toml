@@ -1646,6 +1646,17 @@ role = "context"
 note = "25.4.38: Gauss-Chebyshev quadrature (first kind), exact for polynomials of degree 2n-1."
 verified = false
 
+
+[ref.genz1980]
+authors = "Genz & Malik"
+year = 1980
+title = "Remarks on algorithm 006: An adaptive algorithm for numerical integration over an N-dimensional rectangular region"
+doi = "10.1016/0771-050X(80)90039-X"
+used_in = ["virgil.epochs:broad_loglike"]
+note = "J. Comput. Appl. Math. 6, 295; the degree-7 rule with its embedded degree-5 error estimate, on axis-aligned boxes"
+verified = true
+verified_via = "crossref"
+
 [ref.selfliang1987]
 authors = "Self & Liang"
 year = 1987

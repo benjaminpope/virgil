@@ -3,16 +3,20 @@ the orbit likelihood and the post-fit sidelobe flag
 (design/orbit_noise_models.md, "tempered night flags")."""
 
 import dataclasses
+import inspect
 import json
+import math
 import warnings
 
 import jax
+import jax.numpy as np
 import numpy as onp
 import pytest
+from scipy.integrate import quad
 
 pytest.importorskip("jaxoplanet")
 
-from virgil import aliases  # noqa: E402
+from virgil import aliases, epochs  # noqa: E402
 from virgil._precision import cast_tree  # noqa: E402
 from virgil.aliases import fit_orbit_aliases  # noqa: E402
 from virgil.epochs import (  # noqa: E402
@@ -120,6 +124,7 @@ def _broad(data, settings):
             a_max=settings.a_range[1] * (1 + settings.ecc_max),
             flux_range=settings.flux_range,
             step=1.0,
+            s_max=settings.s_max,
         )
     )
 
@@ -424,3 +429,275 @@ def test_the_outlier_component_is_built_per_kind_and_must_be_finite():
         aliases._broad_components(
             data, ta._settings(outlier="none"), None, None, 4.0
         )
+
+
+# The exact outlier integral (design/orbit_mixture_v2.md §6).
+DELTA = 1e-3  # reporting precision of the probabilities, nats
+FLUX_RANGE = (0.01, 1.0)
+
+
+def _lone_night(position, flux=0.3, **noise):
+    """One night of a binary at ``position`` (mas), in float64."""
+    data = simulate(
+        BinaryModelCartesian(position[0], position[1], flux),
+        ta._night(ta.EPOCHS[0], rotation=0.0, **noise),
+        jax.random.PRNGKey(5),
+    )
+    return cast_tree(data, "float64")
+
+
+def _log_mean_box(data, centre, half, h):
+    """ln of the integral of the night's likelihood over the box ``centre``
+    ± ``half`` in ``(dra, ddec, ln f)``, by a midpoint grid of steps ``h``."""
+    surface = epochs._Surface(data, 10.0)
+    dof = np.asarray(_unit_dof([data])[0])
+
+    def score(z):
+        return epochs._padded_scores(
+            onp.column_stack([z[:, 0], z[:, 1], onp.exp(z[:, 2])]), data,
+            surface, None, dof, None, None,
+        )  # fmt: skip
+
+    return _log_midpoint_box(score, centre, half, h)
+
+
+def _log_midpoint_box(log_f, centre, half, h):
+    """ln of the integral of ``exp(log_f(z))`` over the box ``centre`` ±
+    ``half`` by a midpoint grid of steps ``h`` (rows of ``z`` are points)."""
+    axes = [
+        centre[i] + (onp.arange(-n, n) + 0.5) * half[i] / n
+        for i, n in enumerate(onp.ceil(half / h).astype(int))
+    ]
+    score = log_f(
+        onp.column_stack(
+            [a.ravel() for a in onp.meshgrid(*axes, indexing="ij")]
+        )
+    )
+    cell = onp.prod([2.0 * half[i] / len(a) for i, a in enumerate(axes)])
+    return float(
+        score.max()
+        + onp.log(onp.sum(onp.exp(score - score.max())))
+        + onp.log(cell)
+    )
+
+
+def _prior_volume(a_max):
+    return onp.log(onp.pi * a_max**2 * onp.log(FLUX_RANGE[1] / FLUX_RANGE[0]))
+
+
+@pytest.mark.slow
+@ta.in_float64
+def test_the_broad_component_converges_to_a_fine_grid():
+    # The night's one peak is ~0.01 mas wide, far below any grid over the
+    # disc that fits the time budget (res/256 is 0.017 mas), so the oracle is
+    # a midpoint grid over ±10 sd of the peak, at sd/2, sd/3 and sd/4.
+    data = _lone_night((3.0, 0.0))
+    res = Epochs({"n": data}).resolution_mas
+    a_max = 6.0
+    surface = epochs._Surface(data, 10.0)
+    dof = _unit_dof([data])
+    peaks = epochs._broad_catalogue(
+        onp.array([[3.0, 0.0, onp.log(0.3)]]), a_max, onp.log(FLUX_RANGE),
+        data, np.asarray(dof[0]), None, surface,
+    )  # fmt: skip
+    assert len(peaks["z"]) == 1  # no other peak within 30 nats
+    sd = peaks["sd"][0]
+    ln_j = [
+        _log_mean_box(data, peaks["z"][0], 10.0 * sd, sd / m)
+        for m in (2.0, 3.0, 4.0)
+    ]
+    assert abs(ln_j[2] - ln_j[1]) <= DELTA / 10  # the oracle has converged
+    b = broad_loglike(
+        [data], dof, a_max=a_max, flux_range=FLUX_RANGE, step=0.25 * res,
+        s_max=10.0,
+    )[0]  # fmt: skip
+    assert abs(b - (ln_j[2] - _prior_volume(a_max))) <= 4 * DELTA
+
+
+def _check_the_outlier_component_is_not_above_the_truth(n_draws=20):
+    """``b - l(truth)`` over noise draws of one
+    night of a static binary with its quoted errors."""
+    position, flux = (3.0, 0.0), 0.3
+    res = Epochs({"n": _lone_night(position)}).resolution_mas
+    gaps = []
+    for seed in range(n_draws):
+        data = simulate(
+            BinaryModelCartesian(*position, flux),
+            ta._night(ta.EPOCHS[0], rotation=0.0),
+            jax.random.PRNGKey(100 + seed),
+        )
+        dof = _unit_dof([data])
+        b = broad_loglike(
+            [data], dof, a_max=6.0, flux_range=FLUX_RANGE, step=0.25 * res,
+            s_max=10.0,
+        )[0]  # fmt: skip
+        truth = epochs._padded_scores(
+            onp.array([[*position, flux]]), cast_tree(data, "float64"),
+            epochs._Surface(data, 10.0), None, np.asarray(dof[0]), None, None,
+        )[0]  # fmt: skip
+        gaps.append(float(b - truth))
+    gaps = onp.array(gaps)
+    # E[b - l(truth)] = -KL <= 0 (Jensen: E ln mean_prior(L / L_truth) <=
+    # ln E mean_prior(L / L_truth) = ln 1), whatever the normalisation of l,
+    # if b and l share it. A mean above zero beyond its error means they do not.
+    error = gaps.std(ddof=1) / math.sqrt(n_draws)
+    assert gaps.mean() + 3.0 * error <= 0.0, (gaps.mean(), error)
+
+
+@pytest.mark.slow
+@ta.in_float64
+def test_the_outlier_component_is_below_the_truth_in_float64():
+    _check_the_outlier_component_is_not_above_the_truth()
+
+
+@pytest.mark.slow
+def test_the_outlier_component_is_below_the_truth_in_float32():
+    _check_the_outlier_component_is_not_above_the_truth()
+
+
+def test_the_windowed_reference_reproduces_a_gaussian_integral():
+    # The reference of the two tests above, on a Gaussian as narrow as the
+    # night's peak: ln of (2 pi)^(3/2) sd_x sd_y sd_g, to 1e-9.
+    sd = onp.array([0.0074, 0.0103, 0.0058])
+    mu = onp.array([3.0, 0.0, -1.2])
+    exact = 1.5 * onp.log(2.0 * onp.pi) + onp.log(sd).sum()
+    for m in (2.0, 3.0):
+        got = _log_midpoint_box(
+            lambda z: -0.5 * onp.sum(((z - mu) / sd) ** 2, axis=1),
+            mu, 10.0 * sd, sd / m,
+        )  # fmt: skip
+        assert abs(got - exact) < 1e-9
+
+
+@pytest.mark.slow
+@ta.in_float64
+def test_a_planted_narrow_peak_is_found():
+    a_max = 6.0
+    res = Epochs({"n": _lone_night((3.0, 0.0))}).resolution_mas
+    step = 0.25 * res
+    axis = onp.linspace(-a_max, a_max, math.ceil(2 * a_max / step) + 1)
+    corner = (0.5 * (axis[8] + axis[9]), 0.5 * (axis[5] + axis[6]))
+    # A bright companion with tiny errors: its peak is a fraction of the
+    # lattice step wide, between four lattice points.
+    data = _lone_night(corner, flux=0.5, d_phi=2e-4)
+    dof = _unit_dof([data])
+    surface = epochs._Surface(data, 10.0)
+    # The climb from the lattice point nearest the peak finds it.
+    near = onp.array([axis[onp.argmin(abs(axis - c))] for c in corner])
+    start = onp.array([[*near, onp.log(0.5)]])
+    peaks = epochs._broad_catalogue(
+        start, a_max, onp.log(FLUX_RANGE), data, np.asarray(dof[0]), None,
+        surface,
+    )  # fmt: skip
+    sd = peaks["sd"][0]
+    assert sd[:2].max() < res / 100.0  # narrow: a lattice point cannot see it
+    assert onp.hypot(*(peaks["z"][0][:2] - corner)) < 6.0 * sd[:2].max()
+    # The integral over the peak: a midpoint grid over ±10 sd, at sd/2 and
+    # sd/3 (a Gaussian's midpoint rule is spectrally accurate there).
+    ln_j = [
+        _log_mean_box(data, peaks["z"][0], 10.0 * sd, sd / m)
+        for m in (2.0, 3.0)
+    ]
+    assert abs(ln_j[1] - ln_j[0]) <= DELTA / 2  # the oracle has converged
+    b = broad_loglike(
+        [data], dof, a_max=a_max, flux_range=FLUX_RANGE, step=step,
+        s_max=10.0,
+    )[0]  # fmt: skip
+    assert abs(b - (ln_j[1] - _prior_volume(a_max))) <= 4 * DELTA
+
+
+@ta.in_float64
+def test_default_calls_use_a_bounded_scale():
+    assert (
+        inspect.signature(fit_orbit_aliases).parameters["s_max"].default
+        == epochs._NUMERIC_S_MAX
+    )
+    data = [_lone_night((3.0, 0.0))]
+    with pytest.raises(ValueError, match="finite s_max"):
+        aliases._broad_components(
+            data, ta._settings(outlier="mixture", s_max=None), None, None, 4.0
+        )
+
+
+@ta.in_float64
+def test_the_broad_component_does_not_depend_on_the_grid_origin():
+    data = _lone_night((3.0, 0.0), flux=0.5, d_phi=2e-4)  # one dominant peak
+    dof = _unit_dof([data])
+    kw = dict(flux_range=FLUX_RANGE, step=1.0, s_max=10.0)
+    # The lattices of a_max = 6 and 6.5 at step 1 are offset by half a step;
+    # the same mass sits inside both discs, so only the prior's area differs.
+    base = broad_loglike([data], dof, a_max=6.0, **kw)[0]
+    shifted = broad_loglike([data], dof, a_max=6.5, **kw)[0]
+    assert abs(shifted + 2.0 * onp.log(6.5 / 6.0) - base) <= 4 * DELTA
+
+
+@ta.in_float64
+def test_the_own_scale_marginal_matches_quadrature():
+    def reference(chi2, nu, dof, lo, hi):
+        t = onp.linspace(lo, hi, 20001)
+        log_f = dof * (-0.5 * chi2 * onp.exp(-2 * t) - nu * t)
+        top = log_f.max()
+        value, _ = quad(
+            lambda s: onp.exp(
+                dof * (-0.5 * chi2 * onp.exp(-2 * s) - nu * s) - top
+            ),
+            lo, hi, points=[t[onp.argmax(log_f)]], limit=500, epsabs=0,
+            epsrel=1e-13,
+        )  # fmt: skip
+        return onp.log(value) + top
+
+    hi = onp.log(10.0)
+    cases = [  # chi2 near nu, a missed block (chi2 >> nu s_max^2), dof != 1
+        (18.0, 18, 1.0), (40.0, 18, 1.0), (5.0, 18, 1.0),
+        (24096.0, 18, 1.0), (1e5, 9, 1.0), (2e7, 18, 1.0),
+        (18.0, 18, 0.2), (900.0, 27, 0.5), (1e-8, 18, 1.0),
+    ]  # fmt: skip
+    for chi2, nu, dof in cases:
+        got = float(
+            epochs._log_scale_integral(np.asarray(chi2), nu, dof, -hi, hi)
+        )
+        want = reference(chi2, nu, dof, -hi, hi)
+        assert abs(got - want) <= 1e-10 * abs(want), (chi2, nu, dof)
+    # In float32 a missed block's integrand underflows; the closed form
+    # stays finite and close to the float64 value.
+    for chi2 in (900.0, 2e7):
+        low = float(
+            epochs._log_scale_integral(
+                np.asarray(chi2, np.float32), 18, 1.0,
+                np.float32(-hi), np.float32(hi),
+            )
+        )  # fmt: skip
+        full = float(
+            epochs._log_scale_integral(np.asarray(chi2), 18, 1.0, -hi, hi)
+        )
+        assert onp.isfinite(low) and abs(low - full) <= 1e-4 * abs(full)
+
+
+@ta.in_float64
+def test_the_level_zero_sum_is_reused_only_on_a_matching_fingerprint():
+    data = _lone_night((3.0, 0.0))
+    axis = onp.arange(-8.0, 8.01, 0.5)
+    nodes = onp.geomspace(*FLUX_RANGE, epochs._N_FLUX)
+    grid = {"dra": axis, "ddec": axis, "flux": nodes}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        positions = epoch_positions(
+            Epochs({"n0": data}), grid, n_peaks=2, s_max=10.0
+        )
+    dof = _unit_dof([data])
+    lattice = onp.linspace(-6.0, 6.0, 13)
+
+    def stored(dof_k=dof[0], s_max=10.0, diam=None):
+        print_ = epochs._scoring_print(data, dof_k, s_max, diam)
+        return epochs._level_zero(positions, 0, print_, lattice, nodes)
+
+    assert stored() is not None
+    assert stored(dof_k=0.5 * onp.asarray(dof[0])) is None  # other tempering
+    assert stored(s_max=20.0) is None
+    assert stored(diam=0.3) is None  # other primary
+    kw = dict(a_max=6.0, flux_range=FLUX_RANGE, step=1.0, s_max=10.0)
+    epochs._BROAD_CACHE.clear()
+    own = broad_loglike([data], dof, **kw)
+    epochs._BROAD_CACHE.clear()
+    reused = broad_loglike([data], dof, positions=positions, **kw)
+    assert abs(reused[0] - own[0]) <= 4 * DELTA

@@ -146,6 +146,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
+| `broad_loglike` | [Genz & Malik (1980)](#genz1980), [doi:10.1016/0771-050X(80)90039-X](https://doi.org/10.1016/0771-050X(80)90039-X) | after |
 | `marginal_loglike` | [MacKay (1992)](#mackay1992), [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415) | after |
 
 ### `virgil.fields`
@@ -532,6 +533,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="foreman-mackey2021"></a>**Foreman-Mackey et al. (2021)**. exoplanet: Gradient-based probabilistic inference for exoplanet data & other astronomical time series. [arXiv:2105.01994](https://arxiv.org/abs/2105.01994), [ADS](https://ui.adsabs.harvard.edu/abs/2021JOSS....6.3285F/abstract), [doi:10.21105/joss.03285](https://doi.org/10.21105/joss.03285). JOSS 6, 3285.
 - <a id="frank2021"></a>**Frank, Leike & Enßlin (2021)**. Geometric variational inference. [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract). geoVI.
 - <a id="gallenne2015"></a>**Gallenne et al. (2015)**. Robust high-contrast companion detection from interferometric observations. The CANDID algorithm and an application to six binary stars. [arXiv:1505.02715](https://arxiv.org/abs/1505.02715), [ADS](https://ui.adsabs.harvard.edu/abs/2015A&A...579A..68G/abstract). CANDID.
+- <a id="genz1980"></a>**Genz & Malik (1980)**. Remarks on algorithm 006: An adaptive algorithm for numerical integration over an N-dimensional rectangular region. [doi:10.1016/0771-050X(80)90039-X](https://doi.org/10.1016/0771-050X(80)90039-X). J. Comput. Appl. Math. 6, 295; the degree-7 rule with its embedded degree-5 error estimate, on axis-aligned boxes.
 - <a id="frito"></a>**Goldfine**. frito. [GitHub](https://github.com/JonahDG/frito). *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="greenbaum2015"></a>**Greenbaum et al. (2014)**. An image-plane algorithm for JWST's non-redundant aperture mask data. [arXiv:1411.3446](https://arxiv.org/abs/1411.3446), [ADS](https://ui.adsabs.harvard.edu/abs/2015ApJ...798...68G/abstract). ImPlaneIA; ApJ 798, 68 (2015).
 - <a id="implaneia"></a>**Greenbaum, Sivaramakrishnan et al.**. ImPlaneIA. [GitHub](https://github.com/anand0xff/ImPlaneIA). paper: greenbaum2015. *Not yet verified against arXiv, Crossref or ADS.*
