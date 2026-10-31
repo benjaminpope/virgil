@@ -64,7 +64,7 @@ The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per 
 | `fov_fraction` (1.0) | See `max_sep_mas`. |
 | `grid_step_mas` (`None`) | Grid spacing; by default a quarter of the finest λ/B of the samples, coarsened so that no axis exceeds `max_grid` points (the search report then records the effective step and warns). |
 | `max_grid` (101) | Most points per position axis; the grid has the largest odd number of points not above it (at least 3). |
-| `flux_range` (`[1e-5, 0.5]`) | Flux axis of the grid and bounds of the log-uniform flux prior (companion/primary). |
+| `flux_range` (`[1e-5, 1]`) | Flux axis of the grid and bounds of the log-uniform flux prior (companion/primary). |
 | `n_flux` (40) | Points on the flux axis. |
 | `wavel_range` (`None`) | `[min, max]` wavelengths to keep, in metres. |
 | `error_floor` (`None`) | Absolute error floors by observable, for example `{"vis": 0.01, "phi": 0.005}` (phases in radians), as [`OIData.with_error_floor`][virgil.oidata.OIData.with_error_floor]. |
@@ -137,7 +137,7 @@ virgil-pipeline image star.oifits -o runs/image --set star=auto
 | --- | --- |
 | `oversample` (3.0), `field_fwhms` (6.0), `field_mas` (`None`), `max_npix` (128) | The grid: pixels per resolution element, the field in beam FWHMs (or `field_mas` in mas), and the most pixels per side. |
 | `star` (`"auto"`), `star_threshold` (5.0) | `True`, `False` or `"auto"`, which compares fits with and without a central point source by log evidence and decides at \|ΔlogZ\| ≥ `star_threshold`. |
-| `sigmas` ([1, 2, 4]), `lengths_beam` ([0.5, 1, 2]), `grid_growths` (2) | The evidence grid for the Gaussian-process amplitude σ and length ℓ (in beams). |
+| `sigmas` ([1, 2, 4]), `lengths_beam` ([0.5, 1, 2]), `grid_growths` (`None`: the engine's 3) | The evidence grid for the Gaussian-process amplitude σ and length ℓ (in beams). |
 | `members` (8), `member_grids` (`False`) | Members fitted at the shared hyperparameters, varying only the start, the pixel scale and the field (1 or 1.5 times). `member_grids=True` gives each its own evidence grid: slow, for cluster runs. |
 | `method` (`None`), `max_steps` (`None`) | The optimizer of [`fit`][virgil.fitting.fit]. |
 | `seed` (0), `wavel_range` (`None`), `error_floor` (`None`), `quicklook_execute` (`True`) | As for `BinaryPipeline`. |
@@ -226,14 +226,14 @@ A run that interrupts resumes: the bands already fitted are read back from their
 | `gap_days` (0.5) | Frames further apart than this are in different nights (`from_oifits`). |
 | `exclude` (`{}`) | `{file, night or dataset: reason}` left out; a ruling recorded in `run.json`. |
 | `flag_nights` (`True`), `flag_sep_blocks` (`False`) | Flag the nights that cannot seed an orbit; whether a separation below λ/2B also keeps a night from seeding (reported either way). |
-| `outlier` (`"mixture"`) | The night-outlier component of the orbit likelihood, of which the fit marginalizes one rate $\epsilon$ shared by all nights (Beta(½, ½), exactly: `group_outlier_mixture`). `"mixture"`: the outlier component is a companion anywhere in the field, the night's mean likelihood over the prior's disc; `"inflation"`: it is the night's own model with its errors inflated by a scale in $[1,$ `s_max`$]$ (needs `s_max`). The default is the nearest continuation of the previous behaviour, not a verdict between the two: the choice rests on the no-orbit test on constructed data. The no-orbit null carries the same component. The posterior outlier probability of each night is in the search report, with the `orbit-prefers-secondary` flags (reported only: no night is ever excluded). |
+| `outlier` (`"mixture"`) | The night-outlier component of the orbit likelihood, of which the fit marginalizes one rate $\epsilon$ shared by all nights (Beta(½, ½) (Jeffreys); the integral over it is exact, `group_outlier_mixture`, but the mixture model is virgil's own design and was not chosen on merit). `"mixture"`: the outlier component is a companion anywhere in the field, the night's mean likelihood over the prior's disc; `"inflation"`: it is the night's own model with its errors inflated by a scale in $[1,$ `s_max`$]$ (needs `s_max`). The default is the nearest continuation of the previous behaviour, not a verdict between the two: the choice rests on the no-orbit test on constructed data. The no-orbit null carries the same component. The posterior outlier probability of each night is in the search report, with the `orbit-prefers-secondary` flags (reported only: no night is ever excluded). |
 | `batch_size` (`None`), `memory_budget` (`None`, bytes), `coarse_nats` (30) | Grid points and candidate orbits scored together (by default what fits in the budget, 1 GiB on a CPU); for data with gains or offsets, the nats below the best within which the position grid integrates the error scale in full (`None`: every point). See `epoch_positions`. None of the three is a prior range. |
 | `n_peaks` (5), `max_sep_mas` (`None`), `grid_step_mas` (`None`), `max_grid` (201) | The position search; the step is by default a quarter of the finest λ/B (coarsened to `max_grid` points) and the half-width `a_range[1] (1 + ecc_max)`, the prior's reach, limited on lattice coverage (aperture masks, DISCO) to the alias cell. |
 | `period_range` (`None`) | `[min, max]` days; by default from the data (see `fit_orbit_aliases`). |
 | `a_range` ([1, 30]), `flux_range` ([0.01, 1]), `ecc_max` (0.9), `s_max` (10) | The engine's prior ranges (mas; flux ratio at most 1; eccentricity; error-scale bound). |
 | `primary_diam` (`"auto"`), `vis_amp`, `sign_free`, `flip_flux`, `temper` (`True`) | As for the engine. |
 | `n_bands_max`, `n_candidates`, `n_refine`, `max_steps`, `n_is` | Search effort; the defaults are those of `fit_orbit_aliases`, the one place to raise them (the `mode_converged` check says when to). |
-| `alias_nats` (10), `no_orbit_nats` (10) | Thresholds of the `alias_ambiguity` and `no_orbit` checks. |
+| `alias_nats` (10), `no_orbit_nats` (10) | Thresholds of the `alias_ambiguity` and `no_orbit` checks, in nats and not yet calibrated: the alias, no-orbit, label and resolved verdicts are indications, not Bayes factors, until the null-distribution calibration lands. |
 | `posterior_p_min` (0.05), `max_modes` (3) | Bands sampled by NUTS besides the winner. |
 | `num_warmup`, `num_samples`, `num_chains` (1000, 1000, 4), `chain_method` (`"vectorized"`), `seed` (0) | NUTS. |
 | `posterior_max_tree_depth` (8), `posterior_max_hours` (12) | NUTS uses each mode's Laplace covariance as the dense mass matrix, fixed in warm-up (adapted only if the Hessian was clipped or the mode is on a prior bound; raising `num_warmup` then changes only the step size). A band that exceeds the time left reports `converged: false`, `budget_exhausted: true`, its step size, tree depth and post-warm-up gradient count (`n_gradients_sampling`). |
@@ -284,7 +284,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `grid_edge` (peak on the edge of the `dra` or `ddec` axis; the flux axis is not a search boundary) | at the edge | |
 | `start_at_bound` (only when triggered: the best fit, where NUTS starts, within 0.1% of a prior bound; typically a non-detection, with the flux or diameter at the edge of its range) | any: NUTS starts just inside the bound and the posterior is prior-dominated | |
 | `prior_bound` (posterior mass within 1% of a prior bound) | above 5% | |
-| `r_hat` | above 1.01 | above 1.05 |
+| `r_hat` | above 1.01, or a pass with the smallest bulk effective sample size below 400 (too few draws to trust it) | above 1.05 |
 | `ess` (smallest bulk effective sample size) | below 400 | below 100 |
 | `divergences` | any | above 1% of transitions (a warning instead, naming the walls, when `StarPipeline`'s wall probe finds hard closure-phase walls around the posterior) |
 | `residual_normality` (skewness and excess kurtosis of the independent whitened residuals, without the periodic closure-phase penalty terms) | beyond three standard errors | |
@@ -309,9 +309,9 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `alias_ambiguity` (`OrbitPipeline`: log Z of the best alias band over the runner-up's, `alias_nats`) | under 10 nats: the runner-up is not excluded | under 1 nat: the period is not determined |
 | `winner_flags` (`OrbitPipeline`: the winning band's evidence flags, such as `not-converged`, `laplace-is-differ`, `low-ess`) | any flag: its log Z is less reliable | |
 | `mode_converged` (`OrbitPipeline`: the best sampled point against the search's best mode) | over 1 nat: the search stopped short of the optimum; raise `n_candidates`, `n_refine` or `max_steps` | |
-| `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
+| `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood; tempering is virgil's own design, on by default) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
 | `primary_resolved` (`OrbitPipeline`) | the primary is resolved and its diameter is the largest tried | |
-| `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's, `no_orbit_nats`; both carry the night-outlier component, so under `"mixture"` the single star may have an unrelated companion on any night and the check asks whether the positions follow an orbit) | under 10 nats | under 0: no orbit is detected |
+| `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's, `no_orbit_nats`, an uncalibrated difference in nats and not a Bayes factor; both carry the night-outlier component, so under `"mixture"` the single star may have an unrelated companion on any night and the check asks whether the positions follow an orbit) | under 10 nats | under 0: no orbit is detected |
 | `period_bound` (`OrbitPipeline`) | the best period is at the top of the window (a short arc) or at its bottom (the sampling limit) | |
 
 ### Warnings raised inside stages

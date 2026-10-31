@@ -100,7 +100,7 @@ DEFAULTS = {
     "fov_fraction": 1.0,
     "grid_step_mas": None,
     "max_grid": 101,
-    "flux_range": [1e-5, 0.5],
+    "flux_range": [1e-5, 1.0],
     "n_flux": 40,
     "wavel_range": None,
     "error_floor": None,

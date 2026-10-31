@@ -381,8 +381,28 @@ def test_pure_noise_around_one_gives_flags_not_a_confident_diameter(
     assert s["worst_check"] == "fail"
     # Limb darkening is not claimed for a star that is not resolved.
     assert s["comparison"]["preferred"] == "uniform"
-    assert s["comparison"]["delta_chi2"] < 0
+    # delta_chi2 < 0 was never true: the shape's gain (17.8 here) is real but
+    # is the diameter's lower prior edge, not limb darkening, so it is unidentified.
+    assert s["comparison"]["unidentified"]
+    assert "shape is unidentified" in res.describe()
     assert "[fail] resolution" in res.describe()
+
+
+def test_the_shape_is_unidentified_for_an_unresolved_star_on_a_second_realization(
+    tmp_path,
+):
+    # A second realization, independent of null_data: the limb-darkened disk
+    # can emulate a diameter below the prior's lower edge, so a gain over the
+    # uniform disk at that edge is not evidence of limb darkening.
+    data = _template().with_model(PointSource(), key=jax.random.PRNGKey(11))
+    res = StarPipeline(
+        data, output=tmp_path / "run", quicklook_execute=False, **TINY
+    ).run(through="fit")
+    comparison = res.summary["comparison"]
+    assert comparison["preferred"] == "uniform"
+    assert comparison["unidentified"]
+    assert "[pass] limb_darkening_gain" in res.describe()
+    assert "unidentified" in res.describe()
 
 
 # --- (c) a golden synthetic case ---------------------------------------------
@@ -423,22 +443,114 @@ def test_golden_default_settings_recover_a_uniform_disk(tmp_path):
 @pytest.mark.slow
 @pytest.mark.xfail(
     strict=True,
-    reason="virgil#580: limb-darkened star NUTS chains do not mix (r_hat 2.4-4, "
-    "ESS 2.5 at 1000 + 1000 draws); the failing sampler checks of a model "
-    "that is not selected are reported as failures; Ben decides whether to "
-    "keep this xfail",
+    reason="virgil#580: the limb-darkened disk sampled explicitly on a star whose "
+    "data cannot constrain its shape (q1, q2 on a thin curved ridge with the "
+    "diameter) does not mix: r_hat 2.2, ESS 2.6 at 250 + 250 draws; "
+    "the pipeline avoids sampling it by default (next test) but does not fix this",
 )
 @pytest.mark.timeout(900)
-def test_golden_default_model_set_recovers_the_star_without_failing_checks(
+def test_golden_limb_darkened_model_sampled_explicitly_mixes(tmp_path):
+    """The limb-darkened disk alone on the golden star, NUTS at 250 + 250."""
+    truth = UniformDisk(4.0)
+    res = _golden(
+        truth, tmp_path, "limb_darkened", num_warmup=250, num_samples=250
+    )
+    _assert_golden(res, truth)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(900)
+def test_golden_default_model_set_does_not_sample_an_unconstrained_shape(
     tmp_path,
 ):
     """The default pipeline (uniform and limb-darkened, compared) on the
-    same star, with the NUTS length reduced to 250 + 250 draws (the
-    default's 1000 + 1000 for both models takes over 10 minutes here)."""
+    golden star (virgil#580): the data cannot constrain the limb darkening
+    (expected σ_posterior/σ_prior of q1, q2 above 0.8), so the unselected
+    model is fitted and compared but not sampled, and the output says so."""
     truth = UniformDisk(4.0)
     res = _golden(truth, tmp_path, num_warmup=250, num_samples=250)
     _assert_golden(res, truth)
-    assert res.summary["comparison"]["preferred"] == "uniform"
+    comparison = res.summary["comparison"]
+    assert comparison["preferred"] == "uniform"
+    assert not comparison["constrained"]
+    assert min(comparison["shape_ratio"].values()) > 0.8
+    assert list(res.summary["posterior"]["models"]) == ["uniform"]
+    assert "[warn] limb_darkening_not_sampled" in res.describe()
+
+
+def _dense(sigma_v2):
+    return vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 4),
+        hour_angles_h=onp.linspace(-3.0, 3.0, 5),
+        sigma_v2=sigma_v2,
+        sigma_cp_deg=15.0,
+    )
+
+
+def _shape_ratios(data, diam):
+    entry = star.models()["limb_darkened"]
+    prior_std = {"q1": 0.2887, "q2": 0.2887}  # Uniform(0, 1)
+    return star._shape_ratios(data, entry, diam, prior_std)
+
+
+@pytest.mark.parametrize(
+    "data, diam, expected, constrained",
+    [
+        # The golden star's coverage (3 wavelengths x 3 hour angles, sigma
+        # 0.01, 4 mas): almost the prior alone.
+        (_template(), 4.0, (0.92, 0.88), False),
+        # Just above 0.8 (4 x 5, sigma 1e-2, 8 mas): sampled alone at
+        # 500 + 500 draws the limb-darkened model had r_hat 2.6, ESS 2.6.
+        (_dense(1e-2), 8.0, (0.85, 0.74), False),
+        # Just below (4 x 5, sigma 3e-4, 4 mas): r_hat 1.035, ESS 141 at
+        # 500 + 500 draws.
+        (_dense(3e-4), 4.0, (0.70, 0.60), True),
+        # Well measured (4 x 5, sigma 1e-4, 8 mas).
+        (_dense(1e-4), 8.0, (0.14, 0.11), True),
+    ],
+)
+def test_the_shape_gate_decides_on_both_sides_of_the_threshold(
+    data, diam, expected, constrained
+):
+    ratios = _shape_ratios(data, diam)
+    assert tuple(ratios.values()) == pytest.approx(expected, abs=0.02)
+    assert all(r < 0.8 for r in ratios.values()) is constrained
+
+
+def test_a_constrained_shape_is_fitted_and_kept_when_the_data_resolve_it(
+    tmp_path,
+):
+    truth = QuadraticLimbDarkenedDisk.from_u(8.0, u1=0.35, u2=0.25)
+    data = _dense(1e-4).with_model(truth, key=jax.random.PRNGKey(3))
+    res = StarPipeline(
+        data, output=tmp_path / "run", quicklook_execute=False, **TINY
+    ).run(through="fit")
+    comparison = res.summary["comparison"]
+    assert comparison["constrained"]
+    assert comparison["preferred"] == "limb_darkened"
+    assert "not_sampled" not in res.describe()
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(1800)
+def test_a_constrained_limb_darkened_star_mixes_at_the_default_draws(tmp_path):
+    """A positive control, not a regression test of the gate (the same run
+    passes without it): a star past the first null whose shape the data
+    constrain (σ(V²) = 1e-4, 4 wavelengths, 5 hour angles, 8 mas), the
+    limb-darkened model at the default 1000 + 1000 NUTS draws. (About 5 min.)"""
+    truth = QuadraticLimbDarkenedDisk.from_u(8.0, u1=0.35, u2=0.25)
+    data = _dense(1e-4).with_model(truth, key=jax.random.PRNGKey(3))
+    res = StarPipeline(
+        data,
+        "limb_darkened",
+        output=tmp_path / "run",
+        quicklook_execute=False,
+    ).run()
+    assert res.status == "complete"
+    s = res.summary
+    assert s["resolution"]["first_null_fraction"] > 1.0
+    assert s["posterior"]["r_hat_max"] < 1.01
+    assert s["posterior"]["ess_bulk_min"] > 400
 
 
 def test_a_failing_model_that_was_not_selected_still_fails_and_is_named(

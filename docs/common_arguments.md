@@ -19,8 +19,8 @@ The function may return a list of models, one per dataset in `data`, sharing
 parameters: a scene and a [`Rotated`][virgil.models.Rotated] copy of it for two
 epochs between which it turns, say, or binaries at two epochs with one flux
 ratio and a position each. Model `i` is compared with dataset `i`.
-Regularizers act on the first model only, so an `Image` that appears only in a
-later model is not regularized.
+Regularizers cannot be combined with a list of models: that raises a
+`ValueError`, since they would act on the first model only.
 
 ## `priors` {#priors}
 

@@ -617,7 +617,7 @@ def _convert_flux(values, units):
     )
 
 
-# deliberate: named step: resolves the plotted axes (early returns)
+# deliberate: reduces a full log-likelihood grid over its flux axis to the plotted array and axis keys, returning early for grids that need no reduction
 def _grid_axes(values, grid, kind, flux_param):
     """``(values, coord_keys)``; a full log-likelihood grid is reduced to its
     maximum over the flux axis."""
@@ -2146,7 +2146,7 @@ def _disk_with(disk, latents):
     return disk
 
 
-# deliberate: named step: draws or validates the disk latents
+# deliberate: draws the RadialGP latents, or validates supplied ones against the disk, as arrays of shape (n, *shape)
 def _disk_latents(disk, latents, key, n):
     """The latents of the draws, as a dict of arrays ``(n, *shape)``."""
     import jax
@@ -2179,7 +2179,7 @@ def _disk_latents(disk, latents, key, n):
     return {p: np.asarray(z) for p, z in latents.items()}
 
 
-# deliberate: named step: vmapped tracks of the disk cuts
+# deliberate: vmaps the radial tracks ln I0 - mu and c_1 .. c_M over the latent draws on a common radius grid
 def _disk_tracks(disk, latents, mmax):
     """Radii and the tracks ``ln I0 - mu``, ``c_1 .. c_M``, each ``(n, nr)``."""
     import jax

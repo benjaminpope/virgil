@@ -1,0 +1,106 @@
+# Vacuous '# deliberate:' stamps that predate the stamp lint. This list may only
+# shrink: the lint fails if a PR adds an entry (WP-18 empties it).
+# Regenerate after fixing stamps: python scripts/code_shape.py --write-allowlist
+count: 102
+aliases.py :: _band_evidence :: 33 lines, tests call it; a named stage of _fit_band
+aliases.py :: _band_result :: 42 lines, tests build band rows with it
+aliases.py :: _band_target :: imported by virgil/pipeline/orbit.py (internal interface)
+aliases.py :: _batch :: jit boundary (static batch_size for lax.map)
+aliases.py :: _candidate_batch :: tests/test_epoch_coarse.py calls it directly
+aliases.py :: _check_seed_diameter :: tests call it directly
+aliases.py :: _checkpoint_key :: tests check which inputs invalidate a checkpoint
+aliases.py :: _default_vis_amp :: tests (also test_marginal_gains.py) call it directly
+aliases.py :: _field_mas :: tests probe its fallbacks directly
+aliases.py :: _fit_band :: 51 lines and patched by tests/test_tempering.py as the per-band seam
+aliases.py :: _flip_is_relabelling :: test asserts the resolved-primary skip directly; no cheap public route
+aliases.py :: _flipped :: tests check the label-swap algebra directly
+aliases.py :: _hessian_groups :: tests/test_epoch_coarse.py calls it; memory-budget grouping is not reachable cheaply via the public API
+aliases.py :: _labels_free :: tests score its verdict directly
+aliases.py :: _mixture_weights :: tests check the one-mode mixture against the evidence directly
+aliases.py :: _mode_evidence :: 78 lines, called by tests with a known Gaussian; folding into _band_evidence would hide its contract
+aliases.py :: _night_length :: tests probe its gap handling directly; fit needs full data to reach it
+aliases.py :: _preflight :: patched by many tests to avoid or force the preflight
+aliases.py :: _refine :: tests patch the optimizer to fail starts; _fit_band only sees the count
+aliases.py :: _seeding_positions :: 67 lines and tests call it directly
+aliases.py :: _short_arc_bands :: 45 lines and tests call it
+aliases.py :: _short_arc_profile :: 45 lines and patched by tests
+aliases.py :: _signs_trusted :: tests pin its tempering threshold directly
+aliases.py :: _warn_tempering :: 57 lines and tests/test_tempering.py calls it
+arcs.py :: _pv_fit :: jit/vmap boundary
+epochs.py :: _Surface._table :: 60 lines
+epochs.py :: _blocks :: used by pipeline/_common.py
+epochs.py :: _distinct_tracks :: imported by aliases.py
+epochs.py :: _flag_one_night :: 85 lines, tested directly
+epochs.py :: _grid_peaks :: unit-tested on synthetic grids; the caller is a 400-line loop
+epochs.py :: _loglike_kernel :: jit boundary, compile-once
+epochs.py :: _loss_order :: only its direct test covers the sort order
+epochs.py :: _orbit_batch_size :: imported by orbit_search.py; unit-tested
+epochs.py :: _orbit_list :: imported by orbit_search.py
+epochs.py :: _peak_weights :: unit-tested on synthetic Hessians; no cheap public route
+epochs.py :: _rank_peaks :: unit-tested with stub refine/score; the caller is a 400-line loop
+epochs.py :: _refined_gap :: unit-tested on synthetic peaks; no cheap public route
+epochs.py :: _refuse_amp_with_gains :: imported by aliases.py; unit-tested
+epochs.py :: _warn_if_coarse :: only its direct test covers the warning
+fitting.py :: _lm_residuals :: optx callback and test seam
+imaging.py :: _clean_columns :: jit boundary
+imaging.py :: _clean_step :: jit boundary
+imaging.py :: _render_latents :: jit boundary
+likelihood.py :: _warn_zero_size_for_parallel_chains :: named check, keeps numpyro_model short
+models.py :: System._tied :: one named step per part
+orbits.py :: KeplerOrbit._frame :: also called by models.py
+orbits.py :: _fit_batch :: jit boundary, fitter static
+orbits.py :: _phase_drift :: imported by epochs.py
+orbits.py :: _state_elements :: jit boundary
+orbits.py :: _thiele_innes_fit :: jit boundary vmapped by _fit_batch
+orbits.py :: _thiele_innes_fit_sign_free :: jit/vmap boundary, 59 lines
+pipeline/_common.py :: _m2loglike_grid :: float64 wrapper of the jit entry, test seam
+pipeline/_common.py :: _refine_diameter :: float64 wrapper of the jit entry
+pipeline/_core.py :: _Pipeline._run_stage :: named step
+pipeline/_quicklook.py :: _binary_cells :: dispatch-table callable
+pipeline/_quicklook.py :: _disk_cells :: dispatch-table callable (_SECTIONS)
+pipeline/_quicklook.py :: _image_cells :: dispatch-table callable
+pipeline/_quicklook.py :: _orbit_cells :: dispatch-table callable
+pipeline/_quicklook.py :: _star_cells :: dispatch-table callable
+pipeline/binary.py :: _fit_start :: tests call it with a stub pipeline
+pipeline/binary.py :: _global_nsigma :: tests pin the look-elsewhere values
+pipeline/binary.py :: _refined_flux :: tests call it directly
+pipeline/cli.py :: _info :: argparse callback
+pipeline/cli.py :: _quicklook :: argparse callback
+pipeline/cli.py :: _run :: argparse callback
+pipeline/cli.py :: _validate :: argparse callback
+pipeline/disk.py :: _compare_gp :: callback: the compare stage of the "GP" entry of MODELS
+pipeline/disk.py :: _compare_rings :: callback: the compare stage of the "rings" entry of MODELS
+pipeline/disk.py :: _geometry_stage :: stage callable, patched by tests
+pipeline/disk.py :: _load_disk :: stage callable, patched by tests
+pipeline/disk.py :: _nuts :: float64 boundary (in_float64) around the NUTS run
+pipeline/disk.py :: _profile_gp :: callback: the profile stage of the "GP" entry of MODELS
+pipeline/disk.py :: _profile_rings :: callback: the profile stage of the "rings" entry of MODELS
+pipeline/image.py :: _combine :: stage callable
+pipeline/image.py :: _hyperparameters :: stage callable
+pipeline/image.py :: _members :: stage callable
+pipeline/orbit.py :: _alias_search :: test seam
+pipeline/orbit.py :: _apply_exclude :: named step
+pipeline/orbit.py :: _as_mapping :: named step
+pipeline/orbit.py :: _band_checkpoints :: test seam
+pipeline/orbit.py :: _band_summary :: named step
+pipeline/orbit.py :: _converged :: named step
+pipeline/orbit.py :: _engine_defaults :: test seam (tests import it)
+pipeline/orbit.py :: _night_positions :: named step
+pipeline/orbit.py :: _null_verdict :: test seam (monkeypatched)
+pipeline/orbit.py :: _optimum_gap :: test seam (tests/test_pipeline_robust_core.py)
+pipeline/orbit.py :: _plot_sky :: named step: one figure
+pipeline/orbit.py :: _positions_from_json :: test seam
+pipeline/orbit.py :: _positions_json :: test seam
+pipeline/orbit.py :: _read_nights :: named step
+pipeline/orbit.py :: _read_positions :: test seam
+pipeline/orbit.py :: _run_summary :: named step
+pipeline/orbit.py :: _sample_band :: named step
+pipeline/orbit.py :: _worst_fractions :: test seam (tests/test_pipeline_robust_core.py)
+pipeline/star.py :: _find_lobes :: test seam
+pipeline/star.py :: _nuts :: float64 boundary
+pipeline/star.py :: _quadratic_derived :: registry callback
+pipeline/star.py :: _quadratic_priors :: registry callback
+pipeline/star.py :: _refine :: float64 boundary
+pipeline/star.py :: _scan :: float64 boundary
+pipeline/star.py :: _scan_lobes :: test seam
+pipeline/star.py :: _uniform_disk :: registry callback

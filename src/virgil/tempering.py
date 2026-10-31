@@ -6,8 +6,11 @@
 The effective-channel factor ``f = N / N_eff`` is estimated from the
 within-chain covariance of the residuals of neighbouring channels, and the
 log likelihood is divided by it (``dof_b = 1 / f_b``). The derivation,
-the estimator and its limits are in ``docs/api/tempering.md``; the solved
-problem is in the AGENTS.md table. This module imports nothing from virgil.
+the estimator and its limits are in ``docs/api/tempering.md``. This module
+imports nothing from virgil.
+
+Source: virgil's own design; no published source (see
+``references/provenance.toml``).
 """
 
 import dataclasses

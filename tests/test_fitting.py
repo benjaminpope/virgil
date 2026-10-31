@@ -1607,3 +1607,34 @@ def test_post_step_needs_plain_adam():
             fit(START, PRIORS, DATA, post_step=lambda z: z, **kw)
     with pytest.raises(ValueError, match="post_step"):
         _adam(post_step=lambda z: z, precondition="diag")
+
+
+def test_regularizers_raise_for_a_model_per_dataset():
+    def two(dra, ddec, flux, **_):
+        model = BinaryModelCartesian(dra, ddec, flux)
+        return [model, model]
+
+    init = {"dra": 55.0, "ddec": -35.0, "flux": 0.03}
+    with pytest.raises(ValueError, match="one model per dataset"):
+        fit(
+            two,
+            PRIORS,
+            [DATA, DATA],
+            init=init,
+            regularizers=[TV(1.0, path="env")],
+        )
+    fit(two, PRIORS, [DATA, DATA], init=init, max_steps=1)  # none: fine
+
+
+def test_numpyro_model_raises_for_a_model_per_dataset_with_regularizers():
+    def two(dra, ddec, flux, **_):
+        model = BinaryModelCartesian(dra, ddec, flux)
+        return [model, model]
+
+    model = numpyro_model(
+        two, PRIORS, [DATA, DATA], [Centroid(10.0, path="env")]
+    )
+    with pytest.raises(ValueError, match="one model per dataset"):
+        numpyro.handlers.trace(
+            numpyro.handlers.seed(model, jax.random.PRNGKey(0))
+        ).get_trace()

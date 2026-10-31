@@ -5,8 +5,10 @@
 [![integration](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml)
 [![Documentation](https://github.com/benjaminpope/virgil/actions/workflows/zensical-pages.yml/badge.svg)](https://benjaminpope.github.io/virgil/)
 <!-- dev-carbon-badge -->
-[![dev carbon | 328 kg CO2e](https://img.shields.io/endpoint?url=https%3A%2F%2Fbenjaminpope.github.io%2Fvirgil%2Fgenerated%2Fdev_carbon_badge.json)](dev_carbon.md)
+[![dev carbon | 337 kg CO2e](https://img.shields.io/endpoint?url=https%3A%2F%2Fbenjaminpope.github.io%2Fvirgil%2Fgenerated%2Fdev_carbon_badge.json)](dev_carbon.md)
 <!-- /dev-carbon-badge -->
+
+The badge is an estimate with a range, not a measurement; it covers AI assistants, continuous integration and cluster jobs for development, and not data analysis ([details](dev_carbon.md)).
 
 **V**ersatile **I**nterferometric **R**econstruction and **G**radient-based **I**nference **L**ibrary.
 
@@ -82,7 +84,7 @@ Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpo
 
 ## Independent validation
 
-virgil's own tests mostly check virgil against itself. The companion repository [virgil-validation](https://github.com/benjaminpope/virgil-validation) checks it against code that shares nothing with it: textbook visibilities for geometric primitives, uv tracks and OIFITS files built from first principles, and aperture-masking images simulated with [dLux](https://github.com/LouisDesdoigts/dLux) for virgil to read and fit. To ask for another check, [open an Issue there](https://github.com/benjaminpope/virgil-validation/issues) naming the model or function, the independent result it should match, and the precision you expect.
+virgil's own tests mostly check virgil against itself. The companion repository [virgil-validation](https://github.com/benjaminpope/virgil-validation) checks it against code that shares nothing with it: textbook visibilities for geometric primitives, uv tracks and OIFITS files built from first principles, and aperture-masking images simulated with [dLux](https://github.com/LouisDesdoigts/dLux) for virgil to read and fit. Some provisional features have no independent check yet: the orbit alias search end to end, tempering, the pipelines, CLEAN, bandwidth smearing and harmonix. To ask for another check, [open an Issue there](https://github.com/benjaminpope/virgil-validation/issues) naming the model or function, the independent result it should match, and the precision you expect.
 
 ## Collaboration & Development
 

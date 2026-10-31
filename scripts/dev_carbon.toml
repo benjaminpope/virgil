@@ -8,6 +8,7 @@ github_user = "benjaminpope"
 # The per-record ledger stays private (~/.claude/carbon/ledger-virgil.json);
 # only daily totals of expired records are committed, as
 # docs/generated/dev_carbon_archive.json.
+ledger = "~/.claude/carbon/ledger-virgil.json"
 hide_excluded = true
 
 [claude]
@@ -28,6 +29,16 @@ projects = [
 # also holds nuHor matches too; its science folder puts it in the excluded
 # class below.
 folders = ["~/code/drpangloss"]
+
+[gemini]
+# Gemini in Google Antigravity (app and CLI): Argon PR reviews and audits.
+# Each conversation is attributed to a repository by its argon-review title,
+# its workspace or its parent conversation. virgil and virgil-validation
+# count; science repositories match [classes.science] dirs (virgil-apep,
+# virgil-vlti); any other project (the website, ozstar_scripts, scratch
+# folders) is class "other", and conversations with no project
+# "unattributed": both are costed but kept out of the headline.
+projects = ["virgil", "virgil-validation"]
 
 [gha]
 enabled = true
@@ -74,7 +85,7 @@ branches = [
 [classes.validation]
 jobs = ["sbc*", "contest*", "detection-mc", "orbitize*", "*validation*"]
 dirs = ["*virgil_validation*", "*sbc_numpyro*", "*contest_imaging*", "*imaging_contests*",
-        "*detection_mc*", "*orbitize_posterior*"]
+        "*detection_mc*", "*orbitize_posterior*", "*virgil-validation*"]
 branches = ["validation-*"]
 
 # Everything else counts as development: dpg_prof, virgil-nb, sparse-mwe,

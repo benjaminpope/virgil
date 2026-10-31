@@ -17,6 +17,8 @@ tier: each stage's JIT compile alone takes several seconds on a CI runner.
 """
 
 import json
+import pathlib
+import types
 
 import jax
 import numpy as onp
@@ -263,6 +265,7 @@ GP_CHECKS = [
     "absorbed_companion",
     "render_consistency",
     "at_bound",
+    "laplace_pd",
 ]
 RINGS_CHECKS = [
     "chi2_reduced",
@@ -271,6 +274,7 @@ RINGS_CHECKS = [
     "inclination",
     "absorbed_companion",
     "at_bound",
+    "laplace_pd",
     "prior_bound",
     "r_hat",
     "ess",
@@ -302,6 +306,7 @@ def test_pipeline_specific_contract():
         "absorbed_companion",
         "render_consistency",
         "at_bound",
+        "laplace_pd",
     )
     for entry in disk.models().values():
         assert set(entry.checks) <= set(disk.CHECKS)
@@ -1379,3 +1384,171 @@ def test_estimated_scale_is_not_called_fitted():
         in _checks.error_scale({"mackay": 0.8}, kind="estimated").message
     )
     assert "Fitted" in _checks.error_scale({"vis_scale": 0.8}).message
+
+
+# === FALLBACKS THAT USED TO BE SILENT (audit CO-1, CO-2, CO-3) ===
+
+
+def _laplace_returning(monkeypatch, cov):
+    monkeypatch.setattr(disk, "_builder", lambda ctx, shape: None)
+    monkeypatch.setattr(
+        "virgil.inference.laplace_cov", lambda *a, **k: onp.asarray(cov)
+    )
+    return disk._laplace(None, None, ["a", "b"], {"a": 1.0, "b": 2.0}, None)
+
+
+def test_a_positive_definite_laplace_covariance_gives_widths(monkeypatch):
+    sd, cov = _laplace_returning(monkeypatch, [[4.0, 0.0], [0.0, 9.0]])
+    assert sd == {"a": 2.0, "b": 3.0} and cov is not None
+
+
+def test_a_negative_laplace_variance_is_unconstrained_not_zero(monkeypatch):
+    # Not positive definite: the old clip reported sd = 0, "perfectly known".
+    sd, cov = _laplace_returning(monkeypatch, [[4.0, 0.0], [0.0, -9.0]])
+    assert sd == {"a": 2.0, "b": None}
+    assert cov is None  # no Laplace evidence from it
+
+
+def test_an_indefinite_covariance_with_positive_diagonal_has_no_evidence(
+    monkeypatch,
+):
+    sd, cov = _laplace_returning(monkeypatch, [[1.0, 2.0], [2.0, 1.0]])
+    assert cov is None and sd == {"a": 1.0, "b": 1.0}
+
+
+def test_a_programming_error_in_the_laplace_step_is_not_swallowed(monkeypatch):
+    def broken(*a, **k):
+        raise TypeError("a bug")
+
+    monkeypatch.setattr(disk, "_builder", lambda ctx, shape: None)
+    monkeypatch.setattr("virgil.inference.laplace_cov", broken)
+    with pytest.raises(TypeError, match="a bug"):
+        disk._laplace(None, None, ["a"], {"a": 1.0}, None)
+
+
+def test_a_numerical_laplace_failure_warns_and_gives_none(monkeypatch):
+    def singular(*a, **k):
+        raise onp.linalg.LinAlgError("singular")
+
+    monkeypatch.setattr(disk, "_builder", lambda ctx, shape: None)
+    monkeypatch.setattr("virgil.inference.laplace_cov", singular)
+    with pytest.warns(RuntimeWarning, match="could not be computed"):
+        sd, cov = disk._laplace(None, None, ["a"], {"a": 1.0}, None)
+    assert sd == {"a": None} and cov is None
+
+
+def _synthetic_compare(name, sd):
+    "Minimal overview, geometry and compare reports for ``_fit_checks``."
+    row = {
+        "name": "best",
+        "n": 1,
+        "bic": 0.0,
+        "ell_mas": 2.0,
+        "log_evidence": -1.0,
+        "sd": sd,
+    }
+    overview = {"resolution_mas": 2.0}
+    geometry = {"laplace_sd": sd, "grid": {"n_minima": 1}}
+    compare = {
+        "best": "best",
+        "rows": [
+            row,
+            {**row, "name": "other", "ell_mas": 4.0, "log_evidence": -9.0},
+        ],
+        "grid": {"on_grid_edge": None, "extended": None},
+        "outer_fraction": 0.0,
+        "inc_deg": 40.0,
+        "pa_sd_deg": sd.get("pa"),
+        "at_bound": [],
+        "raised_search": None,
+        "residual_search": {"delta_chi2": 0.0},
+        "degree": 1,
+        "evidence_spread": 8.0,
+        "profile_correlation": 0.5,
+        "inner_fraction": 0.0,
+        "inner_correlation": 0.0,
+        "render": {"chi2_model": 1.0, "chi2_render": 1.0},
+        "n_best": 1,
+        "split_counts": [],
+    }
+    return overview, geometry, compare
+
+
+@pytest.mark.parametrize("model", ["gp", "rings"])
+def test_a_missing_laplace_width_is_flagged_and_reaches_the_other_checks(
+    model,
+):
+    # A non-positive-definite Hessian leaves sd = None (never 0): the
+    # laplace_pd check warns and names it, and the inclination check, which
+    # reads the position angle's spread, accepts None.
+    settings = dict(DiskPipeline._DEFAULTS)
+    entry = disk.models()[model]
+    for sd, status in (
+        ({"pa": 5.0, "inc": 2.0}, "pass"),
+        ({"pa": None, "inc": 2.0}, "warn"),
+    ):
+        overview, geometry, compare = _synthetic_compare(model, sd)
+        checks = {
+            c.name: c
+            for c in disk._fit_checks(
+                entry, settings, overview, geometry, compare
+            )
+        }
+        assert checks["laplace_pd"].status == status
+        assert checks["inclination"].status in ("pass", "warn", "fail")
+        if status == "warn":
+            assert "geometry.pa" in checks["laplace_pd"].message
+            assert checks["laplace_pd"].value == 2  # geometry and best row
+
+
+@pytest.mark.parametrize("missing", ["report", "factor", "list"])
+def test_a_rescale_run_without_its_profile_scale_raises(
+    tiny, tmp_path, missing
+):
+    # error_scale="auto" is the rescale for the GP: a missing or unusable
+    # profile report must not fall back to the quoted errors (factor 1.0).
+    pipeline = DiskPipeline(tiny, "gp", output=tmp_path / "run", **_TINY)
+    if missing != "report":
+        folder = pipeline.output / "stages" / "profile"
+        folder.mkdir(parents=True)
+        text = {"factor": '{"error_scale_factor": null}', "list": "[1, 2]"}
+        (folder / "report.json").write_text(text[missing])
+    with pytest.raises(RuntimeError, match="rerun the profile stage"):
+        pipeline._rescale_factor()
+
+
+def test_a_quoted_error_run_needs_no_profile_scale(tiny, tmp_path):
+    pipeline = DiskPipeline(tiny, "rings", output=tmp_path / "run", **_TINY)
+    assert pipeline._rescale_factor() == 1.0
+
+
+@pytest.mark.parametrize(
+    "error, raises",
+    [(FloatingPointError, False), (TypeError, True)],
+)
+def test_the_evidence_failure_is_narrow(monkeypatch, error, raises):
+    # A numerical failure loses that one evidence (with a warning); a bug is
+    # not turned into a warning.
+    fit = types.SimpleNamespace(
+        model=None, chi2=10.0, n_free=3, info={"converged": True, "steps": 5}
+    )
+    pipe = types.SimpleNamespace(
+        output=pathlib.Path("unused"),
+        processed=types.SimpleNamespace(n_independent=10),
+        _ctx=lambda: types.SimpleNamespace(halffringe=2.0),
+        _rescale_factor=lambda: 1.0,
+    )
+    monkeypatch.setattr(disk, "_gp_fit", lambda *a, **k: (fit, {}))
+    monkeypatch.setattr(disk, "_save_fit", lambda *a, **k: None)
+
+    def evidence(*a, **k):
+        raise error("x")
+
+    monkeypatch.setattr("virgil.imaging.log_evidence", evidence)
+    if raises:
+        with pytest.raises(error):
+            disk._score_ell(pipe, 1.0, None, None, 0)
+    else:
+        with pytest.warns(RuntimeWarning, match="evidence"):
+            row = disk._score_ell(pipe, 1.0, None, None, 0)
+        assert row["log_evidence"] is None

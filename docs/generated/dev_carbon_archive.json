@@ -839,6 +839,3134 @@
 "pr": null,
 "source": "gha",
 "tokens": {}
+},
+"2026-09-28|claude|Claude Opus|model calls|dev|main / unattributed": {
+"calls": 459,
+"class": "dev",
+"day": "2026-09-28",
+"feature": "main / unattributed",
+"kg": [
+1.766516055099628,
+2.187501132582069,
+3.8714414425118315
+],
+"kg_by_type": {
+"cache_read": 1.1226268732865088,
+"cache_write": 0.1487138588194,
+"input": 8.272649616e-05,
+"output": 0.91607767398
+},
+"kind": "model calls",
+"kwh": [
+5.353363556843999,
+6.6291437374224005,
+11.732264459735998
+],
+"label": "Claude Opus",
+"n": 3,
+"override": false,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 156737454,
+"cache_write": 1661035,
+"input": 924,
+"output": 482220
+}
+},
+"2026-09-29|claude|Claude Opus|model calls|dev|main / unattributed": {
+"calls": 10,
+"class": "dev",
+"day": "2026-09-29",
+"feature": "main / unattributed",
+"kg": [
+0.027064164355802,
+0.0284440073947232,
+0.033963379550408
+],
+"kg_by_type": {
+"cache_read": 0.0036795814371231995,
+"cache_write": 0.007788377302439999,
+"input": 2.14874016e-06,
+"output": 0.016973899915
+},
+"kind": "model calls",
+"kwh": [
+0.08201697954599999,
+0.08619854439359999,
+0.10292480378399999
+],
+"label": "Claude Opus",
+"n": 2,
+"override": false,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 513731,
+"cache_write": 86991,
+"input": 24,
+"output": 8935
+}
+},
+"2026-09-30|claude|Claude Opus|model calls|dev|#69": {
+"calls": 6,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "#69",
+"kg": [
+0.014068419703169997,
+0.016942453674551997,
+0.028438589560079996
+],
+"kg_by_type": {
+"cache_read": 0.007664090590352,
+"cache_write": 0.0008767755161199999,
+"input": 1.07437008e-06,
+"output": 0.008400513197999998
+},
+"kind": "model calls",
+"kwh": [
+0.04263384141,
+0.051343498296,
+0.08618212583999998
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 69,
+"source": "claude",
+"tokens": {
+"cache_read": 1070035,
+"cache_write": 9793,
+"input": 12,
+"output": 4422
+}
+},
+"2026-09-30|claude|Claude Opus|model calls|dev|#70": {
+"calls": 26,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "#70",
+"kg": [
+0.08080286361671998,
+0.099895548026904,
+0.17626628566763997
+],
+"kg_by_type": {
+"cache_read": 0.05091382509382399,
+"cache_write": 0.0034657388163999996,
+"input": 4.65560368e-06,
+"output": 0.04551132851299999
+},
+"kind": "model calls",
+"kwh": [
+0.24487018055999998,
+0.302729875992,
+0.53416865772
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 70,
+"source": "claude",
+"tokens": {
+"cache_read": 7108420,
+"cache_write": 38710,
+"input": 52,
+"output": 23957
+}
+},
+"2026-09-30|claude|Claude Opus|model calls|dev|#71": {
+"calls": 38,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "#71",
+"kg": [
+0.137296034957732,
+0.1723839035160032,
+0.31273537774908794
+],
+"kg_by_type": {
+"cache_read": 0.09356764948872318,
+"cache_write": 0.0051539323354399995,
+"input": 6.804343839999999e-06,
+"output": 0.073655517348
+},
+"kind": "model calls",
+"kwh": [
+0.41607071043599997,
+0.5224032378336,
+0.9477333474239998
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 71,
+"source": "claude",
+"tokens": {
+"cache_read": 13063606,
+"cache_write": 57566,
+"input": 76,
+"output": 38772
+}
+},
+"2026-09-30|claude|Claude Opus|model calls|dev|#72": {
+"calls": 54,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "#72",
+"kg": [
+0.19885985008748597,
+0.24233502235076956,
+0.41623571140390403
+],
+"kg_by_type": {
+"cache_read": 0.11593379270208957,
+"cache_write": 0.009787421897959999,
+"input": 9.669330719999999e-06,
+"output": 0.11660413841999998
+},
+"kind": "model calls",
+"kwh": [
+0.602637644478,
+0.7343875949808,
+1.261387396992
+],
+"label": "Claude Opus",
+"n": 3,
+"override": false,
+"pr": 72,
+"source": "claude",
+"tokens": {
+"cache_read": 16186293,
+"cache_write": 109319,
+"input": 108,
+"output": 61380
+}
+},
+"2026-09-30|claude|Claude Opus|model calls|dev|#73": {
+"calls": 61,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "#73",
+"kg": [
+0.242957126482154,
+0.30737696618397436,
+0.565056324991256
+],
+"kg_by_type": {
+"cache_read": 0.17178623920485442,
+"cache_write": 0.0075713545462799976,
+"input": 1.1280885839999997e-05,
+"output": 0.128008091547
+},
+"kind": "model calls",
+"kwh": [
+0.736272859242,
+0.9314948733311998,
+1.7123829296880002
+],
+"label": "Claude Opus",
+"n": 2,
+"override": false,
+"pr": 73,
+"source": "claude",
+"tokens": {
+"cache_read": 23984227,
+"cache_write": 84567,
+"input": 126,
+"output": 67383
+}
+},
+"2026-09-30|claude|Claude Opus|model calls|dev|#76": {
+"calls": 37,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "#76",
+"kg": [
+0.10329668338291398,
+0.11974315936903039,
+0.18552906331349597
+],
+"kg_by_type": {
+"cache_read": 0.04385726929631039,
+"cache_write": 0.027544968703559998,
+"input": 6.625282159999999e-06,
+"output": 0.048334296086999996
+},
+"kind": "model calls",
+"kwh": [
+0.31303689472199997,
+0.36287735041919994,
+0.5622391732079999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 76,
+"source": "claude",
+"tokens": {
+"cache_read": 6123207,
+"cache_write": 307659,
+"input": 74,
+"output": 25443
+}
+},
+"2026-09-30|claude|Claude Opus|model calls|dev|#85": {
+"calls": 68,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "#85",
+"kg": [
+0.143589606785016,
+0.1664333146614096,
+0.257808146166984
+],
+"kg_by_type": {
+"cache_read": 0.06091655433704959,
+"cache_write": 0.012025603367119999,
+"input": 1.2176194239999998e-05,
+"output": 0.093478980763
+},
+"kind": "model calls",
+"kwh": [
+0.43514315416800003,
+0.5043701917007999,
+0.781278341832
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 85,
+"source": "claude",
+"tokens": {
+"cache_read": 8504968,
+"cache_write": 134318,
+"input": 136,
+"output": 49207
+}
+},
+"2026-09-30|claude|Claude Opus|model calls|dev|main / unattributed": {
+"calls": 582,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "main / unattributed",
+"kg": [
+1.2049275104160135,
+1.3942555226255262,
+2.1515675714635756
+],
+"kg_by_type": {
+"cache_read": 0.5048746992253663,
+"cache_write": 0.19661984162491997,
+"input": 0.00010618357624,
+"output": 0.6926547981989999
+},
+"kind": "model calls",
+"kwh": [
+3.651489611022,
+4.2252413626272,
+6.520248369047999
+],
+"label": "Claude Opus",
+"n": 4,
+"override": false,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 70488937,
+"cache_write": 2196113,
+"input": 1186,
+"output": 364611
+}
+},
+"2026-09-30|claude|Claude Sonnet|model calls|dev|#71": {
+"calls": 19,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "#71",
+"kg": [
+0.006392290318322999,
+0.009204014853952797,
+0.020450912996471997
+],
+"kg_by_type": {
+"cache_read": 0.0074979320950127985,
+"cache_write": 0.0012408526769799998,
+"input": 1.7010859599999998e-06,
+"output": 0.0004635289959999999
+},
+"kind": "model calls",
+"kwh": [
+0.019371606578999997,
+0.027892436954399993,
+0.061975758455999994
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 71,
+"source": "claude",
+"tokens": {
+"cache_read": 2093673,
+"cache_write": 27719,
+"input": 38,
+"output": 488
+}
+},
+"2026-09-30|claude|Claude Sonnet|model calls|dev|#76": {
+"calls": 38,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "#76",
+"kg": [
+0.024542771334717998,
+0.028393606467284793,
+0.043796946997551996
+],
+"kg_by_type": {
+"cache_read": 0.010268893686844797,
+"cache_write": 0.008174434284519999,
+"input": 3.4021719199999996e-06,
+"output": 0.009946876323999999
+},
+"kind": "model calls",
+"kwh": [
+0.07437598841399999,
+0.08604580619039999,
+0.132725077296
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 76,
+"source": "claude",
+"tokens": {
+"cache_read": 2867418,
+"cache_write": 182606,
+"input": 76,
+"output": 10472
+}
+},
+"2026-09-30|claude|Claude Sonnet|model calls|dev|#85": {
+"calls": 5,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "#85",
+"kg": [
+0.010821266576785,
+0.011132290000131998,
+0.01237638369352
+],
+"kg_by_type": {
+"cache_read": 0.0008293957955919999,
+"cache_write": 0.003398904044339999,
+"input": 4.476542e-07,
+"output": 0.006903542506
+},
+"kind": "model calls",
+"kwh": [
+0.032793460304999994,
+0.033736005635999995,
+0.03750618696
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 85,
+"source": "claude",
+"tokens": {
+"cache_read": 231595,
+"cache_write": 75927,
+"input": 10,
+"output": 7268
+}
+},
+"2026-09-30|claude|Claude Sonnet|model calls|dev|main / unattributed": {
+"calls": 28,
+"class": "dev",
+"day": "2026-09-30",
+"feature": "main / unattributed",
+"kg": [
+0.012451621217049,
+0.015672876825698397,
+0.028557899260295998
+],
+"kg_by_type": {
+"cache_read": 0.008590014956398398,
+"cache_write": 0.004494851056779999,
+"input": 2.506863519999999e-06,
+"output": 0.002585503949
+},
+"kind": "model calls",
+"kwh": [
+0.037734191577000004,
+0.0474960911832,
+0.086543689608
+],
+"label": "Claude Sonnet",
+"n": 2,
+"override": false,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 2398619,
+"cache_write": 100409,
+"input": 56,
+"output": 2722
+}
+},
+"2026-09-30|claude|excluded|model calls|science|": {
+"calls": 123,
+"class": "science",
+"day": "2026-09-30",
+"feature": "",
+"kg": [
+0.697965843540924,
+0.8959191270563183,
+1.6877322611178955
+],
+"kg_by_type": {
+"cache_read": 0.5278754227077183,
+"cache_write": 0.07435652652091998,
+"input": 2.2561771679999997e-05,
+"output": 0.2936646160559999
+},
+"kind": "model calls",
+"kwh": [
+2.115160459452,
+2.7150507864431996,
+5.114612094408
+],
+"label": "excluded",
+"n": 1,
+"override": true,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 73700222,
+"cache_write": 830513,
+"input": 252,
+"output": 154584
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#76": {
+"calls": 138,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#76",
+"kg": [
+0.9176758139569298,
+1.2216708022479517,
+2.4376507554120392
+],
+"kg_by_type": {
+"cache_read": 0.8106533021093918,
+"cache_write": 0.07910757007635999,
+"input": 2.5068635199999995e-05,
+"output": 0.33188486142699997
+},
+"kind": "model calls",
+"kwh": [
+2.7809836458899997,
+3.7022295564959995,
+7.387213198919999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 76,
+"source": "claude",
+"tokens": {
+"cache_read": 113180735,
+"cache_write": 883579,
+"input": 280,
+"output": 174703
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#77": {
+"calls": 51,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#77",
+"kg": [
+0.18443247863833795,
+0.22872773369923674,
+0.40590875394283193
+],
+"kg_by_type": {
+"cache_read": 0.11812068016239678,
+"cache_write": 0.009926642354159998,
+"input": 9.132145679999998e-06,
+"output": 0.10067127903699997
+},
+"kind": "model calls",
+"kwh": [
+0.5589160126739999,
+0.6931511946863999,
+1.2300919227359999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 77,
+"source": "claude",
+"tokens": {
+"cache_read": 16491619,
+"cache_write": 110874,
+"input": 102,
+"output": 52993
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#78": {
+"calls": 115,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#78",
+"kg": [
+0.33188742298709195,
+0.3950852177554912,
+0.6478763968290879
+],
+"kg_by_type": {
+"cache_read": 0.16852745271573116,
+"cache_write": 0.03163652809155999,
+"input": 2.0592093199999996e-05,
+"output": 0.194900644855
+},
+"kind": "model calls",
+"kwh": [
+1.005772933716,
+1.1972915844576,
+1.963366187424
+],
+"label": "Claude Opus",
+"n": 2,
+"override": false,
+"pr": 78,
+"source": "claude",
+"tokens": {
+"cache_read": 23529246,
+"cache_write": 353359,
+"input": 230,
+"output": 102595
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#79 Imaging Stage 4c: SPARCO imaging of real PIONIER data": {
+"calls": 8,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#79 Imaging Stage 4c: SPARCO imaging of real PIONIER data",
+"kg": [
+0.021864637273933993,
+0.0268382106275024,
+0.046732504041775993
+],
+"kg_by_type": {
+"cache_read": 0.0132628622761824,
+"cache_write": 0.00066539320288,
+"input": 1.4324934399999998e-06,
+"output": 0.012908522654999997
+},
+"kind": "model calls",
+"kwh": [
+0.06625999918199998,
+0.08133223487519999,
+0.14162117764799997
+],
+"label": "Claude Opus",
+"n": 1,
+"override": true,
+"pr": 79,
+"source": "claude",
+"tokens": {
+"cache_read": 1851717,
+"cache_write": 7432,
+"input": 16,
+"output": 6795
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#81": {
+"calls": 16,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#81",
+"kg": [
+0.063257922348866,
+0.0739318508699456,
+0.11662756495426399
+],
+"kg_by_type": {
+"cache_read": 0.028463809389545593,
+"cache_write": 0.0027578184645199997,
+"input": 2.8649868799999995e-06,
+"output": 0.042707358029
+},
+"kind": "model calls",
+"kwh": [
+0.19170086521799998,
+0.22404782282879995,
+0.353435653272
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 81,
+"source": "claude",
+"tokens": {
+"cache_read": 3974023,
+"cache_write": 30803,
+"input": 32,
+"output": 22481
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#82": {
+"calls": 16,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#82",
+"kg": [
+0.047176857412748,
+0.059397908394204786,
+0.108282112320032
+],
+"kg_by_type": {
+"cache_read": 0.032589469283884794,
+"cache_write": 0.0025082960134399997,
+"input": 2.8649868799999995e-06,
+"output": 0.024297278109999997
+},
+"kind": "model calls",
+"kwh": [
+0.142967774604,
+0.18000323135039994,
+0.32814505833600005
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 82,
+"source": "claude",
+"tokens": {
+"cache_read": 4550034,
+"cache_write": 28016,
+"input": 32,
+"output": 12790
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#83 SPARCO spectra: BlackBody temperatures": {
+"calls": 111,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#83 SPARCO spectra: BlackBody temperatures",
+"kg": [
+0.3925613763894479,
+0.5053606836394368,
+0.9565579126393918
+],
+"kg_by_type": {
+"cache_read": 0.30079815266663673,
+"cache_write": 0.013973167729639998,
+"input": 2.0054908159999996e-05,
+"output": 0.190569308335
+},
+"kind": "model calls",
+"kwh": [
+1.1896431737039999,
+1.5314774292863997,
+2.8988144516159995
+],
+"label": "Claude Opus",
+"n": 1,
+"override": true,
+"pr": 83,
+"source": "claude",
+"tokens": {
+"cache_read": 41996444,
+"cache_write": 156071,
+"input": 224,
+"output": 100315
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#84": {
+"calls": 40,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#84",
+"kg": [
+0.056045273338754,
+0.06701267679088639,
+0.11088229059941601
+],
+"kg_by_type": {
+"cache_read": 0.029246409205686396,
+"cache_write": 0.00311737431796,
+"input": 7.69965224e-06,
+"output": 0.034641193614999996
+},
+"kind": "model calls",
+"kwh": [
+0.169843191042,
+0.20307951390719997,
+0.33602480536800006
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 84,
+"source": "claude",
+"tokens": {
+"cache_read": 4083287,
+"cache_write": 34819,
+"input": 86,
+"output": 18235
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#85": {
+"calls": 7,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#85",
+"kg": [
+0.03171600288779999,
+0.0425926569852,
+0.08609927337479999
+],
+"kg_by_type": {
+"cache_read": 0.0290044109264,
+"cache_write": 0.0013300701590399997,
+"input": 1.2534317599999997e-06,
+"output": 0.012256922468
+},
+"kind": "model calls",
+"kwh": [
+0.0961142094,
+0.1290755196,
+0.26092076039999995
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 85,
+"source": "claude",
+"tokens": {
+"cache_read": 4049500,
+"cache_write": 14856,
+"input": 14,
+"output": 6452
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#86": {
+"calls": 18,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#86",
+"kg": [
+0.08007052271254397,
+0.10323338296490238,
+0.195884823974336
+],
+"kg_by_type": {
+"cache_read": 0.06176762733962239,
+"cache_write": 0.0028319500000399994,
+"input": 3.22311024e-06,
+"output": 0.03863058251499999
+},
+"kind": "model calls",
+"kwh": [
+0.24265084771199993,
+0.31284506507519994,
+0.5936219345279998
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 86,
+"source": "claude",
+"tokens": {
+"cache_read": 8623792,
+"cache_write": 31631,
+"input": 36,
+"output": 20335
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#87": {
+"calls": 33,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#87",
+"kg": [
+0.14835653841560997,
+0.19344762236956803,
+0.3738119581854
+],
+"kg_by_type": {
+"cache_read": 0.120242890543888,
+"cache_write": 0.004473050297239999,
+"input": 5.9090354399999995e-06,
+"output": 0.06872577249299999
+},
+"kind": "model calls",
+"kwh": [
+0.44958916952999994,
+0.586236082464,
+1.1328237342
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 87,
+"source": "claude",
+"tokens": {
+"cache_read": 16787915,
+"cache_write": 49961,
+"input": 66,
+"output": 36177
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#88": {
+"calls": 44,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#88",
+"kg": [
+0.18262499031581,
+0.250453988924384,
+0.5217699833586799
+],
+"kg_by_type": {
+"cache_read": 0.18087732962286399,
+"cache_write": 0.004886593247199999,
+"input": 8.774022319999997e-06,
+"output": 0.064681292032
+},
+"kind": "model calls",
+"kwh": [
+0.55343848413,
+0.7589918320319999,
+1.5812052236399998
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 88,
+"source": "claude",
+"tokens": {
+"cache_read": 25253495,
+"cache_write": 54580,
+"input": 98,
+"output": 34048
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|#91": {
+"calls": 183,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "#91",
+"kg": [
+0.8624757887142038,
+1.1319385538508542,
+2.209789614397456
+],
+"kg_by_type": {
+"cache_read": 0.7185673736977343,
+"cache_write": 0.048071614859519995,
+"input": 3.4917027599999995e-05,
+"output": 0.36526464826599997
+},
+"kind": "model calls",
+"kwh": [
+2.6137019488920004,
+3.4302991955711994,
+6.696688182288
+],
+"label": "Claude Opus",
+"n": 2,
+"override": false,
+"pr": 91,
+"source": "claude",
+"tokens": {
+"cache_read": 100324002,
+"cache_write": 536928,
+"input": 390,
+"output": 192274
+}
+},
+"2026-10-01|claude|Claude Opus|model calls|dev|main / unattributed": {
+"calls": 8,
+"class": "dev",
+"day": "2026-10-01",
+"feature": "main / unattributed",
+"kg": [
+0.013565364985536,
+0.015925670101689597,
+0.025366890566304
+],
+"kg_by_type": {
+"cache_read": 0.0062941469764095995,
+"cache_write": 0.0037200959328399993,
+"input": 1.43249344e-06,
+"output": 0.005909994698999999
+},
+"kind": "model calls",
+"kwh": [
+0.041109352127999994,
+0.048262172140799996,
+0.07687345219199998
+],
+"label": "Claude Opus",
+"n": 2,
+"override": false,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 878768,
+"cache_write": 41551,
+"input": 16,
+"output": 3111
+}
+},
+"2026-10-01|claude|excluded|model calls|science|": {
+"calls": 621,
+"class": "science",
+"day": "2026-10-01",
+"feature": "",
+"kg": [
+2.0837793390301855,
+2.5231891354988973,
+4.280828321373743
+],
+"kg_by_type": {
+"cache_read": 1.1717594572498973,
+"cache_write": 0.17180619025723998,
+"input": 0.00011316698175999998,
+"output": 1.1795103210099998
+},
+"kind": "model calls",
+"kwh": [
+6.314818561577999,
+7.646434192324799,
+12.972896715311997
+],
+"label": "excluded",
+"n": 13,
+"override": true,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 163597183,
+"cache_write": 1918961,
+"input": 1264,
+"output": 620890
+}
+},
+"2026-10-02|claude|Claude Opus|model calls|dev|#91": {
+"calls": 34,
+"class": "dev",
+"day": "2026-10-02",
+"feature": "#91",
+"kg": [
+0.06721060864527799,
+0.0757367263364768,
+0.10984119710127198
+],
+"kg_by_type": {
+"cache_read": 0.02273631384319679,
+"cache_write": 0.009733613863119998,
+"input": 6.6252821599999996e-06,
+"output": 0.043260173347999996
+},
+"kind": "model calls",
+"kwh": [
+0.20367933929399998,
+0.22951743320639997,
+0.3328698088559999
+],
+"label": "Claude Opus",
+"n": 2,
+"override": false,
+"pr": 91,
+"source": "claude",
+"tokens": {
+"cache_read": 3174369,
+"cache_write": 108718,
+"input": 74,
+"output": 22772
+}
+},
+"2026-10-02|claude|excluded|model calls|science|": {
+"calls": 99,
+"class": "science",
+"day": "2026-10-02",
+"feature": "",
+"kg": [
+0.796304992034664,
+0.9668829767413825,
+1.6491949155682557
+],
+"kg_by_type": {
+"cache_read": 0.4548746258845824,
+"cache_write": 0.23517244804479998,
+"input": 1.7906168e-05,
+"output": 0.27681799664400003
+},
+"kind": "model calls",
+"kwh": [
+2.413173722472,
+2.9301041881152,
+4.997826050688
+],
+"label": "excluded",
+"n": 2,
+"override": true,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 63508092,
+"cache_write": 2626720,
+"input": 200,
+"output": 145716
+}
+},
+"2026-10-03|claude|Claude Haiku|model calls|dev|#92": {
+"calls": 18,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#92",
+"kg": [
+0.004166620125737999,
+0.0046840713121607995,
+0.006753876057852
+],
+"kg_by_type": {
+"cache_read": 0.0013798698304607999,
+"cache_write": 0.0013054766391799998,
+"input": 3.3961530399999993e-06,
+"output": 0.0019953286894799998
+},
+"kind": "model calls",
+"kwh": [
+0.012626792873999999,
+0.014194910138400001,
+0.020467379196
+],
+"label": "Claude Haiku",
+"n": 1,
+"override": false,
+"pr": 92,
+"source": "claude",
+"tokens": {
+"cache_read": 751662,
+"cache_write": 56891,
+"input": 148,
+"output": 4203
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#100": {
+"calls": 42,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#100",
+"kg": [
+0.054973409369914,
+0.0653221905299824,
+0.10671731517025598
+],
+"kg_by_type": {
+"cache_read": 0.027596749760182393,
+"cache_write": 0.0032418221855599993,
+"input": 7.69965224e-06,
+"output": 0.034475918932
+},
+"kind": "model calls",
+"kwh": [
+0.166594945722,
+0.1979565559152,
+0.323402996688
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 100,
+"source": "claude",
+"tokens": {
+"cache_read": 3852967,
+"cache_write": 36209,
+"input": 86,
+"output": 18148
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#101": {
+"calls": 57,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#101",
+"kg": [
+0.17496958068084598,
+0.23644045178412956,
+0.4823239361972639
+],
+"kg_by_type": {
+"cache_read": 0.16392232294208955,
+"cache_write": 0.006093379439559999,
+"input": 1.092276248e-05,
+"output": 0.06641382663999999
+},
+"kind": "model calls",
+"kwh": [
+0.5302390397579999,
+0.7165243102607999,
+1.4616653922719995
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 101,
+"source": "claude",
+"tokens": {
+"cache_read": 22886293,
+"cache_write": 68059,
+"input": 122,
+"output": 34960
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#102": {
+"calls": 72,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#102",
+"kg": [
+0.10987645201374797,
+0.1316379093056048,
+0.218683738473032
+],
+"kg_by_type": {
+"cache_read": 0.05803055277828478,
+"cache_write": 0.00704124244264,
+"input": 1.3608687679999998e-05,
+"output": 0.06655250539699999
+},
+"kind": "model calls",
+"kwh": [
+0.3329766476039999,
+0.39892396355039994,
+0.6627132273359999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 102,
+"source": "claude",
+"tokens": {
+"cache_read": 8102034,
+"cache_write": 78646,
+"input": 152,
+"output": 35033
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#103": {
+"calls": 26,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#103",
+"kg": [
+0.05460404793335799,
+0.07095098890341278,
+0.13633875278363197
+],
+"kg_by_type": {
+"cache_read": 0.04359184258681279,
+"cache_write": 0.00262182111856,
+"input": 5.013727039999999e-06,
+"output": 0.024732311470999996
+},
+"kind": "model calls",
+"kwh": [
+0.16547560913399997,
+0.21501442753439995,
+0.4131697011359999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 103,
+"source": "claude",
+"tokens": {
+"cache_read": 6086149,
+"cache_write": 29284,
+"input": 56,
+"output": 13019
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#104": {
+"calls": 139,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#104",
+"kg": [
+0.30988032837852997,
+0.38164442227912,
+0.6687007978814798
+],
+"kg_by_type": {
+"cache_read": 0.19137091706823994,
+"cache_write": 0.02034606245168,
+"input": 2.5068635199999998e-05,
+"output": 0.169902374124
+},
+"kind": "model calls",
+"kwh": [
+0.9390812226899999,
+1.15655973576,
+2.0264737880399997
+],
+"label": "Claude Opus",
+"n": 4,
+"override": false,
+"pr": 104,
+"source": "claude",
+"tokens": {
+"cache_read": 26718575,
+"cache_write": 227252,
+"input": 280,
+"output": 89436
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#105": {
+"calls": 13,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#105",
+"kg": [
+0.013362017689006,
+0.0159188922409216,
+0.026146390448584002
+],
+"kg_by_type": {
+"cache_read": 0.006818332138441599,
+"cache_write": 0.00112289579528,
+"input": 2.6859252e-06,
+"output": 0.007974978382
+},
+"kind": "model calls",
+"kwh": [
+0.040493115438,
+0.048241632076799996,
+0.07923569863200002
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 105,
+"source": "claude",
+"tokens": {
+"cache_read": 951953,
+"cache_write": 12542,
+"input": 30,
+"output": 4198
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#106": {
+"calls": 56,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#106",
+"kg": [
+0.208025131394696,
+0.26703541299263356,
+0.503076539384384
+],
+"kg_by_type": {
+"cache_read": 0.15736075092783358,
+"cache_write": 0.007820518874,
+"input": 1.07437008e-05,
+"output": 0.10184339949
+},
+"kind": "model calls",
+"kwh": [
+0.630412700808,
+0.8092412430527999,
+1.5245554120319997
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 106,
+"source": "claude",
+"tokens": {
+"cache_read": 21970188,
+"cache_write": 87350,
+"input": 120,
+"output": 53610
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#108": {
+"calls": 75,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#108",
+"kg": [
+0.15020437885199595,
+0.17965919615641754,
+0.29747846537410394
+],
+"kg_by_type": {
+"cache_read": 0.07854617947845759,
+"cache_write": 0.009766740273919999,
+"input": 1.396681104e-05,
+"output": 0.091332309593
+},
+"kind": "model calls",
+"kwh": [
+0.45518898370799993,
+0.5444507512847999,
+0.9014978215919999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 108,
+"source": "claude",
+"tokens": {
+"cache_read": 10966358,
+"cache_write": 109088,
+"input": 156,
+"output": 48077
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#110": {
+"calls": 394,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#110",
+"kg": [
+1.0585585582659778,
+1.3108111959073485,
+2.3198217464728317
+],
+"kg_by_type": {
+"cache_read": 0.6726737003769887,
+"cache_write": 0.07322163359308,
+"input": 7.538496727999999e-05,
+"output": 0.56484047697
+},
+"kind": "model calls",
+"kwh": [
+3.207923750394,
+3.972366322862399,
+7.030136612736
+],
+"label": "Claude Opus",
+"n": 4,
+"override": false,
+"pr": 110,
+"source": "claude",
+"tokens": {
+"cache_read": 93916479,
+"cache_write": 817837,
+"input": 842,
+"output": 297330
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#111": {
+"calls": 18,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#111",
+"kg": [
+0.039915896545685996,
+0.04975785973606559,
+0.08912571249758398
+],
+"kg_by_type": {
+"cache_read": 0.026245235174345596,
+"cache_write": 0.0017250802251199998,
+"input": 3.5812336e-06,
+"output": 0.021783963102999997
+},
+"kind": "model calls",
+"kwh": [
+0.12096369307799999,
+0.15078940958879997,
+0.270092275632
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 111,
+"source": "claude",
+"tokens": {
+"cache_read": 3664273,
+"cache_write": 19268,
+"input": 40,
+"output": 11467
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#112": {
+"calls": 6,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#112",
+"kg": [
+0.021900812059363995,
+0.0295705842768224,
+0.06024967314665598
+],
+"kg_by_type": {
+"cache_read": 0.020452725913222395,
+"cache_write": 0.0006269844725199999,
+"input": 1.07437008e-06,
+"output": 0.008489799520999998
+},
+"kind": "model calls",
+"kwh": [
+0.06636962557199999,
+0.08961259523519999,
+0.18258447388799992
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 112,
+"source": "claude",
+"tokens": {
+"cache_read": 2855542,
+"cache_write": 7003,
+"input": 12,
+"output": 4469
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#117": {
+"calls": 37,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#117",
+"kg": [
+0.137694526005442,
+0.19681928979317917,
+0.433318344944128
+],
+"kg_by_type": {
+"cache_read": 0.15766603676729918,
+"cache_write": 0.00282899548232,
+"input": 7.520590559999999e-06,
+"output": 0.036316736952999994
+},
+"kind": "model calls",
+"kwh": [
+0.4172783232659999,
+0.5964537996815998,
+1.313155705344
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 117,
+"source": "claude",
+"tokens": {
+"cache_read": 22012811,
+"cache_write": 31598,
+"input": 84,
+"output": 19117
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#118": {
+"calls": 155,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#118",
+"kg": [
+0.312593681501836,
+0.43421940631000944,
+0.920722305542704
+],
+"kg_by_type": {
+"cache_read": 0.3243352661551296,
+"cache_write": 0.028673325880079994,
+"input": 2.8649868800000004e-05,
+"output": 0.081182164406
+},
+"kind": "model calls",
+"kwh": [
+0.947303942028,
+1.3158863395007994,
+2.790215929392
+],
+"label": "Claude Opus",
+"n": 2,
+"override": false,
+"pr": 118,
+"source": "claude",
+"tokens": {
+"cache_read": 45282618,
+"cache_write": 320262,
+"input": 320,
+"output": 42734
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#119": {
+"calls": 6,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#119",
+"kg": [
+0.028525952324267995,
+0.03674132189945279,
+0.06960280020019201
+],
+"kg_by_type": {
+"cache_read": 0.021907652200492796,
+"cache_write": 0.0004839141901999999,
+"input": 1.2534317599999997e-06,
+"output": 0.014348502076999997
+},
+"kind": "model calls",
+"kwh": [
+0.08644687556399998,
+0.11134325845439998,
+0.210928790016
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 119,
+"source": "claude",
+"tokens": {
+"cache_read": 3058674,
+"cache_write": 5405,
+"input": 14,
+"output": 7553
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#120": {
+"calls": 74,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#120",
+"kg": [
+0.34442211266672995,
+0.45965108367931196,
+0.92056696772964
+],
+"kg_by_type": {
+"cache_read": 0.30727725603355194,
+"cache_write": 0.010943623165719998,
+"input": 1.396681104e-05,
+"output": 0.14141623766899997
+},
+"kind": "model calls",
+"kwh": [
+1.04375886129,
+1.392956125776,
+2.7897451837199996
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 120,
+"source": "claude",
+"tokens": {
+"cache_read": 42901035,
+"cache_write": 122233,
+"input": 156,
+"output": 74441
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#121": {
+"calls": 80,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#121",
+"kg": [
+0.28375440610945396,
+0.37657127056603035,
+0.747838728392336
+],
+"kg_by_type": {
+"cache_read": 0.24751163855087038,
+"cache_write": 0.011269873546679998,
+"input": 1.539930448e-05,
+"output": 0.11777435916399999
+},
+"kind": "model calls",
+"kwh": [
+0.859907552142,
+1.1411857314192,
+2.266298448528
+],
+"label": "Claude Opus",
+"n": 3,
+"override": false,
+"pr": 121,
+"source": "claude",
+"tokens": {
+"cache_read": 34556757,
+"cache_write": 125877,
+"input": 172,
+"output": 61996
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#122": {
+"calls": 6,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#122",
+"kg": [
+0.014100579782785998,
+0.0187044785073776,
+0.037120073405744
+],
+"kg_by_type": {
+"cache_read": 0.012277063265577598,
+"cache_write": 0.00047057409503999993,
+"input": 1.25343176e-06,
+"output": 0.005955587715
+},
+"kind": "model calls",
+"kwh": [
+0.04273130137799999,
+0.056683251364799986,
+0.11249105131199998
+],
+"label": "Claude Opus",
+"n": 2,
+"override": false,
+"pr": 122,
+"source": "claude",
+"tokens": {
+"cache_read": 1714083,
+"cache_write": 5256,
+"input": 14,
+"output": 3135
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#123": {
+"calls": 1,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#123",
+"kg": [
+0.004100259829511999,
+0.005857596225667199,
+0.012886941810287997
+],
+"kg_by_type": {
+"cache_read": 0.004686230389747199,
+"cache_write": 6.365642724e-05,
+"input": 1.7906167999999997e-07,
+"output": 0.001107530347
+},
+"kind": "model calls",
+"kwh": [
+0.012425690375999998,
+0.017751235305599997,
+0.03905341502399999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 123,
+"source": "claude",
+"tokens": {
+"cache_read": 654276,
+"cache_write": 711,
+"input": 2,
+"output": 583
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#135": {
+"calls": 8,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#135",
+"kg": [
+0.042086890762125996,
+0.05035479434829759,
+0.083426408692984
+],
+"kg_by_type": {
+"cache_read": 0.022047742896457594,
+"cache_write": 0.0022302132244,
+"input": 1.4324934399999998e-06,
+"output": 0.026075405733999996
+},
+"kind": "model calls",
+"kwh": [
+0.12754281319799998,
+0.15259839852479995,
+0.252820739832
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 135,
+"source": "claude",
+"tokens": {
+"cache_read": 3078233,
+"cache_write": 24910,
+"input": 16,
+"output": 13726
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#144": {
+"calls": 43,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#144",
+"kg": [
+0.153848935658992,
+0.22083820929896317,
+0.4887953038588479
+],
+"kg_by_type": {
+"cache_read": 0.17863806303992316,
+"cache_write": 0.0037799025339599994,
+"input": 1.0027454079999998e-05,
+"output": 0.038410216271
+},
+"kind": "model calls",
+"kwh": [
+0.46623368241599994,
+0.6692422739135999,
+1.4812766399039996
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 144,
+"source": "claude",
+"tokens": {
+"cache_read": 24940856,
+"cache_write": 42219,
+"input": 112,
+"output": 20219
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#148": {
+"calls": 77,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#148",
+"kg": [
+0.21785631634342797,
+0.25902723606355677,
+0.423710914944072
+],
+"kg_by_type": {
+"cache_read": 0.10978911925367678,
+"cache_write": 0.011466930925519998,
+"input": 1.3787749360000001e-05,
+"output": 0.13775739813499996
+},
+"kind": "model calls",
+"kwh": [
+0.6602057542439999,
+0.7849727500463998,
+1.2840407332559998
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 148,
+"source": "claude",
+"tokens": {
+"cache_read": 15328394,
+"cache_write": 128078,
+"input": 154,
+"output": 72515
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#149": {
+"calls": 1,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#149",
+"kg": [
+0.007377604617236,
+0.0080048164980896,
+0.010513664021503999
+],
+"kg_by_type": {
+"cache_read": 0.0016725650156095998,
+"cache_write": 8.013010179999998e-05,
+"input": 1.7906167999999997e-07,
+"output": 0.006251942318999999
+},
+"kind": "model calls",
+"kwh": [
+0.022357566228,
+0.024258309340799998,
+0.031861281792
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 149,
+"source": "claude",
+"tokens": {
+"cache_read": 233518,
+"cache_write": 895,
+"input": 2,
+"output": 3291
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#91": {
+"calls": 13,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#91",
+"kg": [
+0.033557230869764,
+0.0371554627950464,
+0.051548390496176
+],
+"kg_by_type": {
+"cache_read": 0.009595285134086399,
+"cache_write": 0.012403871166119998,
+"input": 2.32780184e-06,
+"output": 0.015153978693
+},
+"kind": "model calls",
+"kwh": [
+0.10169398477199999,
+0.1125982975872,
+0.15621554884799999
+],
+"label": "Claude Opus",
+"n": 2,
+"override": false,
+"pr": 91,
+"source": "claude",
+"tokens": {
+"cache_read": 1339662,
+"cache_write": 138543,
+"input": 26,
+"output": 7977
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#92": {
+"calls": 33,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#92",
+"kg": [
+0.11609082504805798,
+0.1341394876470768,
+0.206334138043152
+],
+"kg_by_type": {
+"cache_read": 0.0481297669307168,
+"cache_write": 0.00687677428956,
+"input": 6.267158799999999e-06,
+"output": 0.07912667926799999
+},
+"kind": "model calls",
+"kwh": [
+0.351809082234,
+0.4065049070064,
+0.6252882060960001
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 92,
+"source": "claude",
+"tokens": {
+"cache_read": 6719719,
+"cache_write": 76809,
+"input": 70,
+"output": 41652
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#93": {
+"calls": 5,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#93",
+"kg": [
+0.01574908209861,
+0.021164538494232,
+0.04282636407672
+],
+"kg_by_type": {
+"cache_read": 0.014441217054991996,
+"cache_write": 0.00040969312384,
+"input": 8.953084e-07,
+"output": 0.006312733007
+},
+"kind": "model calls",
+"kwh": [
+0.04772702853,
+0.064138374936,
+0.12978376056
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 93,
+"source": "claude",
+"tokens": {
+"cache_read": 2016235,
+"cache_write": 4576,
+"input": 10,
+"output": 3323
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#94": {
+"calls": 25,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#94",
+"kg": [
+0.08158066974855,
+0.10020800418820798,
+0.17471734194684
+],
+"kg_by_type": {
+"cache_read": 0.04967289183908799,
+"cache_write": 0.00648534545708,
+"input": 5.013727039999999e-06,
+"output": 0.044044753165
+},
+"kind": "model calls",
+"kwh": [
+0.24722729414999997,
+0.30367676318399994,
+0.5294746393199999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 94,
+"source": "claude",
+"tokens": {
+"cache_read": 6935165,
+"cache_write": 72437,
+"input": 56,
+"output": 23185
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#97": {
+"calls": 30,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#97",
+"kg": [
+0.08354846999942801,
+0.1103025250530448,
+0.217318745267512
+],
+"kg_by_type": {
+"cache_read": 0.07134414680964479,
+"cache_write": 0.004240807298279999,
+"input": 6.088097119999999e-06,
+"output": 0.034711482848
+},
+"kind": "model calls",
+"kwh": [
+0.253190642244,
+0.3342678466704,
+0.6585766643759999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 97,
+"source": "claude",
+"tokens": {
+"cache_read": 9960834,
+"cache_write": 47367,
+"input": 68,
+"output": 18272
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|#98": {
+"calls": 56,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#98",
+"kg": [
+0.08875081308953998,
+0.10450534908340799,
+0.16752349305887998
+],
+"kg_by_type": {
+"cache_read": 0.042012095983647996,
+"cache_write": 0.005913691043679999,
+"input": 1.0027454079999998e-05,
+"output": 0.05656953460199999
+},
+"kind": "model calls",
+"kwh": [
+0.26895615642,
+0.316699712784,
+0.50767393824
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 98,
+"source": "claude",
+"tokens": {
+"cache_read": 5865590,
+"cache_write": 66052,
+"input": 112,
+"output": 29778
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|dev|main / unattributed": {
+"calls": 1541,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "main / unattributed",
+"kg": [
+4.248372843516157,
+5.505627487120476,
+10.53464606153775
+],
+"kg_by_type": {
+"cache_read": 3.3526790496115155,
+"cache_write": 0.7386752697900799,
+"input": 0.00028936367488000003,
+"output": 1.4139838040439998
+},
+"kind": "model calls",
+"kwh": [
+12.874541553533998,
+16.684606665206395,
+31.924867111896
+],
+"label": "Claude Opus",
+"n": 17,
+"override": false,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 468089969,
+"cache_write": 8250512,
+"input": 3232,
+"output": 744316
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|validation|#133": {
+"calls": 71,
+"class": "validation",
+"day": "2026-10-03",
+"feature": "#133",
+"kg": [
+0.17478837319488996,
+0.20848479551737598,
+0.34327048480732
+],
+"kg_by_type": {
+"cache_read": 0.08985712619329599,
+"cache_write": 0.044706598238119996,
+"input": 1.2892440959999998e-05,
+"output": 0.07390817864499999
+},
+"kind": "model calls",
+"kwh": [
+0.5296898969699999,
+0.6318056964479999,
+1.04026889436
+],
+"label": "Claude Opus",
+"n": 2,
+"override": false,
+"pr": 133,
+"source": "claude",
+"tokens": {
+"cache_read": 12545555,
+"cache_write": 499343,
+"input": 144,
+"output": 38905
+}
+},
+"2026-10-03|claude|Claude Opus|model calls|validation|#134": {
+"calls": 48,
+"class": "validation",
+"day": "2026-10-03",
+"feature": "#134",
+"kg": [
+0.06866743077441799,
+0.08199176582065278,
+0.13528910600559196
+],
+"kg_by_type": {
+"cache_read": 0.03553156012329279,
+"cache_write": 0.004214664292999999,
+"input": 9.31120736e-06,
+"output": 0.04223623019699999
+},
+"kind": "model calls",
+"kwh": [
+0.20809418651399997,
+0.24847310605439996,
+0.4099887842159999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 134,
+"source": "claude",
+"tokens": {
+"cache_read": 4960799,
+"cache_write": 47075,
+"input": 104,
+"output": 22233
+}
+},
+"2026-10-03|claude|Claude Sonnet|model calls|dev|#101": {
+"calls": 41,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#101",
+"kg": [
+0.016921748369981,
+0.023027032277681596,
+0.04744816790848399
+],
+"kg_by_type": {
+"cache_read": 0.016280757087201597,
+"cache_write": 0.0028262647916999996,
+"input": 3.7602952799999996e-06,
+"output": 0.0039162501035
+},
+"kind": "model calls",
+"kwh": [
+0.05128075161299999,
+0.06978259555679998,
+0.14378997133199997
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 101,
+"source": "claude",
+"tokens": {
+"cache_read": 4546131,
+"cache_write": 63135,
+"input": 84,
+"output": 4123
+}
+},
+"2026-10-03|claude|Claude Sonnet|model calls|dev|#110": {
+"calls": 5,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#110",
+"kg": [
+0.003441759184682,
+0.0037081787911952,
+0.004773857217247999
+],
+"kg_by_type": {
+"cache_read": 0.0007104522840351999,
+"cache_write": 0.00234852822946,
+"input": 4.476542e-07,
+"output": 0.0006487506234999999
+},
+"kind": "model calls",
+"kwh": [
+0.010430127786000002,
+0.0112375028496,
+0.014467003103999999
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 110,
+"source": "claude",
+"tokens": {
+"cache_read": 198382,
+"cache_write": 52463,
+"input": 10,
+"output": 683
+}
+},
+"2026-10-03|claude|Claude Sonnet|model calls|dev|#135": {
+"calls": 3,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#135",
+"kg": [
+0.0013186558609629996,
+0.0016270712509408,
+0.002860732810851999
+],
+"kg_by_type": {
+"cache_read": 0.0008224410399407997,
+"cache_write": 0.00010716841547999997,
+"input": 2.6859252e-07,
+"output": 0.0006971932029999999
+},
+"kind": "model calls",
+"kwh": [
+0.003996139298999999,
+0.0049307810783999996,
+0.008669348195999998
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 135,
+"source": "claude",
+"tokens": {
+"cache_read": 229653,
+"cache_write": 2394,
+"input": 6,
+"output": 734
+}
+},
+"2026-10-03|claude|Claude Sonnet|model calls|dev|#144": {
+"calls": 28,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#144",
+"kg": [
+0.013870880268469,
+0.0164217020879464,
+0.026624989365856003
+],
+"kg_by_type": {
+"cache_read": 0.006802191518606399,
+"cache_write": 0.007546733565280001,
+"input": 3.0440485599999995e-06,
+"output": 0.0020697329554999998
+},
+"kind": "model calls",
+"kwh": [
+0.04203520523700001,
+0.0497653792872,
+0.08068607548800001
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 144,
+"source": "claude",
+"tokens": {
+"cache_read": 1899399,
+"cache_write": 168584,
+"input": 68,
+"output": 2179
+}
+},
+"2026-10-03|claude|Claude Sonnet|model calls|dev|#148": {
+"calls": 40,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#148",
+"kg": [
+0.013794427871629997,
+0.018309696436471994,
+0.03637077069583999
+],
+"kg_by_type": {
+"cache_read": 0.012040716172911997,
+"cache_write": 0.005479869358459999,
+"input": 3.5812336e-06,
+"output": 0.0007855296715
+},
+"kind": "model calls",
+"kwh": [
+0.041803518989999996,
+0.05548687845599999,
+0.11022031632
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 148,
+"source": "claude",
+"tokens": {
+"cache_read": 3362170,
+"cache_write": 122413,
+"input": 80,
+"output": 827
+}
+},
+"2026-10-03|claude|Claude Sonnet|model calls|dev|#92": {
+"calls": 67,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#92",
+"kg": [
+0.03825727389693999,
+0.044460794175868,
+0.06927487529157998
+],
+"kg_by_type": {
+"cache_read": 0.016542720743807998,
+"cache_write": 0.01629716450894,
+"input": 6.088097119999999e-06,
+"output": 0.011614820825999999
+},
+"kind": "model calls",
+"kwh": [
+0.11593729661999998,
+0.134736842364,
+0.20993502533999994
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 92,
+"source": "claude",
+"tokens": {
+"cache_read": 4619280,
+"cache_write": 364057,
+"input": 136,
+"output": 12228
+}
+},
+"2026-10-03|claude|Claude Sonnet|model calls|dev|#94": {
+"calls": 38,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#94",
+"kg": [
+0.017128613795916,
+0.020397218236953594,
+0.033471636001104
+],
+"kg_by_type": {
+"cache_read": 0.008716278509433599,
+"cache_write": 0.0093617922846,
+"input": 3.4021719199999996e-06,
+"output": 0.0023157452709999995
+},
+"kind": "model calls",
+"kwh": [
+0.051907649868,
+0.06181303841279999,
+0.101434592592
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 94,
+"source": "claude",
+"tokens": {
+"cache_read": 2433876,
+"cache_write": 209130,
+"input": 76,
+"output": 2438
+}
+},
+"2026-10-03|claude|Claude Sonnet|model calls|dev|#97": {
+"calls": 22,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "#97",
+"kg": [
+0.013251314460538,
+0.015282650144120797,
+0.023407992878451998
+],
+"kg_by_type": {
+"cache_read": 0.005416895156220799,
+"cache_write": 0.007086410751419999,
+"input": 1.96967848e-06,
+"output": 0.0027773745579999995
+},
+"kind": "model calls",
+"kwh": [
+0.040157633274,
+0.046313523218399995,
+0.070937082996
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 97,
+"source": "claude",
+"tokens": {
+"cache_read": 1512578,
+"cache_write": 158301,
+"input": 44,
+"output": 2924
+}
+},
+"2026-10-03|claude|Claude Sonnet|model calls|dev|main / unattributed": {
+"calls": 183,
+"class": "dev",
+"day": "2026-10-03",
+"feature": "main / unattributed",
+"kg": [
+0.08906415131770799,
+0.1081581357156888,
+0.18453407330761196
+],
+"kg_by_type": {
+"cache_read": 0.050917291727948795,
+"cache_write": 0.04825295957593999,
+"input": 1.7458513799999997e-05,
+"output": 0.008970425897999998
+},
+"kind": "model calls",
+"kwh": [
+0.269905716684,
+0.32776935168239996,
+0.559223891676
+],
+"label": "Claude Sonnet",
+"n": 7,
+"override": false,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 14217808,
+"cache_write": 1077907,
+"input": 390,
+"output": 9444
+}
+},
+"2026-10-03|claude|Claude Sonnet|model calls|validation|#133": {
+"calls": 38,
+"class": "validation",
+"day": "2026-10-03",
+"feature": "#133",
+"kg": [
+0.019985975620169995,
+0.025109364509543996,
+0.04560292006704
+],
+"kg_by_type": {
+"cache_read": 0.013662370371663998,
+"cache_write": 0.008893143102619998,
+"input": 3.49170276e-06,
+"output": 0.002550359332499999
+},
+"kind": "model calls",
+"kwh": [
+0.060566782409999985,
+0.076093028712,
+0.13819801392
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 133,
+"source": "claude",
+"tokens": {
+"cache_read": 3814990,
+"cache_write": 198661,
+"input": 78,
+"output": 2685
+}
+},
+"2026-10-03|claude|excluded|model calls|science|": {
+"calls": 1674,
+"class": "science",
+"day": "2026-10-03",
+"feature": "",
+"kg": [
+5.751665581103574,
+7.335999876567963,
+13.67333705842552
+],
+"kg_by_type": {
+"cache_read": 4.224891454571703,
+"cache_write": 0.8056994443420997,
+"input": 0.00030207705416000004,
+"output": 2.3051069005999993
+},
+"kind": "model calls",
+"kwh": [
+17.430216285974996,
+22.231484553371995,
+41.436557622959995
+],
+"label": "excluded",
+"n": 31,
+"override": true,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 596698682,
+"cache_write": 9300498,
+"input": 3510,
+"output": 1231925
+}
+},
+"2026-10-04|claude|Claude Opus|model calls|dev|#144": {
+"calls": 7,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#144",
+"kg": [
+0.026624882079319994,
+0.038034531173407986,
+0.08367312754976
+],
+"kg_by_type": {
+"cache_read": 0.030425730917567992,
+"cache_write": 0.0005537482454,
+"input": 1.4324934399999998e-06,
+"output": 0.007053619517
+},
+"kind": "model calls",
+"kwh": [
+0.08068575035999999,
+0.11526228278399997,
+0.25356841248
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 144,
+"source": "claude",
+"tokens": {
+"cache_read": 4247940,
+"cache_write": 6185,
+"input": 16,
+"output": 3713
+}
+},
+"2026-10-04|claude|Claude Opus|model calls|dev|#148": {
+"calls": 22,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#148",
+"kg": [
+0.043744777866118,
+0.0596851771979008,
+0.123446774525032
+],
+"kg_by_type": {
+"cache_read": 0.0425077315514208,
+"cache_write": 0.0015685803167999998,
+"input": 4.65560368e-06,
+"output": 0.015604209726
+},
+"kind": "model calls",
+"kwh": [
+0.13256698061400002,
+0.1808737891584,
+0.37410102333600004
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 148,
+"source": "claude",
+"tokens": {
+"cache_read": 5934789,
+"cache_write": 17520,
+"input": 52,
+"output": 8214
+}
+},
+"2026-10-04|claude|Claude Opus|model calls|dev|#149": {
+"calls": 45,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#149",
+"kg": [
+0.10751230780012798,
+0.14441950928002079,
+0.29204831519959196
+],
+"kg_by_type": {
+"cache_read": 0.09841920394638078,
+"cache_write": 0.0037537595286799997,
+"input": 8.41589896e-06,
+"output": 0.042238129905999997
+},
+"kind": "model calls",
+"kwh": [
+0.32581219334399997,
+0.4376581439183999,
+0.885041946216
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 149,
+"source": "claude",
+"tokens": {
+"cache_read": 13740964,
+"cache_write": 41927,
+"input": 94,
+"output": 22234
+}
+},
+"2026-10-04|claude|Claude Opus|model calls|dev|#150": {
+"calls": 27,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#150",
+"kg": [
+0.031880997993823997,
+0.03802084035811039,
+0.06258020981525599
+],
+"kg_by_type": {
+"cache_read": 0.016372912971430394,
+"cache_write": 0.0030879186716,
+"input": 5.5509120799999994e-06,
+"output": 0.018554457803
+},
+"kind": "model calls",
+"kwh": [
+0.096614221152,
+0.11522079325919998,
+0.18964708168799999
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 150,
+"source": "claude",
+"tokens": {
+"cache_read": 2285932,
+"cache_write": 34490,
+"input": 62,
+"output": 9767
+}
+},
+"2026-10-04|claude|Claude Opus|model calls|dev|#155": {
+"calls": 8,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#155",
+"kg": [
+0.056136864178052,
+0.0714673355576432,
+0.13278922107600796
+],
+"kg_by_type": {
+"cache_read": 0.0408812570122432,
+"cache_write": 0.0015684907859599996,
+"input": 1.4324934399999998e-06,
+"output": 0.029016155265999995
+},
+"kind": "model calls",
+"kwh": [
+0.170120753796,
+0.21657919755359997,
+0.402412972584
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 155,
+"source": "claude",
+"tokens": {
+"cache_read": 5707706,
+"cache_write": 17519,
+"input": 16,
+"output": 15274
+}
+},
+"2026-10-04|claude|Claude Opus|model calls|dev|#161": {
+"calls": 13,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#161",
+"kg": [
+0.021189731043123994,
+0.02537295747696639,
+0.042105863212335996
+],
+"kg_by_type": {
+"cache_read": 0.011155270490246397,
+"cache_write": 0.0037626230818399997,
+"input": 2.8649868799999995e-06,
+"output": 0.010452198917999998
+},
+"kind": "model calls",
+"kwh": [
+0.06421472005199999,
+0.07689183774719999,
+0.12760030852799997
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 161,
+"source": "claude",
+"tokens": {
+"cache_read": 1557462,
+"cache_write": 42026,
+"input": 32,
+"output": 5502
+}
+},
+"2026-10-04|claude|Claude Opus|model calls|dev|#163": {
+"calls": 43,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#163",
+"kg": [
+0.064396681353802,
+0.07791083610577118,
+0.131967455113648
+],
+"kg_by_type": {
+"cache_read": 0.03603774600525119,
+"cache_write": 0.004131400611799999,
+"input": 9.669330719999997e-06,
+"output": 0.037732020158
+},
+"kind": "model calls",
+"kwh": [
+0.19515183354600002,
+0.23610599489759998,
+0.399922640304
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 163,
+"source": "claude",
+"tokens": {
+"cache_read": 5031471,
+"cache_write": 46145,
+"input": 108,
+"output": 19862
+}
+},
+"2026-10-04|claude|Claude Opus|model calls|dev|#167": {
+"calls": 38,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#167",
+"kg": [
+0.11120612187964998,
+0.13595121500659996,
+0.2349315875144
+],
+"kg_by_type": {
+"cache_read": 0.06598691500519999,
+"cache_write": 0.0070957667242,
+"input": 7.1624672e-06,
+"output": 0.06286137081
+},
+"kind": "model calls",
+"kwh": [
+0.33700616445,
+0.41199528179999995,
+0.7119517512
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 167,
+"source": "claude",
+"tokens": {
+"cache_read": 9212875,
+"cache_write": 79255,
+"input": 80,
+"output": 33090
+}
+},
+"2026-10-04|claude|Claude Opus|model calls|dev|#170": {
+"calls": 2,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#170",
+"kg": [
+0.005700153820927999,
+0.007949895512148801,
+0.016948862277032
+],
+"kg_by_type": {
+"cache_read": 0.005999311176588799,
+"cache_write": 0.00023098956719999993,
+"input": 3.5812335999999994e-07,
+"output": 0.0017192366449999997
+},
+"kind": "model calls",
+"kwh": [
+0.017274111744,
+0.0240918732624,
+0.051362919336
+],
+"label": "Claude Opus",
+"n": 1,
+"override": false,
+"pr": 170,
+"source": "claude",
+"tokens": {
+"cache_read": 837604,
+"cache_write": 2580,
+"input": 4,
+"output": 905
+}
+},
+"2026-10-04|claude|Claude Opus|model calls|dev|main / unattributed": {
+"calls": 1490,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "main / unattributed",
+"kg": [
+5.326461909605142,
+6.887423040902902,
+13.131267566093936
+],
+"kg_by_type": {
+"cache_read": 4.162563016794022,
+"cache_write": 0.5158659563792001,
+"input": 0.00028220120768,
+"output": 2.2087118665219996
+},
+"kind": "model calls",
+"kwh": [
+16.141651807512,
+20.872088539075197,
+39.793835465328
+],
+"label": "Claude Opus",
+"n": 13,
+"override": false,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 581163292,
+"cache_write": 5761880,
+"input": 3152,
+"output": 1162658
+}
+},
+"2026-10-04|claude|Claude Sonnet|model calls|dev|#148": {
+"calls": 14,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#148",
+"kg": [
+0.013304011993208999,
+0.015138658717358396,
+0.022477245613955997
+],
+"kg_by_type": {
+"cache_read": 0.004892391264398399,
+"cache_write": 0.008775589109699998,
+"input": 1.2534317599999997e-06,
+"output": 0.0014694249114999998
+},
+"kind": "model calls",
+"kwh": [
+0.040317331257,
+0.04587716236319999,
+0.06811648678799999
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 148,
+"source": "claude",
+"tokens": {
+"cache_read": 1366119,
+"cache_write": 196035,
+"input": 28,
+"output": 1547
+}
+},
+"2026-10-04|claude|Claude Sonnet|model calls|dev|#155": {
+"calls": 11,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#155",
+"kg": [
+0.002312038299235,
+0.0033463410900639993,
+0.007483552253379999
+],
+"kg_by_type": {
+"cache_read": 0.0027581407755439998,
+"cache_write": 0.0004323891917799999,
+"input": 9.8483924e-07,
+"output": 0.0001548262835
+},
+"kind": "model calls",
+"kwh": [
+0.007006549154999999,
+0.010140966671999997,
+0.022678636739999997
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 155,
+"source": "claude",
+"tokens": {
+"cache_read": 770165,
+"cache_write": 9659,
+"input": 22,
+"output": 163
+}
+},
+"2026-10-04|claude|Claude Sonnet|model calls|dev|#163": {
+"calls": 18,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#163",
+"kg": [
+0.008760837925741997,
+0.010044847153527197,
+0.015180884064668
+],
+"kg_by_type": {
+"cache_read": 0.0034240246074271996,
+"cache_write": 0.0062915111884799995,
+"input": 1.61155512e-06,
+"output": 0.0003276998024999999
+},
+"kind": "model calls",
+"kwh": [
+0.026549405165999997,
+0.030440549085599993,
+0.046005124764000004
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 163,
+"source": "claude",
+"tokens": {
+"cache_read": 956102,
+"cache_write": 140544,
+"input": 36,
+"output": 345
+}
+},
+"2026-10-04|claude|Claude Sonnet|model calls|dev|#167": {
+"calls": 9,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#167",
+"kg": [
+0.004445387900939999,
+0.005526607090199999,
+0.00985148384724
+],
+"kg_by_type": {
+"cache_read": 0.0028832511713599994,
+"cache_write": 0.00036859846828,
+"input": 8.0577756e-07,
+"output": 0.0022739516729999997
+},
+"kind": "model calls",
+"kwh": [
+0.013471588619999999,
+0.016748184599999997,
+0.02985456852
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 167,
+"source": "claude",
+"tokens": {
+"cache_read": 805100,
+"cache_write": 8234,
+"input": 18,
+"output": 2394
+}
+},
+"2026-10-04|claude|Claude Sonnet|model calls|dev|#170": {
+"calls": 15,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "#170",
+"kg": [
+0.006538745035676001,
+0.007714879449653599,
+0.012419417105563999
+],
+"kg_by_type": {
+"cache_read": 0.0031363584372735994,
+"cache_write": 0.00372040929078,
+"input": 1.3429626e-06,
+"output": 0.0008567687589999999
+},
+"kind": "model calls",
+"kwh": [
+0.019815432348,
+0.023379665512799998,
+0.037636598172
+],
+"label": "Claude Sonnet",
+"n": 1,
+"override": false,
+"pr": 170,
+"source": "claude",
+"tokens": {
+"cache_read": 875776,
+"cache_write": 83109,
+"input": 30,
+"output": 902
+}
+},
+"2026-10-04|claude|Claude Sonnet|model calls|dev|main / unattributed": {
+"calls": 59,
+"class": "dev",
+"day": "2026-10-04",
+"feature": "main / unattributed",
+"kg": [
+0.030555113157036996,
+0.0363449834966512,
+0.05950446485510799
+],
+"kg_by_type": {
+"cache_read": 0.015439654238971198,
+"cache_write": 0.01794694929762,
+"input": 5.282319559999999e-06,
+"output": 0.0029530976404999994
+},
+"kind": "model calls",
+"kwh": [
+0.092596174701,
+0.11014216913759999,
+0.180326146884
+],
+"label": "Claude Sonnet",
+"n": 5,
+"override": false,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 4311267,
+"cache_write": 400911,
+"input": 118,
+"output": 3109
+}
+},
+"2026-10-04|claude|excluded|model calls|science|": {
+"calls": 949,
+"class": "science",
+"day": "2026-10-04",
+"feature": "",
+"kg": [
+3.9238371886148675,
+5.052915466217012,
+9.569228576625592
+],
+"kg_by_type": {
+"cache_read": 3.0108754069390526,
+"cache_write": 0.4350949032956399,
+"input": 0.00017888261832,
+"output": 1.6067662733639998
+},
+"kind": "model calls",
+"kwh": [
+11.891047889364,
+15.312679120334398,
+28.999204044216
+],
+"label": "excluded",
+"n": 6,
+"override": true,
+"pr": null,
+"source": "claude",
+"tokens": {
+"cache_read": 420368474,
+"cache_write": 4859721,
+"input": 1998,
+"output": 845796
+}
 }
 },
 "version": 1

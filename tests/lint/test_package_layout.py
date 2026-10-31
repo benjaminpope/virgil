@@ -52,7 +52,7 @@ def test_legacy_simbad_lookup_fails_with_install_hint(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "astroquery.simbad", None)
     with pytest.raises(ImportError, match=r"virgil-astro\[legacy\]"):
-        oifits_implaneia._simbad()
+        oifits_implaneia._query_simbad("x")
 
 
 def test_limits_do_not_depend_on_grid_fit():

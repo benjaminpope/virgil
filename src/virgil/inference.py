@@ -65,14 +65,41 @@ def hessian_matrix(objective, x):
 
 
 def regularized_inverse(matrix, ridge=1e-10):
-    """Return ``inv(matrix + ridge * I)``.
+    """Return the inverse of ``matrix``, regularized only if it is not positive definite.
 
-    A ``RuntimeWarning`` is raised (outside ``jax.jit``) if the regularized
-    matrix is not positive definite, since its inverse is then not a
-    covariance.
+    A positive-definite ``matrix`` (a Hessian at a likelihood maximum) is
+    inverted as it is, whatever the scales of its parameters. Otherwise
+    ``ridge * |matrix_ii|`` is added to each diagonal entry first (the
+    largest ``|matrix_ii|`` for a zero one, 1 if all are zero): a ridge
+    relative to each parameter's own curvature, so it does not depend on the
+    units of the parameters. A parameter the data do not constrain then has a
+    large variance set by the ridge, not the data. A ``RuntimeWarning`` is raised
+    (outside ``jax.jit``) when the ridge was needed, and when even the
+    regularized matrix is not positive definite, since its inverse is then
+    not a covariance.
     """
-    regularized = _add_ridge(np.asarray(matrix, dtype=float), ridge)
-    value = _concrete(regularized)
+    matrix = np.asarray(matrix, dtype=float)
+    scale = np.abs(np.diagonal(matrix))
+    top = np.max(scale)
+    scale = np.where(scale > 0.0, scale, np.where(top > 0.0, top, 1.0))
+    regularized = matrix + ridge * np.diag(scale)
+    # Cholesky gives NaN unless the matrix is positive definite.
+    plain = np.all(np.isfinite(np.linalg.cholesky(matrix)))
+    value, raw = _concrete(regularized), _concrete(matrix)
+    if (
+        value is not None
+        and raw is not None
+        and onp.all(onp.isfinite(raw))
+        and onp.min(onp.linalg.eigvalsh(raw)) <= 0.0
+        and onp.min(onp.linalg.eigvalsh(value)) > 0.0
+    ):
+        warnings.warn(
+            "The matrix is not positive definite (a parameter is "
+            "unconstrained, or the Hessian is too inexact): a ridge was added, "
+            "so that variance is set by the ridge, not the data.",
+            RuntimeWarning,
+            stacklevel=external_stacklevel(),
+        )
     if (
         value is not None
         and onp.all(onp.isfinite(value))
@@ -85,7 +112,7 @@ def regularized_inverse(matrix, ridge=1e-10):
             RuntimeWarning,
             stacklevel=external_stacklevel(),
         )
-    return np.linalg.inv(regularized)
+    return np.linalg.inv(np.where(plain, matrix, regularized))
 
 
 def objective_laplace_covariance(objective, x, ridge=1e-10):
@@ -93,8 +120,10 @@ def objective_laplace_covariance(objective, x, ridge=1e-10):
 
     For a model and data use [`laplace_cov`][virgil.inference.laplace_cov].
     ``objective`` is a negative log likelihood of the flat vector ``x``,
-    which should be at (or near) its minimum. A small ``ridge`` (default
-    1e-10) is added to the diagonal before inverting.
+    which should be at (or near) its minimum. A relative ``ridge``
+    (default 1e-10 of each diagonal entry) is added to the diagonal only if
+    the Hessian is not positive definite; see
+    [`regularized_inverse`][virgil.inference.regularized_inverse].
     """
     hess = hessian_matrix(objective, x)
     return regularized_inverse(hess, ridge=ridge)

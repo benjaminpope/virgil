@@ -558,6 +558,8 @@ class _Objective(eqx.Module):
 
     def penalty(self, z):
         """The summed regularizers at ``z``."""
+        if not self.regularizers:
+            return 0.0
         model = _reference(self.build(z))
         return sum((r.value(model) for r in self.regularizers), 0.0)
 
@@ -958,6 +960,9 @@ class _Budget:
 
 # A parameter is at a bound of its prior when it is within this fraction of
 # the prior's range of one end, in the coordinate it is fitted in.
+# deliberate: a reporting threshold, not a fit setting. 1e-3 of a uniform range
+# is 6.9 units from the edge in logit, where a MAP pushed against a bound sits
+# (the sigmoid is flat there); it is a convention, not tuned to any target.
 _AT_BOUND = 1e-3
 
 
@@ -1036,7 +1041,13 @@ def _check_dense_size(n, what, hint=""):
 
 
 # P is floored at this fraction of its largest entry in the Woodbury branch,
-# so that W = P^-½ is finite.
+# so that W = P^-½ is finite (it can be zero at run time). The floor is
+# relative to the tightest prior, so it is not invariant to rescaling one
+# coordinate's units: it only acts on a coordinate whose prior is over 1e6
+# times wider (in standard deviation) than the tightest, i.e. one whose
+# covariance is set by JᵀJ. 1e-12 keeps W ≤ 1e6/√largest, with ~4 digits of
+# float64 (eps 2e-16) to spare; float32 has no such margin.
+# deliberate: a numerical guard against division by zero, not a model choice
 _P_FLOOR = 1e-12
 
 
@@ -1337,9 +1348,10 @@ def _scaled_loss(problem, scale):
 def _tolerance(gradient, gtol):
     """The gradient tolerance of LM and L-BFGS, from the starting gradient.
 
-    ``gtol``, or 1/1000 of the starting gradient's largest component if smaller,
-    but no less than √eps times it, nor below ``1e-6 * gtol``. See
-    ``design/fitting_internals.md``.
+    Relative to the starting gradient, not absolute: ``gtol``, or 1/1000 of the
+    starting gradient's largest component if smaller, but no less than √eps
+    times it, nor below ``1e-6 * gtol``, so the same fit started elsewhere can
+    stop at a different gradient. See ``design/fitting_internals.md``.
     """
     largest = _largest(gradient)
     floor = np.sqrt(np.finfo(largest.dtype).eps) * largest
@@ -1419,15 +1431,23 @@ def _lm_tolerance(problem, z0, scale, gtol):
 
 # Up to this many unconstrained coordinates, LM's inner solve is a dense QR
 # of the Jacobian, which costs one Jacobian-vector product per coordinate.
+# deliberate: a cost threshold (≤200 products and a dense QR per step), not
+# swept; above it the CG normal equations run for ``cg_steps`` steps.
 _DENSE_LM = 200
 
 
 # Steps per chunk when fit has a time limit or reports progress: LM steps
 # (a Jacobian and a solve each) cost far more than L-BFGS steps.
+# deliberate: the granularity of the time limit and progress reports only, not
+# swept; a smaller LM chunk resets the damping more often (see ``_lm``).
 _LM_CHUNK = 50
 _LBFGS_CHUNK = 200
 # L-BFGS restarts after this many steps without converging, while a round
 # still gains more than _RESTART_GAIN in the loss per data point.
+# deliberate: restarts refresh the preconditioner diagonal (design/
+# fit_preconditioning.md); the 2000-step round was used in its sweeps, which
+# did not vary it. 1e-7 per point is a convention for "no further gain", not
+# swept.
 _LBFGS_ROUND = 2000
 _RESTART_GAIN = 1e-7
 
@@ -1517,6 +1537,10 @@ def _lbfgs_memory(memory, z):
 _EXACT_DIAG = 1024
 _DIAG_PROBES = 16
 # A coordinate's curvature is floored at this fraction of its block's largest.
+# deliberate: chosen from a sweep over 1e-3…1e-12 in design/fit_preconditioning.md
+# ("Floor"): 1e-3 was the only floor at which every weight converged on both
+# the AMI 32² and VLTI-like 41² images; ≤1e-6 let dead pixels stall the line
+# search. It shapes the preconditioner only, not the objective.
 _DIAG_FLOOR = 1e-3
 
 
@@ -1660,8 +1684,10 @@ def _fisher_diagonal(problem, z, probes, round=0):
             model = _reference(problem.build(unravel(x)))
             return np.concatenate([r.metric_rows(model) for r in metric])
 
-        # deliberate: the data JᵀJ and other terms are dropped on these pixels
-        # (measured faster than adding them)
+        # deliberate: the data JᵀJ and other terms are dropped on these pixels.
+        # Fewer L-BFGS steps (not timed) on one 8×8 AMI test, ``precondition=
+        # "diag"``, MaxEntropy weights 1e3, 50, 3: 13, 41, 45 as coded; 16, 48,
+        # 146 with JᵀJ added back (2026-10-30). The objective is unchanged.
         curvature = _gn_diagonal(rows, flat, probes, key)
         diagonal = np.where(curvature > 0.0, curvature, diagonal)
     return diagonal
@@ -2163,6 +2189,8 @@ def _lbfgs_round(
     return z, count, False, stop, tolerance, grad_norm
 
 
+# deliberate: Adam's steps per jitted call, so also per time-limit and progress
+# check; not swept. A smaller chunk only costs more host round trips.
 _ADAM_CHUNK = 200
 
 
