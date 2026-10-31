@@ -61,6 +61,7 @@
  "tests/test_long_baseline.py": 51.0,
  "tests/test_marginal.py": 3.9,
  "tests/test_marginal_gains.py": 176.0,
+ "tests/test_marginal_woodbury.py": 292.0,
  "tests/test_metrics.py": 6.0,
  "tests/test_models_core.py": 13.0,
  "tests/test_models_sources.py": 127.0,

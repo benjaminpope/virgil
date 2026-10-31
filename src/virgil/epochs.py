@@ -47,10 +47,12 @@ from ._grid import batch_size_or_default, batch_visibilities
 from ._marginal import gauss_legendre, log_integral
 from ._precision import cast_tree, run_in
 from .fitting import fit
+from ._linear import arrow_at
 from .likelihood import (
+    _gain_jacobian,
     _gaussian_loglike,
     _prediction_and_errors,
-    _whiten_with_log_norm,
+    _whiten_phases,
     _whitened_and_errors,
     model_loglike,
     whitened_residuals,
@@ -454,6 +456,37 @@ _N_CENTRE = 4
 _NUMERIC_S_MAX = 10.0
 
 
+def _arrow_term(problem, penalty, log_s, derivs):
+    """``(χ², norm[, dχ²/d ln s, dnorm/d ln s])`` of a gains or offsets block
+    at ``ln s``, with ``penalty`` (plain rows, ∝ 1/s²) added to χ²."""
+    scale2 = np.exp(2.0 * log_s)
+    if not derivs:
+        chi2, norm, _ = arrow_at(problem, scale2)
+        return chi2 + penalty / scale2, norm
+    chi2, norm, r2, trace = arrow_at(problem, scale2, trace=True)
+    n_col = problem.gram_bb.shape[0] * problem.gram_bb.shape[1]
+    n_col += problem.gram_out.shape[0]
+    return (
+        chi2 + penalty / scale2,
+        norm,
+        -2.0 * (r2 + penalty) / scale2,
+        scale2 * trace - n_col,
+    )
+
+
+def _plain_term(chi2_of, log_s, derivs):
+    """``(χ², 0[, dχ²/d ln s, 0])`` of a block with no marginalized modes."""
+
+    def f(t):
+        return chi2_of(np.exp(t))
+
+    zero = np.zeros((), log_s.dtype)
+    if not derivs:
+        return f(log_s), zero
+    chi2, d_chi2 = jax.jvp(f, (log_s,), (np.ones_like(log_s),))
+    return chi2, zero, d_chi2, zero
+
+
 class _Surface:
     """The scale-marginalized score of one dataset, block by block.
 
@@ -468,7 +501,8 @@ class _Surface:
     Data with gains or closure-phase offsets have covariance C(s) = s^2 D + U U^T,
     which a scale does not factor, so ln s is integrated numerically (``numeric``):
     a Gauss-Legendre rule over +-9 standard deviations of the integrand around its
-    Newton peak, whitened exactly at each s. Such data without ``s_max`` take 10.
+    Newton peak, with χ² and the log determinant exact at each s (Woodbury,
+    ``_linear.arrow_at``). Such data without ``s_max`` take 10.
     """
 
     floor = (
@@ -553,20 +587,29 @@ class _Surface:
         )
         n_block = len(self.blocks)
         bound, low = float(onp.log(self.s_max)), self._low
-        at = self._at(
-            prediction, errors, values, gain_terms, offset_terms, data
-        )
+        args = (prediction, errors, values, gain_terms, offset_terms)
+        at = self._at(*args, data)
+        # The window carries no gradient: find it on frozen inputs.
+        at_free = self._at(*jax.lax.stop_gradient(args), data)
 
-        def log_f(log_s):
-            """Each block's log integrand at its own ``log_s`` (blocks are
-            independent, so a sum has their derivatives as its gradient)."""
-            chi2, own = at(log_s)
-            return np.stack(
-                [
-                    self._log_f(k, log_s[k : k + 1], chi2[k], own[k], data)[0]
-                    for k in range(n_block)
-                ]
-            )
+        def slope(log_s):
+            """d log f_k/d ln s_k of each block (blocks are independent):
+            the analytic ∂χ², ∂norm of ``at`` through ``_log_f``."""
+            chi2, own, d_chi2, d_own = at_free(log_s, True)
+            out = []
+            for k in range(n_block):
+
+                def log_f(t, c, n, k=k):
+                    return self._log_f(k, t[None], c, n, data)[0]
+
+                g_t, g_c, g_n = jax.grad(log_f, (0, 1, 2))(
+                    log_s[k], chi2[k], own[k]
+                )
+                out.append(g_t + g_c * d_chi2[k] + g_n * d_own[k])
+            return np.stack(out)
+
+        def curve(log_s):
+            return jax.jvp(slope, (log_s,), (np.ones_like(log_s),))[1]
 
         nu = np.asarray(self.nu)
         chi2_one = at(np.zeros(n_block))[0]
@@ -575,19 +618,18 @@ class _Surface:
         # k the gains' rank, so the χ² = ν point sits k/2ν off the peak).
         centre = np.zeros(n_block)
         for _ in range(2):
-            chi2_c = at(centre)[0]
+            chi2_c = at_free(centre)[0]
             tiny = np.finfo(chi2_c.dtype).tiny
             centre = np.clip(
                 centre + 0.5 * np.log(np.maximum(chi2_c, tiny) / nu),
                 low,
                 bound,
             )
-        slope = jax.grad(lambda t: np.sum(log_f(t)))
-        curve = jax.grad(lambda t: np.sum(slope(t)))
         for _ in range(_N_CENTRE):
             step = slope(centre) / np.maximum(-curve(centre), 0.1 * nu)
             centre = np.clip(centre + np.clip(step, -1.0, 1.0), low, bound)
         curvature = np.maximum(-curve(centre), 0.1 * nu)
+        # ``data`` (the von Mises ``_log_f`` reads ``d_phi``) is not frozen.
         centre, curvature = jax.lax.stop_gradient((centre, curvature))
         dof = np.broadcast_to(
             np.asarray(1.0 if dof is None else dof, chi2_one.dtype),
@@ -606,45 +648,74 @@ class _Surface:
         )
 
     def _at(self, prediction, errors, values, gain_terms, offset_terms, data):
-        """``at(log_s)``: each block's χ² and gains/offsets log normalizer
-        with the errors times ``exp(log_s)`` (one whitening, exact log det)."""
-        sizes = onp.asarray(self.sizes)
-        # The block of each entry of ``sizes`` (an absent, empty block has
-        # size 0: any index will do).
-        index = {n: k for k, n in enumerate(self.names)}
-        labels = ["vis", "phi"] + [
-            f"extra[{k}]" for k in range(len(self.sizes) - 2)
-        ]
-        block_of = onp.array([index.get(n, 0) for n in labels])
+        """``at(log_s, derivs=False)``: each block's χ² and gains/offsets log
+        normalizer with the errors times ``exp(log_s)`` and, with ``derivs``,
+        their ``ln s`` derivatives too.
 
-        def at(log_s):
-            scale = np.repeat(
-                np.exp(log_s[block_of]),
-                sizes,
-                total_repeat_length=int(sizes.sum()),
-            )
-            w, _, norm = _whiten_with_log_norm(
-                data,
-                prediction,
-                values,
-                errors * scale,
-                gain_terms,
-                offset_terms,
-                split_norm=True,
-            )
-            chi2 = self.block_chi2(w)
-            # The log normalizer [gains', offsets'] adds to each block.
-            own = np.stack(
-                [
-                    norm[0]
-                    if name == "vis"
-                    else norm[1]
-                    if name == "phi"
-                    else np.zeros((), norm.dtype)
-                    for name in self.names
-                ]
-            )
-            return chi2, own
+        The gain and offset blocks keep their whitened problem at s = 1 and
+        evaluate the marginal at each s by Woodbury (``arrow_problem``,
+        ``arrow_at``); the other blocks whiten their own observables again.
+        """
+        n_vis = np.asarray(data.vis).size  # traced data: size is static
+        resid, edges = prediction - values, onp.cumsum((0,) + self.sizes)
+        labels = ["vis", "phi"] + [
+            f"extra[{k}]" for k in range(len(edges) - 3)
+        ]
+        terms = []
+        for name in self.names:
+            i = labels.index(name)
+            a, b = int(edges[i]), int(edges[i + 1])
+            if name == "vis" and data.gains is not None:
+                gains, e = data.gains, errors[:n_vis]
+                jac = _gain_jacobian(data, prediction[:n_vis]) / e
+                problem = gains.marginal_problem(
+                    resid[:n_vis] / e, jac, gains.widths_for(gain_terms)
+                )
+                terms.append(
+                    functools.partial(
+                        _arrow_term, problem, np.zeros((), resid.dtype)
+                    )
+                )
+            elif (
+                name == "phi"
+                and data._phases_wrap
+                and data.cp_noise is not None
+                and data.phase_offsets is not None
+            ):
+                # Correlated closure phases with offsets: the sines are
+                # marginalized; the periodic penalty rows ∝ 1/s are plain.
+                r, e, offsets = resid[a:b], errors[a:b], data.phase_offsets
+                x = data.cp_noise.whiten(np.sin(r), e)[0]
+                problem = offsets.marginal_problem(
+                    data.cp_noise, x, e, offsets.widths_for(offset_terms)
+                )
+                penalty = np.sum((2.0 * np.sin(0.5 * r) ** 2 / e) ** 2)
+                terms.append(functools.partial(_arrow_term, problem, penalty))
+            elif name == "vis":
+                chi2 = lambda s, a=a, b=b: np.sum(
+                    (resid[a:b] / (errors[a:b] * s)) ** 2
+                )
+                terms.append(functools.partial(_plain_term, chi2))
+            elif name == "phi":
+                chi2 = lambda s, a=a, b=b: np.sum(
+                    _whiten_phases(data, resid[a:b], errors[a:b] * s)[0] ** 2
+                )
+                terms.append(functools.partial(_plain_term, chi2))
+            else:
+                block = data.extras[labels.index(name) - 2]
+                chi2 = lambda s, block=block, a=a, b=b: np.sum(
+                    block.whiten(
+                        prediction[a:b], values[a:b], errors[a:b] * s
+                    )[0]
+                    ** 2
+                )
+                terms.append(functools.partial(_plain_term, chi2))
+
+        def at(log_s, derivs=False):
+            out = [term(log_s[k], derivs) for k, term in enumerate(terms)]
+            return tuple(np.stack(col) for col in zip(*out))[
+                : 4 if derivs else 2
+            ]
 
         return at
 
@@ -1431,15 +1502,13 @@ def _grid_marginal(chi2, dof, data, surface):
     return jax.vmap(lambda c: surface.score(c, dof, data))(chi2)
 
 
-# The memory a grid point needs scales with what one whitening holds: the
-# observables and, with gains or offsets, their modes (rank). A table whitens
-# at ``_N_NODES`` nodes at once, and the window search differentiates through
-# whitenings: that working set is about _TABLE_COPIES times one whitening's
-# (measured on calibrated GRAVITY data: 325 MB per point, 34k floats; a 1190-point batch ran out of
-# memory on a laptop); a fixed-scale score is one whitening with its gradient
-# free, about _FIXED_COPIES.
-_TABLE_COPIES = 1200
+# The memory a grid point needs: ``_table_floats`` for the scale table (an
+# analytic count of its arrays); a fixed-scale score is one whitening with its
+# gradient free, about _FIXED_COPIES of ``_whitening_floats``.
 _FIXED_COPIES = 8
+# Counted floats are live arrays; the compiler keeps more (CI on Linux: 4.4 MB
+# against 3.0 MB counted for four float32 points), so the count is doubled.
+_TABLE_MARGIN = 2
 CPU_MEMORY_BUDGET = 2**30
 ACCELERATOR_MEMORY_BUDGET = 2**33
 
@@ -1469,12 +1538,52 @@ def _whitening_floats(data):
     return n
 
 
+def _table_floats(data):
+    """Floats one value-and-gradient of the scale table holds per point.
+
+    Counted from the live arrays of ``_linear.arrow_at``, not fitted. The old
+    constant was measured (``_TABLE_COPIES = 1200`` whitenings: 325 MB per
+    point on calibrated GRAVITY data, where a 1190-point batch ran out of
+    memory on a laptop); this count is checked against the compiled working
+    set in ``tests/test_marginal_woodbury.py``.
+    """
+    # The rows of the observables that are whitened again at each node
+    # (residuals, errors, their reverse sweep), once per node plus a few.
+    floats = (2 * _N_NODES + 4) * _whitening_floats(data)
+    # (blocks, rows, modes, spanning modes, observables) of each problem
+    problems = []
+    if data.gains is not None:
+        n_block, n_row, n_mode = data.gains.shapes.shape
+        span = data.gains.spanning
+        n_span = 0 if span is None else int(span.shape[1])
+        problems.append((n_block, n_row, n_mode, n_span, data.vis.size))
+    if data.phase_offsets is not None:
+        offsets = data.phase_offsets
+        n_block, n_row = offsets.rows.shape
+        n_mode = int(offsets.values.shape[1])
+        problems.append((n_block, n_row, n_mode, 0, offsets.n_out))
+    for n_block, n_row, m, k, n in problems:
+        # Once: the columns, their gathered copy and cotangent (3 · B R m,
+        # 3 · n k), the Grams ``G_bb`` (B m²), ``G_bs`` (B m k), ``G_ss`` (k²).
+        once = 3 * (n_block * n_row * m + n * k)
+        once += n_block * m * (m + k) + k * k
+        # Per node: the Cholesky factor, its input and cotangent (3 · B m²),
+        # the solves ``B⁻¹[x, G_bs]`` and their cotangent (2 · B m (1+k)), the
+        # Schur complement, its factor and cotangent (3 · k²), the residual
+        # pass (4 · n), ``Z`` (3 · n k) and the coefficients ``y``.
+        node = 3 * n_block * m * m + 2 * n_block * m * (1 + k) + 3 * k * k
+        node += 3 * n * k  # Z = Ũ_s - Ũ_b W and its cotangent
+        floats += once + _N_NODES * (node + 4 * n + n_block * m + k)
+    return _TABLE_MARGIN * floats
+
+
 def _grid_batch(batch_size, memory_budget, data, surface, copies=None):
     """Grid points per batch: ``batch_size`` if given, else what fits in
     ``memory_budget`` bytes (default ``CPU_MEMORY_BUDGET``, or
     ``ACCELERATOR_MEMORY_BUDGET`` off the CPU) for data with gains or offsets,
-    where each point holds ``copies`` whitenings of ``_whitening_floats``
-    float64s; the visibility rule of ``batch_size_or_default`` otherwise."""
+    where each point holds ``_table_floats`` float64s (or ``copies``
+    whitenings of ``_whitening_floats``); the visibility rule of
+    ``batch_size_or_default`` otherwise."""
     if batch_size is not None:
         return batch_size_or_default(batch_size, None)
     default = batch_size_or_default(None, data)
@@ -1486,8 +1595,12 @@ def _grid_batch(batch_size, memory_budget, data, surface, copies=None):
         raise ValueError(
             f"memory_budget must be positive, got {memory_budget}."
         )
-    copies = _TABLE_COPIES if copies is None else copies
-    per_point = 8 * copies * _whitening_floats(data)
+    floats = (
+        _table_floats(data)
+        if copies is None
+        else copies * _whitening_floats(data)
+    )
+    per_point = 8 * floats
     return int(max(1, min(default, memory_budget // per_point)))
 
 

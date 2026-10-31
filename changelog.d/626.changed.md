@@ -1,0 +1,1 @@
+The scale marginal of gains and closure offsets uses a Woodbury solve per node (a Cholesky per frame and a Schur complement on the spanning columns) with analytic centring, instead of rank-one whitening scans: same values, an order of magnitude faster, and a much smaller memory model so batches vectorize.
