@@ -245,7 +245,9 @@ def period_cut(
     ----------
     times : array-like
         One time per night (days); repeated times count as one night.
-    field, night_length, resolution, motion_fraction, p_floor
+    field, night_length, resolution
+        As for [`period_window`][virgil.aliases.period_window].
+    motion_fraction, p_floor
         As for [`period_window`][virgil.aliases.period_window].
 
     Returns
