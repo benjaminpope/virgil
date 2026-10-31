@@ -1745,3 +1745,25 @@ verified = true
 verified_via = "arxiv"
 used_in = ["virgil.smc:tempered_smc"]
 note = "Bayesian Analysis 16, 745; per-stage tuning of the HMC step size and trajectory length, the mass matrix from the particle covariance (via BlackJAX's pretuning)"
+
+[ref.lee2018]
+authors = "Lee & Whiteley"
+year = 2018
+title = "Variance estimation in the particle filter"
+arxiv = "1509.00394"
+doi = "10.1093/biomet/asy028"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "Biometrika 105, 609; the single-run variance estimator of the normalizing constant from Eve (time-0 ancestor) indices, eq. 4 with phi = 1; needs multinomial resampling"
+
+[ref.du2021]
+authors = "Du & Guyader"
+year = 2021
+title = "Variance estimation in adaptive sequential Monte Carlo"
+arxiv = "1909.13602"
+doi = "10.1214/20-AAP1611"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "Ann. Appl. Probab. 31, 1021; extends the Eve-index variance estimator to SMC whose tempering schedule is chosen adaptively from the particles"

@@ -7,8 +7,11 @@
 [`bridge_smc`][virgil.smc.bridge_smc] tempers prior × L₁ to prior × L₂ from
 given particles, ``π_β ∝ prior · L₁^(1-β) · L₂^β``. Both return the
 particles, their weights, ``log Z`` (the log evidence, or the log ratio
-``Z₂/Z₁`` for a bridge) with a Monte Carlo error from independent replicates,
-and the schedule. The next β solves for an ESS of one half of the incremental
+``Z₂/Z₁`` for a bridge) with a Monte Carlo error from a single run, and the
+schedule. The error is the genealogy-based estimator of Lee & Whiteley (2018),
+extended to adaptive SMC by Du & Guyader (2021); it needs multinomial
+resampling, which is what is used. When the genealogy has collapsed to one
+ancestor the error is ``nan`` and ``variance_degenerate`` is set. The next β solves for an ESS of one half of the incremental
 weights of the (resampled) particles, as in BlackJAX's adaptive tempering
 (Jasra et al. 2011; Zhou, Johansen & Aston 2016). The mutation is fixed-length HMC with the
 step size and trajectory length tuned per stage and the mass matrix set to the
@@ -19,7 +22,8 @@ With x64 on, use float64 particles: BlackJAX draws the HMC momentum in the
 default float width.
 
 Source: BlackJAX (Cabezas et al. 2024), Del Moral, Doucet & Jasra 2006,
-Jasra et al. 2011 (see ``references/provenance.toml``).
+Jasra et al. 2011, Lee & Whiteley 2018, Du & Guyader 2021 (see
+``references/provenance.toml``).
 """
 
 import dataclasses
@@ -54,7 +58,12 @@ class SMCResult:
         Log evidence (log ratio for a bridge): the log of the mean of the
         replicates' unbiased ``Ẑ``. ``nan`` if ``stopped``.
     log_z_error : float
-        Standard error of ``log_z`` from the replicates; ``nan`` for one.
+        Standard error of ``log_z`` from the genealogy-based variance
+        estimator; ``nan`` if ``variance_degenerate``.
+    log_z_variance : float
+        The unclipped variance estimate behind ``log_z_error``; it is unbiased
+        and so can be negative. ``nan`` if every particle of a replicate
+        shares one ancestor, or if ``stopped``.
     log_z_replicates : array
         Each replicate's ``log Ẑ``.
     betas : list of array
@@ -65,17 +74,22 @@ class SMCResult:
         A replicate reached the time or stage cap before β = 1.
     undersampled : bool
         A replicate's final ESS is below ``ess_target · n_particles``.
+    variance_degenerate : bool
+        The error estimate is unusable: all particles of a replicate share
+        one ancestor, or the estimate is not positive. Use more particles.
     """
 
     particles: object
     weights: object
     log_z: float
     log_z_error: float
+    log_z_variance: float
     log_z_replicates: object
     betas: list
     ess: list
     stopped: bool
     undersampled: bool
+    variance_degenerate: bool
 
 
 def _block(particles):
@@ -160,7 +174,8 @@ def _build(
         loglike,
         mcmc_step,
         mcmc_init,
-        resampling.systematic,
+        # Multinomial, as the variance estimator of Lee & Whiteley requires.
+        resampling.multinomial,
         steps,
         initial,
         pretune,
@@ -189,28 +204,48 @@ def _build(
 
 
 def _run(key, init, stage, particles, max_stages, deadline):
-    """One replicate: ``(particles, weights, log Z, betas, ess, stopped)``."""
+    """One replicate: ``(particles, weights, log Z, betas, ess, stopped, v)``.
+
+    ``v`` estimates ``var(Ẑ) / Z²`` (``nan`` if the genealogy collapsed).
+    """
     state = init(particles)
+    n = _block(particles).shape[0]
     tol = 8 * float(np.finfo(_block(particles).dtype).eps)
     log_z, betas, ess = 0.0, [], []
-    for key in jax.random.split(key, max_stages):
+    # Eve indices (Lee & Whiteley 2018, Algorithm 1): the time-0 ancestor of
+    # each particle, carried through BlackJAX's resampling ancestors.
+    eve = onp.arange(n)
+    *keys, final_key = jax.random.split(key, max_stages + 1)
+    for key in keys:
         if time.monotonic() > deadline:
-            return None, None, onp.nan, betas, ess, True
+            return None, None, onp.nan, betas, ess, True, onp.nan
         state, info = stage(key, state)
+        eve = eve[onp.asarray(info.ancestors)]
         beta = float(state.sampler_state.tempering_param)
         log_z += float(info.log_likelihood_increment)
         betas.append(beta)
         ess.append(float(1.0 / np.sum(state.sampler_state.weights**2)))
         if beta >= 1.0 - tol:
-            return (
-                state.sampler_state.particles,
-                state.sampler_state.weights,
-                log_z,
-                betas,
-                ess,
-                False,
+            weights = state.sampler_state.weights
+            # Ẑ is a product over the potentials of every stage including the
+            # last, so the estimator's final time is the cloud resampled by
+            # the last weights (Lee & Whiteley eq. 4 at time n = stages + 1).
+            final = onp.asarray(resampling.multinomial(final_key, weights, n))
+            sizes = onp.bincount(eve[final], minlength=n)
+            pairs = n * n - int((sizes**2).sum())  # ordered pairs, E^i != E^j
+            # v = 1 - prod_p N/(N-1) * pairs / (N (N-1)), for phi = 1; the
+            # unbiasedness E[Ẑ² v] = var Ẑ (their Theorem 1) holds with
+            # multinomial resampling, adaptively by Du & Guyader (2021).
+            v = (
+                1.0 - (n / (n - 1)) ** (len(betas) + 1) * pairs / (n * (n - 1))
+                if pairs > 0
+                else onp.nan
             )
-    return None, None, onp.nan, betas, ess, True
+            return (
+                state.sampler_state.particles, weights, log_z, betas, ess,
+                False, v,
+            )  # fmt: skip
+    return None, None, onp.nan, betas, ess, True, onp.nan
 
 
 def _smc(
@@ -240,29 +275,30 @@ def _smc(
     ess = [onp.asarray(run[4]) for run in runs]
     if stopped:
         return SMCResult(
-            None, None, onp.nan, onp.nan, onp.full(len(runs), onp.nan),
-            betas, ess, True, False,
+            None, None, onp.nan, onp.nan, onp.nan, onp.full(len(runs), onp.nan),
+            betas, ess, True, False, False,
         )  # fmt: skip
     log_zs = onp.array([run[2] for run in runs])
     shift = log_zs.max()
     log_z = float(shift + onp.log(onp.mean(onp.exp(log_zs - shift))))
-    # Delta method for log of the mean of the unbiased Z estimates.
+    # Delta method for the log of the mean of the unbiased Ẑ_r, with
+    # var(Ẑ_r) estimated by Ẑ_r² v_r (Lee & Whiteley 2018, Theorem 1).
     u = onp.exp(log_zs - shift)
-    error = (
-        float(onp.std(u, ddof=1) / (onp.mean(u) * onp.sqrt(len(runs))))
-        if len(runs) > 1
-        else onp.nan
-    )
+    vs = onp.array([run[6] for run in runs])
+    variance = float(onp.sum(u**2 * vs) / onp.sum(u) ** 2)
+    degenerate = not variance > 0
     return SMCResult(
         jax.tree.map(lambda *a: np.concatenate(a), *[run[0] for run in runs]),
         np.concatenate([run[1] for run in runs]) / len(runs),
         log_z,
-        error,
+        onp.nan if degenerate else float(onp.sqrt(variance)),
+        variance,
         log_zs,
         betas,
         ess,
         False,
         any(e[-1] < ess_target * n_particles for e in ess),
+        degenerate,
     )
 
 
@@ -278,7 +314,7 @@ def tempered_smc(
     *,
     key,
     n_particles,
-    replicates=2,
+    replicates=1,
     ess_target=0.25,
     steps=5,
     leapfrogs=4,
@@ -303,8 +339,9 @@ def tempered_smc(
     n_particles : int
         Particles per replicate.
     replicates : int
-        Independent runs; ``log_z_error`` needs at least two and has one
-        degree of freedom at two, so it is then only an order of magnitude.
+        Independent runs, pooled into one evidence and one particle set. The
+        error comes from each run's genealogy, so one run suffices; more are
+        for cross-checks (compare ``log_z_replicates``).
     ess_target : float
         Fraction of ``n_particles`` below which the final ESS sets
         ``undersampled``. It is below the schedule's one half so that a
@@ -352,7 +389,7 @@ def bridge_smc(
     key,
     weights=None,
     n_particles=None,
-    replicates=2,
+    replicates=1,
     ess_target=0.25,
     steps=5,
     leapfrogs=4,

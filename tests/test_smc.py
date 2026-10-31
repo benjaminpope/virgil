@@ -103,25 +103,50 @@ def test_bridge_ratio(weighted):
 
 
 @pytest.mark.slow
-def test_replicate_spread_matches_error():
+def test_single_run_variance_is_calibrated():
+    # Lee & Whiteley's estimator is unbiased for var(Ẑ)/Z²: its mean over
+    # runs matches the spread of log Ẑ over independent runs.
     mu = onp.array([1.0])
     logprior, init = _gauss_prior(1)
     runs = [
         tempered_smc(
-            logprior, _gauss_like(mu), init, key=jax.random.key(10 + i),
-            n_particles=200, replicates=4,
+            logprior, _gauss_like(mu), init, key=jax.random.key(100 + i),
+            n_particles=100,
         )
-        for i in range(20)
+        for i in range(100)
     ]  # fmt: skip
-    spread = onp.std([r.log_z for r in runs], ddof=1)
-    reported = onp.mean([r.log_z_error for r in runs])
-    assert 0.5 < spread / reported < 2
-    assert onp.isnan(
-        tempered_smc(
-            logprior, _gauss_like(mu), init, key=jax.random.key(0),
-            n_particles=100, replicates=1,
-        ).log_z_error
+    # The unbiased estimate is negative in some runs at this size; those are
+    # flagged, and kept in the mean.
+    assert not onp.isnan([r.log_z_variance for r in runs]).any()
+    assert sum(r.variance_degenerate for r in runs) < 20
+    log_zs = onp.array([r.log_z for r in runs])
+    assert abs(log_zs.mean() - _log_z(mu)) < 0.05
+    ratio = onp.mean([r.log_z_variance for r in runs]) / onp.var(
+        log_zs, ddof=1
+    )
+    assert 0.6 < ratio < 1.6
+
+
+def test_collapsed_genealogy_is_reported():
+    logprior, init = _gauss_prior(1)
+    r = tempered_smc(
+        logprior, _gauss_like([1.0]), init, key=jax.random.key(0),
+        n_particles=3,
     )  # fmt: skip
+    assert not r.stopped
+    assert r.variance_degenerate
+    assert onp.isnan(r.log_z_error) and onp.isnan(r.log_z_variance)
+    assert onp.isfinite(r.log_z)
+
+
+def test_healthy_run_reports_a_positive_error():
+    logprior, init = _gauss_prior(1)
+    r = tempered_smc(
+        logprior, _gauss_like([1.0]), init, key=jax.random.key(0),
+        n_particles=500,
+    )  # fmt: skip
+    assert not r.variance_degenerate
+    assert 0 < r.log_z_error < 0.5
 
 
 @pytest.mark.parametrize("cap", [{"max_stages": 2}, {"max_seconds": 0.0}])
