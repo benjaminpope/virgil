@@ -1,0 +1,1 @@
+Adds `virgil.smc` (provisional): `tempered_smc` and `bridge_smc`, adaptive tempered SMC on BlackJAX with per-stage HMC tuning, the evidence with a replicate error, and a failure return at the time or stage cap. `blackjax>=1.7.1` is now a dependency, which raises the `jax` floor to 0.9.

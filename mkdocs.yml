@@ -134,6 +134,7 @@ nav:
       - Inference: api/inference.md
       - Grid Fit: api/grid_fit.md
       - Limits: api/limits.md
+      - SMC: api/smc.md
       - Priors: api/priors.md
       - Detection: api/detection.md
       - Spectra: api/spectra.md
