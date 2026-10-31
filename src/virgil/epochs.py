@@ -2048,16 +2048,31 @@ def _climb(z, lam, radius, g_range, data, dof, diam, surface, n_steps):
         outward = g[:2] @ unit
         edge = (np.hypot(p[0], p[1]) >= radius * (1 - 1e-9)) & (outward > 0)
         g = g.at[:2].add(-np.where(edge, outward, 0.0) * unit)
-        ends = ((p[2] <= g_range[0]) & (g[2] < 0)) | (
-            (p[2] >= g_range[1]) & (g[2] > 0)
-        )
-        g = g.at[2].set(np.where(ends, 0.0, g[2]))
-        w, v = np.linalg.eigh(-h)
-        w = np.abs(w)
-        floor = 1e-12 * np.max(w) + np.finfo(g.dtype).tiny
-        step = v @ ((v.T @ g) / (np.maximum(w, floor) + damping * np.max(w)))
-        free = 0.5 * g @ (v @ ((v.T @ g) / np.maximum(w, floor)))
-        return step, free
+
+        def solve(g, h):
+            w, v = np.linalg.eigh(-h)
+            w = np.abs(w)
+            floor = 1e-12 * np.max(w) + np.finfo(g.dtype).tiny
+            step = v @ (
+                (v.T @ g) / (np.maximum(w, floor) + damping * np.max(w))
+            )
+            return step, 0.5 * g @ (v @ ((v.T @ g) / np.maximum(w, floor)))
+
+        # The flux range's ends hold ln f when the gradient points outward
+        # there and the step would cross it. The coordinate is then taken
+        # out of the system (its row and column of the Hessian) and set to
+        # the end, so the other two climb and converge on the face.
+        step, _ = solve(g, h)
+        reach = p[2] + step[2]
+        at_hi = (g[2] > 0) & ((reach >= g_range[1]) | (p[2] >= g_range[1]))
+        at_lo = (g[2] < 0) & ((reach <= g_range[0]) | (p[2] <= g_range[0]))
+        keep = np.array([1.0, 1.0, np.where(at_hi | at_lo, 0.0, 1.0)])
+        h = h * np.outer(keep, keep) - np.diag(1.0 - keep)
+        step, free = solve(g * keep, h)
+        end = np.where(at_hi, g_range[1], g_range[0])
+        return step.at[2].set(
+            np.where(keep[2] == 0.0, end - p[2], step[2])
+        ), free
 
     def climb(p, damping):
         def body(carry, _):
