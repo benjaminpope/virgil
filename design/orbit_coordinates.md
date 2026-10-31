@@ -28,8 +28,12 @@ are smooth where Campbell elements are not (face-on, `e = 0`), and have no
   `|z_u|²|z_v|² = a² sin²i`, so `p(z) ∝ a⁻² ∝ |z|⁻⁴`. `a = |z|²/2`.
 - `k + ih = e e^{iM_a} = ζ²`: `d²(k+ih) = 4e d²ζ`, so the uniform-`e`,
   uniform-`M_a` density `1/(2π)` per `de dM_a` is constant in `ζ`.
-- Quaternion link: unit `(z_u, z_v)` is a unit quaternion, uniform on S³ for
-  Haar measure on SO(3) (Shoemake 1992).
+- Literature: Haar measure on SO(3) is the isotropic orientation (Miles 1965);
+  `(√u, √V)/√(2a)` are the Cayley–Klein parameters (Goldstein et al. 2002, §4.5);
+  a unit quaternion uniform on S³ is Haar on SO(3), covering it 2:1 (Moran 1975);
+  `(√e cos ω, √e sin ω)` uniform in e is Ford (2006). Steps (i)–(iv) and Ford are
+  from the literature; using them as sampler coordinates is our exact change of
+  variables (derived, experimental, opt-in until Stage 4).
 
 ## Pinning tests (`tests/test_orbit_coordinates.py`)
 
@@ -60,8 +64,8 @@ preimage must be multiplied by 8 (equivalently, use the prior restricted to a
 fundamental domain, density × 8); a sampler that visits several preimages
 needs no factor. Report only the invariants (`invariants`).
 
-## Citation
+## Citations
 
-Shoemake (1992) is `verified = false`: Graphics Gems III has no arXiv or DOI
-and is not in ADS. It supports only the quaternion/Haar link; the `u`, `V`
-squares and the `ζ` map are derived here and pinned by the tests.
+Miles (1965), Moran (1975) and Ford (2006) are verified (Crossref, Crossref, ADS).
+Goldstein et al. (2002) is a textbook without DOI or ADS record and stays
+`verified = false`. None of them gives `|z|⁻⁴` or the `ζ` map: those are derived here.

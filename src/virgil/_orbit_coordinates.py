@@ -19,9 +19,9 @@ Campbell elements are for reporting only (:func:`invariants`).
 Thiele–Innes constants are tuples ``(A, B, F, G)`` of arrays (also the
 argument of the anchor rotations).
 
-Source: Thiele–Innes constants; the quaternion form of SO(3)'s Haar measure
-(Shoemake 1992) applied to ``u``, ``V``. Derived here, checked by the
-prior-recovery tests.
+Source: Miles (1965), Moran (1975), Goldstein et al. (2002) and Ford (2006)
+give the steps; using them as sampler coordinates is our exact change of
+variables (derived, experimental, opt-in), checked by the prior-recovery tests.
 """
 
 import jax
@@ -46,6 +46,28 @@ def anchor_rotate(abfg, mean_anomaly):
 def anchor_unrotate(abfg_prime, mean_anomaly):
     """The Thiele–Innes constants ``(A, B, F, G)`` of TI′ constants."""
     return anchor_rotate(abfg_prime, -mean_anomaly)
+
+
+# The map, step by step (derivation: design/orbit_coordinates.md):
+# (i) an isotropic orientation is Haar measure on SO(3) (Miles 1965): Omega and
+#     omega uniform, cos i uniform.
+# (ii) u = (A+G) + i(B-F) = 2a cos²(i/2) e^{i(omega+Omega)} and
+#     V = (A-G) - i(B+F) = 2a sin²(i/2) e^{i(omega-Omega)}: the split of
+#     ``_thiele_innes_angles``.
+# (iii) z = (√u, √V) = √(2a) × the Cayley–Klein parameters
+#     (cos(i/2) e^{i(omega+Omega)/2}, sin(i/2) e^{i(omega-Omega)/2})
+#     (Goldstein et al. 2002, §4.5).
+# (iv) a unit quaternion uniform on S³ is Haar on SO(3), covering it 2:1
+#     (Moran 1975); the sign of each square root makes z a 4:1 cover.
+# (v) log-uniform a, a = |z|²/2: with d⁴(A,B,F,G) = 4|z_u|²|z_v|² d⁴z and
+#     |z_u|²|z_v|² = a² sin²i, the density 1/(a⁴ sin²i) in (A,B,F,G) becomes
+#     a⁻² ∝ |z|⁻⁴ in z (change of variables; no approximation).
+# (vi) zeta = √e e^{iM_a/2}: uniform on the disc ⇔ e uniform and M_a uniform,
+#     since d²(k+ih) = 4e d²zeta. Ford (2006) uses (√e cos ω, √e sin ω); this
+#     half-angle form, with the anchor mean anomaly M_a in place of ω, is
+#     analytic at e = 0.
+# Steps (i)-(iv) and Ford are from the literature; the sampler coordinates are
+# our derived change of variables.
 
 
 def z_to_ti(z):
