@@ -128,7 +128,8 @@ modes the heuristics were built for.
   stream are unchanged. A truth with *P* < P_cut = max(2·Δt_min, P_night),
   computed from the draw's realized epochs by `virgil.aliases.period_cut`
   (Δt_min the shortest gap between consecutive nights, P_night the
-  within-night motion bound of `period_window`; orbit_alias_cycles §1.3),
+  within-night motion bound of `period_window` at the draw's own
+  semi-major axis, which is the `field` argument; orbit_alias_cycles §1.3),
   lies outside the engine's declared prior and is **excluded from every
   scored metric and counted**; the count is reported. The excluded draws form
   a reported stratum B′, not scored in any must-hold: the same draws, scored
