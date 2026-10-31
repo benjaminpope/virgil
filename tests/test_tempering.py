@@ -684,6 +684,7 @@ CALIBRATION_CASES = pytest.mark.parametrize(
 
 @pytest.mark.slow
 @pytest.mark.full_only
+@pytest.mark.timeout(900)  # 20 fits take 300-400 s on CI
 @CALIBRATION_CASES
 def test_the_tempered_posterior_is_calibrated(common, rho):
     # 20 seeds of correlated noise at chi2/N about 12 (one AR(1) set at
@@ -704,6 +705,7 @@ def test_the_tempered_posterior_is_calibrated(common, rho):
 
 @pytest.mark.slow
 @pytest.mark.full_only
+@pytest.mark.timeout(900)  # 20 fits take 300-400 s on CI
 @CALIBRATION_CASES
 def test_the_untempered_posterior_is_not_calibrated(common, rho):
     # The untempered posterior is too narrow by sqrt(f) (2.2 to 2.3): its
