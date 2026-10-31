@@ -119,7 +119,6 @@ class ArrowProblem(NamedTuple):
     gram_bs: jax.Array  # (n_block, n_mode, n_span)
     gram_out: jax.Array  # (n_span, n_span): spanning rows outside every block
     proj_b: jax.Array  # (n_block, n_mode): Ũᵀx
-    proj_s: jax.Array  # (n_span,)
 
 
 def arrow_problem(x, rows, local, spanning=None):
@@ -148,7 +147,6 @@ def arrow_problem(x, rows, local, spanning=None):
         np.einsum("brm,brk->bmk", local, s_b, precision=hi),
         np.matmul(spanning.T * outside, spanning, precision=hi),
         np.einsum("brm,br->bm", local, x_b, precision=hi),
-        np.matmul(spanning.T, x, precision=hi),
     )
 
 
@@ -186,7 +184,15 @@ def arrow_at(problem, scale2, trace=False):
         + scale2 * np.einsum("bmk,bml->kl", m_gs, m_gs, precision=hi)
     )
     chol_s = np.linalg.cholesky(schur)
-    y_s = _solve_spd(chol_s, p.proj_s - np.einsum("bmk,bm->k", p.gram_bs, m_g))
+    # Ũ_sᵀ(x - Ũ_b m_g), formed on the residual of the block fit: the Gram
+    # form (Ũ_sᵀx - G_bsᵀm_g) cancels, and χ² amplifies an error in y by κ.
+    fit_b = (
+        np.zeros_like(p.x)
+        .at[p.rows]
+        .add(np.einsum("brm,bm->br", p.local, m_g), mode="drop")
+    )
+    rhs_s = np.matmul(p.spanning.T, p.x - fit_b, precision=hi)
+    y_s = _solve_spd(chol_s, rhs_s)
     y_b = m_g - np.einsum("bmk,k->bm", m_gs, y_s)
     fit = (
         np.zeros_like(p.x)
