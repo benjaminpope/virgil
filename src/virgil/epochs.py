@@ -629,6 +629,8 @@ class _Surface:
             step = slope(centre) / np.maximum(-curve(centre), 0.1 * nu)
             centre = np.clip(centre + np.clip(step, -1.0, 1.0), low, bound)
         curvature = np.maximum(-curve(centre), 0.1 * nu)
+        # ``data`` (the von Mises ``_log_f`` reads ``d_phi``) is not frozen.
+        centre, curvature = jax.lax.stop_gradient((centre, curvature))
         dof = np.broadcast_to(
             np.asarray(1.0 if dof is None else dof, chi2_one.dtype),
             (n_block,),
@@ -670,7 +672,7 @@ class _Surface:
                     resid[:n_vis] / e, jac, gains.widths_for(gain_terms)
                 )
                 terms.append(
-                    functools.partial(_arrow_term, problem, np.zeros(()))
+                    functools.partial(_arrow_term, problem, np.zeros((), resid.dtype))
                 )
             elif (
                 name == "phi"
@@ -1502,6 +1504,9 @@ def _grid_marginal(chi2, dof, data, surface):
 # analytic count of its arrays); a fixed-scale score is one whitening with its
 # gradient free, about _FIXED_COPIES of ``_whitening_floats``.
 _FIXED_COPIES = 8
+# Counted floats are live arrays; the compiler keeps more (CI on Linux: 4.4 MB
+# against 3.0 MB counted for four float32 points), so the count is doubled.
+_TABLE_MARGIN = 2
 CPU_MEMORY_BUDGET = 2**30
 ACCELERATOR_MEMORY_BUDGET = 2**33
 
@@ -1534,12 +1539,14 @@ def _whitening_floats(data):
 def _table_floats(data):
     """Floats one value-and-gradient of the scale table holds per point.
 
-    Counted from the live arrays of ``_linear.arrow_at``, not fitted: the
-    whitened problem and its Grams (once), then at each of ``_N_NODES`` nodes
-    the Cholesky factors and solves of the blocks (``B m²``, ``B m (1+K)``),
-    the Schur complement (``K²``) and the residual pass (``n`` entries), plus
-    the rows of the observables that are whitened again at each node.
+    Counted from the live arrays of ``_linear.arrow_at``, not fitted. The old
+    constant was measured (``_TABLE_COPIES = 1200`` whitenings: 325 MB per
+    point on calibrated GRAVITY data, where a 1190-point batch ran out of
+    memory on a laptop); this count is checked against the compiled working
+    set in ``tests/test_marginal_woodbury.py``.
     """
+    # The rows of the observables that are whitened again at each node
+    # (residuals, errors, their reverse sweep), once per node plus a few.
     floats = (2 * _N_NODES + 4) * _whitening_floats(data)
     # (blocks, rows, modes, spanning modes, observables) of each problem
     problems = []
@@ -1554,11 +1561,17 @@ def _table_floats(data):
         n_mode = int(offsets.values.shape[1])
         problems.append((n_block, n_row, n_mode, 0, offsets.n_out))
     for n_block, n_row, m, k, n in problems:
+        # Once: the columns, their gathered copy and cotangent (3 · B R m,
+        # 3 · n k), the Grams ``G_bb`` (B m²), ``G_bs`` (B m k), ``G_ss`` (k²).
         once = 3 * (n_block * n_row * m + n * k)
         once += n_block * m * (m + k) + k * k
+        # Per node: the Cholesky factor, its input and cotangent (3 · B m²),
+        # the solves ``B⁻¹[x, G_bs]`` and their cotangent (2 · B m (1+k)), the
+        # Schur complement, its factor and cotangent (3 · k²), the residual
+        # pass (4 · n) and the block and spanning coefficients ``y``.
         node = 3 * n_block * m * m + 2 * n_block * m * (1 + k) + 3 * k * k
         floats += once + _N_NODES * (node + 4 * n + n_block * m + k)
-    return floats
+    return _TABLE_MARGIN * floats
 
 
 def _grid_batch(batch_size, memory_budget, data, surface, copies=None):

@@ -129,10 +129,12 @@ def arrow_problem(x, rows, local, spanning=None):
     ``local`` (n_block, n_row, n_mode) and ``spanning`` (n, n_span) are as for
     ``whiten_blocks``. Evaluate it at any ``s`` with ``arrow_at``.
     """
-    x, local = np.asarray(x), np.asarray(local)
+    x, local, rows = np.asarray(x), np.asarray(local), np.asarray(rows)
     if spanning is None:
         spanning = np.zeros((x.shape[0], 0), x.dtype)
-    rows = np.asarray(rows)
+    # A padded row is no observation: its columns add nothing (as in
+    # ``whiten_blocks``, which drops the log det of a block with no rows).
+    local = np.where((rows < x.shape[0])[..., None], local, 0)
     hi = jax.lax.Precision.HIGHEST
     x_b = x.at[rows].get(mode="fill", fill_value=0)
     s_b = spanning.at[rows].get(mode="fill", fill_value=0)

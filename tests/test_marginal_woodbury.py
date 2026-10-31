@@ -12,9 +12,15 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from virgil._linear import arrow_at, arrow_problem, whiten_cholesky
+from virgil._linear import (
+    arrow_at,
+    arrow_problem,
+    whiten_blocks,
+    whiten_cholesky,
+)
 from virgil._marginal import gauss_legendre
-from virgil._precision import run_in
+from virgil._precision import cast_tree, run_in
+from virgil.aliases import _N_SITES
 from virgil.coverage import VLTI_UTS, vlti_oidata
 from virgil.epochs import _Surface, _table_floats, _N_NODES
 from virgil.likelihood import _gain_jacobian, _prediction_and_errors
@@ -24,7 +30,7 @@ from virgil.observables import VisibilityAmplitude
 
 TRUTH = BinaryModelCartesian(dra=6.0, ddec=-4.0, flux=0.3)
 S_MAX = 10.0
-CASES = ["gains_offsets", "gains_only", "extra", "von_mises"]
+CASES = ["gains_offsets", "gains_only", "extra", "von_mises", "no_modes"]
 
 
 def _night(case, seed=0):
@@ -41,6 +47,8 @@ def _night(case, seed=0):
     ).with_model(TRUTH, jax.random.PRNGKey(seed), noise_scale=2.0)
     n = int(onp.asarray(data.vis).size)
     modes = onp.random.default_rng(1).normal(size=(2, n))
+    if case == "no_modes":  # no spanning columns
+        modes = None
     data = data.with_gains(
         telescope=0.05, baseline=0.03, chromatic=0.01, modes=modes
     )
@@ -288,28 +296,44 @@ def test_gauss_newton_weights_use_the_plain_chi2_of_the_table():
         assert onp.allclose(rows, want)
 
 
-@pytest.mark.parametrize("case", ["gains_offsets", "extra"])
-def test_float32_follows_the_conditioning(case):
-    """Float32 errors scale with the condition number and χ² (no float64)."""
+@pytest.mark.parametrize("case", ["gains_offsets", "extra", "collinear"])
+@pytest.mark.parametrize("at_low_edge", [False, True])
+def test_float32_matches_float64_on_the_same_data(case, at_low_edge):
+    """The float32 path on cast float64 data stays within 1e-5 of float64
+    (also at the window's low edge, where ``s² I + G`` is worst conditioned,
+    and with a spanning mode near the per-frame span)."""
     with run_in("float64"):
-        data = _night(case)
+        data = _night("gains_offsets" if case == "collinear" else case)
+        if case == "collinear":
+            n = int(onp.asarray(data.vis).size)
+            modes = onp.ones((2, n))
+            modes[1] += 1e-3 * onp.random.default_rng(2).normal(size=n)
+            data = data.with_gains(
+                telescope=0.05, baseline=0.03, chromatic=0.01, modes=modes
+            )
         surface = _Surface(data, S_MAX)
-        s2_min = onp.exp(2 * surface._low)
-        kappa = _kappa(data, TRUTH, s2_min)
         log_s = _log_s(surface, 3)
+        if at_low_edge:
+            log_s = np.full_like(log_s, surface._low)
         chi2_ref, own_ref = (
             onp.asarray(a) for a in _whiten_at(surface, data, TRUTH)(log_s)
         )
+        data32 = cast_tree(data, "float32")
+        model32 = cast_tree(TRUTH, "float32")
     with run_in("float32"):
-        data = _night(case)
-        surface = _Surface(data, S_MAX)
-        args = _prediction_and_errors(TRUTH, data, {})
-        chi2, own = surface._at(*args, data)(log_s.astype("float32"))
-        assert chi2.dtype == np.float32
-    eps = float(onp.finfo(onp.float32).eps)
-    tol = 8 * eps * max(kappa, 1.0)
-    assert onp.allclose(chi2, chi2_ref, rtol=tol, atol=tol)
-    assert onp.allclose(own, own_ref, rtol=tol, atol=tol * 10)
+        surface = _Surface(data32, S_MAX)
+        args = _prediction_and_errors(model32, data32, {})
+        chi2, own = (
+            onp.asarray(a)
+            for a in surface._at(*args, data32)(log_s.astype("float32"))
+        )
+    assert chi2.dtype == onp.float32 and onp.isfinite(chi2).all()
+    # The Schur complement comes from Gram sums, so a spanning mode within
+    # 1e-3 of the per-frame span loses digits in float32 (1e-3 in χ², 0.07 in
+    # the normalizer; the rank-one path loses 1e-6); float64 is unaffected.
+    rtol, atol = (5e-3, 0.2) if case == "collinear" else (1e-5, 1e-4)
+    assert onp.allclose(chi2, chi2_ref, rtol=rtol, atol=0)
+    assert onp.allclose(own, own_ref, rtol=1e-5, atol=atol)
 
 
 def test_arrow_marginal_is_the_dense_cholesky_marginal():
@@ -345,3 +369,49 @@ def test_the_memory_model_bounds_the_compiled_working_set():
     model = 4 * 4 * _table_floats(data)  # float32, four points
     assert temp <= model < 20 * temp
     assert _N_NODES == 32
+
+
+def test_the_hessian_memory_model_bounds_the_compiled_working_set():
+    """``_hessian_groups`` budgets ``8 · _N_SITES · _table_floats`` bytes per
+    night (float64, a Hessian over the orbit's 8 sites and the diameter)."""
+    with run_in("float64"):
+        data = _night("gains_offsets")
+
+        def f(x):
+            shift = 1e-3 * np.sum(x[3:])  # every coordinate reaches the table
+            model = BinaryModelCartesian(x[0] + shift, x[1], x[2])
+            surface = _Surface(data, S_MAX)
+            return surface.score(
+                surface.chi2(model, data, None, 1.0), np.ones(2), data
+            )
+
+        x = np.asarray([6.2, -3.9, 0.31] + [0.1] * (_N_SITES - 3))
+        compiled = jax.jit(jax.hessian(f)).lower(x).compile()
+        temp = compiled.memory_analysis().temp_size_in_bytes
+        assert temp <= 8 * _N_SITES * _table_floats(data) < 20 * temp
+
+
+def test_an_all_padding_block_adds_nothing():
+    """A block whose rows are all padded contributes no χ² and no log det,
+    as in ``whiten_blocks``."""
+    rng = onp.random.default_rng(1)
+    n, m, k = 24, 3, 2
+    x_, span_ = rng.normal(size=n), rng.normal(size=(n, k))
+    local = rng.normal(size=(3, 8, m))
+    rows = onp.arange(n).reshape(3, 8)
+    rows[1] = n  # all padding
+    local[1] = rng.normal(size=(8, m))  # nonzero columns on padded rows
+    rows_j = rows
+    with run_in("float64"):
+        x, span = np.asarray(x_), np.asarray(span_)
+        rows_j, local_j = np.asarray(rows), np.asarray(local)
+        for s in (0.5, 1.0, 2.0):
+            problem = arrow_problem(x / s, rows_j, local_j / s, span / s)
+            chi2, norm, _ = arrow_at(problem, 1.0)
+            white, extra = whiten_blocks(
+                x / s, rows_j, local_j / s, span / s
+            )
+            assert float(chi2) == pytest.approx(
+                float(white @ white), rel=1e-9
+            )
+            assert float(norm) == pytest.approx(float(extra.sum()), rel=1e-9)

@@ -571,9 +571,12 @@ def _batch(surfaces, xs, data, cfg, dof, log_broad=None, batch_size=64):
 
 
 # The Hessian of the likelihood (forward over reverse through the scale
-# integral) holds one reverse working set per sampled coordinate (``x`` has the
-# orbit's 8 sites and the diameter); it is a sum over nights, so it is
-# accumulated in groups of nights that fit the memory budget.
+# integral) holds one reverse working set per sampled coordinate: ``x`` has
+# the orbit's 8 elements and the diameter (``_elements``, ``_model``); a fixed
+# diameter only overcounts. Measured at 1.18 working sets per coordinate
+# (tests/test_marginal_woodbury.py); ``_table_floats`` carries a margin of 2.
+# It is a sum over nights, so it is accumulated in groups of nights that fit
+# the budget.
 _N_SITES = 9
 
 
