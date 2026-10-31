@@ -115,6 +115,12 @@ class _ImageRegulariser(eqx.Module):
 
     probabilistic = False
 
+    beam_mas: float = eqx.field(static=True, default=None)
+
+    def _scale(self, model, b):
+        """``p / B`` and the flux ``Σ b``, for the normalised penalties."""
+        return self.image(model).pixel_scale_mas / self.beam_mas, np.sum(b)
+
 
 def _differences(b):
     """Steps between neighbouring pixels along rows and columns.
@@ -130,31 +136,48 @@ def _differences(b):
 
 
 class TSV(_ImageRegulariser):
-    """Total squared variation: ``weight * Σ (Δx b)² + (Δy b)²``.
+    """Total squared variation: ``weight * Σ((Δx b)² + (Δy b)²) / (F² (p/B)⁴)``.
 
     A quadratic smoothness penalty, so it can be fitted by Levenberg–Marquardt
-    (Kuramochi et al. 2018, ApJ 858, 56).
+    (Kuramochi et al. 2018, ApJ 858, 56). ``F`` is the image's flux (1), ``p``
+    its pixel scale and ``B`` the beam, so the weight is dimensionless and the
+    same at any grid size or flux. Source: eht-imaging ``stv2`` (Chael et al.
+    2018), ``norm_reg=True``.
 
     Parameters
     ----------
     weight : float
-        Strength of the penalty.
+        Strength of the penalty, relative to a unit-sum image over ``B``.
     path : str, optional
         Path of the Image in the model (e.g. ``"env"``); ``None`` if the model
         is the Image itself.
     smoothed : bool, optional
         Penalize the Image's ``smoothed()`` pixels (see ``blur_fwhm_mas``)
         instead of the raw ones. Default ``False``.
+    beam_mas : float
+        The beam ``B`` in mas, a fixed angular scale (eht-imaging's
+        ``beam_size``); required. ``B = p`` gives the old unnormalised weight.
+    n_data : float, optional
+        Multiplies the weight (default 1). eht-imaging's data terms are means,
+        ``χ²/N`` (``chisq_vis``, imager_utils.py:453), virgil's ½χ² is a sum,
+        so eht-imaging's weight ``β`` with data weight ``α`` is
+        ``weight=β, n_data=N/(2α)`` for ``N`` real data.
     """
 
-    def __init__(self, weight, path=None, smoothed=False):
-        self.weight = np.asarray(weight, dtype=float)
+    def __init__(
+        self, weight, path=None, smoothed=False, *, beam_mas, n_data=1.0
+    ):
+        self.weight = np.asarray(weight * n_data, dtype=float)
         self.path = path
         self.smoothed = bool(smoothed)
+        self.beam_mas = beam_mas
 
     def residuals(self, model):
-        dx, dy = _differences(self.pixels(model))
-        return np.sqrt(2.0 * self.weight) * np.concatenate(
+        b = self.pixels(model)
+        ratio, flux = self._scale(model, b)
+        dx, dy = _differences(b)
+        norm = flux**2 * ratio**4
+        return np.sqrt(2.0 * self.weight / norm) * np.concatenate(
             [np.ravel(dx), np.ravel(dy)]
         )
 
@@ -163,19 +186,22 @@ class TSV(_ImageRegulariser):
 
 
 class TV(_ImageRegulariser):
-    """Total variation: ``weight * Σ √((Δx b)² + (Δy b)² + ε²)``.
+    """Total variation: ``weight * Σ √((Δx b)² + (Δy b)² + ε²) / (F p/B)``.
 
     Favours piecewise-flat images with sharp edges (Rudin, Osher & Fatemi 1992,
     Physica D 60, 259). ``ε`` makes it differentiable where the image is flat.
     It is averaged over the four flips of the image, so it does not depend on
     which neighbour each forward difference pairs a pixel with. It is not
     isotropic: a sharp edge along a diagonal costs about a fifth more per unit
-    length than one along a pixel axis.
+    length than one along a pixel axis. ``F``, ``p`` and ``B`` are the flux,
+    pixel scale and beam, so the weight is dimensionless and independent of
+    grid size and flux. Source: eht-imaging ``stv`` (Chael et al. 2018),
+    ``norm_reg=True``.
 
     Parameters
     ----------
     weight : float
-        Strength of the penalty.
+        Strength of the penalty, relative to a unit-sum image over ``B``.
     epsilon : float, optional
         Smoothing scale, as a fraction of the mean pixel flux (default 1e-2).
     path : str, optional
@@ -183,19 +209,38 @@ class TV(_ImageRegulariser):
     smoothed : bool, optional
         Penalize the Image's ``smoothed()`` pixels instead of the raw ones
         (default ``False``).
+    beam_mas : float
+        The beam ``B`` in mas, a fixed angular scale (eht-imaging's
+        ``beam_size``); required. ``B = p`` gives the old unnormalised weight.
+    n_data : float, optional
+        Multiplies the weight (default 1). eht-imaging's data terms are means,
+        ``χ²/N`` (``chisq_vis``, imager_utils.py:453), virgil's ½χ² is a sum,
+        so eht-imaging's weight ``β`` with data weight ``α`` is
+        ``weight=β, n_data=N/(2α)`` for ``N`` real data.
     """
 
     epsilon: float
 
-    def __init__(self, weight, epsilon=1e-2, path=None, smoothed=False):
-        self.weight = np.asarray(weight, dtype=float)
+    def __init__(
+        self,
+        weight,
+        epsilon=1e-2,
+        path=None,
+        smoothed=False,
+        *,
+        beam_mas,
+        n_data=1.0,
+    ):
+        self.weight = np.asarray(weight * n_data, dtype=float)
         self.epsilon = np.asarray(epsilon, dtype=float)
         self.path = path
         self.smoothed = bool(smoothed)
+        self.beam_mas = beam_mas
 
     def value(self, model):
         b = self.pixels(model)
-        eps = self.epsilon / b.size
+        ratio, flux = self._scale(model, b)
+        eps = self.epsilon * flux / b.size
 
         def total(image):
             dx, dy = _differences(image)
@@ -204,7 +249,9 @@ class TV(_ImageRegulariser):
         # Forward differences pair each step with a preferred neighbour;
         # averaging over the four flips of the image removes that bias.
         flips = [b, b[::-1], b[:, ::-1], b[::-1, ::-1]]
-        return self.weight * sum(total(f) for f in flips) / 4.0
+        return (
+            self.weight * sum(total(f) for f in flips) / 4.0 / (flux * ratio)
+        )
 
 
 class MaxEntropy(_ImageRegulariser):
