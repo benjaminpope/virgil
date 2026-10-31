@@ -88,6 +88,14 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `evaluate` | [Lee & Greengard (2005)](#leegreengard2005), [ADS](https://ui.adsabs.harvard.edu/abs/2005JCoPh.206....1L/abstract), [doi:10.1016/j.jcp.2004.12.004](https://doi.org/10.1016/j.jcp.2004.12.004) | after |
 | `spread` | [Oudoumanessah & Iollo](#nufftax), [GitHub](https://github.com/GragasLab/nufftax) | after |
 
+### `virgil._orbit_coordinates`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `sample_z` | [Shoemake (1992)](#shoemake1992) | after |
+| `z_log_prior` | [Shoemake (1992)](#shoemake1992) | after |
+| `z_to_ti` | [Thiele (1883)](#thiele1883), [ADS](https://ui.adsabs.harvard.edu/abs/1883AN....104..245T/abstract) | after |
+
 ### `virgil.aliases`
 
 | Symbol | Source | Relation |
@@ -601,6 +609,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="schwab1984"></a>**Schwab (1984)**. Relaxing the isoplanatism assumption in self-calibration; applications to low-frequency radio interferometry. [ADS](https://ui.adsabs.harvard.edu/abs/1984AJ.....89.1076S/abstract). AJ 89, 1076; bibcode 1984AJ.....89.1076S; the Cotton-Schwab major cycle (residual from the visibilities). Cotton is cited there as a private communication. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="selfliang1987"></a>**Self & Liang (1987)**. Asymptotic properties of maximum likelihood estimators and likelihood ratio tests under nonstandard conditions. [ADS](https://ui.adsabs.harvard.edu/abs/1987JASA...82..605S/abstract), [doi:10.1080/01621459.1987.10478472](https://doi.org/10.1080/01621459.1987.10478472). Nonstandard conditions: a parameter on the boundary, or a nuisance parameter unidentified under the null.
 - <a id="selig2013"></a>**Selig et al. (2013)**. NIFTY - Numerical Information Field Theory - a versatile Python library for signal inference. [arXiv:1301.4499](https://arxiv.org/abs/1301.4499), [ADS](https://ui.adsabs.harvard.edu/abs/2013A&A...554A..26S/abstract).
+- <a id="shoemake1992"></a>**Shoemake (1992)**. Uniform random rotations. Graphics Gems III, 124-132; derived: z (u = z_u^2, V = z_v^2) is the quaternion form of SO(3)'s Haar measure, zeta (k + ih = zeta^2) the same square-root map for the eccentricity vector; prior recovery tested in tests/test_orbit_coordinates.py. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="sivaramakrishnan2023"></a>**Sivaramakrishnan et al. (2022)**. The Near Infrared Imager and Slitless Spectrograph for the James Webb Space Telescope. IV. Aperture Masking Interferometry. [arXiv:2210.17434](https://arxiv.org/abs/2210.17434), [ADS](https://ui.adsabs.harvard.edu/abs/2023PASP..135a5003S/abstract). PASP 135, 015003 (2023).
 - <a id="skilling1989"></a>**Skilling (1989)**. Classic Maximum Entropy. [doi:10.1007/978-94-015-7860-8_3](https://doi.org/10.1007/978-94-015-7860-8_3). Maximum Entropy and Bayesian Methods, Cambridge 1988. docs/contributors.md links its Skilling 1989 entry to DOI ..._4, which Crossref gives as the Gull 1989 chapter.
 - <a id="skillingbryan1984"></a>**Skilling & Bryan (1984)**. Maximum entropy image reconstruction: general algorithm. [ADS](https://ui.adsabs.harvard.edu/abs/1984MNRAS.211..111S/abstract). MNRAS 211, 111; bibcode 1984MNRAS.211..111S; precondition="diag" generalizes its entropy metric to the local curvature of data and regularizers. *Not yet verified against arXiv, Crossref or ADS.*
