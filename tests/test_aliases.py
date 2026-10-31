@@ -1771,6 +1771,27 @@ def test_the_engine_defaults_need_no_per_system_arguments():
     assert sig["vis_amp"].default is True  # V² amplitude (13)
 
 
+def test_period_cut_is_twice_the_closest_gap_or_the_night_bound():
+    kw = dict(resolution=2.0)
+    # nights 0, 1.99, 50, 100: 2 * 1.99 d beats P_night (0.2 d floor, no motion)
+    assert aliases.period_cut(
+        [0.0, 1.99, 50.0, 100.0], 10.0, 0.0, **kw
+    ) == pytest.approx(3.98)
+    # a long night bound wins over twice the closest gap
+    p_night = aliases.period_window([0.0, 100.0], 10.0, 0.5, **kw)[0]
+    assert aliases.period_cut(
+        [0.0, 1.0, 100.0], 10.0, 0.5, **kw
+    ) == pytest.approx(p_night)
+    # repeated times are one night; unsorted input is fine
+    assert aliases.period_cut(
+        [5.0, 0.0, 5.0, 20.0], 10.0, 0.0, **kw
+    ) == pytest.approx(10.0)
+    # one night: the night bound alone
+    assert aliases.period_cut([3.0, 3.0], 10.0, 0.0, **kw) == pytest.approx(
+        0.2
+    )
+
+
 def test_period_window_limits_on_simple_inputs():
     # Upper end: 4 x the span. Lower end: a night of 0.1 d at a field of
     # 10 mas and a resolution of 2 mas moves 2π·10·0.1/P mas, at most
