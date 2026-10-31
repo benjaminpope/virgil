@@ -10,9 +10,10 @@ the data (gains, closure offsets and spanning gain modes marginalized as in
 peak is the mean and covariance of ``(p, v, ln f)`` at the quoted errors, with
 the per-block counts, minimum χ² and Hessians that rescale it to another error
 scale in closed form (for data without gains or closure offsets, where a scale
-factors out of the covariance). The velocity variance is
-``σ_p² / Σ_j (t_j - t̄)²`` (``12 σ_p² / span²`` for uniform sampling), so a short
-or faint night's velocity carries no weight and no threshold is needed.
+factors out of the covariance). For frames of error ``σ`` the velocity variance
+is ``σ² / Σ_j (t_j - t̄)²``; in terms of the night position's error
+``σ_p² = σ² / N`` it is ``12 σ_p² / span²`` for uniform sampling. A short or
+faint night's velocity therefore carries no weight and no threshold is needed.
 """
 
 import dataclasses
@@ -281,7 +282,12 @@ def _summarize(d, positions, i, diam, amp_range):
             ):
                 continue
             hess = onp.asarray(_hessians(problem, zj), float)
-            if not onp.all(onp.isfinite(hess)):
+            # negative curvature is a saddle, not a peak (a flat direction,
+            # such as the velocity of one frame, is allowed)
+            lam = onp.linalg.eigvalsh(onp.sum(hess, 0))
+            if not onp.all(onp.isfinite(hess)) or lam.min() < -(
+                onp.finfo(float).eps * lam.max()
+            ):
                 continue
             peak = NightPeak(
                 onp.asarray(zj, float),

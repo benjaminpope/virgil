@@ -80,11 +80,10 @@ def test_the_velocity_variance_scales_as_one_over_span_squared():
     assert onp.allclose(
         peak.cov[2:4, 2:4] * k**2, base.cov[2:4, 2:4], rtol=1e-3
     )
-    # and the variance matches σ_p² / Σ (t_j - t̄)² to the geometry of the
-    # baselines: within a factor of a few of the position's
+    # σ_v² Σ(t_j − t̄)² / σ_p² is N (σ_p² = σ²/N), up to the baselines' geometry
     s = _fit(data)
-    ratio = base.cov[2, 2] * s.t_ss / base.cov[0, 0]
-    assert 0.2 < ratio < 5.0
+    ratio = base.cov[2, 2] * s.t_ss / base.cov[0, 0] / s.n_frames
+    assert 0.5 < ratio < 2.0
 
 
 def test_the_covariance_scales_with_the_error_scale():
