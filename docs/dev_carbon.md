@@ -3,25 +3,26 @@
 
 An estimate of the energy and carbon emitted in developing and validating virgil: AI coding assistants, continuous integration and cluster jobs. It is refreshed by hand with `python3 scripts/dev_carbon.py`, so it lags the repository.
 
-Estimated development carbon for `benjaminpope/virgil` from 2026-03-03 to 2026-10-23: **328 kg CO₂e** (range 299–459 kg), from 643 kWh (range 555–995 kWh). Data analysis runs are listed separately below and are not in this total.
+Estimated development carbon for `benjaminpope/virgil` from 2026-03-03 to 2026-10-29: **337 kg CO₂e** (range 303–472 kg), from 669 kWh (range 568–1,036 kWh). Data analysis runs are listed separately below and are not in this total.
 
 ## In everyday terms
 
-The total of 328 kg CO₂e set against the three nearest items, on a log scale, in the [ALPLA CO₂ Comparison Tool](https://www.alpla.com/en/sustainability/co2-comparison-tool): the table the carbon tool uses for its everyday equivalents. The per-item figures are ALPLA's own, read from the calculator on 2026-10-01 (ALPLA is a plastic packaging maker), and have not been checked independently. The range follows the low and high totals.
+The total of 337 kg CO₂e set against the three nearest items, on a log scale, in the [ALPLA CO₂ Comparison Tool](https://www.alpla.com/en/sustainability/co2-comparison-tool): the table the carbon tool uses for its everyday equivalents. The per-item figures are ALPLA's own, read from the calculator on 2026-10-01 (ALPLA is a plastic packaging maker), and have not been checked independently. The range follows the low and high totals.
 
 | Item | kg CO₂e each | Equivalent to | Range |
 |---|---:|---:|---:|
-| Tree's annual CO₂ uptake | 24.62 | 13 | 12–19 |
-| Manufactured smartphone | 80 | 4.1 | 3.7–5.7 |
-| Economy flight Zurich–London | 232 | 1.4 | 1.3–2 |
+| Manufactured smartphone | 80 | 4.2 | 3.8–5.9 |
+| Economy flight Zurich–London | 232 | 1.5 | 1.3–2 |
+| Year of driving an average car | 4,600 | 0.073 | 0.066–0.1 |
 
 ## By source
 
 | Source | Items | kWh | kWh range | kg CO₂e | kg range |
 |---|---:|---:|---:|---:|---:|
 | OzSTAR/NT Slurm jobs | 2928 | 280 | 279–315 | 207 | 207–233 |
-| Claude Code | 746 | 308 | 247–550 | 102 | 81.5–181 |
+| Claude Code | 682 | 308 | 247–550 | 102 | 81.5–181 |
 | GitHub Actions CI | 9889 | 34.4 | 21.6–34.4 | 12.7 | 7.97–12.7 |
+| Gemini (Antigravity) | 4021 | 26.1 | 13.4–40.8 | 8.63 | 4.43–13.5 |
 | Copilot cloud agent and review | 261 | 12.2 | 3.41–47 | 4.05 | 1.14–15.5 |
 | VS Code Copilot Chat | 253 | 9.35 | 3.82–48.9 | 3.09 | 1.26–16.1 |
 
@@ -30,8 +31,9 @@ The total of 328 kg CO₂e set against the three nearest items, on a log scale, 
 | Source | Type | Items | kWh | kg CO₂e | kg range |
 |---|---|---:|---:|---:|---:|
 | OzSTAR/NT Slurm jobs | GPU job | 2295 | 269 | 199 | 199–225 |
-| Claude Code | model calls | 746 | 308 | 102 | 81.5–181 |
+| Claude Code | model calls | 682 | 308 | 102 | 81.5–181 |
 | GitHub Actions CI | CI | 9889 | 34.4 | 12.7 | 7.97–12.7 |
+| Gemini (Antigravity) | model calls | 4021 | 26.1 | 8.63 | 4.43–13.5 |
 | OzSTAR/NT Slurm jobs | CPU job | 633 | 10.8 | 7.97 | 7.97–7.97 |
 | Copilot cloud agent and review | code review | 202 | 11 | 3.63 | 0.99–14 |
 | VS Code Copilot Chat | local chat | 88 | 6.23 | 2.06 | 1.26–10.6 |
@@ -51,9 +53,11 @@ By model or workflow:
 
 | Source | Model or workflow | Items | kg CO₂e | kg range |
 |---|---|---:|---:|---:|
-| Claude Code | Claude Opus | 344 | 79.8 | 63.6–145 |
-| Claude Code | Claude Sonnet | 387 | 21.6 | 17.9–36.5 |
+| Claude Code | Claude Opus | 291 | 79.8 | 63.6–145 |
+| Claude Code | Claude Sonnet | 376 | 21.6 | 17.9–36.5 |
 | GitHub Actions CI | automated tests | 1733 | 12.3 | 7.7–12.3 |
+| Gemini (Antigravity) | gemini-4-argon | 1942 | 7.46 | 3.38–10.3 |
+| Gemini (Antigravity) | gemini-3.8-flash-tiered | 2079 | 1.16 | 1.05–3.19 |
 | VS Code Copilot Chat | gpt-5.3-codex | 172 | 1.07 | 0.0272–5.77 |
 | VS Code Copilot Chat | gpt-5.6-terra | 23 | 1.02 | 0.509–5.94 |
 | VS Code Copilot Chat | claude-sonnet-5 | 19 | 0.393 | 0.393–1.52 |
@@ -82,27 +86,27 @@ By model or workflow:
 | GitHub Actions CI | .github/workflows/review-response-label.yml | 56 | 0 | 0–0 |
 | GitHub Actions CI | full CI on label | 3 | 0 | 0–0 |
 
-## By feature (top 15 of 463)
+## By feature (top 15 of 485)
 
-Each item is attributed to a pull request through its branch, the commit a job pinned, or the PR a Copilot run served, and labelled with the PR title.
+Each item is attributed to a pull request through its branch, the commit a job pinned, the PR a Copilot run served, or the PR a Gemini review names, and labelled with the PR title. Gemini work with no PR in this repository (audits, reviews of other repositories) is labelled by its project.
 
 | Feature | Items | kg CO₂e | kg range |
 |---|---:|---:|---:|
 | Validation: imaging contests | 2293 | 199 | 198–225 |
-| main / unattributed | 605 | 44 | 33.8–90.4 |
+| main / unattributed | 558 | 44 | 33.8–90.4 |
 | [#364](https://github.com/benjaminpope/virgil/pull/364) Fix contributors nesting; drop duplicate docs list from README and index | 96 | 16 | 13.3–27 |
+| Gemini: virgil audits and other work | 2021 | 6.41 | 2.95–9.22 |
 | [#201](https://github.com/benjaminpope/virgil/pull/201) virgil docs minor changes | 29 | 4.1 | 3.2–7.7 |
 | [#401](https://github.com/benjaminpope/virgil/pull/401) Docs examples: fix failing pages and stale outputs from the GPU gate | 82 | 3.65 | 3.58–3.87 |
 | [#435](https://github.com/benjaminpope/virgil/pull/435) Temper the short-arc sign gate and the cut's errors by f (Gl 229 gate) | 109 | 2.71 | 2.68–2.78 |
 | [#399](https://github.com/benjaminpope/virgil/pull/399) Release 0.4.0: version, uv.lock and restructured changelog | 204 | 1.58 | 1.17–2.07 |
 | [#76](https://github.com/benjaminpope/virgil/pull/76) Imaging Stage 3: Problem, fit, regularisers, L-curves and diagnose | 25 | 1.43 | 1.07–2.84 |
+| Gemini: virgil-validation audits and other work | 716 | 1.4 | 0.75–2.14 |
 | Validation: simulation-based calibration | 198 | 1.35 | 1.35–1.35 |
-| [#110](https://github.com/benjaminpope/virgil/pull/110) Imaging Stage 5d: a Gauss–Newton NUTS mass matrix, and the sampling tutorial; plan PMOIRED parity | 13 | 1.34 | 1.07–2.41 |
-| [#91](https://github.com/benjaminpope/virgil/pull/91) Imaging Stage 5c: error-bar scale, sampling basics, and imaging tutorials 2–4 | 16 | 1.28 | 0.977–2.47 |
+| [#110](https://github.com/benjaminpope/virgil/pull/110) Imaging Stage 5d: a Gauss–Newton NUTS mass matrix, and the sampling tutorial; plan PMOIRED parity | 10 | 1.34 | 1.07–2.41 |
+| [#91](https://github.com/benjaminpope/virgil/pull/91) Imaging Stage 5c: error-bar scale, sampling basics, and imaging tutorials 2–4 | 13 | 1.28 | 0.977–2.47 |
 | [#292](https://github.com/benjaminpope/virgil/pull/292) Orbit search design (§14 revision) | 65 | 1.2 | 0.994–1.99 |
 | [#369](https://github.com/benjaminpope/virgil/pull/369) Add DiskPipeline (provisional): rings and GP disk models | 150 | 1.03 | 0.847–1.58 |
-| [#516](https://github.com/benjaminpope/virgil/pull/516) radio_toeplitz: dirty-beam (Toeplitz) χ² for one-Image radio fits (PR 1, core) | 60 | 1.02 | 0.865–1.52 |
-| [#347](https://github.com/benjaminpope/virgil/pull/347) PolarDisk P5: tutorial, a planet in a gap between inclined rings | 58 | 0.942 | 0.741–1.63 |
 
 
 ## Copilot cross-check
@@ -120,11 +124,13 @@ Run time times an assumed token rate, against billing (AI Credits or premium req
 
 ## Excluded data analysis
 
-Compute for science with virgil (fits to observations, data reduction and archive downloads), and anything whose purpose was unclear, is costed the same way but kept out of the total. It is shown only in aggregate.
+Compute for science with virgil (fits to observations, data reduction and archive downloads), and anything whose purpose was unclear, is costed the same way but kept out of the total. It is shown only in aggregate. So are Gemini conversations about other projects (the website, cluster scripts, tool set-up) and the few that name no project.
 
 | Item | Records | kWh | kg CO₂e | kg range |
 |---|---:|---:|---:|---:|
-| Excluded data analysis | 579 | 89.1 | 32.4 | 26–55.5 |
+| Excluded data analysis | 1,755 | 93 | 33.6 | 27–58.4 |
+| Gemini work on other projects | 1,056 | 6.97 | 2.3 | 1.22–3.61 |
+| Gemini work with no project | 74 | 0.592 | 0.195 | 0.0906–0.267 |
 
 ## Scope and caveats
 
@@ -132,6 +138,7 @@ Compute for science with virgil (fits to observations, data reduction and archiv
 - **Claude Code** was used from 2026-09-28, and is counted from its local transcripts on one machine: sessions in the virgil repository and its worktrees, but not in the separate virgil-validation and virgil-vlti repositories. Sessions run in the cloud (claude.ai, cloud agents) or on other machines are not stored locally and are not captured.
 - **Before that, VS Code Copilot Chat** was the main assistant (from March 2026). Its logs give prompt and output tokens per request but no cache split, so prompts are costed as uncached input, which errs high.
 - **GPT and other non-Claude models** have no published per-token energy. Each is assigned an assumed Claude size class (e.g. GPT-5.6 Sol and Terra and GPT-5.5 as Opus class, GPT-5.6 Luna and GPT-5.3-Codex as Sonnet class), with a range across the neighbouring classes.
+- **Gemini (Google Antigravity)** has been used since 2026-10-27 for pull-request reviews and code audits (Gemini 4 Argon, with Gemini Flash for some calls). Token counts per model call come from Antigravity's local conversation databases. Reviews and audits of virgil and virgil-validation count; each conversation is attributed by the repository its review or audit names, else its workspace. Google publishes no per-token energy, so Argon is assumed Opus class and Flash Haiku class, with a range across the neighbouring classes. Google's measured 0.24 Wh for the median Gemini Apps text prompt (Elsworth et al. 2025) is far below the per-call figure here, as review calls carry contexts of 10⁴–10⁵ tokens.
 - **Copilot cloud agent and code review** expose no token counts. Their billed AI Credits are converted to tokens at the rate measured on the local chat logs (572 credits per million tokens), with a factor-of-two range; months without credits use run time times a token rate.
 - **Data centres and grids.** Model inference uses TokenClimate's PUE (1.14) and grid factor; GitHub runners assume a hyperscale PUE of 1.18 and the US average grid; NT assumes Green Algorithms' default PUE of 1.67 and the Victorian grid. None of these is published for the specific facilities.
 - **Cache reads dominate the uncertainty** of the Claude figure. They are almost all of its tokens, costed at 0.08 times the input energy (range 0.05–0.20); at 1.0 the Claude figure would be several times larger.
@@ -145,6 +152,7 @@ Every figure is an estimate with a low, mid and high value; tables show the mid 
 |---|---|---|---|
 | Claude Code | Token counts by type from local transcripts | TokenClimate per-token factors by model family | Cache reads at 0.08× input energy (range 0.05–0.2); PUE 1.14; 0.376 g CO₂e per server Wh |
 | VS Code Copilot Chat | Prompt and output tokens per request from local chat logs | TokenClimate factors for an assumed model class | GPT and other non-Claude models placed in a Claude size class by assumption; prompts costed as uncached input; the high value counts every model call's prompt; requests without counts take the median of counted ones |
+| Gemini (Antigravity) | Uncached input, cached-read input and output tokens per model call from local conversation databases | TokenClimate factors for an assumed model class | Gemini 4 Argon placed in the Opus class and Flash models in the Haiku class by assumption; cache reads as for Claude; only the configured projects count. Cross-check: Google's 0.24 Wh per median Gemini Apps text prompt (Elsworth et al. 2025) |
 | Copilot cloud agent and review | Workflow run time; billed AI Credits and premium requests | Tokens from credits (or run time) on TokenClimate Sonnet factors | 572 credits per million tokens, measured on local chat (measured); account-wide billing attributed by this repository's share of local use or agent PRs |
 | GitHub Actions CI | Runner time per job | Green Algorithms | 4 vCPU at 4.38 W each, 16 GB, usage 0.5–1.0, PUE 1.18, 0.37 kg/kWh |
 | OzSTAR/NT Slurm jobs | sacct allocation and run time; NT Job Report usage | Green Algorithms | EPYC 7543 at 7.03 W per core, A100 at 400 W, measured usage where reported, PUE 1.67, Victorian grid 0.74 kg/kWh |
@@ -156,5 +164,6 @@ Not included: Claude sessions run in the cloud or on other machines, the energy 
 - TokenClimate, methodology `tokenclimate-v3-2026-09`, https://tokenclimate.com/en/methodology
 - Lannelongue, L., Grealey, J. & Inouye, M. (2021), Green Algorithms: Quantifying the carbon footprint of computation, *Advanced Science* 8, 2100707, https://doi.org/10.1002/advs.202100707
 - DCCEEW (2026), *Australian National Greenhouse Accounts Factors*, Table 1, https://www.dcceew.gov.au/climate-change/publications/national-greenhouse-accounts-factors
+- Elsworth, C. et al. (2025), Measuring the environmental impact of delivering AI at Google scale, https://arxiv.org/abs/2508.15734
 - US EPA, eGRID2022 (US average grid intensity, for GitHub-hosted runners)
 

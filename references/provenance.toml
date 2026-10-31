@@ -1680,3 +1680,15 @@ title = "Period-alias band search for sparsely sampled orbits"
 used_in = ["virgil.aliases:fit_orbit_aliases"]
 note = "No published source. The search over cycle-count bands, its nats thresholds and its night-outlier mixture (marginalized rate, Beta(1/2, 1/2) (Jeffreys)) are virgil's own design, provisional and not independently validated end to end."
 verified = false
+
+[ref.elsworth2025]
+used_in = []
+authors = "Elsworth et al."
+year = 2025
+title = "Measuring the environmental impact of delivering AI at Google Scale"
+arxiv = "2508.15734"
+bibcode = "2025arXiv250815734E"
+note = "Google's measured 0.24 Wh per median Gemini Apps text prompt; a cross-check for the Gemini figure in the development-carbon estimate (docs/dev_carbon.md)"
+role = "context"
+verified = true
+verified_via = "arxiv"

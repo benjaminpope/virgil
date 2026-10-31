@@ -1,0 +1,1 @@
+scripts/code_shape.py: the stamp lint now sees `# deliberate:` stamps anywhere on a multi-line def signature, bans more vacuous reasons (jit/float64 boundaries, stage/registry/argparse callables, test-only reasons, bare line counts), and keeps existing vacuous stamps in a shrink-only allow-list (`tests/lint/stamp_allowlist.txt`)

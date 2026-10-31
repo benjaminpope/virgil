@@ -98,6 +98,8 @@ class ImagingPipeline(_Pipeline):
         "quicklook",
     )
     _DEFAULTS = {
+        # deliberate: the base of the members' pixel scales, which are this
+        # and 1.5 times it (see _member_setup), not the engine's (2, 3, 4).
         "oversample": 3.0,
         "field_fwhms": 6.0,
         "field_mas": None,
@@ -106,7 +108,7 @@ class ImagingPipeline(_Pipeline):
         "star_threshold": 5.0,
         "sigmas": [1.0, 2.0, 4.0],
         "lengths_beam": [0.5, 1.0, 2.0],
-        "grid_growths": 2,
+        "grid_growths": None,
         "members": 8,
         "member_grids": False,
         "method": None,
@@ -129,7 +131,8 @@ class ImagingPipeline(_Pipeline):
         if s["field_mas"] is not None:
             _positive(s, "field_mas")
         _integer(s, "max_npix", 4)
-        _integer(s, "grid_growths", 0)
+        if s["grid_growths"] is not None:
+            _integer(s, "grid_growths", 0)
         _integer(s, "members", 1)
         if s["members"] > 8:
             raise ValueError(
@@ -224,16 +227,24 @@ def _grid_spec(s, field_mas, point=None, aniso=True):
     sigmas, lengths = sorted(s["sigmas"]), sorted(s["lengths_beam"])
     if point:
         sigmas, lengths = [point[0]], [point[1]]
+    # None leaves the engine default.
+    growths = (
+        {}
+        if s["grid_growths"] is None
+        else {"gp_growths": int(s["grid_growths"])}
+    )
     return EnsembleSpec(
         families=("gp",),
         oversample=(float(s["oversample"]),),
+        # deliberate: one member is one (start, scale, field); _member_setup
+        # replaces these per member, so these are not the engine's sets.
         field_factors=(1.0,),
         starts=("moments",),
         max_npix=int(s["max_npix"]),
         field_mas=field_mas,
         gp_sigmas=tuple(sigmas),
         gp_lengths=tuple(lengths),
-        gp_growths=0 if point else int(s["grid_growths"]),
+        **({"gp_growths": 0} if point else growths),
         gp_axis_ratio=_ANISOTROPIC_BELOW if aniso else None,
     )
 

@@ -6,6 +6,8 @@ Pure stdlib: parses fixture snippets only.
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location(
     "code_shape", ROOT / "scripts" / "code_shape.py"
@@ -199,20 +201,127 @@ def test_genuine_reason_passes():
     reason = "custom_jvp rule: the primal is reused by the tangent"
     assert _found(_STAMPED.format(reason)) == []
     assert (
-        shape.find_vacuous_stamps(
-            {"m.py": _STAMPED.format(reason)}, {"m.py": ""}
-        )
-        == []
+        shape.find_vacuous_stamps({"m.py": _STAMPED.format(reason)}, []) == []
     )
 
 
-def test_changed_old_stamp_is_judged_and_untouched_is_not():
-    old = _STAMPED.format("jit boundary")
-    new = _STAMPED.format("named step")
-    assert shape.find_vacuous_stamps({"m.py": old}, {"m.py": old}) == []
-    assert shape.find_vacuous_stamps({"m.py": new}, {"m.py": old}) == [
-        "m.py:1 # deliberate: named step"
-    ]
+def _key(reason, q="_h"):
+    return ("m.py", q, reason)
+
+
+def test_vacuous_stamp_off_the_allowlist_fails_and_on_it_passes():
+    src = _STAMPED.format("named step")
+    assert len(shape.find_vacuous_stamps({"m.py": src}, [])) == 1
+    assert shape.find_vacuous_stamps({"m.py": src}, [_key("named step")]) == []
+
+
+def test_changed_listed_stamp_is_judged_again():
+    new = _STAMPED.format("test seam")
+    got = shape.find_vacuous_stamps({"m.py": new}, [_key("named step")])
+    assert len(got) == 2  # the new one is unlisted; the old entry has no stamp
+
+
+def test_allowlist_may_only_shrink():
+    src = _STAMPED.format("named step")
+    k = _key("named step")
+    assert shape.find_vacuous_stamps({"m.py": src}, [k], [k]) == []
+    got = shape.find_vacuous_stamps({"m.py": src}, [k], [])
+    assert len(got) == 1 and "may only shrink" in got[0]
+    stale = shape.find_vacuous_stamps({"m.py": ""}, [k], [k])
+    assert len(stale) == 1 and "remove it" in stale[0]
+
+
+def test_duplicate_stamps_need_duplicate_entries():
+    src = _STAMPED.format("named step") + _STAMPED.format("named step")
+    assert (
+        len(shape.find_vacuous_stamps({"m.py": src}, [_key("named step")]))
+        == 1
+    )
+
+
+def test_allowlist_file_round_trips_and_checks_its_count():
+    keys = [_key("named step"), _key("a :: b", "f")]
+    text = shape.format_allowlist(keys)
+    assert shape.read_allowlist(text) == sorted(keys)
+    for bad in (text.replace("count: 2", "count: 1"), text + "x :: y :: z\n"):
+        with pytest.raises(ValueError):
+            shape.read_allowlist(bad)
+
+
+def test_committed_allowlist_matches_the_tree():
+    tree = shape._read_tree()
+    listed = shape.read_allowlist(shape.STAMP_ALLOWLIST.read_text())
+    assert shape.find_vacuous_stamps(tree, listed) == []
+
+
+_MULTI = "{above}def _h({defl}\n    a,{mid}\n    b,\n):{close}\n    return 1\n\n\ndef f():\n    return _h(1, 2)\n"
+
+
+def _multi(where, reason):
+    parts = dict(above="", defl="", mid="", close="")
+    mark = f"# deliberate: {reason}"
+    parts[where] = mark + "\n" if where == "above" else "  " + mark
+    return _MULTI.format(**parts)
+
+
+def test_stamp_on_any_line_of_a_multiline_signature_counts():
+    for where in ("above", "defl", "mid", "close"):
+        good, bad = (
+            _multi(where, "a lax.scan body"),
+            _multi(where, "jit boundary"),
+        )
+        line = 2 if where == "above" else 1
+        assert _found(good) == [], where
+        assert _found(bad) == [f"m.py:{line} _h"], where
+        assert len(shape._stamps({"m.py": bad})) == 1, where
+        assert len(shape.find_vacuous_stamps({"m.py": bad}, [])) == 1, where
+
+
+def test_body_comment_does_not_stamp_a_multiline_def():
+    src = _MULTI.format(above="", defl="", mid="", close="").replace(
+        "    return 1", "    # deliberate: a lax.scan body\n    return 1"
+    )
+    assert _found(src) == ["m.py:1 _h"]
+    assert shape._stamps({"m.py": src}) == []
+
+
+def test_annotated_signature_ends_at_its_own_colon():
+    src = (
+        "def _h(a: dict[str, int],\n       b: int = 1) -> dict:  # deliberate: a lax.scan body\n"
+        "    return a\n\n\ndef f():\n    return _h({})\n"
+    )
+    assert _found(src) == []
+
+
+def test_audited_vacuous_reasons_are_rejected():
+    for reason in (
+        "stage callable",
+        "stage callable, patched by tests",
+        "one named step per part",
+        "dispatch-table callable (_SECTIONS)",
+        "argparse callback",
+        "registry callback",
+        "float64 boundary (in_float64) around the NUTS run",
+        "jit/vmap boundary, 59 lines",
+        "speed",
+        "readability",
+        "60 lines",
+        "85 lines, tested directly",
+        "tests call it directly",
+        "imported by aliases.py; unit-tested",
+        "named check, keeps numpyro_model short",
+    ):
+        assert shape._vacuous(reason), reason
+
+
+def test_specific_reasons_are_not_vacuous():
+    for reason in (
+        "custom_jvp rule, an implicit-function derivative",
+        "lax.while_loop body, jitted with its solve",
+        "70 lines; inlined it would bury score_orbits",
+        "Gauss-Legendre quadrature in ln f, anchored at the bound nearest the peak",
+    ):
+        assert not shape._vacuous(reason), reason
 
 
 def test_audit_counts_vacuous_and_kept():
@@ -223,13 +332,3 @@ def test_audit_counts_vacuous_and_kept():
 
 def test_named_word_step_is_rejected():
     assert shape._vacuous("named pipeline step")
-
-
-def test_common_reason_on_another_def_does_not_hide_a_new_stamp():
-    other = "# deliberate: named step\ndef _g():\n    return 2\n\n\ndef k():\n    return _g() + _g()\n\n\n"
-    old = other + _STAMPED.format("a lax.scan body")
-    new = other + _STAMPED.format("named step")
-    assert shape.find_vacuous_stamps({"m.py": new}, {"m.py": old}) == [
-        "m.py:10 # deliberate: named step"
-    ]
-    assert shape.find_vacuous_stamps({"m.py": old}, {"m.py": old}) == []
