@@ -1661,7 +1661,9 @@ def test_lbfgs_keeps_the_last_finite_point_after_a_non_finite_update(
             bad = np.where(count >= 2, np.nan, 1.0)
             return jax.tree.map(lambda u: u * bad, updates), count + 1
 
-        return optax.chain(real(*args), optax.GradientTransformation(init, update))
+        return optax.chain(
+            real(*args), optax.GradientTransformation(init, update)
+        )
 
     monkeypatch.setattr(fitting, "_capped_lbfgs", poisoned)
     with pytest.warns(RuntimeWarning, match="not finite"):
