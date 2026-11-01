@@ -103,25 +103,26 @@ class OutlierTable:
 
     The 2²⁰ samples are binned (linear bins of half a bandwidth) and smoothed by a
     Gaussian filter of the KDE's bandwidth; the binning widens the kernel's variance by
-    1/48 (a 1 % bandwidth change). ``log_g`` is the log density in
-    ``(ln|p|, ln|v|, ψ)`` and ``log_gp`` the one in ``ln|p|`` alone (the velocity
-    integrated out, for a night with a single exposure). Outside the grid, which pads the
+    1/48 (a 1 % bandwidth change). ``dens`` is the density in
+    ``(ln|p|, ln|v|, ψ)`` and ``dens_p`` the one in ``ln|p|`` alone (the velocity
+    integrated out, for a night with a single exposure); they are interpolated linearly
+    as densities, so a zero cell never turns a neighbour into ``nan``. Outside the grid, which pads the
     samples by four bandwidths, the density is zero.
     """
 
     lo: onp.ndarray  # (2,) grid origin of (ln|p|, ln|v|)
     step: onp.ndarray  # (3,) bin widths of (ln|p|, ln|v|, ψ)
-    log_g: (
+    dens: (
         onp.ndarray
     )  # (n_p, n_v, n_ψ + 2) with the ψ axis wrapped by one cell
-    log_gp: onp.ndarray  # (n_p,)
+    dens_p: onp.ndarray  # (n_p,)
     ln_f_floor: float
 
     def _inside(self, lp, lv=None):
-        n_p = self.log_g.shape[0]
+        n_p = self.dens.shape[0]
         ok = (lp >= self.lo[0]) & (lp <= self.lo[0] + n_p * self.step[0])
         if lv is not None:
-            n_v = self.log_g.shape[1]
+            n_v = self.dens.shape[1]
             ok &= (lv >= self.lo[1]) & (lv <= self.lo[1] + n_v * self.step[1])
         return ok
 
@@ -137,22 +138,22 @@ class OutlierTable:
             ]
         )
         out = ndimage.map_coordinates(
-            self.log_g, onp.where(ok, coords, 0.0), order=1, mode="nearest"
+            self.dens, onp.where(ok, coords, 0.0), order=1, mode="nearest"
         )
-        return onp.where(ok, out, -onp.inf)
+        return onp.where(ok, _safe_log(out), -onp.inf)
 
     def log_density_p(self, lp):
         """``ln g_p`` at ``ln|p|``: the velocity integrated out."""
         ok = self._inside(lp)
         coords = (lp - self.lo[0]) / self.step[0] - 0.5
         out = ndimage.map_coordinates(
-            self.log_gp, [onp.where(ok, coords, 0.0)], order=1, mode="nearest"
+            self.dens_p, [onp.where(ok, coords, 0.0)], order=1, mode="nearest"
         )
-        return onp.where(ok, out, -onp.inf)
+        return onp.where(ok, _safe_log(out), -onp.inf)
 
     def bounds(self):
         """``((ln|p|_lo, ln|p|_hi), (ln|v|_lo, ln|v|_hi))`` of the grid."""
-        n_p, n_v = self.log_g.shape[:2]
+        n_p, n_v = self.dens.shape[:2]
         return (
             (self.lo[0], self.lo[0] + n_p * self.step[0]),
             (self.lo[1], self.lo[1] + n_v * self.step[1]),
@@ -196,13 +197,13 @@ def outlier_table(prior):
     dens = ndimage.gaussian_filter(
         hist, sigma, mode=("constant", "constant", "wrap"), truncate=4.0
     ) / (len(s) * onp.prod(step))
-    log_g = _safe_log(dens)
-    log_g = onp.concatenate(
-        [log_g[..., -1:], log_g, log_g[..., :1]], axis=2
+    dens = onp.concatenate(
+        [dens[..., -1:], dens, dens[..., :1]], axis=2
     )  # wrap ψ by one cell for the interpolation
     marg = ndimage.gaussian_filter1d(hist.sum((1, 2)), sigma[0], truncate=4.0)
-    log_gp = _safe_log(marg / (len(s) * step[0]))
-    return OutlierTable(lo, step, log_g, log_gp, prior.ln_f_floor)
+    return OutlierTable(
+        lo, step, dens, marg / (len(s) * step[0]), prior.ln_f_floor
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -226,17 +227,6 @@ class _Group:
     surface: object
     data: object  # nights of one shape, stacked on a leading axis
     index: onp.ndarray
-
-
-def _signature(d, surface):
-    leaves, tree = jax.tree_util.tree_flatten(d)
-    return (surface, tree, tuple(onp.shape(x) for x in leaves))
-
-
-def _stack(trees):
-    return jax.tree_util.tree_map(
-        lambda *xs: np.stack([np.asarray(x) for x in xs]), *trees
-    )
 
 
 class _Nights:
@@ -281,14 +271,21 @@ class _Nights:
                 consts[k] = float(s.loglike_null) - float(
                     surface.fixed_score(null, d64, None, None, zero)
                 )
-                key = _signature(d64, surface)
+                leaves, tree = jax.tree_util.tree_flatten(d64)
+                key = (surface, tree, tuple(onp.shape(x) for x in leaves))
                 if key not in sig:
                     sig[key] = _Group(surface, [], [])
                     groups.append(sig[key])
                 sig[key].data.append(_centred(d, s.t_ref, dtype))
                 sig[key].index.append(k)
         self.groups = [
-            _Group(g.surface, _stack(g.data), onp.asarray(g.index))
+            _Group(
+                g.surface,
+                jax.tree_util.tree_map(
+                    lambda *xs: np.stack([np.asarray(x) for x in xs]), *g.data
+                ),
+                onp.asarray(g.index),
+            )
             for g in groups
         ]
         self.const = np.asarray(consts, dtype)
@@ -670,17 +667,16 @@ def outlier_exact(
                 )
                 lo[:, col] -= shift
                 hi[:, col] -= shift
-            lo, hi = _merge_boxes(lo, hi)
-            if (hi <= lo).any(axis=1).all():
+            keep = ~(hi <= lo).any(axis=1)
+            if not keep.any():
                 out.append(_LOG_TINY)
                 continue
-            keep = ~(hi <= lo).any(axis=1)
             lo, hi = lo[keep], hi[keep]
+            # the scale of the integrand: its largest value at a catalogued peak
+            # (a box's centre is its peak), where the likelihood is near its mode
             log_f = _night_log_f(nights, table, k, velocity)
-            centres = 0.5 * (lo + hi)
-            mref = float(onp.max(log_f(centres)))
-            if not onp.isfinite(mref):
-                mref = float(onp.max(onp.concatenate([log_f(lo + 1e-9)])))
+            mref = float(onp.max(log_f(0.5 * (lo + hi))))
+            lo, hi = _merge_boxes(lo, hi)
             if not onp.isfinite(mref):
                 out.append(_LOG_TINY)
                 continue

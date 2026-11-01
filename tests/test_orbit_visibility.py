@@ -51,8 +51,11 @@ def test_cubature_integrates_a_gaussian_to_the_tolerance(n):
     mass, err, evals, ok = ov._cubature(
         _gauss(0.2), -onp.ones((1, n)), onp.ones((1, n)), 0.0
     )
-    assert ok and abs(mass - 1.0) < 4 * ov._TOL and evals < ov._MAX_EVALS
-    assert err <= 4 * ov._TOL * mass
+    assert ok and evals < ov._MAX_EVALS
+    assert err <= ov._TOL * mass  # the stopping rule's own estimate
+    # the estimate is not a bound (the 2-D rule's true error is twice it); the
+    # requirement on b_k is design §2.2's 0.05 nats, which the true error meets
+    assert abs(onp.log(mass)) < 0.05
 
 
 def test_cubature_sums_the_boxes_of_separated_peaks():
@@ -90,9 +93,9 @@ def test_the_grid_density_integrates_to_one_and_covers_the_samples():
     table = ov.outlier_table(prior)
     s = onp.asarray(prior.samples)[:500]
     assert onp.isfinite(table.log_density(s[:, 0], s[:, 1], s[:, 2])).all()
-    mass = onp.exp(table.log_g[:, :, 1:-1]).sum() * onp.prod(table.step)
+    mass = table.dens[:, :, 1:-1].sum() * onp.prod(table.step)
     assert abs(mass - 1.0) < 0.02
-    assert abs(onp.exp(table.log_gp).sum() * table.step[0] - 1.0) < 0.02
+    assert abs(table.dens_p.sum() * table.step[0] - 1.0) < 0.02
 
 
 @x64

@@ -327,6 +327,12 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `position_leg` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
 
+### `virgil.orbit_visibility`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `outlier_exact` | [Genz & Malik (1980)](#genz1980), [doi:10.1016/0771-050X(80)90039-X](https://doi.org/10.1016/0771-050X(80)90039-X) | ported |
+
 ### `virgil.orbits`
 
 | Symbol | Source | Relation |
@@ -494,7 +500,6 @@ Cited by the paper, not a source of virgil's methods.
 | [Chavez et al. (2026)](#chavez2026), [arXiv:2606.04094](https://arxiv.org/abs/2606.04094), [ADS](https://ui.adsabs.harvard.edu/abs/2026ApJ..1005..132C/abstract) |  |
 | [Del Moral, Doucet & Jasra (2006)](#delmoral2006), [doi:10.1111/j.1467-9868.2006.00553.x](https://doi.org/10.1111/j.1467-9868.2006.00553.x) | JRSSB 68, 411; SMC samplers and the normalizing-constant estimate, Z as the product of the incremental weights |
 | [Foreman-Mackey et al. (2021)](#foreman-mackey2021), [arXiv:2105.01994](https://arxiv.org/abs/2105.01994), [ADS](https://ui.adsabs.harvard.edu/abs/2021JOSS....6.3285F/abstract), [doi:10.21105/joss.03285](https://doi.org/10.21105/joss.03285) | JOSS 6, 3285 |
-| [Genz & Malik (1980)](#genz1980), [doi:10.1016/0771-050X(80)90039-X](https://doi.org/10.1016/0771-050X(80)90039-X) | J. Comput. Appl. Math. 6, 295; the degree-7 rule with an embedded degree-5 rule and fourth-difference split axis, for the outlier floor b_k |
 | [Hattori et al. (2024)](#jaxoplanet), [ADS](https://ui.adsabs.harvard.edu/abs/2024zndo..10736936H/abstract), [doi:10.5281/zenodo.10736936](https://doi.org/10.5281/zenodo.10736936), [GitHub](https://github.com/exoplanet-dev/jaxoplanet) | Zenodo; https://github.com/exoplanet-dev/jaxoplanet |
 | [Jasra, Stephens, Doucet & Tsagaris (2011)](#jasra2011), [doi:10.1111/j.1467-9469.2010.00723.x](https://doi.org/10.1111/j.1467-9469.2010.00723.x) | Scand. J. Stat. 38, 1 (online December 2010); ESS-adaptive tempering schedules |
 | [Kustaanheimo & Stiefel (1965)](#kustaanheimo1965), [doi:10.1515/crll.1965.218.204](https://doi.org/10.1515/crll.1965.218.204) | J. reine angew. Math. 218, 204; regularizing maps of Kepler motion |
