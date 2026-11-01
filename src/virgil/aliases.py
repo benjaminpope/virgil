@@ -95,6 +95,7 @@ __all__ = [
     "LABELS_FREE_NATS",
     "alias_bands",
     "fit_orbit_aliases",
+    "period_cut",
     "period_window",
     "position_profile",
 ]
@@ -211,6 +212,58 @@ def alias_bands(times, p_range):
     return bands
 
 
+def _night_period_bound(
+    field, night_length, resolution, motion_fraction, p_floor
+):
+    """Shortest period (days) whose companion moves under ``motion_fraction`` of
+    ``resolution`` in the longest night (and is not below a night or ``p_floor``)."""
+    return max(
+        2 * math.pi * field * night_length / (motion_fraction * resolution),
+        night_length,
+        p_floor,
+    )
+
+
+def period_cut(
+    times,
+    field,
+    night_length,
+    *,
+    resolution,
+    motion_fraction=0.5,
+    p_floor=_P_FLOOR,
+):
+    """The shortest period of the declared prior: ``max(2 * dt_min, P_night)``, in days.
+
+    ``dt_min`` is the shortest gap between consecutive nights, so above the cut the
+    closest pair of nights advances by under half a cycle and the regular-sampling
+    alias lies outside the domain. ``P_night`` is the within-night motion bound of
+    [`period_window`][virgil.aliases.period_window]. A prior choice, not a Nyquist
+    limit: below it irregular sampling can still identify the period.
+
+    Parameters
+    ----------
+    times : array-like
+        One time per night (days); repeated times count as one night.
+    field, night_length, resolution
+        As for [`period_window`][virgil.aliases.period_window].
+    motion_fraction, p_floor
+        As for [`period_window`][virgil.aliases.period_window].
+
+    Returns
+    -------
+    float
+        ``P_cut`` in days; ``P_night`` alone for a single night.
+    """
+    t = onp.unique(onp.asarray(times, float))
+    p_night = _night_period_bound(
+        field, night_length, resolution, motion_fraction, p_floor
+    )
+    if t.size < 2:
+        return float(p_night)
+    return float(max(2 * onp.min(onp.diff(t)), p_night))
+
+
 def period_window(
     times,
     field,
@@ -264,10 +317,8 @@ def period_window(
             "positive field, resolution, motion_fraction, span_factor and "
             "p_floor."
         )
-    p_min = max(
-        2 * math.pi * field * night_length / (motion_fraction * resolution),
-        night_length,
-        p_floor,
+    p_min = _night_period_bound(
+        field, night_length, resolution, motion_fraction, p_floor
     )
     p_max = span_factor * span
     if not p_min < p_max:
