@@ -1376,8 +1376,8 @@ year = 2006
 title = "Gaussian Processes for Machine Learning"
 doi = "10.7551/mitpress/3206.001.0001"
 url = "https://gaussianprocess.org/gpml/"
-used_in = []
-note = "MIT Press (book); GP terminology, Matérn kernels, marginal likelihood"
+used_in = ["virgil._linear:arrow_at"]
+note = "MIT Press (book); GP terminology, Matérn kernels, marginal likelihood; A.9 matrix inversion and determinant lemmas (arrow_at)"
 role = "context"
 verified = true
 verified_via = "crossref"
@@ -1692,3 +1692,142 @@ note = "Google's measured 0.24 Wh per median Gemini Apps text prompt; a cross-ch
 role = "context"
 verified = true
 verified_via = "arxiv"
+
+# Sources of design/orbit_alias_cycles.md (not yet coded): role "bibliography" until a stage sets used_in.
+# The z and ζ maps, the anchor TI' rotation and the velocity-aware outlier contract are derived there (no source).
+
+[ref.pricewhelan2020]
+authors = "Price-Whelan et al."
+year = 2020
+title = "Close Binary Companions to APOGEE DR16 Stars: 20,000 Binary-star Systems Across the Color-Magnitude Diagram"
+used_in = []
+note = "ApJ 895, 2; The Joker at scale"
+role = "bibliography"
+bibcode = "2020ApJ...895....2P"
+arxiv = "2002.00014"
+verified = true
+verified_via = "ads"
+
+[ref.delmoral2006]
+authors = "Del Moral, Doucet & Jasra"
+year = 2006
+title = "Sequential Monte Carlo Samplers"
+doi = "10.1111/j.1467-9868.2006.00553.x"
+used_in = []
+note = "JRSSB 68, 411; SMC samplers and the normalizing-constant estimate"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.jasra2011]
+authors = "Jasra, Stephens, Doucet & Tsagaris"
+year = 2011
+title = "Inference for Lévy-Driven Stochastic Volatility Models via Adaptive Sequential Monte Carlo"
+doi = "10.1111/j.1467-9469.2010.00723.x"
+used_in = []
+note = "Scand. J. Stat. 38, 1 (online December 2010); ESS-adaptive tempering schedules"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.zhou2016]
+authors = "Zhou, Johansen & Aston"
+year = 2016
+title = "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
+doi = "10.1080/10618600.2015.1060885"
+used_in = []
+note = "JCGS 25, 701; conditional ESS for the next temperature"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.buchholz2021]
+authors = "Buchholz, Chopin & Jacob"
+year = 2021
+title = "Adaptive Tuning of Hamiltonian Monte Carlo Within Sequential Monte Carlo"
+doi = "10.1214/20-ba1222"
+arxiv = "1808.07730"
+used_in = []
+note = "Bayesian Anal. 16, 745; fixed-L HMC kernels tuned per stage"
+role = "bibliography"
+bibcode = "2018arXiv180807730B"
+verified = true
+verified_via = "ads"
+
+[ref.beskos2013]
+authors = "Beskos, Pillai, Roberts, Sanz-Serna & Stuart"
+year = 2013
+title = "Optimal tuning of the hybrid Monte Carlo algorithm"
+doi = "10.3150/12-bej414"
+used_in = []
+note = "Bernoulli 19, 1501; acceptance target 0.651"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.shoemake1992]
+authors = "Shoemake"
+year = 1992
+title = "Uniform Random Rotations"
+doi = "10.1016/b978-0-08-050755-2.50036-1"
+used_in = []
+note = "Graphics Gems III, 124; unit quaternions and the Haar measure of SO(3)"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.mengersen1996]
+authors = "Mengersen & Tweedie"
+year = 1996
+title = "Rates of convergence of the Hastings and Metropolis algorithms"
+doi = "10.1214/aos/1033066201"
+used_in = []
+note = "Ann. Stat. 24, 101; independence Metropolis-Hastings is uniformly ergodic iff the weight is bounded"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.kustaanheimo1965]
+authors = "Kustaanheimo & Stiefel"
+year = 1965
+title = "Perturbation theory of Kepler motion based on spinor regularization"
+doi = "10.1515/crll.1965.218.204"
+used_in = []
+note = "J. reine angew. Math. 218, 204; regularizing maps of Kepler motion"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.levicivita1920]
+authors = "Levi-Civita"
+year = 1920
+title = "Sur la régularisation du problème des trois corps"
+doi = "10.1007/BF02404416"
+used_in = []
+note = "Acta Math. 42, 99; the planar regularizing map"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.phipson2010]
+authors = "Phipson & Smyth"
+year = 2010
+title = "Permutation P-values Should Never Be Zero: Calculating Exact P-values When Permutations Are Randomly Drawn"
+doi = "10.2202/1544-6115.1585"
+used_in = []
+note = "Stat. Appl. Genet. Mol. Biol. 9, 39; (1 + #)/(1 + n) permutation p-value"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.surjanovic2023]
+authors = "Surjanovic, Biron-Lattes, Tiede et al."
+year = 2023
+title = "Pigeons.jl: Distributed Sampling From Intractable Distributions"
+arxiv = "2308.09769"
+used_in = []
+note = "parallel tempering prior art next to Octofitter"
+role = "bibliography"
+bibcode = "2023arXiv230809769S"
+verified = true
+verified_via = "ads"

@@ -152,6 +152,33 @@ def test_injected_alias_wins_in_closure_phases(period, tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("seed", range(5))
+def test_injected_alias_wins_at_reduced_effort_for_every_seed(seed):
+    """On the 12.38 d synthetic, the reduced search effort (``n_candidates=10``,
+    ``n_refine=2``, cut from 30 and 3 for speed) recovers the injected
+    period for every candidate-pool seed. The noise draw is fixed by
+    ``_synthetic``; only the pool seed varies."""
+    period = 12.38
+    data, pos = _synthetic(period)
+    result = fit_orbit_aliases(
+        data,
+        (11.3, 12.9),
+        positions=pos,
+        t_ref=T_REF,
+        n_candidates=10,
+        n_refine=2,
+        n_is=100,
+        n_samples=10,
+        seed=seed,
+        primary_diam=None,
+    )
+    n_true = round(float(onp.ptp(result.times)) / period)
+    assert result.best.n == n_true
+    assert result.best.p > 0.9
+    assert abs(result.best.best["period"] - period) < 0.05
+
+
+@pytest.mark.slow
 def test_a_band_that_cannot_fit_the_data_warns_loudly():
     """No orbit in 13.5-14.5 d fits a 12.38 d orbit's data, so the best
     band is flagged poor-fit and the call warns rather than failing
@@ -1362,6 +1389,11 @@ def _draw_alias_night_data(seed=SEED_ALIAS_NIGHT):
     best static-binary peak is a single-night alias, 19 mas from the truth
     (the Gl 229 2024-02-27 situation), and every other night is right and
     unflagged.
+
+    This is a positive control: it tests that the flag fires on a
+    constructed reflection, not that a realistic case of this kind (one
+    found in noise) is flagged. The fixture was built because the scanned
+    seed that once produced an alias stopped doing so.
 
     The alias is built into the data, not left to the noise. The night's V²
     are the truth's, which a binary shares with its point reflection through

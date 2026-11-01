@@ -252,3 +252,12 @@ def test_test_budget_stays_active_when_shard_packing_changes():
     assert (
         "format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax)" in line
     )
+
+
+def test_slow_orbit_tests_are_never_dropped_on_nightly_or_main():
+    """``orbit_slow`` adds the orbit slow tests to a PR run that touches
+    orbit modules; main, dispatch and the nightly already run every slow
+    test, so none of those sets it."""
+    for event in ("push", "schedule", "workflow_dispatch"):
+        jobs = _jobs(event, orbit_slow=True)
+        assert not any(j.get("orbit_slow") for j in jobs), event

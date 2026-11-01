@@ -1,7 +1,7 @@
 # Vacuous '# deliberate:' stamps that predate the stamp lint. This list may only
 # shrink: the lint fails if a PR adds an entry (WP-18 empties it).
 # Regenerate after fixing stamps: python scripts/code_shape.py --write-allowlist
-count: 102
+count: 101
 aliases.py :: _band_evidence :: 33 lines, tests call it; a named stage of _fit_band
 aliases.py :: _band_result :: 42 lines, tests build band rows with it
 aliases.py :: _band_target :: imported by virgil/pipeline/orbit.py (internal interface)
@@ -62,7 +62,6 @@ pipeline/_quicklook.py :: _image_cells :: dispatch-table callable
 pipeline/_quicklook.py :: _orbit_cells :: dispatch-table callable
 pipeline/_quicklook.py :: _star_cells :: dispatch-table callable
 pipeline/binary.py :: _fit_start :: tests call it with a stub pipeline
-pipeline/binary.py :: _global_nsigma :: tests pin the look-elsewhere values
 pipeline/binary.py :: _refined_flux :: tests call it directly
 pipeline/cli.py :: _info :: argparse callback
 pipeline/cli.py :: _quicklook :: argparse callback
