@@ -155,3 +155,48 @@ def test_the_label_swap_negates_the_thiele_innes_constants_and_is_order_four():
         11,
     ]  # period, a, ζ, ln f, scales are untouched
     assert np.allclose(ov.swap_label(x)[:, keep], x[:, keep])
+
+
+@pytest.mark.parametrize("n", [2, 3, 5])
+def test_the_genz_malik_rule_is_exact_for_degree_seven_polynomials(n):
+    points, w7, w5, _ = ov._genz_malik(n)
+    assert onp.isclose(w7.sum(), 1.0) and onp.isclose(w5.sum(), 1.0)
+    rng = onp.random.default_rng(n)
+    for _ in range(5):
+        powers = rng.integers(0, 8, n)
+        while powers.sum() > 7:
+            powers[rng.choice(onp.flatnonzero(powers))] -= 1
+        exact = onp.prod(
+            [0.0 if k % 2 else 1.0 / (k + 1) for k in powers]
+        )  # mean of x^k over [-1, 1]
+        assert onp.isclose(w7 @ onp.prod(points**powers, axis=1), exact)
+    # the embedded rule is exact to degree five
+    assert onp.isclose(w5 @ points[:, 0] ** 4, 1.0 / 5)
+
+
+@x64
+def test_the_polar_box_holds_the_peak_and_the_log_integrand_is_finite_there():
+    data = _night()
+    summary = _fit(data)
+    peak, table = summary.peaks[0], _table()
+    lo, hi = ov._polar_box(
+        peak, onp.ones(len(summary.blocks)), table, True, table.ln_f_floor
+    )
+    mean = peak.mean
+    centre = onp.array(
+        [
+            0.5 * onp.log(mean[0] ** 2 + mean[1] ** 2),
+            onp.arctan2(mean[1], mean[0]),
+            0.5 * onp.log(mean[2] ** 2 + mean[3] ** 2),
+            onp.arctan2(mean[3], mean[2]),
+            mean[4],
+        ]
+    )
+    assert (lo < centre).all() and (centre < hi).all()
+    nights = ov._Nights([data], [summary], None, "float64")
+    log_f = ov._night_log_f(nights, table, 0, True)
+    value = log_f(centre[None])[0]
+    assert onp.isfinite(value) and value > summary.loglike_null
+    off = centre.copy()
+    off[4] = 0.5  # a flux ratio above one is outside the prior
+    assert log_f(off[None])[0] == -onp.inf

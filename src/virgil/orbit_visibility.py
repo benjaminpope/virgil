@@ -321,10 +321,26 @@ class _Nights:
         ``G ln(2 ln s_max)``."""
         for g in self.groups:
             if k in g.index:
-                j = int(onp.flatnonzero(g.index == k)[0])
-                d = jax.tree_util.tree_map(lambda x: x[j], g.data)
-                return _own_batch(self, g.surface, d, z, k)
-        raise IndexError(k)
+                break
+        else:
+            raise IndexError(k)
+        j = int(onp.flatnonzero(g.index == k)[0])
+        d = jax.tree_util.tree_map(lambda x: x[j], g.data)
+        # chunks of one shape, padded, so that every night shares one compilation
+        z = onp.asarray(z, float)
+        out = onp.empty(len(z))
+        for i in range(0, len(z), _CHUNK):
+            part = z[i : i + _CHUNK]
+            pad = onp.concatenate(
+                [part, onp.repeat(part[:1], _CHUNK - len(part), axis=0)]
+            )
+            res = _own_core(self.hashable, g.surface, d, np.asarray(pad))
+            out[i : i + len(part)] = onp.asarray(res)[: len(part)]
+        return (
+            out
+            + float(self.const[k])
+            - len(g.surface.names) * math.log(2 * math.log(self.s_max))
+        )
 
 
 @functools.partial(jax.jit, static_argnums=(0, 1))
@@ -337,24 +353,6 @@ def _own_core(nights, surface, d, z):
         return surface.score(chi2, ones, d)
 
     return jax.vmap(one)(z)
-
-
-def _own_batch(nights, surface, d, z, k):
-    # chunks of one shape, padded, so that every night shares one compilation
-    z = onp.asarray(z, float)
-    out = onp.empty(len(z))
-    for i in range(0, len(z), _CHUNK):
-        part = z[i : i + _CHUNK]
-        pad = onp.concatenate(
-            [part, onp.repeat(part[:1], _CHUNK - len(part), axis=0)]
-        )
-        res = _own_core(nights.hashable, surface, d, np.asarray(pad))
-        out[i : i + len(part)] = onp.asarray(res)[: len(part)]
-    return (
-        out
-        + float(nights.const[k])
-        - len(surface.names) * math.log(2 * math.log(nights.s_max))
-    )
 
 
 # jit needs a hashable static stand-in for the nights object: the only things the
@@ -838,9 +836,10 @@ def visibility_leg(
     log_outlier : array-like
         Each night's ``b_k``; the one the position leg used.
     key : jax.random.PRNGKey
-    n_particles, steps, replicates, max_seconds, dtype : optional
-        As for [`position_leg`][virgil.orbit_cells.position_leg]; the particles default to
-        those of the position leg.
+    n_particles : int, optional
+        Particles; default those of the position leg.
+    steps, replicates, max_seconds, dtype : optional
+        As for [`position_leg`][virgil.orbit_cells.position_leg].
 
     Returns
     -------
@@ -949,9 +948,12 @@ def fit_cells(
         Override the period domain ``[P_cut, P_max]``.
     a_range, e_max, flux_floor, s_max : optional
         Declared prior bounds (design §10).
-    n_particles, steps, replicates, max_seconds, dtype : optional
-        As for [`position_leg`][virgil.orbit_cells.position_leg]; ``max_seconds`` caps each
-        leg and reaching it raises.
+    n_particles, steps, replicates : optional
+        As for [`position_leg`][virgil.orbit_cells.position_leg].
+    max_seconds : float, optional
+        Time cap per leg; reaching it raises.
+    dtype : str, optional
+        Precision of the legs.
     prune : bool, optional
         Drop the cells below ``δ / N_cells`` after the position leg (opt-in, design §7).
     outlier_samples : int, optional
