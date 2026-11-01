@@ -39,25 +39,133 @@ def _image(brightness, **kwargs):
     return Image.from_brightness(brightness, SCALE, **kwargs)
 
 
+BEAM = 100.0  # a fixed angular beam, mas
+
+
 def test_tsv_and_tv_penalize_edges_and_structure():
     flat = _image(np.ones((NPIX, NPIX)))
     blob = _image(gaussian_blob(NPIX, SCALE, 15.0))
     # A flat image only has steps at its (zero-padded) edges.
     b = flat.brightness
-    assert np.isclose(TSV(1.0).value(flat), 4 * NPIX * b[0, 0] ** 2, rtol=1e-4)
-    for regularizer in (TSV(2.0), TV(2.0)):
-        assert regularizer.value(blob) > 0.0
+    # beam = pixel scale: no normalisation.
+    assert np.isclose(
+        TSV(1.0, beam_mas=SCALE).value(flat),
+        4 * NPIX * b[0, 0] ** 2,
+        rtol=1e-4,
+    )
+    for cls in (TSV, TV):
+        assert cls(2.0, beam_mas=BEAM).value(blob) > 0.0
         assert np.isclose(
-            regularizer.value(blob), 2.0 * type(regularizer)(1.0).value(blob)
+            cls(2.0, beam_mas=BEAM).value(blob),
+            2.0 * cls(1.0, beam_mas=BEAM).value(blob),
         )
-    tsv = TSV(3.0)
+    tsv = TSV(3.0, beam_mas=BEAM)
     assert np.isclose(0.5 * np.sum(tsv.residuals(blob) ** 2), tsv.value(blob))
+
+
+@pytest.mark.parametrize("cls", [TSV, TV])
+def test_n_data_multiplies_the_weight(cls):
+    sky = _sky(NPIX)
+    base = float(cls(1.0, beam_mas=BEAM).value(sky))
+    got = float(cls(0.3, beam_mas=BEAM, n_data=40).value(sky))
+    assert got == pytest.approx(0.3 * 40 * base, rel=1e-5)
+
+
+def test_beam_is_required():
+    with pytest.raises(TypeError, match="beam_mas"):
+        TSV(1.0)
+    with pytest.raises(TypeError, match="beam_mas"):
+        TV(1.0)
+
+
+def _sky(npix, field=None):
+    """The same Gaussian sky on ``npix`` pixels across ``field`` mas."""
+    scale = (field or SCALE * NPIX) / npix
+    return Image.from_brightness(gaussian_blob(npix, scale, 30.0), scale)
+
+
+@pytest.mark.parametrize("cls", [TSV, TV])
+def test_penalty_is_independent_of_grid_size(cls):
+    reg = cls(1.0, beam_mas=BEAM)
+    values = [float(reg.value(_sky(n))) for n in (NPIX, 2 * NPIX)]
+    assert values[1] == pytest.approx(values[0], rel=0.03)
+
+
+@pytest.mark.parametrize("cls", [TSV, TV])
+def test_penalty_is_independent_of_the_field(cls):
+    # The same sky, zero-padded to twice the field at the same pixel scale.
+    small = _sky(NPIX)
+    big = Image.from_brightness(
+        np.pad(np.asarray(small.brightness), NPIX // 2), SCALE
+    )
+    reg = cls(1.0, beam_mas=BEAM)
+    # TV's epsilon is a fraction of the mean pixel flux, which padding changes.
+    rel = 3e-2 if cls is TV else 1e-3
+    assert float(reg.value(big)) == pytest.approx(
+        float(reg.value(small)), rel=rel
+    )
+
+
+class _Scaled(TSV):
+    """TSV on pixels carrying total flux 3."""
+
+    def pixels(self, model):
+        return 3.0 * super().pixels(model)
+
+
+class _ScaledTV(TV):
+    def pixels(self, model):
+        return 3.0 * super().pixels(model)
+
+
+def test_penalty_is_independent_of_total_flux():
+    sky = _sky(NPIX)
+    assert float(_Scaled(1.0, beam_mas=BEAM).value(sky)) == pytest.approx(
+        float(TSV(1.0, beam_mas=BEAM).value(sky)), rel=1e-5
+    )
+    assert float(_ScaledTV(1.0, beam_mas=BEAM).value(sky)) == pytest.approx(
+        float(TV(1.0, beam_mas=BEAM).value(sky)), rel=1e-5
+    )
+
+
+def test_old_weights_convert_exactly():
+    from virgil.imaging import _differences
+
+    sky = _sky(NPIX)
+    b = sky.brightness
+    old = 7.0
+    dx, dy = _differences(b)
+    legacy_tsv = old * float(np.sum(dx**2 + dy**2))
+    eps = 1e-2 / b.size
+    legacy_tv = (
+        old
+        * sum(
+            float(np.sum(np.sqrt(sum(d**2 for d in _differences(f)) + eps**2)))
+            for f in (b, b[::-1], b[:, ::-1], b[::-1, ::-1])
+        )
+        / 4.0
+    )
+    # beam = pixel scale reproduces the old weight.
+    assert float(TSV(old, beam_mas=SCALE).value(sky)) == pytest.approx(
+        legacy_tsv, rel=1e-5
+    )
+    assert float(TV(old, beam_mas=SCALE).value(sky)) == pytest.approx(
+        legacy_tv, rel=1e-5
+    )
+    # Any other beam: the old weight times (p/B)**4 (TSV) or p/B (TV).
+    ratio = SCALE / BEAM
+    assert float(
+        TSV(old * ratio**4, beam_mas=BEAM).value(sky)
+    ) == pytest.approx(legacy_tsv, rel=1e-5)
+    assert float(TV(old * ratio, beam_mas=BEAM).value(sky)) == pytest.approx(
+        legacy_tv, rel=1e-5
+    )
 
 
 def test_tv_has_no_preferred_direction():
     b = np.array([[1.0, 2.0], [3.0, 7.0]])
     values = [
-        TV(1.0).value(_image(x))
+        TV(1.0, beam_mas=SCALE).value(_image(x))
         for x in (b, b[::-1], b[:, ::-1], b[::-1, ::-1])
     ]
     assert np.allclose(np.array(values), values[0], rtol=1e-5)
@@ -118,10 +226,11 @@ def test_centroid_measures_sky_offsets_with_rotation():
 def test_regularizers_find_the_image_by_path():
     scene = System(star=PointSource(), env=_image(np.ones((NPIX, NPIX))))
     assert np.isclose(
-        TSV(1.0, path="env").value(scene), TSV(1.0).value(scene.env)
+        TSV(1.0, path="env", beam_mas=SCALE).value(scene),
+        TSV(1.0, beam_mas=SCALE).value(scene.env),
     )
     with pytest.raises(TypeError, match="not an Image"):
-        TSV(1.0, path="star").value(scene)
+        TSV(1.0, path="star", beam_mas=SCALE).value(scene)
 
 
 def test_image_priors_cover_every_image():
@@ -168,7 +277,7 @@ def test_centroid_prior_centres_an_image_only_fit():
         start,
         image_priors(start),
         data,
-        [TSV(1e3), Centroid(1.0)],
+        [TSV(1e3, beam_mas=SCALE), Centroid(1.0)],
         method="lm",
     )
     assert np.all(np.abs(Centroid(1.0).centroid(result.model)) < 3.0)
@@ -189,7 +298,11 @@ def test_a_star_anchors_the_image_position():
         env=Image.from_model(GaussianDisk(40.0), NPIX, SCALE, flux=0.2),
     )
     result = fit(
-        start, image_priors(start), data, [TSV(1e3, path="env")], method="lm"
+        start,
+        image_priors(start),
+        data,
+        [TSV(1e3, path="env", beam_mas=SCALE)],
+        method="lm",
     )
     centroid = Centroid(1.0, path="env").centroid(result.model)
     assert np.allclose(centroid, np.array([36.0, 24.0]), atol=6.0)
@@ -208,7 +321,7 @@ def test_l_curve_trades_chi2_against_the_penalty():
         start,
         image_priors(start),
         data,
-        TSV(1.0, path="env"),
+        TSV(1.0, path="env", beam_mas=SCALE),
         [1e1, 1e3, 1e5],
         method="lm",
     )
@@ -500,8 +613,14 @@ def test_a_dirty_start_is_a_positive_image():
 @pytest.mark.parametrize(
     "regularizers, method",
     [
-        (lambda v: [TSV(1e2), Centroid(v)], "lm"),
-        (lambda v: [TV(1e2, epsilon=v * 1e-3), Centroid(5.0)], "lbfgs"),
+        (lambda v: [TSV(1e2, beam_mas=SCALE), Centroid(v)], "lm"),
+        (
+            lambda v: [
+                TV(1e2, epsilon=v * 1e-3, beam_mas=SCALE),
+                Centroid(5.0),
+            ],
+            "lbfgs",
+        ),
         (lambda v: [StarletL1(1.0, epsilon=v * 1e-3)], "lbfgs"),
         (lambda v: [LogSum(1e-3, epsilon=v * 1e-3)], "lbfgs"),
     ],

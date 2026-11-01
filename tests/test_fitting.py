@@ -100,7 +100,7 @@ def test_float32_and_float64_fits_agree():
 
 def test_lm_and_lbfgs_agree_on_a_tsv_image():
     start, priors, data = _image_fit()
-    regularizers = [TSV(1e3, path="env")]
+    regularizers = [TSV(1e3, path="env", beam_mas=12.0)]
     # A tight tolerance, so that this tests the solution, not the stopping
     # rule (at the default tolerance their losses can differ by ~2%).
     options = {"gtol": 1e-7, "max_steps": 20_000}
@@ -142,7 +142,7 @@ def test_normal_priors_are_least_squares_terms():
 
 def test_non_least_squares_objectives_default_to_lbfgs():
     start, priors, data = _image_fit()
-    regularizers = [TV(1.0, path="env")]
+    regularizers = [TV(1.0, path="env", beam_mas=12.0)]
     objective = _Objective(start, priors, data, regularizers)
     with pytest.raises(TypeError, match="lbfgs"):
         objective.residuals(objective.init())
@@ -174,7 +174,9 @@ def test_numpyro_model_accepts_prior_regularizers_only():
     pixels = dist.Normal(np.zeros((16, 16)), 3.0).to_event(2)
     priors = {"env.log_brightness": pixels}
     with pytest.raises(ValueError, match="TSV"):
-        numpyro_model(start, priors, data, [TSV(1.0, path="env")])
+        numpyro_model(
+            start, priors, data, [TSV(1.0, path="env", beam_mas=12.0)]
+        )
     model = numpyro_model(start, priors, data, [Centroid(10.0, path="env")])
     trace = numpyro.handlers.trace(
         numpyro.handlers.seed(model, jax.random.PRNGKey(0))
@@ -580,7 +582,7 @@ def test_repeated_fits_do_not_recompile(method):
     again = data.with_model(start, key=jax.random.PRNGKey(2))
 
     def fit_tsv(data, weight):
-        regs = [TSV(weight, path="env")]
+        regs = [TSV(weight, path="env", beam_mas=12.0)]
         return fit(start, priors, data, regs, method=method, **options)
 
     fit_tsv(data, 10.0)
@@ -1621,7 +1623,7 @@ def test_regularizers_raise_for_a_model_per_dataset():
             PRIORS,
             [DATA, DATA],
             init=init,
-            regularizers=[TV(1.0, path="env")],
+            regularizers=[TV(1.0, path="env", beam_mas=12.0)],
         )
     fit(two, PRIORS, [DATA, DATA], init=init, max_steps=1)  # none: fine
 
