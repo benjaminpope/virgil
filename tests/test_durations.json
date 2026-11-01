@@ -78,6 +78,7 @@
  "tests/test_orbit_cells.py": 280.0,
  "tests/test_orbit_coordinates.py": 12.2,
  "tests/test_orbit_positions.py": 157.8,
+ "tests/test_orbit_visibility.py": 10.0,
  "tests/test_orbit_posterior_mass.py": 8.0,
  "tests/test_orbit_search.py": 265.5,
  "tests/test_orbits.py": 63.8,
