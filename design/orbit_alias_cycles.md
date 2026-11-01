@@ -648,6 +648,10 @@ run; changing one afterwards is a recorded decision.
 | e_max | 0.9 | declared prior bound | inherited default |
 | flux floor lo | data's 2σ contrast curve | derived | dehack §2I |
 | π_out | joint prior predictive π(p, v)π(f), tabulated from a 2²⁰ scrambled-Sobol sample, KDE (Scott bandwidth) in (ln|p|, ln|v|, φ) | derived | §2.2; b_k changes < 0.05 nats from 2²⁰ to 2²¹ (tolerance) |
+| b_k cubature tolerance | 4δ relative | tolerance | #618's; the integral's reporting precision (3c) |
+| b_k cubature box | peak ± 5σ of the own-scale peak, in (ln\|p\|, φ_p, ln\|v\|, φ_v, ln f), cut to the prior's support | declared | a Student-t with ν ≥ 9 per scale block has < 1e-4 beyond 5σ; D said ±4σ, widened (3c) |
+| b_k cubature budget | 4×10⁵ evaluations per night, a warning when reached | declared budget | 3c; measured on simulated nights |
+| π_out table bin | h/2 (half a Scott bandwidth), Gaussian filter of the bandwidth | tolerance | widens the kernel variance by 1/48 (1 % in h) (3c) |
 | σ_J grid | type-II ML on a 1-D log grid, 0.1–10 × the median σ_p | budget | §5 |
 | gap_days | 0.5 d | tolerance | night separation (inherited) |
 | flux floor | 2σ of the data's contrast curve | derived | dehack §2I |
@@ -735,6 +739,6 @@ uses P_night at the truth's a, so only the 2Δt_min part of P_cut is new in prac
 | 2b | §5 (night summaries, keep rule, v variance, σ_J, (iii′) analogue); the (k, h) Kepler solve (§3.3) |
 | 3a | §6.1–6.3, 6.6 as generic, non-orbit SMC on BlackJAX (#623) plus the composite mutation hook (custom MH/Gibbs); budgets of §10 |
 | 3b | §4, §5 position-level target, §7 pruning measurement |
-| 3c | §2 contract (5-D b_k, joint π_out), §6.2 bridge, §1.1 noise; #618's six tests as acceptance at both pinned precisions |
+| 3c (`orbit_visibility`) | §2 contract (5-D b_k, joint π_out), §6.2 bridge, §1.1 noise; #618's six tests as acceptance at both pinned precisions |
 | 3d | §8 (T statistic, stepwise FAP) |
 | 4 | the vv criteria file (committed before any run; awaiting Ben's sign-off), §7 measurement, §9 table |
