@@ -1640,3 +1640,36 @@ def test_numpyro_model_raises_for_a_model_per_dataset_with_regularizers():
         numpyro.handlers.trace(
             numpyro.handlers.seed(model, jax.random.PRNGKey(0))
         ).get_trace()
+
+
+def test_lbfgs_keeps_the_last_finite_point_after_a_non_finite_update(
+    monkeypatch,
+):
+    import optax
+
+    import virgil.fitting as fitting
+
+    real = fitting._capped_lbfgs
+
+    def poisoned(*args):
+        # The real optimizer, whose third update is NaN: a finite loss and
+        # gradient at z, then a non-finite proposal.
+        def init(params):
+            return np.zeros((), int)
+
+        def update(updates, count, params=None, **extra):
+            bad = np.where(count >= 2, np.nan, 1.0)
+            return jax.tree.map(lambda u: u * bad, updates), count + 1
+
+        return optax.chain(
+            real(*args), optax.GradientTransformation(init, update)
+        )
+
+    monkeypatch.setattr(fitting, "_capped_lbfgs", poisoned)
+    with pytest.warns(RuntimeWarning, match="not finite"):
+        result = fit(START, PRIORS, DATA, method="lbfgs", max_steps=50)
+    assert result.info["stop"] == "non-finite"
+    assert result.info["steps"] == 3
+    assert np.isfinite(result.info["grad_norm"])
+    assert np.isfinite(result.info["loss"])
+    assert all(np.isfinite(v) for v in result.values.values())
