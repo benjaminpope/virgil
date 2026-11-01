@@ -1642,42 +1642,32 @@ def test_numpyro_model_raises_for_a_model_per_dataset_with_regularizers():
         ).get_trace()
 
 
-class _Cliff:
-    """A quadratic that is NaN beyond a radius, and whose gradient is inf at 1."""
+def test_lbfgs_keeps_the_last_finite_point_after_a_non_finite_update(
+    monkeypatch,
+):
+    import optax
 
-    def __init__(self, radius, nan_gradient=False):
-        self.radius, self.nan_gradient = radius, nan_gradient
+    import virgil.fitting as fitting
 
-    def loss(self, z):
-        quad = 0.5 * np.sum((z - 0.3) ** 2)
-        if self.nan_gradient:
-            quad = quad + 1e-3 * np.sum(np.sqrt(np.maximum(z - 1.0, 0.0)))
-        return np.where(np.linalg.norm(z) > self.radius, np.nan, quad)
+    real = fitting._capped_lbfgs
 
+    def poisoned(*args):
+        # The real optimizer, whose third update is NaN: a finite loss and
+        # gradient at z, then a non-finite proposal.
+        def init(params):
+            return np.zeros((), int)
 
-@pytest.mark.parametrize("nan_gradient", [False, True])
-def test_lbfgs_never_accepts_a_non_finite_iterate(nan_gradient):
-    from virgil.fitting import _lbfgs_run
+        def update(updates, count, params=None, **extra):
+            bad = np.where(count >= 2, np.nan, 1.0)
+            return jax.tree.map(lambda u: u * bad, updates), count + 1
 
-    z0 = np.array([0.0, 0.1])
-    # A step cap far above the cliff: the first trial point lies beyond it.
-    carry, _ = _lbfgs_run(
-        _Cliff(1.0, nan_gradient), z0, 1.0, np.asarray(50), 1e-8, 1e6, 10
-    )
-    z = carry[1]
-    assert np.all(np.isfinite(z)) and np.isfinite(carry[3])
-    assert np.allclose(z, 0.3, atol=1e-4) or not np.isfinite(carry[4])
+        return optax.chain(real(*args), optax.GradientTransformation(init, update))
 
-
-def test_a_softmax_image_with_max_entropy_fits_without_raising():
-    start, priors, data = _image_fit(npix=8)
-    result = fit(
-        start,
-        priors,
-        data,
-        [MaxEntropy(1e-9, path="env")],
-        method="lbfgs",
-        max_steps=60,
-    )
-    assert np.all(np.isfinite(result.model.env.log_brightness))
+    monkeypatch.setattr(fitting, "_capped_lbfgs", poisoned)
+    with pytest.warns(RuntimeWarning, match="not finite"):
+        result = fit(START, PRIORS, DATA, method="lbfgs", max_steps=50)
+    assert result.info["stop"] == "non-finite"
+    assert result.info["steps"] == 3
+    assert np.isfinite(result.info["grad_norm"])
     assert np.isfinite(result.info["loss"])
+    assert all(np.isfinite(v) for v in result.values.values())

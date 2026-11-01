@@ -1946,17 +1946,21 @@ def _lbfgs_loop(
     def step(carry):
         count, z, state, _, _, _ = carry
         value, grad = value_and_grad(z, state=state)
-        updates, state = optimizer.update(
+        updates, proposed = optimizer.update(
             grad, state, z, value=value, grad=grad, value_fn=loss
         )
         new = optax.apply_updates(z, updates)
-        # A non-finite iterate is not accepted: keep the last finite point,
-        # and flag the stop through a NaN gradient size.
+        # A non-finite iterate is not accepted: keep the last finite point
+        # and its optimizer state (so the reported gradient is at that
+        # point), and flag the stop through a NaN gradient size.
         sound = jax.tree.reduce(
             np.logical_and,
             jax.tree.map(lambda a: np.all(np.isfinite(a)), new),
         )
         new = jax.tree.map(lambda a, b: np.where(sound, a, b), new, z)
+        state = jax.tree.map(
+            lambda a, b: np.where(sound, a, b), proposed, state
+        )
         moved = jax.tree.reduce(
             np.logical_or,
             jax.tree.map(lambda a, b: np.any(a != b), new, z),
