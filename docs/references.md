@@ -88,6 +88,16 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `evaluate` | [Lee & Greengard (2005)](#leegreengard2005), [ADS](https://ui.adsabs.harvard.edu/abs/2005JCoPh.206....1L/abstract), [doi:10.1016/j.jcp.2004.12.004](https://doi.org/10.1016/j.jcp.2004.12.004) | after |
 | `spread` | [Oudoumanessah & Iollo](#nufftax), [GitHub](https://github.com/GragasLab/nufftax) | after |
 
+### `virgil._orbit_coordinates`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `sample_z` | [Moran (1975)](#moran1975), [doi:10.1017/s0021900200047720](https://doi.org/10.1017/s0021900200047720) | after |
+| `ti_to_z` | [Goldstein, Poole & Safko (2002)](#goldstein2002) | after |
+| `z_log_prior` | [Miles (1965)](#miles1965), [doi:10.1093/biomet/52.3-4.636](https://doi.org/10.1093/biomet/52.3-4.636) | after |
+| `z_to_ti` | [Thiele (1883)](#thiele1883), [ADS](https://ui.adsabs.harvard.edu/abs/1883AN....104..245T/abstract) | after |
+| `zeta_to_eccentricity` | [Ford (2006)](#ford2006), [arXiv:astro-ph/0512634](https://arxiv.org/abs/astro-ph/0512634), [ADS](https://ui.adsabs.harvard.edu/abs/2006ApJ...642..505F/abstract), [doi:10.1086/500802](https://doi.org/10.1086/500802) | after |
+
 ### `virgil.aliases`
 
 | Symbol | Source | Relation |
@@ -544,10 +554,12 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="espinosalara2011"></a>**Espinosa Lara & Rieutord (2011)**. Gravity darkening in rotating stars. [arXiv:1109.3038](https://arxiv.org/abs/1109.3038), [ADS](https://ui.adsabs.harvard.edu/abs/2011A&A...533A..43E/abstract), [doi:10.1051/0004-6361/201117252](https://doi.org/10.1051/0004-6361/201117252). A&A 533, A43.
 - <a id="fawcett2006"></a>**Fawcett (2006)**. An introduction to ROC analysis. [ADS](https://ui.adsabs.harvard.edu/abs/2006PaReL..27..861F/abstract), [doi:10.1016/j.patrec.2005.10.010](https://doi.org/10.1016/j.patrec.2005.10.010).
 - <a id="fessler2005"></a>**Fessler et al. (2005)**. Toeplitz-based iterative image reconstruction for MRI with correction for magnetic field inhomogeneity. [ADS](https://ui.adsabs.harvard.edu/abs/2005ITSP...53.3393F/abstract), [doi:10.1109/TSP.2005.853152](https://doi.org/10.1109/TSP.2005.853152). IEEE Trans. Signal Process. 53, 3393; the Toeplitz embedding of the normal operator AᴴWA on a 2N grid.
+- <a id="ford2006"></a>**Ford (2006)**. Improving the Efficiency of Markov Chain Monte Carlo for Analyzing the Orbits of Extrasolar Planets. [arXiv:astro-ph/0512634](https://arxiv.org/abs/astro-ph/0512634), [ADS](https://ui.adsabs.harvard.edu/abs/2006ApJ...642..505F/abstract), [doi:10.1086/500802](https://doi.org/10.1086/500802). ApJ 642, 505; the (sqrt(e) cos omega, sqrt(e) sin omega) parameterization, uniform in e; zeta is its half-angle variant.
 - <a id="foreman-mackey2021"></a>**Foreman-Mackey et al. (2021)**. exoplanet: Gradient-based probabilistic inference for exoplanet data & other astronomical time series. [arXiv:2105.01994](https://arxiv.org/abs/2105.01994), [ADS](https://ui.adsabs.harvard.edu/abs/2021JOSS....6.3285F/abstract), [doi:10.21105/joss.03285](https://doi.org/10.21105/joss.03285). JOSS 6, 3285.
 - <a id="frank2021"></a>**Frank, Leike & Enßlin (2021)**. Geometric variational inference. [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract). geoVI.
 - <a id="gallenne2015"></a>**Gallenne et al. (2015)**. Robust high-contrast companion detection from interferometric observations. The CANDID algorithm and an application to six binary stars. [arXiv:1505.02715](https://arxiv.org/abs/1505.02715), [ADS](https://ui.adsabs.harvard.edu/abs/2015A&A...579A..68G/abstract). CANDID.
 - <a id="frito"></a>**Goldfine**. frito. [GitHub](https://github.com/JonahDG/frito). *Not yet verified against arXiv, Crossref or ADS.*
+- <a id="goldstein2002"></a>**Goldstein, Poole & Safko (2002)**. Classical Mechanics (3rd ed.). Addison-Wesley, section 4.5; the Cayley-Klein parameters of a rotation in Euler angles. A textbook with no DOI or ADS record: unverified. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="greenbaum2015"></a>**Greenbaum et al. (2014)**. An image-plane algorithm for JWST's non-redundant aperture mask data. [arXiv:1411.3446](https://arxiv.org/abs/1411.3446), [ADS](https://ui.adsabs.harvard.edu/abs/2015ApJ...798...68G/abstract). ImPlaneIA; ApJ 798, 68 (2015).
 - <a id="implaneia"></a>**Greenbaum, Sivaramakrishnan et al.**. ImPlaneIA. [GitHub](https://github.com/anand0xff/ImPlaneIA). paper: greenbaum2015. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="gross2010"></a>**Gross & Vitells (2010)**. Trial factors for the look elsewhere effect in high energy physics. [arXiv:1005.1891](https://arxiv.org/abs/1005.1891), [ADS](https://ui.adsabs.harvard.edu/abs/2010EPJC...70..525G/abstract).
@@ -598,7 +610,9 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="xara"></a>**Martinache (2010)**. Kernel-Phase in Fizeau Inteferometry. [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract), [GitHub](https://github.com/fmartinache/xara). xara was formerly pysco; cvis_binary is adapted from it.
 - <a id="mawet2014"></a>**Mawet et al. (2014)**. Fundamental limitations of high contrast imaging set by small sample statistics. [arXiv:1407.2247](https://arxiv.org/abs/1407.2247), [ADS](https://ui.adsabs.harvard.edu/abs/2014ApJ...792...97M/abstract). ApJ 792, 97; the small-sample false-alarm correction, not applied in injection_recovery.
 - <a id="mengersen1996"></a>**Mengersen & Tweedie (1996)**. Rates of convergence of the Hastings and Metropolis algorithms. [doi:10.1214/aos/1033066201](https://doi.org/10.1214/aos/1033066201). Ann. Stat. 24, 101; independence Metropolis-Hastings is uniformly ergodic iff the weight is bounded.
+- <a id="miles1965"></a>**Miles (1965)**. On random rotations in R^3. [doi:10.1093/biomet/52.3-4.636](https://doi.org/10.1093/biomet/52.3-4.636). Biometrika 52, 636-639; the isotropic (Haar) distribution of rotations: Omega and omega uniform, cos i uniform. Not on ADS: checked on Crossref.
 - <a id="monnier2007"></a>**Monnier et al. (2007)**. Imaging the Surface of Altair. [arXiv:0706.0867](https://arxiv.org/abs/0706.0867), [ADS](https://ui.adsabs.harvard.edu/abs/2007Sci...317..342M/abstract), [doi:10.1126/science.1143205](https://doi.org/10.1126/science.1143205). Science 317, 342; the Altair-like truth of notebooks/mwe/mwe_elr_chara.ipynb is inspired by it, not a reproduction.
+- <a id="moran1975"></a>**Moran (1975)**. Quaternions, Haar measure and the estimation of a palaeomagnetic rotation. [doi:10.1017/s0021900200047720](https://doi.org/10.1017/s0021900200047720). J. Appl. Prob. 12, 295-301; Haar measure on SO(3) is the uniform measure on S^3, covered 2:1 by unit quaternions. Not on ADS: checked on Crossref.
 - <a id="merand2022"></a>**Mérand (2022)**. Flexible Spectro Interferometric modelling of OIFITS data with PMOIRED. [arXiv:2207.11047](https://arxiv.org/abs/2207.11047), [ADS](https://ui.adsabs.harvard.edu/abs/2022SPIE12183E..1NM/abstract), [GitHub](https://github.com/amerand/pmoired). PMOIRED.
 - <a id="candid"></a>**Mérand et al.**. CANDID: Companion Analysis and Non-Detection in Interferometric Data. [GitHub](https://github.com/amerand/CANDID). algorithm paper: gallenne2015. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="offringa2014"></a>**Offringa et al. (2014)**. WSCLEAN: an implementation of a fast, generic wide-field imager for radio astronomy. [arXiv:1407.1943](https://arxiv.org/abs/1407.1943), [ADS](https://ui.adsabs.harvard.edu/abs/2014MNRAS.444..606O/abstract). MNRAS 444, 606; bibcode 2014MNRAS.444..606O; the WSClean argument conventions radio_clean follows.
