@@ -203,3 +203,38 @@ def test_the_polar_box_holds_the_peak_and_the_log_integrand_is_finite_there():
     off = centre.copy()
     off[4] = 0.5  # a flux ratio above one is outside the prior
     assert log_f(off[None])[0] == -onp.inf
+
+
+@pytest.mark.slow
+@pytest.mark.xfail(
+    strict=True,
+    reason="the position leg tempers from the prior and is flat on the outlier "
+    "floor for a 6-night orbit with a 238 d gap; leg 1 is being redesigned "
+    "(search, then Monte Carlo in a low-dimensional space)",
+)
+@x64
+def test_the_position_leg_picks_the_true_cycle_count_on_a_gapped_six_night_orbit():
+    from tests.test_aliases import EPOCHS, T_REF, TRUTH
+    from tests.test_orbit_cells import LOG_B, _summaries
+    from virgil.orbits import KeplerOrbit
+
+    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+    summaries = _summaries(orbit, EPOCHS, sigma=0.1)
+    domain = cells.period_domain(
+        summaries, night_length=0.1, resolution=3.0, p_range=(11.5, 13.0)
+    )
+    out = cells.position_cells(
+        summaries,
+        domain,
+        jax.random.PRNGKey(1),
+        log_outlier=onp.full(len(EPOCHS), LOG_B),
+        jitter=0.0,
+        n_particles=256,
+        pilot=False,
+    )
+    true_cell = onp.argmax(
+        [c.p_lo <= TRUTH["period"] <= c.p_hi for c in out.cells]
+    )
+    log_z = onp.array([leg.log_z for leg in out.legs])
+    assert log_z.max() - log_z.min() > 5.0  # the cells are told apart
+    assert onp.argmax(out.p_pos) == true_cell
