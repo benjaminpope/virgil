@@ -39,6 +39,7 @@ EXPECTED = {
     "virgil.orbit_search": {"*"},
     "virgil.tempering": {"*"},
     "virgil.svi": {"*"},
+    "virgil.smc": {"*"},
     "virgil.metrics": {"*"},
     "virgil.radio": {"*"},
     "virgil.radio_clean": {"*"},

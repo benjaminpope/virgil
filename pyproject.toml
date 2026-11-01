@@ -18,12 +18,14 @@ authors = [
 keywords = ["interferometry", "oifits", "aperture-masking", "astronomy", "jax", "autodiff", "differentiable", "image-reconstruction", "virgil"]
 dependencies = [
   # Floors are the oldest versions CI tests (the "lowest" job in
-  # tests.yml installs exactly these). jax.enable_x64 needs jax 0.8.
+  # tests.yml installs exactly these). jax.enable_x64 needs jax 0.8; blackjax needs 0.9.
   # There is deliberately no upper bound: the other jobs in tests.yml
   # upgrade to the newest JAX, and uv.lock tracks it too (JAX 0.11 needs
   # Python 3.12, so Python 3.11 locks the last release that supports it).
-  "jax>=0.8.0",
+  "jax>=0.9.0",  # blackjax 1.7.1 needs jax 0.9
   "jaxbessel>=0.2.0",
+  # Adaptive tempered SMC (virgil.smc).
+  "blackjax>=1.7.1",
   "equinox>=0.13.2",
   "zodiax>=0.4.1",
   # 0.1.0: before it, a solver whose terminate() returns an unsuccessful

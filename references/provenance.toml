@@ -1753,8 +1753,8 @@ authors = "Del Moral, Doucet & Jasra"
 year = 2006
 title = "Sequential Monte Carlo Samplers"
 doi = "10.1111/j.1467-9868.2006.00553.x"
-used_in = []
-note = "JRSSB 68, 411; SMC samplers and the normalizing-constant estimate"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "JRSSB 68, 411; SMC samplers and the normalizing-constant estimate, Z as the product of the incremental weights"
 role = "bibliography"
 verified = true
 verified_via = "crossref"
@@ -1764,7 +1764,7 @@ authors = "Jasra, Stephens, Doucet & Tsagaris"
 year = 2011
 title = "Inference for Lévy-Driven Stochastic Volatility Models via Adaptive Sequential Monte Carlo"
 doi = "10.1111/j.1467-9469.2010.00723.x"
-used_in = []
+used_in = ["virgil.smc:tempered_smc"]
 note = "Scand. J. Stat. 38, 1 (online December 2010); ESS-adaptive tempering schedules"
 role = "bibliography"
 verified = true
@@ -1775,7 +1775,7 @@ authors = "Zhou, Johansen & Aston"
 year = 2016
 title = "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
 doi = "10.1080/10618600.2015.1060885"
-used_in = []
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
 note = "JCGS 25, 701; conditional ESS for the next temperature"
 role = "bibliography"
 verified = true
@@ -1787,7 +1787,7 @@ year = 2021
 title = "Adaptive Tuning of Hamiltonian Monte Carlo Within Sequential Monte Carlo"
 doi = "10.1214/20-ba1222"
 arxiv = "1808.07730"
-used_in = []
+used_in = ["virgil.smc:tempered_smc"]
 note = "Bayesian Anal. 16, 745; fixed-L HMC kernels tuned per stage"
 role = "bibliography"
 bibcode = "2018arXiv180807730B"
@@ -1871,3 +1871,37 @@ role = "bibliography"
 bibcode = "2023arXiv230809769S"
 verified = true
 verified_via = "ads"
+
+
+[ref.cabezas2024]
+authors = "Cabezas et al."
+year = 2024
+title = "BlackJAX: Composable Bayesian inference in JAX"
+arxiv = "2402.10797"
+repo = "https://github.com/blackjax-devs/blackjax"
+verified = true
+verified_via = "arxiv"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "the adaptive tempered SMC, HMC and pretuning kernels (blackjax >= 1.7.1) that virgil.smc wraps"
+
+[ref.lee2018]
+authors = "Lee & Whiteley"
+year = 2018
+title = "Variance estimation in the particle filter"
+arxiv = "1509.00394"
+doi = "10.1093/biomet/asy028"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "Biometrika 105, 609; the single-run variance estimator of the normalizing constant from Eve (time-0 ancestor) indices, eq. 4 with phi = 1; needs multinomial resampling"
+
+[ref.du2021]
+authors = "Du & Guyader"
+year = 2021
+title = "Variance estimation in adaptive sequential Monte Carlo"
+arxiv = "1909.13602"
+doi = "10.1214/20-AAP1611"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "Ann. Appl. Probab. 31, 1021; extends the Eve-index variance estimator to SMC whose tempering schedule is chosen adaptively from the particles"
