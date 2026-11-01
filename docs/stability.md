@@ -16,10 +16,11 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 
 | Area | Provisional names |
 | --- | --- |
-| Orbit fitting | the modules [`virgil.epochs`](api/epochs.md), [`virgil.aliases`](api/aliases.md), [`virgil.arcs`](api/arcs.md), [`virgil.orbit_search`](api/orbit_search.md) and [`virgil.tempering`](api/tempering.md) (the whole of each) |
+| Orbit fitting | the modules [`virgil.epochs`](api/epochs.md), [`virgil.aliases`](api/aliases.md), [`virgil.arcs`](api/arcs.md), [`virgil.night_summaries`](api/night_summaries.md), [`virgil.orbit_cells`](api/orbit_cells.md), [`virgil.orbit_search`](api/orbit_search.md) and [`virgil.tempering`](api/tempering.md) (the whole of each) |
 | `MultipoleDisk` family ([`virgil.models`](api/models/classes/multipole_disk.md)) | `MultipoleDisk`, `ThinRing`, `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`, `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `Harmonics`, `VonMises`, `Cone`, `PowerLawHeight`, `multipole_disk_cvis`, `gp_priors` |
 | Polar fields ([`virgil.fields`](api/fields.md)) | `MultipoleField`, `multipole_field_priors` |
 | Ensembles' Gaussian-process members ([`virgil.ensemble`](api/ensemble.md)) | `evidence_grid`, `gp_members`, `GPFit`, `EvidenceGrid` |
+| Tempered SMC | the module [`virgil.smc`](api/smc.md) (`tempered_smc`, `bridge_smc`, `SMCResult`) |
 | Variational inference | the module [`virgil.svi`](api/svi.md) (`variational`, `VariationalResult`) |
 | Pipelines | the whole of [`virgil.pipeline`](pipeline.md): `BinaryPipeline`, `StarPipeline`, `OrbitPipeline`, `Result`, `load` and the rest. Promoted to stable after a release of use |
 | Sparse imaging ([`virgil.imaging`](api/imaging.md)) | `clean`, `CleanResult` |
