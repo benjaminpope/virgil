@@ -1640,3 +1640,44 @@ def test_numpyro_model_raises_for_a_model_per_dataset_with_regularizers():
         numpyro.handlers.trace(
             numpyro.handlers.seed(model, jax.random.PRNGKey(0))
         ).get_trace()
+
+
+class _Cliff:
+    """A quadratic that is NaN beyond a radius, and whose gradient is inf at 1."""
+
+    def __init__(self, radius, nan_gradient=False):
+        self.radius, self.nan_gradient = radius, nan_gradient
+
+    def loss(self, z):
+        quad = 0.5 * np.sum((z - 0.3) ** 2)
+        if self.nan_gradient:
+            quad = quad + 1e-3 * np.sum(np.sqrt(np.maximum(z - 1.0, 0.0)))
+        return np.where(np.linalg.norm(z) > self.radius, np.nan, quad)
+
+
+@pytest.mark.parametrize("nan_gradient", [False, True])
+def test_lbfgs_never_accepts_a_non_finite_iterate(nan_gradient):
+    from virgil.fitting import _lbfgs_run
+
+    z0 = np.array([0.0, 0.1])
+    # A step cap far above the cliff: the first trial point lies beyond it.
+    carry, _ = _lbfgs_run(
+        _Cliff(1.0, nan_gradient), z0, 1.0, np.asarray(50), 1e-8, 1e6, 10
+    )
+    z = carry[1]
+    assert np.all(np.isfinite(z)) and np.isfinite(carry[3])
+    assert np.allclose(z, 0.3, atol=1e-4) or not np.isfinite(carry[4])
+
+
+def test_a_softmax_image_with_max_entropy_fits_without_raising():
+    start, priors, data = _image_fit(npix=8)
+    result = fit(
+        start,
+        priors,
+        data,
+        [MaxEntropy(1e-9, path="env")],
+        method="lbfgs",
+        max_steps=60,
+    )
+    assert np.all(np.isfinite(result.model.env.log_brightness))
+    assert np.isfinite(result.info["loss"])

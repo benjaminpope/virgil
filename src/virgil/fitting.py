@@ -1927,7 +1927,8 @@ def _lbfgs_loop(
 
     ``carry`` is ``(count, z, optimizer state, loss, gradient, moved)``. Stops at
     ``stop_at`` steps, within ``tolerance``, when a step no longer moves the
-    parameters, or when the loss or gradient is not finite. ``stop_at`` is traced,
+    parameters, or when the loss or gradient is not finite (a non-finite step is
+    not taken: ``z`` stays the last finite point). ``stop_at`` is traced,
     so chunked fits compile the loop once. With a ``metric``, ``z`` is in its
     scaled coordinates, and ``gradient`` is still the unscaled one.
     """
@@ -1949,11 +1950,19 @@ def _lbfgs_loop(
             grad, state, z, value=value, grad=grad, value_fn=loss
         )
         new = optax.apply_updates(z, updates)
+        # A non-finite iterate is not accepted: keep the last finite point,
+        # and flag the stop through a NaN gradient size.
+        sound = jax.tree.reduce(
+            np.logical_and,
+            jax.tree.map(lambda a: np.all(np.isfinite(a)), new),
+        )
+        new = jax.tree.map(lambda a, b: np.where(sound, a, b), new, z)
         moved = jax.tree.reduce(
             np.logical_or,
             jax.tree.map(lambda a, b: np.any(a != b), new, z),
         )
         size = _largest(grad if metric is None else metric.gradient(grad))
+        size = np.where(sound, size, np.nan)
         return count + 1, new, state, value, size, moved
 
     return jax.lax.while_loop(keep_going, step, carry)

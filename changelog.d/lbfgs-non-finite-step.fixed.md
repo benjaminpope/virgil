@@ -1,0 +1,1 @@
+`fit(method="lbfgs")` no longer accepts a non-finite iterate: if a step would make the parameters NaN or infinite, it keeps the last finite point and stops with `info["stop"] == "non-finite"` instead of raising later (for example from `Image` on a NaN `log_brightness`) after a long run.
