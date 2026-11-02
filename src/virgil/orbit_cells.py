@@ -788,23 +788,18 @@ def _objective(x, space):
     return _target(x, space) + 3.0 * np.log(np.linalg.norm(x[_Z]))
 
 
-def _night_terms(x, space):
-    """``(K, J)`` peak terms at ``x`` for the brighter-star sign ``σ = +1``."""
-    c = space.decode(x)
-    pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
-    state = np.concatenate(
-        [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
-    )
-    return _peak_terms(space.cat, c["ln_s"], space.jitter, state, space.dtype)
-
-
 def _labels(x, space):
     """Each night's best peak, or -1 (outlier) where the floor is higher.
 
     At the prior mean ``ε̄ = ½`` the inlier and outlier weights ``1 - ε̄`` and
     ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``.
     """
-    terms = _night_terms(x, space)
+    c = space.decode(x)
+    pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+    state = np.concatenate(
+        [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
+    )
+    terms = _peak_terms(space.cat, c["ln_s"], space.jitter, state, space.dtype)
     j = np.argmax(terms, axis=1)
     best = np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
     return np.where(best > space.cat.log_b, j, -1)
@@ -1078,40 +1073,16 @@ def _ransac_count(m):
     return math.ceil(math.log(DELTA) / math.log(1.0 - (1.0 - EPS_HI) ** m))
 
 
-def _interior_fills(peaks, pairs, rng):
-    """Random triplets spanning each pair of nights, for a system above
-    ``N_SET_MAX`` sets (design §6.1).
-
-    Per pair of nights ``(a, b)`` with a night strictly between them, ``n =
-    ⌈ln δ / ln(1 - w^(m-2))⌉`` (``m = 3``) triplets ``(a, c, b)``: ``c`` an
-    interior night with a peak, the three peaks random. The outer pair is in
-    every one, so the span that pins the period is never dropped; the pairs
-    themselves are all kept, with every combination of their peaks.
-
-    Source: Fischler & Bolles (1981).
-    """
-    n = math.ceil(math.log(DELTA) / math.log(1.0 - (1.0 - EPS_HI)))
-    spans = sorted({nt for nt, _ in pairs})
-    fills = set()
-    for a, b in spans:
-        inner = [c for c in range(a + 1, b) if len(peaks[c])]
-        if not inner:
-            continue
-        for _ in range(n):
-            c = inner[rng.integers(len(inner))]
-            pk = tuple(int(rng.choice(peaks[k])) for k in (a, c, b))
-            fills.add(((a, c, b), pk))
-    return sorted(fills)
-
-
 def search_plan(space, key=None, nu_width=None):
     """The minimal sets of a system, as arrays (the same for every cell).
 
     Pairs of nights (positions and velocities: 8 equations for the 4 TI′ at
     fixed ``(P, ζ)``) and triplets (positions only: 6), with every combination
     of their peaks. Above ``N_SET_MAX`` sets the triplets are the random
-    interior fills of every pair ([`_interior_fills`][virgil.orbit_cells._interior_fills],
-    drawn from ``key``) and the pairs stay whole, so the pair that spans the
+    interior fills of every pair (per pair of nights ``(a, b)`` with a night
+    between them, ``⌈ln δ / ln(1 - w)⌉`` triplets ``(a, c, b)``, ``c`` an
+    interior night with a peak, the three peaks random; design §6.1; drawn
+    from ``key``) and the pairs stay whole, so the pair that spans the
     inliers (it pins the period to ``σ / (a Δ)``) is always there.
 
     The ``ln P`` grid has ``⌈K_COH Δ ν_w⌉ + 1`` nodes (at least ``K_COH + 1``)
@@ -1152,7 +1123,15 @@ def search_plan(space, key=None, nu_width=None):
                 for pk in itertools.product(*[peaks[k] for k in nights]):
                     sets[m].append((nights, pk))
     if sum(len(v) for v in sets.values()) > N_SET_MAX:
-        sets[3] = _interior_fills(peaks, sets[2], rng)
+        n_fill = math.ceil(math.log(DELTA) / math.log(1.0 - (1.0 - EPS_HI)))
+        fills = set()
+        for a, b in sorted({nt for nt, _ in sets[2]}):
+            inner = [c for c in range(a + 1, b) if len(peaks[c])]
+            for _ in range(n_fill if inner else 0):
+                c = inner[rng.integers(len(inner))]
+                pk = tuple(int(rng.choice(peaks[k])) for k in (a, c, b))
+                fills.add(((a, c, b), pk))
+        sets[3] = sorted(fills)
     chosen = sets[2] + sets[3]
     s = len(chosen)
     nights = onp.zeros((s, 3), int)

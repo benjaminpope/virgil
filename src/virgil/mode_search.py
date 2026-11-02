@@ -147,19 +147,6 @@ def distinct_modes(modes):
     return kept
 
 
-def _log_t(x, mu, linv, logdet, df):
-    """Log density of the multivariate t of every component at ``x``."""
-    d = x.shape[-1]
-    z = np.einsum("mij,mj->mi", linv, x[None] - mu)
-    return (
-        -0.5 * (df + d) * np.log1p(np.sum(z**2, -1) / df)
-        - 0.5 * logdet
-        + math.lgamma(0.5 * (df + d))
-        - math.lgamma(0.5 * df)
-        - 0.5 * d * math.log(df * math.pi)
-    )
-
-
 @jax.tree_util.register_pytree_node_class
 class DefensiveMixture:
     """``q = α prior + (1 - α) Σ_m w_m t_DF(g x_m, g cov_m gᵀ)``.
@@ -247,7 +234,15 @@ class DefensiveMixture:
 
     def log_q(self, x):
         """``ln q(x)`` of one vector."""
-        lt = _log_t(x, self.mu, self.linv, self.logdet, self.df)
+        df, d = self.df, x.shape[-1]
+        z = np.einsum("mij,mj->mi", self.linv, x[None] - self.mu)
+        lt = (  # log density of the multivariate t of every component at x
+            -0.5 * (df + d) * np.log1p(np.sum(z**2, -1) / df)
+            - 0.5 * self.logdet
+            + math.lgamma(0.5 * (df + d))
+            - math.lgamma(0.5 * df)
+            - 0.5 * d * math.log(df * math.pi)
+        )
         return np.logaddexp(
             self.log_alpha + self.log_prior(x),
             self.log_beta + jax.scipy.special.logsumexp(self.log_w + lt),
@@ -327,12 +322,6 @@ def importance_evidence(
     )  # fmt: skip
 
 
-def _systematic(key, w, n):
-    """Indices of a systematic resample of weights ``w`` (normalized)."""
-    u = (jax.random.uniform(key, ()) + np.arange(n)) / n
-    return np.minimum(np.searchsorted(np.cumsum(w), u), w.shape[0] - 1)
-
-
 @functools.partial(
     jax.jit, static_argnames=("log_target", "n_draws", "n_moves", "n_warm")
 )
@@ -342,7 +331,8 @@ def _move_kernel(
     """Systematic resample, dual-averaged warm-up, then ``n_moves`` HMC steps."""
     k_res, k_warm, k_move = jax.random.split(key, 3)
     w = np.exp(log_w - jax.scipy.special.logsumexp(log_w))
-    parts = x[_systematic(k_res, w, n_draws)]
+    u = (jax.random.uniform(k_res, ()) + np.arange(n_draws)) / n_draws
+    parts = x[np.minimum(np.searchsorted(np.cumsum(w), u), w.shape[0] - 1)]
     logdensity = lambda v: log_target(v, theta)  # noqa: E731
     kernel = hmc.build_kernel()
     states = jax.vmap(lambda v: hmc.init(v, logdensity))(parts)
