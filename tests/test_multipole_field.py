@@ -685,7 +685,7 @@ def test_resolved_bakes_the_tie_in():
     from virgil.imaging import TSV
 
     moved = scene.set("disk.pa", np.asarray(-70.0))
-    penalty = TSV(1.0, "env")
+    penalty = TSV(1.0, "env", beam_mas=1.0)
     direct = Image(moved.env.log_brightness, 1.0).brightness
     assert not onp.allclose(penalty.image(moved).brightness, direct, atol=1e-6)
     assert onp.allclose(
