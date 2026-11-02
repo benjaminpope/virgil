@@ -1,0 +1,12 @@
+K6_2s sigma/a=0.01 N=20 exact lnZ=-5.213 floor=-61.50 [0s] | search k=4: grid=37 modes=6 cost=1.58e+04 wall=2.5s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   -5.214 bias=  -0.001
+  I: lnZ=   -5.216 bias=  -0.003 sd=  0.012 cost=4.00e+03 var*cost=5.81e-01 wall=0.0s sentinel=ok E[n_in]=6.00 all=[-5.217, -5.203, -5.212, -5.232]
+  B: lnZ=   -5.210 bias=   0.002 sd=  0.013 cost=1.83e+06 var*cost=3.15e+02 wall=16.3s  all=[-5.204, -5.229, -5.198, -5.211]
+K6_2s sigma/a=0.001 N=20 exact lnZ=10.910 floor=-61.50 [0s] | search k=4: grid=37 modes=6 cost=3.03e+04 wall=5.7s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   10.908 bias=  -0.002
+  I: lnZ=   10.905 bias=  -0.005 sd=  0.012 cost=4.00e+03 var*cost=5.65e-01 wall=0.1s sentinel=ok E[n_in]=6.00 all=[10.904, 10.918, 10.909, 10.89]
+  B: lnZ=   10.910 bias=  -0.000 sd=  0.013 cost=2.05e+06 var*cost=3.58e+02 wall=14.4s  all=[10.91, 10.893, 10.926, 10.91]
+K6_2s sigma/a=0.0001 N=20 exact lnZ=27.028 floor=-61.50 [1s] | search k=4: grid=37 modes=6 cost=4.43e+04 wall=5.6s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   27.026 bias=  -0.002
+  I: lnZ=   27.024 bias=  -0.005 sd=  0.012 cost=4.00e+03 var*cost=5.63e-01 wall=0.1s sentinel=ok E[n_in]=6.00 all=[27.023, 27.037, 27.027, 27.008]
+  B: lnZ=   27.028 bias=  -0.000 sd=  0.011 cost=2.58e+06 var*cost=3.26e+02 wall=16.2s  all=[27.029, 27.012, 27.039, 27.032]

@@ -1,0 +1,26 @@
+K10_2s sigma/a=0.01 N=20 exact lnZ=-6.024 floor=-102.50 [1s] | search k=4: grid=211 modes=21 cost=1.38e+05 wall=19.4s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   -6.024 bias=  -0.001
+  I: lnZ=   -6.026 bias=  -0.003 sd=  0.012 cost=4.00e+03 var*cost=5.68e-01 wall=0.1s sentinel=ok E[n_in]=9.00 all=[-6.027, -6.014, -6.023, -6.042]
+  B: lnZ=   -6.021 bias=   0.002 sd=  0.014 cost=6.26e+06 var*cost=1.26e+03 wall=68.3s  all=[-6.018, -6.04, -6.006, -6.022]
+K10_2s sigma/a=0.001 N=20 exact lnZ=23.912 floor=-102.50 [2s] | search k=4: grid=212 modes=14 cost=2.13e+05 wall=21.7s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   23.908 bias=  -0.004
+  I: lnZ=   23.906 bias=  -0.006 sd=  0.012 cost=4.00e+03 var*cost=5.64e-01 wall=0.1s sentinel=ok E[n_in]=9.00 all=[23.905, 23.919, 23.909, 23.89]
+  B: lnZ=   23.910 bias=  -0.002 sd=  0.012 cost=6.37e+06 var*cost=8.97e+02 wall=38.7s  all=[23.91, 23.894, 23.923, 23.911]
+K10_2s sigma/a=0.0001 N=20 exact lnZ=53.845 floor=-102.50 [20s] | search k=4: grid=212 modes=10 cost=1.78e+05 wall=22.3s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   53.841 bias=  -0.004
+  I: lnZ=   53.839 bias=  -0.006 sd=  0.012 cost=4.00e+03 var*cost=5.63e-01 wall=0.1s sentinel=ok E[n_in]=9.00 all=[53.838, 53.852, 53.842, 53.824]
+  B: lnZ=   53.843 bias=  -0.003 sd=  0.013 cost=4.61e+06 var*cost=7.57e+02 wall=27.1s  all=[53.841, 53.827, 53.859, 53.843]
+K10_3s sigma/a=0.01 N=25 exact lnZ=-5.178 floor=-102.50 [1s] | search k=4: grid=147 modes=12 cost=5.34e+04 wall=8.0s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   -5.178 bias=  -0.000
+K10_3s sigma/a=0.001 N=25 exact lnZ=24.762 floor=-102.50 [0s] | search k=4: grid=147 modes=8 cost=9.53e+04 wall=1.7s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   24.759 bias=  -0.003
+  I: lnZ=   24.756 bias=  -0.005 sd=  0.012 cost=4.00e+03 var*cost=5.62e-01 wall=0.0s sentinel=ok E[n_in]=9.00 all=[24.755, 24.769, 24.76, 24.741]
+K10_3s sigma/a=0.0001 N=25 exact lnZ=54.696 floor=-102.50 [3s] | search k=4: grid=147 modes=4 cost=1.96e+05 wall=3.3s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   54.693 bias=  -0.003
+  I: lnZ=   54.690 bias=  -0.006 sd=  0.012 cost=4.00e+03 var*cost=5.63e-01 wall=0.0s sentinel=ok E[n_in]=9.00 all=[54.689, 54.703, 54.694, 54.675]
+K14_4s sigma/a=0.01 N=40 exact lnZ=-7.447 floor=-143.50 [5s] | search k=4: grid=398 modes=54 cost=1.51e+05 wall=2.1s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   -7.447 bias=  -0.000
+  I: lnZ=   -7.449 bias=  -0.003 sd=  0.012 cost=4.00e+03 var*cost=5.55e-01 wall=0.0s sentinel=ok E[n_in]=12.00 all=[-7.45, -7.436, -7.446, -7.465]
+K14_4s sigma/a=0.0001 N=40 exact lnZ=80.055 floor=-143.50 [59s] | search k=4: grid=398 modes=11 cost=1.74e+05 wall=3.0s coverage=1.000000 oracle peaks>=delta 1/1
+  L: lnZ=   80.052 bias=  -0.004
+  I: lnZ=   80.050 bias=  -0.006 sd=  0.012 cost=4.00e+03 var*cost=5.63e-01 wall=0.0s sentinel=ok E[n_in]=12.00 all=[80.048, 80.063, 80.053, 80.034]
