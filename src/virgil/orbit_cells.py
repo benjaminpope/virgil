@@ -1843,6 +1843,7 @@ def position_cells(
     if jitter is None:
         jitter = fit_jitter(summaries, log_outlier, domain, (t_a, t_b))
     cells = make_cells(t_a, t_b, domain)
+    workers = N_WORKERS if workers is None else workers
     start = time.time()
     keys = jax.random.split(key, len(cells))
 
