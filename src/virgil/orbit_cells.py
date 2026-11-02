@@ -1184,8 +1184,8 @@ def search_cell(space, key=None, *, plan=None, info=None):
        the rest deduplicated by labels and ``(ln P, ζ)``.
     3. C-steps (at most ``N_C``): Newton on the labelled target in the full
        chart, relabel, until the labels repeat.
-    4. Newton on the label-summed objective; keep it if minus its Hessian is
-       positive definite; ``distinct_modes``.
+    4. Newton on the label-summed objective; the covariance is the inverse of
+       its saddle-free Hessian (``|eigenvalues|``); ``distinct_modes``.
 
     ``info``, a dict, receives the counts of each step and ``evaluations``, the
     likelihood-equivalent cost (a gradient is 3, a Hessian 3 per dimension).
@@ -1284,19 +1284,17 @@ def search_cell(space, key=None, *, plan=None, info=None):
             onp.isfinite(xi).all()
             and onp.isfinite(hi).all()
             and onp.isfinite(ti)
-            and _positive_definite(hi)
         ):
-            modes.append(Mode(xi, float(ti), onp.linalg.inv(hi), float(ni)))
+            # saddle-free: |eigenvalues|, floored at the numerical rank (a
+            # saturated coordinate has none); a saddle's t is still a proposal
+            e, vec = onp.linalg.eigh(hi)
+            e = onp.maximum(
+                onp.abs(e), len(e) * onp.finfo(hi.dtype).eps * onp.abs(e).max()
+            )
+            modes.append(Mode(xi, float(ti), (vec / e) @ vec.T, float(ni)))
     modes = distinct_modes(modes)
     info["modes"] = len(modes)
     return modes
-
-
-def _positive_definite(h):
-    """``h`` is positive definite to numerical rank: its smallest eigenvalue
-    exceeds ``d · eps · λ_max`` (a saturated coordinate has none)."""
-    e = onp.linalg.eigvalsh(h)
-    return bool(e.min() > len(e) * onp.finfo(h.dtype).eps * e.max())
 
 
 def _symmetry_images(d):
