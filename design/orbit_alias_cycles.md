@@ -709,6 +709,14 @@ ADS does not index).
 for b_k with velocity (§2) and the peak keep rule (§5). Each is flagged *derived* in the methods register by its stage and
 checked by a vv-independent test (the check script, the prior-recovery tests, the #618 oracle in 5-D).
 
+**Stage 2b status (`virgil.night_summaries`, provisional): *derived*.** Per-peak whole-night linear-motion summaries at
+visibility level (§5) and the peak keep rule are not published practice; both are derived here. Tests pinning them
+(`tests/test_night_summaries.py`): unit pulls over seeds, the velocity covariance ∝ 1/span² (exact under time stretching)
+and ∝ σ², the keep-rule threshold at K = 1 and K = 3, merge-to-best, no peak reported on a bound, the null profiled like the
+peaks. Per-frame jitter σ_J enters as σ_J²/N at the night position and σ_J²/Σ(t_j − t̄)² in the velocity (§5: σ_J is added to
+every per-exposure σ_p). Closed-form error rescaling is exact only without gains and closure offsets; with them
+`NightPeak` refuses it (refit instead). vv check: with 3b.
+
 ## 12. G1 criteria change (separate PR; awaiting Ben's sign-off; the gate is **not** changed by this PR)
 
 `design/orbit_gate_042.md` §3.3 draws stratum B truths with *P* log-uniform on [1 d, 3 × span]. Under the declared prior

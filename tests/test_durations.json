@@ -69,6 +69,7 @@
  "tests/test_multipole_disk_height.py": 66.6,
  "tests/test_multipole_field.py": 61.7,
  "tests/test_night_flags.py": 167.6,
+ "tests/test_night_summaries.py": 20.0,
  "tests/test_no_data_priors.py": 51.5,
  "tests/test_north_angle.py": 11.8,
  "tests/test_nufft.py": 46.7,
