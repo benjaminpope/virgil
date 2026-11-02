@@ -1,6 +1,7 @@
 """Cells, period domain and the position-level search and evidence."""
 
 import functools
+import math
 import types
 
 import jax
@@ -16,7 +17,7 @@ pytest.importorskip("blackjax")
 from virgil import _orbit_coordinates as oc  # noqa: E402
 from virgil import orbit_cells as oc_cells  # noqa: E402
 from virgil.aliases import alias_bands, period_cut  # noqa: E402
-from virgil.mode_search import laplace_log_evidence  # noqa: E402
+from virgil.mode_search import Mode, laplace_log_evidence  # noqa: E402
 from virgil.night_summaries import NightPeak, NightSummary  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
 
@@ -393,6 +394,46 @@ def _two_season_times(rng, k=8):
     ).round(3)
 
 
+def _truth_chart(space, orbit, t_anchor, ln_f=-2.0):
+    """The chart vector of ``orbit`` (``y_z`` at unit radius; the radius is
+    free: the likelihood depends on its direction only)."""
+    z, zeta = (onp.asarray(a, float) for a in oc.campbell_to_coordinates(
+        orbit, t_anchor
+    ))  # fmt: skip
+    la = onp.log(space.a_range[0])
+    da = onp.log(space.a_range[1] / space.a_range[0])
+
+    def logit(u):
+        return onp.log(u) - onp.log1p(-u)
+
+    u_p = (onp.log(float(orbit.period)) - float(space.ln_lo)) / float(
+        space.ln_hi - space.ln_lo
+    )
+    a = float(oc.semimajor(z))
+    x = onp.zeros(space.d)
+    x[0] = logit(u_p)
+    x[1:5] = z / onp.linalg.norm(z)
+    x[5] = logit((onp.log(a) - la) / da)
+    x[6:8] = zeta / onp.sqrt(space.e_max - (zeta**2).sum())
+    x[8] = logit(1.0 - ln_f / space.ln_f_floor)
+    return x
+
+
+def _truth_distance2(fit, orbit, t_anchor):
+    """Squared Mahalanobis distance from the nearest mode to the truth (over
+    the target's symmetry images, the radius of ``y_z`` set to the mode's)."""
+    xt = _truth_chart(fit.space, orbit, t_anchor)
+    images = [onp.eye(fit.space.d)] + oc_cells._symmetry_images(fit.space.d)
+    best = onp.inf
+    for m in fit.modes:
+        for g in images:
+            x = g @ xt
+            x[1:5] *= onp.linalg.norm(m.x[1:5])
+            r = m.x - x
+            best = min(best, float(r @ onp.linalg.solve(m.cov, r)))
+    return best
+
+
 @x64
 def test_the_symmetry_images_leave_the_target_invariant():
     s = _summaries(_orbit(), TIMES)
@@ -450,6 +491,8 @@ def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
             cell=cell, log_z=0.0, log_z_error=0.0, modes=[], draws=None,
             at_floor=cell.n == cells[1].n, plan=None,
         )  # fmt: skip
+        fit.failed, fit.unreliable, fit.nonfinite = fit.at_floor, False, False
+        fit.log_z_upper = 0.0
         return fit
 
     monkeypatch.setattr(oc_cells, "position_leg", leg)
@@ -490,13 +533,14 @@ def test_the_true_cell_is_found_and_its_cycle_count_is_in_the_99_percent_set(
     true_n = [i for i, c in enumerate(out.cells) if c.p_lo <= period <= c.p_hi]
     assert true_n[0] in keep
     fit = out.fits[true_n[0]]
-    best = fit.modes[0]
-    space = fit.space
-    w = np.asarray(best.x[0])
-    p_best = float(space.period(w))
-    slope = float(jax.grad(lambda v: np.log(space.period(v)))(w))
-    sd = abs(slope) * onp.sqrt(best.cov[0, 0])
-    assert abs(onp.log(p_best / period)) < 5 * sd + 1e-3
+    # the nearest mode (any symmetry image) is within the 1 - DELTA chi-square
+    # radius of the truth: 9 degrees of freedom (the radius of y_z is free)
+    d2 = _truth_distance2(fit, orbit, times[out.anchors[0]])
+    assert d2 < stats.chi2.isf(oc_cells.DELTA, fit.space.d - 1)
+    # the resample-move draws are spread over the posterior, not duplicates
+    assert fit.draws is not None and len(onp.unique(fit.draws[:, 0])) > 100
+    ln_p = onp.log(oc_cells.decode_particles(fit)["period"])
+    assert abs(onp.median(ln_p) - onp.log(period)) < 5 * ln_p.std() + 1e-3
 
 
 @pytest.mark.slow
@@ -685,3 +729,180 @@ def test_a_large_orbit_without_a_rescalable_scale_still_finds_the_true_mode():
     # the evidence is the true mode's (the cut bug gave -80 nats from it)
     laplace = laplace_log_evidence(fit.modes[0])
     assert abs(fit.log_z - laplace) < 3.0
+
+
+# --- failure paths and robustness ----------------------------------------------
+
+
+@x64
+def test_a_search_that_drops_the_true_mode_fails_the_cell(monkeypatch):
+    """The sentinel at orbit level: a mode with inliers far above the floor
+    that the draws never reach."""
+    times = TIMES[:5]
+    s = _summaries(_orbit(), times, sigma=0.05)
+    _, cells = _cells(s, (6.0, 400.0))
+    log_b = onp.full(5, LOG_B)
+    floor = log_b.sum() + math.lgamma(5.5) - 0.5 * math.log(math.pi)
+    floor -= math.lgamma(6.0)
+
+    def fake(space, key=None, *, plan=None, info=None):
+        info.update(evaluations=0.0)
+        x = onp.asarray(space.sample(jax.random.key(5), 1))[0]
+        return [Mode(x, floor + 100.0, 0.01 * onp.eye(space.d), 2.0)]
+
+    monkeypatch.setattr(oc_cells, "search_cell", fake)
+    fit = oc_cells.position_leg(
+        s, log_b, cells[2], jax.random.key(0), t_anchor=times[0],
+        t_nights=times, n_is=2000, posterior_draws=False,
+    )  # fmt: skip
+    assert fit.at_floor and fit.failed and fit.draws is None
+
+
+@x64
+def test_a_non_finite_target_fails_the_cell(monkeypatch):
+    times = TIMES[:5]
+    s = _summaries(_orbit(), times, sigma=0.3)
+    _, cells = _cells(s, (6.0, 400.0))
+    real = oc_cells.importance_evidence
+
+    def nan_half(log_target, theta, *a, **k):
+        def bad(x, th):
+            return np.where(x[0] > 0.0, np.nan, log_target(x, th))
+
+        return real(bad, theta, *a, **k)
+
+    monkeypatch.setattr(oc_cells, "importance_evidence", nan_half)
+    fit = oc_cells.position_leg(
+        s, onp.full(5, LOG_B), cells[2], jax.random.key(0), t_anchor=times[0],
+        t_nights=times, n_is=512, posterior_draws=False,
+    )  # fmt: skip
+    assert fit.nonfinite and fit.failed
+
+
+def test_the_time_cap_raises():
+    s = _summaries(_orbit(), TIMES, sigma=0.3)
+    domain, _ = _cells(s, (60.0, 400.0))
+    with pytest.raises(RuntimeError, match="max_seconds"):
+        oc_cells.position_cells(
+            s, domain, jax.random.key(0),
+            log_outlier=onp.full(len(TIMES), LOG_B), jitter=0.0,
+            max_seconds=-1.0,
+        )  # fmt: skip
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.timeout(1200)
+def test_pruning_does_not_change_the_evidence(monkeypatch):
+    """A needle among many candidates (K = 8, e = 0.5, sigma / a = 1e-4): the
+    evidence with the prune and without it agree within their errors."""
+    rng = onp.random.default_rng(5 * 10**3 + 10)
+    times = _two_season_times(rng)
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.5)
+    s = _summaries(orbit, times, sigma=6e-4, seed=1)
+    _, _, cell = _true_cell(11.3, times, s, (9.0, 14.0))
+
+    def run():
+        return oc_cells.position_leg(
+            s, onp.full(len(times), LOG_B), cell, jax.random.key(0),
+            t_anchor=times[0], t_nights=times, n_is=4000,
+            posterior_draws=False,
+        )  # fmt: skip
+
+    pruned = run()
+    monkeypatch.setattr(oc_cells, "W_PRUNE", float("inf"))
+    full = run()
+    assert len(full.modes) >= len(pruned.modes)
+    tol = 4 * onp.hypot(pruned.log_z_error, full.log_z_error) + 0.02
+    assert abs(pruned.log_z - full.log_z) < tol
+
+
+def _decoys_and_outliers(summaries, rng, outliers):
+    """Each night gets a decoy peak (lower likelihood, random state); the
+    nights in ``outliers`` lose their true peak to a random state."""
+    out = []
+    for i, n in enumerate(summaries):
+        p = n.peaks[0]
+        mean = p.mean.copy()
+        if i in outliers:
+            mean[:2] = rng.uniform(-20.0, 20.0, 2)
+            mean[2:4] = rng.normal(size=2) * 0.5
+        peak = NightPeak(mean, p.cov, p.loglike, p.n, p.chi2, p.hessian)
+        decoy_mean = p.mean + rng.normal(size=5) * onp.array(
+            [5.0, 5.0, 0.5, 0.5, 0.1]
+        )
+        decoy = NightPeak(
+            decoy_mean, p.cov, p.loglike - 6.0, p.n, p.chi2, p.hessian
+        )
+        out.append(
+            NightSummary(
+                n.t_ref, n.t_ss, n.n_frames, BLOCKS, (peak, decoy),
+                n.loglike_null,
+            )
+        )
+    return tuple(out)
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.timeout(1800)
+def test_outlier_nights_decoy_peaks_and_a_set_budget_still_find_the_true_mode(
+    monkeypatch,
+):
+    """K = 10 with two peaks per night, two outlier nights, e = 0.8 and the
+    set budget forced low (the interior fills of design 6.1)."""
+    rng = onp.random.default_rng(11)
+    times = _two_season_times(rng, 10)
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.8)
+    s = _summaries(orbit, times, sigma=6e-3, seed=1)
+    s = _decoys_and_outliers(s, rng, {2, 7})
+    monkeypatch.setattr(oc_cells, "N_SET_MAX", 100)
+    domain = oc_cells.period_domain(
+        s, night_length=0.1, resolution=3.0, p_range=(9.0, 14.0)
+    )
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(10, LOG_B),
+        jitter=0.0,
+    )  # fmt: skip
+    assert not out.failed.any()
+    assert len(out.fits[0].plan["nights"]) < 2000
+    order = onp.argsort(-out.p_pos)
+    keep = order[
+        : int(onp.searchsorted(onp.cumsum(out.p_pos[order]), 0.99)) + 1
+    ]
+    true_i = [i for i, c in enumerate(out.cells) if c.p_lo <= 11.3 <= c.p_hi]
+    assert true_i[0] in keep
+    assert out.fits[true_i[0]].modes[0].n_inliers > 10 - 2 - 0.5
+
+
+@x64
+@pytest.mark.parametrize("gap", [3.0, 40.0])
+def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
+    monkeypatch, gap
+):
+    """An unreliable cell (ESS < ESS_FAIL) within W of the best cell makes the
+    probabilities undefined; one far below it is information only."""
+    s = _summaries(_orbit(), TIMES, sigma=0.3)
+    domain, cells = _cells(s, (60.0, 400.0))
+    best, odd = cells[0].n, cells[1].n
+
+    def leg(summaries, log_outlier, cell, key, **kw):
+        low = cell.n == odd
+        z = -cell.log_mass - (gap if low else 0.0)
+        return types.SimpleNamespace(
+            cell=cell, log_z=z, log_z_upper=z, log_z_error=0.0, modes=[],
+            draws=None, at_floor=False, failed=False, nonfinite=False,
+            unreliable=low, plan=None,
+        )  # fmt: skip
+
+    monkeypatch.setattr(oc_cells, "position_leg", leg)
+    monkeypatch.setattr(oc_cells, "_draw", lambda f, k: None)
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(len(TIMES), LOG_B),
+        jitter=0.0,
+    )  # fmt: skip
+    assert best != odd
+    if gap < oc_cells.W:
+        assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
+    else:
+        assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)

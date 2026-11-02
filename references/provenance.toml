@@ -151,7 +151,7 @@ authors = "Luger, Foreman-Mackey & Hogg"
 year = 2017
 title = "Linear Models for Systematics and Nuisances"
 doi = "10.3847/2515-5172/aa96b5"
-used_in = ["virgil._linear", "virgil.grid_fit:linear_flux_grid", "virgil.orbits:starting_orbits", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil._linear", "virgil.grid_fit:linear_flux_grid", "virgil.orbits:starting_orbits"]
 note = "RNAAS 1, 7"
 bibcode = "2017RNAAS...1....7L"
 arxiv = "1710.11136"
@@ -777,7 +777,7 @@ year = 2011
 alt_years = [2014]
 alt_years_note = "year is the first posting; the journal paper is dated 2014"
 title = "The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo"
-used_in = ["virgil.inference"]
+used_in = ["virgil.inference", "virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
 note = "NUTS; JMLR 15, 1593 (2014)"
 bibcode = "2011arXiv1111.4246H"
 arxiv = "1111.4246"
@@ -1881,7 +1881,7 @@ arxiv = "2402.10797"
 repo = "https://github.com/blackjax-devs/blackjax"
 verified = true
 verified_via = "arxiv"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.mode_search:resample_move"]
 note = "the adaptive tempered SMC, HMC and pretuning kernels (blackjax >= 1.7.1) that virgil.smc wraps"
 
 [ref.lee2018]
@@ -1914,7 +1914,7 @@ title = "Random sample consensus: a paradigm for model fitting with applications
 doi = "10.1145/358669.358692"
 verified = false
 verified_via = "none"
-used_in = ["virgil.orbit_cells:search_cell"]
+used_in = ["virgil.orbit_cells:search_cell", "virgil.orbit_cells:search_plan"]
 note = "Commun. ACM 24, 381; minimal sets of nights as candidate fits (RANSAC)"
 
 [ref.rousseeuw1984]
@@ -1954,7 +1954,7 @@ title = "Weighted average importance sampling and defensive mixture distribution
 doi = "10.1080/00401706.1995.10484303"
 verified = false
 verified_via = "none"
-used_in = ["virgil.mode_search:DefensiveMixture"]
+used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg"]
 note = "Technometrics 37, 185; a prior share in the proposal bounds the importance weights by the likelihood maximum over the share"
 
 [ref.gilks2001]
@@ -1964,7 +1964,7 @@ title = "Following a moving target: Monte Carlo inference for dynamic Bayesian m
 doi = "10.1111/1467-9868.00280"
 verified = false
 verified_via = "none"
-used_in = ["virgil.mode_search:resample_move"]
+used_in = ["virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
 note = "J. R. Stat. Soc. B 63, 127; resample-move: resample weighted draws, then move them with a kernel invariant for the target"
 
 [ref.neal2011]
@@ -1984,4 +1984,4 @@ title = "Validating Bayesian inference algorithms with simulation-based calibrat
 arxiv = "1804.06788"
 verified = false
 verified_via = "none"
-note = "rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit"
+note = "rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py)"

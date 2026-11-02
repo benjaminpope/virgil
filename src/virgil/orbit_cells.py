@@ -46,12 +46,14 @@ from ._precision import run_in
 from .aliases import _P_FLOOR, alias_bands, period_cut, position_profile
 from .mode_search import (
     DefensiveMixture,
+    ESS_FAIL,
     M_MIN,
     W,
     N_IS,
     Mode,
     distinct_modes,
     importance_evidence,
+    laplace_log_evidence,
     resample_move,
 )
 from .night_summaries import DELTA
@@ -102,6 +104,7 @@ TOL_GAIN = (
     1e-5  # Newton stops at a predicted gain below this (nats: DELTA / 100)
 )
 W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
+#                    (at least; raised to ln(n / δ) for n candidates)
 N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
 CHUNK_C = 256  # candidates per batched C-step call (budget)
 CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
@@ -776,6 +779,11 @@ def _objective(x, space):
     no mode in its radius; ``+ 3 ln |y_z|`` (the radial volume) puts it at
     ``√3`` with curvature 2, and leaves the angular curvature at a mode as it
     is. It places modes and their covariances; the evidence uses the target.
+
+    Its Laplace ``ln Z`` is offset from the target's by a constant common to
+    every mode (the radial volume, about 1.7 nats: ``√π e^-3/2 r0³`` against
+    the true ``2``), so mode weights are unaffected; the sentinel margin ``W``
+    is effectively about 1.7 nats less (5.2 for ``DELTA = 1e-3``).
     """
     return _target(x, space) + 3.0 * np.log(np.linalg.norm(x[_Z]))
 
@@ -1021,13 +1029,17 @@ def _scores(space, x):
 
 
 def _prune(space, x):
-    """Indices of the candidates within ``W_PRUNE`` of the best Laplace ``ln Z``.
+    """Indices of the candidates within ``max(W_PRUNE, ln(n / δ))`` of the best
+    Laplace ``ln Z`` (``n`` candidates scored).
 
-    A candidate that far below the best is covered by the prior share of the
-    mixture, whose weights are bounded by ``e^W / α``; dropping it cannot bias
-    the evidence. The estimate is at the start ``x`` (not its mode): it agreed
-    with the refined one to 1-2 nats where measured, and the margin is twice
-    ``W`` for that. A non-finite score drops the candidate.
+    A dropped candidate carries at most ``e^-threshold`` of the best mode's
+    mass if its score is accurate, so the ``n`` of them together less than
+    ``δ``. The score is at the current ``x`` (not its mode): it can sit tens of
+    nats from the refined one, but a candidate scored that far below the best
+    is a duplicate of a better mode as far as measured (a K = 8 cell kept 3 of
+    95, the dropped ones refined onto the best mode: ``test_the_prune_...``
+    compares the evidence with and without it). A non-finite score drops the
+    candidate.
     """
     if not len(x):
         return onp.zeros(0, int)
@@ -1042,7 +1054,8 @@ def _prune(space, x):
         ]
     )
     score = onp.where(onp.isfinite(score), score, -onp.inf)
-    return onp.flatnonzero(score >= score.max() - W_PRUNE)
+    margin = max(W_PRUNE, math.log(len(x) / DELTA))
+    return onp.flatnonzero(score >= score.max() - margin)
 
 
 def _chunks(n, size):
@@ -1396,6 +1409,15 @@ class CellFit:
         The cell *failed*: never report its ``log_z`` as an evidence.
     undersampled : bool
         ``cell-undersampled``: the ESS is below ``ESS_TARGET``; information only.
+    unreliable : bool
+        The ESS is below ``ESS_FAIL``: the estimate is a few draws and its
+        error meaningless (a search that found only a partial-outlier mode had
+        ESS about 1 and an evidence 100 nats low). It fails the *system* only
+        if the cell could matter: see ``CellsResult.failed``. The error
+        ``log_z_error`` is a lower bound (first order in ``1/ESS``) and is not
+        propagated into ``p_pos``.
+    nonfinite : bool
+        Some importance draws had a non-finite target: the cell *failed*.
     search_evaluations, is_evaluations : int
         Likelihood-equivalent evaluations of the search and the sampling.
     """
@@ -1414,6 +1436,21 @@ class CellFit:
     evidence: object = dataclasses.field(repr=False, default=None)
     plan: object = dataclasses.field(repr=False, default=None)
     space: object = dataclasses.field(repr=False, default=None)
+    unreliable: bool = False
+    nonfinite: bool = False
+
+    @property
+    def failed(self):
+        """The cell failed on its own: ``at_floor`` or ``nonfinite``."""
+        return bool(self.at_floor or self.nonfinite)
+
+    @property
+    def log_z_upper(self):
+        """The larger of ``ln Ẑ`` and the best mode's Laplace ``ln Z``: an
+        unreliable ``ln Ẑ`` is usually low (missed mass), the Laplace value is
+        an independent estimate."""
+        lap = [laplace_log_evidence(m) for m in self.modes]
+        return max([self.log_z] + lap)
 
 
 def decode_particles(result):
@@ -1431,12 +1468,12 @@ def decode_particles(result):
 
 def _draw(fit, key):
     """Resample-move posterior draws of a fit, with the mass matrix of its
-    dominant mode."""
+    dominant mode (the highest Laplace ``ln Z``, not the highest peak)."""
+    cov = None
+    if fit.modes:
+        cov = max(fit.modes, key=laplace_log_evidence).cov
     with run_in(onp.dtype(fit.space.dtype).name):
-        return resample_move(
-            _target, fit.space, fit.evidence, key,
-            cov=fit.modes[0].cov if fit.modes else None,
-        )  # fmt: skip
+        return resample_move(_target, fit.space, fit.evidence, key, cov=cov)
 
 
 def position_leg(
@@ -1530,10 +1567,10 @@ def position_leg(
         )  # fmt: skip
     fit = CellFit(
         cell, ev.log_z, ev.log_z_error, modes, None, ev.log_w, ev.x,
-        ev.at_floor or ev.n_nonfinite > 0, ev.undersampled,
-        int(info["evaluations"]), n_is, ev, plan, space,
+        ev.at_floor, ev.undersampled, int(info["evaluations"]), n_is, ev,
+        plan, space, bool(ev.ess < ESS_FAIL), bool(ev.n_nonfinite > 0),
     )  # fmt: skip
-    if posterior_draws and not fit.at_floor:
+    if posterior_draws and not fit.failed:
         fit.draws = _draw(fit, k_move)
     return fit
 
@@ -1647,8 +1684,13 @@ class CellsResult:
     jitter : float
         The position jitter used (mas).
     failed : numpy.ndarray
-        Cells at the floor (``cell-at-floor``): the search missed the dominant
-        mode. Any true entry makes ``p_pos`` undefined.
+        Cells at the floor (``cell-at-floor``: the search missed the dominant
+        mode), with a non-finite target, or unreliable (ESS below ``ESS_FAIL``)
+        *and* within ``W`` of the best cell (``ln`` mass ``+ ln Ẑ`` taken as
+        the larger of the importance and the Laplace estimates, so a cell whose
+        probability could reach the reporting precision ``δ``). A low-ESS cell
+        far below the best is information only. Any true entry makes ``p_pos``
+        undefined.
     """
 
     domain: PeriodDomain
@@ -1748,8 +1790,14 @@ def position_cells(
             )
         )  # fmt: skip
         plan = fits[0].plan
-    failed = onp.array([f.at_floor for f in fits])
     log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
+    upper = onp.array(
+        [c.log_mass + f.log_z_upper for c, f in zip(cells, fits)]
+    )
+    matters = upper >= upper.max() - W
+    failed = onp.array(
+        [f.failed or (f.unreliable and m) for f, m in zip(fits, matters)]
+    )
     if failed.any():
         p = onp.full(len(cells), onp.nan)
     else:

@@ -50,6 +50,7 @@ ALPHA = 0.1  # prior share of q (Hesterberg 1995): bounds w <= L_max / ALPHA
 DF = 5.0  # t degrees of freedom, as aliases._mode_evidence
 N_IS = 4000  # IS draws per cell; sd(ln Z) ~ 0.012 on the toys
 ESS_TARGET = 400  # sd(ln Z) ~ ESS^-1/2 <= 0.05
+ESS_FAIL = 10  # below this the estimate is a few draws: the cell fails
 W = math.log(1.0 / DELTA)  # sentinel margin above the floor (nats)
 M_MIN = 2  # sentinel: the smallest minimal set (a pair of nights)
 M_PAD = 128  # components padded to at least this (8 modes with 15 images):
@@ -81,7 +82,9 @@ class Mode:
 class Evidence:
     """Importance-sampling estimate of ``ln Z`` from a defensive mixture.
 
-    ``log_z_error`` is the delta-method ``√(1/ESS - 1/n)``. ``at_floor``
+    ``log_z_error`` is the delta-method ``√(1/ESS - 1/n)``, a first-order
+    lower bound (it misses heavy tails and mass the proposal missed; ``ln Ẑ``
+    also carries a bias of ``-1/(2 ESS)``). ``at_floor``
     is the sentinel: the draws sit at the all-outlier floor although a mode
     with at least ``m_min`` inliers has a Laplace ``ln Z`` ``W`` nats above it; ``log_z`` must
     then not be reported. ``undersampled`` is ``ess < ESS_TARGET``

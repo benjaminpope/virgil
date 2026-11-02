@@ -281,7 +281,10 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | Symbol | Source | Relation |
 |---|---|---|
 | `DefensiveMixture` | [Hesterberg (1995)](#hesterberg1995), [doi:10.1080/00401706.1995.10484303](https://doi.org/10.1080/00401706.1995.10484303) | after |
+| `importance_evidence` | [Hesterberg (1995)](#hesterberg1995), [doi:10.1080/00401706.1995.10484303](https://doi.org/10.1080/00401706.1995.10484303) | after |
+| `resample_move` | [Cabezas et al. (2024)](#cabezas2024), [arXiv:2402.10797](https://arxiv.org/abs/2402.10797), [GitHub](https://github.com/blackjax-devs/blackjax) | after |
 | `resample_move` | [Gilks & Berzuini (2001)](#gilks2001), [doi:10.1111/1467-9868.00280](https://doi.org/10.1111/1467-9868.00280) | after |
+| `resample_move` | [Hoffman & Gelman (2011)](#hoffman2014), [arXiv:1111.4246](https://arxiv.org/abs/1111.4246), [ADS](https://ui.adsabs.harvard.edu/abs/2011arXiv1111.4246H/abstract) | after |
 | `resample_move` | [Neal (2011)](#neal2011), [arXiv:1206.1901](https://arxiv.org/abs/1206.1901) | after |
 
 ### `virgil.models`
@@ -333,11 +336,14 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
-| `position_leg` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
+| `position_leg` | [Gilks & Berzuini (2001)](#gilks2001), [doi:10.1111/1467-9868.00280](https://doi.org/10.1111/1467-9868.00280) | after |
+| `position_leg` | [Hesterberg (1995)](#hesterberg1995), [doi:10.1080/00401706.1995.10484303](https://doi.org/10.1080/00401706.1995.10484303) | after |
+| `position_leg` | [Hoffman & Gelman (2011)](#hoffman2014), [arXiv:1111.4246](https://arxiv.org/abs/1111.4246), [ADS](https://ui.adsabs.harvard.edu/abs/2011arXiv1111.4246H/abstract) | after |
 | `search_cell` | [Fischler & Bolles (1981)](#fischler1981), [doi:10.1145/358669.358692](https://doi.org/10.1145/358669.358692) | after |
 | `search_cell` | [Golub & Pereyra (1973)](#golub1973), [doi:10.1137/0710036](https://doi.org/10.1137/0710036) | after |
 | `search_cell` | [Rousseeuw (1984)](#rousseeuw1984), [doi:10.1080/01621459.1984.10477105](https://doi.org/10.1080/01621459.1984.10477105) | after |
 | `search_cell` | [Rousseeuw & Van Driessen (1999)](#rousseeuw1999), [doi:10.1080/00401706.1999.10485670](https://doi.org/10.1080/00401706.1999.10485670) | after |
+| `search_plan` | [Fischler & Bolles (1981)](#fischler1981), [doi:10.1145/358669.358692](https://doi.org/10.1145/358669.358692) | after |
 
 ### `virgil.orbits`
 
@@ -494,7 +500,7 @@ Heritage and context without a code symbol of their own.
 | Source | Note |
 |---|---|
 | [Martinache (2010)](#martinache2010), [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract) | ApJ 724, 464 (2010) |
-| [Talts, Betancourt, Simpson, Vehtari & Gelman (2018)](#talts2018), [arXiv:1804.06788](https://arxiv.org/abs/1804.06788) | rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit |
+| [Talts, Betancourt, Simpson, Vehtari & Gelman (2018)](#talts2018), [arXiv:1804.06788](https://arxiv.org/abs/1804.06788) | rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py) |
 
 ## In the bibliography only
 
@@ -683,7 +689,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="soummer2007"></a>**Soummer et al. (2007)**. Fast computation of Lyot-style coronagraph propagation. [arXiv:0711.0368](https://arxiv.org/abs/0711.0368), [ADS](https://ui.adsabs.harvard.edu/abs/2007OExpr..1515935S/abstract). matrix Fourier transform.
 - <a id="starck2010"></a>**Starck, Murtagh & Fadili (2010)**. Sparse Image and Signal Processing: Wavelets, Curvelets, Morphological Diversity. book (CUP). *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="surjanovic2023"></a>**Surjanovic, Biron-Lattes, Tiede et al. (2023)**. Pigeons.jl: Distributed Sampling From Intractable Distributions. [arXiv:2308.09769](https://arxiv.org/abs/2308.09769), [ADS](https://ui.adsabs.harvard.edu/abs/2023arXiv230809769S/abstract). parallel tempering prior art next to Octofitter.
-- <a id="talts2018"></a>**Talts, Betancourt, Simpson, Vehtari & Gelman (2018)**. Validating Bayesian inference algorithms with simulation-based calibration. [arXiv:1804.06788](https://arxiv.org/abs/1804.06788). rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit. *Not yet verified against arXiv, Crossref or ADS.*
+- <a id="talts2018"></a>**Talts, Betancourt, Simpson, Vehtari & Gelman (2018)**. Validating Bayesian inference algorithms with simulation-based calibration. [arXiv:1804.06788](https://arxiv.org/abs/1804.06788). rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py). *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="thiele1883"></a>**Thiele (1883)**. Neue Methode zur Berechung von Doppelsternbahnen. [ADS](https://ui.adsabs.harvard.edu/abs/1883AN....104..245T/abstract). Astron. Nachr. 104, 245; title as spelled by ADS. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="thiebaut2017"></a>**Thiébaut & Young (2017)**. Principles of image reconstruction in optical interferometry: tutorial. [arXiv:1708.08390](https://arxiv.org/abs/1708.08390), [ADS](https://ui.adsabs.harvard.edu/abs/2017JOSAA..34..904T/abstract). JOSA A 34, 904.
 - <a id="thompson2023"></a>**Thompson et al. (2023)**. Octofitter: Fast, Flexible, and Accurate Orbit Modelling to Detect Exoplanets. [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc), [GitHub](https://github.com/sefffal/Octofitter.jl). AJ 166, 164 (2023); the arXiv preprint was posted in February 2024, after publication.
