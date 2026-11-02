@@ -192,7 +192,7 @@ class _Problem(eqx.Module):
     [`_gauss_newton`][virgil._gauss_newton] kernel problem."""
 
     data: object
-    diam: object
+    diam: object = eqx.field(static=True)  # a float or None: a Python branch
     t_ref: float = eqx.field(static=True)
     surface: _Surface = eqx.field(static=True)
     amp_range: object = eqx.field(static=True, default=None)
@@ -234,7 +234,7 @@ def _summarize(d, positions, i, diam, amp_range):
     with run_in("float64"):
         d64 = cast_tree(d, "float64")
         surface = _Surface(d64)
-        dm = None if not diam else np.asarray(float(diam))
+        dm = None if not diam else float(diam)
         problem = _Problem(d64, dm, t_ref, surface, amp_range)
         zero = np.zeros(5)
         rescalable = d.gains is None and d.phase_offsets is None

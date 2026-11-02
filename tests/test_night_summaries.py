@@ -26,30 +26,30 @@ def _times(data):
     return onp.bincount(idx, weights=onp.asarray(data.mjd)) / onp.bincount(idx)
 
 
-def _night(frames=6, seed=0, d_vis=0.005, d_phi=0.02, post=None):
+def _night(frames=6, seed=0, d_vis=0.005, d_phi=0.02, post=None, diam=None):
     """A night with the companion at ``TRUTH``; ``post`` edits the empty data
     (gains, offsets) before simulating."""
     data = vlti_night(T0, frames, 0.0, d_vis=d_vis, d_phi=d_phi, stations=True)
     if post is not None:
         data = post(data)
     t_ref = float(onp.mean(_times(data)))
-    model = ns._model(np.asarray(TRUTH), t_ref, None)
+    model = ns._model(np.asarray(TRUTH), t_ref, diam)
     return simulate(model, data, key=jax.random.PRNGKey(seed))
 
 
-def _positions(start):
+def _positions(start, diam=None):
     """A stub catalogue with one peak at ``start = (dra, ddec, flux)``."""
     start = onp.atleast_2d(start)
     peaks = types.SimpleNamespace(
         dra=start[:, 0], ddec=start[:, 1], flux=start[:, 2]
     )
     return types.SimpleNamespace(
-        names=("n",), peaks=(peaks,), primary_diam=None
+        names=("n",), peaks=(peaks,), primary_diam=diam
     )
 
 
-def _fit(data, start=(3.2, -1.8, 0.2), **kw):
-    return ns.night_summaries([data], _positions(start), **kw)[0]
+def _fit(data, start=(3.2, -1.8, 0.2), diam=None, **kw):
+    return ns.night_summaries([data], _positions(start, diam), **kw)[0]
 
 
 def test_pulls_over_seeds_are_unit_normal():
@@ -200,3 +200,16 @@ def test_the_keep_rule_threshold_is_derived_from_the_node_count():
     eps = onp.sin(onp.pi / 8) ** 2
     edge = -onp.log(ns.DELTA * eps / (1 - eps))
     assert kept(3, edge - 0.02) == 1 and kept(3, edge + 0.02) == 0
+
+
+@pytest.mark.parametrize("wrap", [float, np.asarray, onp.float64])
+def test_a_resolved_primary_is_fitted_under_jit(wrap):
+    # the diameter reaches the Gauss-Newton kernel as a static value: the
+    # resolved/unresolved choice must never be a Python bool on a tracer
+    # (estimate_primary_diameter returns arrays)
+    data = _night(diam=1.2)
+    peak = _fit(data, diam=wrap(1.2)).peaks[0]
+    pull = (peak.mean - TRUTH) / onp.sqrt(onp.diag(peak.cov))
+    assert onp.abs(pull).max() < 5.0
+    # the resolved primary changes the fit relative to a point star
+    assert not onp.allclose(peak.mean, _fit(data).peaks[0].mean)
