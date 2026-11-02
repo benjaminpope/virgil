@@ -859,7 +859,9 @@ def _solve_set(g, mean, w, s_w2):
     Weighted least squares of the set's ``(p, v)`` peak means on TI′ with the
     precisions ``w`` and a ridge ``1 / s_w²`` (the working prior), so the solve
     is defined on degenerate sets. Returns ``(R, ti)``, ``R = Σ rᵀ W r +
-    |ti|²/s_w²``.
+    |ti|²/s_w²``; the ``χ²`` cut applies to ``R - |ti|²/s_w²``, the data
+    residual (the ridge term grows with the orbit and is no part of the null
+    ``χ²``).
 
     Source: Golub & Pereyra (1973).
     """
@@ -928,7 +930,8 @@ def _chart_from(space, v, ti, ln_f):
 @functools.partial(jax.jit, static_argnames=("n_iter",))
 def _varpro_chunk(space, plan, s, v0, n_iter):
     """Refine ``(ln P, ζ)`` of each set ``s`` from ``v0``; return the chart
-    vector, labels, residual and the Hessian of ``R / 2`` in ``v``."""
+    vector, labels, the *data* residual (without the ridge term: the quantity
+    the ``χ²`` cut applies to), ``v`` and the Hessian of ``R / 2`` in ``v``."""
 
     def one(si, v):
         args = (plan["nights"][si], plan["w"][si], plan["mean"][si], space)
@@ -938,7 +941,7 @@ def _varpro_chunk(space, plan, s, v0, n_iter):
         )[1]
         x = _chart_from(space, v, ti, plan["lnf"][si])
         h = -jax.hessian(_varpro_objective)(v, *args)
-        return x, _labels(x, space), -2.0 * fv, v, h
+        return x, _labels(x, space), -2.0 * fv - ti @ ti / space.s_w2, v, h
 
     return jax.vmap(one)(s, v0)
 
@@ -1078,7 +1081,13 @@ def search_plan(space, key=None):
     precision-weighted ``ln f`` and the cut on its residual: the ``1 - δ``
     quantile of ``χ²`` with the set's equations less the 4 TI′, times
     ``S_MAX²`` where the error scale is free (``(P, ζ)`` are fitted too,
-    which only lowers the residual: the cut is conservative).
+    which only lowers the residual: the cut is conservative). It applies to the
+    data residual ``Σ rᵀ W r`` at the ridge solution, not to the ridge-penalized
+    ``R``: the ridge term ``|TI′|²/s_w²`` grows with the orbit (the old cut
+    removed every true set at ``a = 25`` mas). The ridge solution's data
+    residual exceeds the least-squares one by at most ``|TI′|² / (4 s_w²)``
+    (per eigendirection ``λ² d / (d + λ)²`` is at most ``λ / 4``), negligible
+    once the sets are informative (``σ`` well below ``s_w``).
     """
     cat, dt = space.cat, space.dtype
     zero = np.zeros(len(cat.blocks), dt)
