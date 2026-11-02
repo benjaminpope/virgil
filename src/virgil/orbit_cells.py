@@ -44,7 +44,7 @@ from scipy.stats import qmc
 
 from . import _orbit_coordinates as oc
 from ._precision import run_in
-from .aliases import _P_FLOOR, alias_bands, period_cut, position_profile
+from .aliases import _P_FLOOR, alias_bands, position_profile
 from .mode_search import (
     DefensiveMixture,
     ESS_FAIL,
@@ -90,6 +90,7 @@ _N_PV = 4  # (p, v) of the linear Gaussian block; ln f is the fifth dimension
 
 # The search (design §6.1, §10; the importance-sampling constants are in
 # virgil.mode_search).
+GAP_DAYS = 0.5  # nights closer than this merge (design §10; OIData.epochs)
 K_COH = (
     4  # ln P grid points per cycle of a set's span (> 2 brackets a minimum)
 )
@@ -121,12 +122,27 @@ R0 = math.sqrt(3.0)  # radius of y_z at a mode: the mode of its chi-4 prior
 class PeriodDomain:
     """The period prior ``log-uniform [p_cut, p_max]`` (days), declared.
 
-    ``overridden`` is true when ``p_range`` replaced the derived limits.
+    Attributes
+    ----------
+    overridden : bool
+        True when ``p_range`` replaced the derived limits.
+    binding : {"2dt_min", "p_floor", "p_range"}
+        The term that sets ``p_cut``.
+    a_hi, span, sigma_min : float
+        The inputs of ``p_max = 2π a_hi span / sigma_min`` (mas, days, mas);
+        ``sigma_min`` is ``nan`` without a night with a peak.
+    n0_mass : float
+        Prior mass of the long-period band ``N = 0`` (``P > span``).
     """
 
     p_cut: float
     p_max: float
     overridden: bool
+    binding: str = "p_range"
+    a_hi: float = math.nan
+    span: float = math.nan
+    sigma_min: float = math.nan
+    n0_mass: float = math.nan
 
 
 def _sigma_p(summary):
@@ -139,62 +155,77 @@ def _sigma_p(summary):
 def period_domain(
     summaries,
     *,
-    night_length,
-    resolution,
     a_range=A_RANGE,
     p_range=None,
-    motion_fraction=0.5,
+    gap_days=GAP_DAYS,
     p_floor=_P_FLOOR,
 ):
-    """The declared period domain ``[P_cut, P_max]``.
+    """The declared period domain ``[P_cut, P_max]`` (design §1.3).
 
-    ``P_cut = max(2 Δt_min, P_night)``
-    ([`period_cut`][virgil.aliases.period_cut]) and
-    ``P_max = 2π a_hi · span / σ_min``, with ``σ_min`` the smallest night position
-    error: beyond it the motion over the span is below that error.
+    ``P_cut = max(2 Δt_min, p_floor)``, ``Δt_min`` the shortest gap between
+    consecutive nights after merging nights less than ``gap_days`` apart:
+    above it the closest pair of nights advances by under half a cycle, so the
+    regular-sampling alias lies outside the domain. There is no within-night
+    bound; the per-exposure target and the exact-projection summaries model
+    the motion within a night. A prior choice, not a Nyquist limit.
+    ``P_max = 2π a_hi · span / σ_min``, with ``σ_min`` the smallest night
+    position error: beyond it the motion over the span is below that error.
 
     Parameters
     ----------
     summaries : sequence of NightSummary
         One per night.
-    night_length, resolution : float
-        The longest night (days) and λ/B_max (mas), as for
-        [`period_window`][virgil.aliases.period_window].
     a_range : (float, float)
         Prior range of the semimajor axis (mas); ``a_hi`` is the field.
     p_range : (float, float), optional
         Override ``(P_cut, P_max)``.
-    motion_fraction, p_floor : float, optional
-        As for [`period_window`][virgil.aliases.period_window].
+    gap_days : float, optional
+        Nights closer than this merge (default 0.5 d, as ``OIData.epochs``).
+    p_floor : float, optional
+        The only other lower bound (days).
 
     Returns
     -------
     PeriodDomain
+        With the binding term of ``P_cut``, the inputs of ``P_max`` and the
+        prior mass of the ``N = 0`` band.
     """
+    times = onp.array([s.t_ref for s in summaries])
+    sigma = onp.array([_sigma_p(s) for s in summaries])
+    span = float(onp.ptp(times)) if times.size else math.nan
+    sigma_min = float(sigma.min()) if onp.isfinite(sigma).any() else math.nan
     if p_range is not None:
         lo, hi = map(float, p_range)
-        overridden = True
+        overridden, binding = True, "p_range"
     else:
-        times = onp.array([s.t_ref for s in summaries])
-        sigma = onp.array([_sigma_p(s) for s in summaries])
         if onp.isfinite(sigma).sum() < 2:
             raise ValueError(
                 "Need two nights with a peak, or pass p_range, to set the "
                 "period domain."
             )
-        lo = period_cut(
-            times,
-            a_range[1],
-            night_length,
-            resolution=resolution,
-            motion_fraction=motion_fraction,
-            p_floor=p_floor,
+        # nights: mean time of each group of times at most gap_days apart
+        # (a new night starts on a gap > gap_days, as OIData.epochs)
+        t = onp.sort(times)
+        label = onp.r_[0, onp.cumsum(onp.diff(t) > gap_days)]
+        nights = onp.bincount(label, weights=t) / onp.bincount(label)
+        if nights.size < 2:
+            raise ValueError(
+                "Need two nights more than gap_days apart, or pass p_range."
+            )
+        two_dt = 2.0 * float(onp.min(onp.diff(nights)))
+        lo, binding = (
+            max(two_dt, p_floor),
+            ("2dt_min" if two_dt >= p_floor else "p_floor"),
         )
-        hi = 2 * math.pi * a_range[1] * float(onp.ptp(times)) / sigma.min()
+        hi = 2 * math.pi * a_range[1] * span / sigma_min
         overridden = False
     if not 0 < lo < hi:
         raise ValueError(f"The period domain [{lo:.4g}, {hi:.4g}] d is empty.")
-    return PeriodDomain(lo, hi, overridden)
+    n0 = math.log(hi / span) / math.log(hi / lo) if 0 < span < hi else 0.0
+    return PeriodDomain(
+        lo, hi, overridden, binding, float(a_range[1]), span, sigma_min,
+        min(1.0, max(0.0, n0)),
+    )  # fmt: skip
 
 
 def choose_anchors(summaries):
@@ -493,6 +524,14 @@ class _Catalogue:
         self.t_ss = onp.array([s.t_ss for s in summaries])
         self.n_frames = onp.array([s.n_frames for s in summaries], float)
         self.t_ref = onp.array([s.t_ref for s in summaries])
+        # frame offsets and the (p̂, v̂) projection, padded with zeros
+        f = max(s.n_frames for s in summaries)
+        self.offsets = onp.zeros((k, f))
+        self.proj = onp.zeros((k, 2, f))
+        for i, s in enumerate(summaries):
+            self.offsets[i, : s.n_frames] = s.frame_offsets()
+            self.proj[i, :, : s.n_frames] = s.projection()
+        self.single = self.t_ss <= 0  # one frame: the velocity is the state's
         self.log_b = onp.broadcast_to(
             onp.asarray(log_outlier, float), (k,)
         ).copy()
@@ -500,7 +539,7 @@ class _Catalogue:
 
     _ARRAYS = (
         "mean", "hess", "n", "chi2", "loglike", "valid", "t_ss", "n_frames",
-        "t_ref", "log_b",
+        "t_ref", "log_b", "offsets", "proj", "single",
     )  # fmt: skip
 
     def tree_flatten(self):
@@ -734,9 +773,28 @@ class _Space:
         pos, vel = jax.jvp(position, (t,), (np.ones_like(t),))
         return np.concatenate([pos.T, vel.T], axis=1)
 
+    def night_states(self, nights, period, ti, zeta):
+        """The summaries' prediction ``(p̂, v̂)`` of ``ti`` at ``nights``
+        (indices): ``(len(nights), 4)``.
+
+        The exact least-squares projection of the orbit's positions at the
+        stored frame offsets onto linear motion, the fit the summaries made
+        (design §5); it removes the curvature bias of the instantaneous state.
+        A one-frame night has no velocity fit and takes the state's.
+        """
+        cat = self.cat
+        off, proj = cat.offsets[nights], cat.proj[nights]
+        m, f = off.shape
+        s = self.states_at(
+            (self.t_k[nights][:, None] + off).reshape(-1), period, ti, zeta
+        ).reshape(m, f, 4)
+        fit = np.einsum("mcf,mfx->mcx", proj, s[..., :2])
+        v = np.where(cat.single[nights][:, None], s[:, 0, 2:], fit[:, 1])
+        return np.concatenate([fit[:, 0], v], axis=1)
+
     def states(self, period, ti, zeta):
-        """``(p, v)`` of ``ti`` at the nights: ``(K, 4)``."""
-        return self.states_at(self.t_k, period, ti, zeta)
+        """``(p̂, v̂)`` of ``ti`` for every night: ``(K, 4)``."""
+        return self.night_states(np.arange(len(self.t_k)), period, ti, zeta)
 
     def loglike(self, x):
         c = self.decode(x)
@@ -855,9 +913,10 @@ def _design(space, nights, v):
     ``v = (w_P, y_ζ[2])`` is the chart's period and ζ.
     """
     period, zeta = space.period(v[0]), space.zeta(v[1:3])
-    t = space.t_k[nights]
     zero = np.zeros(4, space.dtype)
-    return jax.jacfwd(lambda ti: space.states_at(t, period, ti, zeta))(zero)
+    return jax.jacfwd(lambda ti: space.night_states(nights, period, ti, zeta))(
+        zero
+    )
 
 
 def _solve_set(g, mean, w, s_w2):
