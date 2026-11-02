@@ -151,7 +151,7 @@ authors = "Luger, Foreman-Mackey & Hogg"
 year = 2017
 title = "Linear Models for Systematics and Nuisances"
 doi = "10.3847/2515-5172/aa96b5"
-used_in = ["virgil._linear", "virgil.grid_fit:linear_flux_grid", "virgil.orbits:starting_orbits", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil._linear", "virgil.grid_fit:linear_flux_grid", "virgil.orbits:starting_orbits"]
 note = "RNAAS 1, 7"
 bibcode = "2017RNAAS...1....7L"
 arxiv = "1710.11136"
@@ -777,7 +777,7 @@ year = 2011
 alt_years = [2014]
 alt_years_note = "year is the first posting; the journal paper is dated 2014"
 title = "The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo"
-used_in = ["virgil.inference"]
+used_in = ["virgil.inference", "virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
 note = "NUTS; JMLR 15, 1593 (2014)"
 bibcode = "2011arXiv1111.4246H"
 arxiv = "1111.4246"
@@ -1827,17 +1827,6 @@ role = "bibliography"
 verified = true
 verified_via = "crossref"
 
-[ref.hesterberg1995]
-authors = "Hesterberg"
-year = 1995
-title = "Weighted Average Importance Sampling and Defensive Mixture Distributions"
-doi = "10.1080/00401706.1995.10484303"
-used_in = []
-note = "Technometrics 37, 185; a mixture with a share of the prior bounds the importance weights (orbit leg-1 evidence)"
-role = "bibliography"
-verified = true
-verified_via = "crossref"
-
 [ref.meng1996]
 authors = "Meng & Wong"
 year = 1996
@@ -1872,50 +1861,6 @@ role = "bibliography"
 verified = true
 verified_via = "crossref"
 
-[ref.fischler1981]
-authors = "Fischler & Bolles"
-year = 1981
-title = "Random sample consensus: a paradigm for model fitting with applications to image analysis and automated cartography"
-doi = "10.1145/358669.358692"
-used_in = []
-note = "Commun. ACM 24, 381; RANSAC: fit minimal sets of the data, then keep the consensus (the orbit leg-1 search)"
-role = "bibliography"
-verified = true
-verified_via = "crossref"
-
-[ref.rousseeuw1984]
-authors = "Rousseeuw"
-year = 1984
-title = "Least Median of Squares Regression"
-doi = "10.1080/01621459.1984.10477105"
-used_in = []
-note = "JASA 79, 871; robust regression by enumerating elemental (minimal) subsets"
-role = "bibliography"
-verified = true
-verified_via = "crossref"
-
-[ref.rousseeuw1999]
-authors = "Rousseeuw & Van Driessen"
-year = 1999
-title = "A Fast Algorithm for the Minimum Covariance Determinant Estimator"
-doi = "10.1080/00401706.1999.10485670"
-used_in = []
-note = "Technometrics 41, 212; concentration (C-) steps: refit on the inliers, relabel, repeat"
-role = "bibliography"
-verified = true
-verified_via = "crossref"
-
-[ref.golub1973]
-authors = "Golub & Pereyra"
-year = 1973
-title = "The Differentiation of Pseudo-Inverses and Nonlinear Least Squares Problems Whose Variables Separate"
-doi = "10.1137/0710036"
-used_in = []
-note = "SIAM J. Numer. Anal. 10, 413; variable projection: solve the linear parameters (TI') inside the nonlinear search"
-role = "bibliography"
-verified = true
-verified_via = "crossref"
-
 [ref.tierney1986]
 authors = "Tierney & Kadane"
 year = 1986
@@ -1937,39 +1882,6 @@ note = "JASA 87, 861; griddy Gibbs: draw a scalar conditional by tabulating it o
 role = "bibliography"
 verified = true
 verified_via = "crossref"
-
-[ref.gilks2001]
-authors = "Gilks & Berzuini"
-year = 2001
-title = "Following a Moving Target: Monte Carlo Inference for Dynamic Bayesian Models"
-doi = "10.1111/1467-9868.00280"
-used_in = []
-note = "JRSSB 63, 127; resample-move: resample weighted draws, then MCMC moves that keep the target"
-role = "bibliography"
-verified = true
-verified_via = "crossref"
-
-[ref.neal2011]
-authors = "Neal"
-year = 2011
-title = "MCMC using Hamiltonian dynamics"
-arxiv = "1206.1901"
-used_in = []
-note = "Handbook of Markov Chain Monte Carlo, ch. 5; HMC with a mass matrix (preconditioning) and a jittered step size"
-role = "bibliography"
-verified = true
-verified_via = "arxiv"
-
-[ref.talts2018]
-authors = "Talts, Betancourt, Simpson, Vehtari & Gelman"
-year = 2018
-title = "Validating Bayesian Inference Algorithms with Simulation-Based Calibration"
-arxiv = "1804.06788"
-used_in = []
-note = "Simulation-based calibration ranks (the population test)"
-role = "bibliography"
-verified = true
-verified_via = "arxiv"
 
 [ref.skilling2006]
 authors = "Skilling"
@@ -2109,7 +2021,7 @@ arxiv = "2402.10797"
 repo = "https://github.com/blackjax-devs/blackjax"
 verified = true
 verified_via = "arxiv"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.mode_search:resample_move"]
 note = "the adaptive tempered SMC, HMC and pretuning kernels (blackjax >= 1.7.1) that virgil.smc wraps"
 
 [ref.lee2018]
@@ -2134,3 +2046,82 @@ verified_via = "crossref"
 used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
 note = "Ann. Appl. Probab. 31, 1021; extends the Eve-index variance estimator to SMC whose tempering schedule is chosen adaptively from the particles"
 
+
+[ref.fischler1981]
+authors = "Fischler & Bolles"
+year = 1981
+title = "Random sample consensus: a paradigm for model fitting with applications to image analysis and automated cartography"
+doi = "10.1145/358669.358692"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.orbit_cells:search_cell", "virgil.orbit_cells:search_plan"]
+note = "Commun. ACM 24, 381; minimal sets of nights as candidate fits (RANSAC)"
+
+[ref.rousseeuw1984]
+authors = "Rousseeuw"
+year = 1984
+title = "Least median of squares regression"
+doi = "10.1080/01621459.1984.10477105"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "J. Am. Stat. Assoc. 79, 871; elemental subsets as starts of a robust fit"
+
+[ref.rousseeuw1999]
+authors = "Rousseeuw & Van Driessen"
+year = 1999
+title = "A fast algorithm for the minimum covariance determinant estimator"
+doi = "10.1080/00401706.1999.10485670"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "Technometrics 41, 212; concentration steps (C-steps): relabel inliers, refit, until the labels repeat"
+
+[ref.golub1973]
+authors = "Golub & Pereyra"
+year = 1973
+title = "The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate"
+doi = "10.1137/0710036"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "SIAM J. Numer. Anal. 10, 413; variable projection: the linear Thiele-Innes constants solved at fixed period and eccentricity"
+
+[ref.hesterberg1995]
+authors = "Hesterberg"
+year = 1995
+title = "Weighted average importance sampling and defensive mixture distributions"
+doi = "10.1080/00401706.1995.10484303"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg"]
+note = "Technometrics 37, 185; a prior share in the proposal bounds the importance weights by the likelihood maximum over the share"
+
+[ref.gilks2001]
+authors = "Gilks & Berzuini"
+year = 2001
+title = "Following a moving target: Monte Carlo inference for dynamic Bayesian models"
+doi = "10.1111/1467-9868.00280"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
+note = "J. R. Stat. Soc. B 63, 127; resample-move: resample weighted draws, then move them with a kernel invariant for the target"
+
+[ref.neal2011]
+authors = "Neal"
+year = 2011
+title = "MCMC using Hamiltonian dynamics"
+arxiv = "1206.1901"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.mode_search:resample_move"]
+note = "Handbook of Markov Chain Monte Carlo, ch. 5; randomized step size and trajectory length for HMC"
+
+[ref.talts2018]
+authors = "Talts, Betancourt, Simpson, Vehtari & Gelman"
+year = 2018
+title = "Validating Bayesian inference algorithms with simulation-based calibration"
+arxiv = "1804.06788"
+verified = true
+verified_via = "crossref"
+note = "rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py)"
