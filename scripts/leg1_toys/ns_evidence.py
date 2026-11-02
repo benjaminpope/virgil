@@ -65,7 +65,7 @@ def _log_q(q):
 
 def run(prob, n_live, key, q=None):
     """Nested sampling from the prior, or (q given) from the search's mixture by posterior
-    repartitioning (Chen, Feroz & Hobson 2019): reference q, likelihood p L / q, same Z."""
+    repartitioning (Chen, Feroz & Hobson 2023): reference q, likelihood p L / q, same Z."""
     logprior = _logprior if q is None else _log_q(q)
 
     def loglike(w):

@@ -381,6 +381,17 @@ Edges are fixed at x = N ± ½ (`make_cells`' default). The pilot pass and valle
 retired (2026-11-02). They only moved labels, and the search and IS of §6 do not need the posterior to sit inside one
 cell: a mode straddling an edge is found from both sides, and the IS indicator splits its mass exactly.
 
+**Modes on an edge.** In the cell's logistic period chart, the half of such a mode that lies inside the cell has its
+maximum pushed inward by the log-Jacobian, so its Laplace covariance is distorted. This costs efficiency, not
+correctness:
+
+- IS weights use the exact target and the exact q, so the estimate stays unbiased. Each cell's evidence integrates
+  only over that cell. The defensive share α bounds the weights, and a poor t5 fit shows up as low ESS (flag, §6.6).
+- HMC in the logistic chart samples the truncated target exactly.
+
+Overlapping cells (e.g. N ± 0.6) are not used. The cells must partition x, or their evidences double-count. The edge
+case is measured in §6.7's grid, where every neighbouring cell agrees with the reference.
+
 ### 4.5 The long-period band
 
 Everything with x < x_low (below the lowest cell: P longer than the lowest cell's upper edge, up to P_max) is one band,
@@ -514,9 +525,14 @@ eccentric orbits the start set is a declared budget (the `starting_orbits` grid 
 is a Stage 3b test on eccentric toys.
 
 **Number of sets.** All C(K, m) sets are enumerated while C(K, m) ≤ n_set_max (§10): 91 pairs or 364 triplets at
-K = 14. Above that budget, sets are drawn at random. The count needed to include an all-inlier set spanning the outer
-inliers with probability 1 − δ is n = ln δ / ln(1 − w^m) (Fischler & Bolles 1981), with w = 1 − ε_hi the declared
-inlier fraction.
+K = 14. Above that budget the sampling is stratified so that the coverage argument still holds. Plain RANSAC
+sampling does not suffice: the chance that a random set contains the two outer inliers falls as 1/C(K, 2).
+
+- All C(K, 2) span pairs (t_i, t_j) are enumerated. There are 1770 at K = 60, so the pair holding I's outer nights
+  is always among them, and pairs (m = 2) never need sampling.
+- For m > 2, each span pair takes n = ln δ / ln(1 − w^(m−2)) random fills of m − 2 nights from between its ends
+  (Fischler & Bolles' count applied to the interior nights only). Here w = 1 − ε_hi is the declared inlier fraction.
+- The cost is C(K, 2)·n sets. At m = 3, ε_hi = 0.3 and δ = 10⁻³, n = 6.
 
 **The coverage contract (gated).** The search is a component with its own test, not an implementation detail:
 
@@ -528,6 +544,13 @@ inlier fraction.
 
   This is the signature of every review failure (the evidence ended at K·b while a mode existed). It is cheap: one
   weighted mean over draws the estimator already has.
+
+  The sentinel catches an estimator that falls to the floor when the search has found the mode. It cannot catch a
+  mode the search missed, because condition 2 then has no mode to point at. Missed modes are the coverage contract's
+  job (above, §6.5, §14).
+
+  If the search returns no mode at all, q is the prior alone (α = 1). The IS estimate stays unbiased, the sentinel
+  cannot fire, and the cell carries the ESS flag of §6.6.
 
 ### 6.2 Leg 2: the visibility level (changed; flag for Ben)
 
@@ -760,14 +783,14 @@ The per-N work that remains is the search's cross-season minimal sets and the ev
 |---|---|---|---|---|---|
 | 18 | −61.139 | −0.005 | 0.009 | −40.0 | 1.6 |
 | 19 | −50.312 | −0.001 | 0.013 | −52.9 | 0.8 |
-| 20 (true) | −7.637 | −0.004 | 0.012 | −0.000 | 0.003 |
+| 20 (true) | −7.638 | −0.003 | 0.012 | +0.001 | 0.003 |
 | 21 | −51.969 | −0.003 | 0.017 | −45.8 | 4.0 |
-| 22 | −65.352 | +0.561 | 0.006 | −34.2 | 2.0 |
+| 22 | −64.784 | −0.007 | 0.006 | −34.8 | 2.0 |
 
 Cost: per-N 1.0e6 evaluations, shared 1.8e6. The shared search over five cells cost more than five per-N searches,
-because each set's grid spans every cell. The total-variation distance of p(N) from exact is 5e-22 per-N and 2e-19
-shared. The +0.56 at N = 22 is the reference's fault, not the estimator's: `Problem.exact` refines only peaks within
-40 nats of the global maximum, and this cell is 58 nats below.
+because each set's grid spans every cell. The total-variation distance of p(N) from exact is 3e-22 per-N and 2e-19
+shared. The reference uses 1.6e6 grid points over the five cells. At the default 4e5, the narrow peak of N = 22 fell
+between grid points and its ln Z was 0.57 nats low. The other cells agree to 0.001 between the two grids.
 
 **Conclusion: per-N is the default.**
 
@@ -843,7 +866,7 @@ likelihood evaluations c (no gradient) or gradients g ≈ 3c:
 |---|---|---|
 | T_compile, T_epochs, T_summ, T_b, K | as before | Stage 0, 2b, #618 |
 | B | cells, T/P_cut − T/P_max | data |
-| sets S, m | minimal sets (all C(K, m) × peak choices up to N_SET_MAX, else the RANSAC count) | §6.1 |
+| sets S, m | minimal sets (all C(K, m) × peak choices up to N_SET_MAX, else all span pairs × stratified interior fills) | §6.1 |
 | n_cand, n_modes | candidates after the grid; distinct modes | measured |
 | N_IS | IS draws per cell (4000) | budget |
 | B_vis | cells entering leg 2 (B unless pruning, §7) | data |
@@ -916,7 +939,7 @@ run; changing one afterwards is a recorded decision.
 | m (minimal set) | 2 with velocities, 3 positions only | derived | equations ≥ unknowns at fixed ζ (§6.1) |
 | K_COH | 4 | budget (derived > 2) | ln P grid points per cycle of a set's span; > 2 brackets every minimum (§6.1) |
 | ζ starts | e ∈ {0, 0.3, 0.6} × 8 anchor phases (17) | budget | coverage tested on eccentric toys, not derived (§6.1, §14) |
-| N_SET_MAX | 2000 | budget | enumerate all sets below, RANSAC count above (§6.1) |
+| N_SET_MAX | 2000 | budget | enumerate all sets below; above it, all span pairs with stratified interior fills (§6.1) |
 | ε_hi | 0.3 | declared | outlier fraction in the RANSAC count n = ln δ/ln(1 − (1 − ε_hi)^m) |
 | N_C | 10 | budget | C-step cap; labels repeat within 2–3 steps on the toys |
 | inlier rule | ℓ_k > b_k | derived | the larger component (C-step labels) |
@@ -1012,8 +1035,9 @@ uses P_night at the truth's a, so only the 2Δt_min part of P_cut is new in prac
 ### 13.1 Changes to the open PRs (flag for Ben)
 
 - **#623 (generic tempered SMC on BlackJAX).** The orbit legs no longer use it, and the composite-mutation hook it was
-  to grow is not needed. It can land as a generic tool, or close. Ben decides. Nothing in this note depends on it, except
-  that BlackJAX ≥ 1.7.1 becomes a core dependency, which #629 already declares.
+  to grow is not needed. It can land as a generic tool, or close. Ben decides. Nothing in this note depends on it. BlackJAX ≥ 1.7.1 stays a
+  core dependency, which #629 already declares: it supplies the HMC kernel and the dual-averaging step-size adaptation of
+  §6.3, so the resample-move does not fork a sampler.
 - **#629 (cells and position leg).** The brief in the coordinating session's notes is the implementation plan.
   - **Kept:** `PeriodDomain`, `period_domain`, `choose_anchors`, `Cell`, `make_cells`, `OutlierPrior` and its functions,
     `_Catalogue`, `_log_mixture` and its helpers, `_Space` (minus `with_ti`), `fit_jitter`.
@@ -1062,8 +1086,11 @@ constant is tuned to it after a failure.
 4. **Coverage contract.** On the subset with circular truths, K ≤ 14 and positions only, the exact collapsed reference
    of `scripts/leg1_toys/toy.py` applies with a Gaussian TI′ prior. There, |ln Ẑ_N − ln Z_N| ≤ 4 sd(ln Ẑ_N) + 0.01 for
    every cell with p(N) ≥ δ.
-5. **Eccentric coverage of the ζ starts.** In the e > 0.3 stratum the true cell's best mode is within Mahalanobis 1 of
-   the truth in ≥ 99 % of systems, judged by the same binomial rule.
+5. **Eccentric coverage of the ζ starts.** In the e > 0.3 stratum the true cell's best mode has squared Mahalanobis
+   distance to the truth, under its Laplace covariance, within χ²_d(0.99) (d the chart dimension) in ≥ 99 % of systems.
+   A system misses when it exceeds that bound, and misses are judged by the binomial rule of assertion 1 at the 1 % rate
+   expected under a correct Laplace approximation plus the search's δ. (The Mahalanobis-1 rule of §6.1 is a
+   duplicate test, not a confidence region.)
 
 **Tiers:**
 

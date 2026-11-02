@@ -245,6 +245,12 @@ class Mixture:
 
     def __init__(self, prob, modes):
         self.prob = prob
+        # no modes: q is the prior alone, so the IS estimate stays valid (and the coverage tests,
+        # not the sentinel, catch the missed mode)
+        self.alpha = ALPHA if modes else 1.0
+        if not modes:
+            self.w = onp.zeros(0)
+            return
         lz = onp.array([laplace_one(m) for m in modes])
         self.w = onp.exp(lz - lz.max())
         self.w /= self.w.sum()
@@ -274,9 +280,9 @@ class Mixture:
         return self.mu[m] + (z @ self.chol[m].T) / onp.sqrt(g)[:, None]
 
     def log_q(self, x):
-        parts = [onp.log(ALPHA) + self.prob.logprior(x)]
+        parts = [onp.log(self.alpha) + self.prob.logprior(x)]
         parts += [
-            onp.log(1 - ALPHA) + onp.log(self.w[m]) + self.log_t(x, m)
+            onp.log(1 - self.alpha) + onp.log(self.w[m]) + self.log_t(x, m)
             for m in range(len(self.w))
         ]
         return onp.logaddexp.reduce(onp.stack(parts), 0)
@@ -285,7 +291,7 @@ class Mixture:
         comp = rng.choice(
             len(self.w) + 1,
             size=n,
-            p=onp.concatenate([[ALPHA], (1 - ALPHA) * self.w]),
+            p=onp.concatenate([[self.alpha], (1 - self.alpha) * self.w]),
         )
         x = self.prob.prior_draw(n, rng)
         for m in range(len(self.w)):
@@ -477,6 +483,10 @@ def sentinel(prob, x, lw, modes):
     resp = 1 / (1 + onp.exp(LNB - ell))
     w = onp.exp(lw - lw.max())
     n_in = float((w * resp.sum(1)).sum() / w.sum())
+    if (
+        not modes
+    ):  # nothing to compare against: a missed mode is the coverage tests' job
+        return False, n_in
     best = modes[0][0]
     uc0, uc1 = features(onp.exp(prob.u_of_w(best[0:1])), prob.t)
     lb = night_ell(uc0, uc1, best[None, 1:], prob.d, prob.sig)[0]

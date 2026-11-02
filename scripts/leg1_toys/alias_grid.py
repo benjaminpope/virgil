@@ -31,7 +31,9 @@ if __name__ == "__main__":
     reps = int(sys.argv[4]) if len(sys.argv) > 4 else 5
     whole = Problem(pattern, rel, cells=side)
     ns = list(range(whole.n_lo, whole.n_hi + 1))
-    ex, _ = whole.exact()
+    # the whole domain at the default 4e5-point cap is coarser than the outer cells' peaks
+    # (N = 22 of K10_2s was 0.57 nats low); 1.6e6 points agree with 4e5 to 0.001 elsewhere
+    ex, _ = whole.exact(n0=1_600_000)
     w_tot = whole.LHI - whole.LLO
 
     # per-N

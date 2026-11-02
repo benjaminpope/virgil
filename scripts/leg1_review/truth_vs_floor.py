@@ -1,3 +1,10 @@
+"""Truth vs the all-outlier floor on #629's position target (a review of the tempered leg).
+
+Needs `virgil.orbit_cells` and `tests/test_orbit_cells.py`, which exist only on #629's branch
+(claude/orbit-cells-position-leg-f28847): run it from a checkout of that branch. Kept here as the
+record behind the review logs; it is not run on main.
+"""
+
 import numpy as onp
 import jax
 

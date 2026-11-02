@@ -196,16 +196,24 @@ class Problem:
 
     def exact(self, n0=None, cells=None):
         """ln Z per cell (dict n -> ln Z_n), by trapezoid on a grid fine enough for the needle
-        (>= 4 points per sigma) plus a 20x refinement around every local maximum within 40 nats."""
+        (>= 4 points per sigma) plus a 20x refinement around every local maximum within 40 nats of
+        its own cell's maximum, so cells far below the best one are refined too."""
         w = self.needle_width()
         n0 = n0 or int(min(4e5, max(2e4, 4 * (self.LHI - self.LLO) / w)))
+        if n0 < 4 * (self.LHI - self.LLO) / w:
+            print(
+                f"exact: {n0} points is under 4 per needle sigma; check convergence in n0"
+            )
         u = onp.linspace(self.LLO, self.LHI, n0)
         f = self.collapsed(u)
+        cell = onp.rint(self.T / onp.exp(u)).astype(int)
+        f_cell = onp.full(cell.max() + 1, -onp.inf)
+        onp.maximum.at(f_cell, cell, f)
         loc = (
             onp.flatnonzero(
                 (f[1:-1] >= f[:-2])
                 & (f[1:-1] >= f[2:])
-                & (f[1:-1] > f.max() - 40)
+                & (f[1:-1] > f_cell[cell[1:-1]] - 40)
             )
             + 1
         )
