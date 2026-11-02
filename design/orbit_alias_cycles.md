@@ -901,6 +901,29 @@ likelihood evaluations c (no gradient) or gradients g ≈ 3c:
 - T_search = 1.6e4–2.1e5 evaluations for K = 6–10 (§6.5), plus N_IS = 4e3.
 - The cell is search-dominated. The search grows with the number of sets, C(K, 3) = 20 to 364 for K = 6 to 14.
 
+**Two seasons, measured (K = 14, 7 + 7 nights a year apart, P ∈ [2.2, 60] d, 161 cells, float64, 2 threads, a laptop at
+load ≈ 26, so wall times are inflated; compare only within the table).** 455 sets (91 pairs + 364 triplets) × 17 ζ
+starts give ≈ 1.5 × 10⁴ candidates per cell, 30–40 % of which pass the χ² cut. Per cell, search ≈ 93 % of the time:
+
+| stage | share of the search |
+|---|---|
+| grid | 0.4 % |
+| variable-projection Newton on the sets (`_varpro_chunk`) | 63 % |
+| first C-step pass, 4 steps on ≈ 4 × 10³ unique starts | 24 % |
+| Laplace scores, per-mode refinement | 4 % + 5 % |
+
+Importance sampling is 0.3 s per cell and an HMC resample-move 150 s per drawn cell (usually one to three cells). Cost is
+flat in N: every cell has the same ν width 1/T, so the same grid, sets and candidates. The kernels compile once (≈ 90
+compiles, 60–75 s, none after the first cell). In the set Newton, 98 % of candidates use all `N_VARPRO = 12` steps and
+63 % end with |w_P| > 6, at the cell edge: the minimum of their residual lies outside the cell (a grid end counts as a
+minimum, and a straddling needle needs it), so the steps are not wasted for coverage, and no cheaper stopping rule
+applies. Cells run in two threads (exact; see the PR table). Tried and reverted: the gradient and Hessian of each Newton
+step in one pass (about 10 % faster) moved the K = 3 prior-importance check of `test_the_position_evidence_of_a_tiny_case...`
+by 1.3 nats (4 sigma), so the search is sensitive to floating-point reassociation there. Not done, because they change which
+candidates are kept: dropping triplets where
+velocities are informative (pairs suffice for the coverage argument, 5× fewer sets), and a pre-Newton cut on the grid
+residual (it has no derived bound: a candidate far above the cut at a node can refine below it).
+
 **A worked example** at gallery scale:
 
 - Position level: B ≈ 250 cells × 2 × 10⁵ evaluations ≈ 5 × 10⁷.

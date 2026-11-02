@@ -1016,3 +1016,42 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
     else:
         assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
+
+
+# --- the speed measures are exact --------------------------------------------
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.timeout(1200)
+def test_running_cells_in_threads_changes_nothing():
+    """Two seasons, K = 6: the cells' evidence, probabilities and modes with
+    one worker and with two (each cell has its own key)."""
+    rng = onp.random.default_rng(0)
+    times = _two_season_times(rng, 6)
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    s = _summaries(orbit, times, sigma=0.3)
+    domain = oc_cells.period_domain(s, p_range=(10.0, 12.5))
+    out = [
+        oc_cells.position_cells(
+            s,
+            domain,
+            jax.random.key(0),
+            log_outlier=onp.full(len(times), LOG_B),
+            jitter=0.0,
+            n_is=512,
+            workers=w,
+        )  # fmt: skip
+        for w in (1, 2)
+    ]
+    assert len(out[0].cells) > 2
+    for name in ("p_pos", "failed"):
+        onp.testing.assert_array_equal(
+            getattr(out[0], name), getattr(out[1], name)
+        )
+    for a, b in zip(*(o.fits for o in out)):
+        assert a.log_z == b.log_z and len(a.modes) == len(b.modes)
+        onp.testing.assert_array_equal(a.x_is, b.x_is)
+        assert (a.draws is None) == (b.draws is None)
+        if a.draws is not None:
+            onp.testing.assert_array_equal(a.draws, b.draws)

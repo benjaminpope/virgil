@@ -27,6 +27,7 @@ Source: Fischler & Bolles (1981), Rousseeuw (1984), Rousseeuw & Van Driessen
 derived in the design note.
 """
 
+import concurrent.futures
 import dataclasses
 import functools
 import itertools
@@ -110,6 +111,7 @@ W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
 N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
 CHUNK_C = 256  # candidates per batched C-step call (budget)
 CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
+N_WORKERS = 2  # cells run at once (threads; the laptop budget of 2 cores)
 R0 = math.sqrt(3.0)  # radius of y_z at a mode: the mode of its chi-4 prior
 
 
@@ -875,6 +877,7 @@ def _lm(f, x, args, n_iter, step_max=10.0):
     the predicted gain ``g·step`` is below ``TOL_GAIN``. vmap-able.
     Returns ``(x, f(x))``.
     """
+
     grad, hess = jax.grad(f), jax.hessian(f)
 
     def body(c):
@@ -1757,6 +1760,7 @@ def position_cells(
     delta=DELTA,
     n_is=N_IS,
     max_seconds=float("inf"),
+    workers=N_WORKERS,
     **leg_kwargs,
 ):
     """The position-level fit of every cell of ``domain``.
@@ -1793,6 +1797,10 @@ def position_cells(
         Importance draws per cell.
     max_seconds : float, optional
         Time cap on the whole run.
+    workers : int, optional
+        Cells run at once, in threads (default ``N_WORKERS``); the first cell
+        runs alone, as it compiles the kernels and draws the sets. The result
+        does not depend on it: each cell has its own key.
     **leg_kwargs
         Other arguments of [`position_leg`][virgil.orbit_cells.position_leg].
 
@@ -1815,20 +1823,25 @@ def position_cells(
     if jitter is None:
         jitter = fit_jitter(summaries, log_outlier, domain, (t_a, t_b))
     cells = make_cells(t_a, t_b, domain)
-    start, fits, plan = time.time(), [], None
-    for cell, k in zip(cells, jax.random.split(key, len(cells))):
+    start = time.time()
+    keys = jax.random.split(key, len(cells))
+
+    def run(cell, k, plan):
         if time.time() - start > max_seconds:
             raise RuntimeError(
                 f"position_cells reached max_seconds before cell N={cell.n}."
             )
-        fits.append(
-            position_leg(
-                summaries, log_outlier, cell, k, t_anchor=t_a, t_nights=t_all,
-                jitter=jitter, n_is=n_is, posterior_draws=False, plan=plan,
-                nu_width=1.0 / t_ab, **leg_kwargs,
-            )
+        return position_leg(
+            summaries, log_outlier, cell, k, t_anchor=t_a, t_nights=t_all,
+            jitter=jitter, n_is=n_is, posterior_draws=False, plan=plan,
+            nu_width=1.0 / t_ab, **leg_kwargs,
         )  # fmt: skip
-        plan = fits[0].plan
+
+    fits = [run(cells[0], keys[0], None)]
+    with concurrent.futures.ThreadPoolExecutor(max(1, workers)) as pool:
+        fits += pool.map(
+            lambda ck: run(*ck, fits[0].plan), zip(cells[1:], keys[1:])
+        )
     log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
     upper = onp.array(
         [c.log_mass + f.log_z_upper for c, f in zip(cells, fits)]
@@ -1842,11 +1855,18 @@ def position_cells(
     else:
         p = onp.exp(log_p - onp_logsumexp(log_p))
     below = p < delta / len(cells)
-    for f, pi, k in zip(
-        fits, p, jax.random.split(jax.random.fold_in(key, 1), len(cells))
-    ):
-        if pi >= delta / len(cells):
-            f.draws = _draw(f, k)
+    drawn = [
+        (f, k)
+        for f, pi, k in zip(
+            fits, p, jax.random.split(jax.random.fold_in(key, 1), len(cells))
+        )
+        if pi >= delta / len(cells)
+    ]
+    with concurrent.futures.ThreadPoolExecutor(max(1, workers)) as pool:
+        for (f, _), draws in zip(
+            drawn, pool.map(lambda fk: _draw(*fk), drawn)
+        ):
+            f.draws = draws
     return CellsResult(
         domain, (first, last), t_ab, cells, fits, p, below,
         below if prune else onp.zeros_like(below), float(p[below].sum()),
