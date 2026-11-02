@@ -92,7 +92,8 @@ K_COH = (
 )
 ZETA_E = (0.0, 0.3, 0.6)  # ζ starts: eccentricities, 8 phases each (17 points)
 ZETA_PHASES = 8  # anchor mean anomalies M_a per eccentricity, from 0 to 2π
-N_SET_MAX = 2000  # enumerate every set below this, a random subset above
+N_SET_MAX = 2000  # enumerate every set up to this; above it, every span pair
+#                   (all peaks) and random interior fills of each (design §6.1)
 EPS_HI = 0.3  # declared outlier fraction of the RANSAC count (design §10)
 N_C = 10  # C-step cap (labels repeat in 2-3 steps on the toys)
 N_VARPRO = 12  # damped Newton steps of a set's (ln P, ζ) refinement (budget)
@@ -876,14 +877,13 @@ def _solve_set(g, mean, w, s_w2):
 def _grid_stage(space, plan):
     """Every set's residual on a ``ln P`` grid of the cell, at every ζ start.
 
-    ``K_COH + 1`` points equally spaced in ``ν = 1 / P`` over the cell: a cell
-    is ``1 / T`` wide in ``ν``, so a set of span ``Δ`` needs
-    ``⌈K_COH Δ / T⌉ + 1 <= K_COH + 1``. Returns the residuals ``(S, Z, n)``,
+    The nodes ``plan["grid"]`` (in ``[0, 1]``) are equally spaced in
+    ``ν = 1 / P`` over the cell; their number is sized by ``search_plan`` to
+    the widest set. Returns the residuals ``(S, Z, n)``,
     their local minima along the grid (grid ends count) and the grid's ``ln P``.
     """
-    nu = np.linspace(
-        1.0 / np.exp(space.ln_hi), 1.0 / np.exp(space.ln_lo), K_COH + 1
-    )
+    nu_lo, nu_hi = 1.0 / np.exp(space.ln_hi), 1.0 / np.exp(space.ln_lo)
+    nu = nu_lo + plan["grid"] * (nu_hi - nu_lo)
     period, zeta = 1.0 / nu, space.zeta(plan["y0"])
     zero = np.zeros(4, space.dtype)
 
@@ -1065,16 +1065,46 @@ def _ransac_count(m):
     return math.ceil(math.log(DELTA) / math.log(1.0 - (1.0 - EPS_HI) ** m))
 
 
-def search_plan(space, key=None):
+def _interior_fills(peaks, pairs, rng):
+    """Random triplets spanning each pair of nights, for a system above
+    ``N_SET_MAX`` sets (design §6.1).
+
+    Per pair of nights ``(a, b)`` with a night strictly between them, ``n =
+    ⌈ln δ / ln(1 - w^(m-2))⌉`` (``m = 3``) triplets ``(a, c, b)``: ``c`` an
+    interior night with a peak, the three peaks random. The outer pair is in
+    every one, so the span that pins the period is never dropped; the pairs
+    themselves are all kept, with every combination of their peaks.
+
+    Source: Fischler & Bolles (1981).
+    """
+    n = math.ceil(math.log(DELTA) / math.log(1.0 - (1.0 - EPS_HI)))
+    spans = sorted({nt for nt, _ in pairs})
+    fills = set()
+    for a, b in spans:
+        inner = [c for c in range(a + 1, b) if len(peaks[c])]
+        if not inner:
+            continue
+        for _ in range(n):
+            c = inner[rng.integers(len(inner))]
+            pk = tuple(int(rng.choice(peaks[k])) for k in (a, c, b))
+            fills.add(((a, c, b), pk))
+    return sorted(fills)
+
+
+def search_plan(space, key=None, nu_width=None):
     """The minimal sets of a system, as arrays (the same for every cell).
 
     Pairs of nights (positions and velocities: 8 equations for the 4 TI′ at
     fixed ``(P, ζ)``) and triplets (positions only: 6), with every combination
-    of their peaks. Above ``N_SET_MAX`` a random subset is drawn from ``key``,
-    split over the two sizes by their counts and at least
-    [`_ransac_count`][virgil.orbit_cells._ransac_count] each (the count
-    guarantees an all-inlier set, not the set that spans the inliers: see
-    design §6.1).
+    of their peaks. Above ``N_SET_MAX`` sets the triplets are the random
+    interior fills of every pair ([`_interior_fills`][virgil.orbit_cells._interior_fills],
+    drawn from ``key``) and the pairs stay whole, so the pair that spans the
+    inliers (it pins the period to ``σ / (a Δ)``) is always there.
+
+    The ``ln P`` grid has ``⌈K_COH Δ ν_w⌉ + 1`` nodes (at least ``K_COH + 1``)
+    equally spaced in ``ν = 1 / P`` over a cell, ``Δ`` the largest set span and
+    ``ν_w`` the largest cell width in ``ν`` (``1 / T``; default the width of
+    ``space.cell``): at least ``K_COH`` per cycle of the widest set.
 
     Each set carries its precisions ``W`` (the ``(p, v)`` block of the peak's
     total covariance at ``ln s = 0`` and the fitted jitter), the peak means, the
@@ -1090,6 +1120,8 @@ def search_plan(space, key=None):
     once the sets are informative (``σ`` well below ``s_w``).
     """
     cat, dt = space.cat, space.dtype
+    if nu_width is None:
+        nu_width = 1.0 / space.cell.p_lo - 1.0 / space.cell.p_hi
     zero = np.zeros(len(cat.blocks), dt)
     total = onp.asarray(_peak_precision(cat, zero, space.jitter, dt)[1], float)
     w_pv = onp.linalg.inv(total[..., :4, :4])
@@ -1106,15 +1138,8 @@ def search_plan(space, key=None):
             if all(len(peaks[k]) for k in nights):
                 for pk in itertools.product(*[peaks[k] for k in nights]):
                     sets[m].append((nights, pk))
-    total_sets = sum(len(v) for v in sets.values())
-    if total_sets > N_SET_MAX:
-        for m in (2, 3):
-            n = max(
-                _ransac_count(m), round(N_SET_MAX * len(sets[m]) / total_sets)
-            )
-            if n < len(sets[m]):
-                pick = rng.choice(len(sets[m]), n, replace=False)
-                sets[m] = [sets[m][i] for i in sorted(pick)]
+    if sum(len(v) for v in sets.values()) > N_SET_MAX:
+        sets[3] = _interior_fills(peaks, sets[2], rng)
     chosen = sets[2] + sets[3]
     s = len(chosen)
     nights = onp.zeros((s, 3), int)
@@ -1135,6 +1160,11 @@ def search_plan(space, key=None):
             / wf.sum()
         )
         cut[i] = scale * stats.chi2.isf(DELTA, 4 if len(nt) == 2 else 2)
+    t_k = onp.asarray(space.t_k, float)
+    span = max(
+        (t_k[max(nt)] - t_k[min(nt)] for nt, _ in chosen), default=0.0
+    )
+    n_grid = max(K_COH + 1, math.ceil(K_COH * span * nu_width) + 1)
     ecc = onp.minimum(onp.array(ZETA_E), 0.5 * space.e_max)
     ecc = onp.maximum(ecc, min(1e-4, 0.5 * space.e_max))  # ζ = 0 has no M_a
     starts = [(ecc[0], 0.0)] + [
@@ -1152,6 +1182,7 @@ def search_plan(space, key=None):
     return {
         "nights": np.asarray(nights), "w": np.asarray(w, dt), "mean": np.asarray(mean, dt),
         "lnf": np.asarray(lnf, dt), "cut": onp.asarray(cut), "y0": np.asarray(y0, dt),
+        "grid": np.linspace(0.0, 1.0, n_grid, dtype=dt),
         "wk": np.asarray(w_pv, dt), "mk": np.asarray(mean_all[..., :4], dt),
         "wf": np.asarray(w_f, dt), "fm": np.asarray(mean_all[..., 4], dt),
     }  # fmt: skip
@@ -1424,6 +1455,7 @@ def position_leg(
     posterior_draws=True,
     dtype="float64",
     plan=None,
+    nu_width=None,
 ):
     """Search, defensive importance sampling and posterior draws of one cell.
 
@@ -1458,6 +1490,9 @@ def position_leg(
     plan : dict, optional
         The sets of [`search_plan`][virgil.orbit_cells.search_plan], reused
         across the cells of a system.
+    nu_width : float, optional
+        The widest cell in ``1 / P`` (``1 / T``), to size the plan's ``ln P``
+        grid when ``plan`` is made here (default the width of ``cell``).
 
     Returns
     -------
@@ -1473,7 +1508,9 @@ def position_leg(
             cat, cell, 0.0, onp.asarray(t_nights, float) - t_anchor, a_range,
             e_max, flux_floor, jitter, getattr(np, name),
         )  # fmt: skip
-        plan = search_plan(space, k_plan) if plan is None else plan
+        plan = (
+            search_plan(space, k_plan, nu_width) if plan is None else plan
+        )
         info = {}
         modes = search_cell(space, plan=plan, info=info)
         mixture = DefensiveMixture(
@@ -1707,7 +1744,7 @@ def position_cells(
             position_leg(
                 summaries, log_outlier, cell, k, t_anchor=t_a, t_nights=t_all,
                 jitter=jitter, n_is=n_is, posterior_draws=False, plan=plan,
-                **leg_kwargs,
+                nu_width=1.0 / t_ab, **leg_kwargs,
             )
         )  # fmt: skip
         plan = fits[0].plan

@@ -16,6 +16,7 @@ pytest.importorskip("blackjax")
 from virgil import _orbit_coordinates as oc  # noqa: E402
 from virgil import orbit_cells as oc_cells  # noqa: E402
 from virgil.aliases import alias_bands, period_cut  # noqa: E402
+from virgil.mode_search import laplace_log_evidence  # noqa: E402
 from virgil.night_summaries import NightPeak, NightSummary  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
 
@@ -622,3 +623,65 @@ def test_the_velocity_marginal_of_the_outlier_prior_integrates_the_velocity():
     )
     marginal = float(onp.exp(prior.log_density(mean, velocity=False))[0])
     assert total == pytest.approx(marginal, rel=0.05)
+
+
+# --- the search plan -----------------------------------------------------------
+
+
+@x64
+def test_above_the_set_budget_every_span_pair_is_kept(monkeypatch):
+    """The pair that spans the inliers pins the period: it is never sampled
+    away (design 6.1), and each pair of nights has interior triplet fills."""
+    s = _summaries(_orbit(), TIMES)
+    _, cells = _cells(s, (6.0, 400.0))
+    space = _space(s, cells[2])
+    monkeypatch.setattr(oc_cells, "N_SET_MAX", 10)
+    plan = oc_cells.search_plan(space, jax.random.key(0))
+    nights, w = onp.asarray(plan["nights"]), onp.asarray(plan["w"])
+    is_pair = onp.all(w[:, 2] == 0.0, axis=(1, 2))
+    pairs = {(int(a), int(b)) for a, b, _ in nights[is_pair]}
+    k = len(TIMES)
+    assert pairs == {(a, b) for a in range(k) for b in range(a + 1, k)}
+    trips = {tuple(int(i) for i in n) for n in nights[~is_pair]}
+    assert all(a < c < b for a, c, b in trips)
+    spans = {(a, b) for a, _, b in trips}
+    assert spans == {(a, b) for a in range(k) for b in range(a + 2, k)}
+
+
+@x64
+def test_the_ln_p_grid_is_sized_by_the_widest_set_span():
+    """``⌈K_COH Δ ν_w⌉ + 1`` nodes: a set spanning twice the anchor baseline
+    still has ``K_COH`` nodes per cycle."""
+    s = _summaries(_orbit(), TIMES)
+    _, cells = _cells(s, (6.0, 400.0))
+    space = _space(s, cells[2])
+    t = TIMES[-1] - TIMES[0]
+    wide = oc_cells.search_plan(space, nu_width=2.0 / t)
+    narrow = oc_cells.search_plan(space, nu_width=1.0 / t)
+    assert len(narrow["grid"]) == oc_cells.K_COH + 1
+    assert len(wide["grid"]) == 2 * oc_cells.K_COH + 1
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.timeout(1200)
+def test_a_large_orbit_without_a_rescalable_scale_still_finds_the_true_mode():
+    """Gains and offsets, ``a = 25`` mas: the old ridge-inclusive cut removed
+    every true set (ln Z biased by -100 nats, no flag)."""
+    rng = onp.random.default_rng(0)
+    times = _two_season_times(rng)
+    orbit = _orbit(period=11.3, a=25.0, ecc=0.0)
+    s = tuple(
+        _without_rescaling(n)
+        for n in _summaries(orbit, times, sigma=25e-3, seed=1)
+    )
+    _, _, cell = _true_cell(11.3, times, s, (9.0, 14.0))
+    fit = oc_cells.position_leg(
+        s, onp.full(len(times), LOG_B), cell, jax.random.key(0),
+        t_anchor=times[0], t_nights=times, n_is=4000, posterior_draws=False,
+    )  # fmt: skip
+    assert not fit.at_floor and fit.evidence.ess > 100
+    assert fit.modes[0].n_inliers > len(times) - 0.5
+    # the evidence is the true mode's (the cut bug gave -80 nats from it)
+    laplace = laplace_log_evidence(fit.modes[0])
+    assert abs(fit.log_z - laplace) < 3.0
