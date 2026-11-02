@@ -1,14 +1,14 @@
-# Alias-resolved orbit fits: model, coordinates, cells, tempered SMC (Stage D)
+# Alias-resolved orbit fits: model, coordinates, cells, search and evidence (Stage D)
 
 Status: **design for Ben's review**, 2026-11-01 (Opus-reviewed plan; Sonnet draft of this note). Nothing here is
-implemented. It is the note every later stage codes against (2a coordinates, 2b night summaries, 3a generic SMC, 3b
-cells and position leg, 3c visibility leg and noise contract, 3d no-orbit verdict, 4 validation).
+implemented. §6–7, §9–10, §13–14 were rewritten on 2026-11-02 (Opus) after the leg-1 review, on Ben's decisions of 2026-11-01. It is the note every later stage codes against (2a coordinates, 2b night summaries, 3b′
+search, evidence and position leg, 3c visibility leg and noise contract, 3d no-orbit verdict, 4 validation).
 
 Companions: [orbit_mixture_v2.md](orbit_mixture_v2.md) (approved 2026-10-29: the noise model),
 [orbit_dehack.md](orbit_dehack.md) (decisions 4, 5, 10, 12; §2I flux floor), [linear_marginalisation.md](linear_marginalisation.md),
 [thiele_innes_marginalisation.md](thiele_innes_marginalisation.md), [orbit_gate_042.md](orbit_gate_042.md) (§3.3, the G1 gate).
 Checks: [`scripts/check_orbit_coordinates.py`](../scripts/check_orbit_coordinates.py) (every Jacobian below) and
-[`scripts/toy_tiprime_legs.py`](../scripts/toy_tiprime_legs.py) (§6.5).
+[`scripts/toy_tiprime_legs.py`](../scripts/toy_tiprime_legs.py) (the superseded tempered comparison), [`scripts/leg1_review/`](../scripts/leg1_review/) (the review that retired it) and [`scripts/leg1_toys/`](../scripts/leg1_toys/) (§6.4–6.7).
 
 Design notes stay general: gallery targets appear only as worked examples. No constant below was chosen by looking at
 vv or gallery results (§10).
@@ -22,14 +22,22 @@ vv or gallery results (§10).
    orbit. #618's b_k is the uniform-disc, σ_v → ∞ special case. Measured on #618's fixture: at the true orbit b_k − ℓ_k is
    −27 to −58 nats, so **no choice of π(v) or scales restores #618's six failing tests**: they fail because the optimizer
    returns partial-orbit optima at least 54 nats below the truth (data precision pinned; a float32 rerun passed). The contract is still fixed (it is a modelling error), and the
-   tests are the acceptance test of the tempered search (§2.5).
+   tests are the acceptance test of the search (§2.5, §6).
 3. **Coordinates (§3).** Anchor Thiele–Innes TI′; z ∈ ℝ⁴ with u = z_u², V = z_v² (prior ∝ |z|⁻⁴, 4:1 cover); ζ with
    k + ih = ζ² (uniform prior, 2:1 cover). Both are *derived* departures; all Jacobians checked to 6 × 10⁻¹⁴.
 4. **Cells (§4).** T/P = N + ρ, π(N, ρ) ∝ 1/(N + ρ); exact partition for any edges; edges and anchors affect efficiency
    and labels only.
-5. **Search (§5–§7).** Per band, an adaptive tempered SMC: leg 1 at position level on per-peak (p, v, f) night summaries,
-   leg 2 a bridge to the visibility level. TI′ moves are the Luger conditional with an MH correction (leg 1; leg 2
-   per §6.3); the Joker-style collapsed alternative (J) is the cross-check. Neither dominates in the toy (§6.5).
+5. **Search, evidence, sampling (§5–§7; rewritten 2026-11-02).** There is no tempering: it fails at the first-order
+   transition onto the all-outlier floor (−47 to −156 nats on the review toys).
+   - **Search.** Per cell, a deterministic search in the low-dimensional core (ρ, ζ): minimal sets of nights with TI′
+     solved by variable projection, then concentration steps, then Newton on the label-summed target. Its coverage is
+     derived for ρ, tested for ζ, and gated, with a `cell-at-floor` sentinel.
+   - **Evidence.** Z_N comes from defensive importance sampling from the search-built t₅ mixture. It is unbiased on every
+     toy at 4000 evaluations, with var × cost 500–2000× below bridge sampling. Laplace is a baseline. Nested sampling
+     fails unseeded as tempering does.
+   - **Sampling.** Posterior draws come by resample-move with HMC, in cells that carry mass.
+   - **Across N.** Cells run per-N; shared draws across N were measured and rejected (§6.7).
+   - **Testing.** A population test (§14) replaces Stage 3b's slow tests.
 6. **Verdict (§8), cost (§9), constants (§10), literature (§11), draft G1 criteria change (§12, awaiting Ben).**
 
 ## 1. The model
@@ -54,7 +62,7 @@ decision 2), and both are carried through this note:
   e^{o_k(x, s)}, o_k = ln ∫₁^{s_max} Π_g L_kg(x; s_g t) dt/(t ln s_max), the night's *own* likelihood at the orbit with
   every group's scale inflated by one shared t (the group product is inside the log, so t_k is a single per-night label). It depends on (x, s), so there is **no constant floor**: an outlier night still pulls
   x (weight ≈ 1/s_max²), and the position-level analogue is õ_k(x, s) of §5. Wherever this note says "the floor
-  ε e^{b_k}", read ε e^{o_k(x, s)} under (iii′); §5 and §6 give both forms. The Luger move's label draw carries
+  ε e^{b_k}", read ε e^{o_k(x, s)} under (iii′); §5 and §6 give both forms. The search's C-step labels (§6.1) carry
   t_k as one more per-night label (conditionally Gaussian in TI′ with the inflated variance t_k² σ²).
 
 ### 1.2 Prior
@@ -95,6 +103,12 @@ P ∈ [P_cut, P_max], **P_cut = max(2·Δt_min, P_night)**:
   Δt_min. The contract's "curvature inside a night is ignored" rests on P_night: if P_night is ever dropped, that
   dependency must be restated.
 - Consequence for the gate: §12.
+- **TODO (open, 2026-11-02; do not resolve here).** Argon's simulated ensemble on #629 (#632) found 52 % of true
+  periods outside the default domain. One example: a single 25-d season with P = 11.4 d, where the lowest cell starts
+  at 39 d. A suspected cause is that P_night (`period_window`, night length 0.1, resolution 3) is a linear-motion bound
+  that scales as a/σ, rather than the curvature bound that (p, v) summaries need. The coordinating session is diagnosing
+  it, and this bullet is replaced by its result. Until then the §14 population counts the truths outside the domain
+  (stratum B′) and does not score them.
 
 ### 1.4 Linear parameters (Luger, Foreman-Mackey & Hogg 2017)
 
@@ -103,7 +117,7 @@ P ∈ [P_cut, P_max], **P_cut = max(2·Δt_min, P_night)**:
 | gains, closure offsets | observables (linearized) | already marginalized analytically (Stage 1 makes it cheap) |
 | ln s_g | no (scale) | sampled; one Woodbury solve per night at the current s_g |
 | outlier own scale (per group, per night) | no | integrated inside b_k only (closed-form Gamma integral, or 1-D quadrature with gains) |
-| TI′ = (A′, B′, F′, G′) | night positions *and* velocities | exact Gaussian conditional given the nonlinear core and the night labels; used as an MH-corrected Gibbs move (§6.3), **not** as a closed-form marginal: the isotropic prior is not Gaussian in TI′ and peaks and outliers make the marginal a sum over ∏(J_k + 1) assignments |
+| TI′ = (A′, B′, F′, G′) | night positions *and* velocities | exact Gaussian conditional given the nonlinear core and the night labels; used by the search's variable-projection solve (§6.1) and sampled by HMC (§6.3), **not** used as a closed-form marginal: the isotropic prior is not Gaussian in TI′ and peaks and outliers make the marginal a sum over ∏(J_k + 1) assignments |
 | RV γ per instrument, RV amplitude | RVs | marginalize when RVs enter; C and H are functions of TI′ so TI′ stops being linear with RV (thiele_innes_marginalisation §3) |
 | flux ratio f | closure phases only for f ≪ 1 | proposal only |
 | P, e, M_a, θ, vis_amp | no | sampled |
@@ -220,7 +234,7 @@ None of π(v), the scales or v = 0 does by itself:
 4. So the failing tests are **search failures** (graduated non-convexity's cliff: a night absorbed at q = 1 stops
    pulling, and the optimizer settles). #618's own diagnosis ("a poor fit is absorbed at cost b_k, so the alias contest
    loses discriminating power") is true of the *search*, not of the target: the target still prefers the truth by ≥ 34 nats (float32) and ≈ 127 (float64).
-   Restoring the tests is the job of the tempered search (§5–6), which keeps every mode with its weight and needs no
+   Restoring the tests is the job of the search and IS of §6, which keep every mode with its weight and need no
    optimizer basin.
 
 **Decision:** the contract of §2.1–2.2 is the target in Stage 3c (it is consistent; #618's v = 0 integral is its
@@ -275,7 +289,7 @@ summed) is
   p(TI′) = 1 / [π² ln(a_hi/a_lo) · (|u| + |V|)² · |u| · |V|]  on a_lo ≤ (|u| + |V|)/2 ≤ a_hi,
 
 checked to integrate to 1 (3 × 10⁻⁴, grid). The 1/(|u||V|) factor is the face-on cusp in TI′: it is what a Gaussian
-working prior has to be reweighted by (§6.3–6.4).
+working prior would have to be reweighted by, and why TI′ is sampled rather than marginalized (§6.3).
 
 ### 3.3 The ζ map (2:1 cover of the eccentricity vector)
 
@@ -363,10 +377,20 @@ approximately the spectral window of x_k = (t_k − t_a)/T, and exactly so only 
 
 ### 4.4 Edges
 
-One cheap pilot pass of leg 1 (§5) over the whole period domain at n_pilot = M/4 particles, one replicate, run to β = 1,
-gives the pooled position-level marginal of x = T/P. For each integer N, the edge x_N is the minimum of the
-Gaussian-smoothed marginal (width ¼) inside [N − ½, N + ½]; with no mass in the window it is N. Labels by the nearest
-integer are unchanged for any edge in that window. Constants: ±½, ¼, ¼M, all affecting labels only (§10).
+Edges are fixed at x = N ± ½ (`make_cells`' default). The pilot pass and valley edges of the previous draft are
+retired (2026-11-02). They only moved labels, and the search and IS of §6 do not need the posterior to sit inside one
+cell: a mode straddling an edge is found from both sides, and the IS indicator splits its mass exactly.
+
+**Modes on an edge.** In the cell's logistic period chart, the half of such a mode that lies inside the cell has its
+maximum pushed inward by the log-Jacobian, so its Laplace covariance is distorted. This costs efficiency, not
+correctness:
+
+- IS weights use the exact target and the exact q, so the estimate stays unbiased. Each cell's evidence integrates
+  only over that cell. The defensive share α bounds the weights, and a poor t5 fit shows up as low ESS (flag, §6.6).
+- HMC in the logistic chart samples the truncated target exactly.
+
+Overlapping cells (e.g. N ± 0.6) are not used. The cells must partition x, or their evidences double-count. The edge
+case is measured in §6.7's grid, where every neighbouring cell agrees with the reference.
 
 ### 4.5 The long-period band
 
@@ -415,159 +439,395 @@ likelihood with no companion (used in §8).
   check; the catalogue is the same one that makes b_k exact.
 - Summaries feed only leg 1; the target of leg 2 is the per-exposure likelihood.
 
-## 6. The tempered SMC
+## 6. Search, sampling and evidence per cell
 
-One adaptive tempered SMC per band, started from the band prior. Particles are the sampled vector x (10 + J chart
-coordinates: ρ or ln P, ζ (2), y (4), logit ln f, θ, vis_amp, ln s_g) plus discrete labels (peak labels per night,
-brighter/fainter, disc).
+**Rewritten 2026-11-01 after the leg-1 review** (Ben's decisions, quoted where they are his):
 
-### 6.1 Leg 1: position level
+1. The evidence rests on the search finding every mode, so **search coverage is a gated, tested component** (§6.1), with a
+   sentinel that fails a cell ending at the all-outlier floor.
+2. **No tempering** from the band prior: "I don't think we need to temper unless there is a strong reason to".
+3. Laplace is allowed as a baseline but not preferred: "reduce it to a low-dim continuous search space (ideal for monte
+   carlo methods) and analytically propagating that information through a grid of N integer aliases" (§6.1, §6.7).
+4. The within-cell sampler is **HMC** ("I'd have gone with hmc because why not"; §6.3).
+5. Stage 3b's slow tests are replaced by a **population test** (§14).
 
-Temper from the band prior to the night-summary likelihood, π_β ∝ prior · L_pos^β, with each night's outlier term under
-§2's contract ((ii): the constant e^{b_k}; (iii′): õ_k of §5), so the leg is defensive night by night. The next β is the largest for which the conditional ESS of the
-incremental weights is ≥ ½ (Zhou, Johansen & Aston 2016; ESS-adaptive tempering is Jasra et al. 2011; the SMC sampler is
-Del Moral, Doucet & Jasra 2006). Leg 1 does nearly all the compression and gives Z_N^pos.
+**Why the tempered SMC was dropped.** At σ/a ≲ 10⁻³ the band prior's mass on the needle that holds the posterior is
+≲ e⁻⁴⁰. Tempering from it meets a first-order transition: the β-path stays on the all-outlier floor and then jumps, and
+no ESS rule sees the jump coming. Skilling (2006) named this failure of thermodynamic paths and built nested sampling
+for it. The review toys ([`scripts/leg1_review/`](../scripts/leg1_review/), `table.log`) measured it. Whole-mixture
+tempering (#629's leg) was biased by −47 to −156 nats, per-label tempering by −27 to −156, and the Joker-style path by
+−7 to −113. At σ/a = 10⁻³ and 10⁻⁴ each of these ended with a single stage at the floor (ln Ẑ = K·b). A reference path
+started from a search-built proposal was unbiased. The cure is in the start, not the path: find the modes first, then
+integrate from a proposal built on them.
 
-### 6.2 Leg 2: visibility level
+The structure per cell N (§4) is therefore:
 
-Bridge π_β ∝ prior · L_pos^{1−β} · L_vis^β, β: 0 → 1, from leg 1's particles with the same adaptive rule. The estimate
-of Z_N is the product of the two legs' normalizing-constant ratios, unbiased in the SMC sense (Del Moral et al. 2006).
-The bridge's ratio is finite when the catalogue is complete (§5). **Its efficiency rests on L_pos ≈ L_vis on the retained
-peaks, not on a defensive bound:** per night, L_vis/L_pos ≤ 1 + (1 − ε) e^{ℓ_vis − b_k}/ε, which is e^{30} to e^{60} at §2.4's
-numbers, and ε is integrated jointly so nights do not factor. The bridge's conditional-ESS steps S₂ measure it (Stage 3c).
+**search (§6.1) → defensive mixture q → evidence Ẑ_N by importance sampling (§6.4) → posterior draws by
+resample-move with HMC (§6.3)**
 
-### 6.3 Moves
+The sentinel and ESS flags are in §6.6. The same draws serve every N where that is exact (§6.7).
 
-- **Fixed-L HMC** on the chart coordinates, as `virgil.smc` (#623, read at 525ba54) implements it: BlackJAX pretuning, a
-  per-particle step size and trajectory length perturbed with σ_ε = ε/4, 5 steps, ε₀ = d^{−1/4}, L₀ = 4, a dense
-  particle-covariance mass matrix, at most 200 stages (Buchholz, Chopin & Jacob 2021 for fixed-L HMC within SMC). This
-  note's own targets (acceptance 0.651, Beskos et al. 2013; trajectory-length candidates {½, 1, 2}×) are not what #623
-  implements, so they are dropped from §10 in favour of #623's constants; vmapped NUTS would run every particle to the
-  slowest tree.
-- **Luger TI′ move** (Luger, Foreman-Mackey & Hogg 2017). Given the nonlinear core c and the night labels z, the night states
-  are linear in θ = TI′ (p and v are linear in TI′; ln f is in the core; the brighter/fainter sign is linear). A Gaussian
-  working prior N(0, s_w² I), s_w² = ⟨a²⟩/3 (the per-component variance of TI′ under the isotropic prior:
-  E[A² + B² + F² + G²] = ⟨a²⟩ E[1 + cos² i] = 4⟨a²⟩/3, ⟨a²⟩ = (a_hi² − a_lo²)/(2 ln(a_hi/a_lo))), gives an exact Gaussian
-  conditional G(θ | c, z, β) ∝ N_w(θ) L_G(θ; z)^β, with L_G the labelled position-level Gaussian (leg 1 tempers per label,
-  Σ_z L_G(θ; z)^β, as in the toy of §6.5). Propose from it
-  (independence proposal).
-  - **Leg 1** (target p_iso L_G^β): accept with min{1, [p_iso/N_w](θ′)/[p_iso/N_w](θ)}, p_iso the §3.2 density. This is
-    exact only because the tempered likelihood is exactly Gaussian in θ given (c, z).
-  - **Leg 2** (target p_iso L_pos^{1−β} L_vis^β on θ, labels summed; z drawn from L_G(θ; z)/L_pos(θ), θ′ from
-    G(θ | c, z, 1)): L_G cancels against the proposal and the ratio is
-    [p_iso/N_w](θ′)/[p_iso/N_w](θ) × {[L_vis/L_pos](θ′)/[L_vis/L_pos](θ)}^β, one extra visibility evaluation per proposal
-    (L_pos, not L_G: the two differ wherever there are several peaks or an outlier floor).
-    Without the second factor the move would sample the wrong distribution. **The Luger move is used in leg 1 only by
-    default;** the leg-2 form is the exact option, to be measured in Stage 3b (its acceptance falls as β → 1 wherever
-    L_vis/L_pos varies), and leg 2 otherwise uses HMC on the label-summed target, with no separate label sweep.
-  - A wrong s_w costs acceptance, never correctness. The independence proposal is not uniformly ergodic: the weight
-    p_iso/N_w ∝ 1/(|u||V|) is unbounded at |V| → 0 (Mengersen & Tweedie 1996), so it can stick face-on (§6.5, measured).
-- **Labels are summed in the target, drawn only inside the move.** Every discrete label (peak, outlier and t_k under (iii′),
-  brighter/fainter, disc) is summed exactly per night in the target, so particles stay flat vectors and there is no label sweep outside the Luger move. The Luger move draws
-  the labels from their conditional given θ, proposes θ′ from G(θ | c, z), and accepts on the augmented target; the
-  θ-marginal is invariant (a Gibbs-then-Metropolis step, as in the toy §6.5). #623's kernel therefore needs only a
-  composite-mutation hook (custom MH and Gibbs moves), which Stage 3a adds; one Luger move per stage (§10).
+### 6.1 Search: minimal sets in a low-dimensional core
 
-### 6.4 The Joker-style collapsed alternative
+**The space.** Given the nonlinear core c = (ρ, ζ) (§3.3–3.4; three real dimensions), the night states are linear in
+TI′, and ln f is a weighted mean of the nights' flux summaries. For fixed c and fixed night labels, TI′ and ln f are
+therefore solved by weighted least squares: variable projection (Golub & Pereyra 1973), as `aliases._epoch_residuals`
+already does for amplitudes. The search runs only over c and the labels.
 
-Carry the night labels as particle state, so that **given the labels, TI′ marginalizes in closed form** under the
-Gaussian working prior (The Joker; Price-Whelan et al. 2017, 2020). Temper likelihood under the working prior (exact moves,
-no rejection), then swap to the isotropic prior by tempering the ratio (p_iso/N_w)^γ with γ: 0 → 1. The face-on ratio
-p_iso/N_w ∝ 1/(|u||V|) has an infinite second moment (∫ d²u/|u|²: logarithmic divergence), so a single step has infinite
-weight variance. After a step to γ_prev the particles follow π_γ ∝ N_w^{1−γ} p_iso^γ L and the next weight is
-(p_iso/N_w)^{Δγ}, so E[w²] ∝ ∫ N_w^{1−γ_prev−2Δγ} p_iso^{γ_prev+2Δγ} L, whose face-on tail is ∝ ∫ |V|^{−(γ_prev+2Δγ)} d²V:
-finite iff γ_prev + 2Δγ < 2. Only the first step (γ_prev = 0) is limited to Δγ < 1; later steps may be larger, and it
-matters only if L puts non-negligible mass near |V| = 0. The conditional-ESS rule sees none of this tail (a finite particle
-set cannot).
+**Why a fixed coherence grid fails.** Each night's term is the defensive mixture ln[(1 − ε)e^{ℓ_k} + ε e^{b_k}]. Its
+basin in ρ around a mode is the set of ρ over which the inlier nights stay within about σ√(2Δ_k) of the orbit, where
+Δ_k = ℓ_k^max − b_k is the night's height above its floor. Beyond that a night becomes an outlier and stops pulling. The
+basin therefore shrinks ∝ σ/a, while a grid at fixed coherence (`orbits.period_grid`, k points per cycle) does not. On
+the toy, a k = 4 grid followed by Newton missed the needle at σ/a = 10⁻⁴ (coverage 0, IS bias −84 nats). At 10⁻² it
+converged to partial-outlier maxima. Both runs were measured before the rewrite.
 
-### 6.5 Toy comparison and the choice
+**Minimal sets (RANSAC; Fischler & Bolles 1981; elemental sets, Rousseeuw 1984).** A minimal set is the smallest set of
+nights whose summaries determine (ρ, TI′) at a fixed ζ:
 
-[`scripts/toy_tiprime_legs.py`](../scripts/toy_tiprime_legs.py): fixed circular core, K = 8 nights of 2-D positions
-(σ = 0.3, two outlier nights), a ∈ [1, 30], M = 1000 particles, 2 moves per stage, 10 replicates, three data seeds; ε =
-0.1 fixed. **L** is the Luger-move SMC from the isotropic prior; **J** is the Joker-style path above with the exact
-conditional moves. Both estimate ln Z = ln ∫ p_iso(θ) ∏_k L_k(θ) dθ and use the same adaptive rule. Results, raw:
-
-ln Ẑ mean and sd over 10 replicates (cost = per-particle night evaluations + θ conditionals; the two methods cost the same
-to within 25%). s_w = 6.6 is the derived working scale ⟨a²⟩/3 of §6.3 (a ∈ [1, 30]); 15 is a deliberately broad one.
-
-| data seed | method | s_w | ln Ẑ | sd | stages | cost | variance × cost |
-|---|---|---|---|---|---|---|---|
-| 0 | L | 6.6 | -33.346 | 0.279 | 8.0 | 1.01e6 | 7.8e4 |
-| 0 | L | 15 | -33.343 | 0.34 | 8.0 | 1.01e6 | 1.2e5 |
-| 0 | J | 6.6 | -33.349 | 0.096 | 9.0 | 1.03e6 | 9.5e3 |
-| 0 | J | 15 | -36.494 | 2.166 | 7.8 | 8.4e5 | 4.0e6 |
-| 1 | L | 6.6 | -34.096 | 0.308 | 8.0 | 1.00e6 | 9.5e4 |
-| 1 | L | 15 | -34.166 | 0.443 | 8.0 | 1.00e6 | 2.0e5 |
-| 1 | J | 6.6 | -34.39 | 0.311 | 9.0 | 1.02e6 | 9.9e4 |
-| 1 | J | 15 | -37.058 | 1.754 | 7.4 | 7.9e5 | 2.4e6 |
-| 2 | L | 6.6 | -35.372 | 0.261 | 8.0 | 1.00e6 | 6.9e4 |
-| 2 | L | 15 | -35.512 | 0.419 | 8.0 | 1.00e6 | 1.8e5 |
-| 2 | J | 6.6 | -35.612 | 0.288 | 8.9 | 1.00e6 | 8.3e4 |
-| 2 | J | 15 | -40.121 | 2.578 | 7.3 | 7.7e5 | 5.1e6 |
-
-Reference ln Z, by enumerating the 2⁸ label sets (the inlier nights are Gaussian in θ given the labels; the prior
-expectation of each Gaussian is a Monte Carlo average of 2 × 10⁵ draws; `exact_ln_z` in the script; two MC seeds agree to
-0.002): **−33.342, −34.124, −35.389** for the three data seeds. L agrees with it within its error at both s_w (|Δ| ≤ 0.07 at
-s_w = 6.6, ≤ 0.14 at 15, against a standard error of the mean of 0.1); J at s_w = 6.6 is low by 0.01, 0.27 and 0.22, and at
-15 by 3.2, 2.9 and 4.7. So the J bias is real, not a bug in one path.
-
-More moves (10 per stage, s_w = 15, generic truth): L stays unbiased with sd 0.10–0.20 (ln Ẑ −33.327, −34.133, −35.342 against
-−33.342, −34.124, −35.389); J falls by 1.6, 1.1 and 2.5 and has sd 0.9–1.4. J's bias shrinks with moves, so it is a stage-1
-mixing failure at a broad working prior, not the infinite-variance cusp tail of §6.4.
-
-**Face-on truth** (`--faceon`, truth TI′ = [4, −2.5, 2.5, 4]; exact ln Z −31.743, −32.951, −34.137), 2 moves, s_w = 6.6:
-
-| data seed | method | ln Ẑ | sd |
+| data | equations per night | unknowns at fixed ζ | m (nights per set) |
 |---|---|---|---|
-| 0 | L | −31.997 | 0.90 |
-| 0 | J | −31.780 | 0.17 |
-| 1 | L | −33.409 | 0.70 |
-| 1 | J | −33.124 | 0.36 |
-| 2 | L | −34.466 | 0.78 |
-| 2 | J | −34.676 | 0.60 |
+| positions and velocities | 4 | 5 (ρ, TI′) | 2 |
+| positions only | 2 | 5 | 3 |
 
-L has 3–5× the generic-truth sd and is low by 0.25–0.46 on seeds 0–1. The reason is the independence-MH weight
-p_iso/N_w ∝ 1/(|u||V|), unbounded as |V| → 0 (§6.3, Mengersen & Tweedie 1996): the chain sticks near the face-on cusp. J, which
-integrates θ out, is steadier here. With **one z-space random-walk step added** (`--zmove`, step (2.38/2)·mean sd(z), target
-|z|⁻⁴ × likelihood, applied at β = 1) L's face-on sd falls to 0.37, 0.59 and 0.56 and its bias to −0.35, −0.28 and −0.05,
-and the generic-truth result is unchanged (L at 2 moves: sd 0.22, 0.27, 0.22; |bias| ≤ 0.11).
+For each set S and each ζ start (below):
 
-**Decision: neither dominates.** L keeps the default structure with the z-space step added to its mutation; J is the cross-check
-and the fall-back where L's z-step does not reach J's face-on sd. Stage 3b's acceptance: L + HMC (with the z step) must have an
-sd within 1.5× J's on the face-on toy (today: 2.2×, 1.7×, 0.9× on the three seeds), else J or a hybrid is the default. J's
-sensitivity to the working scale remains a defect (a wide s_w costs it 3–5 nats at 2 moves). **Either way the SMC core (#623)
-needs custom MH and Gibbs moves** (§6.3); that is a Stage 3a deliverable independent of this choice. The toy fixes the core and
-the labels' enumerability is used by neither method; a real fit has a nonlinear core and ∏(J_k + 1) labels, which only raises J's
-collapsed label cost.
+1. Grid ρ at coherence k_coh over the set's own span Δ_S, so n_ρ(S) = ⌈k_coh Δ_S/T⌉ + 1 points per cell.
+2. From each local minimum of the set's VarPro residual on that grid, run a bounded 1-D minimization (Brent) in ρ.
+3. With velocities, or with m + 1 nights in the set, the solve is over (ρ, ζ) jointly, started at the grid node.
 
-### 6.6 Replicates, errors, failure
+**Concentration steps (Rousseeuw & Van Driessen 1999).** From each set's solution:
 
-- Two independent replicates per band; the band reports their mean ln Ẑ, and p(N) ∝ Ẑ_N uses it. The replicate
-  difference |Δ ln Ẑ| is a diagnostic only: |Δ|/√2 estimates the sd of one replicate (|Δ|/2 that of the mean), with one degree
-  of freedom, so its 95 % interval spans a factor of about 30. It is never propagated into p(N) or the pruning rule, and is
-  reported beside the band. A per-run, genealogy-based variance estimator is a Stage 3a option to replace it. The SMC particles give the posterior.
-- **Hitting the time cap is a failure**: a posterior at β < 1 is never reported. One flag, `band-undersampled`, marks a
-  band whose final ESS is below ESS_target; it is information, with no retry. No cascade: one diagnostic, one action, one
-  flag.
-- The mass is per band, never pooled.
+1. Label each night inlier if ℓ_k > b_k, i.e. if its inlier component is the larger one.
+2. Maximize the labelled target (inliers Gaussian, outliers at b_k) by Newton in (c, TI′, ln f).
+3. Relabel, and repeat until the labels repeat (at most n_C steps, §10).
 
-### 6.7 Why SMC
+Each step is coordinate ascent on max_labels of the labelled target: the labels maximize it given the parameters, and
+the parameters given the labels. The objective therefore never decreases, and the steps end in finitely many moves
+(the C-step argument of Rousseeuw & Van Driessen). Finally, Newton on the **label-summed** target gives the mode, and its
+Hessian gives the Laplace covariance.
 
-Nested sampling would do the whole prior-to-posterior compression on whichever likelihood it targets, and its cost
-multiplies by the number of bands. Parallel tempering (Pigeons, as in Octofitter; Thompson et al. 2023, Surjanovic
-et al. 2023) handles multimodality well, but every chain pays the target likelihood and Z needs stepping stones. A grid has
-a resolution parameter, covers only a surrogate and gives no particles to continue from; it survives only as a test
-oracle on low-dimensional toys. Tempered SMC lets the cheap likelihood do the compression, carries its particles straight
-into the expensive leg, gives Z directly and vectorizes.
+**Distinct modes.** A new mode is the same as a kept one if their Mahalanobis distance is < 1 under **both**
+covariances. A one-sided test lets a broad partial-outlier mode absorb the needle inside it. On the toy at σ/a = 10⁻⁴
+that error cost 62 nats in Laplace and was fixed by the symmetric test.
+
+**Coverage argument (derived for ρ, independent of σ/a).** Take any posterior mode whose inlier set I contains a
+minimal set.
+
+- Among the enumerated sets is one drawn from I that spans I's earliest and latest nights.
+- That set's residual has a minimum inside the mode's needle, because its span equals the needle's coherence length,
+  and the grid at k_coh > 2 points per cycle brackets it.
+- The other inliers of I lie between the set's nights. They are interpolated with error about σ, which is below the
+  inlier threshold σ√(2Δ_k).
+- The first C-step therefore labels I (or a superset) inlier and converges to the mode.
+
+Nothing in this argument depends on σ/a. The ζ starts have no such argument. On the circular toy ζ = 0 is exact; for
+eccentric orbits the start set is a declared budget (the `starting_orbits` grid in e and phase, §10), and its coverage
+is a Stage 3b test on eccentric toys.
+
+**Number of sets.** All C(K, m) sets are enumerated while C(K, m) ≤ n_set_max (§10): 91 pairs or 364 triplets at
+K = 14. Above that budget the sampling is stratified so that the coverage argument still holds. Plain RANSAC
+sampling does not suffice: the chance that a random set contains the two outer inliers falls as 1/C(K, 2).
+
+- All C(K, 2) span pairs (t_i, t_j) are enumerated. There are 1770 at K = 60, so the pair holding I's outer nights
+  is always among them, and pairs (m = 2) never need sampling.
+- For m > 2, each span pair takes n = ln δ / ln(1 − w^(m−2)) random fills of m − 2 nights from between its ends
+  (Fischler & Bolles' count applied to the interior nights only). Here w = 1 − ε_hi is the declared inlier fraction.
+- The cost is C(K, 2)·n sets. At m = 3, ε_hi = 0.3 and δ = 10⁻³, n = 6.
+
+**The coverage contract (gated).** The search is a component with its own test, not an implementation detail:
+
+- On every toy with an exact reference (§6.5, §14), the modes found must hold ≥ 1 − δ of the exact posterior mass of
+  the cell. Mass is attributed to basins cut at the profile minima between the oracle's peaks (prominence ≥ 1 nat).
+- **Sentinel (Ben's decision 1).** A cell fails, with flag `cell-at-floor`, when both of the following hold:
+  - under the IS draws the posterior mean of the number of inlier nights is < m (the evidence came from the floor);
+  - the search's best mode has ≥ m inliers and lies more than W = ln(1/δ) above the floor K·b.
+
+  This is the signature of every review failure (the evidence ended at K·b while a mode existed). It is cheap: one
+  weighted mean over draws the estimator already has.
+
+  The sentinel catches an estimator that falls to the floor when the search has found the mode. It cannot catch a
+  mode the search missed, because condition 2 then has no mode to point at. Missed modes are the coverage contract's
+  job (above, §6.5, §14).
+
+  If the search returns no mode at all, q is the prior alone (α = 1). The IS estimate stays unbiased, the sentinel
+  cannot fire, and the cell carries the ESS flag of §6.6.
+
+### 6.2 Leg 2: the visibility level (changed; flag for Ben)
+
+The tempered bridge from L_pos to L_vis is withdrawn for the same reason as leg 1. Its efficiency rested on
+L_pos ≈ L_vis, with no defensive bound: e³⁰ to e⁶⁰ per night at §2.4's numbers. The replacement has the same shape as
+leg 1:
+
+1. Refine each leg-1 mode by Newton on the per-exposure target (§1.1), with labels summed per night.
+2. Build the defensive mixture from the visibility-level Laplace covariances.
+3. Estimate Z_N^vis by IS (§6.4).
+
+The catalogue-completeness assumption (§5) stays: a visibility mode absent from the catalogue can be reached only
+through the defensive prior share. The sentinel applies here too, on the visibility-level inlier count. This changes
+#630 (§13).
+
+### 6.3 Within-cell sampler: HMC by resample-move
+
+**Coordinates.** All are unconstrained, and each log-Jacobian is analytic:
+
+| coordinate | chart | dimension |
+|---|---|---|
+| ρ | logistic chart on the cell's edges, ρ = x_lo + (x_hi − x_lo)·logistic(r) − N, with log-density ln(1/(N + ρ)) + Jacobian | 1 |
+| ζ | §3.5 chart | 2 |
+| z | §3.5: four Gaussian direction coordinates plus the logistic ln a | 5 |
+| ln f | | 1 |
+| ln s_g | one per group | 1 per group |
+| θ, vis_amp | leg 2 only | |
+
+The leg-1 dimension is 9 plus the number of groups. **TI′ is sampled, not marginalized.** Its prior p_iso ∝ |z|⁻⁴ is
+not Gaussian, and with labels summed the likelihood in TI′ is a 2^K-term Gaussian mixture. A closed form exists only
+per label set under a Gaussian working prior, which is the Joker-style route J of the previous draft. That route was
+biased by 0.2–4.7 nats at a broad working scale in the old toy and grows exponentially with K. **Labels are summed
+exactly in the target**, per night: there is no discrete state and no label sweep.
+
+**Resample-move (Gilks & Berzuini 2001).**
+
+1. Draw n_IS points from q (§6.4) and resample them by their IS weights; the weights already give Ẑ_N.
+2. Move each resampled point by n_HMC HMC transitions that leave the cell posterior invariant.
+
+The weighted draws are exact before the moves. The moves only repair the duplicates that resampling creates, so a
+weak sampler costs efficiency, never correctness.
+
+**HMC settings (Neal 2011):**
+
+- Coordinates are whitened by the Cholesky factor of the dominant mode's Laplace covariance (the mass matrix).
+- The step size ε is tuned by dual averaging to acceptance 0.8 (Hoffman & Gelman 2014) during n_warm warm-up
+  transitions, and jittered ±20 % per transition.
+- The trajectory length is L = ⌈π/(2ε)⌉, a quarter period of a unit Gaussian in whitened coordinates.
+
+There is no tempering. Each draw starts inside a found mode, and the only multimodality HMC must cross is within a mode
+the search already split. Moves between modes are not needed, because the mode weights come from IS.
+
+**HMC runs only where it is needed:** in cells with p̂(N) ≥ δ/B, for posterior draws. Ẑ_N never needs it (§6.4).
+
+### 6.4 Evidence per cell: four candidates, measured
+
+All four candidates target the same cell posterior, with labels and TI′ in the target as in §6.3:
+
+- **(a) Bridge sampling** (Meng & Wong 1996; Gronau et al. 2017).
+  - Per-mode bridges between q_m and the posterior restricted to mode m by the balance-heuristic partition of unity
+    r_m = w_m q_m/Σ_j w_j q_j (Veach & Guibas 1995).
+  - The posterior side is drawn by HMC (§6.3) on p·L·r_m.
+  - The prior share is done by IS.
+- **(b) Defensive importance sampling** (Hesterberg 1995): q = α·prior + (1 − α)·Σ_m w_m t₅(ĉ_m, Σ_m).
+  - Student-t components with 5 degrees of freedom sit at each mode's Laplace covariance, with w_m ∝ the Laplace
+    evidence (`aliases._Proposal`).
+  - In the chart the target is exactly invariant under 16 linear maps per mode, and each found mode enters q with all
+    16 images, its weight split equally. The maps are the z cover (y_z[0:2] and y_z[2:4] sign flips, 4), the ζ cover
+    (y_ζ → −y_ζ, 2) and the label swap TI′ → −TI′ (z_u → i z_u, z_v → i z_v, 2), which is a symmetry because the target
+    sums the brighter/fainter sign. Without the images, IS would still be unbiased through the prior share, but its
+    variance would be large. Stage 3b′ tests the invariance numerically.
+  - The weight is p·L/q ≤ L_max/α, which is bounded, so its variance is finite whatever the modes look like (Hesterberg's
+    defensive argument). The prior share also covers any mode the search missed, at a cost the sentinel and the ESS
+    expose.
+- **(c) Laplace** (Tierney & Kadane 1986): Σ_m of each mode's Laplace evidence. Baseline only.
+- **(d) Nested sampling** (Skilling 2006), as BlackJAX's nested slice sampler (Yallup, Kroupa & Handley 2026;
+  `blackjax.nss`, ≥ 1.7; jaxns, Albert 2020, is the alternative).
+  - Live points start from the cell prior, with no search.
+  - Run with 5·d inner slice steps, 10 % of the live set replaced per step, and stop when the live points hold
+    < e⁻³ of Ẑ.
+
+Toys: [`scripts/leg1_toys/`](../scripts/leg1_toys/).
+
+- **Model.** Circular orbit, positions only, TI′ with a Gaussian prior (so the reference is exact); ε = 0.1 fixed;
+  uniform-disc floor; the cell N = round(T/P_true).
+- **Patterns.**
+
+  | pattern | nights | seasons | outlier nights |
+  |---|---|---|---|
+  | K6_2s | 6 | 2 | 0 |
+  | K10_2s | 10 | 2 | 1 |
+  | K10_3s | 10 | 3 | 1 |
+  | K14_4s | 14 | 4 | 2 |
+
+- **Reference.** ln Z_N by exact sums over the 2^K label sets, with TI′ integrated in closed form, and adaptive quadrature
+  in ln P that resolves the needle (`toy.Problem.exact`).
+- **Cost** is in likelihood evaluations, with a gradient counted as 3. Variance × cost is the figure of merit.
+- **Settings.** IS uses n_IS = 4000. Bridge uses 4 chains of 150 warm-up and 250 draws per mode, with 1000 proposal and
+  1000 prior draws.
+
+**(a)–(c), with the search** (`search_evidence.py PATTERN REL 4`). Bias is the mean of 4 replicates minus exact; sd is
+over replicates. Cost counts the estimator only; the search cost, which every method needs, is in §6.5.
+
+| pattern | σ/a | exact ln Z_N | (c) L bias | (b) I bias | I sd | I cost | I var × cost | (a) B bias | B sd | B cost | B var × cost |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| K6_2s | 1e-2 | −5.213 | −0.001 | −0.003 | 0.012 | 4.0e3 | 0.58 | +0.002 | 0.013 | 1.8e6 | 315 |
+| K6_2s | 1e-3 | 10.910 | −0.002 | −0.005 | 0.012 | 4.0e3 | 0.57 | −0.000 | 0.013 | 2.1e6 | 358 |
+| K6_2s | 1e-4 | 27.028 | −0.002 | −0.005 | 0.012 | 4.0e3 | 0.56 | −0.000 | 0.011 | 2.6e6 | 326 |
+| K10_2s | 1e-2 | −6.024 | −0.001 | −0.003 | 0.012 | 4.0e3 | 0.57 | +0.002 | 0.014 | 6.3e6 | 1260 |
+| K10_2s | 1e-3 | 23.912 | −0.004 | −0.006 | 0.012 | 4.0e3 | 0.56 | −0.002 | 0.012 | 6.4e6 | 897 |
+| K10_2s | 1e-4 | 53.845 | −0.004 | −0.006 | 0.012 | 4.0e3 | 0.56 | −0.003 | 0.013 | 4.6e6 | 757 |
+| K10_3s | 1e-2 | −5.178 | −0.000 | | | | | | | | |
+| K10_3s | 1e-3 | 24.762 | −0.003 | −0.005 | 0.012 | 4.0e3 | 0.56 | | | | |
+| K10_3s | 1e-4 | 54.696 | −0.003 | −0.006 | 0.012 | 4.0e3 | 0.56 | | | | |
+| K14_4s | 1e-2 | −7.447 | −0.000 | −0.003 | 0.012 | 4.0e3 | 0.56 | | | | |
+| K14_4s | 1e-4 | 80.055 | −0.004 | −0.006 | 0.012 | 4.0e3 | 0.56 | | | | |
+
+Blank (a) cells were not run. The bridge costs 10³ times IS per run, and the K6/K10_2s rows already separate the two
+by 500–2000× in var × cost. The K10_3s 1e-2 IS row was lost to an interrupted run.
+
+The IS biases (−0.003 to −0.006) are a quarter to a half of one replicate's sd. All four replicates share draw seeds
+across rows, which is why the sd column repeats. The Laplace bias is ≤ 0.004 here because the toy's modes are close to
+Gaussian once the needle is found. It is a baseline only, because nothing bounds its error when a mode is not Gaussian.
+
+**(d) Nested sampling** (`ns_evidence.py`; BlackJAX 1.7.1 in a scratch venv, since the worktree venv lacks it until #623).
+Runs are unseeded, starting from the cell prior:
+
+| pattern | σ/a | n_live | stop rule | ln Ẑ bias (per run) | H (nats) | evaluations per run |
+|---|---|---|---|---|---|---|
+| K6_2s | 1e-2 | 200 | standard (live < e⁻³ of Ẑ) | −0.06 | 25 | 9.4e5 |
+| K6_2s | 1e-3 | 500 | standard | −66.6, −72.4, −67.1 | 0–13 | 1.2e6–1.4e6 |
+| K6_2s | 1e-4 | 500 | standard | −88.5, −88.5, −78.7 | 0–13 | 1.2e6–2.0e6 |
+| K10_3s | 1e-3 | 500 | standard | −119.8, −113.2, −119.1 | 10–22 | 1.2e6–2.2e6 |
+| K10_3s | 1e-4 | 500 | standard | −157.2 | 0 | 2.6e6 |
+| K6_2s | 1e-3 | 500 | forced to −ln X ≥ 100 | −66.6, −72.4 | 0–12 | 8.3e7–8.5e7 |
+| K6_2s | 1e-4 | 500 | forced | −88.5, −88.5 | 0 | 3.4e7–8.3e7 |
+| K10_3s | 1e-3 | 500 | forced | −119.8, −113.2 | 10–22 | 2.4e7–8.6e7 |
+| K10_3s | 1e-4 | 500 | forced | −157.2, −157.2 | 0 | 2.2e7–8.3e7 |
+
+**Unseeded nested sampling fails here exactly as tempering does.** The all-outlier floor is a likelihood plateau
+(Fowlie, Handley & Su 2021). The live points sit on it, and the standard rule stops after about 30 compression steps
+with ln Ẑ = K·b (H = 0). Forcing 100 nats of compression (950 steps, 30–60× the cost) changes nothing: the slice
+moves never enter the needle, whose prior volume is ≈ e⁻⁴¹ at 1e-3 and ≈ e⁻⁵³ at 1e-4 in K6_2s (ln P width over the cell, times the four TI′ widths σ/√K over the prior SW). Runs that left the plateau
+(H = 10–22) found partial-outlier modes, not the needle. At 1e-2, where the needle is wide, NS is unbiased (−0.06),
+but its variance × cost (≈ 0.18 × 9.4e5 ≈ 1.7e5) is about 3 × 10⁵ times IS's. More live points push the threshold down
+but cannot remove it. The live set must sample a volume of ≈ e⁻⁴⁰ to e⁻⁵⁰ before the likelihood shows any slope
+towards it. That is the structure Kroupa & Handley (2026) report for aliased time-delay likelihoods.
+
+**Seeded nested sampling** is posterior repartitioning (Chen, Feroz & Hobson 2023): reference q (the search mixture),
+likelihood π·L/q, same Z. Its information is H = KL(posterior ‖ q) ≈ 1 nat, so it would be cheap and valid. It is
+implemented (`ns_evidence.py … seed`) but was not run before this PR. Once the search has built q it duplicates (b) at
+higher cost, so it is a cross-check option, not a candidate.
+
+**Choice: (b) defensive IS from the search-built mixture.** It was unbiased on every row, at a var × cost
+500–2000 times below bridge sampling, and its weights are bounded by construction (L_max/α). Its error comes from its
+own ESS (§6.6), and its draws are the posterior once resampled (§6.3). (a) needs HMC per mode for no gain. (c) is
+reported beside Ẑ as a diagnostic: a Laplace–IS gap above 1 nat flags a non-Gaussian mode. (d) needs the search as
+much as (b) does. Unseeded, it fails; seeded, it is (b) at higher cost.
+
+### 6.5 Search coverage on the toys
+
+The search is the triplet minimal-set search of §6.1, with k_coh = 4 and ζ = 0 on these circular toys. "Sets × grid"
+counts the candidate starts after the per-set ln P grid. Coverage is the share of the exact cell posterior mass in
+the basins of the modes found. The oracle peaks are the profile's local maxima of prominence ≥ 1 nat holding
+≥ δ of the mass.
+
+| pattern | σ/a | candidate starts | modes kept | search evaluations | wall (s) | coverage | oracle peaks found |
+|---|---|---|---|---|---|---|---|
+| K6_2s | 1e-2 | 37 | 6 | 1.6e4 | 2.5 | 1.000000 | 1/1 |
+| K6_2s | 1e-3 | 37 | 6 | 3.0e4 | 5.7 | 1.000000 | 1/1 |
+| K6_2s | 1e-4 | 37 | 6 | 4.4e4 | 5.6 | 1.000000 | 1/1 |
+| K10_2s | 1e-2 | 211 | 21 | 1.4e5 | 19 | 1.000000 | 1/1 |
+| K10_2s | 1e-3 | 212 | 14 | 2.1e5 | 22 | 1.000000 | 1/1 |
+| K10_2s | 1e-4 | 212 | 10 | 1.8e5 | 22 | 1.000000 | 1/1 |
+| K10_3s | 1e-2 | 147 | 12 | 5.3e4 | 8 | 1.000000 | 1/1 |
+| K10_3s | 1e-3 | 147 | 8 | 9.5e4 | 2 | 1.000000 | 1/1 |
+| K10_3s | 1e-4 | 147 | 4 | 2.0e5 | 3 | 1.000000 | 1/1 |
+| K14_4s | 1e-2 | 398 | 54 | 1.5e5 | 2 | 1.000000 | 1/1 |
+| K14_4s | 1e-4 | 398 | 11 | 1.7e5 | 3 | 1.000000 | 1/1 |
+
+The search costs 4–50 times the IS (1.6e4–2.1e5 evaluations against 4e3), so it dominates the cell. Before the rewrite
+the k = 4 coherence grid had coverage 0 at 1e-4 on K6_2s (IS bias −84 nats). The sentinel raised `cell-at-floor`
+there, which is the case it exists for. The modes kept beyond the needle are partial-outlier maxima. They cost
+mixture components and nothing else: their IS weight is what it is. The ζ starts are not exercised by these toys.
+Their coverage is the eccentric test of Stage 3b (§14).
+
+### 6.6 Errors, flags, failure
+
+- **Error of Ẑ_N.** By the delta method, sd(ln Ẑ_N) ≈ √(1/ESS − 1/n_IS), with ESS = (Σw)²/Σw² the Kish effective sample
+  size of the IS weights. One run per cell suffices, so the two-replicate rule of the previous draft is retired.
+- **Flags.** One diagnostic and one flag each, with no retry and no cascade:
+  - `cell-at-floor`: the sentinel of §6.1. The cell **fails** and is reported as a failure, never as an evidence.
+  - `cell-undersampled`: ESS < ESS_target. This is information only.
+- The mass is per cell, never pooled.
+
+### 6.7 Across the alias grid N (Ben's idea)
+
+Ben's suggestion is to reduce the problem to a low-dimensional continuous search and to propagate it analytically
+across the integer aliases N. LITMUS (McDougall, Pope & Davis 2026) is the closest prior art. Its `hessian_scan` scans an
+aliased lag, optimizes and takes a Laplace evidence per slice, then integrates across the grid. Here is what is exact
+across N, and what is not.
+
+**Exact across N:**
+
+- The prior factor, π(N, ρ) ∝ 1/(N + ρ).
+- The anchor nights' positions, which are the TI′ amplitudes and independent of N (§4.3).
+- The normal equations of TI′ on the anchor nights. With velocities they are polynomial in (N + ρ), of degree 2.
+
+**Not exact across N.** Every other night enters through its phase 2π(N + ρ)(t_k − t_a)/T. For two-season data the
+in-season offsets enter only through P = T/(N + ρ):
+
+  L_N(ρ, θ) = L̃(ρ, θ, P = T/(N + ρ)).
+
+This is smooth in N across neighbouring cells, so one search over (ρ, P) covers them all. Each intermediate season s
+adds a phase 2π(N + ρ)x_s that is not smooth in N. Propagating in an extended space then costs about k^{S−1}·Δ_max/T
+of a per-N search, with S the number of seasons, so it pays only for S ≤ 2–3 seasons.
+
+**What can be shared exactly** is the draws:
+
+- One defensive mixture over the modes of all cells, sampled once.
+- Ẑ_N is the IS mean of p·L·1{x ∈ cell N}/q, which is unbiased for every N at once.
+- Draws are allocated by mass, so a cell with negligible mass gets few draws. Its estimate is still unbiased in
+  expectation, but in practice it is skewed (measured below).
+
+The per-N work that remains is the search's cross-season minimal sets and the evaluations of non-anchor nights.
+
+**Measured** (`alias_grid.py K10_2s 1e-2 2 4`: cells 18–22, 4 replicates, the same total number of draws each way):
+
+| N | exact ln Z_N | per-N bias | per-N sd | shared bias | shared sd |
+|---|---|---|---|---|---|
+| 18 | −61.139 | −0.005 | 0.009 | −40.0 | 1.6 |
+| 19 | −50.312 | −0.001 | 0.013 | −52.9 | 0.8 |
+| 20 (true) | −7.638 | −0.003 | 0.012 | +0.001 | 0.003 |
+| 21 | −51.969 | −0.003 | 0.017 | −45.8 | 4.0 |
+| 22 | −64.784 | −0.007 | 0.006 | −34.8 | 2.0 |
+
+Cost: per-N 1.0e6 evaluations, shared 1.8e6. The shared search over five cells cost more than five per-N searches,
+because each set's grid spans every cell. The total-variation distance of p(N) from exact is 3e-22 per-N and 2e-19
+shared. The reference uses 1.6e6 grid points over the five cells. At the default 4e5, the narrow peak of N = 22 fell
+between grid points and its ln Z was 0.57 nats low. The other cells agree to 0.001 between the two grids.
+
+**Conclusion: per-N is the default.**
+
+- Shared draws are unbiased in expectation, and p(N) comes out right because the cells they get wrong carry ~e⁻⁴⁰ of
+  the mass.
+- But the mixture allocates draws by Laplace mass, so a negligible cell sees only prior draws on the floor. Its ln Ẑ_N
+  is then 34–53 nats low in practice: a heavily skewed estimator, not a usable one.
+- The shared search did not save work either.
+
+What propagates analytically across N is the prior factor and the anchor terms (above), which per-N runs use for free.
+Ben's idea pays as a shared *search* only where a single (ρ, P) search covers several cells, i.e. two-season data. That
+is the extension to measure on the §14 population, not a default.
+
+### 6.8 Why not tempering, and where nested sampling fits
+
+- **Tempered SMC and parallel tempering** (Pigeons, Octofitter; Thompson et al. 2023, Surjanovic et al. 2023) both
+  cross the first-order transition of §6. Both can be run *from* the search-built mixture instead of the prior. That is
+  a stepping-stone path, and its first stone is (b).
+- **Nested sampling** (Skilling 2006) is the method designed for such transitions, and it needs no search. Its cost
+  scales as n_live·H, with H = KL(posterior ‖ prior), which grows by about ln(a/σ) per dimension. Kroupa & Handley (2026)
+  show that on aliased time-delay likelihoods it needs many live points to avoid spurious modes. Its role here is
+  measured in §6.4. Unseeded it stays on the floor plateau, as tempering does; seeded by repartitioning onto q it is a
+  valid but costlier duplicate of (b). It is kept as an optional cross-check (BlackJAX is a dependency already), not as
+  the estimator.
+- **A grid** survives only as the test oracle on toys.
 
 ## 7. Pruning
 
-Optional after leg 1: drop bands whose position-level mass is below δ/N_bands. By construction the position-level mass
-dropped is < δ. The visibility-level mass of dropped bands can differ, and Ẑ_N carries Monte Carlo noise, so pruning stays
-**opt-in until Stage 4 measures the mean pruned posterior mass**: run the unpruned two-leg posterior on simulated
-populations (random orbits on the gallery's real epoch patterns, never the gallery's own data) and report
-E[Σ_dropped p_vis(N)] with its standard error against δ. Pruning becomes default only if the mean plus 3 SE ≤ δ. The
-replicate difference of §6.6 is not used to prune.
+The evidence of every cell comes from the search and IS, which are cheap at position level (§9). Pruning therefore saves
+only the expensive parts: the visibility-level refinement and IS (leg 2), and the HMC posterior draws.
+
+- A cell enters leg 2 iff its position-level mass p̂_pos(N) ≥ δ/B.
+- It gets HMC draws iff p̂_vis(N) ≥ δ/B.
+
+By construction the position-level mass dropped is < δ. The visibility-level mass of dropped cells can differ, so leg-2
+pruning stays **opt-in until the population test (§14) measures the mean pruned posterior mass**: report
+E[Σ_dropped p_vis(N)] with its standard error against δ. Pruning becomes the default only if the mean plus 3 SE ≤ δ.
 
 ## 8. The no-orbit verdict
 
@@ -589,50 +849,63 @@ the posterior, not the verdict, so that the null calibrates the statistic actual
 
 ## 9. Cost formula
 
-Per system, with every symbol a measured quantity (Stage 0 `run.json` counters, Stage 1 timings):
+Per system, with every symbol a measured quantity (Stage 0 `run.json` counters, Stage 1 timings). Costs are in
+likelihood evaluations c (no gradient) or gradients g ≈ 3c:
 
-  T_sys = T_compile + T_epochs + T_summ + K·T_b + T_pilot + f_tune·[B·R·M·S₁·m₁·(L₁ + 1)·g_pos
-          + B_keep·R·M·S₂·m₂·(L₂ + 1)·g_vis] + n_null·T_null
+  T_sys = T_compile + T_epochs + T_summ + K·T_b
+          + B·(T_search + N_IS·c_pos)
+          + B_vis·(n_modes·T_refine,vis + N_IS·c_vis)
+          + B_post·N_POST·N_HMC·(L + 1)·g_vis
+          + n_null·T_null
+
+  T_search = Σ_S Σ_ζ n_P(S)·m·c_pos + n_cand·N_C·T_Newton,pos + n_modes·T_Newton,pos,  with n_P(S) = ⌈K_COH·Δ_S/T⌉ + 1
 
   T_null = T_summ + K·T_b + B·n_seed·K·J·c_pos.
 
 | symbol | meaning | source |
 |---|---|---|
-| T_compile | XLA compile of the unrolled `_night_terms` (once per shape) | Stage 0 |
-| T_epochs | epochs stage (`epoch_positions`) | Stage 0, per system |
-| T_summ | peak summaries for all K nights of the system (includes the keep rule's J_k cost, §5) | Stage 2b |
-| T_b, K | b_k per night: 5-D (p, v, f) adaptive cubature, cached per fingerprint | #618 / Stage 3c |
-| B, B_keep | bands, bands kept after pruning (B_keep = B while pruning is opt-in) | data |
-| R | replicates per band (2) | budget |
-| M | particles | budget |
-| S₁, S₂ | leg-1 and leg-2 stages | measured; set by the conditional-ESS rule |
-| m₁, m₂ | HMC moves per stage | budget |
-| L₁, L₂ | leapfrog steps per move | measured |
-| f_tune | step-size and trajectory pretuning factor (BlackJAX), 1–3 | measured |
-| g_pos, g_vis | gradient cost, position- and visibility-level | Stage 0, Stage 1 |
-| T_pilot | edge pilot ≈ (M/4)·S₁·m₁·(L₁ + 1)·g_pos | as above |
-| n_seed, J, c_pos | seeds per band, peaks per night, per-peak position-level cost | Stage 3d |
-| n_null | stepwise 100–1000 (§8) | budget |
+| T_compile, T_epochs, T_summ, T_b, K | as before | Stage 0, 2b, #618 |
+| B | cells, T/P_cut − T/P_max | data |
+| sets S, m | minimal sets (all C(K, m) × peak choices up to N_SET_MAX, else all span pairs × stratified interior fills) | §6.1 |
+| n_cand, n_modes | candidates after the grid; distinct modes | measured |
+| N_IS | IS draws per cell (4000) | budget |
+| B_vis | cells entering leg 2 (B unless pruning, §7) | data |
+| B_post | cells with p̂ ≥ δ/B that get HMC draws | data, usually 1–3 |
+| N_POST, N_HMC, L | resample-move draws, moves per draw, leapfrog steps | budget, measured |
+| c_pos, c_vis, g_vis | evaluation costs, position and visibility level | Stage 0, Stage 1 |
+| n_seed, J, n_null | as §8 | Stage 3d |
 
-g_vis loses Stage 1's per-night quadrature under v2's global scales (a cost up to 32× per gradient); B scales as
-T/P_cut − T/P_max cells. **A worked example** at the order of magnitude of the gallery: B ≈ 250, R = 2, M = 2048, S₁ ≈ 20,
-m = 4, L ≈ 10 gives B·R·M·S₁·m·(L + 1) ≈ 9 × 10⁸ position-level gradients, and with B_keep = B about 2 × 10⁸
-visibility-level gradients at S₂ ≈ 5.
+**Measured on the toys:**
 
-**Laptop verdict (revised).** At these defaults and without pruning the formula does **not** support population runs on the
-laptop: 9 × 10⁸ position-level gradients is hours at a few μs, and the visibility term at a measured g_vis ≳ 1 ms is
-2 × 10⁵ s. A single system is feasible only with pruning (B_keep ≪ B) or a measured g_vis ≲ 1 ms; populations go to
-OzSTAR or a GPU. This is falsifiable: Stage 0/1 fill the table below, and any of g_pos, g_vis, S, B changes the verdict.
+- T_search = 1.6e4–2.1e5 evaluations for K = 6–10 (§6.5), plus N_IS = 4e3.
+- The cell is search-dominated. The search grows with the number of sets, C(K, 3) = 20 to 364 for K = 6 to 14.
+
+**A worked example** at gallery scale:
+
+- Position level: B ≈ 250 cells × 2 × 10⁵ evaluations ≈ 5 × 10⁷.
+- Visibility level, unpruned: 250 × (4000 + refinement) ≈ 10⁶ evaluations.
+- HMC: a few cells × 1000 × 5 × ~20 ≈ 10⁵ gradients per cell.
+
+The old tempered design needed 9 × 10⁸ position-level and 2 × 10⁸ visibility-level gradients.
+
+**Laptop verdict (revised).**
+
+- A single system is now feasible on the laptop. The position level is minutes at a few μs per evaluation. The
+  visibility level is ~10³ s at c_vis ≈ 1 ms unpruned, and less with pruning.
+- The §14 population of 200 systems has B ≈ 15 cells for one 30-d season at P ≥ 2 d. It is ≈ 200 × 15 × 2 × 10⁵ ≈
+  6 × 10⁸ position-level evaluations, which is hours on 2 threads. It goes to OzSTAR as a stage; a 10-system smoke
+  run stays local.
+- Falsifiable: Stage 0/1 fill the table below, and any of c_pos, c_vis, n_cand or B changes the verdict.
 
 | quantity | M4 4 threads | M4 10 threads | A100 | source |
 |---|---|---|---|---|
-| T_compile, T_epochs, g_pos, g_vis, T_b, T_summ, T_null | _to fill_ | _to fill_ | _to fill_ | Stage 0 / 1 |
-| S₁, S₂, L₁, L₂, B, ESS, f_tune | _to fill_ | | | Stage 3 on simulated populations |
+| T_compile, T_epochs, c_pos, c_vis, g_vis, T_b, T_summ, T_null | _to fill_ | _to fill_ | _to fill_ | Stage 0 / 1 |
+| T_search, n_cand, n_modes, ESS, B | _to fill_ | | | Stage 3b′ on the §14 population |
 
 ## 10. Constants
 
 Every constant is **derived**, a **tolerance** with a meaning, or a declared **budget**. None was chosen by looking at vv
-or gallery targets. Provisional budgets are fixed in the 3a/3b PRs from simulated populations (stratum D) before any vv
+or gallery targets. Provisional budgets are fixed in the 3b′ PR from the §14 population before any vv
 run; changing one afterwards is a recorded decision.
 
 | constant | value | kind | basis |
@@ -660,21 +933,28 @@ run; changing one afterwards is a recorded decision.
 | W = ln(1/δ) | 6.9 | derived | from δ |
 | peak keep rule | (1 − ε_lo)L_j ≥ δ·ε_lo·e^{b_k} | derived | §5 |
 | season gap | P_cut | derived | §4.2 |
-| edge window, smoothing, pilot size | ±½, ¼, M/4 | tolerance / budget (labels only) | §4.4 |
+| edges | x = N ± ½ (`make_cells` default) | labels only | §4.4; the pilot and valley edges are retired |
 | z chart | auxiliary Gaussian direction in ℝ⁴ plus a logistic ln a coordinate | chart, no statistical meaning | §3.5 |
 | ζ chart | ζ = √e_max·y/√(1 + \|y\|²) | chart, no statistical meaning | §3.5 |
-| s_w² (Luger move) | ⟨a²⟩/3 | derived | §6.3; a wrong value costs acceptance only |
-| conditional ESS target | ½ | tolerance | Zhou et al. 2016; the adaptive rule |
-| #623 HMC: α, σ_ε, steps, ε₀, L₀, mass, max stages | 1, ε/4, 5, d^{−1/4}, 4, dense, 200 | inherited | `virgil.smc` at 525ba54; §6.3 |
-| Luger moves per stage (label draw inside) | 1 | budget | §6.3 (set in 3a/3b) |
-| Luger move in leg 2 | off (leg 1 only) | budget | §6.3; measured in 3b |
-| particles M | provisional 2048 | budget | set on simulated populations in 3a |
-| moves per stage m | provisional 4 | budget | idem |
-| replicates R | 2 | budget | the minimum that gives an error |
-| ESS_target | provisional M/4 at β = 1 | budget | flag only |
-| wall-time cap per band | declared per run | budget | failure, never a posterior at β < 1 |
-| α | 0.01 | declared | dehack decision 4 |
-| n_pilot for edges | M/4 (the single pilot size) | budget | §4.4 |
+| m (minimal set) | 2 with velocities, 3 positions only | derived | equations ≥ unknowns at fixed ζ (§6.1) |
+| K_COH | 4 | budget (derived > 2) | ln P grid points per cycle of a set's span; > 2 brackets every minimum (§6.1) |
+| ζ starts | e ∈ {0, 0.3, 0.6} × 8 anchor phases (17) | budget | coverage tested on eccentric toys, not derived (§6.1, §14) |
+| N_SET_MAX | 2000 | budget | enumerate all sets below; above it, all span pairs with stratified interior fills (§6.1) |
+| ε_hi | 0.3 | declared | outlier fraction in the RANSAC count n = ln δ/ln(1 − (1 − ε_hi)^m) |
+| N_C | 10 | budget | C-step cap; labels repeat within 2–3 steps on the toys |
+| inlier rule | ℓ_k > b_k | derived | the larger component (C-step labels) |
+| distinct-mode radius | Mahalanobis 1 under both covariances | tolerance | §6.1; the one-sided test cost 62 nats |
+| VarPro ridge | 1/s_w², s_w² = ⟨a²⟩/3 | derived | §6.1; the per-component TI′ variance of the prior |
+| α (IS) | 0.1 | inherited | `aliases`; defensive share, w ≤ L_max/α (Hesterberg 1995) |
+| t degrees of freedom | 5 | inherited | `aliases._Proposal` |
+| N_IS | 4000 | budget | sd(ln Ẑ) ≈ 0.012 measured (§6.4) |
+| ESS_target | 400 | derived | sd(ln Ẑ) ≈ ESS^{−1/2} ≤ 0.05 (flag only) |
+| sentinel | E_w[n_inliers] < m while the best mode has ≥ m inliers and lies W above K·b | derived | §6.1 |
+| HMC acceptance target | 0.8 | tolerance | dual averaging (Hoffman & Gelman 2014) |
+| HMC warm-up, moves per draw, L cap | 150, 5, 64 | budget | §6.3 |
+| step jitter | ±20 % | budget | Neal 2011 |
+| N_POST | 1000 | budget | resample-move draws per cell with p̂ ≥ δ/B |
+| α (FAP) | 0.01 | declared | dehack decision 4 (§8) |
 
 P_cut caveat: in practice the within-night motion bound P_night usually sets P_cut (81 % of random epoch patterns, median
 P_cut/span ≈ 0.05; `scripts/p_cut_random_epochs.py`), so the 2Δt_min term seldom binds. With (p, v) night summaries
@@ -688,24 +968,45 @@ ADS does not index).
 
 | source | role here | verified |
 |---|---|---|
-| Luger, Foreman-Mackey & Hogg 2017, RNAAS 1, 7 | exact Gaussian conditional for linear parameters (§1.4, §6.3) | ADS 2017RNAAS...1....7L (existing entry) |
-| Price-Whelan, Hogg & Foreman-Mackey 2017, ApJ 837, 20; Price-Whelan et al. 2020, ApJ 895, 2 | The Joker: collapsed linear parameters, label sampling (§6.4) | ADS 2017ApJ...837...20P (existing), 2020ApJ...895....2P |
+| Luger, Foreman-Mackey & Hogg 2017, RNAAS 1, 7 | linear parameters given the core (§1.4; the VarPro solve of §6.1) | ADS 2017RNAAS...1....7L (existing entry) |
+| Price-Whelan, Hogg & Foreman-Mackey 2017, ApJ 837, 20; Price-Whelan et al. 2020, ApJ 895, 2 | The Joker: collapsed linear parameters (the superseded J path; §6.3) | ADS 2017ApJ...837...20P (existing), 2020ApJ...895....2P |
 | Lucy 2014, A&A 563, A126 | mass estimates for incomplete visual-binary orbits (prior art on short arcs; not the source of the alias structure) | ADS 2014A&A...563A.126L (existing) |
-| Del Moral, Doucet & Jasra 2006, JRSSB 68, 411 | SMC samplers, Ẑ (§6) | Crossref 10.1111/j.1467-9868.2006.00553.x |
-| Jasra, Stephens, Doucet & Tsagaris 2011, Scand. J. Stat. 38, 1 | ESS-adaptive tempering (§6.1) | Crossref 10.1111/j.1467-9469.2010.00723.x |
-| Zhou, Johansen & Aston 2016, JCGS 25, 701 | conditional ESS rule (§6.1); not the source of the two-replicate error (§6.6) | Crossref 10.1080/10618600.2015.1060885 |
-| Buchholz, Chopin & Jacob 2021, Bayesian Anal. 16, 745 | fixed-L HMC within SMC (§6.3) | Crossref 10.1214/20-ba1222, arXiv:1808.07730 |
-| Mengersen & Tweedie 1996, Ann. Stat. 24, 101 | independence MH is uniformly ergodic iff the weight is bounded (§6.3) | Crossref 10.1214/aos/1033066201 |
+| Del Moral, Doucet & Jasra 2006, JRSSB 68, 411 | SMC samplers, Ẑ (superseded tempered design) | Crossref 10.1111/j.1467-9868.2006.00553.x |
+| Jasra, Stephens, Doucet & Tsagaris 2011, Scand. J. Stat. 38, 1 | ESS-adaptive tempering (superseded) | Crossref 10.1111/j.1467-9469.2010.00723.x |
+| Zhou, Johansen & Aston 2016, JCGS 25, 701 | conditional ESS rule (superseded) | Crossref 10.1080/10618600.2015.1060885 |
+| Buchholz, Chopin & Jacob 2021, Bayesian Anal. 16, 745 | fixed-L HMC within SMC (superseded) | Crossref 10.1214/20-ba1222, arXiv:1808.07730 |
+| Mengersen & Tweedie 1996, Ann. Stat. 24, 101 | independence MH is uniformly ergodic iff the weight is bounded (why the Luger move stuck face-on; superseded) | Crossref 10.1214/aos/1033066201 |
 | Kustaanheimo & Stiefel 1965, J. reine angew. Math. 218, 204; Levi-Civita 1920, Acta Math. 42, 99 | regularizing maps (z, ζ are analogues; §3.2) | Crossref 10.1515/crll.1965.218.204; 10.1007/BF02404416 |
-| Blunt et al. 2017, AJ 153, 229 | OFTI: rejection sampling of short arcs (§6.4) | ADS 2017AJ....153..229B |
+| Blunt et al. 2017, AJ 153, 229 | OFTI: rejection sampling of short arcs (prior art; prior-proposal IS fails at the needle, §6) | ADS 2017AJ....153..229B |
 | Phipson & Smyth 2010, Stat. Appl. Genet. Mol. Biol. 9, 39 | permutation p-values (1 + #)/(1 + n) (§8) | Crossref 10.2202/1544-6115.1585 |
 | VanderPlas 2018, ApJS 236, 16 | Nyquist limit does not apply to irregular sampling (§1.3) | ADS 2018ApJS..236...16V (existing) |
 | Shoemake 1992, Graphics Gems III, 124 | unit quaternions, SO(3) Haar measure (§3.2) | Crossref 10.1016/b978-0-08-050755-2.50036-1 |
-| Thompson et al. 2023, AJ 166, 164; Surjanovic et al. 2023, arXiv:2308.09769 | Octofitter and Pigeons: parallel-tempering prior art (§6.7) | ADS 2023AJ....166..164T (existing); 2023arXiv230809769S |
+| Thompson et al. 2023, AJ 166, 164; Surjanovic et al. 2023, arXiv:2308.09769 | Octofitter and Pigeons: parallel-tempering prior art (§6.8) | ADS 2023AJ....166..164T (existing); 2023arXiv230809769S |
 | Genz & Malik 1980; Blake & Zisserman 1987 | b_k cubature (#618); GNC (superseded) | in #618 / mixture v2 |
 | Rasmussen & Williams 2006, A.9 | Woodbury and determinant lemma (Stage 1) | textbook |
+| Skilling 2006, Bayesian Anal. 1, 833 | nested sampling; thermodynamic paths fail at first-order transitions (§6, candidate (d) of §6.4) | Crossref 10.1214/06-BA127 |
+| Fischler & Bolles 1981, Commun. ACM 24, 381 | RANSAC: minimal sets, and the count of random sets (§6.1) | Crossref 10.1145/358669.358692 |
+| Rousseeuw 1984, JASA 79, 871 | least median of squares; elemental sets (§6.1) | Crossref 10.1080/01621459.1984.10477105 |
+| Rousseeuw & Van Driessen 1999, Technometrics 41, 212 | concentration steps, monotone in the objective (§6.1) | Crossref 10.1080/00401706.1999.10485670 |
+| Golub & Pereyra 1973, SIAM J. Numer. Anal. 10, 413 | variable projection for the linear TI′ (§6.1) | Crossref 10.1137/0710036 |
+| Hesterberg 1995, Technometrics 37, 185 | defensive mixture importance sampling, bounded weights (§6.4, the estimator) | Crossref 10.1080/00401706.1995.10484303 |
+| Meng & Wong 1996, Stat. Sinica 6, 831; Gronau et al. 2017, J. Math. Psychol. 81, 80 | bridge sampling, candidate (a) (§6.4) | publisher page; Crossref 10.1016/j.jmp.2017.09.005 |
+| Veach & Guibas 1995, SIGGRAPH '95, 419 | balance heuristic: the per-mode partition of unity in (a) (§6.4) | Crossref 10.1145/218380.218498 |
+| Tierney & Kadane 1986, JASA 81, 82 | Laplace evidence, candidate (c) and the mixture weights (§6.4) | Crossref 10.1080/01621459.1986.10478240 |
+| Gilks & Berzuini 2001, JRSSB 63, 127 | resample-move (§6.3) | Crossref 10.1111/1467-9868.00280 |
+| Neal 2011, Handbook of MCMC ch. 5 | HMC, mass matrix, step jitter (§6.3) | arXiv:1206.1901 |
+| Hoffman & Gelman 2014, JMLR 15, 1593 | dual averaging of the step size (§6.3) | existing entry |
+| Yallup, Kroupa & Handley 2026 | BlackJAX nested slice sampling, measured as (d) (§6.4) | arXiv:2601.23252 |
+| Albert 2020 | jaxns, the alternative NS implementation (not measured; §6.4) | arXiv:2012.15286 |
+| Chen, Feroz & Hobson 2023, Bayesian Anal. 18, 695 | posterior repartitioning: NS seeded by q (§6.4) | Crossref 10.1214/22-BA1323 |
+| Fowlie, Handley & Su 2021, MNRAS 503, 1199 | NS on likelihood plateaus: the all-outlier floor (§6.4) | Crossref 10.1093/mnras/stab590 |
+| Kroupa & Handley 2026 | NS on aliased (time-delay) likelihoods needs many live points (§6.4, §6.8) | arXiv:2602.22307 |
+| McDougall, Pope & Davis 2026, PASA 43 | LITMUS `hessian_scan`: a scan over an aliased variable with Laplace per slice; prior art for §6.7 | Crossref 10.1017/pasa.2026.10149 |
+| Talts et al. 2018 | simulation-based calibration (§14) | arXiv:1804.06788 |
 
-**Derived departures (no source):** the z map (§3.2), the ζ map (§3.3), the anchor TI′ rotation (§3.4), the contract
+**Ben's suggestions (labelled as his, no source):** reducing the problem to a low-dimensional search and propagating across N (§6.7, measured and partly adopted: the anchor and prior terms are exact; shared draws were rejected); HMC within cells (§6.3); the population test (§14).
+
+**Derived departures (no source):** the z map (§3.2), the ζ map (§3.3), the anchor TI′ rotation (§3.4), the sentinel and the symmetric distinct-mode test (§6.1), the contract
 for b_k with velocity (§2) and the peak keep rule (§5). Each is flagged *derived* in the methods register by its stage and
 checked by a vv-independent test (the check script, the prior-recovery tests, the #618 oracle in 5-D).
 
@@ -725,8 +1026,77 @@ uses P_night at the truth's a, so only the 2Δt_min part of P_cut is new in prac
 |---|---|
 | 2a | §3 (maps, chart, TI′ density, invariants, Campbell conversion); prior-recovery tests; register z, ζ as derived |
 | 2b | §5 (night summaries, keep rule, v variance, σ_J, (iii′) analogue); the (k, h) Kepler solve (§3.3) |
-| 3a | §6.1–6.3, 6.6 as generic, non-orbit SMC on BlackJAX (#623) plus the composite mutation hook (custom MH/Gibbs); budgets of §10 |
-| 3b | §4, §5 position-level target, §7 pruning measurement |
-| 3c | §2 contract (5-D b_k, joint π_out), §6.2 bridge, §1.1 noise; #618's six tests as acceptance at both pinned precisions |
+| 3a | **retired for orbits**: the generic search and IS module of §6.1–6.4 and §6.6 replaces it (see #623 below) |
+| 3b′ | §4, §5 position-level target, §6.1–6.6 at position level, §7, the §14 population test |
+| 3c | §2 contract (5-D b_k, joint π_out), §6.2 refine-and-IS at visibility level, §1.1 noise; #618's six tests as acceptance at both pinned precisions |
 | 3d | §8 (T statistic, stepwise FAP) |
 | 4 | the vv criteria file (committed before any run; awaiting Ben's sign-off), §7 measurement, §9 table |
+
+### 13.1 Changes to the open PRs (flag for Ben)
+
+- **#623 (generic tempered SMC on BlackJAX).** The orbit legs no longer use it, and the composite-mutation hook it was
+  to grow is not needed. It can land as a generic tool, or close. Ben decides. Nothing in this note depends on it. BlackJAX ≥ 1.7.1 stays a
+  core dependency, which #629 already declares: it supplies the HMC kernel and the dual-averaging step-size adaptation of
+  §6.3, so the resample-move does not fork a sampler.
+- **#629 (cells and position leg).** The brief in the coordinating session's notes is the implementation plan.
+  - **Kept:** `PeriodDomain`, `period_domain`, `choose_anchors`, `Cell`, `make_cells`, `OutlierPrior` and its functions,
+    `_Catalogue`, `_log_mixture` and its helpers, `_Space` (minus `with_ti`), `fit_jitter`.
+  - **Deleted:** the tempered `position_leg` body, `_luger_move`, `valley_edges`, the pilot, and the slow tests of the
+    tempered leg.
+  - **Added:** a generic `mode_search` module (minimal-set search, C-steps, distinct modes, defensive mixture with the
+    chart's 16 symmetry images, IS evidence, sentinel, HMC resample-move) and its orbit adapter. The fast tests port the
+    toys' exact references, and §14 replaces the slow tests.
+  - **Stacking:** a new branch on #629's head.
+- **#630 (visibility leg).**
+  - **Withdrawn:** the tempered bridge `visibility_leg`.
+  - **Kept:** `OutlierTable`, `outlier_table`, `_genz_malik`, `_cubature`, `outlier_exact`, `swap_label`,
+    `report_invariants` and `_VisSpace`.
+  - **Replaced:** `visibility_leg` and `fit_cells` become a per-mode visibility-level Newton refine, then the same
+    defensive IS (§6.2). Work on it stays paused until 3b′ lands.
+- **#632 (Argon's simulated ensemble harness).** It is reused by §14: `draw_population`, `_summaries` and `run_one`,
+  with `run_one` calling the new `position_cells`. Its first run found 52 % of the true periods outside the default
+  period domain. That is the open domain question of §1.3. It is not a property of the search.
+
+## 14. The population test (replaces Stage 3b's slow tests)
+
+This is Ben's decision 5: a simulated population, the truths drawn from the prior, and the pipeline asserted against
+calibration, not against one hand-picked case. Toys and simulations only. No gallery or vv target enters it, and no
+constant is tuned to it after a failure.
+
+**The population (Ben's simulated-ensemble spec, 2026-11-02):**
+
+- Orbits: P log-uniform on 2–60 d; e uniform on 0–0.8; isotropic orientation; a log-uniform on [a_lo, a_hi].
+- Epochs: 5–20 nights, uniform. Either one season of about 30 d, or two seasons a year apart. Nights are clustered
+  within each season.
+- Noise: σ/a log-uniform on 10⁻⁴–10⁻². 0–2 outlier nights, each with its summary drawn from π_out.
+- Data: night summaries simulated as in #632's `_summaries`.
+- Truths with P outside the declared period domain (§1.3) are excluded and counted (stratum B′, as §12). The count is
+  reported until the domain question of §1.3 is settled.
+
+**Assertions:**
+
+1. **N in the 99 % set.** The true cell N is in the smallest set of cells holding ≥ 99 % of p̂(N). At n_sys = 200 the
+   test fails if misses ≥ 7, since P(≥ 7 | Binomial(200, 0.01)) = 0.005.
+2. **No `cell-at-floor` failures** in any system.
+3. **SBC** (Talts et al. 2018).
+   - For N, use the randomized PIT u = F̂(N_true − 1) + U·p̂(N_true), with U uniform.
+   - For ln P, use the rank of the truth among the resample-move draws of the true cell, thinned to their effective
+     size.
+   - Each is uniform under a calibrated pipeline. The test is χ² on 10 bins, failing at p < 0.001 per statistic.
+4. **Coverage contract.** On the subset with circular truths, K ≤ 14 and positions only, the exact collapsed reference
+   of `scripts/leg1_toys/toy.py` applies with a Gaussian TI′ prior. There, |ln Ẑ_N − ln Z_N| ≤ 4 sd(ln Ẑ_N) + 0.01 for
+   every cell with p(N) ≥ δ.
+5. **Eccentric coverage of the ζ starts.** In the e > 0.3 stratum the true cell's best mode has squared Mahalanobis
+   distance to the truth, under its Laplace covariance, within χ²_d(0.99) (d the chart dimension) in ≥ 99 % of systems.
+   A system misses when it exceeds that bound, and misses are judged by the binomial rule of assertion 1 at the 1 % rate
+   expected under a correct Laplace approximation plus the search's δ. (The Mahalanobis-1 rule of §6.1 is a
+   duplicate test, not a confidence region.)
+
+**Tiers:**
+
+- n_sys = 10 as a local smoke run under pyslot.
+- n_sys = 200 as an OzSTAR stage that Ben submits.
+- CI keeps only the fast exact-reference tests of 3b′.
+
+The thresholds are fixed in the criteria file before the first n_sys = 200 run. Changing one afterwards is a recorded
+decision, never a loosening after a failure.
