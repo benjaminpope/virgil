@@ -463,11 +463,13 @@ def test_the_sentinel_fires_when_the_true_visibility_mode_is_withheld(
     floor = log_b.sum() + math.lgamma(n_k + 0.5) - 0.5 * math.log(math.pi)
     floor -= math.lgamma(n_k + 1.0)
 
-    def withheld(space, modes):
-        x = onp.asarray(space.sample(jax.random.key(5), 1))[0]
-        return [Mode(x, floor + 100.0, 0.01 * onp.eye(space.d), 2.0)]
+    def withheld(space, x, n_iter):
+        # a prior draw in place of the refined true mode: a high, thin ridge
+        # that fits two nights only
+        x = space.sample(jax.random.key(5), 1)[0]
+        return x, 100.0 * np.eye(space.d), np.asarray(floor + 100.0), 2.0
 
-    monkeypatch.setattr(ov, "_refined_modes", withheld)
+    monkeypatch.setattr(ov, "_vis_refine", withheld)
     out = ov.visibility_leg(leg, nights, jax.random.key(1), n_is=2000)
     assert out.at_floor and out.failed and out.draws is None
 

@@ -862,27 +862,6 @@ def _vis_refine(space, x, n_iter):
     )
 
 
-def _refined_modes(space, modes):
-    """Each position-level mode refined by Newton on the visibility objective, with the
-    saddle-free covariance of its Hessian, as ``search_cell``; distinct modes only."""
-    out = []
-    for m in modes:
-        x, h, t, n = (
-            onp.asarray(a)
-            for a in _vis_refine(
-                space, np.asarray(m.x, space.dtype), cells_mod.N_NEWTON
-            )
-        )
-        h = 0.5 * (h + h.T)
-        if onp.isfinite(x).all() and onp.isfinite(h).all() and onp.isfinite(t):
-            e, vec = onp.linalg.eigh(h)
-            e = onp.maximum(
-                onp.abs(e), len(e) * onp.finfo(h.dtype).eps * onp.abs(e).max()
-            )
-            out.append(Mode(x, float(t), (vec / e) @ vec.T, float(n)))
-    return distinct_modes(out)
-
-
 @dataclasses.dataclass
 class VisibilityCell:
     """The visibility-level fit of one cell (refined modes, importance sampling, draws).
@@ -964,7 +943,29 @@ def visibility_leg(fit, nights, key, *, n_is=N_IS, posterior_draws=True):
     base = fit.space
     with run_in(onp.dtype(base.dtype).name):
         space = _VisSpace(base, nights)
-        modes = _refined_modes(space, fit.modes)
+        # each mode refined by Newton on the visibility objective, with the
+        # saddle-free covariance of its Hessian, as ``search_cell``
+        refined = []
+        for m in fit.modes:
+            x, h, t, n = (
+                onp.asarray(a)
+                for a in _vis_refine(
+                    space, np.asarray(m.x, space.dtype), cells_mod.N_NEWTON
+                )
+            )
+            h = 0.5 * (h + h.T)
+            if (
+                onp.isfinite(x).all()
+                and onp.isfinite(h).all()
+                and onp.isfinite(t)
+            ):
+                e, vec = onp.linalg.eigh(h)
+                e = onp.maximum(
+                    onp.abs(e),
+                    len(e) * onp.finfo(h.dtype).eps * onp.abs(e).max(),
+                )
+                refined.append(Mode(x, float(t), (vec / e) @ vec.T, float(n)))
+        modes = distinct_modes(refined)
         mixture = DefensiveMixture(
             modes, cells_mod._log_prior,
             cells_mod._prior_sampler(space.d, space.dtype),
