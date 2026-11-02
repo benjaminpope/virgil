@@ -917,8 +917,8 @@ flat in N: every cell has the same ν width 1/T, so the same grid, sets and cand
 compiles, 60–75 s, none after the first cell). In the set Newton, 98 % of candidates use all `N_VARPRO = 12` steps and
 63 % end with |w_P| > 6, at the cell edge: the minimum of their residual lies outside the cell (a grid end counts as a
 minimum, and a straddling needle needs it), so the steps are not wasted for coverage, and no cheaper stopping rule
-applies. Cells run in two threads (exact; see the PR table). Tried and reverted: the gradient and Hessian of each Newton
-step in one pass (about 10 % faster) moved the K = 3 prior-importance check of `test_the_position_evidence_of_a_tiny_case...`
+applies. Cells can run in threads (`workers=2`; exact, bit-identical `ln Z` and `p(N)` to one worker on this system; K = 14: 1088 s to 877 s, K = 8: 79.7 s to 67.8 s, +0.3 GB; virgil#638). Tried and reverted: the gradient and Hessian of each Newton
+step in one pass (about 10 % faster) moved the K = 3 prior-importance check of `test_the_position_evidence_of_a_tiny_case_matches_prior_importance`
 by 1.3 nats (4 sigma), so the search is sensitive to floating-point reassociation there. Not done, because they change which
 candidates are kept: dropping triplets where
 velocities are informative (pairs suffice for the coverage argument, 5× fewer sets), and a pre-Newton cut on the grid

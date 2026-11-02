@@ -111,7 +111,10 @@ W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
 N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
 CHUNK_C = 256  # candidates per batched C-step call (budget)
 CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
-N_WORKERS = 2  # cells run at once (threads; the laptop budget of 2 cores)
+N_WORKERS = (
+    1  # cells run at once; 2 threads ran K = 14 two-season 1.24x faster
+)
+#                (design §9), at +0.3 GB: opt in with ``workers``
 R0 = math.sqrt(3.0)  # radius of y_z at a mode: the mode of its chi-4 prior
 
 
@@ -1748,6 +1751,22 @@ class CellsResult:
     failed: onp.ndarray
 
 
+def _map(fn, items, workers):
+    """``[fn(i) for i in items]`` in ``workers`` threads, in order; the first
+    exception (or interrupt) cancels the queued items before it is raised.
+    One worker runs inline."""
+    if workers <= 1:
+        return [fn(i) for i in items]
+    pool = concurrent.futures.ThreadPoolExecutor(workers)
+    try:
+        return [f.result() for f in [pool.submit(fn, i) for i in items]]
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    finally:
+        pool.shutdown(wait=True)
+
+
 def position_cells(
     summaries,
     domain,
@@ -1798,9 +1817,10 @@ def position_cells(
     max_seconds : float, optional
         Time cap on the whole run.
     workers : int, optional
-        Cells run at once, in threads (default ``N_WORKERS``); the first cell
-        runs alone, as it compiles the kernels and draws the sets. The result
-        does not depend on it: each cell has its own key.
+        Cells run at once, in threads (default ``N_WORKERS``, one: inline);
+        the first cell runs alone, as it compiles the kernels and draws the
+        sets. The result does not depend on it: each cell has its own key.
+        Two threads cost about 0.3 GB more.
     **leg_kwargs
         Other arguments of [`position_leg`][virgil.orbit_cells.position_leg].
 
@@ -1838,10 +1858,10 @@ def position_cells(
         )  # fmt: skip
 
     fits = [run(cells[0], keys[0], None)]
-    with concurrent.futures.ThreadPoolExecutor(max(1, workers)) as pool:
-        fits += pool.map(
-            lambda ck: run(*ck, fits[0].plan), zip(cells[1:], keys[1:])
-        )
+    fits += _map(
+        lambda ck: run(*ck, fits[0].plan), list(zip(cells[1:], keys[1:])),
+        workers,
+    )  # fmt: skip
     log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
     upper = onp.array(
         [c.log_mass + f.log_z_upper for c, f in zip(cells, fits)]
@@ -1862,11 +1882,10 @@ def position_cells(
         )
         if pi >= delta / len(cells)
     ]
-    with concurrent.futures.ThreadPoolExecutor(max(1, workers)) as pool:
-        for (f, _), draws in zip(
-            drawn, pool.map(lambda fk: _draw(*fk), drawn)
-        ):
-            f.draws = draws
+    for (f, _), draws in zip(
+        drawn, _map(lambda fk: _draw(*fk), drawn, workers)
+    ):
+        f.draws = draws
     return CellsResult(
         domain, (first, last), t_ab, cells, fits, p, below,
         below if prune else onp.zeros_like(below), float(p[below].sum()),

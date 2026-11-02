@@ -1,1 +1,0 @@
-`position_cells` (provisional) runs the cells of a system in `workers` threads (default 2; the first cell alone, as it compiles the kernels and draws the sets); the evidence, probabilities, modes and draws are unchanged (each cell has its own key), and a test compares one worker with two.

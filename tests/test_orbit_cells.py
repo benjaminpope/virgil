@@ -2,6 +2,7 @@
 
 import functools
 import math
+import time
 import types
 
 import jax
@@ -1055,3 +1056,35 @@ def test_running_cells_in_threads_changes_nothing():
         assert (a.draws is None) == (b.draws is None)
         if a.draws is not None:
             onp.testing.assert_array_equal(a.draws, b.draws)
+    # and the cells of the threaded run are those of a direct call on the main
+    # thread with the key the loop assigns (float64, plan of the first cell)
+    log_outlier = onp.full(len(times), LOG_B)
+    t_a = times[out[1].anchors[0]]
+    keys = jax.random.split(jax.random.key(0), len(out[1].cells))
+    for i in (1, len(out[1].cells) - 1):
+        direct = oc_cells.position_leg(
+            s, log_outlier, out[1].cells[i], keys[i], t_anchor=t_a,
+            t_nights=times, jitter=0.0, n_is=512, posterior_draws=False,
+            plan=out[1].fits[0].plan, nu_width=1.0 / out[1].t_ab,
+        )  # fmt: skip
+        got = out[1].fits[i]
+        assert direct.log_z == got.log_z
+        assert got.x_is.dtype == onp.float64
+        onp.testing.assert_array_equal(direct.x_is, got.x_is)
+
+
+def test_a_failing_cell_cancels_the_queued_ones():
+    done = []
+
+    def fn(i):
+        done.append(i)
+        if i == 1:
+            raise ValueError("boom")
+        time.sleep(0.05)
+        return i
+
+    with pytest.raises(ValueError, match="boom"):
+        oc_cells._map(fn, list(range(200)), 2)
+    assert len(done) < 20
+    assert oc_cells._map(lambda i: i * i, [1, 2, 3], 2) == [1, 4, 9]
+    assert oc_cells._map(lambda i: i * i, [1, 2, 3], 1) == [1, 4, 9]
