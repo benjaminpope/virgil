@@ -415,7 +415,9 @@ Ben's rule: velocity only with adequate span and SNR, and no threshold. This is 
 hd_9312 had 0 velocities; `_MAX_SHIFT` is deleted). The frame time offsets t_j − t̄_k are stored with each summary.
 
 **What the orbit predicts for a summary** (Ben, 2026-11-02). It predicts the exact least-squares projection of the orbit's
-positions at the stored frame offsets onto (p, v), not the instantaneous state at t̄_k. The projection is a fixed linear
+positions at the stored frame offsets onto (p, v), not the instantaneous state at t̄_k. (`NightSummary.offsets` and
+`.weights` store the offsets and the fit's frame weights, equal in the current fit; `_Space.night_states` applies the
+map. A one-frame night has no velocity fit and takes the instantaneous velocity.) The projection is a fixed linear
 map of the per-frame positions, so it costs one small matrix product per night. It removes the curvature bias
 ½·a(2π/P)²·T_ss/n of §1.3, which reached about 15σ for eccentric short-period orbits. This is what lets P_cut drop
 P_night.

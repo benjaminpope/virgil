@@ -46,13 +46,27 @@ def _state(orbit, t):
     return onp.concatenate([pos.T, vel.T], axis=1)
 
 
+def _night_state(orbit, times):
+    """``(K, 4)`` ``(p̂, v̂)``: the least-squares line through ``orbit``'s
+    positions at the six frames of each night, as a summary fits it."""
+    off = FRAMES - FRAMES.mean()
+    times = onp.asarray(times, float)
+    pos = _state(orbit, (times[:, None] + off).ravel())[:, :2].reshape(
+        len(times), len(off), 2
+    )
+    return onp.concatenate(
+        [pos.mean(1), onp.einsum("f,kfc->kc", off / T_SS, pos)], axis=1
+    )
+
+
 def _summaries(
     orbit, times, sigma=0.05, ln_f=-2.0, seed=0, sign=1.0, sigma_f=0.05
 ):
-    """Night summaries of ``orbit``: one peak per night at the truth plus a
-    draw from the quoted covariance (the Gaussian a visibility fit gives)."""
+    """Night summaries of ``orbit``: one peak per night at the truth's
+    projection plus a draw from the quoted covariance (the Gaussian a
+    visibility fit gives)."""
     rng = onp.random.default_rng(seed)
-    truth = _state(orbit, onp.asarray(times, float))
+    truth = _night_state(orbit, times)
     cov = onp.diag(
         [sigma**2, sigma**2, sigma**2 / T_SS, sigma**2 / T_SS, sigma_f**2]
     )
@@ -80,9 +94,7 @@ LOG_B = -30.0 - 25.0  # b_k: 25 nats below a true peak (a typical floor)
 
 
 def _cells(summaries, p_range):
-    domain = oc_cells.period_domain(
-        summaries, night_length=0.1, resolution=3.0, p_range=p_range
-    )
+    domain = oc_cells.period_domain(summaries, p_range=p_range)
     return domain, oc_cells.make_cells(TIMES[0], TIMES[-1], domain)
 
 
@@ -91,21 +103,85 @@ def _cells(summaries, p_range):
 
 def test_the_period_domain_is_p_cut_to_p_max_and_p_range_overrides_it():
     s = _summaries(_orbit(), TIMES)
-    d = oc_cells.period_domain(
-        s, night_length=0.1, resolution=3.0, a_range=(1.0, 20.0)
-    )
-    cut = period_cut(TIMES, 20.0, 0.1, resolution=3.0)
-    assert d.p_cut == pytest.approx(cut) and not d.overridden
+    d = oc_cells.period_domain(s, a_range=(1.0, 20.0))
+    assert d.p_cut == pytest.approx(2 * onp.diff(TIMES).min())
+    assert not d.overridden
     sigma = min(oc_cells._sigma_p(n) for n in s)
     assert d.p_max == pytest.approx(2 * onp.pi * 20.0 * onp.ptp(TIMES) / sigma)
-    d2 = oc_cells.period_domain(
-        s, night_length=0.1, resolution=3.0, p_range=(2.0, 500.0)
-    )
+    d2 = oc_cells.period_domain(s, p_range=(2.0, 500.0))
     assert (d2.p_cut, d2.p_max, d2.overridden) == (2.0, 500.0, True)
     with pytest.raises(ValueError, match="empty"):
-        oc_cells.period_domain(
-            s, night_length=0.1, resolution=3.0, p_range=(5.0, 5.0)
-        )
+        oc_cells.period_domain(s, p_range=(5.0, 5.0))
+
+
+def test_a_short_circular_period_is_inside_the_new_domain_not_the_old():
+    times = onp.array([0.0, 1.0, 3.2, 7.9, 12.0, 20.4])
+    truth = 2.6  # d, below the old P_night = 12.6 d, above 2 dt_min = 2 d
+    s = _summaries(_orbit(period=truth, ecc=0.0), times)
+    d = oc_cells.period_domain(s)
+    assert d.p_cut <= truth <= d.p_max
+    old = period_cut(times, oc_cells.A_RANGE[1], 0.1, resolution=3.0)
+    assert old > truth  # the old rule excluded it
+    cells = oc_cells.make_cells(times[0], times[-1], d)
+    assert any(c.p_lo <= truth <= c.p_hi for c in cells)
+
+
+def test_the_period_domain_reports_its_binding_term_and_inputs():
+    # nights 0.3 d apart merge: the shortest gap is 5.85 d, not 0.3 d
+    times = onp.array([0.0, 0.3, 6.0, 12.0])
+    d = oc_cells.period_domain(_summaries(_orbit(), times))
+    assert d.binding == "2dt_min"
+    assert d.p_cut == pytest.approx(2 * 5.85)
+    # with no merging the floor binds at gap_days below p_floor / 2
+    times = onp.array([0.0, 0.08, 5.0])
+    s = _summaries(_orbit(), times)
+    f = oc_cells.period_domain(s, gap_days=0.05)
+    assert f.binding == "p_floor" and f.p_cut == pytest.approx(0.2)
+    assert f.a_hi == oc_cells.A_RANGE[1] and f.span == pytest.approx(5.0)
+    sigma = min(oc_cells._sigma_p(n) for n in s)
+    assert f.sigma_min == pytest.approx(sigma)
+    # the N = 0 band is P > span of the log-uniform prior
+    assert f.n0_mass == pytest.approx(
+        math.log(f.p_max / 5.0) / math.log(f.p_max / f.p_cut)
+    )
+    assert oc_cells.period_domain(s, p_range=(1.0, 9.0)).binding == "p_range"
+
+
+@x64
+def test_the_summary_prediction_is_the_projection_not_the_instant_state():
+    # an eccentric short-period orbit: the curvature of a night's six frames
+    # biases the instantaneous state by many sigma
+    a, sigma = 8.0, 1e-3 * 8.0
+    orbit = _orbit(period=1.5, a=a, ecc=0.5)
+    s = _summaries(orbit, TIMES, sigma=sigma)
+    _, _, cell = _true_cell(1.5, TIMES, s, (1.0, 400.0))
+    space = _space(s, cell)
+    x = _truth_chart(space, orbit, TIMES[0])
+    c = space.decode(np.asarray(x))
+    ti = oc.z_to_ti(c["z"])
+    fit = onp.asarray(space.states(c["period"], ti, c["zeta"]))
+    inst = onp.asarray(space.states_at(space.t_k, c["period"], ti, c["zeta"]))
+    want = _night_state(orbit, TIMES)
+    assert onp.max(onp.abs(fit[:, :2] - want[:, :2])) < sigma
+    assert onp.max(onp.abs(inst[:, :2] - want[:, :2])) > 5 * sigma
+
+
+@x64
+def test_a_single_frame_night_predicts_the_instantaneous_state():
+    orbit = _orbit(period=11.3)
+    s = [
+        NightSummary(n.t_ref, 0.0, 1, BLOCKS, n.peaks, n.loglike_null)
+        for n in _summaries(orbit, TIMES)
+    ]
+    _, _, cell = _true_cell(11.3, TIMES, s, (6.0, 400.0))
+    space = _space(s, cell)
+    c = space.decode(np.asarray(_truth_chart(space, orbit, TIMES[0])))
+    ti = oc.z_to_ti(c["z"])
+    onp.testing.assert_allclose(
+        space.states(c["period"], ti, c["zeta"]),
+        space.states_at(space.t_k, c["period"], ti, c["zeta"]),
+        rtol=1e-12, atol=1e-12,
+    )  # fmt: skip
 
 
 def test_the_anchors_are_the_best_night_of_the_first_and_last_quarter():
@@ -379,9 +455,7 @@ def test_the_evidence_agrees_between_campbell_and_the_new_coordinates():
 
 
 def _true_cell(period, times, s, p_range):
-    domain = oc_cells.period_domain(
-        s, night_length=0.1, resolution=3.0, p_range=p_range
-    )
+    domain = oc_cells.period_domain(s, p_range=p_range)
     cells = oc_cells.make_cells(times[0], times[-1], domain)
     return domain, cells, [c for c in cells if c.p_lo <= period <= c.p_hi][0]
 
@@ -518,9 +592,7 @@ def test_the_true_cell_is_found_and_its_cycle_count_is_in_the_99_percent_set(
     period, a = 11.3, 6.0
     orbit = _orbit(period=period, a=a, ecc=ecc)
     s = _summaries(orbit, times, sigma=rel * a, seed=1)
-    domain = oc_cells.period_domain(
-        s, night_length=0.1, resolution=3.0, p_range=(9.0, 14.0)
-    )
+    domain = oc_cells.period_domain(s, p_range=(9.0, 14.0))
     out = oc_cells.position_cells(
         s, domain, jax.random.key(0), log_outlier=onp.full(len(times), LOG_B),
         jitter=0.0, a_range=(1.0, 30.0), e_max=0.9,
@@ -568,9 +640,7 @@ def test_the_position_evidence_of_a_tiny_case_matches_prior_importance(
     times = onp.array([0.0, 4.1, 9.3])
     orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
     s = _summaries(orbit, times, sigma=0.9, seed=2)
-    domain = oc_cells.period_domain(
-        s, night_length=0.1, resolution=3.0, p_range=(8.0, 14.0)
-    )
+    domain = oc_cells.period_domain(s, p_range=(8.0, 14.0))
     cells = oc_cells.make_cells(times[0], times[-1], domain)
     cell = [c for c in cells if c.p_lo <= 11.3 <= c.p_hi][0]
     log_b = onp.full(3, LOG_B)
@@ -625,8 +695,6 @@ def test_the_anchors_differ_and_need_two_nights_with_a_peak():
     with pytest.raises(ValueError, match="two nights"):
         oc_cells.period_domain(
             [s[0]] + [empty(n) for n in s[1:]],
-            night_length=0.1,
-            resolution=3.0,
         )
 
 
@@ -875,9 +943,7 @@ def test_outlier_nights_decoy_peaks_and_a_set_budget_still_find_the_true_mode(
     s = _summaries(orbit, times, sigma=6e-3, seed=1)
     s = _decoys_and_outliers(s, rng, {2, 7})
     monkeypatch.setattr(oc_cells, "N_SET_MAX", 100)
-    domain = oc_cells.period_domain(
-        s, night_length=0.1, resolution=3.0, p_range=(9.0, 14.0)
-    )
+    domain = oc_cells.period_domain(s, p_range=(9.0, 14.0))
     out = oc_cells.position_cells(
         s, domain, jax.random.key(0), log_outlier=onp.full(10, LOG_B),
         jitter=0.0,

@@ -131,6 +131,13 @@ class NightSummary:
         Converged peaks, best first. Empty if none converged.
     loglike_null : float
         The night's log likelihood with no companion.
+    offsets : tuple of float, optional
+        The frame times ``t_j - t̄`` (days), ``n_frames`` of them. ``None``
+        means uniform spacing with the sum of squares ``t_ss``.
+    weights : tuple of float, optional
+        The weight of each frame in the ``(p, v)`` least-squares fit. ``None``
+        means equal weights, which the variances of
+        [`covariance`][virgil.night_summaries.NightSummary.covariance] assume.
     """
 
     t_ref: float
@@ -139,9 +146,40 @@ class NightSummary:
     blocks: tuple
     peaks: tuple
     loglike_null: float
+    offsets: tuple | None = None
+    weights: tuple | None = None
 
     def __len__(self):
         return len(self.peaks)
+
+    def frame_offsets(self):
+        """The frame offsets ``t_j - t̄`` (days): ``(n_frames,)``."""
+        if self.offsets is not None:
+            return onp.asarray(self.offsets, float)
+        n = self.n_frames
+        grid = onp.arange(n) - 0.5 * (n - 1)
+        return grid * onp.sqrt(self.t_ss / max(onp.sum(grid**2), 1e-300))
+
+    def frame_weights(self):
+        """The frame weights of the ``(p, v)`` fit: ``(n_frames,)``."""
+        if self.weights is not None:
+            return onp.asarray(self.weights, float)
+        return onp.ones(self.n_frames)
+
+    def projection(self):
+        """The ``(2, n_frames)`` map from the companion's frame positions to
+        the night's ``(p̂, v̂)``: the weighted least-squares fit of
+        ``p + v (t_j - t̄)`` (``t̄`` the weighted mean offset removed), exact
+        for any orbit. One frame, or a zero ``t_ss``, gives the instantaneous
+        position and a zero row for the velocity (taken from the state)."""
+        dt, w = self.frame_offsets(), self.frame_weights()
+        mean = onp.sum(w * dt) / onp.sum(w)
+        c = dt - mean
+        sw = onp.sum(w * c**2)
+        pos = w / onp.sum(w)
+        # p̂ is the fit's value at t̄ (dt = 0): mean position - v̂ · mean offset
+        vel = w * c / sw if sw > 0 else onp.zeros_like(w)
+        return onp.stack([pos - mean * vel, vel])
 
     def covariance(self, peak, scale=1.0, jitter=0.0):
         """``peak``'s covariance at error ``scale`` with a ``jitter`` (mas),
@@ -319,6 +357,8 @@ def _summarize(d, positions, i, diam, amp_range):
         tuple(b[0] for b in surface.blocks),
         tuple(peaks),
         loglike_null,
+        tuple(float(x) for x in times - t_ref),
+        (1.0,) * len(times),
     )
 
 

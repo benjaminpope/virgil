@@ -88,6 +88,20 @@ def _state(orbit, times):
     return onp.concatenate([pos.T, vel.T], axis=1)
 
 
+def _night_state(orbit, times):
+    """``(K, 4)`` ``(p̂, v̂)`` of ``orbit``: the least-squares line through its
+    positions at the six frames of each night (design §5), as the summaries fit
+    it; not the instantaneous state."""
+    off = FRAMES - FRAMES.mean()
+    times = onp.asarray(times, float)
+    pos = _state(orbit, (times[:, None] + off).ravel())[:, :2].reshape(
+        len(times), len(off), 2
+    )
+    return onp.concatenate(
+        [pos.mean(1), onp.einsum("f,kfc->kc", off / T_SS, pos)], axis=1
+    )
+
+
 def _cov(sigma):
     return onp.diag(
         [sigma**2, sigma**2, sigma**2 / T_SS, sigma**2 / T_SS, SIGMA_F**2]
@@ -136,13 +150,11 @@ def fit_domain(nights):
     blank = _summaries(
         nights["times"], onp.zeros((len(nights["times"]), 5)), sigma
     )
-    default = oc_cells.period_domain(blank, night_length=0.1, resolution=3.0)
+    default = oc_cells.period_domain(blank)
     lo, hi = max(default.p_cut, P_TRUE[0]), min(default.p_max, P_TRUE[1])
     if not lo < hi:
         return default, None
-    return default, oc_cells.period_domain(
-        blank, night_length=0.1, resolution=3.0, p_range=(lo, hi)
-    )
+    return default, oc_cells.period_domain(blank, p_range=(lo, hi))
 
 
 def draw_system(rng, nights, fit):
@@ -158,7 +170,9 @@ def draw_system(rng, nights, fit):
     ln_s = rng.uniform(-math.log(oc_cells.S_MAX), math.log(oc_cells.S_MAX))
     eps = rng.beta(0.5, 0.5)
     outlier = rng.uniform(size=k) < eps
-    truth = onp.append(sign * _state(orbit, times), onp.full((k, 1), ln_f), 1)
+    truth = onp.append(
+        sign * _night_state(orbit, times), onp.full((k, 1), ln_f), 1
+    )
     mean = truth + math.exp(ln_s) * rng.multivariate_normal(
         onp.zeros(5), _cov(sigma), size=k
     )
@@ -166,7 +180,7 @@ def draw_system(rng, nights, fit):
         other = _orbit(
             rng, fit.p_cut, fit.p_max, _loguniform(rng, *oc_cells.A_RANGE)
         )
-        mean[i, :4] = _state(other, times[i : i + 1])[0]
+        mean[i, :4] = _night_state(other, times[i : i + 1])[0]
         mean[i, 4] = onp.log(oc_cells.FLUX_FLOOR) * rng.uniform()
     return dict(
         **nights, period=period, orbit=orbit, ln_s=ln_s, eps=float(eps),
