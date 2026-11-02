@@ -341,7 +341,14 @@ def test_zeta_has_a_coordinate_singularity_at_zero():
 
 
 def test_float32_round_trips():
-    # the default precision: nothing is promoted to float64 or complex128
+    # the default precision: nothing is promoted to float64 or complex128.
+    # Pinned off: importing jaxoplanet (KeplerOrbit, earlier in the same
+    # worker) enables x64 globally in CI's locked version.
+    with jax.enable_x64(False):
+        _float32_round_trips()
+
+
+def _float32_round_trips():
     z = oc.sample_z(jax.random.key(13), (50,), A_MIN, A_MAX)
     zeta = oc.sample_zeta(jax.random.key(14), (50,))
     abfg = oc.z_to_ti(z)

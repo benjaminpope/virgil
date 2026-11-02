@@ -561,10 +561,25 @@ def _l_curve_steps(dtype, npix=41):
 
 
 @pytest.mark.slow
-# float32 converged at every weight in a local run (strict xfail XPASSed), so
-# the old non-strict xfail is gone. If the slow tier sees it stall on another
-# platform, report that raw and restore a strict xfail conditioned on it.
-@pytest.mark.parametrize("dtype", ["float64", "float32"])
+# float32 converges at every weight in the default (float32-ambient) jobs, but
+# the x64-ambient CI job stalls the weakest weight deterministically (3358
+# steps, not converged, five runs in a row since #615 asserted it). Reported
+# raw, as the note on #615 asked: a strict xfail conditioned on that mix.
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        "float64",
+        pytest.param(
+            "float32",
+            marks=pytest.mark.xfail(
+                jax.config.jax_enable_x64,
+                reason="float32 request under ambient x64 stalls at w=0.1 "
+                "(3358 steps, unconverged): see design/fit_preconditioning.md",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_the_l_curve_converges_at_every_weight(dtype):
     """Stage 7: flat-prior MaxEntropy, w = 0.1 ... 1e4, default step limit."""
     runs = _l_curve_steps(dtype)
