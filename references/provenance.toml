@@ -1906,3 +1906,82 @@ verified_via = "crossref"
 used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
 note = "Ann. Appl. Probab. 31, 1021; extends the Eve-index variance estimator to SMC whose tempering schedule is chosen adaptively from the particles"
 
+
+[ref.fischler1981]
+authors = "Fischler & Bolles"
+year = 1981
+title = "Random sample consensus: a paradigm for model fitting with applications to image analysis and automated cartography"
+doi = "10.1145/358669.358692"
+verified = false
+verified_via = "none"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "Commun. ACM 24, 381; minimal sets of nights as candidate fits (RANSAC)"
+
+[ref.rousseeuw1984]
+authors = "Rousseeuw"
+year = 1984
+title = "Least median of squares regression"
+doi = "10.1080/01621459.1984.10477105"
+verified = false
+verified_via = "none"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "J. Am. Stat. Assoc. 79, 871; elemental subsets as starts of a robust fit"
+
+[ref.rousseeuw1999]
+authors = "Rousseeuw & Van Driessen"
+year = 1999
+title = "A fast algorithm for the minimum covariance determinant estimator"
+doi = "10.1080/00401706.1999.10485670"
+verified = false
+verified_via = "none"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "Technometrics 41, 212; concentration steps (C-steps): relabel inliers, refit, until the labels repeat"
+
+[ref.golub1973]
+authors = "Golub & Pereyra"
+year = 1973
+title = "The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate"
+doi = "10.1137/0710036"
+verified = false
+verified_via = "none"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "SIAM J. Numer. Anal. 10, 413; variable projection: the linear Thiele-Innes constants solved at fixed period and eccentricity"
+
+[ref.hesterberg1995]
+authors = "Hesterberg"
+year = 1995
+title = "Weighted average importance sampling and defensive mixture distributions"
+doi = "10.1080/00401706.1995.10484303"
+verified = false
+verified_via = "none"
+used_in = ["virgil.mode_search:DefensiveMixture"]
+note = "Technometrics 37, 185; a prior share in the proposal bounds the importance weights by the likelihood maximum over the share"
+
+[ref.gilks2001]
+authors = "Gilks & Berzuini"
+year = 2001
+title = "Following a moving target: Monte Carlo inference for dynamic Bayesian models"
+doi = "10.1111/1467-9868.00280"
+verified = false
+verified_via = "none"
+used_in = ["virgil.mode_search:resample_move"]
+note = "J. R. Stat. Soc. B 63, 127; resample-move: resample weighted draws, then move them with a kernel invariant for the target"
+
+[ref.neal2011]
+authors = "Neal"
+year = 2011
+title = "MCMC using Hamiltonian dynamics"
+arxiv = "1206.1901"
+verified = false
+verified_via = "none"
+used_in = ["virgil.mode_search:resample_move"]
+note = "Handbook of Markov Chain Monte Carlo, ch. 5; randomized step size and trajectory length for HMC"
+
+[ref.talts2018]
+authors = "Talts, Betancourt, Simpson, Vehtari & Gelman"
+year = 2018
+title = "Validating Bayesian inference algorithms with simulation-based calibration"
+arxiv = "1804.06788"
+verified = false
+verified_via = "none"
+note = "rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit"
