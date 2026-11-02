@@ -1,0 +1,21 @@
+K6_2s sigma/a=0.001 N=20 exact lnZ=10.910 floor=-61.50 needle(x)=1.59e-04 n_live=500
+  rep 0: lnZ=  -55.643 bias= -66.553 sd_internal=0.676 H=  12.2 evals=1.39e+06 steps=94 p(needle)=0.000 wall=17s
+  rep 1: lnZ=  -61.499 bias= -72.409 sd_internal=0.001 H=   0.0 evals=1.40e+06 steps=96 p(needle)=0.022 wall=11s
+  rep 2: lnZ=  -56.153 bias= -67.063 sd_internal=0.731 H=  12.6 evals=1.22e+06 steps=94 p(needle)=0.000 wall=4s
+  N: lnZ=  -57.765 bias= -68.675 sd=  3.244 cost=1.34e+06 var*cost=1.41e+07
+K6_2s sigma/a=0.0001 N=20 exact lnZ=27.028 floor=-61.50 needle(x)=1.59e-05 n_live=500
+  rep 0: lnZ=  -61.499 bias= -88.528 sd_internal=0.001 H=   0.0 evals=1.95e+06 steps=29 p(needle)=0.000 wall=14s
+  rep 1: lnZ=  -61.499 bias= -88.528 sd_internal=0.001 H=   0.0 evals=1.96e+06 steps=29 p(needle)=0.006 wall=6s
+  rep 2: lnZ=  -51.671 bias= -78.699 sd_internal=0.744 H=  12.8 evals=1.23e+06 steps=96 p(needle)=0.000 wall=9s
+  N: lnZ=  -58.223 bias= -85.252 sd=  5.674 cost=1.71e+06 var*cost=5.52e+07
+K10_3s sigma/a=0.001 N=25 exact lnZ=24.762 floor=-102.50 needle(x)=1.59e-04 n_live=500
+  rep 0: lnZ=  -95.039 bias=-119.800 sd_internal=0.614 H=  10.5 evals=1.26e+06 steps=86 p(needle)=0.000 wall=15s
+  rep 1: lnZ=  -88.419 bias=-113.181 sd_internal=0.814 H=  22.0 evals=2.23e+06 steps=197 p(needle)=0.000 wall=11s
+  rep 2: lnZ=  -94.298 bias=-119.060 sd_internal=0.432 H=   9.8 evals=1.18e+06 steps=85 p(needle)=0.012 wall=11s
+  N: lnZ=  -92.585 bias=-117.347 sd=  3.627 cost=1.55e+06 var*cost=2.04e+07
+K10_3s sigma/a=0.0001 N=25 exact lnZ=54.696 floor=-102.50 needle(x)=1.59e-05 n_live=500
+  rep 0: lnZ= -102.498 bias=-157.194 sd_internal=0.001 H=   0.0 evals=2.60e+06 steps=29 p(needle)=0.008 wall=14s
+  rep 1: lnZ= -102.498 bias=-157.194 sd_internal=0.001 H=   0.0 evals=4.34e+06 steps=231 p(needle)=0.000 wall=13s
+  rep 2: lnZ= -102.498 bias=-157.194 sd_internal=0.001 H=   0.0 evals=2.42e+06 steps=99 p(needle)=0.001 wall=13s
+  N: lnZ= -102.498 bias=-157.194 sd=  0.000 cost=3.12e+06 var*cost=0.00e+00
+Terminated: 15
