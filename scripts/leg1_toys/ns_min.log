@@ -1,0 +1,16 @@
+K6_2s sigma/a=0.001 N=20 exact lnZ=10.910 floor=-61.50 needle(x)=1.59e-04 n_live=500
+  rep 0: lnZ=  -55.643 bias= -66.553 sd_internal=0.676 H=  12.2 evals=8.51e+07 steps=951 p(needle)=0.000 wall=88s
+  rep 1: lnZ=  -61.499 bias= -72.409 sd_internal=0.001 H=   0.0 evals=8.31e+07 steps=951 p(needle)=0.022 wall=49s
+  N: lnZ=  -58.571 bias= -69.481 sd=  4.141 cost=8.41e+07 var*cost=1.44e+09
+K6_2s sigma/a=0.0001 N=20 exact lnZ=27.028 floor=-61.50 needle(x)=1.59e-05 n_live=500
+  rep 0: lnZ=  -61.499 bias= -88.528 sd_internal=0.001 H=   0.0 evals=8.29e+07 steps=951 p(needle)=0.000 wall=70s
+  rep 1: lnZ=  -61.499 bias= -88.528 sd_internal=0.001 H=   0.0 evals=3.39e+07 steps=951 p(needle)=0.006 wall=26s
+  N: lnZ=  -61.499 bias= -88.528 sd=  0.000 cost=5.84e+07 var*cost=0.00e+00
+K10_3s sigma/a=0.001 N=25 exact lnZ=24.762 floor=-102.50 needle(x)=1.59e-04 n_live=500
+  rep 0: lnZ=  -95.039 bias=-119.800 sd_internal=0.614 H=  10.5 evals=8.62e+07 steps=951 p(needle)=0.000 wall=91s
+  rep 1: lnZ=  -88.419 bias=-113.181 sd_internal=0.814 H=  22.0 evals=2.38e+07 steps=951 p(needle)=0.000 wall=32s
+  N: lnZ=  -91.729 bias=-116.491 sd=  4.680 cost=5.50e+07 var*cost=1.20e+09
+K10_3s sigma/a=0.0001 N=25 exact lnZ=54.696 floor=-102.50 needle(x)=1.59e-05 n_live=500
+  rep 0: lnZ= -102.498 bias=-157.194 sd_internal=0.001 H=   0.0 evals=8.32e+07 steps=951 p(needle)=0.008 wall=130s
+  rep 1: lnZ= -102.498 bias=-157.194 sd_internal=0.001 H=   0.0 evals=2.19e+07 steps=951 p(needle)=0.000 wall=57s
+  N: lnZ= -102.498 bias=-157.194 sd=  0.000 cost=5.26e+07 var*cost=0.00e+00

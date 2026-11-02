@@ -4,6 +4,8 @@ Small problems only: a quadratic with a known diagonal metric, a binary on a
 7-hole mask, and a 16² image.
 """
 
+from contextlib import nullcontext
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -98,7 +100,7 @@ def test_the_diagonal_is_that_of_the_gauss_newton_matrix():
 def test_the_regularizer_curvature_is_included_and_estimated_by_probes():
     start, priors, data = _image_fit(8)
     values = {"env.log_brightness": start.env.log_brightness}
-    kwargs = dict(regularizers=[TSV(5.0, path="env")])
+    kwargs = dict(regularizers=[TSV(5.0, path="env", beam_mas=12.0)])
     exact = gauss_newton_diag(start, priors, data, values, **kwargs)
     plain = gauss_newton_diag(start, priors, data, values)
     key = "env.log_brightness"
@@ -401,7 +403,8 @@ def test_recentring_changes_no_loss_and_fixes_the_log_flux():
     x[0, :3] = -500.0  # dark pixels are left where they are
     with run_in("float64"):
         problem = cast_tree(
-            _Objective(start, priors, data, [TSV(1e2)]), "float64"
+            _Objective(start, priors, data, [TSV(1e2, beam_mas=12.0)]),
+            "float64",
         )
         z = {key: np.asarray(x + 1e5)}
         out = _recentre(problem, z)[key]
@@ -429,7 +432,8 @@ def test_lm_sees_the_gauge_direction_through_one_extra_residual():
     start, priors, data = _gauge_problem()
     with run_in("float64"):
         problem = cast_tree(
-            _Objective(start, priors, data, [TSV(1e2)]), "float64"
+            _Objective(start, priors, data, [TSV(1e2, beam_mas=12.0)]),
+            "float64",
         )
         masks = _gauge_masks(problem)
         z = {
@@ -465,7 +469,14 @@ def test_the_fitted_log_brightness_is_gauge_fixed_for_every_method(
     )
     warm = None
     for weight in (1e3, 3e2, 1e2):
-        result = fit(start, priors, data, [TSV(weight)], init=warm, **options)
+        result = fit(
+            start,
+            priors,
+            data,
+            [TSV(weight, beam_mas=12.0)],
+            init=warm,
+            **options,
+        )
         x = onp.asarray(result.values["log_brightness"])
         assert onp.all(onp.isfinite(x))
         # deliberate: the gauge is exact only up to rounding in the working
@@ -491,7 +502,7 @@ def test_the_fitted_log_brightness_is_gauge_fixed_for_every_method(
             start,
             priors,
             data,
-            [TSV(1e2)],
+            [TSV(1e2, beam_mas=12.0)],
             init={"log_brightness": b},
             **options,
         )
@@ -552,11 +563,14 @@ def _l_curve_steps(dtype, npix=41):
 
 
 @pytest.mark.slow
-# float32 converged at every weight in a local run (strict xfail XPASSed), so
-# the old non-strict xfail is gone. If the slow tier sees it stall on another
-# platform, report that raw and restore a strict xfail conditioned on it.
 @pytest.mark.parametrize("dtype", ["float64", "float32"])
 def test_the_l_curve_converges_at_every_weight(dtype):
     """Stage 7: flat-prior MaxEntropy, w = 0.1 ... 1e4, default step limit."""
-    runs = _l_curve_steps(dtype)
+    # A float32 case builds its noise draws, scenes and starting image in
+    # float32 whatever the ambient x64 (importing jaxoplanet turns it on for a
+    # worker). Built in float64 and cast down they are another realisation,
+    # which stalled the weakest weight (3358 steps) in the x64 CI job.
+    ambient = jax.enable_x64(False) if dtype == "float32" else nullcontext()
+    with ambient:
+        runs = _l_curve_steps(dtype)
     assert all(converged for _, converged in runs), runs
