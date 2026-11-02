@@ -352,6 +352,9 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | Symbol | Source | Relation |
 |---|---|---|
 | `outlier_exact` | [Genz & Malik (1980)](#genz1980), [doi:10.1016/0771-050X(80)90039-X](https://doi.org/10.1016/0771-050X(80)90039-X) | ported |
+| `visibility_leg` | [Gilks & Berzuini (2001)](#gilks2001), [doi:10.1111/1467-9868.00280](https://doi.org/10.1111/1467-9868.00280) | after |
+| `visibility_leg` | [Hesterberg (1995)](#hesterberg1995), [doi:10.1080/00401706.1995.10484303](https://doi.org/10.1080/00401706.1995.10484303) | after |
+| `visibility_leg` | [Hoffman & Gelman (2011)](#hoffman2014), [arXiv:1111.4246](https://arxiv.org/abs/1111.4246), [ADS](https://ui.adsabs.harvard.edu/abs/2011arXiv1111.4246H/abstract) | after |
 
 ### `virgil.orbits`
 

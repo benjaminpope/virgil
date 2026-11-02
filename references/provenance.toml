@@ -777,7 +777,7 @@ year = 2011
 alt_years = [2014]
 alt_years_note = "year is the first posting; the journal paper is dated 2014"
 title = "The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo"
-used_in = ["virgil.inference", "virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.inference", "virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg", "virgil.orbit_visibility:visibility_leg"]
 note = "NUTS; JMLR 15, 1593 (2014)"
 bibcode = "2011arXiv1111.4246H"
 arxiv = "1111.4246"
@@ -1753,7 +1753,7 @@ authors = "Del Moral, Doucet & Jasra"
 year = 2006
 title = "Sequential Monte Carlo Samplers"
 doi = "10.1111/j.1467-9868.2006.00553.x"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_cells:position_leg", "virgil.orbit_visibility:visibility_leg"]
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_cells:position_leg"]
 note = "JRSSB 68, 411; SMC samplers and the normalizing-constant estimate, Z as the product of the incremental weights"
 role = "bibliography"
 verified = true
@@ -1775,7 +1775,7 @@ authors = "Zhou, Johansen & Aston"
 year = 2016
 title = "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
 doi = "10.1080/10618600.2015.1060885"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_visibility:visibility_leg"]
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
 note = "JCGS 25, 701; conditional ESS for the next temperature"
 role = "bibliography"
 verified = true
@@ -2106,7 +2106,7 @@ title = "Weighted average importance sampling and defensive mixture distribution
 doi = "10.1080/00401706.1995.10484303"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg", "virgil.orbit_visibility:visibility_leg"]
 note = "Technometrics 37, 185; a prior share in the proposal bounds the importance weights by the likelihood maximum over the share"
 
 [ref.gilks2001]
@@ -2116,7 +2116,7 @@ title = "Following a moving target: Monte Carlo inference for dynamic Bayesian m
 doi = "10.1111/1467-9868.00280"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg", "virgil.orbit_visibility:visibility_leg"]
 note = "J. R. Stat. Soc. B 63, 127; resample-move: resample weighted draws, then move them with a kernel invariant for the target"
 
 [ref.neal2011]

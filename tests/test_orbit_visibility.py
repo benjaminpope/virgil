@@ -1,6 +1,7 @@
 """Visibility-level leg, exact outlier floor and labels (design/orbit_alias_cycles.md §2, §6.2)."""
 
 import functools
+import math
 import types
 
 import jax
@@ -15,6 +16,12 @@ from virgil import _orbit_coordinates as oc  # noqa: E402
 from virgil import orbit_cells as cells  # noqa: E402
 from virgil import orbit_visibility as ov  # noqa: E402
 from tests.test_night_summaries import _fit, _night  # noqa: E402
+from tests._shared import vlti_night  # noqa: E402
+from virgil import night_summaries as ns  # noqa: E402
+from virgil import mode_search  # noqa: E402
+from virgil.mode_search import Mode  # noqa: E402
+from virgil.orbits import KeplerOrbit  # noqa: E402
+from virgil.simulate import simulate  # noqa: E402
 
 
 def x64(test):
@@ -205,36 +212,286 @@ def test_the_polar_box_holds_the_peak_and_the_log_integrand_is_finite_there():
     assert log_f(off[None])[0] == -onp.inf
 
 
-@pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    reason="the position leg tempers from the prior and is flat on the outlier "
-    "floor for a 6-night orbit with a 238 d gap; leg 1 is being redesigned "
-    "(search, then Monte Carlo in a low-dimensional space)",
-)
-@x64
-def test_the_position_leg_picks_the_true_cycle_count_on_a_gapped_six_night_orbit():
-    from tests.test_aliases import EPOCHS, T_REF, TRUTH
-    from tests.test_orbit_cells import LOG_B, _summaries
-    from virgil.orbits import KeplerOrbit
+# --- the visibility leg (design §6.2) -----------------------------------------------
 
-    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
-    summaries = _summaries(orbit, EPOCHS, sigma=0.1)
-    domain = cells.period_domain(
-        summaries, night_length=0.1, resolution=3.0, p_range=(11.5, 13.0)
+T0 = 60000.0
+N_FRAMES = 6
+LN_F = float(onp.log(0.25))
+
+
+def _gains_and_offsets(d):
+    n = int(onp.asarray(d.vis).size)
+    d = d.with_gains(telescope=0.03, modes=onp.ones((1, n)))
+    return d.with_closure_offsets(triangle=0.02)
+
+
+def _night_truth(orbit, t0):
+    """``(p̂, v̂, ln f)`` of the orbit's least-squares line through one night's frames."""
+    t = t0 + onp.arange(N_FRAMES) / 24.0
+    off = t - t.mean()
+    pos = onp.stack([onp.asarray(c, float) for c in orbit.relative(t)[:2]], 1)
+    return onp.concatenate(
+        [pos.mean(0), onp.einsum("f,fc->c", off / (off**2).sum(), pos), [LN_F]]
+    ), float(t.mean())
+
+
+@functools.cache
+def _system(times, d_vis=0.005, d_phi=0.02, gains=False, seed=0, period=11.3):
+    """Simulated nights of a binary, the nights' summaries and the catalogue stubs (a
+    peak at the truth: the catalogue-completeness assumption of design §5)."""
+    orbit = KeplerOrbit(period, 2.0, 0.3, 55.0, 40.0, 70.0, 6.0, t_ref=T0)
+    sets, peaks = [], []
+    for k, t in enumerate(times):
+        truth, t_ref = _night_truth(orbit, T0 + t)
+        d = vlti_night(
+            T0 + t, N_FRAMES, 0.0, d_vis=d_vis, d_phi=d_phi, stations=True
+        )
+        if gains:
+            d = _gains_and_offsets(d)
+        sets.append(
+            simulate(
+                ns._model(np.asarray(truth), t_ref, None),
+                d,
+                key=jax.random.PRNGKey(seed + k),
+            )
+        )
+        peaks.append(
+            types.SimpleNamespace(
+                dra=truth[:1], ddec=truth[1:2], flux=onp.exp(truth[4:5])
+            )
+        )
+    positions = types.SimpleNamespace(
+        names=tuple(map(str, range(len(times)))),
+        peaks=tuple(peaks),
+        primary_diam=None,
     )
-    out = cells.position_cells(
-        summaries,
-        domain,
-        jax.random.PRNGKey(1),
-        log_outlier=onp.full(len(EPOCHS), LOG_B),
-        jitter=0.0,
-        n_particles=256,
-        pilot=False,
+    summaries = ns.night_summaries(sets, positions)
+    log_b = onp.array([s.peaks[0].loglike - 25.0 for s in summaries])
+    return orbit, sets, summaries, log_b
+
+
+TIMES = (0.0, 3.1, 9.7, 17.2, 31.0, 44.6, 59.3, 80.1)
+
+
+def _position(times, p_range, **kw):
+    orbit, sets, summaries, log_b = _system(times, **kw)
+    domain = cells.period_domain(summaries, p_range=p_range)
+    pos = cells.position_cells(
+        summaries, domain, jax.random.key(0), log_outlier=log_b, jitter=0.0
     )
-    true_cell = onp.argmax(
-        [c.p_lo <= TRUTH["period"] <= c.p_hi for c in out.cells]
+    nights = ov._Nights(sets, summaries, None, "float64")
+    return orbit, pos, nights, log_b
+
+
+@x64
+def test_the_symmetry_images_leave_the_visibility_target_invariant():
+    """At the truth and small steps from it, where every night is an inlier (not at
+    prior draws, where any prior-preserving map would pass)."""
+    from tests.test_orbit_cells import _truth_chart
+
+    orbit, sets, summaries, log_b = _system(TIMES[:6])
+    domain = cells.period_domain(summaries, p_range=(9.0, 14.0))
+    t_all = [s.t_ref for s in summaries]
+    cell = [
+        c
+        for c in cells.make_cells(t_all[0], t_all[-1], domain)
+        if c.p_lo <= 11.3 <= c.p_hi
+    ][0]
+    base = cells._Space(
+        cells._Catalogue(summaries, log_b), cell, 0.0,
+        onp.array(t_all) - t_all[0], (1.0, 30.0), 0.9, 1e-4, 0.0, np.float64,
+    )  # fmt: skip
+    space = ov._VisSpace(base, ov._Nights(sets, summaries, None, "float64"))
+    xt = _truth_chart(base, orbit, t_all[0] - T0, ln_f=LN_F)
+    xt[1:5] *= onp.sqrt(3.0)
+    rng = onp.random.default_rng(0)
+    x = xt + 1e-4 * rng.standard_normal((5, base.d))
+    target = jax.jit(jax.vmap(ov._vis_target, in_axes=(0, None)))
+    images = cells._symmetry_images(base.d)
+    assert len(images) == 15
+    ref = onp.asarray(target(x, space))
+    assert onp.all(ref > log_b.sum() + 50.0)  # the truth is not at the floor
+    for g in images:
+        moved = onp.asarray(target(x @ np.asarray(g).T, space))
+        onp.testing.assert_allclose(moved, ref, rtol=1e-10, atol=1e-10)
+    # and the target is not flat: a step along the period changes it
+    off = x.copy()
+    off[:, 0] += 1.0
+    assert onp.all(onp.asarray(target(off, space)) < ref - 1.0)
+
+
+def _vis_space(times):
+    """The truth's cell, its position-level space and the visibility space."""
+    orbit, sets, summaries, log_b = _system(times)
+    domain = cells.period_domain(summaries, p_range=(9.0, 14.0))
+    t_all = [s.t_ref for s in summaries]
+    cell = [
+        c
+        for c in cells.make_cells(t_all[0], t_all[-1], domain)
+        if c.p_lo <= 11.3 <= c.p_hi
+    ][0]
+    base = cells._Space(
+        cells._Catalogue(summaries, log_b), cell, 0.0,
+        onp.array(t_all) - t_all[0], (1.0, 30.0), 0.9, 1e-4, 0.0, np.float64,
+    )  # fmt: skip
+    space = ov._VisSpace(base, ov._Nights(sets, summaries, None, "float64"))
+    return orbit, base, space, t_all[0]
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(1800)
+@x64
+def test_the_visibility_evidence_matches_brute_force_quadrature_on_a_slice():
+    """Fix every chart coordinate but (w_P, w_a, w_f) at the truth: the vis target on
+    that slice is 3-D, and its ``ln Z`` by a dense grid of ±9σ about the Laplace mode at
+    0.3σ (spectrally accurate for a smooth integrand) is the reference. The grid and the
+    slice are fixed here; the reference's own error is the difference from a grid of
+    twice the spacing. The estimate is the defensive mixture of ``mode_search`` on the
+    Newton-refined slice mode."""
+    from tests.test_orbit_cells import _truth_chart
+
+    orbit, base, space, t_anchor = _vis_space(TIMES[:6])
+    free = onp.array([0, 5, 8])
+    xt = _truth_chart(base, orbit, t_anchor - T0, ln_f=LN_F)
+    xt[1:5] *= onp.sqrt(3.0)
+    xt_j = np.asarray(xt)
+
+    def log_pdf(u):
+        return np.sum(cells._logistic_log_pdf(u))
+
+    def target(u, theta):
+        return theta.loglike(xt_j.at[free].set(u)) + log_pdf(u)
+
+    def inliers(u, theta):
+        return theta.terms(xt_j.at[free].set(u))[1]
+
+    u0 = np.asarray(xt[free])
+    u_hat, _ = cells._lm(target, u0, (space,), 30)
+    hess = -jax.hessian(target)(u_hat, space)
+    cov = onp.linalg.inv(onp.asarray(0.5 * (hess + hess.T)))
+    chol = onp.linalg.cholesky(cov)
+    mode = Mode(onp.asarray(u_hat), float(target(u_hat, space)), cov, 6.0)
+
+    jit_target = jax.jit(jax.vmap(target, in_axes=(0, None)))
+
+    def grid_log_z(step, half=9.0):
+        g = onp.arange(-half, half + 1e-9, step)
+        pts = onp.stack(onp.meshgrid(g, g, g, indexing="ij"), -1).reshape(
+            -1, 3
+        )
+        u = onp.asarray(u_hat) + pts @ chol.T
+        lt = onp.concatenate(
+            [
+                onp.asarray(jit_target(np.asarray(u[i : i + 50_000]), space))
+                for i in range(0, len(u), 50_000)
+            ]
+        )
+        return float(
+            lt.max()
+            + onp.log(onp.exp(lt - lt.max()).sum())
+            + onp.log(step**3)
+            + 0.5 * onp.linalg.slogdet(cov)[1]
+        )
+
+    ref, coarse = grid_log_z(0.3), grid_log_z(0.6)
+    ref_err = abs(ref - coarse)
+    mixture = mode_search.DefensiveMixture(
+        [mode], log_pdf,
+        lambda key, n: jax.random.logistic(key, (n, 3), np.float64), dim=3,
+    )  # fmt: skip
+    ev = mode_search.importance_evidence(
+        target, space, mixture, jax.random.key(0), 20_000, inliers_fn=inliers,
+        log_floor=onp.inf,
+    )  # fmt: skip
+    err = onp.hypot(ev.log_z_error, ref_err)
+    assert abs(ev.log_z - ref) < 4.0 * err + 0.01, (ev.log_z, ref, err, ev.ess)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(1800)
+@x64
+def test_a_second_cell_of_a_system_compiles_nothing_at_visibility_level():
+    times = TIMES[:6]
+    orbit, sets, summaries, log_b = _system(times)
+    domain = cells.period_domain(summaries, p_range=(9.0, 14.0))
+    t_all = [s.t_ref for s in summaries]
+    cs = cells.make_cells(t_all[0], t_all[-1], domain)
+    cell = [c for c in cs if c.p_lo <= 11.3 <= c.p_hi][0]
+    other = cs[cs.index(cell) + 1]
+    nights = ov._Nights(sets, summaries, None, "float64")
+    count = [0, False]
+
+    def listener(event, duration, **kw):
+        if count[1] and event.endswith("backend_compile_duration"):
+            count[0] += 1
+
+    jax.monitoring.register_event_duration_secs_listener(listener)
+    kw = dict(
+        t_anchor=t_all[0], t_nights=t_all, n_is=512, posterior_draws=False
     )
-    log_z = onp.array([leg.log_z for leg in out.legs])
-    assert log_z.max() - log_z.min() > 5.0  # the cells are told apart
-    assert onp.argmax(out.p_pos) == true_cell
+    a = cells.position_leg(summaries, log_b, cell, jax.random.key(0), **kw)
+    b = cells.position_leg(
+        summaries, log_b, other, jax.random.key(1), plan=a.plan, **kw
+    )
+    ov.visibility_leg(a, nights, jax.random.key(2), n_is=512)
+    count[1] = True
+    ov.visibility_leg(b, nights, jax.random.key(3), n_is=512)
+    count[1] = False
+    assert count[0] == 0
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(1800)
+@x64
+def test_the_sentinel_fires_when_the_true_visibility_mode_is_withheld(
+    monkeypatch,
+):
+    times = TIMES[:5]
+    _, sets, summaries, log_b = _system(times)
+    domain = cells.period_domain(summaries, p_range=(9.0, 14.0))
+    t_all = [s.t_ref for s in summaries]
+    cell = [
+        c for c in cells.make_cells(t_all[0], t_all[-1], domain)
+        if c.p_lo <= 11.3 <= c.p_hi
+    ][0]  # fmt: skip
+    leg = cells.position_leg(
+        summaries, log_b, cell, jax.random.key(0), t_anchor=t_all[0],
+        t_nights=t_all, n_is=256, posterior_draws=False,
+    )  # fmt: skip
+    nights = ov._Nights(sets, summaries, None, "float64")
+    n_k = len(times)
+    floor = log_b.sum() + math.lgamma(n_k + 0.5) - 0.5 * math.log(math.pi)
+    floor -= math.lgamma(n_k + 1.0)
+
+    def withheld(space, modes):
+        x = onp.asarray(space.sample(jax.random.key(5), 1))[0]
+        return [Mode(x, floor + 100.0, 0.01 * onp.eye(space.d), 2.0)]
+
+    monkeypatch.setattr(ov, "_refined_modes", withheld)
+    out = ov.visibility_leg(leg, nights, jax.random.key(1), n_is=2000)
+    assert out.at_floor and out.failed and out.draws is None
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(1800)
+@x64
+def test_the_true_cycle_count_is_in_the_99_percent_set_at_visibility_level():
+    times = (0.0, 2.9, 7.1, 11.0, 365.4, 369.2, 374.8, 380.1)
+    orbit, pos, nights, _ = _position(times, (9.0, 14.0))
+    assert not pos.failed.any()
+    legs, log_z, p, failed = ov.visibility_cells(
+        pos, nights, jax.random.key(3)
+    )
+    assert not failed.any() and onp.all(onp.isfinite(p))
+    order = onp.argsort(-p)
+    keep = order[: int(onp.searchsorted(onp.cumsum(p[order]), 0.99)) + 1]
+    true_n = [i for i, c in enumerate(pos.cells) if c.p_lo <= 11.3 <= c.p_hi][
+        0
+    ]
+    assert true_n in keep
+    leg = legs[true_n]
+    assert not leg.at_floor and leg.evidence.n_inliers > len(times) - 1
+    # the draws are spread over the posterior (not duplicates) and centred on the truth
+    ln_p = onp.log(cells.decode_particles(leg)["period"])
+    assert len(onp.unique(leg.draws[:, 0])) > 100
+    assert abs(onp.median(ln_p) - onp.log(11.3)) < 5 * ln_p.std() + 1e-3

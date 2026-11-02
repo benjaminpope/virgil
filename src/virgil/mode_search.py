@@ -261,7 +261,7 @@ class DefensiveMixture:
     def log_q(self, x):
         """``ln q(x)`` of one vector."""
         df, d = self.df, x.shape[-1]
-        z = np.einsum("mij,mj->mi", self.linv, x[None] - self.mu)
+        z = np.sum(self.linv * (x[None] - self.mu)[:, None, :], -1)
         lt = (  # log density of the multivariate t of every component at x
             -0.5 * (df + d) * np.log1p(np.sum(z**2, -1) / df)
             - 0.5 * self.logdet
@@ -287,7 +287,7 @@ class DefensiveMixture:
         g = g / (0.5 * self.df)
         t = (
             self.mu[idx]
-            + np.einsum("nij,nj->ni", self.chol[idx], z)
+            + np.sum(self.chol[idx] * z[:, None, :], -1)
             / (np.sqrt(g)[:, None])
         )
         prior = self.sample_prior(k[3], n)

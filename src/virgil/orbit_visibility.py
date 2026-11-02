@@ -12,11 +12,14 @@ Stage 3c of the plan in ``design/orbit_alias_cycles.md``. It adds to
   cubature around the night's peaks
   ([`outlier_exact`][virgil.orbit_visibility.outlier_exact]). This is #618's integral with
   the velocity added, in the coordinates where the prior is smooth;
-- the **visibility leg** ``π_β ∝ prior · L_pos^(1-β) · L_vis^β`` from the position leg's
-  particles ([`visibility_leg`][virgil.orbit_visibility.visibility_leg]), with the mixture
-  of §1.1: one global inlier scale per error block in the sampled vector, gains and closure
-  offsets marginalized analytically at that scale, the outlier floor ``b_k`` shared with
-  the position leg; ``Z_N`` is the product of the two legs' normalizing constants;
+- the **visibility leg** (§6.2): each position-level mode of a cell is refined by Newton
+  on the per-exposure target, with one global inlier scale per error block in the sampled
+  vector, gains and closure offsets marginalized analytically at that scale and the
+  outlier floor ``b_k`` shared with the position leg; a defensive mixture on the refined
+  modes gives ``ln Z`` by importance sampling and an HMC resample-move gives the draws
+  ([`visibility_leg`][virgil.orbit_visibility.visibility_leg],
+  [`visibility_cells`][virgil.orbit_visibility.visibility_cells]), as
+  [`mode_search`][virgil.mode_search] does at position level. No tempering;
 - the **labels**: the brighter/fainter label and the antipodal swap ``TI′ → −TI′`` are one
   symmetry, [`swap_label`][virgil.orbit_visibility.swap_label]; posteriors are reported in
   invariants ([`report_invariants`][virgil.orbit_visibility.report_invariants]);
@@ -25,9 +28,9 @@ Stage 3c of the plan in ``design/orbit_alias_cycles.md``. It adds to
 Nothing here touches the old search path. The primary diameter is held at the value of
 ``positions`` and no visibility amplitude is fitted.
 
-Source: Genz & Malik (1980), Del Moral, Doucet & Jasra (2006), Luger, Foreman-Mackey &
-Hogg (2017), [references](../references.md); the contract and the table are derived in the
-design note.
+Source: Genz & Malik (1980), Hesterberg (1995), Gilks & Berzuini (2001), Luger,
+Foreman-Mackey & Hogg (2017), [references](../references.md); the contract and the table
+are derived in the design note.
 """
 
 import copy
@@ -45,10 +48,20 @@ from scipy.special import logsumexp as onp_logsumexp
 
 from . import _orbit_coordinates as oc
 from . import orbit_cells as cells_mod
-from . import smc
 from ._precision import cast_tree, run_in
 from ._geometry import fringe_scales
 from .epochs import Epochs, _Surface
+from .mode_search import (
+    DefensiveMixture,
+    ESS_FAIL,
+    N_IS,
+    W,
+    Mode,
+    distinct_modes,
+    importance_evidence,
+    laplace_log_evidence,
+    resample_move,
+)
 from .night_summaries import DELTA, _model, keep_peaks, night_summaries
 from .orbit_cells import (
     A_RANGE,
@@ -57,7 +70,7 @@ from .orbit_cells import (
     S_MAX,
     Cell,
     _eps_nodes,
-    _Space,
+    _Z,
     outlier_prior,
     period_domain,
     position_cells,
@@ -66,12 +79,13 @@ from .orbit_cells import (
 __all__ = [
     "CellsFit",
     "OutlierTable",
-    "VisibilityLeg",
+    "VisibilityCell",
     "fit_cells",
     "outlier_exact",
     "outlier_table",
     "report_invariants",
     "swap_label",
+    "visibility_cells",
     "visibility_leg",
 ]
 
@@ -229,6 +243,7 @@ class _Group:
     index: onp.ndarray
 
 
+@jax.tree_util.register_pytree_node_class
 class _Nights:
     """The per-exposure log likelihood of every night for a companion in linear motion
     ``p + v (t - t̄)`` (design §2.1: the same data model for the inlier and the outlier
@@ -289,6 +304,25 @@ class _Nights:
             for g in groups
         ]
         self.const = np.asarray(consts, dtype)
+
+    def tree_flatten(self):
+        children = ([g.data for g in self.groups], self.const)
+        aux = (
+            tuple((g.surface, tuple(g.index.tolist())) for g in self.groups),
+            self.dtype, self.s_max, self.diam, self.n, self.blocks,
+        )  # fmt: skip
+        return children, aux
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        new = object.__new__(cls)
+        groups, new.dtype, new.s_max, new.diam, new.n, new.blocks = aux
+        new.groups = [
+            _Group(s, d, onp.asarray(i, int))
+            for (s, i), d in zip(groups, children[0])
+        ]
+        new.const = children[1]
+        return new
 
     def _model_of(self, z):
         return _model(
@@ -740,138 +774,231 @@ def report_invariants(result):
 # ---------------------------------------------------------------------------
 
 
-class _VisSpace(_Space):
-    """The chart, prior and sampler of the position leg, with the visibility-level
-    likelihood: the mixture of design §1.1 with the nights' per-exposure likelihood,
-    the global scales live and the outlier floor of the position leg."""
+@jax.tree_util.register_pytree_node_class
+class _VisSpace:
+    """The chart, prior and sampler of the position leg with the visibility-level
+    likelihood: the mixture of design §1.1 over the nights' per-exposure likelihood,
+    the global scales live and the outlier floor of the position leg.
 
-    def __init__(self, base, nights, log_b):
-        self.__dict__.update(base.__dict__)
-        self.nights = nights
-        self.log_b = np.asarray(log_b, base.dtype)
+    A pytree (the position leg's space and the nights' data are traced), so one
+    compilation serves every cell of a system.
+    """
 
-    def live_scales(self, x):
-        return math.log(S_MAX) * (2.0 * jax.nn.sigmoid(x[..., 9:]) - 1.0)
+    def __init__(self, base, nights):
+        self.base, self.nights = base, nights
 
-    def loglike(self, x):
-        c = self.decode(x)
-        pv = self.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
-        ln_s = self.live_scales(x)
-        n_eps = self.cat.n_eps
-        eps = _eps_nodes(n_eps).astype(self.dtype)
-        per_sign = []
+    def tree_flatten(self):
+        return (self.base, self.nights), None
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        return cls(*children)
+
+    @property
+    def d(self):
+        return self.base.d
+
+    @property
+    def dtype(self):
+        return self.base.dtype
+
+    def logprior(self, x):
+        return self.base.logprior(x)
+
+    def decode(self, x):
+        return self.base.decode(x)
+
+    def sample(self, key, n):
+        return self.base.sample(key, n)
+
+    def terms(self, x):
+        """``(ln L_vis, expected inlier nights)`` at chart vector ``x``."""
+        base = self.base
+        c = base.decode(x)
+        pv = base.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+        ln_s = math.log(S_MAX) * (2.0 * jax.nn.sigmoid(x[9:]) - 1.0)
+        eps = _eps_nodes(base.cat.n_eps).astype(base.dtype)
+        per_sign, resp = [], []
         for sign in (1.0, -1.0):
             ell = self.nights.ell(sign * pv, c["ln_f"], ln_s)
-            night = np.logaddexp(
-                np.log1p(-eps)[:, None] + ell[None],
-                np.log(eps)[:, None] + self.log_b,
-            )
+            inside = np.log1p(-eps)[:, None] + ell[None]
+            night = np.logaddexp(inside, np.log(eps)[:, None] + base.cat.log_b)
             per_sign.append(night.sum(axis=1))
-        return logsumexp(np.stack(per_sign)) - np.log(2.0 * n_eps)
+            resp.append(np.exp(inside - night).sum(axis=1))
+        total = np.stack(per_sign)
+        out = logsumexp(total) - np.log(2.0 * base.cat.n_eps)
+        weight = np.exp(total - logsumexp(total))
+        return out, np.sum(weight * np.stack(resp))
+
+    def loglike(self, x):
+        return self.terms(x)[0]
 
 
-@dataclasses.dataclass(frozen=True)
-class VisibilityLeg:
-    """The visibility leg of one cell.
+def _vis_target(x, space):
+    """The label-summed log target at visibility level (log prior + log likelihood)."""
+    return space.loglike(x) + space.logprior(x)
+
+
+def _vis_inliers(x, space):
+    return space.terms(x)[1]
+
+
+def _vis_objective(x, space):
+    """The search objective at visibility level: the target with the chi-4 radial
+    prior of ``y_z``, as [`orbit_cells._objective`][virgil.orbit_cells]."""
+    return _vis_target(x, space) + 3.0 * np.log(np.linalg.norm(x[_Z]))
+
+
+@functools.partial(jax.jit, static_argnames=("n_iter",))
+def _vis_refine(space, x, n_iter):
+    """Newton on the visibility objective from ``x``: the result, minus its Hessian,
+    the objective and the expected inlier count."""
+    x, _ = cells_mod._lm(_vis_objective, x, (space,), n_iter)
+    return (
+        x,
+        -jax.hessian(_vis_objective)(x, space),
+        _vis_objective(x, space),
+        _vis_inliers(x, space),
+    )
+
+
+def _refined_modes(space, modes):
+    """Each position-level mode refined by Newton on the visibility objective, with the
+    saddle-free covariance of its Hessian, as ``search_cell``; distinct modes only."""
+    out = []
+    for m in modes:
+        x, h, t, n = (
+            onp.asarray(a)
+            for a in _vis_refine(
+                space, np.asarray(m.x, space.dtype), cells_mod.N_NEWTON
+            )
+        )
+        h = 0.5 * (h + h.T)
+        if onp.isfinite(x).all() and onp.isfinite(h).all() and onp.isfinite(t):
+            e, vec = onp.linalg.eigh(h)
+            e = onp.maximum(
+                onp.abs(e), len(e) * onp.finfo(h.dtype).eps * onp.abs(e).max()
+            )
+            out.append(Mode(x, float(t), (vec / e) @ vec.T, float(n)))
+    return distinct_modes(out)
+
+
+@dataclasses.dataclass
+class VisibilityCell:
+    """The visibility-level fit of one cell (refined modes, importance sampling, draws).
 
     Attributes
     ----------
     cell : Cell
-    log_z, log_z_error, log_z_variance : float
-        ``ln(Z_vis / Z_pos)`` of the bridge, its error and single-run variance
-        ([`SMCResult`][virgil.smc.SMCResult]); ``nan`` if ``stopped``.
-    log_z_total : float
-        ``ln Ẑ_N`` of the cell's normalized prior: the position leg's plus this leg's.
-    particles, weights
-        Chart vectors at β = 1 (``None`` if ``stopped``) and their weights; the chart is
-        that of the position leg.
-    stopped, undersampled, variance_degenerate : bool
-        As for [`LegResult`][virgil.orbit_cells.LegResult]. A stopped leg is a failure.
-    space : object
-        The leg's ``_Space``, for [`report_invariants`][virgil.orbit_visibility.report_invariants].
+    log_z, log_z_error : float
+        ``ln Ẑ_N^vis`` of the cell's normalized prior (the cell's mass is applied in
+        [`CellsFit`][virgil.orbit_visibility.CellsFit]) and its delta-method error.
+    modes : list of Mode
+        The refined visibility-level modes.
+    draws : array or None
+        Resample-move posterior draws (chart vectors); ``None`` until made.
+    at_floor, undersampled, unreliable, nonfinite : bool
+        As for [`CellFit`][virgil.orbit_cells.CellFit]: ``cell-at-floor`` and
+        ``nonfinite`` fail the cell; ``cell-undersampled`` (ESS below ``ESS_TARGET``)
+        is information; ``unreliable`` is ESS below ``ESS_FAIL``.
+    space : _VisSpace
+        For [`report_invariants`][virgil.orbit_visibility.report_invariants].
+    evidence : Evidence
+    move : Move or None
     """
 
     cell: Cell
     log_z: float
     log_z_error: float
-    log_z_variance: float
-    log_z_total: float
-    particles: object
-    weights: object
-    stopped: bool
+    modes: list
+    draws: object
+    at_floor: bool
     undersampled: bool
-    variance_degenerate: bool
+    unreliable: bool
+    nonfinite: bool
     space: object = dataclasses.field(repr=False, default=None)
+    evidence: object = dataclasses.field(repr=False, default=None)
+    move: object = dataclasses.field(repr=False, default=None)
+
+    @property
+    def failed(self):
+        """The cell failed on its own: ``at_floor`` or ``nonfinite``."""
+        return bool(self.at_floor or self.nonfinite)
+
+    @property
+    def log_z_upper(self):
+        """The larger of ``ln Ẑ`` and the best mode's Laplace ``ln Z``."""
+        return max(
+            [self.log_z] + [laplace_log_evidence(m) for m in self.modes]
+        )
 
 
-def visibility_leg(
-    leg,
-    nights,
-    log_outlier,
-    key,
-    *,
-    n_particles=None,
-    steps=4,
-    replicates=1,
-    max_seconds=float("inf"),
-    dtype="float64",
-):
-    """Bridge a cell from the position likelihood to the visibility likelihood.
+def visibility_leg(fit, nights, key, *, n_is=N_IS, posterior_draws=True):
+    """Visibility-level evidence and draws of one cell from its position-level modes.
 
-    ``π_β ∝ prior · L_pos^(1-β) · L_vis^β``, β: 0 → 1, from the particles of the
-    position leg ``leg`` with the adaptive rule of [`bridge_smc`][virgil.smc.bridge_smc];
-    HMC only (the Luger move of the position leg is off here, design §6.3). Both
-    likelihoods share the floor ``log_outlier``.
+    Each mode of ``fit`` is refined by Newton on the per-exposure visibility target
+    (gains and offsets marginalized, global scales live), a defensive mixture is built
+    on the refined modes and their symmetry images, ``ln Z`` is its importance-sampling
+    estimate and the draws an HMC resample-move of the weighted draws
+    (`mode_search`; design §6.2). The sentinel and flags are those of the position leg.
 
     Parameters
     ----------
-    leg : LegResult
-        The cell's position leg, not stopped.
+    fit : CellFit
+        The cell's position leg ([`position_leg`][virgil.orbit_cells.position_leg]).
     nights : _Nights
         The nights' visibility likelihood.
-    log_outlier : array-like
-        Each night's ``b_k``; the one the position leg used.
     key : jax.random.PRNGKey
-    n_particles : int, optional
-        Particles; default those of the position leg.
-    steps, replicates, max_seconds, dtype : optional
-        As for [`position_leg`][virgil.orbit_cells.position_leg].
+    n_is : int, optional
+        Importance draws.
+    posterior_draws : bool, optional
+        Make the resample-move draws (not for a cell that failed).
 
     Returns
     -------
-    VisibilityLeg
+    VisibilityCell
 
-    Source: Del Moral, Doucet & Jasra (2006); Zhou, Johansen & Aston (2016).
+    Source: Hesterberg (1995), Gilks & Berzuini (2001), Hoffman & Gelman (2014).
     """
-    if leg.particles is None:
-        raise ValueError("The position leg stopped: it has no particles.")
-    with run_in(dtype):
-        space = _VisSpace(leg.space, nights, log_outlier)
-        result = smc.bridge_smc(
-            leg.space.logprior,
-            leg.space.loglike,
-            space.loglike,
-            leg.particles,
-            key=key,
-            weights=leg.weights,
-            n_particles=n_particles,
-            replicates=replicates,
-            steps=steps,
-            max_seconds=max_seconds,
+    k_is, k_move = jax.random.split(key)
+    base = fit.space
+    with run_in(onp.dtype(base.dtype).name):
+        space = _VisSpace(base, nights)
+        modes = _refined_modes(space, fit.modes)
+        mixture = DefensiveMixture(
+            modes, cells_mod._log_prior,
+            cells_mod._prior_sampler(space.d, space.dtype),
+            images=cells_mod._symmetry_images(space.d), dtype=space.dtype,
+            dim=space.d,
+        )  # fmt: skip
+        n_k = len(base.cat.log_b)
+        # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))
+        floor = float(onp.sum(base.cat.log_b)) + (
+            math.lgamma(n_k + 0.5)
+            - 0.5 * math.log(math.pi)
+            - math.lgamma(n_k + 1)
         )
-    return VisibilityLeg(
-        leg.cell,
-        result.log_z,
-        result.log_z_error,
-        result.log_z_variance,
-        leg.log_z + result.log_z,
-        result.particles,
-        result.weights,
-        result.stopped,
-        result.undersampled,
-        result.variance_degenerate,
-        space,
-    )
+        ev = importance_evidence(
+            _vis_target, space, mixture, k_is, n_is, inliers_fn=_vis_inliers,
+            log_floor=floor,
+        )  # fmt: skip
+        out = VisibilityCell(
+            fit.cell, ev.log_z, ev.log_z_error, modes, None, ev.at_floor,
+            ev.undersampled, bool(ev.ess < ESS_FAIL), bool(ev.n_nonfinite > 0),
+            space, ev,
+        )  # fmt: skip
+        if posterior_draws and not out.failed:
+            cov = max(modes, key=laplace_log_evidence).cov if modes else None
+            out.move = resample_move(_vis_target, space, ev, k_move, cov=cov)
+            out.draws = out.move.draws
+            if out.move.stuck:
+                warnings.warn(
+                    f"cell {fit.cell}: HMC accepted {out.move.acceptance:.3g} of "
+                    "moves (< 1 per particle): the draws are not rejuvenated",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -881,18 +1008,23 @@ def visibility_leg(
 
 @dataclasses.dataclass(frozen=True)
 class CellsFit:
-    """The two-leg posterior over the cells.
+    """The visibility-level posterior over the cells.
 
     Attributes
     ----------
     positions : CellsResult
         The position leg over every cell ([`position_cells`][virgil.orbit_cells.position_cells]).
-    legs : list of VisibilityLeg
-        The visibility leg of each cell (a pruned cell has none: ``None``).
+    legs : list of VisibilityCell
+        The visibility leg of each kept cell (``None`` for a cell the position leg
+        dropped below ``δ / N_cells``, or when the position leg failed).
     log_z : numpy.ndarray
-        ``ln Ẑ_N = ln Ẑ_N^pos + ln Ẑ_N^vis`` per cell (``-inf`` where pruned).
+        ``ln Ẑ_N^vis`` per cell (``-inf`` where dropped).
     p : numpy.ndarray
-        ``p(N) ∝ mass_N Ẑ_N``, summing to one.
+        ``p(N) ∝ mass_N Ẑ_N^vis`` over the kept cells, summing to one; all ``nan`` when
+        any cell failed (never renormalized over the others).
+    failed : numpy.ndarray
+        Cells that failed: the position leg's, and the visibility leg's ``at_floor`` or
+        ``nonfinite``, or unreliable and within ``W`` of the best.
     log_outlier : numpy.ndarray
         The exact ``b_k``.
     summaries : tuple of NightSummary
@@ -903,8 +1035,56 @@ class CellsFit:
     legs: list
     log_z: onp.ndarray
     p: onp.ndarray
+    failed: onp.ndarray
     log_outlier: onp.ndarray
     summaries: tuple
+
+
+def visibility_cells(positions, nights, key, *, delta=DELTA, n_is=N_IS):
+    """The visibility leg in every cell that leg 1 keeps (``p_pos ≥ δ / N_cells``).
+
+    Parameters
+    ----------
+    positions : CellsResult
+        From [`position_cells`][virgil.orbit_cells.position_cells]. If its leg failed,
+        no cell is refined and ``p`` is undefined.
+    nights : _Nights
+    key : jax.random.PRNGKey
+    delta : float, optional
+        Reporting precision.
+    n_is : int, optional
+        Importance draws per cell.
+
+    Returns
+    -------
+    legs, log_z, p, failed : list, numpy.ndarray, numpy.ndarray, numpy.ndarray
+    """
+    n = len(positions.cells)
+    legs = [None] * n
+    failed = onp.array(positions.failed, bool)
+    if not failed.any():
+        for i, k in enumerate(jax.random.split(key, n)):
+            if positions.p_pos[i] >= delta / n:
+                legs[i] = visibility_leg(
+                    positions.fits[i], nights, k, n_is=n_is
+                )
+    log_z = onp.array([-onp.inf if v is None else v.log_z for v in legs])
+    log_p = onp.array([c.log_mass for c in positions.cells]) + log_z
+    upper = onp.array(
+        [
+            -onp.inf if v is None else c.log_mass + v.log_z_upper
+            for c, v in zip(positions.cells, legs)
+        ]
+    )
+    matters = upper >= upper.max() - W
+    for i, v in enumerate(legs):
+        if v is not None:
+            failed[i] |= v.failed or (v.unreliable and bool(matters[i]))
+    if failed.any() or not onp.isfinite(log_p).any():
+        p = onp.full(n, onp.nan)
+    else:
+        p = onp.exp(log_p - onp_logsumexp(log_p))
+    return legs, log_z, p, failed
 
 
 def fit_cells(
@@ -919,11 +1099,8 @@ def fit_cells(
     e_max=E_MAX,
     flux_floor=FLUX_FLOOR,
     s_max=S_MAX,
-    n_particles=2048,
-    steps=4,
-    replicates=1,
+    n_is=N_IS,
     prune=False,
-    max_seconds=float("inf"),
     dtype="float64",
     outlier_samples=2**20,
 ):
@@ -944,25 +1121,19 @@ def fit_cells(
         Override the period domain ``[P_cut, P_max]``.
     a_range, e_max, flux_floor, s_max : optional
         Declared prior bounds (design §10).
-    n_particles, steps, replicates : optional
-        As for [`position_leg`][virgil.orbit_cells.position_leg].
-    max_seconds : float, optional
-        Time cap per leg; reaching it raises.
+    n_is : int, optional
+        Importance draws per cell, in both legs.
+    prune : bool, optional
+        As for [`position_cells`][virgil.orbit_cells.position_cells]. The visibility
+        leg runs only in the cells the position leg keeps either way.
     dtype : str, optional
         Precision of the legs.
-    prune : bool, optional
-        Drop the cells below ``δ / N_cells`` after the position leg (opt-in, design §7).
     outlier_samples : int, optional
         Draws of the tabulated prior predictive (default 2²⁰).
 
     Returns
     -------
     CellsFit
-
-    Raises
-    ------
-    RuntimeError
-        If a leg reached its time or stage cap.
     """
     sets = list(data.data) if isinstance(data, Epochs) else list(data)
     summaries = night_summaries(sets, positions)
@@ -990,52 +1161,14 @@ def fit_cells(
         domain,
         k_pos,
         log_outlier=b,
-        n_particles=n_particles,
-        steps=steps,
-        replicates=replicates,
+        n_is=n_is,
         prune=prune,
-        max_seconds=max_seconds,
         a_range=a_range,
         e_max=e_max,
         flux_floor=flux_floor,
         dtype=dtype,
     )
     with run_in(dtype):
-        nights = _Nights(
-            sets,
-            summaries,
-            diam,
-            dtype,
-            s_max,
-        )
-    legs = []
-    keys = jax.random.split(k_vis, len(pos.legs))
-    for leg, drop, k in zip(pos.legs, pos.pruned, keys):
-        if drop:
-            legs.append(None)
-            continue
-        vis = visibility_leg(
-            leg,
-            nights,
-            b,
-            k,
-            steps=steps,
-            replicates=replicates,
-            max_seconds=max_seconds,
-            dtype=dtype,
-        )
-        if vis.stopped or not onp.isfinite(vis.log_z_total):
-            raise RuntimeError(
-                f"The visibility leg of cell N={leg.cell.n} "
-                + (
-                    "reached its time or stage cap before β = 1; there is no "
-                    "posterior. Raise max_seconds, or use more particles."
-                    if vis.stopped
-                    else "returned a non-finite evidence."
-                )
-            )
-        legs.append(vis)
-    log_z = onp.array([-onp.inf if v is None else v.log_z_total for v in legs])
-    log_p = onp.array([c.log_mass for c in pos.cells]) + log_z
-    p = onp.exp(log_p - onp_logsumexp(log_p))
-    return CellsFit(pos, legs, log_z, p, b, summaries)
+        nights = _Nights(sets, summaries, diam, dtype, s_max)
+    legs, log_z, p, failed = visibility_cells(pos, nights, k_vis, n_is=n_is)
+    return CellsFit(pos, legs, log_z, p, failed, b, summaries)
