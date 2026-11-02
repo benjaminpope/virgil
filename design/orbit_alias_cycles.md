@@ -16,7 +16,7 @@ vv or gallery results (§10).
 ## 0. Summary
 
 1. **Model (§1).** Mixture v2 with global inlier scales; isotropic orientation, log-uniform *a* and *P*, uniform *e*;
-   period domain [P_cut, P_max] with P_cut = max(2Δt_min, P_night) as a **declared prior**.
+   period domain [P_cut, P_max] with P_cut = max(2Δt_min, p_floor) as a **declared prior** (P_night dropped, 2026-11-02).
 2. **Outlier contract (§2).** b_k is the prior-predictive density of night *k* under the *same* per-exposure
    likelihood as the inlier term, with the companion's night state (p, v, f) drawn from π_out instead of from the
    orbit. #618's b_k is the uniform-disc, σ_v → ∞ special case. Measured on #618's fixture: at the true orbit b_k − ℓ_k is
@@ -82,55 +82,41 @@ Isotropy and log-uniform *a* together are exactly "uniform direction on S³ × l
 
 ### 1.3 The period domain is a declared prior
 
-P ∈ [P_cut, P_max], **P_cut = max(2·Δt_min, P_night)**:
+P ∈ [P_cut, P_max], **P_cut = max(2·Δt_min, p_floor)** (Ben, 2026-11-02; replaces max(2Δt_min, P_night)):
 
-- Δt_min: the shortest gap between consecutive nights. P_night: the within-night motion bound of `period_window`
-  (the companion moves less than `motion_fraction` of a resolution element in the longest night, floor `p_floor`).
-- Above P_cut the closest pair of nights advances by less than half a cycle, so the regular-sampling alias
-  (prograde, retrograde, ν) ≡ (retrograde, prograde, 1/Δt − ν) lies outside the domain. The factor 2 holds at every
-  inclination.
-- It is **not** a Nyquist limit for irregular sampling (VanderPlas 2018): below Δt_min, irregular gaps and within-night
-  velocities can still identify P. It is a prior choice (Ben, 2026-11-01), reported in every summary, overridden by
+- **Δt_min** is the shortest gap between consecutive nights, after merging exposures less than `gap_days` = 0.5 d apart
+  into one night.
+- **p_floor** (0.2 d, inherited) is the only other lower bound. The orbit-cells path drops P_night, the within-night
+  motion bound of `period_window`. P_night belongs to the snapshot-era likelihood; the per-exposure target of §2 models
+  the motion within a night, so it needs no within-night bound. The only bound left is within one integration, about
+  0.015 d, which is below p_floor.
+- **The alias argument.** Above P_cut the closest pair of nights advances by less than half a cycle, so the
+  regular-sampling alias (prograde, retrograde, ν) ≡ (retrograde, prograde, 1/Δt − ν) lies outside the domain. The
+  factor 2 holds exactly at every e and inclination, given that Δt_min is taken over merged nights.
+- **Not a Nyquist limit.** For irregular sampling it is not one (VanderPlas 2018): below Δt_min, irregular gaps and
+  within-night velocities can still identify P. It is a prior choice, reported in every summary and overridden by
   `p_range`. There is no `period-floor` flag and no κ (orbit_dehack decision 4: no nats anywhere).
-- **P_max** follows orbit_dehack decision 13 (`span_factor` deleted): periods beyond the span form one long-period band
-  [span, P_max] with P_max = 2π a_hi · span/σ_min, σ_min the smallest per-night position error (the motion over the span
-  falls below it); a data-derived, reported domain limit. The gate draws truths up to 3 × span, far inside it.
-- **In practice P_night usually sets P_cut.** On random epoch patterns (gate stratum B's schedules S1–S3, K ∈ {4, 6, 8, 12};
-  night length U(0.05, 0.3) d, resolution U(2, 5) mas, field ∈ {10, 30} mas: illustrative ranges, tuned to no target;
-  `scripts/p_cut_random_epochs.py`), P_night ≥ 2Δt_min in 81% of draws (S1 0.81, S2 0.70, S3 0.91), the median P_cut is
-  11.8 d, and P_cut/span has quartiles 0.011, 0.047, 0.30 (10th, 50th, 90th percentile). The prior's lower end therefore
-  depends on a_hi (through `field`), `motion_fraction` and `gap_days` = 0.5 of `_night_length` (all in §10), not mainly on
-  Δt_min. The contract's "curvature inside a night is ignored" rests on P_night: if P_night is ever dropped, that
-  dependency must be restated.
+- **P_max** follows orbit_dehack decision 13 (`span_factor` deleted). Periods beyond the span form one long-period band
+  [span, P_max], with P_max = 2π a_hi · span/σ_min, where σ_min is the smallest per-night position error (the motion
+  over the span falls below it). It is a data-derived, reported domain limit. The gate draws truths up to 3 × span, far
+  inside it.
+- **Reporting.** `PeriodDomain` reports which term binds P_cut (2Δt_min or p_floor), the inputs to P_max (a_hi, span,
+  σ_min) and the prior mass of the long-period band N = 0. With P_max at a_hi and σ_min, that mass is 63–91 % and
+  depends on the data, so it is shown, not hidden.
+- **Curvature inside a night.** This is no longer covered by a bound. It is modelled in two places:
+  - the per-exposure target (§2), whose inlier term moves the companion through the night;
+  - the night summaries of the cheap leg (§5), which predict each night's (p̂, v̂) as the exact least-squares
+    projection of the orbit at the stored frame offsets, not as the instantaneous state.
+
+  The instantaneous-state prediction carried a curvature bias of ½·a(2π/P)²·T_ss/n, up to about 15σ for eccentric
+  short-period orbits. Because the bias depends on the parameters, it is modelled rather than cut.
+- **Why it changed.** Argon's simulated ensemble on #629 (#632) found 52 % of true periods outside the old domain.
+  `period_domain` passed field = A_RANGE[1] = 30 mas to `aliases.period_cut`. With L = 0.1 d and res = 3 mas, that gave
+  P_night = 2π·30·0.1/(0.5·3) = 12.566 d, which bound in 50 of 50 draws, while 2·Δt_min was ≤ 2.6 d (median 0.25 d).
+  The old note's random-epoch study (`scripts/p_cut_random_epochs.py`) had already found P_night binding in 81 % of
+  patterns.
+- **Cost.** Two seasons a year apart give about 250 cells (§9).
 - Consequence for the gate: §12.
-- **TODO (open, 2026-11-02; do not resolve here).** Argon's simulated ensemble on #629 (#632) found 52 % of true
-  periods outside the default domain. One example: a single 25-d season with P = 11.4 d, where the lowest cell starts
-  at 39 d. (39.26 d was the lower edge of the top cell, not the domain floor.)
-
-  **Diagnosis (coordinating session, 2026-11-02).**
-  - `period_domain` passes field = A_RANGE[1] = 30 mas to `aliases.period_cut`.
-  - With the harness's L = 0.1 d and res = 3 mas, P_night = 2π·30·0.1/(0.5·3) = 12.566 d. That binds in 50 of 50
-    draws, while 2·dt_min is ≤ 2.6 d (median 0.25 d).
-
-  **Derivation.**
-  - The per-exposure target needs no within-night bound. P_night belongs to the snapshot-era likelihood.
-  - Only a within-integration bound applies, about 0.015 d, which is below p_floor.
-  - The 2·dt_min grid-alias argument holds exactly for any e and inclination, provided dt_min is taken over nights
-    merged at gap_days = 0.5 d.
-  - The cheap leg does carry a curvature bias. Each night's (p, v) is the least-squares fit over its frames, but
-    `_Space.states` predicts the instantaneous state. The bias is ½·a(2π/P)²·T_ss/n, up to about 15σ for eccentric
-    short-period orbits. It depends on the parameters, so it must be modelled, not cut: predict each night's (p̂, v̂)
-    as the exact least-squares projection of the orbit at the stored frame offsets.
-
-  **Proposal for Ben (it changes his declared prior, so it needs his sign-off).**
-  - P_cut = max(2·dt_min over merged nights, p_floor), with P_night dropped from the orbit-cells path.
-  - `PeriodDomain` reports the binding term, the inputs to P_max, and the N = 0 prior mass. P_max currently sits at
-    a_hi and σ_min, so the N = 0 mass is 63–91 % and depends on the data.
-  - The exact-projection summaries ship with it.
-  - Cost: about 250 cells for two seasons a year apart.
-
-  Until Ben decides, the §14 population scores with the declared p_range (the plan's allowed route). It counts the truths
-  outside the domain as stratum B′.
 
 ### 1.4 Linear parameters (Luger, Foreman-Mackey & Hogg 2017)
 
@@ -156,8 +142,9 @@ instead, the data are scored by the *same* function, and the night has its own s
   ℓ_k(x, s) = L_k(s_k(x); s_g),  b_k = ln ∫ π_out(p, v, f) · [ ∫ L_k(p, v, f; s_k) π(s_k) ds_k ] dp dv df,
 
 where L_k(p, v, f; ·) is the per-exposure likelihood of a companion moving linearly through the night, p(t_j) = p + v
-(t_j − t̄_k), exactly the within-night motion the inlier term has (`arcs.night_motion`; the orbit's curvature inside a
-night is below the half-resolution motion bound of P_night and is ignored in both). The own scale s_k has one
+(t_j − t̄_k), exactly the within-night motion the inlier term has (`arcs.night_motion`). The orbit's curvature inside a
+night is in the inlier term through the per-exposure positions. The cheap leg's night summaries model it through the
+exact least-squares projection (§1.3, §5). The own scale s_k has one
 log-uniform entry per calibration group on [1/s_max, s_max] (orbit_mixture_v2 §2.4), so b_k is constant in (x, s) and
 a night with q → 1 has zero pull on x. This is the contract; the rest of the section fixes π_out and checks it.
 
@@ -425,7 +412,15 @@ Ben's rule: velocity only with adequate span and SNR, and no threshold. This is 
 
 **What is computed, and at what.** Each night k is fitted **per peak at visibility level** with linear motion over the
 **whole night** (no half-night split, so offsets and spanning gain modes are kept; `OIData._subset` raises on offsets, and
-hd_9312 had 0 velocities; `_MAX_SHIFT` is deleted), at
+hd_9312 had 0 velocities; `_MAX_SHIFT` is deleted). The frame time offsets t_j − t̄_k are stored with each summary.
+
+**What the orbit predicts for a summary** (Ben, 2026-11-02). It predicts the exact least-squares projection of the orbit's
+positions at the stored frame offsets onto (p, v), not the instantaneous state at t̄_k. The projection is a fixed linear
+map of the per-frame positions, so it costs one small matrix product per night. It removes the curvature bias
+½·a(2π/P)²·T_ss/n of §1.3, which reached about 15σ for eccentric short-period orbits. This is what lets P_cut drop
+P_night.
+
+The fit runs at
 
 - **global scale s_g = 1** for every group (the tempered errors of §1.1), the summary being stored so that any s_g is a
   closed-form rescale: per peak j and group g the data count n_gj, the minimum χ²_gj and the Hessian H_gj of ½χ², giving
@@ -934,9 +929,9 @@ run; changing one afterwards is a recorded decision.
 |---|---|---|---|
 | s_max | 10 | declared prior bound | inherited `_NUMERIC_S_MAX`; covers χ²/N ≤ 100 (v2 §2.2) |
 | ε prior | Beta(½, ½) | derived | Jeffreys for a rate |
-| P_cut | max(2Δt_min, P_night) | derived (a declared prior) | §1.3 |
-| P_night | 2π·field·night/(motion_fraction·res), ≥ night, ≥ p_floor | derived | `period_window` |
-| motion_fraction | ½ | tolerance | a companion moving < ½ resolution element in a night; inherited |
+| P_cut | max(2Δt_min over nights merged at gap_days, p_floor) | derived (a declared prior; Ben, 2026-11-02) | §1.3 |
+| P_night | dropped from the orbit-cells path (snapshot-era likelihood only) | n/a | §1.3 |
+| motion_fraction | ½ | tolerance | P_night only, which the orbit-cells path no longer uses (§1.3); inherited |
 | p_floor | 0.2 d | declared | inherited |
 | P_max | 2π·a_hi·span/σ_min, one long-period band [span, P_max] | declared prior bound | orbit_dehack decision 13 (the inherited 4 × span is retired) |
 | a_lo, a_hi | 1, 30 mas | declared prior bound | inherited default; to move to resolution units (decision 12) |
@@ -978,10 +973,9 @@ run; changing one afterwards is a recorded decision.
 | N_POST | 1000 | budget | resample-move draws per cell with p̂ ≥ δ/B |
 | α (FAP) | 0.01 | declared | dehack decision 4 (§8) |
 
-P_cut caveat: in practice the within-night motion bound P_night usually sets P_cut (81 % of random epoch patterns, median
-P_cut/span ≈ 0.05; `scripts/p_cut_random_epochs.py`), so the 2Δt_min term seldom binds. With (p, v) night summaries
-P_night's role is only inside P_cut; the max(2Δt_min, P_night) rule stands (Ben's decision); P_night could now be dropped,
-since within-night motion is modelled. Not changed here.
+P_cut: P_night is dropped (Ben, 2026-11-02). It had set P_cut in 81 % of random epoch patterns
+(`scripts/p_cut_random_epochs.py`) and in all 50 draws of #632's ensemble. P_cut is now max(2Δt_min, p_floor), and
+within-night curvature is modelled by the exact-projection summaries (§1.3).
 
 ## 11. Literature and provenance
 
@@ -1035,12 +1029,13 @@ checked by a vv-independent test (the check script, the prior-recovery tests, th
 ## 12. G1 criteria change (separate PR; awaiting Ben's sign-off; the gate is **not** changed by this PR)
 
 `design/orbit_gate_042.md` §3.3 draws stratum B truths with *P* log-uniform on [1 d, 3 × span]. Under the declared prior
-of §1.3, truths with *P* < P_cut = max(2Δt_min, P_night) fall outside the default prior. The change is in
+of §1.3, truths with *P* < P_cut = max(2Δt_min, p_floor) fall outside the default prior. The change is in
 [#625](https://github.com/benjaminpope/virgil/pull/625), not here: the draw is unchanged, truths with *P* < P_cut are
 excluded and counted (stratum B′, reported, not scored; excluding rather than redrawing keeps the generator stream and
 the before/after pairs identical), the baseline stays reported under its own criteria commit, and the rule is
-`aliases.period_cut`, shared by the engine and the vv harness. M4's `init=` oracle is unchanged. Stratum A (explicit `p_range`) is unaffected. The engine's existing redraw rule already
-uses P_night at the truth's a, so only the 2Δt_min part of P_cut is new in practice.
+`aliases.period_cut`, shared by the engine and the vv harness. M4's `init=` oracle is unchanged. Stratum A (explicit `p_range`) is unaffected. The engine's existing redraw rule used
+P_night at the truth's a. With P_night dropped (§1.3), that rule changes to the 2Δt_min and p_floor terms, so far fewer
+truths fall in B′ than under the old rule.
 
 ## 13. Stage consequences
 
@@ -1092,8 +1087,9 @@ constant is tuned to it after a failure.
   within each season.
 - Noise: σ/a log-uniform on 10⁻⁴–10⁻². 0–2 outlier nights, each with its summary drawn from π_out.
 - Data: night summaries simulated as in #632's `_summaries`.
-- Truths with P outside the declared period domain (§1.3) are excluded and counted (stratum B′, as §12). The count is
-  reported until the domain question of §1.3 is settled.
+- Truths with P outside the declared period domain (§1.3) are excluded and counted (stratum B′, as §12). Under the 2026-11-02
+  domain (P_cut = max(2Δt_min, p_floor)), B′ holds only truths below twice the shortest gap between nights or below
+  p_floor. The count is reported.
 
 **Assertions:**
 
