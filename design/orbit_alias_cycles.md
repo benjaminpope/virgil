@@ -105,10 +105,32 @@ P ∈ [P_cut, P_max], **P_cut = max(2·Δt_min, P_night)**:
 - Consequence for the gate: §12.
 - **TODO (open, 2026-11-02; do not resolve here).** Argon's simulated ensemble on #629 (#632) found 52 % of true
   periods outside the default domain. One example: a single 25-d season with P = 11.4 d, where the lowest cell starts
-  at 39 d. A suspected cause is that P_night (`period_window`, night length 0.1, resolution 3) is a linear-motion bound
-  that scales as a/σ, rather than the curvature bound that (p, v) summaries need. The coordinating session is diagnosing
-  it, and this bullet is replaced by its result. Until then the §14 population counts the truths outside the domain
-  (stratum B′) and does not score them.
+  at 39 d. (39.26 d was the lower edge of the top cell, not the domain floor.)
+
+  **Diagnosis (coordinating session, 2026-11-02).**
+  - `period_domain` passes field = A_RANGE[1] = 30 mas to `aliases.period_cut`.
+  - With the harness's L = 0.1 d and res = 3 mas, P_night = 2π·30·0.1/(0.5·3) = 12.566 d. That binds in 50 of 50
+    draws, while 2·dt_min is ≤ 2.6 d (median 0.25 d).
+
+  **Derivation.**
+  - The per-exposure target needs no within-night bound. P_night belongs to the snapshot-era likelihood.
+  - Only a within-integration bound applies, about 0.015 d, which is below p_floor.
+  - The 2·dt_min grid-alias argument holds exactly for any e and inclination, provided dt_min is taken over nights
+    merged at gap_days = 0.5 d.
+  - The cheap leg does carry a curvature bias. Each night's (p, v) is the least-squares fit over its frames, but
+    `_Space.states` predicts the instantaneous state. The bias is ½·a(2π/P)²·T_ss/n, up to about 15σ for eccentric
+    short-period orbits. It depends on the parameters, so it must be modelled, not cut: predict each night's (p̂, v̂)
+    as the exact least-squares projection of the orbit at the stored frame offsets.
+
+  **Proposal for Ben (it changes his declared prior, so it needs his sign-off).**
+  - P_cut = max(2·dt_min over merged nights, p_floor), with P_night dropped from the orbit-cells path.
+  - `PeriodDomain` reports the binding term, the inputs to P_max, and the N = 0 prior mass. P_max currently sits at
+    a_hi and σ_min, so the N = 0 mass is 63–91 % and depends on the data.
+  - The exact-projection summaries ship with it.
+  - Cost: about 250 cells for two seasons a year apart.
+
+  Until Ben decides, the §14 population scores with the declared p_range (the plan's allowed route). It counts the truths
+  outside the domain as stratum B′.
 
 ### 1.4 Linear parameters (Luger, Foreman-Mackey & Hogg 2017)
 
