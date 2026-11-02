@@ -1,4 +1,4 @@
-"""Cells, period domain and the position-level SMC leg."""
+"""Cells, period domain and the position-level search and evidence."""
 
 import functools
 import types
@@ -156,22 +156,6 @@ def test_the_cells_partition_the_domain_exactly_for_any_edges():
         oc_cells.make_cells(0.0, t, domain, edges[::-1])
 
 
-def test_the_valley_edge_sits_between_two_peaks_and_defaults_without_mass():
-    s = _summaries(_orbit(), TIMES)
-    domain, cells = _cells(s, (6.0, 400.0))
-    t = TIMES[-1] - TIMES[0]
-    rng = onp.random.default_rng(0)
-    # clusters at x = 3.0 and x = 4.0 (T / P): the valley is near 3.5
-    x = onp.r_[rng.normal(3.0, 0.08, 500), rng.normal(4.0, 0.08, 500)]
-    edges = oc_cells.valley_edges(x, onp.ones(x.size), cells, t)
-    n3 = [i for i, c in enumerate(cells[:-1]) if c.n == 3][0]
-    assert t / edges[n3] == pytest.approx(3.5, abs=0.1)
-    # unvisited windows keep the default (half-integer) edge
-    n1 = [i for i, c in enumerate(cells[:-1]) if c.n == 1][0]
-    assert edges[n1] == pytest.approx(cells[n1].p_lo)
-    assert onp.all(onp.diff(onp.r_[domain.p_max, edges, domain.p_cut]) < 0)
-
-
 # --- the likelihood ---------------------------------------------------------
 
 
@@ -301,68 +285,6 @@ def test_the_eccentricity_chart_density_integrates_to_the_disc_measure():
     assert total == pytest.approx(onp.pi, rel=1e-6)
 
 
-def _invariant_stats(space, v):
-    c = space.decode(v)
-    inv = oc.invariants(c["period"], c["z"], c["zeta"])
-    return onp.stack(
-        [
-            onp.asarray(inv["cos_inc"]),
-            onp.log(onp.asarray(inv["a"])),
-            onp.log(onp.asarray(c["period"])),
-        ]
-    )
-
-
-@x64
-def test_the_luger_move_leaves_the_prior_invariant_over_many_steps():
-    # At β = 0 the move targets the prior whatever the likelihood: after many
-    # steps the invariants keep their distribution, and the state really moves.
-    s = _summaries(_orbit(), TIMES)
-    _, cells = _cells(s, (6.0, 400.0))
-    space = _space(s, cells[2])
-    move = oc_cells._luger_move(space)
-    step = jax.jit(jax.vmap(lambda k, p: move(k, p, space.logprior)))
-    x = space.sample(jax.random.key(0), 1500)
-    new, moved = x, onp.zeros(1500, bool)
-    for i in range(20):
-        keys = jax.random.split(jax.random.key(i + 1), 1500)
-        new, took = step(keys, new)
-        moved |= onp.asarray(took, bool)
-    assert moved.mean() > 0.5
-    for a, b in zip(_invariant_stats(space, x), _invariant_stats(space, new)):
-        assert stats.ks_2samp(a, b).pvalue > 1e-3
-
-
-@x64
-@pytest.mark.parametrize("beta", [0.5, 1.0])
-def test_the_luger_move_leaves_a_tempered_target_invariant(beta):
-    """Prior draws weighted by ``L^β`` sample ``π_β``: the move must not shift
-    the weighted mean of any invariant, ``E_prior[w (f(x') - f(x))] = 0``."""
-    s = _summaries(_orbit(), TIMES[:3], sigma=30.0, sigma_f=6.0)  # broad
-    _, cells = _cells(s, (6.0, 400.0))
-    space = _space(s, cells[2])
-    move = oc_cells._luger_move(space)
-
-    def logdensity(v):
-        return space.logprior(v) + beta * space.loglike(v)
-
-    n = 20000
-    x = space.sample(jax.random.key(0), n)
-    keys = jax.random.split(jax.random.key(1), n)
-    new, took = jax.jit(jax.vmap(lambda k, v: move(k, v, logdensity)))(keys, x)
-    assert float(took.mean()) > 0.05
-    ll = onp.asarray(jax.jit(jax.vmap(space.loglike))(x))
-    w = onp.exp(beta * (ll - ll.max()))
-    assert w.sum() ** 2 / (w**2).sum() > 300  # effective sample size
-    before, after = _invariant_stats(space, x), _invariant_stats(space, new)
-    assert onp.array_equal(before[2], after[2])  # the move never touches P
-    for f in (0, 1):  # cos i and ln a
-        d = after[f] - before[f]
-        mean = onp.sum(w * d) / onp.sum(w)
-        err = onp.sqrt(onp.sum((w * (d - mean)) ** 2)) / onp.sum(w)
-        assert abs(mean) < 4 * err
-
-
 @x64
 def test_the_evidence_agrees_between_campbell_and_the_new_coordinates():
     """Z = E_prior[L] by Sobol quadrature in Campbell elements and in
@@ -451,96 +373,179 @@ def test_the_evidence_agrees_between_campbell_and_the_new_coordinates():
     assert abs(ln_z(new) - ln_z(campbell)) < max(tol, 0.02)
 
 
-# --- the leg ------------------------------------------------------------------
+# --- the search and the evidence ------------------------------------------------
 
 
-@pytest.mark.slow
-@x64
-def test_the_leg_recovers_a_toy_evidence_and_the_truth():
-    orbit = _orbit(period=11.3)
-    s = _summaries(orbit, TIMES, sigma=0.3)
-    domain, cells = _cells(s, (6.0, 400.0))
-    cell = [c for c in cells if c.p_lo < 11.3 <= c.p_hi][0]
-    res = oc_cells.position_leg(
-        s, onp.full(len(TIMES), LOG_B), cell, jax.random.key(3),
-        t_anchor=TIMES[0], t_nights=TIMES, n_particles=512,
-    )  # fmt: skip
-    assert not res.stopped and onp.isfinite(res.log_z)
-    d = oc_cells.decode_particles(res)
-    w = onp.asarray(res.weights)
-    mean_p = float(onp.sum(w * onp.asarray(d["period"])))
-    assert mean_p == pytest.approx(11.3, rel=0.03)
-
-
-@pytest.mark.slow
-def test_the_leg_runs_in_float32():
-    orbit = _orbit(period=11.3, a=3.0)
-    s = _summaries(orbit, TIMES[:5], sigma=0.3)
-    cell = oc_cells.Cell(1, 8.0, 14.0, 0.0)
-    res = oc_cells.position_leg(
-        s, onp.full(5, LOG_B), cell, jax.random.key(0), t_anchor=TIMES[0],
-        t_nights=TIMES[:5], n_particles=128, dtype="float32",
-    )  # fmt: skip
-    assert not res.stopped and res.particles.dtype == np.float32
-    assert onp.isfinite(res.log_z)
-
-
-@x64
-def test_the_leg_fails_at_the_time_cap_instead_of_returning_a_posterior():
-    s = _summaries(_orbit(), TIMES[:5], sigma=0.3)
-    cell = oc_cells.Cell(1, 8.0, 14.0, 0.0)
-    res = oc_cells.position_leg(
-        s, onp.full(5, LOG_B), cell, jax.random.key(0), t_anchor=TIMES[0],
-        t_nights=TIMES[:5], n_particles=64, max_seconds=0.0,
-    )  # fmt: skip
-    assert res.stopped and res.particles is None and onp.isnan(res.log_z)
-    with pytest.raises(ValueError, match="stopped"):
-        oc_cells.decode_particles(res)
-
-
-def _gallery_like_times(rng):
-    """Nights in two or three seasons with irregular gaps (random schedules)."""
-    k = int(rng.choice([6, 8, 10]))
-    seasons = onp.sort(rng.uniform(0, 400, 3))
-    t = onp.sort(
-        rng.choice(seasons, size=k) + rng.exponential(5.0, k).cumsum() % 25
+def _true_cell(period, times, s, p_range):
+    domain = oc_cells.period_domain(
+        s, night_length=0.1, resolution=3.0, p_range=p_range
     )
-    return onp.unique(onp.round(t, 3))
+    cells = oc_cells.make_cells(times[0], times[-1], domain)
+    return domain, cells, [c for c in cells if c.p_lo <= period <= c.p_hi][0]
+
+
+def _two_season_times(rng, k=8):
+    """``k`` nights in two seasons a year apart (about 30 d each)."""
+    n1 = k // 2
+    return onp.sort(
+        onp.r_[rng.uniform(0, 30, n1), 365.0 + rng.uniform(0, 30, k - n1)]
+    ).round(3)
+
+
+@x64
+def test_the_symmetry_images_leave_the_target_invariant():
+    s = _summaries(_orbit(), TIMES)
+    _, cells = _cells(s, (6.0, 400.0))
+    space = _space(s, cells[2])
+    images = oc_cells._symmetry_images(space.d)
+    assert len(images) == 15
+    x = space.sample(jax.random.key(0), 6)
+    target = jax.jit(jax.vmap(oc_cells._target, in_axes=(0, None)))
+    base = onp.asarray(target(x, space))
+    assert onp.all(onp.isfinite(base))
+    for g in images:
+        moved = onp.asarray(target(x @ np.asarray(g).T, space))
+        onp.testing.assert_allclose(moved, base, rtol=1e-10, atol=1e-10)
+
+
+@x64
+def test_a_second_cell_of_a_system_compiles_nothing():
+    rng = onp.random.default_rng(0)
+    times = _two_season_times(rng)
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    s = _summaries(orbit, times, sigma=0.06)
+    _, cells, cell = _true_cell(11.3, times, s, (9.0, 14.0))
+    other = cells[cells.index(cell) + 1]
+    count = [0, False]
+
+    def listener(event, duration, **kw):
+        if count[1] and event.endswith("backend_compile_duration"):
+            count[0] += 1
+
+    jax.monitoring.register_event_duration_secs_listener(listener)
+    kw = dict(
+        t_anchor=times[0], t_nights=times, n_is=512, posterior_draws=False
+    )
+    first = oc_cells.position_leg(
+        s, onp.full(len(times), LOG_B), cell, jax.random.key(0), **kw
+    )
+    count[1] = True
+    oc_cells.position_leg(
+        s, onp.full(len(times), LOG_B), other, jax.random.key(1),
+        plan=first.plan, **kw,
+    )  # fmt: skip
+    count[1] = False
+    assert count[0] == 0
+
+
+@x64
+def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
+    s = _summaries(_orbit(), TIMES, sigma=0.3)
+    domain, cells = _cells(s, (60.0, 400.0))
+    real = oc_cells.position_leg
+
+    def leg(summaries, log_outlier, cell, key, **kw):
+        fit = types.SimpleNamespace(
+            cell=cell, log_z=0.0, log_z_error=0.0, modes=[], draws=None,
+            at_floor=cell.n == cells[1].n, plan=None,
+        )  # fmt: skip
+        return fit
+
+    monkeypatch.setattr(oc_cells, "position_leg", leg)
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(len(TIMES), LOG_B),
+        jitter=0.0,
+    )  # fmt: skip
+    assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
+    assert real is not leg
 
 
 @pytest.mark.slow
-@pytest.mark.timeout(1800)
 @x64
-def test_the_true_cycle_count_is_in_the_99_percent_set():
-    hits, runs = 0, 4
-    for seed in range(runs):
-        rng = onp.random.default_rng(100 + seed)
-        times = _gallery_like_times(rng)
-        t = times[-1] - times[0]
-        period = onp.exp(rng.uniform(onp.log(t / 3.4), onp.log(t / 0.9)))
-        orbit = KeplerOrbit(
-            period, rng.uniform(0, period), rng.uniform(0.0, 0.7),
-            onp.degrees(onp.arccos(rng.uniform(-0.9, 0.9))),
-            rng.uniform(0, 360), rng.uniform(0, 360), rng.uniform(4.0, 12.0),
-        )  # fmt: skip
-        s = _summaries(orbit, times, sigma=0.1, seed=seed)
-        domain = oc_cells.period_domain(
-            s, night_length=0.1, resolution=3.0, p_range=(t / 3.6, 2 * t)
-        )
-        out = oc_cells.position_cells(
-            s, domain, jax.random.key(seed), log_outlier=onp.full(len(times), LOG_B),
-            jitter=0.0, n_particles=192, pilot=False,
-        )  # fmt: skip
-        order = onp.argsort(-out.p_pos)
-        keep = order[
-            : int(onp.searchsorted(onp.cumsum(out.p_pos[order]), 0.99)) + 1
-        ]
-        true_n = onp.argmax([c.p_lo <= period <= c.p_hi for c in out.cells])
-        hits += int(true_n in keep)
-        # the position-level cells sum to one and the dropped mass is recorded
-        assert out.p_pos.sum() == pytest.approx(1.0)
-        assert out.pruned_mass < 1e-3 and not out.pruned.any()
-    assert hits == runs
+@pytest.mark.timeout(1200)
+@pytest.mark.parametrize("ecc", [0.0, 0.5])
+@pytest.mark.parametrize("rel", [1e-2, 1e-4])
+def test_the_true_cell_is_found_and_its_cycle_count_is_in_the_99_percent_set(
+    ecc, rel
+):
+    """The search's coverage contract on K = 8 nights in two seasons."""
+    rng = onp.random.default_rng(int(1e4 * ecc) + int(rel * 1e5))
+    times = _two_season_times(rng)
+    period, a = 11.3, 6.0
+    orbit = _orbit(period=period, a=a, ecc=ecc)
+    s = _summaries(orbit, times, sigma=rel * a, seed=1)
+    domain = oc_cells.period_domain(
+        s, night_length=0.1, resolution=3.0, p_range=(9.0, 14.0)
+    )
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(len(times), LOG_B),
+        jitter=0.0, a_range=(1.0, 30.0), e_max=0.9,
+    )  # fmt: skip
+    assert not out.failed.any() and onp.all(onp.isfinite(out.p_pos))
+    order = onp.argsort(-out.p_pos)
+    keep = order[
+        : int(onp.searchsorted(onp.cumsum(out.p_pos[order]), 0.99)) + 1
+    ]
+    true_n = [i for i, c in enumerate(out.cells) if c.p_lo <= period <= c.p_hi]
+    assert true_n[0] in keep
+    fit = out.fits[true_n[0]]
+    best = fit.modes[0]
+    space = fit.space
+    w = np.asarray(best.x[0])
+    p_best = float(space.period(w))
+    slope = float(jax.grad(lambda v: np.log(space.period(v)))(w))
+    sd = abs(slope) * onp.sqrt(best.cov[0, 0])
+    assert abs(onp.log(p_best / period)) < 5 * sd + 1e-3
+
+
+@pytest.mark.slow
+def test_the_position_fit_runs_in_float32():
+    rng = onp.random.default_rng(3)
+    times = _two_season_times(rng, 6)
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    s = _summaries(orbit, times, sigma=0.3)
+    _, _, cell = _true_cell(11.3, times, s, (9.0, 14.0))
+    fit = oc_cells.position_leg(
+        s, onp.full(len(times), LOG_B), cell, jax.random.key(0),
+        t_anchor=times[0], t_nights=times, n_is=1024, dtype="float32",
+    )  # fmt: skip
+    assert fit.draws.dtype == onp.float32 and onp.isfinite(fit.log_z)
+    assert not fit.at_floor
+
+
+@pytest.mark.slow
+@x64
+def test_the_position_evidence_of_a_tiny_case_matches_prior_importance():
+    """K = 3 nights, a circular orbit (``e_max`` -> 1e-6): the search and
+    defensive evidence of the cell against 2**20 plain draws from its prior."""
+    times = onp.array([0.0, 4.1, 9.3])
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    s = _summaries(orbit, times, sigma=0.9, seed=2)
+    domain = oc_cells.period_domain(
+        s, night_length=0.1, resolution=3.0, p_range=(8.0, 14.0)
+    )
+    cells = oc_cells.make_cells(times[0], times[-1], domain)
+    cell = [c for c in cells if c.p_lo <= 11.3 <= c.p_hi][0]
+    log_b = onp.full(3, LOG_B)
+    fit = oc_cells.position_leg(
+        s, log_b, cell, jax.random.key(0), t_anchor=times[0], t_nights=times,
+        e_max=1e-6, n_is=20000, posterior_draws=False,
+    )  # fmt: skip
+    space = oc_cells._Space(
+        oc_cells._Catalogue(s, log_b), cell, times[0], times - times[0],
+        oc_cells.A_RANGE, 1e-6, oc_cells.FLUX_FLOOR, 0.0, np.float64,
+    )  # fmt: skip
+    ll = jax.jit(jax.vmap(space.loglike))
+    chunks = [
+        onp.asarray(ll(space.sample(jax.random.key(10 + i), 2**15)))
+        for i in range(32)
+    ]
+    ref = onp.concatenate(chunks)
+    lz = onp.log(onp.mean(onp.exp(ref - ref.max()))) + ref.max()
+    w = onp.exp(ref - ref.max())
+    ess = w.sum() ** 2 / (w**2).sum()
+    err = onp.sqrt(1 / ess)
+    assert abs(fit.log_z - lz) < 4 * onp.hypot(fit.log_z_error, err) + 0.02
 
 
 # --- review hardening ---------------------------------------------------------
@@ -564,16 +569,6 @@ def test_the_anchors_differ_and_need_two_nights_with_a_peak():
             night_length=0.1,
             resolution=3.0,
         )
-
-
-def test_a_non_finite_evidence_is_a_failure_not_a_probability():
-    leg = types.SimpleNamespace(
-        stopped=False,
-        log_z=float("nan"),
-        cell=oc_cells.Cell(1, 8.0, 14.0, 0.0),
-    )
-    with pytest.raises(RuntimeError, match="non-finite"):
-        oc_cells._check(leg)
 
 
 def _without_rescaling(night):

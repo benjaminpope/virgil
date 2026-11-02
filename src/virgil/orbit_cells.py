@@ -1,48 +1,66 @@
-"""Cells, period domain and the position-level SMC leg of the alias-resolved orbit fit.
+"""Cells, period domain and the position-level search of the alias-resolved orbit fit.
 
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
 The period prior is log-uniform on ``[P_cut, P_max]``
 ([`period_domain`][virgil.orbit_cells.period_domain]). Two anchor nights set
-``T``, and ``T / P = N + ρ`` splits the domain into cells, an exact partition for
-any edges ([`make_cells`][virgil.orbit_cells.make_cells]): the edges sit at valleys
-of a pilot run's marginal of ``T / P`` and change labels only. Each cell is
-sampled by the tempered SMC of [`virgil.smc`][virgil.smc], from the cell prior to
-the night-summary likelihood of [`virgil.night_summaries`][virgil.night_summaries],
-in the ``(ln P, z, ζ)`` coordinates of ``virgil._orbit_coordinates``, with
-HMC and the Luger Gibbs move on the Thiele–Innes constants
-([`position_leg`][virgil.orbit_cells.position_leg]).
+``T``, and ``T / P = N + ρ`` splits the domain into cells, an exact partition
+for any edges ([`make_cells`][virgil.orbit_cells.make_cells]). Each cell is
+searched for the modes of the night-summary likelihood of
+[`virgil.night_summaries`][virgil.night_summaries], in the ``(ln P, z, ζ)``
+coordinates of ``virgil._orbit_coordinates``: variable projection of the
+Thiele–Innes constants on minimal sets of nights, concentration steps and
+Newton refinement. A defensive mixture on the modes (with the images of the
+exact symmetries of the target) gives the evidence by importance sampling, and
+an HMC resample-move gives posterior draws
+([`position_leg`][virgil.orbit_cells.position_leg]). The generic parts are in
+[`virgil.mode_search`][virgil.mode_search].
 [`position_cells`][virgil.orbit_cells.position_cells] runs every cell and gives
-``p(N) ∝ prior mass × Ẑ_N``, with an opt-in pruning that records the dropped mass.
-Design: ``design/orbit_alias_cycles.md`` §4–§7.
+``p(N) ∝ prior mass × Ẑ_N``, with an opt-in pruning that records the dropped
+mass; a cell whose search missed the dominant mode (``cell-at-floor``) is a
+failure, never an evidence. Design: ``design/orbit_alias_cycles.md`` §4–§7.
 
-Source: Luger, Foreman-Mackey & Hogg (2017), Del Moral, Doucet & Jasra (2006),
-[references](../references.md); the cells, outlier floor and leg are derived
-in the design note.
+Source: Fischler & Bolles (1981), Rousseeuw (1984), Rousseeuw & Van Driessen
+(1999), Golub & Pereyra (1973), Hesterberg (1995), Gilks & Berzuini (2001),
+[references](../references.md); the cells, outlier floor and search are
+derived in the design note.
 """
 
 import dataclasses
+import functools
+import itertools
 import math
+import time
 
 import jax
 import jax.numpy as np
 import numpy as onp
 from jax.scipy.special import logsumexp
+from scipy import stats
 from scipy.special import logsumexp as onp_logsumexp
 from scipy.stats import qmc
 
 from . import _orbit_coordinates as oc
-from . import smc
 from ._precision import run_in
 from .aliases import _P_FLOOR, alias_bands, period_cut, position_profile
+from .mode_search import (
+    DefensiveMixture,
+    M_MIN,
+    W,
+    N_IS,
+    Mode,
+    distinct_modes,
+    importance_evidence,
+    resample_move,
+)
 from .night_summaries import DELTA
 from .orbits import KeplerOrbit, PositionData, _unit_orbit
 
 __all__ = [
     "Cell",
+    "CellFit",
     "CellsResult",
-    "LegResult",
     "OutlierPrior",
     "PeriodDomain",
     "choose_anchors",
@@ -54,7 +72,8 @@ __all__ = [
     "period_domain",
     "position_cells",
     "position_leg",
-    "valley_edges",
+    "search_cell",
+    "search_plan",
 ]
 
 __provisional__ = ("*",)
@@ -65,6 +84,27 @@ A_RANGE = (1.0, 30.0)  # mas
 E_MAX = 0.9
 FLUX_FLOOR = 1e-4  # engine's flux floor (arcs._half_position)
 _N_PV = 4  # (p, v) of the linear Gaussian block; ln f is the fifth dimension
+
+# The search (design §6.1, §10; the importance-sampling constants are in
+# virgil.mode_search).
+K_COH = (
+    4  # ln P grid points per cycle of a set's span (> 2 brackets a minimum)
+)
+ZETA_E = (0.0, 0.3, 0.6)  # ζ starts: eccentricities, 8 phases each (17 points)
+ZETA_PHASES = 8  # anchor mean anomalies M_a per eccentricity, from 0 to 2π
+N_SET_MAX = 2000  # enumerate every set below this, a random subset above
+EPS_HI = 0.3  # declared outlier fraction of the RANSAC count (design §10)
+N_C = 10  # C-step cap (labels repeat in 2-3 steps on the toys)
+N_VARPRO = 12  # damped Newton steps of a set's (ln P, ζ) refinement (budget)
+N_NEWTON = 30  # damped Newton steps per C-step and for the refinement (budget)
+TOL_GAIN = (
+    1e-5  # Newton stops at a predicted gain below this (nats: DELTA / 100)
+)
+W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
+N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
+CHUNK_C = 256  # candidates per batched C-step call (budget)
+CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
+R0 = math.sqrt(3.0)  # radius of y_z at a mode: the mode of its chi-4 prior
 
 
 # ---------------------------------------------------------------------------
@@ -227,50 +267,6 @@ def make_cells(t_a, t_b, domain, p_edges=None):
              math.log(math.log(bounds[i] / bounds[i + 1]) / total))
         for i, b in enumerate(bands)
     ]  # fmt: skip
-
-
-def valley_edges(x, weights, cells, t_ab, width=0.25):
-    """Cell edges (periods) at the valleys of a pilot marginal of ``x = T / P``.
-
-    For each pair of neighbouring cells the edge is the minimum of the
-    weighted, Gaussian-smoothed marginal of ``x`` between the two integers
-    around their default edge; with no mass there, the default.
-
-    Parameters
-    ----------
-    x, weights : array-like
-        ``T / P`` of the pilot particles and their weights.
-    cells : sequence of Cell
-        The default cells.
-    t_ab : float
-        ``T``, the time between the anchors (days).
-    width : float, optional
-        Smoothing in ``x`` (default 1/4).
-
-    Returns
-    -------
-    numpy.ndarray
-        One edge per pair of neighbouring cells, as for ``make_cells``.
-    """
-    x, w = onp.asarray(x, float), onp.asarray(weights, float)
-    x_min, x_max = t_ab / cells[0].p_hi, t_ab / cells[-1].p_lo
-    edges = []
-    for upper in cells[:-1]:
-        default = t_ab / upper.p_lo
-        lo, hi = (
-            max(math.floor(default), x_min),
-            min(math.floor(default) + 1, x_max),
-        )
-        # an interior grid: an edge never touches the domain's end
-        grid = onp.linspace(lo, hi, 101)[1:-1]
-        if not w[(x >= lo) & (x <= hi)].sum() > 0:
-            edges.append(upper.p_lo)
-            continue
-        density = (
-            w[None] * onp.exp(-0.5 * ((grid[:, None] - x[None]) / width) ** 2)
-        ).sum(1)
-        edges.append(t_ab / grid[onp.argmin(density)])
-    return onp.array(edges)
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +462,7 @@ def outlier_log_density(summaries, prior, s_max=S_MAX):
 # ---------------------------------------------------------------------------
 
 
+@jax.tree_util.register_pytree_node_class
 class _Catalogue:
     """The nights' peaks as padded arrays (a pytree of constants)."""
 
@@ -495,6 +492,25 @@ class _Catalogue:
             onp.asarray(log_outlier, float), (k,)
         ).copy()
         self.n_eps = (k + 2) // 2  # ⌈(K + 1) / 2⌉: exact for degree K
+
+    _ARRAYS = (
+        "mean", "hess", "n", "chi2", "loglike", "valid", "t_ss", "n_frames",
+        "t_ref", "log_b",
+    )  # fmt: skip
+
+    def tree_flatten(self):
+        return tuple(getattr(self, k) for k in self._ARRAYS), (
+            self.blocks,
+            self.rescalable,
+            self.n_eps,
+        )
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        new = object.__new__(cls)
+        new.__dict__.update(zip(cls._ARRAYS, children))
+        new.blocks, new.rescalable, new.n_eps = aux
+        return new
 
     def cast(self, dtype):
         """The same arrays as ``dtype`` JAX arrays."""
@@ -551,21 +567,31 @@ def _eps_nodes(n):
     return np.sin((2 * np.arange(1, n + 1) - 1) * np.pi / (4 * n)) ** 2
 
 
-def _log_mixture(cat, ln_s, jitter, pv, ln_f, dtype):
+def _log_mixture(cat, ln_s, jitter, pv, ln_f, dtype, inliers=False):
     """``ln ∫ dε Beta(ε) ½ Σ_σ Π_k [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``, with the
-    brighter/fainter sign ``σ`` flipping ``(p, v)``. ``pv`` is ``(K, 4)``."""
+    brighter/fainter sign ``σ`` flipping ``(p, v)``. ``pv`` is ``(K, 4)``.
+
+    With ``inliers``, also the expected number of inlier nights: the night
+    responsibilities ``(1-ε) e^{ℓ̃_k} / [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``, summed
+    over nights and averaged over ``(σ, ε)`` with their posterior weights.
+    """
     eps = _eps_nodes(cat.n_eps).astype(dtype)
-    per_sign = []
+    per_sign, resp = [], []
     for sign in (1.0, -1.0):
         state = np.concatenate(
             [sign * pv, np.full((pv.shape[0], 1), ln_f, dtype)], axis=1
         )
         a = logsumexp(_peak_terms(cat, ln_s, jitter, state, dtype), axis=1)
-        night = np.logaddexp(
-            np.log1p(-eps)[:, None] + a[None], np.log(eps)[:, None] + cat.log_b
-        )
+        inside = np.log1p(-eps)[:, None] + a[None]
+        night = np.logaddexp(inside, np.log(eps)[:, None] + cat.log_b)
         per_sign.append(night.sum(axis=1))
-    return logsumexp(np.stack(per_sign)) - np.log(2.0 * cat.n_eps)
+        resp.append(np.exp(inside - night).sum(axis=1))
+    total = np.stack(per_sign)  # (2, n_eps)
+    out = logsumexp(total) - np.log(2.0 * cat.n_eps)
+    if not inliers:
+        return out
+    weight = np.exp(total - logsumexp(total))
+    return out, np.sum(weight * np.stack(resp))
 
 
 # ---------------------------------------------------------------------------
@@ -580,9 +606,50 @@ def _logistic_log_pdf(w):
     return jax.nn.log_sigmoid(w) + jax.nn.log_sigmoid(-w)
 
 
+def _log_prior(x):
+    """The cell prior in the chart (independent of the cell)."""
+    yz = x[6:8]
+    return (
+        _logistic_log_pdf(x[0])
+        + _logistic_log_pdf(x[5])
+        + _logistic_log_pdf(x[8])
+        + np.sum(_logistic_log_pdf(x[9:]))
+        + np.sum(-0.5 * x[_Z] ** 2 - 0.5 * math.log(2 * math.pi))
+        - math.log(math.pi)
+        - 2.0 * np.log1p(np.sum(yz**2))
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def _prior_sampler(d, dtype):
+    """``sample(key, n)``: exact draws of the chart prior (a stable function)."""
+
+    def sample(key, n):
+        k = jax.random.split(key, 6)
+        zeta = oc.sample_zeta(k[3], (n,)).astype(dtype)  # uniform on the disc
+        return np.concatenate(
+            [
+                jax.random.logistic(k[0], (n, 1), dtype),
+                jax.random.normal(k[1], (n, 4), dtype),
+                jax.random.logistic(k[2], (n, 1), dtype),
+                zeta / np.sqrt(1.0 - np.sum(zeta**2, -1, keepdims=True)),
+                jax.random.logistic(k[4], (n, 1), dtype),
+                jax.random.logistic(k[5], (n, d - 9), dtype),
+            ],
+            axis=1,
+        )
+
+    return sample
+
+
+@jax.tree_util.register_pytree_node_class
 class _Space:
     """Coordinates, prior and likelihood of one cell: ``x`` is the flat chart
-    ``(w_P, y_z[4], w_a, y_ζ[2], w_f, w_s[G])``."""
+    ``(w_P, y_z[4], w_a, y_ζ[2], w_f, w_s[G])``.
+
+    A pytree: the cell bounds, the nights and the catalogue are traced, so one
+    compilation serves every cell of a system.
+    """
 
     def __init__(
         self, cat, cell, t_anchor, t_k, a_range, e_max, flux_floor, jitter,
@@ -590,31 +657,55 @@ class _Space:
     ):  # fmt: skip
         self.cat, self.cell, self.dtype = cat.cast(dtype), cell, dtype
         self.t_anchor, self.t_k = t_anchor, np.asarray(t_k, dtype)
-        self.a_range, self.e_max, self.jitter = a_range, e_max, jitter
+        self.a_range, self.e_max = tuple(a_range), float(e_max)
+        self.jitter = np.asarray(jitter, dtype)
+        self.ln_lo = np.asarray(math.log(cell.p_lo), dtype)
+        self.ln_hi = np.asarray(math.log(cell.p_hi), dtype)
         self.ln_f_floor = math.log(flux_floor)
         self.d = 9 + len(cat.blocks)
         self.s_w2 = (a_range[1] ** 2 - a_range[0] ** 2) / (
             2 * math.log(a_range[1] / a_range[0]) * 3
         )
 
+    def tree_flatten(self):
+        children = (self.cat, self.t_k, self.jitter, self.ln_lo, self.ln_hi)
+        aux = (
+            self.dtype, self.t_anchor, self.a_range, self.e_max,
+            self.ln_f_floor, self.d, self.s_w2,
+        )  # fmt: skip
+        return children, aux
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        new = object.__new__(cls)
+        new.cat, new.t_k, new.jitter, new.ln_lo, new.ln_hi = children
+        (new.dtype, new.t_anchor, new.a_range, new.e_max, new.ln_f_floor,
+         new.d, new.s_w2) = aux  # fmt: skip
+        new.cell = None
+        return new
+
+    def period(self, w):
+        """The period of the logistic coordinate ``w`` (days)."""
+        return np.exp(
+            self.ln_lo + (self.ln_hi - self.ln_lo) * jax.nn.sigmoid(w)
+        )
+
+    def zeta(self, y):
+        """The ζ of its chart coordinate ``y`` (last axis, 2)."""
+        r2 = np.sum(y**2, axis=-1, keepdims=True)
+        return math.sqrt(self.e_max) * y / np.sqrt(1.0 + r2)
+
     def decode(self, x):
         """The orbit coordinates of chart vector(s) ``x`` (last axis)."""
-        lo, hi = math.log(self.cell.p_lo), math.log(self.cell.p_hi)
         la = math.log(self.a_range[0])
         da = math.log(self.a_range[1] / self.a_range[0])
         y = x[..., _Z]
         direction = y / np.linalg.norm(y, axis=-1, keepdims=True)
         a = np.exp(la + da * jax.nn.sigmoid(x[..., 5]))
-        yz = x[..., 6:8]
-        zeta = (
-            math.sqrt(self.e_max)
-            * yz
-            / np.sqrt(1.0 + np.sum(yz**2, axis=-1, keepdims=True))
-        )
         return {
-            "period": np.exp(lo + (hi - lo) * jax.nn.sigmoid(x[..., 0])),
+            "period": self.period(x[..., 0]),
             "z": direction * np.sqrt(2.0 * a)[..., None],
-            "zeta": zeta,
+            "zeta": self.zeta(x[..., 6:8]),
             "ln_f": self.ln_f_floor * (1.0 - jax.nn.sigmoid(x[..., 8])),
             # error scales stay at 1 where a scale does not factor out (gains,
             # closure offsets): the coordinates remain, with no likelihood
@@ -623,9 +714,10 @@ class _Space:
             * (2.0 * jax.nn.sigmoid(x[..., 9:]) - 1.0),
         }
 
-    def states(self, period, ti, zeta):
+    def states_at(self, t, period, ti, zeta):
         """``(p, v)`` of the Thiele–Innes constants ``ti`` (the anchor-frame
-        TI′) at the nights: ``(K, 4)``, in mas and mas/day."""
+        TI′) at times ``t`` (days from the anchor): ``(len(t), 4)``, in mas and
+        mas/day."""
         ecc, anomaly = oc.zeta_to_eccentricity(zeta)
         a, b, f, g = oc.anchor_unrotate(tuple(ti), anomaly)
         dt_peri = -anomaly * period / (2.0 * np.pi)  # anchor at time 0
@@ -634,8 +726,12 @@ class _Space:
             x, y = _unit_orbit(dt, period, dt_peri, ecc)
             return np.stack([b * x + g * y, a * x + f * y])
 
-        pos, vel = jax.jvp(position, (self.t_k,), (np.ones_like(self.t_k),))
+        pos, vel = jax.jvp(position, (t,), (np.ones_like(t),))
         return np.concatenate([pos.T, vel.T], axis=1)
+
+    def states(self, period, ti, zeta):
+        """``(p, v)`` of ``ti`` at the nights: ``(K, 4)``."""
+        return self.states_at(self.t_k, period, ti, zeta)
 
     def loglike(self, x):
         c = self.decode(x)
@@ -645,212 +741,663 @@ class _Space:
         )
 
     def logprior(self, x):
-        yz = x[6:8]
-        return (
-            _logistic_log_pdf(x[0])
-            + _logistic_log_pdf(x[5])
-            + _logistic_log_pdf(x[8])
-            + np.sum(_logistic_log_pdf(x[9:]))
-            + np.sum(-0.5 * x[_Z] ** 2 - 0.5 * math.log(2 * math.pi))
-            - math.log(math.pi)
-            - 2.0 * np.log1p(np.sum(yz**2))
-        )
+        return _log_prior(x)
 
     def sample(self, key, n):
         """``n`` exact draws from the cell prior."""
-        k = jax.random.split(key, 6)
-        dt = self.dtype
-        zeta = oc.sample_zeta(k[3], (n,)).astype(dt)  # uniform on the disc
-        return np.concatenate(
-            [
-                jax.random.logistic(k[0], (n, 1), dt),
-                jax.random.normal(k[1], (n, 4), dt),
-                jax.random.logistic(k[2], (n, 1), dt),
-                zeta / np.sqrt(1.0 - np.sum(zeta**2, -1, keepdims=True)),
-                jax.random.logistic(k[4], (n, 1), dt),
-                jax.random.logistic(k[5], (n, self.d - 9), dt),
-            ],
-            axis=1,
-        )
-
-    def with_ti(self, x, theta, key):
-        """``x`` with its ``z`` replaced by a preimage of ``theta`` (TI′), the
-        radius of ``y`` kept; ``None`` where ``a`` leaves its prior range."""
-        z = oc.ti_to_z(*theta)
-        # the four preimages are equivalent: pick one uniformly
-        z = z * (2.0 * jax.random.bernoulli(key, 0.5, (2,)) - 1.0).repeat(2)
-        a = oc.semimajor(z)
-        la = math.log(self.a_range[0])
-        da = math.log(self.a_range[1] / self.a_range[0])
-        frac = (np.log(a) - la) / da
-        ok = (frac > 0.0) & (frac < 1.0)
-        frac = np.clip(frac, 1e-12, 1.0 - 1e-12)
-        y = z / np.linalg.norm(z) * np.linalg.norm(x[_Z])
-        new = x.at[_Z].set(y).at[5].set(np.log(frac) - np.log1p(-frac))
-        return new, ok
+        return _prior_sampler(self.d, self.dtype)(key, n)
 
 
-def _luger_move(space):
-    """The Luger Gibbs-then-Metropolis move on TI′ (design §6.3).
+# ---------------------------------------------------------------------------
+# The search
+# ---------------------------------------------------------------------------
 
-    Given the core ``(P, ζ, ln f, ln s)`` the night states are linear in
-    ``TI′``. Draw ``(ε node, σ, peak labels)`` from their conditional, propose
-    ``TI′`` from the Gaussian conditional under the working prior
-    ``N(0, s_w² I)`` and accept by the independence-Metropolis ratio of the
-    augmented target; it leaves the tempered density invariant at any β.
+
+def _target(x, space):
+    """The label-summed log target (log prior + log likelihood) at ``x``."""
+    return space.loglike(x) + space.logprior(x)
+
+
+def _inliers(x, space):
+    """Expected number of inlier nights at ``x`` (see ``_log_mixture``)."""
+    c = space.decode(x)
+    pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+    return _log_mixture(
+        space.cat, c["ln_s"], space.jitter, pv, c["ln_f"], space.dtype,
+        inliers=True,
+    )[1]  # fmt: skip
+
+
+def _objective(x, space):
+    """The search objective: the target with the chi-4 radial prior of ``y_z``.
+
+    The likelihood depends on the direction of ``y_z`` only, so the target has
+    no mode in its radius; ``+ 3 ln |y_z|`` (the radial volume) puts it at
+    ``√3`` with curvature 2, and leaves the angular curvature at a mode as it
+    is. It places modes and their covariances; the evidence uses the target.
     """
-    cat, dtype = space.cat, space.dtype
+    return _target(x, space) + 3.0 * np.log(np.linalg.norm(x[_Z]))
 
-    def move(key, x, logdensity):
-        k_node, k_label, k_prop, k_acc, k_sign = jax.random.split(key, 5)
-        c = space.decode(x)
-        theta = np.stack(oc.z_to_ti(c["z"]))
-        jac = jax.jacfwd(lambda t: space.states(c["period"], t, c["zeta"]))
-        lin = jac(theta)  # (K, 4, 4): states are linear in TI′
-        eps = _eps_nodes(cat.n_eps).astype(dtype)
-        pv = np.einsum("kab,b->ka", lin, theta)
-        signs = np.array([1.0, -1.0], dtype)
-        terms = np.stack(
-            [
-                _peak_terms(
-                    cat,
-                    c["ln_s"],
-                    space.jitter,
-                    np.concatenate(
-                        [s * pv, np.full((pv.shape[0], 1), c["ln_f"], dtype)],
-                        1,
-                    ),
-                    dtype,
-                )
-                for s in signs
-            ]
-        )  # (2, K, J)
-        a = logsumexp(terms, axis=2)  # (2, K)
-        night = np.logaddexp(
-            np.log1p(-eps)[:, None, None] + a[None],
-            np.log(eps)[:, None, None] + cat.log_b,
-        )  # (n, 2, K)
-        joint = night.sum(axis=2)
-        pick = jax.random.categorical(k_node, joint.ravel())
-        i, si = pick // 2, pick % 2
-        sign = signs[si]
-        labels_logit = np.concatenate(
-            [
-                np.log1p(-eps[i]) + terms[si],
-                (np.log(eps[i]) + cat.log_b)[:, None],
-            ],
-            axis=1,
-        )  # (K, J + 1): the last column is the outlier
-        j = jax.random.categorical(k_label, labels_logit, axis=1)  # (K,)
-        peak = j < terms.shape[2]
-        j = np.minimum(j, terms.shape[2] - 1)
-        _, _, inv = _peak_precision(cat, c["ln_s"], space.jitter, dtype)
-        rows = np.arange(j.shape[0])
-        lam = inv[rows, j][:, :_N_PV, :_N_PV] * peak[:, None, None]
-        cross = inv[rows, j][:, :_N_PV, _N_PV] * peak[:, None]
-        mean = cat.mean[rows, j]
-        d_f = c["ln_f"] - mean[:, 4]
-        prec = np.eye(4, dtype=dtype) / space.s_w2 + np.einsum(
-            "kba,kbc,kcd->ad", lin, lam, lin
+
+def _night_terms(x, space):
+    """``(K, J)`` peak terms at ``x`` for the brighter-star sign ``σ = +1``."""
+    c = space.decode(x)
+    pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+    state = np.concatenate(
+        [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
+    )
+    return _peak_terms(space.cat, c["ln_s"], space.jitter, state, space.dtype)
+
+
+def _labels(x, space):
+    """Each night's best peak, or -1 (outlier) where the floor is higher.
+
+    At the prior mean ``ε̄ = ½`` the inlier and outlier weights ``1 - ε̄`` and
+    ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``.
+    """
+    terms = _night_terms(x, space)
+    j = np.argmax(terms, axis=1)
+    best = np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
+    return np.where(best > space.cat.log_b, j, -1)
+
+
+def _lm(f, x, args, n_iter, step_max=10.0):
+    """Saddle-free Levenberg–Marquardt ascent of ``f(x, *args)``.
+
+    Newton with ``|eigenvalues|`` of the Hessian plus a damping ``λ`` that
+    falls on an accepted step and rises on a rejected one (a step is accepted
+    only if ``f`` is finite and rises). Stops after ``n_iter`` steps or when
+    the predicted gain ``g·step`` is below ``TOL_GAIN``. vmap-able.
+    Returns ``(x, f(x))``.
+    """
+    grad, hess = jax.grad(f), jax.hessian(f)
+
+    def body(c):
+        i, x, fx, lam, _ = c
+        g, h = grad(x, *args), -hess(x, *args)
+        e, v = np.linalg.eigh(0.5 * (h + h.T))
+        step = v @ ((v.T @ g) / (np.abs(e) + lam))
+        step = step * np.minimum(
+            1.0, step_max / (np.linalg.norm(step) + 1e-30)
         )
-        rhs = sign * np.einsum(
-            "kba,kb->a", lin,
-            np.einsum("kab,kb->ka", lam, mean[:, :_N_PV]) - cross * d_f[:, None],
+        fn = f(x + step, *args)
+        ok = np.isfinite(fn) & (fn > fx)
+        gain = np.where(np.isfinite(g @ step), g @ step, 0.0)
+        return (
+            i + 1,
+            np.where(ok, x + step, x),
+            np.where(ok, fn, fx),
+            np.where(
+                ok, np.maximum(lam / 3.0, 1e-9), np.minimum(lam * 4.0, 1e8)
+            ),
+            np.where(ok, gain, np.inf),
+        )
+
+    fx = f(x, *args)
+    fx = np.where(np.isfinite(fx), fx, -np.inf)
+    init = (0, x, fx, np.asarray(1e-2, x.dtype), np.asarray(np.inf, x.dtype))
+    _, x, fx, _, _ = jax.lax.while_loop(
+        lambda c: (c[0] < n_iter) & (c[4] > TOL_GAIN), body, init
+    )
+    return x, fx
+
+
+def _design(space, nights, v):
+    """``states`` at a set's three nights as a linear map of TI′: ``(3, 4, 4)``.
+
+    ``v = (w_P, y_ζ[2])`` is the chart's period and ζ.
+    """
+    period, zeta = space.period(v[0]), space.zeta(v[1:3])
+    t = space.t_k[nights]
+    zero = np.zeros(4, space.dtype)
+    return jax.jacfwd(lambda ti: space.states_at(t, period, ti, zeta))(zero)
+
+
+def _solve_set(g, mean, w, s_w2):
+    """TI′ and the residual of one set at design ``g`` (variable projection).
+
+    Weighted least squares of the set's ``(p, v)`` peak means on TI′ with the
+    precisions ``w`` and a ridge ``1 / s_w²`` (the working prior), so the solve
+    is defined on degenerate sets. Returns ``(R, ti)``, ``R = Σ rᵀ W r +
+    |ti|²/s_w²``.
+
+    Source: Golub & Pereyra (1973).
+    """
+    a = np.einsum("mia,mij,mjb->ab", g, w, g) + np.eye(4, dtype=g.dtype) / s_w2
+    b = np.einsum("mia,mij,mj->a", g, w, mean)
+    ti = np.linalg.solve(a, b)
+    r = mean - np.einsum("mia,a->mi", g, ti)
+    return np.einsum("mi,mij,mj->", r, w, r) + ti @ ti / s_w2, ti
+
+
+@jax.jit
+def _grid_stage(space, plan):
+    """Every set's residual on a ``ln P`` grid of the cell, at every ζ start.
+
+    ``K_COH + 1`` points equally spaced in ``ν = 1 / P`` over the cell: a cell
+    is ``1 / T`` wide in ``ν``, so a set of span ``Δ`` needs
+    ``⌈K_COH Δ / T⌉ + 1 <= K_COH + 1``. Returns the residuals ``(S, Z, n)``,
+    their local minima along the grid (grid ends count) and the grid's ``ln P``.
+    """
+    nu = np.linspace(
+        1.0 / np.exp(space.ln_hi), 1.0 / np.exp(space.ln_lo), K_COH + 1
+    )
+    period, zeta = 1.0 / nu, space.zeta(plan["y0"])
+    zero = np.zeros(4, space.dtype)
+
+    def design(p, z):
+        return jax.jacfwd(lambda ti: space.states(p, ti, z))(zero)
+
+    g = jax.vmap(lambda z: jax.vmap(lambda p: design(p, z))(period))(zeta)
+
+    def per_set(nights, w, mean):
+        return jax.vmap(
+            jax.vmap(lambda gg: _solve_set(gg, mean, w, space.s_w2)[0])
+        )(g[:, :, nights])
+
+    r = jax.vmap(per_set)(plan["nights"], plan["w"], plan["mean"])
+    left = np.concatenate([r[..., :1], r[..., :-1]], -1)
+    right = np.concatenate([r[..., 1:], r[..., -1:]], -1)
+    return r, (r <= left) & (r <= right) & np.isfinite(r), np.log(period)
+
+
+def _varpro_objective(v, nights, w, mean, space):
+    return -0.5 * _solve_set(_design(space, nights, v), mean, w, space.s_w2)[0]
+
+
+def _chart_from(space, v, ti, ln_f):
+    """The chart vector of ``(w_P, y_ζ) = v``, TI′ and ``ln f``, with ``y_z``
+    at the radius ``R0`` and the error scales at one."""
+    z = oc.ti_to_z(*tuple(ti))
+    la = math.log(space.a_range[0])
+    da = math.log(space.a_range[1] / space.a_range[0])
+    frac = np.clip((np.log(oc.semimajor(z)) - la) / da, 1e-6, 1.0 - 1e-6)
+    ff = np.clip(1.0 - ln_f / space.ln_f_floor, 1e-6, 1.0 - 1e-6)
+    return np.concatenate(
+        [
+            v[:1],
+            z / np.linalg.norm(z) * R0,
+            (np.log(frac) - np.log1p(-frac))[None],
+            v[1:3],
+            (np.log(ff) - np.log1p(-ff))[None],
+            np.zeros(space.d - 9, space.dtype),
+        ]
+    )
+
+
+@functools.partial(jax.jit, static_argnames=("n_iter",))
+def _varpro_chunk(space, plan, s, v0, n_iter):
+    """Refine ``(ln P, ζ)`` of each set ``s`` from ``v0``; return the chart
+    vector, labels, residual and the Hessian of ``R / 2`` in ``v``."""
+
+    def one(si, v):
+        args = (plan["nights"][si], plan["w"][si], plan["mean"][si], space)
+        v, fv = _lm(_varpro_objective, v, args, n_iter)
+        ti = _solve_set(
+            _design(space, args[0], v), args[2], args[1], space.s_w2
+        )[1]
+        x = _chart_from(space, v, ti, plan["lnf"][si])
+        h = -jax.hessian(_varpro_objective)(v, *args)
+        return x, _labels(x, space), -2.0 * fv, v, h
+
+    return jax.vmap(one)(s, v0)
+
+
+def _labelled_objective(v, lab, wk, mk, space):
+    """Minus half the variable-projection residual of every night labelled an
+    inlier, at ``(w_P, y_ζ) = v``: the C-step's labelled target (``s = 1``,
+    full ``(p, v)`` precisions, outlier nights constant)."""
+    k = lab.shape[0]
+    j = np.maximum(lab, 0)
+    w = np.where((lab >= 0)[:, None, None], wk[np.arange(k), j], 0.0)
+    g = _design(space, np.arange(k), v)
+    return -0.5 * _solve_set(g, mk[np.arange(k), j], w, space.s_w2)[0]
+
+
+@functools.partial(jax.jit, static_argnames=("n_iter",))
+def _cstep_chunk(space, plan, v, lab, n_iter):
+    """One C-step per candidate: Newton in ``(ln P, ζ)`` on the labelled
+    target (TI′ and ``ln f`` solved linearly), then relabel at the result.
+    Returns ``v``, the labels, the chart vector, the residual and the Hessian
+    of ``R / 2`` in ``v``."""
+
+    def one(v, lab):
+        args = (lab, plan["wk"], plan["mk"], space)
+        v, fv = _lm(_labelled_objective, v, args, n_iter)
+        k = lab.shape[0]
+        j = np.maximum(lab, 0)
+        w = np.where(
+            (lab >= 0)[:, None, None], plan["wk"][np.arange(k), j], 0.0
+        )
+        ti = _solve_set(
+            _design(space, np.arange(k), v),
+            plan["mk"][np.arange(k), j],
+            w,
+            space.s_w2,
+        )[1]
+        wf = np.where(lab >= 0, plan["wf"][np.arange(k), j], 0.0)
+        ln_f = np.sum(wf * plan["fm"][np.arange(k), j]) / np.maximum(
+            wf.sum(), 1e-30
+        )
+        x = _chart_from(space, v, ti, ln_f)
+        h = -jax.hessian(_labelled_objective)(v, *args)
+        return v, _labels(x, space), x, -2.0 * fv, h
+
+    return jax.vmap(one)(v, lab)
+
+
+@functools.partial(jax.jit, static_argnames=("n_iter",))
+def _refine(space, x, n_iter):
+    """Newton on the label-summed objective from one ``x``: the result, minus
+    its Hessian, the target and the expected inlier count. One candidate per
+    call: a batch would run every member as long as the slowest."""
+    x, _ = _lm(_objective, x, (space,), n_iter)
+    return (
+        x,
+        -jax.hessian(_objective)(x, space),
+        _target(x, space),
+        _inliers(x, space),
+    )
+
+
+@jax.jit
+def _scores(space, x):
+    """Laplace ``ln Z`` at each ``x`` of a batch, from the saddle-free Hessian
+    (``|eigenvalues|``) of the objective: the start's estimate of its mode's."""
+
+    def one(x):
+        h = -jax.hessian(_objective)(x, space)
+        e = np.linalg.eigvalsh(0.5 * (h + h.T))
+        return (
+            _objective(x, space)
+            + 0.5 * x.shape[0] * math.log(2.0 * math.pi)
+            - 0.5 * np.sum(np.log(np.maximum(np.abs(e), 1e-12)))
+        )
+
+    return jax.vmap(one)(x)
+
+
+def _prune(space, x):
+    """Indices of the candidates within ``W_PRUNE`` of the best Laplace ``ln Z``.
+
+    A candidate that far below the best is covered by the prior share of the
+    mixture, whose weights are bounded by ``e^W / α``; dropping it cannot bias
+    the evidence. The estimate is at the start ``x`` (not its mode): it agreed
+    with the refined one to 1-2 nats where measured, and the margin is twice
+    ``W`` for that. A non-finite score drops the candidate.
+    """
+    if not len(x):
+        return onp.zeros(0, int)
+    score = onp.concatenate(
+        [
+            onp.asarray(
+                _scores(
+                    space, np.asarray(_padded(x[sl], CHUNK_C), space.dtype)
+                )
+            )[: sl.stop - sl.start]
+            for sl in _chunks(len(x), CHUNK_C)
+        ]
+    )
+    score = onp.where(onp.isfinite(score), score, -onp.inf)
+    return onp.flatnonzero(score >= score.max() - W_PRUNE)
+
+
+def _chunks(n, size):
+    """Slices of ``range(n)`` of ``size`` (the last is padded by the caller)."""
+    return [slice(i, min(i + size, n)) for i in range(0, n, size)]
+
+
+def _padded(a, size):
+    """``a`` with its first row repeated to ``size`` rows."""
+    return onp.concatenate([a, onp.repeat(a[:1], size - len(a), axis=0)])
+
+
+def _ransac_count(m):
+    """Random minimal sets of ``m`` nights, one all-inlier with prob ``1 - δ``.
+
+    ``n = ⌈ln δ / ln(1 - w^m)⌉`` with inlier fraction ``w = 1 - EPS_HI``.
+
+    Source: Fischler & Bolles (1981).
+    """
+    return math.ceil(math.log(DELTA) / math.log(1.0 - (1.0 - EPS_HI) ** m))
+
+
+def search_plan(space, key=None):
+    """The minimal sets of a system, as arrays (the same for every cell).
+
+    Pairs of nights (positions and velocities: 8 equations for the 4 TI′ at
+    fixed ``(P, ζ)``) and triplets (positions only: 6), with every combination
+    of their peaks. Above ``N_SET_MAX`` a random subset is drawn from ``key``,
+    split over the two sizes by their counts and at least
+    [`_ransac_count`][virgil.orbit_cells._ransac_count] each (the count
+    guarantees an all-inlier set, not the set that spans the inliers: see
+    design §6.1).
+
+    Each set carries its precisions ``W`` (the ``(p, v)`` block of the peak's
+    total covariance at ``ln s = 0`` and the fitted jitter), the peak means, the
+    precision-weighted ``ln f`` and the cut on its residual: the ``1 - δ``
+    quantile of ``χ²`` with the set's equations less the 4 TI′, times
+    ``S_MAX²`` where the error scale is free (``(P, ζ)`` are fitted too,
+    which only lowers the residual: the cut is conservative).
+    """
+    cat, dt = space.cat, space.dtype
+    zero = np.zeros(len(cat.blocks), dt)
+    total = onp.asarray(_peak_precision(cat, zero, space.jitter, dt)[1], float)
+    w_pv = onp.linalg.inv(total[..., :4, :4])
+    w_pos = onp.zeros_like(w_pv)
+    w_pos[..., :2, :2] = onp.linalg.inv(total[..., :2, :2])
+    w_f = 1.0 / total[..., 4, 4]
+    mean_all, valid = onp.asarray(cat.mean, float), onp.asarray(cat.valid)
+    peaks = [onp.flatnonzero(v) for v in valid]
+    seed = 0 if key is None else int(jax.random.randint(key, (), 0, 2**31 - 1))
+    rng = onp.random.default_rng(seed)
+    sets = {2: [], 3: []}
+    for m in (2, 3):
+        for nights in itertools.combinations(range(len(peaks)), m):
+            if all(len(peaks[k]) for k in nights):
+                for pk in itertools.product(*[peaks[k] for k in nights]):
+                    sets[m].append((nights, pk))
+    total_sets = sum(len(v) for v in sets.values())
+    if total_sets > N_SET_MAX:
+        for m in (2, 3):
+            n = max(
+                _ransac_count(m), round(N_SET_MAX * len(sets[m]) / total_sets)
+            )
+            if n < len(sets[m]):
+                pick = rng.choice(len(sets[m]), n, replace=False)
+                sets[m] = [sets[m][i] for i in sorted(pick)]
+    chosen = sets[2] + sets[3]
+    s = len(chosen)
+    nights = onp.zeros((s, 3), int)
+    w = onp.zeros((s, 3, 4, 4))
+    mean = onp.zeros((s, 3, 4))
+    lnf, cut = onp.zeros(s), onp.zeros(s)
+    scale = S_MAX**2 if cat.rescalable else 1.0
+    for i, (nt, pk) in enumerate(chosen):
+        wt = w_pv if len(nt) == 2 else w_pos
+        nights[i, :] = nt[0]
+        nights[i, : len(nt)] = nt
+        for j, (k, p) in enumerate(zip(nt, pk)):
+            w[i, j], mean[i, j] = wt[k, p], mean_all[k, p, :4]
+        wf = onp.array([w_f[k, p] for k, p in zip(nt, pk)])
+        lnf[i] = (
+            wf
+            @ onp.array([mean_all[k, p, 4] for k, p in zip(nt, pk)])
+            / wf.sum()
+        )
+        cut[i] = scale * stats.chi2.isf(DELTA, 4 if len(nt) == 2 else 2)
+    ecc = onp.minimum(onp.array(ZETA_E), 0.5 * space.e_max)
+    ecc = onp.maximum(ecc, min(1e-4, 0.5 * space.e_max))  # ζ = 0 has no M_a
+    starts = [(ecc[0], 0.0)] + [
+        (e, 2.0 * math.pi * i / ZETA_PHASES)
+        for e in ecc[1:]
+        for i in range(ZETA_PHASES)
+    ]
+    zeta = onp.array(
+        [
+            [math.sqrt(e) * math.cos(a / 2), math.sqrt(e) * math.sin(a / 2)]
+            for e, a in starts
+        ]
+    )
+    y0 = zeta / onp.sqrt(space.e_max - (zeta**2).sum(1, keepdims=True))
+    return {
+        "nights": np.asarray(nights), "w": np.asarray(w, dt), "mean": np.asarray(mean, dt),
+        "lnf": np.asarray(lnf, dt), "cut": onp.asarray(cut), "y0": np.asarray(y0, dt),
+        "wk": np.asarray(w_pv, dt), "mk": np.asarray(mean_all[..., :4], dt),
+        "wf": np.asarray(w_f, dt), "fm": np.asarray(mean_all[..., 4], dt),
+    }  # fmt: skip
+
+
+def _unique_starts(lab, v, h, r):
+    """Candidates (best residual first) not within ``MAHAL`` of a kept one.
+
+    Two candidates with the same labels are the same when their
+    squared Mahalanobis distance in ``(w_P, y_ζ)`` is below one under *both*
+    Hessians (the symmetric rule of ``distinct_modes``).
+    """
+    kept, groups = [], {}
+    for i in onp.argsort(r):
+        prec = 0.5 * (h[i] + h[i].T)
+        e, u = onp.linalg.eigh(prec)
+        prec = (u * onp.maximum(e, 1e-12)) @ u.T
+        h[i] = prec
+        near = False
+        for j in groups.get(lab[i].tobytes(), ()):
+            d = v[i] - v[j]
+            if max(d @ h[j] @ d, d @ prec @ d) < 1.0:
+                near = True
+                break
+        if not near:
+            kept.append(i)
+            groups.setdefault(lab[i].tobytes(), []).append(i)
+    return onp.array(kept, int)
+
+
+def search_cell(space, key=None, *, plan=None, info=None):
+    """The modes of the label-summed target in one cell, best first.
+
+    1. Every minimal set of [`search_plan`][virgil.orbit_cells.search_plan], at
+       each of the 17 ζ starts, on a ``ln P`` grid of the cell; at every grid
+       minimum a damped Newton in ``(ln P, ζ)`` on the set's variable-projection
+       residual.
+    2. Candidates whose set residual exceeds its derived ``χ²`` cut are dropped,
+       the rest deduplicated by labels and ``(ln P, ζ)``.
+    3. C-steps (at most ``N_C``): Newton on the labelled target in the full
+       chart, relabel, until the labels repeat.
+    4. Newton on the label-summed objective; keep it if minus its Hessian is
+       positive definite; ``distinct_modes``.
+
+    ``info``, a dict, receives the counts of each step and ``evaluations``, the
+    likelihood-equivalent cost (a gradient is 3, a Hessian 3 per dimension).
+
+    Source: Fischler & Bolles (1981), Rousseeuw (1984), Rousseeuw & Van Driessen
+    (1999), Golub & Pereyra (1973).
+    """
+    plan = search_plan(space, key) if plan is None else plan
+    info = {} if info is None else info
+    n_sets, d, k = len(plan["nights"]), space.d, len(space.cat.log_b)
+    newton = 4.0 + 3.0 * d  # one Newton step, in likelihood evaluations
+    info.update(sets=n_sets, candidates=0, survivors=0, unique=0, modes=0)
+    info["evaluations"] = 0.0
+    if n_sets == 0:
+        return []
+    r, is_min, ln_p = _grid_stage(space, plan)
+    s_i, z_i, p_i = onp.nonzero(onp.asarray(is_min))
+    info["candidates"] = len(s_i)
+    info["evaluations"] += float(r.size * 2 / max(k, 1))
+    frac = onp.clip(
+        (onp.asarray(ln_p)[p_i] - float(space.ln_lo))
+        / float(space.ln_hi - space.ln_lo),
+        0.01,
+        0.99,
+    )
+    v0 = onp.stack(
+        [onp.log(frac) - onp.log1p(-frac)]
+        + [onp.asarray(plan["y0"])[z_i, 0], onp.asarray(plan["y0"])[z_i, 1]],
+        1,
+    )
+    out = []
+    for sl in _chunks(len(s_i), CHUNK_VP):
+        n = sl.stop - sl.start
+        res = _varpro_chunk(
+            space, plan, _padded(s_i[sl], CHUNK_VP),
+            np.asarray(_padded(v0[sl], CHUNK_VP), space.dtype), N_VARPRO,
         )  # fmt: skip
-        chol = np.linalg.cholesky(prec)
-        mu = np.linalg.solve(prec, rhs)
-        noise = jax.random.normal(k_prop, (4,), dtype)
-        proposal = mu + jax.scipy.linalg.solve_triangular(
-            chol.T, noise, lower=False
+        out.append([onp.asarray(a)[:n] for a in res])
+    info["evaluations"] += len(s_i) * N_VARPRO * (4.0 + 9.0) * 3 / max(k, 1)
+    if not out:
+        return []
+    x, lab, rr, v, h = (onp.concatenate([o[i] for o in out]) for i in range(5))
+    ok = onp.isfinite(x).all(1) & onp.isfinite(rr) & (rr <= plan["cut"][s_i])
+    info["survivors"] = int(ok.sum())
+    if not ok.any():
+        return []
+    x, lab, rr, v, h = x[ok], lab[ok], rr[ok], v[ok], h[ok]
+    keep = _unique_starts(lab, v, h, rr)
+    v, lab = v[keep], lab[keep]
+    info["unique"] = len(v)
+    x = onp.zeros((len(v), d))
+    r2, h2 = onp.zeros(len(v)), onp.zeros((len(v), 3, 3))
+    active, steps = onp.arange(len(v)), 0
+    for n_pass, n_iter in enumerate((N_PRE,) + (N_NEWTON,) * N_C):
+        changed = []
+        for sl in _chunks(len(active), CHUNK_C):
+            idx = active[sl]
+            res = _cstep_chunk(
+                space, plan,
+                np.asarray(_padded(v[idx], CHUNK_C), space.dtype),
+                np.asarray(_padded(lab[idx], CHUNK_C)), n_iter,
+            )  # fmt: skip
+            vs, ls, xs, rs, hs = (onp.asarray(a)[: len(idx)] for a in res)
+            changed.append(idx[(ls != lab[idx]).any(1)])
+            v[idx], lab[idx], x[idx], r2[idx], h2[idx] = vs, ls, xs, rs, hs
+            steps += len(idx) * n_iter
+        if n_pass == 0:
+            # a few steps merge most candidates onto their modes
+            ok = onp.isfinite(x).all(1) & onp.isfinite(v).all(1)
+            keep = onp.flatnonzero(ok)[
+                _unique_starts(lab[ok], v[ok], h2[ok], r2[ok])
+            ]
+            keep = keep[_prune(space, x[keep])]
+            if not len(keep):
+                return []
+            v, lab, x, r2, h2 = v[keep], lab[keep], x[keep], r2[keep], h2[keep]
+            active = onp.arange(len(v))
+            continue
+        active = onp.concatenate(changed) if changed else active[:0]
+        if not len(active):
+            break
+    info["evaluations"] += steps * (1.0 + 3.0 + 9.0)
+    ok = onp.isfinite(x).all(1) & onp.isfinite(v).all(1)
+    x, lab, v, r2, h2 = x[ok], lab[ok], v[ok], r2[ok], h2[ok]
+    keep = _unique_starts(lab, v, h2, r2)
+    x = x[keep][_prune(space, x[keep])]
+    modes = []
+    for xi in x:
+        xi, hi, ti, ni = (
+            onp.asarray(a)
+            for a in _refine(space, np.asarray(xi, space.dtype), N_NEWTON)
         )
-        new, ok = space.with_ti(x, proposal, k_sign)
-
-        def log_target(point, ti):
-            """``ln τ(θ) - ln N_w(θ) - ln L(θ)`` with τ the tempered density in
-            TI′: the chart prior drops out, leaving β ln L and ``p(TI′)``."""
-            u = np.hypot(ti[0] + ti[3], ti[1] - ti[2])
-            v = np.hypot(ti[0] - ti[3], ti[1] + ti[2])
-            a = (u + v) / 2
-            # ln p(TI′): isotropic orientation, log-uniform a (design §3.2)
-            log_p = (
-                -np.log(
-                    np.pi**2 * math.log(space.a_range[1] / space.a_range[0])
-                )
-                - 2.0 * np.log(u + v)
-                - np.log(u)
-                - np.log(v)
-            )
-            log_p = np.where(
-                (a >= space.a_range[0]) & (a <= space.a_range[1]),
-                log_p,
-                -np.inf,
-            )
-            return (
-                log_p
-                + logdensity(point)
-                - space.logprior(point)
-                - space.loglike(point)
-                + 0.5 * np.sum(ti**2) / space.s_w2
-            )
-
-        log_ratio = log_target(new, proposal) - log_target(x, theta)
-        take = ok & (np.log(jax.random.uniform(k_acc, (), dtype)) < log_ratio)
-        return np.where(take, new, x), take
-
-    return move
+        info["evaluations"] += N_NEWTON * newton
+        hi = 0.5 * (hi + hi.T)
+        if (
+            onp.isfinite(xi).all()
+            and onp.isfinite(hi).all()
+            and onp.isfinite(ti)
+            and _positive_definite(hi)
+        ):
+            modes.append(Mode(xi, float(ti), onp.linalg.inv(hi), float(ni)))
+    modes = distinct_modes(modes)
+    info["modes"] = len(modes)
+    return modes
 
 
-# ---------------------------------------------------------------------------
-# The leg
-# ---------------------------------------------------------------------------
+def _positive_definite(h):
+    """``h`` is positive definite to numerical rank: its smallest eigenvalue
+    exceeds ``d · eps · λ_max`` (a saturated coordinate has none)."""
+    e = onp.linalg.eigvalsh(h)
+    return bool(e.min() > len(e) * onp.finfo(h.dtype).eps * e.max())
 
 
-@dataclasses.dataclass(frozen=True)
-class LegResult:
-    """The position-level leg of one cell.
+def _symmetry_images(d):
+    """The 15 non-identity linear maps of the chart that leave the target
+    invariant (the group of order 16, identity implicit).
+
+    The ``z`` cover (``±z_u``, ``±z_v``: ``y[0:2]`` and ``y[2:4]`` change sign
+    independently), the ``ζ`` twin (``y_ζ → -y_ζ``) and the label swap
+    ``TI′ → -TI′`` (``z → i z``: ``y → (-y1, y0, -y3, y2)``, a symmetry
+    because the target sums the brighter/fainter sign).
+    """
+    eye = onp.eye(d)
+
+    def diag(*idx):
+        m = eye.copy()
+        for i in idx:
+            m[i, i] = -1.0
+        return m
+
+    swap = eye.copy()
+    swap[1:5, 1:5] = [[0, -1, 0, 0], [1, 0, 0, 0], [0, 0, 0, -1], [0, 0, 1, 0]]
+    gens = [diag(1, 2), diag(3, 4), diag(6, 7), swap]
+    group = {eye.tobytes(): eye}
+    frontier = [eye]
+    while frontier:
+        nxt = []
+        for g in frontier:
+            for h in gens:
+                m = h @ g
+                if m.tobytes() not in group:
+                    group[m.tobytes()] = m
+                    nxt.append(m)
+        frontier = nxt
+    return [
+        m for key, m in sorted(group.items()) if not onp.array_equal(m, eye)
+    ]
+
+
+@dataclasses.dataclass
+class CellFit:
+    """The position-level fit of one cell (search, importance sampling, draws).
 
     Attributes
     ----------
     cell : Cell
-    log_z, log_z_error, log_z_variance : float
-        ``ln Ẑ_N^pos`` of the cell's normalized prior (not multiplied by the
-        cell's mass), the standard error and the single-run variance from
-        [`SMCResult`][virgil.smc.SMCResult]; ``nan`` if ``stopped``.
-    particles, weights
-        Chart vectors at β = 1 and their weights (``None`` if ``stopped``);
-        ``decode_particles`` turns them into orbit coordinates.
-    stopped : bool
-        The time or stage cap was reached before β = 1. This is a failure: there
-        is no posterior at β < 1.
+    log_z, log_z_error : float
+        ``ln Ẑ_N^pos`` of the cell's normalized prior (the cell's mass is
+        applied in [`CellsResult`][virgil.orbit_cells.CellsResult]) and its
+        delta-method error ``√(1/ESS - 1/n)``.
+    modes : list of Mode
+    draws : array or None
+        Resample-move posterior draws (chart vectors); ``None`` until made.
+    log_w, x_is : array
+        The importance draws and their log weights (exact, not resampled).
+    at_floor : bool
+        ``cell-at-floor``: the draws sit at the all-outlier floor although the
+        search found a mode above it, so the search missed the dominant mode.
+        The cell *failed*: never report its ``log_z`` as an evidence.
     undersampled : bool
-        ``band-undersampled``: the final ESS is below target. Information only.
-    variance_degenerate : bool
-        The variance estimate is unusable (see ``SMCResult``).
+        ``cell-undersampled``: the ESS is below ``ESS_TARGET``; information only.
+    search_evaluations, is_evaluations : int
+        Likelihood-equivalent evaluations of the search and the sampling.
     """
 
     cell: Cell
     log_z: float
     log_z_error: float
-    log_z_variance: float
-    particles: object
-    weights: object
-    stopped: bool
+    modes: list
+    draws: object
+    log_w: object
+    x_is: object
+    at_floor: bool
     undersampled: bool
-    variance_degenerate: bool
+    search_evaluations: int
+    is_evaluations: int
+    evidence: object = dataclasses.field(repr=False, default=None)
+    plan: object = dataclasses.field(repr=False, default=None)
     space: object = dataclasses.field(repr=False, default=None)
 
 
 def decode_particles(result):
-    """Orbit coordinates of a leg's particles.
+    """Orbit coordinates of a fit's posterior draws.
 
     Returns a dict of arrays with ``period``, ``z``, ``zeta``, ``ln_f``,
     ``ln_s`` and the reporting invariants ``a``, ``ecc``, ``cos_inc``,
     ``omega`` and ``Omega`` (invariant under the covers of ``z`` and ``ζ``).
     """
-    if result.particles is None:
-        raise ValueError("The leg stopped before β = 1: it has no particles.")
-    c = result.space.decode(result.particles)
+    if result.draws is None:
+        raise ValueError("The fit has no draws (failed, or not drawn yet).")
+    c = result.space.decode(np.asarray(result.draws))
     return {**c, **oc.invariants(c["period"], c["z"], c["zeta"])}
+
+
+def _draw(fit, key):
+    """Resample-move posterior draws of a fit, with the mass matrix of its
+    dominant mode."""
+    with run_in(onp.dtype(fit.space.dtype).name):
+        return resample_move(
+            _target, fit.space, fit.evidence, key,
+            cov=fit.modes[0].cov if fit.modes else None,
+        )  # fmt: skip
 
 
 def position_leg(
@@ -861,18 +1408,21 @@ def position_leg(
     *,
     t_anchor,
     t_nights,
-    n_particles=2048,
     a_range=A_RANGE,
     e_max=E_MAX,
     flux_floor=FLUX_FLOOR,
     jitter=0.0,
-    luger=True,
-    steps=4,
-    replicates=1,
-    max_seconds=float("inf"),
+    n_is=N_IS,
+    posterior_draws=True,
     dtype="float64",
+    plan=None,
 ):
-    """The tempered SMC of one cell from its prior to the night-summary likelihood.
+    """Search, defensive importance sampling and posterior draws of one cell.
+
+    The modes of the cell ([`search_cell`][virgil.orbit_cells.search_cell]) with
+    the images of the target's symmetries are the components of a defensive
+    mixture; ``ln Ẑ`` is its importance-sampling estimate and the draws come
+    from an HMC resample-move of the weighted draws.
 
     Parameters
     ----------
@@ -886,54 +1436,61 @@ def position_leg(
     t_anchor, t_nights : float, array-like
         The anchor time and each night's reference time (days, any common
         origin).
-    n_particles, steps, replicates, max_seconds
-        As for [`tempered_smc`][virgil.smc.tempered_smc]; defaults are the budgets
-        of the design note (steps = HMC moves per stage).
     a_range, e_max, flux_floor : declared prior bounds
         Semimajor axis (mas), maximum eccentricity and flux-ratio floor.
     jitter : float, optional
         Position jitter (mas) added in quadrature, from
         [`fit_jitter`][virgil.orbit_cells.fit_jitter] (default 0).
-    luger : bool, optional
-        Add the Luger move on TI′ to the HMC steps (default True).
+    n_is : int, optional
+        Importance draws.
+    posterior_draws : bool, optional
+        Make the resample-move draws (not for a cell that failed).
     dtype : {"float64", "float32"}, optional
         Precision of the run (default float64, as ``fit``).
+    plan : dict, optional
+        The sets of [`search_plan`][virgil.orbit_cells.search_plan], reused
+        across the cells of a system.
 
     Returns
     -------
-    LegResult
+    CellFit
 
-    Source: Luger, Foreman-Mackey & Hogg (2017); Del Moral, Doucet & Jasra (2006).
+    Source: Hesterberg (1995), Gilks & Berzuini (2001), Hoffman & Gelman (2014).
     """
     cat = _Catalogue(summaries, log_outlier)
-    with run_in(dtype):
+    name = onp.dtype(dtype).name
+    k_plan, k_is, k_move = jax.random.split(key, 3)
+    with run_in(name):
         space = _Space(
             cat, cell, 0.0, onp.asarray(t_nights, float) - t_anchor, a_range,
-            e_max, flux_floor, jitter, np.float64 if dtype == "float64" else np.float32,
+            e_max, flux_floor, jitter, getattr(np, name),
         )  # fmt: skip
-        result = smc.tempered_smc(
-            space.logprior,
-            space.loglike,
-            space.sample,
-            key=key,
-            n_particles=n_particles,
-            replicates=replicates,
-            steps=steps,
-            max_seconds=max_seconds,
-            moves=(_luger_move(space),) if luger else (),
+        plan = search_plan(space, k_plan) if plan is None else plan
+        info = {}
+        modes = search_cell(space, plan=plan, info=info)
+        mixture = DefensiveMixture(
+            modes, _log_prior, _prior_sampler(space.d, space.dtype),
+            images=_symmetry_images(space.d), dtype=space.dtype,
+        )  # fmt: skip
+        n_k = len(cat.log_b)
+        # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))
+        floor = float(onp.sum(cat.log_b)) + (
+            math.lgamma(n_k + 0.5)
+            - 0.5 * math.log(math.pi)
+            - math.lgamma(n_k + 1)
         )
-    return LegResult(
-        cell,
-        result.log_z,
-        result.log_z_error,
-        result.log_z_variance,
-        result.particles,
-        result.weights,
-        result.stopped,
-        result.undersampled,
-        result.variance_degenerate,
-        space,
-    )
+        ev = importance_evidence(
+            _target, space, mixture, k_is, n_is, inliers_fn=_inliers,
+            log_floor=floor, m_min=M_MIN,
+        )  # fmt: skip
+    fit = CellFit(
+        cell, ev.log_z, ev.log_z_error, modes, None, ev.log_w, ev.x,
+        ev.at_floor or ev.n_nonfinite > 0, ev.undersampled,
+        int(info["evaluations"]), n_is, ev, plan, space,
+    )  # fmt: skip
+    if posterior_draws and not fit.at_floor:
+        fit.draws = _draw(fit, k_move)
+    return fit
 
 
 def fit_jitter(
@@ -1021,7 +1578,7 @@ def fit_jitter(
 
 @dataclasses.dataclass(frozen=True)
 class CellsResult:
-    """The position-level leg over every cell.
+    """The position-level fit over every cell.
 
     Attributes
     ----------
@@ -1031,9 +1588,10 @@ class CellsResult:
     t_ab : float
         ``T``, the time between the anchors (days).
     cells : list of Cell
-    legs : list of LegResult
+    fits : list of CellFit
     p_pos : numpy.ndarray
-        ``p(N) ∝ mass_N Ẑ_N^pos`` over the cells, summing to one.
+        ``p(N) ∝ mass_N Ẑ_N^pos`` over the cells, summing to one; all ``nan``
+        when a cell failed (never renormalized over the others).
     below_delta : numpy.ndarray
         Cells with ``p_pos < δ / N_cells``: the ones pruning would drop.
     pruned : numpy.ndarray
@@ -1043,21 +1601,22 @@ class CellsResult:
         mass pruning drops, for Stage 4 to compare with the visibility level.
     jitter : float
         The position jitter used (mas).
-    edges : numpy.ndarray
-        The cell edges (periods, days).
+    failed : numpy.ndarray
+        Cells at the floor (``cell-at-floor``): the search missed the dominant
+        mode. Any true entry makes ``p_pos`` undefined.
     """
 
     domain: PeriodDomain
     anchors: tuple
     t_ab: float
     cells: list
-    legs: list
+    fits: list
     p_pos: onp.ndarray
     below_delta: onp.ndarray
     pruned: onp.ndarray
     pruned_mass: float
     jitter: float
-    edges: onp.ndarray
+    failed: onp.ndarray
 
 
 def position_cells(
@@ -1068,19 +1627,23 @@ def position_cells(
     log_outlier=None,
     outlier=None,
     jitter=None,
-    pilot=True,
     prune=False,
     delta=DELTA,
-    n_particles=2048,
+    n_is=N_IS,
     max_seconds=float("inf"),
     **leg_kwargs,
 ):
-    """The position-level leg over every cell of ``domain``.
+    """The position-level fit of every cell of ``domain``.
 
-    Chooses the anchors, runs a pilot leg over the whole domain at a quarter of
-    the particles to place the cell edges at valleys (``pilot=False`` keeps the
-    default edges), then runs one leg per cell. ``p(N) ∝ mass_N Ẑ_N``. A leg that
-    reaches ``max_seconds`` is a failure and raises.
+    Chooses the anchors, makes the cells (edges at the half-integers of
+    ``T / P``: edges change labels only) and runs the search and the importance
+    sampling in each; ``p(N) ∝ mass_N Ẑ_N``. Resample-move draws are made only
+    where ``p(N) >= δ / N_cells``. The cells are independent, so a system
+    compiles once and the sets are drawn once.
+
+    TODO: share one search and one set of importance draws across the cells
+    (exact, unbiased for every ``N`` at once; design §6.7). Not implemented: it
+    is unmeasured (``scripts/leg1_toys/alias_grid.py`` has not run).
 
     Parameters
     ----------
@@ -1095,15 +1658,15 @@ def position_cells(
     jitter : float, optional
         Position jitter (mas); default fitted by
         [`fit_jitter`][virgil.orbit_cells.fit_jitter]. Pass 0 for none.
-    pilot, prune : bool, optional
-        Place edges by the pilot (True); drop cells below ``δ / N_cells``
-        (False: the dropped mass is recorded but nothing is dropped).
+    prune : bool, optional
+        Drop cells below ``δ / N_cells`` (False: the dropped mass is recorded
+        but nothing is dropped).
     delta : float, optional
         Reporting precision (default ``DELTA``).
-    n_particles : int, optional
-        Particles per cell.
+    n_is : int, optional
+        Importance draws per cell.
     max_seconds : float, optional
-        Time cap per leg.
+        Time cap on the whole run.
     **leg_kwargs
         Other arguments of [`position_leg`][virgil.orbit_cells.position_leg].
 
@@ -1114,7 +1677,7 @@ def position_cells(
     Raises
     ------
     RuntimeError
-        If a leg reached its time or stage cap.
+        If ``max_seconds`` ran out.
     """
     if log_outlier is None:
         outlier = outlier or outlier_prior(domain)
@@ -1125,56 +1688,35 @@ def position_cells(
     t_ab = t_b - t_a
     if jitter is None:
         jitter = fit_jitter(summaries, log_outlier, domain, (t_a, t_b))
-    kwargs = dict(
-        t_anchor=t_a, t_nights=t_all, jitter=jitter, max_seconds=max_seconds,
-        **leg_kwargs,
-    )  # fmt: skip
-    keys = jax.random.split(key, 2)
     cells = make_cells(t_a, t_b, domain)
-    if pilot and len(cells) > 1:
-        whole = Cell(0, domain.p_cut, domain.p_max, 0.0)
-        run = position_leg(
-            summaries, log_outlier, whole, keys[0],
-            n_particles=max(n_particles // 4, 8), **kwargs,
-        )  # fmt: skip
-        _check(run)
-        period = run.space.decode(run.particles)["period"]
-        cells = make_cells(
-            t_a, t_b, domain,
-            valley_edges(t_ab / onp.asarray(period), run.weights, cells, t_ab),
-        )  # fmt: skip
-    legs = []
-    for cell, k in zip(cells, jax.random.split(keys[1], len(cells))):
-        legs.append(
-            position_leg(
-                summaries,
-                log_outlier,
-                cell,
-                k,
-                n_particles=n_particles,
-                **kwargs,
+    start, fits, plan = time.time(), [], None
+    for cell, k in zip(cells, jax.random.split(key, len(cells))):
+        if time.time() - start > max_seconds:
+            raise RuntimeError(
+                f"position_cells reached max_seconds before cell N={cell.n}."
             )
-        )
-        _check(legs[-1])
-    log_p = onp.array([c.log_mass + g.log_z for c, g in zip(cells, legs)])
-    p = onp.exp(log_p - onp_logsumexp(log_p))
+        fits.append(
+            position_leg(
+                summaries, log_outlier, cell, k, t_anchor=t_a, t_nights=t_all,
+                jitter=jitter, n_is=n_is, posterior_draws=False, plan=plan,
+                **leg_kwargs,
+            )
+        )  # fmt: skip
+        plan = fits[0].plan
+    failed = onp.array([f.at_floor for f in fits])
+    log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
+    if failed.any():
+        p = onp.full(len(cells), onp.nan)
+    else:
+        p = onp.exp(log_p - onp_logsumexp(log_p))
     below = p < delta / len(cells)
+    for f, pi, k in zip(
+        fits, p, jax.random.split(jax.random.fold_in(key, 1), len(cells))
+    ):
+        if pi >= delta / len(cells):
+            f.draws = _draw(f, k)
     return CellsResult(
-        domain, (first, last), t_ab, cells, legs, p, below,
+        domain, (first, last), t_ab, cells, fits, p, below,
         below if prune else onp.zeros_like(below), float(p[below].sum()),
-        float(jitter),
-        onp.array([c.p_hi for c in cells[1:]]),
+        float(jitter), failed,
     )  # fmt: skip
-
-
-def _check(leg):
-    if leg.stopped:
-        raise RuntimeError(
-            f"The leg of cell N={leg.cell.n} reached its time or stage cap "
-            "before β = 1; there is no posterior. Raise max_seconds, or use "
-            "more particles."
-        )
-    if not onp.isfinite(leg.log_z):
-        raise RuntimeError(
-            f"The leg of cell N={leg.cell.n} returned a non-finite evidence."
-        )
