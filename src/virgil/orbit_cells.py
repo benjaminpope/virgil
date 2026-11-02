@@ -151,13 +151,6 @@ def _sigma_p(summary):
     return float(onp.sqrt(onp.trace(summary.peaks[0].cov[:2, :2]) / 2))
 
 
-def _merged_nights(times, gap_days):
-    """Mean time of each night, merging times less than ``gap_days`` apart."""
-    t = onp.sort(onp.asarray(times, float))
-    label = onp.r_[0, onp.cumsum(onp.diff(t) >= gap_days)]
-    return onp.bincount(label, weights=t) / onp.bincount(label)
-
-
 def period_domain(
     summaries,
     *,
@@ -209,7 +202,11 @@ def period_domain(
                 "Need two nights with a peak, or pass p_range, to set the "
                 "period domain."
             )
-        nights = _merged_nights(times, gap_days)
+        # nights: mean time of each group of times at most gap_days apart
+        # (a new night starts on a gap > gap_days, as OIData.epochs)
+        t = onp.sort(times)
+        label = onp.r_[0, onp.cumsum(onp.diff(t) > gap_days)]
+        nights = onp.bincount(label, weights=t) / onp.bincount(label)
         if nights.size < 2:
             raise ValueError(
                 "Need two nights more than gap_days apart, or pass p_range."

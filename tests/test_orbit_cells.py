@@ -164,6 +164,22 @@ def test_the_summary_prediction_is_the_projection_not_the_instant_state():
     want = _night_state(orbit, TIMES)
     assert onp.max(onp.abs(fit[:, :2] - want[:, :2])) < sigma
     assert onp.max(onp.abs(inst[:, :2] - want[:, :2])) > 5 * sigma
+    sigma_v = sigma / math.sqrt(T_SS)
+    assert onp.max(onp.abs(fit[:, 2:] - want[:, 2:])) < sigma_v
+
+
+def test_the_projection_is_the_weighted_least_squares_line_at_the_mean_time():
+    # offsets that do not average to zero, unequal weights
+    off = (-0.03, 0.0, 0.01, 0.05, 0.08)
+    w = (1.0, 3.0, 0.5, 2.0, 1.5)
+    night = NightSummary(0.0, 0.01, 5, BLOCKS, (), -200.0, off, w)
+    proj = night.projection()
+    rng = onp.random.default_rng(0)
+    pos = rng.normal(size=(5, 2))  # arbitrary positions: the map is linear
+    design = onp.stack([onp.ones(5), onp.array(off)], axis=1)
+    sw = onp.sqrt(onp.array(w))[:, None]
+    coef = onp.linalg.lstsq(design * sw, pos * sw, rcond=None)[0]
+    onp.testing.assert_allclose(proj @ pos, coef, rtol=1e-10, atol=1e-12)
 
 
 @x64

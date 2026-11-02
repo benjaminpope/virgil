@@ -169,9 +169,13 @@ class NightSummary:
     def projection(self):
         """The ``(2, n_frames)`` map from the companion's frame positions to
         the night's ``(p̂, v̂)``: the weighted least-squares fit of
-        ``p + v (t_j - t̄)`` (``t̄`` the weighted mean offset removed), exact
-        for any orbit. One frame, or a zero ``t_ss``, gives the instantaneous
-        position and a zero row for the velocity (taken from the state)."""
+        ``p + v (t_j - t̄)``, exact for the positions under these scalar
+        frame weights. It matches the visibility fit only to first order in
+        the track's departure from a line: the fit weights each frame by its
+        own information (rows, errors, baseline orientation), which the
+        equal default does not. One frame, or a zero ``t_ss``, gives the
+        instantaneous position and a zero row for the velocity (taken from the
+        state)."""
         dt, w = self.frame_offsets(), self.frame_weights()
         mean = onp.sum(w * dt) / onp.sum(w)
         c = dt - mean
