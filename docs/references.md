@@ -95,7 +95,6 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `sample_z` | [Moran (1975)](#moran1975), [doi:10.1017/s0021900200047720](https://doi.org/10.1017/s0021900200047720) | after |
 | `ti_to_z` | [Goldstein, Poole & Safko (2002)](#goldstein2002) | after |
 | `z_log_prior` | [Miles (1965)](#miles1965), [doi:10.1093/biomet/52.3-4.636](https://doi.org/10.1093/biomet/52.3-4.636) | after |
-| `z_to_ti` | [Thiele (1883)](#thiele1883), [ADS](https://ui.adsabs.harvard.edu/abs/1883AN....104..245T/abstract) | after |
 | `zeta_to_eccentricity` | [Ford (2006)](#ford2006), [arXiv:astro-ph/0512634](https://arxiv.org/abs/astro-ph/0512634), [ADS](https://ui.adsabs.harvard.edu/abs/2006ApJ...642..505F/abstract), [doi:10.1086/500802](https://doi.org/10.1086/500802) | after |
 
 ### `virgil.aliases`
@@ -323,6 +322,12 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `read_oifits` | [Duvert, Young & Hummel (2015)](#duvert2017), [arXiv:1510.04556](https://arxiv.org/abs/1510.04556), [ADS](https://ui.adsabs.harvard.edu/abs/2017A&A...597A...8D/abstract), [doi:10.1051/0004-6361/201526405](https://doi.org/10.1051/0004-6361/201526405) | after |
 | `read_oifits` | [Pauls et al. (2005)](#pauls2005), [arXiv:astro-ph/0508185](https://arxiv.org/abs/astro-ph/0508185), [ADS](https://ui.adsabs.harvard.edu/abs/2005PASP..117.1255P/abstract), [doi:10.1086/444523](https://doi.org/10.1086/444523) | after |
 | `write_oifits` | [Duvert, Young & Hummel (2015)](#duvert2017), [arXiv:1510.04556](https://arxiv.org/abs/1510.04556), [ADS](https://ui.adsabs.harvard.edu/abs/2017A&A...597A...8D/abstract), [doi:10.1051/0004-6361/201526405](https://doi.org/10.1051/0004-6361/201526405) | after |
+
+### `virgil.orbit_cells`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `position_leg` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
 
 ### `virgil.orbits`
 
