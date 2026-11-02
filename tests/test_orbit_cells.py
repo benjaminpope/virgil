@@ -436,15 +436,25 @@ def _truth_distance2(fit, orbit, t_anchor):
 
 @x64
 def test_the_symmetry_images_leave_the_target_invariant():
-    s = _summaries(_orbit(), TIMES)
+    """At points where the likelihood dominates (the truth and small steps
+    from it, every night labelled an inlier), not at prior draws, where every
+    night sits at the outlier floor and any prior-preserving map would pass."""
+    orbit = _orbit()
+    s = _summaries(orbit, TIMES)
     _, cells = _cells(s, (6.0, 400.0))
-    space = _space(s, cells[2])
+    space = _space(s, [c for c in cells if c.p_lo <= 11.3 <= c.p_hi][0])
     images = oc_cells._symmetry_images(space.d)
     assert len(images) == 15
-    x = space.sample(jax.random.key(0), 6)
+    xt = _truth_chart(space, orbit, TIMES[0])
+    xt[1:5] *= onp.sqrt(3.0)
+    rng = onp.random.default_rng(0)
+    x = xt + 1e-4 * rng.standard_normal((6, space.d))  # the period is a needle
     target = jax.jit(jax.vmap(oc_cells._target, in_axes=(0, None)))
+    labels = jax.vmap(oc_cells._labels, in_axes=(0, None))(x, space)
+    assert onp.all(onp.asarray(labels) >= 0)
     base = onp.asarray(target(x, space))
-    assert onp.all(onp.isfinite(base))
+    floor = LOG_B * len(TIMES)
+    assert onp.all(base > floor + 50.0)
     for g in images:
         moved = onp.asarray(target(x @ np.asarray(g).T, space))
         onp.testing.assert_allclose(moved, base, rtol=1e-10, atol=1e-10)

@@ -106,7 +106,7 @@ def test_the_sentinel_fires_when_the_true_mode_is_missing():
     modes = _modes(prob)
     best = max(modes, key=lambda m: m.log_target)
     assert best.n_inliers >= ms.M_MIN
-    prior_only = ms.DefensiveMixture([], _lp, _sp)
+    prior_only = ms.DefensiveMixture([], _lp, _sp, dim=5)
     prior_only.modes = [best]  # the search found it; q does not cover it
     floor = prob.K * toy.LNB
     ev = ms.importance_evidence(
@@ -164,9 +164,21 @@ def test_resample_move_returns_the_posterior_of_a_gaussian_target():
         log_floor=-50.0,
     )  # fmt: skip
     assert ev.log_z == pytest.approx(float(lp(th)), abs=4 * ev.log_z_error)
-    x = ms.resample_move(tgt, th, ev, jax.random.key(1))
+    move = ms.resample_move(tgt, th, ev, jax.random.key(1))
+    x = move.draws
     assert x.shape[1] == 3 and len(x) == ms.N_POST
+    assert not move.stuck and 0.0 < move.acceptance <= 1.0
+    # the moves rejuvenate the duplicates of the resample
+    assert len(onp.unique(x[:, 0])) > 0.9 * len(x)
     # the posterior is N(th * 25/25.01, ~0.01 I)
     assert onp.abs(x.mean(0) - onp.asarray(th)).max() < 0.03
     assert onp.abs(x.std(0) - 0.1).max() < 0.03
     assert math.isfinite(ev.log_z)
+
+
+def test_an_empty_mixture_has_the_padded_shapes_of_a_populated_one():
+    mode = ms.Mode(onp.zeros(5), 0.0, onp.eye(5), 3.0)
+    full = ms.DefensiveMixture([mode], _lp, _sp)
+    empty = ms.DefensiveMixture([], _lp, _sp, dim=5)
+    for name in ("mu", "chol", "linv", "logdet", "log_w"):
+        assert getattr(empty, name).shape == getattr(full, name).shape

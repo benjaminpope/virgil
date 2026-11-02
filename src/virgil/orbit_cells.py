@@ -19,7 +19,7 @@ an HMC resample-move gives posterior draws
 [`position_cells`][virgil.orbit_cells.position_cells] runs every cell and gives
 ``p(N) ∝ prior mass × Ẑ_N``, with an opt-in pruning that records the dropped
 mass; a cell whose search missed the dominant mode (``cell-at-floor``) is a
-failure, never an evidence. Design: ``design/orbit_alias_cycles.md`` §4–§7.
+failure, never an evidence.
 
 Source: Fischler & Bolles (1981), Rousseeuw (1984), Rousseeuw & Van Driessen
 (1999), Golub & Pereyra (1973), Hesterberg (1995), Gilks & Berzuini (2001),
@@ -32,6 +32,7 @@ import functools
 import itertools
 import math
 import time
+import warnings
 
 import jax
 import jax.numpy as np
@@ -780,10 +781,12 @@ def _objective(x, space):
     ``√3`` with curvature 2, and leaves the angular curvature at a mode as it
     is. It places modes and their covariances; the evidence uses the target.
 
-    Its Laplace ``ln Z`` is offset from the target's by a constant common to
-    every mode (the radial volume, about 1.7 nats: ``√π e^-3/2 r0³`` against
-    the true ``2``), so mode weights are unaffected; the sentinel margin ``W``
-    is effectively about 1.7 nats less (5.2 for ``DELTA = 1e-3``).
+    The ``+ 3 ln |y_z|`` is the Cartesian volume element of the chi-4 radial
+    prior, so the Laplace ``ln Z`` of this objective is that of the target: the
+    radial factor is ``√π e^-3/2 r0³`` against the exact ``2`` (``r0 = √3``),
+    an offset of 0.03 nats, common to every mode. A [`Mode`][virgil.mode_search.Mode]
+    records the objective at the mode, so that its Laplace ``ln Z`` and the
+    pruning scores are on one footing.
     """
     return _target(x, space) + 3.0 * np.log(np.linalg.norm(x[_Z]))
 
@@ -921,7 +924,7 @@ def _chart_from(space, v, ti, ln_f):
     return np.concatenate(
         [
             v[:1],
-            z / np.linalg.norm(z) * R0,
+            z / np.maximum(np.linalg.norm(z), 1e-30) * R0,
             (np.log(frac) - np.log1p(-frac))[None],
             v[1:3],
             (np.log(ff) - np.log1p(-ff))[None],
@@ -995,13 +998,13 @@ def _cstep_chunk(space, plan, v, lab, n_iter):
 @functools.partial(jax.jit, static_argnames=("n_iter",))
 def _refine(space, x, n_iter):
     """Newton on the label-summed objective from one ``x``: the result, minus
-    its Hessian, the target and the expected inlier count. One candidate per
+    its Hessian, the objective and the expected inlier count. One candidate per
     call: a batch would run every member as long as the slowest."""
     x, _ = _lm(_objective, x, (space,), n_iter)
     return (
         x,
         -jax.hessian(_objective)(x, space),
-        _target(x, space),
+        _objective(x, space),
         _inliers(x, space),
     )
 
@@ -1061,16 +1064,6 @@ def _chunks(n, size):
 def _padded(a, size):
     """``a`` with its first row repeated to ``size`` rows."""
     return onp.concatenate([a, onp.repeat(a[:1], size - len(a), axis=0)])
-
-
-def _ransac_count(m):
-    """Random minimal sets of ``m`` nights, one all-inlier with prob ``1 - δ``.
-
-    ``n = ⌈ln δ / ln(1 - w^m)⌉`` with inlier fraction ``w = 1 - EPS_HI``.
-
-    Source: Fischler & Bolles (1981).
-    """
-    return math.ceil(math.log(DELTA) / math.log(1.0 - (1.0 - EPS_HI) ** m))
 
 
 def search_plan(space, key=None, nu_width=None):
@@ -1397,6 +1390,8 @@ class CellFit:
         Some importance draws had a non-finite target: the cell *failed*.
     search_evaluations, is_evaluations : int
         Likelihood-equivalent evaluations of the search and the sampling.
+    move : virgil.mode_search.Move or None
+        The resample-move of ``draws`` (HMC acceptance and step size).
     """
 
     cell: Cell
@@ -1415,6 +1410,7 @@ class CellFit:
     space: object = dataclasses.field(repr=False, default=None)
     unreliable: bool = False
     nonfinite: bool = False
+    move: object = dataclasses.field(repr=False, default=None)
 
     @property
     def failed(self):
@@ -1450,7 +1446,16 @@ def _draw(fit, key):
     if fit.modes:
         cov = max(fit.modes, key=laplace_log_evidence).cov
     with run_in(onp.dtype(fit.space.dtype).name):
-        return resample_move(_target, fit.space, fit.evidence, key, cov=cov)
+        move = resample_move(_target, fit.space, fit.evidence, key, cov=cov)
+    fit.move = move
+    if move.stuck:
+        warnings.warn(
+            f"cell {fit.cell}: HMC accepted {move.acceptance:.3g} of moves "
+            "(< 1 per particle): the draws are not rejuvenated",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return move.draws
 
 
 def position_leg(
@@ -1527,7 +1532,7 @@ def position_leg(
         modes = search_cell(space, plan=plan, info=info)
         mixture = DefensiveMixture(
             modes, _log_prior, _prior_sampler(space.d, space.dtype),
-            images=_symmetry_images(space.d), dtype=space.dtype,
+            images=_symmetry_images(space.d), dtype=space.dtype, dim=space.d,
         )  # fmt: skip
         n_k = len(cat.log_b)
         # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))

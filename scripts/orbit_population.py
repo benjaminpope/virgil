@@ -94,13 +94,14 @@ def _cov(sigma):
     )
 
 
-def _summaries(times, mean, sigma):
-    """One-peak night summaries with the means ``mean`` ``(K, 5)``."""
+def _summaries(times, mean, sigma, scale=1.0):
+    """One-peak night summaries with the means ``mean`` ``(K, 5)``; ``chi2``
+    is that of data scattered by ``scale`` times the quoted errors."""
     cov = _cov(sigma)
     out = []
     for t, m in zip(times, mean):
         peak = NightPeak(
-            m, cov, -30.0, onp.array([N_OBS]), onp.array([N_OBS]),
+            m, cov, -30.0, onp.array([N_OBS]), onp.array([N_OBS * scale**2]),
             onp.linalg.inv(cov)[None],
         )  # fmt: skip
         out.append(NightSummary(float(t), T_SS, 6, BLOCKS, (peak,), -200.0))
@@ -171,7 +172,7 @@ def draw_system(rng, nights, fit):
     return dict(
         **nights, period=period, orbit=orbit, ln_s=ln_s, eps=float(eps),
         outliers=onp.flatnonzero(outlier),
-        summaries=_summaries(times, mean, sigma),
+        summaries=_summaries(times, mean, sigma, math.exp(ln_s)),
     )  # fmt: skip
 
 

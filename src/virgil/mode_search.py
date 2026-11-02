@@ -15,9 +15,8 @@ turns the weighted draws into posterior draws. The target is a function
 parameters, so one compilation serves every cell of a system.
 
 Source: Hesterberg (1995), Hoffman & Gelman (2014), BlackJAX
-(Cabezas et al. 2024), Gilks & Berzuini (2001), Neal (2011); the sentinel and
-the symmetric distinct-mode rule are derived in ``design/orbit_alias_cycles.md``
-§6.
+(Cabezas et al. 2024), Gilks & Berzuini (2001), Neal (2011). The sentinel and
+the symmetric distinct-mode rule are not from these: they are provisional.
 """
 
 import dataclasses
@@ -36,6 +35,7 @@ __all__ = [
     "DefensiveMixture",
     "Evidence",
     "Mode",
+    "Move",
     "distinct_modes",
     "importance_evidence",
     "laplace_log_evidence",
@@ -69,7 +69,8 @@ class Mode:
     """A mode of the label-summed target.
 
     ``cov`` is the inverse of minus the Hessian of the search objective at
-    ``x``; ``log_target`` is the log target (prior × likelihood) at ``x``.
+    ``x``; ``log_target`` is the log of the objective the search maximized, at ``x``
+    (the log target for a target whose Laplace ``ln Z`` needs no correction).
     """
 
     x: object
@@ -100,6 +101,28 @@ class Evidence:
     undersampled: bool
     n_inliers: float
     n_nonfinite: int
+
+
+@dataclasses.dataclass(frozen=True)
+class Move:
+    """The result of [`resample_move`][virgil.mode_search.resample_move].
+
+    ``draws`` are the moved particles, ``acceptance`` the mean HMC acceptance
+    over the moves and ``step`` the adapted step size. ``stuck`` is true when
+    fewer than one move per particle is accepted on average
+    (``acceptance * n_moves < 1``): the draws are then the resampled weighted
+    draws, with duplicates, not rejuvenated.
+    """
+
+    draws: object
+    acceptance: float
+    step: float
+    n_moves: int
+
+    @property
+    def stuck(self):
+        """Whether the moves accepted less than once per particle."""
+        return not self.acceptance * self.n_moves >= 1.0
 
 
 def logmeanexp(a):
@@ -169,11 +192,14 @@ class DefensiveMixture:
         ``sample_prior(key, n)`` draws ``(n, d)`` from the prior.
     images : sequence of (d, d) arrays
         Non-identity symmetry maps.
+    dim : int, optional
+        Dimension of ``x``; fixes the padded shapes of an empty (prior-only)
+        mixture so that it shares the compiled kernels of the other cells.
     """
 
     def __init__(
         self, modes, log_prior, sample_prior, images=(), alpha=ALPHA, df=DF,
-        dtype=None,
+        dtype=None, dim=None,
     ):  # fmt: skip
         self.modes = list(modes)
         self.log_prior, self.sample_prior, self.df = (
@@ -187,7 +213,7 @@ class DefensiveMixture:
             lz = onp.array([laplace_log_evidence(m) for m in self.modes])
             lw = lz - onp.logaddexp.reduce(lz) - math.log(len(maps))
         else:
-            d, alpha = 0, 1.0
+            d, alpha = 0 if dim is None else dim, 1.0
         mu, cov, logw = [], [], []
         for m, w in zip(self.modes, lw if self.modes else []):
             for g in maps:
@@ -196,7 +222,7 @@ class DefensiveMixture:
                     g = onp.asarray(g, float)
                     x, c = g @ x, g @ c @ g.T
                 mu.append(x), cov.append(0.5 * (c + c.T)), logw.append(w)
-        self.d = d
+        self.d = d if dim is None else dim
         m_pad = max(M_PAD, 1 << math.ceil(math.log2(max(len(mu), 1))))
         pad = m_pad - len(mu)
         eye = onp.eye(max(d, 1))
@@ -300,7 +326,7 @@ def importance_evidence(
     """
     x, lw, inl = _is_kernel(log_target, inliers_fn, theta, mixture, key, n)
     lw = onp.asarray(lw, float)
-    bad = onp.isnan(lw)
+    bad = onp.isnan(lw) | onp.isposinf(lw)
     lw = onp.where(bad, -onp.inf, lw)
     inl = onp.asarray(inl, float)
     finite = onp.isfinite(lw)
@@ -377,7 +403,7 @@ def _move_kernel(
 def resample_move(
     log_target, theta, ev, key, n_draws=N_POST, n_moves=N_HMC, cov=None
 ):
-    """Posterior draws from the weighted draws of ``ev``.
+    """The posterior draws of ``ev`` after resampling and moving them.
 
     Systematic resampling of ``ev.x`` by ``ev.log_w``, then ``n_moves`` BlackJAX
     HMC transitions per draw: step size by dual averaging to ``ACCEPT`` over
@@ -397,8 +423,8 @@ def resample_move(
         r = onp.asarray(ev.x) - mean
         cov = (r * w[:, None]).T @ r + 1e-12 * onp.eye(x.shape[1])
     d = x.shape[1]
-    out, _, _ = _move_kernel(
+    out, acc, eps = _move_kernel(
         log_target, theta, x, lw, np.asarray(cov, x.dtype), key,
         0.5 / math.sqrt(d), n_draws, n_moves, N_WARM,
     )  # fmt: skip
-    return onp.asarray(out)
+    return Move(onp.asarray(out), float(acc), float(eps), n_moves)
