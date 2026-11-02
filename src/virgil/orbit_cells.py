@@ -1174,9 +1174,7 @@ def search_plan(space, key=None, nu_width=None):
         )
         cut[i] = scale * stats.chi2.isf(DELTA, 4 if len(nt) == 2 else 2)
     t_k = onp.asarray(space.t_k, float)
-    span = max(
-        (t_k[max(nt)] - t_k[min(nt)] for nt, _ in chosen), default=0.0
-    )
+    span = max((t_k[max(nt)] - t_k[min(nt)] for nt, _ in chosen), default=0.0)
     n_grid = max(K_COH + 1, math.ceil(K_COH * span * nu_width) + 1)
     ecc = onp.minimum(onp.array(ZETA_E), 0.5 * space.e_max)
     ecc = onp.maximum(ecc, min(1e-4, 0.5 * space.e_max))  # ζ = 0 has no M_a
@@ -1545,9 +1543,7 @@ def position_leg(
             cat, cell, 0.0, onp.asarray(t_nights, float) - t_anchor, a_range,
             e_max, flux_floor, jitter, getattr(np, name),
         )  # fmt: skip
-        plan = (
-            search_plan(space, k_plan, nu_width) if plan is None else plan
-        )
+        plan = search_plan(space, k_plan, nu_width) if plan is None else plan
         info = {}
         modes = search_cell(space, plan=plan, info=info)
         mixture = DefensiveMixture(

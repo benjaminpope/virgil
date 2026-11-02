@@ -133,7 +133,9 @@ def fit_domain(nights):
     """``(default domain, fit domain)`` of ``nights``: the fit prior is the
     default domain cut to ``P_TRUE`` (``None`` if they do not overlap)."""
     sigma = nights["rel"] * nights["a"]
-    blank = _summaries(nights["times"], onp.zeros((len(nights["times"]), 5)), sigma)
+    blank = _summaries(
+        nights["times"], onp.zeros((len(nights["times"]), 5)), sigma
+    )
     default = oc_cells.period_domain(blank, night_length=0.1, resolution=3.0)
     lo, hi = max(default.p_cut, P_TRUE[0]), min(default.p_max, P_TRUE[1])
     if not lo < hi:
@@ -161,7 +163,9 @@ def draw_system(rng, nights, fit):
         onp.zeros(5), _cov(sigma), size=k
     )
     for i in onp.flatnonzero(outlier):  # an independent orbit, the prior
-        other = _orbit(rng, fit.p_cut, fit.p_max, _loguniform(rng, *oc_cells.A_RANGE))
+        other = _orbit(
+            rng, fit.p_cut, fit.p_max, _loguniform(rng, *oc_cells.A_RANGE)
+        )
         mean[i, :4] = _state(other, times[i : i + 1])[0]
         mean[i, 4] = onp.log(oc_cells.FLUX_FLOOR) * rng.uniform()
     return dict(

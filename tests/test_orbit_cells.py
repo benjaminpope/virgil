@@ -560,7 +560,9 @@ def test_the_position_fit_runs_in_float32():
 
 @pytest.mark.slow
 @x64
-def test_the_position_evidence_of_a_tiny_case_matches_prior_importance():
+def test_the_position_evidence_of_a_tiny_case_matches_prior_importance(
+    monkeypatch,
+):
     """K = 3 nights, a circular orbit (``e_max`` -> 1e-6): the search and
     defensive evidence of the cell against 2**20 plain draws from its prior."""
     times = onp.array([0.0, 4.1, 9.3])
@@ -572,10 +574,22 @@ def test_the_position_evidence_of_a_tiny_case_matches_prior_importance():
     cells = oc_cells.make_cells(times[0], times[-1], domain)
     cell = [c for c in cells if c.p_lo <= 11.3 <= c.p_hi][0]
     log_b = onp.full(3, LOG_B)
+    seen = {}
+    real_mixture = oc_cells.DefensiveMixture
+
+    def spy(modes, *args, **kwargs):
+        seen["modes"], seen["images"] = len(modes), len(kwargs["images"])
+        return real_mixture(modes, *args, **kwargs)
+
+    monkeypatch.setattr(oc_cells, "DefensiveMixture", spy)
     fit = oc_cells.position_leg(
         s, log_b, cell, jax.random.key(0), t_anchor=times[0], t_nights=times,
         e_max=1e-6, n_is=20000, posterior_draws=False,
     )  # fmt: skip
+    # the tolerance below (about 2 nats at this ESS) cannot tell a search from
+    # none, nor dropped images (importance weights are exact either way): check
+    # that the mixture has the modes and the 15 images of the symmetry group
+    assert seen["modes"] >= 1 and seen["images"] == 15
     space = oc_cells._Space(
         oc_cells._Catalogue(s, log_b), cell, times[0], times - times[0],
         oc_cells.A_RANGE, 1e-6, oc_cells.FLUX_FLOOR, 0.0, np.float64,
@@ -836,7 +850,11 @@ def _decoys_and_outliers(summaries, rng, outliers):
         )
         out.append(
             NightSummary(
-                n.t_ref, n.t_ss, n.n_frames, BLOCKS, (peak, decoy),
+                n.t_ref,
+                n.t_ss,
+                n.n_frames,
+                BLOCKS,
+                (peak, decoy),
                 n.loglike_null,
             )
         )
