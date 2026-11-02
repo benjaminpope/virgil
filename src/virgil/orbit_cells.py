@@ -1155,21 +1155,22 @@ def _unique_starts(lab, v, h, r):
     squared Mahalanobis distance in ``(w_P, y_ζ)`` is below one under *both*
     Hessians (the symmetric rule of ``distinct_modes``).
     """
+    prec = 0.5 * (h + h.swapaxes(1, 2))
+    e, u = onp.linalg.eigh(prec)
+    h[:] = (u * onp.maximum(e, 1e-12)[:, None, :]) @ u.swapaxes(1, 2)
+    keys = [row.tobytes() for row in lab]
     kept, groups = [], {}
     for i in onp.argsort(r):
-        prec = 0.5 * (h[i] + h[i].T)
-        e, u = onp.linalg.eigh(prec)
-        prec = (u * onp.maximum(e, 1e-12)) @ u.T
-        h[i] = prec
-        near = False
-        for j in groups.get(lab[i].tobytes(), ()):
-            d = v[i] - v[j]
-            if max(d @ h[j] @ d, d @ prec @ d) < 1.0:
-                near = True
-                break
-        if not near:
-            kept.append(i)
-            groups.setdefault(lab[i].tobytes(), []).append(i)
+        near = groups.get(keys[i])
+        if near:
+            idx = onp.array(near)
+            d = v[i] - v[idx]
+            a = onp.einsum("mi,mij,mj->m", d, h[idx], d)
+            b = onp.einsum("mi,ij,mj->m", d, h[i], d)
+            if (onp.maximum(a, b) < 1.0).any():
+                continue
+        kept.append(i)
+        groups.setdefault(keys[i], []).append(i)
     return onp.array(kept, int)
 
 
