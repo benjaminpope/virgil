@@ -89,6 +89,7 @@ DTYPE_INDEPENDENT = (
     "test_fetch_references.py",
     "test_night_flags.py",
     "test_oifits.py",
+    "test_orbit_coordinates.py",
     "test_orbit_positions.py",
     "test_orbit_search.py",
     "test_pipeline_binary.py",
