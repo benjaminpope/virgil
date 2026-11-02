@@ -64,6 +64,18 @@ def _bijection(distribution):
     return biject_to(distribution.support)
 
 
+def _inside(prior, value, eps=1e-5):
+    """``value`` clipped into the open interior of ``prior``'s support, by
+    ``eps`` of its width (of the bound's size if half-bounded)."""
+    lo = getattr(prior.support, "lower_bound", -np.inf)
+    hi = getattr(prior.support, "upper_bound", np.inf)
+    lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+    width = np.where(
+        np.isfinite(hi - lo), hi - lo, np.maximum(1.0, np.abs(lo + hi))
+    )
+    return np.clip(value, lo + eps * width, hi - eps * width)
+
+
 class NoLeastSquaresForm(TypeError):
     """The objective has no residual vector (use L-BFGS or Adam).
 
@@ -287,8 +299,19 @@ class _Objective(eqx.Module):
                 angle = np.deg2rad(np.asarray(values[path], float))
                 z[path] = np.stack([np.cos(angle), np.sin(angle)])
                 continue
-            z[path] = self.bijection(prior).inv(
-                np.asarray(values[path], float)
+            start = np.asarray(values[path], float)
+            z[path] = self.bijection(prior).inv(start)
+            if not bool(np.all(np.isfinite(z[path]))):
+                # On or outside a bound (e.g. a railed earlier stage):
+                # nudge just inside it, keeping the fitted value.
+                z[path] = self.bijection(prior).inv(_inside(prior, start))
+        bad = [
+            p for p, v in z.items() if not bool(np.all(np.isfinite(v)))
+        ]
+        if bad:
+            raise ValueError(
+                f"Non-finite starting coordinates for {bad}: check their "
+                "starting values against the priors' supports."
             )
         return z
 
