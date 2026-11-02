@@ -340,17 +340,14 @@ def test_zeta_has_a_coordinate_singularity_at_zero():
     assert not onp.all(onp.isfinite(jac(np.zeros(2))))
 
 
+@x64
 def test_float32_round_trips():
-    # the default precision: nothing is promoted to float64 or complex128.
-    # Pinned off: importing jaxoplanet (KeplerOrbit, earlier in the same
-    # worker) enables x64 globally in CI's locked version.
-    with jax.enable_x64(False):
-        _float32_round_trips()
-
-
-def _float32_round_trips():
-    z = oc.sample_z(jax.random.key(13), (50,), A_MIN, A_MAX)
-    zeta = oc.sample_zeta(jax.random.key(14), (50,))
+    # float32 inputs under x64: nothing is promoted to float64 or complex128.
+    # Run with x64 on, so a promotion would show; with it off every float64
+    # request is silently float32. Also independent of the worker's global
+    # x64 state (importing jaxoplanet turns it on in CI's locked version).
+    z = oc.sample_z(jax.random.key(13), (50,), A_MIN, A_MAX).astype(np.float32)
+    zeta = oc.sample_zeta(jax.random.key(14), (50,)).astype(np.float32)
     abfg = oc.z_to_ti(z)
     z2 = oc.ti_to_z(*abfg)
     ecc, m = oc.zeta_to_eccentricity(zeta)
