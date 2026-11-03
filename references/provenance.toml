@@ -2151,7 +2151,7 @@ verified = true
 verified_via = "crossref"
 used_in = []
 role = "bibliography"
-note = "J. Math. Anal. Appl. 15, 243; Newton with the Moore-Penrose inverse for underdetermined systems; measured and not chosen for the orbit-cells set step"
+note = "J. Math. Anal. Appl. 15, 243; Newton with the Moore-Penrose inverse for underdetermined systems; planned minimum-norm set step and C-steps of the orbit-cells search"
 
 [ref.hesterberg1995]
 authors = "Hesterberg"
