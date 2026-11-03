@@ -1016,3 +1016,77 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
     else:
         assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
+
+
+# --- the edge stop and shared neighbour modes (design 6.11, fix 1) ---------------
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.timeout(1800)
+def test_a_mode_beside_an_edge_gives_both_cells_the_exact_evidence():
+    """K = 3 nights in two seasons, a circular orbit a few hundredths of a cell
+    inside the edge of cell 35: the mode is interior to one cell, and its
+    neighbour (cell 36) reaches it through a shared component. Both cells' ``ln Ẑ``
+    against 2**20 plain prior draws each."""
+    times = onp.array([0.0, 4.1, 365.0])
+    t, period = times[-1] - times[0], 365.0 / (35.5 - 0.03)
+    s = _summaries(_orbit(period=period, a=6.0, ecc=0.0), times, sigma=1.5)
+    domain = oc_cells.period_domain(s, p_range=(t / 37.5, t / 33.5))
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(3, LOG_B),
+        jitter=0.0, e_max=1e-6, n_is=20000,
+    )  # fmt: skip
+    for n in (35, 36):
+        fit = [f for f in out.fits if f.cell.n == n][0]
+        ll = jax.jit(jax.vmap(fit.space.loglike))
+        ref = onp.concatenate(
+            [
+                onp.asarray(ll(fit.space.sample(jax.random.key(10 + i), 2**15)))
+                for i in range(32)
+            ]
+        )
+        w = onp.exp(ref - ref.max())
+        lz = onp.log(onp.mean(w)) + ref.max()
+        err = onp.sqrt(1 / (w.sum() ** 2 / (w**2).sum()))
+        assert abs(fit.log_z - lz) < 4 * onp.hypot(fit.log_z_error, err) + 0.02
+    # the neighbour has the shared component (its own mode too: a short-span
+    # ridge is kept, design 6.11, so absence is not promised)
+    assert [f for f in out.fits if f.cell.n == 36][0].shared
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.timeout(1800)
+def test_the_edge_stop_cuts_the_step_cap_count_and_drops_only_with_neighbours(
+    monkeypatch,
+):
+    """K = 6 nights in two seasons: stopping at the edge ends Newton runs the
+    step cap used to end, and drops stopped long-span candidates only where the
+    neighbours are searched."""
+    rng = onp.random.default_rng(3)
+    times = _two_season_times(rng, k=6)
+    s = _summaries(_orbit(period=11.3, a=6.0, ecc=0.0), times, sigma=0.3)
+    domain = oc_cells.period_domain(s, p_range=(9.0, 14.0))
+    cells = oc_cells.make_cells(times[0], times[-1], domain)
+    cell = cells[len(cells) // 2]
+    space = oc_cells._Space(
+        oc_cells._Catalogue(s, onp.full(6, LOG_B)), cell, 0.0, times - times[0],
+        (1.0, 30.0), 0.9, 1e-4, 0.0, np.float64,
+    )  # fmt: skip
+    plan = oc_cells.search_plan(
+        space, jax.random.key(0), nu_width=1.0 / (times[-1] - times[0])
+    )
+    runs = {}
+    for name, edge, nb in (
+        ("off", onp.inf, (True, True)),
+        ("on", oc_cells.EDGE_STOP, (False, False)),
+        ("drop", oc_cells.EDGE_STOP, (True, True)),
+    ):
+        monkeypatch.setattr(oc_cells, "EDGE_STOP", edge)
+        runs[name] = {}
+        oc_cells.search_cell(space, plan=plan, info=runs[name], neighbours=nb)
+    assert runs["off"]["edge_stopped"] == 0 and runs["off"]["dropped"] == 0
+    assert runs["on"]["edge_stopped"] > 0 and runs["on"]["dropped"] == 0
+    assert runs["drop"]["dropped"] > 0
+    assert runs["on"]["capped"] < runs["off"]["capped"]
