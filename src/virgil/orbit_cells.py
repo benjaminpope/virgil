@@ -101,7 +101,7 @@ N_SET_MAX = 2000  # enumerate every set up to this; above it, every span pair
 EPS_HI = 0.3  # declared outlier fraction of the RANSAC count (design §10)
 N_C = 10  # C-step cap (labels repeat in 2-3 steps on the toys)
 N_VARPRO = 12  # damped Newton steps of a set's (ln P, ζ) refinement (budget)
-N_SCALE = 3  # damped Newton steps of the scale with a jitter (budget)
+N_SCALE = 3  # _lm steps of the scale with a jitter (budget)
 N_NEWTON = 30  # damped Newton steps per C-step and for the refinement (budget)
 TOL_GAIN = (
     1e-5  # Newton stops at a predicted gain below this (nats: DELTA / 100)
@@ -909,12 +909,12 @@ def _initial_labels(x, space):
 def _scale_step(x, space, lab):
     """``x`` with the inlier scale at its maximum given the labels ``lab``.
 
-    Per block, ``ŝ² = Σ_I (χ² + q) / Σ_I n``, clipped to ``[1/S_MAX, S_MAX]``
-    (where the prior is flat); with jitter, damped Newton steps in ``ln s`` from
-    there. The labels fixed, this does not decrease the labelled objective.
+    Per block, ``ŝ² = Σ_I (χ² + q) / Σ_I n`` with ``ŝ`` clipped to ``[1/S_MAX, S_MAX]``
+    (where the prior is flat); with jitter, ``N_SCALE`` steps of ``_lm`` in
+    ``ln s`` (trust radius one e-fold) from there. The labels fixed, this does not decrease the labelled objective.
     Data that do not rescale, or no inlier, keep ``s = 1``.
 
-    Source: Celeux & Govaert (1992).
+    Source: Celeux & Govaert (1992), [references](../references.md#celeux1992).
     """
     cat = space.cat
     if not cat.rescalable:
@@ -941,16 +941,11 @@ def _scale_step(x, space, lab):
         t = _peak_terms(cat, ls, space.jitter, state, space.dtype)
         return np.sum(np.where(lab >= 0, t[k, j], 0.0))
 
-    def newton(ls):
-        g, h = jax.grad(objective)(ls), jax.hessian(objective)(ls)
-        e, u = np.linalg.eigh(0.5 * (h + h.T))
-        step = u @ ((u.T @ g) / (np.abs(e) + 1e-3))
-        new = np.clip(ls + np.clip(step, -1.0, 1.0), -lim, lim)
-        return np.where(objective(new) > objective(ls), new, ls)
-
     ln_s = jax.lax.cond(
         space.jitter > 0,
-        lambda ls: jax.lax.fori_loop(0, N_SCALE, lambda _, v: newton(v), ls),
+        lambda ls: np.clip(
+            _lm(objective, ls, (), N_SCALE, step_max=1.0)[0], -lim, lim
+        ),
         lambda ls: ls,
         ln_s,
     )
@@ -962,18 +957,6 @@ def _relabel(x, space, lab):
     """Scale step given ``lab``, then the labels at that scale: ``(x, labels)``."""
     x = _scale_step(x, space, lab)
     return x, _labels(x, space)
-
-
-def _labelled_f(x, space, lab):
-    """The labelled objective ``F(x, s, I)`` of the search: the peak terms of
-    the inlier nights plus the floors of the others (``ln π(s)`` is flat on the
-    clip range)."""
-    c, state = _peak_state(x, space)
-    t = _peak_terms(space.cat, c["ln_s"], space.jitter, state, space.dtype)
-    k = np.arange(lab.shape[0])
-    return np.sum(
-        np.where(lab >= 0, t[k, np.maximum(lab, 0)], space.cat.log_b)
-    )
 
 
 def _lm(f, x, args, n_iter, step_max=10.0):

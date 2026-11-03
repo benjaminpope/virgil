@@ -1047,11 +1047,11 @@ def _scaled_summaries(orbit, times, ln_s, seed=1, sigma=0.05):
     return tuple(out), LOG_B
 
 
-def _scaled_space(summaries, log_b, cell):
+def _scaled_space(summaries, log_b, cell, jitter=0.0):
     return oc_cells._Space(
         oc_cells._Catalogue(summaries, log_b), cell, 0.0,
         onp.array([n.t_ref for n in summaries]) - summaries[0].t_ref,
-        (1.0, 30.0), 0.9, 1e-4, 0.0, np.float64,
+        (1.0, 30.0), 0.9, 1e-4, jitter, np.float64,
     )  # fmt: skip
 
 
@@ -1112,7 +1112,7 @@ def test_quoting_every_error_c_times_larger_leaves_the_cycle_counts_unchanged():
 
 
 @x64
-def test_the_labelled_objective_does_not_decrease_over_the_c_steps():
+def test_the_scale_and_label_steps_do_not_decrease_the_labelled_objective():
     ln_s = 1.9
     orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
     s, log_b = _scaled_summaries(orbit, TIMES, ln_s)
@@ -1127,12 +1127,12 @@ def test_the_labelled_objective_does_not_decrease_over_the_c_steps():
     lab = oc_cells._initial_labels(x, space)
     assert onp.all(onp.asarray(lab) >= 0)  # own-scale labels recover the truth
     x, lab = oc_cells._relabel(x, space, lab)
-    f = [float(oc_cells._labelled_f(x, space, lab))]
+    f = [float(_labelled_f(x, space, lab))]
     for _ in range(3):
         x1 = oc_cells._scale_step(x, space, lab)
-        f.append(float(oc_cells._labelled_f(x1, space, lab)))  # scale step
+        f.append(float(_labelled_f(x1, space, lab)))  # scale step
         lab1 = oc_cells._labels(x1, space)
-        f.append(float(oc_cells._labelled_f(x1, space, lab1)))  # label step
+        f.append(float(_labelled_f(x1, space, lab1)))  # label step
         x, lab = x1, lab1
     assert all(b >= a - 1e-9 for a, b in zip(f, f[1:]))
     # and the profiled scale is the true one
@@ -1196,3 +1196,45 @@ def test_a_non_finite_outlier_density_is_an_error():
             s, log_b, cells[2], jax.random.key(0), t_anchor=TIMES[0],
             t_nights=TIMES[:5], n_is=64, posterior_draws=False,
         )  # fmt: skip
+
+
+def _labelled_f(x, space, lab):
+    """The search's labelled objective ``F(x, s, I)``: the peak terms of the
+    inlier nights plus the floors of the others."""
+    c = space.decode(x)
+    pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+    state = np.concatenate(
+        [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
+    )
+    t = oc_cells._peak_terms(
+        space.cat, c["ln_s"], space.jitter, state, space.dtype
+    )
+    k = np.arange(lab.shape[0])
+    return np.sum(
+        np.where(lab >= 0, t[k, np.maximum(lab, 0)], space.cat.log_b)
+    )
+
+
+@x64
+def test_the_scale_step_with_a_jitter_does_not_lower_the_objective():
+    """With a jitter there is no closed form: the ``_lm`` steps start at the
+    jitter-free one and must not lower ``F`` at the jittered space."""
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    s, log_b = _scaled_summaries(orbit, TIMES, 1.9)
+    _, cells = _cells(s, (9.0, 14.0))
+    cell = [c for c in cells if c.p_lo <= 11.3 <= c.p_hi][0]
+    free, jit = (
+        _scaled_space(s, log_b, cell),
+        _scaled_space(s, log_b, cell, 0.004),
+    )
+    xt = _truth_chart(free, orbit, 0.0)
+    xt[1:5] *= onp.sqrt(3.0)
+    x = np.asarray(xt)
+    lab = oc_cells._initial_labels(x, free)
+    closed = oc_cells._scale_step(x, free, lab)
+    moved = oc_cells._scale_step(x, jit, lab)
+    assert (
+        float(_labelled_f(moved, jit, lab))
+        >= float(_labelled_f(closed, jit, lab)) - 1e-9
+    )
+    assert abs(float(jit.decode(moved)["ln_s"][0]) - 1.9) < 0.5
