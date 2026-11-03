@@ -611,6 +611,29 @@ def _peak_terms(cat, ln_s, jitter, state, dtype):
     return np.where(cat.valid, scaled + log_det - 0.5 * quad, -1e30)
 
 
+def _peak_gap(cat, jitter, dtype, n_scale=9):
+    """``Δ_k = max_j ℓ̃_kj(ŝ) - b_k`` per night ``(K,)``: the height of the
+    night's best peak over its outlier floor, at the error scale that
+    maximizes it (``n_scale`` values of ``ln s`` over ``±ln S_MAX`` when the
+    scale is free, else ``s = 1``)."""
+    g = len(cat.blocks)
+    grid = onp.linspace(-1.0, 1.0, n_scale) * math.log(S_MAX)
+    best = []
+    for v in grid if cat.rescalable else [0.0]:
+        cov, total, _ = _peak_precision(
+            cat, np.full(g, v, dtype), jitter, dtype
+        )
+        s = math.exp(v)
+        scaled = cat.loglike - np.sum(
+            cat.n * v + 0.5 * cat.chi2 * (s**-2 - 1.0), axis=-1
+        )
+        log_det = 0.5 * (
+            np.linalg.slogdet(cov)[1] - np.linalg.slogdet(total)[1]
+        )
+        best.append(np.where(cat.valid, scaled + log_det, -1e30).max(axis=1))
+    return np.max(np.stack(best), axis=0) - cat.log_b
+
+
 def _eps_nodes(n):
     """Gauss–Chebyshev nodes of the Beta(½, ½) integral of ε (equal weights)."""
     return np.sin((2 * np.arange(1, n + 1) - 1) * np.pi / (4 * n)) ** 2
@@ -944,6 +967,50 @@ def _solve_set(g, mean, w, s_w2):
     return np.einsum("mi,mij,mj->", r, w, r) + ti @ ti / s_w2, ti
 
 
+def _prediction_cost(gg, nights, w, chol, valid):
+    """``λ_k = λ_max(Σ_k⁻¹ C_k)`` per night ``(K,)`` for a pair solved on
+    ``nights`` (precisions ``w``) at the designs ``gg`` ``(K, 4, 4)``:
+    ``C_k = G_k F⁻¹ G_kᵀ``, ``F`` the pair's Fisher information; the
+    largest over the night's peaks (``chol`` ``(K, J, 4, 4)``, ``Σ_k⁻¹ = L Lᵀ``).
+    Scaling every ``Σ`` by ``c²`` leaves it unchanged."""
+    gs = gg[nights]
+    f = np.einsum("mia,mij,mjb->ab", gs, w, gs)
+    f = f + np.finfo(gg.dtype).eps * np.trace(f) * np.eye(4, dtype=gg.dtype)
+    c = np.einsum("kia,ab,kjb->kij", gg, np.linalg.inv(f), gg)
+    m = np.einsum("kjai,kab,kjbc->kjic", chol, c, chol)
+    lam = np.linalg.eigvalsh(m)[..., -1]
+    return np.where(valid, lam, 0.0).max(axis=1)
+
+
+def _covered(space, plan, g):
+    """Which span pairs cover their interior nights, ``(Q, Z, n)``.
+
+    At each ``(ζ start, ln P)`` node a pair solved on its own nights predicts
+    night ``k`` between them with the error cost ``½ λ_k χ²₄(1 - δ)`` in
+    ``ℓ_k`` at most, with probability ``1 - δ``
+    ([`_prediction_cost`][virgil.orbit_cells._prediction_cost]). It covers its
+    span when that is below the night's height ``Δ_k`` over its floor for
+    every interior night: its triplet fills then add nothing (design §6.11,
+    fix 4).
+    """
+    chi4 = stats.chi2.isf(DELTA, 4)
+    chol = np.linalg.cholesky(plan["wk"])  # (K, J, 4, 4), precision = L Lᵀ
+
+    def one(nights, w, inner, gg):
+        lam = _prediction_cost(gg, nights, w, chol, space.cat.valid)
+        return (
+            ((0.5 * chi4 * lam < plan["gap"]) | ~inner).all()
+        ) & inner.any()
+
+    pr = plan["pairs"]
+    run = jax.vmap(
+        lambda nt, w, inner: jax.vmap(
+            jax.vmap(lambda gg: one(nt, w, inner, gg))
+        )(g)
+    )
+    return run(plan["nights"][pr], plan["w"][pr], plan["inner"])
+
+
 @jax.jit
 def _grid_stage(space, plan):
     """Every set's residual on a ``ln P`` grid of the cell, at every ζ start.
@@ -971,7 +1038,12 @@ def _grid_stage(space, plan):
     r = jax.vmap(per_set)(plan["nights"], plan["w"], plan["mean"])
     left = np.concatenate([r[..., :1], r[..., :-1]], -1)
     right = np.concatenate([r[..., 1:], r[..., -1:]], -1)
-    return r, (r <= left) & (r <= right) & np.isfinite(r), np.log(period)
+    is_min = (r <= left) & (r <= right) & np.isfinite(r)
+    if len(plan["pairs"]) == 0:
+        return r, is_min, np.log(period), np.zeros((), int)
+    covered = _covered(space, plan, g)  # (Q, Z, n)
+    skip = (plan["parent"] >= 0)[:, None, None] & covered[plan["parent"]]
+    return r, is_min & ~skip, np.log(period), (is_min & skip).sum()
 
 
 def _varpro_objective(v, nights, w, mean, space):
@@ -1175,6 +1247,7 @@ def search_plan(space, key=None, nu_width=None):
     seed = 0 if key is None else int(jax.random.randint(key, (), 0, 2**31 - 1))
     rng = onp.random.default_rng(seed)
     sets = {2: [], 3: []}
+    parent = {}  # fill triplet -> the set of its span pair
     for m in (2, 3):
         for nights in itertools.combinations(range(len(peaks)), m):
             if all(len(peaks[k]) for k in nights):
@@ -1190,8 +1263,22 @@ def search_plan(space, key=None, nu_width=None):
                 pk = tuple(int(rng.choice(peaks[k])) for k in (a, c, b))
                 fills.add(((a, c, b), pk))
         sets[3] = sorted(fills)
+        index = {st: i for i, st in enumerate(sets[2])}
+        parent = {
+            st: index[((st[0][0], st[0][2]), (st[1][0], st[1][2]))]
+            for st in sets[3]
+        }
     chosen = sets[2] + sets[3]
     s = len(chosen)
+    pairs = sorted(set(parent.values()))
+    local = {q: i for i, q in enumerate(pairs)}
+    parent_of = onp.array(
+        [local[parent[st]] if st in parent else -1 for st in chosen], int
+    )
+    inner = onp.zeros((len(pairs), len(peaks)), bool)
+    for i, q in enumerate(pairs):
+        a, b = chosen[q][0]
+        inner[i, a + 1 : b] = [len(peaks[c]) > 0 for c in range(a + 1, b)]
     nights = onp.zeros((s, 3), int)
     w = onp.zeros((s, 3, 4, 4))
     mean = onp.zeros((s, 3, 4))
@@ -1233,6 +1320,9 @@ def search_plan(space, key=None, nu_width=None):
         "grid": np.linspace(0.0, 1.0, n_grid, dtype=dt),
         "wk": np.asarray(w_pv, dt), "mk": np.asarray(mean_all[..., :4], dt),
         "wf": np.asarray(w_f, dt), "fm": np.asarray(mean_all[..., 4], dt),
+        "parent": np.asarray(parent_of), "pairs": np.asarray(pairs, int),
+        "inner": np.asarray(inner),
+        "gap": np.asarray(_peak_gap(cat, space.jitter, dt), dt),
     }  # fmt: skip
 
 
@@ -1290,9 +1380,10 @@ def search_cell(space, key=None, *, plan=None, info=None):
     info["evaluations"] = 0.0
     if n_sets == 0:
         return []
-    r, is_min, ln_p = _grid_stage(space, plan)
+    r, is_min, ln_p, covered = _grid_stage(space, plan)
     s_i, z_i, p_i = onp.nonzero(onp.asarray(is_min))
     info["candidates"] = len(s_i)
+    info["covered"] = int(covered)
     info["evaluations"] += float(r.size * 2 / max(k, 1))
     frac = onp.clip(
         (onp.asarray(ln_p)[p_i] - float(space.ln_lo))

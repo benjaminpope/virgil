@@ -1153,3 +1153,5 @@ constant is tuned to it after a failure.
 
 The thresholds are fixed in the criteria file before the first n_sys = 200 run. Changing one afterwards is a recorded
 decision, never a loosening after a failure.
+
+**Fix 4 implemented (virgil#638).** `search_plan` records each fill's span pair and `_grid_stage` drops the fill's grid minima at `(ζ start, ln P)` nodes where `_covered` holds (λ_k from `_prediction_cost`; Δ_k the night's best peak height at its best scale over its floor; the largest λ over a night's peaks). It applies above `N_SET_MAX` only. Coverage gate: `test_the_velocity_criterion_keeps_the_true_mode_with_fewer_triplets` (K = 8, circular and e = 0.5, fill regime forced) passes. On the K = 14 two-season case (night length 0.007 d, σ = 6 mas·10⁻³ · a) it dropped **no** candidates in any cell: the prediction error of a pair at a random grid node exceeds the interior nights' heights, so the criterion never passes there. Results are bit-identical to before (max |Δ ln Z| = 0, max |Δp| = 0), so it saves nothing on this system; it can only help where velocities are much better than σ/t_ss here.

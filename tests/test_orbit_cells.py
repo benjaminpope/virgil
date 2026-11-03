@@ -1088,3 +1088,57 @@ def test_a_failing_cell_cancels_the_queued_ones():
     assert len(done) < 20
     assert oc_cells._map(lambda i: i * i, [1, 2, 3], 2) == [1, 4, 9]
     assert oc_cells._map(lambda i: i * i, [1, 2, 3], 1) == [1, 4, 9]
+
+
+# --- the velocity criterion for the triplet fills (design 6.11, fix 4) --------
+
+
+@x64
+def test_the_prediction_cost_does_not_depend_on_the_error_scale():
+    """``λ_k`` is the same when every covariance is multiplied by ``c²``."""
+    rng = onp.random.default_rng(0)
+    gg = np.asarray(rng.normal(size=(5, 4, 4)))
+    a = rng.normal(size=(5, 2, 4, 4))
+    prec = onp.einsum("kjab,kjcb->kjac", a, a) + 4 * onp.eye(4)
+    nights, valid = np.asarray([0, 3, 3]), np.ones((5, 2), bool)
+    w = np.asarray(prec[[0, 3, 3], 0] * onp.array([1, 1, 0])[:, None, None])
+
+    def cost(c):
+        chol = np.linalg.cholesky(np.asarray(prec) / c**2)
+        return oc_cells._prediction_cost(gg, nights, w / c**2, chol, valid)
+
+    assert onp.allclose(cost(1.0), cost(7.0), rtol=1e-8)
+    assert onp.all(onp.asarray(cost(1.0)) > 0)
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.timeout(1200)
+@pytest.mark.parametrize("ecc", [0.0, 0.5])
+def test_the_velocity_criterion_keeps_the_true_mode_with_fewer_triplets(
+    monkeypatch, ecc
+):
+    """Fill regime, K = 8, velocities informative: the criterion drops some
+    triplet candidates and the coverage contract of the search still holds."""
+    rng = onp.random.default_rng(int(1e4 * ecc) + 1000)
+    times = _two_season_times(rng)
+    orbit = _orbit(period=11.3, a=6.0, ecc=ecc)
+    s = _summaries(orbit, times, sigma=1e-3 * 6.0, seed=1)
+    monkeypatch.setattr(oc_cells, "N_SET_MAX", 20)
+    domain, cells, cell = _true_cell(11.3, times, s, (9.0, 14.0))
+    space = _space(s, cell)
+    plan = oc_cells.search_plan(space, jax.random.key(0))
+    assert int(oc_cells._grid_stage(space, plan)[3]) > 0
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(len(times), LOG_B),
+        jitter=0.0, a_range=(1.0, 30.0), e_max=0.9,
+    )  # fmt: skip
+    assert not out.failed.any() and onp.all(onp.isfinite(out.p_pos))
+    order = onp.argsort(-out.p_pos)
+    keep = order[
+        : int(onp.searchsorted(onp.cumsum(out.p_pos[order]), 0.99)) + 1
+    ]
+    true_n = [i for i, c in enumerate(out.cells) if c.p_lo <= 11.3 <= c.p_hi]
+    assert true_n[0] in keep
+    d2 = _truth_distance2(out.fits[true_n[0]], orbit, times[out.anchors[0]])
+    assert d2 < stats.chi2.isf(oc_cells.DELTA, out.fits[true_n[0]].space.d - 1)
