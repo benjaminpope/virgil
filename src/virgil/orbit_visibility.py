@@ -49,7 +49,6 @@ from scipy.special import logsumexp as onp_logsumexp
 from . import _orbit_coordinates as oc
 from . import orbit_cells as cells_mod
 from ._precision import cast_tree, run_in
-from ._geometry import fringe_scales
 from .epochs import Epochs, _Surface
 from .mode_search import (
     DefensiveMixture,
@@ -711,6 +710,9 @@ def outlier_exact(
             log_f = _night_log_f(nights, table, k, velocity)
             mref = float(onp.max(log_f(0.5 * (lo + hi))))
             lo, hi = _merge_boxes(lo, hi)
+            for col in (1, 3) if velocity else (1,):
+                # a merged box must not wrap an angle twice (the integrand is 2π periodic)
+                hi[:, col] = onp.minimum(hi[:, col], lo[:, col] + 2.0 * math.pi)
             if not onp.isfinite(mref):
                 out.append(_LOG_TINY)
                 continue
@@ -1093,8 +1095,6 @@ def fit_cells(
     positions,
     key,
     *,
-    night_length=None,
-    resolution=None,
     p_range=None,
     a_range=A_RANGE,
     e_max=E_MAX,
@@ -1115,9 +1115,6 @@ def fit_cells(
     positions : EpochPositions
         Their peak catalogues and the primary diameter.
     key : jax.random.PRNGKey
-    night_length, resolution : float, optional
-        The longest night (days) and λ/B_max (mas) that set ``P_night``; default from the
-        data.
     p_range : (float, float), optional
         Override the period domain ``[P_cut, P_max]``.
     a_range, e_max, flux_floor, s_max : optional
@@ -1138,14 +1135,8 @@ def fit_cells(
     """
     sets = list(data.data) if isinstance(data, Epochs) else list(data)
     summaries = night_summaries(sets, positions)
-    if night_length is None:
-        night_length = max(float(onp.ptp(d.mjd)) for d in sets)
-    if resolution is None:
-        resolution = float(fringe_scales(sets)[0])
     domain = period_domain(
         summaries,
-        night_length=night_length,
-        resolution=resolution,
         a_range=a_range,
         p_range=p_range,
     )

@@ -144,7 +144,7 @@ def test_the_exact_floor_is_finite_and_above_the_null():
 
 @x64
 def test_the_label_swap_negates_the_thiele_innes_constants_and_is_order_four():
-    x = jax.random.normal(jax.random.PRNGKey(0), (7, 12))
+    x = jax.random.normal(jax.random.key(0), (7, 12))
     z = x[:, 1:5]
     swapped = ov.swap_label(x)[:, 1:5]
     ti = np.stack(oc.z_to_ti(z), axis=-1)
@@ -252,7 +252,7 @@ def _system(times, d_vis=0.005, d_phi=0.02, gains=False, seed=0, period=11.3):
             simulate(
                 ns._model(np.asarray(truth), t_ref, None),
                 d,
-                key=jax.random.PRNGKey(seed + k),
+                key=jax.random.key(seed + k),
             )
         )
         peaks.append(
@@ -497,3 +497,58 @@ def test_the_true_cycle_count_is_in_the_99_percent_set_at_visibility_level():
     ln_p = onp.log(cells.decode_particles(leg)["period"])
     assert len(onp.unique(leg.draws[:, 0])) > 100
     assert abs(onp.median(ln_p) - onp.log(11.3)) < 5 * ln_p.std() + 1e-3
+
+
+@x64
+def test_the_reported_invariants_do_not_see_the_label_swap():
+    _, base, _, _ = _vis_space(TIMES[:3])
+    draws = jax.random.normal(jax.random.key(2), (9, base.d))
+    twin = ov.swap_label(draws)
+    one = ov.report_invariants(types.SimpleNamespace(space=base, draws=draws))
+    two = ov.report_invariants(types.SimpleNamespace(space=base, draws=twin))
+    assert set(one) == {
+        "period", "a", "ecc", "mean_anomaly", "cos_inc", "Omega", "omega_mod_pi",
+    }  # fmt: skip
+    for k in one:
+        onp.testing.assert_allclose(two[k], one[k], rtol=1e-8, atol=1e-8)
+    assert onp.all((one["omega_mod_pi"] >= 0) & (one["omega_mod_pi"] < 180.0))
+
+
+@x64
+def test_gains_and_closure_offsets_are_marginalized_in_the_night_likelihoods():
+    orbit, sets, summaries, _ = _system(TIMES[:2], gains=True)
+    nights = ov._Nights(sets, summaries, None, "float64")
+    truth = onp.stack([_night_truth(orbit, T0 + t)[0] for t in TIMES[:2]])
+    ln_s = np.zeros(len(summaries[0].blocks))
+    at = onp.asarray(nights.ell(np.asarray(truth[:, :4]), LN_F, ln_s))
+    away = onp.asarray(nights.ell(np.asarray(truth[:, :4] + 0.05), LN_F, ln_s))
+    assert onp.all(onp.isfinite(at)) and onp.all(at > away + 10.0)
+    own = nights.own(0, truth[:1])
+    assert onp.isfinite(own).all() and own[0] > summaries[0].loglike_null
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(1800)
+@x64
+def test_fit_cells_runs_the_whole_path_on_a_simulated_system():
+    _, sets, summaries, _ = _system(TIMES[:5])
+    positions = types.SimpleNamespace(
+        names=tuple(map(str, range(len(sets)))),
+        peaks=tuple(
+            types.SimpleNamespace(
+                dra=s.peaks[0].mean[:1],
+                ddec=s.peaks[0].mean[1:2],
+                flux=onp.exp(s.peaks[0].mean[4:5]),
+            )
+            for s in summaries
+        ),
+        primary_diam=None,
+    )
+    out = ov.fit_cells(
+        sets, positions, jax.random.key(4), p_range=(10.5, 12.5), n_is=1000
+    )
+    assert isinstance(out, ov.CellsFit)
+    assert len(out.legs) == len(out.positions.cells) == len(out.p)
+    assert len(out.log_outlier) == len(sets)
+    assert onp.all(onp.isfinite(out.log_outlier))
+    assert out.failed.any() or abs(out.p.sum() - 1.0) < 1e-6
