@@ -72,3 +72,20 @@ def test_the_draws_follow_the_fitted_prior():
         assert len(sysd["summaries"]) == k
         seen += 1
     assert seen >= 1
+
+
+def test_every_simulated_night_has_a_finite_outlier_density():
+    """An inlier's observed ln f stays inside the flux prior's support, so
+    the outlier density b_k (uniform on it) is finite for every night."""
+    rng = onp.random.default_rng(0)
+    lo = onp.log(pop.oc_cells.FLUX_FLOOR)
+    n_checked = 0
+    while n_checked < 40:
+        nights = pop.draw_nights(rng)
+        _, fit = pop.fit_domain(nights)
+        if fit is None:
+            continue
+        sysd = pop.draw_system(rng, nights, fit)
+        ln_f = onp.array([s.peaks[0].mean[4] for s in sysd["summaries"]])
+        assert onp.all((ln_f >= lo) & (ln_f <= 0.0))
+        n_checked += 1

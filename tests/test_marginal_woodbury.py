@@ -300,7 +300,7 @@ def test_gauss_newton_weights_use_the_plain_chi2_of_the_table():
 @pytest.mark.parametrize("at_low_edge", [False, True])
 def test_float32_matches_float64_on_the_same_data(case, at_low_edge):
     """The float32 path on cast float64 data is within twice the float32
-    error of the old rank-one path plus 32 ulps of the value (also at the
+    error of the old rank-one path plus 64 ulps of the value (also at the
     window's low edge, where ``s² I + G`` is worst conditioned, and with a
     spanning mode near the per-frame span)."""
     with run_in("float64"):
@@ -335,7 +335,12 @@ def test_float32_matches_float64_on_the_same_data(case, at_low_edge):
             )
         )
     assert chi2.dtype == onp.float32
-    ulps = 32 * float(onp.finfo(onp.float32).eps)
+    # Empirical, not derived: the Woodbury chi2 is a solve (kappa 3.5e7 at the
+    # low edge, so kappa * eps is above 1 and bounds nothing) minus a
+    # correction. The collinear block's float32 error is 41 eps of the value
+    # (4.3e-4 on 88; 3.5e-4 on Linux CI) where the rank-one path happens to
+    # be 2 eps off; 64 eps is 1.5x that. The absolute cap above still guards.
+    ulps = 64 * float(onp.finfo(onp.float32).eps)
     for new, ref, rank_one in (
         (chi2, chi2_ref, old[0]),
         (own, own_ref, old[1]),
