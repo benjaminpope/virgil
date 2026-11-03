@@ -1016,3 +1016,128 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
     else:
         assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
+
+
+# ---------------------------------------------------------------------------
+# The scale-free search (design §6.9)
+# ---------------------------------------------------------------------------
+
+
+def _scaled_summaries(orbit, times, ln_s, seed=1, sigma=0.05):
+    """The summaries of ``orbit`` with every quoted ``σ`` divided by ``e^ln_s``
+    (the data's true scale is ``ln_s``): the covariances shrink, ``χ²`` grows by
+    ``s²`` and ``ln L`` and the floor move by ``n ln s``, as the target's
+    equivariance has them."""
+    s = onp.exp(ln_s)
+    out = []
+    for night in _summaries(orbit, times, sigma=sigma, seed=seed):
+        p = night.peaks[0]
+        cov = p.cov / s**2
+        peak = NightPeak(
+            p.mean, cov, p.loglike + N_OBS * ln_s - 0.5 * N_OBS * (s**2 - 1.0),
+            p.n, p.chi2 * s**2, p.hessian * s**2,
+        )  # fmt: skip
+        out.append(
+            NightSummary(night.t_ref, T_SS, 6, BLOCKS, (peak,), night.loglike_null)
+        )
+    return tuple(out), LOG_B + N_OBS * ln_s
+
+
+def _scaled_space(summaries, log_b, cell):
+    return oc_cells._Space(
+        oc_cells._Catalogue(summaries, log_b), cell, 0.0,
+        onp.array([n.t_ref for n in summaries]) - summaries[0].t_ref,
+        (1.0, 30.0), 0.9, 1e-4, 0.0, np.float64,
+    )  # fmt: skip
+
+
+@x64
+@pytest.mark.slow
+@pytest.mark.timeout(1200)
+def test_the_true_scale_is_found_and_every_night_is_an_inlier_at_ln_s_1_9():
+    """At ``ln s = 1.9`` the quoted errors are 6.7 times too small: at ``s = 1``
+    every night is below its floor and the search used to return no mode."""
+    ln_s = 1.9
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    s, log_b = _scaled_summaries(orbit, TIMES, ln_s)
+    _, cells = _cells(s, (9.0, 14.0))
+    cell = [c for c in cells if c.p_lo <= 11.3 <= c.p_hi][0]
+    space = _scaled_space(s, log_b, cell)
+    modes = oc_cells.search_cell(space, jax.random.key(0))
+    assert modes
+    best = modes[0]
+    c = space.decode(np.asarray(best.x))
+    n_in = len(TIMES)
+    assert best.n_inliers == pytest.approx(n_in, abs=0.5)
+    assert abs(float(c["ln_s"][0]) - ln_s) < 3.0 / onp.sqrt(2.0 * n_in * N_OBS)
+
+
+@x64
+@pytest.mark.slow
+@pytest.mark.timeout(1800)
+def test_quoting_every_error_c_times_larger_leaves_the_cycle_counts_unchanged():
+    """Scale equivariance: ``p̂(N)`` and the true mode's inliers do not depend
+    on the quoted scale (``c ∈ {e⁻¹, e^1.5}`` against ``ln s = 0``)."""
+    rng = onp.random.default_rng(3)
+    times = _two_season_times(rng)
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    p, inliers = {}, {}
+    for ln_c in (0.0, -1.0, 1.5):
+        s, log_b = _scaled_summaries(orbit, times, -ln_c, sigma=0.03)
+        domain = oc_cells.period_domain(s, p_range=(9.0, 14.0))
+        out = oc_cells.position_cells(
+            s, domain, jax.random.key(0), log_outlier=onp.full(len(times), log_b),
+            jitter=0.0, a_range=(1.0, 30.0), e_max=0.9,
+        )  # fmt: skip
+        assert not out.failed.any()
+        p[ln_c] = out
+        true = [i for i, c in enumerate(out.cells) if c.p_lo <= 11.3 <= c.p_hi][0]
+        inliers[ln_c] = out.fits[true].modes[0].n_inliers
+    base = p[0.0]
+    for ln_c in (-1.0, 1.5):
+        keep = base.p_pos >= oc_cells.DELTA
+        for i in onp.flatnonzero(keep):
+            sd = onp.hypot(
+                p[ln_c].p_pos[i] * p[ln_c].fits[i].log_z_error,
+                base.p_pos[i] * base.fits[i].log_z_error,
+            )
+            assert abs(p[ln_c].p_pos[i] - base.p_pos[i]) < 4 * sd + 0.01
+        assert inliers[ln_c] == pytest.approx(inliers[0.0], abs=0.5)
+
+
+@x64
+def test_the_labelled_objective_does_not_decrease_over_the_c_steps():
+    ln_s = 1.9
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    s, log_b = _scaled_summaries(orbit, TIMES, ln_s)
+    _, cells = _cells(s, (9.0, 14.0))
+    cell = [c for c in cells if c.p_lo <= 11.3 <= c.p_hi][0]
+    space = _scaled_space(s, log_b, cell)
+    plan = oc_cells.search_plan(space, jax.random.key(0))
+    xt = _truth_chart(space, orbit, 0.0)
+    xt[1:5] *= onp.sqrt(3.0)
+    x = np.asarray(xt + 1e-3 * onp.random.default_rng(0).standard_normal(space.d))
+    lab = oc_cells._initial_labels(x, space)
+    assert onp.all(onp.asarray(lab) >= 0)  # own-scale labels recover the truth
+    x, lab = oc_cells._relabel(x, space, lab)
+    f = [float(oc_cells._labelled_f(x, space, lab))]
+    for _ in range(3):
+        x1 = oc_cells._scale_step(x, space, lab)
+        f.append(float(oc_cells._labelled_f(x1, space, lab)))  # scale step
+        lab1 = oc_cells._labels(x1, space)
+        f.append(float(oc_cells._labelled_f(x1, space, lab1)))  # label step
+        x, lab = x1, lab1
+    assert all(b >= a - 1e-9 for a, b in zip(f, f[1:]))
+    # and the profiled scale is the true one
+    assert abs(float(space.decode(x)["ln_s"][0]) - ln_s) < 0.3
+
+
+@x64
+def test_a_non_rescalable_catalogue_keeps_the_scale_at_one():
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    s = tuple(_without_rescaling(n) for n in _summaries(orbit, TIMES))
+    _, cells = _cells(s, (9.0, 14.0))
+    space = _space(s, cells[0])
+    x = np.zeros(space.d).at[1:5].set(1.0)
+    lab = np.zeros(len(TIMES), int)
+    assert onp.array_equal(onp.asarray(oc_cells._scale_step(x, space, lab)), onp.asarray(x))

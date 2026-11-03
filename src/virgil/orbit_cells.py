@@ -101,6 +101,7 @@ N_SET_MAX = 2000  # enumerate every set up to this; above it, every span pair
 EPS_HI = 0.3  # declared outlier fraction of the RANSAC count (design §10)
 N_C = 10  # C-step cap (labels repeat in 2-3 steps on the toys)
 N_VARPRO = 12  # damped Newton steps of a set's (ln P, ζ) refinement (budget)
+N_SCALE = 3  # damped Newton steps of the scale with a jitter (budget)
 N_NEWTON = 30  # damped Newton steps per C-step and for the refinement (budget)
 TOL_GAIN = (
     1e-5  # Newton stops at a predicted gain below this (nats: DELTA / 100)
@@ -866,6 +867,120 @@ def _labels(x, space):
     return np.where(best > space.cat.log_b, j, -1)
 
 
+def _w_of(ln_s):
+    """The chart coordinate of the error scale ``ln s`` (inverse of ``decode``)."""
+    u = np.clip(0.5 * (ln_s / math.log(S_MAX) + 1.0), 1e-6, 1.0 - 1e-6)
+    return np.log(u) - np.log1p(-u)
+
+
+def _peak_state(x, space):
+    """``(decoded x, (K, 5) state)`` of the chart vector ``x``."""
+    c = space.decode(x)
+    pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+    state = np.concatenate(
+        [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
+    )
+    return c, state
+
+
+def _scale_sums(cat, state):
+    """Per peak and block ``χ² + q`` and ``n``, ``(K, J, G)`` each: ``q`` is
+    the peak's Laplace quadratic ``dᵀ H_g d`` at the state."""
+    d = state[:, None, :] - cat.mean
+    q = np.einsum("kja,kjgab,kjb->kjg", d, cat.hess, d)
+    return cat.chi2 + q, cat.n
+
+
+def _initial_labels(x, space):
+    """Each night's best peak where it beats the floor at the night's own best
+    scale, else -1: ``I₀ = {k : max_s ℓ_k(x, s) > b_k}`` (the comparison ``b_k``
+    makes; more permissive than any fixed ``s``). The own scale is the closed
+    form of ``_scale_step`` per peak, at zero jitter."""
+    cat = space.cat
+    if not cat.rescalable:
+        return _labels(x, space)
+    _, state = _peak_state(x, space)
+    a, n = _scale_sums(cat, state)
+    lim = math.log(S_MAX)
+    ln_s = np.clip(0.5 * np.log(np.maximum(a, 1e-300) / n), -lim, lim)
+    peak = cat.loglike - np.sum(
+        n * ln_s + 0.5 * a * np.exp(-2 * ln_s) - 0.5 * cat.chi2, axis=-1
+    )
+    peak = np.where(cat.valid, peak, -1e30)
+    j = np.argmax(peak, axis=1)
+    best = np.take_along_axis(peak, j[:, None], axis=1)[:, 0]
+    return np.where(best > cat.log_b, j, -1)
+
+
+def _scale_step(x, space, lab):
+    """``x`` with the inlier scale at its maximum given the labels ``lab``.
+
+    Per block, ``ŝ² = Σ_I (χ² + q) / Σ_I n``, clipped to ``[1/S_MAX, S_MAX]``
+    (where the prior is flat); with jitter, damped Newton steps in ``ln s`` from
+    there. The labels fixed, this does not decrease the labelled objective.
+    Data that do not rescale, or no inlier, keep ``s = 1``.
+
+    Source: Celeux & Govaert (1992).
+    """
+    cat = space.cat
+    if not cat.rescalable:
+        return x
+    _, state = _peak_state(x, space)
+    j = np.maximum(lab, 0)
+    k = np.arange(lab.shape[0])
+    a, n = _scale_sums(cat, state)
+    on = (lab >= 0)[:, None]
+    num = np.sum(np.where(on, a[k, j], 0.0), axis=0)
+    den = np.sum(np.where(on, n[k, j], 0.0), axis=0)
+    lim = math.log(S_MAX)
+    ln_s = np.where(
+        den > 0,
+        np.clip(
+            0.5 * np.log(np.maximum(num, 1e-300) / np.maximum(den, 1e-300)),
+            -lim,
+            lim,
+        ),
+        0.0,
+    )
+
+    def objective(ls):
+        t = _peak_terms(cat, ls, space.jitter, state, space.dtype)
+        return np.sum(np.where(lab >= 0, t[k, j], 0.0))
+
+    def newton(ls):
+        g, h = jax.grad(objective)(ls), jax.hessian(objective)(ls)
+        e, u = np.linalg.eigh(0.5 * (h + h.T))
+        step = u @ ((u.T @ g) / (np.abs(e) + 1e-3))
+        new = np.clip(ls + np.clip(step, -1.0, 1.0), -lim, lim)
+        return np.where(objective(new) > objective(ls), new, ls)
+
+    ln_s = jax.lax.cond(
+        space.jitter > 0,
+        lambda ls: jax.lax.fori_loop(0, N_SCALE, lambda _, v: newton(v), ls),
+        lambda ls: ls,
+        ln_s,
+    )
+    return x.at[9:].set(_w_of(ln_s))
+
+
+def _relabel(x, space, lab):
+    """Scale step given ``lab``, then the labels at that scale: ``(x, labels)``."""
+    x = _scale_step(x, space, lab)
+    return x, _labels(x, space)
+
+
+def _labelled_f(x, space, lab):
+    """The labelled objective ``F(x, s, I)`` of the search: the peak terms of
+    the inlier nights plus the floors of the others (``ln π(s)`` is flat on the
+    clip range)."""
+    c, state = _peak_state(x, space)
+    t = _peak_terms(space.cat, c["ln_s"], space.jitter, state, space.dtype)
+    k = np.arange(lab.shape[0])
+    return np.sum(
+        np.where(lab >= 0, t[k, np.maximum(lab, 0)], space.cat.log_b)
+    )
+
+
 def _lm(f, x, args, n_iter, step_max=10.0):
     """Saddle-free Levenberg–Marquardt ascent of ``f(x, *args)``.
 
@@ -1005,8 +1120,9 @@ def _varpro_chunk(space, plan, s, v0, n_iter):
             _design(space, args[0], v), args[2], args[1], space.s_w2
         )[1]
         x = _chart_from(space, v, ti, plan["lnf"][si])
+        x, lab = _relabel(x, space, _initial_labels(x, space))
         h = -jax.hessian(_varpro_objective)(v, *args)
-        return x, _labels(x, space), -2.0 * fv - ti @ ti / space.s_w2, v, h
+        return x, lab, -2.0 * fv - ti @ ti / space.s_w2, v, h
 
     return jax.vmap(one)(s, v0)
 
@@ -1048,8 +1164,9 @@ def _cstep_chunk(space, plan, v, lab, n_iter):
             wf.sum(), 1e-30
         )
         x = _chart_from(space, v, ti, ln_f)
+        x, new = _relabel(x, space, lab)
         h = -jax.hessian(_labelled_objective)(v, *args)
-        return v, _labels(x, space), x, -2.0 * fv, h
+        return v, new, x, -2.0 * fv, h
 
     return jax.vmap(one)(v, lab)
 
