@@ -611,29 +611,6 @@ def _peak_terms(cat, ln_s, jitter, state, dtype):
     return np.where(cat.valid, scaled + log_det - 0.5 * quad, -1e30)
 
 
-def _peak_gap(cat, jitter, dtype, n_scale=9):
-    """``Δ_k = max_j ℓ̃_kj(ŝ) - b_k`` per night ``(K,)``: the height of the
-    night's best peak over its outlier floor, at the error scale that
-    maximizes it (``n_scale`` values of ``ln s`` over ``±ln S_MAX`` when the
-    scale is free, else ``s = 1``)."""
-    g = len(cat.blocks)
-    grid = onp.linspace(-1.0, 1.0, n_scale) * math.log(S_MAX)
-    best = []
-    for v in grid if cat.rescalable else [0.0]:
-        cov, total, _ = _peak_precision(
-            cat, np.full(g, v, dtype), jitter, dtype
-        )
-        s = math.exp(v)
-        scaled = cat.loglike - np.sum(
-            cat.n * v + 0.5 * cat.chi2 * (s**-2 - 1.0), axis=-1
-        )
-        log_det = 0.5 * (
-            np.linalg.slogdet(cov)[1] - np.linalg.slogdet(total)[1]
-        )
-        best.append(np.where(cat.valid, scaled + log_det, -1e30).max(axis=1))
-    return np.max(np.stack(best), axis=0) - cat.log_b
-
-
 def _eps_nodes(n):
     """Gauss–Chebyshev nodes of the Beta(½, ½) integral of ε (equal weights)."""
     return np.sin((2 * np.arange(1, n + 1) - 1) * np.pi / (4 * n)) ** 2
@@ -982,35 +959,6 @@ def _prediction_cost(gg, nights, w, chol, valid):
     return np.where(valid, lam, 0.0).max(axis=1)
 
 
-def _covered(space, plan, g):
-    """Which span pairs cover their interior nights, ``(Q, Z, n)``.
-
-    At each ``(ζ start, ln P)`` node a pair solved on its own nights predicts
-    night ``k`` between them with the error cost ``½ λ_k χ²₄(1 - δ)`` in
-    ``ℓ_k`` at most, with probability ``1 - δ``
-    ([`_prediction_cost`][virgil.orbit_cells._prediction_cost]). It covers its
-    span when that is below the night's height ``Δ_k`` over its floor for
-    every interior night: its triplet fills then add nothing (design §6.11,
-    fix 4).
-    """
-    chi4 = stats.chi2.isf(DELTA, 4)
-    chol = np.linalg.cholesky(plan["wk"])  # (K, J, 4, 4), precision = L Lᵀ
-
-    def one(nights, w, inner, gg):
-        lam = _prediction_cost(gg, nights, w, chol, space.cat.valid)
-        return (
-            ((0.5 * chi4 * lam < plan["gap"]) | ~inner).all()
-        ) & inner.any()
-
-    pr = plan["pairs"]
-    run = jax.vmap(
-        lambda nt, w, inner: jax.vmap(
-            jax.vmap(lambda gg: one(nt, w, inner, gg))
-        )(g)
-    )
-    return run(plan["nights"][pr], plan["w"][pr], plan["inner"])
-
-
 @jax.jit
 def _grid_stage(space, plan):
     """Every set's residual on a ``ln P`` grid of the cell, at every ζ start.
@@ -1041,7 +989,26 @@ def _grid_stage(space, plan):
     is_min = (r <= left) & (r <= right) & np.isfinite(r)
     if len(plan["pairs"]) == 0:
         return r, is_min, np.log(period), np.zeros((), int)
-    covered = _covered(space, plan, g)  # (Q, Z, n)
+    # A span pair solved on its own nights predicts night k between them with
+    # the error cost ½ λ_k χ²₄(1 - δ) in ℓ_k at most, with probability 1 - δ
+    # (_prediction_cost). It covers its span when that is below the night's
+    # height Δ_k over its floor for every interior night: its triplet fills
+    # then add nothing (design §6.11, fix 4).
+    chi4 = stats.chi2.isf(DELTA, 4)
+    chol = np.linalg.cholesky(plan["wk"])  # (K, J, 4, 4), precision = L Lᵀ
+
+    def pair_covers(nights, w, inner, gg):
+        lam = _prediction_cost(gg, nights, w, chol, space.cat.valid)
+        return (
+            ((0.5 * chi4 * lam < plan["gap"]) | ~inner).all()
+        ) & inner.any()
+
+    pr = plan["pairs"]
+    covered = jax.vmap(
+        lambda nt, w, inner: jax.vmap(
+            jax.vmap(lambda gg: pair_covers(nt, w, inner, gg))
+        )(g)
+    )(plan["nights"][pr], plan["w"][pr], plan["inner"])  # (Q, Z, n)
     skip = (plan["parent"] >= 0)[:, None, None] & covered[plan["parent"]]
     return r, is_min & ~skip, np.log(period), (is_min & skip).sum()
 
@@ -1314,6 +1281,28 @@ def search_plan(space, key=None, nu_width=None):
         ]
     )
     y0 = zeta / onp.sqrt(space.e_max - (zeta**2).sum(1, keepdims=True))
+    # Δ_k: night k's best peak over its outlier floor, at the error scale that
+    # maximizes it (9 values of ln s over ±ln S_MAX if free, else s = 1)
+    heights = []
+    for ln_s in (
+        onp.linspace(-1.0, 1.0, 9) * math.log(S_MAX)
+        if cat.rescalable
+        else [0.0]
+    ):
+        cov, total, _ = _peak_precision(
+            cat, np.full(len(cat.blocks), ln_s, dt), space.jitter, dt
+        )
+        scaled = cat.loglike - np.sum(
+            cat.n * ln_s + 0.5 * cat.chi2 * (math.exp(-2 * ln_s) - 1.0),
+            axis=-1,
+        )
+        log_det = 0.5 * (
+            np.linalg.slogdet(cov)[1] - np.linalg.slogdet(total)[1]
+        )
+        heights.append(
+            np.where(cat.valid, scaled + log_det, -1e30).max(axis=1)
+        )
+    gap = np.max(np.stack(heights), axis=0) - cat.log_b
     return {
         "nights": np.asarray(nights), "w": np.asarray(w, dt), "mean": np.asarray(mean, dt),
         "lnf": np.asarray(lnf, dt), "cut": onp.asarray(cut), "y0": np.asarray(y0, dt),
@@ -1322,7 +1311,7 @@ def search_plan(space, key=None, nu_width=None):
         "wf": np.asarray(w_f, dt), "fm": np.asarray(mean_all[..., 4], dt),
         "parent": np.asarray(parent_of), "pairs": np.asarray(pairs, int),
         "inner": np.asarray(inner),
-        "gap": np.asarray(_peak_gap(cat, space.jitter, dt), dt),
+        "gap": np.asarray(gap, dt),
     }  # fmt: skip
 
 
