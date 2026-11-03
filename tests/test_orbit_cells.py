@@ -1028,8 +1028,8 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
 def _scaled_summaries(orbit, times, ln_s, seed=1, sigma=0.05):
     """The summaries of ``orbit`` with every quoted ``σ`` divided by ``e^ln_s``
     (the data's true scale is ``ln_s``): the covariances shrink, ``χ²`` grows by
-    ``s²`` and ``ln L`` and the floor move by ``n ln s``, as the target's
-    equivariance has them."""
+    ``s²`` and ``ln L`` moves by ``n ln s``. The floor is unchanged: it is the
+    density of the same data at its own scale."""
     s = onp.exp(ln_s)
     out = []
     for night in _summaries(orbit, times, sigma=sigma, seed=seed):
@@ -1042,7 +1042,7 @@ def _scaled_summaries(orbit, times, ln_s, seed=1, sigma=0.05):
         out.append(
             NightSummary(night.t_ref, T_SS, 6, BLOCKS, (peak,), night.loglike_null)
         )
-    return tuple(out), LOG_B + N_OBS * ln_s
+    return tuple(out), LOG_B
 
 
 def _scaled_space(summaries, log_b, cell):

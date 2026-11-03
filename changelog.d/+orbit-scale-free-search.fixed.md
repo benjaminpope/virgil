@@ -1,0 +1,1 @@
+Leg-1 orbit search is scale-free: the inlier error scale is profiled jointly with the labels in the initial labels and every C-step (closed-form step, Newton with jitter), so systems whose quoted errors are off by a factor of several no longer return no mode.

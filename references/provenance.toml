@@ -2084,9 +2084,8 @@ title = "A classification EM algorithm for clustering and two stochastic version
 doi = "10.1016/0167-9473(92)90042-E"
 verified = true
 verified_via = "crossref"
-used_in = []
-role = "bibliography"
-note = "Comput. Stat. Data Anal. 14, 315; classification EM: block ascent over labels and parameters; planned inlier-scale step of the orbit-cells search"
+used_in = ["virgil.orbit_cells:_scale_step"]
+note = "Comput. Stat. Data Anal. 14, 315; classification EM: block ascent over labels and parameters; the inlier scale as an M-step of the C-steps"
 
 [ref.rue2009]
 authors = "Rue, Martino & Chopin"
