@@ -854,7 +854,7 @@ def test_a_search_that_drops_the_true_mode_fails_the_cell(monkeypatch):
     floor = log_b.sum() + math.lgamma(5.5) - 0.5 * math.log(math.pi)
     floor -= math.lgamma(6.0)
 
-    def fake(space, key=None, *, plan=None, info=None):
+    def fake(space, key=None, *, plan=None, info=None, neighbours=(False, False)):
         info.update(evaluations=0.0)
         x = onp.asarray(space.sample(jax.random.key(5), 1))[0]
         return [Mode(x, floor + 100.0, 0.01 * onp.eye(space.d), 2.0)]
