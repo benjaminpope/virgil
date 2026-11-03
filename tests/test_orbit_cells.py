@@ -854,7 +854,9 @@ def test_a_search_that_drops_the_true_mode_fails_the_cell(monkeypatch):
     floor = log_b.sum() + math.lgamma(5.5) - 0.5 * math.log(math.pi)
     floor -= math.lgamma(6.0)
 
-    def fake(space, key=None, *, plan=None, info=None, neighbours=(False, False)):
+    def fake(
+        space, key=None, *, plan=None, info=None, neighbours=(False, False)
+    ):
         info.update(evaluations=0.0)
         x = onp.asarray(space.sample(jax.random.key(5), 1))[0]
         return [Mode(x, floor + 100.0, 0.01 * onp.eye(space.d), 2.0)]
@@ -1044,7 +1046,9 @@ def test_a_mode_beside_an_edge_gives_both_cells_the_exact_evidence():
         ll = jax.jit(jax.vmap(fit.space.loglike))
         ref = onp.concatenate(
             [
-                onp.asarray(ll(fit.space.sample(jax.random.key(10 + i), 2**15)))
+                onp.asarray(
+                    ll(fit.space.sample(jax.random.key(10 + i), 2**15))
+                )
                 for i in range(32)
             ]
         )

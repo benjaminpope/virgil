@@ -1287,6 +1287,34 @@ def _outward(v, g, span, plan, neighbours, edge):
     )
 
 
+# deliberate: polishes each C-step survivor on the label-summed target and takes its saddle-free Laplace covariance, a whole step that keeps search_cell under the function-length gate
+def _laplace_modes(space, x, info):
+    """The ``Mode`` of each start in ``x``: Newton on the label-summed target,
+    saddle-free Hessian covariance; adds the cost to ``info["evaluations"]``."""
+    newton = 4.0 + 3.0 * space.d  # one Newton step, in likelihood evaluations
+    modes = []
+    for xi in x:
+        xi, hi, ti, ni = (
+            onp.asarray(a)
+            for a in _refine(space, np.asarray(xi, space.dtype), N_NEWTON)
+        )
+        info["evaluations"] += N_NEWTON * newton
+        hi = 0.5 * (hi + hi.T)
+        if (
+            onp.isfinite(xi).all()
+            and onp.isfinite(hi).all()
+            and onp.isfinite(ti)
+        ):
+            # saddle-free: |eigenvalues|, floored at the numerical rank (a
+            # saturated coordinate has none); a saddle's t is still a proposal
+            e, vec = onp.linalg.eigh(hi)
+            e = onp.maximum(
+                onp.abs(e), len(e) * onp.finfo(hi.dtype).eps * onp.abs(e).max()
+            )
+            modes.append(Mode(xi, float(ti), (vec / e) @ vec.T, float(ni)))
+    return modes
+
+
 def search_cell(
     space, key=None, *, plan=None, info=None, neighbours=(False, False)
 ):
@@ -1319,7 +1347,6 @@ def search_cell(
     plan = search_plan(space, key) if plan is None else plan
     info = {} if info is None else info
     n_sets, d, k = len(plan["nights"]), space.d, len(space.cat.log_b)
-    newton = 4.0 + 3.0 * d  # one Newton step, in likelihood evaluations
     info.update(sets=n_sets, candidates=0, survivors=0, unique=0, modes=0)
     info.update(capped=0, newton_runs=0, edge_stopped=0, dropped=0)
     info["evaluations"] = 0.0
@@ -1413,7 +1440,9 @@ def search_cell(
             if not len(keep):
                 return []
             v, lab, x, r2, h2 = v[keep], lab[keep], x[keep], r2[keep], h2[keep]
-            cap, grad, dead = (onp.zeros(len(v), t) for t in (bool, float, bool))
+            cap, grad, dead = (
+                onp.zeros(len(v), t) for t in (bool, float, bool)
+            )
             active = onp.arange(len(v))
             continue
         active = onp.concatenate(changed) if changed else active[:0]
@@ -1425,27 +1454,7 @@ def search_cell(
     x, lab, v, r2, h2 = x[ok], lab[ok], v[ok], r2[ok], h2[ok]
     keep = _unique_starts(lab, v, h2, r2)
     x = x[keep][_prune(space, x[keep])]
-    modes = []
-    for xi in x:
-        xi, hi, ti, ni = (
-            onp.asarray(a)
-            for a in _refine(space, np.asarray(xi, space.dtype), N_NEWTON)
-        )
-        info["evaluations"] += N_NEWTON * newton
-        hi = 0.5 * (hi + hi.T)
-        if (
-            onp.isfinite(xi).all()
-            and onp.isfinite(hi).all()
-            and onp.isfinite(ti)
-        ):
-            # saddle-free: |eigenvalues|, floored at the numerical rank (a
-            # saturated coordinate has none); a saddle's t is still a proposal
-            e, vec = onp.linalg.eigh(hi)
-            e = onp.maximum(
-                onp.abs(e), len(e) * onp.finfo(hi.dtype).eps * onp.abs(e).max()
-            )
-            modes.append(Mode(xi, float(ti), (vec / e) @ vec.T, float(ni)))
-    modes = distinct_modes(modes)
+    modes = distinct_modes(_laplace_modes(space, x, info))
     info["modes"] = len(modes)
     return modes
 
@@ -1700,9 +1709,7 @@ def position_leg(
         )  # fmt: skip
         plan = search_plan(space, k_plan, nu_width) if plan is None else plan
         info = {}
-        modes = search_cell(
-            space, plan=plan, info=info, neighbours=neighbours
-        )
+        modes = search_cell(space, plan=plan, info=info, neighbours=neighbours)
         ev = _cell_evidence(space, [*modes, *shared], k_is, n_is)
     fit = CellFit(
         cell, ev.log_z, ev.log_z_error, modes, None, ev.log_w, ev.x,
@@ -1956,8 +1963,9 @@ def position_cells(
                 near = -math.log(
                     min(sd / d_nu, 0.5) / (1.0 - min(sd / d_nu, 0.5))
                 )
-                mid, half = 0.5 * (EDGE_STOP + near), max(
-                    0.5 * (EDGE_STOP - near), 1.0
+                mid, half = (
+                    0.5 * (EDGE_STOP + near),
+                    max(0.5 * (EDGE_STOP - near), 1.0),
                 )
                 scale = onp.ones(len(m.x))
                 scale[0] = half / math.sqrt(m.cov[0, 0])
@@ -1965,8 +1973,9 @@ def position_cells(
                 x = onp.array(m.x, float)
                 x[0] = side * mid
                 lap = laplace_log_evidence(m) + math.log(across)
-                shift = 0.5 * len(x) * math.log(2.0 * math.pi) + 0.5 * (
-                    onp.linalg.slogdet(cov)[1]
+                shift = (
+                    0.5 * len(x) * math.log(2.0 * math.pi)
+                    + 0.5 * (onp.linalg.slogdet(cov)[1])
                 )
                 shared.append(Mode(x, lap - shift, cov, m.n_inliers))
         if shared:
