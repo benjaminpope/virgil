@@ -525,9 +525,8 @@ For each set S and each ζ start (below):
 **Concentration steps (Rousseeuw & Van Driessen 1999).** From each set's solution:
 
 1. Label each night inlier if ℓ_k > b_k, i.e. if its inlier component is the larger one, at the jointly profiled
-   inlier scale ŝ (§6.9; the first labels compare each night at its own best scale).
-2. Maximize the labelled target (inliers Gaussian, outliers at b_k) by Newton in (c, TI′, ln f), with the closed-form
-   scale step of §6.9 between label and core steps.
+   inlier scale ŝ (§6.9: labels and ln s are chosen together given the parameters).
+2. Maximize the labelled target (inliers Gaussian, outliers at b_k) by Newton in (c, TI′, ln f).
 3. Relabel, and repeat until the labels repeat (at most n_C steps, §10).
 
 Each step is coordinate ascent on max_labels of the labelled target: the labels maximize it given the parameters, and
@@ -886,41 +885,50 @@ posterior from ln s to ln s − ln c, and both ℓ_k and b_k shift by the same �
 bounds. So p(N | d) is unchanged. A search inherits that equivariance only if its labels, scores and starts depend on
 s·σ, never on σ alone. The labelled objective of §6.1 is therefore maximized over (labels, x, ln s) jointly:
 
-  F(x, s, I) = Σ_{k∈I} ℓ_k(x, s) + Σ_{k∉I} b_k + ln π(s).
+  F(x, s, I) = Σ_{k∈I} ℓ_k(x, s) + Σ_{k∉I} o_k(x, s) + ln π(s),
 
-This is block coordinate ascent, the classification-EM scheme of Celeux & Govaert (1992), with the scale as an M-step
-parameter (Rousseeuw & Van Driessen's C-steps are its trimming special case). Each block step does not decrease F, so the
-argument of §6.1 for finite termination is unchanged:
+where o_k is the outlier term. Under candidate (ii) of §1.1, which the code implements, o_k = b_k is a constant. Under
+(iii′), o_k(x, s) moves with s. This is block coordinate ascent, the classification-EM scheme of Celeux & Govaert
+(1992), with the scale as a parameter of the classification step (Rousseeuw & Van Driessen's C-steps are its trimming
+special case). Each block step does not decrease F, so the argument of §6.1 for finite termination is unchanged:
 
-1. **Labels given (x, s):** inlier iff ℓ_k(x, s) > b_k (the larger component; unchanged rule, now at the current s).
-2. **Scale given (x, labels):** rescalable and jitter 0, the step is closed form per inlier group g:
-   ŝ_g² = Σ_{k∈I}(χ²_gk + q_gk)/Σ_{k∈I} n_gk, with q_gk = d_kᵀH_gk d_k the peak's Laplace quadratic. ŝ_g is clipped to
-   [1/s_max, s_max], which is where the prior π(s) is flat and supported. With jitter, the step is a 1-D Newton in ln s.
-3. **Core given (labels, s):** the WLS/VarPro Newton of §6.1. A global scale cancels in the WLS solve, so only the labels
+1. **Labels and scale jointly, given x:**
+
+     (I, s) ← argmax_{I, s} F = argmax_s [Σ_k max(ℓ_k(x, s), o_k(x, s)) + ln π(s)],
+
+   with each night inlier iff ℓ_k > o_k at that s. The maximization is 1-D in ln s over the prior range
+   [−ln s_max, ln s_max]. It uses a grid at spacing h = 1/√n_tot (n_tot the total residual count), then Newton in ln s
+   within the winning label set. Near its optimum F has curvature about −2n_I in ln s, so the grid's loss is at most
+   n_I·(h/2)² ≤ ¼ nat. Under (ii), rescalable data and jitter 0, the Newton step has the closed form
+   ŝ_g² = Σ_{k∈I}(χ²_gk + q_gk)/Σ_{k∈I} n_gk per inlier group g, with q_gk = d_kᵀH_gk d_k the peak's Laplace quadratic,
+   clipped to [1/s_max, s_max]. Under (iii′), or with jitter, it is a 1-D Newton over all nights, since the outliers'
+   o_k pull s too.
+2. **Core given (labels, s):** the WLS/VarPro Newton of §6.1. A global scale cancels in the WLS solve, so only the labels
    and the Laplace terms see it.
 
-**Initial labels.** A minimal set fits its own nights exactly, so it carries no information on s. The first labels
-compare each night at its own best scale with its floor, which is profiled the same way:
-
-  I₀ = {k : max_s ℓ_k(x, s) > b_k}.
-
-This is the same comparison b_k makes, orbit against π_out at the night's own scale. It is more permissive than any
-fixed s, so I₀ contains the true inliers. An outlier admitted to I₀ inflates the first ŝ, and step 1 then removes it.
-The monotone chain starts at the first scale step.
+**Why the labels and the scale move together.** A scale step at fixed labels (a pooled ŝ, then relabel) is not robust.
+Suppose one outlier with (χ² + q)/n = r·s² is labelled inlier. It raises the pooled ŝ² by about (r − 1)/|I|. Each true
+inlier then loses n_k·g(ŝ/s), and once that exceeds Δ_k the relabel drops the inliers and keeps the outlier. With four
+40-residual inliers and r = 10, the loss is about 35 nats per inlier. F still rises, but to the wrong mode. The joint
+step cannot do this: each night enters as max(ℓ_k, o_k), so an outlier's contribution is capped at its floor whatever s
+is, and the maximum over s is set by the nights that fit. No start labels are needed either. A minimal set fits its own
+nights exactly and carries no information on s, but step 1 needs only x.
 
 **Coverage argument, carried over.** Replace σ by sσ throughout the argument of §6.1. The set spanning I's outer nights
 still brackets the needle, since the needle's width in ρ is set by sσ/a and the grid's coherence by the span, which is
 independent of both. An interpolated inlier then sits within about sσ of the orbit, below its threshold sσ√(2Δ_k).
-At its own scale it passes the test for I₀, because ŝ_k² = χ²_k/n_k ≈ s²(1 ± √(2/n_k)). The pooled step then fixes ŝ to
-within 1/√(2n_I) in ln s. The first full C-step labels I or a superset inlier. The argument is free of σ/a and of s.
+At the true s, the true inliers contribute Σ_{k∈I}ℓ_k(x, s), which exceeds the all-floor value by Σ_{k∈I}Δ_k minus their
+interpolation cost. So the joint maximum over s is at the true s (to within 1/√(2n_I) in ln s), unless a different
+label set fits better, which would make it the larger mode. The first full C-step labels I or a superset inlier. The
+argument is free of σ/a and of s.
 
 **What must change (and nothing else).** `_labels`, `_cstep_chunk`, `_scores`, `_prune`, `_refine` and `fit_jitter`
 all use the profiled ŝ. Non-rescalable data (gains or closure offsets) keep s pinned at 1 on both sides, as now (§1.1).
 The scale step adds one pass over the inlier nights' χ² per C-step, which is negligible.
 
 **Toy check.** `scalefix.py` is kept with the pass's session notes, not in the repository. It patches `_labels`,
-`_refine` and `_scores` in-process to profile ln s on an 81-node grid, on replayed population systems, with no src
-change:
+`_refine` and `_scores` in-process. Each call runs step 1 (the joint max of Σ_k max(ℓ_k, b_k) over ln s) on an
+81-node grid, on replayed population systems, with no src change:
 
 | system (seed:index) | K | outliers | true ln s | base: modes, p̂(true), failed cells | scale-profiled: mode ln s, p̂(true), failed cells, ESS (true cell) |
 |---|---|---|---|---|---|
@@ -929,13 +937,16 @@ change:
 | 4:8 | 16 | 0 | 1.74 | none, 0.02 (set 14 of 15), 4 | 1.80, 1.00, 1, **1** |
 | 12:1 | 10 | 10 (all) | 1.92 | none, 0.15 (set 12 of 12), 1 | none, 0.18 (set 12 of 12), 0, 47 |
 | 16:2 | 9 | 0 | −1.11 | −1.07, 1.00, 2 | −1.07, 1.00, 0, 1013 |
+| 1:4 | 10 | 1 | 2.17 | 2.14 (2 of 9 inliers), 9e-5 (**truth outside the 99 % set**), 1 | 2.22 (9 of 9 inliers), 1.00, 1, 288 |
+| 14:4 | 8 | 1 | 1.83 | none, 0.31 (set 4 of 5), 1 | 1.86 (7 of 7 inliers), 1.00, 1, **2** |
 
-The profiled search finds the mode at the true scale (to 0.05 in ln s) in every system that has inliers, and the ln Ẑ
-of the true cell rises by 40–208 nats over the floor fit. The all-outlier system correctly stays at the prior. Two
-things remain:
+The profiled search finds the mode at the true scale (to 0.05 in ln s) in every system that has inliers. In the two
+systems with an outlier night it recovers exactly the true inlier set. The ln Ẑ of the true cell rises by 40–208 nats
+over the base fit. The all-outlier system correctly stays at the prior. Two things remain:
 
-- 4:8's true cell has ESS 1. The mode is right, but at n_I = 640 its t₅ component is too narrow or misplaced for the
-  draws. This is the proposal problem of §6.10, not the search.
+- 4:8 and 14:4 have ESS 1–2 in the true cell, and one failed cell remains in each of 4:8, 1:4 and 14:4. The mode is
+  right, but at n_I = 280–640 its t₅ component is too narrow or misplaced for the draws. This is the proposal problem
+  of §6.10, not the search.
 - The toy profiles s on an 81-node grid inside every call, so it ran 2–6× slower. The closed-form step above costs one
   pass over χ².
 
@@ -970,8 +981,10 @@ pair's data drawn from π_out (the floor's own generative model) and summed over
 
   E_{π_out}[ Σ_N p_orb,N(d_ij) / p_out(d_ij) ] = Σ_N π(N) = 1,
 
-so the expected ratio per cell is the cell's prior mass. No bound can declare such a mode negligible, and raising m_min
-above m would drop mass the model assigns (and would be tuning to counts). **m_min stays m** (2 with velocities, 3
+so the expected ratio per cell is the cell's prior mass. The ratio is heavy-tailed: its mean is 1 and its median is
+typically ≪ 1. So this does not say that every such mode matters on given data. It says that no data-independent rule
+can drop them: the data-dependent bound below may. Raising m_min above m would drop mass the model assigns (and would
+be tuning to counts). **m_min stays m** (2 with velocities, 3
 positions only): it is the identifiability count of §6.1, and the sentinel keeps it.
 
 **Why they are ridges.** An m-inlier mode does not resolve the alias when its inliers lie in one season. The phase
@@ -986,16 +999,23 @@ The Laplace approximation in the logistic chart then fails in two ways:
 δ of its mass outside the cell, or if its set-Newton ended at |w_P| ≥ W (§6.11). Its proposal component is replaced by
 a truncated conditional mixture, following the integrated nested Laplace approximation (Rue, Martino & Chopin 2009):
 
-1. Nodes ρ_j across the cell, n_ρ = max(2, ⌈K_COH·Δ_I/T⌉ + 1), the same coherence as the set grid (§6.1).
-2. At each node, the conditional mode of the other coordinates and its Laplace (log height h_j, covariance Σ_j).
-3. The component's ρ-density is piecewise linear through the nodes' conditional evidences e^{h_j}|Σ_j|^{½}, normalized
-   over the cell. Given ρ, the other coordinates are t₅ about the conditional mode and covariance, interpolated linearly
-   between nodes.
+1. Start with nodes ρ_j across the cell, n_ρ = max(2, ⌈K_COH·Δ_I/T⌉ + 1), at the same coherence as the set grid (§6.1).
+2. At each node, find the conditional mode of the other coordinates and its Laplace: log evidence
+   h_j = ln L̂_j + ½ln|2πΣ_j|, with covariance Σ_j.
+3. Bisect any interval whose |h_{j+1} − h_j| > 1 nat, and repeat until none remains. Phase coherence does not bound how
+   much h changes across the cell. That change grows with the information, ∝ n_I·(2πΔ_I/T·a/sσ)², so two nodes can
+   differ by tens of nats at large n_I. The 1-nat step is a tolerance: a log-linear interpolant through such nodes has
+   a relative mass error of order (1 nat)²/8 per interval.
+4. Set the component's ρ-density to exp of the piecewise-linear interpolant of h, which is piecewise exponential and
+   normalizable in closed form over the cell. Given ρ, the other coordinates are t₅ about the conditional mode and
+   covariance, interpolated linearly between nodes.
+5. In the chart, ρ = ρ_lo + σ(w_P) across the cell, so log q_w = log q_ρ + ln σ(w_P) + ln(1 − σ(w_P)). The other
+   coordinates keep their own chart Jacobians as for any component.
 
 The component is a proper density with a closed-form log q, so the IS of §6.4 stays exact and unbiased. Its quadrature
-sum Σ_j (trapezoid weight)·e^{h_j}|2πΣ_j|^{½} replaces the Laplace mass wherever a mass is used: in the mixture weights,
-in `_prune`, and in the sentinel's "W above the floor" test. Kind 2 disappears because no inflated Laplace remains to
-trigger on.
+sum (the closed-form integral of e^{h(ρ)} over the cell) replaces the Laplace mass wherever a mass is used: in the
+mixture weights, in `_prune`, and in the sentinel's "W above the floor" test. Kind 2 disappears because no inflated
+Laplace remains to trigger on.
 
 **Negligibility by a bound, not by Laplace.** `position_cells` now calls a cell negligible when its Laplace upper estimate
 is W below the best cell. A ridge's Laplace is not an upper bound, so this can call a real cell negligible or a
@@ -1003,18 +1023,30 @@ negligible one matters. The bound that holds is
 
   Z_N ≤ π(cell N)·sup_{x∈cell} L(x),
 
-with sup L the label-summed target at the best mode found (the search's coverage contract makes it the cell's maximum to
-within δ). A cell is negligible iff ln π(cell) + ln sup L < max_N' ln Ẑ_N' − W. The bound omits the Occam factor, so it
-is conservative: more cells are kept, never fewer.
+with sup L evaluated as the label-summed target at the best mode found. A cell is negligible iff
+ln π(cell) + ln sup L < max_N' ln Ẑ_N' − W.
+
+The best mode found is a *lower* bound on sup L. So the rule is conservative (more cells kept than by the exact
+integral, since the bound omits the Occam factor) only *conditional on the search's coverage*. When the search misses
+the cell's top mode, which the coverage contract allows with probability ≤ δ, a real cell can be called negligible.
+Two consequences follow:
+
+- A cell in which the search found no mode is never negligible by this rule. It runs its IS.
+- A dropped real cell shows up as a miss of N in assertion 1, or as a non-uniform PIT in assertion 3 of §14, on the
+  whole population, and in assertion 4 where the exact reference exists. The failure rate is the search's δ, not a
+  new tolerance.
 
 **Unreliable flag by relative error.** ESS < ESS_FAIL stays the trigger, because Kish's ESS is the available diagnostic.
 A cell fails only if its estimate could change p̂(N) at δ, i.e. ESS < ESS_FAIL and the bound above admits p(N) ≥ δ.
 The ridge component is what makes ESS ≥ ESS_FAIL in kinds 1 and 3. Retries and cascades stay excluded (§6.6).
 
-**A model check for the population.** The population draws ε ~ Beta(½,½) per system, so some systems have every night
-an outlier, while §14's spec says 0–2 outlier nights. Both are legitimate tests, but they test different things: under
-the spec, a system with ≤ m inliers left should be rare. The population script is to follow the spec (0–2 outlier nights).
-Systems with all-outlier draws are reported as a separate stratum (B″), where the correct answer is the prior.
+**The population stays a prior draw.** The population draws ε ~ Beta(½,½) per system, which is the model's prior
+(§1.1, §10). §14's spec says 0–2 outlier nights, but switching to that would make the population no longer a prior draw.
+SBC (assertion 3) would then lose its uniformity, and the change would remove exactly the kind-1 systems above after
+they failed. The population therefore keeps Beta(½,½). Results are reported by stratum: all nights outliers (B″, where
+the correct answer is the prior), ≤ m inliers left, and the rest. §14 flags the mismatch with the spec's
+"0–2 outlier nights" for Ben. Making the model's ε prior match the spec instead would be a model change, and
+would need his decision.
 
 ### 6.11 Speed on two-season data (problem C)
 
@@ -1044,8 +1076,12 @@ by either case; the first work item measures the gradient at stop.
 **Fix 1: stop at the edge, and share the neighbour's mode.** A candidate is stopped once |w_P| ≥ W = ln(1/δ). Beyond that
 point the logistic chart leaves less than a fraction δ of the cell's ρ-interval (1/(1 + e^{W}) < δ), so it is derived,
 not tuned. A stopped two-season candidate whose ρ-gradient points outward is dropped here: the neighbour's own search
-finds it as an interior mode, under the coverage argument of §6.1. The neighbour's mode enters this cell's mixture as a
-component when its Laplace puts more than δ of its mass across the shared edge. This shares *modes* across cells, not
+finds it as an interior mode, under the coverage argument of §6.1. That holds only when the neighbour exists and is
+searched. At the first and last cells of the N grid, or when the neighbour is not searched (pruned, or negligible by
+the §6.10 bound), the stopped candidate is kept here as a ridge component (§6.10) instead of being dropped. Otherwise
+the mode would be found nowhere, and neither the sentinel nor `no-mode` would fire. The neighbour's mode enters this
+cell's mixture as a component when its ρ-space (delta-method) Laplace marginal puts more than δ of its mass across the
+shared edge. In its own logistic chart a Laplace never leaves the cell, so the test is made in ρ. This shares *modes* across cells, not
 draws: each cell keeps its own n_IS draws and its own estimate, so §6.7's objection (a negligible cell sees only prior
 draws and its ln Ẑ is skewed low) does not apply.
 
@@ -1070,16 +1106,21 @@ quantitative per span pair. For a pair S = (i, j) solved at a ζ start, night k 
   C_k = G_k F_S⁻¹ G_kᵀ,
 
 where G_k is the Jacobian of night k's state (p, v) in the parameters and F_S the pair's Fisher information. The
-prediction error e ~ N(0, C_k) costs ½eᵀΣ_k⁻¹e in ℓ_k, with Σ_k the night's summary covariance at the profiled scale.
-With λ_k = λ_max(Σ_k⁻¹C_k), we have eᵀΣ_k⁻¹e ≤ λ_k·|z|² with |z|² ~ χ²_4, so
+C-step compares ℓ_k at the pair's prediction p̂_k with ℓ_k^max, which is taken at night k's own peak μ_k, not at the
+true state. The offset is therefore p̂_k − μ_k = e_pred − e_noise ~ N(0, C_k + Σ_k), with Σ_k the night's summary
+covariance at the profiled scale. It costs ½eᵀΣ_k⁻¹e in ℓ_k. With λ_k = λ_max(Σ_k⁻¹C_k),
 
-  P(½eᵀΣ_k⁻¹e > ½λ_k·χ²_4(1 − δ)) ≤ δ.
+  eᵀΣ_k⁻¹e ≤ (1 + λ_k)·|z|²,  |z|² ~ χ²_4,
 
-The pair then labels night k inlier at its first C-step with probability ≥ 1 − δ when
+so P(½eᵀΣ_k⁻¹e > ½(1 + λ_k)·χ²_4(1 − δ)) ≤ δ. The pair then labels night k inlier at its first C-step with probability
+≥ 1 − δ when
 
-  ½λ_k·χ²_4(1 − δ) < Δ_k  for every night k between i and j,
+  ½(1 + λ_k)·χ²_4(1 − δ) < Δ_k  for every night k between i and j,
 
-with Δ_k = ℓ_k^max(ŝ_k) − b_k the night's height over its floor, known from its summary before the search. If every
+with Δ_k = ℓ_k^max(ŝ_k) − b_k the night's height over its floor, known from its summary before the search. The night's
+own noise term ½χ²_4(1 − δ) = 9.2 nats at δ = 10⁻³ dominates when the velocities are informative (λ_k ≪ 1). A night
+lower than that over its floor keeps its pair's triplet fills whatever the velocities. For a position-only night the
+state has 2 dimensions, and χ²_4 is conservative. If every
 interior night passes, the pair alone covers that span, and its triplet fills add nothing to coverage. Otherwise the
 pair keeps its stratified triplet fills (§6.1). The blanket proposal is the special case in which every pair passes.
 The criterion keeps coverage to first order, since it is the coverage argument's own condition. It rests on two
@@ -1226,13 +1267,13 @@ run; changing one afterwards is a recorded decision.
 | N_SET_MAX | 2000 | budget | enumerate all sets below; above it, all span pairs with stratified interior fills (§6.1) |
 | ε_hi | 0.3 | declared | outlier fraction in the RANSAC count n = ln δ/ln(1 − (1 − ε_hi)^m) |
 | N_C | 10 | budget | C-step cap; labels repeat within 2–3 steps on the toys |
-| inlier rule | ℓ_k(x, ŝ) > b_k at the jointly profiled ŝ; first labels at each night's own scale | derived | the larger component (C-step labels; §6.9) |
-| scale step | ŝ_g² = Σ_I(χ² + q)/Σ_I n, clipped to [1/s_max, s_max] | derived | CEM M-step for s (Celeux & Govaert 1992; §6.9) |
+| inlier rule | ℓ_k(x, ŝ) > o_k at the jointly profiled ŝ | derived | the larger component (C-step labels; §6.9) |
+| scale step | joint (labels, ln s) max of Σ_k max(ℓ_k, o_k): grid at h = 1/√n_tot, then Newton (closed form ŝ_g² = Σ_I(χ² + q)/Σ_I n under (ii)) | derived; h a tolerance (≤ ¼ nat) | CEM classification step (Celeux & Govaert 1992; §6.9) |
 | edge stop | \|w_P\| ≥ W | derived | the logistic chart leaves < δ of the cell beyond it (§6.11) |
 | short-span set | K_COH·Δ_S/T < 1 | derived | from K_COH: under a quarter cycle across a cell (§6.11) |
 | ridge mode | Laplace ρ-marginal > δ outside the cell, or set-Newton stopped at the edge | derived | from δ and the edge stop (§6.10) |
-| ridge nodes | n_ρ = max(2, ⌈K_COH·Δ_I/T⌉ + 1) | derived | the set grid's coherence (§6.1, §6.10) |
-| triplet criterion | keep a span pair's fills iff some interior night has ½λ_max(Σ_k⁻¹C_k)·χ²_4(1 − δ) ≥ Δ_k | derived | the §6.1 interpolation step at level δ (§6.11) |
+| ridge nodes | start n_ρ = max(2, ⌈K_COH·Δ_I/T⌉ + 1); bisect until \|Δh\| ≤ 1 nat between nodes | derived start, tolerance step | the set grid's coherence; log-linear interpolation error (§6.10) |
+| triplet criterion | keep a span pair's fills iff some interior night has ½(1 + λ_max(Σ_k⁻¹C_k))·χ²_4(1 − δ) ≥ Δ_k | derived | the §6.1 interpolation step at level δ (§6.11) |
 | negligible cell | ln π(cell) + ln sup L < max ln Ẑ − W | derived | Z_N ≤ π(cell)·sup L (§6.10) |
 | distinct-mode radius | Mahalanobis 1 under both covariances | tolerance | §6.1; the one-sided test cost 62 nats |
 | VarPro ridge | 1/s_w², s_w² = ⟨a²⟩/3 | derived | §6.1; the per-component TI′ variance of the prior |
@@ -1370,7 +1411,10 @@ constant is tuned to it after a failure.
 - Orbits: P log-uniform on 2–60 d; e uniform on 0–0.8; isotropic orientation; a log-uniform on [a_lo, a_hi].
 - Epochs: 5–20 nights, uniform. Either one season of about 30 d, or two seasons a year apart. Nights are clustered
   within each season.
-- Noise: σ/a log-uniform on 10⁻⁴–10⁻². 0–2 outlier nights, each with its summary drawn from π_out.
+- Noise: σ/a log-uniform on 10⁻⁴–10⁻². 0–2 outlier nights, each with its summary drawn from π_out. **Flag for Ben
+  (2026-11-03):** the population script instead draws ε ~ Beta(½, ½) per system, which is the model's prior. The
+  design pass recommends keeping that draw, so the population stays a prior draw and SBC stays valid (§6.10). The
+  alternative is to change the model's ε prior to match the spec. Either choice is Ben's.
 - Data: night summaries simulated as in #632's `_summaries`.
 - Truths with P outside the declared period domain (§1.3) are excluded and counted (stratum B′, as §12). Under the 2026-11-02
   domain (P_cut = max(2Δt_min, p_floor)), B′ holds only truths below twice the shortest gap between nights or below
@@ -1404,8 +1448,8 @@ constant is tuned to it after a failure.
 8. **Informativeness is reported, not gated.** Per ln s and σ/a stratum, the median size of the 99 % set over B and the
    KL divergence of p̂(N) from the prior. A pass in assertion 1 with p̂(N) equal to the prior is visible here.
 
-The population follows the spec's 0–2 outlier nights. Draws with every night an outlier are a separate stratum (B″),
-where the correct answer is the prior and assertion 7 does not apply.
+Results are reported by stratum: all nights outliers (B″, where the correct answer is the prior and assertion 7
+does not apply), ≤ m inliers left, and the rest.
 
 **Tiers:**
 
