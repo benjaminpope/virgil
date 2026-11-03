@@ -550,6 +550,7 @@ def test_the_symmetry_images_leave_the_target_invariant():
         onp.testing.assert_allclose(moved, base, rtol=1e-10, atol=1e-10)
 
 
+@pytest.mark.slow
 @x64
 def test_a_second_cell_of_a_system_compiles_nothing():
     rng = onp.random.default_rng(0)
@@ -866,6 +867,7 @@ def test_a_search_that_drops_the_true_mode_fails_the_cell(monkeypatch):
     assert fit.at_floor and fit.failed and fit.draws is None
 
 
+@pytest.mark.slow
 @x64
 def test_a_non_finite_target_fails_the_cell(monkeypatch):
     times = TIMES[:5]
@@ -1090,3 +1092,49 @@ def test_the_edge_stop_cuts_the_step_cap_count_and_drops_only_with_neighbours(
     assert runs["on"]["edge_stopped"] > 0 and runs["on"]["dropped"] == 0
     assert runs["drop"]["dropped"] > 0
     assert runs["on"]["capped"] < runs["off"]["capped"]
+
+
+@x64
+@pytest.mark.parametrize("gap", [3.0, 200.0])
+def test_a_floor_cell_fails_the_system_only_if_it_could_matter(
+    monkeypatch, gap
+):
+    """The floor sentinel obeys the same rule as the low-ESS flag: a cell at
+    the floor within W of the best cell (in its upper bound on the mass) fails
+    the system; one far below stays flagged on its fit but does not."""
+    s = _summaries(_orbit(), TIMES, sigma=0.3)
+    domain, cells = _cells(s, (60.0, 400.0))
+    odd = cells[1].n
+
+    def leg(summaries, log_outlier, cell, key, **kw):
+        low = cell.n == odd
+        z = -cell.log_mass - (gap if low else 0.0)
+        return types.SimpleNamespace(
+            cell=cell, log_z=z, log_z_upper=z, log_z_error=0.0, modes=[],
+            draws=None, at_floor=low, failed=low, nonfinite=False,
+            unreliable=False, plan=None,
+        )  # fmt: skip
+
+    monkeypatch.setattr(oc_cells, "position_leg", leg)
+    monkeypatch.setattr(oc_cells, "_draw", lambda f, k: None)
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(len(TIMES), LOG_B),
+        jitter=0.0,
+    )  # fmt: skip
+    assert out.fits[1].at_floor
+    if gap < oc_cells.W:
+        assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
+    else:
+        assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
+
+
+def test_a_non_finite_outlier_density_is_an_error():
+    s = _summaries(_orbit(), TIMES[:5], sigma=0.3)
+    _, cells = _cells(s, (6.0, 400.0))
+    log_b = onp.full(5, LOG_B)
+    log_b[2] = -onp.inf
+    with pytest.raises(ValueError, match="all-outlier floor is undefined"):
+        oc_cells.position_leg(
+            s, log_b, cells[2], jax.random.key(0), t_anchor=TIMES[0],
+            t_nights=TIMES[:5], n_is=64, posterior_draws=False,
+        )  # fmt: skip

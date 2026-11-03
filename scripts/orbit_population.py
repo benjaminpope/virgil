@@ -174,9 +174,15 @@ def draw_system(rng, nights, fit):
     truth = onp.append(
         sign * _night_state(orbit, times), onp.full((k, 1), ln_f), 1
     )
-    mean = truth + math.exp(ln_s) * rng.multivariate_normal(
-        onp.zeros(5), _cov(sigma), size=k
-    )
+    noise = rng.multivariate_normal(onp.zeros(5), _cov(sigma), size=k)
+    # the observed ln f is a draw of the flux prior's support, so redraw the
+    # night's ln f noise until it lands in [ln FLUX_FLOOR, 0] (a night outside
+    # it has an undefined outlier density b_k)
+    floor = math.log(oc_cells.FLUX_FLOOR)
+    for i in range(k):
+        while not floor <= truth[i, 4] + math.exp(ln_s) * noise[i, 4] <= 0.0:
+            noise[i, 4] = SIGMA_F * rng.standard_normal()
+    mean = truth + math.exp(ln_s) * noise
     for i in onp.flatnonzero(outlier):  # an independent orbit, the prior
         other = _orbit(
             rng, fit.p_cut, fit.p_max, _loguniform(rng, *oc_cells.A_RANGE)
