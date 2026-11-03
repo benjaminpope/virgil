@@ -880,9 +880,11 @@ With every label an outlier, the labelled objective is constant, the C-steps do 
 label-summed gradient in w_s is weighted by e^{ℓ−b} ≈ 0. No mode is returned, q is the prior, and the sentinel cannot
 fire (§6.1). Only the IS ESS can flag the cell, and on a flat floor every weight is equal, so ESS = n_IS.
 
-**Derivation of a scale-free search.** The target is equivariant: quoting every σ as cσ moves each night's scale
-posterior from ln s to ln s − ln c, and both ℓ_k and b_k shift by the same −n_k ln c while ŝ stays inside the prior
-bounds. So p(N | d) is unchanged. A search inherits that equivariance only if its labels, scores and starts depend on
+**Derivation of a scale-free search.** The target is equivariant. Hold the data fixed and quote every σ as cσ. Then
+ℓ_k^new(x, s) = ℓ_k^old(x, c·s) exactly, which is a translation in ln s. The same holds for each night's own scale
+inside b_k, and under (iii′) for the inflation integral, which is relative to s. The prior on ln s is uniform (§1.1),
+so the target is unchanged once ln s is integrated, provided the translated support stays inside ±ln s_max. That
+proviso applies to the inlier s_g and to every night's own ŝ_k, not just the true s. Then p(N | d) is unchanged. A search inherits that equivariance only if its labels, scores and starts depend on
 s·σ, never on σ alone. The labelled objective of §6.1 is therefore maximized over (labels, x, ln s) jointly:
 
   F(x, s, I) = Σ_{k∈I} ℓ_k(x, s) + Σ_{k∉I} o_k(x, s) + ln π(s),
@@ -1439,7 +1441,7 @@ constant is tuned to it after a failure.
    expected under a correct Laplace approximation plus the search's δ. (The Mahalanobis-1 rule of §6.1 is a
    duplicate test, not a confidence region.)
 6. **Scale equivariance (§6.9).** For a subset of systems, rerun with every quoted σ multiplied by c ∈ {e⁻¹, e^{1.5}},
-   keeping the true ln s − ln c inside the prior bounds. The target is exactly equivariant, so for every cell with
+   keeping every night's ŝ_k/c and the true s/c inside the prior bounds. The target is exactly equivariant, so for every cell with
    p(N) ≥ δ, |ln p̂_c(N) − ln p̂_1(N)| ≤ 4·√(sd_c² + sd_1²) + 0.01, and the true cell's best mode has the same inlier set.
 7. **No failure depends on ln s at fixed effective noise.** Equivariance says only s·σ/a matters. Within strata of the
    effective noise s·σ/a, the failure rate (any flag that fails a system, plus `no-mode` on a system with an orbit) is
