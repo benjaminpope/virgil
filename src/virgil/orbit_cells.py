@@ -1435,7 +1435,8 @@ class CellFit:
     at_floor : bool
         ``cell-at-floor``: the draws sit at the all-outlier floor although the
         search found a mode above it, so the search missed the dominant mode.
-        The cell *failed*: never report its ``log_z`` as an evidence.
+        Never report the cell's ``log_z`` as an evidence. It fails the *system*
+        only if the cell could matter: see ``CellsResult.failed``.
     undersampled : bool
         ``cell-undersampled``: the ESS is below ``ESS_TARGET``; information only.
     unreliable : bool
@@ -1594,6 +1595,12 @@ def position_leg(
             images=_symmetry_images(space.d), dtype=space.dtype, dim=space.d,
         )  # fmt: skip
         n_k = len(cat.log_b)
+        if not onp.all(onp.isfinite(cat.log_b)):
+            raise ValueError(
+                "A night has a non-finite outlier log density b_k (its ln f "
+                "is outside the flux prior [ln flux_floor, 0]): the "
+                "all-outlier floor is undefined."
+            )
         # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))
         floor = float(onp.sum(cat.log_b)) + (
             math.lgamma(n_k + 0.5)
@@ -1723,13 +1730,14 @@ class CellsResult:
     jitter : float
         The position jitter used (mas).
     failed : numpy.ndarray
-        Cells at the floor (``cell-at-floor``: the search missed the dominant
-        mode), with a non-finite target, or unreliable (ESS below ``ESS_FAIL``)
+        Cells with a non-finite target, or at the floor (``cell-at-floor``: the
+        search missed the dominant mode) or unreliable (ESS below ``ESS_FAIL``)
         *and* within ``W`` of the best cell (``ln`` mass ``+ ln Ẑ`` taken as
         the larger of the importance and the Laplace estimates, so a cell whose
-        probability could reach the reporting precision ``δ``). A low-ESS cell
-        far below the best is information only. Any true entry makes ``p_pos``
-        undefined.
+        probability could reach the reporting precision ``δ``). A floor or
+        low-ESS cell far below the best is information only: it stays flagged
+        on its fit (``CellFit.at_floor``, ``unreliable``) but does not fail the
+        system. Any true entry makes ``p_pos`` undefined.
     """
 
     domain: PeriodDomain
@@ -1835,7 +1843,10 @@ def position_cells(
     )
     matters = upper >= upper.max() - W
     failed = onp.array(
-        [f.failed or (f.unreliable and m) for f, m in zip(fits, matters)]
+        [
+            f.nonfinite or ((f.at_floor or f.unreliable) and m)
+            for f, m in zip(fits, matters)
+        ]
     )
     if failed.any():
         p = onp.full(len(cells), onp.nan)

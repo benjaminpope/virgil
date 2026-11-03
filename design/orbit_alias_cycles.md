@@ -573,6 +573,13 @@ sampling does not suffice: the chance that a random set contains the two outer i
   If the search returns no mode at all, q is the prior alone (α = 1). The IS estimate stays unbiased, the sentinel
   cannot fire, and the cell carries the ESS flag of §6.6.
 
+  **The sentinel fails the system only if the cell could matter.** The flag is per cell and is always reported. A
+  mode's peak height says nothing of its mass, so a cell at the floor far below the best cell (a thin mode, or a cell
+  whose true mode is 85–200 nats below the system's dominant cell) must not fail the system. A flagged cell fails the
+  system only when it passes the `matters` rule of §6.6: its upper bound on the evidence mass, ln mass_N + max(ln Ẑ_N,
+  Laplace ln Z of its best mode), is within W of the largest such bound over the cells. Non-finite targets fail the
+  system unconditionally. The rule adds no constant: W is the one of the sentinel and of §6.6.
+
 ### 6.2 Leg 2: the visibility level (changed; flag for Ben)
 
 The tempered bridge from L_pos to L_vis is withdrawn for the same reason as leg 1. Its efficiency rested on
@@ -763,8 +770,15 @@ Their coverage is the eccentric test of Stage 3b (§14).
 - **Error of Ẑ_N.** By the delta method, sd(ln Ẑ_N) ≈ √(1/ESS − 1/n_IS), with ESS = (Σw)²/Σw² the Kish effective sample
   size of the IS weights. One run per cell suffices, so the two-replicate rule of the previous draft is retired.
 - **Flags.** One diagnostic and one flag each, with no retry and no cascade:
-  - `cell-at-floor`: the sentinel of §6.1. The cell **fails** and is reported as a failure, never as an evidence.
+  - `cell-at-floor`: the sentinel of §6.1. The cell is reported as a failure, never as an evidence. It fails the
+    **system** only if it could matter (the rule below).
   - `cell-undersampled`: ESS < ESS_target. This is information only.
+- **`matters`.** A cell fails the system if its target is non-finite, or if it is flagged `cell-at-floor` or has ESS < ESS_fail
+  *and* its upper bound ln mass_N + ln Ẑ_N^upper is within W of the maximum of that bound over the cells (a cell whose
+  probability could reach δ). A flagged cell below that is information only: reported per cell, not failing the system.
+- **Finite floor.** The all-outlier floor K·b needs every b_k finite, i.e. every night's ln f inside [ln flux_floor, 0].
+  A night outside has b_k = −inf: the fit raises an error (never a silent pass). The population simulation draws the
+  inlier ln f noise truncated to that support (its own generative process).
 - The mass is per cell, never pooled.
 
 ### 6.7 Across the alias grid N (Ben's idea)
@@ -970,7 +984,7 @@ run; changing one afterwards is a recorded decision.
 | t degrees of freedom | 5 | inherited | `aliases._Proposal` |
 | N_IS | 4000 | budget | sd(ln Ẑ) ≈ 0.012 measured (§6.4) |
 | ESS_target | 400 | derived | sd(ln Ẑ) ≈ ESS^{−1/2} ≤ 0.05 (flag only) |
-| sentinel | E_w[n_inliers] < m while the best mode has ≥ m inliers and lies W above K·b | derived | §6.1 |
+| sentinel | E_w[n_inliers] < m while the best mode has ≥ m inliers and lies W above K·b; fails the system only if the cell `matters` (ln mass + ln Ẑ upper within W of the best) | derived | §6.1, §6.6 |
 | HMC acceptance target | 0.8 | tolerance | dual averaging (Hoffman & Gelman 2014) |
 | HMC warm-up, moves per draw, L cap | 150, 5, 64 | budget | §6.3 |
 | step jitter | ±20 % | budget | Neal 2011 |
