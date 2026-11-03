@@ -712,7 +712,9 @@ def outlier_exact(
             lo, hi = _merge_boxes(lo, hi)
             for col in (1, 3) if velocity else (1,):
                 # a merged box must not wrap an angle twice (the integrand is 2π periodic)
-                hi[:, col] = onp.minimum(hi[:, col], lo[:, col] + 2.0 * math.pi)
+                hi[:, col] = onp.minimum(
+                    hi[:, col], lo[:, col] + 2.0 * math.pi
+                )
             if not onp.isfinite(mref):
                 out.append(_LOG_TINY)
                 continue
