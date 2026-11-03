@@ -520,7 +520,10 @@ For each set S and each ζ start (below):
 
 1. Grid ρ at coherence k_coh over the set's own span Δ_S, so n_ρ(S) = ⌈k_coh Δ_S/T⌉ + 1 points per cell.
 2. From each local minimum of the set's VarPro residual on that grid, run a bounded 1-D minimization (Brent) in ρ.
-3. With velocities, or with m + 1 nights in the set, the solve is over (ρ, ζ) jointly, started at the grid node.
+3. ~~With velocities, or with m + 1 nights in the set, the solve is over (ρ, ζ) jointly, started at the grid node.~~
+   **Replaced (§6.12):** a minimal set does not determine ζ. A triplet leaves a curve of exact fits, and a pair gets
+   ζ only from its velocities. Every set takes minimum-norm Gauss–Newton steps in (ρ, ζ) along the directions its data
+   determine, from the grid node, and stops on the Newton decrement. ζ along the rest is set by the C-steps and `_refine`.
 
 **Concentration steps (Rousseeuw & Van Driessen 1999).** From each set's solution:
 
@@ -1012,7 +1015,7 @@ The Laplace approximation in the logistic chart then fails in two ways:
 - a t₅ component centred at |w_P| ≫ 1 covers the ridge badly, so ESS collapses (kinds 1 and 3).
 
 **Design: a ridge component (INLA-style).** A mode is a *ridge* if its Laplace ρ-marginal (in ρ, not w_P) puts more than
-δ of its mass outside the cell, or if its set-Newton ended at |w_P| ≥ W (§6.11). Its proposal component is replaced by
+δ of its mass outside the cell (the edge-stop clause is withdrawn, §6.12). Its proposal component is replaced by
 a truncated conditional mixture, following the integrated nested Laplace approximation (Rue, Martino & Chopin 2009):
 
 1. Start with nodes ρ_j across the cell, n_ρ = max(2, ⌈K_COH·Δ_I/T⌉ + 1), at the same coherence as the set grid (§6.1).
@@ -1089,7 +1092,8 @@ Neither has a stationary point inside the cell, so neither meets the convergence
 (N_VARPRO, then N_NEWTON). About 35 % of the *interior* candidates also use all 12 VarPro steps, which is not explained
 by either case; the first work item measures the gradient at stop.
 
-**Fix 1: stop at the edge, and share the neighbour's mode.** A candidate is stopped once |w_P| ≥ W = ln(1/δ). Beyond that
+**Fix 1: stop at the edge, and share the neighbour's mode.** **Withdrawn (§6.12):** W2's counters found no capped run at
+the edge. The capped runs are interior, and their cause is the constraint count of §6.12. A candidate is stopped once |w_P| ≥ W = ln(1/δ). Beyond that
 point the logistic chart leaves less than a fraction δ of the cell's ρ-interval (1/(1 + e^{W}) < δ), so it is derived,
 not tuned. A stopped two-season candidate whose ρ-gradient points outward is dropped here: the neighbour's own search
 finds it as an interior mode, under the coverage argument of §6.1. That holds only when the neighbour exists and is
@@ -1156,6 +1160,204 @@ short-span band modes (fix 2).
 candidates, each at the step cap) to the steps needed to reach |w_P| = W. Fix 2 moves the 18–45 % short-span
 candidates out of the per-cell loop. Together these are a 3–10× reduction, which brings 877 s to the 5-min target. The
 acceptance test is the measured time, not this estimate.
+
+### 6.12 The set-Newton runs crawl along curves of exact fits (design pass 2026-11-03, problem D)
+
+**Measurement (W2's counters, virgil#643, K = 8 one season).** 11,448 of 21,524 set-Newton runs hit the cap of
+`N_VARPRO = 12` steps. Rerun from their end points with five times the budget, 94 % still do not stop. None reaches
+|w_P| ≥ W, so they are interior. At the cap the w_P gradient is 0.1–10 in 46 % of runs and ≥ 10 in 18 %. The C-step
+pre-pass is at its cap of 4 in 78 % of runs, by design. The real C-steps hit their cap 18 times in 295. §6.11's premise
+(drift to the edge) was wrong, and its fix 1 is withdrawn (Ben: "Trim, then Opus pass").
+
+**The constraint count.** The set step (`_varpro_chunk`) runs damped Newton in v = (w_P, y_ζ), with TI′ solved by
+VarPro at each v (§6.1). Its unknowns are therefore ρ, ζ (two) and TI′ (four): seven. ln f is a precision-weighted
+mean and does not enter. A global scale s cancels in the weighted solve (§6.9, step 2).
+
+| problem | equations | joint in (ρ, ζ, TI′): unknowns, residual dof | at fixed ζ: unknowns, residual dof |
+|---|---|---|---|
+| pair, positions and velocities | 8 | 7, 1 | 5, 3 |
+| triplet, positions only (the code uses `w_pos`) | 6 | 7, **−1** | 5, 1 |
+| C-step with \|I\| labelled nights, positions | 2\|I\| | 7, 2\|I\| − 7 | 5, 2\|I\| − 5 |
+
+Five consequences follow.
+
+1. **A triplet does not determine its orbit.** Six equations for seven unknowns leave a curve C of exact fits in
+   (ρ, ζ). This is the classical count for visual binaries: an apparent orbit has seven elements, and three positions
+   give six conditions. The data residual is exactly zero along C. Only the VarPro ridge |TI′|²/s_w² varies there, by a
+   few units, while the curvature across C is of order (a/sσ)². The set objective has no isolated data optimum. Its
+   maximum on C is chosen by s_w², a device of the solver with no meaning for the posterior. Newton then follows a
+   curved, narrow valley (measured condition number 10⁴–10⁵ below), which is the textbook case where Newton and
+   Levenberg–Marquardt steps stay short (Nocedal & Wright 2006, ch. 4 and §10.3). The predicted gain stays far above
+   `TOL_GAIN` = 10⁻⁵ because the ridge's gradient is of order one, which is W2's w_P gradient of 0.1–10.
+2. **The slide does harm besides its cost.** It moves ρ off the grid node whose bracket the §6.1 coverage argument
+   relies on. It also voids the χ² cut: as the residual falls to zero, every triplet passes. The cut's eq − 4 = 2
+   degrees of freedom are a fixed-ζ count, and only there is the cut conservative.
+3. **A pair has ρ and ζ only from its velocities.** Its four position equations are met exactly by the four TI′ at every
+   (ρ, ζ), since that solve is square and linear. R(ρ, ζ) is the velocity misfit alone, with precision ∝ T_SS
+   (σ_v² = σ_p²/T_SS, §5). The optimum is isolated, but every direction is weak and the objective is far from quadratic
+   over the cell. On the K = 14 two-season case (nights of 0.007 d) a pair carries almost no ρ information, which is
+   why fix 4 of §6.11 never passed there.
+4. **The scale adds no direction and gets no information.** The weighted solve does not see s. A minimal set leaves at
+   most one residual degree of freedom, so it has no information on s. Profiling s per set would add an exactly flat,
+   unbounded direction (ŝ → 0 at an exact fit). §6.9 profiles s only given x, from the labelled nights, and that stays.
+5. **The C-steps inherit the count.** With \|I\| ≤ 3 labelled nights (at the first pass, usually the set's own nights)
+   the labelled objective repeats 1 or 3. That is most of the pre-pass at its cap. With \|I\| ≥ 4, 2\|I\| ≥ 8 > 7, the
+   problem is identified, and the real C-steps converge (18 capped in 295).
+
+**Numerical check (counters only).** Three K = 8 draws of `scripts/orbit_population.py` (one season, seeds 561 and 74;
+two seasons, seed 705), the true cell, every grid candidate. The script (`crawl.py`) is kept with the pass's session
+notes, not in the repository. Draws are restricted to |ln s| < 0.3 and at most one outlier night, because the search on
+main is not yet scale-free (§6.9); seed 74 (ln s = −1.4) is kept for the stopping-rule row only. Step counts are means.
+"Drift > 1" is the fraction of candidates that end more than one grid interval (in ν) from their grid node, i.e.
+outside the bracket. Pairs and triplets are given as m = 2 / 3.
+
+| system | step | m | capped | steps | passes the χ² cut | data residual (median) | condition number (median) | drift > 1 |
+|---|---|---|---|---|---|---|---|---|
+| one season, seed 561, 3143 candidates | joint, cap 12 (main) | 2 / 3 | 0.88 / 0.96 | 11.6 / 11.9 | 0.98 / 0.73 | 34 / 379 | 6 × 10² / 7 × 10² | 0.30 / 0.15 |
+| | joint, cap 60 | 2 / 3 | 0.10 / 0.24 | 28 / 38 | 0.98 / 0.89 | 3.6 / 0.14 | 3 × 10³ / 4 × 10³ | 0.44 / 0.37 |
+| | ρ alone, decrement | 2 / 3 | 0 / 0 | 2.4 / 5.5 | 0.96 / 0.56 | 177 / 994 | | 0.01 / 0.02 |
+| | min-norm GN, decrement | 2 / 3 | 0 / 0 | 2.6 / 6.3 | 0.98 / 0.87 | 28 / 6.1 | | 0.15 / 0.15 |
+| two seasons, seed 705, 2838 candidates | joint, cap 12 (main) | 2 / 3 | 0.92 / 0.98 | 11.8 / 12.0 | 0.86 / 0.55 | 30 / 1080 | | 0.17 / 0.13 |
+| | joint, cap 60 | 2 / 3 | 0.38 / 0.44 | 36 / 45 | 0.88 / 0.67 | 4.9 / 2.0 | 10⁸ / 10⁷ | 0.30 / 0.31 |
+| | ρ alone, decrement | 2 / 3 | 0 / 0 | 3.7 / 5.5 | 0.62 / 0.40 | 702 / 2360 | | 0.01 / 0.02 |
+| | min-norm GN, decrement | 2 / 3 | 0 / 0 | 3.8 / 6.0 | 0.85 / 0.68 | 13 / 16 | | 0.12 / 0.17 |
+| one season, seed 74 (ln s = −1.4) | joint, decrement only, cap 60 | 2 / 3 | 0.01 / 0.08 | 10.2 / 22.7 | | | 6 × 10² / 2 × 10⁴ | |
+
+The joint step drives the triplets' data residual towards zero as its budget grows (379 → 0.14), its condition number
+grows with it, and a third of its candidates leave their bracket. A stopping rule alone (last row) still follows the
+valley. Both fixes stop every run well inside 60 steps.
+
+**Evidence, not just counters.** The same two draws, the true cell and two neighbours each, full `position_leg` with
+n_IS = 4000 and no posterior draws (`compare.py`, with the session notes):
+
+| system, cell | main: ln Ẑ (ESS, modes) | ρ alone | min-norm GN |
+|---|---|---|---|
+| 561, N = 3 (true) | −304.096 ± 0.032 (772, 2) | −304.096 ± 0.032 (772, 2) | −304.107 ± 0.029 (918, 2) |
+| 561, N = 1 | −409.345 ± 0.274 (13, 1; 3 inliers) | **−431.363 (floor, no mode)** | −409.345 ± 0.274 (13, 1) |
+| 561, N = 4 | −373.835 ± 0.049 (382, 4) | −377.104 ± 0.782 (**ESS 1.6**, 3) | −373.904 ± 0.042 (504, 3) |
+| 705, N = 125 (true) | −283.641 ± 0.085 (133, 2) | −283.582 ± 0.156 (41, 1) | −283.621 ± 0.111 (80, 2) |
+| 705, N = 123 | −364.927 ± 0.116 (73, 10) | −370.146 ± 0.646 (**ESS 2.4**, 9) | −364.891 ± 0.198 (25, 15) |
+| 705, N = 126 | −329.334 ± 0.085 (133, 3) | −329.223 ± 0.135 (54, 1) | −329.223 ± 0.135 (54, 2) |
+
+The ρ-alone solve keeps the true cells but **loses modes with exactly m inliers** in the neighbours: cell 1 falls 22
+nats to the floor, and two cells drop to ESS ≈ 2. The reason is consequence 1 read the other way. A mode whose inliers
+are exactly the set's three nights *is* the curve C: its posterior mass lies along C, and ζ is not determined by the
+data. Its seed must lie on C. At a fixed ζ start the set misses C, fails the cut, and the mode is never seeded. The
+minimum-norm step lands on C, and every cell agrees with main within its IS error (largest gap 1.2 combined sd).
+
+**The fix: Gauss–Newton restricted to the directions the data determine.**
+
+- **F1. Minimum-norm Gauss–Newton step.** Replace the saddle-free LM on the VarPro objective by Gauss–Newton on the
+  whitened VarPro residual r(v) (TI′ still solved by VarPro at each v). Let J = ∂r/∂v and JᵀJ = UΛUᵀ. Step only along
+  the eigendirections with λ_i > κ:
+  Δv = −Σ_{λ_i > κ} u_i (u_iᵀJᵀr)/λ_i,
+  backtracking by halving until the residual falls. Along a direction with λ_i ≤ κ the step is zero. On an exactly flat
+  direction this is the minimum-norm (pseudo-inverse) step of Ben-Israel (1966), which converges to a solution of an
+  underdetermined system near its start, quadratically when the residual there is zero (Nocedal & Wright 2006, §10.3).
+  A triplet therefore lands on C at the foot nearest its grid node and stops; it does not slide along C. A pair keeps
+  the directions its velocities determine.
+- **κ is derived:** κ = 4, the largest curvature of the chart's log prior in v. The logistic density of w_P has
+  curvature 2σ(1 − σ) ≤ ½. The ζ chart's density ∝ (1 + |y|²)⁻² has Hessian eigenvalues ≤ 4, reached at y = 0. A
+  direction with λ_i ≤ κ is one along which the set's data say less than the prior does. Its value at the mode is set by
+  the prior and the other nights, in `_refine`, which keeps every coordinate and has the prior in its objective. The
+  measured spectra put the flat and the determined eigenvalues 10³–10⁸ apart, so the result does not hinge on κ.
+- **F2. Stop by the Newton decrement, not by a gain of 10⁻⁵ nats.** Stop when λ² = Σ_{λ_i > κ}(u_iᵀJᵀr)²/λ_i < 1. For
+  the quadratic model, ½λ² is the gain left to its optimum (Boyd & Vandenberghe 2004, §9.5.1), and λ < 1 puts that
+  optimum within Mahalanobis distance 1 under the candidate's own information. That is the radius at which
+  `_unique_starts` merges candidates (§6.1, the distinct-mode radius), so further steps cannot change which candidate
+  survives. The threshold is that tolerance, not a new one.
+- **F3. The C-steps use the same step and stop.** Their labelled residual over |I| nights is identified in (ρ, ζ) only
+  for 2|I| > 7 position equations (|I| ≥ 4). F1's information test makes that cut by itself, with no count in the code:
+  a C-step on the set's own m nights lands on C as the set step does. The C-steps' ascent argument (Rousseeuw & Van
+  Driessen 1999) holds for any number of accepted steps, so they still end. `_refine` (one run per mode, giving the
+  Laplace mean and covariance) keeps saddle-free LM and `TOL_GAIN`: it is not part of the crawl.
+- **F4. Compact the batch between rounds.** A vmapped `while_loop` runs every lane until the slowest stops, so a batch
+  costs its maximum step count, not its mean. On main that made no difference, since nearly every run hit the cap. Under
+  F1–F2 the mean is 2.6–6.3 steps while a few runs take up to ~60. The set step and the C-steps therefore run in rounds
+  of n_round steps, and after each round the stopped candidates leave the batch (as the C-steps' `active` list already
+  does across passes). n_round is a budget that trades padding against dispatch. The defensive cap is 60 steps, five
+  times `N_VARPRO`, the extended budget of W2's diagnosis. The capped count is reported, and it was 0 at 60 in every
+  measured run.
+
+**Not chosen.**
+
+- **ρ alone at the ζ start** (§6.1 as written): cheapest per step, with drift ≤ 2 %, but it loses the m-inlier modes
+  (evidence table). §6.1's step 3 is replaced by F1, not by fixed-ζ solves.
+- **A better stopping rule alone:** it still follows the valley (last row of the counters). The count is the cause, and
+  a stopping rule treats a symptom.
+- **Parametrizing the ridge.** C has no closed form. The posterior along it matters when the mode has exactly m inliers,
+  and then §6.10's ridge component integrates it. Its nodes are at fixed ρ, where a triplet is square (6 equations for
+  ζ and TI′), so each node's conditional mode is isolated and F1 finds it.
+- **Fewer sets.** Under F1–F2 a pair whose objective is flat across the cell stops at once (λ² < 1 at its start), so it
+  costs one step and needs no rule. Whether such candidates should merge before the C-steps is left to the
+  implementation's counters.
+
+**Why no mode with mass ≥ δ is lost.**
+
+- *The estimator does not depend on the fix.* IS from the defensive mixture is unbiased whatever its components,
+  because the prior has share α (§6.4). F1–F4 change only which components q has.
+- *The needle's seed stays in its bracket.* The §6.1 argument puts the spanning set's grid node inside the needle,
+  where the set's residual at the ζ start is of the order of its noise (interpolation error ≲ sσ). F1's correction there
+  is |J⁺r| ≈ σ_ρ in ρ, well inside one grid interval: a minimum-norm step does not move along C, and the move onto C is
+  as small as the residual. Candidates that drift out of their bracket start far from any exact fit. They are not the
+  needle's seed, and the bracket argument does not rely on them.
+- *m-inlier modes get a seed on their own support.* F1 ends on C, the support of such a mode, and §6.10 integrates along
+  it.
+- *ζ.* Eccentric coverage stays the declared ζ-start budget of §6.1, tested by §14 assertion 5. F1 moves ζ only along
+  directions the set determines. That is a pair's velocity-determined directions, or a triplet's move onto C, which the
+  joint step also made before sliding.
+- *The χ² cut* keeps its meaning for pairs (3 residual degrees of freedom on their solution against the cut's 4). For
+  triplets it stays as void as it is on main once a triplet reaches C. Filtering them is left to the C-step pre-pass and
+  `_prune`, as on main.
+
+**How the exact-reference tests would show a loss.** A missed mode of mass ≥ δ takes its mass out of q, and the cell's
+ln Ẑ then falls short of the exact value by more than its IS error. Each check below runs at its unchanged tolerance.
+
+- `test_the_position_evidence_of_a_tiny_case_matches_prior_importance` (K = 3, circular, e_max → 10⁻⁶). It once moved
+  by 1.3 nats under a floating-point reassociation (§9). A move here is investigated, never absorbed.
+- `test_the_toy_evidence_matches_the_exact_reference`, and §14 assertion 4 against the collapsed reference of
+  `scripts/leg1_toys/toy.py` (p̂(N) against brute force): |ln Ẑ_N − ln Z_N| ≤ 4 sd(ln Ẑ_N) + 0.01 in every cell with
+  p(N) ≥ δ. A lost mode with mass ≥ δ fails this in its cell. The evidence table above is the same check against main
+  instead of an exact reference. It is what rejected the ρ-alone solve.
+- Eccentric and fill-regime coverage: `test_the_true_cell_is_found_and_its_cycle_count_is_in_the_99_percent_set`
+  (e = 0 and 0.5, σ/a = 10⁻² and 10⁻⁴), `test_the_velocity_criterion_keeps_the_true_mode_with_fewer_triplets`,
+  `test_pruning_does_not_change_the_evidence`, and §14 assertions 1 and 5 on the n_sys = 10 smoke run.
+
+**Cost.** Counting set evaluations, one step costs:
+
+- on main, a saddle-free Newton step in d_v = 3: about 1 + d_v + d_v² = 13 (value, gradient, Hessian);
+- under F1, a Gauss–Newton step: about 1 + d_v = 4 (the residual and its forward-mode Jacobian), plus n_bt backtracking
+  values.
+
+The set stage goes from
+
+  T_set = n_cand · N_VARPRO · 13 · c_set  (nearly every run at the cap)
+
+to
+
+  T_set = Σ_rounds n_active · n_round · (4 + n̄_bt) · c_set ≈ n_cand · n̄ · (4 + n̄_bt) · c_set,
+
+with n̄ = 2.6–6.3 measured. With n̄_bt ≈ 1, that is 12·13/(5·5) ≈ 6× on the set stage, which was 63 % of the search
+(§9). The C-step pre-pass then dominates (24 % on main); F2–F4 shorten it as well. The expected search cost falls 2–4×.
+
+`info["evaluations"]` must become a count. On main it is a formula (n_cand · N_VARPRO · …), which charges every run the
+full cap: in the evidence runs above it barely moved (2.9 × 10⁵ against 2.8 × 10⁵) while the step counts fell 2–4×.
+The implementation counts the steps actually taken. Wall time in those runs is not comparable: the scratch
+implementation had no compaction (F4), so each batch ran to its slowest lane.
+
+**Acceptance criteria for the implementation PR.** Counters come first. Wall time is supporting only, since the laptop is
+loaded. The systems are K = 8 one season, K = 8 two seasons and the K = 14 two-season case of §9.
+
+1. The set and C-step runs that reach the defensive cap of 60: 0 on all three systems.
+2. Reported before and after, at the same commit of main: set runs, steps taken by set type and stage (counted, F4),
+   unique candidates, C-step steps, and search evaluations per cell. Counted search evaluations fall at least 2× on the
+   K = 14 two-season case. A smaller gain is reported as it is; nothing is tuned to reach the figure.
+3. A unit test on one triplet and one pair at an exact-fit truth: from the grid node nearest the truth, F1 ends within
+   one grid interval of that node, and its data residual is within the χ² cut. For the triplet it is ≈ 0.
+4. The exact-reference and coverage tests listed above pass at unchanged tolerances.
+5. On the three systems, every cell with p ≥ δ agrees with main: |Δ ln Ẑ_N| ≤ 4·√(sd² + sd²) + 0.01. The true cell's
+   best mode has the same inlier set.
+6. The §14 smoke run (n_sys = 10): no new failure, and the assertion-5 stratum reported.
 
 
 ## 7. Pruning
@@ -1237,7 +1439,8 @@ flat in N: every cell has the same ν width 1/T, so the same grid, sets and cand
 compiles, 60–75 s, none after the first cell). In the set Newton, 98 % of candidates use all `N_VARPRO = 12` steps and
 63 % end with |w_P| > 6, at the cell edge: the minimum of their residual lies outside the cell (a grid end counts as a
 minimum, and a straddling needle needs it), so the steps are not wasted for coverage, and no cheaper stopping rule
-applies. Cells can run in threads (`workers=2`; exact, bit-identical `ln Z` and `p(N)` to one worker on this system; K = 14: 1088 s to 877 s, K = 8: 79.7 s to 67.8 s, +0.3 GB; virgil#638). Tried and reverted: the gradient and Hessian of each Newton
+applies. **Superseded by §6.12:** W2's counters (virgil#643) found the capped runs interior, sliding along a curve of
+exact fits that a minimal set leaves when ζ is free. The fix there replaces both the step and the stopping rule. Cells can run in threads (`workers=2`; exact, bit-identical `ln Z` and `p(N)` to one worker on this system; K = 14: 1088 s to 877 s, K = 8: 79.7 s to 67.8 s, +0.3 GB; virgil#638). Tried and reverted: the gradient and Hessian of each Newton
 step in one pass (about 10 % faster) moved the K = 3 prior-importance check of `test_the_position_evidence_of_a_tiny_case_matches_prior_importance`
 by 1.3 nats (4 sigma), so the search is sensitive to floating-point reassociation there. Not done, because they change which
 candidates are kept: dropping triplets where
@@ -1306,11 +1509,15 @@ run; changing one afterwards is a recorded decision.
 | N_SET_MAX | 2000 | budget | enumerate all sets below; above it, all span pairs with stratified interior fills (§6.1) |
 | ε_hi | 0.3 | declared | outlier fraction in the RANSAC count n = ln δ/ln(1 − (1 − ε_hi)^m) |
 | N_C | 10 | budget | C-step cap; labels repeat within 2–3 steps on the toys |
+| set step | minimum-norm Gauss–Newton on the whitened VarPro residual: steps only along JᵀJ eigendirections with λ > κ | derived | a minimal set does not determine ζ; the step lands on the curve of exact fits and does not slide along it (§6.12) |
+| set and C-step stop | Newton decrement in the kept subspace < 1 | tolerance | the distinct-mode radius (Mahalanobis 1): later steps cannot change which candidate survives (§6.12) |
+| κ | 4 | derived | largest curvature of the chart's log prior in v (logistic w_P ≤ ½; ζ chart 4 at y = 0): a direction below it is one the set's data say less about than the prior (§6.12) |
+| N_VARPRO, N_PRE | 60 (W2's extended budget), 4 | budget, now defensive caps | capped set and C-step runs must be 0; runs go in rounds with stopped lanes compacted out (§6.12) |
 | inlier rule | ℓ_k(x, ŝ) > o_k at the jointly profiled ŝ | derived | the larger component (C-step labels; §6.9) |
 | scale step | joint (labels, ln s) max of Σ_k max(ℓ_k, o_k): grid at h = 1/√n_tot, then Newton (closed form ŝ_g² = Σ_I(χ² + q)/Σ_I n under (ii)) | derived; h a tolerance (≤ ¼ nat) | CEM classification step (Celeux & Govaert 1992; §6.9) |
-| edge stop | \|w_P\| ≥ W | derived | the logistic chart leaves < δ of the cell beyond it (§6.11) |
+| edge stop | withdrawn | n/a | no capped run reached the edge (W2, virgil#643); the cause is the constraint count (§6.12) |
 | short-span set | K_COH·Δ_S/T < 1 | derived | from K_COH: under a quarter cycle across a cell (§6.11) |
-| ridge mode | Laplace ρ-marginal > δ outside the cell, or set-Newton stopped at the edge | derived | from δ and the edge stop (§6.10) |
+| ridge mode | Laplace ρ-marginal > δ outside the cell | derived | from δ (§6.10); the edge-stop clause is withdrawn with the edge stop (§6.12) |
 | ridge nodes | start n_ρ = max(2, ⌈K_COH·Δ_I/T⌉ + 1); bisect until \|Δh\| ≤ 1 nat between nodes | derived start, tolerance step | the set grid's coherence; log-linear interpolation error (§6.10) |
 | triplet criterion | keep a span pair's fills iff some interior night has ½(1 + λ_max(Σ_k⁻¹C_k))·χ²_4(1 − δ) ≥ Δ_k | derived | the §6.1 interpolation step at level δ (§6.11) |
 | negligible cell | ln π(cell) + ln sup L < max ln Ẑ − W | derived | Z_N ≤ π(cell)·sup L (§6.10) |
@@ -1362,6 +1569,9 @@ ADS does not index).
 | Celeux & Govaert 1992, Comput. Stat. Data Anal. 14, 315 | classification EM: block ascent over labels and parameters, here with the inlier scale as an M-step (§6.9) | Crossref 10.1016/0167-9473(92)90042-E |
 | Rue, Martino & Chopin 2009, JRSS B 71, 319 | INLA: quadrature in a low-dimensional parameter with conditional Laplace, here the ridge component in ρ (§6.10) | Crossref 10.1111/j.1467-9868.2008.00700.x |
 | Golub & Pereyra 1973, SIAM J. Numer. Anal. 10, 413 | variable projection for the linear TI′ (§6.1) | Crossref 10.1137/0710036 |
+| Nocedal & Wright 2006, Numerical Optimization (2nd ed.), ch. 3–4, §10.3 | Newton and Levenberg–Marquardt crawl in curved narrow valleys; safeguarded steps in a bracket; trust-region predicted reduction (§6.12) | Crossref 10.1007/978-0-387-40065-5 |
+| Boyd & Vandenberghe 2004, Convex Optimization, §9.5.1 | Newton decrement: ½λ² is the quadratic model's remaining gain, the stopping rule of §6.12 | Crossref 10.1017/CBO9780511804441 |
+| Ben-Israel 1966, J. Math. Anal. Appl. 15, 243 | Newton with the Moore–Penrose inverse for underdetermined systems: the minimum-norm set step (§6.12) | Crossref 10.1016/0022-247X(66)90115-6 |
 | Hesterberg 1995, Technometrics 37, 185 | defensive mixture importance sampling, bounded weights (§6.4, the estimator) | Crossref 10.1080/00401706.1995.10484303 |
 | Meng & Wong 1996, Stat. Sinica 6, 831; Gronau et al. 2017, J. Math. Psychol. 81, 80 | bridge sampling, candidate (a) (§6.4) | publisher page; Crossref 10.1016/j.jmp.2017.09.005 |
 | Veach & Guibas 1995, SIGGRAPH '95, 419 | balance heuristic: the per-mode partition of unity in (a) (§6.4) | Crossref 10.1145/218380.218498 |
@@ -1379,7 +1589,7 @@ ADS does not index).
 
 **Ben's suggestions (labelled as his, no source):** reducing the problem to a low-dimensional search and propagating across N (§6.7, measured and partly adopted: the anchor and prior terms are exact; shared draws were rejected); HMC within cells (§6.3); the population test (§14).
 
-**Derived departures (no source):** the z map (§3.2), the ζ map (§3.3), the anchor TI′ rotation (§3.4), the sentinel and the symmetric distinct-mode test (§6.1), the edge stop, short-span band search and triplet criterion (§6.11), the contract
+**Derived departures (no source):** the z map (§3.2), the ζ map (§3.3), the anchor TI′ rotation (§3.4), the sentinel and the symmetric distinct-mode test (§6.1), the short-span band search and triplet criterion (§6.11; the edge stop is withdrawn, §6.12), the set step's information threshold κ (§6.12), the contract
 for b_k with velocity (§2) and the peak keep rule (§5). Each is flagged *derived* in the methods register by its stage and
 checked by a vv-independent test (the check script, the prior-recovery tests, the #618 oracle in 5-D).
 
