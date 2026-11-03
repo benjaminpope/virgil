@@ -867,12 +867,6 @@ def _labels(x, space):
     return np.where(best > space.cat.log_b, j, -1)
 
 
-def _w_of(ln_s):
-    """The chart coordinate of the error scale ``ln s`` (inverse of ``decode``)."""
-    u = np.clip(0.5 * (ln_s / math.log(S_MAX) + 1.0), 1e-6, 1.0 - 1e-6)
-    return np.log(u) - np.log1p(-u)
-
-
 def _peak_state(x, space):
     """``(decoded x, (K, 5) state)`` of the chart vector ``x``."""
     c = space.decode(x)
@@ -960,7 +954,8 @@ def _scale_step(x, space, lab):
         lambda ls: ls,
         ln_s,
     )
-    return x.at[9:].set(_w_of(ln_s))
+    u = np.clip(0.5 * (ln_s / lim + 1.0), 1e-6, 1.0 - 1e-6)  # decode's inverse
+    return x.at[9:].set(np.log(u) - np.log1p(-u))
 
 
 def _relabel(x, space, lab):

@@ -1040,7 +1040,9 @@ def _scaled_summaries(orbit, times, ln_s, seed=1, sigma=0.05):
             p.n, p.chi2 * s**2, p.hessian * s**2,
         )  # fmt: skip
         out.append(
-            NightSummary(night.t_ref, T_SS, 6, BLOCKS, (peak,), night.loglike_null)
+            NightSummary(
+                night.t_ref, T_SS, 6, BLOCKS, (peak,), night.loglike_null
+            )
         )
     return tuple(out), LOG_B
 
@@ -1093,7 +1095,9 @@ def test_quoting_every_error_c_times_larger_leaves_the_cycle_counts_unchanged():
         )  # fmt: skip
         assert not out.failed.any()
         p[ln_c] = out
-        true = [i for i, c in enumerate(out.cells) if c.p_lo <= 11.3 <= c.p_hi][0]
+        true = [
+            i for i, c in enumerate(out.cells) if c.p_lo <= 11.3 <= c.p_hi
+        ][0]
         inliers[ln_c] = out.fits[true].modes[0].n_inliers
     base = p[0.0]
     for ln_c in (-1.0, 1.5):
@@ -1115,10 +1119,11 @@ def test_the_labelled_objective_does_not_decrease_over_the_c_steps():
     _, cells = _cells(s, (9.0, 14.0))
     cell = [c for c in cells if c.p_lo <= 11.3 <= c.p_hi][0]
     space = _scaled_space(s, log_b, cell)
-    plan = oc_cells.search_plan(space, jax.random.key(0))
     xt = _truth_chart(space, orbit, 0.0)
     xt[1:5] *= onp.sqrt(3.0)
-    x = np.asarray(xt + 1e-3 * onp.random.default_rng(0).standard_normal(space.d))
+    x = np.asarray(
+        xt + 1e-3 * onp.random.default_rng(0).standard_normal(space.d)
+    )
     lab = oc_cells._initial_labels(x, space)
     assert onp.all(onp.asarray(lab) >= 0)  # own-scale labels recover the truth
     x, lab = oc_cells._relabel(x, space, lab)
@@ -1142,7 +1147,10 @@ def test_a_non_rescalable_catalogue_keeps_the_scale_at_one():
     space = _space(s, cells[0])
     x = np.zeros(space.d).at[1:5].set(1.0)
     lab = np.zeros(len(TIMES), int)
-    assert onp.array_equal(onp.asarray(oc_cells._scale_step(x, space, lab)), onp.asarray(x))
+    assert onp.array_equal(
+        onp.asarray(oc_cells._scale_step(x, space, lab)), onp.asarray(x)
+    )
+
 
 @x64
 @pytest.mark.parametrize("gap", [3.0, 200.0])
