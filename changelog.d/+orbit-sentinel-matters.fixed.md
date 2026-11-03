@@ -1,0 +1,1 @@
+Fix leg-1 failures: the cell-at-floor sentinel now fails the system only when the cell could matter (same `matters` rule as low ESS); position_leg raises if an outlier density b_k is non-finite; the population simulation keeps inlier ln f inside the flux prior.
