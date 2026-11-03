@@ -111,8 +111,8 @@ W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
 N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
 CHUNK_C = 256  # candidates per batched C-step call (budget)
 CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
-EDGE_STOP = W  # |w_P| at which a set's Newton stops: the logistic chart leaves
-#                less than δ of the cell's ρ-interval beyond it (design §6.11)
+EDGE_STOP = W  # |w_P| beyond which the logistic chart holds less than δ of the
+#                cell's ρ-interval: where a shared neighbour mode's proposal ends
 N_WORKERS = (
     1  # cells run at once; 2 threads ran K = 14 two-season 1.24x faster
 )
@@ -873,14 +873,13 @@ def _labels(x, space):
     return np.where(best > space.cat.log_b, j, -1)
 
 
-def _lm(f, x, args, n_iter, step_max=10.0, edge=np.inf):
+def _lm(f, x, args, n_iter, step_max=10.0):
     """Saddle-free Levenberg–Marquardt ascent of ``f(x, *args)``.
 
     Newton with ``|eigenvalues|`` of the Hessian plus a damping ``λ`` that
     falls on an accepted step and rises on a rejected one (a step is accepted
-    only if ``f`` is finite and rises). Stops after ``n_iter`` steps, when
-    the predicted gain ``g·step`` is below ``TOL_GAIN``, or when ``|x[0]|`` (the
-    period coordinate) reaches ``edge``. vmap-able.
+    only if ``f`` is finite and rises). Stops after ``n_iter`` steps or when
+    the predicted gain ``g·step`` is below ``TOL_GAIN``. vmap-able.
     Returns ``(x, f(x), capped)``, ``capped`` true if the step cap ended it.
     """
 
@@ -911,11 +910,9 @@ def _lm(f, x, args, n_iter, step_max=10.0, edge=np.inf):
     fx = np.where(np.isfinite(fx), fx, -np.inf)
     init = (0, x, fx, np.asarray(1e-2, x.dtype), np.asarray(np.inf, x.dtype))
     i, x, fx, _, gain = jax.lax.while_loop(
-        lambda c: (c[0] < n_iter) & (c[4] > TOL_GAIN)
-        & (np.abs(c[1][0]) < edge),
-        body, init,
-    )  # fmt: skip
-    return x, fx, (i >= n_iter) & (gain > TOL_GAIN) & (np.abs(x[0]) < edge)
+        lambda c: (c[0] < n_iter) & (c[4] > TOL_GAIN), body, init
+    )
+    return x, fx, (i >= n_iter) & (gain > TOL_GAIN)
 
 
 def _design(space, nights, v):
@@ -1043,24 +1040,23 @@ def _chart_from(space, v, ti, ln_f):
 
 
 @functools.partial(jax.jit, static_argnames=("n_iter",))
-def _varpro_chunk(space, plan, s, v0, n_iter, edge):
+def _varpro_chunk(space, plan, s, v0, n_iter):
     """Refine ``(ln P, ζ)`` of each set ``s`` from ``v0``; return the chart
     vector, labels, the *data* residual (without the ridge term: the quantity
-    the ``χ²`` cut applies to), ``v``, the Hessian of ``R / 2`` in ``v``, whether
-    the step cap ended it and the gradient in ``w_P``."""
+    the ``χ²`` cut applies to), ``v``, the Hessian of ``R / 2`` in ``v`` and
+    whether the step cap ended it."""
 
     def one(si, v):
         args = (plan["nights"][si], plan["w"][si], plan["mean"][si], space)
-        v, fv, capped = _lm(_varpro_objective, v, args, n_iter, edge=edge)
+        v, fv, capped = _lm(_varpro_objective, v, args, n_iter)
         ti = _solve_set(
             _design(space, args[0], v), args[2], args[1], space.s_w2
         )[1]
         x = _chart_from(space, v, ti, plan["lnf"][si])
         h = -jax.hessian(_varpro_objective)(v, *args)
-        g = jax.grad(_varpro_objective)(v, *args)[0]
         return (
             x, _labels(x, space), -2.0 * fv - ti @ ti / space.s_w2, v, h,
-            capped, g,
+            capped,
         )  # fmt: skip
 
     return jax.vmap(one)(s, v0)
@@ -1078,16 +1074,15 @@ def _labelled_objective(v, lab, wk, mk, space):
 
 
 @functools.partial(jax.jit, static_argnames=("n_iter",))
-def _cstep_chunk(space, plan, v, lab, n_iter, edge):
+def _cstep_chunk(space, plan, v, lab, n_iter):
     """One C-step per candidate: Newton in ``(ln P, ζ)`` on the labelled
     target (TI′ and ``ln f`` solved linearly), then relabel at the result.
     Returns ``v``, the labels, the chart vector, the residual, the Hessian
-    of ``R / 2`` in ``v``, whether the step cap ended it and the gradient in
-    ``w_P``."""
+    of ``R / 2`` in ``v`` and whether the step cap ended it."""
 
     def one(v, lab):
         args = (lab, plan["wk"], plan["mk"], space)
-        v, fv, capped = _lm(_labelled_objective, v, args, n_iter, edge=edge)
+        v, fv, capped = _lm(_labelled_objective, v, args, n_iter)
         k = lab.shape[0]
         j = np.maximum(lab, 0)
         w = np.where(
@@ -1105,8 +1100,7 @@ def _cstep_chunk(space, plan, v, lab, n_iter, edge):
         )
         x = _chart_from(space, v, ti, ln_f)
         h = -jax.hessian(_labelled_objective)(v, *args)
-        g = jax.grad(_labelled_objective)(v, *args)[0]
-        return v, _labels(x, space), x, -2.0 * fv, h, capped, g
+        return v, _labels(x, space), x, -2.0 * fv, h, capped
 
     return jax.vmap(one)(v, lab)
 
@@ -1277,8 +1271,7 @@ def search_plan(space, key=None, nu_width=None):
         )
         cut[i] = scale * stats.chi2.isf(DELTA, 4 if len(nt) == 2 else 2)
     t_k = onp.asarray(space.t_k, float)
-    spans = onp.array([t_k[max(nt)] - t_k[min(nt)] for nt, _ in chosen])
-    span = spans.max(initial=0.0)
+    span = max((t_k[max(nt)] - t_k[min(nt)] for nt, _ in chosen), default=0.0)
     n_grid = max(K_COH + 1, math.ceil(K_COH * span * nu_width) + 1)
     ecc = onp.minimum(onp.array(ZETA_E), 0.5 * space.e_max)
     ecc = onp.maximum(ecc, min(1e-4, 0.5 * space.e_max))  # ζ = 0 has no M_a
@@ -1322,7 +1315,6 @@ def search_plan(space, key=None, nu_width=None):
         "grid": np.linspace(0.0, 1.0, n_grid, dtype=dt),
         "wk": np.asarray(w_pv, dt), "mk": np.asarray(mean_all[..., :4], dt),
         "wf": np.asarray(w_f, dt), "fm": np.asarray(mean_all[..., 4], dt),
-        "span": spans, "nu_width": float(nu_width),
         "parent": np.asarray(parent_of), "pairs": np.asarray(pairs, int),
         "inner": np.asarray(inner),
         "gap": np.asarray(gap, dt),
@@ -1355,23 +1347,6 @@ def _unique_starts(lab, v, h, r):
     return onp.array(kept, int)
 
 
-def _outward(v, g, span, plan, neighbours, edge):
-    """Candidates stopped at the period edge with the gradient pointing out of
-    the cell, whose span is long (``K_COH Δ ν_w >= 1``, a quarter cycle or more
-    across the cell) and whose neighbour across that edge is searched: the
-    neighbour finds them as interior modes (design §6.11). ``v`` is
-    ``(w_P, y_ζ)``, ``g`` the gradient in ``w_P``, ``neighbours`` the flags for
-    the longer- and shorter-period neighbour."""
-    side = onp.sign(v[:, 0])
-    has = onp.where(side > 0, neighbours[0], neighbours[1])
-    return (
-        (onp.abs(v[:, 0]) >= edge)
-        & (g * side > 0)
-        & (K_COH * span * plan["nu_width"] >= 1.0)
-        & has
-    )
-
-
 # deliberate: polishes each C-step survivor on the label-summed target and takes its saddle-free Laplace covariance, a whole step that keeps search_cell under the function-length gate
 def _laplace_modes(space, x, info):
     """The ``Mode`` of each start in ``x``: Newton on the label-summed target,
@@ -1400,9 +1375,7 @@ def _laplace_modes(space, x, info):
     return modes
 
 
-def search_cell(
-    space, key=None, *, plan=None, info=None, neighbours=(False, False)
-):
+def search_cell(space, key=None, *, plan=None, info=None):
     """The modes of the label-summed target in one cell, best first.
 
     1. Every minimal set of [`search_plan`][virgil.orbit_cells.search_plan], at
@@ -1416,15 +1389,9 @@ def search_cell(
     4. Newton on the label-summed objective; the covariance is the inverse of
        its saddle-free Hessian (``|eigenvalues|``); ``distinct_modes``.
 
-    Newton stops at ``|w_P| >= EDGE_STOP`` (design §6.11). A long-span candidate
-    stopped there with its gradient pointing out of the cell is dropped where
-    ``neighbours`` (the longer- and shorter-period cells) are searched: they
-    find it as an interior mode.
-
     ``info``, a dict, receives the counts of each step, ``capped`` (Newton runs
-    ended by the step cap, of ``newton_runs``), ``edge_stopped``, ``dropped`` and
-    ``evaluations``, the likelihood-equivalent cost (a gradient is 3, a Hessian
-    3 per dimension).
+    ended by the step cap, of ``newton_runs``) and ``evaluations``, the
+    likelihood-equivalent cost (a gradient is 3, a Hessian 3 per dimension).
 
     Source: Fischler & Bolles (1981), Rousseeuw (1984), Rousseeuw & Van Driessen
     (1999), Golub & Pereyra (1973).
@@ -1433,9 +1400,8 @@ def search_cell(
     info = {} if info is None else info
     n_sets, d, k = len(plan["nights"]), space.d, len(space.cat.log_b)
     info.update(sets=n_sets, candidates=0, survivors=0, unique=0, modes=0)
-    info.update(capped=0, newton_runs=0, edge_stopped=0, dropped=0)
+    info.update(capped=0, newton_runs=0)
     info["evaluations"] = 0.0
-    edge = np.asarray(EDGE_STOP, space.dtype)
     if n_sets == 0:
         return []
     r, is_min, ln_p, covered = _grid_stage(space, plan)
@@ -1459,22 +1425,18 @@ def search_cell(
         n = sl.stop - sl.start
         res = _varpro_chunk(
             space, plan, _padded(s_i[sl], CHUNK_VP),
-            np.asarray(_padded(v0[sl], CHUNK_VP), space.dtype), N_VARPRO, edge,
+            np.asarray(_padded(v0[sl], CHUNK_VP), space.dtype), N_VARPRO,
         )  # fmt: skip
         out.append([onp.asarray(a)[:n] for a in res])
     info["evaluations"] += len(s_i) * N_VARPRO * (4.0 + 9.0) * 3 / max(k, 1)
     if not out:
         return []
-    x, lab, rr, v, h, capped, g = (
-        onp.concatenate([o[i] for o in out]) for i in range(7)
+    x, lab, rr, v, h, capped = (
+        onp.concatenate([o[i] for o in out]) for i in range(6)
     )
     info["newton_runs"], info["capped"] = len(x), int(capped.sum())
-    info["edge_stopped"] = int((onp.abs(v[:, 0]) >= EDGE_STOP).sum())
     ok = onp.isfinite(x).all(1) & onp.isfinite(rr) & (rr <= plan["cut"][s_i])
     info["survivors"] = int(ok.sum())
-    gone = _outward(v, g, plan["span"][s_i], plan, neighbours, EDGE_STOP)
-    info["dropped"] = int((ok & gone).sum())
-    ok &= ~gone
     if not ok.any():
         return []
     x, lab, rr, v, h = x[ok], lab[ok], rr[ok], v[ok], h[ok]
@@ -1483,8 +1445,7 @@ def search_cell(
     info["unique"] = len(v)
     x = onp.zeros((len(v), d))
     r2, h2 = onp.zeros(len(v)), onp.zeros((len(v), 3, 3))
-    cap, grad, dead = (onp.zeros(len(v), t) for t in (bool, float, bool))
-    t_k = onp.asarray(space.t_k, float)
+    cap = onp.zeros(len(v), bool)
     active, steps = onp.arange(len(v)), 0
     for n_pass, n_iter in enumerate((N_PRE,) + (N_NEWTON,) * N_C):
         changed = []
@@ -1493,33 +1454,18 @@ def search_cell(
             res = _cstep_chunk(
                 space, plan,
                 np.asarray(_padded(v[idx], CHUNK_C), space.dtype),
-                np.asarray(_padded(lab[idx], CHUNK_C)), n_iter, edge,
+                np.asarray(_padded(lab[idx], CHUNK_C)), n_iter,
             )  # fmt: skip
-            vs, ls, xs, rs, hs, cs, gs = (
-                onp.asarray(a)[: len(idx)] for a in res
-            )
+            vs, ls, xs, rs, hs, cs = (onp.asarray(a)[: len(idx)] for a in res)
             changed.append(idx[(ls != lab[idx]).any(1)])
             v[idx], lab[idx], x[idx], r2[idx], h2[idx] = vs, ls, xs, rs, hs
-            cap[idx], grad[idx] = cs, gs
+            cap[idx] = cs
             steps += len(idx) * n_iter
         info["newton_runs"] += len(active)
         info["capped"] += int(cap[active].sum())
-        info["edge_stopped"] += int((onp.abs(v[active, 0]) >= EDGE_STOP).sum())
-        inl = lab[active] >= 0
-        span = onp.where(
-            inl.any(1),
-            onp.where(inl, t_k, -onp.inf).max(1)
-            - onp.where(inl, t_k, onp.inf).min(1),
-            0.0,
-        )
-        gone = _outward(
-            v[active], grad[active], span, plan, neighbours, EDGE_STOP
-        )
-        dead[active[gone]] = True
-        info["dropped"] += int(gone.sum())
         if n_pass == 0:
             # a few steps merge most candidates onto their modes
-            ok = onp.isfinite(x).all(1) & onp.isfinite(v).all(1) & ~dead
+            ok = onp.isfinite(x).all(1) & onp.isfinite(v).all(1)
             keep = onp.flatnonzero(ok)[
                 _unique_starts(lab[ok], v[ok], h2[ok], r2[ok])
             ]
@@ -1527,17 +1473,14 @@ def search_cell(
             if not len(keep):
                 return []
             v, lab, x, r2, h2 = v[keep], lab[keep], x[keep], r2[keep], h2[keep]
-            cap, grad, dead = (
-                onp.zeros(len(v), t) for t in (bool, float, bool)
-            )
+            cap = onp.zeros(len(v), bool)
             active = onp.arange(len(v))
             continue
         active = onp.concatenate(changed) if changed else active[:0]
-        active = active[~dead[active]]
         if not len(active):
             break
     info["evaluations"] += steps * (1.0 + 3.0 + 9.0)
-    ok = onp.isfinite(x).all(1) & onp.isfinite(v).all(1) & ~dead
+    ok = onp.isfinite(x).all(1) & onp.isfinite(v).all(1)
     x, lab, v, r2, h2 = x[ok], lab[ok], v[ok], r2[ok], h2[ok]
     keep = _unique_starts(lab, v, h2, r2)
     x = x[keep][_prune(space, x[keep])]
@@ -1622,8 +1565,8 @@ class CellFit:
         Neighbour modes that straddle a shared edge, in this cell's chart: extra
         components of the mixture (not in ``modes``).
     info : dict
-        The search's counts (``capped``, ``newton_runs``, ``edge_stopped``,
-        ``dropped``, ...: [`search_cell`][virgil.orbit_cells.search_cell]).
+        The search's counts (``capped``, ``newton_runs``, ...:
+        [`search_cell`][virgil.orbit_cells.search_cell]).
     """
 
     cell: Cell
@@ -1733,7 +1676,6 @@ def position_leg(
     dtype="float64",
     plan=None,
     nu_width=None,
-    neighbours=(False, False),
     shared=(),
 ):
     """Search, defensive importance sampling and posterior draws of one cell.
@@ -1772,10 +1714,6 @@ def position_leg(
     nu_width : float, optional
         The widest cell in ``1 / P`` (``1 / T``), to size the plan's ``ln P``
         grid when ``plan`` is made here (default the width of ``cell``).
-    neighbours : (bool, bool), optional
-        Whether the longer- and shorter-period cells are searched: only then
-        are the long-span candidates that run out of this cell dropped
-        ([`search_cell`][virgil.orbit_cells.search_cell]).
     shared : sequence of Mode, optional
         Neighbour modes in this cell's chart, extra mixture components
         ([`position_cells`][virgil.orbit_cells.position_cells] makes them).
@@ -1796,7 +1734,7 @@ def position_leg(
         )  # fmt: skip
         plan = search_plan(space, k_plan, nu_width) if plan is None else plan
         info = {}
-        modes = search_cell(space, plan=plan, info=info, neighbours=neighbours)
+        modes = search_cell(space, plan=plan, info=info)
         ev = _cell_evidence(space, [*modes, *shared], k_is, n_is)
     fit = CellFit(
         cell, ev.log_z, ev.log_z_error, modes, None, ev.log_w, ev.x,
@@ -2045,8 +1983,7 @@ def position_cells(
         return position_leg(
             summaries, log_outlier, cells[i], keys[i], t_anchor=t_a,
             t_nights=t_all, jitter=jitter, n_is=n_is, posterior_draws=False,
-            plan=plan, nu_width=1.0 / t_ab,
-            neighbours=(i > 0, i < len(cells) - 1), **leg_kwargs,
+            plan=plan, nu_width=1.0 / t_ab, **leg_kwargs,
         )  # fmt: skip
 
     fits = [run(0, None)]

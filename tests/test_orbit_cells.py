@@ -855,9 +855,7 @@ def test_a_search_that_drops_the_true_mode_fails_the_cell(monkeypatch):
     floor = log_b.sum() + math.lgamma(5.5) - 0.5 * math.log(math.pi)
     floor -= math.lgamma(6.0)
 
-    def fake(
-        space, key=None, *, plan=None, info=None, neighbours=(False, False)
-    ):
+    def fake(space, key=None, *, plan=None, info=None):
         info.update(evaluations=0.0)
         x = onp.asarray(space.sample(jax.random.key(5), 1))[0]
         return [Mode(x, floor + 100.0, 0.01 * onp.eye(space.d), 2.0)]
@@ -1023,7 +1021,7 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
 
 
-# --- the edge stop and shared neighbour modes (design 6.11, fix 1) ---------------
+# --- shared neighbour modes (design 6.11) ----------------------------------------
 
 
 @pytest.mark.slow
@@ -1152,43 +1150,6 @@ def test_the_prediction_cost_does_not_depend_on_the_error_scale():
 
     assert onp.allclose(cost(1.0), cost(7.0), rtol=1e-8)
     assert onp.all(onp.asarray(cost(1.0)) > 0)
-
-
-@pytest.mark.slow
-@x64
-@pytest.mark.timeout(1800)
-def test_the_edge_stop_cuts_the_step_cap_count_and_drops_only_with_neighbours(
-    monkeypatch,
-):
-    """K = 6 nights in two seasons: stopping at the edge ends Newton runs the
-    step cap used to end, and drops stopped long-span candidates only where the
-    neighbours are searched."""
-    rng = onp.random.default_rng(3)
-    times = _two_season_times(rng, k=6)
-    s = _summaries(_orbit(period=11.3, a=6.0, ecc=0.0), times, sigma=0.3)
-    domain = oc_cells.period_domain(s, p_range=(9.0, 14.0))
-    cells = oc_cells.make_cells(times[0], times[-1], domain)
-    cell = cells[len(cells) // 2]
-    space = oc_cells._Space(
-        oc_cells._Catalogue(s, onp.full(6, LOG_B)), cell, 0.0, times - times[0],
-        (1.0, 30.0), 0.9, 1e-4, 0.0, np.float64,
-    )  # fmt: skip
-    plan = oc_cells.search_plan(
-        space, jax.random.key(0), nu_width=1.0 / (times[-1] - times[0])
-    )
-    runs = {}
-    for name, edge, nb in (
-        ("off", onp.inf, (True, True)),
-        ("on", oc_cells.EDGE_STOP, (False, False)),
-        ("drop", oc_cells.EDGE_STOP, (True, True)),
-    ):
-        monkeypatch.setattr(oc_cells, "EDGE_STOP", edge)
-        runs[name] = {}
-        oc_cells.search_cell(space, plan=plan, info=runs[name], neighbours=nb)
-    assert runs["off"]["edge_stopped"] == 0 and runs["off"]["dropped"] == 0
-    assert runs["on"]["edge_stopped"] > 0 and runs["on"]["dropped"] == 0
-    assert runs["drop"]["dropped"] > 0
-    assert runs["on"]["capped"] < runs["off"]["capped"]
 
 
 @pytest.mark.slow
