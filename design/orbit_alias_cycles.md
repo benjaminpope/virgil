@@ -519,7 +519,8 @@ nights whose summaries determine (ρ, TI′) at a fixed ζ:
 For each set S and each ζ start (below):
 
 1. Grid ρ at coherence k_coh over the set's own span Δ_S, so n_ρ(S) = ⌈k_coh Δ_S/T⌉ + 1 points per cell.
-2. From each local minimum of the set's VarPro residual on that grid, run a bounded 1-D minimization (Brent) in ρ.
+2. ~~From each local minimum of the set's VarPro residual on that grid, run a bounded 1-D minimization (Brent) in ρ.~~
+   **Replaced (§6.12):** each local minimum on that grid is a candidate start; it goes straight to step 3.
 3. ~~With velocities, or with m + 1 nights in the set, the solve is over (ρ, ζ) jointly, started at the grid node.~~
    **Replaced (§6.12):** a minimal set does not determine ζ. A triplet leaves a curve of exact fits, and a pair gets
    ζ only from its velocities. Every set takes minimum-norm Gauss–Newton steps in (ρ, ζ) along the directions its data
@@ -1248,7 +1249,7 @@ minimum-norm step lands on C, and every cell agrees with main within its IS erro
 **The fix: Gauss–Newton restricted to the directions the data determine.**
 
 - **F1. Minimum-norm Gauss–Newton step.** Replace the saddle-free LM on the VarPro objective by Gauss–Newton on the
-  whitened VarPro residual r(v) (TI′ still solved by VarPro at each v). Let J = ∂r/∂v and JᵀJ = UΛUᵀ. Step only along
+  whitened VarPro residual r(v) (TI′ still solved by VarPro at each v). r(v) holds only the whitened data residuals (8 for a pair, 6 for a triplet); the ridge |TI′|²/s_w² stays inside the inner VarPro solve and is not appended to r, since its gradient along C is what drives the crawl. Let J = ∂r/∂v and JᵀJ = UΛUᵀ. Step only along
   the eigendirections with λ_i > κ:
   Δv = −Σ_{λ_i > κ} u_i (u_iᵀJᵀr)/λ_i,
   backtracking by halving until the residual falls. Along a direction with λ_i ≤ κ the step is zero. On an exactly flat
