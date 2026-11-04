@@ -104,13 +104,35 @@ def _draw(seed, i):
     return pop.draw_system(rng, nights, fit), float(pit.uniform())
 
 
-def test_a_seed_list_draws_the_same_systems_whatever_the_fits_did():
-    """The PIT stream is its own child: consuming it (or not), or drawing the
-    systems in another order, changes nothing about any other system."""
+def _population(monkeypatch, outcome):
+    """``run_population`` over seed 3 with the fit replaced by ``outcome``
+    (a status, or an error), recording what each fit was handed."""
+    seen = []
+
+    def run_one(sysd, fit, key, u, **kw):
+        seen.append((float(sysd["period"]), float(u)))
+        if outcome(len(seen)) == "error":
+            raise RuntimeError("boom")
+        return dict(status=outcome(len(seen)))
+
+    monkeypatch.setattr(pop, "run_one", run_one)
+    return pop.run_population(3, 0, 8, False, 0), seen
+
+
+def test_a_seed_list_draws_the_same_systems_whatever_the_fits_did(
+    monkeypatch,
+):
+    """Whatever each fit returns (ok, failed, an error), ``run_population``
+    hands every later system the same draws: pairing."""
+    kinds = ("ok", "failed", "error")
+    rows0, seen0 = _population(monkeypatch, lambda n: "ok")
+    rows1, seen1 = _population(monkeypatch, lambda n: kinds[n % 3])
+    assert seen0 == seen1 and len(seen0) > 0
+    for a, b in zip(rows0, rows1):
+        assert a["seed"] == b["seed"] == 3 and a["sys"] == b["sys"]
     first = {i: _draw(3, i) for i in range(8)}
     again = {}
     for i in reversed(range(8)):
-        pop.streams(3, i)[1].uniform(size=int(i % 3))  # "a fit outcome"
         again[i] = _draw(3, i)
     for i, a in first.items():
         b = again[i]
@@ -202,9 +224,10 @@ def test_failed_systems_never_enter_the_gated_sbc_and_assertions_5_to_7_gate():
         pop.summarize(ok + failed, 230)[1] == "FAIL"
     )  # a failure still fails
     text, _ = pop.summarize(ok + failed, 230)
-    assert (
-        "cell at floor (failed): 30" in text and "SBC chi-square p, N" in text
-    )
+    assert "cell at floor (failed): 30" in text
+    # the SBC sees the ok rows only: 30 PITs at 0 would drive p far lower
+    p_ok = f"{pop.chi2_uniform([r['pit_n'] for r in ok]):.3g}"
+    assert f"{pop.BINS} bins): {p_ok}" in text
     # assertion 5: 100 eccentric systems, 6 outside chi2_d(0.99): a failure
     ecc = [dict(r, ecc=0.6, maha2=1.0, maha_df=10) for r in ok[:100]]
     ecc[:6] = [dict(r, maha2=1e3) for r in ecc[:6]]
@@ -234,8 +257,9 @@ def test_the_strata_are_those_of_section_14():
 @pytest.mark.slow
 @pytest.mark.timeout(1200)
 def test_the_oracle_and_the_diagnostics_change_no_fit_result():
-    """Fit columns are bit-identical with the oracle (and the equivariance
-    rerun) off or on; only their own columns are added."""
+    """Fit columns are bit-identical with the oracle off or on; only its own
+    columns are added. (The refactor of ``orbit_cells`` behind the counters is
+    checked against ``main`` by hand, byte for byte; see the PR.)"""
     import jax
 
     rng, pit = pop.streams(0, 20)  # a small one-season system

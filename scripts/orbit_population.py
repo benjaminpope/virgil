@@ -92,6 +92,9 @@ SD_TOL = (4.0, 0.01)  # §14 assertion 4: |gap| <= 4 sd + 0.01
 E_ECC = 0.3  # assertion 5's eccentric stratum
 CONFIDENCE = 0.99  # assertion 5's chi-square region
 SCALES = (math.exp(-1.0), math.exp(1.5))  # assertion 6's c
+STEP_COUNTS = (  # runs ended by the step cap, by stage; only the C-steps converge
+    "varpro_runs", "varpro_capped", "pre_runs", "pre_capped", "c_runs", "c_capped",
+)  # fmt: skip
 INVARIANTS = ("a", "ecc", "cos_inc", "omega", "Omega")
 STRATA = ("B2", "le_m", "rest")  # B'' (all outliers), <= m inliers, the rest
 CLASSES = ("search_miss", "proposal_miss", "sentinel_fp", "support")
@@ -280,23 +283,32 @@ def _pit_p(p, cells, fits, truth_p):
     return pit
 
 
-def invariant_pits(p, fits, truth):
+def invariant_pits(p, fits, truth, distinct=False):
     """Mixture PITs of the invariants of ``truth`` (a dict): each cell's
-    distinct draws, weighted by the cell's ``p``; cells without draws (below
-    ``δ / N_cells``) are left out and the rest renormalized."""
+    resample-move draws, equally weighted (a draw repeated by a rejected move
+    carries its mass), weighted by the cell's ``p``; ``distinct`` keeps each
+    distinct draw once instead (a separate diagnostic, columns ``pitd_*``).
+    Cells without draws (below ``δ / N_cells``) are left out and the rest
+    renormalized."""
     num, den = dict.fromkeys(INVARIANTS, 0.0), 0.0
     for pi, f in zip(p, fits):
         if f.draws is None or not pi > 0:
             continue
-        distinct = onp.unique(onp.asarray(f.draws), axis=0)
-        dec = oc_cells.decode_particles(dataclasses.replace(f, draws=distinct))
+        if distinct:
+            f = dataclasses.replace(
+                f, draws=onp.unique(onp.asarray(f.draws), axis=0)
+            )
+        dec = oc_cells.decode_particles(f)
         for name in INVARIANTS:
             num[name] += pi * float(
                 onp.mean(onp.asarray(dec[name]) < truth[name])
             )
         den += pi
     return {
-        f"pit_{n}": (num[n] / den if den > 0 else math.nan) for n in INVARIANTS
+        f"{'pitd' if distinct else 'pit'}_{n}": (
+            num[n] / den if den > 0 else math.nan
+        )
+        for n in INVARIANTS
     }
 
 
@@ -345,8 +357,7 @@ def cell_records(out, true_i, oracle):
             log_z=float(f.log_z), laplace=float(lap),
             gap=float(lap - f.log_z), matters=bool(out.matters[i]),
             n_inliers=[round(float(m.n_inliers), 2) for m in f.modes],
-            capped=int(f.info.get("capped", 0)),
-            newton_runs=int(f.info.get("newton_runs", 0)),
+            **{k: int(f.info.get(k, 0)) for k in STEP_COUNTS},
         )  # fmt: skip
         if i == true_i and oracle:
             rec.update(oracle)
@@ -386,7 +397,9 @@ def sbc_columns(sysd, out, p, u, true_i, t_anchor):
         pit_n=float(p[:true_i].sum() + u * p[true_i]),
         pit_lnp=_pit_p(p, out.cells, out.fits, sysd["period"]),
     )  # fmt: skip
-    row.update(invariant_pits(p, out.fits, truth_invariants(sysd, t_anchor)))
+    truth = truth_invariants(sysd, t_anchor)
+    row.update(invariant_pits(p, out.fits, truth))
+    row.update(invariant_pits(p, out.fits, truth, distinct=True))
     return row
 
 
@@ -493,8 +506,7 @@ def run_one(sysd, fit, key, u, *, oracle=False, equiv=False):
         n_at_floor=sum(f.at_floor for f in fits),
         n_unreliable=sum(f.unreliable for f in fits),
         n_nonfinite=sum(f.nonfinite for f in fits),
-        capped=sum(f.info.get("capped", 0) for f in fits),
-        newton_runs=sum(f.info.get("newton_runs", 0) for f in fits),
+        **{k: sum(f.info.get(k, 0) for f in fits) for k in STEP_COUNTS},
         min_ess=min(float(getattr(f.evidence, "ess", onp.nan)) for f in fits),
         n_undersampled=sum(f.undersampled for f in fits),
     )  # fmt: skip
@@ -593,8 +605,12 @@ def _a5(rows):
     """Assertion 5: ``(n, misses)`` over the e > ``E_ECC`` systems that have a
     distance (everything but errors)."""
     sel = [r for r in rows if r.get("maha2") is not None and r["ecc"] > E_ECC]
-    cut = stats.chi2.ppf(CONFIDENCE, sel[0]["maha_df"]) if sel else math.inf
-    return len(sel), sum(not r["maha2"] <= cut for r in sel)
+    # a row whose distance failed carries no df: a miss
+    miss = sum(
+        not r["maha2"] <= stats.chi2.ppf(CONFIDENCE, r.get("maha_df", 0))
+        for r in sel
+    )
+    return len(sel), miss
 
 
 def _a6(rows):
@@ -781,7 +797,7 @@ def run_population(seed, start, n_sys, oracle, equiv_every):
                 row = {**base, "status": "error", "error": repr(err)[:200]}
                 if sysd is not None:
                     row.update(describe(sysd, fit))
-        rows.append(dict(sys=i, **row))
+        rows.append(dict(seed=seed, sys=i, **row))
         print(
             i, row.get("status"), f"{row.get('seconds', 0):.0f}s", flush=True
         )
@@ -842,7 +858,11 @@ def main():
     args = ap.parse_args()
     if args.merge:
         rows = read_rows(args.merge)
-        finish(sorted(rows, key=lambda r: r["sys"]), len(rows), args.out)
+        finish(
+            sorted(rows, key=lambda r: (r["seed"], r["sys"])),
+            len(rows),
+            args.out,
+        )
     rows = run_population(
         args.seed, args.start, args.n_sys, args.oracle, args.equiv_every
     )

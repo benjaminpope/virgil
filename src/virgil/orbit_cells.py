@@ -1388,9 +1388,11 @@ def search_cell(space, key=None, *, plan=None, info=None):
     4. Newton on the label-summed objective; the covariance is the inverse of
        its saddle-free Hessian (``|eigenvalues|``); ``distinct_modes``.
 
-    ``info``, a dict, receives the counts of each step, ``capped`` (Newton runs
-    ended by the step cap, of ``newton_runs``) and ``evaluations``, the
-    likelihood-equivalent cost (a gradient is 3, a Hessian 3 per dimension).
+    ``info``, a dict, receives the counts of each step, the runs ended by the
+    step cap in each of the VarPro, pre-pass and C-step stages
+    (``varpro_capped`` of ``varpro_runs``, ``pre_capped`` of ``pre_runs``,
+    ``c_capped`` of ``c_runs``; only the C-steps are meant to converge) and
+    ``evaluations``, the likelihood-equivalent cost (a gradient is 3, a Hessian 3 per dimension).
 
     Source: Fischler & Bolles (1981), Rousseeuw (1984), Rousseeuw & Van Driessen
     (1999), Golub & Pereyra (1973).
@@ -1399,7 +1401,8 @@ def search_cell(space, key=None, *, plan=None, info=None):
     info = {} if info is None else info
     n_sets, d, k = len(plan["nights"]), space.d, len(space.cat.log_b)
     info.update(sets=n_sets, candidates=0, survivors=0, unique=0, modes=0)
-    info.update(capped=0, newton_runs=0)
+    info.update(varpro_runs=0, varpro_capped=0, pre_runs=0, pre_capped=0)
+    info.update(c_runs=0, c_capped=0)
     info["evaluations"] = 0.0
     if n_sets == 0:
         return []
@@ -1433,7 +1436,7 @@ def search_cell(space, key=None, *, plan=None, info=None):
     x, lab, rr, v, h, capped = (
         onp.concatenate([o[i] for o in out]) for i in range(6)
     )
-    info["newton_runs"], info["capped"] = len(x), int(capped.sum())
+    info["varpro_runs"], info["varpro_capped"] = len(x), int(capped.sum())
     ok = onp.isfinite(x).all(1) & onp.isfinite(rr) & (rr <= plan["cut"][s_i])
     info["survivors"] = int(ok.sum())
     if not ok.any():
@@ -1460,8 +1463,9 @@ def search_cell(space, key=None, *, plan=None, info=None):
             v[idx], lab[idx], x[idx], r2[idx], h2[idx] = vs, ls, xs, rs, hs
             cap[idx] = cs
             steps += len(idx) * n_iter
-        info["newton_runs"] += len(active)
-        info["capped"] += int(cap[active].sum())
+        stage = "pre" if n_pass == 0 else "c"
+        info[f"{stage}_runs"] += len(active)
+        info[f"{stage}_capped"] += int(cap[active].sum())
         if n_pass == 0:
             # a few steps merge most candidates onto their modes
             ok = onp.isfinite(x).all(1) & onp.isfinite(v).all(1)
@@ -1561,7 +1565,7 @@ class CellFit:
     move : virgil.mode_search.Move or None
         The resample-move of ``draws`` (HMC acceptance and step size).
     info : dict
-        The search's counts (``capped``, ``newton_runs``, ...:
+        The search's counts (``c_capped``, ``c_runs``, ...:
         [`search_cell`][virgil.orbit_cells.search_cell]).
     """
 
@@ -2084,19 +2088,6 @@ def truth_distance2(space, mode, x_true):
     return best
 
 
-def _same_basin(space, mode, oracle):
-    """Whether Newton from ``mode`` ends at ``oracle`` or one of its symmetry
-    images, by the distinct-mode rule (both covariances, ``MAHAL``)."""
-    x = onp.asarray(
-        _refine(space, np.asarray(mode.x, space.dtype), N_NEWTON)[0]
-    )
-    for g in _group(space.d):
-        gx, gc = g @ onp.asarray(oracle.x, float), g @ oracle.cov @ g.T
-        if max(_maha2(x - gx, gc), _maha2(x - gx, mode.cov)) < MAHAL:
-            return True
-    return False
-
-
 def oracle_evidence(fit, x_true, key, n_is=N_IS):
     """The mass oracle of a cell: its defensive IS rerun with the
     truth-started optimum added as a mixture component.
@@ -2133,7 +2124,22 @@ def oracle_evidence(fit, x_true, key, n_is=N_IS):
             return dict(oracle_log_z=onp.nan, oracle_basin=-1)
         mode = found[0]
         ev = _cell_evidence(space, [*fit.modes, mode], key, n_is)
-        basin = sum(_same_basin(space, m, mode) for m in fit.modes)
+        # a found mode shares the optimum's basin when Newton from it ends at
+        # the optimum or a symmetry image, by the distinct-mode rule (both
+        # covariances, ``MAHAL``)
+        images = [
+            (g @ onp.asarray(mode.x, float), g @ mode.cov @ g.T)
+            for g in _group(space.d)
+        ]
+        basin = 0
+        for m in fit.modes:
+            x = onp.asarray(
+                _refine(space, np.asarray(m.x, space.dtype), N_NEWTON)[0]
+            )
+            basin += any(
+                max(_maha2(x - gx, gc), _maha2(x - gx, m.cov)) < MAHAL
+                for gx, gc in images
+            )
     return dict(
         oracle_log_z=ev.log_z, oracle_log_z_error=ev.log_z_error,
         oracle_ess=ev.ess, oracle_laplace=laplace_log_evidence(mode),
