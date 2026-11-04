@@ -1429,24 +1429,23 @@ runs in the chart.)
 
 - **q(θ)** is the t₅ at the profile (varpro) Laplace in θ plus the cell prior as the defensive share, as now.
 - **q(TI′ | θ)** has two parts: a mixture of the exact per-labelling Gaussian conditionals N(μ_λ(θ), Σ_λ(θ)) over a
-  small labelling set Λ fixed per cell, **with fixed mixture weights (not a function of θ)**; and a p_iso defensive
-  share.
+  small labelling set Λ fixed per cell, with weights π(λ | θ) that may depend on θ **provided λ is sampled per draw,
+  not allocated**; and a p_iso defensive share α. The density evaluated is the full mixture at that θ,
+  q(TI′ | θ) = α p_iso + (1 − α) Σ_λ π(λ | θ) N_λ(θ), so single-sample IS stays unbiased. The default is
+  π(λ | θ) ∝ Z_λ(θ) over Λ, with α fixed. A fixed *allocation* (a deterministic number of draws per component)
+  with θ-dependent weights stays forbidden: it is biased.
   - **Λ and its weights:** Λ is the set of labellings (inlier sets) of the cell's persisted modes (§6.4), restricted
     to rank 4 (at least one inlier night with a velocity, or at least two position nights); a sub-rank labelling has
-    no proper conditional and is left to the defensive share. Weights are the modes' Laplace evidence shares, as
-    `DefensiveMixture` has now.
+    no proper conditional and is left to the defensive share. Z_λ is as in the I(θ) formula below.
   - **Sign images.** If the target sums the brighter/fainter sign, q includes the TI′ → −TI′ image of each component
     (the existing mixture's images), and test 3 includes it. p_iso being even does not make L even.
   - The conditionals are exactly Gaussian under outlier model (ii) (§1.1). Under (iii′), t_k is a continuous
   per-night label and the conditional is a scale mixture, so t_k enters Λ as extra labels on Gauss–Legendre nodes.
-- **Open option for C2** (flagged for Ben; the fixed weights above are the default and are not changed here):
-  θ-dependent weights π(λ | θ), e.g. ∝ Z_λ(θ), stay unbiased if λ is *sampled* per draw and the density evaluated is
-  the full mixture at that θ. Tests 3–4 decide whether they are needed.
 
 Why this and not a nested estimator: it is single-sample IS, so Ẑ_N stays unbiased; there is no nested estimator, no
 common random numbers, no Jensen bias and no smoothness requirement at the a-shell. (A fixed allocation with
 θ-dependent weights is biased: up to +0.9 nats in a numeric check.) It follows the TI′ banana exactly, because μ_λ
-moves with θ. No weight bound is claimed, since the bound is vacuous at a needle; the tests below measure the variance.
+moves with θ. No weight bound is claimed, since the bound is vacuous at a needle; the tests below measure the variance. A fixed-weight variant is kept as a comparison arm in tests 3–4.
 
 **Reuse.** A new component type in `mode_search.DefensiveMixture` that draws TI′ given θ and evaluates its density;
 not a new evidence path.
