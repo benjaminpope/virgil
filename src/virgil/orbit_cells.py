@@ -27,6 +27,7 @@ Source: Fischler & Bolles (1981), Rousseeuw (1984), Rousseeuw & Van Driessen
 derived in the design note.
 """
 
+import concurrent.futures
 import dataclasses
 import functools
 import itertools
@@ -110,6 +111,10 @@ W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
 N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
 CHUNK_C = 256  # candidates per batched C-step call (budget)
 CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
+N_WORKERS = (
+    1  # cells run at once; 2 threads ran K = 14 two-season 1.24x faster
+)
+#                (design §9), at +0.3 GB: opt in with ``workers``
 R0 = math.sqrt(3.0)  # radius of y_z at a mode: the mode of its chi-4 prior
 
 
@@ -875,6 +880,7 @@ def _lm(f, x, args, n_iter, step_max=10.0):
     the predicted gain ``g·step`` is below ``TOL_GAIN``. vmap-able.
     Returns ``(x, f(x))``.
     """
+
     grad, hess = jax.grad(f), jax.hessian(f)
 
     def body(c):
@@ -938,6 +944,21 @@ def _solve_set(g, mean, w, s_w2):
     return np.einsum("mi,mij,mj->", r, w, r) + ti @ ti / s_w2, ti
 
 
+def _prediction_cost(gg, nights, w, chol, valid):
+    """``λ_k = λ_max(Σ_k⁻¹ C_k)`` per night ``(K,)`` for a pair solved on
+    ``nights`` (precisions ``w``) at the designs ``gg`` ``(K, 4, 4)``:
+    ``C_k = G_k F⁻¹ G_kᵀ``, ``F`` the pair's Fisher information; the
+    largest over the night's peaks (``chol`` ``(K, J, 4, 4)``, ``Σ_k⁻¹ = L Lᵀ``).
+    Scaling every ``Σ`` by ``c²`` leaves it unchanged."""
+    gs = gg[nights]
+    f = np.einsum("mia,mij,mjb->ab", gs, w, gs)
+    f = f + np.finfo(gg.dtype).eps * np.trace(f) * np.eye(4, dtype=gg.dtype)
+    c = np.einsum("kia,ab,kjb->kij", gg, np.linalg.inv(f), gg)
+    m = np.einsum("kjai,kab,kjbc->kjic", chol, c, chol)
+    lam = np.linalg.eigvalsh(m)[..., -1]
+    return np.where(valid, lam, 0.0).max(axis=1)
+
+
 @jax.jit
 def _grid_stage(space, plan):
     """Every set's residual on a ``ln P`` grid of the cell, at every ζ start.
@@ -965,7 +986,31 @@ def _grid_stage(space, plan):
     r = jax.vmap(per_set)(plan["nights"], plan["w"], plan["mean"])
     left = np.concatenate([r[..., :1], r[..., :-1]], -1)
     right = np.concatenate([r[..., 1:], r[..., -1:]], -1)
-    return r, (r <= left) & (r <= right) & np.isfinite(r), np.log(period)
+    is_min = (r <= left) & (r <= right) & np.isfinite(r)
+    if len(plan["pairs"]) == 0:
+        return r, is_min, np.log(period), np.zeros((), int)
+    # A span pair solved on its own nights predicts night k between them with
+    # the error cost ½ λ_k χ²₄(1 - δ) in ℓ_k at most, with probability 1 - δ
+    # (_prediction_cost). It covers its span when that is below the night's
+    # height Δ_k over its floor for every interior night: its triplet fills
+    # then add nothing (design §6.11, fix 4).
+    chi4 = stats.chi2.isf(DELTA, 4)
+    chol = np.linalg.cholesky(plan["wk"])  # (K, J, 4, 4), precision = L Lᵀ
+
+    def pair_covers(nights, w, inner, gg):
+        lam = _prediction_cost(gg, nights, w, chol, space.cat.valid)
+        return (
+            ((0.5 * chi4 * lam < plan["gap"]) | ~inner).all()
+        ) & inner.any()
+
+    pr = plan["pairs"]
+    covered = jax.vmap(
+        lambda nt, w, inner: jax.vmap(
+            jax.vmap(lambda gg: pair_covers(nt, w, inner, gg))
+        )(g)
+    )(plan["nights"][pr], plan["w"][pr], plan["inner"])  # (Q, Z, n)
+    skip = (plan["parent"] >= 0)[:, None, None] & covered[plan["parent"]]
+    return r, is_min & ~skip, np.log(period), (is_min & skip).sum()
 
 
 def _varpro_objective(v, nights, w, mean, space):
@@ -1169,6 +1214,7 @@ def search_plan(space, key=None, nu_width=None):
     seed = 0 if key is None else int(jax.random.randint(key, (), 0, 2**31 - 1))
     rng = onp.random.default_rng(seed)
     sets = {2: [], 3: []}
+    parent = {}  # fill triplet -> the set of its span pair
     for m in (2, 3):
         for nights in itertools.combinations(range(len(peaks)), m):
             if all(len(peaks[k]) for k in nights):
@@ -1184,8 +1230,22 @@ def search_plan(space, key=None, nu_width=None):
                 pk = tuple(int(rng.choice(peaks[k])) for k in (a, c, b))
                 fills.add(((a, c, b), pk))
         sets[3] = sorted(fills)
+        index = {st: i for i, st in enumerate(sets[2])}
+        parent = {
+            st: index[((st[0][0], st[0][2]), (st[1][0], st[1][2]))]
+            for st in sets[3]
+        }
     chosen = sets[2] + sets[3]
     s = len(chosen)
+    pairs = sorted(set(parent.values()))
+    local = {q: i for i, q in enumerate(pairs)}
+    parent_of = onp.array(
+        [local[parent[st]] if st in parent else -1 for st in chosen], int
+    )
+    inner = onp.zeros((len(pairs), len(peaks)), bool)
+    for i, q in enumerate(pairs):
+        a, b = chosen[q][0]
+        inner[i, a + 1 : b] = [len(peaks[c]) > 0 for c in range(a + 1, b)]
     nights = onp.zeros((s, 3), int)
     w = onp.zeros((s, 3, 4, 4))
     mean = onp.zeros((s, 3, 4))
@@ -1221,12 +1281,37 @@ def search_plan(space, key=None, nu_width=None):
         ]
     )
     y0 = zeta / onp.sqrt(space.e_max - (zeta**2).sum(1, keepdims=True))
+    # Δ_k: night k's best peak over its outlier floor, at the error scale that
+    # maximizes it (9 values of ln s over ±ln S_MAX if free, else s = 1)
+    heights = []
+    for ln_s in (
+        onp.linspace(-1.0, 1.0, 9) * math.log(S_MAX)
+        if cat.rescalable
+        else [0.0]
+    ):
+        cov, total, _ = _peak_precision(
+            cat, np.full(len(cat.blocks), ln_s, dt), space.jitter, dt
+        )
+        scaled = cat.loglike - np.sum(
+            cat.n * ln_s + 0.5 * cat.chi2 * (math.exp(-2 * ln_s) - 1.0),
+            axis=-1,
+        )
+        log_det = 0.5 * (
+            np.linalg.slogdet(cov)[1] - np.linalg.slogdet(total)[1]
+        )
+        heights.append(
+            np.where(cat.valid, scaled + log_det, -1e30).max(axis=1)
+        )
+    gap = np.max(np.stack(heights), axis=0) - cat.log_b
     return {
         "nights": np.asarray(nights), "w": np.asarray(w, dt), "mean": np.asarray(mean, dt),
         "lnf": np.asarray(lnf, dt), "cut": onp.asarray(cut), "y0": np.asarray(y0, dt),
         "grid": np.linspace(0.0, 1.0, n_grid, dtype=dt),
         "wk": np.asarray(w_pv, dt), "mk": np.asarray(mean_all[..., :4], dt),
         "wf": np.asarray(w_f, dt), "fm": np.asarray(mean_all[..., 4], dt),
+        "parent": np.asarray(parent_of), "pairs": np.asarray(pairs, int),
+        "inner": np.asarray(inner),
+        "gap": np.asarray(gap, dt),
     }  # fmt: skip
 
 
@@ -1284,9 +1369,10 @@ def search_cell(space, key=None, *, plan=None, info=None):
     info["evaluations"] = 0.0
     if n_sets == 0:
         return []
-    r, is_min, ln_p = _grid_stage(space, plan)
+    r, is_min, ln_p, covered = _grid_stage(space, plan)
     s_i, z_i, p_i = onp.nonzero(onp.asarray(is_min))
     info["candidates"] = len(s_i)
+    info["covered"] = int(covered)
     info["evaluations"] += float(r.size * 2 / max(k, 1))
     frac = onp.clip(
         (onp.asarray(ln_p)[p_i] - float(space.ln_lo))
@@ -1435,7 +1521,8 @@ class CellFit:
     at_floor : bool
         ``cell-at-floor``: the draws sit at the all-outlier floor although the
         search found a mode above it, so the search missed the dominant mode.
-        The cell *failed*: never report its ``log_z`` as an evidence.
+        Never report the cell's ``log_z`` as an evidence. It fails the *system*
+        only if the cell could matter: see ``CellsResult.failed``.
     undersampled : bool
         ``cell-undersampled``: the ESS is below ``ESS_TARGET``; information only.
     unreliable : bool
@@ -1594,6 +1681,12 @@ def position_leg(
             images=_symmetry_images(space.d), dtype=space.dtype, dim=space.d,
         )  # fmt: skip
         n_k = len(cat.log_b)
+        if not onp.all(onp.isfinite(cat.log_b)):
+            raise ValueError(
+                "A night has a non-finite outlier log density b_k (its ln f "
+                "is outside the flux prior [ln flux_floor, 0]): the "
+                "all-outlier floor is undefined."
+            )
         # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))
         floor = float(onp.sum(cat.log_b)) + (
             math.lgamma(n_k + 0.5)
@@ -1723,13 +1816,14 @@ class CellsResult:
     jitter : float
         The position jitter used (mas).
     failed : numpy.ndarray
-        Cells at the floor (``cell-at-floor``: the search missed the dominant
-        mode), with a non-finite target, or unreliable (ESS below ``ESS_FAIL``)
+        Cells with a non-finite target, or at the floor (``cell-at-floor``: the
+        search missed the dominant mode) or unreliable (ESS below ``ESS_FAIL``)
         *and* within ``W`` of the best cell (``ln`` mass ``+ ln Ẑ`` taken as
         the larger of the importance and the Laplace estimates, so a cell whose
-        probability could reach the reporting precision ``δ``). A low-ESS cell
-        far below the best is information only. Any true entry makes ``p_pos``
-        undefined.
+        probability could reach the reporting precision ``δ``). A floor or
+        low-ESS cell far below the best is information only: it stays flagged
+        on its fit (``CellFit.at_floor``, ``unreliable``) but does not fail the
+        system. Any true entry makes ``p_pos`` undefined.
     """
 
     domain: PeriodDomain
@@ -1745,6 +1839,22 @@ class CellsResult:
     failed: onp.ndarray
 
 
+def _map(fn, items, workers):
+    """``[fn(i) for i in items]`` in ``workers`` threads, in order; the first
+    exception (or interrupt) cancels the queued items before it is raised.
+    One worker runs inline."""
+    if workers <= 1:
+        return [fn(i) for i in items]
+    pool = concurrent.futures.ThreadPoolExecutor(workers)
+    try:
+        return [f.result() for f in [pool.submit(fn, i) for i in items]]
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    finally:
+        pool.shutdown(wait=True)
+
+
 def position_cells(
     summaries,
     domain,
@@ -1757,6 +1867,7 @@ def position_cells(
     delta=DELTA,
     n_is=N_IS,
     max_seconds=float("inf"),
+    workers=N_WORKERS,
     **leg_kwargs,
 ):
     """The position-level fit of every cell of ``domain``.
@@ -1793,6 +1904,11 @@ def position_cells(
         Importance draws per cell.
     max_seconds : float, optional
         Time cap on the whole run.
+    workers : int, optional
+        Cells run at once, in threads (default ``N_WORKERS``, one: inline);
+        the first cell runs alone, as it compiles the kernels and draws the
+        sets. The result does not depend on it: each cell has its own key.
+        Two threads cost about 0.3 GB more.
     **leg_kwargs
         Other arguments of [`position_leg`][virgil.orbit_cells.position_leg].
 
@@ -1815,38 +1931,53 @@ def position_cells(
     if jitter is None:
         jitter = fit_jitter(summaries, log_outlier, domain, (t_a, t_b))
     cells = make_cells(t_a, t_b, domain)
-    start, fits, plan = time.time(), [], None
-    for cell, k in zip(cells, jax.random.split(key, len(cells))):
+    workers = N_WORKERS if workers is None else workers
+    start = time.time()
+    keys = jax.random.split(key, len(cells))
+
+    def run(cell, k, plan):
         if time.time() - start > max_seconds:
             raise RuntimeError(
                 f"position_cells reached max_seconds before cell N={cell.n}."
             )
-        fits.append(
-            position_leg(
-                summaries, log_outlier, cell, k, t_anchor=t_a, t_nights=t_all,
-                jitter=jitter, n_is=n_is, posterior_draws=False, plan=plan,
-                nu_width=1.0 / t_ab, **leg_kwargs,
-            )
+        return position_leg(
+            summaries, log_outlier, cell, k, t_anchor=t_a, t_nights=t_all,
+            jitter=jitter, n_is=n_is, posterior_draws=False, plan=plan,
+            nu_width=1.0 / t_ab, **leg_kwargs,
         )  # fmt: skip
-        plan = fits[0].plan
+
+    fits = [run(cells[0], keys[0], None)]
+    fits += _map(
+        lambda ck: run(*ck, fits[0].plan), list(zip(cells[1:], keys[1:])),
+        workers,
+    )  # fmt: skip
     log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
     upper = onp.array(
         [c.log_mass + f.log_z_upper for c, f in zip(cells, fits)]
     )
     matters = upper >= upper.max() - W
     failed = onp.array(
-        [f.failed or (f.unreliable and m) for f, m in zip(fits, matters)]
+        [
+            f.nonfinite or ((f.at_floor or f.unreliable) and m)
+            for f, m in zip(fits, matters)
+        ]
     )
     if failed.any():
         p = onp.full(len(cells), onp.nan)
     else:
         p = onp.exp(log_p - onp_logsumexp(log_p))
     below = p < delta / len(cells)
-    for f, pi, k in zip(
-        fits, p, jax.random.split(jax.random.fold_in(key, 1), len(cells))
+    drawn = [
+        (f, k)
+        for f, pi, k in zip(
+            fits, p, jax.random.split(jax.random.fold_in(key, 1), len(cells))
+        )
+        if pi >= delta / len(cells)
+    ]
+    for (f, _), draws in zip(
+        drawn, _map(lambda fk: _draw(*fk), drawn, workers)
     ):
-        if pi >= delta / len(cells):
-            f.draws = _draw(f, k)
+        f.draws = draws
     return CellsResult(
         domain, (first, last), t_ab, cells, fits, p, below,
         below if prune else onp.zeros_like(below), float(p[below].sum()),

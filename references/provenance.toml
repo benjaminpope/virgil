@@ -2077,6 +2077,39 @@ verified_via = "crossref"
 used_in = ["virgil.orbit_cells:search_cell"]
 note = "Technometrics 41, 212; concentration steps (C-steps): relabel inliers, refit, until the labels repeat"
 
+[ref.celeux1992]
+authors = "Celeux & Govaert"
+year = 1992
+title = "A classification EM algorithm for clustering and two stochastic versions"
+doi = "10.1016/0167-9473(92)90042-E"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "Comput. Stat. Data Anal. 14, 315; classification EM: block ascent over labels and parameters; planned inlier-scale step of the orbit-cells search"
+
+[ref.rue2009]
+authors = "Rue, Martino & Chopin"
+year = 2009
+title = "Approximate Bayesian inference for latent Gaussian models by using integrated nested Laplace approximations"
+doi = "10.1111/j.1467-9868.2008.00700.x"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "J. R. Stat. Soc. B 71, 319; INLA: quadrature in a low-dimensional parameter with conditional Laplace; planned ridge proposal component in rho for orbit cells"
+
+[ref.mantel1959]
+authors = "Mantel & Haenszel"
+year = 1959
+title = "Statistical aspects of the analysis of data from retrospective studies of disease"
+doi = "10.1093/jnci/22.4.719"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "J. Natl. Cancer Inst. 22, 719; stratified test of a common rate across strata; planned orbit population-test assertion"
+
 [ref.golub1973]
 authors = "Golub & Pereyra"
 year = 1973
@@ -2124,4 +2157,5 @@ title = "Validating Bayesian inference algorithms with simulation-based calibrat
 arxiv = "1804.06788"
 verified = true
 verified_via = "crossref"
+used_in = []
 note = "rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py)"

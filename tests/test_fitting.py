@@ -1665,9 +1665,16 @@ def test_lbfgs_keeps_the_last_finite_point_after_a_non_finite_update(
             real(*args), optax.GradientTransformation(init, update)
         )
 
+    # The optimizer is built at trace time: a compiled fit left by an earlier
+    # test (same shapes) would bypass the poisoned one. Clear before, and
+    # after so no later test reuses the poisoned program.
+    jax.clear_caches()
     monkeypatch.setattr(fitting, "_capped_lbfgs", poisoned)
-    with pytest.warns(RuntimeWarning, match="not finite"):
-        result = fit(START, PRIORS, DATA, method="lbfgs", max_steps=50)
+    try:
+        with pytest.warns(RuntimeWarning, match="not finite"):
+            result = fit(START, PRIORS, DATA, method="lbfgs", max_steps=50)
+    finally:
+        jax.clear_caches()
     assert result.info["stop"] == "non-finite"
     assert result.info["steps"] == 3
     assert np.isfinite(result.info["grad_norm"])
