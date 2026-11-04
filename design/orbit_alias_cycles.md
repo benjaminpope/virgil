@@ -1406,23 +1406,33 @@ On the census baseline's flagged cells and a matched sample of unflagged cells, 
 1. **Block variance.** Var(ln w) of the existing IS, split by block: freeze θ and redraw z (TI′ block), versus freeze z
    and redraw θ.
 2. **Banana measure.** Along each flagged mode's ρ extent, ‖μ(ρ) − its linear fit‖ in units of the conditional sd.
-3. **Laplace comparison.** Three Laplace estimates against the IS estimate: the 10-D chart Laplace; the profile
+3. **Laplace comparison.** Three Laplace estimates against the IS estimate: the (9 + G)-D chart Laplace; the profile
    Laplace in θ plus the exact Gaussian TI′ integral; the same with I(θ) by Gauss–Hermite.
 
 **Decision rule** (committed in the census criteria before the run):
 
-- Build (next subsection) only if the TI′ block carries at least half of Var(ln w) in a failure class with at least
+- Build (next subsection) only if the TI′ share carries at least half of Var(ln w) in a failure class with at least
   about 5% of informative systems, or the banana measure exceeds 1 sd there.
+- **The TI′ share** is E_θ[Var(ln w | θ)] / Var(ln w) (law of total variance: the expected variance left when θ is
+  frozen, so it is the TI′ block's variance including its θ × TI′ interaction). Var(ln w | θ) uses 64 redraws of z per
+  frozen θ, over the IS's own θ draws (at most 256). The freeze-z split is reported but is not the rule's input.
 - Otherwise the fix belongs to the θ-chart and ridge work (§6.10 and §6.12), and this section is the whole outcome.
 
 #### Step 2 (if the rule says build): the joint conditional proposal
 
-One IS on the unchanged 10-D target, with q(x) = q(θ) · q(TI′ | θ) mapped back to the chart.
+One IS on the unchanged (9 + G)-D target. The proposal is q(θ) · q(TI′ | θ) on (θ, TI′), and the weight is
+p(θ) p_iso(TI′) L(θ, TI′) / [q(θ) q(TI′ | θ)] by the split above, so no chart mapping is needed. (Drawing in the chart
+would need the 4:1 preimage choice of §3.2 and the density of the nuisance radius |y_z|; if C2 takes that route, test 5
+runs in the chart.)
 
 - **q(θ)** is the t₅ at the profile (varpro) Laplace in θ plus the cell prior as the defensive share, as now.
 - **q(TI′ | θ)** has two parts: a mixture of the exact per-labelling Gaussian conditionals N(μ_λ(θ), Σ_λ(θ)) over a
   small labelling set Λ fixed per cell, **with fixed mixture weights (not a function of θ)**; and a p_iso defensive
-  share.
+  share. The conditionals are exactly Gaussian under outlier model (ii) (§1.1). Under (iii′), t_k is a continuous
+  per-night label and the conditional is a scale mixture, so t_k enters Λ as extra labels on Gauss–Legendre nodes.
+- **Open option for C2** (flagged for Ben; the fixed weights above are the default and are not changed here):
+  θ-dependent weights π(λ | θ), e.g. ∝ Z_λ(θ), stay unbiased if λ is *sampled* per draw and the density evaluated is
+  the full mixture at that θ. Tests 3–4 decide whether they are needed.
 
 Why this and not a nested estimator: it is single-sample IS, so Ẑ_N stays unbiased; there is no nested estimator, no
 common random numbers, no Jensen bias and no smoothness requirement at the a-shell. (A fixed allocation with
@@ -1433,12 +1443,14 @@ moves with θ. No weight bound is claimed, since the bound is vacuous at a needl
 not a new evidence path.
 
 **Laplace versus HMC in the collapsed space.** Where the TI′ conditional is narrow and away from the cusp and the shell,
-take I(θ) ≈ E_N[p_iso] by 3⁴-point Gauss–Hermite: deterministic, smooth in θ, with exact gradients.
+take I(θ) = Σ_{λ∈Λ} Z_λ(θ) E_{N_λ(θ)}[p_iso], with Z_λ(θ) = L_λ(θ, μ_λ) (2π)² |Σ_λ(θ)|^{1/2} the Gaussian integral
+of the likelihood and each expectation by 3⁴-point Gauss–Hermite: deterministic, smooth in θ, with exact gradients.
 
 - **Laplace** is taken on p(θ) I(θ) in 4 + G dimensions; **HMC** runs on the same target, so its draws are exact for
   that deterministic target.
 - **Compare** by Z against the IS above (HMC gives no Z), and by draws through SBC and ESS per cost.
-- **Fallback to IS** wherever a pre-registered check fails: the Gaussian's 4-sd box reaches the shell or a cusp.
+- **Fallback to IS** wherever a pre-registered check fails: the Gaussian's 4-sd box reaches the shell or a cusp, or Λ misses
+  mass (Σ_{λ∈Λ} Z_λ below the all-labellings sum by more than 0.01 in ln, on the K ≤ 10 toys and at the modes).
 
 **Tests.**
 
