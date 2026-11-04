@@ -1412,7 +1412,9 @@ On the census baseline's flagged cells and a matched sample of unflagged cells, 
 **Decision rule** (committed in the census criteria before the run):
 
 - Build (next subsection) only if the TI′ share carries at least half of Var(ln w) in a failure class with at least
-  about 5% of informative systems, or the banana measure exceeds 1 sd there.
+  about 5% of informative systems, or the banana measure exceeds 1 sd there. "Informative" is as in the census
+  criteria (systems whose true cell has p ≥ δ). The three thresholds are declared budgets (§10): they gate build effort,
+  not a result, and are fixed in the census criteria file before the baseline runs.
 - **The TI′ share** is E_θ[Var(ln w | θ)] / Var(ln w) (law of total variance: the expected variance left when θ is
   frozen, so it is the TI′ block's variance including its θ × TI′ interaction). Var(ln w | θ) uses 64 redraws of z per
   frozen θ, over the IS's own θ draws (at most 256). The freeze-z split is reported but is not the rule's input.
@@ -1428,7 +1430,14 @@ runs in the chart.)
 - **q(θ)** is the t₅ at the profile (varpro) Laplace in θ plus the cell prior as the defensive share, as now.
 - **q(TI′ | θ)** has two parts: a mixture of the exact per-labelling Gaussian conditionals N(μ_λ(θ), Σ_λ(θ)) over a
   small labelling set Λ fixed per cell, **with fixed mixture weights (not a function of θ)**; and a p_iso defensive
-  share. The conditionals are exactly Gaussian under outlier model (ii) (§1.1). Under (iii′), t_k is a continuous
+  share.
+  - **Λ and its weights:** Λ is the set of labellings (inlier sets) of the cell's persisted modes (§6.4), restricted
+    to rank 4 (at least one inlier night with a velocity, or at least two position nights); a sub-rank labelling has
+    no proper conditional and is left to the defensive share. Weights are the modes' Laplace evidence shares, as
+    `DefensiveMixture` has now.
+  - **Sign images.** If the target sums the brighter/fainter sign, q includes the TI′ → −TI′ image of each component
+    (the existing mixture's images), and test 3 includes it. p_iso being even does not make L even.
+  - The conditionals are exactly Gaussian under outlier model (ii) (§1.1). Under (iii′), t_k is a continuous
   per-night label and the conditional is a scale mixture, so t_k enters Λ as extra labels on Gauss–Legendre nodes.
 - **Open option for C2** (flagged for Ben; the fixed weights above are the default and are not changed here):
   θ-dependent weights π(λ | θ), e.g. ∝ Z_λ(θ), stay unbiased if λ is *sampled* per draw and the density evaluated is
@@ -1449,7 +1458,10 @@ of the likelihood and each expectation by 3⁴-point Gauss–Hermite: determinis
 - **Laplace** is taken on p(θ) I(θ) in 4 + G dimensions; **HMC** runs on the same target, so its draws are exact for
   that deterministic target.
 - **Compare** by Z against the IS above (HMC gives no Z), and by draws through SBC and ESS per cost.
-- **Fallback to IS** wherever a pre-registered check fails: the Gaussian's 4-sd box reaches the shell or a cusp, or Λ misses
+- **Fallback to IS** applies to the *evidence estimator only*, per cell, decided before the run from the modes (never
+  mid-trajectory). HMC runs on the deterministic target only in cells whose checks pass at every mode, and its draws
+  are discarded and replaced by the IS resample-move draws of §6.3 when a trajectory leaves the checked region
+  (its Gauss–Hermite boxes). The checks, pre-registered: the Gaussian's 4-sd box reaches the shell or a cusp, or Λ misses
   mass (Σ_{λ∈Λ} Z_λ below the all-labellings sum by more than 0.01 in ln, on the K ≤ 10 toys and at the modes).
 
 **Tests.**
@@ -1470,7 +1482,8 @@ has low ESS, with these rules (committed with the census criteria):
 
 - **Containment:** the integrand at the box edge is ≤ e⁻¹⁰ of its peak; the box is grown until it is.
 - **Inner integral:** deterministic (Gauss–Hermite, or n large enough that the inner relative variance is ≤ 10⁻⁴).
-- **Tolerance:** 4·√(sd² + sd_E0²) + 0.01.
+- **Tolerance:** 4·√(sd² + sd_E0²) + 0.01, where sd_E0 is not a sampling error: it is the quadrature error,
+  |ln Ẑ_E0(n) − ln Ẑ_E0(2n)| with the box width and the node counts doubled (so a 4-sd bound on a converged grid).
 - **Cost** goes as 8^G in the nuisance dimensions. ln f and ln s are narrow (widths about σ_f/√K and 1/√(2n)), so the
   nodes sit at their Laplace widths, not across their priors.
 
@@ -1637,6 +1650,7 @@ run; changing one afterwards is a recorded decision.
 | edges | x = N ± ½ (`make_cells` default) | labels only | §4.4; the pilot and valley edges are retired |
 | z chart | auxiliary Gaussian direction in ℝ⁴ plus a logistic ln a coordinate | chart, no statistical meaning | §3.5 |
 | ζ chart | ζ = √e_max·y/√(1 + \|y\|²) | chart, no statistical meaning | §3.5 |
+| §6.13 build rule | TI′ share ≥ ½ of Var(ln w); failure class ≥ ~5% of informative systems; banana > 1 sd | declared budget | §6.13; gates build effort only; fixed in the census criteria before the baseline |
 | m (minimal set) | 2 with velocities, 3 positions only | derived | equations ≥ unknowns at fixed ζ (§6.1) |
 | K_COH | 4 | budget (derived > 2) | ln P grid points per cycle of a set's span; > 2 brackets every minimum (§6.1) |
 | ζ starts | e ∈ {0, 0.3, 0.6} × 8 anchor phases (17) | budget | coverage tested on eccentric toys, not derived (§6.1, §14) |
