@@ -704,17 +704,22 @@ def test_a_dirty_start_padded_beyond_the_field_keeps_the_natural_block():
     assert np.allclose(centre, natural.env.log_brightness, atol=1e-6)
 
 
-def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
+def _non_pixel_prior_scene(n=8):
+    from virgil.fields import GaussianField
+
+    field = GaussianField(onp.zeros((n, n)), 1.5, 24.0)
+    scene = System(star=PointSource(), env=Image(field, SCALE, flux=0.3))
+    return scene, DATA.with_model(scene, key=jax.random.PRNGKey(9))
+
+
+def test_evidence_and_laplace_account_for_non_pixel_priors():
     import numpyro.distributions as dist
 
-    from virgil.fields import GaussianField
     from virgil.imaging import error_scale, laplace_samples, log_evidence
     from virgil.likelihood import whitened_residuals
 
     n = 8
-    field = GaussianField(onp.zeros((n, n)), 1.5, 24.0)
-    scene = System(star=PointSource(), env=Image(field, SCALE, flux=0.3))
-    data = DATA.with_model(scene, key=jax.random.PRNGKey(9))
+    scene, data = _non_pixel_prior_scene(n)
     base_priors = image_priors(scene)
     full_priors = base_priors | {"env.flux": dist.LogUniform(1e-3, 10.0)}
     result = fit(scene, full_priors, data, max_steps=5)
@@ -809,6 +814,14 @@ def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
         onp.isfinite(draws["latents"])
     )
 
+
+def test_evidence_and_laplace_account_for_the_centroid_regularizer():
+    from virgil.fields import GaussianField
+    from virgil.imaging import error_scale, log_evidence
+    from virgil.likelihood import whitened_residuals
+
+    n = 8
+    _, data = _non_pixel_prior_scene(n)
     # Probabilistic regularizer (Centroid) contributes to log_evidence:
     # check against explicit augmented residual and Jacobian in float64.
     reg = Centroid(5.0)
@@ -826,6 +839,15 @@ def test_evidence_and_laplace_account_for_non_pixel_priors_and_centroid():
                 else x
             ),
             fit_img.model,
+        )
+        d64 = jax.tree_util.tree_map(
+            lambda x: (
+                np.asarray(x, np.float64)
+                if hasattr(x, "dtype")
+                and onp.issubdtype(x.dtype, onp.floating)
+                else x
+            ),
+            data,
         )
         z_im = im64.get("log_brightness.latent").reshape(-1)
 
