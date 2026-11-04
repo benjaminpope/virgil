@@ -1634,13 +1634,19 @@ def _draw(fit, key):
     return move.draws
 
 
-def _cell_evidence(space, modes, key, n_is):
-    """Defensive importance sampling of a cell on ``modes`` (and the images of
-    the target's symmetries)."""
-    mixture = DefensiveMixture(
+def _mixture(space, modes):
+    """The defensive mixture of ``modes`` (and the images of the target's
+    symmetries)."""
+    return DefensiveMixture(
         modes, _log_prior, _prior_sampler(space.d, space.dtype),
         images=_symmetry_images(space.d), dtype=space.dtype, dim=space.d,
     )  # fmt: skip
+
+
+def _cell_evidence(space, modes, key, n_is):
+    """Defensive importance sampling of a cell on ``modes`` (and the images of
+    the target's symmetries)."""
+    mixture = _mixture(space, modes)
     n_k = len(space.cat.log_b)
     # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))
     floor = float(onp.sum(space.cat.log_b)) + (
@@ -2147,3 +2153,111 @@ def oracle_evidence(fit, x_true, key, n_is=N_IS):
         oracle_sd=math.hypot(ev.log_z_error, fit.log_z_error),
         oracle_basin=int(basin),
     )  # fmt: skip
+
+
+N_BLOCK = 200  # redraws per block of ``block_variance`` (a fixed diagnostic)
+_Z_BLOCK = slice(1, 6)  # (y_z[4], w_a): the Thiele–Innes block of the chart
+
+
+def block_variance(fit, key, n=N_BLOCK):
+    """Variance of ``ln w`` of a cell's importance sampling by block.
+
+    Take the highest-weight draw ``x*`` of the cell's IS and the mixture
+    component ``m*`` it most belongs to. **z block**: freeze θ = (w_P, y_ζ,
+    w_f, w_s) at ``x*`` and redraw ``(y_z, w_a)`` from the conditional of the
+    multivariate t of ``m*``; **θ block**: freeze z and redraw θ. ``ln w`` is
+    ``ln target - ln q`` of the full mixture. Diagnostics only: nothing of
+    ``fit`` changes.
+
+    Returns
+    -------
+    dict
+        ``var_lnw_z`` and ``var_lnw_theta`` (``nan`` for a cell without modes
+        or draws).
+    """
+    nan = dict(var_lnw_z=onp.nan, var_lnw_theta=onp.nan)
+    ev, space = fit.evidence, fit.space
+    if not fit.modes or ev is None or not onp.isfinite(ev.log_w).any():
+        return nan
+    with run_in(onp.dtype(space.dtype).name):
+        mix = _mixture(space, fit.modes)
+        x_star = onp.asarray(ev.x, float)[int(onp.argmax(ev.log_w))]
+        z = onp.einsum(
+            "mij,mj->mi",
+            onp.asarray(mix.linv, float),
+            x_star - onp.asarray(mix.mu, float),
+        )
+        df, d = mix.df, space.d
+        lt = -0.5 * (df + d) * onp.log1p(
+            (z**2).sum(-1) / df
+        ) - 0.5 * onp.asarray(mix.logdet, float)
+        m = int(onp.argmax(onp.asarray(mix.log_w, float) + lt))
+        mu = onp.asarray(mix.mu, float)[m]
+        chol = onp.asarray(mix.chol, float)[m]
+        cov = chol @ chol.T
+        in_z = onp.zeros(d, bool)
+        in_z[_Z_BLOCK] = True
+        k_z, k_t = jax.random.split(key)
+        out = {}
+        for name, free, k in (
+            ("var_lnw_z", in_z, k_z),
+            ("var_lnw_theta", ~in_z, k_t),
+        ):
+            fix = ~free
+            s_cc = cov[onp.ix_(fix, fix)]
+            gain = cov[onp.ix_(free, fix)] @ onp.linalg.inv(s_cc)
+            r = x_star[fix] - mu[fix]
+            delta = float(r @ onp.linalg.solve(s_cc, r))
+            nu = df + fix.sum()
+            c_f = (
+                (df + delta)
+                / nu
+                * (cov[onp.ix_(free, free)] - gain @ cov[onp.ix_(fix, free)])
+            )
+            l_f = onp.linalg.cholesky(0.5 * (c_f + c_f.T))
+            k_n, k_g = jax.random.split(k)
+            e = onp.asarray(jax.random.normal(k_n, (n, int(free.sum()))))
+            g = onp.asarray(jax.random.gamma(k_g, 0.5 * nu, (n,))) / (0.5 * nu)
+            x = onp.tile(x_star, (n, 1))
+            x[:, free] = (mu[free] + gain @ r) + e @ l_f.T / onp.sqrt(g)[
+                :, None
+            ]
+            xj = np.asarray(x, space.dtype)
+            lw = onp.asarray(
+                jax.vmap(lambda v: _target(v, space) - mix.log_q(v))(xj),
+                float,
+            )
+            lw = lw[onp.isfinite(lw)]
+            out[name] = float(onp.var(lw)) if len(lw) > 1 else onp.nan
+    return out
+
+
+def persist_arrays(fit, key):
+    """The arrays that rebuild a cell's baseline: every mode (chart ``x``,
+    Laplace covariance, ``log_target``, inlier count, night labels, ``-1`` for
+    an outlier, and the inlier set), the IS draws and their ``ln w`` and the
+    cell's JAX key (data)."""
+    space = fit.space
+    n_k, d = len(space.cat.log_b), space.d
+    with run_in(onp.dtype(space.dtype).name):
+        labels = onp.array(
+            [
+                onp.asarray(_labels(np.asarray(m.x, space.dtype), space))
+                for m in fit.modes
+            ],
+            int,
+        ).reshape(len(fit.modes), n_k)
+    arrays = dict(
+        mode_x=onp.array([onp.asarray(m.x, float) for m in fit.modes]).reshape(-1, d),
+        mode_cov=onp.array([onp.asarray(m.cov, float) for m in fit.modes]).reshape(-1, d, d),
+        mode_log_target=onp.array([float(m.log_target) for m in fit.modes]),
+        mode_n_inliers=onp.array([float(m.n_inliers) for m in fit.modes]),
+        mode_labels=labels, mode_inliers=labels >= 0,
+        key=onp.asarray(jax.random.key_data(key)),
+    )  # fmt: skip
+    if fit.evidence is not None:
+        arrays.update(
+            is_x=onp.asarray(fit.evidence.x, float),
+            is_log_w=onp.asarray(fit.evidence.log_w, float),
+        )
+    return arrays

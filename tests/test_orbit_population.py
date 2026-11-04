@@ -1,6 +1,7 @@
 """The population script: its draws follow the fit's prior, its verdict is
 calibrated to the number of fitted systems."""
 
+import json
 import importlib.util
 import pathlib
 
@@ -270,9 +271,16 @@ def test_the_oracle_and_the_diagnostics_change_no_fit_result():
     sysd = pop.draw_system(rng, nights, fit)
     key = jax.random.key(7)
     off = pop.run_one(sysd, fit, key, u)
-    on = pop.run_one(sysd, fit, key, u, oracle=True)
+    store = {}
+    on = pop.run_one(sysd, fit, key, u, oracle=True, store=store)
     skip = ("seconds", "seconds_extra", "cells_json", "true_class")
     for k, v in off.items():
         if k not in skip:
             assert on[k] == v or (v != v and on[k] != on[k]), k
     assert "oracle_log_z" in on and "oracle_log_z" not in off
+    # persistence: the true cell's modes, draws and keys, and block variances
+    assert any(k.endswith("_mode_x") for k in store)
+    assert any(k.endswith("_is_log_w") for k in store)
+    recs = json.loads(on["cells_json"])
+    assert all("persist_error" not in r for r in recs)
+    assert any(r["matched"] for r in recs) or all(r["flagged"] for r in recs)

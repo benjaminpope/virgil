@@ -63,6 +63,7 @@ import json
 import math
 import os
 import resource
+import subprocess
 import time
 
 os.environ.setdefault("OMP_NUM_THREADS", "2")
@@ -337,7 +338,17 @@ def classify(rec, ess_fail=ESS_FAIL):
     return "unresolved" if rec["flagged"] else "none"
 
 
-def cell_records(out, true_i, oracle):
+def matched_cell(out, p):
+    """The matched sample of the criteria file: the unflagged cell of largest
+    ``p`` (``None`` if every cell is flagged)."""
+    free = [
+        i for i, f in enumerate(out.fits)
+        if not (f.at_floor or f.unreliable or f.nonfinite)
+    ]  # fmt: skip
+    return max(free, key=lambda i: p[i]) if free else None
+
+
+def cell_records(out, true_i, oracle, matched=None):
     """One dict per flagged cell and for the true cell: truth, rank in
     ``upper``, ESS, ln Ẑ, best Laplace, the gap, the modes' inlier counts, the
     capped Newton runs, ``matters`` and the class."""
@@ -345,13 +356,14 @@ def cell_records(out, true_i, oracle):
     recs = []
     for i, (c, f) in enumerate(zip(out.cells, out.fits)):
         flagged = bool(f.at_floor or f.unreliable or f.nonfinite)
-        if not (flagged or i == true_i):
+        if not (flagged or i == true_i or i == matched):
             continue
         lap = max(
             [oc_cells.laplace_log_evidence(m) for m in f.modes] or [-math.inf]
         )
         rec = dict(
-            n=int(c.n), true=int(i == true_i), flagged=flagged, rank=int(rank[i]),
+            n=int(c.n), cell=i, true=int(i == true_i), flagged=flagged,
+            matched=int(i == matched), rank=int(rank[i]),
             at_floor=bool(f.at_floor), unreliable=bool(f.unreliable),
             nonfinite=bool(f.nonfinite), ess=float(f.evidence.ess),
             log_z=float(f.log_z), laplace=float(lap),
@@ -484,7 +496,25 @@ def equivariance_columns(sysd, fit_dom, out, key, true_i):
     return cols
 
 
-def run_one(sysd, fit, key, u, *, oracle=False, equiv=False):
+def persist_cells(out, recs, key, store):
+    """Block variances of ``ln w`` (into the records) and the baseline arrays
+    of every recorded cell (into ``store``, keyed ``c<N>_<name>``); a
+    diagnostic that never fails a system."""
+    cell_keys = jax.random.split(key, len(out.cells))  # as position_cells
+    for rec in recs:
+        f = out.fits[rec["cell"]]
+        try:
+            k = jax.random.fold_in(key, 200 + rec["cell"])
+            rec.update(oc_cells.block_variance(f, k))
+            for name, a in oc_cells.persist_arrays(
+                f, cell_keys[rec["cell"]]
+            ).items():
+                store[f"c{rec['n']}_{name}"] = a
+        except Exception as err:
+            rec["persist_error"] = repr(err)[:200]
+
+
+def run_one(sysd, fit, key, u, *, oracle=False, equiv=False, store=None):
     """Fit one system; returns its record (a dict). Every system, failed or
     not, keeps its truth, strata, ``p_true``, PITs (``pit_diagnostic`` if the
     system failed) and its flagged cells."""
@@ -532,7 +562,10 @@ def run_one(sysd, fit, key, u, *, oracle=False, equiv=False):
         row["diag_error"] = repr(err)[:200]
     row.update(cols)
     row.update(orc)
-    recs = cell_records(out, true_i, orc)
+    matched = matched_cell(out, p) if store is not None else None
+    recs = cell_records(out, true_i, orc, matched)
+    if store is not None:
+        persist_cells(out, recs, key, store)
     row.update(
         cells_json=json.dumps(recs),
         true_class=next(r["class"] for r in recs if r["true"]),
@@ -765,7 +798,18 @@ def summarize(rows, n_sys):
     return "\n".join(lines) + "\n", verdict
 
 
-def run_population(seed, start, n_sys, oracle, equiv_every):
+def git_hash():
+    """The full hash of ``HEAD`` (``""`` outside a checkout)."""
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+            check=True, cwd=os.path.dirname(os.path.abspath(__file__)),
+        ).stdout.strip()  # fmt: skip
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def run_population(seed, start, n_sys, oracle, equiv_every, persist=None):
     """The records of systems ``start .. start + n_sys - 1`` of ``seed``."""
     root = jax.random.key(seed)
     rows = []
@@ -789,10 +833,20 @@ def run_population(seed, start, n_sys, oracle, equiv_every):
             sysd = None
             try:
                 sysd = draw_system(rng, nights, fit)
+                store = {} if persist else None
                 row = run_one(
                     sysd, fit, key, u, oracle=oracle,
                     equiv=bool(equiv_every) and i % equiv_every == 0,
+                    store=store,
                 )  # fmt: skip
+                if store:
+                    onp.savez_compressed(
+                        f"{persist}_s{seed}_{i}.npz",
+                        git_hash=git_hash(),
+                        seed=seed,
+                        sys=i,
+                        **store,
+                    )
             except Exception as err:  # an error is a recorded failure
                 row = {**base, "status": "error", "error": repr(err)[:200]}
                 if sysd is not None:
@@ -850,6 +904,10 @@ def main():
         "--equiv-every", type=int, default=10,
         help="assertion 6 reruns every this many systems (0: none)",
     )  # fmt: skip
+    ap.add_argument(
+        "--persist", action="store_true",
+        help="per-system npz of the modes and IS draws of the flagged, true and matched cells, and their block variances of ln w",
+    )  # fmt: skip
     ap.add_argument("--start", type=int, default=0, help="first system index")
     ap.add_argument(
         "--merge", nargs="+", metavar="CSV",
@@ -864,7 +922,12 @@ def main():
             args.out,
         )
     rows = run_population(
-        args.seed, args.start, args.n_sys, args.oracle, args.equiv_every
+        args.seed,
+        args.start,
+        args.n_sys,
+        args.oracle,
+        args.equiv_every,
+        args.out if args.persist else None,
     )
     finish(rows, args.n_sys, args.out)
 
