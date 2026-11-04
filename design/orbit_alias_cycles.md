@@ -644,6 +644,8 @@ the search already split. Moves between modes are not needed, because the mode w
 
 **HMC runs only where it is needed:** in cells with p̂(N) ≥ δ/B, for posterior draws. Ẑ_N never needs it (§6.4).
 
+Whether collapsing TI′ out of the evidence would help is examined in §6.13.
+
 ### 6.4 Evidence per cell: four candidates, measured
 
 All four candidates target the same cell posterior, with labels and TI′ in the target as in §6.3:
@@ -1369,6 +1371,115 @@ loaded. The systems are K = 8 one season, K = 8 two seasons and the K = 14 two-s
 5. On the three systems, every cell with p ≥ δ agrees with main: |Δ ln Ẑ_N| ≤ 4·√(sd² + sd²) + 0.01. The true cell's
    best mode has the same inlier set.
 6. The §14 smoke run (n_sys = 10): no new failure, and the assertion-5 stratum reported.
+
+
+### 6.13 Collapsing the linear TI′ block out of the per-cell evidence (design pass 2026-11-04; measure first)
+
+**Question.** Given (P, e, anchor anomaly), leg-1 positions and velocities are linear in TI′ = (A′, B′, F′, G′). Can the
+evidence and draws integrate TI′ near-analytically and work in the low-dimensional rest, and would Laplace or HMC there
+beat the current 9 + G chart? The search already profiles TI′ out (`_solve_set`, §6.1), so only the evidence and draws
+are in question. This section adds no code and changes no decision elsewhere: building waits on the census baseline
+(Stage A, #646) and the census taxonomy, under census plan v2 (no science merge without a paired census delta; never
+tuned to named systems or seeds; criteria committed before runs).
+
+**Why measure first.** At a needle the conditional mean μ(θ) is linear across the needle width, so the full-covariance
+t₅ of `DefensiveMixture` already captures TI′ well. The chart is non-Gaussian in TI′ only near face-on, which is rare
+(§3.2). §6.10's failures are ridges in ρ, and the inflated Laplace comes from the logistic ρ chart, which a TI′ collapse
+does not touch. The collapse can help only where μ(ρ) curves along a ridge (a banana) and near face-on.
+
+#### Model facts
+
+- **p_iso in TI′** is §3.2 (not re-derived here), with u = (A′ + G′) + i(B′ − F′), V = (A′ − G′) − i(B′ + F′).
+  A Monte Carlo check against z ~ |z|⁻⁴ on the shell is kept as a test.
+- **The split.** With θ = (w_P, y_ζ[2], w_f, w_s[G]) and I(θ) = ∫ p_iso(TI′) L(θ, TI′) dTI′, the product p(θ) I(θ) is
+  exactly the current chart target integrated over (y_z, w_a). There is no missing Jacobian.
+- **Sign.** p_iso is invariant under TI′ → −TI′, so the brighter/fainter sign needs no separate term inside I.
+- **Rank.** One inlier night *with* a velocity already gives a proper rank-4 conditional (circular orbit:
+  det[[x, y], [x′, y′]] = n(x² + y²)). Without velocities, one night gives rank 2 and two nights rank 4.
+- **Leg 2** (visibilities, §6.2) is not linear in TI′. The collapse is leg 1 only.
+
+#### Step 1: measure (no new fitting code)
+
+On the census baseline's flagged cells and a matched sample of unflagged cells, from persisted modes and IS draws
+(each mode's x, Laplace covariance, labels and inlier set; the IS draws x and ln w; the JAX key and the git hash):
+
+1. **Block variance.** Var(ln w) of the existing IS, split by block: freeze θ and redraw z (TI′ block), versus freeze z
+   and redraw θ.
+2. **Banana measure.** Along each flagged mode's ρ extent, ‖μ(ρ) − its linear fit‖ in units of the conditional sd.
+3. **Laplace comparison.** Three Laplace estimates against the IS estimate: the 10-D chart Laplace; the profile
+   Laplace in θ plus the exact Gaussian TI′ integral; the same with I(θ) by Gauss–Hermite.
+
+**Decision rule** (committed in the census criteria before the run):
+
+- Build (next subsection) only if the TI′ block carries at least half of Var(ln w) in a failure class with at least
+  about 5% of informative systems, or the banana measure exceeds 1 sd there.
+- Otherwise the fix belongs to the θ-chart and ridge work (§6.10 and §6.12), and this section is the whole outcome.
+
+#### Step 2 (if the rule says build): the joint conditional proposal
+
+One IS on the unchanged 10-D target, with q(x) = q(θ) · q(TI′ | θ) mapped back to the chart.
+
+- **q(θ)** is the t₅ at the profile (varpro) Laplace in θ plus the cell prior as the defensive share, as now.
+- **q(TI′ | θ)** has two parts: a mixture of the exact per-labelling Gaussian conditionals N(μ_λ(θ), Σ_λ(θ)) over a
+  small labelling set Λ fixed per cell, **with fixed mixture weights (not a function of θ)**; and a p_iso defensive
+  share.
+
+Why this and not a nested estimator: it is single-sample IS, so Ẑ_N stays unbiased; there is no nested estimator, no
+common random numbers, no Jensen bias and no smoothness requirement at the a-shell. (A fixed allocation with
+θ-dependent weights is biased: up to +0.9 nats in a numeric check.) It follows the TI′ banana exactly, because μ_λ
+moves with θ. No weight bound is claimed, since the bound is vacuous at a needle; the tests below measure the variance.
+
+**Reuse.** A new component type in `mode_search.DefensiveMixture` that draws TI′ given θ and evaluates its density;
+not a new evidence path.
+
+**Laplace versus HMC in the collapsed space.** Where the TI′ conditional is narrow and away from the cusp and the shell,
+take I(θ) ≈ E_N[p_iso] by 3⁴-point Gauss–Hermite: deterministic, smooth in θ, with exact gradients.
+
+- **Laplace** is taken on p(θ) I(θ) in 4 + G dimensions; **HMC** runs on the same target, so its draws are exact for
+  that deterministic target.
+- **Compare** by Z against the IS above (HMC gives no Z), and by draws through SBC and ESS per cost.
+- **Fallback to IS** wherever a pre-registered check fails: the Gaussian's 4-sd box reaches the shell or a cusp.
+
+**Tests.**
+
+1. The Monte Carlo check of p_iso.
+2. The Gaussian-prior variant equals `scripts/leg1_toys/toy.py`'s exact reference.
+3. On K ≤ 10 toys, Ẑ_N from the new mixture equals a long run with Λ = all labellings, including at θ away from the
+   mode.
+4. The inner ESS and the variance of ln w as K grows: 6, 10, 14, 20.
+5. Prior recovery: L ≡ 1 gives the cell's prior mass.
+
+#### Quadrature reference (E0)
+
+E0 cannot detect a missed mode: a mode-centred grid shares the search's blind spots, and a certified cover of a whole
+cell is infeasible at σ/a = 10⁻⁴ (ρ-width about 10⁻⁵ of the cell). Classifying a search miss stays with the census
+oracle (the truth-started component), and E0 is given the oracle's mode as an extra node set. E0 is used where IS itself
+has low ESS, with these rules (committed with the census criteria):
+
+- **Containment:** the integrand at the box edge is ≤ e⁻¹⁰ of its peak; the box is grown until it is.
+- **Inner integral:** deterministic (Gauss–Hermite, or n large enough that the inner relative variance is ≤ 10⁻⁴).
+- **Tolerance:** 4·√(sd² + sd_E0²) + 0.01.
+- **Cost** goes as 8^G in the nuisance dimensions. ln f and ln s are narrow (widths about σ_f/√K and 1/√(2n)), so the
+  nodes sit at their Laplace widths, not across their priors.
+
+#### What carries over from route J
+
+- The 2^K labelling structure is not removed. It becomes the variance of the q(TI′ | θ) mixture over Λ, which tests 3
+  and 4 measure.
+- Route J's tempering and its label sampling are gone. Its face-on cusp sits in p_iso, which q contains.
+
+#### Stages
+
+| # | what | when |
+|---|---|---|
+| C0 | This section (design only) | now |
+| — | Persistence of modes, IS draws and block variance added to #646 | now |
+| C1 | Step 1's measurement script on the baseline outputs: read-only analysis | after the baseline |
+| C2 | If the rule says build: the `DefensiveMixture` component, opt-in, with its tests | after C1 and census Stage C |
+| C3 | Laplace versus HMC in the collapsed space against C2's IS: exploratory seeds, then held-out seeds for the decision | after C2 |
+| C4 | The winner as a census arm; paired delta on held-out seeds as plan v2 requires | after C3; Ben decides on the default |
+
+Nothing in C1–C4 starts before the baseline and Stage C; a science merge needs its paired census delta.
 
 
 ## 7. Pruning
