@@ -479,3 +479,14 @@ Jy/beam and a point source of flux `F` at the centre peaks at `F`.
   weights by `s_d²`, so match it to an image made with `use_sigma=True`.
 * The beam is not deconvolved: this is a display and a check on a fit, never
   a likelihood. Large data are transformed in chunks of `chunk_size` points.
+
+## Pixel flux in Jy {#linear-image-flux}
+
+Models are unit-normalized and `cal.flux` sets the scale, so a lone
+[`LinearImage`][virgil.models.LinearImage] with a free `cal.flux` would leave
+`Σ pixels` a null direction of the χ². Build the nuisance with
+`CalibrationNuisance(data, fit_flux=False)` instead: `cal.flux` is then absent
+(1), the model visibility is the un-normalized transform of the pixels and
+`Σ pixels` is the zero-spacing flux in Jy. This holds for the dense and the
+Toeplitz term; other scenes are refused with `fit_flux=False`. The reference
+gain stays fixed at 1, so `gain × flux` is not degenerate.

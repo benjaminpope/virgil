@@ -1,0 +1,1 @@
+`CalibrationNuisance(..., fit_flux=False)`: with a scene that is one `LinearImage`, `Σ pixels` is the absolute flux in Jy in the dense and Toeplitz radio χ² (no `cal.flux` site, so no scale degeneracy). `LinearImage` with a free `cal.flux`, or any other scene with `fit_flux=False`, raises. Default behaviour is unchanged.

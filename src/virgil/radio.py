@@ -44,7 +44,7 @@ from ._geometry import (
 )
 from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
-from .models import Image, LinearImage, SourceModel
+from .models import Image, LinearImage, SourceModel, System
 
 _PIXEL_IMAGES = (Image, LinearImage)
 
@@ -416,7 +416,8 @@ class ComplexVisData(eqx.Module):
         V_scene(u, v)``; see
         [`CalibrationNuisance`][virgil.radio.CalibrationNuisance]. ``scene``
         is a [`SourceModel`][virgil.models.SourceModel] (normalized to unit
-        flux; ``cal.flux`` sets the scale), evaluated at wavelength
+        flux; ``cal.flux`` sets the scale, or ``Σ pixels`` for one
+        ``LinearImage`` with ``fit_flux=False``), evaluated at wavelength
         ``c / ν`` of each point so that chromatic scenes work.
         """
         _no_antenna_gains(nuisance)
@@ -1111,7 +1112,7 @@ class CalibrationNuisance:
     ===============  ================  ==========================  =============
     Site             Shape             Default prior               Not fitted
     ===============  ================  ==========================  =============
-    ``cal.flux``     ``()``            ``LogUniform(1e-4, 1e2)``   always fitted
+    ``cal.flux``     ``()``            ``LogUniform(1e-4, 1e2)``   ``fit_flux=False``
     ``cal.gain``     ``(n_obs-1,)``    Jeffreys ``1/g``            1
     ``cal.offset``   ``(n_obs-1, 2)``  ``Uniform(-θ_k, θ_k)`` mas  0
     ``cal.sigma``    ``(n_ddid,)``     Jeffreys ``1/s``            1
@@ -1129,7 +1130,7 @@ class CalibrationNuisance:
     ref_obs : int
         Index of the reference observation.
     gains, offsets, sigmas, alpha : bool (``alpha`` also a float)
-        Which nuisances are fitted (the flux always is); gains and offsets
+        Which nuisances are fitted (the flux is unless ``fit_flux=False``); gains and offsets
         need more than one observation; a nuisance not fitted takes the
         table's last column. ``sigmas="profile"`` sets the error scales at
         every evaluation (see
@@ -1161,6 +1162,14 @@ class CalibrationNuisance:
         Formerly ``taper_fwhm_mas``, a deprecated alias.
     prefix : str
         Site-name prefix.
+    fit_flux : bool
+        Fit ``cal.flux`` (default). ``False`` fixes it at 1 for a scene that is
+        one [`LinearImage`][virgil.models.LinearImage], whose pixels are then
+        the flux in Jy (``Σ pixels`` is the zero-spacing flux); any other scene
+        is refused with it, and a ``LinearImage`` with ``fit_flux=True``,
+        where ``cal.flux`` and the pixels would be a scale degeneracy. A
+        reference gain is fixed at 1 (``ref_obs``), so ``gain × flux`` is not
+        degenerate.
     """
 
     @renamed({"taper_fwhm_mas": "blur_fwhm_mas"})
@@ -1175,6 +1184,7 @@ class CalibrationNuisance:
         nu0_hz=None,
         blur_fwhm_mas=None,
         prefix="cal",
+        fit_flux=True,
         offset_beams=3.0,
         antenna_gains=False,
         solint="scan",
@@ -1239,6 +1249,7 @@ class CalibrationNuisance:
             None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
         self.prefix = prefix
+        self.fit_flux = bool(fit_flux)
         self.antenna_gains = bool(antenna_gains)
         if self.antenna_gains:
             _antenna_gains.gain_intervals(data, solint)  # validates
@@ -1310,8 +1321,12 @@ class CalibrationNuisance:
         if unknown:
             raise ValueError(f"unknown bounds {sorted(unknown)}.")
         k = self.n_obs - 1
-        lo, hi = bounds.get("flux", (1e-4, 1e2))
-        out = {self._site("flux"): dist.LogUniform(lo, hi)}
+        out = {}
+        if self.fit_flux:
+            lo, hi = bounds.get("flux", (1e-4, 1e2))
+            out[self._site("flux")] = dist.LogUniform(lo, hi)
+        elif "flux" in bounds:
+            raise ValueError("fit_flux=False: there is no flux site to bound.")
         if self.gains:
             if "gain" in bounds:
                 lo, hi = bounds["gain"]
@@ -1355,7 +1370,7 @@ class CalibrationNuisance:
     def defaults(self):
         """Starting values of the fitted sites."""
         k = self.n_obs - 1
-        out = {self._site("flux"): self.flux_start}
+        out = {self._site("flux"): self.flux_start} if self.fit_flux else {}
         if self.gains:
             out[self._site("gain")] = onp.ones(k)
         if self.offsets:
@@ -1406,7 +1421,8 @@ class CalibrationNuisance:
             else np.ones(self.n_ddid)  # profiled: set by the term
         )
         alpha = values[site("alpha")] if self.alpha else self.alpha_fixed
-        return values[site("flux")], gain, offset, sigma, alpha
+        flux = values[site("flux")] if self.fit_flux else 1.0
+        return flux, gain, offset, sigma, alpha
 
     @property
     def taper_fwhm_mas(self):
@@ -1434,8 +1450,38 @@ def _no_antenna_gains(nuisance):
         )
 
 
+def _lone_linear_image(scene):
+    """The `LinearImage` that is the whole of ``scene`` (inside any Systems of
+    one part), else None."""
+    while isinstance(scene, System):
+        parts = scene.resolved().parts
+        if len(parts) != 1:
+            return None
+        scene = parts[0]
+    return scene if isinstance(scene, LinearImage) else None
+
+
+def _flux_scale(scene, flux, nuisance):
+    """The overall flux ``F``: ``cal.flux``, or ``Σ pixels`` of a lone
+    `LinearImage` (``fit_flux=False``)."""
+    image = _lone_linear_image(scene)
+    if image is not None and nuisance.fit_flux:
+        raise ValueError(
+            "a scene that is one LinearImage carries its own flux (Σ pixels): "
+            "use CalibrationNuisance(..., fit_flux=False); a free cal.flux "
+            "would be a scale degeneracy with the pixels."
+        )
+    if image is None and not nuisance.fit_flux:
+        raise ValueError(
+            "fit_flux=False needs a scene that is one LinearImage; other "
+            "scenes are unit-normalized and need cal.flux."
+        )
+    return flux if image is None else image.total_flux
+
+
 def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
     flux, gain, offset, _, alpha = unpacked
+    flux = _flux_scale(scene, flux, nuisance)
     lam = C_LIGHT / freq
     vis = scene.model(u * lam, v * lam, lam)
     ramp = offset_phase(u, v, offset[obs, 0], offset[obs, 1])

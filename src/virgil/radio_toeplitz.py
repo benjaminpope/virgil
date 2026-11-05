@@ -46,6 +46,7 @@ from ._utils import mas2rad
 from .models import Image, LinearImage, System
 from .radio import (
     _checked_sigma,
+    _flux_scale,
     _require_function,
     _scene_function,
     _TermBase,
@@ -621,6 +622,7 @@ class _ToeplitzTerm(_TermBase):
                 "dtype='float64'."
             )
         flux, gain, offset, sigma, _ = self.nuisance._unpack(values)
+        flux = _flux_scale(self.scene(values), flux, self.nuisance)
         image = self._image(values)
         g = (flux * gain)[onp.asarray(self.ddid_obs)]
         return image, self._shift(offset), g, sigma
