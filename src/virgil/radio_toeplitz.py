@@ -46,7 +46,7 @@ from ._utils import mas2rad
 from .models import Image, LinearImage, System
 from .radio import (
     _checked_sigma,
-    _flux_scale,
+    _owned_image,
     _require_function,
     _scene_function,
     _TermBase,
@@ -533,6 +533,9 @@ class _ToeplitzTerm(_TermBase):
         scene = self.scene(values)
         _warn_double_blur(scene, self.nuisance)
         image, offsets = _single_image(scene)
+        # an owned flux is the pixels themselves (fit_flux=False: flux 1), so
+        # the loss is quadratic in them and the Gauss–Newton curvature exact
+        owned = _owned_image(scene, self.nuisance) is not None
         layout = (
             _shape(image),
             image.pixel_scale_mas,
@@ -550,7 +553,7 @@ class _ToeplitzTerm(_TermBase):
             np.asarray(ddec) != self.image_offset_mas[1]
         )
         return eqx.error_if(
-            image.brightness,
+            image.fluxes if owned else image.brightness,
             moved,
             "The Toeplitz term needs the scene's Image (with any System "
             "around it) at the template's offset; fit the offsets as "
@@ -622,7 +625,6 @@ class _ToeplitzTerm(_TermBase):
                 "dtype='float64'."
             )
         flux, gain, offset, sigma, _ = self.nuisance._unpack(values)
-        flux = _flux_scale(self.scene(values), flux, self.nuisance)
         image = self._image(values)
         g = (flux * gain)[onp.asarray(self.ddid_obs)]
         return image, self._shift(offset), g, sigma

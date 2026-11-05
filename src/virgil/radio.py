@@ -44,7 +44,7 @@ from ._geometry import (
 )
 from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
-from .models import Image, LinearImage, SourceModel, System
+from .models import Image, LinearImage, Rotated, SourceModel, System
 
 _PIXEL_IMAGES = (Image, LinearImage)
 
@@ -1442,12 +1442,19 @@ def _no_antenna_gains(nuisance):
         )
 
 
-def _flux_scale(scene, flux, nuisance):
-    """The overall flux ``F``: ``cal.flux``, or ``Σ pixels`` of a scene that is
-    one `LinearImage` (``fit_flux=False``)."""
+def _owned_image(scene, nuisance):
+    """The `LinearImage` that is the whole of ``scene`` (inside Systems of one
+    part and ``Rotated``), else None; checks it against ``nuisance.fit_flux``:
+    a lone `LinearImage` carries its flux (``fit_flux=False``), anything else
+    needs ``cal.flux``."""
     image = scene
-    while isinstance(image, System) and len(image.resolved().parts) == 1:
-        image = image.resolved().parts[0]
+    while True:
+        if isinstance(image, System) and len(image.resolved().parts) == 1:
+            image = image.resolved().parts[0]
+        elif isinstance(image, Rotated):
+            image = image.source
+        else:
+            break
     lone = isinstance(image, LinearImage)
     if lone and nuisance.fit_flux:
         raise ValueError(
@@ -1460,7 +1467,18 @@ def _flux_scale(scene, flux, nuisance):
             "fit_flux=False needs a scene that is one LinearImage; other "
             "scenes are unit-normalized and need cal.flux."
         )
-    return image.total_flux if lone else flux
+    return image if lone else None
+
+
+def _flux_scale(scene, flux, nuisance):
+    """The overall flux ``F``: ``cal.flux``, or ``Σ pixels`` of a scene that is
+    one `LinearImage` (``fit_flux=False``), which must be positive: the
+    model is ``Σ pixels`` times the unit-sum transform."""
+    image = _owned_image(scene, nuisance)
+    if image is None:
+        return flux
+    total = image.total_flux
+    return eqx.error_if(total, total <= 0.0, "Σ pixels must be positive.")
 
 
 def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):

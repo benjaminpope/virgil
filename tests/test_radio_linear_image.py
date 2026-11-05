@@ -10,8 +10,11 @@ from virgil import (
     ComplexVisData,
     Image,
     LinearImage,
+    PointSource,
+    System,
 )
 from virgil.imaging import MaxEntropy
+from virgil.models import Rotated
 from scipy.constants import c as C_LIGHT
 
 from virgil._utils import mas2rad
@@ -172,3 +175,53 @@ def test_maxentropy_gradient_through_the_radio_term_is_finite():
     g = jax.grad(loss)(_x("sqrt"))
     assert bool(np.all(np.isfinite(g)))
     assert float(np.max(np.abs(g))) > 0.0
+
+
+def test_wrapped_scenes_equal_the_bare_image():
+    data, scene = _data(), _scene("linear")
+    nuis = _nuis(data, fit_flux=False)
+    assert "cal.flux" not in nuis.defaults()
+    values = {"x": _x("linear")}
+    bare = _chi2(data, scene, nuis, values)
+    wrapped = lambda v: System(env=scene(v))  # noqa: E731
+    rotated = lambda v: Rotated(scene(v), 0.0)  # noqa: E731
+    assert _chi2(data, wrapped, nuis, values) == pytest.approx(bare, rel=1e-12)
+    assert _chi2(data, rotated, nuis, values) == pytest.approx(bare, rel=1e-12)
+    template = LinearImage(np.ones((NPIX, NPIX)), PIXEL)
+    tchi2 = data.toeplitz(template, nuis).chi2_by_ddid(wrapped, values, nuis)
+    assert tchi2[0][0] == pytest.approx(bare, rel=1e-9)
+    free = _nuis(data)
+    with pytest.raises(ValueError, match="fit_flux=False"):
+        data.model(rotated(values), {**free.defaults(), **values}, free)
+
+
+def test_multi_part_and_toeplitz_refusals():
+    data, x = _data(), _x("linear")
+    scene = _scene("linear")({"x": x})
+    mixed = System(star=PointSource(), env=scene)
+    with pytest.raises(ValueError, match="one LinearImage"):
+        data.model(mixed, {"x": x}, _nuis(data, fit_flux=False))
+    template = LinearImage(np.ones((NPIX, NPIX)), PIXEL)
+    nuis = _nuis(data)
+    term = data.toeplitz(template, nuis).term(_scene("linear"), nuis)
+    values = {**nuis.defaults(), "x": x}
+    with pytest.raises(ValueError, match="fit_flux=False"):
+        term.chi2_and_log_norm(values)
+
+
+def test_toeplitz_curvature_is_that_of_the_pixels():
+    data = _data()
+    nuis = _nuis(data, fit_flux=False)
+    template = LinearImage(np.ones((NPIX, NPIX)), PIXEL)
+    term = data.toeplitz(template, nuis).term(_scene("linear"), nuis)
+    x = _x("linear")
+    image, _, g, _ = term.curvature_params({"x": x})
+    assert onp.allclose(image, x) and onp.allclose(g, 1.0)
+
+
+def test_zero_pixel_sum_raises():
+    data = _data()
+    nuis = _nuis(data, fit_flux=False)
+    zeros = {"x": np.zeros((NPIX, NPIX))}
+    with pytest.raises(Exception, match="positive"):
+        data.model(_scene("linear")(zeros), zeros, nuis)
