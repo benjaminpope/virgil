@@ -69,7 +69,7 @@ def test_linear_pixels_are_non_negative_and_satisfy_kkt():
         problem, z, np.asarray(scale), np.ravel(z["env.pixels"])
     )
     grad = onp.asarray(grad).reshape(pix.shape)
-    tol = 10 * result.info["pg_norm"] + 1e-9
+    tol = 1e-4  # fit's default gtol, per data point: independent of pg_norm
     assert grad[zero].min() >= -tol
     assert onp.abs(grad[~zero]).max() <= tol
     assert result.info["pg_norm"] == result.info["grad_norm"]
@@ -78,9 +78,8 @@ def test_linear_pixels_are_non_negative_and_satisfy_kkt():
 
 def test_support_pixels_stay_zero():
     support = _disc(1.0) > 0
-    start = _scene(
-        onp.where(support, 0.5 / support.sum(), 0.0), support=support
-    )
+    # Start lit everywhere: the bounds, not the loss, must zero the rest.
+    start = _scene(onp.full((NPIX, NPIX), 0.5 / NPIX**2), support=support)
     data = DATA.with_model(_scene(_disc(0.5)), noise_scale=0.0)
     result = fit(
         start,
@@ -138,4 +137,17 @@ def test_refuses_priors_without_a_box_and_warns_on_float32():
             data,
             method="lbfgsb",
             dtype="float32",
+        )
+
+
+def test_precondition_is_refused():
+    start = BinaryModelCartesian(140.0, -70.0, 0.01)
+    data = oidata.with_model(start, noise_scale=0.0)
+    with pytest.raises(ValueError, match="precondition"):
+        fit(
+            start,
+            {"flux": dist.Uniform(0.0, 0.5)},
+            data,
+            method="lbfgsb",
+            precondition="diag",
         )

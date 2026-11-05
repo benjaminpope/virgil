@@ -173,6 +173,21 @@ class _Objective(eqx.Module):
         }
         if not self.priors:
             raise ValueError("priors must name at least one free parameter.")
+        if not boxed and isinstance(model, SourceModel):
+            # Linear pixels are non-negative only under L-BFGS-B's bounds.
+            for path in self.priors:
+                parent, _, name = path.rpartition(".")
+                image = model.get(parent) if parent else model
+                if (
+                    name == "pixels"
+                    and isinstance(image, LinearImage)
+                    and image.bounds() is not None
+                ):
+                    raise TypeError(
+                        f"{path!r}: linear pixels must stay non-negative, "
+                        "which only fit(method='lbfgsb') enforces; use it, "
+                        "or parametrisation='sqrt'."
+                    )
         for path, prior in self.priors.items():
             if isinstance(model, SourceModel):
                 model.get(path)  # raises for an unknown path
@@ -716,7 +731,7 @@ def fit(
         Step limit (1000 LM, 20000 L-BFGS and L-BFGS-B, 2000 Adam), gradient
         tolerance and L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
     lbfgs_memory, cg_steps, learning_rate : int, int and float, optional
-        L-BFGS history (default 100, cut to keep it under 1 GiB); CG steps
+        L-BFGS history (100, cut to keep it under 1 GiB; 10, uncut, for L-BFGS-B); CG steps
         per LM step (above 200 coordinates); Adam's rate: a float or an optax
         schedule (a callable of the step).
     dtype : {"float64", "float32"}, optional
@@ -782,6 +797,8 @@ def fit(
             stacklevel=external_stacklevel(),
         )
         dtype = "float64"
+    if method == "lbfgsb" and precondition:
+        raise ValueError("method='lbfgsb' does not take precondition.")
     budget = _Budget(time_limit, progress)
     with run_in(dtype):
         problem = cast_tree(
@@ -816,7 +833,6 @@ def fit(
         ndata = [d.n_independent for d in problem.data]
         # A term's size is its ``n_data``, or the length of its residuals.
         start = problem.constrain(z0)
-        _refuse_unbounded_linear(problem)
         if method not in ("lm", "lbfgs", "adam", "lbfgsb"):
             raise ValueError(
                 "method must be 'lm', 'lbfgs', 'adam' or 'lbfgsb', "
@@ -2075,7 +2091,10 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
     if method == "lbfgsb":
         head = f"fit(method={method!r}) did not converge"
         if stop == "limit":
-            return f"{head} in {steps} steps, the step limit; raise max_steps."
+            return (
+                f"{head} after {steps} steps: it reached max_steps or its "
+                "limit of 3 * max_steps function evaluations; raise max_steps."
+            )
         return f"{head}: the line search stopped after {steps} steps."
     if method == "lbfgs":
         head = f"fit(method={method!r}) did not converge"
@@ -2148,23 +2167,6 @@ def _box(problem, z):
         lower.append(onp.ravel(lo))
         upper.append(onp.ravel(hi))
     return onp.concatenate(lower), onp.concatenate(upper)
-
-
-# deliberate: the refusal of linear pixels outside L-BFGS-B, kept apart from fit
-def _refuse_unbounded_linear(problem):
-    """Linear ``LinearImage`` pixels are non-negative only under L-BFGS-B bounds."""
-    if problem.boxed or not isinstance(problem.model, SourceModel):
-        return
-    for path in problem.priors:
-        parent, _, name = path.rpartition(".")
-        image = problem.model.get(parent) if parent else problem.model
-        if name == "pixels" and isinstance(image, LinearImage):
-            if image.bounds() is not None:
-                raise TypeError(
-                    f"{path!r}: linear pixels must stay non-negative, which "
-                    "only method='lbfgsb' enforces; use it, or "
-                    "parametrisation='sqrt'."
-                )
 
 
 @eqx.filter_jit
