@@ -1701,12 +1701,14 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def with_radial_amplitude(self, order=4, width=10.0):
         """A copy of DISCO data with a radial log-amplitude nuisance.
 
+        !!! warning "Provisional"
+            May change in any 0.4.x release without a deprecation cycle.
+
         Marginalizes a smooth radial profile in |u|/λ (degree 0 to ``order``)
         on log |V|, analytically, so that grid searches, fits and contrast
         limits ignore radially symmetric amplitude errors (a PSF-shape
-        mismatch, perhaps the brighter-fatter effect: a hypothesis). Use it
-        when a bare star's amplitude-only flux map is mostly negative or
-        positive. It costs amplitude sensitivity, most at small separations;
+        mismatch between target and calibrator). Use it when a bare star's
+        amplitude-only flux map is mostly of one sign. It costs amplitude sensitivity, most at small separations;
         phases are unaffected. See
         [`radial_amplitude_modes`][virgil.gains.radial_amplitude_modes].
         ``width`` is a default fitted as the noise term ``vis_gain_radial``.

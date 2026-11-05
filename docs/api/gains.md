@@ -16,11 +16,16 @@ whitened closure phases: add them with
 fit their widths with `phi_offset_baseline`, `phi_offset_triangle` and
 `phi_offset_modes`. They are off by default.
 
+For projected DISCO log-amplitudes use
+[`OIData.with_radial_amplitude`][virgil.oidata.OIData.with_radial_amplitude]
+(provisional) instead; its width is the noise term `vis_gain_radial`.
+
 ::: virgil.gains
     options:
       members:
         - GainModes
         - gain_modes
+        - radial_amplitude_modes
         - GAIN_GROUPS
         - ClosureOffsets
         - closure_offsets

@@ -69,6 +69,7 @@ EXPECTED = {
         "multipole_disk_cvis",
         "gp_priors",
     },
+    "virgil.gains": {"radial_amplitude_modes"},
     "virgil.fields": {"MultipoleField", "multipole_field_priors"},
     "virgil.ensemble": {
         "evidence_grid",

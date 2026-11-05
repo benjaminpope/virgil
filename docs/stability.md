@@ -18,6 +18,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | --- | --- |
 | Orbit fitting | the modules [`virgil.epochs`](api/epochs.md), [`virgil.aliases`](api/aliases.md), [`virgil.arcs`](api/arcs.md), [`virgil.night_summaries`](api/night_summaries.md), [`virgil.orbit_cells`](api/orbit_cells.md), [`virgil.mode_search`](api/mode_search.md), [`virgil.orbit_search`](api/orbit_search.md) and [`virgil.tempering`](api/tempering.md) (the whole of each) |
 | `MultipoleDisk` family ([`virgil.models`](api/models/classes/multipole_disk.md)) | `MultipoleDisk`, `ThinRing`, `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`, `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `Harmonics`, `VonMises`, `Cone`, `PowerLawHeight`, `multipole_disk_cvis`, `gp_priors` |
+| Radial amplitude nuisance ([`virgil.gains`](api/gains.md)) | `radial_amplitude_modes`, `OIData.with_radial_amplitude` and the noise term `vis_gain_radial` |
 | Polar fields ([`virgil.fields`](api/fields.md)) | `MultipoleField`, `multipole_field_priors` |
 | Ensembles' Gaussian-process members ([`virgil.ensemble`](api/ensemble.md)) | `evidence_grid`, `gp_members`, `GPFit`, `EvidenceGrid` |
 | Tempered SMC | the module [`virgil.smc`](api/smc.md) (`tempered_smc`, `bridge_smc`, `SMCResult`) |

@@ -18,15 +18,25 @@ GRID = {"dra": AXIS, "ddec": AXIS, "flux": onp.array([1e-3])}
 WIDE = 1e8  # flat-prior limit, for comparison with a plain projection
 
 
-@pytest.fixture(autouse=True, scope="module")
-def _x64():
-    """Compare with a float64 projection to 1e-10, in either CI dtype."""
+@pytest.fixture(params=["float32", "float64"])
+def dtype(request):
+    """JAX's default float width, then float64 (CI runs both)."""
+    if request.param == "float64":
+        with jax.enable_x64(True):
+            yield request.param
+    else:
+        yield request.param
+
+
+@pytest.fixture
+def x64():
+    """Float64, to compare with a numpy projection to 1e-9."""
     with jax.enable_x64(True):
         yield
 
 
-@pytest.fixture(scope="module")
-def disco(_x64):
+@pytest.fixture
+def disco(dtype):
     """The repository's synthetic DISCO product, with phases switched off
     (amplitude-only) and its data replaced by a bare star."""
     data = load_oi_data(CALIBRATED_VISIBILITY, "F430M")
@@ -46,7 +56,7 @@ def _radial_error(data, coeffs=(0.02, 0.01)):
 
 
 def _reference(data, r, positions, order=4):
-    """The sketch's QR projection (design/sketches/disco_amp_nuisance.py)."""
+    """An independent numpy QR projection onto the powers 1, q, ..., q^order."""
     A = onp.asarray(data.vis_mat) / onp.asarray(data.d_vis)[:, None]
     uv = onp.stack([data.u, data.v], 1) / onp.asarray(data.wavel)[..., None]
     q = onp.hypot(data.u, data.v) / data.wavel
@@ -74,7 +84,7 @@ def _positions():
 @pytest.mark.validates(
     "virgil.gains.radial_amplitude_modes", roots=["mathematics"], kind="check"
 )
-def test_snr_map_matches_a_plain_qr_projection(disco):
+def test_snr_map_matches_a_plain_qr_projection(x64, disco):
     rng = onp.random.default_rng(1)
     r = _radial_error(disco) + onp.asarray(disco.d_vis) * rng.normal(
         size=disco.vis.shape
@@ -177,3 +187,15 @@ def test_refuses_unprojected_data():
 
     with pytest.raises(ValueError, match="projected log-amplitudes"):
         _data().with_radial_amplitude()
+
+
+def test_simulating_never_draws_the_nuisance(disco):
+    """with_model(key=...) leaves the radial profile out: its width is a
+    near-flat prior, not a size."""
+    truth = BinaryModelCartesian(dra=90.0, ddec=-60.0, flux=2e-3)
+    data = disco.with_radial_amplitude()
+    simulated = data.with_model(truth, key=jax.random.PRNGKey(0))
+    clean = data.with_model(truth)
+    off = onp.asarray(simulated.vis - clean.vis) / onp.asarray(data.d_vis)
+    assert onp.abs(off).max() < 6.0  # noise only, not N(0, 10²) coefficients
+    assert simulated.gains is not None

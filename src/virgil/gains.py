@@ -54,6 +54,8 @@ from ._closure import ClosureNoise
 from ._linear import arrow_problem, whiten_blocks
 from ._utils import group_indices
 
+__provisional__ = ("radial_amplitude_modes",)
+
 __all__ = [
     "GainModes",
     "GAIN_GROUPS",
@@ -179,7 +181,11 @@ class GainModes(eqx.Module):
 
     def sample(self, key, widths):
         """Draw the gains: log |V| offset of each visibility observable."""
+        # The radial nuisance is marginalized, not a simulated error: its
+        # width is a near-flat prior, not a size.
         widths = np.asarray(widths)
+        is_radial = np.asarray([g == "radial" for g in self.groups])
+        widths = np.where(is_radial, 0.0, widths)
         local_key, span_key = jax.random.split(key)
         z = jax.random.normal(local_key, self.group.shape)
         per_row = np.einsum("brk,bk->br", self.shapes, z * widths[self.group])
@@ -354,6 +360,9 @@ def gain_modes(
 def radial_amplitude_modes(data, order=4, width=10.0):
     """A radial log-amplitude nuisance for projected DISCO data.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     The modes are the Legendre polynomials of degree 0 to ``order`` in
     q = |u|/λ (scaled to [−1, 1] over the data), the same span as the powers
     1, q, ..., q^order, on log |V| and projected like the data
@@ -361,8 +370,9 @@ def radial_amplitude_modes(data, order=4, width=10.0):
     radially symmetric log-amplitude error (a PSF-shape mismatch between
     target and calibrator) from the fit, at the cost of amplitude sensitivity
     at small separations. The default ``order`` 4 is the least that removed
-    the bare-star amplitude bias on a ν Hor DISCO product (offset and q²
-    alone did not).
+    the bias of a bare star's amplitude-only map in tests (an offset and q²
+    alone did not). The modes are a nuisance, not a signal: they are never
+    drawn when simulating (``OIData.with_model(key=...)``).
 
     Parameters
     ----------

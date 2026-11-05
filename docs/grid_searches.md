@@ -38,6 +38,9 @@ or `lincmap`), so noise gives negative values and an SNR of either sign.
 
 ### A radial amplitude nuisance for DISCO data {#radial-amplitude}
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 On DISCO data a radially symmetric log-amplitude error (a PSF-shape mismatch
 between target and calibrator; the brighter-fatter effect is a hypothesis,
 not shown) can make the amplitude part of the map mostly negative, or mostly
