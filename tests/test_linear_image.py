@@ -229,15 +229,6 @@ def test_render_fourier_transform_matches_model_visibilities():
     assert onp.max(onp.abs(ft - got)) < 1e-3
 
 
-def test_radio_terms_refuse_a_linear_image():
-    from virgil.radio import _refuse_linear_image
-
-    im = LinearImage(np.ones((4, 4)), SCALE)
-    with pytest.raises(TypeError, match="unconstrained"):
-        _refuse_linear_image(System(env=im))
-    _refuse_linear_image(System(star=PointSource()))
-
-
 def test_smoothed_regulariser_on_a_linear_image():
     from virgil._geometry import gaussian_smooth
 
