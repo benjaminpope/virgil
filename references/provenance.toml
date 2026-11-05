@@ -2147,9 +2147,9 @@ title = "Numerical Optimization"
 doi = "10.1007/978-0-387-40065-5"
 verified = true
 verified_via = "crossref"
-used_in = []
+used_in = ["virgil.fitting:kkt_report"]
 role = "bibliography"
-note = "Springer, 2nd ed.; ch. 3-4 and 10.3: safeguarded steps in a bracket, trust-region predicted reduction, Newton and Levenberg-Marquardt in curved valleys; planned set step of the orbit-cells search"
+note = "Springer, 2nd ed.; ch. 12 and 16.7: KKT and projected-gradient conditions (kkt_report); ch. 3-4 and 10.3: safeguarded steps in a bracket, trust-region predicted reduction, Newton and Levenberg-Marquardt in curved valleys; planned set step of the orbit-cells search"
 
 [ref.boyd2004]
 authors = "Boyd & Vandenberghe"
