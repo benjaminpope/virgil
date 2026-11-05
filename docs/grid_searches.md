@@ -45,7 +45,8 @@ positive, at every position. `data.with_radial_amplitude()` marginalizes such
 a profile analytically (degree 0 to 4 in $|u|/\lambda$), and the grid fits and
 contrast limits then honour it. It costs amplitude sensitivity, most at small
 separations (roughly half inside 200 mas, a quarter less beyond on one test
-product), so quote limits with it on or off explicitly. Phases are unaffected.
+product), so quote limits with it on or off explicitly. Phases are unaffected. It also removes the radial amplitude information of a
+real companion, so a companion's amplitude SNR drops, though not its position.
 Its width is fitted with the noise term `vis_gain_radial`.
 
 ### Limits of the linearization, and `n_iter` {#n-iter}

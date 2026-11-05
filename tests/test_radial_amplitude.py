@@ -92,11 +92,12 @@ def test_snr_map_matches_a_plain_qr_projection(disco):
         )
 
 
-def test_the_nuisance_removes_a_radial_error_bias(disco):
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_the_nuisance_removes_a_radial_error_bias_of_either_sign(disco, sign):
     rng = onp.random.default_rng(2)
-    r = _radial_error(disco) + onp.asarray(disco.d_vis) * rng.normal(
-        size=disco.vis.shape
-    )
+    r = _radial_error(disco, (0.02 * sign, 0.01 * sign)) + onp.asarray(
+        disco.d_vis
+    ) * rng.normal(size=disco.vis.shape)
     data = disco.set(["vis"], [np.asarray(r)])
     keep = _positions()[1]
     plain = onp.asarray(linear_flux_grid(BinaryModelCartesian, data, GRID).snr)
@@ -105,8 +106,30 @@ def test_the_nuisance_removes_a_radial_error_bias(disco):
             BinaryModelCartesian, data.with_radial_amplitude(), GRID
         ).snr
     )
-    assert plain[keep].mean() < -3.0 and (plain[keep] < 0).mean() > 0.7
+    # a plain map is biased one way (here against the error's sign), a
+    # marginalized one is not biased at all
+    assert -sign * plain[keep].mean() > 3.0
+    assert (sign * plain[keep] < 0).mean() > 0.7
     assert abs(nuis[keep].mean()) < 1.0
+
+
+def test_the_nuisance_absorbs_a_companions_symmetric_signal(disco):
+    """A real companion's azimuthally symmetric amplitude signal is projected
+    out too: its amplitude SNR falls, its peak stays put."""
+    at = (90.0, -60.0)
+    data = disco.with_model(BinaryModelCartesian(*at, 2e-3))
+    plain = onp.asarray(linear_flux_grid(BinaryModelCartesian, data, GRID).snr)
+    nuis = onp.asarray(
+        linear_flux_grid(
+            BinaryModelCartesian, data.with_radial_amplitude(), GRID
+        ).snr
+    )
+    keep = _positions()[1]
+    peak = lambda m: onp.unravel_index(
+        onp.argmax(onp.where(keep, m, -onp.inf)), m.shape
+    )
+    assert peak(plain) == peak(nuis)
+    assert 0.0 < nuis[peak(nuis)] < 0.95 * plain[peak(plain)]
 
 
 def test_a_companion_survives_at_the_expected_sensitivity(disco):
