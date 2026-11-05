@@ -319,6 +319,22 @@ def test_float32_matches_float64_on_the_same_data(case, at_low_edge):
         chi2_ref, own_ref = (
             onp.asarray(a) for a in _whiten_at(surface, data, TRUTH)(log_s)
         )
+        # the chi2 before the marginal's subtraction, in float64: the
+        # magnitude the float32 rounding scales with (see the bound below)
+        pred, errs, vals, _, _ = _prediction_and_errors(TRUTH, data, {})
+        naive = onp.array(
+            [
+                onp.sum(
+                    (
+                        onp.asarray(pred - vals)[a:b]
+                        / (onp.asarray(errs)[a:b] * onp.exp(log_s[k]))
+                    )
+                    ** 2
+                )
+                for k, (_, a, b, _, _) in enumerate(surface.blocks)
+            ]
+        )
+        n_terms = onp.array([b - a for _, a, b, _, _ in surface.blocks])
         data32 = cast_tree(data, "float32")
         model32 = cast_tree(TRUTH, "float32")
     with run_in("float32"):
@@ -335,23 +351,35 @@ def test_float32_matches_float64_on_the_same_data(case, at_low_edge):
             )
         )
     assert chi2.dtype == onp.float32
-    # Empirical, not derived: the Woodbury chi2 is a solve (kappa 3.5e7 at the
-    # low edge, so kappa * eps is above 1 and bounds nothing) minus a
-    # correction. The collinear block's float32 error is 41 eps of the value
-    # (4.3e-4 on 88; 3.5e-4 on Linux CI) where the rank-one path happens to
-    # be 2 eps off; 64 eps is 1.5x that. The absolute cap above still guards.
-    ulps = 64 * float(onp.finfo(onp.float32).eps)
-    for new, ref, rank_one in (
-        (chi2, chi2_ref, old[0]),
-        (own, own_ref, old[1]),
+    # The marginal chi2 is the whitened sum of squares (a sum of n non-negative
+    # terms, ``naive`` below) minus a Woodbury correction that cancels part of
+    # it, so float32 rounding scales with ``naive``, not with the smaller
+    # result: a sum of n squares is off by at most gamma_n = n eps / (1 - n eps)
+    # of ``naive`` (Higham, eq. 3.2), with n the block's terms (54 and 63 here).
+    # At the low edge ``naive`` is 2.3x the chi2 (18367 against 8029), and
+    # the worst float32 error seen, 0.069 (Linux CI), is 0.6 of this bound
+    # (0.117). The solve's own kappa (3.5e7) bounds nothing (kappa * eps > 1),
+    # and the correction is a sum of the same magnitude, so gamma_n is
+    # what is checked. The other output (the log normalizer) has no
+    # cancellation: 64 ulps of its value, empirical. The absolute cap still guards.
+    eps32 = float(onp.finfo(onp.float32).eps)
+    gamma = n_terms * eps32 / (1 - n_terms * eps32)
+    ulps = 64 * eps32
+    for new, ref, rank_one, slack in (
+        (
+            chi2,
+            chi2_ref,
+            old[0],
+            onp.maximum(ulps * onp.abs(chi2_ref), gamma * naive),
+        ),
+        (own, own_ref, old[1], ulps * onp.abs(own_ref)),
     ):
         assert onp.isfinite(new).all() and onp.isfinite(rank_one).all()
         # absolute cap, so a drift shared by both paths still fails: 3e-5
         # (about 250 float32 ulps) is 3x the worst observed (1.06e-5, Linux CI)
         assert onp.all(onp.abs(new - ref) <= 3e-5 * onp.abs(ref))
         assert onp.all(
-            onp.abs(new - ref)
-            <= 2 * onp.abs(rank_one - ref) + ulps * onp.abs(ref)
+            onp.abs(new - ref) <= 2 * onp.abs(rank_one - ref) + slack
         )
 
 
