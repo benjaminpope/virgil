@@ -43,7 +43,7 @@ import numpy as onp
 from . import _nufft_spread as grid
 from ._geometry import gaussian_taper, offset_phase, rotate
 from ._utils import mas2rad
-from .models import Image, System
+from .models import Image, LinearImage, System
 from .radio import (
     _checked_sigma,
     _require_function,
@@ -241,11 +241,11 @@ class ToeplitzVisData(eqx.Module):
                 if nuisance.offsets
                 else "offsets='spread' needs a nuisance that fits offsets."
             )
-        if not isinstance(image, Image):
+        if not isinstance(image, (Image, LinearImage)):
             raise TypeError(
-                f"image must be an Image (the layout), not {type(image).__name__}."
+                f"image must be an Image or LinearImage (the layout), not {type(image).__name__}."
             )
-        nrow, ncol = image.eta.shape
+        nrow, ncol = _shape(image)
         if nrow != ncol:
             raise ValueError(f"the Image must be square, not {nrow} x {ncol}.")
         if onp.ndim(image.dra) or onp.ndim(image.ddec):
@@ -470,6 +470,10 @@ class ToeplitzVisData(eqx.Module):
 # ----------------------------------------------------------------------
 
 
+def _shape(image):
+    return image.brightness.shape
+
+
 def _single_image(scene):
     """``(image, offsets)``: the one Image of ``scene`` and every offset leaf
     on the way to it (their sum must be the template's)."""
@@ -484,7 +488,7 @@ def _single_image(scene):
             )
         offsets += [model.dra, model.ddec]
         model = parts[0]
-    if not isinstance(model, Image):
+    if not isinstance(model, (Image, LinearImage)):
         raise TypeError(
             "The Toeplitz term needs a scene of one Image, not "
             f"{type(model).__name__}. Use ComplexVisData.term."
@@ -529,7 +533,7 @@ class _ToeplitzTerm(_TermBase):
         _warn_double_blur(scene, self.nuisance)
         image, offsets = _single_image(scene)
         layout = (
-            image.eta.shape,
+            _shape(image),
             image.pixel_scale_mas,
             image.rotation_deg,
             image.blur_fwhm_mas,

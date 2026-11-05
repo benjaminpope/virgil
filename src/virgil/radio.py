@@ -44,7 +44,9 @@ from ._geometry import (
 )
 from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
-from .models import Image, SourceModel
+from .models import Image, LinearImage, SourceModel
+
+_PIXEL_IMAGES = (Image, LinearImage)
 
 __provisional__ = ("*",)
 
@@ -1478,10 +1480,11 @@ def _warn_double_blur(scene, nuisance):
     if nuisance.blur_fwhm_mas is None:
         return
     images = jax.tree_util.tree_leaves(
-        scene, is_leaf=lambda x: isinstance(x, Image)
+        scene, is_leaf=lambda x: isinstance(x, _PIXEL_IMAGES)
     )
     if any(
-        isinstance(x, Image) and x.blur_fwhm_mas is not None for x in images
+        isinstance(x, _PIXEL_IMAGES) and x.blur_fwhm_mas is not None
+        for x in images
     ):
         warnings.warn(
             "CalibrationNuisance.blur_fwhm_mas and Image.blur_fwhm_mas "
@@ -1657,7 +1660,7 @@ class _RadioTerm(_TermBase):
                     fitted.update(id(v) for v in eqn.outvars)
             if any(id(v) in fitted for v in jaxpr.outvars):
                 unmet.append("the Image's dra or ddec is fitted")
-            side, other = image.eta.shape
+            side, other = image.brightness.shape
             if side != other:
                 unmet.append("the Image is not square")
             pixels = side * other * nuis.n_ddid

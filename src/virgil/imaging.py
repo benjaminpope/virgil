@@ -54,6 +54,7 @@ from .likelihood import _whitened_errors_and_log_norm, whitened_residuals
 from .models import (
     _scene_images,
     Image,
+    LinearImage,
     PointSource,
     Rotated,
     SourceModel,
@@ -89,8 +90,14 @@ class _ImageRegulariser(eqx.Module):
         leaves tiny negatives, and an exact zero would give NaN gradients in
         ``xlogy``."""
         image = self.image(model)
+        # Linear pixels are penalized in units of the reference flux.
+        scale = (
+            image.total_flux / image.reference_flux
+            if isinstance(image, LinearImage)
+            else 1.0
+        )
         if not self.smoothed:
-            return image.brightness
+            return scale * image.brightness
         if image.blur_fwhm_mas is not None:
             warnings.warn(
                 "smoothed=True penalizes the blurred image, so the base "
@@ -99,17 +106,17 @@ class _ImageRegulariser(eqx.Module):
                 UserWarning,
                 stacklevel=external_stacklevel(),
             )
-        b = image.smoothed()
+        b = scale * image.smoothed()
         return np.maximum(b, np.finfo(b.dtype).tiny)
 
     def image(self, model):
         """The regularized [`Image`][virgil.models.Image] in ``model``."""
         model = model.resolved()
         image = model if self.path is None else model.get(self.path)
-        if not isinstance(image, Image):
+        if not isinstance(image, (Image, LinearImage)):
             raise TypeError(
                 f"{type(self).__name__}(path={self.path!r}) found a "
-                f"{type(image).__name__}, not an Image."
+                f"{type(image).__name__}, not an Image or LinearImage."
             )
         return image
 
@@ -119,7 +126,11 @@ class _ImageRegulariser(eqx.Module):
 
     def _scale(self, model, b):
         """``p / B`` and the flux ``Σ b``, for the normalised penalties."""
-        return self.image(model).pixel_scale_mas / self.beam_mas, np.sum(b)
+        image = self.image(model)
+        # The reference flux is fixed, so the penalty stays convex in a
+        # linear image: ``b`` is already in units of it.
+        flux = 1.0 if isinstance(image, LinearImage) else np.sum(b)
+        return image.pixel_scale_mas / self.beam_mas, flux
 
 
 def _differences(b):
@@ -286,6 +297,11 @@ class MaxEntropy(_ImageRegulariser):
     def _brightness_and_default(self, model):
         """The unit-sum image ``b`` and the default ``q`` (1 where ``b`` is 0)."""
         image = self.image(model)
+        if isinstance(image, LinearImage) and image.parametrisation != "sqrt":
+            raise TypeError(
+                "MaxEntropy on a linear LinearImage needs a positive lower "
+                "bound on the pixels; use parametrisation='sqrt'."
+            )
         b = self.pixels(model)
         if self.prior is None:
             # Smoothing spreads flux beyond the support: flat over all pixels.
@@ -301,7 +317,12 @@ class MaxEntropy(_ImageRegulariser):
 
     def value(self, model):
         b, q = self._brightness_and_default(model)
-        return self.weight * np.sum(xlogy(b, b) - xlogy(b, q))
+        value = np.sum(xlogy(b, b) - xlogy(b, q))
+        if isinstance(self.image(model), LinearImage):
+            # Skilling's form, ``Σ b ln(b/q) - b + q``, for unnormalised b
+            # (reference-flux units, ``q`` unit-sum).
+            value = value + 1.0 - np.sum(b)
+        return self.weight * value
 
     def residuals(self, model):
         """Residuals ``r`` with ``value = 0.5 Σ r²`` (``b`` and ``q`` sum to 1):
@@ -558,6 +579,9 @@ class Centroid(_ImageRegulariser):
 def image_priors(scene):
     """Priors on the log-brightness of every Image in a scene.
 
+    A [`LinearImage`][virgil.models.LinearImage] gets a flat prior on its
+    ``pixels`` instead (non-negative for the linear form, real for ``"sqrt"``).
+
     Returns a priors dict for [`fit`][virgil.fitting.fit]. An Image with
     a plain log-brightness array gets a flat prior,
     ``{"env.log_brightness": ImproperUniform(...)}``, so that its pixels are
@@ -572,7 +596,18 @@ def image_priors(scene):
     import numpyro.distributions as dist
 
     priors = {}
-    for prefix, image in _scene_images(scene):
+    for prefix, image in _scene_images(scene, kinds=(Image, LinearImage)):
+        if isinstance(image, LinearImage):
+            # Linear pixels are bounded by `image.bounds()`; a square-root
+            # parametrisation is unbounded.
+            priors[prefix + "pixels"] = dist.ImproperUniform(
+                dist.constraints.real
+                if image.parametrisation == "sqrt"
+                else dist.constraints.nonnegative,
+                (),
+                event_shape=image.pixels.shape,
+            )
+            continue
         shape = image.log_brightness.shape
         if _whitened_field(image.log_brightness):
             priors[prefix + "log_brightness.latent"] = dist.Normal(

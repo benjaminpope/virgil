@@ -67,6 +67,7 @@ from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
 __provisional__ = (
+    "LinearImage",
     "MultipoleDisk",
     "ThinRing",
     "GaussianRing",
@@ -1822,78 +1823,27 @@ def _pixel_visibilities(
     return image_visibilities(fluxes, uu, vv, pixel_scale_mas, ft)
 
 
-class Image(Component):
-    """Pixelised brightness distribution, for image reconstruction.
+class _BrightnessImage(Component):
+    """Shared transform code of the pixel images, which define ``brightness``
+    (unit-sum pixels)."""
 
-    Pixel fluxes are ``softmax(log_brightness)`` over the pixels in
-    ``support``: positive, summing to one, zero outside. Inside a
-    [`System`][virgil.models.System] it has a ``flux`` weight and offset like
-    any component, so unresolved sources stay analytic; visibilities are the
-    exact Fourier transform of the pixels, each a point at its centre. A
-    constant added to ``log_brightness`` changes nothing, so `fit` fixes it (a
-    free array comes back as ``log`` of the pixel fluxes); a pixel whose
-    optimum is zero flux can fit far below the rest (-1e3 or lower, set by
-    rounding): read an image from ``brightness``, not from those values.
-
-    Parameters
-    ----------
-    log_brightness : array-like, shape (nrow, ncol), or GaussianField
-        Log pixel fluxes up to a constant, oriented as
-        [`render`][virgil.models.SourceModel.render] (row 0 North, column 0
-        East), or an object with ``evaluate(pixel_scale_mas)`` such as a
-        [`GaussianField`][virgil.fields.GaussianField].
-    pixel_scale_mas : float
-        Pixel size in mas; the image centre, index ``((nrow - 1) / 2, (ncol -
-        1) / 2)``, is at ``(dra, ddec)``.
-    support : array-like of bool, optional
-        Pixels allowed to carry flux, same shape as ``log_brightness`` (default
-        all); see [`circular_support`][virgil.models.circular_support].
-    flux, dra, ddec : optional
-        As for any [`Component`][virgil.models.Component].
-    rotation_deg : float, optional
-        Position angle (North to East) of the grid's "up" axis (default 0);
-        matching ``data.uv_grid.rotation_deg`` gives a much faster exact
-        two-sided matrix transform.
-    ft : {"auto", "dft", "nufft"}, optional
-        Transform for irregular uv points (default ``"auto"``, whichever is
-        faster; see [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
-    blur_fwhm_mas : float, optional
-        FWHM in mas of a fixed (not fitted) Gaussian blurring kernel in the
-        forward model: the data are compared with the blurred image, so the
-        pixels are the unblurred sky. Default ``None``, recommended; blur
-        for display after the fit (``smoothed()`` gives the blurred pixels).
-        Compounds with ``CalibrationNuisance.blur_fwhm_mas``. Source: MPoL's
-        Gaussian base layer, Czekala et al. (2025),
-        [references](../references.md#mpol).
-    smooth_fwhm_mas : float, optional
-        Deprecated alias of ``blur_fwhm_mas``.
-
-    Examples
-    --------
-    >>> image = Image(np.zeros((32, 32)), pixel_scale_mas=2.0)
-    >>> envelope = Image.from_model(GaussianDisk(sigma=8.0), 32, 2.0, flux=0.3)
-    """
-
-    log_brightness: Any
     support: jax.Array | None
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
     ft: str = eqx.field(static=True)
     blur_fwhm_mas: float | None = eqx.field(static=True)
 
-    @renamed({"smooth_fwhm_mas": "blur_fwhm_mas"})
-    def __init__(
+    def _set_layout(
         self,
-        log_brightness,
+        shape,
+        name,
         pixel_scale_mas,
-        support=None,
-        flux=1.0,
-        dra=0.0,
-        ddec=0.0,
-        rotation_deg=0.0,
-        ft="auto",
-        blur_fwhm_mas=None,
+        support,
+        rotation_deg,
+        ft,
+        blur_fwhm_mas,
     ):
+        """Validate and store the grid, support and transform options."""
         if blur_fwhm_mas is not None and not (
             onp.isfinite(blur_fwhm_mas) and blur_fwhm_mas > 0.0
         ):
@@ -1905,94 +1855,25 @@ class Image(Component):
             None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
         self.ft = _check_ft(ft)
-        if not hasattr(log_brightness, "evaluate"):
-            log_brightness = np.asarray(log_brightness, dtype=float)
-        self.log_brightness = log_brightness
         if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
             raise ValueError(
                 f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
             )
         self.pixel_scale_mas = float(pixel_scale_mas)
-        eta = self.eta
-        if eta.ndim != 2:
-            raise ValueError("log_brightness must be a 2D array.")
+        if len(shape) != 2:
+            raise ValueError(f"{name} must be a 2D array.")
         if support is not None:
             support = np.asarray(support, dtype=bool)
-            if support.shape != eta.shape:
+            if support.shape != tuple(shape):
                 raise ValueError(
-                    f"support has shape {support.shape}, but log_brightness "
-                    f"has shape {eta.shape}."
+                    f"support has shape {support.shape}, but {name} "
+                    f"has shape {tuple(shape)}."
                 )
             any_pixel = concrete(np.any(support))
             if any_pixel is not None and not bool(any_pixel):
                 raise ValueError("support must contain at least one pixel.")
         self.support = support
-        # Reject a log-brightness whose softmax over the support is not
-        # finite (skipped under jax.jit).
-        live = np.ones(eta.shape, dtype=bool) if support is None else support
-        if concrete(np.any(live & (np.isnan(eta) | (eta == np.inf)))):
-            raise ValueError("log_brightness must not be NaN or +inf.")
-        finite = concrete(np.any(live & np.isfinite(eta)))
-        if finite is not None and not bool(finite):
-            raise ValueError(
-                "log_brightness needs at least one finite (supported) pixel."
-            )
         self.rotation_deg = float(rotation_deg)
-        self._place(flux, dra, ddec)
-
-    @classmethod
-    def from_brightness(
-        cls, brightness, pixel_scale_mas, *, floor=1e-6, **kwargs
-    ):
-        """Build an image from non-negative pixel fluxes.
-
-        Pixels fainter than ``floor`` times the brightest are raised to that
-        level, so that their logarithm is finite. Other keyword arguments
-        (``support``, ``flux``, ``dra``, ``ddec``, ``rotation_deg``) go to
-        [`Image`][virgil.models.Image].
-        """
-        brightness = np.asarray(brightness, dtype=float)
-        support = kwargs.get("support")
-        inside = (
-            brightness
-            if support is None
-            else np.where(support, brightness, 0.0)
-        )
-        peak = np.max(inside)
-        if concrete(peak) is not None and not float(peak) > 0.0:
-            raise ValueError("brightness needs a positive (supported) pixel.")
-        brightness = np.maximum(brightness, floor * peak)
-        return cls(np.log(brightness), pixel_scale_mas, **kwargs)
-
-    @classmethod
-    def from_model(cls, model, npix, pixel_scale_mas, **kwargs):
-        """Pixelise a model, e.g. a parametric fit, as a starting image.
-
-        The pixels sample ``model`` on an ``npix`` x ``npix`` grid (rotated
-        by ``rotation_deg``, if given); see
-        [`from_brightness`][virgil.models.Image.from_brightness] for
-        the keyword arguments.
-        """
-        xx, yy = image_coordinates(npix, npix * pixel_scale_mas)
-        xx, yy = rotate(xx, yy, kwargs.get("rotation_deg", 0.0))
-        image = _normalize_image(model._image(xx, yy, pixel_scale_mas))
-        return cls.from_brightness(image, pixel_scale_mas, **kwargs)
-
-    @property
-    def eta(self):
-        """The log-brightness array, evaluated if it is a field."""
-        if hasattr(self.log_brightness, "evaluate"):
-            return self.log_brightness.evaluate(self.pixel_scale_mas)
-        return self.log_brightness
-
-    @property
-    def brightness(self):
-        """Pixel fluxes: positive, unit sum, zero outside ``support``."""
-        eta = self.eta
-        # As a mask: some zodiax versions return leaves as floats from get().
-        where = None if self.support is None else self.support.ravel() != 0
-        flat = jax.nn.softmax(eta.ravel(), where=where)
-        return flat.reshape(eta.shape)
 
     @property
     def smooth_fwhm_mas(self):
@@ -2049,6 +1930,312 @@ class Image(Component):
         rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
         cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
         return map_coordinates(brightness, [rows, cols], order=1)
+
+
+class Image(_BrightnessImage):
+    """Pixelised brightness distribution, for image reconstruction.
+
+    Pixel fluxes are ``softmax(log_brightness)`` over the pixels in
+    ``support``: positive, summing to one, zero outside. Inside a
+    [`System`][virgil.models.System] it has a ``flux`` weight and offset like
+    any component, so unresolved sources stay analytic; visibilities are the
+    exact Fourier transform of the pixels, each a point at its centre. A
+    constant added to ``log_brightness`` changes nothing, so `fit` fixes it (a
+    free array comes back as ``log`` of the pixel fluxes); a pixel whose
+    optimum is zero flux can fit far below the rest (-1e3 or lower, set by
+    rounding): read an image from ``brightness``, not from those values.
+
+    Parameters
+    ----------
+    log_brightness : array-like, shape (nrow, ncol), or GaussianField
+        Log pixel fluxes up to a constant, oriented as
+        [`render`][virgil.models.SourceModel.render] (row 0 North, column 0
+        East), or an object with ``evaluate(pixel_scale_mas)`` such as a
+        [`GaussianField`][virgil.fields.GaussianField].
+    pixel_scale_mas : float
+        Pixel size in mas; the image centre, index ``((nrow - 1) / 2, (ncol -
+        1) / 2)``, is at ``(dra, ddec)``.
+    support : array-like of bool, optional
+        Pixels allowed to carry flux, same shape as ``log_brightness`` (default
+        all); see [`circular_support`][virgil.models.circular_support].
+    flux, dra, ddec : optional
+        As for any [`Component`][virgil.models.Component].
+    rotation_deg : float, optional
+        Position angle (North to East) of the grid's "up" axis (default 0);
+        matching ``data.uv_grid.rotation_deg`` gives a much faster exact
+        two-sided matrix transform.
+    ft : {"auto", "dft", "nufft"}, optional
+        Transform for irregular uv points (default ``"auto"``, whichever is
+        faster; see [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
+    blur_fwhm_mas : float, optional
+        FWHM in mas of a fixed (not fitted) Gaussian blurring kernel in the
+        forward model: the data are compared with the blurred image, so the
+        pixels are the unblurred sky. Default ``None``, recommended; blur
+        for display after the fit (``smoothed()`` gives the blurred pixels).
+        Compounds with ``CalibrationNuisance.blur_fwhm_mas``. Source: MPoL's
+        Gaussian base layer, Czekala et al. (2025),
+        [references](../references.md#mpol).
+    smooth_fwhm_mas : float, optional
+        Deprecated alias of ``blur_fwhm_mas``.
+
+    Examples
+    --------
+    >>> image = Image(np.zeros((32, 32)), pixel_scale_mas=2.0)
+    >>> envelope = Image.from_model(GaussianDisk(sigma=8.0), 32, 2.0, flux=0.3)
+    """
+
+    log_brightness: Any
+
+    @renamed({"smooth_fwhm_mas": "blur_fwhm_mas"})
+    def __init__(
+        self,
+        log_brightness,
+        pixel_scale_mas,
+        support=None,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+        rotation_deg=0.0,
+        ft="auto",
+        blur_fwhm_mas=None,
+    ):
+        if not hasattr(log_brightness, "evaluate"):
+            log_brightness = np.asarray(log_brightness, dtype=float)
+        self.log_brightness = log_brightness
+        self.pixel_scale_mas = pixel_scale_mas  # a field evaluates on it
+        eta = self.eta
+        self._set_layout(
+            eta.shape,
+            "log_brightness",
+            pixel_scale_mas,
+            support,
+            rotation_deg,
+            ft,
+            blur_fwhm_mas,
+        )
+        # Reject a log-brightness whose softmax over the support is not
+        # finite (skipped under jax.jit).
+        live = np.ones(eta.shape, dtype=bool) if support is None else support
+        if concrete(np.any(live & (np.isnan(eta) | (eta == np.inf)))):
+            raise ValueError("log_brightness must not be NaN or +inf.")
+        finite = concrete(np.any(live & np.isfinite(eta)))
+        if finite is not None and not bool(finite):
+            raise ValueError(
+                "log_brightness needs at least one finite (supported) pixel."
+            )
+        self._place(flux, dra, ddec)
+
+    @classmethod
+    def from_brightness(
+        cls, brightness, pixel_scale_mas, *, floor=1e-6, **kwargs
+    ):
+        """Build an image from non-negative pixel fluxes.
+
+        Pixels fainter than ``floor`` times the brightest are raised to that
+        level, so that their logarithm is finite. Other keyword arguments
+        (``support``, ``flux``, ``dra``, ``ddec``, ``rotation_deg``) go to
+        [`Image`][virgil.models.Image].
+        """
+        brightness = np.asarray(brightness, dtype=float)
+        support = kwargs.get("support")
+        inside = (
+            brightness
+            if support is None
+            else np.where(support, brightness, 0.0)
+        )
+        peak = np.max(inside)
+        if concrete(peak) is not None and not float(peak) > 0.0:
+            raise ValueError("brightness needs a positive (supported) pixel.")
+        brightness = np.maximum(brightness, floor * peak)
+        return cls(np.log(brightness), pixel_scale_mas, **kwargs)
+
+    @classmethod
+    def from_model(cls, model, npix, pixel_scale_mas, **kwargs):
+        """Pixelise a model, e.g. a parametric fit, as a starting image.
+
+        The pixels sample ``model`` on an ``npix`` x ``npix`` grid (rotated
+        by ``rotation_deg``, if given); see
+        [`from_brightness`][virgil.models.Image.from_brightness] for
+        the keyword arguments.
+        """
+        xx, yy = image_coordinates(npix, npix * pixel_scale_mas)
+        xx, yy = rotate(xx, yy, kwargs.get("rotation_deg", 0.0))
+        image = _normalize_image(model._image(xx, yy, pixel_scale_mas))
+        return cls.from_brightness(image, pixel_scale_mas, **kwargs)
+
+    @property
+    def eta(self):
+        """The log-brightness array, evaluated if it is a field."""
+        if hasattr(self.log_brightness, "evaluate"):
+            return self.log_brightness.evaluate(self.pixel_scale_mas)
+        return self.log_brightness
+
+    @property
+    def brightness(self):
+        """Pixel fluxes: positive, unit sum, zero outside ``support``."""
+        eta = self.eta
+        # As a mask: some zodiax versions return leaves as floats from get().
+        where = None if self.support is None else self.support.ravel() != 0
+        flat = jax.nn.softmax(eta.ravel(), where=where)
+        return flat.reshape(eta.shape)
+
+
+class LinearImage(_BrightnessImage):
+    """Pixel image whose fitted values are the pixel fluxes themselves.
+
+    The free array ``pixels`` is the flux of each pixel in ``support``
+    (``parametrisation="linear"``, to be kept non-negative by bounds: see
+    ``bounds``) or its square root (``"sqrt"``, flux ``x**2``, unbounded and
+    so usable with any `fit` method). The total flux is the sum of the pixel
+    fluxes: there is no separate ``flux`` to fit (a free flux times free
+    pixel amplitudes is an exact scale degeneracy), and inside a
+    [`System`][virgil.models.System] the component's weight is that sum. The
+    ``flux`` field is fixed at 1 and must not be fitted. ``brightness`` is
+    the unit-sum image, as for an [`Image`][virgil.models.Image].
+
+    Unlike the softmax of an ``Image``, pixels can reach exactly zero, which
+    the minimiser of TSV, TV, ``StarletL1`` or an unregularised fit needs.
+    The ``"sqrt"`` form is the choice for
+    [`MaxEntropy`][virgil.imaging.MaxEntropy]: it keeps the entropy's
+    interior minimum, and its metric ``4 I`` is that of entropic mirror
+    descent (design/bounded_pixels.md). ``x = 0`` is a stationary point, so
+    start strictly positive.
+
+    Regularizers act on ``fluxes / reference_flux``, so their weights keep
+    their meaning and TSV, TV and ``StarletL1`` stay convex in a linear
+    image; the weight drifts by ``(F / reference_flux)**2`` if the fitted
+    flux ``F`` moves far from it. Source: non-negative linear pixels as in SMILI,
+    [Akiyama et al. (2017)](../references.md#akiyama2017), for a bounded
+    L-BFGS-B solver, [Byrd et al. (1995)](../references.md#byrd1995); the
+    ``"sqrt"`` form is virgil's own, checked in the design note.
+
+    Parameters
+    ----------
+    pixels : array-like, shape (nrow, ncol)
+        Pixel fluxes (``"linear"``, non-negative) or their square roots
+        (``"sqrt"``), oriented as [`render`][virgil.models.SourceModel.render]
+        (row 0 North, column 0 East).
+    pixel_scale_mas : float
+        Pixel size in mas, as for [`Image`][virgil.models.Image].
+    support, rotation_deg, ft, blur_fwhm_mas : optional
+        As for [`Image`][virgil.models.Image].
+    dra, ddec : optional
+        As for any [`Component`][virgil.models.Component].
+    parametrisation : {"linear", "sqrt"}, optional
+        What ``pixels`` holds (default ``"linear"``).
+    reference_flux : float, optional
+        The fixed flux ``F0`` that regularizers divide by (default: the sum of
+        the starting pixel fluxes).
+
+    Examples
+    --------
+    >>> image = LinearImage(np.full((8, 8), 0.01), pixel_scale_mas=2.0)
+    >>> round(float(image.total_flux), 4)
+    0.64
+    """
+
+    pixels: jax.Array
+    parametrisation: str = eqx.field(static=True)
+    reference_flux: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        pixels,
+        pixel_scale_mas,
+        support=None,
+        dra=0.0,
+        ddec=0.0,
+        rotation_deg=0.0,
+        ft="auto",
+        blur_fwhm_mas=None,
+        parametrisation="linear",
+        reference_flux=None,
+    ):
+        if parametrisation not in ("linear", "sqrt"):
+            raise ValueError(
+                f"parametrisation must be 'linear' or 'sqrt', not {parametrisation!r}."
+            )
+        self.parametrisation = parametrisation
+        pixels = np.asarray(pixels, dtype=float)
+        self.pixels = pixels
+        self._set_layout(
+            pixels.shape,
+            "pixels",
+            pixel_scale_mas,
+            support,
+            rotation_deg,
+            ft,
+            blur_fwhm_mas,
+        )
+        bad = concrete(np.any(np.isnan(pixels)))
+        if bad:
+            raise ValueError("pixels must not be NaN.")
+        if parametrisation == "linear" and concrete(np.any(pixels < 0.0)):
+            raise ValueError("linear pixels must be non-negative.")
+        if reference_flux is None:
+            total = concrete(np.sum(self._fluxes(pixels)))
+            if total is None:
+                raise ValueError(
+                    "reference_flux is required when the pixels are traced."
+                )
+            reference_flux = float(total)
+        if not (onp.isfinite(reference_flux) and reference_flux > 0.0):
+            raise ValueError(
+                f"reference_flux must be finite and positive, not {reference_flux}."
+            )
+        self.reference_flux = float(reference_flux)
+        self._place(1.0, dra, ddec)
+
+    def _fluxes(self, pixels):
+        flux = pixels**2 if self.parametrisation == "sqrt" else pixels
+        return (
+            flux if self.support is None else np.where(self.support, flux, 0.0)
+        )
+
+    @property
+    def fluxes(self):
+        """Pixel fluxes: non-negative, zero outside ``support``."""
+        return self._fluxes(self.pixels)
+
+    @property
+    def total_flux(self):
+        """The image's flux, the sum of ``fluxes``."""
+        return np.sum(self.fluxes)
+
+    @property
+    def brightness(self):
+        """Pixel fluxes divided by the total: unit sum, zero outside ``support``."""
+        fluxes = self.fluxes
+        return fluxes / np.sum(fluxes)
+
+    @property
+    def regularised_pixels(self):
+        """``fluxes / reference_flux``, the pixels that regularizers penalize."""
+        return self.fluxes / self.reference_flux
+
+    def _weight(self, wavel=None):
+        return self.total_flux
+
+    def bounds(self):
+        """``(lower, upper)`` arrays for a bounded optimiser, or ``None``.
+
+        Linear pixels have ``0 <= flux < inf`` inside ``support`` and ``(0,
+        0)`` outside it; the square-root form needs no bounds.
+        """
+        if self.parametrisation == "sqrt":
+            return None
+        live = (
+            onp.ones(self.pixels.shape, bool)
+            if self.support is None
+            else onp.asarray(self.support)
+        )
+        return onp.zeros(live.shape), onp.where(live, onp.inf, 0.0)
+
+    def is_physical(self):
+        ok = super().is_physical()
+        if self.parametrisation == "linear":
+            ok = ok & np.all(self.pixels >= 0.0)
+        return ok & (self.total_flux > 0.0)
 
 
 class _PixelRendered(Component):
@@ -5198,7 +5385,9 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
         return total * offset_phase(
             u / wavel, v / wavel, model.dra, model.ddec
         )
-    if isinstance(model, Component) and not isinstance(model, Image):
+    if isinstance(model, Component) and not isinstance(
+        model, _BrightnessImage
+    ):
         ra, dec = ra0 + model.dra, dec0 + model.ddec
         arg = bandwidth * mas2rad * (u * ra + v * dec) / wavel**2
         return model.model(u, v, wavel) * np.sinc(arg)
@@ -5938,13 +6127,14 @@ def _cvis_gaussian_envelope(u, v, fwhm):
     )
 
 
-def _scene_images(scene, prefix=""):
+def _scene_images(scene, prefix="", kinds=Image):
     """Yield ``(path prefix, Image)`` for each Image in a scene, walking
-    ``System`` components and ``Rotated`` sources (``"env."``, ``"source."``)."""
-    if isinstance(scene, Image):
+    ``System`` components and ``Rotated`` sources (``"env."``, ``"source."``).
+    ``kinds`` widens the match, e.g. to ``(Image, LinearImage)``."""
+    if isinstance(scene, kinds):
         yield prefix, scene
     elif isinstance(scene, System):
         for name, part in scene.components.items():
-            yield from _scene_images(part, prefix + name + ".")
+            yield from _scene_images(part, prefix + name + ".", kinds)
     elif isinstance(scene, Rotated):
-        yield from _scene_images(scene.source, prefix + "source.")
+        yield from _scene_images(scene.source, prefix + "source.", kinds)
