@@ -44,7 +44,13 @@ import numpy as onp
 from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
-from ._geometry import fringe_scales, pixel_offsets, rotate, smearing_scale
+from ._geometry import (
+    fringe_scales,
+    gaussian_smooth,
+    pixel_offsets,
+    rotate,
+    smearing_scale,
+)
 from ._utils import FWHM_PER_SIGMA, _reference, mas2rad
 from ._deprecate import external_stacklevel, keyword_only, renamed
 from ._precision import cast_tree, run_in
@@ -90,14 +96,9 @@ class _ImageRegulariser(eqx.Module):
         leaves tiny negatives, and an exact zero would give NaN gradients in
         ``xlogy``."""
         image = self.image(model)
-        # Linear pixels are penalized in units of the reference flux.
-        scale = (
-            image.total_flux / image.reference_flux
-            if isinstance(image, LinearImage)
-            else 1.0
-        )
+        linear = isinstance(image, LinearImage)
         if not self.smoothed:
-            return scale * image.brightness
+            return image.regularised_pixels if linear else image.brightness
         if image.blur_fwhm_mas is not None:
             warnings.warn(
                 "smoothed=True penalizes the blurred image, so the base "
@@ -106,7 +107,14 @@ class _ImageRegulariser(eqx.Module):
                 UserWarning,
                 stacklevel=external_stacklevel(),
             )
-        b = scale * image.smoothed()
+        if linear:
+            b = image.regularised_pixels
+            if image.blur_fwhm_mas is not None:
+                b = gaussian_smooth(
+                    b, image.blur_fwhm_mas / image.pixel_scale_mas
+                )
+        else:
+            b = image.smoothed()
         return np.maximum(b, np.finfo(b.dtype).tiny)
 
     def image(self, model):
@@ -269,7 +277,10 @@ class MaxEntropy(_ImageRegulariser):
     """Maximum entropy: ``weight * Σ b log(b / q)``, with ``b`` and ``q`` unit-sum.
 
     The relative entropy of the image with respect to a default image ``q``
-    (Skilling & Bryan 1984, MNRAS 211, 111; BSMEM, Baron & Young 2008).
+    (Skilling & Bryan 1984, MNRAS 211, 111; BSMEM, Baron & Young 2008). On a
+    [`LinearImage`][virgil.models.LinearImage], ``b`` is in units of its
+    reference flux and the penalty is Skilling's ``Σ b log(b / q) - b + q``.
+    Source: Skilling (1989), [references](../references.md#skilling1989).
 
     Parameters
     ----------

@@ -43,12 +43,13 @@ import numpy as onp
 from . import _nufft_spread as grid
 from ._geometry import gaussian_taper, offset_phase, rotate
 from ._utils import mas2rad
-from .models import Image, LinearImage, System
+from .models import Image, System
 from .radio import (
     _checked_sigma,
     _require_function,
     _scene_function,
     _TermBase,
+    _refuse_linear_image,
     _warn_double_blur,
 )
 
@@ -241,11 +242,11 @@ class ToeplitzVisData(eqx.Module):
                 if nuisance.offsets
                 else "offsets='spread' needs a nuisance that fits offsets."
             )
-        if not isinstance(image, (Image, LinearImage)):
+        if not isinstance(image, Image):
             raise TypeError(
-                f"image must be an Image or LinearImage (the layout), not {type(image).__name__}."
+                f"image must be an Image (the layout), not {type(image).__name__}."
             )
-        nrow, ncol = _shape(image)
+        nrow, ncol = image.eta.shape
         if nrow != ncol:
             raise ValueError(f"the Image must be square, not {nrow} x {ncol}.")
         if onp.ndim(image.dra) or onp.ndim(image.ddec):
@@ -470,10 +471,6 @@ class ToeplitzVisData(eqx.Module):
 # ----------------------------------------------------------------------
 
 
-def _shape(image):
-    return image.brightness.shape
-
-
 def _single_image(scene):
     """``(image, offsets)``: the one Image of ``scene`` and every offset leaf
     on the way to it (their sum must be the template's)."""
@@ -488,7 +485,7 @@ def _single_image(scene):
             )
         offsets += [model.dra, model.ddec]
         model = parts[0]
-    if not isinstance(model, (Image, LinearImage)):
+    if not isinstance(model, Image):
         raise TypeError(
             "The Toeplitz term needs a scene of one Image, not "
             f"{type(model).__name__}. Use ComplexVisData.term."
@@ -530,10 +527,11 @@ class _ToeplitzTerm(_TermBase):
 
     def _image(self, values):
         scene = self.scene(values)
+        _refuse_linear_image(scene)
         _warn_double_blur(scene, self.nuisance)
         image, offsets = _single_image(scene)
         layout = (
-            _shape(image),
+            image.eta.shape,
             image.pixel_scale_mas,
             image.rotation_deg,
             image.blur_fwhm_mas,

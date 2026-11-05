@@ -38,14 +38,44 @@ def _blob(flux=0.5):
     return flux * img / img.sum()
 
 
-def test_flux_is_the_sum_of_pixels_and_roundtrips():
+@pytest.mark.parametrize("par", ["linear", "sqrt"])
+def test_flux_is_recovered_from_the_visibility_against_a_star(par):
+    # Where the blob is resolved out, V = 1 / (1 + F) for a unit star.
     pix = _blob(0.5)
-    for par, x in (("linear", pix), ("sqrt", np.sqrt(pix))):
-        im = LinearImage(x, SCALE, parametrisation=par)
-        assert abs(float(im.total_flux) - 0.5) < 1e-12
-        assert abs(float(im.brightness.sum()) - 1.0) < 1e-12
-        assert onp.allclose(im.brightness * im.total_flux, pix, atol=1e-14)
-        assert im.reference_flux == pytest.approx(0.5)
+    x = pix if par == "linear" else np.sqrt(pix)
+    im = LinearImage(x, SCALE, parametrisation=par)
+    assert abs(float(im.total_flux) - 0.5) < 1e-12
+    assert abs(float(im.brightness.sum()) - 1.0) < 1e-12
+    scene = System(star=PointSource(), env=im)
+    u, v = np.asarray([29.7]), np.asarray([0.0])
+    vis = abs(complex(scene.model(u, v, 4.8e-6)[0]))
+    assert 1.0 / vis - 1.0 == pytest.approx(0.5, rel=3e-2)
+
+
+def test_float_and_list_supports_still_work():
+    from virgil.models import Image
+
+    pix = onp.ones((4, 4))
+    assert Image(np.zeros((4, 4)), 1.0, support=pix).support.dtype == bool
+    assert Image(np.zeros((4, 4)), 1.0, support=pix.tolist()) is not None
+
+
+def test_image_field_order_is_unchanged():
+    import dataclasses
+
+    from virgil.models import Image
+
+    assert [f.name for f in dataclasses.fields(Image)] == [
+        "flux",
+        "dra",
+        "ddec",
+        "log_brightness",
+        "support",
+        "pixel_scale_mas",
+        "rotation_deg",
+        "ft",
+        "blur_fwhm_mas",
+    ]
 
 
 @pytest.mark.parametrize("par", ["linear", "sqrt"])
@@ -199,9 +229,22 @@ def test_render_fourier_transform_matches_model_visibilities():
     assert onp.max(onp.abs(ft - got)) < 1e-3
 
 
-def test_toeplitz_layout_accepts_linear_image():
-    from virgil.radio_toeplitz import _shape, _single_image
+def test_radio_terms_refuse_a_linear_image():
+    from virgil.radio import _refuse_linear_image
 
-    im = LinearImage(np.ones((NPIX, NPIX)), SCALE)
-    assert _single_image(System(env=im))[0] is im
-    assert _shape(im) == (NPIX, NPIX)
+    im = LinearImage(np.ones((4, 4)), SCALE)
+    with pytest.raises(TypeError, match="unconstrained"):
+        _refuse_linear_image(System(env=im))
+    _refuse_linear_image(System(star=PointSource()))
+
+
+def test_smoothed_regulariser_on_a_linear_image():
+    from virgil._geometry import gaussian_smooth
+
+    pix = _blob(0.5)
+    im = LinearImage(pix, SCALE, blur_fwhm_mas=15.0, reference_flux=0.5)
+    reg = TSV(1.0, beam_mas=BEAM, smoothed=True)
+    with pytest.warns(UserWarning, match="smoothed"):
+        got = reg.pixels(im)
+    want = gaussian_smooth(pix / 0.5, 15.0 / SCALE)
+    assert onp.allclose(got, want, atol=1e-9)

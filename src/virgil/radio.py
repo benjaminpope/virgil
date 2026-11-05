@@ -46,8 +46,6 @@ from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
 from .models import Image, LinearImage, SourceModel
 
-_PIXEL_IMAGES = (Image, LinearImage)
-
 __provisional__ = ("*",)
 
 __all__ = [
@@ -1476,15 +1474,28 @@ def _checked_sigma(sigma, nuisance):
     return sigma
 
 
+def _refuse_linear_image(scene):
+    """A LinearImage's flux is its pixel sum, but a radio term scales the
+    unit-normalised model by the fitted ``cal.flux``: the two are degenerate."""
+    parts = jax.tree_util.tree_leaves(
+        scene, is_leaf=lambda x: isinstance(x, LinearImage)
+    )
+    if any(isinstance(x, LinearImage) for x in parts):
+        raise TypeError(
+            "A LinearImage cannot be fitted by a radio term: its flux is "
+            "the sum of its pixels, but the term's cal.flux scales the "
+            "model freely, so the total flux is unconstrained. Use an Image."
+        )
+
+
 def _warn_double_blur(scene, nuisance):
     if nuisance.blur_fwhm_mas is None:
         return
     images = jax.tree_util.tree_leaves(
-        scene, is_leaf=lambda x: isinstance(x, _PIXEL_IMAGES)
+        scene, is_leaf=lambda x: isinstance(x, Image)
     )
     if any(
-        isinstance(x, _PIXEL_IMAGES) and x.blur_fwhm_mas is not None
-        for x in images
+        isinstance(x, Image) and x.blur_fwhm_mas is not None for x in images
     ):
         warnings.warn(
             "CalibrationNuisance.blur_fwhm_mas and Image.blur_fwhm_mas "
@@ -1660,7 +1671,7 @@ class _RadioTerm(_TermBase):
                     fitted.update(id(v) for v in eqn.outvars)
             if any(id(v) in fitted for v in jaxpr.outvars):
                 unmet.append("the Image's dra or ddec is fitted")
-            side, other = image.brightness.shape
+            side, other = image.eta.shape
             if side != other:
                 unmet.append("the Image is not square")
             pixels = side * other * nuis.n_ddid
@@ -1710,6 +1721,7 @@ class _RadioTerm(_TermBase):
         unpacked = nuis._unpack(values)
         sigma = unpacked[3]
         scene = self.scene(values)
+        _refuse_linear_image(scene)
         _warn_double_blur(scene, nuis)
 
         def model(a):
