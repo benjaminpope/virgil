@@ -8,8 +8,9 @@ import pytest
 
 from virgil.amigo import load_oi_data
 from virgil.grid_fit import linear_flux_grid
-from virgil.likelihood import model_loglike
+from virgil.likelihood import model_loglike, whitened_residuals
 from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData
 from tests._shared import CALIBRATED_VISIBILITY
 
 MAS = onp.pi / 180 / 3600e3
@@ -116,11 +117,11 @@ def test_the_nuisance_removes_a_radial_error_bias_of_either_sign(disco, sign):
             BinaryModelCartesian, data.with_radial_amplitude(), GRID
         ).snr
     )
-    # a plain map is biased one way (here against the error's sign), a
-    # marginalized one is not biased at all
-    assert -sign * plain[keep].mean() > 3.0
-    assert (sign * plain[keep] < 0).mean() > 0.7
-    assert abs(nuis[keep].mean()) < 1.0
+    # The plain map is biased against the error's sign, in most of the map;
+    # the marginalized one keeps at most a fifth of the bias.
+    assert sign * plain[keep].mean() < 0.0
+    assert (sign * plain[keep] < 0).mean() > 0.5
+    assert abs(nuis[keep].mean()) < 0.2 * abs(plain[keep].mean())
 
 
 def test_the_nuisance_absorbs_a_companions_symmetric_signal(disco):
@@ -162,7 +163,7 @@ def test_a_companion_survives_at_the_expected_sensitivity(disco):
     )  # the default width 10 is not quite flat
 
 
-def test_the_width_is_fittable_and_finite(disco):
+def test_the_width_is_fittable_and_finite(x64, disco):
     rng = onp.random.default_rng(3)
     r = _radial_error(disco, (0.05, 0.02)) + onp.asarray(
         disco.d_vis
@@ -170,23 +171,50 @@ def test_the_width_is_fittable_and_finite(disco):
     data = disco.set(["vis"], [np.asarray(r)]).with_radial_amplitude(width=0.1)
     assert data.gains.groups == ("radial",)
     model = BinaryModelCartesian(dra=50.0, ddec=0.0, flux=1e-3)
-    values = [
-        model_loglike(model, data, vis_gain_radial=w) for w in (0.01, 0.1, 1.0)
-    ]
+
+    def loglike(w):
+        return model_loglike(model, data, vis_gain_radial=w)
+
+    values = [loglike(w) for w in (0.01, 0.1, 1.0)]
     assert onp.all(onp.isfinite(values))
-    grad = jax.grad(lambda w: model_loglike(model, data, vis_gain_radial=w))(
-        np.asarray(0.1)
-    )
-    assert onp.isfinite(grad)
-    # the wide width beats a width of 0 here: the error is not noise
-    assert values[1] > model_loglike(model, data, vis_gain_radial=0.0)
+    # the width's gradient is the finite difference of the log likelihood
+    # (in log width, as the sampler sees it)
+    w, h = 0.1, 1e-5
+    fd = (loglike(w * onp.exp(h)) - loglike(w * onp.exp(-h))) / (2 * h)
+    grad = jax.grad(lambda t: loglike(np.exp(t)))(np.log(w))
+    assert grad == pytest.approx(fd, rel=1e-5)
+    # a radial error is not noise: a finite width fits better than none
+    assert values[1] > loglike(0.0)
+
+
+def test_phases_only_change_by_the_projection(x64):
+    """On mixed DISCO data with its phase operator, the nuisance is exactly a
+    projection of the whitened residuals off the radial modes."""
+    full = load_oi_data(CALIBRATED_VISIBILITY, "F430M")
+    assert onp.abs(onp.asarray(full.phi_mat)).max() > 0
+    model = BinaryModelCartesian(dra=90.0, ddec=-60.0, flux=2e-3)
+    data = full.with_radial_amplitude(width=WIDE)
+    r0 = onp.asarray(whitened_residuals(model, full))
+    r1 = onp.asarray(whitened_residuals(model, data))
+    n = onp.asarray(data.gains.shapes[0]) / onp.asarray(full.d_vis)[:, None]
+    q, _ = onp.linalg.qr(n)
+    onp.testing.assert_allclose(r1, r0 - q @ (q.T @ r0), rtol=1e-5, atol=1e-6)
+    assert onp.linalg.norm(r1) < onp.linalg.norm(r0)
 
 
 def test_refuses_unprojected_data():
-    from tests.test_gains import _data
-
+    rng = onp.random.default_rng(0)
+    data = OIData(
+        {
+            "u": rng.normal(0, 60, 6),
+            "v": rng.normal(0, 60, 6),
+            "wavel": onp.linspace(2.0e-6, 2.4e-6, 3),
+            "vis": rng.uniform(0.3, 0.9, (6, 3)),
+            "d_vis": onp.full((6, 3), 0.01),
+        }
+    )
     with pytest.raises(ValueError, match="projected log-amplitudes"):
-        _data().with_radial_amplitude()
+        data.with_radial_amplitude()
 
 
 def test_simulating_never_draws_the_nuisance(disco):

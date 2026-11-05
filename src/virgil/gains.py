@@ -401,6 +401,8 @@ def radial_amplitude_modes(data, order=4, width=10.0):
     n_sample = onp.size(data.u)
     wavel = onp.broadcast_to(onp.asarray(data.wavel, float), (n_sample,))
     q = onp.hypot(onp.asarray(data.u), onp.asarray(data.v)) / wavel
+    if not onp.max(q) > 0.0:
+        raise ValueError("The data have no non-zero spatial frequencies.")
     x = 2.0 * q / onp.max(q) - 1.0
     modes = onp.polynomial.legendre.legvander(x, order)  # (n_sample, K)
     shapes = onp.asarray(data.vis_mat, float) @ modes  # (n_vis, K)
