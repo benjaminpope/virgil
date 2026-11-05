@@ -2,7 +2,9 @@
 
 Regularizers, priors and helpers for image reconstruction with
 [`Image`](models/classes/image.md). Ways to choose a regularization weight are the
-L-curve's corner, the discrepancy principle, classic MaxEnt (`LCurve.classic_maxent`), the degrees-of-freedom-corrected discrepancy (`LCurve.dof_discrepancy`) and, for
+L-curve's corner, the discrepancy principle, classic MaxEnt
+(`LCurve.classic_maxent`), the degrees-of-freedom-corrected discrepancy
+(`LCurve.dof_discrepancy`) and, for
 Gaussian-field images, the Laplace evidence (`log_evidence`).
 
 ## Methods {#methods}

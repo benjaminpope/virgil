@@ -1866,6 +1866,7 @@ class LCurve:
         maxit=2000,
         seed=0,
         secant=True,
+        max_secant=1,
         curvature=None,
     ):
         """The weight of the degrees-of-freedom-corrected discrepancy principle.
@@ -1874,21 +1875,30 @@ class LCurve:
             May change in any 0.4.x release without a deprecation cycle.
 
         Morozov's discrepancy with the fitted degrees of freedom removed: ``w``
-        is the root in ``ln w`` of ``m(w) = χ²/s² − (n − G)``, where ``n`` is
-        the number of real data, ``s²`` the noise scale (the factor on the
-        quoted variances) and ``G = Tr[K (K + H_R)⁻¹]`` the number of image
-        parameters the data fix, by Hutchinson's estimator. ``K`` is the data's
-        Gauss–Newton curvature and ``H_R`` the Hessian of the swept regularizer and the sweep's ``others``, in the
-        pixel fluxes of a [`LinearImage`][virgil.models.LinearImage], over its
-        free pixels (inside the support, flux above zero). ``H_R`` must be
-        positive definite there: a convex regularizer such as
-        [`MaxEntropy`][virgil.imaging.MaxEntropy] or TSV. The root is
-        interpolated linearly in ``ln w`` between the sweep's bracketing fits;
-        then one secant step, from a refit at the interpolated weight, is
-        taken unless ``|m| ≤ 3 se(G)`` already. Source: Morozov (1966) and Wahba
-        (1983), [references](../references.md#morozov1966),
-        [Wahba](../references.md#wahba1983); Hutchinson (1989),
-        [references](../references.md#hutchinson1989).
+        is the root in ``ln w`` of ``m(w) = χ²/s² − (n − G)``, with ``n`` the
+        number of real data, ``s²`` the noise scale on the quoted variances
+        and ``G = Tr[K (K + H_R)⁻¹]`` (Hutchinson's estimator). ``K`` is the
+        data's Gauss–Newton curvature and ``H_R`` the Hessian of the swept
+        regularizer and the sweep's ``others``, in the pixel fluxes of a
+        [`LinearImage`][virgil.models.LinearImage] over its free pixels
+        (inside the support, flux above zero); it must be positive definite
+        (MaxEntropy, TSV).
+
+        The root is interpolated linearly in ``ln w``. Where ``m`` changes
+        sign more than once, ``roots`` lists every crossing and the one at the
+        largest weight (the strongest regularization) is chosen. Refits then
+        take up to ``max_secant`` secant steps until ``|m| ≤ 3 se(G)``.
+        Failures warn and show in the result: no sign change gives
+        ``weight=None``, an unmet tolerance ``accepted=False``; the weak end
+        of the sweep is never a fallback. Source: Morozov (1966), Wahba
+        (1983) and Craven & Wahba (1979), [references](../references.md#morozov1966);
+        Hutchinson (1989), [references](../references.md#hutchinson1989).
+
+        ``K`` covers the fitted image pixels only, and ``n`` is not reduced
+        for fitted nuisances. Closure phases of four or more telescopes have
+        more residual rows than independent data: do not use them. ``h`` uses
+        Skilling's unnormalised entropy, so it is classic ``h`` only if
+        ``Σ b = 1``.
 
         Parameters
         ----------
@@ -1905,8 +1915,10 @@ class LCurve:
             Rademacher probes, relative CG tolerance and iteration limit of
             the trace estimator, and its seed.
         secant : bool, optional
-            Refit at the interpolated weight and, if needed, once more (the
-            default); needs a sweep from :func:`l_curve`.
+            Refit at the interpolated weight (default) and take secant steps;
+            needs a sweep from :func:`l_curve`. ``False`` only interpolates.
+        max_secant : int, optional
+            The most secant steps after the first refit (default 1).
         curvature : callable, optional
             ``curvature(model) -> matvec`` giving the whole ``K v`` for a flat
             NumPy ``v`` over the pixels, in place of the default from the
@@ -1915,8 +1927,7 @@ class LCurve:
 
         Returns
         -------
-        DofDiscrepancy or None
-            ``None`` if ``m`` does not change sign over the sweep.
+        DofDiscrepancy
         """
         n_real = float(sum(self.results[0].info["ndata"]))
         if curvature is None and len(self.results[0].info["ndata"]) > len(
@@ -1928,60 +1939,113 @@ class LCurve:
             )
 
         def evaluate(result, weight):
-            return _dof_point(
-                result,
-                regularizer,
-                weight,
-                data,
-                noise_scale2,
-                n_real,
-                (nprobe, tol, maxit, seed),
-                curvature,
-                self.others,
+            return dict(
+                _dof_point(
+                    result,
+                    regularizer,
+                    weight,
+                    data,
+                    noise_scale2,
+                    n_real,
+                    (nprobe, tol, maxit, seed),
+                    curvature,
+                    self.others,
+                ),
+                weight=weight,
             )
 
-        points = [
-            evaluate(r, float(w)) for w, r in zip(self.weights, self.results)
-        ]
         weights = onp.asarray(self.weights, dtype=float)
+        points = [evaluate(r, float(w)) for w, r in zip(weights, self.results)]
         m = onp.array([pt["m"] for pt in points])
-        root = _lerp_root(weights, m)
-        if root is None:
-            return None
-        i, weight = root
-        chosen, trace = dict(points[i], weight=weight), []
-        if secant and self.refit is not None:
-            first = evaluate(
-                self.refit(weight, self.results[i].values), weight
+        crossings = _lerp_roots(weights, m)
+        fields = dict(
+            weights=weights,
+            m_sweep=m,
+            g_sweep=onp.array([pt["g"] for pt in points]),
+            n_real=n_real,
+            roots=tuple(w for _, w in crossings),
+        )
+        if not crossings:
+            warnings.warn(
+                "dof_discrepancy: m(w) does not change sign over the sweep "
+                f"(m from {m.min():.3g} to {m.max():.3g}); no weight chosen. "
+                "Extend the sweep.",
+                UserWarning,
+                stacklevel=2,
             )
-            trace.append(first)
-            chosen = first
-            if abs(first["m"]) > 3.0 * first["se"]:
-                # The end of the bracket with m of the opposite sign.
-                j = i if m[i] * first["m"] < 0 else i + 1
-                lo, hi = onp.log(weight), onp.log(weights[j])
-                step = float(
-                    onp.exp(lo - first["m"] * (hi - lo) / (m[j] - first["m"]))
+            return DofDiscrepancy(
+                weight=None,
+                m=None,
+                g=None,
+                g_se=None,
+                chi2=None,
+                accepted=False,
+                h=None,
+                weight_band=None,
+                trace=(),
+                **fields,
+            )
+        i, weight = max(crossings, key=lambda c: c[1])
+        chosen, trace = dict(points[i], weight=weight), []
+        if (
+            secant
+            and self.refit is not None
+            and i + 1 < len(points)
+            and points[i]["m"] != 0.0
+        ):
+            ends = [points[i], points[i + 1]]  # bracketing fits
+            for _ in range(1 + max_secant):
+                strong = max(ends, key=lambda pt: pt["weight"])
+                lo, hi = (onp.log(pt["weight"]) for pt in ends)
+                a, b = ends[0]["m"], ends[1]["m"]
+                step = float(onp.exp(lo - a * (hi - lo) / (b - a)))
+                new = evaluate(self.refit(step, strong["result"].values), step)
+                trace.append(new)
+                if abs(new["m"]) < abs(chosen["m"]) or len(trace) == 1:
+                    chosen = new
+                if abs(new["m"]) <= 3.0 * new["se"]:
+                    break
+                # Keep the bracket: the new point replaces the end it matches.
+                ends[0 if a * new["m"] > 0 else 1] = new
+            accepted = bool(abs(chosen["m"]) <= 3.0 * chosen["se"])
+            if not accepted:
+                warnings.warn(
+                    f"dof_discrepancy: |m| = {abs(chosen['m']):.3g} exceeds "
+                    f"3 se(G) = {3.0 * chosen['se']:.3g} at w = "
+                    f"{chosen['weight']:.4g} after {len(trace)} refit(s); "
+                    "raise max_secant, nprobe or tighten the sweep.",
+                    UserWarning,
+                    stacklevel=2,
                 )
-                second = evaluate(
-                    self.refit(step, first["result"].values), step
-                )
-                trace.append(second)
-                if abs(second["m"]) < abs(first["m"]):
-                    chosen = second
+        else:
+            accepted = None
         band = None
         if noise_scale_sigma is not None:
             ends = []
             for sign in (1.0, -1.0):
                 s2 = noise_scale2 + sign * 2.0 * noise_scale_sigma
-                if s2 <= 0.0:
-                    ends.append(None)
-                    continue
-                mm = onp.array(
-                    [pt["chi2"] / s2 - (n_real - pt["g"]) for pt in points]
+                found = (
+                    _lerp_roots(
+                        weights,
+                        onp.array(
+                            [
+                                pt["chi2"] / s2 - (n_real - pt["g"])
+                                for pt in points
+                            ]
+                        ),
+                    )
+                    if s2 > 0.0
+                    else []
                 )
-                found = _lerp_root(weights, mm)
-                ends.append(None if found is None else found[1])
+                if not found:
+                    warnings.warn(
+                        f"dof_discrepancy: no root at s² = {s2:.4g} "
+                        "(non-positive or outside the sweep); that band end "
+                        "is None.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                ends.append(max(w for _, w in found) if found else None)
             band = tuple(ends)
         return DofDiscrepancy(
             weight=float(chosen["weight"]),
@@ -1989,10 +2053,7 @@ class LCurve:
             g=float(chosen["g"]),
             g_se=float(chosen["se"]),
             chi2=float(chosen["chi2"]),
-            n_real=n_real,
-            accepted=(
-                bool(abs(chosen["m"]) <= 3.0 * chosen["se"]) if trace else None
-            ),
+            accepted=accepted,
             h=(
                 float(
                     2.0 * chosen["weight"] / noise_scale2 * chosen["penalty"]
@@ -2002,10 +2063,8 @@ class LCurve:
                 else None
             ),
             weight_band=band,
-            weights=weights,
-            m_sweep=m,
-            g_sweep=onp.array([pt["g"] for pt in points]),
             trace=tuple((t["weight"], t["m"], t["se"]) for t in trace),
+            **fields,
         )
 
     def classic_maxent(self, data, path="env"):
@@ -2079,56 +2138,74 @@ class DofDiscrepancy:
 
     Attributes
     ----------
-    weight : float
-        The chosen weight (the better of the interpolated root and its secant
-        step).
-    m, g, g_se, chi2 : float
+    weight : float or None
+        The chosen weight: the best refit among the chosen crossing and its
+        secant steps. ``None`` if ``m`` never changes sign over the sweep
+        (a warning is also raised).
+    m, g, g_se, chi2 : float or None
         ``m(w)``, the effective degrees of freedom ``G`` with its standard
         error, and ``χ²`` (quoted weights), at ``weight``.
     n_real : float
         The number of real data.
     accepted : bool or None
-        Whether ``|m| ≤ 3 g_se`` at ``weight``; ``None`` if no refit was made.
+        Whether ``|m| ≤ 3 g_se`` at ``weight`` (``False`` with a warning if
+        not, or if there is no root); ``None`` if no refit was made.
     h : float or None
         Classic MaxEntropy's ``h(w) = 2 (w / s²) KL − G`` at ``weight``, a
         diagnostic only (``None`` unless the regularizer is a
         [`MaxEntropy`][virgil.imaging.MaxEntropy]).
     weight_band : tuple or None
-        The roots at ``s² + 2σ_s`` and ``s² − 2σ_s`` from the sweep alone.
+        The roots at ``s² + 2σ_s`` and ``s² − 2σ_s`` from the sweep alone;
+        an end is ``None`` (with a warning) if it has no root.
+    roots : tuple of float
+        Every interpolated root of ``m`` over the sweep, in sweep order.
     weights, m_sweep, g_sweep : array
         The sweep's weights, ``m`` and ``G``.
     trace : tuple
         ``(weight, m, g_se)`` of each refit.
     """
 
-    weight: float
-    m: float
-    g: float
-    g_se: float
-    chi2: float
+    weight: object
+    m: object
+    g: object
+    g_se: object
+    chi2: object
     n_real: float
     accepted: object
     h: object
     weight_band: object
+    roots: tuple
     weights: object
     m_sweep: object
     g_sweep: object
     trace: tuple
 
 
-def _lerp_root(weights, values):
-    """``(i, w)``: the first sign change of ``values`` between ``i`` and
-    ``i + 1``, interpolated linearly in ``ln w``; ``None`` if there is none."""
-    for i in range(len(values) - 1):
-        a, b = values[i], values[i + 1]
-        if not (onp.isfinite(a) and onp.isfinite(b)):
+def _lerp_roots(weights, values):
+    """``[(i, w)]``: each sign change of ``values`` from ``i`` to ``i + 1``
+    (or a zero at ``i``), interpolated linearly in ``ln w``. A non-finite
+    value warns and spoils its intervals."""
+    found = []
+    for i in range(len(values)):
+        a = values[i]
+        if not onp.isfinite(a):
+            warnings.warn(
+                f"dof_discrepancy: m is not finite at w = {weights[i]:.4g}; "
+                "the intervals either side are skipped.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
             continue
         if a == 0.0:
-            return i, float(weights[i])
-        if a * b < 0.0:
-            lw = onp.log(weights[i : i + 2])
-            return i, float(onp.exp(lw[0] - a * (lw[1] - lw[0]) / (b - a)))
-    return None
+            found.append((i, float(weights[i])))
+        elif i + 1 < len(values) and onp.isfinite(values[i + 1]):
+            b = values[i + 1]
+            if a * b < 0.0:
+                lw = onp.log(weights[i : i + 2])
+                found.append(
+                    (i, float(onp.exp(lw[0] - a * (lw[1] - lw[0]) / (b - a))))
+                )
+    return found
 
 
 def _hutchinson_g(

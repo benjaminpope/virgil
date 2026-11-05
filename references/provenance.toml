@@ -2230,3 +2230,13 @@ used_in = ["virgil.imaging:LCurve.dof_discrepancy"]
 note = "J. R. Stat. Soc. B 45, 133; the effective degrees of freedom Tr[K (K + H_R)^-1] of a regularized fit (cf. Hansen 1998, Rank-Deficient and Discrete Ill-Posed Problems, SIAM)"
 verified = true
 verified_via = "crossref"
+
+[ref.craven1979]
+authors = "Craven & Wahba"
+year = 1979
+title = "Smoothing noisy data with spline functions"
+doi = "10.1007/BF01404567"
+used_in = ["virgil.imaging:LCurve.dof_discrepancy"]
+note = "Numer. Math. 31, 377; the trace of the influence matrix as the effective degrees of freedom of a regularized fit"
+verified = true
+verified_via = "crossref"
