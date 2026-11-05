@@ -67,6 +67,7 @@ from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
 __provisional__ = (
+    "LinearImage",
     "MultipoleDisk",
     "ThinRing",
     "GaussianRing",
@@ -1822,7 +1823,112 @@ def _pixel_visibilities(
     return image_visibilities(fluxes, uu, vv, pixel_scale_mas, ft)
 
 
-class Image(Component):
+class _BrightnessImage(Component):
+    """Shared transform code of the pixel images, which define ``brightness``
+    (unit-sum pixels) and the fields ``support``, ``pixel_scale_mas``,
+    ``rotation_deg``, ``ft`` and ``blur_fwhm_mas``, which each subclass
+    declares itself (so that its pytree order is its own)."""
+
+    def _set_layout(
+        self,
+        shape,
+        name,
+        pixel_scale_mas,
+        support,
+        rotation_deg,
+        ft,
+        blur_fwhm_mas,
+    ):
+        """Validate and store the grid, support and transform options."""
+        if blur_fwhm_mas is not None and not (
+            onp.isfinite(blur_fwhm_mas) and blur_fwhm_mas > 0.0
+        ):
+            raise ValueError(
+                "blur_fwhm_mas must be None or finite and positive, "
+                f"not {blur_fwhm_mas}."
+            )
+        self.blur_fwhm_mas = (
+            None if blur_fwhm_mas is None else float(blur_fwhm_mas)
+        )
+        self.ft = _check_ft(ft)
+        if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
+            raise ValueError(
+                f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
+            )
+        self.pixel_scale_mas = float(pixel_scale_mas)
+        if len(shape) != 2:
+            raise ValueError(f"{name} must be a 2D array.")
+        if support is not None:
+            support = np.asarray(support, dtype=bool)
+            if support.shape != tuple(shape):
+                raise ValueError(
+                    f"support has shape {support.shape}, but {name} "
+                    f"has shape {tuple(shape)}."
+                )
+            any_pixel = concrete(np.any(support))
+            if any_pixel is not None and not bool(any_pixel):
+                raise ValueError("support must contain at least one pixel.")
+        self.support = support
+        self.rotation_deg = float(rotation_deg)
+
+    @property
+    def smooth_fwhm_mas(self):
+        """Deprecated alias of ``blur_fwhm_mas``."""
+        return self.blur_fwhm_mas
+
+    def smoothed(self):
+        """The pixels convolved with the Gaussian of ``blur_fwhm_mas``.
+
+        Returns ``brightness`` itself when there is no smoothing. Otherwise
+        an FFT convolution on a zero-padded grid, cropped to the image, so
+        flux spreading past the edges is lost; see
+        ``virgil._geometry.gaussian_smooth`` for how closely
+        its transform matches the analytic Gaussian taper.
+        """
+        if self.blur_fwhm_mas is None:
+            return self.brightness
+        return gaussian_smooth(
+            self.brightness, self.blur_fwhm_mas / self.pixel_scale_mas
+        )
+
+    def _blur(self, u, v):
+        # Unrotated baselines in wavelengths: the taper is isotropic.
+        if self.blur_fwhm_mas is None:
+            return 1.0
+        return gaussian_taper(u * u + v * v, self.blur_fwhm_mas)
+
+    def _centred_cvis(self, uu, vv):
+        uu, vv = rotate(uu, vv, -self.rotation_deg)
+        vis = image_visibilities(
+            self.brightness, uu, vv, self.pixel_scale_mas, self.ft
+        )
+        return vis * self._blur(uu, vv)
+
+    def model_on_grid(self, u, v, wavel, grid):
+        vis = _pixel_visibilities(
+            self.brightness,
+            self.pixel_scale_mas,
+            self.rotation_deg,
+            u,
+            v,
+            wavel,
+            grid,
+            self.ft,
+        )
+        vis = vis * self._blur(u / wavel, v / wavel)
+        return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        # Bilinear resampling of the (smoothed) pixels, exact at their centres.
+        xx, yy = rotate(xx, yy, -self.rotation_deg)
+        brightness = self.smoothed()
+        nrow, ncol = brightness.shape
+        rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
+        cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
+        return map_coordinates(brightness, [rows, cols], order=1)
+
+
+class Image(_BrightnessImage):
     """Pixelised brightness distribution, for image reconstruction.
 
     Pixel fluxes are ``softmax(log_brightness)`` over the pixels in
@@ -1894,42 +2000,27 @@ class Image(Component):
         ft="auto",
         blur_fwhm_mas=None,
     ):
-        if blur_fwhm_mas is not None and not (
-            onp.isfinite(blur_fwhm_mas) and blur_fwhm_mas > 0.0
-        ):
-            raise ValueError(
-                "blur_fwhm_mas must be None or finite and positive, "
-                f"not {blur_fwhm_mas}."
-            )
-        self.blur_fwhm_mas = (
-            None if blur_fwhm_mas is None else float(blur_fwhm_mas)
-        )
-        self.ft = _check_ft(ft)
         if not hasattr(log_brightness, "evaluate"):
             log_brightness = np.asarray(log_brightness, dtype=float)
         self.log_brightness = log_brightness
-        if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
-            raise ValueError(
-                f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
-            )
-        self.pixel_scale_mas = float(pixel_scale_mas)
+        self.pixel_scale_mas = pixel_scale_mas  # a field evaluates on it
         eta = self.eta
-        if eta.ndim != 2:
-            raise ValueError("log_brightness must be a 2D array.")
-        if support is not None:
-            support = np.asarray(support, dtype=bool)
-            if support.shape != eta.shape:
-                raise ValueError(
-                    f"support has shape {support.shape}, but log_brightness "
-                    f"has shape {eta.shape}."
-                )
-            any_pixel = concrete(np.any(support))
-            if any_pixel is not None and not bool(any_pixel):
-                raise ValueError("support must contain at least one pixel.")
-        self.support = support
+        self._set_layout(
+            eta.shape,
+            "log_brightness",
+            pixel_scale_mas,
+            support,
+            rotation_deg,
+            ft,
+            blur_fwhm_mas,
+        )
         # Reject a log-brightness whose softmax over the support is not
         # finite (skipped under jax.jit).
-        live = np.ones(eta.shape, dtype=bool) if support is None else support
+        live = (
+            np.ones(eta.shape, dtype=bool)
+            if self.support is None
+            else self.support
+        )
         if concrete(np.any(live & (np.isnan(eta) | (eta == np.inf)))):
             raise ValueError("log_brightness must not be NaN or +inf.")
         finite = concrete(np.any(live & np.isfinite(eta)))
@@ -1937,7 +2028,6 @@ class Image(Component):
             raise ValueError(
                 "log_brightness needs at least one finite (supported) pixel."
             )
-        self.rotation_deg = float(rotation_deg)
         self._place(flux, dra, ddec)
 
     @classmethod
@@ -1994,61 +2084,175 @@ class Image(Component):
         flat = jax.nn.softmax(eta.ravel(), where=where)
         return flat.reshape(eta.shape)
 
+
+class LinearImage(_BrightnessImage):
+    """Pixel image whose fitted values are the pixel fluxes themselves.
+
+    The free array ``pixels`` is the flux of each pixel in ``support``
+    (``parametrisation="linear"``, to be kept non-negative by bounds: see
+    ``bounds``) or its square root (``"sqrt"``, flux ``x**2``, unbounded and
+    so usable with any `fit` method). The total flux is the sum of the pixel
+    fluxes: there is no separate ``flux`` to fit (a free flux times free
+    pixel amplitudes is an exact scale degeneracy), and inside a
+    [`System`][virgil.models.System] the component's weight is that sum. The
+    ``flux`` field is fixed at 1 and must not be fitted. ``brightness`` is
+    the unit-sum image, as for an [`Image`][virgil.models.Image].
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    The data see the total flux only through a ``System``'s weights. A lone
+    ``LinearImage`` (or the radio Toeplitz term, where ``cal.flux`` sets the
+    scale) fixes nothing, so TSV, TV or ``StarletL1`` shrink it towards zero:
+    put it in a ``System`` with a fixed-flux component, or use ``MaxEntropy``.
+    The radio terms refuse it for that reason, and ``diagnose`` and the
+    ensemble helpers do not cover it yet.
+
+    Unlike the softmax of an ``Image``, pixels can reach exactly zero, which
+    the minimiser of TSV, TV, ``StarletL1`` or an unregularised fit needs.
+    The ``"sqrt"`` form is the choice for
+    [`MaxEntropy`][virgil.imaging.MaxEntropy]: it keeps the entropy's
+    interior minimum, and its metric ``4 I`` is that of entropic mirror
+    descent. ``x = 0`` is a stationary point, so start strictly positive.
+
+    Regularizers act on ``fluxes / reference_flux``, so their weights keep
+    their meaning and TSV, TV and ``StarletL1`` stay convex in a linear
+    image; the weight drifts by ``(F / reference_flux)**2`` if the fitted
+    flux ``F`` moves far from it. Source: SMILI's non-negative linear pixels,
+    [Akiyama et al. (2017)](../references.md#akiyama2017) (also AJ 153, 159); the ``"sqrt"`` form
+    is experimental, with no published source found.
+
+    Parameters
+    ----------
+    pixels : array-like, shape (nrow, ncol)
+        Pixel fluxes (``"linear"``, non-negative) or their square roots
+        (``"sqrt"``), oriented as [`render`][virgil.models.SourceModel.render]
+        (row 0 North, column 0 East).
+    pixel_scale_mas : float
+        Pixel size in mas, as for [`Image`][virgil.models.Image].
+    support, rotation_deg, ft, blur_fwhm_mas : optional
+        As for [`Image`][virgil.models.Image].
+    dra, ddec : optional
+        As for any [`Component`][virgil.models.Component].
+    parametrisation : {"linear", "sqrt"}, optional
+        What ``pixels`` holds (default ``"linear"``).
+    reference_flux : float, optional
+        The fixed flux ``F0`` that regularizers divide by (default: the sum of
+        the starting pixel fluxes).
+
+    Examples
+    --------
+    >>> image = LinearImage(np.full((8, 8), 0.01), pixel_scale_mas=2.0)
+    >>> round(float(image.total_flux), 4)
+    0.64
+    """
+
+    pixels: jax.Array
+    support: jax.Array | None
+    pixel_scale_mas: float = eqx.field(static=True)
+    rotation_deg: float = eqx.field(static=True)
+    ft: str = eqx.field(static=True)
+    blur_fwhm_mas: float | None = eqx.field(static=True)
+    parametrisation: str = eqx.field(static=True)
+    reference_flux: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        pixels,
+        pixel_scale_mas,
+        support=None,
+        dra=0.0,
+        ddec=0.0,
+        rotation_deg=0.0,
+        ft="auto",
+        blur_fwhm_mas=None,
+        parametrisation="linear",
+        reference_flux=None,
+    ):
+        if parametrisation not in ("linear", "sqrt"):
+            raise ValueError(
+                f"parametrisation must be 'linear' or 'sqrt', not {parametrisation!r}."
+            )
+        self.parametrisation = parametrisation
+        pixels = np.asarray(pixels, dtype=float)
+        self.pixels = pixels
+        self._set_layout(
+            pixels.shape,
+            "pixels",
+            pixel_scale_mas,
+            support,
+            rotation_deg,
+            ft,
+            blur_fwhm_mas,
+        )
+        if concrete(np.any(~np.isfinite(pixels))):
+            raise ValueError("pixels must be finite.")
+        if parametrisation == "linear" and concrete(np.any(pixels < 0.0)):
+            raise ValueError("linear pixels must be non-negative.")
+        if reference_flux is None:
+            total = concrete(np.sum(self._fluxes(pixels)))
+            if total is None:
+                raise ValueError(
+                    "reference_flux is required when the pixels are traced."
+                )
+            reference_flux = float(total)
+        if not (onp.isfinite(reference_flux) and reference_flux > 0.0):
+            raise ValueError(
+                f"reference_flux must be finite and positive, not {reference_flux}."
+            )
+        self.reference_flux = float(reference_flux)
+        self._place(1.0, dra, ddec)
+
+    def _fluxes(self, pixels):
+        flux = pixels**2 if self.parametrisation == "sqrt" else pixels
+        return (
+            flux if self.support is None else np.where(self.support, flux, 0.0)
+        )
+
     @property
-    def smooth_fwhm_mas(self):
-        """Deprecated alias of ``blur_fwhm_mas``."""
-        return self.blur_fwhm_mas
+    def fluxes(self):
+        """Pixel fluxes: non-negative, zero outside ``support``."""
+        return self._fluxes(self.pixels)
 
-    def smoothed(self):
-        """The pixels convolved with the Gaussian of ``blur_fwhm_mas``.
+    @property
+    def total_flux(self):
+        """The image's flux, the sum of ``fluxes``."""
+        return np.sum(self.fluxes)
 
-        Returns ``brightness`` itself when there is no smoothing. Otherwise
-        an FFT convolution on a zero-padded grid, cropped to the image, so
-        flux spreading past the edges is lost; see
-        ``virgil._geometry.gaussian_smooth`` for how closely
-        its transform matches the analytic Gaussian taper.
+    @property
+    def brightness(self):
+        """Pixel fluxes divided by the total: unit sum, zero outside ``support``."""
+        fluxes = self.fluxes
+        return fluxes / np.sum(fluxes)
+
+    @property
+    def regularised_pixels(self):
+        """``fluxes / reference_flux``, the pixels that regularizers penalize."""
+        return self.fluxes / self.reference_flux
+
+    def _weight(self, wavel=None):
+        return self.total_flux
+
+    def bounds(self):
+        """``(lower, upper)`` arrays for a bounded optimiser, or ``None``.
+
+        Linear pixels have ``0 <= flux < inf`` inside ``support`` and ``(0,
+        0)`` outside it; the square-root form needs no bounds.
         """
-        if self.blur_fwhm_mas is None:
-            return self.brightness
-        return gaussian_smooth(
-            self.brightness, self.blur_fwhm_mas / self.pixel_scale_mas
+        if self.parametrisation == "sqrt":
+            return None
+        live = (
+            onp.ones(self.pixels.shape, bool)
+            if self.support is None
+            else onp.asarray(self.support)
         )
+        return onp.zeros(live.shape), onp.where(live, onp.inf, 0.0)
 
-    def _blur(self, u, v):
-        # Unrotated baselines in wavelengths: the taper is isotropic.
-        if self.blur_fwhm_mas is None:
-            return 1.0
-        return gaussian_taper(u * u + v * v, self.blur_fwhm_mas)
-
-    def _centred_cvis(self, uu, vv):
-        uu, vv = rotate(uu, vv, -self.rotation_deg)
-        vis = image_visibilities(
-            self.brightness, uu, vv, self.pixel_scale_mas, self.ft
-        )
-        return vis * self._blur(uu, vv)
-
-    def model_on_grid(self, u, v, wavel, grid):
-        vis = _pixel_visibilities(
-            self.brightness,
-            self.pixel_scale_mas,
-            self.rotation_deg,
-            u,
-            v,
-            wavel,
-            grid,
-            self.ft,
-        )
-        vis = vis * self._blur(u / wavel, v / wavel)
-        return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
-
-    def _centred_image(self, xx, yy, pixel_scale_mas):
-        # Bilinear resampling of the (smoothed) pixels, exact at their centres.
-        xx, yy = rotate(xx, yy, -self.rotation_deg)
-        brightness = self.smoothed()
-        nrow, ncol = brightness.shape
-        rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
-        cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
-        return map_coordinates(brightness, [rows, cols], order=1)
+    def is_physical(self):
+        ok = super().is_physical()
+        if self.parametrisation == "linear":
+            ok = ok & np.all(self.pixels >= 0.0)
+        return ok & (self.total_flux > 0.0)
 
 
 class _PixelRendered(Component):
@@ -5198,7 +5402,9 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
         return total * offset_phase(
             u / wavel, v / wavel, model.dra, model.ddec
         )
-    if isinstance(model, Component) and not isinstance(model, Image):
+    if isinstance(model, Component) and not isinstance(
+        model, _BrightnessImage
+    ):
         ra, dec = ra0 + model.dra, dec0 + model.ddec
         arg = bandwidth * mas2rad * (u * ra + v * dec) / wavel**2
         return model.model(u, v, wavel) * np.sinc(arg)
@@ -5938,13 +6144,14 @@ def _cvis_gaussian_envelope(u, v, fwhm):
     )
 
 
-def _scene_images(scene, prefix=""):
+def _scene_images(scene, prefix="", kinds=Image):
     """Yield ``(path prefix, Image)`` for each Image in a scene, walking
-    ``System`` components and ``Rotated`` sources (``"env."``, ``"source."``)."""
-    if isinstance(scene, Image):
+    ``System`` components and ``Rotated`` sources (``"env."``, ``"source."``).
+    ``kinds`` widens the match, e.g. to ``(Image, LinearImage)``."""
+    if isinstance(scene, kinds):
         yield prefix, scene
     elif isinstance(scene, System):
         for name, part in scene.components.items():
-            yield from _scene_images(part, prefix + name + ".")
+            yield from _scene_images(part, prefix + name + ".", kinds)
     elif isinstance(scene, Rotated):
-        yield from _scene_images(scene.source, prefix + "source.")
+        yield from _scene_images(scene.source, prefix + "source.", kinds)
