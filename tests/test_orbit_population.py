@@ -284,3 +284,34 @@ def test_the_oracle_and_the_diagnostics_change_no_fit_result():
     recs = json.loads(on["cells_json"])
     assert all("persist_error" not in r for r in recs)
     assert any(r["matched"] for r in recs) or all(r["flagged"] for r in recs)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+def test_position_cells_matches_main_before_the_counters_were_added():
+    """Refactor equivalence, not a correctness oracle: the values were computed
+    on ``origin/main`` at cdaa3f82825115379e0d7e688ab21812575cf384 (before
+    the step-cap counters and the ``_laplace_modes`` / ``_cell_evidence``
+    split) for seed 0, system 13 (K = 6, one season). The branch gave the same
+    numbers to the last digit; the tolerance is cross-platform drift only."""
+    import jax
+
+    rng, _ = pop.streams(0, 13)
+    nights = pop.draw_nights(rng)
+    _, fit = pop.fit_domain(nights)
+    pop._loguniform(rng, *pop.P_TRUE)
+    sysd = pop.draw_system(rng, nights, fit)
+    assert len(sysd["summaries"]) == 6
+    out = pop.oc_cells.position_cells(
+        sysd["summaries"], fit, jax.random.fold_in(jax.random.key(0), 13),
+        jitter=0.0, e_max=pop.oc_cells.E_MAX,
+    )  # fmt: skip
+    assert [c.n for c in out.cells] == [0, 1, 2, 3, 4, 5]
+    assert [len(f.modes) for f in out.fits] == [9, 1, 1, 1, 1, 0]
+    onp.testing.assert_allclose(
+        [f.log_z for f in out.fits],
+        [-322.25829475326555, -278.90501993907327, -391.9133024481856,
+         -397.14838496678516, -397.2668781833448, -397.2693751159761],
+        atol=1e-6,
+    )  # fmt: skip
+    assert onp.isnan(out.p_pos).all()  # the system failed on main too
