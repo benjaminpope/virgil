@@ -1640,10 +1640,9 @@ def _fisher_diagonal(problem, z, probes, round=0):
     curvature of the priors, the Hessian diagonal of the regularizers (floored
     at zero, as for ``gauss_newton_mass``) and, for scalar-χ² terms, JᵀHJ through
     their ``curvature_params`` (also floored). A regularizer with
-    ``metric_rows`` (maximum entropy) gives its own positive curvature instead,
-    which replaces the rest on the coordinates it covers (the data JᵀJ is
-    dropped there on purpose: whitened by the regularizer it is the identity
-    plus a low-rank part). Probes are drawn
+    ``metric_rows`` (maximum entropy) adds its own positive curvature to the
+    rest (replacing the data JᵀJ there froze faint pixels once the data
+    curvature dominated, as for ALMA). Probes are drawn
     afresh in each ``round`` (deterministically), so that refreshes do not
     repeat an error."""
     key = jax.random.PRNGKey(round)
@@ -1684,12 +1683,7 @@ def _fisher_diagonal(problem, z, probes, round=0):
             model = _reference(problem.build(unravel(x)))
             return np.concatenate([r.metric_rows(model) for r in metric])
 
-        # deliberate: the data JᵀJ and other terms are dropped on these pixels.
-        # Fewer L-BFGS steps (not timed) on one 8×8 AMI test, ``precondition=
-        # "diag"``, MaxEntropy weights 1e3, 50, 3: 13, 41, 45 as coded; 16, 48,
-        # 146 with JᵀJ added back (2026-10-30). The objective is unchanged.
-        curvature = _gn_diagonal(rows, flat, probes, key)
-        diagonal = np.where(curvature > 0.0, curvature, diagonal)
+        diagonal = diagonal + _gn_diagonal(rows, flat, probes, key)
     return diagonal
 
 

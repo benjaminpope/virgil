@@ -122,31 +122,35 @@ def test_max_entropy_curvature_is_the_weight_times_the_image():
         logits = start.env.log_brightness
         if eta:
             logits = jax.random.normal(jax.random.PRNGKey(0), logits.shape)
-        diag = gauss_newton_diag(
-            start,
-            priors,
-            data,
-            {"env.log_brightness": logits},
-            regularizers=[MaxEntropy(7.0, path="env")],
+        values = {"env.log_brightness": logits}
+        full = gauss_newton_diag(
+            start, priors, data, values, regularizers=[MaxEntropy(7.0, path="env")]
         )["env.log_brightness"]
-        b = jax.nn.softmax(logits.ravel()).reshape(logits.shape)
+        diag = full - gauss_newton_diag(start, priors, data, values)[
+            "env.log_brightness"
+        ]
+        b =jax.nn.softmax(logits.ravel()).reshape(logits.shape)
         onp.testing.assert_allclose(diag, 7.0 * b * (1.0 - b), rtol=1e-6)
         if eta:  # far from w b, which the 3 x 3 image can tell apart
             assert onp.max(onp.abs(diag / (7.0 * b) - 1.0)) > 0.1
 
 
-def test_the_entropy_metric_replaces_the_data_curvature_on_its_pixels():
+def test_the_entropy_metric_is_added_to_the_data_curvature():
     start, priors, data = _image_fit(8)
-    values = {"env.log_brightness": start.env.log_brightness}
+    key = "env.log_brightness"
+    values = {key: start.env.log_brightness}
     regularizers = [MaxEntropy(7.0, path="env")]
+    plain = gauss_newton_diag(start, priors, data, values)[key]
     once = gauss_newton_diag(
         start, priors, data, values, regularizers=regularizers
-    )
+    )[key]
     twice = gauss_newton_diag(
         start, priors, [data, data], values, regularizers=regularizers
-    )
+    )[key]
+    assert onp.all(plain > 0)
+    # the data part doubles with the data, the entropy part does not
     onp.testing.assert_allclose(
-        twice["env.log_brightness"], once["env.log_brightness"], rtol=1e-6
+        twice - once, plain, rtol=1e-6
     )
 
 
