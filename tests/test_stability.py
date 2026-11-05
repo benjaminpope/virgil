@@ -78,7 +78,7 @@ EXPECTED = {
         "EvidenceGrid",
     },
     "virgil.imaging": {"clean", "CleanResult"},
-    "virgil.fitting": {"gauss_newton_diag"},
+    "virgil.fitting": {"gauss_newton_diag", "kkt_report"},
     "virgil.plotting": {"plot_field_draws"},
     "virgil.likelihood": {
         "group_outlier_mixture",
