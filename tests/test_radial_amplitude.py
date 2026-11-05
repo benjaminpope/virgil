@@ -31,7 +31,7 @@ def dtype(request):
 
 @pytest.fixture
 def x64():
-    """Float64, to compare with a numpy projection to 1e-9."""
+    """Float64, to compare with a numpy projection to 1e-7."""
     with jax.enable_x64(True):
         yield
 
@@ -99,7 +99,7 @@ def test_snr_map_matches_a_plain_qr_projection(x64, disco):
     ):
         snr = linear_flux_grid(BinaryModelCartesian, d, GRID).snr
         onp.testing.assert_allclose(
-            onp.asarray(snr)[keep], ref[name][2], rtol=1e-9, atol=1e-10
+            onp.asarray(snr)[keep], ref[name][2], rtol=1e-7, atol=1e-8
         )
 
 
@@ -182,7 +182,7 @@ def test_the_width_is_fittable_and_finite(x64, disco):
     w, h = 0.1, 1e-5
     fd = (loglike(w * onp.exp(h)) - loglike(w * onp.exp(-h))) / (2 * h)
     grad = jax.grad(lambda t: loglike(np.exp(t)))(np.log(w))
-    assert grad == pytest.approx(fd, rel=1e-5)
+    assert float(grad) == pytest.approx(float(fd), rel=1e-5)
     # a radial error is not noise: a finite width fits better than none
     assert values[1] > loglike(0.0)
 

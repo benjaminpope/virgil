@@ -103,6 +103,7 @@
  "tests/test_plot_field_draws.py": 3.0,
  "tests/test_plotting_detection.py": 1.1,
  "tests/test_priors.py": 14.7,
+ "tests/test_radial_amplitude.py": 4.0,
  "tests/test_radial_gp.py": 128.4,
  "tests/test_radio.py": 38.0,
  "tests/test_radio_clean.py": 9.7,

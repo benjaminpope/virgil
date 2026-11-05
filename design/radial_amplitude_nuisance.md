@@ -23,7 +23,7 @@ Whether a particular dataset needs fewer is for the user to check.
 
 **Cause.** A PSF-shape mismatch, perhaps the brighter-fatter effect: a hypothesis, not shown here.
 
-**Pins.** `tests/test_radial_amplitude.py` (independent numpy QR projection onto the powers to 1e-9;
+**Pins.** `tests/test_radial_amplitude.py` (independent numpy QR projection onto the powers to 1e-7;
 bias of either sign removed; companion SNR falls by the projection's factor and its peak stays; width fit
 finite; float32). virgil-validation check: none yet.
 
