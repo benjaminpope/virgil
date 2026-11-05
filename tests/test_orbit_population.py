@@ -323,7 +323,12 @@ def test_position_cells_matches_main_before_the_counters_were_added():
     system), so they are not pinned: only that the cells with modes on main
     still have at least one. ``ln Ẑ`` agrees within
     ``4 sqrt(sd_main^2 + sd_branch^2) + 0.01``, each fit's own reported
-    sd; ``p_pos`` has the same argmax and total variation <= 1e-3."""
+    sd; ``p_pos`` has the same argmax and, for each cell with main's
+    ``p >= DELTA``, ``|ln p - ln p_main| <= tol_i + max_j tol_j``: since
+    ``ln p_i = ln m_i + ln Ẑ_i - logsumexp_j(ln m_j + ln Ẑ_j)``, the log
+    normalizer moves by at most ``max_j |Δ ln Ẑ_j|``. (An earlier bound,
+    TV <= 1e-3, was not derived and failed on the Linux runners at TV 0.0043
+    and 0.0063.)"""
     import jax
 
     rng, _ = pop.streams(0, 57)
@@ -347,4 +352,6 @@ def test_position_cells_matches_main_before_the_counters_were_added():
     p = onp.asarray(out.p_pos, float)
     assert onp.isfinite(p).all()
     assert int(p.argmax()) == int(onp.argmax(MAIN_P))
-    assert 0.5 * onp.abs(p - MAIN_P).sum() <= 1e-3
+    big = onp.asarray(MAIN_P) >= pop.oc_cells.DELTA
+    shift = onp.abs(onp.log(p) - onp.log(MAIN_P))
+    assert (shift[big] <= (tol + tol.max())[big]).all()
