@@ -174,6 +174,8 @@ class _Objective(eqx.Module):
         if not self.priors:
             raise ValueError("priors must name at least one free parameter.")
         if not boxed and isinstance(model, SourceModel):
+            import numpyro.distributions as dist
+
             # Linear pixels are non-negative only under L-BFGS-B's bounds.
             for path in self.priors:
                 parent, _, name = path.rpartition(".")
@@ -182,6 +184,9 @@ class _Objective(eqx.Module):
                     name == "pixels"
                     and isinstance(image, LinearImage)
                     and image.bounds() is not None
+                    and isinstance(
+                        _base(self.priors[path]), dist.ImproperUniform
+                    )
                 ):
                     raise TypeError(
                         f"{path!r}: linear pixels must stay non-negative, "
@@ -680,6 +685,67 @@ class FitResult:
     info: dict
 
 
+# deliberate: fit's argument checks, kept apart so fit stays short
+def _check_options(
+    method,
+    precondition,
+    post_step,
+    max_step_size,
+    learning_rate,
+    dtype,
+    time_limit,
+    ftol_abs,
+    ftol_window,
+):
+    """Validate ``fit``'s options; return ``(precondition, dtype)`` to use."""
+    if not math.isfinite(max_step_size) or max_step_size <= 0:
+        raise ValueError(
+            f"max_step_size must be finite and positive, not {max_step_size}."
+        )
+    if time_limit is not None and not time_limit >= 0:
+        raise ValueError(
+            f"time_limit must be a number of seconds, not {time_limit}."
+        )
+    if ftol_window < 1:
+        raise ValueError(f"ftol_window must be at least 1, not {ftol_window}.")
+    if ftol_abs is not None and not 0 <= ftol_abs < math.inf:
+        raise ValueError(
+            f"ftol_abs must be finite and non-negative, not {ftol_abs}."
+        )
+    if precondition not in (None, False, "diag"):
+        raise ValueError(
+            f"precondition must be None or 'diag', not {precondition!r}."
+        )
+    precondition = bool(precondition)
+    if post_step is not None and (method != "adam" or precondition):
+        raise ValueError(
+            "post_step needs method='adam' without precondition: a projection "
+            "breaks L-BFGS's curvature pairs and the preconditioner's metric."
+        )
+    if method == "lbfgsb" and dtype != "float64":
+        warnings.warn(
+            "method='lbfgsb' computes in float64 (the solver is double "
+            f"precision); dtype={dtype!r} is ignored.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+        dtype = "float64"
+    if method not in (None, "lm", "lbfgs", "adam", "lbfgsb"):
+        raise ValueError(
+            "method must be 'lm', 'lbfgs', 'adam' or 'lbfgsb', "
+            f"not {method!r}."
+        )
+    if method == "lbfgsb" and precondition:
+        raise ValueError("method='lbfgsb' does not take precondition.")
+    if method == "lbfgsb" and (max_step_size != 2.0 or learning_rate != 1e-2):
+        warnings.warn(
+            "method='lbfgsb' ignores max_step_size and learning_rate.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    return precondition, dtype
+
+
 @renamed()
 def fit(
     model,
@@ -725,7 +791,7 @@ def fit(
         Loss penalties (e.g. [`virgil.imaging`][virgil.imaging]) and priors on
         error terms; see [common arguments](../common_arguments.md).
     init, method : dict and str, optional
-        Starting values by path (required for a function model); ``"lm"`` (default for least squares), ``"lbfgs"`` (for penalties), ``"adam"`` or
+        Starting values by path (required for a function model); ``"lm"`` (default for least squares), ``"lbfgs"`` (for penalties, which LM also fits in float64), ``"adam"`` or
         ``"lbfgsb"`` (bounded by ``Uniform`` priors and linear ``LinearImage`` pixels).
     max_steps, gtol, max_step_size : int and float, optional
         Step limit (1000 LM, 20000 L-BFGS and L-BFGS-B, 2000 Adam), gradient
@@ -765,40 +831,17 @@ def fit(
         Model, values and diagnostics; warns if LM, L-BFGS or Adam did not converge
         (``info["stop"]`` gives the reason, ``info["grad_norm"]`` the gradient).
     """
-    if not math.isfinite(max_step_size) or max_step_size <= 0:
-        raise ValueError(
-            f"max_step_size must be finite and positive, not {max_step_size}."
-        )
-    if time_limit is not None and not time_limit >= 0:
-        raise ValueError(
-            f"time_limit must be a number of seconds, not {time_limit}."
-        )
-    if ftol_window < 1:
-        raise ValueError(f"ftol_window must be at least 1, not {ftol_window}.")
-    if ftol_abs is not None and not 0 <= ftol_abs < math.inf:
-        raise ValueError(
-            f"ftol_abs must be finite and non-negative, not {ftol_abs}."
-        )
-    if precondition not in (None, False, "diag"):
-        raise ValueError(
-            f"precondition must be None or 'diag', not {precondition!r}."
-        )
-    precondition = bool(precondition)
-    if post_step is not None and (method != "adam" or precondition):
-        raise ValueError(
-            "post_step needs method='adam' without precondition: a projection "
-            "breaks L-BFGS's curvature pairs and the preconditioner's metric."
-        )
-    if method == "lbfgsb" and dtype != "float64":
-        warnings.warn(
-            "method='lbfgsb' computes in float64 (the solver is double "
-            f"precision); dtype={dtype!r} is ignored.",
-            UserWarning,
-            stacklevel=external_stacklevel(),
-        )
-        dtype = "float64"
-    if method == "lbfgsb" and precondition:
-        raise ValueError("method='lbfgsb' does not take precondition.")
+    precondition, dtype = _check_options(
+        method,
+        precondition,
+        post_step,
+        max_step_size,
+        learning_rate,
+        dtype,
+        time_limit,
+        ftol_abs,
+        ftol_window,
+    )
     budget = _Budget(time_limit, progress)
     with run_in(dtype):
         problem = cast_tree(
@@ -833,11 +876,6 @@ def fit(
         ndata = [d.n_independent for d in problem.data]
         # A term's size is its ``n_data``, or the length of its residuals.
         start = problem.constrain(z0)
-        if method not in ("lm", "lbfgs", "adam", "lbfgsb"):
-            raise ValueError(
-                "method must be 'lm', 'lbfgs', 'adam' or 'lbfgsb', "
-                f"not {method!r}."
-            )
         originals = problem.likelihoods
         resolved = [
             t.resolve(start, method == "lm")
@@ -864,13 +902,7 @@ def fit(
         if method == "lbfgsb":
             limit = max_steps or 20_000
             z, steps, converged, stop, grad_norm, extra = _lbfgsb(
-                problem,
-                z0,
-                float(scale),
-                limit,
-                float(gtol),
-                lbfgs_memory or 10,
-                budget,
+                problem, z0, traced_scale, limit, gtol, lbfgs_memory, budget
             )
         elif method == "lm":
             limit = max_steps or 1000
@@ -948,7 +980,7 @@ def fit(
             **({"loss_history": history} if method == "adam" else {}),
             "post_step": post_step is not None,
             "precondition": "diag"
-            if precondition and method != "lm"
+            if precondition and method not in ("lm", "lbfgsb")
             else None,
             "precondition_rounds": rounds,
             **extra,
@@ -2129,7 +2161,10 @@ def _box(problem, z):
     """``(lower, upper)`` flat bounds of the coordinates of a boxed problem.
 
     From ``Uniform`` priors, and from the non-negative pixels of a linear
-    ``LinearImage`` (``LinearImage.bounds``); the two are intersected.
+    ``LinearImage`` (``LinearImage.bounds``); the two are intersected. Other
+    priors (``LogUniform``, isotropic angles, positive ``ImproperUniform``)
+    raise ``TypeError``, as do angle vectors and error terms; a function model
+    gets no image bounds, with a warning if a flat prior could hold pixels.
     """
     import numpyro.distributions as dist
 
@@ -2155,10 +2190,19 @@ def _box(problem, z):
             lo, hi = onp.full(shape, -onp.inf), onp.full(shape, onp.inf)
         else:
             raise TypeError(
-                f"method='lbfgsb' needs {path!r} to have a Uniform or flat "
-                f"real prior to take bounds from, not {type(base).__name__}."
+                f"method='lbfgsb' supports only Uniform priors and flat real "
+                f"priors (ImproperUniform on the real line, as image_priors "
+                f"gives); {path!r} has {type(base).__name__}."
             )
         parent, _, name = path.rpartition(".")
+        if not isinstance(problem.model, SourceModel) and flat_real:
+            warnings.warn(
+                f"method='lbfgsb' cannot see inside a function model: "
+                f"{path!r} is unbounded, so LinearImage pixels may go "
+                "negative.",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
         if isinstance(problem.model, SourceModel) and name == "pixels":
             image = problem.model.get(parent) if parent else problem.model
             box = image.bounds() if isinstance(image, LinearImage) else None
@@ -2185,10 +2229,19 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
     """
     from scipy.optimize import Bounds, minimize
 
+    memory = memory or 10
     x0, unravel = problem.ravel(z0)
     lower, upper = _box(problem, z0)
-    x0 = onp.clip(onp.asarray(x0, float), lower, upper)
-    scale = np.asarray(scale)
+    x0 = onp.asarray(x0, float)
+    if onp.any((x0 < lower) | (x0 > upper)):
+        warnings.warn(
+            "method='lbfgsb': the starting values are outside the bounds "
+            "and are clipped to them.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    x0 = onp.clip(x0, lower, upper)
+    scale, gtol = np.asarray(scale), float(gtol)
 
     def evaluate(x):
         value, grad = _value_and_gradient(problem, z0, scale, np.asarray(x))

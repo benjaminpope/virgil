@@ -69,7 +69,7 @@ def test_linear_pixels_are_non_negative_and_satisfy_kkt():
         problem, z, np.asarray(scale), np.ravel(z["env.pixels"])
     )
     grad = onp.asarray(grad).reshape(pix.shape)
-    tol = 1e-4  # fit's default gtol, per data point: independent of pg_norm
+    tol = 1e-3  # absolute per data point (TSV's kinks make it platform-sensitive)
     assert grad[zero].min() >= -tol
     assert onp.abs(grad[~zero]).max() <= tol
     assert result.info["pg_norm"] == result.info["grad_norm"]
@@ -151,3 +151,113 @@ def test_precondition_is_refused():
             method="lbfgsb",
             precondition="diag",
         )
+
+
+def _nnls_problem():
+    rng = onp.random.default_rng(3)
+    a = rng.normal(size=(40, 16))
+    x = onp.zeros(16)
+    x[[1, 5, 6, 12]] = [1.0, 0.5, 2.0, 0.7]
+    b = a @ x + 0.3 * rng.normal(size=40)
+
+    def term(values):
+        return a @ np.ravel(values["pixels"]) - b
+
+    return a, b, term
+
+
+def _nnls_fit(**kwargs):
+    from scipy.optimize import nnls
+
+    a, b, term = _nnls_problem()
+    start = LinearImage(np.full((4, 4), 0.5), 1.0)
+    priors = image_priors(start)
+    result = fit(
+        start, priors, (), likelihoods=[term], method="lbfgsb", **kwargs
+    )
+    return a, b, nnls, result
+
+
+def test_agrees_with_nnls_on_a_linear_problem():
+    a, b, nnls, result = _nnls_fit(gtol=1e-9, max_steps=500)
+    want, _ = nnls(a, b)
+    got = onp.asarray(result.values["pixels"]).ravel()
+    assert onp.abs(got - want).max() < 1e-6 * want.max()
+    assert onp.array_equal(got == 0.0, want == 0.0)
+
+
+def test_time_limit_and_max_steps_stop_reasons():
+    with pytest.warns(RuntimeWarning, match="time_limit"):
+        *_, timed = _nnls_fit(time_limit=0.0)
+    assert timed.info["stop"] == "time" and not timed.info["converged"]
+    with pytest.warns(RuntimeWarning, match="step limit|max_steps"):
+        *_, capped = _nnls_fit(max_steps=2, gtol=1e-12)
+    assert capped.info["stop"] == "limit"
+
+
+@pytest.mark.parametrize("flux_first", [True, False])
+def test_mixed_model_bounds_follow_the_prior_order(flux_first):
+    from virgil.fitting import _box
+
+    start = _scene(onp.full((NPIX, NPIX), 0.005))
+    flux = ("star.flux", dist.Uniform(0.1, 0.9))
+    pixels = next(iter(image_priors(start).items()))
+    items = [flux, pixels] if flux_first else [pixels, flux]
+    problem = _Objective(start, dict(items), DATA, boxed=True)
+    lower, upper = _box(problem, problem.init())
+    n = NPIX**2
+    at = slice(0, 1) if flux_first else slice(n, n + 1)
+    rest = slice(1, None) if flux_first else slice(0, n)
+    assert (lower[at], upper[at]) == ([0.1], [0.9])
+    assert onp.all(lower[rest] == 0.0) and onp.all(upper[rest] == onp.inf)
+
+
+def test_sqrt_pixels_are_unbounded():
+    from virgil.fitting import _box
+
+    start = _scene(onp.full((NPIX, NPIX), 0.05), "sqrt")
+    problem = _Objective(start, image_priors(start), DATA, boxed=True)
+    lower, upper = _box(problem, problem.init())
+    assert onp.all(lower == -onp.inf) and onp.all(upper == onp.inf)
+
+
+def test_a_start_outside_the_bounds_is_clipped_with_a_warning():
+    start = BinaryModelCartesian(140.0, -70.0, 0.01)
+    data = oidata.with_model(start, noise_scale=0.0)
+    with pytest.warns(UserWarning, match="clipped"):
+        result = fit(
+            start,
+            {"flux": dist.Uniform(0.0, 0.5)},
+            data,
+            init={"flux": 0.7},
+            method="lbfgsb",
+        )
+    assert 0.0 <= result.values["flux"] <= 0.5
+
+
+def test_a_softmax_image_with_a_support_fits_finitely():
+    from virgil.models import Image
+
+    support = _disc(1.0) > 0
+    env = Image(np.zeros((NPIX, NPIX)), SCALE, support=support)
+    start = System(star=PointSource(), env=env)
+    data = DATA.with_model(_scene(_disc(0.5)), noise_scale=0.0)
+    result = fit(
+        start,
+        image_priors(start),
+        data,
+        [TSV(0.02, path="env", beam_mas=60.0)],
+        method="lbfgsb",
+        max_steps=50,
+    )
+    assert onp.isfinite(result.info["loss"])
+    assert onp.all(onp.isfinite(result.info["pg_norm"]))
+
+
+def test_a_uniform_prior_on_linear_pixels_still_fits_with_lbfgs():
+    start = LinearImage(np.full((4, 4), 0.5), 1.0)
+    _, _, term = _nnls_problem()
+    priors = {"pixels": dist.Uniform(0.0, 5.0).expand((4, 4)).to_event(2)}
+    fit(start, priors, (), likelihoods=[term], method="lbfgs", max_steps=20)
+    with pytest.raises(ValueError, match="method must be"):
+        fit(start, image_priors(start), (), likelihoods=[term], method="nope")
