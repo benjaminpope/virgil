@@ -49,6 +49,7 @@ from .radio import (
     _require_function,
     _scene_function,
     _TermBase,
+    _refuse_linear_image,
     _warn_double_blur,
 )
 
@@ -526,6 +527,7 @@ class _ToeplitzTerm(_TermBase):
 
     def _image(self, values):
         scene = self.scene(values)
+        _refuse_linear_image(scene)
         _warn_double_blur(scene, self.nuisance)
         image, offsets = _single_image(scene)
         layout = (
