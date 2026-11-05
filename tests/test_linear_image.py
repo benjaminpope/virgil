@@ -176,8 +176,9 @@ def test_sqrt_max_entropy_fit_reaches_the_default_image():
     assert float(mem.value(result.model)) < 1e-6 * float(mem.value(start))
     flat = 0.5 / NPIX**2
     assert onp.allclose(result.model.fluxes, flat, atol=1e-3 * flat)
-    with pytest.raises(ValueError, match="sqrt"):
-        image_priors(LinearImage(truth, SCALE))
+    linear = LinearImage(truth, SCALE)
+    with pytest.raises(TypeError, match="lbfgsb"):
+        fit(linear, image_priors(linear), (), [mem], method="lbfgs")
 
 
 def test_max_entropy_residuals_match_value_on_linear_image():

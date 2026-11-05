@@ -46,6 +46,7 @@ from .likelihood import (
     tied_log_prior,
 )
 from .models import (
+    LinearImage,
     MultipoleKernel,
     RadialGP,
     RadialGPFunction,
@@ -144,6 +145,7 @@ class _Objective(eqx.Module):
     noise: dict
     likelihoods: tuple
     flat: bool = eqx.field(static=True)
+    boxed: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -154,9 +156,11 @@ class _Objective(eqx.Module):
         noise=None,
         likelihoods=(),
         flat=True,
+        boxed=False,
     ):
         self.model = model
         self.flat = flat
+        self.boxed = boxed
         self.data = tuple(data) if isinstance(data, (list, tuple)) else (data,)
         self.likelihoods = tuple(likelihoods)
         self.priors = {path: _traced(p) for path, p in priors.items()}
@@ -222,10 +226,19 @@ class _Objective(eqx.Module):
 
     def _in_flat_coordinate(self, prior):
         """Whether ``prior``'s parameter is fitted in its flat coordinate."""
-        return self.flat and _flat_coordinate(prior) is not None
+        return (
+            self.flat
+            and not self.boxed
+            and _flat_coordinate(prior) is not None
+        )
 
     def bijection(self, prior):
-        """The map from unconstrained coordinates to ``prior``'s support."""
+        """The map from unconstrained coordinates to ``prior``'s support
+        (the identity if ``boxed``: the coordinates are the values)."""
+        if self.boxed:
+            from numpyro.distributions.transforms import IdentityTransform
+
+            return IdentityTransform()
         if self._in_flat_coordinate(prior):
             return _FlatBijection(*_flat_coordinate(prior))
         return _bijection(prior)
@@ -697,11 +710,10 @@ def fit(
         Loss penalties (e.g. [`virgil.imaging`][virgil.imaging]) and priors on
         error terms; see [common arguments](../common_arguments.md).
     init, method : dict and str, optional
-        Starting values by path (required for a function model); ``"lm"`` (the
-        default for a least-squares objective), ``"lbfgs"`` (for penalties such as
-        maximum entropy, which LM also fits in float64) or ``"adam"``.
+        Starting values by path (required for a function model); ``"lm"`` (default for least squares), ``"lbfgs"`` (for penalties), ``"adam"`` or
+        ``"lbfgsb"`` (bounded by ``Uniform`` priors and linear ``LinearImage`` pixels).
     max_steps, gtol, max_step_size : int and float, optional
-        Step limit (default 1000 LM, 20000 L-BFGS, 2000 Adam), gradient
+        Step limit (1000 LM, 20000 L-BFGS and L-BFGS-B, 2000 Adam), gradient
         tolerance and L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
     lbfgs_memory, cg_steps, learning_rate : int, int and float, optional
         L-BFGS history (default 100, cut to keep it under 1 GiB); CG steps
@@ -730,7 +742,7 @@ def fit(
         [conventions](../conventions.md#preconditioning-image-fits).
         ``info["precondition_rounds"]`` records the spread per round. With a
         maximum-entropy regularizer at weak weights float32 can stall: use float64.
-        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984), [Hutchinson (1989)](../references.md#hutchinson1989).
+        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984), [Hutchinson (1989)](../references.md#hutchinson1989); ``"lbfgsb"``: [Byrd et al. (1995)](../references.md#byrd1995), [Zhu et al. (1997)](../references.md#zhu1997).
 
     Returns
     -------
@@ -762,10 +774,26 @@ def fit(
             "post_step needs method='adam' without precondition: a projection "
             "breaks L-BFGS's curvature pairs and the preconditioner's metric."
         )
+    if method == "lbfgsb" and dtype != "float64":
+        warnings.warn(
+            "method='lbfgsb' computes in float64 (the solver is double "
+            f"precision); dtype={dtype!r} is ignored.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+        dtype = "float64"
     budget = _Budget(time_limit, progress)
     with run_in(dtype):
         problem = cast_tree(
-            _Objective(model, priors, data, regularizers, noise, likelihoods),
+            _Objective(
+                model,
+                priors,
+                data,
+                regularizers,
+                noise,
+                likelihoods,
+                boxed=method == "lbfgsb",
+            ),
             dtype,
         )
         z0 = _recentre(problem, problem.init(cast_tree(init, dtype)))
@@ -788,9 +816,11 @@ def fit(
         ndata = [d.n_independent for d in problem.data]
         # A term's size is its ``n_data``, or the length of its residuals.
         start = problem.constrain(z0)
-        if method not in ("lm", "lbfgs", "adam"):
+        _refuse_unbounded_linear(problem)
+        if method not in ("lm", "lbfgs", "adam", "lbfgsb"):
             raise ValueError(
-                f"method must be 'lm', 'lbfgs' or 'adam', not {method!r}."
+                "method must be 'lm', 'lbfgs', 'adam' or 'lbfgsb', "
+                f"not {method!r}."
             )
         originals = problem.likelihoods
         resolved = [
@@ -814,8 +844,19 @@ def fit(
         # that new values do not recompile.
         traced_scale, gtol = np.asarray(scale), np.asarray(gtol)
         stop = grad_norm = None
-        rounds = []
-        if method == "lm":
+        rounds, extra = [], {}
+        if method == "lbfgsb":
+            limit = max_steps or 20_000
+            z, steps, converged, stop, grad_norm, extra = _lbfgsb(
+                problem,
+                z0,
+                float(scale),
+                limit,
+                float(gtol),
+                lbfgs_memory or 10,
+                budget,
+            )
+        elif method == "lm":
             limit = max_steps or 1000
             z, steps, converged, stop = _lm(
                 problem, z0, traced_scale, limit, gtol, cg_steps, budget
@@ -894,6 +935,7 @@ def fit(
             if precondition and method != "lm"
             else None,
             "precondition_rounds": rounds,
+            **extra,
             "at_bound": _at_bound(problem, values),
             "derived": {
                 k: onp.asarray(v)
@@ -2030,6 +2072,11 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
             f"was not finite (NaN or inf) after {steps} steps; check the "
             "model and priors for invalid values."
         )
+    if method == "lbfgsb":
+        head = f"fit(method={method!r}) did not converge"
+        if stop == "limit":
+            return f"{head} in {steps} steps, the step limit; raise max_steps."
+        return f"{head}: the line search stopped after {steps} steps."
     if method == "lbfgs":
         head = f"fit(method={method!r}) did not converge"
         if stop == "limit":
@@ -2056,6 +2103,151 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
             "step limit; raise max_steps."
         )
     return f"fit(method={method!r}) did not converge in {steps} steps."
+
+
+# deliberate: the bounds of an L-BFGS-B fit, kept apart from the host loop
+def _box(problem, z):
+    """``(lower, upper)`` flat bounds of the coordinates of a boxed problem.
+
+    From ``Uniform`` priors, and from the non-negative pixels of a linear
+    ``LinearImage`` (``LinearImage.bounds``); the two are intersected.
+    """
+    import numpyro.distributions as dist
+
+    if problem.noise:
+        raise TypeError("method='lbfgsb' does not fit error terms.")
+    lower, upper = [], []
+    for path, prior in problem.priors.items():
+        base, shape = _base(prior), onp.shape(z[path])
+        support = base.support
+        while hasattr(support, "base_constraint"):  # independent(real, n)
+            support = support.base_constraint
+        flat_real = isinstance(support, type(dist.constraints.real))
+        if is_angle_vector(prior):
+            raise TypeError(
+                f"method='lbfgsb' cannot fit angle vector {path!r}."
+            )
+        if isinstance(base, dist.Uniform):
+            lo, hi = (
+                onp.broadcast_to(onp.asarray(b, float), shape)
+                for b in (base.low, base.high)
+            )
+        elif isinstance(base, dist.ImproperUniform) and flat_real:
+            lo, hi = onp.full(shape, -onp.inf), onp.full(shape, onp.inf)
+        else:
+            raise TypeError(
+                f"method='lbfgsb' needs {path!r} to have a Uniform or flat "
+                f"real prior to take bounds from, not {type(base).__name__}."
+            )
+        parent, _, name = path.rpartition(".")
+        if isinstance(problem.model, SourceModel) and name == "pixels":
+            image = problem.model.get(parent) if parent else problem.model
+            box = image.bounds() if isinstance(image, LinearImage) else None
+            if box is not None:
+                lo, hi = onp.maximum(lo, box[0]), onp.minimum(hi, box[1])
+        lower.append(onp.ravel(lo))
+        upper.append(onp.ravel(hi))
+    return onp.concatenate(lower), onp.concatenate(upper)
+
+
+# deliberate: the refusal of linear pixels outside L-BFGS-B, kept apart from fit
+def _refuse_unbounded_linear(problem):
+    """Linear ``LinearImage`` pixels are non-negative only under L-BFGS-B bounds."""
+    if problem.boxed or not isinstance(problem.model, SourceModel):
+        return
+    for path in problem.priors:
+        parent, _, name = path.rpartition(".")
+        image = problem.model.get(parent) if parent else problem.model
+        if name == "pixels" and isinstance(image, LinearImage):
+            if image.bounds() is not None:
+                raise TypeError(
+                    f"{path!r}: linear pixels must stay non-negative, which "
+                    "only method='lbfgsb' enforces; use it, or "
+                    "parametrisation='sqrt'."
+                )
+
+
+@eqx.filter_jit
+# deliberate: jit boundary of the L-BFGS-B host loop; the template z fixes the unravel
+def _value_and_gradient(problem, template, scale, x):
+    _, unravel = problem.ravel(template)
+    return jax.value_and_grad(lambda x: problem.loss(unravel(x)) / scale)(x)
+
+
+# deliberate: the L-BFGS-B host loop, kept apart from fit
+def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
+    """Box-constrained fit by scipy's L-BFGS-B (Byrd et al. 1995; Zhu et al. 1997).
+
+    Returns ``(z, steps, converged, stop, pg_norm, extra)``: converged when the
+    projected-gradient ∞-norm of the loss per data point is within ``_tolerance``.
+    """
+    from scipy.optimize import Bounds, minimize
+
+    x0, unravel = problem.ravel(z0)
+    lower, upper = _box(problem, z0)
+    x0 = onp.clip(onp.asarray(x0, float), lower, upper)
+    scale = np.asarray(scale)
+
+    def evaluate(x):
+        value, grad = _value_and_gradient(problem, z0, scale, np.asarray(x))
+        return float(value), onp.asarray(grad, float)
+
+    def projected(x, grad):
+        return onp.max(
+            onp.abs(x - onp.clip(x - grad, lower, upper)), initial=0.0
+        )
+
+    _, g0 = evaluate(x0)
+    tolerance = float(_tolerance(np.asarray(projected(x0, g0)), gtol))
+    out_of_time, trace = [], []
+
+    def callback(intermediate_result):
+        x = intermediate_result.x
+        trace.append(1)
+
+        def report():
+            value, grad = evaluate(x)
+            return value * float(scale), float(projected(x, grad))
+
+        if budget.check(len(trace), report):
+            out_of_time.append(True)
+            raise StopIteration
+
+    res = minimize(
+        evaluate,
+        x0,
+        jac=True,
+        method="L-BFGS-B",
+        bounds=Bounds(lower, upper),
+        callback=callback,
+        options={
+            "maxiter": max_steps,
+            "maxfun": 3 * max_steps,
+            "maxcor": memory,
+            "ftol": 0.0,
+            "gtol": tolerance,
+        },
+    )
+    x = onp.clip(res.x, lower, upper)
+    value, grad = evaluate(x)
+    pg = float(projected(x, grad))
+    finite = onp.isfinite(value) and onp.all(onp.isfinite(grad))
+    converged = bool(finite and pg <= tolerance)
+    steps = int(res.nit)
+    if converged:
+        stop = None
+    elif not finite:
+        stop = "non-finite"
+    elif out_of_time:
+        stop = "time"
+    elif steps >= max_steps or res.nfev >= 3 * max_steps:
+        stop = "limit"
+    else:
+        stop = "stalled"
+    message = res.message
+    message = message.decode() if isinstance(message, bytes) else str(message)
+    extra = {"nit": steps, "message": message, "pg_norm": pg}
+    return unravel(np.asarray(x)), steps, converged, stop, pg, extra
 
 
 def _lbfgs(
