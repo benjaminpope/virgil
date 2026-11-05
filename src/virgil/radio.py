@@ -1470,20 +1470,16 @@ def _owned_image(scene, nuisance):
     return image if lone else None
 
 
-def _flux_scale(scene, flux, nuisance):
-    """The overall flux ``F``: ``cal.flux``, or ``Σ pixels`` of a scene that is
-    one `LinearImage` (``fit_flux=False``), which must be positive: the
-    model is ``Σ pixels`` times the unit-sum transform."""
-    image = _owned_image(scene, nuisance)
-    if image is None:
-        return flux
-    total = image.total_flux
-    return eqx.error_if(total, total <= 0.0, "Σ pixels must be positive.")
-
-
 def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
     flux, gain, offset, _, alpha = unpacked
-    flux = _flux_scale(scene, flux, nuisance)
+    image = _owned_image(scene, nuisance)
+    if image is not None:
+        # Σ pixels times the unit-sum transform: must be positive
+        flux = eqx.error_if(
+            image.total_flux,
+            image.total_flux <= 0.0,
+            "Σ pixels must be positive.",
+        )
     lam = C_LIGHT / freq
     vis = scene.model(u * lam, v * lam, lam)
     ramp = offset_phase(u, v, offset[obs, 0], offset[obs, 1])
