@@ -17,6 +17,7 @@ from .gains import (
     closure_offsets,
     gain_modes,
     offsets_noise,
+    radial_amplitude_modes,
 )
 from .observables import (
     KINDS,
@@ -1693,6 +1694,29 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             The data with ``gains`` set (replacing any earlier ones).
         """
         gains = gain_modes(self, telescope, baseline, chromatic, modes)
+        return eqx.tree_at(
+            lambda d: d.gains, self, gains, is_leaf=lambda x: x is None
+        )
+
+    def with_radial_amplitude(self, order=4, width=10.0):
+        """A copy of DISCO data with a radial log-amplitude nuisance.
+
+        Marginalizes a smooth radial profile in |u|/λ (degree 0 to ``order``)
+        on log |V|, analytically, so that grid searches, fits and contrast
+        limits ignore radially symmetric amplitude errors (a PSF-shape
+        mismatch, perhaps the brighter-fatter effect: a hypothesis). Use it
+        when a bare star's amplitude-only flux map is mostly negative or
+        positive. It costs amplitude sensitivity, most at small separations;
+        phases are unaffected. See
+        [`radial_amplitude_modes`][virgil.gains.radial_amplitude_modes].
+        ``width`` is a default fitted as the noise term ``vis_gain_radial``.
+
+        Returns
+        -------
+        OIData
+            The data with ``gains`` set (replacing any earlier ones).
+        """
+        gains = radial_amplitude_modes(self, order, width)
         return eqx.tree_at(
             lambda d: d.gains, self, gains, is_leaf=lambda x: x is None
         )

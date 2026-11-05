@@ -17,7 +17,9 @@ its width. The modes come in groups, with one width each:
 * ``chromatic``: one per (frame, baseline) shaped (λ_ref/λ)², the first
   order of a coherence loss exp(−a/λ²) from piston jitter;
 * ``modes``: shapes supplied from outside, per 1σ, e.g. from a calibrator
-  PCA (as virgil-vlti makes), whose width scales them (1 = as given).
+  PCA (as virgil-vlti makes), whose width scales them (1 = as given);
+* ``radial``: for projected DISCO log-amplitudes only, a smooth radial
+  profile in |u|/λ (``radial_amplitude_modes``).
 
 For small gains (τ ≲ 0.2) the observable changes linearly, by
 J m_j with J = dObs/dlog|V| = 2V² for squared visibilities, |V| for
@@ -56,6 +58,7 @@ __all__ = [
     "GainModes",
     "GAIN_GROUPS",
     "gain_modes",
+    "radial_amplitude_modes",
     "ClosureOffsets",
     "OFFSET_GROUPS",
     "closure_offsets",
@@ -63,7 +66,7 @@ __all__ = [
 
 # Groups of gain modes, in order; their widths are fitted with the noise
 # terms "vis_gain_<group>".
-GAIN_GROUPS = ("telescope", "baseline", "chromatic", "modes")
+GAIN_GROUPS = ("telescope", "baseline", "chromatic", "modes", "radial")
 
 
 class GainModes(eqx.Module):
@@ -289,7 +292,8 @@ def gain_modes(
     if data.vis_encoding != "split" or data.vis_mat is not None:
         raise ValueError(
             "Gains act on observed visibilities, not on projected (kernel, "
-            "DISCO) observables."
+            "DISCO) observables; for DISCO log-amplitudes use "
+            "OIData.with_radial_amplitude."
         )
     built_in = {
         "telescope": telescope,
@@ -345,6 +349,62 @@ def gain_modes(
     if not columns:
         raise ValueError("No gain modes: give at least one group or mode.")
     return _pack(columns, groups, widths, frame)
+
+
+def radial_amplitude_modes(data, order=4, width=10.0):
+    """A radial log-amplitude nuisance for projected DISCO data.
+
+    The modes are the Legendre polynomials of degree 0 to ``order`` in
+    q = |u|/λ (scaled to [−1, 1] over the data), the same span as the powers
+    1, q, ..., q^order, on log |V| and projected like the data
+    (``vis_mat @ mode``). Marginalized with a wide prior they remove any
+    radially symmetric log-amplitude error (a PSF-shape mismatch between
+    target and calibrator) from the fit, at the cost of amplitude sensitivity
+    at small separations. The default ``order`` 4 is the least that removed
+    the bare-star amplitude bias on a ν Hor DISCO product (offset and q²
+    alone did not).
+
+    Parameters
+    ----------
+    data : OIData
+        DISCO data: log-amplitude observables projected by ``vis_mat``.
+    order : int, optional
+        Highest degree.
+    width : float, optional
+        1σ prior width of each mode's coefficient on log |V|. The default
+        is wide enough to act as a flat prior; fit it with the noise term
+        ``vis_gain_radial``.
+
+    Returns
+    -------
+    GainModes
+    """
+    if data.vis_mat is None or data.vis_mode != "logamp":
+        raise ValueError(
+            "A radial amplitude nuisance needs projected log-amplitudes "
+            "(DISCO data with vis_mat)."
+        )
+    order = int(order)
+    if order < 0:
+        raise ValueError(f"order must be non-negative, not {order}.")
+    _check_widths({"radial": width})
+    n_sample = onp.size(data.u)
+    wavel = onp.broadcast_to(onp.asarray(data.wavel, float), (n_sample,))
+    q = onp.hypot(onp.asarray(data.u), onp.asarray(data.v)) / wavel
+    x = 2.0 * q / onp.max(q) - 1.0
+    modes = onp.polynomial.legendre.legvander(x, order)  # (n_sample, K)
+    shapes = onp.asarray(data.vis_mat, float) @ modes  # (n_vis, K)
+    n_vis, n_mode = shapes.shape
+    return GainModes(
+        np.arange(n_vis, dtype=np.int32)[None],
+        np.asarray(shapes)[None],
+        np.zeros((1, n_mode), np.int32),
+        None,
+        None,
+        np.asarray([float(width)]),
+        ("radial",),
+        int(n_vis),
+    )
 
 
 def _check_widths(widths):

@@ -36,6 +36,18 @@ or `lincmap`), so noise gives negative values and an SNR of either sign.
 `flux_error` is the standard deviation, whereas `lincmap` returns the
 *variance* $1/(g\cdot g)$.
 
+### A radial amplitude nuisance for DISCO data {#radial-amplitude}
+
+On DISCO data a radially symmetric log-amplitude error (a PSF-shape mismatch
+between target and calibrator; the brighter-fatter effect is a hypothesis,
+not shown) can make the amplitude part of the map mostly negative, or mostly
+positive, at every position. `data.with_radial_amplitude()` marginalizes such
+a profile analytically (degree 0 to 4 in $|u|/\lambda$), and the grid fits and
+contrast limits then honour it. It costs amplitude sensitivity, most at small
+separations (roughly half inside 200 mas, a quarter less beyond on one test
+product), so quote limits with it on or off explicitly. Phases are unaffected.
+Its width is fitted with the noise term `vis_gain_radial`.
+
 ### Limits of the linearization, and `n_iter` {#n-iter}
 
 With `n_iter=0` the linearization holds only for $f \ll 1$. A binary's closure
