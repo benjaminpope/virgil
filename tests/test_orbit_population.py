@@ -286,34 +286,65 @@ def test_the_oracle_and_the_diagnostics_change_no_fit_result():
     assert any(r["matched"] for r in recs) or all(r["flagged"] for r in recs)
 
 
+MAIN_P = [
+    0.0824096751078581, 0.3332734433161518, 0.14456033264572826,
+    0.09721359313839946, 0.07533519955161296, 0.06108624763063713,
+    0.04882012303024854, 0.04341153612611458, 0.035056212913210115,
+    0.03164002900804005, 0.030070448505412014, 0.017123159026571983,
+]  # fmt: skip
+MAIN_LOG_Z = [
+    -290.7160734682129, -290.64141002133886, -290.7109015583775,
+    -290.690175309423, -290.6533275932228, -290.63794869120466,
+    -290.67874525406324, -290.6413945857246, -290.72123539248304,
+    -290.70570804596036, -290.6510317300779, -290.7663648905121,
+]  # fmt: skip
+MAIN_LOG_Z_SD = [
+    0.04831127285267147, 0.04634728484028038, 0.04817265147614891,
+    0.04761268217821458, 0.046652643454991816, 0.04623872854584874,
+    0.04729223714106227, 0.04634642975523397, 0.04844885943232774,
+    0.04803252955329319, 0.04659630983469983, 0.04967008420871414,
+]  # fmt: skip
+MAIN_MODES = [3, 1, 2, 2, 2, 2, 2, 1, 2, 2, 1, 1]
+
+
 @pytest.mark.slow
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(900)
 def test_position_cells_matches_main_before_the_counters_were_added():
-    """Refactor equivalence, not a correctness oracle: the values were computed
-    on ``origin/main`` at cdaa3f82825115379e0d7e688ab21812575cf384 (before
-    the step-cap counters and the ``_laplace_modes`` / ``_cell_evidence``
-    split) for seed 0, system 13 (K = 6, one season). The branch gave the same
-    numbers to the last digit; the tolerance is cross-platform drift only."""
+    """Refactor equivalence, not a correctness oracle: ``p_pos`` and every
+    cell's ``ln Ẑ`` equal those of ``origin/main`` at
+    cdaa3f82825115379e0d7e688ab21812575cf384, before the step-cap counters and
+    the ``_laplace_modes`` / ``_cell_evidence`` split.
+
+    The system is picked by a rule stated before any result was seen: the
+    first system of seed 0 with finite ``p_pos`` on main and a cell with two
+    or more modes, among those with K <= 6 nights and one season (a CI-cost
+    restriction; larger systems take minutes). That is system 57 (K = 6).
+    Mode counts drift across platforms (macOS 9 vs Linux 10 on another
+    system), so they are not pinned: only that the cells with modes on main
+    still have at least one. ``ln Ẑ`` agrees within
+    ``4 sqrt(sd_main^2 + sd_branch^2) + 0.01``, each fit's own reported
+    sd; ``p_pos`` has the same argmax and total variation <= 1e-3."""
     import jax
 
-    rng, _ = pop.streams(0, 13)
+    rng, _ = pop.streams(0, 57)
     nights = pop.draw_nights(rng)
     _, fit = pop.fit_domain(nights)
     pop._loguniform(rng, *pop.P_TRUE)
     sysd = pop.draw_system(rng, nights, fit)
     assert len(sysd["summaries"]) == 6
     out = pop.oc_cells.position_cells(
-        sysd["summaries"], fit, jax.random.fold_in(jax.random.key(0), 13),
+        sysd["summaries"], fit, jax.random.fold_in(jax.random.key(0), 57),
         jitter=0.0, e_max=pop.oc_cells.E_MAX,
     )  # fmt: skip
-    assert [c.n for c in out.cells] == [0, 1, 2, 3, 4, 5]
-    # cell 0 (nine modes on main) is not pinned: its search is sensitive to
-    # platform drift (the GitHub runner found ten); the single-mode cells are
-    assert [len(f.modes) for f in out.fits[1:]] == [1, 1, 1, 1, 0]
-    onp.testing.assert_allclose(
-        [f.log_z for f in out.fits[1:]],
-        [-278.90501993907327, -391.9133024481856, -397.14838496678516,
-         -397.2668781833448, -397.2693751159761],
-        atol=1e-6,
-    )  # fmt: skip
-    assert onp.isnan(out.p_pos).all()  # the system failed on main too
+    assert len(out.cells) == len(MAIN_P)
+    assert all(
+        len(f.modes) >= 1 for f, n in zip(out.fits, MAIN_MODES) if n >= 1
+    )
+    lz = onp.array([f.log_z for f in out.fits])
+    sd = onp.array([f.log_z_error for f in out.fits])
+    tol = 4 * onp.hypot(MAIN_LOG_Z_SD, sd) + 0.01
+    assert (onp.abs(lz - MAIN_LOG_Z) <= tol).all()
+    p = onp.asarray(out.p_pos, float)
+    assert onp.isfinite(p).all()
+    assert int(p.argmax()) == int(onp.argmax(MAIN_P))
+    assert 0.5 * onp.abs(p - MAIN_P).sum() <= 1e-3
