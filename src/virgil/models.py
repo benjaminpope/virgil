@@ -1825,13 +1825,9 @@ def _pixel_visibilities(
 
 class _BrightnessImage(Component):
     """Shared transform code of the pixel images, which define ``brightness``
-    (unit-sum pixels)."""
-
-    support: jax.Array | None
-    pixel_scale_mas: float = eqx.field(static=True)
-    rotation_deg: float = eqx.field(static=True)
-    ft: str = eqx.field(static=True)
-    blur_fwhm_mas: float | None = eqx.field(static=True)
+    (unit-sum pixels) and the fields ``support``, ``pixel_scale_mas``,
+    ``rotation_deg``, ``ft`` and ``blur_fwhm_mas``, which each subclass
+    declares itself (so that its pytree order is its own)."""
 
     def _set_layout(
         self,
@@ -1985,6 +1981,11 @@ class Image(_BrightnessImage):
     """
 
     log_brightness: Any
+    support: jax.Array | None
+    pixel_scale_mas: float = eqx.field(static=True)
+    rotation_deg: float = eqx.field(static=True)
+    ft: str = eqx.field(static=True)
+    blur_fwhm_mas: float | None = eqx.field(static=True)
 
     @renamed({"smooth_fwhm_mas": "blur_fwhm_mas"})
     def __init__(
@@ -2015,7 +2016,11 @@ class Image(_BrightnessImage):
         )
         # Reject a log-brightness whose softmax over the support is not
         # finite (skipped under jax.jit).
-        live = np.ones(eta.shape, dtype=bool) if support is None else support
+        live = (
+            np.ones(eta.shape, dtype=bool)
+            if self.support is None
+            else self.support
+        )
         if concrete(np.any(live & (np.isnan(eta) | (eta == np.inf)))):
             raise ValueError("log_brightness must not be NaN or +inf.")
         finite = concrete(np.any(live & np.isfinite(eta)))
@@ -2102,6 +2107,7 @@ class LinearImage(_BrightnessImage):
     ``LinearImage`` elsewhere fixes nothing, so TSV, TV or ``StarletL1`` shrink
     it towards zero: put it in a ``System`` with a fixed-flux component, or
     use ``MaxEntropy``.
+    ``diagnose`` and the ensemble helpers do not cover it yet.
 
     Unlike the softmax of an ``Image``, pixels can reach exactly zero, which
     the minimiser of TSV, TV, ``StarletL1`` or an unregularised fit needs.
@@ -2114,7 +2120,7 @@ class LinearImage(_BrightnessImage):
     their meaning and TSV, TV and ``StarletL1`` stay convex in a linear
     image; the weight drifts by ``(F / reference_flux)**2`` if the fitted
     flux ``F`` moves far from it. Source: SMILI's non-negative linear pixels,
-    [Akiyama et al. (2017)](../references.md#akiyama2017); the ``"sqrt"`` form
+    [Akiyama et al. (2017)](../references.md#akiyama2017) (also AJ 153, 159); the ``"sqrt"`` form
     is experimental, with no published source found.
 
     Parameters
@@ -2143,6 +2149,11 @@ class LinearImage(_BrightnessImage):
     """
 
     pixels: jax.Array
+    support: jax.Array | None
+    pixel_scale_mas: float = eqx.field(static=True)
+    rotation_deg: float = eqx.field(static=True)
+    ft: str = eqx.field(static=True)
+    blur_fwhm_mas: float | None = eqx.field(static=True)
     parametrisation: str = eqx.field(static=True)
     reference_flux: float = eqx.field(static=True)
 
@@ -2175,9 +2186,8 @@ class LinearImage(_BrightnessImage):
             ft,
             blur_fwhm_mas,
         )
-        bad = concrete(np.any(np.isnan(pixels)))
-        if bad:
-            raise ValueError("pixels must not be NaN.")
+        if concrete(np.any(~np.isfinite(pixels))):
+            raise ValueError("pixels must be finite.")
         if parametrisation == "linear" and concrete(np.any(pixels < 0.0)):
             raise ValueError("linear pixels must be non-negative.")
         if reference_flux is None:

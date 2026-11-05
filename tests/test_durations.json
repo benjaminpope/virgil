@@ -50,6 +50,7 @@
  "tests/test_image_model.py": 20.9,
  "tests/test_image_smoothing.py": 12.1,
  "tests/test_imaging.py": 47.2,
+ "tests/test_linear_image.py": 15.0,
  "tests/test_inference_geometry.py": 6.3,
  "tests/test_injection_limits.py": 14.1,
  "tests/test_laplace_array_params.py": 24.2,
