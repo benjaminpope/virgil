@@ -2219,6 +2219,7 @@ year = 1966
 title = "On the solution of functional equations by the method of regularization"
 used_in = ["virgil.imaging:LCurve.dof_discrepancy"]
 note = "Soviet Math. Dokl. 7, 414 (1966); the discrepancy principle. No DOI, and not in ADS or Crossref as of 2026-11-05: unverified"
+verified = false
 
 [ref.wahba1983]
 authors = "Wahba"
