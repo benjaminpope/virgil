@@ -44,7 +44,7 @@ from ._geometry import (
 )
 from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
-from .models import Image, SourceModel
+from .models import Image, LinearImage, SourceModel
 
 __provisional__ = ("*",)
 
@@ -1474,6 +1474,20 @@ def _checked_sigma(sigma, nuisance):
     return sigma
 
 
+def _refuse_linear_image(scene):
+    """A LinearImage's flux is its pixel sum, but a radio term scales the
+    unit-normalised model by the fitted ``cal.flux``: the two are degenerate."""
+    parts = jax.tree_util.tree_leaves(
+        scene, is_leaf=lambda x: isinstance(x, LinearImage)
+    )
+    if any(isinstance(x, LinearImage) for x in parts):
+        raise TypeError(
+            "A LinearImage cannot be fitted by a radio term: its flux is "
+            "the sum of its pixels, but the term's cal.flux scales the "
+            "model freely, so the total flux is unconstrained. Use an Image."
+        )
+
+
 def _warn_double_blur(scene, nuisance):
     if nuisance.blur_fwhm_mas is None:
         return
@@ -1707,6 +1721,7 @@ class _RadioTerm(_TermBase):
         unpacked = nuis._unpack(values)
         sigma = unpacked[3]
         scene = self.scene(values)
+        _refuse_linear_image(scene)
         _warn_double_blur(scene, nuis)
 
         def model(a):
