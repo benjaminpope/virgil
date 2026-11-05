@@ -10,7 +10,6 @@ from virgil import (
     ComplexVisData,
     Image,
     LinearImage,
-
 )
 from virgil.imaging import MaxEntropy
 from scipy.constants import c as C_LIGHT
@@ -44,7 +43,11 @@ def _data(zero=0, seed=0):
 
 def _nuis(data, **kw):
     return CalibrationNuisance(
-        data, gains=False, offsets=False, alpha=False, **{"sigmas": False, **kw}
+        data,
+        gains=False,
+        offsets=False,
+        alpha=False,
+        **{"sigmas": False, **kw},
     )
 
 
@@ -111,7 +114,9 @@ def test_toeplitz_matches_dense(parametrisation, sigmas):
     assert float(np.max(np.abs(g - g_ref)) / np.max(np.abs(g_ref))) < 1e-8
     if sigmas is False:
         chi2 = tdata.chi2_by_ddid(scene, {"x": x1}, nuis)[0]
-        assert chi2[0] == pytest.approx(_chi2(data, scene, nuis, {"x": x1}), rel=1e-9)
+        assert chi2[0] == pytest.approx(
+            _chi2(data, scene, nuis, {"x": x1}), rel=1e-9
+        )
 
 
 @pytest.mark.parametrize("parametrisation", ["sqrt", "linear"])
