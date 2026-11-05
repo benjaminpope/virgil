@@ -1012,7 +1012,7 @@ authors = "Hutchinson"
 year = 1989
 title = "A stochastic estimator of the trace of the influence matrix for Laplacian smoothing splines"
 doi = "10.1080/03610918908812806"
-used_in = ["virgil.fitting:gauss_newton_diag", "virgil.fitting:fit"]
+used_in = ["virgil.fitting:gauss_newton_diag", "virgil.fitting:fit", "virgil.imaging:LCurve.dof_discrepancy"]
 note = "Commun. Statist. Simul. Comput. 18, 1059; the trace estimator whose Rademacher probes the regularizer part of the diagonal follows (the JᵀJ part uses Gaussian (Jᵀu)² sketches)"
 bibcode = "1989CoSSC..18.1059H"
 verified = true
@@ -2212,3 +2212,20 @@ verified = true
 verified_via = "crossref"
 used_in = []
 note = "rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py)"
+
+[ref.morozov1966]
+authors = "Morozov"
+year = 1966
+title = "On the solution of functional equations by the method of regularization"
+used_in = ["virgil.imaging:LCurve.dof_discrepancy"]
+note = "Soviet Math. Dokl. 7, 414 (1966); the discrepancy principle. No DOI, and not in ADS or Crossref as of 2026-11-05: unverified"
+
+[ref.wahba1983]
+authors = "Wahba"
+year = 1983
+title = "Bayesian \"Confidence Intervals\" for the Cross-Validated Smoothing Spline"
+doi = "10.1111/j.2517-6161.1983.tb01239.x"
+used_in = ["virgil.imaging:LCurve.dof_discrepancy"]
+note = "J. R. Stat. Soc. B 45, 133; the effective degrees of freedom Tr[K (K + H_R)^-1] of a regularized fit (cf. Hansen 1998, Rank-Deficient and Discrete Ill-Posed Problems, SIAM)"
+verified = true
+verified_via = "crossref"

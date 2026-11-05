@@ -1793,6 +1793,9 @@ class LCurve:
         The unweighted regularizer, ``value / weight``, of each fit.
     results : list of FitResult
         The fits.
+    refit : callable, optional
+        ``refit(weight, init) -> FitResult``, set by :func:`l_curve`; the secant
+        step of :meth:`dof_discrepancy` needs it.
     """
 
     weights: object
@@ -1800,6 +1803,7 @@ class LCurve:
     chi2_red: object
     penalty: object
     results: list
+    refit: object = dataclasses.field(default=None, repr=False, compare=False)
 
     def corner(self):
         """The weight at the L-curve's corner, where it bends most sharply.
@@ -1845,6 +1849,138 @@ class LCurve:
         c = binding[i : i + 2]
         fraction = (c[0] - target) / (c[0] - c[1])
         return float(np.exp(t[0] + fraction * (t[1] - t[0])))
+
+    def dof_discrepancy(
+        self,
+        data,
+        regularizer,
+        *,
+        noise_scale2=1.0,
+        noise_scale_sigma=None,
+        nprobe=16,
+        tol=1e-4,
+        maxit=2000,
+        seed=0,
+        secant=True,
+        curvature=None,
+    ):
+        """The weight of the degrees-of-freedom-corrected discrepancy principle.
+
+        Morozov's discrepancy with the fitted degrees of freedom removed: ``w``
+        is the root in ``ln w`` of ``m(w) = χ²/s² − (n − G)``, where ``n`` is
+        the number of real data, ``s²`` the noise scale (the factor on the
+        quoted variances) and ``G = Tr[K (K + H_R)⁻¹]`` the number of image
+        parameters the data fix, by Hutchinson's estimator. ``K`` is the data's
+        Gauss–Newton curvature and ``H_R`` the regularizer's Hessian, in the
+        pixel fluxes of a [`LinearImage`][virgil.models.LinearImage], over its
+        free pixels (inside the support, flux above zero). ``H_R`` must be
+        positive definite there: a convex regularizer such as
+        [`MaxEntropy`][virgil.imaging.MaxEntropy] or TSV. The root is
+        interpolated linearly in ``ln w`` between the sweep's bracketing fits;
+        then one secant step, from a refit at the interpolated weight, is
+        taken unless ``|m| ≤ 3 se(G)`` already. Source: Morozov (1966) and Wahba
+        (1983), [references](../references.md#morozov1966),
+        [Wahba](../references.md#wahba1983); Hutchinson (1989),
+        [references](../references.md#hutchinson1989).
+
+        Parameters
+        ----------
+        data : OIData or sequence of OIData
+            The data the sweep was fitted to.
+        regularizer
+            The regularizer swept, with its ``path`` (its weight is replaced).
+        noise_scale2 : float, optional
+            ``s²``, from the data scatter rather than an image fit.
+        noise_scale_sigma : float, optional
+            Its standard error; ``weight_band`` is then the root at
+            ``s² ± 2σ_s``.
+        nprobe, tol, maxit, seed : optional
+            Rademacher probes, relative CG tolerance and iteration limit of
+            the trace estimator, and its seed.
+        secant : bool, optional
+            Refit at the interpolated weight and, if needed, once more (the
+            default); needs a sweep from :func:`l_curve`.
+        curvature : callable, optional
+            ``curvature(model) -> matvec`` giving ``K v`` for a flat NumPy
+            ``v`` over the pixels, in place of the default from the whitened
+            residuals of ``data`` (for data they do not cover).
+
+        Returns
+        -------
+        DofDiscrepancy or None
+            ``None`` if ``m`` does not change sign over the sweep.
+        """
+        n_real = float(sum(self.results[0].info["ndata"]))
+
+        def evaluate(result, weight):
+            return _dof_point(
+                result,
+                regularizer,
+                weight,
+                data,
+                noise_scale2,
+                n_real,
+                (nprobe, tol, maxit, seed),
+                curvature,
+            )
+
+        points = [
+            evaluate(r, float(w)) for w, r in zip(self.weights, self.results)
+        ]
+        weights = onp.asarray(self.weights, dtype=float)
+        m = onp.array([pt["m"] for pt in points])
+        root = _lerp_root(weights, m)
+        if root is None:
+            return None
+        i, weight = root
+        chosen, trace = dict(points[i], weight=weight), []
+        if secant and self.refit is not None:
+            first = evaluate(
+                self.refit(weight, self.results[i].values), weight
+            )
+            trace.append(first)
+            chosen = first
+            if abs(first["m"]) > 3.0 * first["se"]:
+                # The end of the bracket with m of the opposite sign.
+                j = i if first["m"] < 0 else i + 1
+                lo, hi = onp.log(weight), onp.log(weights[j])
+                step = float(
+                    onp.exp(lo - first["m"] * (hi - lo) / (m[j] - first["m"]))
+                )
+                second = evaluate(
+                    self.refit(step, first["result"].values), step
+                )
+                trace.append(second)
+                if abs(second["m"]) < abs(first["m"]):
+                    chosen = second
+        band = None
+        if noise_scale_sigma is not None:
+            ends = []
+            for sign in (1.0, -1.0):
+                s2 = noise_scale2 + sign * 2.0 * noise_scale_sigma
+                mm = onp.array(
+                    [pt["chi2"] / s2 - (n_real - pt["g"]) for pt in points]
+                )
+                found = _lerp_root(weights, mm)
+                ends.append(None if found is None else found[1])
+            band = tuple(ends)
+        return DofDiscrepancy(
+            weight=float(chosen["weight"]),
+            m=float(chosen["m"]),
+            g=float(chosen["g"]),
+            g_se=float(chosen["se"]),
+            chi2=float(chosen["chi2"]),
+            n_real=n_real,
+            accepted=(
+                bool(abs(chosen["m"]) <= 3.0 * chosen["se"]) if trace else None
+            ),
+            h=_classic_gap(chosen, regularizer, noise_scale2),
+            weight_band=band,
+            weights=weights,
+            m_sweep=m,
+            g_sweep=onp.array([pt["g"] for pt in points]),
+            trace=tuple((t["weight"], t["m"], t["se"]) for t in trace),
+        )
 
     def classic_maxent(self, data, path="env"):
         """The maximum-entropy weight of Gull and Skilling's "classic MaxEnt".
@@ -1906,6 +2042,210 @@ class LCurve:
         t = onp.log(onp.asarray(self.weights[i : i + 2], dtype=float))
         fraction = gap[i] / (gap[i] - gap[i + 1])
         return float(onp.exp(t[0] + fraction * (t[1] - t[0])))
+
+
+@dataclasses.dataclass(frozen=True)
+class DofDiscrepancy:
+    """The result of :meth:`LCurve.dof_discrepancy`.
+
+    Attributes
+    ----------
+    weight : float
+        The chosen weight (the better of the interpolated root and its secant
+        step).
+    m, g, g_se, chi2 : float
+        ``m(w)``, the effective degrees of freedom ``G`` with its standard
+        error, and ``χ²`` (quoted weights), at ``weight``.
+    n_real : float
+        The number of real data.
+    accepted : bool or None
+        Whether ``|m| ≤ 3 g_se`` at ``weight``; ``None`` if no refit was made.
+    h : float or None
+        Classic MaxEntropy's ``h(w) = 2 (w / s²) KL − G`` at ``weight``, a
+        diagnostic only (``None`` unless the regularizer is a
+        [`MaxEntropy`][virgil.imaging.MaxEntropy]).
+    weight_band : tuple or None
+        The roots at ``s² + 2σ_s`` and ``s² − 2σ_s`` from the sweep alone.
+    weights, m_sweep, g_sweep : array
+        The sweep's weights, ``m`` and ``G``.
+    trace : tuple
+        ``(weight, m, g_se)`` of each refit.
+    """
+
+    weight: float
+    m: float
+    g: float
+    g_se: float
+    chi2: float
+    n_real: float
+    accepted: object
+    h: object
+    weight_band: object
+    weights: object
+    m_sweep: object
+    g_sweep: object
+    trace: tuple
+
+
+def _lerp_root(weights, values):
+    """``(i, w)``: the first sign change of ``values`` between ``i`` and
+    ``i + 1``, interpolated linearly in ``ln w``; ``None`` if there is none."""
+    for i in range(len(values) - 1):
+        a, b = values[i], values[i + 1]
+        if not (onp.isfinite(a) and onp.isfinite(b)):
+            continue
+        if a == 0.0:
+            return i, float(weights[i])
+        if a * b < 0.0:
+            lw = onp.log(weights[i : i + 2])
+            return i, float(onp.exp(lw[0] - a * (lw[1] - lw[0]) / (b - a)))
+    return None
+
+
+def _cg(matvec, z, tol, maxit):
+    """Conjugate gradients for ``A x = z``, ``A`` positive definite."""
+    x, r = onp.zeros_like(z), z.copy()
+    d, rs, norm = r.copy(), r @ r, onp.sqrt(z @ z)
+    for _ in range(maxit):
+        if onp.sqrt(rs) <= tol * norm:
+            break
+        ad = matvec(d)
+        curvature = d @ ad
+        if not curvature > 0.0:
+            raise ValueError(
+                "K + H_R is not positive definite: the regularizer's Hessian "
+                "must be positive definite on the free pixels."
+            )
+        a = rs / curvature
+        x, r = x + a * d, r - a * ad
+        rs_new = r @ r
+        d, rs = r + (rs_new / rs) * d, rs_new
+    return x
+
+
+def _hutchinson_g(
+    k_matvec, h_matvec, mask, nprobe=16, tol=1e-4, maxit=2000, seed=0
+):
+    """``(G, se)``, ``G = Tr[K (K + H)⁻¹]`` over the pixels in ``mask``.
+
+    Hutchinson's estimator with Rademacher probes, ``E[zᵀ K (K + H)⁻¹ z]``,
+    each solve by CG; ``se`` is the standard error of the probe mean. The
+    matvecs take and return flat NumPy vectors.
+    """
+    rng = onp.random.default_rng(seed)
+    mask = onp.asarray(mask, float)
+
+    def total(v):
+        return (k_matvec(v * mask) + h_matvec(v * mask)) * mask
+
+    values = []
+    for _ in range(nprobe):
+        z = rng.choice([-1.0, 1.0], size=mask.size) * mask
+        y = _cg(total, z, tol, maxit)
+        values.append(z @ (k_matvec(y) * mask))
+    values = onp.array(values)
+    return float(values.mean()), float(values.std(ddof=1) / onp.sqrt(nprobe))
+
+
+def _pixel_theta(b, sqrt):
+    """The ``pixels`` leaf for fluxes ``b`` (safe at ``b <= 0``)."""
+    if not sqrt:
+        return b
+    return np.where(b > 0.0, np.sqrt(np.where(b > 0.0, b, 1.0)), 0.0)
+
+
+@eqx.filter_jit
+def _flux_curvature_matvec(model, datasets, leaf, sqrt, b0, v):
+    """``Jᵀ J v`` for the whitened residuals' Jacobian in pixel fluxes."""
+
+    def residuals(b):
+        changed = model.set(leaf, _pixel_theta(b, sqrt))
+        return np.concatenate(
+            [np.ravel(whitened_residuals(changed, d)) for d in datasets]
+        )
+
+    _, jvp = jax.linearize(residuals, b0)
+    return jax.linear_transpose(jvp, b0)(jvp(v))[0]
+
+
+@eqx.filter_jit
+def _flux_hessian_matvec(model, regularizer, leaf, sqrt, b0, v):
+    """The regularizer's Hessian-vector product in pixel fluxes."""
+
+    def value(b):
+        return regularizer.value(model.set(leaf, _pixel_theta(b, sqrt)))
+
+    return jax.jvp(jax.grad(value), (b0,), (v,))[1]
+
+
+def _dof_point(
+    result, regularizer, weight, data, s2, n_real, probe, curvature
+):
+    """χ², ``G`` (with its error) and ``m`` of one fit of a sweep."""
+    nprobe, tol, maxit, seed = probe
+    weighted = eqx.tree_at(
+        lambda r: r.weight, regularizer, np.asarray(weight, dtype=float)
+    )
+    model = _reference(_single_model(result, "dof_discrepancy"))
+    image = weighted.image(model)
+    if not isinstance(image, LinearImage):
+        raise TypeError("dof_discrepancy needs a LinearImage.")
+    leaf = ("" if weighted.path is None else weighted.path + ".") + "pixels"
+    sqrt = image.parametrisation == "sqrt"
+    datasets = tuple(_as_list(data))
+    with run_in("float64"):
+        model, datasets, weighted = cast_tree(
+            (model, datasets, weighted), "float64"
+        )
+        x = np.asarray(model.get(leaf), dtype=float)
+        b0 = x**2 if sqrt else x
+        free = onp.asarray(b0 > 0.0)
+        if image.support is not None:
+            free &= onp.asarray(image.support, bool)
+        shape = b0.shape
+
+        def h_matvec(v):
+            out = _flux_hessian_matvec(
+                model, weighted, leaf, sqrt, b0, np.asarray(v.reshape(shape))
+            )
+            return onp.asarray(out, dtype=float).ravel()
+
+        if curvature is None:
+
+            def k_matvec(v):
+                out = _flux_curvature_matvec(
+                    model,
+                    datasets,
+                    leaf,
+                    sqrt,
+                    b0,
+                    np.asarray(v.reshape(shape)),
+                )
+                return onp.asarray(out, dtype=float).ravel()
+
+        else:
+            k_matvec = curvature(model)
+        g, se = _hutchinson_g(
+            k_matvec, h_matvec, free.ravel(), nprobe, tol, maxit, seed
+        )
+        chi2 = float(sum(result.info["chi2"]))
+        penalty = float(weighted.value(model)) / weight
+    return dict(
+        result=result,
+        weight=weight,
+        chi2=chi2,
+        g=g,
+        se=se,
+        penalty=penalty,
+        m=chi2 / s2 - (n_real - g),
+    )
+
+
+def _classic_gap(point, regularizer, s2):
+    """Classic MaxEntropy's ``h(w) = 2 (w / s²) KL − G`` at a point."""
+    if not isinstance(regularizer, MaxEntropy):
+        return None
+    return float(2.0 * point["weight"] / s2 * point["penalty"] - point["g"])
 
 
 def _set_each(model, paths, values):
@@ -2714,12 +3054,22 @@ def l_curve(
         penalty.append(
             float(weighted.value(_reference(result.model))) / weight
         )
+
+    def refit(weight, init):
+        weighted = eqx.tree_at(
+            lambda r: r.weight, regularizer, np.asarray(weight, dtype=float)
+        )
+        return fit(
+            model, priors, data, [weighted, *others], init=init, **fit_options
+        )
+
     return LCurve(
         np.asarray(weights),
         np.asarray(chi2),
         np.asarray(chi2_red),
         np.asarray(penalty),
         results,
+        refit,
     )
 
 
