@@ -1957,7 +1957,7 @@ class LCurve:
         weights = onp.asarray(self.weights, dtype=float)
         points = [evaluate(r, float(w)) for w, r in zip(weights, self.results)]
         m = onp.array([pt["m"] for pt in points])
-        crossings = _lerp_roots(weights, m)
+        crossings = _dof_roots(weights, points, n_real, noise_scale2)
         fields = dict(
             weights=weights,
             m_sweep=m,
@@ -1973,18 +1973,7 @@ class LCurve:
                 UserWarning,
                 stacklevel=2,
             )
-            return DofDiscrepancy(
-                weight=None,
-                m=None,
-                g=None,
-                g_se=None,
-                chi2=None,
-                accepted=False,
-                h=None,
-                weight_band=None,
-                trace=(),
-                **fields,
-            )
+            return DofDiscrepancy(**fields)
         i, weight = max(crossings, key=lambda c: c[1])
         chosen, trace = dict(points[i], weight=weight), []
         if (
@@ -2024,19 +2013,7 @@ class LCurve:
             ends = []
             for sign in (1.0, -1.0):
                 s2 = noise_scale2 + sign * 2.0 * noise_scale_sigma
-                found = (
-                    _lerp_roots(
-                        weights,
-                        onp.array(
-                            [
-                                pt["chi2"] / s2 - (n_real - pt["g"])
-                                for pt in points
-                            ]
-                        ),
-                    )
-                    if s2 > 0.0
-                    else []
-                )
+                found = _dof_roots(weights, points, n_real, s2)
                 if not found:
                     warnings.warn(
                         f"dof_discrepancy: no root at s² = {s2:.4g} "
@@ -2165,20 +2142,29 @@ class DofDiscrepancy:
         ``(weight, m, g_se)`` of each refit.
     """
 
-    weight: object
-    m: object
-    g: object
-    g_se: object
-    chi2: object
     n_real: float
-    accepted: object
-    h: object
-    weight_band: object
     roots: tuple
     weights: object
     m_sweep: object
     g_sweep: object
-    trace: tuple
+    weight: object = None
+    m: object = None
+    g: object = None
+    g_se: object = None
+    chi2: object = None
+    accepted: object = False
+    h: object = None
+    weight_band: object = None
+    trace: tuple = ()
+
+
+def _dof_roots(weights, points, n_real, s2):
+    """Every root of ``m = χ²/s² − (n − G)`` over a sweep's points; none for
+    a non-positive ``s²``."""
+    if s2 <= 0.0:
+        return []
+    m = [pt["chi2"] / s2 - (n_real - pt["g"]) for pt in points]
+    return _lerp_roots(weights, onp.array(m))
 
 
 def _lerp_roots(weights, values):
