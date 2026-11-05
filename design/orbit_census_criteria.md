@@ -57,3 +57,8 @@ extent) exceeds 1 there; otherwise the fix belongs to the θ-chart and ridge wor
 
 Any quadrature reference must show its integrand at the box edge ≤ e⁻¹⁰ of its peak, a deterministic inner integral,
 and tolerance 4·√(sd² + sd_ref²) + 0.01.
+
+## Platform drift (added 2026-11-05)
+
+Mode counts drift across platforms (macOS 9 vs Linux runner 10, seed 0 system 13); census arms are paired only within
+one platform (OzSTAR), never across.
