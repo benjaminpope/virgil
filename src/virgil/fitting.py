@@ -2713,6 +2713,69 @@ def _pixel_gradient(problem, z, grads, key, parent):
     return d, dp, mu, b, live, rms
 
 
+# deliberate: kkt_report would exceed the 120-line cap with the nuisance branch inline.
+def _nuisance_entry(x, g, box, top):
+    """Projected-gradient ∞-norm of one nuisance and its ratio to ``top``."""
+    lower, upper, offset = box
+    lo, hi = -onp.inf, onp.inf
+    if lower is not None:
+        lo, hi = (
+            lower[offset : offset + g.size],
+            upper[offset : offset + g.size],
+        )
+    norm = _projected_norm(x, g, lo, hi)
+    return {"grad_norm": norm, "grad_rel": norm / top}
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the growth rule inline.
+def _want_grow(d, b, masks, margin, softmax):
+    """Frozen pixels whose gradient ``d`` says they want flux.
+
+    The rule is ``g_j < mu - 3 scale kkt_rel`` (``margin = scale * kkt_rel``,
+    with ``kkt_rel`` floored at ``KKT_TOL``: a converged fit has ~0). A sqrt
+    pixel moves in x = sqrt(f), where its gradient is 2 x d, so the rule is
+    measured there: faint pixels' noise 1 / x is not read as a want to grow.
+    """
+    inside, live = masks
+    peak = b.max()
+    frozen = inside & live & (b < _FROZEN * peak)
+    reach = 1.0 if softmax else onp.sqrt(peak / onp.where(live, b, peak))
+    return frozen & (d < -_GROW * margin * reach)
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the linear-pixel branch inline.
+def _linear_certificate(x, g, image, top, w):
+    """``(out, ok)``: the certificate of one linear-parametrised pixel array."""
+    lo, hi = (onp.ravel(a) for a in image.bounds())
+    out = {"kind": "linear", "pg_rel": _projected_norm(x, g, lo, hi) / top}
+    zero = (x == 0.0) & (hi > 0.0)
+    bad = zero & (g < -KKT_TOL * top)
+    out["zero_violation"] = float(bad.sum() / max(zero.sum(), 1))
+    ok = out["pg_rel"] < KKT_TOL and not bad.any()
+    if w is not None:  # registered statistic, in units of w / F0
+        pg = x - onp.clip(x - g, lo, hi)
+        sel = (x > _ACTIVE * x.max()) | ((x <= lo) & (g < 0))
+        out["kkt_w"] = float(onp.sqrt(onp.mean(pg[sel] ** 2)) / (w / x.sum()))
+        ok = out["kkt_w"] < KKT_W_TOL and not bad.any()
+    return out, ok
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the band-limit setup inline.
+def _data_band_limit(data, image, b):
+    """``_band_limit`` of fluxes ``b`` at the data's largest spatial frequency.
+
+    That is in cycles per radian: OIData ``u, v`` are metres, per ``wavel``;
+    radio ``u, v`` are already wavelengths.
+    """
+    sets = data if isinstance(data, (list, tuple)) else (data,)
+    cut = max(
+        float(onp.max(onp.hypot(s.u, s.v) / getattr(s, "wavel", 1.0)))
+        for s in sets
+    )
+    shape = onp.shape(image.brightness)
+    return _band_limit(b.reshape(shape), image.pixel_scale_mas, cut)
+
+
 def kkt_report(
     result,
     priors,
@@ -2802,11 +2865,9 @@ def kkt_report(
             zip(keys, onp.cumsum([0] + [onp.size(z[k]) for k in keys]))
         )
         images, nuisances, verdicts = {}, {}, []
-        w = weight
-        if w is None and len(regularizers) == 1:
-            w = getattr(regularizers[0], "weight", None)
+        lone = regularizers[0] if len(regularizers) == 1 else None
+        w = weight if weight is not None else getattr(lone, "weight", None)
         w = None if w is None else float(w)
-        gated = start is not None
         model = problem.model
         for key in keys:
             parent, _, name = key.rpartition(".")
@@ -2819,14 +2880,10 @@ def kkt_report(
             softmax = isinstance(image, Image) and name == "log_brightness"
             linear = isinstance(image, LinearImage) and name == "pixels"
             if not (softmax or linear):
-                o = offsets[key]
-                lo, hi = -onp.inf, onp.inf
-                if lower is not None:
-                    lo, hi = lower[o : o + g.size], upper[o : o + g.size]
-                norm = _projected_norm(x, g, lo, hi)
-                nuisances[key] = {"grad_norm": norm}
-                nuisances[key]["grad_rel"] = norm / _peak(grad, ref, key, pen)
-                if gated:
+                top = _peak(grad, ref, key, pen)
+                box = (lower, upper, offsets[key])
+                nuisances[key] = _nuisance_entry(x, g, box, top)
+                if start is not None:
                     verdicts.append(
                         bool(nuisances[key]["grad_rel"] < NUISANCE_TOL)
                     )
@@ -2834,20 +2891,7 @@ def kkt_report(
             out = {}
             top = _peak(grad, ref, key, pen)
             if linear and image.parametrisation == "linear":
-                lo, hi = (onp.ravel(a) for a in image.bounds())
-                out["kind"] = "linear"
-                out["pg_rel"] = _projected_norm(x, g, lo, hi) / top
-                zero = (x == 0.0) & (hi > 0.0)
-                bad = zero & (g < -KKT_TOL * top)
-                out["zero_violation"] = float(bad.sum() / max(zero.sum(), 1))
-                ok = out["pg_rel"] < KKT_TOL and not bad.any()
-                if w is not None:  # registered statistic, in units of w / F0
-                    pg = x - onp.clip(x - g, lo, hi)
-                    sel = (x > _ACTIVE * x.max()) | ((x <= lo) & (g < 0))
-                    out["kkt_w"] = float(
-                        onp.sqrt(onp.mean(pg[sel] ** 2)) / (w / x.sum())
-                    )
-                    ok = out["kkt_w"] < KKT_W_TOL and not bad.any()
+                out, ok = _linear_certificate(x, g, image, top, w)
             else:
                 d, dp, mu, b, live, scale = _pixel_gradient(
                     problem, z, (grad, pen), key, parent
@@ -2873,18 +2917,8 @@ def kkt_report(
                     if scale
                     else 0.0
                 )
-                frozen = inside & live & (b < _FROZEN * peak)
-                # The §4 rule g_j < mu - 3 scale kkt_rel, with kkt_rel floored at
-                # KKT_TOL (a converged fit has rel ~ 0). A sqrt pixel moves in
-                # x = sqrt(f), where its gradient is 2 x d: measure the rule there,
-                # so faint pixels' noise 1 / x is not read as a want to grow.
-                reach = (
-                    1.0
-                    if softmax
-                    else onp.sqrt(peak / onp.where(live, b, peak))
-                )
-                grow = frozen & (
-                    d < -_GROW * scale * max(rel, KKT_TOL) * reach
+                grow = _want_grow(
+                    d, b, (inside, live), scale * max(rel, KKT_TOL), softmax
                 )
                 out["kind"] = "softmax" if softmax else "sqrt"
                 out["kkt_rel"] = float(rel)
@@ -2898,27 +2932,12 @@ def kkt_report(
                         onp.sqrt(onp.mean(d[act] ** 2)) / (w / flux)
                     )
                     ok = out["kkt_w"] < KKT_W_TOL and not grow.any()
-                reg = regularizers[0] if len(regularizers) == 1 else None
-                if isinstance(reg, MaxEntropy) and (reg.path or "") == parent:
-                    # Largest spatial frequency, cycles per radian (OIData u, v
-                    # are metres, per wavelength; radio u, v are wavelengths).
-                    sets = (
-                        problem.data
-                        if isinstance(problem.data, (list, tuple))
-                        else (problem.data,)
-                    )
-                    cut = max(
-                        float(
-                            onp.max(
-                                onp.hypot(s.u, s.v) / getattr(s, "wavel", 1.0)
-                            )
-                        )
-                        for s in sets
-                    )
-                    out["band_limit"] = _band_limit(
-                        b.reshape(onp.shape(image.brightness)),
-                        image.pixel_scale_mas,
-                        cut,
+                if (
+                    isinstance(lone, MaxEntropy)
+                    and (lone.path or "") == parent
+                ):
+                    out["band_limit"] = _data_band_limit(
+                        problem.data, image, b
                     )
                     ok = ok and out["band_limit"] < BAND_TOL
             images[parent or "."] = out
