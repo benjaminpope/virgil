@@ -488,5 +488,8 @@ Models are unit-normalized and `cal.flux` sets the scale, so a lone
 `CalibrationNuisance(data, fit_flux=False)` instead: `cal.flux` is then absent
 (1), the model visibility is the un-normalized transform of the pixels and
 `Σ pixels` is the zero-spacing flux in Jy. This holds for the dense and the
-Toeplitz term; other scenes are refused with `fit_flux=False`. The reference
+Toeplitz term; other scenes are refused with `fit_flux=False`, and a scene of
+`LinearImage`s only is refused with a free `cal.flux`. A `LinearImage` beside a
+fixed-flux component (a `PointSource`) is accepted with `cal.flux` free: the
+mixture weights fix the pixel scale. Σ pixels must be positive. The reference
 gain stays fixed at 1, so `gain × flux` is not degenerate.

@@ -1130,14 +1130,13 @@ class CalibrationNuisance:
     ref_obs : int
         Index of the reference observation.
     gains, offsets, sigmas, alpha : bool (``alpha`` also a float)
-        Which nuisances are fitted; gains and offsets need more than one
-        observation; a nuisance not fitted takes the table's last column. ``sigmas="profile"`` sets the error scales at
-        every evaluation (see
+        Which nuisances are fitted (gains and offsets need more than one
+        observation); one not fitted takes the table's last column.
+        ``sigmas="profile"`` sets the error scales at every evaluation (see
         [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]). A float
-        ``alpha`` fixes the spectral index (a non-zero integer is refused:
-        ``alpha=1`` used to mean "fit").
+        ``alpha`` fixes the spectral index (a non-zero integer is refused).
     offset_beams : float, optional
-        Default offset prior half-width in beams (3).
+        Default offset prior half-width in beams (3). Provisional, as the module.
     antenna_gains : bool
         Marginalize a complex gain per antenna and solution interval ([antenna
         gains](../radio_interferometry.md#antenna-based-gains)); needs
@@ -1151,7 +1150,8 @@ class CalibrationNuisance:
     gain_steps : int
         Gauss–Newton steps of the gain solution.
     nu0_hz : float, optional
-        Reference frequency of ``alpha`` (default: the mean frequency).
+        Reference frequency of the spectral index (default: the
+        weight-averaged frequency of ``data``).
     blur_fwhm_mas : float, optional
         FWHM (mas) of a Gaussian blurring kernel in the forward model: the
         data are compared with the blurred model. Default ``None``,
@@ -1444,10 +1444,14 @@ def _no_antenna_gains(nuisance):
 
 def _owned_image(scene, nuisance):
     """The `LinearImage` that is the whole of ``scene`` (inside Systems of one
-    part and ``Rotated``), else None; checks it against ``nuisance.fit_flux``:
-    a lone `LinearImage` carries its flux (``fit_flux=False``), anything else
-    needs ``cal.flux``."""
-    image = scene
+    part and ``Rotated``), else None, checked against ``nuisance.fit_flux``.
+
+    A lone `LinearImage` carries its flux (``fit_flux=False``). With a free
+    ``cal.flux`` a scene made only of `LinearImage` parts is refused (scaling
+    every pixel leaves the unit-normalized model unchanged); a fixed-flux
+    part such as a `PointSource` fixes the scale and is accepted.
+    """
+    image, leaves = scene, [scene]
     while True:
         if isinstance(image, System) and len(image.resolved().parts) == 1:
             image = image.resolved().parts[0]
@@ -1456,11 +1460,20 @@ def _owned_image(scene, nuisance):
         else:
             break
     lone = isinstance(image, LinearImage)
-    if lone and nuisance.fit_flux:
-        raise ValueError(
-            "a scene that is one LinearImage carries its own flux (Σ pixels): "
-            "use CalibrationNuisance(..., fit_flux=False); a free cal.flux "
-            "would be a scale degeneracy with the pixels."
+    while leaves:
+        part = leaves.pop()
+        if isinstance(part, System):
+            leaves += part.resolved().parts
+        elif isinstance(part, Rotated):
+            leaves.append(part.source)
+        elif not isinstance(part, LinearImage):
+            leaves = None
+            break
+    if nuisance.fit_flux and leaves is not None:
+        raise TypeError(
+            "a scene made only of LinearImages carries its own flux (Σ pixels):"
+            " use CalibrationNuisance(..., fit_flux=False) for one LinearImage;"
+            " with a free cal.flux the scale is a degeneracy with the pixels."
         )
     if not lone and not nuisance.fit_flux:
         raise ValueError(

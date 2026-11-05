@@ -536,6 +536,12 @@ class _ToeplitzTerm(_TermBase):
         # an owned flux is the pixels themselves (fit_flux=False: flux 1), so
         # the loss is quadratic in them and the Gauss–Newton curvature exact
         owned = _owned_image(scene, self.nuisance) is not None
+        if owned:
+            image = eqx.error_if(
+                image,
+                np.sum(image.fluxes) <= 0.0,
+                "Σ pixels must be positive.",
+            )
         layout = (
             _shape(image),
             image.pixel_scale_mas,

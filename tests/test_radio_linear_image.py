@@ -31,7 +31,7 @@ def float64():
 
 
 def _data(zero=0, seed=0):
-    """Noiseless-free random points; ``zero`` extra points at u = v = 0."""
+    """Random points; ``zero`` extra points at u = v = 0."""
     rng = onp.random.default_rng(seed)
     q = 0.4 / (2.0 * mas2rad * PIXEL) * onp.sqrt(rng.uniform(0, 1, N))
     phi = rng.uniform(0, 2 * onp.pi, N)
@@ -152,7 +152,7 @@ def test_flux_ownership_is_enforced():
     data = _data()
     x = _x("sqrt")
     lone = _scene("sqrt")({"x": x})
-    with pytest.raises(ValueError, match="fit_flux=False"):
+    with pytest.raises(TypeError, match="fit_flux=False"):
         data.model(lone, _nuis(data).defaults() | {"x": x}, _nuis(data))
     image = Image(np.zeros((NPIX, NPIX)), PIXEL, ft="dft")
     nuis = _nuis(data, fit_flux=False)
@@ -191,7 +191,7 @@ def test_wrapped_scenes_equal_the_bare_image():
     tchi2 = data.toeplitz(template, nuis).chi2_by_ddid(wrapped, values, nuis)
     assert tchi2[0][0] == pytest.approx(bare, rel=1e-9)
     free = _nuis(data)
-    with pytest.raises(ValueError, match="fit_flux=False"):
+    with pytest.raises(TypeError, match="fit_flux=False"):
         data.model(rotated(values), {**free.defaults(), **values}, free)
 
 
@@ -205,7 +205,7 @@ def test_multi_part_and_toeplitz_refusals():
     nuis = _nuis(data)
     term = data.toeplitz(template, nuis).term(_scene("linear"), nuis)
     values = {**nuis.defaults(), "x": x}
-    with pytest.raises(ValueError, match="fit_flux=False"):
+    with pytest.raises(TypeError, match="fit_flux=False"):
         term.chi2_and_log_norm(values)
 
 
@@ -225,3 +225,25 @@ def test_zero_pixel_sum_raises():
     zeros = {"x": np.zeros((NPIX, NPIX))}
     with pytest.raises(Exception, match="positive"):
         data.model(_scene("linear")(zeros), zeros, nuis)
+
+
+def test_mixtures_with_a_free_flux():
+    data, x = _data(), _x("linear")
+    free = _nuis(data)
+    values = {**free.defaults(), "x": x}
+    env = _scene("linear")({"x": x})
+    ok = System(star=PointSource(), env=env)
+    assert onp.all(onp.isfinite(onp.asarray(data.model(ok, values, free))))
+    two = System(a=env, b=LinearImage(x, PIXEL, dra=3.0, reference_flux=1.0))
+    with pytest.raises(TypeError, match="only of LinearImages"):
+        data.model(two, values, free)
+
+
+def test_zero_pixel_sum_raises_in_both_paths():
+    data = _data()
+    nuis = _nuis(data, fit_flux=False)
+    template = LinearImage(np.ones((NPIX, NPIX)), PIXEL)
+    term = data.toeplitz(template, nuis).term(_scene("linear"), nuis)
+    zeros = {"x": np.zeros((NPIX, NPIX))}
+    with pytest.raises(Exception, match="positive"):
+        term.chi2_and_log_norm(zeros)
