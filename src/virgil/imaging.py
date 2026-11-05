@@ -73,6 +73,7 @@ from .models import (
 __provisional__ = (
     "clean",
     "CleanResult",
+    "DofDiscrepancy",
 )
 
 _HIGHEST = jax.lax.Precision.HIGHEST
@@ -1796,6 +1797,8 @@ class LCurve:
     refit : callable, optional
         ``refit(weight, init) -> FitResult``, set by :func:`l_curve`; the secant
         step of :meth:`dof_discrepancy` needs it.
+    others : tuple, optional
+        The fixed regularizers of the sweep, set by :func:`l_curve`.
     """
 
     weights: object
@@ -1804,6 +1807,7 @@ class LCurve:
     penalty: object
     results: list
     refit: object = dataclasses.field(default=None, repr=False, compare=False)
+    others: tuple = ()
 
     def corner(self):
         """The weight at the L-curve's corner, where it bends most sharply.
@@ -1866,12 +1870,15 @@ class LCurve:
     ):
         """The weight of the degrees-of-freedom-corrected discrepancy principle.
 
+        !!! warning "Provisional"
+            May change in any 0.4.x release without a deprecation cycle.
+
         Morozov's discrepancy with the fitted degrees of freedom removed: ``w``
         is the root in ``ln w`` of ``m(w) = χ²/s² − (n − G)``, where ``n`` is
         the number of real data, ``s²`` the noise scale (the factor on the
         quoted variances) and ``G = Tr[K (K + H_R)⁻¹]`` the number of image
         parameters the data fix, by Hutchinson's estimator. ``K`` is the data's
-        Gauss–Newton curvature and ``H_R`` the regularizer's Hessian, in the
+        Gauss–Newton curvature and ``H_R`` the Hessian of the swept regularizer and the sweep's ``others``, in the
         pixel fluxes of a [`LinearImage`][virgil.models.LinearImage], over its
         free pixels (inside the support, flux above zero). ``H_R`` must be
         positive definite there: a convex regularizer such as
@@ -1901,9 +1908,10 @@ class LCurve:
             Refit at the interpolated weight and, if needed, once more (the
             default); needs a sweep from :func:`l_curve`.
         curvature : callable, optional
-            ``curvature(model) -> matvec`` giving ``K v`` for a flat NumPy
-            ``v`` over the pixels, in place of the default from the whitened
-            residuals of ``data`` (for data they do not cover).
+            ``curvature(model) -> matvec`` giving the whole ``K v`` for a flat
+            NumPy ``v`` over the pixels, in place of the default from the
+            whitened residuals of ``data``. Needed when the fit had further
+            likelihood terms (such as a Toeplitz χ²), else a ``ValueError``.
 
         Returns
         -------
@@ -1911,6 +1919,13 @@ class LCurve:
             ``None`` if ``m`` does not change sign over the sweep.
         """
         n_real = float(sum(self.results[0].info["ndata"]))
+        if curvature is None and len(self.results[0].info["ndata"]) > len(
+            _as_list(data)
+        ):
+            raise ValueError(
+                "The fit has likelihood terms beyond `data`, whose curvature "
+                "the default K lacks: pass `curvature=` for all of them."
+            )
 
         def evaluate(result, weight):
             return _dof_point(
@@ -1922,6 +1937,7 @@ class LCurve:
                 n_real,
                 (nprobe, tol, maxit, seed),
                 curvature,
+                self.others,
             )
 
         points = [
@@ -1942,7 +1958,7 @@ class LCurve:
             chosen = first
             if abs(first["m"]) > 3.0 * first["se"]:
                 # The end of the bracket with m of the opposite sign.
-                j = i if first["m"] < 0 else i + 1
+                j = i if m[i] * first["m"] < 0 else i + 1
                 lo, hi = onp.log(weight), onp.log(weights[j])
                 step = float(
                     onp.exp(lo - first["m"] * (hi - lo) / (m[j] - first["m"]))
@@ -1958,6 +1974,9 @@ class LCurve:
             ends = []
             for sign in (1.0, -1.0):
                 s2 = noise_scale2 + sign * 2.0 * noise_scale_sigma
+                if s2 <= 0.0:
+                    ends.append(None)
+                    continue
                 mm = onp.array(
                     [pt["chi2"] / s2 - (n_real - pt["g"]) for pt in points]
                 )
@@ -1974,7 +1993,14 @@ class LCurve:
             accepted=(
                 bool(abs(chosen["m"]) <= 3.0 * chosen["se"]) if trace else None
             ),
-            h=_classic_gap(chosen, regularizer, noise_scale2),
+            h=(
+                float(
+                    2.0 * chosen["weight"] / noise_scale2 * chosen["penalty"]
+                    - chosen["g"]
+                )
+                if isinstance(regularizer, MaxEntropy)
+                else None
+            ),
             weight_band=band,
             weights=weights,
             m_sweep=m,
@@ -2048,6 +2074,9 @@ class LCurve:
 class DofDiscrepancy:
     """The result of :meth:`LCurve.dof_discrepancy`.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Attributes
     ----------
     weight : float
@@ -2102,27 +2131,6 @@ def _lerp_root(weights, values):
     return None
 
 
-def _cg(matvec, z, tol, maxit):
-    """Conjugate gradients for ``A x = z``, ``A`` positive definite."""
-    x, r = onp.zeros_like(z), z.copy()
-    d, rs, norm = r.copy(), r @ r, onp.sqrt(z @ z)
-    for _ in range(maxit):
-        if onp.sqrt(rs) <= tol * norm:
-            break
-        ad = matvec(d)
-        curvature = d @ ad
-        if not curvature > 0.0:
-            raise ValueError(
-                "K + H_R is not positive definite: the regularizer's Hessian "
-                "must be positive definite on the free pixels."
-            )
-        a = rs / curvature
-        x, r = x + a * d, r - a * ad
-        rs_new = r @ r
-        d, rs = r + (rs_new / rs) * d, rs_new
-    return x
-
-
 def _hutchinson_g(
     k_matvec, h_matvec, mask, nprobe=16, tol=1e-4, maxit=2000, seed=0
 ):
@@ -2141,7 +2149,30 @@ def _hutchinson_g(
     values = []
     for _ in range(nprobe):
         z = rng.choice([-1.0, 1.0], size=mask.size) * mask
-        y = _cg(total, z, tol, maxit)
+        y, r = onp.zeros_like(z), z.copy()  # conjugate gradients, total y = z
+        d, rs, norm = r.copy(), r @ r, onp.sqrt(z @ z)
+        for _ in range(maxit):
+            if onp.sqrt(rs) <= tol * norm:
+                break
+            ad = total(d)
+            curvature = d @ ad
+            if not curvature > 0.0:
+                raise ValueError(
+                    "K + H_R is not positive definite: the regularizer's "
+                    "Hessian must be positive definite on the free pixels."
+                )
+            a = rs / curvature
+            y, r = y + a * d, r - a * ad
+            rs_new = r @ r
+            d, rs = r + (rs_new / rs) * d, rs_new
+        else:
+            if onp.sqrt(rs) > tol * norm:
+                warnings.warn(
+                    f"Conjugate gradients did not reach tol={tol:g} in "
+                    f"{maxit} iterations: G is biased; raise maxit.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         values.append(z @ (k_matvec(y) * mask))
     values = onp.array(values)
     return float(values.mean()), float(values.std(ddof=1) / onp.sqrt(nprobe))
@@ -2169,17 +2200,18 @@ def _flux_curvature_matvec(model, datasets, leaf, sqrt, b0, v):
 
 
 @eqx.filter_jit
-def _flux_hessian_matvec(model, regularizer, leaf, sqrt, b0, v):
-    """The regularizer's Hessian-vector product in pixel fluxes."""
+def _flux_hessian_matvec(model, regularizers, leaf, sqrt, b0, v):
+    """The regularizers' Hessian-vector product in pixel fluxes."""
 
     def value(b):
-        return regularizer.value(model.set(leaf, _pixel_theta(b, sqrt)))
+        changed = model.set(leaf, _pixel_theta(b, sqrt))
+        return sum(reg.value(changed) for reg in regularizers)
 
     return jax.jvp(jax.grad(value), (b0,), (v,))[1]
 
 
 def _dof_point(
-    result, regularizer, weight, data, s2, n_real, probe, curvature
+    result, regularizer, weight, data, s2, n_real, probe, curvature, others=()
 ):
     """χ², ``G`` (with its error) and ``m`` of one fit of a sweep."""
     nprobe, tol, maxit, seed = probe
@@ -2194,8 +2226,8 @@ def _dof_point(
     sqrt = image.parametrisation == "sqrt"
     datasets = tuple(_as_list(data))
     with run_in("float64"):
-        model, datasets, weighted = cast_tree(
-            (model, datasets, weighted), "float64"
+        model, datasets, weighted, others = cast_tree(
+            (model, datasets, weighted, tuple(others)), "float64"
         )
         x = np.asarray(model.get(leaf), dtype=float)
         b0 = x**2 if sqrt else x
@@ -2206,7 +2238,12 @@ def _dof_point(
 
         def h_matvec(v):
             out = _flux_hessian_matvec(
-                model, weighted, leaf, sqrt, b0, np.asarray(v.reshape(shape))
+                model,
+                (weighted, *others),
+                leaf,
+                sqrt,
+                b0,
+                np.asarray(v.reshape(shape)),
             )
             return onp.asarray(out, dtype=float).ravel()
 
@@ -2239,13 +2276,6 @@ def _dof_point(
         penalty=penalty,
         m=chi2 / s2 - (n_real - g),
     )
-
-
-def _classic_gap(point, regularizer, s2):
-    """Classic MaxEntropy's ``h(w) = 2 (w / s²) KL − G`` at a point."""
-    if not isinstance(regularizer, MaxEntropy):
-        return None
-    return float(2.0 * point["weight"] / s2 * point["penalty"] - point["g"])
 
 
 def _set_each(model, paths, values):
@@ -3070,6 +3100,7 @@ def l_curve(
         np.asarray(penalty),
         results,
         refit,
+        tuple(others),
     )
 
 

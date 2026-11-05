@@ -12,6 +12,7 @@ from virgil.coverage import ami_grid_record
 from virgil.imaging import (
     LCurve,
     MaxEntropy,
+    _dof_point,
     _hutchinson_g,
     _lerp_root,
     image_priors,
@@ -74,7 +75,9 @@ def _analytic(w):
 
 
 def _toy_curve(weights, monkeypatch, s2=1.0):
-    def fake_point(result, regularizer, weight, data, s2_, n_real, probe, c):
+    def fake_point(
+        result, regularizer, weight, data, s2_, n_real, probe, c, others=()
+    ):
         chi2, g = _analytic(weight)
         # G through the estimator itself, on diagonal K and H = w I.
         g_est, se = _hutchinson_g(
@@ -198,7 +201,7 @@ def _fit_sweep():
         image_priors(start),
         data,
         reg,
-        [1e1, 1e0],
+        [1e5, 1e3],
         method="lbfgs",
         max_steps=150,
     )
@@ -209,7 +212,7 @@ def test_g_agrees_with_the_dense_trace_on_a_real_fit(sweep):
     curve, data, reg = sweep
     result = curve.results[1]
     weight = float(curve.weights[1])
-    point = imaging._dof_point(
+    point = _dof_point(
         result, reg, weight, data, 1.0, 1.0, (64, 1e-10, 2000, 0), None
     )
     model = result.model
@@ -228,15 +231,67 @@ def test_g_agrees_with_the_dense_trace_on_a_real_fit(sweep):
     assert abs(point["g"] - exact) <= 3.0 * point["se"] + 1e-6 * exact
 
 
-def test_dof_discrepancy_end_to_end_and_existing_discrepancy_unchanged(sweep):
+def test_dof_discrepancy_end_to_end_with_a_refit(sweep):
     curve, data, _ = sweep
-    before = curve.discrepancy(target=1.0)
     out = curve.dof_discrepancy(data, MaxEntropy(1.0), nprobe=8)
-    assert curve.discrepancy(target=1.0) == before
-    if out is not None:
-        assert out.weights.size == 2 and onp.isfinite(out.m)
-        assert out.h is not None and onp.isfinite(out.h)
-    assert curve.refit is not None
+    assert out is not None and len(out.trace) >= 1
+    assert out.accepted is not None and onp.isfinite(out.h)
+    assert 1e3 < out.weight < 1e5 and out.weights.size == 2
+    # The refit's residual is smaller than the interpolation's at the sweep.
+    assert abs(out.m) < abs(out.m_sweep).min() + 1e-9
+    assert out.trace[0][0] == pytest.approx(out.trace[0][0])
+
+
+def test_extra_likelihood_terms_need_a_curvature(sweep):
+    curve, data, _ = sweep
+    results = [types.SimpleNamespace(info={"ndata": [5.0, 7.0]}, values=None)]
+    extra = LCurve(
+        curve.weights, curve.chi2, curve.chi2_red, curve.penalty, results
+    )
+    with pytest.raises(ValueError, match="curvature"):
+        extra.dof_discrepancy(data, MaxEntropy(1.0))
+
+
+def test_cg_that_does_not_converge_warns():
+    k, h = onp.diag(onp.arange(1.0, 31.0)), onp.eye(30)
+    with pytest.warns(RuntimeWarning, match="did not reach"):
+        _hutchinson_g(
+            lambda v: k @ v,
+            lambda v: h @ v,
+            onp.ones(30),
+            nprobe=2,
+            tol=1e-12,
+            maxit=2,
+        )
+
+
+def test_others_enter_the_hessian_and_lower_g(sweep):
+    curve, data, reg = sweep
+    result, weight = curve.results[1], float(curve.weights[1])
+    probe = (32, 1e-8, 2000, 0)
+    alone = _dof_point(result, reg, weight, data, 1.0, 1.0, probe, None)
+    both = _dof_point(
+        result, reg, weight, data, 1.0, 1.0, probe, None, (MaxEntropy(weight),)
+    )
+    assert both["g"] < alone["g"]
+
+
+def test_band_edge_with_nonpositive_scale_is_none(monkeypatch):
+    curve = _toy_curve(onp.logspace(3, -3, 25), monkeypatch)
+    out = curve.dof_discrepancy(
+        None, MaxEntropy(1.0), noise_scale_sigma=0.6, secant=False
+    )
+    assert out.weight_band[1] is None and out.weight_band[0] is not None
+
+
+def test_secant_picks_the_bracket_end_by_sign(monkeypatch):
+    # Ascending weights: m crosses upward, so the step must still stay inside.
+    weights = onp.logspace(-3, 3, 5)
+    out = _toy_curve(weights, monkeypatch).dof_discrepancy(
+        None, MaxEntropy(1.0)
+    )
+    assert weights[0] < out.trace[-1][0] < weights[-1]
+    assert out.weight == pytest.approx(_analytic_root(), rel=0.3)
 
 
 def test_existing_discrepancy_on_a_known_curve():
