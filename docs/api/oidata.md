@@ -170,6 +170,7 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
         - with_bandwidth
         - with_north_angle
         - with_closure_offsets
+        - with_radial_amplitude
         - mjd
         - epochs
         - split_by_epoch
