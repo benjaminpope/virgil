@@ -107,6 +107,11 @@ def test_regularizers_act_on_pixels_over_reference_flux(reg):
     assert float(reg.value(scene)) == pytest.approx(
         float(reg.value(img)), rel=1e-6
     )
+    # The normaliser is the fixed reference flux, not the fitted one: doubling
+    # the flux scales a quadratic penalty by 4 and a linear one by 2.
+    power = 4.0 if isinstance(reg, TSV) else 2.0
+    ratio = float(reg.value(scaled)) / float(reg.value(scene))
+    assert ratio == pytest.approx(power, rel=1e-2)
 
 
 def test_max_entropy_skilling_form_and_refusal():
@@ -128,26 +133,70 @@ def test_max_entropy_skilling_form_and_refusal():
         mem.value(LinearImage(pix, SCALE))
 
 
-def test_sqrt_fit_runs():
-    scene = System(
-        star=PointSource(),
-        env=LinearImage(
-            np.sqrt(np.full((NPIX, NPIX), 0.5 / NPIX**2)),
-            SCALE,
-            parametrisation="sqrt",
-        ),
+def test_sqrt_max_entropy_fit_reaches_the_default_image():
+    # Alone, Skilling's entropy is minimal at the default: flat, flux F0.
+    truth = _blob(0.5)
+    start = LinearImage(
+        np.sqrt(truth), SCALE, parametrisation="sqrt", reference_flux=0.5
     )
-    priors = image_priors(scene)
-    assert set(priors) == {"env.pixels"}
-    result = fit(
-        scene,
-        priors,
-        DATA,
-        [MaxEntropy(1e-3, path="env")],
-        method="lbfgs",
-        max_steps=5,
+    priors = image_priors(start)
+    assert set(priors) == {"pixels"}
+    mem = MaxEntropy(1.0)
+    result = fit(start, priors, (), [mem], method="lbfgs", max_steps=500)
+    assert float(mem.value(result.model)) < 1e-6 * float(mem.value(start))
+    flat = 0.5 / NPIX**2
+    assert onp.allclose(result.model.fluxes, flat, atol=1e-3 * flat)
+    with pytest.raises(ValueError, match="sqrt"):
+        image_priors(LinearImage(truth, SCALE))
+
+
+def test_max_entropy_residuals_match_value_on_linear_image():
+    im = LinearImage(
+        np.sqrt(_blob(0.5)), SCALE, parametrisation="sqrt", reference_flux=0.5
     )
-    assert onp.all(onp.isfinite(onp.asarray(result.model.env.fluxes)))
+    mem = MaxEntropy(2.0)
+    r = mem.residuals(im)
+    assert float(0.5 * np.sum(r**2)) == pytest.approx(
+        float(mem.value(im)), rel=1e-9
+    )
+
+
+def test_lone_image_visibilities_ignore_the_flux():
+    pix = _blob(0.5)
+    a = LinearImage(pix, SCALE).model(DATA.u, DATA.v, 4.8e-6)
+    b = LinearImage(3.0 * pix, SCALE).model(DATA.u, DATA.v, 4.8e-6)
+    assert onp.allclose(a, b, atol=1e-12)
+
+
+def test_single_pixel_is_a_point_source_at_that_pixel():
+    # Row 0 is North, column 0 East: the top-left pixel has dra, ddec > 0.
+    npix, scale = 9, 5.0
+    x = np.zeros((npix, npix)).at[0, 0].set(1.0)
+    image = LinearImage(x, scale, dra=1.0, ddec=-2.0)
+    expected = PointSource(dra=4 * scale + 1.0, ddec=4 * scale - 2.0)
+    u, v = DATA.u, DATA.v
+    assert np.allclose(
+        image.model(u, v, 4.8e-6), expected.model(u, v, 4.8e-6), atol=1e-6
+    )
+    rendered = image.render(npix=npix, fov_mas=npix * scale)
+    assert np.unravel_index(np.argmax(rendered), rendered.shape) == (0, 0)
+
+
+def test_render_fourier_transform_matches_model_visibilities():
+    im = LinearImage(_blob(0.5), SCALE)
+    npix = NPIX
+    rendered = onp.asarray(im.render(npix=npix, fov_mas=npix * SCALE))
+    u = onp.array([0.0, 1.0, 2.0, 0.5]) * 1e5
+    v = onp.array([0.0, 0.5, -1.0, 2.0]) * 1e5
+    mas = onp.pi / 180 / 3600 / 1000
+    x = -(onp.arange(npix) - 0.5 * (npix - 1)) * SCALE
+    y = (0.5 * (npix - 1) - onp.arange(npix)) * SCALE
+    xx, yy = onp.meshgrid(x, y)
+    arg = onp.outer(u, xx.ravel()) + onp.outer(v, yy.ravel())
+    ft = onp.exp(-2j * onp.pi * mas * arg) @ rendered.ravel()
+    ft = ft / rendered.sum()
+    got = onp.asarray(im.model(u * 4.8e-6, v * 4.8e-6, 4.8e-6))
+    assert onp.max(onp.abs(ft - got)) < 1e-3
 
 
 def test_toeplitz_layout_accepts_linear_image():

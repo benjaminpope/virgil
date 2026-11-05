@@ -120,3 +120,14 @@ Slow set (not CI): the 384² fast-loop TSV fit by `lbfgsb` against softmax `lbfg
   TSV/TV/StarletL1/none → `LinearImage` with `lbfgsb`), and why (one paragraph, with Byrd et al. 1995 and Skilling &
   Bryan 1984). Mention that MPoL's softplus pixels with entropy on the blurred image leave the base image unregularised.
 - Add the references to `references/provenance.toml` and `docs/references.md` as for other sources.
+
+## Register entry: √I pixels (methods beyond published practice)
+- **Claim:** `LinearImage(parametrisation="sqrt")` fits x = √I with a plain unconstrained optimiser. The metric is 4I,
+  that of entropic mirror descent, so faint pixels converge as fast as bright ones. It reached the lowest objective
+  fastest in test P (§3).
+- **References:** bounded linear pixels, Akiyama et al. 2017 (`akiyama2017`); L-BFGS-B, Byrd et al. 1995 (`byrd1995`);
+  Skilling's un-normalised entropy, Skilling 1989 (`skilling1989`), all in `references/provenance.toml`. No source
+  for the square-root parametrisation was found on ADS. Biraud 1969 (1969A&A.....1..124B, "A New Approach for
+  Increasing the Resolving Power by Data Processing") is candidate prior art that has not been read: unverified.
+- **Tests:** `tests/test_linear_image.py`. **vv check:** none yet.
+- **Status:** novel / experimental. It is opt-in (the default is `"linear"`) and provisional.

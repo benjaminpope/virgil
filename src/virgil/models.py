@@ -2093,21 +2093,27 @@ class LinearImage(_BrightnessImage):
     ``flux`` field is fixed at 1 and must not be fitted. ``brightness`` is
     the unit-sum image, as for an [`Image`][virgil.models.Image].
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    The data see the total flux only through a ``System``'s weights. A lone
+    ``LinearImage`` (or the radio Toeplitz term, where ``cal.flux`` sets the
+    scale) fixes nothing, so TSV, TV or ``StarletL1`` shrink it towards zero:
+    put it in a ``System`` with a fixed-flux component, or use ``MaxEntropy``.
+
     Unlike the softmax of an ``Image``, pixels can reach exactly zero, which
     the minimiser of TSV, TV, ``StarletL1`` or an unregularised fit needs.
     The ``"sqrt"`` form is the choice for
     [`MaxEntropy`][virgil.imaging.MaxEntropy]: it keeps the entropy's
     interior minimum, and its metric ``4 I`` is that of entropic mirror
-    descent (design/bounded_pixels.md). ``x = 0`` is a stationary point, so
-    start strictly positive.
+    descent. ``x = 0`` is a stationary point, so start strictly positive.
 
     Regularizers act on ``fluxes / reference_flux``, so their weights keep
     their meaning and TSV, TV and ``StarletL1`` stay convex in a linear
     image; the weight drifts by ``(F / reference_flux)**2`` if the fitted
-    flux ``F`` moves far from it. Source: non-negative linear pixels as in SMILI,
-    [Akiyama et al. (2017)](../references.md#akiyama2017), for a bounded
-    L-BFGS-B solver, [Byrd et al. (1995)](../references.md#byrd1995); the
-    ``"sqrt"`` form is virgil's own, checked in the design note.
+    flux ``F`` moves far from it. Source: SMILI's non-negative linear pixels,
+    [Akiyama et al. (2017)](../references.md#akiyama2017); the ``"sqrt"`` form
+    is experimental, with no published source found.
 
     Parameters
     ----------

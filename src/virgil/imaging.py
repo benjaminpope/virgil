@@ -579,8 +579,9 @@ class Centroid(_ImageRegulariser):
 def image_priors(scene):
     """Priors on the log-brightness of every Image in a scene.
 
-    A [`LinearImage`][virgil.models.LinearImage] gets a flat prior on its
-    ``pixels`` instead (non-negative for the linear form, real for ``"sqrt"``).
+    A [`LinearImage`][virgil.models.LinearImage] with ``"sqrt"`` pixels gets a
+    flat prior on its ``pixels`` instead; a linear one is refused until
+    `fit` has a bounded method.
 
     Returns a priors dict for [`fit`][virgil.fitting.fit]. An Image with
     a plain log-brightness array gets a flat prior,
@@ -598,14 +599,16 @@ def image_priors(scene):
     priors = {}
     for prefix, image in _scene_images(scene, kinds=(Image, LinearImage)):
         if isinstance(image, LinearImage):
-            # Linear pixels are bounded by `image.bounds()`; a square-root
-            # parametrisation is unbounded.
+            if image.parametrisation != "sqrt":
+                # `fit` would map a non-negative prior through exp, so the
+                # pixels could not reach zero: wait for `method="lbfgsb"`.
+                raise ValueError(
+                    f"{prefix}pixels: a linear LinearImage needs bounded "
+                    "optimisation, which fit does not offer yet; use "
+                    "parametrisation='sqrt'."
+                )
             priors[prefix + "pixels"] = dist.ImproperUniform(
-                dist.constraints.real
-                if image.parametrisation == "sqrt"
-                else dist.constraints.nonnegative,
-                (),
-                event_shape=image.pixels.shape,
+                dist.constraints.real, (), event_shape=image.pixels.shape
             )
             continue
         shape = image.log_brightness.shape
