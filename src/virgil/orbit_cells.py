@@ -1668,6 +1668,12 @@ def position_leg(
     cat = _Catalogue(summaries, log_outlier)
     name = onp.dtype(dtype).name
     k_plan, k_is, k_move = jax.random.split(key, 3)
+    if not onp.all(onp.isfinite(cat.log_b)):
+        raise ValueError(
+            "A night has a non-finite outlier log density b_k (its ln f "
+            "is outside the flux prior [ln flux_floor, 0]): the "
+            "all-outlier floor is undefined."
+        )
     with run_in(name):
         space = _Space(
             cat, cell, 0.0, onp.asarray(t_nights, float) - t_anchor, a_range,
@@ -1681,12 +1687,6 @@ def position_leg(
             images=_symmetry_images(space.d), dtype=space.dtype, dim=space.d,
         )  # fmt: skip
         n_k = len(cat.log_b)
-        if not onp.all(onp.isfinite(cat.log_b)):
-            raise ValueError(
-                "A night has a non-finite outlier log density b_k (its ln f "
-                "is outside the flux prior [ln flux_floor, 0]): the "
-                "all-outlier floor is undefined."
-            )
         # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))
         floor = float(onp.sum(cat.log_b)) + (
             math.lgamma(n_k + 0.5)

@@ -2120,6 +2120,39 @@ verified_via = "crossref"
 used_in = ["virgil.orbit_cells:search_cell"]
 note = "SIAM J. Numer. Anal. 10, 413; variable projection: the linear Thiele-Innes constants solved at fixed period and eccentricity"
 
+[ref.nocedal2006]
+authors = "Nocedal & Wright"
+year = 2006
+title = "Numerical Optimization"
+doi = "10.1007/978-0-387-40065-5"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "Springer, 2nd ed.; ch. 3-4 and 10.3: safeguarded steps in a bracket, trust-region predicted reduction, Newton and Levenberg-Marquardt in curved valleys; planned set step of the orbit-cells search"
+
+[ref.boyd2004]
+authors = "Boyd & Vandenberghe"
+year = 2004
+title = "Convex Optimization"
+doi = "10.1017/CBO9780511804441"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "Cambridge University Press; 9.5.1: the Newton decrement as a stopping rule; planned stop of the orbit-cells set step and C-steps"
+
+[ref.benisrael1966]
+authors = "Ben-Israel"
+year = 1966
+title = "A Newton-Raphson method for the solution of systems of equations"
+doi = "10.1016/0022-247X(66)90115-6"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "J. Math. Anal. Appl. 15, 243; Newton with the Moore-Penrose inverse for underdetermined systems; planned minimum-norm set step and C-steps of the orbit-cells search"
+
 [ref.hesterberg1995]
 authors = "Hesterberg"
 year = 1995
