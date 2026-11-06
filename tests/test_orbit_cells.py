@@ -607,6 +607,7 @@ def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @x64
 @pytest.mark.timeout(1200)
 @pytest.mark.parametrize("ecc", [0.0, 0.5])
@@ -959,6 +960,7 @@ def _decoys_and_outliers(summaries, rng, outliers):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @x64
 @pytest.mark.timeout(1800)
 def test_outlier_nights_decoy_peaks_and_a_set_budget_still_find_the_true_mode(
@@ -1025,6 +1027,7 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @x64
 @pytest.mark.timeout(1200)
 def test_running_cells_in_threads_changes_nothing():
@@ -1114,6 +1117,7 @@ def test_the_prediction_cost_does_not_depend_on_the_error_scale():
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @x64
 @pytest.mark.timeout(1200)
 @pytest.mark.parametrize("ecc", [0.0, 0.5])
