@@ -269,8 +269,9 @@ def test_the_optimum_and_the_gradient_norm_are_unchanged():
     # that cannot see them: a flat valley that gtol does not pin, so the two
     # runs stop at different points (25 mas: 135.30 vs 135.54, with the
     # gradient norm below 2e-6 in both) and the loss gap is not a measure of
-    # the optimum. Where the curvature is bounded below by lambda, the gap is
-    # at most |g|^2 / (2 lambda), negligible at gtol = 1e-6.
+    # the optimum. Where the curvature is bounded below by lambda * min(p) (the
+    # entropy curvature is w p per pixel), the gap is at most
+    # |g|^2 / (2 lambda min(p)), negligible at gtol = 1e-6.
     start, priors, data = _image_fit(sigma=60.0)
     regularizers = [MaxEntropy(10.0, path="env")]
     # A tighter gtol than the default.
@@ -283,8 +284,14 @@ def test_the_optimum_and_the_gradient_norm_are_unchanged():
     # The gradient test is in the unscaled coordinates, whatever the metric.
     assert scaled.info["grad_norm"] < 1e-5
     assert scaled.info["loss"] == pytest.approx(plain.info["loss"], rel=2e-3)
+    # Pixels are a softmax over 256, about 0.004 each, so the tolerance is a
+    # fraction of the peak, and the image must have moved off the flat start.
+    peak = plain.model.env.brightness.max()
+    assert peak > 1.5 / 256
     onp.testing.assert_allclose(
-        scaled.model.env.brightness, plain.model.env.brightness, atol=1e-2
+        scaled.model.env.brightness,
+        plain.model.env.brightness,
+        atol=1e-2 * peak,
     )
     # The softmax gauge is fixed: log-brightness is the log of the pixel fluxes.
     x = scaled.values["env.log_brightness"]
