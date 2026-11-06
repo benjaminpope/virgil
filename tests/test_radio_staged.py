@@ -75,20 +75,20 @@ def _nuis(data):
     )
 
 
-def _run(data, **kw):
+def _run(data, nuisance=None, key="pixels", **kw):
     prior = dist.ImproperUniform(
         dist.constraints.real, (), event_shape=(NPIX, NPIX)
     )
-    start = {"pixels": np.full((NPIX, NPIX), onp.sqrt(1.0 / NPIX**2))}
+    start = {key: np.full((NPIX, NPIX), onp.sqrt(1.0 / NPIX**2))}
+    scene = _scene if key == "pixels" else lambda v: _scene({"pixels": v[key]})
     return fit_staged_nuisances(
         data,
-        _scene,
-        {"pixels": prior},
+        scene,
+        {key: prior},
         [MaxEntropy(1e-6)],
         init=start,
-        nuisance=dict(
-            offsets=False, sigmas=False, alpha=False, fit_flux=False
-        ),
+        nuisance=nuisance
+        or dict(offsets=False, sigmas=False, alpha=False, fit_flux=False),
         weight=1e-6,
         max_steps=500,
         **kw,
@@ -96,11 +96,12 @@ def _run(data, **kw):
 
 
 def test_reference_is_the_largest_sum_of_weights():
-    data = _data([1, 1, 1], weights=(0.2, 3.0, 1.0))
+    # obs 1 has the largest Σw: the other gains are relative to it
+    data = _data([1.1, 1.0, 0.9], weights=(0.2, 3.0, 1.0))
     result = _run(data)
     assert result.ref_obs == 1
     assert onp.argmax(result.sum_weights) == 1
-    assert result.values["cal.gain"].shape == (NOBS - 1,)
+    assert onp.allclose(result.values["cal.gain"], [1.1, 0.9], atol=0.02)
 
 
 def test_explicit_reference_overrides():
@@ -128,3 +129,25 @@ def test_stage_three_reports_kkt():
     assert "converged" in result.kkt
     assert "kkt_w" in result.kkt["images"]["."]
     assert "cal.gain" in result.kkt["nuisances"]
+
+
+def test_offsets_are_boxed_and_checked():
+    result = _run(
+        _data([1.0, 1.0, 1.0]),
+        nuisance=dict(sigmas=False, alpha=False, fit_flux=False),
+    )
+    assert result.nuisances["cal.offset"]["value"].shape == (NOBS - 1, 2)
+    assert not result.failed
+
+
+def test_unboxed_sigma_scales_are_refused():
+    with pytest.raises(ValueError, match="no box"):
+        _run(
+            _data([1.0, 1.0, 1.0]),
+            nuisance=dict(offsets=False, alpha=False, fit_flux=False),
+        )
+
+
+def test_kkt_refuses_an_unrecognized_image_site():
+    with pytest.raises(ValueError, match="no image block"):
+        _run(_data([1.0, 1.0, 1.0]), key="img")

@@ -2956,6 +2956,11 @@ def kkt_report(
                     ok = ok and out["band_limit"] < BAND_TOL
             images[parent or "."] = out
             verdicts.append(bool(ok))
+    if regularizers and not images:
+        raise ValueError(
+            "kkt_report found no image block: the fitted pixels must be a "
+            "'pixels' or 'log_brightness' site of a bare Image or LinearImage."
+        )
     return {
         "images": images,
         "nuisances": nuisances,

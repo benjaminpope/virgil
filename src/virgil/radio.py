@@ -2021,7 +2021,8 @@ class StagedFit:
         ``Σw`` of each observation, from the weights alone.
     nuisances : dict
         Per boxed site: ``value``, ``lower``, ``upper`` and ``edge_frac``, the
-        distance to the nearer bound over the box width.
+        distance to the nearer bound over the box width (in ``ln`` for a
+        log-uniform box).
     edge : dict
         Per boxed site, a bool array: within ``edge`` of a bound.
     failed : bool
@@ -2084,7 +2085,8 @@ def fit_staged_nuisances(
         the flux gauge is not left to a lightly weighted observation.
     bounds : dict, optional
         Box ends for [`CalibrationNuisance.priors`][virgil.radio.CalibrationNuisance.priors],
-        taken uniform in the value; default ``{"gain": (0.7, 1.3)}``.
+        default ``{"gain": (0.7, 1.3)}``. L-BFGS-B fits a box uniform in the
+        value; a sigma scale needs a box (``sigma=(lo, hi)``) or is not fitted.
     edge : float, optional
         Edge fraction of the box width.
     weight : float, optional
@@ -2113,13 +2115,26 @@ def fit_staged_nuisances(
         data, **{**kw, "gains": False, "offsets": False, "sigmas": False}
     )
     full = CalibrationNuisance(data, **kw)
-    nuis_priors = full.priors(**{"gain": (0.7, 1.3), **(bounds or {})})
-    # deliberate: L-BFGS-B takes only Uniform boxes, so a LogUniform one is
-    # a Uniform over the same ends.
-    nuis_priors = {
-        k: dist.Uniform(p.low, p.high) if isinstance(p, dist.LogUniform) else p
-        for k, p in nuis_priors.items()
-    }
+    raw = full.priors(**{"gain": (0.7, 1.3), **(bounds or {})})
+    improper = [k for k, q in raw.items() if not hasattr(q, "low")]
+    if improper:
+        raise ValueError(
+            f"{improper} have no box: L-BFGS-B needs one; pass bounds= "
+            "(e.g. sigma=(0.5, 2)) or fit that nuisance off."
+        )
+
+    def boxed(priors):
+        # deliberate: L-BFGS-B takes only Uniform boxes, so a LogUniform one
+        # becomes a Uniform over the same ends (the MAP differs from a plain
+        # fit's by the 1/x Jacobian); edges are measured in ln x for it.
+        return {
+            k: dist.Uniform(q.low, q.high)
+            if isinstance(q, dist.LogUniform)
+            else q
+            for k, q in priors.items()
+        }
+
+    nuis_priors = boxed(raw)
     opts = dict(method=method, **fit_kw)
 
     def run(model, priors, start, term, regs=regularizers):
@@ -2135,7 +2150,7 @@ def fit_staged_nuisances(
 
     s1 = run(
         scene,
-        {**image_priors, **nominal.priors()},
+        {**image_priors, **boxed(nominal.priors())},
         {**init, **nominal.defaults()},
         data.term(scene, nominal, chi2=chi2),
     )
@@ -2161,12 +2176,11 @@ def fit_staged_nuisances(
         weight=weight,
     )
     table, flags = {}, {}
-    for site, prior in nuis_priors.items():
-        lo = onp.asarray(prior.support.lower_bound, float)
-        hi = onp.asarray(prior.support.upper_bound, float)
-        if not (onp.all(onp.isfinite(lo)) and onp.all(onp.isfinite(hi))):
-            continue  # an improper (Jeffreys) prior has no box
+    for site, prior in raw.items():
+        lo, hi = (onp.asarray(t, float) for t in (prior.low, prior.high))
         x = onp.asarray(s3.values[site], float)
+        if isinstance(prior, dist.LogUniform):
+            x, lo, hi = onp.log(x), onp.log(lo), onp.log(hi)
         frac = onp.minimum(x - lo, hi - x) / (hi - lo)
         table[site] = dict(value=x, lower=lo, upper=hi, edge_frac=frac)
         flags[site] = frac < edge
