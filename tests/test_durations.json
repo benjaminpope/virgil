@@ -113,6 +113,7 @@
  "tests/test_radio_gains.py": 90.0,
  "tests/test_radio_linear_image.py": 25.0,
  "tests/test_radio_refactor.py": 30.0,
+ "tests/test_radio_staged.py": 18.0,
  "tests/test_radio_toeplitz.py": 20.0,
  "tests/test_regressions.py": 25.9,
  "tests/test_release_correctness.py": 4.5,
