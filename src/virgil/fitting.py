@@ -321,8 +321,31 @@ class _Objective(eqx.Module):
                 angle = np.deg2rad(np.asarray(values[path], float))
                 z[path] = np.stack([np.cos(angle), np.sin(angle)])
                 continue
-            z[path] = self.bijection(prior).inv(
-                np.asarray(values[path], float)
+            start = np.asarray(values[path], float)
+            z[path] = self.bijection(prior).inv(start)
+            if not bool(np.all(np.isfinite(z[path]))):
+                # On or outside a bound (e.g. a railed earlier stage):
+                # nudge just inside it, keeping the fitted value.
+                support = prior.support
+                lo = np.asarray(
+                    getattr(support, "lower_bound", -np.inf), float
+                )
+                hi = np.asarray(getattr(support, "upper_bound", np.inf), float)
+                bound = np.where(
+                    np.isfinite(lo), lo, np.where(np.isfinite(hi), hi, 0.0)
+                )
+                eps = 1e-5 * np.where(
+                    np.isfinite(hi - lo),
+                    hi - lo,
+                    np.maximum(1.0, np.abs(bound)),
+                )
+                start = np.clip(start, lo + eps, hi - eps)
+                z[path] = self.bijection(prior).inv(start)
+        bad = [p for p, v in z.items() if not bool(np.all(np.isfinite(v)))]
+        if bad:
+            raise ValueError(
+                f"Non-finite starting coordinates for {bad}: check their "
+                "starting values against the priors' supports."
             )
         return z
 
