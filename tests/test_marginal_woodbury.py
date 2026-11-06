@@ -66,6 +66,14 @@ def _plain_chi2(surface, data, model, log_s):
     """Each block's χ² at ``log_s`` with gains and offsets off: the whitened
     sum of squares before the marginal's correction is subtracted."""
     prediction, errors, values, _, _ = _prediction_and_errors(model, data, {})
+    # ``_whiten_with_log_norm`` marginalizes whatever the data carry, so the
+    # gains and offsets are removed from the data itself
+    data = eqx.tree_at(
+        lambda d: (d.gains, d.phase_offsets),
+        data,
+        (None, None),
+        is_leaf=lambda x: x is None,
+    )
     sizes = onp.asarray(surface.sizes)
     index = {n: k for k, n in enumerate(surface.names)}
     labels = ["vis", "phi"] + [f"extra[{k}]" for k in range(len(sizes) - 2)]
@@ -342,6 +350,8 @@ def test_float32_matches_float64_on_the_same_data(case, at_low_edge):
         # included): the magnitude float32 rounding scales with (see below)
         naive = _plain_chi2(surface, data, TRUTH, log_s)
         assert onp.all(naive >= chi2_ref * (1 - 1e-12))  # float64 roundoff
+        if at_low_edge:  # the sum really is the pre-subtraction one
+            assert naive[0] > 1.5 * chi2_ref[0]
         n_terms = onp.array([b - a for _, a, b, _, _ in surface.blocks])
         data32 = cast_tree(data, "float32")
         model32 = cast_tree(TRUTH, "float32")
