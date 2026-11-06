@@ -235,3 +235,30 @@ def test_no_finite_jittered_start_raises_instead_of_copying_the_mode():
             jitter=onp.array([[1.0]]),
             max_tree_depth=3,
         )
+
+
+def test_finite_jittered_starts_are_the_seeded_draws_of_each_chain(
+    monkeypatch,
+):
+    """With every start finite, chain k starts at 0.3 L eps[k] for the rows
+    of one seeded (n, d) normal draw, as before the redraw."""
+    from numpyro.infer import MCMC
+
+    seen = {}
+    run = MCMC.run
+
+    def spy(self, *args, init_params=None, **kwargs):
+        seen["x"] = onp.asarray(init_params["x"])
+        return run(self, *args, init_params=init_params, **kwargs)
+
+    monkeypatch.setattr(MCMC, "run", spy)
+    _run_chains(
+        _walled_model(1e3),
+        {**SETTINGS, "num_chains": 3, "num_warmup": 5, "num_samples": 5},
+        {"x": onp.array(0.0)},
+        dense_mass=False,
+        jitter=onp.array([[2.0]]),
+        max_tree_depth=3,
+    )
+    eps = onp.random.default_rng(SETTINGS["seed"]).standard_normal((3, 1))
+    assert onp.allclose(seen["x"], [0.0, 0.6 * eps[1, 0], 0.6 * eps[2, 0]])

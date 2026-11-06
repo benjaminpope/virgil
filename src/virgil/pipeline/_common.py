@@ -440,6 +440,9 @@ def _run_chains(
         flat, unravel = ravel_pytree(z0)
         rng = onp.random.default_rng(settings["seed"])
         scale = 0.3 * np.asarray(jitter)
+        # deliberate: the first row of the old (n, d) draw, unused there, so
+        # chain k's first try is the old chain k's start.
+        rng.standard_normal(len(flat))
         chains = [z0]
         for k in range(1, n):
             # Redraw until the log-density is finite, so no chain copies
