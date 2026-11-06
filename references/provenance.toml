@@ -449,12 +449,32 @@ verified_via = "ads"
 authors = "Akiyama et al."
 year = 2017
 title = "Imaging the Schwarzschild-radius-scale Structure of M87 with the Event Horizon Telescope using Sparse Modeling"
-used_in = ["virgil.imaging:TSV", "virgil.imaging:StarletL1"]
-note = "ApJ 838, 1"
+used_in = ["virgil.imaging:TSV", "virgil.imaging:StarletL1", "virgil.models:LinearImage"]
+note = "ApJ 838, 1; SMILI: bounded linear (non-negative) pixels"
 bibcode = "2017ApJ...838....1A"
 arxiv = "1702.07361"
 verified = true
 verified_via = "ads"
+
+[ref.byrd1995]
+authors = "Byrd, Lu, Nocedal & Zhu"
+year = 1995
+title = "A Limited Memory Algorithm for Bound Constrained Optimization"
+doi = "10.1137/0916069"
+used_in = ["virgil.models:LinearImage", "virgil.fitting:fit"]
+note = "SIAM J. Sci. Comput. 16, 1190 (L-BFGS-B); fit(method=\"lbfgsb\") calls scipy's implementation, with the bounds of a linear LinearImage and Uniform priors"
+bibcode = "1995SJSC...16.1190B"
+verified = true
+verified_via = "ads"
+
+[ref.zhu1997]
+authors = "Zhu, Byrd, Lu & Nocedal"
+year = 1997
+title = "Algorithm 778: L-BFGS-B: Fortran subroutines for large-scale bound-constrained optimization"
+doi = "10.1145/279232.279236"
+used_in = ["virgil.fitting:fit"]
+note = "ACM Trans. Math. Softw. 23, 550; the L-BFGS-B code scipy wraps"
+verified = false
 
 [ref.honma2014]
 authors = "Honma, Akiyama, Uemura & Ikeda"
@@ -1016,8 +1036,8 @@ title = "Classic Maximum Entropy"
 doi = "10.1007/978-94-015-7860-8_3"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.imaging:LCurve.classic_maxent"]
-note = "Maximum Entropy and Bayesian Methods, Cambridge 1988. docs/contributors.md links its Skilling 1989 entry to DOI ..._4, which Crossref gives as the Gull 1989 chapter"
+used_in = ["virgil.imaging:LCurve.classic_maxent", "virgil.imaging:MaxEntropy"]
+note = "Maximum Entropy and Bayesian Methods, Cambridge 1988; the un-normalised entropy of MaxEntropy on a LinearImage. docs/contributors.md links its Skilling 1989 entry to DOI ..._4, which Crossref gives as the Gull 1989 chapter"
 
 [ref.skillingbryan1984]
 authors = "Skilling & Bryan"
