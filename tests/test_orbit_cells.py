@@ -2,6 +2,7 @@
 
 import functools
 import math
+import time
 import types
 
 import jax
@@ -550,6 +551,7 @@ def test_the_symmetry_images_leave_the_target_invariant():
         onp.testing.assert_allclose(moved, base, rtol=1e-10, atol=1e-10)
 
 
+@pytest.mark.slow
 @x64
 def test_a_second_cell_of_a_system_compiles_nothing():
     rng = onp.random.default_rng(0)
@@ -605,6 +607,7 @@ def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @x64
 @pytest.mark.timeout(1200)
 @pytest.mark.parametrize("ecc", [0.0, 0.5])
@@ -866,6 +869,7 @@ def test_a_search_that_drops_the_true_mode_fails_the_cell(monkeypatch):
     assert fit.at_floor and fit.failed and fit.draws is None
 
 
+@pytest.mark.slow
 @x64
 def test_a_non_finite_target_fails_the_cell(monkeypatch):
     times = TIMES[:5]
@@ -956,6 +960,7 @@ def _decoys_and_outliers(summaries, rng, outliers):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @x64
 @pytest.mark.timeout(1800)
 def test_outlier_nights_decoy_peaks_and_a_set_budget_still_find_the_true_mode(
@@ -1016,3 +1021,176 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
     else:
         assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
+
+
+# --- the speed measures are exact --------------------------------------------
+
+
+@pytest.mark.slow
+@pytest.mark.full_only
+@x64
+@pytest.mark.timeout(1200)
+def test_running_cells_in_threads_changes_nothing():
+    """Two seasons, K = 6: the cells' evidence, probabilities and modes with
+    one worker and with two (each cell has its own key)."""
+    rng = onp.random.default_rng(0)
+    times = _two_season_times(rng, 6)
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    s = _summaries(orbit, times, sigma=0.3)
+    domain = oc_cells.period_domain(s, p_range=(10.0, 12.5))
+    out = [
+        oc_cells.position_cells(
+            s,
+            domain,
+            jax.random.key(0),
+            log_outlier=onp.full(len(times), LOG_B),
+            jitter=0.0,
+            n_is=512,
+            workers=w,
+        )  # fmt: skip
+        for w in (1, 2)
+    ]
+    assert len(out[0].cells) > 2
+    for name in ("p_pos", "failed"):
+        onp.testing.assert_array_equal(
+            getattr(out[0], name), getattr(out[1], name)
+        )
+    for a, b in zip(*(o.fits for o in out)):
+        assert a.log_z == b.log_z and len(a.modes) == len(b.modes)
+        onp.testing.assert_array_equal(a.x_is, b.x_is)
+        assert (a.draws is None) == (b.draws is None)
+        if a.draws is not None:
+            onp.testing.assert_array_equal(a.draws, b.draws)
+    # and the cells of the threaded run are those of a direct call on the main
+    # thread with the key the loop assigns (float64, plan of the first cell)
+    log_outlier = onp.full(len(times), LOG_B)
+    t_a = times[out[1].anchors[0]]
+    keys = jax.random.split(jax.random.key(0), len(out[1].cells))
+    for i in (1, len(out[1].cells) - 1):
+        direct = oc_cells.position_leg(
+            s, log_outlier, out[1].cells[i], keys[i], t_anchor=t_a,
+            t_nights=times, jitter=0.0, n_is=512, posterior_draws=False,
+            plan=out[1].fits[0].plan, nu_width=1.0 / out[1].t_ab,
+        )  # fmt: skip
+        got = out[1].fits[i]
+        assert direct.log_z == got.log_z
+        assert got.x_is.dtype == onp.float64
+        onp.testing.assert_array_equal(direct.x_is, got.x_is)
+
+
+def test_a_failing_cell_cancels_the_queued_ones():
+    done = []
+
+    def fn(i):
+        done.append(i)
+        if i == 1:
+            raise ValueError("boom")
+        time.sleep(0.05)
+        return i
+
+    with pytest.raises(ValueError, match="boom"):
+        oc_cells._map(fn, list(range(200)), 2)
+    assert len(done) < 20
+    assert oc_cells._map(lambda i: i * i, [1, 2, 3], 2) == [1, 4, 9]
+    assert oc_cells._map(lambda i: i * i, [1, 2, 3], 1) == [1, 4, 9]
+
+
+# --- the velocity criterion for the triplet fills (design 6.11, fix 4) --------
+
+
+@x64
+def test_the_prediction_cost_does_not_depend_on_the_error_scale():
+    """``λ_k`` is the same when every covariance is multiplied by ``c²``."""
+    rng = onp.random.default_rng(0)
+    gg = np.asarray(rng.normal(size=(5, 4, 4)))
+    a = rng.normal(size=(5, 2, 4, 4))
+    prec = onp.einsum("kjab,kjcb->kjac", a, a) + 4 * onp.eye(4)
+    nights, valid = np.asarray([0, 3, 3]), np.ones((5, 2), bool)
+    w = np.asarray(prec[[0, 3, 3], 0] * onp.array([1, 1, 0])[:, None, None])
+
+    def cost(c):
+        chol = np.linalg.cholesky(np.asarray(prec) / c**2)
+        return oc_cells._prediction_cost(gg, nights, w / c**2, chol, valid)
+
+    assert onp.allclose(cost(1.0), cost(7.0), rtol=1e-8)
+    assert onp.all(onp.asarray(cost(1.0)) > 0)
+
+
+@pytest.mark.slow
+@pytest.mark.full_only
+@x64
+@pytest.mark.timeout(1200)
+@pytest.mark.parametrize("ecc", [0.0, 0.5])
+def test_the_velocity_criterion_keeps_the_true_mode_with_fewer_triplets(
+    monkeypatch, ecc
+):
+    """Fill regime, K = 8, velocities informative: the criterion drops some
+    triplet candidates and the coverage contract of the search still holds."""
+    rng = onp.random.default_rng(int(1e4 * ecc) + 1000)
+    times = _two_season_times(rng)
+    orbit = _orbit(period=11.3, a=6.0, ecc=ecc)
+    s = _summaries(orbit, times, sigma=1e-3 * 6.0, seed=1)
+    monkeypatch.setattr(oc_cells, "N_SET_MAX", 20)
+    domain, cells, cell = _true_cell(11.3, times, s, (9.0, 14.0))
+    space = _space(s, cell)
+    plan = oc_cells.search_plan(space, jax.random.key(0))
+    assert int(oc_cells._grid_stage(space, plan)[3]) > 0
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(len(times), LOG_B),
+        jitter=0.0, a_range=(1.0, 30.0), e_max=0.9,
+    )  # fmt: skip
+    assert not out.failed.any() and onp.all(onp.isfinite(out.p_pos))
+    order = onp.argsort(-out.p_pos)
+    keep = order[
+        : int(onp.searchsorted(onp.cumsum(out.p_pos[order]), 0.99)) + 1
+    ]
+    true_n = [i for i, c in enumerate(out.cells) if c.p_lo <= 11.3 <= c.p_hi]
+    assert true_n[0] in keep
+    d2 = _truth_distance2(out.fits[true_n[0]], orbit, times[out.anchors[0]])
+    assert d2 < stats.chi2.isf(oc_cells.DELTA, out.fits[true_n[0]].space.d - 1)
+
+
+@x64
+@pytest.mark.parametrize("gap", [3.0, 200.0])
+def test_a_floor_cell_fails_the_system_only_if_it_could_matter(
+    monkeypatch, gap
+):
+    """The floor sentinel obeys the same rule as the low-ESS flag: a cell at
+    the floor within W of the best cell (in its upper bound on the mass) fails
+    the system; one far below stays flagged on its fit but does not."""
+    s = _summaries(_orbit(), TIMES, sigma=0.3)
+    domain, cells = _cells(s, (60.0, 400.0))
+    odd = cells[1].n
+
+    def leg(summaries, log_outlier, cell, key, **kw):
+        low = cell.n == odd
+        z = -cell.log_mass - (gap if low else 0.0)
+        return types.SimpleNamespace(
+            cell=cell, log_z=z, log_z_upper=z, log_z_error=0.0, modes=[],
+            draws=None, at_floor=low, failed=low, nonfinite=False,
+            unreliable=False, plan=None,
+        )  # fmt: skip
+
+    monkeypatch.setattr(oc_cells, "position_leg", leg)
+    monkeypatch.setattr(oc_cells, "_draw", lambda f, k: None)
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(len(TIMES), LOG_B),
+        jitter=0.0,
+    )  # fmt: skip
+    assert out.fits[1].at_floor
+    if gap < oc_cells.W:
+        assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
+    else:
+        assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
+
+
+def test_a_non_finite_outlier_density_is_an_error():
+    s = _summaries(_orbit(), TIMES[:5], sigma=0.3)
+    _, cells = _cells(s, (6.0, 400.0))
+    log_b = onp.full(5, LOG_B)
+    log_b[2] = -onp.inf
+    with pytest.raises(ValueError, match="all-outlier floor is undefined"):
+        oc_cells.position_leg(
+            s, log_b, cells[2], jax.random.key(0), t_anchor=TIMES[0],
+            t_nights=TIMES[:5], n_is=64, posterior_draws=False,
+        )  # fmt: skip

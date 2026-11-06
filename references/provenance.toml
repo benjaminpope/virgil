@@ -449,12 +449,32 @@ verified_via = "ads"
 authors = "Akiyama et al."
 year = 2017
 title = "Imaging the Schwarzschild-radius-scale Structure of M87 with the Event Horizon Telescope using Sparse Modeling"
-used_in = ["virgil.imaging:TSV", "virgil.imaging:StarletL1"]
-note = "ApJ 838, 1"
+used_in = ["virgil.imaging:TSV", "virgil.imaging:StarletL1", "virgil.models:LinearImage"]
+note = "ApJ 838, 1; SMILI: bounded linear (non-negative) pixels"
 bibcode = "2017ApJ...838....1A"
 arxiv = "1702.07361"
 verified = true
 verified_via = "ads"
+
+[ref.byrd1995]
+authors = "Byrd, Lu, Nocedal & Zhu"
+year = 1995
+title = "A Limited Memory Algorithm for Bound Constrained Optimization"
+doi = "10.1137/0916069"
+used_in = ["virgil.models:LinearImage", "virgil.fitting:fit"]
+note = "SIAM J. Sci. Comput. 16, 1190 (L-BFGS-B); fit(method=\"lbfgsb\") calls scipy's implementation, with the bounds of a linear LinearImage and Uniform priors"
+bibcode = "1995SJSC...16.1190B"
+verified = true
+verified_via = "ads"
+
+[ref.zhu1997]
+authors = "Zhu, Byrd, Lu & Nocedal"
+year = 1997
+title = "Algorithm 778: L-BFGS-B: Fortran subroutines for large-scale bound-constrained optimization"
+doi = "10.1145/279232.279236"
+used_in = ["virgil.fitting:fit"]
+note = "ACM Trans. Math. Softw. 23, 550; the L-BFGS-B code scipy wraps"
+verified = false
 
 [ref.honma2014]
 authors = "Honma, Akiyama, Uemura & Ikeda"
@@ -1016,8 +1036,8 @@ title = "Classic Maximum Entropy"
 doi = "10.1007/978-94-015-7860-8_3"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.imaging:LCurve.classic_maxent"]
-note = "Maximum Entropy and Bayesian Methods, Cambridge 1988. docs/contributors.md links its Skilling 1989 entry to DOI ..._4, which Crossref gives as the Gull 1989 chapter"
+used_in = ["virgil.imaging:LCurve.classic_maxent", "virgil.imaging:MaxEntropy"]
+note = "Maximum Entropy and Bayesian Methods, Cambridge 1988; the un-normalised entropy of MaxEntropy on a LinearImage. docs/contributors.md links its Skilling 1989 entry to DOI ..._4, which Crossref gives as the Gull 1989 chapter"
 
 [ref.skillingbryan1984]
 authors = "Skilling & Bryan"
@@ -2077,6 +2097,39 @@ verified_via = "crossref"
 used_in = ["virgil.orbit_cells:search_cell"]
 note = "Technometrics 41, 212; concentration steps (C-steps): relabel inliers, refit, until the labels repeat"
 
+[ref.celeux1992]
+authors = "Celeux & Govaert"
+year = 1992
+title = "A classification EM algorithm for clustering and two stochastic versions"
+doi = "10.1016/0167-9473(92)90042-E"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "Comput. Stat. Data Anal. 14, 315; classification EM: block ascent over labels and parameters; planned inlier-scale step of the orbit-cells search"
+
+[ref.rue2009]
+authors = "Rue, Martino & Chopin"
+year = 2009
+title = "Approximate Bayesian inference for latent Gaussian models by using integrated nested Laplace approximations"
+doi = "10.1111/j.1467-9868.2008.00700.x"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "J. R. Stat. Soc. B 71, 319; INLA: quadrature in a low-dimensional parameter with conditional Laplace; planned ridge proposal component in rho for orbit cells"
+
+[ref.mantel1959]
+authors = "Mantel & Haenszel"
+year = 1959
+title = "Statistical aspects of the analysis of data from retrospective studies of disease"
+doi = "10.1093/jnci/22.4.719"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "J. Natl. Cancer Inst. 22, 719; stratified test of a common rate across strata; planned orbit population-test assertion"
+
 [ref.golub1973]
 authors = "Golub & Pereyra"
 year = 1973
@@ -2086,6 +2139,39 @@ verified = true
 verified_via = "crossref"
 used_in = ["virgil.orbit_cells:search_cell"]
 note = "SIAM J. Numer. Anal. 10, 413; variable projection: the linear Thiele-Innes constants solved at fixed period and eccentricity"
+
+[ref.nocedal2006]
+authors = "Nocedal & Wright"
+year = 2006
+title = "Numerical Optimization"
+doi = "10.1007/978-0-387-40065-5"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "Springer, 2nd ed.; ch. 3-4 and 10.3: safeguarded steps in a bracket, trust-region predicted reduction, Newton and Levenberg-Marquardt in curved valleys; planned set step of the orbit-cells search"
+
+[ref.boyd2004]
+authors = "Boyd & Vandenberghe"
+year = 2004
+title = "Convex Optimization"
+doi = "10.1017/CBO9780511804441"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "Cambridge University Press; 9.5.1: the Newton decrement as a stopping rule; planned stop of the orbit-cells set step and C-steps"
+
+[ref.benisrael1966]
+authors = "Ben-Israel"
+year = 1966
+title = "A Newton-Raphson method for the solution of systems of equations"
+doi = "10.1016/0022-247X(66)90115-6"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "J. Math. Anal. Appl. 15, 243; Newton with the Moore-Penrose inverse for underdetermined systems; planned minimum-norm set step and C-steps of the orbit-cells search"
 
 [ref.hesterberg1995]
 authors = "Hesterberg"
@@ -2124,4 +2210,5 @@ title = "Validating Bayesian inference algorithms with simulation-based calibrat
 arxiv = "1804.06788"
 verified = true
 verified_via = "crossref"
+used_in = []
 note = "rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py)"
