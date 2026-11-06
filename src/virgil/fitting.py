@@ -437,7 +437,7 @@ class _Objective(eqx.Module):
                 )
         return np.concatenate(parts)
 
-    # The Gauss–Newton curvature F = JᵀJ + diag(P) (design/gauss_newton_plan.md).
+    # The Gauss–Newton curvature F = JᵀJ + diag(P) (design/history/gauss_newton_plan.md).
 
     @property
     def coordinate_keys(self):
