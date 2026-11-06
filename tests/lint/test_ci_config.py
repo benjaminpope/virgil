@@ -56,12 +56,15 @@ def test_main_push_is_the_gate_with_slow_tests():
     jobs = _jobs("push")
     assert _ids(jobs) == GATE
     assert all(j["slow"] and not j["orbit_slow"] for j in jobs)
+    # Cold float32 shards with every slow test outran the 45-minute limit.
+    assert all(j["skip_full_only"] for j in jobs)
 
 
 def test_full_ci_label_adds_macos_py313_and_the_floors():
     jobs = _jobs("pull_request", full_label=True)
     assert _ids(jobs) == GATE | PY313 | FLOORS | {"macos-latest-py3.11-x640"}
     assert all(j["slow"] for j in jobs if j["id"] in GATE)
+    assert not any(j.get("skip_full_only") for j in jobs)
     # The extra jobs run slow tests nightly only.
     assert not any(j["slow"] for j in jobs if j["id"] not in GATE)
 
@@ -252,3 +255,12 @@ def test_test_budget_stays_active_when_shard_packing_changes():
     assert (
         "format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax)" in line
     )
+
+
+def test_slow_orbit_tests_are_never_dropped_on_nightly_or_main():
+    """``orbit_slow`` adds the orbit slow tests to a PR run that touches
+    orbit modules; main, dispatch and the nightly already run every slow
+    test, so none of those sets it."""
+    for event in ("push", "schedule", "workflow_dispatch"):
+        jobs = _jobs(event, orbit_slow=True)
+        assert not any(j.get("orbit_slow") for j in jobs), event

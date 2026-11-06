@@ -44,7 +44,9 @@ from ._geometry import (
 )
 from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
-from .models import Image, SourceModel
+from .models import Image, LinearImage, Rotated, SourceModel, System
+
+_PIXEL_IMAGES = (Image, LinearImage)
 
 __provisional__ = ("*",)
 
@@ -414,7 +416,8 @@ class ComplexVisData(eqx.Module):
         V_scene(u, v)``; see
         [`CalibrationNuisance`][virgil.radio.CalibrationNuisance]. ``scene``
         is a [`SourceModel`][virgil.models.SourceModel] (normalized to unit
-        flux; ``cal.flux`` sets the scale), evaluated at wavelength
+        flux; ``cal.flux`` sets the scale, or ``Σ pixels`` for one
+        ``LinearImage`` with ``fit_flux=False``), evaluated at wavelength
         ``c / ν`` of each point so that chromatic scenes work.
         """
         _no_antenna_gains(nuisance)
@@ -1109,7 +1112,7 @@ class CalibrationNuisance:
     ===============  ================  ==========================  =============
     Site             Shape             Default prior               Not fitted
     ===============  ================  ==========================  =============
-    ``cal.flux``     ``()``            ``LogUniform(1e-4, 1e2)``   always fitted
+    ``cal.flux``     ``()``            ``LogUniform(1e-4, 1e2)``   ``fit_flux=False``
     ``cal.gain``     ``(n_obs-1,)``    Jeffreys ``1/g``            1
     ``cal.offset``   ``(n_obs-1, 2)``  ``Uniform(-θ_k, θ_k)`` mas  0
     ``cal.sigma``    ``(n_ddid,)``     Jeffreys ``1/s``            1
@@ -1127,13 +1130,11 @@ class CalibrationNuisance:
     ref_obs : int
         Index of the reference observation.
     gains, offsets, sigmas, alpha : bool (``alpha`` also a float)
-        Which nuisances are fitted (the flux always is); gains and offsets
-        need more than one observation; a nuisance not fitted takes the
-        table's last column. ``sigmas="profile"`` sets the error scales at
-        every evaluation (see
+        Which nuisances are fitted (gains and offsets need more than one
+        observation); one not fitted takes the table's last column.
+        ``sigmas="profile"`` sets the error scales at every evaluation (see
         [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]). A float
-        ``alpha`` fixes the spectral index (a non-zero integer is refused:
-        ``alpha=1`` used to mean "fit").
+        ``alpha`` fixes the spectral index (a non-zero integer is refused).
     offset_beams : float, optional
         Default offset prior half-width in beams (3). Provisional, as the module.
     antenna_gains : bool
@@ -1159,6 +1160,8 @@ class CalibrationNuisance:
         Formerly ``taper_fwhm_mas``, a deprecated alias.
     prefix : str
         Site-name prefix.
+    fit_flux : bool
+        ``False``: no ``cal.flux``; for one [`LinearImage`][virgil.models.LinearImage].
     """
 
     @renamed({"taper_fwhm_mas": "blur_fwhm_mas"})
@@ -1173,6 +1176,7 @@ class CalibrationNuisance:
         nu0_hz=None,
         blur_fwhm_mas=None,
         prefix="cal",
+        fit_flux=True,
         offset_beams=3.0,
         antenna_gains=False,
         solint="scan",
@@ -1237,6 +1241,7 @@ class CalibrationNuisance:
             None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
         self.prefix = prefix
+        self.fit_flux = bool(fit_flux)
         self.antenna_gains = bool(antenna_gains)
         if self.antenna_gains:
             _antenna_gains.gain_intervals(data, solint)  # validates
@@ -1308,8 +1313,12 @@ class CalibrationNuisance:
         if unknown:
             raise ValueError(f"unknown bounds {sorted(unknown)}.")
         k = self.n_obs - 1
-        lo, hi = bounds.get("flux", (1e-4, 1e2))
-        out = {self._site("flux"): dist.LogUniform(lo, hi)}
+        out = {}
+        if self.fit_flux:
+            lo, hi = bounds.get("flux", (1e-4, 1e2))
+            out[self._site("flux")] = dist.LogUniform(lo, hi)
+        elif "flux" in bounds:
+            raise ValueError("fit_flux=False: there is no flux site to bound.")
         if self.gains:
             if "gain" in bounds:
                 lo, hi = bounds["gain"]
@@ -1353,7 +1362,7 @@ class CalibrationNuisance:
     def defaults(self):
         """Starting values of the fitted sites."""
         k = self.n_obs - 1
-        out = {self._site("flux"): self.flux_start}
+        out = {self._site("flux"): self.flux_start} if self.fit_flux else {}
         if self.gains:
             out[self._site("gain")] = onp.ones(k)
         if self.offsets:
@@ -1404,7 +1413,8 @@ class CalibrationNuisance:
             else np.ones(self.n_ddid)  # profiled: set by the term
         )
         alpha = values[site("alpha")] if self.alpha else self.alpha_fixed
-        return values[site("flux")], gain, offset, sigma, alpha
+        flux = values[site("flux")] if self.fit_flux else 1.0
+        return flux, gain, offset, sigma, alpha
 
     @property
     def taper_fwhm_mas(self):
@@ -1432,8 +1442,57 @@ def _no_antenna_gains(nuisance):
         )
 
 
+def _owned_image(scene, nuisance):
+    """The `LinearImage` that is the whole of ``scene`` (inside Systems of one
+    part and ``Rotated``), else None, checked against ``nuisance.fit_flux``.
+
+    A lone `LinearImage` carries its flux (``fit_flux=False``). With a free
+    ``cal.flux`` a scene made only of `LinearImage` parts is refused (scaling
+    every pixel leaves the unit-normalized model unchanged); a fixed-flux
+    part such as a `PointSource` fixes the scale and is accepted.
+    """
+    image, leaves = scene, [scene]
+    while True:
+        if isinstance(image, System) and len(image.resolved().parts) == 1:
+            image = image.resolved().parts[0]
+        elif isinstance(image, Rotated):
+            image = image.source
+        else:
+            break
+    lone = isinstance(image, LinearImage)
+    while leaves:
+        part = leaves.pop()
+        if isinstance(part, System):
+            leaves += part.resolved().parts
+        elif isinstance(part, Rotated):
+            leaves.append(part.source)
+        elif not isinstance(part, LinearImage):
+            leaves = None
+            break
+    if nuisance.fit_flux and leaves is not None:
+        raise TypeError(
+            "a scene made only of LinearImages carries its own flux (Σ pixels):"
+            " use CalibrationNuisance(..., fit_flux=False) for one LinearImage;"
+            " with a free cal.flux the scale is a degeneracy with the pixels."
+        )
+    if not lone and not nuisance.fit_flux:
+        raise ValueError(
+            "fit_flux=False needs a scene that is one LinearImage; other "
+            "scenes are unit-normalized and need cal.flux."
+        )
+    return image if lone else None
+
+
 def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
     flux, gain, offset, _, alpha = unpacked
+    image = _owned_image(scene, nuisance)
+    if image is not None:
+        # Σ pixels times the unit-sum transform: must be positive
+        flux = eqx.error_if(
+            image.total_flux,
+            image.total_flux <= 0.0,
+            "Σ pixels must be positive.",
+        )
     lam = C_LIGHT / freq
     vis = scene.model(u * lam, v * lam, lam)
     ramp = offset_phase(u, v, offset[obs, 0], offset[obs, 1])
@@ -1478,10 +1537,11 @@ def _warn_double_blur(scene, nuisance):
     if nuisance.blur_fwhm_mas is None:
         return
     images = jax.tree_util.tree_leaves(
-        scene, is_leaf=lambda x: isinstance(x, Image)
+        scene, is_leaf=lambda x: isinstance(x, _PIXEL_IMAGES)
     )
     if any(
-        isinstance(x, Image) and x.blur_fwhm_mas is not None for x in images
+        isinstance(x, _PIXEL_IMAGES) and x.blur_fwhm_mas is not None
+        for x in images
     ):
         warnings.warn(
             "CalibrationNuisance.blur_fwhm_mas and Image.blur_fwhm_mas "
@@ -1657,7 +1717,7 @@ class _RadioTerm(_TermBase):
                     fitted.update(id(v) for v in eqn.outvars)
             if any(id(v) in fitted for v in jaxpr.outvars):
                 unmet.append("the Image's dra or ddec is fitted")
-            side, other = image.eta.shape
+            side, other = image.brightness.shape
             if side != other:
                 unmet.append("the Image is not square")
             pixels = side * other * nuis.n_ddid

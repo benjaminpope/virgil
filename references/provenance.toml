@@ -449,12 +449,32 @@ verified_via = "ads"
 authors = "Akiyama et al."
 year = 2017
 title = "Imaging the Schwarzschild-radius-scale Structure of M87 with the Event Horizon Telescope using Sparse Modeling"
-used_in = ["virgil.imaging:TSV", "virgil.imaging:StarletL1"]
-note = "ApJ 838, 1"
+used_in = ["virgil.imaging:TSV", "virgil.imaging:StarletL1", "virgil.models:LinearImage"]
+note = "ApJ 838, 1; SMILI: bounded linear (non-negative) pixels"
 bibcode = "2017ApJ...838....1A"
 arxiv = "1702.07361"
 verified = true
 verified_via = "ads"
+
+[ref.byrd1995]
+authors = "Byrd, Lu, Nocedal & Zhu"
+year = 1995
+title = "A Limited Memory Algorithm for Bound Constrained Optimization"
+doi = "10.1137/0916069"
+used_in = ["virgil.models:LinearImage", "virgil.fitting:fit"]
+note = "SIAM J. Sci. Comput. 16, 1190 (L-BFGS-B); fit(method=\"lbfgsb\") calls scipy's implementation, with the bounds of a linear LinearImage and Uniform priors"
+bibcode = "1995SJSC...16.1190B"
+verified = true
+verified_via = "ads"
+
+[ref.zhu1997]
+authors = "Zhu, Byrd, Lu & Nocedal"
+year = 1997
+title = "Algorithm 778: L-BFGS-B: Fortran subroutines for large-scale bound-constrained optimization"
+doi = "10.1145/279232.279236"
+used_in = ["virgil.fitting:fit"]
+note = "ACM Trans. Math. Softw. 23, 550; the L-BFGS-B code scipy wraps"
+verified = false
 
 [ref.honma2014]
 authors = "Honma, Akiyama, Uemura & Ikeda"
@@ -473,7 +493,7 @@ authors = "Rudin, Osher & Fatemi"
 year = 1992
 title = "Nonlinear total variation based noise removal algorithms"
 doi = "10.1016/0167-2789(92)90242-F"
-used_in = ["virgil.imaging:TV"]
+used_in = ["virgil.imaging:TV", "virgil.imaging:TSV"]
 note = "Physica D 60, 259"
 bibcode = "1992PhyD...60..259R"
 verified = true
@@ -485,7 +505,7 @@ year = 2018
 title = "Interferometric Imaging Directly with Closure Phases and Closure Amplitudes"
 repo = "https://github.com/achael/eht-imaging"
 doi = "10.3847/1538-4357/aab6a8"
-used_in = ["virgil.imaging:TV"]
+used_in = ["virgil.imaging:TV", "virgil.imaging:TSV"]
 note = "ApJ 857, 23; eht-imaging"
 bibcode = "2018ApJ...857...23C"
 arxiv = "1803.07088"
@@ -777,7 +797,7 @@ year = 2011
 alt_years = [2014]
 alt_years_note = "year is the first posting; the journal paper is dated 2014"
 title = "The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo"
-used_in = ["virgil.inference"]
+used_in = ["virgil.inference", "virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
 note = "NUTS; JMLR 15, 1593 (2014)"
 bibcode = "2011arXiv1111.4246H"
 arxiv = "1111.4246"
@@ -1016,8 +1036,8 @@ title = "Classic Maximum Entropy"
 doi = "10.1007/978-94-015-7860-8_3"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.imaging:LCurve.classic_maxent"]
-note = "Maximum Entropy and Bayesian Methods, Cambridge 1988. docs/contributors.md links its Skilling 1989 entry to DOI ..._4, which Crossref gives as the Gull 1989 chapter"
+used_in = ["virgil.imaging:LCurve.classic_maxent", "virgil.imaging:MaxEntropy"]
+note = "Maximum Entropy and Bayesian Methods, Cambridge 1988; the un-normalised entropy of MaxEntropy on a LinearImage. docs/contributors.md links its Skilling 1989 entry to DOI ..._4, which Crossref gives as the Gull 1989 chapter"
 
 [ref.skillingbryan1984]
 authors = "Skilling & Bryan"
@@ -1376,8 +1396,8 @@ year = 2006
 title = "Gaussian Processes for Machine Learning"
 doi = "10.7551/mitpress/3206.001.0001"
 url = "https://gaussianprocess.org/gpml/"
-used_in = []
-note = "MIT Press (book); GP terminology, Matérn kernels, marginal likelihood"
+used_in = ["virgil._linear:arrow_at"]
+note = "MIT Press (book); GP terminology, Matérn kernels, marginal likelihood; A.9 matrix inversion and determinant lemmas (arrow_at)"
 role = "context"
 verified = true
 verified_via = "crossref"
@@ -1692,3 +1712,503 @@ note = "Google's measured 0.24 Wh per median Gemini Apps text prompt; a cross-ch
 role = "context"
 verified = true
 verified_via = "arxiv"
+
+[ref.miles1965]
+authors = "Miles"
+year = 1965
+title = "On random rotations in R^3"
+doi = "10.1093/biomet/52.3-4.636"
+used_in = ["virgil._orbit_coordinates:z_log_prior"]
+note = "Biometrika 52, 636-639; the isotropic (Haar) distribution of rotations: Omega and omega uniform, cos i uniform. Not on ADS: checked on Crossref"
+verified = true
+verified_via = "crossref"
+
+[ref.moran1975]
+authors = "Moran"
+year = 1975
+title = "Quaternions, Haar measure and the estimation of a palaeomagnetic rotation"
+doi = "10.1017/s0021900200047720"
+used_in = ["virgil._orbit_coordinates:sample_z"]
+note = "J. Appl. Prob. 12, 295-301; Haar measure on SO(3) is the uniform measure on S^3, covered 2:1 by unit quaternions. Not on ADS: checked on Crossref"
+verified = true
+verified_via = "crossref"
+
+[ref.goldstein2002]
+authors = "Goldstein, Poole & Safko"
+year = 2002
+title = "Classical Mechanics (3rd ed.)"
+used_in = ["virgil._orbit_coordinates:ti_to_z"]
+note = "Addison-Wesley, section 4.5; the Cayley-Klein parameters of a rotation in Euler angles. A textbook with no DOI or ADS record: unverified"
+verified = false
+
+[ref.ford2006]
+authors = "Ford"
+year = 2006
+title = "Improving the Efficiency of Markov Chain Monte Carlo for Analyzing the Orbits of Extrasolar Planets"
+used_in = ["virgil._orbit_coordinates:zeta_to_eccentricity"]
+note = "ApJ 642, 505; the (sqrt(e) cos omega, sqrt(e) sin omega) parameterization, uniform in e; zeta is its half-angle variant"
+bibcode = "2006ApJ...642..505F"
+arxiv = "astro-ph/0512634"
+doi = "10.1086/500802"
+verified = true
+verified_via = "ads"
+
+# Sources of design/orbit_alias_cycles.md (not yet coded): role "bibliography" until a stage sets used_in.
+# The z and ζ maps, the anchor TI' rotation and the velocity-aware outlier contract are derived there (no source).
+
+[ref.pricewhelan2020]
+authors = "Price-Whelan et al."
+year = 2020
+title = "Close Binary Companions to APOGEE DR16 Stars: 20,000 Binary-star Systems Across the Color-Magnitude Diagram"
+used_in = []
+note = "ApJ 895, 2; The Joker at scale"
+role = "bibliography"
+bibcode = "2020ApJ...895....2P"
+arxiv = "2002.00014"
+verified = true
+verified_via = "ads"
+
+[ref.delmoral2006]
+authors = "Del Moral, Doucet & Jasra"
+year = 2006
+title = "Sequential Monte Carlo Samplers"
+doi = "10.1111/j.1467-9868.2006.00553.x"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_cells:position_leg"]
+note = "JRSSB 68, 411; SMC samplers and the normalizing-constant estimate, Z as the product of the incremental weights"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.jasra2011]
+authors = "Jasra, Stephens, Doucet & Tsagaris"
+year = 2011
+title = "Inference for Lévy-Driven Stochastic Volatility Models via Adaptive Sequential Monte Carlo"
+doi = "10.1111/j.1467-9469.2010.00723.x"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Scand. J. Stat. 38, 1 (online December 2010); ESS-adaptive tempering schedules"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.zhou2016]
+authors = "Zhou, Johansen & Aston"
+year = 2016
+title = "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
+doi = "10.1080/10618600.2015.1060885"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "JCGS 25, 701; conditional ESS for the next temperature"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.buchholz2021]
+authors = "Buchholz, Chopin & Jacob"
+year = 2021
+title = "Adaptive Tuning of Hamiltonian Monte Carlo Within Sequential Monte Carlo"
+doi = "10.1214/20-ba1222"
+arxiv = "1808.07730"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Bayesian Anal. 16, 745; fixed-L HMC kernels tuned per stage"
+role = "bibliography"
+bibcode = "2018arXiv180807730B"
+verified = true
+verified_via = "ads"
+
+[ref.beskos2013]
+authors = "Beskos, Pillai, Roberts, Sanz-Serna & Stuart"
+year = 2013
+title = "Optimal tuning of the hybrid Monte Carlo algorithm"
+doi = "10.3150/12-bej414"
+used_in = []
+note = "Bernoulli 19, 1501; acceptance target 0.651"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.shoemake1992]
+authors = "Shoemake"
+year = 1992
+title = "Uniform Random Rotations"
+doi = "10.1016/b978-0-08-050755-2.50036-1"
+used_in = []
+note = "Graphics Gems III, 124; unit quaternions and the Haar measure of SO(3)"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.mengersen1996]
+authors = "Mengersen & Tweedie"
+year = 1996
+title = "Rates of convergence of the Hastings and Metropolis algorithms"
+doi = "10.1214/aos/1033066201"
+used_in = []
+note = "Ann. Stat. 24, 101; independence Metropolis-Hastings is uniformly ergodic iff the weight is bounded"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.meng1996]
+authors = "Meng & Wong"
+year = 1996
+title = "Simulating ratios of normalizing constants via a simple identity: a theoretical exploration"
+url = "https://www3.stat.sinica.edu.tw/statistica/j6n4/j6n43/j6n43.htm"
+used_in = []
+note = "Statistica Sinica 6, 831; bridge sampling and its optimal iterative estimator (compared for the orbit alias-cell evidence). No DOI, arXiv ID or ADS record: title and authors read from the journal page"
+role = "bibliography"
+verified = false
+verified_via = "publisher"
+
+[ref.gronau2017]
+authors = "Gronau, Sarafoglou, Matzke, Ly, Boehm, Marsman, Leslie, Forster, Wagenmakers & Steingroever"
+year = 2017
+title = "A tutorial on bridge sampling"
+doi = "10.1016/j.jmp.2017.09.005"
+arxiv = "1703.05984"
+used_in = []
+note = "J. Math. Psychol. 81, 80; bridge sampling from MCMC draws to a fitted proposal (compared for the orbit alias-cell evidence)"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.veach1995]
+authors = "Veach & Guibas"
+year = 1995
+title = "Optimally combining sampling techniques for Monte Carlo rendering"
+doi = "10.1145/218380.218498"
+used_in = []
+note = "SIGGRAPH '95, 419; the balance heuristic, the partition of unity that splits the bridge per mode"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.tierney1986]
+authors = "Tierney & Kadane"
+year = 1986
+title = "Accurate Approximations for Posterior Moments and Marginal Densities"
+doi = "10.1080/01621459.1986.10478240"
+used_in = []
+note = "JASA 81, 82; Laplace's method for marginal likelihoods (the baseline for the orbit alias-cell evidence)"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.ritter1992]
+authors = "Ritter & Tanner"
+year = 1992
+title = "Facilitating the Gibbs Sampler: The Gibbs Stopper and the Griddy-Gibbs Sampler"
+doi = "10.1080/01621459.1992.10475289"
+used_in = []
+note = "JASA 87, 861; griddy Gibbs: draw a scalar conditional by tabulating it on a grid (a review toy for the orbit alias-cell search)"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.skilling2006]
+authors = "Skilling"
+year = 2006
+title = "Nested sampling for general Bayesian computation"
+doi = "10.1214/06-BA127"
+used_in = []
+note = "Bayesian Analysis 1, 833; nested sampling, candidate (d) for the per-cell evidence; robust to first-order phase transitions where tempering fails"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.yallup2026]
+authors = "Yallup, Kroupa & Handley"
+year = 2026
+title = "Nested Slice Sampling: Vectorized Nested Sampling for GPU-Accelerated Inference"
+arxiv = "2601.23252"
+used_in = []
+note = "the BlackJAX nested slice sampler (blackjax.nss, >= 1.7) measured as candidate (d) on the leg-1 toys"
+role = "bibliography"
+verified = true
+verified_via = "arxiv"
+
+[ref.albert2020]
+authors = "Albert"
+year = 2020
+title = "JAXNS: a high-performance nested sampling package based on JAX"
+arxiv = "2012.15286"
+used_in = []
+note = "jaxns, the alternative JAX nested sampler considered for candidate (d); not measured, BlackJAX is already a dependency"
+role = "bibliography"
+verified = true
+verified_via = "arxiv"
+
+[ref.kroupa2026]
+authors = "Kroupa & Handley"
+year = 2026
+title = "Global structure of the time delay likelihood"
+arxiv = "2602.22307"
+used_in = []
+note = "nested sampling on an aliased (time-delay) likelihood needs many live points to avoid spurious modes; the caution behind running NS as a check, not the default"
+role = "bibliography"
+verified = true
+verified_via = "arxiv"
+
+[ref.chen2023]
+authors = "Chen, Feroz & Hobson"
+year = 2023
+title = "Bayesian Posterior Repartitioning for Nested Sampling"
+doi = "10.1214/22-BA1323"
+arxiv = "1908.04655"
+alt_years = [2019]
+alt_years_note = "year is the journal paper; the arXiv preprint is dated 2019"
+used_in = []
+note = "Bayesian Analysis 18, 695; nested sampling with the prior replaced by any reference and the likelihood by prior x likelihood / reference, same Z; how NS is seeded by the search"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.fowlie2021]
+authors = "Fowlie, Handley & Su"
+year = 2021
+title = "Nested sampling with plateaus"
+doi = "10.1093/mnras/stab590"
+arxiv = "2010.13884"
+used_in = []
+note = "MNRAS 503, 1199; likelihood plateaus break nested sampling's compression; the all-outlier floor is one"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.mcdougall2026]
+authors = "McDougall, Pope & Davis"
+year = 2026
+title = "LITMUS: Bayesian lag recovery in reverberation mapping with fast differentiable models"
+doi = "10.1017/pasa.2026.10149"
+arxiv = "2505.09832"
+alt_years = [2025]
+alt_years_note = "year is the journal paper; the arXiv preprint is dated 2025"
+used_in = []
+note = "PASA 43; hessian_scan: a scan over an aliased variable with optimization and a Laplace evidence per slice, integrated across the grid; prior art for the across-N propagation"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.kustaanheimo1965]
+authors = "Kustaanheimo & Stiefel"
+year = 1965
+title = "Perturbation theory of Kepler motion based on spinor regularization"
+doi = "10.1515/crll.1965.218.204"
+used_in = []
+note = "J. reine angew. Math. 218, 204; regularizing maps of Kepler motion"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.levicivita1920]
+authors = "Levi-Civita"
+year = 1920
+title = "Sur la régularisation du problème des trois corps"
+doi = "10.1007/BF02404416"
+used_in = []
+note = "Acta Math. 42, 99; the planar regularizing map"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.phipson2010]
+authors = "Phipson & Smyth"
+year = 2010
+title = "Permutation P-values Should Never Be Zero: Calculating Exact P-values When Permutations Are Randomly Drawn"
+doi = "10.2202/1544-6115.1585"
+used_in = []
+note = "Stat. Appl. Genet. Mol. Biol. 9, 39; (1 + #)/(1 + n) permutation p-value"
+role = "bibliography"
+verified = true
+verified_via = "crossref"
+
+[ref.surjanovic2023]
+authors = "Surjanovic, Biron-Lattes, Tiede et al."
+year = 2023
+title = "Pigeons.jl: Distributed Sampling From Intractable Distributions"
+arxiv = "2308.09769"
+used_in = []
+note = "parallel tempering prior art next to Octofitter"
+role = "bibliography"
+bibcode = "2023arXiv230809769S"
+verified = true
+verified_via = "ads"
+
+
+[ref.cabezas2024]
+authors = "Cabezas et al."
+year = 2024
+title = "BlackJAX: Composable Bayesian inference in JAX"
+arxiv = "2402.10797"
+repo = "https://github.com/blackjax-devs/blackjax"
+verified = true
+verified_via = "arxiv"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.mode_search:resample_move"]
+note = "the adaptive tempered SMC, HMC and pretuning kernels (blackjax >= 1.7.1) that virgil.smc wraps"
+
+[ref.lee2018]
+authors = "Lee & Whiteley"
+year = 2018
+title = "Variance estimation in the particle filter"
+arxiv = "1509.00394"
+doi = "10.1093/biomet/asy028"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "Biometrika 105, 609; the single-run variance estimator of the normalizing constant from Eve (time-0 ancestor) indices, eq. 4 with phi = 1; needs multinomial resampling"
+
+[ref.du2021]
+authors = "Du & Guyader"
+year = 2021
+title = "Variance estimation in adaptive sequential Monte Carlo"
+arxiv = "1909.13602"
+doi = "10.1214/20-AAP1611"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+note = "Ann. Appl. Probab. 31, 1021; extends the Eve-index variance estimator to SMC whose tempering schedule is chosen adaptively from the particles"
+
+
+[ref.fischler1981]
+authors = "Fischler & Bolles"
+year = 1981
+title = "Random sample consensus: a paradigm for model fitting with applications to image analysis and automated cartography"
+doi = "10.1145/358669.358692"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.orbit_cells:search_cell", "virgil.orbit_cells:search_plan"]
+note = "Commun. ACM 24, 381; minimal sets of nights as candidate fits (RANSAC)"
+
+[ref.rousseeuw1984]
+authors = "Rousseeuw"
+year = 1984
+title = "Least median of squares regression"
+doi = "10.1080/01621459.1984.10477105"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "J. Am. Stat. Assoc. 79, 871; elemental subsets as starts of a robust fit"
+
+[ref.rousseeuw1999]
+authors = "Rousseeuw & Van Driessen"
+year = 1999
+title = "A fast algorithm for the minimum covariance determinant estimator"
+doi = "10.1080/00401706.1999.10485670"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "Technometrics 41, 212; concentration steps (C-steps): relabel inliers, refit, until the labels repeat"
+
+[ref.celeux1992]
+authors = "Celeux & Govaert"
+year = 1992
+title = "A classification EM algorithm for clustering and two stochastic versions"
+doi = "10.1016/0167-9473(92)90042-E"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "Comput. Stat. Data Anal. 14, 315; classification EM: block ascent over labels and parameters; planned inlier-scale step of the orbit-cells search"
+
+[ref.rue2009]
+authors = "Rue, Martino & Chopin"
+year = 2009
+title = "Approximate Bayesian inference for latent Gaussian models by using integrated nested Laplace approximations"
+doi = "10.1111/j.1467-9868.2008.00700.x"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "J. R. Stat. Soc. B 71, 319; INLA: quadrature in a low-dimensional parameter with conditional Laplace; planned ridge proposal component in rho for orbit cells"
+
+[ref.mantel1959]
+authors = "Mantel & Haenszel"
+year = 1959
+title = "Statistical aspects of the analysis of data from retrospective studies of disease"
+doi = "10.1093/jnci/22.4.719"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "J. Natl. Cancer Inst. 22, 719; stratified test of a common rate across strata; planned orbit population-test assertion"
+
+[ref.golub1973]
+authors = "Golub & Pereyra"
+year = 1973
+title = "The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate"
+doi = "10.1137/0710036"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "SIAM J. Numer. Anal. 10, 413; variable projection: the linear Thiele-Innes constants solved at fixed period and eccentricity"
+
+[ref.nocedal2006]
+authors = "Nocedal & Wright"
+year = 2006
+title = "Numerical Optimization"
+doi = "10.1007/978-0-387-40065-5"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.fitting:kkt_report"]
+role = "bibliography"
+note = "Springer, 2nd ed.; ch. 12 and 16.7: KKT and projected-gradient conditions (kkt_report); ch. 3-4 and 10.3: safeguarded steps in a bracket, trust-region predicted reduction, Newton and Levenberg-Marquardt in curved valleys; planned set step of the orbit-cells search"
+
+[ref.boyd2004]
+authors = "Boyd & Vandenberghe"
+year = 2004
+title = "Convex Optimization"
+doi = "10.1017/CBO9780511804441"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "Cambridge University Press; 9.5.1: the Newton decrement as a stopping rule; planned stop of the orbit-cells set step and C-steps"
+
+[ref.benisrael1966]
+authors = "Ben-Israel"
+year = 1966
+title = "A Newton-Raphson method for the solution of systems of equations"
+doi = "10.1016/0022-247X(66)90115-6"
+verified = true
+verified_via = "crossref"
+used_in = []
+role = "bibliography"
+note = "J. Math. Anal. Appl. 15, 243; Newton with the Moore-Penrose inverse for underdetermined systems; planned minimum-norm set step and C-steps of the orbit-cells search"
+
+[ref.hesterberg1995]
+authors = "Hesterberg"
+year = 1995
+title = "Weighted average importance sampling and defensive mixture distributions"
+doi = "10.1080/00401706.1995.10484303"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg"]
+note = "Technometrics 37, 185; a prior share in the proposal bounds the importance weights by the likelihood maximum over the share"
+
+[ref.gilks2001]
+authors = "Gilks & Berzuini"
+year = 2001
+title = "Following a moving target: Monte Carlo inference for dynamic Bayesian models"
+doi = "10.1111/1467-9868.00280"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
+note = "J. R. Stat. Soc. B 63, 127; resample-move: resample weighted draws, then move them with a kernel invariant for the target"
+
+[ref.neal2011]
+authors = "Neal"
+year = 2011
+title = "MCMC using Hamiltonian dynamics"
+arxiv = "1206.1901"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.mode_search:resample_move"]
+note = "Handbook of Markov Chain Monte Carlo, ch. 5; randomized step size and trajectory length for HMC"
+
+[ref.talts2018]
+authors = "Talts, Betancourt, Simpson, Vehtari & Gelman"
+year = 2018
+title = "Validating Bayesian inference algorithms with simulation-based calibration"
+arxiv = "1804.06788"
+verified = true
+verified_via = "crossref"
+used_in = []
+note = "rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py)"

@@ -46,12 +46,13 @@ def pytest_configure(config):
     # The heaviest, compile-dominated tests. Pull requests run
     # `-m "not slow"`, except that a pull request touching the orbit modules
     # also runs the slow tests of their own test files (VIRGIL_SLOW_FILES
-    # below); pushes to main, the `full-ci` label and the nightly run
-    # them (.github/scripts/ci_matrix.py).
+    # below); pushes to main run them except the `full_only` ones, which
+    # only the `full-ci` label and the nightly run (.github/scripts/ci_matrix.py).
     config.addinivalue_line(
         "markers",
-        "full_only: slow tests too heavy for the orbit-PR slow run; only main, "
-        "the full-ci label and the nightly run them",
+        "full_only: slow tests too heavy for the orbit-PR slow run or for "
+        "pushes to main; only the full-ci label, dispatch and the nightly "
+        "run them",
     )
     config.addinivalue_line(
         "markers",
@@ -89,6 +90,7 @@ DTYPE_INDEPENDENT = (
     "test_fetch_references.py",
     "test_night_flags.py",
     "test_oifits.py",
+    "test_orbit_coordinates.py",
     "test_orbit_positions.py",
     "test_orbit_search.py",
     "test_pipeline_binary.py",
@@ -276,3 +278,23 @@ def junk_files(tmp_path):
     (tmp_path / "empty.fits").write_bytes(b"")
     fits.PrimaryHDU().writeto(tmp_path / "no_tables.fits")
     return tmp_path
+
+
+# A module-level ``pytest.importorskip`` (h5py, nbclient, jaxoplanet) skips a
+# whole file when the job's environment lacks the package. In CI that would
+# pass the orbit and pipeline stacks vacuously, so fail the session instead.
+_IMPORT_SKIPS = []
+
+
+def pytest_collectreport(report):
+    if report.skipped and os.environ.get("CI"):
+        text = str(report.longrepr)
+        if "could not import" in text:
+            _IMPORT_SKIPS.append(f"{report.nodeid}: {text}")
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if _IMPORT_SKIPS:
+        print("\nCI: test modules skipped on a missing import:")
+        print("\n".join(_IMPORT_SKIPS))
+        session.exitstatus = 1

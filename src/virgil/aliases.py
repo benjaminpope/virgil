@@ -54,7 +54,7 @@ from ._grid import batch_size_or_default
 from .epochs import (
     _grid_batch,
     default_memory_budget,
-    _whitening_floats,
+    _table_floats,
     _REFINE_WINDOW,
     EpochPositions,
     _amp_profile,
@@ -95,6 +95,7 @@ __all__ = [
     "LABELS_FREE_NATS",
     "alias_bands",
     "fit_orbit_aliases",
+    "period_cut",
     "period_window",
     "position_profile",
 ]
@@ -211,6 +212,58 @@ def alias_bands(times, p_range):
     return bands
 
 
+def _night_period_bound(
+    field, night_length, resolution, motion_fraction, p_floor
+):
+    """Shortest period (days) whose companion moves under ``motion_fraction`` of
+    ``resolution`` in the longest night (and is not below a night or ``p_floor``)."""
+    return max(
+        2 * math.pi * field * night_length / (motion_fraction * resolution),
+        night_length,
+        p_floor,
+    )
+
+
+def period_cut(
+    times,
+    field,
+    night_length,
+    *,
+    resolution,
+    motion_fraction=0.5,
+    p_floor=_P_FLOOR,
+):
+    """The shortest period of the declared prior: ``max(2 * dt_min, P_night)``, in days.
+
+    ``dt_min`` is the shortest gap between consecutive nights, so above the cut the
+    closest pair of nights advances by under half a cycle and the regular-sampling
+    alias lies outside the domain. ``P_night`` is the within-night motion bound of
+    [`period_window`][virgil.aliases.period_window]. A prior choice, not a Nyquist
+    limit: below it irregular sampling can still identify the period.
+
+    Parameters
+    ----------
+    times : array-like
+        One time per night (days); repeated times count as one night.
+    field, night_length, resolution
+        As for [`period_window`][virgil.aliases.period_window].
+    motion_fraction, p_floor
+        As for [`period_window`][virgil.aliases.period_window].
+
+    Returns
+    -------
+    float
+        ``P_cut`` in days; ``P_night`` alone for a single night.
+    """
+    t = onp.unique(onp.asarray(times, float))
+    p_night = _night_period_bound(
+        field, night_length, resolution, motion_fraction, p_floor
+    )
+    if t.size < 2:
+        return float(p_night)
+    return float(max(2 * onp.min(onp.diff(t)), p_night))
+
+
 def period_window(
     times,
     field,
@@ -264,10 +317,8 @@ def period_window(
             "positive field, resolution, motion_fraction, span_factor and "
             "p_floor."
         )
-    p_min = max(
-        2 * math.pi * field * night_length / (motion_fraction * resolution),
-        night_length,
-        p_floor,
+    p_min = _night_period_bound(
+        field, night_length, resolution, motion_fraction, p_floor
     )
     p_max = span_factor * span
     if not p_min < p_max:
@@ -571,10 +622,13 @@ def _batch(surfaces, xs, data, cfg, dof, log_broad=None, batch_size=64):
 
 
 # The Hessian of the likelihood (forward over reverse through the scale
-# integral) holds about this many whitenings' floats per night (measured: 6.4k
-# on calibrated GRAVITY-like data); it is a sum over nights, so it is
-# accumulated in groups of nights that fit the memory budget.
-_HESSIAN_COPIES = 8000
+# integral) holds one reverse working set per sampled coordinate: ``x`` has
+# the orbit's 8 elements and the diameter (``_elements``, ``_model``); a fixed
+# diameter only overcounts. Measured at 1.18 working sets per coordinate
+# (tests/test_marginal_woodbury.py); ``_table_floats`` carries a margin of 2.
+# It is a sum over nights, so it is accumulated in groups of nights that fit
+# the budget.
+_N_SITES = 9
 
 
 # deliberate: tests/test_epoch_coarse.py calls it; memory-budget grouping is not reachable cheaply via the public API
@@ -590,7 +644,7 @@ def _hessian_groups(memory_budget, data, surfaces):
     if not budget > 0:
         raise ValueError(f"memory_budget must be positive, got {budget}.")
     per_night = [
-        8 * _HESSIAN_COPIES * _whitening_floats(d) if s.numeric else 0
+        8 * _N_SITES * _table_floats(d) if s.numeric else 0
         for d, s in zip(data, surfaces)
     ]
     groups, start, used = [], 0, 0

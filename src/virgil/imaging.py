@@ -44,7 +44,13 @@ import numpy as onp
 from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
-from ._geometry import fringe_scales, pixel_offsets, rotate, smearing_scale
+from ._geometry import (
+    fringe_scales,
+    gaussian_smooth,
+    pixel_offsets,
+    rotate,
+    smearing_scale,
+)
 from ._utils import FWHM_PER_SIGMA, _reference, mas2rad
 from ._deprecate import external_stacklevel, keyword_only, renamed
 from ._precision import cast_tree, run_in
@@ -54,6 +60,7 @@ from .likelihood import _whitened_errors_and_log_norm, whitened_residuals
 from .models import (
     _scene_images,
     Image,
+    LinearImage,
     PointSource,
     Rotated,
     SourceModel,
@@ -89,8 +96,9 @@ class _ImageRegulariser(eqx.Module):
         leaves tiny negatives, and an exact zero would give NaN gradients in
         ``xlogy``."""
         image = self.image(model)
+        linear = isinstance(image, LinearImage)
         if not self.smoothed:
-            return image.brightness
+            return image.regularised_pixels if linear else image.brightness
         if image.blur_fwhm_mas is not None:
             warnings.warn(
                 "smoothed=True penalizes the blurred image, so the base "
@@ -99,21 +107,38 @@ class _ImageRegulariser(eqx.Module):
                 UserWarning,
                 stacklevel=external_stacklevel(),
             )
-        b = image.smoothed()
+        if linear:
+            b = image.regularised_pixels
+            if image.blur_fwhm_mas is not None:
+                b = gaussian_smooth(
+                    b, image.blur_fwhm_mas / image.pixel_scale_mas
+                )
+        else:
+            b = image.smoothed()
         return np.maximum(b, np.finfo(b.dtype).tiny)
 
     def image(self, model):
         """The regularized [`Image`][virgil.models.Image] in ``model``."""
         model = model.resolved()
         image = model if self.path is None else model.get(self.path)
-        if not isinstance(image, Image):
+        if not isinstance(image, (Image, LinearImage)):
             raise TypeError(
                 f"{type(self).__name__}(path={self.path!r}) found a "
-                f"{type(image).__name__}, not an Image."
+                f"{type(image).__name__}, not an Image or LinearImage."
             )
         return image
 
     probabilistic = False
+
+    beam_mas: float = eqx.field(static=True, default=None)
+
+    def _scale(self, model, b):
+        """``p / B`` and the flux ``Σ b``, for the normalised penalties."""
+        image = self.image(model)
+        # The reference flux is fixed, so the penalty stays convex in a
+        # linear image: ``b`` is already in units of it.
+        flux = 1.0 if isinstance(image, LinearImage) else np.sum(b)
+        return image.pixel_scale_mas / self.beam_mas, flux
 
 
 def _differences(b):
@@ -130,31 +155,48 @@ def _differences(b):
 
 
 class TSV(_ImageRegulariser):
-    """Total squared variation: ``weight * Σ (Δx b)² + (Δy b)²``.
+    """Total squared variation: ``weight * Σ((Δx b)² + (Δy b)²) / (F² (p/B)⁴)``.
 
     A quadratic smoothness penalty, so it can be fitted by Levenberg–Marquardt
-    (Kuramochi et al. 2018, ApJ 858, 56).
+    (Kuramochi et al. 2018, ApJ 858, 56). ``F`` is the image's flux (1), ``p``
+    its pixel scale and ``B`` the beam, so the weight is dimensionless and the
+    same at any grid size or flux. Source: eht-imaging ``stv2`` (Chael et al.
+    2018), ``norm_reg=True``.
 
     Parameters
     ----------
     weight : float
-        Strength of the penalty.
+        Strength of the penalty, relative to a unit-sum image over ``B``.
     path : str, optional
         Path of the Image in the model (e.g. ``"env"``); ``None`` if the model
         is the Image itself.
     smoothed : bool, optional
         Penalize the Image's ``smoothed()`` pixels (see ``blur_fwhm_mas``)
         instead of the raw ones. Default ``False``.
+    beam_mas : float
+        The beam ``B`` in mas, a fixed angular scale (eht-imaging's
+        ``beam_size``); required. ``B = p`` gives the old unnormalised weight.
+    n_data : float, optional
+        Multiplies the weight (default 1). eht-imaging's data terms are means,
+        ``χ²/N`` (``chisq_vis``, imager_utils.py:453), virgil's ½χ² is a sum,
+        so eht-imaging's weight ``β`` with data weight ``α`` is
+        ``weight=β, n_data=N/(2α)`` for ``N`` real data.
     """
 
-    def __init__(self, weight, path=None, smoothed=False):
-        self.weight = np.asarray(weight, dtype=float)
+    def __init__(
+        self, weight, path=None, smoothed=False, *, beam_mas, n_data=1.0
+    ):
+        self.weight = np.asarray(weight * n_data, dtype=float)
         self.path = path
         self.smoothed = bool(smoothed)
+        self.beam_mas = beam_mas
 
     def residuals(self, model):
-        dx, dy = _differences(self.pixels(model))
-        return np.sqrt(2.0 * self.weight) * np.concatenate(
+        b = self.pixels(model)
+        ratio, flux = self._scale(model, b)
+        dx, dy = _differences(b)
+        norm = flux**2 * ratio**4
+        return np.sqrt(2.0 * self.weight / norm) * np.concatenate(
             [np.ravel(dx), np.ravel(dy)]
         )
 
@@ -163,19 +205,22 @@ class TSV(_ImageRegulariser):
 
 
 class TV(_ImageRegulariser):
-    """Total variation: ``weight * Σ √((Δx b)² + (Δy b)² + ε²)``.
+    """Total variation: ``weight * Σ √((Δx b)² + (Δy b)² + ε²) / (F p/B)``.
 
     Favours piecewise-flat images with sharp edges (Rudin, Osher & Fatemi 1992,
     Physica D 60, 259). ``ε`` makes it differentiable where the image is flat.
     It is averaged over the four flips of the image, so it does not depend on
     which neighbour each forward difference pairs a pixel with. It is not
     isotropic: a sharp edge along a diagonal costs about a fifth more per unit
-    length than one along a pixel axis.
+    length than one along a pixel axis. ``F``, ``p`` and ``B`` are the flux,
+    pixel scale and beam, so the weight is dimensionless and independent of
+    grid size and flux. Source: eht-imaging ``stv`` (Chael et al. 2018),
+    ``norm_reg=True``.
 
     Parameters
     ----------
     weight : float
-        Strength of the penalty.
+        Strength of the penalty, relative to a unit-sum image over ``B``.
     epsilon : float, optional
         Smoothing scale, as a fraction of the mean pixel flux (default 1e-2).
     path : str, optional
@@ -183,19 +228,38 @@ class TV(_ImageRegulariser):
     smoothed : bool, optional
         Penalize the Image's ``smoothed()`` pixels instead of the raw ones
         (default ``False``).
+    beam_mas : float
+        The beam ``B`` in mas, a fixed angular scale (eht-imaging's
+        ``beam_size``); required. ``B = p`` gives the old unnormalised weight.
+    n_data : float, optional
+        Multiplies the weight (default 1). eht-imaging's data terms are means,
+        ``χ²/N`` (``chisq_vis``, imager_utils.py:453), virgil's ½χ² is a sum,
+        so eht-imaging's weight ``β`` with data weight ``α`` is
+        ``weight=β, n_data=N/(2α)`` for ``N`` real data.
     """
 
     epsilon: float
 
-    def __init__(self, weight, epsilon=1e-2, path=None, smoothed=False):
-        self.weight = np.asarray(weight, dtype=float)
+    def __init__(
+        self,
+        weight,
+        epsilon=1e-2,
+        path=None,
+        smoothed=False,
+        *,
+        beam_mas,
+        n_data=1.0,
+    ):
+        self.weight = np.asarray(weight * n_data, dtype=float)
         self.epsilon = np.asarray(epsilon, dtype=float)
         self.path = path
         self.smoothed = bool(smoothed)
+        self.beam_mas = beam_mas
 
     def value(self, model):
         b = self.pixels(model)
-        eps = self.epsilon / b.size
+        ratio, flux = self._scale(model, b)
+        eps = self.epsilon * flux / b.size
 
         def total(image):
             dx, dy = _differences(image)
@@ -204,14 +268,19 @@ class TV(_ImageRegulariser):
         # Forward differences pair each step with a preferred neighbour;
         # averaging over the four flips of the image removes that bias.
         flips = [b, b[::-1], b[:, ::-1], b[::-1, ::-1]]
-        return self.weight * sum(total(f) for f in flips) / 4.0
+        return (
+            self.weight * sum(total(f) for f in flips) / 4.0 / (flux * ratio)
+        )
 
 
 class MaxEntropy(_ImageRegulariser):
     """Maximum entropy: ``weight * Σ b log(b / q)``, with ``b`` and ``q`` unit-sum.
 
     The relative entropy of the image with respect to a default image ``q``
-    (Skilling & Bryan 1984, MNRAS 211, 111; BSMEM, Baron & Young 2008).
+    (Skilling & Bryan 1984, MNRAS 211, 111; BSMEM, Baron & Young 2008). On a
+    [`LinearImage`][virgil.models.LinearImage], ``b`` is in units of its
+    reference flux and the penalty is Skilling's ``Σ b log(b / q) - b + q``.
+    Source: Skilling (1989), [references](../references.md#skilling1989).
 
     Parameters
     ----------
@@ -239,6 +308,11 @@ class MaxEntropy(_ImageRegulariser):
     def _brightness_and_default(self, model):
         """The unit-sum image ``b`` and the default ``q`` (1 where ``b`` is 0)."""
         image = self.image(model)
+        if isinstance(image, LinearImage) and image.parametrisation != "sqrt":
+            raise TypeError(
+                "MaxEntropy on a linear LinearImage needs a positive lower "
+                "bound on the pixels; use parametrisation='sqrt'."
+            )
         b = self.pixels(model)
         if self.prior is None:
             # Smoothing spreads flux beyond the support: flat over all pixels.
@@ -254,7 +328,12 @@ class MaxEntropy(_ImageRegulariser):
 
     def value(self, model):
         b, q = self._brightness_and_default(model)
-        return self.weight * np.sum(xlogy(b, b) - xlogy(b, q))
+        value = np.sum(xlogy(b, b) - xlogy(b, q))
+        if isinstance(self.image(model), LinearImage):
+            # Skilling's form, ``Σ b ln(b/q) - b + q``, for unnormalised b
+            # (reference-flux units, ``q`` unit-sum).
+            value = value + 1.0 - np.sum(b)
+        return self.weight * value
 
     def residuals(self, model):
         """Residuals ``r`` with ``value = 0.5 Σ r²`` (``b`` and ``q`` sum to 1):
@@ -511,6 +590,10 @@ class Centroid(_ImageRegulariser):
 def image_priors(scene):
     """Priors on the log-brightness of every Image in a scene.
 
+    A [`LinearImage`][virgil.models.LinearImage] gets a flat prior on its
+    ``pixels`` instead; linear ones need ``fit(method="lbfgsb")``, which
+    bounds them at zero.
+
     Returns a priors dict for [`fit`][virgil.fitting.fit]. An Image with
     a plain log-brightness array gets a flat prior,
     ``{"env.log_brightness": ImproperUniform(...)}``, so that its pixels are
@@ -525,7 +608,12 @@ def image_priors(scene):
     import numpyro.distributions as dist
 
     priors = {}
-    for prefix, image in _scene_images(scene):
+    for prefix, image in _scene_images(scene, kinds=(Image, LinearImage)):
+        if isinstance(image, LinearImage):
+            priors[prefix + "pixels"] = dist.ImproperUniform(
+                dist.constraints.real, (), event_shape=image.pixels.shape
+            )
+            continue
         shape = image.log_brightness.shape
         if _whitened_field(image.log_brightness):
             priors[prefix + "log_brightness.latent"] = dist.Normal(

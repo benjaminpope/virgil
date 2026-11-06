@@ -4,6 +4,8 @@ Small problems only: a quadratic with a known diagonal metric, a binary on a
 7-hole mask, and a 16² image.
 """
 
+from contextlib import nullcontext
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -55,12 +57,12 @@ def _quadratic_fit(**options):
     )
 
 
-def _image_fit(npix=16):
+def _image_fit(npix=16, sigma=25.0):
     data = OIData(ami_grid_record(pitch_m=0.5))
     truth = System(
         star=PointSource(),
         env=Image.from_brightness(
-            gaussian_blob(npix, 12.0, 25.0, dra=20.0), 12.0, flux=0.1
+            gaussian_blob(npix, 12.0, sigma, dra=20.0), 12.0, flux=0.1
         ),
     )
     data = data.with_model(truth, key=jax.random.PRNGKey(1))
@@ -98,7 +100,7 @@ def test_the_diagonal_is_that_of_the_gauss_newton_matrix():
 def test_the_regularizer_curvature_is_included_and_estimated_by_probes():
     start, priors, data = _image_fit(8)
     values = {"env.log_brightness": start.env.log_brightness}
-    kwargs = dict(regularizers=[TSV(5.0, path="env")])
+    kwargs = dict(regularizers=[TSV(5.0, path="env", beam_mas=12.0)])
     exact = gauss_newton_diag(start, priors, data, values, **kwargs)
     plain = gauss_newton_diag(start, priors, data, values)
     key = "env.log_brightness"
@@ -120,32 +122,41 @@ def test_max_entropy_curvature_is_the_weight_times_the_image():
         logits = start.env.log_brightness
         if eta:
             logits = jax.random.normal(jax.random.PRNGKey(0), logits.shape)
-        diag = gauss_newton_diag(
+        values = {"env.log_brightness": logits}
+        full = gauss_newton_diag(
             start,
             priors,
             data,
-            {"env.log_brightness": logits},
+            values,
             regularizers=[MaxEntropy(7.0, path="env")],
         )["env.log_brightness"]
+        diag = (
+            full
+            - gauss_newton_diag(start, priors, data, values)[
+                "env.log_brightness"
+            ]
+        )
         b = jax.nn.softmax(logits.ravel()).reshape(logits.shape)
         onp.testing.assert_allclose(diag, 7.0 * b * (1.0 - b), rtol=1e-6)
         if eta:  # far from w b, which the 3 x 3 image can tell apart
             assert onp.max(onp.abs(diag / (7.0 * b) - 1.0)) > 0.1
 
 
-def test_the_entropy_metric_replaces_the_data_curvature_on_its_pixels():
+def test_the_entropy_metric_is_added_to_the_data_curvature():
     start, priors, data = _image_fit(8)
-    values = {"env.log_brightness": start.env.log_brightness}
+    key = "env.log_brightness"
+    values = {key: start.env.log_brightness}
     regularizers = [MaxEntropy(7.0, path="env")]
+    plain = gauss_newton_diag(start, priors, data, values)[key]
     once = gauss_newton_diag(
         start, priors, data, values, regularizers=regularizers
-    )
+    )[key]
     twice = gauss_newton_diag(
         start, priors, [data, data], values, regularizers=regularizers
-    )
-    onp.testing.assert_allclose(
-        twice["env.log_brightness"], once["env.log_brightness"], rtol=1e-6
-    )
+    )[key]
+    assert onp.all(plain > 0)
+    # the data part doubles with the data, the entropy part does not
+    onp.testing.assert_allclose(twice - once, plain, rtol=1e-6)
 
 
 def test_lm_fits_maximum_entropy():
@@ -253,10 +264,17 @@ def test_adam_ftol_with_a_metric():
 
 
 def test_the_optimum_and_the_gradient_norm_are_unchanged():
-    start, priors, data = _image_fit()
+    # A scene broad enough that every pixel holds a share of the flux. On a
+    # compact one the faint pixels have entropy curvature w p ~ 1e-9 and data
+    # that cannot see them: a flat valley that gtol does not pin, so the two
+    # runs stop at different points (25 mas: 135.30 vs 135.54, with the
+    # gradient norm below 2e-6 in both) and the loss gap is not a measure of
+    # the optimum. Where the curvature is bounded below by lambda * min(p) (the
+    # entropy curvature is w p per pixel), the gap is at most
+    # |g|^2 / (2 lambda min(p)), negligible at gtol = 1e-6.
+    start, priors, data = _image_fit(sigma=60.0)
     regularizers = [MaxEntropy(10.0, path="env")]
-    # A tighter gtol than the default, which stops where a flat direction
-    # still has a few tenths of a percent of the loss to give.
+    # A tighter gtol than the default.
     options = dict(gtol=1e-6)
     plain = fit(start, priors, data, regularizers, **options)
     scaled = fit(
@@ -266,8 +284,14 @@ def test_the_optimum_and_the_gradient_norm_are_unchanged():
     # The gradient test is in the unscaled coordinates, whatever the metric.
     assert scaled.info["grad_norm"] < 1e-5
     assert scaled.info["loss"] == pytest.approx(plain.info["loss"], rel=2e-3)
+    # Pixels are a softmax over 256, about 0.004 each, so the tolerance is a
+    # fraction of the peak, and the image must have moved off the flat start.
+    peak = plain.model.env.brightness.max()
+    assert peak > 1.5 / 256
     onp.testing.assert_allclose(
-        scaled.model.env.brightness, plain.model.env.brightness, atol=1e-2
+        scaled.model.env.brightness,
+        plain.model.env.brightness,
+        atol=1e-2 * peak,
     )
     # The softmax gauge is fixed: log-brightness is the log of the pixel fluxes.
     x = scaled.values["env.log_brightness"]
@@ -401,7 +425,8 @@ def test_recentring_changes_no_loss_and_fixes_the_log_flux():
     x[0, :3] = -500.0  # dark pixels are left where they are
     with run_in("float64"):
         problem = cast_tree(
-            _Objective(start, priors, data, [TSV(1e2)]), "float64"
+            _Objective(start, priors, data, [TSV(1e2, beam_mas=12.0)]),
+            "float64",
         )
         z = {key: np.asarray(x + 1e5)}
         out = _recentre(problem, z)[key]
@@ -429,7 +454,8 @@ def test_lm_sees_the_gauge_direction_through_one_extra_residual():
     start, priors, data = _gauge_problem()
     with run_in("float64"):
         problem = cast_tree(
-            _Objective(start, priors, data, [TSV(1e2)]), "float64"
+            _Objective(start, priors, data, [TSV(1e2, beam_mas=12.0)]),
+            "float64",
         )
         masks = _gauge_masks(problem)
         z = {
@@ -465,7 +491,14 @@ def test_the_fitted_log_brightness_is_gauge_fixed_for_every_method(
     )
     warm = None
     for weight in (1e3, 3e2, 1e2):
-        result = fit(start, priors, data, [TSV(weight)], init=warm, **options)
+        result = fit(
+            start,
+            priors,
+            data,
+            [TSV(weight, beam_mas=12.0)],
+            init=warm,
+            **options,
+        )
         x = onp.asarray(result.values["log_brightness"])
         assert onp.all(onp.isfinite(x))
         # deliberate: the gauge is exact only up to rounding in the working
@@ -491,7 +524,7 @@ def test_the_fitted_log_brightness_is_gauge_fixed_for_every_method(
             start,
             priors,
             data,
-            [TSV(1e2)],
+            [TSV(1e2, beam_mas=12.0)],
             init={"log_brightness": b},
             **options,
         )
@@ -552,21 +585,14 @@ def _l_curve_steps(dtype, npix=41):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize(
-    "dtype",
-    [
-        "float64",
-        pytest.param(
-            "float32",
-            marks=pytest.mark.xfail(
-                reason="converges at memory 100 in one run, but float32 at "
-                "the weakest weight is noisy: see design/fit_preconditioning.md",
-                strict=False,
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("dtype", ["float64", "float32"])
 def test_the_l_curve_converges_at_every_weight(dtype):
     """Stage 7: flat-prior MaxEntropy, w = 0.1 ... 1e4, default step limit."""
-    runs = _l_curve_steps(dtype)
+    # A float32 case builds its noise draws, scenes and starting image in
+    # float32 whatever the ambient x64 (importing jaxoplanet turns it on for a
+    # worker). Built in float64 and cast down they are another realisation,
+    # which stalled the weakest weight (3358 steps) in the x64 CI job.
+    ambient = jax.enable_x64(False) if dtype == "float32" else nullcontext()
+    with ambient:
+        runs = _l_curve_steps(dtype)
     assert all(converged for _, converged in runs), runs

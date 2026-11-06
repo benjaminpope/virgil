@@ -469,6 +469,15 @@ steps for w = 1e4 → 0.1 (identical χ²):
 Wall times are one run each on a loaded laptop. Float64 is at least as good;
 float32 is within the line search's run-to-run variation at the last weight.
 
+**2026-11-02, float32 L-curve under ambient x64.** The Stage 7 test
+(`test_the_l_curve_converges_at_every_weight[float32]`) stalled at w = 0.1
+(3358 steps, unconverged, deterministic across five CI runs) in the x64-ambient
+job only, once #615 asserted it. The fit itself runs float32 inside `run_in`, so
+the difference is the inputs: noise draws, scenes and the starting image built
+in float64 and cast down are another realisation of the problem. The test now
+builds a float32 case under `jax.enable_x64(False)`, so it is the same problem in
+every job; float32 at the weakest weight remains noisy, as above.
+
 ## L-BFGS memory sweep (2026-10-22)
 
 Steps to converge at the weakest weight (w = 0.1) of the L-curves with

@@ -152,6 +152,33 @@ def test_injected_alias_wins_in_closure_phases(period, tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("seed", range(5))
+def test_injected_alias_wins_at_reduced_effort_for_every_seed(seed):
+    """On the 12.38 d synthetic, the reduced search effort (``n_candidates=10``,
+    ``n_refine=2``, cut from 30 and 3 for speed) recovers the injected
+    period for every candidate-pool seed. The noise draw is fixed by
+    ``_synthetic``; only the pool seed varies."""
+    period = 12.38
+    data, pos = _synthetic(period)
+    result = fit_orbit_aliases(
+        data,
+        (11.3, 12.9),
+        positions=pos,
+        t_ref=T_REF,
+        n_candidates=10,
+        n_refine=2,
+        n_is=100,
+        n_samples=10,
+        seed=seed,
+        primary_diam=None,
+    )
+    n_true = round(float(onp.ptp(result.times)) / period)
+    assert result.best.n == n_true
+    assert result.best.p > 0.9
+    assert abs(result.best.best["period"] - period) < 0.05
+
+
+@pytest.mark.slow
 def test_a_band_that_cannot_fit_the_data_warns_loudly():
     """No orbit in 13.5-14.5 d fits a 12.38 d orbit's data, so the best
     band is flagged poor-fit and the call warns rather than failing
@@ -1363,6 +1390,11 @@ def _draw_alias_night_data(seed=SEED_ALIAS_NIGHT):
     (the Gl 229 2024-02-27 situation), and every other night is right and
     unflagged.
 
+    This is a positive control: it tests that the flag fires on a
+    constructed reflection, not that a realistic case of this kind (one
+    found in noise) is flagged. The fixture was built because the scanned
+    seed that once produced an alias stopped doing so.
+
     The alias is built into the data, not left to the noise. The night's V²
     are the truth's, which a binary shares with its point reflection through
     the primary; its closure phases, which alone tell the two apart, are the
@@ -1737,6 +1769,27 @@ def test_the_engine_defaults_need_no_per_system_arguments():
     assert sig["flip_flux"].default is True  # flux flip (9)
     assert sig["primary_diam"].default == "auto"  # UD primary (10)
     assert sig["vis_amp"].default is True  # V² amplitude (13)
+
+
+def test_period_cut_is_twice_the_closest_gap_or_the_night_bound():
+    kw = dict(resolution=2.0)
+    # nights 0, 1.99, 50, 100: 2 * 1.99 d beats P_night (0.2 d floor, no motion)
+    assert aliases.period_cut(
+        [0.0, 1.99, 50.0, 100.0], 10.0, 0.0, **kw
+    ) == pytest.approx(3.98)
+    # a long night bound wins over twice the closest gap
+    p_night = aliases.period_window([0.0, 100.0], 10.0, 0.5, **kw)[0]
+    assert aliases.period_cut(
+        [0.0, 1.0, 100.0], 10.0, 0.5, **kw
+    ) == pytest.approx(p_night)
+    # repeated times are one night; unsorted input is fine
+    assert aliases.period_cut(
+        [5.0, 0.0, 5.0, 20.0], 10.0, 0.0, **kw
+    ) == pytest.approx(10.0)
+    # one night: the night bound alone
+    assert aliases.period_cut([3.0, 3.0], 10.0, 0.0, **kw) == pytest.approx(
+        0.2
+    )
 
 
 def test_period_window_limits_on_simple_inputs():
@@ -2391,6 +2444,7 @@ def _seasonal(ecc, inc):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(900)  # a default short-arc fit takes 270-305 s on CI
 @pytest.mark.parametrize("ecc, inc", [(0.3, 50.0), (0.7, 80.0)])
 def test_a_cold_seasonal_gap_fit_ranks_the_true_alias_first(ecc, inc):

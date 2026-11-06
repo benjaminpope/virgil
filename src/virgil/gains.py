@@ -49,7 +49,7 @@ import jax.scipy.linalg as jsl
 import numpy as onp
 
 from ._closure import ClosureNoise
-from ._linear import whiten_blocks
+from ._linear import arrow_problem, whiten_blocks
 from ._utils import group_indices
 
 __all__ = [
@@ -152,6 +152,12 @@ class GainModes(eqx.Module):
         """
         local, spanning = self._columns(jacobian, widths)
         return whiten_blocks(x, self.rows, local, spanning)
+
+    def marginal_problem(self, x, jacobian, widths):
+        """The arguments of ``whiten`` as a ``_linear.arrow_problem``, to be
+        evaluated at any error scale (covariance ``s² D + U Uᵀ``)."""
+        local, spanning = self._columns(jacobian, widths)
+        return arrow_problem(x, self.rows, local, spanning)
 
     def covariance(self, errors, jacobian, widths):
         """The dense visibility covariance ``D + U Uᵀ`` (for checks; O(n²)).
@@ -505,6 +511,12 @@ class ClosureOffsets(eqx.Module):
         """
         cols = self._columns(cp_noise, sigma, widths)
         return whiten_blocks(x, np.asarray(self.rows), cols)
+
+    def marginal_problem(self, cp_noise, x, sigma, widths):
+        """The arguments of ``whiten`` as a ``_linear.arrow_problem``, to be
+        evaluated at any error scale (covariance ``s² I + U Uᵀ``)."""
+        cols = self._columns(cp_noise, sigma, widths)
+        return arrow_problem(x, np.asarray(self.rows), cols)
 
     def modes(self, cp_noise, n_phase, widths=None):
         """The modes as dense columns over the closure phases (for checks)."""

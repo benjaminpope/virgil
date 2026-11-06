@@ -100,7 +100,7 @@ def test_float32_and_float64_fits_agree():
 
 def test_lm_and_lbfgs_agree_on_a_tsv_image():
     start, priors, data = _image_fit()
-    regularizers = [TSV(1e3, path="env")]
+    regularizers = [TSV(1e3, path="env", beam_mas=12.0)]
     # A tight tolerance, so that this tests the solution, not the stopping
     # rule (at the default tolerance their losses can differ by ~2%).
     options = {"gtol": 1e-7, "max_steps": 20_000}
@@ -120,6 +120,33 @@ def test_bijections_keep_parameters_in_their_support():
     stretched = objective.constrain({p: np.asarray(50.0) for p in PRIORS})
     assert 0.0 < stretched["flux"] < 0.5
     assert -400.0 < stretched["dra"] < 400.0
+
+
+@pytest.mark.parametrize(
+    "flux_prior, flux_start",
+    [
+        (dist.Uniform(0.0, 0.5), 0.0),
+        (dist.HalfNormal(0.1), 0.0),
+        (dist.HalfNormal(0.1), -0.01),  # outside the support
+    ],
+)
+def test_a_start_on_a_bound_is_nudged_inside_it(flux_prior, flux_start):
+    priors = {**PRIORS, "flux": flux_prior}
+    start = BinaryModelCartesian(400.0, -70.0, 0.01)
+    objective = _Objective(start, priors, DATA)
+    # dra is on its upper bound, flux on (or past) its lower one.
+    z = objective.init({"dra": 400.0, "ddec": -70.0, "flux": flux_start})
+    assert all(np.all(np.isfinite(v)) for v in z.values())
+    values = objective.constrain(z)
+    assert abs(values["dra"] - 400.0) < 0.1  # not the prior mean, 0
+    assert 0.0 < values["flux"] < 1e-3
+    assert np.isfinite(objective.loss(z))
+
+
+def test_a_non_finite_start_is_rejected_by_path():
+    objective = _Objective(START, PRIORS, DATA)
+    with pytest.raises(ValueError, match="ddec"):
+        objective.init({"dra": 140.0, "ddec": float("nan"), "flux": 0.01})
 
 
 def test_residuals_and_loss_are_consistent():
@@ -142,7 +169,7 @@ def test_normal_priors_are_least_squares_terms():
 
 def test_non_least_squares_objectives_default_to_lbfgs():
     start, priors, data = _image_fit()
-    regularizers = [TV(1.0, path="env")]
+    regularizers = [TV(1.0, path="env", beam_mas=12.0)]
     objective = _Objective(start, priors, data, regularizers)
     with pytest.raises(TypeError, match="lbfgs"):
         objective.residuals(objective.init())
@@ -174,7 +201,9 @@ def test_numpyro_model_accepts_prior_regularizers_only():
     pixels = dist.Normal(np.zeros((16, 16)), 3.0).to_event(2)
     priors = {"env.log_brightness": pixels}
     with pytest.raises(ValueError, match="TSV"):
-        numpyro_model(start, priors, data, [TSV(1.0, path="env")])
+        numpyro_model(
+            start, priors, data, [TSV(1.0, path="env", beam_mas=12.0)]
+        )
     model = numpyro_model(start, priors, data, [Centroid(10.0, path="env")])
     trace = numpyro.handlers.trace(
         numpyro.handlers.seed(model, jax.random.PRNGKey(0))
@@ -580,7 +609,7 @@ def test_repeated_fits_do_not_recompile(method):
     again = data.with_model(start, key=jax.random.PRNGKey(2))
 
     def fit_tsv(data, weight):
-        regs = [TSV(weight, path="env")]
+        regs = [TSV(weight, path="env", beam_mas=12.0)]
         return fit(start, priors, data, regs, method=method, **options)
 
     fit_tsv(data, 10.0)
@@ -1621,7 +1650,7 @@ def test_regularizers_raise_for_a_model_per_dataset():
             PRIORS,
             [DATA, DATA],
             init=init,
-            regularizers=[TV(1.0, path="env")],
+            regularizers=[TV(1.0, path="env", beam_mas=12.0)],
         )
     fit(two, PRIORS, [DATA, DATA], init=init, max_steps=1)  # none: fine
 
@@ -1638,3 +1667,43 @@ def test_numpyro_model_raises_for_a_model_per_dataset_with_regularizers():
         numpyro.handlers.trace(
             numpyro.handlers.seed(model, jax.random.PRNGKey(0))
         ).get_trace()
+
+
+def test_lbfgs_keeps_the_last_finite_point_after_a_non_finite_update(
+    monkeypatch,
+):
+    import optax
+
+    import virgil.fitting as fitting
+
+    real = fitting._capped_lbfgs
+
+    def poisoned(*args):
+        # The real optimizer, whose third update is NaN: a finite loss and
+        # gradient at z, then a non-finite proposal.
+        def init(params):
+            return np.zeros((), int)
+
+        def update(updates, count, params=None, **extra):
+            bad = np.where(count >= 2, np.nan, 1.0)
+            return jax.tree.map(lambda u: u * bad, updates), count + 1
+
+        return optax.chain(
+            real(*args), optax.GradientTransformation(init, update)
+        )
+
+    # The optimizer is built at trace time: a compiled fit left by an earlier
+    # test (same shapes) would bypass the poisoned one. Clear before, and
+    # after so no later test reuses the poisoned program.
+    jax.clear_caches()
+    monkeypatch.setattr(fitting, "_capped_lbfgs", poisoned)
+    try:
+        with pytest.warns(RuntimeWarning, match="not finite"):
+            result = fit(START, PRIORS, DATA, method="lbfgs", max_steps=50)
+    finally:
+        jax.clear_caches()
+    assert result.info["stop"] == "non-finite"
+    assert result.info["steps"] == 3
+    assert np.isfinite(result.info["grad_norm"])
+    assert np.isfinite(result.info["loss"])
+    assert all(np.isfinite(v) for v in result.values.values())

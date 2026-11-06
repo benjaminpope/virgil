@@ -13,5 +13,6 @@ integrated out.
         - AliasBandResult
         - alias_bands
         - period_window
+        - period_cut
         - position_profile
         - AliasBand
