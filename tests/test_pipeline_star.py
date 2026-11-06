@@ -497,7 +497,7 @@ def test_resolution_message_names_the_regime():
     [
         (200.0, 100.0, "pass", "preferred"),
         (105.0, 100.0, "pass", "adequate"),
-        (100.0, 130.0, "warn", "did not converge"),
+        (100.0, 130.0, "fail", "did not converge"),
         (float("nan"), 1.0, "fail", "not finite"),
     ],
 )
