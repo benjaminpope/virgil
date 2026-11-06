@@ -425,6 +425,7 @@ def _truth_within(res, nsigma):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 def test_golden_injected_companion_is_recovered_at_the_default_settings(
     data, tmp_path
 ):
@@ -457,6 +458,7 @@ def test_golden_injected_companion_is_recovered_at_the_default_settings(
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 def test_the_default_settings_never_pass_a_wrong_companion_silently(
     data, tmp_path
 ):

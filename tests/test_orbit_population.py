@@ -4,6 +4,7 @@ calibrated to the number of fitted systems."""
 import json
 import importlib.util
 import pathlib
+import types
 
 import numpy as onp
 import pytest
@@ -256,6 +257,7 @@ def test_the_strata_are_those_of_section_14():
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(1200)
 def test_the_oracle_and_the_diagnostics_change_no_fit_result():
     """Fit columns are bit-identical with the oracle off or on; only its own
@@ -308,6 +310,7 @@ MAIN_MODES = [3, 1, 2, 2, 2, 2, 2, 1, 2, 2, 1, 1]
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(900)
 def test_position_cells_matches_main_before_the_counters_were_added():
     """Refactor equivalence, not a correctness oracle: ``p_pos`` and every
@@ -355,3 +358,54 @@ def test_position_cells_matches_main_before_the_counters_were_added():
     big = onp.asarray(MAIN_P) >= pop.oc_cells.DELTA
     shift = onp.abs(onp.log(p) - onp.log(MAIN_P))
     assert (shift[big] <= (tol + tol.max())[big]).all()
+
+
+def test_the_census_simulates_and_labels_in_float64(monkeypatch):
+    """The census runs in the default float32 on OzSTAR, but a float32 mean
+    anomaly (ulp ~ 2e-4 rad at ~2000 rad) is as coarse as σ/a of an informative
+    system: ``run_population`` simulates inside float64, to the draws made with
+    x64 on, and ``_labels`` runs in its space's dtype."""
+    import jax
+    import jax.numpy as np
+
+    seen = []
+
+    def run_one(sysd, fit, key, u, **kw):
+        seen.append(
+            (jax.config.jax_enable_x64, sysd["period"], sysd["summaries"])
+        )
+        return dict(status="ok")
+
+    monkeypatch.setattr(pop, "run_one", run_one)
+    with jax.enable_x64(False):
+        pop.run_population(3, 0, 3, False, 0)
+        assert not jax.config.jax_enable_x64  # restored
+    assert seen
+    with jax.enable_x64(True):
+        ref = {
+            d[0]["period"]: d[0]["summaries"]
+            for d in map(lambda i: _draw(3, i), range(3))
+            if d is not None
+        }
+    for x64, period, summaries in seen:
+        assert x64
+        for sa, sb in zip(summaries, ref[period]):
+            onp.testing.assert_array_equal(sa.peaks[0].mean, sb.peaks[0].mean)
+
+    # _labels: the state it scores is float64 whatever the ambient mode
+    seen_state = []
+
+    def peak_terms(cat, ln_s, jitter, state, dtype):
+        seen_state.append((jax.config.jax_enable_x64, state.dtype))
+        return np.zeros((state.shape[0], 1), dtype)
+
+    monkeypatch.setattr(pop.oc_cells, "_peak_terms", peak_terms)
+    space = types.SimpleNamespace(
+        dtype=onp.float64, jitter=0.0, cat=types.SimpleNamespace(log_b=-1.0),
+        decode=lambda x: dict(period=1.0, z=None, zeta=0.0, ln_f=0.0, ln_s=0.0),
+        states=lambda period, ti, zeta: onp.zeros((3, 4)),
+    )  # fmt: skip
+    monkeypatch.setattr(pop.oc_cells.oc, "z_to_ti", lambda z: z)
+    with jax.enable_x64(False):
+        pop.oc_cells._labels(None, space)
+    assert seen_state == [(True, onp.dtype("float64"))]
