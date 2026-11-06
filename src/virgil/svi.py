@@ -88,8 +88,9 @@ class VariationalResult:
         The guide's fitted parameters.
     converged : bool
         Whether the loss stopped falling: the mean loss over the last ``window``
-        steps is not below that of the ``window`` steps before it by more than
-        twice their combined standard error. Necessary, not sufficient.
+        steps is below that of the ``window`` steps before it by less than one
+        nat, with 2 standard errors of margin (see ``_loss_settled``).
+        Necessary, not sufficient.
     info : dict
         ``guide`` (its name), ``steps``, ``elbo`` (minus the mean loss over the
         last window; ``None`` for a point-mass guide, whose loss is given as
@@ -257,6 +258,42 @@ def _start_scale(
     source = onp.concatenate([gn_index[s] for s in common])
     covariance[onp.ix_(latent, latent)] = gn[onp.ix_(source, source)]
     return onp.linalg.cholesky(covariance), True
+
+
+_KHAT_MAX = 0.7  # Vehtari et al. (2024): above it importance weights are unreliable
+_SETTLED_NATS = 1.0
+
+
+def _loss_settled(losses, window):
+    """Whether the loss has stopped falling, by an upper confidence bound.
+
+    The loss is minus the ELBO in nats. Let ``drop`` be the mean loss of the
+    window before the last minus that of the last window, and ``se`` the
+    standard error of that difference, ``sqrt((var_last + var_before) /
+    window)``. The run counts as settled when the upper 2σ bound on the true
+    fall is under one nat,
+
+        drop + 2 se <= 1.
+
+    Why this rule: the true fall exceeds ``drop + 2 se`` only with probability
+    about 2% (normal means over a window), so passing certifies that the
+    loss is falling by less than the tolerance, not merely that the fall is
+    unmeasurable. The bound is increasing in ``se``, so a noisier run can
+    never pass more easily than a quieter one with the same drop; a run too
+    noisy to resolve one nat (2 se > 1 even with no drop) does not pass. The
+    old rule ``drop <= 2 se`` did the opposite: noise widened what it
+    accepted. One nat is the unit of the ELBO's scale: a change below it
+    alters no model comparison worth mentioning (Kass & Raftery 1995, a
+    Bayes factor below e).
+    Necessary, not sufficient: a flat stretch of a slow descent also passes
+    when the fall per window is under one nat.
+    """
+    last, before = losses[-window:], losses[-2 * window : -window]
+    if losses.size < 2 * window or not onp.all(onp.isfinite(last)):
+        return False
+    drop = before.mean() - last.mean()
+    se = math.sqrt((last.var() + before.var()) / window)
+    return bool(drop + 2 * se <= _SETTLED_NATS)
 
 
 def variational(
@@ -429,27 +466,26 @@ def variational(
             except ImportError:  # numpyro < 0.20
                 pass
             else:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    khat = float(
-                        psis_diagnostic(
-                            k_psis,
-                            params,
-                            posterior,
-                            guide_obj,
-                            num_particles=num_samples,
-                        )
+                khat = float(
+                    psis_diagnostic(
+                        k_psis,
+                        params,
+                        posterior,
+                        guide_obj,
+                        num_particles=num_samples,
+                    )
+                )
+                if not khat <= _KHAT_MAX:  # also NaN
+                    warnings.warn(
+                        f"The Pareto k̂ of the importance weights is {khat:.2f} "
+                        f"> {_KHAT_MAX}: the guide is too far from the "
+                        "posterior to trust its samples or to reweight them "
+                        "(Vehtari et al. 2024).",
+                        RuntimeWarning,
+                        stacklevel=external_stacklevel(),
                     )
     losses = onp.asarray(run.losses)
-    # converged: the mean loss of the last window is not significantly below
-    # that of the window before it
-    last, before = losses[-window:], losses[-2 * window : -window]
-    if losses.size < 2 * window or not onp.all(onp.isfinite(last)):
-        converged = False
-    else:
-        drop = before.mean() - last.mean()
-        noise = math.sqrt((last.var() + before.var()) / window)
-        converged = bool(drop <= 2 * noise)
+    converged = _loss_settled(losses, window)
     if not converged:
         warnings.warn(
             f"The SVI loss had not settled after {steps} steps; raise "

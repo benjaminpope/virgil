@@ -384,3 +384,16 @@ def test_log_uniform_float32_edge_cases():
     f_hat, sigma = float(out.flux[0, 0]), float(out.flux_error[0, 0])
     log_b, _, _ = _brute_log_uniform(f_hat, sigma, 1e-9, 1e-7)
     assert onp.isclose(out.log_bayes_factor[0, 0], log_b, rtol=1e-4)
+
+
+def test_flux_convergence_has_no_quarter_sigma_gate():
+    """585#15: a point 0.2σ from its maximum (g = 0.2√|c|) passed the old
+    gate |g| < 0.25√|c|, yet still has 0.02 nats to gain, above the float32
+    rounding error (6e-3 at ℓ = -5000); one within it has converged."""
+    from virgil.grid_fit import _flux_converged
+
+    f32 = np.float32
+    c, ll = f32(-100.0), f32(-5000.0)
+    assert not bool(_flux_converged(f32(0.2 * 10.0), c, ll))
+    assert bool(_flux_converged(f32(np.sqrt(2 * 100.0 * 1e-3)), c, ll))
+    assert not bool(_flux_converged(f32(0.0), f32(1.0), ll))  # not a maximum

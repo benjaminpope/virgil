@@ -67,6 +67,13 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `(module)` | [Hogg, Myers & Bovy (2010)](#hogg2010ecc), [arXiv:1008.4146](https://arxiv.org/abs/1008.4146), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...725.2166H/abstract) | after |
 
+### `virgil._gauss_newton`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `_solve_free` | [Marquardt (1963)](#marquardt1963), [doi:10.1137/0111030](https://doi.org/10.1137/0111030) | after |
+| `_solve_free` | [Moré (1978)](#more1978), [doi:10.1007/BFb0067700](https://doi.org/10.1007/BFb0067700) | after |
+
 ### `virgil._geometry`
 
 | Symbol | Source | Relation |
@@ -450,6 +457,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
+| `_loss_settled` | [Kass & Raftery (1995)](#kass1995), [doi:10.1080/01621459.1995.10476572](https://doi.org/10.1080/01621459.1995.10476572) | after |
 | `variational` | [De Cao, Titov & Aziz (2019)](#decao2019), [arXiv:1904.04676](https://arxiv.org/abs/1904.04676), [ADS](https://ui.adsabs.harvard.edu/abs/2019arXiv190404676D/abstract) | after |
 | `variational` | [Frank, Leike & Enßlin (2021)](#frank2021), [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract) | after |
 | `variational` | [Kingma et al. (2016)](#kingma2016), [arXiv:1606.04934](https://arxiv.org/abs/1606.04934), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160604934K/abstract) | after |
@@ -656,6 +664,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="junklewitz2016"></a>**Junklewitz et al. (2016)**. RESOLVE: A new algorithm for aperture synthesis imaging of extended emission in radio astronomy. [arXiv:1311.5282](https://arxiv.org/abs/1311.5282), [ADS](https://ui.adsabs.harvard.edu/abs/2016A&A...586A..76J/abstract). A&A 586, A76; an IFT imaging algorithm for radio interferometry.
 - <a id="fouriever"></a>**Kammerer**. fouriever. [GitHub](https://github.com/kammerje/fouriever). comparison only: compare linear_flux_grid with its lincmap (closure/kernel phases only); no paper found. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="kammerer2020"></a>**Kammerer et al. (2020)**. Increasing the achievable contrast of infrared interferometry with an error correlation model. [arXiv:2011.01209](https://arxiv.org/abs/2011.01209), [ADS](https://ui.adsabs.harvard.edu/abs/2020A&A...644A.110K/abstract).
+- <a id="kass1995"></a>**Kass & Raftery (1995)**. Bayes factors. [doi:10.1080/01621459.1995.10476572](https://doi.org/10.1080/01621459.1995.10476572). JASA 90, 773; a log Bayes factor below 1 is not worth more than a bare mention: the one-nat settling tolerance of the SVI loss.
 - <a id="visr"></a>**Kennedy (2025)**. vis-r: a parametric visibility modelling code for radial profiles of discs. [arXiv:2502.17619](https://arxiv.org/abs/2502.17619), [ADS](https://ui.adsabs.harvard.edu/abs/2025RASTI...4....4D/abstract), [GitHub](https://github.com/drgmk/vis-r). RASTI (2025); github.com/drgmk/vis-r. Ideas only, no code copied.
 - <a id="kingma2015"></a>**Kingma & Ba (2014)**. Adam: A Method for Stochastic Optimization. [arXiv:1412.6980](https://arxiv.org/abs/1412.6980), [ADS](https://ui.adsabs.harvard.edu/abs/2014arXiv1412.6980K/abstract).
 - <a id="kingma2016"></a>**Kingma et al. (2016)**. Improving Variational Inference with Inverse Autoregressive Flow. [arXiv:1606.04934](https://arxiv.org/abs/1606.04934), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160604934K/abstract). IAF.
@@ -682,6 +691,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="mackay1992"></a>**MacKay (1992)**. Bayesian Interpolation. [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415). Neural Comput. 4, 415.
 - <a id="malbet2010"></a>**Malbet et al. (2010)**. The 2010 Interferometric Imaging Beauty Contest. [arXiv:1007.4473](https://arxiv.org/abs/1007.4473), [ADS](https://ui.adsabs.harvard.edu/abs/2010SPIE.7734E..2NM/abstract). SPIE 7734.
 - <a id="mantel1959"></a>**Mantel & Haenszel (1959)**. Statistical aspects of the analysis of data from retrospective studies of disease. [doi:10.1093/jnci/22.4.719](https://doi.org/10.1093/jnci/22.4.719). J. Natl. Cancer Inst. 22, 719; stratified test of a common rate across strata; planned orbit population-test assertion.
+- <a id="marquardt1963"></a>**Marquardt (1963)**. An algorithm for least-squares estimation of nonlinear parameters. [doi:10.1137/0111030](https://doi.org/10.1137/0111030). J. Soc. Ind. Appl. Math. 11, 431; damping scaled by diag(JᵀJ), per parameter.
 - <a id="martens2010"></a>**Martens (2010)**. Deep learning via Hessian-free optimization. [link](https://icml.cc/Conferences/2010/papers/458.pdf). ICML 27, 735-742; the Gauss-Newton matrix as the curvature matrix. No DOI or arXiv ID, not on ADS: title and author read from the ICML 2010 PDF. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="martinache2010"></a>**Martinache (2010)**. Kernel-Phase in Fizeau Inteferometry. [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract). ApJ 724, 464 (2010).
 - <a id="xara"></a>**Martinache (2010)**. Kernel-Phase in Fizeau Inteferometry. [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract), [GitHub](https://github.com/fmartinache/xara). xara was formerly pysco; cvis_binary is adapted from it.
@@ -692,6 +702,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="miles1965"></a>**Miles (1965)**. On random rotations in R^3. [doi:10.1093/biomet/52.3-4.636](https://doi.org/10.1093/biomet/52.3-4.636). Biometrika 52, 636-639; the isotropic (Haar) distribution of rotations: Omega and omega uniform, cos i uniform. Not on ADS: checked on Crossref.
 - <a id="monnier2007"></a>**Monnier et al. (2007)**. Imaging the Surface of Altair. [arXiv:0706.0867](https://arxiv.org/abs/0706.0867), [ADS](https://ui.adsabs.harvard.edu/abs/2007Sci...317..342M/abstract), [doi:10.1126/science.1143205](https://doi.org/10.1126/science.1143205). Science 317, 342; the Altair-like truth of notebooks/mwe/mwe_elr_chara.ipynb is inspired by it, not a reproduction.
 - <a id="moran1975"></a>**Moran (1975)**. Quaternions, Haar measure and the estimation of a palaeomagnetic rotation. [doi:10.1017/s0021900200047720](https://doi.org/10.1017/s0021900200047720). J. Appl. Prob. 12, 295-301; Haar measure on SO(3) is the uniform measure on S^3, covered 2:1 by unit quaternions. Not on ADS: checked on Crossref.
+- <a id="more1978"></a>**Moré (1978)**. The Levenberg-Marquardt algorithm: implementation and theory. [doi:10.1007/BFb0067700](https://doi.org/10.1007/BFb0067700). Lecture Notes in Mathematics 630, 105; per-parameter diagonal scaling makes the step invariant to rescaling the variables.
 - <a id="merand2022"></a>**Mérand (2022)**. Flexible Spectro Interferometric modelling of OIFITS data with PMOIRED. [arXiv:2207.11047](https://arxiv.org/abs/2207.11047), [ADS](https://ui.adsabs.harvard.edu/abs/2022SPIE12183E..1NM/abstract), [GitHub](https://github.com/amerand/pmoired). PMOIRED.
 - <a id="candid"></a>**Mérand et al.**. CANDID: Companion Analysis and Non-Detection in Interferometric Data. [GitHub](https://github.com/amerand/CANDID). algorithm paper: gallenne2015. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="neal2011"></a>**Neal (2011)**. MCMC using Hamiltonian dynamics. [arXiv:1206.1901](https://arxiv.org/abs/1206.1901). Handbook of Markov Chain Monte Carlo, ch. 5; randomized step size and trajectory length for HMC.
