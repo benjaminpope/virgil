@@ -46,6 +46,7 @@ from .likelihood import (
     tied_log_prior,
 )
 from .models import (
+    Image,
     LinearImage,
     MultipoleKernel,
     RadialGP,
@@ -56,7 +57,7 @@ from .models import (
 from ._deprecate import external_stacklevel
 
 
-__provisional__ = ("gauss_newton_diag",)
+__provisional__ = ("gauss_newton_diag", "kkt_report")
 
 
 def _bijection(distribution):
@@ -2213,6 +2214,11 @@ def _box(problem, z):
     return onp.concatenate(lower), onp.concatenate(upper)
 
 
+def _projected_norm(x, grad, lower, upper):
+    """∞-norm of the projected gradient ``x - P(x - grad)`` for box bounds."""
+    return onp.max(onp.abs(x - onp.clip(x - grad, lower, upper)), initial=0.0)
+
+
 @eqx.filter_jit
 # deliberate: jit boundary of the L-BFGS-B host loop; the template z fixes the unravel
 def _value_and_gradient(problem, template, scale, x):
@@ -2248,9 +2254,7 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
         return float(value), onp.asarray(grad, float)
 
     def projected(x, grad):
-        return onp.max(
-            onp.abs(x - onp.clip(x - grad, lower, upper)), initial=0.0
-        )
+        return _projected_norm(x, grad, lower, upper)
 
     _, g0 = evaluate(x0)
     tolerance = float(_tolerance(np.asarray(projected(x0, g0)), gtol))
@@ -2571,3 +2575,375 @@ def _adam_run(
         stop,
         onp.concatenate(history) if history else onp.zeros(0),
     )
+
+
+# Thresholds of ``kkt_report``, from the IM Lup imaging diagnosis: kkt_w < 1e-4 and
+# band_limit < 2 gate ``converged``. KKT_TOL is the relative residual, far below the
+# fits' own stop yet above the float64 noise of a converged fit; band_limit is
+# about 1 at an optimum.
+KKT_TOL = 1e-3
+BAND_TOL = 2.0
+# _ACTIVE: pixels above 1e-3 of the peak have gradients well resolved against
+# the unit-sum scale. _FROZEN: below 1e-6 a softmax pixel's eta-gradient is a
+# millionth of an active one's, so L-BFGS cannot move it. _GROW: a frozen pixel
+# counts as wanting flux only if its unmet gradient exceeds 3 times the gradient
+# scale times the tolerance (virgil's margin over the noise on faint pixels).
+_ACTIVE, _FROZEN, _GROW = 1e-3, 1e-6, 3.0
+_IMAGE_COORDS = ("log_brightness", "pixels")
+_FWHM = 2 * onp.sqrt(2 * onp.log(2))  # FWHM over sigma of a Gaussian
+_LIT_FWHM, _EDGE_FWHM = (
+    30 / 18,
+    20 / 18,
+)  # band_limit windows, resolution elements
+KKT_W_TOL = 1e-4  # kkt_w: the registered IM Lup criterion
+NUISANCE_TOL = 1e-3  # grad_rel of a nuisance, relative to the start gradient
+
+
+def _smooth(img, sigma):
+    """``img`` blurred by a Gaussian of ``sigma`` pixels (zero-padded FFT)."""
+    n = img.shape[0]
+    f = onp.fft.fftfreq(2 * n)
+    gauss = onp.exp(
+        -2 * onp.pi**2 * sigma**2 * (f[:, None] ** 2 + f[None, :] ** 2)
+    )
+    pad = onp.fft.ifft2(onp.fft.fft2(img, s=(2 * n, 2 * n)) * gauss).real
+    return pad[:n, :n]
+
+
+def _band_limit(brightness, pixel_scale_mas, cut):
+    """Fraction of the windowed ``ln b`` power beyond ``cut`` over that of its
+    hard low-pass (the diagnosis' ``f_eta / f_floor``).
+
+    The window is the lit region (``b`` blurred with a Gaussian of FWHM
+    ``_LIT_FWHM`` resolution elements ``1 / cut``, above 1e-3 of its peak),
+    smoothed with one of FWHM ``_EDGE_FWHM``. Non-finite ``ln b`` (empty pixels)
+    become the finite minimum. Thresholds and windows follow an IM Lup
+    imaging diagnosis, where 30 and 20 mas FWHM were 1.67 and 1.11 elements.
+    """
+    b = onp.asarray(brightness, float)
+    n = b.shape[0]
+    step = pixel_scale_mas * onp.pi / 180 / 3.6e6
+    element = 1.0 / (cut * step * _FWHM)  # sigma of one element, in pixels
+    with onp.errstate(divide="ignore"):
+        eta = onp.log(b / b.max())
+    eta = onp.where(onp.isfinite(eta), eta, eta[onp.isfinite(eta)].min())
+    blurred = _smooth(b, _LIT_FWHM * element)
+    mask = blurred >= 1e-3 * blurred.max()
+    window = onp.clip(
+        _smooth(mask.astype(float), _EDGE_FWHM * element), 0.0, 1.0
+    )
+
+    def beyond(img, freq):
+        power = (
+            onp.abs(
+                onp.fft.fft2(
+                    window * (img - img[mask].mean()), s=(2 * n, 2 * n)
+                )
+            )
+            ** 2
+        )
+        return power[freq > cut].sum() / power.sum()
+
+    f = onp.fft.fftfreq(n, step)
+    low = onp.fft.ifft2(
+        onp.fft.fft2(eta) * (onp.hypot(f[:, None], f[None, :]) <= cut)
+    ).real
+    k = onp.fft.fftfreq(2 * n, step)
+    freq = onp.hypot(k[:, None], k[None, :])
+    floor = beyond(low, freq)
+    return beyond(eta, freq) / floor if floor > 0 else float("nan")
+
+
+def _peak(grad, start, key, pen):
+    """The gradient ∞-norm that a certificate is relative to: the start's, or the
+    larger of the data and penalty parts at the result."""
+    if start is not None:
+        top = onp.max(onp.abs(onp.asarray(start[key], float)), initial=0.0)
+    else:
+        g, gp = (onp.asarray(t[key], float) for t in (grad, pen))
+        top = max(
+            onp.max(onp.abs(g - gp), initial=0.0),
+            onp.max(onp.abs(gp), initial=0.0),
+        )
+    return float(top) or 1.0
+
+
+def _pixel_gradient(problem, z, grads, key, parent):
+    """``(d, dp, mu, b, live, scale)`` at ``z`` for a softmax or √I image.
+
+    ``d`` and ``dp`` are the total and penalty gradients per pixel flux, ``mu``
+    the multiplier, ``b`` the pixel fluxes, ``live`` the pixels whose gradient is
+    defined and ``scale`` the rms gradient over the active pixels.
+    """
+    image = problem.build(z)
+    image = image.get(parent) if parent else image
+    g, gp = (onp.asarray(t[key], float).ravel() for t in grads)
+    if isinstance(image, Image):
+        b = onp.asarray(image.brightness, float).ravel()
+        live = b > 0.0
+        # mu = Σ b g = flux dJ/dflux for a unit-sum image: fixed flux, so not
+        # a coordinate (fitted, it is stationary at a converged fit).
+        path = f"{parent}.flux" if parent else "flux"
+        mu = 0.0
+        if path not in problem.priors:
+            flux = problem.model.get(path)
+            if problem.model.resolved() is not problem.model or not isinstance(
+                flux, (int, float, jax.Array, onp.ndarray)
+            ):
+                raise NotImplementedError(
+                    f"kkt_report needs a plain fitted or fixed {path}, not a tied or derived one."
+                )
+
+            def loss(t):
+                model = problem.model.set([path], [flux * (1.0 + t)])
+                return eqx.tree_at(lambda p: p.model, problem, model).loss(z)
+
+            mu = float(jax.grad(loss)(0.0))
+        scale = onp.where(live, b, 1.0)  # g_eta = b (g_b - mu)
+    else:
+        b = onp.asarray(image.fluxes, float).ravel()
+        x = onp.asarray(z[key], float).ravel()
+        live, mu = x != 0.0, 0.0
+        scale = 2.0 * onp.where(live, x, 1.0)  # f = x²
+    d, dp = (onp.where(live, v / scale, 0.0) for v in (g, gp))
+    act = live & (b > _ACTIVE * b.max())
+    rms = 0.0
+    if act.any():
+        rms = float(onp.sqrt(onp.mean((d[act] - dp[act]) ** 2 + dp[act] ** 2)))
+    return d, dp, mu, b, live, rms
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the nuisance branch inline.
+def _nuisance_entry(x, g, box, top):
+    """Projected-gradient ∞-norm of one nuisance and its ratio to ``top``."""
+    lower, upper, offset = box
+    lo, hi = -onp.inf, onp.inf
+    if lower is not None:
+        lo, hi = (
+            lower[offset : offset + g.size],
+            upper[offset : offset + g.size],
+        )
+    norm = _projected_norm(x, g, lo, hi)
+    return {"grad_norm": norm, "grad_rel": norm / top}
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the growth rule inline.
+def _want_grow(d, b, masks, margin, softmax):
+    """Frozen pixels whose gradient ``d`` says they want flux.
+
+    The rule is ``g_j < mu - 3 scale kkt_rel`` (``margin = scale * kkt_rel``,
+    with ``kkt_rel`` floored at ``KKT_TOL``: a converged fit has ~0). A sqrt
+    pixel moves in x = sqrt(f), where its gradient is 2 x d, so the rule is
+    measured there: faint pixels' noise 1 / x is not read as a want to grow.
+    """
+    inside, live = masks
+    peak = b.max()
+    frozen = inside & live & (b < _FROZEN * peak)
+    reach = 1.0 if softmax else onp.sqrt(peak / onp.where(live, b, peak))
+    return frozen & (d < -_GROW * margin * reach)
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the linear-pixel branch inline.
+def _linear_certificate(x, g, image, top, w):
+    """``(out, ok)``: the certificate of one linear-parametrised pixel array."""
+    lo, hi = (onp.ravel(a) for a in image.bounds())
+    out = {"kind": "linear", "pg_rel": _projected_norm(x, g, lo, hi) / top}
+    zero = (x == 0.0) & (hi > 0.0)
+    bad = zero & (g < -KKT_TOL * top)
+    out["zero_violation"] = float(bad.sum() / max(zero.sum(), 1))
+    ok = out["pg_rel"] < KKT_TOL and not bad.any()
+    if w is not None:  # registered statistic, in units of w / F0
+        pg = x - onp.clip(x - g, lo, hi)
+        sel = (x > _ACTIVE * x.max()) | ((x <= lo) & (g < 0))
+        out["kkt_w"] = float(onp.sqrt(onp.mean(pg[sel] ** 2)) / (w / x.sum()))
+        ok = out["kkt_w"] < KKT_W_TOL and not bad.any()
+    return out, ok
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the band-limit setup inline.
+def _data_band_limit(data, image, b):
+    """``_band_limit`` of fluxes ``b`` at the data's largest spatial frequency.
+
+    That is in cycles per radian: OIData ``u, v`` are metres, per ``wavel``;
+    radio ``u, v`` are already wavelengths.
+    """
+    sets = data if isinstance(data, (list, tuple)) else (data,)
+    cut = max(
+        float(onp.max(onp.hypot(s.u, s.v) / getattr(s, "wavel", 1.0)))
+        for s in sets
+    )
+    shape = onp.shape(image.brightness)
+    return _band_limit(b.reshape(shape), image.pixel_scale_mas, cut)
+
+
+def kkt_report(
+    result,
+    priors,
+    data,
+    regularizers=(),
+    *,
+    noise=None,
+    likelihoods=(),
+    start=None,
+    weight=None,
+):
+    """Convergence certificates of a regularized image fit, not a loss plateau.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    Call with a [`FitResult`][virgil.fitting.FitResult] and the ``priors``,
+    ``data``, ``regularizers``, ``noise`` and ``likelihoods`` it was fitted
+    with. ``start`` is the starting values (``fit``'s ``init``): the
+    gradient scales and ``pg_rel`` are then relative to those at the start as
+    well, which a fit with no penalty needs (its gradient is zero at the
+    optimum). Without it they use the result alone: the larger of the data and
+    penalty gradients.
+
+    ``"images"`` holds, by path:
+
+    - [`Image`][virgil.models.Image] (softmax): ``kkt_w``, the rms over pixels above
+      1e-3 of the peak of ``g_I - μ``, the gradient per pixel flux less the
+      multiplier, in units of ``w / F`` (regulariser weight over flux), which
+      gates ``converged`` at ``KKT_W_TOL``. (The diagnosis took ``μ`` as the
+      median; here ``μ = Σ b g`` exactly, which agrees to within a few percent
+      at an optimum.) ``kkt_rel``, the rms of
+      ``g - μ`` over pixels above 1e-3 of the peak, with ``g = ∂J/∂b`` for
+      unit-sum ``b`` and ``μ = Σ b g``, over ``|μ|`` plus the rms gradient
+      scale; ``want_grow``, the fraction of pixels below 1e-6 of the peak whose
+      objective would raise them.
+    - ``LinearImage`` ``"sqrt"``: the same with ``g = ∂J/∂flux`` and ``μ = 0``.
+      A pixel exactly zero has zero gradient and is not seen to want growth.
+    - ``LinearImage`` ``"linear"``: ``kkt_w``, the rms projected gradient over
+      pixels above 1e-3 of the peak or at a bound with ``g < 0``, in units of
+      ``w / F0`` with ``F0`` the pixel sum; ``pg_rel``, the ∞-norm of the
+      projected gradient over its reference; and ``zero_violation``, the
+      fraction of zero pixels with ``g < 0``. Active bounds are not violations.
+    - A lone ``MaxEntropy``: ``band_limit``, the windowed power of ``ln b``
+      beyond the data's largest spatial frequency over that of its hard
+      low-pass; about 1 at an optimum, a larger value meaning structure the
+      data cannot constrain.
+
+    ``"nuisances"`` holds the projected-gradient ∞-norm of every other
+    parameter in its fitted coordinate, and ``grad_rel`` relative to the start
+    gradient. ``"converged"`` is true when every image has ``kkt_w`` below
+    ``KKT_W_TOL`` (``kkt_rel`` or ``pg_rel`` below ``KKT_TOL`` if there is no
+    weight), ``want_grow`` and ``zero_violation`` zero, and ``band_limit``
+    below ``BAND_TOL``; and, given ``start``, every nuisance ``grad_rel`` is
+    below ``NUISANCE_TOL``. Only a plain fitted or fixed image flux is
+    supported; a tied or derived one raises ``NotImplementedError``.
+
+    Source: [Nocedal & Wright (2006)](../references.md#nocedal2006), ch. 12 and §16.7.
+    """
+    from .imaging import MaxEntropy  # deliberate: imaging imports fitting
+
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(
+                result.model,
+                priors,
+                data,
+                regularizers,
+                noise,
+                likelihoods,
+                boxed=True,
+            ),
+            "float64",
+        )
+        z = problem.init(result.values)
+        grad = jax.grad(problem.loss)(z)
+        pen = jax.grad(problem.penalty)(z)
+        z0 = None if start is None else problem.init(start)
+        ref = None if start is None else jax.grad(problem.loss)(z0)
+        pen0 = None if start is None else jax.grad(problem.penalty)(z0)
+        try:
+            lower, upper = _box(problem, z)
+        except TypeError:
+            lower = upper = None
+        keys = problem.coordinate_keys
+        offsets = dict(
+            zip(keys, onp.cumsum([0] + [onp.size(z[k]) for k in keys]))
+        )
+        images, nuisances, verdicts = {}, {}, []
+        lone = regularizers[0] if len(regularizers) == 1 else None
+        w = weight if weight is not None else getattr(lone, "weight", None)
+        w = None if w is None else float(w)
+        model = problem.model
+        for key in keys:
+            parent, _, name = key.rpartition(".")
+            g = onp.asarray(grad[key], float).ravel()
+            x = onp.asarray(z[key], float).ravel()
+            # Error terms (``noise.<term>``) and function models have no image.
+            image = None
+            if isinstance(model, SourceModel) and name in _IMAGE_COORDS:
+                image = model.get(parent) if parent else model
+            softmax = isinstance(image, Image) and name == "log_brightness"
+            linear = isinstance(image, LinearImage) and name == "pixels"
+            if not (softmax or linear):
+                top = _peak(grad, ref, key, pen)
+                box = (lower, upper, offsets[key])
+                nuisances[key] = _nuisance_entry(x, g, box, top)
+                if start is not None:
+                    verdicts.append(
+                        bool(nuisances[key]["grad_rel"] < NUISANCE_TOL)
+                    )
+                continue
+            out = {}
+            top = _peak(grad, ref, key, pen)
+            if linear and image.parametrisation == "linear":
+                out, ok = _linear_certificate(x, g, image, top, w)
+            else:
+                d, dp, mu, b, live, scale = _pixel_gradient(
+                    problem, z, (grad, pen), key, parent
+                )
+                inside = (
+                    onp.ones(b.shape, bool)
+                    if image.support is None
+                    else onp.asarray(image.support).ravel() != 0
+                )
+                peak = b.max()
+                act = live & (b > _ACTIVE * peak)
+                if (
+                    start is not None
+                ):  # a fit with no penalty has none at its optimum
+                    scale = max(
+                        scale,
+                        _pixel_gradient(problem, z0, (ref, pen0), key, parent)[
+                            5
+                        ],
+                    )
+                rel = (
+                    onp.sqrt(onp.mean(d[act] ** 2)) / (abs(mu) + scale)
+                    if scale
+                    else 0.0
+                )
+                grow = _want_grow(
+                    d, b, (inside, live), scale * max(rel, KKT_TOL), softmax
+                )
+                out["kind"] = "softmax" if softmax else "sqrt"
+                out["kkt_rel"] = float(rel)
+                out["want_grow"] = float(grow.sum() / max(inside.sum(), 1))
+                ok = rel < KKT_TOL and not grow.any()
+                if w is not None:  # registered statistic, in units of w / F
+                    flux = (
+                        1.0 if softmax else b.sum()
+                    )  # d is per unit-sum b for softmax
+                    out["kkt_w"] = float(
+                        onp.sqrt(onp.mean(d[act] ** 2)) / (w / flux)
+                    )
+                    ok = out["kkt_w"] < KKT_W_TOL and not grow.any()
+                if (
+                    isinstance(lone, MaxEntropy)
+                    and (lone.path or "") == parent
+                ):
+                    out["band_limit"] = _data_band_limit(
+                        problem.data, image, b
+                    )
+                    ok = ok and out["band_limit"] < BAND_TOL
+            images[parent or "."] = out
+            verdicts.append(bool(ok))
+    return {
+        "images": images,
+        "nuisances": nuisances,
+        "converged": bool(verdicts) and all(verdicts),
+    }
