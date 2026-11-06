@@ -2101,11 +2101,11 @@ class LinearImage(_BrightnessImage):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The data see the total flux only through a ``System``'s weights. A lone
-    ``LinearImage`` (or the radio Toeplitz term, where ``cal.flux`` sets the
-    scale) fixes nothing, so TSV, TV or ``StarletL1`` shrink it towards zero:
-    put it in a ``System`` with a fixed-flux component, or use ``MaxEntropy``.
-    The radio terms refuse it for that reason, and ``diagnose`` and the
+    The data see the total flux only through a ``System``'s weights or, in the
+    radio χ², ``CalibrationNuisance(..., fit_flux=False)`` (``Σ pixels`` in
+    Jy). A lone ``LinearImage`` elsewhere fixes nothing, so TSV, TV or
+    ``StarletL1`` shrink it towards zero: put it in a ``System`` with a
+    fixed-flux component, or use ``MaxEntropy``. ``diagnose`` and the
     ensemble helpers do not cover it yet.
 
     Unlike the softmax of an ``Image``, pixels can reach exactly zero, which

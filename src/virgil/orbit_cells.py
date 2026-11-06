@@ -862,15 +862,18 @@ def _labels(x, space):
     At the prior mean ``ε̄ = ½`` the inlier and outlier weights ``1 - ε̄`` and
     ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``.
     """
-    c = space.decode(x)
-    pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
-    state = np.concatenate(
-        [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
-    )
-    terms = _peak_terms(space.cat, c["ln_s"], space.jitter, state, space.dtype)
-    j = np.argmax(terms, axis=1)
-    best = np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
-    return np.where(best > space.cat.log_b, j, -1)
+    with run_in(onp.dtype(space.dtype).name):
+        c = space.decode(x)
+        pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+        state = np.concatenate(
+            [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
+        )
+        terms = _peak_terms(
+            space.cat, c["ln_s"], space.jitter, state, space.dtype
+        )
+        j = np.argmax(terms, axis=1)
+        best = np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
+        return np.where(best > space.cat.log_b, j, -1)
 
 
 def _peak_state(x, space):

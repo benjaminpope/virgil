@@ -461,11 +461,20 @@ authors = "Byrd, Lu, Nocedal & Zhu"
 year = 1995
 title = "A Limited Memory Algorithm for Bound Constrained Optimization"
 doi = "10.1137/0916069"
-used_in = ["virgil.models:LinearImage"]
-note = "SIAM J. Sci. Comput. 16, 1190 (L-BFGS-B); the solver the bounds of a linear LinearImage are for (not yet in fit)"
+used_in = ["virgil.models:LinearImage", "virgil.fitting:fit"]
+note = "SIAM J. Sci. Comput. 16, 1190 (L-BFGS-B); fit(method=\"lbfgsb\") calls scipy's implementation, with the bounds of a linear LinearImage and Uniform priors"
 bibcode = "1995SJSC...16.1190B"
 verified = true
 verified_via = "ads"
+
+[ref.zhu1997]
+authors = "Zhu, Byrd, Lu & Nocedal"
+year = 1997
+title = "Algorithm 778: L-BFGS-B: Fortran subroutines for large-scale bound-constrained optimization"
+doi = "10.1145/279232.279236"
+used_in = ["virgil.fitting:fit"]
+note = "ACM Trans. Math. Softw. 23, 550; the L-BFGS-B code scipy wraps"
+verified = false
 
 [ref.honma2014]
 authors = "Honma, Akiyama, Uemura & Ikeda"
