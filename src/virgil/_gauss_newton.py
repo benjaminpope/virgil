@@ -76,9 +76,12 @@ def _solve_free(F, g, free, lam):
     """
     # Marquardt (1963) scaling M = diag F, per parameter: the damping carries
     # each coordinate's own units, so the step is invariant to rescaling z
-    # (Moré 1978). A coordinate with no curvature gets 1, as in MINPACK
-    # (Moré, Garbow & Hillstrom 1980). There is no cross-parameter floor,
-    # which would give a small-unit coordinate the damping of the largest.
+    # (the property Moré 1978 builds on). Plain diag F: without Moré's running
+    # max D_k = max(D_{k-1}, diag F_k), so a diagonal that is tiny but not
+    # zero keeps its tiny damping and the run stalls honestly. A coordinate
+    # with exactly zero curvature gets 1 (MINPACK's convention). There is no
+    # cross-parameter floor, which would give a small-unit coordinate the
+    # damping of the largest.
     d = np.diag(F)
     scaling = np.where(d > 0.0, d, 1.0)
     A = F + lam * np.diag(scaling)

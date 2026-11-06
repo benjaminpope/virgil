@@ -397,3 +397,14 @@ def test_flux_convergence_has_no_quarter_sigma_gate():
     assert not bool(_flux_converged(f32(0.2 * 10.0), c, ll))
     assert bool(_flux_converged(f32(np.sqrt(2 * 100.0 * 1e-3)), c, ll))
     assert not bool(_flux_converged(f32(0.0), f32(1.0), ll))  # not a maximum
+
+
+def test_optimized_flux_grid_converges_everywhere_in_float32():
+    """The rounding-error gate holds in float32 end to end: no point of a
+    small synthetic binary grid is flagged unconverged (585#15)."""
+    data = _simulate(0.05, noise_scale=1.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        with jax.enable_x64(False):
+            flux = optimized_flux_grid(BinaryModelCartesian, data, _grid())
+    assert onp.all(onp.isfinite(onp.asarray(flux)))

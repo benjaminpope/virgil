@@ -460,7 +460,7 @@ def test_a_coordinate_just_inside_a_bound_in_float32_uses_a_float32_epsilon():
         assert int(state.rejects) <= 1
 
 
-def test_a_gradient_without_curvature_is_damped_to_the_right_answer_or_says_not():
+def test_a_gradient_without_curvature_is_damped_to_the_right_answer():
     """A term of Φ missing from rows and diag (zero curvature in coordinate 1).
 
     A zero diagonal takes unit Marquardt scaling, so the damped step there is
@@ -470,11 +470,25 @@ def test_a_gradient_without_curvature_is_damped_to_the_right_answer_or_says_not(
     """
     start = np.array([3.0, 7.0])
     state = solve(MissingTerm(), start, gtol=1e-10, max_steps=200)
-    assert int(state.stop) in (CONVERGED, STALLED)
-    assert onp.all(onp.isfinite(onp.asarray(state.z)))
+    assert int(state.stop) == CONVERGED
+    onp.testing.assert_allclose(state.z, [1.0, 0.0], atol=1e-8)
     assert float(state.value) <= float(MissingTerm().loss(start))
-    if int(state.stop) == CONVERGED:
-        onp.testing.assert_allclose(state.z, [1.0, 0.0], atol=1e-8)
+
+
+class TinyDiagonal(MissingTerm):
+    """As `MissingTerm`, but a diagonal of 1e-30 stands for the missing term."""
+
+    def diag(self, z):
+        return np.asarray([0.0, 1e-30])
+
+
+def test_a_tiny_but_nonzero_curvature_keeps_its_tiny_damping_and_stalls():
+    """The unit scaling is for an exactly zero diagonal only (plain Marquardt,
+    no Moré running max): the step in coordinate 1 is ~g/(1e-30·λ), every
+    trial is rejected, and the run says STALLED rather than claim success."""
+    state = solve(TinyDiagonal(), np.array([3.0, 7.0]), gtol=1e-10)
+    assert int(state.stop) == STALLED
+    assert onp.all(onp.isfinite(onp.asarray(state.z)))
 
 
 class WrongGradient(eqx.Module):

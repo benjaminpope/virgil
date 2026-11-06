@@ -50,13 +50,12 @@ def _flux_converged(grad, curvature, loglike):
     g²/(2|c|), exact for a quadratic. A point has converged when that is
     below the rounding error of the log likelihood itself (10 ulp of
     max(|ℓ|, 1), for the accumulated sum): a smaller gain cannot be told from
-    rounding in this dtype and costs fewer nats than the rounding error. The
-    same criterion as the kernel's (`_gauss_newton`), on one coordinate. (It
+    rounding in this dtype and costs fewer nats than the rounding error. (It
     replaces a gate of a quarter σ on the flux, which had no derivation:
     that is 0.03 nats, far above float64 rounding.)
     """
-    resolution = 10 * np.finfo(loglike.dtype).eps * np.maximum(
-        np.abs(loglike), 1.0
+    resolution = (
+        10 * np.finfo(loglike.dtype).eps * np.maximum(np.abs(loglike), 1.0)
     )
     return (curvature < 0.0) & (
         0.5 * grad**2 / np.abs(curvature) <= resolution
@@ -152,7 +151,7 @@ def _refine_flux_grid(
         curvature = jax.grad(jax.grad(flux_loglike))(flux, coord_vals)
         best = flux_loglike(flux, coord_vals)
         converged = _flux_converged(grad, curvature, best)
-        return flux, flux_loglike(flux, coord_vals), converged
+        return flux, best, converged
 
     flux, best_loglike, success = map_points(
         refine,

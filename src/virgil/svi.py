@@ -260,7 +260,9 @@ def _start_scale(
     return onp.linalg.cholesky(covariance), True
 
 
-_KHAT_MAX = 0.7  # Vehtari et al. (2024): above it importance weights are unreliable
+_KHAT_MAX = (
+    0.7  # Vehtari et al. (2024): above it importance weights are unreliable
+)
 _SETTLED_NATS = 1.0
 
 
@@ -489,7 +491,8 @@ def variational(
     if not converged:
         warnings.warn(
             f"The SVI loss had not settled after {steps} steps; raise "
-            "steps or lower learning_rate, or check info and the losses.",
+            "steps, num_particles or window (the loss noise must resolve one "
+            "nat), or lower learning_rate, or check info and the losses.",
             RuntimeWarning,
             stacklevel=external_stacklevel(),
         )
