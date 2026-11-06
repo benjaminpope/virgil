@@ -352,6 +352,7 @@ def test_float32_matches_float64_on_the_same_data(case, at_low_edge):
         assert onp.all(naive >= chi2_ref * (1 - 1e-12))  # float64 roundoff
         if at_low_edge:  # the sum really is the pre-subtraction one
             assert naive[0] > 1.5 * chi2_ref[0]
+            assert naive[1] > (1 + 1e-3) * chi2_ref[1]  # offsets removed too
         n_terms = onp.array([b - a for _, a, b, _, _ in surface.blocks])
         data32 = cast_tree(data, "float32")
         model32 = cast_tree(TRUTH, "float32")
