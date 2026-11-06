@@ -546,6 +546,7 @@ def test_rings_run_contract_and_recovery(rings_run):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 def test_rings_posterior_is_folded(rings_run):
     _, res = rings_run
     samples = res.samples()
