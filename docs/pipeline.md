@@ -291,7 +291,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `residual_normality` (skewness and excess kurtosis of the independent whitened residuals, without the periodic closure-phase penalty terms) | beyond three standard errors | |
 | `field_of_view` (companion inside the resolution limit or beyond the field) | outside | |
 | `chi2_uniform`, `chi2_limb_darkened` (`StarPipeline`; as `chi2`) | as `chi2` | as `chi2` |
-| `limb_darkening_gain` (delta chi-squared of the limb-darkened over the uniform fit, against a BIC penalty of 2 ln N for two parameters) | the limb-darkened model fits worse than the uniform disk it contains | |
+| `limb_darkening_gain` (delta chi-squared of the limb-darkened over the uniform fit, against a BIC penalty of 2 ln N for two parameters) | the uniform-disk diameter is at the lower edge of its range (the comparison is not valid, the uniform disk is kept) | the limb-darkened model fits worse than the uniform disk it contains (Δ(−2 log L) < −1) |
 | `resolution` (the longest B/λ against the first null of the fitted model's visibility, θB/λ = 1.22 for a uniform disk) | below the first null (limb darkening is degenerate with the diameter) | below 0.15 of it (unresolved: an upper limit) |
 | `multimodal` (the per-lobe table of the preferred model, `fit.models.<name>.lobes`: the next-best diameter lobe against a Δχ² of 25) | the next-best lobe is within Δχ² of 25; the message gives its diameter | |
 | `limb_darkening_constrained` (posterior against prior standard deviation of `q1`, `q2`) | a ratio of 0.8 or more | |
@@ -317,11 +317,11 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 
 ### Warnings raised inside stages
 
-A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and always warn:
+A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and warn (`convergence` fails when every grid position failed):
 
 | Check | Raised by | Meaning |
 | --- | --- | --- |
-| `convergence` | the optimizer did not converge at some grid positions | value: the worst fraction of positions; values there may be inaccurate |
+| `convergence` | the optimizer did not converge at some grid positions | value: the worst fraction of positions; values there may be inaccurate; fails when the optimizer failed at every position of a grid |
 | `flux_axis_resolution` | the flux axis does not resolve the likelihood peak (fewer than 2 steps across its FWHM) | `log_bayes_factor` is inaccurate; use a larger `n_flux` |
 | `limits_clipped` | contrast limits fell outside the flux bounds | value: the number of clipped limits; widen `flux_range` |
 | `stage_warnings` | any other warning, except deprecation notices | value: the number of warnings; the message quotes the first three |
