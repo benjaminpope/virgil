@@ -57,12 +57,12 @@ def _quadratic_fit(**options):
     )
 
 
-def _image_fit(npix=16):
+def _image_fit(npix=16, sigma=25.0):
     data = OIData(ami_grid_record(pitch_m=0.5))
     truth = System(
         star=PointSource(),
         env=Image.from_brightness(
-            gaussian_blob(npix, 12.0, 25.0, dra=20.0), 12.0, flux=0.1
+            gaussian_blob(npix, 12.0, sigma, dra=20.0), 12.0, flux=0.1
         ),
     )
     data = data.with_model(truth, key=jax.random.PRNGKey(1))
@@ -264,10 +264,16 @@ def test_adam_ftol_with_a_metric():
 
 
 def test_the_optimum_and_the_gradient_norm_are_unchanged():
-    start, priors, data = _image_fit()
+    # A scene broad enough that every pixel holds a share of the flux. On a
+    # compact one the faint pixels have entropy curvature w p ~ 1e-9 and data
+    # that cannot see them: a flat valley that gtol does not pin, so the two
+    # runs stop at different points (25 mas: 135.30 vs 135.54, with the
+    # gradient norm below 2e-6 in both) and the loss gap is not a measure of
+    # the optimum. Where the curvature is bounded below by lambda, the gap is
+    # at most |g|^2 / (2 lambda), negligible at gtol = 1e-6.
+    start, priors, data = _image_fit(sigma=60.0)
     regularizers = [MaxEntropy(10.0, path="env")]
-    # A tighter gtol than the default, which stops where a flat direction
-    # still has a few tenths of a percent of the loss to give.
+    # A tighter gtol than the default.
     options = dict(gtol=1e-6)
     plain = fit(start, priors, data, regularizers, **options)
     scaled = fit(
