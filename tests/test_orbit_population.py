@@ -257,6 +257,7 @@ def test_the_strata_are_those_of_section_14():
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(1200)
 def test_the_oracle_and_the_diagnostics_change_no_fit_result():
     """Fit columns are bit-identical with the oracle off or on; only its own
@@ -309,6 +310,7 @@ MAIN_MODES = [3, 1, 2, 2, 2, 2, 2, 1, 2, 2, 1, 1]
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(900)
 def test_position_cells_matches_main_before_the_counters_were_added():
     """Refactor equivalence, not a correctness oracle: ``p_pos`` and every

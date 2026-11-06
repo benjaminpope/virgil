@@ -103,7 +103,9 @@ the float width), with the versions in `uv.lock`; a pull request that edits `pyp
 also runs once with every dependency at the oldest version it allows. A pull request that
 edits `aliases`, `epochs` or `orbit*` (or their test files) also runs the slow tests of
 `test_aliases.py`, `test_epochs.py` and `test_orbit*.py` in those jobs. Pushes to main run
-the same jobs with all the slow tests. Pull requests labelled `full-ci` (always the release
+the same jobs with the slow tests except those marked `full_only`, which only the `full-ci`
+label, dispatch and the nightly run (a regression in one shows as a nightly failure, not a red
+main). Pull requests labelled `full-ci` (always the release
 pull request) and manual dispatches add macOS with Python 3.11, Python 3.13 and the
 dependency floors (the last two in two shards each, to stay under the 30-minute pull-request limit). A daily run does all of that, plus a canary with dependencies newer than
 the lock, and opens an issue labelled `nightly-failure` when it fails. A failing push to main opens one
