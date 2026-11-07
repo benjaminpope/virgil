@@ -1644,8 +1644,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         triangle : float, optional
             Width (radians) of an offset per (frame, triangle).
         modes : array-like, optional
-            Further modes, ``(n_mode, n_phase)``, radians per 1σ, each within one
-            frame; their width, 1 by default, scales them.
+            Further modes, ``(n_mode, n_phase)``, radians per 1σ, each possibly
+            spanning frames; their width, 1 by default, scales them.
 
         Returns
         -------
