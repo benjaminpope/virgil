@@ -75,7 +75,9 @@ class _Axis(NamedTuple):
 
 
 # Null searches per call of the compiled kernel, and draws evaluated together
-# in it (about 25% faster than one at a time on a CPU).
+# in it (about 25% faster than one at a time on a CPU). Changing the chunk size
+# changes the drawn nulls: it sets the number of draws and each chunk's key,
+# fold_in(PRNGKey(seed), chunk index).
 _NULL_CHUNK = 128
 _NULL_DRAW_BATCH = 32
 
@@ -92,7 +94,7 @@ def _null_nsigma(
     ``delta_chi2``, so it is an upper bound and the significance a lower
     bound; with ``k = 0`` it sits at the floor ``1 / (n + 1)`` however strong
     the peak. Drawing stops early once ``k`` is too large for the probability
-    to reach ``detection_sigma`` even with all ``n_null`` draws: the verdict
+    to reach ``detection_sigma`` even with all the draws: the verdict
     is then settled and the significance rests on the draws so far.
     Returns ``(sigma, fap, k, n)``; all NaN if ``delta_chi2`` is not finite."""
     import jax
@@ -105,8 +107,11 @@ def _null_nsigma(
         return (float("nan"),) * 4
     chunks = -(-n_null // _NULL_CHUNK)
     size = -(-n_null // chunks)
-    # Passing needs (k + 1) / (n_null + 1) <= the tail beyond detection_sigma.
-    k_pass = math.floor(float(norm.sf(detection_sigma)) * (n_null + 1)) - 1
+    # Passing needs (k + 1) / (N + 1) <= the tail beyond detection_sigma, for
+    # N = chunks * size draws (at least n_null).
+    k_pass = (
+        math.floor(float(norm.sf(detection_sigma)) * (chunks * size + 1)) - 1
+    )
     noise = gaussian_null(_null_model(), data)
     key = jax.random.PRNGKey(seed)
     k = n = 0
@@ -124,8 +129,7 @@ def _null_nsigma(
             uncertainty=False,  # only delta_chi2 is read
             progress=False,
         )
-        fap = float(mc.false_alarm_probability("delta_chi2", delta_chi2)[0])
-        k += round(fap * (size + 1)) - 1
+        k += int((mc.null["delta_chi2"] >= delta_chi2).sum())
         n += size
         if k > k_pass:
             break

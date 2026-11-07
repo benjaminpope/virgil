@@ -500,6 +500,16 @@ def test_null_draws_stop_once_the_verdict_is_settled(data, monkeypatch):
     )
 
 
+def test_null_draws_round_up_to_whole_chunks(data, monkeypatch):
+    from virgil.pipeline import binary
+
+    monkeypatch.setattr(binary, "_NULL_CHUNK", 4)
+    grid = BinaryPipeline(data, **TINY)._grid()
+    # 5 requested -> two chunks of 3 = 6 draws; the floor is 1 / (n + 1).
+    _, fap, k, n = binary._null_nsigma(data, grid, None, 5, 0, 1e12, 1.0)
+    assert (k, n) == (0, 6) and fap == pytest.approx(1 / 7)
+
+
 # Slow: 8 searches, each against 50 simulated null searches, take about two
 # minutes on a CI core; it calibrates the null, which no cheaper run can.
 @pytest.mark.slow

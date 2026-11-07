@@ -766,12 +766,13 @@ def injection_recovery(
         "match_radius": match_radius,
         "n_null": n_null,
         "n_injected": n_inj,
+        "uncertainty": bool(uncertainty),
         "seeds": [seed],
     }
     return DetectionMC(null=null, injected=injected, meta=meta)
 
 
-# deliberate: argument-checking stage of injection_recovery, split out to keep it under the 120-statement gate
+# deliberate: argument-checking stage of injection_recovery, split out to keep it under the 120-line gate
 def _check_arguments(
     params, coord_keys, flux_key, n_null, draw_batch, match_radius
 ):
@@ -811,7 +812,7 @@ def _check_arguments(
     return names, n_null, draw_batch, match_radius
 
 
-# deliberate: injection-parsing stage of injection_recovery, split out to keep it under the 120-statement gate
+# deliberate: injection-parsing stage of injection_recovery, split out to keep it under the 120-line gate
 def _injection_values(injections, params, names):
     """``(n, len(params))`` float32 injection values in ``params`` order, validated."""
     if injections is None:
