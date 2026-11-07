@@ -24,6 +24,7 @@ ratio. Likelihoods of these models are in
 import dataclasses
 import math
 import textwrap
+import warnings
 from typing import Any
 
 import equinox as eqx
@@ -4768,12 +4769,20 @@ class MultipoleDisk(Component):
         n = int(8 * onp.ceil(max(n, 16) / 8))
         # A Gauss-Laguerre tail (ExpTail, alone or inside a RadialSum/Gap)
         # has at most 150 nodes; step down in 8s until the rule builds.
+        wanted = n
         while n > 16:
             try:
                 self.profile.with_rule(n)
                 break
             except ValueError:
                 n -= 8
+        if n < wanted:
+            warnings.warn(
+                f"suggest_n_r wants {wanted} radial nodes but the profile can "
+                f"build at most {n}: the Hankel quadrature may be under-"
+                "resolved on the longest baselines.",
+                stacklevel=2,
+            )
         return n
 
     def _alpha(self, r):

@@ -82,13 +82,13 @@ def test_covariance_is_the_radial_matern_times_the_multipolekernel_spectrum(
     k_r = onp.exp(-0.5 * d * d) if onp.isinf(nu) else _matern(d, 1.0, nu)
     expected = sigma**2 * onp.kron(k_r, _azimuthal_covariance(N_T, ell_t, nu))
     # The prior is the plain separable one with order m of node k scaled by
-    # tanh(r_k / spacing)^|m|: T_k is the circulant with that symbol.
+    # tanh(r_k / ell_r)^|m|: T_k is the circulant with that symbol.
     mm = onp.minimum(onp.arange(N_T), N_T - onp.arange(N_T))
     taper = onp.stack(
         [
             onp.real(
                 onp.fft.ifft(
-                    onp.tanh(rk / field.spacing) ** mm[:, None]
+                    onp.tanh(rk / ell_r) ** mm[:, None]
                     * onp.fft.fft(onp.eye(N_T), axis=0),
                     axis=0,
                 )
@@ -789,14 +789,20 @@ def test_the_multipole_kernel_spectrum_is_finite_for_a_long_angle():
 def test_the_field_is_single_valued_at_the_centre_and_stationary_away_from_it():
     n_r, n_theta = 12, 16
     z = onp.random.default_rng(0).normal(size=(600, n_r, n_theta))
-    kw = dict(image_shape=(8, 8), r_max_mas=11.0, r_min_mas=0.0, sigma=2.0)
+    kw = dict(
+        image_shape=(8, 8),
+        r_max_mas=11.0,
+        r_min_mas=0.0,
+        sigma=2.0,
+        length_r=1.0,
+    )
     vals = onp.stack(
         [onp.asarray(MultipoleField(zi, **kw).polar_values()) for zi in z]
     )
     # r = 0: no azimuthal variation.
     assert onp.abs(vals[:, 0, :] - vals[:, 0, :1]).max() < 1e-5
-    # Per-order variance: gone at node 0 for m >= 1, tanh(r/spacing)^(2m)
-    # at node 1, and unchanged eight spacings out (node 11 is the outermost
+    # Per-order variance: gone at node 0 for m >= 1, tanh(r/ell)^(2m)
+    # at node 1 (ell = one spacing), and unchanged eight spacings out (node 11 is the outermost
     # node, node 8 is eight spacings out).
     var = (onp.abs(onp.fft.fft(vals, axis=2)) ** 2).mean(axis=0) / n_theta
     assert var[0, 3] < 1e-8
@@ -819,3 +825,23 @@ def test_an_annulus_keeps_the_plain_prior():
         )
     )
     assert onp.allclose(ring.polar_values(), expected, atol=1e-5)
+
+
+def test_the_origin_taper_is_set_by_the_correlation_length_not_the_grid():
+    # The same physical field (same ell_r, same r_max) sampled on two radial
+    # grids: the order-m variance at a given radius follows tanh(r/ell)^2m,
+    # whatever n_r is. Nodes at r = 4 exist on both grids (spacings 1, 0.5).
+    ell, m, n_theta = 2.0, 3, 16
+    var = {}
+    for n_r in (9, 17):
+        z = onp.random.default_rng(0).normal(size=(800, n_r, n_theta))
+        kw = dict(image_shape=(8, 8), r_max_mas=8.0, sigma=1.0, length_r=ell)
+        vals = onp.stack(
+            [onp.asarray(MultipoleField(zi, **kw).polar_values()) for zi in z]
+        )
+        v = (onp.abs(onp.fft.fft(vals, axis=2)) ** 2).mean(axis=0) / n_theta
+        var[n_r] = (v[2 * (n_r - 1) // 4, m], v[-1, m])  # r = 4 and r = 8
+    ratios = [a / b for a, b in var.values()]
+    expected = (onp.tanh(4.0 / ell) / onp.tanh(8.0 / ell)) ** (2 * m)
+    for r in ratios:
+        assert r == pytest.approx(expected, rel=0.2)

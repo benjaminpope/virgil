@@ -263,7 +263,9 @@ class ToeplitzVisData(eqx.Module):
         bound = 0.0
         if free:
             # The largest image-frame shift (pixels) of the offsets' prior box.
-            shift_mas = max_offset_mas or nuisance._max_offset_mas
+            shift_mas = max_offset_mas
+            if shift_mas is None:
+                shift_mas = nuisance._max_offset_mas
             if shift_mas is None:
                 free_obs = onp.arange(nuisance.n_obs) != nuisance.ref_obs
                 unit = nuisance.offset_unit_mas[free_obs]
