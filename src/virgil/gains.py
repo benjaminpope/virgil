@@ -595,7 +595,8 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
     modes : array-like, optional
         Further modes, ``(n_mode, n_phase)``, in radians per 1σ, one value
         per closure phase of ``data.phi``. A mode may span frames, which are
-        then whitened together. Their width (default 1) scales them all.
+        then one dense block with every group they touch (cost grows with
+        the square of the frames spanned). Their width (default 1) scales them all.
 
     Returns
     -------
