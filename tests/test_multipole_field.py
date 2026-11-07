@@ -130,9 +130,10 @@ def test_the_azimuthal_spectrum_is_multipolekernels(nu_theta):
 
 
 def test_latents_are_whitened_and_zero_latent_is_the_template():
-    # An empirical check that standard-normal latents give variance sigma^2.
+    # An empirical check that standard-normal latents give variance sigma^2
+    # (an annulus: the origin taper of a disk lowers the variance near r = 0).
     sigma = 2.0
-    field = _field(sigma=sigma)
+    field = _field(sigma=sigma, r_min_mas=2.0)
     draws = onp.random.default_rng(1).normal(size=(400, N_R, N_T))
     values = jax.vmap(lambda z: field.set("latent", z).polar_values())(draws)
     assert float(np.std(values)) == pytest.approx(sigma, rel=0.1)
