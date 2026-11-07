@@ -18,6 +18,7 @@ coordinates unless told ``flat_coordinates=True``.
 import dataclasses
 import math
 import time
+import types
 import warnings
 
 import equinox as eqx
@@ -2734,6 +2735,10 @@ def _pixel_gradient(problem, z, grads, key, parent):
         path = f"{parent}.flux" if parent else "flux"
         mu = 0.0
         if path not in problem.priors:
+            if not isinstance(problem.model, SourceModel):
+                raise NotImplementedError(
+                    "kkt_report of a softmax image needs a model template, not a function."
+                )
             flux = problem.model.get(path)
             if problem.model.resolved() is not problem.model or not isinstance(
                 flux, (int, float, jax.Array, onp.ndarray)
@@ -2809,13 +2814,19 @@ def _linear_certificate(x, g, image, top, w):
 
 
 # deliberate: kkt_report would exceed the 120-line cap with the band-limit setup inline.
-def _data_band_limit(data, image, b):
+def _data_band_limit(data, image, b, terms=()):
     """``_band_limit`` of fluxes ``b`` at the data's largest spatial frequency.
 
     That is in cycles per radian: OIData ``u, v`` are metres, per ``wavel``;
     radio ``u, v`` are already wavelengths.
     """
-    sets = data if isinstance(data, (list, tuple)) else (data,)
+    sets = list(data) if isinstance(data, (list, tuple)) else [data]
+    # a radio term holds its own (padded, wavelength) u, v
+    sets += [
+        types.SimpleNamespace(u=t.arrays["u"], v=t.arrays["v"])
+        for t in terms
+        if hasattr(t, "arrays")
+    ]
     cut = max(
         float(onp.max(onp.hypot(s.u, s.v) / getattr(s, "wavel", 1.0)))
         for s in sets
@@ -2916,7 +2927,10 @@ def kkt_report(
         lone = regularizers[0] if len(regularizers) == 1 else None
         w = weight if weight is not None else getattr(lone, "weight", None)
         w = None if w is None else float(w)
+        # a function model: the image is read off the model it builds at the result
         model = problem.model
+        if callable(model) and not isinstance(model, SourceModel):
+            model = problem.build(z)
         for key in keys:
             parent, _, name = key.rpartition(".")
             g = onp.asarray(grad[key], float).ravel()
@@ -2985,11 +2999,16 @@ def kkt_report(
                     and (lone.path or "") == parent
                 ):
                     out["band_limit"] = _data_band_limit(
-                        problem.data, image, b
+                        problem.data, image, b, problem.likelihoods
                     )
                     ok = ok and out["band_limit"] < BAND_TOL
             images[parent or "."] = out
             verdicts.append(bool(ok))
+    if regularizers and not images:
+        raise ValueError(
+            "kkt_report found no image block: the fitted pixels must be a "
+            "'pixels' or 'log_brightness' site of a bare Image or LinearImage."
+        )
     return {
         "images": images,
         "nuisances": nuisances,
