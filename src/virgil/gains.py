@@ -594,8 +594,9 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
         channels: what a pair test of consecutive frames measures.
     modes : array-like, optional
         Further modes, ``(n_mode, n_phase)``, in radians per 1σ, one value
-        per closure phase of ``data.phi``. Each must lie within one frame.
-        Their width (default 1) scales them all.
+        per closure phase of ``data.phi``. A mode may span frames, which are
+        then one dense block with every group they touch (cost grows with
+        the square of the frames spanned). Their width (default 1) scales them all.
 
     Returns
     -------
@@ -679,11 +680,6 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
         gid = add_group("modes", 1.0)
         for m in modes:
             rows = onp.flatnonzero(m)
-            if onp.unique(frame[rows]).size > 1:
-                raise ValueError(
-                    "A closure-phase mode spans several frames; each must "
-                    "lie within one frame."
-                )
             if rows.size:
                 columns.append((gid, rows, m[rows]))
     if not columns:
