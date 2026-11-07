@@ -1381,7 +1381,9 @@ def test_the_c_step_labels_by_the_predictive_term_and_keeps_an_extrapolated_nigh
     v = np.asarray(_truth_chart(space, orbit, 0.0)[[0, 6, 7]])[None]
     lab = onp.full(len(TIMES), -1)
     lab[:3] = 0
-    _, new, x, *_ = oc_cells._cstep_chunk(space, plan, v, np.asarray(lab)[None], 2)
+    _, new, x, *_ = oc_cells._cstep_chunk(
+        space, plan, v, np.asarray(lab)[None], 2
+    )
     point = onp.asarray(oc_cells._labels(x[0], space))
     assert (point < 0).any()  # the point term drops a true night
     assert onp.all(onp.asarray(new[0]) >= 0)  # the predictive term keeps all
