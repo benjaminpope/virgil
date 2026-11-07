@@ -1520,15 +1520,24 @@ and the log-determinant,
 
   ℓ̃_k^pred = ln L_k(s) + ½ ln(|Σ_k| / |Σ_k + C_k|) − ½ eᵀ(Σ_k + C_k)⁻¹e,
 
-compared with b_k as before. C_k = J_k H⁻¹ J_kᵀ, H the saddle-free Hessian of minus the labelled target (s = 1) in the
-full chart (w_P, y_ζ, TI′), J_k the Jacobian of night k's (p, v) in it. C scales as s², so it takes the profiled ln s
-of the point term (the largest if there are several, which keeps more nights). `ln f` is taken as known.
+compared with b_k as before. C_k = J_k H_post⁻¹ J_kᵀ, J_k the Jacobian of night k's (p, v) in the full chart
+(w_P, y_ζ, TI′), and H_post the curvature of the labelled *posterior* there,
+
+  H_post = H_lik / s² + H_prior,
+
+with H_lik minus the Hessian of the labelled likelihood (s = 1), H_prior minus the Hessian of the chart's own log prior
+(`_log_prior`) in (w_P, y_ζ), plus the working ridge 1/s_w² on TI′. Only the likelihood scales with s²; the prior does
+not. The scale is the profiled ln s of the point term (the largest if there are several, which keeps more nights).
+`ln f` is taken as known. The likelihood alone is near-singular in (w_P, y_ζ) with few inliers, which would make C_k
+enormous and the Occam factor below push true nights to outliers; the prior makes H_post a posterior curvature, so the
+predictive is a posterior predictive. H_post is saddle-free (|eigenvalues|); its floor is ε_dtype · max|eigenvalue|, a
+numerical tolerance.
 
 **Reading.** For a night outside the labelled set this is exactly the leave-one-out predictive density. For a night
 inside it, C_k is the posterior covariance with the night included, below Σ_k, so the rule changes little there: a
 fitted night is not dropped for being fitted. With C_k → 0 it is the point term. The Occam factor ½ ln(|Σ + C| / |Σ|)
 penalises a night the fit cannot predict, so a poorly constrained fit does not label everything an inlier. No new
-constants: the 1e-12 floor on |eigenvalues| is that of the existing saddle-free steps.
+tunable constants.
 
 **What does not change.** The labelled objective, the label-summed target, the evidence and the IS are untouched, as
 are the final label-summed Newton and `distinct_modes`. The labels only seed which mode the C-steps reach, so the rule

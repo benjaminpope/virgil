@@ -1204,32 +1204,37 @@ def _cstep_chunk(space, plan, v, lab, n_iter):
         )
         x = _chart_from(space, v, ti, ln_f)
         x = _scale_step(x, space, lab)
-        # C_k = J_k H⁻¹ J_kᵀ: H the saddle-free Hessian of minus the labelled
-        # target (s = 1) in the full chart (w_P, y_ζ, TI′), J_k the Jacobian of
-        # night k's (p, v) in it; C scales as s² (the largest scale if several,
-        # which keeps more nights); zero in ln f.
+        # C_k = J_k H⁻¹ J_kᵀ with H the posterior curvature of the labelled
+        # fit in the full chart (w_P, y_ζ, TI′): the likelihood's at the
+        # profiled scale (the largest if several, which keeps more nights),
+        # the chart prior's in (w_P, y_ζ), the ridge on TI′. J_k is the
+        # Jacobian of night k's (p, v); zero in ln f. Saddle-free.
         idx = np.arange(k)
         mk = plan["mk"][idx, j]
 
         def states(th):
             return np.einsum("kia,a->ki", _design(space, idx, th[:3]), th[3:])
 
-        def target(th):
+        def likelihood(th):
             r = mk - states(th)
-            return -0.5 * (
-                np.einsum("ki,kij,kj->", r, w, r)
-                + th[3:] @ th[3:] / space.s_w2
-            )
+            return -0.5 * np.einsum("ki,kij,kj->", r, w, r)
+
+        def log_prior(vv):
+            return _log_prior(x.at[0].set(vv[0]).at[6:8].set(vv[1:3]))
 
         th = np.concatenate([v, ti])
-        hf = -jax.hessian(target)(th)
+        hf = -jax.hessian(likelihood)(th) * np.exp(
+            -2.0 * np.max(space.decode(x)["ln_s"])
+        )
+        hf = hf.at[:3, :3].add(-jax.hessian(log_prior)(v))
+        hf = hf + np.diag(np.r_[np.zeros(3), np.ones(4) / space.s_w2])
         e, u = np.linalg.eigh(0.5 * (hf + hf.T))
-        jac = jax.jacfwd(states)(th)
-        c = np.exp(2.0 * np.max(space.decode(x)["ln_s"])) * np.einsum(
+        e = np.abs(e)
+        c = np.einsum(
             "kia,ab,kjb->kij",
-            jac,
-            (u / np.maximum(np.abs(e), 1e-12)) @ u.T,
-            jac,
+            jax.jacfwd(states)(th),
+            (u / np.maximum(e, np.finfo(space.dtype).eps * e.max())) @ u.T,
+            jax.jacfwd(states)(th),
         )
         extra = np.zeros((k, 5, 5), space.dtype).at[:, :4, :4].set(c)
         new = _labels(x, space, extra)

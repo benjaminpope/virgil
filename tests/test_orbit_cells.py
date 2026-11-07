@@ -1387,3 +1387,28 @@ def test_the_c_step_labels_by_the_predictive_term_and_keeps_an_extrapolated_nigh
     point = onp.asarray(oc_cells._labels(x[0], space))
     assert (point < 0).any()  # the point term drops a true night
     assert onp.all(onp.asarray(new[0]) >= 0)  # the predictive term keeps all
+
+
+@x64
+@pytest.mark.parametrize("init", [[0, 1], [0, 3]])
+def test_the_predictive_labels_keep_every_night_the_point_term_keeps(init):
+    """With two inlier nights the labelled fit is weak in ``(w_P, y_ζ)``: the
+    posterior curvature (the chart prior's included) keeps ``C_k`` finite, so
+    the Occam factor does not turn a night the point term keeps into an
+    outlier (design §6.14)."""
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.3)
+    s = _summaries(orbit, TIMES, sigma=0.05)
+    _, cells = _cells(s, (9.0, 14.0))
+    cell = [c for c in cells if c.p_lo <= 11.3 <= c.p_hi][0]
+    space = _scaled_space(s, LOG_B, cell)
+    plan = oc_cells.search_plan(space, jax.random.key(0))
+    v = np.asarray(_truth_chart(space, orbit, 0.0)[[0, 6, 7]])[None]
+    lab = onp.full(len(TIMES), -1)
+    lab[init] = 0
+    _, new, x, *_ = oc_cells._cstep_chunk(
+        space, plan, v, np.asarray(lab)[None], 2
+    )
+    point = onp.asarray(oc_cells._labels(x[0], space))
+    new = onp.asarray(new[0])
+    assert (point >= 0).sum() >= 2
+    assert onp.all(new[point >= 0] >= 0)
