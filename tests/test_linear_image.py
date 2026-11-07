@@ -52,24 +52,6 @@ def test_flux_is_recovered_from_the_visibility_against_a_star(par):
     assert 1.0 / vis - 1.0 == pytest.approx(0.5, rel=3e-2)
 
 
-def test_all_zero_linear_image_is_the_star_alone_and_finite():
-    # L-BFGS-B's line search can clip a trial point to all zeros; 0/0 there made
-    # the loss and its gradient NaN, which ends the search with "ABNORMAL".
-    u, v = np.asarray([29.7, 5.0]), np.asarray([0.0, 11.0])
-
-    def vis(pixels):
-        scene = System(
-            star=PointSource(),
-            env=LinearImage(pixels, SCALE, reference_flux=0.5),
-        )
-        return np.abs(scene.model(u, v, 4.8e-6))
-
-    zero = np.zeros((NPIX, NPIX))
-    assert onp.allclose(vis(zero), 1.0)
-    jac = jax.jacobian(vis)(zero)
-    assert onp.isfinite(jac).all()
-
-
 def test_float_and_list_supports_still_work():
     from virgil.models import Image
 

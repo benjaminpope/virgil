@@ -1,1 +1,1 @@
-`method="lbfgsb"` no longer stops after a few steps when a line-search trial point clips a `LinearImage` to all zeros: its brightness is now zero there, not 0/0 NaN, so the line search backtracks. This made a bounded fit fail on Linux and pass on macOS (#662).
+`method="lbfgsb"` restarts from its last point when a line search meets a trial point where the model is undefined (such as a `LinearImage` clipped to all zeros, whose brightness is 0/0), instead of stopping with an `ABNORMAL` failure after a few steps. A bounded fit failed this way on Linux and passed on macOS (#662).

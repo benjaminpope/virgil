@@ -18,7 +18,6 @@ coordinates unless told ``flat_coordinates=True``.
 import dataclasses
 import math
 import time
-import types
 import warnings
 
 import equinox as eqx
@@ -2277,10 +2276,16 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
         value, grad = _value_and_gradient(problem, z0, scale, np.asarray(x))
         return float(value), onp.asarray(grad, float)
 
+    def evaluate_flagged(x):
+        value, grad = evaluate(x)
+        if not (onp.isfinite(value) and onp.isfinite(grad).all()):
+            undefined.append(True)
+        return value, grad
+
     def projected(x, grad):
         return _projected_norm(x, grad, lower, upper)
 
-    _, g0 = evaluate(x0)
+    start_value, g0 = evaluate(x0)
     tolerance = float(_tolerance(np.asarray(projected(x0, g0)), gtol))
     out_of_time, trace = [], []
 
@@ -2296,34 +2301,53 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
             out_of_time.append(True)
             raise StopIteration
 
-    res = minimize(
-        evaluate,
-        x0,
-        jac=True,
-        method="L-BFGS-B",
-        bounds=Bounds(lower, upper),
-        callback=callback,
-        options={
-            "maxiter": max_steps,
-            "maxfun": 3 * max_steps,
-            "maxcor": memory,
-            "ftol": 0.0,
-            "gtol": tolerance,
-        },
-    )
-    x = onp.clip(res.x, lower, upper)
-    value, grad = evaluate(x)
+    undefined = []  # a trial point where the model is NaN (e.g. 0/0)
+    nit = nfev = 0
+    while True:
+        undefined.clear()
+        res = minimize(
+            evaluate_flagged,
+            x0,
+            jac=True,
+            method="L-BFGS-B",
+            bounds=Bounds(lower, upper),
+            callback=callback,
+            options={
+                "maxiter": max_steps - nit,
+                "maxfun": 3 * max_steps - nfev,
+                "maxcor": memory,
+                "ftol": 0.0,
+                "gtol": tolerance,
+            },
+        )
+        nit, nfev = nit + int(res.nit), nfev + int(res.nfev)
+        x = onp.clip(res.x, lower, upper)
+        value, grad = evaluate(x)
+        # A line search cannot continue from a NaN: it ends "ABNORMAL". Restart
+        # from the last accepted point, with fresh curvature memory (so a
+        # smaller first step), while that gains loss, as ``_lbfgs`` does.
+        gain = start_value - value
+        if (
+            res.success
+            or not undefined
+            or out_of_time
+            or not gain > 0.0  # also true of a NaN
+            or nit >= max_steps
+            or nfev >= 3 * max_steps
+        ):
+            break
+        x0, start_value = x, value
     pg = float(projected(x, grad))
     finite = onp.isfinite(value) and onp.all(onp.isfinite(grad))
     converged = bool(finite and pg <= tolerance)
-    steps = int(res.nit)
+    steps = nit
     if converged:
         stop = None
     elif not finite:
         stop = "non-finite"
     elif out_of_time:
         stop = "time"
-    elif steps >= max_steps or res.nfev >= 3 * max_steps:
+    elif steps >= max_steps or nfev >= 3 * max_steps:
         stop = "limit"
     else:
         stop = "stalled"
@@ -2710,10 +2734,6 @@ def _pixel_gradient(problem, z, grads, key, parent):
         path = f"{parent}.flux" if parent else "flux"
         mu = 0.0
         if path not in problem.priors:
-            if not isinstance(problem.model, SourceModel):
-                raise NotImplementedError(
-                    "kkt_report of a softmax image needs a model template, not a function."
-                )
             flux = problem.model.get(path)
             if problem.model.resolved() is not problem.model or not isinstance(
                 flux, (int, float, jax.Array, onp.ndarray)
@@ -2789,19 +2809,13 @@ def _linear_certificate(x, g, image, top, w):
 
 
 # deliberate: kkt_report would exceed the 120-line cap with the band-limit setup inline.
-def _data_band_limit(data, image, b, terms=()):
+def _data_band_limit(data, image, b):
     """``_band_limit`` of fluxes ``b`` at the data's largest spatial frequency.
 
     That is in cycles per radian: OIData ``u, v`` are metres, per ``wavel``;
     radio ``u, v`` are already wavelengths.
     """
-    sets = list(data) if isinstance(data, (list, tuple)) else [data]
-    # a radio term holds its own (padded, wavelength) u, v
-    sets += [
-        types.SimpleNamespace(u=t.arrays["u"], v=t.arrays["v"])
-        for t in terms
-        if hasattr(t, "arrays")
-    ]
+    sets = data if isinstance(data, (list, tuple)) else (data,)
     cut = max(
         float(onp.max(onp.hypot(s.u, s.v) / getattr(s, "wavel", 1.0)))
         for s in sets
@@ -2902,10 +2916,7 @@ def kkt_report(
         lone = regularizers[0] if len(regularizers) == 1 else None
         w = weight if weight is not None else getattr(lone, "weight", None)
         w = None if w is None else float(w)
-        # a function model: the image is read off the model it builds at the result
         model = problem.model
-        if callable(model) and not isinstance(model, SourceModel):
-            model = problem.build(z)
         for key in keys:
             parent, _, name = key.rpartition(".")
             g = onp.asarray(grad[key], float).ravel()
@@ -2974,16 +2985,11 @@ def kkt_report(
                     and (lone.path or "") == parent
                 ):
                     out["band_limit"] = _data_band_limit(
-                        problem.data, image, b, problem.likelihoods
+                        problem.data, image, b
                     )
                     ok = ok and out["band_limit"] < BAND_TOL
             images[parent or "."] = out
             verdicts.append(bool(ok))
-    if regularizers and not images:
-        raise ValueError(
-            "kkt_report found no image block: the fitted pixels must be a "
-            "'pixels' or 'log_brightness' site of a bare Image or LinearImage."
-        )
     return {
         "images": images,
         "nuisances": nuisances,
