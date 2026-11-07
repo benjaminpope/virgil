@@ -2240,3 +2240,12 @@ used_in = ["virgil.imaging:LCurve.dof_discrepancy"]
 note = "Numer. Math. 31, 377; the trace of the influence matrix as the effective degrees of freedom of a regularized fit"
 verified = true
 verified_via = "crossref"
+
+[ref.hubble_precond]
+authors = "Greer"
+title = "precond.py (coron branch), h-greer/hubble"
+repo = "https://github.com/h-greer/hubble"
+used_in = ["virgil.fitting:gauss_newton_diag"]
+note = "exact entries for small coordinate blocks beside probed large ones, batched one-hot lax.map, imputing non-finite diagonal entries; ideas only, no code copied"
+verified = false
+verified_via = "none"

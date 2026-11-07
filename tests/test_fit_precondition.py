@@ -364,7 +364,7 @@ def test_the_gauge_masks_follow_the_support_of_each_flat_image():
 def test_probes_are_redrawn_each_round_and_a_new_round_does_not_recompile():
     from virgil.fitting import _fisher_diagonal, _lbfgs_run
 
-    start, priors, data = _image_fit(8)
+    start, priors, data = _image_fit(16)
     problem = _Objective(start, priors, data)
     z = problem.init()
     first = _fisher_diagonal(problem, z, 4, 0)
@@ -596,3 +596,71 @@ def test_the_l_curve_converges_at_every_weight(dtype):
     with ambient:
         runs = _l_curve_steps(dtype)
     assert all(converged for _, converged in runs), runs
+
+
+def _nuisance_fit(npix=16):
+    start, priors, data = _image_fit(npix)
+    priors = dict(
+        priors,
+        **{
+            "star.flux": dist.LogUniform(1e-3, 10.0),
+            "env.flux": dist.LogUniform(1e-3, 10.0),
+        },
+    )
+    values = {"env.log_brightness": start.env.log_brightness}
+    return start, priors, data, values
+
+
+def _flat(diag):
+    return onp.concatenate([onp.ravel(v) for v in diag.values()])
+
+
+def test_small_blocks_stay_exact_when_probing():
+    args = _nuisance_fit()
+    exact = _flat(gauss_newton_diag(*args))
+    probed = _flat(gauss_newton_diag(*args, n_probes=4))
+    small = [0, -1]  # star.flux, env.flux flank the image block
+    onp.testing.assert_allclose(probed[small], exact[small], rtol=1e-8)
+    assert not onp.allclose(probed[1:-1], exact[1:-1], rtol=1e-3)
+
+
+def test_the_large_block_probe_estimate_is_still_unbiased():
+    args = _nuisance_fit()
+    exact = _flat(gauss_newton_diag(*args))
+    problem = _Objective(args[0], args[1], args[2])
+    with run_in("float64"):
+        problem = cast_tree(problem, "float64")
+        z = problem.init(cast_tree(args[3], "float64"))
+        from virgil.fitting import _fisher_diagonal
+
+        rounds = [
+            onp.asarray(_fisher_diagonal(problem, z, 8, np.asarray(r)))
+            for r in range(40)
+        ]
+    mean = onp.mean(rounds, axis=0)
+    onp.testing.assert_allclose(
+        onp.sum(mean[1:-1]), onp.sum(exact[1:-1]), rtol=0.1
+    )
+
+
+def test_a_small_problem_is_exact_without_probes():
+    from virgil.fitting import _EXACT_DIAG, _diagonal_probes
+
+    args = _nuisance_fit(8)
+    n = _flat(gauss_newton_diag(*args)).size
+    assert n <= _EXACT_DIAG and _diagonal_probes(n, None) is None
+    onp.testing.assert_array_equal(
+        _flat(gauss_newton_diag(*args)),
+        _flat(gauss_newton_diag(*args, n_probes=0)),
+    )
+
+
+def test_non_finite_diagonal_entries_are_imputed_with_a_warning():
+    from virgil.fitting import _impute
+
+    d = np.asarray([1.0, 4.0, onp.nan, 2.0, onp.inf])
+    with pytest.warns(RuntimeWarning, match="non-finite"):
+        out = onp.asarray(_impute("x", d))
+    onp.testing.assert_array_equal(out, [1.0, 4.0, 4.0, 2.0, 4.0])
+    clean = np.asarray([1.0, 2.0])
+    onp.testing.assert_array_equal(_impute("x", clean), clean)
