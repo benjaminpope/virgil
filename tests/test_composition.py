@@ -11,8 +11,9 @@ from virgil.grid_fit import (
     laplace_flux_uncertainty_grid,
     likelihood_grid,
     optimized_flux_grid,
-    optimized_likelihood_grid,
 )
+from virgil._grid import batch_size_or_default, resolve_grid_keys
+from virgil.grid_fit import _optimize_flux_grid
 from virgil.inference import laplace_cov
 from virgil.likelihood import (
     build_model,
@@ -414,24 +415,53 @@ def test_likelihood_grid_with_paths_matches_model_class():
     )
 
 
+def _optimized(model, grid, flux_param):
+    """``(log likelihood, converged)`` of the flux optimizer on a grid."""
+    params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
+    _, best, success = _optimize_flux_grid(
+        oidata,
+        model,
+        grid,
+        params=params,
+        coord_keys=coord_keys,
+        flux_key=flux_key,
+        batch_size=batch_size_or_default(None, oidata),
+    )
+    return onp.asarray(best), onp.asarray(success)
+
+
 def test_optimized_likelihood_grid_with_paths_matches_model_class():
-    grid_best = onp.asarray(
-        likelihood_grid(BinaryModelCartesian, data=oidata, grid=samples_dict)
+    # Every cell, against an independent dense flux scan over positive flux,
+    # which can only undershoot the maximum. A converged cell has |g| <
+    # 0.25 σ_f (σ_f = |curvature|^-1/2, the grid_fit convergence flag), so its
+    # log likelihood is within g²/(2|curvature|) <= 0.25²/2 of the maximum;
+    # two converged results differ by at most twice that. Float32 adds a few
+    # ulps at |log likelihood| ~ 1e3. A cell whose maximum is at negative flux
+    # can only beat the scan.
+    gate = 0.25**2 / 2
+    dense = onp.asarray(
+        likelihood_grid(
+            BinaryModelCartesian,
+            data=oidata,
+            grid={**samples_dict, "flux": onp.logspace(-6, -1, 400)},
+        )
     ).max(axis=2)
-    composed = onp.asarray(
-        optimized_likelihood_grid(
-            _composed_binary(), oidata, _path_samples(), flux_param="comp.flux"
-        )
+    composed, ok_composed = _optimized(
+        _composed_binary(), _path_samples(), "comp.flux"
     )
-    reference = onp.asarray(
-        optimized_likelihood_grid(
-            BinaryModelCartesian, oidata, samples_dict, flux_param="flux"
-        )
+    reference, ok_reference = _optimized(
+        BinaryModelCartesian, samples_dict, "flux"
     )
-    # In float32, BFGS lands on slightly different optima in ~1% of cells for
-    # either input; both must still improve on the grid.
-    assert onp.all(composed >= grid_best - 1e-2 * onp.abs(grid_best))
-    assert onp.mean(onp.isclose(composed, reference, rtol=1e-4)) > 0.98
+    slack = 8 * onp.finfo(composed.dtype).eps * onp.abs(dense)
+    for result in (composed, reference):
+        assert onp.all(result >= dense - gate - slack)
+    both = ok_composed & ok_reference
+    assert onp.all(
+        onp.abs(composed - reference)[both] <= 2 * gate + slack[both]
+    )
+    # Where the optimizer reports no convergence, the two inputs still agree
+    # to the same bound: they run the same model on the same data.
+    assert onp.all(onp.abs(composed - reference) <= 2 * gate + slack)
 
 
 def test_absil_limits_with_paths_matches_model_class():
