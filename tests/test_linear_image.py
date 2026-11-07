@@ -59,7 +59,8 @@ def test_all_zero_linear_image_is_the_star_alone_and_finite():
 
     def vis(pixels):
         scene = System(
-            star=PointSource(), env=LinearImage(pixels, SCALE, reference_flux=0.5)
+            star=PointSource(),
+            env=LinearImage(pixels, SCALE, reference_flux=0.5),
         )
         return np.abs(scene.model(u, v, 4.8e-6))
 
