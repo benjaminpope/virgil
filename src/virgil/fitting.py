@@ -2274,7 +2274,7 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
 
     def evaluate(x):
         value, grad = _value_and_gradient(problem, z0, scale, np.asarray(x))
-        return float(value), onp.asarray(grad, float)
+        return float(value), onp.array(grad, float)
 
     def projected(x, grad):
         return _projected_norm(x, grad, lower, upper)
