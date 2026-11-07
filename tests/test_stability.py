@@ -77,7 +77,7 @@ EXPECTED = {
         "GPFit",
         "EvidenceGrid",
     },
-    "virgil.imaging": {"clean", "CleanResult"},
+    "virgil.imaging": {"clean", "CleanResult", "DofDiscrepancy"},
     "virgil.fitting": {"gauss_newton_diag", "kkt_report"},
     "virgil.plotting": {"plot_field_draws"},
     "virgil.likelihood": {
