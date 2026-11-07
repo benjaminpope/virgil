@@ -1657,7 +1657,11 @@ _DIAG_PROBES = 16
 # matters; exact entries cost one JVP each, cheap for a block this small. It
 # shapes the preconditioner only, not the objective.
 _EXACT_BLOCK = 64
-# Columns or probes run in vectorized chunks of this many.
+# Exact columns run in vectorized chunks of this many; probes stay sequential,
+# as each holds a full vjp or hvp in memory.
+# deliberate: 16 columns per chunk is the batch size of h-greer/hubble precond.py;
+# a column is one jvp, so the chunk's memory is that of 16 jvps, small beside the
+# images that need probing.
 _MAP_BATCH = 16
 # A coordinate's curvature is floored at this fraction of its block's largest.
 # deliberate: chosen from a sweep over 1e-3…1e-12 in design/fit_preconditioning.md
@@ -1668,7 +1672,7 @@ _DIAG_FLOOR = 1e-3
 
 
 def _map(fn, xs):
-    """``lax.map`` of ``fn`` over ``xs`` in chunks of ``_MAP_BATCH``."""
+    """``lax.map`` of the column function ``fn`` over ``xs`` in chunks of ``_MAP_BATCH``."""
     return jax.lax.map(fn, xs, batch_size=min(_MAP_BATCH, len(xs)))
 
 
@@ -1717,7 +1721,9 @@ def _gn_diagonal(rows, x, probes, key=None, exact=None):
         return pull(jax.random.rademacher(key, (m,), x.dtype))[0] ** 2
 
     keys = jax.random.split(jax.random.fold_in(key, 0), probes)
-    return _with_exact(np.mean(_map(squared, keys), axis=0), exact, column)
+    return _with_exact(
+        np.mean(jax.lax.map(squared, keys), axis=0), exact, column
+    )
 
 
 # deliberate: Hutchinson estimate of the Hessian diagonal (mean of v*Hv over Rademacher v), exact by unit vectors when probes is None
@@ -1742,7 +1748,9 @@ def _hessian_diagonal(f, x, probes, key=None, exact=None):
         return v * product(v)
 
     keys = jax.random.split(jax.random.fold_in(key, 1), probes)
-    return _with_exact(np.mean(_map(estimate, keys), axis=0), exact, entry)
+    return _with_exact(
+        np.mean(jax.lax.map(estimate, keys), axis=0), exact, entry
+    )
 
 
 # deliberate: Gauss-Newton curvature JtHJ of a loss quadratic in its parameters, by linearize and Rademacher probes or exact unit vectors
@@ -1773,7 +1781,9 @@ def _gn_params_diagonal(params, loss, x, probes, key=None, exact=None):
         return u * pull(product(push(u)))[0]
 
     keys = jax.random.split(jax.random.fold_in(key, 2), probes)
-    return _with_exact(np.mean(_map(estimate, keys), axis=0), exact, entry)
+    return _with_exact(
+        np.mean(jax.lax.map(estimate, keys), axis=0), exact, entry
+    )
 
 
 @eqx.filter_jit
@@ -1792,15 +1802,16 @@ def _fisher_diagonal(problem, z, probes, round=0):
     flat, unravel = problem.ravel(z)
     exact = None
     if probes is not None:
-        # Blocks of at most _EXACT_BLOCK coordinates, as static flat indices.
+        # Blocks of at most _EXACT_BLOCK coordinates, as static flat indices,
+        # while the exact coordinates total at most _EXACT_DIAG (the cost cap).
         sizes = [int(onp.size(z[k])) for k in problem.coordinate_keys]
         starts = onp.cumsum([0, *sizes])
+        small = [
+            (a, k) for a, k in zip(starts, sizes) if 0 < k <= _EXACT_BLOCK
+        ]
+        budget = onp.cumsum([k for _, k in small]) <= _EXACT_DIAG
         exact = onp.concatenate(
-            [
-                onp.arange(a, a + k)
-                for a, k in zip(starts, sizes)
-                if 0 < k <= _EXACT_BLOCK
-            ]
+            [onp.arange(a, a + k) for (a, k), ok in zip(small, budget) if ok]
             + [onp.zeros(0, int)]
         ).astype(onp.int32)
     diagonal = _gn_diagonal(

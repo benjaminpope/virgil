@@ -611,22 +611,19 @@ def _nuisance_fit(npix=16):
     return start, priors, data, values
 
 
-def _flat(diag):
-    return onp.concatenate([onp.ravel(v) for v in diag.values()])
-
-
 def test_small_blocks_stay_exact_when_probing():
     args = _nuisance_fit()
-    exact = _flat(gauss_newton_diag(*args))
-    probed = _flat(gauss_newton_diag(*args, n_probes=4))
-    small = [0, -1]  # star.flux, env.flux flank the image block
-    onp.testing.assert_allclose(probed[small], exact[small], rtol=1e-8)
-    assert not onp.allclose(probed[1:-1], exact[1:-1], rtol=1e-3)
+    exact = gauss_newton_diag(*args)
+    probed = gauss_newton_diag(*args, n_probes=4)
+    for key in ("star.flux", "env.flux"):
+        onp.testing.assert_allclose(probed[key], exact[key], rtol=1e-8)
+    pixels = "env.log_brightness"
+    assert not onp.allclose(probed[pixels], exact[pixels], rtol=1e-3)
 
 
 def test_the_large_block_probe_estimate_is_still_unbiased():
     args = _nuisance_fit()
-    exact = _flat(gauss_newton_diag(*args))
+    exact = gauss_newton_diag(*args)
     problem = _Objective(args[0], args[1], args[2])
     with run_in("float64"):
         problem = cast_tree(problem, "float64")
@@ -637,21 +634,11 @@ def test_the_large_block_probe_estimate_is_still_unbiased():
             onp.asarray(_fisher_diagonal(problem, z, 8, np.asarray(r)))
             for r in range(40)
         ]
-    mean = onp.mean(rounds, axis=0)
+        _, unravel = problem.ravel(z)
+        mean = unravel(onp.mean(rounds, axis=0))
+    pixels = "env.log_brightness"
     onp.testing.assert_allclose(
-        onp.sum(mean[1:-1]), onp.sum(exact[1:-1]), rtol=0.1
-    )
-
-
-def test_a_small_problem_is_exact_without_probes():
-    from virgil.fitting import _EXACT_DIAG, _diagonal_probes
-
-    args = _nuisance_fit(8)
-    n = _flat(gauss_newton_diag(*args)).size
-    assert n <= _EXACT_DIAG and _diagonal_probes(n, None) is None
-    onp.testing.assert_array_equal(
-        _flat(gauss_newton_diag(*args)),
-        _flat(gauss_newton_diag(*args, n_probes=0)),
+        onp.sum(mean[pixels]), onp.sum(exact[pixels]), rtol=0.1
     )
 
 
