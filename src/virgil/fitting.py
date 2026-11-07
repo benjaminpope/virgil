@@ -2277,10 +2277,16 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
         value, grad = _value_and_gradient(problem, z0, scale, np.asarray(x))
         return float(value), onp.asarray(grad, float)
 
+    def evaluate_flagged(x):
+        value, grad = evaluate(x)
+        if not (onp.isfinite(value) and onp.isfinite(grad).all()):
+            undefined.append(True)
+        return value, grad
+
     def projected(x, grad):
         return _projected_norm(x, grad, lower, upper)
 
-    _, g0 = evaluate(x0)
+    start_value, g0 = evaluate(x0)
     tolerance = float(_tolerance(np.asarray(projected(x0, g0)), gtol))
     out_of_time, trace = [], []
 
@@ -2296,34 +2302,53 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
             out_of_time.append(True)
             raise StopIteration
 
-    res = minimize(
-        evaluate,
-        x0,
-        jac=True,
-        method="L-BFGS-B",
-        bounds=Bounds(lower, upper),
-        callback=callback,
-        options={
-            "maxiter": max_steps,
-            "maxfun": 3 * max_steps,
-            "maxcor": memory,
-            "ftol": 0.0,
-            "gtol": tolerance,
-        },
-    )
-    x = onp.clip(res.x, lower, upper)
-    value, grad = evaluate(x)
+    undefined = []  # a trial point where the model is NaN (e.g. 0/0)
+    nit = nfev = 0
+    while True:
+        undefined.clear()
+        res = minimize(
+            evaluate_flagged,
+            x0,
+            jac=True,
+            method="L-BFGS-B",
+            bounds=Bounds(lower, upper),
+            callback=callback,
+            options={
+                "maxiter": max_steps - nit,
+                "maxfun": 3 * max_steps - nfev,
+                "maxcor": memory,
+                "ftol": 0.0,
+                "gtol": tolerance,
+            },
+        )
+        nit, nfev = nit + int(res.nit), nfev + int(res.nfev)
+        x = onp.clip(res.x, lower, upper)
+        value, grad = evaluate(x)
+        # A line search cannot continue from a NaN: it ends "ABNORMAL". Restart
+        # from the last accepted point, with fresh curvature memory (so a
+        # smaller first step), while that gains loss, as ``_lbfgs`` does.
+        gain = start_value - value
+        if (
+            res.success
+            or not undefined
+            or out_of_time
+            or not gain > 0.0  # also true of a NaN
+            or nit >= max_steps
+            or nfev >= 3 * max_steps
+        ):
+            break
+        x0, start_value = x, value
     pg = float(projected(x, grad))
     finite = onp.isfinite(value) and onp.all(onp.isfinite(grad))
     converged = bool(finite and pg <= tolerance)
-    steps = int(res.nit)
+    steps = nit
     if converged:
         stop = None
     elif not finite:
         stop = "non-finite"
     elif out_of_time:
         stop = "time"
-    elif steps >= max_steps or res.nfev >= 3 * max_steps:
+    elif steps >= max_steps or nfev >= 3 * max_steps:
         stop = "limit"
     else:
         stop = "stalled"
