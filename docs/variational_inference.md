@@ -72,7 +72,7 @@ for name in priors:
 
 ## Checking the result
 
-- **Convergence.** `vi.converged` is `True` when the loss (the negative ELBO) has stopped falling over the last tenth of the steps; `vi.losses` holds its history. A plateau is necessary, not sufficient.
-- **PSIS k̂.** `vi.info["khat"]` is the Pareto k̂ of the importance weights p/q of the guide's draws. Below about 0.7 the guide covers the posterior well enough to reweight its draws towards it; above that it misses posterior mass.
+- **Convergence.** `vi.converged` is `True` when the upper 2σ bound on the loss's fall between the last two windows (a tenth of the steps each) is under one nat; `vi.losses` holds its history. A noisy loss cannot pass, so raise `steps`, `num_particles` or `window` if it warns on a plateau. A plateau is necessary, not sufficient.
+- **PSIS k̂.** `vi.info["khat"]` is the Pareto k̂ of the importance weights p/q of the guide's draws. Below about 0.7 the guide covers the posterior well enough to reweight its draws towards it; above that it misses posterior mass, and `variational` warns.
 - **One mode.** Every guide here covers a single mode. A multimodal posterior (an orbit with Ω/ω flips or period aliases, an image with a mirrored solution) needs several starts, for example the distinct fits of [`OrbitStart.chain_values`][virgil.epochs.OrbitStart.chain_values]. Compare their ELBOs, or reweight their draws and check k̂.
 - **Precision.** SVI runs in float64 by default, as `fit` does (`dtype="float32"` also works).
