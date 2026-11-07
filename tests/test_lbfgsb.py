@@ -291,5 +291,28 @@ def test_a_line_search_that_meets_an_undefined_point_restarts(monkeypatch):
 
     monkeypatch.setattr(fitting, "_value_and_gradient", undefined_once)
     result = fit(*args, method="lbfgsb", max_steps=3000)
+    assert len(calls) > 6  # the undefined evaluation was reached
+    assert result.info["undefined"] and result.info["restarts"] >= 1
+    assert not clean.info["undefined"] and clean.info["restarts"] == 0
     assert clean.info["converged"] and result.info["converged"], result.info
+    assert result.info["loss"] == pytest.approx(clean.info["loss"], rel=1e-6)
+    assert "ABNORMAL" in result.info["message"]  # the first round's message
+
+
+def test_a_start_that_overshoots_to_zero_flux_still_converges():
+    # No monkeypatch: a uniform start 1e3 times too bright, whose line search
+    # clips a trial point to the all-zero image where the model is 0/0.
+    truth = _scene(_disc(0.5))
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(1), noise_scale=3.0)
+    tsv = [TSV(0.02, path="env", beam_mas=60.0)]
+    ref = _scene(onp.full((NPIX, NPIX), 0.5 / NPIX**2))
+    clean = fit(
+        ref, image_priors(ref), data, tsv, method="lbfgsb", max_steps=3000
+    )
+    start = _scene(onp.full((NPIX, NPIX), 1e3))
+    result = fit(
+        start, image_priors(start), data, tsv, method="lbfgsb", max_steps=3000
+    )
+    assert result.info["undefined"], result.info
+    assert result.info["converged"], result.info
     assert result.info["loss"] == pytest.approx(clean.info["loss"], rel=1e-6)

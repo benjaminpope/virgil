@@ -2303,7 +2303,8 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
             raise StopIteration
 
     undefined = []  # a trial point where the model is NaN (e.g. 0/0)
-    nit = nfev = 0
+    nit = nfev = restarts = 0
+    hit, first_message = False, None
     while True:
         undefined.clear()
         res = minimize(
@@ -2322,6 +2323,9 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
             },
         )
         nit, nfev = nit + int(res.nit), nfev + int(res.nfev)
+        hit = hit or bool(undefined)
+        if first_message is None:
+            first_message = res.message
         x = onp.clip(res.x, lower, upper)
         value, grad = evaluate(x)
         # A line search cannot continue from a NaN: it ends "ABNORMAL". Restart
@@ -2338,6 +2342,7 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
         ):
             break
         x0, start_value = x, value
+        restarts += 1
     pg = float(projected(x, grad))
     finite = onp.isfinite(value) and onp.all(onp.isfinite(grad))
     converged = bool(finite and pg <= tolerance)
@@ -2352,9 +2357,16 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
         stop = "limit"
     else:
         stop = "stalled"
-    message = res.message
+    # The first round's message: it says why the first line search ended.
+    message = first_message
     message = message.decode() if isinstance(message, bytes) else str(message)
-    extra = {"nit": steps, "message": message, "pg_norm": pg}
+    extra = {
+        "nit": steps,
+        "message": message,
+        "pg_norm": pg,
+        "restarts": restarts,
+        "undefined": hit,
+    }
     return unravel(np.asarray(x)), steps, converged, stop, pg, extra
 
 
