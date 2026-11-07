@@ -191,7 +191,9 @@ def test_single_frame_mode_is_unchanged():
         mode[0, :N_WAVE] = 0.01
         got = float(
             model_loglike(TRUTH, data.with_closure_offsets(modes=mode))
-        ) - float(model_loglike(TRUTH, data.with_closure_offsets(triangle=0.0)))
+        ) - float(
+            model_loglike(TRUTH, data.with_closure_offsets(triangle=0.0))
+        )
     assert got == pytest.approx(-0.33868005245598454, abs=1e-12)
 
 
