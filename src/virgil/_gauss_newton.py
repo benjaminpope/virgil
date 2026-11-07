@@ -13,14 +13,14 @@ vector: ``loss(z)`` (scalar Φ), ``rows(z)`` (any length, possibly 0) and
 static layouts use ``eqx.field(static=True)``.
 
 `step` solves ``(F + λM) δ = -g`` by Cholesky on the free coordinates
-(M: Marquardt scaling of diag F, floored), clips the trial into the box and
+(M: Marquardt scaling, diag F per parameter, 1 where it is zero), clips the trial into the box and
 accepts it if everything is finite and Φ falls (λ/3 on accept, 4λ on
 reject; a failed Cholesky gives NaNs, so it is a rejection). Coordinates
 at a bound with the descent direction pointing out of the box are held.
 Stop codes: ``CONVERGED`` (projected gradient ≤ ``gtol``, Newton decrement
-≤ ``dtol``, or, once λ > 1e10, decrement at the rounding floor),
-``STALLED`` (λ > 1e10 otherwise), ``LIMIT``, and ``NON_FINITE`` from
-`init`. A stopped state is unchanged by ``step``; `solve` resumes from a
+≤ ``dtol``), ``STALLED`` (λ > 1e10 with neither met, e.g. a tolerance finer
+than Φ's rounding error; never promoted to ``CONVERGED``), ``LIMIT``, and
+``NON_FINITE`` from `init`. A stopped state is unchanged by ``step``; `solve` resumes from a
 `State`, counting ``max_steps`` from ``state.steps``.
 
 Private; imports nothing from virgil. The algorithm, tolerances and tests
@@ -37,7 +37,6 @@ _LAM_START = 1e-3
 _LAM_FLOOR = 1e-12
 _LAM_STALL = 1e10
 _BOUND_EPS = 1e-10
-_MARQUARDT_FLOOR = 1e-12
 
 
 class State(eqx.Module):
@@ -75,11 +74,16 @@ def _solve_free(F, g, free, lam):
 
     NaN when the system is not positive definite (Cholesky does not raise).
     """
-    # Marquardt's scaling M (the diagonal), floored, on the free coordinates.
+    # Marquardt (1963) scaling M = diag F, per parameter: the damping carries
+    # each coordinate's own units, so the step is invariant to rescaling z
+    # (the property Moré 1978 builds on). Plain diag F: without Moré's running
+    # max D_k = max(D_{k-1}, diag F_k), so a diagonal that is tiny but not
+    # zero keeps its tiny damping and the run stalls honestly. A coordinate
+    # with exactly zero curvature gets 1 (MINPACK's convention). There is no
+    # cross-parameter floor, which would give a small-unit coordinate the
+    # damping of the largest.
     d = np.diag(F)
-    biggest = np.max(np.where(free, d, 0.0))
-    tiny = np.finfo(F.dtype).tiny
-    scaling = np.maximum(np.maximum(d, _MARQUARDT_FLOOR * biggest), tiny)
+    scaling = np.where(d > 0.0, d, 1.0)
     A = F + lam * np.diag(scaling)
     both = free[:, None] & free[None, :]
     A = np.where(both, A, 0.0) + np.diag(np.where(free, 0.0, 1.0))
@@ -148,13 +152,12 @@ def _advance(problem, state, lower, upper, gtol, dtol, limit):
     delta = _solve_free(F, g, free, _LAM_FLOOR)
     dec = -0.5 * np.sum(np.where(free, g * delta, 0.0))
     dec = np.where(np.isfinite(dec), dec, np.inf)
-    eps = np.finfo(z.dtype).eps
-    floor = lam > _LAM_STALL
     converged = (gnorm <= gtol) | (dec <= dtol)
-    floor_ok = floor & (dec <= 10 * eps * np.maximum(np.abs(value), 1.0))
+    # Damping that ran away without meeting a criterion is a stall, reported
+    # as such (callers name it "the damping limit"); it is never converged.
     code = np.select(
-        [converged, floor_ok, floor, steps >= limit],
-        [CONVERGED, CONVERGED, STALLED, LIMIT],
+        [converged, lam > _LAM_STALL, steps >= limit],
+        [CONVERGED, STALLED, LIMIT],
         default=RUNNING,
     ).astype(np.int32)
     return State(z, value, g, F, lam, steps, rejects, code)
@@ -216,7 +219,8 @@ def solve(
         Box bounds, scalars or vectors; default ±inf.
     gtol, dtol
         Stop when the projected gradient's infinity norm is ≤ ``gtol`` or the
-        Newton decrement is ≤ ``dtol``.
+        Newton decrement is ≤ ``dtol``. A tolerance finer than
+        the rounding error of Φ cannot be met: the run ends ``STALLED``.
     max_steps
         Maximum iterations (accepted and rejected) in this call, at least 1.
     """
