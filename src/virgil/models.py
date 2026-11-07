@@ -2223,7 +2223,10 @@ class LinearImage(_BrightnessImage):
     def brightness(self):
         """Pixel fluxes divided by the total: unit sum, zero outside ``support``."""
         fluxes = self.fluxes
-        return fluxes / np.sum(fluxes)
+        total = np.sum(fluxes)
+        # An all-zero linear image (a bound-clipped trial point of L-BFGS-B)
+        # has no brightness: zero, not 0/0 NaN, which stops the line search.
+        return fluxes / np.where(total > 0.0, total, 1.0)
 
     @property
     def regularised_pixels(self):
