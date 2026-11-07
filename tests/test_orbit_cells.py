@@ -1023,6 +1023,45 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
 
 
+# --- shared neighbour modes (design 6.11) ----------------------------------------
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.timeout(1800)
+def test_a_mode_beside_an_edge_gives_both_cells_the_exact_evidence():
+    """K = 3 nights in two seasons, a circular orbit a few hundredths of a cell
+    inside the edge of cell 35: the mode is interior to one cell, and its
+    neighbour (cell 36) reaches it through a shared component. Both cells' ``ln Ẑ``
+    against 2**20 plain prior draws each."""
+    times = onp.array([0.0, 4.1, 365.0])
+    t, period = times[-1] - times[0], 365.0 / (35.5 - 0.03)
+    s = _summaries(_orbit(period=period, a=6.0, ecc=0.0), times, sigma=1.5)
+    domain = oc_cells.period_domain(s, p_range=(t / 37.5, t / 33.5))
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(3, LOG_B),
+        jitter=0.0, e_max=1e-6, n_is=20000,
+    )  # fmt: skip
+    for n in (35, 36):
+        fit = [f for f in out.fits if f.cell.n == n][0]
+        ll = jax.jit(jax.vmap(fit.space.loglike))
+        ref = onp.concatenate(
+            [
+                onp.asarray(
+                    ll(fit.space.sample(jax.random.key(10 + i), 2**15))
+                )
+                for i in range(32)
+            ]
+        )
+        w = onp.exp(ref - ref.max())
+        lz = onp.log(onp.mean(w)) + ref.max()
+        err = onp.sqrt(1 / (w.sum() ** 2 / (w**2).sum()))
+        assert abs(fit.log_z - lz) < 4 * onp.hypot(fit.log_z_error, err) + 0.02
+    # the neighbour has the shared component (its own mode too: a short-span
+    # ridge is kept, design 6.11, so absence is not promised)
+    assert [f for f in out.fits if f.cell.n == 36][0].shared
+
+
 # --- the speed measures are exact --------------------------------------------
 
 

@@ -112,6 +112,8 @@ W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
 N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
 CHUNK_C = 256  # candidates per batched C-step call (budget)
 CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
+EDGE_STOP = W  # |w_P| beyond which the logistic chart holds less than δ of the
+#                cell's ρ-interval: where a shared neighbour mode's proposal ends
 N_WORKERS = (
     1  # cells run at once; 2 threads ran K = 14 two-season 1.24x faster
 )
@@ -1567,6 +1569,9 @@ class CellFit:
         Likelihood-equivalent evaluations of the search and the sampling.
     move : virgil.mode_search.Move or None
         The resample-move of ``draws`` (HMC acceptance and step size).
+    shared : list of Mode
+        Neighbour modes that straddle a shared edge, in this cell's chart: extra
+        components of the mixture (not in ``modes``).
     info : dict
         The search's counts (``c_capped``, ``c_runs``, ...:
         [`search_cell`][virgil.orbit_cells.search_cell]).
@@ -1589,6 +1594,7 @@ class CellFit:
     unreliable: bool = False
     nonfinite: bool = False
     move: object = dataclasses.field(repr=False, default=None)
+    shared: list = dataclasses.field(repr=False, default_factory=list)
     info: dict = dataclasses.field(repr=False, default_factory=dict)
 
     @property
@@ -1678,6 +1684,7 @@ def position_leg(
     dtype="float64",
     plan=None,
     nu_width=None,
+    shared=(),
 ):
     """Search, defensive importance sampling and posterior draws of one cell.
 
@@ -1715,6 +1722,9 @@ def position_leg(
     nu_width : float, optional
         The widest cell in ``1 / P`` (``1 / T``), to size the plan's ``ln P``
         grid when ``plan`` is made here (default the width of ``cell``).
+    shared : sequence of Mode, optional
+        Neighbour modes in this cell's chart, extra mixture components
+        ([`position_cells`][virgil.orbit_cells.position_cells] makes them).
 
     Returns
     -------
@@ -1739,12 +1749,12 @@ def position_leg(
         plan = search_plan(space, k_plan, nu_width) if plan is None else plan
         info = {}
         modes = search_cell(space, plan=plan, info=info)
-        ev = _cell_evidence(space, modes, k_is, n_is)
+        ev = _cell_evidence(space, [*modes, *shared], k_is, n_is)
     fit = CellFit(
         cell, ev.log_z, ev.log_z_error, modes, None, ev.log_w, ev.x,
         ev.at_floor, ev.undersampled, int(info["evaluations"]), n_is, ev,
         plan, space, bool(ev.ess < ESS_FAIL), bool(ev.n_nonfinite > 0),
-        info=info,
+        shared=list(shared), info=info,
     )  # fmt: skip
     if posterior_draws and not fit.failed:
         fit.draws = _draw(fit, k_move)
@@ -1985,22 +1995,78 @@ def position_cells(
     start = time.time()
     keys = jax.random.split(key, len(cells))
 
-    def run(cell, k, plan):
+    def run(i, plan):
         if time.time() - start > max_seconds:
             raise RuntimeError(
-                f"position_cells reached max_seconds before cell N={cell.n}."
+                f"position_cells reached max_seconds before cell N={cells[i].n}."
             )
         return position_leg(
-            summaries, log_outlier, cell, k, t_anchor=t_a, t_nights=t_all,
-            jitter=jitter, n_is=n_is, posterior_draws=False, plan=plan,
-            nu_width=1.0 / t_ab, **leg_kwargs,
+            summaries, log_outlier, cells[i], keys[i], t_anchor=t_a,
+            t_nights=t_all, jitter=jitter, n_is=n_is, posterior_draws=False,
+            plan=plan, nu_width=1.0 / t_ab, **leg_kwargs,
         )  # fmt: skip
 
-    fits = [run(cells[0], keys[0], None)]
-    fits += _map(
-        lambda ck: run(*ck, fits[0].plan), list(zip(cells[1:], keys[1:])),
-        workers,
-    )  # fmt: skip
+    fits = [run(0, None)]
+    fits += _map(lambda i: run(i, fits[0].plan), range(1, len(cells)), workers)
+    # a neighbour's mode with more than δ of its ρ mass across the shared edge
+    # is a component here (its Laplace in ρ: a mode never leaves its own chart)
+    for i, (cell, fit) in enumerate(zip(cells, fits)):
+        shared = []
+        for j, side in ((i - 1, 1.0), (i + 1, -1.0)):
+            if not 0 <= j < len(cells):
+                continue
+            nu_edge = 1.0 / (cell.p_hi if side > 0 else cell.p_lo)
+            d_nu = 1.0 / cell.p_lo - 1.0 / cell.p_hi
+            for m in fits[j].modes:
+                lo = float(fits[j].space.ln_lo)
+                hi = float(fits[j].space.ln_hi)
+                u = 1.0 / (1.0 + math.exp(-float(m.x[0])))
+                nu = math.exp(-(lo + (hi - lo) * u))
+                sd = nu * (hi - lo) * u * (1.0 - u) * math.sqrt(m.cov[0, 0])
+                across = float(stats.norm.sf(abs(nu - nu_edge) / sd))
+                if not across > delta:
+                    continue
+                # centred on the tail inside this cell, from one σ_ρ to the
+                # edge stop, in this cell's chart
+                near = min(
+                    -math.log(
+                        min(sd / d_nu, 0.5) / (1.0 - min(sd / d_nu, 0.5))
+                    ),
+                    EDGE_STOP,
+                )
+                mid, half = (
+                    0.5 * (EDGE_STOP + near),
+                    max(0.5 * (EDGE_STOP - near), 1.0),
+                )
+                scale = onp.ones(len(m.x))
+                scale[0] = half / math.sqrt(m.cov[0, 0])
+                cov = scale[:, None] * m.cov * scale
+                x = onp.array(m.x, float)
+                x[0] = side * mid
+                # cell j's Laplace is under j's conditional prior: restate it
+                # in this cell's (the ratio of the cells' prior masses)
+                lap = (
+                    laplace_log_evidence(m) + math.log(across)
+                    + cells[j].log_mass - cell.log_mass
+                )  # fmt: skip
+                shift = (
+                    0.5 * len(x) * math.log(2.0 * math.pi)
+                    + 0.5 * (onp.linalg.slogdet(cov)[1])
+                )
+                shared.append(Mode(x, lap - shift, cov, m.n_inliers))
+        if shared:
+            with run_in(onp.dtype(fit.space.dtype).name):
+                ev = _cell_evidence(
+                    fit.space, [*fit.modes, *shared],
+                    jax.random.split(keys[i], 3)[1], n_is,
+                )  # fmt: skip
+            fit.shared, fit.evidence = shared, ev
+            fit.is_evaluations += n_is  # the first run's draws were discarded
+            fit.log_z, fit.log_z_error = ev.log_z, ev.log_z_error
+            fit.log_w, fit.x_is = ev.log_w, ev.x
+            fit.at_floor, fit.undersampled = ev.at_floor, ev.undersampled
+            fit.unreliable = bool(ev.ess < ESS_FAIL)
+            fit.nonfinite = bool(ev.n_nonfinite > 0)
     log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
     upper = onp.array(
         [c.log_mass + f.log_z_upper for c, f in zip(cells, fits)]
