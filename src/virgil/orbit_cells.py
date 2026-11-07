@@ -597,10 +597,15 @@ def _peak_precision(cat, ln_s, jitter, dtype):
     return cov, total, np.linalg.inv(total)
 
 
-def _peak_terms(cat, ln_s, jitter, state, dtype):
+def _peak_terms(cat, ln_s, jitter, state, dtype, extra=None):
     """``ln L_j(s) + ½ ln(|Σ_data| / |Σ_total|) - ½ dᵀ Σ_total⁻¹ d`` per peak,
-    ``(K, J)``; ``-inf`` for padding. ``state`` is ``(K, 5)``."""
+    ``(K, J)``; ``-inf`` for padding. ``state`` is ``(K, 5)``. With ``extra``
+    ``(K, 5, 5)``, the state's covariance, it is added to ``Σ_total``: the
+    peak term marginalised over the state's uncertainty (predictive term)."""
     cov, total, inv = _peak_precision(cat, ln_s, jitter, dtype)
+    if extra is not None:
+        total = total + extra[:, None]
+        inv = np.linalg.inv(total)
     s = np.exp(ln_s)
     scaled = cat.loglike - np.sum(
         cat.n * ln_s + 0.5 * cat.chi2 * (s**-2 - 1.0), axis=-1
@@ -856,11 +861,12 @@ def _objective(x, space):
     return _target(x, space) + 3.0 * np.log(np.linalg.norm(x[_Z]))
 
 
-def _labels(x, space):
+def _labels(x, space, extra=None):
     """Each night's best peak, or -1 (outlier) where the floor is higher.
 
     At the prior mean ``ε̄ = ½`` the inlier and outlier weights ``1 - ε̄`` and
-    ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``.
+    ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``. With
+    ``extra``, the predictive term of ``_peak_terms``.
     """
     with run_in(onp.dtype(space.dtype).name):
         c = space.decode(x)
@@ -869,7 +875,7 @@ def _labels(x, space):
             [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
         )
         terms = _peak_terms(
-            space.cat, c["ln_s"], space.jitter, state, space.dtype
+            space.cat, c["ln_s"], space.jitter, state, space.dtype, extra
         )
         j = np.argmax(terms, axis=1)
         best = np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
@@ -1172,7 +1178,9 @@ def _labelled_objective(v, lab, wk, mk, space):
 @functools.partial(jax.jit, static_argnames=("n_iter",))
 def _cstep_chunk(space, plan, v, lab, n_iter):
     """One C-step per candidate: Newton in ``(ln P, ζ)`` on the labelled
-    target (TI′ and ``ln f`` solved linearly), then relabel at the result.
+    target (TI′ and ``ln f`` solved linearly), then relabel at the result by
+    each night's predictive term (design §6.14): the labels only seed the
+    search, the target is unchanged.
     Returns ``v``, the labels, the chart vector, the residual, the Hessian
     of ``R / 2`` in ``v`` and whether the step cap ended it."""
 
@@ -1195,7 +1203,41 @@ def _cstep_chunk(space, plan, v, lab, n_iter):
             wf.sum(), 1e-30
         )
         x = _chart_from(space, v, ti, ln_f)
-        x, new = _relabel(x, space, lab)
+        x = _scale_step(x, space, lab)
+        # C_k = J_k H⁻¹ J_kᵀ with H the posterior curvature of the labelled
+        # fit in the full chart (w_P, y_ζ, TI′): the likelihood's at the
+        # profiled scale (the largest if several, which keeps more nights),
+        # the chart prior's in (w_P, y_ζ), the ridge on TI′. J_k is the
+        # Jacobian of night k's (p, v); zero in ln f. Saddle-free.
+        idx = np.arange(k)
+        mk = plan["mk"][idx, j]
+
+        def states(th):
+            return np.einsum("kia,a->ki", _design(space, idx, th[:3]), th[3:])
+
+        def likelihood(th):
+            r = mk - states(th)
+            return -0.5 * np.einsum("ki,kij,kj->", r, w, r)
+
+        def log_prior(vv):
+            return _log_prior(x.at[0].set(vv[0]).at[6:8].set(vv[1:3]))
+
+        th = np.concatenate([v, ti])
+        hf = -jax.hessian(likelihood)(th) * np.exp(
+            -2.0 * np.max(space.decode(x)["ln_s"])
+        )
+        hf = hf.at[:3, :3].add(-jax.hessian(log_prior)(v))
+        hf = hf + np.diag(np.r_[np.zeros(3), np.ones(4) / space.s_w2])
+        e, u = np.linalg.eigh(0.5 * (hf + hf.T))
+        e = np.abs(e)
+        c = np.einsum(
+            "kia,ab,kjb->kij",
+            jax.jacfwd(states)(th),
+            (u / np.maximum(e, np.finfo(space.dtype).eps * e.max())) @ u.T,
+            jax.jacfwd(states)(th),
+        )
+        extra = np.zeros((k, 5, 5), space.dtype).at[:, :4, :4].set(c)
+        new = _labels(x, space, extra)
         h = -jax.hessian(_labelled_objective)(v, *args)
         return v, new, x, -2.0 * fv, h, capped
 

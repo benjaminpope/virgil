@@ -62,3 +62,17 @@ and tolerance 4·√(sd² + sd_ref²) + 0.01.
 
 Mode counts drift across platforms (macOS 9 vs Linux runner 10, seed 0 system 13); census arms are paired only within
 one platform (OzSTAR), never across.
+
+---
+## Arm: predictive C-step labels (#667, stacked on W1 #642), added 2026-11-07 before any run of this arm
+
+The held-out W1 result (paired with baseline f71294b, systems 200–399) was read in aggregate on 2026-11-07, including a post-hoc split by ln s. Systems 200–399 are therefore no longer clean for deciding W1 or this arm. The decision set is a fresh paired set, systems 400–599 of seed 0 (`START_BASE=400`), which nobody has inspected.
+
+- **Arms on 400–599:** baseline f71294b; W1 2673182; this arm (its pinned head). All three run on OzSTAR with the same image.
+- **Primary, for each of W1 and this arm against the baseline:** failure (status failed or error) in the informative stratum "rest", exact one-sided McNemar on discordant pairs, α = 0.01.
+- **Harm:** failure in each other stratum, and misses (ok with the truth outside the 99% set). Exact two-sided McNemar; harm if the arm is worse at p < 0.05.
+- **Merge rule:** primary passes and no harm.
+- **Secondary, recorded as a hypothesis from the W1 analysis, report-only:** this arm against W1, rest stratum, baseline ln s < −0.5, one-sided McNemar at α = 0.05.
+- **Report-only:** this arm on 200–399 against the baseline and W1 there.
+- **Systems 400–599 are aggregate-only,** like 200–399 before them.
+---
