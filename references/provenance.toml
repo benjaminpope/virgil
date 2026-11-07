@@ -2251,7 +2251,7 @@ doi = "10.1137/1.9780898718027"
 verified = true
 verified_via = "crossref"
 used_in = ["virgil._gauss_newton:rounding_dtol", "virgil.grid_fit:_flux_converged"]
-note = "SIAM, 2nd ed., section 4.2: the rounding error of a sum of n terms is at most about log2(n) eps sum|x_i| for tree-wise summation"
+note = "SIAM, 2nd ed., section 4.2: the rounding error of a sum of n terms is at most about log2(n) eps sum|x_i| for tree-wise summation; the bound used by rounding_dtol where the terms share a sign"
 
 [ref.morozov1966]
 authors = "Morozov"

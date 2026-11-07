@@ -402,8 +402,11 @@ def test_flux_convergence_has_no_quarter_sigma_gate():
     g = f32(np.sqrt(2 * 100.0 * 5e-3))
     assert bool(_flux_converged(g, c, ll))
     assert not bool(_flux_converged(g, c, f32(-0.5)))
-    # 6e-3 nats at c = -100 is an offset of ~0.1σ
-    assert 0.1 < np.sqrt(2 * 6e-3 / 100.0) * 10.0 < 0.12
+    # the allowance at ℓ = -5000 is an offset of ~0.1σ at c = -100
+    from virgil._gauss_newton import rounding_dtol
+
+    dec = float(rounding_dtol(ll))
+    assert 0.1 < np.sqrt(2 * dec / 100.0) * 10.0 < 0.12
 
 
 def test_optimized_flux_grid_converges_everywhere_in_float32():

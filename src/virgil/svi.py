@@ -281,8 +281,10 @@ def _loss_settled(losses, window):
     It alone passes a run too noisy to see any fall; the second closes that:
     the true fall exceeds ``drop + 2 se`` only with probability about 2%
     (normal means over a window), so a pass certifies a fall under the
-    tolerance, and a run too noisy to resolve one nat (2 se > 1) does not
-    pass. The cap of one nat per window is a modelling choice: it is the
+    tolerance, and a run too noisy to resolve one nat (2 se > 1) never
+    passes. The rule is not monotone in the noise: at a fixed drop it passes
+    only for drop/2 <= se <= (1 - drop)/2, trading the old "noisier never
+    passes more easily" for detecting a fall that is measured. The cap of one nat per window is a modelling choice: it is the
     scale of a log Bayes factor (Kass & Raftery 1995), so a loss still
     falling by less than one nat per window cannot move a model comparison by
     more than a bare mention; the paper sets that scale, not an optimiser

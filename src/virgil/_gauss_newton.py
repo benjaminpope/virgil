@@ -62,10 +62,14 @@ def curvature(problem, z):
 def rounding_dtol(value):
     """The decrement (nats) below which Φ cannot tell two points apart.
 
-    10 ulp of max(|Φ|, 1): Φ is a sum of n terms, whose rounding error is at
-    most about log2(n) ε Σ|xᵢ| for tree-wise summation (Higham 2002, §4.2),
-    and log2(n) ≲ 10 for n up to 10³ terms; Σ|xᵢ| is |Φ| for a sum of terms of
-    one sign (a chi-squared), and the floor of 1 is one nat.
+    10 ulp of max(|Φ|, 1). Derivation, when Φ is a sum of n terms of one sign
+    (a chi-squared): its rounding error is at most about log2(n) ε Σ|xᵢ| =
+    log2(n) ε |Φ| for tree-wise summation (Higham 2002, §4.2), and log2(n) is
+    10 at n = 10³ (13 at 10⁴); the floor of 1 is one nat. Not derived for a
+    Φ whose terms have both signs, such as the marginal surface of `epochs`
+    (a sum of ν log χ² per block), where |Φ| can be far below Σ|xᵢ|: there
+    it is the allowance the kernel's former rescue used, kept so as not to
+    change behaviour.
     """
     return 10 * np.finfo(value.dtype).eps * np.maximum(np.abs(value), 1.0)
 
