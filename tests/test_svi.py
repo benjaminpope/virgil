@@ -449,7 +449,9 @@ def test_a_noisier_loss_never_settles_more_easily():
 def test_a_large_khat_warns_and_is_in_info(monkeypatch):
     """585#8: the PSIS diagnostic's warnings were silenced, and a k̂ above
     0.7 passed without a word."""
-    import numpyro.infer.importance as importance
+    importance = pytest.importorskip(
+        "numpyro.infer.importance"
+    )  # numpyro >= 0.20
 
     monkeypatch.setattr(importance, "psis_diagnostic", lambda *a, **k: 0.9)
     with pytest.warns(RuntimeWarning, match="Pareto k̂"):
@@ -468,7 +470,9 @@ def test_a_large_khat_warns_and_is_in_info(monkeypatch):
 def test_the_diagnostics_own_warnings_are_not_suppressed(monkeypatch):
     import warnings
 
-    import numpyro.infer.importance as importance
+    importance = pytest.importorskip(
+        "numpyro.infer.importance"
+    )  # numpyro >= 0.20
 
     def noisy(*args, **kwargs):
         warnings.warn("tail too short for the GPD fit", UserWarning)
