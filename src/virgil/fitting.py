@@ -2250,6 +2250,9 @@ def _value_and_gradient(problem, template, scale, x):
 
 
 # deliberate: the L-BFGS-B host loop, kept apart from fit
+TRACE = []
+
+
 def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
     """Box-constrained fit by scipy's L-BFGS-B (Byrd et al. 1995; Zhu et al. 1997).
 
@@ -2274,7 +2277,9 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
 
     def evaluate(x):
         value, grad = _value_and_gradient(problem, z0, scale, np.array(x))
-        return float(value), onp.array(grad, float)
+        v_, g_ = float(value), onp.array(grad, float)
+        TRACE.append((v_, g_, onp.array(x, float)))
+        return v_, g_
 
     def projected(x, grad):
         return _projected_norm(x, grad, lower, upper)
