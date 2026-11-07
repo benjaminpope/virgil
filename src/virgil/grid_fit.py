@@ -28,6 +28,7 @@ from ._grid import (
     resolve_grid_keys,
     warn_unconverged,
 )
+from . import _gauss_newton
 from ._deprecate import old_order, renamed
 from ._marginal import gauss_legendre
 from .inference import _ambient_dtype, laplace_parameter_uncertainty
@@ -48,17 +49,16 @@ def _flux_converged(grad, curvature, loglike):
 
     The log likelihood still to gain is estimated by the Newton decrement
     g²/(2|c|), exact for a quadratic. A point has converged when that is
-    below the rounding error of the log likelihood itself (10 ulp of
-    max(|ℓ|, 1), for the accumulated sum): a smaller gain cannot be told from
-    rounding in this dtype and costs fewer nats than the rounding error. (It
-    replaces a gate of a quarter σ on the flux, which had no derivation:
-    that is 0.03 nats, far above float64 rounding.)
+    at most `_gauss_newton.rounding_dtol` of ``loglike``: 10 ulp of
+    max(|ℓ|, 1), the rounding error of the sum (Higham 2002, §4.2; ℓ is
+    -½Σr², terms of one sign, so |ℓ| is Σ|ℓᵢ|). A smaller gain cannot be
+    told from rounding in this dtype. In float32 at ℓ = -5000 that leaves
+    offsets of up to ~0.1σ (6e-3 nats = ½(0.11σ)²·|c|σ²), as the gate it
+    replaces (a quarter σ on the flux, with no derivation) noted.
     """
-    resolution = (
-        10 * np.finfo(loglike.dtype).eps * np.maximum(np.abs(loglike), 1.0)
-    )
     return (curvature < 0.0) & (
-        0.5 * grad**2 / np.abs(curvature) <= resolution
+        0.5 * grad**2 / np.abs(curvature)
+        <= _gauss_newton.rounding_dtol(loglike)
     )
 
 

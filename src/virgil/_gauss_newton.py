@@ -59,6 +59,17 @@ def curvature(problem, z):
     return 0.5 * (F + F.T)
 
 
+def rounding_dtol(value):
+    """The decrement (nats) below which Φ cannot tell two points apart.
+
+    10 ulp of max(|Φ|, 1): Φ is a sum of n terms, whose rounding error is at
+    most about log2(n) ε Σ|xᵢ| for tree-wise summation (Higham 2002, §4.2),
+    and log2(n) ≲ 10 for n up to 10³ terms; Σ|xᵢ| is |Φ| for a sum of terms of
+    one sign (a chi-squared), and the floor of 1 is one nat.
+    """
+    return 10 * np.finfo(value.dtype).eps * np.maximum(np.abs(value), 1.0)
+
+
 def _held(z, g, lower, upper):
     """The ε-active set: coordinates whose descent direction leaves the box."""
     rel = max(_BOUND_EPS, 10 * np.finfo(z.dtype).eps)
@@ -152,6 +163,8 @@ def _advance(problem, state, lower, upper, gtol, dtol, limit):
     delta = _solve_free(F, g, free, _LAM_FLOOR)
     dec = -0.5 * np.sum(np.where(free, g * delta, 0.0))
     dec = np.where(np.isfinite(dec), dec, np.inf)
+    # dtol=None (NaN here) is the rounding resolution of the current Φ
+    dtol = np.where(np.isnan(dtol), rounding_dtol(value), dtol)
     converged = (gnorm <= gtol) | (dec <= dtol)
     # Damping that ran away without meeting a criterion is a stall, reported
     # as such (callers name it "the damping limit"); it is never converged.
@@ -221,6 +234,8 @@ def solve(
         Stop when the projected gradient's infinity norm is ≤ ``gtol`` or the
         Newton decrement is ≤ ``dtol``. A tolerance finer than
         the rounding error of Φ cannot be met: the run ends ``STALLED``.
+        ``dtol=None`` is that rounding error at the current Φ
+        (`rounding_dtol`): the finest decrement Φ can resolve.
     max_steps
         Maximum iterations (accepted and rejected) in this call, at least 1.
     """
@@ -242,6 +257,6 @@ def solve(
         bound(lower, -np.inf),
         bound(upper, np.inf),
         np.asarray(gtol, dtype),
-        np.asarray(dtol, dtype),
+        np.asarray(np.nan if dtol is None else dtol, dtype),
         np.asarray(max_steps, np.int32),
     )

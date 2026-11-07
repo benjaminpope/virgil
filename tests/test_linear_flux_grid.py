@@ -397,6 +397,13 @@ def test_flux_convergence_has_no_quarter_sigma_gate():
     assert not bool(_flux_converged(f32(0.2 * 10.0), c, ll))
     assert bool(_flux_converged(f32(np.sqrt(2 * 100.0 * 1e-3)), c, ll))
     assert not bool(_flux_converged(f32(0.0), f32(1.0), ll))  # not a maximum
+    # the allowance scales with |ℓ|: a 5e-3 nat decrement is rounding at
+    # ℓ = -5000 (resolution 6e-3) but real at ℓ = -0.5 (1.2e-6)
+    g = f32(np.sqrt(2 * 100.0 * 5e-3))
+    assert bool(_flux_converged(g, c, ll))
+    assert not bool(_flux_converged(g, c, f32(-0.5)))
+    # 6e-3 nats at c = -100 is an offset of ~0.1σ
+    assert 0.1 < np.sqrt(2 * 6e-3 / 100.0) * 10.0 < 0.12
 
 
 def test_optimized_flux_grid_converges_everywhere_in_float32():

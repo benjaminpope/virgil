@@ -419,9 +419,10 @@ def test_the_dense_guides_refuse_more_coordinates_than_the_limit(monkeypatch):
 def test_a_noisier_loss_never_settles_more_easily():
     """585#9: ``drop <= 2 se`` passed a run the more, the noisier it was.
 
-    The same mean losses (a drop of 0.3 nat between windows) pass with a
+    The same mean losses (a drop of 0.02 nat between windows) pass with a
     small standard error and fail with a large one; a run too noisy to
-    resolve one nat fails even with no drop at all.
+    resolve one nat fails even with no drop at all; and a fall of 0.3 nat
+    that a small standard error measures (the #665 rule passed it) fails.
     """
     from virgil.svi import _loss_settled
 
@@ -437,12 +438,15 @@ def test_a_noisier_loss_never_settles_more_easily():
         out[:window] += drop
         return out
 
-    assert _loss_settled(losses(0.1, 0.3), window)
-    assert not _loss_settled(losses(10.0, 0.3), window)
+    assert _loss_settled(losses(0.1, 0.02), window)
+    assert not _loss_settled(losses(0.1, 0.3), window)  # measured, 21 se
+    assert not _loss_settled(losses(10.0, 0.02), window)
     assert not _loss_settled(losses(10.0, 0.0), window)
     assert not _loss_settled(losses(0.1, 3.0), window)  # a real fall
     # Monotone in the noise at a fixed drop.
-    verdicts = [_loss_settled(losses(s, 0.3), window) for s in (0.05, 0.5, 5)]
+    verdicts = [
+        _loss_settled(losses(s, 0.005), window) for s in (0.05, 0.5, 5)
+    ]
     assert verdicts == sorted(verdicts, reverse=True)
 
 

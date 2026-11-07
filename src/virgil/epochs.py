@@ -1916,7 +1916,7 @@ def _refine_marginal(x0, dof, d64, surface, bounds, diam=None, amp_range=None):
         onp.asarray(x0, float),
         lower=[b[0] for b in bounds],
         upper=[b[1] for b in bounds],
-        dtol=_REFINE_DTOL,
+        dtol=None,
         max_steps=200,
     )
     stop = int(state.stop)
@@ -2517,10 +2517,6 @@ RESOLVE_NATS = 5.0
 # 10⁴, and one of 1.5 λ/B_max has crossed the first visibility null.
 _DIAM_FRACTIONS = (0.03, 0.06, 0.12, 0.25, 0.4, 0.6, 0.9, 1.3)
 # A position is searched within this many resolution elements of its start.
-# Newton decrement (nats) at which a refined mode has converged, as for
-# ``aliases._DTOL``. The kernel cannot reach a decrement below the rounding
-# error of Φ (10 ulp of |Φ|: 1e-12 once Φ > 450), which it reports STALLED.
-_REFINE_DTOL = 1e-9
 _REFINE_WINDOW = 3.0
 
 

@@ -2241,7 +2241,17 @@ doi = "10.1080/01621459.1995.10476572"
 verified = true
 verified_via = "crossref"
 used_in = ["virgil.svi:_loss_settled"]
-note = "JASA 90, 773; a log Bayes factor below 1 is not worth more than a bare mention: the one-nat settling tolerance of the SVI loss"
+note = "JASA 90, 773; the nat scale of a log Bayes factor (below 1: not worth more than a bare mention), the scale against which the SVI loss's remaining fall is capped; the cap is a modelling choice, not Kass & Raftery's"
+
+[ref.higham2002]
+authors = "Higham"
+year = 2002
+title = "Accuracy and Stability of Numerical Algorithms"
+doi = "10.1137/1.9780898718027"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil._gauss_newton:rounding_dtol", "virgil.grid_fit:_flux_converged"]
+note = "SIAM, 2nd ed., section 4.2: the rounding error of a sum of n terms is at most about log2(n) eps sum|x_i| for tree-wise summation"
 
 [ref.morozov1966]
 authors = "Morozov"

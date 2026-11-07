@@ -27,7 +27,7 @@ from . import _gauss_newton
 from ._geometry import fringe_scales
 from ._precision import cast_tree, run_in
 from .aliases import _epoch_residuals, _UDBinary
-from .epochs import _REFINE_DTOL, _REFINE_WINDOW, Epochs, _Surface
+from .epochs import _REFINE_WINDOW, Epochs, _Surface
 from .likelihood import model_loglike, whitened_residuals
 from .models import OrbitalBinary
 
@@ -315,7 +315,7 @@ def _summarize(d, positions, i, diam, amp_range):
                 z0,
                 lower=lo,
                 upper=hi,
-                dtol=_REFINE_DTOL,
+                dtol=None,
                 max_steps=200,
             )
             zj = state.z
