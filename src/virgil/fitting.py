@@ -2039,10 +2039,14 @@ def _impute(key, d):
     finite = np.isfinite(d)
     if bool(np.all(finite)):
         return d
+    replacement = (
+        "the block's largest finite entry"
+        if bool(np.any(finite))
+        else "zero, so the block gets a flat scale"
+    )
     warnings.warn(
         f"preconditioner diagonal of '{key}' has {int(np.sum(~finite))}/"
-        f"{d.size} non-finite entries; replaced by the block's largest finite "
-        "entry",
+        f"{d.size} non-finite entries; replaced by {replacement}",
         RuntimeWarning,
         stacklevel=external_stacklevel(),
     )

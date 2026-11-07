@@ -649,5 +649,7 @@ def test_non_finite_diagonal_entries_are_imputed_with_a_warning():
     with pytest.warns(RuntimeWarning, match="non-finite"):
         out = onp.asarray(_impute("x", d))
     onp.testing.assert_array_equal(out, [1.0, 4.0, 4.0, 2.0, 4.0])
+    with pytest.warns(RuntimeWarning, match="flat scale"):
+        _impute("x", np.asarray([onp.nan, onp.nan]))
     clean = np.asarray([1.0, 2.0])
     onp.testing.assert_array_equal(_impute("x", clean), clean)
