@@ -393,7 +393,7 @@ def test_the_census_simulates_and_labels_in_float64(monkeypatch):
     # _labels: the state it scores is float64 whatever the ambient mode
     seen_state = []
 
-    def peak_terms(cat, ln_s, jitter, state, dtype):
+    def peak_terms(cat, ln_s, jitter, state, dtype, extra=None):
         seen_state.append((jax.config.jax_enable_x64, state.dtype))
         return np.zeros((state.shape[0], 1), dtype)
 
