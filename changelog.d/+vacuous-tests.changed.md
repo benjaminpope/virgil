@@ -1,0 +1,1 @@
+Tests: the injection-limit bound, NUTS divergence count, scale-eigenvalue vote, `error_scale` fixed-point and optimized-grid vote assertions are replaced by checks against independently derived values (scipy chi-squared threshold, injected noise scale, per-cell dense flux scan), each shown to fail on a mutant.
