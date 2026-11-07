@@ -235,7 +235,7 @@ No warnings.
 ## Pixel types and regularizers
 
 The softmax image of the fits above keeps the brightness positive and the flux separate, but it can never reach exactly zero. Two other pixel types suit particular regularizers. Both are a [`LinearImage`][virgil.models.LinearImage], whose total flux is the sum of its pixels (there is no separate flux to fit):
-- **Maximum entropy: √I pixels** (`parametrisation="sqrt"`). The fitted array is the square root of the flux, so the flux `x²` is positive without a bound, and entropy keeps its interior minimum. The metric `4I` of these coordinates is that of entropic mirror descent, which conditions the problem for the quasi-Newton solver.
+- **Maximum entropy: √I pixels** (`parametrisation="sqrt"`). The fitted array is the square root of the flux, so the flux `x²` is positive without a bound, and entropy keeps its interior minimum. A gradient step in x moves I by −4I ∂J/∂I, the entropic mirror-descent preconditioner up to a factor of 4, which conditions the problem for the quasi-Newton solver.
 - **TSV, TV and L1: bounded linear pixels** (`parametrisation="linear"`) with `fit(..., method="lbfgsb")`. These penalties are minimized at exactly zero pixels, and in square-root coordinates a zero pixel is a flat, slow stationary point. L-BFGS-B takes non-negativity as a box bound on the pixels instead, so zeros are reached in finite steps.
 
 The parametrization changes how the optimizer moves, not the problem: both minimize ½χ² + wR over non-negative fluxes, so the image at the optimum is the same.
@@ -244,7 +244,7 @@ Put a `LinearImage` in a `System` with a fixed-flux component (a star), or use m
 
 ## A small worked example
 
-A small simulated image on the AMI coverage of part 1: a smooth Gaussian truth, with noise at the quoted error bars. The folded cell below is setup.
+A small simulated image on a coarse AMI grid (0.7 m pitch): a smooth Gaussian truth, with noise at the quoted error bars. The folded cell below is setup.
 
 ??? note "Code"
 
@@ -257,7 +257,6 @@ A small simulated image on the AMI coverage of part 1: a smooth Gaussian truth, 
     import numpyro.distributions as dist
 
     from virgil import CalibrationNuisance, ComplexVisData
-    from virgil._utils import mas2rad
     from virgil.coverage import ami_grid_record
     from virgil.fitting import fit, kkt_report
     from virgil.imaging import MaxEntropy, image_priors, l_curve
@@ -265,6 +264,8 @@ A small simulated image on the AMI coverage of part 1: a smooth Gaussian truth, 
     from virgil.oidata import OIData
     from virgil.radio import fit_staged_nuisances
 
+
+    # The example runs in float64; it comes after every cell above, which are unaffected.
     jax.config.update("jax_enable_x64", True)
     warnings.filterwarnings("ignore", message=".*cannot see inside a function model.*")
 
@@ -313,7 +314,7 @@ A loss that has stopped falling is not a converged fit: the optimizer may have g
 - **`band_limit`.** For a lone maximum entropy, the power of ln b beyond the data's highest spatial frequency. It is about 1 at an optimum; larger means structure the data cannot constrain.
 - **Nuisances.** The gradient of every other fitted parameter is reported too.
 
-`converged` is true only when all of these pass. A two-step fit shows what failure looks like.
+`converged` is true only when all of these pass (the nuisance gradients only when `start=` is passed). A two-step fit shows what failure looks like.
 
 ```python
 best = [MaxEntropy(choice.weight)]
@@ -354,7 +355,7 @@ Here three observations have gains 1.1, 1.0 and 0.9, and unequal weights. The ga
     ```python
     rng = onp.random.default_rng(0)
     npts = 450
-    radius = 0.4 / (2 * mas2rad * scale) * onp.sqrt(rng.uniform(0.05, 1, npts))
+    radius = 0.4 / (2 * (onp.pi / (180 * 3600e3)) * scale) * onp.sqrt(rng.uniform(0.05, 1, npts))
     angle = rng.uniform(0, 2 * onp.pi, npts)
     u, v = radius * onp.cos(angle), radius * onp.sin(angle)
     obs = onp.repeat(onp.arange(3), 150)
@@ -402,6 +403,8 @@ gains of the others, relative to it: [1.1 0.9]
 failed (a gain within 5% of its box edge): False
 image block converged (kkt_report): False
 ```
+
+## Summary
 
 RML turns the reconstruction into an optimization of ½χ² + wR:
 - **A starting image.** `starting_image` builds one from a parametric fit (moments) or from the dirty image, with a sensible grid and a hole under the star. With coverage this good, both starts lead to the same image.
