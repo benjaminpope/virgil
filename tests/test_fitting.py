@@ -122,6 +122,33 @@ def test_bijections_keep_parameters_in_their_support():
     assert -400.0 < stretched["dra"] < 400.0
 
 
+@pytest.mark.parametrize(
+    "flux_prior, flux_start",
+    [
+        (dist.Uniform(0.0, 0.5), 0.0),
+        (dist.HalfNormal(0.1), 0.0),
+        (dist.HalfNormal(0.1), -0.01),  # outside the support
+    ],
+)
+def test_a_start_on_a_bound_is_nudged_inside_it(flux_prior, flux_start):
+    priors = {**PRIORS, "flux": flux_prior}
+    start = BinaryModelCartesian(400.0, -70.0, 0.01)
+    objective = _Objective(start, priors, DATA)
+    # dra is on its upper bound, flux on (or past) its lower one.
+    z = objective.init({"dra": 400.0, "ddec": -70.0, "flux": flux_start})
+    assert all(np.all(np.isfinite(v)) for v in z.values())
+    values = objective.constrain(z)
+    assert abs(values["dra"] - 400.0) < 0.1  # not the prior mean, 0
+    assert 0.0 < values["flux"] < 1e-3
+    assert np.isfinite(objective.loss(z))
+
+
+def test_a_non_finite_start_is_rejected_by_path():
+    objective = _Objective(START, PRIORS, DATA)
+    with pytest.raises(ValueError, match="ddec"):
+        objective.init({"dra": 140.0, "ddec": float("nan"), "flux": 0.01})
+
+
 def test_residuals_and_loss_are_consistent():
     objective = _Objective(START, PRIORS, DATA)
     z0 = objective.init()

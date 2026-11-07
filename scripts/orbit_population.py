@@ -74,6 +74,7 @@ from scipy import stats
 
 from virgil import _orbit_coordinates as oc
 from virgil import orbit_cells as oc_cells
+from virgil._precision import run_in
 from virgil.mode_search import ESS_FAIL, M_MIN, W
 from virgil.night_summaries import NightPeak, NightSummary
 from virgil.orbits import KeplerOrbit
@@ -813,48 +814,54 @@ def run_population(seed, start, n_sys, oracle, equiv_every, persist=None):
     """The records of systems ``start .. start + n_sys - 1`` of ``seed``."""
     root = jax.random.key(seed)
     rows = []
-    for i in range(start, start + n_sys):
-        rng, pit_rng = streams(seed, i)
-        u = float(pit_rng.uniform())  # consumed whatever the status
-        key = jax.random.fold_in(root, i)
-        nights = draw_nights(rng)
-        default, fit = fit_domain(nights)
-        # the selection event: a log-uniform P on P_TRUE inside the default
-        # domain; given it, P is log-uniform on the fit domain (drawn in
-        # draw_system, the domain being a function of the nights only)
-        p_try = _loguniform(rng, *P_TRUE)
-        base = dict(
-            period=p_try, a=nights["a"], rel=nights["rel"],
-            k=len(nights["times"]), p_cut=default.p_cut, p_max=default.p_max,
-        )  # fmt: skip
-        if fit is None or not default.p_cut <= p_try <= default.p_max:
-            row = {**base, "status": "outside_domain"}
-        else:
-            sysd = None
-            try:
-                sysd = draw_system(rng, nights, fit)
-                store = {} if persist else None
-                row = run_one(
-                    sysd, fit, key, u, oracle=oracle,
-                    equiv=bool(equiv_every) and i % equiv_every == 0,
-                    store=store,
-                )  # fmt: skip
-                if store:
-                    onp.savez_compressed(
-                        f"{persist}_s{seed}_{i}.npz",
-                        git_hash=git_hash(),
-                        seed=seed,
-                        sys=i,
-                        **store,
-                    )
-            except Exception as err:  # an error is a recorded failure
-                row = {**base, "status": "error", "error": repr(err)[:200]}
-                if sysd is not None:
-                    row.update(describe(sysd, fit))
-        rows.append(dict(seed=seed, sys=i, **row))
-        print(
-            i, row.get("status"), f"{row.get('seconds', 0):.0f}s", flush=True
-        )
+    # float64 throughout: the simulator and the inlier set run outside the
+    # fit, and a float32 mean anomaly is off by ~σ/a for short periods
+    with run_in("float64"):
+        for i in range(start, start + n_sys):
+            rng, pit_rng = streams(seed, i)
+            u = float(pit_rng.uniform())  # consumed whatever the status
+            key = jax.random.fold_in(root, i)
+            nights = draw_nights(rng)
+            default, fit = fit_domain(nights)
+            # the selection event: a log-uniform P on P_TRUE inside the default
+            # domain; given it, P is log-uniform on the fit domain (drawn in
+            # draw_system, the domain being a function of the nights only)
+            p_try = _loguniform(rng, *P_TRUE)
+            base = dict(
+                period=p_try, a=nights["a"], rel=nights["rel"],
+                k=len(nights["times"]), p_cut=default.p_cut, p_max=default.p_max,
+            )  # fmt: skip
+            if fit is None or not default.p_cut <= p_try <= default.p_max:
+                row = {**base, "status": "outside_domain"}
+            else:
+                sysd = None
+                try:
+                    sysd = draw_system(rng, nights, fit)
+                    store = {} if persist else None
+                    row = run_one(
+                        sysd, fit, key, u, oracle=oracle,
+                        equiv=bool(equiv_every) and i % equiv_every == 0,
+                        store=store,
+                    )  # fmt: skip
+                    if store:
+                        onp.savez_compressed(
+                            f"{persist}_s{seed}_{i}.npz",
+                            git_hash=git_hash(),
+                            seed=seed,
+                            sys=i,
+                            **store,
+                        )
+                except Exception as err:  # an error is a recorded failure
+                    row = {**base, "status": "error", "error": repr(err)[:200]}
+                    if sysd is not None:
+                        row.update(describe(sysd, fit))
+            rows.append(dict(seed=seed, sys=i, **row))
+            print(
+                i,
+                row.get("status"),
+                f"{row.get('seconds', 0):.0f}s",
+                flush=True,
+            )
     return rows
 
 

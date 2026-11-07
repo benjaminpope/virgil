@@ -24,7 +24,7 @@ Stop codes: ``CONVERGED`` (projected gradient ≤ ``gtol``, Newton decrement
 `State`, counting ``max_steps`` from ``state.steps``.
 
 Private; imports nothing from virgil. The algorithm, tolerances and tests
-are in ``design/gauss_newton_plan.md``.
+are in ``design/history/gauss_newton_plan.md``.
 """
 
 import equinox as eqx
