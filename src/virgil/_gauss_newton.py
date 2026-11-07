@@ -37,6 +37,11 @@ _LAM_START = 1e-3
 _LAM_FLOOR = 1e-12
 _LAM_STALL = 1e10
 _BOUND_EPS = 1e-10
+# The decrement (nats) a float64 run reaches whatever Φ: the pre-#665 value of
+# the refinement callers, kept so their acceptance set is unchanged. Not
+# derived; the decrement is computed from the gradient, whose rounding is not
+# bounded by Φ's.
+_DTOL_AUTO = 1e-12
 
 
 class State(eqx.Module):
@@ -167,8 +172,10 @@ def _advance(problem, state, lower, upper, gtol, dtol, limit):
     delta = _solve_free(F, g, free, _LAM_FLOOR)
     dec = -0.5 * np.sum(np.where(free, g * delta, 0.0))
     dec = np.where(np.isfinite(dec), dec, np.inf)
-    # dtol=None (NaN here) is the rounding resolution of the current Φ
-    dtol = np.where(np.isnan(dtol), rounding_dtol(value), dtol)
+    # dtol=None (NaN here): the larger of _DTOL_AUTO and Φ's rounding resolution
+    dtol = np.where(
+        np.isnan(dtol), np.maximum(_DTOL_AUTO, rounding_dtol(value)), dtol
+    )
     converged = (gnorm <= gtol) | (dec <= dtol)
     # Damping that ran away without meeting a criterion is a stall, reported
     # as such (callers name it "the damping limit"); it is never converged.
@@ -238,8 +245,9 @@ def solve(
         Stop when the projected gradient's infinity norm is ≤ ``gtol`` or the
         Newton decrement is ≤ ``dtol``. A tolerance finer than
         the rounding error of Φ cannot be met: the run ends ``STALLED``.
-        ``dtol=None`` is that rounding error at the current Φ
-        (`rounding_dtol`): the finest decrement Φ can resolve.
+        ``dtol=None`` is the larger of 1e-12 and that rounding error at the
+        current Φ (`rounding_dtol`), the acceptance set of the refinement
+        callers before #665 (a tolerance of 1e-12, or the rounding rescue).
     max_steps
         Maximum iterations (accepted and rejected) in this call, at least 1.
     """
