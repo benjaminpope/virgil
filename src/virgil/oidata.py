@@ -2028,8 +2028,7 @@ def _good_samples(values, errors, flag, n_samples, name, operator=False):
     """Mask of unflagged, usable samples, or ``None`` if all are good.
 
     Already-projected data (size not ``n_samples``) cannot be flagged per
-    sample, so they must be finite with non-negative finite errors (a zero
-    projected error is rejected where the data are whitened).
+    sample, so they must be finite with positive finite errors.
     """
     if values.size != n_samples:
         if flag is not None:
@@ -2037,15 +2036,11 @@ def _good_samples(values, errors, flag, n_samples, name, operator=False):
                 f"{name}_flag was given, but {name} has {values.size} values "
                 f"for {n_samples} samples (it looks already projected)."
             )
-        if not (
-            onp.all(onp.isfinite(values))
-            and onp.all(onp.isfinite(errors))
-            and onp.all(onp.asarray(errors) >= 0)
-        ):
+        if not onp.all(_valid_samples(values, errors)):
             raise ValueError(
                 f"{name} has {values.size} values for {n_samples} samples (it "
                 "looks already projected), and some are not finite or have a "
-                "negative or non-finite error: projected data cannot be "
+                "non-positive or non-finite error: projected data cannot be "
                 "flagged, so remove them first."
             )
         return None

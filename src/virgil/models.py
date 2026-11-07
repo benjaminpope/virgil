@@ -54,7 +54,7 @@ from ._geometry import (
     undo_elliptical_transf_spat_freq,
 )
 from . import _elr
-from ._deprecate import renamed
+from ._deprecate import external_stacklevel, renamed
 from .harmonics import cone_coefficients, rim_coefficients
 from ._utils import (
     FWHM_PER_SIGMA,
@@ -4745,8 +4745,8 @@ class MultipoleDisk(Component):
         phase of a ``height``'s lift (at the current parameter values, which
         must be concrete), rounded up to a
         multiple of 8 (but at most the 144 nodes buildable for a Gauss-Laguerre
-        tail). A starting point only: check convergence by
-        doubling ``n_r``.
+        tail), with a warning when it has to step down. A starting point
+        only: check convergence by doubling ``n_r``.
 
         Parameters
         ----------
@@ -4778,10 +4778,10 @@ class MultipoleDisk(Component):
                 n -= 8
         if n < wanted:
             warnings.warn(
-                f"suggest_n_r wants {wanted} radial nodes but the profile can "
-                f"build at most {n}: the Hankel quadrature may be under-"
-                "resolved on the longest baselines.",
-                stacklevel=2,
+                f"suggest_n_r wants {wanted} radial nodes but the profile "
+                f"cannot build that many; using {n}: the Hankel quadrature "
+                "may be under-resolved on the longest baselines.",
+                stacklevel=external_stacklevel(),
             )
         return n
 

@@ -830,7 +830,8 @@ def test_an_annulus_keeps_the_plain_prior():
 def test_the_origin_taper_is_set_by_the_correlation_length_not_the_grid():
     # The same physical field (same ell_r, same r_max) sampled on two radial
     # grids: the order-m variance at a given radius follows tanh(r/ell)^2m,
-    # whatever n_r is. Nodes at r = 4 exist on both grids (spacings 1, 0.5).
+    # whatever n_r is. Nodes at r = 1 exist on both grids (spacings 1, 0.5); there main's
+    # spacing taper gives 0.19 (n_r = 9) and 0.80 (n_r = 17) against 0.0098.
     ell, m, n_theta = 2.0, 3, 16
     var = {}
     for n_r in (9, 17):
@@ -840,8 +841,8 @@ def test_the_origin_taper_is_set_by_the_correlation_length_not_the_grid():
             [onp.asarray(MultipoleField(zi, **kw).polar_values()) for zi in z]
         )
         v = (onp.abs(onp.fft.fft(vals, axis=2)) ** 2).mean(axis=0) / n_theta
-        var[n_r] = (v[2 * (n_r - 1) // 4, m], v[-1, m])  # r = 4 and r = 8
+        var[n_r] = (v[(n_r - 1) // 8, m], v[-1, m])  # r = 1 and r = 8
     ratios = [a / b for a, b in var.values()]
-    expected = (onp.tanh(4.0 / ell) / onp.tanh(8.0 / ell)) ** (2 * m)
+    expected = (onp.tanh(1.0 / ell) / onp.tanh(8.0 / ell)) ** (2 * m)
     for r in ratios:
         assert r == pytest.approx(expected, rel=0.2)

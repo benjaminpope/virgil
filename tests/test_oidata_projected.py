@@ -27,8 +27,9 @@ def test_projected_data_build_when_finite():
         (onp.array([0.9, onp.nan, 0.9, 0.9, 0.9]), onp.full(5, 0.01)),
         (onp.full(5, 0.9), onp.array([0.01, onp.inf, 0.01, 0.01, 0.01])),
         (onp.full(5, 0.9), onp.array([0.01, -0.01, 0.01, 0.01, 0.01])),
+        (onp.full(5, 0.9), onp.array([0.01, 0.0, 0.01, 0.01, 0.01])),
     ],
 )
-def test_projected_data_must_be_finite_with_non_negative_errors(vis, d_vis):
+def test_projected_data_must_be_finite_with_positive_errors(vis, d_vis):
     with pytest.raises(ValueError, match="already projected"):
         OIData(_record(vis, d_vis))
