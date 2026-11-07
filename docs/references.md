@@ -73,6 +73,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `_solve_free` | [Marquardt (1963)](#marquardt1963), [doi:10.1137/0111030](https://doi.org/10.1137/0111030) | after |
 | `_solve_free` | [Moré (1978)](#more1978), [doi:10.1007/BFb0067700](https://doi.org/10.1007/BFb0067700) | after |
+| `rounding_dtol` | [Higham (2002)](#higham2002), [doi:10.1137/1.9780898718027](https://doi.org/10.1137/1.9780898718027) | after |
 
 ### `virgil._geometry`
 
@@ -205,6 +206,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | Symbol | Source | Relation |
 |---|---|---|
 | `(module)` | [Jeffreys (1946)](#jeffreys1946), [ADS](https://ui.adsabs.harvard.edu/abs/1946RSPSA.186..453J/abstract), [doi:10.1098/rspa.1946.0056](https://doi.org/10.1098/rspa.1946.0056) | after |
+| `_flux_converged` | [Higham (2002)](#higham2002), [doi:10.1137/1.9780898718027](https://doi.org/10.1137/1.9780898718027) | after |
 | `linear_flux_grid` | [Gallenne et al. (2015)](#gallenne2015), [arXiv:1505.02715](https://arxiv.org/abs/1505.02715), [ADS](https://ui.adsabs.harvard.edu/abs/2015A&A...579A..68G/abstract) | after |
 | `linear_flux_grid` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
 
@@ -655,6 +657,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="hartkopf1989"></a>**Hartkopf, McAlister & Franz (1989)**. Binary star orbits from speckle interferometry. II. Combined visual-spectroscopic orbits of 31 close binaries. [ADS](https://ui.adsabs.harvard.edu/abs/1989AJ.....98.1014H/abstract), [doi:10.1086/115193](https://doi.org/10.1086/115193). AJ 98, 1014; bibcode 1989AJ.....98.1014H.
 - <a id="jaxoplanet"></a>**Hattori et al. (2024)**. jaxoplanet. [ADS](https://ui.adsabs.harvard.edu/abs/2024zndo..10736936H/abstract), [doi:10.5281/zenodo.10736936](https://doi.org/10.5281/zenodo.10736936), [GitHub](https://github.com/exoplanet-dev/jaxoplanet). Zenodo; https://github.com/exoplanet-dev/jaxoplanet.
 - <a id="hesterberg1995"></a>**Hesterberg (1995)**. Weighted average importance sampling and defensive mixture distributions. [doi:10.1080/00401706.1995.10484303](https://doi.org/10.1080/00401706.1995.10484303). Technometrics 37, 185; a prior share in the proposal bounds the importance weights by the likelihood maximum over the share.
+- <a id="higham2002"></a>**Higham (2002)**. Accuracy and Stability of Numerical Algorithms. [doi:10.1137/1.9780898718027](https://doi.org/10.1137/1.9780898718027). SIAM, 2nd ed., section 4.2: the rounding error of a sum of n terms is at most about log2(n) eps sum|x_i| for tree-wise summation; the bound used by rounding_dtol where the terms share a sign.
 - <a id="hillen2016"></a>**Hillen et al. (2016)**. Imaging the dust sublimation front of a circumbinary disk. [arXiv:1603.03023](https://arxiv.org/abs/1603.03023), [ADS](https://ui.adsabs.harvard.edu/abs/2016A&A...588L...1H/abstract), [doi:10.1051/0004-6361/201628125](https://doi.org/10.1051/0004-6361/201628125).
 - <a id="hoffman2014"></a>**Hoffman & Gelman (2011)**. The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo. [arXiv:1111.4246](https://arxiv.org/abs/1111.4246), [ADS](https://ui.adsabs.harvard.edu/abs/2011arXiv1111.4246H/abstract). NUTS; JMLR 15, 1593 (2014).
 - <a id="hogg2010recipes"></a>**Hogg, Bovy & Lang (2010)**. Data analysis recipes: Fitting a model to data. [arXiv:1008.4686](https://arxiv.org/abs/1008.4686), [ADS](https://ui.adsabs.harvard.edu/abs/2010arXiv1008.4686H/abstract).
@@ -670,7 +673,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="junklewitz2016"></a>**Junklewitz et al. (2016)**. RESOLVE: A new algorithm for aperture synthesis imaging of extended emission in radio astronomy. [arXiv:1311.5282](https://arxiv.org/abs/1311.5282), [ADS](https://ui.adsabs.harvard.edu/abs/2016A&A...586A..76J/abstract). A&A 586, A76; an IFT imaging algorithm for radio interferometry.
 - <a id="fouriever"></a>**Kammerer**. fouriever. [GitHub](https://github.com/kammerje/fouriever). comparison only: compare linear_flux_grid with its lincmap (closure/kernel phases only); no paper found. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="kammerer2020"></a>**Kammerer et al. (2020)**. Increasing the achievable contrast of infrared interferometry with an error correlation model. [arXiv:2011.01209](https://arxiv.org/abs/2011.01209), [ADS](https://ui.adsabs.harvard.edu/abs/2020A&A...644A.110K/abstract).
-- <a id="kass1995"></a>**Kass & Raftery (1995)**. Bayes factors. [doi:10.1080/01621459.1995.10476572](https://doi.org/10.1080/01621459.1995.10476572). JASA 90, 773; a log Bayes factor below 1 is not worth more than a bare mention: the one-nat settling tolerance of the SVI loss.
+- <a id="kass1995"></a>**Kass & Raftery (1995)**. Bayes factors. [doi:10.1080/01621459.1995.10476572](https://doi.org/10.1080/01621459.1995.10476572). JASA 90, 773; the nat scale of a log Bayes factor (below 1: not worth more than a bare mention), the scale against which the SVI loss's remaining fall is capped; the cap is a modelling choice, not Kass & Raftery's.
 - <a id="visr"></a>**Kennedy (2025)**. vis-r: a parametric visibility modelling code for radial profiles of discs. [arXiv:2502.17619](https://arxiv.org/abs/2502.17619), [ADS](https://ui.adsabs.harvard.edu/abs/2025RASTI...4....4D/abstract), [GitHub](https://github.com/drgmk/vis-r). RASTI (2025); github.com/drgmk/vis-r. Ideas only, no code copied.
 - <a id="kingma2015"></a>**Kingma & Ba (2014)**. Adam: A Method for Stochastic Optimization. [arXiv:1412.6980](https://arxiv.org/abs/1412.6980), [ADS](https://ui.adsabs.harvard.edu/abs/2014arXiv1412.6980K/abstract).
 - <a id="kingma2016"></a>**Kingma et al. (2016)**. Improving Variational Inference with Inverse Autoregressive Flow. [arXiv:1606.04934](https://arxiv.org/abs/1606.04934), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160604934K/abstract). IAF.
