@@ -157,11 +157,12 @@ def test_error_scale_rejects_bad_factors_and_pixel_images():
 def _assert_recovers_noise_scale(scale, truth, jac, n_data):
     """``scale`` is the injected noise scale to the chi-squared sampling error.
 
-    With the prior the data were drawn from, the whitened chi-squared at the
-    MAP is ``truth² (N - γ)`` times a chi-squared variate of ``N - γ`` degrees
-    of freedom over ``N - γ`` (MacKay 1992), where γ is computed here at the
-    *true* precision from the Jacobian's singular values. So ``scale²/truth²``
-    has relative standard deviation ``sqrt(2 / (N - γ))``; allow 3 of them.
+    For a MAP fitted at the true precision (data drawn from the prior, errors
+    quoted at the truth), the whitened chi-squared is ``truth² (N - γ)`` times
+    a chi-squared variate of ``N - γ`` degrees of freedom over ``N - γ``
+    (MacKay 1992), with γ computed here from the Jacobian's singular values.
+    So ``scale²/truth²`` has relative standard deviation ``sqrt(2 / (N - γ))``;
+    allow 3 of them.
     """
     lam = onp.linalg.svd(jac, compute_uv=False) ** 2
     beta = 1.0 / truth**2
@@ -174,22 +175,38 @@ def _assert_recovers_noise_scale(scale, truth, jac, n_data):
     )
 
 
+def _assert_mackay_fixed_point(scale, r, jac, n_data):
+    # s² = χ² / (N − γ) with γ = Σ βλ / (1 + βλ) at β = 1/s² itself
+    # (MacKay 1992, eqs. 4.9-4.10), not at β = 1; r and jac are from an
+    # independent jacfwd.
+    lam = onp.linalg.svd(jac, compute_uv=False) ** 2
+    beta = 1.0 / scale**2
+    gamma = onp.sum(beta * lam / (1.0 + beta * lam))
+    assert scale**2 == pytest.approx((r @ r) / (n_data - gamma), rel=1e-6)
+
+
 @pytest.mark.slow
 def test_error_scale_recovers_the_injected_noise_scale():
-    # Data drawn from the prior with noise 0.5 of the quoted errors: the
-    # estimate is 0.5 to the chi-squared sampling error, as derived in
-    # _assert_recovers_noise_scale from the true precision, not from the
-    # estimate's own fixed-point equation.
+    # Data drawn from the prior with noise 0.5 of the quoted errors. The fit
+    # is made at the true precision (errors rescaled by 0.5), so the scale of
+    # the rescaled data is 1 to the chi-squared sampling error, and the
+    # estimate on the quoted errors solves MacKay's fixed point.
     latent = jax.random.normal(jax.random.PRNGKey(6), (N, N))
     noisy = DATA.with_model(
         _gp_scene(latent, 1.5), key=jax.random.PRNGKey(7), noise_scale=0.5
     )
     start = _gp_scene(onp.zeros((N, N)), 1.5)
+    path = "env.log_brightness.latent"
     result = fit(start, image_priors(start), noisy)
     scale = error_scale(result.model, noisy)
-    path = "env.log_brightness.latent"
-    _, jac, _ = _hand_jacobian(result.model, noisy, [path])
-    _assert_recovers_noise_scale(scale, 0.5, jac, noisy.n_independent)
+    r, jac, _ = _hand_jacobian(result.model, noisy, [path])
+    _assert_mackay_fixed_point(scale, r, jac, noisy.n_independent)
+    rescaled = noisy.with_error_scale(0.5)
+    again = fit(start, image_priors(start), rescaled)
+    _, jac, _ = _hand_jacobian(again.model, rescaled, [path])
+    _assert_recovers_noise_scale(
+        error_scale(again.model, rescaled), 1.0, jac, rescaled.n_independent
+    )
 
 
 def test_evidence_helpers_reject_fitted_noise_and_model_lists():
@@ -760,11 +777,12 @@ def test_error_scale_of_two_images_counts_every_latent():
     n_latent = _NC**2 + _NE**2
 
     paths = ("compact.log_brightness.latent", "extended.log_brightness.latent")
-    _, jac, _ = _hand_jacobian(model, data, paths)
+    r, jac, _ = _hand_jacobian(model, data, paths)
     lam = onp.linalg.svd(jac, compute_uv=False) ** 2
-    gamma = onp.sum(lam / (1.0 + lam))  # at the injected noise scale, 1
+    beta = 1.0 / scale**2
+    gamma = onp.sum(beta * lam / (1.0 + beta * lam))
     assert gamma <= n_latent
-    _assert_recovers_noise_scale(scale, 1.0, jac, data.n_independent)
+    _assert_mackay_fixed_point(scale, r, jac, data.n_independent)
     only = error_scale(model, data, path="compact")
     assert only != scale
     blocks = error_scale(model, data, path=None, by_observable=True)

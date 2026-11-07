@@ -12,6 +12,7 @@ from virgil.grid_fit import (
     likelihood_grid,
     optimized_flux_grid,
 )
+from virgil._precision import cast_tree, run_in
 from virgil._grid import batch_size_or_default, resolve_grid_keys
 from virgil.grid_fit import _optimize_flux_grid
 from virgil.inference import laplace_cov
@@ -415,53 +416,70 @@ def test_likelihood_grid_with_paths_matches_model_class():
     )
 
 
-def _optimized(model, grid, flux_param):
+def _optimized(model, grid, flux_param, data):
     """``(log likelihood, converged)`` of the flux optimizer on a grid."""
     params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     _, best, success = _optimize_flux_grid(
-        oidata,
+        data,
         model,
         grid,
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
-        batch_size=batch_size_or_default(None, oidata),
+        batch_size=batch_size_or_default(None, data),
     )
     return onp.asarray(best), onp.asarray(success)
 
 
 def test_optimized_likelihood_grid_with_paths_matches_model_class():
-    # Every cell, against an independent dense flux scan over positive flux,
-    # which can only undershoot the maximum. A converged cell has |g| <
-    # 0.25 σ_f (σ_f = |curvature|^-1/2, the grid_fit convergence flag), so its
-    # log likelihood is within g²/(2|curvature|) <= 0.25²/2 of the maximum;
-    # two converged results differ by at most twice that. Float32 adds a few
-    # ulps at |log likelihood| ~ 1e3. A cell whose maximum is at negative flux
-    # can only beat the scan.
-    gate = 0.25**2 / 2
-    dense = onp.asarray(
-        likelihood_grid(
-            BinaryModelCartesian,
-            data=oidata,
-            grid={**samples_dict, "flux": onp.logspace(-6, -1, 400)},
+    # Every converged cell, in float64, against an independent dense flux scan
+    # over positive flux, which can only undershoot the maximum.
+    # `_flux_converged` certifies a cell to within a Newton decrement of
+    # 10 ulp of max(|ℓ|, 1) of its maximum, so a converged cell is at most
+    # that far below the scan. Two converged cells differ by at most twice
+    # that plus the two models' own disagreement in ℓ, measured as the largest
+    # gap between the two dense scans of the cell. A cell whose maximum is at
+    # negative flux can only beat the scan. (Float32 evaluation of ℓ is
+    # noisier than 10 ulp, so the bound is only meaningful in float64.)
+    with run_in("float64"):
+        data = cast_tree(oidata, "float64")
+        grids = cast_tree((samples_dict, _path_samples()), "float64")
+        scan = onp.logspace(-6, -1, 400)
+        dense_reference = onp.asarray(
+            likelihood_grid(
+                BinaryModelCartesian,
+                data=data,
+                grid={**grids[0], "flux": scan},
+            )
         )
-    ).max(axis=2)
-    composed, ok_composed = _optimized(
-        _composed_binary(), _path_samples(), "comp.flux"
-    )
-    reference, ok_reference = _optimized(
-        BinaryModelCartesian, samples_dict, "flux"
-    )
-    slack = 8 * onp.finfo(composed.dtype).eps * onp.abs(dense)
-    for result in (composed, reference):
-        assert onp.all(result >= dense - gate - slack)
+        dense_composed = onp.asarray(
+            likelihood_grid(
+                cast_tree(_composed_binary(), "float64"),
+                data=data,
+                grid={**grids[1], "comp.flux": scan},
+            )
+        )
+        composed, ok_composed = _optimized(
+            cast_tree(_composed_binary(), "float64"),
+            grids[1],
+            "comp.flux",
+            data,
+        )
+        reference, ok_reference = _optimized(
+            BinaryModelCartesian, grids[0], "flux", data
+        )
+    dense = dense_reference.max(axis=2)
+    model_gap = onp.abs(dense_composed - dense_reference).max(axis=2)
+    ulp10 = 10 * onp.finfo(composed.dtype).eps * onp.maximum(onp.abs(dense), 1)
+    for result, ok in ((composed, ok_composed), (reference, ok_reference)):
+        assert onp.all((result >= dense - ulp10)[ok])
+        # No silent non-convergence: a cell not certified must be one the
+        # scan cannot reach, because its maximum is at negative flux.
+        assert onp.all(ok | (result > dense))
     both = ok_composed & ok_reference
     assert onp.all(
-        onp.abs(composed - reference)[both] <= 2 * gate + slack[both]
+        (onp.abs(composed - reference) <= 2 * ulp10 + model_gap)[both]
     )
-    # Where the optimizer reports no convergence, the two inputs still agree
-    # to the same bound: they run the same model on the same data.
-    assert onp.all(onp.abs(composed - reference) <= 2 * gate + slack)
 
 
 def test_absil_limits_with_paths_matches_model_class():
