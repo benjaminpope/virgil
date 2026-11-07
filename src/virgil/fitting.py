@@ -1672,18 +1672,6 @@ def _map(fn, xs):
     return jax.lax.map(fn, xs, batch_size=min(_MAP_BATCH, len(xs)))
 
 
-def _exact_indices(sizes):
-    """Flat indices (static NumPy) of the blocks of at most ``_EXACT_BLOCK``
-    coordinates, given the block sizes in flat order."""
-    starts = onp.cumsum([0, *sizes])
-    parts = [
-        onp.arange(a, a + k)
-        for a, k in zip(starts, sizes)
-        if 0 < k <= _EXACT_BLOCK
-    ]
-    return onp.concatenate([*parts, onp.zeros(0, int)]).astype(onp.int32)
-
-
 def _with_exact(estimate, exact, entry):
     """``estimate`` with its entries at the NumPy indices ``exact`` replaced by
     ``entry`` mapped over them."""
@@ -1804,9 +1792,17 @@ def _fisher_diagonal(problem, z, probes, round=0):
     flat, unravel = problem.ravel(z)
     exact = None
     if probes is not None:
-        exact = _exact_indices(
-            [int(onp.size(z[k])) for k in problem.coordinate_keys]
-        )
+        # Blocks of at most _EXACT_BLOCK coordinates, as static flat indices.
+        sizes = [int(onp.size(z[k])) for k in problem.coordinate_keys]
+        starts = onp.cumsum([0, *sizes])
+        exact = onp.concatenate(
+            [
+                onp.arange(a, a + k)
+                for a, k in zip(starts, sizes)
+                if 0 < k <= _EXACT_BLOCK
+            ]
+            + [onp.zeros(0, int)]
+        ).astype(onp.int32)
     diagonal = _gn_diagonal(
         lambda x: problem.curvature_rows(unravel(x), skip_scalar=True),
         flat,
@@ -1824,9 +1820,7 @@ def _fisher_diagonal(problem, z, probes, round=0):
         def loss(theta):
             return sum(t.curvature_loss(p) for t, p in zip(scalar, theta))
 
-        curvature = _gn_params_diagonal(
-            params, loss, flat, probes, key, exact
-        )
+        curvature = _gn_params_diagonal(params, loss, flat, probes, key, exact)
         diagonal = diagonal + np.maximum(curvature, 0.0)
     metric = [r for r in problem.regularizers if hasattr(r, "metric_rows")]
     plain = [r for r in problem.regularizers if not hasattr(r, "metric_rows")]
