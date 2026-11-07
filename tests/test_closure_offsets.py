@@ -146,17 +146,53 @@ def test_three_telescopes_get_triangle_offsets_and_fold_baseline_into_them():
         assert onp.isfinite(float(model_loglike(TRUTH, d)))
 
 
-def test_supplied_modes_must_stay_in_a_frame():
-    data = _data()
-    n_phase = data.phi.size
-    within = onp.zeros(n_phase)
-    within[:3] = 0.01
-    assert data.with_closure_offsets(
-        modes=within
-    ).phase_offsets.groups_present == ("modes",)
-    across = onp.full(n_phase, 0.01)
-    with pytest.raises(ValueError, match="one frame"):
-        data.with_closure_offsets(modes=across)
+def _mode_loglike_change(frames, value):
+    """The log-likelihood change from a mode of ``value`` on every channel of
+    ``frames`` (width 1), and the dense Gaussian's. One offset δ ~ N(0, 1)
+    times the mode is common to those frames, so the sines (three telescopes:
+    one triangle per group) have covariance diag(σ²) + m mᵀ."""
+    data = _three_telescopes()
+    zero = data.with_closure_offsets(triangle=0.0)
+    mode = onp.zeros((1, data.phi.size))
+    for f in frames:
+        mode[0, f * N_WAVE : (f + 1) * N_WAVE] = value
+    with_mode = data.with_closure_offsets(modes=mode)
+    resid = onp.sin(onp.asarray(data.phi - data.with_model(TRUTH).phi))
+    sigma = onp.asarray(data.d_phi)
+    sel = mode[0] != 0
+    r, m = resid[sel], mode[0][sel]
+
+    def gaussian(m):
+        c = onp.diag(sigma[sel] ** 2) + onp.outer(m, m)
+        sign, logdet = onp.linalg.slogdet(c)
+        return -0.5 * r @ onp.linalg.solve(c, r) - 0.5 * logdet
+
+    got = float(model_loglike(TRUTH, with_mode)) - float(
+        model_loglike(TRUTH, zero)
+    )
+    return got, gaussian(m) - gaussian(0 * m)
+
+
+def test_a_mode_shared_by_two_frames_gives_the_common_offset_covariance():
+    # Two float64 pipelines (Woodbury blocks vs a dense solve) of O(1) terms
+    # agree to a few hundred ulp: 1e-12.
+    with jax.enable_x64(True):
+        got, expected = _mode_loglike_change(frames=(0, 1), value=0.05)
+    assert abs(expected) > 1e-3  # the mode matters
+    assert got == pytest.approx(expected, rel=1e-12, abs=1e-12)
+
+
+def test_single_frame_mode_is_unchanged():
+    # Reference: the same quantity from the code before spanning modes were
+    # allowed (float64, same data).
+    with jax.enable_x64(True):
+        data = _three_telescopes()
+        mode = onp.zeros((1, data.phi.size))
+        mode[0, :N_WAVE] = 0.01
+        got = float(
+            model_loglike(TRUTH, data.with_closure_offsets(modes=mode))
+        ) - float(model_loglike(TRUTH, data.with_closure_offsets(triangle=0.0)))
+    assert got == pytest.approx(-0.33868005245598454, abs=1e-12)
 
 
 def test_with_model_draws_offsets_common_to_the_channels():
