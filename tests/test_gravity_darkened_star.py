@@ -410,7 +410,6 @@ def test_plot_surface_returns_artist():
 
     fig, ax = plt.subplots()
     artist = GravityDarkenedStar(1.0, 0.8, 60.0, 30.0).plot_surface(ax)
-    star = GravityDarkenedStar(1.0, 0.8, 60.0, 30.0)
     # the coloured triangles are the visible ones, each a positive flux
     values = onp.asarray(artist.get_array())
     assert values.size > 0
