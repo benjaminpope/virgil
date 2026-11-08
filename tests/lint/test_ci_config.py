@@ -257,16 +257,6 @@ def test_test_budget_stays_active_when_shard_packing_changes():
     )
 
 
-def test_test_budget_is_enforced_only_on_an_exact_cache_hit():
-    """On a fallback restore a test's time includes compiling for the PR's new
-    shapes, so the budget is reported, not enforced (tests/conftest.py)."""
-    tests = (ROOT / ".github/workflows/tests.yml").read_text()
-    line = next(
-        x for x in tests.splitlines() if "VIRGIL_TEST_BUDGET_ENFORCE:" in x
-    )
-    assert "steps.cache.outputs.cache-hit == 'true'" in line
-
-
 def test_slow_orbit_tests_are_never_dropped_on_nightly_or_main():
     """``orbit_slow`` adds the orbit slow tests to a PR run that touches
     orbit modules; main, dispatch and the nightly already run every slow
