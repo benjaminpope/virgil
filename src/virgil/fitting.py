@@ -1651,6 +1651,18 @@ def _lbfgs_memory(memory, z):
 # Jacobian-vector product each); above, it is estimated from _DIAG_PROBES probes.
 _EXACT_DIAG = 1024
 _DIAG_PROBES = 16
+# When probing, every coordinate block of at most this size is still exact.
+# deliberate: a small nuisance block (gain, offset, flux, position) gets its probe
+# noise from cross-terms with every image pixel, so it is noisiest where its scale
+# matters; exact entries cost one JVP each, cheap for a block this small. It
+# shapes the preconditioner only, not the objective.
+_EXACT_BLOCK = 64
+# Exact columns run in vectorized chunks of this many; probes stay sequential,
+# as each holds a full vjp or hvp in memory.
+# deliberate: 16 columns per chunk is the batch size of h-greer/hubble precond.py;
+# a column is one jvp, so the chunk's memory is that of 16 jvps, small beside the
+# images that need probing.
+_MAP_BATCH = 16
 # A coordinate's curvature is floored at this fraction of its block's largest.
 # deliberate: chosen from a sweep over 1e-3…1e-12 in design/fit_preconditioning.md
 # ("Floor"): 1e-3 was the only floor at which every weight converged on both
@@ -1659,22 +1671,42 @@ _DIAG_PROBES = 16
 _DIAG_FLOOR = 1e-3
 
 
-def _gn_diagonal(rows, x, probes, key=None):
+def _map(fn, xs):
+    """``lax.map`` of the column function ``fn`` over ``xs`` in chunks of ``_MAP_BATCH``."""
+    return jax.lax.map(fn, xs, batch_size=min(_MAP_BATCH, len(xs)))
+
+
+def _with_exact(estimate, exact, entry):
+    """``estimate`` with its entries at the NumPy indices ``exact`` replaced by
+    ``entry`` mapped over them."""
+    if exact is None or len(exact) == 0:
+        return estimate
+    return estimate.at[exact].set(_map(entry, np.asarray(exact)))
+
+
+def _one_hot(i, n, dtype):
+    # Built from the traced index: a constant tangent lets XLA fold through the jvp.
+    return jax.nn.one_hot(i, n, dtype=dtype)
+
+
+# Source: batched one-hot maps and small-block exact entries follow
+# h-greer/hubble precond.py (coron branch), https://github.com/h-greer/hubble
+def _gn_diagonal(rows, x, probes, key=None, exact=None):
     """The diagonal of JᵀJ for the rows ``rows(x)``: exact (``probes=None``),
     or the mean of ``(Jᵀu)²`` over Rademacher ``u`` (±1) in row space, whose
     mean is the diagonal and which is never negative; for a diagonal J it is
-    exact."""
+    exact. When probing, the coordinates ``exact`` (NumPy indices) are exact."""
     n = x.size
     m = jax.eval_shape(rows, x).size
     if m == 0:
         return np.zeros(n, x.dtype)
+
+    def column(i):
+        e = _one_hot(i, n, x.dtype)
+        return np.sum(jax.jvp(rows, (x,), (e,))[1] ** 2)
+
     if probes is None and n <= m:
-
-        def column(i):
-            e = np.zeros(n, x.dtype).at[i].set(1.0)
-            return np.sum(jax.jvp(rows, (x,), (e,))[1] ** 2)
-
-        return jax.lax.map(column, np.arange(n))
+        return _map(column, np.arange(n))
     _, pull = jax.vjp(rows, x)
     if probes is None:
 
@@ -1689,40 +1721,45 @@ def _gn_diagonal(rows, x, probes, key=None):
         return pull(jax.random.rademacher(key, (m,), x.dtype))[0] ** 2
 
     keys = jax.random.split(jax.random.fold_in(key, 0), probes)
-    return np.mean(jax.lax.map(squared, keys), axis=0)
+    return _with_exact(
+        np.mean(jax.lax.map(squared, keys), axis=0), exact, column
+    )
 
 
 # deliberate: Hutchinson estimate of the Hessian diagonal (mean of v*Hv over Rademacher v), exact by unit vectors when probes is None
-def _hessian_diagonal(f, x, probes, key=None):
+def _hessian_diagonal(f, x, probes, key=None, exact=None):
     """The diagonal of the Hessian of ``f`` at ``x``: exact (``probes=None``) or
-    the mean of ``v ⊙ Hv`` over Rademacher ``v``."""
+    the mean of ``v ⊙ Hv`` over Rademacher ``v``, with the coordinates
+    ``exact`` (NumPy indices) exact."""
     n = x.size
     grad = jax.grad(f)
 
     def product(v):
         return jax.jvp(grad, (x,), (v,))[1]
 
+    def entry(i):
+        return product(_one_hot(i, n, x.dtype))[i]
+
     if probes is None:
-
-        def entry(i):
-            return product(np.zeros(n, x.dtype).at[i].set(1.0))[i]
-
-        return jax.lax.map(entry, np.arange(n))
+        return _map(entry, np.arange(n))
 
     def estimate(key):
         v = jax.random.rademacher(key, (n,), x.dtype)
         return v * product(v)
 
     keys = jax.random.split(jax.random.fold_in(key, 1), probes)
-    return np.mean(jax.lax.map(estimate, keys), axis=0)
+    return _with_exact(
+        np.mean(jax.lax.map(estimate, keys), axis=0), exact, entry
+    )
 
 
 # deliberate: Gauss-Newton curvature JtHJ of a loss quadratic in its parameters, by linearize and Rademacher probes or exact unit vectors
-def _gn_params_diagonal(params, loss, x, probes, key=None):
+def _gn_params_diagonal(params, loss, x, probes, key=None, exact=None):
     """The diagonal of JᵀHJ, J the Jacobian of ``params(x)`` and H the Hessian
     of ``loss`` at ``params(x)``: the Gauss–Newton curvature of a loss that is
     quadratic in its parameters. Exact (``probes=None``) or the mean of
-    ``u ⊙ JᵀHJu`` over Rademacher ``u``."""
+    ``u ⊙ JᵀHJu`` over Rademacher ``u``, with the coordinates ``exact`` (NumPy
+    indices) exact."""
     n = x.size
     theta, push = jax.linearize(params, x)
     grad = jax.grad(loss)
@@ -1730,14 +1767,13 @@ def _gn_params_diagonal(params, loss, x, probes, key=None):
     def product(v):
         return jax.jvp(grad, (theta,), (v,))[1]
 
+    def entry(i):
+        v = push(_one_hot(i, n, x.dtype))
+        leaves = jax.tree.leaves(jax.tree.map(np.vdot, v, product(v)))
+        return np.real(sum(leaves))
+
     if probes is None:
-
-        def entry(i):
-            v = push(np.zeros(n, x.dtype).at[i].set(1.0))
-            leaves = jax.tree.leaves(jax.tree.map(np.vdot, v, product(v)))
-            return np.real(sum(leaves))
-
-        return jax.lax.map(entry, np.arange(n))
+        return _map(entry, np.arange(n))
     pull = jax.linear_transpose(push, x)
 
     def estimate(key):
@@ -1745,7 +1781,9 @@ def _gn_params_diagonal(params, loss, x, probes, key=None):
         return u * pull(product(push(u)))[0]
 
     keys = jax.random.split(jax.random.fold_in(key, 2), probes)
-    return np.mean(jax.lax.map(estimate, keys), axis=0)
+    return _with_exact(
+        np.mean(jax.lax.map(estimate, keys), axis=0), exact, entry
+    )
 
 
 @eqx.filter_jit
@@ -1762,11 +1800,26 @@ def _fisher_diagonal(problem, z, probes, round=0):
     repeat an error."""
     key = jax.random.PRNGKey(round)
     flat, unravel = problem.ravel(z)
+    exact = None
+    if probes is not None:
+        # Blocks of at most _EXACT_BLOCK coordinates, as static flat indices,
+        # while the exact coordinates total at most _EXACT_DIAG (the cost cap).
+        sizes = [int(onp.size(z[k])) for k in problem.coordinate_keys]
+        starts = onp.cumsum([0, *sizes])
+        small = [
+            (a, k) for a, k in zip(starts, sizes) if 0 < k <= _EXACT_BLOCK
+        ]
+        budget = onp.cumsum([k for _, k in small]) <= _EXACT_DIAG
+        exact = onp.concatenate(
+            [onp.arange(a, a + k) for (a, k), ok in zip(small, budget) if ok]
+            + [onp.zeros(0, int)]
+        ).astype(onp.int32)
     diagonal = _gn_diagonal(
         lambda x: problem.curvature_rows(unravel(x), skip_scalar=True),
         flat,
         probes,
         key,
+        exact,
     ) + problem.curvature_diag(z, False)
     scalar = [t for t in problem.likelihoods if _scalar(t)]
     if scalar:
@@ -1778,7 +1831,7 @@ def _fisher_diagonal(problem, z, probes, round=0):
         def loss(theta):
             return sum(t.curvature_loss(p) for t, p in zip(scalar, theta))
 
-        curvature = _gn_params_diagonal(params, loss, flat, probes, key)
+        curvature = _gn_params_diagonal(params, loss, flat, probes, key, exact)
         diagonal = diagonal + np.maximum(curvature, 0.0)
     metric = [r for r in problem.regularizers if hasattr(r, "metric_rows")]
     plain = [r for r in problem.regularizers if not hasattr(r, "metric_rows")]
@@ -1790,6 +1843,7 @@ def _fisher_diagonal(problem, z, probes, round=0):
             flat,
             probes,
             key,
+            exact,
         )
         diagonal = diagonal + np.maximum(penalty, 0.0)
     if metric:
@@ -1798,7 +1852,7 @@ def _fisher_diagonal(problem, z, probes, round=0):
             model = _reference(problem.build(unravel(x)))
             return np.concatenate([r.metric_rows(model) for r in metric])
 
-        diagonal = diagonal + _gn_diagonal(rows, flat, probes, key)
+        diagonal = diagonal + _gn_diagonal(rows, flat, probes, key, exact)
     return diagonal
 
 
@@ -1841,7 +1895,8 @@ def gauss_newton_diag(
     [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
     [Cornwell & Evans (1985)](../references.md#cornwellevans1985),
     [Martens (2010)](../references.md#martens2010),
-    [Schraudolph (2002)](../references.md#schraudolph2002).
+    [Schraudolph (2002)](../references.md#schraudolph2002); small exact blocks,
+    [h-greer/hubble](../references.md#hubble_precond).
 
     Parameters
     ----------
@@ -1853,7 +1908,8 @@ def gauss_newton_diag(
         Up to 1024 coordinates the diagonal is exact, one Jacobian-vector
         product per coordinate. Above, it is estimated: JᵀJ from the mean of
         ``(Jᵀu)²`` over 16 Rademacher vectors ``u``, R from 16 Rademacher
-        Hessian-vector products, each good to a relative ``√(2 / probes)``.
+        Hessian-vector products, each good to a relative ``√(2 / probes)``;
+        blocks of at most 64 coordinates (a gain, a flux, a position) stay exact.
         Give a number of probes to estimate at any size, or ``0`` for the exact
         diagonal at any size.
 
@@ -1977,6 +2033,27 @@ def _recentre(problem, z):
     return out
 
 
+def _impute(key, d):
+    """``d`` with non-finite entries replaced by the largest finite entry of the
+    block (the scale the floor is taken from; never zero), warning once."""
+    finite = np.isfinite(d)
+    if bool(np.all(finite)):
+        return d
+    replacement = (
+        "the block's largest finite entry"
+        if bool(np.any(finite))
+        else "zero, so the block gets a flat scale"
+    )
+    warnings.warn(
+        f"preconditioner diagonal of '{key}' has {int(np.sum(~finite))}/"
+        f"{d.size} non-finite entries; replaced by {replacement}",
+        RuntimeWarning,
+        stacklevel=external_stacklevel(),
+    )
+    top = np.max(np.where(finite, d, -np.inf))
+    return np.where(finite, d, top if np.isfinite(top) else 0.0)
+
+
 def _metric(problem, z, scale, round=0):
     """``(metric, stats)`` at ``z`` for a loss per data point ``scale``.
 
@@ -1988,7 +2065,7 @@ def _metric(problem, z, scale, round=0):
     _, unravel = problem.ravel(z)
     width, decades, floored = {}, 0.0, 0
     for key, d in unravel(flat).items():
-        d = np.nan_to_num(d)
+        d = _impute(key, d)
         floor = _DIAG_FLOOR * np.max(d)
         usable = bool(floor > 0)
         if usable:
@@ -2277,10 +2354,16 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
         value, grad = _value_and_gradient(problem, z0, scale, np.asarray(x))
         return float(value), onp.asarray(grad, float)
 
+    def evaluate_flagged(x):
+        value, grad = evaluate(x)
+        if not (onp.isfinite(value) and onp.isfinite(grad).all()):
+            undefined.append(True)
+        return value, grad
+
     def projected(x, grad):
         return _projected_norm(x, grad, lower, upper)
 
-    _, g0 = evaluate(x0)
+    start_value, g0 = evaluate(x0)
     tolerance = float(_tolerance(np.asarray(projected(x0, g0)), gtol))
     out_of_time, trace = [], []
 
@@ -2296,40 +2379,71 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
             out_of_time.append(True)
             raise StopIteration
 
-    res = minimize(
-        evaluate,
-        x0,
-        jac=True,
-        method="L-BFGS-B",
-        bounds=Bounds(lower, upper),
-        callback=callback,
-        options={
-            "maxiter": max_steps,
-            "maxfun": 3 * max_steps,
-            "maxcor": memory,
-            "ftol": 0.0,
-            "gtol": tolerance,
-        },
-    )
-    x = onp.clip(res.x, lower, upper)
-    value, grad = evaluate(x)
+    undefined = []  # a trial point where the model is NaN (e.g. 0/0)
+    nit = nfev = restarts = 0
+    hit, first_message = False, None
+    while True:
+        undefined.clear()
+        res = minimize(
+            evaluate_flagged,
+            x0,
+            jac=True,
+            method="L-BFGS-B",
+            bounds=Bounds(lower, upper),
+            callback=callback,
+            options={
+                "maxiter": max_steps - nit,
+                "maxfun": 3 * max_steps - nfev,
+                "maxcor": memory,
+                "ftol": 0.0,
+                "gtol": tolerance,
+            },
+        )
+        nit, nfev = nit + int(res.nit), nfev + int(res.nfev)
+        hit = hit or bool(undefined)
+        if first_message is None:
+            first_message = res.message
+        x = onp.clip(res.x, lower, upper)
+        value, grad = evaluate(x)
+        # A line search cannot continue from a NaN: it ends "ABNORMAL". Restart
+        # from the last accepted point, with fresh curvature memory (so a
+        # smaller first step), while that gains loss, as ``_lbfgs`` does.
+        gain = start_value - value
+        if (
+            res.success
+            or not undefined
+            or out_of_time
+            or not gain > 0.0  # also true of a NaN
+            or nit >= max_steps
+            or nfev >= 3 * max_steps
+        ):
+            break
+        x0, start_value = x, value
+        restarts += 1
     pg = float(projected(x, grad))
     finite = onp.isfinite(value) and onp.all(onp.isfinite(grad))
     converged = bool(finite and pg <= tolerance)
-    steps = int(res.nit)
+    steps = nit
     if converged:
         stop = None
     elif not finite:
         stop = "non-finite"
     elif out_of_time:
         stop = "time"
-    elif steps >= max_steps or res.nfev >= 3 * max_steps:
+    elif steps >= max_steps or nfev >= 3 * max_steps:
         stop = "limit"
     else:
         stop = "stalled"
-    message = res.message
+    # The first round's message: it says why the first line search ended.
+    message = first_message
     message = message.decode() if isinstance(message, bytes) else str(message)
-    extra = {"nit": steps, "message": message, "pg_norm": pg}
+    extra = {
+        "nit": steps,
+        "message": message,
+        "pg_norm": pg,
+        "restarts": restarts,
+        "undefined": hit,
+    }
     return unravel(np.asarray(x)), steps, converged, stop, pg, extra
 
 
