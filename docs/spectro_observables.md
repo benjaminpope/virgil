@@ -7,7 +7,7 @@ amplitudes (OI_T3 `T3AMP`) and differential phases (OI_VIS `VISPHI`). virgil
 reads them on request as *extra observables*, which follow the visibilities
 and phases in the data vector, so every likelihood, fit and grid uses them
 through the same [`whitened_residuals`][virgil.likelihood.whitened_residuals].
-The API is [`virgil.observables`](api/observables.md).
+The API is [`virgil.observables`](api/observables.md). The extra observables, including the bandwidth-smearing treatment, are not independently validated.
 
 ## Reading them
 
