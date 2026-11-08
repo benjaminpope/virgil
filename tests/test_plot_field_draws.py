@@ -89,7 +89,7 @@ def test_posterior_multipole_latents():
     im = ax["a"].images[0]
     assert onp.asarray(im.get_array()).shape == (24, 24)
     assert float(onp.sum(im.get_array())) == pytest.approx(1.0, rel=1e-5)
-    assert sorted(im.get_extent()) == [-12.0, -12.0, 12.0, 12.0]
+    assert list(im.get_extent()) == [12.0, -12.0, -12.0, 12.0]  # East left
     assert ax["d"].get_xlabel() == "disk-plane radius [mas]"
 
 
