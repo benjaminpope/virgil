@@ -287,6 +287,21 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         # Drop flagged samples from the observables. Their baselines stay in
         # u and v, because closure phases may still need them.
+        mode_in = str(
+            data.get("vis_mode", data.get("observable_vis_mode", "auto"))
+        ).strip().lower()
+        if mode_in == "auto":
+            mode_in = "v2" if v2_flag else "amp"
+        vis_flag = _exclude_log_domain(
+            vis,
+            d_vis,
+            vis_flag,
+            u.size,
+            mode_in,
+            v2_flag,
+            vis_mat is not None,
+        )
+
         vis_index = None
         keep = _good_samples(
             vis, d_vis, vis_flag, u.size, "vis", vis_mat is not None
@@ -931,38 +946,44 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         return amp
 
     def _visibility_channel_from_data(self, vis, d_vis):
-        """Convert stored visibility observables to the scalar channel ``vis_mode``."""
+        """Convert stored visibility observables to the scalar channel ``vis_mode``.
+
+        Values are transformed as they are, never floored. Samples where the
+        transform is undefined (V² or |V| ≤ 0 for ``logamp``, V² ≤ 0 for
+        ``amp`` from V²) were already flagged on construction.
+        """
         vis = np.asarray(vis, dtype=float)
-        d_vis = np.asarray(d_vis, dtype=float)
         if self.vis_mode == "logamp":
-            # Floored at its own error: V² or |V| at or below zero stays finite.
-            floored = np.maximum(vis, np.maximum(d_vis, 1e-30))
             if self.v2_flag:
-                return 0.5 * np.log(floored)
-            return np.log(floored)
+                return 0.5 * np.log(vis)
+            return np.log(vis)
         if self.vis_mode == "amp" and self.v2_flag:
-            return np.sqrt(np.maximum(vis, 0.0))
+            return np.sqrt(vis)
         if self.vis_mode == "v2" and (not self.v2_flag):
             return vis**2
         return vis
 
     def _visibility_uncertainty_channel(self, vis, d_vis):
-        """Propagate visibility errors linearly into the scalar channel ``vis_mode``."""
+        """Propagate visibility errors to first order into the channel ``vis_mode``.
+
+        σ_f = |f'(x)| σ_x on the data as given, with no floor: log|V| from V²
+        gives σ/(2V²); log|V| from |V| gives σ/|V|; |V| from V² gives
+        σ/(2|V|); V² from |V| gives 2|V|σ. The first three diverge as the
+        datum goes to zero and are poor once σ ≳ the datum (the error
+        distribution is then far from Gaussian); 2|V|σ omits the σ² term of
+        the exact variance 4V²σ² + 2σ⁴ (Gaussian |V|), which matters only
+        for |V| ≲ σ.
+        """
         vis = np.asarray(vis, dtype=float)
         d_vis = np.asarray(d_vis, dtype=float)
-        # The derivative diverges near zero, so the data are floored at their
-        # own error first, in either direction.
-        floored = np.maximum(vis, np.maximum(d_vis, 1e-30))
         if self.vis_mode == "logamp":
             if self.v2_flag:
-                return 0.5 * d_vis / floored
-            return d_vis / floored
+                return 0.5 * d_vis / vis
+            return d_vis / np.abs(vis)
         if self.vis_mode == "amp" and self.v2_flag:
-            return 0.5 * d_vis / np.sqrt(floored)
+            return 0.5 * d_vis / np.sqrt(vis)
         if self.vis_mode == "v2" and (not self.v2_flag):
-            # |V| is floored at its own uncertainty, so noisy amplitudes near
-            # or below zero do not get a vanishing V² error.
-            return 2.0 * np.hypot(vis, d_vis) * d_vis
+            return 2.0 * np.abs(vis) * d_vis
         return d_vis
 
     def _transform_observed_channels(
@@ -2022,6 +2043,57 @@ _ZERO_PROJECTED_ERROR = (
     "have zero errors); it cannot be whitened. Give the inputs positive "
     "errors."
 )
+
+
+def _exclude_log_domain(
+    vis, d_vis, flag, n_samples, mode, v2_flag, has_operator
+):
+    """Flag the samples whose requested channel is undefined, and say so.
+
+    ``logamp`` takes log|V| and ``amp`` from V² takes sqrt(V²); both are
+    undefined for V² (or |V|) ≤ 0, which noisy data reach legitimately. Such
+    samples are added to ``flag`` (one counted ``UserWarning``), not clipped:
+    a floor would replace a measured value with an invented one and bias the
+    fit. Samples with 0 < V² < σ are kept at their own value; the error
+    propagates to first order (σ/(2 V²) for log|V| from V², σ_V²/(2|V|) for
+    |V| from V², σ/|V| for log|V| from |V|), which is poor once the relative
+    error approaches 1, so they are counted in a second warning.
+    """
+    log_mode = mode == "logamp"
+    if not (log_mode or (mode == "amp" and v2_flag)) or vis.size != n_samples:
+        return flag
+    with onp.errstate(invalid="ignore"):
+        nonpositive = vis <= 0
+        weak = (vis > 0) & (vis < d_vis)
+    n_bad, n_weak, total = int(nonpositive.sum()), int(weak.sum()), vis.size
+    quantity = "V²" if v2_flag else "|V|"
+    if n_bad and has_operator:
+        raise ValueError(
+            f"{n_bad} of {total} visibilities have {quantity} ≤ 0, where "
+            f"vis_mode={mode!r} is undefined, and data with an operator "
+            "(vis_mat) cannot be flagged per sample: drop those samples and "
+            "the matching operator columns, or use vis_mode='v2'."
+        )
+    if n_bad:
+        warnings.warn(
+            f"{n_bad} of {total} points with {quantity} ≤ 0 are excluded from "
+            f"{mode} because the channel is undefined there (not floored). "
+            "Use vis_mode='v2' to keep them.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+        flag = nonpositive | (
+            False if flag is None else onp.asarray(flag, dtype=bool)
+        )
+    if n_weak:
+        warnings.warn(
+            f"{n_weak} of {total} points have 0 < {quantity} < σ: kept at "
+            f"their own value in {mode}, but the first-order error "
+            "propagation is poor there.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    return flag
 
 
 def _good_samples(values, errors, flag, n_samples, name, operator=False):
