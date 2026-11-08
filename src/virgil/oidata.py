@@ -287,21 +287,6 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         # Drop flagged samples from the observables. Their baselines stay in
         # u and v, because closure phases may still need them.
-        mode_in = str(
-            data.get("vis_mode", data.get("observable_vis_mode", "auto"))
-        ).strip().lower()
-        if mode_in == "auto":
-            mode_in = "v2" if v2_flag else "amp"
-        vis_flag = _exclude_log_domain(
-            vis,
-            d_vis,
-            vis_flag,
-            u.size,
-            mode_in,
-            v2_flag,
-            vis_mat is not None,
-        )
-
         vis_index = None
         keep = _good_samples(
             vis, d_vis, vis_flag, u.size, "vis", vis_mat is not None
@@ -968,11 +953,13 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         σ_f = |f'(x)| σ_x on the data as given, with no floor: log|V| from V²
         gives σ/(2V²); log|V| from |V| gives σ/|V|; |V| from V² gives
-        σ/(2|V|); V² from |V| gives 2|V|σ. The first three diverge as the
-        datum goes to zero and are poor once σ ≳ the datum (the error
-        distribution is then far from Gaussian); 2|V|σ omits the σ² term of
-        the exact variance 4V²σ² + 2σ⁴ (Gaussian |V|), which matters only
-        for |V| ≲ σ.
+        σ/(2|V|). These diverge as the datum goes to zero and are poor once σ
+        ≳ the datum (the transformed noise is then far from Gaussian); such
+        points are flagged out where undefined and counted otherwise. V² from
+        a Gaussian |V| is the exact standard deviation σ·√(4V² + 2σ²)
+        (Var a² = 4μ²σ² + 2σ⁴); it tends to first-order 2|V|σ for |V| ≫ σ,
+        and stays finite at |V| = 0, so first-order weights ∝ 1/V² are
+        avoided.
         """
         vis = np.asarray(vis, dtype=float)
         d_vis = np.asarray(d_vis, dtype=float)
@@ -983,7 +970,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         if self.vis_mode == "amp" and self.v2_flag:
             return 0.5 * d_vis / np.sqrt(vis)
         if self.vis_mode == "v2" and (not self.v2_flag):
-            return 2.0 * np.abs(vis) * d_vis
+            return d_vis * np.sqrt(4.0 * vis**2 + 2.0 * d_vis**2)
         return d_vis
 
     def _transform_observed_channels(
@@ -1001,6 +988,63 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         n_phi = self._n_phi_samples()
         self._validate_operator_shape(self.vis_mat, n_vis, "vis_mat")
         self._validate_operator_shape(self.phi_mat, n_phi, "phi_mat")
+
+        mode, v2 = self.vis_mode, self.v2_flag
+        cut = mode == "logamp" or (mode == "amp" and v2)
+        if np.asarray(self.vis).size == n_vis and (
+            cut or (mode == "v2" and not v2)
+        ):
+            # logamp takes log|V| and amp from V² takes sqrt(V²); both are
+            # undefined for V² (or |V|) <= 0, which noisy data reach
+            # legitimately. Flag those samples out (one counted warning)
+            # rather than flooring them: a floor replaces a measured value
+            # with an invented one and biases the fit. Valid samples with the
+            # datum below σ are kept at their own value, but the propagated
+            # error is poor there (the transformed noise is far from
+            # Gaussian), so they are counted in a second warning, also for
+            # v2 from |V|. Flagged and invalid samples are already gone.
+            vis, err = onp.asarray(self.vis), onp.asarray(self.d_vis)
+            undefined = (vis <= 0) if cut else onp.zeros(vis.shape, bool)
+            weak = ~undefined & (onp.abs(vis) < err)
+            what = "V²" if v2 else "|V|"
+            if undefined.any() and self.vis_mat is not None:
+                raise ValueError(
+                    f"{undefined.sum()} of {vis.size} visibilities have "
+                    f"{what} <= 0, where vis_mode={mode!r} is undefined, and "
+                    "data with an operator (vis_mat) cannot be flagged per "
+                    "sample: drop those samples and the matching operator "
+                    "columns, or use vis_mode='v2'."
+                )
+            if undefined.any():
+                warnings.warn(
+                    f"{undefined.sum()} of {vis.size} points with {what} <= "
+                    f"0 are excluded from {mode} because the channel is "
+                    "undefined there (not floored).",
+                    UserWarning,
+                    stacklevel=external_stacklevel(),
+                )
+            if weak.any():
+                warnings.warn(
+                    f"{weak.sum()} of {vis.size} points have {what} < σ: "
+                    f"kept at their own value in {mode}, but the error "
+                    "propagation is poor there (the transformed noise is far "
+                    "from Gaussian).",
+                    UserWarning,
+                    stacklevel=external_stacklevel(),
+                )
+            if undefined.any():
+                kept = ~undefined
+                rows = (
+                    onp.arange(vis.size)
+                    if self.vis_index is None
+                    else onp.asarray(self.vis_index)
+                )
+                self.vis_index = np.asarray(rows[kept])
+                self.vis, self.d_vis = (
+                    np.asarray(vis[kept]),
+                    np.asarray(err[kept]),
+                )
+                n_vis = self._n_vis_samples()
 
         if np.asarray(self.vis).size == n_vis:
             vis_channel = self._visibility_channel_from_data(
@@ -2043,78 +2087,6 @@ _ZERO_PROJECTED_ERROR = (
     "have zero errors); it cannot be whitened. Give the inputs positive "
     "errors."
 )
-
-
-def _exclude_log_domain(
-    vis, d_vis, flag, n_samples, mode, v2_flag, has_operator
-):
-    """Flag the samples whose requested channel is undefined, and say so.
-
-    ``logamp`` takes log|V| and ``amp`` from V² takes sqrt(V²); both are
-    undefined for V² (or |V|) ≤ 0, which noisy data reach legitimately. ``v2``
-    from |V| gives the error 2|V|σ, which is zero at |V| = 0 (infinite
-    weight). Such samples are added to ``flag`` (one counted ``UserWarning``),
-    not clipped: a floor would replace a measured value with an invented one
-    and bias the fit. Samples that are valid but have the datum below σ are
-    kept at their own value; the first-order error (σ/(2V²) for log|V| from
-    V², σ/|V| for log|V| from |V|, σ/(2|V|) for |V| from V², 2|V|σ for V² from
-    |V|) is poor once the relative error approaches 1, so they are counted in
-    a second warning. Only unflagged samples with a finite, positive error
-    are counted.
-    """
-    from_amp_to_v2 = mode == "v2" and not v2_flag
-    undefined_at_zero = mode == "logamp" or (mode == "amp" and v2_flag)
-    if not (undefined_at_zero or from_amp_to_v2) or vis.size != n_samples:
-        return flag
-    already = (
-        onp.zeros(vis.size, dtype=bool)
-        if flag is None
-        else onp.asarray(flag, dtype=bool).reshape(-1)
-    )
-    with onp.errstate(invalid="ignore"):
-        usable = (
-            onp.isfinite(vis) & onp.isfinite(d_vis) & (d_vis > 0) & ~already
-        )
-        if undefined_at_zero:
-            bad = usable & (vis <= 0)
-            weak = usable & (vis > 0) & (vis < d_vis)
-        else:
-            # |V| = 0 gives a zero V² error; a negative |V| is squared as is.
-            bad = usable & (vis == 0)
-            weak = usable & (vis != 0) & (onp.abs(vis) < d_vis)
-    n_bad, n_weak, total = int(bad.sum()), int(weak.sum()), int(usable.sum())
-    quantity = "V²" if v2_flag else "|V|"
-    reason = (
-        "the channel is undefined there"
-        if undefined_at_zero
-        else "its first-order V² error 2|V|σ is zero there"
-    )
-    if n_bad and has_operator:
-        raise ValueError(
-            f"{n_bad} of {total} visibilities have {quantity} "
-            f"{'≤' if undefined_at_zero else '='} 0, where vis_mode={mode!r} "
-            "fails, and data with an operator (vis_mat) cannot be flagged "
-            "per sample: drop those samples and the matching operator "
-            "columns, or use another vis_mode."
-        )
-    if n_bad:
-        warnings.warn(
-            f"{n_bad} of {total} points with {quantity} "
-            f"{'≤' if undefined_at_zero else '='} 0 are excluded from "
-            f"{mode} because {reason} (not floored).",
-            UserWarning,
-            stacklevel=external_stacklevel(),
-        )
-        flag = bad | already
-    if n_weak:
-        warnings.warn(
-            f"{n_weak} of {total} points have {quantity} < σ: kept at "
-            f"their own value in {mode}, but the first-order error "
-            "propagation is poor there.",
-            UserWarning,
-            stacklevel=external_stacklevel(),
-        )
-    return flag
 
 
 def _good_samples(values, errors, flag, n_samples, name, operator=False):

@@ -67,24 +67,37 @@ def test_v2_from_amplitude_is_first_order_and_warns_below_sigma():
     assert len(weak) == 1 and "2 of 4" in weak[0]
     assert data.vis_index is None
     onp.testing.assert_allclose(data.vis, RAW**2, rtol=1e-5)
+    # Exact SD of a² for Gaussian a: σ√(4a² + 2σ²), finite and positive.
     onp.testing.assert_allclose(
-        data.d_vis, 2.0 * onp.abs(RAW) * SIGMA, rtol=1e-5
+        data.d_vis, SIGMA * onp.sqrt(4 * RAW**2 + 2 * SIGMA**2), rtol=1e-5
     )
 
 
-def test_v2_from_amplitude_excludes_zero_amplitude():
+def test_v2_from_amplitude_keeps_zero_amplitude_with_finite_error():
+    # Weights must not blow up as |V| -> 0 (first-order 2|V|σ would give
+    # infinite weight at 0): the exact SD σ√(4V² + 2σ²) stays positive.
     record = _data("v2", False)
-    record["vis"] = onp.array([0.0, 0.5, 3.0, 20.0]) * SIGMA
+    record["vis"] = onp.array([0.0, 1e-9, 3.0, 20.0]) * SIGMA
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         data = OIData(record)
     msgs = [str(w.message) for w in caught if w.category is UserWarning]
-    excluded = [m for m in msgs if "excluded" in m]
-    assert len(excluded) == 1 and "1 of 4" in excluded[0]
-    assert sum("poor there" in m for m in msgs) == 1
-    onp.testing.assert_array_equal(data.vis_index, [1, 2, 3])
-    assert onp.all(onp.asarray(data.d_vis) > 0)
-    onp.testing.assert_allclose(data.vis, record["vis"][1:] ** 2, rtol=1e-5)
+    assert not [m for m in msgs if "excluded" in m]
+    assert sum("poor there" in m for m in msgs) == 1 and "2 of 4" in msgs[0]
+    assert data.vis_index is None
+    d = onp.asarray(data.d_vis)
+    assert onp.all(d > 0)
+    onp.testing.assert_allclose(d[:2], SIGMA * onp.sqrt(2) * SIGMA, rtol=1e-5)
+
+
+def test_operator_with_zero_error_and_nonpositive_data_raises():
+    # _good_samples accepts a raw error of 0 with an operator; it must not
+    # pass through to log(V²) <= 0 as NaN.
+    record = _data("logamp", True)
+    record["vis_mat"] = onp.eye(RAW.size)
+    record["d_vis"] = onp.zeros(RAW.size)
+    with pytest.raises(ValueError, match="cannot be flagged"):
+        OIData(record)
 
 
 def test_counts_ignore_already_flagged_and_invalid_samples():
@@ -96,7 +109,7 @@ def test_counts_ignore_already_flagged_and_invalid_samples():
         warnings.simplefilter("always")
         data = OIData(record)
     msgs = [str(w.message) for w in caught if w.category is UserWarning]
-    # Only sample 1 is a new exclusion among the 3 usable samples (0 is
+    # Only sample 1 is a new exclusion among the 2 usable samples (0 is
     # flagged already, 3 has a non-finite error).
     excluded = [m for m in msgs if "excluded" in m]
     assert len(excluded) == 1 and "1 of 2" in excluded[0]
