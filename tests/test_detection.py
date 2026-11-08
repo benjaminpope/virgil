@@ -441,6 +441,21 @@ def test_monte_carlo_is_reproducible_and_independent_of_chunking():
     )
 
 
+def test_statistics_only_path_matches_the_full_one_bit_for_bit():
+    """Skipping the Laplace pass changes only the two statistics built on it."""
+    inj = injection_grid([60.0], [1e-2], 4, 1)
+    full = _recover(key=7, n_null=4, injections=inj)
+    fast = _recover(key=7, n_null=4, injections=inj, uncertainty=False)
+    for part in ("null", "injected"):
+        got, want = getattr(fast, part), getattr(full, part)
+        for stat in want:
+            if stat in ("max_snr", "flux_peak_steps"):
+                assert onp.isnan(got[stat]).all()
+                assert onp.isfinite(want[stat]).all()
+            else:
+                onp.testing.assert_array_equal(got[stat], want[stat])
+
+
 def test_draw_batch_vectorizes_the_same_draws():
     # draw_batch > 1 vmaps the search over draws (the tutorial uses it to
     # amortise the flux optimizer's loop); draw i keeps its key.
