@@ -244,7 +244,7 @@ def test_smoothed_regulariser_on_a_linear_image():
 
 @pytest.mark.parametrize("par", ["linear", "sqrt"])
 def test_all_zero_pixels_give_finite_model_and_gradient(par):
-    # Finiteness only: the gradient at exactly zero is a guard value, not the
+    # Linear: only finiteness of the gradient is checked. At exactly zero it is a guard value, not the
     # derivative (the V(b) dF term of F * V(b) is lost), so it is not checked.
 
     def mean_vis(x):
@@ -254,6 +254,11 @@ def test_all_zero_pixels_give_finite_model_and_gradient(par):
         return np.sum(np.abs(scene.model(u, v, 4.8e-6)))
 
     x = np.zeros((NPIX, NPIX))
-    assert np.all(np.isfinite(LinearImage(x, SCALE, parametrization=par, reference_flux=0.5).brightness))
+    b = LinearImage(x, SCALE, parametrization=par, reference_flux=0.5).brightness
+    assert np.all(b == 0.0)
     assert np.isfinite(mean_vis(x))
-    assert np.all(np.isfinite(jax.grad(mean_vis)(x)))
+    g = jax.grad(mean_vis)(x)
+    assert np.all(np.isfinite(g))
+    if par == "sqrt":
+        # d(x^2)/dx = 0 at x = 0, so the true gradient is zero here.
+        assert np.all(g == 0.0)
