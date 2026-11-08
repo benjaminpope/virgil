@@ -261,3 +261,58 @@ def test_a_uniform_prior_on_linear_pixels_still_fits_with_lbfgs():
     fit(start, priors, (), likelihoods=[term], method="lbfgs", max_steps=20)
     with pytest.raises(ValueError, match="method must be"):
         fit(start, image_priors(start), (), likelihoods=[term], method="nope")
+
+
+def test_a_line_search_that_meets_an_undefined_point_restarts(monkeypatch):
+    # The model is NaN at an all-zero linear image (0/0), a corner L-BFGS-B's
+    # line search can clip a trial point to on some platforms; NaN there ends
+    # it with "ABNORMAL" after a few steps. Make the 6th evaluation undefined
+    # (about the second trial point) and check the fit restarts and converges.
+    import virgil.fitting as fitting
+
+    truth = _scene(_disc(0.5))
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(1), noise_scale=3.0)
+    start = _scene(onp.full((NPIX, NPIX), 0.5 / NPIX**2))
+    args = (
+        start,
+        image_priors(start),
+        data,
+        [TSV(0.02, path="env", beam_mas=60.0)],
+    )
+    clean = fit(*args, method="lbfgsb", max_steps=3000)
+    original, calls = fitting._value_and_gradient, []
+
+    def undefined_once(problem, template, scale, x):
+        calls.append(1)
+        value, grad = original(problem, template, scale, x)
+        if len(calls) == 6:
+            return value * np.nan, grad * np.nan
+        return value, grad
+
+    monkeypatch.setattr(fitting, "_value_and_gradient", undefined_once)
+    result = fit(*args, method="lbfgsb", max_steps=3000)
+    assert len(calls) > 6  # the undefined evaluation was reached
+    assert result.info["undefined"] and result.info["restarts"] >= 1
+    assert not clean.info["undefined"] and clean.info["restarts"] == 0
+    assert clean.info["converged"] and result.info["converged"], result.info
+    assert result.info["loss"] == pytest.approx(clean.info["loss"], rel=1e-6)
+    assert "ABNORMAL" in result.info["message"]  # the first round's message
+
+
+def test_a_start_that_overshoots_to_zero_flux_still_converges():
+    # No monkeypatch: a uniform start 1e3 times too bright, whose line search
+    # clips a trial point to the all-zero image where the model is 0/0.
+    truth = _scene(_disc(0.5))
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(1), noise_scale=3.0)
+    tsv = [TSV(0.02, path="env", beam_mas=60.0)]
+    ref = _scene(onp.full((NPIX, NPIX), 0.5 / NPIX**2))
+    clean = fit(
+        ref, image_priors(ref), data, tsv, method="lbfgsb", max_steps=3000
+    )
+    start = _scene(onp.full((NPIX, NPIX), 1e3))
+    result = fit(
+        start, image_priors(start), data, tsv, method="lbfgsb", max_steps=3000
+    )
+    assert result.info["undefined"], result.info
+    assert result.info["converged"], result.info
+    assert result.info["loss"] == pytest.approx(clean.info["loss"], rel=1e-6)
