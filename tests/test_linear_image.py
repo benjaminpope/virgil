@@ -254,7 +254,9 @@ def test_all_zero_pixels_give_finite_model_and_gradient(par):
         return np.sum(np.abs(scene.model(u, v, 4.8e-6)))
 
     x = np.zeros((NPIX, NPIX))
-    b = LinearImage(x, SCALE, parametrization=par, reference_flux=0.5).brightness
+    b = LinearImage(
+        x, SCALE, parametrization=par, reference_flux=0.5
+    ).brightness
     assert np.all(b == 0.0)
     assert np.isfinite(mean_vis(x))
     g = jax.grad(mean_vis)(x)
