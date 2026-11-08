@@ -193,7 +193,7 @@ class _Objective(eqx.Module):
                     raise TypeError(
                         f"{path!r}: linear pixels must stay non-negative, "
                         "which only fit(method='lbfgsb') enforces; use it, "
-                        "or parametrisation='sqrt'."
+                        "or parametrization='sqrt'."
                     )
         for path, prior in self.priors.items():
             if isinstance(model, SourceModel):
@@ -3041,7 +3041,7 @@ def kkt_report(
                 continue
             out = {}
             top = _peak(grad, ref, key, pen)
-            if linear and image.parametrisation == "linear":
+            if linear and image.parametrization == "linear":
                 out, ok = _linear_certificate(x, g, image, top, w)
             else:
                 d, dp, mu, b, live, scale = _pixel_gradient(

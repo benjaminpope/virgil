@@ -99,7 +99,7 @@ class _ImageRegulariser(eqx.Module):
         image = self.image(model)
         linear = isinstance(image, LinearImage)
         if not self.smoothed:
-            return image.regularised_pixels if linear else image.brightness
+            return image.regularized_pixels if linear else image.brightness
         if image.blur_fwhm_mas is not None:
             warnings.warn(
                 "smoothed=True penalizes the blurred image, so the base "
@@ -109,7 +109,7 @@ class _ImageRegulariser(eqx.Module):
                 stacklevel=external_stacklevel(),
             )
         if linear:
-            b = image.regularised_pixels
+            b = image.regularized_pixels
             if image.blur_fwhm_mas is not None:
                 b = gaussian_smooth(
                     b, image.blur_fwhm_mas / image.pixel_scale_mas
@@ -134,7 +134,7 @@ class _ImageRegulariser(eqx.Module):
     beam_mas: float = eqx.field(static=True, default=None)
 
     def _scale(self, model, b):
-        """``p / B`` and the flux ``Σ b``, for the normalised penalties."""
+        """``p / B`` and the flux ``Σ b``, for the normalized penalties."""
         image = self.image(model)
         # The reference flux is fixed, so the penalty stays convex in a
         # linear image: ``b`` is already in units of it.
@@ -176,7 +176,7 @@ class TSV(_ImageRegulariser):
         instead of the raw ones. Default ``False``.
     beam_mas : float
         The beam ``B`` in mas, a fixed angular scale (eht-imaging's
-        ``beam_size``); required. ``B = p`` gives the old unnormalised weight.
+        ``beam_size``); required. ``B = p`` gives the old unnormalized weight.
     n_data : float, optional
         Multiplies the weight (default 1). eht-imaging's data terms are means,
         ``χ²/N`` (``chisq_vis``, imager_utils.py:453), virgil's ½χ² is a sum,
@@ -231,7 +231,7 @@ class TV(_ImageRegulariser):
         (default ``False``).
     beam_mas : float
         The beam ``B`` in mas, a fixed angular scale (eht-imaging's
-        ``beam_size``); required. ``B = p`` gives the old unnormalised weight.
+        ``beam_size``); required. ``B = p`` gives the old unnormalized weight.
     n_data : float, optional
         Multiplies the weight (default 1). eht-imaging's data terms are means,
         ``χ²/N`` (``chisq_vis``, imager_utils.py:453), virgil's ½χ² is a sum,
@@ -309,10 +309,10 @@ class MaxEntropy(_ImageRegulariser):
     def _brightness_and_default(self, model):
         """The unit-sum image ``b`` and the default ``q`` (1 where ``b`` is 0)."""
         image = self.image(model)
-        if isinstance(image, LinearImage) and image.parametrisation != "sqrt":
+        if isinstance(image, LinearImage) and image.parametrization != "sqrt":
             raise TypeError(
                 "MaxEntropy on a linear LinearImage needs a positive lower "
-                "bound on the pixels; use parametrisation='sqrt'."
+                "bound on the pixels; use parametrization='sqrt'."
             )
         b = self.pixels(model)
         if self.prior is None:
@@ -331,7 +331,7 @@ class MaxEntropy(_ImageRegulariser):
         b, q = self._brightness_and_default(model)
         value = np.sum(xlogy(b, b) - xlogy(b, q))
         if isinstance(self.image(model), LinearImage):
-            # Skilling's form, ``Σ b ln(b/q) - b + q``, for unnormalised b
+            # Skilling's form, ``Σ b ln(b/q) - b + q``, for unnormalized b
             # (reference-flux units, ``q`` unit-sum).
             value = value + 1.0 - np.sum(b)
         return self.weight * value
@@ -1897,7 +1897,7 @@ class LCurve:
         ``K`` covers the fitted image pixels only, and ``n`` is not reduced
         for fitted nuisances. Closure phases of four or more telescopes have
         more residual rows than independent data: do not use them. ``h`` uses
-        Skilling's unnormalised entropy, so it is classic ``h`` only if
+        Skilling's unnormalized entropy, so it is classic ``h`` only if
         ``Σ b = 1``.
 
         Parameters
@@ -1971,7 +1971,7 @@ class LCurve:
                 f"(m from {m.min():.3g} to {m.max():.3g}); no weight chosen. "
                 "Extend the sweep.",
                 UserWarning,
-                stacklevel=2,
+                stacklevel=external_stacklevel(),
             )
             return DofDiscrepancy(**fields)
         i, weight = max(crossings, key=lambda c: c[1])
@@ -2004,7 +2004,7 @@ class LCurve:
                     f"{chosen['weight']:.4g} after {len(trace)} refit(s); "
                     "raise max_secant, nprobe or tighten the sweep.",
                     UserWarning,
-                    stacklevel=2,
+                    stacklevel=external_stacklevel(),
                 )
         else:
             accepted = None
@@ -2020,7 +2020,7 @@ class LCurve:
                         "(non-positive or outside the sweep); that band end "
                         "is None.",
                         UserWarning,
-                        stacklevel=2,
+                        stacklevel=external_stacklevel(),
                     )
                 ends.append(max(w for _, w in found) if found else None)
             band = tuple(ends)
@@ -2286,7 +2286,7 @@ def _dof_point(
     if not isinstance(image, LinearImage):
         raise TypeError("dof_discrepancy needs a LinearImage.")
     leaf = ("" if weighted.path is None else weighted.path + ".") + "pixels"
-    sqrt = image.parametrisation == "sqrt"
+    sqrt = image.parametrization == "sqrt"
     datasets = tuple(_as_list(data))
     with run_in("float64"):
         model, datasets, weighted, others = cast_tree(
@@ -3303,7 +3303,7 @@ def short_baseline_residual(model, data, quantile=0.2):
 def residual_image(model, data, npix, pixel_scale_mas, rotation_deg=0.0):
     """The residual dirty map of a model, for any observable.
 
-    The normalised χ² gradient ``-g_p / |J e_p|`` of adding a little flux at
+    The normalized χ² gradient ``-g_p / |J e_p|`` of adding a little flux at
     each pixel ``p`` (``g`` the gradient of χ², ``J e_p`` the response of the
     whitened residuals), as [`clean`][virgil.imaging.clean] uses. For linear
     data it is the dirty image of the residuals; for closure phases, the

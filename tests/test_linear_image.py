@@ -43,7 +43,7 @@ def test_flux_is_recovered_from_the_visibility_against_a_star(par):
     # Where the blob is resolved out, V = 1 / (1 + F) for a unit star.
     pix = _blob(0.5)
     x = pix if par == "linear" else np.sqrt(pix)
-    im = LinearImage(x, SCALE, parametrisation=par)
+    im = LinearImage(x, SCALE, parametrization=par, reference_flux=0.5)
     assert abs(float(im.total_flux) - 0.5) < 1e-12
     assert abs(float(im.brightness.sum()) - 1.0) < 1e-12
     scene = System(star=PointSource(), env=im)
@@ -83,7 +83,7 @@ def test_matches_image_in_a_system_to_1e8(par):
     pix = _blob(0.5)
     x = pix if par == "linear" else np.sqrt(pix)
     lin = System(
-        star=PointSource(), env=LinearImage(x, SCALE, parametrisation=par)
+        star=PointSource(), env=LinearImage(x, SCALE, parametrization=par)
     )
     ref = System(
         star=PointSource(),
@@ -99,7 +99,7 @@ def test_support_pixels_stay_exactly_zero():
     support = circular_support(NPIX, SCALE, 40.0)
     for par in ("linear", "sqrt"):
         im = LinearImage(
-            np.ones((NPIX, NPIX)), SCALE, support, parametrisation=par
+            np.ones((NPIX, NPIX)), SCALE, support, parametrization=par
         )
         assert onp.all(onp.asarray(im.fluxes)[~support] == 0.0)
         assert onp.all(onp.asarray(im.brightness)[~support] == 0.0)
@@ -108,7 +108,7 @@ def test_support_pixels_stay_exactly_zero():
     assert onp.all(onp.isinf(hi[support]))
     assert (
         LinearImage(
-            np.ones((NPIX, NPIX)), SCALE, parametrisation="sqrt"
+            np.ones((NPIX, NPIX)), SCALE, parametrization="sqrt"
         ).bounds()
         is None
     )
@@ -117,8 +117,8 @@ def test_support_pixels_stay_exactly_zero():
 def test_validation():
     with pytest.raises(ValueError, match="non-negative"):
         LinearImage(-np.ones((4, 4)), SCALE)
-    with pytest.raises(ValueError, match="parametrisation"):
-        LinearImage(np.ones((4, 4)), SCALE, parametrisation="log")
+    with pytest.raises(ValueError, match="parametrization"):
+        LinearImage(np.ones((4, 4)), SCALE, parametrization="log")
     with pytest.raises(ValueError, match="2D"):
         LinearImage(np.ones(4), SCALE)
 
@@ -147,7 +147,7 @@ def test_regularizers_act_on_pixels_over_reference_flux(reg):
 def test_max_entropy_skilling_form_and_refusal():
     pix = _blob(0.5)
     im = LinearImage(
-        np.sqrt(pix), SCALE, parametrisation="sqrt", reference_flux=0.5
+        np.sqrt(pix), SCALE, parametrization="sqrt", reference_flux=0.5
     )
     mem = MaxEntropy(1.0)
     b = onp.asarray(pix) / 0.5
@@ -156,7 +156,7 @@ def test_max_entropy_skilling_form_and_refusal():
     assert float(mem.value(im)) == pytest.approx(float(want), rel=1e-6)
     # At the default the entropy is zero and its minimum is interior.
     flat = LinearImage(
-        np.full((NPIX, NPIX), 1.0 / NPIX**2), SCALE, parametrisation="sqrt"
+        np.full((NPIX, NPIX), 1.0 / NPIX**2), SCALE, parametrization="sqrt"
     )
     assert abs(float(mem.value(flat))) < 1e-12
     with pytest.raises(TypeError, match="sqrt"):
@@ -167,7 +167,7 @@ def test_sqrt_max_entropy_fit_reaches_the_default_image():
     # Alone, Skilling's entropy is minimal at the default: flat, flux F0.
     truth = _blob(0.5)
     start = LinearImage(
-        np.sqrt(truth), SCALE, parametrisation="sqrt", reference_flux=0.5
+        np.sqrt(truth), SCALE, parametrization="sqrt", reference_flux=0.5
     )
     priors = image_priors(start)
     assert set(priors) == {"pixels"}
@@ -183,7 +183,7 @@ def test_sqrt_max_entropy_fit_reaches_the_default_image():
 
 def test_max_entropy_residuals_match_value_on_linear_image():
     im = LinearImage(
-        np.sqrt(_blob(0.5)), SCALE, parametrisation="sqrt", reference_flux=0.5
+        np.sqrt(_blob(0.5)), SCALE, parametrization="sqrt", reference_flux=0.5
     )
     mem = MaxEntropy(2.0)
     r = mem.residuals(im)
@@ -240,3 +240,18 @@ def test_smoothed_regulariser_on_a_linear_image():
         got = reg.pixels(im)
     want = gaussian_smooth(pix / 0.5, 15.0 / SCALE)
     assert onp.allclose(got, want, atol=1e-9)
+
+
+@pytest.mark.parametrize("par", ["linear", "sqrt"])
+def test_all_zero_pixels_give_finite_model_and_gradient(par):
+
+    def mean_vis(x):
+        im = LinearImage(x, SCALE, parametrization=par, reference_flux=0.5)
+        scene = System(star=PointSource(), env=im)
+        u, v = np.asarray([29.7, 10.0]), np.asarray([0.0, 5.0])
+        return np.sum(np.abs(scene.model(u, v, 4.8e-6)))
+
+    x = np.zeros((NPIX, NPIX))
+    assert np.all(np.isfinite(LinearImage(x, SCALE, parametrization=par, reference_flux=0.5).brightness))
+    assert np.isfinite(mean_vis(x))
+    assert np.all(np.isfinite(jax.grad(mean_vis)(x)))

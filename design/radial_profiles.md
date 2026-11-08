@@ -55,7 +55,7 @@ This mirrors `Image(GaussianField(...))`: one component built from small interch
   - **I0 is the azimuthal mean.** The θ-mean of |h|² is Σ|h_j|² by Parseval, so the normalisation divides it out.
 - **`form="linear"` (the legacy form).** I = I0 · [1 + Σ c_m cos mθ + s_m sin mθ]. It is exactly linear in (c, s) and reproduces `ModulatedGaussianRim` and `TruncatedCone`, so the subsumed classes use it. Positivity needs 1 + f ≥ 0, and `min_intensity()` reports violations.
 
-**Multimodality, and how the parametrisation removes it** (raised by Ben, 2026-10-14; checked numerically). The scratch script `fr_check.py` lives in the review session; a test in P3 reproduces it.
+**Multimodality, and how the parametrization removes it** (raised by Ben, 2026-10-14; checked numerically). The scratch script `fr_check.py` lives in the review session; a test in P3 reproduces it.
 - **A real square [1 + f]² is unique, but it is not enough.**
   - [1+f]²/N_f = [1+g]²/N_g gives (1+g)² = λ²(1+f)² for trigonometric polynomials. These are analytic, so 1 + g = ±λ(1 + f), and the constant term forces g = f.
   - However, the image degree can only be even.
@@ -68,17 +68,17 @@ This mirrors `Image(GaussianField(...))`: one component built from small interch
   - Parametrise h by complex reflection coefficients k_1…k_M with |k_j| < 1, built by the Levinson step-up recursion h^{(j)}_i = h^{(j−1)}_i + k_j conj(h^{(j−1)}_{j−i}).
   - This is a bijection onto the minimum-phase factors, whose roots all lie outside the unit circle. That is the unique canonical representative of each positive image (Schur–Cohn; as for stable AR models, Barndorff-Nielsen & Schou 1973).
   - Each k_j comes from an unconstrained Cartesian latent w_j ∈ ℂ through k = w tanh|w| / |w|, which is smooth at 0. There is no funnel, no label switching, no polar singularity and no constraint.
-  - **Numerical check.** Random w at M = 1–6 always gave min-phase h. Every root-flipped twin of a k = (0.6, 0.6, 0.6) model gives the same image, but each twin's step-down coefficients have some |k_j| > 1, outside the disk, so the parametrisation excludes it (for the twin that flips one real-axis root, |k| = (1.64, 1.51, 0.79); the other single and double flips give e.g. (2.08, 3.44, 0.96) and (1.64, 1.51, 1.26); flipping all three gives (0.60, 0.60, 1.67)). An earlier draft quoted (2.25, 1.21, 0.71), which no twin reproduces. The degree-1 form fits 1 + 0.9 cos θ exactly (|k| = 0.63).
+  - **Numerical check.** Random w at M = 1–6 always gave min-phase h. Every root-flipped twin of a k = (0.6, 0.6, 0.6) model gives the same image, but each twin's step-down coefficients have some |k_j| > 1, outside the disk, so the parametrization excludes it (for the twin that flips one real-axis root, |k| = (1.64, 1.51, 0.79); the other single and double flips give e.g. (2.08, 3.44, 0.96) and (1.64, 1.51, 1.26); flipping all three gives (0.60, 0.60, 1.67)). An earlier draft quoted (2.25, 1.21, 0.71), which no twin reproduces. The degree-1 form fits 1 + 0.9 cos θ exactly (|k| = 0.63).
 - **What the reflection coefficients are.**
   - **Step-up recursion.** It builds h one degree at a time, h^{(j)}(z) = h^{(j−1)}(z) + k_j z^j h̄^{(j−1)}(1/z), using the reversed conjugate of the previous polynomial.
   - **Schur–Cohn.** The final h has every root outside the unit circle if and only if every |k_j| < 1. The unit-disk box of k's is therefore a one-to-one chart of the minimum-phase polynomials. The step-down recursion inverts it.
   - **Origin.** This is the Levinson–Durbin algorithm of linear prediction, where the k's are the partial autocorrelations. The name comes from lattice filters and layered-medium (acoustic-tube, seismic) models, where k_j is literally the reflection coefficient at the j-th interface.
   - **Why it applies here.** Our azimuthal profile |h(e^{iθ})|² is mathematically the power spectrum of a moving-average process in θ, and positivity of spectra is the classical problem these tools solve.
   - **Unconstrained version.** Using these coefficients to parametrise stationary autoregressive models without constraints, with a tanh map from the real line, is standard practice (Barndorff-Nielsen & Schou 1973; Jones 1980). We use the complex version.
-  - **References.** Dumitrescu 2007, *Positive Trigonometric Polynomials and Signal Processing Applications* (Springer), covers Fejér–Riesz, spectral factorisation and the Schur–Levinson recursion in one place. Barndorff-Nielsen & Schou 1973 (J. Multivariate Anal. 3, 408) gives the unconstrained reflection-coefficient parametrisation. Check both on ADS or DOI before adding them.
+  - **References.** Dumitrescu 2007, *Positive Trigonometric Polynomials and Signal Processing Applications* (Springer), covers Fejér–Riesz, spectral factorisation and the Schur–Levinson recursion in one place. Barndorff-Nielsen & Schou 1973 (J. Multivariate Anal. 3, 408) gives the unconstrained reflection-coefficient parametrization. Check both on ADS or DOI before adding them.
 - **Numerics.** k = w·tanh|w|/|w| is computed in a form that is finite at w = 0, with value and gradient taken from the series tanh(x)/x ≈ 1 − x²/3 below a threshold (a safe `where`).
 - **Weak asymmetry is near-linear.** I ≈ I0(1 + 2 Re Σ h_m e^{imθ}), and for small k the first-order coefficients are h_m ≈ k_m.
-- **What is reported.** The image harmonics I_m(r) (amplitude and phase per m) are the derived quantities. The reflection coefficients are an internal parametrisation, not something to interpret.
+- **What is reported.** The image harmonics I_m(r) (amplitude and phase per m) are the derived quantities. The reflection coefficients are an internal parametrization, not something to interpret.
 - **Priors.** A `MultipoleKernel` or `RadialGP` prior acts on the latents w_j(r). Its variance falling with j plays the role of falling with m, because k_j first enters h at order j.
 
 **Why not log** (decided 2026-10-14; an earlier draft used exp(f)). The reasons below compare linear with log. The positive form keeps every one of them except exact linearity in the coefficients, and adds positivity:
@@ -242,7 +242,7 @@ This is done as a real worked example in its own analysis repository, never in v
 - **A3, optional, after P3:** Cartesian harmonics on the parametric cone alone, as a cheap test of leading-edge brightening before A2.
 
 ## 9. Open decisions
-- **Profile parametrisation.** Proposed: I0 > 0 through exp of a GP or of positive parametric forms, with the vis-r forms as named profiles.
+- **Profile parametrization.** Proposed: I0 > 0 through exp of a GP or of positive parametric forms, with the vis-r forms as named profiles.
 
 ## 10. Review log
 - **2026-10-14, adversarial review** (the author plus an independent agent).
@@ -288,7 +288,7 @@ We reimplement ideas and copy no code (frank is LGPL). Credit is still mandatory
   - the Fourier–Bessel DHT and GP radial profiles: Jennings et al. 2020, MNRAS 495, 3209 (frank, github.com/discsim/frank);
   - forward parametric radial profiles, the uv deprojection and the Gaussian scale-height envelope: Kennedy 2025, RASTI (vis-r, github.com/drgmk/vis-r);
   - whitened GP latents on Fourier–Bessel nodes and per-quantity radial GPs: Yoshida et al. 2026, arXiv:2607.12618 (FRAP, github.com/tomyoshida/frap);
-  - the positive harmonic parametrisation: cite only Dumitrescu 2007 (Fejér–Riesz and the spectral factorisation) and Barndorff-Nielsen & Schou 1973 (the reflection-coefficient parametrisation). Add them to docstrings and `references/` in P3, but not to the contributors page, since this is standard mathematics rather than borrowed code;
+  - the positive harmonic parametrization: cite only Dumitrescu 2007 (Fejér–Riesz and the spectral factorisation) and Barndorff-Nielsen & Schou 1973 (the reflection-coefficient parametrization). Add them to docstrings and `references/` in P3, but not to the contributors page, since this is standard mathematics rather than borrowed code;
   - the existing `TruncatedCone`, `ModulatedGaussianRim` and flared-disk credits carry over to the engine-backed classes unchanged.
 - **`docs/contributors.md`.** Under *Methods*, one entry per work: what it gave virgil and a link to the paper and code. The BibTeX goes in `references/`. Both are added in the PR that first uses the idea (P1 for frank and vis-r; P4 for FRAP), and the PR description says so.
 

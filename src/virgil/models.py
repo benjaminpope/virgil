@@ -2090,7 +2090,7 @@ class LinearImage(_BrightnessImage):
     """Pixel image whose fitted values are the pixel fluxes themselves.
 
     The free array ``pixels`` is the flux of each pixel in ``support``
-    (``parametrisation="linear"``, to be kept non-negative by bounds: see
+    (``parametrization="linear"``, to be kept non-negative by bounds: see
     ``bounds``) or its square root (``"sqrt"``, flux ``x**2``, unbounded and
     so usable with any `fit` method). The total flux is the sum of the pixel
     fluxes: there is no separate ``flux`` to fit (a free flux times free
@@ -2135,7 +2135,7 @@ class LinearImage(_BrightnessImage):
         As for [`Image`][virgil.models.Image].
     dra, ddec : optional
         As for any [`Component`][virgil.models.Component].
-    parametrisation : {"linear", "sqrt"}, optional
+    parametrization : {"linear", "sqrt"}, optional
         What ``pixels`` holds (default ``"linear"``).
     reference_flux : float, optional
         The fixed flux ``F0`` that regularizers divide by (default: the sum of
@@ -2154,7 +2154,7 @@ class LinearImage(_BrightnessImage):
     rotation_deg: float = eqx.field(static=True)
     ft: str = eqx.field(static=True)
     blur_fwhm_mas: float | None = eqx.field(static=True)
-    parametrisation: str = eqx.field(static=True)
+    parametrization: str = eqx.field(static=True)
     reference_flux: float = eqx.field(static=True)
 
     def __init__(
@@ -2167,14 +2167,14 @@ class LinearImage(_BrightnessImage):
         rotation_deg=0.0,
         ft="auto",
         blur_fwhm_mas=None,
-        parametrisation="linear",
+        parametrization="linear",
         reference_flux=None,
     ):
-        if parametrisation not in ("linear", "sqrt"):
+        if parametrization not in ("linear", "sqrt"):
             raise ValueError(
-                f"parametrisation must be 'linear' or 'sqrt', not {parametrisation!r}."
+                f"parametrization must be 'linear' or 'sqrt', not {parametrization!r}."
             )
-        self.parametrisation = parametrisation
+        self.parametrization = parametrization
         pixels = np.asarray(pixels, dtype=float)
         self.pixels = pixels
         self._set_layout(
@@ -2188,7 +2188,7 @@ class LinearImage(_BrightnessImage):
         )
         if concrete(np.any(~np.isfinite(pixels))):
             raise ValueError("pixels must be finite.")
-        if parametrisation == "linear" and concrete(np.any(pixels < 0.0)):
+        if parametrization == "linear" and concrete(np.any(pixels < 0.0)):
             raise ValueError("linear pixels must be non-negative.")
         if reference_flux is None:
             total = concrete(np.sum(self._fluxes(pixels)))
@@ -2205,7 +2205,7 @@ class LinearImage(_BrightnessImage):
         self._place(1.0, dra, ddec)
 
     def _fluxes(self, pixels):
-        flux = pixels**2 if self.parametrisation == "sqrt" else pixels
+        flux = pixels**2 if self.parametrization == "sqrt" else pixels
         return (
             flux if self.support is None else np.where(self.support, flux, 0.0)
         )
@@ -2224,10 +2224,13 @@ class LinearImage(_BrightnessImage):
     def brightness(self):
         """Pixel fluxes divided by the total: unit sum, zero outside ``support``."""
         fluxes = self.fluxes
-        return fluxes / np.sum(fluxes)
+        total = np.sum(fluxes)
+        # Double where: a zero total gives zero brightness with a finite gradient.
+        nonzero = total != 0.0
+        return np.where(nonzero, fluxes / np.where(nonzero, total, 1.0), 0.0)
 
     @property
-    def regularised_pixels(self):
+    def regularized_pixels(self):
         """``fluxes / reference_flux``, the pixels that regularizers penalize."""
         return self.fluxes / self.reference_flux
 
@@ -2240,7 +2243,7 @@ class LinearImage(_BrightnessImage):
         Linear pixels have ``0 <= flux < inf`` inside ``support`` and ``(0,
         0)`` outside it; the square-root form needs no bounds.
         """
-        if self.parametrisation == "sqrt":
+        if self.parametrization == "sqrt":
             return None
         live = (
             onp.ones(self.pixels.shape, bool)
@@ -2251,7 +2254,7 @@ class LinearImage(_BrightnessImage):
 
     def is_physical(self):
         ok = super().is_physical()
-        if self.parametrisation == "linear":
+        if self.parametrization == "linear":
             ok = ok & np.all(self.pixels >= 0.0)
         return ok & (self.total_flux > 0.0)
 
