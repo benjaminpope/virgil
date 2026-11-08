@@ -84,7 +84,13 @@ def test_posterior_latents_and_images():
 
 def test_posterior_multipole_latents():
     z = jax.random.normal(KEY, (4, 6, 12))
-    plot_field_draws(_mp(), 1.0, latents=z, n_cuts=2)
+    fig, ax = plot_field_draws(_mp(), 1.0, latents=z, n_cuts=2)
+    # panel a: a 24 x 24 draw, unit-sum, spanning +-12 mas (24 px of 1 mas)
+    im = ax["a"].images[0]
+    assert onp.asarray(im.get_array()).shape == (24, 24)
+    assert float(onp.sum(im.get_array())) == pytest.approx(1.0, rel=1e-5)
+    assert sorted(im.get_extent()) == [-12.0, -12.0, 12.0, 12.0]
+    assert ax["d"].get_xlabel() == "disk-plane radius [mas]"
 
 
 def test_errors():
