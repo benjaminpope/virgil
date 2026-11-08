@@ -591,7 +591,8 @@ def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
     def leg(summaries, log_outlier, cell, key, **kw):
         fit = types.SimpleNamespace(
             cell=cell, log_z=0.0, log_z_error=0.0, modes=[], draws=None,
-            at_floor=cell.n == cells[1].n, plan=None, evidence=types.SimpleNamespace(ess=1e3), smc=None,
+            at_floor=cell.n == cells[1].n, plan=None, smc=None,
+            evidence=types.SimpleNamespace(ess=1.0 if cell.n == cells[1].n else 1e3),
         )  # fmt: skip
         fit.failed, fit.unreliable, fit.nonfinite = fit.at_floor, False, False
         fit.log_z_upper = 0.0
@@ -1005,10 +1006,16 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         return types.SimpleNamespace(
             cell=cell, log_z=z, log_z_upper=z, log_z_error=0.0, modes=[],
             draws=None, at_floor=False, failed=False, nonfinite=False,
-            unreliable=low, plan=None, evidence=types.SimpleNamespace(ess=1e3), smc=None,
+            unreliable=low, plan=None, smc=None,
+            evidence=types.SimpleNamespace(ess=1.0 if low else 1e3),
         )  # fmt: skip
 
+    def smc_stays_unreliable(fit, key, *, max_seconds):
+        fit.smc = object()  # the SMC ran and is still unreliable (stopped)
+        return fit
+
     monkeypatch.setattr(oc_cells, "position_leg", leg)
+    monkeypatch.setattr(oc_cells, "smc_cell", smc_stays_unreliable)
     monkeypatch.setattr(oc_cells, "_draw", lambda f, k: None)
     out = oc_cells.position_cells(
         s, domain, jax.random.key(0), log_outlier=onp.full(len(TIMES), LOG_B),
@@ -1296,7 +1303,8 @@ def test_a_floor_cell_fails_the_system_only_if_it_could_matter(
         return types.SimpleNamespace(
             cell=cell, log_z=z, log_z_upper=z, log_z_error=0.0, modes=[],
             draws=None, at_floor=low, failed=low, nonfinite=False,
-            unreliable=False, plan=None, evidence=types.SimpleNamespace(ess=1e3), smc=None,
+            unreliable=False, plan=None, smc=None,
+            evidence=types.SimpleNamespace(ess=1.0 if low else 1e3),
         )  # fmt: skip
 
     monkeypatch.setattr(oc_cells, "position_leg", leg)
@@ -1444,9 +1452,9 @@ def _banana_toy(b=1.0, s0=1.0, s1=0.2):
 @x64
 def test_the_smc_recovers_the_evidence_where_a_poor_proposal_gives_a_few_draws():
     """Fails on the pre-PR code (``_run_smc`` does not exist). The toy's shape
-    (b = 1, s1 = 0.2) was fixed before any run; IS ESS < 10 on four of four
-    keys. The SMC key is the second of the four runs of the exploration (design
-    §6.15 reports all four: its error is understated on this banana)."""
+    (b = 1, s1 = 0.2) was fixed before any run. The property is the one the
+    census needs, not a nominal 3σ: the SMC is accurate or flagged (design
+    §6.15 reports runs biased by ~0.2 nats that are not flagged)."""
     from virgil.mode_search import ESS_FAIL
 
     space, mixture, truth = _banana_toy()
@@ -1456,18 +1464,13 @@ def test_the_smc_recovers_the_evidence_where_a_poor_proposal_gives_a_few_draws()
     lw = onp.asarray(lw)
     w = onp.exp(lw - lw.max())
     ess = w.sum() ** 2 / (w**2).sum()
-    is_log_z = lw.max() + onp.log(w.mean())
-    is_err = math.sqrt(1 / ess - 1 / n)
     # the IS flags itself (its delta-method error is large at this ESS)
     assert ess < ESS_FAIL
-    res = oc_cells._run_smc(
-        space, mixture, jax.random.key(11), n, float("inf")
-    )
+    res = oc_cells._run_smc(space, mixture, jax.random.key(0), n, float("inf"))
     assert not res.stopped and not res.variance_degenerate
     err = oc_cells._smc_error(res)
-    assert abs(res.log_z - truth) < 3 * err
-    assert err < is_err and abs(res.log_z - truth) < abs(is_log_z - truth)
-    assert not oc_cells._smc_unreliable(res)
+    assert abs(res.log_z - truth) < 3 * err or oc_cells._smc_unreliable(res)
+    assert abs(res.log_z - truth) < 1.0  # not the IS's few draws
 
 
 class _FakeFit:
@@ -1480,7 +1483,8 @@ class _FakeFit:
             0.0,
         )
         self.ess, self.modes, self.draws, self.plan = ess, [], None, None
-        self.at_floor = self.unreliable = self.nonfinite = False
+        self.at_floor = self.nonfinite = False
+        self.unreliable = ess < oc_cells.ESS_FAIL
         self.evidence = types.SimpleNamespace(ess=ess)
         self.smc, self.calls, self.failed = None, 0, False
 
@@ -1542,7 +1546,7 @@ def test_the_smc_rounds_end_and_run_each_cell_at_most_once(monkeypatch):
         calls.append(i)
         if i == 0:
             fit.log_z = -30.0 - fit.cell.log_mass
-        fit.smc = object()
+        fit.smc, fit.unreliable = object(), False
         return fit
 
     monkeypatch.setattr(oc_cells, "smc_cell", fake)

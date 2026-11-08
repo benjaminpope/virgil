@@ -352,6 +352,8 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `search_cell` | [Rousseeuw (1984)](#rousseeuw1984), [doi:10.1080/01621459.1984.10477105](https://doi.org/10.1080/01621459.1984.10477105) | after |
 | `search_cell` | [Rousseeuw & Van Driessen (1999)](#rousseeuw1999), [doi:10.1080/00401706.1999.10485670](https://doi.org/10.1080/00401706.1999.10485670) | after |
 | `search_plan` | [Fischler & Bolles (1981)](#fischler1981), [doi:10.1145/358669.358692](https://doi.org/10.1145/358669.358692) | after |
+| `smc_cell` | [Du & Guyader (2021)](#du2021), [arXiv:1909.13602](https://arxiv.org/abs/1909.13602), [doi:10.1214/20-AAP1611](https://doi.org/10.1214/20-AAP1611) | after |
+| `smc_cell` | [Hesterberg (1995)](#hesterberg1995), [doi:10.1080/00401706.1995.10484303](https://doi.org/10.1080/00401706.1995.10484303) | after |
 
 ### `virgil.orbits`
 

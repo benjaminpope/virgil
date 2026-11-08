@@ -81,6 +81,7 @@ __all__ = [
     "position_leg",
     "search_cell",
     "search_plan",
+    "smc_cell",
 ]
 
 __provisional__ = ("*",)
@@ -2236,15 +2237,19 @@ def position_cells(
         todo = [
             i
             for i, (f, m) in enumerate(zip(fits, matters))
-            if m and i not in tried and not f.nonfinite
+            if m and i not in tried and not f.failed
             and f.evidence.ess < ESS_FAIL
         ]  # fmt: skip
         if not todo:
             break
         tried.update(todo)
-        left = max(max_seconds - (time.time() - start), 0.0)
-        _map(lambda i: smc_cell(fits[i], smc_keys[i], max_seconds=left),
-             todo, workers)  # fmt: skip
+        _map(
+            lambda i: smc_cell(
+                fits[i], smc_keys[i],
+                max_seconds=max(max_seconds - (time.time() - start), 0.0),
+            ),
+            todo, workers,
+        )  # fmt: skip
         log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
         upper = onp.array(
             [c.log_mass + f.log_z_upper for c, f in zip(cells, fits)]
@@ -2355,7 +2360,9 @@ def oracle_evidence(fit, x_true, key, n_is=N_IS):
     dict
         ``oracle_log_z`` and ``oracle_log_z_error`` (the augmented IS),
         ``oracle_ess`` (of the IS), ``oracle_smc`` (1 if the augmented cell's
-        IS was unreliable and its ``oracle_log_z`` is the SMC's), ``oracle_laplace`` (the optimum's Laplace ``ln Z``),
+        IS was unreliable and its ``oracle_log_z`` is the SMC's, which then
+        was not itself unreliable), ``oracle_laplace`` (the optimum's
+        Laplace ``ln Z``),
         ``oracle_gap`` (augmented minus unaided ``ln Ẑ``), ``oracle_sd`` (the
         two errors in quadrature) and ``oracle_basin`` (the number of found
         modes whose Newton run ends at the optimum); ``oracle_log_z`` is
@@ -2384,7 +2391,7 @@ def oracle_evidence(fit, x_true, key, n_is=N_IS):
                 space, _mixture(space, [*fit.modes, mode]),
                 jax.random.fold_in(key, 1), n_is, float("inf"),
             )  # fmt: skip
-            if not res.stopped:
+            if not _smc_unreliable(res):
                 log_z, log_z_error, smc = res.log_z, _smc_error(res), True
         # a found mode shares the optimum's basin when Newton from it ends at
         # the optimum or a symmetry image, by the distinct-mode rule (both
