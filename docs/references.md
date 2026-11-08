@@ -67,6 +67,13 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `(module)` | [Hogg, Myers & Bovy (2010)](#hogg2010ecc), [arXiv:1008.4146](https://arxiv.org/abs/1008.4146), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...725.2166H/abstract) | after |
 
+### `virgil._gauss_newton`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `_solve_free` | [Marquardt (1963)](#marquardt1963), [doi:10.1137/0111030](https://doi.org/10.1137/0111030) | after |
+| `_solve_free` | [Moré (1978)](#more1978), [doi:10.1007/BFb0067700](https://doi.org/10.1007/BFb0067700) | after |
+
 ### `virgil._geometry`
 
 | Symbol | Source | Relation |
@@ -182,6 +189,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `fit` | [Zhu, Byrd, Lu & Nocedal (1997)](#zhu1997), [doi:10.1145/279232.279236](https://doi.org/10.1145/279232.279236) | after |
 | `gauss_newton_diag` | [Bekas, Kokiopoulou & Saad (2007)](#bekas2007), [ADS](https://ui.adsabs.harvard.edu/abs/2007ApNM...57.1214B/abstract), [doi:10.1016/j.apnum.2007.01.003](https://doi.org/10.1016/j.apnum.2007.01.003) | after |
 | `gauss_newton_diag` | [Cornwell & Evans (1985)](#cornwellevans1985), [ADS](https://ui.adsabs.harvard.edu/abs/1985A&A...143...77C/abstract) | after |
+| `gauss_newton_diag` | [Greer](#hubble_precond), [GitHub](https://github.com/h-greer/hubble) | after |
 | `gauss_newton_diag` | [Hutchinson (1989)](#hutchinson1989), [ADS](https://ui.adsabs.harvard.edu/abs/1989CoSSC..18.1059H/abstract), [doi:10.1080/03610918908812806](https://doi.org/10.1080/03610918908812806) | after |
 | `gauss_newton_diag` | [Martens (2010)](#martens2010), [link](https://icml.cc/Conferences/2010/papers/458.pdf) | after |
 | `gauss_newton_diag` | [Schraudolph (2002)](#schraudolph2002), [doi:10.1162/08997660260028683](https://doi.org/10.1162/08997660260028683) | after |
@@ -216,6 +224,10 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `Image` | [Charles et al. (2026)](#dorito), [arXiv:2510.10924](https://arxiv.org/abs/2510.10924), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASA...43...48C/abstract) | ported |
 | `LCurve.classic_maxent` | [Gull (1989)](#gull1989), [doi:10.1007/978-94-015-7860-8_4](https://doi.org/10.1007/978-94-015-7860-8_4) | after |
 | `LCurve.classic_maxent` | [Skilling (1989)](#skilling1989), [doi:10.1007/978-94-015-7860-8_3](https://doi.org/10.1007/978-94-015-7860-8_3) | after |
+| `LCurve.dof_discrepancy` | [Craven & Wahba (1979)](#craven1979), [doi:10.1007/BF01404567](https://doi.org/10.1007/BF01404567) | after |
+| `LCurve.dof_discrepancy` | [Hutchinson (1989)](#hutchinson1989), [ADS](https://ui.adsabs.harvard.edu/abs/1989CoSSC..18.1059H/abstract), [doi:10.1080/03610918908812806](https://doi.org/10.1080/03610918908812806) | after |
+| `LCurve.dof_discrepancy` | [Morozov (1966)](#morozov1966) | after |
+| `LCurve.dof_discrepancy` | [Wahba (1983)](#wahba1983), [doi:10.1111/j.2517-6161.1983.tb01239.x](https://doi.org/10.1111/j.2517-6161.1983.tb01239.x) | after |
 | `Laplacian` | [Thiébaut & Young (2017)](#thiebaut2017), [arXiv:1708.08390](https://arxiv.org/abs/1708.08390), [ADS](https://ui.adsabs.harvard.edu/abs/2017JOSAA..34..904T/abstract) | after |
 | `LogSum` | [Baron, Monnier & Kloppenburg (2010)](#baron2010squeeze), [ADS](https://ui.adsabs.harvard.edu/abs/2010SPIE.7734E..2IB/abstract), [doi:10.1117/12.857364](https://doi.org/10.1117/12.857364) | after |
 | `LogSum` | [Candès, Wakin & Boyd (2007)](#candes2008), [arXiv:0711.1612](https://arxiv.org/abs/0711.1612), [ADS](https://ui.adsabs.harvard.edu/abs/2008JFAA...14..877C/abstract) | after |
@@ -400,6 +412,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `ComplexVisData` | [Pawitan (2001)](#pawitan2001), [doi:10.1093/oso/9780198507659.001.0001](https://doi.org/10.1093/oso/9780198507659.001.0001) | after |
 | `ComplexVisData` | [Zawadzki et al. (2023)](#zawadzki2023), [arXiv:2209.11813](https://arxiv.org/abs/2209.11813), [ADS](https://ui.adsabs.harvard.edu/abs/2023PASP..135f4503Z/abstract), [doi:10.1088/1538-3873/acdf84](https://doi.org/10.1088/1538-3873/acdf84) | after |
 | `ComplexVisData._imaging_weights` | [Briggs (1995)](#briggs1995), [ADS](https://ui.adsabs.harvard.edu/abs/1995PhDT.......238B/abstract) | after |
+| `fit_staged_nuisances` | [Cornwell & Wilkinson (1981)](#cornwellwilkinson1981), [ADS](https://ui.adsabs.harvard.edu/abs/1981MNRAS.196.1067C/abstract), [doi:10.1093/mnras/196.4.1067](https://doi.org/10.1093/mnras/196.4.1067) | after |
 
 ### `virgil.radio_clean`
 
@@ -450,6 +463,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
+| `_loss_settled` | [Kass & Raftery (1995)](#kass1995), [doi:10.1080/01621459.1995.10476572](https://doi.org/10.1080/01621459.1995.10476572) | after |
 | `variational` | [De Cao, Titov & Aziz (2019)](#decao2019), [arXiv:1904.04676](https://arxiv.org/abs/1904.04676), [ADS](https://ui.adsabs.harvard.edu/abs/2019arXiv190404676D/abstract) | after |
 | `variational` | [Frank, Leike & Enßlin (2021)](#frank2021), [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract) | after |
 | `variational` | [Kingma et al. (2016)](#kingma2016), [arXiv:1606.04934](https://arxiv.org/abs/1606.04934), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160604934K/abstract) | after |
@@ -596,8 +610,9 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="clark1980"></a>**Clark (1980)**. An efficient implementation of the algorithm 'CLEAN'. [ADS](https://ui.adsabs.harvard.edu/abs/1980A&A....89..377C/abstract). A&A 89, 377; bibcode 1980A&A....89..377C; PSF-window minor cycles and the cycle threshold. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="cornwell2008"></a>**Cornwell (2008)**. Multi-Scale CLEAN deconvolution of radio synthesis images. [arXiv:0806.2228](https://arxiv.org/abs/0806.2228), [ADS](https://ui.adsabs.harvard.edu/abs/2008ISTSP...2..793C/abstract), [doi:10.1109/jstsp.2008.2006388](https://doi.org/10.1109/jstsp.2008.2006388). IEEE JSTSP 2, 793.
 - <a id="cornwellevans1985"></a>**Cornwell & Evans (1985)**. A simple maximum entropy deconvolution algorithm. [ADS](https://ui.adsabs.harvard.edu/abs/1985A&A...143...77C/abstract). A&A 143, 77; the entropy metric as the natural preconditioner in MEM. No DOI or arXiv ID: checked on ADS. *Not yet verified against arXiv, Crossref or ADS.*
-- <a id="cornwellwilkinson1981"></a>**Cornwell & Wilkinson (1981)**. A new method for making maps with unstable radio interferometers. [ADS](https://ui.adsabs.harvard.edu/abs/1981MNRAS.196.1067C/abstract), [doi:10.1093/mnras/196.4.1067](https://doi.org/10.1093/mnras/196.4.1067). MNRAS 196, 1067; self-calibration with a reference antenna fixing the gauge (the reference observation's gain 1).
+- <a id="cornwellwilkinson1981"></a>**Cornwell & Wilkinson (1981)**. A new method for making maps with unstable radio interferometers. [ADS](https://ui.adsabs.harvard.edu/abs/1981MNRAS.196.1067C/abstract), [doi:10.1093/mnras/196.4.1067](https://doi.org/10.1093/mnras/196.4.1067). MNRAS 196, 1067; self-calibration with a reference antenna fixing the gauge (the reference observation's gain 1; staged fit with the box-edge check).
 - <a id="cotton2008"></a>**Cotton, Monnier & Baron (2008)**. 2008 imaging beauty contest. [ADS](https://ui.adsabs.harvard.edu/abs/2008SPIE.7013E..1NC/abstract), [doi:10.1117/12.788903](https://doi.org/10.1117/12.788903). Proc. SPIE 7013.
+- <a id="craven1979"></a>**Craven & Wahba (1979)**. Smoothing noisy data with spline functions. [doi:10.1007/BF01404567](https://doi.org/10.1007/BF01404567). Numer. Math. 31, 377; the trace of the influence matrix as the effective degrees of freedom of a regularized fit.
 - <a id="currie2019"></a>**Currie et al. (2019)**. No Clear, Direct Evidence for Multiple Protoplanets Orbiting LkCa 15: LkCa 15 bcd are Likely Inner Disk Signals. [arXiv:1905.04322](https://arxiv.org/abs/1905.04322), [ADS](https://ui.adsabs.harvard.edu/abs/2019ApJ...877L...3C/abstract), [doi:10.3847/2041-8213/ab1b42](https://doi.org/10.3847/2041-8213/ab1b42). ApJL 877, L3; motivates fitting a disk and a planet together.
 - <a id="mpol"></a>**Czekala et al. (2025)**. Million Points of Light (MPoL): a PyTorch library for radio interferometric imaging and inference. [arXiv:2502.00100](https://arxiv.org/abs/2502.00100), [ADS](https://ui.adsabs.harvard.edu/abs/2025arXiv250200100C/abstract), [GitHub](https://github.com/mpol-dev/MPoL), [link](https://mpol-dev.github.io/MPoL/). software paper; the Gaussian base layer (GaussConvFourier) behind blur_fwhm_mas; ADS bibcode checked.
 - <a id="decao2019"></a>**De Cao, Titov & Aziz (2019)**. Block Neural Autoregressive Flow. [arXiv:1904.04676](https://arxiv.org/abs/1904.04676), [ADS](https://ui.adsabs.harvard.edu/abs/2019arXiv190404676D/abstract). BNAF.
@@ -634,6 +649,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="golub1973"></a>**Golub & Pereyra (1973)**. The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate. [doi:10.1137/0710036](https://doi.org/10.1137/0710036). SIAM J. Numer. Anal. 10, 413; variable projection: the linear Thiele-Innes constants solved at fixed period and eccentricity.
 - <a id="greenbaum2015"></a>**Greenbaum et al. (2014)**. An image-plane algorithm for JWST's non-redundant aperture mask data. [arXiv:1411.3446](https://arxiv.org/abs/1411.3446), [ADS](https://ui.adsabs.harvard.edu/abs/2015ApJ...798...68G/abstract). ImPlaneIA; ApJ 798, 68 (2015).
 - <a id="implaneia"></a>**Greenbaum, Sivaramakrishnan et al.**. ImPlaneIA. [GitHub](https://github.com/anand0xff/ImPlaneIA). paper: greenbaum2015. *Not yet verified against arXiv, Crossref or ADS.*
+- <a id="hubble_precond"></a>**Greer**. precond.py (coron branch), h-greer/hubble. [GitHub](https://github.com/h-greer/hubble). exact entries for small coordinate blocks beside probed large ones, batched one-hot lax.map, imputing non-finite diagonal entries; ideas only, no code copied. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="gronau2017"></a>**Gronau, Sarafoglou, Matzke, Ly, Boehm, Marsman, Leslie, Forster, Wagenmakers & Steingroever (2017)**. A tutorial on bridge sampling. [arXiv:1703.05984](https://arxiv.org/abs/1703.05984), [doi:10.1016/j.jmp.2017.09.005](https://doi.org/10.1016/j.jmp.2017.09.005). J. Math. Psychol. 81, 80; bridge sampling from MCMC draws to a fitted proposal (compared for the orbit alias-cell evidence).
 - <a id="gross2010"></a>**Gross & Vitells (2010)**. Trial factors for the look elsewhere effect in high energy physics. [arXiv:1005.1891](https://arxiv.org/abs/1005.1891), [ADS](https://ui.adsabs.harvard.edu/abs/2010EPJC...70..525G/abstract).
 - <a id="gull1989"></a>**Gull (1989)**. Developments in Maximum Entropy Data Analysis. [doi:10.1007/978-94-015-7860-8_4](https://doi.org/10.1007/978-94-015-7860-8_4). in Maximum Entropy and Bayesian Methods, Cambridge 1988; the DOI chapter title is the Gull one; Skilling 1989 shares the volume.
@@ -656,6 +672,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="junklewitz2016"></a>**Junklewitz et al. (2016)**. RESOLVE: A new algorithm for aperture synthesis imaging of extended emission in radio astronomy. [arXiv:1311.5282](https://arxiv.org/abs/1311.5282), [ADS](https://ui.adsabs.harvard.edu/abs/2016A&A...586A..76J/abstract). A&A 586, A76; an IFT imaging algorithm for radio interferometry.
 - <a id="fouriever"></a>**Kammerer**. fouriever. [GitHub](https://github.com/kammerje/fouriever). comparison only: compare linear_flux_grid with its lincmap (closure/kernel phases only); no paper found. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="kammerer2020"></a>**Kammerer et al. (2020)**. Increasing the achievable contrast of infrared interferometry with an error correlation model. [arXiv:2011.01209](https://arxiv.org/abs/2011.01209), [ADS](https://ui.adsabs.harvard.edu/abs/2020A&A...644A.110K/abstract).
+- <a id="kass1995"></a>**Kass & Raftery (1995)**. Bayes factors. [doi:10.1080/01621459.1995.10476572](https://doi.org/10.1080/01621459.1995.10476572). JASA 90, 773; a log Bayes factor below 1 is not worth more than a bare mention: the one-nat settling tolerance of the SVI loss.
 - <a id="visr"></a>**Kennedy (2025)**. vis-r: a parametric visibility modelling code for radial profiles of discs. [arXiv:2502.17619](https://arxiv.org/abs/2502.17619), [ADS](https://ui.adsabs.harvard.edu/abs/2025RASTI...4....4D/abstract), [GitHub](https://github.com/drgmk/vis-r). RASTI (2025); github.com/drgmk/vis-r. Ideas only, no code copied.
 - <a id="kingma2015"></a>**Kingma & Ba (2014)**. Adam: A Method for Stochastic Optimization. [arXiv:1412.6980](https://arxiv.org/abs/1412.6980), [ADS](https://ui.adsabs.harvard.edu/abs/2014arXiv1412.6980K/abstract).
 - <a id="kingma2016"></a>**Kingma et al. (2016)**. Improving Variational Inference with Inverse Autoregressive Flow. [arXiv:1606.04934](https://arxiv.org/abs/1606.04934), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160604934K/abstract). IAF.
@@ -682,6 +699,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="mackay1992"></a>**MacKay (1992)**. Bayesian Interpolation. [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415). Neural Comput. 4, 415.
 - <a id="malbet2010"></a>**Malbet et al. (2010)**. The 2010 Interferometric Imaging Beauty Contest. [arXiv:1007.4473](https://arxiv.org/abs/1007.4473), [ADS](https://ui.adsabs.harvard.edu/abs/2010SPIE.7734E..2NM/abstract). SPIE 7734.
 - <a id="mantel1959"></a>**Mantel & Haenszel (1959)**. Statistical aspects of the analysis of data from retrospective studies of disease. [doi:10.1093/jnci/22.4.719](https://doi.org/10.1093/jnci/22.4.719). J. Natl. Cancer Inst. 22, 719; stratified test of a common rate across strata; planned orbit population-test assertion.
+- <a id="marquardt1963"></a>**Marquardt (1963)**. An algorithm for least-squares estimation of nonlinear parameters. [doi:10.1137/0111030](https://doi.org/10.1137/0111030). J. Soc. Ind. Appl. Math. 11, 431; damping scaled by diag(JᵀJ), per parameter.
 - <a id="martens2010"></a>**Martens (2010)**. Deep learning via Hessian-free optimization. [link](https://icml.cc/Conferences/2010/papers/458.pdf). ICML 27, 735-742; the Gauss-Newton matrix as the curvature matrix. No DOI or arXiv ID, not on ADS: title and author read from the ICML 2010 PDF. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="martinache2010"></a>**Martinache (2010)**. Kernel-Phase in Fizeau Inteferometry. [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract). ApJ 724, 464 (2010).
 - <a id="xara"></a>**Martinache (2010)**. Kernel-Phase in Fizeau Inteferometry. [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract), [GitHub](https://github.com/fmartinache/xara). xara was formerly pysco; cvis_binary is adapted from it.
@@ -692,6 +710,8 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="miles1965"></a>**Miles (1965)**. On random rotations in R^3. [doi:10.1093/biomet/52.3-4.636](https://doi.org/10.1093/biomet/52.3-4.636). Biometrika 52, 636-639; the isotropic (Haar) distribution of rotations: Omega and omega uniform, cos i uniform. Not on ADS: checked on Crossref.
 - <a id="monnier2007"></a>**Monnier et al. (2007)**. Imaging the Surface of Altair. [arXiv:0706.0867](https://arxiv.org/abs/0706.0867), [ADS](https://ui.adsabs.harvard.edu/abs/2007Sci...317..342M/abstract), [doi:10.1126/science.1143205](https://doi.org/10.1126/science.1143205). Science 317, 342; the Altair-like truth of notebooks/mwe/mwe_elr_chara.ipynb is inspired by it, not a reproduction.
 - <a id="moran1975"></a>**Moran (1975)**. Quaternions, Haar measure and the estimation of a palaeomagnetic rotation. [doi:10.1017/s0021900200047720](https://doi.org/10.1017/s0021900200047720). J. Appl. Prob. 12, 295-301; Haar measure on SO(3) is the uniform measure on S^3, covered 2:1 by unit quaternions. Not on ADS: checked on Crossref.
+- <a id="morozov1966"></a>**Morozov (1966)**. On the solution of functional equations by the method of regularization. Soviet Math. Dokl. 7, 414 (1966); the discrepancy principle. No DOI, and not in ADS or Crossref as of 2026-11-05: unverified. *Not yet verified against arXiv, Crossref or ADS.*
+- <a id="more1978"></a>**Moré (1978)**. The Levenberg-Marquardt algorithm: implementation and theory. [doi:10.1007/BFb0067700](https://doi.org/10.1007/BFb0067700). Lecture Notes in Mathematics 630, 105; per-parameter diagonal scaling makes the step invariant to rescaling the variables.
 - <a id="merand2022"></a>**Mérand (2022)**. Flexible Spectro Interferometric modelling of OIFITS data with PMOIRED. [arXiv:2207.11047](https://arxiv.org/abs/2207.11047), [ADS](https://ui.adsabs.harvard.edu/abs/2022SPIE12183E..1NM/abstract), [GitHub](https://github.com/amerand/pmoired). PMOIRED.
 - <a id="candid"></a>**Mérand et al.**. CANDID: Companion Analysis and Non-Detection in Interferometric Data. [GitHub](https://github.com/amerand/CANDID). algorithm paper: gallenne2015. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="neal2011"></a>**Neal (2011)**. MCMC using Hamiltonian dynamics. [arXiv:1206.1901](https://arxiv.org/abs/1206.1901). Handbook of Markov Chain Monte Carlo, ch. 5; randomized step size and trajectory length for HMC.
@@ -744,6 +764,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="virgil_tempering"></a>**virgil (own design) (2026)**. Tempering an evidence for correlated spectral channels. No published source. The effective-channel factor from neighbouring-channel residual covariance is virgil's own method; provisional, and no test checks that tempered evidences are calibrated. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="virgil_short_arcs"></a>**virgil (own design) (2026)**. Short-arc motion constraints for the orbit period search. No published source. Provisional; not independently validated. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="virgil_alias_search"></a>**virgil (own design) (2026)**. Period-alias band search for sparsely sampled orbits. No published source. The search over cycle-count bands, its nats thresholds and its night-outlier mixture (marginalized rate, Beta(1/2, 1/2) (Jeffreys)) are virgil's own design, provisional and not independently validated end to end. *Not yet verified against arXiv, Crossref or ADS.*
+- <a id="wahba1983"></a>**Wahba (1983)**. Bayesian "Confidence Intervals" for the Cross-Validated Smoothing Spline. [doi:10.1111/j.2517-6161.1983.tb01239.x](https://doi.org/10.1111/j.2517-6161.1983.tb01239.x). J. R. Stat. Soc. B 45, 133; the effective degrees of freedom Tr[K (K + H_R)^-1] of a regularized fit (cf. Hansen 1998, Rank-Deficient and Discrete Ill-Posed Problems, SIAM).
 - <a id="wilks1938"></a>**Wilks (1938)**. The Large-Sample Distribution of the Likelihood Ratio for Testing Composite Hypotheses. [doi:10.1214/aoms/1177732360](https://doi.org/10.1214/aoms/1177732360).
 - <a id="wright2009"></a>**Wright & Howard (2009)**. Efficient fitting of multiplanet Keplerian models to radial velocity and astrometry data. [arXiv:0904.3725](https://arxiv.org/abs/0904.3725), [ADS](https://ui.adsabs.harvard.edu/abs/2009ApJS..182..205W/abstract). ApJS 182, 205.
 - <a id="yallup2026"></a>**Yallup, Kroupa & Handley (2026)**. Nested Slice Sampling: Vectorized Nested Sampling for GPU-Accelerated Inference. [arXiv:2601.23252](https://arxiv.org/abs/2601.23252). the BlackJAX nested slice sampler (blackjax.nss, >= 1.7) measured as candidate (d) on the leg-1 toys.

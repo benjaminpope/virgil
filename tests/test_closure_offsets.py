@@ -91,10 +91,10 @@ def test_widths_zero_widths_and_refusals():
         fixed.select(wavel_max=2.3e-6)
 
 
-def _three_telescopes():
+def _three_telescopes(hours=(0.0, 1.0)):
     return vlti_oidata(
         stations=onp.array([[0.0, 0.0], [50.0, 10.0], [20.0, 60.0]]),
-        hour_angles_h=(0.0, 1.0),
+        hour_angles_h=hours,
         wavelengths_m=onp.linspace(2.0e-6, 2.4e-6, N_WAVE),
     ).with_model(TRUTH, jax.random.PRNGKey(1))
 
@@ -146,17 +146,53 @@ def test_three_telescopes_get_triangle_offsets_and_fold_baseline_into_them():
         assert onp.isfinite(float(model_loglike(TRUTH, d)))
 
 
-def test_supplied_modes_must_stay_in_a_frame():
-    data = _data()
+def _mode_loglike_change(frames, value, triangle=None):
+    """The log-likelihood change from a mode of ``value`` on every channel of
+    ``frames`` (width 1), with optional triangle offsets of width ``triangle``
+    in every frame, and the dense Gaussian's. The sines (three telescopes: one
+    triangle per group) have covariance diag(σ²) + m mᵀ + τ² Σ_f 1_f 1_fᵀ over
+    all closure phases, 1_f the channels of frame f."""
+    data = _three_telescopes(hours=(0.0, 1.0, 2.0))
     n_phase = data.phi.size
-    within = onp.zeros(n_phase)
-    within[:3] = 0.01
-    assert data.with_closure_offsets(
-        modes=within
-    ).phase_offsets.groups_present == ("modes",)
-    across = onp.full(n_phase, 0.01)
-    with pytest.raises(ValueError, match="one frame"):
-        data.with_closure_offsets(modes=across)
+    ref = data.with_closure_offsets(triangle=0.0)
+    mode = onp.zeros((1, n_phase))
+    for f in frames:
+        mode[0, f * N_WAVE : (f + 1) * N_WAVE] = value
+    with_mode = data.with_closure_offsets(modes=mode, triangle=triangle)
+    resid = onp.sin(onp.asarray(data.phi - data.with_model(TRUTH).phi))
+    sigma = onp.asarray(data.d_phi)
+
+    def gaussian(m, tau):
+        c = onp.diag(sigma**2) + onp.outer(m, m)
+        for f in range(n_phase // N_WAVE):
+            one = onp.zeros(n_phase)
+            one[f * N_WAVE : (f + 1) * N_WAVE] = 1.0
+            c = c + tau**2 * onp.outer(one, one)
+        return (
+            -0.5 * resid @ onp.linalg.solve(c, resid)
+            - 0.5 * (onp.linalg.slogdet(c)[1])
+        )
+
+    tau = 0.0 if triangle is None else triangle
+    got = float(model_loglike(TRUTH, with_mode)) - float(
+        model_loglike(TRUTH, ref)
+    )
+    return got, gaussian(mode[0], tau) - gaussian(0 * mode[0], 0.0)
+
+
+@pytest.mark.parametrize(
+    "frames, triangle",
+    [((0,), None), ((0, 1), None), ((0, 1), 0.03), ((0, 2), 0.03)],
+)
+def test_modes_give_the_common_offset_covariance(frames, triangle):
+    # One offset δ ~ N(0, 1) times the mode is common to its frames. Two
+    # float64 pipelines (Woodbury blocks vs a dense solve) of O(1) terms agree
+    # to a few hundred ulp: 1e-12. Frame 2 (or 1) gets its own padded block
+    # beside the spanning one when triangle offsets are on.
+    with jax.enable_x64(True):
+        got, expected = _mode_loglike_change(frames, 0.05, triangle)
+    assert abs(expected) > 1e-3  # the mode matters
+    assert got == pytest.approx(expected, rel=1e-12, abs=1e-12)
 
 
 def test_with_model_draws_offsets_common_to_the_channels():

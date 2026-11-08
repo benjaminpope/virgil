@@ -24,7 +24,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Tempered SMC | the module [`virgil.smc`](api/smc.md) (`tempered_smc`, `bridge_smc`, `SMCResult`) |
 | Variational inference | the module [`virgil.svi`](api/svi.md) (`variational`, `VariationalResult`) |
 | Pipelines | the whole of [`virgil.pipeline`](pipeline.md): `BinaryPipeline`, `StarPipeline`, `OrbitPipeline`, `Result`, `load` and the rest. Promoted to stable after a release of use |
-| Sparse imaging ([`virgil.imaging`](api/imaging.md)) | `clean`, `CleanResult` |
+| Sparse imaging ([`virgil.imaging`](api/imaging.md)) | `clean`, `CleanResult`, `DofDiscrepancy` (and `LCurve.dof_discrepancy`) |
 | Fourier-transform choice | the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, its automatic thresholds and its tolerances |
 | Rendered disks on uv lattices | the `rotation_deg` argument of `FlaredDisk*` and its `"grid"` default; the lattice tolerance for DISCO dictionaries |
 | Diagnostic plots ([`virgil.plotting`](api/plotting.md)) | `plot_field_draws` |

@@ -1012,7 +1012,7 @@ authors = "Hutchinson"
 year = 1989
 title = "A stochastic estimator of the trace of the influence matrix for Laplacian smoothing splines"
 doi = "10.1080/03610918908812806"
-used_in = ["virgil.fitting:gauss_newton_diag", "virgil.fitting:fit"]
+used_in = ["virgil.fitting:gauss_newton_diag", "virgil.fitting:fit", "virgil.imaging:LCurve.dof_discrepancy"]
 note = "Commun. Statist. Simul. Comput. 18, 1059; the trace estimator whose Rademacher probes the regularizer part of the diagonal follows (the JᵀJ part uses Gaussian (Jᵀu)² sketches)"
 bibcode = "1989CoSSC..18.1059H"
 verified = true
@@ -1610,8 +1610,8 @@ authors = "Cornwell & Wilkinson"
 year = 1981
 title = "A new method for making maps with unstable radio interferometers"
 doi = "10.1093/mnras/196.4.1067"
-used_in = ["virgil.radio:CalibrationNuisance"]
-note = "MNRAS 196, 1067; self-calibration with a reference antenna fixing the gauge (the reference observation's gain 1)"
+used_in = ["virgil.radio:CalibrationNuisance", "virgil.radio:fit_staged_nuisances"]
+note = "MNRAS 196, 1067; self-calibration with a reference antenna fixing the gauge (the reference observation's gain 1; staged fit with the box-edge check)"
 bibcode = "1981MNRAS.196.1067C"
 verified = true
 verified_via = "ads"
@@ -2212,3 +2212,70 @@ verified = true
 verified_via = "crossref"
 used_in = []
 note = "rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py)"
+
+[ref.marquardt1963]
+authors = "Marquardt"
+year = 1963
+title = "An algorithm for least-squares estimation of nonlinear parameters"
+doi = "10.1137/0111030"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil._gauss_newton:_solve_free"]
+note = "J. Soc. Ind. Appl. Math. 11, 431; damping scaled by diag(JᵀJ), per parameter"
+
+[ref.more1978]
+authors = "Moré"
+year = 1978
+title = "The Levenberg-Marquardt algorithm: implementation and theory"
+doi = "10.1007/BFb0067700"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil._gauss_newton:_solve_free"]
+note = "Lecture Notes in Mathematics 630, 105; per-parameter diagonal scaling makes the step invariant to rescaling the variables"
+
+[ref.kass1995]
+authors = "Kass & Raftery"
+year = 1995
+title = "Bayes factors"
+doi = "10.1080/01621459.1995.10476572"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.svi:_loss_settled"]
+note = "JASA 90, 773; a log Bayes factor below 1 is not worth more than a bare mention: the one-nat settling tolerance of the SVI loss"
+
+[ref.morozov1966]
+authors = "Morozov"
+year = 1966
+title = "On the solution of functional equations by the method of regularization"
+used_in = ["virgil.imaging:LCurve.dof_discrepancy"]
+note = "Soviet Math. Dokl. 7, 414 (1966); the discrepancy principle. No DOI, and not in ADS or Crossref as of 2026-11-05: unverified"
+verified = false
+
+[ref.wahba1983]
+authors = "Wahba"
+year = 1983
+title = "Bayesian \"Confidence Intervals\" for the Cross-Validated Smoothing Spline"
+doi = "10.1111/j.2517-6161.1983.tb01239.x"
+used_in = ["virgil.imaging:LCurve.dof_discrepancy"]
+note = "J. R. Stat. Soc. B 45, 133; the effective degrees of freedom Tr[K (K + H_R)^-1] of a regularized fit (cf. Hansen 1998, Rank-Deficient and Discrete Ill-Posed Problems, SIAM)"
+verified = true
+verified_via = "crossref"
+
+[ref.craven1979]
+authors = "Craven & Wahba"
+year = 1979
+title = "Smoothing noisy data with spline functions"
+doi = "10.1007/BF01404567"
+used_in = ["virgil.imaging:LCurve.dof_discrepancy"]
+note = "Numer. Math. 31, 377; the trace of the influence matrix as the effective degrees of freedom of a regularized fit"
+verified = true
+verified_via = "crossref"
+
+[ref.hubble_precond]
+authors = "Greer"
+title = "precond.py (coron branch), h-greer/hubble"
+repo = "https://github.com/h-greer/hubble"
+used_in = ["virgil.fitting:gauss_newton_diag"]
+note = "exact entries for small coordinate blocks beside probed large ones, batched one-hot lax.map, imputing non-finite diagonal entries; ideas only, no code copied"
+verified = false
+verified_via = "none"
