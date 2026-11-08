@@ -415,10 +415,14 @@ def test_plot_surface_returns_artist():
     values = onp.asarray(artist.get_array())
     assert values.size > 0
     assert onp.all(onp.isfinite(values)) and onp.all(values > 0)
-    # East to the left, and the axes cover the whole outline
+    # East to the left, and the axes cover the drawn triangles in both
+    # coordinates
+    verts = onp.concatenate([p.vertices for p in artist.get_paths()])
     x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
     assert x0 > x1
-    assert max(abs(x0), abs(x1)) >= _outline_radii(star)[0]
+    assert x0 >= verts[:, 0].max() and x1 <= verts[:, 0].min()
+    assert y0 <= verts[:, 1].min() and y1 >= verts[:, 1].max()
     assert ax.get_xlabel() == "ΔRA (mas)"
     artist2 = GravityDarkenedStar(1.0, 0.8, 60.0).plot_surface()
     assert onp.asarray(artist2.get_array()).size > 0
