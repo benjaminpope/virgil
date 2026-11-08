@@ -88,3 +88,4 @@ The held-out W1 result (paired with baseline f71294b, systems 200–399) was rea
 - **Calibration, harm if violated (arm only, ok systems):** misses are not significantly above 1% (binomial, p < 0.01); the PIT KS tests for N, ln P, a, e and cos i are not rejected at 0.01, judged with a Bonferroni correction over those five.
 - **Cost, report only:** median and maximum `seconds` per stratum, and the `n_smc`, `n_smc_failed`, `smc_stages`, `smc_seconds` columns.
 - **Merge rule:** primary passes and no harm.
+- **Review fix, 2026-11-08, before any run of this arm (changes results):** the SMC runs two replicates and its error is √max(genealogy variance, Δ²/4) (design §6.15), commit `0814e1c5d9d126b46f74029dd6b34070ad0646f2`. The decision set stays 600–799 and nothing above is moved.
