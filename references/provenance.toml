@@ -1773,7 +1773,7 @@ authors = "Del Moral, Doucet & Jasra"
 year = 2006
 title = "Sequential Monte Carlo Samplers"
 doi = "10.1111/j.1467-9868.2006.00553.x"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_cells:position_leg", "virgil.orbit_cells:smc_cell"]
 note = "JRSSB 68, 411; SMC samplers and the normalizing-constant estimate, Z as the product of the incremental weights"
 role = "bibliography"
 verified = true
@@ -2063,7 +2063,7 @@ arxiv = "1909.13602"
 doi = "10.1214/20-AAP1611"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_cells:smc_cell"]
 note = "Ann. Appl. Probab. 31, 1021; extends the Eve-index variance estimator to SMC whose tempering schedule is chosen adaptively from the particles"
 
 
@@ -2179,7 +2179,7 @@ title = "Weighted average importance sampling and defensive mixture distribution
 doi = "10.1080/00401706.1995.10484303"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg", "virgil.orbit_cells:smc_cell"]
 note = "Technometrics 37, 185; a prior share in the proposal bounds the importance weights by the likelihood maximum over the share"
 
 [ref.gilks2001]

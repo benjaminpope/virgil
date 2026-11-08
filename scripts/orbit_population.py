@@ -339,6 +339,18 @@ def classify(rec, ess_fail=ESS_FAIL):
     return "unresolved" if rec["flagged"] else "none"
 
 
+def smc_columns(fits):
+    """Diagnostic columns of the SMC fallback (design §6.15): cells run, those
+    still unreliable, the total and largest number of stages, and seconds."""
+    run = [f for f in fits if f.smc is not None]
+    stages = [len(f.smc.betas[0]) for f in run]
+    return dict(
+        n_smc=len(run), n_smc_failed=sum(f.unreliable for f in run),
+        smc_stages=sum(stages), smc_stages_max=max(stages, default=0),
+        smc_seconds=sum(f.smc_seconds for f in run),
+    )  # fmt: skip
+
+
 def matched_cell(out, p):
     """The matched sample of the criteria file: the unflagged cell of largest
     ``p`` (``None`` if every cell is flagged)."""
@@ -540,6 +552,7 @@ def run_one(sysd, fit, key, u, *, oracle=False, equiv=False, store=None):
         **{k: sum(f.info.get(k, 0) for f in fits) for k in STEP_COUNTS},
         min_ess=min(float(getattr(f.evidence, "ess", onp.nan)) for f in fits),
         n_undersampled=sum(f.undersampled for f in fits),
+        **smc_columns(fits),
     )  # fmt: skip
     t_a = float(s[out.anchors[0]].t_ref)
     extra = time.time()

@@ -859,7 +859,7 @@ is the extension to measure on the §14 population, not a default.
 
 - **Tempered SMC and parallel tempering** (Pigeons, Octofitter; Thompson et al. 2023, Surjanovic et al. 2023) both
   cross the first-order transition of §6. Both can be run *from* the search-built mixture instead of the prior. That is
-  a stepping-stone path, and its first stone is (b).
+  a stepping-stone path, and its first stone is (b). §6.15 does this for the cells whose IS is unreliable.
 - **Nested sampling** (Skilling 2006) is the method designed for such transitions, and it needs no search. Its cost
   scales as n_live·H, with H = KL(posterior ‖ prior), which grows by about ln(a/σ) per dimension. Kroupa & Handley (2026)
   show that on aliased time-delay likelihoods it needs many live points to avoid spurious modes. Its role here is
@@ -1555,6 +1555,66 @@ harm elsewhere.
 (2000).
 
 
+### 6.15 Tempered SMC from the search mixture where the IS is unreliable (design pass 2026-11-08)
+
+**Problem.** The census (W1, systems 0–199) finds the `ok` fits calibrated and the `failed` fits miscalibrated, so the
+failure flag is honest. 27 of the 39 failures are pure `cell-unreliable` (IS ESS < ESS_FAIL in a cell that matters).
+The cause is the proposal: a Laplace/t₅ mixture on a curved (banana) or ridge posterior leaves Laplace-IS gaps of tens
+of nats with one draw dominating. A better evidence for those cells is a better sampler, not a looser flag. No Bayesian
+method returns the true orbit every time; the aim is a calibrated uncertainty, and a cell that still cannot be sampled
+stays a failure.
+
+**Path.** §6.8 already notes that tempering can run from the search-built mixture. With q the normalized defensive
+mixture (exactly sampleable, `DefensiveMixture`), p̃ = prior × L the cell target, and Z_N = ∫ p̃,
+
+  π_β ∝ q^(1−β) p̃^β,  β: 0 → 1,  π_0 = q,  π_1 = p̃ / Z_N.
+
+This is `smc.tempered_smc` with `logprior = ln q` and `loglike = ln p̃ − ln q`. The first stage is importance sampling
+from q (the incremental weight at β₀ = 0 → β₁ is (p̃/q)^β₁), and the schedule (conditional ESS ½), HMC mutations and
+caps are those of `smc.py`. Because q is normalized, Ẑ estimates ln Z_N, the quantity IS estimates, and the particles at
+β = 1 are posterior draws. The weights are bounded at every stage: p̃/q ≤ sup L / α (Hesterberg), the defensive share
+that bounds the IS weights, so the first stone is no worse than the defensive IS and the later ones move particles from
+q towards the mode along the curved ridge, which a single importance step cannot do.
+
+**Trigger.** A cell is run through the SMC only if (i) its IS has ESS < ESS_FAIL, (ii) its target is finite
+(`nonfinite` false), and (iii) it matters under §6.6. The last depends on every cell's estimate, so the cells are
+processed in rounds: all cells by IS; SMC the low-ESS cells that matter; recompute `matters` with the new estimates;
+repeat for any low-ESS cell that newly matters. Each cell is SMC'd at most once, so there are at most as many rounds as
+cells and the loop ends. Every other cell keeps its IS estimate, evidence and draws unchanged (bit for bit).
+
+**Unbiasedness.** The SMC uses a fresh key, independent of the IS draws. The trigger is a function of the IS draws (and
+the search) only. Conditional on the trigger and the search, the SMC's Ẑ is therefore unbiased for Z_N (Del Moral, Doucet & Jasra
+2006; with adaptive schedules, Du & Guyader 2021), exactly as it would be unconditionally. A cell that is not
+triggered keeps today's IS estimator. The IS draws of a triggered cell are discarded for its evidence (not averaged
+with the SMC: the average would re-enter the selection).
+
+**Failure.** The SMC'd cell is `cell-unreliable` if the run `stopped` (time or stage cap), is `variance_degenerate`
+(the Lee & Whiteley estimator unusable), or its error exceeds 1/√ESS_FAIL. That threshold is the sd that ESS_FAIL
+already implies by sd(ln Ẑ) ≈ ESS^(−1/2) (§6.6): ESS_FAIL = 10 ⇒ sd 0.316. If stopped, the IS ln Ẑ is kept
+(finite, flagged). `cell-at-floor` stays as the IS sentinel: it reads the IS draws, never the SMC. The `matters` rule
+and the system failure rule are unchanged; only the evidence and the flag of a triggered cell change.
+
+**Draws.** The posterior draws of a triggered cell are the SMC particles at β = 1, resampled by their weights to N_POST
+(systematic), with no `resample_move`: they were moved at every stage.
+
+**Time.** The SMC takes the remaining `max_seconds` of `position_cells` as its own cap (the existing budget, no new
+constant); a run that reaches it is `stopped`.
+
+**Census.** `oracle_evidence` applies the same rule to its augmented mixture (ESS < ESS_FAIL and finite; it has no
+system, so no `matters`), keeping the taxonomy comparable. The census records, per system, the number of SMC'd cells,
+how many still failed, their stages and their seconds (diagnostic columns). The decision is the paired comparison with
+#667 on systems 600–799 in `design/orbit_census_criteria.md`.
+
+**Measured (toy, 2026-11-08, laptop).** Banana ln p̃ = −½x₀² − ½(x₁ − x₀²)²/s₁², ln Z = ln(2π s₁), one-component
+mixture on a N(0, 400 I) prior, N = 4000, default SMC. s₁ = 0.2: IS ESS 5.8–9.7 on four keys; SMC deviations from the
+truth −0.38, −0.12, +0.11, +0.50 nats against reported errors 0.04, 0.12, 0.35, 0.34. The genealogy error is
+understated when the mutations mix poorly on a thin curved target (the first run is 9 errors out). So the failure
+rule of §6.15 is necessary, not sufficient, and the census calibration test (PIT on `ok` systems) is the judge.
+
+**Source.** Del Moral, Doucet & Jasra (2006); Jasra et al. (2011); Lee & Whiteley (2018); Hesterberg
+(1995).
+
+
 ## 7. Pruning
 
 The evidence of every cell comes from the search and IS, which are cheap at position level (§9). Pruning therefore saves
@@ -1725,6 +1785,8 @@ run; changing one afterwards is a recorded decision.
 | ESS_target | 400 | derived | sd(ln Ẑ) ≈ ESS^{−1/2} ≤ 0.05 (flag only) |
 | sentinel | E_w[n_inliers] < m while the best mode has ≥ m inliers and its mass (ridge quadrature for a ridge, §6.10) lies W above K·b; fails the system only if the cell `matters` (§6.6) | derived | §6.1, §6.6 |
 | ESS_FAIL | 10 | inherited | `mode_search`; a cell fails only when also not negligible by the §6.10 bound |
+| SMC error limit | ESS_FAIL^(−1/2) ≈ 0.316 | derived | sd(ln Ẑ) ≈ ESS^(−1/2) at ESS_FAIL; failure of a SMC'd cell (§6.15) |
+| SMC time cap | the remaining `max_seconds` of `position_cells` | existing budget | no new constant (§6.15); schedule, particles (N_IS), mutations and stage cap are `smc.py`'s defaults |
 | HMC acceptance target | 0.8 | tolerance | dual averaging (Hoffman & Gelman 2014) |
 | HMC warm-up, moves per draw, L cap | 150, 5, 64 | budget | §6.3 |
 | step jitter | ±20 % | budget | Neal 2011 |

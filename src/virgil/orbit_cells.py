@@ -53,6 +53,7 @@ from .mode_search import (
     MAHAL,
     W,
     N_IS,
+    N_POST,
     Mode,
     distinct_modes,
     importance_evidence,
@@ -60,6 +61,7 @@ from .mode_search import (
     resample_move,
 )
 from .night_summaries import DELTA
+from .smc import tempered_smc
 from .orbits import KeplerOrbit, PositionData, _unit_orbit
 
 __all__ = [
@@ -1700,6 +1702,13 @@ class CellFit:
         propagated into ``p_pos``.
     nonfinite : bool
         Some importance draws had a non-finite target: the cell *failed*.
+    smc : virgil.smc.SMCResult or None
+        The tempered SMC from the search mixture of a cell whose importance
+        sampling was unreliable ([`smc_cell`][virgil.orbit_cells.smc_cell]);
+        ``log_z``, ``log_z_error``, ``unreliable`` and ``draws`` then come
+        from it. ``None`` for every other cell.
+    smc_seconds : float
+        The SMC's wall time (0 if it did not run).
     search_evaluations, is_evaluations : int
         Likelihood-equivalent evaluations of the search and the sampling.
     move : virgil.mode_search.Move or None
@@ -1727,6 +1736,8 @@ class CellFit:
     nonfinite: bool = False
     move: object = dataclasses.field(repr=False, default=None)
     info: dict = dataclasses.field(repr=False, default_factory=dict)
+    smc: object = dataclasses.field(repr=False, default=None)
+    smc_seconds: float = 0.0
 
     @property
     def failed(self):
@@ -1757,7 +1768,17 @@ def decode_particles(result):
 
 def _draw(fit, key):
     """Resample-move posterior draws of a fit, with the mass matrix of its
-    dominant mode (the highest Laplace ``ln Z``, not the highest peak)."""
+    dominant mode (the highest Laplace ``ln Z``, not the highest peak). The
+    draws of a cell with a finished SMC are its particles, resampled by their
+    weights (§6.15)."""
+    if fit.smc is not None and not fit.smc.stopped:
+        w = onp.asarray(fit.smc.weights, float)
+        u = float(jax.random.uniform(key))
+        pos = (u + onp.arange(N_POST)) / N_POST
+        idx = onp.minimum(
+            onp.searchsorted(onp.cumsum(w / w.sum()), pos), len(w) - 1
+        )
+        return onp.asarray(fit.smc.particles)[idx]
     cov = None
     if fit.modes:
         cov = max(fit.modes, key=laplace_log_evidence).cov
@@ -1796,6 +1817,58 @@ def _cell_evidence(space, modes, key, n_is):
         _target, space, mixture, key, n_is, inliers_fn=_inliers,
         log_floor=floor, m_min=M_MIN,
     )  # fmt: skip
+
+
+SMC_ERROR = ESS_FAIL**-0.5  # sd(ln Ẑ) ≈ ESS^(-1/2) at ESS_FAIL (§6.15)
+
+
+def _smc_unreliable(res):
+    """A SMC run that stopped, has no usable error, or whose error is above
+    the sd that ``ESS_FAIL`` implies."""
+    return bool(
+        res.stopped
+        or res.variance_degenerate
+        or not res.log_z_error <= SMC_ERROR
+    )
+
+
+def _run_smc(space, mixture, key, n, max_seconds):
+    """Tempered SMC from ``mixture`` (normalized, sampleable) to the target:
+    ``π_β ∝ q^(1-β) (prior·L)^β`` (§6.15)."""
+
+    def loglike(x):
+        return _target(x, space) - mixture.log_q(x)
+
+    with run_in(onp.dtype(space.dtype).name):
+        return tempered_smc(
+            mixture.log_q, loglike, mixture.sample, key=key, n_particles=n,
+            max_seconds=max_seconds,
+        )  # fmt: skip
+
+
+def smc_cell(fit, key, *, max_seconds=float("inf")):
+    """Replace a cell's importance-sampling evidence by a tempered SMC from its
+    search-built defensive mixture (design §6.15).
+
+    ``fit`` is changed in place: ``log_z``, ``log_z_error``, ``unreliable``,
+    ``undersampled`` and ``smc``. The SMC's key must be independent of the
+    cell's importance draws. A run that stops (``max_seconds`` or the stage
+    cap) keeps the importance ``ln Ẑ`` and is ``unreliable``. ``at_floor``
+    keeps reading the importance draws.
+
+    Source: Del Moral, Doucet & Jasra (2006), Hesterberg (1995).
+    """
+    start = time.time()
+    res = _run_smc(
+        fit.space, _mixture(fit.space, fit.modes), key, fit.is_evaluations,
+        max_seconds,
+    )  # fmt: skip
+    fit.smc, fit.smc_seconds = res, time.time() - start
+    if not res.stopped:
+        fit.log_z, fit.log_z_error = res.log_z, res.log_z_error
+        fit.undersampled = bool(res.undersampled)
+    fit.unreliable = _smc_unreliable(res)
+    return fit
 
 
 def position_leg(
@@ -2143,6 +2216,29 @@ def position_cells(
         [c.log_mass + f.log_z_upper for c, f in zip(cells, fits)]
     )
     matters = upper >= upper.max() - W
+    # Cells whose IS is unreliable and that matter get the SMC (§6.15). Whether
+    # a cell matters depends on every estimate, so repeat until no new cell
+    # qualifies; each cell is SMC'd at most once.
+    smc_keys = jax.random.split(jax.random.fold_in(key, 3), len(cells))
+    tried = set()
+    while True:
+        todo = [
+            i
+            for i, (f, m) in enumerate(zip(fits, matters))
+            if m and i not in tried and not f.nonfinite
+            and f.evidence.ess < ESS_FAIL
+        ]  # fmt: skip
+        if not todo:
+            break
+        tried.update(todo)
+        left = max(max_seconds - (time.time() - start), 0.0)
+        _map(lambda i: smc_cell(fits[i], smc_keys[i], max_seconds=left),
+             todo, workers)  # fmt: skip
+        log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
+        upper = onp.array(
+            [c.log_mass + f.log_z_upper for c, f in zip(cells, fits)]
+        )
+        matters = upper >= upper.max() - W
     failed = onp.array(
         [
             f.nonfinite or ((f.at_floor or f.unreliable) and m)
@@ -2247,7 +2343,8 @@ def oracle_evidence(fit, x_true, key, n_is=N_IS):
     -------
     dict
         ``oracle_log_z`` and ``oracle_log_z_error`` (the augmented IS),
-        ``oracle_ess``, ``oracle_laplace`` (the optimum's Laplace ``ln Z``),
+        ``oracle_ess`` (of the IS), ``oracle_smc`` (1 if the augmented cell's
+        IS was unreliable and its ``oracle_log_z`` is the SMC's), ``oracle_laplace`` (the optimum's Laplace ``ln Z``),
         ``oracle_gap`` (augmented minus unaided ``ln Ẑ``), ``oracle_sd`` (the
         two errors in quadrature) and ``oracle_basin`` (the number of found
         modes whose Newton run ends at the optimum); ``oracle_log_z`` is
@@ -2270,6 +2367,14 @@ def oracle_evidence(fit, x_true, key, n_is=N_IS):
             return dict(oracle_log_z=onp.nan, oracle_basin=-1)
         mode = found[0]
         ev = _cell_evidence(space, [*fit.modes, mode], key, n_is)
+        log_z, log_z_error, smc = ev.log_z, ev.log_z_error, False
+        if ev.ess < ESS_FAIL and ev.n_nonfinite == 0:  # the same rule (§6.15)
+            res = _run_smc(
+                space, _mixture(space, [*fit.modes, mode]),
+                jax.random.fold_in(key, 1), n_is, float("inf"),
+            )  # fmt: skip
+            if not res.stopped:
+                log_z, log_z_error, smc = res.log_z, res.log_z_error, True
         # a found mode shares the optimum's basin when Newton from it ends at
         # the optimum or a symmetry image, by the distinct-mode rule (both
         # covariances, ``MAHAL``)
@@ -2287,11 +2392,11 @@ def oracle_evidence(fit, x_true, key, n_is=N_IS):
                 for gx, gc in images
             )
     return dict(
-        oracle_log_z=ev.log_z, oracle_log_z_error=ev.log_z_error,
+        oracle_log_z=log_z, oracle_log_z_error=log_z_error,
         oracle_ess=ev.ess, oracle_laplace=laplace_log_evidence(mode),
-        oracle_gap=ev.log_z - fit.log_z,
-        oracle_sd=math.hypot(ev.log_z_error, fit.log_z_error),
-        oracle_basin=int(basin),
+        oracle_gap=log_z - fit.log_z,
+        oracle_sd=math.hypot(log_z_error, fit.log_z_error),
+        oracle_basin=int(basin), oracle_smc=int(smc),
     )  # fmt: skip
 
 

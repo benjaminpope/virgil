@@ -1412,3 +1412,142 @@ def test_the_predictive_labels_keep_every_night_the_point_term_keeps(init):
     new = onp.asarray(new[0])
     assert (point >= 0).sum() >= 2
     assert onp.all(new[point >= 0] >= 0)
+
+
+# --- tempered SMC from the search mixture (design §6.15) ---------------------
+
+
+def _banana_toy(b=1.0, s0=1.0, s1=0.2):
+    """A banana target with ``ln Z = ln(2π s0 s1)`` (a volume-preserving shear
+    of a Gaussian), a wide Gaussian prior and a one-component mixture."""
+    from virgil.mode_search import DefensiveMixture
+
+    def loglike(x):
+        return (
+            -0.5 * (x[0] / s0) ** 2 - 0.5 * ((x[1] - b * x[0] ** 2) / s1) ** 2
+        )
+
+    def log_prior(x):
+        return -0.5 * np.sum(x**2) / 400.0 - np.log(2 * np.pi * 400.0)
+
+    def sample(key, n):
+        return 20.0 * jax.random.normal(key, (n, 2))
+
+    space = types.SimpleNamespace(
+        loglike=loglike, logprior=lambda x: 0.0 * x[0], dtype=np.float64
+    )
+    mode = Mode(onp.zeros(2), 0.0, onp.diag([s0**2, s1**2]), 2.0)
+    mixture = DefensiveMixture([mode], log_prior, sample, dim=2)
+    return space, mixture, math.log(2 * math.pi * s0 * s1)
+
+
+@x64
+def test_the_smc_recovers_the_evidence_where_a_poor_proposal_gives_a_few_draws():
+    """Fails on the pre-PR code (``_run_smc`` does not exist). The toy's shape
+    (b = 1, s1 = 0.2) was fixed before any run; IS ESS < 10 on four of four
+    keys. The SMC key is the second of the four runs of the exploration (design
+    §6.15 reports all four: its error is understated on this banana)."""
+    from virgil.mode_search import ESS_FAIL
+
+    space, mixture, truth = _banana_toy()
+    n = 4000
+    x = mixture.sample(jax.random.key(0), n)
+    lw = jax.vmap(lambda v: oc_cells._target(v, space) - mixture.log_q(v))(x)
+    lw = onp.asarray(lw)
+    w = onp.exp(lw - lw.max())
+    ess = w.sum() ** 2 / (w**2).sum()
+    is_log_z = lw.max() + onp.log(w.mean())
+    is_err = math.sqrt(1 / ess - 1 / n)
+    # the IS flags itself (its delta-method error is large at this ESS)
+    assert ess < ESS_FAIL
+    res = oc_cells._run_smc(
+        space, mixture, jax.random.key(11), n, float("inf")
+    )
+    assert not res.stopped and not res.variance_degenerate
+    assert abs(res.log_z - truth) < 3 * res.log_z_error
+    assert res.log_z_error < is_err and abs(res.log_z - truth) < abs(
+        is_log_z - truth
+    )
+    assert not oc_cells._smc_unreliable(res)
+
+
+class _FakeFit:
+    """A cell fit with a given ``upper`` (``ln mass + ln Ẑ``) and IS ESS."""
+
+    def __init__(self, cell, upper, ess):
+        self.cell, self.log_z, self.log_z_error = (
+            cell,
+            upper - cell.log_mass,
+            0.0,
+        )
+        self.ess, self.modes, self.draws, self.plan = ess, [], None, None
+        self.at_floor = self.unreliable = self.nonfinite = False
+        self.evidence = types.SimpleNamespace(ess=ess)
+        self.smc, self.calls, self.failed = None, 0, False
+
+    @property
+    def log_z_upper(self):
+        return self.log_z
+
+
+def _stub_cells(monkeypatch, uppers, esses):
+    s = _summaries(_orbit(), TIMES, sigma=0.3)
+    domain, cells = _cells(s, (10.0, 400.0))
+    assert len(cells) >= len(uppers)
+    fits = {}
+
+    def leg(summaries, log_outlier, cell, key, **kw):
+        i = [c.n for c in cells].index(cell.n)
+        fits[i] = _FakeFit(cell, uppers[i] if i < len(uppers) else -100.0,
+                           esses[i] if i < len(esses) else 1000.0)  # fmt: skip
+        return fits[i]
+
+    monkeypatch.setattr(oc_cells, "position_leg", leg)
+    monkeypatch.setattr(oc_cells, "_draw", lambda f, k: onp.zeros((3, 2)))
+    run = functools.partial(
+        oc_cells.position_cells, s, domain, jax.random.key(0),
+        log_outlier=onp.full(len(TIMES), LOG_B), jitter=0.0,
+    )  # fmt: skip
+    return fits, run
+
+
+@x64
+def test_a_healthy_cell_is_untouched_by_the_smc_fallback(monkeypatch):
+    """Fails on the pre-PR code (``smc_cell`` does not exist)."""
+
+    def never(*a, **k):
+        raise AssertionError("smc_cell ran for a healthy cell")
+
+    fits, run = _stub_cells(monkeypatch, [0.0, -50.0], [1000.0, 1000.0])
+    monkeypatch.setattr(oc_cells, "smc_cell", never)
+    out = run()
+    assert all(f.smc is None and f.log_z_error == 0.0 for f in fits.values())
+    assert not out.failed.any() and onp.isfinite(out.p_pos).all()
+    assert all(
+        onp.all(f.draws == 0.0) for f in out.fits if f.draws is not None
+    )
+
+
+@x64
+def test_the_smc_rounds_end_and_run_each_cell_at_most_once(monkeypatch):
+    """Cell 0 is the best and unreliable; its SMC lowers its estimate, so cell 1
+    (unreliable, 20 nats below) newly matters. Both run once; cell 2 is not
+    unreliable. Fails on the pre-PR code (``smc_cell`` does not exist)."""
+    fits, run = _stub_cells(
+        monkeypatch, [0.0, -20.0, -20.0], [1.0, 1.0, 1000.0]
+    )
+    calls = []
+
+    def fake(fit, key, *, max_seconds):
+        i = next(j for j, f in fits.items() if f is fit)
+        calls.append(i)
+        if i == 0:
+            fit.log_z = -30.0 - fit.cell.log_mass
+        fit.smc = object()
+        return fit
+
+    monkeypatch.setattr(oc_cells, "smc_cell", fake)
+    out = run()
+    assert calls == [0, 1]
+    assert out.matters[1] and not out.matters[0]
+    assert not out.failed.any()
