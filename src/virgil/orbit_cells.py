@@ -1822,19 +1822,30 @@ def _cell_evidence(space, modes, key, n_is):
 SMC_ERROR = ESS_FAIL**-0.5  # sd(ln Ẑ) ≈ ESS^(-1/2) at ESS_FAIL (§6.15)
 
 
+def _smc_error(res):
+    """``√max(genealogy variance, Δ²/4)`` of a two-replicate SMC, with Δ the
+    difference of the replicates' ``ln Ẑ``: ``Δ²/4`` is the variance of the
+    mean of two independent runs, a check that does not depend on the
+    genealogy (§6.15)."""
+    delta = float(onp.ptp(res.log_z_replicates))
+    var = res.log_z_variance
+    return math.sqrt(max(delta**2 / 4, var if var == var else 0.0))
+
+
 def _smc_unreliable(res):
-    """A SMC run that stopped, has no usable error, or whose error is above
-    the sd that ``ESS_FAIL`` implies."""
+    """A SMC run that stopped, has no usable genealogy error, or whose error
+    (``_smc_error``) is above the sd that ``ESS_FAIL`` implies."""
     return bool(
         res.stopped
         or res.variance_degenerate
-        or not res.log_z_error <= SMC_ERROR
+        or not _smc_error(res) <= SMC_ERROR
     )
 
 
 def _run_smc(space, mixture, key, n, max_seconds):
     """Tempered SMC from ``mixture`` (normalized, sampleable) to the target:
-    ``π_β ∝ q^(1-β) (prior·L)^β`` (§6.15)."""
+    ``π_β ∝ q^(1-β) (prior·L)^β`` (§6.15). Two independent replicates of ``n``
+    particles each."""
 
     def loglike(x):
         return _target(x, space) - mixture.log_q(x)
@@ -1842,7 +1853,7 @@ def _run_smc(space, mixture, key, n, max_seconds):
     with run_in(onp.dtype(space.dtype).name):
         return tempered_smc(
             mixture.log_q, loglike, mixture.sample, key=key, n_particles=n,
-            max_seconds=max_seconds,
+            replicates=2, max_seconds=max_seconds,
         )  # fmt: skip
 
 
@@ -1865,7 +1876,7 @@ def smc_cell(fit, key, *, max_seconds=float("inf")):
     )  # fmt: skip
     fit.smc, fit.smc_seconds = res, time.time() - start
     if not res.stopped:
-        fit.log_z, fit.log_z_error = res.log_z, res.log_z_error
+        fit.log_z, fit.log_z_error = res.log_z, _smc_error(res)
         fit.undersampled = bool(res.undersampled)
     fit.unreliable = _smc_unreliable(res)
     return fit
@@ -2374,7 +2385,7 @@ def oracle_evidence(fit, x_true, key, n_is=N_IS):
                 jax.random.fold_in(key, 1), n_is, float("inf"),
             )  # fmt: skip
             if not res.stopped:
-                log_z, log_z_error, smc = res.log_z, res.log_z_error, True
+                log_z, log_z_error, smc = res.log_z, _smc_error(res), True
         # a found mode shares the optimum's basin when Newton from it ends at
         # the optimum or a symmetry image, by the distinct-mode rule (both
         # covariances, ``MAHAL``)

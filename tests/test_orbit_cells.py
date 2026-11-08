@@ -1464,10 +1464,9 @@ def test_the_smc_recovers_the_evidence_where_a_poor_proposal_gives_a_few_draws()
         space, mixture, jax.random.key(11), n, float("inf")
     )
     assert not res.stopped and not res.variance_degenerate
-    assert abs(res.log_z - truth) < 3 * res.log_z_error
-    assert res.log_z_error < is_err and abs(res.log_z - truth) < abs(
-        is_log_z - truth
-    )
+    err = oc_cells._smc_error(res)
+    assert abs(res.log_z - truth) < 3 * err
+    assert err < is_err and abs(res.log_z - truth) < abs(is_log_z - truth)
     assert not oc_cells._smc_unreliable(res)
 
 
@@ -1551,3 +1550,18 @@ def test_the_smc_rounds_end_and_run_each_cell_at_most_once(monkeypatch):
     assert calls == [0, 1]
     assert out.matters[1] and not out.matters[0]
     assert not out.failed.any()
+
+
+def test_the_replicate_check_flags_a_run_the_genealogy_error_passes():
+    """Two replicates 1 nat apart with a small genealogy variance: the
+    genealogy error alone (0.03) passes, Δ/2 = 0.5 > ``SMC_ERROR`` fails.
+    Fails on the pre-PR code (``_smc_error`` does not exist)."""
+    res = types.SimpleNamespace(
+        stopped=False, variance_degenerate=False, log_z_variance=1e-3,
+        log_z_replicates=onp.array([0.0, 1.0]),
+    )  # fmt: skip
+    assert math.sqrt(res.log_z_variance) < oc_cells.SMC_ERROR
+    assert oc_cells._smc_error(res) == pytest.approx(0.5)
+    assert oc_cells._smc_unreliable(res)
+    res.log_z_replicates = onp.array([0.0, 0.1])
+    assert not oc_cells._smc_unreliable(res)

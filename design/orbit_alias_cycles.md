@@ -1611,6 +1611,16 @@ truth −0.38, −0.12, +0.11, +0.50 nats against reported errors 0.04, 0.12, 0.
 understated when the mutations mix poorly on a thin curved target (the first run is 9 errors out). So the failure
 rule of §6.15 is necessary, not sufficient, and the census calibration test (PIT on `ok` systems) is the judge.
 
+**Replicate check (review fix, 2026-11-08, before any census run).** The SMC runs two independent replicates of N_IS
+particles (fresh keys; 2× cost in SMC'd cells only). ln Ẑ is the log of the mean of the two Ẑ, as `smc.py` reports it.
+The error is √max(genealogy variance, Δ²/4), Δ the difference of the replicates' ln Ẑ: Δ²/4 is the variance of the mean
+of two independent runs and needs no new constant. Same toy, six fresh keys (100–105): the true ln Z lies within 2
+reported errors in 2 of 6 runs with the genealogy error alone and in 2 of 6 with the new error; the rule flags 2 of 6
+(`unreliable`: error > 0.316). The four runs it does not flag deviate by −0.19 to −0.24 nats with errors 0.06–0.09:
+the two replicates agree because both are biased the same way (poor mixing lowers Ẑ consistently), which no
+two-replicate check can see. The check catches scatter, not shared bias. The calibration test of the census is the
+judge, and a miscalibrated SMC'd cell there is the evidence that the mutations (not the error) need work.
+
 **Source.** Del Moral, Doucet & Jasra (2006); Jasra et al. (2011); Lee & Whiteley (2018); Hesterberg
 (1995).
 
