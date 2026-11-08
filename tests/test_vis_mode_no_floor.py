@@ -36,7 +36,7 @@ def _build(vis_mode, v2):
 def test_logamp_excludes_nonpositive_and_keeps_the_rest(v2):
     data, msgs = _build("logamp", v2)
     excluded = [m for m in msgs if "excluded" in m]
-    weak = [m for m in msgs if "first-order" in m]
+    weak = [m for m in msgs if "poor there" in m]
     assert len(excluded) == 1 and "1 of 4" in excluded[0]
     assert len(weak) == 1 and "1 of 4" in weak[0]
     onp.testing.assert_array_equal(data.vis_index, [1, 2, 3])
@@ -50,7 +50,7 @@ def test_logamp_excludes_nonpositive_and_keeps_the_rest(v2):
 def test_amp_from_v2_excludes_nonpositive_and_keeps_the_rest():
     data, msgs = _build("amp", True)
     assert sum("excluded" in m for m in msgs) == 1
-    assert sum("first-order" in m for m in msgs) == 1
+    assert sum("poor there" in m for m in msgs) == 1
     onp.testing.assert_array_equal(data.vis_index, [1, 2, 3])
     kept = RAW[1:]
     onp.testing.assert_allclose(data.vis, onp.sqrt(kept), rtol=1e-5)
@@ -59,13 +59,48 @@ def test_amp_from_v2_excludes_nonpositive_and_keeps_the_rest():
     )
 
 
-def test_v2_from_amplitude_is_first_order_and_unchanged():
+def test_v2_from_amplitude_is_first_order_and_warns_below_sigma():
     data, msgs = _build("v2", False)
-    assert not msgs and data.vis_index is None
+    # -0.5σ and 0.5σ are below σ: kept, counted; none excluded.
+    assert not [m for m in msgs if "excluded" in m]
+    weak = [m for m in msgs if "poor there" in m]
+    assert len(weak) == 1 and "2 of 4" in weak[0]
+    assert data.vis_index is None
     onp.testing.assert_allclose(data.vis, RAW**2, rtol=1e-5)
     onp.testing.assert_allclose(
         data.d_vis, 2.0 * onp.abs(RAW) * SIGMA, rtol=1e-5
     )
+
+
+def test_v2_from_amplitude_excludes_zero_amplitude():
+    record = _data("v2", False)
+    record["vis"] = onp.array([0.0, 0.5, 3.0, 20.0]) * SIGMA
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        data = OIData(record)
+    msgs = [str(w.message) for w in caught if w.category is UserWarning]
+    excluded = [m for m in msgs if "excluded" in m]
+    assert len(excluded) == 1 and "1 of 4" in excluded[0]
+    assert sum("poor there" in m for m in msgs) == 1
+    onp.testing.assert_array_equal(data.vis_index, [1, 2, 3])
+    assert onp.all(onp.asarray(data.d_vis) > 0)
+    onp.testing.assert_allclose(data.vis, record["vis"][1:] ** 2, rtol=1e-5)
+
+
+def test_counts_ignore_already_flagged_and_invalid_samples():
+    record = _data("logamp", True)
+    record["vis"] = onp.array([-0.5, -0.5, 0.5, 3.0]) * SIGMA
+    record["d_vis"] = onp.array([SIGMA, SIGMA, SIGMA, onp.nan])
+    record["vis_flag"] = onp.array([True, False, False, False])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        data = OIData(record)
+    msgs = [str(w.message) for w in caught if w.category is UserWarning]
+    # Only sample 1 is a new exclusion among the 3 usable samples (0 is
+    # flagged already, 3 has a non-finite error).
+    excluded = [m for m in msgs if "excluded" in m]
+    assert len(excluded) == 1 and "1 of 2" in excluded[0]
+    onp.testing.assert_array_equal(data.vis_index, [2])
 
 
 @pytest.mark.parametrize("vis_mode", ["v2", "amp"])

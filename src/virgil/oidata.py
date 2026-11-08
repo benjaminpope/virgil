@@ -2051,43 +2051,64 @@ def _exclude_log_domain(
     """Flag the samples whose requested channel is undefined, and say so.
 
     ``logamp`` takes log|V| and ``amp`` from V² takes sqrt(V²); both are
-    undefined for V² (or |V|) ≤ 0, which noisy data reach legitimately. Such
-    samples are added to ``flag`` (one counted ``UserWarning``), not clipped:
-    a floor would replace a measured value with an invented one and bias the
-    fit. Samples with 0 < V² < σ are kept at their own value; the error
-    propagates to first order (σ/(2 V²) for log|V| from V², σ_V²/(2|V|) for
-    |V| from V², σ/|V| for log|V| from |V|), which is poor once the relative
-    error approaches 1, so they are counted in a second warning.
+    undefined for V² (or |V|) ≤ 0, which noisy data reach legitimately. ``v2``
+    from |V| gives the error 2|V|σ, which is zero at |V| = 0 (infinite
+    weight). Such samples are added to ``flag`` (one counted ``UserWarning``),
+    not clipped: a floor would replace a measured value with an invented one
+    and bias the fit. Samples that are valid but have the datum below σ are
+    kept at their own value; the first-order error (σ/(2V²) for log|V| from
+    V², σ/|V| for log|V| from |V|, σ/(2|V|) for |V| from V², 2|V|σ for V² from
+    |V|) is poor once the relative error approaches 1, so they are counted in
+    a second warning. Only unflagged samples with a finite, positive error
+    are counted.
     """
-    log_mode = mode == "logamp"
-    if not (log_mode or (mode == "amp" and v2_flag)) or vis.size != n_samples:
+    from_amp_to_v2 = mode == "v2" and not v2_flag
+    undefined_at_zero = mode == "logamp" or (mode == "amp" and v2_flag)
+    if not (undefined_at_zero or from_amp_to_v2) or vis.size != n_samples:
         return flag
+    already = (
+        onp.zeros(vis.size, dtype=bool)
+        if flag is None
+        else onp.asarray(flag, dtype=bool).reshape(-1)
+    )
     with onp.errstate(invalid="ignore"):
-        nonpositive = vis <= 0
-        weak = (vis > 0) & (vis < d_vis)
-    n_bad, n_weak, total = int(nonpositive.sum()), int(weak.sum()), vis.size
+        usable = (
+            onp.isfinite(vis) & onp.isfinite(d_vis) & (d_vis > 0) & ~already
+        )
+        if undefined_at_zero:
+            bad = usable & (vis <= 0)
+            weak = usable & (vis > 0) & (vis < d_vis)
+        else:
+            # |V| = 0 gives a zero V² error; a negative |V| is squared as is.
+            bad = usable & (vis == 0)
+            weak = usable & (vis != 0) & (onp.abs(vis) < d_vis)
+    n_bad, n_weak, total = int(bad.sum()), int(weak.sum()), int(usable.sum())
     quantity = "V²" if v2_flag else "|V|"
+    reason = (
+        "the channel is undefined there"
+        if undefined_at_zero
+        else "its first-order V² error 2|V|σ is zero there"
+    )
     if n_bad and has_operator:
         raise ValueError(
-            f"{n_bad} of {total} visibilities have {quantity} ≤ 0, where "
-            f"vis_mode={mode!r} is undefined, and data with an operator "
-            "(vis_mat) cannot be flagged per sample: drop those samples and "
-            "the matching operator columns, or use vis_mode='v2'."
+            f"{n_bad} of {total} visibilities have {quantity} "
+            f"{'≤' if undefined_at_zero else '='} 0, where vis_mode={mode!r} "
+            "fails, and data with an operator (vis_mat) cannot be flagged "
+            "per sample: drop those samples and the matching operator "
+            "columns, or use another vis_mode."
         )
     if n_bad:
         warnings.warn(
-            f"{n_bad} of {total} points with {quantity} ≤ 0 are excluded from "
-            f"{mode} because the channel is undefined there (not floored). "
-            "Use vis_mode='v2' to keep them.",
+            f"{n_bad} of {total} points with {quantity} "
+            f"{'≤' if undefined_at_zero else '='} 0 are excluded from "
+            f"{mode} because {reason} (not floored).",
             UserWarning,
             stacklevel=external_stacklevel(),
         )
-        flag = nonpositive | (
-            False if flag is None else onp.asarray(flag, dtype=bool)
-        )
+        flag = bad | already
     if n_weak:
         warnings.warn(
-            f"{n_weak} of {total} points have 0 < {quantity} < σ: kept at "
+            f"{n_weak} of {total} points have {quantity} < σ: kept at "
             f"their own value in {mode}, but the first-order error "
             "propagation is poor there.",
             UserWarning,
