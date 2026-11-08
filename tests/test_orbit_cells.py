@@ -591,7 +591,7 @@ def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
     def leg(summaries, log_outlier, cell, key, **kw):
         fit = types.SimpleNamespace(
             cell=cell, log_z=0.0, log_z_error=0.0, modes=[], draws=None,
-            at_floor=cell.n == cells[1].n, plan=None,
+            at_floor=cell.n == cells[1].n, plan=None, evidence=types.SimpleNamespace(ess=1e3), smc=None,
         )  # fmt: skip
         fit.failed, fit.unreliable, fit.nonfinite = fit.at_floor, False, False
         fit.log_z_upper = 0.0
@@ -1005,7 +1005,7 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         return types.SimpleNamespace(
             cell=cell, log_z=z, log_z_upper=z, log_z_error=0.0, modes=[],
             draws=None, at_floor=False, failed=False, nonfinite=False,
-            unreliable=low, plan=None,
+            unreliable=low, plan=None, evidence=types.SimpleNamespace(ess=1e3), smc=None,
         )  # fmt: skip
 
     monkeypatch.setattr(oc_cells, "position_leg", leg)
@@ -1296,7 +1296,7 @@ def test_a_floor_cell_fails_the_system_only_if_it_could_matter(
         return types.SimpleNamespace(
             cell=cell, log_z=z, log_z_upper=z, log_z_error=0.0, modes=[],
             draws=None, at_floor=low, failed=low, nonfinite=False,
-            unreliable=False, plan=None,
+            unreliable=False, plan=None, evidence=types.SimpleNamespace(ess=1e3), smc=None,
         )  # fmt: skip
 
     monkeypatch.setattr(oc_cells, "position_leg", leg)
