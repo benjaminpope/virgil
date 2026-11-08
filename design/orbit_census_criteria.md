@@ -76,3 +76,15 @@ The held-out W1 result (paired with baseline f71294b, systems 200–399) was rea
 - **Report-only:** this arm on 200–399 against the baseline and W1 there.
 - **Systems 400–599 are aggregate-only,** like 200–399 before them.
 ---
+
+---
+## Arm: tempered SMC from the search mixture where the IS is unreliable (design §6.15), added 2026-11-08 before any run of this arm
+
+- **Arm:** the head of the SMC PR (stacked on #667), frozen once this file is committed; later pushes are CI or review fixes only, each declared as changing results or not.
+- **Paired comparator:** #667 head `9204b787bd62b15e60d19f06c7982e2858f11800`. Same image, same platform (OzSTAR).
+- **Decision set:** fresh systems 600–799 of seed 0 (`START_BASE=600`). Nobody has inspected them. Aggregate only.
+- **Primary:** failure (status failed or error) in the "rest" stratum, exact one-sided McNemar on the discordant pairs (arm better), α = 0.01.
+- **Harm (exact two-sided McNemar, harm if the arm is worse at p < 0.05):** failures in each other stratum, and misses (ok with the truth outside the 99% set).
+- **Calibration, harm if violated (arm only, ok systems):** misses are not significantly above 1% (binomial, p < 0.01); the PIT KS tests for N, ln P, a, e and cos i are not rejected at 0.01, judged with a Bonferroni correction over those five.
+- **Cost, report only:** median and maximum `seconds` per stratum, and the `n_smc`, `n_smc_failed`, `smc_stages`, `smc_seconds` columns.
+- **Merge rule:** primary passes and no harm.
