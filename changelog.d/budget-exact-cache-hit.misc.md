@@ -1,0 +1,1 @@
+The per-test time budget is enforced in CI only when the JAX compilation cache is an exact key hit; on a fallback restore, over-budget tests are reported in the job summary and as a warning instead of failing, since their time then includes compiling for the PR's new shapes. No budget value changed.

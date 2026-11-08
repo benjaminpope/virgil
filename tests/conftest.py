@@ -229,10 +229,16 @@ def _keep_shard(config, items):
 # the suite grows. Setup is charged to the file, not the test: under xdist
 # the first test of a module on each worker pays for the module-scoped
 # fixtures (where sampler runs hide), and which test that is varies from run
-# to run. Shrink the test or fixture, or mark it slow. tests/over_budget.txt
+# to run. Shrink the test or fixture, or mark it slow. CI enforces the budget
+# (VIRGIL_TEST_BUDGET_ENFORCE=1) only on an exact JAX-cache key hit; on a
+# fallback restore a test's time includes compiling the PR's new shapes, so
+# over-budget tests are reported (warning and job summary), not failed.
+# tests/over_budget.txt
 # lists the tests (node ids, for the call) and files (for setup) that were
 # over budget when it was introduced; it should only get shorter.
 _BUDGET = float(os.environ.get("VIRGIL_TEST_BUDGET") or 0)
+_ENFORCE = bool(os.environ.get("VIRGIL_TEST_BUDGET_ENFORCE"))
+_OVER_BUDGET = []  # messages of the tests over budget on an unenforced run
 _EXEMPT = {
     line.strip()
     for line in (HERE / "over_budget.txt").read_text().splitlines()
@@ -260,13 +266,32 @@ def pytest_runtest_makereport(item, call):
         what = nodeid
     else:
         return
-    report.outcome = "failed"
-    report.longrepr = (
+    message = (
         f"The {what} took {report.duration:.1f} s, over the {_BUDGET:g} s "
         "budget for tests not marked slow. Shrink it (a smaller problem, "
         "fewer draws, a stub run) or mark it @pytest.mark.slow; see "
         "tests/conftest.py."
     )
+    if not _ENFORCE:
+        _OVER_BUDGET.append(
+            f"{message} (not enforced: the JAX cache was not an exact key hit)"
+        )
+        return
+    report.outcome = "failed"
+    report.longrepr = message
+
+
+def pytest_terminal_summary(terminalreporter):
+    if not _OVER_BUDGET:
+        return
+    terminalreporter.section("over the time budget (not enforced)")
+    for line in _OVER_BUDGET:
+        terminalreporter.write_line(line)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write("### Tests over the time budget (not enforced)\n\n")
+            f.write("".join(f"- {line}\n" for line in _OVER_BUDGET))
 
 
 @pytest.fixture

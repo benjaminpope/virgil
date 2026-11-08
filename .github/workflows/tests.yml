@@ -127,10 +127,15 @@ jobs:
           # The float64 jobs skip the dtype-independent files (conftest.py).
           VIRGIL_SKIP_DTYPE_INDEPENDENT: ${{ matrix.x64 }}
           VIRGIL_SLOW_FILES: ${{ matrix.orbit_slow }}
-          # Seconds per test not marked slow (tests/conftest.py), whenever any
-          # warm cache for this job and JAX version is restored (including
-          # when PR file changes fall back to the job+JAX restore-key).
+          # Seconds per test not marked slow (tests/conftest.py). Always set
+          # when any warm cache for this job and JAX version is restored, but
+          # enforced (VIRGIL_TEST_BUDGET_ENFORCE) only on an exact key hit:
+          # on the job+JAX fallback restore the cache lacks entries for the
+          # PR's new shapes and code, so a test's time includes compiling,
+          # which is not its own cost. Then over-budget tests are reported in
+          # the job summary and as warnings.
           VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax)) && '30' || '' }}
+          VIRGIL_TEST_BUDGET_ENFORCE: ${{ steps.cache.outputs.cache-hit == 'true' && '1' || '' }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             nproc; free -m; df -h .
