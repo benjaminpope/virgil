@@ -2225,7 +2225,11 @@ class LinearImage(_BrightnessImage):
         """Pixel fluxes divided by the total: unit sum, zero outside ``support``."""
         fluxes = self.fluxes
         total = np.sum(fluxes)
-        # Double where: a zero total gives zero brightness with a finite gradient.
+        # Double where: a zero total gives zero brightness and a finite
+        # gradient. That gradient is not the derivative of the flux-weighted
+        # visibility at zero (``System._mix`` forms ``F * V(b)``, and the
+        # ``V(b) dF`` term is lost), so it carries no spatial information:
+        # do not start a fit at exactly zero pixels.
         nonzero = total != 0.0
         return np.where(nonzero, fluxes / np.where(nonzero, total, 1.0), 0.0)
 
