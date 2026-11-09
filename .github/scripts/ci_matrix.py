@@ -3,7 +3,8 @@
     EVENT=pull_request FULL_CI=true PR=123 python3 .github/scripts/ci_matrix.py
 
 (``NIGHTLY=true`` makes any event the nightly tier: a hand-dispatched
-nightly.)
+nightly. ``TIER=main`` makes a dispatch the main tier, which
+lock-upgrade.yml uses; an empty ``TIER`` leaves a dispatch full.)
 
 prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 
@@ -16,12 +17,16 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 |         |                              | pyproject.toml adds the floors          |
 | main    | push to main                 | the gate, with the slow tests except    |
 |         |                              | the `full_only` ones                    |
+|         | dispatch with `tier=main`    | the same (the daily lock-upgrade PR)    |
 | full    | `full-ci` label, dispatch    | main + the `full_only` tests, macOS     |
-|         |                              | py3.11, py3.13 and the floors (the last |
-|         |                              | two in 2 shards each)                   |
+|         |                              | py3.11 float64, py3.13 and the floors   |
+|         |                              | (the last two in 2 shards each)         |
 | nightly | daily schedule               | full, all with slow tests except macOS  |
-|         |                              | (fast tier), + the newest-dependencies  |
-|         |                              | canary                                  |
+|         |                              | (fast tier)                             |
+
+The float64 gate jobs skip the dtype-independent test files, so they add
+about 0.57x the float32 suite, not 2x. The lock-upgrade PR tests the newest
+dependencies before they merge, so the nightly has no separate canary.
 
 Job names do not change between tiers, so the same checks report on every
 pull request. Standard library and the ``gh`` CLI only.
@@ -55,11 +60,20 @@ def changed_flags(files):
     )
 
 
-def choose(event, full_label=False, pyproject=False, orbit_slow=False):
+def choose(
+    event, full_label=False, pyproject=False, orbit_slow=False, tier=""
+):
     """The job matrix for a workflow event, as ``{"include": [...]}``."""
     nightly = event == "schedule"
-    full = nightly or event == "workflow_dispatch" or full_label
-    slow = full or event == "push"
+    main_tier = event == "push" or (
+        event == "workflow_dispatch" and tier == "main"
+    )
+    full = (
+        nightly
+        or full_label
+        or (event == "workflow_dispatch" and not main_tier)
+    )
+    slow = full or main_tier
     orbit_files = ORBIT_SLOW_FILES if orbit_slow and not slow else ""
 
     # Whole files per shard, packed by tests/test_durations.json. The
@@ -83,12 +97,12 @@ def choose(event, full_label=False, pyproject=False, orbit_slow=False):
     ]
     if full:
         # x64 dtype mix-ups have surfaced on macOS and Python 3.11 but not
-        # in Linux CI.
+        # in Linux CI: run float64 there, on the numerical files only.
         include.append(
             {
                 "os": "macos-latest",
                 "python-version": "3.11",
-                "x64": "0",
+                "x64": "1",
                 "slow": nightly,
                 # Unsharded, its 3 cores took over 3 hours for the whole
                 # suite: the nightly's 90-minute limit fits the fast tier.
@@ -120,20 +134,10 @@ def choose(event, full_label=False, pyproject=False, orbit_slow=False):
             }
             for k in (1, 2)
         ]
-    if nightly:
-        # Newer than uv.lock: catches a break from a new release before
-        # lock-upgrade.yml's pull request merges.
-        include.append({**LINUX, "canary": True, "slow": True})
 
     for job in include:
         shard = job.get("shard", "").replace("/", "of")
-        variant = (
-            "-lowest"
-            if job.get("lowest")
-            else "-canary"
-            if job.get("canary")
-            else ""
-        )
+        variant = "-lowest" if job.get("lowest") else ""
         job["id"] = (
             f"{job['os']}-py{job['python-version']}-x64{job['x64']}"
             f"{variant}{'-shard' + shard if shard else ''}"
@@ -158,6 +162,7 @@ def main():
         os.environ.get("FULL_CI") == "true",
         pyproject,
         orbit_slow,
+        os.environ.get("TIER", ""),
     )
     print("matrix=" + json.dumps(matrix))
 
