@@ -416,34 +416,35 @@ def test_the_dense_guides_refuse_more_coordinates_than_the_limit(monkeypatch):
     assert result.samples["dra"].shape == (10,)
 
 
-def test_a_noisier_loss_never_settles_more_easily():
-    """585#9: ``drop <= 2 se`` passed a run the more, the noisier it was.
+def test_the_settling_rule_passes_only_in_a_band_of_noise():
+    """585#9: ``drop <= 2 se`` alone passed a run the more, the noisier it was.
 
-    The same mean losses (a drop of 0.3 nat between windows) pass with a
-    small standard error and fail with a large one; a run too noisy to
-    resolve one nat fails even with no drop at all.
+    Now a run passes only for drop/2 <= se <= (1 - drop)/2 (no measured
+    fall, and the upper 2σ bound on the fall under one nat): never when
+    2 se > 1, and not a measured fall (a 0.3-nat drop at 21 se, which the
+    #665 rule passed). The rule is not monotone in the noise: a drop of 0.3
+    passes at se ≈ 0.21 but not at se ≈ 0.014.
     """
     from virgil.svi import _loss_settled
 
     window = 100
     rng = onp.random.default_rng(0)
     z = rng.standard_normal(2 * window)
-    z = (z - z.mean()) / z.std()  # exact mean 0, variance 1 in each draw set
     z[:window] -= z[:window].mean()
     z[window:] -= z[window:].mean()
+    z /= z.std()  # unit variance in the pooled draws; se = sqrt(2/window)·σ
 
     def losses(sigma, drop):
         out = sigma * z
         out[:window] += drop
         return out
 
-    assert _loss_settled(losses(0.1, 0.3), window)
-    assert not _loss_settled(losses(10.0, 0.3), window)
+    assert _loss_settled(losses(0.1, 0.02), window)
+    assert not _loss_settled(losses(0.1, 0.3), window)  # measured, 21 se
+    assert _loss_settled(losses(1.5, 0.3), window)  # inside the band
+    assert not _loss_settled(losses(10.0, 0.02), window)  # 2 se > 1
     assert not _loss_settled(losses(10.0, 0.0), window)
     assert not _loss_settled(losses(0.1, 3.0), window)  # a real fall
-    # Monotone in the noise at a fixed drop.
-    verdicts = [_loss_settled(losses(s, 0.3), window) for s in (0.05, 0.5, 5)]
-    assert verdicts == sorted(verdicts, reverse=True)
 
 
 def test_a_large_khat_warns_and_is_in_info(monkeypatch):

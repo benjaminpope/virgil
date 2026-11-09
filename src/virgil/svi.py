@@ -267,35 +267,36 @@ _SETTLED_NATS = 1.0
 
 
 def _loss_settled(losses, window):
-    """Whether the loss has stopped falling, by an upper confidence bound.
+    """Whether the loss has stopped falling, and cannot be falling much.
 
     The loss is minus the ELBO in nats. Let ``drop`` be the mean loss of the
     window before the last minus that of the last window, and ``se`` the
     standard error of that difference, ``sqrt((var_last + var_before) /
-    window)``. The run counts as settled when the upper 2σ bound on the true
-    fall is under one nat,
+    window)``. The run counts as settled when both hold:
 
-        drop + 2 se <= 1.
+        drop <= 2 se        (no fall is detected at 2σ), and
+        drop + 2 se <= 1    (the upper 2σ bound on the true fall is under one nat).
 
-    Why this rule: the true fall exceeds ``drop + 2 se`` only with probability
-    about 2% (normal means over a window), so passing certifies that the
-    loss is falling by less than the tolerance, not merely that the fall is
-    unmeasurable. The bound is increasing in ``se``, so a noisier run can
-    never pass more easily than a quieter one with the same drop; a run too
-    noisy to resolve one nat (2 se > 1 even with no drop) does not pass. The
-    old rule ``drop <= 2 se`` did the opposite: noise widened what it
-    accepted. One nat is the unit of the ELBO's scale: a change below it
-    alters no model comparison worth mentioning (Kass & Raftery 1995, a
-    Bayes factor below e).
-    Necessary, not sufficient: a flat stretch of a slow descent also passes
-    when the fall per window is under one nat.
+    The first is the rule used before #665, so this is never looser than it.
+    It alone passes a run too noisy to see any fall; the second closes that:
+    the true fall exceeds ``drop + 2 se`` only with probability about 2%
+    (normal means over a window), so a pass certifies a fall under the
+    tolerance, and a run too noisy to resolve one nat (2 se > 1) never
+    passes. The rule is not monotone in the noise: at a fixed drop it passes
+    only for drop/2 <= se <= (1 - drop)/2, trading the old "noisier never
+    passes more easily" for detecting a fall that is measured. The cap of one nat per window is a modelling choice: it is the
+    scale of a log Bayes factor (Kass & Raftery 1995), so a loss still
+    falling by less than one nat per window cannot move a model comparison by
+    more than a bare mention; the paper sets that scale, not an optimiser
+    tolerance. Necessary, not sufficient: a flat stretch of a slow descent
+    also passes when the fall per window is under one nat.
     """
     last, before = losses[-window:], losses[-2 * window : -window]
     if losses.size < 2 * window or not onp.all(onp.isfinite(last)):
         return False
     drop = before.mean() - last.mean()
     se = math.sqrt((last.var() + before.var()) / window)
-    return bool(drop + 2 * se <= _SETTLED_NATS)
+    return bool(drop <= 2 * se and drop + 2 * se <= _SETTLED_NATS)
 
 
 def variational(

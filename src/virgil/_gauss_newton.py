@@ -37,6 +37,11 @@ _LAM_START = 1e-3
 _LAM_FLOOR = 1e-12
 _LAM_STALL = 1e10
 _BOUND_EPS = 1e-10
+# The decrement (nats) a float64 run reaches whatever Φ: the pre-#665 value of
+# the refinement callers, kept so their acceptance set is unchanged. Not
+# derived; the decrement is computed from the gradient, whose rounding is not
+# bounded by Φ's.
+_DTOL_AUTO = 1e-12
 
 
 class State(eqx.Module):
@@ -57,6 +62,21 @@ def curvature(problem, z):
     J = jax.jacfwd(problem.rows)(z)
     F = J.T @ J + np.diag(problem.diag(z))
     return 0.5 * (F + F.T)
+
+
+def rounding_dtol(value):
+    """The decrement (nats) below which Φ cannot tell two points apart.
+
+    10 ulp of max(|Φ|, 1). Derivation, when Φ is a sum of n terms of one sign
+    (a chi-squared): its rounding error is at most about log2(n) ε Σ|xᵢ| =
+    log2(n) ε |Φ| for tree-wise summation (Higham 2002, §4.2), and log2(n) is
+    10 at n = 10³ (13 at 10⁴); the floor of 1 is one nat. Not derived for a
+    Φ whose terms have both signs, such as the marginal surface of `epochs`
+    (a sum of ν log χ² per block), where |Φ| can be far below Σ|xᵢ|: there
+    it is the allowance the kernel's former rescue used, kept so as not to
+    change behaviour.
+    """
+    return 10 * np.finfo(value.dtype).eps * np.maximum(np.abs(value), 1.0)
 
 
 def _held(z, g, lower, upper):
@@ -152,6 +172,10 @@ def _advance(problem, state, lower, upper, gtol, dtol, limit):
     delta = _solve_free(F, g, free, _LAM_FLOOR)
     dec = -0.5 * np.sum(np.where(free, g * delta, 0.0))
     dec = np.where(np.isfinite(dec), dec, np.inf)
+    # dtol=None (NaN here): the larger of _DTOL_AUTO and Φ's rounding resolution
+    dtol = np.where(
+        np.isnan(dtol), np.maximum(_DTOL_AUTO, rounding_dtol(value)), dtol
+    )
     converged = (gnorm <= gtol) | (dec <= dtol)
     # Damping that ran away without meeting a criterion is a stall, reported
     # as such (callers name it "the damping limit"); it is never converged.
@@ -221,6 +245,9 @@ def solve(
         Stop when the projected gradient's infinity norm is ≤ ``gtol`` or the
         Newton decrement is ≤ ``dtol``. A tolerance finer than
         the rounding error of Φ cannot be met: the run ends ``STALLED``.
+        ``dtol=None`` is the larger of 1e-12 and that rounding error at the
+        current Φ (`rounding_dtol`), the acceptance set of the refinement
+        callers before #665 (a tolerance of 1e-12, or the rounding rescue).
     max_steps
         Maximum iterations (accepted and rejected) in this call, at least 1.
     """
@@ -242,6 +269,6 @@ def solve(
         bound(lower, -np.inf),
         bound(upper, np.inf),
         np.asarray(gtol, dtype),
-        np.asarray(dtol, dtype),
+        np.asarray(np.nan if dtol is None else dtol, dtype),
         np.asarray(max_steps, np.int32),
     )

@@ -785,6 +785,46 @@ def test_the_velocity_marginal_of_the_outlier_prior_integrates_the_velocity():
     assert total == pytest.approx(marginal, rel=0.05)
 
 
+@x64
+@pytest.mark.parametrize("sigma_f", [0.01, 0.05, 0.5])
+def test_the_flux_box_integral_matches_quadrature_and_is_finite_everywhere(
+    sigma_f,
+):
+    s = _summaries(_orbit(), TIMES)
+    domain, _ = _cells(s, (6.0, 400.0))
+    prior = oc_cells.outlier_prior(domain, n=2**10)
+    ell = prior.ln_f_floor
+    for m in (ell - 0.1, ell, ell + 0.01, -1.0, -0.02, 0.0, 0.03, 0.3):
+        got = float(prior.log_flux_box(m, sigma_f))
+        assert onp.isfinite(got)
+        want, _ = integrate.quad(
+            lambda x: stats.norm.pdf(x, m, sigma_f) / -ell,
+            ell, 0.0, points=[min(max(m, ell), 0.0)], epsabs=0, epsrel=1e-12,
+        )  # fmt: skip
+        if want > 1e-300:
+            assert onp.exp(got) == pytest.approx(want, rel=1e-8)
+    # far from both ends the integral is the old box value: continuity
+    assert float(prior.log_flux_box(-3.0, 0.01)) == pytest.approx(
+        -math.log(-ell), abs=1e-12
+    )
+
+
+@x64
+def test_a_night_with_an_observed_flux_above_one_fits_without_error():
+    s = _summaries(_orbit(), TIMES, ln_f=0.05)  # truth ln f above 0
+    assert any(n.peaks[0].mean[4] > 0 for n in s)
+    domain, cells = _cells(s, (9.0, 14.0))
+    prior = oc_cells.outlier_prior(domain, n=2**14)
+    b = oc_cells.outlier_log_density(s, prior)
+    assert onp.all(onp.isfinite(b))
+    cell = next(c for c in cells if c.p_lo <= 11.3 <= c.p_hi)
+    fit = oc_cells.position_leg(
+        s, b, cell, jax.random.key(0), t_anchor=TIMES[0], t_nights=TIMES,
+        n_is=256, posterior_draws=False,
+    )  # fmt: skip
+    assert onp.isfinite(fit.log_z)
+
+
 # --- the search plan -----------------------------------------------------------
 
 
@@ -1010,7 +1050,7 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         low = cell.n == odd
         z = -cell.log_mass - (gap if low else 0.0)
         return types.SimpleNamespace(
-            cell=cell, log_z=z, log_l_sup=z, log_z_error=0.0, modes=[object()],
+            cell=cell, log_z=z, log_l_sup=z, log_z_error=0.0, modes=[_MODE], space=_SPACE,
             draws=None, at_floor=False, failed=False, nonfinite=False,
             unreliable=low, plan=None,
         )  # fmt: skip
@@ -1026,6 +1066,45 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
     else:
         assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
+
+
+# --- shared neighbour modes (design 6.11) ----------------------------------------
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.timeout(1800)
+def test_a_mode_beside_an_edge_gives_both_cells_the_exact_evidence():
+    """K = 3 nights in two seasons, a circular orbit a few hundredths of a cell
+    inside the edge of cell 35: the mode is interior to one cell, and its
+    neighbour (cell 36) reaches it through a shared component. Both cells' ``ln Ẑ``
+    against 2**20 plain prior draws each."""
+    times = onp.array([0.0, 4.1, 365.0])
+    t, period = times[-1] - times[0], 365.0 / (35.5 - 0.03)
+    s = _summaries(_orbit(period=period, a=6.0, ecc=0.0), times, sigma=1.5)
+    domain = oc_cells.period_domain(s, p_range=(t / 37.5, t / 33.5))
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(3, LOG_B),
+        jitter=0.0, e_max=1e-6, n_is=20000,
+    )  # fmt: skip
+    for n in (35, 36):
+        fit = [f for f in out.fits if f.cell.n == n][0]
+        ll = jax.jit(jax.vmap(fit.space.loglike))
+        ref = onp.concatenate(
+            [
+                onp.asarray(
+                    ll(fit.space.sample(jax.random.key(10 + i), 2**15))
+                )
+                for i in range(32)
+            ]
+        )
+        w = onp.exp(ref - ref.max())
+        lz = onp.log(onp.mean(w)) + ref.max()
+        err = onp.sqrt(1 / (w.sum() ** 2 / (w**2).sum()))
+        assert abs(fit.log_z - lz) < 4 * onp.hypot(fit.log_z_error, err) + 0.02
+    # the neighbour has the shared component (its own mode too: a short-span
+    # ridge is kept, design 6.11, so absence is not promised)
+    assert [f for f in out.fits if f.cell.n == 36][0].shared
 
 
 # --- the speed measures are exact --------------------------------------------
@@ -1171,7 +1250,7 @@ def test_a_floor_cell_fails_the_system_only_if_it_could_matter(
         low = cell.n == odd
         z = -cell.log_mass - (gap if low else 0.0)
         return types.SimpleNamespace(
-            cell=cell, log_z=z, log_l_sup=z, log_z_error=0.0, modes=[object()],
+            cell=cell, log_z=z, log_l_sup=z, log_z_error=0.0, modes=[_MODE], space=_SPACE,
             draws=None, at_floor=low, failed=low, nonfinite=False,
             unreliable=False, plan=None,
         )  # fmt: skip
@@ -1199,6 +1278,11 @@ def test_a_non_finite_outlier_density_is_an_error():
             s, log_b, cells[2], jax.random.key(0), t_anchor=TIMES[0],
             t_nights=TIMES[:5], n_is=64, posterior_draws=False,
         )  # fmt: skip
+
+
+# a narrow mode of a stub fit: its mass never crosses a cell edge (no shared mode)
+_MODE = Mode(onp.zeros(1), 0.0, onp.full((1, 1), 1e-12), 2.0)
+_SPACE = types.SimpleNamespace(ln_lo=0.0, ln_hi=1.0)
 
 
 # --- `matters` is a bound -----------------------------------------------------
@@ -1303,7 +1387,7 @@ def test_position_cells_fails_on_a_flagged_cell_within_the_bound(monkeypatch):
             low = cell.n == cells[1].n
             z = -cell.log_mass - (300.0 if low else 0.0)
             return types.SimpleNamespace(
-                cell=cell, log_z=z, log_z_error=0.0, modes=[object()],
+                cell=cell, log_z=z, log_z_error=0.0, modes=[_MODE], space=_SPACE,
                 draws=None, at_floor=low, failed=low, nonfinite=False,
                 unreliable=False, plan=None,
                 log_l_sup=-cell.log_mass - (sup_gap if low else 0.0),
