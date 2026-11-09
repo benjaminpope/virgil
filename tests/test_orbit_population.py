@@ -120,7 +120,9 @@ def test_scoring_is_invariant_to_the_orbit_swap():
                 assert a[name] == pytest.approx(b[name], abs=1e-6), name
 
 
-def test_the_omega_pit_is_the_same_for_draws_in_either_orbit_image(monkeypatch):
+def test_the_omega_pit_is_the_same_for_draws_in_either_orbit_image(
+    monkeypatch,
+):
     """The draw side of the fold: a fit whose draws sit in the omega + 180
     image gets the same ``pit_omega`` as one in the truth's image."""
     base = onp.linspace(10.0, 170.0, 9)  # omega draws in [0, 180)
