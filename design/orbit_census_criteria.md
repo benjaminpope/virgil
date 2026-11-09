@@ -75,6 +75,25 @@ The held-out W1 result (paired with baseline f71294b, systems 200–399) was rea
 - **Secondary, recorded as a hypothesis from the W1 analysis, report-only:** this arm against W1, rest stratum, baseline ln s < −0.5, one-sided McNemar at α = 0.05.
 - **Report-only:** this arm on 200–399 against the baseline and W1 there.
 - **Systems 400–599 are aggregate-only,** like 200–399 before them.
+
+**W1 merge rule (added 2026-11-09, before the 400–599 baseline is complete).**
+
+- **W1's first test.** W1's first primary, on 200–399, was written in an uncommitted local script (`~/data/orbit_census_local/diag/heldout_delta.py`), not in git, and it failed (p = 0.036). The 400–599 primary is therefore W1's second try.
+- **W1 alone.** W1 merges alone only if its 400–599 primary passes at α = 0.005 (Bonferroni over its two tries), with no harm.
+- **#667.** #667 is judged as W1 + #667 against the baseline, at α = 0.01 as already committed. If #667 passes, that does not mean W1 passed.
+- **Comparator.** #667 against W1 stays report-only. It may not replace the baseline comparison.
+- **Partial look.** An aggregate look was taken at the partial baseline (82 of ~190 systems) during an independent review on 2026-11-08. No decision uses it. The primary is scored only on the complete set, exactly as written.
+- **Simulator caveat.** The census simulator sets each night's χ² to exactly n·s² (noise-free) and truncates ln f (#641), so these results are not performance on real data.
+
+**Floor sentinel gated by mass (#641): decision 2026-11-09.**
+
+- **What #641 changed.** It was merged on 2026-11-03, after the first census (aea931a, 73/200 failed). It changed `CellsResult.failed` so that a cell at the floor fails the system only if it `matters`. This loosens assertion 2 as implemented.
+- **The decision.** Ben accepts this rule, on the condition that `matters` gets the M2 fix from the 2026-11-08 code review:
+  - a genuine upper bound on each cell's evidence, in place of max(ln Ẑ, best Laplace);
+  - the threshold ln(n_cells/δ).
+
+  The fix will be a separate PR, judged on a fresh census arm.
+- **Until then.** Census results under the current `matters` rule carry this caveat.
 ---
 
 ---

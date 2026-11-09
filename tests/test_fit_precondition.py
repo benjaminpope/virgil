@@ -57,12 +57,12 @@ def _quadratic_fit(**options):
     )
 
 
-def _image_fit(npix=16):
+def _image_fit(npix=16, sigma=25.0):
     data = OIData(ami_grid_record(pitch_m=0.5))
     truth = System(
         star=PointSource(),
         env=Image.from_brightness(
-            gaussian_blob(npix, 12.0, 25.0, dra=20.0), 12.0, flux=0.1
+            gaussian_blob(npix, 12.0, sigma, dra=20.0), 12.0, flux=0.1
         ),
     )
     data = data.with_model(truth, key=jax.random.PRNGKey(1))
@@ -264,10 +264,17 @@ def test_adam_ftol_with_a_metric():
 
 
 def test_the_optimum_and_the_gradient_norm_are_unchanged():
-    start, priors, data = _image_fit()
+    # A scene broad enough that every pixel holds a share of the flux. On a
+    # compact one the faint pixels have entropy curvature w p ~ 1e-9 and data
+    # that cannot see them: a flat valley that gtol does not pin, so the two
+    # runs stop at different points (25 mas: 135.30 vs 135.54, with the
+    # gradient norm below 2e-6 in both) and the loss gap is not a measure of
+    # the optimum. Where the curvature is bounded below by lambda * min(p) (the
+    # entropy curvature is w p per pixel), the gap is at most
+    # |g|^2 / (2 lambda min(p)), negligible at gtol = 1e-6.
+    start, priors, data = _image_fit(sigma=60.0)
     regularizers = [MaxEntropy(10.0, path="env")]
-    # A tighter gtol than the default, which stops where a flat direction
-    # still has a few tenths of a percent of the loss to give.
+    # A tighter gtol than the default.
     options = dict(gtol=1e-6)
     plain = fit(start, priors, data, regularizers, **options)
     scaled = fit(
@@ -277,8 +284,14 @@ def test_the_optimum_and_the_gradient_norm_are_unchanged():
     # The gradient test is in the unscaled coordinates, whatever the metric.
     assert scaled.info["grad_norm"] < 1e-5
     assert scaled.info["loss"] == pytest.approx(plain.info["loss"], rel=2e-3)
+    # Pixels are a softmax over 256, about 0.004 each, so the tolerance is a
+    # fraction of the peak, and the image must have moved off the flat start.
+    peak = plain.model.env.brightness.max()
+    assert peak > 1.5 / 256
     onp.testing.assert_allclose(
-        scaled.model.env.brightness, plain.model.env.brightness, atol=1e-2
+        scaled.model.env.brightness,
+        plain.model.env.brightness,
+        atol=1e-2 * peak,
     )
     # The softmax gauge is fixed: log-brightness is the log of the pixel fluxes.
     x = scaled.values["env.log_brightness"]
@@ -351,7 +364,7 @@ def test_the_gauge_masks_follow_the_support_of_each_flat_image():
 def test_probes_are_redrawn_each_round_and_a_new_round_does_not_recompile():
     from virgil.fitting import _fisher_diagonal, _lbfgs_run
 
-    start, priors, data = _image_fit(8)
+    start, priors, data = _image_fit(16)
     problem = _Objective(start, priors, data)
     z = problem.init()
     first = _fisher_diagonal(problem, z, 4, 0)
@@ -583,3 +596,60 @@ def test_the_l_curve_converges_at_every_weight(dtype):
     with ambient:
         runs = _l_curve_steps(dtype)
     assert all(converged for _, converged in runs), runs
+
+
+def _nuisance_fit(npix=16):
+    start, priors, data = _image_fit(npix)
+    priors = dict(
+        priors,
+        **{
+            "star.flux": dist.LogUniform(1e-3, 10.0),
+            "env.flux": dist.LogUniform(1e-3, 10.0),
+        },
+    )
+    values = {"env.log_brightness": start.env.log_brightness}
+    return start, priors, data, values
+
+
+def test_small_blocks_stay_exact_when_probing():
+    args = _nuisance_fit()
+    exact = gauss_newton_diag(*args)
+    probed = gauss_newton_diag(*args, n_probes=4)
+    for key in ("star.flux", "env.flux"):
+        onp.testing.assert_allclose(probed[key], exact[key], rtol=1e-8)
+    pixels = "env.log_brightness"
+    assert not onp.allclose(probed[pixels], exact[pixels], rtol=1e-3)
+
+
+def test_the_large_block_probe_estimate_is_still_unbiased():
+    args = _nuisance_fit()
+    exact = gauss_newton_diag(*args)
+    problem = _Objective(args[0], args[1], args[2])
+    with run_in("float64"):
+        problem = cast_tree(problem, "float64")
+        z = problem.init(cast_tree(args[3], "float64"))
+        from virgil.fitting import _fisher_diagonal
+
+        rounds = [
+            onp.asarray(_fisher_diagonal(problem, z, 8, np.asarray(r)))
+            for r in range(40)
+        ]
+        _, unravel = problem.ravel(z)
+        mean = unravel(onp.mean(rounds, axis=0))
+    pixels = "env.log_brightness"
+    onp.testing.assert_allclose(
+        onp.sum(mean[pixels]), onp.sum(exact[pixels]), rtol=0.1
+    )
+
+
+def test_non_finite_diagonal_entries_are_imputed_with_a_warning():
+    from virgil.fitting import _impute
+
+    d = np.asarray([1.0, 4.0, onp.nan, 2.0, onp.inf])
+    with pytest.warns(RuntimeWarning, match="non-finite"):
+        out = onp.asarray(_impute("x", d))
+    onp.testing.assert_array_equal(out, [1.0, 4.0, 4.0, 2.0, 4.0])
+    with pytest.warns(RuntimeWarning, match="flat scale"):
+        _impute("x", np.asarray([onp.nan, onp.nan]))
+    clean = np.asarray([1.0, 2.0])
+    onp.testing.assert_array_equal(_impute("x", clean), clean)

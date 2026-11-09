@@ -183,7 +183,8 @@ Near each peak of the night's likelihood (peak state ŝ, covariance Σ over (p, 
 
   b_k ≈ ln Σ_peaks L_peak · (2π)^{5/2} |Σ|^{1/2} π_out(ŝ),
 
-while for the true orbit ℓ_k(truth) ≈ ln L_peak. So at the truth
+where the flux factor of π_out is not evaluated at ŝ but integrated over the Gaussian ln f error in closed form
+(§6.6 "Finite floor"), so the term is finite for an observed ln f > 0; while for the true orbit ℓ_k(truth) ≈ ln L_peak. So at the truth
 
   Δ_k^truth = b_k − ℓ_k(truth) ≈ ln[(2π)^{5/2} |Σ|^{1/2} π_out(ŝ)] + (own-scale Occam)
             = −(Occam of p) − (Occam of v) − (Occam of f) − Σ_g (2.0 to 2.4 nats),
@@ -587,9 +588,9 @@ sampling does not suffice: the chance that a random set contains the two outer i
   **The sentinel fails the system only if the cell could matter.** The flag is per cell and is always reported. A
   mode's peak height says nothing of its mass, so a cell at the floor far below the best cell (a thin mode, or a cell
   whose true mode is 85–200 nats below the system's dominant cell) must not fail the system. A flagged cell fails the
-  system only when it passes the `matters` rule of §6.6: its upper bound on the evidence mass, ln mass_N + max(ln Ẑ_N,
-  Laplace ln Z of its best mode), is within W of the largest such bound over the cells. Non-finite targets fail the
-  system unconditionally. The rule adds no constant: W is the one of the sentinel and of §6.6.
+  system only when it passes the `matters` rule of §6.6: its bound ln mass_N + ln sup L_N is not below the best unflagged
+  cell's ln(mass Ẑ) by ln(n_cells/δ) (§6.10). Non-finite targets fail the system unconditionally. The rule adds no
+  constant (W is the sentinel's only; the threshold uses δ and the cell count).
 
 ### 6.2 Leg 2: the visibility level (changed; flag for Ben)
 
@@ -790,12 +791,29 @@ Their coverage is the eccentric test of Stage 3b (§14).
   - `no-mode` (per system): no mode in any cell and every ln Ẑ_N at the all-floor value. Information; the system goes
     to the §8 null test before any p̂(N) is reported (§6.9).
 - The mass is per cell, never pooled. Ridge modes carry their quadrature mass, never a Laplace mass (§6.10).
-- **`matters`.** A cell fails the system if its target is non-finite, or if it is flagged `cell-at-floor` or has ESS < ESS_fail
-  *and* its upper bound ln mass_N + ln Ẑ_N^upper is within W of the maximum of that bound over the cells (a cell whose
-  probability could reach δ). A flagged cell below that is information only: reported per cell, not failing the system.
-- **Finite floor.** The all-outlier floor K·b needs every b_k finite, i.e. every night's ln f inside [ln flux_floor, 0].
-  A night outside has b_k = −inf: the fit raises an error (never a silent pass). The population simulation draws the
-  inlier ln f noise truncated to that support (its own generative process).
+- **`matters`** (implemented; §6.10 has the bound). A cell fails the system if its target is non-finite, or if it is
+  flagged `cell-at-floor` or has ESS < ESS_fail *and* it matters. With U_N = ln mass_N + ln sup L_N (`CellFit.log_l_sup`:
+  the largest ln L evaluated at any found mode or IS draw) and R = max ln(mass_N Ẑ_N) over the cells that are neither
+  failed nor unreliable, a cell matters iff it has no found mode or U_N ≥ R − ln(n_cells/δ). If no cell is unflagged,
+  every flagged cell matters. A flagged cell that does not matter is information only: reported per cell, not failing
+  the system. `CellsResult.omitted_bound` = Σ exp(U_N) over those cells / Σ mass_N Ẑ_N; it is a diagnostic, below δ by the
+  threshold *given that the search found each cell's top mode* (ln sup L evaluated is a lower bound, so it can be
+  understated). The threshold is a union bound over the cells, so the total omitted mass is ≤ δ, not δ per cell.
+  A flagged cell with no found mode always matters (it has no bound). W now serves the sentinel only. Expect more failures than
+  under the earlier rule (max(ln Ẑ, Laplace) within W per cell): that is the intended honesty.
+- **Finite floor.** The all-outlier floor K·b needs every b_k finite. The flux prior π(ln f) = 1/|ℓ| on [ℓ, 0]
+  (ℓ = ln flux_floor) is integrated exactly over the Gaussian ln f error N(m_f, σ_f²), σ_f² = Σ[4, 4] at the peak:
+  E[π(ln f)] = [Φ(−m_f/σ_f) − Φ((ℓ − m_f)/σ_f)] / |ℓ| (`OutlierPrior.log_flux_box`, in logs with `log_ndtr`). It is
+  finite for every m_f, including m_f > 0; the old point evaluation gave −inf there and overstated b_k by up to ln 2
+  within ~2σ_f of either end. The inlier term is unchanged: a mean with m_f > 0 is an ordinary Gaussian measurement of a
+  truth at or below 0. The population simulation no longer truncates the simulated ln f noise (a truncation made the
+  census generate only data the fit could handle), so its summaries are exactly the fit's model.
+- **Finding to check, not fixed here.** The plan (orbit_eval_20261109) says the real `night_summaries` bounds ln f to
+  [ln F_MIN, 0] and drops a peak held at a bound, so real summaries probably never carry m_f > 0 and a near-twin's
+  failure in the wild is more likely a dropped true peak. B′ measures this before any fold or mirror is added.
+- **Near-twins** are scored up to the orbit ↔ −orbit swap (ω → ω + π): Ben, "perfect" means right up to this
+  orientation degeneracy. The census scored ω over [0, 360), which is not swap-invariant; it now folds ω mod 180°
+  (truth and draws), and `test_scoring_is_invariant_to_the_orbit_swap` enforces it.
 
 ### 6.7 Across the alias grid N (Ben's idea)
 
@@ -1039,16 +1057,17 @@ sum (the closed-form integral of e^{h(ρ)} over the cell) replaces the Laplace m
 mixture weights, in `_prune`, and in the sentinel's "W above the floor" test. Kind 2 disappears because no inflated
 Laplace remains to trigger on.
 
-**Negligibility by a bound, not by Laplace.** `position_cells` now calls a cell negligible when its Laplace upper estimate
-is W below the best cell. A ridge's Laplace is not an upper bound, so this can call a real cell negligible or a
-negligible one matters. The bound that holds is
+**Negligibility by a bound, not by Laplace** (implemented in `position_cells`). The earlier rule called a cell negligible
+when max(ln Ẑ, Laplace) was W below the best cell. A ridge's Laplace is not an upper bound, and W per cell ignores that
+n cells can each hide mass. The bound that holds is
 
-  Z_N ≤ π(cell N)·sup_{x∈cell} L(x),
+  mass_N·Z_N ≤ mass_N·sup_{x∈cell} L(x) = exp(U_N),
 
-with sup L evaluated as the label-summed target at the best mode found. A cell is negligible iff
-ln π(cell) + ln sup L < max_N' ln Ẑ_N' − W.
+because the cell prior is normalized. sup L is the largest ln L evaluated in the cell (every found mode, every IS
+draw). A flagged cell is negligible iff U_N < R − ln(n_cells/δ), R as in §6.6. The negligible cells then hold at most
+n_cells·e^R·δ/n_cells = δ e^R ≤ δ of the posterior, conditional on the search coverage below. Unflagged cells need no bound.
 
-The best mode found is a *lower* bound on sup L. So the rule is conservative (more cells kept than by the exact
+The largest ln L evaluated is a *lower* bound on sup L. So the rule is conservative (more cells kept than by the exact
 integral, since the bound omits the Occam factor) only *conditional on the search's coverage*. When the search misses
 the cell's top mode, which the coverage contract allows with probability ≤ δ, a real cell can be called negligible.
 Two consequences follow:
@@ -1579,7 +1598,9 @@ q towards the mode along the curved ridge, which a single importance step cannot
 **Trigger.** A cell is run through the SMC only if (i) its IS has ESS < ESS_FAIL, (ii) its target is finite
 (`nonfinite` false), and (iii) it matters under §6.6. The last depends on every cell's estimate, so the cells are
 processed in rounds: all cells by IS; SMC the low-ESS cells that matter; recompute `matters` with the new estimates;
-repeat for any low-ESS cell that newly matters. Each cell is SMC'd at most once, so there are at most as many rounds as
+repeat for any low-ESS cell that newly matters (under the bound-based rule of the merged base, an SMC'd cell that
+becomes reliable can raise the reference R and so only removes cells from `matters`; the loop is kept as written
+because it is safe either way). Each cell is SMC'd at most once, so there are at most as many rounds as
 cells and the loop ends. Every other cell keeps its IS estimate, evidence and draws unchanged (bit for bit).
 
 **Unbiasedness.** The SMC uses a fresh key, independent of the IS draws. The trigger is a function of the IS draws (and

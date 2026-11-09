@@ -1916,7 +1916,7 @@ def _refine_marginal(x0, dof, d64, surface, bounds, diam=None, amp_range=None):
         onp.asarray(x0, float),
         lower=[b[0] for b in bounds],
         upper=[b[1] for b in bounds],
-        dtol=1e-12,
+        dtol=None,
         max_steps=200,
     )
     stop = int(state.stop)

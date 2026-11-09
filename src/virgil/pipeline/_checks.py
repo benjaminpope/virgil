@@ -594,8 +594,9 @@ def model_gain(
         Their names, for the message.
     unidentified : bool
         The simpler model's diameter is on the lower edge of the diameter
-        range: the comparison is not valid and the simpler model is kept (a
-        fit that did not converge still warns).
+        range: the comparison is not valid and the simpler model is kept,
+        with a warning. A richer model that fits worse than the simpler one
+        it contains fails: a fit did not converge.
     """
     gain = float(m2loglike_simple) - float(m2loglike_complex)
     penalty = bic_penalty(n_extra, n)
@@ -605,13 +606,13 @@ def model_gain(
         )
     # The richer model contains the simpler: a fit did not converge.
     if gain < -1.0:
-        status = "warn"
+        status = "fail"
         message = (
             f"The {complex_} model fits worse than the {simple} model it "
             f"contains (Δ(−2 log L) = {gain:.3g}): a fit did not converge."
         )
     elif unidentified:
-        status = "pass"
+        status = "warn"
         message = (
             f"Δ(−2 log L) = {gain:.3g} for {n_extra} extra parameters, but "
             f"the {simple} diameter is at the lower edge of its range, so the "
@@ -1103,6 +1104,9 @@ def convergence(records):
         The recorded warnings that mention non-convergence ("the optimizer
         did not converge at N of M grid positions"). The one with the worst
         fraction N/M is reported; grids of different sizes can appear.
+
+    A warning, except a failure when the optimizer failed at every position
+    of a grid (N = M): no value of that grid is a fit.
     """
     worst, total = 0.0, 0.0
     for record in records:
@@ -1124,7 +1128,7 @@ def convergence(records):
         )
     return Check(
         "convergence",
-        "warn",
+        "fail" if worst >= total else "warn",
         worst / total,
         0.0,
         f"The optimizer did not converge at {worst:.0f} of {total:.0f} grid "
@@ -1747,8 +1751,10 @@ def period_bound(bound, lower, p_range):
 # --- checks of ImagingPipeline (every χ²/N is on the quoted errors) ---------
 
 
-def _two_way(name, bad, value, threshold, good_text, bad_text):
-    status = "warn" if bad else "pass"
+def _two_way(name, bad, value, threshold, good_text, bad_text, *, fail=False):
+    """A pass or, when ``bad``, a warning: a failure when ``fail`` as well
+    (the criterion invalidates the result, not just weakens it)."""
+    status = ("fail" if fail else "warn") if bad else "pass"
     return Check(
         name, status, value, threshold, bad_text if bad else good_text
     )
@@ -1769,6 +1775,7 @@ def quoted_errors(blocks):
         "The quoted errors vary and are positive.",
         f"The quoted errors are {' and '.join(parts)}: they look like "
         "placeholders, so the hyperparameters and every χ²/N are suspect.",
+        fail=bool(bad),
     )
 
 
@@ -1790,11 +1797,20 @@ def effective_parameters(n, n_gamma, *, warn=0.2):
 
 def short_baselines(mean, error, *, warn=3.0, fail=5.0):
     """Mean visibility residual on the shortest baselines, in errors."""
-    if mean is None or not _finite(mean):
+    if mean is None:
         return Check(
             "short_baselines", "pass", None, warn, "No baseline-ordered data."
         )
-    sigma = float(mean) / float(error)
+    sigma = float(mean) / float(error) if _finite(error) and error else None
+    if not _finite(mean) or not _finite(sigma):
+        return Check(
+            "short_baselines",
+            "fail",
+            None,
+            warn,
+            "The mean residual on the shortest baselines, or its error, is "
+            "not finite.",
+        )
     status = (
         ("fail" if abs(sigma) > fail else "warn")
         if abs(sigma) > warn
@@ -1844,6 +1860,7 @@ def orientation(flip_dchi2, closure, *, warn=9.0):
         f"Turning the image by 180° raises χ² by {flip_dchi2:.3g}.",
         "The orientation is weakly constrained (no closure phases, or a "
         "180° turn changes χ² by under the threshold).",
+        fail=bool(closure) and not _finite(flip_dchi2),
     )
 
 
@@ -1866,6 +1883,7 @@ def edges(grid_edges, flux, *, warn=0.01):
         "field.",
         f"The fit is {' and '.join(parts)}: the grid or the field is too "
         "small.",
+        fail=not _finite(flux),
     )
 
 
@@ -1881,6 +1899,7 @@ def ensemble_kept(n_kept, n, *, min_kept=3):
         "mean.",
         f"Only {n_kept} of {n} members are in the mean (fewer than "
         f"{min_kept}, or under half): the sigma map is not a useful map.",
+        fail=n_kept == 0,
     )
 
 
@@ -1903,4 +1922,5 @@ def ensemble_spread(spread, n_kept, *, warn=0.5, shared=True):
         f"The kept members differ by {100 * spread:.3g}% of the flux." + note,
         "Fewer than two members are kept, or they differ by more than "
         f"{100 * warn:g}% of the flux: the mean is not stable." + note,
+        fail=not _finite(spread),
     )

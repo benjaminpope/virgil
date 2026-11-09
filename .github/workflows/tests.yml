@@ -140,6 +140,7 @@ jobs:
           .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} --dist loadgroup -rs --durations=30 \
             --ignore=tests/lint \
             ${{ (matrix.fast_only || !matrix.slow && !matrix.orbit_slow) && '-m "not slow"' || '' }} \
+            ${{ matrix.skip_full_only && '-m "not full_only"' || '' }} \
             ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} \
             --junitxml=junit-evidence.xml -o junit_family=xunit1
 
