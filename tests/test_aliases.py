@@ -2444,6 +2444,7 @@ def _seasonal(ecc, inc):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(900)  # a default short-arc fit takes 270-305 s on CI
 @pytest.mark.parametrize("ecc, inc", [(0.3, 50.0), (0.7, 80.0)])
 def test_a_cold_seasonal_gap_fit_ranks_the_true_alias_first(ecc, inc):

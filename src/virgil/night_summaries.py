@@ -311,7 +311,12 @@ def _summarize(d, positions, i, diam, amp_range):
             lo = onp.append(lower, onp.log(_F_MIN))
             hi = onp.append(upper, 0.0)
             state = _gauss_newton.solve(
-                problem, z0, lower=lo, upper=hi, dtol=1e-12, max_steps=200
+                problem,
+                z0,
+                lower=lo,
+                upper=hi,
+                dtol=None,
+                max_steps=200,
             )
             zj = state.z
             # a peak held on the window or flux bound is not a stationary

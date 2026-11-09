@@ -14,9 +14,11 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 |         |                              | orbit modules or the disk pipeline adds |
 |         |                              | their slow tests, one changing          |
 |         |                              | pyproject.toml adds the floors          |
-| main    | push to main                 | the gate, with the slow tests           |
-| full    | `full-ci` label, dispatch    | main + macOS py3.11, py3.13 and the     |
-|         |                              | floors (the last two in 2 shards each)  |
+| main    | push to main                 | the gate, with the slow tests except    |
+|         |                              | the `full_only` ones                    |
+| full    | `full-ci` label, dispatch    | main + the `full_only` tests, macOS     |
+|         |                              | py3.11, py3.13 and the floors (the last |
+|         |                              | two in 2 shards each)                   |
 | nightly | daily schedule               | full, all with slow tests except macOS  |
 |         |                              | (fast tier), + the newest-dependencies  |
 |         |                              | canary                                  |
@@ -72,6 +74,9 @@ def choose(event, full_label=False, pyproject=False, orbit_slow=False):
             "slow": slow,
             "orbit_slow": orbit_files,
             "budget": True,
+            # A cold float32 main run with every slow test outran the
+            # 45-minute limit; the `full_only` ones wait for the full tiers.
+            "skip_full_only": slow and not full,
         }
         for x64 in ("0", "1")
         for k in (1, 2, 3)

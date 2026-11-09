@@ -44,6 +44,7 @@ from ._geometry import (
 )
 from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
+from .fitting import fit, kkt_report
 from .models import Image, LinearImage, Rotated, SourceModel, System
 
 _PIXEL_IMAGES = (Image, LinearImage)
@@ -54,7 +55,9 @@ __all__ = [
     "CalibrationNuisance",
     "ComplexVisData",
     "SigmaScale",
+    "StagedFit",
     "dartboard_folds",
+    "fit_staged_nuisances",
     "primary_beam",
 ]
 
@@ -1997,3 +2000,191 @@ def dartboard_folds(data, k=5, n_q=12, n_phi=16, seed=0):
     fold_of[order] = onp.arange(cells.size) % k
     fold = fold_of[onp.searchsorted(cells, cell)]
     return fold, annulus
+
+
+# ----------------------------------------------------------------------
+# Staged nuisance fit
+# ----------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class StagedFit:
+    """Result of [`fit_staged_nuisances`][virgil.radio.fit_staged_nuisances].
+
+    Attributes
+    ----------
+    stages : tuple of FitResult
+        Image at nominal nuisances, nuisances at the fixed image, joint.
+    ref_obs : int
+        Index of the observation whose gain is fixed at 1.
+    sum_weights : (n_obs,) array
+        ``Σw`` of each observation, from the weights alone.
+    nuisances : dict
+        Per boxed site: ``value``, ``lower``, ``upper`` and ``edge_frac``, the
+        distance to the nearer bound over the box width (in ``ln`` for a
+        log-uniform box).
+    edge : dict
+        Per boxed site, a bool array: within ``edge`` of a bound.
+    failed : bool
+        Any nuisance sits at a box edge.
+    kkt : dict
+        [`kkt_report`][virgil.fitting.kkt_report] of the joint fit.
+    """
+
+    stages: tuple
+    ref_obs: int
+    sum_weights: onp.ndarray
+    nuisances: dict
+    edge: dict
+    failed: bool
+    kkt: dict
+
+    @property
+    def values(self):
+        """The joint fit's values (image and nuisances)."""
+        return self.stages[2].values
+
+
+def fit_staged_nuisances(
+    data,
+    scene,
+    image_priors,
+    regularizers=(),
+    *,
+    init,
+    ref_obs=None,
+    bounds=None,
+    edge=0.05,
+    weight=None,
+    nuisance=None,
+    chi2="auto",
+    method="lbfgsb",
+    **fit_kw,
+):
+    """Fit an image and its calibration nuisances in three stages.
+
+    1. the image with the nuisances nominal (gains 1, offsets 0, scales 1);
+    2. the nuisances with the image held fixed;
+    3. a joint refinement, followed by a
+       [`kkt_report`][virgil.fitting.kkt_report] of the image block.
+
+    The fit fails (``failed``) if a boxed nuisance ends within ``edge`` of
+    either bound of its prior box. Provisional.
+
+    Parameters
+    ----------
+    data : ComplexVisData
+    scene : callable
+        Maps the fitted values to a [`SourceModel`][virgil.models.SourceModel].
+    image_priors, init : dict
+        Priors of the image sites (the keys of ``scene``) and their starts.
+    regularizers : sequence, optional
+        Image regularizers (all stages).
+    ref_obs : int, optional
+        Observation with gain 1. Default: the largest ``Σw``, so that
+        the flux gauge is not left to a lightly weighted observation.
+    bounds : dict, optional
+        Box ends for [`CalibrationNuisance.priors`][virgil.radio.CalibrationNuisance.priors],
+        default ``{"gain": (0.7, 1.3)}``. L-BFGS-B fits a box uniform in the
+        value; a sigma scale needs a box (``sigma=(lo, hi)``) or is not fitted.
+    edge : float, optional
+        Edge fraction of the box width.
+    weight : float, optional
+        Regularizer weight for the KKT report (as `kkt_report`).
+    nuisance : dict, optional
+        Keywords of `CalibrationNuisance` (``fit_flux``, ``offsets``, ...).
+    chi2, method : str, optional
+        As in [`ComplexVisData.term`][virgil.radio.ComplexVisData.term] and
+        [`fit`][virgil.fitting.fit]; further keywords go to ``fit``.
+
+    Returns
+    -------
+    StagedFit
+
+    Source: Cornwell & Wilkinson (1981), [references](../references.md#cornwellwilkinson1981).
+    """
+    sum_w = onp.bincount(
+        onp.asarray(data.obs),
+        weights=onp.asarray(data.weight, float),
+        minlength=len(data.obs_ids),
+    )
+    if ref_obs is None:
+        ref_obs = int(onp.argmax(sum_w))
+    kw = {**(nuisance or {}), "ref_obs": ref_obs}
+    nominal = CalibrationNuisance(
+        data, **{**kw, "gains": False, "offsets": False, "sigmas": False}
+    )
+    full = CalibrationNuisance(data, **kw)
+    raw = full.priors(**{"gain": (0.7, 1.3), **(bounds or {})})
+    improper = [k for k, q in raw.items() if not hasattr(q, "low")]
+    if improper:
+        raise ValueError(
+            f"{improper} have no box: L-BFGS-B needs one; pass bounds= "
+            "(e.g. sigma=(0.5, 2)) or fit that nuisance off."
+        )
+
+    def boxed(priors):
+        # deliberate: L-BFGS-B takes only Uniform boxes, so a LogUniform one
+        # becomes a Uniform over the same ends (the MAP differs from a plain
+        # fit's by the 1/x Jacobian); edges are measured in ln x for it.
+        return {
+            k: dist.Uniform(q.low, q.high)
+            if isinstance(q, dist.LogUniform)
+            else q
+            for k, q in priors.items()
+        }
+
+    nuis_priors = boxed(raw)
+    opts = dict(method=method, **fit_kw)
+
+    def run(model, priors, start, term, regs=regularizers):
+        return fit(
+            lambda **v: model(v),
+            priors,
+            (),
+            regularizers=regs,
+            likelihoods=[term],
+            init=start,
+            **opts,
+        )
+
+    s1 = run(
+        scene,
+        {**image_priors, **boxed(nominal.priors())},
+        {**init, **nominal.defaults()},
+        data.term(scene, nominal, chi2=chi2),
+    )
+    image = {k: s1.values[k] for k in image_priors}
+
+    def held(v):
+        return scene({**image, **v})
+
+    start2 = {**full.defaults(), **{k: s1.values[k] for k in nominal.sites}}
+    s2 = run(held, nuis_priors, start2, data.term(held, full, chi2=chi2), ())
+    term3 = data.term(scene, full, chi2=chi2)
+    priors3 = {**image_priors, **nuis_priors}
+    start3 = {**image, **s2.values}
+    s3 = run(scene, priors3, start3, term3)
+    # kkt_report needs the function model, not the model built at the result
+    report = kkt_report(
+        dataclasses.replace(s3, model=lambda **v: scene(v)),
+        priors3,
+        (),
+        regularizers,
+        likelihoods=[term3],
+        start=start3,
+        weight=weight,
+    )
+    table, flags = {}, {}
+    for site, prior in raw.items():
+        lo, hi = (onp.asarray(t, float) for t in (prior.low, prior.high))
+        x = onp.asarray(s3.values[site], float)
+        if isinstance(prior, dist.LogUniform):
+            x, lo, hi = onp.log(x), onp.log(lo), onp.log(hi)
+        frac = onp.minimum(x - lo, hi - x) / (hi - lo)
+        table[site] = dict(value=x, lower=lo, upper=hi, edge_frac=frac)
+        flags[site] = frac < edge
+    failed = any(bool(onp.any(f)) for f in flags.values())
+    return StagedFit(
+        (s1, s2, s3), ref_obs, sum_w, table, flags, failed, report
+    )

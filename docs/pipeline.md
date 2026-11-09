@@ -60,7 +60,7 @@ The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per 
 | --- | --- |
 | `sigma` (3.0) | Significance of the contrast limits. |
 | `detection_sigma` (3.0) | Threshold of the detection check, on the global significance: the grid maximum against `n_null` simulated companion-free searches (one-sided Gaussian σ of the false-alarm probability; 3σ is 1.35e-3). |
-| `n_null` (1000) | Companion-free searches simulated for the global significance. The smallest false-alarm probability is 1/(`n_null` + 1), so 1000 resolves 3.09σ; raise it to claim more. |
+| `n_null` (1000) | Companion-free searches simulated for the global significance (about 16 ms each on a laptop at the default grid). The smallest false-alarm probability is 1/(`n_null` + 1), so 1000 resolves 3.09σ; raise it to claim more. |
 | `max_sep_mas` (`None`) | Half-width of the search grid; by default `fov_fraction` times the coarsest λ/B of the samples (each sample's own wavelength over its own baseline, not λ_max/B_min), capped as above on lattice coverage. |
 | `fov_fraction` (1.0) | See `max_sep_mas`. |
 | `grid_step_mas` (`None`) | Grid spacing; by default a quarter of the finest λ/B of the samples, coarsened so that no axis exceeds `max_grid` points (the search report then records the effective step and warns). |
@@ -291,7 +291,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `residual_normality` (skewness and excess kurtosis of the independent whitened residuals, without the periodic closure-phase penalty terms) | beyond three standard errors | |
 | `field_of_view` (companion inside the resolution limit or beyond the field) | outside | |
 | `chi2_uniform`, `chi2_limb_darkened` (`StarPipeline`; as `chi2`) | as `chi2` | as `chi2` |
-| `limb_darkening_gain` (delta chi-squared of the limb-darkened over the uniform fit, against a BIC penalty of 2 ln N for two parameters) | the limb-darkened model fits worse than the uniform disk it contains | |
+| `limb_darkening_gain` (delta chi-squared of the limb-darkened over the uniform fit, against a BIC penalty of 2 ln N for two parameters) | the uniform-disk diameter is at the lower edge of its range (the comparison is not valid, the uniform disk is kept) | the limb-darkened model fits worse than the uniform disk it contains (Δ(−2 log L) < −1) |
 | `resolution` (the longest B/λ against the first null of the fitted model's visibility, θB/λ = 1.22 for a uniform disk) | below the first null (limb darkening is degenerate with the diameter) | below 0.15 of it (unresolved: an upper limit) |
 | `multimodal` (the per-lobe table of the preferred model, `fit.models.<name>.lobes`: the next-best diameter lobe against a Δχ² of 25) | the next-best lobe is within Δχ² of 25; the message gives its diameter | |
 | `limb_darkening_constrained` (posterior against prior standard deviation of `q1`, `q2`) | a ratio of 0.8 or more | |
@@ -317,11 +317,11 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 
 ### Warnings raised inside stages
 
-A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and always warn:
+A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and warn (`convergence` fails when every grid position failed):
 
 | Check | Raised by | Meaning |
 | --- | --- | --- |
-| `convergence` | the optimizer did not converge at some grid positions | value: the worst fraction of positions; values there may be inaccurate |
+| `convergence` | the optimizer did not converge at some grid positions | value: the worst fraction of positions; values there may be inaccurate; fails when the optimizer failed at every position of a grid |
 | `flux_axis_resolution` | the flux axis does not resolve the likelihood peak (fewer than 2 steps across its FWHM) | `log_bayes_factor` is inaccurate; use a larger `n_flux` |
 | `limits_clipped` | contrast limits fell outside the flux bounds | value: the number of clipped limits; widen `flux_range` |
 | `stage_warnings` | any other warning, except deprecation notices | value: the number of warnings; the message quotes the first three |
@@ -346,7 +346,7 @@ When a pipeline is promoted to stable, it keeps the following within a schema ve
 
 After that, changes are additive: new settings whose defaults keep the old behaviour, new summary keys, new checks appended at the end, and new files. Anything else needs a new schema version. Snapshot tests already pin the signatures, defaults, summary keys and check order, so a change is visible in review; while a pipeline is provisional, updating the snapshot is allowed.
 
-`global_nsigma` is the significance of the false-alarm probability `(k + 1) / (n_null + 1)`, `k` being the simulated companion-free maxima at or above the observed one: an upper bound on the probability, so a lower bound on the significance. The simulation uses Gaussian noise at the quoted errors, so it is anti-conservative if they are underestimated (see the `chi2` and `error_scale` checks). When no null reaches the peak (`n_null_above` is 0, `global_nsigma_is_lower_bound` true) `global_nsigma` sits at the floor `norm.isf(1/(n_null+1))`, 3.09σ by default, however strong the companion: read it as a lower bound (the check prints `≥`) and rank detections by `local_nsigma`. `BinaryPipeline` refuses an `n_null` too small to resolve `detection_sigma`.
+`global_nsigma` is the significance of the false-alarm probability `(k + 1) / (n_null + 1)`, `k` being the simulated companion-free maxima at or above the observed one: an upper bound on the probability, so a lower bound on the significance. The simulation uses Gaussian noise at the quoted errors, so it is anti-conservative if they are underestimated (see the `chi2` and `error_scale` checks). When no null reaches the peak (`n_null_above` is 0, `global_nsigma_is_lower_bound` true) `global_nsigma` sits at the floor `norm.isf(1/(n_null+1))`, 3.09σ by default, however strong the companion: read it as a lower bound (the check prints `≥`) and rank detections by `local_nsigma`. `BinaryPipeline` refuses an `n_null` too small to resolve `detection_sigma`. The nulls are drawn in chunks and drawing stops once too many exceed the peak for `detection_sigma` to be reached: `n_null` in the summary is the number actually drawn, and the significance then rests on those (a failed verdict either way). A detection always uses all `n_null` draws. The false-alarm probability has a Monte Carlo error of about `1/sqrt(n_null_above + 1)` of itself, so a significance resting on a handful of exceeding nulls is coarse: raise `n_null` to firm it up.
 
 | Pipeline | CLI command | Tier |
 | --- | --- | --- |
