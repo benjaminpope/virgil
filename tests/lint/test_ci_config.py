@@ -76,7 +76,7 @@ def test_dispatch_is_full_and_nightly_is_full_with_slow_everywhere():
     nightly = _jobs("schedule")
     assert _ids(nightly) == _ids(_jobs("workflow_dispatch"))
     assert not any("canary" in i for i in _ids(nightly))
-    assert all(j["slow"] for j in nightly if j["os"] != "macos-latest")
+    assert all(j["slow"] for j in nightly)
 
 
 def test_dispatch_with_main_tier_is_the_main_tier():
@@ -241,12 +241,15 @@ def test_release_gate_job_names_match_tests_yml():
         }.items():
             out = out.replace("${{ " + key + " }}", value)
         # The remaining expressions append a suffix when a flag is set.
-        for flag, suffix in (("lowest", " lowest"),):
-            expr = f"matrix.{flag} && '{suffix}'"
-            assert expr in out, f"build.name lost its {flag} suffix"
+        for expr, suffix, on in (
+            ("matrix.x64 == '1'", " x64", job["x64"] == "1"),
+            ("matrix.lowest", " lowest", job.get("lowest")),
+        ):
+            expr = f"{expr} && '{suffix}'"
+            assert expr in out, f"build.name lost its {suffix} suffix"
             out = re.sub(
                 r"\$\{\{ [^}]*" + re.escape(expr) + r"[^}]*\}\}",
-                suffix if job.get(flag) else "",
+                suffix if on else "",
                 out,
             )
         return re.sub(r"\$\{\{.*?\}\}", "", out)
