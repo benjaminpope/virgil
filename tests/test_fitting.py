@@ -1016,7 +1016,9 @@ def _curvature(model, priors, data, values, noise=None, flat=False):
         )
 
 
-def _hessian_check(model, priors, data, values, noise=None, flat=False):
+def _hessian_check(
+    model, priors, data, values, noise=None, flat=False, matrix=False
+):
     """``(sites, eigenvalues of F⁻¹H, mass)``: H is the exact Hessian of the
     numpyro potential in the coordinates of the mass matrix."""
     from numpyro.infer import init_to_value
@@ -1051,7 +1053,10 @@ def _hessian_check(model, priors, data, values, noise=None, flat=False):
 
         flat_z = np.concatenate([np.ravel(z[k]) for k in sites])
         hessian = onp.asarray(jax.hessian(potential)(flat_z))
-    return sites, onp.linalg.eigvals(covariance @ hessian).real, mass
+    product = covariance @ hessian
+    if matrix:
+        return sites, product, mass
+    return sites, onp.linalg.eigvals(product).real, mass
 
 
 def _sigmoid(z):
@@ -1138,9 +1143,10 @@ def test_the_scale_block_is_the_fisher_information_and_decoupled():
 @pytest.mark.slow
 def test_the_v19_matrix_whitens_the_posterior(flat):
     values = _v19_fixture()
-    sites, eigenvalues, mass = _hessian_check(
-        START, PRIORS, NOISY, values, SCALES, flat
+    sites, product, mass = _hessian_check(
+        START, PRIORS, NOISY, values, SCALES, flat, matrix=True
     )
+    eigenvalues = onp.linalg.eigvals(product).real
     assert set(sites) == {
         "dra",
         "ddec",
@@ -1154,7 +1160,13 @@ def test_the_v19_matrix_whitens_the_posterior(flat):
     # plan's bound [0.8, 1.25] was for e8's cleaner data; this is the
     # measured one with margin.
     assert eigenvalues.min() > 0.6 and eigenvalues.max() < 1.4, eigenvalues
-    assert onp.sum(onp.abs(eigenvalues - 1.0) < 0.01) >= 2  # the scales
+    # The two scales are the last two coordinates: their diagonal F⁻¹H block
+    # is the identity, because the fit sits at the scales' conditional optimum
+    # (χ²/s² = N), where the exact curvature of the potential in s is the
+    # Fisher information 2N (d ln s / dz)². Test that block itself, not a
+    # count of eigenvalues near 1.
+    assert set(sites[-2:]) == {"noise.vis_scale", "noise.phi_scale"}
+    onp.testing.assert_allclose(product[-2:, -2:], onp.eye(2), atol=1e-3)
     assert mass.condition < 1e4
 
 

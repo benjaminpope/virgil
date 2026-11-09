@@ -84,7 +84,7 @@ Two further details. If a closure triangle $(a, b, c)$ needs baseline $(a, b)$ b
 | `"amp"` | $\lvert V \rvert$ | visibility amplitude |
 | `"logamp"` | $\ln \lvert V \rvert$ | log-amplitude |
 
-The default, `"auto"`, keeps the data's own form; ask for another and data and errors are converted, propagating errors linearly, $\sigma_f = \lvert f'(V)\rvert\,\sigma_V$. Near zero, where noisy data can be negative, the derivative blows up, so it is evaluated with the data floored at their uncertainty: $V^2$ converted to amplitude gets $\sigma_{V^2} / (2\sqrt{\max(V^2, \sigma_{V^2})})$. Fit low-signal data in the form they were measured in.
+The default, `"auto"`, keeps the data's own form; ask for another and data and errors are converted, propagating errors linearly, $\sigma_f = \lvert f'(V)\rvert\,\sigma_V$. Samples are never floored. Where the conversion is undefined ($V^2$ or $\lvert V\rvert \le 0$ for `"logamp"`, $V^2 \le 0$ for `"amp"` from $V^2$), the sample is flagged out with a counted warning; with an operator (`vis_mat`) it raises. Samples below $\sigma$ are kept at their own value, with a counted warning that the propagated error is poor there: $V^2$ to amplitude gives $\sigma_{V^2} / (2\sqrt{V^2})$, and $V^2$ from amplitude uses the exact $\sigma\sqrt{4V^2 + 2\sigma^2}$ for a Gaussian amplitude. Fit low-signal data in the form they were measured in.
 
 **Phases** are one of:
 
