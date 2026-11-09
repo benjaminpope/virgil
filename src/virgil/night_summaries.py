@@ -34,6 +34,7 @@ from .models import OrbitalBinary
 
 __all__ = [
     "DELTA",
+    "EPS_PRIOR",
     "NightPeak",
     "NightSummary",
     "keep_peaks",
