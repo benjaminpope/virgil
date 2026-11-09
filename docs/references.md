@@ -11,7 +11,8 @@ history of the project in prose.
 "Ported" means code was adapted; "after" means the idea and its equations
 were reimplemented from the paper or the package's documentation, with no
 code copied. An entry is marked verified when its arXiv ID or DOI was checked
-against the arXiv abstract page, Crossref or NASA ADS.
+against the arXiv abstract page, Crossref or NASA ADS. Entries marked "Not yet verified" have not had that check: treat
+their identifiers and attributions as unconfirmed until the mark is removed.
 
 ## Origin of the package
 

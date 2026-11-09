@@ -877,3 +877,31 @@ def test_plot_residual_map_is_symmetric_and_east_left():
     left, right, bottom, top = image.get_extent()
     assert left > 0 and top > 0  # column 0 is East, row 0 is North
     plt.close(fig)
+
+
+def test_legacy_simbad_failure_warns_and_gives_placeholders(monkeypatch):
+    from virgil.legacy import oifits_implaneia
+
+    class Failing:
+        def add_votable_fields(self, *fields):
+            pass
+
+        def query_object(self, name):
+            raise OSError("network down")
+
+    monkeypatch.setattr(oifits_implaneia, "Simbad", Failing)
+    with pytest.warns(UserWarning, match="SIMBAD lookup"):
+        out = oifits_implaneia._query_simbad("HD 1")
+    assert out[2] == ["unknown"]
+
+
+def test_legacy_simbad_programming_error_is_not_swallowed(monkeypatch):
+    from virgil.legacy import oifits_implaneia
+
+    class Broken:
+        def add_votable_fields(self, *fields):
+            raise RuntimeError("bug")
+
+    monkeypatch.setattr(oifits_implaneia, "Simbad", Broken)
+    with pytest.raises(RuntimeError, match="bug"):
+        oifits_implaneia._query_simbad("HD 1")
