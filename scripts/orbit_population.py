@@ -251,13 +251,6 @@ def draw_system(rng, nights, fit):
         sign * _night_state(orbit, times), onp.full((k, 1), ln_f), 1
     )
     noise = rng.multivariate_normal(onp.zeros(5), _cov(sigma), size=k)
-    # the observed ln f is a draw of the flux prior's support, so redraw the
-    # night's ln f noise until it lands in [ln FLUX_FLOOR, 0] (a night outside
-    # it has an undefined outlier density b_k)
-    floor = math.log(oc_cells.FLUX_FLOOR)
-    for i in range(k):
-        while not floor <= truth[i, 4] + math.exp(ln_s) * noise[i, 4] <= 0.0:
-            noise[i, 4] = SIGMA_F * rng.standard_normal()
     mean = truth + math.exp(ln_s) * noise
     for i in onp.flatnonzero(outlier):  # an independent orbit, the prior
         other = _orbit(
@@ -341,9 +334,10 @@ def invariant_pits(p, fits, truth, distinct=False):
             )
         dec = oc_cells.decode_particles(f)
         for name in INVARIANTS:
-            num[name] += pi * float(
-                onp.mean(onp.asarray(dec[name]) < truth[name])
-            )
+            draws = onp.asarray(dec[name])
+            if name == "omega":  # orbit <-> -orbit is omega -> omega + 180
+                draws = draws % 180.0
+            num[name] += pi * float(onp.mean(draws < truth[name]))
         den += pi
     return {
         f"{'pitd' if distinct else 'pit'}_{n}": (
@@ -354,10 +348,14 @@ def invariant_pits(p, fits, truth, distinct=False):
 
 
 def truth_invariants(sysd, t_anchor):
-    """The folded invariants of the true orbit, through the fit's own map."""
+    """The folded invariants of the true orbit, through the fit's own map.
+    ``omega`` is folded to [0, 180): a fit is right up to the orbit <->
+    -orbit swap (omega -> omega + 180), the orientation degeneracy."""
     z, zeta = oc.campbell_to_coordinates(sysd["orbit"], t_anchor)
     inv = oc.invariants(sysd["period"], z, zeta)
-    return {n: float(inv[n]) for n in INVARIANTS}
+    out = {n: float(inv[n]) for n in INVARIANTS}
+    out["omega"] %= 180.0
+    return out
 
 
 def classify(rec, ess_fail=ESS_FAIL):

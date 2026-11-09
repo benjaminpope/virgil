@@ -40,6 +40,7 @@ import jax.numpy as np
 import numpy as onp
 from jax.scipy.special import logsumexp
 from scipy import stats
+from scipy.special import log_ndtr
 from scipy.special import logsumexp as onp_logsumexp
 from scipy.stats import qmc
 
@@ -329,11 +330,13 @@ class OutlierPrior:
     bandwidth: onp.ndarray
     ln_f_floor: float
 
-    def log_density(self, mean, velocity=True):
+    def log_density(self, mean, velocity=True, sigma_f=None):
         """``ln π(p, v) π(f)`` at ``mean = (dra, ddec, vra, vdec, ln f)``,
         a density in ``(p, v, ln f)``; ``-inf`` outside the flux range. With
         ``velocity=False`` the velocity is integrated out: the density in
-        ``(p, ln f)`` (``mean[2:4]`` unused)."""
+        ``(p, ln f)`` (``mean[2:4]`` unused). With ``sigma_f`` the flux box
+        is integrated over a Gaussian ``ln f`` error of that width
+        (:meth:`log_flux_box`) instead of evaluated at ``mean[:, 4]``."""
         mean = onp.atleast_2d(onp.asarray(mean, float))
         p = mean[:, :2]
         v = mean[:, 2:4] if velocity else onp.ones_like(p)  # unused if not
@@ -366,9 +369,30 @@ class OutlierPrior:
         log_pv = log_g - math.log(2 * math.pi) - 2 * lp
         if velocity:
             log_pv = log_pv - 2 * lv
-        in_f = (mean[:, 4] >= self.ln_f_floor) & (mean[:, 4] <= 0.0)
-        log_f = onp.where(in_f, -math.log(-self.ln_f_floor), -onp.inf)
+        if sigma_f is None:
+            in_f = (mean[:, 4] >= self.ln_f_floor) & (mean[:, 4] <= 0.0)
+            log_f = onp.where(in_f, -math.log(-self.ln_f_floor), -onp.inf)
+        else:
+            log_f = self.log_flux_box(mean[:, 4], sigma_f)
         return log_pv + log_f
+
+    def log_flux_box(self, m_f, sigma_f):
+        """``ln E[π(ln f)]`` for ``ln f ~ N(m_f, σ_f²)``: the uniform flux
+        prior on ``[ℓ, 0]`` (``ℓ = ln_f_floor``) integrated over the Gaussian
+        measurement error, ``[Φ(-m/σ) - Φ((ℓ-m)/σ)] / |ℓ|``.
+        Finite for every ``m_f``, including ``m_f > 0``."""
+        m_f = onp.asarray(m_f, float)
+        sigma_f = onp.asarray(sigma_f, float)
+        hi = -m_f / sigma_f  # Φ(hi) - Φ(lo), hi > lo
+        lo = (self.ln_f_floor - m_f) / sigma_f
+        # reflect when both limits sit in the upper tail, where the two
+        # log-CDFs are ~0 and the difference would cancel
+        flip = lo > 0
+        a = log_ndtr(onp.where(flip, -lo, hi))
+        b = log_ndtr(onp.where(flip, -hi, lo))
+        with onp.errstate(divide="ignore"):
+            log_diff = a + onp.log1p(-onp.exp(b - a))
+        return log_diff - math.log(-self.ln_f_floor)
 
 
 @jax.jit
@@ -493,7 +517,13 @@ def outlier_log_density(summaries, prior, s_max=S_MAX):
                 + occam
                 + 0.5 * len(dims) * math.log(2 * math.pi)
                 + 0.5 * logdet
-                + float(prior.log_density(p.mean, velocity=len(dims) == 5)[0])
+                + float(
+                    prior.log_density(
+                        p.mean,
+                        velocity=len(dims) == 5,
+                        sigma_f=math.sqrt(cov[4, 4]),
+                    )[0]
+                )
             )
         out.append(float(onp_logsumexp(terms)) if terms else s.loglike_null)
     return onp.array(out)
@@ -1727,9 +1757,9 @@ def position_leg(
     k_plan, k_is, k_move = jax.random.split(key, 3)
     if not onp.all(onp.isfinite(cat.log_b)):
         raise ValueError(
-            "A night has a non-finite outlier log density b_k (its ln f "
-            "is outside the flux prior [ln flux_floor, 0]): the "
-            "all-outlier floor is undefined."
+            "A night has a non-finite outlier log density b_k (a "
+            "non-finite peak mean or covariance): the all-outlier floor is "
+            "undefined."
         )
     with run_in(name):
         space = _Space(

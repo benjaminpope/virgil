@@ -183,7 +183,8 @@ Near each peak of the night's likelihood (peak state ŝ, covariance Σ over (p, 
 
   b_k ≈ ln Σ_peaks L_peak · (2π)^{5/2} |Σ|^{1/2} π_out(ŝ),
 
-while for the true orbit ℓ_k(truth) ≈ ln L_peak. So at the truth
+where the flux factor of π_out is not evaluated at ŝ but integrated over the Gaussian ln f error in closed form
+(§6.6 "Finite floor"), so the term is finite for an observed ln f > 0; while for the true orbit ℓ_k(truth) ≈ ln L_peak. So at the truth
 
   Δ_k^truth = b_k − ℓ_k(truth) ≈ ln[(2π)^{5/2} |Σ|^{1/2} π_out(ŝ)] + (own-scale Occam)
             = −(Occam of p) − (Occam of v) − (Occam of f) − Σ_g (2.0 to 2.4 nats),
@@ -793,9 +794,19 @@ Their coverage is the eccentric test of Stage 3b (§14).
 - **`matters`.** A cell fails the system if its target is non-finite, or if it is flagged `cell-at-floor` or has ESS < ESS_fail
   *and* its upper bound ln mass_N + ln Ẑ_N^upper is within W of the maximum of that bound over the cells (a cell whose
   probability could reach δ). A flagged cell below that is information only: reported per cell, not failing the system.
-- **Finite floor.** The all-outlier floor K·b needs every b_k finite, i.e. every night's ln f inside [ln flux_floor, 0].
-  A night outside has b_k = −inf: the fit raises an error (never a silent pass). The population simulation draws the
-  inlier ln f noise truncated to that support (its own generative process).
+- **Finite floor.** The all-outlier floor K·b needs every b_k finite. The flux prior π(ln f) = 1/|ℓ| on [ℓ, 0]
+  (ℓ = ln flux_floor) is integrated exactly over the Gaussian ln f error N(m_f, σ_f²), σ_f² = Σ[4, 4] at the peak:
+  E[π(ln f)] = [Φ(−m_f/σ_f) − Φ((ℓ − m_f)/σ_f)] / |ℓ| (`OutlierPrior.log_flux_box`, in logs with `log_ndtr`). It is
+  finite for every m_f, including m_f > 0; the old point evaluation gave −inf there and overstated b_k by up to ln 2
+  within ~2σ_f of either end. The inlier term is unchanged: a mean with m_f > 0 is an ordinary Gaussian measurement of a
+  truth at or below 0. The population simulation no longer truncates the simulated ln f noise (a truncation made the
+  census generate only data the fit could handle), so its summaries are exactly the fit's model.
+- **Finding to check, not fixed here.** The plan (orbit_eval_20261109) says the real `night_summaries` bounds ln f to
+  [ln F_MIN, 0] and drops a peak held at a bound, so real summaries probably never carry m_f > 0 and a near-twin's
+  failure in the wild is more likely a dropped true peak. B′ measures this before any fold or mirror is added.
+- **Near-twins** are scored up to the orbit ↔ −orbit swap (ω → ω + π): Ben, "perfect" means right up to this
+  orientation degeneracy. The census scored ω over [0, 360), which is not swap-invariant; it now folds ω mod 180°
+  (truth and draws), and `test_scoring_is_invariant_to_the_orbit_swap` enforces it.
 
 ### 6.7 Across the alias grid N (Ben's idea)
 
