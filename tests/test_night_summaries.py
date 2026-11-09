@@ -193,13 +193,12 @@ def test_the_keep_rule_threshold_is_derived_from_the_node_count():
     def kept(k, shift):
         return len(ns.keep_peaks((summary,) * k, best + shift)[0].peaks)
 
-    # K = 1: ε_lo = sin²(π/4) = ½, so a peak stays iff L >= b + ln δ
-    edge = -onp.log(ns.DELTA)
-    assert kept(1, edge - 0.02) == 1 and kept(1, edge + 0.02) == 0
-    # K = 3: n = 2, ε_lo = sin²(π/8): L >= b + ln[δ ε / (1 - ε)]
-    eps = onp.sin(onp.pi / 8) ** 2
-    edge = -onp.log(ns.DELTA * eps / (1 - eps))
-    assert kept(3, edge - 0.02) == 1 and kept(3, edge + 0.02) == 0
+    # ε_lo is the smallest Gauss-Jacobi node of Beta(*EPS_PRIOR), n = ⌈(K+1)/2⌉:
+    # a peak stays iff L >= b + ln[δ ε / (1 - ε)]
+    for k in (1, 3, 12):
+        eps = ns._eps_rule((k + 2) // 2, *ns.EPS_PRIOR)[0].min()
+        edge = -onp.log(ns.DELTA * eps / (1 - eps))
+        assert kept(k, edge - 0.02) == 1 and kept(k, edge + 0.02) == 0
 
 
 @pytest.mark.parametrize("wrap", [float, np.asarray, onp.float64])

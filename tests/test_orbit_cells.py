@@ -255,18 +255,43 @@ def test_the_cells_partition_the_domain_exactly_for_any_edges():
 
 
 @x64
-def test_the_epsilon_nodes_integrate_polynomials_of_degree_k_exactly():
-    for k in (1, 4, 7):
-        n = (k + 2) // 2
-        eps = oc_cells._eps_nodes(n)
-        coef = onp.random.default_rng(k).normal(size=k + 1)
-        poly = onp.polynomial.Polynomial(coef)
-        exact = integrate.quad(
-            lambda e: poly(e) * stats.beta(0.5, 0.5).pdf(e), 0, 1
+@pytest.mark.parametrize("prior", [(1.0, 9.0), (0.5, 0.5)])
+@pytest.mark.parametrize("k", [5, 12, 20])
+def test_the_epsilon_rule_integrates_the_night_product_exactly(k, prior):
+    eps, log_w = oc_cells._eps_rule((k + 2) // 2, *prior)
+    assert onp.exp(log_w).sum() == pytest.approx(1.0, rel=1e-13)
+    rng = onp.random.default_rng(k)
+    ra, rb = rng.uniform(0.1, 3.0, (2, k))
+    prod = lambda e: onp.prod((1 - e) * ra[:, None] + e * rb[:, None], axis=0)
+    exact = integrate.quad(
+        lambda e: prod(onp.array([e]))[0] * stats.beta(*prior).pdf(e),
+        0, 1, epsabs=0, epsrel=1e-13, limit=200,
+    )[0]  # fmt: skip
+    got = float(onp.sum(onp.exp(log_w) * prod(eps)))
+    assert got == pytest.approx(exact, rel=1e-12)
+
+
+@x64
+def test_the_beta_half_rule_reproduces_the_chebyshev_mixture(monkeypatch):
+    """With Beta(½, ½) the Gauss–Jacobi rule is the old Gauss–Chebyshev one."""
+    s = _summaries(_orbit(), TIMES)
+    monkeypatch.setattr(oc_cells, "EPS_PRIOR", (0.5, 0.5))
+    cat = oc_cells._Catalogue(s, LOG_B)
+    n = (len(s) + 2) // 2
+    cheb = onp.sin((2 * onp.arange(1, n + 1) - 1) * onp.pi / (4 * n)) ** 2
+    assert onp.allclose(onp.sort(cat.eps), cheb, rtol=1e-12, atol=0)
+    assert onp.allclose(onp.exp(cat.log_w_eps), 1.0 / n, rtol=1e-12)
+
+
+@x64
+def test_the_floor_is_the_expected_epsilon_power():
+    a, b = oc_cells.EPS_PRIOR
+    for k in (5, 12, 20):
+        direct = integrate.quad(
+            lambda e: e**k * stats.beta(a, b).pdf(e), 0, 1, epsrel=1e-13
         )[0]
-        assert float(np.mean(poly(onp.asarray(eps)))) == pytest.approx(
-            exact, rel=1e-9, abs=1e-9
-        )
+        got = oc_cells._ln_beta(a + k, b) - oc_cells._ln_beta(a, b)
+        assert math.exp(got) == pytest.approx(direct, rel=1e-10)
 
 
 @x64
@@ -898,8 +923,8 @@ def test_a_search_that_drops_the_true_mode_fails_the_cell(monkeypatch):
     s = _summaries(_orbit(), times, sigma=0.05)
     _, cells = _cells(s, (6.0, 400.0))
     log_b = onp.full(5, LOG_B)
-    floor = log_b.sum() + math.lgamma(5.5) - 0.5 * math.log(math.pi)
-    floor -= math.lgamma(6.0)
+    a, b = oc_cells.EPS_PRIOR
+    floor = log_b.sum() + oc_cells._ln_beta(a + 5, b) - oc_cells._ln_beta(a, b)
 
     def fake(space, key=None, *, plan=None, info=None):
         info.update(evaluations=0.0)
