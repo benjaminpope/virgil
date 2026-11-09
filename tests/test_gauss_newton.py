@@ -410,6 +410,25 @@ def test_rounding_floor_converges_with_a_nonzero_residual(x64):
         off = solve(problem, np.zeros(4, dtype))
         assert int(off.stop) == STALLED
         assert float(off.lam) > 1e10
+        # dtol=None is the rounding resolution of Φ, reachable by construction
+        auto = solve(problem, np.zeros(4, dtype), dtol=None)
+        assert int(auto.stop) == CONVERGED
+        # it stops within the decrement Φ resolves of the minimum, no closer
+        from virgil._gauss_newton import rounding_dtol
+
+        phi_ref = problem.loss(np.asarray(ref, dtype))
+        assert float(auto.value - phi_ref) <= 2 * float(
+            rounding_dtol(auto.value)
+        )
+
+
+def test_rounding_dtol_is_ten_ulp_of_phi_with_a_one_nat_floor():
+    from virgil._gauss_newton import rounding_dtol
+
+    for dtype in (np.float32, np.float64):
+        eps = float(np.finfo(dtype).eps)
+        assert float(rounding_dtol(dtype(0.1))) == pytest.approx(10 * eps)
+        assert float(rounding_dtol(dtype(-5000.0))) == pytest.approx(5e4 * eps)
 
 
 def test_a_coordinate_just_inside_a_bound_is_held_not_clipped_and_rejected():
