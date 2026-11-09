@@ -386,11 +386,33 @@ def matched_cell(out, p):
     return max(free, key=lambda i: p[i]) if free else None
 
 
+def old_rule(out):
+    """``(matters_old, status_old)`` of the rule before the bounded
+    ``matters`` (``max(ln Ẑ, Laplace)`` within ``W`` of the best): diagnostic
+    columns from the same fit, never binding."""
+    up = onp.array(
+        [
+            c.log_mass
+            + max(
+                [f.log_z] + [oc_cells.laplace_log_evidence(m) for m in f.modes]
+            )
+            for c, f in zip(out.cells, out.fits)
+        ]
+    )
+    m = up >= up.max() - W
+    bad = any(
+        f.nonfinite or ((f.at_floor or f.unreliable) and mi)
+        for f, mi in zip(out.fits, m)
+    )
+    return m, "failed" if bad else "ok"
+
+
 def cell_records(out, true_i, oracle, matched=None):
     """One dict per flagged cell and for the true cell: truth, rank in
     ``upper``, ESS, ln Ẑ, best Laplace, the gap, the modes' inlier counts, the
     capped Newton runs, ``matters`` and the class."""
     rank = onp.argsort(onp.argsort(-out.upper))
+    m_old = old_rule(out)[0]
     recs = []
     for i, (c, f) in enumerate(zip(out.cells, out.fits)):
         flagged = bool(f.at_floor or f.unreliable or f.nonfinite)
@@ -406,6 +428,7 @@ def cell_records(out, true_i, oracle, matched=None):
             nonfinite=bool(f.nonfinite), ess=float(f.evidence.ess),
             log_z=float(f.log_z), laplace=float(lap),
             gap=float(lap - f.log_z), matters=bool(out.matters[i]),
+            matters_old=bool(m_old[i]),
             n_inliers=[round(float(m.n_inliers), 2) for m in f.modes],
             **{k: int(f.info.get(k, 0)) for k in STEP_COUNTS},
         )  # fmt: skip
@@ -570,6 +593,7 @@ def run_one(sysd, fit, key, u, *, oracle=False, equiv=False, store=None):
     fits = out.fits
     row.update(
         status="failed" if out.failed.any() else "ok",
+        status_old=old_rule(out)[1],
         seconds=time.time() - start, n_cells=len(cells),
         true_n=cells[true_i].n, no_mode=int(all(not f.modes for f in fits)),
         n_at_floor=sum(f.at_floor for f in fits),

@@ -1605,6 +1605,12 @@ class CellFit:
     info : dict
         The search's counts (``c_capped``, ``c_runs``, ...:
         [`search_cell`][virgil.orbit_cells.search_cell]).
+    log_l_sup : float
+        The largest ``ln L`` evaluated in the cell (at every found mode and
+        importance draw): a *lower* bound on the cell's ``sup ln L``, which
+        itself bounds ``ln Z_N`` (the cell prior is normalized). It is a bound
+        on ``Z_N`` only if the search found the cell's top mode (design
+        §6.10); ``nan`` (not set) counts as mattering.
     """
 
     cell: Cell
@@ -1626,19 +1632,12 @@ class CellFit:
     move: object = dataclasses.field(repr=False, default=None)
     shared: list = dataclasses.field(repr=False, default_factory=list)
     info: dict = dataclasses.field(repr=False, default_factory=dict)
+    log_l_sup: float = float("nan")
 
     @property
     def failed(self):
         """The cell failed on its own: ``at_floor`` or ``nonfinite``."""
         return bool(self.at_floor or self.nonfinite)
-
-    @property
-    def log_z_upper(self):
-        """The larger of ``ln Ẑ`` and the best mode's Laplace ``ln Z``: an
-        unreliable ``ln Ẑ`` is usually low (missed mass), the Laplace value is
-        an independent estimate."""
-        lap = [laplace_log_evidence(m) for m in self.modes]
-        return max([self.log_z] + lap)
 
 
 def decode_particles(result):
@@ -1780,11 +1779,22 @@ def position_leg(
         info = {}
         modes = search_cell(space, plan=plan, info=info)
         ev = _cell_evidence(space, [*modes, *shared], k_is, n_is)
+        sup = [float(space.loglike(m.x)) for m in [*modes, *shared]]
+        if ev.log_q is not None:
+            ll = (
+                onp.asarray(ev.log_w)
+                + ev.log_q
+                - onp.asarray(
+                    jax.vmap(space.logprior)(np.asarray(ev.x)), float
+                )
+            )
+            sup.append(float(onp.max(ll[onp.isfinite(ll)], initial=-onp.inf)))
     fit = CellFit(
         cell, ev.log_z, ev.log_z_error, modes, None, ev.log_w, ev.x,
         ev.at_floor, ev.undersampled, int(info["evaluations"]), n_is, ev,
         plan, space, bool(ev.ess < ESS_FAIL), bool(ev.n_nonfinite > 0),
         shared=list(shared), info=info,
+        log_l_sup=max(sup, default=float("-inf")),
     )  # fmt: skip
     if posterior_draws and not fit.failed:
         fit.draws = _draw(fit, k_move)
@@ -1902,16 +1912,20 @@ class CellsResult:
     failed : numpy.ndarray
         Cells with a non-finite target, or at the floor (``cell-at-floor``: the
         search missed the dominant mode) or unreliable (ESS below ``ESS_FAIL``)
-        *and* within ``W`` of the best cell (``ln`` mass ``+ ln Ẑ`` taken as
-        the larger of the importance and the Laplace estimates, so a cell whose
-        probability could reach the reporting precision ``δ``). A floor or
-        low-ESS cell far below the best is information only: it stays flagged
-        on its fit (``CellFit.at_floor``, ``unreliable``) but does not fail the
-        system. Any true entry makes ``p_pos`` undefined.
+        *and* it ``matters`` (below). A flagged cell that cannot matter is
+        information only: it stays flagged on its fit (``CellFit.at_floor``,
+        ``unreliable``) but does not fail the system. Any true entry makes
+        ``p_pos`` undefined.
     upper, matters : numpy.ndarray
-        Each cell's ``ln`` mass ``+ ln Ẑ`` (the larger of the importance and
-        Laplace estimates) and whether it is within ``W`` of the best:
-        diagnostics, the quantities the ``failed`` rule uses.
+        ``upper = ln mass + ln sup L`` bounds the cell's ``ln (mass Z_N)``.
+        With ``R`` the best ``ln mass + ln Ẑ`` among unflagged cells, a cell
+        ``matters`` iff it has no found mode or ``upper >= R - ln(n_cells/δ)``
+        (every flagged cell matters if none is unflagged).
+    omitted_bound : float
+        The summed ``exp(upper)`` of flagged cells that do not matter, over
+        the total mass. A diagnostic: below ``δ`` by the threshold, given the
+        search found each cell's top mode (a lower ``sup L`` would understate
+        it).
     """
 
     domain: PeriodDomain
@@ -1927,6 +1941,34 @@ class CellsResult:
     failed: onp.ndarray
     upper: onp.ndarray = None
     matters: onp.ndarray = None
+    omitted_bound: float = None
+
+
+def _matters(cells, fits, log_p, delta):
+    """``(upper, matters, flagged, omitted_bound)`` of the cells.
+
+    ``upper = ln mass + ln sup L`` bounds a cell's ``ln (mass Z_N)``. With
+    ``R`` the largest ``ln mass + ln Ẑ`` of a cell that is neither failed nor
+    unreliable, a flagged cell is negligible iff ``upper < R - ln(n/δ)``: the
+    negligible cells hold at most ``δ`` of the mass in all (up to the
+    reference cell's own error). A cell without a found mode always matters,
+    as does every flagged cell if no cell is unflagged.
+
+    Source: design/orbit_alias_cycles.md §6.6, §6.10 (union bound).
+    """
+    n = len(cells)
+    upper = onp.array([c.log_mass + f.log_l_sup for c, f in zip(cells, fits)])
+    flagged = onp.array([bool(f.at_floor or f.unreliable) for f in fits])
+    no_mode = onp.array([len(f.modes) == 0 for f in fits])
+    ok = onp.array([not (f.failed or f.unreliable) for f in fits])
+    ok &= onp.isfinite(log_p)
+    r = log_p[ok].max() if ok.any() else -onp.inf
+    # a nan bound compares false: it matters
+    matters = no_mode | ~(upper < r - math.log(n / delta))
+    neg = flagged & ~matters
+    total = onp_logsumexp(log_p[onp.isfinite(log_p)])
+    omitted = float(onp.exp(upper[neg] - total).sum()) if neg.any() else 0.0
+    return upper, matters, flagged, omitted
 
 
 def _map(fn, items, workers):
@@ -2098,15 +2140,9 @@ def position_cells(
             fit.unreliable = bool(ev.ess < ESS_FAIL)
             fit.nonfinite = bool(ev.n_nonfinite > 0)
     log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
-    upper = onp.array(
-        [c.log_mass + f.log_z_upper for c, f in zip(cells, fits)]
-    )
-    matters = upper >= upper.max() - W
+    upper, matters, flagged, omitted = _matters(cells, fits, log_p, delta)
     failed = onp.array(
-        [
-            f.nonfinite or ((f.at_floor or f.unreliable) and m)
-            for f, m in zip(fits, matters)
-        ]
+        [f.nonfinite or (fl and m) for f, fl, m in zip(fits, flagged, matters)]
     )
     if failed.any():
         p = onp.full(len(cells), onp.nan)
@@ -2127,7 +2163,7 @@ def position_cells(
     return CellsResult(
         domain, (first, last), t_ab, cells, fits, p, below,
         below if prune else onp.zeros_like(below), float(p[below].sum()),
-        float(jitter), failed, upper, matters,
+        float(jitter), failed, upper, matters, omitted,
     )  # fmt: skip
 
 

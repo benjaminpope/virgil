@@ -588,9 +588,9 @@ sampling does not suffice: the chance that a random set contains the two outer i
   **The sentinel fails the system only if the cell could matter.** The flag is per cell and is always reported. A
   mode's peak height says nothing of its mass, so a cell at the floor far below the best cell (a thin mode, or a cell
   whose true mode is 85–200 nats below the system's dominant cell) must not fail the system. A flagged cell fails the
-  system only when it passes the `matters` rule of §6.6: its upper bound on the evidence mass, ln mass_N + max(ln Ẑ_N,
-  Laplace ln Z of its best mode), is within W of the largest such bound over the cells. Non-finite targets fail the
-  system unconditionally. The rule adds no constant: W is the one of the sentinel and of §6.6.
+  system only when it passes the `matters` rule of §6.6: its bound ln mass_N + ln sup L_N is not below the best unflagged
+  cell's ln(mass Ẑ) by ln(n_cells/δ) (§6.10). Non-finite targets fail the system unconditionally. The rule adds no
+  constant (W is the sentinel's only; the threshold uses δ and the cell count).
 
 ### 6.2 Leg 2: the visibility level (changed; flag for Ben)
 
@@ -791,9 +791,16 @@ Their coverage is the eccentric test of Stage 3b (§14).
   - `no-mode` (per system): no mode in any cell and every ln Ẑ_N at the all-floor value. Information; the system goes
     to the §8 null test before any p̂(N) is reported (§6.9).
 - The mass is per cell, never pooled. Ridge modes carry their quadrature mass, never a Laplace mass (§6.10).
-- **`matters`.** A cell fails the system if its target is non-finite, or if it is flagged `cell-at-floor` or has ESS < ESS_fail
-  *and* its upper bound ln mass_N + ln Ẑ_N^upper is within W of the maximum of that bound over the cells (a cell whose
-  probability could reach δ). A flagged cell below that is information only: reported per cell, not failing the system.
+- **`matters`** (implemented; §6.10 has the bound). A cell fails the system if its target is non-finite, or if it is
+  flagged `cell-at-floor` or has ESS < ESS_fail *and* it matters. With U_N = ln mass_N + ln sup L_N (`CellFit.log_l_sup`:
+  the largest ln L evaluated at any found mode or IS draw) and R = max ln(mass_N Ẑ_N) over the cells that are neither
+  failed nor unreliable, a cell matters iff it has no found mode or U_N ≥ R − ln(n_cells/δ). If no cell is unflagged,
+  every flagged cell matters. A flagged cell that does not matter is information only: reported per cell, not failing
+  the system. `CellsResult.omitted_bound` = Σ exp(U_N) over those cells / Σ mass_N Ẑ_N; it is a diagnostic, below δ by the
+  threshold *given that the search found each cell's top mode* (ln sup L evaluated is a lower bound, so it can be
+  understated). The threshold is a union bound over the cells, so the total omitted mass is ≤ δ, not δ per cell.
+  A flagged cell with no found mode always matters (it has no bound). W now serves the sentinel only. Expect more failures than
+  under the earlier rule (max(ln Ẑ, Laplace) within W per cell): that is the intended honesty.
 - **Finite floor.** The all-outlier floor K·b needs every b_k finite. The flux prior π(ln f) = 1/|ℓ| on [ℓ, 0]
   (ℓ = ln flux_floor) is integrated exactly over the Gaussian ln f error N(m_f, σ_f²), σ_f² = Σ[4, 4] at the peak:
   E[π(ln f)] = [Φ(−m_f/σ_f) − Φ((ℓ − m_f)/σ_f)] / |ℓ| (`OutlierPrior.log_flux_box`, in logs with `log_ndtr`). It is
@@ -1050,16 +1057,17 @@ sum (the closed-form integral of e^{h(ρ)} over the cell) replaces the Laplace m
 mixture weights, in `_prune`, and in the sentinel's "W above the floor" test. Kind 2 disappears because no inflated
 Laplace remains to trigger on.
 
-**Negligibility by a bound, not by Laplace.** `position_cells` now calls a cell negligible when its Laplace upper estimate
-is W below the best cell. A ridge's Laplace is not an upper bound, so this can call a real cell negligible or a
-negligible one matters. The bound that holds is
+**Negligibility by a bound, not by Laplace** (implemented in `position_cells`). The earlier rule called a cell negligible
+when max(ln Ẑ, Laplace) was W below the best cell. A ridge's Laplace is not an upper bound, and W per cell ignores that
+n cells can each hide mass. The bound that holds is
 
-  Z_N ≤ π(cell N)·sup_{x∈cell} L(x),
+  mass_N·Z_N ≤ mass_N·sup_{x∈cell} L(x) = exp(U_N),
 
-with sup L evaluated as the label-summed target at the best mode found. A cell is negligible iff
-ln π(cell) + ln sup L < max_N' ln Ẑ_N' − W.
+because the cell prior is normalized. sup L is the largest ln L evaluated in the cell (every found mode, every IS
+draw). A flagged cell is negligible iff U_N < R − ln(n_cells/δ), R as in §6.6. The negligible cells then hold at most
+n_cells·e^R·δ/n_cells = δ e^R ≤ δ of the posterior, conditional on the search coverage below. Unflagged cells need no bound.
 
-The best mode found is a *lower* bound on sup L. So the rule is conservative (more cells kept than by the exact
+The largest ln L evaluated is a *lower* bound on sup L. So the rule is conservative (more cells kept than by the exact
 integral, since the bound omits the Occam factor) only *conditional on the search's coverage*. When the search misses
 the cell's top mode, which the coverage contract allows with probability ≤ δ, a real cell can be called negligible.
 Two consequences follow:

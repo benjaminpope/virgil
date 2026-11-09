@@ -594,7 +594,7 @@ def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
             at_floor=cell.n == cells[1].n, plan=None,
         )  # fmt: skip
         fit.failed, fit.unreliable, fit.nonfinite = fit.at_floor, False, False
-        fit.log_z_upper = 0.0
+        fit.log_l_sup = 0.0
         return fit
 
     monkeypatch.setattr(oc_cells, "position_leg", leg)
@@ -694,6 +694,11 @@ def test_the_position_evidence_of_a_tiny_case_matches_prior_importance(
         oc_cells.A_RANGE, 1e-6, oc_cells.FLUX_FLOOR, 0.0, np.float64,
     )  # fmt: skip
     ll = jax.jit(jax.vmap(space.loglike))
+    # log_l_sup is the largest ln L at the modes and the importance draws
+    seen_l = [float(space.loglike(m.x)) for m in fit.modes]
+    seen_l.append(float(onp.max(onp.asarray(ll(np.asarray(fit.x_is))))))
+    assert abs(fit.log_l_sup - max(seen_l)) < 1e-6 * (1 + abs(max(seen_l)))
+    assert fit.log_l_sup >= fit.log_z
     chunks = [
         onp.asarray(ll(space.sample(jax.random.key(10 + i), 2**15)))
         for i in range(32)
@@ -1045,7 +1050,7 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         low = cell.n == odd
         z = -cell.log_mass - (gap if low else 0.0)
         return types.SimpleNamespace(
-            cell=cell, log_z=z, log_z_upper=z, log_z_error=0.0, modes=[],
+            cell=cell, log_z=z, log_l_sup=z, log_z_error=0.0, modes=[_MODE], space=_SPACE,
             draws=None, at_floor=False, failed=False, nonfinite=False,
             unreliable=low, plan=None,
         )  # fmt: skip
@@ -1057,7 +1062,7 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         jitter=0.0,
     )  # fmt: skip
     assert best != odd
-    if gap < oc_cells.W:
+    if gap < math.log(len(cells) / oc_cells.DELTA):
         assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
     else:
         assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
@@ -1245,7 +1250,7 @@ def test_a_floor_cell_fails_the_system_only_if_it_could_matter(
         low = cell.n == odd
         z = -cell.log_mass - (gap if low else 0.0)
         return types.SimpleNamespace(
-            cell=cell, log_z=z, log_z_upper=z, log_z_error=0.0, modes=[],
+            cell=cell, log_z=z, log_l_sup=z, log_z_error=0.0, modes=[_MODE], space=_SPACE,
             draws=None, at_floor=low, failed=low, nonfinite=False,
             unreliable=False, plan=None,
         )  # fmt: skip
@@ -1257,7 +1262,7 @@ def test_a_floor_cell_fails_the_system_only_if_it_could_matter(
         jitter=0.0,
     )  # fmt: skip
     assert out.fits[1].at_floor
-    if gap < oc_cells.W:
+    if gap < math.log(len(cells) / oc_cells.DELTA):
         assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
     else:
         assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
@@ -1273,3 +1278,128 @@ def test_a_non_finite_outlier_density_is_an_error():
             s, log_b, cells[2], jax.random.key(0), t_anchor=TIMES[0],
             t_nights=TIMES[:5], n_is=64, posterior_draws=False,
         )  # fmt: skip
+
+
+# a narrow mode of a stub fit: its mass never crosses a cell edge (no shared mode)
+_MODE = Mode(onp.zeros(1), 0.0, onp.full((1, 1), 1e-12), 2.0)
+_SPACE = types.SimpleNamespace(ln_lo=0.0, ln_hi=1.0)
+
+
+# --- `matters` is a bound -----------------------------------------------------
+
+
+def _stub_cells(log_mass, log_z, log_l_sup, flagged, modes=True):
+    """Cells and fits as `_matters` reads them."""
+    cells = [types.SimpleNamespace(log_mass=m) for m in log_mass]
+    fits = [
+        types.SimpleNamespace(
+            log_z=z,
+            log_l_sup=s,
+            at_floor=bool(f),
+            unreliable=False,
+            failed=bool(f),
+            modes=[object()] if modes else [],
+        )  # fmt: skip
+        for z, s, f in zip(log_z, log_l_sup, flagged)
+    ]
+    log_p = onp.array(log_mass) + onp.array(log_z)
+    return cells, fits, log_p
+
+
+def test_matters_switches_at_the_union_bound_threshold_for_170_cells():
+    n, delta = 170, oc_cells.DELTA
+    margin = math.log(n / delta)
+    eps = 0.01 * onp.where(onp.arange(n - 1) % 2 == 0, 1.0, -1.0)
+    # cell 0 is the unflagged reference, R = 0; the others are flagged at the floor
+    log_mass = onp.zeros(n)
+    log_z = onp.r_[0.0, onp.full(n - 1, -500.0)]
+    sup = onp.r_[0.0, -margin + eps]
+    flagged = onp.r_[False, onp.ones(n - 1, bool)]
+    cells, fits, log_p = _stub_cells(log_mass, log_z, sup, flagged)
+    upper, matters, _, _ = oc_cells._matters(cells, fits, log_p, delta)
+    assert onp.array_equal(matters[1:], eps > 0)
+    # the per-cell W of the earlier rule would have called all of them negligible
+    assert margin > 1.5 * oc_cells.W
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_the_true_omitted_mass_is_below_the_bound_and_delta_on_random_stubs(
+    seed,
+):
+    rng = onp.random.default_rng(seed)
+    n, delta = 170, oc_cells.DELTA
+    log_mass = -onp.log(n) + rng.normal(0, 1, n)
+    log_z = rng.normal(0, 10, n)
+    sup = log_z + rng.exponential(10, n)  # Z_N <= sup L
+    flagged = rng.random(n) < 0.6
+    flagged[rng.integers(n)] = False
+    cells, fits, log_p = _stub_cells(log_mass, log_z, sup, flagged)
+    _, matters, _, omitted = oc_cells._matters(cells, fits, log_p, delta)
+    neg = flagged & ~matters
+    # the mass of the stub's own evidences (Σ mass·Z) that the rule omits
+    true = onp.exp(log_p[neg]).sum() / onp.exp(log_p).sum()
+    assert true <= omitted <= delta
+    assert neg.any() and true < omitted  # the bound uses sup L, not Ẑ
+
+
+def test_a_ridge_whose_laplace_exceeds_sup_l_follows_sup_l():
+    """A flagged cell with a huge Laplace ln Z but a low sup L is negligible:
+    the earlier rule took the Laplace and called it mattering."""
+    n = 4
+    cells, fits, log_p = _stub_cells(
+        onp.zeros(n), [0.0, -300.0, -300.0, -300.0], [0.0, -90.0, -5.0, -90.0],
+        [False, True, True, True],
+    )  # fmt: skip
+    ridge = Mode(onp.zeros(3), 200.0, onp.eye(3) * 1e-6, 2.0)
+    assert laplace_log_evidence(ridge) > 100.0  # the old bound: it matters
+    for f in fits[1:]:
+        f.modes = [ridge]
+    _, matters, _, _ = oc_cells._matters(cells, fits, log_p, oc_cells.DELTA)
+    assert not matters[1] and not matters[3]  # -90 < -ln(n/δ)
+    assert matters[2]  # -5 is above it
+
+
+def test_a_flagged_cell_with_no_mode_matters_and_so_does_every_one_if_none_is_free():
+    cells, fits, log_p = _stub_cells(
+        onp.zeros(3), [0.0, -300.0, -300.0], [0.0, -900.0, -900.0],
+        [False, True, True],
+    )  # fmt: skip
+    fits[2].modes = []
+    _, matters, _, _ = oc_cells._matters(cells, fits, log_p, oc_cells.DELTA)
+    assert onp.array_equal(matters, [True, False, True])
+    cells, fits, log_p = _stub_cells(
+        onp.zeros(3), [-300.0] * 3, [-900.0] * 3, [True] * 3
+    )
+    _, matters, _, omitted = oc_cells._matters(
+        cells, fits, log_p, oc_cells.DELTA
+    )
+    assert matters.all() and omitted == 0.0
+
+
+def test_position_cells_fails_on_a_flagged_cell_within_the_bound(monkeypatch):
+    s = _summaries(_orbit(), TIMES, sigma=0.3)
+    domain, cells = _cells(s, (60.0, 400.0))
+    n = len(cells)
+    margin = math.log(n / oc_cells.DELTA)
+
+    def run(sup_gap):
+        def leg(summaries, log_outlier, cell, key, **kw):
+            low = cell.n == cells[1].n
+            z = -cell.log_mass - (300.0 if low else 0.0)
+            return types.SimpleNamespace(
+                cell=cell, log_z=z, log_z_error=0.0, modes=[_MODE], space=_SPACE,
+                draws=None, at_floor=low, failed=low, nonfinite=False,
+                unreliable=False, plan=None,
+                log_l_sup=-cell.log_mass - (sup_gap if low else 0.0),
+            )  # fmt: skip
+
+        monkeypatch.setattr(oc_cells, "position_leg", leg)
+        monkeypatch.setattr(oc_cells, "_draw", lambda f, k: None)
+        return oc_cells.position_cells(
+            s, domain, jax.random.key(0),
+            log_outlier=onp.full(len(TIMES), LOG_B), jitter=0.0,
+        )  # fmt: skip
+
+    assert run(margin - 0.01).failed.sum() == 1
+    out = run(margin + 0.01)
+    assert not out.failed.any() and out.omitted_bound <= oc_cells.DELTA
