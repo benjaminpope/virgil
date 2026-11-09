@@ -1,6 +1,7 @@
 """The population script: its draws follow the fit's prior, its verdict is
 calibrated to the number of fitted systems."""
 
+import dataclasses
 import json
 import importlib.util
 import pathlib
@@ -120,6 +121,11 @@ def test_scoring_is_invariant_to_the_orbit_swap():
                 assert a[name] == pytest.approx(b[name], abs=1e-6), name
 
 
+@dataclasses.dataclass
+class _FakeFit:
+    draws: onp.ndarray
+
+
 def test_the_omega_pit_is_the_same_for_draws_in_either_orbit_image(
     monkeypatch,
 ):
@@ -132,9 +138,12 @@ def test_the_omega_pit_is_the_same_for_draws_in_either_orbit_image(
         dec = {n: onp.zeros(9) for n in pop.INVARIANTS}
         dec["omega"] = (base + shift) % 360.0
         monkeypatch.setattr(pop.oc_cells, "decode_particles", lambda f: dec)
-        fit = types.SimpleNamespace(draws=onp.zeros((9, 1)))
-        pits.append(pop.invariant_pits([1.0], [fit], truth)["pit_omega"])
-    assert pits[0] == pytest.approx(pits[1]) and 0.0 < pits[0] < 1.0
+        fit = _FakeFit(draws=onp.arange(9.0)[:, None])
+        out = pop.invariant_pits([1.0], [fit], truth)
+        out |= pop.invariant_pits([1.0], [fit], truth, distinct=True)
+        pits.append((out["pit_omega"], out["pitd_omega"]))
+    assert pits[0] == pytest.approx(pits[1])
+    assert all(0.0 < x < 1.0 for x in pits[0])
 
 
 # --- the census: paired seeds, classes, assertions 5-7 ----------------------

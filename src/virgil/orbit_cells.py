@@ -379,7 +379,7 @@ class OutlierPrior:
     def log_flux_box(self, m_f, sigma_f):
         """``ln E[π(ln f)]`` for ``ln f ~ N(m_f, σ_f²)``: the uniform flux
         prior on ``[ℓ, 0]`` (``ℓ = ln_f_floor``) integrated over the Gaussian
-        measurement error, ``[Φ(-m/σ) - Φ((ℓ-m)/σ)] / |ℓ|`` (design §2.3).
+        measurement error, ``[Φ(-m/σ) - Φ((ℓ-m)/σ)] / |ℓ|``.
         Finite for every ``m_f``, including ``m_f > 0``."""
         m_f = onp.asarray(m_f, float)
         sigma_f = onp.asarray(sigma_f, float)
@@ -1757,9 +1757,9 @@ def position_leg(
     k_plan, k_is, k_move = jax.random.split(key, 3)
     if not onp.all(onp.isfinite(cat.log_b)):
         raise ValueError(
-            "A night has a non-finite outlier log density b_k (its ln f "
-            "is outside the flux prior [ln flux_floor, 0]): the "
-            "all-outlier floor is undefined."
+            "A night has a non-finite outlier log density b_k (a "
+            "non-finite peak mean or covariance): the all-outlier floor is "
+            "undefined."
         )
     with run_in(name):
         space = _Space(
