@@ -7,6 +7,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 import pytest
+from scipy import optimize, special
 
 pytest.importorskip("jaxoplanet")
 
@@ -193,10 +194,18 @@ def test_the_keep_rule_threshold_is_derived_from_the_node_count():
     def kept(k, shift):
         return len(ns.keep_peaks((summary,) * k, best + shift)[0].peaks)
 
-    # ε_lo is the smallest Gauss-Jacobi node of Beta(*EPS_PRIOR), n = ⌈(K+1)/2⌉:
-    # a peak stays iff L >= b + ln[δ ε / (1 - ε)]
+    # ε_lo is the smallest Gauss-Jacobi node of Beta(1, 9), n = ⌈(K+1)/2⌉:
+    # a peak stays iff L >= b + ln[δ ε / (1 - ε)]. The node is pinned here
+    # independently: the smallest root of P_n^(8,0)(2ε - 1), by Brent's method.
+    def eps_lo(n):
+        f = lambda e: special.eval_jacobi(n, 8, 0, 2 * e - 1)
+        grid = onp.linspace(0.0, 1.0, 20001)[1:-1]
+        i = onp.flatnonzero(onp.sign(f(grid[:-1])) != onp.sign(f(grid[1:])))[0]
+        return optimize.brentq(f, grid[i], grid[i + 1], xtol=1e-15)
+
+    assert eps_lo(1) == pytest.approx(0.1, rel=1e-12)  # the Beta mean
     for k in (1, 3, 12):
-        eps = ns._eps_rule((k + 2) // 2, *ns.EPS_PRIOR)[0].min()
+        eps = eps_lo((k + 2) // 2)
         edge = -onp.log(ns.DELTA * eps / (1 - eps))
         assert kept(k, edge - 0.02) == 1 and kept(k, edge + 0.02) == 0
 

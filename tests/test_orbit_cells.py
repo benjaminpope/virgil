@@ -284,6 +284,53 @@ def test_the_beta_half_rule_reproduces_the_chebyshev_mixture(monkeypatch):
 
 
 @x64
+def test_the_mixture_and_its_inlier_count_match_quadrature_under_beta_1_9():
+    s = _summaries(_orbit(), TIMES)
+    cat = oc_cells._Catalogue(s, LOG_B)
+    a, b = oc_cells.EPS_PRIOR
+    cat64 = cat.cast(np.float64)
+    ln_s = np.zeros(len(cat.n[0]))
+    pv = np.asarray(onp.random.default_rng(1).normal(size=(len(s), 4)))
+    got, got_n = oc_cells._log_mixture(
+        cat64, ln_s, 0.0, pv, -1.0, np.float64, inliers=True
+    )
+    log_b = onp.asarray(cat.log_b)
+    z = onp.zeros(
+        2
+    )  # per sign: ∫ Beta Π_k night_k, and ∫ Beta Π_k night_k Σ_k r_k
+    zn = onp.zeros(2)
+    for i, sign in enumerate((1.0, -1.0)):
+        st = np.concatenate([sign * pv, np.full((len(s), 1), -1.0)], axis=1)
+        ak = onp.asarray(
+            jax.scipy.special.logsumexp(
+                oc_cells._peak_terms(cat64, ln_s, 0.0, st, np.float64), axis=1
+            )
+        )
+
+        def night(e):
+            return (1 - e) * onp.exp(ak) + e * onp.exp(log_b)
+
+        def dens(e):
+            return stats.beta(a, b).pdf(e)
+
+        z[i] = integrate.quad(
+            lambda e: onp.prod(night(e)) * dens(e),
+            0,
+            1,
+            epsabs=0,
+            epsrel=1e-12,
+        )[0]
+        zn[i] = integrate.quad(
+            lambda e: onp.prod(night(e))
+            * onp.sum((1 - e) * onp.exp(ak) / night(e))
+            * dens(e),
+            0, 1, epsabs=0, epsrel=1e-12,
+        )[0]  # fmt: skip
+    assert float(got) == pytest.approx(onp.log(z.sum() / 2), rel=1e-10)
+    assert float(got_n) == pytest.approx(zn.sum() / z.sum(), rel=1e-9)
+
+
+@x64
 def test_the_floor_is_the_expected_epsilon_power():
     a, b = oc_cells.EPS_PRIOR
     for k in (5, 12, 20):
@@ -923,8 +970,11 @@ def test_a_search_that_drops_the_true_mode_fails_the_cell(monkeypatch):
     s = _summaries(_orbit(), times, sigma=0.05)
     _, cells = _cells(s, (6.0, 400.0))
     log_b = onp.full(5, LOG_B)
-    a, b = oc_cells.EPS_PRIOR
-    floor = log_b.sum() + oc_cells._ln_beta(a + 5, b) - oc_cells._ln_beta(a, b)
+    a, b = oc_cells.EPS_PRIOR  # ln E[ε^5], written out
+    floor = log_b.sum() + (
+        math.lgamma(a + 5) + math.lgamma(a + b)
+        - math.lgamma(a) - math.lgamma(a + b + 5)
+    )  # fmt: skip
 
     def fake(space, key=None, *, plan=None, info=None):
         info.update(evaluations=0.0)
