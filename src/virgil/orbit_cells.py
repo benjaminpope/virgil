@@ -83,7 +83,6 @@ __all__ = [
     "search_cell",
     "search_plan",
     "smc_cell",
-    "smc_rounds",
 ]
 
 __provisional__ = ("*",)
@@ -2210,37 +2209,6 @@ def _map(fn, items, workers):
         pool.shutdown(wait=True)
 
 
-def smc_rounds(cells, fits, key, delta, start, max_seconds, workers):
-    """Run [`smc_cell`][virgil.orbit_cells.smc_cell] on the unreliable cells
-    that matter, in rounds, and return ``(log_p, upper, matters, flagged,
-    omitted)`` (design §6.15).
-
-    Whether a cell matters depends on every estimate, so the rounds repeat
-    until no new cell qualifies; each cell is SMC'd at most once, so they end.
-    ``start`` is the clock of ``position_cells`` and ``max_seconds`` its cap.
-    """
-    smc_keys = jax.random.split(jax.random.fold_in(key, 3), len(cells))
-    tried = set()
-    while True:
-        log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
-        upper, matters, flagged, omitted = _matters(cells, fits, log_p, delta)
-        todo = [
-            i
-            for i, (f, m) in enumerate(zip(fits, matters))
-            if m and i not in tried and not f.failed and f.unreliable
-        ]  # fmt: skip
-        if not todo:
-            return log_p, upper, matters, flagged, omitted
-        tried.update(todo)
-        _map(
-            lambda i: smc_cell(
-                fits[i], smc_keys[i],
-                max_seconds=max(max_seconds - (time.time() - start), 0.0),
-            ),
-            todo, workers,
-        )  # fmt: skip
-
-
 def position_cells(
     summaries,
     domain,
@@ -2344,8 +2312,7 @@ def position_cells(
             nu_edge = 1.0 / (cell.p_hi if side > 0 else cell.p_lo)
             d_nu = 1.0 / cell.p_lo - 1.0 / cell.p_hi
             for m in fits[j].modes:
-                lo = float(fits[j].space.ln_lo)
-                hi = float(fits[j].space.ln_hi)
+                lo, hi = float(fits[j].space.ln_lo), float(fits[j].space.ln_hi)
                 u = 1.0 / (1.0 + math.exp(-float(m.x[0])))
                 nu = math.exp(-(lo + (hi - lo) * u))
                 sd = nu * (hi - lo) * u * (1.0 - u) * math.sqrt(m.cov[0, 0])
@@ -2354,16 +2321,10 @@ def position_cells(
                     continue
                 # centred on the tail inside this cell, from one σ_ρ to the
                 # edge stop, in this cell's chart
-                near = min(
-                    -math.log(
-                        min(sd / d_nu, 0.5) / (1.0 - min(sd / d_nu, 0.5))
-                    ),
-                    EDGE_STOP,
-                )
-                mid, half = (
-                    0.5 * (EDGE_STOP + near),
-                    max(0.5 * (EDGE_STOP - near), 1.0),
-                )
+                r = min(sd / d_nu, 0.5)
+                near = min(-math.log(r / (1.0 - r)), EDGE_STOP)
+                mid, half = 0.5 * (EDGE_STOP + near), 0.5 * (EDGE_STOP - near)
+                half = max(half, 1.0)
                 scale = onp.ones(len(m.x))
                 scale[0] = half / math.sqrt(m.cov[0, 0])
                 cov = scale[:, None] * m.cov * scale
@@ -2375,9 +2336,9 @@ def position_cells(
                     laplace_log_evidence(m) + math.log(across)
                     + cells[j].log_mass - cell.log_mass
                 )  # fmt: skip
-                shift = (
-                    0.5 * len(x) * math.log(2.0 * math.pi)
-                    + 0.5 * (onp.linalg.slogdet(cov)[1])
+                shift = 0.5 * (
+                    len(x) * math.log(2.0 * math.pi)
+                    + onp.linalg.slogdet(cov)[1]
                 )
                 shared.append(Mode(x, lap - shift, cov, m.n_inliers))
         if shared:
@@ -2393,22 +2354,34 @@ def position_cells(
             fit.at_floor, fit.undersampled = ev.at_floor, ev.undersampled
             fit.unreliable = bool(ev.ess < ESS_FAIL)
             fit.nonfinite = bool(ev.n_nonfinite > 0)
-    log_p, upper, matters, flagged, omitted = smc_rounds(
-        cells, fits, key, delta, start, max_seconds, workers
-    )
+    # The unreliable cells that matter get the SMC (§6.15). Whether a cell
+    # matters depends on every estimate, so repeat until none is left; each
+    # cell is SMC'd at most once.
+    tried = set()
+    smc_keys = jax.random.split(jax.random.fold_in(key, 3), len(cells))
+    while True:
+        log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
+        upper, matters, flagged, omitted = _matters(cells, fits, log_p, delta)
+        todo = [
+            i
+            for i, (f, m) in enumerate(zip(fits, matters))
+            if m and i not in tried and not f.failed and f.unreliable
+        ]
+        if not todo:
+            break
+        tried.update(todo)
+        left = max(max_seconds - (time.time() - start), 0.0)
+        _map(lambda i: smc_cell(fits[i], smc_keys[i], max_seconds=left), todo, workers)  # fmt: skip
     failed = onp.array(
         [f.nonfinite or (fl and m) for f, fl, m in zip(fits, flagged, matters)]
     )
-    if failed.any():
-        p = onp.full(len(cells), onp.nan)
-    else:
-        p = onp.exp(log_p - onp_logsumexp(log_p))
+    p = onp.exp(log_p - onp_logsumexp(log_p))
+    p[:] = onp.nan if failed.any() else p
     below = p < delta / len(cells)
+    draw_keys = jax.random.split(jax.random.fold_in(key, 1), len(cells))
     drawn = [
         (f, k)
-        for f, pi, k in zip(
-            fits, p, jax.random.split(jax.random.fold_in(key, 1), len(cells))
-        )
+        for f, pi, k in zip(fits, p, draw_keys)
         if pi >= delta / len(cells)
     ]
     for (f, _), draws in zip(
