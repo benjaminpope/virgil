@@ -312,7 +312,9 @@ MAIN_MODES = [3, 1, 2, 2, 2, 2, 2, 1, 2, 2, 1, 1]
 @pytest.mark.slow
 @pytest.mark.full_only
 @pytest.mark.timeout(900)
-def test_position_cells_matches_main_before_the_counters_were_added():
+def test_position_cells_matches_main_before_the_counters_were_added(
+    monkeypatch,
+):
     """Refactor equivalence, not a correctness oracle: ``p_pos`` and every
     cell's ``ln Ẑ`` equal those of ``origin/main`` at
     cdaa3f82825115379e0d7e688ab21812575cf384, before the step-cap counters and
@@ -334,6 +336,13 @@ def test_position_cells_matches_main_before_the_counters_were_added():
     and 0.0063.)"""
     import jax
 
+    # the pinned values are those of the old simulator (noise-free N_OBS s²)
+    monkeypatch.setattr(
+        pop, "_noise_outliers_and_chi2",
+        lambda rng, mean, outlier, ln_s, sigma: (
+            mean, onp.full(len(mean), pop.N_OBS * onp.exp(2 * ln_s))
+        ),
+    )  # fmt: skip
     rng, _ = pop.streams(0, 57)
     nights = pop.draw_nights(rng)
     _, fit = pop.fit_domain(nights)
@@ -409,3 +418,149 @@ def test_the_census_simulates_and_labels_in_float64(monkeypatch):
     with jax.enable_x64(False):
         pop.oc_cells._labels(None, space)
     assert seen_state == [(True, onp.dtype("float64"))]
+
+
+def test_the_within_night_chi2_is_drawn_not_set():
+    """Inlier nights: χ²/s² has mean ν and variance 2ν (the standard error
+    of a χ²_ν sample variance uses the excess kurtosis 12/ν), not the old
+    noise-free N_OBS. Outlier nights: ln s_k = ½ ln(χ²/ν) + noise is centred
+    and has the spread of a log-uniform scale on ±ln S_MAX. ``draw_system``
+    passes the drawn χ² on to its summaries."""
+    rng = onp.random.default_rng(0)
+    n, ln_s, sigma, nu = 4000, 0.3, 1e-3, pop.N_OBS - pop.N_PAR
+    mean = onp.zeros((n, 5))
+    mean[:, 4] = -2.0
+    _, c2 = pop._noise_outliers_and_chi2(
+        rng, mean, onp.zeros(n, bool), ln_s, sigma
+    )
+    z = c2 / onp.exp(2 * ln_s)
+    assert abs(z.mean() - nu) < 4 * onp.sqrt(2 * nu / n)
+    assert abs(z.var() - 2 * nu) < 4 * 2 * nu * onp.sqrt((2 + 12 / nu) / n)
+    _, c2 = pop._noise_outliers_and_chi2(
+        rng, mean, onp.ones(n, bool), ln_s, sigma
+    )
+    ln_sk = 0.5 * onp.log(c2 / nu)
+    # ln s_k ~ U(±L) plus ½ ln(χ²_ν/ν) (variance ~ 1/(2ν)): mean and sd
+    big = onp.log(pop.oc_cells.S_MAX)
+    sd = onp.sqrt(big**2 / 3 + 1 / (2 * nu))
+    assert abs(ln_sk.mean()) < 4 * sd / onp.sqrt(n)
+    assert abs(ln_sk.std() / sd - 1) < 4 / onp.sqrt(2 * n) * 1.5
+    nights = pop.draw_nights(rng)
+    _, fit = pop.fit_domain(nights)
+    while fit is None:
+        nights = pop.draw_nights(rng)
+        _, fit = pop.fit_domain(nights)
+    sysd = pop.draw_system(rng, nights, fit)
+    got = [float(s.peaks[0].chi2[0]) for s in sysd["summaries"]]
+    assert all(c > 0 for c in got)
+    assert not onp.allclose(got, pop.N_OBS * onp.exp(2 * sysd["ln_s"]))
+
+
+def test_the_ln_s_pit_is_the_p_weighted_mixture_of_the_cells_draws(
+    monkeypatch,
+):
+    """``_pit_lns`` weights each cell's fraction of ln s draws below the truth
+    by ``p``, leaves out cells without draws or mass, renormalizes, and is
+    nan with no draws at all."""
+    draws = {
+        1: onp.array([0.0, 1.0, 2.0, 3.0]),  # 2 of 4 below 1.5
+        2: onp.array([5.0, 6.0]),  # none below 1.5
+    }
+    monkeypatch.setattr(
+        pop.oc_cells, "decode_particles", lambda f: dict(ln_s=draws[f.i])
+    )
+    fits = [
+        types.SimpleNamespace(draws=True, i=1),
+        types.SimpleNamespace(draws=True, i=2),
+        types.SimpleNamespace(draws=None, i=3),
+    ]
+    p = onp.array([0.2, 0.2, 0.6])
+    # cell 3 has no draws: left out, the rest renormalized
+    assert pop._pit_lns(p, fits, 1.5) == pytest.approx(0.5 * 0.5 + 0.0)
+    assert onp.isnan(pop._pit_lns(p, [fits[2]] * 3, 1.5))
+    assert onp.isnan(pop._pit_lns(onp.zeros(3), fits, 1.5))
+
+
+def test_outlier_nights_are_scattered_by_their_own_scale():
+    """The outlier mean's scatter grows with the night's own scale s_k (read
+    off its χ²), instead of being noise-free or tied to the system's s."""
+    from scipy import stats
+
+    rng = onp.random.default_rng(3)
+    n, sigma = 3000, 1e-3
+    mean = onp.zeros((n, 5))
+    mean[:, 4] = -2.0
+    m, chi2 = pop._noise_outliers_and_chi2(
+        rng, mean, onp.ones(n, bool), 0.0, sigma
+    )
+    assert (m[:, :4] != 0.0).all() and (chi2 > 0.0).all()
+    r = onp.abs(m[:, 0]) / sigma
+    assert stats.spearmanr(r, chi2).statistic > 0.3
+    # at the system's single s the scatter would be the quoted one
+    assert onp.sqrt(onp.mean(r**2)) > 2.0
+
+
+def test_the_chi2_draw_leaves_the_pairing_structure_alone(monkeypatch):
+    """Drawing the χ² last leaves every earlier draw alone: with the χ² block
+    replaced by one that draws nothing, the truth and the inlier means are
+    equal to the real ones, and only the outlier rows differ."""
+
+    def one(i):
+        rng, _ = pop.streams(5, i)
+        nights = pop.draw_nights(rng)
+        _, fit = pop.fit_domain(nights)
+        if fit is None:
+            return None
+        pop._loguniform(rng, *pop.P_TRUE)  # the selection draw
+        return pop.draw_system(rng, nights, fit)
+
+    with_outliers = 0
+    for i in range(12):
+        a = one(i)
+        if a is None:
+            continue
+        monkeypatch.setattr(
+            pop, "_noise_outliers_and_chi2",
+            lambda rng, mean, outlier, ln_s, sigma: (mean, onp.zeros(len(mean))),
+        )  # fmt: skip
+        b = one(i)
+        monkeypatch.undo()
+        for k in ("period", "ln_s", "eps"):
+            assert a[k] == b[k]
+        onp.testing.assert_array_equal(a["outliers"], b["outliers"])
+        for j, (sa, sb) in enumerate(zip(a["summaries"], b["summaries"])):
+            ma, mb = sa.peaks[0].mean, sb.peaks[0].mean
+            if j in a["outliers"]:
+                with_outliers += 1
+                assert not onp.array_equal(ma, mb)
+            else:
+                onp.testing.assert_array_equal(ma, mb)
+    assert with_outliers > 0
+
+
+def test_the_fit_scores_the_drawn_chi2_without_bias_in_ln_s():
+    """For a fixed state and s, simulated (m, χ²) through ``_peak_terms`` give
+    a flat-prior posterior mean of ln s that is unbiased on average (the
+    draw's N_OBS - N_PAR dof plus the 5 of the mean make the N_OBS of the
+    likelihood)."""
+    import jax
+    import jax.numpy as np
+
+    oc = pop.oc_cells
+    n, ln_s0, sigma = 2000, 0.4, 1e-3
+    rng = onp.random.default_rng(0)
+    cov = pop._cov(sigma)
+    mean = onp.exp(ln_s0) * rng.multivariate_normal(onp.zeros(5), cov, size=n)
+    chi2 = onp.exp(2 * ln_s0) * rng.chisquare(pop.N_OBS - pop.N_PAR, size=n)
+    summaries = pop._summaries(onp.arange(n, dtype=float), mean, sigma, chi2)
+    grid = onp.linspace(ln_s0 - 1.5, ln_s0 + 1.5, 601)
+    with jax.enable_x64(True):
+        cat = oc._Catalogue(summaries, -5.0).cast(np.float64)
+        state = np.zeros((n, 5))
+        terms = onp.stack([
+            onp.asarray(oc._peak_terms(cat, np.array([g]), 0.0, state, np.float64))[:, 0]
+            for g in grid
+        ])  # fmt: skip
+    w = onp.exp(terms - terms.max(axis=0))
+    post = (w * grid[:, None]).sum(0) / w.sum(0)
+    assert abs(post.mean() - ln_s0) < 4 * post.std() / onp.sqrt(n)
