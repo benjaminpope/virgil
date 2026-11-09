@@ -102,15 +102,21 @@ def _report(
 TSV_ = [TSV(3.0, path="env", beam_mas=60.0)]
 
 
-@pytest.mark.slow
-def test_bounded_linear_fit_is_converged_with_active_bounds():
-    start, priors, data = _problem(10, 24.0)
-    result = fit(start, priors, data, TSV_, method="lbfgsb", max_steps=5000)
-    result = _polish(result, start, priors, data, TSV_, "lbfgsb", 1)
-    assert (
-        onp.asarray(result.values["env.pixels"]) == 0
-    ).any()  # bounds active
-    report = kkt_report(result, priors, data, TSV_)
+def test_bounded_linear_optimum_is_converged_with_active_bounds():
+    # Noise-free data from a disc with zeros around it: the disc is a global
+    # minimum of chi^2 (zero residual) on the box pixels >= 0, so its gradient
+    # is zero up to rounding, and its zero pixels are active bounds. pg_rel is
+    # then rounding against the flat start's gradient, far below KKT_TOL. Built
+    # directly rather than fitted (#674): where L-BFGS-B stalls is
+    # platform-dependent, and a stalled fit is rightly not converged.
+    n, scale = 10, 24.0
+    flat = onp.full((n, n), 0.5 / n**2)
+    start, disc = _scene(flat, scale), _disc(n, 0.5)
+    data = DATA.with_model(_scene(disc, scale), noise_scale=0.0)
+    priors = image_priors(start)
+    result = FitResult(start, {"env.pixels": disc}, {})
+    assert (disc == 0).any()  # bounds active
+    report = kkt_report(result, priors, data, start={"env.pixels": flat})
     image = report["images"]["env"]
     assert report["converged"], report
     assert image["pg_rel"] < KKT_TOL
@@ -188,19 +194,22 @@ def test_softmax_maxentropy_converges_and_stopped_fit_does_not(softmax_mem):
 
 
 def test_frozen_softmax_pixels_want_to_grow():
-    # Fewer pixels than data, unregularised, with some starting at 1e-12: the
-    # softmax cannot raise them, though the data would.
-    n, scale = 6, 40.0
-    truth = Image(onp.random.default_rng(3).normal(size=(n, n)), scale)
-    data = DATA.with_model(truth, key=jax.random.PRNGKey(2), noise_scale=3.0)
-    eta = onp.zeros((n, n))
-    eta[onp.random.default_rng(0).random(eta.shape) < 0.2] = onp.log(1e-12)
-    start = Image(eta, scale)
-    priors = image_priors(start)
-    result = fit(start, priors, data, (), method="lbfgs", gtol=1e-6)
-    result = _polish(result, start, priors, data, (), "lbfgs", 1)
-    report = kkt_report(result, priors, data, start={"log_brightness": eta})
-    assert report["images"]["."]["want_grow"] > 0.0, report
+    # Four disc pixels start at 1e-12: their eta-gradient is b times their flux
+    # gradient, so the softmax cannot raise them and the fit converges on the
+    # other pixels (kkt_rel ~ 1e-8, so the want_grow margin is its KKT_TOL floor).
+    # Their flux gradient keeps the entropy's -alpha ln b ~ 30 x 27.6 against
+    # the others', far beyond that margin, whatever the fit's path. (An
+    # unregularised fit, #674, drives other pixels to b = 0 on some platforms.)
+    _, _, data = _softmax_problem()
+    eta = onp.zeros((32, 32))
+    eta[15:17, 15:17] = onp.log(1e-12)
+    start = Image(eta, 7.5)
+    priors, reg = image_priors(start), [MaxEntropy(30.0)]
+    result = fit(start, priors, data, reg, method="lbfgs", gtol=1e-6)
+    result = _polish(result, start, priors, data, reg, "lbfgs", 3)
+    report = kkt_report(result, priors, data, reg)
+    image = report["images"]["."]
+    assert image["want_grow"] == 4 / 32**2, report
     assert not report["converged"]
 
 
