@@ -81,6 +81,7 @@ from virgil.orbits import KeplerOrbit
 
 BLOCKS = ("vis",)
 N_OBS = 40.0
+N_PAR = 5  # fitted per night (p, v, ln f): chi2_min ~ s^2 chi2_{N_OBS - N_PAR}
 FRAMES = onp.arange(6) * 0.02
 T_SS = float(onp.sum((FRAMES - FRAMES.mean()) ** 2))
 BINS = 10
@@ -159,14 +160,17 @@ def _cov(sigma):
     )
 
 
-def _summaries(times, mean, sigma, scale=1.0):
-    """One-peak night summaries with the means ``mean`` ``(K, 5)``; ``chi2``
-    is that of data scattered by ``scale`` times the quoted errors."""
+def _summaries(times, mean, sigma, chi2=None):
+    """One-peak night summaries with the means ``mean`` ``(K, 5)`` and the
+    within-night minimum χ² ``chi2`` ``(K,)`` (default: its mean for unit
+    scale, ``N_OBS - N_PAR``)."""
     cov = _cov(sigma)
+    if chi2 is None:
+        chi2 = onp.full(len(times), N_OBS - N_PAR)
     out = []
-    for t, m in zip(times, mean):
+    for t, m, c2 in zip(times, mean, chi2):
         peak = NightPeak(
-            m, cov, -30.0, onp.array([N_OBS]), onp.array([N_OBS * scale**2]),
+            m, cov, -30.0, onp.array([N_OBS]), onp.array([float(c2)]),
             onp.linalg.inv(cov)[None],
         )  # fmt: skip
         out.append(NightSummary(float(t), T_SS, 6, BLOCKS, (peak,), -200.0))
@@ -209,6 +213,27 @@ def fit_domain(nights):
     return default, oc_cells.period_domain(blank, p_range=(lo, hi))
 
 
+def _noise_outliers_and_chi2(rng, mean, outlier, ln_s, sigma):
+    """``(mean, chi2)`` of the nights: ``chi2`` is s² χ²_{N_OBS - N_PAR} (the
+    fit's summary model). An outlier night has its own scale s_k, log-uniform
+    on [1/S_MAX, S_MAX], and its mean is scattered by s_k times the night's
+    noise. Drawn after everything else in ``draw_system``, so the truth and
+    the inlier means of a stream are as before the χ² draw; the extra draws
+    only follow them."""
+    k = len(mean)
+    floor = math.log(oc_cells.FLUX_FLOOR)
+    mean = mean.copy()
+    scale = onp.full(k, math.exp(ln_s))
+    smax = math.log(oc_cells.S_MAX)
+    for i in onp.flatnonzero(outlier):
+        scale[i] = math.exp(rng.uniform(-smax, smax))
+        z = rng.multivariate_normal(onp.zeros(5), _cov(sigma))
+        while not floor <= mean[i, 4] + scale[i] * z[4] <= 0.0:
+            z[4] = SIGMA_F * rng.standard_normal()
+        mean[i] += scale[i] * z
+    return mean, scale**2 * rng.chisquare(N_OBS - N_PAR, size=k)
+
+
 def draw_system(rng, nights, fit):
     """The truth (from the fit's prior) and the summaries, given the nights
     and the fit domain."""
@@ -226,13 +251,6 @@ def draw_system(rng, nights, fit):
         sign * _night_state(orbit, times), onp.full((k, 1), ln_f), 1
     )
     noise = rng.multivariate_normal(onp.zeros(5), _cov(sigma), size=k)
-    # the observed ln f is a draw of the flux prior's support, so redraw the
-    # night's ln f noise until it lands in [ln FLUX_FLOOR, 0] (a night outside
-    # it has an undefined outlier density b_k)
-    floor = math.log(oc_cells.FLUX_FLOOR)
-    for i in range(k):
-        while not floor <= truth[i, 4] + math.exp(ln_s) * noise[i, 4] <= 0.0:
-            noise[i, 4] = SIGMA_F * rng.standard_normal()
     mean = truth + math.exp(ln_s) * noise
     for i in onp.flatnonzero(outlier):  # an independent orbit, the prior
         other = _orbit(
@@ -240,10 +258,11 @@ def draw_system(rng, nights, fit):
         )
         mean[i, :4] = _night_state(other, times[i : i + 1])[0]
         mean[i, 4] = onp.log(oc_cells.FLUX_FLOOR) * rng.uniform()
+    mean, chi2 = _noise_outliers_and_chi2(rng, mean, outlier, ln_s, sigma)
     return dict(
         **nights, period=period, orbit=orbit, ln_s=ln_s, ln_f=float(ln_f),
         eps=float(eps), outliers=onp.flatnonzero(outlier),
-        summaries=_summaries(times, mean, sigma, math.exp(ln_s)),
+        summaries=_summaries(times, mean, sigma, chi2),
     )  # fmt: skip
 
 
@@ -285,6 +304,19 @@ def _pit_p(p, cells, fits, truth_p):
     return pit
 
 
+def _pit_lns(p, fits, truth_ln_s):
+    """Mixture PIT of ln s: the cells' resample-move draws weighted by ``p``
+    (cells without draws left out, the rest renormalized)."""
+    num, den = 0.0, 0.0
+    for pi, f in zip(p, fits):
+        if f.draws is None or not pi > 0:
+            continue
+        d = oc_cells.decode_particles(f)["ln_s"]
+        num += pi * float(onp.mean(onp.asarray(d) < truth_ln_s))
+        den += pi
+    return num / den if den > 0 else math.nan
+
+
 def invariant_pits(p, fits, truth, distinct=False):
     """Mixture PITs of the invariants of ``truth`` (a dict): each cell's
     resample-move draws, equally weighted (a draw repeated by a rejected move
@@ -302,9 +334,10 @@ def invariant_pits(p, fits, truth, distinct=False):
             )
         dec = oc_cells.decode_particles(f)
         for name in INVARIANTS:
-            num[name] += pi * float(
-                onp.mean(onp.asarray(dec[name]) < truth[name])
-            )
+            draws = onp.asarray(dec[name])
+            if name == "omega":  # orbit <-> -orbit is omega -> omega + 180
+                draws = draws % 180.0
+            num[name] += pi * float(onp.mean(draws < truth[name]))
         den += pi
     return {
         f"{'pitd' if distinct else 'pit'}_{n}": (
@@ -315,10 +348,14 @@ def invariant_pits(p, fits, truth, distinct=False):
 
 
 def truth_invariants(sysd, t_anchor):
-    """The folded invariants of the true orbit, through the fit's own map."""
+    """The folded invariants of the true orbit, through the fit's own map.
+    ``omega`` is folded to [0, 180): a fit is right up to the orbit <->
+    -orbit swap (omega -> omega + 180), the orientation degeneracy."""
     z, zeta = oc.campbell_to_coordinates(sysd["orbit"], t_anchor)
     inv = oc.invariants(sysd["period"], z, zeta)
-    return {n: float(inv[n]) for n in INVARIANTS}
+    out = {n: float(inv[n]) for n in INVARIANTS}
+    out["omega"] %= 180.0
+    return out
 
 
 def classify(rec, ess_fail=ESS_FAIL):
@@ -349,11 +386,33 @@ def matched_cell(out, p):
     return max(free, key=lambda i: p[i]) if free else None
 
 
+def old_rule(out):
+    """``(matters_old, status_old)`` of the rule before the bounded
+    ``matters`` (``max(ln Ẑ, Laplace)`` within ``W`` of the best): diagnostic
+    columns from the same fit, never binding."""
+    up = onp.array(
+        [
+            c.log_mass
+            + max(
+                [f.log_z] + [oc_cells.laplace_log_evidence(m) for m in f.modes]
+            )
+            for c, f in zip(out.cells, out.fits)
+        ]
+    )
+    m = up >= up.max() - W
+    bad = any(
+        f.nonfinite or ((f.at_floor or f.unreliable) and mi)
+        for f, mi in zip(out.fits, m)
+    )
+    return m, "failed" if bad else "ok"
+
+
 def cell_records(out, true_i, oracle, matched=None):
     """One dict per flagged cell and for the true cell: truth, rank in
     ``upper``, ESS, ln Ẑ, best Laplace, the gap, the modes' inlier counts, the
     capped Newton runs, ``matters`` and the class."""
     rank = onp.argsort(onp.argsort(-out.upper))
+    m_old = old_rule(out)[0]
     recs = []
     for i, (c, f) in enumerate(zip(out.cells, out.fits)):
         flagged = bool(f.at_floor or f.unreliable or f.nonfinite)
@@ -369,6 +428,7 @@ def cell_records(out, true_i, oracle, matched=None):
             nonfinite=bool(f.nonfinite), ess=float(f.evidence.ess),
             log_z=float(f.log_z), laplace=float(lap),
             gap=float(lap - f.log_z), matters=bool(out.matters[i]),
+            matters_old=bool(m_old[i]),
             n_inliers=[round(float(m.n_inliers), 2) for m in f.modes],
             **{k: int(f.info.get(k, 0)) for k in STEP_COUNTS},
         )  # fmt: skip
@@ -409,6 +469,7 @@ def sbc_columns(sysd, out, p, u, true_i, t_anchor):
         if ok else math.nan,
         pit_n=float(p[:true_i].sum() + u * p[true_i]),
         pit_lnp=_pit_p(p, out.cells, out.fits, sysd["period"]),
+        pit_lns=_pit_lns(p, out.fits, sysd["ln_s"]),
     )  # fmt: skip
     truth = truth_invariants(sysd, t_anchor)
     row.update(invariant_pits(p, out.fits, truth))
@@ -532,6 +593,7 @@ def run_one(sysd, fit, key, u, *, oracle=False, equiv=False, store=None):
     fits = out.fits
     row.update(
         status="failed" if out.failed.any() else "ok",
+        status_old=old_rule(out)[1],
         seconds=time.time() - start, n_cells=len(cells),
         true_n=cells[true_i].n, no_mode=int(all(not f.modes for f in fits)),
         n_at_floor=sum(f.at_floor for f in fits),
@@ -734,6 +796,7 @@ def summarize(rows, n_sys):
     miss = [r for r in ok if not r["in_99"]]
     p_n = chi2_uniform([r["pit_n"] for r in ok])
     p_p = chi2_uniform([r["pit_lnp"] for r in ok])
+    p_s = chi2_uniform([r.get("pit_lns", math.nan) for r in ok])
     p_inv = {
         n: chi2_uniform([r.get(f"pit_{n}", math.nan) for r in ok])
         for n in INVARIANTS
@@ -767,6 +830,8 @@ def summarize(rows, n_sys):
         f"(P(Binomial >= misses at 1 %) = {tail:.3g}; fails below {P_MISS})",
         f"- SBC chi-square p, N (randomized PIT, {BINS} bins): {p_n:.3g}",
         f"- SBC chi-square p, ln P (resample-move draws): {p_p:.3g}",
+        f"- SBC chi-square p, ln s (resample-move draws; reported, not yet "
+        f"gated): {p_s:.3g}",
         "- SBC chi-square p, invariants (distinct weighted draws; "
         + ", ".join(f"{n} {v:.3g}" for n, v in p_inv.items())
         + ")",

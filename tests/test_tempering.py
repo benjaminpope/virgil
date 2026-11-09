@@ -645,7 +645,7 @@ def _offset(result, truth_xy, epoch):
 
 
 def _median_offsets(common, rho, temper, n_seeds=20):
-    """``(median offset, median f)`` over seeds of the fit of noise at chi2/N
+    """``(offsets, median f)`` over seeds of the fit of noise at chi2/N
     about 12 (eight channels, noise 3.5 times the errors); ``f`` is ``None``
     untempered."""
     truth = onp.array(
@@ -668,7 +668,7 @@ def _median_offsets(common, rho, temper, n_seeds=20):
             offsets.append(_offset(result, truth, EPOCHS[0]))
             if temper:
                 fs.append(result.temper_f)
-    return float(onp.median(offsets)), float(onp.median(fs)) if fs else None
+    return onp.array(offsets), float(onp.median(fs)) if fs else None
 
 
 # Each outlier-mixture fit scores a position grid on every night, so the 20
@@ -694,7 +694,8 @@ def test_the_tempered_posterior_is_calibrated(common, rho):
     # be worse: at chi2/N ~ 12 the orbit scores below the diffuse outlier
     # component on every night, the weights flatten the likelihood and the
     # band has no valid mode (offset inf).
-    med, f = _median_offsets(common, rho, True)
+    offsets, f = _median_offsets(common, rho, True)
+    med = float(onp.median(offsets))
     print(f"median offset/spread {med:.2f}, median f {f:.2f}")
     # the estimated f must be the true one (a lag-1 AR(1) estimate gives
     # 3.2 for common mode, truth 5.2, and a median offset near 1.5)
@@ -706,12 +707,25 @@ def test_the_tempered_posterior_is_calibrated(common, rho):
 @pytest.mark.slow
 @pytest.mark.full_only
 @pytest.mark.timeout(900)  # 20 fits take 300-400 s on CI
+@pytest.mark.xfail(
+    strict=True,
+    reason="untempered outlier-mixture fit has no valid mode on 17/20 seeds "
+    "(ar1-0.85) and 19/20 (common-0.6): offsets inf (0.4.2 review F3; "
+    "tracking issue to be linked, milestone 0.4.3)",
+)
 @CALIBRATION_CASES
 def test_the_untempered_posterior_is_not_calibrated(common, rho):
     # The untempered posterior is too narrow by sqrt(f) (2.2 to 2.3): its
     # median offset is well above 2.
-    med, _ = _median_offsets(common, rho, False)
-    print(f"median offset/spread {med:.2f}")
+    offsets, _ = _median_offsets(common, rho, False)
+    med = float(onp.median(offsets))
+    print(f"median offset/spread {med:.2f}, offsets {onp.round(offsets, 2)}")
+    # a fit with no valid mode has offset inf, which would pass "> 2"
+    # vacuously: every seed must give a finite offset
+    assert onp.all(onp.isfinite(offsets)), offsets
+    # calibrated, the 2-D offset over spread has median sqrt(2 ln 2) (the
+    # median of a chi distribution with 2 degrees of freedom); a posterior
+    # too narrow by sqrt(f) multiplies it by sqrt(f): 2.7 for f = 5.2
     assert med > 2.0
 
 

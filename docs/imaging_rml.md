@@ -232,11 +232,184 @@ phase_regime            [0]
 No warnings.
 ```
 
+## Pixel types and regularizers
+
+The softmax image of the fits above keeps the brightness positive and the flux separate, but it can never reach exactly zero. Two other pixel types suit particular regularizers. Both are a [`LinearImage`][virgil.models.LinearImage], whose total flux is the sum of its pixels (there is no separate flux to fit):
+- **Maximum entropy: √I pixels** (`parametrisation="sqrt"`). The fitted array is the square root of the flux, so the flux `x²` is positive without a bound, and entropy keeps its interior minimum. A gradient step in x moves I by −4I ∂J/∂I, the entropic mirror-descent preconditioner up to a factor of 4, which conditions the problem for the quasi-Newton solver.
+- **TSV, TV and L1: bounded linear pixels** (`parametrisation="linear"`) with `fit(..., method="lbfgsb")`. These penalties are minimized at exactly zero pixels, and in square-root coordinates a zero pixel is a flat, slow stationary point. L-BFGS-B takes non-negativity as a box bound on the pixels instead, so zeros are reached in finite steps.
+
+The parametrization changes how the optimizer moves, not the problem: both minimize ½χ² + wR over non-negative fluxes, so the image at the optimum is the same.
+
+Put a `LinearImage` in a `System` with a fixed-flux component (a star), or use maximum entropy: otherwise nothing stops TSV, TV or L1 from shrinking the flux to zero.
+
+## A small worked example
+
+A small simulated image on a coarse AMI grid (0.7 m pitch): a smooth Gaussian truth, with noise at the quoted error bars. The folded cell below is setup.
+
+??? note "Code"
+
+    ```python
+    import warnings
+
+    import jax
+    import jax.numpy as jnp
+    import numpy as onp
+    import numpyro.distributions as dist
+
+    from virgil import CalibrationNuisance, ComplexVisData
+    from virgil.coverage import ami_grid_record
+    from virgil.fitting import fit, kkt_report
+    from virgil.imaging import MaxEntropy, image_priors, l_curve
+    from virgil.models import LinearImage
+    from virgil.oidata import OIData
+    from virgil.radio import fit_staged_nuisances
+
+
+    # The example runs in float64; it comes after every cell above, which are unaffected.
+    jax.config.update("jax_enable_x64", True)
+    warnings.filterwarnings("ignore", message=".*cannot see inside a function model.*")
+
+    n, scale, flux = 8, 30.0, 0.3
+    grid = (jnp.arange(n) - (n - 1) / 2) * scale
+    gx, gy = jnp.meshgrid(grid, grid)
+    shape = jnp.exp(-(gx**2 + gy**2) / (2 * 40.0**2))
+    shape = flux * shape / shape.sum()
+
+
+    def pixels(p, parametrisation):
+        return LinearImage(p, scale, parametrisation=parametrisation, reference_flux=flux)
+
+
+    small = OIData(ami_grid_record(pitch_m=0.7)).with_model(pixels(jnp.sqrt(shape), "sqrt"), key=jax.random.PRNGKey(3))
+    start = pixels(jnp.sqrt(jnp.full((n, n), flux / n**2)), "sqrt")
+    priors = image_priors(start)
+    ```
+
+### Choosing the weight
+
+`LCurve.dof_discrepancy` refines the discrepancy principle. A fitted image absorbs some of the noise, so χ² falls to n − G, not n, with n the number of data and G the effective degrees of freedom the fit has used (estimated stochastically). The weight is the root of m(w) = χ²/s² − (n − G):
+- **s² is the noise scale on the quoted errors, taken from the scatter of the data.** Measure it from repeated observations or calibrator scatter, never by fitting it with the image: a flexible image absorbs structure into s² and the root moves to a weight that is too weak. The default is 1, right here because the simulation's errors are as quoted.
+- **No root is a failure.** If m never changes sign over the sweep, the weight is `None` and a warning is raised. The weak end of the sweep is never a fallback, because it is the least-regularized image: extend the sweep, or suspect the error bars.
+- **The strongest crossing is the default.** m can cross zero more than once, and every crossing is in `roots`. The one at the largest weight is chosen: the smoothest image still consistent with the data.
+- **The secant cap.** The root interpolated from the sweep is refitted, and up to `max_secant` further secant steps are taken (default 1) until |m| is within three standard errors of G. Otherwise `accepted` is false and a warning says so: raise `max_secant` or refine the sweep.
+
+```python
+regularizer = MaxEntropy(1.0)
+curve = l_curve(start, priors, small, regularizer, jnp.logspace(4, 2, 9), max_steps=3000)
+choice = curve.dof_discrepancy(small, regularizer)
+print(f"w = {choice.weight:.0f}, accepted {choice.accepted}, roots {[round(r) for r in choice.roots]}")
+print(f"chi2 = {choice.chi2:.1f}, G = {choice.g:.1f} ± {choice.g_se:.1f}, n = {choice.n_real:.0f}, m = {choice.m:.2f}")
+```
+
+```text
+w = 4354, accepted True, roots [4354]
+chi2 = 87.1, G = 19.5 ± 2.1, n = 109, m = -2.42
+```
+
+### Certifying convergence
+
+A loss that has stopped falling is not a converged fit: the optimizer may have given up on a slope. `kkt_report` tests the optimality conditions directly:
+- **Gradient conditions.** For √I and softmax pixels, the gradient per pixel flux, less its multiplier, is small on the lit pixels (`kkt_rel`, and `kkt_w` in units of w/F). For bounded linear pixels, the projected gradient is small (`pg_rel`) and no pixel at zero wants to grow (`zero_violation`). Active bounds are not violations.
+- **`want_grow`.** The fraction of dark pixels whose objective would raise them: an unfinished fit.
+- **`band_limit`.** For a lone maximum entropy, the power of ln b beyond the data's highest spatial frequency. It is about 1 at an optimum; larger means structure the data cannot constrain.
+- **Nuisances.** The gradient of every other fitted parameter is reported too.
+
+`converged` is true only when all of these pass (the nuisance gradients only when `start=` is passed). A two-step fit shows what failure looks like.
+
+```python
+best = [MaxEntropy(choice.weight)]
+short = fit(start, priors, small, best, init=curve.results[-1].values, max_steps=2)
+done = fit(start, priors, small, best, init=curve.results[-1].values, max_steps=3000)
+for name, result in (("2 steps", short), ("converged fit", done)):
+    report = kkt_report(result, priors, small, best)
+    image = report["images"]["."]
+    print(f"{name}: converged {report['converged']}, kkt_rel {image['kkt_rel']:.1e}, band_limit {image['band_limit']:.2f}")
+```
+
+```text
+RuntimeWarning: fit(method='lbfgs') did not converge in 2 steps, the step limit; raise max_steps.
+```
+
+```text
+2 steps: converged False, kkt_rel 4.4e-01, band_limit 1.58
+converged fit: converged True, kkt_rel 1.8e-07, band_limit 1.07
+```
+
+For TSV, TV or L1 the same call certifies a `method="lbfgsb"` fit of a `parametrisation="linear"` image: fit with `[TSV(w, beam_mas=...)]`, then call `kkt_report` with the same arguments. Restart an unconverged fit from its own values with a tighter `gtol` and report again.
+
+### Gains and offsets in stages
+
+Radio data need antenna-based gains (and optionally offsets) fitted with the image. Fitting everything at once from a flat image can trade image structure for gain, so `fit_staged_nuisances` (in `virgil.radio`) follows Cornwell & Wilkinson's order:
+1. the image, with the nuisances nominal;
+2. the nuisances, with the image held fixed;
+3. both jointly, followed by a `kkt_report` of the image.
+
+Two guards come with it:
+- **The reference gain.** Gains are relative: scaling every gain and the flux by the same factor leaves the data unchanged. One observation's gain is fixed at 1, by default the one with the largest Σw, so the flux scale comes from the best-measured data and not a lightly weighted observation.
+- **The box-edge check.** L-BFGS-B fits each nuisance inside a box (gains default to 0.7–1.3). A nuisance that ends within 5% of the box width of an edge is probably being held there, not measured: `failed` is set and `edge` says which.
+
+Here three observations have gains 1.1, 1.0 and 0.9, and unequal weights. The gains are recovered, but the image block of this short run is not yet certified: `fit` warns that it ran out of steps, and `kkt_report` agrees. Raise `max_steps` before trusting the image.
+
+??? note "Code"
+
+    ```python
+    rng = onp.random.default_rng(0)
+    npts = 450
+    radius = 0.4 / (2 * (onp.pi / (180 * 3600e3)) * scale) * onp.sqrt(rng.uniform(0.05, 1, npts))
+    angle = rng.uniform(0, 2 * onp.pi, npts)
+    u, v = radius * onp.cos(angle), radius * onp.sin(angle)
+    obs = onp.repeat(onp.arange(3), 150)
+    weight = onp.repeat([0.2e6, 3e6, 1e6], 150)
+    nominal = ComplexVisData.from_arrays(u, v, onp.ones(npts) + 0j, weight, onp.full(npts, 230e9), obs=obs)
+    fixed = CalibrationNuisance(nominal, gains=False, offsets=False, alpha=False, sigmas=False, fit_flux=False)
+
+
+    def scene(values):
+        return LinearImage(values["pixels"], scale, ft="dft", parametrisation="sqrt", reference_flux=1.0)
+
+
+    truth = {"pixels": jnp.sqrt(shape / shape.sum())}
+    model = onp.asarray(nominal.model(scene(truth), truth, fixed))
+    gains = onp.array([1.1, 1.0, 0.9])[obs]
+    vis = gains * model + 1e-3 * (rng.normal(size=npts) + 1j * rng.normal(size=npts))
+    radio = ComplexVisData.from_arrays(u, v, vis, weight, onp.full(npts, 230e9), obs=obs)
+    ```
+
+```python
+flat = dist.ImproperUniform(dist.constraints.real, (), event_shape=(n, n))
+staged = fit_staged_nuisances(
+    radio,
+    scene,
+    {"pixels": flat},
+    [MaxEntropy(1.0)],
+    init={"pixels": jnp.full((n, n), 1 / n)},
+    nuisance=dict(offsets=False, sigmas=False, alpha=False, fit_flux=False),
+    weight=1.0,
+    max_steps=5000,
+)
+print(f"reference observation {staged.ref_obs} (sums of weights {staged.sum_weights})")
+print("gains of the others, relative to it:", onp.round(onp.exp(staged.nuisances["cal.gain"]["value"]), 3))
+print("failed (a gain within 5% of its box edge):", staged.failed)
+print("image block converged (kkt_report):", staged.kkt["converged"])
+```
+
+```text
+RuntimeWarning: fit(method='lbfgsb') did not converge after 5000 steps: it reached max_steps or its limit of 3 * max_steps function evaluations; raise max_steps.
+```
+
+```text
+reference observation 1 (sums of weights [3.0e+07 4.5e+08 1.5e+08])
+gains of the others, relative to it: [1.1 0.9]
+failed (a gain within 5% of its box edge): False
+image block converged (kkt_report): False
+```
+
 ## Summary
 
 RML turns the reconstruction into an optimization of ½χ² + wR:
 - **A starting image.** `starting_image` builds one from a parametric fit (moments) or from the dirty image, with a sensible grid and a hole under the star. With coverage this good, both starts lead to the same image.
-- **The weight.** `l_curve` sweeps it with warm starts. The discrepancy principle chooses the weight at which χ² per point reaches one; the corner is a check that needs no error bars.
-- **Checks.** Look at the images either side of the chosen weight, and run `diagnose`.
+- **The weight.** `l_curve` sweeps it with warm starts. The discrepancy principle chooses the weight at which χ² per point reaches one; the corner is a check that needs no error bars. `dof_discrepancy` corrects the principle for the degrees of freedom the fit used.
+- **Pixels.** Maximum entropy takes √I pixels; TSV, TV and L1 take bounded linear pixels with L-BFGS-B.
+- **Checks.** `kkt_report` certifies convergence, and `fit_staged_nuisances` fits calibration in stages with a reference gain and a box-edge check. Look at the images either side of the chosen weight, and run `diagnose`.
 
 Part 3 replaces the maximum-entropy penalty with a Gaussian-process prior, whose two hyperparameters can be chosen from the Bayesian evidence instead of a sweep.

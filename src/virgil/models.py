@@ -24,6 +24,7 @@ ratio. Likelihoods of these models are in
 import dataclasses
 import math
 import textwrap
+import warnings
 from typing import Any
 
 import equinox as eqx
@@ -53,7 +54,7 @@ from ._geometry import (
     undo_elliptical_transf_spat_freq,
 )
 from . import _elr
-from ._deprecate import renamed
+from ._deprecate import external_stacklevel, renamed
 from .harmonics import cone_coefficients, rim_coefficients
 from ._utils import (
     FWHM_PER_SIGMA,
@@ -4744,8 +4745,8 @@ class MultipoleDisk(Component):
         phase of a ``height``'s lift (at the current parameter values, which
         must be concrete), rounded up to a
         multiple of 8 (but at most the 144 nodes buildable for a Gauss-Laguerre
-        tail). A starting point only: check convergence by
-        doubling ``n_r``.
+        tail), with a warning when it has to step down. A starting point
+        only: check convergence by doubling ``n_r``.
 
         Parameters
         ----------
@@ -4768,12 +4769,20 @@ class MultipoleDisk(Component):
         n = int(8 * onp.ceil(max(n, 16) / 8))
         # A Gauss-Laguerre tail (ExpTail, alone or inside a RadialSum/Gap)
         # has at most 150 nodes; step down in 8s until the rule builds.
+        wanted = n
         while n > 16:
             try:
                 self.profile.with_rule(n)
                 break
             except ValueError:
                 n -= 8
+        if n < wanted:
+            warnings.warn(
+                f"suggest_n_r wants {wanted} radial nodes but the profile "
+                f"cannot build that many; using {n}: the Hankel quadrature "
+                "may be under-resolved on the longest baselines.",
+                stacklevel=external_stacklevel(),
+            )
         return n
 
     def _alpha(self, r):

@@ -394,10 +394,15 @@ evidence proper.
 single-valued at $r=0$. A smooth 2D field has Fourier coefficients
 $a_m(r)\sim r^{|m|}$ (the Zernike radial polynomials, Born & Wolf, *Principles
 of Optics*, section 9.2), so order $m$ of $\eta$ is multiplied by
-$\tanh(r/\Delta r)^{|m|}$, with $\Delta r$ the node spacing. The factor is
-$1 - O(2|m|\,e^{-2r/\Delta r})$, so the prior is stationary away from the
-centre (the variance of order $m$ is within $4|m|e^{-10}$ of $\sigma^2$ beyond
-five spacings); the latents stay whitened and only $m=0$ is free at $r=0$. It is
+$\tanh(r/\ell_r)^{|m|}$, with $\ell_r$ the radial correlation length, the
+scale on which the field varies (a physical length, so the prior does not
+depend on the grid). The variance of order $m$ is $\tanh(r/\ell_r)^{2|m|}$ of
+$\sigma^2$: it is within $4|m|e^{-10}$ of $\sigma^2$ beyond five correlation
+lengths, but high orders recover slowly (for $n_\theta = 64$, order 32 keeps
+about 10 per cent of its variance at $r = 2\ell_r$). The default
+$\ell_r$ is five node spacings, so the region where the prior is not
+stationary is about five spacings, not one, and a fitted $\ell_r$ also sets
+how much $m \ge 1$ structure the inner disk can carry; the latents stay whitened and only $m=0$ is free at $r=0$. It is
 applied only when `r_min_mas = 0`; an annulus keeps the plain prior.
 
 **Geometry.** By default the geometry parameters belong to the field: they are
