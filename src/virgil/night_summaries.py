@@ -45,7 +45,8 @@ __provisional__ = ("*",)
 # Reporting precision of a probability (design §10): a peak is dropped only
 # if the night's outlier term outweighs it by more than 1/DELTA.
 DELTA = 1e-3
-EPS_PRIOR = (1.0, 9.0)  # declared prior (Ben, 2026-11-09): ε ~ Beta(1, 9), mean 0.1
+# Declared prior (Ben, 2026-11-09): ε ~ Beta(1, 9), mean 0.1.
+EPS_PRIOR = (1.0, 9.0)
 # The engine's flux floor (arcs._half_position); the ln f upper bound is 0.
 _F_MIN = 1e-4
 
