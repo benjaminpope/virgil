@@ -795,9 +795,10 @@ Their coverage is the eccentric test of Stage 3b (§14).
   the largest ln L evaluated at any found mode or IS draw) and R = max ln(mass_N Ẑ_N) over the cells that are neither
   failed nor unreliable, a cell matters iff it has no found mode or U_N ≥ R − ln(n_cells/δ). If no cell is unflagged,
   every flagged cell matters. A flagged cell that does not matter is information only: reported per cell, not failing
-  the system. `CellsResult.omitted_bound` = Σ exp(U_N) over those cells / Σ mass_N Ẑ_N; it is ≤ δ by construction
-  (1.37 δ allowed for the reference cell's own error) and a violation raises. The threshold is a union bound over the
-  cells, so the total omitted mass is ≤ δ, not δ per cell. W now serves the sentinel only. Expect more failures than
+  the system. `CellsResult.omitted_bound` = Σ exp(U_N) over those cells / Σ mass_N Ẑ_N; it is a diagnostic, below δ by the
+  threshold *given that the search found each cell's top mode* (ln sup L evaluated is a lower bound, so it can be
+  understated). The threshold is a union bound over the cells, so the total omitted mass is ≤ δ, not δ per cell.
+  A flagged cell with no found mode always matters (it has no bound). W now serves the sentinel only. Expect more failures than
   under the earlier rule (max(ln Ẑ, Laplace) within W per cell): that is the intended honesty.
 - **Finite floor.** The all-outlier floor K·b needs every b_k finite, i.e. every night's ln f inside [ln flux_floor, 0].
   A night outside has b_k = −inf: the fit raises an error (never a silent pass). The population simulation draws the
@@ -1053,8 +1054,7 @@ n cells can each hide mass. The bound that holds is
 
 because the cell prior is normalized. sup L is the largest ln L evaluated in the cell (every found mode, every IS
 draw). A flagged cell is negligible iff U_N < R − ln(n_cells/δ), R as in §6.6. The negligible cells then hold at most
-n_cells·e^R·δ/n_cells = δ e^R ≤ δ of the posterior, up to the reference cell's own error (factor ≤ 1.37 under the
-reliability rule). Unflagged cells need no bound.
+n_cells·e^R·δ/n_cells = δ e^R ≤ δ of the posterior, conditional on the search coverage below. Unflagged cells need no bound.
 
 The largest ln L evaluated is a *lower* bound on sup L. So the rule is conservative (more cells kept than by the exact
 integral, since the bound omits the Occam factor) only *conditional on the search's coverage*. When the search misses

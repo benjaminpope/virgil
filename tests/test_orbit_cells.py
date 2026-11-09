@@ -694,6 +694,11 @@ def test_the_position_evidence_of_a_tiny_case_matches_prior_importance(
         oc_cells.A_RANGE, 1e-6, oc_cells.FLUX_FLOOR, 0.0, np.float64,
     )  # fmt: skip
     ll = jax.jit(jax.vmap(space.loglike))
+    # log_l_sup is the largest ln L at the modes and the importance draws
+    seen_l = [float(space.loglike(m.x)) for m in fit.modes]
+    seen_l.append(float(onp.max(onp.asarray(ll(np.asarray(fit.x_is))))))
+    assert abs(fit.log_l_sup - max(seen_l)) < 1e-6 * (1 + abs(max(seen_l)))
+    assert fit.log_l_sup >= fit.log_z
     chunks = [
         onp.asarray(ll(space.sample(jax.random.key(10 + i), 2**15)))
         for i in range(32)
@@ -1234,7 +1239,9 @@ def test_matters_switches_at_the_union_bound_threshold_for_170_cells():
 
 
 @pytest.mark.parametrize("seed", range(20))
-def test_the_omitted_bound_is_at_most_delta_on_random_stubs(seed):
+def test_the_true_omitted_mass_is_below_the_bound_and_delta_on_random_stubs(
+    seed,
+):
     rng = onp.random.default_rng(seed)
     n, delta = 170, oc_cells.DELTA
     log_mass = -onp.log(n) + rng.normal(0, 1, n)
@@ -1243,8 +1250,12 @@ def test_the_omitted_bound_is_at_most_delta_on_random_stubs(seed):
     flagged = rng.random(n) < 0.6
     flagged[rng.integers(n)] = False
     cells, fits, log_p = _stub_cells(log_mass, log_z, sup, flagged)
-    _, _, _, omitted = oc_cells._matters(cells, fits, log_p, delta)
-    assert 0.0 <= omitted <= 1.37 * delta
+    _, matters, _, omitted = oc_cells._matters(cells, fits, log_p, delta)
+    neg = flagged & ~matters
+    # the mass of the stub's own evidences (Σ mass·Z) that the rule omits
+    true = onp.exp(log_p[neg]).sum() / onp.exp(log_p).sum()
+    assert true <= omitted <= delta
+    assert neg.any() and true < omitted  # the bound uses sup L, not Ẑ
 
 
 def test_a_ridge_whose_laplace_exceeds_sup_l_follows_sup_l():
@@ -1307,4 +1318,4 @@ def test_position_cells_fails_on_a_flagged_cell_within_the_bound(monkeypatch):
 
     assert run(margin - 0.01).failed.sum() == 1
     out = run(margin + 0.01)
-    assert not out.failed.any() and out.omitted_bound <= 1.37 * oc_cells.DELTA
+    assert not out.failed.any() and out.omitted_bound <= oc_cells.DELTA

@@ -1572,8 +1572,10 @@ class CellFit:
         [`search_cell`][virgil.orbit_cells.search_cell]).
     log_l_sup : float
         The largest ``ln L`` evaluated in the cell (at every found mode and
-        importance draw): a lower bound on the cell's ``sup ln L``, which
-        bounds ``ln Z_N`` because the cell prior is normalized (design §6.10).
+        importance draw): a *lower* bound on the cell's ``sup ln L``, which
+        itself bounds ``ln Z_N`` (the cell prior is normalized). It is a bound
+        on ``Z_N`` only if the search found the cell's top mode (design
+        §6.10); ``nan`` (not set) counts as mattering.
     """
 
     cell: Cell
@@ -1594,7 +1596,7 @@ class CellFit:
     nonfinite: bool = False
     move: object = dataclasses.field(repr=False, default=None)
     info: dict = dataclasses.field(repr=False, default_factory=dict)
-    log_l_sup: float = float("-inf")
+    log_l_sup: float = float("nan")
 
     @property
     def failed(self):
@@ -1880,8 +1882,9 @@ class CellsResult:
         (every flagged cell matters if none is unflagged).
     omitted_bound : float
         The summed ``exp(upper)`` of flagged cells that do not matter, over
-        the total mass: at most ``δ`` (``1.37 δ`` allowed for the reference
-        cell's error); exceeding it raises.
+        the total mass. A diagnostic: below ``δ`` by the threshold, given the
+        search found each cell's top mode (a lower ``sup L`` would understate
+        it).
     """
 
     domain: PeriodDomain
@@ -1898,9 +1901,6 @@ class CellsResult:
     upper: onp.ndarray = None
     matters: onp.ndarray = None
     omitted_bound: float = None
-
-
-_OMITTED_SLACK = 1.37  # e^0.316: the reference cell's error under ESS_FAIL
 
 
 def _matters(cells, fits, log_p, delta):
@@ -2051,11 +2051,6 @@ def position_cells(
         p = onp.full(len(cells), onp.nan)
     else:
         p = onp.exp(log_p - onp_logsumexp(log_p))
-        if omitted > _OMITTED_SLACK * delta:
-            raise RuntimeError(
-                f"omitted_bound {omitted:.3g} exceeds {_OMITTED_SLACK} delta: "
-                "a bug in the `matters` rule."
-            )
     below = p < delta / len(cells)
     drawn = [
         (f, k)
