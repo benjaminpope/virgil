@@ -13,18 +13,18 @@ vector: ``loss(z)`` (scalar Φ), ``rows(z)`` (any length, possibly 0) and
 static layouts use ``eqx.field(static=True)``.
 
 `step` solves ``(F + λM) δ = -g`` by Cholesky on the free coordinates
-(M: Marquardt scaling of diag F, floored), clips the trial into the box and
+(M: Marquardt scaling, diag F per parameter, 1 where it is zero), clips the trial into the box and
 accepts it if everything is finite and Φ falls (λ/3 on accept, 4λ on
 reject; a failed Cholesky gives NaNs, so it is a rejection). Coordinates
 at a bound with the descent direction pointing out of the box are held.
 Stop codes: ``CONVERGED`` (projected gradient ≤ ``gtol``, Newton decrement
-≤ ``dtol``, or, once λ > 1e10, decrement at the rounding floor),
-``STALLED`` (λ > 1e10 otherwise), ``LIMIT``, and ``NON_FINITE`` from
-`init`. A stopped state is unchanged by ``step``; `solve` resumes from a
+≤ ``dtol``), ``STALLED`` (λ > 1e10 with neither met, e.g. a tolerance finer
+than Φ's rounding error; never promoted to ``CONVERGED``), ``LIMIT``, and
+``NON_FINITE`` from `init`. A stopped state is unchanged by ``step``; `solve` resumes from a
 `State`, counting ``max_steps`` from ``state.steps``.
 
 Private; imports nothing from virgil. The algorithm, tolerances and tests
-are in ``design/gauss_newton_plan.md``.
+are in ``design/history/gauss_newton_plan.md``.
 """
 
 import equinox as eqx
@@ -37,7 +37,11 @@ _LAM_START = 1e-3
 _LAM_FLOOR = 1e-12
 _LAM_STALL = 1e10
 _BOUND_EPS = 1e-10
-_MARQUARDT_FLOOR = 1e-12
+# The decrement (nats) a float64 run reaches whatever Φ: the pre-#665 value of
+# the refinement callers, kept so their acceptance set is unchanged. Not
+# derived; the decrement is computed from the gradient, whose rounding is not
+# bounded by Φ's.
+_DTOL_AUTO = 1e-12
 
 
 class State(eqx.Module):
@@ -60,6 +64,21 @@ def curvature(problem, z):
     return 0.5 * (F + F.T)
 
 
+def rounding_dtol(value):
+    """The decrement (nats) below which Φ cannot tell two points apart.
+
+    10 ulp of max(|Φ|, 1). Derivation, when Φ is a sum of n terms of one sign
+    (a chi-squared): its rounding error is at most about log2(n) ε Σ|xᵢ| =
+    log2(n) ε |Φ| for tree-wise summation (Higham 2002, §4.2), and log2(n) is
+    10 at n = 10³ (13 at 10⁴); the floor of 1 is one nat. Not derived for a
+    Φ whose terms have both signs, such as the marginal surface of `epochs`
+    (a sum of ν log χ² per block), where |Φ| can be far below Σ|xᵢ|: there
+    it is the allowance the kernel's former rescue used, kept so as not to
+    change behaviour.
+    """
+    return 10 * np.finfo(value.dtype).eps * np.maximum(np.abs(value), 1.0)
+
+
 def _held(z, g, lower, upper):
     """The ε-active set: coordinates whose descent direction leaves the box."""
     rel = max(_BOUND_EPS, 10 * np.finfo(z.dtype).eps)
@@ -75,11 +94,16 @@ def _solve_free(F, g, free, lam):
 
     NaN when the system is not positive definite (Cholesky does not raise).
     """
-    # Marquardt's scaling M (the diagonal), floored, on the free coordinates.
+    # Marquardt (1963) scaling M = diag F, per parameter: the damping carries
+    # each coordinate's own units, so the step is invariant to rescaling z
+    # (the property Moré 1978 builds on). Plain diag F: without Moré's running
+    # max D_k = max(D_{k-1}, diag F_k), so a diagonal that is tiny but not
+    # zero keeps its tiny damping and the run stalls honestly. A coordinate
+    # with exactly zero curvature gets 1 (MINPACK's convention). There is no
+    # cross-parameter floor, which would give a small-unit coordinate the
+    # damping of the largest.
     d = np.diag(F)
-    biggest = np.max(np.where(free, d, 0.0))
-    tiny = np.finfo(F.dtype).tiny
-    scaling = np.maximum(np.maximum(d, _MARQUARDT_FLOOR * biggest), tiny)
+    scaling = np.where(d > 0.0, d, 1.0)
     A = F + lam * np.diag(scaling)
     both = free[:, None] & free[None, :]
     A = np.where(both, A, 0.0) + np.diag(np.where(free, 0.0, 1.0))
@@ -148,13 +172,16 @@ def _advance(problem, state, lower, upper, gtol, dtol, limit):
     delta = _solve_free(F, g, free, _LAM_FLOOR)
     dec = -0.5 * np.sum(np.where(free, g * delta, 0.0))
     dec = np.where(np.isfinite(dec), dec, np.inf)
-    eps = np.finfo(z.dtype).eps
-    floor = lam > _LAM_STALL
+    # dtol=None (NaN here): the larger of _DTOL_AUTO and Φ's rounding resolution
+    dtol = np.where(
+        np.isnan(dtol), np.maximum(_DTOL_AUTO, rounding_dtol(value)), dtol
+    )
     converged = (gnorm <= gtol) | (dec <= dtol)
-    floor_ok = floor & (dec <= 10 * eps * np.maximum(np.abs(value), 1.0))
+    # Damping that ran away without meeting a criterion is a stall, reported
+    # as such (callers name it "the damping limit"); it is never converged.
     code = np.select(
-        [converged, floor_ok, floor, steps >= limit],
-        [CONVERGED, CONVERGED, STALLED, LIMIT],
+        [converged, lam > _LAM_STALL, steps >= limit],
+        [CONVERGED, STALLED, LIMIT],
         default=RUNNING,
     ).astype(np.int32)
     return State(z, value, g, F, lam, steps, rejects, code)
@@ -216,7 +243,11 @@ def solve(
         Box bounds, scalars or vectors; default ±inf.
     gtol, dtol
         Stop when the projected gradient's infinity norm is ≤ ``gtol`` or the
-        Newton decrement is ≤ ``dtol``.
+        Newton decrement is ≤ ``dtol``. A tolerance finer than
+        the rounding error of Φ cannot be met: the run ends ``STALLED``.
+        ``dtol=None`` is the larger of 1e-12 and that rounding error at the
+        current Φ (`rounding_dtol`), the acceptance set of the refinement
+        callers before #665 (a tolerance of 1e-12, or the rounding rescue).
     max_steps
         Maximum iterations (accepted and rejected) in this call, at least 1.
     """
@@ -238,6 +269,6 @@ def solve(
         bound(lower, -np.inf),
         bound(upper, np.inf),
         np.asarray(gtol, dtype),
-        np.asarray(dtol, dtype),
+        np.asarray(np.nan if dtol is None else dtol, dtype),
         np.asarray(max_steps, np.int32),
     )

@@ -44,7 +44,13 @@ import numpy as onp
 from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
-from ._geometry import fringe_scales, pixel_offsets, rotate, smearing_scale
+from ._geometry import (
+    fringe_scales,
+    gaussian_smooth,
+    pixel_offsets,
+    rotate,
+    smearing_scale,
+)
 from ._utils import FWHM_PER_SIGMA, _reference, mas2rad
 from ._deprecate import external_stacklevel, keyword_only, renamed
 from ._precision import cast_tree, run_in
@@ -54,6 +60,7 @@ from .likelihood import _whitened_errors_and_log_norm, whitened_residuals
 from .models import (
     _scene_images,
     Image,
+    LinearImage,
     PointSource,
     Rotated,
     SourceModel,
@@ -66,6 +73,7 @@ from .models import (
 __provisional__ = (
     "clean",
     "CleanResult",
+    "DofDiscrepancy",
 )
 
 _HIGHEST = jax.lax.Precision.HIGHEST
@@ -89,8 +97,9 @@ class _ImageRegulariser(eqx.Module):
         leaves tiny negatives, and an exact zero would give NaN gradients in
         ``xlogy``."""
         image = self.image(model)
+        linear = isinstance(image, LinearImage)
         if not self.smoothed:
-            return image.brightness
+            return image.regularised_pixels if linear else image.brightness
         if image.blur_fwhm_mas is not None:
             warnings.warn(
                 "smoothed=True penalizes the blurred image, so the base "
@@ -99,17 +108,24 @@ class _ImageRegulariser(eqx.Module):
                 UserWarning,
                 stacklevel=external_stacklevel(),
             )
-        b = image.smoothed()
+        if linear:
+            b = image.regularised_pixels
+            if image.blur_fwhm_mas is not None:
+                b = gaussian_smooth(
+                    b, image.blur_fwhm_mas / image.pixel_scale_mas
+                )
+        else:
+            b = image.smoothed()
         return np.maximum(b, np.finfo(b.dtype).tiny)
 
     def image(self, model):
         """The regularized [`Image`][virgil.models.Image] in ``model``."""
         model = model.resolved()
         image = model if self.path is None else model.get(self.path)
-        if not isinstance(image, Image):
+        if not isinstance(image, (Image, LinearImage)):
             raise TypeError(
                 f"{type(self).__name__}(path={self.path!r}) found a "
-                f"{type(image).__name__}, not an Image."
+                f"{type(image).__name__}, not an Image or LinearImage."
             )
         return image
 
@@ -119,7 +135,11 @@ class _ImageRegulariser(eqx.Module):
 
     def _scale(self, model, b):
         """``p / B`` and the flux ``Σ b``, for the normalised penalties."""
-        return self.image(model).pixel_scale_mas / self.beam_mas, np.sum(b)
+        image = self.image(model)
+        # The reference flux is fixed, so the penalty stays convex in a
+        # linear image: ``b`` is already in units of it.
+        flux = 1.0 if isinstance(image, LinearImage) else np.sum(b)
+        return image.pixel_scale_mas / self.beam_mas, flux
 
 
 def _differences(b):
@@ -258,7 +278,10 @@ class MaxEntropy(_ImageRegulariser):
     """Maximum entropy: ``weight * Σ b log(b / q)``, with ``b`` and ``q`` unit-sum.
 
     The relative entropy of the image with respect to a default image ``q``
-    (Skilling & Bryan 1984, MNRAS 211, 111; BSMEM, Baron & Young 2008).
+    (Skilling & Bryan 1984, MNRAS 211, 111; BSMEM, Baron & Young 2008). On a
+    [`LinearImage`][virgil.models.LinearImage], ``b`` is in units of its
+    reference flux and the penalty is Skilling's ``Σ b log(b / q) - b + q``.
+    Source: Skilling (1989), [references](../references.md#skilling1989).
 
     Parameters
     ----------
@@ -286,6 +309,11 @@ class MaxEntropy(_ImageRegulariser):
     def _brightness_and_default(self, model):
         """The unit-sum image ``b`` and the default ``q`` (1 where ``b`` is 0)."""
         image = self.image(model)
+        if isinstance(image, LinearImage) and image.parametrisation != "sqrt":
+            raise TypeError(
+                "MaxEntropy on a linear LinearImage needs a positive lower "
+                "bound on the pixels; use parametrisation='sqrt'."
+            )
         b = self.pixels(model)
         if self.prior is None:
             # Smoothing spreads flux beyond the support: flat over all pixels.
@@ -301,7 +329,12 @@ class MaxEntropy(_ImageRegulariser):
 
     def value(self, model):
         b, q = self._brightness_and_default(model)
-        return self.weight * np.sum(xlogy(b, b) - xlogy(b, q))
+        value = np.sum(xlogy(b, b) - xlogy(b, q))
+        if isinstance(self.image(model), LinearImage):
+            # Skilling's form, ``Σ b ln(b/q) - b + q``, for unnormalised b
+            # (reference-flux units, ``q`` unit-sum).
+            value = value + 1.0 - np.sum(b)
+        return self.weight * value
 
     def residuals(self, model):
         """Residuals ``r`` with ``value = 0.5 Σ r²`` (``b`` and ``q`` sum to 1):
@@ -558,6 +591,10 @@ class Centroid(_ImageRegulariser):
 def image_priors(scene):
     """Priors on the log-brightness of every Image in a scene.
 
+    A [`LinearImage`][virgil.models.LinearImage] gets a flat prior on its
+    ``pixels`` instead; linear ones need ``fit(method="lbfgsb")``, which
+    bounds them at zero.
+
     Returns a priors dict for [`fit`][virgil.fitting.fit]. An Image with
     a plain log-brightness array gets a flat prior,
     ``{"env.log_brightness": ImproperUniform(...)}``, so that its pixels are
@@ -572,7 +609,12 @@ def image_priors(scene):
     import numpyro.distributions as dist
 
     priors = {}
-    for prefix, image in _scene_images(scene):
+    for prefix, image in _scene_images(scene, kinds=(Image, LinearImage)):
+        if isinstance(image, LinearImage):
+            priors[prefix + "pixels"] = dist.ImproperUniform(
+                dist.constraints.real, (), event_shape=image.pixels.shape
+            )
+            continue
         shape = image.log_brightness.shape
         if _whitened_field(image.log_brightness):
             priors[prefix + "log_brightness.latent"] = dist.Normal(
@@ -1752,6 +1794,11 @@ class LCurve:
         The unweighted regularizer, ``value / weight``, of each fit.
     results : list of FitResult
         The fits.
+    refit : callable, optional
+        ``refit(weight, init) -> FitResult``, set by :func:`l_curve`; the secant
+        step of :meth:`dof_discrepancy` needs it.
+    others : tuple, optional
+        The fixed regularizers of the sweep, set by :func:`l_curve`.
     """
 
     weights: object
@@ -1759,6 +1806,8 @@ class LCurve:
     chi2_red: object
     penalty: object
     results: list
+    refit: object = dataclasses.field(default=None, repr=False, compare=False)
+    others: tuple = ()
 
     def corner(self):
         """The weight at the L-curve's corner, where it bends most sharply.
@@ -1804,6 +1853,196 @@ class LCurve:
         c = binding[i : i + 2]
         fraction = (c[0] - target) / (c[0] - c[1])
         return float(np.exp(t[0] + fraction * (t[1] - t[0])))
+
+    def dof_discrepancy(
+        self,
+        data,
+        regularizer,
+        *,
+        noise_scale2=1.0,
+        noise_scale_sigma=None,
+        nprobe=16,
+        tol=1e-4,
+        maxit=2000,
+        seed=0,
+        secant=True,
+        max_secant=1,
+        curvature=None,
+    ):
+        """The weight of the degrees-of-freedom-corrected discrepancy principle.
+
+        !!! warning "Provisional"
+            May change in any 0.4.x release without a deprecation cycle.
+
+        Morozov's discrepancy with the fitted degrees of freedom removed: ``w``
+        is the root in ``ln w`` of ``m(w) = χ²/s² − (n − G)``, with ``n`` the
+        number of real data, ``s²`` the noise scale on the quoted variances
+        and ``G = Tr[K (K + H_R)⁻¹]`` (Hutchinson's estimator). ``K`` is the
+        data's Gauss–Newton curvature and ``H_R`` the Hessian of the swept
+        regularizer and the sweep's ``others``, in the pixel fluxes of a
+        [`LinearImage`][virgil.models.LinearImage] over its free pixels
+        (inside the support, flux above zero); it must be positive definite
+        (MaxEntropy, TSV).
+
+        The root is interpolated linearly in ``ln w``. Where ``m`` changes
+        sign more than once, ``roots`` lists every crossing and the one at the
+        largest weight (the strongest regularization) is chosen. Refits then
+        take up to ``max_secant`` secant steps until ``|m| ≤ 3 se(G)``.
+        Failures warn and show in the result: no sign change gives
+        ``weight=None``, an unmet tolerance ``accepted=False``; the weak end
+        of the sweep is never a fallback. Source: Morozov (1966), Wahba
+        (1983) and Craven & Wahba (1979), [references](../references.md#morozov1966);
+        Hutchinson (1989), [references](../references.md#hutchinson1989).
+
+        ``K`` covers the fitted image pixels only, and ``n`` is not reduced
+        for fitted nuisances. Closure phases of four or more telescopes have
+        more residual rows than independent data: do not use them. ``h`` uses
+        Skilling's unnormalised entropy, so it is classic ``h`` only if
+        ``Σ b = 1``.
+
+        Parameters
+        ----------
+        data : OIData or sequence of OIData
+            The data the sweep was fitted to.
+        regularizer
+            The regularizer swept, with its ``path`` (its weight is replaced).
+        noise_scale2 : float, optional
+            ``s²``, from the data scatter rather than an image fit.
+        noise_scale_sigma : float, optional
+            Its standard error; ``weight_band`` is then the root at
+            ``s² ± 2σ_s``.
+        nprobe, tol, maxit, seed : optional
+            Rademacher probes, relative CG tolerance and iteration limit of
+            the trace estimator, and its seed.
+        secant : bool, optional
+            Refit at the interpolated weight (default) and take secant steps;
+            needs a sweep from :func:`l_curve`. ``False`` only interpolates.
+        max_secant : int, optional
+            The most secant steps after the first refit (default 1).
+        curvature : callable, optional
+            ``curvature(model) -> matvec`` giving the whole ``K v`` for a flat
+            NumPy ``v`` over the pixels, in place of the default from the
+            whitened residuals of ``data``. Needed when the fit had further
+            likelihood terms (such as a Toeplitz χ²), else a ``ValueError``.
+
+        Returns
+        -------
+        DofDiscrepancy
+        """
+        n_real = float(sum(self.results[0].info["ndata"]))
+        if curvature is None and len(self.results[0].info["ndata"]) > len(
+            _as_list(data)
+        ):
+            raise ValueError(
+                "The fit has likelihood terms beyond `data`, whose curvature "
+                "the default K lacks: pass `curvature=` for all of them."
+            )
+
+        def evaluate(result, weight):
+            return dict(
+                _dof_point(
+                    result,
+                    regularizer,
+                    weight,
+                    data,
+                    noise_scale2,
+                    n_real,
+                    (nprobe, tol, maxit, seed),
+                    curvature,
+                    self.others,
+                ),
+                weight=weight,
+            )
+
+        weights = onp.asarray(self.weights, dtype=float)
+        points = [evaluate(r, float(w)) for w, r in zip(weights, self.results)]
+        m = onp.array([pt["m"] for pt in points])
+        crossings = _dof_roots(weights, points, n_real, noise_scale2)
+        fields = dict(
+            weights=weights,
+            m_sweep=m,
+            g_sweep=onp.array([pt["g"] for pt in points]),
+            n_real=n_real,
+            roots=tuple(w for _, w in crossings),
+        )
+        if not crossings:
+            warnings.warn(
+                "dof_discrepancy: m(w) does not change sign over the sweep "
+                f"(m from {m.min():.3g} to {m.max():.3g}); no weight chosen. "
+                "Extend the sweep.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return DofDiscrepancy(**fields)
+        i, weight = max(crossings, key=lambda c: c[1])
+        chosen, trace = dict(points[i], weight=weight), []
+        if (
+            secant
+            and self.refit is not None
+            and i + 1 < len(points)
+            and points[i]["m"] != 0.0
+        ):
+            ends = [points[i], points[i + 1]]  # bracketing fits
+            for _ in range(1 + max_secant):
+                strong = max(ends, key=lambda pt: pt["weight"])
+                lo, hi = (onp.log(pt["weight"]) for pt in ends)
+                a, b = ends[0]["m"], ends[1]["m"]
+                step = float(onp.exp(lo - a * (hi - lo) / (b - a)))
+                new = evaluate(self.refit(step, strong["result"].values), step)
+                trace.append(new)
+                if abs(new["m"]) < abs(chosen["m"]) or len(trace) == 1:
+                    chosen = new
+                if abs(new["m"]) <= 3.0 * new["se"]:
+                    break
+                # Keep the bracket: the new point replaces the end it matches.
+                ends[0 if a * new["m"] > 0 else 1] = new
+            accepted = bool(abs(chosen["m"]) <= 3.0 * chosen["se"])
+            if not accepted:
+                warnings.warn(
+                    f"dof_discrepancy: |m| = {abs(chosen['m']):.3g} exceeds "
+                    f"3 se(G) = {3.0 * chosen['se']:.3g} at w = "
+                    f"{chosen['weight']:.4g} after {len(trace)} refit(s); "
+                    "raise max_secant, nprobe or tighten the sweep.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        else:
+            accepted = None
+        band = None
+        if noise_scale_sigma is not None:
+            ends = []
+            for sign in (1.0, -1.0):
+                s2 = noise_scale2 + sign * 2.0 * noise_scale_sigma
+                found = _dof_roots(weights, points, n_real, s2)
+                if not found:
+                    warnings.warn(
+                        f"dof_discrepancy: no root at s² = {s2:.4g} "
+                        "(non-positive or outside the sweep); that band end "
+                        "is None.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                ends.append(max(w for _, w in found) if found else None)
+            band = tuple(ends)
+        return DofDiscrepancy(
+            weight=float(chosen["weight"]),
+            m=float(chosen["m"]),
+            g=float(chosen["g"]),
+            g_se=float(chosen["se"]),
+            chi2=float(chosen["chi2"]),
+            accepted=accepted,
+            h=(
+                float(
+                    2.0 * chosen["weight"] / noise_scale2 * chosen["penalty"]
+                    - chosen["g"]
+                )
+                if isinstance(regularizer, MaxEntropy)
+                else None
+            ),
+            weight_band=band,
+            trace=tuple((t["weight"], t["m"], t["se"]) for t in trace),
+            **fields,
+        )
 
     def classic_maxent(self, data, path="env"):
         """The maximum-entropy weight of Gull and Skilling's "classic MaxEnt".
@@ -1865,6 +2104,241 @@ class LCurve:
         t = onp.log(onp.asarray(self.weights[i : i + 2], dtype=float))
         fraction = gap[i] / (gap[i] - gap[i + 1])
         return float(onp.exp(t[0] + fraction * (t[1] - t[0])))
+
+
+@dataclasses.dataclass(frozen=True)
+class DofDiscrepancy:
+    """The result of :meth:`LCurve.dof_discrepancy`.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    Attributes
+    ----------
+    weight : float or None
+        The chosen weight: the best refit among the chosen crossing and its
+        secant steps. ``None`` if ``m`` never changes sign over the sweep
+        (a warning is also raised).
+    m, g, g_se, chi2 : float or None
+        ``m(w)``, the effective degrees of freedom ``G`` with its standard
+        error, and ``χ²`` (quoted weights), at ``weight``.
+    n_real : float
+        The number of real data.
+    accepted : bool or None
+        Whether ``|m| ≤ 3 g_se`` at ``weight`` (``False`` with a warning if
+        not, or if there is no root); ``None`` if no refit was made.
+    h : float or None
+        Classic MaxEntropy's ``h(w) = 2 (w / s²) KL − G`` at ``weight``, a
+        diagnostic only (``None`` unless the regularizer is a
+        [`MaxEntropy`][virgil.imaging.MaxEntropy]).
+    weight_band : tuple or None
+        The roots at ``s² + 2σ_s`` and ``s² − 2σ_s`` from the sweep alone;
+        an end is ``None`` (with a warning) if it has no root.
+    roots : tuple of float
+        Every interpolated root of ``m`` over the sweep, in sweep order.
+    weights, m_sweep, g_sweep : array
+        The sweep's weights, ``m`` and ``G``.
+    trace : tuple
+        ``(weight, m, g_se)`` of each refit.
+    """
+
+    n_real: float
+    roots: tuple
+    weights: object
+    m_sweep: object
+    g_sweep: object
+    weight: object = None
+    m: object = None
+    g: object = None
+    g_se: object = None
+    chi2: object = None
+    accepted: object = False
+    h: object = None
+    weight_band: object = None
+    trace: tuple = ()
+
+
+def _dof_roots(weights, points, n_real, s2):
+    """Every root of ``m = χ²/s² − (n − G)`` over a sweep's points; none for
+    a non-positive ``s²``."""
+    if s2 <= 0.0:
+        return []
+    m = [pt["chi2"] / s2 - (n_real - pt["g"]) for pt in points]
+    return _lerp_roots(weights, onp.array(m))
+
+
+def _lerp_roots(weights, values):
+    """``[(i, w)]``: each sign change of ``values`` from ``i`` to ``i + 1``
+    (or a zero at ``i``), interpolated linearly in ``ln w``. A non-finite
+    value warns and spoils its intervals."""
+    found = []
+    for i in range(len(values)):
+        a = values[i]
+        if not onp.isfinite(a):
+            warnings.warn(
+                f"dof_discrepancy: m is not finite at w = {weights[i]:.4g}; "
+                "the intervals either side are skipped.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            continue
+        if a == 0.0:
+            found.append((i, float(weights[i])))
+        elif i + 1 < len(values) and onp.isfinite(values[i + 1]):
+            b = values[i + 1]
+            if a * b < 0.0:
+                lw = onp.log(weights[i : i + 2])
+                found.append(
+                    (i, float(onp.exp(lw[0] - a * (lw[1] - lw[0]) / (b - a))))
+                )
+    return found
+
+
+def _hutchinson_g(
+    k_matvec, h_matvec, mask, nprobe=16, tol=1e-4, maxit=2000, seed=0
+):
+    """``(G, se)``, ``G = Tr[K (K + H)⁻¹]`` over the pixels in ``mask``.
+
+    Hutchinson's estimator with Rademacher probes, ``E[zᵀ K (K + H)⁻¹ z]``,
+    each solve by CG; ``se`` is the standard error of the probe mean. The
+    matvecs take and return flat NumPy vectors.
+    """
+    rng = onp.random.default_rng(seed)
+    mask = onp.asarray(mask, float)
+
+    def total(v):
+        return (k_matvec(v * mask) + h_matvec(v * mask)) * mask
+
+    values = []
+    for _ in range(nprobe):
+        z = rng.choice([-1.0, 1.0], size=mask.size) * mask
+        y, r = onp.zeros_like(z), z.copy()  # conjugate gradients, total y = z
+        d, rs, norm = r.copy(), r @ r, onp.sqrt(z @ z)
+        for _ in range(maxit):
+            if onp.sqrt(rs) <= tol * norm:
+                break
+            ad = total(d)
+            curvature = d @ ad
+            if not curvature > 0.0:
+                raise ValueError(
+                    "K + H_R is not positive definite: the regularizer's "
+                    "Hessian must be positive definite on the free pixels."
+                )
+            a = rs / curvature
+            y, r = y + a * d, r - a * ad
+            rs_new = r @ r
+            d, rs = r + (rs_new / rs) * d, rs_new
+        else:
+            if onp.sqrt(rs) > tol * norm:
+                warnings.warn(
+                    f"Conjugate gradients did not reach tol={tol:g} in "
+                    f"{maxit} iterations: G is biased; raise maxit.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        values.append(z @ (k_matvec(y) * mask))
+    values = onp.array(values)
+    return float(values.mean()), float(values.std(ddof=1) / onp.sqrt(nprobe))
+
+
+def _pixel_theta(b, sqrt):
+    """The ``pixels`` leaf for fluxes ``b`` (safe at ``b <= 0``)."""
+    if not sqrt:
+        return b
+    return np.where(b > 0.0, np.sqrt(np.where(b > 0.0, b, 1.0)), 0.0)
+
+
+@eqx.filter_jit
+def _flux_curvature_matvec(model, datasets, leaf, sqrt, b0, v):
+    """``Jᵀ J v`` for the whitened residuals' Jacobian in pixel fluxes."""
+
+    def residuals(b):
+        changed = model.set(leaf, _pixel_theta(b, sqrt))
+        return np.concatenate(
+            [np.ravel(whitened_residuals(changed, d)) for d in datasets]
+        )
+
+    _, jvp = jax.linearize(residuals, b0)
+    return jax.linear_transpose(jvp, b0)(jvp(v))[0]
+
+
+@eqx.filter_jit
+def _flux_hessian_matvec(model, regularizers, leaf, sqrt, b0, v):
+    """The regularizers' Hessian-vector product in pixel fluxes."""
+
+    def value(b):
+        changed = model.set(leaf, _pixel_theta(b, sqrt))
+        return sum(reg.value(changed) for reg in regularizers)
+
+    return jax.jvp(jax.grad(value), (b0,), (v,))[1]
+
+
+def _dof_point(
+    result, regularizer, weight, data, s2, n_real, probe, curvature, others=()
+):
+    """χ², ``G`` (with its error) and ``m`` of one fit of a sweep."""
+    nprobe, tol, maxit, seed = probe
+    weighted = eqx.tree_at(
+        lambda r: r.weight, regularizer, np.asarray(weight, dtype=float)
+    )
+    model = _reference(_single_model(result, "dof_discrepancy"))
+    image = weighted.image(model)
+    if not isinstance(image, LinearImage):
+        raise TypeError("dof_discrepancy needs a LinearImage.")
+    leaf = ("" if weighted.path is None else weighted.path + ".") + "pixels"
+    sqrt = image.parametrisation == "sqrt"
+    datasets = tuple(_as_list(data))
+    with run_in("float64"):
+        model, datasets, weighted, others = cast_tree(
+            (model, datasets, weighted, tuple(others)), "float64"
+        )
+        x = np.asarray(model.get(leaf), dtype=float)
+        b0 = x**2 if sqrt else x
+        free = onp.asarray(b0 > 0.0)
+        if image.support is not None:
+            free &= onp.asarray(image.support, bool)
+        shape = b0.shape
+
+        def h_matvec(v):
+            out = _flux_hessian_matvec(
+                model,
+                (weighted, *others),
+                leaf,
+                sqrt,
+                b0,
+                np.asarray(v.reshape(shape)),
+            )
+            return onp.asarray(out, dtype=float).ravel()
+
+        if curvature is None:
+
+            def k_matvec(v):
+                out = _flux_curvature_matvec(
+                    model,
+                    datasets,
+                    leaf,
+                    sqrt,
+                    b0,
+                    np.asarray(v.reshape(shape)),
+                )
+                return onp.asarray(out, dtype=float).ravel()
+
+        else:
+            k_matvec = curvature(model)
+        g, se = _hutchinson_g(
+            k_matvec, h_matvec, free.ravel(), nprobe, tol, maxit, seed
+        )
+        chi2 = float(sum(result.info["chi2"]))
+        penalty = float(weighted.value(model)) / weight
+    return dict(
+        result=result,
+        weight=weight,
+        chi2=chi2,
+        g=g,
+        se=se,
+        penalty=penalty,
+        m=chi2 / s2 - (n_real - g),
+    )
 
 
 def _set_each(model, paths, values):
@@ -2673,12 +3147,23 @@ def l_curve(
         penalty.append(
             float(weighted.value(_reference(result.model))) / weight
         )
+
+    def refit(weight, init):
+        weighted = eqx.tree_at(
+            lambda r: r.weight, regularizer, np.asarray(weight, dtype=float)
+        )
+        return fit(
+            model, priors, data, [weighted, *others], init=init, **fit_options
+        )
+
     return LCurve(
         np.asarray(weights),
         np.asarray(chi2),
         np.asarray(chi2_red),
         np.asarray(penalty),
         results,
+        refit,
+        tuple(others),
     )
 
 

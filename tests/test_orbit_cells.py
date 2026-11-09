@@ -2,6 +2,7 @@
 
 import functools
 import math
+import time
 import types
 
 import jax
@@ -550,6 +551,7 @@ def test_the_symmetry_images_leave_the_target_invariant():
         onp.testing.assert_allclose(moved, base, rtol=1e-10, atol=1e-10)
 
 
+@pytest.mark.slow
 @x64
 def test_a_second_cell_of_a_system_compiles_nothing():
     rng = onp.random.default_rng(0)
@@ -592,7 +594,7 @@ def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
             at_floor=cell.n == cells[1].n, plan=None,
         )  # fmt: skip
         fit.failed, fit.unreliable, fit.nonfinite = fit.at_floor, False, False
-        fit.log_z_upper = 0.0
+        fit.log_l_sup = 0.0
         return fit
 
     monkeypatch.setattr(oc_cells, "position_leg", leg)
@@ -605,6 +607,7 @@ def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @x64
 @pytest.mark.timeout(1200)
 @pytest.mark.parametrize("ecc", [0.0, 0.5])
@@ -691,6 +694,11 @@ def test_the_position_evidence_of_a_tiny_case_matches_prior_importance(
         oc_cells.A_RANGE, 1e-6, oc_cells.FLUX_FLOOR, 0.0, np.float64,
     )  # fmt: skip
     ll = jax.jit(jax.vmap(space.loglike))
+    # log_l_sup is the largest ln L at the modes and the importance draws
+    seen_l = [float(space.loglike(m.x)) for m in fit.modes]
+    seen_l.append(float(onp.max(onp.asarray(ll(np.asarray(fit.x_is))))))
+    assert abs(fit.log_l_sup - max(seen_l)) < 1e-6 * (1 + abs(max(seen_l)))
+    assert fit.log_l_sup >= fit.log_z
     chunks = [
         onp.asarray(ll(space.sample(jax.random.key(10 + i), 2**15)))
         for i in range(32)
@@ -775,6 +783,46 @@ def test_the_velocity_marginal_of_the_outlier_prior_integrates_the_velocity():
     )
     marginal = float(onp.exp(prior.log_density(mean, velocity=False))[0])
     assert total == pytest.approx(marginal, rel=0.05)
+
+
+@x64
+@pytest.mark.parametrize("sigma_f", [0.01, 0.05, 0.5])
+def test_the_flux_box_integral_matches_quadrature_and_is_finite_everywhere(
+    sigma_f,
+):
+    s = _summaries(_orbit(), TIMES)
+    domain, _ = _cells(s, (6.0, 400.0))
+    prior = oc_cells.outlier_prior(domain, n=2**10)
+    ell = prior.ln_f_floor
+    for m in (ell - 0.1, ell, ell + 0.01, -1.0, -0.02, 0.0, 0.03, 0.3):
+        got = float(prior.log_flux_box(m, sigma_f))
+        assert onp.isfinite(got)
+        want, _ = integrate.quad(
+            lambda x: stats.norm.pdf(x, m, sigma_f) / -ell,
+            ell, 0.0, points=[min(max(m, ell), 0.0)], epsabs=0, epsrel=1e-12,
+        )  # fmt: skip
+        if want > 1e-300:
+            assert onp.exp(got) == pytest.approx(want, rel=1e-8)
+    # far from both ends the integral is the old box value: continuity
+    assert float(prior.log_flux_box(-3.0, 0.01)) == pytest.approx(
+        -math.log(-ell), abs=1e-12
+    )
+
+
+@x64
+def test_a_night_with_an_observed_flux_above_one_fits_without_error():
+    s = _summaries(_orbit(), TIMES, ln_f=0.05)  # truth ln f above 0
+    assert any(n.peaks[0].mean[4] > 0 for n in s)
+    domain, cells = _cells(s, (9.0, 14.0))
+    prior = oc_cells.outlier_prior(domain, n=2**14)
+    b = oc_cells.outlier_log_density(s, prior)
+    assert onp.all(onp.isfinite(b))
+    cell = next(c for c in cells if c.p_lo <= 11.3 <= c.p_hi)
+    fit = oc_cells.position_leg(
+        s, b, cell, jax.random.key(0), t_anchor=TIMES[0], t_nights=TIMES,
+        n_is=256, posterior_draws=False,
+    )  # fmt: skip
+    assert onp.isfinite(fit.log_z)
 
 
 # --- the search plan -----------------------------------------------------------
@@ -866,6 +914,7 @@ def test_a_search_that_drops_the_true_mode_fails_the_cell(monkeypatch):
     assert fit.at_floor and fit.failed and fit.draws is None
 
 
+@pytest.mark.slow
 @x64
 def test_a_non_finite_target_fails_the_cell(monkeypatch):
     times = TIMES[:5]
@@ -956,6 +1005,7 @@ def _decoys_and_outliers(summaries, rng, outliers):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @x64
 @pytest.mark.timeout(1800)
 def test_outlier_nights_decoy_peaks_and_a_set_budget_still_find_the_true_mode(
@@ -1000,7 +1050,7 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         low = cell.n == odd
         z = -cell.log_mass - (gap if low else 0.0)
         return types.SimpleNamespace(
-            cell=cell, log_z=z, log_z_upper=z, log_z_error=0.0, modes=[],
+            cell=cell, log_z=z, log_l_sup=z, log_z_error=0.0, modes=[_MODE], space=_SPACE,
             draws=None, at_floor=False, failed=False, nonfinite=False,
             unreliable=low, plan=None,
         )  # fmt: skip
@@ -1012,7 +1062,344 @@ def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
         jitter=0.0,
     )  # fmt: skip
     assert best != odd
-    if gap < oc_cells.W:
+    if gap < math.log(len(cells) / oc_cells.DELTA):
         assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
     else:
         assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
+
+
+# --- shared neighbour modes (design 6.11) ----------------------------------------
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.timeout(1800)
+def test_a_mode_beside_an_edge_gives_both_cells_the_exact_evidence():
+    """K = 3 nights in two seasons, a circular orbit a few hundredths of a cell
+    inside the edge of cell 35: the mode is interior to one cell, and its
+    neighbour (cell 36) reaches it through a shared component. Both cells' ``ln Ẑ``
+    against 2**20 plain prior draws each."""
+    times = onp.array([0.0, 4.1, 365.0])
+    t, period = times[-1] - times[0], 365.0 / (35.5 - 0.03)
+    s = _summaries(_orbit(period=period, a=6.0, ecc=0.0), times, sigma=1.5)
+    domain = oc_cells.period_domain(s, p_range=(t / 37.5, t / 33.5))
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(3, LOG_B),
+        jitter=0.0, e_max=1e-6, n_is=20000,
+    )  # fmt: skip
+    for n in (35, 36):
+        fit = [f for f in out.fits if f.cell.n == n][0]
+        ll = jax.jit(jax.vmap(fit.space.loglike))
+        ref = onp.concatenate(
+            [
+                onp.asarray(
+                    ll(fit.space.sample(jax.random.key(10 + i), 2**15))
+                )
+                for i in range(32)
+            ]
+        )
+        w = onp.exp(ref - ref.max())
+        lz = onp.log(onp.mean(w)) + ref.max()
+        err = onp.sqrt(1 / (w.sum() ** 2 / (w**2).sum()))
+        assert abs(fit.log_z - lz) < 4 * onp.hypot(fit.log_z_error, err) + 0.02
+    # the neighbour has the shared component (its own mode too: a short-span
+    # ridge is kept, design 6.11, so absence is not promised)
+    assert [f for f in out.fits if f.cell.n == 36][0].shared
+
+
+# --- the speed measures are exact --------------------------------------------
+
+
+@pytest.mark.slow
+@pytest.mark.full_only
+@x64
+@pytest.mark.timeout(1200)
+def test_running_cells_in_threads_changes_nothing():
+    """Two seasons, K = 6: the cells' evidence, probabilities and modes with
+    one worker and with two (each cell has its own key)."""
+    rng = onp.random.default_rng(0)
+    times = _two_season_times(rng, 6)
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
+    s = _summaries(orbit, times, sigma=0.3)
+    domain = oc_cells.period_domain(s, p_range=(10.0, 12.5))
+    out = [
+        oc_cells.position_cells(
+            s,
+            domain,
+            jax.random.key(0),
+            log_outlier=onp.full(len(times), LOG_B),
+            jitter=0.0,
+            n_is=512,
+            workers=w,
+        )  # fmt: skip
+        for w in (1, 2)
+    ]
+    assert len(out[0].cells) > 2
+    for name in ("p_pos", "failed"):
+        onp.testing.assert_array_equal(
+            getattr(out[0], name), getattr(out[1], name)
+        )
+    for a, b in zip(*(o.fits for o in out)):
+        assert a.log_z == b.log_z and len(a.modes) == len(b.modes)
+        onp.testing.assert_array_equal(a.x_is, b.x_is)
+        assert (a.draws is None) == (b.draws is None)
+        if a.draws is not None:
+            onp.testing.assert_array_equal(a.draws, b.draws)
+    # and the cells of the threaded run are those of a direct call on the main
+    # thread with the key the loop assigns (float64, plan of the first cell)
+    log_outlier = onp.full(len(times), LOG_B)
+    t_a = times[out[1].anchors[0]]
+    keys = jax.random.split(jax.random.key(0), len(out[1].cells))
+    for i in (1, len(out[1].cells) - 1):
+        direct = oc_cells.position_leg(
+            s, log_outlier, out[1].cells[i], keys[i], t_anchor=t_a,
+            t_nights=times, jitter=0.0, n_is=512, posterior_draws=False,
+            plan=out[1].fits[0].plan, nu_width=1.0 / out[1].t_ab,
+        )  # fmt: skip
+        got = out[1].fits[i]
+        assert direct.log_z == got.log_z
+        assert got.x_is.dtype == onp.float64
+        onp.testing.assert_array_equal(direct.x_is, got.x_is)
+
+
+def test_a_failing_cell_cancels_the_queued_ones():
+    done = []
+
+    def fn(i):
+        done.append(i)
+        if i == 1:
+            raise ValueError("boom")
+        time.sleep(0.05)
+        return i
+
+    with pytest.raises(ValueError, match="boom"):
+        oc_cells._map(fn, list(range(200)), 2)
+    assert len(done) < 20
+    assert oc_cells._map(lambda i: i * i, [1, 2, 3], 2) == [1, 4, 9]
+    assert oc_cells._map(lambda i: i * i, [1, 2, 3], 1) == [1, 4, 9]
+
+
+# --- the velocity criterion for the triplet fills (design 6.11, fix 4) --------
+
+
+@x64
+def test_the_prediction_cost_does_not_depend_on_the_error_scale():
+    """``λ_k`` is the same when every covariance is multiplied by ``c²``."""
+    rng = onp.random.default_rng(0)
+    gg = np.asarray(rng.normal(size=(5, 4, 4)))
+    a = rng.normal(size=(5, 2, 4, 4))
+    prec = onp.einsum("kjab,kjcb->kjac", a, a) + 4 * onp.eye(4)
+    nights, valid = np.asarray([0, 3, 3]), np.ones((5, 2), bool)
+    w = np.asarray(prec[[0, 3, 3], 0] * onp.array([1, 1, 0])[:, None, None])
+
+    def cost(c):
+        chol = np.linalg.cholesky(np.asarray(prec) / c**2)
+        return oc_cells._prediction_cost(gg, nights, w / c**2, chol, valid)
+
+    assert onp.allclose(cost(1.0), cost(7.0), rtol=1e-8)
+    assert onp.all(onp.asarray(cost(1.0)) > 0)
+
+
+@pytest.mark.slow
+@pytest.mark.full_only
+@x64
+@pytest.mark.timeout(1200)
+@pytest.mark.parametrize("ecc", [0.0, 0.5])
+def test_the_velocity_criterion_keeps_the_true_mode_with_fewer_triplets(
+    monkeypatch, ecc
+):
+    """Fill regime, K = 8, velocities informative: the criterion drops some
+    triplet candidates and the coverage contract of the search still holds."""
+    rng = onp.random.default_rng(int(1e4 * ecc) + 1000)
+    times = _two_season_times(rng)
+    orbit = _orbit(period=11.3, a=6.0, ecc=ecc)
+    s = _summaries(orbit, times, sigma=1e-3 * 6.0, seed=1)
+    monkeypatch.setattr(oc_cells, "N_SET_MAX", 20)
+    domain, cells, cell = _true_cell(11.3, times, s, (9.0, 14.0))
+    space = _space(s, cell)
+    plan = oc_cells.search_plan(space, jax.random.key(0))
+    assert int(oc_cells._grid_stage(space, plan)[3]) > 0
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(len(times), LOG_B),
+        jitter=0.0, a_range=(1.0, 30.0), e_max=0.9,
+    )  # fmt: skip
+    assert not out.failed.any() and onp.all(onp.isfinite(out.p_pos))
+    order = onp.argsort(-out.p_pos)
+    keep = order[
+        : int(onp.searchsorted(onp.cumsum(out.p_pos[order]), 0.99)) + 1
+    ]
+    true_n = [i for i, c in enumerate(out.cells) if c.p_lo <= 11.3 <= c.p_hi]
+    assert true_n[0] in keep
+    d2 = _truth_distance2(out.fits[true_n[0]], orbit, times[out.anchors[0]])
+    assert d2 < stats.chi2.isf(oc_cells.DELTA, out.fits[true_n[0]].space.d - 1)
+
+
+@x64
+@pytest.mark.parametrize("gap", [3.0, 200.0])
+def test_a_floor_cell_fails_the_system_only_if_it_could_matter(
+    monkeypatch, gap
+):
+    """The floor sentinel obeys the same rule as the low-ESS flag: a cell at
+    the floor within W of the best cell (in its upper bound on the mass) fails
+    the system; one far below stays flagged on its fit but does not."""
+    s = _summaries(_orbit(), TIMES, sigma=0.3)
+    domain, cells = _cells(s, (60.0, 400.0))
+    odd = cells[1].n
+
+    def leg(summaries, log_outlier, cell, key, **kw):
+        low = cell.n == odd
+        z = -cell.log_mass - (gap if low else 0.0)
+        return types.SimpleNamespace(
+            cell=cell, log_z=z, log_l_sup=z, log_z_error=0.0, modes=[_MODE], space=_SPACE,
+            draws=None, at_floor=low, failed=low, nonfinite=False,
+            unreliable=False, plan=None,
+        )  # fmt: skip
+
+    monkeypatch.setattr(oc_cells, "position_leg", leg)
+    monkeypatch.setattr(oc_cells, "_draw", lambda f, k: None)
+    out = oc_cells.position_cells(
+        s, domain, jax.random.key(0), log_outlier=onp.full(len(TIMES), LOG_B),
+        jitter=0.0,
+    )  # fmt: skip
+    assert out.fits[1].at_floor
+    if gap < math.log(len(cells) / oc_cells.DELTA):
+        assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
+    else:
+        assert not out.failed.any() and onp.isclose(out.p_pos.sum(), 1.0)
+
+
+def test_a_non_finite_outlier_density_is_an_error():
+    s = _summaries(_orbit(), TIMES[:5], sigma=0.3)
+    _, cells = _cells(s, (6.0, 400.0))
+    log_b = onp.full(5, LOG_B)
+    log_b[2] = -onp.inf
+    with pytest.raises(ValueError, match="all-outlier floor is undefined"):
+        oc_cells.position_leg(
+            s, log_b, cells[2], jax.random.key(0), t_anchor=TIMES[0],
+            t_nights=TIMES[:5], n_is=64, posterior_draws=False,
+        )  # fmt: skip
+
+
+# a narrow mode of a stub fit: its mass never crosses a cell edge (no shared mode)
+_MODE = Mode(onp.zeros(1), 0.0, onp.full((1, 1), 1e-12), 2.0)
+_SPACE = types.SimpleNamespace(ln_lo=0.0, ln_hi=1.0)
+
+
+# --- `matters` is a bound -----------------------------------------------------
+
+
+def _stub_cells(log_mass, log_z, log_l_sup, flagged, modes=True):
+    """Cells and fits as `_matters` reads them."""
+    cells = [types.SimpleNamespace(log_mass=m) for m in log_mass]
+    fits = [
+        types.SimpleNamespace(
+            log_z=z,
+            log_l_sup=s,
+            at_floor=bool(f),
+            unreliable=False,
+            failed=bool(f),
+            modes=[object()] if modes else [],
+        )  # fmt: skip
+        for z, s, f in zip(log_z, log_l_sup, flagged)
+    ]
+    log_p = onp.array(log_mass) + onp.array(log_z)
+    return cells, fits, log_p
+
+
+def test_matters_switches_at_the_union_bound_threshold_for_170_cells():
+    n, delta = 170, oc_cells.DELTA
+    margin = math.log(n / delta)
+    eps = 0.01 * onp.where(onp.arange(n - 1) % 2 == 0, 1.0, -1.0)
+    # cell 0 is the unflagged reference, R = 0; the others are flagged at the floor
+    log_mass = onp.zeros(n)
+    log_z = onp.r_[0.0, onp.full(n - 1, -500.0)]
+    sup = onp.r_[0.0, -margin + eps]
+    flagged = onp.r_[False, onp.ones(n - 1, bool)]
+    cells, fits, log_p = _stub_cells(log_mass, log_z, sup, flagged)
+    upper, matters, _, _ = oc_cells._matters(cells, fits, log_p, delta)
+    assert onp.array_equal(matters[1:], eps > 0)
+    # the per-cell W of the earlier rule would have called all of them negligible
+    assert margin > 1.5 * oc_cells.W
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_the_true_omitted_mass_is_below_the_bound_and_delta_on_random_stubs(
+    seed,
+):
+    rng = onp.random.default_rng(seed)
+    n, delta = 170, oc_cells.DELTA
+    log_mass = -onp.log(n) + rng.normal(0, 1, n)
+    log_z = rng.normal(0, 10, n)
+    sup = log_z + rng.exponential(10, n)  # Z_N <= sup L
+    flagged = rng.random(n) < 0.6
+    flagged[rng.integers(n)] = False
+    cells, fits, log_p = _stub_cells(log_mass, log_z, sup, flagged)
+    _, matters, _, omitted = oc_cells._matters(cells, fits, log_p, delta)
+    neg = flagged & ~matters
+    # the mass of the stub's own evidences (Σ mass·Z) that the rule omits
+    true = onp.exp(log_p[neg]).sum() / onp.exp(log_p).sum()
+    assert true <= omitted <= delta
+    assert neg.any() and true < omitted  # the bound uses sup L, not Ẑ
+
+
+def test_a_ridge_whose_laplace_exceeds_sup_l_follows_sup_l():
+    """A flagged cell with a huge Laplace ln Z but a low sup L is negligible:
+    the earlier rule took the Laplace and called it mattering."""
+    n = 4
+    cells, fits, log_p = _stub_cells(
+        onp.zeros(n), [0.0, -300.0, -300.0, -300.0], [0.0, -90.0, -5.0, -90.0],
+        [False, True, True, True],
+    )  # fmt: skip
+    ridge = Mode(onp.zeros(3), 200.0, onp.eye(3) * 1e-6, 2.0)
+    assert laplace_log_evidence(ridge) > 100.0  # the old bound: it matters
+    for f in fits[1:]:
+        f.modes = [ridge]
+    _, matters, _, _ = oc_cells._matters(cells, fits, log_p, oc_cells.DELTA)
+    assert not matters[1] and not matters[3]  # -90 < -ln(n/δ)
+    assert matters[2]  # -5 is above it
+
+
+def test_a_flagged_cell_with_no_mode_matters_and_so_does_every_one_if_none_is_free():
+    cells, fits, log_p = _stub_cells(
+        onp.zeros(3), [0.0, -300.0, -300.0], [0.0, -900.0, -900.0],
+        [False, True, True],
+    )  # fmt: skip
+    fits[2].modes = []
+    _, matters, _, _ = oc_cells._matters(cells, fits, log_p, oc_cells.DELTA)
+    assert onp.array_equal(matters, [True, False, True])
+    cells, fits, log_p = _stub_cells(
+        onp.zeros(3), [-300.0] * 3, [-900.0] * 3, [True] * 3
+    )
+    _, matters, _, omitted = oc_cells._matters(
+        cells, fits, log_p, oc_cells.DELTA
+    )
+    assert matters.all() and omitted == 0.0
+
+
+def test_position_cells_fails_on_a_flagged_cell_within_the_bound(monkeypatch):
+    s = _summaries(_orbit(), TIMES, sigma=0.3)
+    domain, cells = _cells(s, (60.0, 400.0))
+    n = len(cells)
+    margin = math.log(n / oc_cells.DELTA)
+
+    def run(sup_gap):
+        def leg(summaries, log_outlier, cell, key, **kw):
+            low = cell.n == cells[1].n
+            z = -cell.log_mass - (300.0 if low else 0.0)
+            return types.SimpleNamespace(
+                cell=cell, log_z=z, log_z_error=0.0, modes=[_MODE], space=_SPACE,
+                draws=None, at_floor=low, failed=low, nonfinite=False,
+                unreliable=False, plan=None,
+                log_l_sup=-cell.log_mass - (sup_gap if low else 0.0),
+            )  # fmt: skip
+
+        monkeypatch.setattr(oc_cells, "position_leg", leg)
+        monkeypatch.setattr(oc_cells, "_draw", lambda f, k: None)
+        return oc_cells.position_cells(
+            s, domain, jax.random.key(0),
+            log_outlier=onp.full(len(TIMES), LOG_B), jitter=0.0,
+        )  # fmt: skip
+
+    assert run(margin - 0.01).failed.sum() == 1
+    out = run(margin + 0.01)
+    assert not out.failed.any() and out.omitted_bound <= oc_cells.DELTA

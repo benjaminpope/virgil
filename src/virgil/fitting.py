@@ -18,6 +18,7 @@ coordinates unless told ``flat_coordinates=True``.
 import dataclasses
 import math
 import time
+import types
 import warnings
 
 import equinox as eqx
@@ -46,6 +47,8 @@ from .likelihood import (
     tied_log_prior,
 )
 from .models import (
+    Image,
+    LinearImage,
     MultipoleKernel,
     RadialGP,
     RadialGPFunction,
@@ -55,7 +58,7 @@ from .models import (
 from ._deprecate import external_stacklevel
 
 
-__provisional__ = ("gauss_newton_diag",)
+__provisional__ = ("gauss_newton_diag", "kkt_report")
 
 
 def _bijection(distribution):
@@ -144,6 +147,7 @@ class _Objective(eqx.Module):
     noise: dict
     likelihoods: tuple
     flat: bool = eqx.field(static=True)
+    boxed: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -154,9 +158,11 @@ class _Objective(eqx.Module):
         noise=None,
         likelihoods=(),
         flat=True,
+        boxed=False,
     ):
         self.model = model
         self.flat = flat
+        self.boxed = boxed
         self.data = tuple(data) if isinstance(data, (list, tuple)) else (data,)
         self.likelihoods = tuple(likelihoods)
         self.priors = {path: _traced(p) for path, p in priors.items()}
@@ -169,6 +175,26 @@ class _Objective(eqx.Module):
         }
         if not self.priors:
             raise ValueError("priors must name at least one free parameter.")
+        if not boxed and isinstance(model, SourceModel):
+            import numpyro.distributions as dist
+
+            # Linear pixels are non-negative only under L-BFGS-B's bounds.
+            for path in self.priors:
+                parent, _, name = path.rpartition(".")
+                image = model.get(parent) if parent else model
+                if (
+                    name == "pixels"
+                    and isinstance(image, LinearImage)
+                    and image.bounds() is not None
+                    and isinstance(
+                        _base(self.priors[path]), dist.ImproperUniform
+                    )
+                ):
+                    raise TypeError(
+                        f"{path!r}: linear pixels must stay non-negative, "
+                        "which only fit(method='lbfgsb') enforces; use it, "
+                        "or parametrisation='sqrt'."
+                    )
         for path, prior in self.priors.items():
             if isinstance(model, SourceModel):
                 model.get(path)  # raises for an unknown path
@@ -222,10 +248,19 @@ class _Objective(eqx.Module):
 
     def _in_flat_coordinate(self, prior):
         """Whether ``prior``'s parameter is fitted in its flat coordinate."""
-        return self.flat and _flat_coordinate(prior) is not None
+        return (
+            self.flat
+            and not self.boxed
+            and _flat_coordinate(prior) is not None
+        )
 
     def bijection(self, prior):
-        """The map from unconstrained coordinates to ``prior``'s support."""
+        """The map from unconstrained coordinates to ``prior``'s support
+        (the identity if ``boxed``: the coordinates are the values)."""
+        if self.boxed:
+            from numpyro.distributions.transforms import IdentityTransform
+
+            return IdentityTransform()
         if self._in_flat_coordinate(prior):
             return _FlatBijection(*_flat_coordinate(prior))
         return _bijection(prior)
@@ -287,8 +322,31 @@ class _Objective(eqx.Module):
                 angle = np.deg2rad(np.asarray(values[path], float))
                 z[path] = np.stack([np.cos(angle), np.sin(angle)])
                 continue
-            z[path] = self.bijection(prior).inv(
-                np.asarray(values[path], float)
+            start = np.asarray(values[path], float)
+            z[path] = self.bijection(prior).inv(start)
+            if not bool(np.all(np.isfinite(z[path]))):
+                # On or outside a bound (e.g. a railed earlier stage):
+                # nudge just inside it, keeping the fitted value.
+                support = prior.support
+                lo = np.asarray(
+                    getattr(support, "lower_bound", -np.inf), float
+                )
+                hi = np.asarray(getattr(support, "upper_bound", np.inf), float)
+                bound = np.where(
+                    np.isfinite(lo), lo, np.where(np.isfinite(hi), hi, 0.0)
+                )
+                eps = 1e-5 * np.where(
+                    np.isfinite(hi - lo),
+                    hi - lo,
+                    np.maximum(1.0, np.abs(bound)),
+                )
+                start = np.clip(start, lo + eps, hi - eps)
+                z[path] = self.bijection(prior).inv(start)
+        bad = [p for p, v in z.items() if not bool(np.all(np.isfinite(v)))]
+        if bad:
+            raise ValueError(
+                f"Non-finite starting coordinates for {bad}: check their "
+                "starting values against the priors' supports."
             )
         return z
 
@@ -404,7 +462,7 @@ class _Objective(eqx.Module):
                 )
         return np.concatenate(parts)
 
-    # The Gauss–Newton curvature F = JᵀJ + diag(P) (design/gauss_newton_plan.md).
+    # The Gauss–Newton curvature F = JᵀJ + diag(P) (design/history/gauss_newton_plan.md).
 
     @property
     def coordinate_keys(self):
@@ -652,6 +710,67 @@ class FitResult:
     info: dict
 
 
+# deliberate: fit's argument checks, kept apart so fit stays short
+def _check_options(
+    method,
+    precondition,
+    post_step,
+    max_step_size,
+    learning_rate,
+    dtype,
+    time_limit,
+    ftol_abs,
+    ftol_window,
+):
+    """Validate ``fit``'s options; return ``(precondition, dtype)`` to use."""
+    if not math.isfinite(max_step_size) or max_step_size <= 0:
+        raise ValueError(
+            f"max_step_size must be finite and positive, not {max_step_size}."
+        )
+    if time_limit is not None and not time_limit >= 0:
+        raise ValueError(
+            f"time_limit must be a number of seconds, not {time_limit}."
+        )
+    if ftol_window < 1:
+        raise ValueError(f"ftol_window must be at least 1, not {ftol_window}.")
+    if ftol_abs is not None and not 0 <= ftol_abs < math.inf:
+        raise ValueError(
+            f"ftol_abs must be finite and non-negative, not {ftol_abs}."
+        )
+    if precondition not in (None, False, "diag"):
+        raise ValueError(
+            f"precondition must be None or 'diag', not {precondition!r}."
+        )
+    precondition = bool(precondition)
+    if post_step is not None and (method != "adam" or precondition):
+        raise ValueError(
+            "post_step needs method='adam' without precondition: a projection "
+            "breaks L-BFGS's curvature pairs and the preconditioner's metric."
+        )
+    if method == "lbfgsb" and dtype != "float64":
+        warnings.warn(
+            "method='lbfgsb' computes in float64 (the solver is double "
+            f"precision); dtype={dtype!r} is ignored.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+        dtype = "float64"
+    if method not in (None, "lm", "lbfgs", "adam", "lbfgsb"):
+        raise ValueError(
+            "method must be 'lm', 'lbfgs', 'adam' or 'lbfgsb', "
+            f"not {method!r}."
+        )
+    if method == "lbfgsb" and precondition:
+        raise ValueError("method='lbfgsb' does not take precondition.")
+    if method == "lbfgsb" and (max_step_size != 2.0 or learning_rate != 1e-2):
+        warnings.warn(
+            "method='lbfgsb' ignores max_step_size and learning_rate.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    return precondition, dtype
+
+
 @renamed()
 def fit(
     model,
@@ -697,14 +816,13 @@ def fit(
         Loss penalties (e.g. [`virgil.imaging`][virgil.imaging]) and priors on
         error terms; see [common arguments](../common_arguments.md).
     init, method : dict and str, optional
-        Starting values by path (required for a function model); ``"lm"`` (the
-        default for a least-squares objective), ``"lbfgs"`` (for penalties such as
-        maximum entropy, which LM also fits in float64) or ``"adam"``.
+        Starting values by path (required for a function model); ``"lm"`` (default for least squares), ``"lbfgs"`` (for penalties, which LM also fits in float64), ``"adam"`` or
+        ``"lbfgsb"`` (bounded by ``Uniform`` priors and linear ``LinearImage`` pixels).
     max_steps, gtol, max_step_size : int and float, optional
-        Step limit (default 1000 LM, 20000 L-BFGS, 2000 Adam), gradient
+        Step limit (1000 LM, 20000 L-BFGS and L-BFGS-B, 2000 Adam), gradient
         tolerance and L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
     lbfgs_memory, cg_steps, learning_rate : int, int and float, optional
-        L-BFGS history (default 100, cut to keep it under 1 GiB); CG steps
+        L-BFGS history (100, cut to keep it under 1 GiB; 10, uncut, for L-BFGS-B); CG steps
         per LM step (above 200 coordinates); Adam's rate: a float or an optax
         schedule (a callable of the step).
     dtype : {"float64", "float32"}, optional
@@ -730,7 +848,7 @@ def fit(
         [conventions](../conventions.md#preconditioning-image-fits).
         ``info["precondition_rounds"]`` records the spread per round. With a
         maximum-entropy regularizer at weak weights float32 can stall: use float64.
-        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984), [Hutchinson (1989)](../references.md#hutchinson1989).
+        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984), [Hutchinson (1989)](../references.md#hutchinson1989); ``"lbfgsb"``: [Byrd et al. (1995)](../references.md#byrd1995), [Zhu et al. (1997)](../references.md#zhu1997).
 
     Returns
     -------
@@ -738,34 +856,29 @@ def fit(
         Model, values and diagnostics; warns if LM, L-BFGS or Adam did not converge
         (``info["stop"]`` gives the reason, ``info["grad_norm"]`` the gradient).
     """
-    if not math.isfinite(max_step_size) or max_step_size <= 0:
-        raise ValueError(
-            f"max_step_size must be finite and positive, not {max_step_size}."
-        )
-    if time_limit is not None and not time_limit >= 0:
-        raise ValueError(
-            f"time_limit must be a number of seconds, not {time_limit}."
-        )
-    if ftol_window < 1:
-        raise ValueError(f"ftol_window must be at least 1, not {ftol_window}.")
-    if ftol_abs is not None and not 0 <= ftol_abs < math.inf:
-        raise ValueError(
-            f"ftol_abs must be finite and non-negative, not {ftol_abs}."
-        )
-    if precondition not in (None, False, "diag"):
-        raise ValueError(
-            f"precondition must be None or 'diag', not {precondition!r}."
-        )
-    precondition = bool(precondition)
-    if post_step is not None and (method != "adam" or precondition):
-        raise ValueError(
-            "post_step needs method='adam' without precondition: a projection "
-            "breaks L-BFGS's curvature pairs and the preconditioner's metric."
-        )
+    precondition, dtype = _check_options(
+        method,
+        precondition,
+        post_step,
+        max_step_size,
+        learning_rate,
+        dtype,
+        time_limit,
+        ftol_abs,
+        ftol_window,
+    )
     budget = _Budget(time_limit, progress)
     with run_in(dtype):
         problem = cast_tree(
-            _Objective(model, priors, data, regularizers, noise, likelihoods),
+            _Objective(
+                model,
+                priors,
+                data,
+                regularizers,
+                noise,
+                likelihoods,
+                boxed=method == "lbfgsb",
+            ),
             dtype,
         )
         z0 = _recentre(problem, problem.init(cast_tree(init, dtype)))
@@ -788,10 +901,6 @@ def fit(
         ndata = [d.n_independent for d in problem.data]
         # A term's size is its ``n_data``, or the length of its residuals.
         start = problem.constrain(z0)
-        if method not in ("lm", "lbfgs", "adam"):
-            raise ValueError(
-                f"method must be 'lm', 'lbfgs' or 'adam', not {method!r}."
-            )
         originals = problem.likelihoods
         resolved = [
             t.resolve(start, method == "lm")
@@ -814,8 +923,13 @@ def fit(
         # that new values do not recompile.
         traced_scale, gtol = np.asarray(scale), np.asarray(gtol)
         stop = grad_norm = None
-        rounds = []
-        if method == "lm":
+        rounds, extra = [], {}
+        if method == "lbfgsb":
+            limit = max_steps or 20_000
+            z, steps, converged, stop, grad_norm, extra = _lbfgsb(
+                problem, z0, traced_scale, limit, gtol, lbfgs_memory, budget
+            )
+        elif method == "lm":
             limit = max_steps or 1000
             z, steps, converged, stop = _lm(
                 problem, z0, traced_scale, limit, gtol, cg_steps, budget
@@ -891,9 +1005,10 @@ def fit(
             **({"loss_history": history} if method == "adam" else {}),
             "post_step": post_step is not None,
             "precondition": "diag"
-            if precondition and method != "lm"
+            if precondition and method not in ("lm", "lbfgsb")
             else None,
             "precondition_rounds": rounds,
+            **extra,
             "at_bound": _at_bound(problem, values),
             "derived": {
                 k: onp.asarray(v)
@@ -1536,6 +1651,18 @@ def _lbfgs_memory(memory, z):
 # Jacobian-vector product each); above, it is estimated from _DIAG_PROBES probes.
 _EXACT_DIAG = 1024
 _DIAG_PROBES = 16
+# When probing, every coordinate block of at most this size is still exact.
+# deliberate: a small nuisance block (gain, offset, flux, position) gets its probe
+# noise from cross-terms with every image pixel, so it is noisiest where its scale
+# matters; exact entries cost one JVP each, cheap for a block this small. It
+# shapes the preconditioner only, not the objective.
+_EXACT_BLOCK = 64
+# Exact columns run in vectorized chunks of this many; probes stay sequential,
+# as each holds a full vjp or hvp in memory.
+# deliberate: 16 columns per chunk is the batch size of h-greer/hubble precond.py;
+# a column is one jvp, so the chunk's memory is that of 16 jvps, small beside the
+# images that need probing.
+_MAP_BATCH = 16
 # A coordinate's curvature is floored at this fraction of its block's largest.
 # deliberate: chosen from a sweep over 1e-3…1e-12 in design/fit_preconditioning.md
 # ("Floor"): 1e-3 was the only floor at which every weight converged on both
@@ -1544,22 +1671,42 @@ _DIAG_PROBES = 16
 _DIAG_FLOOR = 1e-3
 
 
-def _gn_diagonal(rows, x, probes, key=None):
+def _map(fn, xs):
+    """``lax.map`` of the column function ``fn`` over ``xs`` in chunks of ``_MAP_BATCH``."""
+    return jax.lax.map(fn, xs, batch_size=min(_MAP_BATCH, len(xs)))
+
+
+def _with_exact(estimate, exact, entry):
+    """``estimate`` with its entries at the NumPy indices ``exact`` replaced by
+    ``entry`` mapped over them."""
+    if exact is None or len(exact) == 0:
+        return estimate
+    return estimate.at[exact].set(_map(entry, np.asarray(exact)))
+
+
+def _one_hot(i, n, dtype):
+    # Built from the traced index: a constant tangent lets XLA fold through the jvp.
+    return jax.nn.one_hot(i, n, dtype=dtype)
+
+
+# Source: batched one-hot maps and small-block exact entries follow
+# h-greer/hubble precond.py (coron branch), https://github.com/h-greer/hubble
+def _gn_diagonal(rows, x, probes, key=None, exact=None):
     """The diagonal of JᵀJ for the rows ``rows(x)``: exact (``probes=None``),
     or the mean of ``(Jᵀu)²`` over Rademacher ``u`` (±1) in row space, whose
     mean is the diagonal and which is never negative; for a diagonal J it is
-    exact."""
+    exact. When probing, the coordinates ``exact`` (NumPy indices) are exact."""
     n = x.size
     m = jax.eval_shape(rows, x).size
     if m == 0:
         return np.zeros(n, x.dtype)
+
+    def column(i):
+        e = _one_hot(i, n, x.dtype)
+        return np.sum(jax.jvp(rows, (x,), (e,))[1] ** 2)
+
     if probes is None and n <= m:
-
-        def column(i):
-            e = np.zeros(n, x.dtype).at[i].set(1.0)
-            return np.sum(jax.jvp(rows, (x,), (e,))[1] ** 2)
-
-        return jax.lax.map(column, np.arange(n))
+        return _map(column, np.arange(n))
     _, pull = jax.vjp(rows, x)
     if probes is None:
 
@@ -1574,40 +1721,45 @@ def _gn_diagonal(rows, x, probes, key=None):
         return pull(jax.random.rademacher(key, (m,), x.dtype))[0] ** 2
 
     keys = jax.random.split(jax.random.fold_in(key, 0), probes)
-    return np.mean(jax.lax.map(squared, keys), axis=0)
+    return _with_exact(
+        np.mean(jax.lax.map(squared, keys), axis=0), exact, column
+    )
 
 
 # deliberate: Hutchinson estimate of the Hessian diagonal (mean of v*Hv over Rademacher v), exact by unit vectors when probes is None
-def _hessian_diagonal(f, x, probes, key=None):
+def _hessian_diagonal(f, x, probes, key=None, exact=None):
     """The diagonal of the Hessian of ``f`` at ``x``: exact (``probes=None``) or
-    the mean of ``v ⊙ Hv`` over Rademacher ``v``."""
+    the mean of ``v ⊙ Hv`` over Rademacher ``v``, with the coordinates
+    ``exact`` (NumPy indices) exact."""
     n = x.size
     grad = jax.grad(f)
 
     def product(v):
         return jax.jvp(grad, (x,), (v,))[1]
 
+    def entry(i):
+        return product(_one_hot(i, n, x.dtype))[i]
+
     if probes is None:
-
-        def entry(i):
-            return product(np.zeros(n, x.dtype).at[i].set(1.0))[i]
-
-        return jax.lax.map(entry, np.arange(n))
+        return _map(entry, np.arange(n))
 
     def estimate(key):
         v = jax.random.rademacher(key, (n,), x.dtype)
         return v * product(v)
 
     keys = jax.random.split(jax.random.fold_in(key, 1), probes)
-    return np.mean(jax.lax.map(estimate, keys), axis=0)
+    return _with_exact(
+        np.mean(jax.lax.map(estimate, keys), axis=0), exact, entry
+    )
 
 
 # deliberate: Gauss-Newton curvature JtHJ of a loss quadratic in its parameters, by linearize and Rademacher probes or exact unit vectors
-def _gn_params_diagonal(params, loss, x, probes, key=None):
+def _gn_params_diagonal(params, loss, x, probes, key=None, exact=None):
     """The diagonal of JᵀHJ, J the Jacobian of ``params(x)`` and H the Hessian
     of ``loss`` at ``params(x)``: the Gauss–Newton curvature of a loss that is
     quadratic in its parameters. Exact (``probes=None``) or the mean of
-    ``u ⊙ JᵀHJu`` over Rademacher ``u``."""
+    ``u ⊙ JᵀHJu`` over Rademacher ``u``, with the coordinates ``exact`` (NumPy
+    indices) exact."""
     n = x.size
     theta, push = jax.linearize(params, x)
     grad = jax.grad(loss)
@@ -1615,14 +1767,13 @@ def _gn_params_diagonal(params, loss, x, probes, key=None):
     def product(v):
         return jax.jvp(grad, (theta,), (v,))[1]
 
+    def entry(i):
+        v = push(_one_hot(i, n, x.dtype))
+        leaves = jax.tree.leaves(jax.tree.map(np.vdot, v, product(v)))
+        return np.real(sum(leaves))
+
     if probes is None:
-
-        def entry(i):
-            v = push(np.zeros(n, x.dtype).at[i].set(1.0))
-            leaves = jax.tree.leaves(jax.tree.map(np.vdot, v, product(v)))
-            return np.real(sum(leaves))
-
-        return jax.lax.map(entry, np.arange(n))
+        return _map(entry, np.arange(n))
     pull = jax.linear_transpose(push, x)
 
     def estimate(key):
@@ -1630,7 +1781,9 @@ def _gn_params_diagonal(params, loss, x, probes, key=None):
         return u * pull(product(push(u)))[0]
 
     keys = jax.random.split(jax.random.fold_in(key, 2), probes)
-    return np.mean(jax.lax.map(estimate, keys), axis=0)
+    return _with_exact(
+        np.mean(jax.lax.map(estimate, keys), axis=0), exact, entry
+    )
 
 
 @eqx.filter_jit
@@ -1640,19 +1793,33 @@ def _fisher_diagonal(problem, z, probes, round=0):
     curvature of the priors, the Hessian diagonal of the regularizers (floored
     at zero, as for ``gauss_newton_mass``) and, for scalar-χ² terms, JᵀHJ through
     their ``curvature_params`` (also floored). A regularizer with
-    ``metric_rows`` (maximum entropy) gives its own positive curvature instead,
-    which replaces the rest on the coordinates it covers (the data JᵀJ is
-    dropped there on purpose: whitened by the regularizer it is the identity
-    plus a low-rank part). Probes are drawn
+    ``metric_rows`` (maximum entropy) adds its own positive curvature to the
+    rest (replacing the data JᵀJ there froze faint pixels once the data
+    curvature dominated, as for ALMA). Probes are drawn
     afresh in each ``round`` (deterministically), so that refreshes do not
     repeat an error."""
     key = jax.random.PRNGKey(round)
     flat, unravel = problem.ravel(z)
+    exact = None
+    if probes is not None:
+        # Blocks of at most _EXACT_BLOCK coordinates, as static flat indices,
+        # while the exact coordinates total at most _EXACT_DIAG (the cost cap).
+        sizes = [int(onp.size(z[k])) for k in problem.coordinate_keys]
+        starts = onp.cumsum([0, *sizes])
+        small = [
+            (a, k) for a, k in zip(starts, sizes) if 0 < k <= _EXACT_BLOCK
+        ]
+        budget = onp.cumsum([k for _, k in small]) <= _EXACT_DIAG
+        exact = onp.concatenate(
+            [onp.arange(a, a + k) for (a, k), ok in zip(small, budget) if ok]
+            + [onp.zeros(0, int)]
+        ).astype(onp.int32)
     diagonal = _gn_diagonal(
         lambda x: problem.curvature_rows(unravel(x), skip_scalar=True),
         flat,
         probes,
         key,
+        exact,
     ) + problem.curvature_diag(z, False)
     scalar = [t for t in problem.likelihoods if _scalar(t)]
     if scalar:
@@ -1664,7 +1831,7 @@ def _fisher_diagonal(problem, z, probes, round=0):
         def loss(theta):
             return sum(t.curvature_loss(p) for t, p in zip(scalar, theta))
 
-        curvature = _gn_params_diagonal(params, loss, flat, probes, key)
+        curvature = _gn_params_diagonal(params, loss, flat, probes, key, exact)
         diagonal = diagonal + np.maximum(curvature, 0.0)
     metric = [r for r in problem.regularizers if hasattr(r, "metric_rows")]
     plain = [r for r in problem.regularizers if not hasattr(r, "metric_rows")]
@@ -1676,6 +1843,7 @@ def _fisher_diagonal(problem, z, probes, round=0):
             flat,
             probes,
             key,
+            exact,
         )
         diagonal = diagonal + np.maximum(penalty, 0.0)
     if metric:
@@ -1684,12 +1852,7 @@ def _fisher_diagonal(problem, z, probes, round=0):
             model = _reference(problem.build(unravel(x)))
             return np.concatenate([r.metric_rows(model) for r in metric])
 
-        # deliberate: the data JᵀJ and other terms are dropped on these pixels.
-        # Fewer L-BFGS steps (not timed) on one 8×8 AMI test, ``precondition=
-        # "diag"``, MaxEntropy weights 1e3, 50, 3: 13, 41, 45 as coded; 16, 48,
-        # 146 with JᵀJ added back (2026-10-30). The objective is unchanged.
-        curvature = _gn_diagonal(rows, flat, probes, key)
-        diagonal = np.where(curvature > 0.0, curvature, diagonal)
+        diagonal = diagonal + _gn_diagonal(rows, flat, probes, key, exact)
     return diagonal
 
 
@@ -1732,7 +1895,8 @@ def gauss_newton_diag(
     [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
     [Cornwell & Evans (1985)](../references.md#cornwellevans1985),
     [Martens (2010)](../references.md#martens2010),
-    [Schraudolph (2002)](../references.md#schraudolph2002).
+    [Schraudolph (2002)](../references.md#schraudolph2002); small exact blocks,
+    [h-greer/hubble](../references.md#hubble_precond).
 
     Parameters
     ----------
@@ -1744,7 +1908,8 @@ def gauss_newton_diag(
         Up to 1024 coordinates the diagonal is exact, one Jacobian-vector
         product per coordinate. Above, it is estimated: JᵀJ from the mean of
         ``(Jᵀu)²`` over 16 Rademacher vectors ``u``, R from 16 Rademacher
-        Hessian-vector products, each good to a relative ``√(2 / probes)``.
+        Hessian-vector products, each good to a relative ``√(2 / probes)``;
+        blocks of at most 64 coordinates (a gain, a flux, a position) stay exact.
         Give a number of probes to estimate at any size, or ``0`` for the exact
         diagonal at any size.
 
@@ -1868,6 +2033,27 @@ def _recentre(problem, z):
     return out
 
 
+def _impute(key, d):
+    """``d`` with non-finite entries replaced by the largest finite entry of the
+    block (the scale the floor is taken from; never zero), warning once."""
+    finite = np.isfinite(d)
+    if bool(np.all(finite)):
+        return d
+    replacement = (
+        "the block's largest finite entry"
+        if bool(np.any(finite))
+        else "zero, so the block gets a flat scale"
+    )
+    warnings.warn(
+        f"preconditioner diagonal of '{key}' has {int(np.sum(~finite))}/"
+        f"{d.size} non-finite entries; replaced by {replacement}",
+        RuntimeWarning,
+        stacklevel=external_stacklevel(),
+    )
+    top = np.max(np.where(finite, d, -np.inf))
+    return np.where(finite, d, top if np.isfinite(top) else 0.0)
+
+
 def _metric(problem, z, scale, round=0):
     """``(metric, stats)`` at ``z`` for a loss per data point ``scale``.
 
@@ -1879,7 +2065,7 @@ def _metric(problem, z, scale, round=0):
     _, unravel = problem.ravel(z)
     width, decades, floored = {}, 0.0, 0
     for key, d in unravel(flat).items():
-        d = np.nan_to_num(d)
+        d = _impute(key, d)
         floor = _DIAG_FLOOR * np.max(d)
         usable = bool(floor > 0)
         if usable:
@@ -2036,6 +2222,14 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
             f"was not finite (NaN or inf) after {steps} steps; check the "
             "model and priors for invalid values."
         )
+    if method == "lbfgsb":
+        head = f"fit(method={method!r}) did not converge"
+        if stop == "limit":
+            return (
+                f"{head} after {steps} steps: it reached max_steps or its "
+                "limit of 3 * max_steps function evaluations; raise max_steps."
+            )
+        return f"{head}: the line search stopped after {steps} steps."
     if method == "lbfgs":
         head = f"fit(method={method!r}) did not converge"
         if stop == "limit":
@@ -2062,6 +2256,195 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
             "step limit; raise max_steps."
         )
     return f"fit(method={method!r}) did not converge in {steps} steps."
+
+
+# deliberate: the bounds of an L-BFGS-B fit, kept apart from the host loop
+def _box(problem, z):
+    """``(lower, upper)`` flat bounds of the coordinates of a boxed problem.
+
+    From ``Uniform`` priors, and from the non-negative pixels of a linear
+    ``LinearImage`` (``LinearImage.bounds``); the two are intersected. Other
+    priors (``LogUniform``, isotropic angles, positive ``ImproperUniform``)
+    raise ``TypeError``, as do angle vectors and error terms; a function model
+    gets no image bounds, with a warning if a flat prior could hold pixels.
+    """
+    import numpyro.distributions as dist
+
+    if problem.noise:
+        raise TypeError("method='lbfgsb' does not fit error terms.")
+    lower, upper = [], []
+    for path, prior in problem.priors.items():
+        base, shape = _base(prior), onp.shape(z[path])
+        support = base.support
+        while hasattr(support, "base_constraint"):  # independent(real, n)
+            support = support.base_constraint
+        flat_real = isinstance(support, type(dist.constraints.real))
+        if is_angle_vector(prior):
+            raise TypeError(
+                f"method='lbfgsb' cannot fit angle vector {path!r}."
+            )
+        if isinstance(base, dist.Uniform):
+            lo, hi = (
+                onp.broadcast_to(onp.asarray(b, float), shape)
+                for b in (base.low, base.high)
+            )
+        elif isinstance(base, dist.ImproperUniform) and flat_real:
+            lo, hi = onp.full(shape, -onp.inf), onp.full(shape, onp.inf)
+        else:
+            raise TypeError(
+                f"method='lbfgsb' supports only Uniform priors and flat real "
+                f"priors (ImproperUniform on the real line, as image_priors "
+                f"gives); {path!r} has {type(base).__name__}."
+            )
+        parent, _, name = path.rpartition(".")
+        if not isinstance(problem.model, SourceModel) and flat_real:
+            warnings.warn(
+                f"method='lbfgsb' cannot see inside a function model: "
+                f"{path!r} is unbounded, so LinearImage pixels may go "
+                "negative.",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
+        if isinstance(problem.model, SourceModel) and name == "pixels":
+            image = problem.model.get(parent) if parent else problem.model
+            box = image.bounds() if isinstance(image, LinearImage) else None
+            if box is not None:
+                lo, hi = onp.maximum(lo, box[0]), onp.minimum(hi, box[1])
+        lower.append(onp.ravel(lo))
+        upper.append(onp.ravel(hi))
+    return onp.concatenate(lower), onp.concatenate(upper)
+
+
+def _projected_norm(x, grad, lower, upper):
+    """∞-norm of the projected gradient ``x - P(x - grad)`` for box bounds."""
+    return onp.max(onp.abs(x - onp.clip(x - grad, lower, upper)), initial=0.0)
+
+
+@eqx.filter_jit
+# deliberate: jit boundary of the L-BFGS-B host loop; the template z fixes the unravel
+def _value_and_gradient(problem, template, scale, x):
+    _, unravel = problem.ravel(template)
+    return jax.value_and_grad(lambda x: problem.loss(unravel(x)) / scale)(x)
+
+
+# deliberate: the L-BFGS-B host loop, kept apart from fit
+def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
+    """Box-constrained fit by scipy's L-BFGS-B (Byrd et al. 1995; Zhu et al. 1997).
+
+    Returns ``(z, steps, converged, stop, pg_norm, extra)``: converged when the
+    projected-gradient ∞-norm of the loss per data point is within ``_tolerance``.
+    """
+    from scipy.optimize import Bounds, minimize
+
+    memory = memory or 10
+    x0, unravel = problem.ravel(z0)
+    lower, upper = _box(problem, z0)
+    x0 = onp.asarray(x0, float)
+    if onp.any((x0 < lower) | (x0 > upper)):
+        warnings.warn(
+            "method='lbfgsb': the starting values are outside the bounds "
+            "and are clipped to them.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    x0 = onp.clip(x0, lower, upper)
+    scale, gtol = np.asarray(scale), float(gtol)
+
+    def evaluate(x):
+        value, grad = _value_and_gradient(problem, z0, scale, np.asarray(x))
+        return float(value), onp.asarray(grad, float)
+
+    def evaluate_flagged(x):
+        value, grad = evaluate(x)
+        if not (onp.isfinite(value) and onp.isfinite(grad).all()):
+            undefined.append(True)
+        return value, grad
+
+    def projected(x, grad):
+        return _projected_norm(x, grad, lower, upper)
+
+    start_value, g0 = evaluate(x0)
+    tolerance = float(_tolerance(np.asarray(projected(x0, g0)), gtol))
+    out_of_time, trace = [], []
+
+    def callback(intermediate_result):
+        x = intermediate_result.x
+        trace.append(1)
+
+        def report():
+            value, grad = evaluate(x)
+            return value * float(scale), float(projected(x, grad))
+
+        if budget.check(len(trace), report):
+            out_of_time.append(True)
+            raise StopIteration
+
+    undefined = []  # a trial point where the model is NaN (e.g. 0/0)
+    nit = nfev = restarts = 0
+    hit, first_message = False, None
+    while True:
+        undefined.clear()
+        res = minimize(
+            evaluate_flagged,
+            x0,
+            jac=True,
+            method="L-BFGS-B",
+            bounds=Bounds(lower, upper),
+            callback=callback,
+            options={
+                "maxiter": max_steps - nit,
+                "maxfun": 3 * max_steps - nfev,
+                "maxcor": memory,
+                "ftol": 0.0,
+                "gtol": tolerance,
+            },
+        )
+        nit, nfev = nit + int(res.nit), nfev + int(res.nfev)
+        hit = hit or bool(undefined)
+        if first_message is None:
+            first_message = res.message
+        x = onp.clip(res.x, lower, upper)
+        value, grad = evaluate(x)
+        # A line search cannot continue from a NaN: it ends "ABNORMAL". Restart
+        # from the last accepted point, with fresh curvature memory (so a
+        # smaller first step), while that gains loss, as ``_lbfgs`` does.
+        gain = start_value - value
+        if (
+            res.success
+            or not undefined
+            or out_of_time
+            or not gain > 0.0  # also true of a NaN
+            or nit >= max_steps
+            or nfev >= 3 * max_steps
+        ):
+            break
+        x0, start_value = x, value
+        restarts += 1
+    pg = float(projected(x, grad))
+    finite = onp.isfinite(value) and onp.all(onp.isfinite(grad))
+    converged = bool(finite and pg <= tolerance)
+    steps = nit
+    if converged:
+        stop = None
+    elif not finite:
+        stop = "non-finite"
+    elif out_of_time:
+        stop = "time"
+    elif steps >= max_steps or nfev >= 3 * max_steps:
+        stop = "limit"
+    else:
+        stop = "stalled"
+    # The first round's message: it says why the first line search ended.
+    message = first_message
+    message = message.decode() if isinstance(message, bytes) else str(message)
+    extra = {
+        "nit": steps,
+        "message": message,
+        "pg_norm": pg,
+        "restarts": restarts,
+        "undefined": hit,
+    }
+    return unravel(np.asarray(x)), steps, converged, stop, pg, extra
 
 
 def _lbfgs(
@@ -2330,3 +2713,393 @@ def _adam_run(
         stop,
         onp.concatenate(history) if history else onp.zeros(0),
     )
+
+
+# Thresholds of ``kkt_report``, from the IM Lup imaging diagnosis: kkt_w < 1e-4 and
+# band_limit < 2 gate ``converged``. KKT_TOL is the relative residual, far below the
+# fits' own stop yet above the float64 noise of a converged fit; band_limit is
+# about 1 at an optimum.
+KKT_TOL = 1e-3
+BAND_TOL = 2.0
+# _ACTIVE: pixels above 1e-3 of the peak have gradients well resolved against
+# the unit-sum scale. _FROZEN: below 1e-6 a softmax pixel's eta-gradient is a
+# millionth of an active one's, so L-BFGS cannot move it. _GROW: a frozen pixel
+# counts as wanting flux only if its unmet gradient exceeds 3 times the gradient
+# scale times the tolerance (virgil's margin over the noise on faint pixels).
+_ACTIVE, _FROZEN, _GROW = 1e-3, 1e-6, 3.0
+_IMAGE_COORDS = ("log_brightness", "pixels")
+_FWHM = 2 * onp.sqrt(2 * onp.log(2))  # FWHM over sigma of a Gaussian
+_LIT_FWHM, _EDGE_FWHM = (
+    30 / 18,
+    20 / 18,
+)  # band_limit windows, resolution elements
+KKT_W_TOL = 1e-4  # kkt_w: the registered IM Lup criterion
+NUISANCE_TOL = 1e-3  # grad_rel of a nuisance, relative to the start gradient
+
+
+def _smooth(img, sigma):
+    """``img`` blurred by a Gaussian of ``sigma`` pixels (zero-padded FFT)."""
+    n = img.shape[0]
+    f = onp.fft.fftfreq(2 * n)
+    gauss = onp.exp(
+        -2 * onp.pi**2 * sigma**2 * (f[:, None] ** 2 + f[None, :] ** 2)
+    )
+    pad = onp.fft.ifft2(onp.fft.fft2(img, s=(2 * n, 2 * n)) * gauss).real
+    return pad[:n, :n]
+
+
+def _band_limit(brightness, pixel_scale_mas, cut):
+    """Fraction of the windowed ``ln b`` power beyond ``cut`` over that of its
+    hard low-pass (the diagnosis' ``f_eta / f_floor``).
+
+    The window is the lit region (``b`` blurred with a Gaussian of FWHM
+    ``_LIT_FWHM`` resolution elements ``1 / cut``, above 1e-3 of its peak),
+    smoothed with one of FWHM ``_EDGE_FWHM``. Non-finite ``ln b`` (empty pixels)
+    become the finite minimum. Thresholds and windows follow an IM Lup
+    imaging diagnosis, where 30 and 20 mas FWHM were 1.67 and 1.11 elements.
+    """
+    b = onp.asarray(brightness, float)
+    n = b.shape[0]
+    step = pixel_scale_mas * onp.pi / 180 / 3.6e6
+    element = 1.0 / (cut * step * _FWHM)  # sigma of one element, in pixels
+    with onp.errstate(divide="ignore"):
+        eta = onp.log(b / b.max())
+    eta = onp.where(onp.isfinite(eta), eta, eta[onp.isfinite(eta)].min())
+    blurred = _smooth(b, _LIT_FWHM * element)
+    mask = blurred >= 1e-3 * blurred.max()
+    window = onp.clip(
+        _smooth(mask.astype(float), _EDGE_FWHM * element), 0.0, 1.0
+    )
+
+    def beyond(img, freq):
+        power = (
+            onp.abs(
+                onp.fft.fft2(
+                    window * (img - img[mask].mean()), s=(2 * n, 2 * n)
+                )
+            )
+            ** 2
+        )
+        return power[freq > cut].sum() / power.sum()
+
+    f = onp.fft.fftfreq(n, step)
+    low = onp.fft.ifft2(
+        onp.fft.fft2(eta) * (onp.hypot(f[:, None], f[None, :]) <= cut)
+    ).real
+    k = onp.fft.fftfreq(2 * n, step)
+    freq = onp.hypot(k[:, None], k[None, :])
+    floor = beyond(low, freq)
+    return beyond(eta, freq) / floor if floor > 0 else float("nan")
+
+
+def _peak(grad, start, key, pen):
+    """The gradient ∞-norm that a certificate is relative to: the start's, or the
+    larger of the data and penalty parts at the result."""
+    if start is not None:
+        top = onp.max(onp.abs(onp.asarray(start[key], float)), initial=0.0)
+    else:
+        g, gp = (onp.asarray(t[key], float) for t in (grad, pen))
+        top = max(
+            onp.max(onp.abs(g - gp), initial=0.0),
+            onp.max(onp.abs(gp), initial=0.0),
+        )
+    return float(top) or 1.0
+
+
+def _pixel_gradient(problem, z, grads, key, parent):
+    """``(d, dp, mu, b, live, scale)`` at ``z`` for a softmax or √I image.
+
+    ``d`` and ``dp`` are the total and penalty gradients per pixel flux, ``mu``
+    the multiplier, ``b`` the pixel fluxes, ``live`` the pixels whose gradient is
+    defined and ``scale`` the rms gradient over the active pixels.
+    """
+    image = problem.build(z)
+    image = image.get(parent) if parent else image
+    g, gp = (onp.asarray(t[key], float).ravel() for t in grads)
+    if isinstance(image, Image):
+        b = onp.asarray(image.brightness, float).ravel()
+        live = b > 0.0
+        # mu = Σ b g = flux dJ/dflux for a unit-sum image: fixed flux, so not
+        # a coordinate (fitted, it is stationary at a converged fit).
+        path = f"{parent}.flux" if parent else "flux"
+        mu = 0.0
+        if path not in problem.priors:
+            if not isinstance(problem.model, SourceModel):
+                raise NotImplementedError(
+                    "kkt_report of a softmax image needs a model template, not a function."
+                )
+            flux = problem.model.get(path)
+            if problem.model.resolved() is not problem.model or not isinstance(
+                flux, (int, float, jax.Array, onp.ndarray)
+            ):
+                raise NotImplementedError(
+                    f"kkt_report needs a plain fitted or fixed {path}, not a tied or derived one."
+                )
+
+            def loss(t):
+                model = problem.model.set([path], [flux * (1.0 + t)])
+                return eqx.tree_at(lambda p: p.model, problem, model).loss(z)
+
+            mu = float(jax.grad(loss)(0.0))
+        scale = onp.where(live, b, 1.0)  # g_eta = b (g_b - mu)
+    else:
+        b = onp.asarray(image.fluxes, float).ravel()
+        x = onp.asarray(z[key], float).ravel()
+        live, mu = x != 0.0, 0.0
+        scale = 2.0 * onp.where(live, x, 1.0)  # f = x²
+    d, dp = (onp.where(live, v / scale, 0.0) for v in (g, gp))
+    act = live & (b > _ACTIVE * b.max())
+    rms = 0.0
+    if act.any():
+        rms = float(onp.sqrt(onp.mean((d[act] - dp[act]) ** 2 + dp[act] ** 2)))
+    return d, dp, mu, b, live, rms
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the nuisance branch inline.
+def _nuisance_entry(x, g, box, top):
+    """Projected-gradient ∞-norm of one nuisance and its ratio to ``top``."""
+    lower, upper, offset = box
+    lo, hi = -onp.inf, onp.inf
+    if lower is not None:
+        lo, hi = (
+            lower[offset : offset + g.size],
+            upper[offset : offset + g.size],
+        )
+    norm = _projected_norm(x, g, lo, hi)
+    return {"grad_norm": norm, "grad_rel": norm / top}
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the growth rule inline.
+def _want_grow(d, b, masks, margin, softmax):
+    """Frozen pixels whose gradient ``d`` says they want flux.
+
+    The rule is ``g_j < mu - 3 scale kkt_rel`` (``margin = scale * kkt_rel``,
+    with ``kkt_rel`` floored at ``KKT_TOL``: a converged fit has ~0). A sqrt
+    pixel moves in x = sqrt(f), where its gradient is 2 x d, so the rule is
+    measured there: faint pixels' noise 1 / x is not read as a want to grow.
+    """
+    inside, live = masks
+    peak = b.max()
+    frozen = inside & live & (b < _FROZEN * peak)
+    reach = 1.0 if softmax else onp.sqrt(peak / onp.where(live, b, peak))
+    return frozen & (d < -_GROW * margin * reach)
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the linear-pixel branch inline.
+def _linear_certificate(x, g, image, top, w):
+    """``(out, ok)``: the certificate of one linear-parametrised pixel array."""
+    lo, hi = (onp.ravel(a) for a in image.bounds())
+    out = {"kind": "linear", "pg_rel": _projected_norm(x, g, lo, hi) / top}
+    zero = (x == 0.0) & (hi > 0.0)
+    bad = zero & (g < -KKT_TOL * top)
+    out["zero_violation"] = float(bad.sum() / max(zero.sum(), 1))
+    ok = out["pg_rel"] < KKT_TOL and not bad.any()
+    if w is not None:  # registered statistic, in units of w / F0
+        pg = x - onp.clip(x - g, lo, hi)
+        sel = (x > _ACTIVE * x.max()) | ((x <= lo) & (g < 0))
+        out["kkt_w"] = float(onp.sqrt(onp.mean(pg[sel] ** 2)) / (w / x.sum()))
+        ok = out["kkt_w"] < KKT_W_TOL and not bad.any()
+    return out, ok
+
+
+# deliberate: kkt_report would exceed the 120-line cap with the band-limit setup inline.
+def _data_band_limit(data, image, b, terms=()):
+    """``_band_limit`` of fluxes ``b`` at the data's largest spatial frequency.
+
+    That is in cycles per radian: OIData ``u, v`` are metres, per ``wavel``;
+    radio ``u, v`` are already wavelengths.
+    """
+    sets = list(data) if isinstance(data, (list, tuple)) else [data]
+    # a radio term holds its own (padded, wavelength) u, v
+    sets += [
+        types.SimpleNamespace(u=t.arrays["u"], v=t.arrays["v"])
+        for t in terms
+        if hasattr(t, "arrays")
+    ]
+    cut = max(
+        float(onp.max(onp.hypot(s.u, s.v) / getattr(s, "wavel", 1.0)))
+        for s in sets
+    )
+    shape = onp.shape(image.brightness)
+    return _band_limit(b.reshape(shape), image.pixel_scale_mas, cut)
+
+
+def kkt_report(
+    result,
+    priors,
+    data,
+    regularizers=(),
+    *,
+    noise=None,
+    likelihoods=(),
+    start=None,
+    weight=None,
+):
+    """Convergence certificates of a regularized image fit, not a loss plateau.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    Call with a [`FitResult`][virgil.fitting.FitResult] and the ``priors``,
+    ``data``, ``regularizers``, ``noise`` and ``likelihoods`` it was fitted
+    with. ``start`` is the starting values (``fit``'s ``init``): the
+    gradient scales and ``pg_rel`` are then relative to those at the start as
+    well, which a fit with no penalty needs (its gradient is zero at the
+    optimum). Without it they use the result alone: the larger of the data and
+    penalty gradients.
+
+    ``"images"`` holds, by path:
+
+    - [`Image`][virgil.models.Image] (softmax): ``kkt_w``, the rms over pixels above
+      1e-3 of the peak of ``g_I - μ``, the gradient per pixel flux less the
+      multiplier, in units of ``w / F`` (regulariser weight over flux), which
+      gates ``converged`` at ``KKT_W_TOL``. (The diagnosis took ``μ`` as the
+      median; here ``μ = Σ b g`` exactly, which agrees to within a few percent
+      at an optimum.) ``kkt_rel``, the rms of
+      ``g - μ`` over pixels above 1e-3 of the peak, with ``g = ∂J/∂b`` for
+      unit-sum ``b`` and ``μ = Σ b g``, over ``|μ|`` plus the rms gradient
+      scale; ``want_grow``, the fraction of pixels below 1e-6 of the peak whose
+      objective would raise them.
+    - ``LinearImage`` ``"sqrt"``: the same with ``g = ∂J/∂flux`` and ``μ = 0``.
+      A pixel exactly zero has zero gradient and is not seen to want growth.
+    - ``LinearImage`` ``"linear"``: ``kkt_w``, the rms projected gradient over
+      pixels above 1e-3 of the peak or at a bound with ``g < 0``, in units of
+      ``w / F0`` with ``F0`` the pixel sum; ``pg_rel``, the ∞-norm of the
+      projected gradient over its reference; and ``zero_violation``, the
+      fraction of zero pixels with ``g < 0``. Active bounds are not violations.
+    - A lone ``MaxEntropy``: ``band_limit``, the windowed power of ``ln b``
+      beyond the data's largest spatial frequency over that of its hard
+      low-pass; about 1 at an optimum, a larger value meaning structure the
+      data cannot constrain.
+
+    ``"nuisances"`` holds the projected-gradient ∞-norm of every other
+    parameter in its fitted coordinate, and ``grad_rel`` relative to the start
+    gradient. ``"converged"`` is true when every image has ``kkt_w`` below
+    ``KKT_W_TOL`` (``kkt_rel`` or ``pg_rel`` below ``KKT_TOL`` if there is no
+    weight), ``want_grow`` and ``zero_violation`` zero, and ``band_limit``
+    below ``BAND_TOL``; and, given ``start``, every nuisance ``grad_rel`` is
+    below ``NUISANCE_TOL``. Only a plain fitted or fixed image flux is
+    supported; a tied or derived one raises ``NotImplementedError``.
+
+    Source: [Nocedal & Wright (2006)](../references.md#nocedal2006), ch. 12 and §16.7.
+    """
+    from .imaging import MaxEntropy  # deliberate: imaging imports fitting
+
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(
+                result.model,
+                priors,
+                data,
+                regularizers,
+                noise,
+                likelihoods,
+                boxed=True,
+            ),
+            "float64",
+        )
+        z = problem.init(result.values)
+        grad = jax.grad(problem.loss)(z)
+        pen = jax.grad(problem.penalty)(z)
+        z0 = None if start is None else problem.init(start)
+        ref = None if start is None else jax.grad(problem.loss)(z0)
+        pen0 = None if start is None else jax.grad(problem.penalty)(z0)
+        try:
+            lower, upper = _box(problem, z)
+        except TypeError:
+            lower = upper = None
+        keys = problem.coordinate_keys
+        offsets = dict(
+            zip(keys, onp.cumsum([0] + [onp.size(z[k]) for k in keys]))
+        )
+        images, nuisances, verdicts = {}, {}, []
+        lone = regularizers[0] if len(regularizers) == 1 else None
+        w = weight if weight is not None else getattr(lone, "weight", None)
+        w = None if w is None else float(w)
+        # a function model: the image is read off the model it builds at the result
+        model = problem.model
+        if callable(model) and not isinstance(model, SourceModel):
+            model = problem.build(z)
+        for key in keys:
+            parent, _, name = key.rpartition(".")
+            g = onp.asarray(grad[key], float).ravel()
+            x = onp.asarray(z[key], float).ravel()
+            # Error terms (``noise.<term>``) and function models have no image.
+            image = None
+            if isinstance(model, SourceModel) and name in _IMAGE_COORDS:
+                image = model.get(parent) if parent else model
+            softmax = isinstance(image, Image) and name == "log_brightness"
+            linear = isinstance(image, LinearImage) and name == "pixels"
+            if not (softmax or linear):
+                top = _peak(grad, ref, key, pen)
+                box = (lower, upper, offsets[key])
+                nuisances[key] = _nuisance_entry(x, g, box, top)
+                if start is not None:
+                    verdicts.append(
+                        bool(nuisances[key]["grad_rel"] < NUISANCE_TOL)
+                    )
+                continue
+            out = {}
+            top = _peak(grad, ref, key, pen)
+            if linear and image.parametrisation == "linear":
+                out, ok = _linear_certificate(x, g, image, top, w)
+            else:
+                d, dp, mu, b, live, scale = _pixel_gradient(
+                    problem, z, (grad, pen), key, parent
+                )
+                inside = (
+                    onp.ones(b.shape, bool)
+                    if image.support is None
+                    else onp.asarray(image.support).ravel() != 0
+                )
+                peak = b.max()
+                act = live & (b > _ACTIVE * peak)
+                if (
+                    start is not None
+                ):  # a fit with no penalty has none at its optimum
+                    scale = max(
+                        scale,
+                        _pixel_gradient(problem, z0, (ref, pen0), key, parent)[
+                            5
+                        ],
+                    )
+                rel = (
+                    onp.sqrt(onp.mean(d[act] ** 2)) / (abs(mu) + scale)
+                    if scale
+                    else 0.0
+                )
+                grow = _want_grow(
+                    d, b, (inside, live), scale * max(rel, KKT_TOL), softmax
+                )
+                out["kind"] = "softmax" if softmax else "sqrt"
+                out["kkt_rel"] = float(rel)
+                out["want_grow"] = float(grow.sum() / max(inside.sum(), 1))
+                ok = rel < KKT_TOL and not grow.any()
+                if w is not None:  # registered statistic, in units of w / F
+                    flux = (
+                        1.0 if softmax else b.sum()
+                    )  # d is per unit-sum b for softmax
+                    out["kkt_w"] = float(
+                        onp.sqrt(onp.mean(d[act] ** 2)) / (w / flux)
+                    )
+                    ok = out["kkt_w"] < KKT_W_TOL and not grow.any()
+                if (
+                    isinstance(lone, MaxEntropy)
+                    and (lone.path or "") == parent
+                ):
+                    out["band_limit"] = _data_band_limit(
+                        problem.data, image, b, problem.likelihoods
+                    )
+                    ok = ok and out["band_limit"] < BAND_TOL
+            images[parent or "."] = out
+            verdicts.append(bool(ok))
+    if regularizers and not images:
+        raise ValueError(
+            "kkt_report found no image block: the fitted pixels must be a "
+            "'pixels' or 'log_brightness' site of a bare Image or LinearImage."
+        )
+    return {
+        "images": images,
+        "nuisances": nuisances,
+        "converged": bool(verdicts) and all(verdicts),
+    }

@@ -122,6 +122,33 @@ def test_bijections_keep_parameters_in_their_support():
     assert -400.0 < stretched["dra"] < 400.0
 
 
+@pytest.mark.parametrize(
+    "flux_prior, flux_start",
+    [
+        (dist.Uniform(0.0, 0.5), 0.0),
+        (dist.HalfNormal(0.1), 0.0),
+        (dist.HalfNormal(0.1), -0.01),  # outside the support
+    ],
+)
+def test_a_start_on_a_bound_is_nudged_inside_it(flux_prior, flux_start):
+    priors = {**PRIORS, "flux": flux_prior}
+    start = BinaryModelCartesian(400.0, -70.0, 0.01)
+    objective = _Objective(start, priors, DATA)
+    # dra is on its upper bound, flux on (or past) its lower one.
+    z = objective.init({"dra": 400.0, "ddec": -70.0, "flux": flux_start})
+    assert all(np.all(np.isfinite(v)) for v in z.values())
+    values = objective.constrain(z)
+    assert abs(values["dra"] - 400.0) < 0.1  # not the prior mean, 0
+    assert 0.0 < values["flux"] < 1e-3
+    assert np.isfinite(objective.loss(z))
+
+
+def test_a_non_finite_start_is_rejected_by_path():
+    objective = _Objective(START, PRIORS, DATA)
+    with pytest.raises(ValueError, match="ddec"):
+        objective.init({"dra": 140.0, "ddec": float("nan"), "flux": 0.01})
+
+
 def test_residuals_and_loss_are_consistent():
     objective = _Objective(START, PRIORS, DATA)
     z0 = objective.init()
@@ -989,7 +1016,9 @@ def _curvature(model, priors, data, values, noise=None, flat=False):
         )
 
 
-def _hessian_check(model, priors, data, values, noise=None, flat=False):
+def _hessian_check(
+    model, priors, data, values, noise=None, flat=False, matrix=False
+):
     """``(sites, eigenvalues of F⁻¹H, mass)``: H is the exact Hessian of the
     numpyro potential in the coordinates of the mass matrix."""
     from numpyro.infer import init_to_value
@@ -1024,7 +1053,10 @@ def _hessian_check(model, priors, data, values, noise=None, flat=False):
 
         flat_z = np.concatenate([np.ravel(z[k]) for k in sites])
         hessian = onp.asarray(jax.hessian(potential)(flat_z))
-    return sites, onp.linalg.eigvals(covariance @ hessian).real, mass
+    product = covariance @ hessian
+    if matrix:
+        return sites, product, mass
+    return sites, onp.linalg.eigvals(product).real, mass
 
 
 def _sigmoid(z):
@@ -1111,9 +1143,10 @@ def test_the_scale_block_is_the_fisher_information_and_decoupled():
 @pytest.mark.slow
 def test_the_v19_matrix_whitens_the_posterior(flat):
     values = _v19_fixture()
-    sites, eigenvalues, mass = _hessian_check(
-        START, PRIORS, NOISY, values, SCALES, flat
+    sites, product, mass = _hessian_check(
+        START, PRIORS, NOISY, values, SCALES, flat, matrix=True
     )
+    eigenvalues = onp.linalg.eigvals(product).real
     assert set(sites) == {
         "dra",
         "ddec",
@@ -1127,7 +1160,13 @@ def test_the_v19_matrix_whitens_the_posterior(flat):
     # plan's bound [0.8, 1.25] was for e8's cleaner data; this is the
     # measured one with margin.
     assert eigenvalues.min() > 0.6 and eigenvalues.max() < 1.4, eigenvalues
-    assert onp.sum(onp.abs(eigenvalues - 1.0) < 0.01) >= 2  # the scales
+    # The two scales are the last two coordinates: their diagonal F⁻¹H block
+    # is the identity, because the fit sits at the scales' conditional optimum
+    # (χ²/s² = N), where the exact curvature of the potential in s is the
+    # Fisher information 2N (d ln s / dz)². Test that block itself, not a
+    # count of eigenvalues near 1.
+    assert set(sites[-2:]) == {"noise.vis_scale", "noise.phi_scale"}
+    onp.testing.assert_allclose(product[-2:, -2:], onp.eye(2), atol=1e-3)
     assert mass.condition < 1e4
 
 
@@ -1665,9 +1704,16 @@ def test_lbfgs_keeps_the_last_finite_point_after_a_non_finite_update(
             real(*args), optax.GradientTransformation(init, update)
         )
 
+    # The optimizer is built at trace time: a compiled fit left by an earlier
+    # test (same shapes) would bypass the poisoned one. Clear before, and
+    # after so no later test reuses the poisoned program.
+    jax.clear_caches()
     monkeypatch.setattr(fitting, "_capped_lbfgs", poisoned)
-    with pytest.warns(RuntimeWarning, match="not finite"):
-        result = fit(START, PRIORS, DATA, method="lbfgs", max_steps=50)
+    try:
+        with pytest.warns(RuntimeWarning, match="not finite"):
+            result = fit(START, PRIORS, DATA, method="lbfgs", max_steps=50)
+    finally:
+        jax.clear_caches()
     assert result.info["stop"] == "non-finite"
     assert result.info["steps"] == 3
     assert np.isfinite(result.info["grad_norm"])

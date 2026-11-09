@@ -1074,3 +1074,13 @@ def test_curvature_loss_matches_the_direct_term_with_free_sigma(small):
     assert t1 == pytest.approx(d1, rel=1e-12)
     assert t2 == pytest.approx(d2, rel=1e-12)
     assert t1 - t2 == pytest.approx(d1 - d2, rel=1e-10)
+
+
+def test_a_zero_max_offset_is_honoured_not_replaced_by_the_nuisance_bound(
+    small,
+):
+    data, nuis, scene, template = small
+    zero = data.toeplitz(template, nuis, offsets="spread", max_offset_mas=0.0)
+    default = data.toeplitz(template, nuis, offsets="spread")
+    assert zero.max_shift_pix == 0.0
+    assert default.max_shift_pix > 0.0

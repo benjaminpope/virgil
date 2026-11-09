@@ -27,6 +27,7 @@ Source: Fischler & Bolles (1981), Rousseeuw (1984), Rousseeuw & Van Driessen
 derived in the design note.
 """
 
+import concurrent.futures
 import dataclasses
 import functools
 import itertools
@@ -39,6 +40,7 @@ import jax.numpy as np
 import numpy as onp
 from jax.scipy.special import logsumexp
 from scipy import stats
+from scipy.special import log_ndtr
 from scipy.special import logsumexp as onp_logsumexp
 from scipy.stats import qmc
 
@@ -49,6 +51,7 @@ from .mode_search import (
     DefensiveMixture,
     ESS_FAIL,
     M_MIN,
+    MAHAL,
     W,
     N_IS,
     Mode,
@@ -110,6 +113,12 @@ W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
 N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
 CHUNK_C = 256  # candidates per batched C-step call (budget)
 CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
+EDGE_STOP = W  # |w_P| beyond which the logistic chart holds less than δ of the
+#                cell's ρ-interval: where a shared neighbour mode's proposal ends
+N_WORKERS = (
+    1  # cells run at once; 2 threads ran K = 14 two-season 1.24x faster
+)
+#                (design §9), at +0.3 GB: opt in with ``workers``
 R0 = math.sqrt(3.0)  # radius of y_z at a mode: the mode of its chi-4 prior
 
 
@@ -323,11 +332,13 @@ class OutlierPrior:
     bandwidth: onp.ndarray
     ln_f_floor: float
 
-    def log_density(self, mean, velocity=True):
+    def log_density(self, mean, velocity=True, sigma_f=None):
         """``ln π(p, v) π(f)`` at ``mean = (dra, ddec, vra, vdec, ln f)``,
         a density in ``(p, v, ln f)``; ``-inf`` outside the flux range. With
         ``velocity=False`` the velocity is integrated out: the density in
-        ``(p, ln f)`` (``mean[2:4]`` unused)."""
+        ``(p, ln f)`` (``mean[2:4]`` unused). With ``sigma_f`` the flux box
+        is integrated over a Gaussian ``ln f`` error of that width
+        (:meth:`log_flux_box`) instead of evaluated at ``mean[:, 4]``."""
         mean = onp.atleast_2d(onp.asarray(mean, float))
         p = mean[:, :2]
         v = mean[:, 2:4] if velocity else onp.ones_like(p)  # unused if not
@@ -360,9 +371,30 @@ class OutlierPrior:
         log_pv = log_g - math.log(2 * math.pi) - 2 * lp
         if velocity:
             log_pv = log_pv - 2 * lv
-        in_f = (mean[:, 4] >= self.ln_f_floor) & (mean[:, 4] <= 0.0)
-        log_f = onp.where(in_f, -math.log(-self.ln_f_floor), -onp.inf)
+        if sigma_f is None:
+            in_f = (mean[:, 4] >= self.ln_f_floor) & (mean[:, 4] <= 0.0)
+            log_f = onp.where(in_f, -math.log(-self.ln_f_floor), -onp.inf)
+        else:
+            log_f = self.log_flux_box(mean[:, 4], sigma_f)
         return log_pv + log_f
+
+    def log_flux_box(self, m_f, sigma_f):
+        """``ln E[π(ln f)]`` for ``ln f ~ N(m_f, σ_f²)``: the uniform flux
+        prior on ``[ℓ, 0]`` (``ℓ = ln_f_floor``) integrated over the Gaussian
+        measurement error, ``[Φ(-m/σ) - Φ((ℓ-m)/σ)] / |ℓ|``.
+        Finite for every ``m_f``, including ``m_f > 0``."""
+        m_f = onp.asarray(m_f, float)
+        sigma_f = onp.asarray(sigma_f, float)
+        hi = -m_f / sigma_f  # Φ(hi) - Φ(lo), hi > lo
+        lo = (self.ln_f_floor - m_f) / sigma_f
+        # reflect when both limits sit in the upper tail, where the two
+        # log-CDFs are ~0 and the difference would cancel
+        flip = lo > 0
+        a = log_ndtr(onp.where(flip, -lo, hi))
+        b = log_ndtr(onp.where(flip, -hi, lo))
+        with onp.errstate(divide="ignore"):
+            log_diff = a + onp.log1p(-onp.exp(b - a))
+        return log_diff - math.log(-self.ln_f_floor)
 
 
 @jax.jit
@@ -487,7 +519,13 @@ def outlier_log_density(summaries, prior, s_max=S_MAX):
                 + occam
                 + 0.5 * len(dims) * math.log(2 * math.pi)
                 + 0.5 * logdet
-                + float(prior.log_density(p.mean, velocity=len(dims) == 5)[0])
+                + float(
+                    prior.log_density(
+                        p.mean,
+                        velocity=len(dims) == 5,
+                        sigma_f=math.sqrt(cov[4, 4]),
+                    )[0]
+                )
             )
         out.append(float(onp_logsumexp(terms)) if terms else s.loglike_null)
     return onp.array(out)
@@ -855,15 +893,18 @@ def _labels(x, space):
     At the prior mean ``ε̄ = ½`` the inlier and outlier weights ``1 - ε̄`` and
     ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``.
     """
-    c = space.decode(x)
-    pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
-    state = np.concatenate(
-        [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
-    )
-    terms = _peak_terms(space.cat, c["ln_s"], space.jitter, state, space.dtype)
-    j = np.argmax(terms, axis=1)
-    best = np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
-    return np.where(best > space.cat.log_b, j, -1)
+    with run_in(onp.dtype(space.dtype).name):
+        c = space.decode(x)
+        pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+        state = np.concatenate(
+            [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
+        )
+        terms = _peak_terms(
+            space.cat, c["ln_s"], space.jitter, state, space.dtype
+        )
+        j = np.argmax(terms, axis=1)
+        best = np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
+        return np.where(best > space.cat.log_b, j, -1)
 
 
 def _lm(f, x, args, n_iter, step_max=10.0):
@@ -873,8 +914,9 @@ def _lm(f, x, args, n_iter, step_max=10.0):
     falls on an accepted step and rises on a rejected one (a step is accepted
     only if ``f`` is finite and rises). Stops after ``n_iter`` steps or when
     the predicted gain ``g·step`` is below ``TOL_GAIN``. vmap-able.
-    Returns ``(x, f(x))``.
+    Returns ``(x, f(x), capped)``, ``capped`` true if the step cap ended it.
     """
+
     grad, hess = jax.grad(f), jax.hessian(f)
 
     def body(c):
@@ -901,10 +943,10 @@ def _lm(f, x, args, n_iter, step_max=10.0):
     fx = f(x, *args)
     fx = np.where(np.isfinite(fx), fx, -np.inf)
     init = (0, x, fx, np.asarray(1e-2, x.dtype), np.asarray(np.inf, x.dtype))
-    _, x, fx, _, _ = jax.lax.while_loop(
+    i, x, fx, _, gain = jax.lax.while_loop(
         lambda c: (c[0] < n_iter) & (c[4] > TOL_GAIN), body, init
     )
-    return x, fx
+    return x, fx, (i >= n_iter) & (gain > TOL_GAIN)
 
 
 def _design(space, nights, v):
@@ -938,6 +980,21 @@ def _solve_set(g, mean, w, s_w2):
     return np.einsum("mi,mij,mj->", r, w, r) + ti @ ti / s_w2, ti
 
 
+def _prediction_cost(gg, nights, w, chol, valid):
+    """``λ_k = λ_max(Σ_k⁻¹ C_k)`` per night ``(K,)`` for a pair solved on
+    ``nights`` (precisions ``w``) at the designs ``gg`` ``(K, 4, 4)``:
+    ``C_k = G_k F⁻¹ G_kᵀ``, ``F`` the pair's Fisher information; the
+    largest over the night's peaks (``chol`` ``(K, J, 4, 4)``, ``Σ_k⁻¹ = L Lᵀ``).
+    Scaling every ``Σ`` by ``c²`` leaves it unchanged."""
+    gs = gg[nights]
+    f = np.einsum("mia,mij,mjb->ab", gs, w, gs)
+    f = f + np.finfo(gg.dtype).eps * np.trace(f) * np.eye(4, dtype=gg.dtype)
+    c = np.einsum("kia,ab,kjb->kij", gg, np.linalg.inv(f), gg)
+    m = np.einsum("kjai,kab,kjbc->kjic", chol, c, chol)
+    lam = np.linalg.eigvalsh(m)[..., -1]
+    return np.where(valid, lam, 0.0).max(axis=1)
+
+
 @jax.jit
 def _grid_stage(space, plan):
     """Every set's residual on a ``ln P`` grid of the cell, at every ζ start.
@@ -965,7 +1022,31 @@ def _grid_stage(space, plan):
     r = jax.vmap(per_set)(plan["nights"], plan["w"], plan["mean"])
     left = np.concatenate([r[..., :1], r[..., :-1]], -1)
     right = np.concatenate([r[..., 1:], r[..., -1:]], -1)
-    return r, (r <= left) & (r <= right) & np.isfinite(r), np.log(period)
+    is_min = (r <= left) & (r <= right) & np.isfinite(r)
+    if len(plan["pairs"]) == 0:
+        return r, is_min, np.log(period), np.zeros((), int)
+    # A span pair solved on its own nights predicts night k between them with
+    # the error cost ½ λ_k χ²₄(1 - δ) in ℓ_k at most, with probability 1 - δ
+    # (_prediction_cost). It covers its span when that is below the night's
+    # height Δ_k over its floor for every interior night: its triplet fills
+    # then add nothing (design §6.11, fix 4).
+    chi4 = stats.chi2.isf(DELTA, 4)
+    chol = np.linalg.cholesky(plan["wk"])  # (K, J, 4, 4), precision = L Lᵀ
+
+    def pair_covers(nights, w, inner, gg):
+        lam = _prediction_cost(gg, nights, w, chol, space.cat.valid)
+        return (
+            ((0.5 * chi4 * lam < plan["gap"]) | ~inner).all()
+        ) & inner.any()
+
+    pr = plan["pairs"]
+    covered = jax.vmap(
+        lambda nt, w, inner: jax.vmap(
+            jax.vmap(lambda gg: pair_covers(nt, w, inner, gg))
+        )(g)
+    )(plan["nights"][pr], plan["w"][pr], plan["inner"])  # (Q, Z, n)
+    skip = (plan["parent"] >= 0)[:, None, None] & covered[plan["parent"]]
+    return r, is_min & ~skip, np.log(period), (is_min & skip).sum()
 
 
 def _varpro_objective(v, nights, w, mean, space):
@@ -996,17 +1077,21 @@ def _chart_from(space, v, ti, ln_f):
 def _varpro_chunk(space, plan, s, v0, n_iter):
     """Refine ``(ln P, ζ)`` of each set ``s`` from ``v0``; return the chart
     vector, labels, the *data* residual (without the ridge term: the quantity
-    the ``χ²`` cut applies to), ``v`` and the Hessian of ``R / 2`` in ``v``."""
+    the ``χ²`` cut applies to), ``v``, the Hessian of ``R / 2`` in ``v`` and
+    whether the step cap ended it."""
 
     def one(si, v):
         args = (plan["nights"][si], plan["w"][si], plan["mean"][si], space)
-        v, fv = _lm(_varpro_objective, v, args, n_iter)
+        v, fv, capped = _lm(_varpro_objective, v, args, n_iter)
         ti = _solve_set(
             _design(space, args[0], v), args[2], args[1], space.s_w2
         )[1]
         x = _chart_from(space, v, ti, plan["lnf"][si])
         h = -jax.hessian(_varpro_objective)(v, *args)
-        return x, _labels(x, space), -2.0 * fv - ti @ ti / space.s_w2, v, h
+        return (
+            x, _labels(x, space), -2.0 * fv - ti @ ti / space.s_w2, v, h,
+            capped,
+        )  # fmt: skip
 
     return jax.vmap(one)(s, v0)
 
@@ -1026,12 +1111,12 @@ def _labelled_objective(v, lab, wk, mk, space):
 def _cstep_chunk(space, plan, v, lab, n_iter):
     """One C-step per candidate: Newton in ``(ln P, ζ)`` on the labelled
     target (TI′ and ``ln f`` solved linearly), then relabel at the result.
-    Returns ``v``, the labels, the chart vector, the residual and the Hessian
-    of ``R / 2`` in ``v``."""
+    Returns ``v``, the labels, the chart vector, the residual, the Hessian
+    of ``R / 2`` in ``v`` and whether the step cap ended it."""
 
     def one(v, lab):
         args = (lab, plan["wk"], plan["mk"], space)
-        v, fv = _lm(_labelled_objective, v, args, n_iter)
+        v, fv, capped = _lm(_labelled_objective, v, args, n_iter)
         k = lab.shape[0]
         j = np.maximum(lab, 0)
         w = np.where(
@@ -1049,7 +1134,7 @@ def _cstep_chunk(space, plan, v, lab, n_iter):
         )
         x = _chart_from(space, v, ti, ln_f)
         h = -jax.hessian(_labelled_objective)(v, *args)
-        return v, _labels(x, space), x, -2.0 * fv, h
+        return v, _labels(x, space), x, -2.0 * fv, h, capped
 
     return jax.vmap(one)(v, lab)
 
@@ -1059,7 +1144,7 @@ def _refine(space, x, n_iter):
     """Newton on the label-summed objective from one ``x``: the result, minus
     its Hessian, the objective and the expected inlier count. One candidate per
     call: a batch would run every member as long as the slowest."""
-    x, _ = _lm(_objective, x, (space,), n_iter)
+    x, _, _ = _lm(_objective, x, (space,), n_iter)
     return (
         x,
         -jax.hessian(_objective)(x, space),
@@ -1169,6 +1254,7 @@ def search_plan(space, key=None, nu_width=None):
     seed = 0 if key is None else int(jax.random.randint(key, (), 0, 2**31 - 1))
     rng = onp.random.default_rng(seed)
     sets = {2: [], 3: []}
+    parent = {}  # fill triplet -> the set of its span pair
     for m in (2, 3):
         for nights in itertools.combinations(range(len(peaks)), m):
             if all(len(peaks[k]) for k in nights):
@@ -1184,8 +1270,22 @@ def search_plan(space, key=None, nu_width=None):
                 pk = tuple(int(rng.choice(peaks[k])) for k in (a, c, b))
                 fills.add(((a, c, b), pk))
         sets[3] = sorted(fills)
+        index = {st: i for i, st in enumerate(sets[2])}
+        parent = {
+            st: index[((st[0][0], st[0][2]), (st[1][0], st[1][2]))]
+            for st in sets[3]
+        }
     chosen = sets[2] + sets[3]
     s = len(chosen)
+    pairs = sorted(set(parent.values()))
+    local = {q: i for i, q in enumerate(pairs)}
+    parent_of = onp.array(
+        [local[parent[st]] if st in parent else -1 for st in chosen], int
+    )
+    inner = onp.zeros((len(pairs), len(peaks)), bool)
+    for i, q in enumerate(pairs):
+        a, b = chosen[q][0]
+        inner[i, a + 1 : b] = [len(peaks[c]) > 0 for c in range(a + 1, b)]
     nights = onp.zeros((s, 3), int)
     w = onp.zeros((s, 3, 4, 4))
     mean = onp.zeros((s, 3, 4))
@@ -1221,12 +1321,37 @@ def search_plan(space, key=None, nu_width=None):
         ]
     )
     y0 = zeta / onp.sqrt(space.e_max - (zeta**2).sum(1, keepdims=True))
+    # Δ_k: night k's best peak over its outlier floor, at the error scale that
+    # maximizes it (9 values of ln s over ±ln S_MAX if free, else s = 1)
+    heights = []
+    for ln_s in (
+        onp.linspace(-1.0, 1.0, 9) * math.log(S_MAX)
+        if cat.rescalable
+        else [0.0]
+    ):
+        cov, total, _ = _peak_precision(
+            cat, np.full(len(cat.blocks), ln_s, dt), space.jitter, dt
+        )
+        scaled = cat.loglike - np.sum(
+            cat.n * ln_s + 0.5 * cat.chi2 * (math.exp(-2 * ln_s) - 1.0),
+            axis=-1,
+        )
+        log_det = 0.5 * (
+            np.linalg.slogdet(cov)[1] - np.linalg.slogdet(total)[1]
+        )
+        heights.append(
+            np.where(cat.valid, scaled + log_det, -1e30).max(axis=1)
+        )
+    gap = np.max(np.stack(heights), axis=0) - cat.log_b
     return {
         "nights": np.asarray(nights), "w": np.asarray(w, dt), "mean": np.asarray(mean, dt),
         "lnf": np.asarray(lnf, dt), "cut": onp.asarray(cut), "y0": np.asarray(y0, dt),
         "grid": np.linspace(0.0, 1.0, n_grid, dtype=dt),
         "wk": np.asarray(w_pv, dt), "mk": np.asarray(mean_all[..., :4], dt),
         "wf": np.asarray(w_f, dt), "fm": np.asarray(mean_all[..., 4], dt),
+        "parent": np.asarray(parent_of), "pairs": np.asarray(pairs, int),
+        "inner": np.asarray(inner),
+        "gap": np.asarray(gap, dt),
     }  # fmt: skip
 
 
@@ -1256,6 +1381,34 @@ def _unique_starts(lab, v, h, r):
     return onp.array(kept, int)
 
 
+# deliberate: polishes each C-step survivor on the label-summed target and takes its saddle-free Laplace covariance, a whole step that keeps search_cell under the function-length gate
+def _laplace_modes(space, x, info):
+    """The ``Mode`` of each start in ``x``: Newton on the label-summed target,
+    saddle-free Hessian covariance; adds the cost to ``info["evaluations"]``."""
+    newton = 4.0 + 3.0 * space.d  # one Newton step, in likelihood evaluations
+    modes = []
+    for xi in x:
+        xi, hi, ti, ni = (
+            onp.asarray(a)
+            for a in _refine(space, np.asarray(xi, space.dtype), N_NEWTON)
+        )
+        info["evaluations"] += N_NEWTON * newton
+        hi = 0.5 * (hi + hi.T)
+        if (
+            onp.isfinite(xi).all()
+            and onp.isfinite(hi).all()
+            and onp.isfinite(ti)
+        ):
+            # saddle-free: |eigenvalues|, floored at the numerical rank (a
+            # saturated coordinate has none); a saddle's t is still a proposal
+            e, vec = onp.linalg.eigh(hi)
+            e = onp.maximum(
+                onp.abs(e), len(e) * onp.finfo(hi.dtype).eps * onp.abs(e).max()
+            )
+            modes.append(Mode(xi, float(ti), (vec / e) @ vec.T, float(ni)))
+    return modes
+
+
 def search_cell(space, key=None, *, plan=None, info=None):
     """The modes of the label-summed target in one cell, best first.
 
@@ -1270,8 +1423,11 @@ def search_cell(space, key=None, *, plan=None, info=None):
     4. Newton on the label-summed objective; the covariance is the inverse of
        its saddle-free Hessian (``|eigenvalues|``); ``distinct_modes``.
 
-    ``info``, a dict, receives the counts of each step and ``evaluations``, the
-    likelihood-equivalent cost (a gradient is 3, a Hessian 3 per dimension).
+    ``info``, a dict, receives the counts of each step, the runs ended by the
+    step cap in each of the VarPro, pre-pass and C-step stages
+    (``varpro_capped`` of ``varpro_runs``, ``pre_capped`` of ``pre_runs``,
+    ``c_capped`` of ``c_runs``; only the C-steps are meant to converge) and
+    ``evaluations``, the likelihood-equivalent cost (a gradient is 3, a Hessian 3 per dimension).
 
     Source: Fischler & Bolles (1981), Rousseeuw (1984), Rousseeuw & Van Driessen
     (1999), Golub & Pereyra (1973).
@@ -1279,14 +1435,16 @@ def search_cell(space, key=None, *, plan=None, info=None):
     plan = search_plan(space, key) if plan is None else plan
     info = {} if info is None else info
     n_sets, d, k = len(plan["nights"]), space.d, len(space.cat.log_b)
-    newton = 4.0 + 3.0 * d  # one Newton step, in likelihood evaluations
     info.update(sets=n_sets, candidates=0, survivors=0, unique=0, modes=0)
+    info.update(varpro_runs=0, varpro_capped=0, pre_runs=0, pre_capped=0)
+    info.update(c_runs=0, c_capped=0)
     info["evaluations"] = 0.0
     if n_sets == 0:
         return []
-    r, is_min, ln_p = _grid_stage(space, plan)
+    r, is_min, ln_p, covered = _grid_stage(space, plan)
     s_i, z_i, p_i = onp.nonzero(onp.asarray(is_min))
     info["candidates"] = len(s_i)
+    info["covered"] = int(covered)
     info["evaluations"] += float(r.size * 2 / max(k, 1))
     frac = onp.clip(
         (onp.asarray(ln_p)[p_i] - float(space.ln_lo))
@@ -1310,7 +1468,10 @@ def search_cell(space, key=None, *, plan=None, info=None):
     info["evaluations"] += len(s_i) * N_VARPRO * (4.0 + 9.0) * 3 / max(k, 1)
     if not out:
         return []
-    x, lab, rr, v, h = (onp.concatenate([o[i] for o in out]) for i in range(5))
+    x, lab, rr, v, h, capped = (
+        onp.concatenate([o[i] for o in out]) for i in range(6)
+    )
+    info["varpro_runs"], info["varpro_capped"] = len(x), int(capped.sum())
     ok = onp.isfinite(x).all(1) & onp.isfinite(rr) & (rr <= plan["cut"][s_i])
     info["survivors"] = int(ok.sum())
     if not ok.any():
@@ -1321,6 +1482,7 @@ def search_cell(space, key=None, *, plan=None, info=None):
     info["unique"] = len(v)
     x = onp.zeros((len(v), d))
     r2, h2 = onp.zeros(len(v)), onp.zeros((len(v), 3, 3))
+    cap = onp.zeros(len(v), bool)
     active, steps = onp.arange(len(v)), 0
     for n_pass, n_iter in enumerate((N_PRE,) + (N_NEWTON,) * N_C):
         changed = []
@@ -1331,10 +1493,14 @@ def search_cell(space, key=None, *, plan=None, info=None):
                 np.asarray(_padded(v[idx], CHUNK_C), space.dtype),
                 np.asarray(_padded(lab[idx], CHUNK_C)), n_iter,
             )  # fmt: skip
-            vs, ls, xs, rs, hs = (onp.asarray(a)[: len(idx)] for a in res)
+            vs, ls, xs, rs, hs, cs = (onp.asarray(a)[: len(idx)] for a in res)
             changed.append(idx[(ls != lab[idx]).any(1)])
             v[idx], lab[idx], x[idx], r2[idx], h2[idx] = vs, ls, xs, rs, hs
+            cap[idx] = cs
             steps += len(idx) * n_iter
+        stage = "pre" if n_pass == 0 else "c"
+        info[f"{stage}_runs"] += len(active)
+        info[f"{stage}_capped"] += int(cap[active].sum())
         if n_pass == 0:
             # a few steps merge most candidates onto their modes
             ok = onp.isfinite(x).all(1) & onp.isfinite(v).all(1)
@@ -1345,6 +1511,7 @@ def search_cell(space, key=None, *, plan=None, info=None):
             if not len(keep):
                 return []
             v, lab, x, r2, h2 = v[keep], lab[keep], x[keep], r2[keep], h2[keep]
+            cap = onp.zeros(len(v), bool)
             active = onp.arange(len(v))
             continue
         active = onp.concatenate(changed) if changed else active[:0]
@@ -1355,27 +1522,7 @@ def search_cell(space, key=None, *, plan=None, info=None):
     x, lab, v, r2, h2 = x[ok], lab[ok], v[ok], r2[ok], h2[ok]
     keep = _unique_starts(lab, v, h2, r2)
     x = x[keep][_prune(space, x[keep])]
-    modes = []
-    for xi in x:
-        xi, hi, ti, ni = (
-            onp.asarray(a)
-            for a in _refine(space, np.asarray(xi, space.dtype), N_NEWTON)
-        )
-        info["evaluations"] += N_NEWTON * newton
-        hi = 0.5 * (hi + hi.T)
-        if (
-            onp.isfinite(xi).all()
-            and onp.isfinite(hi).all()
-            and onp.isfinite(ti)
-        ):
-            # saddle-free: |eigenvalues|, floored at the numerical rank (a
-            # saturated coordinate has none); a saddle's t is still a proposal
-            e, vec = onp.linalg.eigh(hi)
-            e = onp.maximum(
-                onp.abs(e), len(e) * onp.finfo(hi.dtype).eps * onp.abs(e).max()
-            )
-            modes.append(Mode(xi, float(ti), (vec / e) @ vec.T, float(ni)))
-    modes = distinct_modes(modes)
+    modes = distinct_modes(_laplace_modes(space, x, info))
     info["modes"] = len(modes)
     return modes
 
@@ -1435,7 +1582,8 @@ class CellFit:
     at_floor : bool
         ``cell-at-floor``: the draws sit at the all-outlier floor although the
         search found a mode above it, so the search missed the dominant mode.
-        The cell *failed*: never report its ``log_z`` as an evidence.
+        Never report the cell's ``log_z`` as an evidence. It fails the *system*
+        only if the cell could matter: see ``CellsResult.failed``.
     undersampled : bool
         ``cell-undersampled``: the ESS is below ``ESS_TARGET``; information only.
     unreliable : bool
@@ -1451,6 +1599,18 @@ class CellFit:
         Likelihood-equivalent evaluations of the search and the sampling.
     move : virgil.mode_search.Move or None
         The resample-move of ``draws`` (HMC acceptance and step size).
+    shared : list of Mode
+        Neighbour modes that straddle a shared edge, in this cell's chart: extra
+        components of the mixture (not in ``modes``).
+    info : dict
+        The search's counts (``c_capped``, ``c_runs``, ...:
+        [`search_cell`][virgil.orbit_cells.search_cell]).
+    log_l_sup : float
+        The largest ``ln L`` evaluated in the cell (at every found mode and
+        importance draw): a *lower* bound on the cell's ``sup ln L``, which
+        itself bounds ``ln Z_N`` (the cell prior is normalized). It is a bound
+        on ``Z_N`` only if the search found the cell's top mode (design
+        §6.10); ``nan`` (not set) counts as mattering.
     """
 
     cell: Cell
@@ -1470,19 +1630,14 @@ class CellFit:
     unreliable: bool = False
     nonfinite: bool = False
     move: object = dataclasses.field(repr=False, default=None)
+    shared: list = dataclasses.field(repr=False, default_factory=list)
+    info: dict = dataclasses.field(repr=False, default_factory=dict)
+    log_l_sup: float = float("nan")
 
     @property
     def failed(self):
         """The cell failed on its own: ``at_floor`` or ``nonfinite``."""
         return bool(self.at_floor or self.nonfinite)
-
-    @property
-    def log_z_upper(self):
-        """The larger of ``ln Ẑ`` and the best mode's Laplace ``ln Z``: an
-        unreliable ``ln Ẑ`` is usually low (missed mass), the Laplace value is
-        an independent estimate."""
-        lap = [laplace_log_evidence(m) for m in self.modes]
-        return max([self.log_z] + lap)
 
 
 def decode_particles(result):
@@ -1517,6 +1672,30 @@ def _draw(fit, key):
     return move.draws
 
 
+def _mixture(space, modes):
+    """The defensive mixture of ``modes`` (and the images of the target's
+    symmetries)."""
+    return DefensiveMixture(
+        modes, _log_prior, _prior_sampler(space.d, space.dtype),
+        images=_symmetry_images(space.d), dtype=space.dtype, dim=space.d,
+    )  # fmt: skip
+
+
+def _cell_evidence(space, modes, key, n_is):
+    """Defensive importance sampling of a cell on ``modes`` (and the images of
+    the target's symmetries)."""
+    mixture = _mixture(space, modes)
+    n_k = len(space.cat.log_b)
+    # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))
+    floor = float(onp.sum(space.cat.log_b)) + (
+        math.lgamma(n_k + 0.5) - 0.5 * math.log(math.pi) - math.lgamma(n_k + 1)
+    )
+    return importance_evidence(
+        _target, space, mixture, key, n_is, inliers_fn=_inliers,
+        log_floor=floor, m_min=M_MIN,
+    )  # fmt: skip
+
+
 def position_leg(
     summaries,
     log_outlier,
@@ -1534,6 +1713,7 @@ def position_leg(
     dtype="float64",
     plan=None,
     nu_width=None,
+    shared=(),
 ):
     """Search, defensive importance sampling and posterior draws of one cell.
 
@@ -1571,6 +1751,9 @@ def position_leg(
     nu_width : float, optional
         The widest cell in ``1 / P`` (``1 / T``), to size the plan's ``ln P``
         grid when ``plan`` is made here (default the width of ``cell``).
+    shared : sequence of Mode, optional
+        Neighbour modes in this cell's chart, extra mixture components
+        ([`position_cells`][virgil.orbit_cells.position_cells] makes them).
 
     Returns
     -------
@@ -1581,6 +1764,12 @@ def position_leg(
     cat = _Catalogue(summaries, log_outlier)
     name = onp.dtype(dtype).name
     k_plan, k_is, k_move = jax.random.split(key, 3)
+    if not onp.all(onp.isfinite(cat.log_b)):
+        raise ValueError(
+            "A night has a non-finite outlier log density b_k (a "
+            "non-finite peak mean or covariance): the all-outlier floor is "
+            "undefined."
+        )
     with run_in(name):
         space = _Space(
             cat, cell, 0.0, onp.asarray(t_nights, float) - t_anchor, a_range,
@@ -1589,25 +1778,23 @@ def position_leg(
         plan = search_plan(space, k_plan, nu_width) if plan is None else plan
         info = {}
         modes = search_cell(space, plan=plan, info=info)
-        mixture = DefensiveMixture(
-            modes, _log_prior, _prior_sampler(space.d, space.dtype),
-            images=_symmetry_images(space.d), dtype=space.dtype, dim=space.d,
-        )  # fmt: skip
-        n_k = len(cat.log_b)
-        # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))
-        floor = float(onp.sum(cat.log_b)) + (
-            math.lgamma(n_k + 0.5)
-            - 0.5 * math.log(math.pi)
-            - math.lgamma(n_k + 1)
-        )
-        ev = importance_evidence(
-            _target, space, mixture, k_is, n_is, inliers_fn=_inliers,
-            log_floor=floor, m_min=M_MIN,
-        )  # fmt: skip
+        ev = _cell_evidence(space, [*modes, *shared], k_is, n_is)
+        sup = [float(space.loglike(m.x)) for m in [*modes, *shared]]
+        if ev.log_q is not None:
+            ll = (
+                onp.asarray(ev.log_w)
+                + ev.log_q
+                - onp.asarray(
+                    jax.vmap(space.logprior)(np.asarray(ev.x)), float
+                )
+            )
+            sup.append(float(onp.max(ll[onp.isfinite(ll)], initial=-onp.inf)))
     fit = CellFit(
         cell, ev.log_z, ev.log_z_error, modes, None, ev.log_w, ev.x,
         ev.at_floor, ev.undersampled, int(info["evaluations"]), n_is, ev,
         plan, space, bool(ev.ess < ESS_FAIL), bool(ev.n_nonfinite > 0),
+        shared=list(shared), info=info,
+        log_l_sup=max(sup, default=float("-inf")),
     )  # fmt: skip
     if posterior_draws and not fit.failed:
         fit.draws = _draw(fit, k_move)
@@ -1723,13 +1910,22 @@ class CellsResult:
     jitter : float
         The position jitter used (mas).
     failed : numpy.ndarray
-        Cells at the floor (``cell-at-floor``: the search missed the dominant
-        mode), with a non-finite target, or unreliable (ESS below ``ESS_FAIL``)
-        *and* within ``W`` of the best cell (``ln`` mass ``+ ln Ẑ`` taken as
-        the larger of the importance and the Laplace estimates, so a cell whose
-        probability could reach the reporting precision ``δ``). A low-ESS cell
-        far below the best is information only. Any true entry makes ``p_pos``
-        undefined.
+        Cells with a non-finite target, or at the floor (``cell-at-floor``: the
+        search missed the dominant mode) or unreliable (ESS below ``ESS_FAIL``)
+        *and* it ``matters`` (below). A flagged cell that cannot matter is
+        information only: it stays flagged on its fit (``CellFit.at_floor``,
+        ``unreliable``) but does not fail the system. Any true entry makes
+        ``p_pos`` undefined.
+    upper, matters : numpy.ndarray
+        ``upper = ln mass + ln sup L`` bounds the cell's ``ln (mass Z_N)``.
+        With ``R`` the best ``ln mass + ln Ẑ`` among unflagged cells, a cell
+        ``matters`` iff it has no found mode or ``upper >= R - ln(n_cells/δ)``
+        (every flagged cell matters if none is unflagged).
+    omitted_bound : float
+        The summed ``exp(upper)`` of flagged cells that do not matter, over
+        the total mass. A diagnostic: below ``δ`` by the threshold, given the
+        search found each cell's top mode (a lower ``sup L`` would understate
+        it).
     """
 
     domain: PeriodDomain
@@ -1743,6 +1939,52 @@ class CellsResult:
     pruned_mass: float
     jitter: float
     failed: onp.ndarray
+    upper: onp.ndarray = None
+    matters: onp.ndarray = None
+    omitted_bound: float = None
+
+
+def _matters(cells, fits, log_p, delta):
+    """``(upper, matters, flagged, omitted_bound)`` of the cells.
+
+    ``upper = ln mass + ln sup L`` bounds a cell's ``ln (mass Z_N)``. With
+    ``R`` the largest ``ln mass + ln Ẑ`` of a cell that is neither failed nor
+    unreliable, a flagged cell is negligible iff ``upper < R - ln(n/δ)``: the
+    negligible cells hold at most ``δ`` of the mass in all (up to the
+    reference cell's own error). A cell without a found mode always matters,
+    as does every flagged cell if no cell is unflagged.
+
+    Source: design/orbit_alias_cycles.md §6.6, §6.10 (union bound).
+    """
+    n = len(cells)
+    upper = onp.array([c.log_mass + f.log_l_sup for c, f in zip(cells, fits)])
+    flagged = onp.array([bool(f.at_floor or f.unreliable) for f in fits])
+    no_mode = onp.array([len(f.modes) == 0 for f in fits])
+    ok = onp.array([not (f.failed or f.unreliable) for f in fits])
+    ok &= onp.isfinite(log_p)
+    r = log_p[ok].max() if ok.any() else -onp.inf
+    # a nan bound compares false: it matters
+    matters = no_mode | ~(upper < r - math.log(n / delta))
+    neg = flagged & ~matters
+    total = onp_logsumexp(log_p[onp.isfinite(log_p)])
+    omitted = float(onp.exp(upper[neg] - total).sum()) if neg.any() else 0.0
+    return upper, matters, flagged, omitted
+
+
+def _map(fn, items, workers):
+    """``[fn(i) for i in items]`` in ``workers`` threads, in order; the first
+    exception (or interrupt) cancels the queued items before it is raised.
+    One worker runs inline."""
+    if workers <= 1:
+        return [fn(i) for i in items]
+    pool = concurrent.futures.ThreadPoolExecutor(workers)
+    try:
+        return [f.result() for f in [pool.submit(fn, i) for i in items]]
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    finally:
+        pool.shutdown(wait=True)
 
 
 def position_cells(
@@ -1757,6 +1999,7 @@ def position_cells(
     delta=DELTA,
     n_is=N_IS,
     max_seconds=float("inf"),
+    workers=N_WORKERS,
     **leg_kwargs,
 ):
     """The position-level fit of every cell of ``domain``.
@@ -1793,6 +2036,11 @@ def position_cells(
         Importance draws per cell.
     max_seconds : float, optional
         Time cap on the whole run.
+    workers : int, optional
+        Cells run at once, in threads (default ``N_WORKERS``, one: inline);
+        the first cell runs alone, as it compiles the kernels and draws the
+        sets. The result does not depend on it: each cell has its own key.
+        Two threads cost about 0.3 GB more.
     **leg_kwargs
         Other arguments of [`position_leg`][virgil.orbit_cells.position_leg].
 
@@ -1815,40 +2063,336 @@ def position_cells(
     if jitter is None:
         jitter = fit_jitter(summaries, log_outlier, domain, (t_a, t_b))
     cells = make_cells(t_a, t_b, domain)
-    start, fits, plan = time.time(), [], None
-    for cell, k in zip(cells, jax.random.split(key, len(cells))):
+    workers = N_WORKERS if workers is None else workers
+    start = time.time()
+    keys = jax.random.split(key, len(cells))
+
+    def run(i, plan):
         if time.time() - start > max_seconds:
             raise RuntimeError(
-                f"position_cells reached max_seconds before cell N={cell.n}."
+                f"position_cells reached max_seconds before cell N={cells[i].n}."
             )
-        fits.append(
-            position_leg(
-                summaries, log_outlier, cell, k, t_anchor=t_a, t_nights=t_all,
-                jitter=jitter, n_is=n_is, posterior_draws=False, plan=plan,
-                nu_width=1.0 / t_ab, **leg_kwargs,
-            )
+        return position_leg(
+            summaries, log_outlier, cells[i], keys[i], t_anchor=t_a,
+            t_nights=t_all, jitter=jitter, n_is=n_is, posterior_draws=False,
+            plan=plan, nu_width=1.0 / t_ab, **leg_kwargs,
         )  # fmt: skip
-        plan = fits[0].plan
+
+    fits = [run(0, None)]
+    fits += _map(lambda i: run(i, fits[0].plan), range(1, len(cells)), workers)
+    # a neighbour's mode with more than δ of its ρ mass across the shared edge
+    # is a component here (its Laplace in ρ: a mode never leaves its own chart)
+    for i, (cell, fit) in enumerate(zip(cells, fits)):
+        shared = []
+        for j, side in ((i - 1, 1.0), (i + 1, -1.0)):
+            if not 0 <= j < len(cells):
+                continue
+            nu_edge = 1.0 / (cell.p_hi if side > 0 else cell.p_lo)
+            d_nu = 1.0 / cell.p_lo - 1.0 / cell.p_hi
+            for m in fits[j].modes:
+                lo = float(fits[j].space.ln_lo)
+                hi = float(fits[j].space.ln_hi)
+                u = 1.0 / (1.0 + math.exp(-float(m.x[0])))
+                nu = math.exp(-(lo + (hi - lo) * u))
+                sd = nu * (hi - lo) * u * (1.0 - u) * math.sqrt(m.cov[0, 0])
+                across = float(stats.norm.sf(abs(nu - nu_edge) / sd))
+                if not across > delta:
+                    continue
+                # centred on the tail inside this cell, from one σ_ρ to the
+                # edge stop, in this cell's chart
+                near = min(
+                    -math.log(
+                        min(sd / d_nu, 0.5) / (1.0 - min(sd / d_nu, 0.5))
+                    ),
+                    EDGE_STOP,
+                )
+                mid, half = (
+                    0.5 * (EDGE_STOP + near),
+                    max(0.5 * (EDGE_STOP - near), 1.0),
+                )
+                scale = onp.ones(len(m.x))
+                scale[0] = half / math.sqrt(m.cov[0, 0])
+                cov = scale[:, None] * m.cov * scale
+                x = onp.array(m.x, float)
+                x[0] = side * mid
+                # cell j's Laplace is under j's conditional prior: restate it
+                # in this cell's (the ratio of the cells' prior masses)
+                lap = (
+                    laplace_log_evidence(m) + math.log(across)
+                    + cells[j].log_mass - cell.log_mass
+                )  # fmt: skip
+                shift = (
+                    0.5 * len(x) * math.log(2.0 * math.pi)
+                    + 0.5 * (onp.linalg.slogdet(cov)[1])
+                )
+                shared.append(Mode(x, lap - shift, cov, m.n_inliers))
+        if shared:
+            with run_in(onp.dtype(fit.space.dtype).name):
+                ev = _cell_evidence(
+                    fit.space, [*fit.modes, *shared],
+                    jax.random.split(keys[i], 3)[1], n_is,
+                )  # fmt: skip
+            fit.shared, fit.evidence = shared, ev
+            fit.is_evaluations += n_is  # the first run's draws were discarded
+            fit.log_z, fit.log_z_error = ev.log_z, ev.log_z_error
+            fit.log_w, fit.x_is = ev.log_w, ev.x
+            fit.at_floor, fit.undersampled = ev.at_floor, ev.undersampled
+            fit.unreliable = bool(ev.ess < ESS_FAIL)
+            fit.nonfinite = bool(ev.n_nonfinite > 0)
     log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
-    upper = onp.array(
-        [c.log_mass + f.log_z_upper for c, f in zip(cells, fits)]
-    )
-    matters = upper >= upper.max() - W
+    upper, matters, flagged, omitted = _matters(cells, fits, log_p, delta)
     failed = onp.array(
-        [f.failed or (f.unreliable and m) for f, m in zip(fits, matters)]
+        [f.nonfinite or (fl and m) for f, fl, m in zip(fits, flagged, matters)]
     )
     if failed.any():
         p = onp.full(len(cells), onp.nan)
     else:
         p = onp.exp(log_p - onp_logsumexp(log_p))
     below = p < delta / len(cells)
-    for f, pi, k in zip(
-        fits, p, jax.random.split(jax.random.fold_in(key, 1), len(cells))
+    drawn = [
+        (f, k)
+        for f, pi, k in zip(
+            fits, p, jax.random.split(jax.random.fold_in(key, 1), len(cells))
+        )
+        if pi >= delta / len(cells)
+    ]
+    for (f, _), draws in zip(
+        drawn, _map(lambda fk: _draw(*fk), drawn, workers)
     ):
-        if pi >= delta / len(cells):
-            f.draws = _draw(f, k)
+        f.draws = draws
     return CellsResult(
         domain, (first, last), t_ab, cells, fits, p, below,
         below if prune else onp.zeros_like(below), float(p[below].sum()),
-        float(jitter), failed,
+        float(jitter), failed, upper, matters, omitted,
     )  # fmt: skip
+
+
+# ---------------------------------------------------------------------------
+# Census diagnostics: they read a fit and never change it
+# ---------------------------------------------------------------------------
+
+
+def truth_chart(space, orbit, t_anchor, ln_f, ln_s=0.0):
+    """The chart vector of a known orbit in the cell ``space`` (a diagnostic of
+    the population census, never an input of a fit).
+
+    ``t_anchor`` is the anchor time in days since ``orbit.t_ref``. ``y_z`` is
+    placed at the radius ``R0`` (the likelihood does not depend on it); the
+    label sign is not encoded: it is a symmetry of the target (the swap among
+    ``_symmetry_images``).
+    """
+    z, zeta = oc.campbell_to_coordinates(orbit, t_anchor)
+    z, zeta = onp.asarray(z, float), onp.asarray(zeta, float)
+
+    def logit(frac):
+        frac = onp.clip(frac, 1e-6, 1.0 - 1e-6)
+        return onp.log(frac) - onp.log1p(-frac)
+
+    la = math.log(space.a_range[0])
+    da = math.log(space.a_range[1] / space.a_range[0])
+    ln_lo, ln_hi = float(space.ln_lo), float(space.ln_hi)
+    u = zeta / math.sqrt(space.e_max)  # the disc point of the ζ chart
+    w_s = onp.zeros(space.d - 9)
+    if space.cat.rescalable:
+        w_s += logit((ln_s / math.log(S_MAX) + 1.0) / 2.0)
+    return onp.concatenate(
+        [
+            [logit((math.log(float(orbit.period)) - ln_lo) / (ln_hi - ln_lo))],
+            z / onp.linalg.norm(z) * R0,
+            [logit((math.log(float(onp.sum(z**2) / 2.0)) - la) / da)],
+            u / onp.sqrt(max(1.0 - onp.sum(u**2), 1e-12)),
+            [logit(1.0 - ln_f / space.ln_f_floor)],
+            w_s,
+        ]
+    )
+
+
+def _maha2(r, cov):
+    return float(r @ onp.linalg.solve(onp.asarray(cov, float), r))
+
+
+def _group(d):
+    return [onp.eye(d), *_symmetry_images(d)]
+
+
+def truth_distance2(space, mode, x_true):
+    """Squared Mahalanobis distance of ``mode`` to the truth, under the mode's
+    Laplace covariance, minimized over the images of the target's symmetries
+    (design §14 assertion 5). The radius of ``y_z`` is set to the mode's: the
+    likelihood is blind to it."""
+    best = onp.inf
+    x = onp.asarray(mode.x, float)
+    for g in _group(space.d):
+        t = g @ x_true
+        t[_Z] *= onp.linalg.norm(x[_Z]) / onp.linalg.norm(t[_Z])
+        best = min(best, _maha2(t - x, mode.cov))
+    return best
+
+
+def oracle_evidence(fit, x_true, key, n_is=N_IS):
+    """The mass oracle of a cell: its defensive IS rerun with the
+    truth-started optimum added as a mixture component.
+
+    The optimum is Newton (the search's own ``_refine``) on the label-summed
+    objective from the best of the symmetry images of ``x_true``
+    (``truth_chart``). Adding a component keeps the estimate unbiased. Nothing
+    of ``fit`` changes: the result is a dict of diagnostic columns.
+
+    Returns
+    -------
+    dict
+        ``oracle_log_z`` and ``oracle_log_z_error`` (the augmented IS),
+        ``oracle_ess``, ``oracle_laplace`` (the optimum's Laplace ``ln Z``),
+        ``oracle_gap`` (augmented minus unaided ``ln Ẑ``), ``oracle_sd`` (the
+        two errors in quadrature) and ``oracle_basin`` (the number of found
+        modes whose Newton run ends at the optimum); ``oracle_log_z`` is
+        ``nan`` and ``oracle_basin`` -1 if the optimum is not finite.
+    """
+    space = fit.space
+    with run_in(onp.dtype(space.dtype).name):
+        starts = onp.array([g @ x_true for g in _group(space.d)])
+        value = onp.array(
+            [
+                float(_objective(np.asarray(s, space.dtype), space))
+                for s in starts
+            ]
+        )
+        value = onp.where(onp.isfinite(value), value, -onp.inf)
+        found = _laplace_modes(
+            space, starts[[int(onp.argmax(value))]], {"evaluations": 0.0}
+        )
+        if not found:
+            return dict(oracle_log_z=onp.nan, oracle_basin=-1)
+        mode = found[0]
+        ev = _cell_evidence(space, [*fit.modes, mode], key, n_is)
+        # a found mode shares the optimum's basin when Newton from it ends at
+        # the optimum or a symmetry image, by the distinct-mode rule (both
+        # covariances, ``MAHAL``)
+        images = [
+            (g @ onp.asarray(mode.x, float), g @ mode.cov @ g.T)
+            for g in _group(space.d)
+        ]
+        basin = 0
+        for m in fit.modes:
+            x = onp.asarray(
+                _refine(space, np.asarray(m.x, space.dtype), N_NEWTON)[0]
+            )
+            basin += any(
+                max(_maha2(x - gx, gc), _maha2(x - gx, m.cov)) < MAHAL
+                for gx, gc in images
+            )
+    return dict(
+        oracle_log_z=ev.log_z, oracle_log_z_error=ev.log_z_error,
+        oracle_ess=ev.ess, oracle_laplace=laplace_log_evidence(mode),
+        oracle_gap=ev.log_z - fit.log_z,
+        oracle_sd=math.hypot(ev.log_z_error, fit.log_z_error),
+        oracle_basin=int(basin),
+    )  # fmt: skip
+
+
+N_BLOCK = 200  # redraws per block of ``block_variance`` (a fixed diagnostic)
+_Z_BLOCK = slice(1, 6)  # (y_z[4], w_a): the Thiele–Innes block of the chart
+
+
+def block_variance(fit, key, n=N_BLOCK):
+    """Variance of ``ln w`` of a cell's importance sampling by block.
+
+    Take the highest-weight draw ``x*`` of the cell's IS and the mixture
+    component ``m*`` it most belongs to. **z block**: freeze θ = (w_P, y_ζ,
+    w_f, w_s) at ``x*`` and redraw ``(y_z, w_a)`` from the conditional of the
+    multivariate t of ``m*``; **θ block**: freeze z and redraw θ. ``ln w`` is
+    ``ln target - ln q`` of the full mixture. Diagnostics only: nothing of
+    ``fit`` changes.
+
+    Returns
+    -------
+    dict
+        ``var_lnw_z`` and ``var_lnw_theta`` (``nan`` for a cell without modes
+        or draws).
+    """
+    nan = dict(var_lnw_z=onp.nan, var_lnw_theta=onp.nan)
+    ev, space = fit.evidence, fit.space
+    if not fit.modes or ev is None or not onp.isfinite(ev.log_w).any():
+        return nan
+    with run_in(onp.dtype(space.dtype).name):
+        mix = _mixture(space, fit.modes)
+        x_star = onp.asarray(ev.x, float)[int(onp.argmax(ev.log_w))]
+        z = onp.einsum(
+            "mij,mj->mi",
+            onp.asarray(mix.linv, float),
+            x_star - onp.asarray(mix.mu, float),
+        )
+        df, d = mix.df, space.d
+        lt = -0.5 * (df + d) * onp.log1p(
+            (z**2).sum(-1) / df
+        ) - 0.5 * onp.asarray(mix.logdet, float)
+        m = int(onp.argmax(onp.asarray(mix.log_w, float) + lt))
+        mu = onp.asarray(mix.mu, float)[m]
+        chol = onp.asarray(mix.chol, float)[m]
+        cov = chol @ chol.T
+        in_z = onp.zeros(d, bool)
+        in_z[_Z_BLOCK] = True
+        k_z, k_t = jax.random.split(key)
+        out = {}
+        for name, free, k in (
+            ("var_lnw_z", in_z, k_z),
+            ("var_lnw_theta", ~in_z, k_t),
+        ):
+            fix = ~free
+            s_cc = cov[onp.ix_(fix, fix)]
+            gain = cov[onp.ix_(free, fix)] @ onp.linalg.inv(s_cc)
+            r = x_star[fix] - mu[fix]
+            delta = float(r @ onp.linalg.solve(s_cc, r))
+            nu = df + fix.sum()
+            c_f = (
+                (df + delta)
+                / nu
+                * (cov[onp.ix_(free, free)] - gain @ cov[onp.ix_(fix, free)])
+            )
+            l_f = onp.linalg.cholesky(0.5 * (c_f + c_f.T))
+            k_n, k_g = jax.random.split(k)
+            e = onp.asarray(jax.random.normal(k_n, (n, int(free.sum()))))
+            g = onp.asarray(jax.random.gamma(k_g, 0.5 * nu, (n,))) / (0.5 * nu)
+            x = onp.tile(x_star, (n, 1))
+            x[:, free] = (mu[free] + gain @ r) + e @ l_f.T / onp.sqrt(g)[
+                :, None
+            ]
+            xj = np.asarray(x, space.dtype)
+            lw = onp.asarray(
+                jax.vmap(lambda v: _target(v, space) - mix.log_q(v))(xj),
+                float,
+            )
+            lw = lw[onp.isfinite(lw)]
+            out[name] = float(onp.var(lw)) if len(lw) > 1 else onp.nan
+    return out
+
+
+def persist_arrays(fit, key):
+    """The arrays that rebuild a cell's baseline: every mode (chart ``x``,
+    Laplace covariance, ``log_target``, inlier count, night labels, ``-1`` for
+    an outlier, and the inlier set), the IS draws and their ``ln w`` and the
+    cell's JAX key (data)."""
+    space = fit.space
+    n_k, d = len(space.cat.log_b), space.d
+    with run_in(onp.dtype(space.dtype).name):
+        labels = onp.array(
+            [
+                onp.asarray(_labels(np.asarray(m.x, space.dtype), space))
+                for m in fit.modes
+            ],
+            int,
+        ).reshape(len(fit.modes), n_k)
+    arrays = dict(
+        mode_x=onp.array([onp.asarray(m.x, float) for m in fit.modes]).reshape(-1, d),
+        mode_cov=onp.array([onp.asarray(m.cov, float) for m in fit.modes]).reshape(-1, d, d),
+        mode_log_target=onp.array([float(m.log_target) for m in fit.modes]),
+        mode_n_inliers=onp.array([float(m.n_inliers) for m in fit.modes]),
+        mode_labels=labels, mode_inliers=labels >= 0,
+        key=onp.asarray(jax.random.key_data(key)),
+    )  # fmt: skip
+    if fit.evidence is not None:
+        arrays.update(
+            is_x=onp.asarray(fit.evidence.x, float),
+            is_log_w=onp.asarray(fit.evidence.log_w, float),
+        )
+    return arrays

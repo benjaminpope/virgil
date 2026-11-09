@@ -28,6 +28,7 @@ pytestmark = pytest.mark.xdist_group("pipeline_orbit_resolved")
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(900)
 def test_a_resolved_primary_is_fitted(tmp_path):
     import virgil.aliases as aliases
@@ -51,6 +52,7 @@ def test_a_resolved_primary_is_fitted(tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(900)
 def test_a_highly_eccentric_orbit_is_recovered(tmp_path):
     truth = {**TRUTH, "ecc": 0.8}

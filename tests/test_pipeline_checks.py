@@ -545,7 +545,7 @@ _BRANCHES = [
         lambda: checks.model_gain(
             "gain", 10.0, 20.0, 100, n_extra=3, simple="a", complex_="b"
         ),
-        "warn",
+        "fail",
     ),
     (
         "gain-preferred",
@@ -1193,3 +1193,76 @@ def test_r_hat_cannot_pass_without_enough_effective_samples():
     assert checks.r_hat(0.99, ess=500.0).status == "pass"
     assert checks.r_hat(0.99, ess=150.0).status == "warn"
     assert checks.r_hat(1.2, ess=20.0).status == "fail"
+
+
+def test_an_unidentified_model_gain_warns_and_says_why():
+    check = checks.model_gain(
+        "gain",
+        300.0,
+        250.0,
+        81,
+        n_extra=2,
+        simple="uniform disk",
+        complex_="limb-darkened",
+        unidentified=True,
+    )
+    assert check.status == "warn"
+    assert "unidentified" in check.message
+
+
+@pytest.mark.parametrize(
+    "mean, error, status",
+    [
+        (0.5, 1.0, "pass"),
+        (4.0, 1.0, "warn"),
+        (6.0, 1.0, "fail"),
+        (None, None, "pass"),
+        (NAN, 1.0, "fail"),
+        (INF, 1.0, "fail"),
+        (1.0, NAN, "fail"),
+        (1.0, 0.0, "fail"),
+    ],
+)
+def test_short_baselines_with_a_non_finite_residual_fails(mean, error, status):
+    assert _status(checks.short_baselines(mean, error)) == status
+
+
+@pytest.mark.parametrize(
+    "make, status",
+    [
+        (lambda: checks.quoted_errors({"v2": _blocks(n_bad=3)}), "fail"),
+        (lambda: checks.quoted_errors({"v2": _blocks(equal=True)}), "warn"),
+        (lambda: checks.quoted_errors({"v2": _blocks()}), "pass"),
+        (lambda: checks.orientation(NAN, True), "fail"),
+        (lambda: checks.orientation(2.0, True), "warn"),
+        (lambda: checks.orientation(2.0, False), "warn"),
+        (lambda: checks.edges([], NAN), "fail"),
+        (lambda: checks.edges([], 0.5), "warn"),
+        (lambda: checks.ensemble_kept(0, 10), "fail"),
+        (lambda: checks.ensemble_kept(2, 10), "warn"),
+        (lambda: checks.ensemble_kept(8, 10), "pass"),
+        (lambda: checks.ensemble_spread(NAN, 5), "fail"),
+        (lambda: checks.ensemble_spread(0.9, 5), "warn"),
+        (lambda: checks.ensemble_spread(0.1, 5), "pass"),
+    ],
+)
+def test_two_way_checks_fail_when_the_result_is_invalid(make, status):
+    assert _status(make()) == status
+
+
+def _blocks(equal=False, n_bad=0):
+    return {"all_equal": equal, "n_bad": n_bad}
+
+
+@pytest.mark.parametrize(
+    "message, status",
+    [
+        ("the optimizer did not converge at 5 of 6561 grid positions", "warn"),
+        (
+            "the optimizer did not converge at 6561 of 6561 grid positions",
+            "fail",
+        ),
+    ],
+)
+def test_convergence_fails_when_every_grid_position_fails(message, status):
+    assert checks.convergence([_w(message)]).status == status

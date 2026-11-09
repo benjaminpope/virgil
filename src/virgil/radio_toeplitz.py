@@ -43,9 +43,10 @@ import numpy as onp
 from . import _nufft_spread as grid
 from ._geometry import gaussian_taper, offset_phase, rotate
 from ._utils import mas2rad
-from .models import Image, System
+from .models import Image, LinearImage, System
 from .radio import (
     _checked_sigma,
+    _owned_image,
     _require_function,
     _scene_function,
     _TermBase,
@@ -241,11 +242,11 @@ class ToeplitzVisData(eqx.Module):
                 if nuisance.offsets
                 else "offsets='spread' needs a nuisance that fits offsets."
             )
-        if not isinstance(image, Image):
+        if not isinstance(image, (Image, LinearImage)):
             raise TypeError(
-                f"image must be an Image (the layout), not {type(image).__name__}."
+                f"image must be an Image or LinearImage (the layout), not {type(image).__name__}."
             )
-        nrow, ncol = image.eta.shape
+        nrow, ncol = _shape(image)
         if nrow != ncol:
             raise ValueError(f"the Image must be square, not {nrow} x {ncol}.")
         if onp.ndim(image.dra) or onp.ndim(image.ddec):
@@ -262,7 +263,11 @@ class ToeplitzVisData(eqx.Module):
         bound = 0.0
         if free:
             # The largest image-frame shift (pixels) of the offsets' prior box.
-            shift_mas = max_offset_mas or nuisance._max_offset_mas
+            shift_mas = (
+                nuisance._max_offset_mas
+                if max_offset_mas is None
+                else max_offset_mas
+            )
             if shift_mas is None:
                 free_obs = onp.arange(nuisance.n_obs) != nuisance.ref_obs
                 unit = nuisance.offset_unit_mas[free_obs]
@@ -307,9 +312,6 @@ class ToeplitzVisData(eqx.Module):
             last_l += [False] * (n_chunks - 1) + [True] * min(n_chunks, 1)
         idx = onp.concatenate(idx_l).reshape(-1, chunk)
         valid = onp.concatenate(valid_l).reshape(-1, chunk)
-        chunk_group = onp.asarray(group_l, dtype=onp.int32)
-        last = onp.asarray(last_l, dtype=bool)
-        nf_b = grid.grid_size(2 * npix, kp)
         nf_d = grid.grid_size(npix + 2 * math.ceil(bound), kp)
         margin = grid.margin(nf_d, kp) if free else None
         if free and tau > margin:
@@ -326,30 +328,26 @@ class ToeplitzVisData(eqx.Module):
         self.plan = dict(
             idx=np.asarray(used[idx]),
             valid=np.asarray(valid),
-            group=np.asarray(chunk_group),
-            last=np.asarray(last),
+            group=np.asarray(group_l, dtype=onp.int32),
+            last=np.asarray(last_l, dtype=bool),
             tx=chunked(tx),
             ty=chunked(ty),
             h=chunked(h),
             rot=chunked(rot),
         )
-        self.data = data
-        self.mask = mask
-        self.npix = npix
+        self.data, self.mask, self.npix = data, mask, npix
         self.pixel_scale_mas = float(pix)
         self.rotation_deg = float(image.rotation_deg)
         self.blur_fwhm_mas = image.blur_fwhm_mas
         self.image_offset_mas = (dra, ddec)
-        self.free_offsets = free
-        self.max_shift_pix = float(bound)
-        self.nyquist_fraction = tau
-        self.margin = margin
+        self.free_offsets, self.max_shift_pix = free, float(bound)
+        self.nyquist_fraction, self.margin = tau, margin
         self.signature = _signature(nuisance)
         self.kp = kp
-        self.sizes = (n_groups, nf_b, nf_d)
-        count = onp.bincount(group, minlength=n_groups).astype(onp.float64)
+        self.sizes = (n_groups, grid.grid_size(2 * npix, kp), nf_d)
         self.arrays = dict(
-            self._compute(data.vis, data.weight), count=np.asarray(count)
+            self._compute(data.vis, data.weight),
+            count=np.asarray(counts, dtype=onp.float64),
         )
 
     def _compute(self, vis, weight):
@@ -470,6 +468,10 @@ class ToeplitzVisData(eqx.Module):
 # ----------------------------------------------------------------------
 
 
+def _shape(image):
+    return image.brightness.shape
+
+
 def _single_image(scene):
     """``(image, offsets)``: the one Image of ``scene`` and every offset leaf
     on the way to it (their sum must be the template's)."""
@@ -484,7 +486,7 @@ def _single_image(scene):
             )
         offsets += [model.dra, model.ddec]
         model = parts[0]
-    if not isinstance(model, Image):
+    if not isinstance(model, (Image, LinearImage)):
         raise TypeError(
             "The Toeplitz term needs a scene of one Image, not "
             f"{type(model).__name__}. Use ComplexVisData.term."
@@ -528,8 +530,17 @@ class _ToeplitzTerm(_TermBase):
         scene = self.scene(values)
         _warn_double_blur(scene, self.nuisance)
         image, offsets = _single_image(scene)
+        # an owned flux is the pixels themselves (fit_flux=False: flux 1), so
+        # the loss is quadratic in them and the Gauss–Newton curvature exact
+        owned = _owned_image(scene, self.nuisance) is not None
+        if owned:
+            image = eqx.error_if(
+                image,
+                np.sum(image.fluxes) <= 0.0,
+                "Σ pixels must be positive.",
+            )
         layout = (
-            image.eta.shape,
+            _shape(image),
             image.pixel_scale_mas,
             image.rotation_deg,
             image.blur_fwhm_mas,
@@ -545,7 +556,7 @@ class _ToeplitzTerm(_TermBase):
             np.asarray(ddec) != self.image_offset_mas[1]
         )
         return eqx.error_if(
-            image.brightness,
+            image.fluxes if owned else image.brightness,
             moved,
             "The Toeplitz term needs the scene's Image (with any System "
             "around it) at the template's offset; fit the offsets as "

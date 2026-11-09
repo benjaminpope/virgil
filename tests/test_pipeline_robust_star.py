@@ -401,7 +401,7 @@ def test_the_shape_is_unidentified_for_an_unresolved_star_on_a_second_realizatio
     comparison = res.summary["comparison"]
     assert comparison["preferred"] == "uniform"
     assert comparison["unidentified"]
-    assert "[pass] limb_darkening_gain" in res.describe()
+    assert "[warn] limb_darkening_gain" in res.describe()
     assert "unidentified" in res.describe()
 
 
@@ -441,6 +441,7 @@ def test_golden_default_settings_recover_a_uniform_disk(tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.xfail(
     strict=True,
     reason="virgil#580: the limb-darkened disk sampled explicitly on a star whose "
@@ -532,6 +533,7 @@ def test_a_constrained_shape_is_fitted_and_kept_when_the_data_resolve_it(
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(1800)
 def test_a_constrained_limb_darkened_star_mixes_at_the_default_draws(tmp_path):
     """A positive control, not a regression test of the gate (the same run

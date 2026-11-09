@@ -51,6 +51,7 @@ EXPECTED = {
     "virgil.crossval": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
+        "LinearImage",
         "MultipoleDisk",
         "ThinRing",
         "GaussianRing",
@@ -77,8 +78,8 @@ EXPECTED = {
         "GPFit",
         "EvidenceGrid",
     },
-    "virgil.imaging": {"clean", "CleanResult"},
-    "virgil.fitting": {"gauss_newton_diag"},
+    "virgil.imaging": {"clean", "CleanResult", "DofDiscrepancy"},
+    "virgil.fitting": {"gauss_newton_diag", "kkt_report"},
     "virgil.plotting": {"plot_field_draws"},
     "virgil.likelihood": {
         "group_outlier_mixture",

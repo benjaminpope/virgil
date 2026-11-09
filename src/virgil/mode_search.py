@@ -89,7 +89,8 @@ class Evidence:
     is the sentinel: the draws sit at the all-outlier floor although a mode
     with at least ``m_min`` inliers has a Laplace ``ln Z`` ``W`` nats above it; ``log_z`` must
     then not be reported. ``undersampled`` is ``ess < ESS_TARGET``
-    (information only). ``n_inliers`` is the weighted mean of ``inliers_fn``.
+    (information only). ``n_inliers`` is the weighted mean of ``inliers_fn``;
+    ``log_q`` is the proposal's log density at the draws (``None`` if unset).
     """
 
     log_z: float
@@ -101,6 +102,7 @@ class Evidence:
     undersampled: bool
     n_inliers: float
     n_nonfinite: int
+    log_q: object = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -298,12 +300,12 @@ class DefensiveMixture:
 
 @functools.partial(jax.jit, static_argnames=("log_target", "inliers_fn", "n"))
 def _is_kernel(log_target, inliers_fn, theta, mixture, key, n):
-    """Draws from ``q``, ``ln p - ln q`` and the inlier count of each."""
+    """Draws from ``q``, ``ln p - ln q``, the inlier count and ``ln q``."""
     x = mixture.sample(key, n)
     lt = jax.vmap(lambda v: log_target(v, theta))(x)
     lq = jax.vmap(mixture.log_q)(x)
     inl = jax.vmap(lambda v: inliers_fn(v, theta))(x)
-    return x, lt - lq, inl
+    return x, lt - lq, inl, lq
 
 
 def importance_evidence(
@@ -324,7 +326,7 @@ def importance_evidence(
     Evidence
         The weighted draws are exact posterior draws once resampled.
     """
-    x, lw, inl = _is_kernel(log_target, inliers_fn, theta, mixture, key, n)
+    x, lw, inl, lq = _is_kernel(log_target, inliers_fn, theta, mixture, key, n)
     lw = onp.asarray(lw, float)
     bad = onp.isnan(lw) | onp.isposinf(lw)
     lw = onp.where(bad, -onp.inf, lw)
@@ -344,7 +346,7 @@ def importance_evidence(
     at_floor = bool(n_in < m_min and found and max(found) > log_floor + W)
     return Evidence(
         log_z, err, ess, onp.asarray(x), lw, at_floor, ess < ESS_TARGET,
-        n_in, int(bad.sum()),
+        n_in, int(bad.sum()), onp.asarray(lq, float),
     )  # fmt: skip
 
 

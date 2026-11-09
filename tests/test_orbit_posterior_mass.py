@@ -186,3 +186,79 @@ def test_the_clock_is_read_inside_the_compiled_function(monkeypatch):
     assert float(alive(np.asarray(0.0))) == 0.0
     now[0] = 10.0  # the same compiled function, after the deadline
     assert float(alive(np.asarray(0.0))) == -np.inf
+
+
+def _walled_model(half_width):
+    """A unit normal with the log-density -inf outside |x| < half_width."""
+
+    def model():
+        x = numpyro.sample("x", dist.Normal(0.0, 1.0))
+        numpyro.factor("wall", np.where(np.abs(x) < half_width, 0.0, -np.inf))
+
+    return model
+
+
+def test_a_jittered_start_off_the_support_is_redrawn_not_copied(monkeypatch):
+    from numpyro.infer import MCMC
+
+    seen = {}
+    run = MCMC.run
+
+    def spy(self, *args, init_params=None, **kwargs):
+        seen["x"] = onp.asarray(init_params["x"])
+        return run(self, *args, init_params=init_params, **kwargs)
+
+    monkeypatch.setattr(MCMC, "run", spy)
+    _run_chains(
+        _walled_model(0.3),
+        {**SETTINGS, "num_chains": 3, "num_warmup": 5, "num_samples": 5},
+        {"x": onp.array(0.0)},
+        dense_mass=False,
+        jitter=onp.array([[1.0]]),
+        max_tree_depth=3,
+    )
+    x = seen["x"]
+    assert x[0] == 0.0
+    assert len(set(x.tolist())) == 3  # no chain copies another's start
+    assert onp.all(onp.abs(x) < 0.3)  # every start has a finite density
+
+
+def test_no_finite_jittered_start_raises_instead_of_copying_the_mode():
+    import pytest
+
+    with pytest.raises(ValueError, match="No jittered start for chain 1"):
+        _run_chains(
+            _walled_model(1e-4),
+            {**SETTINGS, "num_warmup": 5, "num_samples": 5},
+            {"x": onp.array(0.0)},
+            dense_mass=False,
+            jitter=onp.array([[1.0]]),
+            max_tree_depth=3,
+        )
+
+
+def test_finite_jittered_starts_are_the_seeded_draws_of_each_chain(
+    monkeypatch,
+):
+    """With every start finite, chain k starts at 0.3 L eps[k] for the rows
+    of one seeded (n, d) normal draw, as before the redraw."""
+    from numpyro.infer import MCMC
+
+    seen = {}
+    run = MCMC.run
+
+    def spy(self, *args, init_params=None, **kwargs):
+        seen["x"] = onp.asarray(init_params["x"])
+        return run(self, *args, init_params=init_params, **kwargs)
+
+    monkeypatch.setattr(MCMC, "run", spy)
+    _run_chains(
+        _walled_model(1e3),
+        {**SETTINGS, "num_chains": 3, "num_warmup": 5, "num_samples": 5},
+        {"x": onp.array(0.0)},
+        dense_mass=False,
+        jitter=onp.array([[2.0]]),
+        max_tree_depth=3,
+    )
+    eps = onp.random.default_rng(SETTINGS["seed"]).standard_normal((3, 1))
+    assert onp.allclose(seen["x"], [0.0, 0.6 * eps[1, 0], 0.6 * eps[2, 0]])
