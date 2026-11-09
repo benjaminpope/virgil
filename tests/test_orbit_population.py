@@ -312,7 +312,9 @@ MAIN_MODES = [3, 1, 2, 2, 2, 2, 2, 1, 2, 2, 1, 1]
 @pytest.mark.slow
 @pytest.mark.full_only
 @pytest.mark.timeout(900)
-def test_position_cells_matches_main_before_the_counters_were_added():
+def test_position_cells_matches_main_before_the_counters_were_added(
+    monkeypatch,
+):
     """Refactor equivalence, not a correctness oracle: ``p_pos`` and every
     cell's ``ln Ẑ`` equal those of ``origin/main`` at
     cdaa3f82825115379e0d7e688ab21812575cf384, before the step-cap counters and
@@ -334,6 +336,13 @@ def test_position_cells_matches_main_before_the_counters_were_added():
     and 0.0063.)"""
     import jax
 
+    # the pinned values are those of the old simulator (noise-free N_OBS s²)
+    monkeypatch.setattr(
+        pop, "_noise_outliers_and_chi2",
+        lambda rng, mean, outlier, ln_s, sigma: (
+            mean, onp.full(len(mean), pop.N_OBS * onp.exp(2 * ln_s))
+        ),
+    )  # fmt: skip
     rng, _ = pop.streams(0, 57)
     nights = pop.draw_nights(rng)
     _, fit = pop.fit_domain(nights)
@@ -409,3 +418,75 @@ def test_the_census_simulates_and_labels_in_float64(monkeypatch):
     with jax.enable_x64(False):
         pop.oc_cells._labels(None, space)
     assert seen_state == [(True, onp.dtype("float64"))]
+
+
+def test_the_within_night_chi2_is_drawn_not_set():
+    """A night's χ² is s² χ²_{N_OBS - N_PAR}: mean and variance over the
+    inlier nights, and not the old noise-free N_OBS s²."""
+    rng = onp.random.default_rng(11)
+    z, outlier_scales = [], 0
+    while len(z) < 600:
+        nights = pop.draw_nights(rng)
+        _, fit = pop.fit_domain(nights)
+        if fit is None:
+            continue
+        sysd = pop.draw_system(rng, nights, fit)
+        s2 = onp.exp(2 * sysd["ln_s"])
+        for i, night in enumerate(sysd["summaries"]):
+            c2 = float(night.peaks[0].chi2[0])
+            if i in sysd["outliers"]:
+                outlier_scales += 1
+                assert c2 > 0.0
+            else:
+                z.append(c2 / s2)
+    z = onp.array(z)
+    nu = pop.N_OBS - pop.N_PAR
+    assert abs(z.mean() - nu) < 4 * onp.sqrt(2 * nu / len(z))
+    assert abs(z.var() - 2 * nu) < 4 * 2 * nu * onp.sqrt(2 / (len(z) - 1)) * 1.5
+    assert z.std() > 1.0  # not the old noise-free N_OBS s^2
+
+
+def test_the_chi2_draw_leaves_the_pairing_structure_alone():
+    """The same stream gives the same truth, means and χ² (before and after
+    an unrelated fit stream draw), and the draws before the χ² block are
+    unchanged in count: the truth does not depend on the χ² draws."""
+    def one():
+        rng, _ = pop.streams(5, 0)
+        nights = pop.draw_nights(rng)
+        _, fit = pop.fit_domain(nights)
+        pop._loguniform(rng, *pop.P_TRUE)
+        return pop.draw_system(rng, nights, fit)
+
+    a, b = one(), one()
+    assert a["period"] == b["period"] and a["ln_s"] == b["ln_s"]
+    for sa, sb in zip(a["summaries"], b["summaries"]):
+        onp.testing.assert_array_equal(sa.peaks[0].mean, sb.peaks[0].mean)
+        onp.testing.assert_array_equal(sa.peaks[0].chi2, sb.peaks[0].chi2)
+
+
+def test_the_fit_scores_the_drawn_chi2_without_bias_in_ln_s():
+    """For a fixed state and s, simulated (m, χ²) through ``_peak_terms`` give
+    a flat-prior posterior mean of ln s that is unbiased on average (the
+    draw's N_OBS - N_PAR dof plus the 5 of the mean make the N_OBS of the
+    likelihood)."""
+    import jax
+    import jax.numpy as np
+
+    oc = pop.oc_cells
+    n, ln_s0, sigma = 2000, 0.4, 1e-3
+    rng = onp.random.default_rng(0)
+    cov = pop._cov(sigma)
+    mean = onp.exp(ln_s0) * rng.multivariate_normal(onp.zeros(5), cov, size=n)
+    chi2 = onp.exp(2 * ln_s0) * rng.chisquare(pop.N_OBS - pop.N_PAR, size=n)
+    summaries = pop._summaries(onp.arange(n, dtype=float), mean, sigma, chi2)
+    grid = onp.linspace(ln_s0 - 1.5, ln_s0 + 1.5, 601)
+    with jax.enable_x64(True):
+        cat = oc._Catalogue(summaries, -5.0).cast(np.float64)
+        state = np.zeros((n, 5))
+        terms = onp.stack([
+            onp.asarray(oc._peak_terms(cat, np.array([g]), 0.0, state, np.float64))[:, 0]
+            for g in grid
+        ])  # fmt: skip
+    w = onp.exp(terms - terms.max(axis=0))
+    post = (w * grid[:, None]).sum(0) / w.sum(0)
+    assert abs(post.mean() - ln_s0) < 4 * post.std() / onp.sqrt(n)
