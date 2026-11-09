@@ -83,6 +83,7 @@ __all__ = [
     "search_cell",
     "search_plan",
     "smc_cell",
+    "smc_rounds",
 ]
 
 __provisional__ = ("*",)
@@ -2209,6 +2210,37 @@ def _map(fn, items, workers):
         pool.shutdown(wait=True)
 
 
+def smc_rounds(cells, fits, key, delta, start, max_seconds, workers):
+    """Run [`smc_cell`][virgil.orbit_cells.smc_cell] on the unreliable cells
+    that matter, in rounds, and return ``(log_p, upper, matters, flagged,
+    omitted)`` (design §6.15).
+
+    Whether a cell matters depends on every estimate, so the rounds repeat
+    until no new cell qualifies; each cell is SMC'd at most once, so they end.
+    ``start`` is the clock of ``position_cells`` and ``max_seconds`` its cap.
+    """
+    smc_keys = jax.random.split(jax.random.fold_in(key, 3), len(cells))
+    tried = set()
+    while True:
+        log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
+        upper, matters, flagged, omitted = _matters(cells, fits, log_p, delta)
+        todo = [
+            i
+            for i, (f, m) in enumerate(zip(fits, matters))
+            if m and i not in tried and not f.failed and f.unreliable
+        ]  # fmt: skip
+        if not todo:
+            return log_p, upper, matters, flagged, omitted
+        tried.update(todo)
+        _map(
+            lambda i: smc_cell(
+                fits[i], smc_keys[i],
+                max_seconds=max(max_seconds - (time.time() - start), 0.0),
+            ),
+            todo, workers,
+        )  # fmt: skip
+
+
 def position_cells(
     summaries,
     domain,
@@ -2361,31 +2393,9 @@ def position_cells(
             fit.at_floor, fit.undersampled = ev.at_floor, ev.undersampled
             fit.unreliable = bool(ev.ess < ESS_FAIL)
             fit.nonfinite = bool(ev.n_nonfinite > 0)
-    log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
-    upper, matters, flagged, omitted = _matters(cells, fits, log_p, delta)
-    # Cells whose IS is unreliable and that matter get the SMC (§6.15). Whether
-    # a cell matters depends on every estimate, so repeat until no new cell
-    # qualifies; each cell is SMC'd at most once.
-    smc_keys = jax.random.split(jax.random.fold_in(key, 3), len(cells))
-    tried = set()
-    while True:
-        todo = [
-            i
-            for i, (f, m) in enumerate(zip(fits, matters))
-            if m and i not in tried and not f.failed and f.unreliable
-        ]  # fmt: skip
-        if not todo:
-            break
-        tried.update(todo)
-        _map(
-            lambda i: smc_cell(
-                fits[i], smc_keys[i],
-                max_seconds=max(max_seconds - (time.time() - start), 0.0),
-            ),
-            todo, workers,
-        )  # fmt: skip
-        log_p = onp.array([c.log_mass + f.log_z for c, f in zip(cells, fits)])
-        upper, matters, flagged, omitted = _matters(cells, fits, log_p, delta)
+    log_p, upper, matters, flagged, omitted = smc_rounds(
+        cells, fits, key, delta, start, max_seconds, workers
+    )
     failed = onp.array(
         [f.nonfinite or (fl and m) for f, fl, m in zip(fits, flagged, matters)]
     )

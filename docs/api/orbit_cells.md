@@ -19,6 +19,7 @@ posterior draws are an HMC resample-move.
         - search_cell
         - position_leg
         - smc_cell
+        - smc_rounds
         - decode_particles
         - fit_jitter
         - position_cells
