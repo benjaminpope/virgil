@@ -107,7 +107,7 @@ the same jobs with the slow tests except those marked `full_only`, which only th
 label, dispatch and the nightly run (a regression in one shows as a nightly failure, not a red
 main). Pull requests labelled `full-ci` (always the release
 pull request) and manual dispatches add macOS with Python 3.11, Python 3.13 and the
-dependency floors (the last two in two shards each, to stay under the 30-minute pull-request limit). The macOS job runs in float64 on the numerical files. A daily run does all of that, and opens an issue labelled `nightly-failure` when it fails. A failing push to main opens one
+dependency floors (the last two in two shards each, to stay under the 30-minute pull-request limit). The macOS job runs in float64 on the numerical files only (no float32 on macOS). The lock-upgrade pull request runs the main tier, so a break only on py3.13 or macOS shows in the next nightly, and a red lock PR opens no issue: watch it. A daily run does all of that, and opens an issue labelled `nightly-failure` when it fails. A failing push to main opens one
 issue labelled `red-main`, which the next green push closes. Each pull request also
 builds the wheel and sdist, checks them with `twine check --strict`, and imports the wheel in
 a clean environment.
