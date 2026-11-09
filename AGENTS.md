@@ -224,7 +224,8 @@ and writing history into docstrings. So:
 - A comment says why, not what: a reason, a convention or a surprise, never a restatement of the line.
 - Build a result object (`NamedTuple`, dataclass, dict of results) with keyword arguments
   when it has more than four fields or any boolean field.
-- No `# fmt: skip` outside module-level constant tables.
+- No new `# fmt: skip` outside module-level constant tables. Existing uses in `smc.py` and
+  `mode_search.py` are being removed (orbit-redesign session); do not copy them.
 
 ## Docstring style
 
@@ -262,9 +263,9 @@ Ben is surprised how long some docstrings are. Keep them short.
   resolves entries against ADS). `scripts/sync_references_page.py --by-module`
   and `--unverified` give the census.
 - **The gate:** `tests/lint/test_docstring_length.py` fails any docstring with
-  more than 60 lines of prose, with no allowlist. Prose is the summary, the
-  description and Notes; the numpydoc `Parameters`, `Returns` and `Raises`
-  sections are not counted, so each parameter can have its own entry. The gate
+  more than 60 lines of prose, with no allowlist. Prose is every section
+  except the numpydoc `Parameters`, `Returns` and `Raises` (so the summary,
+  description, Notes and Examples all count); so each parameter can have its own entry. The gate
   also forbids more than four parameter names on one numpydoc header line (a
   fixed legacy set is exempt; it only shrinks): shorten the prose, and put
   derivations in `docs/` and design history in `design/`.

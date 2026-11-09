@@ -192,3 +192,15 @@ def test_notes_count_as_prose():
 def test_prose_resumes_after_uncapped_sections():
     doc = _doc(prose=0, params=3) + "\nNotes\n-----\n" + "x\n" * 70
     assert prose_lines(doc) > MAX_LINES
+
+
+def _section(name: str, n: int) -> list[str]:
+    return [name, "-" * len(name), *["entry"] * n]
+
+
+def test_returns_and_raises_are_excluded_and_boundary_is_exact():
+    prose = ["Summary."] + ["p"] * (MAX_LINES - 1)
+    tail = _section("Returns", 40) + _section("Raises", 40)
+    doc = "\n".join(prose + tail)
+    assert prose_lines(doc) == MAX_LINES
+    assert prose_lines("\n".join(prose + ["one more"] + tail)) > MAX_LINES

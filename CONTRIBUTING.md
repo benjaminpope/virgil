@@ -132,7 +132,7 @@ Prefer deleting to adding, build only what a test system or user needs now, and 
 
 **Code layout**
 
-Separate the phases of a function with blank lines; write comments that say why, not what; build a result object with keyword arguments when it has more than four fields or any boolean field; and do not use `# fmt: skip` outside module-level constant tables (see "Code layout" in [AGENTS.md](AGENTS.md)).
+Separate the phases of a function with blank lines; write comments that say why, not what; build a result object with keyword arguments when it has more than four fields or any boolean field; and do not add `# fmt: skip` outside module-level constant tables (see "Code layout" in [AGENTS.md](AGENTS.md)).
 
 **Documentation**
 
