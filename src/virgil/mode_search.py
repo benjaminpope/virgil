@@ -89,7 +89,8 @@ class Evidence:
     is the sentinel: the draws sit at the all-outlier floor although a mode
     with at least ``m_min`` inliers has a Laplace ``ln Z`` ``W`` nats above it; ``log_z`` must
     then not be reported. ``undersampled`` is ``ess < ESS_TARGET``
-    (information only). ``n_inliers`` is the weighted mean of ``inliers_fn``.
+    (information only). ``n_inliers`` is the weighted mean of ``inliers_fn``;
+    ``log_q`` is the proposal's log density at the draws (``None`` if unset).
     """
 
     log_z: float
