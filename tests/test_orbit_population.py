@@ -421,10 +421,12 @@ def test_the_census_simulates_and_labels_in_float64(monkeypatch):
 
 
 def test_the_within_night_chi2_is_drawn_not_set():
-    """A night's χ² is s² χ²_{N_OBS - N_PAR}: mean and variance over the
-    inlier nights, and not the old noise-free N_OBS s²."""
+    """Inlier nights: χ²/s² has mean ν and variance 2ν (the standard error
+    of a χ²_ν sample variance uses the excess kurtosis 12/ν), not the old
+    noise-free N_OBS. Outlier nights: ln s_k = ½ ln(χ²/ν) + noise is centred
+    and has the spread of a log-uniform scale on ±ln S_MAX."""
     rng = onp.random.default_rng(11)
-    z, outlier_scales = [], 0
+    z, ln_sk = [], []
     while len(z) < 600:
         nights = pop.draw_nights(rng)
         _, fit = pop.fit_domain(nights)
@@ -432,39 +434,81 @@ def test_the_within_night_chi2_is_drawn_not_set():
             continue
         sysd = pop.draw_system(rng, nights, fit)
         s2 = onp.exp(2 * sysd["ln_s"])
+        nu = pop.N_OBS - pop.N_PAR
         for i, night in enumerate(sysd["summaries"]):
             c2 = float(night.peaks[0].chi2[0])
             if i in sysd["outliers"]:
-                outlier_scales += 1
-                assert c2 > 0.0
+                ln_sk.append(0.5 * onp.log(c2 / nu))
             else:
                 z.append(c2 / s2)
-    z = onp.array(z)
-    nu = pop.N_OBS - pop.N_PAR
+    z, ln_sk = onp.array(z), onp.array(ln_sk)
     assert abs(z.mean() - nu) < 4 * onp.sqrt(2 * nu / len(z))
-    assert (
-        abs(z.var() - 2 * nu) < 4 * 2 * nu * onp.sqrt(2 / (len(z) - 1)) * 1.5
+    assert abs(z.var() - 2 * nu) < 4 * 2 * nu * onp.sqrt(
+        (2 + 12 / nu) / len(z)
     )
-    assert z.std() > 1.0  # not the old noise-free N_OBS s^2
+    # ln s_k ~ U(±L) plus ½ ln(χ²_ν/ν) (variance ~ 1/(2ν)): sd and mean
+    big = onp.log(pop.oc_cells.S_MAX)
+    sd = onp.sqrt(big**2 / 3 + 1 / (2 * nu))
+    assert len(ln_sk) > 100
+    assert abs(ln_sk.mean()) < 4 * sd / onp.sqrt(len(ln_sk))
+    assert abs(ln_sk.std() / sd - 1) < 4 / onp.sqrt(2 * len(ln_sk)) * 1.5
 
 
-def test_the_chi2_draw_leaves_the_pairing_structure_alone():
-    """The same stream gives the same truth, means and χ² (before and after
-    an unrelated fit stream draw), and the draws before the χ² block are
-    unchanged in count: the truth does not depend on the χ² draws."""
+def test_outlier_nights_are_scattered_by_their_own_scale():
+    """The outlier mean's scatter grows with the night's own scale s_k (read
+    off its χ²), instead of being noise-free or tied to the system's s."""
+    from scipy import stats
 
-    def one():
-        rng, _ = pop.streams(5, 0)
+    rng = onp.random.default_rng(3)
+    n, sigma = 3000, 1e-3
+    mean = onp.zeros((n, 5))
+    mean[:, 4] = -2.0
+    m, chi2 = pop._noise_outliers_and_chi2(
+        rng, mean, onp.ones(n, bool), 0.0, sigma
+    )
+    assert (m[:, :4] != 0.0).all() and (chi2 > 0.0).all()
+    r = onp.abs(m[:, 0]) / sigma
+    assert stats.spearmanr(r, chi2).statistic > 0.3
+    # at the system's single s the scatter would be the quoted one
+    assert onp.sqrt(onp.mean(r**2)) > 2.0
+
+
+def test_the_chi2_draw_leaves_the_pairing_structure_alone(monkeypatch):
+    """Drawing the χ² last leaves every earlier draw alone: with the χ² block
+    replaced by one that draws nothing, the truth and the inlier means are
+    equal to the real ones, and only the outlier rows differ."""
+
+    def one(i):
+        rng, _ = pop.streams(5, i)
         nights = pop.draw_nights(rng)
         _, fit = pop.fit_domain(nights)
-        pop._loguniform(rng, *pop.P_TRUE)
+        if fit is None:
+            return None
+        pop._loguniform(rng, *pop.P_TRUE)  # the selection draw
         return pop.draw_system(rng, nights, fit)
 
-    a, b = one(), one()
-    assert a["period"] == b["period"] and a["ln_s"] == b["ln_s"]
-    for sa, sb in zip(a["summaries"], b["summaries"]):
-        onp.testing.assert_array_equal(sa.peaks[0].mean, sb.peaks[0].mean)
-        onp.testing.assert_array_equal(sa.peaks[0].chi2, sb.peaks[0].chi2)
+    with_outliers = 0
+    for i in range(12):
+        a = one(i)
+        if a is None:
+            continue
+        monkeypatch.setattr(
+            pop, "_noise_outliers_and_chi2",
+            lambda rng, mean, outlier, ln_s, sigma: (mean, onp.zeros(len(mean))),
+        )  # fmt: skip
+        b = one(i)
+        monkeypatch.undo()
+        for k in ("period", "ln_s", "eps"):
+            assert a[k] == b[k]
+        onp.testing.assert_array_equal(a["outliers"], b["outliers"])
+        for j, (sa, sb) in enumerate(zip(a["summaries"], b["summaries"])):
+            ma, mb = sa.peaks[0].mean, sb.peaks[0].mean
+            if j in a["outliers"]:
+                with_outliers += 1
+                assert not onp.array_equal(ma, mb)
+            else:
+                onp.testing.assert_array_equal(ma, mb)
+    assert with_outliers > 0
 
 
 def test_the_fit_scores_the_drawn_chi2_without_bias_in_ln_s():
