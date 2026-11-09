@@ -780,6 +780,46 @@ def test_the_velocity_marginal_of_the_outlier_prior_integrates_the_velocity():
     assert total == pytest.approx(marginal, rel=0.05)
 
 
+@x64
+@pytest.mark.parametrize("sigma_f", [0.01, 0.05, 0.5])
+def test_the_flux_box_integral_matches_quadrature_and_is_finite_everywhere(
+    sigma_f,
+):
+    s = _summaries(_orbit(), TIMES)
+    domain, _ = _cells(s, (6.0, 400.0))
+    prior = oc_cells.outlier_prior(domain, n=2**10)
+    ell = prior.ln_f_floor
+    for m in (ell - 0.1, ell, ell + 0.01, -1.0, -0.02, 0.0, 0.03, 0.3):
+        got = float(prior.log_flux_box(m, sigma_f))
+        assert onp.isfinite(got)
+        want, _ = integrate.quad(
+            lambda x: stats.norm.pdf(x, m, sigma_f) / -ell,
+            ell, 0.0, points=[min(max(m, ell), 0.0)], epsabs=0, epsrel=1e-12,
+        )  # fmt: skip
+        if want > 1e-300:
+            assert onp.exp(got) == pytest.approx(want, rel=1e-8)
+    # far from both ends the integral is the old box value: continuity
+    assert float(prior.log_flux_box(-3.0, 0.01)) == pytest.approx(
+        -math.log(-ell), abs=1e-12
+    )
+
+
+@x64
+def test_a_night_with_an_observed_flux_above_one_fits_without_error():
+    s = _summaries(_orbit(), TIMES, ln_f=0.05)  # truth ln f above 0
+    assert any(n.peaks[0].mean[4] > 0 for n in s)
+    domain, cells = _cells(s, (9.0, 14.0))
+    prior = oc_cells.outlier_prior(domain, n=2**14)
+    b = oc_cells.outlier_log_density(s, prior)
+    assert onp.all(onp.isfinite(b))
+    cell = next(c for c in cells if c.p_lo <= 11.3 <= c.p_hi)
+    fit = oc_cells.position_leg(
+        s, b, cell, jax.random.key(0), t_anchor=TIMES[0], t_nights=TIMES,
+        n_is=256, posterior_draws=False,
+    )  # fmt: skip
+    assert onp.isfinite(fit.log_z)
+
+
 # --- the search plan -----------------------------------------------------------
 
 

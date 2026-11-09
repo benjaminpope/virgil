@@ -77,10 +77,10 @@ def test_the_draws_follow_the_fitted_prior():
 
 
 def test_every_simulated_night_has_a_finite_outlier_density():
-    """An inlier's observed ln f stays inside the flux prior's support, so
-    the outlier density b_k (uniform on it) is finite for every night."""
+    """The simulated ln f is the truth plus the full Gaussian noise (no
+    truncation), so a night can sit above 0; b_k integrates the flux box over
+    the ln f error and stays finite for every night."""
     rng = onp.random.default_rng(0)
-    lo = onp.log(pop.oc_cells.FLUX_FLOOR)
     n_checked = 0
     while n_checked < 40:
         nights = pop.draw_nights(rng)
@@ -88,9 +88,28 @@ def test_every_simulated_night_has_a_finite_outlier_density():
         if fit is None:
             continue
         sysd = pop.draw_system(rng, nights, fit)
-        ln_f = onp.array([s.peaks[0].mean[4] for s in sysd["summaries"]])
-        assert onp.all((ln_f >= lo) & (ln_f <= 0.0))
+        prior = pop.oc_cells.outlier_prior(fit, n=2**12)
+        b = pop.oc_cells.outlier_log_density(sysd["summaries"], prior)
+        assert onp.all(onp.isfinite(b))
         n_checked += 1
+
+
+def test_scoring_is_invariant_to_the_orbit_swap():
+    """Near-twins are right up to orbit <-> -orbit (omega -> omega + 180):
+    the census's orientation-dependent truth quantities agree for a truth and
+    its swapped truth (Ben: a fit is "perfect" up to this degeneracy)."""
+    rng = onp.random.default_rng(1)
+    for _ in range(5):
+        orbit = pop._orbit(rng, 3.0, 300.0, 8.0)
+        swapped = pop.KeplerOrbit(
+            orbit.period, orbit.dt_peri, orbit.ecc, orbit.inc,
+            (float(orbit.omega) + 180.0) % 360.0, orbit.Omega, orbit.a_mas,
+        )  # fmt: skip
+        period = float(orbit.period)
+        a = pop.truth_invariants(dict(orbit=orbit, period=period), 0.0)
+        b = pop.truth_invariants(dict(orbit=swapped, period=period), 0.0)
+        for name in pop.INVARIANTS:
+            assert a[name] == pytest.approx(b[name], abs=1e-6), name
 
 
 # --- the census: paired seeds, classes, assertions 5-7 ----------------------
