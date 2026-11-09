@@ -146,7 +146,8 @@ class BinaryPipeline(_Pipeline):
 
     Stages: ``load``, ``overview``, ``search`` (point-companion grid,
     [`detection_statistics`][virgil.detection.detection_statistics]),
-    ``limits`` ([`absil_limits`][virgil.limits.absil_limits]), ``fit``,
+    ``limits`` ([`ruffio_upperlimit`][virgil.limits.ruffio_upperlimit] by
+    default, or [`absil_limits`][virgil.limits.absil_limits]), ``fit``,
     ``posterior`` (NUTS, same prior as the fit) and ``quicklook``.
     ``res.summary["companion"]`` has ``sep_mas`` and ``pa_deg`` for either
     template. Settings:
@@ -165,7 +166,8 @@ class BinaryPipeline(_Pipeline):
         Run folder (default ``"run"``).
     **settings
         Overrides of ``BinaryPipeline.defaults()``. The most used: ``sigma``
-        (significance of the contrast limits, 3.0), ``max_sep_mas`` (search
+        (significance of the contrast limits, 3.0), ``limit_method``
+        (``"ruffio"``, the default, or ``"absil"``), ``max_sep_mas`` (search
         half-width in mas; default the coarsest λ/B, capped on lattice
         coverage), ``grid_step_mas``, ``flux_range`` (companion/primary, 1e-5 to 1; a
         brighter companion is the primary under relabelling), ``error_scale``
@@ -213,6 +215,7 @@ class BinaryPipeline(_Pipeline):
         "seed": 0,
         "batch_size": None,
         "limit_bins": 20,
+        "limit_method": "ruffio",
         "quicklook_execute": True,
     }
 
@@ -256,6 +259,8 @@ class BinaryPipeline(_Pipeline):
         _pair(s, "flux_range")
         if s["error_scale"] not in ("quoted", "fit"):
             raise ValueError('error_scale must be "quoted" or "fit".')
+        if s["limit_method"] not in ("ruffio", "absil"):
+            raise ValueError('limit_method must be "ruffio" or "absil".')
         _validate_common(s)
 
     # --- shared state, rebuilt on demand so that resume works ------------
@@ -550,25 +555,41 @@ def _search_report(data, grid, axis, detection, settings):
 
 
 def _limits(p):
+    """Contrast limits at ``sigma``: Ruffio et al. (2018) or Absil et al. (2011).
+
+    Ruffio is the search's flux and Laplace σ, truncated to ``f >= 0``, at the
+    ``norm.cdf(sigma)`` quantile, on the quoted errors with no error-scale
+    rescale (a deliberate choice for now).
+
+    Source: Ruffio et al. (2018), [references](../references.md#ruffio2018).
+    """
+    from scipy.stats import norm
+
     from ..limits import (
         absil_limits,
         flux_to_delta_mag,
         radial_profile,
+        ruffio_upperlimit,
     )
     from ..models import BinaryModelCartesian
     from ..plotting import plot_contrast_curve, plot_grid_map
 
     s = p.settings
     grid, max_sep = p._grid(), p._grid_axis().max_sep
-    limit = onp.asarray(
-        absil_limits(
+    search = _io.read_h5(p.output / "grids.h5", "search")
+    method = s["limit_method"]
+    if method == "ruffio":
+        flux, sigma = _search_flux(p, grid, search)
+        limit = ruffio_upperlimit(flux, sigma, norm.cdf(s["sigma"]))
+    else:
+        limit = absil_limits(
             BinaryModelCartesian,
             p.processed,
             grid,
             s["sigma"],
             batch_size=s["batch_size"],
         )
-    )
+    limit = onp.asarray(limit)
     dra, ddec = onp.asarray(grid["dra"]), onp.asarray(grid["ddec"])
     # Inside the resolution limit separation and flux are degenerate: NaN.
     r = onp.hypot(*onp.meshgrid(dra, ddec, indexing="ij"))
@@ -578,11 +599,11 @@ def _limits(p):
         limit, dra, ddec, r_max=max_sep, bins=s["limit_bins"]
     )
     # write_h5 cannot append: rewrite the file with the search group read back.
-    meta = {"sigma": s["sigma"], "method": "absil"}
+    meta = {"sigma": s["sigma"], "method": method}
     _write_grids(
         p.output,
         grid,
-        search=_io.read_h5(p.output / "grids.h5", "search"),
+        search=search,
         limits={"limit_flux": (limit, meta)},
     )
     fig, _ = plot_grid_map(
@@ -595,12 +616,26 @@ def _limits(p):
     delta_mag = onp.asarray(flux_to_delta_mag(median), dtype=float)
     return {
         "sigma": s["sigma"],
-        "method": "absil",
+        "method": method,
         "r_mas": profile["r"],
         "median_flux": median,
         "median_delta_mag": delta_mag,
         "deepest_delta_mag": float(onp.nanmax(delta_mag)),
     }
+
+
+def _search_flux(p, grid, search):
+    """``(flux_best, flux_sigma)`` of the search stage, recomputed when its
+    maps are missing or on another grid."""
+    axes = _io.read_h5(p.output / "grids.h5", "axes")
+    same = all(
+        k in axes and onp.array_equal(axes[k], onp.asarray(grid[k]))
+        for k in ("dra", "ddec")
+    )
+    if same and {"flux_best", "flux_sigma"} <= search.keys():
+        return search["flux_best"], search["flux_sigma"]
+    maps = _search_maps(p.processed, grid, p.settings["batch_size"])
+    return maps["flux_best"], maps["flux_sigma"]
 
 
 # --- fit ---

@@ -116,6 +116,7 @@ DEFAULTS = {
     "seed": 0,
     "batch_size": None,
     "limit_bins": 20,
+    "limit_method": "ruffio",
     "quicklook_execute": True,
 }
 SUMMARY_KEYS = {
@@ -234,6 +235,8 @@ def test_settings_are_validated(data):
         BinaryPipeline(data, sigma=-1.0)
     with pytest.raises(ValueError, match="error_scale"):
         BinaryPipeline(data, error_scale="rescaled")
+    with pytest.raises(ValueError, match="limit_method"):
+        BinaryPipeline(data, limit_method="injection")
     with pytest.raises(TypeError, match="unknown settings"):
         BinaryPipeline(data, num_sample=10)
     with pytest.raises(TypeError, match="BinaryModelAngular"):
@@ -349,6 +352,79 @@ def test_quicklook_notebook(full_run):
 def _started(out):
     run = json.loads((out / "run.json").read_text())
     return {k: v["started"] for k, v in run["stages"].items()}, run
+
+
+def _limits_meta(out):
+    from virgil.pipeline import _io
+
+    return _io.read_h5_attrs(out / "grids.h5", "limits/limit_flux")
+
+
+def _resolution_mask(pipeline, grid):
+    from virgil.pipeline._common import _geometry
+
+    dra, ddec = (onp.asarray(grid["axes"][k]) for k in ("dra", "ddec"))
+    r = onp.hypot(*onp.meshgrid(dra, ddec, indexing="ij"))
+    return r < _geometry(pipeline.processed)["resolution_mas"]
+
+
+def test_ruffio_limits_are_the_default_on_the_search_maps(full_run):
+    """Default limits: ruffio_upperlimit on the search's flux_best and
+    flux_sigma at norm.cdf(sigma), NaN inside the resolution limit."""
+    from scipy.stats import norm
+    from virgil.limits import ruffio_upperlimit
+    from virgil.pipeline.binary import _search_flux
+
+    pipeline, res = full_run
+    assert res.summary["limits"]["method"] == "ruffio"
+    assert _limits_meta(pipeline.output)["method"] == "ruffio"
+    grid = res.grid()
+    want = onp.asarray(
+        ruffio_upperlimit(
+            grid["flux_best"],
+            grid["flux_sigma"],
+            norm.cdf(pipeline.settings["sigma"]),
+        )
+    )
+    inside = _resolution_mask(pipeline, grid)
+    assert inside.any() and (~inside).any()
+    assert onp.isnan(grid["limit_flux"][inside]).all()
+    onp.testing.assert_allclose(grid["limit_flux"][~inside], want[~inside])
+
+    # Without stored search maps the same flux and sigma are recomputed.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        flux, sigma = _search_flux(pipeline, pipeline._grid(), {})
+    onp.testing.assert_allclose(flux, grid["flux_best"], rtol=1e-6)
+    onp.testing.assert_allclose(sigma, grid["flux_sigma"], rtol=1e-6)
+
+
+@pytest.mark.slow
+def test_absil_limit_method_reproduces_the_absil_limits(data, tmp_path):
+    """limit_method="absil": absil_limits at sigma, NaN inside the resolution
+    limit (the stage's output before Ruffio became the default)."""
+    from virgil.limits import absil_limits
+
+    out = tmp_path / "run"
+    settings = dict(TINY, quicklook_execute=False, limit_method="absil")
+    pipeline = BinaryPipeline(data, output=out, **settings)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = pipeline.run(through="limits")
+        want = onp.asarray(
+            absil_limits(
+                BinaryModelCartesian,
+                pipeline.processed,
+                pipeline._grid(),
+                pipeline.settings["sigma"],
+            )
+        )
+    assert res.summary["limits"]["method"] == "absil"
+    assert _limits_meta(out)["method"] == "absil"
+    grid = res.grid()
+    inside = _resolution_mask(pipeline, grid)
+    want = onp.where(inside, onp.nan, want)
+    onp.testing.assert_allclose(grid["limit_flux"], want)
 
 
 def test_resume_skips_completed_stages(data, tmp_path, monkeypatch):
