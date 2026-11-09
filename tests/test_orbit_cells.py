@@ -809,6 +809,7 @@ def test_the_flux_box_integral_matches_quadrature_and_is_finite_everywhere(
     )
 
 
+@pytest.mark.slow
 @x64
 def test_a_night_with_an_observed_flux_above_one_fits_without_error():
     s = _summaries(_orbit(), TIMES, ln_f=0.05)  # truth ln f above 0
