@@ -11,6 +11,7 @@ from virgil.fitting import (
     KKT_W_TOL,
     FitResult,
     _band_limit,
+    _linear_certificate,
     fit,
     kkt_report,
 )
@@ -105,7 +106,8 @@ TSV_ = [TSV(3.0, path="env", beam_mas=60.0)]
 def test_bounded_linear_optimum_is_converged_with_active_bounds():
     # Noise-free data from a disc with zeros around it: the disc is a global
     # minimum of chi^2 (zero residual) on the box pixels >= 0, so its gradient
-    # is zero up to rounding, and its zero pixels are active bounds. pg_rel is
+    # is zero up to rounding, and its zero pixels are weakly active bounds (see
+    # the next test for strictly active ones). pg_rel is
     # then rounding against the flat start's gradient, far below KKT_TOL. Built
     # directly rather than fitted (#674): where L-BFGS-B stalls is
     # platform-dependent, and a stalled fit is rightly not converged.
@@ -123,6 +125,22 @@ def test_bounded_linear_optimum_is_converged_with_active_bounds():
     assert (
         image["zero_violation"] == 0.0
     )  # bound-active zeros are not violations
+
+
+def test_strictly_active_bounds_are_projected_out():
+    # Zero pixels whose gradient pushes outward (g > 0, multiplier > 0) are at a
+    # KKT point: x - clip(x - g, 0, inf) is exactly zero there, so pg_rel and
+    # kkt_w are zero and nothing is a violation. With the sign flipped every
+    # zero pixel wants flux.
+    n = 10
+    image = _scene(onp.full((n, n), 0.5 / n**2), 24.0).get("env")
+    x = _disc(n, 0.5).ravel()
+    g = onp.where(x == 0.0, 1.0, 0.0)
+    out, ok = _linear_certificate(x, g, image, 1.0, 3.0)
+    assert ok and out["pg_rel"] == 0.0 and out["kkt_w"] == 0.0
+    assert out["zero_violation"] == 0.0
+    out, ok = _linear_certificate(x, -g, image, 1.0, 3.0)
+    assert not ok and out["zero_violation"] == 1.0 and out["pg_rel"] == 1.0
 
 
 def test_bounded_linear_fit_stopped_early_is_not_converged():
@@ -211,6 +229,10 @@ def test_frozen_softmax_pixels_want_to_grow():
     image = report["images"]["."]
     assert image["want_grow"] == 4 / 32**2, report
     assert not report["converged"]
+    # With start, the gradient scale is at least the start's rms (data and
+    # penalty far from the optimum), so kkt_rel can only shrink.
+    ref = kkt_report(result, priors, data, reg, start={"log_brightness": eta})
+    assert ref["images"]["."]["kkt_rel"] <= image["kkt_rel"], ref
 
 
 def test_noise_parameters_are_nuisances():
