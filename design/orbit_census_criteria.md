@@ -84,4 +84,14 @@ The held-out W1 result (paired with baseline f71294b, systems 200–399) was rea
 - **Comparator.** #667 against W1 stays report-only. It may not replace the baseline comparison.
 - **Partial look.** An aggregate look was taken at the partial baseline (82 of ~190 systems) during an independent review on 2026-11-08. No decision uses it. The primary is scored only on the complete set, exactly as written.
 - **Simulator caveat.** The census simulator sets each night's χ² to exactly n·s² (noise-free) and truncates ln f (#641), so these results are not performance on real data.
+
+**Floor sentinel gated by mass (#641): decision 2026-11-09.**
+
+- **What #641 changed.** It was merged on 2026-11-03, after the first census (aea931a, 73/200 failed). It changed `CellsResult.failed` so that a cell at the floor fails the system only if it `matters`. This loosens assertion 2 as implemented.
+- **The decision.** Ben accepts this rule, on the condition that `matters` gets the M2 fix from the 2026-11-08 code review:
+  - a genuine upper bound on each cell's evidence, in place of max(ln Ẑ, best Laplace);
+  - the threshold ln(n_cells/δ).
+
+  The fix will be a separate PR, judged on a fresh census arm.
+- **Until then.** Census results under the current `matters` rule carry this caveat.
 ---
