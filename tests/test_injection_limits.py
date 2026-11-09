@@ -19,6 +19,7 @@ import equinox as eqx
 import jax.numpy as np
 import numpy as onp
 import pytest
+from scipy.stats import chi2, norm
 
 from virgil import PointSource, System, UniformDisk
 from virgil.likelihood import build_model
@@ -56,6 +57,9 @@ def data():
 @pytest.fixture(scope="module")
 def template():
     return System(star=UniformDisk(0.8), comp=PointSource(0.01, 0.0, 0.0))
+
+
+_PARAMS = ("comp.dra", "comp.ddec", "comp.flux")
 
 
 def one_point(dra, ddec, fluxes=(0.01,)):
@@ -136,7 +140,29 @@ def test_injection_limits_grid_shape_and_bounds(data, template):
     limits = injection_limits(template, data, samples, 3.0)
     assert limits.shape == (3, 2)
     assert onp.all(onp.isfinite(limits))
-    assert onp.all((limits > 1e-6) & (limits < 1.0))
+
+    # Each limit is the root of the criterion, computed here with scipy and
+    # raw errors. With residual r = data - null and signal s = model(f) -
+    # null, the null model fits the injected data with |r + s|^2 and the
+    # companion model with |r|^2 (errors whitened), so a 3-sigma detection
+    # is chi2.sf(ndof |r + s|^2 / |r|^2, ndof) = 2 norm.sf(3).
+    target = chi2.isf(2 * norm.sf(3.0), data.n_independent)
+    sigma_all = onp.asarray(data.flatten_data()[1])
+    m0 = onp.asarray(
+        data.model(build_model(template, _PARAMS, [0.0, 0.0, 0.0]))
+    )
+    resid = (onp.asarray(data.flatten_data()[0]) - m0) / sigma_all
+    for i, dra in enumerate(samples["comp.dra"]):
+        for j, ddec in enumerate(samples["comp.ddec"]):
+            f = float(limits[i, j])
+            m = data.model(build_model(template, _PARAMS, [dra, ddec, f]))
+            sig = (onp.asarray(m) - m0) / sigma_all
+            ratio = (
+                data.n_independent
+                * onp.sum((resid + sig) ** 2)
+                / onp.sum(resid**2)
+            )
+            assert ratio == pytest.approx(target, rel=1e-3)
 
     # A bracket that cannot contain the limit clips, and warns.
     with pytest.warns(RuntimeWarning, match="clipped"):

@@ -31,7 +31,7 @@ def _scene(latent, sigma, length):
 @pytest.mark.slow
 def test_nuts_runs_on_an_injected_field():
     # A smoke test: NUTS runs through numpyro_model, stays finite and
-    # rarely diverges. Whether its posterior is calibrated (the injected
+    # does not diverge. Whether its posterior is calibrated (the injected
     # amplitude inside the credible interval, at the nominal rate) needs
     # many repeats, and is checked by the coverage campaign in
     # virgil-validation rather than by a single chain here.
@@ -65,7 +65,9 @@ def test_nuts_runs_on_an_injected_field():
     # below cannot pass vacuously on an empty or partial dict.
     assert set(samples) == set(priors)
     assert all(onp.all(onp.isfinite(onp.asarray(v))) for v in samples.values())
-    assert int(mcmc.get_extra_fields()["diverging"].sum()) <= 5
+    # Any divergence is a failed trajectory: a well-conditioned posterior
+    # started at its MAP with a mass matrix adapted to it gives none.
+    assert int(mcmc.get_extra_fields()["diverging"].sum()) == 0
 
 
 @pytest.mark.slow
