@@ -442,7 +442,9 @@ def test_the_within_night_chi2_is_drawn_not_set():
     z = onp.array(z)
     nu = pop.N_OBS - pop.N_PAR
     assert abs(z.mean() - nu) < 4 * onp.sqrt(2 * nu / len(z))
-    assert abs(z.var() - 2 * nu) < 4 * 2 * nu * onp.sqrt(2 / (len(z) - 1)) * 1.5
+    assert (
+        abs(z.var() - 2 * nu) < 4 * 2 * nu * onp.sqrt(2 / (len(z) - 1)) * 1.5
+    )
     assert z.std() > 1.0  # not the old noise-free N_OBS s^2
 
 
@@ -450,6 +452,7 @@ def test_the_chi2_draw_leaves_the_pairing_structure_alone():
     """The same stream gives the same truth, means and χ² (before and after
     an unrelated fit stream draw), and the draws before the χ² block are
     unchanged in count: the truth does not depend on the χ² draws."""
+
     def one():
         rng, _ = pop.streams(5, 0)
         nights = pop.draw_nights(rng)
