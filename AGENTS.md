@@ -218,6 +218,14 @@ and writing history into docstrings. So:
    inlining into monoliths. The base branch's copy of the script decides, so a
    PR cannot weaken the gate.
 
+## Code layout
+
+- Separate the phases of a function (validate, build, compute, package) with blank lines.
+- A comment says why, not what: a reason, a convention or a surprise, never a restatement of the line.
+- Build a result object (`NamedTuple`, dataclass, dict of results) with keyword arguments
+  when it has more than four fields or any boolean field.
+- No `# fmt: skip` outside module-level constant tables.
+
 ## Docstring style
 
 Ben is surprised how long some docstrings are. Keep them short.
@@ -229,10 +237,11 @@ Ben is surprised how long some docstrings are. Keep them short.
 - **Leave out:** derivations, design history, plan or "problem N" numbers,
   PR/issue numbers and named science targets. Put a derivation in a docs page
   and link it with a markdown link; put history in `design/` notes.
-- **Shared parameters** (`noise`, `priors`, `flat_coordinates`, `dtype`,
-  `regularizers`, ...) are documented once, in `docs/conventions.md` (see "Which
-  priors?", "Priors and the MAP" and "Precision"; add `noise` and `regularizers`
-  there rather than creating a page), and each docstring says one line and links it.
+- **Shared parameters** (`model`, `priors`, `noise`, `regularizers`, `dtype`, ...)
+  are documented once, in `docs/common_arguments.md`, and each docstring says one
+  line and links it. Conventions that are not arguments (coordinates, orbits,
+  "Which priors?", "Priors and the MAP", "Precision") live in `docs/conventions.md`.
+  Add a new shared argument to `common_arguments.md`, not a new page.
 - **Private helpers:** one or two lines.
 - **Deliberate choices:** a surprising or deliberate choice gets a short inline
   `#` comment at the line that makes it, not a docstring paragraph, e.g.
@@ -252,10 +261,13 @@ Ben is surprised how long some docstrings are. Keep them short.
   it is checked on the arXiv abstract page (`scripts/fetch_references.py`
   resolves entries against ADS). `scripts/sync_references_page.py --by-module`
   and `--unverified` give the census.
-- **The gate:** `tests/lint/test_docstring_length.py` fails any docstring over 60
-  lines, with no allowlist, and forbids more than four parameter names on one
-  numpydoc header line (a fixed legacy set is exempt; it only shrinks): shorten the docstring, and put derivations in `docs/` and design history in
-  `design/`.
+- **The gate:** `tests/lint/test_docstring_length.py` fails any docstring with
+  more than 60 lines of prose, with no allowlist. Prose is the summary, the
+  description and Notes; the numpydoc `Parameters`, `Returns` and `Raises`
+  sections are not counted, so each parameter can have its own entry. The gate
+  also forbids more than four parameter names on one numpydoc header line (a
+  fixed legacy set is exempt; it only shrinks): shorten the prose, and put
+  derivations in `docs/` and design history in `design/`.
 - **Comprehension check:** every docstring-rewrite PR runs one. Give a fresh
   subagent only the signature and the new docstring of each rewritten public
   function. It writes a correct call for a stated task and lists anything it
