@@ -1211,17 +1211,21 @@ def _sample_band(  # deliberate: named step
 
     cap = s["posterior_max_tree_depth"]
     t0 = time.monotonic()
-    mcmc = _run_chains(
-        model,
-        s,
-        start,
+    kwargs = dict(
         dense_mass=True,
         priors=priors,
         inverse_mass=inverse_mass,
-        jitter=jitter,
         max_tree_depth=cap,
         adapt_mass=adapt,
     )
+    try:
+        mcmc = _run_chains(model, s, start, jitter=jitter, **kwargs)
+    except ValueError:
+        if deadline is None or time.monotonic() <= deadline:
+            raise
+        # The budget ran out during the start-up: every jittered start is
+        # -inf. Start every chain at the mode and drain, for the report.
+        mcmc = _run_chains(model, s, start, jitter=None, **kwargs)
     seconds = time.monotonic() - t0
     exhausted = late or (deadline is not None and time.monotonic() > deadline)
     drawn, stats = _draws(mcmc)

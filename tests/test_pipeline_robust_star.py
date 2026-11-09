@@ -401,7 +401,7 @@ def test_the_shape_is_unidentified_for_an_unresolved_star_on_a_second_realizatio
     comparison = res.summary["comparison"]
     assert comparison["preferred"] == "uniform"
     assert comparison["unidentified"]
-    assert "[pass] limb_darkening_gain" in res.describe()
+    assert "[warn] limb_darkening_gain" in res.describe()
     assert "unidentified" in res.describe()
 
 

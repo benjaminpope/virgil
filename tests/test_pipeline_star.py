@@ -497,7 +497,7 @@ def test_resolution_message_names_the_regime():
     [
         (200.0, 100.0, "pass", "preferred"),
         (105.0, 100.0, "pass", "adequate"),
-        (100.0, 130.0, "warn", "did not converge"),
+        (100.0, 130.0, "fail", "did not converge"),
         (float("nan"), 1.0, "fail", "not finite"),
     ],
 )
@@ -781,9 +781,9 @@ def _report(m2loglike, diam, at_bound, lobe=1):
         (_report(300.0, 3.0, []), 50.0, "b", False, "pass"),
         # The same gain with the diameter on the lower edge of the range is
         # not a valid likelihood-ratio test: the parent is kept.
-        (_report(300.0, 1.0, ["diam"], lobe=1), 50.0, "a", True, "pass"),
-        # A fit that did not converge still warns on the lower edge.
-        (_report(300.0, 1.0, ["diam"], lobe=1), -40.0, "a", True, "warn"),
+        (_report(300.0, 1.0, ["diam"], lobe=1), 50.0, "a", True, "warn"),
+        # A fit that did not converge fails, on the lower edge too.
+        (_report(300.0, 1.0, ["diam"], lobe=1), -40.0, "a", True, "fail"),
         # The upper edge is an over-resolved star, not a parameter boundary.
         (_report(300.0, 50.0, ["diam"], lobe=2), 50.0, "b", False, "pass"),
         # The lower edge of an inner lobe is not a boundary either.
@@ -813,7 +813,7 @@ def test_model_choice_is_invalid_with_the_parent_diameter_on_the_lower_edge(
     )
     assert check.status == status
     assert ("unidentified" in check.message) == (
-        unidentified and status == "pass"
+        unidentified and status == "warn"
     )
 
 
