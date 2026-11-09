@@ -6,6 +6,7 @@ import importlib.util
 import pathlib
 import types
 
+import jax
 import numpy as onp
 import pytest
 
@@ -81,17 +82,23 @@ def test_every_simulated_night_has_a_finite_outlier_density():
     truncation), so a night can sit above 0; b_k integrates the flux box over
     the ln f error and stays finite for every night."""
     rng = onp.random.default_rng(0)
-    n_checked = 0
-    while n_checked < 40:
+    n_checked = n_drawn = n_above = 0
+    while n_drawn < 400:
         nights = pop.draw_nights(rng)
         _, fit = pop.fit_domain(nights)
         if fit is None:
             continue
         sysd = pop.draw_system(rng, nights, fit)
-        prior = pop.oc_cells.outlier_prior(fit, n=2**12)
-        b = pop.oc_cells.outlier_log_density(sysd["summaries"], prior)
-        assert onp.all(onp.isfinite(b))
-        n_checked += 1
+        n_drawn += 1
+        ln_f = onp.array([s.peaks[0].mean[4] for s in sysd["summaries"]])
+        n_above += int(onp.sum(ln_f > 0.0))
+        if n_above and n_checked < 40:  # b_k on the systems that matter
+            prior = pop.oc_cells.outlier_prior(fit, n=2**12)
+            b = pop.oc_cells.outlier_log_density(sysd["summaries"], prior)
+            assert onp.all(onp.isfinite(b))
+            n_checked += 1
+    # the case the box integral newly supports must actually occur
+    assert n_above > 0 and n_checked > 0
 
 
 def test_scoring_is_invariant_to_the_orbit_swap():
@@ -99,17 +106,33 @@ def test_scoring_is_invariant_to_the_orbit_swap():
     the census's orientation-dependent truth quantities agree for a truth and
     its swapped truth (Ben: a fit is "perfect" up to this degeneracy)."""
     rng = onp.random.default_rng(1)
-    for _ in range(5):
-        orbit = pop._orbit(rng, 3.0, 300.0, 8.0)
-        swapped = pop.KeplerOrbit(
-            orbit.period, orbit.dt_peri, orbit.ecc, orbit.inc,
-            (float(orbit.omega) + 180.0) % 360.0, orbit.Omega, orbit.a_mas,
-        )  # fmt: skip
-        period = float(orbit.period)
-        a = pop.truth_invariants(dict(orbit=orbit, period=period), 0.0)
-        b = pop.truth_invariants(dict(orbit=swapped, period=period), 0.0)
-        for name in pop.INVARIANTS:
-            assert a[name] == pytest.approx(b[name], abs=1e-6), name
+    with jax.enable_x64(True):  # the census scores in float64
+        for _ in range(5):
+            orbit = pop._orbit(rng, 3.0, 300.0, 8.0)
+            swapped = pop.KeplerOrbit(
+                orbit.period, orbit.dt_peri, orbit.ecc, orbit.inc,
+                (float(orbit.omega) + 180.0) % 360.0, orbit.Omega, orbit.a_mas,
+            )  # fmt: skip
+            period = float(orbit.period)
+            a = pop.truth_invariants(dict(orbit=orbit, period=period), 0.0)
+            b = pop.truth_invariants(dict(orbit=swapped, period=period), 0.0)
+            for name in pop.INVARIANTS:
+                assert a[name] == pytest.approx(b[name], abs=1e-6), name
+
+
+def test_the_omega_pit_is_the_same_for_draws_in_either_orbit_image(monkeypatch):
+    """The draw side of the fold: a fit whose draws sit in the omega + 180
+    image gets the same ``pit_omega`` as one in the truth's image."""
+    base = onp.linspace(10.0, 170.0, 9)  # omega draws in [0, 180)
+    truth = dict.fromkeys(pop.INVARIANTS, 0.0) | dict(omega=90.0)
+    pits = []
+    for shift in (0.0, 180.0):
+        dec = {n: onp.zeros(9) for n in pop.INVARIANTS}
+        dec["omega"] = (base + shift) % 360.0
+        monkeypatch.setattr(pop.oc_cells, "decode_particles", lambda f: dec)
+        fit = types.SimpleNamespace(draws=onp.zeros((9, 1)))
+        pits.append(pop.invariant_pits([1.0], [fit], truth)["pit_omega"])
+    assert pits[0] == pytest.approx(pits[1]) and 0.0 < pits[0] < 1.0
 
 
 # --- the census: paired seeds, classes, assertions 5-7 ----------------------
