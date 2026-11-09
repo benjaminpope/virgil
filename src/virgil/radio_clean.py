@@ -483,8 +483,9 @@ def clean(
     Major cycles image the exact residual ``V − M`` (NUFFT model); minor
     cycles clean it with a window of the PSF. Arguments are named as in
     ``tclean``; see the [guide](../radio_clean.md). Unlike
-    [`virgil.imaging.clean`][virgil.imaging.clean] it takes complex
-    visibilities and an **odd** ``npix``. Provisional (new in 0.4.1).
+    [`virgil.imaging.clean`][virgil.imaging.clean] (gradient CLEAN of optical
+    `OIData`) it takes complex visibilities and an **odd** ``npix``.
+    Provisional (new in 0.4.1).
 
     Source: Högbom (1974), Clark (1980), Schwab (1984), Cornwell (2008), CASA.
 

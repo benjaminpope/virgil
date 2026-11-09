@@ -1527,6 +1527,9 @@ def clean(
 ):
     """Build an image from components, one at a time: gradient CLEAN.
 
+    For optical `OIData`; for radio complex visibilities use
+    [`virgil.radio_clean.clean`][virgil.radio_clean.clean].
+
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
