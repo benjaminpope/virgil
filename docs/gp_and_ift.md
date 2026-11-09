@@ -243,11 +243,11 @@ The "GP terminology" column follows Rasmussen & Williams (2006) where it covers 
 | partition function, Z(d) | evidence, marginal likelihood p(d) | `log_evidence(scene, data)` returns its logarithm, in the Laplace approximation |
 | classical solution; minimum of H | MAP (maximum a posteriori) estimate | `fit(scene, priors, data)`, which returns the MAP as `FitResult.model` and `FitResult.values` |
 | information source, j = R†N⁻¹d | back-projected, noise-weighted data; for a linear response, a dirty image | not formed. The closest analogue is `dirty_image(data, npix, pixel_scale_mas)`, which weights the data uniformly rather than by their errors |
-| information propagator, D = (S⁻¹ + R†N⁻¹R)⁻¹ | posterior covariance | not returned for the latents. Its Laplace approximation, $(I + J^\top J)^{-1}$, is what `log_evidence` and `error_scale` use, through the determinant and eigenvalues of $J^\top J$ |
+| information propagator, D = (S⁻¹ + R†N⁻¹R)⁻¹ | posterior covariance | not returned for the latents. Its Laplace approximation, $(I + J^\top J)^{-1}$, is what `log_evidence` and `error_scale` use, through the determinant and eigenvalues of $J^\top J$. A guide fitted by `virgil.svi.variational` ([Variational inference](variational_inference.md)) draws from the posterior without the Gaussian assumption |
 | Wiener filter, m = Dj | GP posterior mean; kriging | `FitResult.model`, the MAP. The MAP equals the posterior mean only for a linear model with Gaussian noise, and virgil's model is nonlinear |
-| (Gibbs) free energy | variational free energy, the negative evidence lower bound (ELBO) | not computed |
+| (Gibbs) free energy | variational free energy, the negative evidence lower bound (ELBO) | the negative of `info["elbo"]` from `virgil.svi.variational` (see [Variational inference](variational_inference.md)); `log_evidence` gives the Laplace estimate of −ln Z instead |
 | Fisher metric, M = J†N⁻¹J + 1 | Gauss–Newton curvature of the loss: the data's part plus the prior's (the identity, in whitened coordinates) | $J^\top J + I$, where J is the Jacobian of `whitened_residuals` with respect to `field.latent`. It is the matrix in each step of `fit(..., method="lm")`; because `whitened_residuals` already divides by the errors, N⁻¹ does not appear |
-| MGVI (metric Gaussian variational inference) | variational inference with a Gaussian approximation whose covariance is the inverse Fisher metric | not implemented. virgil uses `fit` with the Laplace approximation, or NUTS through `numpyro_model` |
+| MGVI (metric Gaussian variational inference) | variational inference with a Gaussian approximation whose covariance is the inverse Fisher metric | not implemented. virgil uses `fit` with the Laplace approximation, `virgil.svi.variational` with a Gaussian or flow guide, or NUTS through `numpyro_model` |
 | geoVI (geometric variational inference) | variational inference after a nonlinear change of coordinates that makes the posterior closer to Gaussian | not implemented |
 | critical filter | empirical-Bayes estimate of the power spectrum | a grid of `fit` and `log_evidence` over `sigma` and `length_mas`, as in [Imaging, part 3](imaging_gp.md); the spectral shape is fixed |
 | correlated field model | a GP whose power spectrum is itself unknown and inferred, under a hierarchical prior | not implemented; `field_spectrum` has a fixed Matérn-like shape |
@@ -268,7 +268,7 @@ virgil takes two ideas from IFT, whitened latents and a stationary field compute
 | Spectrum | a fixed Matérn-like shape with two hyperparameters, σ and ℓ (`field_spectrum`) | inferred from the data: a power law plus smooth departures from it, controlled by hyperparameters named `fluctuations`, `flexibility`, `asperity` and `loglogavgslope` |
 | Basis and edges | DCT-II, with reflecting edges (`idctn(..., type=2, norm="ortho")` in `field.evaluate`) | FFT, which is periodic, usually with zero-padding to keep the edges apart |
 | Hyperparameters | chosen by the evidence on a grid (`log_evidence`), or sampled with NUTS (`numpyro_model`) | inferred together with the field, usually by MGVI or geoVI |
-| Posterior | the MAP (`fit`) with a Laplace approximation (a Gaussian centred on the MAP), or NUTS samples (`numpyro_model`) | samples from MGVI or geoVI |
+| Posterior | the MAP (`fit`) with a Laplace approximation (a Gaussian centred on the MAP), a variational guide (`virgil.svi.variational`), or NUTS samples (`numpyro_model`) | samples from MGVI or geoVI |
 
 A fixed spectral shape has fewer hyperparameters, so it is quicker to fit and easier to interpret. A learned spectrum adapts to structure on several scales at once, such as a compact core in a diffuse halo.
 

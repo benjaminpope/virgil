@@ -1,5 +1,5 @@
 <!-- AUTO-GENERATED FROM notebooks/model_syntax.ipynb by scripts/sync_tutorial_docs.py. -->
-# Visibility Models
+# Visibility models
 
 This tutorial shows how `BinaryModelCartesian` and `BinaryModelAngular` work internally, how they interact with `OIData`, and how a likelihood is built from an `OIData` instance and a model class.
 

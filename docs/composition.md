@@ -1,5 +1,5 @@
 <!-- AUTO-GENERATED FROM notebooks/composition.ipynb by scripts/sync_tutorial_docs.py. -->
-# Composing source models
+# Composing models
 
 Stars rarely come alone. A young star may be ringed by the hot inner rim of its disk; a companion may carry its own envelope of accreting material; a close binary may sit inside a circumbinary ring. None of these is "a binary" or "a disk", and a bespoke model class for every combination is tedious and error-prone.
 
@@ -344,7 +344,7 @@ rim.flux     0.5000    0.5041 ± 0.0365     0.0421             -
 rim.diam    40.0000   39.8353 ± 1.2293     1.4678             -
 ```
 
-The rim and the companion are recovered together, all within about two standard deviations of the truth, and the Laplace and HMC uncertainties broadly agree. Freeing the rim costs something: the Laplace uncertainty on the companion's flux grows by about a third (from 0.0006 to 0.0008), and its declination also becomes less certain, most likely because the lopsided rim also produces closure phases, and some of its signal can be traded against the companion's. But the companion is still detected at more than ten sigma, so here no plausible rim can masquerade as the planet. This is the check to make before believing a detection.
+The rim and the companion are recovered together, all within about two standard deviations of the truth, and the Laplace and HMC uncertainties broadly agree. Freeing the rim costs something: the Laplace uncertainty on the companion's flux grows by about half (from 0.0008 to 0.0012), and its declination also becomes less certain, most likely because the lopsided rim also produces closure phases, and some of its signal can be traded against the companion's. But the companion is still detected at about 8σ (HMC flux 0.0101 ± 0.0012), so here no plausible rim can masquerade as the planet. This is the check to make before believing a detection.
 
 ## Fitting the parameters you care about
 

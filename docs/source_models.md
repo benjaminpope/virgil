@@ -68,6 +68,7 @@ data = OIData({
     "d_vis": d_vis,
     "phi": phi_obs,
     "d_phi": d_phi,
+    "phi_unit": "deg",
     "i_cps1": None,
     "i_cps2": None,
     "i_cps3": None,

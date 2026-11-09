@@ -23,10 +23,9 @@ they sum to one) and ``LogSum`` favour sparse ones, and ``LogSum`` is not
 convex, so start it from a [`clean`][virgil.imaging.clean] model.
 [`l_curve`][virgil.imaging.l_curve] sweeps the weight ``w``.
 
-When [`fit`][virgil.fitting.fit]'s model function returns one model per
-dataset, every regularizer acts on the **first model only**: right for
-transformed copies of one scene (e.g. a [`Rotated`][virgil.models.Rotated]
-epoch), but an Image that appears only in a later model is not regularized.
+Regularizers cannot be combined with a model function that returns one
+model per dataset: that raises a ``ValueError``. Put the penalty in the
+priors, or fit with a single model.
 
 Closure, kernel and DISCO phases do not fix an image's position: something
 must (an analytic star at the origin, a [`Centroid`][virgil.imaging.Centroid]

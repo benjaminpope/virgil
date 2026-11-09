@@ -10,7 +10,7 @@ DSHARP analyses.
 arbitrary (u, v) points, the data of any radio or millimetre array whose
 visibilities are in a CASA measurement set. Any [source model](source_models.md) works, including a pixel
 [`Image`](api/models/classes/image.md) whose Fourier transform runs through
-the NUFFT backend. Each observation (observation) may have its own flux scale,
+the NUFFT backend. Each observation may have its own flux scale,
 phase-centre offset and error scale, fitted together with the sky.
 
 ## Install
@@ -433,8 +433,7 @@ Caveats:
   it should; near 1 means constant data or a time order that does not follow
   the data (for example a scrambled time column), so check `ŝ`.
 * It sorts one ddid at a time with NumPy and no Python loop over points:
-  memory is a few arrays of the largest ddid's length (see the PR notes for
-  numbers).
+  memory is a few arrays of the largest ddid's length.
 
 ### Dirty and residual images
 
