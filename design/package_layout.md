@@ -42,7 +42,7 @@
 | `smc.py` | adaptive tempered sequential Monte Carlo on BlackJAX: `tempered_smc` (prior to prior × L), `bridge_smc` (L₁ to L₂ from given particles), `SMCResult`; evidence and particles of a flat-vector model; provisional |
 | `crossval.py` | K-fold cross-validation of a hyperparameter, generic over the data: `cv_task` (one fold, a JSON-friendly record), `cross_validate`, `aggregate`, `aggregate_files`, `fold_masks`, `save_record`, `load_records`; the data enter through `make_term(mask)`, a likelihood term as in `docs/api/likelihood_terms.md`; provisional |
 | `arcs.py` | short arcs: each night's velocity, the periods its positions and velocities admit, and each alias band's seed orbits; narrows `aliases` bands; provisional |
-| `_marginal.py` | log-space quadrature shared by the orbit scores and flux grids: `log_integral` (adaptive), `gauss_legendre`, `log_quadrature` (private; used by `_linear`, `aliases`, `arcs`, `epochs`, `grid_fit`, `orbits` and `orbit_search`) |
+| `_marginal.py` | log-space quadrature shared by the orbit scores and flux grids: `log_integral` (adaptive), `gauss_legendre`, `log_quadrature` (private; used by `epochs`, `grid_fit` and `orbit_search`) |
 | `_antenna_gains.py` | Laplace-marginalized antenna gains for complex visibilities (private; used by `radio`) |
 | `_stability.py` | the stability policy and the provisional notice (`ADMONITION`); imports nothing; each module's `__provisional__` tuple lists its provisional names (private) |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |

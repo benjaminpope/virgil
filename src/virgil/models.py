@@ -31,7 +31,7 @@ Contents, in file order (each family has a banner comment):
 6. Flared scattered-light disks: `FlaredDisk` and its subclasses.
 7. Radial profiles (`ThinRing`, `GaussianRing`, `RadialSum`, `RadialGP`, ...):
    parts of a `MultipoleDisk`, not components.
-8. `MultipoleDisk` and its azimuthal, height and kernel parts.
+8. `MultipoleDisk` (its kernel, azimuthal and height parts are under 7).
 9. Composition: `System`, `Rotated`, `Attached`, `Resolved`.
 10. Binaries: `OrbitalBinary`, `BinaryModelAngular`, `BinaryModelCartesian`.
 11. `HarmonixModel`.
@@ -4561,7 +4561,7 @@ def _dot(matrix, x):
 
 
 # ---------------------------------------------------------------------------
-# MultipoleDisk and its parts (azimuthal harmonics, height, kernels)
+# MultipoleDisk
 # ---------------------------------------------------------------------------
 
 

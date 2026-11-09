@@ -18,7 +18,7 @@ say. The built-in terms are
 
 | Attribute | Contract |
 |---|---|
-| `term(values)` | Whitened residuals, an array of any shape. The term's χ² is the sum of their squares, and its size is the size of the array. Not needed when the term has `chi2_and_log_norm`. |
+| `term(values)` | Whitened residuals, an array of any shape. The term's χ² is the sum of their squares, and its size is the size of the array. Not needed when the term has `chi2_and_log_norm`, but such a term must then define `n_data`. |
 
 ## Optional
 
@@ -28,12 +28,12 @@ say. The built-in terms are
 | `residuals_and_log_norm(values)` | `fit` | `(residuals, log_norm)` in one evaluation; used instead of `term(values)` plus `log_norm` when the normalization needs the residuals (a profiled scale). |
 | `chi2_and_log_norm(values)` | `fit` | A scalar-χ² term: `(χ², log_norm)` with no residual vector. Needs the scalar-χ² attributes below. It has no least-squares form either. |
 | `chi2_constant`, `loss_constant` | `fit` | Constants left out of `chi2_and_log_norm` and of the loss; added back to the reported χ² and loss. Scalar-χ² terms only. |
-| `curvature_params(values)`, `curvature_loss(params)` | `gauss_newton_mass` | The curvature of a scalar-χ² term, through a function of a few parameters. Scalar-χ² terms only. |
+| `curvature_params(values)`, `curvature_loss(params)` | `fit` (the L-BFGS/Adam preconditioner), `gauss_newton_diag` | The curvature of a scalar-χ² term, through a function of a few parameters. Required by scalar-χ² terms whenever `fit` preconditions. `gauss_newton_mass` does not accept scalar-χ² terms. |
 | `n_data` | `fit` | The number of data points, for the per-point loss scale; otherwise the size of `term(start)`. |
 | `resolve(start, least_squares)` | `fit` | Returns `(term, form)`: the term `fit` should actually use at `start`, and a note of which form ran (a radio term may swap in its Toeplitz form). |
 | `derived(values)` | `fit` | A dict of extra quantities (not parameters) added to `info["derived"]`. |
-| `arrays` | `fit` | A dict with `"u"` and `"v"` (in wavelengths), so the default pixel scale and field of view see the term's baselines. |
-| `loglike(values)` | `numpyro_model` | The term's own normalized log density, added with `numpyro.factor`. Without it, the factor is $-\tfrac12\sum r^2$ of `term(values)`. |
+| `arrays` | `kkt_report` | A dict with `"u"` and `"v"` (in wavelengths), so the band-limit diagnostic sees the term's longest baseline. |
+| `loglike(values)` | `numpyro_model` | The term's own normalized log density, added with `numpyro.factor`. Without it, the factor is $-\tfrac12\sum r^2$ of `term(values)` only: `log_norm` is ignored, so a term with a `log_norm` (or a scalar χ²) must define `loglike` to be sampled correctly. |
 
 ## Cross-validation
 

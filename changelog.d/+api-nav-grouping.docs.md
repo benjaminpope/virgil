@@ -1,1 +1,0 @@
-The API reference is grouped under nine headings, lists `smc`, `mode_search`, `night_summaries` and `orbit_cells`, and has a page on the likelihood-term contract (the attributes `fit` and `crossval` read from a term). The `models` module docstring has a contents list, and the two `clean` functions, `GaussianRing` and `scenes` point at what they are not.
