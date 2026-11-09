@@ -302,9 +302,32 @@ def test_gradient_of_model_traced_under_jit():
     star = GravityDarkenedStar(1.0, 0.7, 55.0, 15.0)
     value = eqx.filter_jit(model_loglike)(star, data)
     assert onp.isfinite(float(value))
-    # gradient is nonzero for a model mismatched with the data
-    grads = eqx.filter_grad(model_loglike)(star, data)
-    assert any(onp.any(onp.asarray(g) != 0) for g in float_leaves(grads))
+
+
+def test_gradient_matches_finite_differences_per_parameter():
+    # Each shape parameter's gradient against a central difference of the
+    # log-likelihood, in float64. The step 1e-3 has truncation error
+    # ~h**2/6 times the third derivative, below 1e-6 of |g| here; rtol is
+    # 100x that. The data are closure phases, so flux and the offsets have no
+    # gradient to check.
+    h = 1e-3
+    with jax.enable_x64():
+        data = _data_for_gradients()
+        star = GravityDarkenedStar(1.0, 0.7, 55.0, 15.0)
+        grads = eqx.filter_grad(model_loglike)(star, data)
+        for name in ("diam_eq", "omega", "inc", "pa"):
+            x = float(getattr(star, name))
+
+            def loglike(v, name=name):
+                moved = eqx.tree_at(
+                    lambda m: getattr(m, name), star, np.asarray(v)
+                )
+                return float(model_loglike(moved, data))
+
+            fd = (loglike(x + h) - loglike(x - h)) / (2 * h)
+            g = float(getattr(grads, name))
+            assert abs(fd) > 1e-7, name  # a zero gradient cannot pass
+            assert g == pytest.approx(fd, rel=1e-4), name
 
 
 # --- 7. composition ------------------------------------------------------
@@ -387,9 +410,21 @@ def test_plot_surface_returns_artist():
 
     fig, ax = plt.subplots()
     artist = GravityDarkenedStar(1.0, 0.8, 60.0, 30.0).plot_surface(ax)
-    assert artist is not None
+    # the coloured triangles are the visible ones, each a positive flux
+    values = onp.asarray(artist.get_array())
+    assert values.size > 0
+    assert onp.all(onp.isfinite(values)) and onp.all(values > 0)
+    # East to the left, and the axes cover the drawn triangles in both
+    # coordinates
+    verts = onp.concatenate([p.vertices for p in artist.get_paths()])
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    assert x0 > x1
+    assert x0 >= verts[:, 0].max() and x1 <= verts[:, 0].min()
+    assert y0 <= verts[:, 1].min() and y1 >= verts[:, 1].max()
+    assert ax.get_xlabel() == "ΔRA (mas)"
     artist2 = GravityDarkenedStar(1.0, 0.8, 60.0).plot_surface()
-    assert artist2 is not None
+    assert onp.asarray(artist2.get_array()).size > 0
     plt.close("all")
 
 

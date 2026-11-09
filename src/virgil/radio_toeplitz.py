@@ -263,7 +263,11 @@ class ToeplitzVisData(eqx.Module):
         bound = 0.0
         if free:
             # The largest image-frame shift (pixels) of the offsets' prior box.
-            shift_mas = max_offset_mas or nuisance._max_offset_mas
+            shift_mas = (
+                nuisance._max_offset_mas
+                if max_offset_mas is None
+                else max_offset_mas
+            )
             if shift_mas is None:
                 free_obs = onp.arange(nuisance.n_obs) != nuisance.ref_obs
                 unit = nuisance.offset_unit_mas[free_obs]
@@ -308,9 +312,6 @@ class ToeplitzVisData(eqx.Module):
             last_l += [False] * (n_chunks - 1) + [True] * min(n_chunks, 1)
         idx = onp.concatenate(idx_l).reshape(-1, chunk)
         valid = onp.concatenate(valid_l).reshape(-1, chunk)
-        chunk_group = onp.asarray(group_l, dtype=onp.int32)
-        last = onp.asarray(last_l, dtype=bool)
-        nf_b = grid.grid_size(2 * npix, kp)
         nf_d = grid.grid_size(npix + 2 * math.ceil(bound), kp)
         margin = grid.margin(nf_d, kp) if free else None
         if free and tau > margin:
@@ -327,30 +328,26 @@ class ToeplitzVisData(eqx.Module):
         self.plan = dict(
             idx=np.asarray(used[idx]),
             valid=np.asarray(valid),
-            group=np.asarray(chunk_group),
-            last=np.asarray(last),
+            group=np.asarray(group_l, dtype=onp.int32),
+            last=np.asarray(last_l, dtype=bool),
             tx=chunked(tx),
             ty=chunked(ty),
             h=chunked(h),
             rot=chunked(rot),
         )
-        self.data = data
-        self.mask = mask
-        self.npix = npix
+        self.data, self.mask, self.npix = data, mask, npix
         self.pixel_scale_mas = float(pix)
         self.rotation_deg = float(image.rotation_deg)
         self.blur_fwhm_mas = image.blur_fwhm_mas
         self.image_offset_mas = (dra, ddec)
-        self.free_offsets = free
-        self.max_shift_pix = float(bound)
-        self.nyquist_fraction = tau
-        self.margin = margin
+        self.free_offsets, self.max_shift_pix = free, float(bound)
+        self.nyquist_fraction, self.margin = tau, margin
         self.signature = _signature(nuisance)
         self.kp = kp
-        self.sizes = (n_groups, nf_b, nf_d)
-        count = onp.bincount(group, minlength=n_groups).astype(onp.float64)
+        self.sizes = (n_groups, grid.grid_size(2 * npix, kp), nf_d)
         self.arrays = dict(
-            self._compute(data.vis, data.weight), count=np.asarray(count)
+            self._compute(data.vis, data.weight),
+            count=np.asarray(counts, dtype=onp.float64),
         )
 
     def _compute(self, vis, weight):

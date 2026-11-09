@@ -931,38 +931,46 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         return amp
 
     def _visibility_channel_from_data(self, vis, d_vis):
-        """Convert stored visibility observables to the scalar channel ``vis_mode``."""
+        """Convert stored visibility observables to the scalar channel ``vis_mode``.
+
+        Values are transformed as they are, never floored. Samples where the
+        transform is undefined (V² or |V| ≤ 0 for ``logamp``, V² ≤ 0 for
+        ``amp`` from V²) were already flagged on construction.
+        """
         vis = np.asarray(vis, dtype=float)
-        d_vis = np.asarray(d_vis, dtype=float)
         if self.vis_mode == "logamp":
-            # Floored at its own error: V² or |V| at or below zero stays finite.
-            floored = np.maximum(vis, np.maximum(d_vis, 1e-30))
             if self.v2_flag:
-                return 0.5 * np.log(floored)
-            return np.log(floored)
+                return 0.5 * np.log(vis)
+            return np.log(vis)
         if self.vis_mode == "amp" and self.v2_flag:
-            return np.sqrt(np.maximum(vis, 0.0))
+            return np.sqrt(vis)
         if self.vis_mode == "v2" and (not self.v2_flag):
             return vis**2
         return vis
 
     def _visibility_uncertainty_channel(self, vis, d_vis):
-        """Propagate visibility errors linearly into the scalar channel ``vis_mode``."""
+        """Propagate visibility errors to first order into the channel ``vis_mode``.
+
+        σ_f = |f'(x)| σ_x on the data as given, with no floor: log|V| from V²
+        gives σ/(2V²); log|V| from |V| gives σ/|V|; |V| from V² gives
+        σ/(2|V|). These diverge as the datum goes to zero and are poor once σ
+        ≳ the datum (the transformed noise is then far from Gaussian); such
+        points are flagged out where undefined and counted otherwise. V² from
+        a Gaussian |V| is the exact standard deviation σ·√(4V² + 2σ²)
+        (Var a² = 4μ²σ² + 2σ⁴); it tends to first-order 2|V|σ for |V| ≫ σ,
+        and stays finite at |V| = 0, so first-order weights ∝ 1/V² are
+        avoided.
+        """
         vis = np.asarray(vis, dtype=float)
         d_vis = np.asarray(d_vis, dtype=float)
-        # The derivative diverges near zero, so the data are floored at their
-        # own error first, in either direction.
-        floored = np.maximum(vis, np.maximum(d_vis, 1e-30))
         if self.vis_mode == "logamp":
             if self.v2_flag:
-                return 0.5 * d_vis / floored
-            return d_vis / floored
+                return 0.5 * d_vis / vis
+            return d_vis / np.abs(vis)
         if self.vis_mode == "amp" and self.v2_flag:
-            return 0.5 * d_vis / np.sqrt(floored)
+            return 0.5 * d_vis / np.sqrt(vis)
         if self.vis_mode == "v2" and (not self.v2_flag):
-            # |V| is floored at its own uncertainty, so noisy amplitudes near
-            # or below zero do not get a vanishing V² error.
-            return 2.0 * np.hypot(vis, d_vis) * d_vis
+            return d_vis * np.sqrt(4.0 * vis**2 + 2.0 * d_vis**2)
         return d_vis
 
     def _transform_observed_channels(
@@ -980,6 +988,63 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         n_phi = self._n_phi_samples()
         self._validate_operator_shape(self.vis_mat, n_vis, "vis_mat")
         self._validate_operator_shape(self.phi_mat, n_phi, "phi_mat")
+
+        mode, v2 = self.vis_mode, self.v2_flag
+        cut = mode == "logamp" or (mode == "amp" and v2)
+        if np.asarray(self.vis).size == n_vis and (
+            cut or (mode == "v2" and not v2)
+        ):
+            # logamp takes log|V| and amp from V² takes sqrt(V²); both are
+            # undefined for V² (or |V|) <= 0, which noisy data reach
+            # legitimately. Flag those samples out (one counted warning)
+            # rather than flooring them: a floor replaces a measured value
+            # with an invented one and biases the fit. Valid samples with the
+            # datum below σ are kept at their own value, but the propagated
+            # error is poor there (the transformed noise is far from
+            # Gaussian), so they are counted in a second warning, also for
+            # v2 from |V|. Flagged and invalid samples are already gone.
+            vis, err = onp.asarray(self.vis), onp.asarray(self.d_vis)
+            undefined = (vis <= 0) if cut else onp.zeros(vis.shape, bool)
+            weak = ~undefined & (onp.abs(vis) < err)
+            what = "V²" if v2 else "|V|"
+            if undefined.any() and self.vis_mat is not None:
+                raise ValueError(
+                    f"{undefined.sum()} of {vis.size} visibilities have "
+                    f"{what} <= 0, where vis_mode={mode!r} is undefined, and "
+                    "data with an operator (vis_mat) cannot be flagged per "
+                    "sample: drop those samples and the matching operator "
+                    "columns, or use vis_mode='v2'."
+                )
+            if undefined.any():
+                warnings.warn(
+                    f"{undefined.sum()} of {vis.size} points with {what} <= "
+                    f"0 are excluded from {mode} because the channel is "
+                    "undefined there (not floored).",
+                    UserWarning,
+                    stacklevel=external_stacklevel(),
+                )
+            if weak.any():
+                warnings.warn(
+                    f"{weak.sum()} of {vis.size} points have {what} < σ: "
+                    f"kept at their own value in {mode}, but the error "
+                    "propagation is poor there (the transformed noise is far "
+                    "from Gaussian).",
+                    UserWarning,
+                    stacklevel=external_stacklevel(),
+                )
+            if undefined.any():
+                kept = ~undefined
+                rows = (
+                    onp.arange(vis.size)
+                    if self.vis_index is None
+                    else onp.asarray(self.vis_index)
+                )
+                self.vis_index = np.asarray(rows[kept])
+                self.vis, self.d_vis = (
+                    np.asarray(vis[kept]),
+                    np.asarray(err[kept]),
+                )
+                n_vis = self._n_vis_samples()
 
         if np.asarray(self.vis).size == n_vis:
             vis_channel = self._visibility_channel_from_data(
@@ -2027,13 +2092,21 @@ _ZERO_PROJECTED_ERROR = (
 def _good_samples(values, errors, flag, n_samples, name, operator=False):
     """Mask of unflagged, usable samples, or ``None`` if all are good.
 
-    Already-projected data (size not ``n_samples``) are not checked.
+    Already-projected data (size not ``n_samples``) cannot be flagged per
+    sample, so they must be finite with positive finite errors.
     """
     if values.size != n_samples:
         if flag is not None:
             raise ValueError(
                 f"{name}_flag was given, but {name} has {values.size} values "
                 f"for {n_samples} samples (it looks already projected)."
+            )
+        if not onp.all(_valid_samples(values, errors)):
+            raise ValueError(
+                f"{name} has {values.size} values for {n_samples} samples (it "
+                "looks already projected), and some are not finite or have a "
+                "non-positive or non-finite error: projected data cannot be "
+                "flagged, so remove them first."
             )
         return None
     if operator:
