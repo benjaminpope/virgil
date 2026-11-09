@@ -424,34 +424,61 @@ def test_the_within_night_chi2_is_drawn_not_set():
     """Inlier nights: χ²/s² has mean ν and variance 2ν (the standard error
     of a χ²_ν sample variance uses the excess kurtosis 12/ν), not the old
     noise-free N_OBS. Outlier nights: ln s_k = ½ ln(χ²/ν) + noise is centred
-    and has the spread of a log-uniform scale on ±ln S_MAX."""
-    rng = onp.random.default_rng(11)
-    z, ln_sk = [], []
-    while len(z) < 600:
-        nights = pop.draw_nights(rng)
-        _, fit = pop.fit_domain(nights)
-        if fit is None:
-            continue
-        sysd = pop.draw_system(rng, nights, fit)
-        s2 = onp.exp(2 * sysd["ln_s"])
-        nu = pop.N_OBS - pop.N_PAR
-        for i, night in enumerate(sysd["summaries"]):
-            c2 = float(night.peaks[0].chi2[0])
-            if i in sysd["outliers"]:
-                ln_sk.append(0.5 * onp.log(c2 / nu))
-            else:
-                z.append(c2 / s2)
-    z, ln_sk = onp.array(z), onp.array(ln_sk)
-    assert abs(z.mean() - nu) < 4 * onp.sqrt(2 * nu / len(z))
-    assert abs(z.var() - 2 * nu) < 4 * 2 * nu * onp.sqrt(
-        (2 + 12 / nu) / len(z)
+    and has the spread of a log-uniform scale on ±ln S_MAX. ``draw_system``
+    passes the drawn χ² on to its summaries."""
+    rng = onp.random.default_rng(0)
+    n, ln_s, sigma, nu = 4000, 0.3, 1e-3, pop.N_OBS - pop.N_PAR
+    mean = onp.zeros((n, 5))
+    mean[:, 4] = -2.0
+    _, c2 = pop._noise_outliers_and_chi2(
+        rng, mean, onp.zeros(n, bool), ln_s, sigma
     )
-    # ln s_k ~ U(±L) plus ½ ln(χ²_ν/ν) (variance ~ 1/(2ν)): sd and mean
+    z = c2 / onp.exp(2 * ln_s)
+    assert abs(z.mean() - nu) < 4 * onp.sqrt(2 * nu / n)
+    assert abs(z.var() - 2 * nu) < 4 * 2 * nu * onp.sqrt((2 + 12 / nu) / n)
+    _, c2 = pop._noise_outliers_and_chi2(
+        rng, mean, onp.ones(n, bool), ln_s, sigma
+    )
+    ln_sk = 0.5 * onp.log(c2 / nu)
+    # ln s_k ~ U(±L) plus ½ ln(χ²_ν/ν) (variance ~ 1/(2ν)): mean and sd
     big = onp.log(pop.oc_cells.S_MAX)
     sd = onp.sqrt(big**2 / 3 + 1 / (2 * nu))
-    assert len(ln_sk) > 100
-    assert abs(ln_sk.mean()) < 4 * sd / onp.sqrt(len(ln_sk))
-    assert abs(ln_sk.std() / sd - 1) < 4 / onp.sqrt(2 * len(ln_sk)) * 1.5
+    assert abs(ln_sk.mean()) < 4 * sd / onp.sqrt(n)
+    assert abs(ln_sk.std() / sd - 1) < 4 / onp.sqrt(2 * n) * 1.5
+    nights = pop.draw_nights(rng)
+    _, fit = pop.fit_domain(nights)
+    while fit is None:
+        nights = pop.draw_nights(rng)
+        _, fit = pop.fit_domain(nights)
+    sysd = pop.draw_system(rng, nights, fit)
+    got = [float(s.peaks[0].chi2[0]) for s in sysd["summaries"]]
+    assert all(c > 0 for c in got)
+    assert not onp.allclose(got, pop.N_OBS * onp.exp(2 * sysd["ln_s"]))
+
+
+def test_the_ln_s_pit_is_the_p_weighted_mixture_of_the_cells_draws(
+    monkeypatch,
+):
+    """``_pit_lns`` weights each cell's fraction of ln s draws below the truth
+    by ``p``, leaves out cells without draws or mass, renormalizes, and is
+    nan with no draws at all."""
+    draws = {
+        1: onp.array([0.0, 1.0, 2.0, 3.0]),  # 2 of 4 below 1.5
+        2: onp.array([5.0, 6.0]),  # none below 1.5
+    }
+    monkeypatch.setattr(
+        pop.oc_cells, "decode_particles", lambda f: dict(ln_s=draws[f.i])
+    )
+    fits = [
+        types.SimpleNamespace(draws=True, i=1),
+        types.SimpleNamespace(draws=True, i=2),
+        types.SimpleNamespace(draws=None, i=3),
+    ]
+    p = onp.array([0.2, 0.2, 0.6])
+    # cell 3 has no draws: left out, the rest renormalized
+    assert pop._pit_lns(p, fits, 1.5) == pytest.approx(0.5 * 0.5 + 0.0)
+    assert onp.isnan(pop._pit_lns(p, [fits[2]] * 3, 1.5))
+    assert onp.isnan(pop._pit_lns(onp.zeros(3), fits, 1.5))
 
 
 def test_outlier_nights_are_scattered_by_their_own_scale():
