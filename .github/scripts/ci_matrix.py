@@ -19,7 +19,7 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 |         |                              | the `full_only` ones                    |
 |         | dispatch with `tier=main`    | the same (the daily lock-upgrade PR)    |
 | full    | `full-ci` label, dispatch    | main + the `full_only` tests, macOS     |
-|         |                              | py3.11 float64, py3.13 and the floors   |
+|         |                              | py3.11, py3.13 and the floors           |
 |         |                              | (the last two in 2 shards each)         |
 | nightly | daily schedule               | full, all with slow tests except macOS  |
 |         |                              | (fast tier)                             |
@@ -96,13 +96,13 @@ def choose(
         for k in (1, 2, 3)
     ]
     if full:
-        # x64 dtype mix-ups have surfaced on macOS and Python 3.11 but not
-        # in Linux CI: run float64 there, on the numerical files only.
+        # A float32 platform check: macOS py3.11, fast tier. It does not
+        # test x64 (the Linux gate jobs do).
         include.append(
             {
                 "os": "macos-latest",
                 "python-version": "3.11",
-                "x64": "1",
+                "x64": "0",
                 "slow": nightly,
                 # Unsharded, its 3 cores took over 3 hours for the whole
                 # suite: the nightly's 90-minute limit fits the fast tier.

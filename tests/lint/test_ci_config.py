@@ -62,7 +62,7 @@ def test_main_push_is_the_gate_with_slow_tests():
 
 def test_full_ci_label_adds_macos_py313_and_the_floors():
     jobs = _jobs("pull_request", full_label=True)
-    assert _ids(jobs) == GATE | PY313 | FLOORS | {"macos-latest-py3.11-x641"}
+    assert _ids(jobs) == GATE | PY313 | FLOORS | {"macos-latest-py3.11-x640"}
     assert all(j["slow"] for j in jobs if j["id"] in GATE)
     assert not any(j.get("skip_full_only") for j in jobs)
     # The extra jobs run slow tests nightly only.
@@ -93,11 +93,11 @@ def test_dispatch_with_main_tier_is_the_main_tier():
     assert _ids(_jobs("pull_request", tier="main")) == GATE
 
 
-def test_macos_job_is_float64_and_fast_only():
+def test_macos_job_is_float32_and_fast_only():
     (mac,) = [
         j for j in _jobs("workflow_dispatch") if j["os"] == "macos-latest"
     ]
-    assert mac["x64"] == "1" and mac["fast_only"]
+    assert mac["x64"] == "0" and mac["fast_only"]
 
 
 def test_lock_upgrade_dispatches_the_main_tier():
