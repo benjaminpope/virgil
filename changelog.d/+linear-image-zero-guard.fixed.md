@@ -1,1 +1,0 @@
-`LinearImage.brightness` is zero, with a finite (NaN-free) gradient, when all pixels are zero, instead of NaN. The gradient of a `System` at exactly zero pixels is a guard value, not the derivative: do not start a fit there.

@@ -243,24 +243,10 @@ def test_smoothed_regulariser_on_a_linear_image():
 
 
 @pytest.mark.parametrize("par", ["linear", "sqrt"])
-def test_all_zero_pixels_give_finite_model_and_gradient(par):
-    # Linear: only finiteness of the gradient is checked. At exactly zero it is a guard value, not the
-    # derivative (the V(b) dF term of F * V(b) is lost), so it is not checked.
-
-    def mean_vis(x):
-        im = LinearImage(x, SCALE, parametrization=par, reference_flux=0.5)
-        scene = System(star=PointSource(), env=im)
-        u, v = np.asarray([29.7, 10.0]), np.asarray([0.0, 5.0])
-        return np.sum(np.abs(scene.model(u, v, 4.8e-6)))
-
+def test_all_zero_pixels_are_undefined_not_a_wrong_finite_value(par):
+    # A guard would give a finite but wrong gradient (the V(b) dF term of
+    # F * V(b) is lost) and let L-BFGS-B converge on the empty image, so the
+    # brightness stays 0/0 = NaN there and the solver restarts from it.
     x = np.zeros((NPIX, NPIX))
-    b = LinearImage(
-        x, SCALE, parametrization=par, reference_flux=0.5
-    ).brightness
-    assert np.all(b == 0.0)
-    assert np.isfinite(mean_vis(x))
-    g = jax.grad(mean_vis)(x)
-    assert np.all(np.isfinite(g))
-    if par == "sqrt":
-        # d(x^2)/dx = 0 at x = 0, so the true gradient is zero here.
-        assert np.all(g == 0.0)
+    im = LinearImage(x, SCALE, parametrization=par, reference_flux=0.5)
+    assert not np.any(np.isfinite(im.brightness))
