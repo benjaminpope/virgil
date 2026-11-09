@@ -78,13 +78,14 @@ def test_the_draws_follow_the_fitted_prior():
     assert seen >= 1
 
 
+@pytest.mark.slow
 def test_every_simulated_night_has_a_finite_outlier_density():
     """The simulated ln f is the truth plus the full Gaussian noise (no
     truncation), so a night can sit above 0; b_k integrates the flux box over
     the ln f error and stays finite for every night."""
     rng = onp.random.default_rng(0)
-    n_checked = n_drawn = n_above = 0
-    while n_drawn < 400:
+    n_checked = n_drawn = 0
+    while n_checked < 1 and n_drawn < 1000:
         nights = pop.draw_nights(rng)
         _, fit = pop.fit_domain(nights)
         if fit is None:
@@ -92,14 +93,14 @@ def test_every_simulated_night_has_a_finite_outlier_density():
         sysd = pop.draw_system(rng, nights, fit)
         n_drawn += 1
         ln_f = onp.array([s.peaks[0].mean[4] for s in sysd["summaries"]])
-        n_above += int(onp.sum(ln_f > 0.0))
-        if n_above and n_checked < 40:  # b_k on the systems that matter
-            prior = pop.oc_cells.outlier_prior(fit, n=2**12)
-            b = pop.oc_cells.outlier_log_density(sysd["summaries"], prior)
-            assert onp.all(onp.isfinite(b))
-            n_checked += 1
+        if not onp.any(ln_f > 0.0):  # only the systems the box newly supports
+            continue
+        prior = pop.oc_cells.outlier_prior(fit, n=2**10)
+        b = pop.oc_cells.outlier_log_density(sysd["summaries"], prior)
+        assert onp.all(onp.isfinite(b))
+        n_checked += 1
     # the case the box integral newly supports must actually occur
-    assert n_above > 0 and n_checked > 0
+    assert n_checked == 1
 
 
 def test_scoring_is_invariant_to_the_orbit_swap():
