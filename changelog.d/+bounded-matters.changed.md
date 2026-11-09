@@ -1,0 +1,1 @@
+- A flagged orbit cell fails a system only if it `matters` under a bound: `CellFit.log_l_sup` (the largest ln L evaluated in the cell) replaces `log_z_upper`, the threshold is `ln(n_cells/δ)` below the best unflagged cell, and `CellsResult.omitted_bound` records the mass the negligible cells can hold (≤ δ). Expect more failures than before; this is intended.
