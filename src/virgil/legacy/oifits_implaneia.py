@@ -196,7 +196,7 @@ def _query_simbad(name):
 
     Coordinates are in degrees, proper motions in deg/yr and the parallax in
     degrees, as OIFITS requires (SIMBAD gives mas/yr and mas). A failed
-    query, such as a network error or an unknown target, gives zeros; a
+    query, such as a network error or an unknown target, warns and gives zeros; a
     missing ``astroquery`` raises, with an install hint.
     """
     unknown = [0], [0], ["unknown"], [0], [0], [0]
@@ -238,7 +238,12 @@ def _query_simbad(name):
             [float(column("pmdec")) * mas_to_deg],
             [float(column("plx_value")) * mas_to_deg],
         )
-    except Exception:
+    except (OSError, KeyError, IndexError, TypeError, ValueError) as err:
+        warnings.warn(
+            f"SIMBAD lookup for {name!r} failed ({err!r}); writing placeholder "
+            "OI_TARGET coordinates.",
+            stacklevel=2,
+        )
         return unknown
 
 
