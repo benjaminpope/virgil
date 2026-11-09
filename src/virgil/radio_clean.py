@@ -485,9 +485,9 @@ def clean(
     ``tclean``; see the [guide](../radio_clean.md). Unlike
     [`virgil.imaging.clean`][virgil.imaging.clean] (gradient CLEAN of optical
     `OIData`) it takes complex visibilities and an **odd** ``npix``.
-    Variants: Högbom point components (1974) or Cornwell's multi-scale
-    Gaussians (2008) in Clark's PSF-windowed minor cycles (1980), with a
-    Cotton–Schwab major cycle on the visibilities (Schwab 1984).
+    Variants: Högbom (1974) point components or multi-scale Gaussian
+    components (Cornwell 2008) in Clark's (1980) PSF-windowed minor cycles,
+    with a Cotton–Schwab major cycle on the visibilities (Schwab 1984).
     Provisional (new in 0.4.1).
 
     Source: Högbom (1974), Clark (1980), Schwab (1984), Cornwell (2008), CASA.
