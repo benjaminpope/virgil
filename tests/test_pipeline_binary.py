@@ -373,7 +373,6 @@ def test_ruffio_limits_are_the_default_on_the_search_maps(full_run):
     flux_sigma) truncated to flux >= 0 (scipy's truncnorm as the reference),
     NaN inside the resolution limit and where the refinement failed."""
     from scipy.stats import norm, truncnorm
-    from virgil.pipeline.binary import _search_flux
 
     pipeline, res = full_run
     assert res.summary["limits"]["method"] == "ruffio"
@@ -389,13 +388,37 @@ def test_ruffio_limits_are_the_default_on_the_search_maps(full_run):
     want = truncnorm.ppf(q, -mu[ok] / s[ok], onp.inf, loc=mu[ok], scale=s[ok])
     onp.testing.assert_allclose(grid["limit_flux"][ok], want, rtol=1e-4)
 
-    # Without stored search maps the same maps are recomputed.
+
+def test_limits_recompute_search_maps_missing_from_an_older_run(
+    full_run, data, tmp_path
+):
+    """A run whose search group lacks flux_converged (an older virgil)
+    resumes through limits: the maps are recomputed and written back."""
+    import h5py
+
+    pipeline, res = full_run
+    out = tmp_path / "run"
+    shutil.copytree(pipeline.output, out)
+    with h5py.File(out / "grids.h5", "a") as f:
+        del f["search/flux_converged"]
+    run = json.loads((out / "run.json").read_text())
+    run["stages"]["limits"]["status"] = "failed"
+    (out / "run.json").write_text(json.dumps(run))
+    again = BinaryPipeline(data, output=out, quicklook_execute=False, **TINY)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        flux, sigma, converged = _search_flux(pipeline, pipeline._grid(), {})
-    onp.testing.assert_allclose(flux, mu, rtol=1e-6)
-    onp.testing.assert_allclose(sigma, s, rtol=1e-6)
-    onp.testing.assert_array_equal(converged, grid["flux_converged"])
+        back = again.run(through="limits")
+    grid, want = back.grid(), res.grid()
+    assert back.summary["limits"]["method"] == "ruffio"
+    onp.testing.assert_array_equal(
+        grid["flux_converged"], want["flux_converged"]
+    )
+    onp.testing.assert_allclose(
+        grid["flux_best"], want["flux_best"], rtol=1e-6
+    )
+    onp.testing.assert_allclose(
+        grid["limit_flux"], want["limit_flux"], rtol=1e-5
+    )
 
 
 @pytest.mark.slow

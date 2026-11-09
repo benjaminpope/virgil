@@ -579,10 +579,19 @@ def _limits(p):
 
     s = p.settings
     grid, max_sep = p._grid(), p._grid_axis().max_sep
-    search = _io.read_h5(p.output / "grids.h5", "search")
+    path = p.output / "grids.h5"
+    axes = _io.read_h5(path, "axes") if path.is_file() else {}
+    same = all(
+        onp.array_equal(axes.get(k), onp.asarray(grid[k]))
+        for k in ("dra", "ddec")
+    )
+    search = _io.read_h5(path, "search") if same else {}
     method = s["limit_method"]
     if method == "ruffio":
-        flux, sigma, converged = _search_flux(p, grid, search)
+        keys = ("flux_best", "flux_sigma", "flux_converged")
+        if not set(keys) <= search.keys():  # e.g. a run from an older virgil
+            search = _search_maps(p.processed, grid, s["batch_size"])
+        flux, sigma, converged = (onp.asarray(search[k]) for k in keys)
         limit = ruffio_upperlimit(flux, sigma, norm.cdf(s["sigma"]))
         bad = ~converged | ~onp.isfinite(sigma) | (sigma <= 0)
         limit = onp.where(bad, onp.nan, limit)
@@ -635,20 +644,6 @@ def _limits(p):
         "median_delta_mag": delta_mag,
         "deepest_delta_mag": float(onp.nanmax(delta_mag)),
     }
-
-
-def _search_flux(p, grid, search):
-    """``(flux_best, flux_sigma, flux_converged)`` of the search stage,
-    recomputed when its maps are missing or on another grid."""
-    axes = _io.read_h5(p.output / "grids.h5", "axes")
-    same = all(
-        k in axes and onp.array_equal(axes[k], onp.asarray(grid[k]))
-        for k in ("dra", "ddec")
-    )
-    keys = ("flux_best", "flux_sigma", "flux_converged")
-    if not (same and set(keys) <= search.keys()):
-        search = _search_maps(p.processed, grid, p.settings["batch_size"])
-    return tuple(onp.asarray(search[k]) for k in keys)
 
 
 # --- fit ---
