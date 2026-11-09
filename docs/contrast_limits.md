@@ -192,7 +192,7 @@ display(Image(filename=str(res.path / "plots" / "limits_contrast_curve.png")))
 ```
 
 ```text
-BinaryPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp37xwpjqk/limits_run: partial
+BinaryPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpddyie1t5/limits_run: partial
   data.n_vis = 21
   data.n_phi = 35
   data.n_independent = 36
@@ -217,12 +217,13 @@ BinaryPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp37xwpj
   search.flux = 8.28444e-05
   search.max_sep_mas = 250
   limits.sigma = 2
-  limits.deepest_delta_mag = 10.0473
+  limits.deepest_delta_mag = 10.046
   [pass] chi2: χ²/N = 0.614 for the star alone on quoted errors: consistent with the quoted errors.
   [warn] detection: No companion above 3σ (2.66σ local): the fit and posterior describe the highest noise peak; quote the contrast limits instead.
   [pass] grid_edge: The grid peak lies inside the searched grid.
   [warn] convergence: The optimizer did not converge at 243 of 3721 grid positions (6.5 per cent): values there may be inaccurate.
-  2 warning(s) recorded in the search stage(s) (see the checks, or Result.summary['warnings'])
+  [warn] stage_warnings: 1 warning(s) were raised inside the stages: ruffio limits: 243 of 3721 grid positions have an unconverged flux refinement or no finite Laplace sigma; their limits are NaN. See the 'warnings' list of summary.json.
+  3 warning(s) recorded in the limits, search stage(s) (see the checks, or Result.summary['warnings'])
 ```
 
 ![contrast_limits output 15.2](generated/contrast_limits_cell015_out02.png)

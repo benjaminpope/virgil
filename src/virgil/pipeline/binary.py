@@ -422,7 +422,8 @@ def _search(p):
 def _refined_flux(
     data, grid, batch_size
 ):  # deliberate: tests call it directly
-    """``(flux, loglike)`` of the point companion refined at every position."""
+    """``(flux, loglike, converged)`` of the point companion refined at every
+    position."""
     from .._grid import (
         batch_size_or_default,
         resolve_grid_keys,
@@ -442,7 +443,7 @@ def _refined_flux(
         batch_size=batch_size_or_default(batch_size, data),
     )
     warn_unconverged(converged, "optimized_flux_grid")
-    return flux, loglike
+    return flux, loglike, converged
 
 
 def _search_maps(data, grid, batch_size):
@@ -453,7 +454,7 @@ def _search_maps(data, grid, batch_size):
     from ..likelihood import model_loglike
     from ..models import BinaryModelCartesian
 
-    flux, loglike = (
+    flux, loglike, converged = (
         onp.asarray(x) for x in _refined_flux(data, grid, batch_size)
     )
     sigma = onp.asarray(
@@ -474,6 +475,7 @@ def _search_maps(data, grid, batch_size):
         "loglike": loglike,
         "flux_best": flux,
         "flux_sigma": sigma,
+        "flux_converged": converged.astype(bool),
         "snr": flux / sigma,
     }
 
@@ -559,7 +561,8 @@ def _limits(p):
 
     Ruffio is the search's flux and Laplace σ, truncated to ``f >= 0``, at the
     ``norm.cdf(sigma)`` quantile, on the quoted errors with no error-scale
-    rescale (a deliberate choice for now).
+    rescale (a deliberate choice for now). Positions where the flux refinement
+    did not converge, or σ is undefined, are NaN, with a warning.
 
     Source: Ruffio et al. (2018), [references](../references.md#ruffio2018).
     """
@@ -579,8 +582,18 @@ def _limits(p):
     search = _io.read_h5(p.output / "grids.h5", "search")
     method = s["limit_method"]
     if method == "ruffio":
-        flux, sigma = _search_flux(p, grid, search)
+        flux, sigma, converged = _search_flux(p, grid, search)
         limit = ruffio_upperlimit(flux, sigma, norm.cdf(s["sigma"]))
+        bad = ~converged | ~onp.isfinite(sigma) | (sigma <= 0)
+        limit = onp.where(bad, onp.nan, limit)
+        if bad.any():
+            warnings.warn(
+                f"ruffio limits: {int(bad.sum())} of {bad.size} grid "
+                "positions have an unconverged flux refinement or no finite "
+                "Laplace sigma; their limits are NaN",
+                RuntimeWarning,
+                stacklevel=2,
+            )
     else:
         limit = absil_limits(
             BinaryModelCartesian,
@@ -625,17 +638,17 @@ def _limits(p):
 
 
 def _search_flux(p, grid, search):
-    """``(flux_best, flux_sigma)`` of the search stage, recomputed when its
-    maps are missing or on another grid."""
+    """``(flux_best, flux_sigma, flux_converged)`` of the search stage,
+    recomputed when its maps are missing or on another grid."""
     axes = _io.read_h5(p.output / "grids.h5", "axes")
     same = all(
         k in axes and onp.array_equal(axes[k], onp.asarray(grid[k]))
         for k in ("dra", "ddec")
     )
-    if same and {"flux_best", "flux_sigma"} <= search.keys():
-        return search["flux_best"], search["flux_sigma"]
-    maps = _search_maps(p.processed, grid, p.settings["batch_size"])
-    return maps["flux_best"], maps["flux_sigma"]
+    keys = ("flux_best", "flux_sigma", "flux_converged")
+    if not (same and set(keys) <= search.keys()):
+        search = _search_maps(p.processed, grid, p.settings["batch_size"])
+    return tuple(onp.asarray(search[k]) for k in keys)
 
 
 # --- fit ---

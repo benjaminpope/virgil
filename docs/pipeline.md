@@ -43,7 +43,7 @@ A run resumes by default: a completed stage whose outputs exist is skipped, and 
 | `load` | Applies `wavel_range` and `error_floor`, and writes the data that are fitted | `OIData.select`, `OIData.with_error_floor`, `write_oifits` |
 | `overview` | Plots the data and the uv coverage | `plot_oidata_overview`, `plot_uv_coverage` |
 | `search` | Delta chi-squared, best flux and SNR maps on a point-companion grid, with the significance of the peak locally and globally (against simulated companion-free searches at the quoted errors, so the look-elsewhere effect is included) | `detection_statistics`, `optimized_likelihood_grid`, `local_nsigma` |
-| `limits` | Contrast limits at `sigma` and their radial profile: by default Ruffio et al. (2018), the search's best flux and its Laplace σ as a Gaussian truncated to flux ≥ 0, at the `norm.cdf(sigma)` quantile; `limit_method="absil"` gives Absil et al. (2011) | `ruffio_upperlimit`, `absil_limits`, `radial_profile` |
+| `limits` | Contrast limits at `sigma` and their radial profile: by default Ruffio et al. (2018), the search's best flux and its Laplace σ as a Gaussian truncated to flux ≥ 0, at the `norm.cdf(sigma)` quantile (NaN, with a warning, where the flux refinement did not converge); `limit_method="absil"` gives Absil et al. (2011) | `ruffio_upperlimit`, `absil_limits`, `radial_profile` |
 | `fit` | MAP fit of the model template from the best grid point | `fit` |
 | `posterior` | NUTS from the fit | `numpyro_model`, `chain_init_params` |
 | `quicklook` | Writes and executes `quicklook.ipynb` | `load` |

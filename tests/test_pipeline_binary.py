@@ -369,34 +369,33 @@ def _resolution_mask(pipeline, grid):
 
 
 def test_ruffio_limits_are_the_default_on_the_search_maps(full_run):
-    """Default limits: ruffio_upperlimit on the search's flux_best and
-    flux_sigma at norm.cdf(sigma), NaN inside the resolution limit."""
-    from scipy.stats import norm
-    from virgil.limits import ruffio_upperlimit
+    """Default limits: the norm.cdf(sigma) quantile of N(flux_best,
+    flux_sigma) truncated to flux >= 0 (scipy's truncnorm as the reference),
+    NaN inside the resolution limit and where the refinement failed."""
+    from scipy.stats import norm, truncnorm
     from virgil.pipeline.binary import _search_flux
 
     pipeline, res = full_run
     assert res.summary["limits"]["method"] == "ruffio"
     assert _limits_meta(pipeline.output)["method"] == "ruffio"
     grid = res.grid()
-    want = onp.asarray(
-        ruffio_upperlimit(
-            grid["flux_best"],
-            grid["flux_sigma"],
-            norm.cdf(pipeline.settings["sigma"]),
-        )
-    )
+    mu, s = grid["flux_best"], grid["flux_sigma"]
+    q = norm.cdf(pipeline.settings["sigma"])
     inside = _resolution_mask(pipeline, grid)
-    assert inside.any() and (~inside).any()
-    assert onp.isnan(grid["limit_flux"][inside]).all()
-    onp.testing.assert_allclose(grid["limit_flux"][~inside], want[~inside])
+    bad = ~grid["flux_converged"] | ~onp.isfinite(s) | (s <= 0)
+    ok = ~inside & ~bad
+    assert inside.any() and ok.any()  # negative means: test_grid_and_limits
+    assert onp.isnan(grid["limit_flux"][inside | bad]).all()
+    want = truncnorm.ppf(q, -mu[ok] / s[ok], onp.inf, loc=mu[ok], scale=s[ok])
+    onp.testing.assert_allclose(grid["limit_flux"][ok], want, rtol=1e-4)
 
-    # Without stored search maps the same flux and sigma are recomputed.
+    # Without stored search maps the same maps are recomputed.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        flux, sigma = _search_flux(pipeline, pipeline._grid(), {})
-    onp.testing.assert_allclose(flux, grid["flux_best"], rtol=1e-6)
-    onp.testing.assert_allclose(sigma, grid["flux_sigma"], rtol=1e-6)
+        flux, sigma, converged = _search_flux(pipeline, pipeline._grid(), {})
+    onp.testing.assert_allclose(flux, mu, rtol=1e-6)
+    onp.testing.assert_allclose(sigma, s, rtol=1e-6)
+    onp.testing.assert_array_equal(converged, grid["flux_converged"])
 
 
 @pytest.mark.slow
@@ -702,7 +701,7 @@ def test_refined_flux_is_the_two_public_grids_from_one_pass(data):
     grid = {"dra": axis, "ddec": axis, "flux": np.logspace(-3, -1, 5)}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        flux, loglike = _refined_flux(data, grid, None)
+        flux, loglike, _ = _refined_flux(data, grid, None)
         want_flux = optimized_flux_grid(BinaryModelCartesian, data, grid)
         want_loglike = optimized_likelihood_grid(
             BinaryModelCartesian, data, grid
