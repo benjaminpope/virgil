@@ -145,7 +145,7 @@ The two agree to float32 rounding, so the image and the analytic model are inter
 
 ## Pixels that follow the detector
 
-The visibilities of an `Image` are an exact sum over its pixels, whatever the uv sampling. When the samples lie on a lattice and the image's pixel grid is rotated to match it (`rotation_deg`), the sum separates into two small matrix products, the matrix Fourier transform of Soummer et al. (2007). It gives the same answer as the direct sum; the cell below checks that the two paths agree. For AMI this means pixels aligned with the detector rather than with North, though `render` and `plot_model` still show the image North up.
+The visibilities of an `Image` are an exact sum over its pixels, whatever the uv sampling. When the samples lie on a lattice and the image's pixel grid is rotated to match it (`rotation_deg`), the sum separates into two small matrix products, the matrix Fourier transform of Soummer et al. (2007). It gives the same answer as the direct sum; the cell below checks that the two paths agree and times them; the timings depend on the machine and show no speed-up at this size. For AMI this means pixels aligned with the detector rather than with North, though `render` and `plot_model` still show the image North up.
 
 ```python
 rotation = template.uv_grid.rotation_deg
