@@ -14,8 +14,12 @@ on:
     types: [opened, synchronize, reopened, labeled]
   schedule:
     - cron: "0 3 * * *"
-  # Also dispatched by lock-upgrade.yml; `nightly` runs the nightly tier by hand.
-  workflow_dispatch: {inputs: {nightly: {description: Run the nightly tier, type: boolean, default: false}}}
+  # Also dispatched by lock-upgrade.yml with tier=main; `nightly` runs the
+  # nightly tier by hand. A dispatch with neither runs the full tier.
+  workflow_dispatch:
+    inputs:
+      nightly: {description: Run the nightly tier, type: boolean, default: false}
+      tier: {description: "Tier of a dispatch: empty is full, main is the gate with slow tests", type: choice, options: ["", main], default: ""}
 
 concurrency:
   # A label other than full-ci gets its own group: it must not cancel the PR's run.
@@ -37,6 +41,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           NIGHTLY: ${{ github.event_name == 'schedule' || inputs.nightly }}
+          TIER: ${{ inputs.tier }}
           FULL_CI: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
           PR: ${{ github.event.pull_request.number }}
           GH_REPO: ${{ github.repository }}
@@ -44,7 +49,7 @@ jobs:
         run: python3 .github/scripts/ci_matrix.py >> "$GITHUB_OUTPUT"
 
   build:
-    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}${{ matrix.canary && ' canary' || '' }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }}
+    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }}
     needs: matrix
     runs-on: ${{ matrix.os }}
     # Fail a hung job instead of holding a runner for GitHub's 6 hours. The
@@ -59,16 +64,14 @@ jobs:
       - uses: astral-sh/setup-uv@v6
 
       # The floors include the orbits extra, so jaxoplanet's is tested too.
-      # Versions come from uv.lock (lock-upgrade.yml keeps it current; the
-      # nightly canary runs ahead of it). harmonix is a dependency group.
+      # Versions come from uv.lock (lock-upgrade.yml keeps it current and
+      # tests each upgrade in its pull request before it merges). harmonix
+      # is a dependency group.
       - name: create environment
         run: |
           if [ "${{ matrix.lowest }}" = "true" ]; then
             uv venv .venv
             uv pip install --python .venv/bin/python --resolution lowest-direct -e ".[test,orbits]"
-          elif [ "${{ matrix.canary }}" = "true" ]; then
-            uv lock --upgrade
-            uv sync --extra test --extra integrations --group harmonix
           else
             uv sync --locked --extra test --extra integrations --group harmonix
           fi
