@@ -55,7 +55,7 @@ extras; gains and closure offsets marginalized analytically, as now). Calibratio
 instrument) each carry one global inlier scale s_g with ln s_g uniform on [−ln s_max, ln s_max] and s_max = 10
 (orbit_mixture_v2 §2.2), appended to the sampled vector. Night *k* contributes
 
-  (1 − ε) e^{ℓ_k(x, s)} + ε e^{b_k},  ε ~ Beta(½, ½) integrated (Gauss–Chebyshev, exact),
+  (1 − ε) e^{ℓ_k(x, s)} + ε e^{b_k},  ε ~ Beta(1, 9) integrated (Gauss–Jacobi, exact: the integrand has degree K in ε; Golub & Welsch 1969),
 
 with ℓ_k the tempered inlier log likelihood at orbit x and b_k the outlier component of §2. Tempering factors f_b
 (`virgil.tempering`) multiply each block's log likelihood in ℓ_k **and** b_k.
@@ -452,7 +452,7 @@ likelihood with no companion (used in §8).
   or faint night's velocity carries no weight automatically.
 - **Peak keep rule (derived):** the night factor is (1 − ε) e^{ℓ_k} + ε e^{b_k}, and an orbit through peak j contributes at
   best (1 − ε) L_j with *no* π_out or Occam factor. A peak is therefore kept iff **(1 − ε_lo) L_j ≥ δ ε_lo e^{b_k}**
-  under (ii) (under (iii′): e^{b_k} replaced by e^{o_k} at the peak's own state), ε_lo the smallest Gauss–Chebyshev node of
+  under (ii) (under (iii′): e^{b_k} replaced by e^{o_k} at the peak's own state), ε_lo the smallest Gauss–Jacobi node of
   the ε integral (§10). Comparing the Laplace-penalized outlier share instead (the first draft) would drop a true-companion
   peak 8 nats below a sidelobe, which is still ≈ 23 nats above the floor. J_k is not bounded by 1/δ: its distribution is
   reported, and its cost enters T_summ (§9).
@@ -1081,13 +1081,12 @@ Two consequences follow:
 A cell fails only if its estimate could change p̂(N) at δ, i.e. ESS < ESS_FAIL and the bound above admits p(N) ≥ δ.
 The ridge component is what makes ESS ≥ ESS_FAIL in kinds 1 and 3. Retries and cascades stay excluded (§6.6).
 
-**The population stays a prior draw.** The population draws ε ~ Beta(½,½) per system, which is the model's prior
-(§1.1, §10). §14's spec says 0–2 outlier nights, but switching to that would make the population no longer a prior draw.
-SBC (assertion 3) would then lose its uniformity, and the change would remove exactly the kind-1 systems above after
-they failed. The population therefore keeps Beta(½,½). Results are reported by stratum: all nights outliers (B″, where
-the correct answer is the prior), ≤ m inliers left, and the rest. §14 flags the mismatch with the spec's
-"0–2 outlier nights" for Ben. Making the model's ε prior match the spec instead would be a model change, and
-would need his decision.
+**The population stays a prior draw.** The population draws ε ~ Beta(1, 9) per system, the model's prior (§1.1, §10;
+declared, Ben, 2026-11-09, replacing Beta(½, ½)). The mean 0.1 matches the spec's 0–2 outlier nights over K uniform on
+5–20 (mean fraction 0.095). Fit and simulator change together, so SBC (assertion 3) stays valid. The B″ and ≤ m inlier
+strata are now rare and the census says little about outlier-dominated data; that is accepted, and the misspecification
+arm (B′) covers those regimes. On real data with many bad nights the answer is broader, or the fit fails. Results are
+still reported by stratum, with the "≤ 2 outlier nights" stratum as a report.
 
 ### 6.11 Speed on two-season data (problem C)
 
@@ -1692,7 +1691,7 @@ run; changing one afterwards is a recorded decision.
 | constant | value | kind | basis |
 |---|---|---|---|
 | s_max | 10 | declared prior bound | inherited `_NUMERIC_S_MAX`; covers χ²/N ≤ 100 (v2 §2.2) |
-| ε prior | Beta(½, ½) | derived | Jeffreys for a rate |
+| ε prior | Beta(1, 9) | declared prior (Ben, 2026-11-09) | mean 0.1 = spec's 0–2 outlier nights; `EPS_PRIOR` |
 | P_cut | max(2Δt_min over nights merged at gap_days, p_floor) | derived (a declared prior; Ben, 2026-11-02) | §1.3 |
 | P_night | dropped from the orbit-cells path (snapshot-era likelihood only) | n/a | §1.3 |
 | motion_fraction | ½ | tolerance | P_night only, which the orbit-cells path no longer uses (§1.3); inherited |
@@ -1706,7 +1705,7 @@ run; changing one afterwards is a recorded decision.
 | gap_days | 0.5 d | tolerance | night separation (inherited) |
 | flux floor | 2σ of the data's contrast curve | derived | dehack §2I |
 | lattice, cubature box widths | ±4σ of π_out and of the per-night posterior | tolerance | #618 |
-| ε_lo | sin²(π/(4 n_GC)), n_GC = ⌈(K + 1)/2⌉ | derived | smallest Gauss–Chebyshev node (§5) |
+| ε_lo | smallest Gauss–Jacobi node of Beta(1, 9), n = ⌈(K + 1)/2⌉ | derived | §5 |
 | anchor quarter | first/last ¼ of span | budget (labels only) | §4.2 |
 | pruning margin | mean + 3 SE ≤ δ | tolerance | §7 |
 | FAP stepping | 100, 200, 400, 800; cap 1000 = 10/α | budget | §8 |
@@ -1875,10 +1874,8 @@ constant is tuned to it after a failure.
 - Orbits: P log-uniform on 2–60 d; e uniform on 0–0.8; isotropic orientation; a log-uniform on [a_lo, a_hi].
 - Epochs: 5–20 nights, uniform. Either one season of about 30 d, or two seasons a year apart. Nights are clustered
   within each season.
-- Noise: σ/a log-uniform on 10⁻⁴–10⁻². 0–2 outlier nights, each with its summary drawn from π_out. **Flag for Ben
-  (2026-11-03):** the population script instead draws ε ~ Beta(½, ½) per system, which is the model's prior. The
-  design pass recommends keeping that draw, so the population stays a prior draw and SBC stays valid (§6.10). The
-  alternative is to change the model's ε prior to match the spec. Either choice is Ben's.
+- Noise: σ/a log-uniform on 10⁻⁴–10⁻². 0–2 outlier nights, each with its summary drawn from π_out. **Resolved
+  (Ben, 2026-11-09):** the model's ε prior is Beta(1, 9) (§10) and the population draws it, so SBC stays valid (§6.10).
 - Data: night summaries simulated as in #632's `_summaries`.
 - Truths with P outside the declared period domain (§1.3) are excluded and counted (stratum B′, as §12). Under the 2026-11-02
   domain (P_cut = max(2Δt_min, p_floor)), B′ holds only truths below twice the shortest gap between nights or below

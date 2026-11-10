@@ -2977,7 +2977,7 @@ def fit_orbit_aliases(
     init=None,
     skip_flagged=True,  # deliberate: a flagged night seeds nothing but its data still count
     n_bands_max=_N_BANDS_MAX,
-    temper=True,  # deliberate: untempered evidence is overconfident under correlated channels
+    temper=False,  # deliberate: opt-in until 0.5 (D6); temper=True corrects the overconfident evidence of correlated channels
     batch_size=None,
     memory_budget=None,
     short_arcs=True,  # deliberate: Nyquist-style bands alone leave hundreds of cycle counts

@@ -255,18 +255,90 @@ def test_the_cells_partition_the_domain_exactly_for_any_edges():
 
 
 @x64
-def test_the_epsilon_nodes_integrate_polynomials_of_degree_k_exactly():
-    for k in (1, 4, 7):
-        n = (k + 2) // 2
-        eps = oc_cells._eps_nodes(n)
-        coef = onp.random.default_rng(k).normal(size=k + 1)
-        poly = onp.polynomial.Polynomial(coef)
-        exact = integrate.quad(
-            lambda e: poly(e) * stats.beta(0.5, 0.5).pdf(e), 0, 1
-        )[0]
-        assert float(np.mean(poly(onp.asarray(eps)))) == pytest.approx(
-            exact, rel=1e-9, abs=1e-9
+@pytest.mark.parametrize("prior", [(1.0, 9.0), (0.5, 0.5)])
+@pytest.mark.parametrize("k", [5, 12, 20])
+def test_the_epsilon_rule_integrates_the_night_product_exactly(k, prior):
+    eps, log_w = oc_cells._eps_rule((k + 2) // 2, *prior)
+    assert onp.exp(log_w).sum() == pytest.approx(1.0, rel=1e-13)
+    rng = onp.random.default_rng(k)
+    ra, rb = rng.uniform(0.1, 3.0, (2, k))
+    prod = lambda e: onp.prod((1 - e) * ra[:, None] + e * rb[:, None], axis=0)
+    exact = integrate.quad(
+        lambda e: prod(onp.array([e]))[0] * stats.beta(*prior).pdf(e),
+        0, 1, epsabs=0, epsrel=1e-13, limit=200,
+    )[0]  # fmt: skip
+    got = float(onp.sum(onp.exp(log_w) * prod(eps)))
+    assert got == pytest.approx(exact, rel=1e-12)
+
+
+@x64
+def test_the_beta_half_rule_reproduces_the_chebyshev_mixture(monkeypatch):
+    """With Beta(½, ½) the Gauss–Jacobi rule is the old Gauss–Chebyshev one."""
+    s = _summaries(_orbit(), TIMES)
+    monkeypatch.setattr(oc_cells, "EPS_PRIOR", (0.5, 0.5))
+    cat = oc_cells._Catalogue(s, LOG_B)
+    n = (len(s) + 2) // 2
+    cheb = onp.sin((2 * onp.arange(1, n + 1) - 1) * onp.pi / (4 * n)) ** 2
+    assert onp.allclose(onp.sort(cat.eps), cheb, rtol=1e-12, atol=0)
+    assert onp.allclose(onp.exp(cat.log_w_eps), 1.0 / n, rtol=1e-12)
+
+
+@x64
+def test_the_mixture_and_its_inlier_count_match_quadrature_under_beta_1_9():
+    s = _summaries(_orbit(), TIMES)
+    cat = oc_cells._Catalogue(s, LOG_B)
+    a, b = oc_cells.EPS_PRIOR
+    cat64 = cat.cast(np.float64)
+    ln_s = np.zeros(len(cat.n[0]))
+    pv = np.asarray(onp.random.default_rng(1).normal(size=(len(s), 4)))
+    got, got_n = oc_cells._log_mixture(
+        cat64, ln_s, 0.0, pv, -1.0, np.float64, inliers=True
+    )
+    log_b = onp.asarray(cat.log_b)
+    z = onp.zeros(
+        2
+    )  # per sign: ∫ Beta Π_k night_k, and ∫ Beta Π_k night_k Σ_k r_k
+    zn = onp.zeros(2)
+    for i, sign in enumerate((1.0, -1.0)):
+        st = np.concatenate([sign * pv, np.full((len(s), 1), -1.0)], axis=1)
+        ak = onp.asarray(
+            jax.scipy.special.logsumexp(
+                oc_cells._peak_terms(cat64, ln_s, 0.0, st, np.float64), axis=1
+            )
         )
+
+        def night(e):
+            return (1 - e) * onp.exp(ak) + e * onp.exp(log_b)
+
+        def dens(e):
+            return stats.beta(a, b).pdf(e)
+
+        z[i] = integrate.quad(
+            lambda e: onp.prod(night(e)) * dens(e),
+            0,
+            1,
+            epsabs=0,
+            epsrel=1e-12,
+        )[0]
+        zn[i] = integrate.quad(
+            lambda e: onp.prod(night(e))
+            * onp.sum((1 - e) * onp.exp(ak) / night(e))
+            * dens(e),
+            0, 1, epsabs=0, epsrel=1e-12,
+        )[0]  # fmt: skip
+    assert float(got) == pytest.approx(onp.log(z.sum() / 2), rel=1e-10)
+    assert float(got_n) == pytest.approx(zn.sum() / z.sum(), rel=1e-9)
+
+
+@x64
+def test_the_floor_is_the_expected_epsilon_power():
+    a, b = oc_cells.EPS_PRIOR
+    for k in (5, 12, 20):
+        direct = integrate.quad(
+            lambda e: e**k * stats.beta(a, b).pdf(e), 0, 1, epsrel=1e-13
+        )[0]
+        got = oc_cells._ln_beta(a + k, b) - oc_cells._ln_beta(a, b)
+        assert math.exp(got) == pytest.approx(direct, rel=1e-10)
 
 
 @x64
@@ -811,6 +883,7 @@ def test_the_flux_box_integral_matches_quadrature_and_is_finite_everywhere(
 
 @pytest.mark.slow
 @x64
+@pytest.mark.slow
 def test_a_night_with_an_observed_flux_above_one_fits_without_error():
     s = _summaries(_orbit(), TIMES, ln_f=0.05)  # truth ln f above 0
     assert any(n.peaks[0].mean[4] > 0 for n in s)
@@ -899,8 +972,11 @@ def test_a_search_that_drops_the_true_mode_fails_the_cell(monkeypatch):
     s = _summaries(_orbit(), times, sigma=0.05)
     _, cells = _cells(s, (6.0, 400.0))
     log_b = onp.full(5, LOG_B)
-    floor = log_b.sum() + math.lgamma(5.5) - 0.5 * math.log(math.pi)
-    floor -= math.lgamma(6.0)
+    a, b = oc_cells.EPS_PRIOR  # ln E[ε^5], written out
+    floor = log_b.sum() + (
+        math.lgamma(a + 5) + math.lgamma(a + b)
+        - math.lgamma(a) - math.lgamma(a + b + 5)
+    )  # fmt: skip
 
     def fake(space, key=None, *, plan=None, info=None):
         info.update(evaluations=0.0)

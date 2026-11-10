@@ -55,7 +55,7 @@ def test_nuts_runs_on_an_injected_field():
             numpyro_model(start, priors, data),
             init_strategy=init_to_value(values=init),
         ),
-        num_warmup=50,
+        num_warmup=200,  # 50 left the adaptation coarse enough for a stray divergence
         num_samples=50,
         progress_bar=False,
     )

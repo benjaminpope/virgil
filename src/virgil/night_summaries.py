@@ -22,6 +22,7 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
+from scipy.special import roots_jacobi
 
 from . import _gauss_newton
 from ._geometry import fringe_scales
@@ -33,6 +34,7 @@ from .models import OrbitalBinary
 
 __all__ = [
     "DELTA",
+    "EPS_PRIOR",
     "NightPeak",
     "NightSummary",
     "keep_peaks",
@@ -44,6 +46,8 @@ __provisional__ = ("*",)
 # Reporting precision of a probability (design §10): a peak is dropped only
 # if the night's outlier term outweighs it by more than 1/DELTA.
 DELTA = 1e-3
+# Declared prior (Ben, 2026-11-09): ε ~ Beta(1, 9), mean 0.1.
+EPS_PRIOR = (1.0, 9.0)
 # The engine's flux floor (arcs._half_position); the ln f upper bound is 0.
 _F_MIN = 1e-4
 
@@ -410,14 +414,24 @@ def night_summaries(data, positions, *, amp_range=None):
     )
 
 
+def _eps_rule(n, a, b):
+    """Gauss–Jacobi nodes and log weights of the Beta(a, b) integral of ε.
+
+    Exact for polynomials of degree ``2n - 1``; the weights sum to one.
+    Source: Golub & Welsch (1969) ([references](../references.md#golub1969)).
+    """
+    x, w = roots_jacobi(n, b - 1.0, a - 1.0)
+    return (1.0 + x) / 2.0, onp.log(w / w.sum())
+
+
 def keep_peaks(summaries, log_outlier, delta=DELTA):
     """The peaks the position-level likelihood needs.
 
     A peak is kept iff ``(1 - ε_lo) L_j ≥ δ ε_lo e^{b_k}``: an orbit through it
     contributes at best ``(1 - ε) L_j`` to the night's mixture factor
     ``(1 - ε) e^{ℓ_k} + ε e^{b_k}``, with no Occam factor. ``ε_lo`` is the
-    smallest Gauss–Chebyshev node of the ε integral, ``sin²(π / (4 n))`` with
-    ``n = ⌈(K + 1) / 2⌉`` for ``K`` nights.
+    smallest Gauss–Jacobi node of the ``EPS_PRIOR`` integral of ε, with
+    ``n = ⌈(K + 1) / 2⌉`` nodes for ``K`` nights.
 
     Parameters
     ----------
@@ -437,7 +451,7 @@ def keep_peaks(summaries, log_outlier, delta=DELTA):
         onp.asarray(log_outlier, float), (len(summaries),)
     )
     n = int(onp.ceil((len(summaries) + 1) / 2))
-    eps = onp.sin(onp.pi / (4 * n)) ** 2
+    eps = _eps_rule(n, *EPS_PRIOR)[0].min()
     out = []
     for s, b in zip(summaries, log_outlier):
         keep = tuple(
