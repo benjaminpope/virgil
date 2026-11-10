@@ -42,7 +42,7 @@ from .grid_fit import (
 )
 from .likelihood import build_model, loglike, whitened_residuals
 from .limits import nsigma
-from ._deprecate import external_stacklevel
+from ._deprecate import CheckWarning, external_stacklevel
 
 
 __all__ = [
@@ -143,11 +143,14 @@ def detection_statistics(
         )
     elif float(steps) < MIN_PEAK_STEPS:
         warnings.warn(
-            "detection_statistics(): the flux axis does not resolve the "
-            f"likelihood peak ({float(steps):.2g} steps across its FWHM, "
-            f"under {MIN_PEAK_STEPS:g}), so log_bayes_factor is "
-            "inaccurate; refine the flux axis near the best flux.",
-            RuntimeWarning,
+            CheckWarning(
+                "detection_statistics(): the flux axis does not resolve the "
+                f"likelihood peak ({float(steps):.2g} steps across its FWHM, "
+                f"under {MIN_PEAK_STEPS:g}), so log_bayes_factor is "
+                "inaccurate; refine the flux axis near the best flux.",
+                check="flux_axis_resolution",
+                steps=float(steps),
+            ),
             stacklevel=external_stacklevel(),
         )
     return stats

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import dataclasses
 import math
-import re
 
 from .._utils import mas2rad
 
@@ -1165,9 +1164,13 @@ _BENIGN_CATEGORIES = (
 )
 
 
-def _numbers(pattern, text):
-    match = re.search(pattern, text)
-    return [float(g) for g in match.groups()] if match else None
+def _counts(records, key):
+    """The ``counts[key]`` of each record that carries it, as floats."""
+    return [
+        float(r["counts"][key])
+        for r in records
+        if key in (r.get("counts") or {})
+    ]
 
 
 def convergence(records):
@@ -1176,22 +1179,20 @@ def convergence(records):
     Parameters
     ----------
     records : list of dict
-        The recorded warnings that mention non-convergence ("the optimizer
-        did not converge at N of M grid positions"). The one with the worst
-        fraction N/M is reported; grids of different sizes can appear.
+        The recorded ``convergence`` warnings, each with ``counts`` holding
+        ``failed`` (N) and ``total`` (M) grid positions. The one with the
+        worst fraction N/M is reported; grids of different sizes can
+        appear.
 
     A warning, except a failure when the optimizer failed at every position
     of a grid (N = M): no value of that grid is a fit.
     """
     worst, total = 0.0, 0.0
     for record in records:
-        counts = _numbers(r"(\d+)\s+of\s+(\d+)", record["message"])
-        if (
-            counts
-            and counts[1]
-            and (not total or counts[0] / counts[1] > worst / total)
-        ):
-            worst, total = counts
+        counts = record.get("counts") or {}
+        n, m = float(counts.get("failed", 0)), float(counts.get("total", 0))
+        if m and (not total or n / m > worst / total):
+            worst, total = n, m
     if not total:
         return Check(
             "convergence",
@@ -1214,11 +1215,7 @@ def convergence(records):
 
 def flux_axis_resolution(records, *, minimum=2.0):
     """The flux axis does not resolve the likelihood peak."""
-    steps = []
-    for r in records:
-        found = _numbers(r"([\d.]+(?:e[-+]?\d+)?)\s+steps", r["message"])
-        if found:
-            steps.append(found[0])
+    steps = _counts(records, "steps")
     value = min(steps) if steps else None
     detail = f" ({value:.2g} steps across its FWHM)" if steps else ""
     return Check(
@@ -1233,11 +1230,7 @@ def flux_axis_resolution(records, *, minimum=2.0):
 
 def limits_clipped(records):
     """Contrast limits clipped to the flux bounds."""
-    counts = []
-    for r in records:
-        found = _numbers(r"(\d+)\s+limits", r["message"])
-        if found:
-            counts.append(found[0])
+    counts = _counts(records, "clipped")
     value = max(counts) if counts else None
     which = f"{value:.0f} limits" if counts else "Some limits"
     return Check(
@@ -1275,29 +1268,22 @@ _RULES = {
 def stage_warning_checks(warning_records):
     """Checks for the warnings recorded inside the stages.
 
-    Known messages map to specific checks (``convergence``,
-    ``flux_axis_resolution``, ``limits_clipped``), matched by keywords so
-    that rewording a message does not break the mapping; any other
-    warning, except deprecation notices, goes to one ``stage_warnings``
-    check. No warnings give no checks.
+    A record whose ``check`` is ``convergence``, ``flux_axis_resolution``
+    or ``limits_clipped`` (a `virgil._deprecate.CheckWarning`) goes to that
+    check, which reads its ``counts``. Any other warning, except
+    deprecation notices, goes to one ``stage_warnings`` check; nothing is
+    matched on the message text. No warnings give no checks.
 
     Parameters
     ----------
     warning_records : list of dict
-        Each with ``stage``, ``category`` and ``message``.
+        Each with ``stage``, ``category`` and ``message``, and for a
+        `CheckWarning` also ``check`` and ``counts``.
     """
     grouped, other = {}, []
     for record in warning_records:
-        text = record["message"].lower()
-        if "converge" in text and "optimizer" in text:
-            rule = "convergence"
-        elif "resolve" in text and "peak" in text:
-            rule = "flux_axis_resolution"
-        elif "clipped" in text or "flux_bounds" in text:
-            rule = "limits_clipped"
-        else:
-            rule = None
-        if rule:
+        rule = record.get("check")
+        if rule in _RULES:
             grouped.setdefault(rule, []).append(record)
         elif not record["category"].endswith(_BENIGN_CATEGORIES):
             other.append(record)
