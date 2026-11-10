@@ -819,16 +819,32 @@ def _chi2_checks(search, fit):
         label = "the best-fit binary" + (
             f" (star alone: {null:.3g})" if null is not None else ""
         )
-        return [_checks.chi2_reduced("chi2", fit["chi2_reduced"], label=label)]
+        return [
+            _checks.chi2_reduced(
+                "chi2",
+                fit["chi2_reduced"],
+                label=label,
+                n=fit["n_independent"],
+            )
+        ]
     if search:
-        return [_checks.chi2_reduced("chi2", null, label="the star alone")]
+        return [
+            _checks.chi2_reduced(
+                "chi2",
+                null,
+                label="the star alone",
+                n=search["n_independent"],
+            )
+        ]
     return []
 
 
 def _fit_checks(fit, companion, load):
     checks = []
     if fit["error_scales"]:
-        checks.append(_checks.error_scale(fit["error_scales"]))
+        checks.append(_checks.error_scale(
+                fit["error_scales"], n=fit["n_independent"]
+            ))
     if fit["at_bound"]:
         checks.append(_checks.at_bound(fit["at_bound"], start=True))
     checks.append(

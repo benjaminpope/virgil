@@ -2406,11 +2406,16 @@ def _chi2_checks(entry, compare):
             "chi2_reduced",
             compare["chi2_reduced"],
             label=f"the {entry.label} fit",
+            n=compare["n_independent"],
         )
     ]
     if compare["error_scales"]:
         checks.append(
-            _checks.error_scale(compare["error_scales"], kind="estimated")
+            _checks.error_scale(
+                compare["error_scales"],
+                kind="estimated",
+                n=compare["n_independent"],
+            )
         )
     return checks
 

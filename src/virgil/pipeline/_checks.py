@@ -1571,9 +1571,12 @@ def bands_failed(failed, n_bands=None):
         The orbit counts N of the bands whose fit raised (their evidence is
         -inf, so they never win nor appear as the runner-up).
     n_bands : int, optional
-        All bands searched. When at least half failed (a majority
-        convention: most of the period range is unevaluated) the check
-        fails: the winner is the best of a minority of the search.
+        All bands searched. When at least half failed the check fails: the
+        winner is the best of a minority of the search. The half is a
+        convention, not derived: a failed band has no evidence, so no
+        margin can say how many failures the winner survives; a majority
+        is the smallest fraction at which most of the period range is
+        unevaluated.
     """
     if not len(failed):
         return Check(

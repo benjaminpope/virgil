@@ -1468,6 +1468,7 @@ def _summarize(settings, reports):
                 "chi2",
                 pooled["chi2"] / pooled["n"],
                 label="the best-fit orbit",
+                n=pooled["n"],
             )
         )
     if epochs:
@@ -1476,7 +1477,9 @@ def _summarize(settings, reports):
         )
     if search:
         checks.append(_checks.labels_free(search["labels_free"]))
-        checks.append(_checks.bands_failed(search["failed_bands"]))
+        checks.append(
+            _checks.bands_failed(search["failed_bands"], search["n_bands"])
+        )
     if modes:
         sections["modes"] = _pick(modes, _MODES_KEYS, strict=False)
         runner = modes["runner_up"]
@@ -1485,6 +1488,7 @@ def _summarize(settings, reports):
                 modes["delta_log_z"],
                 None if runner is None else runner["n"],
                 warn=settings["alias_nats"],
+                n_failed=len(search["failed_bands"]) if search else 0,
             )
         )
         checks.append(_checks.winner_flags(modes["winner"]["flags"]))

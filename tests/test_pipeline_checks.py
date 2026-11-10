@@ -1353,3 +1353,86 @@ def test_winner_flags_fail_without_a_valid_mode():
     assert _status(checks.winner_flags(["no-valid-mode"])) == "fail"
     assert _status(checks.winner_flags(["low-ess", "no-valid-mode"])) == "fail"
     assert _status(checks.winner_flags(["low-ess"])) == "warn"
+
+
+# --- R-F: the pipelines pass N to the χ² checks --------------------------------
+# χ²/N = 2.5 and s = 2.2 are above the fixed 2 (warn); on 3 data they are
+# inside the 1e-3 tails (χ²/N 5.42, s 2.33), so they pass only when the
+# pipeline passes the number of data.
+
+
+def test_binary_chi2_checks_pass_the_number_of_data():
+    from virgil.pipeline import binary
+
+    fit = {"chi2_reduced": 2.5, "n_independent": 3}
+    (check,) = binary._chi2_checks(None, fit)
+    assert check.status == "pass"
+    search = {"chi2_null": 7.5, "n_independent": 3}
+    (check,) = binary._chi2_checks(search, None)
+    assert check.status == "pass"
+    fit = {"chi2_reduced": 2.5, "n_independent": 1000}
+    assert binary._chi2_checks(None, fit)[0].status == "warn"
+
+
+def test_star_fit_checks_pass_the_number_of_data():
+    from virgil.pipeline import star
+
+    def report(n):
+        return {
+            "names": ["a"],
+            "comparisons": [],
+            "n_independent": n,
+            "models": {
+                "a": {
+                    "chi2_reduced": 2.5,
+                    "error_scales": {"vis": 2.2},
+                    "at_bound": [],
+                }
+            },
+        }
+
+    registry = {"a": type("M", (), {"label": "model a"})()}
+    got = {c.name: c.status for c in star._fit_checks(report(3), registry)}
+    assert got == {"chi2_a": "pass", "error_scale": "pass"}
+    got = {c.name: c.status for c in star._fit_checks(report(1000), registry)}
+    assert got == {"chi2_a": "warn", "error_scale": "warn"}
+
+
+def test_image_checks_pass_the_number_of_data_by_observable():
+    from virgil.pipeline import image
+
+    def verdicts(n):
+        reports = {
+            "combine": {
+                "chi2_red_by_observable": {"total": 2.5, "vis": 2.5},
+                "n_by_observable": {"total": n, "vis": n},
+                "n_kept": 3,
+                "n_members": 3,
+                "spread": 0.01,
+            },
+            "hyperparameters": {"scale_by_observable": {"vis": 2.2}},
+        }
+        checks = image._run_checks({"member_grids": False}, reports)
+        return {c.name: c.status for c in checks}
+
+    assert verdicts(3)["chi2_reduced"] == "pass"
+    assert verdicts(3)["error_scale"] == "pass"
+    assert verdicts(1000)["chi2_reduced"] == "warn"
+    assert verdicts(1000)["error_scale"] == "warn"
+
+
+def test_disk_chi2_checks_pass_the_number_of_data():
+    from virgil.pipeline import disk
+
+    entry = type("E", (), {"label": "ring"})()
+
+    def verdicts(n):
+        compare = {
+            "chi2_reduced": 2.5,
+            "n_independent": n,
+            "error_scales": {"vis": 2.2},
+        }
+        return {c.name: c.status for c in disk._chi2_checks(entry, compare)}
+
+    assert verdicts(3) == {"chi2_reduced": "pass", "error_scale": "pass"}
+    assert verdicts(1000) == {"chi2_reduced": "warn", "error_scale": "warn"}
