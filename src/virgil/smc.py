@@ -27,6 +27,7 @@ Jasra et al. 2011, Lee & Whiteley 2018, Du & Guyader 2021 (see
 """
 
 import dataclasses
+import functools
 import time
 from typing import NamedTuple
 
@@ -123,14 +124,16 @@ class _Position(NamedTuple):
     position: object
 
 
-def _build(
-    logprior, loglike, dtype, d, n_particles, target_ess, steps, tune, moves,
-    composite, masses,
+def _algorithm(
+    logprior, loglike, args, masses, dtype, d, n_particles, target_ess, steps,
+    tune, moves, composite,
 ):  # fmt: skip
-    """Jitted one-stage function: tune, mutate, reweight.
+    """The BlackJAX algorithm of one SMC stage.
 
-    ``masses`` (``None``, or one covariance per label ``particle["c"]``) are the
-    fixed inverse mass matrices of the HMC; ``None`` sets it to the cloud's.
+    ``logprior(p, *args)``, ``loglike(p, *args)`` and each ``move(key, p,
+    logdensity, *args)`` get ``args``; ``masses`` (``None``, or one covariance
+    per label ``particle["c"]``) are the fixed inverse mass matrices of the
+    HMC (``None``: the cloud's covariance, set in ``_stage``).
     """
     step_size, leapfrogs, alpha = tune
     if composite:
@@ -167,7 +170,7 @@ def _build(
                 else new.position
             )
             for k, move in zip(keys[1:], moves):
-                p, _ = move(k, p, logdensity_fn)
+                p, _ = move(k, p, logdensity_fn, *args)
             return _Position(p), info
 
         def measure(state):
@@ -211,8 +214,8 @@ def _build(
     )
     algorithm = blackjax.pretuning(
         blackjax.adaptive_tempered_smc,
-        logprior,
-        loglike,
+        lambda p: logprior(p, *args),
+        lambda p: loglike(p, *args),
         mcmc_step,
         mcmc_init,
         # Multinomial, as the variance estimator of Lee & Whiteley requires.
@@ -223,27 +226,36 @@ def _build(
         target_ess=target_ess,
     )
 
-    @jax.jit
-    def stage(key, state):
-        if masses is not None:
-            return algorithm.step(key, state)
-        particles = _block(state.sampler_state.particles)
-        weights = state.sampler_state.weights
-        centred = particles - weights @ particles
-        cov = (centred * weights[:, None]).T @ centred
-        # The jitter keeps the Cholesky in the ESJD finite on a degenerate cloud.
-        jitter = np.finfo(cov.dtype).eps * (np.trace(cov) + 1.0)
-        cov = (cov + jitter * np.eye(d, dtype=cov.dtype)).astype(
-            particles.dtype
-        )
-        parameters = {
-            **state.parameter_override,
-            "inverse_mass_matrix": cov[None],
-        }
-        state = type(state)(state.sampler_state, parameters)
-        return algorithm.step(key, state)
+    return algorithm
 
-    return algorithm.init, stage
+
+_STATIC = (
+    "logprior", "loglike", "dtype", "d", "n_particles", "target_ess", "steps",
+    "tune", "moves", "composite",
+)  # fmt: skip
+
+
+@functools.partial(jax.jit, static_argnames=_STATIC)
+def _stage(key, state, args, masses, **static):
+    """One stage: tune, mutate, reweight. The data are arguments, not closed
+    over, so the compiled stage is reused by every run with the same functions
+    and shapes."""
+    algorithm = _algorithm(static["logprior"], static["loglike"], args,
+                           masses, *[static[k] for k in _STATIC[2:]])  # fmt: skip
+    if masses is not None:
+        return algorithm.step(key, state)
+    particles = _block(state.sampler_state.particles)
+    weights = state.sampler_state.weights
+    centred = particles - weights @ particles
+    cov = (centred * weights[:, None]).T @ centred
+    # The jitter keeps the Cholesky in the ESJD finite on a degenerate cloud.
+    jitter = np.finfo(cov.dtype).eps * (np.trace(cov) + 1.0)
+    cov = (cov + jitter * np.eye(static["d"], dtype=cov.dtype)).astype(
+        particles.dtype
+    )
+    parameters = {**state.parameter_override, "inverse_mass_matrix": cov[None]}
+    state = type(state)(state.sampler_state, parameters)
+    return algorithm.step(key, state)
 
 
 def _run(key, init, stage, particles, max_stages, deadline):
@@ -306,29 +318,33 @@ def _pool(log_zs, vs, fs):
 def _smc(
     logprior, loglike, starts, key, n_particles, replicates, ess_target,
     steps, step_size, leapfrogs, alpha, max_stages, max_seconds, moves,
-    masses=None,
+    masses=None, args=(),
 ):  # fmt: skip
     deadline = time.monotonic() + max_seconds
     per_run = [steps] * replicates if isinstance(steps, int) else list(steps)
     if len(per_run) != replicates:
         raise ValueError("steps needs one entry per replicate")
-    # Built once per distinct ``steps``: replicates share the compiled stage.
-    stages = {
-        n_steps: _build(
-            logprior,
-            loglike,
-            _block(starts[0]).dtype,
-            _block(starts[0]).shape[1],
-            n_particles,
-            0.5,
-            n_steps,
-            (step_size, leapfrogs, alpha),
-            moves,
-            bool(moves) or masses is not None or isinstance(starts[0], dict),
-            masses,
+    # One compiled stage per distinct ``steps``, reused by every replicate (and
+    # every run with the same functions and shapes: see ``_stage``).
+    dtype, d = _block(starts[0]).dtype, _block(starts[0]).shape[1]
+    composite = (
+        bool(moves) or masses is not None or isinstance(starts[0], dict)
+    )
+    stages = {}
+    for n_steps in sorted(set(per_run)):
+        static = dict(
+            logprior=logprior, loglike=loglike, dtype=dtype, d=d,
+            n_particles=n_particles, target_ess=0.5, steps=n_steps,
+            tune=(step_size, leapfrogs, alpha), moves=tuple(moves),
+            composite=composite,
+        )  # fmt: skip
+        init = _algorithm(
+            logprior, loglike, args, masses, *[static[k] for k in _STATIC[2:]]
+        ).init
+        stages[n_steps] = (
+            init,
+            functools.partial(_stage, args=args, masses=masses, **static),
         )
-        for n_steps in sorted(set(per_run))
-    }
     runs = [
         _run(k, *stages[n_steps], start, max_stages, deadline)
         for k, start, n_steps in zip(
@@ -369,9 +385,13 @@ def _smc(
         for n_steps in (lo, hi):
             keep = onp.array([k == n_steps for k in per_run])
             m, v, f = _pool(log_zs[keep], vs[keep], fs[keep])
-            halves.append((m, max(v if v == v else 0.0, f)))
+            halves.append((m, max(v if v > 0 else 0.0, f if f > 0 else 0.0)))
         total = halves[0][1] + halves[1][1]
-        mixing = (halves[1][0] - halves[0][0]) / onp.sqrt(total)
+        mixing = (
+            (halves[1][0] - halves[0][0]) / onp.sqrt(total)
+            if total > 0
+            else onp.nan
+        )
     return SMCResult(
         jax.tree.map(lambda *a: np.concatenate(a), *[run[0] for run in runs]),
         np.concatenate([run[1] for run in runs]) / len(runs),
@@ -413,6 +433,7 @@ def tempered_smc(
     max_seconds=float("inf"),
     moves=(),
     masses=None,
+    args=(),
 ):
     """Temper the prior to prior × likelihood with adaptive SMC.
 
@@ -459,8 +480,12 @@ def tempered_smc(
         label and never on ``x``, so each move leaves the target invariant
         (Neal 2011, §5.2). The step size and trajectory are tuned on the jump
         in each particle's own metric. ``None``: the mass is the cloud's
-        covariance. ``moves`` must leave the label's conditional invariant (a
-        Gibbs update of the label).
+        covariance. ``moves`` must then update the label (Gibbs).
+    args : tuple of pytrees
+        Extra arguments of ``logprior``, ``loglike`` and each move
+        (``logprior(p, *args)``, ``move(key, p, logdensity, *args)``). They are
+        traced, so module-level functions and equal shapes reuse the compiled
+        stage across calls.
 
     Returns
     -------
@@ -479,6 +504,7 @@ def tempered_smc(
     return _smc(
         logprior, loglike, starts, keys[0], n_particles, replicates, ess_target,
         steps, step, leapfrogs, alpha, max_stages, max_seconds, moves, masses,
+        tuple(args),
     )  # fmt: skip
 
 

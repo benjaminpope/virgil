@@ -1871,7 +1871,8 @@ def _smc_error(res):
         res.log_z_floor_variance,
         res.log_z_rep_variance,
     ]
-    return math.sqrt(max(v for v in terms if v == v))
+    valid = [v for v in terms if v == v and v > 0]
+    return math.sqrt(max(valid)) if valid else math.nan
 
 
 def _smc_unreliable(res):
@@ -1893,8 +1894,25 @@ def _prior_scale(d):
     and for ``y_ζ`` (no variance: its median ``|y|²`` is 1)."""
     v = onp.ones(d)
     for i in (0, 5, 8, *range(9, d)):
-        v[i] = math.pi**2 / 3.0
+        if i < d:
+            v[i] = math.pi**2 / 3.0
     return v
+
+
+def _smc_logprior(p, mixture, space):
+    return mixture.log_components(p["x"])[p["c"]]
+
+
+def _smc_loglike(p, mixture, space):
+    return _target(p["x"], space) - mixture.log_q(p["x"])
+
+
+def _smc_label_gibbs(key, p, logdensity, mixture, space):
+    """``c | x ~ q_c(x) / q(x)``: the label's conditional, so any ``β``."""
+    return {
+        **p,
+        "c": jax.random.categorical(key, mixture.log_components(p["x"])),
+    }, None
 
 
 def _run_smc(space, mixture, key, n, max_seconds, prior_scale):
@@ -1903,25 +1921,15 @@ def _run_smc(space, mixture, key, n, max_seconds, prior_scale):
     mixture component: ``π̃_β(x, c) ∝ q_c(x) (p̃/q)^β`` has the marginal ``π_β``
     and the normalizer ``Z_β``, so ``Ẑ`` still estimates ``Z_N``. HMC runs on
     ``x`` given ``c`` with the mass of component ``c``; a Gibbs step redraws
-    ``c`` (§6.15). ``len(SMC_STEPS)`` replicates of ``n`` particles."""
-
-    def logprior(p):
-        return mixture.log_components(p["x"])[p["c"]]
-
-    def loglike(p):
-        return _target(p["x"], space) - mixture.log_q(p["x"])
-
-    def label_gibbs(key, p, logdensity):
-        return {**p, "c": jax.random.categorical(
-            key, mixture.log_components(p["x"])
-        )}, None  # fmt: skip
-
+    ``c`` (§6.15). ``len(SMC_STEPS)`` replicates of ``n`` particles. The
+    mixture and the space are arguments of module-level functions, so the
+    compiled stage is reused by every cell of the same shape."""
     with run_in(onp.dtype(space.dtype).name):
         return tempered_smc(
-            logprior, loglike, mixture.sample_labelled, key=key,
+            _smc_logprior, _smc_loglike, mixture.sample_labelled, key=key,
             n_particles=n, replicates=len(SMC_STEPS), steps=SMC_STEPS,
-            max_seconds=max_seconds, moves=(label_gibbs,),
-            masses=mixture.masses(prior_scale),
+            max_seconds=max_seconds, moves=(_smc_label_gibbs,),
+            masses=mixture.masses(prior_scale), args=(mixture, space),
         )  # fmt: skip
 
 
@@ -2407,8 +2415,7 @@ def position_cells(
     failed = onp.array(
         [f.nonfinite or (fl and m) for f, fl, m in zip(fits, flagged, matters)]
     )
-    p = onp.exp(log_p - onp_logsumexp(log_p))
-    p[:] = onp.nan if failed.any() else p
+    p = onp.full(len(cells), onp.nan) if failed.any() else onp.exp(log_p - onp_logsumexp(log_p))  # fmt: skip
     below = p < delta / len(cells)
     draw_keys = jax.random.split(jax.random.fold_in(key, 1), len(cells))
     drawn = [

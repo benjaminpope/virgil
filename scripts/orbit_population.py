@@ -64,11 +64,13 @@ import math
 import os
 import resource
 import subprocess
+import threading
 import time
 
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 
 import jax
+import jax.monitoring
 import numpy as onp
 from scipy import stats
 
@@ -376,6 +378,36 @@ def classify(rec, ess_fail=ESS_FAIL):
     return "unresolved" if rec["flagged"] else "none"
 
 
+_COMPILE = {"n": 0, "seconds": 0.0, "hits": 0}
+_COMPILE_LOCK = threading.Lock()
+
+
+def _count_compiles(event, seconds, **_):
+    """Report-only counters: backend compiles and persistent-cache hits."""
+    with _COMPILE_LOCK:
+        if event == "/jax/core/compile/backend_compile_duration":
+            _COMPILE["n"] += 1
+            _COMPILE["seconds"] += seconds
+        elif event == "/jax/compilation_cache/cache_retrieval_time_sec":
+            _COMPILE["hits"] += 1
+
+
+jax.monitoring.register_event_duration_secs_listener(_count_compiles)
+
+
+def compile_columns(before):
+    """Compiles, their seconds and persistent-cache hits since ``before`` (a
+    copy of ``_COMPILE``): a diagnostic of the system's whole fit, to compare
+    with ``seconds`` and ``smc_seconds``."""
+    with _COMPILE_LOCK:
+        now = dict(_COMPILE)
+    return dict(
+        compile_n=now["n"] - before["n"],
+        compile_seconds=now["seconds"] - before["seconds"],
+        compile_cache_hits=now["hits"] - before["hits"],
+    )
+
+
 def smc_columns(fits):
     """Diagnostic columns of the SMC fallback (design §6.15): cells run, those
     still unreliable, the total and largest number of stages, and seconds."""
@@ -594,6 +626,8 @@ def run_one(sysd, fit, key, u, *, oracle=False, equiv=False, store=None):
     system failed) and its flagged cells."""
     s = sysd["summaries"]
     start = time.time()
+    with _COMPILE_LOCK:
+        compiled = dict(_COMPILE)
     row = describe(sysd, fit)
     out = oc_cells.position_cells(
         s, fit, key, jitter=0.0, e_max=oc_cells.E_MAX
@@ -614,7 +648,7 @@ def run_one(sysd, fit, key, u, *, oracle=False, equiv=False, store=None):
         **{k: sum(f.info.get(k, 0) for f in fits) for k in STEP_COUNTS},
         min_ess=min(float(getattr(f.evidence, "ess", onp.nan)) for f in fits),
         n_undersampled=sum(f.undersampled for f in fits),
-        **smc_columns(fits),
+        **smc_columns(fits), **compile_columns(compiled),
     )  # fmt: skip
     t_a = float(s[out.anchors[0]].t_ref)
     extra = time.time()
@@ -995,10 +1029,17 @@ def main():
     )  # fmt: skip
     ap.add_argument("--start", type=int, default=0, help="first system index")
     ap.add_argument(
+        "--compile-cache", default=os.environ.get("VIRGIL_COMPILE_CACHE"),
+        metavar="DIR",
+        help="persistent JAX compilation cache (default: $VIRGIL_COMPILE_CACHE; off if unset), so tasks reuse each other's compiles",
+    )  # fmt: skip
+    ap.add_argument(
         "--merge", nargs="+", metavar="CSV",
         help="summarize the part files of several tasks instead of running",
     )  # fmt: skip
     args = ap.parse_args()
+    if args.compile_cache:
+        jax.config.update("jax_compilation_cache_dir", args.compile_cache)
     if args.merge:
         rows = read_rows(args.merge)
         finish(

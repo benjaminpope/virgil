@@ -1516,6 +1516,27 @@ def test_the_predictive_labels_keep_every_night_the_point_term_keeps(init):
 # --- tempered SMC from the search mixture (design §6.15) ---------------------
 
 
+@jax.tree_util.register_pytree_node_class
+class _ToySpace:
+    """A target that is just a log density: a pytree with no leaves, so the
+    SMC can take it as an argument (its functions are static)."""
+
+    dtype = np.float64
+
+    def __init__(self, loglike, d=2):
+        self.loglike, self.d = loglike, d
+
+    def logprior(self, x):
+        return 0.0 * x[0]
+
+    def tree_flatten(self):
+        return (), (self.loglike, self.d)
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        return cls(*aux)
+
+
 def _banana_toy(b=1.0, s0=1.0, s1=0.2):
     """A banana target with ``ln Z = ln(2π s0 s1)`` (a volume-preserving shear
     of a Gaussian), a wide Gaussian prior and a one-component mixture."""
@@ -1532,9 +1553,7 @@ def _banana_toy(b=1.0, s0=1.0, s1=0.2):
     def sample(key, n):
         return 20.0 * jax.random.normal(key, (n, 2))
 
-    space = types.SimpleNamespace(
-        loglike=loglike, logprior=lambda x: 0.0 * x[0], dtype=np.float64
-    )
+    space = _ToySpace(loglike)
     mode = Mode(onp.zeros(2), 0.0, onp.diag([s0**2, s1**2]), 2.0)
     mixture = DefensiveMixture([mode], log_prior, sample, dim=2)
     return space, mixture, math.log(2 * math.pi * s0 * s1)
@@ -1615,10 +1634,7 @@ class _ImageToy:
             )
             return _LN_Z + jax.scipy.special.logsumexp(logw + lp)
 
-        self.space = types.SimpleNamespace(
-            loglike=loglike, logprior=lambda x: 0.0 * x[0],
-            dtype=np.float64, d=d,
-        )  # fmt: skip
+        self.space = _ToySpace(loglike, d)
         modes = []
         for m, c, r in zip(self.mu, self.cov, self.rho):
             top = onp.linalg.eigh(c)
@@ -1662,6 +1678,8 @@ class _ImageToy:
 
 def _toy_failures(toy, res, seed):
     """The checks (a)-(c) of the 16-image toy: a list of failure messages."""
+    if res.stopped:
+        return ["the SMC stopped before finishing"]
     out = []
     err = oc_cells._smc_error(res)
     if oc_cells._smc_unreliable(res):
