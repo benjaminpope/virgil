@@ -155,3 +155,31 @@ def test_hide_input_tag_folds_the_code_but_keeps_the_outputs(tmp_path):
         in rendered
     )
     assert "```text\nresult 3\n```" in rendered
+
+
+# Notebooks allowed to have no stored outputs, with the reason. Remove the
+# entry once the notebook is executed.
+_UNEXECUTED = {
+    "notebooks/pipelines.ipynb": "executed by the notebook-outputs PR; "
+    "remove this entry once it merges",
+}
+
+
+def test_every_synced_notebook_has_stored_outputs():
+    import json
+
+    repo_root = Path(__file__).resolve().parents[2]
+    module = _load_sync_module(repo_root)
+    empty = []
+    for nb_rel in module.MAPPINGS:
+        cells = json.loads((repo_root / nb_rel).read_text("utf-8"))["cells"]
+        code = [c for c in cells if c["cell_type"] == "code"]
+        if code and not any(c.get("outputs") for c in code):
+            empty.append(nb_rel)
+    assert sorted(empty) == sorted(
+        nb for nb in _UNEXECUTED if nb in module.MAPPINGS
+    ), (
+        "Notebooks synced to docs without stored outputs (execute them, "
+        "then run scripts/sync_tutorial_docs.py); stale _UNEXECUTED entries "
+        f"must be removed: {empty}"
+    )

@@ -1886,6 +1886,7 @@ class _BrightnessImage(Component):
         rotation_deg,
         ft,
         blur_fwhm_mas,
+        allow_grid=False,
     ):
         """Validate and store the grid, support and transform options."""
         if blur_fwhm_mas is not None and not (
@@ -1917,7 +1918,26 @@ class _BrightnessImage(Component):
             if any_pixel is not None and not bool(any_pixel):
                 raise ValueError("support must contain at least one pixel.")
         self.support = support
-        self.rotation_deg = float(rotation_deg)
+        if isinstance(rotation_deg, str):
+            if not (allow_grid and rotation_deg == "grid"):
+                raise ValueError(
+                    "rotation_deg must be a number"
+                    + (" or 'grid'" if allow_grid else "")
+                    + f", not {rotation_deg!r}."
+                )
+            self.rotation_deg = rotation_deg
+        else:
+            self.rotation_deg = float(rotation_deg)
+
+    def _frame(self, grid=None):
+        """Position angle of the pixel grid's "up" axis for these data.
+
+        ``rotation_deg="grid"`` follows the data's uv lattice (North up
+        without one).
+        """
+        if self.rotation_deg != "grid":
+            return self.rotation_deg
+        return 0.0 if grid is None else grid.rotation_deg
 
     @property
     def smooth_fwhm_mas(self):
@@ -1946,7 +1966,7 @@ class _BrightnessImage(Component):
         return gaussian_taper(u * u + v * v, self.blur_fwhm_mas)
 
     def _centred_cvis(self, uu, vv):
-        uu, vv = rotate(uu, vv, -self.rotation_deg)
+        uu, vv = rotate(uu, vv, -self._frame())
         vis = image_visibilities(
             self.brightness, uu, vv, self.pixel_scale_mas, self.ft
         )
@@ -1956,7 +1976,7 @@ class _BrightnessImage(Component):
         vis = _pixel_visibilities(
             self.brightness,
             self.pixel_scale_mas,
-            self.rotation_deg,
+            self._frame(grid),
             u,
             v,
             wavel,
@@ -1968,7 +1988,7 @@ class _BrightnessImage(Component):
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
         # Bilinear resampling of the (smoothed) pixels, exact at their centres.
-        xx, yy = rotate(xx, yy, -self.rotation_deg)
+        xx, yy = rotate(xx, yy, -self._frame())
         brightness = self.smoothed()
         nrow, ncol = brightness.shape
         rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
@@ -2004,10 +2024,12 @@ class Image(_BrightnessImage):
         all); see [`circular_support`][virgil.models.circular_support].
     flux, dra, ddec : optional
         As for any [`Component`][virgil.models.Component].
-    rotation_deg : float, optional
+    rotation_deg : float or "grid", optional
         Position angle (North to East) of the grid's "up" axis (default 0);
         matching ``data.uv_grid.rotation_deg`` gives a much faster exact
-        two-sided matrix transform.
+        two-sided matrix transform. ``"grid"`` (provisional) follows the
+        data's uv lattice, North up without one, so DISCO data always take
+        the matrix transform.
     ft : {"auto", "dft", "nufft"}, optional
         Transform for irregular uv points (default ``"auto"``, whichever is
         faster; see [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
@@ -2031,7 +2053,7 @@ class Image(_BrightnessImage):
     log_brightness: Any
     support: jax.Array | None
     pixel_scale_mas: float = eqx.field(static=True)
-    rotation_deg: float = eqx.field(static=True)
+    rotation_deg: float | str = eqx.field(static=True)
     ft: str = eqx.field(static=True)
     blur_fwhm_mas: float | None = eqx.field(static=True)
 
@@ -2061,6 +2083,7 @@ class Image(_BrightnessImage):
             rotation_deg,
             ft,
             blur_fwhm_mas,
+            allow_grid=True,
         )
         # Reject a log-brightness whose softmax over the support is not
         # finite (skipped under jax.jit).
@@ -2112,7 +2135,8 @@ class Image(_BrightnessImage):
         the keyword arguments.
         """
         xx, yy = image_coordinates(npix, npix * pixel_scale_mas)
-        xx, yy = rotate(xx, yy, kwargs.get("rotation_deg", 0.0))
+        rotation = kwargs.get("rotation_deg", 0.0)
+        xx, yy = rotate(xx, yy, 0.0 if rotation == "grid" else rotation)
         image = _normalize_image(model._image(xx, yy, pixel_scale_mas))
         return cls.from_brightness(image, pixel_scale_mas, **kwargs)
 
@@ -5365,6 +5389,11 @@ class System(SourceModel):
                 )
         # The disk's sky position and angle in the Image's grid frame: the
         # field's centre is relative to the Image's, along its rotated axes.
+        if part.rotation_deg == "grid":
+            raise ValueError(
+                f"Component {name!r} has rotation_deg='grid', which depends "
+                "on the data; give a number for a MultipoleField to follow."
+            )
         x, y = rotate(
             disk.dra - part.dra, disk.ddec - part.ddec, -part.rotation_deg
         )

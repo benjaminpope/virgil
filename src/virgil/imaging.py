@@ -578,7 +578,7 @@ class Centroid(_ImageRegulariser):
             pixel_offsets(nrow, image.pixel_scale_mas),
             precision=_HIGHEST,
         )
-        x, y = rotate(x, y, image.rotation_deg)
+        x, y = rotate(x, y, image._frame())
         return np.stack([x + image.dra, y + image.ddec])
 
     def residuals(self, model):
@@ -793,7 +793,29 @@ def image_field(
 _DIRTY_BATCH = 4096
 
 
-def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
+def _grid_rotation(observations, rotation_deg="grid"):
+    """The pixel grid's rotation: ``rotation_deg``, or for ``"grid"`` that of
+    the data's uv lattice (0 when they have none, or lattices that differ).
+    """
+    if not isinstance(rotation_deg, str):
+        return float(rotation_deg)
+    if rotation_deg != "grid":
+        raise ValueError(
+            f"rotation_deg must be a number or 'grid', not {rotation_deg!r}."
+        )
+    angles = [
+        float(d.uv_grid.rotation_deg)
+        for d in observations
+        if getattr(d, "uv_grid", None) is not None
+    ]
+    if angles and max(angles) - min(angles) < 1e-9:
+        return angles[0]
+    return 0.0
+
+
+def dirty_image(
+    data, npix, pixel_scale_mas, flux_ratio=None, rotation_deg=0.0
+):
     """The dirty image: direct synthesis of the visibilities, unregularized.
 
     ``I(x) = Σ_k w_k Re[V_k exp(+2πi u_k · x)] / Σ_k w_k``, with uniform weights
@@ -816,6 +838,9 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
         best-fitting point source at the origin is subtracted and the image
         scaled by ``(1 + flux_ratio) / flux_ratio``, so the map shows the
         emission alone.
+    rotation_deg : float, optional
+        Position angle of the grid's "up" axis (default 0, North up), as for
+        [`Image`][virgil.models.Image].
 
     Returns
     -------
@@ -878,6 +903,8 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
             vis = (vis - star) * (1.0 + flux_ratio) / flux_ratio
         fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
         fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
+        if rotation_deg != 0.0:
+            fu, fv = rotate(fu, fv, -rotation_deg)
         # In chunks of samples: all k at once is hundreds of GB for DISCO
         # data (k ~ 1e5, npix ~ 256).
         wv = weight * vis
@@ -960,6 +987,7 @@ def starting_image(
     inner_elements=4.0,
     aperture_mas=None,
     pad_to_mas=None,
+    rotation_deg="grid",
 ):
     """A starting model for an image fit, sized from the data.
 
@@ -1038,7 +1066,10 @@ def starting_image(
     support = None
     if hole_mas is not None:
         support = circular_support(npix, scale, npix * scale, hole_mas)
-    options = dict(flux=envelope.flux, support=support)
+    rotation = _grid_rotation(_as_list(data), rotation_deg)
+    options = dict(
+        flux=envelope.flux, support=support, rotation_deg=rotation
+    )
     if start == "moments":
         # An unresolved envelope drives sigma to its lower bound, and a
         # Gaussian narrower than a pixel samples to zeros: start one pixel wide.
@@ -1047,7 +1078,9 @@ def starting_image(
         image = Image.from_model(model, npix, scale, **options)
     elif start == "dirty":
         ratio = float(envelope.flux) if star else None
-        dirty = dirty_image(data, natural, scale, flux_ratio=ratio)
+        dirty = dirty_image(
+            data, natural, scale, flux_ratio=ratio, rotation_deg=rotation
+        )
         positive = _pad_brightness(np.maximum(dirty, 0.0), npix)
         image = Image.from_brightness(positive, scale, floor=1e-3, **options)
     else:
@@ -1520,7 +1553,7 @@ def clean(
     spectrum=None,
     support=None,
     init=None,
-    rotation_deg=0.0,
+    rotation_deg="grid",
     dtype="float64",
     scales_mas=(0.0,),
     scale_bias=0.0,
@@ -1564,9 +1597,11 @@ def clean(
         mask, e.g. [`circular_support`][virgil.models.circular_support];
         non-negative starting fluxes ``(npix, npix)`` or
         ``(n_scales, npix, npix)``.
-    rotation_deg, dtype : float and str, optional
-        Grid position angle (match ``data.uv_grid.rotation_deg``, see
-        [`Image`][virgil.models.Image]); [precision](../common_arguments.md#dtype).
+    rotation_deg, dtype : float or "grid", and str, optional
+        Grid position angle: ``"grid"`` (default, provisional) takes the
+        data's uv lattice, ``data.uv_grid.rotation_deg``, for the exact fast
+        transform (0 without one); see [`Image`][virgil.models.Image].
+        [Precision](../common_arguments.md#dtype).
     scales_mas, scale_bias : sequence of float and float, optional
         FWHMs (mas) of the components, 0 for a point (``(0.0, 3.0)``: both);
         in [0, 1), the down-weighting ``1 - scale_bias s / max(scales_mas)``.
@@ -1578,7 +1613,7 @@ def clean(
     """
     observations = tuple(_as_list(data))
     npix, pixel_scale_mas = int(npix), float(pixel_scale_mas)
-    rotation_deg = float(rotation_deg)
+    rotation_deg = _grid_rotation(observations, rotation_deg)
     if not 0.0 < gain <= 1.0:
         raise ValueError(f"gain must be in (0, 1], not {gain}.")
     for name, value in (
@@ -3306,7 +3341,7 @@ def short_baseline_residual(model, data, quantile=0.2):
     return float(onp.mean(r[shortest])), float(1.0 / onp.sqrt(n))
 
 
-def residual_image(model, data, npix, pixel_scale_mas, rotation_deg=0.0):
+def residual_image(model, data, npix, pixel_scale_mas, rotation_deg="grid"):
     """The residual dirty map of a model, for any observable.
 
     The normalised χ² gradient ``-g_p / |J e_p|`` of adding a little flux at
@@ -3325,7 +3360,7 @@ def residual_image(model, data, npix, pixel_scale_mas, rotation_deg=0.0):
         The data.
     npix, pixel_scale_mas : int, float
         The centred grid of the map, as in [`clean`][virgil.imaging.clean].
-    rotation_deg : float, optional
+    rotation_deg : float or "grid", optional
         The grid's rotation, as in ``clean``.
 
     Returns
@@ -3334,6 +3369,7 @@ def residual_image(model, data, npix, pixel_scale_mas, rotation_deg=0.0):
         Shape ``(npix, npix)``.
     """
     observations = _as_list(data)
+    rotation_deg = _grid_rotation(observations, rotation_deg)
     shapes = _scale_shapes(
         (0.0,), onp.ones((npix, npix), bool), pixel_scale_mas
     )

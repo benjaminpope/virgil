@@ -926,7 +926,7 @@ def _on_common_grid(image, npix, scale):
     onto the common grid, so that its corners are not cropped by a rotation
     within its own frame; others are resampled.
     """
-    if float(image.rotation_deg) == 0.0:
+    if float(image._frame()) == 0.0:
         return onp.asarray(
             resample(image, image.pixel_scale_mas, npix, scale), dtype=float
         )

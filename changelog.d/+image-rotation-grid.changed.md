@@ -1,0 +1,1 @@
+`Image(rotation_deg="grid")` (provisional) follows the data's uv lattice, as for `FlaredDisk*`; `starting_image`, `clean` and `residual_image` default to it, and `dirty_image` takes `rotation_deg`. Imaging fits on rotated AMI/DISCO lattices now take the exact matrix transform instead of the per-point DFT (same values to rounding); data without a lattice are unchanged
