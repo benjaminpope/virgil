@@ -1613,9 +1613,11 @@ class _ToySpace:
         return cls(*aux)
 
 
+@functools.cache  # the same closures every call: the SMC stage compiles once
 def _banana_toy(b=1.0, s0=1.0, s1=0.2):
     """A banana target with ``ln Z = ln(2π s0 s1)`` (a volume-preserving shear
-    of a Gaussian), a wide Gaussian prior and a one-component mixture."""
+    of a Gaussian), a wide Gaussian prior and a one-component mixture.
+    Cached per parameters, so repeated runs reuse the compiled SMC stage."""
     from virgil.mode_search import DefensiveMixture
 
     def loglike(x):
