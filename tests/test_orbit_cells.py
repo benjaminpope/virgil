@@ -665,7 +665,7 @@ def test_the_position_evidence_of_a_tiny_case_matches_prior_importance(
     monkeypatch,
 ):
     """K = 3 nights, a circular orbit (``e_max`` -> 1e-6): the search and
-    defensive evidence of the cell against 2**20 plain draws from its prior."""
+    defensive evidence of the cell against 2**21 plain draws from its prior."""
     times = onp.array([0.0, 4.1, 9.3])
     orbit = _orbit(period=11.3, a=6.0, ecc=0.0)
     s = _summaries(orbit, times, sigma=0.9, seed=2)
@@ -701,8 +701,13 @@ def test_the_position_evidence_of_a_tiny_case_matches_prior_importance(
     assert fit.log_l_sup >= fit.log_z
     chunks = [
         onp.asarray(ll(space.sample(jax.random.key(10 + i), 2**15)))
-        for i in range(32)
+        for i in range(64)
     ]
+    # The prior reference is the noisy side: this cell is a small corner of its
+    # prior, so 2**20 draws had an ESS of only ~11 on a CI runner, where
+    # 1/sqrt(ESS) understates the error of a log-mean (skewed, heavy tailed)
+    # and the 4-sigma band was crossed by chance (|dlogZ| 1.88 vs 1.39). The
+    # band is unchanged; the reference gets twice the draws (ESS ~ 22).
     ref = onp.concatenate(chunks)
     lz = onp.log(onp.mean(onp.exp(ref - ref.max()))) + ref.max()
     w = onp.exp(ref - ref.max())
