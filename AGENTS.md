@@ -23,7 +23,7 @@ pre-commit install
 Cloud agents get this environment from `.github/workflows/copilot-setup-steps.yml`.
 CI tests against the newest JAX: it installs from `uv.lock`, which
 `.github/workflows/lock-upgrade.yml` upgrades daily through a pull request of its
-own, and a nightly canary runs ahead of the lock. A stale JAX locally can hide
+own, and the upgrade pull request is tested before it merges. A stale JAX locally can hide
 failures that only appear in newer releases. Bring an existing `.venv`
 up to date with `uv pip install --python .venv/bin/python --upgrade -e ".[dev]"`;
 upgrading `jax` alone can leave optax, equinox etc. too old for it.
@@ -130,6 +130,22 @@ why; never adjust the code or the check until it passes.
 **Reviewer checklist item:** does this change make a test or gate pass by
 special-casing, tuning or loosening? The PR description answers it.
 
+## Trust the user
+
+Add an argument check only if, without it, one of these happens: (a) a number
+comes out silently wrong; (b) an argument is silently ignored or truncated; (c) a
+dispatch on an option silently falls through to a default branch. Otherwise do not
+add the check. Non-finite, negative or out-of-range scalars, bool-for-int and
+parameter shapes need no check unless (a)–(c) applies (a negative flux gives a
+silently wrong visibility, so it does). Document a non-obvious assumption in one
+docstring sentence instead. To keep traced code physical, put the constraint in
+`is_physical()` (enforced only with `reject_unphysical=True`, not by default) and
+in the prior support; eager checks go through `concrete()` and run only on
+concrete values. For new checks and new tests: do not add a test that bad input
+raises, except one per check kept under (a)–(c). The rule does not license
+deleting existing tests or guards. A PR deleting an existing guard states the
+failure mode that remains without it. New tests cover maths and physics.
+
 ## Instrument-specific work
 
 Calibration and error models specific to the VLTI instruments (GRAVITY,
@@ -218,6 +234,15 @@ and writing history into docstrings. So:
    inlining into monoliths. The base branch's copy of the script decides, so a
    PR cannot weaken the gate.
 
+## Code layout
+
+- Separate the phases of a function (validate, build, compute, package) with blank lines.
+- A comment says why, not what: a reason, a convention or a surprise, never a restatement of the line.
+- Build a result object (`NamedTuple`, dataclass, dict of results) with keyword arguments
+  when it has more than four fields or any boolean field.
+- No new `# fmt: skip` outside module-level constant tables. Existing uses in `smc.py` and
+  `mode_search.py` are being removed (orbit-redesign session); do not copy them.
+
 ## Docstring style
 
 Ben is surprised how long some docstrings are. Keep them short.
@@ -229,10 +254,11 @@ Ben is surprised how long some docstrings are. Keep them short.
 - **Leave out:** derivations, design history, plan or "problem N" numbers,
   PR/issue numbers and named science targets. Put a derivation in a docs page
   and link it with a markdown link; put history in `design/` notes.
-- **Shared parameters** (`noise`, `priors`, `flat_coordinates`, `dtype`,
-  `regularizers`, ...) are documented once, in `docs/conventions.md` (see "Which
-  priors?", "Priors and the MAP" and "Precision"; add `noise` and `regularizers`
-  there rather than creating a page), and each docstring says one line and links it.
+- **Shared parameters** (`model`, `priors`, `noise`, `regularizers`, `dtype`, ...)
+  are documented once, in `docs/common_arguments.md`, and each docstring says one
+  line and links it. Conventions that are not arguments (coordinates, orbits,
+  "Which priors?", "Priors and the MAP", "Precision") live in `docs/conventions.md`.
+  Add a new shared argument to `common_arguments.md`, not a new page.
 - **Private helpers:** one or two lines.
 - **Deliberate choices:** a surprising or deliberate choice gets a short inline
   `#` comment at the line that makes it, not a docstring paragraph, e.g.
@@ -252,10 +278,13 @@ Ben is surprised how long some docstrings are. Keep them short.
   it is checked on the arXiv abstract page (`scripts/fetch_references.py`
   resolves entries against ADS). `scripts/sync_references_page.py --by-module`
   and `--unverified` give the census.
-- **The gate:** `tests/lint/test_docstring_length.py` fails any docstring over 60
-  lines, with no allowlist, and forbids more than four parameter names on one
-  numpydoc header line (a fixed legacy set is exempt; it only shrinks): shorten the docstring, and put derivations in `docs/` and design history in
-  `design/`.
+- **The gate:** `tests/lint/test_docstring_length.py` fails any docstring with
+  more than 60 lines of prose, with no allowlist. Prose is every section
+  except the numpydoc `Parameters`, `Returns` and `Raises` (so the summary,
+  description, Notes and Examples all count); so each parameter can have its own entry. The gate
+  also forbids more than four parameter names on one numpydoc header line (a
+  fixed legacy set is exempt; it only shrinks): shorten the prose, and put
+  derivations in `docs/` and design history in `design/`.
 - **Comprehension check:** every docstring-rewrite PR runs one. Give a fresh
   subagent only the signature and the new docstring of each rewritten public
   function. It writes a correct call for a stated task and lists anything it

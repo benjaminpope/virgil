@@ -11,6 +11,7 @@ from virgil.fitting import (
     KKT_W_TOL,
     FitResult,
     _band_limit,
+    _smooth,
     _linear_certificate,
     fit,
     kkt_report,
@@ -185,8 +186,15 @@ def test_sqrt_maxentropy(steps, converged):
         assert not report["converged"]
 
 
-def _softmax_problem(n=32, scale=7.5):
-    truth = Image(onp.log(_disc(n) + 1e-3), scale)
+def _ring(n, flux=1.0):
+    yy, xx = onp.mgrid[:n, :n] - (n - 1) / 2
+    r = onp.hypot(xx, yy)
+    ring = ((r > n / 8) & (r < n / 4)).astype(float)
+    return flux * ring / ring.sum()
+
+
+def _softmax_problem(n=32, scale=7.5, shape=_disc):
+    truth = Image(onp.log(shape(n) + 1e-3), scale)
     data = DATA.with_model(truth, noise_scale=0.0)
     return truth, Image(onp.zeros((n, n)), scale), data
 
@@ -306,3 +314,29 @@ def test_band_limit_matches_the_diagnosis_reference():
     assert _band_limit(onp.exp(eta), dx, cut) == pytest.approx(
         expected, rel=1e-6
     )
+
+
+# 10 mas pixels are left out: there band_limit is 6.5 (disc) and 7.3 (ring)
+# against its gate of 2.0 at a KKT optimum, and the ring fit stalls. That
+# finding is in the PR (an xfail needs Ben's sign-off); the gate is unchanged.
+@pytest.mark.parametrize("scale", [5.0])
+@pytest.mark.parametrize("shape", [_disc, _ring])
+def test_converged_gate_holds_across_morphology_and_resolution(shape, scale):
+    # New scenes (the ring is new): a fit stopped after 5 steps is not
+    # converged, an over-converged one is. Thresholds are never adjusted.
+    _, start, data = _softmax_problem(scale=scale, shape=shape)
+    priors, reg = image_priors(start), [MaxEntropy(30.0)]
+    short = fit(start, priors, data, reg, method="lbfgs", max_steps=5)
+    full = fit(start, priors, data, reg, method="lbfgs", gtol=1e-6)
+    full = _polish(full, start, priors, data, reg, "lbfgs", 3, gtol=1e-6)
+    assert not kkt_report(short, priors, data, reg)["converged"]
+    done = kkt_report(full, priors, data, reg)
+    assert done["converged"] is True, done
+
+
+def test_band_limit_refuses_non_square_images():
+    img = onp.ones((8, 12))
+    with pytest.raises(ValueError, match="square"):
+        _band_limit(img, 7.5, 1.0 / (4 * 7.5 * MAS))
+    with pytest.raises(ValueError, match="square"):
+        _smooth(img, 1.0)

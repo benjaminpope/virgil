@@ -1527,6 +1527,12 @@ def clean(
 ):
     """Build an image from components, one at a time: gradient CLEAN.
 
+    For optical `OIData`. Variants: Högbom's point-component CLEAN (1974),
+    multi-scale Gaussian components with ``scales_mas`` (Cornwell 2008), and a
+    gradient generalization to nonlinear data. For radio complex visibilities
+    (Clark and Cotton–Schwab CLEAN) use
+    [`virgil.radio_clean.clean`][virgil.radio_clean.clean].
+
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
@@ -1534,7 +1540,7 @@ def clean(
     lowers χ² most (Högbom's CLEAN for linear data, else matching pursuit); every
     ``refit_every`` iterations a major cycle refits all fluxes by non-negative
     least squares. See [CLEAN](../imaging_clean.md).
-    Source: Högbom (1974), [references](../references.md#hogbom1974).
+    Source: Högbom (1974), [references](../references.md#hogbom1974); Cornwell (2008), [references](../references.md#cornwell2008).
 
     Parameters
     ----------

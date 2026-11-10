@@ -99,6 +99,10 @@ samples = {
 opt_flux = optimized_flux_grid(BinaryModelCartesian, oidata_sim, samples)
 ```
 
+```text
+RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 244 of 3721 grid positions; values there may be inaccurate.
+```
+
 ## Ruffio Contrast Limits
 
 The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) method is Bayesian: infer the Gaussian posterior on a companion's flux, impose a positive-flux prior, and report a chosen percentile as the upper limit, *conditioned on the astrometry being right and a source being there*.
@@ -164,7 +168,7 @@ ax.set_title("Radial contrast limits: Ruffio vs Absil");
 
 ## As a pipeline
 
-The search grid, Absil limits and contrast curve are the `search` and `limits` stages of [`BinaryPipeline`](pipeline.md), so running it `through="limits"` stops before the fit and sampler, which a non-detection does not need. The cell below uses the same $\pm 250$ mas grid of 61 points per axis, the same flux axis and $\sigma = 2$. The pipeline blanks grid points inside the resolution limit, where separation and flux are degenerate, so compare its limit map with the hand-computed Absil map where both are defined. The contrast curve is one of the pipeline's plots.
+The search grid, Ruffio limits and contrast curve are the `search` and `limits` stages of [`BinaryPipeline`](pipeline.md), so running it `through="limits"` stops before the fit and sampler, which a non-detection does not need. The cell below uses the same $\pm 250$ mas grid of 61 points per axis, the same flux axis and $\sigma = 2$. The pipeline blanks grid points inside the resolution limit, where separation and flux are degenerate, so compare its limit map with the hand-computed Ruffio map where both are defined; `limit_method="absil"` gives the Absil map instead. The contrast curve is one of the pipeline's plots.
 
 ```python
 from tempfile import mkdtemp
@@ -188,7 +192,7 @@ display(Image(filename=str(res.path / "plots" / "limits_contrast_curve.png")))
 ```
 
 ```text
-BinaryPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpk6xqpibo/limits_run: partial
+BinaryPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpddyie1t5/limits_run: partial
   data.n_vis = 21
   data.n_phi = 35
   data.n_independent = 36
@@ -204,21 +208,22 @@ BinaryPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpk6xqpi
   search.log_bayes_factor = -0.349728
   search.max_snr = 2.65709
   search.local_nsigma = 2.65635
-  search.global_nsigma = 1.19582
-  search.false_alarm_probability = 0.115884
-  search.n_null = 1000
-  search.n_null_above = 115
+  search.global_nsigma = 0.99969
+  search.false_alarm_probability = 0.15873
+  search.n_null = 125
+  search.n_null_above = 19
   search.dra_mas = -100
   search.ddec_mas = -175
   search.flux = 8.28444e-05
   search.max_sep_mas = 250
   limits.sigma = 2
-  limits.deepest_delta_mag = 9.6868
+  limits.deepest_delta_mag = 10.046
   [pass] chi2: χ²/N = 0.614 for the star alone on quoted errors: consistent with the quoted errors.
   [warn] detection: No companion above 3σ (2.66σ local): the fit and posterior describe the highest noise peak; quote the contrast limits instead.
   [pass] grid_edge: The grid peak lies inside the searched grid.
-  [warn] limits_clipped: 1 limits fell outside the flux bounds and were clipped to the nearer bound: those limits are not the true limits; widen flux_range.
-  1 warning(s) recorded in the limits stage(s) (see the checks, or Result.summary['warnings'])
+  [warn] convergence: The optimizer did not converge at 243 of 3721 grid positions (6.5 per cent): values there may be inaccurate.
+  [warn] stage_warnings: 1 warning(s) were raised inside the stages: ruffio limits: 243 of 3721 grid positions have an unconverged flux refinement or no finite Laplace sigma; their limits are NaN. See the 'warnings' list of summary.json.
+  3 warning(s) recorded in the limits, search stage(s) (see the checks, or Result.summary['warnings'])
 ```
 
 ![contrast_limits output 15.2](generated/contrast_limits_cell015_out02.png)

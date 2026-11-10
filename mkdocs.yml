@@ -107,9 +107,12 @@ nav:
       - "Pipelines and their stability": pipeline.md
   - API Reference:
       - Overview: api/index.md
-      - OIData: api/oidata.md
-      - OIFITS: api/oifits.md
-      - AMIGO: api/amigo.md
+      - Data:
+          - OIData: api/oidata.md
+          - OIFITS: api/oifits.md
+          - AMIGO: api/amigo.md
+          - Observables: api/observables.md
+          - Gains: api/gains.md
       - Models:
           - Overview: api/models/index.md
           - Classes:
@@ -122,42 +125,48 @@ nav:
               - HarmonixModel: api/models/classes/harmonix_model.md
           - Functions: api/models/functions.md
           - Model notes: api/models/notes.md
-      - Harmonics: api/harmonics.md
-      - Likelihood: api/likelihood.md
-      - Gains: api/gains.md
-      - Linear marginalization (internal): api/linear.md
-      - Observables: api/observables.md
-      - Fitting: api/fitting.md
-      - SVI: api/svi.md
-      - Angles: api/angles.md
-      - Imaging: api/imaging.md
-      - Inference: api/inference.md
-      - Grid Fit: api/grid_fit.md
-      - Limits: api/limits.md
-      - SMC: api/smc.md
-      - Priors: api/priors.md
-      - Detection: api/detection.md
-      - Spectra: api/spectra.md
-      - Orbits: api/orbits.md
-      - Orbit aliases: api/aliases.md
-      - Short arcs: api/arcs.md
-      - Night summaries: api/night_summaries.md
-      - Orbit cells: api/orbit_cells.md
-      - Orbit visibility: api/orbit_visibility.md
-      - Mode search: api/mode_search.md
-      - Tempering: api/tempering.md
-      - Epochs: api/epochs.md
-      - Orbit Search: api/orbit_search.md
-      - Radio: api/radio.md
-      - Radio Toeplitz: api/radio_toeplitz.md
-      - Radio CLEAN: api/radio_clean.md
-      - Cross-validation: api/crossval.md
-      - Fields: api/fields.md
-      - Scenes: api/scenes.md
-      - Metrics: api/metrics.md
-      - Ensemble: api/ensemble.md
-      - Coverage: api/coverage.md
-      - Pipeline: api/pipeline.md
-      - Simulate: api/simulate.md
-      - Plotting: api/plotting.md
-      - Legacy: api/legacy.md
+          - Harmonics: api/harmonics.md
+          - Spectra: api/spectra.md
+          - Fields: api/fields.md
+      - Likelihood and fitting:
+          - Likelihood: api/likelihood.md
+          - Likelihood terms (contract): api/likelihood_terms.md
+          - Fitting: api/fitting.md
+          - SVI: api/svi.md
+          - Inference: api/inference.md
+          - Priors: api/priors.md
+          - Angles: api/angles.md
+          - Linear marginalization (internal): api/linear.md
+      - Sampling and evidence:
+          - SMC: api/smc.md
+          - Mode search: api/mode_search.md
+          - Cross-validation: api/crossval.md
+      - Searches and limits:
+          - Grid Fit: api/grid_fit.md
+          - Limits: api/limits.md
+          - Detection: api/detection.md
+      - Imaging:
+          - Imaging: api/imaging.md
+          - Ensemble: api/ensemble.md
+          - Metrics: api/metrics.md
+          - Scenes: api/scenes.md
+      - Radio:
+          - Radio: api/radio.md
+          - Radio CLEAN: api/radio_clean.md
+          - Radio Toeplitz: api/radio_toeplitz.md
+      - Orbits:
+          - Orbits: api/orbits.md
+          - Epochs: api/epochs.md
+          - Orbit Search: api/orbit_search.md
+          - Orbit aliases: api/aliases.md
+          - Short arcs: api/arcs.md
+          - Tempering: api/tempering.md
+          - Night summaries: api/night_summaries.md
+          - Orbit cells: api/orbit_cells.md
+          - Orbit visibility: api/orbit_visibility.md
+      - Pipelines and utilities:
+          - Pipeline: api/pipeline.md
+          - Simulate: api/simulate.md
+          - Coverage: api/coverage.md
+          - Plotting: api/plotting.md
+          - Legacy: api/legacy.md
