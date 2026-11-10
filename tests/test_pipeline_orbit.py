@@ -91,7 +91,7 @@ DEFAULTS = {
     "vis_amp": True,
     "sign_free": True,
     "flip_flux": True,
-    "temper": True,
+    "temper": False,
     **_engine_defaults(
         "n_bands_max", "n_candidates", "n_refine", "max_steps", "n_is"
     ),

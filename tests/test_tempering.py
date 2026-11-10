@@ -411,7 +411,7 @@ def test_the_dof_argument_is_f_one_or_a_fixed_f(monkeypatch):
         run(temper=-2.0)
 
 
-def test_correlated_channels_are_tempered_by_default(monkeypatch):
+def test_correlated_channels_are_tempered_when_asked(monkeypatch):
     data, positions = _cached(0.85, n=3)
     seen = {}
 
@@ -442,10 +442,17 @@ def test_correlated_channels_are_tempered_by_default(monkeypatch):
         with pytest.raises(Stop):
             aliases.fit_orbit_aliases(
                 data, (12.0, 13.0), positions=positions, t_ref=T_REF,
-                primary_diam=None, n_random=5,
+                primary_diam=None, n_random=5, temper=True,
             )  # fmt: skip
     dof = dict(seen["settings"].dof)
     assert set(dof) == {"vis", "phi"} and all(v < 0.5 for v in dof.values())
+
+
+def test_the_default_is_untempered(monkeypatch):
+    # D6: tempering is opt-in until 0.5.
+    data, positions = _cached(0.85, n=3)
+    settings = _stub_fit(monkeypatch, data, positions, primary_diam=None)
+    assert settings.dof == ()
 
 
 def test_several_channels_without_positions_warn_and_stay_untempered(
@@ -464,7 +471,7 @@ def test_several_channels_without_positions_warn_and_stay_untempered(
         with pytest.raises(Stop):
             aliases.fit_orbit_aliases(
                 data, (12.0, 13.0), t_ref=T_REF, primary_diam=None,
-                n_random=5,
+                n_random=5, temper=True,
             )  # fmt: skip
 
 
@@ -594,6 +601,7 @@ def test_tempering_turns_an_overconfident_band_probability_into_a_calibrated_one
         n_is=200,
         n_samples=20,
         primary_diam=None,
+        temper=True,
     )
     assert 4.0 < result.temper_f < 7.0
     best = result.bands[0]
@@ -829,7 +837,9 @@ def _scripted(monkeypatch, data, positions, resolved):
 
     monkeypatch.setattr(aliases, "_auto_primary", auto)
     monkeypatch.setattr(aliases, "_temper_factors", factors)
-    settings = _stub_fit(monkeypatch, data, positions, primary_diam="auto")
+    settings = _stub_fit(
+        monkeypatch, data, positions, primary_diam="auto", temper=True
+    )
     return calls, pilots, settings
 
 
@@ -974,7 +984,7 @@ def test_a_checkpoint_with_tempering_on_roundtrips_and_depends_on_f(
     kw = dict(
         positions=positions, t_ref=T_REF, n_random=10, n_refine=1,
         max_steps=3, n_is=20, n_samples=5, primary_diam=None,
-        checkpoint_dir=tmp_path,
+        checkpoint_dir=tmp_path, temper=True,
     )  # fmt: skip
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
