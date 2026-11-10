@@ -1,14 +1,26 @@
 """``rotation_deg="grid"`` for pixel images, and the imaging defaults."""
 
+import dataclasses
+
 import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
 import pytest
+from jax.scipy.ndimage import map_coordinates
 
 from virgil import models
 from virgil.coverage import ami_grid_record
-from virgil.imaging import clean, dirty_image, starting_image
+from virgil._geometry import image_coordinates, rotate
+from virgil.imaging import (
+    beam,
+    clean,
+    convolve_beam,
+    dirty_image,
+    starting_image,
+)
+from virgil.metrics import resample
+from virgil.scenes import gaussian_blob
 from virgil.models import GaussianDisk, Image, LinearImage, PointSource, System
 from virgil.oidata import OIData
 
@@ -111,12 +123,74 @@ def test_starting_image_and_clean_follow_the_lattice(monkeypatch):
     assert explicit.rotation_deg == 0.0
 
 
-def test_dirty_image_rotation_matches_a_rotated_sky():
+def _correlation(a, b):
+    a, b = onp.ravel(a) - onp.mean(a), onp.ravel(b) - onp.mean(b)
+    return float(a @ b / onp.sqrt((a @ a) * (b @ b)))
+
+
+def test_dirty_image_in_the_grid_frame_is_the_north_up_map_turned():
+    angle = 35.0
+    source = System(
+        star=PointSource(), c=PointSource(flux=0.5, dra=30.0, ddec=40.0)
+    )
+    data = OIData(ami_grid_record(rotation_deg=angle)).with_model(source)
+    assert data.uv_grid.rotation_deg == pytest.approx(angle)
+    n, h = 32, SCALE / 2
+
+    def dirty(rotation):
+        return onp.asarray(
+            dirty_image(data, n, h, flux_ratio=0.5, rotation_deg=rotation)
+        )
+
+    north = dirty(0.0)
+    assert onp.array_equal(dirty("grid"), dirty(angle))
+
+    # North-up pixel (x, y) sits at rotate(x, y, -angle) in the turned grid.
+    xx, yy = (onp.asarray(a) for a in image_coordinates(n, n * h))
+    centre = 0.5 * (n - 1)
+    inside = onp.hypot(xx, yy) < 60.0
+
+    def agreement(sign):
+        gx, gy = (onp.asarray(a) for a in rotate(xx, yy, -sign * angle))
+        turned = map_coordinates(
+            np.asarray(dirty(angle)),
+            [centre - gy / h, centre - gx / h],
+            order=1,
+            mode="constant",
+        )
+        return _correlation(onp.asarray(turned)[inside], north[inside])
+
+    assert agreement(1) > 0.99
+    assert agreement(-1) < 0.5
+    with pytest.raises(ValueError, match="rotation_deg"):
+        dirty_image(data, NPIX, SCALE, rotation_deg="sky")
+
+
+def test_scoring_and_resampling_see_a_rotated_image_as_the_sky():
+    blob = gaussian_blob(NPIX, 1.0, 2.0, dra=5.0, ddec=5.0)
+    north = Image.from_brightness(blob, 1.0, floor=1e-3)
+    turned = Image.from_brightness(blob, 1.0, floor=1e-3, rotation_deg=45.0)
+    assert np.array_equal(
+        resample(north, None, NPIX, 1.0), resample(north, 1.0, NPIX, 1.0)
+    )
+    sky = onp.asarray(turned.render(NPIX, float(NPIX)))
+    got = onp.asarray(resample(turned, None, NPIX, 1.0))
+    assert onp.allclose(got / got.sum(), sky / sky.sum(), atol=1e-6)
+
+
+def test_clean_result_records_its_frame_and_turns_the_beam():
     data = _lattice().with_model(
         System(star=PointSource(), env=GaussianDisk(15.0, flux=0.3))
     )
-    north = dirty_image(data, NPIX, SCALE)
-    assert np.array_equal(dirty_image(data, NPIX, SCALE, rotation_deg=0.0), north)
-    turned = dirty_image(data, NPIX, SCALE, rotation_deg=ROTATION)
-    assert turned.shape == north.shape
-    assert not np.allclose(turned, north)
+    result = clean(
+        data, npix=NPIX, pixel_scale_mas=SCALE, max_iterations=3, base=None
+    )
+    assert result.rotation_deg == pytest.approx(data.uv_grid.rotation_deg)
+    b = beam(data)
+    turned = result.restored(b)
+    by_hand = convolve_beam(
+        result.components,
+        SCALE,
+        dataclasses.replace(b, pa_deg=b.pa_deg - result.rotation_deg),
+    )
+    assert np.array_equal(turned, by_hand)

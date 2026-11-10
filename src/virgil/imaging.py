@@ -838,9 +838,9 @@ def dirty_image(
         best-fitting point source at the origin is subtracted and the image
         scaled by ``(1 + flux_ratio) / flux_ratio``, so the map shows the
         emission alone.
-    rotation_deg : float, optional
+    rotation_deg : float or "grid", optional
         Position angle of the grid's "up" axis (default 0, North up), as for
-        [`Image`][virgil.models.Image].
+        [`Image`][virgil.models.Image]; ``"grid"`` takes the data's uv lattice.
 
     Returns
     -------
@@ -849,6 +849,7 @@ def dirty_image(
         (East left, North up). It has negative sidelobes.
     """
     observations = _as_list(data)
+    rotation_deg = _grid_rotation(observations, rotation_deg)
     offsets = onp.asarray(pixel_offsets(int(npix), float(pixel_scale_mas)))
     image, total = onp.zeros((int(npix), int(npix))), 0.0
     for d in observations:
@@ -1025,11 +1026,18 @@ def starting_image(
         Least grid width (mas), padded with empty pixels; may exceed λ / B_min,
         but beyond it the data do not constrain the flux, so pair a large field
         with a support or priors.
+    rotation_deg : float or "grid", optional
+        Position angle of the pixel grid (default ``"grid"``, provisional):
+        the data's uv lattice, ``data.uv_grid.rotation_deg``, so that fits take
+        the exact matrix transform (North up without a lattice).
 
     Returns
     -------
     SourceModel
-        ``System(star=PointSource(), env=Image(...))``, or the Image alone.
+        ``System(star=PointSource(), env=Image(...))``, or the Image alone. Its
+        pixel array is in the grid's frame: render it with
+        [`plot_model`][virgil.plotting.plot_model], and give any image built
+        from its pixels the same ``rotation_deg``.
     """
     from .models import GaussianDisk
 
@@ -1516,6 +1524,9 @@ class CleanResult:
         units of ``components``; each sums to that scale's share of the flux.
     scales_mas : tuple of float
         The FWHM of each scale's Gaussian shape (0 for a point).
+    rotation_deg : float
+        Position angle of the pixel grid's "up" axis, the frame of
+        ``components`` (the data's uv lattice by default; 0 is North up).
     """
 
     model: object
@@ -1525,14 +1536,19 @@ class CleanResult:
     stop: str
     components_by_scale: jax.Array = None
     scales_mas: tuple = (0.0,)
+    rotation_deg: float = 0.0
 
     def restored(self, beam):
         """The components convolved with ``beam``: the "restored" image.
 
-        In the orientation of the pixel grid, in the units of
-        ``components``. Unlike radio astronomy's restored image, it does not
-        include the residuals.
+        In the frame of the pixel grid (``rotation_deg``), in the units of
+        ``components``; the beam's position angle is turned into that frame.
+        Unlike radio astronomy's restored image, it does not include the
+        residuals.
         """
+        beam = dataclasses.replace(
+            beam, pa_deg=beam.pa_deg - self.rotation_deg
+        )
         return convolve_beam(self.components, self.pixel_scale_mas, beam)
 
 
@@ -1816,6 +1832,7 @@ def clean(
         stop,
         np.asarray(by_scale),
         scales_mas,
+        rotation_deg,
     )
 
 
@@ -3341,7 +3358,7 @@ def short_baseline_residual(model, data, quantile=0.2):
     return float(onp.mean(r[shortest])), float(1.0 / onp.sqrt(n))
 
 
-def residual_image(model, data, npix, pixel_scale_mas, rotation_deg="grid"):
+def residual_image(model, data, npix, pixel_scale_mas, rotation_deg=0.0):
     """The residual dirty map of a model, for any observable.
 
     The normalised χ² gradient ``-g_p / |J e_p|`` of adding a little flux at
@@ -3361,7 +3378,9 @@ def residual_image(model, data, npix, pixel_scale_mas, rotation_deg="grid"):
     npix, pixel_scale_mas : int, float
         The centred grid of the map, as in [`clean`][virgil.imaging.clean].
     rotation_deg : float or "grid", optional
-        The grid's rotation, as in ``clean``.
+        The grid's rotation, as in ``clean`` (default 0, North up, the
+        orientation of [`plot_residual_map`][virgil.plotting.plot_residual_map];
+        ``"grid"`` takes the data's uv lattice).
 
     Returns
     -------

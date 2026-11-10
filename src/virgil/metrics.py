@@ -53,7 +53,14 @@ def _array_and_scale(image, pixel_scale_mas):
             if hasattr(image, "smoothed")
             else image.brightness
         )
-        return np.asarray(pixels), float(scale)
+        pixels = np.asarray(pixels)
+        # An image on a rotated grid is scored as the sky: North up.
+        frame = image._frame() if hasattr(image, "_frame") else 0.0
+        if frame != 0.0 and pixels.shape[0] == pixels.shape[1]:
+            n = pixels.shape[0]
+            sky = np.asarray(image.render(n, n * image.pixel_scale_mas))
+            pixels = sky / np.sum(sky) * np.sum(pixels)
+        return pixels, float(scale)
     if pixel_scale_mas is None:
         raise ValueError("Give pixel_scale_mas for an array (not an Image).")
     return np.asarray(image), float(pixel_scale_mas)

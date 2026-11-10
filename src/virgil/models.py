@@ -2029,7 +2029,10 @@ class Image(_BrightnessImage):
         matching ``data.uv_grid.rotation_deg`` gives a much faster exact
         two-sided matrix transform. ``"grid"`` (provisional) follows the
         data's uv lattice, North up without one, so DISCO data always take
-        the matrix transform.
+        the matrix transform. The pixels are the parameters, so with ``"grid"``
+        they mean different skies on data with different lattices (or none),
+        and ``render`` and ``model`` without data are North up: fit one
+        lattice, or give a number (as ``starting_image`` does).
     ft : {"auto", "dft", "nufft"}, optional
         Transform for irregular uv points (default ``"auto"``, whichever is
         faster; see [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
