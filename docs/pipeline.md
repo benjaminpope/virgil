@@ -43,7 +43,7 @@ A run resumes by default: a completed stage whose outputs exist is skipped, and 
 | `load` | Applies `wavel_range` and `error_floor`, and writes the data that are fitted | `OIData.select`, `OIData.with_error_floor`, `write_oifits` |
 | `overview` | Plots the data and the uv coverage | `plot_oidata_overview`, `plot_uv_coverage` |
 | `search` | Delta chi-squared, best flux and SNR maps on a point-companion grid, with the significance of the peak locally and globally (against simulated companion-free searches at the quoted errors, so the look-elsewhere effect is included) | `detection_statistics`, `optimized_likelihood_grid`, `local_nsigma` |
-| `limits` | Contrast limits at `sigma` and their radial profile | `absil_limits`, `radial_profile` |
+| `limits` | Contrast limits at `sigma` and their radial profile: by default Ruffio et al. (2018), the search's best flux and its Laplace σ as a Gaussian truncated to flux ≥ 0, at the `norm.cdf(sigma)` quantile (NaN, with a warning, where the flux refinement did not converge); `limit_method="absil"` gives Absil et al. (2011) | `ruffio_upperlimit`, `absil_limits`, `radial_profile` |
 | `fit` | MAP fit of the model template from the best grid point | `fit` |
 | `posterior` | NUTS from the fit | `numpyro_model`, `chain_init_params` |
 | `quicklook` | Writes and executes `quicklook.ipynb` | `load` |
@@ -74,6 +74,7 @@ The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per 
 | `chain_method` (`"vectorized"`), `seed` (0) | NUTS chain method and random seed. |
 | `batch_size` (`None`) | Grid batch size. |
 | `limit_bins` (20) | Annuli of the contrast curve. |
+| `limit_method` (`"ruffio"`) | `"ruffio"` (posterior quantile, on the quoted errors with no error-scale rescale) or `"absil"` (the chi-squared test). See [detection limits](detection_limits.md). |
 | `quicklook_execute` (`True`) | Execute the quicklook notebook. |
 
 The search and the limits always use a point companion in Cartesian offsets; the model template (`BinaryModelAngular` or `BinaryModelCartesian`) sets only the parameters of the fit and the posterior.
