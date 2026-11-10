@@ -1266,3 +1266,210 @@ def _blocks(equal=False, n_bad=0):
 )
 def test_convergence_fails_when_every_grid_position_fails(message, status):
     assert checks.convergence([_w(message)]).status == status
+
+
+# --- N-aware χ² thresholds (CO-8, ruling D-C) ---------------------------------
+
+
+def test_chi2_limits_are_the_quantiles_of_chi2_over_n():
+    from scipy import stats
+
+    lo, hi = checks.chi2_limits(10, 1e-3)
+    assert hi * 10 == pytest.approx(stats.chi2.isf(1e-3, 10))
+    assert lo * 10 == pytest.approx(stats.chi2.ppf(1e-3, 10))
+    # Large N closes on 1 at the spread sqrt(2/N).
+    lo, hi = checks.chi2_limits(10**6, 1e-3)
+    assert hi == pytest.approx(1 + 3.09 * (2 / 10**6) ** 0.5, abs=2e-3)
+
+
+@pytest.mark.parametrize(
+    "n, n_params, chi2, status",
+    [
+        (None, None, 3.0, "warn"),  # fixed convention without N
+        # N = 3, p unknown: high limits (5.42, 10.2) from the chi2(3) tails
+        (3, None, 3.0, "pass"),  # the fixed rule would warn
+        (3, None, 6.0, "warn"),
+        (3, None, 11.0, "fail"),
+        (3, None, 0.05, "warn"),  # low limit stays 1/2 without p
+        # N = 3, p = 1: dof 2; the low limit is the chi2(2) lower 1e-3 tail
+        (3, 1, 0.05, "pass"),
+        (3, 1, 0.0002, "warn"),
+        # large N: the fixed 2 / 5 floor
+        (10**4, 0, 1.5, "pass"),
+        (10**4, 0, 3.0, "warn"),
+        (10**4, 0, 6.0, "fail"),
+    ],
+)
+def test_chi2_reduced_thresholds_depend_on_n(n, n_params, chi2, status):
+    check = checks.chi2_reduced(
+        "chi2", chi2, label="the model", n=n, n_params=n_params
+    )
+    assert _status(check) == status
+
+
+def test_chi2_reduced_small_n_is_wider_and_large_n_keeps_the_floor():
+    # p unknown: high limits from chi2(N), the low limit stays 1/warn
+    low3, warn3, fail3 = checks._chi2_bounds(3, 2.0, 5.0)
+    assert (low3, warn3 > 2.0, fail3 > 5.0) == (0.5, True, True)
+    # p known: dof = N - p, the high limits tighten, the low one widens
+    low, warn, fail = checks._chi2_bounds(6, 2.0, 5.0, n_params=3)
+    assert low < 0.01 and warn > 2.0 and fail > 5.0
+    assert warn < checks._chi2_bounds(6, 2.0, 5.0)[1]  # chi2(3) < chi2(6)
+    assert checks._chi2_bounds(10**6, 2.0, 5.0) == (0.5, 2.0, 5.0)
+    assert checks._chi2_bounds(None, 2.0, 5.0) == (0.5, 2.0, 5.0)
+
+
+def test_chi2_lower_tail_uses_the_degrees_of_freedom_of_a_fit():
+    # 6 data, 3 fitted parameters: chi2 ~ chi2(3), so P(chi2/N < 0.1) is
+    # 1.0e-2: with N used instead of N - p the lower limit (0.38) would
+    # warn on about 5 per cent of correct fits, not 1e-3.
+    from scipy import stats
+
+    low = checks.chi2_limits(6, checks.CHI2_WARN_TAIL, n_params=3)[0]
+    assert stats.chi2.cdf(low * 6, 3) == pytest.approx(1e-3)
+    assert stats.chi2.cdf(checks.chi2_limits(6, 1e-3)[0] * 6, 3) > 0.01
+
+
+def test_error_scale_limits_are_n_aware():
+    assert _status(checks.error_scale({"v": 2.5})) == "warn"
+    assert _status(checks.error_scale({"v": 2.5}, n=2)) == "pass"
+    assert _status(checks.error_scale({"v": 2.5}, n={"v": 10**5})) == "warn"
+    assert _status(checks.error_scale({"v": 9.0}, n=10**5)) == "fail"
+
+
+# --- orbit checks that could not fail (F5, 620#5) -----------------------------
+
+
+def test_alias_ambiguity_fails_when_every_rival_crashed():
+    crashed = checks.alias_ambiguity(None, None, n_failed=3)
+    assert crashed.status == "fail"
+    assert "No rival" in crashed.message
+    single = checks.alias_ambiguity(None, None)
+    assert single.status == "pass"
+    assert checks.alias_ambiguity(float("-inf"), None, n_failed=1).status == (
+        "fail"
+    )
+    # a finite margin is judged on its own even if other bands crashed
+    assert checks.alias_ambiguity(30.0, 21, n_failed=2).status == "pass"
+
+
+@pytest.mark.parametrize(
+    "failed, n_bands, status",
+    [
+        ([], 10, "pass"),
+        ([21], 10, "warn"),
+        ([1, 2, 3, 4], 10, "warn"),
+        ([1, 2, 3, 4, 5], 10, "fail"),  # at least half
+        ([21], None, "warn"),
+    ],
+)
+def test_bands_failed_fails_when_most_of_the_search_is_lost(
+    failed, n_bands, status
+):
+    assert _status(checks.bands_failed(failed, n_bands)) == status
+
+
+def test_winner_flags_fail_without_a_valid_mode():
+    assert _status(checks.winner_flags(["no-valid-mode"])) == "fail"
+    assert _status(checks.winner_flags(["low-ess", "no-valid-mode"])) == "fail"
+    assert _status(checks.winner_flags(["low-ess"])) == "warn"
+
+
+# --- R-F: the pipelines pass N to the χ² checks --------------------------------
+# χ²/N = 2.5 and s = 2.2 are above the fixed 2 (warn); on 3 data they are
+# inside the 1e-3 tails (χ²/N 5.42, s 2.33), so they pass only when the
+# pipeline passes the number of data.
+
+
+def test_binary_chi2_checks_pass_the_number_of_data():
+    from virgil.pipeline import binary
+
+    fit = {
+        "chi2_reduced": 2.5,
+        "n_independent": 3,
+        "params": {"sep": 1.0},
+        "error_scales": None,
+    }
+    (check,) = binary._chi2_checks(None, fit)
+    assert check.status == "pass"
+    search = {"chi2_null": 7.5, "n_independent": 3}
+    (check,) = binary._chi2_checks(search, None)
+    assert check.status == "pass"
+    fit = {
+        "chi2_reduced": 2.5,
+        "n_independent": 1000,
+        "params": {"sep": 1.0},
+        "error_scales": None,
+    }
+    assert binary._chi2_checks(None, fit)[0].status == "warn"
+
+
+def test_star_fit_checks_pass_the_number_of_data():
+    from virgil.pipeline import star
+
+    def report(n):
+        return {
+            "names": ["a"],
+            "comparisons": [],
+            "n_independent": n,
+            "models": {
+                "a": {
+                    "chi2_reduced": 2.5,
+                    "error_scales": {"vis": 2.2},
+                    "at_bound": [],
+                }
+            },
+        }
+
+    registry = {"a": type("M", (), {"label": "model a", "n_params": 1})()}
+    got = {c.name: c.status for c in star._fit_checks(report(3), registry)}
+    assert got == {"chi2_a": "pass", "error_scale": "pass"}
+    got = {c.name: c.status for c in star._fit_checks(report(1000), registry)}
+    assert got == {"chi2_a": "warn", "error_scale": "warn"}
+
+
+def test_image_checks_pass_the_number_of_data_by_observable():
+    from virgil.pipeline import image
+
+    def verdicts(n):
+        reports = {
+            "combine": {
+                "chi2_red_by_observable": {"total": 2.5, "vis": 2.5},
+                "n_by_observable": {"total": n, "vis": n},
+                "n_kept": 3,
+                "n_members": 3,
+                "spread": 0.01,
+            },
+            "hyperparameters": {"scale_by_observable": {"vis": 2.2}},
+        }
+        checks = image._run_checks({"member_grids": False}, reports)
+        return {c.name: c.status for c in checks}
+
+    assert verdicts(3)["chi2_reduced"] == "pass"
+    assert verdicts(3)["error_scale"] == "pass"
+    assert verdicts(1000)["chi2_reduced"] == "warn"
+    assert verdicts(1000)["error_scale"] == "warn"
+
+
+def test_disk_chi2_checks_pass_the_number_of_data():
+    from virgil.pipeline import disk
+
+    entry = type("E", (), {"label": "ring"})()
+
+    def verdicts(n):
+        compare = {
+            "chi2_reduced": 2.5,
+            "n_independent": n,
+            "error_scales": {"vis": 2.2},
+        }
+        return {c.name: c.status for c in disk._chi2_checks(entry, compare)}
+
+    assert verdicts(3) == {"chi2_reduced": "pass", "error_scale": "pass"}
+    assert verdicts(1000) == {"chi2_reduced": "warn", "error_scale": "warn"}
+
+
+def test_winner_flags_message_says_a_failed_winner_is_not_evidence():
+    fail = checks.winner_flags(["no-valid-mode"])
+    assert fail.status == "fail" and "not evidence" in fail.message
+    warn = checks.winner_flags(["low-ess"])
+    assert warn.status == "warn" and "less reliable" in warn.message

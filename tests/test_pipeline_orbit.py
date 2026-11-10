@@ -766,3 +766,43 @@ def test_an_empty_period_window_names_the_pipeline_setting(monkeypatch):
     )
     with pytest.raises(ValueError, match="Set period_range"):
         orbit_module._alias_search(pipeline, [], None, None, None)
+
+
+# --- R-F: the checks reach the verdict through a real summary -----------------
+
+
+def _verdicts(reports):
+    _, checks = orbit_module._summarize(OrbitPipeline.defaults(), reports)
+    return {c.name: c.status for c in checks}
+
+
+def test_summary_fails_when_every_rival_band_crashed():
+    reports = _fake_reports()
+    reports["search"]["failed_bands"] = [21, 22]
+    reports["modes"]["delta_log_z"] = None
+    reports["modes"]["runner_up"] = None
+    verdicts = _verdicts(reports)
+    assert verdicts["alias_ambiguity"] == "fail"
+    assert verdicts["bands_failed"] == "warn"  # 2 of 5 bands
+    # no crashed band and no rival: a single band, which passes
+    reports["search"]["failed_bands"] = []
+    assert _verdicts(reports)["alias_ambiguity"] == "pass"
+
+
+def test_summary_fails_when_most_bands_failed_or_the_winner_has_no_mode():
+    reports = _fake_reports()
+    reports["search"]["failed_bands"] = [21, 22, 23]  # 3 of 5
+    reports["modes"]["winner"]["flags"] = ["no-valid-mode"]
+    verdicts = _verdicts(reports)
+    assert verdicts["bands_failed"] == "fail"
+    assert verdicts["winner_flags"] == "fail"
+
+
+def test_summary_chi2_limits_use_the_number_of_data():
+    reports = _fake_reports()
+    # chi2/N = 2.5 on 10 data: above the fixed 2, inside the 1e-3 tail (2.96)
+    reports["search"]["chi2"].update(chi2=25.0, n=10)
+    assert _verdicts(reports)["chi2"] == "pass"
+    # the same chi2/N on 1000 data is far outside the tail and above 2
+    reports["search"]["chi2"].update(chi2=2500.0, n=1000)
+    assert _verdicts(reports)["chi2"] == "warn"

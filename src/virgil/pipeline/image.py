@@ -555,7 +555,10 @@ def _run_checks(settings, reports):
         red = fit["chi2_red_by_observable"]
         checks += [
             _checks.chi2_reduced(
-                name, red[kind], label=f"the {kind} of the image"
+                name,
+                red[kind],
+                label=f"the {kind} of the image",
+                n=fit["n_by_observable"][kind],
             )
             for name, kind in (
                 ("chi2_reduced", "total"),
@@ -568,7 +571,11 @@ def _run_checks(settings, reports):
         checks.append(_checks.quoted_errors(load["quoted_errors"]))
     if hyper:
         checks.append(
-            _checks.error_scale(hyper["scale_by_observable"], kind="estimated")
+            _checks.error_scale(
+                hyper["scale_by_observable"],
+                kind="estimated",
+                n=fit["n_by_observable"] if fit else None,
+            )
         )
     if fit and load:
         checks += [

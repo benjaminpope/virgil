@@ -87,7 +87,60 @@ def format_sigma(value):
     return f"{float(value):.2f}σ" if _finite(value) else "n/a"
 
 
-def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
+# Tail levels of the χ² test behind the N-aware thresholds (conventions).
+# They are false-alarm rates for data that follow the quoted errors: a
+# warning on one run in a thousand (a 3σ-class one-sided tail) and a failure
+# on one in a million (a 5σ-class tail; the Gaussian 5σ tail is 2.9e-7).
+CHI2_WARN_TAIL = 1e-3
+CHI2_FAIL_TAIL = 1e-6
+
+
+def chi2_limits(n, tail, n_params=0):
+    """The χ²/N bounds ``(lower, upper)`` that a best fit of ``n_params``
+    parameters to ``n`` data leaves with probability ``tail`` at each end,
+    for a correct model and errors.
+
+    The best-fit χ² follows χ²(N − p), so the bounds are its quantiles
+    divided by N, the N of the reported χ²/N. At large N both tend to 1
+    (the spread is √(2/N)).
+    """
+    from scipy import stats
+
+    dof = float(n) - n_params
+    return (
+        float(stats.chi2.ppf(tail, dof) / n),
+        float(stats.chi2.isf(tail, dof) / n),
+    )
+
+
+def _chi2_bounds(n, warn, fail, n_params=None):
+    """``(low_warn, high_warn, high_fail)`` of χ²/N.
+
+    Without ``n``: ``1/warn``, ``warn`` and ``fail``. With ``n``, the high
+    limits are the wider of that fixed convention and the χ²(N − p) tail
+    bound at ``CHI2_WARN_TAIL`` / ``CHI2_FAIL_TAIL``, with p = ``n_params``
+    (0 if unknown, which is conservative: the tail is then too high, so
+    fewer alarms). The low limit widens to the lower tail bound only when
+    ``n_params`` is given: with p unknown the true degrees of freedom are
+    below N and the lower tail would alarm more often than stated. Few
+    degrees of freedom scatter widely, so the tail bounds are the wider
+    and avoid false alarms; at large N they close on 1, where a few per
+    cent of error misestimate is not actionable, so the fixed convention
+    (errors wrong by a factor √2) stays as the floor.
+    """
+    low_warn = 1.0 / warn
+    if n is not None and n - (n_params or 0) > 0:
+        p = n_params or 0
+        if n_params is not None:
+            low_warn = min(low_warn, chi2_limits(n, CHI2_WARN_TAIL, p)[0])
+        warn = max(warn, chi2_limits(n, CHI2_WARN_TAIL, p)[1])
+        fail = max(fail, chi2_limits(n, CHI2_FAIL_TAIL, p)[1])
+    return low_warn, warn, fail
+
+
+def chi2_reduced(
+    name, chi2_red, *, label, warn=2.0, fail=5.0, n=None, n_params=None
+):
     """χ²/N on the quoted errors, even when error scales are fitted.
 
     Parameters
@@ -100,11 +153,20 @@ def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
         What was fitted, e.g. ``"the best-fit binary"``.
     warn, fail : float, optional
         χ²/N above ``warn`` warns; above ``fail`` fails.
+    n : int, optional
+        The number of independent observables. Given, the thresholds widen
+        to the χ²(N) tail bounds at ``CHI2_WARN_TAIL`` and
+        ``CHI2_FAIL_TAIL`` where those exceed ``warn`` and ``fail``.
+    n_params : int, optional
+        The fitted parameters, so that the best-fit χ² has N − p degrees
+        of freedom. Without it the high limits use N (conservative) and
+        the "errors likely overestimated" limit stays at ``1/warn``.
     """
     if not _finite(chi2_red):
         return Check(
             name, "fail", chi2_red, warn, f"χ²/N of {label} is not finite."
         )
+    low_warn, warn, fail = _chi2_bounds(n, warn, fail, n_params)
     if chi2_red > fail:
         status, meaning = (
             "fail",
@@ -113,7 +175,7 @@ def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
         )
     elif chi2_red > warn:
         status, meaning = "warn", "errors likely underestimated"
-    elif chi2_red < 1.0 / warn:
+    elif chi2_red < low_warn:
         status, meaning = "warn", "errors likely overestimated"
     else:
         status, meaning = "pass", "consistent with the quoted errors"
@@ -126,17 +188,30 @@ def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
     )
 
 
-def error_scale(scales, *, warn=2.0, fail=5.0, kind="fitted"):
+def error_scale(
+    scales, *, warn=2.0, fail=5.0, kind="fitted", n=None, n_params=None
+):
     """Error-scale factors ``s``: fitted (``error_scale="fit"``) or estimated
     once by MacKay's rule (``"rescale"``, ``kind="estimated"``).
 
     A factor much greater than 1 means the quoted errors are too small or
     the model is wrong; rescaling then makes χ² ≈ 1 by construction, so the
     raw χ²/N on quoted errors is the number to quote.
+
+    ``n`` (an int, or a mapping from scale name to its number of
+    observables) makes the limits N-aware as in ``chi2_reduced``: ``s`` is
+    √(χ²/N), so its limits are the square roots of the χ²/N ones, taken for
+    the scale that sets the worst value; ``n_params`` is as there.
     """
     values = [float(s) for s in scales.values()]
     worst = max(values, default=1.0) if all(map(_finite, values)) else math.nan
     names = ", ".join(f"{k} = {float(v):.3g}" for k, v in scales.items())
+    if n is not None and _finite(worst):
+        for k, v in scales.items():
+            nk = n.get(k) if isinstance(n, dict) else n
+            if nk and float(v) == worst:
+                _, w, f = _chi2_bounds(nk, warn**2, fail**2, n_params)
+                warn, fail = math.sqrt(w), math.sqrt(f)
     if not _finite(worst):
         status = "fail"
         meaning = "an error scale is not finite"
@@ -1444,7 +1519,7 @@ def labels_free(free):
     )
 
 
-def alias_ambiguity(delta, runner_up, *, warn=10.0, fail=1.0):
+def alias_ambiguity(delta, runner_up, *, warn=10.0, fail=1.0, n_failed=0):
     """The winning alias band's evidence over the runner-up's.
 
     Parameters
@@ -1457,7 +1532,21 @@ def alias_ambiguity(delta, runner_up, *, warn=10.0, fail=1.0):
     warn, fail : float, optional
         A margin below ``warn`` nats warns (the runner-up is not
         excluded); below ``fail`` fails (the period is not determined).
+    n_failed : int, optional
+        The alias bands whose fit raised. With no finite margin and some
+        bands failed, no rival was evaluated, so the check fails: it
+        cannot say the period is unique.
     """
+    if n_failed and (delta is None or not _finite(delta)):
+        return Check(
+            "alias_ambiguity",
+            "fail",
+            None,
+            warn,
+            f"No rival alias band was evaluated ({n_failed} failed): the "
+            "winner's margin is unknown, so the period is not shown to be "
+            "unique.",
+        )
     if delta is None or not _finite(delta):
         return Check(
             "alias_ambiguity",
@@ -1489,7 +1578,7 @@ def alias_ambiguity(delta, runner_up, *, warn=10.0, fail=1.0):
     )
 
 
-def bands_failed(failed):
+def bands_failed(failed, n_bands=None):
     """Alias bands the search could not evaluate.
 
     Parameters
@@ -1497,6 +1586,13 @@ def bands_failed(failed):
     failed : sequence of int
         The orbit counts N of the bands whose fit raised (their evidence is
         -inf, so they never win nor appear as the runner-up).
+    n_bands : int, optional
+        All bands searched. When at least half failed the check fails: the
+        winner is the best of a minority of the search. The half is a
+        convention, not derived: a failed band has no evidence, so no
+        margin can say how many failures the winner survives; a majority
+        is the smallest fraction at which most of the period range is
+        unevaluated.
     """
     if not len(failed):
         return Check(
@@ -1508,9 +1604,10 @@ def bands_failed(failed):
         )
     shown = ", ".join(str(n) for n in list(failed)[:10])
     more = "" if len(failed) <= 10 else f" and {len(failed) - 10} more"
+    majority = bool(n_bands) and 2 * len(failed) >= n_bands
     return Check(
         "bands_failed",
-        "warn",
+        "fail" if majority else "warn",
         len(failed),
         0,
         f"The fit of {len(failed)} alias band(s) failed (N = {shown}{more}): "
@@ -1519,6 +1616,8 @@ def bands_failed(failed):
     )
 
 
+# Without a mode the winner's evidence is invalid, not just less reliable.
+_WINNER_INVALID = ("no-valid-mode",)
 _WINNER_FLAGS = (
     "not-converged",
     "laplace-is-differ",
@@ -1545,6 +1644,16 @@ def winner_flags(flags):
             [],
             None,
             "The winning band's evidence has no flags.",
+        )
+    if any(f in _WINNER_INVALID for f in bad):
+        return Check(
+            "winner_flags",
+            "fail",
+            bad,
+            None,
+            f"The winning band's evidence carries {', '.join(bad)}: the "
+            "search found no mode, so its log Z and the margin over the "
+            "runner-up are not evidence.",
         )
     return Check(
         "winner_flags",
