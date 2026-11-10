@@ -61,14 +61,19 @@ from .mode_search import (
     laplace_log_evidence,
     resample_move,
 )
-from .night_summaries import DELTA, _model, keep_peaks, night_summaries
+from .night_summaries import (
+    DELTA,
+    EPS_PRIOR,
+    _model,
+    keep_peaks,
+    night_summaries,
+)
 from .orbit_cells import (
     A_RANGE,
     E_MAX,
     FLUX_FLOOR,
     S_MAX,
     Cell,
-    _eps_nodes,
     _Z,
     outlier_prior,
     period_domain,
@@ -821,7 +826,8 @@ class _VisSpace:
         c = base.decode(x)
         pv = base.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
         ln_s = math.log(S_MAX) * (2.0 * jax.nn.sigmoid(x[9:]) - 1.0)
-        eps = _eps_nodes(base.cat.n_eps).astype(base.dtype)
+        eps = np.asarray(base.cat.eps, base.dtype)
+        log_w = np.asarray(base.cat.log_w_eps, base.dtype)
         per_sign, resp = [], []
         for sign in (1.0, -1.0):
             ell = self.nights.ell(sign * pv, c["ln_f"], ln_s)
@@ -830,8 +836,8 @@ class _VisSpace:
             per_sign.append(night.sum(axis=1))
             resp.append(np.exp(inside - night).sum(axis=1))
         total = np.stack(per_sign)
-        out = logsumexp(total) - np.log(2.0 * base.cat.n_eps)
-        weight = np.exp(total - logsumexp(total))
+        out = logsumexp(total + log_w) - np.log(2.0)
+        weight = np.exp(total + log_w - logsumexp(total + log_w))
         return out, np.sum(weight * np.stack(resp))
 
     def loglike(self, x):
@@ -977,11 +983,10 @@ def visibility_leg(fit, nights, key, *, n_is=N_IS, posterior_draws=True):
             dim=space.d,
         )  # fmt: skip
         n_k = len(base.cat.log_b)
-        # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))
+        # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] = ln B(a+K, b) - ln B(a, b)
+        a, b = EPS_PRIOR
         floor = float(onp.sum(base.cat.log_b)) + (
-            math.lgamma(n_k + 0.5)
-            - 0.5 * math.log(math.pi)
-            - math.lgamma(n_k + 1)
+            cells_mod._ln_beta(a + n_k, b) - cells_mod._ln_beta(a, b)
         )
         ev = importance_evidence(
             _vis_target, space, mixture, k_is, n_is, inliers_fn=_vis_inliers,

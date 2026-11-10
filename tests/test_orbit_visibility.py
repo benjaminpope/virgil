@@ -1,7 +1,6 @@
 """Visibility-level leg, exact outlier floor and labels (design/orbit_alias_cycles.md §2, §6.2)."""
 
 import functools
-import math
 import types
 
 import jax
@@ -15,6 +14,7 @@ pytest.importorskip("blackjax")
 from virgil import _orbit_coordinates as oc  # noqa: E402
 from virgil import orbit_cells as cells  # noqa: E402
 from virgil import orbit_visibility as ov  # noqa: E402
+from virgil.night_summaries import EPS_PRIOR  # noqa: E402
 from tests.test_night_summaries import _fit, _night  # noqa: E402
 from tests._shared import vlti_night  # noqa: E402
 from virgil import night_summaries as ns  # noqa: E402
@@ -460,8 +460,8 @@ def test_the_sentinel_fires_when_the_true_visibility_mode_is_withheld(
     )  # fmt: skip
     nights = ov._Nights(sets, summaries, None, "float64")
     n_k = len(times)
-    floor = log_b.sum() + math.lgamma(n_k + 0.5) - 0.5 * math.log(math.pi)
-    floor -= math.lgamma(n_k + 1.0)
+    a, b = EPS_PRIOR
+    floor = log_b.sum() + cells._ln_beta(a + n_k, b) - cells._ln_beta(a, b)
 
     def withheld(space, x, n_iter):
         # a prior draw in place of the refined true mode: a high, thin ridge
