@@ -1481,13 +1481,13 @@ def test_a_missing_laplace_width_is_flagged_and_reaches_the_other_checks(
     model,
 ):
     # A non-positive-definite Hessian leaves sd = None (never 0): the
-    # laplace_pd check warns and names it, and the inclination check, which
+    # laplace_pd check fails and names it, and the inclination check, which
     # reads the position angle's spread, accepts None.
     settings = dict(DiskPipeline._DEFAULTS)
     entry = disk.models()[model]
     for sd, status in (
         ({"pa": 5.0, "inc": 2.0}, "pass"),
-        ({"pa": None, "inc": 2.0}, "warn"),
+        ({"pa": None, "inc": 2.0}, "fail"),
     ):
         overview, geometry, compare = _synthetic_compare(model, sd)
         checks = {
@@ -1498,7 +1498,7 @@ def test_a_missing_laplace_width_is_flagged_and_reaches_the_other_checks(
         }
         assert checks["laplace_pd"].status == status
         assert checks["inclination"].status in ("pass", "warn", "fail")
-        if status == "warn":
+        if status == "fail":
             assert "geometry.pa" in checks["laplace_pd"].message
             assert checks["laplace_pd"].value == 2  # geometry and best row
 

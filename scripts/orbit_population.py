@@ -14,7 +14,7 @@ own prior:
   ``A_RANGE``, ``ln f`` uniform from ``ln FLUX_FLOOR`` to 0, the brighter or
   fainter sign at random, ``ln s`` uniform on ±ln ``S_MAX`` (the quoted
   covariance is scaled by ``s²``);
-* each night an outlier with probability ``ε ~ Beta(1/2, 1/2)``; an outlier's
+* each night an outlier with probability ``ε ~ Beta(*EPS_PRIOR)`` (Beta(1, 9)); an outlier's
   state is that of an independent orbit from the same prior at its night (the
   prior predictive of ``outlier_prior``);
 * 5-20 nights in one season of about 30 d or two seasons a year apart;
@@ -247,7 +247,7 @@ def draw_system(rng, nights, fit):
     sign = rng.choice([-1.0, 1.0])
     ln_f = onp.log(oc_cells.FLUX_FLOOR) * rng.uniform()
     ln_s = rng.uniform(-math.log(oc_cells.S_MAX), math.log(oc_cells.S_MAX))
-    eps = rng.beta(0.5, 0.5)
+    eps = rng.beta(*oc_cells.EPS_PRIOR)
     outlier = rng.uniform(size=k) < eps
     truth = onp.append(
         sign * _night_state(orbit, times), onp.full((k, 1), ln_f), 1

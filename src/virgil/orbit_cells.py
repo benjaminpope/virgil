@@ -61,7 +61,7 @@ from .mode_search import (
     laplace_log_evidence,
     resample_move,
 )
-from .night_summaries import DELTA
+from .night_summaries import DELTA, EPS_PRIOR, _eps_rule
 from .smc import tempered_smc
 from .orbits import KeplerOrbit, PositionData, _unit_orbit
 
@@ -577,25 +577,25 @@ class _Catalogue:
         self.log_b = onp.broadcast_to(
             onp.asarray(log_outlier, float), (k,)
         ).copy()
-        self.n_eps = (k + 2) // 2  # ⌈(K + 1) / 2⌉: exact for degree K
+        # ⌈(K + 1) / 2⌉ Gauss–Jacobi nodes: exact for degree K
+        self.eps, self.log_w_eps = _eps_rule((k + 2) // 2, *EPS_PRIOR)
 
     _ARRAYS = (
         "mean", "hess", "n", "chi2", "loglike", "valid", "t_ss", "n_frames",
-        "t_ref", "log_b", "offsets", "proj", "single",
+        "t_ref", "log_b", "offsets", "proj", "single", "eps", "log_w_eps",
     )  # fmt: skip
 
     def tree_flatten(self):
         return tuple(getattr(self, k) for k in self._ARRAYS), (
             self.blocks,
             self.rescalable,
-            self.n_eps,
         )
 
     @classmethod
     def tree_unflatten(cls, aux, children):
         new = object.__new__(cls)
         new.__dict__.update(zip(cls._ARRAYS, children))
-        new.blocks, new.rescalable, new.n_eps = aux
+        new.blocks, new.rescalable = aux
         return new
 
     def cast(self, dtype):
@@ -653,20 +653,16 @@ def _peak_terms(cat, ln_s, jitter, state, dtype, extra=None):
     return np.where(cat.valid, scaled + log_det - 0.5 * quad, -1e30)
 
 
-def _eps_nodes(n):
-    """Gauss–Chebyshev nodes of the Beta(½, ½) integral of ε (equal weights)."""
-    return np.sin((2 * np.arange(1, n + 1) - 1) * np.pi / (4 * n)) ** 2
-
-
 def _log_mixture(cat, ln_s, jitter, pv, ln_f, dtype, inliers=False):
-    """``ln ∫ dε Beta(ε) ½ Σ_σ Π_k [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``, with the
+    """``ln ∫ dε Beta(ε; EPS_PRIOR) ½ Σ_σ Π_k [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``, with the
     brighter/fainter sign ``σ`` flipping ``(p, v)``. ``pv`` is ``(K, 4)``.
 
     With ``inliers``, also the expected number of inlier nights: the night
     responsibilities ``(1-ε) e^{ℓ̃_k} / [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``, summed
     over nights and averaged over ``(σ, ε)`` with their posterior weights.
     """
-    eps = _eps_nodes(cat.n_eps).astype(dtype)
+    eps = np.asarray(cat.eps, dtype)
+    log_w = np.asarray(cat.log_w_eps, dtype)
     per_sign, resp = [], []
     for sign in (1.0, -1.0):
         state = np.concatenate(
@@ -677,11 +673,11 @@ def _log_mixture(cat, ln_s, jitter, pv, ln_f, dtype, inliers=False):
         night = np.logaddexp(inside, np.log(eps)[:, None] + cat.log_b)
         per_sign.append(night.sum(axis=1))
         resp.append(np.exp(inside - night).sum(axis=1))
-    total = np.stack(per_sign)  # (2, n_eps)
-    out = logsumexp(total) - np.log(2.0 * cat.n_eps)
+    total = np.stack(per_sign)  # (2, nodes)
+    out = logsumexp(total + log_w) - np.log(2.0)
     if not inliers:
         return out
-    weight = np.exp(total - logsumexp(total))
+    weight = np.exp(total + log_w - logsumexp(total + log_w))
     return out, np.sum(weight * np.stack(resp))
 
 
@@ -1843,14 +1839,19 @@ def _mixture(space, modes):
     )  # fmt: skip
 
 
+def _ln_beta(a, b):
+    return math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
+
+
 def _cell_evidence(space, modes, key, n_is):
     """Defensive importance sampling of a cell on ``modes`` (and the images of
     the target's symmetries)."""
     mixture = _mixture(space, modes)
     n_k = len(space.cat.log_b)
-    # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] (Beta(½, ½))
+    # ln Z of the all-outlier target: Σ b_k + ln E[ε^K] = ln B(a+K, b) - ln B(a, b)
+    a, b = EPS_PRIOR
     floor = float(onp.sum(space.cat.log_b)) + (
-        math.lgamma(n_k + 0.5) - 0.5 * math.log(math.pi) - math.lgamma(n_k + 1)
+        _ln_beta(a + n_k, b) - _ln_beta(a, b)
     )
     return importance_evidence(
         _target, space, mixture, key, n_is, inliers_fn=_inliers,

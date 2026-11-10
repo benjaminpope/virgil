@@ -339,6 +339,12 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `multipole_disk_cvis` | [Jennings et al. (2020)](#frank), [arXiv:2005.07709](https://arxiv.org/abs/2005.07709), [ADS](https://ui.adsabs.harvard.edu/abs/2020MNRAS.495.3209J/abstract), [GitHub](https://github.com/discsim/frank) | after |
 | `multipole_disk_cvis` | [Kennedy (2025)](#visr), [arXiv:2502.17619](https://arxiv.org/abs/2502.17619), [ADS](https://ui.adsabs.harvard.edu/abs/2025RASTI...4....4D/abstract), [GitHub](https://github.com/drgmk/vis-r) | after |
 
+### `virgil.night_summaries`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `_eps_rule` | [Golub & Welsch (1969)](#golub1969), [doi:10.1090/S0025-5718-69-99647-1](https://doi.org/10.1090/S0025-5718-69-99647-1) | after |
+
 ### `virgil.oidata`
 
 | Symbol | Source | Relation |
@@ -661,6 +667,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="frito"></a>**Goldfine**. frito. [GitHub](https://github.com/JonahDG/frito). *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="goldstein2002"></a>**Goldstein, Poole & Safko (2002)**. Classical Mechanics (3rd ed.). Addison-Wesley, section 4.5; the Cayley-Klein parameters of a rotation in Euler angles. A textbook with no DOI or ADS record: unverified. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="golub1973"></a>**Golub & Pereyra (1973)**. The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate. [doi:10.1137/0710036](https://doi.org/10.1137/0710036). SIAM J. Numer. Anal. 10, 413; variable projection: the linear Thiele-Innes constants solved at fixed period and eccentricity.
+- <a id="golub1969"></a>**Golub & Welsch (1969)**. Calculation of Gauss quadrature rules. [doi:10.1090/S0025-5718-69-99647-1](https://doi.org/10.1090/S0025-5718-69-99647-1). Math. Comp. 23, 221; Gauss-Jacobi nodes and weights: the outlier-fraction integral of a degree-K polynomial is exact with ceil((K+1)/2) nodes.
 - <a id="greenbaum2015"></a>**Greenbaum et al. (2014)**. An image-plane algorithm for JWST's non-redundant aperture mask data. [arXiv:1411.3446](https://arxiv.org/abs/1411.3446), [ADS](https://ui.adsabs.harvard.edu/abs/2015ApJ...798...68G/abstract). ImPlaneIA; ApJ 798, 68 (2015).
 - <a id="implaneia"></a>**Greenbaum, Sivaramakrishnan et al.**. ImPlaneIA. [GitHub](https://github.com/anand0xff/ImPlaneIA). paper: greenbaum2015. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="hubble_precond"></a>**Greer**. precond.py (coron branch), h-greer/hubble. [GitHub](https://github.com/h-greer/hubble). exact entries for small coordinate blocks beside probed large ones, batched one-hot lax.map, imputing non-finite diagonal entries; ideas only, no code copied. *Not yet verified against arXiv, Crossref or ADS.*

@@ -391,6 +391,11 @@ def test_position_cells_matches_main_before_the_counters_were_added(
     import jax
 
     # the pinned values are those of the old simulator (noise-free N_OBS s²)
+    # and the old ε prior, Beta(½, ½) (the rule is then Gauss–Chebyshev)
+    from virgil import night_summaries as _ns
+
+    monkeypatch.setattr(pop.oc_cells, "EPS_PRIOR", (0.5, 0.5))
+    monkeypatch.setattr(_ns, "EPS_PRIOR", (0.5, 0.5))
     monkeypatch.setattr(
         pop, "_noise_outliers_and_chi2",
         lambda rng, mean, outlier, ln_s, sigma: (
