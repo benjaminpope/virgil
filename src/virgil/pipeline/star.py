@@ -895,10 +895,10 @@ def _compare(registry, reports, child, n):
         unidentified = lobe_low == low and math.log(
             lobe_diam / lobe_low
         ) < math.log(lobe_high / lobe_diam)
-    # The expected shape_ratio does not change the preference, which the gain
+    # The expected shape_ratio (`_shape_ratios`) does not change the preference, which the gain
     # decides; but a child the data cannot constrain is not sampled when it is
     # not selected: "constrained" is false when any ratio is at or above
-    # PRIOR_DOMINATES (or not finite).
+    # `_checks.PRIOR_DOMINATES` (or not finite).
     ratios = reports[child].get("shape_ratio") or {}
     return {
         "simple": parent,
@@ -934,11 +934,15 @@ def _shape_ratios(data, entry, diam, prior_std):
         return data.model(entry.build(values))[:n]
 
     # The ratio the posterior's ``*_constrained`` check measures after
-    # sampling, predicted before it. The Fisher matrix is Σ (ΔV²_i / σ_i)²
-    # (the closure phase of a centrosymmetric disk is 0 or π and carries no
-    # shape) with 1 / σ_prior² added to the shape block (a Gaussian stand-in
-    # for the uniform prior). A ratio near 1 means the likelihood adds nothing to
-    # the prior; at PRIOR_DOMINATES = 0.8 the likelihood alone has
+    # sampling, predicted from the data before it. Moving a shape parameter by
+    # one prior standard deviation changes the V² by ΔV²_i at each sample; the
+    # expected Δχ² is Σ (ΔV²_i / σ_i)² (the UD/LD difference over the quoted
+    # error), after the diameter has absorbed what it can. Its linear form is
+    # the Fisher information JᵀJ, J = ∂V²/∂θ / σ (the closure phase of a
+    # centrosymmetric disk is 0 or π and carries no shape), with 1 / σ_prior²
+    # added to the shape block (a Gaussian stand-in for the uniform prior). A
+    # ratio near 1 means the likelihood adds nothing to
+    # the prior; at `_checks.PRIOR_DOMINATES` = 0.8 the likelihood alone has
     # σ_L = 1.33 σ_prior, so a prior-sized change of the shape moves χ² by
     # 1 / 1.33² = 0.56: not detectable. Below it the shape is measured; far
     # above (the 4 mas star observed with 3 wavelengths × 3 hour angles at

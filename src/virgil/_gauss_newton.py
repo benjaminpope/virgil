@@ -38,7 +38,7 @@ _LAM_FLOOR = 1e-12
 _LAM_STALL = 1e10
 _BOUND_EPS = 1e-10
 # The decrement (nats) a float64 run reaches whatever Φ: the refinement
-# callers' value, kept so their acceptance set is unchanged. Not
+# callers' fixed tolerance. Not
 # derived; the decrement is computed from the gradient, whose rounding is not
 # bounded by Φ's.
 _DTOL_AUTO = 1e-12
@@ -246,8 +246,8 @@ def solve(
         Newton decrement is ≤ ``dtol``. A tolerance finer than
         the rounding error of Φ cannot be met: the run ends ``STALLED``.
         ``dtol=None`` is the larger of 1e-12 and that rounding error at the
-        current Φ (`rounding_dtol`), the refinement callers' acceptance
-        set (a tolerance of 1e-12, or the rounding rescue).
+        current Φ (`rounding_dtol`), the refinement callers' fixed
+        tolerance of 1e-12, or the rounding rescue.
     max_steps
         Maximum iterations (accepted and rejected) in this call, at least 1.
     """

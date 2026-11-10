@@ -277,8 +277,9 @@ def _loss_settled(losses, window):
         drop <= 2 se        (no fall is detected at 2σ), and
         drop + 2 se <= 1    (the upper 2σ bound on the true fall is under one nat).
 
-    The first is the earlier rule, so this is never looser than it.
-    It alone passes a run too noisy to see any fall; the second closes that:
+    The first is the plain no-fall rule and the second only tightens it, so the
+    pair is never looser than the first alone. The first alone passes a run
+    too noisy to see any fall; the second closes that:
     the true fall exceeds ``drop + 2 se`` only with probability about 2%
     (normal means over a window), so a pass certifies a fall under the
     tolerance, and a run too noisy to resolve one nat (2 se > 1) never
