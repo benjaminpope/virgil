@@ -1719,3 +1719,12 @@ def test_lbfgs_keeps_the_last_finite_point_after_a_non_finite_update(
     assert np.isfinite(result.info["grad_norm"])
     assert np.isfinite(result.info["loss"])
     assert all(np.isfinite(v) for v in result.values.values())
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs", "lbfgsb"])
+def test_an_explicit_zero_max_steps_is_not_the_default(method):
+    # max_steps=0 means no steps, not the method's default (R8).
+    with pytest.warns(RuntimeWarning):
+        result = fit(START, PRIORS, DATA, method=method, max_steps=0)
+    # scipy's L-BFGS-B still counts its first iteration; the default is 20000.
+    assert result.info["steps"] <= 1
