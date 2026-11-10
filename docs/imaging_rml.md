@@ -124,7 +124,7 @@ print(f"converged {one.info['converged']} after {one.info['steps']} steps; chi2 
 ```
 
 ```text
-converged True after 2183 steps; chi2 per point 1.008; image flux 0.0514 (truth 0.05)
+converged True after 844 steps; chi2 per point 1.007; image flux 0.0514 (truth 0.05)
 ```
 
 ## Choosing the weight: the L-curve and the discrepancy principle
@@ -219,12 +219,12 @@ print(diagnose(final["moments"], data))
 ```
 
 ```text
-chi2_red                [0.98]
-chi2_red_by_observable  [{'vis': 0.9797832099964383}]
+chi2_red                [0.979]
+chi2_red_by_observable  [{'vis': 0.9793173699822372}]
 short_baseline_mean     None
 anchored                True
 pixel_scale_mas         [20.9]
-edge_flux               [0.0159]
+edge_flux               [0.016]
 centroid_mas            [[50.1, 18.3]]
 flip_dchi2              2.11e+04
 phase_regime            [0]
@@ -302,8 +302,8 @@ print(f"chi2 = {choice.chi2:.1f}, G = {choice.g:.1f} ± {choice.g_se:.1f}, n = {
 ```
 
 ```text
-w = 4354, accepted True, roots [4354]
-chi2 = 87.1, G = 19.5 ± 2.1, n = 109, m = -2.42
+w = 4185, accepted True, roots [4185]
+chi2 = 87.1, G = 19.5 ± 2.1, n = 109, m = -2.43
 ```
 
 ### Certifying convergence
@@ -331,8 +331,8 @@ RuntimeWarning: fit(method='lbfgs') did not converge in 2 steps, the step limit;
 ```
 
 ```text
-2 steps: converged False, kkt_rel 4.4e-01, band_limit 1.58
-converged fit: converged True, kkt_rel 1.8e-07, band_limit 1.07
+2 steps: converged False, kkt_rel 4.5e-01, band_limit 1.66
+converged fit: converged True, kkt_rel 1.3e-06, band_limit 1.07
 ```
 
 For TSV, TV or L1 the same call certifies a `method="lbfgsb"` fit of a `parametrization="linear"` image: fit with `[TSV(w, beam_mas=...)]`, then call `kkt_report` with the same arguments. Restart an unconverged fit from its own values with a tighter `gtol` and report again.
