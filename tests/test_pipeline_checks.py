@@ -145,31 +145,26 @@ def test_checks_are_deterministic():
     assert checks.detection(4.0, 2.0) == checks.detection(4.0, 2.0)
 
 
-def _w(message, category="RuntimeWarning", stage="search"):
-    return {"stage": stage, "category": category, "message": message}
+def _w(
+    message, category="RuntimeWarning", stage="search", check=None, **counts
+):
+    record = {"stage": stage, "category": category, "message": message}
+    if check:
+        record.update(check=check, counts=counts)
+    return record
 
 
-def test_stage_warning_checks_map_known_messages():
+def test_stage_warning_checks_map_records_by_check_id():
     from virgil.pipeline._checks import stage_warning_checks
 
     checks = {
         c.name: c
         for c in stage_warning_checks(
             [
-                _w(
-                    "f(): the optimizer did not converge at 2 of 6561 grid positions"
-                ),
-                _w(
-                    "g(): the optimizer did not converge at 5 of 6561 grid positions"
-                ),
-                _w(
-                    "detection_statistics(): the flux axis does not resolve the "
-                    "likelihood peak (0.28 steps across its FWHM, under 2), so "
-                    "log_bayes_factor is inaccurate"
-                ),
-                _w(
-                    "absil_limits(): 1 limits fell outside flux_bounds=(1, 2) and were clipped"
-                ),
+                _w("f()", check="convergence", failed=2, total=6561),
+                _w("g()", check="convergence", failed=5, total=6561),
+                _w("h()", check="flux_axis_resolution", steps=0.28),
+                _w("i()", check="limits_clipped", clipped=1),
             ]
         )
     }
@@ -184,24 +179,57 @@ def test_stage_warning_checks_map_known_messages():
     assert all(c.status == "warn" for c in checks.values())
 
 
-def test_stage_warning_checks_tolerate_rewording_and_unknowns():
+def test_stage_warning_checks_ignore_the_message_text():
     from virgil.pipeline._checks import stage_warning_checks
 
-    (reworded,) = stage_warning_checks(
-        [_w("the optimizer failed to converge somewhere")]
+    # The old English texts without a check id are ordinary warnings.
+    (plain,) = stage_warning_checks(
+        [_w("the optimizer did not converge at 2 of 6561 grid positions")]
     )
-    assert reworded.name == "convergence" and reworded.value is None
+    assert plain.name == "stage_warnings" and plain.value == 1
+    # A check id without counts still routes to its check, with no value.
+    (tagged,) = stage_warning_checks([_w("reworded", check="convergence")])
+    assert tagged.name == "convergence" and tagged.value is None
+    # An unknown id is an ordinary warning.
+    (unknown,) = stage_warning_checks([_w("x", check="not-a-check")])
+    assert unknown.name == "stage_warnings"
     (other,) = stage_warning_checks([_w("surprise", "UserWarning")])
     assert other.name == "stage_warnings" and other.value == 1
     assert stage_warning_checks([_w("old api", "DeprecationWarning")]) == []
     assert stage_warning_checks([]) == []
 
 
+def test_emitted_warnings_reach_their_checks_through_the_recorder():
+    import warnings
+
+    import numpy as onp
+
+    from virgil._deprecate import CheckWarning
+    from virgil._grid import warn_unconverged
+    from virgil.pipeline._checks import stage_warning_checks
+    from virgil.pipeline._core import _record_warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        warn_unconverged(onp.zeros(4, dtype=bool), "f")  # every position
+        warn_unconverged(onp.array([True, False, True, True]), "g")
+    assert all(issubclass(w.category, CheckWarning) for w in caught)
+    records = _record_warnings("search", caught)
+    assert [r["counts"] for r in records] == [
+        {"failed": 4, "total": 4},
+        {"failed": 1, "total": 4},
+    ]
+    json.dumps(records)  # strict-JSON ready
+    (found,) = stage_warning_checks(records)
+    assert found.name == "convergence" and found.status == "fail"
+    assert found.value == 1.0
+
+
 def test_convergence_reports_worst_fraction_across_grid_sizes():
     found = checks.convergence(
         [
-            _w("the optimizer did not converge at 5 of 6561 grid positions"),
-            _w("the optimizer did not converge at 3 of 10 grid positions"),
+            _w("a", check="convergence", failed=5, total=6561),
+            _w("b", check="convergence", failed=3, total=10),
         ]
     )
     assert found.value == pytest.approx(0.3)
@@ -209,11 +237,7 @@ def test_convergence_reports_worst_fraction_across_grid_sizes():
 
 def test_flux_axis_resolution_reads_exponent_notation():
     found = checks.flux_axis_resolution(
-        [
-            _w(
-                "the flux axis does not resolve the likelihood peak (3e-05 steps across its FWHM, under 2)"
-            )
-        ]
+        [_w("a", check="flux_axis_resolution", steps=3e-05)]
     )
     assert found.value == pytest.approx(3e-5)
 
@@ -799,7 +823,7 @@ _BRANCHES = [
         "convergence-zero-grid",
         "convergence",
         lambda: checks.convergence(
-            [_w("did not converge at 5 of 0 grid positions")]
+            [_w("a", check="convergence", failed=5, total=0)]
         ),
         "warn",
     ),
@@ -974,7 +998,7 @@ def test_a_stray_wall_hit_is_not_blamed_for_the_divergences():
         ),
         (
             lambda: checks.convergence(
-                [_w("did not converge at 5 of 0 grid")]
+                [_w("a", check="convergence", failed=5, total=0)]
             ),
             ["at some grid positions"],
         ),
@@ -982,7 +1006,10 @@ def test_a_stray_wall_hit_is_not_blamed_for_the_divergences():
         (lambda: checks.limits_clipped([]), ["Some limits fell outside"]),
         (
             lambda: checks.limits_clipped(
-                [_w("2 limits clipped"), _w("7 limits clipped")]
+                [
+                    _w("a", check="limits_clipped", clipped=2),
+                    _w("b", check="limits_clipped", clipped=7),
+                ]
             ),
             ["7 limits fell outside"],
         ),
@@ -1021,11 +1048,18 @@ def test_stage_warning_checks_order_benign_filter_and_recognized_categories():
             _w("old", "PyparsingDeprecationWarning"),
             _w("fd", "ResourceWarning"),
             _w("import", "ImportWarning"),
-            # recognized by keyword even when the category is a benign one
-            _w("the optimizer did not converge", "DeprecationWarning"),
+            # recognized by check id even when the category is a benign one
+            _w(
+                "c",
+                "DeprecationWarning",
+                check="convergence",
+                failed=1,
+                total=9,
+            ),
+            _w("l", check="limits_clipped", clipped=2),
+            _w("f", check="flux_axis_resolution", steps=1.0),
+            # text alone is not recognized
             _w("limits were clipped"),
-            _w("uses flux_bounds somewhere"),
-            _w("could not resolve the likelihood peak"),
         ]
     )
     assert [c.name for c in found] == [
@@ -1034,7 +1068,8 @@ def test_stage_warning_checks_order_benign_filter_and_recognized_categories():
         "limits_clipped",
         "stage_warnings",
     ]
-    assert found[-1].value == 1 and "odd" in found[-1].message
+    assert found[-1].value == 2 and "odd" in found[-1].message
+    assert "limits were clipped" in found[-1].message
     assert "old" not in found[-1].message and "fd" not in found[-1].message
 
 
@@ -1255,17 +1290,13 @@ def _blocks(equal=False, n_bad=0):
 
 
 @pytest.mark.parametrize(
-    "message, status",
-    [
-        ("the optimizer did not converge at 5 of 6561 grid positions", "warn"),
-        (
-            "the optimizer did not converge at 6561 of 6561 grid positions",
-            "fail",
-        ),
-    ],
+    "failed, total, status", [(5, 6561, "warn"), (6561, 6561, "fail")]
 )
-def test_convergence_fails_when_every_grid_position_fails(message, status):
-    assert checks.convergence([_w(message)]).status == status
+def test_convergence_fails_when_every_grid_position_fails(
+    failed, total, status
+):
+    record = _w("m", check="convergence", failed=failed, total=total)
+    assert checks.convergence([record]).status == status
 
 
 # --- N-aware χ² thresholds (CO-8, ruling D-C) ---------------------------------
