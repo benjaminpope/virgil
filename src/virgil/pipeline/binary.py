@@ -843,11 +843,13 @@ def _chi2_checks(search, fit):
 def _fit_checks(fit, companion, load):
     checks = []
     if fit["error_scales"]:
-        checks.append(_checks.error_scale(
+        checks.append(
+            _checks.error_scale(
                 fit["error_scales"],
                 n=fit["n_independent"],
                 n_params=len(fit["params"]) + len(fit["error_scales"]),
-            ))
+            )
+        )
     if fit["at_bound"]:
         checks.append(_checks.at_bound(fit["at_bound"], start=True))
     checks.append(
