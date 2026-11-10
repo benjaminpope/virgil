@@ -19,6 +19,23 @@
 Every flux is relative: for a companion it is the companion/primary flux
 ratio. Likelihoods of these models are in
 [`virgil.likelihood`][virgil.likelihood].
+
+Contents, in file order (each family has a banner comment):
+
+1. Base classes: `SourceModel`, `Component`.
+2. Single shapes: `PointSource`, Gaussians, `GaussianArc`, `TruncatedCone`,
+   `UniformDisk`.
+3. Limb-darkened disks.
+4. `GravityDarkenedStar`, `ModulatedGaussianRim`.
+5. Pixel images: `Image`, `LinearImage`.
+6. Flared scattered-light disks: `FlaredDisk` and its subclasses.
+7. Radial profiles (`ThinRing`, `GaussianRing`, `RadialSum`, `RadialGP`, ...):
+   parts of a `MultipoleDisk`, not components.
+8. `MultipoleDisk` (its kernel, azimuthal and height parts are under 7).
+9. Composition: `System`, `Rotated`, `Attached`, `Resolved`.
+10. Binaries: `OrbitalBinary`, `BinaryModelAngular`, `BinaryModelCartesian`.
+11. `HarmonixModel`.
+12. The analytic `cvis_*` functions.
 """
 
 import dataclasses
@@ -180,6 +197,11 @@ def _positive(x):
 
 def _in_unit_interval(x):
     return (x > 0.0) & (x <= 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Base classes: SourceModel and Component
+# ---------------------------------------------------------------------------
 
 
 class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -419,6 +441,11 @@ class Component(SourceModel):
     def __check_init__(self):
         _check_non_negative_flux(self.flux, type(self).__name__)
         _check_shape_params(type(self).__name__, self._shape_checks())
+
+
+# ---------------------------------------------------------------------------
+# Single shapes: PointSource, Gaussians, arcs, cones and uniform disks
+# ---------------------------------------------------------------------------
 
 
 class PointSource(Component):
@@ -1043,6 +1070,11 @@ class UniformDisk(Component):
         return np.where(xx**2 + yy**2 <= radius**2, 1.0, 0.0)
 
 
+# ---------------------------------------------------------------------------
+# Limb-darkened disks
+# ---------------------------------------------------------------------------
+
+
 class _LimbDarkenedDisk(Component):
     r"""Circular disk whose brightness is a sum of powers of $\mu$.
 
@@ -1358,6 +1390,11 @@ def _in_unit_square(q1, q2):
     return np.all((q1 >= 0.0) & (q1 <= 1.0) & (q2 >= 0.0) & (q2 <= 1.0))
 
 
+# ---------------------------------------------------------------------------
+# Gravity-darkened star
+# ---------------------------------------------------------------------------
+
+
 class GravityDarkenedStar(Component):
     """Rapidly rotating star: Roche shape and gravity darkening (ELR11).
 
@@ -1657,6 +1694,11 @@ def _modulation_array(values, name):
     return array
 
 
+# ---------------------------------------------------------------------------
+# Modulated rim
+# ---------------------------------------------------------------------------
+
+
 class ModulatedGaussianRim(Component):
     """Azimuthally modulated, infinitely thin rim convolved with a Gaussian.
 
@@ -1822,6 +1864,11 @@ def _pixel_visibilities(
         return vis.ravel()[grid.index]
     uu, vv = rotate(u / wavel, v / wavel, -rotation_deg)
     return image_visibilities(fluxes, uu, vv, pixel_scale_mas, ft)
+
+
+# ---------------------------------------------------------------------------
+# Pixel images: Image and LinearImage
+# ---------------------------------------------------------------------------
 
 
 class _BrightnessImage(Component):
@@ -2259,6 +2306,11 @@ class LinearImage(_BrightnessImage):
         if self.parametrization == "linear":
             ok = ok & np.all(self.pixels >= 0.0)
         return ok & (self.total_flux > 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Flared scattered-light disks
+# ---------------------------------------------------------------------------
 
 
 class _PixelRendered(Component):
@@ -2738,6 +2790,11 @@ class ThinRing(_RadialProfile):
 class GaussianRing(_RadialProfile):
     r"""Gaussian ring, $I \propto \exp[-(r - r_0)^2 / 2\sigma^2]$, with
     $r \ge 0$ and $r_0$ = ``radius``.
+
+    A radial profile of a [`MultipoleDisk`][virgil.models.MultipoleDisk], not
+    a `Component`: put it in a `MultipoleDisk`, not directly in a `System`
+    (for a Gaussian component see
+    [`GaussianDisk`][virgil.models.GaussianDisk]).
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
@@ -4508,6 +4565,11 @@ def _dot(matrix, x):
     return np.sum(matrix * x, axis=-1)
 
 
+# ---------------------------------------------------------------------------
+# MultipoleDisk
+# ---------------------------------------------------------------------------
+
+
 class _FrozenGeometry(zdx.Base):
     """The cached matrices of ``MultipoleDisk.freeze_geometry``: the baselines,
     nodes and geometry they were built for (to check against at every call)
@@ -5108,6 +5170,11 @@ def gp_priors(model, sigma=None, ell=None, ell_theta=None):
     return priors
 
 
+# ---------------------------------------------------------------------------
+# Composition: System, Rotated, Attached, Resolved
+# ---------------------------------------------------------------------------
+
+
 class Resolved(SourceModel):
     """Fully resolved (over-resolved) flux, e.g. a large, diffuse envelope.
 
@@ -5671,6 +5738,11 @@ class Attached(SourceModel):
         return self.component.is_physical()
 
 
+# ---------------------------------------------------------------------------
+# Binaries: OrbitalBinary, BinaryModelAngular, BinaryModelCartesian
+# ---------------------------------------------------------------------------
+
+
 class OrbitalBinary(SourceModel):
     """A primary and a point-source companion moving on a Keplerian orbit.
 
@@ -5866,6 +5938,11 @@ class BinaryModelCartesian(SourceModel):
         return self.to_system()._image(xx, yy, pixel_scale_mas)
 
 
+# ---------------------------------------------------------------------------
+# HarmonixModel: spotted stars (harmonix)
+# ---------------------------------------------------------------------------
+
+
 class HarmonixModel(SourceModel):
     """Wrapper for external models with harmonix-like visibility methods.
 
@@ -5967,6 +6044,11 @@ class HarmonixModel(SourceModel):
             x.ravel(), y.ravel(), z.ravel(), theta=theta
         )
         return np.where(on_disk, np.reshape(intensity, xx.shape), 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Analytic complex visibilities (cvis_*)
+# ---------------------------------------------------------------------------
 
 
 def cvis_binary(u, v, dra, ddec, flux):

@@ -153,7 +153,7 @@ class OrbitPipeline(_Pipeline):
         "vis_amp": True,
         "sign_free": True,
         "flip_flux": True,
-        "temper": True,
+        "temper": False,
         **_engine_defaults(
             "n_bands_max", "n_candidates", "n_refine", "max_steps", "n_is"
         ),
@@ -1211,17 +1211,21 @@ def _sample_band(  # deliberate: named step
 
     cap = s["posterior_max_tree_depth"]
     t0 = time.monotonic()
-    mcmc = _run_chains(
-        model,
-        s,
-        start,
+    kwargs = dict(
         dense_mass=True,
         priors=priors,
         inverse_mass=inverse_mass,
-        jitter=jitter,
         max_tree_depth=cap,
         adapt_mass=adapt,
     )
+    try:
+        mcmc = _run_chains(model, s, start, jitter=jitter, **kwargs)
+    except ValueError:
+        if deadline is None or time.monotonic() <= deadline:
+            raise
+        # The budget ran out during the start-up: every jittered start is
+        # -inf. Start every chain at the mode and drain, for the report.
+        mcmc = _run_chains(model, s, start, jitter=None, **kwargs)
     seconds = time.monotonic() - t0
     exhausted = late or (deadline is not None and time.monotonic() > deadline)
     drawn, stats = _draws(mcmc)
@@ -1464,6 +1468,7 @@ def _summarize(settings, reports):
                 "chi2",
                 pooled["chi2"] / pooled["n"],
                 label="the best-fit orbit",
+                n=pooled["n"],
             )
         )
     if epochs:
@@ -1472,7 +1477,9 @@ def _summarize(settings, reports):
         )
     if search:
         checks.append(_checks.labels_free(search["labels_free"]))
-        checks.append(_checks.bands_failed(search["failed_bands"]))
+        checks.append(
+            _checks.bands_failed(search["failed_bands"], search["n_bands"])
+        )
     if modes:
         sections["modes"] = _pick(modes, _MODES_KEYS, strict=False)
         runner = modes["runner_up"]
@@ -1481,6 +1488,7 @@ def _summarize(settings, reports):
                 modes["delta_log_z"],
                 None if runner is None else runner["n"],
                 warn=settings["alias_nats"],
+                n_failed=len(search["failed_bands"]) if search else 0,
             )
         )
         checks.append(_checks.winner_flags(modes["winner"]["flags"]))

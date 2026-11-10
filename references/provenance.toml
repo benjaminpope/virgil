@@ -2140,6 +2140,16 @@ verified_via = "crossref"
 used_in = ["virgil.orbit_cells:search_cell"]
 note = "SIAM J. Numer. Anal. 10, 413; variable projection: the linear Thiele-Innes constants solved at fixed period and eccentricity"
 
+[ref.golub1969]
+authors = "Golub & Welsch"
+year = 1969
+title = "Calculation of Gauss quadrature rules"
+doi = "10.1090/S0025-5718-69-99647-1"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.night_summaries:_eps_rule"]
+note = "Math. Comp. 23, 221; Gauss-Jacobi nodes and weights: the outlier-fraction integral of a degree-K polynomial is exact with ceil((K+1)/2) nodes"
+
 [ref.nocedal2006]
 authors = "Nocedal & Wright"
 year = 2006
@@ -2241,7 +2251,17 @@ doi = "10.1080/01621459.1995.10476572"
 verified = true
 verified_via = "crossref"
 used_in = ["virgil.svi:_loss_settled"]
-note = "JASA 90, 773; a log Bayes factor below 1 is not worth more than a bare mention: the one-nat settling tolerance of the SVI loss"
+note = "JASA 90, 773; the nat scale of a log Bayes factor (below 1: not worth more than a bare mention), the scale against which the SVI loss's remaining fall is capped; the cap is a modelling choice, not Kass & Raftery's"
+
+[ref.higham2002]
+authors = "Higham"
+year = 2002
+title = "Accuracy and Stability of Numerical Algorithms"
+doi = "10.1137/1.9780898718027"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil._gauss_newton:rounding_dtol", "virgil.grid_fit:_flux_converged"]
+note = "SIAM, 2nd ed., section 4.2: the rounding error of a sum of n terms is at most about log2(n) eps sum|x_i| for tree-wise summation; the bound used by rounding_dtol where the terms share a sign"
 
 [ref.morozov1966]
 authors = "Morozov"

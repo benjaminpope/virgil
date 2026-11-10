@@ -43,7 +43,7 @@ A run resumes by default: a completed stage whose outputs exist is skipped, and 
 | `load` | Applies `wavel_range` and `error_floor`, and writes the data that are fitted | `OIData.select`, `OIData.with_error_floor`, `write_oifits` |
 | `overview` | Plots the data and the uv coverage | `plot_oidata_overview`, `plot_uv_coverage` |
 | `search` | Delta chi-squared, best flux and SNR maps on a point-companion grid, with the significance of the peak locally and globally (against simulated companion-free searches at the quoted errors, so the look-elsewhere effect is included) | `detection_statistics`, `optimized_likelihood_grid`, `local_nsigma` |
-| `limits` | Contrast limits at `sigma` and their radial profile | `absil_limits`, `radial_profile` |
+| `limits` | Contrast limits at `sigma` and their radial profile: by default Ruffio et al. (2018), the search's best flux and its Laplace σ as a Gaussian truncated to flux ≥ 0, at the `norm.cdf(sigma)` quantile (NaN, with a warning, where the flux refinement did not converge); `limit_method="absil"` gives Absil et al. (2011) | `ruffio_upperlimit`, `absil_limits`, `radial_profile` |
 | `fit` | MAP fit of the model template from the best grid point | `fit` |
 | `posterior` | NUTS from the fit | `numpyro_model`, `chain_init_params` |
 | `quicklook` | Writes and executes `quicklook.ipynb` | `load` |
@@ -74,6 +74,7 @@ The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per 
 | `chain_method` (`"vectorized"`), `seed` (0) | NUTS chain method and random seed. |
 | `batch_size` (`None`) | Grid batch size. |
 | `limit_bins` (20) | Annuli of the contrast curve. |
+| `limit_method` (`"ruffio"`) | `"ruffio"` (posterior quantile, on the quoted errors with no error-scale rescale) or `"absil"` (the chi-squared test). See [detection limits](detection_limits.md). |
 | `quicklook_execute` (`True`) | Execute the quicklook notebook. |
 
 The search and the limits always use a point companion in Cartesian offsets; the model template (`BinaryModelAngular` or `BinaryModelCartesian`) sets only the parameters of the fit and the posterior.
@@ -213,7 +214,7 @@ The [orbit tutorial](orbit_fitting.md) runs this on synthetic two-season data, r
 | --- | --- | --- |
 | `load` | Groups the data into nights as given and records the nights | `OIData.split_by_epoch`, `Epochs` |
 | `epochs` | The companion's position on every night, on one grid that holds the prior's disc; flags the nights that cannot seed an orbit (aliased peaks, a low gap, a separation below the resolution, a flux at its bound) | `epoch_positions` |
-| `search` | The alias search with the engine's defaults, band by band, checkpointed in `stages/search/bands`: the period window from the data, the primary's diameter estimated, the V² amplitude fitted per night, the labels free, the likelihood tempered | `fit_orbit_aliases` |
+| `search` | The alias search with the engine's defaults, band by band, checkpointed in `stages/search/bands`: the period window from the data, the primary's diameter estimated, the V² amplitude fitted per night, the labels free; the likelihood is untempered unless `temper=True` | `fit_orbit_aliases` |
 | `modes` | Ranks the bands; the winner's margin over the runner-up; the band probabilities; the best orbit against a single star (`no-orbit`) | `AliasResult` |
 | `posterior` | NUTS in the winning band and in every band with a probability of at least `posterior_p_min` (at most `max_modes` besides the winner), on the engine's own posterior, so the tempering and the V² amplitude are those of the search | `AliasResult`, `chain_init_params` |
 | `quicklook` | Writes and executes `quicklook.ipynb` | `load` |
@@ -232,7 +233,7 @@ A run that interrupts resumes: the bands already fitted are read back from their
 | `n_peaks` (5), `max_sep_mas` (`None`), `grid_step_mas` (`None`), `max_grid` (201) | The position search; the step is by default a quarter of the finest λ/B (coarsened to `max_grid` points) and the half-width `a_range[1] (1 + ecc_max)`, the prior's reach, limited on lattice coverage (aperture masks, DISCO) to the alias cell. |
 | `period_range` (`None`) | `[min, max]` days; by default from the data (see `fit_orbit_aliases`). |
 | `a_range` ([1, 30]), `flux_range` ([0.01, 1]), `ecc_max` (0.9), `s_max` (`None`) | The engine's prior ranges (mas; flux ratio at most 1; eccentricity; error-scale bound). |
-| `primary_diam` (`"auto"`), `vis_amp`, `sign_free`, `flip_flux`, `temper` (`True`) | As for the engine. |
+| `primary_diam` (`"auto"`), `vis_amp`, `sign_free`, `flip_flux`, `temper` (`False`: opt-in until 0.5) | As for the engine. |
 | `n_bands_max`, `n_candidates`, `n_refine`, `max_steps`, `n_is` | Search effort; the defaults are those of `fit_orbit_aliases`, the one place to raise them (the `mode_converged` check says when to). |
 | `alias_nats` (10), `no_orbit_nats` (10) | Thresholds of the `alias_ambiguity` and `no_orbit` checks, in nats and not yet calibrated: the alias, no-orbit, label and resolved verdicts are indications, not Bayes factors, until the null-distribution calibration lands. |
 | `posterior_p_min` (0.05), `max_modes` (3) | Bands sampled by NUTS besides the winner. |
@@ -291,7 +292,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `residual_normality` (skewness and excess kurtosis of the independent whitened residuals, without the periodic closure-phase penalty terms) | beyond three standard errors | |
 | `field_of_view` (companion inside the resolution limit or beyond the field) | outside | |
 | `chi2_uniform`, `chi2_limb_darkened` (`StarPipeline`; as `chi2`) | as `chi2` | as `chi2` |
-| `limb_darkening_gain` (delta chi-squared of the limb-darkened over the uniform fit, against a BIC penalty of 2 ln N for two parameters) | the limb-darkened model fits worse than the uniform disk it contains | |
+| `limb_darkening_gain` (delta chi-squared of the limb-darkened over the uniform fit, against a BIC penalty of 2 ln N for two parameters) | the uniform-disk diameter is at the lower edge of its range (the comparison is not valid, the uniform disk is kept) | the limb-darkened model fits worse than the uniform disk it contains (Δ(−2 log L) < −1) |
 | `resolution` (the longest B/λ against the first null of the fitted model's visibility, θB/λ = 1.22 for a uniform disk) | below the first null (limb darkening is degenerate with the diameter) | below 0.15 of it (unresolved: an upper limit) |
 | `multimodal` (the per-lobe table of the preferred model, `fit.models.<name>.lobes`: the next-best diameter lobe against a Δχ² of 25) | the next-best lobe is within Δχ² of 25; the message gives its diameter | |
 | `limb_darkening_constrained` (posterior against prior standard deviation of `q1`, `q2`) | a ratio of 0.8 or more | |
@@ -310,18 +311,18 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `alias_ambiguity` (`OrbitPipeline`: log Z of the best alias band over the runner-up's, `alias_nats`) | under 10 nats: the runner-up is not excluded | under 1 nat: the period is not determined |
 | `winner_flags` (`OrbitPipeline`: the winning band's evidence flags, such as `not-converged`, `laplace-is-differ`, `low-ess`) | any flag: its log Z is less reliable | |
 | `mode_converged` (`OrbitPipeline`: the best sampled point against the search's best mode) | over 1 nat: the search stopped short of the optimum; raise `n_candidates`, `n_refine` or `max_steps` | |
-| `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood; tempering is virgil's own design, on by default) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
+| `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood; tempering is virgil's own design, opt-in with `temper=True` until 0.5) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
 | `primary_resolved` (`OrbitPipeline`) | the primary is resolved and its diameter is the largest tried | |
 | `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's, `no_orbit_nats`, an uncalibrated difference in nats and not a Bayes factor; both carry the night-outlier component, so under `"mixture"` the single star may have an unrelated companion on any night and the check asks whether the positions follow an orbit) | under 10 nats | under 0: no orbit is detected |
 | `period_bound` (`OrbitPipeline`) | the best period is at the top of the window (a short arc) or at its bottom (the sampling limit) | |
 
 ### Warnings raised inside stages
 
-A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and always warn:
+A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and warn (`convergence` fails when every grid position failed):
 
 | Check | Raised by | Meaning |
 | --- | --- | --- |
-| `convergence` | the optimizer did not converge at some grid positions | value: the worst fraction of positions; values there may be inaccurate |
+| `convergence` | the optimizer did not converge at some grid positions | value: the worst fraction of positions; values there may be inaccurate; fails when the optimizer failed at every position of a grid |
 | `flux_axis_resolution` | the flux axis does not resolve the likelihood peak (fewer than 2 steps across its FWHM) | `log_bayes_factor` is inaccurate; use a larger `n_flux` |
 | `limits_clipped` | contrast limits fell outside the flux bounds | value: the number of clipped limits; widen `flux_range` |
 | `stage_warnings` | any other warning, except deprecation notices | value: the number of warnings; the message quotes the first three |

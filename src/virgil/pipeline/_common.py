@@ -19,7 +19,9 @@ from .._precision import cast_tree, in_float64, run_in
 from ..likelihood import model_loglike
 from . import _checks, _io
 
-# Fraction of a prior's range, at either end, counted as "at the bound".
+# Fraction of a prior's range, at either end, counted as "at the bound" for a
+# posterior sample. Deliberately wider than fitting._AT_BOUND (1e-3), which tests
+# one MAP point: a sample band must be wide enough to hold several draws.
 _BOUND_FRACTION = 0.01
 
 
@@ -378,6 +380,10 @@ def _interior_start(priors, start, inset=_START_INSET):
     return out
 
 
+# Redraws of a jittered chain start whose log-density is not finite.
+_JITTER_TRIES = 20
+
+
 def _run_chains(
     posterior,
     settings,
@@ -401,8 +407,9 @@ def _run_chains(
     order of the unconstrained sites (``ravel_pytree``: sorted by name);
     ``adapt_mass=False`` keeps it fixed (warm-up windows of a few hundred
     draws estimate a worse matrix than a Laplace one). ``jitter`` (a matrix ``L`` in the same order) starts
-    chain ``k > 0`` at ``0.3 L ε`` from the start, ``ε`` standard normal, when
-    the log-density is finite there; chain 0 starts at ``start``.
+    chain ``k > 0`` at ``0.3 L ε`` from the start, ``ε`` standard normal,
+    redrawn until the log-density is finite there (a ``ValueError`` after
+    ``_JITTER_TRIES`` draws, never a copy of another chain's start); chain 0 starts at ``start``.
     """
     import jax
     from jax.flatten_util import ravel_pytree
@@ -433,14 +440,26 @@ def _run_chains(
     if jitter is not None and n > 1:
         z0 = jax.tree_util.tree_map(lambda a: a[0], init)
         flat, unravel = ravel_pytree(z0)
-        eps = onp.random.default_rng(settings["seed"]).standard_normal(
-            (n, len(flat))
-        )
+        rng = onp.random.default_rng(settings["seed"])
+        scale = 0.3 * np.asarray(jitter)
+        # deliberate: the first row of the old (n, d) draw, unused there, so
+        # chain k's first try is the old chain k's start.
+        rng.standard_normal(len(flat))
         chains = [z0]
         for k in range(1, n):
-            z = unravel(flat + 0.3 * np.asarray(jitter) @ eps[k])
-            ok = onp.isfinite(float(potential_energy(posterior, (), {}, z)))
-            chains.append(z if ok else z0)
+            # Redraw until the log-density is finite, so no chain copies
+            # another's start.
+            for _ in range(_JITTER_TRIES):
+                z = unravel(flat + scale @ rng.standard_normal(len(flat)))
+                if onp.isfinite(float(potential_energy(posterior, (), {}, z))):
+                    chains.append(z)
+                    break
+            else:
+                raise ValueError(
+                    f"No jittered start for chain {k} has a finite "
+                    f"log-density in {_JITTER_TRIES} draws: the jitter is "
+                    "too wide for the posterior, or the mode sits on a wall."
+                )
         init = jax.tree_util.tree_map(lambda *a: np.stack(a), *chains)
     kwargs = (
         {} if inverse_mass is None else {"inverse_mass_matrix": inverse_mass}

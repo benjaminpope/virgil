@@ -22,7 +22,18 @@ tests/test_orbit_search.py::test_flux_and_slope_marginal_matches_quadrature
 tests/test_orbit_search.py::test_independent_of_batch_size
 tests/test_orbit_search.py::test_per_epoch_flux_decoy_loses_under_shared_flux
 tests/test_orbit_search.py::test_rv_term_adds_its_loglike
+# Added 2026-11-08 (virgil#681), by exception: the CI call time is 31.2 s
+# (shard 3/3, main at 43bb4a2). Local: 21.0 s cold, 6.4 s while the persistent
+# JAX cache fills, 2.9 s fully warm. No regression found (the shared search
+# stage takes the same time before #665 as now); nothing to trim: the 11x11
+# grid cannot share the 13x13 run's compiles.
+tests/test_pipeline_binary.py::test_grid_is_capped_at_an_odd_number_and_the_step_reported
 tests/test_pipeline_binary.py::test_summary_keys_snapshot
+# Added 2026-11-08 (virgil#681), by exception: CI call times 31.4, 30.6 and
+# 32.5 s. Local: 14.2 s cold, 8.0 s filling the cache, 3.6 s fully warm. No
+# regression found; nothing to trim (n_null=15 is the minimum for
+# detection_sigma=1.5; the fit needs the search peak as its start).
+tests/test_pipeline_robust_binary.py::test_a_prior_that_excludes_the_truth_is_reported_at_the_fit[flux prior below the truth]
 tests/test_pipeline_star.py::test_divergences_at_hard_walls_are_explained_not_hidden
 tests/test_pipeline_star.py::test_summary_keys_snapshot
 tests/test_pipeline_star.py::test_uniform_only_run_and_error_scale

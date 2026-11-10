@@ -411,7 +411,7 @@ def test_the_dof_argument_is_f_one_or_a_fixed_f(monkeypatch):
         run(temper=-2.0)
 
 
-def test_correlated_channels_are_tempered_by_default(monkeypatch):
+def test_correlated_channels_are_tempered_when_asked(monkeypatch):
     data, positions = _cached(0.85, n=3)
     seen = {}
 
@@ -442,10 +442,17 @@ def test_correlated_channels_are_tempered_by_default(monkeypatch):
         with pytest.raises(Stop):
             aliases.fit_orbit_aliases(
                 data, (12.0, 13.0), positions=positions, t_ref=T_REF,
-                primary_diam=None, n_random=5,
+                primary_diam=None, n_random=5, temper=True,
             )  # fmt: skip
     dof = dict(seen["settings"].dof)
     assert set(dof) == {"vis", "phi"} and all(v < 0.5 for v in dof.values())
+
+
+def test_the_default_is_untempered(monkeypatch):
+    # D6: tempering is opt-in until 0.5.
+    data, positions = _cached(0.85, n=3)
+    settings = _stub_fit(monkeypatch, data, positions, primary_diam=None)
+    assert settings.dof == ()
 
 
 def test_several_channels_without_positions_warn_and_stay_untempered(
@@ -464,7 +471,7 @@ def test_several_channels_without_positions_warn_and_stay_untempered(
         with pytest.raises(Stop):
             aliases.fit_orbit_aliases(
                 data, (12.0, 13.0), t_ref=T_REF, primary_diam=None,
-                n_random=5,
+                n_random=5, temper=True,
             )  # fmt: skip
 
 
@@ -594,6 +601,7 @@ def test_tempering_turns_an_overconfident_band_probability_into_a_calibrated_one
         n_is=200,
         n_samples=20,
         primary_diam=None,
+        temper=True,
     )
     assert 4.0 < result.temper_f < 7.0
     best = result.bands[0]
@@ -645,7 +653,7 @@ def _offset(result, truth_xy, epoch):
 
 
 def _median_offsets(common, rho, temper, n_seeds=20):
-    """``(median offset, median f)`` over seeds of the fit of noise at chi2/N
+    """``(offsets, median f)`` over seeds of the fit of noise at chi2/N
     about 12 (eight channels, noise 3.5 times the errors); ``f`` is ``None``
     untempered."""
     truth = onp.array(
@@ -668,7 +676,7 @@ def _median_offsets(common, rho, temper, n_seeds=20):
             offsets.append(_offset(result, truth, EPOCHS[0]))
             if temper:
                 fs.append(result.temper_f)
-    return float(onp.median(offsets)), float(onp.median(fs)) if fs else None
+    return onp.array(offsets), float(onp.median(fs)) if fs else None
 
 
 # Each outlier-mixture fit scores a position grid on every night, so the 20
@@ -694,7 +702,8 @@ def test_the_tempered_posterior_is_calibrated(common, rho):
     # be worse: at chi2/N ~ 12 the orbit scores below the diffuse outlier
     # component on every night, the weights flatten the likelihood and the
     # band has no valid mode (offset inf).
-    med, f = _median_offsets(common, rho, True)
+    offsets, f = _median_offsets(common, rho, True)
+    med = float(onp.median(offsets))
     print(f"median offset/spread {med:.2f}, median f {f:.2f}")
     # the estimated f must be the true one (a lag-1 AR(1) estimate gives
     # 3.2 for common mode, truth 5.2, and a median offset near 1.5)
@@ -706,12 +715,25 @@ def test_the_tempered_posterior_is_calibrated(common, rho):
 @pytest.mark.slow
 @pytest.mark.full_only
 @pytest.mark.timeout(900)  # 20 fits take 300-400 s on CI
+@pytest.mark.xfail(
+    strict=True,
+    reason="untempered outlier-mixture fit has no valid mode on 17/20 seeds "
+    "(ar1-0.85) and 19/20 (common-0.6): offsets inf (0.4.2 review F3; "
+    "tracking issue to be linked, milestone 0.4.3)",
+)
 @CALIBRATION_CASES
 def test_the_untempered_posterior_is_not_calibrated(common, rho):
     # The untempered posterior is too narrow by sqrt(f) (2.2 to 2.3): its
     # median offset is well above 2.
-    med, _ = _median_offsets(common, rho, False)
-    print(f"median offset/spread {med:.2f}")
+    offsets, _ = _median_offsets(common, rho, False)
+    med = float(onp.median(offsets))
+    print(f"median offset/spread {med:.2f}, offsets {onp.round(offsets, 2)}")
+    # a fit with no valid mode has offset inf, which would pass "> 2"
+    # vacuously: every seed must give a finite offset
+    assert onp.all(onp.isfinite(offsets)), offsets
+    # calibrated, the 2-D offset over spread has median sqrt(2 ln 2) (the
+    # median of a chi distribution with 2 degrees of freedom); a posterior
+    # too narrow by sqrt(f) multiplies it by sqrt(f): 2.7 for f = 5.2
     assert med > 2.0
 
 
@@ -815,7 +837,9 @@ def _scripted(monkeypatch, data, positions, resolved):
 
     monkeypatch.setattr(aliases, "_auto_primary", auto)
     monkeypatch.setattr(aliases, "_temper_factors", factors)
-    settings = _stub_fit(monkeypatch, data, positions, primary_diam="auto")
+    settings = _stub_fit(
+        monkeypatch, data, positions, primary_diam="auto", temper=True
+    )
     return calls, pilots, settings
 
 
@@ -960,7 +984,7 @@ def test_a_checkpoint_with_tempering_on_roundtrips_and_depends_on_f(
     kw = dict(
         positions=positions, t_ref=T_REF, n_random=10, n_refine=1,
         max_steps=3, n_is=20, n_samples=5, primary_diam=None,
-        checkpoint_dir=tmp_path,
+        checkpoint_dir=tmp_path, temper=True,
     )  # fmt: skip
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

@@ -55,7 +55,7 @@ extras; gains and closure offsets marginalized analytically, as now). Calibratio
 instrument) each carry one global inlier scale s_g with ln s_g uniform on [−ln s_max, ln s_max] and s_max = 10
 (orbit_mixture_v2 §2.2), appended to the sampled vector. Night *k* contributes
 
-  (1 − ε) e^{ℓ_k(x, s)} + ε e^{b_k},  ε ~ Beta(½, ½) integrated (Gauss–Chebyshev, exact),
+  (1 − ε) e^{ℓ_k(x, s)} + ε e^{b_k},  ε ~ Beta(1, 9) integrated (Gauss–Jacobi, exact: the integrand has degree K in ε; Golub & Welsch 1969),
 
 with ℓ_k the tempered inlier log likelihood at orbit x and b_k the outlier component of §2. Tempering factors f_b
 (`virgil.tempering`) multiply each block's log likelihood in ℓ_k **and** b_k.
@@ -183,7 +183,8 @@ Near each peak of the night's likelihood (peak state ŝ, covariance Σ over (p, 
 
   b_k ≈ ln Σ_peaks L_peak · (2π)^{5/2} |Σ|^{1/2} π_out(ŝ),
 
-while for the true orbit ℓ_k(truth) ≈ ln L_peak. So at the truth
+where the flux factor of π_out is not evaluated at ŝ but integrated over the Gaussian ln f error in closed form
+(§6.6 "Finite floor"), so the term is finite for an observed ln f > 0; while for the true orbit ℓ_k(truth) ≈ ln L_peak. So at the truth
 
   Δ_k^truth = b_k − ℓ_k(truth) ≈ ln[(2π)^{5/2} |Σ|^{1/2} π_out(ŝ)] + (own-scale Occam)
             = −(Occam of p) − (Occam of v) − (Occam of f) − Σ_g (2.0 to 2.4 nats),
@@ -451,7 +452,7 @@ likelihood with no companion (used in §8).
   or faint night's velocity carries no weight automatically.
 - **Peak keep rule (derived):** the night factor is (1 − ε) e^{ℓ_k} + ε e^{b_k}, and an orbit through peak j contributes at
   best (1 − ε) L_j with *no* π_out or Occam factor. A peak is therefore kept iff **(1 − ε_lo) L_j ≥ δ ε_lo e^{b_k}**
-  under (ii) (under (iii′): e^{b_k} replaced by e^{o_k} at the peak's own state), ε_lo the smallest Gauss–Chebyshev node of
+  under (ii) (under (iii′): e^{b_k} replaced by e^{o_k} at the peak's own state), ε_lo the smallest Gauss–Jacobi node of
   the ε integral (§10). Comparing the Laplace-penalized outlier share instead (the first draft) would drop a true-companion
   peak 8 nats below a sidelobe, which is still ≈ 23 nats above the floor. J_k is not bounded by 1/δ: its distribution is
   reported, and its cost enters T_summ (§9).
@@ -587,9 +588,9 @@ sampling does not suffice: the chance that a random set contains the two outer i
   **The sentinel fails the system only if the cell could matter.** The flag is per cell and is always reported. A
   mode's peak height says nothing of its mass, so a cell at the floor far below the best cell (a thin mode, or a cell
   whose true mode is 85–200 nats below the system's dominant cell) must not fail the system. A flagged cell fails the
-  system only when it passes the `matters` rule of §6.6: its upper bound on the evidence mass, ln mass_N + max(ln Ẑ_N,
-  Laplace ln Z of its best mode), is within W of the largest such bound over the cells. Non-finite targets fail the
-  system unconditionally. The rule adds no constant: W is the one of the sentinel and of §6.6.
+  system only when it passes the `matters` rule of §6.6: its bound ln mass_N + ln sup L_N is not below the best unflagged
+  cell's ln(mass Ẑ) by ln(n_cells/δ) (§6.10). Non-finite targets fail the system unconditionally. The rule adds no
+  constant (W is the sentinel's only; the threshold uses δ and the cell count).
 
 ### 6.2 Leg 2: the visibility level (changed; flag for Ben)
 
@@ -790,12 +791,29 @@ Their coverage is the eccentric test of Stage 3b (§14).
   - `no-mode` (per system): no mode in any cell and every ln Ẑ_N at the all-floor value. Information; the system goes
     to the §8 null test before any p̂(N) is reported (§6.9).
 - The mass is per cell, never pooled. Ridge modes carry their quadrature mass, never a Laplace mass (§6.10).
-- **`matters`.** A cell fails the system if its target is non-finite, or if it is flagged `cell-at-floor` or has ESS < ESS_fail
-  *and* its upper bound ln mass_N + ln Ẑ_N^upper is within W of the maximum of that bound over the cells (a cell whose
-  probability could reach δ). A flagged cell below that is information only: reported per cell, not failing the system.
-- **Finite floor.** The all-outlier floor K·b needs every b_k finite, i.e. every night's ln f inside [ln flux_floor, 0].
-  A night outside has b_k = −inf: the fit raises an error (never a silent pass). The population simulation draws the
-  inlier ln f noise truncated to that support (its own generative process).
+- **`matters`** (implemented; §6.10 has the bound). A cell fails the system if its target is non-finite, or if it is
+  flagged `cell-at-floor` or has ESS < ESS_fail *and* it matters. With U_N = ln mass_N + ln sup L_N (`CellFit.log_l_sup`:
+  the largest ln L evaluated at any found mode or IS draw) and R = max ln(mass_N Ẑ_N) over the cells that are neither
+  failed nor unreliable, a cell matters iff it has no found mode or U_N ≥ R − ln(n_cells/δ). If no cell is unflagged,
+  every flagged cell matters. A flagged cell that does not matter is information only: reported per cell, not failing
+  the system. `CellsResult.omitted_bound` = Σ exp(U_N) over those cells / Σ mass_N Ẑ_N; it is a diagnostic, below δ by the
+  threshold *given that the search found each cell's top mode* (ln sup L evaluated is a lower bound, so it can be
+  understated). The threshold is a union bound over the cells, so the total omitted mass is ≤ δ, not δ per cell.
+  A flagged cell with no found mode always matters (it has no bound). W now serves the sentinel only. Expect more failures than
+  under the earlier rule (max(ln Ẑ, Laplace) within W per cell): that is the intended honesty.
+- **Finite floor.** The all-outlier floor K·b needs every b_k finite. The flux prior π(ln f) = 1/|ℓ| on [ℓ, 0]
+  (ℓ = ln flux_floor) is integrated exactly over the Gaussian ln f error N(m_f, σ_f²), σ_f² = Σ[4, 4] at the peak:
+  E[π(ln f)] = [Φ(−m_f/σ_f) − Φ((ℓ − m_f)/σ_f)] / |ℓ| (`OutlierPrior.log_flux_box`, in logs with `log_ndtr`). It is
+  finite for every m_f, including m_f > 0; the old point evaluation gave −inf there and overstated b_k by up to ln 2
+  within ~2σ_f of either end. The inlier term is unchanged: a mean with m_f > 0 is an ordinary Gaussian measurement of a
+  truth at or below 0. The population simulation no longer truncates the simulated ln f noise (a truncation made the
+  census generate only data the fit could handle), so its summaries are exactly the fit's model.
+- **Finding to check, not fixed here.** The plan (orbit_eval_20261109) says the real `night_summaries` bounds ln f to
+  [ln F_MIN, 0] and drops a peak held at a bound, so real summaries probably never carry m_f > 0 and a near-twin's
+  failure in the wild is more likely a dropped true peak. B′ measures this before any fold or mirror is added.
+- **Near-twins** are scored up to the orbit ↔ −orbit swap (ω → ω + π): Ben, "perfect" means right up to this
+  orientation degeneracy. The census scored ω over [0, 360), which is not swap-invariant; it now folds ω mod 180°
+  (truth and draws), and `test_scoring_is_invariant_to_the_orbit_swap` enforces it.
 
 ### 6.7 Across the alias grid N (Ben's idea)
 
@@ -1039,16 +1057,17 @@ sum (the closed-form integral of e^{h(ρ)} over the cell) replaces the Laplace m
 mixture weights, in `_prune`, and in the sentinel's "W above the floor" test. Kind 2 disappears because no inflated
 Laplace remains to trigger on.
 
-**Negligibility by a bound, not by Laplace.** `position_cells` now calls a cell negligible when its Laplace upper estimate
-is W below the best cell. A ridge's Laplace is not an upper bound, so this can call a real cell negligible or a
-negligible one matters. The bound that holds is
+**Negligibility by a bound, not by Laplace** (implemented in `position_cells`). The earlier rule called a cell negligible
+when max(ln Ẑ, Laplace) was W below the best cell. A ridge's Laplace is not an upper bound, and W per cell ignores that
+n cells can each hide mass. The bound that holds is
 
-  Z_N ≤ π(cell N)·sup_{x∈cell} L(x),
+  mass_N·Z_N ≤ mass_N·sup_{x∈cell} L(x) = exp(U_N),
 
-with sup L evaluated as the label-summed target at the best mode found. A cell is negligible iff
-ln π(cell) + ln sup L < max_N' ln Ẑ_N' − W.
+because the cell prior is normalized. sup L is the largest ln L evaluated in the cell (every found mode, every IS
+draw). A flagged cell is negligible iff U_N < R − ln(n_cells/δ), R as in §6.6. The negligible cells then hold at most
+n_cells·e^R·δ/n_cells = δ e^R ≤ δ of the posterior, conditional on the search coverage below. Unflagged cells need no bound.
 
-The best mode found is a *lower* bound on sup L. So the rule is conservative (more cells kept than by the exact
+The largest ln L evaluated is a *lower* bound on sup L. So the rule is conservative (more cells kept than by the exact
 integral, since the bound omits the Occam factor) only *conditional on the search's coverage*. When the search misses
 the cell's top mode, which the coverage contract allows with probability ≤ δ, a real cell can be called negligible.
 Two consequences follow:
@@ -1062,13 +1081,12 @@ Two consequences follow:
 A cell fails only if its estimate could change p̂(N) at δ, i.e. ESS < ESS_FAIL and the bound above admits p(N) ≥ δ.
 The ridge component is what makes ESS ≥ ESS_FAIL in kinds 1 and 3. Retries and cascades stay excluded (§6.6).
 
-**The population stays a prior draw.** The population draws ε ~ Beta(½,½) per system, which is the model's prior
-(§1.1, §10). §14's spec says 0–2 outlier nights, but switching to that would make the population no longer a prior draw.
-SBC (assertion 3) would then lose its uniformity, and the change would remove exactly the kind-1 systems above after
-they failed. The population therefore keeps Beta(½,½). Results are reported by stratum: all nights outliers (B″, where
-the correct answer is the prior), ≤ m inliers left, and the rest. §14 flags the mismatch with the spec's
-"0–2 outlier nights" for Ben. Making the model's ε prior match the spec instead would be a model change, and
-would need his decision.
+**The population stays a prior draw.** The population draws ε ~ Beta(1, 9) per system, the model's prior (§1.1, §10;
+declared, Ben, 2026-11-09, replacing Beta(½, ½)). The mean 0.1 matches the spec's 0–2 outlier nights over K uniform on
+5–20 (mean fraction 0.095). Fit and simulator change together, so SBC (assertion 3) stays valid. The B″ and ≤ m inlier
+strata are now rare and the census says little about outlier-dominated data; that is accepted, and the misspecification
+arm (B′) covers those regimes. On real data with many bad nights the answer is broader, or the fit fails. Results are
+still reported by stratum, with the "≤ 2 outlier nights" stratum as a report.
 
 ### 6.11 Speed on two-season data (problem C)
 
@@ -1624,7 +1642,7 @@ run; changing one afterwards is a recorded decision.
 | constant | value | kind | basis |
 |---|---|---|---|
 | s_max | 10 | declared prior bound | inherited `_NUMERIC_S_MAX`; covers χ²/N ≤ 100 (v2 §2.2) |
-| ε prior | Beta(½, ½) | derived | Jeffreys for a rate |
+| ε prior | Beta(1, 9) | declared prior (Ben, 2026-11-09) | mean 0.1 = spec's 0–2 outlier nights; `EPS_PRIOR` |
 | P_cut | max(2Δt_min over nights merged at gap_days, p_floor) | derived (a declared prior; Ben, 2026-11-02) | §1.3 |
 | P_night | dropped from the orbit-cells path (snapshot-era likelihood only) | n/a | §1.3 |
 | motion_fraction | ½ | tolerance | P_night only, which the orbit-cells path no longer uses (§1.3); inherited |
@@ -1638,7 +1656,7 @@ run; changing one afterwards is a recorded decision.
 | gap_days | 0.5 d | tolerance | night separation (inherited) |
 | flux floor | 2σ of the data's contrast curve | derived | dehack §2I |
 | lattice, cubature box widths | ±4σ of π_out and of the per-night posterior | tolerance | #618 |
-| ε_lo | sin²(π/(4 n_GC)), n_GC = ⌈(K + 1)/2⌉ | derived | smallest Gauss–Chebyshev node (§5) |
+| ε_lo | smallest Gauss–Jacobi node of Beta(1, 9), n = ⌈(K + 1)/2⌉ | derived | §5 |
 | anchor quarter | first/last ¼ of span | budget (labels only) | §4.2 |
 | pruning margin | mean + 3 SE ≤ δ | tolerance | §7 |
 | FAP stepping | 100, 200, 400, 800; cap 1000 = 10/α | budget | §8 |
@@ -1807,10 +1825,8 @@ constant is tuned to it after a failure.
 - Orbits: P log-uniform on 2–60 d; e uniform on 0–0.8; isotropic orientation; a log-uniform on [a_lo, a_hi].
 - Epochs: 5–20 nights, uniform. Either one season of about 30 d, or two seasons a year apart. Nights are clustered
   within each season.
-- Noise: σ/a log-uniform on 10⁻⁴–10⁻². 0–2 outlier nights, each with its summary drawn from π_out. **Flag for Ben
-  (2026-11-03):** the population script instead draws ε ~ Beta(½, ½) per system, which is the model's prior. The
-  design pass recommends keeping that draw, so the population stays a prior draw and SBC stays valid (§6.10). The
-  alternative is to change the model's ε prior to match the spec. Either choice is Ben's.
+- Noise: σ/a log-uniform on 10⁻⁴–10⁻². 0–2 outlier nights, each with its summary drawn from π_out. **Resolved
+  (Ben, 2026-11-09):** the model's ε prior is Beta(1, 9) (§10) and the population draws it, so SBC stays valid (§6.10).
 - Data: night summaries simulated as in #632's `_summaries`.
 - Truths with P outside the declared period domain (§1.3) are excluded and counted (stratum B′, as §12). Under the 2026-11-02
   domain (P_cut = max(2Δt_min, p_floor)), B′ holds only truths below twice the shortest gap between nights or below
