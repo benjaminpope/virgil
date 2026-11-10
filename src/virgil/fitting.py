@@ -2719,8 +2719,9 @@ def _adam_run(
 
 # Thresholds of ``kkt_report``: kkt_w < 1e-4 and band_limit < 2 gate
 # ``converged``. These are conventions, not derived or validated limits: they
-# were set on one ALMA disc and are checked on held-out synthetic images in
-# tests/test_kkt_report.py. KKT_TOL is the relative residual, far below the
+# were set on one ALMA disc and tested on synthetic images in
+# tests/test_kkt_report.py, where band_limit fails for sharp-edged scenes at
+# 10 mas pixels (not in the suite). KKT_TOL is the relative residual, far below the
 # fits' own stop yet above the float64 noise of a converged fit; band_limit is
 # about 1 at an optimum, so 2 allows twice the hard low-pass's excess power.
 KKT_TOL = 1e-3
@@ -2965,9 +2966,7 @@ def kkt_report(
     - [`Image`][virgil.models.Image] (softmax): ``kkt_w``, the rms over pixels above
       1e-3 of the peak of ``g_I - μ``, the gradient per pixel flux less the
       multiplier, in units of ``w / F`` (regulariser weight over flux), which
-      gates ``converged`` at ``KKT_W_TOL``. (The diagnosis took ``μ`` as the
-      median; here ``μ = Σ b g`` exactly, which agrees to within a few percent
-      at an optimum.) ``kkt_rel``, the rms of
+      gates ``converged`` at ``KKT_W_TOL``. ``kkt_rel``, the rms of
       ``g - μ`` over pixels above 1e-3 of the peak, with ``g = ∂J/∂b`` for
       unit-sum ``b`` and ``μ = Σ b g``, over ``|μ|`` plus the rms gradient
       scale; ``want_grow``, the fraction of pixels below 1e-6 of the peak whose

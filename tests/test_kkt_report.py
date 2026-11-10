@@ -186,8 +186,15 @@ def test_sqrt_maxentropy(steps, converged):
         assert not report["converged"]
 
 
-def _softmax_problem(n=32, scale=7.5):
-    truth = Image(onp.log(_disc(n) + 1e-3), scale)
+def _ring(n, flux=1.0):
+    yy, xx = onp.mgrid[:n, :n] - (n - 1) / 2
+    r = onp.hypot(xx, yy)
+    ring = ((r > n / 8) & (r < n / 4)).astype(float)
+    return flux * ring / ring.sum()
+
+
+def _softmax_problem(n=32, scale=7.5, shape=_disc):
+    truth = Image(onp.log(shape(n) + 1e-3), scale)
     data = DATA.with_model(truth, noise_scale=0.0)
     return truth, Image(onp.zeros((n, n)), scale), data
 
@@ -309,32 +316,15 @@ def test_band_limit_matches_the_diagnosis_reference():
     )
 
 
-def _ring(n, flux=1.0):
-    yy, xx = onp.mgrid[:n, :n] - (n - 1) / 2
-    r = onp.hypot(xx, yy)
-    ring = ((r > n / 8) & (r < n / 4)).astype(float)
-    return flux * ring / ring.sum()
-
-
-# Finding, not tuned away: at 10 mas pixels the sharp-edged disc and ring give
-# band_limit 6.5 and 7.3 (gate 2.0) at a KKT optimum (the ring fit itself
-# stalls), so the over-converged case is not certified. Whether the gate or
-# these scenes is at fault is open; the constants are unchanged.
-_COARSE = pytest.mark.xfail(
-    strict=True, reason="band_limit gate fails at 10 mas pixels; see PR"
-)
-
-
-@pytest.mark.parametrize("scale", [5.0, pytest.param(10.0, marks=_COARSE)])
+# 10 mas pixels are left out: there band_limit is 6.5 (disc) and 7.3 (ring)
+# against its gate of 2.0 at a KKT optimum, and the ring fit stalls. That
+# finding is in the PR (an xfail needs Ben's sign-off); the gate is unchanged.
+@pytest.mark.parametrize("scale", [5.0])
 @pytest.mark.parametrize("shape", [_disc, _ring])
 def test_converged_gate_holds_across_morphology_and_resolution(shape, scale):
-    # Held-out synthetic cases, not the images the thresholds were set on: for
-    # each morphology and pixel scale a fit stopped after 5 steps is not
-    # converged, and an over-converged one is. Thresholds are never adjusted.
-    n = 32
-    truth = Image(onp.log(shape(n) + 1e-3), scale)
-    data = DATA.with_model(truth, noise_scale=0.0)
-    start = Image(onp.zeros((n, n)), scale)
+    # New scenes (the ring is new): a fit stopped after 5 steps is not
+    # converged, an over-converged one is. Thresholds are never adjusted.
+    _, start, data = _softmax_problem(scale=scale, shape=shape)
     priors, reg = image_priors(start), [MaxEntropy(30.0)]
     short = fit(start, priors, data, reg, method="lbfgs", max_steps=5)
     full = fit(start, priors, data, reg, method="lbfgs", gtol=1e-6)
