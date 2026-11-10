@@ -313,6 +313,7 @@ def _reports():
         },
         "combine": {
             "chi2_red_by_observable": kinds,
+            "n_by_observable": {k: 100 for k in kinds},
             "short_baseline_mean": 0.1,
             "short_baseline_error": 0.5,
             "flip_dchi2": 30.0,
