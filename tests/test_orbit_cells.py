@@ -1879,13 +1879,17 @@ def test_the_resample_move_draws_keep_the_image_weights_and_shape(
     seed = _seed(record_property)
     toy = _ImageToy()
     n = 20000
+
+    def _toy_target(v, _theta):  # the toy space is not a pytree: no theta
+        return toy.space.loglike(v)
+
     x = toy.mixture.sample(jax.random.key(seed), n)
     lw = jax.vmap(
         lambda v: oc_cells._target(v, toy.space) - toy.mixture.log_q(v)
     )(x)
     ev = types.SimpleNamespace(x=x, log_w=onp.asarray(lw))
     move = resample_move(
-        oc_cells._target, toy.space, ev, jax.random.key(seed + 1),
+        _toy_target, 0.0, ev, jax.random.key(seed + 1),
         cov=toy.mixture.masses(toy.scale), mixture=toy.mixture,
     )  # fmt: skip
     draws = onp.asarray(move.draws)
