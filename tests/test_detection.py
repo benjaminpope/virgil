@@ -1120,3 +1120,21 @@ def test_remainder_chunk_matches_unchunked_run():
     onp.testing.assert_allclose(
         a.null["delta_chi2"], b.null["delta_chi2"], rtol=1e-4, atol=1e-6
     )
+
+
+def test_unresolved_flux_peak_reaches_its_check_with_the_steps():
+    from virgil.pipeline._checks import stage_warning_checks
+    from virgil.pipeline._core import _record_warnings
+
+    data = _data(1e-2, 5)
+    coarse = {
+        "dra": np.array([60.0]),
+        "ddec": np.array([-40.0]),
+        "flux": np.geomspace(1e-4, 0.1, 5),
+    }
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = detection_statistics(BinaryModelCartesian, data, coarse)
+    (found,) = stage_warning_checks(_record_warnings("overview", caught))
+    assert found.name == "flux_axis_resolution"
+    assert found.value == pytest.approx(float(result["flux_peak_steps"]))
