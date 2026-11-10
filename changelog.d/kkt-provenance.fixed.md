@@ -1,1 +1,0 @@
-Fixed `fit` treating an explicit `max_steps=0` or `memory=0` as unset, `kkt_report` crashing opaquely on non-square images (now a clear `ValueError`), and relabelled the `kkt_report` thresholds as conventions with held-out synthetic tests; the two "at the bound" fractions are documented as different tests.

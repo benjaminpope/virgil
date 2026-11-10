@@ -1721,7 +1721,7 @@ def test_lbfgs_keeps_the_last_finite_point_after_a_non_finite_update(
     assert all(np.isfinite(v) for v in result.values.values())
 
 
-@pytest.mark.parametrize("method", ["lm", "lbfgs", "lbfgsb"])
+@pytest.mark.parametrize("method", ["lm", "lbfgs", "lbfgsb", "adam"])
 def test_an_explicit_zero_max_steps_is_not_the_default(method):
     # max_steps=0 means no steps, not the method's default (R8).
     with pytest.warns(RuntimeWarning):
