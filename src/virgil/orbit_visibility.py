@@ -857,7 +857,7 @@ def _vis_objective(x, space):
 def _vis_refine(space, x, n_iter):
     """Newton on the visibility objective from ``x``: the result, minus its Hessian,
     the objective and the expected inlier count."""
-    x, _ = cells_mod._lm(_vis_objective, x, (space,), n_iter)
+    x, _, _ = cells_mod._lm(_vis_objective, x, (space,), n_iter)
     return (
         x,
         -jax.hessian(_vis_objective)(x, space),

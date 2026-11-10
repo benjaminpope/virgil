@@ -366,7 +366,7 @@ def test_the_visibility_evidence_matches_brute_force_quadrature_on_a_slice():
         return theta.terms(xt_j.at[free].set(u))[1]
 
     u0 = np.asarray(xt[free])
-    u_hat, _ = cells._lm(target, u0, (space,), 30)
+    u_hat, _, _ = cells._lm(target, u0, (space,), 30)
     hess = -jax.hessian(target)(u_hat, space)
     cov = onp.linalg.inv(onp.asarray(0.5 * (hess + hess.T)))
     chol = onp.linalg.cholesky(cov)
