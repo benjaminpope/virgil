@@ -260,24 +260,49 @@ class DefensiveMixture:
         new.modes = []
         return new
 
-    def log_q(self, x):
-        """``ln q(x)`` of one vector."""
+    def _log_t(self, x):
+        """The log density of every component's multivariate t at ``x``."""
         df, d = self.df, x.shape[-1]
         z = np.einsum("mij,mj->mi", self.linv, x[None] - self.mu)
-        lt = (  # log density of the multivariate t of every component at x
+        return (
             -0.5 * (df + d) * np.log1p(np.sum(z**2, -1) / df)
             - 0.5 * self.logdet
             + math.lgamma(0.5 * (df + d))
             - math.lgamma(0.5 * df)
             - 0.5 * d * math.log(df * math.pi)
         )
+
+    def log_q(self, x):
+        """``ln q(x)`` of one vector."""
         return np.logaddexp(
             self.log_alpha + self.log_prior(x),
-            self.log_beta + jax.scipy.special.logsumexp(self.log_w + lt),
+            self.log_beta
+            + jax.scipy.special.logsumexp(self.log_w + self._log_t(x)),
         )
 
-    def sample(self, key, n):
-        """``n`` exact draws from ``q``."""
+    def log_components(self, x):
+        """``ln q_c(x)`` of every component, ``(M_pad + 1,)``: ``c = 0`` is the
+        prior share ``α π`` and ``c = 1 + m`` the ``m``-th mode or image
+        (``-inf`` where padded); ``q = Σ_c q_c``."""
+        return np.concatenate(
+            [
+                (self.log_alpha + self.log_prior(x))[None],
+                self.log_beta + self.log_w + self._log_t(x),
+            ]
+        )
+
+    def masses(self, prior_scale):
+        """The inverse mass matrix (covariance) of every component,
+        ``(M_pad + 1, d, d)``: ``diag(prior_scale)`` for the prior share and
+        the scale matrix ``g Σ_m gᵀ`` of each mode or image (the identity where
+        padded: never drawn)."""
+        scale = np.einsum("mij,mkj->mik", self.chol, self.chol)
+        prior = np.diag(np.asarray(prior_scale, self.mu.dtype))
+        return np.concatenate([prior[None], scale])
+
+    def sample_labelled(self, key, n):
+        """``n`` exact draws from ``q`` with their component: ``{"x": (n, d),
+        "c": (n,)}`` (``c`` indexes ``log_components``)."""
         k = jax.random.split(key, 4)
         logits = np.concatenate(
             [self.log_alpha[None], self.log_beta + self.log_w]
@@ -293,9 +318,12 @@ class DefensiveMixture:
             / (np.sqrt(g)[:, None])
         )
         prior = self.sample_prior(k[3], n)
-        if self.d == 0:
-            return prior
-        return np.where((comp == 0)[:, None], prior, t)
+        x = prior if self.d == 0 else np.where((comp == 0)[:, None], prior, t)
+        return {"x": x, "c": comp}
+
+    def sample(self, key, n):
+        """``n`` exact draws from ``q``."""
+        return self.sample_labelled(key, n)["x"]
 
 
 @functools.partial(jax.jit, static_argnames=("log_target", "inliers_fn", "n"))
@@ -354,9 +382,16 @@ def importance_evidence(
     jax.jit, static_argnames=("log_target", "n_draws", "n_moves", "n_warm")
 )
 def _move_kernel(
-    log_target, theta, x, log_w, inv_mass, key, eps0, n_draws, n_moves, n_warm
+    log_target, theta, x, log_w, inv_mass, key, eps0, n_draws, n_moves, n_warm,
+    mixture=None,
 ):  # fmt: skip
-    """Systematic resample, dual-averaged warm-up, then ``n_moves`` HMC steps."""
+    """Systematic resample, dual-averaged warm-up, then ``n_moves`` HMC steps.
+
+    With a ``mixture``, ``inv_mass`` is one covariance per component and each
+    step first redraws every draw's component ``c ~ q_c(x) / q(x)`` and moves
+    ``x`` given ``c`` with mass ``inv_mass[c]``, on ``p(x) q_c(x) / q(x)``: the
+    marginal over ``c`` is ``p``, so the moves leave the posterior invariant.
+    """
     k_res, k_warm, k_move = jax.random.split(key, 3)
     w = np.exp(log_w - jax.scipy.special.logsumexp(log_w))
     u = (jax.random.uniform(k_res, ()) + np.arange(n_draws)) / n_draws
@@ -364,6 +399,21 @@ def _move_kernel(
     logdensity = lambda v: log_target(v, theta)  # noqa: E731
     kernel = hmc.build_kernel()
     states = jax.vmap(lambda v: hmc.init(v, logdensity))(parts)
+
+    def one(kk, s, e, n_leap):
+        if mixture is None:
+            return kernel(kk, s, logdensity, e, inv_mass, n_leap)
+        k_c, kk = jax.random.split(kk)
+        c = jax.random.categorical(k_c, mixture.log_components(s.position))
+
+        def given_c(v):  # the stored density depends on the label: re-init
+            return (
+                logdensity(v) + mixture.log_components(v)[c] - mixture.log_q(v)
+            )
+
+        return kernel(
+            kk, hmc.init(s.position, given_c), given_c, e, inv_mass[c], n_leap
+        )
 
     def step(states, k, eps, jitter):
         n_leap = np.clip(np.ceil(0.5 * np.pi / eps), 1, L_MAX).astype(int)
@@ -373,9 +423,7 @@ def _move_kernel(
         keys = jax.random.split(
             jax.random.fold_in(k, 1), states.position.shape[0]
         )
-        new, info = jax.vmap(
-            lambda kk, s: kernel(kk, s, logdensity, e, inv_mass, n_leap)
-        )(keys, states)
+        new, info = jax.vmap(lambda kk, s: one(kk, s, e, n_leap))(keys, states)
         return new, info.acceptance_rate.mean()
 
     da_init, da_update, da_final = dual_averaging.dual_averaging()
@@ -403,7 +451,14 @@ def _move_kernel(
 
 
 def resample_move(
-    log_target, theta, ev, key, n_draws=N_POST, n_moves=N_HMC, cov=None
+    log_target,
+    theta,
+    ev,
+    key,
+    n_draws=N_POST,
+    n_moves=N_HMC,
+    cov=None,
+    mixture=None,
 ):
     """The posterior draws of ``ev`` after resampling and moving them.
 
@@ -413,6 +468,9 @@ def resample_move(
     ``±JITTER``, trajectory ``⌈π/(2ε)⌉`` capped at ``L_MAX``, mass matrix
     ``cov`` (the dominant mode's, else the weighted sample covariance). The
     weighted draws are already exact: the moves only rejuvenate duplicates.
+    With the ``mixture`` that made ``ev``, ``cov`` is its ``(K, d, d)``
+    ``masses`` and each draw is moved with the mass of its mixture component
+    (a Gibbs-redrawn label), not one mass for every image.
 
     Source: Gilks & Berzuini (2001), Hoffman & Gelman (2014), Neal (2011).
     """
@@ -427,6 +485,6 @@ def resample_move(
     d = x.shape[1]
     out, acc, eps = _move_kernel(
         log_target, theta, x, lw, np.asarray(cov, x.dtype), key,
-        0.5 / math.sqrt(d), n_draws, n_moves, N_WARM,
+        0.5 / math.sqrt(d), n_draws, n_moves, N_WARM, mixture,
     )  # fmt: skip
     return Move(onp.asarray(out), float(acc), float(eps), n_moves)

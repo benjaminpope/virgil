@@ -1803,8 +1803,8 @@ def decode_particles(result):
 
 
 def _draw(fit, key):
-    """Resample-move posterior draws of a fit, with the mass matrix of its
-    dominant mode (the highest Laplace ``ln Z``, not the highest peak). The
+    """Resample-move posterior draws of a fit, each draw with the mass of its
+    mixture component (§6.15). The
     draws of a cell with a finished SMC are its particles, resampled by their
     weights (§6.15)."""
     if fit.smc is not None and not fit.smc.stopped:
@@ -1814,12 +1814,15 @@ def _draw(fit, key):
         idx = onp.minimum(
             onp.searchsorted(onp.cumsum(w / w.sum()), pos), len(w) - 1
         )
-        return onp.asarray(fit.smc.particles)[idx]
-    cov = None
-    if fit.modes:
-        cov = max(fit.modes, key=laplace_log_evidence).cov
+        return onp.asarray(fit.smc.particles["x"])[idx]
+    cov, mixture = None, None
+    if fit.modes:  # each draw moves with the mass of its mixture component
+        mixture = _mixture(fit.space, [*fit.modes, *fit.shared])
+        cov = mixture.masses(_prior_scale(fit.space.d))
     with run_in(onp.dtype(fit.space.dtype).name):
-        move = resample_move(_target, fit.space, fit.evidence, key, cov=cov)
+        move = resample_move(
+            _target, fit.space, fit.evidence, key, cov=cov, mixture=mixture
+        )
     fit.move = move
     if move.stuck:
         warnings.warn(
@@ -1856,40 +1859,69 @@ def _cell_evidence(space, modes, key, n_is):
 
 
 SMC_ERROR = ESS_FAIL**-0.5  # sd(ln Ẑ) ≈ ESS^(-1/2) at ESS_FAIL (§6.15)
+SMC_STEPS = (5, 5, 10, 10)  # HMC steps per stage of each replicate (§6.15)
+Z_MIXING = 2.326  # z(0.99): the per-cell false-flag rate of the mixing check
 
 
 def _smc_error(res):
-    """``√max(genealogy variance, Δ²/4)`` of a two-replicate SMC, with Δ the
-    difference of the replicates' ``ln Ẑ``: ``Δ²/4`` is the variance of the
-    mean of two independent runs, a check that does not depend on the
-    genealogy (§6.15)."""
-    delta = float(onp.ptp(res.log_z_replicates))
-    var = res.log_z_variance
-    return math.sqrt(max(delta**2 / 4, var if var == var else 0.0))
+    """``√max(V_LW, V_floor, V_rep)`` of the replicated SMC: the genealogy,
+    ESS-floor and replicate variances of ``ln Ẑ`` (§6.15)."""
+    terms = [
+        res.log_z_variance,
+        res.log_z_floor_variance,
+        res.log_z_rep_variance,
+    ]
+    return math.sqrt(max(v for v in terms if v == v))
 
 
 def _smc_unreliable(res):
-    """A SMC run that stopped, has no usable genealogy error, or whose error
-    (``_smc_error``) is above the sd that ``ESS_FAIL`` implies."""
+    """A SMC run that stopped, has no usable genealogy error, whose error
+    (``_smc_error``) is above the sd that ``ESS_FAIL`` implies, or whose
+    doubled-mutation replicates sit significantly above the others (the
+    mixing check, ``Z_MIXING``)."""
     return bool(
         res.stopped
         or res.variance_degenerate
         or not _smc_error(res) <= SMC_ERROR
+        or res.mixing_z > Z_MIXING
     )
 
 
-def _run_smc(space, mixture, key, n, max_seconds):
-    """Tempered SMC from ``mixture`` (normalized, sampleable) to the target:
-    ``π_β ∝ q^(1-β) (prior·L)^β`` (§6.15). Two independent replicates of ``n``
-    particles each."""
+def _prior_scale(d):
+    """The variance of each chart coordinate under ``_log_prior``: the
+    logistic's π²/3 for ``w_P, w_a, w_f, w_s``, 1 for ``y_z`` (standard normal)
+    and for ``y_ζ`` (no variance: its median ``|y|²`` is 1)."""
+    v = onp.ones(d)
+    for i in (0, 5, 8, *range(9, d)):
+        v[i] = math.pi**2 / 3.0
+    return v
 
-    def loglike(x):
-        return _target(x, space) - mixture.log_q(x)
+
+def _run_smc(space, mixture, key, n, max_seconds, prior_scale):
+    """Tempered SMC from ``mixture`` (normalized, sampleable) to the target,
+    ``π_β ∝ q^(1-β) (prior·L)^β``, on particles ``(x, c)`` augmented with their
+    mixture component: ``π̃_β(x, c) ∝ q_c(x) (p̃/q)^β`` has the marginal ``π_β``
+    and the normalizer ``Z_β``, so ``Ẑ`` still estimates ``Z_N``. HMC runs on
+    ``x`` given ``c`` with the mass of component ``c``; a Gibbs step redraws
+    ``c`` (§6.15). ``len(SMC_STEPS)`` replicates of ``n`` particles."""
+
+    def logprior(p):
+        return mixture.log_components(p["x"])[p["c"]]
+
+    def loglike(p):
+        return _target(p["x"], space) - mixture.log_q(p["x"])
+
+    def label_gibbs(key, p, logdensity):
+        return {**p, "c": jax.random.categorical(
+            key, mixture.log_components(p["x"])
+        )}, None  # fmt: skip
 
     with run_in(onp.dtype(space.dtype).name):
         return tempered_smc(
-            mixture.log_q, loglike, mixture.sample, key=key, n_particles=n,
-            replicates=2, max_seconds=max_seconds,
+            logprior, loglike, mixture.sample_labelled, key=key,
+            n_particles=n, replicates=len(SMC_STEPS), steps=SMC_STEPS,
+            max_seconds=max_seconds, moves=(label_gibbs,),
+            masses=mixture.masses(prior_scale),
         )  # fmt: skip
 
 
@@ -1908,7 +1940,7 @@ def smc_cell(fit, key, *, max_seconds=float("inf")):
     start = time.time()
     res = _run_smc(
         fit.space, _mixture(fit.space, [*fit.modes, *fit.shared]), key,
-        len(fit.evidence.log_w), max_seconds,
+        len(fit.evidence.log_w) // 2, max_seconds, _prior_scale(fit.space.d),
     )  # fmt: skip
     fit.smc, fit.smc_seconds = res, time.time() - start
     if not res.stopped:
@@ -2500,7 +2532,8 @@ def oracle_evidence(fit, x_true, key, n_is=N_IS):
         if ev.ess < ESS_FAIL and ev.n_nonfinite == 0:  # the same rule (§6.15)
             res = _run_smc(
                 space, _mixture(space, [*fit.modes, mode]),
-                jax.random.fold_in(key, 1), n_is, float("inf"),
+                jax.random.fold_in(key, 1), n_is // 2, float("inf"),
+                _prior_scale(space.d),
             )  # fmt: skip
             if not _smc_unreliable(res):
                 log_z, log_z_error, smc = res.log_z, _smc_error(res), True

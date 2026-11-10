@@ -2,6 +2,8 @@
 
 import functools
 import math
+import os
+import secrets
 import time
 import types
 
@@ -1538,28 +1540,375 @@ def _banana_toy(b=1.0, s0=1.0, s1=0.2):
     return space, mixture, math.log(2 * math.pi * s0 * s1)
 
 
-@x64
-def test_the_smc_recovers_the_evidence_where_a_poor_proposal_gives_a_few_draws():
-    """Fails on the pre-PR code (``_run_smc`` does not exist). The toy's shape
-    (b = 1, s1 = 0.2) was fixed before any run. The property is the one the
-    census needs, not a nominal 3σ: the SMC is accurate or flagged (design
-    §6.15 reports runs biased by ~0.2 nats that are not flagged)."""
-    from virgil.mode_search import ESS_FAIL
+def _seed(record_property):
+    """A fresh random seed for a statistical test (``VIRGIL_TEST_SEED`` replays
+    one), stored with the test; every assertion message prints it."""
+    seed = int(os.environ.get("VIRGIL_TEST_SEED", secrets.randbits(31)))
+    record_property("seed", seed)
+    return seed
 
-    space, mixture, truth = _banana_toy()
-    n = 4000
-    x = mixture.sample(jax.random.key(0), n)
-    lw = jax.vmap(lambda v: oc_cells._target(v, space) - mixture.log_q(v))(x)
-    lw = onp.asarray(lw)
-    w = onp.exp(lw - lw.max())
-    ess = w.sum() ** 2 / (w**2).sum()
-    # the IS flags itself (its delta-method error is large at this ESS)
-    assert ess < ESS_FAIL
-    res = oc_cells._run_smc(space, mixture, jax.random.key(0), n, float("inf"))
-    assert not res.stopped and not res.variance_degenerate
+
+def _banana_run(seed, s1, n=2000):
+    """The SMC on the banana (``s0 = 1``): ``(result, ln Z truth)``."""
+    space, mixture, truth = _banana_toy(s1=s1)
+    scale = onp.full(2, 400.0)  # the toy prior's variance
+    res = oc_cells._run_smc(
+        space, mixture, jax.random.key(seed), n, float("inf"), scale
+    )
+    return res, truth
+
+
+def _gauss_logpdf(x, mean, cov):
+    r = onp.linalg.solve(onp.linalg.cholesky(cov), (x - mean).T)
+    return (
+        -0.5 * onp.sum(r**2, 0)
+        - 0.5 * onp.linalg.slogdet(cov)[1]
+        - 0.5 * len(mean) * math.log(2 * math.pi)
+    )
+
+
+_RHO = 0.7  # weight of mode 1 (declared toy design)
+_LN_Z = 3.0
+
+
+class _ImageToy:
+    """``p̃ = Z (1/16) Σ_g [ρ N(gμ₁, gΣ₁gᵀ) + (1-ρ) N(gμ₂, gΣ₂gᵀ)]`` in the
+    10-D chart with the group of order 16, so ``ln Z`` is exact whether or not
+    the images overlap. ``Σ₁`` has condition number 10⁴ and a strong ``w_P``-
+    ``y_z`` correlation; ``μ₁`` has ``y_ζ = 0`` (on the ζ flip's fixed set: its
+    images overlap); ``μ₂`` is generic. The mixture ``q`` is on deliberately
+    poor modes: centres 1 sd along the top eigenvector, covariances × ½. The
+    numbers are declared toy design, not tuned."""
+
+    d = 10
+
+    def __init__(self):
+        from virgil.mode_search import DefensiveMixture
+
+        d = self.d
+        sd = 10.0 ** (-2.0 * onp.arange(d) / (d - 1))  # 1 … 0.01
+        corr = onp.eye(d)
+        corr[0, 1] = corr[1, 0] = 0.9
+        self.cov = [sd[:, None] * corr * sd, onp.diag((0.5 * sd[::-1]) ** 2)]
+        self.mu = [
+            onp.array([1.0, -0.5, 0.3, 0.2, -0.4, 0.5, 0.0, 0.0, 0.3, -0.2]),
+            onp.array([-0.8, 0.4, -0.6, 0.5, 0.3, -0.2, 0.7, -0.4, 0.1, 0.3]),
+        ]
+        self.rho = [_RHO, 1.0 - _RHO]
+        self.maps = [onp.eye(d), *oc_cells._symmetry_images(d)]
+        self.means = [g @ m for m in self.mu for g in self.maps]
+        self.covs = [g @ c @ g.T for c in self.cov for g in self.maps]
+        self.weights = [r / 16.0 for r in self.rho for _ in self.maps]
+        chol = onp.linalg.cholesky(onp.array(self.covs))
+        means, linv = np.asarray(self.means), np.asarray(onp.linalg.inv(chol))
+        logdet = np.asarray(
+            2.0 * onp.log(onp.diagonal(chol, axis1=1, axis2=2)).sum(-1)
+        )
+        logw = np.log(np.asarray(self.weights))
+
+        def loglike(x):
+            z = np.einsum("mij,mj->mi", linv, x[None] - means)
+            lp = (
+                -0.5 * np.sum(z**2, -1)
+                - 0.5 * logdet
+                - 0.5 * d * math.log(2 * math.pi)
+            )
+            return _LN_Z + jax.scipy.special.logsumexp(logw + lp)
+
+        self.space = types.SimpleNamespace(
+            loglike=loglike, logprior=lambda x: 0.0 * x[0],
+            dtype=np.float64, d=d,
+        )  # fmt: skip
+        modes = []
+        for m, c, r in zip(self.mu, self.cov, self.rho):
+            top = onp.linalg.eigh(c)
+            shift = top[1][:, -1] * math.sqrt(top[0][-1])
+            poor = 0.5 * c
+            lap = math.log(r) - 0.5 * d * math.log(2 * math.pi)
+            lap -= 0.5 * onp.linalg.slogdet(poor)[1]
+            modes.append(Mode(m + shift, lap, poor, 2.0))
+        self.scale = onp.full(d, 100.0)
+
+        def log_prior(x):
+            return -0.5 * np.sum(x**2) / 100.0 - 0.5 * d * math.log(
+                2 * math.pi * 100.0
+            )
+
+        def sample_prior(key, n):
+            return 10.0 * jax.random.normal(key, (n, d))
+
+        self.mixture = DefensiveMixture(
+            modes, log_prior, sample_prior, images=oc_cells._symmetry_images(d),
+            dim=d,
+        )  # fmt: skip
+
+    def run(self, seed, n=2000):
+        return oc_cells._run_smc(
+            self.space, self.mixture, jax.random.key(seed), n, float("inf"),
+            self.scale,
+        )  # fmt: skip
+
+    def resp(self, x):
+        """Responsibilities ``(n, 32)`` of the target's components."""
+        lp = onp.stack(
+            [
+                math.log(w) + _gauss_logpdf(x, m, c)
+                for w, m, c in zip(self.weights, self.means, self.covs)
+            ],
+            1,
+        )
+        return onp.exp(lp - onp.logaddexp.reduce(lp, 1, keepdims=True))
+
+
+def _toy_failures(toy, res, seed):
+    """The checks (a)-(c) of the 16-image toy: a list of failure messages."""
+    out = []
     err = oc_cells._smc_error(res)
-    assert abs(res.log_z - truth) < 3 * err or oc_cells._smc_unreliable(res)
-    assert abs(res.log_z - truth) < 1.0  # not the IS's few draws
+    if oc_cells._smc_unreliable(res):
+        out.append(f"flagged unreliable (err {err:.3g})")
+    if not abs(res.log_z - _LN_Z) <= 8 * err:
+        out.append(f"|ln Z - truth| = {abs(res.log_z - _LN_Z):.3g} > 8 err")
+    x = onp.asarray(res.particles["x"])
+    w = onp.asarray(res.weights, float)
+    w = w / w.sum()
+    r = toy.resp(x)[:, :16]  # mode 1, its 16 images
+    ess = 1.0 / onp.sum(w**2)
+    for g in range(16):
+        p = float(w @ r[:, g])
+        if abs(p - _RHO / 16) > 8 * math.sqrt(p * (1 - p) / ess):
+            out.append(f"image {g}: weight {p:.4f} vs {_RHO / 16:.4f}")
+    # the mean and covariance of g^-1 x over mode 1's particles
+    wg = (w[:, None] * r).T.ravel()
+    xg = onp.concatenate([x @ g for g in toy.maps])  # g orthogonal: g^-1 = g^T
+    wg = wg / wg.sum()
+    ess_g = 1.0 / onp.sum(wg**2)
+    mean = wg @ xg
+    cov = ((xg - mean) * wg[:, None]).T @ (xg - mean)
+    sig = toy.cov[0]
+    se_m = onp.sqrt(onp.diag(sig) / ess_g)
+    if onp.any(onp.abs(mean - toy.mu[0]) > 8 * se_m):
+        out.append("mean of g^-1 x off")
+    se_c = onp.sqrt((onp.outer(onp.diag(sig), onp.diag(sig)) + sig**2) / ess_g)
+    if onp.any(onp.abs(cov - sig) > 8 * se_c):
+        out.append("covariance of g^-1 x off")
+    return [f"seed {seed}: {m}" for m in out]
+
+
+def test_the_symmetry_group_is_a_group_of_orthogonal_maps_with_null_fixed_sets():
+    maps = [onp.eye(10), *oc_cells._symmetry_images(10)]
+    assert len(maps) == 16
+    keys = {onp.round(m, 9).tobytes() for m in maps}
+    assert len(keys) == 16
+    for g in maps:
+        assert onp.allclose(g @ g.T, onp.eye(10))
+        assert abs(abs(onp.linalg.det(g)) - 1.0) < 1e-12
+        # the product of two maps is a map (closure)
+        assert onp.round(g @ maps[3], 9).tobytes() in keys
+    for g in maps[1:]:  # a proper fixed subspace: measure zero
+        assert onp.linalg.matrix_rank(g - onp.eye(10)) >= 1
+
+
+@x64
+def test_the_chart_prior_is_invariant_under_the_group():
+    rng = onp.random.default_rng(1)
+    for _ in range(5):
+        x = np.asarray(rng.normal(size=10) * 2.0)
+        for g in oc_cells._symmetry_images(10):
+            assert float(
+                oc_cells._log_prior(np.asarray(g) @ x)
+            ) == pytest.approx(float(oc_cells._log_prior(x)), rel=1e-10)
+
+
+@x64
+def test_the_target_is_invariant_under_the_group_on_a_two_season_cell():
+    s = _summaries(_orbit(), TIMES, sigma=0.3)
+    _, cells = _cells(s, (10.0, 400.0))
+    cat = oc_cells._Catalogue(s, onp.full(len(TIMES), LOG_B))
+    cell = cells[len(cells) // 2]
+    space = oc_cells._Space(
+        cat, cell, 0.0, onp.asarray(TIMES, float) - TIMES[0], oc_cells.A_RANGE,
+        oc_cells.E_MAX, oc_cells.FLUX_FLOOR, 0.0, np.float64,
+    )  # fmt: skip
+    rng = onp.random.default_rng(0)
+    for _ in range(4):
+        x = np.asarray(rng.normal(size=space.d) * 0.7)
+        t0 = float(oc_cells._target(x, space))
+        for g in oc_cells._symmetry_images(space.d):
+            assert float(
+                oc_cells._target(np.asarray(g) @ x, space)
+            ) == pytest.approx(t0, rel=1e-10, abs=1e-10)
+
+
+@x64
+def test_the_labelled_mixture_matches_the_plain_one():
+    toy = _ImageToy()
+    mix = toy.mixture
+    key = jax.random.key(3)
+    plain = mix.sample(key, 4000)
+    lab = mix.sample_labelled(key, 4000)
+    assert onp.array_equal(onp.asarray(plain), onp.asarray(lab["x"]))
+    assert int(lab["c"].max()) <= mix.log_w.shape[0]
+    for x in onp.asarray(lab["x"][:8]):
+        comps = onp.asarray(mix.log_components(np.asarray(x)))
+        assert onp.logaddexp.reduce(comps) == pytest.approx(
+            float(mix.log_q(np.asarray(x))), rel=1e-12
+        )
+
+
+@x64
+def test_the_component_masses_are_the_images_of_the_mode_covariances():
+    toy = _ImageToy()
+    masses = onp.asarray(toy.mixture.masses(toy.scale))
+    assert onp.allclose(masses[0], onp.diag(toy.scale))
+    # the mixture's own modes are the poor ones: g Σ gᵀ for each image
+    for m_i, mode in enumerate(toy.mixture.modes):
+        for g_i, g in enumerate(toy.maps):
+            slot = 1 + m_i * 16 + g_i
+            assert onp.allclose(masses[slot], g @ mode.cov @ g.T, atol=1e-12)
+    assert onp.allclose(masses[-1], onp.eye(10))  # a padded slot
+
+
+def test_the_prior_scale_is_the_chart_prior_variance():
+    v = oc_cells._prior_scale(10)
+    assert v[[0, 5, 8, 9]] == pytest.approx(math.pi**2 / 3)
+    assert onp.all(v[1:5] == 1.0) and onp.all(v[6:8] == 1.0)
+
+
+@x64
+def test_the_label_gibbs_step_leaves_a_discrete_continuous_target_invariant():
+    """Exact enumeration: the label move ``c | x ∝ q_c(x)`` keeps
+    ``π̃(x, c) ∝ q_c(x) f(x)`` invariant for any ``f`` of ``x`` alone."""
+    xs = onp.linspace(-4.0, 4.0, 81)
+    comp = onp.stack(
+        [
+            0.3 * onp.exp(-0.5 * xs**2) / math.sqrt(2 * math.pi),
+            0.7
+            * onp.exp(-0.5 * ((xs - 1) / 0.5) ** 2)
+            / (0.5 * math.sqrt(2 * math.pi)),
+        ]
+    )
+    f = onp.exp(-0.2 * xs)
+    joint = comp * f  # π̃(x, c) on the grid
+    cond = comp / comp.sum(0)  # P(c | x)
+    after = cond * joint.sum(0)  # joint after redrawing c given x
+    assert onp.allclose(after, joint)
+
+
+@x64
+def test_the_smc_on_the_sixteen_image_toy_is_accurate_and_well_shaped(
+    record_property,
+):
+    """Not unreliable, ``|ln Ẑ - ln Z| ≤ 8 err``, every image of the dominant
+    mode has its ``ρ/16`` weight, and the pooled ``g⁻¹x`` has the mode's mean
+    and covariance (8 standard errors each: the failure probability is
+    below 3·10⁻³ per run, checked by the slow 1000-key test). A mis-shaped
+    mass fails the covariance; a ×16 or labelling bug is ``ln 16 = 2.8`` nats."""
+    seed = _seed(record_property)
+    toy = _ImageToy()
+    res = toy.run(seed, n=1000)  # half the census size: CI time
+    assert not res.stopped and not res.variance_degenerate, f"seed {seed}"
+    assert _toy_failures(toy, res, seed) == []
+
+
+@pytest.mark.slow
+@x64
+def test_the_toy_error_is_calibrated_over_a_thousand_keys(record_property):
+    """The coverage of the ``±1.96 err`` interval and the PITs of ``z`` are
+    reported; at most 3 of 1000 runs may fail rule (a) of the fast test (the
+    rule of three: a failure probability below 3·10⁻³ at 95%). If this fails
+    the estimator is investigated, not the threshold loosened."""
+    seed = _seed(record_property)
+    toy = _ImageToy()
+    fails, zs = 0, []
+    for i in range(1000):
+        res = toy.run(seed + i)
+        err = oc_cells._smc_error(res)
+        zs.append((res.log_z - _LN_Z) / err)
+        fails += bool(
+            oc_cells._smc_unreliable(res) or abs(res.log_z - _LN_Z) > 8 * err
+        )
+    zs = onp.array(zs)
+    record_property("coverage_95", float(onp.mean(onp.abs(zs) <= 1.96)))
+    record_property("ks_p", float(stats.kstest(zs, "norm").pvalue))
+    assert fails <= 3, f"seed {seed}: {fails} of 1000 failed rule (a)"
+
+
+@pytest.mark.slow
+@x64
+@pytest.mark.parametrize("s1", [0.2, 1.0])
+def test_the_banana_smc_is_accurate_or_flagged_over_200_keys(
+    s1, record_property
+):
+    """Among the runs called reliable, the count with ``|dev| > 4 err + 0.01``
+    is not above ``Binomial(n_reliable, 0.01)`` at ``p < 0.01`` (design §14).
+    The fraction flagged, the coverage of the reliable runs and the stage
+    counts are reported."""
+    seed = _seed(record_property)
+    n_rel = bad = n_flag = 0
+    cover, stages = [], []
+    for i in range(200):
+        res, truth = _banana_run(seed + i, s1)
+        stages.append(len(res.betas[0]))
+        if res.stopped or oc_cells._smc_unreliable(res):
+            n_flag += 1
+            continue
+        err = oc_cells._smc_error(res)
+        n_rel += 1
+        bad += abs(res.log_z - truth) > 4 * err + 0.01
+        cover.append(abs(res.log_z - truth) <= 1.96 * err)
+    record_property("fraction_flagged", n_flag / 200)
+    record_property(
+        "coverage_reliable", float(onp.mean(cover)) if cover else None
+    )
+    record_property("median_stages", float(onp.median(stages)))
+    assert stats.binom.sf(bad - 1, n_rel, 0.01) >= 0.01, (
+        f"seed {seed} s1={s1}: {bad} of {n_rel} reliable runs off by "
+        f"> 4 err + 0.01 ({n_flag} flagged)"
+    )
+
+
+@pytest.mark.slow
+@x64
+def test_the_resample_move_draws_keep_the_image_weights_and_shape(
+    record_property,
+):
+    """A1c: importance draws moved with each draw's own component mass pass
+    the toy's weight and covariance checks."""
+    from virgil.mode_search import resample_move
+
+    seed = _seed(record_property)
+    toy = _ImageToy()
+    n = 20000
+    x = toy.mixture.sample(jax.random.key(seed), n)
+    lw = jax.vmap(
+        lambda v: oc_cells._target(v, toy.space) - toy.mixture.log_q(v)
+    )(x)
+    ev = types.SimpleNamespace(x=x, log_w=onp.asarray(lw))
+    move = resample_move(
+        oc_cells._target, toy.space, ev, jax.random.key(seed + 1),
+        cov=toy.mixture.masses(toy.scale), mixture=toy.mixture,
+    )  # fmt: skip
+    draws = onp.asarray(move.draws)
+    w = onp.exp(ev.log_w - onp.max(ev.log_w))
+    ess = float(w.sum() ** 2 / (w**2).sum())
+    r = toy.resp(draws)[:, :16]
+    xg = onp.concatenate([draws @ g for g in toy.maps])
+    wg = (r / len(draws)).T.ravel()
+    wg = wg / wg.sum()
+    mean = wg @ xg
+    cov = ((xg - mean) * wg[:, None]).T @ (xg - mean)
+    se_c = onp.sqrt(
+        (
+            onp.outer(onp.diag(toy.cov[0]), onp.diag(toy.cov[0]))
+            + toy.cov[0] ** 2
+        )
+        / max(ess, 1.0)
+    )
+    assert onp.all(onp.abs(cov - toy.cov[0]) <= 8 * se_c), f"seed {seed}"
+    p = r.mean(0)
+    assert onp.all(
+        onp.abs(p - _RHO / 16) <= 8 * onp.sqrt(p * (1 - p) / max(ess, 1.0))
+    ), f"seed {seed}"
 
 
 class _FakeFit:
@@ -1650,19 +1999,32 @@ def test_the_smc_rounds_end_and_run_each_cell_at_most_once(
     assert fits[0].unreliable == (not clears)
 
 
-def test_the_replicate_check_flags_a_run_the_genealogy_error_passes():
-    """Two replicates 1 nat apart with a small genealogy variance: the
-    genealogy error alone (0.03) passes, Δ/2 = 0.5 > ``SMC_ERROR`` fails.
-    Fails on the pre-PR code (``_smc_error`` does not exist)."""
-    res = types.SimpleNamespace(
+def _smc_res(**kw):
+    base = dict(
         stopped=False, variance_degenerate=False, log_z_variance=1e-3,
-        log_z_replicates=onp.array([0.0, 1.0]),
+        log_z_floor_variance=1e-3, log_z_rep_variance=1e-3, mixing_z=0.0,
     )  # fmt: skip
-    assert math.sqrt(res.log_z_variance) < oc_cells.SMC_ERROR
-    assert oc_cells._smc_error(res) == pytest.approx(0.5)
-    assert oc_cells._smc_unreliable(res)
-    res.log_z_replicates = onp.array([0.0, 0.1])
-    assert not oc_cells._smc_unreliable(res)
+    return types.SimpleNamespace(**{**base, **kw})
+
+
+def test_the_smc_error_is_the_largest_of_the_three_variances():
+    """The genealogy, ESS-floor and replicate variances (§6.15); a replicate
+    scatter the genealogy does not see is what the replicate term adds."""
+    assert oc_cells._smc_error(_smc_res()) == pytest.approx(math.sqrt(1e-3))
+    assert not oc_cells._smc_unreliable(_smc_res())
+    big = _smc_res(log_z_rep_variance=0.5)
+    assert oc_cells._smc_error(big) == pytest.approx(math.sqrt(0.5))
+    assert oc_cells._smc_unreliable(big)
+    # an unusable genealogy (nan) does not hide the floor
+    assert oc_cells._smc_error(_smc_res(log_z_variance=float("nan"))) > 0
+
+
+def test_the_mixing_check_flags_a_deficit_that_doubling_the_mutation_removes():
+    """``mixing_z`` above ``z(0.99) = 2.326`` is unreliable; below it, not."""
+    assert oc_cells.Z_MIXING == pytest.approx(stats.norm.ppf(0.99), abs=1e-3)
+    assert oc_cells._smc_unreliable(_smc_res(mixing_z=2.4))
+    assert not oc_cells._smc_unreliable(_smc_res(mixing_z=2.2))
+    assert not oc_cells._smc_unreliable(_smc_res(mixing_z=float("nan")))
 
 
 # a narrow mode of a stub fit: its mass never crosses a cell edge (no shared mode)

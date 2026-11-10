@@ -2067,6 +2067,47 @@ used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_cel
 note = "Ann. Appl. Probab. 31, 1021; extends the Eve-index variance estimator to SMC whose tempering schedule is chosen adaptively from the particles"
 
 
+[ref.pompe2020]
+authors = "Pompe, Holmes & Łatuszyński"
+year = 2020
+title = "A framework for adaptive MCMC targeting multimodal distributions"
+arxiv = "1812.02609"
+doi = "10.1214/19-AOS1916"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc", "virgil.orbit_cells:smc_cell"]
+note = "Ann. Statist. 48, 2930; the mode-labelled augmented target: each particle carries its component and is moved with that component's proposal"
+
+[ref.chopin2004]
+authors = "Chopin"
+year = 2004
+title = "Central limit theorem for sequential Monte Carlo methods and its application to Bayesian inference"
+doi = "10.1214/009053604000000698"
+verified = true
+verified_via = "ads"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Ann. Statist. 32, 2385; the asymptotic variance of the SMC normalizer, whose perfectly-mixing floor is the sum of 1/ESS_t - 1/N"
+
+[ref.berard2014]
+authors = "Bérard, Del Moral & Doucet"
+year = 2014
+title = "A lognormal central limit theorem for particle approximations of normalizing constants"
+doi = "10.1214/EJP.v19-3428"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Electron. J. Probab. 19; the log of the SMC normalizer estimate is asymptotically normal with the variance of the floor term"
+
+[ref.chopin2020]
+authors = "Chopin & Papaspiliopoulos"
+year = 2020
+title = "An Introduction to Sequential Monte Carlo"
+doi = "10.1007/978-3-030-47845-2"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Springer Series in Statistics; the check of a tempered SMC against its own number of MCMC steps"
+
 [ref.fischler1981]
 authors = "Fischler & Bolles"
 year = 1981
@@ -2199,7 +2240,7 @@ title = "MCMC using Hamiltonian dynamics"
 arxiv = "1206.1901"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.mode_search:resample_move"]
+used_in = ["virgil.mode_search:resample_move", "virgil.smc:tempered_smc"]
 note = "Handbook of Markov Chain Monte Carlo, ch. 5; randomized step size and trajectory length for HMC"
 
 [ref.talts2018]

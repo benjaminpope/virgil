@@ -1595,6 +1595,52 @@ caps are those of `smc.py`. Because q is normalized, Ẑ estimates ln Z_N, the q
 that bounds the IS weights, so the first stone is no worse than the defensive IS and the later ones move particles from
 q towards the mode along the curved ridge, which a single importance step cannot do.
 
+**Label augmentation and the mass matrix.** One inverse mass matrix for the whole cloud is the weighted covariance of
+every particle. In a cell that cloud spans the 16 symmetry images of each mode (`_mixture` adds them) and the prior
+share (α = 0.1), so that covariance measures the distance between images and the prior's width, not the width of a
+mode. The fix is to give each particle the label c of its mixture component and each label its own fixed mass. This
+follows the mode-labelled augmented target of Pompe, Holmes & Łatuszyński (2020). Write q = Σ_c q_c, with q_0 = α π (the
+prior share) and q_m = (1 − α) w_m t₅(μ_m, Σ_m) for each mode or image m. At stage β the SMC targets
+
+  π̃_β(x, c) ∝ q_c(x) (p̃(x)/q(x))^β.
+
+It is exact:
+
+1. *Marginal.* Σ_c π̃_β(x, c) = q^(1−β) p̃^β = π_β, the target above.
+2. *Normalizer.* ∫ Σ_c q_c (p̃/q)^β = Z_β, so the incremental weights (p̃/q)^Δβ, the schedule and Ẑ are those of the
+   unaugmented sampler (Del Moral, Doucet & Jasra 2006 allow any sequence of targets with invariant kernels): Ẑ still
+   estimates Z_N and no group-order factor enters.
+3. *Initial draws.* π̃_0(x, c) = q_c(x) is how `DefensiveMixture.sample_labelled` draws: the label first, then x.
+4. *Kernels, each invariant for π̃_β.* The label Gibbs step c | x ~ Categorical(q_c(x)/q(x)) (the log likelihood
+   ln p̃ − ln q does not depend on c). HMC on x given c with a fixed mass M_c, targeting q_c(x) (p̃/q)^β: HMC is
+   invariant for any fixed mass (Neal 2011, §5.2), and the mass depends on the auxiliary label, never on x, so no
+   position-dependent-metric correction is needed (Girolami & Calderhead 2011 is the contrast).
+5. *No symmetry is assumed.* The argument holds for any q. Overlapping images do not matter: a circular orbit sits at
+   y_ζ = 0, the fixed set of the ζ flip, and its two ζ images are two identical components, which the Gibbs step
+   handles. The symmetry matters for efficiency only: every image carries its own conjugated covariance g Σ_m gᵀ, so a
+   particle at any image is preconditioned by the right shape.
+
+The masses (inverse masses are covariances, Neal 2011 §4.1) are Σ_m, the Laplace covariance on `Mode.cov` conjugated by
+the image (the t₅'s scale matrix, not its 5/3-inflated covariance: the Laplace covariance approximates the target mode),
+and for the prior share the chart prior's variances from `_prior_scale`: π²/3 for the logistic coordinates w_P, w_a, w_f,
+w_s; 1 for y_z (standard normal); 1 for y_ζ (its density (1/π)(1 + |y|²)⁻² has no variance and its median |y|² is 1).
+The step size and the trajectory length keep the ESJD pretuning of `smc.py` (Buchholz, Chopin & Jacob 2021), measured
+in each particle's own metric M_c⁻¹. In `smc.py` the stack of label masses is one shared parameter of the HMC step,
+which indexes it by the particle's label.
+
+*Rejected: one fundamental domain, Ẑ × 16.* (a) Folding back into the domain is exact only for a G-equivariant kernel,
+which needs g M gᵀ = M for all 16 g; the group flips the signs of y_z and y_ζ, so an invariant M has no covariance
+between those blocks and (w_P, w_a, w_f, w_s), which removes the period–orientation correlations that make the cell
+hard. (b) Rejecting proposals outside the domain is exact (Neal 2011, §5.5.1) but fails where the mass is: a fixed
+point of a group element lies on the boundary of every fundamental domain, the ζ flip fixes y_ζ = 0 (e = 0), and
+near-circular or poorly constrained e are common. (c) Restricting q to the domain and renormalizing needs no ×16 and
+restricting without renormalizing needs ×16: a place for a bug.
+
+*The IS draws.* `_draw` gives `resample_move` the same augmentation: each resampled point gets a label
+c ~ q_c(x)/q(x) and the mass M_c, HMC runs on x given c with target p̃(x) q_c(x)/q(x), and the label is redrawn between
+moves. This changes the draws of every cell with modes (not ln Ẑ): before, every draw used the dominant mode's
+covariance, wrong in sign pattern for 15 of its 16 images.
+
 **Trigger.** A cell is run through the SMC only if (i) its IS has ESS < ESS_FAIL, (ii) its target is finite
 (`nonfinite` false), and (iii) it matters under §6.6. The last depends on every cell's estimate, so the cells are
 processed in rounds: all cells by IS; SMC the low-ESS cells that matter; recompute `matters` with the new estimates;
@@ -1610,13 +1656,14 @@ triggered keeps today's IS estimator. The IS draws of a triggered cell are disca
 with the SMC: the average would re-enter the selection).
 
 **Failure.** The SMC'd cell is `cell-unreliable` if the run `stopped` (time or stage cap), is `variance_degenerate`
-(the Lee & Whiteley estimator unusable), or its error exceeds 1/√ESS_FAIL. That threshold is the sd that ESS_FAIL
-already implies by sd(ln Ẑ) ≈ ESS^(−1/2) (§6.6): ESS_FAIL = 10 ⇒ sd 0.316. If stopped, the IS ln Ẑ is kept
-(finite, flagged). `cell-at-floor` stays as the IS sentinel: it reads the IS draws, never the SMC. The `matters` rule
-and the system failure rule are unchanged; only the evidence and the flag of a triggered cell change.
+(the Lee & Whiteley estimator unusable), its error (below) exceeds 1/√ESS_FAIL, or the mixing check fires. The
+threshold is the sd that ESS_FAIL already implies by sd(ln Ẑ) ≈ ESS^(−1/2) (§6.6): ESS_FAIL = 10 ⇒ sd 0.316. If
+stopped, the IS ln Ẑ is kept (finite, flagged). `cell-at-floor` stays as the IS sentinel: it reads the IS draws, never
+the SMC. The `matters` rule and the system failure rule are unchanged; only the evidence and the flag of a triggered
+cell change.
 
-**Draws.** The posterior draws of a triggered cell are the SMC particles at β = 1, resampled by their weights to N_POST
-(systematic), with no `resample_move`: they were moved at every stage.
+**Draws.** The posterior draws of a triggered cell are the SMC particles' x at β = 1, resampled by their weights to
+N_POST (systematic), with no `resample_move`: they were moved at every stage.
 
 **Time.** The SMC takes the remaining `max_seconds` of `position_cells` as its own cap (the existing budget, no new
 constant); a run that reaches it is `stopped`.
@@ -1632,18 +1679,34 @@ truth −0.38, −0.12, +0.11, +0.50 nats against reported errors 0.04, 0.12, 0.
 understated when the mutations mix poorly on a thin curved target (the first run is 9 errors out). So the failure
 rule of §6.15 is necessary, not sufficient, and the census calibration test (PIT on `ok` systems) is the judge.
 
-**Replicate check (review fix, 2026-11-08, before any census run).** The SMC runs two independent replicates of N_IS
-particles (fresh keys; 2× cost in SMC'd cells only). ln Ẑ is the log of the mean of the two Ẑ, as `smc.py` reports it.
-The error is √max(genealogy variance, Δ²/4), Δ the difference of the replicates' ln Ẑ: Δ²/4 is the variance of the mean
-of two independent runs and needs no new constant. Same toy, six fresh keys (100–105): the true ln Z lies within 2
-reported errors in 2 of 6 runs with the genealogy error alone and in 2 of 6 with the new error; the rule flags 2 of 6
-(`unreliable`: error > 0.316). The four runs it does not flag deviate by −0.19 to −0.24 nats with errors 0.06–0.09:
-the two replicates agree because both are biased the same way (poor mixing lowers Ẑ consistently), which no
-two-replicate check can see. The check catches scatter, not shared bias. The calibration test of the census is the
-judge, and a miscalibrated SMC'd cell there is the evidence that the mutations (not the error) need work.
+**Error and mixing check (A2).** Ẑ is unbiased for any invariant kernel however poorly it mixes. Poor mixing does not bias
+Ẑ: it makes Ẑ heavy-tailed to the right, so a typical run's ln Ẑ sits low and the variance hides in rare large runs. The
+first toy above (−0.19 to −0.24 nats at errors 0.06–0.09 on four of six keys) is that signature, and two replicates
+rarely contain a tail run. No per-cell estimator can certify the absence of a rare tail; the census oracle check bounds
+it at population level. The SMC runs R = 4 independent replicates of N = N_IS/2 particles, replicates 1–2 with 5 HMC
+steps per stage and replicates 3–4 with 10 (`SMC_STEPS`; a declared budget, 1.5× the mutation of the earlier two runs
+of N_IS, spent only in SMC'd cells). ln Ẑ is the log of the mean of the Ẑ_r. With u_r = Ẑ_r / Σ Ẑ the variance of ln Ẑ
+is the largest of three terms:
 
-**Source.** Del Moral, Doucet & Jasra (2006); Jasra et al. (2011); Lee & Whiteley (2018); Hesterberg
-(1995).
+- V_LW = Σ u_r² v_r, v_r the genealogy estimate of var(Ẑ_r)/Z² (Lee & Whiteley 2018; Du & Guyader 2021).
+- V_floor = Σ u_r² Σ_t (1/ESS_t − 1/N), the asymptotic relative variance of Ẑ for kernels that mix perfectly (Chopin
+  2004; Bérard, Del Moral & Doucet 2014). Imperfect mixing normally raises it, so it is a floor, not a theorem-grade
+  lower bound for every kernel; with the conditional-ESS-½ schedule it is about T/N for T stages.
+- V_rep = c² s²/R, s² the sample variance of the ln Ẑ_r and c = t₃(0.975)/z(0.975) = 3.182/1.960 = 1.62 (derived: it
+  makes ±1.96 √V_rep the Student-t 95% interval of the replicate term, which has R − 1 = 3 degrees of freedom).
+
+The error is √max(V_LW, V_floor, V_rep). The mixing check, for bias the replicates share, compares the pooled ln Ẑ of
+the doubled-mutation half m₂ₛ with that of the other half mₛ, each with its own variance V = max(V_LW, V_floor):
+z_b = (m₂ₛ − mₛ)/√(V_S + V_2S), and the cell is unreliable if z_b > z(0.99) = 2.326 (a declared per-cell false-flag rate
+of 0.01; a flagged cell fails a system only if it matters). The rationale: a shared deficit comes from too little
+mutation, so doubling the mutation raises the typical ln Ẑ, while under adequate mixing the two halves estimate the same
+quantity (a standard convergence check against the method's own tuning; Chopin & Papaspiliopoulos 2020). Its power
+with two runs a side is weak: it is a backstop, not the guarantee. The decision-grade bound is the census (A4: the
+paired comparison and the oracle calibration of SMC'd true cells, design/orbit_census_criteria.md).
+
+**Source.** Del Moral, Doucet & Jasra (2006); Jasra et al. (2011); Lee & Whiteley (2018); Du & Guyader (2021);
+Hesterberg (1995); Pompe, Holmes & Łatuszyński (2020); Neal (2011); Girolami & Calderhead (2011); Chopin (2004); Bérard,
+Del Moral & Doucet (2014); Chopin & Papaspiliopoulos (2020); Buchholz, Chopin & Jacob (2021).
 
 
 ## 7. Pruning
@@ -1817,7 +1880,10 @@ run; changing one afterwards is a recorded decision.
 | sentinel | E_w[n_inliers] < m while the best mode has ≥ m inliers and its mass (ridge quadrature for a ridge, §6.10) lies W above K·b; fails the system only if the cell `matters` (§6.6) | derived | §6.1, §6.6 |
 | ESS_FAIL | 10 | inherited | `mode_search`; a cell fails only when also not negligible by the §6.10 bound |
 | SMC error limit | ESS_FAIL^(−1/2) ≈ 0.316 | derived | sd(ln Ẑ) ≈ ESS^(−1/2) at ESS_FAIL; failure of a SMC'd cell (§6.15) |
-| SMC time cap | the remaining `max_seconds` of `position_cells` | existing budget | no new constant (§6.15); schedule, particles (N_IS), mutations and stage cap are `smc.py`'s defaults |
+| SMC replicates and mutation | 4 × N_IS/2 particles; HMC steps 5, 5, 10, 10 (`SMC_STEPS`) | declared budget | 1.5× the mutation of the earlier two runs of N_IS, spent only in SMC'd cells (§6.15) |
+| SMC replicate-error factor | t₃(0.975)/z(0.975) = 1.62 | derived | makes ±1.96√V_rep the Student-t 95% interval of the replicate term (3 degrees of freedom) |
+| SMC mixing check | z(0.99) = 2.326 (`Z_MIXING`) | declared rate | per-cell false-flag rate 0.01 of the doubled-mutation comparison; a flagged cell fails a system only if it matters |
+| SMC time cap | the remaining `max_seconds` of `position_cells` | existing budget | no new constant (§6.15); the schedule and the stage cap are `smc.py`'s defaults |
 | HMC acceptance target | 0.8 | tolerance | dual averaging (Hoffman & Gelman 2014) |
 | HMC warm-up, moves per draw, L cap | 150, 5, 64 | budget | §6.3 |
 | step jitter | ±20 % | budget | Neal 2011 |

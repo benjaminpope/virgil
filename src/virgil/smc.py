@@ -34,6 +34,7 @@ import blackjax
 import jax
 import jax.numpy as np
 import numpy as onp
+from scipy import stats
 from blackjax.mcmc import hmc
 from blackjax.smc import resampling
 from blackjax.smc.pretuning import build_pretune, esjd
@@ -77,6 +78,23 @@ class SMCResult:
     variance_degenerate : bool
         The error estimate is unusable: all particles of a replicate share
         one ancestor, or the estimate is not positive. Use more particles.
+    log_z_floor_variance : float
+        ``Σ_r u_r² Σ_t (1/ESS_t − 1/N)`` over the replicates (``u_r`` the
+        replicates' normalized ``Ẑ_r``): the variance of ``Ẑ`` for kernels
+        that mix perfectly (Chopin 2004; Bérard, Del Moral & Doucet 2014).
+    log_z_rep_variance : float
+        ``(t₃(0.975) / z(0.975))² s² / R``, with ``s²`` the sample variance of
+        the replicates' ``log Ẑ_r`` (``nan`` for fewer than three): the
+        scatter of the replicates, widened for its ``R − 1`` degrees of
+        freedom.
+    mixing_z : float
+        With replicates at two different ``steps``, the pooled ``log Ẑ`` at the
+        larger ``steps`` minus that at the smaller, over its standard error
+        (``max`` of the genealogy and floor variances of each half): the
+        convergence check against the mutation length (Chopin &
+        Papaspiliopoulos 2020). ``nan`` otherwise.
+    steps_per_replicate : tuple of int
+        The HMC mutations per stage of each replicate.
     """
 
     particles: object
@@ -90,6 +108,10 @@ class SMCResult:
     stopped: bool
     undersampled: bool
     variance_degenerate: bool
+    log_z_floor_variance: float = float("nan")
+    log_z_rep_variance: float = float("nan")
+    mixing_z: float = float("nan")
+    steps_per_replicate: tuple = ()
 
 
 def _block(particles):
@@ -103,9 +125,13 @@ class _Position(NamedTuple):
 
 def _build(
     logprior, loglike, dtype, d, n_particles, target_ess, steps, tune, moves,
-    composite,
+    composite, masses,
 ):  # fmt: skip
-    """Jitted one-stage function: tune, mutate, reweight."""
+    """Jitted one-stage function: tune, mutate, reweight.
+
+    ``masses`` (``None``, or one covariance per label ``particle["c"]``) are the
+    fixed inverse mass matrices of the HMC; ``None`` sets it to the cloud's.
+    """
     step_size, leapfrogs, alpha = tune
     if composite:
         # Tuned HMC on the continuous block, then each of ``moves``.
@@ -123,6 +149,9 @@ def _build(
                 return logdensity_fn(
                     {**p, "x": x} if isinstance(p, dict) else x
                 )
+
+            if masses is not None:  # this label's mass: it never depends on x
+                inverse_mass_matrix = inverse_mass_matrix[p["c"]]
 
             new, info = hmc_kernel(
                 keys[0],
@@ -142,6 +171,16 @@ def _build(
             return _Position(p), info
 
         def measure(state):
+            if masses is not None:  # each particle's jump in its own metric
+                chol = np.linalg.cholesky(masses)
+
+                def own(prev, nxt, acc):
+                    r = jax.scipy.linalg.solve_triangular(
+                        chol[prev["c"]], prev["x"] - nxt["x"], lower=True
+                    )
+                    return acc * np.sum(r**2)
+
+                return jax.vmap(own)
             inner = esjd(state.parameter_override["inverse_mass_matrix"][0])
             return lambda prev, nxt, acc: inner(_block(prev), _block(nxt), acc)
 
@@ -152,7 +191,9 @@ def _build(
     initial = {
         "step_size": np.full((n_particles,), step_size, dtype),
         "num_integration_steps": np.full((n_particles,), leapfrogs, int),
-        "inverse_mass_matrix": np.eye(d, dtype=dtype)[None],
+        "inverse_mass_matrix": (
+            np.eye(d, dtype=dtype) if masses is None else masses
+        )[None],
     }
     sigma = {
         "step_size": np.asarray(step_size / 4, dtype),
@@ -184,6 +225,8 @@ def _build(
 
     @jax.jit
     def stage(key, state):
+        if masses is not None:
+            return algorithm.step(key, state)
         particles = _block(state.sampler_state.particles)
         weights = state.sampler_state.weights
         centred = particles - weights @ particles
@@ -248,27 +291,49 @@ def _run(key, init, stage, particles, max_stages, deadline):
     return None, None, onp.nan, betas, ess, True, onp.nan
 
 
+def _pool(log_zs, vs, fs):
+    """``(ln mean Ẑ_r, genealogy variance, floor variance)`` of ``ln`` of the
+    mean of the unbiased ``Ẑ_r``: the delta method with weights
+    ``u_r = Ẑ_r / Σ Ẑ`` and per-replicate relative variances ``vs`` (Lee &
+    Whiteley 2018, Theorem 1: ``var(Ẑ_r) ≈ Ẑ_r² v_r``) and ``fs``."""
+    shift = log_zs.max()
+    u = onp.exp(log_zs - shift)
+    u = u / u.sum()
+    log_z = float(shift + onp.log(onp.mean(onp.exp(log_zs - shift))))
+    return log_z, float(onp.sum(u**2 * vs)), float(onp.sum(u**2 * fs))
+
+
 def _smc(
     logprior, loglike, starts, key, n_particles, replicates, ess_target,
     steps, step_size, leapfrogs, alpha, max_stages, max_seconds, moves,
+    masses=None,
 ):  # fmt: skip
     deadline = time.monotonic() + max_seconds
-    # Built once: every replicate shares the compiled stage.
-    init, stage = _build(
-        logprior,
-        loglike,
-        _block(starts[0]).dtype,
-        _block(starts[0]).shape[1],
-        n_particles,
-        0.5,
-        steps,
-        (step_size, leapfrogs, alpha),
-        moves,
-        bool(moves) or isinstance(starts[0], dict),
-    )
+    per_run = [steps] * replicates if isinstance(steps, int) else list(steps)
+    if len(per_run) != replicates:
+        raise ValueError("steps needs one entry per replicate")
+    # Built once per distinct ``steps``: replicates share the compiled stage.
+    stages = {
+        n_steps: _build(
+            logprior,
+            loglike,
+            _block(starts[0]).dtype,
+            _block(starts[0]).shape[1],
+            n_particles,
+            0.5,
+            n_steps,
+            (step_size, leapfrogs, alpha),
+            moves,
+            bool(moves) or masses is not None or isinstance(starts[0], dict),
+            masses,
+        )
+        for n_steps in sorted(set(per_run))
+    }
     runs = [
-        _run(k, init, stage, start, max_stages, deadline)
-        for k, start in zip(jax.random.split(key, replicates), starts)
+        _run(k, *stages[n_steps], start, max_stages, deadline)
+        for k, start, n_steps in zip(
+            jax.random.split(key, replicates), starts, per_run
+        )
     ]
     stopped = any(run[5] for run in runs)
     betas = [onp.asarray(run[3]) for run in runs]
@@ -276,17 +341,37 @@ def _smc(
     if stopped:
         return SMCResult(
             None, None, onp.nan, onp.nan, onp.nan, onp.full(len(runs), onp.nan),
-            betas, ess, True, False, False,
+            betas, ess, True, False, False, steps_per_replicate=tuple(per_run),
         )  # fmt: skip
     log_zs = onp.array([run[2] for run in runs])
-    shift = log_zs.max()
-    log_z = float(shift + onp.log(onp.mean(onp.exp(log_zs - shift))))
-    # Delta method for the log of the mean of the unbiased Ẑ_r, with
-    # var(Ẑ_r) estimated by Ẑ_r² v_r (Lee & Whiteley 2018, Theorem 1).
-    u = onp.exp(log_zs - shift)
     vs = onp.array([run[6] for run in runs])
-    variance = float(onp.sum(u**2 * vs) / onp.sum(u) ** 2)
+    # Σ_t (1/ESS_t − 1/N): the variance of Ẑ_r / Z of a perfectly mixing
+    # tempered SMC (Chopin 2004; Bérard, Del Moral & Doucet 2014).
+    fs = onp.array([onp.sum(1.0 / e - 1.0 / n_particles) for e in ess])
+    log_z, variance, floor = _pool(log_zs, vs, fs)
     degenerate = not variance > 0
+    r = replicates
+    # The scatter of ln Ẑ_r, widened from the normal to the Student-t interval
+    # of its r − 1 degrees of freedom (ratio of the 97.5% points).
+    rep = (
+        float(
+            (stats.t.ppf(0.975, r - 1) / stats.norm.ppf(0.975)) ** 2
+            * onp.var(log_zs, ddof=1)
+            / r
+        )
+        if r > 1
+        else onp.nan
+    )
+    mixing = onp.nan
+    lo, hi = min(per_run), max(per_run)
+    if lo < hi:  # doubled mutation raises a deficit shared by the replicates
+        halves = []
+        for n_steps in (lo, hi):
+            keep = onp.array([k == n_steps for k in per_run])
+            m, v, f = _pool(log_zs[keep], vs[keep], fs[keep])
+            halves.append((m, max(v if v == v else 0.0, f)))
+        total = halves[0][1] + halves[1][1]
+        mixing = (halves[1][0] - halves[0][0]) / onp.sqrt(total)
     return SMCResult(
         jax.tree.map(lambda *a: np.concatenate(a), *[run[0] for run in runs]),
         np.concatenate([run[1] for run in runs]) / len(runs),
@@ -299,6 +384,10 @@ def _smc(
         False,
         any(e[-1] < ess_target * n_particles for e in ess),
         degenerate,
+        floor,
+        rep,
+        float(mixing),
+        tuple(per_run),
     )
 
 
@@ -323,6 +412,7 @@ def tempered_smc(
     max_stages=200,
     max_seconds=float("inf"),
     moves=(),
+    masses=None,
 ):
     """Temper the prior to prior × likelihood with adaptive SMC.
 
@@ -346,8 +436,10 @@ def tempered_smc(
         Fraction of ``n_particles`` below which the final ESS sets
         ``undersampled``. It is below the schedule's one half so that a
         healthy run, whose final ESS scatters about one half, is not flagged.
-    steps : int
-        HMC mutations per stage.
+    steps : int or sequence of int
+        HMC mutations per stage; a sequence gives each replicate its own (the
+        mixing check ``SMCResult.mixing_z`` compares the largest with the
+        smallest).
     leapfrogs, step_size, alpha
         Initial trajectory length, initial step size (default ``d**-0.25``)
         and the ESJD offset of the per-stage tuning (Buchholz et al. 2021).
@@ -360,12 +452,22 @@ def tempered_smc(
         current β. A move must leave that density invariant (a Gibbs update,
         or Metropolis-Hastings with its own acceptance); HMC moves only the
         continuous block.
+    masses : array, optional
+        ``(K, d, d)`` fixed inverse mass matrices (covariances), one for each
+        label ``particle["c"] ∈ [0, K)`` of dict particles. HMC moves ``x``
+        given the label with that label's mass: it depends on the auxiliary
+        label and never on ``x``, so each move leaves the target invariant
+        (Neal 2011, §5.2). The step size and trajectory are tuned on the jump
+        in each particle's own metric. ``None``: the mass is the cloud's
+        covariance. ``moves`` must leave the label's conditional invariant (a
+        Gibbs update of the label).
 
     Returns
     -------
     SMCResult
 
-    Source: Jasra et al. 2011; Buchholz, Chopin & Jacob 2021.
+    Source: Jasra et al. 2011; Buchholz, Chopin & Jacob 2021; Pompe, Holmes &
+    Łatuszyński 2020; Neal 2011.
     """
     keys = jax.random.split(key, replicates + 1)
     starts = [init_particles(k, n_particles) for k in keys[1:]]
@@ -376,7 +478,7 @@ def tempered_smc(
     )
     return _smc(
         logprior, loglike, starts, keys[0], n_particles, replicates, ess_target,
-        steps, step, leapfrogs, alpha, max_stages, max_seconds, moves,
+        steps, step, leapfrogs, alpha, max_stages, max_seconds, moves, masses,
     )  # fmt: skip
 
 
