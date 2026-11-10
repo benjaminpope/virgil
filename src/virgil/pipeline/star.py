@@ -1273,6 +1273,8 @@ def _fit_checks(fit, registry):
             reports[k]["chi2_reduced"],
             label=f"the {registry[k].label}",
             n=fit["n_independent"],
+            n_params=registry[k].n_params
+            + len(reports[k]["error_scales"] or {}),
         )
         for k in fit["names"]
     ]

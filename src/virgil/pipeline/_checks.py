@@ -95,42 +95,52 @@ CHI2_WARN_TAIL = 1e-3
 CHI2_FAIL_TAIL = 1e-6
 
 
-def chi2_limits(n, tail):
-    """The χ²/N bounds ``(lower, upper)`` that N degrees of freedom leave
-    with probability ``tail`` at each end, for data with correct errors.
+def chi2_limits(n, tail, n_params=0):
+    """The χ²/N bounds ``(lower, upper)`` that a best fit of ``n_params``
+    parameters to ``n`` data leaves with probability ``tail`` at each end,
+    for a correct model and errors.
 
-    The quantiles of χ²(N) over N. At large N both tend to 1 (the
-    spread is √(2/N)).
+    The best-fit χ² follows χ²(N − p), so the bounds are its quantiles
+    divided by N, the N of the reported χ²/N. At large N both tend to 1
+    (the spread is √(2/N)).
     """
     from scipy import stats
 
-    n = float(n)
+    dof = float(n) - n_params
     return (
-        float(stats.chi2.ppf(tail, n) / n),
-        float(stats.chi2.isf(tail, n) / n),
+        float(stats.chi2.ppf(tail, dof) / n),
+        float(stats.chi2.isf(tail, dof) / n),
     )
 
 
-def _chi2_bounds(n, warn, fail):
+def _chi2_bounds(n, warn, fail, n_params=None):
     """``(low_warn, high_warn, high_fail)`` of χ²/N.
 
-    Without ``n``: ``1/warn``, ``warn`` and ``fail``. With ``n``, each is
-    the wider of that fixed convention and the χ²(N) tail bound at
-    ``CHI2_WARN_TAIL`` / ``CHI2_FAIL_TAIL``. Few degrees of freedom scatter
-    widely, so the tail bound is the wider and avoids false alarms; at large
-    N the tail bound closes on 1, where a few per cent of error
-    misestimate is not actionable, so the fixed convention (errors wrong by
-    a factor √2) stays as the floor.
+    Without ``n``: ``1/warn``, ``warn`` and ``fail``. With ``n``, the high
+    limits are the wider of that fixed convention and the χ²(N − p) tail
+    bound at ``CHI2_WARN_TAIL`` / ``CHI2_FAIL_TAIL``, with p = ``n_params``
+    (0 if unknown, which is conservative: the tail is then too high, so
+    fewer alarms). The low limit widens to the lower tail bound only when
+    ``n_params`` is given: with p unknown the true degrees of freedom are
+    below N and the lower tail would alarm more often than stated. Few
+    degrees of freedom scatter widely, so the tail bounds are the wider
+    and avoid false alarms; at large N they close on 1, where a few per
+    cent of error misestimate is not actionable, so the fixed convention
+    (errors wrong by a factor √2) stays as the floor.
     """
     low_warn = 1.0 / warn
-    if n is not None and n > 0:
-        low_warn = min(low_warn, chi2_limits(n, CHI2_WARN_TAIL)[0])
-        warn = max(warn, chi2_limits(n, CHI2_WARN_TAIL)[1])
-        fail = max(fail, chi2_limits(n, CHI2_FAIL_TAIL)[1])
+    if n is not None and n - (n_params or 0) > 0:
+        p = n_params or 0
+        if n_params is not None:
+            low_warn = min(low_warn, chi2_limits(n, CHI2_WARN_TAIL, p)[0])
+        warn = max(warn, chi2_limits(n, CHI2_WARN_TAIL, p)[1])
+        fail = max(fail, chi2_limits(n, CHI2_FAIL_TAIL, p)[1])
     return low_warn, warn, fail
 
 
-def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0, n=None):
+def chi2_reduced(
+    name, chi2_red, *, label, warn=2.0, fail=5.0, n=None, n_params=None
+):
     """χ²/N on the quoted errors, even when error scales are fitted.
 
     Parameters
@@ -147,12 +157,16 @@ def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0, n=None):
         The number of independent observables. Given, the thresholds widen
         to the χ²(N) tail bounds at ``CHI2_WARN_TAIL`` and
         ``CHI2_FAIL_TAIL`` where those exceed ``warn`` and ``fail``.
+    n_params : int, optional
+        The fitted parameters, so that the best-fit χ² has N − p degrees
+        of freedom. Without it the high limits use N (conservative) and
+        the "errors likely overestimated" limit stays at ``1/warn``.
     """
     if not _finite(chi2_red):
         return Check(
             name, "fail", chi2_red, warn, f"χ²/N of {label} is not finite."
         )
-    low_warn, warn, fail = _chi2_bounds(n, warn, fail)
+    low_warn, warn, fail = _chi2_bounds(n, warn, fail, n_params)
     if chi2_red > fail:
         status, meaning = (
             "fail",
@@ -174,7 +188,9 @@ def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0, n=None):
     )
 
 
-def error_scale(scales, *, warn=2.0, fail=5.0, kind="fitted", n=None):
+def error_scale(
+    scales, *, warn=2.0, fail=5.0, kind="fitted", n=None, n_params=None
+):
     """Error-scale factors ``s``: fitted (``error_scale="fit"``) or estimated
     once by MacKay's rule (``"rescale"``, ``kind="estimated"``).
 
@@ -185,7 +201,7 @@ def error_scale(scales, *, warn=2.0, fail=5.0, kind="fitted", n=None):
     ``n`` (an int, or a mapping from scale name to its number of
     observables) makes the limits N-aware as in ``chi2_reduced``: ``s`` is
     √(χ²/N), so its limits are the square roots of the χ²/N ones, taken for
-    the scale that sets the worst value.
+    the scale that sets the worst value; ``n_params`` is as there.
     """
     values = [float(s) for s in scales.values()]
     worst = max(values, default=1.0) if all(map(_finite, values)) else math.nan
@@ -194,7 +210,7 @@ def error_scale(scales, *, warn=2.0, fail=5.0, kind="fitted", n=None):
         for k, v in scales.items():
             nk = n.get(k) if isinstance(n, dict) else n
             if nk and float(v) == worst:
-                _, w, f = _chi2_bounds(nk, warn**2, fail**2)
+                _, w, f = _chi2_bounds(nk, warn**2, fail**2, n_params)
                 warn, fail = math.sqrt(w), math.sqrt(f)
     if not _finite(worst):
         status = "fail"
@@ -1629,9 +1645,19 @@ def winner_flags(flags):
             None,
             "The winning band's evidence has no flags.",
         )
+    if any(f in _WINNER_INVALID for f in bad):
+        return Check(
+            "winner_flags",
+            "fail",
+            bad,
+            None,
+            f"The winning band's evidence carries {', '.join(bad)}: the "
+            "search found no mode, so its log Z and the margin over the "
+            "runner-up are not evidence.",
+        )
     return Check(
         "winner_flags",
-        "fail" if any(f in _WINNER_INVALID for f in bad) else "warn",
+        "warn",
         bad,
         None,
         f"The winning band's evidence carries {', '.join(bad)}: its log Z, "

@@ -1283,31 +1283,51 @@ def test_chi2_limits_are_the_quantiles_of_chi2_over_n():
 
 
 @pytest.mark.parametrize(
-    "n, chi2, status",
+    "n, n_params, chi2, status",
     [
-        (None, 3.0, "warn"),  # fixed convention without N
-        # N = 3: bounds (0.0081, 5.42, 10.2) from the 1e-3 / 1e-6 tails
-        (3, 3.0, "pass"),  # the fixed rule would warn
-        (3, 6.0, "warn"),
-        (3, 11.0, "fail"),
-        (3, 0.005, "warn"),  # below the lower 1e-3 tail
-        (3, 0.05, "pass"),  # the fixed rule would warn
+        (None, None, 3.0, "warn"),  # fixed convention without N
+        # N = 3, p unknown: high limits (5.42, 10.2) from the chi2(3) tails
+        (3, None, 3.0, "pass"),  # the fixed rule would warn
+        (3, None, 6.0, "warn"),
+        (3, None, 11.0, "fail"),
+        (3, None, 0.05, "warn"),  # low limit stays 1/2 without p
+        # N = 3, p = 1: dof 2; the low limit is the chi2(2) lower 1e-3 tail
+        (3, 1, 0.05, "pass"),
+        (3, 1, 0.0002, "warn"),
         # large N: the fixed 2 / 5 floor
-        (10**4, 1.5, "pass"),
-        (10**4, 3.0, "warn"),
-        (10**4, 6.0, "fail"),
+        (10**4, 0, 1.5, "pass"),
+        (10**4, 0, 3.0, "warn"),
+        (10**4, 0, 6.0, "fail"),
     ],
 )
-def test_chi2_reduced_thresholds_depend_on_n(n, chi2, status):
-    check = checks.chi2_reduced("chi2", chi2, label="the model", n=n)
+def test_chi2_reduced_thresholds_depend_on_n(n, n_params, chi2, status):
+    check = checks.chi2_reduced(
+        "chi2", chi2, label="the model", n=n, n_params=n_params
+    )
     assert _status(check) == status
 
 
 def test_chi2_reduced_small_n_is_wider_and_large_n_keeps_the_floor():
+    # p unknown: high limits from chi2(N), the low limit stays 1/warn
     low3, warn3, fail3 = checks._chi2_bounds(3, 2.0, 5.0)
-    assert warn3 > 2.0 and fail3 > 5.0 and low3 < 0.5
+    assert (low3, warn3 > 2.0, fail3 > 5.0) == (0.5, True, True)
+    # p known: dof = N - p, the high limits tighten, the low one widens
+    low, warn, fail = checks._chi2_bounds(6, 2.0, 5.0, n_params=3)
+    assert low < 0.01 and warn > 2.0 and fail > 5.0
+    assert warn < checks._chi2_bounds(6, 2.0, 5.0)[1]  # chi2(3) < chi2(6)
     assert checks._chi2_bounds(10**6, 2.0, 5.0) == (0.5, 2.0, 5.0)
     assert checks._chi2_bounds(None, 2.0, 5.0) == (0.5, 2.0, 5.0)
+
+
+def test_chi2_lower_tail_uses_the_degrees_of_freedom_of_a_fit():
+    # 6 data, 3 fitted parameters: chi2 ~ chi2(3), so P(chi2/N < 0.1) is
+    # 1.0e-2: with N used instead of N - p the lower limit (0.38) would
+    # warn on about 5 per cent of correct fits, not 1e-3.
+    from scipy import stats
+
+    low = checks.chi2_limits(6, checks.CHI2_WARN_TAIL, n_params=3)[0]
+    assert stats.chi2.cdf(low * 6, 3) == pytest.approx(1e-3)
+    assert stats.chi2.cdf(checks.chi2_limits(6, 1e-3)[0] * 6, 3) > 0.01
 
 
 def test_error_scale_limits_are_n_aware():
@@ -1364,13 +1384,23 @@ def test_winner_flags_fail_without_a_valid_mode():
 def test_binary_chi2_checks_pass_the_number_of_data():
     from virgil.pipeline import binary
 
-    fit = {"chi2_reduced": 2.5, "n_independent": 3}
+    fit = {
+        "chi2_reduced": 2.5,
+        "n_independent": 3,
+        "params": {"sep": 1.0},
+        "error_scales": None,
+    }
     (check,) = binary._chi2_checks(None, fit)
     assert check.status == "pass"
     search = {"chi2_null": 7.5, "n_independent": 3}
     (check,) = binary._chi2_checks(search, None)
     assert check.status == "pass"
-    fit = {"chi2_reduced": 2.5, "n_independent": 1000}
+    fit = {
+        "chi2_reduced": 2.5,
+        "n_independent": 1000,
+        "params": {"sep": 1.0},
+        "error_scales": None,
+    }
     assert binary._chi2_checks(None, fit)[0].status == "warn"
 
 
@@ -1391,7 +1421,7 @@ def test_star_fit_checks_pass_the_number_of_data():
             },
         }
 
-    registry = {"a": type("M", (), {"label": "model a"})()}
+    registry = {"a": type("M", (), {"label": "model a", "n_params": 1})()}
     got = {c.name: c.status for c in star._fit_checks(report(3), registry)}
     assert got == {"chi2_a": "pass", "error_scale": "pass"}
     got = {c.name: c.status for c in star._fit_checks(report(1000), registry)}
@@ -1436,3 +1466,10 @@ def test_disk_chi2_checks_pass_the_number_of_data():
 
     assert verdicts(3) == {"chi2_reduced": "pass", "error_scale": "pass"}
     assert verdicts(1000) == {"chi2_reduced": "warn", "error_scale": "warn"}
+
+
+def test_winner_flags_message_says_a_failed_winner_is_not_evidence():
+    fail = checks.winner_flags(["no-valid-mode"])
+    assert fail.status == "fail" and "not evidence" in fail.message
+    warn = checks.winner_flags(["low-ess"])
+    assert warn.status == "warn" and "less reliable" in warn.message
