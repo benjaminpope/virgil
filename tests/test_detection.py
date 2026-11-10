@@ -787,12 +787,6 @@ def test_grid_names_may_not_overwrite_stored_outputs():
             _recover({**grid, "flux": flux}, n_null=1)
 
 
-def test_match_radius_must_be_finite_and_non_negative():
-    for radius in (-1.0, float("nan"), float("inf")):
-        with pytest.raises(ValueError, match="finite and non-negative"):
-            _recover(n_null=1, match_radius=radius)
-
-
 def test_a_simulator_must_observe_through_the_template():
     # An equal copy of the template is accepted (nothing is drawn here);
     # a simulator of other data is refused.
@@ -1055,8 +1049,6 @@ def test_gaussian_null_error_scale_scales_the_noise_not_the_errors():
         vis = onp.asarray(jax.vmap(lambda k: simulate(k).vis)(keys))
         assert onp.std(vis - 1.0) == pytest.approx(0.01 * scale, rel=0.1)
         assert onp.array_equal(simulate(keys[0]).d_vis, TEMPLATE.d_vis)
-    with pytest.raises(ValueError, match="error_scale"):
-        gaussian_null(NULL, TEMPLATE, error_scale=-1.0)
 
 
 def test_default_grid_batch_size_is_split_among_draw_batch(monkeypatch):

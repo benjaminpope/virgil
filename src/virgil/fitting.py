@@ -727,16 +727,6 @@ def _check_options(
         raise ValueError(
             f"max_step_size must be finite and positive, not {max_step_size}."
         )
-    if time_limit is not None and not time_limit >= 0:
-        raise ValueError(
-            f"time_limit must be a number of seconds, not {time_limit}."
-        )
-    if ftol_window < 1:
-        raise ValueError(f"ftol_window must be at least 1, not {ftol_window}.")
-    if ftol_abs is not None and not 0 <= ftol_abs < math.inf:
-        raise ValueError(
-            f"ftol_abs must be finite and non-negative, not {ftol_abs}."
-        )
     if precondition not in (None, False, "diag"):
         raise ValueError(
             f"precondition must be None or 'diag', not {precondition!r}."

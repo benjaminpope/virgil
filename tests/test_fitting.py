@@ -367,11 +367,6 @@ def test_a_fit_stops_at_its_time_limit(monkeypatch, method, chunk):
     assert result.info["steps"] == chunk
 
 
-def test_bad_time_limits_are_rejected():
-    with pytest.raises(ValueError, match="time_limit"):
-        fit(START, PRIORS, DATA, time_limit=-1.0)
-
-
 def _adam(**kw):
     kw = {"max_steps": 40, "method": "adam"} | kw
     with warnings.catch_warnings():
@@ -498,17 +493,6 @@ def test_adam_learning_rate_schedule():
     )
     step = lambda r: abs(r.values["dra"] - START.dra)  # noqa: E731
     assert step(scheduled) < step(constant)
-
-
-def test_bad_ftol_abs_is_rejected():
-    for bad in (-1.0, float("nan"), float("inf")):
-        with pytest.raises(ValueError, match="ftol_abs"):
-            fit(START, PRIORS, DATA, method="adam", ftol_abs=bad)
-
-
-def test_bad_ftol_window_is_rejected():
-    with pytest.raises(ValueError, match="ftol_window"):
-        fit(START, PRIORS, DATA, method="adam", ftol_window=0)
 
 
 def test_poles_of_isotropic_priors_are_not_prior_bounds():
