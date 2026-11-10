@@ -1,6 +1,7 @@
-"""No docstring in ``src/virgil`` may exceed 60 lines.
+"""No docstring in ``src/virgil`` may have more than 60 lines of prose.
 
-Derivations belong in ``docs/`` and design history in ``design/``. See
+Prose is everything except the numpydoc ``Parameters``, ``Returns`` and
+``Raises`` sections, which document the signature and grow with it. Derivations belong in ``docs/`` and design history in ``design/``. See
 "Docstring style" in AGENTS.md.
 """
 
@@ -12,6 +13,7 @@ from pathlib import Path
 
 MAX_LINES = 60
 MAX_PARAMS_PER_HEADER = 4
+UNCAPPED_SECTIONS = {"Parameters", "Returns", "Raises"}
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 _PARAM_HEADER = re.compile(r"^([A-Za-z_*][\w*,\s]*?)(?:\s*:.*)?$")
@@ -108,9 +110,23 @@ def _docstrings() -> dict[str, str]:
     return docs
 
 
+def prose_lines(doc: str) -> int:
+    """Lines of ``doc`` outside its Parameters, Returns and Raises sections."""
+    lines = doc.splitlines()
+    skipping = False
+    n = 0
+    for i, line in enumerate(lines):
+        nxt = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        if nxt and set(nxt) == {"-"} and line.strip():
+            skipping = line.strip() in UNCAPPED_SECTIONS
+        if not skipping:
+            n += 1
+    return n
+
+
 def docstring_lengths() -> dict[str, int]:
-    """Line count of every module, class and function docstring."""
-    return {key: len(doc.splitlines()) for key, doc in _docstrings().items()}
+    """Prose line count of every module, class and function docstring."""
+    return {key: prose_lines(doc) for key, doc in _docstrings().items()}
 
 
 def test_no_docstring_is_over_the_limit():
@@ -120,7 +136,7 @@ def test_no_docstring_is_over_the_limit():
         if n > MAX_LINES
     )
     assert not over, (
-        f"docstrings over {MAX_LINES} lines: {over}. Shorten them (derivations "
+        f"docstrings over {MAX_LINES} prose lines: {over}. Shorten them (derivations "
         "go in docs/, history in design/)."
     )
 
@@ -146,3 +162,45 @@ def test_param_headers_parses_typed_and_untyped_lines():
         "c, d, e, f, g\n    Untyped crammed line.\n"
     )
     assert _param_headers(doc) == [["a", "b"], ["c", "d", "e", "f", "g"]]
+
+
+def _doc(prose: int, params: int) -> str:
+    body = "\n".join(f"Prose line {i}." for i in range(prose))
+    entries = "\n".join(f"p{i} : float\n    Entry." for i in range(params))
+    return (
+        f"Summary.\n\n{body}\n\nParameters\n----------\n{entries}\n\n"
+        "Returns\n-------\nfloat\n    Value.\n\nRaises\n------\n"
+        "ValueError\n    Bad input.\n"
+    )
+
+
+def test_long_parameters_with_short_prose_pass():
+    doc = _doc(prose=5, params=60)
+    assert len(doc.splitlines()) > MAX_LINES
+    assert prose_lines(doc) <= MAX_LINES
+
+
+def test_long_prose_fails():
+    assert prose_lines(_doc(prose=MAX_LINES, params=2)) > MAX_LINES
+
+
+def test_notes_count_as_prose():
+    doc = "Summary.\n\nNotes\n-----\n" + "x\n" * 70
+    assert prose_lines(doc) > MAX_LINES
+
+
+def test_prose_resumes_after_uncapped_sections():
+    doc = _doc(prose=0, params=3) + "\nNotes\n-----\n" + "x\n" * 70
+    assert prose_lines(doc) > MAX_LINES
+
+
+def _section(name: str, n: int) -> list[str]:
+    return [name, "-" * len(name), *["entry"] * n]
+
+
+def test_returns_and_raises_are_excluded_and_boundary_is_exact():
+    prose = ["Summary."] + ["p"] * (MAX_LINES - 1)
+    tail = _section("Returns", 40) + _section("Raises", 40)
+    doc = "\n".join(prose + tail)
+    assert prose_lines(doc) == MAX_LINES
+    assert prose_lines("\n".join(prose + ["one more"] + tail)) > MAX_LINES
