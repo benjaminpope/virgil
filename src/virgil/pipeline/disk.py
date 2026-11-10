@@ -2475,7 +2475,7 @@ def _fit_checks(entry, settings, overview, geometry, compare):
     missing = sorted(k for k, v in sds.items() if v is None)
     by["laplace_pd"] = _checks.Check(
         "laplace_pd",
-        "warn" if missing else "pass",
+        "fail" if missing else "pass",
         len(missing),
         0,
         (

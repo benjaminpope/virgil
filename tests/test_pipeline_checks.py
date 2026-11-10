@@ -1266,3 +1266,90 @@ def _blocks(equal=False, n_bad=0):
 )
 def test_convergence_fails_when_every_grid_position_fails(message, status):
     assert checks.convergence([_w(message)]).status == status
+
+
+# --- N-aware χ² thresholds (CO-8, ruling D-C) ---------------------------------
+
+
+def test_chi2_limits_are_the_quantiles_of_chi2_over_n():
+    from scipy import stats
+
+    lo, hi = checks.chi2_limits(10, 1e-3)
+    assert hi * 10 == pytest.approx(stats.chi2.isf(1e-3, 10))
+    assert lo * 10 == pytest.approx(stats.chi2.ppf(1e-3, 10))
+    # Large N closes on 1 at the spread sqrt(2/N).
+    lo, hi = checks.chi2_limits(10**6, 1e-3)
+    assert hi == pytest.approx(1 + 3.09 * (2 / 10**6) ** 0.5, abs=2e-3)
+
+
+@pytest.mark.parametrize(
+    "n, chi2, status",
+    [
+        (None, 3.0, "warn"),  # fixed convention without N
+        # N = 3: bounds (0.0081, 5.42, 10.2) from the 1e-3 / 1e-6 tails
+        (3, 3.0, "pass"),  # the fixed rule would warn
+        (3, 6.0, "warn"),
+        (3, 11.0, "fail"),
+        (3, 0.005, "warn"),  # below the lower 1e-3 tail
+        (3, 0.05, "pass"),  # the fixed rule would warn
+        # large N: the fixed 2 / 5 floor
+        (10**4, 1.5, "pass"),
+        (10**4, 3.0, "warn"),
+        (10**4, 6.0, "fail"),
+    ],
+)
+def test_chi2_reduced_thresholds_depend_on_n(n, chi2, status):
+    check = checks.chi2_reduced("chi2", chi2, label="the model", n=n)
+    assert _status(check) == status
+
+
+def test_chi2_reduced_small_n_is_wider_and_large_n_keeps_the_floor():
+    low3, warn3, fail3 = checks._chi2_bounds(3, 2.0, 5.0)
+    assert warn3 > 2.0 and fail3 > 5.0 and low3 < 0.5
+    assert checks._chi2_bounds(10**6, 2.0, 5.0) == (0.5, 2.0, 5.0)
+    assert checks._chi2_bounds(None, 2.0, 5.0) == (0.5, 2.0, 5.0)
+
+
+def test_error_scale_limits_are_n_aware():
+    assert _status(checks.error_scale({"v": 2.5})) == "warn"
+    assert _status(checks.error_scale({"v": 2.5}, n=2)) == "pass"
+    assert _status(checks.error_scale({"v": 2.5}, n={"v": 10**5})) == "warn"
+    assert _status(checks.error_scale({"v": 9.0}, n=10**5)) == "fail"
+
+
+# --- orbit checks that could not fail (F5, 620#5) -----------------------------
+
+
+def test_alias_ambiguity_fails_when_every_rival_crashed():
+    crashed = checks.alias_ambiguity(None, None, n_failed=3)
+    assert crashed.status == "fail"
+    assert "No rival" in crashed.message
+    single = checks.alias_ambiguity(None, None)
+    assert single.status == "pass"
+    assert checks.alias_ambiguity(float("-inf"), None, n_failed=1).status == (
+        "fail"
+    )
+    # a finite margin is judged on its own even if other bands crashed
+    assert checks.alias_ambiguity(30.0, 21, n_failed=2).status == "pass"
+
+
+@pytest.mark.parametrize(
+    "failed, n_bands, status",
+    [
+        ([], 10, "pass"),
+        ([21], 10, "warn"),
+        ([1, 2, 3, 4], 10, "warn"),
+        ([1, 2, 3, 4, 5], 10, "fail"),  # at least half
+        ([21], None, "warn"),
+    ],
+)
+def test_bands_failed_fails_when_most_of_the_search_is_lost(
+    failed, n_bands, status
+):
+    assert _status(checks.bands_failed(failed, n_bands)) == status
+
+
+def test_winner_flags_fail_without_a_valid_mode():
+    assert _status(checks.winner_flags(["no-valid-mode"])) == "fail"
+    assert _status(checks.winner_flags(["low-ess", "no-valid-mode"])) == "fail"
+    assert _status(checks.winner_flags(["low-ess"])) == "warn"
