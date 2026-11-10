@@ -55,7 +55,7 @@ def test_nuts_runs_on_an_injected_field():
             numpyro_model(start, priors, data),
             init_strategy=init_to_value(values=init),
         ),
-        num_warmup=50,
+        num_warmup=200,  # 50 left the adaptation coarse enough for a stray divergence
         num_samples=50,
         progress_bar=False,
     )
@@ -65,15 +65,9 @@ def test_nuts_runs_on_an_injected_field():
     # below cannot pass vacuously on an empty or partial dict.
     assert set(samples) == set(priors)
     assert all(onp.all(onp.isfinite(onp.asarray(v))) for v in samples.values())
-    # A divergence is a failed trajectory, and a well-conditioned posterior
-    # started at its MAP should give almost none. "None" was too strict for
-    # this short chain: 50 warmup steps adapt the step size and mass matrix
-    # coarsely, so one stray trajectory in 50 draws (seen on CI runners whose
-    # rounding differs) is not a sampler fault. A systematic failure (a bad
-    # mass layout, a hard wall) diverges in a large fraction of draws, so cap
-    # the fraction at 5%; the calibrated rate is virgil-validation's job.
-    diverging = onp.asarray(mcmc.get_extra_fields()["diverging"])
-    assert diverging.mean() <= 0.05
+    # Any divergence is a failed trajectory: a well-conditioned posterior
+    # started at its MAP with a mass matrix adapted to it gives none.
+    assert int(mcmc.get_extra_fields()["diverging"].sum()) == 0
 
 
 @pytest.mark.slow
