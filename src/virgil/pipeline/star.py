@@ -135,12 +135,6 @@ class StarModel:
         return f"{self.check_stem or self.name}_constrained"
 
 
-def _uniform_disk(values):  # deliberate: registry callback
-    from ..models import UniformDisk
-
-    return UniformDisk(values["diam"])
-
-
 def _quadratic_disk(values):
     from ..models import QuadraticLimbDarkenedDisk
 
@@ -149,25 +143,10 @@ def _quadratic_disk(values):
     )
 
 
-def _quadratic_derived(samples):  # deliberate: registry callback
-    star = _quadratic_disk(samples)
-    return {"u1": onp.asarray(star.u1), "u2": onp.asarray(star.u2)}
-
-
 def _uniform_priors(lo, hi):
     import numpyro.distributions as dist
 
     return {"diam": dist.LogUniform(lo, hi)}
-
-
-def _quadratic_priors(lo, hi):  # deliberate: registry callback
-    import numpyro.distributions as dist
-
-    return {
-        **_uniform_priors(lo, hi),
-        "q1": dist.Uniform(0.0, 1.0),
-        "q2": dist.Uniform(0.0, 1.0),
-    }
 
 
 _MODELS = None
@@ -177,6 +156,8 @@ def models():
     """The registry of short names to [`StarModel`][virgil.pipeline.star.StarModel]."""
     global _MODELS
     if _MODELS is None:
+        import numpyro.distributions as dist
+
         from ..models import QuadraticLimbDarkenedDisk, UniformDisk
 
         entries = (
@@ -184,7 +165,7 @@ def models():
                 name="uniform",
                 label="uniform disk",
                 classes=(UniformDisk,),
-                build=_uniform_disk,
+                build=lambda values: UniformDisk(values["diam"]),
                 params=("diam",),
                 start={},
                 priors=_uniform_priors,
@@ -197,9 +178,16 @@ def models():
                 build=_quadratic_disk,
                 params=("diam", "q1", "q2"),
                 start={"q1": 0.5, "q2": 0.5},
-                priors=_quadratic_priors,
+                priors=lambda lo, hi: {
+                    **_uniform_priors(lo, hi),
+                    "q1": dist.Uniform(0.0, 1.0),
+                    "q2": dist.Uniform(0.0, 1.0),
+                },
                 shape=("q1", "q2"),
-                derived=_quadratic_derived,
+                derived=lambda samples: {
+                    k: onp.asarray(getattr(_quadratic_disk(samples), k))
+                    for k in ("u1", "u2")
+                },
                 parent="uniform",
                 check_stem="limb_darkening",
             ),
@@ -885,20 +873,7 @@ def _fit_in_lobes(p, entry, lobes, noise):
 
 
 def _compare(registry, reports, child, n):
-    """The comparison of a model with its parent: gain against BIC penalty.
-
-    The comparison is not valid when the parent's diameter sits on the lower
-    edge of the diameter range (an unresolved star): the likelihood-ratio
-    regularity conditions fail there and the child's shape parameters are
-    unidentified, so the parent is kept and ``"unidentified"`` is true. The
-    upper edge (an over-resolved star) and the inner lobe edges are not
-    boundaries of the parameter space and do not count.
-
-    The expected ``shape_ratio`` of the child's parameters is recorded
-    (`_shape_ratios`); it does not change the preference, which the
-    likelihood gain decides, but a child the data cannot constrain is not
-    sampled when it is not selected: ``"constrained"`` is false when any
-    ratio is at or above `_checks.PRIOR_DOMINATES` (or not finite).
+    """A model against its parent: likelihood gain against BIC penalty.
 
     Source: Chernoff (1954), Self & Liang (1987) ([references](../../references.md#chernoff1954), [Self & Liang](../../references.md#selfliang1987)).
     """
@@ -906,8 +881,11 @@ def _compare(registry, reports, child, n):
     gain = reports[parent]["m2loglike"] - reports[child]["m2loglike"]
     n_extra = registry[child].n_params - registry[parent].n_params
     penalty = _checks.bic_penalty(n_extra, n)
-    # The best lobe's diameter is at the lower edge of the whole range, not at
-    # an upper or an inner lobe edge.
+    # Unidentified: the parent's diameter is on the lower edge of the whole
+    # range (an unresolved star), where the likelihood-ratio regularity
+    # conditions fail and the child's shape parameters are unidentified, so the
+    # parent is kept. The upper edge (an over-resolved star) and the inner lobe
+    # edges are not boundaries of the parameter space and do not count.
     lobes = reports[parent].get("lobes")
     unidentified = False
     if "diam" in (reports[parent].get("at_bound") or ()) and lobes:
@@ -917,6 +895,10 @@ def _compare(registry, reports, child, n):
         unidentified = lobe_low == low and math.log(
             lobe_diam / lobe_low
         ) < math.log(lobe_high / lobe_diam)
+    # The expected shape_ratio does not change the preference, which the gain
+    # decides; but a child the data cannot constrain is not sampled when it is
+    # not selected: "constrained" is false when any ratio is at or above
+    # PRIOR_DOMINATES (or not finite).
     ratios = reports[child].get("shape_ratio") or {}
     return {
         "simple": parent,
@@ -936,31 +918,9 @@ def _compare(registry, reports, child, n):
 
 
 def _shape_ratios(data, entry, diam, prior_std):
-    """Expected σ_posterior/σ_prior of a model's shape parameters.
-
-    This is the ratio the posterior's ``*_constrained`` check measures after
-    sampling, predicted from the data before it. Moving a shape parameter
-    by one prior standard deviation changes the V² by ``ΔV²_i`` at each
-    sample; the expected Δχ² is ``Σ (ΔV²_i / σ_i)²`` (the UD/LD difference
-    over the quoted error), after the diameter has absorbed what it can.
-    Its linear form is the Fisher information of the V² (the closure phase
-    of a centrosymmetric disk is 0 or π and carries no shape) at the
-    parent's diameter and the prior centre of the shape, marginalized over
-    the diameter, with the prior's precision ``1 / σ_prior²`` added to the
-    shape block (a Gaussian stand-in for the uniform prior). A ratio near
-    1 means the likelihood adds nothing to the prior; at
-    `_checks.PRIOR_DOMINATES` = 0.8 the likelihood alone has
-    σ_L = 1.33 σ_prior, so a prior-sized change of the shape moves χ² by
-    1 / 1.33² = 0.56: not detectable. Below it the shape is measured; far
-    above (the 4 mas star observed with 3 wavelengths × 3 hour angles at
-    σ(V²) = 0.01: 0.92 and 0.88, the marginal σ_L being about 80 σ_prior)
-    it lies on a thin ridge with the diameter that NUTS cannot sample.
-
-    Limitation: the Fisher matrix is linear at the prior centre, so it can
-    mis-call a curved ridge or a shape that is constrained only away from
-    the centre, and it ignores the closure phases and the error-scale
-    nuisance. The ratio is a gate on sampling an unselected model, not an
-    estimate of the posterior width.
+    """Expected σ_posterior/σ_prior of a model's shape parameters, from the data
+    alone: the linear Fisher information of V² at the parent's diameter and the
+    prior centre, marginalized over the diameter, plus the prior's precision.
     """
     import jax
     import jax.numpy as np
@@ -973,6 +933,21 @@ def _shape_ratios(data, entry, diam, prior_std):
         values = dict(zip(names, theta))
         return data.model(entry.build(values))[:n]
 
+    # The ratio the posterior's ``*_constrained`` check measures after
+    # sampling, predicted before it. The Fisher matrix is Σ (ΔV²_i / σ_i)²
+    # (the closure phase of a centrosymmetric disk is 0 or π and carries no
+    # shape) with 1 / σ_prior² added to the shape block (a Gaussian stand-in
+    # for the uniform prior). A ratio near 1 means the likelihood adds nothing to
+    # the prior; at PRIOR_DOMINATES = 0.8 the likelihood alone has
+    # σ_L = 1.33 σ_prior, so a prior-sized change of the shape moves χ² by
+    # 1 / 1.33² = 0.56: not detectable. Below it the shape is measured; far
+    # above (the 4 mas star observed with 3 wavelengths × 3 hour angles at
+    # σ(V²) = 0.01: 0.92 and 0.88, the marginal σ_L being about 80 σ_prior) it
+    # lies on a thin ridge with the diameter that NUTS cannot sample.
+    # Limitation: the matrix is linear at the prior centre, so it can mis-call
+    # a curved ridge or a shape constrained only away from the centre, and it
+    # ignores the closure phases and the error-scale nuisance. It gates
+    # sampling an unselected model; it is not an estimate of the posterior width.
     jac = jax.jacfwd(v2)(centre) / np.asarray(data.d_vis)[:, None]
     precision = onp.asarray(jac.T @ jac) + onp.diag(
         [0.0, *(1.0 / prior_std[k] ** 2 for k in entry.shape)]

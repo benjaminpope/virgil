@@ -583,17 +583,22 @@ def _terms_and_jacobian(surfaces, x, data, cfg, dof, log_broad):
     return jax.jacfwd(stacked, has_aux=True)(x)
 
 
-def _weighted_terms(surfaces, x, data, cfg, dof, log_broad, weights):
-    """``Σ w_ell ell + Σ w_bad bad`` of some epochs (``weights = (w_ell, w_bad)``)."""
-    ell, bad = _night_terms(surfaces, x, data, cfg, dof, log_broad)
-    return np.dot(weights[0], ell) + np.dot(weights[1], bad)
-
-
 _terms_jac = functools.partial(jax.jit, static_argnums=(0, 3))(
     _terms_and_jacobian
 )
+# Hessian of ``Σ w_ell ell + Σ w_bad bad`` over some epochs, ``weights = (w_ell, w_bad)``.
 _weighted_hessian = functools.partial(jax.jit, static_argnums=(0, 3))(
-    jax.hessian(_weighted_terms, argnums=1)
+    jax.hessian(
+        lambda surfaces, x, data, cfg, dof, log_broad, weights: sum(
+            np.dot(w, t)
+            for w, t in zip(
+                weights,
+                _night_terms(surfaces, x, data, cfg, dof, log_broad),
+                strict=True,
+            )
+        ),
+        argnums=1,
+    )
 )
 
 

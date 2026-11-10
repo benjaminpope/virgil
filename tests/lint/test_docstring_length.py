@@ -34,7 +34,6 @@ LEGACY_CRAMMED = {
     "virgil.limits:injection_limits",
     "virgil.orbits:KeplerOrbit.from_position_angle",
     "virgil.plotting:plot_field_draws",
-    "virgil.svi:variational",
 }
 
 
