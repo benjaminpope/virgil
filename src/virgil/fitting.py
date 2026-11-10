@@ -719,13 +719,15 @@ def _check_options(
     learning_rate,
     dtype,
     time_limit,
-    ftol_abs,
-    ftol_window,
 ):
     """Validate ``fit``'s options; return ``(precondition, dtype)`` to use."""
     if not math.isfinite(max_step_size) or max_step_size <= 0:
         raise ValueError(
             f"max_step_size must be finite and positive, not {max_step_size}."
+        )
+    if time_limit is not None and not time_limit >= 0:
+        raise ValueError(
+            f"time_limit must be a number of seconds, not {time_limit}."
         )
     if precondition not in (None, False, "diag"):
         raise ValueError(
@@ -854,8 +856,6 @@ def fit(
         learning_rate,
         dtype,
         time_limit,
-        ftol_abs,
-        ftol_window,
     )
     budget = _Budget(time_limit, progress)
     with run_in(dtype):

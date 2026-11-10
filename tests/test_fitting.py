@@ -367,6 +367,11 @@ def test_a_fit_stops_at_its_time_limit(monkeypatch, method, chunk):
     assert result.info["steps"] == chunk
 
 
+def test_bad_time_limits_are_rejected():
+    with pytest.raises(ValueError, match="time_limit"):
+        fit(START, PRIORS, DATA, time_limit=-1.0)
+
+
 def _adam(**kw):
     kw = {"max_steps": 40, "method": "adam"} | kw
     with warnings.catch_warnings():
