@@ -130,6 +130,22 @@ why; never adjust the code or the check until it passes.
 **Reviewer checklist item:** does this change make a test or gate pass by
 special-casing, tuning or loosening? The PR description answers it.
 
+## Trust the user
+
+Add an argument check only if, without it, one of these happens: (a) a number
+comes out silently wrong; (b) an argument is silently ignored or truncated; (c) a
+dispatch on an option silently falls through to a default branch. Otherwise do not
+add the check. Non-finite, negative or out-of-range scalars, bool-for-int and
+parameter shapes need no check unless (a)–(c) applies (a negative flux gives a
+silently wrong visibility, so it does). Document a non-obvious assumption in one
+docstring sentence instead. To keep traced code physical, put the constraint in
+`is_physical()` (enforced only with `reject_unphysical=True`, not by default) and
+in the prior support; eager checks go through `concrete()` and run only on
+concrete values. For new checks and new tests: do not add a test that bad input
+raises, except one per check kept under (a)–(c). The rule does not license
+deleting existing tests or guards. A PR deleting an existing guard states the
+failure mode that remains without it. New tests cover maths and physics.
+
 ## Instrument-specific work
 
 Calibration and error models specific to the VLTI instruments (GRAVITY,
