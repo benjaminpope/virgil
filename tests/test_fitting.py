@@ -372,6 +372,12 @@ def test_bad_time_limits_are_rejected():
         fit(START, PRIORS, DATA, time_limit=-1.0)
 
 
+def test_bad_ftol_abs_is_rejected():
+    for bad in (-1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="ftol_abs"):
+            fit(START, PRIORS, DATA, method="adam", ftol_abs=bad)
+
+
 def _adam(**kw):
     kw = {"max_steps": 40, "method": "adam"} | kw
     with warnings.catch_warnings():

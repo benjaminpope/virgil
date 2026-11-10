@@ -793,6 +793,11 @@ def _check_arguments(
         raise ValueError(f"draw_batch must be positive; got {draw_batch}.")
     if match_radius is not None:
         match_radius = float(match_radius)
+        if not (onp.isfinite(match_radius) and match_radius >= 0.0):
+            raise ValueError(
+                "match_radius must be finite and non-negative, not "
+                f"{match_radius}."
+            )
         short = set(names.values())
         if not any(set(pair) <= short for pair in _POSITION_KEYS):
             raise ValueError(

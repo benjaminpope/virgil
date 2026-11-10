@@ -787,6 +787,12 @@ def test_grid_names_may_not_overwrite_stored_outputs():
             _recover({**grid, "flux": flux}, n_null=1)
 
 
+def test_match_radius_must_be_finite_and_non_negative():
+    for radius in (-1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="finite and non-negative"):
+            _recover(n_null=1, match_radius=radius)
+
+
 def test_a_simulator_must_observe_through_the_template():
     # An equal copy of the template is accepted (nothing is drawn here);
     # a simulator of other data is refused.
