@@ -33,7 +33,7 @@ from .likelihood import (
     inflated_errors,
     whitened_residuals,
 )
-from ._deprecate import external_stacklevel
+from ._deprecate import CheckWarning, external_stacklevel
 
 
 __all__ = [
@@ -512,10 +512,13 @@ def _limits(
     missed = int(onp.sum(~onp.asarray(crossed, dtype=bool)))
     if missed and flux_bounds is not None:
         warnings.warn(
-            f"{caller}(): {missed} limits fell outside flux_bounds="
-            f"{tuple(flux_bounds)} and were clipped to the nearer bound; "
-            "pass wider flux_bounds, or None, to search further.",
-            RuntimeWarning,
+            CheckWarning(
+                f"{caller}(): {missed} limits fell outside flux_bounds="
+                f"{tuple(flux_bounds)} and were clipped to the nearer bound; "
+                "pass wider flux_bounds, or None, to search further.",
+                check="limits_clipped",
+                clipped=missed,
+            ),
             stacklevel=external_stacklevel(),
         )
     elif missed:
