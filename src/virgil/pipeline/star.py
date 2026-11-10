@@ -918,9 +918,9 @@ def _compare(registry, reports, child, n):
 
 
 def _shape_ratios(data, entry, diam, prior_std):
-    """Expected σ_posterior/σ_prior of a model's shape parameters, from the data
-    alone: the linear Fisher information of V² at the parent's diameter and the
-    prior centre, marginalized over the diameter, plus the prior's precision.
+    """Expected σ_posterior/σ_prior of a model's shape parameters, predicted before
+    sampling: the linear Fisher information of V² at the parent's diameter and
+
     """
     import jax
     import jax.numpy as np
