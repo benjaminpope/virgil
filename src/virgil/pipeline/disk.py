@@ -2406,11 +2406,16 @@ def _chi2_checks(entry, compare):
             "chi2_reduced",
             compare["chi2_reduced"],
             label=f"the {entry.label} fit",
+            n=compare["n_independent"],
         )
     ]
     if compare["error_scales"]:
         checks.append(
-            _checks.error_scale(compare["error_scales"], kind="estimated")
+            _checks.error_scale(
+                compare["error_scales"],
+                kind="estimated",
+                n=compare["n_independent"],
+            )
         )
     return checks
 
@@ -2475,7 +2480,7 @@ def _fit_checks(entry, settings, overview, geometry, compare):
     missing = sorted(k for k, v in sds.items() if v is None)
     by["laplace_pd"] = _checks.Check(
         "laplace_pd",
-        "warn" if missing else "pass",
+        "fail" if missing else "pass",
         len(missing),
         0,
         (
