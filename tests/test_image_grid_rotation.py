@@ -84,12 +84,6 @@ def test_grid_without_a_lattice_is_north_up():
         north.model(data.u, data.v, data.wavel),
     )
     assert np.array_equal(grid.render(32, 100.0), north.render(32, 100.0))
-    assert np.array_equal(
-        Image.from_model(
-            GaussianDisk(20.0), NPIX, SCALE, rotation_deg="grid"
-        ).brightness,
-        Image.from_model(GaussianDisk(20.0), NPIX, SCALE).brightness,
-    )
 
 
 def test_rotation_deg_rejects_other_strings():
@@ -258,3 +252,19 @@ def test_clean_with_a_base_scene_records_its_frame():
 def test_from_model_rejects_other_strings():
     with pytest.raises(ValueError, match="rotation_deg"):
         Image.from_model(GaussianDisk(20.0), NPIX, SCALE, rotation_deg="sky")
+
+
+def test_clean_with_no_components_has_a_frame():
+    data = _lattice().with_model(
+        System(star=PointSource(), env=GaussianDisk(15.0, flux=0.3))
+    )
+    result = clean(
+        data,
+        npix=NPIX,
+        pixel_scale_mas=SCALE,
+        max_iterations=0,
+        base=PointSource(),
+        rotation_deg="grid",
+    )
+    assert isinstance(result.rotation_deg, float)
+    assert result.restored(beam(data)).shape == (NPIX, NPIX)

@@ -176,10 +176,11 @@ def test_every_synced_notebook_has_stored_outputs():
         code = [c for c in cells if c["cell_type"] == "code"]
         if code and not any(c.get("outputs") for c in code):
             empty.append(nb_rel)
-    assert sorted(empty) == sorted(
-        nb for nb in _UNEXECUTED if nb in module.MAPPINGS
-    ), (
+    assert set(_UNEXECUTED) <= set(module.MAPPINGS), "unknown _UNEXECUTED key"
+    unexecuted = sorted(set(empty) - set(_UNEXECUTED))
+    stale = sorted(set(_UNEXECUTED) - set(empty))
+    assert not unexecuted and not stale, (
         "Notebooks synced to docs without stored outputs (execute them, "
-        "then run scripts/sync_tutorial_docs.py); stale _UNEXECUTED entries "
-        f"must be removed: {empty}"
+        f"then run scripts/sync_tutorial_docs.py): {unexecuted}; stale "
+        f"_UNEXECUTED entries to remove: {stale}"
     )

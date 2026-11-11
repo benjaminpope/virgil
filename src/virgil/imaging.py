@@ -1539,7 +1539,9 @@ class CleanResult:
 
     @property
     def rotation_deg(self):
-        return getattr(self.model, "clean", self.model).rotation_deg
+        # With no components the model may be the bare base: any frame will do.
+        image = getattr(self.model, "clean", self.model)
+        return float(image._frame()) if hasattr(image, "_frame") else 0.0
 
     def restored(self, beam):
         """The components convolved with ``beam``: the "restored" image.

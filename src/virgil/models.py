@@ -2139,11 +2139,13 @@ class Image(_BrightnessImage):
         """
         xx, yy = image_coordinates(npix, npix * pixel_scale_mas)
         rotation = kwargs.get("rotation_deg", 0.0)
-        if isinstance(rotation, str) and rotation != "grid":
+        if isinstance(rotation, str):
             raise ValueError(
-                f"rotation_deg must be a number or 'grid', not {rotation!r}."
+                "rotation_deg must be a number here (the model's pixels are "
+                "sampled in that frame; use starting_image(..., "
+                f"rotation_deg='grid') for the lattice), not {rotation!r}."
             )
-        xx, yy = rotate(xx, yy, 0.0 if rotation == "grid" else rotation)
+        xx, yy = rotate(xx, yy, rotation)
         image = _normalize_image(model._image(xx, yy, pixel_scale_mas))
         return cls.from_brightness(image, pixel_scale_mas, **kwargs)
 
