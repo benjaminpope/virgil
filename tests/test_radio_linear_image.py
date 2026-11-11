@@ -54,22 +54,22 @@ def _nuis(data, **kw):
     )
 
 
-def _scene(parametrisation):
+def _scene(parametrization):
     def scene(values):
         return LinearImage(
             values["x"],
             PIXEL,
             ft="dft",
-            parametrisation=parametrisation,
+            parametrization=parametrization,
             reference_flux=1.0,
         )
 
     return scene
 
 
-def _x(parametrisation, seed=1):
+def _x(parametrization, seed=1):
     flux = onp.random.default_rng(seed).uniform(0.01, 0.1, (NPIX, NPIX))
-    x = onp.sqrt(flux) if parametrisation == "sqrt" else flux
+    x = onp.sqrt(flux) if parametrization == "sqrt" else flux
     return np.asarray(x)
 
 
@@ -77,24 +77,24 @@ def _chi2(data, scene, nuis, values):
     return float(data.chi2_by_ddid(scene, values, nuis)[0][0])
 
 
-@pytest.mark.parametrize("parametrisation", ["sqrt", "linear"])
-def test_halving_the_pixels_changes_chi2(parametrisation):
-    data, scene = _data(), _scene(parametrisation)
+@pytest.mark.parametrize("parametrization", ["sqrt", "linear"])
+def test_halving_the_pixels_changes_chi2(parametrization):
+    data, scene = _data(), _scene(parametrization)
     nuis = _nuis(data, fit_flux=False)
     assert "cal.flux" not in nuis.sites
-    x = _x(parametrisation)
-    half = x / (onp.sqrt(2.0) if parametrisation == "sqrt" else 2.0)
+    x = _x(parametrization)
+    half = x / (onp.sqrt(2.0) if parametrization == "sqrt" else 2.0)
     full = _chi2(data, scene, nuis, {"x": x})
     assert abs(_chi2(data, scene, nuis, {"x": half}) - full) > 1e-3 * full
 
 
-@pytest.mark.parametrize("parametrisation", ["sqrt", "linear"])
+@pytest.mark.parametrize("parametrization", ["sqrt", "linear"])
 @pytest.mark.parametrize("sigmas", [False, "profile"])
-def test_toeplitz_matches_dense(parametrisation, sigmas):
-    data, scene = _data(), _scene(parametrisation)
+def test_toeplitz_matches_dense(parametrization, sigmas):
+    data, scene = _data(), _scene(parametrization)
     nuis = _nuis(data, fit_flux=False, sigmas=sigmas)
     template = LinearImage(
-        np.ones((NPIX, NPIX)), PIXEL, parametrisation=parametrisation
+        np.ones((NPIX, NPIX)), PIXEL, parametrization=parametrization
     )
     tdata = data.toeplitz(template, nuis)
     term = tdata.term(scene, nuis)
@@ -108,7 +108,7 @@ def test_toeplitz_matches_dense(parametrisation, sigmas):
         r, log_norm = direct.residuals_and_log_norm({"x": x})
         return 0.5 * np.sum(r**2) + log_norm
 
-    x1, x2 = _x(parametrisation, 1), _x(parametrisation, 2)
+    x1, x2 = _x(parametrization, 1), _x(parametrization, 2)
     # the Toeplitz loss omits a constant: compare differences and gradients
     assert float(toeplitz(x1) - toeplitz(x2)) == pytest.approx(
         float(dense(x1) - dense(x2)), rel=1e-9
@@ -122,11 +122,11 @@ def test_toeplitz_matches_dense(parametrisation, sigmas):
         )
 
 
-@pytest.mark.parametrize("parametrisation", ["sqrt", "linear"])
-def test_zero_spacing_visibility_is_the_pixel_sum(parametrisation):
-    data, scene = _data(zero=3), _scene(parametrisation)
+@pytest.mark.parametrize("parametrization", ["sqrt", "linear"])
+def test_zero_spacing_visibility_is_the_pixel_sum(parametrization):
+    data, scene = _data(zero=3), _scene(parametrization)
     nuis = _nuis(data, fit_flux=False)
-    x = _x(parametrisation)
+    x = _x(parametrization)
     image = scene({"x": x})
     model = onp.asarray(data.model(image, {"x": x}, nuis))
     assert model[-3:] == pytest.approx(float(np.sum(image.fluxes)), rel=1e-12)

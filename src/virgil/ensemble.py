@@ -536,7 +536,7 @@ def run_group(data, draw, *, star=True, starts=None, spec=None, **fit_options):
     if star:
         # The image's flux relative to the star is a scale: log-uniform.
         priors["env.flux"] = dist.LogUniform(1e-4, 1e3)
-    # TV and TSV take beam = pixel scale, the unnormalised weights that
+    # TV and TSV take beam = pixel scale, the unnormalized weights that
     # ``weight_ranges`` were tuned for.
     options = (
         {"beam_mas": draw.pixel_scale_mas}

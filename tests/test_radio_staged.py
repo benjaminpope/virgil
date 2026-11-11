@@ -28,7 +28,7 @@ def _scene(values):
         values["pixels"],
         PIXEL,
         ft="dft",
-        parametrisation="sqrt",
+        parametrization="sqrt",
         reference_flux=1.0,
     )
 
