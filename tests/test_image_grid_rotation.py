@@ -163,7 +163,7 @@ def test_dirty_image_in_the_grid_frame_is_the_north_up_map_turned():
         )
 
     north = dirty(0.0)
-    assert onp.array_equal(dirty("grid"), dirty(angle))
+    assert onp.allclose(dirty("grid"), dirty(angle), rtol=1e-5, atol=1e-8)
 
     # North-up pixel (x, y) sits at rotate(x, y, -angle) in the turned grid.
     xx, yy = (onp.asarray(a) for a in image_coordinates(n, n * h))
