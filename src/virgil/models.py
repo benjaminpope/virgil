@@ -68,6 +68,7 @@ from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
 __provisional__ = (
+    "ArchimedeanSpiral",
     "LinearImage",
     "MultipoleDisk",
     "ThinRing",
@@ -697,6 +698,179 @@ class GaussianArc(Component):
         width = np.maximum(self.width, pixel_scale_mas)
         d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
         return np.sum(weight * np.exp(-4.0 * np.log(2.0) * d2 / width**2), -1)
+
+
+class ArchimedeanSpiral(Component):
+    r"""A pinwheel: a Gaussian ridge along an Archimedean spiral arm.
+
+    The arm is $r = |\mathrm{pitch}|\,\theta / 360^\circ$ in its own plane,
+    for $\theta$ from 0 to $360^\circ\,\mathrm{turns}$, blurred by a Gaussian
+    of FWHM ``width`` (isotropic in that plane) and fading as
+    $\exp(-\mathrm{fade}\,\theta / 360^\circ)$ per unit arc length; the
+    plane is then inclined, as for a
+    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]. The centre
+    is the binary at ``(dra, ddec)``. [Model notes](../notes.md#archimedeanspiral).
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    Parameters
+    ----------
+    pitch : float or array-like
+        Radial growth per full turn (mas); its sign is the winding sense,
+        positive for position angle increasing along the arm (counter-clockwise
+        on the sky when face-on). Not zero.
+    turns : float or array-like
+        Number of turns of the arm that are bright, positive.
+    width : float or array-like
+        FWHM across the arm, in the arm plane (mas).
+    pa : float or array-like, optional
+        Sky position angle (degrees North to East) of the direction in which
+        the arm leaves the centre (default 0).
+    inc, node : float or array-like, optional
+        Inclination of the arm plane, 0 = face-on, and position angle of its
+        projected major axis (degrees; defaults 0, 0).
+    fade : float or array-like, optional
+        e-foldings of brightness lost per turn, at least 0 (default 0, none).
+    flux, dra, ddec : optional
+        As for any [`Component`][virgil.models.Component].
+    nodes : int, optional
+        Points sampling the arm (static). Default from the starting values,
+        so that points are at most ``width / 4`` apart; with traced values
+        you must pass it. See the notes for the rule for long baselines.
+
+    Examples
+    --------
+    >>> arm = ArchimedeanSpiral(pitch=40.0, turns=1.5, width=3.0, pa=90.0)
+
+    Source: Tuthill et al. (1999), [references](../references.md#tuthill1999); Tuthill et al. (2008), [references](../references.md#tuthill2008).
+    """
+
+    pitch: jax.Array
+    turns: jax.Array
+    width: jax.Array
+    pa: jax.Array
+    inc: jax.Array
+    node: jax.Array
+    fade: jax.Array
+    nodes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        pitch,
+        turns,
+        width,
+        pa=0.0,
+        inc=0.0,
+        node=0.0,
+        fade=0.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+        nodes=None,
+    ):
+        self.pitch = np.asarray(pitch, dtype=float)
+        self.turns = np.asarray(turns, dtype=float)
+        self.width = np.asarray(width, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.inc = np.asarray(inc, dtype=float)
+        self.node = np.asarray(node, dtype=float)
+        self.fade = np.asarray(fade, dtype=float)
+        self._place(flux, dra, ddec)
+        if nodes is None:
+            pitch, turns, width = (
+                concrete(a) for a in (self.pitch, self.turns, self.width)
+            )
+            if pitch is None or turns is None or width is None:
+                raise ValueError(
+                    "nodes must be given when the shape parameters are traced."
+                )
+            if onp.all(onp.isfinite([pitch, turns, width])) and onp.all(
+                (turns > 0.0) & (width > 0.0)
+            ):
+                # Spacing in arc length is largest at the end, where
+                # ds/dtheta = a sqrt(1 + theta^2); the chain is continuous
+                # for baselines up to width * q = 1.5 (see the notes).
+                theta = 2.0 * onp.pi * onp.max(turns)
+                step = onp.min(width) / 4.0
+                a = onp.max(onp.abs(pitch)) / (2.0 * onp.pi)
+                nodes = int(onp.ceil(theta * a * onp.hypot(1.0, theta) / step))
+            nodes = max(nodes or 0, 2)
+        if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
+            raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
+        self.nodes = int(nodes)
+
+    def _shape_checks(self):
+        return (
+            ("pitch", self.pitch, lambda x: x != 0.0, "non-zero"),
+            ("turns", self.turns, _positive, "positive"),
+            ("width", self.width, _positive, "positive"),
+            ("fade", self.fade, lambda x: x >= 0.0, "non-negative"),
+            ("inc", self.inc, lambda x: np.abs(x) < 90.0, "below 90 degrees"),
+        )
+
+    def curve(self):
+        """Points along the arm (mas, East and North of the centre) and
+        their normalized trapezoidal-rule weights, as the image samples it.
+
+        The points are equally spaced in the arm angle, with weights
+        proportional to the arc-length element, the fade and the
+        end-point factor of the trapezoidal rule."""
+        theta = np.linspace(0.0, 1.0, self.nodes) * 2.0 * np.pi * self.turns
+        stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        # In-plane azimuth from the major axis whose projection points at pa.
+        d = (self.pa - self.node) * dtor
+        alpha = np.arctan2(np.sin(d) / stretch, np.cos(d))
+        alpha = alpha + np.sign(self.pitch) * theta
+        r = np.abs(self.pitch) / (2.0 * np.pi) * theta
+        xe, yt = r * np.sin(alpha) * stretch, r * np.cos(alpha)
+        n = self.node * dtor
+        x = xe * np.cos(n) + yt * np.sin(n)
+        y = -xe * np.sin(n) + yt * np.cos(n)
+        ends = np.ones(self.nodes).at[np.array([0, -1])].set(0.5)
+        weight = (
+            ends
+            * np.exp(-self.fade * theta / (2.0 * np.pi))
+            * np.sqrt(1.0 + theta**2)
+        )
+        return x, y, weight / np.sum(weight)
+
+    def _centred_cvis(self, uu, vv):
+        x, y, weight = self.curve()
+        shape = np.shape(uu)
+        uf, vf = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
+        arm = np.matmul(
+            offset_phase(uf, vf, x[None, :], y[None, :]),
+            weight,
+            precision=jax.lax.Precision.HIGHEST,
+        )
+        stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        ut, vt = undo_elliptical_transf_spat_freq(
+            uf[:, 0], vf[:, 0], self.node, stretch
+        )
+        # Written out, not _cvis_gaussian_envelope: its hypot has a NaN
+        # gradient at u = v = 0, where flagged samples can sit.
+        fwhm_rad = self.width * mas2rad
+        envelope = np.exp(
+            -(np.pi**2) * fwhm_rad**2 * (ut**2 + vt**2) / (4.0 * np.log(2.0))
+        )
+        return np.reshape(arm * envelope, shape)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        x, y, weight = self.curve()
+        stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        width = np.maximum(self.width, pixel_scale_mas)
+
+        def add_blob(image, blob):
+            xk, yk, wk = blob
+            xt, yt = undo_elliptical_transf_coord(
+                xx - xk, yy - yk, self.node, stretch
+            )
+            blur = np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / width**2)
+            return image + wk * blur, None
+
+        image, _ = jax.lax.scan(add_blob, np.zeros_like(xx), (x, y, weight))
+        return image
 
 
 class TruncatedCone(Component):
