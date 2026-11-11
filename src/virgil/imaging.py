@@ -1538,7 +1538,7 @@ class CleanResult:
 
     @property
     def rotation_deg(self):
-        return self.model.rotation_deg
+        return getattr(self.model, "clean", self.model).rotation_deg
 
     def restored(self, beam):
         """The components convolved with ``beam``: the "restored" image.
