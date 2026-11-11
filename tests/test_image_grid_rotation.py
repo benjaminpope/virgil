@@ -237,3 +237,24 @@ def test_restored_image_turns_the_beam_into_the_grid_frame():
     assert _correlation(sky(result.restored(b), angle), sky_north) > 0.99
     unturned = convolve_beam(comps, SCALE, b)
     assert _correlation(sky(unturned, angle), sky_north) < 0.95
+
+
+def test_clean_with_a_base_scene_records_its_frame():
+    data = _lattice().with_model(
+        System(star=PointSource(), env=GaussianDisk(15.0, flux=0.3))
+    )
+    result = clean(
+        data,
+        npix=NPIX,
+        pixel_scale_mas=SCALE,
+        max_iterations=5,
+        base=PointSource(),
+        rotation_deg="grid",
+    )
+    assert result.rotation_deg == pytest.approx(data.uv_grid.rotation_deg)
+    assert result.restored(beam(data)).shape == (NPIX, NPIX)
+
+
+def test_from_model_rejects_other_strings():
+    with pytest.raises(ValueError, match="rotation_deg"):
+        Image.from_model(GaussianDisk(20.0), NPIX, SCALE, rotation_deg="sky")

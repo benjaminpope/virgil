@@ -846,7 +846,8 @@ def dirty_image(
     -------
     jax.Array, shape (npix, npix)
         In the orientation of [`render`][virgil.models.SourceModel.render]
-        (East left, North up). It has negative sidelobes.
+        (East left, North up) turned by ``rotation_deg``: the pixel grid's
+        frame. It has negative sidelobes.
     """
     observations = _as_list(data)
     rotation_deg = _grid_rotation(observations, rotation_deg)

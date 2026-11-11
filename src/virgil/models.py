@@ -2139,6 +2139,10 @@ class Image(_BrightnessImage):
         """
         xx, yy = image_coordinates(npix, npix * pixel_scale_mas)
         rotation = kwargs.get("rotation_deg", 0.0)
+        if isinstance(rotation, str) and rotation != "grid":
+            raise ValueError(
+                f"rotation_deg must be a number or 'grid', not {rotation!r}."
+            )
         xx, yy = rotate(xx, yy, 0.0 if rotation == "grid" else rotation)
         image = _normalize_image(model._image(xx, yy, pixel_scale_mas))
         return cls.from_brightness(image, pixel_scale_mas, **kwargs)
@@ -5394,8 +5398,9 @@ class System(SourceModel):
         # field's centre is relative to the Image's, along its rotated axes.
         if part.rotation_deg == "grid":
             raise ValueError(
-                f"Component {name!r} has rotation_deg='grid', which depends "
-                "on the data; give a number for a MultipoleField to follow."
+                f"The Image whose field follows {name!r} has "
+                "rotation_deg='grid', which depends on the data; give a "
+                "number for a MultipoleField to follow."
             )
         x, y = rotate(
             disk.dra - part.dra, disk.ddec - part.ddec, -part.rotation_deg
