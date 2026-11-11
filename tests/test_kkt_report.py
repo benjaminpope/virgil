@@ -39,18 +39,18 @@ def _disc(n, flux=1.0):
     return flux * disc / disc.sum()
 
 
-def _scene(pixels, scale, parametrisation="linear"):
+def _scene(pixels, scale, parametrization="linear"):
     env = LinearImage(
-        pixels, scale, parametrisation=parametrisation, reference_flux=0.5
+        pixels, scale, parametrization=parametrization, reference_flux=0.5
     )
     return System(star=PointSource(), env=env)
 
 
-def _problem(n, scale, parametrisation="linear"):
+def _problem(n, scale, parametrization="linear"):
     """A start scene, its priors and noisy data from a disc."""
     flat = onp.full((n, n), 0.5 / n**2)
-    flat = onp.sqrt(flat) if parametrisation == "sqrt" else flat
-    start = _scene(flat, scale, parametrisation)
+    flat = onp.sqrt(flat) if parametrization == "sqrt" else flat
+    start = _scene(flat, scale, parametrization)
     data = DATA.with_model(
         _scene(_disc(n, 0.5), scale),
         key=jax.random.PRNGKey(1),
@@ -81,12 +81,12 @@ def _report(
     n,
     scale,
     regularizers,
-    parametrisation="linear",
+    parametrization="linear",
     rounds=1,
     polish_gtol=1e-4,
     **options,
 ):
-    start, priors, data = _problem(n, scale, parametrisation)
+    start, priors, data = _problem(n, scale, parametrization)
     result = fit(start, priors, data, regularizers, method="lbfgsb", **options)
     result = _polish(
         result,

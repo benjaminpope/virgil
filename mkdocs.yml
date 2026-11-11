@@ -36,6 +36,9 @@ theme:
 
 # ===== Plugins =====
 plugins:
+  - exclude:
+      glob:
+        - misc/*
   - search
   - mkdocstrings:
       default_handler: python

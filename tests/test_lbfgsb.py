@@ -36,11 +36,11 @@ def _disc(flux):
     return flux * disc / disc.sum()
 
 
-def _scene(pixels, parametrisation="linear", **kwargs):
+def _scene(pixels, parametrization="linear", **kwargs):
     env = LinearImage(
         pixels,
         SCALE,
-        parametrisation=parametrisation,
+        parametrization=parametrization,
         reference_flux=0.5,
         **kwargs,
     )

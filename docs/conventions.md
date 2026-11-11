@@ -6,13 +6,14 @@ Which way the axes point, what sign a phase has, what a flux means: none of thes
 2. [Baselines and the Fourier sign](#baselines-and-the-fourier-sign)
 3. [Observables](#observables)
 4. [Closure phases with four or more telescopes](#closure-phases-with-four-or-more-telescopes)
-5. [Fluxes](#fluxes)
-6. [Times and frames](#times-and-frames)
-7. [Orbits](#orbits)
-8. [Which priors?](#which-priors)
-9. [Priors and the MAP](#priors-and-the-map)
-10. [Precision](#precision)
-11. [Preconditioning image fits](#preconditioning-image-fits)
+5. [Likelihood normalization](#likelihood-normalization)
+6. [Fluxes](#fluxes)
+7. [Times and frames](#times-and-frames)
+8. [Orbits](#orbits)
+9. [Which priors?](#which-priors)
+10. [Priors and the MAP](#priors-and-the-map)
+11. [Precision](#precision)
+12. [Preconditioning image fits](#preconditioning-image-fits)
 
 ## Sky coordinates and images
 
@@ -95,7 +96,7 @@ The default, `"auto"`, keeps the data's own form; ask for another and data and e
   where $\varphi_{ab}$ is the visibility phase on baseline $(a, b)$. The legs are stored as sample indices `i_cps1`, `i_cps2` and `i_cps3`, so the closure phase is `phase[i_cps1] + phase[i_cps2] - phase[i_cps3]`. [`cp_indices`][virgil.oidata.cp_indices] builds the indices from station numbers and [`closure_phases`][virgil.oidata.closure_phases] evaluates the sum, wrapped into $[-\pi, \pi)$. Closure phases cancel telescope phase errors and any shift of the whole source;
 - **absolute phases** (`cp_flag=False`), $\arg V$ of each sample, rarer because they need a phase reference.
 
-Phases are **radians inside virgil**: every `phi` and `d_phi` attribute and the output of `closure_phases`. OIFITS stores degrees, and [`read_oifits`][virgil.oifits.read_oifits] converts on reading (from the column's unit, or assuming degrees if there is none). [`write_oifits`][virgil.oifits.write_oifits] does **not** convert: its tables hold phases and errors in degrees, as OIFITS stores them, so convert `phi` and `d_phi` with `numpy.rad2deg` before writing, or both come back about 57 times too small. A dictionary passed straight to `OIData` takes `phi_unit="deg"` for degrees.
+Phases are **radians inside virgil**: every `phi` and `d_phi` attribute and the output of `closure_phases`. OIFITS stores degrees, and [`read_oifits`][virgil.oifits.read_oifits] converts on reading (from the column's unit, or assuming degrees if there is none). [`write_oifits`][virgil.oifits.write_oifits] converts an `OIData` back to degrees; a dictionary of tables passed to it must already hold phases and errors in degrees, as OIFITS stores them (see [OIFITS files](oifits_files.md#writing-oidata)). A dictionary passed straight to `OIData` takes `phi_unit="deg"` for degrees.
 
 **Wrapping and the likelihood.** A phase is an angle, so a model phase of $\pi - \epsilon$ and a data phase of $-\pi + \epsilon$ agree closely. For unprojected phases the residual $\Delta$ (model minus data) enters the likelihood as the chord
 

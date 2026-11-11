@@ -10,7 +10,7 @@ Everything public not listed below is stable. Provisional pages and API entries 
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
-Nothing warns at runtime. The tier lives in the documentation and in each module's `__provisional__` tuple, which a test checks. New public features start provisional and are promoted at a release.
+Nothing warns at runtime. The tier lives in the documentation and in each module's `__provisional__` tuple; the tuples are authoritative for names, and argument-level rows are listed on this page. New public features start provisional and are promoted at a release.
 
 ## Provisional in 0.4
 
@@ -39,4 +39,4 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 
 The user-guide pages about these features carry the same notice: [orbits](orbit_fitting.md), [`MultipoleDisk` rings](multipole_disk_rings.md), [CLEAN](imaging_clean.md), [ensembles](imaging_ensemble.md), [variational inference](variational_inference.md) and [pipelines](pipeline.md), [radio interferometry](radio_interferometry.md) (with its Toeplitz χ²), [radio CLEAN](radio_clean.md) and [cross-validation](cross_validation.md).
 
-The authoritative list is each module's `__provisional__` tuple (`("*",)` means the whole module), checked by `tests/test_stability.py`.
+The module `__provisional__` tuples (`("*",)` means the whole module) are authoritative for names, checked by `tests/test_stability.py`; the argument-level rows above are documented only here.

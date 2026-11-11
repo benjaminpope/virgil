@@ -1,5 +1,5 @@
 <!-- AUTO-GENERATED FROM notebooks/imaging_rml.ipynb by scripts/sync_tutorial_docs.py. -->
-# Imaging, part 2: regularised maximum likelihood
+# Imaging, part 2: regularized maximum likelihood
 
 Part 1 simulated AMI data of a lopsided ring of dust next to a star. This part reconstructs the ring from those data using **regularized maximum likelihood** (RML).
 
@@ -108,7 +108,7 @@ plt.show()
 
 ![imaging_rml output 6.1](generated/imaging_rml_cell006_out01.png)
 
-## One regularised fit
+## One regularized fit
 
 `fit` minimizes the loss above:
 - Its free parameters are the keys of the priors dict. `image_priors` gives flat priors on the image's log-brightness, so only the data and the regularizer constrain the pixels.
@@ -236,8 +236,8 @@ No warnings.
 ## Pixel types and regularizers
 
 The softmax image of the fits above keeps the brightness positive and the flux separate, but it can never reach exactly zero. Two other pixel types suit particular regularizers. Both are a [`LinearImage`][virgil.models.LinearImage], whose total flux is the sum of its pixels (there is no separate flux to fit):
-- **Maximum entropy: √I pixels** (`parametrisation="sqrt"`). The fitted array is the square root of the flux, so the flux `x²` is positive without a bound, and entropy keeps its interior minimum. A gradient step in x moves I by −4I ∂J/∂I, the entropic mirror-descent preconditioner up to a factor of 4, which conditions the problem for the quasi-Newton solver.
-- **TSV, TV and L1: bounded linear pixels** (`parametrisation="linear"`) with `fit(..., method="lbfgsb")`. These penalties are minimized at exactly zero pixels, and in square-root coordinates a zero pixel is a flat, slow stationary point. L-BFGS-B takes non-negativity as a box bound on the pixels instead, so zeros are reached in finite steps.
+- **Maximum entropy: √I pixels** (`parametrization="sqrt"`). The fitted array is the square root of the flux, so the flux `x²` is positive without a bound, and entropy keeps its interior minimum. A gradient step in x moves I by −4I ∂J/∂I, the entropic mirror-descent preconditioner up to a factor of 4, which conditions the problem for the quasi-Newton solver.
+- **TSV, TV and L1: bounded linear pixels** (`parametrization="linear"`) with `fit(..., method="lbfgsb")`. These penalties are minimized at exactly zero pixels, and in square-root coordinates a zero pixel is a flat, slow stationary point. L-BFGS-B takes non-negativity as a box bound on the pixels instead, so zeros are reached in finite steps.
 
 The parametrization changes how the optimizer moves, not the problem: both minimize ½χ² + wR over non-negative fluxes, so the image at the optimum is the same.
 
@@ -277,8 +277,8 @@ A small simulated image on a coarse AMI grid (0.7 m pitch): a smooth Gaussian tr
     shape = flux * shape / shape.sum()
 
 
-    def pixels(p, parametrisation):
-        return LinearImage(p, scale, parametrisation=parametrisation, reference_flux=flux)
+    def pixels(p, parametrization):
+        return LinearImage(p, scale, parametrization=parametrization, reference_flux=flux)
 
 
     small = OIData(ami_grid_record(pitch_m=0.7)).with_model(pixels(jnp.sqrt(shape), "sqrt"), key=jax.random.PRNGKey(3))
@@ -336,7 +336,7 @@ RuntimeWarning: fit(method='lbfgs') did not converge in 2 steps, the step limit;
 converged fit: converged True, kkt_rel 3.5e-07, band_limit 1.07
 ```
 
-For TSV, TV or L1 the same call certifies a `method="lbfgsb"` fit of a `parametrisation="linear"` image: fit with `[TSV(w, beam_mas=...)]`, then call `kkt_report` with the same arguments. Restart an unconverged fit from its own values with a tighter `gtol` and report again.
+For TSV, TV or L1 the same call certifies a `method="lbfgsb"` fit of a `parametrization="linear"` image: fit with `[TSV(w, beam_mas=...)]`, then call `kkt_report` with the same arguments. Restart an unconverged fit from its own values with a tighter `gtol` and report again.
 
 ### Gains and offsets in stages
 
@@ -366,7 +366,7 @@ Here three observations have gains 1.1, 1.0 and 0.9, and unequal weights. The ga
 
 
     def scene(values):
-        return LinearImage(values["pixels"], scale, ft="dft", parametrisation="sqrt", reference_flux=1.0)
+        return LinearImage(values["pixels"], scale, ft="dft", parametrization="sqrt", reference_flux=1.0)
 
 
     truth = {"pixels": jnp.sqrt(shape / shape.sum())}
