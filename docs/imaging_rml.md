@@ -1,5 +1,5 @@
 <!-- AUTO-GENERATED FROM notebooks/imaging_rml.ipynb by scripts/sync_tutorial_docs.py. -->
-# Imaging, part 2: regularised maximum likelihood
+# Imaging, part 2: regularized maximum likelihood
 
 Part 1 simulated AMI data of a lopsided ring of dust next to a star. This part reconstructs the ring from those data using **regularized maximum likelihood** (RML).
 
@@ -107,7 +107,7 @@ plt.show()
 
 ![imaging_rml output 6.1](generated/imaging_rml_cell006_out01.png)
 
-## One regularised fit
+## One regularized fit
 
 `fit` minimizes the loss above:
 - Its free parameters are the keys of the priors dict. `image_priors` gives flat priors on the image's log-brightness, so only the data and the regularizer constrain the pixels.
