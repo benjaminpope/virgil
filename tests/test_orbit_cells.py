@@ -1930,6 +1930,7 @@ def test_the_toy_error_is_calibrated_over_a_thousand_keys(record_property):
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(1200)  # 200 SMC runs: a time budget
 @x64
 @pytest.mark.parametrize("s1", [0.2, 1.0])
 def test_the_banana_smc_is_accurate_or_flagged_over_200_keys(
