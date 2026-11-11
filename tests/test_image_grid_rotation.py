@@ -14,6 +14,7 @@ from virgil.coverage import ami_grid_record
 from virgil._geometry import image_coordinates, rotate
 from virgil.imaging import (
     beam,
+    CleanResult,
     clean,
     convolve_beam,
     dirty_image,
@@ -114,18 +115,24 @@ def test_defaults_are_north_up_and_grid_is_an_opt_in(monkeypatch):
     data = _lattice().with_model(
         System(star=PointSource(), env=GaussianDisk(15.0, flux=0.3))
     )
-    kwargs = dict(npix=NPIX, pixel_scale_mas=SCALE, max_iterations=3, base=None)
+    kwargs = dict(
+        npix=NPIX, pixel_scale_mas=SCALE, max_iterations=3, base=None
+    )
     # Unchanged default on lattice data: North up, so the direct transform.
     start = starting_image(data, star=False, oversample=2.0)
     assert start.rotation_deg == 0.0
     assert clean(data, **kwargs).model.rotation_deg == 0.0
     assert not _uses_matrix_transform(monkeypatch, start, data)
     # Opt-in: the lattice frame, and the matrix transform.
-    grid = starting_image(data, star=False, oversample=2.0, rotation_deg="grid")
+    grid = starting_image(
+        data, star=False, oversample=2.0, rotation_deg="grid"
+    )
     assert grid.rotation_deg == pytest.approx(data.uv_grid.rotation_deg)
     assert _uses_matrix_transform(monkeypatch, grid, data)
     result = clean(data, rotation_deg="grid", **kwargs)
-    assert result.model.rotation_deg == pytest.approx(data.uv_grid.rotation_deg)
+    assert result.model.rotation_deg == pytest.approx(
+        data.uv_grid.rotation_deg
+    )
     assert _uses_matrix_transform(monkeypatch, result.model, data)
     # Without a lattice "grid" is North up, as before.
     bare = _bare(data)
@@ -179,36 +186,54 @@ def test_dirty_image_in_the_grid_frame_is_the_north_up_map_turned():
         dirty_image(data, NPIX, SCALE, rotation_deg="sky")
 
 
-def test_scoring_and_resampling_see_a_rotated_image_as_the_sky():
-    blob = gaussian_blob(NPIX, 1.0, 2.0, dra=5.0, ddec=5.0)
+def test_scoring_sees_a_rotated_image_as_the_sky_and_loses_only_the_corners():
+    blob = gaussian_blob(NPIX, 1.0, 2.0, dra=0.0, ddec=0.0)
     north = Image.from_brightness(blob, 1.0, floor=1e-3)
     turned = Image.from_brightness(blob, 1.0, floor=1e-3, rotation_deg=45.0)
     assert np.array_equal(
         resample(north, None, NPIX, 1.0), resample(north, 1.0, NPIX, 1.0)
     )
+    # A blob inside the inscribed circle loses nothing.
     sky = onp.asarray(turned.render(NPIX, float(NPIX)))
     got = onp.asarray(resample(turned, None, NPIX, 1.0))
     assert onp.allclose(got / got.sum(), sky / sky.sum(), atol=1e-6)
+    assert got.sum() == pytest.approx(
+        float(np.sum(turned.brightness)), rel=0.05
+    )
+    # Flux in a corner turns off the North-up box: it is lost from the
+    # score, and the rest is not rescaled to make up for it.
+    cornered = onp.array(blob)
+    cornered[0, 0] += 5.0 * cornered.max()
+    corner = Image.from_brightness(
+        cornered, 1.0, floor=1e-3, rotation_deg=45.0
+    )
+    lost = onp.asarray(resample(corner, None, NPIX, 1.0))
+    assert lost.sum() < 0.95 * got.sum()
 
 
-def test_clean_result_records_its_frame_and_turns_the_beam():
-    data = _lattice().with_model(
-        System(star=PointSource(), env=GaussianDisk(15.0, flux=0.3))
+def test_restored_image_turns_the_beam_into_the_grid_frame():
+    # An elongated beam on a single component: rendering the grid-frame
+    # restored image as the sky must give the North-up convolution.
+    angle, n = 35.0, 41
+    b = beam(_lattice())
+    b = dataclasses.replace(
+        b, major_mas=4 * SCALE, minor_mas=1.5 * SCALE, pa_deg=30.0
     )
-    result = clean(
-        data,
-        npix=NPIX,
-        pixel_scale_mas=SCALE,
-        max_iterations=3,
-        base=None,
-        rotation_deg="grid",
-    )
-    assert result.rotation_deg == pytest.approx(data.uv_grid.rotation_deg)
-    b = beam(data)
-    turned = result.restored(b)
-    by_hand = convolve_beam(
-        result.components,
-        SCALE,
-        dataclasses.replace(b, pa_deg=b.pa_deg - result.rotation_deg),
-    )
-    assert np.array_equal(turned, by_hand)
+    comps = onp.zeros((n, n))
+    comps[n // 2, n // 2] = 1.0
+    model = Image(comps, SCALE, rotation_deg=angle)
+    result = CleanResult(model, comps, SCALE, 1.0, "max_iterations")
+    assert result.rotation_deg == angle
+    north = onp.asarray(convolve_beam(comps, SCALE, b))
+    fov = n * SCALE
+
+    def sky(pixels, rotation_deg=0.0):
+        image = Image.from_brightness(
+            onp.asarray(pixels), SCALE, floor=1e-9, rotation_deg=rotation_deg
+        )
+        return onp.asarray(image.render(n, fov))
+
+    sky_north = sky(north)
+    assert _correlation(sky(result.restored(b), angle), sky_north) > 0.99
+    unturned = convolve_beam(comps, SCALE, b)
+    assert _correlation(sky(unturned, angle), sky_north) < 0.95

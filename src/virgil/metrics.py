@@ -57,9 +57,21 @@ def _array_and_scale(image, pixel_scale_mas):
         # An image on a rotated grid is scored as the sky: North up.
         frame = image._frame() if hasattr(image, "_frame") else 0.0
         if frame != 0.0 and pixels.shape[0] == pixels.shape[1]:
+            # Render on a canvas that holds the turned square, normalize
+            # by its total, then crop to the North-up n x n box: the corners
+            # that fall outside it are lost, not rescaled into the rest.
             n = pixels.shape[0]
-            sky = np.asarray(image.render(n, n * image.pixel_scale_mas))
-            pixels = sky / np.sum(sky) * np.sum(pixels)
+            c, s = (
+                abs(np.cos(np.radians(frame))),
+                abs(np.sin(np.radians(frame))),
+            )
+            big = int(np.ceil(n * (c + s))) + 1
+            big += (big - n) % 2
+            sky = np.asarray(image.render(big, big * image.pixel_scale_mas))
+            lo = (big - n) // 2
+            pixels = sky[lo : lo + n, lo : lo + n] * (
+                np.sum(pixels) / np.sum(sky)
+            )
         return pixels, float(scale)
     if pixel_scale_mas is None:
         raise ValueError("Give pixel_scale_mas for an array (not an Image).")

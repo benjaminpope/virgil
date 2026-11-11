@@ -1076,9 +1076,7 @@ def starting_image(
     if hole_mas is not None:
         support = circular_support(npix, scale, npix * scale, hole_mas)
     rotation = _grid_rotation(_as_list(data), rotation_deg)
-    options = dict(
-        flux=envelope.flux, support=support, rotation_deg=rotation
-    )
+    options = dict(flux=envelope.flux, support=support, rotation_deg=rotation)
     if start == "moments":
         # An unresolved envelope drives sigma to its lower bound, and a
         # Gaussian narrower than a pixel samples to zeros: start one pixel wide.
@@ -1527,7 +1525,7 @@ class CleanResult:
         The FWHM of each scale's Gaussian shape (0 for a point).
     rotation_deg : float
         Position angle of the pixel grid's "up" axis, the frame of
-        ``components`` (the data's uv lattice by default; 0 is North up).
+        ``components``; the model's, 0 for North up.
     """
 
     model: object
@@ -1537,7 +1535,10 @@ class CleanResult:
     stop: str
     components_by_scale: jax.Array = None
     scales_mas: tuple = (0.0,)
-    rotation_deg: float = 0.0
+
+    @property
+    def rotation_deg(self):
+        return self.model.rotation_deg
 
     def restored(self, beam):
         """The components convolved with ``beam``: the "restored" image.
@@ -1615,11 +1616,9 @@ def clean(
         non-negative starting fluxes ``(npix, npix)`` or
         ``(n_scales, npix, npix)``.
     rotation_deg, dtype : float or "grid", and str, optional
-        Grid position angle (default 0, North up). ``"grid"`` (provisional)
-        takes the data's uv lattice, ``data.uv_grid.rotation_deg``, for the
-        exact fast transform (0 without one); see
-        [`Image`][virgil.models.Image].
-        [Precision](../common_arguments.md#dtype).
+        Grid angle, default 0 (North up); ``"grid"`` (provisional) is the uv
+        lattice's, for the fast transform ([`Image`][virgil.models.Image]);
+        [precision](../common_arguments.md#dtype).
     scales_mas, scale_bias : sequence of float and float, optional
         FWHMs (mas) of the components, 0 for a point (``(0.0, 3.0)``: both);
         in [0, 1), the down-weighting ``1 - scale_bias s / max(scales_mas)``.
@@ -1834,7 +1833,6 @@ def clean(
         stop,
         np.asarray(by_scale),
         scales_mas,
-        rotation_deg,
     )
 
 

@@ -171,7 +171,7 @@ brightest components (dra, ddec in mas: flux):
 
 ![imaging_clean output 8.1](generated/imaging_clean_cell008_out01.png)
 
-How close is the restored image to the truth? Here both are convolved with the beam and scaled to their total fluxes, relative to the star, and the right panel is their signed difference. The CLEAN image is a point estimate with no uncertainties, so these are plain differences, not z-scores. They peak at about 10% of the brightest pixel of the truth, positive at both sources with a faint negative ring around them: CLEAN's sources come out a little more compact than the truth as drawn on this grid. Their fluxes are, if anything, slightly low (0.0194 and 0.0092 against 0.02 and 0.01).
+How close is the restored image to the truth? Here both are convolved with the beam and scaled to their total fluxes, relative to the star, and the right panel is their signed difference. The CLEAN image is a point estimate with no uncertainties, so these are plain differences, not z-scores. They peak at about 2×10⁻⁵ of the star's flux, positive at both sources with a faint negative ring around them: CLEAN's sources come out a little more compact than the truth as drawn on this grid, and its total flux is slightly high (0.0305 against 0.030).
 
 ```python
 # render() gives unit-flux images: scale each by its flux relative to the star.
