@@ -19,6 +19,7 @@ For linear data this is exactly Högbom's CLEAN; mathematically it is *matching 
 This part reconstructs a companion and a knot from AMI DISCOs, refines the result, looks at the loop gain, and then uses closure phases and V² from a long-baseline interferometer.
 
 ```python
+import math
 import sys
 from pathlib import Path
 
@@ -53,7 +54,8 @@ from virgil.plotting import (
 )
 from virgil.scenes import gaussian_blob
 
-# A star with a 2% companion and a 1% knot, both on pixel centres.
+# A star with a 2% companion and a 1% knot. The pixel grid is turned to the lattice,
+# so neither sits on a pixel centre and CLEAN may spread each over neighbours.
 template = OIData(ami_grid_record(wavelength_m=4.8e-6, rotation_deg=-6.9))
 npix, scale = 40, 20.0
 fov = npix * scale
@@ -99,15 +101,17 @@ The **support** says where components may go. A hole of half a beam under the st
 
 Each iteration only adds flux. Every `refit_every` iterations (50 by default) a **major cycle**, as in the Clark and Cotton–Schwab variants of CLEAN, refits the fluxes of all the components at once, keeping them non-negative. Flux can then move off an early mistake, and a component whose flux falls to zero is removed.
 
-CLEAN stops when χ² per data point reaches `target_chi2_red`, 1 by default. That target assumes the error bars are right. Even then, noise scatters the truth's own χ² per point around one by about √(2/N), and if it lands above the target, the target cannot be reached. So CLEAN also stops when χ² has **stalled**, falling by less than 0.1% over 50 iterations even after a major cycle. Check `result.stop` (`"target"`, `"stalled"` or `"max_iterations"`).
+CLEAN stops when χ² per data point reaches `target_chi2_red`, 1 by default. That target assumes the error bars are right, and reaching it is the stopping rule's goal, not a test that the image is right. Even then, noise scatters the truth's own χ² per point around one by about √(2/N), and if it lands above the target, the target cannot be reached. So CLEAN also stops when χ² has **stalled**, falling by less than 0.1% over 50 iterations even after a major cycle. Check `result.stop` (`"target"`, `"stalled"` or `"max_iterations"`).
 
 The result holds the χ² history, the components on the pixel grid, and `model`, an ordinary virgil model: `System(base=star, clean=Image(...))`, whose Image is non-zero only on the components.
+
+Here `rotation_deg="grid"` turns the pixel grid to the data's uv lattice (−6.9°), which gives the exact fast matrix Fourier transform of part 1. The components then lie in the lattice frame, not North up (`result.rotation_deg` records it); `plot_model` renders them North up.
 
 ```python
 support = circular_support(
     npix, scale, radius_mas=fov / 2, inner_radius_mas=0.5 * resolution.minor_mas
 )
-result = clean(data, npix, scale, base=PointSource(), support=support)
+result = clean(data, npix, scale, base=PointSource(), support=support, rotation_deg="grid")
 components = result.components
 print(
     f"stopped ({result.stop}) after {len(result.chi2_red) - 1} iterations at "
@@ -117,10 +121,13 @@ print(
 
 
 def position(index):
-    # Pixel (row, column) to (dra, ddec): column 0 is East, row 0 North.
+    # Pixel (row, column) to (dra, ddec). In the grid's frame column 0 is East
+    # and row 0 North; the grid is turned by result.rotation_deg on the sky.
     row, col = jnp.unravel_index(index, components.shape)
     centre = (npix - 1) / 2
-    return float((centre - col) * scale), float((centre - row) * scale)
+    x, y = (centre - col) * scale, (centre - row) * scale
+    c, s = math.cos(math.radians(result.rotation_deg)), math.sin(math.radians(result.rotation_deg))
+    return float(x * c + y * s), float(-x * s + y * c)
 
 
 print("brightest components (dra, ddec in mas: flux):")
@@ -130,19 +137,19 @@ for index in jnp.argsort(components.ravel())[::-1][:5]:
 ```
 
 ```text
-stopped (target) after 51 iterations at χ²/N = 0.975: 6 components with total flux 0.0297 (truth 0.030)
+stopped (target) after 51 iterations at χ²/N = 0.983: 7 components with total flux 0.0305 (truth 0.030)
 brightest components (dra, ddec in mas: flux):
 ```
 
 ```text
-  (   -90,     70): 0.0194
-  (   130,   -110): 0.0092
-  (   130,   -130): 0.0004
-  (   110,    -90): 0.0003
-  (  -110,     70): 0.0002
+  (   -78,     61): 0.0087
+  (  -100,     79): 0.0081
+  (   125,   -116): 0.0049
+  (   145,   -113): 0.0028
+  (   122,    -96): 0.0023
 ```
 
-χ² per point falls steadily from about 160 to 1.3 over the first 50 iterations. The first major cycle then refits the components' fluxes and takes χ² straight to the target. After it, the flux sits on the companion and the knot (circled), with only faint components on the pixels next to them. The restored image, the components convolved with the beam, is the radio astronomers' way of showing what the data resolve; virgil's `plot_model(..., beam=, convolve=True)` draws it.
+χ² per point falls steadily from about 160 to 1.3 over the first 50 iterations. The first major cycle then refits the components' fluxes and takes χ² straight to the target. After it, the flux sits on the companion and the knot (circled), spread over the pixels around each because the sources lie between the centres of the grid turned to the lattice, with only faint components beyond. The restored image, the components convolved with the beam, is the radio astronomers' way of showing what the data resolve; virgil's `plot_model(..., beam=, convolve=True)` draws it.
 
 ??? note "Plotting code"
 
@@ -220,17 +227,17 @@ print(
 ```
 
 ```text
-flux 0.0297 after CLEAN, 0.0297 refitted (truth 0.030); χ²/N 0.975
+flux 0.0305 after CLEAN, 0.0305 refitted (truth 0.030); χ²/N 0.983
 ```
 
 ## The loop gain
 
-The loop gain trades speed against care. A small gain takes many small steps and can correct an early step with later ones. A large gain moves quickly, but a step that overshoots cannot be undone, because `clean` only ever adds flux (so the image stays positive). The major cycles remove that limitation. Here a gain of 0.5 gets χ² per point to about 1.1 within ten iterations and then stalls, because its early steps put flux in the wrong places. The first major cycle, at iteration 50, moves that flux and reaches the target; without major cycles (`refit_every=0`) CLEAN would stop there, stalled. A gain of 0.03 is still at χ² per point of about 20 after 50 iterations, but by then it has found the right three pixels, and the major cycle solves for their fluxes. All three gains end at the target after the same major cycle, with 3, 6 and 13 components: the larger the gain, the more stray components it leaves. Values of 0.05–0.2 are still the usual choice.
+The loop gain trades speed against care. A small gain takes many small steps and can correct an early step with later ones. A large gain moves quickly, but a step that overshoots cannot be undone, because `clean` only ever adds flux (so the image stays positive). The major cycles remove that limitation. Here a gain of 0.5 gets χ² per point to about 1.1 within ten iterations and then stalls near 1.05, because its early steps put flux in the wrong places. The first major cycle, at iteration 50, moves that flux and reaches the target; without major cycles (`refit_every=0`) CLEAN would stop there, stalled. A gain of 0.03 is still at χ² per point of about 23 after 50 iterations; the major cycle takes it to about 2, and it then needs a few hundred more iterations to reach the target. Gains of 0.1 and 0.5 reach the target at the first major cycle. The grid is turned to the lattice, so the sources lie between pixel centres and every gain spreads each over neighbouring pixels: the component counts are 13, 7 and 14 for gains of 0.03, 0.1 and 0.5. The small gain's long tail of iterations is sensitive to rounding, and its count differs between machines. Values of 0.05–0.2 are still the usual choice.
 
 ```python
 fig, ax = plt.subplots(figsize=(6, 4))
 for gain in (0.03, 0.1, 0.5):
-    run = clean(data, npix, scale, base=PointSource(), support=support, gain=gain)
+    run = clean(data, npix, scale, base=PointSource(), support=support, gain=gain, rotation_deg="grid")
     print(
         f"gain {gain}: {len(run.chi2_red) - 1} iterations, "
         f"{int((run.components > 0).sum())} components, flux "
@@ -244,18 +251,15 @@ plt.show()
 ```
 
 ```text
-gain 0.03: 51 iterations, 3 components, flux 0.0297, stopped (target)
+gain 0.03: 306 iterations, 13 components, flux 0.0311, stopped (target)
+gain 0.1: 51 iterations, 7 components, flux 0.0305, stopped (target)
 ```
 
 ```text
-gain 0.1: 51 iterations, 6 components, flux 0.0297, stopped (target)
+gain 0.5: 51 iterations, 14 components, flux 0.0311, stopped (target)
 ```
 
-```text
-gain 0.5: 51 iterations, 13 components, flux 0.0302, stopped (target)
-```
-
-![imaging_clean output 16.4](generated/imaging_clean_cell016_out04.png)
+![imaging_clean output 16.3](generated/imaging_clean_cell016_out03.png)
 
 ## Closure phases and V² from a long-baseline interferometer
 
