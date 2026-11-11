@@ -17,10 +17,11 @@ from virgil.imaging import (
     CleanResult,
     clean,
     convolve_beam,
+    diagnose,
     dirty_image,
     starting_image,
 )
-from virgil.metrics import resample
+from virgil.metrics import resample, rms_convolved
 from virgil.scenes import gaussian_blob
 from virgil.models import GaussianDisk, Image, LinearImage, PointSource, System
 from virgil.oidata import OIData
@@ -268,3 +269,56 @@ def test_clean_with_no_components_has_a_frame():
     )
     assert isinstance(result.rotation_deg, float)
     assert result.restored(beam(data)).shape == (NPIX, NPIX)
+
+
+def test_code_that_reports_the_sky_needs_a_numeric_angle():
+    from virgil.ensemble import _on_common_grid
+    from virgil.imaging import Centroid
+
+    grid = _image("grid")
+    for call in (
+        lambda: resample(grid, None, NPIX, SCALE),
+        lambda: rms_convolved(grid, grid),
+        lambda: _on_common_grid(grid, NPIX, SCALE),
+        lambda: Centroid(1.0).centroid(grid),
+    ):
+        with pytest.raises(ValueError, match="depends on the data"):
+            call()
+
+
+def test_diagnose_reports_centroids_on_the_sky_for_a_grid_image():
+    data = _lattice()
+    on_grid, numeric = _image("grid"), _image(data.uv_grid.rotation_deg)
+    a = diagnose(on_grid, data.with_model(on_grid))
+    b = diagnose(numeric, data.with_model(numeric))
+    assert onp.allclose(a.checks["centroid_mas"], b.checks["centroid_mas"])
+
+
+def test_scoring_a_rotated_image_ignores_its_offset_and_honours_the_scale():
+    blob = gaussian_blob(NPIX, 1.0, 2.0, dra=0.0, ddec=0.0)
+    plain = Image.from_brightness(blob, 1.0, floor=1e-3, rotation_deg=30.0)
+    shifted = dataclasses.replace(plain, dra=3.0, ddec=-2.0)
+    assert np.array_equal(
+        resample(plain, None, NPIX, 1.0), resample(shifted, None, NPIX, 1.0)
+    )
+    # An explicit pixel scale relabels the grid, as it does North up.
+    half = resample(plain, 0.5, NPIX, 0.5)
+    assert np.array_equal(half, resample(plain, None, NPIX, 1.0))
+    # With no beam the rms is on the sky too.
+    north = Image.from_brightness(blob, 1.0, floor=1e-3)
+    assert float(rms_convolved(plain, north)) == pytest.approx(
+        float(
+            rms_convolved(
+                onp.asarray(resample(plain, None, NPIX, 1.0)),
+                onp.asarray(north.brightness),
+            )
+        ),
+        rel=1e-5,
+    )
+
+
+def test_rotated_rectangular_images_are_refused_by_scoring():
+    pixels = onp.ones((8, 12))
+    wide = Image.from_brightness(pixels, 1.0, rotation_deg=20.0)
+    with pytest.raises(ValueError, match="square"):
+        resample(wide, None, 8, 1.0)

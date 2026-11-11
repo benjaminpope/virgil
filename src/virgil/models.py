@@ -1939,6 +1939,19 @@ class _BrightnessImage(Component):
             return self.rotation_deg
         return 0.0 if grid is None else grid.rotation_deg
 
+    def _numeric_frame(self):
+        """The grid's angle for code that reports the sky, not for the data.
+
+        ``rotation_deg="grid"`` is only defined with a uv lattice, so these
+        callers need a number: ``starting_image`` and ``clean`` return one.
+        """
+        if self.rotation_deg == "grid":
+            raise ValueError(
+                "rotation_deg='grid' depends on the data; give the Image a "
+                "number (starting_image and clean resolve it) before this."
+            )
+        return self.rotation_deg
+
     @property
     def smooth_fwhm_mas(self):
         """Deprecated alias of ``blur_fwhm_mas``."""

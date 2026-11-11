@@ -577,7 +577,7 @@ class Centroid(_ImageRegulariser):
             pixel_offsets(nrow, image.pixel_scale_mas),
             precision=_HIGHEST,
         )
-        x, y = rotate(x, y, image._frame())
+        x, y = rotate(x, y, image._numeric_frame())
         return np.stack([x + image.dra, y + image.ddec])
 
     def residuals(self, model):
@@ -3576,6 +3576,14 @@ def diagnose(model, data, regularizers=()):
         nyquist = nyquist_pixel_scale(observations)
         checks["pixel_scale_mas"] = [im.pixel_scale_mas for _, im in images]
         checks["edge_flux"], checks["centroid_mas"] = [], []
+        # Centroids are on the sky: an Image on the "grid" takes its angle.
+        lattice = _grid_rotation(observations)
+        on_sky = _map_images(
+            model,
+            lambda im: dataclasses.replace(im, rotation_deg=lattice)
+            if im.rotation_deg == "grid"
+            else im,
+        )
         for (path, im), scale in zip(images, checks["pixel_scale_mas"]):
             label = path or "the Image"
             if scale > nyquist:
@@ -3591,7 +3599,7 @@ def diagnose(model, data, regularizers=()):
                     f"{label} has {edge:.0%} of its flux in the outer 2 "
                     "pixels; enlarge the field or add a support."
                 )
-            x, y = Centroid(1.0, path).centroid(model)
+            x, y = Centroid(1.0, path).centroid(on_sky)
             checks["centroid_mas"].append((float(x), float(y)))
 
         # Each Image turned by 180 degrees about the origin of the sky.
@@ -3626,7 +3634,7 @@ def diagnose(model, data, regularizers=()):
         if d.phi_mat is None and d.vis_encoding != "mixed_log_complex":
             continue
         if d.bandwidth is None:
-            cvis = model.model(d.u, d.v, d.wavel)
+            cvis = d._cvis(model)
         else:
             cvis = smeared_model(model, d.u, d.v, d.wavel, d.bandwidth)
         bad = (np.abs(np.angle(cvis)) > 0.8 * np.pi) | (np.abs(cvis) < 0.05)
