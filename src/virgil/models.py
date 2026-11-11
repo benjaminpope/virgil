@@ -790,11 +790,14 @@ class ArchimedeanSpiral(Component):
             ):
                 # Spacing in arc length is largest at the end, where
                 # ds/dtheta = a sqrt(1 + theta^2); the chain is continuous
-                # for baselines up to width * q = 1.5 (see the notes).
+                # for baselines up to width * q = 2 (see the notes).
                 theta = 2.0 * onp.pi * onp.max(turns)
                 step = onp.min(width) / 4.0
                 a = onp.max(onp.abs(pitch)) / (2.0 * onp.pi)
-                nodes = int(onp.ceil(theta * a * onp.hypot(1.0, theta) / step))
+                # That many intervals of at most ``step``, so one more node.
+                nodes = (
+                    int(onp.ceil(theta * a * onp.hypot(1.0, theta) / step)) + 1
+                )
             nodes = max(nodes or 0, 2)
         if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
             raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")

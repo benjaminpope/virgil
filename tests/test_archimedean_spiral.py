@@ -432,3 +432,17 @@ def test_nodes_are_validated_and_needed_when_traced():
         )
     )
     assert onp.isfinite(complex(traced(30.0)))
+
+
+def test_default_nodes_are_at_most_a_quarter_width_apart_on_a_short_arm():
+    # A short arm is where an off-by-one in the node count shows: the arc is about 2.1 steps of width / 4 long, so
+    # it needs three intervals (four nodes). Three nodes would sit 0.79 mas apart, more than width / 4 = 0.75.
+    pitch, turns, width = 30.0, 0.05, 3.0
+    spiral = ArchimedeanSpiral(pitch=pitch, turns=turns, width=width)
+    theta_end = 2.0 * np.pi * turns
+    a = pitch / (2.0 * np.pi)
+    largest = (
+        theta_end / (spiral.nodes - 1) * a * np.hypot(1.0, theta_end)
+    )  # spacing is largest at the end
+    assert spiral.nodes == 4
+    assert largest <= width / 4.0
