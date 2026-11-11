@@ -44,22 +44,24 @@ def pytest_configure(config):
         "(see virgil-validation's docs/design.md)",
     )
     # The heaviest, compile-dominated tests. Pull requests run
-    # `-m "not slow"`, except that a pull request touching the orbit modules
-    # also runs the slow tests of their own test files (VIRGIL_SLOW_FILES
-    # below); pushes to main run them except the `full_only` ones, which
-    # only the `full-ci` label and the nightly run (.github/scripts/ci_matrix.py).
+    # `-m "not slow"`, except that a pull request touching a `tests/test_*.py`
+    # file runs that file's non-`full_only` slow tests and one touching the
+    # orbit or pipeline core/disk/image modules runs `ORBIT_SLOW_FILES`
+    # (`VIRGIL_SLOW_FILES` below); pushes to main run them except the
+    # `full_only` ones, which only `full-ci`, dispatch and the nightly run
+    # (.github/scripts/ci_matrix.py).
     config.addinivalue_line(
         "markers",
-        "full_only: slow tests too heavy for the orbit-PR slow run or for "
+        "full_only: slow tests too heavy for the PR slow-file gate or for "
         "pushes to main; only the full-ci label, dispatch and the nightly "
         "run them",
     )
     config.addinivalue_line(
         "markers",
         "slow: heaviest, compile-dominated tests; skipped on pull requests "
-        "(-m 'not slow'; a pull request touching the orbit modules still runs "
-        "the orbit test files) but run on main, with the full-ci label and "
-        "nightly",
+        "(-m 'not slow', except non-full_only slow tests in modified "
+        "tests/test_*.py files and ORBIT_SLOW_FILES when orbit/pipeline "
+        "modules change) but run on main, with the full-ci label and nightly",
     )
 
 
