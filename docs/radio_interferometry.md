@@ -449,7 +449,7 @@ offsets and error scales take the diagonal of the loss Hessian.
 
 ??? note "Performance"
 
-    No benchmark in the repository reproduces a timing table yet, so none is given.
+    No benchmark in the repository reproduces a timing table yet, so none is given. One independent check on a real ALMA data set (virgil-validation, float64, A100 GPU; 42.4 M points, 26 ddids, 1028² pixels of 5 mas, with gain and offset gradients) measured one value-and-gradient evaluation of χ² at 735 ms through the nufftax backend (`ft="nufft"`, eps 1e-6) and 21.8 ms through the Toeplitz path with free offsets (`offsets="spread"`). The two figures are not shown to share one setup, so their ratio is not a speed-up claim.
 
 ## Diagnostics
 
