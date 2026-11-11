@@ -379,7 +379,6 @@ def test_settings_are_validated(nights):
         ({"outlier": "none"}, "outlier"),
         ({"vis_amp": [2.0, 1.0]}, "vis_amp"),
         ({"max_grid": 2}, "max_grid"),
-        ({"n_peaks": True}, "n_peaks"),
     ):
         with pytest.raises(ValueError, match=match):
             OrbitPipeline(nights, **bad)

@@ -614,7 +614,7 @@ class GaussianArc(Component):
         self.length = np.asarray(length, dtype=float)
         self.pa = np.asarray(pa, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
+        if int(nodes) != nodes or nodes < 2:
             raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
         self.nodes = int(nodes)
         self.quadrature = False
@@ -637,7 +637,7 @@ class GaussianArc(Component):
                     # arc instead.
                     self.quadrature = True
                     degree = _ARC_MAX_DEGREE
-        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+        if int(degree) != degree or degree < 1:
             raise ValueError(f"degree must be a positive integer: {degree}.")
         self.degree = int(degree)
 
@@ -806,7 +806,7 @@ class TruncatedCone(Component):
         self.pa = np.asarray(pa, dtype=float)
         self.ratio = np.asarray(ratio, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(n_rings, bool) or int(n_rings) != n_rings or n_rings < 2:
+        if int(n_rings) != n_rings or n_rings < 2:
             raise ValueError(
                 f"n_rings must be an integer >= 2, got {n_rings}."
             )
@@ -1466,7 +1466,7 @@ class GravityDarkenedStar(Component):
         self.inc = np.asarray(inc, dtype=float)
         self.pa = np.asarray(pa, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(n_lat, bool) or int(n_lat) != n_lat or n_lat < 4:
+        if int(n_lat) != n_lat or n_lat < 4:
             raise ValueError(f"n_lat must be an integer >= 4, got {n_lat}.")
         self.n_lat = int(n_lat)
         self.t_pole = None if t_pole is None else np.asarray(t_pole, float)
@@ -1898,7 +1898,7 @@ class _BrightnessImage(Component):
         self.blur_fwhm_mas = (
             None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
-        self.ft = _check_ft(ft)
+        self.ft = ft
         if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
             raise ValueError(
                 f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
@@ -2330,7 +2330,7 @@ class _PixelRendered(Component):
     # deliberate: the one grid setup that pixel-rendered models share
     def _set_grid(self, npix, pixel_scale_mas, ft, rotation_deg):
         """Validate and store the pixel grid and its transform."""
-        self.ft = _check_ft(ft)
+        self.ft = ft
         if isinstance(rotation_deg, str):
             if rotation_deg != "grid":
                 raise ValueError(
@@ -2339,10 +2339,6 @@ class _PixelRendered(Component):
             self.rotation_deg = rotation_deg
         else:
             self.rotation_deg = float(rotation_deg)
-            if not onp.isfinite(self.rotation_deg):
-                raise ValueError(
-                    f"rotation_deg must be finite, not {self.rotation_deg}."
-                )
         self.npix = int(npix)
         if self.npix <= 0 or self.npix % 2:
             raise ValueError(f"npix must be positive and even, got {npix}.")
@@ -2389,13 +2385,6 @@ class _PixelRendered(Component):
             self.ft,
         )
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
-
-
-def _check_ft(ft):
-    """``ft`` if it is a valid transform name."""
-    if ft not in ("auto", "dft", "nufft"):
-        raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")
-    return ft
 
 
 class FlaredDisk(_PixelRendered):
@@ -4018,7 +4007,7 @@ class Harmonics(_Azimuthal):
                 )
             if degree is None:
                 raise ValueError("a Harmonics with a prior needs its degree.")
-            if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+            if int(degree) != degree or degree < 1:
                 raise ValueError(
                     f"degree must be a positive integer: {degree}."
                 )
@@ -4071,7 +4060,7 @@ class Harmonics(_Azimuthal):
             )
         first, second = (c, s) if form == "linear" else (re, im)
         top = max(len(first), len(second)) if degree is None else degree
-        if isinstance(top, bool) or int(top) != top or top < 0:
+        if int(top) != top or top < 0:
             raise ValueError(f"degree must be a non-negative integer: {top}.")
         top = int(top)
         if max(len(first), len(second)) > top:
@@ -4233,7 +4222,7 @@ class VonMises(_Azimuthal):
             from . import harmonics as _h
 
             degree = 32 if value is None else _h.auto_von_mises_degree(value)
-        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+        if int(degree) != degree or degree < 1:
             raise ValueError(f"degree must be a positive integer: {degree}.")
         self.degree = int(degree)
         n_fft = max(512, 8 * (self.degree + 1)) if n_fft is None else n_fft

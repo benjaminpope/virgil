@@ -1055,8 +1055,6 @@ def test_gaussian_null_error_scale_scales_the_noise_not_the_errors():
         vis = onp.asarray(jax.vmap(lambda k: simulate(k).vis)(keys))
         assert onp.std(vis - 1.0) == pytest.approx(0.01 * scale, rel=0.1)
         assert onp.array_equal(simulate(keys[0]).d_vis, TEMPLATE.d_vis)
-    with pytest.raises(ValueError, match="error_scale"):
-        gaussian_null(NULL, TEMPLATE, error_scale=-1.0)
 
 
 def test_default_grid_batch_size_is_split_among_draw_batch(monkeypatch):

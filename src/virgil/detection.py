@@ -416,12 +416,7 @@ def gaussian_null(null_scene, template, *, error_scale=1.0):
     >>> simulate = gaussian_null(BinaryModelCartesian(0, 0, 0), template)  # doctest: +SKIP
     >>> data = simulate(jax.random.PRNGKey(0))  # doctest: +SKIP
     """
-    error_scale = float(error_scale)
-    if not (onp.isfinite(error_scale) and error_scale >= 0.0):
-        raise ValueError(
-            f"error_scale must be finite and non-negative, not {error_scale}."
-        )
-    return _GaussianNull(template, null_scene, error_scale)
+    return _GaussianNull(template, null_scene, float(error_scale))
 
 
 @old_order("data", "null_scene", data="data")
