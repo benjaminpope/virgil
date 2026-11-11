@@ -272,7 +272,7 @@ class ToeplitzVisData(eqx.Module):
                 free_obs = onp.arange(nuisance.n_obs) != nuisance.ref_obs
                 unit = nuisance.offset_unit_mas[free_obs]
                 shift_mas = nuisance.offset_beams * 2.0 * onp.pi * unit.max()
-            angle = onp.deg2rad(image.rotation_deg)
+            angle = onp.deg2rad(image._frame())
             spread = abs(onp.cos(angle)) + abs(onp.sin(angle))
             bound = float(shift_mas) * spread / pix
 
@@ -280,7 +280,7 @@ class ToeplitzVisData(eqx.Module):
         u = onp.asarray(data.u, onp.float64)[used]
         v = onp.asarray(data.v, onp.float64)[used]
         freq = onp.asarray(data.freq, onp.float64)[used]
-        uu, vv = rotate(u, v, -image.rotation_deg)
+        uu, vv = rotate(u, v, -image._frame())
         scale = 2.0 * onp.pi * mas2rad * pix
         tx, ty = scale * uu, scale * vv
         h = (freq / nuisance.nu0_hz) ** nuisance.alpha_fixed
@@ -337,7 +337,7 @@ class ToeplitzVisData(eqx.Module):
         )
         self.data, self.mask, self.npix = data, mask, npix
         self.pixel_scale_mas = float(pix)
-        self.rotation_deg = float(image.rotation_deg)
+        self.rotation_deg = float(image._frame())
         self.blur_fwhm_mas = image.blur_fwhm_mas
         self.image_offset_mas = (dra, ddec)
         self.free_offsets, self.max_shift_pix = free, float(bound)
@@ -542,7 +542,7 @@ class _ToeplitzTerm(_TermBase):
         layout = (
             _shape(image),
             image.pixel_scale_mas,
-            image.rotation_deg,
+            image._frame(),
             image.blur_fwhm_mas,
         )
         if layout != self.layout:
