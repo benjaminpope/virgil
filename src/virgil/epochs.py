@@ -458,18 +458,25 @@ _NUMERIC_S_MAX = 10.0
 
 def _arrow_term(problem, penalty, log_s, derivs):
     """``(χ², norm[, dχ²/d ln s, dnorm/d ln s])`` of a gains or offsets block
-    at ``ln s``, with ``penalty`` (plain rows, ∝ 1/s²) added to χ²."""
+    at ``ln s``, with ``penalty`` (``(p2, e2, o2)`` or ``None``) added to χ²."""
     scale2 = np.exp(2.0 * log_s)
+    pen_chi2 = d_pen = np.zeros((), log_s.dtype)
+    if penalty is not None:
+        p2, e2, o2 = penalty
+        denom = scale2 * e2 + o2
+        pen_chi2 = np.sum(p2 / denom)
+        if derivs:
+            d_pen = -2.0 * scale2 * np.sum(p2 * e2 / denom**2)
     if not derivs:
         chi2, norm, _ = arrow_at(problem, scale2)
-        return chi2 + penalty / scale2, norm
+        return chi2 + pen_chi2, norm
     chi2, norm, r2, trace = arrow_at(problem, scale2, trace=True)
     n_col = problem.gram_bb.shape[0] * problem.gram_bb.shape[1]
     n_col += problem.gram_out.shape[0]
     return (
-        chi2 + penalty / scale2,
+        chi2 + pen_chi2,
         norm,
-        -2.0 * (r2 + penalty) / scale2,
+        -2.0 * r2 / scale2 + d_pen,
         scale2 * trace - n_col,
     )
 
@@ -512,7 +519,10 @@ class _Surface:
     def __init__(self, data, s_max=None):
         # Extra observables with a model-dependent covariance cannot be
         # scored (gains and closure offsets are integrated numerically).
-        if any(b.model_dependent_covariance for b in data.extras):
+        if any(b.model_dependent_covariance for b in data.extras) or (
+            data.gains is not None
+            and data.gains.n_vis != int(onp.asarray(data.vis).size)
+        ):
             raise NotImplementedError(
                 "The scale-marginalized surface (scales='marginal', "
                 "epoch_positions, marginal_loglike) cannot score extra "
@@ -671,11 +681,7 @@ class _Surface:
                 problem = gains.marginal_problem(
                     resid[:n_vis] / e, jac, gains.widths_for(gain_terms)
                 )
-                terms.append(
-                    functools.partial(
-                        _arrow_term, problem, np.zeros((), resid.dtype)
-                    )
-                )
+                terms.append(functools.partial(_arrow_term, problem, None))
             elif (
                 name == "phi"
                 and data._phases_wrap
@@ -683,14 +689,17 @@ class _Surface:
                 and data.phase_offsets is not None
             ):
                 # Correlated closure phases with offsets: the sines are
-                # marginalized; the periodic penalty rows ∝ 1/s are plain.
+                # marginalized; the periodic penalty rows divide by
+                # hypot(s · e, σ_off).
                 r, e, offsets = resid[a:b], errors[a:b], data.phase_offsets
+                widths = offsets.widths_for(offset_terms)
                 x = data.cp_noise.whiten(np.sin(r), e)[0]
-                problem = offsets.marginal_problem(
-                    data.cp_noise, x, e, offsets.widths_for(offset_terms)
+                problem = offsets.marginal_problem(data.cp_noise, x, e, widths)
+                std = offsets.marginal_std(data.cp_noise, r.size, widths)
+                p2 = (2.0 * np.sin(0.5 * r) ** 2) ** 2
+                terms.append(
+                    functools.partial(_arrow_term, problem, (p2, e**2, std**2))
                 )
-                penalty = np.sum((2.0 * np.sin(0.5 * r) ** 2 / e) ** 2)
-                terms.append(functools.partial(_arrow_term, problem, penalty))
             elif name == "vis":
                 chi2 = lambda s, a=a, b=b: np.sum(
                     (resid[a:b] / (errors[a:b] * s)) ** 2
@@ -1527,7 +1536,7 @@ def _whitening_floats(data):
     n += sum(int(b.data().size) for b in data.extras)
     for modes, names in (
         (data.gains, ("shapes", "spanning")),
-        (data.phase_offsets, ("values",)),
+        (data.phase_offsets, ("values", "spanning")),
     ):
         if modes is not None:
             n += sum(
@@ -1561,7 +1570,9 @@ def _table_floats(data):
         offsets = data.phase_offsets
         n_block, n_row = offsets.rows.shape
         n_mode = int(offsets.values.shape[1])
-        problems.append((n_block, n_row, n_mode, 0, offsets.n_out))
+        span = offsets.spanning
+        n_span = 0 if span is None else int(span.shape[1])
+        problems.append((n_block, n_row, n_mode, n_span, offsets.n_out))
     for n_block, n_row, m, k, n in problems:
         # Once: the columns, their gathered copy and cotangent (3 · B R m,
         # 3 · n k), the Grams ``G_bb`` (B m²), ``G_bs`` (B m k), ``G_ss`` (k²).

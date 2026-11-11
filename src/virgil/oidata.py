@@ -473,22 +473,44 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         See :meth:`epochs`. Each part keeps its own samples, observables and
         closure phases, so it can be fitted on its own or with a model per
         epoch. Not available for projected (kernel, DISCO) observables, nor
-        for data with a gain mode shared between epochs (a supplied mode
-        spanning frames): the parts' likelihoods would then not add up to
-        the whole.
+        for data with a gain or closure-offset mode shared between epochs (a
+        supplied mode spanning frames): the parts' likelihoods would then not
+        add up to the whole.
         """
         labels = self.epochs(gap_days)
         if self.gains is not None:
-            index = (
-                onp.arange(onp.size(self.u))
-                if self.vis_index is None
-                else onp.asarray(self.vis_index)
-            )
-            if self.gains.labels_shared(labels[index]):
+            if self.vis.size == 0:
+                vis_idx = onp.zeros(0, dtype=int)
+            elif self.vis_index is None:
+                vis_idx = onp.arange(onp.size(self.u))
+            else:
+                vis_idx = onp.asarray(self.vis_index)
+            gain_labels = labels[vis_idx]
+            if self.gains.n_vis != self.vis.size:
+                gain_labels = onp.concatenate(
+                    [
+                        gain_labels,
+                        *(
+                            labels[onp.asarray(b.gain_legs()[0])]
+                            for b in self.extras
+                            if b.gain_legs() and onp.size(b.values)
+                        ),
+                    ]
+                )
+            if self.gains.labels_shared(gain_labels):
                 raise ValueError(
                     "A gain mode spans several epochs, so the epochs are not "
                     "independent and their likelihoods would not add up; "
                     "fit the data together, or drop that mode first."
+                )
+        if self.phase_offsets is not None:
+            phi_labels = labels[onp.asarray(self.i_cps1)]
+            if self.phase_offsets.labels_shared(phi_labels):
+                raise ValueError(
+                    "A closure-phase offset mode spans several epochs, so the "
+                    "epochs are not independent and their likelihoods would "
+                    "not add up; fit the data together, or drop that mode "
+                    "first."
                 )
         flux_labels = self._flux_epochs(labels)
         return [
@@ -622,12 +644,20 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             )
         out = self
         empty = np.zeros(0, dtype=int)
+        gains = out._subset_gains(
+            onp.full(out.vis.size, "vis" in names, dtype=bool),
+            lambda b: onp.full(b.values.size, b.kind in names, dtype=bool),
+        )
         if "vis" not in names:
             out = eqx.tree_at(
                 lambda d: (d.vis, d.d_vis, d.vis_index, d.gains),
                 out,
-                (out.vis[:0], out.d_vis[:0], empty, None),
+                (out.vis[:0], out.d_vis[:0], empty, gains),
                 is_leaf=lambda x: x is None,
+            )
+        elif gains is not out.gains:
+            out = eqx.tree_at(
+                lambda d: d.gains, out, gains, is_leaf=lambda x: x is None
             )
         dropped_phases = "phi" not in names and out.has_phases
         if "phi" not in names:
@@ -660,6 +690,26 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             extras.append(block)
         return eqx.tree_at(lambda d: d.extras, out, tuple(extras))
 
+    def _subset_gains(self, kept_vis, extra_keep):
+        """Subset ``self.gains`` across ``vis`` and amplitude ``extras``."""
+        if self.gains is None:
+            return None
+        kept = kept_vis
+        if self.gains.n_vis != self.vis.size:
+            kept = onp.concatenate(
+                [
+                    kept_vis,
+                    *(
+                        extra_keep(b)
+                        for b in self.extras
+                        if b.gain_legs() and onp.size(b.values)
+                    ),
+                ]
+            )
+        if not kept.any():
+            return None
+        return self.gains if kept.all() else self.gains.subset(kept)
+
     def _subset(self, keep, flux_keep=None):
         """These data restricted to the samples where ``keep`` is True.
 
@@ -675,11 +725,6 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "Only unprojected data can be split: projected (kernel, "
                 "DISCO) observables mix samples."
             )
-        if self.phase_offsets is not None:
-            raise ValueError(
-                "Data with closure-phase offsets cannot be split or "
-                "selected; add the offsets (with_closure_offsets) afterwards."
-            )
         keep = onp.asarray(keep, dtype=bool)
         new_index = onp.cumsum(keep) - 1  # old sample -> new sample
 
@@ -692,37 +737,48 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             return rows, np.asarray(new_index[index[rows]])
 
         vis_rows, vis_index = observed(self.vis_index)
+        phase_offsets = None
         if self.cp_flag:
-            legs = [
-                onp.asarray(i) for i in (self.i_cps1, self.i_cps2, self.i_cps3)
-            ]
+            legs = [onp.asarray(i) for i in (self.i_cps1, self.i_cps2, self.i_cps3)]  # fmt: skip
             if onp.any(keep[legs[0]] != keep[legs[1]]) or onp.any(
                 keep[legs[0]] != keep[legs[2]]
             ):
-                raise ValueError(
-                    "A closure phase would be split between parts."
-                )
+                raise ValueError("A closure phase would be split between parts.")  # fmt: skip
             phi_rows = onp.flatnonzero(keep[legs[0]])
-            legs = [new_index[leg[phi_rows]] for leg in legs]
-            closure = ClosureNoise.from_indices(*legs)
-            legs = [np.asarray(leg) for leg in legs]
+            if phi_rows.size:
+                legs = [new_index[leg[phi_rows]] for leg in legs]
+                closure = ClosureNoise.from_indices(
+                    *legs, force=self.phase_offsets is not None
+                )
+                if self.phase_offsets is not None:
+                    kept_phi = onp.zeros(self.phi.size, bool)
+                    kept_phi[phi_rows] = True
+                    phase_offsets = self.phase_offsets.subset(
+                        kept_phi, closure
+                    )
+                legs = [np.asarray(leg) for leg in legs]
+            else:
+                legs, closure = [None] * 3, None
             phi_index = None
         else:
             phi_rows, phi_index = observed(self.phi_index)
             legs, closure = [None] * 3, None
         wavel = self.wavel if self.wavel.size == 1 else self.wavel[keep]
-        bandwidth = self.bandwidth
-        if bandwidth is not None and bandwidth.size > 1:
-            bandwidth = bandwidth[keep]
+        bandwidth = (
+            self.bandwidth[keep]
+            if self.bandwidth is not None and self.bandwidth.size > 1
+            else self.bandwidth
+        )
         times = [
             None if x is None else x[keep]
             for x in (self.dt, self.frame, self.stations)
         ]
-        gains = None
-        if self.gains is not None:
-            kept = onp.zeros(self.vis.size, bool)
-            kept[vis_rows] = True
-            gains = self.gains.subset(kept)
+        kept_vis = onp.zeros(self.vis.size, bool)
+        kept_vis[vis_rows] = True
+        gains = self._subset_gains(
+            kept_vis,
+            lambda b: onp.logical_and.reduce([keep[i] for i in b.gain_legs()]),
+        )
         extras = []
         for block in self.extras:
             own = None
@@ -751,7 +807,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 d.frame,
                 d.stations,
                 d.gains,
-            ),
+                d.phase_offsets,
+                d.extras,
+            ),  # fmt: skip
             self,
             (
                 self.u[keep],
@@ -768,10 +826,14 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 closure,
                 *times,
                 gains,
-            ),
+                phase_offsets,
+                tuple(extras),
+            ),  # fmt: skip
             is_leaf=lambda x: x is None,
         )
-        return eqx.tree_at(lambda d: d.extras, out, tuple(extras))
+        if self.cp_flag and not phi_rows.size:
+            object.__setattr__(out, "cp_flag", False)
+        return out
 
     def _resolve_vis_mode(self, vis_mode):
         """Resolve the visibility channel convention used before linear projection."""
@@ -1715,8 +1777,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         Returns
         -------
         OIData
-            The data with ``phase_offsets`` set. Split or select first: data with
-            offsets cannot be split.
+            The data with ``phase_offsets`` set (replacing any earlier ones).
         """
         offsets = closure_offsets(self, baseline, triangle, modes)
         # Three telescopes have no cp_noise; the offsets are whitened with
@@ -1737,7 +1798,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """A copy of the data with calibration gains correlated across channels.
 
         The likelihood marginalizes gains on log |V| per frame analytically (see
-        [`virgil.gains`][virgil.gains]), with these widths unless fitted as the
+        [`virgil.gains`][virgil.gains]), across ``vis`` and any ``"visamp"`` or
+        ``"t3amp"`` blocks in ``extras``, with these widths unless fitted as the
         noise terms ``vis_gain_telescope``, ``vis_gain_baseline``,
         ``vis_gain_chromatic`` or ``vis_gain_modes`` (log-uniform priors on stated
         bounds). The covariance then depends on the model, so fits use L-BFGS.
@@ -1780,15 +1842,17 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         n_phase = n_vis + self.phi.size
         vis = prediction[:n_vis]
         phi = prediction[n_vis:n_phase]
+        gain_draw = None
         if key is not None:
             vis_key, phi_key = jax.random.split(key)
             if self.gains is not None:
                 gain_key = jax.random.fold_in(key, 2)
-                g = self.gains.sample(gain_key, self.gains.widths)
+                gain_draw = self.gains.sample(gain_key, self.gains.widths)
+                g_vis = gain_draw[:n_vis]
                 vis = {
-                    "v2": vis * np.exp(2.0 * g),
-                    "amp": vis * np.exp(g),
-                }.get(self.vis_mode, vis + g)
+                    "v2": vis * np.exp(2.0 * g_vis),
+                    "amp": vis * np.exp(g_vis),
+                }.get(self.vis_mode, vis + g_vis)
             vis = vis + noise_scale * self.d_vis * jax.random.normal(
                 vis_key, vis.shape
             )
@@ -1809,9 +1873,16 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         if not self.extras:
             return out
         cvis = self._cvis(model)
-        extras, offset = [], n_phase
+        extras, offset, gain_offset = [], n_phase, n_vis
+        has_extra_gains = gain_draw is not None and gain_draw.size > n_vis
         for i, block in enumerate(self.extras):
             n = int(block.data().size)
+            pred_b = prediction[offset : offset + n]
+            if has_extra_gains and block.gain_legs() and n:
+                pred_b = pred_b * np.exp(
+                    gain_draw[gain_offset : gain_offset + n]
+                )
+                gain_offset += n
             noise = None
             block_key = None
             if key is not None:
@@ -1821,7 +1892,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 )
             extras.append(
                 block.simulated(
-                    prediction[offset : offset + n],
+                    pred_b,
                     cvis,
                     noise,
                     key=(
