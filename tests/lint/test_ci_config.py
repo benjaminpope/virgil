@@ -39,11 +39,31 @@ def test_pull_request_runs_only_the_gate():
 
 
 def test_pull_request_touching_orbit_modules_adds_their_slow_tests():
+    assert "test_pipeline_robust_disk.py" in ci.ORBIT_SLOW_FILES.split()
     jobs = _jobs("pull_request", orbit_slow=True)
     assert _ids(jobs) == GATE
     assert all(
-        not j["slow"] and "test_aliases.py" in j["orbit_slow"] for j in jobs
+        not j["slow"]
+        and "test_aliases.py" in j["orbit_slow"]
+        and "test_pipeline_robust_disk.py" in j["orbit_slow"]
+        for j in jobs
     )
+
+
+def test_pull_request_touching_test_file_adds_only_its_slow_tests():
+    jobs = _jobs("pull_request", extra_slow=["test_sampling.py"])
+    assert _ids(jobs) == GATE
+    assert all(
+        not j["slow"] and j["orbit_slow"] == "test_sampling.py" for j in jobs
+    )
+    # Combining orbit_slow with extra_slow preserves order without duplicates.
+    combined = _jobs(
+        "pull_request",
+        orbit_slow=True,
+        extra_slow=["test_pipeline_disk.py", "test_sampling.py"],
+    )
+    expected = f"{ci.ORBIT_SLOW_FILES} test_sampling.py"
+    assert all(j["orbit_slow"] == expected for j in combined)
 
 
 def test_pyproject_pull_request_adds_the_floors_only():
@@ -127,12 +147,15 @@ def test_changed_flags():
         "src/virgil/arcs.py",
         "src/virgil/tempering.py",
         "src/virgil/pipeline/orbit.py",
+        "src/virgil/pipeline/_checks.py",
+        "src/virgil/pipeline/_core.py",
         "tests/test_arcs.py",
         "tests/test_tempering.py",
         "tests/test_pipeline_orbit_gap.py",
         "tests/test_orbit_positions.py",
         "src/virgil/pipeline/disk.py",
         "tests/test_pipeline_disk.py",
+        "tests/test_pipeline_robust_disk.py",
         "src/virgil/pipeline/image.py",
         "tests/test_pipeline_image.py",
     ):
@@ -146,6 +169,22 @@ def test_changed_flags():
         False,
         False,
     )
+
+
+def test_changed_test_files():
+    files = [
+        "README.md",
+        "tests/lint/test_ci_config.py",
+        "tests/_shared.py",
+        "tests/test_durations.json",
+        "tests/test_sampling.py",
+        "tests/test_pipeline_binary.py",
+        "tests/test_sampling.py",
+    ]
+    assert ci.changed_test_files(files) == [
+        "test_pipeline_binary.py",
+        "test_sampling.py",
+    ]
 
 
 def test_dtype_independent_list_is_safe():
@@ -174,6 +213,20 @@ def test_main_reads_the_environment(monkeypatch, capsys):
     monkeypatch.setenv("TIER", "main")
     ci.main()
     assert "macos-latest" not in capsys.readouterr().out
+    monkeypatch.setenv("EVENT", "pull_request")
+    monkeypatch.setenv("PR", "123")
+    monkeypatch.setattr(
+        ci.subprocess,
+        "run",
+        lambda *a, **kw: type(
+            "R",
+            (),
+            {"stdout": "src/virgil/fitting.py\ntests/test_sampling.py\n"},
+        )(),
+    )
+    ci.main()
+    pr_out = capsys.readouterr().out
+    assert '"orbit_slow": "test_sampling.py"' in pr_out
 
 
 def _script(name):
@@ -290,9 +343,26 @@ def test_test_budget_stays_active_when_shard_packing_changes():
 
 
 def test_slow_orbit_tests_are_never_dropped_on_nightly_or_main():
-    """``orbit_slow`` adds the orbit slow tests to a PR run that touches
-    orbit modules; main, dispatch and the nightly already run every slow
-    test, so none of those sets it."""
+    """``orbit_slow`` and ``extra_slow`` add slow tests to a PR gate run;
+    main, dispatch, full-ci and the nightly already run every slow test, so
+    none of those sets ``orbit_slow``."""
     for event in ("push", "schedule", "workflow_dispatch"):
-        jobs = _jobs(event, orbit_slow=True)
+        jobs = _jobs(event, orbit_slow=True, extra_slow=["test_sampling.py"])
         assert not any(j.get("orbit_slow") for j in jobs), event
+    full_pr = _jobs(
+        "pull_request",
+        full_label=True,
+        orbit_slow=True,
+        extra_slow=["test_sampling.py"],
+    )
+    assert not any(j.get("orbit_slow") for j in full_pr)
+
+
+def test_readme_integration_badge_is_scoped_to_main_push():
+    """The tests.yml badge must reflect push runs on main, not schedule runs."""
+    for rel in ("README.md", "docs/index.md"):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert (
+            "actions/workflows/tests.yml/badge.svg?branch=main&event=push"
+            in text
+        ), rel

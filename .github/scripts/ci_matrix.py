@@ -11,9 +11,11 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 | tier    | trigger                      | jobs                                    |
 |---------|------------------------------|-----------------------------------------|
 | gate    | pull request                 | py3.12 float32 and float64, 3 shards    |
-|         |                              | each, no slow tests; a PR touching the  |
-|         |                              | orbit modules or the disk pipeline adds |
-|         |                              | their slow tests, one changing          |
+|         |                              | each, no slow tests; a PR touching      |
+|         |                              | tests/test_*.py adds that file's        |
+|         |                              | non-`full_only` slow tests, touching    |
+|         |                              | the orbit modules or pipeline core/disk |
+|         |                              | adds their slow tests, and changing     |
 |         |                              | pyproject.toml adds the floors          |
 | main    | push to main                 | the gate, with the slow tests except    |
 |         |                              | the `full_only` ones                    |
@@ -37,17 +39,18 @@ import os
 import re
 import subprocess
 
-# The orbit modules, the disk pipeline and their tests: a pull request
-# touching one runs the slow tests of these test files too
+# The orbit modules, the pipeline core/disk/image modules and their tests: a
+# pull request touching one runs the slow tests of these test files too
 # (tests/conftest.py, VIRGIL_SLOW_FILES).
 ORBIT_PATHS = re.compile(
-    r"^(src/virgil/(aliases|arcs|epochs|orbit[a-z_]*|likelihood|tempering|_marginal|_precision|pipeline/(disk|image|orbit))"
-    r"|tests/test_(aliases|arcs|epochs|epoch_coarse|orbit[a-z_]*|tempering|pipeline_(disk|image|orbit[a-z_]*)))\.py$"
+    r"^(src/virgil/(aliases|arcs|epochs|orbit[a-z_]*|likelihood|tempering|_marginal|_precision|pipeline/(_checks|_core|disk|image|orbit))"
+    r"|tests/test_(aliases|arcs|epochs|epoch_coarse|orbit[a-z_]*|tempering|pipeline_(disk|robust_disk|image|orbit[a-z_]*)))\.py$"
 )
 ORBIT_SLOW_FILES = (
     "test_aliases.py test_arcs.py test_epochs.py test_epoch_coarse.py test_orbit*.py test_tempering.py "
-    "test_pipeline_disk.py test_pipeline_image.py test_pipeline_orbit_gap.py"
+    "test_pipeline_disk.py test_pipeline_robust_disk.py test_pipeline_image.py test_pipeline_orbit_gap.py"
 )
+TEST_FILE_RE = re.compile(r"^tests/(test_[a-z0-9_]+\.py)$")
 
 LINUX = {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"}
 
@@ -60,8 +63,18 @@ def changed_flags(files):
     )
 
 
+def changed_test_files(files):
+    """Sorted top-level ``test_*.py`` basenames touched by ``files``."""
+    return sorted({m.group(1) for f in files if (m := TEST_FILE_RE.match(f))})
+
+
 def choose(
-    event, full_label=False, pyproject=False, orbit_slow=False, tier=""
+    event,
+    full_label=False,
+    pyproject=False,
+    orbit_slow=False,
+    tier="",
+    extra_slow=(),
 ):
     """The job matrix for a workflow event, as ``{"include": [...]}``."""
     nightly = event == "schedule"
@@ -74,7 +87,19 @@ def choose(
         or (event == "workflow_dispatch" and not main_tier)
     )
     slow = full or main_tier
-    orbit_files = ORBIT_SLOW_FILES if orbit_slow and not slow else ""
+    slow_files = (
+        list(
+            dict.fromkeys(
+                (
+                    *(ORBIT_SLOW_FILES.split() if orbit_slow else ()),
+                    *extra_slow,
+                )
+            )
+        )
+        if not slow
+        else []
+    )
+    orbit_files = " ".join(slow_files)
 
     # Whole files per shard, packed by tests/test_durations.json. The
     # per-test budget (tests/conftest.py) is enforced on these Linux py3.12
@@ -149,6 +174,7 @@ def main():
     event = os.environ["EVENT"]
     nightly = os.environ.get("NIGHTLY") == "true"
     pyproject = orbit_slow = False
+    extra_slow = ()
     if event == "pull_request":
         files = subprocess.run(
             ["gh", "pr", "diff", os.environ["PR"], "--name-only"],
@@ -157,12 +183,14 @@ def main():
             text=True,
         ).stdout.split()
         pyproject, orbit_slow = changed_flags(files)
+        extra_slow = changed_test_files(files)
     matrix = choose(
         "schedule" if nightly else event,
         os.environ.get("FULL_CI") == "true",
         pyproject,
         orbit_slow,
         os.environ.get("TIER", ""),
+        extra_slow=extra_slow,
     )
     print("matrix=" + json.dumps(matrix))
 
