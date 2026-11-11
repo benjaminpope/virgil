@@ -562,8 +562,11 @@ class Centroid(_ImageRegulariser):
         self.sigma_mas = np.asarray(sigma_mas, dtype=float)
         self.path = path
 
-    def centroid(self, model):
-        """The Image's flux-weighted centroid ``(dra, ddec)`` in mas."""
+    def centroid(self, model, grid=None):
+        """The Image's flux-weighted centroid ``(dra, ddec)`` in mas.
+
+        ``grid`` is the angle an Image with ``rotation_deg="grid"`` takes.
+        """
         image = self.image(model)
         b = image.brightness
         nrow, ncol = b.shape
@@ -577,7 +580,8 @@ class Centroid(_ImageRegulariser):
             pixel_offsets(nrow, image.pixel_scale_mas),
             precision=_HIGHEST,
         )
-        x, y = rotate(x, y, image._numeric_frame())
+        frame = image._numeric_frame() if grid is None else image.rotation_deg
+        x, y = rotate(x, y, grid if frame == "grid" else frame)
         return np.stack([x + image.dra, y + image.ddec])
 
     def residuals(self, model):
@@ -3525,7 +3529,7 @@ def diagnose(model, data, regularizers=()):
     images = [(path, part) for path, part in parts if isinstance(part, Image)]
     checks, warns = {}, []
 
-    chi2 = _chi2(model, observations)
+    chi2, lattice = _chi2(model, observations), _grid_rotation(observations)
     checks["chi2_red"] = [
         c / d.n_independent for c, d in zip(chi2, observations)
     ]
@@ -3576,14 +3580,6 @@ def diagnose(model, data, regularizers=()):
         nyquist = nyquist_pixel_scale(observations)
         checks["pixel_scale_mas"] = [im.pixel_scale_mas for _, im in images]
         checks["edge_flux"], checks["centroid_mas"] = [], []
-        # Centroids are on the sky: an Image on the "grid" takes its angle.
-        lattice = _grid_rotation(observations)
-        on_sky = _map_images(
-            model,
-            lambda im: dataclasses.replace(im, rotation_deg=lattice)
-            if im.rotation_deg == "grid"
-            else im,
-        )
         for (path, im), scale in zip(images, checks["pixel_scale_mas"]):
             label = path or "the Image"
             if scale > nyquist:
@@ -3599,7 +3595,7 @@ def diagnose(model, data, regularizers=()):
                     f"{label} has {edge:.0%} of its flux in the outer 2 "
                     "pixels; enlarge the field or add a support."
                 )
-            x, y = Centroid(1.0, path).centroid(on_sky)
+            x, y = Centroid(1.0, path).centroid(model, lattice)
             checks["centroid_mas"].append((float(x), float(y)))
 
         # Each Image turned by 180 degrees about the origin of the sky.
