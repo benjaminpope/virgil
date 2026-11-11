@@ -98,29 +98,42 @@ def test_rotation_deg_rejects_other_strings():
         LinearImage(np.ones((4, 4)), 1.0, rotation_deg="grid")
 
 
-def test_starting_image_and_clean_follow_the_lattice(monkeypatch):
+def _uses_matrix_transform(monkeypatch, model, data):
+    calls = []
+    original = models.grid_visibilities
+    monkeypatch.setattr(
+        models,
+        "grid_visibilities",
+        lambda *a, **k: calls.append(1) or original(*a, **k),
+    )
+    model.model_on_grid(data.u, data.v, data.wavel, data.uv_grid)
+    return bool(calls)
+
+
+def test_defaults_are_north_up_and_grid_is_an_opt_in(monkeypatch):
     data = _lattice().with_model(
         System(star=PointSource(), env=GaussianDisk(15.0, flux=0.3))
     )
+    kwargs = dict(npix=NPIX, pixel_scale_mas=SCALE, max_iterations=3, base=None)
+    # Unchanged default on lattice data: North up, so the direct transform.
     start = starting_image(data, star=False, oversample=2.0)
-    assert start.rotation_deg == pytest.approx(data.uv_grid.rotation_deg)
-    result = clean(
-        data, npix=NPIX, pixel_scale_mas=SCALE, max_iterations=3, base=None
-    )
-    assert result.model.rotation_deg == pytest.approx(
-        data.uv_grid.rotation_deg
-    )
-    # No lattice: North up, as before.
+    assert start.rotation_deg == 0.0
+    assert clean(data, **kwargs).model.rotation_deg == 0.0
+    assert not _uses_matrix_transform(monkeypatch, start, data)
+    # Opt-in: the lattice frame, and the matrix transform.
+    grid = starting_image(data, star=False, oversample=2.0, rotation_deg="grid")
+    assert grid.rotation_deg == pytest.approx(data.uv_grid.rotation_deg)
+    assert _uses_matrix_transform(monkeypatch, grid, data)
+    result = clean(data, rotation_deg="grid", **kwargs)
+    assert result.model.rotation_deg == pytest.approx(data.uv_grid.rotation_deg)
+    assert _uses_matrix_transform(monkeypatch, result.model, data)
+    # Without a lattice "grid" is North up, as before.
     bare = _bare(data)
-    assert starting_image(bare, star=False).rotation_deg == 0.0
     assert (
-        clean(
-            bare, npix=NPIX, pixel_scale_mas=SCALE, max_iterations=3, base=None
-        ).model.rotation_deg
+        starting_image(bare, star=False, rotation_deg="grid").rotation_deg
         == 0.0
     )
-    explicit = starting_image(data, star=False, rotation_deg=0.0)
-    assert explicit.rotation_deg == 0.0
+    assert clean(bare, rotation_deg="grid", **kwargs).model.rotation_deg == 0.0
 
 
 def _correlation(a, b):
@@ -183,7 +196,12 @@ def test_clean_result_records_its_frame_and_turns_the_beam():
         System(star=PointSource(), env=GaussianDisk(15.0, flux=0.3))
     )
     result = clean(
-        data, npix=NPIX, pixel_scale_mas=SCALE, max_iterations=3, base=None
+        data,
+        npix=NPIX,
+        pixel_scale_mas=SCALE,
+        max_iterations=3,
+        base=None,
+        rotation_deg="grid",
     )
     assert result.rotation_deg == pytest.approx(data.uv_grid.rotation_deg)
     b = beam(data)

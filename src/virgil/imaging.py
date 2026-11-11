@@ -988,7 +988,7 @@ def starting_image(
     inner_elements=4.0,
     aperture_mas=None,
     pad_to_mas=None,
-    rotation_deg="grid",
+    rotation_deg=0.0,
 ):
     """A starting model for an image fit, sized from the data.
 
@@ -1027,9 +1027,10 @@ def starting_image(
         but beyond it the data do not constrain the flux, so pair a large field
         with a support or priors.
     rotation_deg : float or "grid", optional
-        Position angle of the pixel grid (default ``"grid"``, provisional):
-        the data's uv lattice, ``data.uv_grid.rotation_deg``, so that fits take
-        the exact matrix transform (North up without a lattice).
+        Position angle of the pixel grid (default 0, North up). ``"grid"``
+        (provisional) takes the data's uv lattice, ``data.uv_grid.rotation_deg``,
+        so that fits take the exact fast matrix transform (North up without a
+        lattice).
 
     Returns
     -------
@@ -1569,7 +1570,7 @@ def clean(
     spectrum=None,
     support=None,
     init=None,
-    rotation_deg="grid",
+    rotation_deg=0.0,
     dtype="float64",
     scales_mas=(0.0,),
     scale_bias=0.0,
@@ -1614,9 +1615,10 @@ def clean(
         non-negative starting fluxes ``(npix, npix)`` or
         ``(n_scales, npix, npix)``.
     rotation_deg, dtype : float or "grid", and str, optional
-        Grid position angle: ``"grid"`` (default, provisional) takes the
-        data's uv lattice, ``data.uv_grid.rotation_deg``, for the exact fast
-        transform (0 without one); see [`Image`][virgil.models.Image].
+        Grid position angle (default 0, North up). ``"grid"`` (provisional)
+        takes the data's uv lattice, ``data.uv_grid.rotation_deg``, for the
+        exact fast transform (0 without one); see
+        [`Image`][virgil.models.Image].
         [Precision](../common_arguments.md#dtype).
     scales_mas, scale_bias : sequence of float and float, optional
         FWHMs (mas) of the components, 0 for a point (``(0.0, 3.0)``: both);

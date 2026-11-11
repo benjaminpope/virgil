@@ -26,7 +26,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Pipelines | the whole of [`virgil.pipeline`](pipeline.md): `BinaryPipeline`, `StarPipeline`, `OrbitPipeline`, `Result`, `load` and the rest. Promoted to stable after a release of use |
 | Sparse imaging ([`virgil.imaging`](api/imaging.md)) | `clean`, `CleanResult`, `DofDiscrepancy` (and `LCurve.dof_discrepancy`) |
 | Fourier-transform choice | the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, its automatic thresholds and its tolerances |
-| Rendered disks and images on uv lattices | the `rotation_deg` argument of `FlaredDisk*` and its `"grid"` default; `Image(rotation_deg="grid")`, the `"grid"` defaults of `starting_image`, `clean` and `residual_image`, and the `rotation_deg` argument of `dirty_image`; the lattice tolerance for DISCO dictionaries |
+| Rendered disks and images on uv lattices | the `rotation_deg` argument of `FlaredDisk*` and its `"grid"` default; the opt-in `rotation_deg="grid"` of `Image`, `starting_image`, `clean`, `dirty_image` and `residual_image` (their defaults stay North up); the lattice tolerance for DISCO dictionaries |
 | Diagnostic plots ([`virgil.plotting`](api/plotting.md)) | `plot_field_draws` |
 | Preconditioned fits ([`virgil.fitting`](api/fitting.md)) | `gauss_newton_diag`, `kkt_report` and the `precondition` argument of `fit` |
 | Night-outlier mixture ([`virgil.likelihood`](api/likelihood.md)) | `group_outlier_mixture`, `group_outlier_probabilities` |
