@@ -1,7 +1,7 @@
 # Vacuous '# deliberate:' stamps that predate the stamp lint. This list may only
 # shrink: the lint fails if a PR adds an entry (WP-18 empties it).
 # Regenerate after fixing stamps: python scripts/code_shape.py --write-allowlist
-count: 101
+count: 96
 aliases.py :: _band_evidence :: 33 lines, tests call it; a named stage of _fit_band
 aliases.py :: _band_result :: 42 lines, tests build band rows with it
 aliases.py :: _band_target :: imported by virgil/pipeline/orbit.py (internal interface)
@@ -82,7 +82,6 @@ pipeline/orbit.py :: _apply_exclude :: named step
 pipeline/orbit.py :: _as_mapping :: named step
 pipeline/orbit.py :: _band_checkpoints :: test seam
 pipeline/orbit.py :: _band_summary :: named step
-pipeline/orbit.py :: _converged :: named step
 pipeline/orbit.py :: _engine_defaults :: test seam (tests import it)
 pipeline/orbit.py :: _night_positions :: named step
 pipeline/orbit.py :: _null_verdict :: test seam (monkeypatched)
@@ -92,14 +91,10 @@ pipeline/orbit.py :: _positions_from_json :: test seam
 pipeline/orbit.py :: _positions_json :: test seam
 pipeline/orbit.py :: _read_nights :: named step
 pipeline/orbit.py :: _read_positions :: test seam
-pipeline/orbit.py :: _run_summary :: named step
 pipeline/orbit.py :: _sample_band :: named step
 pipeline/orbit.py :: _worst_fractions :: test seam (tests/test_pipeline_robust_core.py)
 pipeline/star.py :: _find_lobes :: test seam
 pipeline/star.py :: _nuts :: float64 boundary
-pipeline/star.py :: _quadratic_derived :: registry callback
-pipeline/star.py :: _quadratic_priors :: registry callback
 pipeline/star.py :: _refine :: float64 boundary
 pipeline/star.py :: _scan :: float64 boundary
 pipeline/star.py :: _scan_lobes :: test seam
-pipeline/star.py :: _uniform_disk :: registry callback
