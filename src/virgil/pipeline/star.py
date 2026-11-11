@@ -1272,6 +1272,9 @@ def _fit_checks(fit, registry):
             f"chi2_{k}",
             reports[k]["chi2_reduced"],
             label=f"the {registry[k].label}",
+            n=fit["n_independent"],
+            n_params=registry[k].n_params
+            + len(reports[k]["error_scales"] or {}),
         )
         for k in fit["names"]
     ]
@@ -1311,7 +1314,7 @@ def _fit_checks(fit, registry):
         for kk, v in (reports[k]["error_scales"] or {}).items()
     }
     if scales:
-        checks.append(_checks.error_scale(scales))
+        checks.append(_checks.error_scale(scales, n=fit["n_independent"]))
     at_bound = [
         f"{k}.{site}" for k in fit["names"] for site in reports[k]["at_bound"]
     ]

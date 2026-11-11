@@ -720,7 +720,6 @@ def _check_options(
     dtype,
     time_limit,
     ftol_abs,
-    ftol_window,
 ):
     """Validate ``fit``'s options; return ``(precondition, dtype)`` to use."""
     if not math.isfinite(max_step_size) or max_step_size <= 0:
@@ -731,8 +730,6 @@ def _check_options(
         raise ValueError(
             f"time_limit must be a number of seconds, not {time_limit}."
         )
-    if ftol_window < 1:
-        raise ValueError(f"ftol_window must be at least 1, not {ftol_window}.")
     if ftol_abs is not None and not 0 <= ftol_abs < math.inf:
         raise ValueError(
             f"ftol_abs must be finite and non-negative, not {ftol_abs}."
@@ -865,7 +862,6 @@ def fit(
         dtype,
         time_limit,
         ftol_abs,
-        ftol_window,
     )
     budget = _Budget(time_limit, progress)
     with run_in(dtype):
@@ -925,17 +921,17 @@ def fit(
         stop = grad_norm = None
         rounds, extra = [], {}
         if method == "lbfgsb":
-            limit = max_steps or 20_000
+            limit = 20_000 if max_steps is None else max_steps
             z, steps, converged, stop, grad_norm, extra = _lbfgsb(
                 problem, z0, traced_scale, limit, gtol, lbfgs_memory, budget
             )
         elif method == "lm":
-            limit = max_steps or 1000
+            limit = 1000 if max_steps is None else max_steps
             z, steps, converged, stop = _lm(
                 problem, z0, traced_scale, limit, gtol, cg_steps, budget
             )
         elif method == "lbfgs":
-            limit = max_steps or 20_000
+            limit = 20_000 if max_steps is None else max_steps
             z, steps, converged, stop, grad_norm, rounds = _lbfgs(
                 problem,
                 z0,
@@ -948,7 +944,7 @@ def fit(
                 precondition,
             )
         else:
-            limit = max_steps or 2000
+            limit = 2000 if max_steps is None else max_steps
             metric = None
             if precondition:
                 metric, stats = _metric(problem, z0, traced_scale)
@@ -1074,7 +1070,9 @@ class _Budget:
 
 
 # A parameter is at a bound of its prior when it is within this fraction of
-# the prior's range of one end, in the coordinate it is fitted in.
+# the prior's range of one end, in the coordinate it is fitted in. This is a
+# MAP position test; pipeline._common._BOUND_FRACTION (1e-2) instead counts the
+# share of posterior samples in a band at the edge, so it is wider by design.
 # deliberate: a reporting threshold, not a fit setting. 1e-3 of a uniform range
 # is 6.9 units from the edge in logit, where a MAP pushed against a bound sits
 # (the sigmoid is flat there); it is a convention, not tuned to any target.
@@ -2336,7 +2334,7 @@ def _lbfgsb(problem, z0, scale, max_steps, gtol, memory, budget):
     """
     from scipy.optimize import Bounds, minimize
 
-    memory = memory or 10
+    memory = 10 if memory is None else memory
     x0, unravel = problem.ravel(z0)
     lower, upper = _box(problem, z0)
     x0 = onp.asarray(x0, float)
@@ -2715,10 +2713,13 @@ def _adam_run(
     )
 
 
-# Thresholds of ``kkt_report``, from the IM Lup imaging diagnosis: kkt_w < 1e-4 and
-# band_limit < 2 gate ``converged``. KKT_TOL is the relative residual, far below the
+# Thresholds of ``kkt_report``: kkt_w < 1e-4 and band_limit < 2 gate
+# ``converged``. These are conventions, not derived or validated limits: they
+# were set on one ALMA disc and tested on synthetic images in
+# tests/test_kkt_report.py, where band_limit fails for sharp-edged scenes at
+# 10 mas pixels (not in the suite). KKT_TOL is the relative residual, far below the
 # fits' own stop yet above the float64 noise of a converged fit; band_limit is
-# about 1 at an optimum.
+# about 1 at an optimum, so 2 allows twice the hard low-pass's excess power.
 KKT_TOL = 1e-3
 BAND_TOL = 2.0
 # _ACTIVE: pixels above 1e-3 of the peak have gradients well resolved against
@@ -2729,17 +2730,21 @@ BAND_TOL = 2.0
 _ACTIVE, _FROZEN, _GROW = 1e-3, 1e-6, 3.0
 _IMAGE_COORDS = ("log_brightness", "pixels")
 _FWHM = 2 * onp.sqrt(2 * onp.log(2))  # FWHM over sigma of a Gaussian
-_LIT_FWHM, _EDGE_FWHM = (
-    30 / 18,
-    20 / 18,
-)  # band_limit windows, resolution elements
-KKT_W_TOL = 1e-4  # kkt_w: the registered IM Lup criterion
+# band_limit windows, in resolution elements (1 / cut): the lit region is the
+# image blurred by 5/3 elements, the window edge is soft over 10/9. Convention:
+# a blur of order one element keeps the support the data can see and drops
+# pixels they cannot.
+_LIT_FWHM, _EDGE_FWHM = 5 / 3, 10 / 9
+# kkt_w: the rms of the weighted KKT residual, in units of w / F. Convention.
+KKT_W_TOL = 1e-4
 NUISANCE_TOL = 1e-3  # grad_rel of a nuisance, relative to the start gradient
 
 
 def _smooth(img, sigma):
     """``img`` blurred by a Gaussian of ``sigma`` pixels (zero-padded FFT)."""
     n = img.shape[0]
+    if img.ndim != 2 or img.shape[1] != n:
+        raise ValueError(f"_smooth needs a square image, got {img.shape}.")
     f = onp.fft.fftfreq(2 * n)
     gauss = onp.exp(
         -2 * onp.pi**2 * sigma**2 * (f[:, None] ** 2 + f[None, :] ** 2)
@@ -2755,10 +2760,14 @@ def _band_limit(brightness, pixel_scale_mas, cut):
     The window is the lit region (``b`` blurred with a Gaussian of FWHM
     ``_LIT_FWHM`` resolution elements ``1 / cut``, above 1e-3 of its peak),
     smoothed with one of FWHM ``_EDGE_FWHM``. Non-finite ``ln b`` (empty pixels)
-    become the finite minimum. Thresholds and windows follow an IM Lup
-    imaging diagnosis, where 30 and 20 mas FWHM were 1.67 and 1.11 elements.
+    become the finite minimum. The windows are conventions in resolution
+    elements, not validated limits. Images must be square.
     """
     b = onp.asarray(brightness, float)
+    if b.ndim != 2 or b.shape[0] != b.shape[1]:
+        raise ValueError(
+            f"band_limit needs a square image, got shape {b.shape}."
+        )
     n = b.shape[0]
     step = pixel_scale_mas * onp.pi / 180 / 3.6e6
     element = 1.0 / (cut * step * _FWHM)  # sigma of one element, in pixels
@@ -2953,9 +2962,7 @@ def kkt_report(
     - [`Image`][virgil.models.Image] (softmax): ``kkt_w``, the rms over pixels above
       1e-3 of the peak of ``g_I - μ``, the gradient per pixel flux less the
       multiplier, in units of ``w / F`` (regulariser weight over flux), which
-      gates ``converged`` at ``KKT_W_TOL``. (The diagnosis took ``μ`` as the
-      median; here ``μ = Σ b g`` exactly, which agrees to within a few percent
-      at an optimum.) ``kkt_rel``, the rms of
+      gates ``converged`` at ``KKT_W_TOL``. ``kkt_rel``, the rms of
       ``g - μ`` over pixels above 1e-3 of the peak, with ``g = ∂J/∂b`` for
       unit-sum ``b`` and ``μ = Σ b g``, over ``|μ|`` plus the rms gradient
       scale; ``want_grow``, the fraction of pixels below 1e-6 of the peak whose

@@ -19,6 +19,23 @@
 Every flux is relative: for a companion it is the companion/primary flux
 ratio. Likelihoods of these models are in
 [`virgil.likelihood`][virgil.likelihood].
+
+Contents, in file order (each family has a banner comment):
+
+1. Base classes: `SourceModel`, `Component`.
+2. Single shapes: `PointSource`, Gaussians, `GaussianArc`, `TruncatedCone`,
+   `UniformDisk`.
+3. Limb-darkened disks.
+4. `GravityDarkenedStar`, `ModulatedGaussianRim`.
+5. Pixel images: `Image`, `LinearImage`.
+6. Flared scattered-light disks: `FlaredDisk` and its subclasses.
+7. Radial profiles (`ThinRing`, `GaussianRing`, `RadialSum`, `RadialGP`, ...):
+   parts of a `MultipoleDisk`, not components.
+8. `MultipoleDisk` (its kernel, azimuthal and height parts are under 7).
+9. Composition: `System`, `Rotated`, `Attached`, `Resolved`.
+10. Binaries: `OrbitalBinary`, `BinaryModelAngular`, `BinaryModelCartesian`.
+11. `HarmonixModel`.
+12. The analytic `cvis_*` functions.
 """
 
 import dataclasses
@@ -180,6 +197,11 @@ def _positive(x):
 
 def _in_unit_interval(x):
     return (x > 0.0) & (x <= 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Base classes: SourceModel and Component
+# ---------------------------------------------------------------------------
 
 
 class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -421,6 +443,11 @@ class Component(SourceModel):
         _check_shape_params(type(self).__name__, self._shape_checks())
 
 
+# ---------------------------------------------------------------------------
+# Single shapes: PointSource, Gaussians, arcs, cones and uniform disks
+# ---------------------------------------------------------------------------
+
+
 class PointSource(Component):
     """Unresolved point source.
 
@@ -587,7 +614,7 @@ class GaussianArc(Component):
         self.length = np.asarray(length, dtype=float)
         self.pa = np.asarray(pa, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
+        if int(nodes) != nodes or nodes < 2:
             raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
         self.nodes = int(nodes)
         self.quadrature = False
@@ -610,7 +637,7 @@ class GaussianArc(Component):
                     # arc instead.
                     self.quadrature = True
                     degree = _ARC_MAX_DEGREE
-        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+        if int(degree) != degree or degree < 1:
             raise ValueError(f"degree must be a positive integer: {degree}.")
         self.degree = int(degree)
 
@@ -779,7 +806,7 @@ class TruncatedCone(Component):
         self.pa = np.asarray(pa, dtype=float)
         self.ratio = np.asarray(ratio, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(n_rings, bool) or int(n_rings) != n_rings or n_rings < 2:
+        if int(n_rings) != n_rings or n_rings < 2:
             raise ValueError(
                 f"n_rings must be an integer >= 2, got {n_rings}."
             )
@@ -1041,6 +1068,11 @@ class UniformDisk(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
         return np.where(xx**2 + yy**2 <= radius**2, 1.0, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Limb-darkened disks
+# ---------------------------------------------------------------------------
 
 
 class _LimbDarkenedDisk(Component):
@@ -1358,6 +1390,11 @@ def _in_unit_square(q1, q2):
     return np.all((q1 >= 0.0) & (q1 <= 1.0) & (q2 >= 0.0) & (q2 <= 1.0))
 
 
+# ---------------------------------------------------------------------------
+# Gravity-darkened star
+# ---------------------------------------------------------------------------
+
+
 class GravityDarkenedStar(Component):
     """Rapidly rotating star: Roche shape and gravity darkening (ELR11).
 
@@ -1429,7 +1466,7 @@ class GravityDarkenedStar(Component):
         self.inc = np.asarray(inc, dtype=float)
         self.pa = np.asarray(pa, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(n_lat, bool) or int(n_lat) != n_lat or n_lat < 4:
+        if int(n_lat) != n_lat or n_lat < 4:
             raise ValueError(f"n_lat must be an integer >= 4, got {n_lat}.")
         self.n_lat = int(n_lat)
         self.t_pole = None if t_pole is None else np.asarray(t_pole, float)
@@ -1657,6 +1694,11 @@ def _modulation_array(values, name):
     return array
 
 
+# ---------------------------------------------------------------------------
+# Modulated rim
+# ---------------------------------------------------------------------------
+
+
 class ModulatedGaussianRim(Component):
     """Azimuthally modulated, infinitely thin rim convolved with a Gaussian.
 
@@ -1824,6 +1866,11 @@ def _pixel_visibilities(
     return image_visibilities(fluxes, uu, vv, pixel_scale_mas, ft)
 
 
+# ---------------------------------------------------------------------------
+# Pixel images: Image and LinearImage
+# ---------------------------------------------------------------------------
+
+
 class _BrightnessImage(Component):
     """Shared transform code of the pixel images, which define ``brightness``
     (unit-sum pixels) and the fields ``support``, ``pixel_scale_mas``,
@@ -1851,7 +1898,7 @@ class _BrightnessImage(Component):
         self.blur_fwhm_mas = (
             None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
-        self.ft = _check_ft(ft)
+        self.ft = ft
         if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
             raise ValueError(
                 f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
@@ -2256,6 +2303,11 @@ class LinearImage(_BrightnessImage):
         return ok & (self.total_flux > 0.0)
 
 
+# ---------------------------------------------------------------------------
+# Flared scattered-light disks
+# ---------------------------------------------------------------------------
+
+
 class _PixelRendered(Component):
     """A component whose visibilities are the transform of its own pixels.
 
@@ -2278,7 +2330,7 @@ class _PixelRendered(Component):
     # deliberate: the one grid setup that pixel-rendered models share
     def _set_grid(self, npix, pixel_scale_mas, ft, rotation_deg):
         """Validate and store the pixel grid and its transform."""
-        self.ft = _check_ft(ft)
+        self.ft = ft
         if isinstance(rotation_deg, str):
             if rotation_deg != "grid":
                 raise ValueError(
@@ -2287,10 +2339,6 @@ class _PixelRendered(Component):
             self.rotation_deg = rotation_deg
         else:
             self.rotation_deg = float(rotation_deg)
-            if not onp.isfinite(self.rotation_deg):
-                raise ValueError(
-                    f"rotation_deg must be finite, not {self.rotation_deg}."
-                )
         self.npix = int(npix)
         if self.npix <= 0 or self.npix % 2:
             raise ValueError(f"npix must be positive and even, got {npix}.")
@@ -2337,13 +2385,6 @@ class _PixelRendered(Component):
             self.ft,
         )
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
-
-
-def _check_ft(ft):
-    """``ft`` if it is a valid transform name."""
-    if ft not in ("auto", "dft", "nufft"):
-        raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")
-    return ft
 
 
 class FlaredDisk(_PixelRendered):
@@ -2733,6 +2774,11 @@ class ThinRing(_RadialProfile):
 class GaussianRing(_RadialProfile):
     r"""Gaussian ring, $I \propto \exp[-(r - r_0)^2 / 2\sigma^2]$, with
     $r \ge 0$ and $r_0$ = ``radius``.
+
+    A radial profile of a [`MultipoleDisk`][virgil.models.MultipoleDisk], not
+    a `Component`: put it in a `MultipoleDisk`, not directly in a `System`
+    (for a Gaussian component see
+    [`GaussianDisk`][virgil.models.GaussianDisk]).
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
@@ -3961,7 +4007,7 @@ class Harmonics(_Azimuthal):
                 )
             if degree is None:
                 raise ValueError("a Harmonics with a prior needs its degree.")
-            if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+            if int(degree) != degree or degree < 1:
                 raise ValueError(
                     f"degree must be a positive integer: {degree}."
                 )
@@ -4014,7 +4060,7 @@ class Harmonics(_Azimuthal):
             )
         first, second = (c, s) if form == "linear" else (re, im)
         top = max(len(first), len(second)) if degree is None else degree
-        if isinstance(top, bool) or int(top) != top or top < 0:
+        if int(top) != top or top < 0:
             raise ValueError(f"degree must be a non-negative integer: {top}.")
         top = int(top)
         if max(len(first), len(second)) > top:
@@ -4176,7 +4222,7 @@ class VonMises(_Azimuthal):
             from . import harmonics as _h
 
             degree = 32 if value is None else _h.auto_von_mises_degree(value)
-        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+        if int(degree) != degree or degree < 1:
             raise ValueError(f"degree must be a positive integer: {degree}.")
         self.degree = int(degree)
         n_fft = max(512, 8 * (self.degree + 1)) if n_fft is None else n_fft
@@ -4501,6 +4547,11 @@ def _dot(matrix, x):
     if x.ndim == 1:
         return np.matmul(matrix, x + 0j, precision=jax.lax.Precision.HIGHEST)
     return np.sum(matrix * x, axis=-1)
+
+
+# ---------------------------------------------------------------------------
+# MultipoleDisk
+# ---------------------------------------------------------------------------
 
 
 class _FrozenGeometry(zdx.Base):
@@ -5103,6 +5154,11 @@ def gp_priors(model, sigma=None, ell=None, ell_theta=None):
     return priors
 
 
+# ---------------------------------------------------------------------------
+# Composition: System, Rotated, Attached, Resolved
+# ---------------------------------------------------------------------------
+
+
 class Resolved(SourceModel):
     """Fully resolved (over-resolved) flux, e.g. a large, diffuse envelope.
 
@@ -5666,6 +5722,11 @@ class Attached(SourceModel):
         return self.component.is_physical()
 
 
+# ---------------------------------------------------------------------------
+# Binaries: OrbitalBinary, BinaryModelAngular, BinaryModelCartesian
+# ---------------------------------------------------------------------------
+
+
 class OrbitalBinary(SourceModel):
     """A primary and a point-source companion moving on a Keplerian orbit.
 
@@ -5861,6 +5922,11 @@ class BinaryModelCartesian(SourceModel):
         return self.to_system()._image(xx, yy, pixel_scale_mas)
 
 
+# ---------------------------------------------------------------------------
+# HarmonixModel: spotted stars (harmonix)
+# ---------------------------------------------------------------------------
+
+
 class HarmonixModel(SourceModel):
     """Wrapper for external models with harmonix-like visibility methods.
 
@@ -5962,6 +6028,11 @@ class HarmonixModel(SourceModel):
             x.ravel(), y.ravel(), z.ravel(), theta=theta
         )
         return np.where(on_disk, np.reshape(intensity, xx.shape), 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Analytic complex visibilities (cvis_*)
+# ---------------------------------------------------------------------------
 
 
 def cvis_binary(u, v, dra, ddec, flux):

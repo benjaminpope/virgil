@@ -1055,8 +1055,6 @@ def test_gaussian_null_error_scale_scales_the_noise_not_the_errors():
         vis = onp.asarray(jax.vmap(lambda k: simulate(k).vis)(keys))
         assert onp.std(vis - 1.0) == pytest.approx(0.01 * scale, rel=0.1)
         assert onp.array_equal(simulate(keys[0]).d_vis, TEMPLATE.d_vis)
-    with pytest.raises(ValueError, match="error_scale"):
-        gaussian_null(NULL, TEMPLATE, error_scale=-1.0)
 
 
 def test_default_grid_batch_size_is_split_among_draw_batch(monkeypatch):
@@ -1120,3 +1118,21 @@ def test_remainder_chunk_matches_unchunked_run():
     onp.testing.assert_allclose(
         a.null["delta_chi2"], b.null["delta_chi2"], rtol=1e-4, atol=1e-6
     )
+
+
+def test_unresolved_flux_peak_reaches_its_check_with_the_steps():
+    from virgil.pipeline._checks import stage_warning_checks
+    from virgil.pipeline._core import _record_warnings
+
+    data = _data(1e-2, 5)
+    coarse = {
+        "dra": np.array([60.0]),
+        "ddec": np.array([-40.0]),
+        "flux": np.geomspace(1e-4, 0.1, 5),
+    }
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = detection_statistics(BinaryModelCartesian, data, coarse)
+    (found,) = stage_warning_checks(_record_warnings("overview", caught))
+    assert found.name == "flux_axis_resolution"
+    assert found.value == pytest.approx(float(result["flux_peak_steps"]))

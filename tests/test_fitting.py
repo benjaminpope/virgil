@@ -372,6 +372,12 @@ def test_bad_time_limits_are_rejected():
         fit(START, PRIORS, DATA, time_limit=-1.0)
 
 
+def test_bad_ftol_abs_is_rejected():
+    for bad in (-1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="ftol_abs"):
+            fit(START, PRIORS, DATA, method="adam", ftol_abs=bad)
+
+
 def _adam(**kw):
     kw = {"max_steps": 40, "method": "adam"} | kw
     with warnings.catch_warnings():
@@ -498,17 +504,6 @@ def test_adam_learning_rate_schedule():
     )
     step = lambda r: abs(r.values["dra"] - START.dra)  # noqa: E731
     assert step(scheduled) < step(constant)
-
-
-def test_bad_ftol_abs_is_rejected():
-    for bad in (-1.0, float("nan"), float("inf")):
-        with pytest.raises(ValueError, match="ftol_abs"):
-            fit(START, PRIORS, DATA, method="adam", ftol_abs=bad)
-
-
-def test_bad_ftol_window_is_rejected():
-    with pytest.raises(ValueError, match="ftol_window"):
-        fit(START, PRIORS, DATA, method="adam", ftol_window=0)
 
 
 def test_poles_of_isotropic_priors_are_not_prior_bounds():
@@ -1719,3 +1714,12 @@ def test_lbfgs_keeps_the_last_finite_point_after_a_non_finite_update(
     assert np.isfinite(result.info["grad_norm"])
     assert np.isfinite(result.info["loss"])
     assert all(np.isfinite(v) for v in result.values.values())
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs", "lbfgsb", "adam"])
+def test_an_explicit_zero_max_steps_is_not_the_default(method):
+    # max_steps=0 means no steps, not the method's default (R8).
+    with pytest.warns(RuntimeWarning):
+        result = fit(START, PRIORS, DATA, method=method, max_steps=0)
+    # scipy's L-BFGS-B still counts its first iteration; the default is 20000.
+    assert result.info["steps"] <= 1

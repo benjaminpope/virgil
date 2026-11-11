@@ -19,7 +19,9 @@ from .._precision import cast_tree, in_float64, run_in
 from ..likelihood import model_loglike
 from . import _checks, _io
 
-# Fraction of a prior's range, at either end, counted as "at the bound".
+# Fraction of a prior's range, at either end, counted as "at the bound" for a
+# posterior sample. Deliberately wider than fitting._AT_BOUND (1e-3), which tests
+# one MAP point: a sample band must be wide enough to hold several draws.
 _BOUND_FRACTION = 0.01
 
 
@@ -730,16 +732,12 @@ def _prior_repr(prior):
 
 
 def _positive(s, name):
-    if isinstance(s[name], bool) or not (
-        isinstance(s[name], numbers.Real) and s[name] > 0
-    ):
+    if not (isinstance(s[name], numbers.Real) and s[name] > 0):
         raise ValueError(f"{name} must be positive; got {s[name]!r}.")
 
 
 def _integer(s, name, minimum):
-    if isinstance(s[name], bool) or not (
-        isinstance(s[name], int) and s[name] >= minimum
-    ):
+    if not (isinstance(s[name], int) and s[name] >= minimum):
         raise ValueError(f"{name} must be an integer >= {minimum}.")
 
 
