@@ -1,14 +1,11 @@
 <!-- AUTO-GENERATED FROM notebooks/contrast_limits.ipynb by scripts/sync_tutorial_docs.py. -->
-# Contrast limits with Ruffio method
+# Contrast limits: Ruffio and Absil
 
 > **Install:** the "As a pipeline" section needs the `pipeline` extra: `pip install "virgil-astro[pipeline]"`.
 
 You have a non-detection, or you have subtracted a well-measured companion and want to know whether anything *else* is in the data. What could you have detected?
 
-This tutorial applies the two methods common in interferometry to a non-detection:
-
-- the Bayesian [Ruffio method](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract), which finds the Laplace-approximation posterior for a point-source companion's flux at every grid position and quotes a posterior Nσ upper limit;
-- the frequentist [Absil method](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract), which uses $\chi^2$ statistics to set an upper limit at a chosen confidence.
+This tutorial applies the two methods common in interferometry to a non-detection: the Bayesian [Ruffio method](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) and the frequentist [Absil method](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract). [Detection limits](detection_limits.md#which-method) says which to use.
 
 First, the imports.
 
@@ -103,9 +100,9 @@ opt_flux = optimized_flux_grid(BinaryModelCartesian, oidata_sim, samples)
 RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 244 of 3721 grid positions; values there may be inaccurate.
 ```
 
-## Ruffio Contrast Limits
+## Ruffio limits
 
-The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) method is Bayesian: infer the Gaussian posterior on a companion's flux, impose a positive-flux prior, and report a chosen percentile as the upper limit, *conditioned on the astrometry being right and a source being there*.
+The Ruffio limit is a Bayesian upper limit on a companion's flux at each position, conditioned on the astrometry being right and a source being there; [Ruffio et al. 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract), defined in [Detection limits](detection_limits.md#ruffio).
 
 ```python
 sigma_flux = laplace_flux_uncertainty_grid(
@@ -123,9 +120,9 @@ plot_grid_map(
 
 ![contrast_limits output 9.1](generated/contrast_limits_cell009_out01.png)
 
-## Absil Contrast Limits
+## Absil limits
 
-[Absil et al 2011](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract) use a frequentist chi-squared test: the limit is the faintest companion that would have been detected at n-σ.
+The Absil limit is the faintest companion that a $\chi^2$ test would have detected at n-σ; [Absil et al. 2011](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract), defined in [Detection limits](detection_limits.md#absil-injection).
 
 ```python
 # Absil method at 2σ
@@ -149,10 +146,10 @@ RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) a
 
 ![contrast_limits output 11.2](generated/contrast_limits_cell011_out02.png)
 
-## Contrast Curves
+## Contrast curves
 Plotted as contrast curves on one axis, the two methods give similar but not identical limits.
 
-The limits are companion/primary flux ratios, but astronomers report a contrast (primary/companion) or magnitudes: a companion 100 times fainter than the star has a contrast of 100, or 5 mag. `units="delta_mag"` (the default for curves) or `units="contrast"` converts for display, and `flux_to_delta_mag` / `flux_to_contrast` convert the numbers.
+The limits are companion/primary flux ratios; `units="delta_mag"` (the default for curves) or `units="contrast"` converts for display ([units](detection_limits.md#units)).
 
 Contrast limits say which companions a non-detection rules out at each position. To calibrate a detection threshold against simulated noise, including the look-elsewhere effect of a grid search, and to measure completeness at a fixed false-alarm probability, see [Detection ROC curves](detection_roc.md).
 

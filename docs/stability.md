@@ -37,6 +37,6 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Image-recovery scores | the module [`virgil.metrics`](api/metrics.md) |
 | Cross-validation | the module [`virgil.crossval`](api/crossval.md) (`cv_task`, `cross_validate`, `aggregate`, `aggregate_files`, `fold_masks`, `save_record`, `load_records`) |
 
-The user-guide pages about these features carry the same notice: [orbits](orbit_fitting.md), [`MultipoleDisk` rings](multipole_disk_rings.md), [CLEAN](imaging_clean.md), [ensembles](imaging_ensemble.md), [variational inference](variational_inference.md) and [pipelines](pipeline.md), [radio interferometry](radio_interferometry.md) (with its Toeplitz χ²), [radio CLEAN](radio_clean.md) and [cross-validation](cross_validation.md).
+The user-guide pages about these features carry the same notice: [orbits](orbit_fitting.md), [orbit methods](orbit_methods.md), [`MultipoleDisk` rings](multipole_disk_rings.md), [CLEAN](imaging_clean.md), [ensembles](imaging_ensemble.md), [variational inference](variational_inference.md) and [pipelines](pipeline.md), [radio interferometry](radio_interferometry.md) (with its Toeplitz χ²), [radio CLEAN](radio_clean.md) and [cross-validation](cross_validation.md).
 
 The module `__provisional__` tuples (`("*",)` means the whole module) are authoritative for names, checked by `tests/test_stability.py`; the argument-level rows above are documented only here.

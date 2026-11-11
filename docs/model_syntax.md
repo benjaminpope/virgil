@@ -1,5 +1,5 @@
 <!-- AUTO-GENERATED FROM notebooks/model_syntax.ipynb by scripts/sync_tutorial_docs.py. -->
-# Visibility models
+# Binary models and OIData
 
 This tutorial shows how `BinaryModelCartesian` and `BinaryModelAngular` work internally, how they interact with `OIData`, and how a likelihood is built from an `OIData` instance and a model class.
 
@@ -120,7 +120,7 @@ data = OIData(
 {'n_baselines': 24, 'v2_flag': True, 'cp_flag': False}
 ```
 
-## How `OIData.model(...)` builds comparable vectors
+## How `OIData.model(...)` builds comparable vectors {#oidata-model}
 
 `OIData.model(model)` evaluates complex visibilities through the model, converts them to the configured observables (`V²` and phases here), and flattens them to match `OIData.flatten_data()`.
 

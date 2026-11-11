@@ -75,10 +75,17 @@ Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpo
 | --- | --- |
 | Read my OIFITS file | [Reading data](https://benjaminpope.github.io/virgil/data_io/) |
 | Find and fit a companion | [Binary search](https://benjaminpope.github.io/virgil/binary_search/) |
-| Set a contrast limit or a detection limit | [Contrast limits](https://benjaminpope.github.io/virgil/contrast_limits/) |
+| Set a contrast limit or a detection limit | [Contrast limits: Ruffio and Absil](https://benjaminpope.github.io/virgil/contrast_limits/), then [Detection ROC curves](https://benjaminpope.github.io/virgil/detection_roc/) |
 | Fit a binary's orbit | [Which orbit tool?](https://benjaminpope.github.io/virgil/which_orbit_tool/), then [Orbits from interferometric data](https://benjaminpope.github.io/virgil/orbit_fitting/) |
 | Make an image | [Simulating AMI data](https://benjaminpope.github.io/virgil/imaging_ami/), then [Regularized maximum likelihood](https://benjaminpope.github.io/virgil/imaging_rml/) |
-| Run a whole analysis in one command | [Pipelines](https://benjaminpope.github.io/virgil/pipeline/) |
+| Image radio visibilities | [Radio imaging tutorial](https://benjaminpope.github.io/virgil/radio_tutorial/), then [Radio interferometry](https://benjaminpope.github.io/virgil/radio_interferometry/) |
+| Image with a Gaussian-process prior | [Imaging, part 3](https://benjaminpope.github.io/virgil/imaging_gp/) |
+| Use AMIGO DISCO products | [AMIGO DISCO data](https://benjaminpope.github.io/virgil/amigo_disco/) |
+| Work with spectro-interferometric data | [Spectro-interferometric observables](https://benjaminpope.github.io/virgil/spectro_observables/) |
+| Fit a stellar diameter with limb darkening | [Limb-darkened stars](https://benjaminpope.github.io/virgil/limb_darkening/) |
+| Run a whole analysis in one command | [Pipeline tutorial](https://benjaminpope.github.io/virgil/pipelines/), then [Pipeline reference](https://benjaminpope.github.io/virgil/pipeline/) |
+| Check a convention or an argument name | [Conventions](https://benjaminpope.github.io/virgil/conventions/) |
+| Look up a function | [API reference](https://benjaminpope.github.io/virgil/api/) |
 | Check which features may change | [Stability](https://benjaminpope.github.io/virgil/stability/) |
 
 ## Independent validation

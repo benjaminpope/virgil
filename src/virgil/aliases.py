@@ -278,7 +278,7 @@ def period_window(
 
     The lower end is a Nyquist-style sampling limit (the companion must not move
     much in a night); the upper end is ``span_factor`` times the span. No published
-    period enters ([why](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults)).
+    period enters ([why](../orbit_methods.md#alias-search)).
 
     Parameters
     ----------
@@ -2996,7 +2996,7 @@ def fit_orbit_aliases(
 
     Each alias band (an integer number of orbits between the epochs) is fitted
     to all epochs and given an evidence; the defaults need no per-system
-    arguments ([how](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults),
+    arguments ([how](../orbit_methods.md#alias-search),
     [settings](../orbit_methods.md#alias-settings)).
 
     Parameters
