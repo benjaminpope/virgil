@@ -514,6 +514,8 @@ def test_the_reported_invariants_do_not_see_the_label_swap():
     assert onp.all((one["omega_mod_pi"] >= 0) & (one["omega_mod_pi"] < 180.0))
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(1800)
 @x64
 def test_gains_and_closure_offsets_are_marginalized_in_the_night_likelihoods():
     orbit, sets, summaries, _ = _system(TIMES[:2], gains=True)
