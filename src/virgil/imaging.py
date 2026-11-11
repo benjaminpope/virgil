@@ -2185,7 +2185,7 @@ def _lerp_roots(weights, values):
                 f"dof_discrepancy: m is not finite at w = {weights[i]:.4g}; "
                 "the intervals either side are skipped.",
                 RuntimeWarning,
-                stacklevel=3,
+                stacklevel=external_stacklevel(),
             )
             continue
         if a == 0.0:
@@ -2240,7 +2240,7 @@ def _hutchinson_g(
                     f"Conjugate gradients did not reach tol={tol:g} in "
                     f"{maxit} iterations: G is biased; raise maxit.",
                     RuntimeWarning,
-                    stacklevel=2,
+                    stacklevel=external_stacklevel(),
                 )
         values.append(z @ (k_matvec(y) * mask))
     values = onp.array(values)
