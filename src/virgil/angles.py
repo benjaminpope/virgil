@@ -5,7 +5,7 @@ angle's path, samples a vector ``v = r(cos θ, sin θ)`` at the site
 ``"<path>_vec"`` instead of the angle; the model receives θ in degrees in
 [0°, 360°), recorded (by [`numpyro_model`][virgil.likelihood.numpyro_model])
 and reported (by [`fit`][virgil.fitting.fit]) under ``"<path>"``. See
-the derivation at the top of this page.
+the derivation in ``docs/api/angles.md``.
 """
 
 import jax
@@ -44,7 +44,7 @@ class AngleVector(dist.Distribution):
     sampled at ``"<path>_vec"``, giving θ = atan2(v₂, v₁) in [0°, 360°); a
     ``fit`` starts from the starting angle or ``init["<path>_vec"]``. The
     prior on θ is uniform unless ``mean`` and ``kappa`` give a von Mises
-    prior; see the derivation at the top of this page.
+    prior; see the derivation in ``docs/api/angles.md``.
 
     Parameters
     ----------

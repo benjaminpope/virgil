@@ -2569,7 +2569,7 @@ def estimate_primary_diameter(
     """Estimate a shared uniform-disk primary diameter and whether the data resolve it.
 
     Each night's binary is re-refined over a diameter grid and the scores
-    summed ([rule](../orbit_methods.md#scale-marginalized-scoring)).
+    summed ([rule](../orbit_methods.md#alias-search)).
 
     Parameters
     ----------

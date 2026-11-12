@@ -1,7 +1,9 @@
 # Orbit methods
 
 !!! warning "Provisional"
-    May change in any 0.4.x release without a deprecation cycle. `virgil.orbit_search` is provisional in the whole; `virgil.epochs` and `virgil.aliases` too (see [stability](stability.md)).
+    May change in any 0.4.x release without a deprecation cycle. `virgil.orbit_search`, `virgil.epochs`, `virgil.aliases`, `virgil.arcs` and `virgil.tempering` are provisional in the whole; the `virgil.orbits` helpers below (orientation priors to the position and RV terms) are stable (see [stability](stability.md)).
+
+**Status.** The thresholds behind the alias, no-orbit, label-swap and resolved-primary verdicts are in nats and are not yet calibrated against a null distribution, so read them as indications and not as Bayes factors. Tempering, the short-arc search, the alias-band search and the night-outlier mixture are virgil's own designs without a published source or an independent end-to-end validation; tempering is opt-in until 0.5 (`temper=True`; the default is untempered); its check currently warns outside a fixed range of the factor, 0.5 to 2.
 
 The methods behind the helpers of [`virgil.orbits`](api/orbits.md). Angle and sign conventions are on the [conventions](conventions.md#orbits) page, and [Orbits from interferometric data](orbit_fitting.md) runs the orbit pipeline and the functions underneath it end to end.
 

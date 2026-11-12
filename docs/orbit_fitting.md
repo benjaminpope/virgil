@@ -16,12 +16,13 @@ A resolved binary observed again over weeks and years shows the companion moving
 
 *Orbits drawn from the posterior (blue) around the true orbit (red). The markers are the companion's positions at the eight nights, fitted from each night alone, coloured by time.*
 
-The page has four parts:
+The page has three parts:
 
 1. **Simulate** eight nights of VLTI-like data whose quoted errors are too small by a different factor each night, as real ones are, and write them as OIFITS files.
 2. **One call**: `OrbitPipeline.from_oifits(files).run()`, then read the result: the raw χ²/N, the quality checks, the orbit and the alias bands.
 3. **The engine underneath**: the functions the pipeline calls (`epoch_positions`, `fit_orbit_aliases`, tempering), for when you need control.
-4. **How the engine decides**, and why its defaults are what they are.
+
+[Orbit methods](orbit_methods.md) says how the engine decides, and why its defaults are what they are.
 
 `OrbitPipeline` fits data that an instrument package has already prepared: the channel, band edges, outlier exposures and noise model are the instrument package's job (for the VLTI instruments, [virgil-vlti](https://github.com/benjaminpope/virgil-vlti)), not the pipeline's. It has no instrument-specific settings, so this page applies to any instrument. The orbit conventions are those of [Conventions](conventions.md#orbits): `Omega` is the position angle of the node where the secondary recedes, `omega` is the secondary's argument of periastron, an inclination below 90° means the position angle increases with time, and times are days since a reference epoch `t_ref`.
 

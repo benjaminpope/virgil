@@ -10,8 +10,8 @@ these *image harmonics* $I_m$ (complex, $m = 0 \dots M$) with
 [`from_image_harmonics`][virgil.harmonics.from_image_harmonics]: report any
 model in one convention and warm-start a positive-form fit from a linear one.
 The positive form's reflection coefficients are an internal parametrization:
-report the image harmonics. The forms, their formulas and references are
-at the top of this page.
+report the image harmonics. The forms, their formulas and references are in
+``docs/api/harmonics.md``.
 """
 
 import warnings

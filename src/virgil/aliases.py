@@ -120,7 +120,7 @@ UNRECORDED = "unrecorded"
 _RESULT_FORMAT = 1  # AliasResult JSON; a file without the field is format 0
 # The labels are *free* when a point-reflected mode's evidence is within this
 # many nats (tempered; odds of 1 to 20) of the best mode's. Why 3: docs/
-# orbit_fitting.md, "Alias search"; orbit_solved_problems.md, "Label swap" row.
+# orbit_methods.md, "Alias search"; orbit_solved_problems.md, "Label swap" row.
 LABELS_FREE_NATS = 3.0
 # ...and the reflected track matches within this fraction of λ/B_max.
 _LABELS_FREE_RES_FRACTION = 0.25
