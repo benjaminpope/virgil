@@ -7,24 +7,32 @@ This notebook is short on purpose: once loaded, these data use the same `joint_l
 
 ## Load the product
 
+The product is the file `calibrated_visibility.npy`, in the [`data/` folder of the repository](https://github.com/benjaminpope/virgil/blob/main/data/calibrated_visibility.npy); AMIGO writes products of this form. It is a pickled dictionary, and `load_oi_data` unpickles it, which can run arbitrary code: **load only products you trust**, such as your own pipeline's output.
+
+??? note "Imports and setup"
+
+    ```python
+    import warnings
+    from pathlib import Path
+
+    import jax.numpy as jnp
+
+    from virgil.amigo import load_oi_data
+    from virgil.likelihood import joint_prediction, whitened_residuals
+    from virgil.models import BinaryModelCartesian
+
+    warnings.filterwarnings("ignore", category=SyntaxWarning)  # upstream zodiax docstrings
+
+    # The tutorial's product lives in the repository's data/ folder; a run from a
+    # clone finds it there. With the package installed, point this at your own product.
+    product_path = next(
+        p / "data" / "calibrated_visibility.npy"
+        for p in [Path.cwd(), *Path.cwd().parents]
+        if (p / "data" / "calibrated_visibility.npy").exists()
+    )
+    ```
+
 ```python
-import sys
-from pathlib import Path
-
-import jax.numpy as jnp
-
-repo_root = Path.cwd()
-if not (repo_root / "src").exists():
-    repo_root = repo_root.parent
-for path in (repo_root, repo_root / "src"):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
-
-from virgil.amigo import load_oi_data
-from virgil.likelihood import joint_loglike, joint_prediction
-from virgil.models import BinaryModelCartesian
-
-product_path = repo_root / "data" / "calibrated_visibility.npy"
 observations_by_filter = load_oi_data(product_path)
 filter_names = tuple(observations_by_filter)
 observations = tuple(observations_by_filter[name] for name in filter_names)
@@ -96,11 +104,20 @@ def binary_model(values, observation_index):
     )
 
 
-joint_prediction(params, binary_model, observations).shape, joint_loglike(
-    params, binary_model, observations
-)
+for i, name in enumerate(filter_names):
+    r = whitened_residuals(binary_model(params, i), observations[i])
+    print(f"{name}: chi2/N = {float(jnp.sum(r**2) / r.size):.1f} on the quoted errors (N = {r.size})")
+print("joint prediction:", joint_prediction(params, binary_model, observations).shape)
 ```
 
 ```text
-((610,), Array(14801.682, dtype=float32))
+F380M: chi2/N = 1.2 on the quoted errors (N = 206)
+F430M: chi2/N = 1.0 on the quoted errors (N = 210)
 ```
+
+```text
+F480M: chi2/N = 0.9 on the quoted errors (N = 194)
+joint prediction: (610,)
+```
+
+$\chi^2/N$ is close to one in every filter on the quoted errors, so the parameters above describe this product well.

@@ -7,30 +7,35 @@ This tutorial shows how `BinaryModelCartesian` and `BinaryModelAngular` work int
 
 We define the Cartesian and angular binary models on the same baseline geometry, and check that they give equivalent complex visibilities when the parameters are converted consistently.
 
-```python
-import sys
-from pathlib import Path
+??? note "Imports and setup"
 
-import numpy as np
-import jax.numpy as jnp
-import matplotlib.pyplot as plt
+    ```python
+    import warnings
 
-from virgil.plotting import set_style
+    import numpy as np
+    import jax.numpy as jnp
+    import matplotlib.pyplot as plt
 
-repo_root = Path.cwd()
-if not (repo_root / "src").exists():
-    repo_root = repo_root.parent
-src_path = repo_root / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
+    from virgil.likelihood import loglike
+    from virgil.limits import flux_to_contrast, flux_to_delta_mag
+    from virgil.models import BinaryModelAngular, BinaryModelCartesian
+    from virgil.oidata import OIData
+    from virgil.plotting import set_style
 
-from virgil.likelihood import loglike
-from virgil.limits import flux_to_contrast, flux_to_delta_mag
-from virgil.models import BinaryModelAngular, BinaryModelCartesian
-from virgil.oidata import OIData
+    warnings.filterwarnings("ignore", category=SyntaxWarning)  # upstream zodiax docstrings
+    set_style()  # the figure style used throughout the docs
 
-set_style()  # the figure style used throughout the docs
-```
+
+    def round_floats(x, sig=4):
+        """Round printed floats to a few significant figures (float32 noise)."""
+        if isinstance(x, float):
+            return float(f"{x:.{sig}g}")
+        if isinstance(x, dict):
+            return {k: round_floats(v, sig) for k, v in x.items()}
+        if isinstance(x, (list, tuple)):
+            return type(x)(round_floats(v, sig) for v in x)
+        return x
+    ```
 
 ## Generate OIData from models
 
@@ -58,19 +63,17 @@ cvis_true = model_cart_true.model(u, v, wavel)
 cvis_ang = model_ang.model(u, v, wavel)
 max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
 
-{
+round_floats({
     "cartesian": truth_cart,
     "angular": {"sep": sep, "pa": pa, "flux": flux},
     "max_complex_visibility_difference": max_complex_diff,
-}
+})
 ```
 
 ```text
 {'cartesian': {'dra': 120.0, 'ddec': -80.0, 'flux': 0.004},
- 'angular': {'sep': 144.22205101855957,
-  'pa': 123.69006752597977,
-  'flux': 0.004},
- 'max_complex_visibility_difference': 0.0}
+ 'angular': {'sep': 144.2, 'pa': 123.7, 'flux': 0.004},
+ 'max_complex_visibility_difference': 3.783e-09}
 ```
 
 `OIData` stores observables, uncertainties and convention flags (`v2_flag` and `cp_flag`), so that model outputs can be converted and flattened consistently. It flattens the data into vectors and tracks which kind of observable each one is.
@@ -165,7 +168,7 @@ model_ang = BinaryModelAngular(sep=sep, pa=pa, flux=flux)
 cvis_ang = model_ang.model(u, v, wavel)
 max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
 
-{
+round_floats({
     "sep_mas": sep,
     "pa_deg": pa,
     "flux": flux,
@@ -173,16 +176,16 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
     "contrast": float(flux_to_contrast(flux)),
     "delta_mag": float(flux_to_delta_mag(flux)),
     "max_complex_visibility_difference": max_complex_diff,
-}
+})
 ```
 
 ```text
-{'sep_mas': 144.22205101855957,
- 'pa_deg': 123.69006752597977,
+{'sep_mas': 144.2,
+ 'pa_deg': 123.7,
  'flux': 0.004,
  'contrast': 250.0,
- 'delta_mag': 5.994850021680094,
- 'max_complex_visibility_difference': 0.0}
+ 'delta_mag': 5.995,
+ 'max_complex_visibility_difference': 3.783e-09}
 ```
 
 ??? note "Plotting code"
@@ -241,18 +244,18 @@ ll_cart_perturbed = float(
     )
 )
 
-{
+round_floats({
     "ll_cart_true": ll_cart,
     "ll_ang_equivalent": ll_ang,
     "ll_cart_perturbed": ll_cart_perturbed,
     "true_beats_perturbed": bool(ll_cart > ll_cart_perturbed),
-}
+})
 ```
 
 ```text
-{'ll_cart_true': 259.3246154785156,
- 'll_ang_equivalent': 259.3246154785156,
- 'll_cart_perturbed': -580.6996459960938,
+{'ll_cart_true': 259.3,
+ 'll_ang_equivalent': 259.3,
+ 'll_cart_perturbed': -580.7,
  'true_beats_perturbed': True}
 ```
 

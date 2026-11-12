@@ -159,10 +159,7 @@ def test_hide_input_tag_folds_the_code_but_keeps_the_outputs(tmp_path):
 
 # Notebooks allowed to have no stored outputs, with the reason. Remove the
 # entry once the notebook is executed.
-_UNEXECUTED = {
-    "notebooks/pipelines.ipynb": "executed by the notebook-outputs PR; "
-    "remove this entry once it merges",
-}
+_UNEXECUTED: dict[str, str] = {}
 
 
 def test_every_synced_notebook_has_stored_outputs():
