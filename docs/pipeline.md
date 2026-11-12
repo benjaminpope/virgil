@@ -318,7 +318,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 
 ### Warnings raised inside stages
 
-A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and warn (`convergence` fails when every grid position failed):
+A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message (and, for a `CheckWarning`, its `check` id and `counts`), in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The three warnings that carry a check id (`CheckWarning`: `check` names the check and `counts` holds its numbers) are also turned into checks; the message text is never matched, so rewording a message cannot change a verdict, and a warning without an id goes to `stage_warnings`. These checks appear only when the warning occurred, after the checks above, and warn (`convergence` fails when every grid position failed):
 
 | Check | Raised by | Meaning |
 | --- | --- | --- |

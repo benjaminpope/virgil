@@ -902,16 +902,14 @@ def test_stage_warnings_are_recorded_not_emitted(data, tmp_path, monkeypatch):
     import warnings
 
     import virgil.pipeline.binary as binary
+    from virgil._grid import warn_unconverged
 
     original = binary._overview
 
     def noisy(p):
         for _ in range(2):  # duplicates are recorded once
-            warnings.warn(
-                "detection_statistics(): the optimizer did not converge at "
-                "2 of 169 grid positions; values there may be inaccurate.",
-                RuntimeWarning,
-            )
+            # the real emitter: 2 of 169 grid positions
+            warn_unconverged(onp.arange(169) >= 2, "detection_statistics")
         warnings.warn("something odd happened", UserWarning)
         # Interpreter noise from a collected unclosed file is not recorded.
         warnings.warn("unclosed file <_io.BufferedReader>", ResourceWarning)
@@ -930,7 +928,7 @@ def test_stage_warnings_are_recorded_not_emitted(data, tmp_path, monkeypatch):
         (tmp_path / "run/stages/overview/report.json").read_text()
     )
     assert [w["category"] for w in report["warnings"]] == [
-        "RuntimeWarning",
+        "CheckWarning",
         "UserWarning",
     ]
     assert {w["stage"] for w in report["warnings"]} == {"overview"}

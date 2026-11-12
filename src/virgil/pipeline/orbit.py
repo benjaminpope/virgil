@@ -1111,34 +1111,6 @@ def _numpyro_order(sites):
     return onp.argsort(onp.asarray(sites))
 
 
-# deliberate: named step
-def _run_summary(stats, seconds, cap, kind, exhausted, adapted):
-    """The sampler's own report of one band: step size, tree depth, cost.
-    The counts are of the post-warm-up draws only."""
-    steps = onp.asarray(stats["num_steps"])
-    return {
-        "mass": kind,
-        "mass_adapted": bool(adapted),
-        "step_size": float(onp.median(onp.asarray(stats["step_size"])[:, -1])),
-        "tree_depth_max": int(onp.ceil(onp.log2(steps.max() + 1.0))),
-        "tree_depth_cap_fraction": float(onp.mean(steps >= 2**cap - 1)),
-        "n_gradients_sampling": int(steps.sum()),
-        "seconds": float(seconds),
-        "budget_exhausted": bool(exhausted),
-    }
-
-
-# deliberate: named step
-def _converged(band):
-    """Whether a band's chains ran to the end and pass the R-hat and ESS
-    checks' failure thresholds."""
-    return bool(
-        not band["sampler"]["budget_exhausted"]
-        and _checks.r_hat(band["r_hat_max"]).status != "fail"
-        and _checks.ess(band["ess_bulk_min"]).status != "fail"
-    )
-
-
 def _sample_band(  # deliberate: named step
     p, result, data, n, *, deadline=None
 ):
@@ -1236,10 +1208,25 @@ def _sample_band(  # deliberate: named step
     }
     summary = _band_summary(n, physical, drawn, stats, priors, bounds)
     summary["optimum_gap"] = _optimum_gap(problem, flat, x0)
-    summary["sampler"] = _run_summary(
-        stats, seconds, cap, kind, exhausted, adapt
+    # The sampler's own report of the band; the counts are of the post-warm-up
+    # draws only.
+    steps = onp.asarray(stats["num_steps"])
+    summary["sampler"] = {
+        "mass": kind,
+        "mass_adapted": bool(adapt),
+        "step_size": float(onp.median(onp.asarray(stats["step_size"])[:, -1])),
+        "tree_depth_max": int(onp.ceil(onp.log2(steps.max() + 1.0))),
+        "tree_depth_cap_fraction": float(onp.mean(steps >= 2**cap - 1)),
+        "n_gradients_sampling": int(steps.sum()),
+        "seconds": float(seconds),
+        "budget_exhausted": bool(exhausted),
+    }
+    # Converged: the chains ran to the end and neither R-hat nor ESS fails.
+    summary["converged"] = bool(
+        not exhausted
+        and _checks.r_hat(summary["r_hat_max"]).status != "fail"
+        and _checks.ess(summary["ess_bulk_min"]).status != "fail"
     )
-    summary["converged"] = _converged(summary)
     return physical, stats, summary
 
 

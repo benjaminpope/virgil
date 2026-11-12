@@ -76,7 +76,7 @@ Read-only audit. Checkout: origin/main 420d1b7. Paths below are relative to that
 | P6 PolarField, FlaredDisk comparison | done | `fields.py:342`; `tests/test_flared_vs_polar_disk.py`. |
 | V (virgil-validation) | outside repo; not verifiable here | |
 | §5 deprecation rule | **open for 0.4.0** | "At the next minor release each other subsumed class gets a deprecation note and a changelog migration line, removed one release later." `TruncatedCone` and `ModulatedGaussianRim` are subsumed and reproducible; none deprecated. Decide: deprecate in 0.4.0 or amend the rule. |
-| Status line | stale | still "scoping note (2026-10-14)"; §13-14 (execution rules for an autonomous run) are history and should be archived. §9 "Open decisions" still lists a decision (profile parametrisation) that was settled. |
+| Status line | stale | still "scoping note (2026-10-14)"; §13-14 (execution rules for an autonomous run) are history and should be archived. §9 "Open decisions" still lists a decision (profile parametrization) that was settled. |
 
 ### design/visibility_orbits.md (header: "plan for 0.4. Stages 1 and 2 are implemented")
 
