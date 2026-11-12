@@ -167,3 +167,65 @@ def test_align_matches_a_shift_by_shift_loop():
     _, (dra, ddec) = metrics.align(moved, truth, float(n), SCALE)
     assert dra == pytest.approx(-1.4, abs=0.15)
     assert ddec == pytest.approx(2.3, abs=0.15)
+
+
+# --- ring_features ---------------------------------------------------------
+
+
+def _ring(
+    n=96,
+    ps=1.0,
+    radius=20.0,
+    sigma=3.0,
+    dra=0.0,
+    ddec=0.0,
+    amp=0.0,
+    eta_deg=0.0,
+    disk=0.0,
+):
+    """Gaussian ring, ``1 + amp cos(PA - eta)`` modulated; row 0 North, col 0 East."""
+    rows, cols = onp.mgrid[:n, :n]
+    north = (n - 1) / 2 - rows * 1.0
+    east = (n - 1) / 2 - cols * 1.0
+    north, east = north * ps - ddec, east * ps - dra
+    r = onp.hypot(north, east)
+    pa = onp.arctan2(east, north)
+    img = onp.exp(-0.5 * ((r - radius) / sigma) ** 2)
+    img = img * (1 + amp * onp.cos(pa - onp.radians(eta_deg)))
+    return img + disk * (r < radius)
+
+
+def test_ring_diameter_and_width():
+    f = metrics.ring_features(_ring(), 1.0)
+    assert f.diameter == pytest.approx(40.0, abs=1.0)
+    assert f.width == pytest.approx(2.355 * 3.0, abs=1.0)
+    assert f.asymmetry < 0.02
+    assert f.central_fraction < 0.05
+
+
+def test_ring_centre_offset():
+    f = metrics.ring_features(_ring(dra=4.0, ddec=-3.0), 1.0)
+    assert f.centre[0] == pytest.approx(4.0, abs=1.0)
+    assert f.centre[1] == pytest.approx(-3.0, abs=1.0)
+    assert f.diameter == pytest.approx(40.0, abs=1.0)
+
+
+@pytest.mark.parametrize("eta", [0.0, 90.0, 200.0])
+def test_ring_pa_and_asymmetry(eta):
+    # PA is East of North: eta = 90 puts the bright side to the East (left).
+    f = metrics.ring_features(_ring(amp=0.4, eta_deg=eta), 1.0)
+    d = (f.pa - eta + 180.0) % 360.0 - 180.0
+    assert abs(d) < 3.0
+    assert f.asymmetry == pytest.approx(0.2, abs=0.03)
+
+
+def test_ring_central_fraction_contrast():
+    ring = metrics.ring_features(_ring(), 1.0)
+    filled = metrics.ring_features(_ring(disk=0.8), 1.0)
+    assert filled.central_fraction > 0.3
+    assert filled.central_fraction > 10 * ring.central_fraction
+
+
+def test_ring_needs_scale_for_array():
+    with pytest.raises(ValueError):
+        metrics.ring_features(_ring())
