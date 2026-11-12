@@ -14,7 +14,7 @@ Thiele–Innes fit to the positions and velocities joined so far is close to
 the best, so each longer gap admits only the cycle counts that the shorter
 arcs allow. [`arc_profile`][virgil.arcs.arc_profile] gives each band's best
 orbits, which seed [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases].
-The [orbit tutorial](../orbit_fitting.md#short-arcs-cycle-counts-from-the-motion)
+The [orbit methods](../orbit_methods.md#short-arcs) page
 gives the reasoning.
 """
 

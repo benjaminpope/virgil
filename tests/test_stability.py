@@ -147,6 +147,7 @@ def test_stability_module_imports_nothing():
 
 PAGES = [
     "docs/orbit_fitting.md",
+    "docs/orbit_methods.md",
     "docs/multipole_disk_rings.md",
     "docs/imaging_clean.md",
     "docs/imaging_ensemble.md",

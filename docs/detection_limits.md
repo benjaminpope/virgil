@@ -5,6 +5,8 @@ each position of a grid. This page says what each method computes and which
 to use; [Contrast limits](contrast_limits.md) runs them on simulated data,
 and [Detection ROC curves](detection_roc.md) calibrates a detection threshold
 for a grid search, look-elsewhere effect included.
+[Detection statistics](detection_statistics.md#detection-plots) explains the
+plots.
 
 ## Units {#units}
 
@@ -118,51 +120,3 @@ $[10^{-10}, 1 - 10^{-10}]$, needs no optional dependency, and is
 differentiable and `jit`-able in both arguments. $p$ is clipped to
 $[\epsilon, 1-\epsilon]$ of its float type and loses precision near $p = 1$,
 so use `nsigma` for small tail probabilities.
-
-## Reading the detection plots {#detection-plots}
-
-[Detection ROC curves](detection_roc.md) describes the three plots of a
-[`DetectionMC`][virgil.detection.DetectionMC] (simulated searches from
-[`injection_recovery`][virgil.detection.injection_recovery]); here are their
-conventions and what to look at.
-
-**Null distribution** ([`plot_null_distribution`][virgil.plotting.plot_null_distribution]).
-The curve is the fraction of companion-free simulations at or above each
-threshold, that threshold's false-alarm probability, on a log scale so the
-tail that sets thresholds is visible. The reference curve is the statistic at
-one position fixed in advance: $\tfrac12 P(\chi^2_1 \ge x)$ for `delta_chi2`
-(Wilks's theorem with the flux on its boundary at zero), the Gaussian tail
-for `max_snr`, and none for `log_bayes_factor`. The gap between the two is
-the look-elsewhere effect of searching a grid. The legend sits outside the
-axes so it never hides the tail; leave room for it in subplot grids.
-
-**ROC curves** ([`plot_roc`][virgil.plotting.plot_roc]). Each curve follows a
-threshold from high to low, with its false-positive rate (the false-alarm
-probability) on the x-axis and its true-positive rate (the completeness) on
-the y-axis. A statistic that cannot tell companions from noise lies on the
-chance curve TPR = FPR; a better one lies above it. The x-axis is logarithmic
-by default, from $0.5/n_\text{null}$ to 1, since detections are claimed at
-small false-alarm probabilities, so the chance curve is curved. `mark_wilks`
-marks local significances (default 3σ and 5σ): a vertical line at the
-one-sided Gaussian tail that Wilks's theorem gives for one fixed position
-(0.135% at 3σ, $2.9\times10^{-7}$ at 5σ), and a circle on each `delta_chi2`
-or `max_snr` curve where the threshold equals that significance
-(`delta_chi2` = 9 or `max_snr` = 3 at 3σ). The circle's horizontal distance
-from the line is the look-elsewhere effect. With several statistics, line
-style distinguishes the statistics and colour the flux or separation
-selections.
-
-**Completeness map** ([`plot_completeness`][virgil.plotting.plot_completeness]).
-Each cell is the fraction of injected companions of that separation and flux
-detected at the false-alarm probability `fap`
-([`DetectionMC.completeness`][virgil.detection.DetectionMC.completeness]).
-Cells span halfway to their neighbours in separation and log flux; zero-flux
-injections have no Δmag or contrast and are left out. The contours are the
-empirical contrast curves of
-[`DetectionMC.contrast_curve`][virgil.detection.DetectionMC.contrast_curve]:
-in each separation bin the completeness is made non-decreasing in flux and
-interpolated linearly in log flux (linearly in Δmag), and a contour is absent
-where the injected fluxes do not bracket its level. The map fixes the axis
-limits to its cells, so curves drawn afterwards, such as Absil limits from
-`plot_contrast_curve`, do not widen them; `plot_contrast_curve` redraws the
-legend, so place it again at the end.

@@ -11,7 +11,7 @@ these *image harmonics* $I_m$ (complex, $m = 0 \dots M$) with
 model in one convention and warm-start a positive-form fit from a linear one.
 The positive form's reflection coefficients are an internal parametrization:
 report the image harmonics. The forms, their formulas and references are in
-[azimuthal harmonics](../conventions.md#azimuthal-harmonics).
+``docs/api/harmonics.md``.
 """
 
 import warnings

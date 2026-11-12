@@ -253,7 +253,7 @@ BinaryModelCartesian 102.51669 -56.45 0.030073004
 (2, 500)
 ```
 
-`data()` returns the data as fitted, `fit_result()` the maximum-likelihood fit (to continue with [`fit`](api/fitting.md)), and `grid()` the search maps. The [pipeline page](pipeline.md) lists every accessor.
+`data()` returns the data as fitted, `fit_result()` the maximum-likelihood fit (to continue with [`fit`](api/fitting.md)), and `grid()` the search maps. The [pipeline reference](pipeline.md) lists every accessor.
 
 ## Stopping early and resuming
 
@@ -489,4 +489,4 @@ The `chi2` check fails here, as it should: the run stops at `limits`, so no comp
 
 ## Where next
 
-The [pipeline page](pipeline.md) lists the stages and the checks, and the [`StarPipeline`](pipeline.md#starpipeline-stellar-diameters) and [`DiskPipeline`](pipeline.md#diskpipeline-rings-and-haloes-provisional) work the same way. Because every number comes from a public function, you can always take a run apart: `res.model()` and `res.data()` give you the objects to carry on with by hand.
+The [pipeline reference](pipeline.md) lists the stages and the checks, and the [`StarPipeline`](pipeline.md#starpipeline-stellar-diameters) and [`DiskPipeline`](pipeline.md#diskpipeline-rings-and-haloes-provisional) work the same way. Because every number comes from a public function, you can always take a run apart: `res.model()` and `res.data()` give you the objects to carry on with by hand.
