@@ -877,7 +877,7 @@ def marginal_loglike(
     Integrating each block's scale out under its Jeffreys prior gives, up to a
     constant, ``m = -sum_b (nu_b/2) ln chi2_b``. It is a search surface, not a
     replacement for [`model_loglike`][virgil.likelihood.model_loglike]
-    ([derivation](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
+    ([derivation](../orbit_methods.md#scale-marginalized-scoring)).
 
     Parameters
     ----------
@@ -2220,7 +2220,7 @@ def epoch_positions(
 
     Scores a static binary on a grid, refines the ``n_peaks`` best maxima and
     ranks them; each night also gets flags
-    ([tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
+    ([orbit methods](../orbit_methods.md#scale-marginalized-scoring)).
 
     Parameters
     ----------
@@ -2569,7 +2569,7 @@ def estimate_primary_diameter(
     """Estimate a shared uniform-disk primary diameter and whether the data resolve it.
 
     Each night's binary is re-refined over a diameter grid and the scores
-    summed ([rule](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
+    summed ([rule](../orbit_methods.md#alias-search)).
 
     Parameters
     ----------

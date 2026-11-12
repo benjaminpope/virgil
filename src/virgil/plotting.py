@@ -7,7 +7,7 @@
   [`plot_roc`][virgil.plotting.plot_roc] and
   [`plot_completeness`][virgil.plotting.plot_completeness] draw a
   [`DetectionMC`][virgil.detection.DetectionMC]; see
-  [detection limits](../detection_limits.md#detection-plots).
+  [detection statistics](../detection_statistics.md#detection-plots).
 * [`plot_field_draws`][virgil.plotting.plot_field_draws] shows draws from a
   Gaussian-process image prior or posterior, with cuts through them.
 
@@ -1062,7 +1062,7 @@ def plot_roc(
     """Plot ROC curves: completeness against false-alarm probability.
 
     A useless statistic lies on TPR = FPR; see
-    [detection limits](../detection_limits.md#detection-plots).
+    [detection statistics](../detection_statistics.md#detection-plots).
 
     Parameters
     ----------
@@ -1256,7 +1256,7 @@ def plot_completeness(
     Each cell is the fraction of injections detected at false-alarm probability
     ``fap`` ([`DetectionMC.completeness`][virgil.detection.DetectionMC.completeness]);
     lines mark ``contours``. See
-    [detection limits](../detection_limits.md#detection-plots).
+    [detection statistics](../detection_statistics.md#detection-plots).
 
     Parameters
     ----------
@@ -1380,7 +1380,7 @@ def plot_null_distribution(
 
     The empirical exceedance function of the statistic over the null
     simulations, on a log scale. See
-    [detection limits](../detection_limits.md#detection-plots).
+    [detection statistics](../detection_statistics.md#detection-plots).
 
     Parameters
     ----------

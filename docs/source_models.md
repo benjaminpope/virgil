@@ -3,7 +3,7 @@
 
 This tutorial covers the non-binary source models in `virgil`: a star plus a `GaussianDisk`, the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `GravityDarkenedStar` (a rapidly rotating star). Spotted stars from harmonix, wrapped in `HarmonixModel`, have [their own tutorial](harmonix.md).
 
-We build synthetic observables from a resolved Gaussian disk, pass them through `OIData`, repeat for a uniform disk and an azimuthally modulated rim, and finally draw a gravity-darkened rapid rotator. The composition tutorial shows how to combine these building blocks into more complex scenes.
+We build synthetic observables from a resolved Gaussian disk, pass them through `OIData`, repeat for a uniform disk and an azimuthally modulated rim, and finally draw a gravity-darkened rapid rotator. The [composition tutorial](composition.md) shows how to combine these building blocks into more complex scenes.
 
 ??? note "Imports and setup"
 
@@ -41,7 +41,7 @@ We build synthetic observables from a resolved Gaussian disk, pass them through 
 
 ## Simulate resolved-disk observables
 
-As in the binary examples, we start from a simple baseline geometry, instantiate a source model, and evaluate complex visibilities on those baselines.
+As in the binary examples, we start from a simple baseline geometry, instantiate a source model, and evaluate complex visibilities on those baselines. A `System` mixes named parts by flux ([Composing models](composition.md#system)), and `OIData.model` flattens the observables as in [Binary models and OIData](model_syntax.md#oidata-model).
 
 ```python
 rng = np.random.default_rng(7)
