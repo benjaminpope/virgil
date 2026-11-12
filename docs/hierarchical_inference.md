@@ -7,71 +7,94 @@ When you have several datasets from different telescopes or wavelengths, you oft
 
 Here we fit a binary to three interferometric observations at three wavelengths at once. The position is shared between filters, and each filter has its own flux ratio. The [Zodiax docs](https://louisdesdoigts.github.io/zodiax/optimisation_tools/) explore many of these ideas in more detail.
 
-```python
-import sys
-from pathlib import Path
+??? note "Imports and setup"
 
-import jax
-import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as onp
-import numpyro
-import numpyro.distributions as dist
-import optimistix as optx
-import pandas as pd
-from jax.flatten_util import ravel_pytree
-from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_value
+    ```python
+    import logging
+    import warnings
 
-jax.config.update("jax_enable_x64", True)
+    import jax
+    import jax.numpy as jnp
+    import matplotlib.pyplot as plt
+    import numpy as onp
+    import numpyro
+    import numpyro.distributions as dist
+    import optimistix as optx
+    import pandas as pd
+    from jax.flatten_util import ravel_pytree
+    from numpyro.infer import MCMC, NUTS
+    from numpyro.infer.initialization import init_to_value
 
-repo_root = Path.cwd()
-if not (repo_root / "src").exists():
-    repo_root = repo_root.parent
-for path in (repo_root, repo_root / "src"):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+    jax.config.update("jax_enable_x64", True)
 
-from virgil.inference import (
-    fisher_projection,
-    expected_fisher,
-    hessian_matrix,
-    regularized_inverse,
-)
-from virgil.likelihood import (
-    joint_data,
-    joint_errors,
-    joint_loglike,
-    joint_prediction,
-    posterior_predictive_summary,
-)
-from virgil.models import BinaryModelCartesian
-from virgil.plotting import (
-    set_style,
-    plot_chainconsumer_diagnostics,
-    plot_data_model_correlation,
-    plot_grid_map,
-)
-from examples.hierarchical_binary_workflow import (
-    FILTER_LABELS,
-    simulate_observations,
-)
+    warnings.filterwarnings("ignore", category=SyntaxWarning)  # upstream zodiax docstrings
+    logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
-set_style()  # the figure style used throughout the docs
-```
+    from virgil.inference import (
+        fisher_projection,
+        expected_fisher,
+        hessian_matrix,
+        regularized_inverse,
+    )
+    from virgil.likelihood import (
+        joint_data,
+        joint_errors,
+        joint_loglike,
+        joint_prediction,
+        posterior_predictive_summary,
+    )
+    from virgil.models import BinaryModelCartesian
+    from virgil.oidata import OIData
+    from virgil.plotting import (
+        set_style,
+        plot_chainconsumer_diagnostics,
+        plot_data_model_correlation,
+        plot_grid_map,
+    )
+
+    set_style()  # the figure style used throughout the docs
+    ```
 
 ## Simulate three observations
 
-The three `OIData` objects have the same baseline sampling and uncertainties, at wavelengths of 800 nm, 1.0 micron and 1.2 microns.
+The three `OIData` objects have the same baseline sampling and uncertainties, at wavelengths of 800 nm, 1.0 micron and 1.2 microns. The binary is about 22 mas from its primary, and 1.5, 1.0 and 0.7 per cent as bright in the three filters; the visibilities have an error of 3e-4 and the phases 0.04 degrees.
 
 ```python
-observations, truth = simulate_observations(seed=7)
+FILTER_LABELS = ("800 nm", "1.0 micron", "1.2 microns")
+truth = {
+    "dra": jnp.array(18.0),
+    "ddec": jnp.array(-12.0),
+    "log10_flux": jnp.log10(jnp.array([0.015, 0.010, 0.007])),
+}
+
+# Eighteen baselines of 1.5 to 6 m, all around the uv plane, shared by the filters.
+angles = jnp.linspace(0.0, 2.0 * jnp.pi, 18, endpoint=False)
+lengths = jnp.linspace(1.5, 6.0, angles.size)
+u, v = lengths * jnp.cos(angles), lengths * jnp.sin(angles)
+
+keys = jax.random.split(jax.random.key(7), len(FILTER_LABELS))
+observations = tuple(
+    OIData(
+        {
+            "u": u, "v": v, "wavel": jnp.array([wavelength]),
+            "vis": jnp.ones_like(u), "d_vis": jnp.full_like(u, 3e-4),
+            "phi": jnp.zeros_like(u), "d_phi": jnp.full_like(u, 0.04),
+            "phi_unit": "deg", "v2_flag": False, "cp_flag": False,
+        }
+    ).with_model(
+        BinaryModelCartesian(
+            truth["dra"], truth["ddec"], 10.0 ** truth["log10_flux"][index]
+        ),
+        key=keys[index],
+    )
+    for index, wavelength in enumerate([800e-9, 1.0e-6, 1.2e-6])
+)
 
 {
     label: {
-        "wavelength_m": float(observation.wavel[0]),
-        "n_observables": int(observation.flatten_data()[0].size),
-        "flux_ratio": float(10.0 ** truth["log10_flux"][index]),
+        "wavelength_um": round(float(observation.wavel[0]) * 1e6, 2),
+        "n_baselines": int(observation.u.size),
+        "flux_ratio": round(float(10.0 ** truth["log10_flux"][index]), 4),
     }
     for index, (label, observation) in enumerate(
         zip(FILTER_LABELS, observations)
@@ -80,15 +103,9 @@ observations, truth = simulate_observations(seed=7)
 ```
 
 ```text
-{'800 nm': {'wavelength_m': 8e-07,
-  'n_observables': 36,
-  'flux_ratio': 0.014999999999999996},
- '1.0 micron': {'wavelength_m': 1e-06,
-  'n_observables': 36,
-  'flux_ratio': 0.010000000000000005},
- '1.2 microns': {'wavelength_m': 1.2e-06,
-  'n_observables': 36,
-  'flux_ratio': 0.007000000000000002}}
+{'800 nm': {'wavelength_um': 0.8, 'n_baselines': 18, 'flux_ratio': 0.015},
+ '1.0 micron': {'wavelength_um': 1.0, 'n_baselines': 18, 'flux_ratio': 0.01},
+ '1.2 microns': {'wavelength_um': 1.2, 'n_baselines': 18, 'flux_ratio': 0.007}}
 ```
 
 ## Define the hierarchy
@@ -111,11 +128,11 @@ def binary_model(values, observation_index):
 initial_loglike = joint_loglike(params, binary_model, observations)
 truth_loglike = joint_loglike(truth, binary_model, observations)
 
-print(f"initial log-likelihood: {float(initial_loglike)}, optimal: {float(truth_loglike)}")
+print(f"log-likelihood at the starting guess: {float(initial_loglike):.1f}, at the simulation truth: {float(truth_loglike):.1f}")
 ```
 
 ```text
-initial log-likelihood: -5654.119194585739, optimal: 682.298987712977
+log-likelihood at the starting guess: -5654.1, at the simulation truth: 682.3
 ```
 
 ## Joint grid initialization
@@ -330,17 +347,9 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-```text
-findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
-```
+![hierarchical_inference output 18.1](generated/hierarchical_inference_cell018_out01.png)
 
-```text
-findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
-```
-
-![hierarchical_inference output 18.3](generated/hierarchical_inference_cell018_out03.png)
-
-![hierarchical_inference output 18.4](generated/hierarchical_inference_cell018_out04.png)
+![hierarchical_inference output 18.2](generated/hierarchical_inference_cell018_out02.png)
 
 ## Posterior predictive correlation per filter
 
