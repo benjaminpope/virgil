@@ -1936,30 +1936,34 @@ def test_the_toy_error_is_calibrated_over_a_thousand_keys(record_property):
 def test_the_banana_smc_is_accurate_or_flagged_over_200_keys(
     s1, record_property
 ):
-    """Among the runs called reliable, the count with ``|dev| > 4 err + 0.01``
-    is not above ``Binomial(n_reliable, 0.01)`` at ``p < 0.01`` (design §14).
-    The fraction flagged, the coverage of the reliable runs and the stage
-    counts are reported."""
+    """Over all runs that finished, flagged or not, the count with
+    ``|dev| > 4 err + 0.01`` is not above ``Binomial(n, 0.01)`` at ``p < 0.01``:
+    a flag must not hide a run whose reported error is dishonest (design §14,
+    A1b′). The fraction flagged, the coverage of the reliable runs and the
+    stage counts are reported."""
     seed = _seed(record_property)
-    n_rel = bad = n_flag = 0
+    n_done = bad = n_flag = 0
     cover, stages = [], []
     for i in range(200):
         res, truth = _banana_run(seed + i, s1)
         stages.append(len(res.betas[0]))
-        if res.stopped or oc_cells._smc_unreliable(res):
+        if res.stopped:
             n_flag += 1
             continue
         err = oc_cells._smc_error(res)
-        n_rel += 1
+        n_done += 1
         bad += abs(res.log_z - truth) > 4 * err + 0.01
+        if oc_cells._smc_unreliable(res):
+            n_flag += 1
+            continue
         cover.append(abs(res.log_z - truth) <= 1.96 * err)
     record_property("fraction_flagged", n_flag / 200)
     record_property(
         "coverage_reliable", float(onp.mean(cover)) if cover else None
     )
     record_property("median_stages", float(onp.median(stages)))
-    assert stats.binom.sf(bad - 1, n_rel, 0.01) >= 0.01, (
-        f"seed {seed} s1={s1}: {bad} of {n_rel} reliable runs off by "
+    assert stats.binom.sf(bad - 1, n_done, 0.01) >= 0.01, (
+        f"seed {seed} s1={s1}: {bad} of {n_done} finished runs off by "
         f"> 4 err + 0.01 ({n_flag} flagged)"
     )
 
