@@ -507,38 +507,6 @@ def _polar(pix, ps, ra0, dec0, r, theta):
     )
 
 
-def _peak_radius(prof, r):
-    """Radius of the peak of each column of ``prof`` (parabolic refinement)."""
-    k = onp.argmax(prof, axis=0)
-    cols = onp.arange(prof.shape[1])
-    kk = onp.clip(k, 1, len(r) - 2)
-    a, b, c = prof[kk - 1, cols], prof[kk, cols], prof[kk + 1, cols]
-    den = a - 2 * b + c
-    ok = den < 0
-    off = onp.where(ok, 0.5 * (a - c) / onp.where(ok, den, 1.0), 0.0)
-    off = onp.clip(off, -1, 1)
-    return onp.where(k == kk, r[kk] + off * (r[1] - r[0]), r[k])
-
-
-def _fwhm(prof, r):
-    """FWHM of a radial profile about its peak; edges give the grid ends."""
-    k = int(onp.argmax(prof))
-    half = 0.5 * prof[k]
-    lo = r[0]
-    for i in range(k, 0, -1):
-        if prof[i - 1] < half <= prof[i]:
-            frac = (half - prof[i - 1]) / (prof[i] - prof[i - 1])
-            lo = r[i - 1] + frac * (r[i] - r[i - 1])
-            break
-    hi = r[-1]
-    for i in range(k, len(r) - 1):
-        if prof[i + 1] < half <= prof[i]:
-            frac = (prof[i] - half) / (prof[i] - prof[i + 1])
-            hi = r[i] + frac * (r[i + 1] - r[i])
-            break
-    return hi - lo
-
-
 def ring_features(
     image,
     pixel_scale_mas=None,
@@ -603,7 +571,17 @@ def ring_features(
     r = onp.arange(dr, 2 * half, dr)
 
     def _rpk(c):
-        return _peak_radius(_polar(pix, ps, c[0], c[1], r, theta), r)
+        """Peak radius per angle about centre ``c`` (parabolic refinement)."""
+        prof = _polar(pix, ps, c[0], c[1], r, theta)
+        k = onp.argmax(prof, axis=0)
+        cols = onp.arange(n_theta)
+        kk = onp.clip(k, 1, len(r) - 2)
+        a, b, c3 = prof[kk - 1, cols], prof[kk, cols], prof[kk + 1, cols]
+        den = a - 2 * b + c3
+        ok = den < 0
+        off = onp.where(ok, 0.5 * (a - c3) / onp.where(ok, den, 1.0), 0.0)
+        off = onp.clip(off, -1, 1)
+        return onp.where(k == kk, r[kk] + off * dr, r[k])
 
     def cost(c):
         rp = _rpk(c)
@@ -630,12 +608,21 @@ def ring_features(
     floor = float(
         onp.mean(_polar(pix, ps, ra0, dec0, onp.array([2 * rmean]), theta))
     )
-    widths = onp.array(
-        [
-            _fwhm(onp.maximum(prof[:, j] - floor, 0.0), r)
-            for j in range(n_theta)
-        ]
-    )
+    widths = onp.zeros(n_theta)
+    for j in range(n_theta):
+        y = onp.maximum(prof[:, j] - floor, 0.0)
+        k = int(onp.argmax(y))
+        lvl = 0.5 * y[k]
+        lo, hi = r[0], r[-1]
+        for i in range(k, 0, -1):
+            if y[i - 1] < lvl <= y[i]:
+                lo = r[i - 1] + (lvl - y[i - 1]) / (y[i] - y[i - 1]) * dr
+                break
+        for i in range(k, len(r) - 1):
+            if y[i + 1] < lvl <= y[i]:
+                hi = r[i] + (y[i] - lvl) / (y[i] - y[i + 1]) * dr
+                break
+        widths[j] = hi - lo
     width = float(onp.mean(widths))
 
     # m = 1 mode over the annulus r_pk +- w/2.
