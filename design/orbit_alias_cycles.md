@@ -1541,12 +1541,14 @@ and the log-determinant,
 compared with b_k as before. C_k = J_k H_post⁻¹ J_kᵀ, J_k the Jacobian of night k's (p, v) in the full chart
 (w_P, y_ζ, TI′), and H_post the curvature of the labelled *posterior* there,
 
-  H_post = H_lik / s² + H_prior,
+  H_post = H_lik + H_prior,
 
-with H_lik minus the Hessian of the labelled likelihood (s = 1), H_prior minus the Hessian of the chart's own log prior
-(`_log_prior`) in (w_P, y_ζ), plus the working ridge 1/s_w² on TI′. Only the likelihood scales with s²; the prior does
-not. The scale is the profiled ln s of the point term (the largest if there are several, which keeps more nights).
-`ln f` is taken as known. The likelihood alone is near-singular in (w_P, y_ζ) with few inliers, which would make C_k
+with H_lik minus the Hessian of the labelled likelihood at the per-block scales (jitter unscaled, as in the point
+term), H_prior the prior precisions in (w_P, y_ζ): minus the second derivative of the logistic log-density in w_P, and
+for ζ the uniform disc's moment-matched precision 4/e_max (variance e_max/4 per axis), pulled back to y_ζ through
+∂ζ/∂y_ζ. The chart's own log-Jacobian Hessian is not used: its radial eigenvalue 4(1 − r²)/(1 + r²)² vanishes at
+r = |y_ζ| = 1 (e = e_max/2) and is negative beyond, so it would cancel weak likelihood curvature. The working ridge
+1/s_w² is added on TI′. `ln f` is taken as known. The likelihood alone is near-singular in (w_P, y_ζ) with few inliers, which would make C_k
 enormous and the Occam factor below push true nights to outliers; the prior makes H_post a posterior curvature, so the
 predictive is a posterior predictive. H_post is saddle-free (|eigenvalues|); its floor is ε_dtype · max|eigenvalue|, a
 numerical tolerance.
@@ -1566,7 +1568,7 @@ already there. `info["evaluations"]` does not count it; the smoke run reports th
 
 **Gate.** `test_the_c_step_labels_by_the_predictive_term_and_keeps_an_extrapolated_night` (high SNR, three initial
 inlier nights: the point term drops five true nights, the predictive keeps all eight). The merge decision is the paired
-census delta on held-out systems 200–399 (`design/orbit_census_criteria.md`): an improvement in the rest stratum, no
+census delta on the fresh systems 400–599 (`design/orbit_census_criteria.md`): an improvement in the rest stratum, no
 harm elsewhere.
 
 **Source.** Scoring inliers by the marginalised rather than the plug-in likelihood follows MLESAC, Torr & Zisserman

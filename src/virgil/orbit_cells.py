@@ -892,8 +892,8 @@ def _objective(x, space):
 def _labels(x, space, extra=None):
     """Each night's best peak, or -1 (outlier) where the floor is higher.
 
-    At the prior mean ``ε̄ = ½`` the inlier and outlier weights ``1 - ε̄`` and
-    ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``. With
+    The comparison is of ``ℓ̃_k`` and ``b_k`` unweighted, without the
+    ``EPS_PRIOR`` log-odds: a seed for the search, not the objective. With
     ``extra``, the predictive term of ``_peak_terms``.
     """
     with run_in(onp.dtype(space.dtype).name):
@@ -1233,12 +1233,18 @@ def _cstep_chunk(space, plan, v, lab, n_iter):
         x = _chart_from(space, v, ti, ln_f)
         x = _scale_step(x, space, lab)
         # C_k = J_k H⁻¹ J_kᵀ with H the posterior curvature of the labelled
-        # fit in the full chart (w_P, y_ζ, TI′): the likelihood's at the
-        # profiled scale (the largest if several, which keeps more nights),
-        # the chart prior's in (w_P, y_ζ), the ridge on TI′. J_k is the
-        # Jacobian of night k's (p, v); zero in ln f. Saddle-free.
+        # fit in (w_P, y_ζ, TI′): the likelihood at the per-block scales
+        # (jitter unscaled, as _peak_precision), the priors' precisions (the
+        # logistic in w_P; the uniform ζ disc's moment-matched 4/e_max,
+        # pulled back to y_ζ, which is positive definite, unlike the chart
+        # log-Jacobian's Hessian), the ridge on TI′. J_k is the Jacobian of
+        # night k's (p, v); zero in ln f. Saddle-free.
         idx = np.arange(k)
         mk = plan["mk"][idx, j]
+        prec = _peak_precision(
+            space.cat, space.decode(x)["ln_s"], space.jitter, space.dtype
+        )[2][idx, j, :4, :4]
+        w = np.where((lab >= 0)[:, None, None], prec, 0.0)
 
         def states(th):
             return np.einsum("kia,a->ki", _design(space, idx, th[:3]), th[3:])
@@ -1247,22 +1253,20 @@ def _cstep_chunk(space, plan, v, lab, n_iter):
             r = mk - states(th)
             return -0.5 * np.einsum("ki,kij,kj->", r, w, r)
 
-        def log_prior(vv):
-            return _log_prior(x.at[0].set(vv[0]).at[6:8].set(vv[1:3]))
-
         th = np.concatenate([v, ti])
-        hf = -jax.hessian(likelihood)(th) * np.exp(
-            -2.0 * np.max(space.decode(x)["ln_s"])
-        )
-        hf = hf.at[:3, :3].add(-jax.hessian(log_prior)(v))
-        hf = hf + np.diag(np.r_[np.zeros(3), np.ones(4) / space.s_w2])
+        hf = -jax.hessian(likelihood)(th)
+        hf = hf.at[0, 0].add(-jax.grad(jax.grad(_logistic_log_pdf))(v[0]))
+        jz = jax.jacfwd(space.zeta)(v[1:3])
+        hf = hf.at[1:3, 1:3].add(jz.T @ jz * (4.0 / space.e_max))
+        hf = hf.at[3:, 3:].add(np.eye(4, dtype=space.dtype) / space.s_w2)
         e, u = np.linalg.eigh(0.5 * (hf + hf.T))
         e = np.abs(e)
+        jac = jax.jacfwd(states)(th)
         c = np.einsum(
             "kia,ab,kjb->kij",
-            jax.jacfwd(states)(th),
+            jac,
             (u / np.maximum(e, np.finfo(space.dtype).eps * e.max())) @ u.T,
-            jax.jacfwd(states)(th),
+            jac,
         )
         extra = np.zeros((k, 5, 5), space.dtype).at[:, :4, :4].set(c)
         new = _labels(x, space, extra)

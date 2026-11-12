@@ -364,6 +364,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
+| `_cstep_chunk` | [Torr & Zisserman (2000)](#torr2000), [doi:10.1006/cviu.1999.0832](https://doi.org/10.1006/cviu.1999.0832) | after |
 | `_scale_step` | [Celeux & Govaert (1992)](#celeux1992), [doi:10.1016/0167-9473(92)90042-E](https://doi.org/10.1016/0167-9473(92)90042-E) | after |
 | `position_leg` | [Gilks & Berzuini (2001)](#gilks2001), [doi:10.1111/1467-9868.00280](https://doi.org/10.1111/1467-9868.00280) | after |
 | `position_leg` | [Hesterberg (1995)](#hesterberg1995), [doi:10.1080/00401706.1995.10484303](https://doi.org/10.1080/00401706.1995.10484303) | after |
@@ -767,6 +768,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="thompson2023"></a>**Thompson et al. (2023)**. Octofitter: Fast, Flexible, and Accurate Orbit Modelling to Detect Exoplanets. [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc), [GitHub](https://github.com/sefffal/Octofitter.jl). AJ 166, 164 (2023); the arXiv preprint was posted in February 2024, after publication.
 - <a id="tiede2025"></a>**Tiede et al. (2025)**. Hierarchical Interferometric Bayesian Imaging. [arXiv:2511.17706](https://arxiv.org/abs/2511.17706), [ADS](https://ui.adsabs.harvard.edu/abs/2026ApJ...997..262T/abstract). HIBI/Comrade.
 - <a id="tierney1986"></a>**Tierney & Kadane (1986)**. Accurate Approximations for Posterior Moments and Marginal Densities. [doi:10.1080/01621459.1986.10478240](https://doi.org/10.1080/01621459.1986.10478240). JASA 81, 82; Laplace's method for marginal likelihoods (the baseline for the orbit alias-cell evidence).
+- <a id="torr2000"></a>**Torr & Zisserman (2000)**. MLESAC: A New Robust Estimator with Application to Estimating Image Geometry. [doi:10.1006/cviu.1999.0832](https://doi.org/10.1006/cviu.1999.0832).
 - <a id="vanhamme1993"></a>**van Hamme (1993)**. New Limb-Darkening Coefficients for Modeling Binary Star Light Curves. [ADS](https://ui.adsabs.harvard.edu/abs/1993AJ....106.2096V/abstract), [doi:10.1086/116788](https://doi.org/10.1086/116788). AJ 106, 2096; the quadratic law the square-root law is compared with.
 - <a id="vanderplas2018"></a>**VanderPlas (2017)**. Understanding the Lomb-Scargle Periodogram. [arXiv:1703.09824](https://arxiv.org/abs/1703.09824), [ADS](https://ui.adsabs.harvard.edu/abs/2018ApJS..236...16V/abstract). ApJS 236, 16 (2018).
 - <a id="veach1995"></a>**Veach & Guibas (1995)**. Optimally combining sampling techniques for Monte Carlo rendering. [doi:10.1145/218380.218498](https://doi.org/10.1145/218380.218498). SIGGRAPH '95, 419; the balance heuristic, the partition of unity that splits the bridge per mode.

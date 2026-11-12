@@ -883,7 +883,6 @@ def test_the_flux_box_integral_matches_quadrature_and_is_finite_everywhere(
 
 @pytest.mark.slow
 @x64
-@pytest.mark.slow
 def test_a_night_with_an_observed_flux_above_one_fits_without_error():
     s = _summaries(_orbit(), TIMES, ln_f=0.05)  # truth ln f above 0
     assert any(n.peaks[0].mean[4] > 0 for n in s)
@@ -1536,7 +1535,7 @@ def test_the_c_step_labels_by_the_predictive_term_and_keeps_an_extrapolated_nigh
     """High signal-to-noise, three initial inlier nights: the labelled fit
     extrapolates to the later nights with a covariance ``C_k`` far above
     their summaries' ``Σ_k``, so the point term ``½ eᵀΣ⁻¹e`` drops true nights
-    that the predictive term (``Σ_k + C_k``) keeps (design §6.13a)."""
+    that the predictive term (``Σ_k + C_k``) keeps (design §6.14)."""
     orbit = _orbit(period=11.3, a=6.0, ecc=0.3)
     s = _summaries(orbit, TIMES, sigma=0.005)
     _, cells = _cells(s, (9.0, 14.0))
@@ -1555,13 +1554,16 @@ def test_the_c_step_labels_by_the_predictive_term_and_keeps_an_extrapolated_nigh
 
 
 @x64
+@pytest.mark.parametrize("ecc", [0.3, 0.45, 0.6])  # |y_ζ|² = 0.5, 1, 2
 @pytest.mark.parametrize("init", [[0, 1], [0, 3]])
-def test_the_predictive_labels_keep_every_night_the_point_term_keeps(init):
+def test_the_predictive_labels_keep_every_night_the_point_term_keeps(
+    init, ecc
+):
     """With two inlier nights the labelled fit is weak in ``(w_P, y_ζ)``: the
     posterior curvature (the chart prior's included) keeps ``C_k`` finite, so
     the Occam factor does not turn a night the point term keeps into an
     outlier (design §6.14)."""
-    orbit = _orbit(period=11.3, a=6.0, ecc=0.3)
+    orbit = _orbit(period=11.3, a=6.0, ecc=ecc)
     s = _summaries(orbit, TIMES, sigma=0.05)
     _, cells = _cells(s, (9.0, 14.0))
     cell = [c for c in cells if c.p_lo <= 11.3 <= c.p_hi][0]
