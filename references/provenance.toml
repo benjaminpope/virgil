@@ -2307,3 +2307,36 @@ doi = "10.1006/cviu.1999.0832"
 verified = true
 verified_via = "crossref"
 used_in = ["virgil.orbit_cells:_cstep_chunk"]
+
+[ref.tuthill1999]
+authors = "Tuthill, Monnier & Danchi"
+year = 1999
+title = "A dusty pinwheel nebula around the massive star WR 104"
+used_in = ["virgil.models:ArchimedeanSpiral"]
+note = "Nature 398, 487; the dust plume follows a linear (Archimedean) spiral; geometry only"
+arxiv = "astro-ph/9904092"
+doi = "10.1038/19033"
+verified = true
+verified_via = "arxiv"
+
+[ref.tuthill2008]
+authors = "Tuthill et al."
+year = 2008
+title = "The prototype colliding-wind pinwheel WR 104"
+used_in = ["virgil.models:ArchimedeanSpiral"]
+note = "ApJ 675, 698; uniformly rotating Archimedean spiral fitted to the WR 104 plume, with the measured brightness profile along it"
+arxiv = "0712.2111"
+doi = "10.1086/527286"
+verified = true
+verified_via = "arxiv"
+
+[ref.han2020]
+authors = "Han et al."
+year = 2020
+title = "The extreme colliding-wind system Apep: resolved imagery of the central binary and dust plume in the infrared"
+used_in = ["virgil.models:ArchimedeanSpiral"]
+note = "MNRAS (2020); geometric pinwheel model of the Apep plume"
+arxiv = "2008.05834"
+doi = "10.1093/mnras/staa2349"
+verified = true
+verified_via = "arxiv"

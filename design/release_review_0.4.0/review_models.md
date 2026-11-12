@@ -66,7 +66,7 @@ PolarDisk and its engine are new since 0.3.0, so every name there is still free 
 - Effort: 1 hour for the table; renames in the new profiles 2 hours.
 
 ### A4. Duplicated model/image code in the PolarDisk special cases [0.4.x; document now] READ
-- `GaussianArc` (`models.py:525`), `TruncatedCone` (`757`), `ModulatedGaussianRim` (`1947`) call the PolarDisk engine for `model` but keep hand-written `_centred_image`, with the legacy `az_amps`/`az_pas` parametrisation. This is a risk to the AGENTS.md invariant `model_on_grid == model` (checked for cone and rim in a repro: agree to 2e-7 when the field contains the source; the 0.15 mismatch seen first was my test's field being too small, not a bug). Longer-term, derive `_centred_image` from the PolarDisk engine and keep these classes as thin constructors. FlaredDisk* stays (design/flared_disk_vs_polar_disk.md).
+- `GaussianArc` (`models.py:525`), `TruncatedCone` (`757`), `ModulatedGaussianRim` (`1947`) call the PolarDisk engine for `model` but keep hand-written `_centred_image`, with the legacy `az_amps`/`az_pas` parametrization. This is a risk to the AGENTS.md invariant `model_on_grid == model` (checked for cone and rim in a repro: agree to 2e-7 when the field contains the source; the 0.15 mismatch seen first was my test's field being too small, not a bug). Longer-term, derive `_centred_image` from the PolarDisk engine and keep these classes as thin constructors. FlaredDisk* stays (design/flared_disk_vs_polar_disk.md).
 - Effort: 1-2 days; not for 0.4.0, but add a parametrised model-vs-image test for all three now (1 hour).
 
 ### A5. Four azimuthal APIs and two field classes [note] READ

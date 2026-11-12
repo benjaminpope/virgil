@@ -32,6 +32,52 @@ chosen. Pass `degree` to force the series. Fitting `length` to much narrower
 arcs than the starting ones needs a larger `degree`, and `is_physical` is
 false once the series drops more than 1e-4 of its power.
 
+## ArchimedeanSpiral
+
+The arm is $r = |\mathrm{pitch}|\,\theta/2\pi$ with $\theta$ in radians from 0 to
+$2\pi\,\mathrm{turns}$, in a plane whose azimuth $\alpha$ is measured from the
+projected major axis in the sense of position angle: $\alpha = \alpha_0 +
+\mathrm{sign}(\mathrm{pitch})\,\theta$. The plane is inclined as for
+[`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] (the minor axis
+shortened by $\cos(\mathrm{inc})$, the major axis at `node`), and $\alpha_0$ is
+fixed so that the arm leaves the centre at sky position angle `pa`. Along the
+arm the brightness per unit arc length is $\exp(-\mathrm{fade}\,\theta/2\pi)$,
+and the whole is blurred by a Gaussian of FWHM `width` that is round in the
+arm plane. The geometry (a linear, Archimedean spiral of a wind carried
+outward by an orbiting binary) is that fitted to WR 104 by Tuthill et al.
+(1999, 2008) and used for Apep by Han et al. (2020); the brightness law is not
+taken from them. Tuthill et al. (2008) measure a profile
+along WR 104 that rises, peaks about 90 degrees downstream, then declines
+roughly monotonically, and no closed form is given. A one-parameter
+exponential fade is a modelling choice; `fade = 0` is a uniform arm.
+
+The sky positions of the $N$ nodes $\theta_k$ (equally spaced in $\theta$) are
+$\mathbf{x}_k$, with weights $w_k \propto \exp(-\mathrm{fade}\,\theta_k/2\pi)
+\sqrt{1+\theta_k^2}$ (the arc-length element, so the nodes sample the arm
+uniformly in length) and half weight at the two ends (trapezoidal rule). Then
+
+$$V(\mathbf{q}) = \Big[\sum_k w_k\, e^{-2\pi i\,\mathbf{q}\cdot\mathbf{x}_k}\Big]
+\exp\!\Big[-\frac{\pi^2\,\mathrm{width}^2\,|\mathbf{q}'|^2}{4\ln 2}\Big],$$
+
+where $\mathbf{q}'$ is $\mathbf{q}$ rotated and shortened into the arm plane,
+and the image is the same Gaussian blobs summed on the pixel grid. The image
+floors `width` at one pixel.
+
+**Choosing `nodes`.** A chain of Gaussians a distance $d$ apart has the
+transform of the continuous ridge plus copies shifted by $1/d$ along the
+arm. At a baseline $q$ the first copy is down by
+$\exp[-3.56\,(\mathrm{width}/d - \mathrm{width}\,q)^2]$, which is below
+$10^{-5}$ for $\mathrm{width}/d \ge \mathrm{width}\,q + 2$. The default places
+nodes at most $\mathrm{width}/4$ apart (in arc length, the largest spacing
+being at the end of the arm), safe up to $\mathrm{width}\,q = 2$, where the arm's
+own transform is already $10^{-6}$; pass a larger `nodes` for the longest
+baselines of a very narrow arm, in proportion to $\mathrm{width}\,q_\mathrm{max}+2$.
+The trapezoidal rule also leaves an end-point error of about
+$2\pi q h/(6N)$ with $h$ the node spacing, below $10^{-3}$ at the default.
+Because `nodes` is static, give it explicitly when the shape parameters are
+traced (the default is computed from their starting values), and re-create
+the model with a larger value if a fit lengthens the arm substantially.
+
 ## TruncatedCone
 
 **Rings.** The cone is a stack of rings about its axis. A ring of radius ρ in

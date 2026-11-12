@@ -104,6 +104,7 @@ from .limits import (  # noqa: E402
     ruffio_upperlimit,
 )
 from .models import (  # noqa: E402
+    ArchimedeanSpiral,
     Attached,
     BinaryModelAngular,
     BinaryModelCartesian,
@@ -198,6 +199,7 @@ def __getattr__(name):
 
 
 __all__ = [
+    "ArchimedeanSpiral",
     "Attached",
     "AxialVonMises",
     "BinaryModelAngular",

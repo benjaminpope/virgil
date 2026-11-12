@@ -50,6 +50,7 @@ EXPECTED = {
     "virgil.crossval": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
+        "ArchimedeanSpiral",
         "LinearImage",
         "MultipoleDisk",
         "ThinRing",
