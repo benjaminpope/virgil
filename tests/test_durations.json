@@ -18,6 +18,7 @@
  "tests/test_composition.py": 72.3,
  "tests/test_concrete_checks_under_jit.py": 10.7,
  "tests/test_coverage.py": 2.6,
+ "tests/test_crescent.py": 40.0,
  "tests/test_crossval.py": 10.3,
  "tests/test_deprecate.py": 6.5,
  "tests/test_detection.py": 156.8,
