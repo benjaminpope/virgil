@@ -28,7 +28,7 @@ First, simulate some data and save it to an `.oifits` file. The data are a dicti
 
     ```python
     # A four-station array, its six baselines and four closure triangles
-    # (stations are numbered from 1, as OIFITS does), and a binary 3 per cent as bright.
+    # (stations are numbered from 1, as OIFITS does), and a binary 0.32 per cent as bright.
     stations = np.array([[0.0, 0.0], [3.2, 0.2], [1.4, 2.6], [-1.1, 1.8]])
     pairs = np.array(list(combinations(range(1, 5), 2)))
     triangles = np.array(list(combinations(range(1, 5), 3)))
