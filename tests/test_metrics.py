@@ -204,10 +204,21 @@ def test_ring_diameter_and_width():
 
 
 def test_ring_centre_offset():
-    f = metrics.ring_features(_ring(dra=4.0, ddec=-3.0), 1.0)
-    assert f.centre[0] == pytest.approx(4.0, abs=1.0)
-    assert f.centre[1] == pytest.approx(-3.0, abs=1.0)
+    # Off the coarse search grid, so the refinement has to find it.
+    f = metrics.ring_features(_ring(dra=3.3, ddec=-2.6), 1.0)
+    assert f.centre[0] == pytest.approx(3.3, abs=0.3)
+    assert f.centre[1] == pytest.approx(-2.6, abs=0.3)
     assert f.diameter == pytest.approx(40.0, abs=1.0)
+
+
+def test_ring_centre_large_pixels():
+    # Large pixel scale: the optimizer's step must scale with the grid.
+    f = metrics.ring_features(
+        _ring(n=96, ps=5.0, radius=200.0, sigma=30.0, dra=12.0, ddec=-10.0),
+        5.0,
+    )
+    assert f.centre[0] == pytest.approx(12.0, abs=1.0)
+    assert f.centre[1] == pytest.approx(-10.0, abs=1.0)
 
 
 @pytest.mark.parametrize("eta", [0.0, 90.0, 200.0])
@@ -221,9 +232,21 @@ def test_ring_pa_and_asymmetry(eta):
 
 def test_ring_central_fraction_contrast():
     ring = metrics.ring_features(_ring(), 1.0)
-    filled = metrics.ring_features(_ring(disk=0.8), 1.0)
-    assert filled.central_fraction > 0.3
-    assert filled.central_fraction > 10 * ring.central_fraction
+    # Flat disc of 0.8 well inside the ring (edge at radius - 3 sigma).
+    img = _ring()
+    n = img.shape[0]
+    rr = onp.hypot(*(onp.mgrid[:n, :n] - (n - 1) / 2))
+    filled = metrics.ring_features(img + 0.8 * (rr < 20.0 - 9.0), 1.0)
+    assert filled.central_fraction == pytest.approx(0.8, rel=0.05)
+    assert ring.central_fraction < 0.01
+
+
+def test_ring_dispersions_vanish_for_symmetric_ring():
+    f = metrics.ring_features(_ring(), 1.0)
+    assert f.diameter_std < 0.3
+    assert f.width_std < 0.3
+    assert f.asymmetry_std < 0.01
+    assert f.central_fraction_std < 0.01
 
 
 def test_ring_needs_scale_for_array():

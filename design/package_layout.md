@@ -47,7 +47,7 @@
 | `_stability.py` | the stability policy and the provisional notice (`ADMONITION`); imports nothing; each module's `__provisional__` tuple lists its provisional names (private) |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
-| `metrics.py` | image-recovery scores against a known truth (`lawson_sigma_over_peak`, `rms_convolved`, `l1_score`, `ncc`), from the imaging contests' published definitions |
+| `metrics.py` | image-recovery scores against a known truth (`lawson_sigma_over_peak`, `rms_convolved`, `l1_score`, `ncc`) from the imaging contests' published definitions, and EHT-style `ring_features` |
 | `ensemble.py` | PYRA/MYTHRA-style reconstruction ensembles: `EnsembleSpec`, `draw_groups`, `run_group` (one L-curve per geometry group), `evidence_grid` and `gp_members` (Gaussian-process groups: `GPFit`, `EvidenceGrid`), `combine` (selection and the iterative mean) and `ensemble`, returning an `Ensemble` (mean `Image`, per-pixel σ, raw χ²/N per dataset) |
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve`; for a `DetectionMC`, `plot_null_distribution`, `plot_roc` and `plot_completeness` (duck-typed: `plotting` does not import `detection`) |

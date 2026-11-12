@@ -16,11 +16,11 @@ contests, written from their published definitions:
   ([`rms_convolved`][virgil.metrics.rms_convolved]);
 * the 2024 contest's ``ImageMetrics`` L1 score
   ([`l1_score`][virgil.metrics.l1_score]);
-* the normalized cross-correlation ([`ncc`][virgil.metrics.ncc]);
-* ring geometry from an image, as in the EHT ring analyses
-  ([`ring_features`][virgil.metrics.ring_features]).
+* the normalized cross-correlation ([`ncc`][virgil.metrics.ncc]).
 
 [`score`][virgil.metrics.score] resamples, aligns and evaluates all of them.
+[`ring_features`][virgil.metrics.ring_features] is separate: it needs no
+truth, and measures ring geometry as the EHT ring analyses do.
 Images are in the virgil orientation (row 0 North, column 0 East, centre at
 the middle of the pixel grid, as in
 [`Image`][virgil.models.Image]); each function takes an
@@ -519,18 +519,22 @@ def ring_features(
 ):
     """Ring diameter, width, orientation, asymmetry and central brightness.
 
-    Source: EHT Collaboration (2019, ApJL 875, L4) §9, after REX in
-    eht-imaging (Chael et al.); https://arxiv.org/abs/1906.11242.
+    Source: Event Horizon Telescope Collaboration (2019),
+    [references](../references.md#eht2019_iv), after REX in eht-imaging.
 
     The image is resampled in polar coordinates about a trial centre.
     The centre minimizes ``σ_r / ⟨r_pk⟩``, with ``r_pk(θ)`` the radius of
     peak brightness at each position angle ``θ``. Then: diameter
     ``2⟨r_pk⟩``; width the mean FWHM of ``I(r, θ) − I_floor``, with
-    ``I_floor = ⟨I(2 r_pk, θ)⟩``; orientation ``η`` and asymmetry ``A`` from
+    ``I_floor = ⟨I(2.5 r_pk, θ)⟩``; orientation ``η`` and asymmetry ``A`` from
     the ``m = 1`` azimuthal mode ``∫ I e^{iθ} dθ`` over the annulus
     ``r_pk ± w/2`` (``η`` East of North, ``A = |m=1| / m=0``, so a
     modulation ``1 + a cos(θ − η)`` has ``A = a/2``); central fraction
-    ``⟨I(r < 0.2 r_pk)⟩ / ⟨I(r_pk, θ)⟩``.
+    ``⟨I(r < 0.25 r_pk)⟩ / ⟨I(r_pk, θ)⟩``.
+    The ratios 2.5 and 0.25 are the paper's fixed 50 and 5 μas scaled to
+    its ring radius (about 20 μas), so any ring size is treated alike.
+    ``η`` (circular mean) and ``A`` are averaged over radius after taking the
+    phase and ratio; ``pa_std`` is the circular standard deviation.
 
     The diameter and width are biased by the finite resolution of the image
     (a blurred or wide ring reads larger or wider): calibrate against
@@ -588,13 +592,20 @@ def ring_features(
         return float(onp.std(rp) / onp.mean(rp))
 
     g = onp.linspace(-search, search, n_search)
+    step = 2 * search / max(n_search - 1, 1)
     best = min(((x, y) for x in g for y in g), key=cost)
     if refine:
         res = minimize(
             cost,
             onp.asarray(best),
             method="Nelder-Mead",
-            options={"xatol": 0.02 * ps, "fatol": 1e-6},
+            options={
+                "xatol": 0.02 * ps,
+                "fatol": 1e-6,
+                # Steps of the coarse grid, not SciPy's absolute 2.5e-4.
+                "initial_simplex": onp.asarray(best)
+                + step * onp.array([[0, 0], [1, 0], [0, 1]]),
+            },
         )
         if res.fun <= cost(best):
             best = tuple(res.x)
@@ -605,15 +616,19 @@ def ring_features(
 
     # Width: FWHM of I - floor, floor = <I(2 r_pk, theta)>.
     prof = _polar(pix, ps, ra0, dec0, r, theta)
+    # The floor ring is kept inside the image.
+    r_floor = min(2.5 * rmean, half - max(abs(ra0), abs(dec0)))
     floor = float(
-        onp.mean(_polar(pix, ps, ra0, dec0, onp.array([2 * rmean]), theta))
+        onp.mean(_polar(pix, ps, ra0, dec0, onp.array([r_floor]), theta))
     )
     widths = onp.zeros(n_theta)
     for j in range(n_theta):
         y = onp.maximum(prof[:, j] - floor, 0.0)
         k = int(onp.argmax(y))
         lvl = 0.5 * y[k]
-        lo, hi = r[0], r[-1]
+        lo, hi = 0.0, r[-1]
+        if y[k] <= 0:
+            continue  # dark azimuth: width 0
         for i in range(k, 0, -1):
             if y[i - 1] < lvl <= y[i]:
                 lo = r[i - 1] + (lvl - y[i - 1]) / (y[i] - y[i - 1]) * dr
@@ -632,16 +647,19 @@ def ring_features(
     a = _polar(pix, ps, ra0, dec0, ann, theta)
     m0 = a.mean(axis=1)
     m1 = (a * onp.exp(1j * theta)[None, :]).mean(axis=1)
-    mean_m1 = onp.sum(m1)
-    dphi = onp.angle(m1 * onp.conj(mean_m1))
+    live = (m0 > 0) & (onp.abs(m1) > 0)
+    unit = m1[live] / onp.abs(m1[live])
+    resultant = onp.abs(onp.mean(unit))
+    ratio = onp.abs(m1[m0 > 0]) / m0[m0 > 0]
 
-    # Central fraction, area-weighted over r < 0.2 r_pk.
-    rc = onp.linspace(0.0, 0.2 * rmean, max(4, int(0.2 * rmean / dr)))
+    # Central fraction, area-weighted over r < 0.25 r_pk.
+    m_c = max(4, int(0.25 * rmean / dr))
+    rc = (onp.arange(m_c) + 0.5) * 0.25 * rmean / m_c
     cen = _polar(pix, ps, ra0, dec0, rc, theta).mean(axis=1)
     mean_c = float(onp.sum(cen * rc) / max(onp.sum(rc), 1e-30))
-    ring_pk = _polar(pix, ps, ra0, dec0, r, theta)[
-        onp.clip(onp.searchsorted(r, rp), 0, len(r) - 1), onp.arange(n_theta)
-    ]
+    ring_pk = onp.array(
+        [onp.interp(rp[j], r, prof[:, j]) for j in range(n_theta)]
+    )
     fc = mean_c / float(onp.mean(ring_pk))
     return RingFeatures(
         centre=(ra0, dec0),
@@ -649,10 +667,12 @@ def ring_features(
         diameter_std=2 * float(onp.std(rp)),
         width=width,
         width_std=float(onp.std(widths)),
-        pa=float(onp.degrees(onp.angle(mean_m1)) % 360.0),
-        pa_std=float(onp.degrees(onp.std(dphi))),
-        asymmetry=float(onp.abs(mean_m1) / onp.sum(m0)),
-        asymmetry_std=float(onp.std(onp.abs(m1) / m0)),
+        pa=float(onp.degrees(onp.angle(onp.mean(unit))) % 360.0),
+        pa_std=float(
+            onp.degrees(onp.sqrt(-2 * onp.log(max(resultant, 1e-12))))
+        ),
+        asymmetry=float(onp.mean(ratio)),
+        asymmetry_std=float(onp.std(ratio)),
         central_fraction=fc,
         central_fraction_std=float(
             abs(fc) * onp.std(ring_pk) / onp.mean(ring_pk)
