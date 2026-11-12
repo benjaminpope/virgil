@@ -16,6 +16,7 @@ from virgil.models import PointSource, System
 from virgil.observables import (
     DifferentialPhase,
     FluxSpectrum,
+    TripleAmplitude,
     continuum_operator,
 )
 from virgil.oidata import OIData, cp_indices
@@ -925,8 +926,8 @@ def test_select_observables_takes_the_gains_with_the_visibilities():
     cp_only = data.select(observables="phi")
     assert cp_only.gains is None and not cp_only.has_model_covariance
     offsets = data.with_closure_offsets(baseline=0.01)
-    with pytest.raises(ValueError, match="closure-phase offsets"):
-        offsets.select(observables="vis")
+    assert offsets.select(observables="phi").phase_offsets is not None
+    assert offsets.select(observables="vis").phase_offsets is None
 
 
 def test_a_step_of_pi_wraps_the_same_in_data_and_model():
@@ -1197,15 +1198,50 @@ def test_with_model_and_fit_propagate_gains_across_vis_visamp_and_t3amp():
         atol=1e-6,
     )
 
+    # include_extras=False restricts GainModes to vis only.
+    vis_only_gains = OIData(
+        read_oifits(build_hdulist(_tables(scene)), extras=("visamp", "t3amp"))
+    ).with_gains(telescope=0.03, include_extras=False)
+    assert vis_only_gains.gains.n_vis == vis_only_gains.vis.size
+
     noisy = template.with_model(
-        scene, key=jax.random.PRNGKey(24), noise_scale=0.5
+        scene, key=jax.random.PRNGKey(24), noise_scale=0.1
     )
     result = fit(
         _scene(dra=0.45),
         {"parts.1.dra": dist.Uniform(0.1, 1.0)},
         noisy,
-        noise={"vis_gain_telescope": dist.LogUniform(0.005, 0.2)},
+        noise={"vis_gain_telescope": dist.Uniform(0.005, 0.2)},
     )
     assert result.info["method"] == "lbfgs"
     assert float(result.values["parts.1.dra"]) == pytest.approx(0.5, abs=0.05)
-    assert 0.005 < float(result.values["noise.vis_gain_telescope"]) < 0.2
+    assert float(result.values["noise.vis_gain_telescope"]) == pytest.approx(
+        0.03, abs=0.02
+    )
+
+
+def test_triple_amplitude_refuses_split_across_parts_or_epochs():
+    import equinox as eqx
+
+    base = _two_epoch_tables(("t3amp",)).select(observables=("vis", "t3amp"))
+    assert not base.cp_flag
+    t3 = base.extras[0]
+    # Point the third leg of row 0 into the second epoch (frame 1).
+    bad_i3 = onp.array(t3.i3, copy=True)
+    bad_i3[0] = int(onp.flatnonzero(onp.asarray(base.frame) == 1)[0])
+    bad_t3 = TripleAmplitude(t3.values, t3.errors, t3.i1, t3.i2, bad_i3)
+    bad = eqx.tree_at(lambda d: d.extras, base, (bad_t3,))
+
+    keep = onp.asarray(bad.frame) == 0
+    with pytest.raises(
+        ValueError, match="triple amplitude would be split between parts"
+    ):
+        bad._subset(keep)
+    with pytest.raises(
+        ValueError, match="triple amplitude would be split between parts"
+    ):
+        bad.split_by_epoch(gap_days=0.5)
+    with pytest.raises(
+        ValueError, match="triple amplitude would be split between parts"
+    ):
+        bad.with_gains(telescope=0.02).split_by_epoch(gap_days=0.5)

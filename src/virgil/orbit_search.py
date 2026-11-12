@@ -421,7 +421,7 @@ class _Scorer:
             (None, None),
             is_leaf=lambda x: x is None,
         )
-        if plain.extras:
+        if getattr(plain, "extras", ()):
             raise NotImplementedError(
                 "score_orbits does not support extra observables "
                 "(OIData.extras) yet; select the visibilities and closure "
@@ -483,15 +483,20 @@ class _Scorer:
             )
         if offsets is not None:
             stop = n_vis + offsets.n_out
+            err_phi = errors[n_vis : self.n_phase]
             cols, spanning = offsets._columns(
-                plain.cp_noise,
-                errors[n_vis : self.n_phase],
-                np.ones_like(offsets.widths),
+                plain.cp_noise, err_phi, np.ones_like(offsets.widths)
             )
             rows = np.asarray(offsets.rows)
             r = r.at[n_vis:stop].set(
                 _profile(r[n_vis:stop], rows, cols, spanning)
             )
+            if offsets.scale_penalty:
+                n_phi = self.n_phase - n_vis
+                scale = err_phi / np.hypot(
+                    err_phi, offsets.marginal_std(offsets.widths)
+                )
+                r = r.at[stop : stop + n_phi].multiply(scale)
         return self.surface.block_chi2(r)
 
     def score(self, chi2, dof, plain, scales):

@@ -110,6 +110,17 @@ arxiv = "2011.01209"
 verified = true
 verified_via = "ads"
 
+[ref.meimon2005]
+authors = "Meimon, Mugnier & Le Besnerais"
+year = 2005
+title = "Convex approximation to the likelihood criterion for aperture synthesis imaging"
+doi = "10.1364/JOSAA.22.002348"
+used_in = ["virgil.gains:ClosureOffsets"]
+note = "JOSA A 22, 2348"
+bibcode = "2005JOSAA..22.2348M"
+verified = true
+verified_via = "ads"
+
 [ref.soummer2007]
 authors = "Soummer et al."
 year = 2007
@@ -367,7 +378,7 @@ authors = "Lachaume"
 year = 2021
 title = "Bias-free model fitting of correlated data in interferometry"
 doi = "10.1017/pasa.2021.20"
-used_in = ["virgil.gains:GainModes"]
+used_in = ["virgil.gains:GainModes", "virgil.gains:ClosureOffsets"]
 note = "PASA 38, e033 (2021)"
 bibcode = "2021PASA...38...29L"
 arxiv = "2104.07082"

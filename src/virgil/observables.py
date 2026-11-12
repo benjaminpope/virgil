@@ -221,7 +221,13 @@ class TripleAmplitude(_Block):
         return amp[self.i1] * amp[self.i2] * amp[self.i3]
 
     def subset(self, keep, new_index, flux_keep=None):
-        rows = onp.flatnonzero(keep[self.i1] & keep[self.i2] & keep[self.i3])
+        if onp.any(keep[self.i1] != keep[self.i2]) or onp.any(
+            keep[self.i1] != keep[self.i3]
+        ):
+            raise ValueError(
+                "A triple amplitude would be split between parts."
+            )
+        rows = onp.flatnonzero(keep[self.i1])
         legs = [new_index[i[rows]].astype(onp.int32) for i in self.gain_legs()]
         return TripleAmplitude(self.values[rows], self.errors[rows], *legs)
 

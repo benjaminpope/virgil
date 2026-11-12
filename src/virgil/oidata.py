@@ -14,6 +14,7 @@ from ._utils import inflate_errors, wrap_phase
 from .gains import (
     ClosureOffsets,
     GainModes,
+    _vis_sample_index,
     closure_offsets,
     gain_modes,
     offsets_noise,
@@ -478,14 +479,18 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         add up to the whole.
         """
         labels = self.epochs(gap_days)
+        for b in self.extras:
+            legs = b.gain_legs()
+            if len(legs) > 1 and onp.size(b.values):
+                l0 = labels[onp.asarray(legs[0])]
+                if any(
+                    onp.any(labels[onp.asarray(leg)] != l0) for leg in legs[1:]
+                ):
+                    raise ValueError(
+                        "A triple amplitude would be split between parts."
+                    )
         if self.gains is not None:
-            if self.vis.size == 0:
-                vis_idx = onp.zeros(0, dtype=int)
-            elif self.vis_index is None:
-                vis_idx = onp.arange(onp.size(self.u))
-            else:
-                vis_idx = onp.asarray(self.vis_index)
-            gain_labels = labels[vis_idx]
+            gain_labels = labels[_vis_sample_index(self)]
             if self.gains.n_vis != self.vis.size:
                 gain_labels = onp.concatenate(
                     [
@@ -582,8 +587,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         -------
         OIData
             The samples in range (closure triangles are kept whole). Not available
-            for projected (kernel, DISCO) observables, or after closure-phase
-            offsets are added.
+            for projected (kernel, DISCO) observables.
 
         Examples
         --------
@@ -637,11 +641,6 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 f"observables must name some of {list(known)}; got "
                 f"{sorted(names)}."
             )
-        if self.phase_offsets is not None and "phi" not in names:
-            raise ValueError(
-                "Data with closure-phase offsets cannot drop their closure "
-                "phases; add the offsets (with_closure_offsets) afterwards."
-            )
         out = self
         empty = np.zeros(0, dtype=int)
         gains = out._subset_gains(
@@ -670,9 +669,19 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                     d.i_cps3,
                     d.phi_index,
                     d.cp_noise,
+                    d.phase_offsets,
                 ),
                 out,
-                (out.phi[:0], out.d_phi[:0], None, None, None, empty, None),
+                (
+                    out.phi[:0],
+                    out.d_phi[:0],
+                    None,
+                    None,
+                    None,
+                    empty,
+                    None,
+                    None,
+                ),
                 is_leaf=lambda x: x is None,
             )
             # A static field: tree_at made a fresh copy, so set it there.
@@ -739,11 +748,15 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         vis_rows, vis_index = observed(self.vis_index)
         phase_offsets = None
         if self.cp_flag:
-            legs = [onp.asarray(i) for i in (self.i_cps1, self.i_cps2, self.i_cps3)]  # fmt: skip
+            legs = [
+                onp.asarray(i) for i in (self.i_cps1, self.i_cps2, self.i_cps3)
+            ]
             if onp.any(keep[legs[0]] != keep[legs[1]]) or onp.any(
                 keep[legs[0]] != keep[legs[2]]
             ):
-                raise ValueError("A closure phase would be split between parts.")  # fmt: skip
+                raise ValueError(
+                    "A closure phase would be split between parts."
+                )
             phi_rows = onp.flatnonzero(keep[legs[0]])
             if phi_rows.size:
                 legs = [new_index[leg[phi_rows]] for leg in legs]
@@ -773,12 +786,6 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             None if x is None else x[keep]
             for x in (self.dt, self.frame, self.stations)
         ]
-        kept_vis = onp.zeros(self.vis.size, bool)
-        kept_vis[vis_rows] = True
-        gains = self._subset_gains(
-            kept_vis,
-            lambda b: onp.logical_and.reduce([keep[i] for i in b.gain_legs()]),
-        )
         extras = []
         for block in self.extras:
             own = None
@@ -787,48 +794,35 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                     raise ValueError("OI_FLUX data cannot be split this way.")
                 own = onp.asarray(flux_keep(block), dtype=bool)
             extras.append(block.subset(keep, new_index, own))
+        kept_vis = onp.zeros(self.vis.size, bool)
+        kept_vis[vis_rows] = True
+        gains = self._subset_gains(kept_vis, lambda b: keep[b.gain_legs()[0]])
+        updates = {
+            **dict(
+                zip(
+                    ("i_cps1", "i_cps2", "i_cps3", "dt", "frame", "stations"),
+                    (*legs, *times),
+                )
+            ),
+            "u": self.u[keep],
+            "v": self.v[keep],
+            "wavel": wavel,
+            "bandwidth": bandwidth,
+            "vis": self.vis[vis_rows],
+            "d_vis": self.d_vis[vis_rows],
+            "phi": self.phi[phi_rows],
+            "d_phi": self.d_phi[phi_rows],
+            "vis_index": vis_index,
+            "phi_index": phi_index,
+            "cp_noise": closure,
+            "gains": gains,
+            "phase_offsets": phase_offsets,
+            "extras": tuple(extras),
+        }
         out = eqx.tree_at(
-            lambda d: (
-                d.u,
-                d.v,
-                d.wavel,
-                d.bandwidth,
-                d.vis,
-                d.d_vis,
-                d.phi,
-                d.d_phi,
-                d.i_cps1,
-                d.i_cps2,
-                d.i_cps3,
-                d.vis_index,
-                d.phi_index,
-                d.cp_noise,
-                d.dt,
-                d.frame,
-                d.stations,
-                d.gains,
-                d.phase_offsets,
-                d.extras,
-            ),  # fmt: skip
+            lambda d: tuple(getattr(d, k) for k in updates),
             self,
-            (
-                self.u[keep],
-                self.v[keep],
-                wavel,
-                bandwidth,
-                self.vis[vis_rows],
-                self.d_vis[vis_rows],
-                self.phi[phi_rows],
-                self.d_phi[phi_rows],
-                *legs,
-                vis_index,
-                phi_index,
-                closure,
-                *times,
-                gains,
-                phase_offsets,
-                tuple(extras),
-            ),  # fmt: skip
+            tuple(updates.values()),
             is_leaf=lambda x: x is None,
         )
         if self.cp_flag and not phi_rows.size:
@@ -1751,7 +1745,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             rotated = eqx.tree_at(lambda d: d.uv_grid, rotated, None)
         return rotated
 
-    def with_closure_offsets(self, baseline=None, triangle=None, modes=None):
+    def with_closure_offsets(
+        self, baseline=None, triangle=None, modes=None, *, scale_penalty=True
+    ):
         """A copy of the data with closure-phase offsets per frame.
 
         The likelihood marginalizes offsets common to the channels of a frame
@@ -1773,13 +1769,18 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         modes : array-like, optional
             Further modes, ``(n_mode, n_phase)``, radians per 1σ, each possibly
             spanning frames; their width, 1 by default, scales them.
+        scale_penalty : bool, optional
+            Divide the periodic wrap penalty by ``hypot(σ, σ_off)`` at the
+            nominal widths (default ``True``). Pass ``False`` to keep ``σ``.
 
         Returns
         -------
         OIData
             The data with ``phase_offsets`` set (replacing any earlier ones).
         """
-        offsets = closure_offsets(self, baseline, triangle, modes)
+        offsets = closure_offsets(
+            self, baseline, triangle, modes, scale_penalty=scale_penalty
+        )
         # Three telescopes have no cp_noise; the offsets are whitened with
         # the one-triangle-per-group form. Their baseline offsets are folded
         # into the triangle group, and the likelihood whitens the sines with a
@@ -1793,16 +1794,23 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         )
 
     def with_gains(
-        self, telescope=None, baseline=None, chromatic=None, modes=None
+        self,
+        telescope=None,
+        baseline=None,
+        chromatic=None,
+        modes=None,
+        *,
+        include_extras=True,
     ):
         """A copy of the data with calibration gains correlated across channels.
 
         The likelihood marginalizes gains on log |V| per frame analytically (see
-        [`virgil.gains`][virgil.gains]), across ``vis`` and any ``"visamp"`` or
-        ``"t3amp"`` blocks in ``extras``, with these widths unless fitted as the
-        noise terms ``vis_gain_telescope``, ``vis_gain_baseline``,
-        ``vis_gain_chromatic`` or ``vis_gain_modes`` (log-uniform priors on stated
-        bounds). The covariance then depends on the model, so fits use L-BFGS.
+        [`virgil.gains`][virgil.gains]), across ``vis`` and (by default) any
+        ``"visamp"`` or ``"t3amp"`` blocks in ``extras``, with these widths
+        unless fitted as the noise terms ``vis_gain_telescope``,
+        ``vis_gain_baseline``, ``vis_gain_chromatic`` or ``vis_gain_modes``
+        (log-uniform priors on stated bounds). The covariance then depends on
+        the model, so fits use L-BFGS.
 
         Parameters
         ----------
@@ -1813,13 +1821,25 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         modes : array-like, optional
             Further modes, ``(n_mode, n_sample)``, shapes on log |V| per 1σ; their
             width, 1 by default, scales them.
+        include_extras : bool, optional
+            Propagate the log-|V| modes to any ``"visamp"`` or ``"t3amp"``
+            blocks in ``extras`` (default ``True``). Pass ``False`` to restrict
+            gains to ``vis`` (e.g. for [`marginal_loglike`][virgil.epochs.marginal_loglike]
+            when both ``vis`` and amplitude extras are present).
 
         Returns
         -------
         OIData
             The data with ``gains`` set (replacing any earlier ones).
         """
-        gains = gain_modes(self, telescope, baseline, chromatic, modes)
+        gains = gain_modes(
+            self,
+            telescope,
+            baseline,
+            chromatic,
+            modes,
+            include_extras=include_extras,
+        )
         return eqx.tree_at(
             lambda d: d.gains, self, gains, is_leaf=lambda x: x is None
         )

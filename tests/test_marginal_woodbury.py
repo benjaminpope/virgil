@@ -115,10 +115,17 @@ def _whiten_at(surface, data, model):
             offset_terms,
             split_norm=True,
         )
+        gains_block = "vis"
+        if data.gains is not None and data.gains.n_vis != int(sizes[0]):
+            gains_block = next(
+                f"extra[{k}]"
+                for k, b in enumerate(data.extras)
+                if b.gain_legs() and onp.size(b.data())
+            )
         own = np.stack(
             [
                 norm[0]
-                if name == "vis"
+                if name == gains_block
                 else norm[1]
                 if name == "phi"
                 else np.zeros((), norm.dtype)
@@ -480,3 +487,70 @@ def test_an_all_padding_block_adds_nothing():
             white, extra = whiten_blocks(x / s, rows_j, local_j / s, span / s)
             assert float(chi2) == pytest.approx(float(white @ white), rel=1e-9)
             assert float(norm) == pytest.approx(float(extra.sum()), rel=1e-9)
+
+
+def test_surface_with_spanning_closure_offsets_and_amplitude_extras():
+    """Woodbury surface handles spanning ClosureOffsets and single-block
+    amplitude extras, while multi-block amplitude gains direct callers to
+    include_extras=False."""
+    with run_in("float64"):
+        base = vlti_oidata(
+            stations=VLTI_UTS,
+            hour_angles_h=(-1.0, 0.0, 1.0),
+            wavelengths_m=onp.linspace(2.0e-6, 2.4e-6, 3),
+            sigma_v2=0.02,
+            sigma_cp_deg=0.5,
+        ).with_model(TRUTH, jax.random.PRNGKey(7), noise_scale=1.5)
+        n_phi = int(onp.asarray(base.phi).size)
+        span_phi = onp.random.default_rng(8).normal(0.0, 0.04, size=(2, n_phi))
+        data_span = base.with_closure_offsets(triangle=0.03, modes=span_phi)
+        assert data_span.phase_offsets.spanning is not None
+
+        surf_span = _Surface(data_span, S_MAX)
+        dof2 = np.ones(len(surf_span.blocks))
+        got_span = surf_span.score(
+            surf_span.chi2(TRUTH, data_span, None, 1.0), dof2, data_span
+        )
+        want_span = _oracle_score(surf_span, data_span, TRUTH, dof2)
+        assert float(got_span) == pytest.approx(float(want_span), rel=1e-6)
+
+        # Attach a VisibilityAmplitude extra block and apply with_gains.
+        n_vis = int(onp.asarray(base.vis).size)
+        visamp = VisibilityAmplitude(
+            np.sqrt(np.asarray(base.vis)),
+            np.full(n_vis, 0.02),
+            onp.arange(n_vis, dtype=onp.int32),
+        )
+        with_extra = eqx.tree_at(lambda d: d.extras, base, (visamp,))
+        shared_amp = with_extra.with_gains(telescope=0.03)
+        with pytest.raises(NotImplementedError, match="include_extras=False"):
+            _Surface(shared_amp, S_MAX)
+
+        # Opting out via include_extras=False works with both vis and visamp.
+        vis_only = with_extra.with_gains(telescope=0.03, include_extras=False)
+        surf_vo = _Surface(vis_only, S_MAX)
+        dof3 = np.ones(len(surf_vo.blocks))
+        assert float(
+            surf_vo.score(
+                surf_vo.chi2(TRUTH, vis_only, None, 1.0), dof3, vis_only
+            )
+        ) == pytest.approx(
+            float(_oracle_score(surf_vo, vis_only, TRUTH, dof3)), rel=1e-6
+        )
+
+        # Selecting a single amplitude block (visamp + phi, n_vis == 0) works
+        # with default include_extras=True and matches the quadrature oracle.
+        amp_only = shared_amp.select(observables=("visamp", "phi"))
+        assert amp_only.vis.size == 0 and amp_only.gains.n_vis == n_vis
+        surf_ao = _Surface(amp_only, S_MAX)
+        dof_ao = np.ones(len(surf_ao.blocks))
+        assert float(
+            surf_ao.score(
+                surf_ao.chi2(TRUTH, amp_only, None, 1.0), dof_ao, amp_only
+            )
+        ) == pytest.approx(
+            float(_oracle_score(surf_ao, amp_only, TRUTH, dof_ao)), rel=1e-6
+        )
+        assert _table_floats(amp_only) > _table_floats(
+            amp_only.select(observables="phi")
+        )

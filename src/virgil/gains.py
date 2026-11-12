@@ -68,24 +68,27 @@ GAIN_GROUPS = ("telescope", "baseline", "chromatic", "modes")
 
 
 class GainModes(eqx.Module):
-    """Low-rank gain modes on the visibility observables.
+    """Low-rank gain modes on the amplitude observables.
 
     Built by [`gain_modes`][virgil.gains.gain_modes] (or
     [`OIData.with_gains`][virgil.oidata.OIData.with_gains]); see the module
-    notes for the model. Modes within one frame are kept in blocks (the
-    connected groups of such modes, padded to a common size); modes that span
-    frames (only supplied ones can) are kept apart as dense columns and whitened
-    after the blocks, so a few of them do not merge every frame into one block.
+    notes for the model. Acts on ``OIData.vis`` followed (when
+    ``include_extras=True``) by any ``"visamp"`` and ``"t3amp"`` blocks in
+    ``OIData.extras``. Modes within one frame are kept in blocks (connected
+    groups padded to a common size); modes that span frames are kept apart as
+    dense columns and whitened after the blocks, so a few of them do not merge
+    every frame into one block.
 
     Attributes
     ----------
     rows : jax.Array
-        ``(n_block, n_row)`` int32: the visibility observables of each block
-        (rows of ``OIData.vis``), padded with ``n_vis`` (out of range). If
-        every mode spans frames, one empty block of padding.
+        ``(n_block, n_row)`` int32: the amplitude observables of each block
+        (``OIData.vis`` then any included ``"visamp"``/``"t3amp"`` blocks),
+        padded with ``n_vis`` (out of range). If every mode spans frames, one
+        empty block of padding.
     shapes : jax.Array
         ``(n_block, n_row, n_mode)``: each mode's shape on log |V| for unit
-        width, zero on padding.
+        width (summed over the three legs for ``"t3amp"``), zero on padding.
     group : jax.Array
         ``(n_block, n_mode)`` int32: each mode's group, an index into
         ``groups``.
@@ -101,7 +104,7 @@ class GainModes(eqx.Module):
     groups : tuple of str
         The groups present, a subset of ``GAIN_GROUPS``.
     n_vis : int
-        The number of visibility observables.
+        The number of amplitude observables marginalized by these modes.
     """
 
     rows: jax.Array
@@ -176,7 +179,7 @@ class GainModes(eqx.Module):
         return np.diag(errors**2) + u @ u.T
 
     def sample(self, key, widths):
-        """Draw the gains: log |V| offset of each visibility observable."""
+        """Draw the gains: effective log |V| offset of each amplitude observable."""
         widths = np.asarray(widths)
         local_key, span_key = jax.random.split(key)
         z = jax.random.normal(local_key, self.group.shape)
@@ -188,7 +191,7 @@ class GainModes(eqx.Module):
         return gains + self.spanning @ (z * widths[self.spanning_group])
 
     def subset(self, keep):
-        """The modes on the visibility observables where ``keep`` is True.
+        """The modes on the amplitude observables where ``keep`` is True.
 
         A Gaussian's marginal on a subset of its variables is the same
         covariance restricted to them, so dropping rows is exact.
@@ -221,9 +224,9 @@ class GainModes(eqx.Module):
     def labels_shared(self, labels):
         """Whether any mode touches observables with different ``labels``.
 
-        ``labels`` (one per visibility observable) partitions the data, e.g.
-        into epochs; a partition's likelihoods add up to the whole only if
-        no gain is shared between its parts.
+        ``labels`` (one per amplitude observable, ``(n_vis,)``) partitions the
+        data, e.g. into epochs; a partition's likelihoods add up to the whole
+        only if no gain is shared between its parts.
         """
         labels = onp.asarray(labels)
         rows = onp.asarray(self.rows)
@@ -239,6 +242,15 @@ class GainModes(eqx.Module):
         return False
 
 
+def _vis_sample_index(data):
+    """Sample index of each row in ``data.vis``."""
+    if hasattr(data, "vis") and onp.size(data.vis) == 0:
+        return onp.zeros(0, dtype=int)
+    if data.vis_index is None:
+        return onp.arange(onp.size(data.u))
+    return onp.asarray(data.vis_index, dtype=int)
+
+
 def _frames_and_stations(data, need_stations, amp_extras=()):
     """Sample indices, frame and station pair of the amplitude samples."""
     if data.frame is None:
@@ -246,18 +258,12 @@ def _frames_and_stations(data, need_stations, amp_extras=()):
             "Gains per frame need each sample's frame: read the data from "
             "OIFITS, or give 'frame' (or 'mjd') in the dictionary."
         )
-    if onp.size(data.vis) == 0:
-        vis_idx = onp.zeros(0, dtype=int)
-    elif data.vis_index is None:
-        vis_idx = onp.arange(onp.size(data.u))
-    else:
-        vis_idx = onp.asarray(data.vis_index, dtype=int)
-    index = vis_idx
+    index = _vis_sample_index(data)
     if amp_extras:
         index = onp.unique(
             onp.concatenate(
                 [
-                    vis_idx,
+                    index,
                     *(
                         onp.asarray(leg, dtype=int)
                         for b in amp_extras
@@ -276,11 +282,17 @@ def _frames_and_stations(data, need_stations, amp_extras=()):
                 "pairs) in the dictionary."
             )
         stations = onp.sort(onp.asarray(data.stations)[index], axis=1)
-    return vis_idx, index, frame, stations
+    return index, frame, stations
 
 
 def gain_modes(
-    data, telescope=None, baseline=None, chromatic=None, modes=None
+    data,
+    telescope=None,
+    baseline=None,
+    chromatic=None,
+    modes=None,
+    *,
+    include_extras=True,
 ):
     """Gain modes for a dataset, with default widths.
 
@@ -289,9 +301,7 @@ def gain_modes(
     data : OIData
         Unprojected data, with frames (``frame``) and, for telescope,
         baseline and chromatic gains, station pairs (``stations``), as read
-        from OIFITS. When ``data.extras`` includes visibility or triple
-        amplitudes (``"visamp"``, ``"t3amp"``), the log-|V| modes propagate
-        to them as well.
+        from OIFITS.
     telescope, baseline, chromatic : float, optional
         Widths (1σ, on log |V|, so 0.01 is a 1% amplitude or 2% V² gain) of
         gains per (frame, telescope), per (frame, baseline), and per
@@ -303,6 +313,10 @@ def gain_modes(
         Further modes, ``(n_mode, n_sample)``: shapes on log |V| per 1σ, one
         value per sample of the data (the order of ``data.u``; flagged
         samples are ignored). Their width (default 1) scales them all.
+    include_extras : bool, optional
+        Propagate the log-|V| modes to any visibility or triple amplitudes
+        (``"visamp"``, ``"t3amp"``) in ``data.extras`` (default ``True``).
+        Pass ``False`` to restrict gains to ``data.vis``.
 
     Returns
     -------
@@ -320,10 +334,12 @@ def gain_modes(
     }
     _check_widths(built_in)
     need_stations = any(w is not None for w in built_in.values())
+    raw_extras = getattr(data, "extras", ()) if include_extras else ()
     amp_extras = [
-        b for b in data.extras if b.gain_legs() and onp.size(b.values)
+        b for b in raw_extras if b.gain_legs() and onp.size(b.values)
     ]
-    vis_idx, index, frame, stations = _frames_and_stations(
+    vis_idx = _vis_sample_index(data)
+    index, frame, stations = _frames_and_stations(
         data, need_stations, amp_extras
     )
     groups, widths, columns = [], [], []  # columns: (group, rows, values)
@@ -521,9 +537,13 @@ class ClosureOffsets(eqx.Module):
     sin Δ by about δ cos Δ) that holds below about 0.3 rad; larger widths are
     not marginalized exactly. Modes within one frame are whitened in blocks,
     and modes that span frames are kept apart as dense columns and whitened
-    after the blocks, as for [`GainModes`][virgil.gains.GainModes]. The
-    periodic penalty rows divide by ``hypot(σ, σ_off)`` using each closure
-    phase's root-sum-square offset width.
+    after the blocks, as for [`GainModes`][virgil.gains.GainModes]. When
+    ``scale_penalty`` is True, the periodic penalty rows divide by
+    ``hypot(σ, σ_off)`` at the nominal ``widths``.
+
+    Source: Meimon, Mugnier & Le Besnerais (2005),
+    [references](../references.md#meimon2005); Lachaume (2021),
+    [references](../references.md#lachaume2021).
 
     Attributes
     ----------
@@ -555,6 +575,9 @@ class ClosureOffsets(eqx.Module):
         The number of whitened closure phases (``cp_noise.size``).
     n_phase : int
         The number of closure phases (``OIData.phi.size``).
+    scale_penalty : bool
+        Whether the periodic wrap penalty divides by ``hypot(σ, σ_off)`` at the
+        nominal ``widths`` (default ``True``).
     """
 
     groups: onp.ndarray
@@ -569,13 +592,17 @@ class ClosureOffsets(eqx.Module):
     groups_present: tuple = eqx.field(static=True)
     n_out: int = eqx.field(static=True)
     n_phase: int = eqx.field(static=True)
+    scale_penalty: bool = eqx.field(static=True, default=True)
 
     def widths_for(self, terms=None):
         """Each group's width, with ``phi_offset_<group>`` terms replacing them."""
         return _widths_for(
-            self.groups_present, self.widths, terms, "phi_offset_",
+            self.groups_present,
+            self.widths,
+            terms,
+            "phi_offset_",
             "OIData.with_closure_offsets",
-        )  # fmt: skip
+        )
 
     def _columns(self, cp_noise, sigma, widths):
         """The modes, whitened like the sines: per block, and spanning frames."""
@@ -662,14 +689,14 @@ class ClosureOffsets(eqx.Module):
             z * widths[self.spanning_group]
         )
 
-    def marginal_std(self, cp_noise, n_phase, widths):
+    def marginal_std(self, widths=None):
         """Root-sum-square offset width (radians) on each closure phase."""
-        widths = np.asarray(widths)
+        widths = np.asarray(self.widths if widths is None else widths)
         group = np.asarray(self.group)
         scaled = np.asarray(self.values) * widths[group][..., None, None]
         per_slot = np.sum(scaled**2, axis=1)
         var = (
-            np.zeros(n_phase, widths.dtype)
+            np.zeros(self.n_phase, widths.dtype)
             .at[np.asarray(self.phases)]
             .add(per_slot, mode="drop")
         )
@@ -696,7 +723,11 @@ class ClosureOffsets(eqx.Module):
         return False
 
     def subset(self, keep, cp_noise):
-        """The modes on the closure phases where ``keep`` is True."""
+        """The modes on the closure phases where ``keep`` is True.
+
+        ``cp_noise`` must be non-``None`` (use ``force=True`` or
+        ``offsets_noise`` on three-telescope data).
+        """
         keep = onp.asarray(keep, bool)
         new_index = onp.cumsum(keep) - 1
         n_new = int(keep.sum())
@@ -731,7 +762,7 @@ class ClosureOffsets(eqx.Module):
         return _pack_offsets(
             local,
             spanning_cols,
-            (self.groups_present, self.widths),
+            (self.groups_present, self.widths, self.scale_penalty),
             (cp_noise, n_new),
         )
 
@@ -769,7 +800,7 @@ def offsets_noise(data):
 
 def _pack_offsets(local, spanning_cols, group_meta, cp_state):
     """Pack frame-local and frame-spanning closure-phase offset columns."""
-    names, widths = group_meta
+    names, widths, scale_penalty = group_meta
     cp_noise, n_phase = cp_state
     spanning = onp.zeros((n_phase, len(spanning_cols)))
     for j, (_, r, vals) in enumerate(spanning_cols):
@@ -824,22 +855,25 @@ def _pack_offsets(local, spanning_cols, group_meta, cp_state):
                 g * k_basis : (g + 1) * k_basis
             ]
     return ClosureOffsets(
-        groups,
-        group_mask,
-        phases,
-        values,
-        group,
-        rows,
-        spanning if spanning_cols else None,
-        spanning_group if spanning_cols else None,
-        np.asarray(widths, float),
-        tuple(names),
-        n_out,
-        int(n_phase),
+        groups=groups,
+        group_mask=group_mask,
+        phases=phases,
+        values=values,
+        group=group,
+        rows=rows,
+        spanning=spanning if spanning_cols else None,
+        spanning_group=spanning_group if spanning_cols else None,
+        widths=np.asarray(widths, float),
+        groups_present=tuple(names),
+        n_out=n_out,
+        n_phase=int(n_phase),
+        scale_penalty=bool(scale_penalty),
     )
 
 
-def closure_offsets(data, baseline=None, triangle=None, modes=None):
+def closure_offsets(
+    data, baseline=None, triangle=None, modes=None, *, scale_penalty=True
+):
     """Closure-phase offsets for a dataset, with default widths.
 
     Parameters
@@ -860,6 +894,9 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
         per closure phase of ``data.phi``. Modes that span frames are kept
         apart as dense columns and whitened after the per-frame blocks. Their
         width (default 1) scales them all.
+    scale_penalty : bool, optional
+        Divide the periodic wrap-penalty rows by ``hypot(σ, σ_off)`` at the
+        nominal widths (default ``True``). Pass ``False`` to keep ``σ``.
 
     Returns
     -------
@@ -951,5 +988,8 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
     local = [c for c, w in zip(columns, within) if w]
     spanning_cols = [c for c, w in zip(columns, within) if not w]
     return _pack_offsets(
-        local, spanning_cols, (names, widths), (cp_noise, n_phase)
+        local,
+        spanning_cols,
+        (names, widths, scale_penalty),
+        (cp_noise, n_phase),
     )

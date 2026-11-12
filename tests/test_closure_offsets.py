@@ -85,10 +85,34 @@ def test_widths_zero_widths_and_refusals():
     plain = float(model_loglike(TRUTH, data))
     zero = data.with_closure_offsets(baseline=0.0)
     assert float(model_loglike(TRUTH, zero)) == pytest.approx(plain, rel=1e-6)
-    fixed = data.with_closure_offsets(baseline=0.02)
-    assert float(model_loglike(TRUTH, fixed)) == pytest.approx(
-        float(model_loglike(TRUTH, zero, phi_offset_baseline=0.02)), rel=1e-6
+    fixed_unscaled = data.with_closure_offsets(
+        baseline=0.02, scale_penalty=False
     )
+    zero_override = float(model_loglike(TRUTH, zero, phi_offset_baseline=0.02))
+    assert float(model_loglike(TRUTH, fixed_unscaled)) == pytest.approx(
+        zero_override, rel=1e-6
+    )
+    fixed = data.with_closure_offsets(baseline=0.02)
+    with jax.enable_x64(True):
+        from virgil._precision import cast_tree
+
+        d64 = cast_tree(data, "float64")
+        f64 = d64.with_closure_offsets(baseline=0.02)
+        z64 = d64.with_closure_offsets(baseline=0.0)
+        t64 = cast_tree(TRUTH, "float64")
+        resid = onp.asarray(d64.model(t64)[d64.vis.size :] - d64.phi, float)
+        sigma = onp.asarray(d64.d_phi, float)
+        pen_num = 2.0 * onp.sin(0.5 * resid) ** 2
+        pen_diff = -0.5 * float(
+            onp.sum(
+                (pen_num / onp.hypot(sigma, onp.sqrt(3.0) * 0.02)) ** 2
+                - (pen_num / sigma) ** 2
+            )
+        )
+        got_diff = float(model_loglike(t64, f64)) - float(
+            model_loglike(t64, z64, phi_offset_baseline=0.02)
+        )
+        assert got_diff == pytest.approx(pen_diff, rel=1e-12, abs=1e-12)
     with pytest.raises(ValueError, match="with_closure_offsets"):
         model_loglike(TRUTH, data, phi_offset_baseline=0.01)
     with pytest.raises(ValueError, match="no modes"):
@@ -416,15 +440,16 @@ def test_wrap_penalty_scaling_gradients_and_unbiased_fit_at_tiny_photon_noise():
     partial_mode[0, : n_phase // 2] = 0.12
     partial_data = base.with_closure_offsets(modes=partial_mode)
     off = partial_data.phase_offsets
-    std0 = onp.asarray(
-        off.marginal_std(partial_data.cp_noise, n_phase, np.array([0.0]))
-    )
+    std0 = onp.asarray(off.marginal_std(np.array([0.0])))
     assert onp.array_equal(std0, onp.zeros(n_phase))
-    std1 = onp.asarray(
-        off.marginal_std(partial_data.cp_noise, n_phase, np.array([1.0]))
-    )
+    std1 = onp.asarray(off.marginal_std(np.array([1.0])))
     assert onp.allclose(std1[: n_phase // 2], 0.12)
     assert onp.array_equal(std1[n_phase // 2 :], onp.zeros(n_phase // 2))
+
+    # Dropping closure phases via select(observables="vis") clears phase_offsets.
+    vis_only = partial_data.select(observables="vis")
+    assert vis_only.phase_offsets is None
+    assert not vis_only.cp_flag
 
     # Smooth finite gradients with respect to model flux and width, even at 0.
     for w in (0.0, 0.15):
@@ -438,13 +463,19 @@ def test_wrap_penalty_scaling_gradients_and_unbiased_fit_at_tiny_photon_noise():
 
     # 10 deg (~0.1745 rad) instrumental closure-phase offsets at 0.1 deg photon
     # noise: fit recovers TRUTH.flux without quartic wrap-penalty bias, while a
-    # π flip is still strongly rejected.
+    # π flip is still strongly rejected, and scale_penalty=False keeps /sigma.
     rng = onp.random.default_rng(22)
     deg10 = onp.deg2rad(10.0)
     n_tri = n_phase // N_WAVE
     inj = onp.repeat(rng.choice([-deg10, deg10], size=n_tri), N_WAVE)
     shifted = eqx.tree_at(lambda d: d.phi, base, base.phi + np.asarray(inj))
     data = shifted.with_closure_offsets(triangle=deg10)
+    unscaled = shifted.with_closure_offsets(
+        triangle=deg10, scale_penalty=False
+    )
+    assert float(model_loglike(TRUTH, data)) > (
+        float(model_loglike(TRUTH, unscaled)) + 100.0
+    )
     pi_flipped = eqx.tree_at(lambda d: d.phi, data, data.phi + np.pi)
     assert (
         float(model_loglike(TRUTH, data))
@@ -457,3 +488,187 @@ def test_wrap_penalty_scaling_gradients_and_unbiased_fit_at_tiny_photon_noise():
         data,
     )
     assert float(result.values["flux"]) == pytest.approx(0.3, abs=0.015)
+
+
+def test_independent_dense_kammerer_plus_offset_loglike_and_penalty():
+    """Verify ClosureOffsets log-likelihood against a standalone dense NumPy
+    construction of the Kammerer (2020) + offset covariance and hypot penalty."""
+    from virgil._precision import cast_tree
+
+    with jax.enable_x64(True):
+        base = cast_tree(
+            vlti_oidata(
+                hour_angles_h=(-1.0, 0.5),
+                wavelengths_m=onp.linspace(2.0e-6, 2.4e-6, 3),
+                sigma_v2=0.01,
+                sigma_cp_deg=0.5,
+            ).with_model(TRUTH, jax.random.PRNGKey(31), noise_scale=1.5),
+            "float64",
+        )
+        n_phi = base.phi.size
+        rng = onp.random.default_rng(32)
+        span_modes = rng.normal(0.0, 0.04, size=(2, n_phi))
+        tau_tri_nom, tau_mode_nom = 0.08, 1.0
+        data = base.with_closure_offsets(
+            triangle=tau_tri_nom, modes=span_modes
+        )
+
+        # Build raw triangle-offset design columns directly from frame & stations.
+        legs = [
+            onp.asarray(i) for i in (base.i_cps1, base.i_cps2, base.i_cps3)
+        ]
+        frame = onp.asarray(base.frame)[legs[0]]
+        stations = onp.asarray(base.stations)
+        wavel = onp.broadcast_to(onp.asarray(base.wavel), base.u.shape)[
+            legs[0]
+        ]
+        tri_keys = [
+            (
+                int(frame[t]),
+                int(stations[legs[0][t], 0]),
+                int(stations[legs[0][t], 1]),
+                int(stations[legs[1][t], 1]),
+            )
+            for t in range(n_phi)
+        ]
+        uniq_tris = list(dict.fromkeys(tri_keys))
+        m_tri = onp.zeros((n_phi, len(uniq_tris)))
+        for j, key in enumerate(uniq_tris):
+            for t, k in enumerate(tri_keys):
+                if k == key:
+                    m_tri[t, j] = 1.0
+
+        # Build dense Kammerer covariance block-by-block per (frame, wavelength).
+        d_phi = onp.asarray(base.d_phi, dtype=float)
+        q_blocks = []
+        idx_blocks = []
+        c_kam = onp.zeros((n_phi, n_phi))
+        chan_keys = [(int(frame[t]), float(wavel[t])) for t in range(n_phi)]
+        for ck in list(dict.fromkeys(chan_keys)):
+            idx = onp.array([t for t, k in enumerate(chan_keys) if k == ck])
+            bl_set = sorted(
+                {
+                    (min(int(a), int(b)), max(int(a), int(b)))
+                    for leg in legs
+                    for a, b in stations[leg[idx]]
+                }
+            )
+            t_mat = onp.zeros((idx.size, len(bl_set)))
+            for row_i, t in enumerate(idx):
+                for leg, sgn in zip(legs, (1.0, 1.0, -1.0)):
+                    a, b = (int(x) for x in stations[leg[t]])
+                    col_j = bl_set.index((min(a, b), max(a, b)))
+                    t_mat[row_i, col_j] += sgn if a < b else -sgn
+            corr = (t_mat @ t_mat.T) / 3.0
+            sig = d_phi[idx]
+            c_kam[onp.ix_(idx, idx)] = onp.outer(sig, sig) * corr
+            eigvals, eigvecs = onp.linalg.eigh(corr)
+            q_blocks.append(eigvecs[:, eigvals > 1e-10])
+            idx_blocks.append(idx)
+
+        q_full = onp.zeros((n_phi, sum(q.shape[1] for q in q_blocks)))
+        col = 0
+        for idx, q in zip(idx_blocks, q_blocks):
+            q_full[idx, col : col + q.shape[1]] = q
+            col += q.shape[1]
+
+        sigma_off_nom = onp.sqrt(
+            onp.sum((tau_tri_nom * m_tri) ** 2, axis=1)
+            + onp.sum((tau_mode_nom * span_modes.T) ** 2, axis=1)
+        )
+        pen_denom2 = d_phi**2 + sigma_off_nom**2
+
+        def dense_phi_term(model, tau_tri, tau_mode):
+            pred = onp.asarray(base.model(model))
+            n_vis = base.vis.size
+            vis_ll = -0.5 * onp.sum(
+                (
+                    (pred[:n_vis] - onp.asarray(base.vis))
+                    / onp.asarray(base.d_vis)
+                )
+                ** 2
+            )
+            resid = pred[n_vis:] - onp.asarray(base.phi)
+            sines = onp.sin(resid)
+            c_tot = (
+                c_kam
+                + (tau_tri**2) * (m_tri @ m_tri.T)
+                + (tau_mode**2) * (span_modes.T @ span_modes)
+            )
+            # Kammererwhitening divides by sigma BEFORE projecting onto Q.
+            c_scaled = c_tot / onp.outer(d_phi, d_phi)
+            c_proj = q_full.T @ c_scaled @ q_full
+            y_proj = q_full.T @ (sines / d_phi)
+            _, logdet = onp.linalg.slogdet(c_proj)
+            quad = float(y_proj @ onp.linalg.solve(c_proj, y_proj))
+            pen = float(
+                onp.sum((2.0 * onp.sin(0.5 * resid) ** 2) ** 2 / pen_denom2)
+            )
+            return vis_ll - 0.5 * (quad + logdet + pen)
+
+        m_a = cast_tree(TRUTH, "float64")
+        m_b = cast_tree(BinaryModelCartesian(5.5, -3.7, 0.24), "float64")
+        ll_a1 = float(
+            model_loglike(
+                m_a, data, phi_offset_triangle=0.06, phi_offset_modes=1.3
+            )
+        )
+        ll_b2 = float(
+            model_loglike(
+                m_b, data, phi_offset_triangle=0.11, phi_offset_modes=0.7
+            )
+        )
+        ref_diff = dense_phi_term(m_a, 0.06, 1.3) - dense_phi_term(
+            m_b, 0.11, 0.7
+        )
+        assert (ll_a1 - ll_b2) == pytest.approx(ref_diff, rel=1e-11, abs=1e-11)
+
+
+def test_fitted_offset_width_is_unbiased_across_many_channels():
+    """With N_CHAN=200 shared channels and 0.1 deg photon noise, fitting
+    phi_offset_triangle recovers the injected ~0.17 rad width without the
+    unnormalized O(N tau^4) upward bias."""
+    import equinox as eqx
+
+    n_chan = 200
+    base = vlti_oidata(
+        hour_angles_h=(-2.0, -1.0, 0.0, 1.0, 2.0),
+        wavelengths_m=onp.linspace(2.0e-6, 2.4e-6, n_chan),
+        sigma_v2=0.005,
+        sigma_cp_deg=0.1,
+    ).with_model(TRUTH, jax.random.PRNGKey(41), noise_scale=1.0)
+    rng = onp.random.default_rng(42)
+    tau_true = 0.17
+    # Inject achromatic baseline phase offsets (so triangle closures are exact)
+    # of width tau_true / sqrt(3), giving triangle closure RMS = tau_true.
+    legs = [onp.asarray(i) for i in (base.i_cps1, base.i_cps2, base.i_cps3)]
+    frame = onp.asarray(base.frame)[legs[0]]
+    stations = onp.asarray(base.stations)
+    bl_offsets = {}
+    inj = onp.zeros(base.phi.size)
+    for t in range(base.phi.size):
+        for leg, sgn in zip(legs, (1.0, 1.0, -1.0)):
+            a, b = (int(x) for x in stations[leg[t]])
+            key = (int(frame[t]), min(a, b), max(a, b))
+            if key not in bl_offsets:
+                bl_offsets[key] = rng.normal(0.0, tau_true / onp.sqrt(3.0))
+            inj[t] += (sgn if a < b else -sgn) * bl_offsets[key]
+    emp_rms = float(onp.sqrt(onp.mean(inj[::n_chan] ** 2)))
+
+    shifted = eqx.tree_at(lambda d: d.phi, base, base.phi + np.asarray(inj))
+    # Nominal triangle width on with_closure_offsets sets the fixed penalty scale;
+    # fitting phi_offset_triangle with a flat prior must stay near emp_rms (~0.17),
+    # not inflate by ~2.4x to >0.38.
+    data = shifted.with_closure_offsets(baseline=tau_true / onp.sqrt(3.0))
+    result = fit(
+        TRUTH.set("flux", 0.25),
+        {"flux": dist.Uniform(0.05, 0.8)},
+        data,
+        noise={"phi_offset_baseline": dist.Uniform(0.02, 0.4)},
+    )
+    fitted_tri_rms = float(result.values["noise.phi_offset_baseline"]) * float(
+        onp.sqrt(3.0)
+    )
+    assert float(result.values["flux"]) == pytest.approx(0.3, abs=0.015)
+    assert fitted_tri_rms == pytest.approx(emp_rms, rel=0.25)
+    assert fitted_tri_rms < 0.25

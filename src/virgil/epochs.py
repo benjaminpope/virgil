@@ -49,7 +49,7 @@ from ._precision import cast_tree, run_in
 from .fitting import fit
 from ._linear import arrow_at
 from .likelihood import (
-    _gain_jacobian,
+    _gain_inputs,
     _gaussian_loglike,
     _prediction_and_errors,
     _whiten_phases,
@@ -519,16 +519,28 @@ class _Surface:
     def __init__(self, data, s_max=None):
         # Extra observables with a model-dependent covariance cannot be
         # scored (gains and closure offsets are integrated numerically).
-        if any(b.model_dependent_covariance for b in data.extras) or (
-            data.gains is not None
-            and data.gains.n_vis != int(onp.asarray(data.vis).size)
-        ):
+        extras = getattr(data, "extras", ())
+        if any(b.model_dependent_covariance for b in extras):
             raise NotImplementedError(
                 "The scale-marginalized surface (scales='marginal', "
                 "epoch_positions, marginal_loglike) cannot score extra "
                 "observables with a model-dependent covariance. Use the "
                 "data without them, or scales='quoted'."
             )
+        n_vis = int(onp.asarray(data.vis).size)
+        if data.gains is not None and data.gains.n_vis != n_vis:
+            n_amp_blocks = int(n_vis > 0) + sum(
+                bool(b.gain_legs() and onp.size(b.data())) for b in extras
+            )
+            if n_amp_blocks > 1:
+                raise NotImplementedError(
+                    "The scale-marginalized surface (scales='marginal', "
+                    "epoch_positions, marginal_loglike) integrates one error "
+                    "scale per observable block, so GainModes spanning "
+                    "visamp/t3amp extras and V² do not factor. Pass "
+                    "include_extras=False to OIData.with_gains for V²-only "
+                    "gains, select one amplitude block, or use scales='quoted'."
+                )
         if s_max is not None and not float(s_max) > 1.0:
             raise ValueError(f"s_max must exceed 1, got {s_max}.")
         self.numeric = bool(
@@ -541,7 +553,7 @@ class _Surface:
         self.sizes = (
             int(onp.asarray(data.vis).size),
             int(onp.asarray(data.phi).size),
-        ) + tuple(int(b.data().size) for b in data.extras)
+        ) + tuple(int(b.data().size) for b in extras)
         self.blocks = _blocks(data)
         self.names = tuple(b[0] for b in self.blocks)
         self.nu = onp.array([b[3] for b in self.blocks], dtype=float)
@@ -675,11 +687,18 @@ class _Surface:
         for name in self.names:
             i = labels.index(name)
             a, b = int(edges[i]), int(edges[i + 1])
-            if name == "vis" and data.gains is not None:
-                gains, e = data.gains, errors[:n_vis]
-                jac = _gain_jacobian(data, prediction[:n_vis]) / e
+            if data.gains is not None and (
+                name == "vis"
+                or (
+                    i >= 2
+                    and data.gains.n_vis != n_vis
+                    and data.extras[i - 2].gain_legs()
+                )
+            ):
+                gains = data.gains
+                x_g, jac_g = _gain_inputs(data, prediction, resid, errors)
                 problem = gains.marginal_problem(
-                    resid[:n_vis] / e, jac, gains.widths_for(gain_terms)
+                    x_g, jac_g, gains.widths_for(gain_terms)
                 )
                 terms.append(functools.partial(_arrow_term, problem, None))
             elif (
@@ -690,12 +709,16 @@ class _Surface:
             ):
                 # Correlated closure phases with offsets: the sines are
                 # marginalized; the periodic penalty rows divide by
-                # hypot(s · e, σ_off).
+                # hypot(s · e, σ_off) at the nominal widths when enabled.
                 r, e, offsets = resid[a:b], errors[a:b], data.phase_offsets
                 widths = offsets.widths_for(offset_terms)
                 x = data.cp_noise.whiten(np.sin(r), e)[0]
                 problem = offsets.marginal_problem(data.cp_noise, x, e, widths)
-                std = offsets.marginal_std(data.cp_noise, r.size, widths)
+                std = (
+                    offsets.marginal_std(offsets.widths)
+                    if offsets.scale_penalty
+                    else np.zeros_like(e)
+                )
                 p2 = (2.0 * np.sin(0.5 * r) ** 2) ** 2
                 terms.append(
                     functools.partial(_arrow_term, problem, (p2, e**2, std**2))
@@ -1565,7 +1588,7 @@ def _table_floats(data):
         n_block, n_row, n_mode = data.gains.shapes.shape
         span = data.gains.spanning
         n_span = 0 if span is None else int(span.shape[1])
-        problems.append((n_block, n_row, n_mode, n_span, data.vis.size))
+        problems.append((n_block, n_row, n_mode, n_span, data.gains.n_vis))
     if data.phase_offsets is not None:
         offsets = data.phase_offsets
         n_block, n_row = offsets.rows.shape
