@@ -51,6 +51,12 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
       heading_level: 2
       members: false
 
+::: virgil.models.Crescent
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members: false
+
 ::: virgil.models.TruncatedCone
     options:
       show_root_heading: true
@@ -133,6 +139,11 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
       members: false
 
 ::: virgil.models.Rotated
+    options:
+      show_root_heading: true
+      heading_level: 2
+
+::: virgil.models.Blurred
     options:
       show_root_heading: true
       heading_level: 2

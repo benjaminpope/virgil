@@ -45,7 +45,14 @@ from ._geometry import (
 from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
 from .fitting import fit, kkt_report
-from .models import Image, LinearImage, Rotated, SourceModel, System
+from .models import (
+    Blurred,
+    Image,
+    LinearImage,
+    Rotated,
+    SourceModel,
+    System,
+)
 
 _PIXEL_IMAGES = (Image, LinearImage)
 
@@ -1539,17 +1546,18 @@ def _checked_sigma(sigma, nuisance):
 def _warn_double_blur(scene, nuisance):
     if nuisance.blur_fwhm_mas is None:
         return
-    images = jax.tree_util.tree_leaves(
-        scene, is_leaf=lambda x: isinstance(x, _PIXEL_IMAGES)
+    leaves = jax.tree_util.tree_leaves(
+        scene, is_leaf=lambda x: isinstance(x, (*_PIXEL_IMAGES, Blurred))
     )
     if any(
-        isinstance(x, _PIXEL_IMAGES) and x.blur_fwhm_mas is not None
-        for x in images
+        isinstance(x, Blurred)
+        or (isinstance(x, _PIXEL_IMAGES) and x.blur_fwhm_mas is not None)
+        for x in leaves
     ):
         warnings.warn(
-            "CalibrationNuisance.blur_fwhm_mas and Image.blur_fwhm_mas "
-            "are both set; the two Gaussians compound, blurring the model "
-            "twice. Use one of them.",
+            "CalibrationNuisance.blur_fwhm_mas and a Blurred wrapper or "
+            "Image.blur_fwhm_mas are both set; the two Gaussians compound, "
+            "blurring the model twice. Use one of them.",
             UserWarning,
             stacklevel=2,
         )

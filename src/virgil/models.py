@@ -86,6 +86,8 @@ from .spectra import Spectrum, _planck_ratio, flux_at
 
 __provisional__ = (
     "ArchimedeanSpiral",
+    "Crescent",
+    "Blurred",
     "LinearImage",
     "MultipoleDisk",
     "ThinRing",
@@ -198,6 +200,10 @@ def _positive(x):
 
 def _in_unit_interval(x):
     return (x > 0.0) & (x <= 1.0)
+
+
+def _in_closed_unit_interval(x):
+    return (x >= 0.0) & (x <= 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1245,6 +1251,124 @@ class UniformDisk(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
         return np.where(xx**2 + yy**2 <= radius**2, 1.0, 0.0)
+
+
+def _disk_transform(u, v, radius_mas):
+    """Transform of a unit-brightness disk, in mas^2: ``2 pi R^2 J1(x) / x``."""
+    x = 2.0 * np.pi * mas2rad * radius_mas * safe_radius(u, v)
+    return 2.0 * np.pi * radius_mas**2 * bessel_jv_over_xv(1.0, x) + 0j
+
+
+class Crescent(Component):
+    """Crescent: an outer disk minus an offset inner disk, with a linear slash.
+
+    The brightness is the outer disk of radius ``r_out`` less an inner disk of
+    radius ``r_in``, displaced by ``ecc * (r_out - r_in)`` away from the bright
+    side, times a linear slash ``1 - fade/2 + fade * x / (2 r_out)`` with ``x``
+    along the axis towards the bright side. The slash is 1 across the middle,
+    and falls to ``1 - fade`` on the far edge of the outer disk.
+    [Model notes](../notes.md#crescent). Source: Kamruddin & Dexter (2013), [arXiv:1306.3226](https://arxiv.org/abs/1306.3226); Benkevitch et al. (2016) "xs-ring", [arXiv:1609.00055](https://arxiv.org/abs/1609.00055).
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    Parameters
+    ----------
+    r_out, r_in : float or array-like
+        Outer and inner radii in milliarcseconds, ``0 <= r_in < r_out``.
+    ecc : float or array-like
+        Inner-disk displacement as a fraction of ``r_out - r_in``, in [0, 1].
+    fade : float or array-like
+        Slash depth, in [0, 1]; 0 is uniform.
+    pa : float or array-like
+        Position angle of the bright (thick) side in degrees, North to East.
+    flux, dra, ddec : optional
+        Relative weight (or spectrum) and sky offset in milliarcseconds,
+        as for any [`Component`][virgil.models.Component].
+
+    Examples
+    --------
+    >>> ring = Crescent(r_out=20.0, r_in=8.0, ecc=0.3, fade=0.5, pa=200.0)
+    """
+
+    r_out: jax.Array
+    r_in: jax.Array
+    ecc: jax.Array
+    fade: jax.Array
+    pa: jax.Array
+
+    def __init__(
+        self,
+        r_out,
+        r_in,
+        ecc=0.0,
+        fade=0.0,
+        pa=0.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+    ):
+        self.r_out = np.asarray(r_out, dtype=float)
+        self.r_in = np.asarray(r_in, dtype=float)
+        self.ecc = np.asarray(ecc, dtype=float)
+        self.fade = np.asarray(fade, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self._place(flux, dra, ddec)
+
+    def _shape_checks(self):
+        return (
+            ("r_in", self.r_in, lambda x: x >= 0.0, "non-negative"),
+            (
+                "r_out - r_in",
+                self.r_out - self.r_in,
+                _positive,
+                "positive (r_in < r_out)",
+            ),
+            ("ecc", self.ecc, _in_closed_unit_interval, "in [0, 1]"),
+            ("fade", self.fade, _in_closed_unit_interval, "in [0, 1]"),
+        )
+
+    def _axis(self):
+        """Unit vector (East, North) towards the bright side."""
+        pa = self.pa * dtor
+        return np.sin(pa), np.cos(pa)
+
+    def _centred_cvis(self, uu, vv):
+        uu, vv = np.broadcast_arrays(
+            np.asarray(uu, dtype=float), np.asarray(vv, dtype=float)
+        )
+        zero = np.zeros(())
+        return self._transform(uu, vv) / self._transform(zero, zero)
+
+    def _transform(self, uu, vv):
+        """Un-normalized visibility (mas^2) at ``(uu, vv)`` in wavelengths."""
+        ax_e, ax_n = self._axis()
+        shift = self.ecc * (self.r_out - self.r_in)
+
+        def top(u, v):
+            outer = _disk_transform(u, v, self.r_out)
+            inner = _disk_transform(u, v, self.r_in) * offset_phase(
+                u, v, -shift * ax_e, -shift * ax_n
+            )
+            return outer - inner
+
+        # x f(x) <-> (i / 2 pi) dF/dq along the axis: one directional derivative.
+        body, slope = jax.jvp(
+            top, (uu, vv), (np.full_like(uu, ax_e), np.full_like(vv, ax_n))
+        )
+        slash = 1j / (2.0 * np.pi * mas2rad) * slope
+        return (1.0 - self.fade / 2.0) * body + (
+            self.fade / (2.0 * self.r_out)
+        ) * slash
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        ax_e, ax_n = self._axis()
+        shift = self.ecc * (self.r_out - self.r_in)
+        inner2 = (xx + shift * ax_e) ** 2 + (yy + shift * ax_n) ** 2
+        inside = (xx**2 + yy**2 <= self.r_out**2) & (inner2 > self.r_in**2)
+        along = xx * ax_e + yy * ax_n
+        slash = 1.0 - self.fade / 2.0 + self.fade * along / (2.0 * self.r_out)
+        return np.where(inside, slash, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -5734,7 +5858,45 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
     )
 
 
-class Rotated(SourceModel):
+class _Wrapper(SourceModel):
+    """A model that transforms one ``source`` (private base of
+    [`Rotated`][virgil.models.Rotated] and [`Blurred`][virgil.models.Blurred]).
+    """
+
+    source: SourceModel
+
+    def resolved(self):
+        source = self.source.resolved()
+        if source is self.source:
+            return self
+        return eqx.tree_at(lambda r: r.source, self, source)
+
+    def _weight(self, wavel=None):
+        return self.source._weight(wavel)
+
+    def total_spectrum(self, wavel):
+        return self.source.total_spectrum(wavel)
+
+    def is_physical(self):
+        return self.source.is_physical()
+
+    @property
+    def time_dependent(self):
+        return self.source.time_dependent
+
+    @property
+    def broadcast_in_time(self):
+        return self.source.broadcast_in_time
+
+    def at(self, mjd, t_ref=0.0):
+        if not self.time_dependent:
+            return self
+        return eqx.tree_at(
+            lambda r: r.source, self, self.source.at(mjd, t_ref)
+        )
+
+
+class Rotated(_Wrapper):
     """A model rotated on the sky about the phase centre.
 
     The rotation is by ``rotation_deg`` from North towards East, and the angle
@@ -5761,7 +5923,6 @@ class Rotated(SourceModel):
     True
     """
 
-    source: SourceModel
     rotation_deg: jax.Array
 
     def __init__(self, source, rotation_deg):
@@ -5772,38 +5933,56 @@ class Rotated(SourceModel):
         u, v = rotate(u, v, -self.rotation_deg)
         return self.source.model(u, v, wavel)
 
-    def resolved(self):
-        source = self.source.resolved()
-        if source is self.source:
-            return self
-        return eqx.tree_at(lambda r: r.source, self, source)
-
     def _image(self, xx, yy, pixel_scale_mas):
         xx, yy = rotate(xx, yy, -self.rotation_deg)
         return self.source._image(xx, yy, pixel_scale_mas)
 
-    def _weight(self, wavel=None):
-        return self.source._weight(wavel)
 
-    def total_spectrum(self, wavel):
-        return self.source.total_spectrum(wavel)
+class Blurred(_Wrapper):
+    """A model convolved with a circular Gaussian.
 
-    def is_physical(self):
-        return self.source.is_physical()
+    The visibilities are those of ``source`` times the Gaussian's transform,
+    so the model is the blurred image. The FWHM is an ordinary (fittable)
+    parameter. [`render`][virgil.models.SourceModel.render] shows the blurred
+    image, by FFT convolution on a zero-padded grid, so flux spreading past the
+    edges is lost. It compounds with ``blur_fwhm_mas`` of an
+    [`Image`][virgil.models.Image] and of
+    [`CalibrationNuisance`][virgil.radio.CalibrationNuisance]; use one.
+    Gaussians need no blur: widen them instead.
 
-    @property
-    def time_dependent(self):
-        return self.source.time_dependent
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
-    @property
-    def broadcast_in_time(self):
-        return self.source.broadcast_in_time
+    Parameters
+    ----------
+    source : SourceModel
+        The model to blur.
+    fwhm : float
+        Full width at half maximum of the Gaussian in milliarcseconds.
 
-    def at(self, mjd, t_ref=0.0):
-        if not self.time_dependent:
-            return self
-        return eqx.tree_at(
-            lambda r: r.source, self, self.source.at(mjd, t_ref)
+    Examples
+    --------
+    >>> disk = Blurred(UniformDisk(diam=4.0), fwhm=1.0)
+    >>> bool(abs(disk.model(np.array([3.0]), np.array([1.0]), 1e-6)[0]) < 1)
+    True
+    """
+
+    fwhm: jax.Array
+
+    def __init__(self, source, fwhm):
+        self.source = source
+        self.fwhm = np.asarray(fwhm, dtype=float)
+
+    def model(self, u, v, wavel):
+        uu, vv = u / wavel, v / wavel
+        return self.source.model(u, v, wavel) * gaussian_taper(
+            uu * uu + vv * vv, self.fwhm
+        )
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        return gaussian_smooth(
+            self.source._image(xx, yy, pixel_scale_mas),
+            self.fwhm / pixel_scale_mas,
         )
 
 
@@ -6460,12 +6639,12 @@ def _cvis_gaussian_envelope(u, v, fwhm):
 
 def _scene_images(scene, prefix="", kinds=Image):
     """Yield ``(path prefix, Image)`` for each Image in a scene, walking
-    ``System`` components and ``Rotated`` sources (``"env."``, ``"source."``).
+    ``System`` components and ``Rotated`` or ``Blurred`` sources (``"env."``, ``"source."``).
     ``kinds`` widens the match, e.g. to ``(Image, LinearImage)``."""
     if isinstance(scene, kinds):
         yield prefix, scene
     elif isinstance(scene, System):
         for name, part in scene.components.items():
             yield from _scene_images(part, prefix + name + ".", kinds)
-    elif isinstance(scene, Rotated):
+    elif isinstance(scene, (Rotated, Blurred)):
         yield from _scene_images(scene.source, prefix + "source.", kinds)

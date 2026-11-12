@@ -1,0 +1,1 @@
+Adds `Crescent` (provisional), an outer disk minus an offset inner disk times a linear slash, with a closed-form visibility and a consistent image, and `Blurred(source, fwhm)`, a wrapper that convolves any model with a circular Gaussian.

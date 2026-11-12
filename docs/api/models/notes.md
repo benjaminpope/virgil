@@ -78,6 +78,35 @@ Because `nodes` is static, give it explicitly when the shape parameters are
 traced (the default is computed from their starting values), and re-create
 the model with a larger value if a fit lengthens the arm substantially.
 
+## Crescent
+
+The brightness is $S(\mathbf{x})\,[\,1 - f/2 + f\,x/(2R)\,]$, with $S$ the
+indicator of the outer disk (radius $R$) minus the inner disk (radius $r$,
+centre displaced by $e\,(R-r)$ away from the bright side), $f$ the `fade`
+and $x$ the coordinate along the axis towards the bright side. Writing $T(\mathbf{q})$
+for the transform of $S$, whose disks are $R\,J_1(2\pi\rho R)/\rho$ with a
+shift phase on the inner one, the slash term is
+$\mathcal{F}[x\,S] = (i/2\pi)\,\partial T/\partial q_x$, taken as one
+forward-mode derivative of $T$ along the axis, so no Bessel-recurrence algebra is
+transcribed. The visibility is divided by its value at zero spacing, which makes
+the flux exactly one. `fade = 1` sends the brightness to zero on the far edge;
+the brightness is non-negative throughout `fade` in [0, 1]. The model is
+the geometry of Kamruddin & Dexter (2013) and the "xs-ring" of Benkevitch et al. (2016) without
+their Gaussian components: compose those with
+[`System`][virgil.models.System] and, to blur the composite as one, with
+[`Blurred`][virgil.models.Blurred]. A wide `fade` and `ecc` are partly
+degenerate at low resolution.
+
+## Blurred
+
+`Blurred(source, fwhm)` multiplies the visibilities by the transform of a
+circular Gaussian of FWHM `fwhm`, so the fitted model is the blurred image;
+`render` returns that image by FFT convolution on a zero-padded grid, which
+loses flux that spreads past the edge. It nests like
+[`Rotated`][virgil.models.Rotated]. The blur compounds with
+`CalibrationNuisance.blur_fwhm_mas` and `Image.blur_fwhm_mas` (a warning is
+raised), and a Gaussian component needs no wrapper: widen it.
+
 ## TruncatedCone
 
 **Rings.** The cone is a stack of rings about its axis. A ring of radius ρ in
