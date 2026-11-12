@@ -55,7 +55,7 @@ print(data.vis.size, "squared visibilities and", data.phi.size, "closure phases"
 
 ## Run it
 
-A pipeline takes the data, a model template (its class sets the parameterization of the answer; the fit starts from the grid search's best point, so the template's values need no tuning), a run folder and keyword settings. We keep the sampler short with `num_warmup`, `num_samples` and `num_chains` so that the whole run takes a minute or so. A seven-hole mask has its holes on a triangular lattice, so its visibilities and closure phases cannot tell a companion from one displaced by a lattice vector, and the nearest of these are 776 mas away. On such coverage the default search grid is limited to 336 mas, half the smallest larger coordinate of an alias vector (672 mas), so that no two points of the square differ by a lattice vector; the summary records the limit as `search.alias_cap_mas`. Every other setting is the default.
+A pipeline takes the data, a model template (its class sets the parameterization of the answer; the fit starts from the grid search's best point, so the template's values need no tuning), a run folder and keyword settings. We keep the sampler short with `num_warmup`, `num_samples` and `num_chains` so that the whole run takes a minute or so. A seven-hole mask has its holes on a triangular lattice, so its visibilities and closure phases cannot tell a companion from one displaced by a lattice vector, and the nearest of these are 776 mas away. On such coverage the default search grid is limited to 336 mas, half the smallest larger coordinate of an alias vector (672 mas), so that no two points of the square differ by a lattice vector; the summary records the limit as `search.alias_cap_mas`. We also set `flux_range` and `n_flux`: with the default flux axis the likelihood peak of this companion falls between grid points and the pipeline warns that the Bayes factor is inaccurate, so we give it 1000 points between $10^{-4}$ and 1, a range that brackets the 3% companion. Every other setting is the default.
 
 ```python
 template = BinaryModelCartesian(dra=0.0, ddec=0.0, flux=1e-3)
@@ -220,7 +220,7 @@ BinaryPipeline run in pipeline_demo/binary_run: complete
  ('stage_warnings', 'warn')]
 ```
 
-Any `warn` here is a caution, not a failure. The `convergence` and `stage_warnings` entries say that the flux refinement did not converge at a grid position or two, far from the peak, so the limits map has a few NaN pixels; they do not touch the fit. The run sets `n_flux` high enough that the flux axis resolves the likelihood peak; with the default it would add a `flux_axis_resolution` warning.
+Any `warn` here is a caution, not a failure. The `convergence` and `stage_warnings` entries say that the flux refinement did not converge at a small fraction of the grid positions (the check message in the report above gives the count), so those pixels of the limits map are NaN. This is a caution about the limits, not about the fit. The run sets `n_flux` high enough that the flux axis resolves the likelihood peak; with the default it would add a `flux_axis_resolution` warning.
 
 The figures live in `res.plots`. This is the contrast curve from the `limits` stage: the faintest companion the data could have shown at each separation.
 
@@ -484,6 +484,8 @@ status: partial
   [warn] flux_axis_resolution: The flux axis does not resolve the likelihood peak (0.084 steps across its FWHM): log_bayes_factor is inaccurate; use a finer flux axis (n_flux).
   [warn] stage_warnings: 1 warning(s) were raised inside the stages: ruffio limits: 2 of 361 grid positions have an unconverged flux refinement or no finite Laplace sigma; their limits are NaN. See the 'warnings' list of summary.json.
 ```
+
+The `chi2` check fails here, as it should: the run stops at `limits`, so no companion was fitted and the only $\chi^2/N$ is that of the star alone. The `flux_axis_resolution` warning is there because this call sets `n_flux=20` to keep it quick, which is too coarse to resolve the flux peak.
 
 ## Where next
 

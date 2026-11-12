@@ -300,10 +300,10 @@ OrbitPipeline run in orbit_demo/run: complete
 
 Two lines at the end of the checks are warnings, on data that are simulated and well behaved. Both are cautions about how far to trust the likelihood, not failures of the run:
 
-- `tempering` warns when the correlated-channel factor of the likelihood is outside 0.5 to 2, or when the residual correlation between channels does not follow the AR(1) form the tempering assumes. Here the factor, 1.36, is inside the range, so it is the second condition. Tempering is opt-in (we passed `temper=True`), and its range is not yet calibrated against a null distribution.
+- `tempering` warns when the correlated-channel factor of the likelihood is outside 0.5 to 2, or when the residual correlation between channels does not follow the AR(1) form the tempering assumes. Here the printed factor is inside the range, so it is the second condition: a flat residual correlation across channels can mean a shared calibration error or a misfit. The data have no shared calibration error, but their error factors differ by a factor of two between nights and the companion moves during a night's three snapshots, which the per-night static position does not model, and either can look like one. Tempering is opt-in (we passed `temper=True`), and its range is not yet calibrated against a null distribution.
 - `stage_warnings` collects the warnings raised inside the stages and lists them: the default period window starts at 1.37 d because a shorter period would move the companion by more than half the resolution during a night, and the residual correlation across channels is flat, the same condition that trips `tempering`.
 
-The orbit below is recovered either way. A warning means "check this before you rely on the evidences", and the checks are listed in full below.
+The orbit below is recovered either way. A warning means "check this before you rely on the evidences", and the checks are listed in full below. It matters for differences of evidence between alias bands; with one band here, the choice between bands is not at stake.
 
 ## Reading the result
 
@@ -368,8 +368,6 @@ for check in res.checks:
 [warn] stage_warnings   2 warning(s) were raised inside the stages: fit_orbit_aliases(): the period window starts at 1.37 d,
 ```
 
-Two checks warn. The first, `stage_warnings`, has the search say how it chose its shortest period: a night is treated as a static snapshot, so periods short enough for the companion to move by more than half the resolution within a night are not searched (the window's lower end, 1.4 days here, is computed from the data; pass `period_range` to override it). The 12.4 day period is well inside the window. The second, `tempering`, is the search noticing that the residual closure-phase correlation across channels is flat, which can mean a shared calibration error or a misfit; the effective-channel factor $f = 1.31$ is itself inside its range. Here the data have no shared calibration error, but their error factors differ by a factor of two between nights and the companion moves during a night's three snapshots, which the per-night static position does not model, and either can look like one. It matters for how far to trust differences of evidence between alias bands; with one band here, the choice between bands is not at stake.
-
 The winner's orbital elements come with 68% intervals from the posterior. The time of periastron is defined modulo the period, so we compare the passage nearest the true one.
 
 ```python
@@ -407,7 +405,7 @@ flux          0.2998   [0.2976, 0.3021]       0.3000
 t_peri     60001.998   [60001.994, 60002.001]    60002.000
 ```
 
-A period of 12.38 days was found blind. The alias table shows what the search did: it lists one row per alias band, an integer number of orbits between the two seasons, with the band's log evidence, its probability and its flags. Here the short-arc step (see [below](#short-arcs-cycle-counts-from-the-motion)) rejected every other cycle count from the motion within and between the nights of each season before any band was fitted, so one band is left. With sparser nights several bands survive, and `alias_ambiguity` reports their margin.
+A period of 12.38 days was found blind. The alias table shows what the search did: it lists one row per alias band, an integer number of orbits between the two seasons, with the band's log evidence, its probability and its flags. Here the short-arc step (see [below](#short-arcs-cycle-counts-from-the-motion)) rejected every other cycle count from the motion within and between the nights of each season before any band was fitted, so one band is left. That band carries the flag `hessian-singular`: the Hessian of the log density at its mode has a numerically flat direction (its smallest eigenvalue is below $10^{-13}$ of the largest), so the Laplace evidence is not trustworthy. We have not diagnosed the cause. The `winner_flags` check does not report this flag, which is a gap in the check. With one band the evidences decide nothing here, and the orbit comes from the best fit and the NUTS posterior, but treat the printed log evidence and the `no_orbit` margin as unverified. With sparser nights several bands survive, and `alias_ambiguity` reports their margin.
 
 ```python
 aliases = res.aliases()  # the engine's AliasResult, read back from the folder
