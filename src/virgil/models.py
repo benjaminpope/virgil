@@ -5434,7 +5434,7 @@ def _multipole_disks(model, prefix=""):
     elif isinstance(model, System):
         for name, part in model.components.items():
             yield from _multipole_disks(part, f"{prefix}{name}.")
-    elif isinstance(model, Rotated):
+    elif isinstance(model, _Wrapper):
         yield from _multipole_disks(model.source, f"{prefix}source.")
     elif isinstance(model, Attached):
         yield from _multipole_disks(model.component, f"{prefix}component.")
@@ -5844,6 +5844,12 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
         u, v = rotate(u, v, -model.rotation_deg)
         ra0, dec0 = rotate(ra0, dec0, -model.rotation_deg)
         return _smeared(model.source, u, v, wavel, bandwidth, ra0, dec0)
+    if isinstance(model, Blurred):
+        # A blur commutes with the shift that the smearing multiplies by.
+        q2 = (u * u + v * v) / wavel**2
+        return gaussian_taper(q2, model.fwhm) * _smeared(
+            model.source, u, v, wavel, bandwidth, ra0, dec0
+        )
     if isinstance(model, OrbitalBinary):
         raise TypeError(
             "OrbitalBinary changes with time: smear a snapshot, "
@@ -5851,7 +5857,7 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
         )
     raise TypeError(
         "Bandwidth smearing supports Systems of Component shapes, Resolved, "
-        "BinaryModelCartesian, BinaryModelAngular and Rotated of these (not "
+        "BinaryModelCartesian, BinaryModelAngular, Rotated and Blurred of these (not "
         "Image, whose flux is not at its offset); got "
         f"{type(model).__name__}. Remove the bandwidth (with_bandwidth(None))"
         " to evaluate it unsmeared."
@@ -5972,6 +5978,16 @@ class Blurred(_Wrapper):
     def __init__(self, source, fwhm):
         self.source = source
         self.fwhm = np.asarray(fwhm, dtype=float)
+        if any(
+            image.blur_fwhm_mas is not None
+            for _, image in _scene_images(source, kinds=(Image, LinearImage))
+        ):
+            warnings.warn(
+                "Blurred wraps an Image with blur_fwhm_mas set; the two "
+                "Gaussians compound, blurring the model twice. Use one.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     def model(self, u, v, wavel):
         uu, vv = u / wavel, v / wavel

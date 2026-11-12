@@ -49,9 +49,9 @@ from .models import (
     Blurred,
     Image,
     LinearImage,
-    Rotated,
     SourceModel,
     System,
+    _Wrapper,
 )
 
 _PIXEL_IMAGES = (Image, LinearImage)
@@ -1454,7 +1454,7 @@ def _no_antenna_gains(nuisance):
 
 def _owned_image(scene, nuisance):
     """The `LinearImage` that is the whole of ``scene`` (inside Systems of one
-    part and ``Rotated``), else None, checked against ``nuisance.fit_flux``.
+    part, ``Rotated`` and ``Blurred``), else None, checked against ``nuisance.fit_flux``.
 
     A lone `LinearImage` carries its flux (``fit_flux=False``). With a free
     ``cal.flux`` a scene made only of `LinearImage` parts is refused (scaling
@@ -1465,7 +1465,7 @@ def _owned_image(scene, nuisance):
     while True:
         if isinstance(image, System) and len(image.resolved().parts) == 1:
             image = image.resolved().parts[0]
-        elif isinstance(image, Rotated):
+        elif isinstance(image, _Wrapper):
             image = image.source
         else:
             break
@@ -1474,7 +1474,7 @@ def _owned_image(scene, nuisance):
         part = leaves.pop()
         if isinstance(part, System):
             leaves += part.resolved().parts
-        elif isinstance(part, Rotated):
+        elif isinstance(part, _Wrapper):
             leaves.append(part.source)
         elif not isinstance(part, LinearImage):
             leaves = None

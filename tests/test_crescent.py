@@ -7,7 +7,15 @@ import pytest
 
 from virgil import Crescent, GaussianDisk, System, UniformDisk
 from virgil._geometry import image_coordinates
-from virgil.models import Blurred, Rotated
+from virgil.models import (
+    Blurred,
+    GaussianRing,
+    Image,
+    MultipoleDisk,
+    Rotated,
+    _multipole_disks,
+    smeared_model,
+)
 
 WAVEL = 1e-6
 MAS2RAD = onp.pi / 180 / 3600e3
@@ -47,9 +55,19 @@ def test_visibility_matches_rendered_image(pa):
     assert np.allclose(model.model(U, V, WAVEL), dft, atol=3e-3)
 
 
-def test_unit_flux_and_finite_at_zero_spacing():
-    vis = Crescent(20.0, 7.0, ecc=0.6, fade=1.0, pa=70.0).model(U, V, WAVEL)
-    assert np.allclose(vis[0], 1.0, atol=1e-12)
+@pytest.mark.parametrize("fade", [0.0, 0.6, 1.0])
+def test_zero_spacing_flux_matches_area_moments(fade):
+    """T(0) = (1 - f/2) area + f/(2R) * first moment of the shape along the axis."""
+    r_out, r_in, ecc = 20.0, 7.0, 0.6
+    model = Crescent(r_out, r_in, ecc=ecc, fade=fade, pa=70.0)
+    area = onp.pi * (r_out**2 - r_in**2)
+    # The inner disk sits at -ecc (R - r) on the axis, so the shape's
+    # first moment is +pi r^2 ecc (R - r).
+    moment = onp.pi * r_in**2 * ecc * (r_out - r_in)
+    want = (1 - fade / 2) * area + fade / (2 * r_out) * moment
+    got = model._transform(np.zeros(()), np.zeros(()))
+    assert np.allclose(got, want, rtol=1e-5)
+    assert np.allclose(model.model(U, V, WAVEL)[0], 1.0)
 
 
 def test_bright_side_is_pa():
@@ -113,3 +131,26 @@ def test_blurred_composes_with_system_and_fits():
     assert np.allclose(
         Blurred(Crescent(20.0, 7.0), 3.0).model(U, V, WAVEL)[0], 1.0
     )
+
+
+def test_blurred_smearing_matches_wider_gaussian():
+    fwhm = 4.0 * 2.0 * onp.sqrt(2.0 * onp.log(2.0))
+    blurred = System(a=Blurred(GaussianDisk(3.0, dra=5.0), fwhm))
+    wider = System(a=GaussianDisk(5.0, dra=5.0))
+    assert np.allclose(
+        smeared_model(blurred, U, V, WAVEL, 1e-7),
+        smeared_model(wider, U, V, WAVEL, 1e-7),
+        atol=1e-6,
+    )
+
+
+def test_wrappers_are_seen_by_scene_walkers():
+    disk = MultipoleDisk(GaussianRing(5.0, 1.0))
+    found = list(_multipole_disks(System(d=Blurred(disk, 2.0))))
+    assert [path for path, _ in found] == ["d.source."]
+
+
+def test_blurred_image_with_its_own_blur_warns():
+    image = Image(np.ones((8, 8)), 1.0, blur_fwhm_mas=1.0)
+    with pytest.warns(UserWarning, match="compound"):
+        Blurred(image, 2.0)

@@ -14,7 +14,7 @@ from virgil import (
     System,
 )
 from virgil.imaging import MaxEntropy
-from virgil.models import Rotated
+from virgil.models import Blurred, Rotated
 from scipy.constants import c as C_LIGHT
 
 from virgil._utils import mas2rad
@@ -247,3 +247,12 @@ def test_zero_pixel_sum_raises_in_both_paths():
     zeros = {"x": np.zeros((NPIX, NPIX))}
     with pytest.raises(Exception, match="positive"):
         term.chi2_and_log_norm(zeros)
+
+
+def test_blurred_linear_image_is_still_owned():
+    """A Blurred wrapper keeps the flux Σ pixels, as Rotated does."""
+    data = _data()
+    nuis = _nuis(data, fit_flux=False)
+    x = _x("linear")
+    blurred = Blurred(_scene("linear")({"x": x}), 2.0)
+    assert onp.isfinite(_chi2(data, blurred, nuis, {"x": x}))
