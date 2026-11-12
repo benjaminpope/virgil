@@ -220,36 +220,11 @@ Prefer numpyro distributions: `dist.LogUniform(low, high)` and `dist.Normal(mean
 
 ### Angle priors without a wrap {#angle-vectors}
 
-A prior on an angle $\theta$ with support on an interval, such as `Uniform(0, 360)`, numpyro's `VonMises` or [`AxialVonMises`][virgil.orbits.AxialVonMises], reaches samplers and [`fit`][virgil.fitting.fit] through a bijection onto the real line, so a posterior that straddles the end of the interval meets a wall. [`AngleVector`][virgil.angles.AngleVector] removes the wall. It samples a vector $v = r(\cos\theta, \sin\theta)$ at the site `"<path>_vec"`, and the model receives $\theta = \operatorname{atan2}(v_2, v_1)$ in degrees in $[0°, 360°)$, which [`numpyro_model`][virgil.likelihood.numpyro_model] records and `fit` reports under `"<path>"`.
-
-The density of $v$ is
-
-$$p(v) = \frac{e^{-(r-1)^2 / 2s^2}}{Z_s}\, p(\theta), \qquad Z_s = \int_0^\infty r\, e^{-(r-1)^2/2s^2}\,dr,$$
-
-so $r$ and $\theta$ are independent and $\theta$ has exactly the density $p(\theta)$ (per radian): uniform, $1/2\pi$, by default; a von Mises, $\exp[\kappa(\cos(\theta - \mu) - 1)] / (2\pi\, \mathrm{i0e}(\kappa))$, given `mean` and `kappa`; or, with `axial=True`, the von Mises of $2\theta$, so that $\theta$ and $\theta + 180°$ are equally likely. The radius is a nuisance with a ring prior whose mode is the unit circle, which keeps a maximum a posteriori fit away from the origin, where $\theta$ is undefined. The ring width $s$ (`ring_width`, default 0.25) does not change the prior on $\theta$.
-
-Every term has a least-squares form for Levenberg–Marquardt and [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass], and the density is normalized in $\mathbb{R}^2$, so evidences stay normalized. The ring's residual is $(r - 1)/s$. A von Mises enters as a chord, $\sqrt{\kappa}\,(\hat v - \hat m)$ with $\hat v = v / r$ and $\hat m = (\cos\mu, \sin\mu)$; half its square is $\kappa(1 - \cos(\theta - \mu))$, the von Mises exponent, just as virgil's phase residuals $2\sin(\Delta/2)/\sigma$ are chords with $\kappa = 1/\sigma^2$ (see [`whitened_residuals`][virgil.likelihood.whitened_residuals]). The axial chord is the same on the doubled direction, $(\cos 2\theta, \sin 2\theta) = (x^2 - y^2, 2xy)/r^2$.
-
-The construction follows Octofitter's `UniformCircular` (Thompson et al. 2023, AJ 166, 164) and exoplanet's `Angle` (Foreman-Mackey et al. 2021, JOSS 6, 3285), which sample $v \sim N(0, I)$ and so peak at the origin; the ring and chord priors are virgil's own.
+A prior on an angle with support on an interval, such as `Uniform(0, 360)`, numpyro's `VonMises` or [`AxialVonMises`][virgil.orbits.AxialVonMises], reaches samplers and [`fit`][virgil.fitting.fit] through a bijection onto the real line, so a posterior that straddles the end of the interval meets a wall. [`AngleVector`][virgil.angles.AngleVector] samples a vector $v = r(\cos\theta, \sin\theta)$ instead and gives the model $\theta$ in degrees in $[0°, 360°)$; its density, least-squares form and credit are on the [`virgil.angles`](api/angles.md) page.
 
 ### Azimuthal harmonics {#azimuthal-harmonics}
 
-At each radius, every azimuthal profile of a [`MultipoleDisk`][virgil.models.MultipoleDisk] is a real function of the azimuth $\theta$ (in the disk plane, from the projected major axis towards `pa + 90`) with the Fourier series
-
-$$
-\frac{I(\theta)}{I_0} = \sum_{m=-M}^{M} I_m e^{im\theta}, \qquad I_0 = 1, \quad I_{-m} = \bar I_m,
-$$
-
-whose *image harmonics* $I_m$ are complex, $m = 0 \dots M$, normalized to the azimuthal mean. Every form maps to and from them with [`to_image_harmonics`][virgil.harmonics.to_image_harmonics] and [`from_image_harmonics`][virgil.harmonics.from_image_harmonics] (or `Harmonics.convert`):
-
-- **linear**: $1 + \sum_m c_m \cos m\theta + s_m \sin m\theta$, so $c_m = 2\,\mathrm{Re}\,I_m$ and $s_m = -2\,\mathrm{Im}\,I_m$ (exact);
-- **positive**: $|h(e^{i\theta})|^2 / \sum_j |h_j|^2$ with $h(z) = 1 + h_1 z + \dots + h_M z^M$, whose roots all lie outside the unit circle. It is built from complex reflection coefficients $k_j$ with $|k_j| < 1$ by the Levinson step-up recursion $h^{(j)}_i = h^{(j-1)}_i + k_j \overline{h^{(j-1)}_{j-i}}$, with $k = w \tanh|w| / |w|$ from unconstrained latents $w_j \in \mathbb{C}$. Then $I_m = \sum_j h_{j+m} \bar h_j / \sum_j |h_j|^2$ (exact); the inverse is a spectral factorization (`from_image_harmonics`);
-- **von Mises**, $\exp[\kappa\cos(\theta - \theta_0)]$, truncated at the model's degree;
-- the legacy amplitude and azimuth pairs `az_amps`/`az_pas` of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] and [`TruncatedCone`][virgil.models.TruncatedCone].
-
-Use the conversions to report models in one convention, warm-start a positive-form fit from a linear one, or compare models. Report image harmonics, not the positive form's internal reflection coefficients.
-
-References: Dumitrescu 2007, *Positive Trigonometric Polynomials and Signal Processing Applications* (Springer, doi:10.1007/978-1-4020-5125-8), for the Fejér–Riesz theorem, spectral factorization and the Schur–Levinson recursion; Barndorff-Nielsen & Schou 1973, J. Multivariate Anal. 3, 408 (doi:10.1016/0047-259X(73)90030-4), for the unconstrained parametrization of a minimum-phase polynomial by reflection (partial autocorrelation) coefficients, here with a complex tanh map.
+Report the image harmonics $I_m$ of a [`MultipoleDisk`][virgil.models.MultipoleDisk], not the positive form's internal reflection coefficients. The legacy `az_amps`/`az_pas` of `ModulatedGaussianRim` and `TruncatedCone` are amplitudes and in-plane angles, not sky position angles; the Fourier series, the four forms and the conversions between them are on the [`virgil.harmonics`](api/harmonics.md) page.
 
 ### Hierarchical scales {#hierarchical-scales}
 

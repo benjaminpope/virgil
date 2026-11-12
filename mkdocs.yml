@@ -80,8 +80,8 @@ nav:
       - "Binary search": binary_search.md
       - "Grid searches": grid_searches.md
       - "Variational inference": variational_inference.md
-      - "Contrast limits": contrast_limits.md
-      - "Detection limits and plots": detection_limits.md
+      - "Contrast limits: Ruffio and Absil": contrast_limits.md
+      - "Detection limits": detection_limits.md
       - "Detection statistics": detection_statistics.md
       - "Detection ROC curves": detection_roc.md
       - "Chromatic companion search": wr_chromatic_search.md
@@ -90,7 +90,7 @@ nav:
       - "Orbits from interferometric data": orbit_fitting.md
       - "Orbit methods": orbit_methods.md
   - Sources:
-      - "Visibility models": model_syntax.md
+      - "Binary models and OIData": model_syntax.md
       - "Extended source models": source_models.md
       - "Composing models": composition.md
       - "Nonparametric disks": multipole_disk_rings.md
@@ -107,7 +107,7 @@ nav:
       - "7. Ensembles": imaging_ensemble.md
   - Pipelines:
       - "Pipeline tutorial": pipelines.md
-      - "Pipelines and their stability": pipeline.md
+      - "Pipeline reference": pipeline.md
   - API Reference:
       - Overview: api/index.md
       - Data:
