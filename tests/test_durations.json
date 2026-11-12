@@ -48,6 +48,7 @@
  "tests/test_harmonics.py": 100.2,
  "tests/test_hierarchical_inference.py": 9.3,
  "tests/test_image_field.py": 17.6,
+ "tests/test_image_grid_rotation.py": 18.2,
  "tests/test_image_model.py": 20.9,
  "tests/test_image_smoothing.py": 12.1,
  "tests/test_imaging.py": 47.2,

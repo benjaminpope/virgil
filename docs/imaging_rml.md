@@ -91,13 +91,14 @@ The fit needs a starting image, and `starting_image` builds one from the data:
 - **A pixel grid.** The pixel scale is a quarter of the Nyquist pixel, and the field of view spans six envelope widths (and at least four resolution elements), but no more than the interferometric field of view (here capped at the truth's field).
 - **A hole under the star.** `hole_mas` cuts a hole of half a beam in the image's support there. Extended flux that close to the star is nearly indistinguishable from the star's own light, so without a hole the fit can trade one against the other.
 - **The starting pixels.** `start="moments"` takes them from the fitted Gaussian. `start="dirty"` takes the positive part of the dirty image, which already has the right shape when the coverage is good, as it is here.
+- **The grid's frame.** `rotation_deg="grid"` turns the pixel grid to the data's uv lattice (here −6.9°), which gives the exact fast matrix Fourier transform of part 1. The pixels then lie in the lattice frame, not North up; `plot_model` and the metrics render them North up.
 
 - **Padding.** `pad_to_mas` pads the grid with empty pixels, centred, out to at least that width, at the same pixel scale. It may exceed the interferometric field λ / B_min, where the data do not constrain the flux, so pair a large field with a support or priors. Unlike `EnsembleSpec.field_mas`, it never shrinks the grid.
 
 A star and an `Image` together make a `System`. The analytic star also fixes the image's position, which the closure phases alone cannot.
 
 ```python
-starts = {kind: starting_image(data, largest_mas=fov, start=kind, hole_mas=0.5 * resolution.minor_mas) for kind in ("moments", "dirty")}
+starts = {kind: starting_image(data, largest_mas=fov, start=kind, hole_mas=0.5 * resolution.minor_mas, rotation_deg="grid") for kind in ("moments", "dirty")}
 fig, axes = plt.subplots(1, 2, figsize=(10, 4.2))
 for ax, (kind, start) in zip(axes, starts.items()):
     plot_model(start.env, fov_mas=fov, npix=npix, ax=ax, title=f'start="{kind}"')
@@ -124,13 +125,13 @@ print(f"converged {one.info['converged']} after {one.info['steps']} steps; chi2 
 ```
 
 ```text
-converged True after 2183 steps; chi2 per point 1.008; image flux 0.0514 (truth 0.05)
+converged True after 649 steps; chi2 per point 1.009; image flux 0.0514 (truth 0.05)
 ```
 
 ## Choosing the weight: the L-curve and the discrepancy principle
 
 `l_curve` fits the image at a sequence of weights, from strong to weak, each fit starting from the previous one, and records χ² and the unweighted penalty R of each. Two criteria read a weight off the sweep:
-- **The discrepancy principle** (`LCurve.discrepancy`) chooses the weight at which χ² per data point reaches one. That is how well the truth itself fits noisy data, so it regularizes as strongly as the data allow. It relies on correct error bars.
+- **The discrepancy principle** (`LCurve.discrepancy`) chooses the weight at which χ² per data point reaches one. That is how well the truth itself fits noisy data, so it regularizes as strongly as the data allow. It relies on correct error bars. Reaching χ² per point ≈ 1 this way is the target the weight is set to hit, not a test that the fit is good.
 - **The corner** (`LCurve.corner`) is where the curve of log χ² against log R bends most sharply. It needs no error bars, but the corner of a coarse or noisy sweep is itself noisy.
 
 Here both starting images are swept, and the two criteria are marked on each curve.
@@ -219,13 +220,13 @@ print(diagnose(final["moments"], data))
 ```
 
 ```text
-chi2_red                [0.98]
-chi2_red_by_observable  [{'vis': 0.9797832099964383}]
+chi2_red                [0.979]
+chi2_red_by_observable  [{'vis': 0.9785587396187714}]
 short_baseline_mean     None
 anchored                True
 pixel_scale_mas         [20.9]
-edge_flux               [0.0159]
-centroid_mas            [[50.1, 18.3]]
+edge_flux               [0.0197]
+centroid_mas            [[50.3, 17.9]]
 flip_dchi2              2.11e+04
 phase_regime            [0]
 
@@ -235,8 +236,8 @@ No warnings.
 ## Pixel types and regularizers
 
 The softmax image of the fits above keeps the brightness positive and the flux separate, but it can never reach exactly zero. Two other pixel types suit particular regularizers. Both are a [`LinearImage`][virgil.models.LinearImage], whose total flux is the sum of its pixels (there is no separate flux to fit):
-- **Maximum entropy: √I pixels** (`parametrisation="sqrt"`). The fitted array is the square root of the flux, so the flux `x²` is positive without a bound, and entropy keeps its interior minimum. A gradient step in x moves I by −4I ∂J/∂I, the entropic mirror-descent preconditioner up to a factor of 4, which conditions the problem for the quasi-Newton solver.
-- **TSV, TV and L1: bounded linear pixels** (`parametrisation="linear"`) with `fit(..., method="lbfgsb")`. These penalties are minimized at exactly zero pixels, and in square-root coordinates a zero pixel is a flat, slow stationary point. L-BFGS-B takes non-negativity as a box bound on the pixels instead, so zeros are reached in finite steps.
+- **Maximum entropy: √I pixels** (`parametrization="sqrt"`). The fitted array is the square root of the flux, so the flux `x²` is positive without a bound, and entropy keeps its interior minimum. A gradient step in x moves I by −4I ∂J/∂I, the entropic mirror-descent preconditioner up to a factor of 4, which conditions the problem for the quasi-Newton solver.
+- **TSV, TV and L1: bounded linear pixels** (`parametrization="linear"`) with `fit(..., method="lbfgsb")`. These penalties are minimized at exactly zero pixels, and in square-root coordinates a zero pixel is a flat, slow stationary point. L-BFGS-B takes non-negativity as a box bound on the pixels instead, so zeros are reached in finite steps.
 
 The parametrization changes how the optimizer moves, not the problem: both minimize ½χ² + wR over non-negative fluxes, so the image at the optimum is the same.
 
@@ -276,8 +277,8 @@ A small simulated image on a coarse AMI grid (0.7 m pitch): a smooth Gaussian tr
     shape = flux * shape / shape.sum()
 
 
-    def pixels(p, parametrisation):
-        return LinearImage(p, scale, parametrisation=parametrisation, reference_flux=flux)
+    def pixels(p, parametrization):
+        return LinearImage(p, scale, parametrization=parametrization, reference_flux=flux)
 
 
     small = OIData(ami_grid_record(pitch_m=0.7)).with_model(pixels(jnp.sqrt(shape), "sqrt"), key=jax.random.PRNGKey(3))
@@ -302,8 +303,8 @@ print(f"chi2 = {choice.chi2:.1f}, G = {choice.g:.1f} ± {choice.g_se:.1f}, n = {
 ```
 
 ```text
-w = 4354, accepted True, roots [4354]
-chi2 = 87.1, G = 19.5 ± 2.1, n = 109, m = -2.42
+w = 4185, accepted True, roots [4185]
+chi2 = 87.1, G = 19.5 ± 2.1, n = 109, m = -2.43
 ```
 
 ### Certifying convergence
@@ -331,11 +332,11 @@ RuntimeWarning: fit(method='lbfgs') did not converge in 2 steps, the step limit;
 ```
 
 ```text
-2 steps: converged False, kkt_rel 4.4e-01, band_limit 1.58
-converged fit: converged True, kkt_rel 1.8e-07, band_limit 1.07
+2 steps: converged False, kkt_rel 4.5e-01, band_limit 1.64
+converged fit: converged True, kkt_rel 3.5e-07, band_limit 1.07
 ```
 
-For TSV, TV or L1 the same call certifies a `method="lbfgsb"` fit of a `parametrisation="linear"` image: fit with `[TSV(w, beam_mas=...)]`, then call `kkt_report` with the same arguments. Restart an unconverged fit from its own values with a tighter `gtol` and report again.
+For TSV, TV or L1 the same call certifies a `method="lbfgsb"` fit of a `parametrization="linear"` image: fit with `[TSV(w, beam_mas=...)]`, then call `kkt_report` with the same arguments. Restart an unconverged fit from its own values with a tighter `gtol` and report again.
 
 ### Gains and offsets in stages
 
@@ -365,7 +366,7 @@ Here three observations have gains 1.1, 1.0 and 0.9, and unequal weights. The ga
 
 
     def scene(values):
-        return LinearImage(values["pixels"], scale, ft="dft", parametrisation="sqrt", reference_flux=1.0)
+        return LinearImage(values["pixels"], scale, ft="dft", parametrization="sqrt", reference_flux=1.0)
 
 
     truth = {"pixels": jnp.sqrt(shape / shape.sum())}

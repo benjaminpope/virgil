@@ -42,7 +42,7 @@ from .grid_fit import (
 )
 from .likelihood import build_model, loglike, whitened_residuals
 from .limits import nsigma
-from ._deprecate import external_stacklevel
+from ._deprecate import CheckWarning, external_stacklevel
 
 
 __all__ = [
@@ -143,11 +143,14 @@ def detection_statistics(
         )
     elif float(steps) < MIN_PEAK_STEPS:
         warnings.warn(
-            "detection_statistics(): the flux axis does not resolve the "
-            f"likelihood peak ({float(steps):.2g} steps across its FWHM, "
-            f"under {MIN_PEAK_STEPS:g}), so log_bayes_factor is "
-            "inaccurate; refine the flux axis near the best flux.",
-            RuntimeWarning,
+            CheckWarning(
+                "detection_statistics(): the flux axis does not resolve the "
+                f"likelihood peak ({float(steps):.2g} steps across its FWHM, "
+                f"under {MIN_PEAK_STEPS:g}), so log_bayes_factor is "
+                "inaccurate; refine the flux axis near the best flux.",
+                check="flux_axis_resolution",
+                steps=float(steps),
+            ),
             stacklevel=external_stacklevel(),
         )
     return stats
@@ -413,12 +416,7 @@ def gaussian_null(null_scene, template, *, error_scale=1.0):
     >>> simulate = gaussian_null(BinaryModelCartesian(0, 0, 0), template)  # doctest: +SKIP
     >>> data = simulate(jax.random.PRNGKey(0))  # doctest: +SKIP
     """
-    error_scale = float(error_scale)
-    if not (onp.isfinite(error_scale) and error_scale >= 0.0):
-        raise ValueError(
-            f"error_scale must be finite and non-negative, not {error_scale}."
-        )
-    return _GaussianNull(template, null_scene, error_scale)
+    return _GaussianNull(template, null_scene, float(error_scale))
 
 
 @old_order("data", "null_scene", data="data")

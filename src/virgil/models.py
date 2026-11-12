@@ -614,7 +614,7 @@ class GaussianArc(Component):
         self.length = np.asarray(length, dtype=float)
         self.pa = np.asarray(pa, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
+        if int(nodes) != nodes or nodes < 2:
             raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
         self.nodes = int(nodes)
         self.quadrature = False
@@ -637,7 +637,7 @@ class GaussianArc(Component):
                     # arc instead.
                     self.quadrature = True
                     degree = _ARC_MAX_DEGREE
-        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+        if int(degree) != degree or degree < 1:
             raise ValueError(f"degree must be a positive integer: {degree}.")
         self.degree = int(degree)
 
@@ -806,7 +806,7 @@ class TruncatedCone(Component):
         self.pa = np.asarray(pa, dtype=float)
         self.ratio = np.asarray(ratio, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(n_rings, bool) or int(n_rings) != n_rings or n_rings < 2:
+        if int(n_rings) != n_rings or n_rings < 2:
             raise ValueError(
                 f"n_rings must be an integer >= 2, got {n_rings}."
             )
@@ -1466,7 +1466,7 @@ class GravityDarkenedStar(Component):
         self.inc = np.asarray(inc, dtype=float)
         self.pa = np.asarray(pa, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(n_lat, bool) or int(n_lat) != n_lat or n_lat < 4:
+        if int(n_lat) != n_lat or n_lat < 4:
             raise ValueError(f"n_lat must be an integer >= 4, got {n_lat}.")
         self.n_lat = int(n_lat)
         self.t_pole = None if t_pole is None else np.asarray(t_pole, float)
@@ -1886,6 +1886,7 @@ class _BrightnessImage(Component):
         rotation_deg,
         ft,
         blur_fwhm_mas,
+        allow_grid=False,
     ):
         """Validate and store the grid, support and transform options."""
         if blur_fwhm_mas is not None and not (
@@ -1898,7 +1899,7 @@ class _BrightnessImage(Component):
         self.blur_fwhm_mas = (
             None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
-        self.ft = _check_ft(ft)
+        self.ft = ft
         if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
             raise ValueError(
                 f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
@@ -1917,7 +1918,39 @@ class _BrightnessImage(Component):
             if any_pixel is not None and not bool(any_pixel):
                 raise ValueError("support must contain at least one pixel.")
         self.support = support
-        self.rotation_deg = float(rotation_deg)
+        if isinstance(rotation_deg, str):
+            if not (allow_grid and rotation_deg == "grid"):
+                raise ValueError(
+                    "rotation_deg must be a number"
+                    + (" or 'grid'" if allow_grid else "")
+                    + f", not {rotation_deg!r}."
+                )
+            self.rotation_deg = rotation_deg
+        else:
+            self.rotation_deg = float(rotation_deg)
+
+    def _frame(self, grid=None):
+        """Position angle of the pixel grid's "up" axis for these data.
+
+        ``rotation_deg="grid"`` follows the data's uv lattice (North up
+        without one).
+        """
+        if self.rotation_deg != "grid":
+            return self.rotation_deg
+        return 0.0 if grid is None else grid.rotation_deg
+
+    def _numeric_frame(self):
+        """The grid's angle for code that reports the sky, not for the data.
+
+        ``rotation_deg="grid"`` is only defined with a uv lattice, so these
+        callers need a number: ``starting_image`` and ``clean`` return one.
+        """
+        if self.rotation_deg == "grid":
+            raise ValueError(
+                "rotation_deg='grid' depends on the data; give the Image a "
+                "number (starting_image and clean resolve it) before this."
+            )
+        return self.rotation_deg
 
     @property
     def smooth_fwhm_mas(self):
@@ -1946,7 +1979,7 @@ class _BrightnessImage(Component):
         return gaussian_taper(u * u + v * v, self.blur_fwhm_mas)
 
     def _centred_cvis(self, uu, vv):
-        uu, vv = rotate(uu, vv, -self.rotation_deg)
+        uu, vv = rotate(uu, vv, -self._frame())
         vis = image_visibilities(
             self.brightness, uu, vv, self.pixel_scale_mas, self.ft
         )
@@ -1956,7 +1989,7 @@ class _BrightnessImage(Component):
         vis = _pixel_visibilities(
             self.brightness,
             self.pixel_scale_mas,
-            self.rotation_deg,
+            self._frame(grid),
             u,
             v,
             wavel,
@@ -1968,7 +2001,7 @@ class _BrightnessImage(Component):
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
         # Bilinear resampling of the (smoothed) pixels, exact at their centres.
-        xx, yy = rotate(xx, yy, -self.rotation_deg)
+        xx, yy = rotate(xx, yy, -self._frame())
         brightness = self.smoothed()
         nrow, ncol = brightness.shape
         rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
@@ -2004,10 +2037,15 @@ class Image(_BrightnessImage):
         all); see [`circular_support`][virgil.models.circular_support].
     flux, dra, ddec : optional
         As for any [`Component`][virgil.models.Component].
-    rotation_deg : float, optional
+    rotation_deg : float or "grid", optional
         Position angle (North to East) of the grid's "up" axis (default 0);
         matching ``data.uv_grid.rotation_deg`` gives a much faster exact
-        two-sided matrix transform.
+        two-sided matrix transform. ``"grid"`` (provisional) follows the
+        data's uv lattice, North up without one, so DISCO data always take
+        the matrix transform. The pixels are the parameters, so with ``"grid"``
+        they mean different skies on data with different lattices (or none),
+        and ``render`` and ``model`` without data are North up: fit one
+        lattice, or give a number (as ``starting_image`` does).
     ft : {"auto", "dft", "nufft"}, optional
         Transform for irregular uv points (default ``"auto"``, whichever is
         faster; see [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
@@ -2031,7 +2069,7 @@ class Image(_BrightnessImage):
     log_brightness: Any
     support: jax.Array | None
     pixel_scale_mas: float = eqx.field(static=True)
-    rotation_deg: float = eqx.field(static=True)
+    rotation_deg: float | str = eqx.field(static=True)
     ft: str = eqx.field(static=True)
     blur_fwhm_mas: float | None = eqx.field(static=True)
 
@@ -2061,6 +2099,7 @@ class Image(_BrightnessImage):
             rotation_deg,
             ft,
             blur_fwhm_mas,
+            allow_grid=True,
         )
         # Reject a log-brightness whose softmax over the support is not
         # finite (skipped under jax.jit).
@@ -2112,7 +2151,14 @@ class Image(_BrightnessImage):
         the keyword arguments.
         """
         xx, yy = image_coordinates(npix, npix * pixel_scale_mas)
-        xx, yy = rotate(xx, yy, kwargs.get("rotation_deg", 0.0))
+        rotation = kwargs.get("rotation_deg", 0.0)
+        if isinstance(rotation, str):
+            raise ValueError(
+                "rotation_deg must be a number here (the model's pixels are "
+                "sampled in that frame; use starting_image(..., "
+                f"rotation_deg='grid') for the lattice), not {rotation!r}."
+            )
+        xx, yy = rotate(xx, yy, rotation)
         image = _normalize_image(model._image(xx, yy, pixel_scale_mas))
         return cls.from_brightness(image, pixel_scale_mas, **kwargs)
 
@@ -2137,7 +2183,7 @@ class LinearImage(_BrightnessImage):
     """Pixel image whose fitted values are the pixel fluxes themselves.
 
     The free array ``pixels`` is the flux of each pixel in ``support``
-    (``parametrisation="linear"``, to be kept non-negative by bounds: see
+    (``parametrization="linear"``, to be kept non-negative by bounds: see
     ``bounds``) or its square root (``"sqrt"``, flux ``x**2``, unbounded and
     so usable with any `fit` method). The total flux is the sum of the pixel
     fluxes: there is no separate ``flux`` to fit (a free flux times free
@@ -2182,7 +2228,7 @@ class LinearImage(_BrightnessImage):
         As for [`Image`][virgil.models.Image].
     dra, ddec : optional
         As for any [`Component`][virgil.models.Component].
-    parametrisation : {"linear", "sqrt"}, optional
+    parametrization : {"linear", "sqrt"}, optional
         What ``pixels`` holds (default ``"linear"``).
     reference_flux : float, optional
         The fixed flux ``F0`` that regularizers divide by (default: the sum of
@@ -2201,7 +2247,7 @@ class LinearImage(_BrightnessImage):
     rotation_deg: float = eqx.field(static=True)
     ft: str = eqx.field(static=True)
     blur_fwhm_mas: float | None = eqx.field(static=True)
-    parametrisation: str = eqx.field(static=True)
+    parametrization: str = eqx.field(static=True)
     reference_flux: float = eqx.field(static=True)
 
     def __init__(
@@ -2214,14 +2260,14 @@ class LinearImage(_BrightnessImage):
         rotation_deg=0.0,
         ft="auto",
         blur_fwhm_mas=None,
-        parametrisation="linear",
+        parametrization="linear",
         reference_flux=None,
     ):
-        if parametrisation not in ("linear", "sqrt"):
+        if parametrization not in ("linear", "sqrt"):
             raise ValueError(
-                f"parametrisation must be 'linear' or 'sqrt', not {parametrisation!r}."
+                f"parametrization must be 'linear' or 'sqrt', not {parametrization!r}."
             )
-        self.parametrisation = parametrisation
+        self.parametrization = parametrization
         pixels = np.asarray(pixels, dtype=float)
         self.pixels = pixels
         self._set_layout(
@@ -2235,7 +2281,7 @@ class LinearImage(_BrightnessImage):
         )
         if concrete(np.any(~np.isfinite(pixels))):
             raise ValueError("pixels must be finite.")
-        if parametrisation == "linear" and concrete(np.any(pixels < 0.0)):
+        if parametrization == "linear" and concrete(np.any(pixels < 0.0)):
             raise ValueError("linear pixels must be non-negative.")
         if reference_flux is None:
             total = concrete(np.sum(self._fluxes(pixels)))
@@ -2252,7 +2298,7 @@ class LinearImage(_BrightnessImage):
         self._place(1.0, dra, ddec)
 
     def _fluxes(self, pixels):
-        flux = pixels**2 if self.parametrisation == "sqrt" else pixels
+        flux = pixels**2 if self.parametrization == "sqrt" else pixels
         return (
             flux if self.support is None else np.where(self.support, flux, 0.0)
         )
@@ -2271,10 +2317,15 @@ class LinearImage(_BrightnessImage):
     def brightness(self):
         """Pixel fluxes divided by the total: unit sum, zero outside ``support``."""
         fluxes = self.fluxes
+        # Deliberately unguarded: at an all-zero total this is 0/0 = NaN, which
+        # the L-BFGS-B driver treats as an undefined point and restarts from.
+        # A guard gives a finite but wrong gradient (``System._mix`` forms
+        # ``F * V(b)``, and the ``V(b) dF`` term is lost) and a fit falsely
+        # converges on the empty image.
         return fluxes / np.sum(fluxes)
 
     @property
-    def regularised_pixels(self):
+    def regularized_pixels(self):
         """``fluxes / reference_flux``, the pixels that regularizers penalize."""
         return self.fluxes / self.reference_flux
 
@@ -2287,7 +2338,7 @@ class LinearImage(_BrightnessImage):
         Linear pixels have ``0 <= flux < inf`` inside ``support`` and ``(0,
         0)`` outside it; the square-root form needs no bounds.
         """
-        if self.parametrisation == "sqrt":
+        if self.parametrization == "sqrt":
             return None
         live = (
             onp.ones(self.pixels.shape, bool)
@@ -2298,7 +2349,7 @@ class LinearImage(_BrightnessImage):
 
     def is_physical(self):
         ok = super().is_physical()
-        if self.parametrisation == "linear":
+        if self.parametrization == "linear":
             ok = ok & np.all(self.pixels >= 0.0)
         return ok & (self.total_flux > 0.0)
 
@@ -2330,7 +2381,7 @@ class _PixelRendered(Component):
     # deliberate: the one grid setup that pixel-rendered models share
     def _set_grid(self, npix, pixel_scale_mas, ft, rotation_deg):
         """Validate and store the pixel grid and its transform."""
-        self.ft = _check_ft(ft)
+        self.ft = ft
         if isinstance(rotation_deg, str):
             if rotation_deg != "grid":
                 raise ValueError(
@@ -2339,10 +2390,6 @@ class _PixelRendered(Component):
             self.rotation_deg = rotation_deg
         else:
             self.rotation_deg = float(rotation_deg)
-            if not onp.isfinite(self.rotation_deg):
-                raise ValueError(
-                    f"rotation_deg must be finite, not {self.rotation_deg}."
-                )
         self.npix = int(npix)
         if self.npix <= 0 or self.npix % 2:
             raise ValueError(f"npix must be positive and even, got {npix}.")
@@ -2389,13 +2436,6 @@ class _PixelRendered(Component):
             self.ft,
         )
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
-
-
-def _check_ft(ft):
-    """``ft`` if it is a valid transform name."""
-    if ft not in ("auto", "dft", "nufft"):
-        raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")
-    return ft
 
 
 class FlaredDisk(_PixelRendered):
@@ -4018,7 +4058,7 @@ class Harmonics(_Azimuthal):
                 )
             if degree is None:
                 raise ValueError("a Harmonics with a prior needs its degree.")
-            if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+            if int(degree) != degree or degree < 1:
                 raise ValueError(
                     f"degree must be a positive integer: {degree}."
                 )
@@ -4071,7 +4111,7 @@ class Harmonics(_Azimuthal):
             )
         first, second = (c, s) if form == "linear" else (re, im)
         top = max(len(first), len(second)) if degree is None else degree
-        if isinstance(top, bool) or int(top) != top or top < 0:
+        if int(top) != top or top < 0:
             raise ValueError(f"degree must be a non-negative integer: {top}.")
         top = int(top)
         if max(len(first), len(second)) > top:
@@ -4233,7 +4273,7 @@ class VonMises(_Azimuthal):
             from . import harmonics as _h
 
             degree = 32 if value is None else _h.auto_von_mises_degree(value)
-        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+        if int(degree) != degree or degree < 1:
             raise ValueError(f"degree must be a positive integer: {degree}.")
         self.degree = int(degree)
         n_fft = max(512, 8 * (self.degree + 1)) if n_fft is None else n_fft
@@ -5365,6 +5405,12 @@ class System(SourceModel):
                 )
         # The disk's sky position and angle in the Image's grid frame: the
         # field's centre is relative to the Image's, along its rotated axes.
+        if part.rotation_deg == "grid":
+            raise ValueError(
+                f"The Image whose field follows {name!r} has "
+                "rotation_deg='grid', which depends on the data; give a "
+                "number for a MultipoleField to follow."
+            )
         x, y = rotate(
             disk.dra - part.dra, disk.ddec - part.ddec, -part.rotation_deg
         )

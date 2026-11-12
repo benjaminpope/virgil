@@ -28,6 +28,8 @@ interferometric data do not fix the absolute position, usually aligned
 first.
 """
 
+import dataclasses
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -53,7 +55,38 @@ def _array_and_scale(image, pixel_scale_mas):
             if hasattr(image, "smoothed")
             else image.brightness
         )
-        return np.asarray(pixels), float(scale)
+        pixels = np.asarray(pixels)
+        # An image on a rotated grid is scored as the sky: North up.
+        frame = (
+            image._numeric_frame() if hasattr(image, "_numeric_frame") else 0.0
+        )
+        if frame != 0.0:
+            if pixels.shape[0] != pixels.shape[1]:
+                raise ValueError(
+                    "An Image on a rotated grid is scored on a square "
+                    f"grid, not {pixels.shape}; set rotation_deg=0 or "
+                    "use a square grid."
+                )
+            # Render on a canvas that holds the turned square, normalize
+            # by its total, then crop to the North-up n x n box: the corners
+            # that fall outside it are lost, not rescaled into the rest.
+            n = pixels.shape[0]
+            c, s = (
+                abs(np.cos(np.radians(frame))),
+                abs(np.sin(np.radians(frame))),
+            )
+            big = int(np.ceil(n * (c + s))) + 1
+            big += (big - n) % 2
+            # The pixel grid's own offset and scale, as for a North-up Image.
+            placed = dataclasses.replace(
+                image, dra=0.0, ddec=0.0, pixel_scale_mas=scale
+            )
+            sky = np.asarray(placed.render(big, big * scale))
+            lo = (big - n) // 2
+            pixels = sky[lo : lo + n, lo : lo + n] * (
+                np.sum(pixels) / np.sum(sky)
+            )
+        return pixels, float(scale)
     if pixel_scale_mas is None:
         raise ValueError("Give pixel_scale_mas for an array (not an Image).")
     return np.asarray(image), float(pixel_scale_mas)
@@ -216,8 +249,10 @@ def rms_convolved(
     """
     if beam is None:
         e, r = (
-            np.asarray(getattr(image, "brightness", image)),
-            np.asarray(getattr(truth, "brightness", truth)),
+            _array_and_scale(x, None)[0]
+            if hasattr(x, "brightness")
+            else np.asarray(x)
+            for x in (image, truth)
         )
         scale = None
     else:
