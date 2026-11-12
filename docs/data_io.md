@@ -3,41 +3,87 @@
 
 `virgil` reads and writes `.oifits` files, the interferometry data standard, with `astropy.io.fits` (see `virgil.oifits`). The older writers derived from [`ImPlaneIA`](https://github.com/anand0xff/ImPlaneIA), in `virgil.legacy.oifits_implaneia`, remain for existing scripts. This page shows how to write a file, read it back into an `OIData`, and check what you got.
 
-```python
-import copy
-import sys
-from pathlib import Path
+??? note "Imports and setup"
 
-import numpy as np
+    ```python
+    import copy
+    import tempfile
+    import warnings
+    from itertools import combinations
+    from pathlib import Path
 
-from virgil.oidata import OIData
-from virgil.oifits import write_oifits
+    import numpy as np
 
-notebook_dir = (
-    (Path.cwd() / "notebooks")
-    if (Path.cwd() / "notebooks").exists()
-    else Path.cwd()
-)
-if str(notebook_dir) not in sys.path:
-    sys.path.insert(0, str(notebook_dir))
+    from virgil.models import BinaryModelCartesian
+    from virgil.oidata import OIData, closure_phases, cp_indices
+    from virgil.oifits import write_oifits
 
-from tutorial_helpers import find_repo_root, load_synthetic_workflow_module
-
-repo_root = find_repo_root()
-module = load_synthetic_workflow_module(repo_root)
-```
+    warnings.filterwarnings("ignore", category=SyntaxWarning)  # upstream zodiax docstrings
+    ```
 
 ## Simulate Data
 First, simulate some data and save it to an `.oifits` file. The data are a dictionary of OIFITS tables (`OI_WAVELENGTH`, `OI_VIS`, `OI_VIS2`, `OI_T3`, plus an `info` dictionary for the header), with phases in degrees as OIFITS stores them:
 
-```python
-out = (
-    repo_root / "docs" / "generated" / "synthetic_binary_from_notebook.oifits"
-).resolve()
+??? note "Code"
 
-synth_dict, truth, noise_settings = module._build_synthetic_oifits_dict(seed=4)
-_ = write_oifits(synth_dict, out)
-```
+    ```python
+    # A four-station array, its six baselines and four closure triangles
+    # (stations are numbered from 1, as OIFITS does), and a binary 3 per cent as bright.
+    stations = np.array([[0.0, 0.0], [3.2, 0.2], [1.4, 2.6], [-1.1, 1.8]])
+    pairs = np.array(list(combinations(range(1, 5), 2)))
+    triangles = np.array(list(combinations(range(1, 5), 3)))
+    uv = stations[pairs[:, 1] - 1] - stations[pairs[:, 0] - 1]
+    leg1 = stations[triangles[:, 1] - 1] - stations[triangles[:, 0] - 1]
+    leg2 = stations[triangles[:, 2] - 1] - stations[triangles[:, 1] - 1]
+
+    truth = {"dra": 110.0, "ddec": -70.0, "flux": 3.2e-3}
+    wavel = 4.8e-6
+    cvis = np.asarray(BinaryModelCartesian(**truth).model(uv[:, 0], uv[:, 1], np.array([wavel])))
+    cp = np.rad2deg(np.asarray(closure_phases(cvis, *cp_indices(pairs, triangles))))
+
+    rng = np.random.default_rng(4)
+    vis2, phi = np.abs(cvis) ** 2, np.rad2deg(np.angle(cvis))
+    vis2_err = 1e-3 * np.median(vis2) * np.ones_like(vis2)
+    cp_err = 4e-3 * max(np.median(np.abs(cp)), 5.0) * np.ones_like(cp)
+    header = {"TARGET_ID": 1, "TIME": 0.0, "MJD": 61000.0, "INT_TIME": 1.0}
+
+    synth_dict = {
+        "info": {
+            "TARGET": "UNKNOWN", "OBJECT": "UNKNOWN", "INSTRUME": "SYNTH",
+            "MASK": "SYNTH_MASK", "ARRNAME": "SYNTH_MASK", "FILT": "F480M",
+            "DATE-OBS": "2000-01-01", "TELESCOP": "SIM", "OBSERVER": "virgil-docs",
+            "INSMODE": "NRM", "PA": 0.0, "MJD": 61000.0, "PSCALE": 65.0, "ISZ": 81,
+            "STAXY": stations, "CTRS_EQT": stations.copy(),
+        },
+        "OI_WAVELENGTH": {"EFF_WAVE": wavel, "EFF_BAND": 0.3e-6},
+        "OI_VIS": {
+            **header,
+            "VISAMP": np.abs(cvis) + 2e-3 * np.median(np.abs(cvis)) * rng.normal(size=6),
+            "VISAMPERR": 2e-3 * np.median(np.abs(cvis)) * np.ones(6),
+            "VISPHI": phi + 0.02 * rng.normal(size=6),
+            "VISPHIERR": 0.02 * np.ones(6),
+            "UCOORD": uv[:, 0], "VCOORD": uv[:, 1],
+            "STA_INDEX": pairs, "FLAG": np.zeros(6, dtype=bool),
+        },
+        "OI_VIS2": {
+            **header,
+            "VIS2DATA": vis2 + vis2_err * rng.normal(size=6), "VIS2ERR": vis2_err,
+            "UCOORD": uv[:, 0], "VCOORD": uv[:, 1],
+            "STA_INDEX": pairs, "FLAG": np.zeros(6, dtype=bool),
+        },
+        "OI_T3": {
+            **header,
+            "T3AMP": np.ones(4), "T3AMPERR": np.ones(4),
+            "T3PHI": cp + cp_err * rng.normal(size=4), "T3PHIERR": cp_err,
+            "U1COORD": leg1[:, 0], "V1COORD": leg1[:, 1],
+            "U2COORD": leg2[:, 0], "V2COORD": leg2[:, 1],
+            "STA_INDEX": triangles, "FLAG": np.zeros(4, dtype=bool),
+        },
+    }
+
+    out = Path(tempfile.mkdtemp()) / "synthetic_binary.oifits"
+    _ = write_oifits(synth_dict, out)
+    ```
 
 # Reading Data
 
@@ -66,6 +112,7 @@ OIData(
   u=f32[6],
   v=f32[6],
   wavel=f32[1],
+  bandwidth=None,
   vis=f32[6],
   d_vis=f32[6],
   phi=f32[4],

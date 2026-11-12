@@ -15,73 +15,39 @@ First, the imports.
 ??? note "Imports and setup"
 
     ```python
-    import sys
-    from pathlib import Path
+    import shutil
 
+    import jax
     import jax.numpy as jnp
     import numpy as onp
     import jax.scipy as jsp
     import matplotlib.pyplot as plt
 
-    repo_root = Path.cwd()
-    if not (repo_root / "src").exists():
-        repo_root = repo_root.parent
-    src_path = repo_root / "src"
-    if str(src_path) not in sys.path:
-        sys.path.insert(0, str(src_path))
-
+    from virgil.coverage import nrm_oidata
     from virgil.grid_fit import laplace_flux_uncertainty_grid, optimized_flux_grid
     from virgil.limits import absil_limits, flux_to_delta_mag, ruffio_upperlimit
     from virgil.models import BinaryModelCartesian
-    from virgil.oidata import OIData
     from virgil.plotting import plot_contrast_curve, plot_grid_map, set_style
 
     set_style()  # the figure style used throughout the docs
+    shutil.rmtree("limits_run", ignore_errors=True)  # the pipeline section writes here
     ```
 
 ## Simulate Data
 
-We generate pure-noise data with Fourier sampling similar to the JWST AMI mask.
+We generate pure-noise data with the Fourier sampling of the JWST AMI mask: [`nrm_oidata`](api/coverage.md) gives the 21 squared visibilities and 35 closure phases of its seven holes at 4.8 microns, with zero data and chosen errors, and `with_model` fills them from a model plus noise. The model is a lone star, a binary with no flux in the companion.
 
 ```python
-rng = onp.random.default_rng(7)
-
-oidata = OIData(repo_root / "data" / "NuHor_F480M.oifits")
-
-# Pure-noise injection amplitude (1.0 uses nominal OIData uncertainties).
-noise_amp = 1.0
-
-sim_data = {
-    "u": oidata.u,
-    "v": oidata.v,
-    "wavel": oidata.wavel,
-    "vis": jnp.ones_like(oidata.vis)
-    + noise_amp * jnp.array(rng.normal(size=oidata.vis.shape)) * oidata.d_vis,
-    "d_vis": oidata.d_vis,
-    "phi": noise_amp
-    * jnp.array(rng.normal(size=oidata.phi.shape))
-    * oidata.d_phi,
-    "d_phi": oidata.d_phi,
-    "i_cps1": oidata.i_cps1,
-    "i_cps2": oidata.i_cps2,
-    "i_cps3": oidata.i_cps3,
-    "v2_flag": oidata.v2_flag,
-    "cp_flag": oidata.cp_flag,
-}
-
-oidata_sim = OIData(sim_data)
-
-print(
-    "Noise amplitude: {:.2g}, Vis std: {:.2g}, Phi std: {:.2g}".format(
-        noise_amp,
-        float(jnp.std(sim_data["vis"] - 1.0)),
-        float(jnp.std(sim_data["phi"])),
-    )
+oidata_sim = nrm_oidata(
+    wavelength_m=4.817e-6, sigma_v2=3.3e-4, sigma_cp_deg=0.016
+).with_model(
+    BinaryModelCartesian(dra=0.0, ddec=0.0, flux=0.0), key=jax.random.PRNGKey(7)
 )
+print(oidata_sim.vis.size, "squared visibilities and", oidata_sim.phi.size, "closure phases")
 ```
 
 ```text
-Noise amplitude: 1, Vis std: 0.00033, Phi std: 0.00028
+21 squared visibilities and 35 closure phases
 ```
 
 ## Declare a search grid
@@ -100,8 +66,10 @@ opt_flux = optimized_flux_grid(BinaryModelCartesian, oidata_sim, samples)
 ```
 
 ```text
-RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 244 of 3721 grid positions; values there may be inaccurate.
+RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 160 of 3721 grid positions; values there may be inaccurate.
 ```
+
+`optimized_flux_grid` warns where its optimizer did not converge (here at a few per cent of the grid points), because the best-fit flux, and so the limit, may be inaccurate there; the warning is the function telling you where.
 
 ## Ruffio Contrast Limits
 
@@ -121,7 +89,7 @@ plot_grid_map(
 );
 ```
 
-![contrast_limits output 9.1](generated/contrast_limits_cell009_out01.png)
+![contrast_limits output 10.1](generated/contrast_limits_cell010_out01.png)
 
 ## Absil Contrast Limits
 
@@ -129,28 +97,21 @@ plot_grid_map(
 
 ```python
 # Absil method at 2σ
-absil_map = absil_limits(BinaryModelCartesian, oidata_sim, samples, sigma=2.0)
-
-{
-    "opt_flux_finite_frac": float(jnp.mean(jnp.isfinite(opt_flux))),
-    "sigma_flux_finite_frac": float(jnp.mean(jnp.isfinite(sigma_flux))),
-    "ruffio_finite_frac": float(jnp.mean(jnp.isfinite(ruffio_map))),
-    "absil_finite_frac": float(jnp.mean(jnp.isfinite(absil_map))),
-    "ruffio_median_dmag": float(jnp.nanmedian(flux_to_delta_mag(ruffio_map))),
-    "absil_median_dmag": float(jnp.nanmedian(flux_to_delta_mag(absil_map))),
-}
+absil_map = absil_limits(
+    BinaryModelCartesian, oidata_sim, samples, sigma=2.0, flux_bounds=(1e-8, 1.0)
+)
 
 plot_grid_map(absil_map, samples, kind="limit", units="delta_mag", sigma=2.0);
 ```
 
 ```text
-RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-06, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
+RuntimeWarning: absil_limits(): 1 limits fell outside flux_bounds=(1e-08, 1.0) and were clipped to the nearer bound; pass wider flux_bounds, or None, to search further.
 ```
 
-![contrast_limits output 11.2](generated/contrast_limits_cell011_out02.png)
+![contrast_limits output 12.2](generated/contrast_limits_cell012_out02.png)
 
 ## Contrast Curves
-Plotted as contrast curves on one axis, the two methods give similar but not identical limits.
+`absil_limits` warns that one limit fell outside `flux_bounds` and was clipped to the nearer bound; it is a single pixel of the map. Plotted as contrast curves on one axis, the two methods give similar but not identical limits.
 
 The limits are companion/primary flux ratios, but astronomers report a contrast (primary/companion) or magnitudes: a companion 100 times fainter than the star has a contrast of 100, or 5 mag. `units="delta_mag"` (the default for curves) or `units="contrast"` converts for display, and `flux_to_delta_mag` / `flux_to_contrast` convert the numbers.
 
@@ -164,15 +125,13 @@ plot_contrast_curve(absil_map, samples, label="Absil 2σ", ax=ax)
 ax.set_title("Radial contrast limits: Ruffio vs Absil");
 ```
 
-![contrast_limits output 13.1](generated/contrast_limits_cell013_out01.png)
+![contrast_limits output 14.1](generated/contrast_limits_cell014_out01.png)
 
 ## As a pipeline
 
-The search grid, Ruffio limits and contrast curve are the `search` and `limits` stages of [`BinaryPipeline`](pipeline.md), so running it `through="limits"` stops before the fit and sampler, which a non-detection does not need. The cell below uses the same $\pm 250$ mas grid of 61 points per axis, the same flux axis and $\sigma = 2$. The pipeline blanks grid points inside the resolution limit, where separation and flux are degenerate, so compare its limit map with the hand-computed Ruffio map where both are defined; `limit_method="absil"` gives the Absil map instead. The contrast curve is one of the pipeline's plots.
+The search grid, Ruffio limits and contrast curve are the `search` and `limits` stages of [`BinaryPipeline`](pipeline.md), so running it `through="limits"` stops before the fit and sampler, which a non-detection does not need. The cell below uses the same $\pm 250$ mas grid of 61 points per axis, the same flux axis and $\sigma = 2$. The pipeline blanks grid points inside the resolution limit, where separation and flux are degenerate, so compare its limit map with the hand-computed Ruffio map where both are defined; `limit_method="absil"` gives the Absil map instead. The contrast curve is one of the pipeline's plots. A non-detection is the expected outcome here, so the `detection` check warns that no companion exceeds 3σ; the `convergence` and `stage_warnings` warnings count grid positions where the flux refinement did not converge, as in the warning above; `res.describe()` prints the full report.
 
 ```python
-from tempfile import mkdtemp
-
 from IPython.display import Image, display
 
 from virgil.pipeline import BinaryPipeline
@@ -180,50 +139,25 @@ from virgil.pipeline import BinaryPipeline
 res = BinaryPipeline(
     oidata_sim,
     BinaryModelCartesian(dra=0.0, ddec=0.0, flux=1e-3),
-    output=f"{mkdtemp()}/limits_run",
+    output="limits_run",
     sigma=2.0,
     max_sep_mas=250.0,
     grid_step_mas=8.34,  # 61 points from -250 to 250 mas
     flux_range=[1e-5, 10**-1.5],
     n_flux=50,
 ).run(through="limits")
-print(res.describe())
+s = res.summary
+print(f"chi2/N of the star alone: {s['chi2']['null_reduced']:.2f}; "
+      f"best grid point {s['search']['local_nsigma']:.1f} sigma (local)")
+print(f"deepest 2-sigma limit: {s['limits']['deepest_delta_mag']:.1f} mag")
+print({c.name: c.status for c in res.checks if c.status != "pass"})
 display(Image(filename=str(res.path / "plots" / "limits_contrast_curve.png")))
 ```
 
 ```text
-BinaryPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpddyie1t5/limits_run: partial
-  data.n_vis = 21
-  data.n_phi = 35
-  data.n_independent = 36
-  data.wavel_min_m = 4.817e-06
-  data.wavel_max_m = 4.817e-06
-  data.baseline_min_m = 1.32
-  data.baseline_max_m = 5.28001
-  data.resolution_mas = 94.0887
-  data.fov_mas = 752.71
-  chi2.n_independent = 36
-  chi2.null_reduced = 0.614164
-  search.delta_chi2 = 7.05621
-  search.log_bayes_factor = -0.349728
-  search.max_snr = 2.65709
-  search.local_nsigma = 2.65635
-  search.global_nsigma = 0.99969
-  search.false_alarm_probability = 0.15873
-  search.n_null = 125
-  search.n_null_above = 19
-  search.dra_mas = -100
-  search.ddec_mas = -175
-  search.flux = 8.28444e-05
-  search.max_sep_mas = 250
-  limits.sigma = 2
-  limits.deepest_delta_mag = 10.046
-  [pass] chi2: χ²/N = 0.614 for the star alone on quoted errors: consistent with the quoted errors.
-  [warn] detection: No companion above 3σ (2.66σ local): the fit and posterior describe the highest noise peak; quote the contrast limits instead.
-  [pass] grid_edge: The grid peak lies inside the searched grid.
-  [warn] convergence: The optimizer did not converge at 243 of 3721 grid positions (6.5 per cent): values there may be inaccurate.
-  [warn] stage_warnings: 1 warning(s) were raised inside the stages: ruffio limits: 243 of 3721 grid positions have an unconverged flux refinement or no finite Laplace sigma; their limits are NaN. See the 'warnings' list of summary.json.
-  3 warning(s) recorded in the limits, search stage(s) (see the checks, or Result.summary['warnings'])
+chi2/N of the star alone: 1.05; best grid point 1.9 sigma (local)
+deepest 2-sigma limit: 10.7 mag
+{'detection': 'warn', 'convergence': 'warn', 'stage_warnings': 'warn'}
 ```
 
-![contrast_limits output 15.2](generated/contrast_limits_cell015_out02.png)
+![contrast_limits output 16.2](generated/contrast_limits_cell016_out02.png)

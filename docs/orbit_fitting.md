@@ -40,7 +40,7 @@ This is one simulated realization, on the geometry the search was developed on, 
     warnings.filterwarnings("ignore", category=SyntaxWarning)
 
     from pathlib import Path
-    from tempfile import TemporaryDirectory
+    import shutil
 
     import equinox as eqx
     import jax
@@ -215,15 +215,17 @@ plt.show()
 
 ## One call
 
-Your data are OIFITS files, so we write the simulated nights to a temporary folder as one file per night. (This is only here because the simulated nights start as `OIData`; real files come from your instrument package.)
+Your data are OIFITS files, so we write the simulated nights to a folder as one file per night. (This is only here because the simulated nights start as `OIData`; real files come from your instrument package.)
 
 ??? note "Code"
 
     ```python
-    folder = TemporaryDirectory()
+    folder = Path("orbit_demo")  # a fixed folder, recreated on every run
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir()
     files = []
     for k, night in enumerate(nights):
-        files.append(str(Path(folder.name) / f"night{k}.oifits"))
+        files.append(str(folder / f"night{k}.oifits"))
         write_oifits(night, files[-1])
     print(f"wrote {len(files)} OIFITS files")
     ```
@@ -235,7 +237,7 @@ wrote 8 OIFITS files
 `OrbitPipeline.from_oifits` reads the files and groups them into nights at gaps of `gap_days` (half a day by default; override a file's night, or its time stamp, with `metadata`). Everything else has a default. The only settings below shorten the sampler, which by default is 4 chains of 1000 warm-up and 1000 draws, and skip the executed quicklook notebook, so the page stays quick:
 
 ```python
-RUN = Path(folder.name) / "run"
+RUN = folder / "run"
 pipeline = OrbitPipeline.from_oifits(
     files,
     output=RUN,
@@ -250,7 +252,7 @@ print(res.describe())
 ```
 
 ```text
-OrbitPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpkby6gd0q/run: complete
+OrbitPipeline run in orbit_demo/run: complete
   data.n_nights = 8
   data.n_datasets = 8
   data.n_vis = 864
@@ -273,8 +275,8 @@ OrbitPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpkby6gd0
   posterior.num_chains = 2
   posterior.num_samples = 500
   posterior.num_warmup = 500
-  posterior.r_hat_max = 1.00134
-  posterior.ess_bulk_min = 495.583
+  posterior.r_hat_max = 0.999672
+  posterior.ess_bulk_min = 1458.96
   posterior.divergence_fraction = 0
   posterior.optimum_gap_max = 0
   [pass] chi2: χ²/N = 1.87 for the best-fit orbit on quoted errors: consistent with the quoted errors.
@@ -283,18 +285,25 @@ OrbitPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpkby6gd0
   [pass] bands_failed: Every alias band was evaluated.
   [pass] alias_ambiguity: There is a single alias band: no rival period.
   [pass] winner_flags: The winning band's evidence has no flags.
-  [warn] tempering: The effective-channel factor f = 1.31 (raw 1.18) is outside [0.5, 2] or the residual correlation is not AR(1): the evidences are less reliable.
+  [warn] tempering: The effective-channel factor f = 1.36 (raw 1.21) is outside [0.5, 2] or the residual correlation is not AR(1): the evidences are less reliable.
   [pass] primary_resolved: The primary's size is not at the edge of the diameters tried.
-  [pass] no_orbit: The best orbit beats a single star by 1.4e+03 nats: the orbit is clearly preferred.
+  [pass] no_orbit: The best orbit beats a single star by 471 nats: the orbit is clearly preferred.
   [pass] period_bound: The period is inside its window (1.37 to 1e+03 d).
   [pass] prior_bound: No posterior mass piles up at a prior bound.
-  [pass] r_hat: Largest R-hat 1.0013: the chains agree.
-  [pass] ess: Smallest bulk ESS 496: enough independent samples.
+  [pass] r_hat: Largest R-hat 0.9997: the chains agree.
+  [pass] ess: Smallest bulk ESS 1459: enough independent samples.
   [pass] divergences: Divergent transitions: 0 per cent: none.
   [pass] mode_converged: The search's best mode is an optimum of the sampled density.
-  [warn] stage_warnings: 2 warning(s) were raised inside the stages: fit_orbit_aliases(): the period window starts at 1.37 d, 6.9 nights' length: a shorter period would move the companion by more than half the resolution during a night (field 8.33 mas). Pass p_range to search shorter periods.; fit_orbit_aliases(): the residual correlation of ['phi'] is flat across channels (lag-2 well above the square of lag-1), the signature of a shared calibration error or of misfit (a resolved primary, a moving companion). The likelihood is tempered by it either way; check the model (AliasResult.tempering).. See the 'warnings' list of summary.json.
+  [warn] stage_warnings: 2 warning(s) were raised inside the stages: fit_orbit_aliases(): the period window starts at 1.37 d, 6.9 nights' length: a shorter period would move the companion by more than half the resolution during a night (field 8.33 mas). Set period_range to search shorter periods.; fit_orbit_aliases(): the residual correlation of ['phi'] is flat across channels (lag-2 well above the square of lag-1), the signature of a shared calibration error or of misfit (a resolved primary, a moving companion). The likelihood is tempered by it either way; check the model (AliasResult.tempering).. See the 'warnings' list of summary.json.
   2 warning(s) recorded in the search stage(s) (see the checks, or Result.summary['warnings'])
 ```
+
+Two lines at the end of the checks are warnings, on data that are simulated and well behaved. Both are cautions about how far to trust the likelihood, not failures of the run:
+
+- `tempering` warns when the correlated-channel factor of the likelihood is outside 0.5 to 2, or when the residual correlation between channels does not follow the AR(1) form the tempering assumes. Here the factor, 1.36, is inside the range, so it is the second condition. Tempering is opt-in (we passed `temper=True`), and its range is not yet calibrated against a null distribution.
+- `stage_warnings` collects the warnings raised inside the stages and lists them: the default period window starts at 1.37 d because a shorter period would move the companion by more than half the resolution during a night, and the residual correlation across channels is flat, the same condition that trips `tempering`.
+
+The orbit below is recovered either way. A warning means "check this before you rely on the evidences", and the checks are listed in full below.
 
 ## Reading the result
 
@@ -347,13 +356,13 @@ for check in res.checks:
 [pass] bands_failed     Every alias band was evaluated.
 [pass] alias_ambiguity  There is a single alias band: no rival period.
 [pass] winner_flags     The winning band's evidence has no flags.
-[warn] tempering        The effective-channel factor f = 1.31 (raw 1.18) is outside [0.5, 2] or the residual correlation is 
+[warn] tempering        The effective-channel factor f = 1.36 (raw 1.21) is outside [0.5, 2] or the residual correlation is 
 [pass] primary_resolved The primary's size is not at the edge of the diameters tried.
-[pass] no_orbit         The best orbit beats a single star by 1.4e+03 nats: the orbit is clearly preferred.
+[pass] no_orbit         The best orbit beats a single star by 471 nats: the orbit is clearly preferred.
 [pass] period_bound     The period is inside its window (1.37 to 1e+03 d).
 [pass] prior_bound      No posterior mass piles up at a prior bound.
-[pass] r_hat            Largest R-hat 1.0013: the chains agree.
-[pass] ess              Smallest bulk ESS 496: enough independent samples.
+[pass] r_hat            Largest R-hat 0.9997: the chains agree.
+[pass] ess              Smallest bulk ESS 1459: enough independent samples.
 [pass] divergences      Divergent transitions: 0 per cent: none.
 [pass] mode_converged   The search's best mode is an optimum of the sampled density.
 [warn] stage_warnings   2 warning(s) were raised inside the stages: fit_orbit_aliases(): the period window starts at 1.37 d,
@@ -389,13 +398,13 @@ print(
 ```text
               median   68% interval            truth
 period       12.3799   [12.3797, 12.3801]      12.3800
-a_mas        10.0081   [9.9869, 10.0277]      10.0000
-ecc           0.2993   [0.2984, 0.3001]       0.3000
-inc          49.9089   [49.7860, 50.0232]      50.0000
-omega        59.8514   [59.6021, 60.1667]      60.0000
-Omega       120.0860   [119.8990, 120.2714]     120.0000
-flux          0.2999   [0.2978, 0.3020]       0.3000
-t_peri     60001.997   [60001.994, 60002.001]    60002.000
+a_mas        10.0071   [9.9853, 10.0282]      10.0000
+ecc           0.2992   [0.2984, 0.3000]       0.3000
+inc          49.8985   [49.7815, 50.0216]      50.0000
+omega        59.8835   [59.6248, 60.1546]      60.0000
+Omega       120.0773   [119.8880, 120.2619]     120.0000
+flux          0.2998   [0.2976, 0.3021]       0.3000
+t_peri     60001.998   [60001.994, 60002.001]    60002.000
 ```
 
 A period of 12.38 days was found blind. The alias table shows what the search did: it lists one row per alias band, an integer number of orbits between the two seasons, with the band's log evidence, its probability and its flags. Here the short-arc step (see [below](#short-arcs-cycle-counts-from-the-motion)) rejected every other cycle count from the motion within and between the nights of each season before any band was fitted, so one band is left. With sparser nights several bands survive, and `alias_ambiguity` reports their margin.
@@ -417,7 +426,7 @@ print(
 
 ```text
 band    n   period (d)  χ²/N     log Z     p  flags
-         20     12.3799   1.87   -2571.9  1.00  []
+         20     12.3799   1.87   -2505.6  1.00  ['hessian-singular']
 the short arcs kept N = [20] and excluded 183 other cycle counts
 ```
 
@@ -433,13 +442,13 @@ Image(plots["search_bands"])
 ['modes_sky', 'posterior_corner', 'posterior_trace', 'search_bands']
 ```
 
-![orbit_fitting output 24.2](generated/orbit_fitting_cell024_out02.png)
+![orbit_fitting output 25.2](generated/orbit_fitting_cell025_out02.png)
 
 ```python
 Image(plots["posterior_corner"])
 ```
 
-![orbit_fitting output 25.1](generated/orbit_fitting_cell025_out01.png)
+![orbit_fitting output 26.1](generated/orbit_fitting_cell026_out01.png)
 
 ### The run folder and the command line
 
@@ -524,7 +533,7 @@ UserWarning: fit_orbit_aliases(): the residual correlation of ['phi'] is flat ac
 ```
 
 ```text
-1 band(s); the best has N = 20, P = 12.3799 d, log Z = -2571.9
+1 band(s); the best has N = 20, P = 12.3799 d, log Z = -2505.6
 same winner and elements as the pipeline: True
 ```
 
@@ -537,8 +546,8 @@ print("outside the range the correction can trust:", result.tempering)
 ```
 
 ```text
-effective-channel factor f = 1.31 (raw 1.18)
-per block: {'phi': 1.64, 'vis': 1.18}
+effective-channel factor f = 1.36 (raw 1.21)
+per block: {'phi': 1.67, 'vis': 1.21}
 outside the range the correction can trust: True
 ```
 
@@ -566,7 +575,7 @@ ax.set_title("OrbitPipeline: 150 posterior orbits and the nightly positions")
 plt.show()
 ```
 
-![orbit_fitting output 35.1](generated/orbit_fitting_cell035_out01.png)
+![orbit_fitting output 36.1](generated/orbit_fitting_cell036_out01.png)
 
 ## Scale-marginalized scoring and night flags
 
