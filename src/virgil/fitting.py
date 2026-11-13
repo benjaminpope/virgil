@@ -193,7 +193,7 @@ class _Objective(eqx.Module):
                     raise TypeError(
                         f"{path!r}: linear pixels must stay non-negative, "
                         "which only fit(method='lbfgsb') enforces; use it, "
-                        "or parametrisation='sqrt'."
+                        "or parametrization='sqrt'."
                     )
         for path, prior in self.priors.items():
             if isinstance(model, SourceModel):
@@ -720,7 +720,6 @@ def _check_options(
     dtype,
     time_limit,
     ftol_abs,
-    ftol_window,
 ):
     """Validate ``fit``'s options; return ``(precondition, dtype)`` to use."""
     if not math.isfinite(max_step_size) or max_step_size <= 0:
@@ -731,8 +730,6 @@ def _check_options(
         raise ValueError(
             f"time_limit must be a number of seconds, not {time_limit}."
         )
-    if ftol_window < 1:
-        raise ValueError(f"ftol_window must be at least 1, not {ftol_window}.")
     if ftol_abs is not None and not 0 <= ftol_abs < math.inf:
         raise ValueError(
             f"ftol_abs must be finite and non-negative, not {ftol_abs}."
@@ -812,32 +809,49 @@ def fit(
         A prior for each free parameter, keyed by its path.
     data : OIData or sequence of OIData
         The data, fitted jointly; ``()`` if ``likelihoods`` has it all.
-    regularizers, noise : sequence and dict, optional
-        Loss penalties (e.g. [`virgil.imaging`][virgil.imaging]) and priors on
-        error terms; see [common arguments](../common_arguments.md).
-    init, method : dict and str, optional
-        Starting values by path (required for a function model); ``"lm"`` (default for least squares), ``"lbfgs"`` (for penalties, which LM also fits in float64), ``"adam"`` or
-        ``"lbfgsb"`` (bounded by ``Uniform`` priors and linear ``LinearImage`` pixels).
-    max_steps, gtol, max_step_size : int and float, optional
-        Step limit (1000 LM, 20000 L-BFGS and L-BFGS-B, 2000 Adam), gradient
-        tolerance and L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
-    lbfgs_memory, cg_steps, learning_rate : int, int and float, optional
-        L-BFGS history (100, cut to keep it under 1 GiB; 10, uncut, for L-BFGS-B); CG steps
-        per LM step (above 200 coordinates); Adam's rate: a float or an optax
-        schedule (a callable of the step).
+    regularizers : sequence, optional
+        Loss penalties, e.g. [`virgil.imaging`][virgil.imaging]; see
+        [common arguments](../common_arguments.md).
+    noise : dict, optional
+        Priors on error terms; see [common arguments](../common_arguments.md).
+    init : dict, optional
+        Starting values by path (required for a function model).
+    method : {"lm", "lbfgs", "adam", "lbfgsb"}, optional
+        ``"lm"`` (default for least squares), ``"lbfgs"`` (for penalties, which
+        LM also fits in float64), ``"adam"`` or ``"lbfgsb"`` (bounded by
+        ``Uniform`` priors and linear ``LinearImage`` pixels).
+    max_steps : int, optional
+        Step limit (1000 LM, 20000 L-BFGS and L-BFGS-B, 2000 Adam); see
+        [fit stopping](../common_arguments.md#fit-stopping).
+    gtol : float, optional
+        Gradient tolerance; see [fit stopping](../common_arguments.md#fit-stopping).
+    max_step_size : float, optional
+        L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
+    lbfgs_memory : int, optional
+        L-BFGS history (100, cut to keep it under 1 GiB; 10, uncut, for L-BFGS-B).
+    cg_steps : int, optional
+        CG steps per LM step (above 200 coordinates).
+    learning_rate : float or callable, optional
+        Adam's rate: a float or an optax schedule (a callable of the step).
     dtype : {"float64", "float32"}, optional
         Precision; see [common arguments](../common_arguments.md#dtype).
-    likelihoods, time_limit, progress : sequence, float and callable, optional
-        Further terms, e.g. [`PositionData.term`][virgil.orbits.PositionData.term];
-        wall-clock budget (s); callback (or ``True``) on ``steps``, ``loss``,
-        ``grad_norm``, ``elapsed`` (``grad_norm`` is NaN for Adam). A
-        ``time_limit`` that runs out on Adam's or LM's last chunk reports
-        ``"limit"``, not ``"time"``.
-    adam_eps, ftol_abs, ftol_window : float, float and int, optional
-        Adam only: ``optax.adam``'s ``eps``; and a plateau stop after
-        ``2 * ftol_window`` steps, at the first step where the last window's
-        loss range is below ``ftol_abs`` and its mean is not lower than the
-        previous window's by ``ftol_abs`` or more (unscaled; off if ``None``).
+    likelihoods : sequence, optional
+        Further terms, e.g. [`PositionData.term`][virgil.orbits.PositionData.term].
+    time_limit : float, optional
+        Wall-clock budget (s). One that runs out on Adam's or LM's last chunk
+        reports ``"limit"``, not ``"time"``.
+    progress : callable or True, optional
+        Callback (or ``True``) on ``steps``, ``loss``, ``grad_norm``,
+        ``elapsed`` (``grad_norm`` is NaN for Adam).
+    adam_eps : float, optional
+        Adam only: ``optax.adam``'s ``eps``.
+    ftol_abs : float, optional
+        Adam only: a plateau stop after ``2 * ftol_window`` steps, at the first
+        step where the last window's loss range is below ``ftol_abs`` and its
+        mean is not lower than the previous window's by ``ftol_abs`` or more
+        (unscaled; off if ``None``).
+    ftol_window : int, optional
+        Adam only: the window of ``ftol_abs``, in steps.
     post_step : callable, optional
         Adam only, not with ``precondition``: a jax-traceable ``post_step(z) -> z``
         on the unconstrained coordinates ``z`` (a dict by path, not ``values``),
@@ -865,7 +879,6 @@ def fit(
         dtype,
         time_limit,
         ftol_abs,
-        ftol_window,
     )
     budget = _Budget(time_limit, progress)
     with run_in(dtype):
@@ -2759,7 +2772,7 @@ def _smooth(img, sigma):
 
 def _band_limit(brightness, pixel_scale_mas, cut):
     """Fraction of the windowed ``ln b`` power beyond ``cut`` over that of its
-    hard low-pass (the diagnosis' ``f_eta / f_floor``).
+    hard low-pass (``f_eta / f_floor``).
 
     The window is the lit region (``b`` blurred with a Gaussian of FWHM
     ``_LIT_FWHM`` resolution elements ``1 / cut``, above 1e-3 of its peak),
@@ -3052,7 +3065,7 @@ def kkt_report(
                 continue
             out = {}
             top = _peak(grad, ref, key, pen)
-            if linear and image.parametrisation == "linear":
+            if linear and image.parametrization == "linear":
                 out, ok = _linear_certificate(x, g, image, top, w)
             else:
                 d, dp, mu, b, live, scale = _pixel_gradient(

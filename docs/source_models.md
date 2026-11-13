@@ -3,40 +3,45 @@
 
 This tutorial covers the non-binary source models in `virgil`: a star plus a `GaussianDisk`, the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `GravityDarkenedStar` (a rapidly rotating star). Spotted stars from harmonix, wrapped in `HarmonixModel`, have [their own tutorial](harmonix.md).
 
-We build synthetic observables from a resolved Gaussian disk, pass them through `OIData`, repeat for a uniform disk and an azimuthally modulated rim, and finally draw a gravity-darkened rapid rotator. The composition tutorial shows how to combine these building blocks into more complex scenes.
+We build synthetic observables from a resolved Gaussian disk, pass them through `OIData`, repeat for a uniform disk and an azimuthally modulated rim, and finally draw a gravity-darkened rapid rotator. The [composition tutorial](composition.md) shows how to combine these building blocks into more complex scenes.
 
-```python
-import sys
-from pathlib import Path
+??? note "Imports and setup"
 
-import numpy as np
-import jax.numpy as jnp
-import matplotlib.pyplot as plt
+    ```python
+    import warnings
 
-from virgil.plotting import set_style
+    import numpy as np
+    import jax.numpy as jnp
+    import matplotlib.pyplot as plt
 
-repo_root = Path.cwd()
-if not (repo_root / "src").exists():
-    repo_root = repo_root.parent
-src_path = repo_root / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
+    from virgil.models import (
+        GaussianDisk,
+        ModulatedGaussianRim,
+        PointSource,
+        System,
+        UniformDisk,
+    )
+    from virgil.oidata import OIData
+    from virgil.plotting import set_style
 
-from virgil.models import (
-    GaussianDisk,
-    ModulatedGaussianRim,
-    PointSource,
-    System,
-    UniformDisk,
-)
-from virgil.oidata import OIData
+    warnings.filterwarnings("ignore", category=SyntaxWarning)  # upstream zodiax docstrings
+    set_style()  # the figure style used throughout the docs
 
-set_style()  # the figure style used throughout the docs
-```
+
+    def round_floats(x, sig=4):
+        """Round printed floats to a few significant figures (float32 noise)."""
+        if isinstance(x, float):
+            return float(f"{x:.{sig}g}")
+        if isinstance(x, dict):
+            return {k: round_floats(v, sig) for k, v in x.items()}
+        if isinstance(x, (list, tuple)):
+            return type(x)(round_floats(v, sig) for v in x)
+        return x
+    ```
 
 ## Simulate resolved-disk observables
 
-As in the binary examples, we start from a simple baseline geometry, instantiate a source model, and evaluate complex visibilities on those baselines.
+As in the binary examples, we start from a simple baseline geometry, instantiate a source model, and evaluate complex visibilities on those baselines. A `System` mixes named parts by flux ([Composing models](composition.md#system)), and `OIData.model` flattens the observables as in [Binary models and OIData](model_syntax.md#oidata-model).
 
 ```python
 rng = np.random.default_rng(7)
@@ -68,6 +73,7 @@ data = OIData({
     "d_vis": d_vis,
     "phi": phi_obs,
     "d_phi": d_phi,
+    "phi_unit": "deg",
     "i_cps1": None,
     "i_cps2": None,
     "i_cps3": None,
@@ -75,13 +81,13 @@ data = OIData({
     "cp_flag": False,
 })
 
-{
+round_floats({
     "n_baselines": int(n_bl),
     "sigma_mas": truth["sigma"],
     "flux": truth["flux"],
     "centroid_mas": (truth["dra"], truth["ddec"]),
     "vis_range": (float(jnp.min(vis_true)), float(jnp.max(vis_true))),
-}
+})
 ```
 
 ```text
@@ -89,7 +95,7 @@ data = OIData({
  'sigma_mas': 18.0,
  'flux': 0.15,
  'centroid_mas': (12.0, -7.5),
- 'vis_range': (0.7543692588806152, 0.8830579519271851)}
+ 'vis_range': (0.7544, 0.8831)}
 ```
 
 ## Use `OIData` to flatten observables
@@ -172,18 +178,18 @@ vis_udisk = jnp.abs(cvis_udisk) ** 2
 phi_udisk = jnp.rad2deg(jnp.angle(cvis_udisk))
 model_vec_udisk = data.model(udisk)
 
-{
+round_floats({
     "diam_mas": float(udisk.diam),
     "centroid_mas": (float(udisk.dra), float(udisk.ddec)),
     "vis_range": (float(jnp.min(vis_udisk)), float(jnp.max(vis_udisk))),
     "model_len": int(model_vec_udisk.shape[0]),
-}
+})
 ```
 
 ```text
 {'diam_mas': 25.0,
  'centroid_mas': (-9.0, 6.0),
- 'vis_range': (0.0001409070537192747, 0.8681560754776001),
+ 'vis_range': (0.0001409, 0.8682),
  'model_len': 64}
 ```
 
@@ -238,20 +244,20 @@ vis_rim = jnp.abs(cvis_rim) ** 2
 phi_rim = jnp.rad2deg(jnp.angle(cvis_rim))
 model_vec_rim = data.model(rim_modulated)
 
-{
+round_floats({
     "diam_mas": float(rim.diam),
     "rim_to_star_flux": float(rim.flux),
     "az_amps": np.asarray(rim.az_amps).tolist(),
     "az_pas_deg": np.asarray(rim.az_pas).tolist(),
     "model_len": int(model_vec_rim.shape[0]),
-}
+})
 ```
 
 ```text
-{'diam_mas': 14.149999618530273,
- 'rim_to_star_flux': 0.6750418543815613,
- 'az_amps': [0.4301162660121918, 0.2745906114578247],
- 'az_pas_deg': [41.53767776489258, 56.24573516845703],
+{'diam_mas': 14.15,
+ 'rim_to_star_flux': 0.675,
+ 'az_amps': [0.4301, 0.2746],
+ 'az_pas_deg': [41.54, 56.25],
  'model_len': 64}
 ```
 
@@ -316,7 +322,7 @@ hot_star = GravityDarkenedStar(
 )
 cvis_star = star.model(u, v, wavel)
 
-{
+round_floats({
     "diam_eq_mas": float(star.diam_eq),
     "omega": float(star.omega),
     "n_baselines": int(cvis_star.shape[0]),
@@ -324,14 +330,14 @@ cvis_star = star.model(u, v, wavel)
         float(jnp.min(jnp.abs(cvis_star) ** 2)),
         float(jnp.max(jnp.abs(cvis_star) ** 2)),
     ),
-}
+})
 ```
 
 ```text
 {'diam_eq_mas': 1.0,
- 'omega': 0.8999999761581421,
+ 'omega': 0.9,
  'n_baselines': 32,
- 'vis_range': (0.9856705069541931, 0.9998699426651001)}
+ 'vis_range': (0.9857, 0.9999)}
 ```
 
 The grey star's visible surface, coloured by local flux, shows the bright pole towards the upper left (with East to the left and North up, the pole at a position angle of 30 degrees) and the darkened equator. The chromatic star at 0.6 micron, drawn through `render`, has the same shape with the equator much dimmer than the pole.

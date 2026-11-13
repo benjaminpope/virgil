@@ -277,8 +277,9 @@ def _loss_settled(losses, window):
         drop <= 2 se        (no fall is detected at 2σ), and
         drop + 2 se <= 1    (the upper 2σ bound on the true fall is under one nat).
 
-    The first is the rule used before #665, so this is never looser than it.
-    It alone passes a run too noisy to see any fall; the second closes that:
+    The first is the plain no-fall rule and the second only tightens it, so the
+    pair is never looser than the first alone. The first alone passes a run
+    too noisy to see any fall; the second closes that:
     the true fall exceeds ``drop + 2 se`` only with probability about 2%
     (normal means over a window), so a pass certifies a fall under the
     tolerance, and a run too noisy to resolve one nat (2 se > 1) never
@@ -337,9 +338,12 @@ def variational(
     model, priors, data
         Scene, priors and data as for
         [`numpyro_model`][virgil.likelihood.numpyro_model].
-    regularizers, noise, likelihoods : optional
-        Regularizers, noise priors and extra likelihoods; see
-        [Common arguments](../common_arguments.md).
+    regularizers : sequence, optional
+        Regularizers; see [Common arguments](../common_arguments.md).
+    noise : dict, optional
+        Noise priors; see [Common arguments](../common_arguments.md).
+    likelihoods : sequence, optional
+        Extra likelihoods; see [Common arguments](../common_arguments.md).
     start : FitResult or dict, optional
         Where the guide starts: a fit or its ``values`` (default: the priors'
         medians, width ``init_scale``).
@@ -349,22 +353,32 @@ def variational(
         autoguide. The flows need two or more parameters; the dense guides
         raise ``ValueError`` above 4096 coordinates (use
         [`laplace_samples`][virgil.imaging.laplace_samples] for images).
-    steps, num_particles, num_samples : int, optional
-        Steps (3000), draws per ELBO estimate (8), draws returned (2000).
-    optimizer, learning_rate, key : optional
-        Optimizer (default ``optax.adam``), its step size (3e-3), and the
-        PRNG key (default ``PRNGKey(0)``).
-    flat_coordinates, dtype : optional
-        ``flat_coordinates`` as for ``numpyro_model``, and the precision
-        (default ``"float64"``, as for ``fit``).
-    dense_start, init_scale : optional
+    steps : int, optional
+        Steps (3000).
+    optimizer : optax optimizer, optional
+        Default ``optax.adam``.
+    learning_rate : float, optional
+        The optimizer's step size (3e-3).
+    num_particles : int, optional
+        Draws per ELBO estimate (8).
+    num_samples : int, optional
+        Draws returned (2000).
+    key : jax.random.PRNGKey, optional
+        Default ``PRNGKey(0)``.
+    flat_coordinates : bool, optional
+        As for ``numpyro_model``.
+    dense_start : bool, optional
         Start the width at the Gauss–Newton covariance (default ``True``;
-        skipped, with a warning, given ``regularizers``). ``init_scale``
-        (default 0.1) is the width of the coordinates it does not cover, or of
-        all of them without it.
-    window, psis : optional
-        Convergence-test window (default ``steps // 10``); whether to compute
-        the Pareto k̂.
+        skipped, with a warning, given ``regularizers``).
+    init_scale : float, optional
+        The width (default 0.1) of the coordinates the Gauss–Newton start does
+        not cover, or of all of them without it.
+    window : int, optional
+        Convergence-test window (default ``steps // 10``).
+    psis : bool, optional
+        Whether to compute the Pareto k̂.
+    dtype : {"float64", "float32"}, optional
+        The precision (default ``"float64"``, as for ``fit``).
     **options
         Fixed error terms and ``reject_unphysical``, as for ``numpyro_model``.
 

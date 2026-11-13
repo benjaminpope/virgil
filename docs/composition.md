@@ -1,5 +1,5 @@
 <!-- AUTO-GENERATED FROM notebooks/composition.ipynb by scripts/sync_tutorial_docs.py. -->
-# Composing source models
+# Composing models
 
 Stars rarely come alone. A young star may be ringed by the hot inner rim of its disk; a companion may carry its own envelope of accreting material; a close binary may sit inside a circumbinary ring. None of these is "a binary" or "a disk", and a bespoke model class for every combination is tedious and error-prone.
 
@@ -7,45 +7,42 @@ This tutorial builds scenes like these out of simple shapes. Our running example
 
 This is a real problem. In LkCa 15, candidate protoplanets found with sparse aperture masking (Kraus & Ireland 2012; Sallum et al. 2015) were later argued to be consistent with light from the disk itself (Currie et al. 2019). If the disk and the planet are fitted *together*, the data can answer that kind of question directly.
 
-```python
-import sys
-from itertools import combinations
-from pathlib import Path
+??? note "Imports and setup"
 
-import jax
-import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as np
-import numpyro.distributions as dist
-from numpyro.infer import MCMC, NUTS, init_to_value
+    ```python
+    import warnings
+    from itertools import combinations
 
-repo_root = Path.cwd()
-if not (repo_root / "src").exists():
-    repo_root = repo_root.parent
-if str(repo_root / "src") not in sys.path:
-    sys.path.insert(0, str(repo_root / "src"))
+    import jax
+    import jax.numpy as jnp
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import numpyro.distributions as dist
+    from numpyro.infer import MCMC, NUTS, init_to_value
 
-from virgil.grid_fit import (
-    best_grid_point,
-    laplace_flux_uncertainty_grid,
-    likelihood_grid,
-    optimized_flux_grid,
-)
-from virgil.inference import laplace_cov
-from virgil.likelihood import numpyro_model
-from virgil.models import (
-    BinaryModelCartesian,
-    GaussianDisk,
-    ModulatedGaussianRim,
-    PointSource,
-    System,
-    UniformDisk,
-)
-from virgil.oidata import OIData, cp_indices
-from virgil.plotting import plot_grid_map, plot_model, set_style
+    warnings.filterwarnings("ignore", category=SyntaxWarning)  # upstream zodiax docstrings
 
-set_style()  # the figure style used throughout the docs
-```
+    from virgil.grid_fit import (
+        best_grid_point,
+        laplace_flux_uncertainty_grid,
+        likelihood_grid,
+        optimized_flux_grid,
+    )
+    from virgil.inference import laplace_cov
+    from virgil.likelihood import numpyro_model
+    from virgil.models import (
+        BinaryModelCartesian,
+        GaussianDisk,
+        ModulatedGaussianRim,
+        PointSource,
+        System,
+        UniformDisk,
+    )
+    from virgil.oidata import OIData, cp_indices
+    from virgil.plotting import plot_grid_map, plot_model, set_style
+
+    set_style()  # the figure style used throughout the docs
+    ```
 
 ## Shapes
 
@@ -110,7 +107,7 @@ print(f"{len(pairs)} baselines and {len(triangles)} closure phases")
 36 baselines and 84 closure phases
 ```
 
-## Mixing shapes into a `System`
+## Mixing shapes into a `System` {#system}
 
 A `System` is a scene made of named parts. Its visibility is the flux-weighted average of theirs,
 
@@ -286,9 +283,13 @@ fig, ax = plot_grid_map(
 plt.show()
 ```
 
-![composition output 18.1](generated/composition_cell018_out01.png)
+```text
+RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 22 of 3721 grid positions; values there may be inaccurate.
+```
 
-The companion stands out clearly above the aliases. The dark patch at the mirror-image position deserves a word. A companion on the opposite side of the star would produce closure phases of the opposite sign, so there the data are best matched by *less* light than the star alone, and the best-fit flux is negative. Real fluxes can't be negative, and `virgil` won't let you build a model with one. The optimizer reports the unconstrained estimate anyway, because the Ruffio et al. (2018) upper limits in the contrast-limits tutorial are built from it; they apply the positivity prior at that stage. So read a significance map for its positive peaks.
+![composition output 18.2](generated/composition_cell018_out02.png)
+
+`optimized_flux_grid` warns at the few grid positions (under 1 per cent here) where its optimizer did not converge; the flux there may be inaccurate. The companion stands out clearly above the aliases. The dark patch at the mirror-image position deserves a word. A companion on the opposite side of the star would produce closure phases of the opposite sign, so there the data are best matched by *less* light than the star alone, and the best-fit flux is negative. Real fluxes can't be negative, and `virgil` won't let you build a model with one. The optimizer reports the unconstrained estimate anyway, because the Ruffio et al. (2018) upper limits in the contrast-limits tutorial are built from it; they apply the positivity prior at that stage. So read a significance map for its positive peaks.
 
 ## Letting the rim vary: Laplace and HMC
 
@@ -333,18 +334,32 @@ for path in paths:
         f"{float(jnp.median(samples)):9.4f} ± {float(jnp.std(samples)):.4f} "
         f"{laplace_sigma[path]:10.4f} {fixed}"
     )
+
+flux_hmc = posterior["comp.flux"]
+print(
+    f"\ncomp.flux Laplace σ: {fixed_sigma['comp.flux']:.4f} with the rim fixed, "
+    f"{laplace_sigma['comp.flux']:.4f} with it free "
+    f"({laplace_sigma['comp.flux'] / fixed_sigma['comp.flux'] - 1:+.0%})"
+)
+print(
+    f"detection: HMC flux {float(jnp.median(flux_hmc)):.4f} ± {float(jnp.std(flux_hmc)):.4f}, "
+    f"{float(jnp.median(flux_hmc) / jnp.std(flux_hmc)):.1f}σ"
+)
 ```
 
 ```text
 parameter     truth                HMC  Laplace σ  σ, rim fixed
-comp.dra    45.0000   47.3183 ± 1.5362     1.6380        1.5882
-comp.ddec   30.0000   29.3432 ± 1.7142     1.8468        1.5855
+comp.dra    45.0000   47.4050 ± 1.6149     1.6380        1.5882
+comp.ddec   30.0000   29.2182 ± 1.9333     1.8468        1.5855
 comp.flux    0.0100    0.0101 ± 0.0012     0.0012        0.0008
-rim.flux     0.5000    0.5041 ± 0.0365     0.0421             -
-rim.diam    40.0000   39.8353 ± 1.2293     1.4678             -
+rim.flux     0.5000    0.5007 ± 0.0359     0.0421             -
+rim.diam    40.0000   39.8969 ± 1.2132     1.4678             -
+
+comp.flux Laplace σ: 0.0008 with the rim fixed, 0.0012 with it free (+55%)
+detection: HMC flux 0.0101 ± 0.0012, 8.7σ
 ```
 
-The rim and the companion are recovered together, all within about two standard deviations of the truth, and the Laplace and HMC uncertainties broadly agree. Freeing the rim costs something: the Laplace uncertainty on the companion's flux grows by about a third (from 0.0006 to 0.0008), and its declination also becomes less certain, most likely because the lopsided rim also produces closure phases, and some of its signal can be traded against the companion's. But the companion is still detected at more than ten sigma, so here no plausible rim can masquerade as the planet. This is the check to make before believing a detection.
+The rim and the companion are recovered together, all within about two standard deviations of the truth, and the Laplace and HMC uncertainties broadly agree. Freeing the rim costs something: the Laplace uncertainty on the companion's flux grows (the ratio is printed under the table), and its declination also becomes less certain, most likely because the lopsided rim also produces closure phases, and some of its signal can be traded against the companion's. But the companion is still detected at the significance printed under the table (the HMC flux over its spread), so here no plausible rim can masquerade as the planet. This is the check to make before believing a detection.
 
 ## Fitting the parameters you care about
 
@@ -381,8 +396,8 @@ print(f"position angle {polar_best['pa']:6.2f} ± {polar_sigma['pa']:.2f} deg  (
 ```
 
 ```text
-separation      55.68 ± 1.57 mas  (HMC spread 1.52)
-position angle  58.20 ± 1.91 deg  (HMC spread 1.78)
+separation      55.69 ± 1.53 mas  (HMC spread 1.58)
+position angle  58.35 ± 1.89 deg  (HMC spread 2.01)
 ```
 
 The Laplace uncertainties in separation and position angle agree with the spread of the HMC samples converted to the same quantities. The function works everywhere a template does: in `numpyro_model` (with priors keyed by argument name), `laplace_cov`, and the grid tools.

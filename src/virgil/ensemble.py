@@ -536,7 +536,7 @@ def run_group(data, draw, *, star=True, starts=None, spec=None, **fit_options):
     if star:
         # The image's flux relative to the star is a scale: log-uniform.
         priors["env.flux"] = dist.LogUniform(1e-4, 1e3)
-    # TV and TSV take beam = pixel scale, the unnormalised weights that
+    # TV and TSV take beam = pixel scale, the unnormalized weights that
     # ``weight_ranges`` were tuned for.
     options = (
         {"beam_mas": draw.pixel_scale_mas}
@@ -926,7 +926,7 @@ def _on_common_grid(image, npix, scale):
     onto the common grid, so that its corners are not cropped by a rotation
     within its own frame; others are resampled.
     """
-    if float(image.rotation_deg) == 0.0:
+    if float(image._numeric_frame()) == 0.0:
         return onp.asarray(
             resample(image, image.pixel_scale_mas, npix, scale), dtype=float
         )

@@ -57,7 +57,7 @@ list of dicts gives each dataset its own (`"noise[i].<term>"`).
 | Term | Meaning | See |
 |---|---|---|
 | `vis_scale`, `phi_scale` | multiply the visibility and phase uncertainties | [`inflated_errors`][virgil.likelihood.inflated_errors] |
-| `vis_error_rel`, `phi_error` | added in quadrature: a fraction of the model visibility; radians | [`inflated_errors`][virgil.likelihood.inflated_errors] |
+| `vis_error_rel`, `phi_error`, `vis_error` | added in quadrature: a fraction of the model visibility; radians; an absolute visibility error | [`inflated_errors`][virgil.likelihood.inflated_errors] |
 | `vis_gain_<group>` | width of gains correlated across channels | [`OIData.with_gains`][virgil.oidata.OIData.with_gains] |
 | `phi_offset_<group>` | width of closure-phase offsets | [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets] |
 | `wavel_scale`, `wavel_offset` | wavelength scale and offset | [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale] |

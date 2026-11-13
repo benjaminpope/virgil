@@ -6,13 +6,14 @@ Which way the axes point, what sign a phase has, what a flux means: none of thes
 2. [Baselines and the Fourier sign](#baselines-and-the-fourier-sign)
 3. [Observables](#observables)
 4. [Closure phases with four or more telescopes](#closure-phases-with-four-or-more-telescopes)
-5. [Fluxes](#fluxes)
-6. [Times and frames](#times-and-frames)
-7. [Orbits](#orbits)
-8. [Which priors?](#which-priors)
-9. [Priors and the MAP](#priors-and-the-map)
-10. [Precision](#precision)
-11. [Preconditioning image fits](#preconditioning-image-fits)
+5. [Likelihood normalization](#likelihood-normalization)
+6. [Fluxes](#fluxes)
+7. [Times and frames](#times-and-frames)
+8. [Orbits](#orbits)
+9. [Which priors?](#which-priors)
+10. [Priors and the MAP](#priors-and-the-map)
+11. [Precision](#precision)
+12. [Preconditioning image fits](#preconditioning-image-fits)
 
 ## Sky coordinates and images
 
@@ -95,7 +96,7 @@ The default, `"auto"`, keeps the data's own form; ask for another and data and e
   where $\varphi_{ab}$ is the visibility phase on baseline $(a, b)$. The legs are stored as sample indices `i_cps1`, `i_cps2` and `i_cps3`, so the closure phase is `phase[i_cps1] + phase[i_cps2] - phase[i_cps3]`. [`cp_indices`][virgil.oidata.cp_indices] builds the indices from station numbers and [`closure_phases`][virgil.oidata.closure_phases] evaluates the sum, wrapped into $[-\pi, \pi)$. Closure phases cancel telescope phase errors and any shift of the whole source;
 - **absolute phases** (`cp_flag=False`), $\arg V$ of each sample, rarer because they need a phase reference.
 
-Phases are **radians inside virgil**: every `phi` and `d_phi` attribute and the output of `closure_phases`. OIFITS stores degrees, and [`read_oifits`][virgil.oifits.read_oifits] converts on reading (from the column's unit, or assuming degrees if there is none). [`write_oifits`][virgil.oifits.write_oifits] does **not** convert: its tables hold phases and errors in degrees, as OIFITS stores them, so convert `phi` and `d_phi` with `numpy.rad2deg` before writing, or both come back about 57 times too small. A dictionary passed straight to `OIData` takes `phi_unit="deg"` for degrees.
+Phases are **radians inside virgil**: every `phi` and `d_phi` attribute and the output of `closure_phases`. OIFITS stores degrees, and [`read_oifits`][virgil.oifits.read_oifits] converts on reading (from the column's unit, or assuming degrees if there is none). [`write_oifits`][virgil.oifits.write_oifits] converts an `OIData` back to degrees; a dictionary of tables passed to it must already hold phases and errors in degrees, as OIFITS stores them (see [OIFITS files](oifits_files.md#writing-oidata)). A dictionary passed straight to `OIData` takes `phi_unit="deg"` for degrees.
 
 **Wrapping and the likelihood.** A phase is an angle, so a model phase of $\pi - \epsilon$ and a data phase of $-\pi + \epsilon$ agree closely. For unprojected phases the residual $\Delta$ (model minus data) enters the likelihood as the chord
 
@@ -219,36 +220,11 @@ Prefer numpyro distributions: `dist.LogUniform(low, high)` and `dist.Normal(mean
 
 ### Angle priors without a wrap {#angle-vectors}
 
-A prior on an angle $\theta$ with support on an interval, such as `Uniform(0, 360)`, numpyro's `VonMises` or [`AxialVonMises`][virgil.orbits.AxialVonMises], reaches samplers and [`fit`][virgil.fitting.fit] through a bijection onto the real line, so a posterior that straddles the end of the interval meets a wall. [`AngleVector`][virgil.angles.AngleVector] removes the wall. It samples a vector $v = r(\cos\theta, \sin\theta)$ at the site `"<path>_vec"`, and the model receives $\theta = \operatorname{atan2}(v_2, v_1)$ in degrees in $[0°, 360°)$, which [`numpyro_model`][virgil.likelihood.numpyro_model] records and `fit` reports under `"<path>"`.
-
-The density of $v$ is
-
-$$p(v) = \frac{e^{-(r-1)^2 / 2s^2}}{Z_s}\, p(\theta), \qquad Z_s = \int_0^\infty r\, e^{-(r-1)^2/2s^2}\,dr,$$
-
-so $r$ and $\theta$ are independent and $\theta$ has exactly the density $p(\theta)$ (per radian): uniform, $1/2\pi$, by default; a von Mises, $\exp[\kappa(\cos(\theta - \mu) - 1)] / (2\pi\, \mathrm{i0e}(\kappa))$, given `mean` and `kappa`; or, with `axial=True`, the von Mises of $2\theta$, so that $\theta$ and $\theta + 180°$ are equally likely. The radius is a nuisance with a ring prior whose mode is the unit circle, which keeps a maximum a posteriori fit away from the origin, where $\theta$ is undefined. The ring width $s$ (`ring_width`, default 0.25) does not change the prior on $\theta$.
-
-Every term has a least-squares form for Levenberg–Marquardt and [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass], and the density is normalized in $\mathbb{R}^2$, so evidences stay normalized. The ring's residual is $(r - 1)/s$. A von Mises enters as a chord, $\sqrt{\kappa}\,(\hat v - \hat m)$ with $\hat v = v / r$ and $\hat m = (\cos\mu, \sin\mu)$; half its square is $\kappa(1 - \cos(\theta - \mu))$, the von Mises exponent, just as virgil's phase residuals $2\sin(\Delta/2)/\sigma$ are chords with $\kappa = 1/\sigma^2$ (see [`whitened_residuals`][virgil.likelihood.whitened_residuals]). The axial chord is the same on the doubled direction, $(\cos 2\theta, \sin 2\theta) = (x^2 - y^2, 2xy)/r^2$.
-
-The construction follows Octofitter's `UniformCircular` (Thompson et al. 2023, AJ 166, 164) and exoplanet's `Angle` (Foreman-Mackey et al. 2021, JOSS 6, 3285), which sample $v \sim N(0, I)$ and so peak at the origin; the ring and chord priors are virgil's own.
+A prior on an angle with support on an interval, such as `Uniform(0, 360)`, numpyro's `VonMises` or [`AxialVonMises`][virgil.orbits.AxialVonMises], reaches samplers and [`fit`][virgil.fitting.fit] through a bijection onto the real line, so a posterior that straddles the end of the interval meets a wall. [`AngleVector`][virgil.angles.AngleVector] samples a vector $v = r(\cos\theta, \sin\theta)$ instead and gives the model $\theta$ in degrees in $[0°, 360°)$; its density, least-squares form and credit are on the [`virgil.angles`](api/angles.md) page.
 
 ### Azimuthal harmonics {#azimuthal-harmonics}
 
-At each radius, every azimuthal profile of a [`MultipoleDisk`][virgil.models.MultipoleDisk] is a real function of the azimuth $\theta$ (in the disk plane, from the projected major axis towards `pa + 90`) with the Fourier series
-
-$$
-\frac{I(\theta)}{I_0} = \sum_{m=-M}^{M} I_m e^{im\theta}, \qquad I_0 = 1, \quad I_{-m} = \bar I_m,
-$$
-
-whose *image harmonics* $I_m$ are complex, $m = 0 \dots M$, normalized to the azimuthal mean. Every form maps to and from them with [`to_image_harmonics`][virgil.harmonics.to_image_harmonics] and [`from_image_harmonics`][virgil.harmonics.from_image_harmonics] (or `Harmonics.convert`):
-
-- **linear**: $1 + \sum_m c_m \cos m\theta + s_m \sin m\theta$, so $c_m = 2\,\mathrm{Re}\,I_m$ and $s_m = -2\,\mathrm{Im}\,I_m$ (exact);
-- **positive**: $|h(e^{i\theta})|^2 / \sum_j |h_j|^2$ with $h(z) = 1 + h_1 z + \dots + h_M z^M$, whose roots all lie outside the unit circle. It is built from complex reflection coefficients $k_j$ with $|k_j| < 1$ by the Levinson step-up recursion $h^{(j)}_i = h^{(j-1)}_i + k_j \overline{h^{(j-1)}_{j-i}}$, with $k = w \tanh|w| / |w|$ from unconstrained latents $w_j \in \mathbb{C}$. Then $I_m = \sum_j h_{j+m} \bar h_j / \sum_j |h_j|^2$ (exact); the inverse is a spectral factorization (`from_image_harmonics`);
-- **von Mises**, $\exp[\kappa\cos(\theta - \theta_0)]$, truncated at the model's degree;
-- the legacy amplitude and azimuth pairs `az_amps`/`az_pas` of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] and [`TruncatedCone`][virgil.models.TruncatedCone].
-
-Use the conversions to report models in one convention, warm-start a positive-form fit from a linear one, or compare models. Report image harmonics, not the positive form's internal reflection coefficients.
-
-References: Dumitrescu 2007, *Positive Trigonometric Polynomials and Signal Processing Applications* (Springer, doi:10.1007/978-1-4020-5125-8), for the Fejér–Riesz theorem, spectral factorization and the Schur–Levinson recursion; Barndorff-Nielsen & Schou 1973, J. Multivariate Anal. 3, 408 (doi:10.1016/0047-259X(73)90030-4), for the unconstrained parametrization of a minimum-phase polynomial by reflection (partial autocorrelation) coefficients, here with a complex tanh map.
+Report the image harmonics $I_m$ of a [`MultipoleDisk`][virgil.models.MultipoleDisk], not the positive form's internal reflection coefficients. The legacy `az_amps`/`az_pas` of `ModulatedGaussianRim` and `TruncatedCone` are amplitudes and in-plane angles, not sky position angles; the Fourier series, the four forms and the conversions between them are on the [`virgil.harmonics`](api/harmonics.md) page.
 
 ### Hierarchical scales {#hierarchical-scales}
 

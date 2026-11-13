@@ -94,6 +94,7 @@ The held-out W1 result (paired with baseline f71294b, systems 200–399) was rea
 
   The fix will be a separate PR, judged on a fresh census arm.
 - **Until then.** Census results under the current `matters` rule carry this caveat.
+- **Update 2026-11-12.** The M2 fix merged as #686 (`0750be5`), into main and so into W1 (`570e13e`) and this branch. Only runs pinned before it (baseline f71294b, W1 2673182) carry the caveat.
 ---
 
 ---
