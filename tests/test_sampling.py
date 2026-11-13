@@ -54,8 +54,16 @@ def test_nuts_runs_on_an_injected_field():
         NUTS(
             numpyro_model(start, priors, data),
             init_strategy=init_to_value(values=init),
+            # The data-informed low-frequency latents have curvature that
+            # scales as σ²·S(ℓ), over 10²-10³ across the (σ, ℓ) the chain
+            # visits, which a diagonal mass adapted at typical σ and ℓ cannot
+            # follow. At the default 0.8 about 10% of chains take one
+            # trajectory from a large-σ start past the leapfrog stability
+            # limit; 0.95 shrinks the step enough to keep those stable. A
+            # hyperparameter-aware parameterization is virgil#720.
+            target_accept_prob=0.95,
         ),
-        num_warmup=200,  # 50 left the adaptation coarse enough for a stray divergence
+        num_warmup=200,
         num_samples=50,
         progress_bar=False,
     )
@@ -65,8 +73,7 @@ def test_nuts_runs_on_an_injected_field():
     # below cannot pass vacuously on an empty or partial dict.
     assert set(samples) == set(priors)
     assert all(onp.all(onp.isfinite(onp.asarray(v))) for v in samples.values())
-    # Any divergence is a failed trajectory: a well-conditioned posterior
-    # started at its MAP with a mass matrix adapted to it gives none.
+    # Any divergence is a failed trajectory.
     assert int(mcmc.get_extra_fields()["diverging"].sum()) == 0
 
 
