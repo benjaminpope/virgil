@@ -1,0 +1,1 @@
+The orbit search's C-steps relabel each night by its predictive inlier term (the peak likelihood marginalised over the labelled fit's parameter uncertainty), so a true night extrapolated by a short, tight inlier fit is no longer labelled an outlier. The target, evidence and IS are unchanged; the labels only seed the search.

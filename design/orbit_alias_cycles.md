@@ -1523,6 +1523,57 @@ has low ESS, with these rules (committed with the census criteria):
 
 Nothing in C1–C4 starts before the baseline and Stage C; a science merge needs its paired census delta.
 
+### 6.14 Predictive labelling in the C-steps (design pass 2026-11-07)
+
+**Problem.** `_labels` marks night k an inlier when its best peak term at the *point* prediction beats the floor
+b_k. The offset from the night's peak is e ~ N(0, C_k + Σ_k), with C_k = G_k F⁻¹ G_kᵀ the prediction covariance of the
+current labelled fit (the C_k of Fix 4, §6.11) and Σ_k the night summary covariance. When the summaries are tight and
+the labelled set short, C_k ≫ Σ_k, so ½eᵀΣ_k⁻¹e exceeds the night's height over its floor and a true night is
+labelled an outlier. The C-steps refit on the current inliers only, so that night never returns and the search settles
+on a partial-inlier mode. Fix 4 bounds the same cost, ½(1 + λ_k)χ²₄, for pairs; it is large exactly when λ_k is.
+
+**Rule.** After the labelled Newton, relabel each night by its *predictive* term: the peak likelihood marginalised
+over the parameter uncertainty of the labelled fit. The Gaussian convolution replaces Σ_k by Σ_k + C_k in the quadratic
+and the log-determinant,
+
+  ℓ̃_k^pred = ln L_k(s) + ½ ln(|Σ_k| / |Σ_k + C_k|) − ½ eᵀ(Σ_k + C_k)⁻¹e,
+
+compared with b_k as before. C_k = J_k H_post⁻¹ J_kᵀ, J_k the Jacobian of night k's (p, v) in the full chart
+(w_P, y_ζ, TI′), and H_post the curvature of the labelled *posterior* there,
+
+  H_post = H_lik + H_prior,
+
+with H_lik minus the Hessian of the labelled likelihood at the per-block scales (jitter unscaled, as in the point
+term), H_prior the prior precisions in (w_P, y_ζ): minus the second derivative of the logistic log-density in w_P, and
+for ζ the uniform disc's moment-matched precision 4/e_max (variance e_max/4 per axis), pulled back to y_ζ through
+∂ζ/∂y_ζ. The chart's own log-Jacobian Hessian is not used: its radial eigenvalue 4(1 − r²)/(1 + r²)² vanishes at
+r = |y_ζ| = 1 (e = e_max/2) and is negative beyond, so it would cancel weak likelihood curvature. The working ridge
+1/s_w² is added on TI′. `ln f` is taken as known. The likelihood alone is near-singular in (w_P, y_ζ) with few inliers, which would make C_k
+enormous and the Occam factor below push true nights to outliers; the prior makes H_post a posterior curvature, so the
+predictive is a posterior predictive. H_post is saddle-free (|eigenvalues|); its floor is ε_dtype · max|eigenvalue|, a
+numerical tolerance.
+
+**Reading.** For a night outside the labelled set this is exactly the leave-one-out predictive density. For a night
+inside it, C_k is the posterior covariance with the night included, below Σ_k, so the rule changes little there: a
+fitted night is not dropped for being fitted. With C_k → 0 it is the point term. The Occam factor ½ ln(|Σ + C| / |Σ|)
+penalises a night the fit cannot predict, so a poorly constrained fit does not label everything an inlier. No new
+tunable constants.
+
+**What does not change.** The labelled objective, the label-summed target, the evidence and the IS are untouched, as
+are the final label-summed Newton and `distinct_modes`. The labels only seed which mode the C-steps reach, so the rule
+changes which modes are found, never the value of a mode.
+
+**Cost.** One 7 × 7 Hessian and a (K, 4, 7) Jacobian per candidate per C-step, beside the 3 × 3 Hessian and Newton
+already there. `info["evaluations"]` does not count it; the smoke run reports the wall time.
+
+**Gate.** `test_the_c_step_labels_by_the_predictive_term_and_keeps_an_extrapolated_night` (high SNR, three initial
+inlier nights: the point term drops five true nights, the predictive keeps all eight). The merge decision is the paired
+census delta on the fresh systems 400–599 (`design/orbit_census_criteria.md`): an improvement in the rest stratum, no
+harm elsewhere.
+
+**Source.** Scoring inliers by the marginalised rather than the plug-in likelihood follows MLESAC, Torr & Zisserman
+(2000).
+
 
 ## 7. Pruning
 

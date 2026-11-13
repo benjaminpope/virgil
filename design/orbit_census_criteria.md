@@ -62,3 +62,37 @@ and tolerance 4·√(sd² + sd_ref²) + 0.01.
 
 Mode counts drift across platforms (macOS 9 vs Linux runner 10, seed 0 system 13); census arms are paired only within
 one platform (OzSTAR), never across.
+
+---
+## Arm: predictive C-step labels (#667, stacked on W1 #642), added 2026-11-07 before any run of this arm
+
+The held-out W1 result (paired with baseline f71294b, systems 200–399) was read in aggregate on 2026-11-07, including a post-hoc split by ln s. Systems 200–399 are therefore no longer clean for deciding W1 or this arm. The decision set is a fresh paired set, systems 400–599 of seed 0 (`START_BASE=400`), which nobody has inspected.
+
+- **Arms on 400–599:** baseline f71294b; W1 2673182; this arm (its pinned head). All three run on OzSTAR with the same image.
+- **Primary, for each of W1 and this arm against the baseline:** failure (status failed or error) in the informative stratum "rest", exact one-sided McNemar on discordant pairs, α = 0.01.
+- **Harm:** failure in each other stratum, and misses (ok with the truth outside the 99% set). Exact two-sided McNemar; harm if the arm is worse at p < 0.05.
+- **Merge rule:** primary passes and no harm.
+- **Secondary, recorded as a hypothesis from the W1 analysis, report-only:** this arm against W1, rest stratum, baseline ln s < −0.5, one-sided McNemar at α = 0.05.
+- **Report-only:** this arm on 200–399 against the baseline and W1 there.
+- **Systems 400–599 are aggregate-only,** like 200–399 before them.
+
+**W1 merge rule (added 2026-11-09, before the 400–599 baseline is complete).**
+
+- **W1's first test.** W1's first primary, on 200–399, was written in an uncommitted local script (`~/data/orbit_census_local/diag/heldout_delta.py`), not in git, and it failed (p = 0.036). The 400–599 primary is therefore W1's second try.
+- **W1 alone.** W1 merges alone only if its 400–599 primary passes at α = 0.005 (Bonferroni over its two tries), with no harm.
+- **#667.** #667 is judged as W1 + #667 against the baseline, at α = 0.01 as already committed. If #667 passes, that does not mean W1 passed.
+- **Comparator.** #667 against W1 stays report-only. It may not replace the baseline comparison.
+- **Partial look.** An aggregate look was taken at the partial baseline (82 of ~190 systems) during an independent review on 2026-11-08. No decision uses it. The primary is scored only on the complete set, exactly as written.
+- **Simulator caveat.** The census simulator sets each night's χ² to exactly n·s² (noise-free) and truncates ln f (#641), so these results are not performance on real data.
+
+**Floor sentinel gated by mass (#641): decision 2026-11-09.**
+
+- **What #641 changed.** It was merged on 2026-11-03, after the first census (aea931a, 73/200 failed). It changed `CellsResult.failed` so that a cell at the floor fails the system only if it `matters`. This loosens assertion 2 as implemented.
+- **The decision.** Ben accepts this rule, on the condition that `matters` gets the M2 fix from the 2026-11-08 code review:
+  - a genuine upper bound on each cell's evidence, in place of max(ln Ẑ, best Laplace);
+  - the threshold ln(n_cells/δ).
+
+  The fix will be a separate PR, judged on a fresh census arm.
+- **Until then.** Census results under the current `matters` rule carry this caveat.
+- **Update 2026-11-12.** The M2 fix merged as #686 (`0750be5`), into main and so into W1 (`570e13e`) and this branch. Only runs pinned before it (baseline f71294b, W1 2673182) carry the caveat.
+---

@@ -2310,6 +2310,15 @@ note = "exact entries for small coordinate blocks beside probed large ones, batc
 verified = false
 verified_via = "none"
 
+[ref.torr2000]
+authors = "Torr & Zisserman"
+year = 2000
+title = "MLESAC: A New Robust Estimator with Application to Estimating Image Geometry"
+doi = "10.1006/cviu.1999.0832"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.orbit_cells:_cstep_chunk"]
+
 [ref.tuthill1999]
 authors = "Tuthill, Monnier & Danchi"
 year = 1999
