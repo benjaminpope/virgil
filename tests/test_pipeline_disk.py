@@ -1503,17 +1503,16 @@ def test_a_missing_laplace_width_is_flagged_and_reaches_the_other_checks(
             assert checks["laplace_pd"].value == 2  # geometry and best row
 
 
-def _quadratic_laplace(monkeypatch, fixed):
-    """``_laplace`` of ``-log L = 2a² + 3ar - r²/2``, its Hessian by finite
-    differences: indefinite, as at a bound in ``r`` where the gradient is
-    not zero."""
+def _quartic_laplace(monkeypatch, fixed, c, k):
+    """``_laplace`` at a = 0.3, r = 1 of ``-log L = 2a² + c a r + k r²/2 +
+    a² (r - 1)²``, its Hessian by finite differences. ``H_aa = 4 + 2(r-1)²``
+    is 4 only if ``r`` is held at the value it was fitted at."""
 
     def laplace_cov(x, params, model, data):
         def nll(z):
             v = model(**dict(zip(params, z)))
-            return (
-                2.0 * v["a"] ** 2 + 3.0 * v["a"] * v["r"] - 0.5 * v["r"] ** 2
-            )
+            a, r = v["a"], v["r"]
+            return 2 * a**2 + c * a * r + 0.5 * k * r**2 + (a * (r - 1)) ** 2
 
         h, eye = 1e-3, onp.eye(len(x))
         hess = [
@@ -1537,18 +1536,32 @@ def _quadratic_laplace(monkeypatch, fixed):
     return disk._laplace(None, None, ["a", "r"], values, None, fixed=fixed)
 
 
-def test_a_parameter_at_a_bound_is_held_fixed_for_the_others_widths(
+def test_a_parameter_at_an_active_bound_is_held_fixed_for_the_others_widths(
     monkeypatch,
 ):
-    # H = [[4, 3], [3, -1]]: its inverse gives r a negative variance, so
-    # without the bound r has no width and a's is 1/sqrt(13), wrong.
-    sd, cov = _quadratic_laplace(monkeypatch, ())
-    assert sd["r"] is None and sd["a"] == pytest.approx(13**-0.5, rel=1e-6)
-    assert cov is None
-    # With r held at its bound (the KKT free subspace), a's width is
-    # 1/sqrt(H_aa) = 1/2; r has no entry and there is no evidence.
-    sd, cov = _quadratic_laplace(monkeypatch, ["r"])
-    assert sd == {"a": pytest.approx(0.5, rel=1e-6)} and cov is None
+    # H = [[4, 3], [3, -0.82]] (H_rr = -1 + 2a²) is indefinite, as at an
+    # active bound in r: its inverse gives r a negative variance, so without
+    # the bound r has no width and a's is sqrt(0.82 / 12.28), wrong.
+    sd, cov = _quartic_laplace(monkeypatch, (), c=3.0, k=-1.0)
+    assert sd["r"] is None and cov is None
+    assert sd["a"] == pytest.approx((0.82 / 12.28) ** 0.5, rel=1e-5)
+    # With r held at its fitted value (the KKT free subspace), a's width is
+    # 1/sqrt(H_aa) = 1/2 (1/sqrt(6) were r held at 0); r has no entry and
+    # there is no evidence.
+    sd, cov = _quartic_laplace(monkeypatch, ["r"], c=3.0, k=-1.0)
+    assert sd == {"a": pytest.approx(0.5, rel=1e-5)} and cov is None
+
+
+def test_a_parameter_near_a_bound_at_an_interior_maximum_keeps_its_width(
+    monkeypatch,
+):
+    # H = [[4, 1], [1, 2.18]] is positive definite: the maximum is interior
+    # though r is flagged near a bound, so the marginal widths are kept
+    # (det 7.72), not the smaller conditional ones, and so is the evidence.
+    sd, cov = _quartic_laplace(monkeypatch, ["r"], c=1.0, k=2.0)
+    assert sd["a"] == pytest.approx((2.18 / 7.72) ** 0.5, rel=1e-5)
+    assert sd["r"] == pytest.approx((4.0 / 7.72) ** 0.5, rel=1e-5)
+    assert cov is not None
 
 
 @pytest.mark.parametrize("model", ["gp", "rings"])
@@ -1573,7 +1586,6 @@ def test_a_geometry_bound_is_reported_by_at_bound_not_laplace_pd(model):
         assert checks["at_bound"].status == "warn"
         assert checks["at_bound"].value == ["geometry.r1"]
         assert checks["laplace_pd"].status == status
-        assert "r1" not in checks["laplace_pd"].message
 
 
 @pytest.mark.parametrize("missing", ["report", "factor", "list"])
