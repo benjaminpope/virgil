@@ -55,15 +55,15 @@ def test_nuts_runs_on_an_injected_field():
             numpyro_model(start, priors, data),
             init_strategy=init_to_value(values=init),
             # The data-informed low-frequency latents have curvature that
-            # scales as σ²·S(ℓ), over 10²-10³ across the (σ, ℓ) the chain
-            # visits, which a diagonal mass adapted at typical σ and ℓ cannot
-            # follow. At the default 0.8 about 10% of chains take one
-            # trajectory from a large-σ start past the leapfrog stability
-            # limit; 0.95 shrinks the step enough to keep those stable. A
+            # scales as σ²·S(ℓ) and varies by 10²-10³ across the (σ, ℓ) the
+            # chain visits, which a diagonal mass adapted at typical σ and ℓ
+            # cannot follow. At the default 0.8, 3 of 50 seeds take one
+            # trajectory from a large-σ state (σ ≈ 3) past the leapfrog
+            # stability limit; at 0.95 none of the 50 do. A
             # hyperparameter-aware parameterization is virgil#720.
             target_accept_prob=0.95,
         ),
-        num_warmup=200,
+        num_warmup=200,  # 50 left the adaptation coarse enough to diverge
         num_samples=50,
         progress_bar=False,
     )
