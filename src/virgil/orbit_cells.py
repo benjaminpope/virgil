@@ -1306,7 +1306,10 @@ def search_plan(space, key=None, nu_width=None):
     w = onp.zeros((s, 3, 4, 4))
     mean = onp.zeros((s, 3, 4))
     lnf, cut = onp.zeros(s), onp.zeros(s)
-    chi2s, ns = onp.zeros((s, 3, len(cat.blocks))), onp.zeros((s, 3, len(cat.blocks)))
+    chi2s, ns = (
+        onp.zeros((s, 3, len(cat.blocks))),
+        onp.zeros((s, 3, len(cat.blocks))),
+    )
     scale = S_MAX**2 if cat.rescalable else 1.0
     for i, (nt, pk) in enumerate(chosen):
         wt = w_pv if len(nt) == 2 else w_pos
