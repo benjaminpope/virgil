@@ -296,6 +296,7 @@ def test_gains_without_spanning_modes_hold_no_zero_size_arrays():
         "with_gains(telescope=0.01, baseline=0.01)",
         # every mode spans frames: no blocks within a frame
         "with_gains(modes=onp.random.default_rng(0).normal(0, 0.02, (2, d.u.size)))",
+        "with_closure_offsets(modes=onp.random.default_rng(0).normal(0, 0.02, (2, d.phi.size)))",
     ],
 )
 def test_parallel_chains_compile_with_gains(gains):
@@ -303,9 +304,14 @@ def test_parallel_chains_compile_with_gains(gains):
     # (0.11.2 segfaults); on others it passes either way.
     import subprocess
     import sys
+    from pathlib import Path
 
+    import virgil
+
+    src_root = str(Path(virgil.__file__).resolve().parents[1])
     script = f"""
-import os
+import os, sys
+sys.path.insert(0, {src_root!r})
 os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=2"
 import jax, jax.numpy as jnp, numpy as onp
 from virgil.coverage import vlti_oidata

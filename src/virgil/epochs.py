@@ -49,7 +49,7 @@ from ._precision import cast_tree, run_in
 from .fitting import fit
 from ._linear import arrow_at
 from .likelihood import (
-    _gain_jacobian,
+    _gain_inputs,
     _gaussian_loglike,
     _prediction_and_errors,
     _whiten_phases,
@@ -458,18 +458,25 @@ _NUMERIC_S_MAX = 10.0
 
 def _arrow_term(problem, penalty, log_s, derivs):
     """``(χ², norm[, dχ²/d ln s, dnorm/d ln s])`` of a gains or offsets block
-    at ``ln s``, with ``penalty`` (plain rows, ∝ 1/s²) added to χ²."""
+    at ``ln s``, with ``penalty`` (``(p2, e2, o2)`` or ``None``) added to χ²."""
     scale2 = np.exp(2.0 * log_s)
+    pen_chi2 = d_pen = np.zeros((), log_s.dtype)
+    if penalty is not None:
+        p2, e2, o2 = penalty
+        denom = scale2 * e2 + o2
+        pen_chi2 = np.sum(p2 / denom)
+        if derivs:
+            d_pen = -2.0 * scale2 * np.sum(p2 * e2 / denom**2)
     if not derivs:
         chi2, norm, _ = arrow_at(problem, scale2)
-        return chi2 + penalty / scale2, norm
+        return chi2 + pen_chi2, norm
     chi2, norm, r2, trace = arrow_at(problem, scale2, trace=True)
     n_col = problem.gram_bb.shape[0] * problem.gram_bb.shape[1]
     n_col += problem.gram_out.shape[0]
     return (
-        chi2 + penalty / scale2,
+        chi2 + pen_chi2,
         norm,
-        -2.0 * (r2 + penalty) / scale2,
+        -2.0 * r2 / scale2 + d_pen,
         scale2 * trace - n_col,
     )
 
@@ -512,13 +519,28 @@ class _Surface:
     def __init__(self, data, s_max=None):
         # Extra observables with a model-dependent covariance cannot be
         # scored (gains and closure offsets are integrated numerically).
-        if any(b.model_dependent_covariance for b in data.extras):
+        extras = getattr(data, "extras", ())
+        if any(b.model_dependent_covariance for b in extras):
             raise NotImplementedError(
                 "The scale-marginalized surface (scales='marginal', "
                 "epoch_positions, marginal_loglike) cannot score extra "
                 "observables with a model-dependent covariance. Use the "
                 "data without them, or scales='quoted'."
             )
+        n_vis = int(onp.asarray(data.vis).size)
+        if data.gains is not None and data.gains.n_vis != n_vis:
+            n_amp_blocks = int(n_vis > 0) + sum(
+                bool(b.gain_legs() and onp.size(b.data())) for b in extras
+            )
+            if n_amp_blocks > 1:
+                raise NotImplementedError(
+                    "The scale-marginalized surface (scales='marginal', "
+                    "epoch_positions, marginal_loglike) integrates one error "
+                    "scale per observable block, so GainModes spanning "
+                    "visamp/t3amp extras and V² do not factor. Pass "
+                    "include_extras=False to OIData.with_gains for V²-only "
+                    "gains, select one amplitude block, or use scales='quoted'."
+                )
         if s_max is not None and not float(s_max) > 1.0:
             raise ValueError(f"s_max must exceed 1, got {s_max}.")
         self.numeric = bool(
@@ -531,7 +553,7 @@ class _Surface:
         self.sizes = (
             int(onp.asarray(data.vis).size),
             int(onp.asarray(data.phi).size),
-        ) + tuple(int(b.data().size) for b in data.extras)
+        ) + tuple(int(b.data().size) for b in extras)
         self.blocks = _blocks(data)
         self.names = tuple(b[0] for b in self.blocks)
         self.nu = onp.array([b[3] for b in self.blocks], dtype=float)
@@ -665,17 +687,20 @@ class _Surface:
         for name in self.names:
             i = labels.index(name)
             a, b = int(edges[i]), int(edges[i + 1])
-            if name == "vis" and data.gains is not None:
-                gains, e = data.gains, errors[:n_vis]
-                jac = _gain_jacobian(data, prediction[:n_vis]) / e
+            if data.gains is not None and (
+                name == "vis"
+                or (
+                    i >= 2
+                    and data.gains.n_vis != n_vis
+                    and data.extras[i - 2].gain_legs()
+                )
+            ):
+                gains = data.gains
+                x_g, jac_g = _gain_inputs(data, prediction, resid, errors)
                 problem = gains.marginal_problem(
-                    resid[:n_vis] / e, jac, gains.widths_for(gain_terms)
+                    x_g, jac_g, gains.widths_for(gain_terms)
                 )
-                terms.append(
-                    functools.partial(
-                        _arrow_term, problem, np.zeros((), resid.dtype)
-                    )
-                )
+                terms.append(functools.partial(_arrow_term, problem, None))
             elif (
                 name == "phi"
                 and data._phases_wrap
@@ -683,14 +708,21 @@ class _Surface:
                 and data.phase_offsets is not None
             ):
                 # Correlated closure phases with offsets: the sines are
-                # marginalized; the periodic penalty rows ∝ 1/s are plain.
+                # marginalized; the periodic penalty rows divide by
+                # hypot(s · e, σ_off) at the nominal widths when enabled.
                 r, e, offsets = resid[a:b], errors[a:b], data.phase_offsets
+                widths = offsets.widths_for(offset_terms)
                 x = data.cp_noise.whiten(np.sin(r), e)[0]
-                problem = offsets.marginal_problem(
-                    data.cp_noise, x, e, offsets.widths_for(offset_terms)
+                problem = offsets.marginal_problem(data.cp_noise, x, e, widths)
+                std = (
+                    offsets.marginal_std(offsets.widths)
+                    if offsets.scale_penalty
+                    else np.zeros_like(e)
                 )
-                penalty = np.sum((2.0 * np.sin(0.5 * r) ** 2 / e) ** 2)
-                terms.append(functools.partial(_arrow_term, problem, penalty))
+                p2 = (2.0 * np.sin(0.5 * r) ** 2) ** 2
+                terms.append(
+                    functools.partial(_arrow_term, problem, (p2, e**2, std**2))
+                )
             elif name == "vis":
                 chi2 = lambda s, a=a, b=b: np.sum(
                     (resid[a:b] / (errors[a:b] * s)) ** 2
@@ -1527,7 +1559,7 @@ def _whitening_floats(data):
     n += sum(int(b.data().size) for b in data.extras)
     for modes, names in (
         (data.gains, ("shapes", "spanning")),
-        (data.phase_offsets, ("values",)),
+        (data.phase_offsets, ("values", "spanning")),
     ):
         if modes is not None:
             n += sum(
@@ -1556,12 +1588,14 @@ def _table_floats(data):
         n_block, n_row, n_mode = data.gains.shapes.shape
         span = data.gains.spanning
         n_span = 0 if span is None else int(span.shape[1])
-        problems.append((n_block, n_row, n_mode, n_span, data.vis.size))
+        problems.append((n_block, n_row, n_mode, n_span, data.gains.n_vis))
     if data.phase_offsets is not None:
         offsets = data.phase_offsets
         n_block, n_row = offsets.rows.shape
         n_mode = int(offsets.values.shape[1])
-        problems.append((n_block, n_row, n_mode, 0, offsets.n_out))
+        span = offsets.spanning
+        n_span = 0 if span is None else int(span.shape[1])
+        problems.append((n_block, n_row, n_mode, n_span, offsets.n_out))
     for n_block, n_row, m, k, n in problems:
         # Once: the columns, their gathered copy and cotangent (3 · B R m,
         # 3 · n k), the Grams ``G_bb`` (B m²), ``G_bs`` (B m k), ``G_ss`` (k²).

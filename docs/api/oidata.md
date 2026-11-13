@@ -19,7 +19,8 @@ ordinary unprojected phases, chord residuals `2 sin(Δ/2)` give a squared
 contribution that is smooth across phase wraps. Correlated closure phases are
 the exception: their residuals are wrapped into `[-π, π)`, combined, and
 whitened together as sines sin Δ, with a periodic penalty
-2 sin²(Δ/2)/σ per closure phase, so the likelihood is continuous
+2 sin²(Δ/2)/σ (or `hypot(σ, σ_off)` when closure-phase offsets are present)
+per closure phase, so the likelihood is continuous
 everywhere (the correlated Gaussian for small residuals, with no false
 minimum at Δ = π).
 
@@ -57,10 +58,14 @@ out there. The same terms for published positions are in
 [`PositionData.term`][virgil.orbits.PositionData.term]; they follow
 Octofitter (Thompson et al. 2023, AJ 166, 164).
 
-`with_closure_offsets` marginalizes closure-phase offsets as a linear
-perturbation: an offset δ changes the whitened sine sin Δ by about
-δ cos Δ, which holds while the offsets and residuals are small
-(δ ≲ 0.3 rad, 17°); larger widths are not marginalized exactly.
+`with_closure_offsets` marginalizes closure-phase offsets (both per-frame
+blocks and frame-spanning `modes`) as a linear perturbation: an offset δ
+changes the whitened sine sin Δ by about δ cos Δ, which holds while the
+offsets and residuals are small (δ ≲ 0.3 rad, 17°); larger widths are not
+marginalized exactly. When `scale_penalty=True` (the default), the periodic
+wrap penalty divides by `hypot(σ, σ_off)` at the nominal offset widths so
+large instrumental offsets do not incur a spurious quartic penalty at small
+photon noise.
 
 ## Attributes
 

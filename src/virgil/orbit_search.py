@@ -392,11 +392,20 @@ def _profile(x, rows, cols, spanning=None):
     return x - span @ (np.linalg.pinv(span) @ x)
 
 
-def _local_rank(rows, cols, n):
-    """The rank of block-local columns (host)."""
-    return sum(
+def _local_rank(rows, cols, n, spanning=None):
+    """The rank of block-local plus spanning columns (host)."""
+    rank = sum(
         int(onp.linalg.matrix_rank(c[r < n])) for r, c in zip(rows, cols)
     )
+    if spanning is not None:
+        span = onp.array(spanning, float, copy=True)
+        for r, c in zip(rows, cols):
+            inside = r < n
+            r, c = r[inside], c[inside]
+            if c.size:
+                span[r] -= c @ (onp.linalg.pinv(c) @ span[r])
+        rank += int(onp.linalg.matrix_rank(span))
+    return rank
 
 
 class _Scorer:
@@ -412,7 +421,7 @@ class _Scorer:
             (None, None),
             is_leaf=lambda x: x is None,
         )
-        if plain.extras:
+        if getattr(plain, "extras", ()):
             raise NotImplementedError(
                 "score_orbits does not support extra observables "
                 "(OIData.extras) yet; select the visibilities and closure "
@@ -426,27 +435,21 @@ class _Scorer:
         if self.gains is not None:
             # The independent gains: the degrees of freedom lost.
             g = self.gains
-            rows, shapes = onp.asarray(g.rows), onp.asarray(g.shapes)
-            lost["vis"] = _local_rank(rows, shapes, g.n_vis)
-            if g.spanning is not None:
-                span = onp.asarray(g.spanning, float)
-                for r, c in zip(rows, shapes):
-                    inside = r < g.n_vis
-                    r, c = r[inside], c[inside]
-                    if c.size:
-                        span[r] -= c @ (onp.linalg.pinv(c) @ span[r])
-                lost["vis"] += int(onp.linalg.matrix_rank(span))
+            lost["vis"] = _local_rank(
+                onp.asarray(g.rows), onp.asarray(g.shapes), g.n_vis, g.spanning
+            )
         if self.offsets is not None:
             sigma = onp.asarray(plain.flatten_data()[1], float)
-            cols = onp.asarray(
-                self.offsets._columns(
-                    plain.cp_noise,
-                    sigma[self.n_vis : self.n_phase],
-                    onp.ones(len(self.offsets.widths)),
-                )
+            cols, spanning = self.offsets._columns(
+                plain.cp_noise,
+                sigma[self.n_vis : self.n_phase],
+                onp.ones(len(self.offsets.widths)),
             )
             lost["phi"] = _local_rank(
-                onp.asarray(self.offsets.rows), cols, self.offsets.n_out
+                onp.asarray(self.offsets.rows),
+                onp.asarray(cols),
+                self.offsets.n_out,
+                spanning,
             )
         blocks = []
         for name, a, b, nu, von_mises in surface.blocks:
@@ -480,13 +483,20 @@ class _Scorer:
             )
         if offsets is not None:
             stop = n_vis + offsets.n_out
-            cols = offsets._columns(
-                plain.cp_noise,
-                errors[n_vis : self.n_phase],
-                np.ones_like(offsets.widths),
+            err_phi = errors[n_vis : self.n_phase]
+            cols, spanning = offsets._columns(
+                plain.cp_noise, err_phi, np.ones_like(offsets.widths)
             )
             rows = np.asarray(offsets.rows)
-            r = r.at[n_vis:stop].set(_profile(r[n_vis:stop], rows, cols))
+            r = r.at[n_vis:stop].set(
+                _profile(r[n_vis:stop], rows, cols, spanning)
+            )
+            if offsets.scale_penalty:
+                n_phi = self.n_phase - n_vis
+                scale = err_phi / np.hypot(
+                    err_phi, offsets.marginal_std(offsets.widths)
+                )
+                r = r.at[stop : stop + n_phi].multiply(scale)
         return self.surface.block_chi2(r)
 
     def score(self, chi2, dof, plain, scales):

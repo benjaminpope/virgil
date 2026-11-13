@@ -12,8 +12,9 @@ as a chord, 2 sin(Δ/2), so that the likelihood is smooth where phases
 wrap at ±π. Closure phases from four or more telescopes are correlated:
 their independent combinations are whitened together, using the sine
 sin Δ (not the chord) of each residual, with a periodic penalty
-2 sin²(Δ/2) / σ added per closure phase. Both terms repeat every 2π and
-are smooth, so the likelihood is continuous everywhere.
+2 sin²(Δ/2) / σ (or ``hypot(σ, σ_off)`` with closure-phase offsets) added
+per closure phase. Both terms repeat every 2π and are smooth, so the
+likelihood is continuous everywhere.
 """
 
 import os
@@ -63,6 +64,26 @@ def _whiten(
     )[:2]
 
 
+def _gain_inputs(data, prediction, resid, errors):
+    """Normalized residuals and error-scaled Jacobians for ``data.gains``."""
+    n_vis = np.asarray(data.vis).size
+    vis_err = errors[:n_vis]
+    x = resid[:n_vis] / vis_err
+    jac = _gain_jacobian(data, prediction[:n_vis]) / vis_err
+    if data.gains.n_vis == n_vis:
+        return x, jac
+    xs, jacs = [x], [jac]
+    offset = n_vis + np.asarray(data.phi).size
+    for block in getattr(data, "extras", ()):
+        end = offset + int(block.data().size)
+        if block.gain_legs() and end > offset:
+            err = errors[offset:end]
+            xs.append(resid[offset:end] / err)
+            jacs.append(prediction[offset:end] / err)
+        offset = end
+    return np.concatenate(xs), np.concatenate(jacs)
+
+
 def _whiten_with_log_norm(
     data,
     prediction,
@@ -83,11 +104,11 @@ def _whiten_with_log_norm(
     and correlated closure phases (chords, sines and the periodic penalty), which
     follow ``docs/conventions.md`` (Observables; Closure phases with four or more
     telescopes; Likelihood normalization). Extra observables follow the phases,
-    each block whitened by itself. With ``frozen=True`` the diagonal ``errors``
-    pass through ``jax.lax.stop_gradient`` for ``_curvature_rows``. With
-    ``split_norm=True`` ``log_norm`` is instead ``[gains', offsets']`` (the
-    visibility and phase parts; extra blocks are left out), as the
-    scale-marginalized surface needs them block by block.
+    each block whitened by itself unless marginalized with ``data.gains``. With
+    ``frozen=True`` the diagonal ``errors`` pass through ``jax.lax.stop_gradient``
+    for ``_curvature_rows``. With ``split_norm=True`` ``log_norm`` is instead
+    ``[gains', offsets']`` (the visibility and phase parts; extra blocks are left
+    out), as the scale-marginalized surface needs them block by block.
     """
     prediction = np.asarray(prediction)
     resid = prediction - np.asarray(reference)
@@ -99,32 +120,53 @@ def _whiten_with_log_norm(
     n_vis = np.asarray(data.vis).size
     n_phase = n_vis + np.asarray(data.phi).size
     vis, vis_errors = resid[:n_vis] / errors[:n_vis], errors[:n_vis]
-    vis_norm = np.zeros((), errors.dtype)
+    gains_norm = np.zeros((), errors.dtype)
+    amp_whitened = amp_extra = None
     if data.gains is not None:  # marginalize the visibility gains
         gains = data.gains
-        jacobian = _gain_jacobian(data, prediction[:n_vis]) / vis_errors
-        vis, extra = gains.whiten(vis, jacobian, gains.widths_for(gain_terms))
-        vis_errors, vis_norm = vis_errors * np.exp(extra), np.sum(extra)
+        x_gain, jac_gain = _gain_inputs(data, prediction, resid, errors)
+        w_gain, extra = gains.whiten(
+            x_gain, jac_gain, gains.widths_for(gain_terms)
+        )
+        gains_norm = np.sum(extra)
+        if gains.n_vis == n_vis:
+            vis, vis_errors = w_gain, vis_errors * np.exp(extra)
+        else:
+            vis = w_gain[:n_vis]
+            vis_errors = vis_errors * np.exp(extra[:n_vis])
+            amp_whitened, amp_extra = w_gain[n_vis:], extra[n_vis:]
     phase, phase_errors, phase_norm = _whiten_phases(
         data, resid[n_vis:n_phase], errors[n_vis:n_phase], offset_terms
     )
     whitened, effective = [vis, phase], [vis_errors, phase_errors]
-    log_norm = vis_norm + phase_norm
+    log_norm = gains_norm + phase_norm
     reference = np.asarray(reference)
     offset = n_phase
-    for block in data.extras:
+    amp_pos = 0
+    for block in getattr(data, "extras", ()):
         # Extra observables (OI_FLUX, T3AMP, VISAMP, VISPHI) whiten their
-        # own blocks: see virgil.observables.
+        # own blocks unless already marginalized with data.gains.
         end = offset + int(block.data().size)
-        w, e = block.whiten(
-            prediction[offset:end], reference[offset:end], errors[offset:end]
-        )
+        if amp_whitened is not None and block.gain_legs() and end > offset:
+            n_b = end - offset
+            w = amp_whitened[amp_pos : amp_pos + n_b]
+            ex = amp_extra[amp_pos : amp_pos + n_b]
+            e = errors[offset:end] * np.exp(ex)
+            amp_pos += n_b
+        else:
+            w, e = block.whiten(
+                prediction[offset:end],
+                reference[offset:end],
+                errors[offset:end],
+            )
+            log_norm = log_norm + np.sum(
+                np.log(e) - np.log(errors[offset:end])
+            )
         whitened.append(w)
         effective.append(e)
-        log_norm = log_norm + np.sum(np.log(e) - np.log(errors[offset:end]))
         offset = end
     if split_norm:
-        log_norm = np.stack([vis_norm, phase_norm])
+        log_norm = np.stack([gains_norm, phase_norm])
     return np.concatenate(whitened), np.concatenate(effective), log_norm
 
 
@@ -145,16 +187,23 @@ def _whiten_phases(data, resid, errors, offset_terms=None):
     whitened, whitened_errors = data.cp_noise.whiten(np.sin(resid), errors)
     offsets = data.phase_offsets
     log_norm = zero
+    penalty_scale = errors
     if offsets is not None:
+        widths = offsets.widths_for(offset_terms)
         whitened, extra = offsets.whiten(
             data.cp_noise,
             whitened,
             errors,
-            offsets.widths_for(offset_terms),
+            widths,
         )
         whitened_errors = whitened_errors * np.exp(extra)
         log_norm = np.sum(extra)
-    penalty = 2.0 * np.sin(0.5 * resid) ** 2 / errors
+        if offsets.scale_penalty:
+            # Nominal widths keep penalty_scale fixed when fitting phi_offset_*.
+            penalty_scale = np.hypot(
+                errors, offsets.marginal_std(offsets.widths)
+            )
+    penalty = 2.0 * np.sin(0.5 * resid) ** 2 / penalty_scale
     penalty_errors = np.full(penalty.shape, 1.0 / np.sqrt(2.0 * np.pi))
     return (
         np.concatenate([whitened, penalty]),
@@ -475,12 +524,15 @@ def _curvature_rows(model, data, noise):
             )[1]
         rows.append(root2 * np.log(phase_errors))
     if gain_terms:
-        pred_vis = jax.lax.stop_gradient(prediction[:n_vis])
-        err_vis = jax.lax.stop_gradient(errors[:n_vis])
-        jacobian = _gain_jacobian(data, pred_vis) / err_vis
+        x_gain, jac_gain = _gain_inputs(
+            data,
+            jax.lax.stop_gradient(prediction),
+            jax.lax.stop_gradient(resid),
+            jax.lax.stop_gradient(errors),
+        )
         extra_vis = data.gains.whiten(
-            jax.lax.stop_gradient(resid[:n_vis]) / err_vis,
-            jacobian,
+            x_gain,
+            jac_gain,
             data.gains.widths_for(gain_terms),
         )[1]
         rows.append(root2 * extra_vis)

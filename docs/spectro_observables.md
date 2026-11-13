@@ -63,12 +63,14 @@ data.select(observables=("phi", "visphi"))          # no V², no spectrum
 
 `observables` names what to keep: `"vis"`, `"phi"` and the `extras` kinds in
 the table above; the rest are dropped at every wavelength. Closure triangles
-are kept whole, since their legs share a wavelength, and calibration gains
-([`with_gains`][virgil.oidata.OIData.with_gains]) go with the visibilities.
-When the closure phases are dropped, the differential phases keep their
-closure part (below), since it is then counted only once. Projected
-observables (kernel phases, DISCOs) cannot be selected, and closure-phase
-offsets must be added after selecting.
+are kept whole, since their legs share a wavelength. Calibration gains
+([`with_gains`][virgil.oidata.OIData.with_gains]) propagate across `vis` and
+(unless `include_extras=False`) `"visamp"` and `"t3amp"`, and both gains and
+closure-phase offsets ([`with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets])
+are subsetted onto the surviving observables (or cleared when all of their
+observables are dropped). When the closure phases are dropped, the differential
+phases keep their closure part (below), since it is then counted only once.
+Projected observables (kernel phases, DISCOs) cannot be selected.
 
 To use different windows for different observables, make them separate
 datasets of one fit. V² and closure phases are independent, so nothing is
