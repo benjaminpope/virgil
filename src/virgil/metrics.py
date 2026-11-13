@@ -516,6 +516,8 @@ def ring_features(
     n_theta=180,
     oversample=4,
     refine=True,
+    central_ratio=0.25,
+    floor_ratio=2.5,
 ):
     """Ring diameter, width, orientation, asymmetry and central brightness.
 
@@ -526,12 +528,12 @@ def ring_features(
     The centre minimizes ``σ_r / ⟨r_pk⟩``, with ``r_pk(θ)`` the radius of
     peak brightness at each position angle ``θ``. Then: diameter
     ``2⟨r_pk⟩``; width the mean FWHM of ``I(r, θ) − I_floor``, with
-    ``I_floor = ⟨I(2.5 r_pk, θ)⟩``; orientation ``η`` and asymmetry ``A`` from
+    ``I_floor = ⟨I(floor_ratio r_pk, θ)⟩``; orientation ``η`` and asymmetry ``A`` from
     the ``m = 1`` azimuthal mode ``∫ I e^{iθ} dθ`` over the annulus
     ``r_pk ± w/2`` (``η`` East of North, ``A = |m=1| / m=0``, so a
     modulation ``1 + a cos(θ − η)`` has ``A = a/2``); central fraction
-    ``⟨I(r < 0.25 r_pk)⟩ / ⟨I(r_pk, θ)⟩``.
-    The ratios 2.5 and 0.25 are the paper's fixed 50 and 5 μas scaled to
+    ``⟨I(r < central_ratio r_pk)⟩ / ⟨I(r_pk, θ)⟩``.
+    The default ratios 2.5 and 0.25 are the paper's fixed 50 and 5 μas scaled to
     its ring radius (about 20 μas), so any ring size is treated alike.
     ``η`` (circular mean) and ``A`` are averaged over radius after taking the
     phase and ratio; ``pa_std`` is the circular standard deviation.
@@ -555,6 +557,10 @@ def ring_features(
         Position angles per ring.
     oversample : float
         Radial samples per pixel.
+    central_ratio : float
+        Central region is ``r < central_ratio · r_pk`` (Paper IV 0.25; 0.2 in some later work).
+    floor_ratio : float
+        ``I_floor`` is sampled at ``floor_ratio · r_pk`` (Paper IV 2.5; 2.0 in some later work).
     refine : bool
         Polish the best trial centre with Nelder-Mead.
 
@@ -617,7 +623,7 @@ def ring_features(
     # Width: FWHM of I - floor, floor = <I(2 r_pk, theta)>.
     prof = _polar(pix, ps, ra0, dec0, r, theta)
     # The floor ring is kept inside the image.
-    r_floor = min(2.5 * rmean, half - max(abs(ra0), abs(dec0)))
+    r_floor = min(floor_ratio * rmean, half - max(abs(ra0), abs(dec0)))
     floor = float(
         onp.mean(_polar(pix, ps, ra0, dec0, onp.array([r_floor]), theta))
     )
@@ -652,9 +658,9 @@ def ring_features(
     resultant = onp.abs(onp.mean(unit))
     ratio = onp.abs(m1[m0 > 0]) / m0[m0 > 0]
 
-    # Central fraction, area-weighted over r < 0.25 r_pk.
-    m_c = max(4, int(0.25 * rmean / dr))
-    rc = (onp.arange(m_c) + 0.5) * 0.25 * rmean / m_c
+    # Central fraction, area-weighted over r < central_ratio r_pk.
+    m_c = max(4, int(central_ratio * rmean / dr))
+    rc = (onp.arange(m_c) + 0.5) * central_ratio * rmean / m_c
     cen = _polar(pix, ps, ra0, dec0, rc, theta).mean(axis=1)
     mean_c = float(onp.sum(cen * rc) / max(onp.sum(rc), 1e-30))
     ring_pk = onp.array(

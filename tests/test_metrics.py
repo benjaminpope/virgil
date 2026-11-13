@@ -252,3 +252,12 @@ def test_ring_dispersions_vanish_for_symmetric_ring():
 def test_ring_needs_scale_for_array():
     with pytest.raises(ValueError):
         metrics.ring_features(_ring())
+
+
+def test_ring_ratio_keywords():
+    img = _ring(sigma=4.0)
+    base = metrics.ring_features(img, 1.0)
+    f = metrics.ring_features(img, 1.0, central_ratio=0.2, floor_ratio=2.0)
+    # A floor nearer the ring is higher, so the width is smaller.
+    assert f.width < base.width
+    assert f.diameter == pytest.approx(base.diameter, abs=0.1)
