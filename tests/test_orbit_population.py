@@ -625,6 +625,9 @@ def test_the_fit_scores_the_drawn_chi2_without_bias_in_ln_s():
     assert abs(post.mean() - ln_s0) < 4 * post.std() / onp.sqrt(n)
 
 
+@pytest.mark.slow
+@pytest.mark.full_only
+@pytest.mark.timeout(1200)
 def test_the_cell_fit_is_equivariant_to_the_scale_of_the_quoted_errors():
     """The posterior does not depend on the noise scale: the same outlier-free
     data under σ·c gives the same p(N), the same inlier nights in the true
