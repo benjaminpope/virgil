@@ -623,3 +623,59 @@ def test_the_fit_scores_the_drawn_chi2_without_bias_in_ln_s():
     w = onp.exp(terms - terms.max(axis=0))
     post = (w * grid[:, None]).sum(0) / w.sum(0)
     assert abs(post.mean() - ln_s0) < 4 * post.std() / onp.sqrt(n)
+
+
+def test_the_cell_fit_is_equivariant_to_the_scale_of_the_quoted_errors():
+    """The posterior does not depend on the noise scale: the same outlier-free
+    data under σ·c gives the same p(N), the same inlier nights in the true
+    cell, and the same ln Z in every cell the library's ``matters`` rule keeps,
+    within the quoted errors (at the DELTA two-sided normal quantile). The
+    search's start must not depend on the scale (it once labelled every night
+    an outlier at a true ln s above 0.3 or below -1.5)."""
+    from scipy import stats
+
+    from tests import test_orbit_cells as toc
+    from virgil import orbit_cells as oc_cells
+
+    with jax.enable_x64(True):
+        rng = onp.random.default_rng(7)
+        times = toc._two_season_times(rng)
+        orbit = toc._orbit(period=11.3, a=6.0, ecc=0.3)
+        base = toc._summaries(orbit, times, sigma=0.03 * 6.0, seed=1)
+        domain = oc_cells.period_domain(base, p_range=(9.0, 14.0))
+        fits = {}
+        for ln_c in (0.0, 1.0, -1.5):
+            out = oc_cells.position_cells(
+                pop.rescaled(base, onp.exp(ln_c)), domain, jax.random.key(0),
+                log_outlier=onp.full(len(times), toc.LOG_B), jitter=0.0,
+                a_range=(1.0, 30.0), e_max=0.9,
+            )  # fmt: skip
+            assert not out.failed.any()
+            fits[ln_c] = out
+        ref = fits[0.0]
+        true_n = [
+            i for i, c in enumerate(ref.cells) if c.p_lo <= 11.3 <= c.p_hi
+        ][0]
+        assert pop._inlier_set(ref.fits[true_n])
+        z = float(stats.norm.isf(oc_cells.DELTA / 2))
+        top = int(onp.argmax(ref.p_pos))
+        assert top == true_n
+        for ln_c in (1.0, -1.5):
+            out = fits[ln_c]
+            assert int(onp.argmax(out.p_pos)) == top
+            assert pop._inlier_set(ref.fits[top]) == pop._inlier_set(
+                out.fits[top]
+            )
+            e_top = onp.hypot(
+                ref.fits[top].log_z_error, out.fits[top].log_z_error
+            )
+            # Negligible-mass wrong cells can hold different multi-night
+            # subsets at different starts, beyond their quoted errors: a
+            # known issue, so only the cells the library's rule keeps count.
+            for i in onp.flatnonzero(ref.matters | out.matters):
+                f0, f1 = ref.fits[i], out.fits[i]
+                err = onp.hypot(f0.log_z_error, f1.log_z_error)
+                assert abs(f0.log_z - f1.log_z) <= z * err
+                # p(N) = Z_N / Σ Z: its log differs by the errors at most
+                dlp = abs(onp.log(ref.p_pos[i]) - onp.log(out.p_pos[i]))
+                assert dlp <= z * (err + e_top)

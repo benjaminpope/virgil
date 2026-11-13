@@ -1049,9 +1049,21 @@ def _varpro_objective(v, nights, w, mean, space):
     return -0.5 * _solve_set(_design(space, nights, v), mean, w, space.s_w2)[0]
 
 
-def _chart_from(space, v, ti, ln_f):
+def _chart_from(space, v, ti, ln_f, chi2, n):
     """The chart vector of ``(w_P, y_ζ) = v``, TI′ and ``ln f``, with ``y_z``
-    at the radius ``R0`` and the error scales at one."""
+    at the radius ``R0``.
+
+    The error scales start at their conditional MLE given the inlier nights:
+    ``ln ŝ_g = ½ ln(Σχ²_g / Σn_g)`` per block (``chi2`` and ``n`` are those
+    sums), clipped to ``±ln S_MAX``, so a night's label does not depend on the
+    scale of the errors. Fixed at one where the scale is not free."""
+    ln_s = 0.5 * np.log(np.maximum(chi2, 1e-30) / np.maximum(n, 1e-30))
+    ln_s = np.where(
+        (n > 0) & (chi2 > 0) & space.cat.rescalable,
+        np.clip(ln_s, -math.log(S_MAX), math.log(S_MAX)),
+        0.0,
+    )
+    frac_s = np.clip((ln_s / math.log(S_MAX) + 1.0) / 2.0, 1e-6, 1.0 - 1e-6)
     z = oc.ti_to_z(*tuple(ti))
     la = math.log(space.a_range[0])
     da = math.log(space.a_range[1] / space.a_range[0])
@@ -1064,7 +1076,7 @@ def _chart_from(space, v, ti, ln_f):
             (np.log(frac) - np.log1p(-frac))[None],
             v[1:3],
             (np.log(ff) - np.log1p(-ff))[None],
-            np.zeros(space.d - 9, space.dtype),
+            (np.log(frac_s) - np.log1p(-frac_s)).astype(space.dtype),
         ]
     )
 
@@ -1082,7 +1094,10 @@ def _varpro_chunk(space, plan, s, v0, n_iter):
         ti = _solve_set(
             _design(space, args[0], v), args[2], args[1], space.s_w2
         )[1]
-        x = _chart_from(space, v, ti, plan["lnf"][si])
+        x = _chart_from(
+            space, v, ti, plan["lnf"][si],
+            plan["chi2"][si].sum(0), plan["n"][si].sum(0),
+        )  # fmt: skip
         h = -jax.hessian(_varpro_objective)(v, *args)
         return (
             x, _labels(x, space), -2.0 * fv - ti @ ti / space.s_w2, v, h,
@@ -1128,7 +1143,12 @@ def _cstep_chunk(space, plan, v, lab, n_iter):
         ln_f = np.sum(wf * plan["fm"][np.arange(k), j]) / np.maximum(
             wf.sum(), 1e-30
         )
-        x = _chart_from(space, v, ti, ln_f)
+        inl = (lab >= 0)[:, None]
+        x = _chart_from(
+            space, v, ti, ln_f,
+            np.sum(np.where(inl, space.cat.chi2[np.arange(k), j], 0.0), 0),
+            np.sum(np.where(inl, space.cat.n[np.arange(k), j], 0.0), 0),
+        )  # fmt: skip
         h = -jax.hessian(_labelled_objective)(v, *args)
         return v, _labels(x, space), x, -2.0 * fv, h, capped
 
@@ -1286,6 +1306,7 @@ def search_plan(space, key=None, nu_width=None):
     w = onp.zeros((s, 3, 4, 4))
     mean = onp.zeros((s, 3, 4))
     lnf, cut = onp.zeros(s), onp.zeros(s)
+    chi2s, ns = onp.zeros((s, 3, len(cat.blocks))), onp.zeros((s, 3, len(cat.blocks)))
     scale = S_MAX**2 if cat.rescalable else 1.0
     for i, (nt, pk) in enumerate(chosen):
         wt = w_pv if len(nt) == 2 else w_pos
@@ -1293,6 +1314,7 @@ def search_plan(space, key=None, nu_width=None):
         nights[i, : len(nt)] = nt
         for j, (k, p) in enumerate(zip(nt, pk)):
             w[i, j], mean[i, j] = wt[k, p], mean_all[k, p, :4]
+            chi2s[i, j], ns[i, j] = cat.chi2[k, p], cat.n[k, p]
         wf = onp.array([w_f[k, p] for k, p in zip(nt, pk)])
         lnf[i] = (
             wf
@@ -1348,6 +1370,7 @@ def search_plan(space, key=None, nu_width=None):
         "parent": np.asarray(parent_of), "pairs": np.asarray(pairs, int),
         "inner": np.asarray(inner),
         "gap": np.asarray(gap, dt),
+        "chi2": np.asarray(chi2s, dt), "n": np.asarray(ns, dt),
     }  # fmt: skip
 
 
