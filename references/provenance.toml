@@ -2098,6 +2098,19 @@ verified_via = "crossref"
 used_in = ["virgil.smc:tempered_smc"]
 note = "Electron. J. Probab. 19; the log of the SMC normalizer estimate is asymptotically normal with the variance of the floor term"
 
+[ref.beskos2016]
+authors = "Beskos, Jasra, Kantas & Thiery"
+year = 2016
+title = "On the convergence of adaptive sequential Monte Carlo methods"
+doi = "10.1214/15-AAP1113"
+arxiv = "1306.6462"
+bibcode = "2013arXiv1306.6462B"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Ann. Appl. Probab. 26, 1111; kernels adapted on the current cloud keep the SMC consistent, with a CLT"
+role = "bibliography"
+verified = true
+verified_via = "ads"
+
 [ref.chopin2020]
 authors = "Chopin & Papaspiliopoulos"
 year = 2020
@@ -2106,7 +2119,7 @@ doi = "10.1007/978-3-030-47845-2"
 verified = true
 verified_via = "crossref"
 used_in = ["virgil.smc:tempered_smc"]
-note = "Springer Series in Statistics; the check of a tempered SMC against its own number of MCMC steps"
+note = "Springer Series in Statistics; the stopping rule on the squared displacement of the mutation (§17.2)"
 
 [ref.fischler1981]
 authors = "Fischler & Bolles"

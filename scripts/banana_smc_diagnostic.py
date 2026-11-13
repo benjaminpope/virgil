@@ -4,7 +4,7 @@ Usage: ``python scripts/banana_smc_diagnostic.py [--s1 0.2] [--n 200]
 [--out banana_smc_s1_0.2.json]``; ``VIRGIL_TEST_SEED`` replays a seed. Runs the
 same keys (``seed + i``) as the 200-key banana test and writes one row per key:
 ln Ẑ, truth, error, which variance term set the error, the replicate spread,
-the mixing z, why the run is flagged, stages and minimum ESS. Data only: it
+the steps used, why the run is flagged, stages and minimum ESS. Data only: it
 asserts nothing and changes no tolerance.
 """
 
@@ -42,11 +42,11 @@ def row(i, seed, res, truth):
         terms=dict(zip(TERMS, map(float, terms))),
         replicate_sd=float(onp.std(res.log_z_replicates, ddof=1)),
         replicates=[float(z) for z in res.log_z_replicates],
-        mixing_z=float(res.mixing_z),
+        steps=[[int(s) for s in r] for r in res.steps],
+        mixing_short=bool(res.mixing_short),
         stopped=bool(res.stopped),
         degenerate=bool(res.variance_degenerate),
         err_high=not err <= oc.SMC_ERROR,
-        mixing_high=bool(res.mixing_z > oc.Z_MIXING),
         unreliable=oc._smc_unreliable(res),
         stages=[len(b) for b in res.betas],
         min_ess=float(min(onp.min(e) for e in res.ess)),

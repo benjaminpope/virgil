@@ -216,9 +216,12 @@ class DefensiveMixture:
             lw = lz - onp.logaddexp.reduce(lz) - math.log(len(maps))
         else:
             d, alpha = 0 if dim is None else dim, 1.0
-        mu, cov, logw = [], [], []
+        mu, cov, logw, group, linear = [], [], [], [], []
         for m, w in zip(self.modes, lw if self.modes else []):
+            first = len(mu)
             for g in maps:
+                group.append(1 + first)
+                linear.append(onp.eye(max(d, 1)) if g is None else g)
                 x, c = onp.asarray(m.x, float), onp.asarray(m.cov, float)
                 if g is not None:
                     g = onp.asarray(g, float)
@@ -227,6 +230,10 @@ class DefensiveMixture:
         self.d = d if dim is None else dim
         m_pad = max(M_PAD, 1 << math.ceil(math.log2(max(len(mu), 1))))
         pad = m_pad - len(mu)
+        group += [1 + len(group) + i for i in range(pad)]  # padded: alone
+        linear += [onp.eye(max(d, 1))] * pad
+        self._group = onp.asarray([0, *group])
+        self._maps = onp.asarray([onp.eye(max(d, 1)), *linear], float)
         eye = onp.eye(max(d, 1))
         mu = onp.array(mu + [onp.zeros(max(d, 1))] * pad)
         cov = onp.array(cov + [eye] * pad)
@@ -243,6 +250,12 @@ class DefensiveMixture:
         self.log_beta = np.asarray(
             math.log1p(-alpha) if alpha < 1.0 else -onp.inf, dt
         )
+
+    def pooling(self):
+        """``(group, maps)`` of the labels of ``log_components`` (``masses``):
+        the components that are images ``g`` of one mode share a group, and
+        ``maps[c]`` is ``g`` (the identity for the prior and padding)."""
+        return self._group, self._maps
 
     def tree_flatten(self):
         children = (

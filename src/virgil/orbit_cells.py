@@ -1860,8 +1860,7 @@ def _cell_evidence(space, modes, key, n_is):
 
 
 SMC_ERROR = ESS_FAIL**-0.5  # sd(ln Ẑ) ≈ ESS^(-1/2) at ESS_FAIL (§6.15)
-SMC_STEPS = (5, 5, 10, 10)  # HMC steps per stage of each replicate (§6.15)
-Z_MIXING = 2.326  # z(0.99): the per-cell false-flag rate of the mixing check
+SMC_REPLICATES = 4  # independent SMC runs of a cell (§6.15)
 
 
 def _smc_error(res):
@@ -1879,13 +1878,13 @@ def _smc_error(res):
 def _smc_unreliable(res):
     """A SMC run that stopped, has no usable genealogy error, whose error
     (``_smc_error``) is above the sd that ``ESS_FAIL`` implies, or whose
-    doubled-mutation replicates sit significantly above the others (the
-    mixing check, ``Z_MIXING``)."""
+    mutation reached its step cap before the clouds had moved
+    (``mixing_short``)."""
     return bool(
         res.stopped
         or res.variance_degenerate
         or not _smc_error(res) <= SMC_ERROR
-        or res.mixing_z > Z_MIXING
+        or res.mixing_short
     )
 
 
@@ -1922,15 +1921,16 @@ def _run_smc(space, mixture, key, n, max_seconds, prior_scale):
     mixture component: ``π̃_β(x, c) ∝ q_c(x) (p̃/q)^β`` has the marginal ``π_β``
     and the normalizer ``Z_β``, so ``Ẑ`` still estimates ``Z_N``. HMC runs on
     ``x`` given ``c`` with the mass of component ``c``; a Gibbs step redraws
-    ``c`` (§6.15). ``len(SMC_STEPS)`` replicates of ``n`` particles. The
+    ``c`` (§6.15). ``SMC_REPLICATES`` replicates of ``n`` particles. The
     mixture and the space are arguments of module-level functions, so the
     compiled stage is reused by every cell of the same shape."""
     with run_in(onp.dtype(space.dtype).name):
         return tempered_smc(
             _smc_logprior, _smc_loglike, mixture.sample_labelled, key=key,
-            n_particles=n, replicates=len(SMC_STEPS), steps=SMC_STEPS,
+            n_particles=n, replicates=SMC_REPLICATES,
             max_seconds=max_seconds, moves=(_smc_label_gibbs,),
-            masses=mixture.masses(prior_scale), args=(mixture, space),
+            masses=mixture.masses(prior_scale), pool=mixture.pooling(),
+            args=(mixture, space),
         )  # fmt: skip
 
 

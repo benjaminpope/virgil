@@ -2107,7 +2107,7 @@ def test_the_smc_rounds_end_and_run_each_cell_at_most_once(
 def _smc_res(**kw):
     base = dict(
         stopped=False, variance_degenerate=False, log_z_variance=1e-3,
-        log_z_floor_variance=1e-3, log_z_rep_variance=1e-3, mixing_z=0.0,
+        log_z_floor_variance=1e-3, log_z_rep_variance=1e-3, mixing_short=False,
     )  # fmt: skip
     return types.SimpleNamespace(**{**base, **kw})
 
@@ -2124,12 +2124,10 @@ def test_the_smc_error_is_the_largest_of_the_three_variances():
     assert oc_cells._smc_error(_smc_res(log_z_variance=float("nan"))) > 0
 
 
-def test_the_mixing_check_flags_a_deficit_that_doubling_the_mutation_removes():
-    """``mixing_z`` above ``z(0.99) = 2.326`` is unreliable; below it, not."""
-    assert oc_cells.Z_MIXING == pytest.approx(stats.norm.ppf(0.99), abs=1e-3)
-    assert oc_cells._smc_unreliable(_smc_res(mixing_z=2.4))
-    assert not oc_cells._smc_unreliable(_smc_res(mixing_z=2.2))
-    assert not oc_cells._smc_unreliable(_smc_res(mixing_z=float("nan")))
+def test_a_mutation_that_hit_its_step_cap_is_unreliable():
+    """``mixing_short`` flags the run; its absence does not."""
+    assert oc_cells._smc_unreliable(_smc_res(mixing_short=True))
+    assert not oc_cells._smc_unreliable(_smc_res(mixing_short=False))
 
 
 # a narrow mode of a stub fit: its mass never crosses a cell edge (no shared mode)
