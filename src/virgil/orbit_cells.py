@@ -1053,7 +1053,9 @@ def _chart_from(space, v, ti, ln_f, chi2, n):
     """The chart vector of ``(w_P, y_ζ) = v``, TI′ and ``ln f``, with ``y_z``
     at the radius ``R0``.
 
-    The error scales start at their conditional MLE given the inlier nights:
+    The error scales start at their conditional MLE given the inlier nights'
+    peaks (each night's own minimum χ², not the χ² at the orbit: a lower
+    bound on the profile MLE, as ``b_k``'s ``ŝ_k``):
     ``ln ŝ_g = ½ ln(Σχ²_g / Σn_g)`` per block (``chi2`` and ``n`` are those
     sums), clipped to ``±ln S_MAX``, so a night's label does not depend on the
     scale of the errors. Fixed at one where the scale is not free."""
@@ -1095,9 +1097,13 @@ def _varpro_chunk(space, plan, s, v0, n_iter):
             _design(space, args[0], v), args[2], args[1], space.s_w2
         )[1]
         x = _chart_from(
-            space, v, ti, plan["lnf"][si],
-            plan["chi2"][si].sum(0), plan["n"][si].sum(0),
-        )  # fmt: skip
+            space,
+            v,
+            ti,
+            plan["lnf"][si],
+            plan["chi2"][si].sum(0),
+            plan["n"][si].sum(0),
+        )
         h = -jax.hessian(_varpro_objective)(v, *args)
         return (
             x, _labels(x, space), -2.0 * fv - ti @ ti / space.s_w2, v, h,
@@ -1145,10 +1151,13 @@ def _cstep_chunk(space, plan, v, lab, n_iter):
         )
         inl = (lab >= 0)[:, None]
         x = _chart_from(
-            space, v, ti, ln_f,
+            space,
+            v,
+            ti,
+            ln_f,
             np.sum(np.where(inl, space.cat.chi2[np.arange(k), j], 0.0), 0),
             np.sum(np.where(inl, space.cat.n[np.arange(k), j], 0.0), 0),
-        )  # fmt: skip
+        )
         h = -jax.hessian(_labelled_objective)(v, *args)
         return v, _labels(x, space), x, -2.0 * fv, h, capped
 
