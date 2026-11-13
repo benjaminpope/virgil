@@ -11,10 +11,12 @@ particles, their weights, ``log Z`` (the log evidence, or the log ratio
 schedule. The error is the genealogy-based estimator of Lee & Whiteley (2018),
 extended to adaptive SMC by Du & Guyader (2021); it needs multinomial
 resampling, which is what is used. When the genealogy has collapsed to one
-ancestor the error is ``nan`` and ``variance_degenerate`` is set. The next β solves for an ESS of one half of the incremental
-weights of the (resampled) particles, as in BlackJAX's adaptive tempering
-(Jasra et al. 2011; Zhou, Johansen & Aston 2016). The mutation is HMC with the
-step size and trajectory length tuned per stage (Buchholz, Chopin & Jacob 2021)
+ancestor the error is ``nan`` and ``variance_degenerate`` is set.
+The next β solves for a conditional ESS of ``tempering_ess`` (default 0.5) of
+the incremental weights of the (resampled) particles (Jasra et al. 2011; Zhou,
+Johansen & Aston 2016), as in BlackJAX's adaptive tempering. The mutation is HMC with the
+step size and trajectory length tuned per stage, per label group when the
+particles carry labels (Buchholz, Chopin & Jacob 2021),
 and the mass matrix set each stage to the weighted covariance of the cloud, one
 per label when particles carry labels (Beskos et al. 2016). The number of
 mutation steps adapts: it stops once the cloud has moved a fraction ``1 - TOL``
@@ -43,6 +45,9 @@ from scipy import stats
 from blackjax.mcmc import hmc
 from blackjax.smc import resampling
 from blackjax.smc.pretuning import build_pretune, esjd
+
+from ._group_pretune import group_pretune
+
 
 __all__ = ["SMCResult", "bridge_smc", "tempered_smc"]
 
@@ -130,7 +135,7 @@ class _Position(NamedTuple):
 
 def _algorithm(
     logprior, loglike, labelled, dtype, d, n_particles, target_ess, tune,
-    moves, composite, lo, hi, args, mass, strategy,
+    moves, composite, lo, hi, args, mass, strategy, group=None,
 ):  # fmt: skip
     """The BlackJAX algorithm of one SMC stage.
 
@@ -217,6 +222,11 @@ def _algorithm(
         positive_parameters=["step_size"],
         **extra,
     )
+    if labelled:
+        pretune = group_pretune(
+            mcmc_init, mcmc_step, group, alpha, sigma, n_particles,
+            extra["performance_of_chain_measure_factory"],
+        )  # fmt: skip
     algorithm = blackjax.pretuning(
         blackjax.adaptive_tempered_smc,
         lambda p: logprior(p, *args),
@@ -250,9 +260,10 @@ def _stage(key, state, args, masses, pool, **static):
 
     Mass. A label's pool is the particles of its group, each mapped back by
     its label's ``maps⁻¹`` into the group's frame; the label gets
-    ``map Σ̂ mapᵀ`` of the pool's weighted covariance ``Σ̂``, unless the pool
-    has fewer than ``ESS_PER_DIM · d`` effective particles (then the fixed
-    ``masses`` stay and the label does not count towards the stopping rule).
+    ``map Σ̂ mapᵀ`` of the pool's weighted covariance ``Σ̂``, unless the pool has fewer than
+    ``ESS_PER_DIM · d`` effective particles: then the label gets the whole
+    cloud's covariance and does not count towards the stopping rule. The step size and length are tuned per
+    group on its own particles' jumps.
 
     Steps. All particles step together until, for every adapted group, the
     mean ``‖L⁻¹(xₖ − x₀)‖²`` of the particles that started in it (``L`` the
@@ -262,6 +273,7 @@ def _stage(key, state, args, masses, pool, **static):
     cloud = state.sampler_state
     x, w = _block(cloud.particles), cloud.weights
     k, d, lo, hi = 1, static["d"], static["lo"], static["hi"]
+    group = None
     eps = np.finfo(x.dtype).eps
     if static["labelled"]:
         c, k = cloud.particles["c"], len(masses)
@@ -281,7 +293,11 @@ def _stage(key, state, args, masses, pool, **static):
         jitter = eps * (np.trace(own, axis1=1, axis2=2) + 1.0)
         own = own + jitter[:, None, None] * np.eye(d, dtype=x.dtype)
         active = ess[group] >= ESS_PER_DIM * d
-        mass = np.where(active[:, None, None], own.astype(x.dtype), masses)
+        # A thin pool takes the whole cloud's covariance (not a fixed mass).
+        centred = x - w @ x
+        gcov = (centred * w[:, None]).T @ centred
+        gcov = gcov + eps * (np.trace(gcov) + 1.0) * np.eye(d, dtype=x.dtype)
+        mass = np.where(active[:, None, None], own, gcov).astype(x.dtype)
         shared = mass[None]
     else:
         centred = x - w @ x
@@ -341,7 +357,9 @@ def _stage(key, state, args, masses, pool, **static):
 
         return update, n_particles
 
-    algorithm = _algorithm(*[static[s] for s in _STATIC], args, mass, strategy)
+    algorithm = _algorithm(
+        *[static[s] for s in _STATIC], args, mass, strategy, group
+    )
     parameters = {**state.parameter_override, "inverse_mass_matrix": shared}
     return algorithm.step(key, type(state)(cloud, parameters))
 
@@ -408,6 +426,7 @@ def _run(key, init, stage, particles, max_stages, deadline):
 
 def _smc(
     logprior, loglike, starts, key, n_particles, replicates, ess_target,
+    tempering_ess,
     lo, hi, step_size, leapfrogs, alpha, max_stages, max_seconds, moves,
     masses=None, pool=None, args=(),
 ):  # fmt: skip
@@ -427,7 +446,7 @@ def _smc(
         pool = (group, maps, np.linalg.inv(maps))
     static = dict(
         logprior=logprior, loglike=loglike, labelled=labelled, dtype=dtype,
-        d=d, n_particles=n_particles, target_ess=0.5,
+        d=d, n_particles=n_particles, target_ess=tempering_ess,
         tune=(step_size, leapfrogs, alpha), moves=tuple(moves),
         composite=composite, lo=lo, hi=hi,
     )  # fmt: skip
@@ -509,6 +528,7 @@ def tempered_smc(
     n_particles,
     replicates=1,
     ess_target=0.25,
+    tempering_ess=0.5,
     min_steps=5,
     max_steps=50,
     leapfrogs=4,
@@ -541,8 +561,14 @@ def tempered_smc(
         for cross-checks (compare ``log_z_replicates``).
     ess_target : float
         Fraction of ``n_particles`` below which the final ESS sets
-        ``undersampled``. It is below the schedule's one half so that a
-        healthy run, whose final ESS scatters about one half, is not flagged.
+        ``undersampled``. It is below the schedule's ``tempering_ess`` so that a
+        healthy run, whose final ESS scatters about it, is not flagged.
+    tempering_ess : float
+        The conditional ESS of the incremental weights that sets each next
+        β (with resampling every stage, BlackJAX's ESS): Zhou, Johansen &
+        Aston (2016). A higher value takes smaller steps in β: more
+        stages, a slower run and a larger genealogy error (it can collapse to
+        ``nan`` at small ``n_particles``).
     min_steps, max_steps : int
         Bounds on the HMC mutation steps of a stage. The mutation stops at the
         first step at or after ``min_steps`` where, for every label whose mass was
@@ -568,9 +594,9 @@ def tempered_smc(
         label and never on ``x``, so each move leaves the target invariant
         (Neal 2011, §5.2). Each stage replaces a label's mass by the weighted
         covariance of the cloud's particles with that label (of its ``pool``
-        group), if they have at least ``10 d`` effective particles; otherwise
-        the fixed mass stays. The step size and trajectory are tuned on the
-        jump in each particle's own metric. ``None``: one mass, the cloud's
+        group), or, below ``10 d`` effective particles, by the whole cloud's covariance;
+        the fixed mass is the first stage's. The step size and trajectory are
+        tuned per group on the jump in each particle's own metric. ``None``: one mass, the cloud's
         covariance. ``moves`` must then update the label (Gibbs).
     pool : tuple of array, optional
         ``(group, maps)`` for labelled particles: ``group`` ``(K,)`` ints, the
@@ -599,7 +625,7 @@ def tempered_smc(
     )
     return _smc(
         logprior, loglike, starts, keys[0], n_particles, replicates, ess_target,
-        min_steps, max_steps, step, leapfrogs, alpha, max_stages, max_seconds,
+        tempering_ess, min_steps, max_steps, step, leapfrogs, alpha, max_stages, max_seconds,
         moves, masses, pool, tuple(args),
     )  # fmt: skip
 
@@ -615,6 +641,7 @@ def bridge_smc(
     n_particles=None,
     replicates=1,
     ess_target=0.25,
+    tempering_ess=0.5,
     min_steps=5,
     max_steps=50,
     leapfrogs=4,
@@ -660,6 +687,6 @@ def bridge_smc(
         lambda x: logprior(x) + loglike1(x),
         lambda x: loglike2(x) - loglike1(x),
         starts, keys[0], n_particles, replicates, ess_target,
-        min_steps, max_steps, step, leapfrogs, alpha, max_stages, max_seconds,
+        tempering_ess, min_steps, max_steps, step, leapfrogs, alpha, max_stages, max_seconds,
         moves,
     )  # fmt: skip

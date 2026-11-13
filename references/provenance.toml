@@ -1795,11 +1795,13 @@ authors = "Zhou, Johansen & Aston"
 year = 2016
 title = "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
 doi = "10.1080/10618600.2015.1060885"
+arxiv = "1303.3123"
+bibcode = "2013arXiv1303.3123Z"
 used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
 note = "JCGS 25, 701; conditional ESS for the next temperature"
 role = "bibliography"
 verified = true
-verified_via = "crossref"
+verified_via = "ads"
 
 [ref.buchholz2021]
 authors = "Buchholz, Chopin & Jacob"
