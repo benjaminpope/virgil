@@ -101,6 +101,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
+| `anchor_unit_orbit` | [Broucke & Cefola (1972)](#broucke1972), [ADS](https://ui.adsabs.harvard.edu/abs/1972CeMec...5..303B/abstract), [doi:10.1007/BF01228432](https://doi.org/10.1007/BF01228432) | after |
 | `sample_z` | [Moran (1975)](#moran1975), [doi:10.1017/s0021900200047720](https://doi.org/10.1017/s0021900200047720) | after |
 | `ti_to_z` | [Goldstein, Poole & Safko (2002)](#goldstein2002) | after |
 | `z_log_prior` | [Miles (1965)](#miles1965), [doi:10.1093/biomet/52.3-4.636](https://doi.org/10.1093/biomet/52.3-4.636) | after |
@@ -369,6 +370,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
+| `_Space.states_at` | [Broucke & Cefola (1972)](#broucke1972), [ADS](https://ui.adsabs.harvard.edu/abs/1972CeMec...5..303B/abstract), [doi:10.1007/BF01228432](https://doi.org/10.1007/BF01228432) | after |
 | `position_leg` | [Gilks & Berzuini (2001)](#gilks2001), [doi:10.1111/1467-9868.00280](https://doi.org/10.1111/1467-9868.00280) | after |
 | `position_leg` | [Hesterberg (1995)](#hesterberg1995), [doi:10.1080/00401706.1995.10484303](https://doi.org/10.1080/00401706.1995.10484303) | after |
 | `position_leg` | [Hoffman & Gelman (2011)](#hoffman2014), [arXiv:1111.4246](https://arxiv.org/abs/1111.4246), [ADS](https://ui.adsabs.harvard.edu/abs/2011arXiv1111.4246H/abstract) | after |
@@ -610,6 +612,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="brandt2021"></a>**Brandt et al. (2021)**. orvara: An Efficient Code to Fit Orbits using Radial Velocity, Absolute, and/or Relative Astrometry. [arXiv:2105.11671](https://arxiv.org/abs/2105.11671), [ADS](https://ui.adsabs.harvard.edu/abs/2021AJ....162..186B/abstract), [GitHub](https://github.com/t-brandt/orvara). orvara; AJ 162, 186.
 - <a id="briggs1995"></a>**Briggs (1995)**. High fidelity deconvolution of moderately resolved sources. [ADS](https://ui.adsabs.harvard.edu/abs/1995PhDT.......238B/abstract). PhD thesis, New Mexico Institute of Mining and Technology; the robust weighting; ADS 1995PhDT.......238B. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="broderick2020"></a>**Broderick et al. (2020)**. THEMIS: A Parameter Estimation Framework for the Event Horizon Telescope. [ADS](https://ui.adsabs.harvard.edu/abs/2020ApJ...897..139B/abstract), [doi:10.3847/1538-4357/ab91a4](https://doi.org/10.3847/1538-4357/ab91a4). ApJ 897, 139 (2020); Laplace marginalization of station gains.
+- <a id="broucke1972"></a>**Broucke & Cefola (1972)**. On the equinoctial orbit elements. [ADS](https://ui.adsabs.harvard.edu/abs/1972CeMec...5..303B/abstract), [doi:10.1007/BF01228432](https://doi.org/10.1007/BF01228432). Celestial Mechanics 5, 303; Kepler's equation in the eccentricity vector (k, h), regular at e = 0.
 - <a id="buchholz2021"></a>**Buchholz, Chopin & Jacob (2021)**. Adaptive Tuning of Hamiltonian Monte Carlo Within Sequential Monte Carlo. [arXiv:1808.07730](https://arxiv.org/abs/1808.07730), [ADS](https://ui.adsabs.harvard.edu/abs/2018arXiv180807730B/abstract), [doi:10.1214/20-ba1222](https://doi.org/10.1214/20-ba1222). Bayesian Anal. 16, 745; fixed-L HMC kernels tuned per stage.
 - <a id="byrd1995"></a>**Byrd, Lu, Nocedal & Zhu (1995)**. A Limited Memory Algorithm for Bound Constrained Optimization. [ADS](https://ui.adsabs.harvard.edu/abs/1995SJSC...16.1190B/abstract), [doi:10.1137/0916069](https://doi.org/10.1137/0916069). SIAM J. Sci. Comput. 16, 1190 (L-BFGS-B); fit(method="lbfgsb") calls scipy's implementation, with the bounds of a linear LinearImage and Uniform priors.
 - <a id="cabezas2024"></a>**Cabezas et al. (2024)**. BlackJAX: Composable Bayesian inference in JAX. [arXiv:2402.10797](https://arxiv.org/abs/2402.10797), [GitHub](https://github.com/blackjax-devs/blackjax). the adaptive tempered SMC, HMC and pretuning kernels (blackjax >= 1.7.1) that virgil.smc wraps.

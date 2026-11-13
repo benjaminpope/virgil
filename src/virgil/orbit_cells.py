@@ -61,7 +61,7 @@ from .mode_search import (
     resample_move,
 )
 from .night_summaries import DELTA, EPS_PRIOR, _eps_rule
-from .orbits import KeplerOrbit, PositionData, _unit_orbit
+from .orbits import KeplerOrbit, PositionData
 
 __all__ = [
     "Cell",
@@ -795,13 +795,12 @@ class _Space:
     def states_at(self, t, period, ti, zeta):
         """``(p, v)`` of the Thiele–Innes constants ``ti`` (the anchor-frame
         TI′) at times ``t`` (days from the anchor): ``(len(t), 4)``, in mas and
-        mas/day."""
-        ecc, anomaly = oc.zeta_to_eccentricity(zeta)
-        a, b, f, g = oc.anchor_unrotate(tuple(ti), anomaly)
-        dt_peri = -anomaly * period / (2.0 * np.pi)  # anchor at time 0
+        mas/day. Analytic in ``zeta`` (no ``M_a``), so the Hessians of the
+        search are finite at ``e = 0``."""
+        a, b, f, g = tuple(ti)
 
         def position(dt):
-            x, y = _unit_orbit(dt, period, dt_peri, ecc)
+            x, y = oc.anchor_unit_orbit(dt, period, zeta)
             return np.stack([b * x + g * y, a * x + f * y])
 
         pos, vel = jax.jvp(position, (t,), (np.ones_like(t),))
