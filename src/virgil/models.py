@@ -1265,9 +1265,13 @@ class Crescent(Component):
     The brightness is the outer disk of radius ``r_out`` less an inner disk of
     radius ``r_in``, displaced by ``ecc * (r_out - r_in)`` away from the bright
     side, times a linear slash ``1 - fade/2 + fade * x / (2 r_out)`` with ``x``
-    along the axis towards the bright side. The slash is 1 across the middle,
-    and falls to ``1 - fade`` on the far edge of the outer disk.
-    [Model notes](../notes.md#crescent). Source: Kamruddin & Dexter (2013), [arXiv:1306.3226](https://arxiv.org/abs/1306.3226); Benkevitch et al. (2016) "xs-ring", [arXiv:1609.00055](https://arxiv.org/abs/1609.00055).
+    along the axis towards the bright side. The slash is 1 on the bright edge,
+    ``1 - fade/2`` across the middle and ``1 - fade`` on the far edge of the
+    outer disk. [Model notes](../notes.md#crescent).
+
+    Source: Kamruddin & Dexter (2013),
+    [references](../../../references.md#kamruddin2013); Benkevitch et al.
+    (2016) "xs-ring", [references](../../../references.md#benkevitch2016).
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
@@ -1365,7 +1369,8 @@ class Crescent(Component):
         ax_e, ax_n = self._axis()
         shift = self.ecc * (self.r_out - self.r_in)
         inner2 = (xx + shift * ax_e) ** 2 + (yy + shift * ax_n) ** 2
-        inside = (xx**2 + yy**2 <= self.r_out**2) & (inner2 > self.r_in**2)
+        hole = (inner2 <= self.r_in**2) & (self.r_in > 0.0)
+        inside = (xx**2 + yy**2 <= self.r_out**2) & ~hole
         along = xx * ax_e + yy * ax_n
         slash = 1.0 - self.fade / 2.0 + self.fade * along / (2.0 * self.r_out)
         return np.where(inside, slash, 0.0)
@@ -5989,10 +5994,25 @@ class Blurred(_Wrapper):
                 stacklevel=2,
             )
 
-    def model(self, u, v, wavel):
+    def _shape_checks(self):
+        return (("fwhm", self.fwhm, lambda x: x >= 0.0, "non-negative"),)
+
+    def __check_init__(self):
+        _check_shape_params(type(self).__name__, self._shape_checks())
+
+    def is_physical(self):
+        return self.source.is_physical() & np.all(self.fwhm >= 0.0)
+
+    def _taper(self, u, v, wavel):
         uu, vv = u / wavel, v / wavel
-        return self.source.model(u, v, wavel) * gaussian_taper(
-            uu * uu + vv * vv, self.fwhm
+        return gaussian_taper(uu * uu + vv * vv, self.fwhm)
+
+    def model(self, u, v, wavel):
+        return self.source.model(u, v, wavel) * self._taper(u, v, wavel)
+
+    def model_on_grid(self, u, v, wavel, grid):
+        return self.source.model_on_grid(u, v, wavel, grid) * self._taper(
+            u, v, wavel
         )
 
     def _image(self, xx, yy, pixel_scale_mas):

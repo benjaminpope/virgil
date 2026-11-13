@@ -86,19 +86,52 @@ def test_brightness_non_negative(ecc, fade):
     assert onp.all(onp.asarray(image) >= 0.0)
 
 
-def test_gradients_finite_including_zero_spacing():
-    # U[0] = V[0] = 0, so the zero spacing is among the baselines.
-    @jax.jit
-    @jax.grad
-    def grad(params):
-        r_out, r_in, ecc, fade, pa = params
-        vis = Crescent(r_out, r_in, ecc, fade, pa).model(U, V, WAVEL)
-        return np.sum(np.abs(vis) ** 2)
+def _loss(params, u, v):
+    r_out, r_in, ecc, fade, pa, fwhm = params
+    scene = Blurred(Crescent(r_out, r_in, ecc, fade, pa), fwhm)
+    return np.sum(np.abs(scene.model(u, v, WAVEL)) ** 2)
 
+
+@pytest.mark.parametrize("fwhm", [3.0, 0.0])
+def test_gradients_match_finite_differences(fwhm):
+    # U[0] = V[0] = 0, so the zero spacing is among the baselines.
+    with jax.enable_x64(True):
+        u, v = np.asarray(U, float), np.asarray(V, float)
+        params = np.array([20.0, 7.0, 0.5, 0.6, 30.0, fwhm])
+        grad = jax.grad(_loss)(params, u, v)
+        for i in range(len(params)):
+            if i == 5 and fwhm == 0.0:
+                # The loss is even in fwhm, which must stay non-negative.
+                assert abs(grad[i]) < 1e-9
+                continue
+            step = np.zeros(len(params)).at[i].set(1e-5)
+            fd = (
+                _loss(params + step, u, v) - _loss(params - step, u, v)
+            ) / 2e-5
+            assert np.isclose(grad[i], fd, rtol=1e-5, atol=1e-9), i
+
+
+def test_solid_disk_gradient_is_finite():
     # r_in = 0 sits on the boundary of the allowed range.
-    for r_in in (7.0, 0.0):
-        values = grad(np.array([20.0, r_in, 0.5, 0.6, 30.0]))
-        assert onp.all(onp.isfinite(values))
+    grad = jax.grad(_loss)(np.array([20.0, 0.0, 0.5, 0.6, 30.0, 2.0]), U, V)
+    assert onp.all(onp.isfinite(grad))
+
+
+def test_solid_disk_renders_without_holes():
+    image = Crescent(15.0, 0.0).render(129, 60.0)  # odd grid: a centre pixel
+    assert image[64, 64] > 0.0
+
+
+def test_blurred_zero_width_and_negative_width():
+    crescent = Crescent(20.0, 7.0, 0.5, 0.5)
+    plain = crescent.render(64, 80.0)
+    assert np.allclose(Blurred(crescent, 0.0).render(64, 80.0), plain)
+    scene = System(star=GaussianDisk(2.0), ring=Blurred(crescent, 0.0))
+    assert onp.all(onp.isfinite(scene.render(64, 80.0)))
+    with pytest.raises(ValueError, match="fwhm"):
+        Blurred(crescent, -1.0)
+    physical = jax.jit(lambda f: Blurred(crescent, f).is_physical())
+    assert bool(physical(1.0)) and not bool(physical(-1.0))
 
 
 def test_pa_agrees_with_rotated():
@@ -121,16 +154,17 @@ def test_blurred_gaussian_is_wider_gaussian():
     assert np.allclose(image, wider, atol=2e-4 * float(wider.max()))
 
 
-def test_blurred_composes_with_system_and_fits():
+def test_blurred_composes_with_system():
     def loss(fwhm):
-        scene = System(ring=Blurred(Crescent(20.0, 7.0, 0.5, 0.5), fwhm))
+        scene = System(
+            star=GaussianDisk(2.0),
+            ring=Blurred(Crescent(20.0, 7.0, 0.5, 0.5, dra=4.0), fwhm),
+        )
         return np.sum(np.abs(scene.model(U, V, WAVEL)) ** 2)
 
-    assert onp.isfinite(jax.grad(loss)(3.0))
-    # The wrapper is transparent to the zero-spacing flux.
-    assert np.allclose(
-        Blurred(Crescent(20.0, 7.0), 3.0).model(U, V, WAVEL)[0], 1.0
-    )
+    with jax.enable_x64(True):
+        fd = (loss(3.0 + 1e-5) - loss(3.0 - 1e-5)) / 2e-5
+        assert np.isclose(jax.grad(loss)(3.0), fd, rtol=1e-5)
 
 
 def test_blurred_smearing_matches_wider_gaussian():
@@ -154,3 +188,13 @@ def test_blurred_image_with_its_own_blur_warns():
     image = Image(np.ones((8, 8)), 1.0, blur_fwhm_mas=1.0)
     with pytest.warns(UserWarning, match="compound"):
         Blurred(image, 2.0)
+
+
+def test_blurred_model_on_grid_keeps_the_source_grid_path():
+    class Marked(Crescent):
+        def model_on_grid(self, u, v, wavel, grid):
+            return self.model(u, v, wavel) * 2.0
+
+    source = Marked(20.0, 7.0)
+    got = Blurred(source, 3.0).model_on_grid(U, V, WAVEL, None)
+    assert np.allclose(got, 2.0 * Blurred(source, 3.0).model(U, V, WAVEL))

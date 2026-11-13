@@ -741,7 +741,13 @@ def gaussian_smooth(brightness, fwhm_pix):
     def kernel(n):
         i = np.arange(n)
         d = np.minimum(i, n - i)  # circular distance from index 0
-        k = np.exp(-0.5 * d**2 / sigma2)
+        # Zero width is the delta kernel; the double where keeps its gradient finite.
+        wide = sigma2 > 0.0
+        k = np.where(
+            wide,
+            np.exp(-0.5 * d**2 / np.where(wide, sigma2, 1.0)),
+            (d == 0).astype(float),
+        )
         return k / np.sum(k)
 
     kr, kc = kernel(shape[0]), kernel(shape[1])
