@@ -1,0 +1,1 @@
+`DiskPipeline`: a geometry-ring parameter that ends on its prior bound (typically the radius on the `r_in` hole) is now held fixed for the Laplace widths of the others, the standard treatment of an active bound, and the `at_bound` check reports it as `geometry.<name>`. It no longer fails `laplace_pd` as a missing width. A missing width of a free parameter still fails.
