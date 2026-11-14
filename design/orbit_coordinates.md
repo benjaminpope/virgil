@@ -51,9 +51,11 @@ prior-recovery check of the pipeline's sampled `(a, cos i, ω, Ω, e)` in vv).
 
 ## Status
 
-*Derived*, experimental. Known limit: positions from `ζ` use
-`M_a = arg(ζ²)` and the jaxoplanet Kepler solve, so the gradient is not finite
-at `ζ = 0` exactly; a Kepler solve in `(k, h)` is part of the Stage 2b likelihood.
+*Derived*, experimental. `coordinates_to_orbit` and `invariants` (reporting)
+go through `M_a = arg(ζ²)`, whose gradient is not finite at `ζ = 0`. The orbit
+cells' likelihood uses `anchor_unit_orbit`: Kepler's equation in `(k, h)`
+(Broucke & Cefola 1972) with implicit derivatives, exact at `ζ = 0` (2026-11-13;
+before it, the autodiff Hessian at a near-circular mode was rounding noise).
 
 ## Covers and evidence
 

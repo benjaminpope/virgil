@@ -314,8 +314,9 @@ radius √e_max. Then e = |ζ|² is uniform on [0, e_max] and M_a = 2 arg ζ uni
 Cartesian density of (k, h) is 1/(2π e)·(1/e_max), a cusp at e = 0; the Jacobian |∂(k, h)/∂ζ| = 4|ζ|² removes it).
 The 2:1 cover (ζ → −ζ) is exact. The anchor-frame positions are polynomial in (k + ih, k − ih) (§3.4), hence
 real-analytic in ζ (the expansion contains ζ̄²): there is no coordinate singularity at e = 0, where (e, M_a) polar
-coordinates have one. **That is a statement about the maths.** #622 defers the Kepler solve in (k, h) to Stage 2b, and its
-gradient is not finite at ζ = 0 until that solve exists; the (k, h) solve is a Stage 2b deliverable (§13). #622's disc is
+coordinates have one. **That is a statement about the maths.** #622 deferred the Kepler solve in (k, h) to Stage 2b; it
+exists now (`_orbit_coordinates.anchor_unit_orbit`, 2026-11-13), so the likelihood's derivatives are exact at ζ = 0. Without
+it the search's Hessian at a near-circular mode was rounding noise and its Laplace covariance too narrow in ζ. #622's disc is
 the unit disc, ζ_code = ζ/√e_max, the same map with e_max entering as a scale.
 
 ### 3.4 Anchor TI′

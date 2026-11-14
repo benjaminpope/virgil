@@ -27,7 +27,12 @@ variables (derived, experimental, opt-in), checked by the prior-recovery tests.
 import jax
 import jax.numpy as np
 
-from .orbits import KeplerOrbit, ThieleInnesOrbit, _thiele_innes_angles
+from .orbits import (
+    KeplerOrbit,
+    ThieleInnesOrbit,
+    _jaxoplanet,
+    _thiele_innes_angles,
+)
 
 
 def anchor_rotate(abfg, mean_anomaly):
@@ -147,6 +152,53 @@ def zeta_to_eccentricity(zeta):
     """
     x, y = np.asarray(zeta)[..., 0], np.asarray(zeta)[..., 1]
     return x**2 + y**2, np.arctan2(2 * x * y, x**2 - y**2)
+
+
+@jax.custom_jvp
+def _eccentric_longitude(m, k, h):
+    """``F = E - M_a``, the root of ``F - k sin F - h cos F = m``.
+
+    Kepler's equation in the eccentricity vector ``k + ih = e e^{iM_a}``
+    (Broucke & Cefola 1972), ``m`` the mean anomaly since the anchor. The value
+    comes from the standard solver; the derivatives are implicit, so they stay
+    finite at ``e = 0``, where ``M_a`` is undefined.
+    """
+    e2 = k**2 + h**2
+    e = np.sqrt(e2)
+    m_a = np.arctan2(h, k)
+    sin_f, cos_f = _jaxoplanet().core.kepler(m + m_a, e * np.ones_like(m))
+    den = 1.0 + e * cos_f
+    return np.arctan2(np.sqrt(1.0 - e2) * sin_f / den, (e + cos_f) / den) - m_a
+
+
+@_eccentric_longitude.defjvp
+def _eccentric_longitude_jvp(primals, tangents):
+    m, k, h = primals
+    dm, dk, dh = tangents
+    f = _eccentric_longitude(m, k, h)
+    s, c = np.sin(f), np.cos(f)
+    # implicit function theorem; 1 - k cos F + h sin F = 1 - e cos E > 0
+    return f, (dm + s * dk + c * dh) / (1.0 - k * c + h * s)
+
+
+def anchor_unit_orbit(dt, period, zeta):
+    """``(X′, Y′)``, the Thiele–Innes ``(X, Y)`` turned by ``-M_a``, at ``dt``
+    days from the anchor.
+
+    The position is ``(B′X′ + G′Y′, A′X′ + F′Y′)`` with the TI′ constants. An
+    analytic function of ``zeta``, ``zeta = 0`` included.
+
+    Source: Broucke & Cefola (1972).
+    """
+    zeta = np.asarray(zeta)
+    k = zeta[..., 0] ** 2 - zeta[..., 1] ** 2
+    h = 2.0 * zeta[..., 0] * zeta[..., 1]
+    f = _eccentric_longitude(2.0 * np.pi * dt / period, k, h)
+    s, c = np.sin(f), np.cos(f)
+    # R(-M_a) of (cos E - e, √(1 - e²) sin E), with E = F + M_a and
+    # √(1 - e²) - 1 = -e² / (1 + √(1 - e²))
+    q = (k * s + h * c) / (1.0 + np.sqrt(1.0 - k**2 - h**2))
+    return c - k - q * h, s + h - q * k
 
 
 def eccentricity_to_zeta(ecc, mean_anomaly):
