@@ -1489,7 +1489,15 @@ def _add_one(space, plan, x, info):
             )
             info["evaluations"] += N_NEWTON * newton
             fr = float(fr)
-            if onp.isfinite(fr) and fr > f and (best is None or fr > best[0]):
+            # a gain counts only with a different label set: the same mode
+            # re-found rises by round-off, which would loop forever
+            new = onp.asarray(_labels(np.asarray(xr, space.dtype), space))
+            if (
+                onp.isfinite(fr)
+                and fr > f
+                and (new != lab).any()
+                and (best is None or fr > best[0])
+            ):
                 best = (fr, onp.asarray(xr))
         if best is None:
             break
