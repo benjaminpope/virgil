@@ -96,3 +96,19 @@ The held-out W1 result (paired with baseline f71294b, systems 200–399) was rea
 - **Until then.** Census results under the current `matters` rule carry this caveat.
 - **Update 2026-11-12.** The M2 fix merged as #686 (`0750be5`), into main and so into W1 (`570e13e`) and this branch. Only runs pinned before it (baseline f71294b, W1 2673182) carry the caveat.
 ---
+
+---
+## Arm: tempered SMC from the search mixture where the IS is unreliable (design §6.15), added 2026-11-08 before any run of this arm
+
+- **Arm:** the head of the SMC PR (stacked on #667), frozen once this file is committed; later pushes are CI or review fixes only, each declared as changing results or not.
+- **Paired comparator:** #667 head `9204b787bd62b15e60d19f06c7982e2858f11800`. Same image, same platform (OzSTAR).
+- **Decision set:** fresh systems 600–799 of seed 0 (`START_BASE=600`). Nobody has inspected them. Aggregate only.
+- **Primary:** failure (status failed or error) in the "rest" stratum, exact one-sided McNemar on the discordant pairs (arm better), α = 0.01.
+- **Harm (exact two-sided McNemar, harm if the arm is worse at p < 0.05):** failures in each other stratum, and misses (ok with the truth outside the 99% set).
+- **Calibration, harm if violated (arm only, ok systems):** misses are not significantly above 1% (binomial, p < 0.01); the PIT KS tests for N, ln P, a, e and cos i are not rejected at 0.01, judged with a Bonferroni correction over those five.
+- **Cost, report only:** median and maximum `seconds` per stratum, and the `n_smc`, `n_smc_failed`, `smc_stages`, `smc_seconds` columns.
+- **Merge rule:** primary passes and no harm.
+- **Review fix, 2026-11-08, before any run of this arm (changes results):** the SMC runs two replicates and its error is √max(genealogy variance, Δ²/4) (design §6.15), commit `0814e1c5d9d126b46f74029dd6b34070ad0646f2`. The decision set stays 600–799 and nothing above is moved.
+- **Freeze breach, declared 2026-11-09 (before the 600–799 results are downloaded):** commit `80babea8c0e17c5373f24ce5b0bac7dc6231a7af` **changes results**. The SMC trigger excludes at-floor cells, the per-cell time budget changed, and the oracle accepts the SMC only if it is not unreliable. It was pushed after the freeze and after the 600–799 census was submitted, so that census measures `fce671cc48fd73d7c35e8bd958b10faaf23ddbc0`, not the PR head. Its results are **report-only**: a diagnostic of the old SMC, not a decision.
+- **Report-only oracle check, to be scored when those results arrive:** for every true cell that got an SMC and has an oracle, report the signed gap `oracle_gap` and z = (ln Ẑ_SMC − ln Z_oracle)/err. Harm if the count with |gap| > 4·err + 0.01 exceeds the binomial 1% expectation at p < 0.01, or if the mean signed gap is below −0.1.
+- **Redesign:** the SMC error and mass matrix are being redesigned (plan to follow, implemented on this PR). The redesigned SMC gets fresh criteria and fresh systems before any decision census. The 600–799 set is not a decision set for it.

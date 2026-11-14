@@ -1784,7 +1784,7 @@ authors = "Del Moral, Doucet & Jasra"
 year = 2006
 title = "Sequential Monte Carlo Samplers"
 doi = "10.1111/j.1467-9868.2006.00553.x"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_cells:position_leg", "virgil.orbit_cells:smc_cell"]
 note = "JRSSB 68, 411; SMC samplers and the normalizing-constant estimate, Z as the product of the incremental weights"
 role = "bibliography"
 verified = true
@@ -1806,11 +1806,13 @@ authors = "Zhou, Johansen & Aston"
 year = 2016
 title = "Toward Automatic Model Comparison: An Adaptive Sequential Monte Carlo Approach"
 doi = "10.1080/10618600.2015.1060885"
+arxiv = "1303.3123"
+bibcode = "2013arXiv1303.3123Z"
 used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
 note = "JCGS 25, 701; conditional ESS for the next temperature"
 role = "bibliography"
 verified = true
-verified_via = "crossref"
+verified_via = "ads"
 
 [ref.buchholz2021]
 authors = "Buchholz, Chopin & Jacob"
@@ -2074,9 +2076,63 @@ arxiv = "1909.13602"
 doi = "10.1214/20-AAP1611"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
+used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc", "virgil.orbit_cells:smc_cell"]
 note = "Ann. Appl. Probab. 31, 1021; extends the Eve-index variance estimator to SMC whose tempering schedule is chosen adaptively from the particles"
 
+
+[ref.pompe2020]
+authors = "Pompe, Holmes & Łatuszyński"
+year = 2020
+title = "A framework for adaptive MCMC targeting multimodal distributions"
+arxiv = "1812.02609"
+doi = "10.1214/19-AOS1916"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc", "virgil.orbit_cells:smc_cell"]
+note = "Ann. Statist. 48, 2930; the mode-labelled augmented target: each particle carries its component and is moved with that component's proposal"
+
+[ref.chopin2004]
+authors = "Chopin"
+year = 2004
+title = "Central limit theorem for sequential Monte Carlo methods and its application to Bayesian inference"
+doi = "10.1214/009053604000000698"
+verified = true
+verified_via = "ads"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Ann. Statist. 32, 2385; the asymptotic variance of the SMC normalizer, whose perfectly-mixing floor is the sum of 1/ESS_t - 1/N"
+
+[ref.berard2014]
+authors = "Bérard, Del Moral & Doucet"
+year = 2014
+title = "A lognormal central limit theorem for particle approximations of normalizing constants"
+doi = "10.1214/EJP.v19-3428"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Electron. J. Probab. 19; the log of the SMC normalizer estimate is asymptotically normal with the variance of the floor term"
+
+[ref.beskos2016]
+authors = "Beskos, Jasra, Kantas & Thiery"
+year = 2016
+title = "On the convergence of adaptive sequential Monte Carlo methods"
+doi = "10.1214/15-AAP1113"
+arxiv = "1306.6462"
+bibcode = "2013arXiv1306.6462B"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Ann. Appl. Probab. 26, 1111; kernels adapted on the current cloud keep the SMC consistent, with a CLT"
+role = "bibliography"
+verified = true
+verified_via = "ads"
+
+[ref.chopin2020]
+authors = "Chopin & Papaspiliopoulos"
+year = 2020
+title = "An Introduction to Sequential Monte Carlo"
+doi = "10.1007/978-3-030-47845-2"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.smc:tempered_smc"]
+note = "Springer Series in Statistics; the stopping rule on the squared displacement of the mutation (§17.2)"
 
 [ref.fischler1981]
 authors = "Fischler & Bolles"
@@ -2200,7 +2256,7 @@ title = "Weighted average importance sampling and defensive mixture distribution
 doi = "10.1080/00401706.1995.10484303"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg", "virgil.orbit_cells:smc_cell"]
 note = "Technometrics 37, 185; a prior share in the proposal bounds the importance weights by the likelihood maximum over the share"
 
 [ref.gilks2001]
@@ -2220,7 +2276,7 @@ title = "MCMC using Hamiltonian dynamics"
 arxiv = "1206.1901"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.mode_search:resample_move"]
+used_in = ["virgil.mode_search:resample_move", "virgil.smc:tempered_smc"]
 note = "Handbook of Markov Chain Monte Carlo, ch. 5; randomized step size and trajectory length for HMC"
 
 [ref.talts2018]
