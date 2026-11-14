@@ -1654,7 +1654,20 @@ def search_cell(space, key=None, *, plan=None, info=None):
     keep = _unique_starts(lab, v, h2, r2)
     x = x[keep][_prune(space, x[keep])]
     if len(x):
-        x = onp.stack([_add_one(space, plan, xi, info) for xi in x])
+        # the add-one results join the survivors, not replace them: a
+        # partial-label mode with its own mass stays (distinct_modes merges
+        # equal ones)
+        more = onp.stack([_add_one(space, plan, xi, info) for xi in x])
+
+        def labels(rows):
+            return onp.stack(
+                [
+                    onp.asarray(_labels(np.asarray(r, space.dtype), space))
+                    for r in rows
+                ]
+            )
+
+        x = onp.concatenate([x, more[(labels(more) != labels(x)).any(1)]])
     modes = distinct_modes(_laplace_modes(space, x, info))
     info["modes"] = len(modes)
     return modes

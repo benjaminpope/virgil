@@ -1607,3 +1607,38 @@ def test_an_all_outlier_c_step_row_gives_a_finite_chart():
     assert onp.isfinite(x).all() and onp.isfinite(onp.asarray(res[1])).all()
     assert abs(onp.linalg.norm(x[1:5]) - math.sqrt(3.0)) < 1e-9
     assert oc_cells._prune(space, x[None]).tolist() == [0]
+
+
+@x64
+def test_the_add_one_results_join_the_survivors_instead_of_replacing_them(
+    monkeypatch,
+):
+    """A survivor whose add-one result differs in its labels stays a candidate
+    next to it, so a partial-label mode with its own mass is not dropped. The
+    add-one result is stubbed with a point labelling every night an outlier,
+    which no survivor does."""
+    times = onp.r_[TIMES, 1000.0]
+    space, plan, xt = _true_state(0.05, times, sigma_last=0.005)
+    other = xt.copy()
+    other[5:] = 14.0
+    survivors, batch = [], []
+    monkeypatch.setattr(
+        oc_cells,
+        "_add_one",
+        lambda space, plan, x, info: survivors.append(x.copy()) or other,
+    )
+    monkeypatch.setattr(
+        oc_cells,
+        "_laplace_modes",
+        lambda space, x, info: batch.extend(x) or [],
+    )
+    oc_cells.search_cell(space, plan=plan)
+
+    def labels(x):
+        return onp.asarray(oc_cells._labels(np.asarray(x), space))
+
+    assert (labels(other) < 0).all()
+    assert survivors and all((labels(x) >= 0).any() for x in survivors)
+    for x in survivors:
+        assert any(onp.array_equal(x, b) for b in batch)
+    assert any(onp.array_equal(other, b) for b in batch)
