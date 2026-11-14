@@ -543,6 +543,10 @@ def tempered_smc(
 ):
     """Temper the prior to prior × likelihood with adaptive SMC.
 
+    Known limitation: on a strongly curved target the late-stage HMC does not
+    transport the tails, so ln Ẑ is slightly low and ``mixing_short`` is set
+    (design §6.15); a curvature-removing parametrization is the cure.
+
     Parameters
     ----------
     logprior, loglike : callable

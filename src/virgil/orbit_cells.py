@@ -1927,7 +1927,11 @@ def _run_smc(space, mixture, key, n, max_seconds, prior_scale):
     ``x`` given ``c`` with the mass of component ``c``; a Gibbs step redraws
     ``c`` (§6.15). ``SMC_REPLICATES`` replicates of ``n`` particles. The
     mixture and the space are arguments of module-level functions, so the
-    compiled stage is reused by every cell of the same shape."""
+    compiled stage is reused by every cell of the same shape.
+
+    Known limitation: late-stage HMC tail transport on a strongly curved cell
+    gives a flagged, slightly low ``ln Ẑ``; the redesign's z/ζ/anchored-TI′
+    coordinates remove the curvature."""
     with run_in(onp.dtype(space.dtype).name):
         return tempered_smc(
             _smc_logprior, _smc_loglike, mixture.sample_labelled, key=key,
