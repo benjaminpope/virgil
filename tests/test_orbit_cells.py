@@ -1513,17 +1513,13 @@ def test_position_cells_fails_on_a_flagged_cell_within_the_bound(monkeypatch):
     assert not out.failed.any() and out.omitted_bound <= oc_cells.DELTA
 
 
-def _true_state(
-    sigma, k_times, b=None, p_range=(9.0, 14.0), sigma_last=None
-):
+def _true_state(sigma, k_times, b=None, p_range=(9.0, 14.0), sigma_last=None):
     """A small system at its truth: ``(space, plan, truth chart)``; the last
     night has ``sigma_last`` if given."""
     orbit = _orbit(period=11.3, a=6.0, ecc=0.5)
     s = _summaries(orbit, k_times, sigma=sigma, seed=1)
     if sigma_last is not None:
-        s = s[:-1] + _summaries(
-            orbit, k_times[-1:], sigma=sigma_last, seed=2
-        )
+        s = s[:-1] + _summaries(orbit, k_times[-1:], sigma=sigma_last, seed=2)
     _, _, cell = _true_cell(11.3, k_times, s, p_range)
     log_b = onp.full(len(k_times), LOG_B if b is None else b)
     space = oc_cells._Space(

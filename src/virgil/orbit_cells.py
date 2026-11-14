@@ -98,7 +98,9 @@ K_COH = (
     4  # ln P grid points per cycle of a set's span (> 2 brackets a minimum)
 )
 ZETA_E = (0.0, 0.3, 0.6)  # ζ starts: eccentricities, 8 phases each (17 points)
-ZETA_E_CAP = 0.9  # a start's e stays below this fraction of e_max (chart validity)
+ZETA_E_CAP = (
+    0.9  # a start's e stays below this fraction of e_max (chart validity)
+)
 ZETA_PHASES = 8  # anchor mean anomalies M_a per eccentricity, from 0 to 2π
 N_SET_MAX = 2000  # enumerate every set up to this; above it, every span pair
 #                   (all peaks) and random interior fills of each (design §6.1)
@@ -1080,7 +1082,7 @@ def _chart_from(space, v, ti, ln_f, chi2, n):
         z / np.where(nz > 1e-30, nz, 1.0),
         np.asarray([1.0, 0.0, 0.0, 0.0], z.dtype),
     )
-    la =math.log(space.a_range[0])
+    la = math.log(space.a_range[0])
     da = math.log(space.a_range[1] / space.a_range[0])
     frac = np.clip((np.log(oc.semimajor(z)) - la) / da, 1e-6, 1.0 - 1e-6)
     ff = np.clip(1.0 - ln_f / space.ln_f_floor, 1e-6, 1.0 - 1e-6)
@@ -1482,7 +1484,9 @@ def _add_one(space, plan, x, info):
         for xi in xs:
             if not onp.isfinite(xi).all():
                 continue
-            xr, _, fr, _ = _refine(space, np.asarray(xi, space.dtype), N_NEWTON)
+            xr, _, fr, _ = _refine(
+                space, np.asarray(xi, space.dtype), N_NEWTON
+            )
             info["evaluations"] += N_NEWTON * newton
             fr = float(fr)
             if onp.isfinite(fr) and fr > f and (best is None or fr > best[0]):
