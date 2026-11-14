@@ -98,6 +98,7 @@ K_COH = (
     4  # ln P grid points per cycle of a set's span (> 2 brackets a minimum)
 )
 ZETA_E = (0.0, 0.3, 0.6)  # ζ starts: eccentricities, 8 phases each (17 points)
+ZETA_E_CAP = 0.9  # a start's e stays below this fraction of e_max (chart validity)
 ZETA_PHASES = 8  # anchor mean anomalies M_a per eccentricity, from 0 to 2π
 N_SET_MAX = 2000  # enumerate every set up to this; above it, every span pair
 #                   (all peaks) and random interior fills of each (design §6.1)
@@ -1067,14 +1068,21 @@ def _chart_from(space, v, ti, ln_f, chi2, n):
     )
     frac_s = np.clip((ln_s / math.log(S_MAX) + 1.0) / 2.0, 1e-6, 1.0 - 1e-6)
     z = oc.ti_to_z(*tuple(ti))
-    la = math.log(space.a_range[0])
+    # no inlier: TI′ = 0 and z has no direction; any one is as good
+    nz = np.linalg.norm(z)
+    zdir = np.where(
+        nz > 1e-30,
+        z / np.where(nz > 1e-30, nz, 1.0),
+        np.asarray([1.0, 0.0, 0.0, 0.0], z.dtype),
+    )
+    la =math.log(space.a_range[0])
     da = math.log(space.a_range[1] / space.a_range[0])
     frac = np.clip((np.log(oc.semimajor(z)) - la) / da, 1e-6, 1.0 - 1e-6)
     ff = np.clip(1.0 - ln_f / space.ln_f_floor, 1e-6, 1.0 - 1e-6)
     return np.concatenate(
         [
             v[:1],
-            z / np.maximum(np.linalg.norm(z), 1e-30) * R0,
+            zdir * R0,
             (np.log(frac) - np.log1p(-frac))[None],
             v[1:3],
             (np.log(ff) - np.log1p(-ff))[None],
@@ -1186,11 +1194,14 @@ def _scores(space, x):
     def one(x):
         h = -jax.hessian(_objective)(x, space)
         e = np.linalg.eigvalsh(0.5 * (h + h.T))
-        return (
+        lap = (
             _objective(x, space)
             + 0.5 * x.shape[0] * math.log(2.0 * math.pi)
             - 0.5 * np.sum(np.log(np.maximum(np.abs(e), 1e-12)))
         )
+        # Z_mode <= sup L under the normalized cell prior (design §6.10): the
+        # eigenvalue floor would credit a flat direction up to ~14 nats
+        return np.minimum(lap, space.loglike(x))
 
     return jax.vmap(one)(x)
 
@@ -1337,7 +1348,8 @@ def search_plan(space, key=None, nu_width=None):
     t_k = onp.asarray(space.t_k, float)
     span = max((t_k[max(nt)] - t_k[min(nt)] for nt, _ in chosen), default=0.0)
     n_grid = max(K_COH + 1, math.ceil(K_COH * span * nu_width) + 1)
-    ecc = onp.minimum(onp.array(ZETA_E), 0.5 * space.e_max)
+    # the ζ chart needs e < e_max (``y0`` diverges at it), nothing tighter
+    ecc = onp.minimum(onp.array(ZETA_E), ZETA_E_CAP * space.e_max)
     ecc = onp.maximum(ecc, min(1e-4, 0.5 * space.e_max))  # ζ = 0 has no M_a
     starts = [(ecc[0], 0.0)] + [
         (e, 2.0 * math.pi * i / ZETA_PHASES)
@@ -1412,6 +1424,82 @@ def _unique_starts(lab, v, h, r):
     return onp.array(kept, int)
 
 
+def _best_peaks(space, x):
+    """Each night's best peak at ``x`` (the outlier floor ignored)."""
+    with run_in(onp.dtype(space.dtype).name):
+        c = space.decode(x)
+        pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+        state = np.concatenate(
+            [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
+        )
+        terms = _peak_terms(space.cat, c["ln_s"], space.jitter, state, space.dtype)
+        return np.argmax(terms, axis=1)
+
+
+def _converge_csteps(space, plan, v, lab):
+    """C-steps of the rows ``(v, lab)`` until each one's labels repeat (at most
+    ``N_C``); returns ``v``, the labels and the chart vectors."""
+    v, lab = v.copy(), lab.copy()
+    x = onp.zeros((len(v), space.d))
+    active = onp.arange(len(v))
+    for _ in range(N_C):
+        nxt = []
+        for sl in _chunks(len(active), CHUNK_C):
+            idx = active[sl]
+            res = _cstep_chunk(
+                space, plan,
+                np.asarray(_padded(v[idx], CHUNK_C), space.dtype),
+                np.asarray(_padded(lab[idx], CHUNK_C)), N_NEWTON,
+            )  # fmt: skip
+            vs, ls, xs = (onp.asarray(a)[: len(idx)] for a in res[:3])
+            nxt.append(idx[(ls != lab[idx]).any(1)])
+            v[idx], lab[idx], x[idx] = vs, ls, xs
+        active = onp.concatenate(nxt)
+        if not len(active):
+            break
+    return v, lab, x
+
+
+def _add_one(space, plan, x, info):
+    """``x`` with every night added back that raises the label-summed objective.
+
+    The C-steps only remove nights, so they can stop at the truth's basin with
+    an inlier labelled an outlier. Forward addition (Hadi & Simonoff 1993): label
+    each outlier night with a peak an inlier at its best peak, run the C-steps to
+    convergence and refine; take the best result if the objective rose, and
+    repeat until no night helps.
+    """
+    has_peak = onp.asarray(space.cat.valid).any(1)
+    newton = 4.0 + 3.0 * space.d
+    x0, _, f, _ = _refine(space, np.asarray(x, space.dtype), N_NEWTON)
+    x, f = onp.asarray(x0), float(f)
+    for _ in range(len(has_peak)):
+        lab = onp.asarray(_labels(np.asarray(x, space.dtype), space))
+        cand = onp.flatnonzero((lab < 0) & has_peak)
+        if not len(cand) or not onp.isfinite(f):
+            break
+        peaks = onp.asarray(_best_peaks(space, np.asarray(x, space.dtype)))
+        labs = onp.repeat(lab[None], len(cand), 0)
+        labs[onp.arange(len(cand)), cand] = peaks[cand]
+        v, _, xs = _converge_csteps(
+            space, plan, onp.repeat(x[[0, 6, 7]][None], len(cand), 0), labs
+        )
+        info["evaluations"] += len(cand) * N_C * N_NEWTON * (1.0 + 3.0 + 9.0)
+        best = None
+        for xi in xs:
+            if not onp.isfinite(xi).all():
+                continue
+            xr, _, fr, _ = _refine(space, np.asarray(xi, space.dtype), N_NEWTON)
+            info["evaluations"] += N_NEWTON * newton
+            fr = float(fr)
+            if onp.isfinite(fr) and fr > f and (best is None or fr > best[0]):
+                best = (fr, onp.asarray(xr))
+        if best is None:
+            break
+        f, x = best
+    return x
+
+
 # deliberate: polishes each C-step survivor on the label-summed target and takes its saddle-free Laplace covariance, a whole step that keeps search_cell under the function-length gate
 def _laplace_modes(space, x, info):
     """The ``Mode`` of each start in ``x``: Newton on the label-summed target,
@@ -1451,7 +1539,9 @@ def search_cell(space, key=None, *, plan=None, info=None):
        the rest deduplicated by labels and ``(ln P, ζ)``.
     3. C-steps (at most ``N_C``): Newton on the labelled target in the full
        chart, relabel, until the labels repeat.
-    4. Newton on the label-summed objective; the covariance is the inverse of
+    4. Add-one: each outlier night with a peak tried as an inlier (C-steps and
+       Newton), kept while the label-summed objective rises.
+    5. Newton on the label-summed objective; the covariance is the inverse of
        its saddle-free Hessian (``|eigenvalues|``); ``distinct_modes``.
 
     ``info``, a dict, receives the counts of each step, the runs ended by the
@@ -1461,7 +1551,7 @@ def search_cell(space, key=None, *, plan=None, info=None):
     ``evaluations``, the likelihood-equivalent cost (a gradient is 3, a Hessian 3 per dimension).
 
     Source: Fischler & Bolles (1981), Rousseeuw (1984), Rousseeuw & Van Driessen
-    (1999), Golub & Pereyra (1973).
+    (1999), Hadi & Simonoff (1993), Golub & Pereyra (1973).
     """
     plan = search_plan(space, key) if plan is None else plan
     info = {} if info is None else info
@@ -1553,6 +1643,8 @@ def search_cell(space, key=None, *, plan=None, info=None):
     x, lab, v, r2, h2 = x[ok], lab[ok], v[ok], r2[ok], h2[ok]
     keep = _unique_starts(lab, v, h2, r2)
     x = x[keep][_prune(space, x[keep])]
+    if len(x):
+        x = onp.stack([_add_one(space, plan, xi, info) for xi in x])
     modes = distinct_modes(_laplace_modes(space, x, info))
     info["modes"] = len(modes)
     return modes

@@ -1511,3 +1511,83 @@ def test_position_cells_fails_on_a_flagged_cell_within_the_bound(monkeypatch):
     assert run(margin - 0.01).failed.sum() == 1
     out = run(margin + 0.01)
     assert not out.failed.any() and out.omitted_bound <= oc_cells.DELTA
+
+
+def _true_state(
+    sigma, k_times, b=None, p_range=(9.0, 14.0), sigma_last=None
+):
+    """A small system at its truth: ``(space, plan, truth chart)``; the last
+    night has ``sigma_last`` if given."""
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.5)
+    s = _summaries(orbit, k_times, sigma=sigma, seed=1)
+    if sigma_last is not None:
+        s = s[:-1] + _summaries(
+            orbit, k_times[-1:], sigma=sigma_last, seed=2
+        )
+    _, _, cell = _true_cell(11.3, k_times, s, p_range)
+    log_b = onp.full(len(k_times), LOG_B if b is None else b)
+    space = oc_cells._Space(
+        oc_cells._Catalogue(s, log_b), cell, 0.0,
+        onp.array([n.t_ref for n in s]) - s[0].t_ref,
+        (1.0, 30.0), 0.9, 1e-4, 0.0, np.float64,
+    )  # fmt: skip
+    plan = oc_cells.search_plan(space, None, 1.0 / (k_times[-1] - k_times[0]))
+    xt = _truth_chart(space, orbit, k_times[0])
+    xt[1:5] *= math.sqrt(3.0)
+    return space, plan, xt
+
+
+@x64
+def test_the_prune_score_never_exceeds_the_likelihood_so_a_flat_candidate_cannot_drop_the_truth():
+    """``Z_mode <= sup L`` (design 6.10): the Laplace score of a point is at
+    most ``ln L`` there. A candidate with every night an outlier is flat in the
+    orbit; flooring its Hessian eigenvalues credits it ``½ ln 10^12`` nats per
+    flat direction (13.8). Its floor is set 5 nats inside the prune margin
+    above the truth's score, so only that credit puts it more than the margin
+    over the truth's basin."""
+    rng = onp.random.default_rng(5 * 10**3 + 10)
+    times = _two_season_times(rng)
+    space, _, xt = _true_state(6e-4, times)
+    flat = xt.copy()
+    flat[5:] = 14.0  # a saturated chart: every night an outlier, no curvature
+    at = lambda x: np.asarray(x)[None]  # noqa: E731
+    truth_score = float(oc_cells._scores(space, at(xt))[0])
+    margin = max(oc_cells.W_PRUNE, math.log(2 / oc_cells.DELTA))
+    # ln L of the flat point is K b + const: move b so that it sits 5 nats
+    # inside the margin over the truth's score
+    ll = lambda b: float(  # noqa: E731
+        _true_state(6e-4, times, b)[0].loglike(np.asarray(flat))
+    )
+    slope = ll(0.0) - ll(-1.0)
+    b = LOG_B + (truth_score + margin - 5.0 - ll(LOG_B)) / slope
+    space, _, xt = _true_state(6e-4, times, b)
+    truth_score = float(oc_cells._scores(space, at(xt))[0])
+    flat_ll = float(space.loglike(np.asarray(flat)))
+    assert flat_ll < truth_score + margin
+    assert float(oc_cells._scores(space, at(flat))[0]) <= flat_ll
+    keep = oc_cells._prune(space, onp.stack([flat, xt]))
+    assert 1 in keep
+
+
+@x64
+def test_add_one_recovers_an_inlier_night_the_c_steps_leave_out():
+    """Eight nights within 80 d (``sigma`` 0.05) and one at 1000 d, ten times
+    more precise, all inliers of one orbit. The C-steps from the truth with
+    the last night labelled an outlier fit the other eight alone: their fit
+    errs by a fraction of ``sigma``, which the 88 cycles to the last night
+    magnify far beyond its own ``sigma``, so it relabels as an outlier (a fixed
+    point of the C-steps). Add-one puts it back and the objective rises."""
+    times = onp.r_[TIMES, 1000.0]
+    space, plan, xt = _true_state(0.05, times, sigma_last=0.005)
+    lab = onp.asarray(oc_cells._labels(np.asarray(xt), space)).copy()
+    assert (lab >= 0).all()
+    lab[-1] = -1
+    v, lab, x = oc_cells._converge_csteps(
+        space, plan, xt[[0, 6, 7]][None], lab[None]
+    )
+    assert lab[0, -1] == -1 and (lab[0, :-1] >= 0).all()
+    f0 = float(oc_cells._refine(space, np.asarray(x[0]), oc_cells.N_NEWTON)[2])
+    info = {"evaluations": 0.0}
+    x1 = oc_cells._add_one(space, plan, x[0], info)
+    assert float(oc_cells._objective(np.asarray(x1), space)) > f0
+    assert (onp.asarray(oc_cells._labels(np.asarray(x1), space)) >= 0).all()
