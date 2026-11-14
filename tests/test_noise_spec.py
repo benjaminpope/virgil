@@ -1,10 +1,8 @@
 """Tests for declarative instrument noise specifications (virgil.noise_spec)."""
 
 from dataclasses import dataclass
-import inspect
 import json
 
-import jax.numpy as np
 import numpy as onp
 import pytest
 
@@ -18,7 +16,6 @@ from virgil.noise_spec import (
     load_noise_spec,
     validate_noise_spec,
 )
-from virgil.observables import DifferentialPhase
 from virgil.oidata import OIData, cp_indices
 from virgil.oifits import build_hdulist
 
@@ -134,8 +131,7 @@ def test_load_noise_spec_resolves_dict_json_and_protocol(tmp_path):
         load_noise_spec(42)
 
 
-def test_validate_noise_spec_normalizes_minimal_diffphase_spec():
-    # Compatible with virgil_vlti.pairs.diff_phase_noise_spec(..., run=..., date=...)
+def test_validate_noise_spec_normalizes_minimal_diffphase_and_null_bound():
     minimal = {
         "schema": SCHEMA,
         "white": {"visphi": onp.float64(0.85)},
@@ -144,7 +140,7 @@ def test_validate_noise_spec_normalizes_minimal_diffphase_spec():
             "tool": "virgil-vlti",
             "run": "diffphase_pairs:8",
             "date": "2026-10-18",
-            "bound": "lower",
+            "bound": None,
         },
     }
     norm = validate_noise_spec(minimal)
@@ -157,7 +153,7 @@ def test_validate_noise_spec_normalizes_minimal_diffphase_spec():
     }
     assert norm["closure_offsets"] == {"triangle": None, "baseline": None}
     assert norm["common_mode"] == {"visphi": 0.012}
-    # Pure Python primitives: round-trips cleanly through json.dumps.
+    assert norm["provenance"]["bound"] is None
     assert json.loads(json.dumps(norm, sort_keys=True)) == norm
 
 
@@ -196,8 +192,6 @@ def test_validate_noise_spec_lists_all_problems_at_once():
 
 
 def test_validate_noise_spec_warns_on_unit_slips_without_rejecting():
-    # SAM (~3 deg = 0.052 rad) and CHARA (~12% on log|V|) widths are valid
-    # below the hard limits, and warn naming the likely unit slip.
     spec = _base_spec(
         gains={"telescope": 0.12, "baseline": None, "chromatic": None},
         closure_offsets={"triangle": 0.05, "baseline": None},
@@ -212,11 +206,12 @@ def test_validate_noise_spec_warns_on_unit_slips_without_rejecting():
     assert out["gains"]["telescope"] == 0.12
 
 
-def test_instrument_match_handles_channels_and_warns_on_mismatch():
+def test_instrument_match_delimiter_prefix_and_mismatch_warnings():
     spec_grav = _base_spec(instrument="GRAVITY")
+    assert instrument_match({"insname": "GRAVITY"}, spec_grav)
     assert instrument_match({"insname": "GRAVITY_SC"}, spec_grav)
     assert instrument_match(
-        {"insname": ("GRAVITY_SC_P1", "GRAVITY_SC_P2")}, spec_grav
+        {"insname": ("GRAVITY_SC_P1", "GRAVITY-FT")}, spec_grav
     )
     assert instrument_match(
         {"insname": "MATISSE_LM"}, _base_spec(instrument="MATISSE")
@@ -227,14 +222,19 @@ def test_instrument_match_handles_channels_and_warns_on_mismatch():
         {"insname": "GRAVITY_SC"}, _base_spec(instrument=None)
     )
 
-    with pytest.warns(UserWarning, match="PIONIER.*GRAVITY_SC"):
-        assert not instrument_match(
-            {"insname": "GRAVITY_SC"}, _base_spec(instrument="PIONIER")
-        )
-    with pytest.warns(UserWarning, match="GRAVITY_FT.*GRAVITY_SC"):
-        assert not instrument_match(
-            {"insname": "GRAVITY_SC"}, _base_spec(instrument="GRAVITY_FT")
-        )
+    # Reject reverse substrings and non-delimiter prefix collisions.
+    for data_ins, spec_ins in (
+        ("GRAVITY_SC", "PIONIER"),
+        ("GRAVITY_SC", "GRAVITY_FT"),
+        ("GRAVITY", "GRAVITY_FT"),
+        ("N", "PIONIER"),
+        ("H", "CHARA"),
+        ("VIS", "VISIR"),
+    ):
+        with pytest.warns(UserWarning, match=f"{spec_ins}.*{data_ins}"):
+            assert not instrument_match(
+                {"insname": data_ins}, _base_spec(instrument=spec_ins)
+            )
 
 
 @pytest.mark.validates(
@@ -249,7 +249,7 @@ def test_apply_noise_spec_equals_manual_chain_and_is_instrument_invariant():
         gains={"telescope": 0.0055, "baseline": 0.0045, "chromatic": 0.002},
         closure_offsets={"triangle": 0.0036, "baseline": 0.002},
     )
-    applied = apply_noise_spec(data, spec)
+    applied = apply_noise_spec(data, spec, insname="PIONIER")
     manual = (
         data.with_error_scale({"vis": 0.32, "phi": 0.65, "t3amp": 0.80})
         .with_gains(telescope=0.0055, baseline=0.0045, chromatic=0.002)
@@ -271,10 +271,14 @@ def test_apply_noise_spec_equals_manual_chain_and_is_instrument_invariant():
         float(model_loglike(SCENE, manual)), rel=1e-6
     )
 
-    # Identical likelihood whatever instrument string the spec carries.
-    other_inst = apply_noise_spec(
-        data, _base_spec(**{**spec, "instrument": "MIRC-X"})
-    )
+    # Identical likelihood whatever instrument string the spec carries, while
+    # emitting UserWarning when insname disagrees.
+    with pytest.warns(UserWarning, match="MIRC-X.*PIONIER"):
+        other_inst = apply_noise_spec(
+            data,
+            _base_spec(**{**spec, "instrument": "MIRC-X"}),
+            insname="PIONIER",
+        )
     assert float(model_loglike(SCENE, applied)) == pytest.approx(
         float(model_loglike(SCENE, other_inst)), rel=1e-12
     )
@@ -291,20 +295,48 @@ def test_apply_noise_spec_equals_manual_chain_and_is_instrument_invariant():
     assert white_only.phase_offsets is None
 
 
-def test_apply_noise_spec_refuses_stacking():
+def test_apply_noise_spec_skips_absent_gain_and_offset_observables():
+    data = _multi_channel_oidata(n_frames=2)
+    spec = _base_spec()
+
+    vis_only = data.select(observables="vis")
+    vis_applied = apply_noise_spec(vis_only, spec)
+    assert vis_applied.gains is not None
+    assert vis_applied.phase_offsets is None
+    onp.testing.assert_allclose(
+        vis_applied.d_vis, vis_only.d_vis * 0.32, rtol=0, atol=1e-7
+    )
+
+    phi_only = data.select(observables="phi")
+    phi_applied = apply_noise_spec(phi_only, spec)
+    assert phi_applied.gains is None
+    assert phi_applied.phase_offsets is not None
+    onp.testing.assert_allclose(
+        phi_applied.d_phi, phi_only.d_phi * 0.65, rtol=0, atol=1e-7
+    )
+
+
+def test_apply_noise_spec_refuses_stacking_upfront():
     data = _multi_channel_oidata(n_frames=2)
     spec = _base_spec()
     applied = apply_noise_spec(data, spec)
+    white_only = _base_spec(gains=None, closure_offsets=None)
 
-    with pytest.raises(ValueError, match="refuses to stack gains"):
-        apply_noise_spec(applied, spec)
+    with pytest.raises(ValueError, match="refuses to stack"):
+        apply_noise_spec(applied, white_only)
 
-    offsets_only = _base_spec(gains=None)
-    with pytest.raises(ValueError, match="refuses to stack offsets"):
-        apply_noise_spec(applied, offsets_only)
+    offsets_applied = apply_noise_spec(data, _base_spec(gains=None))
+    with pytest.raises(ValueError, match="refuses to stack"):
+        apply_noise_spec(offsets_applied, white_only)
+
+    dp_prior = _multi_channel_oidata(
+        n_frames=2, extras=("visphi",)
+    ).with_continuum(lines=LINE_WINDOW, prior_width=0.05)
+    with pytest.raises(ValueError, match="differential-phase nuisance modes"):
+        apply_noise_spec(dp_prior, white_only)
 
 
-def test_apply_noise_spec_common_mode_visphi_hook(monkeypatch):
+def test_apply_noise_spec_common_mode_visphi_raises_until_supported():
     data = _multi_channel_oidata(
         n_frames=2, extras=("visphi",)
     ).with_continuum(lines=LINE_WINDOW)
@@ -319,76 +351,16 @@ def test_apply_noise_spec_common_mode_visphi_hook(monkeypatch):
     v2_cp_only = _multi_channel_oidata(n_frames=2)
     assert apply_noise_spec(v2_cp_only, spec).gains is None
 
-    has_modes = (
-        "modes" in inspect.signature(DifferentialPhase.build).parameters
+    # Null/zero common_mode.visphi rescales white.visphi cleanly.
+    scaled_only = apply_noise_spec(
+        data, _base_spec(**{**spec, "common_mode": {"visphi": 0.0}})
     )
-    if has_modes:
-        out = apply_noise_spec(data, spec)
-        visphi_block = next(b for b in out.extras if b.kind == "visphi")
-        modes = onp.asarray(
-            getattr(
-                visphi_block, "modes", getattr(visphi_block, "raw_modes", None)
-            )
-        )
-        assert modes.shape == (12, visphi_block.values.size)
-        assert np.all(np.isfinite(whitened_residuals(SCENE, out)))
-        with pytest.raises(ValueError, match="refuses to stack"):
-            apply_noise_spec(out, spec)
-        return
-
-    # Before DifferentialPhase(modes=...) merges: verify both the guard and the
-    # mode-construction hook via signature-preserving monkeypatch.
-    with pytest.raises(NotImplementedError, match="DifferentialPhase"):
-        apply_noise_spec(data, spec)
-
-    captured = {}
-    orig_build = DifferentialPhase.build
-
-    def _fake_build(
-        values,
-        errors,
-        sample,
-        wavel,
-        frame,
-        stations,
-        row=None,
-        continuum=None,
-        lines=None,
-        order=1,
-        closure_free=True,
-        prior_width=None,
-        modes=None,
-    ):
-        captured["modes"] = modes
-        return orig_build(
-            values,
-            errors,
-            sample,
-            wavel,
-            frame,
-            stations,
-            row=row,
-            continuum=continuum,
-            lines=lines,
-            order=order,
-            closure_free=closure_free,
-            prior_width=prior_width,
-        )
-
-    monkeypatch.setattr(DifferentialPhase, "build", _fake_build)
-    out = apply_noise_spec(data, spec)
-    visphi_block = next(b for b in out.extras if b.kind == "visphi")
     onp.testing.assert_allclose(
-        visphi_block.errors,
+        scaled_only.extras[0].errors,
         data.extras[0].errors * 0.75,
         rtol=0,
         atol=1e-7,
     )
-    modes = captured["modes"]
-    assert modes.shape == (12, visphi_block.values.size)
-    # Nonzero only inside LINE_WINDOW, equal to 0.015 rad on each row's line channels.
-    in_line = (visphi_block.wavel >= LINE_WINDOW[0][0]) & (
-        visphi_block.wavel <= LINE_WINDOW[0][1]
-    )
-    onp.testing.assert_allclose(modes[:, ~in_line], 0.0)
-    onp.testing.assert_allclose(modes.sum(axis=0)[in_line], 0.015)
+
+    with pytest.raises(NotImplementedError, match="common_mode.visphi"):
+        apply_noise_spec(data, spec)

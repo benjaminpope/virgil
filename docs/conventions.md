@@ -283,7 +283,7 @@ result.info["precondition_rounds"]
 
 ## Instrument noise specs
 
-An instrument package (such as `virgil-vlti`) measures departures from independent quoted errors and emits a declarative `virgil.noise_spec/1` record: a dictionary, a JSON file, or an object with `to_noise_spec() -> dict`. `virgil.noise_spec` (`load_noise_spec`, `validate_noise_spec`, `apply_noise_spec`, `instrument_match`; provisional, see [stability](stability.md)) validates and applies it to an [`OIData`][virgil.oidata.OIData] without importing any instrument code.
+An instrument package (such as `virgil-vlti`) measures departures from independent quoted errors and emits a declarative `virgil.noise_spec/1` record: a dictionary, a JSON file, or an object with `to_noise_spec() -> dict`. [`virgil.noise_spec`](api/noise_spec.md) (`load_noise_spec`, `validate_noise_spec`, `apply_noise_spec`, `instrument_match`; provisional, see [stability](stability.md)) validates and applies it to an [`OIData`][virgil.oidata.OIData] without importing any instrument code.
 
 ```json
 {
@@ -302,11 +302,11 @@ Every unit conversion happens once, in the emitter:
 | Field | Units and allowed values | Applied by `apply_noise_spec` |
 | --- | --- | --- |
 | `schema` | `"virgil.noise_spec/1"` (major-versioned; unknown keys outside `provenance` raise `ValueError` so newer terms are never silently dropped) | checked by `validate_noise_spec` |
-| `instrument` | non-empty string or `null` | compared case-insensitively with `data.insname` when recorded (`UserWarning` on mismatch, never an error) |
+| `instrument` | non-empty string or `null` | compared by case-insensitive delimiter-bounded prefix against `insname` (passed via `insname=` or carried on `data` when recorded; `UserWarning` on mismatch, never an error) |
 | `white` | finite scales $> 0$ on the quoted uncertainties, keyed by [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale] names (`"vis"`, `"phi"`, `"flux"`, `"nflux"`, `"corrflux"`, `"visamp"`, `"t3amp"`, `"visphi"`); missing keys mean `1` | `data.with_error_scale(...)` on the observables present in `data` |
-| `gains` | $1\sigma$ widths on $\ln \lvert V \rvert$ (`telescope`, `baseline`, `chromatic`), `null` or in $[0, 1]$ (half of a fractional $V^2$ gain width; warns above `0.1`) | [`data.with_gains(...)`][virgil.oidata.OIData.with_gains] when any width is positive |
-| `closure_offsets` | $1\sigma$ widths in **radians** (`triangle`, `baseline`), `null` or in $[0, 0.3]$ rad (warns above `0.02` rad) | [`data.with_closure_offsets(...)`][virgil.oidata.OIData.with_closure_offsets] when any width is positive |
-| `common_mode` | optional `{"visphi": width}` in **radians**, `null` or in $[0, 0.5]$ rad (warns above `0.05` rad) | one constant line-channel mode per `(frame, baseline)` on `"visphi"` when positive |
-| `provenance` | free-form mapping requiring non-empty `"run"` and `"date"` strings (and optional `"bound"` in `("lower", "estimate")`) | carried verbatim |
+| `gains` | $1\sigma$ widths on $\ln \lvert V \rvert$ (`telescope`, `baseline`, `chromatic`), `null` or in $[0, 1]$ (half of a fractional $V^2$ gain width; warns above `0.1`) | [`data.with_gains(...)`][virgil.oidata.OIData.with_gains] when any width is positive and amplitude/visibility observables are present in `data` |
+| `closure_offsets` | $1\sigma$ widths in **radians** (`triangle`, `baseline`), `null` or in $[0, 0.3]$ rad (warns above `0.02` rad) | [`data.with_closure_offsets(...)`][virgil.oidata.OIData.with_closure_offsets] when any width is positive and closure phases are present in `data` |
+| `common_mode` | optional `{"visphi": width}` in **radians**, `null` or in $[0, 0.5]$ rad (warns above `0.05` rad) | validated in `/1`; `OIData` application on `"visphi"` currently raises `NotImplementedError` pending `DifferentialPhase` mode marginalization |
+| `provenance` | free-form mapping requiring non-empty `"run"` and `"date"` strings (and optional `"bound"` in `("lower", "estimate")` or `null`) | carried verbatim |
 
-`apply_noise_spec` applies `white` first, then `gains`, `closure_offsets` and `common_mode`, and raises `ValueError` rather than stacking onto data that already carry any active nuisance group.
+`apply_noise_spec` refuses upfront with `ValueError` if `data` already carries marginalized `gains`, `phase_offsets`, or differential-phase nuisance modes (so a white-only spec never rescales `d_vis` underneath existing `gains`), then applies `white` multiplicatively followed by `gains`, `closure_offsets` and `common_mode` (repeated white-only specs on nuisance-free data compound multiplicatively, as [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale] leaves no marker on `OIData`).

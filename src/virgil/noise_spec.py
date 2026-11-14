@@ -15,7 +15,6 @@ see [conventions](../conventions.md#instrument-noise-specs).
 
 from collections.abc import Mapping
 import copy
-import inspect
 import json
 import math
 from numbers import Real
@@ -23,11 +22,10 @@ import os
 from pathlib import Path
 import warnings
 
-import equinox as eqx
 import numpy as onp
 
 from ._deprecate import external_stacklevel
-from .observables import KINDS, DifferentialPhase, in_ranges
+from .observables import KINDS
 
 __all__ = [
     "apply_noise_spec",
@@ -36,12 +34,7 @@ __all__ = [
     "validate_noise_spec",
 ]
 
-__provisional__ = (
-    "load_noise_spec",
-    "validate_noise_spec",
-    "apply_noise_spec",
-    "instrument_match",
-)
+__provisional__ = ("*",)
 
 SCHEMA = "virgil.noise_spec/1"
 SCHEMA_PREFIX = "virgil.noise_spec/"
@@ -50,6 +43,7 @@ GAIN_KEYS = ("telescope", "baseline", "chromatic")
 OFFSET_KEYS = ("triangle", "baseline")
 COMMON_MODE_KEYS = ("visphi",)
 BOUND_VALUES = ("lower", "estimate")
+_INST_DELIMS = ("_", "-", "/", " ", "(")
 _TOP_LEVEL_KEYS = (
     "schema",
     "instrument",
@@ -143,9 +137,6 @@ def _validate_width_group(
 
 def validate_noise_spec(spec):
     """Validate and normalize a ``virgil.noise_spec/1`` mapping.
-
-    !!! warning "Provisional"
-        May change in any 0.4.x release without a deprecation cycle.
 
     Checks the major schema version, rejects unknown keys outside
     ``provenance``, verifies value bounds across every group, and warns on
@@ -250,10 +241,13 @@ def validate_noise_spec(spec):
                 problems.append(
                     f"provenance.{req} must be a non-empty string, got {val!r}"
                 )
-        if "bound" in raw_prov and raw_prov["bound"] not in BOUND_VALUES:
+        if (
+            raw_prov.get("bound") is not None
+            and raw_prov["bound"] not in BOUND_VALUES
+        ):
             problems.append(
-                f"provenance.bound must be one of {list(BOUND_VALUES)}, got "
-                f"{raw_prov['bound']!r}"
+                f"provenance.bound must be None or one of "
+                f"{list(BOUND_VALUES)}, got {raw_prov['bound']!r}"
             )
         provenance = copy.deepcopy(dict(raw_prov))
 
@@ -276,9 +270,6 @@ def validate_noise_spec(spec):
 
 def load_noise_spec(obj):
     """Load and validate a ``virgil.noise_spec/1`` specification.
-
-    !!! warning "Provisional"
-        May change in any 0.4.x release without a deprecation cycle.
 
     Parameters
     ----------
@@ -315,25 +306,27 @@ def load_noise_spec(obj):
     return validate_noise_spec(raw)
 
 
-def instrument_match(data, spec):
-    """Check whether ``data``'s recorded instrument matches ``spec``.
+def instrument_match(data, spec, *, insname=None):
+    """Check whether a dataset's recorded instrument matches ``spec``.
 
-    !!! warning "Provisional"
-        May change in any 0.4.x release without a deprecation cycle.
-
-    Compares ``data``'s ``insname`` (when present and non-empty) against
-    ``spec["instrument"]`` by case-insensitive prefix/substring matching so
-    generic instrument names such as ``"GRAVITY"`` or ``"MATISSE"`` match
-    channel names such as ``"GRAVITY_SC"`` or ``"MATISSE_LM"``. Emits a
-    ``UserWarning`` and returns ``False`` on mismatch, never raising.
+    Compares ``insname`` (or ``data["insname"]`` / ``getattr(data, "insname",
+    None)`` when recorded and non-empty) against ``spec["instrument"]`` by
+    case-insensitive exact or delimiter-bounded prefix matching so generic
+    instrument names such as ``"GRAVITY"`` or ``"MATISSE"`` match sub-channel
+    names such as ``"GRAVITY_SC"`` or ``"MATISSE_LM"`` without matching
+    unrelated short names. Emits a ``UserWarning`` and returns ``False`` on
+    mismatch, never raising.
 
     Parameters
     ----------
     data : OIData or Mapping
-        Dataset (or record) optionally carrying an ``insname`` attribute or
-        key.
+        Dataset or record optionally carrying an ``insname`` attribute or key.
     spec : Mapping
         Noise specification dictionary.
+    insname : str or sequence of str, optional
+        Explicit instrument name(s) overriding any ``insname`` on ``data``
+        (useful when OIFITS ``INSNAME`` metadata are read separately from
+        [`OIData`][virgil.oidata.OIData]).
 
     Returns
     -------
@@ -346,11 +339,13 @@ def instrument_match(data, spec):
         return True
     spec_clean = str(spec_inst).strip()
 
-    raw_ins = (
-        data.get("insname")
-        if isinstance(data, Mapping)
-        else getattr(data, "insname", None)
-    )
+    raw_ins = insname
+    if raw_ins is None:
+        raw_ins = (
+            data.get("insname")
+            if isinstance(data, Mapping)
+            else getattr(data, "insname", None)
+        )
     if raw_ins is None:
         return True
     if isinstance(raw_ins, str):
@@ -367,7 +362,13 @@ def instrument_match(data, spec):
 
     target = spec_clean.lower()
     matched = all(
-        target in name.lower() or name.lower() in target for name in names
+        name.lower() == target
+        or (
+            len(name) > len(target)
+            and name.lower().startswith(target)
+            and name[len(target)] in _INST_DELIMS
+        )
+        for name in names
     )
     if not matched:
         shown = names[0] if len(names) == 1 else names
@@ -380,25 +381,26 @@ def instrument_match(data, spec):
     return matched
 
 
-def apply_noise_spec(data, spec):
+def apply_noise_spec(data, spec, *, insname=None):
     """Apply a validated ``virgil.noise_spec/1`` specification to ``data``.
 
-    !!! warning "Provisional"
-        May change in any 0.4.x release without a deprecation cycle.
-
-    Validates ``spec``, checks [`instrument_match`][virgil.noise_spec.instrument_match],
-    rescales quoted uncertainties on the observables present in ``data``, and
-    attaches marginalized gains, closure-phase offsets and differential-phase
-    common modes. Refuses to stack gains, closure-phase offsets or
-    differential-phase modes onto data that already carry them.
+    Validates ``spec``, refuses to apply onto data that already carry any
+    marginalized nuisance modes, checks
+    [`instrument_match`][virgil.noise_spec.instrument_match], rescales quoted
+    uncertainties on the observables present in ``data``, and attaches
+    marginalized gains and closure-phase offsets where the corresponding
+    observables are present.
 
     Parameters
     ----------
     data : OIData
-        Prepared interferometric dataset without pre-existing gains or offsets
-        for any group active in ``spec``.
+        Prepared interferometric dataset without pre-existing gains,
+        closure-phase offsets, or differential-phase nuisance modes.
     spec : Mapping
         Noise specification dictionary conforming to ``virgil.noise_spec/1``.
+    insname : str or sequence of str, optional
+        Explicit instrument name(s) forwarded to
+        [`instrument_match`][virgil.noise_spec.instrument_match].
 
     Returns
     -------
@@ -409,11 +411,50 @@ def apply_noise_spec(data, spec):
     Raises
     ------
     ValueError
-        If ``spec`` is invalid, if ``data`` already carries a nuisance group
-        that ``spec`` applies, or if ``data`` is incompatible with the
-        requested nuisance modes.
+        If ``spec`` is invalid, if ``data`` already carries marginalized
+        gains, closure-phase offsets, or differential-phase modes, or if
+        ``data`` is incompatible with the requested nuisance modes.
+    NotImplementedError
+        If ``spec["common_mode"]["visphi"]`` is positive and ``data`` carries
+        a ``"visphi"`` block.
     """
     spec = validate_noise_spec(spec)
+    visphi_blocks = [b for b in data.extras if b.kind == "visphi"]
+    if data.gains is not None:
+        raise ValueError(
+            "Data already carry calibration gains (data.gains is not None); "
+            "apply_noise_spec refuses to stack onto data with existing "
+            "nuisance modes."
+        )
+    if data.phase_offsets is not None:
+        raise ValueError(
+            "Data already carry closure-phase offsets "
+            "(data.phase_offsets is not None); apply_noise_spec refuses to "
+            "stack onto data with existing nuisance modes."
+        )
+    if any(
+        getattr(b, "prior_width", None) is not None
+        or getattr(b, "modes", None) is not None
+        or getattr(b, "raw_modes", None) is not None
+        for b in visphi_blocks
+    ):
+        raise ValueError(
+            "Data already carry differential-phase nuisance modes; "
+            "apply_noise_spec refuses to stack onto data with existing "
+            "nuisance modes."
+        )
+
+    instrument_match(data, spec, insname=insname)
+
+    present_kinds = {b.kind for b in data.extras}
+    if data.vis.size:
+        present_kinds.add("vis")
+    if data.phi.size:
+        present_kinds.add("phi")
+    present_white = {
+        k: v for k, v in spec["white"].items() if k in present_kinds
+    }
+
     gain_kwargs = {
         k: v for k, v in spec["gains"].items() if v is not None and v > 0.0
     }
@@ -425,75 +466,19 @@ def apply_noise_spec(data, spec):
     visphi_width = spec["common_mode"]["visphi"]
     visphi_active = visphi_width is not None and visphi_width > 0.0
 
-    if gain_kwargs and data.gains is not None:
-        raise ValueError(
-            "Data already carry calibration gains (data.gains is not None); "
-            "apply_noise_spec refuses to stack gains."
-        )
-    if offset_kwargs and data.phase_offsets is not None:
-        raise ValueError(
-            "Data already carry closure-phase offsets "
-            "(data.phase_offsets is not None); apply_noise_spec refuses to "
-            "stack offsets."
-        )
-    visphi_blocks = [b for b in data.extras if b.kind == "visphi"]
-    if visphi_active and any(
-        getattr(b, "modes", None) is not None
-        or getattr(b, "raw_modes", None) is not None
-        for b in visphi_blocks
-    ):
-        raise ValueError(
-            "Data already carry differential-phase modes; apply_noise_spec "
-            "refuses to stack common_mode.visphi."
-        )
-
-    instrument_match(data, spec)
-
-    present_kinds = {b.kind for b in data.extras}
-    if data.vis.size:
-        present_kinds.add("vis")
-    if data.phi.size:
-        present_kinds.add("phi")
-    present_white = {
-        k: v for k, v in spec["white"].items() if k in present_kinds
-    }
-
     out = data
     if present_white:
         out = out.with_error_scale(present_white)
-    if gain_kwargs:
+    has_gain_obs = bool(out.vis.size) or any(
+        b.gain_legs() and onp.size(b.values) for b in out.extras
+    )
+    if gain_kwargs and has_gain_obs:
         out = out.with_gains(**gain_kwargs)
-    if offset_kwargs:
+    if offset_kwargs and out.phi.size:
         out = out.with_closure_offsets(**offset_kwargs)
     if visphi_active and visphi_blocks:
-        if (
-            "modes"
-            not in inspect.signature(DifferentialPhase.build).parameters
-        ):
-            raise NotImplementedError(
-                "Applying common_mode.visphi requires "
-                "DifferentialPhase.build(..., modes=...)."
-            )
-        new_extras = []
-        for b in out.extras:
-            if b.kind != "visphi":
-                new_extras.append(b)
-                continue
-            wavel = onp.asarray(b.wavel)
-            row = onp.asarray(b.row)
-            if b.continuum is None and b.lines is None:
-                line = onp.ones(wavel.size, dtype=bool)
-            elif b.lines is None:
-                line = ~in_ranges(wavel, b.continuum)
-            else:
-                line = in_ranges(wavel, b.lines)
-            mode_rows = [
-                onp.where((row == r) & line, visphi_width, 0.0)
-                for r in onp.unique(row)
-                if ((row == r) & line).any()
-            ]
-            if mode_rows:
-                b = b.rebuild(modes=onp.stack(mode_rows, axis=0))
-            new_extras.append(b)
-        out = eqx.tree_at(lambda d: d.extras, out, tuple(new_extras))
+        raise NotImplementedError(
+            "Applying common_mode.visphi to DifferentialPhase is not yet "
+            "implemented."
+        )
     return out
