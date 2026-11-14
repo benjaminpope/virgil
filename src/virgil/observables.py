@@ -34,7 +34,7 @@ import jax.scipy.linalg as jsl
 import numpy as onp
 
 from ._deprecate import renamed
-from ._linear import posterior, whiten_blocks
+from ._linear import arrow_problem, posterior, whiten_blocks
 from ._utils import group_indices, wrap_phase
 
 __all__ = [
@@ -131,6 +131,76 @@ def _padded_groups(labels, fill):
     out = onp.full((n_group, counts.max(initial=0)), fill, dtype=onp.int32)
     out[labels[order], onp.arange(labels.size) - first[labels[order]]] = order
     return out
+
+
+def _check_modes(modes, n_sample, label):
+    """Validate ``(n_mode, n_sample)`` mode array; return float array or None."""
+    if modes is None:
+        return None
+    arr = onp.asarray(modes, float)
+    if arr.ndim == 1:
+        arr = arr[None, :]
+    if arr.ndim != 2 or arr.shape[1] != n_sample:
+        raise ValueError(
+            f"modes has shape {arr.shape} for {n_sample} {label} samples; "
+            f"give (n_mode, {n_sample})."
+        )
+    if not onp.all(onp.isfinite(arr)):
+        raise ValueError("modes must be finite.")
+    return None if arr.size == 0 else arr
+
+
+def _partition_flux_modes(modes, group, members, n_sample):
+    """Split ``(n_mode, n_sample)`` modes into per-group local and spanning."""
+    if modes is None:
+        return None, None
+    n_group, max_m = members.shape
+    per_g = [[] for _ in range(n_group)]
+    span = []
+    for mode in modes:
+        gs = onp.unique(group[onp.flatnonzero(mode)])
+        if gs.size == 1:
+            g = int(gs[0])
+            idx = members[g]
+            col = onp.where(
+                idx < n_sample, mode[onp.minimum(idx, n_sample - 1)], 0.0
+            )
+            per_g[g].append(col)
+        elif gs.size > 1:
+            span.append(mode)
+    max_loc = max((len(cols) for cols in per_g), default=0)
+    local_modes = None
+    if max_loc > 0 and n_group > 0 and max_m > 0:
+        local_modes = onp.zeros((n_group, max_m, max_loc))
+        for g, cols in enumerate(per_g):
+            for j, col in enumerate(cols):
+                local_modes[g, :, j] = col
+    spanning_modes = onp.stack(span, axis=1) if span else None
+    return local_modes, spanning_modes
+
+
+def _diffphase_mode_plan(modes, chan, grid):
+    """Static ``(local_idx, span_idx)`` routing for ``DifferentialPhase`` modes."""
+    if modes is None or grid.shape[0] == 0:
+        return None
+    n_mode = modes.shape[0]
+    n_f = grid.shape[0]
+    m_grid = onp.where(chan, modes[:, grid], 0.0)
+    per_f = [[] for _ in range(n_f)]
+    span = []
+    for m_idx in range(n_mode):
+        tf = onp.flatnonzero(onp.any(m_grid[m_idx] != 0, axis=(1, 2)))
+        if tf.size == 1:
+            per_f[int(tf[0])].append(m_idx)
+        elif tf.size > 1:
+            span.append(m_idx)
+    max_loc = max((len(v) for v in per_f), default=0)
+    loc_idx = (
+        tuple(tuple(v + [n_mode] * (max_loc - len(v))) for v in per_f)
+        if max_loc > 0
+        else ()
+    )
+    return loc_idx, tuple(span)
 
 
 class _Block(eqx.Module):
@@ -276,8 +346,14 @@ class FluxSpectrum(_Block):
     per: str = eqx.field(static=True)
     continuum: tuple | None = eqx.field(static=True)
     continuum_order: int = eqx.field(static=True)
+    modes: onp.ndarray | None = None
+    local_modes: onp.ndarray | None = None
+    spanning_modes: onp.ndarray | None = None
 
     model_dependent_covariance = True
+
+    def gain_legs(self):
+        return (self.sample,) if self.kind == "corrflux" else ()
 
     @classmethod
     def build(
@@ -297,6 +373,7 @@ class FluxSpectrum(_Block):
         poly_width=0.1,
         continuum=None,
         continuum_order=0,
+        modes=None,
     ):
         """Build from per-sample arrays (see the class notes).
 
@@ -334,11 +411,21 @@ class FluxSpectrum(_Block):
         continuum_order : int, optional
             For ``"nflux"``: 0 (a mean, the default) or 1 (a mean and a
             slope in wavenumber).
+        modes : array-like, optional
+            Linear nuisance modes ``(n_mode, n_sample)`` in ``d log F`` per
+            1σ for ``"flux"`` or ``"corrflux"`` (refused on ``"nflux"``;
+            Luger, Foreman-Mackey & Hogg 2017).
         """
         if kind not in ("flux", "nflux", "corrflux"):
             raise ValueError(f"Unknown flux kind {kind!r}.")
+        if kind == "nflux" and modes is not None:
+            raise ValueError(
+                "Nuisance modes are not supported for continuum-normalized "
+                "'nflux' spectra."
+            )
         values = onp.asarray(values, float).reshape(-1)
         errors = onp.asarray(errors, float).reshape(-1)
+        modes = _check_modes(modes, values.size, kind)
         wavel = onp.asarray(wavel, float).reshape(-1)
         row = _labels(row)
         frame = onp.asarray(frame).reshape(-1)
@@ -410,6 +497,9 @@ class FluxSpectrum(_Block):
                 c_basis[r, : idx.size] = b
                 c_fit[r][:, onp.flatnonzero(mask)] = onp.linalg.pinv(b[mask])
             cont_rows, cont_basis, cont_fit = c_rows, c_basis, c_fit
+        local_modes, spanning_modes = _partition_flux_modes(
+            modes, group, members, values.size
+        )
         return cls(
             values=np.asarray(values),
             errors=np.asarray(errors),
@@ -434,6 +524,9 @@ class FluxSpectrum(_Block):
             per=per,
             continuum=continuum,
             continuum_order=int(continuum_order),
+            modes=modes,
+            local_modes=local_modes,
+            spanning_modes=spanning_modes,
         )
 
     def rebuild(self, values=None, errors=None, keep=None, **settings):
@@ -447,6 +540,7 @@ class FluxSpectrum(_Block):
             poly_width=self.poly_width,
             continuum=self.continuum,
             continuum_order=self.continuum_order,
+            modes=None if self.modes is None else self.modes[:, rows],
         )
         options.update(settings)
         values = self.values if values is None else values
@@ -509,14 +603,26 @@ class FluxSpectrum(_Block):
     def whiten(self, prediction, data, errors):
         # The residual is already about the prior mean A μ (the prediction
         # is μ t), so the weights' covariance alone is left: I + Σ w_j w_jᵀ
-        # per group, whitened by the 6d gains' blocks.
+        # per group, plus any supplied local or spanning modes.
         x = (prediction - data) / errors
         cols = self._columns(prediction, errors)
         local = cols.at[self.members].get(mode="fill", fill_value=0.0)
-        whitened, extra = whiten_blocks(x, self.members, local)
+        scale = prediction / errors
+        if self.local_modes is not None:
+            scale_g = scale.at[self.members].get(mode="fill", fill_value=0.0)
+            m_loc = scale_g[..., None] * np.asarray(
+                self.local_modes, prediction.dtype
+            )
+            local = np.concatenate([local, m_loc], axis=-1)
+        spanning = None
+        if self.spanning_modes is not None:
+            spanning = scale[:, None] * np.asarray(
+                self.spanning_modes, prediction.dtype
+            )
+        whitened, extra = whiten_blocks(x, self.members, local, spanning)
         return whitened, errors * np.exp(extra)
 
-    def posterior(self, prediction, data, errors):
+    def posterior(self, prediction, data, errors, *, coupled=False):
         """Conditional posterior of the weights w per group: mean and cov.
 
         ``mean[g, 0]`` is the grey scale k of group g, multiplying the
@@ -524,14 +630,36 @@ class FluxSpectrum(_Block):
         Gaussian prior is a proposal for k's Jeffreys prior (see the
         module notes).
         """
-        # In the standardized form of virgil._linear: x about the prior
-        # mean A μ (the prediction is μ t), U the whitened columns, per
-        # group; padding has zero rows, which change nothing.
+        if self.kind == "corrflux" and coupled:
+            raise NotImplementedError(
+                "Conditional flux-scale posterior for 'corrflux' is not "
+                "available when coupled to OIData.gains."
+            )
         x = (data - prediction) / errors
         cols = self._columns(prediction, errors)
-        x = x.at[self.members].get(mode="fill", fill_value=0.0)
-        U = cols.at[self.members].get(mode="fill", fill_value=0.0)
-        mean, cov = jax.vmap(posterior)(x, U)
+        if self.modes is None:
+            x_g = x.at[self.members].get(mode="fill", fill_value=0.0)
+            u_g = cols.at[self.members].get(mode="fill", fill_value=0.0)
+            mean, cov = jax.vmap(posterior)(x_g, u_g)
+        else:
+            n_group, p = self.members.shape[0], self.poly.shape[1]
+            in_g = (np.arange(n_group)[None, :] == self.group[:, None]).astype(
+                cols.dtype
+            )
+            u_poly = (in_g[:, :, None] * cols[:, None, :]).reshape(
+                cols.shape[0], n_group * p
+            )
+            u_modes = (prediction / errors)[:, None] * np.asarray(
+                self.modes, cols.dtype
+            ).T
+            mean_all, cov_all = posterior(
+                x, np.concatenate([u_poly, u_modes], axis=1)
+            )
+            mean = mean_all[: n_group * p].reshape(n_group, p)
+            cov4 = cov_all[: n_group * p, : n_group * p].reshape(
+                n_group, p, n_group, p
+            )
+            cov = np.diagonal(cov4, axis1=0, axis2=2).transpose(2, 0, 1)
         mu = np.asarray(self.mu, prediction.dtype)
         root = np.asarray(self.widths, prediction.dtype)[None, :] * mu[:, None]
         prior_mean = np.zeros_like(root).at[:, 0].set(mu)
@@ -545,19 +673,42 @@ class FluxSpectrum(_Block):
         if noise is not None:
             values = values + self.errors * noise
         if key is not None:
-            widths = np.asarray(self.widths, prediction.dtype)
-            columns = (
-                prediction[:, None]
-                * np.asarray(self.poly, prediction.dtype)
-                * widths
-            )
-            z = jax.random.normal(
-                key, (self.members.shape[0], len(self.widths))
-            )
-            values = values + np.sum(columns * z[self.group], axis=1)
+            poly_key = key
+            mode_key = None
+            if self.modes is not None:
+                poly_key, mode_key = jax.random.split(key)
+            if self.widths is not None:
+                widths = np.asarray(self.widths, prediction.dtype)
+                columns = (
+                    prediction[:, None]
+                    * np.asarray(self.poly, prediction.dtype)
+                    * widths
+                )
+                z = jax.random.normal(
+                    poly_key, (self.members.shape[0], len(self.widths))
+                )
+                values = values + np.sum(columns * z[self.group], axis=1)
+            if mode_key is not None:
+                modes = np.asarray(self.modes, prediction.dtype)
+                z_m = jax.random.normal(mode_key, (modes.shape[0],))
+                values = values + prediction * (modes.T @ z_m)
         if isinstance(values, jax.core.Tracer):
             return eqx.tree_at(lambda b: b.values, self, values)
         return self.rebuild(values=values)
+
+    def labels_shared(self, labels):
+        """Whether any marginalized scale group or mode spans ``labels``."""
+        labels = onp.asarray(labels)
+        if self.widths is not None:
+            for m in self.members:
+                idx = m[m < self.wavel.size]
+                if onp.unique(labels[idx]).size > 1:
+                    return True
+        if self.modes is not None:
+            for mode in onp.asarray(self.modes):
+                if onp.unique(labels[mode != 0]).size > 1:
+                    return True
+        return False
 
 
 class DifferentialPhase(_Block):
@@ -596,6 +747,8 @@ class DifferentialPhase(_Block):
     order: int = eqx.field(static=True)
     closure_free: bool = eqx.field(static=True)
     prior_width: onp.ndarray | None = None
+    modes: onp.ndarray | None = None
+    _mode_plan: tuple | None = eqx.field(static=True, default=None)
     kind: str = eqx.field(static=True, default="visphi")
     # Per frame, the Cholesky factor of the covariance (projection only):
     # it depends only on the errors, so it is computed once, where they are
@@ -617,6 +770,7 @@ class DifferentialPhase(_Block):
         order=1,
         closure_free=True,
         prior_width=None,
+        modes=None,
     ):
         """Build from per-sample phases (see the class notes).
 
@@ -650,24 +804,27 @@ class DifferentialPhase(_Block):
             (radians), over the channels of both windows, instead of
             projecting them out (``None``, the default, as the pipeline
             does).
+        modes : array-like, optional
+            Linear tangent-space nuisance modes ``(n_mode, n_sample)`` in
+            radians per 1σ (Luger, Foreman-Mackey & Hogg 2017).
         """
         values = onp.asarray(values, float).reshape(-1)
         errors = onp.asarray(errors, float).reshape(-1)
+        modes = _check_modes(modes, values.size, "visphi")
         sample = onp.asarray(sample, onp.int32).reshape(-1)
         wavel = onp.asarray(wavel, float).reshape(-1)
         frame = onp.asarray(frame).reshape(-1)
         stations = onp.asarray(stations, int).reshape(-1, 2)
         if row is None:
-            row = _labels(onp.column_stack([frame, stations]))
+            row = onp.column_stack([frame, stations])
         row = _labels(row)
         continuum, lines = _ranges(continuum), _ranges(lines)
         if prior_width is not None:
-            widths = onp.broadcast_to(
-                onp.asarray(prior_width, float), (order + 1,)
+            prior_width = onp.array(
+                onp.broadcast_to(prior_width, (order + 1,)), float
             )
-            if not onp.all(widths > 0):
+            if not onp.all(prior_width > 0):
                 raise ValueError("prior_width must be positive.")
-            prior_width = onp.array(widths, float)
 
         # The samples of each row, ascending (one stable sort, not a pass
         # over all samples per row and frame).
@@ -720,19 +877,15 @@ class DifferentialPhase(_Block):
             grid = onp.empty((rows.size, channels.size), dtype=int)
             pairs = onp.empty((rows.size, 2), dtype=int)
             for b, r in enumerate(rows):
-                idx = by_row[r]
-                order_in_row = onp.argsort(wavel[idx])
-                idx = idx[order_in_row]
-                pos = onp.searchsorted(wavel[idx], channels)
-                grid[b] = idx[pos]
+                idx = by_row[r][onp.argsort(wavel[by_row[r]])]
+                grid[b] = idx[onp.searchsorted(wavel[idx], channels)]
                 pairs[b] = stations[idx[0]]
             if closure_free:
                 # Qᵀ: an orthonormal basis of the telescope-differenced
                 # phases (the column space of the baseline-telescope
                 # incidence matrix)
-                telescopes = onp.unique(pairs)
-                col = {tel: j for j, tel in enumerate(telescopes)}
-                inc = onp.zeros((len(pairs), telescopes.size))
+                col = {tel: j for j, tel in enumerate(onp.unique(pairs))}
+                inc = onp.zeros((len(pairs), len(col)))
                 for b, (i, j) in enumerate(pairs):
                     inc[b, col[i]] += 1.0
                     inc[b, col[j]] -= 1.0
@@ -750,8 +903,7 @@ class DifferentialPhase(_Block):
         r_max = max((x[2].shape[0] for x in frames), default=0)
         grid = onp.zeros((n_f, b_max, c_max), dtype=onp.int32)
         chan = onp.zeros((n_f, b_max, c_max), dtype=bool)
-        q = onp.zeros((n_f, k_max, b_max))
-        w = onp.zeros((n_f, r_max, c_max))
+        q, w = onp.zeros((n_f, k_max, b_max)), onp.zeros((n_f, r_max, c_max))
         valid = onp.zeros((n_f, k_max, r_max), dtype=bool)
         basis = None
         if prior_width is not None:
@@ -790,6 +942,8 @@ class DifferentialPhase(_Block):
             order=int(order),
             closure_free=bool(closure_free),
             prior_width=prior_width,
+            modes=modes,
+            _mode_plan=_diffphase_mode_plan(modes, chan, grid),
         )
         return out._with_cholesky()
 
@@ -803,6 +957,7 @@ class DifferentialPhase(_Block):
             order=self.order,
             closure_free=self.closure_free,
             prior_width=self.prior_width,
+            modes=None if self.modes is None else self.modes[:, rows],
         )
         options.update(settings)
         values = self.values if values is None else values
@@ -926,33 +1081,47 @@ class DifferentialPhase(_Block):
             self.keep
         ]
 
-    def whiten(self, prediction, data, errors):
-        # ``errors`` (the propagated diagonal) is not used: the block is
-        # whitened with its full covariance from the per-sample errors.
+    def _whitened_diffphase(self, resid):
+        """White-noise pre-whitened residual, effective errors, and low-rank modes."""
+        n_f, k, r = self.valid.shape
+        n_keep = self.keep.size
+        m_proj = None
+        if self.modes is not None:
+            m_raw = np.asarray(self.modes, resid.dtype)
+            m_grid = np.where(self.chan, m_raw[:, self.grid], 0.0)
+            q_m = np.asarray(self.q, resid.dtype)
+            w_m = np.asarray(self.w, resid.dtype)
+            m_proj = np.einsum("fkb,mfbc,frc->fkrm", q_m, m_grid, w_m)
+        pos = (
+            np.full(n_f * k * r, n_keep, dtype=np.int32)
+            .at[self.keep]
+            .set(np.arange(n_keep, dtype=np.int32))
+        )
         if self.prior_width is not None:
-            # offsets and slopes marginalized
-            n_f, k, r = self.valid.shape
             y = (
-                np.zeros(n_f * k * r, (prediction - data).dtype)
+                np.zeros(n_f * k * r, resid.dtype)
                 .at[self.keep]
-                .set(prediction - data)
+                .set(resid)
+                .reshape(n_f, k, r)
+                .transpose(0, 2, 1)
             )
-            y = y.reshape(n_f, k, r).transpose(0, 2, 1)  # (F, R, K)
             errors = np.asarray(self.errors)
             var = np.where(self.chan, errors[self.grid] ** 2, 0.0)
             q = np.asarray(self.q, var.dtype)
             w = np.asarray(self.w, var.dtype)
-            var = np.einsum("frc,fbc->fbr", w**2, var)  # W selects channels
-            valid = np.asarray(self.valid).transpose(0, 2, 1)  # (F, R, K)
+            var = np.einsum("frc,fbc->fbr", w**2, var)
+            valid = np.asarray(self.valid).transpose(0, 2, 1)
             pad = 1.0 - valid.astype(var.dtype)
-            # Each channel's closure-free combinations: covariance Qᵀ D Q.
             cov = np.einsum("fkb,flb,fbr->frkl", q, q, var)
             cov = cov + pad[..., None] * np.eye(k, dtype=var.dtype)
             chol = np.linalg.cholesky(cov)
             x = jsl.solve_triangular(chol, y[..., None], lower=True)[..., 0]
-            # Offset and slope of each baseline: Qᵀ e_b times the basis,
-            # through the same whitening; degenerate (closure) directions are
-            # harmless.
+            x_keep = x.transpose(0, 2, 1).reshape(-1)[self.keep]
+            base_eff = (
+                np.diagonal(chol, axis1=2, axis2=3)
+                .transpose(0, 2, 1)
+                .reshape(-1)[self.keep]
+            )
             q_cols = np.broadcast_to(q[:, None], (n_f, r, k, q.shape[2]))
             q_cols = jsl.solve_triangular(chol, q_cols, lower=True)
             widths = np.asarray(self.prior_width, var.dtype)
@@ -960,44 +1129,105 @@ class DifferentialPhase(_Block):
             local = np.einsum("frkb,frj->frkbj", q_cols, basis)
             local = np.where(valid[..., None, None], local, 0.0)
             local = local.reshape(n_f, r * k, -1)
-            n = n_f * r * k
-            flat = np.arange(n).reshape(n_f, r * k)
-            rows = np.where(valid.reshape(n_f, r * k), flat, n)
-            white, extra = whiten_blocks(x.reshape(-1), rows, local)
-            effective = np.diagonal(chol, axis1=2, axis2=3).reshape(-1)
-            effective = effective * np.exp(extra)
-
-            def in_output_order(a):
-                return a.reshape(n_f, r, k).transpose(0, 2, 1).reshape(-1)
-
-            return (
-                in_output_order(white)[self.keep],
-                in_output_order(effective)[self.keep],
+            spanning = None
+            if m_proj is not None:
+                m_frk = m_proj.transpose(0, 2, 1, 3)
+                m_w = jsl.solve_triangular(chol, m_frk, lower=True)
+                m_w = np.where(valid[..., None], m_w, 0.0)
+                loc_idx, span_idx = self._mode_plan
+                if loc_idx:
+                    m_flat = m_w.reshape(n_f, r * k, -1)
+                    pad_m = np.concatenate(
+                        [m_flat, np.zeros((n_f, r * k, 1), m_flat.dtype)],
+                        axis=-1,
+                    )
+                    idx_arr = np.asarray(loc_idx, np.int32)[:, None, :]
+                    local = np.concatenate(
+                        [local, np.take_along_axis(pad_m, idx_arr, axis=2)],
+                        axis=-1,
+                    )
+                if span_idx:
+                    s_cols = (
+                        m_w[..., list(span_idx)]
+                        .transpose(0, 2, 1, 3)
+                        .reshape(n_f * k * r, len(span_idx))
+                    )
+                    spanning = s_cols[self.keep]
+            rows = (
+                pos.reshape(n_f, k, r).transpose(0, 2, 1).reshape(n_f, r * k)
             )
-        n_f, k, r = self.valid.shape
-        resid = np.zeros(n_f * k * r, prediction.dtype)
-        resid = resid.at[self.keep].set(prediction - data)
+            return x_keep, base_eff, rows, local, spanning
+
+        resid_fkr = np.zeros(n_f * k * r, resid.dtype).at[self.keep].set(resid)
         if self.chol is None:
             chol = np.linalg.cholesky(self.covariance())
         else:
             chol = np.asarray(self.chol, resid.dtype)
         white = jsl.solve_triangular(
-            chol, resid.reshape(n_f, k * r, 1), lower=True
+            chol, resid_fkr.reshape(n_f, k * r, 1), lower=True
+        )[..., 0]
+        x_keep = white.reshape(-1)[self.keep]
+        base_eff = np.diagonal(chol, axis1=1, axis2=2).reshape(-1)[self.keep]
+        if m_proj is None:
+            return x_keep, base_eff, None, None, None
+        m_w = jsl.solve_triangular(
+            chol, m_proj.reshape(n_f, k * r, -1), lower=True
         )
-        effective = np.diagonal(chol, axis1=1, axis2=2)
-        return (
-            white.reshape(-1)[self.keep],
-            effective.reshape(-1)[self.keep],
+        valid_fkr = np.asarray(self.valid).reshape(n_f, k * r, 1)
+        m_w = np.where(valid_fkr, m_w, 0.0)
+        loc_idx, span_idx = self._mode_plan
+        if loc_idx:
+            pad_m = np.concatenate(
+                [m_w, np.zeros((n_f, k * r, 1), m_w.dtype)], axis=-1
+            )
+            idx_arr = np.asarray(loc_idx, np.int32)[:, None, :]
+            local = np.take_along_axis(pad_m, idx_arr, axis=2)
+        else:
+            local = np.zeros((n_f, k * r, 1), m_w.dtype)
+        spanning = None
+        if span_idx:
+            spanning = m_w[..., list(span_idx)].reshape(
+                n_f * k * r, len(span_idx)
+            )[self.keep]
+        return x_keep, base_eff, pos.reshape(n_f, k * r), local, spanning
+
+    def whiten(self, prediction, data, errors):
+        # ``errors`` (the propagated diagonal) is not used: the block is
+        # whitened with its full covariance from the per-sample errors.
+        resid = prediction - data
+        if self.keep.size == 0:
+            empty = np.zeros(0, resid.dtype)
+            return empty, empty
+        x_keep, base_eff, rows, local, spanning = self._whitened_diffphase(
+            resid
         )
+        if rows is None:
+            return x_keep, base_eff
+        white, extra = whiten_blocks(x_keep, rows, local, spanning)
+        return white, base_eff * np.exp(extra)
+
+    def marginal_problem(self, prediction, data):
+        """White-noise ``arrow_problem`` for ``s² C_0 + U Uᵀ`` integration."""
+        x_keep, _, rows, local, spanning = self._whitened_diffphase(
+            prediction - data
+        )
+        return arrow_problem(x_keep, rows, local, spanning)
 
     def simulated(self, prediction, cvis, noise, key=None):
         values = np.angle(np.asarray(cvis)[self.sample])
         if noise is not None:
             values = values + self.errors * noise
-        if key is not None and self.prior_width is not None:
+        prior_key = mode_key = key
+        if (
+            key is not None
+            and self.prior_width is not None
+            and self.modes is not None
+        ):
+            prior_key, mode_key = jax.random.split(key)
+        if prior_key is not None and self.prior_width is not None:
             n_f, n_b, _ = self.grid.shape
             n_mode = len(self.prior_width)
-            latent = jax.random.normal(key, (n_f, n_b, n_mode))
+            latent = jax.random.normal(prior_key, (n_f, n_b, n_mode))
             widths = np.asarray(self.prior_width, values.dtype)
             modes = np.einsum(
                 "fbp,frp->fbr",
@@ -1013,4 +1243,21 @@ class DifferentialPhase(_Block):
                     channel = channels[f, : self.basis.shape[1]]
                     samples = self.grid[f, b, channel]
                     values = values.at[samples].add(modes[f, b])
+        if mode_key is not None and self.modes is not None:
+            raw_modes = np.asarray(self.modes, values.dtype)
+            z = jax.random.normal(mode_key, (raw_modes.shape[0],))
+            values = -wrap_phase(-(values + raw_modes.T @ z))
         return eqx.tree_at(lambda b: b.values, self, values)
+
+    def labels_shared(self, labels):
+        """Whether any frame or marginalized mode spans ``labels``."""
+        labels = onp.asarray(labels)
+        for f in range(self.grid.shape[0]):
+            used = self.grid[f][self.chan[f]]
+            if onp.unique(labels[used]).size > 1:
+                return True
+        if self.modes is not None:
+            for mode in onp.asarray(self.modes):
+                if onp.unique(labels[mode != 0]).size > 1:
+                    return True
+        return False

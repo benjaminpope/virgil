@@ -1044,7 +1044,14 @@ def flux_scale_posterior(model, data):
         if not isinstance(block, FluxSpectrum):
             continue
         prediction = block.predict(model, cvis)
-        mean, cov = block.posterior(prediction, block.values, block.errors)
+        coupled = (
+            block.kind == "corrflux"
+            and data.gains is not None
+            and data.gains.n_vis != np.asarray(data.vis).size
+        )
+        mean, cov = block.posterior(
+            prediction, block.values, block.errors, coupled=coupled
+        )
         entry = {"mean": mean, "cov": cov, "groups": block.group}
         if block.kind != "nflux":
             base = model.total_spectrum(np.asarray(block.wavel))

@@ -115,6 +115,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     # Static on purpose: a traced t_ref would be float32, which cannot hold an
     # MJD to better than ~0.004 d, and orbits subtract it in host float64.
     t_ref: float | None = eqx.field(static=True)
+    _gain_modes: jax.Array | None = None
+    _gain_spec: tuple | None = eqx.field(static=True, default=None)
 
     @property
     def observable_kind(self):
@@ -166,7 +168,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             for name, value in mixed_disco_fields(data).items():
                 setattr(self, name, value)
             self.dt = self.frame = self.t_ref = None
-            self.bandwidth = None
+            self.bandwidth = self._gain_modes = self._gain_spec = None
             self.stations = self.gains = self.phase_offsets = None
             self.extras = ()
             return
@@ -378,8 +380,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         self.stations = (
             None if stations is None else np.asarray(stations, np.int32)
         )
-        self.gains = None
-        self.phase_offsets = None
+        self.gains = self.phase_offsets = None
+        self._gain_modes = self._gain_spec = None
         self.extras = _build_extras(data, self, all_legs)
         vis_mode_in = data.get(
             "vis_mode", data.get("observable_vis_mode", "auto")
@@ -479,6 +481,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         add up to the whole.
         """
         labels = self.epochs(gap_days)
+        flux_labels = self._flux_epochs(labels)
         for b in self.extras:
             legs = b.gain_legs()
             if len(legs) > 1 and onp.size(b.values):
@@ -488,6 +491,27 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 ):
                     raise ValueError(
                         "A triple amplitude would be split between parts."
+                    )
+            if isinstance(b, DifferentialPhase) and onp.size(b.values):
+                if b.labels_shared(labels[onp.asarray(b.sample)]):
+                    raise ValueError(
+                        "A differential-phase mode spans several epochs, so "
+                        "the epochs are not independent and their likelihoods "
+                        "would not add up; fit the data together, or drop "
+                        "that mode first."
+                    )
+            if isinstance(b, FluxSpectrum) and onp.size(b.values):
+                b_labels = (
+                    flux_labels[id(b)]
+                    if b.sample is None
+                    else labels[onp.asarray(b.sample)]
+                )
+                if b.labels_shared(b_labels):
+                    raise ValueError(
+                        f"A {b.kind!r} scale group or mode spans several "
+                        "epochs, so the epochs are not independent and their "
+                        "likelihoods would not add up; fit the data together, "
+                        "or drop that mode first."
                     )
         if self.gains is not None:
             gain_labels = labels[_vis_sample_index(self)]
@@ -517,7 +541,6 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                     "not add up; fit the data together, or drop that mode "
                     "first."
                 )
-        flux_labels = self._flux_epochs(labels)
         return [
             self._subset(
                 labels == k,
@@ -697,7 +720,52 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             ):
                 block = block.rebuild(closure_free=False)
             extras.append(block)
-        return eqx.tree_at(lambda d: d.extras, out, tuple(extras))
+        out = eqx.tree_at(lambda d: d.extras, out, tuple(extras))
+        if out.gains is None:
+            out = eqx.tree_at(
+                lambda d: d._gain_modes,
+                out,
+                None,
+                is_leaf=lambda x: x is None,
+            )
+            object.__setattr__(out, "_gain_spec", None)
+        elif "corrflux" in {b.kind for b in self.extras}:
+            out = out._refresh_corrflux_gains()
+        return out
+
+    def _refresh_corrflux_gains(self):
+        """Rebuild ``self.gains`` from ``_gain_spec`` when ``corrflux`` is managed."""
+        if self._gain_spec is None or not self._gain_spec[3]:
+            return self
+        tel, base, chrom, inc_extras = self._gain_spec
+        has_amp = self.vis.size > 0 or any(
+            b.gain_legs() and onp.size(b.values) for b in self.extras
+        )
+        gains = None
+        if has_amp:
+            try:
+                gains = gain_modes(
+                    self,
+                    tel,
+                    base,
+                    chrom,
+                    self._gain_modes,
+                    include_extras=inc_extras,
+                )
+            except ValueError:
+                gains = None
+        out = eqx.tree_at(
+            lambda d: d.gains, self, gains, is_leaf=lambda x: x is None
+        )
+        if gains is None and not has_amp:
+            out = eqx.tree_at(
+                lambda d: d._gain_modes,
+                out,
+                None,
+                is_leaf=lambda x: x is None,
+            )
+            object.__setattr__(out, "_gain_spec", None)
+        return out
 
     def _subset_gains(self, kept_vis, extra_keep):
         """Subset ``self.gains`` across ``vis`` and amplitude ``extras``."""
@@ -797,6 +865,11 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         kept_vis = onp.zeros(self.vis.size, bool)
         kept_vis[vis_rows] = True
         gains = self._subset_gains(kept_vis, lambda b: keep[b.gain_legs()[0]])
+        gain_modes_sub = (
+            None
+            if self._gain_modes is None or not keep.any()
+            else self._gain_modes[:, keep]
+        )
         updates = {
             **dict(
                 zip(
@@ -816,6 +889,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             "phi_index": phi_index,
             "cp_noise": closure,
             "gains": gains,
+            "_gain_modes": gain_modes_sub,
             "phase_offsets": phase_offsets,
             "extras": tuple(extras),
         }
@@ -827,6 +901,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         )
         if self.cp_flag and not phi_rows.size:
             object.__setattr__(out, "cp_flag", False)
+        if "corrflux" in {b.kind for b in self.extras}:
+            out = out._refresh_corrflux_gains()
         return out
 
     def _resolve_vis_mode(self, vis_mode):
@@ -1557,7 +1633,12 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         return eqx.tree_at(lambda d: d.extras, self, extras)
 
     def with_continuum(
-        self, continuum=None, lines=None, order=None, prior_width=None
+        self,
+        continuum=None,
+        lines=None,
+        order=None,
+        prior_width=None,
+        modes=None,
     ):
         """A copy with the continuum and line windows of the extra spectra.
 
@@ -1578,6 +1659,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             For differential phases: marginalize each baseline and frame's offset
             (and slope) under Gaussian priors of these widths (radians), instead
             of projecting them out (the default).
+        modes : array-like, optional
+            For differential phases: linear tangent-space nuisance modes
+            ``(n_mode, data.u.size)`` in radians per 1σ.
 
         Examples
         --------
@@ -1589,22 +1673,56 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "These data have no differential phases or normalized "
                 "spectra; read them with extras=('visphi',) or ('nflux',)."
             )
+        if (prior_width is not None or modes is not None) and (
+            "visphi" not in kinds
+        ):
+            raise ValueError(
+                "prior_width and modes require 'visphi' observables; read "
+                "them with extras=('visphi',)."
+            )
+        modes_arr = None
+        if modes is not None:
+            modes_arr = onp.asarray(modes, float)
+            if modes_arr.ndim == 1:
+                modes_arr = modes_arr[None, :]
+            n_u = onp.size(self.u)
+            if modes_arr.ndim != 2 or modes_arr.shape[1] != n_u:
+                raise ValueError(
+                    f"modes has shape {modes_arr.shape} for {n_u} samples; "
+                    f"give (n_mode, {n_u})."
+                )
+            if not onp.all(onp.isfinite(modes_arr)):
+                raise ValueError("modes must be finite.")
+        keep_windows = (
+            continuum is None
+            and lines is None
+            and (prior_width is not None or modes is not None)
+        )
         out = self
         if "visphi" in kinds:
             out = out._replace_extra(
                 ("visphi",),
                 lambda b: b.rebuild(
-                    continuum=continuum,
-                    lines=lines,
+                    continuum=b.continuum if keep_windows else continuum,
+                    lines=b.lines if keep_windows else lines,
                     order=b.order if order is None else order,
-                    prior_width=prior_width,
+                    prior_width=(
+                        b.prior_width
+                        if prior_width is None and modes is not None
+                        else prior_width
+                    ),
+                    modes=(
+                        b.modes
+                        if modes_arr is None
+                        else modes_arr[:, b.sample]
+                    ),
                 ),
             )
         if "nflux" in kinds:
             out = out._replace_extra(
                 ("nflux",),
                 lambda b: b.rebuild(
-                    continuum=continuum,
+                    continuum=b.continuum if keep_windows else continuum,
                     continuum_order=(
                         b.continuum_order if order is None else order
                     ),
@@ -1615,10 +1733,11 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def with_flux_scale(
         self,
         scale=None,
-        per="dataset",
-        poly_order=0,
-        poly_width=0.1,
+        per=None,
+        poly_order=None,
+        poly_width=None,
         kinds=None,
+        modes=None,
     ):
         """A copy with new grey-scale nuisances for the extra spectra.
 
@@ -1641,27 +1760,57 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         poly_width : float, optional
             Prior width of each polynomial coefficient, relative to the scale's
             prior mean.
-        kinds : sequence of str, optional
-            Which blocks to change: ``"flux"`` and ``"corrflux"`` when ``scale`` is
-            given, every spectrum otherwise.
+        kinds : str or sequence of str, optional
+            Which blocks to change: ``"flux"`` and ``"corrflux"`` when ``scale`` or
+            ``modes`` is given, every spectrum otherwise.
+        modes : array-like, optional
+            Linear nuisance modes ``(n_mode, n_block)`` in ``d log F`` per 1σ
+            for ``"flux"`` or ``"corrflux"`` (refused on ``"nflux"``).
         """
+        if isinstance(kinds, str):
+            kinds = (kinds,)
         if kinds is None:
+            present = {b.kind for b in self.extras}
+            if (
+                modes is not None
+                and present <= {"nflux"}
+                and "nflux" in present
+            ):
+                raise ValueError(
+                    "Nuisance modes are not supported for continuum-normalized "
+                    "'nflux' spectra."
+                )
             kinds = (
                 ("flux", "corrflux")
-                if scale is not None
+                if scale is not None or modes is not None
                 else ("flux", "nflux", "corrflux")
+            )
+        elif modes is not None and "nflux" in kinds:
+            raise ValueError(
+                "Nuisance modes are not supported for continuum-normalized "
+                "'nflux' spectra."
             )
 
         def rebuilt(block):
             stated = block.scale if scale is None else scale
             return block.rebuild(
-                per=per,
+                per=block.per if per is None else per,
                 scale=stated,
-                poly_order=poly_order,
-                poly_width=poly_width,
+                poly_order=(
+                    block.poly.shape[1] - 1
+                    if poly_order is None
+                    else poly_order
+                ),
+                poly_width=(
+                    block.poly_width if poly_width is None else poly_width
+                ),
+                modes=block.modes if modes is None else modes,
             )
 
-        return self._replace_extra(tuple(kinds), rebuilt)
+        out = self._replace_extra(tuple(kinds), rebuilt)
+        if "corrflux" in {b.kind for b in out.extras}:
+            out = out._refresh_corrflux_gains()
+        return out
 
     def with_wavelength_scale(self, scale=1.0, offset=0.0):
         """A copy of the data whose wavelengths are ``scale · λ + offset``.
@@ -1840,9 +1989,24 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             modes,
             include_extras=include_extras,
         )
-        return eqx.tree_at(
-            lambda d: d.gains, self, gains, is_leaf=lambda x: x is None
+        spec = (
+            None if telescope is None else float(telescope),
+            None if baseline is None else float(baseline),
+            None if chromatic is None else float(chromatic),
+            bool(include_extras),
         )
+        g_modes = None
+        if modes is not None:
+            arr = onp.atleast_2d(onp.asarray(modes, float))
+            g_modes = None if arr.size == 0 else np.asarray(arr)
+        out = eqx.tree_at(
+            lambda d: (d.gains, d._gain_modes),
+            self,
+            (gains, g_modes),
+            is_leaf=lambda x: x is None,
+        )
+        object.__setattr__(out, "_gain_spec", spec)
+        return out
 
     @renamed()
     def with_model(self, model, key=None, noise_scale=1.0):
@@ -1898,10 +2062,13 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         for i, block in enumerate(self.extras):
             n = int(block.data().size)
             pred_b = prediction[offset : offset + n]
-            if has_extra_gains and block.gain_legs() and n:
-                pred_b = pred_b * np.exp(
-                    gain_draw[gain_offset : gain_offset + n]
-                )
+            coupled_gain = bool(has_extra_gains and block.gain_legs() and n)
+            if coupled_gain:
+                g_b = gain_draw[gain_offset : gain_offset + n]
+                if isinstance(block, FluxSpectrum):
+                    pred_b = pred_b * (1.0 + g_b)
+                else:
+                    pred_b = pred_b * np.exp(g_b)
                 gain_offset += n
             noise = None
             block_key = None
@@ -1910,18 +2077,13 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 noise = noise_scale * jax.random.normal(
                     jax.random.fold_in(block_key, 0), block.values.shape
                 )
-            extras.append(
-                block.simulated(
-                    pred_b,
-                    cvis,
-                    noise,
-                    key=(
-                        None
-                        if block_key is None
-                        else jax.random.fold_in(block_key, 1)
-                    ),
-                )
+            sim_key = (
+                None
+                if block_key is None
+                or (coupled_gain and isinstance(block, FluxSpectrum))
+                else jax.random.fold_in(block_key, 1)
             )
+            extras.append(block.simulated(pred_b, cvis, noise, key=sim_key))
             offset += n
         return eqx.tree_at(lambda d: d.extras, out, tuple(extras))
 

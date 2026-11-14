@@ -544,7 +544,13 @@ class _Surface:
         if s_max is not None and not float(s_max) > 1.0:
             raise ValueError(f"s_max must exceed 1, got {s_max}.")
         self.numeric = bool(
-            data.gains is not None or data.phase_offsets is not None
+            data.gains is not None
+            or data.phase_offsets is not None
+            or any(
+                getattr(b, "prior_width", None) is not None
+                or getattr(b, "modes", None) is not None
+                for b in extras
+            )
         )
         if self.numeric and s_max is None:
             s_max = _NUMERIC_S_MAX
@@ -734,14 +740,27 @@ class _Surface:
                 )
                 terms.append(functools.partial(_plain_term, chi2))
             else:
-                block = data.extras[labels.index(name) - 2]
-                chi2 = lambda s, block=block, a=a, b=b: np.sum(
-                    block.whiten(
-                        prediction[a:b], values[a:b], errors[a:b] * s
-                    )[0]
-                    ** 2
-                )
-                terms.append(functools.partial(_plain_term, chi2))
+                block = data.extras[i - 2]
+                if (
+                    getattr(block, "prior_width", None) is not None
+                    or getattr(block, "modes", None) is not None
+                ):
+                    problem = block.marginal_problem(
+                        prediction[a:b], values[a:b]
+                    )
+                    terms.append(functools.partial(_arrow_term, problem, None))
+                else:
+                    c1 = np.sum(
+                        block.whiten(
+                            prediction[a:b], values[a:b], errors[a:b]
+                        )[0]
+                        ** 2
+                    )
+                    terms.append(
+                        functools.partial(
+                            _plain_term, lambda s, c1=c1: c1 / s**2
+                        )
+                    )
 
         def at(log_s, derivs=False):
             out = [term(log_s[k], derivs) for k, term in enumerate(terms)]
