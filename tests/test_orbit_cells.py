@@ -1609,6 +1609,7 @@ def test_an_all_outlier_c_step_row_gives_a_finite_chart():
     assert oc_cells._prune(space, x[None]).tolist() == [0]
 
 
+@pytest.mark.slow
 @x64
 def test_the_add_one_results_join_the_survivors_instead_of_replacing_them(
     monkeypatch,
