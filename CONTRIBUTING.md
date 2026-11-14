@@ -100,9 +100,10 @@ runs the suite in tiers. Every pull request runs the tests not marked `slow` on 
 Python 3.12, in float32 (split across three jobs) and in float64 (three jobs, about 0.57 times the float32 suite because they skip the
 files listed in `DTYPE_INDEPENDENT` in `tests/conftest.py`, whose results cannot depend on
 the float width), with the versions in `uv.lock`; a pull request that edits `pyproject.toml`
-also runs once with every dependency at the oldest version it allows. A pull request that
-edits `aliases`, `epochs` or `orbit*` (or their test files) also runs the slow tests of
-`test_aliases.py`, `test_epochs.py` and `test_orbit*.py` in those jobs. Pushes to main run
+also runs once with every dependency at the oldest version it allows. A pull request that edits a top-level `tests/test_*.py` file also runs that file's
+non-`full_only` `slow` tests in those jobs, and a pull request touching the orbit, tempering,
+marginal, precision, likelihood or pipeline (`_checks`, `_core`, `disk`, `image`, `orbit`)
+modules runs their `slow` test files (`ORBIT_SLOW_FILES` in `.github/scripts/ci_matrix.py`). Pushes to main run
 the same jobs with the slow tests except those marked `full_only`, which only the `full-ci`
 label, dispatch and the nightly run (a regression in one shows as a nightly failure, not a red
 main). Pull requests labelled `full-ci` (always the release

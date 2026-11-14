@@ -1,7 +1,7 @@
 # virgil
 [![PyPI version](https://badge.fury.io/py/virgil-astro.svg)](https://badge.fury.io/py/virgil-astro)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![integration](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml)
+[![integration](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml?query=branch%3Amain+event%3Apush)
 [![Documentation](https://github.com/benjaminpope/virgil/actions/workflows/zensical-pages.yml/badge.svg)](https://benjaminpope.github.io/virgil/)
 <!-- dev-carbon-badge -->
 [![dev carbon | 337 kg CO2e](https://img.shields.io/endpoint?url=https%3A%2F%2Fbenjaminpope.github.io%2Fvirgil%2Fgenerated%2Fdev_carbon_badge.json)](https://benjaminpope.github.io/virgil/dev_carbon/)
