@@ -1,0 +1,1 @@
+`virgil.noise_spec` (provisional): declarative `virgil.noise_spec/1` instrument noise specifications (`load_noise_spec`, `validate_noise_spec`, `apply_noise_spec`, `instrument_match`) mapping measured white error scales, log-|V| calibration gains, closure-phase offsets and differential-phase common modes onto `OIData`.

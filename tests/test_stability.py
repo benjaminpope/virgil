@@ -85,6 +85,12 @@ EXPECTED = {
         "group_outlier_mixture",
         "group_outlier_probabilities",
     },
+    "virgil.noise_spec": {
+        "load_noise_spec",
+        "validate_noise_spec",
+        "apply_noise_spec",
+        "instrument_match",
+    },
 }
 
 

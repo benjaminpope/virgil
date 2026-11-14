@@ -14,6 +14,7 @@ Which way the axes point, what sign a phase has, what a flux means: none of thes
 10. [Priors and the MAP](#priors-and-the-map)
 11. [Precision](#precision)
 12. [Preconditioning image fits](#preconditioning-image-fits)
+13. [Instrument noise specs](#instrument-noise-specs)
 
 ## Sky coordinates and images
 
@@ -279,3 +280,33 @@ result.info["precondition_rounds"]
 
 !!! warning "float32"
     At weak weights a float32 fit can still stall: the line search meets the noise of the float32 model evaluation, which rescaling does not remove. Use `dtype="float64"` (the default) for a sweep that reaches small weights.
+
+## Instrument noise specs
+
+An instrument package (such as `virgil-vlti`) measures departures from independent quoted errors and emits a declarative `virgil.noise_spec/1` record: a dictionary, a JSON file, or an object with `to_noise_spec() -> dict`. `virgil.noise_spec` (`load_noise_spec`, `validate_noise_spec`, `apply_noise_spec`, `instrument_match`; provisional, see [stability](stability.md)) validates and applies it to an [`OIData`][virgil.oidata.OIData] without importing any instrument code.
+
+```json
+{
+  "schema": "virgil.noise_spec/1",
+  "instrument": "PIONIER",
+  "white": {"vis": 0.32, "phi": 0.65},
+  "gains": {"telescope": 0.0055, "baseline": 0.0045, "chromatic": null},
+  "closure_offsets": {"triangle": 0.0036, "baseline": null},
+  "common_mode": {"visphi": null},
+  "provenance": {"run": "pair_test:11_pairs", "date": "2026-10-04", "bound": "lower"}
+}
+```
+
+Every unit conversion happens once, in the emitter:
+
+| Field | Units and allowed values | Applied by `apply_noise_spec` |
+| --- | --- | --- |
+| `schema` | `"virgil.noise_spec/1"` (major-versioned; unknown keys outside `provenance` raise `ValueError` so newer terms are never silently dropped) | checked by `validate_noise_spec` |
+| `instrument` | non-empty string or `null` | compared case-insensitively with `data.insname` when recorded (`UserWarning` on mismatch, never an error) |
+| `white` | finite scales $> 0$ on the quoted uncertainties, keyed by [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale] names (`"vis"`, `"phi"`, `"flux"`, `"nflux"`, `"corrflux"`, `"visamp"`, `"t3amp"`, `"visphi"`); missing keys mean `1` | `data.with_error_scale(...)` on the observables present in `data` |
+| `gains` | $1\sigma$ widths on $\ln \lvert V \rvert$ (`telescope`, `baseline`, `chromatic`), `null` or in $[0, 1]$ (half of a fractional $V^2$ gain width; warns above `0.1`) | [`data.with_gains(...)`][virgil.oidata.OIData.with_gains] when any width is positive |
+| `closure_offsets` | $1\sigma$ widths in **radians** (`triangle`, `baseline`), `null` or in $[0, 0.3]$ rad (warns above `0.02` rad) | [`data.with_closure_offsets(...)`][virgil.oidata.OIData.with_closure_offsets] when any width is positive |
+| `common_mode` | optional `{"visphi": width}` in **radians**, `null` or in $[0, 0.5]$ rad (warns above `0.05` rad) | one constant line-channel mode per `(frame, baseline)` on `"visphi"` when positive |
+| `provenance` | free-form mapping requiring non-empty `"run"` and `"date"` strings (and optional `"bound"` in `("lower", "estimate")`) | carried verbatim |
+
+`apply_noise_spec` applies `white` first, then `gains`, `closure_offsets` and `common_mode`, and raises `ValueError` rather than stacking onto data that already carry any active nuisance group.
