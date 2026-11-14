@@ -1,5 +1,6 @@
 """Cells, period domain and the position-level search and evidence."""
 
+import dataclasses
 import functools
 import math
 import time
@@ -676,6 +677,37 @@ def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
     )  # fmt: skip
     assert out.failed.sum() == 1 and onp.all(onp.isnan(out.p_pos))
     assert real is not leg
+
+
+@x64
+def test_the_scale_start_is_the_conditional_mle_per_block_of_the_inliers():
+    """Two error blocks at different χ² / n: the start's ``ln s`` is
+    ``½ ln(Σχ² / Σn)`` of each block over the nights it is given (here
+    ``-ln c_g``), not a value pooled across blocks."""
+    lnc = onp.array([0.7, -1.2])
+    s = tuple(
+        dataclasses.replace(
+            night,
+            blocks=("vis", "phi"),
+            peaks=(
+                dataclasses.replace(
+                    night.peaks[0],
+                    n=onp.full(2, N_OBS),
+                    chi2=N_OBS * onp.exp(-2 * lnc),
+                    hessian=onp.tile(night.peaks[0].hessian, (2, 1, 1)) / 2,
+                ),
+            ),
+        )
+        for night in _summaries(_orbit(), TIMES, seed=2)
+    )
+    space = _space(s, _cells(s, (9.0, 14.0))[1][0])
+    keep = onp.arange(len(TIMES)) != 3  # the sums run over a subset of nights
+    chi2 = onp.asarray(space.cat.chi2[keep, 0]).sum(0)
+    n = onp.asarray(space.cat.n[keep, 0]).sum(0)
+    x = oc_cells._chart_from(
+        space, np.zeros(3), onp.array([1.0, 2.0, 0.5, 0.3]), -2.0, chi2, n
+    )
+    onp.testing.assert_allclose(space.decode(x)["ln_s"], -lnc, atol=1e-6)
 
 
 @pytest.mark.slow

@@ -1,0 +1,1 @@
+- The orbit-cell search starts each error scale at its conditional MLE given the inlier nights (`ln ŝ = ½ ln(Σχ² / Σn)` per block, clipped to ±ln S_MAX) instead of s = 1, so night labels no longer depend on the noise scale. At a true ln s above about 0.3 or below about -1.5 every night was labelled an outlier and every cell collapsed to its prior.
