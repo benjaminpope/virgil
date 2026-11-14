@@ -1566,6 +1566,7 @@ def test_the_prune_score_never_exceeds_the_likelihood_so_a_flat_candidate_cannot
     assert 1 in keep
 
 
+@pytest.mark.slow
 @x64
 def test_add_one_recovers_an_inlier_night_the_c_steps_leave_out():
     """Eight nights within 80 d (``sigma`` 0.05) and one at 1000 d, ten times
