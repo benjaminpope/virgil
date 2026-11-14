@@ -884,12 +884,8 @@ def _objective(x, space):
     return _target(x, space) + 3.0 * np.log(np.linalg.norm(x[_Z]))
 
 
-def _labels(x, space):
-    """Each night's best peak, or -1 (outlier) where the floor is higher.
-
-    At the prior mean ``ε̄ = ½`` the inlier and outlier weights ``1 - ε̄`` and
-    ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``.
-    """
+def _best_peaks(x, space):
+    """Each night's best peak at ``x`` and its term (the outlier floor ignored)."""
     with run_in(onp.dtype(space.dtype).name):
         c = space.decode(x)
         pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
@@ -900,8 +896,17 @@ def _labels(x, space):
             space.cat, c["ln_s"], space.jitter, state, space.dtype
         )
         j = np.argmax(terms, axis=1)
-        best = np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
-        return np.where(best > space.cat.log_b, j, -1)
+        return j, np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
+
+
+def _labels(x, space):
+    """Each night's best peak, or -1 (outlier) where the floor is higher.
+
+    At the prior mean ``ε̄ = ½`` the inlier and outlier weights ``1 - ε̄`` and
+    ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``.
+    """
+    j, best = _best_peaks(x, space)
+    return np.where(best > space.cat.log_b, j, -1)
 
 
 def _lm(f, x, args, n_iter, step_max=10.0):
@@ -1424,18 +1429,6 @@ def _unique_starts(lab, v, h, r):
     return onp.array(kept, int)
 
 
-def _best_peaks(space, x):
-    """Each night's best peak at ``x`` (the outlier floor ignored)."""
-    with run_in(onp.dtype(space.dtype).name):
-        c = space.decode(x)
-        pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
-        state = np.concatenate(
-            [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
-        )
-        terms = _peak_terms(space.cat, c["ln_s"], space.jitter, state, space.dtype)
-        return np.argmax(terms, axis=1)
-
-
 def _converge_csteps(space, plan, v, lab):
     """C-steps of the rows ``(v, lab)`` until each one's labels repeat (at most
     ``N_C``); returns ``v``, the labels and the chart vectors."""
@@ -1478,7 +1471,7 @@ def _add_one(space, plan, x, info):
         cand = onp.flatnonzero((lab < 0) & has_peak)
         if not len(cand) or not onp.isfinite(f):
             break
-        peaks = onp.asarray(_best_peaks(space, np.asarray(x, space.dtype)))
+        peaks = onp.asarray(_best_peaks(np.asarray(x, space.dtype), space)[0])
         labs = onp.repeat(lab[None], len(cand), 0)
         labs[onp.arange(len(cand)), cand] = peaks[cand]
         v, _, xs = _converge_csteps(
