@@ -2343,3 +2343,24 @@ arxiv = "2008.05834"
 doi = "10.1093/mnras/staa2349"
 verified = true
 verified_via = "arxiv"
+
+[ref.kamruddin2013]
+authors = "Kamruddin & Dexter"
+year = 2013
+title = "A geometric crescent model for black hole images"
+used_in = ["virgil.models:Crescent"]
+note = "MNRAS 434, 765; a uniform disk minus an offset uniform disk (the crescent); closed-form visibility"
+arxiv = "1306.3226"
+doi = "10.1093/mnras/stt1068"
+verified = true
+verified_via = "arxiv"
+
+[ref.benkevitch2016]
+authors = "Benkevitch et al."
+year = 2016
+title = "Reconstruction of Static Black Hole Images Using Simple Geometric Forms"
+used_in = ["virgil.models:Crescent"]
+note = "the eccentric ring with a brightness gradient (xs-ring); virgil takes the geometry and derives the visibility by automatic differentiation"
+arxiv = "1609.00055"
+verified = true
+verified_via = "arxiv"

@@ -61,6 +61,7 @@ from .models import (
     Image,
     LinearImage,
     PointSource,
+    Blurred,
     Rotated,
     SourceModel,
     System,
@@ -3456,7 +3457,7 @@ def _parts(model, path=None):
     if isinstance(model, System):
         for name, part in model.components.items():
             found += _parts(part, prefix + name)
-    elif isinstance(model, Rotated):
+    elif isinstance(model, (Rotated, Blurred)):
         found += _parts(model.source, prefix + "source")
     return found
 
@@ -3466,7 +3467,7 @@ def _map_images(model, fn):
     model = model.resolved()
     if isinstance(model, Image):
         return fn(model)
-    if isinstance(model, Rotated):
+    if isinstance(model, (Rotated, Blurred)):
         return eqx.tree_at(
             lambda r: r.source, model, _map_images(model.source, fn)
         )
