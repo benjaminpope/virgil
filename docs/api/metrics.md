@@ -3,6 +3,7 @@
 Image-recovery scores for comparing a reconstruction with a known truth,
 following the interferometric imaging contests: resampling, alignment, the
 normalized cross-correlation, the L1 score, the beam-convolved rms and the
-2004 σ/peak.
+2004 σ/peak, plus EHT-style ring features (diameter, width, orientation,
+asymmetry, central fraction) for any image or rendered model.
 
 ::: virgil.metrics

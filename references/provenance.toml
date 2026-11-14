@@ -2343,3 +2343,24 @@ arxiv = "2008.05834"
 doi = "10.1093/mnras/staa2349"
 verified = true
 verified_via = "arxiv"
+
+[ref.eht2019_iv]
+authors = "Event Horizon Telescope Collaboration"
+year = 2019
+title = "First M87 Event Horizon Telescope Results. IV. Imaging the Central Supermassive Black Hole"
+arxiv = "1906.11241"
+bibcode = "2019ApJ...875L...4E"
+doi = "10.3847/2041-8213/ab0e85"
+used_in = ["virgil.metrics:ring_features"]
+note = "ApJL 875, L4, Section 9; image-domain ring diameter, width, orientation, asymmetry and central fraction"
+verified = true
+verified_via = "arxiv"
+
+[ref.rex_ehtim]
+authors = "Chael et al."
+year = 2018
+title = "eht-imaging: REX ring extractor"
+repo = "https://github.com/achael/eht-imaging"
+used_in = ["virgil.metrics:ring_features"]
+note = "REX, the ring-extraction code used in EHT Paper IV; reimplemented from the published description, not ported"
+verified = false
