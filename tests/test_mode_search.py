@@ -145,6 +145,21 @@ def test_the_mixture_log_density_integrates_to_one_and_samples_it():
 
 
 @x64
+def test_the_jitted_log_density_agrees_with_eager_at_a_large_batch():
+    # XLA CPU gave a wrong jitted batched einsum at 20000 draws x 128 modes
+    modes = [
+        ms.Mode(onp.array([0.09, 0.11, 1.73]), 0.0, 1e-5 * onp.eye(3), 3.0)
+    ]
+    lp = lambda x: -0.5 * np.sum(x**2) / 9 - 1.5 * np.log(2 * np.pi * 9)  # noqa: E731
+    sp = lambda key, n: 3 * jax.random.normal(key, (n, 3))  # noqa: E731
+    q = ms.DefensiveMixture(modes, lp, sp)
+    x = q.sample(jax.random.key(0), 20000)
+    eager = jax.vmap(q.log_q)(x)
+    jitted = jax.jit(lambda m, v: jax.vmap(m.log_q)(v))(q, x)
+    assert float(np.abs(eager - jitted).max()) < 1e-6
+
+
+@x64
 def test_resample_move_returns_the_posterior_of_a_gaussian_target():
     th = np.array([1.0, 2.0, -1.0])
     lp = lambda x: -0.5 * np.sum(x**2) / 25 - 1.5 * np.log(2 * np.pi * 25)  # noqa: E731

@@ -1,0 +1,1 @@
+Fixes `DefensiveMixture.log_q` and `sample` on CPU: the jitted batched `einsum` returned wrong values at 20000 draws times 128 modes (up to 33 nats on 18% of the draws), biasing `importance_evidence` high; both are now elementwise sums, with a regression test.

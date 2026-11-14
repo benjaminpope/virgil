@@ -808,7 +808,7 @@ year = 2011
 alt_years = [2014]
 alt_years_note = "year is the first posting; the journal paper is dated 2014"
 title = "The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo"
-used_in = ["virgil.inference", "virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.inference", "virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg", "virgil.orbit_visibility:visibility_leg"]
 note = "NUTS; JMLR 15, 1593 (2014)"
 bibcode = "2011arXiv1111.4246H"
 arxiv = "1111.4246"
@@ -2078,6 +2078,18 @@ used_in = ["virgil.smc:tempered_smc", "virgil.smc:bridge_smc"]
 note = "Ann. Appl. Probab. 31, 1021; extends the Eve-index variance estimator to SMC whose tempering schedule is chosen adaptively from the particles"
 
 
+[ref.genz1980]
+authors = "Genz & Malik"
+year = 1980
+title = "Remarks on algorithm 006: An adaptive algorithm for numerical integration over an N-dimensional rectangular region"
+doi = "10.1016/0771-050X(80)90039-X"
+how = "ported"
+used_in = ["virgil.orbit_visibility:outlier_exact"]
+note = "J. Comput. Appl. Math. 6, 295; the degree-7 rule with an embedded degree-5 rule and fourth-difference split axis, for the outlier floor b_k"
+role = "method"
+verified = true
+verified_via = "crossref"
+
 [ref.fischler1981]
 authors = "Fischler & Bolles"
 year = 1981
@@ -2201,7 +2213,7 @@ title = "Weighted average importance sampling and defensive mixture distribution
 doi = "10.1080/00401706.1995.10484303"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.mode_search:DefensiveMixture", "virgil.mode_search:importance_evidence", "virgil.orbit_cells:position_leg", "virgil.orbit_visibility:visibility_leg"]
 note = "Technometrics 37, 185; a prior share in the proposal bounds the importance weights by the likelihood maximum over the share"
 
 [ref.gilks2001]
@@ -2211,7 +2223,7 @@ title = "Following a moving target: Monte Carlo inference for dynamic Bayesian m
 doi = "10.1111/1467-9868.00280"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg"]
+used_in = ["virgil.mode_search:resample_move", "virgil.orbit_cells:position_leg", "virgil.orbit_visibility:visibility_leg"]
 note = "J. R. Stat. Soc. B 63, 127; resample-move: resample weighted draws, then move them with a kernel invariant for the target"
 
 [ref.neal2011]

@@ -378,6 +378,15 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `search_cell` | [Rousseeuw & Van Driessen (1999)](#rousseeuw1999), [doi:10.1080/00401706.1999.10485670](https://doi.org/10.1080/00401706.1999.10485670) | after |
 | `search_plan` | [Fischler & Bolles (1981)](#fischler1981), [doi:10.1145/358669.358692](https://doi.org/10.1145/358669.358692) | after |
 
+### `virgil.orbit_visibility`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `outlier_exact` | [Genz & Malik (1980)](#genz1980), [doi:10.1016/0771-050X(80)90039-X](https://doi.org/10.1016/0771-050X(80)90039-X) | ported |
+| `visibility_leg` | [Gilks & Berzuini (2001)](#gilks2001), [doi:10.1111/1467-9868.00280](https://doi.org/10.1111/1467-9868.00280) | after |
+| `visibility_leg` | [Hesterberg (1995)](#hesterberg1995), [doi:10.1080/00401706.1995.10484303](https://doi.org/10.1080/00401706.1995.10484303) | after |
+| `visibility_leg` | [Hoffman & Gelman (2011)](#hoffman2014), [arXiv:1111.4246](https://arxiv.org/abs/1111.4246), [ADS](https://ui.adsabs.harvard.edu/abs/2011arXiv1111.4246H/abstract) | after |
+
 ### `virgil.orbits`
 
 | Symbol | Source | Relation |
@@ -657,6 +666,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="fowlie2021"></a>**Fowlie, Handley & Su (2021)**. Nested sampling with plateaus. [arXiv:2010.13884](https://arxiv.org/abs/2010.13884), [doi:10.1093/mnras/stab590](https://doi.org/10.1093/mnras/stab590). MNRAS 503, 1199; likelihood plateaus break nested sampling's compression; the all-outlier floor is one.
 - <a id="frank2021"></a>**Frank, Leike & Enßlin (2021)**. Geometric variational inference. [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract). geoVI.
 - <a id="gallenne2015"></a>**Gallenne et al. (2015)**. Robust high-contrast companion detection from interferometric observations. The CANDID algorithm and an application to six binary stars. [arXiv:1505.02715](https://arxiv.org/abs/1505.02715), [ADS](https://ui.adsabs.harvard.edu/abs/2015A&A...579A..68G/abstract). CANDID.
+- <a id="genz1980"></a>**Genz & Malik (1980)**. Remarks on algorithm 006: An adaptive algorithm for numerical integration over an N-dimensional rectangular region. [doi:10.1016/0771-050X(80)90039-X](https://doi.org/10.1016/0771-050X(80)90039-X). J. Comput. Appl. Math. 6, 295; the degree-7 rule with an embedded degree-5 rule and fourth-difference split axis, for the outlier floor b_k.
 - <a id="gilks2001"></a>**Gilks & Berzuini (2001)**. Following a moving target: Monte Carlo inference for dynamic Bayesian models. [doi:10.1111/1467-9868.00280](https://doi.org/10.1111/1467-9868.00280). J. R. Stat. Soc. B 63, 127; resample-move: resample weighted draws, then move them with a kernel invariant for the target.
 - <a id="frito"></a>**Goldfine**. frito. [GitHub](https://github.com/JonahDG/frito). *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="goldstein2002"></a>**Goldstein, Poole & Safko (2002)**. Classical Mechanics (3rd ed.). Addison-Wesley, section 4.5; the Cayley-Klein parameters of a rotation in Euler angles. A textbook with no DOI or ADS record: unverified. *Not yet verified against arXiv, Crossref or ADS.*

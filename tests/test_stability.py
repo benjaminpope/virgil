@@ -39,6 +39,7 @@ EXPECTED = {
     "virgil.night_summaries": {"*"},
     "virgil.orbit_cells": {"*"},
     "virgil.mode_search": {"*"},
+    "virgil.orbit_visibility": {"*"},
     "virgil.orbit_search": {"*"},
     "virgil.tempering": {"*"},
     "virgil.svi": {"*"},
