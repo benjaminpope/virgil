@@ -1196,7 +1196,10 @@ def _refine(space, x, n_iter):
 @jax.jit
 def _scores(space, x):
     """Laplace ``ln Z`` at each ``x`` of a batch, from the saddle-free Hessian
-    (``|eigenvalues|``) of the objective: the start's estimate of its mode's."""
+    (``|eigenvalues|``) of the objective, capped at ``ln L(x)``: the start's
+    estimate of its mode's. ``x`` is near its mode (after the pre-pass), where
+    ``ln L(x)`` is a conservative proxy for the basin's ``sup L``. Only the
+    prune score is capped; a ``Mode``'s own Laplace ``ln Z`` is unchanged."""
 
     def one(x):
         h = -jax.hessian(_objective)(x, space)
@@ -1215,7 +1218,7 @@ def _scores(space, x):
 
 def _prune(space, x):
     """Indices of the candidates within ``max(W_PRUNE, ln(n / δ))`` of the best
-    Laplace ``ln Z`` (``n`` candidates scored).
+    score (``n`` candidates scored): the Laplace ``ln Z``, capped at ``ln L``.
 
     A dropped candidate carries at most ``e^-threshold`` of the best mode's
     mass if its score is accurate, so the ``n`` of them together less than
@@ -1442,10 +1445,12 @@ def _converge_csteps(space, plan, v, lab):
         for sl in _chunks(len(active), CHUNK_C):
             idx = active[sl]
             res = _cstep_chunk(
-                space, plan,
+                space,
+                plan,
                 np.asarray(_padded(v[idx], CHUNK_C), space.dtype),
-                np.asarray(_padded(lab[idx], CHUNK_C)), N_NEWTON,
-            )  # fmt: skip
+                np.asarray(_padded(lab[idx], CHUNK_C)),
+                N_NEWTON,
+            )
             vs, ls, xs = (onp.asarray(a)[: len(idx)] for a in res[:3])
             nxt.append(idx[(ls != lab[idx]).any(1)])
             v[idx], lab[idx], x[idx] = vs, ls, xs
