@@ -65,7 +65,8 @@ data.select(observables=("phi", "visphi"))          # no V², no spectrum
 the table above; the rest are dropped at every wavelength. Closure triangles
 are kept whole, since their legs share a wavelength. Calibration gains
 ([`with_gains`][virgil.oidata.OIData.with_gains]) propagate across `vis` and
-(unless `include_extras=False`) `"visamp"` and `"t3amp"`, and both gains and
+(unless `include_extras=False`) `"corrflux"`, `"visamp"` and `"t3amp"`, and
+both gains and
 closure-phase offsets ([`with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets])
 are subsetted onto the surviving observables (or cleared when all of their
 observables are dropped). When the closure phases are dropped, the differential
@@ -152,7 +153,10 @@ Change the prior and grouping with
 (one scale per spectrum) or `per="station"` (per telescope) when injection
 differs between telescopes and exposures, as for uncalibrated GRAVITY
 spectra. `poly_order=1` also marginalizes a slope in λ times the spectrum,
-for a chromatic calibration error.
+for a chromatic calibration error. Linear nuisance modes in `d log F` per 1σ
+can be supplied as `modes` of shape `(n_mode, n_block)` for `"flux"` or
+`"corrflux"` (passing explicit `kinds=` when both are present); on
+`"corrflux"` they are coupled jointly with any [`GainModes`][virgil.gains.GainModes].
 
 `"nflux"` divides the model spectrum by its per-row continuum fit over the
 ranges set with [`with_continuum`][virgil.oidata.OIData.with_continuum].
@@ -214,7 +218,9 @@ whether or not the pipeline has already normalized the data, since that
 subtraction only shifts the marginalized offset and slope, and it reuses the
 low-rank whitening of the 6d gains. As the widths grow, its χ² tends to the
 projection's when every channel is used (tested). The projection stays the
-default because it matches what the pipeline did.
+default because it matches what the pipeline did. Either branch also accepts
+tangent-space nuisance `modes` of shape `(n_mode, data.u.size)` in radians per
+1σ on `with_continuum`.
 
 ### Closure phases and differential phases together
 

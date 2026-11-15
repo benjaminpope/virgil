@@ -350,6 +350,13 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `_eps_rule` | [Golub & Welsch (1969)](#golub1969), [doi:10.1090/S0025-5718-69-99647-1](https://doi.org/10.1090/S0025-5718-69-99647-1) | after |
 
+### `virgil.observables`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `DifferentialPhase` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
+| `FluxSpectrum` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
+
 ### `virgil.oidata`
 
 | Symbol | Source | Relation |
