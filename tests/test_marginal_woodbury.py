@@ -446,6 +446,49 @@ def test_the_memory_model_bounds_the_compiled_working_set():
     assert temp <= model < 20 * temp
     assert _N_NODES == 32
 
+    # Also verify _table_floats on DifferentialPhase(prior_width=..., modes=...).
+    from virgil.observables import DifferentialPhase
+
+    spec = vlti_oidata(
+        stations=VLTI_UTS,
+        hour_angles_h=(-1.0, 0.0, 1.0),
+        wavelengths_m=onp.linspace(2.0e-6, 2.4e-6, 8),
+        sigma_v2=0.03,
+        sigma_cp_deg=3.0,
+    ).with_model(TRUTH, jax.random.PRNGKey(9), noise_scale=1.5)
+    n_u = spec.u.size
+    rng_vp = onp.random.default_rng(11)
+    vp_modes = onp.zeros((3, n_u))
+    frames = onp.asarray(spec.frame)
+    vp_modes[0, frames == 0] = rng_vp.normal(
+        0.0, 0.08, int((frames == 0).sum())
+    )
+    vp_modes[1:] = rng_vp.normal(0.0, 0.05, (2, n_u))
+    vp_block = DifferentialPhase.build(
+        onp.zeros(n_u),
+        onp.full(n_u, 0.05),
+        onp.arange(n_u, dtype=onp.int32),
+        spec.wavel,
+        spec.frame,
+        spec.stations,
+        prior_width=(0.12, 0.08),
+        modes=vp_modes,
+    )
+    data_vp = eqx.tree_at(lambda d: d.extras, spec, (vp_block,))
+    n_b = len(_Surface(data_vp, S_MAX).blocks)
+
+    def f_vp(x):
+        m = BinaryModelCartesian(x[0], x[1], x[2])
+        surf = _Surface(data_vp, S_MAX)
+        return surf.score(
+            surf.chi2(m, data_vp, None, 1.0), np.ones(n_b), data_vp
+        )
+
+    comp_vp = jax.jit(jax.vmap(jax.value_and_grad(f_vp))).lower(xs).compile()
+    temp_vp = comp_vp.memory_analysis().temp_size_in_bytes
+    model_vp = 4 * 4 * _table_floats(data_vp)
+    assert temp_vp <= model_vp < 20 * temp_vp
+
 
 def test_the_hessian_memory_model_bounds_the_compiled_working_set():
     """``_hessian_groups`` budgets ``8 · _N_SITES · _table_floats`` bytes per

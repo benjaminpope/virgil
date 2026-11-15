@@ -81,6 +81,7 @@
  "tests/test_noise_spec.py": 8.8,
  "tests/test_north_angle.py": 11.8,
  "tests/test_nufft.py": 46.7,
+ "tests/test_observable_modes.py": 61.7,
  "tests/test_observables.py": 28.2,
  "tests/test_oidata_projected.py": 0.5,
  "tests/test_oifits.py": 14.9,

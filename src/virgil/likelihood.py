@@ -1010,13 +1010,16 @@ def posterior_predictive_summary(samples, model, data, params=None):
 
 
 @renamed()
-def flux_scale_posterior(model, data):
+def flux_scale_posterior(model, data, kinds=None):
     """The grey scales of the extra spectra, given a model.
 
     The scales (and polynomial coefficients) of OI_FLUX spectra and
     correlated fluxes are marginalized in the likelihood (see
     [`FluxSpectrum`][virgil.observables.FluxSpectrum]); this is their
-    Gaussian posterior conditional on ``model``, for reporting.
+    Gaussian posterior conditional on ``model``, for reporting. When
+    ``"corrflux"`` is coupled to ``data.gains``, its scale is marginalized
+    jointly with the visibility gains and skipped here unless requested via
+    ``kinds``.
 
     Parameters
     ----------
@@ -1024,6 +1027,9 @@ def flux_scale_posterior(model, data):
         E.g. the best fit.
     data : OIData
         Data with extra spectra (``extras=("flux",)`` and the like).
+    kinds : str or sequence of str, optional
+        Which spectrum kinds (``"flux"``, ``"nflux"``, ``"corrflux"``) to
+        report; all uncoupled spectra by default.
 
     Returns
     -------
@@ -1038,13 +1044,32 @@ def flux_scale_posterior(model, data):
     """
     from .observables import FluxSpectrum
 
+    if isinstance(kinds, str):
+        kinds = (kinds,)
+    if kinds is not None:
+        unknown = set(kinds) - {"flux", "nflux", "corrflux"}
+        if unknown:
+            raise ValueError(
+                f"Unknown spectrum kind(s) {sorted(unknown)}; expected "
+                "'flux', 'nflux', or 'corrflux'."
+            )
+    spectra = [b for b in data.extras if isinstance(b, FluxSpectrum)]
     cvis = data._cvis(model)
     out = {}
-    for block in data.extras:
-        if not isinstance(block, FluxSpectrum):
+    for block in spectra:
+        if kinds is not None and block.kind not in kinds:
+            continue
+        coupled = (
+            block.kind == "corrflux"
+            and data.gains is not None
+            and data.gains.n_vis != np.asarray(data.vis).size
+        )
+        if coupled and kinds is None and len(spectra) > 1:
             continue
         prediction = block.predict(model, cvis)
-        mean, cov = block.posterior(prediction, block.values, block.errors)
+        mean, cov = block.posterior(
+            prediction, block.values, block.errors, coupled=coupled
+        )
         entry = {"mean": mean, "cov": cov, "groups": block.group}
         if block.kind != "nflux":
             base = model.total_spectrum(np.asarray(block.wavel))
