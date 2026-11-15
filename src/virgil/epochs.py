@@ -1573,7 +1573,7 @@ def default_memory_budget():
 
 def _whitening_floats(data):
     """The floats one whitening of ``data`` holds: observables plus the
-    gain and offset modes' columns."""
+    gain, offset, and extra-observable mode columns."""
     n = int(onp.size(data.vis) + onp.size(data.phi))
     n += sum(int(b.data().size) for b in data.extras)
     for modes, names in (
@@ -1586,6 +1586,12 @@ def _whitening_floats(data):
                 for a in names
                 if getattr(modes, a, None) is not None
             )
+    for b in data.extras:
+        n += sum(
+            int(onp.size(getattr(b, a)))
+            for a in ("modes", "basis", "local_modes", "spanning_modes")
+            if getattr(b, a, None) is not None
+        )
     return n
 
 
@@ -1615,6 +1621,27 @@ def _table_floats(data):
         span = offsets.spanning
         n_span = 0 if span is None else int(span.shape[1])
         problems.append((n_block, n_row, n_mode, n_span, offsets.n_out))
+    for b in data.extras:
+        if (
+            b.kind == "visphi"
+            and (b.prior_width is not None or b.modes is not None)
+            and b.keep.size > 0
+        ):
+            n_f, k, r = b.valid.shape
+            n_prior = (
+                b.q.shape[2] * b.basis.shape[2]
+                if b.prior_width is not None
+                else 0
+            )
+            loc_idx, span_idx = b._mode_plan or ((), ())
+            n_loc = (
+                len(loc_idx[0])
+                if loc_idx
+                else (1 if b.prior_width is None else 0)
+            )
+            problems.append(
+                (n_f, k * r, n_prior + n_loc, len(span_idx), int(b.keep.size))
+            )
     for n_block, n_row, m, k, n in problems:
         # Once: the columns, their gathered copy and cotangent (3 · B R m,
         # 3 · n k), the Grams ``G_bb`` (B m²), ``G_bs`` (B m k), ``G_ss`` (k²).

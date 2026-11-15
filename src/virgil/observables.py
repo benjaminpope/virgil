@@ -79,6 +79,13 @@ def _continuum_basis(wavel, order):
     return onp.stack([x**j for j in range(order + 1)], axis=1)
 
 
+def _colspace(mat):
+    """Orthonormal rows spanning the column space of ``mat``."""
+    u, s, _ = onp.linalg.svd(mat, full_matrices=False)
+    rank = int(onp.sum(s > 1e-9 * s.max())) if s.size else 0
+    return u[:, :rank].T
+
+
 def continuum_operator(wavel, continuum, order=1):
     """The continuum fit of one spectrum, as a matrix.
 
@@ -150,53 +157,40 @@ def _check_modes(modes, n_sample, label):
     return None if arr.size == 0 else arr
 
 
-def _partition_flux_modes(modes, group, members, n_sample):
-    """Split ``(n_mode, n_sample)`` modes into per-group local and spanning."""
-    if modes is None:
-        return None, None
-    n_group, max_m = members.shape
+def _spectral_inputs(values, errors, wavel, frame, sample, modes, label):
+    """Flat ``(values, errors, wavel, frame, sample)`` and validated ``modes``."""
+    values = onp.asarray(values, float).reshape(-1)
+    errors = onp.asarray(errors, float).reshape(-1)
+    wavel = onp.asarray(wavel, float).reshape(-1)
+    frame = onp.asarray(frame).reshape(-1)
+    if sample is not None:
+        sample = onp.asarray(sample, onp.int32).reshape(-1)
+    return (
+        values,
+        errors,
+        wavel,
+        frame,
+        sample,
+        _check_modes(modes, values.size, label),
+    )
+
+
+def _partition_mode_indices(touched):
+    """Split ``(n_mode, n_group)`` bool touch mask into local/spanning indices."""
+    if touched is None or touched.shape[1] == 0:
+        return None
+    n_mode, n_group = touched.shape
     per_g = [[] for _ in range(n_group)]
     span = []
-    for mode in modes:
-        gs = onp.unique(group[onp.flatnonzero(mode)])
-        if gs.size == 1:
-            g = int(gs[0])
-            idx = members[g]
-            col = onp.where(
-                idx < n_sample, mode[onp.minimum(idx, n_sample - 1)], 0.0
-            )
-            per_g[g].append(col)
-        elif gs.size > 1:
-            span.append(mode)
-    max_loc = max((len(cols) for cols in per_g), default=0)
-    local_modes = None
-    if max_loc > 0 and n_group > 0 and max_m > 0:
-        local_modes = onp.zeros((n_group, max_m, max_loc))
-        for g, cols in enumerate(per_g):
-            for j, col in enumerate(cols):
-                local_modes[g, :, j] = col
-    spanning_modes = onp.stack(span, axis=1) if span else None
-    return local_modes, spanning_modes
-
-
-def _diffphase_mode_plan(modes, chan, grid):
-    """Static ``(local_idx, span_idx)`` routing for ``DifferentialPhase`` modes."""
-    if modes is None or grid.shape[0] == 0:
-        return None
-    n_mode = modes.shape[0]
-    n_f = grid.shape[0]
-    m_grid = onp.where(chan, modes[:, grid], 0.0)
-    per_f = [[] for _ in range(n_f)]
-    span = []
     for m_idx in range(n_mode):
-        tf = onp.flatnonzero(onp.any(m_grid[m_idx] != 0, axis=(1, 2)))
-        if tf.size == 1:
-            per_f[int(tf[0])].append(m_idx)
-        elif tf.size > 1:
+        gs = onp.flatnonzero(touched[m_idx])
+        if gs.size == 1:
+            per_g[int(gs[0])].append(m_idx)
+        elif gs.size > 1:
             span.append(m_idx)
-    max_loc = max((len(v) for v in per_f), default=0)
+    max_loc = max((len(v) for v in per_g), default=0)
     loc_idx = (
-        tuple(tuple(v + [n_mode] * (max_loc - len(v))) for v in per_f)
+        tuple(tuple(v + [n_mode] * (max_loc - len(v))) for v in per_g)
         if max_loc > 0
         else ()
     )
@@ -423,12 +417,10 @@ class FluxSpectrum(_Block):
                 "Nuisance modes are not supported for continuum-normalized "
                 "'nflux' spectra."
             )
-        values = onp.asarray(values, float).reshape(-1)
-        errors = onp.asarray(errors, float).reshape(-1)
-        modes = _check_modes(modes, values.size, kind)
-        wavel = onp.asarray(wavel, float).reshape(-1)
+        values, errors, wavel, frame, sample, modes = _spectral_inputs(
+            values, errors, wavel, frame, sample, modes, kind
+        )
         row = _labels(row)
-        frame = onp.asarray(frame).reshape(-1)
         station = onp.asarray(station)
         choices = {
             "dataset": onp.zeros(values.size, dtype=int),
@@ -497,14 +489,22 @@ class FluxSpectrum(_Block):
                 c_basis[r, : idx.size] = b
                 c_fit[r][:, onp.flatnonzero(mask)] = onp.linalg.pinv(b[mask])
             cont_rows, cont_basis, cont_fit = c_rows, c_basis, c_fit
-        local_modes, spanning_modes = _partition_flux_modes(
-            modes, group, members, values.size
-        )
+        local_modes = spanning_modes = None
+        if modes is not None and n_group > 0:
+            m_pad = onp.pad(modes, ((0, 1), (0, 1)))
+            loc_idx, span_idx = _partition_mode_indices(
+                onp.any(m_pad[:-1, members] != 0, axis=2)
+            )
+            if loc_idx:
+                idx_m = onp.asarray(loc_idx)[:, None, :]
+                local_modes = m_pad[idx_m, members[:, :, None]]
+            if span_idx:
+                spanning_modes = modes[list(span_idx)].T
         return cls(
             values=np.asarray(values),
             errors=np.asarray(errors),
             wavel=wavel,
-            sample=None if sample is None else onp.asarray(sample, onp.int32),
+            sample=sample,
             row=row,
             frame=frame,
             station=station,
@@ -808,23 +808,21 @@ class DifferentialPhase(_Block):
             Linear tangent-space nuisance modes ``(n_mode, n_sample)`` in
             radians per 1σ (Luger, Foreman-Mackey & Hogg 2017).
         """
-        values = onp.asarray(values, float).reshape(-1)
-        errors = onp.asarray(errors, float).reshape(-1)
-        modes = _check_modes(modes, values.size, "visphi")
-        sample = onp.asarray(sample, onp.int32).reshape(-1)
-        wavel = onp.asarray(wavel, float).reshape(-1)
-        frame = onp.asarray(frame).reshape(-1)
+        values, errors, wavel, frame, sample, modes = _spectral_inputs(
+            values, errors, wavel, frame, sample, modes, "visphi"
+        )
         stations = onp.asarray(stations, int).reshape(-1, 2)
         if row is None:
-            row = onp.column_stack([frame, stations])
+            row = _labels(onp.column_stack([frame, stations]))
         row = _labels(row)
         continuum, lines = _ranges(continuum), _ranges(lines)
         if prior_width is not None:
-            prior_width = onp.array(
-                onp.broadcast_to(prior_width, (order + 1,)), float
+            widths = onp.broadcast_to(
+                onp.asarray(prior_width, float), (order + 1,)
             )
-            if not onp.all(prior_width > 0):
+            if not onp.all(widths > 0):
                 raise ValueError("prior_width must be positive.")
+            prior_width = onp.array(widths, float)
 
         # The samples of each row, ascending (one stable sort, not a pass
         # over all samples per row and frame).
@@ -864,11 +862,10 @@ class DifferentialPhase(_Block):
             if prior_width is None:
                 n_op = continuum_operator(channels, cont, order)
                 m = (onp.eye(channels.size) - n_op)[line]
-                u, s, _ = onp.linalg.svd(m, full_matrices=False)
-                rank = int(onp.sum(s > 1e-9 * s.max())) if s.size else 0
-                if rank == 0:
+                u_t = _colspace(m)
+                if u_t.shape[0] == 0:
                     continue
-                w_op = u[:, :rank].T @ m
+                w_op = u_t @ m
                 basis_f = None
             else:
                 used = cont | line
@@ -877,21 +874,23 @@ class DifferentialPhase(_Block):
             grid = onp.empty((rows.size, channels.size), dtype=int)
             pairs = onp.empty((rows.size, 2), dtype=int)
             for b, r in enumerate(rows):
-                idx = by_row[r][onp.argsort(wavel[by_row[r]])]
-                grid[b] = idx[onp.searchsorted(wavel[idx], channels)]
+                idx = by_row[r]
+                order_in_row = onp.argsort(wavel[idx])
+                idx = idx[order_in_row]
+                pos = onp.searchsorted(wavel[idx], channels)
+                grid[b] = idx[pos]
                 pairs[b] = stations[idx[0]]
             if closure_free:
                 # Qᵀ: an orthonormal basis of the telescope-differenced
                 # phases (the column space of the baseline-telescope
                 # incidence matrix)
-                col = {tel: j for j, tel in enumerate(onp.unique(pairs))}
-                inc = onp.zeros((len(pairs), len(col)))
+                telescopes = onp.unique(pairs)
+                col = {tel: j for j, tel in enumerate(telescopes)}
+                inc = onp.zeros((len(pairs), telescopes.size))
                 for b, (i, j) in enumerate(pairs):
                     inc[b, col[i]] += 1.0
                     inc[b, col[j]] -= 1.0
-                u, s, _ = onp.linalg.svd(inc, full_matrices=False)
-                rank = int(onp.sum(s > 1e-9 * s.max()))
-                q_op = u[:, :rank].T
+                q_op = _colspace(inc)
             else:
                 q_op = onp.eye(rows.size)
             frames.append((grid, q_op, w_op, basis_f))
@@ -903,7 +902,8 @@ class DifferentialPhase(_Block):
         r_max = max((x[2].shape[0] for x in frames), default=0)
         grid = onp.zeros((n_f, b_max, c_max), dtype=onp.int32)
         chan = onp.zeros((n_f, b_max, c_max), dtype=bool)
-        q, w = onp.zeros((n_f, k_max, b_max)), onp.zeros((n_f, r_max, c_max))
+        q = onp.zeros((n_f, k_max, b_max))
+        w = onp.zeros((n_f, r_max, c_max))
         valid = onp.zeros((n_f, k_max, r_max), dtype=bool)
         basis = None
         if prior_width is not None:
@@ -922,6 +922,9 @@ class DifferentialPhase(_Block):
             if basis is not None:
                 basis[f, : w_op.shape[0]] = basis_f
         keep = onp.flatnonzero(valid.reshape(-1)).astype(onp.int32)
+        t_on = None
+        if modes is not None:
+            t_on = onp.any(onp.where(chan, modes[:, grid], 0.0) != 0, (2, 3))
         out = cls(
             values=np.asarray(values),
             errors=np.asarray(errors),
@@ -943,7 +946,7 @@ class DifferentialPhase(_Block):
             closure_free=bool(closure_free),
             prior_width=prior_width,
             modes=modes,
-            _mode_plan=_diffphase_mode_plan(modes, chan, grid),
+            _mode_plan=_partition_mode_indices(t_on),
         )
         return out._with_cholesky()
 

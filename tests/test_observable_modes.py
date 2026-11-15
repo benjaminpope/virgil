@@ -13,11 +13,7 @@ from scipy.stats import multivariate_normal
 from tests._shared import PAIRS, TRIANGLES  # noqa: E402
 from virgil._precision import cast_tree
 from virgil.epochs import _Surface, marginal_loglike
-from virgil.gains import (
-    _add_group,
-    _append_corrflux_modes,
-    _map_amp_extras,
-)
+from virgil.gains import gain_modes
 from virgil.imaging import error_scale
 from virgil.likelihood import (
     flux_scale_posterior,
@@ -27,8 +23,6 @@ from virgil.models import PointSource, System
 from virgil.observables import (
     DifferentialPhase,
     FluxSpectrum,
-    _diffphase_mode_plan,
-    _partition_flux_modes,
 )
 from virgil.oidata import OIData, cp_indices
 from virgil.oifits import build_hdulist, read_oifits
@@ -185,75 +179,153 @@ def _dense_flux_cov(block, pred):
     return cov
 
 
-# === DIRECT UNIT TESTS FOR PRIVATE HELPERS ===
+# === API INVARIANTS: PARTIAL UPDATES, KINDS GUARDS, AND CHROMATIC SELECT ===
 
 
-def test_flux_and_diffphase_mode_helpers():
-    group = onp.array([0, 0, 1, 1], dtype=onp.int32)
-    members = onp.array([[0, 1], [2, 3]], dtype=onp.int32)
-    assert _partition_flux_modes(None, group, members, 4) == (None, None)
+def test_partial_updates_unset_clearing_and_multi_flux_kinds_guard():
+    base_vp = _two_epoch_oidata(("visphi",)).select(observables=("visphi",))
+    m_vp = onp.zeros((1, base_vp.u.size))
+    m_vp[0, onp.asarray(base_vp.frame) == 0] = 0.06
 
-    m_loc_only = onp.array([[0.2, -0.1, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]])
-    loc, span = _partition_flux_modes(m_loc_only, group, members, 4)
-    assert loc.shape == (2, 2, 1) and span is None
-    onp.testing.assert_allclose(loc[0, :, 0], [0.2, -0.1])
-    onp.testing.assert_allclose(loc[1, :, 0], [0.0, 0.0])
-
-    m_span_only = onp.array([[0.1, 0.0, -0.2, 0.0]])
-    loc2, span2 = _partition_flux_modes(m_span_only, group, members, 4)
-    assert loc2 is None and span2.shape == (4, 1)
-    onp.testing.assert_allclose(span2[:, 0], [0.1, 0.0, -0.2, 0.0])
-
-    chan = onp.array(
-        [[[True, True], [True, False]], [[True, True], [False, False]]]
+    d_vp = base_vp.with_continuum(
+        continuum=CONT_RANGES,
+        lines=[LINE],
+        order=1,
+        prior_width=(0.2, 0.1),
+        modes=m_vp,
     )
-    grid = onp.array([[[0, 1], [2, 2]], [[3, 4], [4, 4]]], dtype=onp.int32)
-    assert _diffphase_mode_plan(None, chan, grid) is None
-    # Mode 0 touches frame 0 only; mode 1 touches both frames; mode 2 is zero on
-    # valid slots even if non-zero on a padded slot if referenced.
-    modes = onp.array(
-        [
-            [0.3, -0.2, 0.0, 0.0, 0.0],
-            [0.1, 0.0, 0.0, 0.2, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 0.0],
-        ]
+    # Omitted arguments preserve existing settings; explicit None clears them.
+    d_ord0 = d_vp.with_continuum(order=0, prior_width=0.2)
+    b_ord0 = d_ord0.extras[0]
+    assert b_ord0.continuum == tuple(CONT_RANGES)
+    assert b_ord0.lines == (LINE,)
+    assert b_ord0.order == 0 and b_ord0.modes is not None
+
+    d_proj = d_vp.with_continuum(prior_width=None)
+    assert d_proj.extras[0].prior_width is None
+    assert d_proj.extras[0].continuum == tuple(CONT_RANGES)
+    assert d_proj.extras[0].modes is not None
+
+    d_nomode = d_vp.with_continuum(modes=None)
+    assert d_nomode.extras[0].modes is None
+    assert d_nomode.extras[0].prior_width is not None
+
+    d_allchan = d_proj.with_continuum(continuum=None, lines=None)
+    assert d_allchan.extras[0].continuum is None
+    assert d_allchan.extras[0].lines is None
+
+    # Multiple FluxSpectrum blocks ("flux" + "corrflux") require explicit kinds=
+    # when modes is supplied, and flux_scale_posterior skips coupled corrflux.
+    both_raw = _two_epoch_oidata(("flux", "visamp"), amptyp="correlated flux")
+    fb, cfb = both_raw.extras
+    m_f = onp.full((1, fb.values.size), 0.03)
+    m_cf = onp.full((1, cfb.values.size), 0.04)
+
+    with pytest.raises(ValueError, match="kinds='flux' or kinds='corrflux'"):
+        both_raw.with_flux_scale(scale=SCALE_PRIOR, modes=m_f)
+
+    both = (
+        both_raw.with_flux_scale(scale=SCALE_PRIOR)
+        .with_flux_scale(modes=m_f, kinds="flux")
+        .with_flux_scale(per="frame", modes=m_cf, kinds="corrflux")
+        .with_gains(telescope=0.03)
     )
-    loc_idx, span_idx = _diffphase_mode_plan(modes, chan, grid)
-    assert loc_idx == ((0,), (3,))
-    assert span_idx == (1,)
+    assert both.extras[0].modes is not None
+    assert both.extras[1].modes is not None
+
+    post = flux_scale_posterior(_scene(), both)
+    assert list(post) == ["flux"]
+    assert list(flux_scale_posterior(_scene(), both, kinds="flux")) == ["flux"]
+    with pytest.raises(NotImplementedError, match="corrflux"):
+        flux_scale_posterior(_scene(), both, kinds="corrflux")
+    with pytest.raises(ValueError, match="Unknown spectrum kind"):
+        flux_scale_posterior(_scene(), both, kinds="visphi")
+
+    # Clearing modes=None and scale=None on corrflux updates GainModes cleanly.
+    cleared_m = both.with_flux_scale(modes=None, kinds="corrflux")
+    assert cleared_m.extras[1].modes is None
+    assert cleared_m.extras[1].scale is not None
+    cleared_all = cleared_m.with_flux_scale(scale=None, kinds="corrflux")
+    assert cleared_all.extras[1].scale is None
+    assert "_flux" not in cleared_all.gains.groups
 
 
-def test_gain_amp_extra_helpers():
-    data = _two_epoch_oidata(("visamp", "t3amp"), amptyp="correlated flux")
-    amp_extras = [b for b in data.extras if b.gain_legs()]
-    vis_idx = onp.arange(data.vis.size, dtype=int)
-    index = onp.arange(data.u.size, dtype=int)
-
-    empty_cols, frame = _map_amp_extras(data, index, vis_idx, amp_extras, [])
-    assert empty_cols == []
-    assert frame.size == data.vis.size + sum(b.values.size for b in amp_extras)
-
-    sample_cols = [(0, onp.array([0, 1], int), onp.array([0.05, -0.02]))]
-    mapped_cols, _ = _map_amp_extras(
-        data, index, vis_idx, amp_extras, sample_cols
+def test_with_corrflux_chromatic_selection_and_direct_gain_modes():
+    raw = _two_epoch_oidata(("visamp",), amptyp="correlated flux").select(
+        observables=("vis", "corrflux")
     )
-    assert len(mapped_cols) == 1
-    assert mapped_cols[0][0] == 0
-    # Sample 0 appears in vis[0], corrflux[0], and t3amp rows using leg 0.
-    assert 0 in mapped_cols[0][1]
-    assert data.vis.size in mapped_cols[0][1]
+    rng = onp.random.default_rng(141)
+    m_u = rng.normal(0.0, 0.02, (2, raw.u.size))
+    m_cf = rng.normal(0.0, 0.03, (2, raw.extras[0].values.size))
+    asym_ranges = [(2.160e-6, 2.178e-6)]
+    other = _scene(dra=0.61, ddec=0.15)
 
-    # _append_corrflux_modes with modes only (widths is None) vs widths + modes.
-    cf_modes = onp.zeros((1, amp_extras[0].values.size))
-    cf_modes[0, :3] = [0.04, -0.02, 0.01]
-    cf_only_modes = amp_extras[0].rebuild(scale=None, modes=cf_modes)
-    groups, widths, cols = [], [], []
-    add_g = lambda name, w: _add_group(groups, widths, name, w)
-    _append_corrflux_modes(cols, add_g, [cf_only_modes, amp_extras[1]], 10)
-    assert groups == ["_flux"] and widths == [1.0]
-    assert len(cols) == 1
-    onp.testing.assert_array_equal(cols[0][1], [10, 11, 12])
-    onp.testing.assert_allclose(cols[0][2], [0.04, -0.02, 0.01])
+    with jax.enable_x64(True):
+        r64 = cast_tree(raw, "float64")
+        o64 = cast_tree(other, "float64")
+
+        # 1. with_flux_scale and with_gains(..., chromatic=0.02) commute.
+        d_fg = r64.with_flux_scale(
+            scale=SCALE_PRIOR,
+            per="frame",
+            poly_order=1,
+            modes=m_cf,
+        ).with_gains(telescope=0.03, baseline=0.02, chromatic=0.02, modes=m_u)
+        d_gf = r64.with_gains(
+            telescope=0.03, baseline=0.02, chromatic=0.02, modes=m_u
+        ).with_flux_scale(
+            scale=SCALE_PRIOR,
+            per="frame",
+            poly_order=1,
+            modes=m_cf,
+        )
+        assert float(model_loglike(o64, d_fg)) == pytest.approx(
+            float(model_loglike(o64, d_gf)), abs=1e-12
+        )
+
+        # 2. Asymmetric wavelength select + observable select commute exactly
+        # and match VIS2-only data (corrflux never alters VIS2 chromatic modes).
+        vis_one_step = d_fg.select(ranges=asym_ranges, observables="vis")
+        vis_two_step = d_fg.select(ranges=asym_ranges).select(
+            observables="vis"
+        )
+        vis_pure = (
+            r64.select(observables="vis")
+            .with_gains(
+                telescope=0.03, baseline=0.02, chromatic=0.02, modes=m_u
+            )
+            .select(ranges=asym_ranges)
+        )
+        ll_one = float(model_loglike(o64, vis_one_step))
+        assert abs(ll_one - float(model_loglike(o64, vis_two_step))) < 1e-12
+        assert abs(ll_one - float(model_loglike(o64, vis_pure))) < 1e-12
+        assert "_flux" not in vis_two_step.gains.groups
+
+        # 3. Direct gain_modes() attached via tree_at refreshes _flux across
+        # both with_flux_scale and select(ranges=...).
+        direct = eqx.tree_at(
+            lambda d: d.gains,
+            r64,
+            gain_modes(
+                r64, telescope=0.03, baseline=0.02, chromatic=0.02, modes=m_u
+            ),
+            is_leaf=lambda x: x is None,
+        ).with_flux_scale(
+            scale=SCALE_PRIOR, per="frame", poly_order=1, modes=m_cf
+        )
+        assert float(
+            model_loglike(o64, direct.select(ranges=asym_ranges))
+        ) == pytest.approx(
+            float(model_loglike(o64, d_fg.select(ranges=asym_ranges))),
+            abs=1e-12,
+        )
+
+    # 4. Dropping corrflux or clearing scale/modes on _flux-only GainModes
+    # clears gains back to None.
+    flux_only = raw.with_flux_scale(scale=SCALE_PRIOR, modes=m_cf).with_gains()
+    assert flux_only.gains.groups == ("_flux",)
+    assert flux_only.select(observables="vis").gains is None
+    assert flux_only.with_flux_scale(scale=None, modes=None).gains is None
 
 
 # === GATE 1a: DifferentialPhase(modes=...) ===
@@ -760,16 +832,12 @@ def test_six_way_commutativity_flux_scale_gains_and_select():
         _scene(), key=jax.random.PRNGKey(123)
     )
     # Reset scale back to None so all 6 permutations start from identical unscaled data.
-    unscaled = eqx.tree_at(
-        lambda d: d.extras,
-        noisy,
-        (noisy.extras[0].rebuild(scale=None), noisy.extras[1]),
-    )
+    unscaled = noisy.with_flux_scale(scale=None)
 
     rng = onp.random.default_rng(124)
     modes_u_full = rng.normal(0.0, 0.02, (2, unscaled.u.size))
     modes_cf_full = rng.normal(0.0, 0.03, (2, unscaled.extras[0].values.size))
-    sel_ranges = [(2.156e-6, 2.174e-6)]
+    sel_ranges = [(2.160e-6, 2.178e-6)]
 
     from virgil.observables import in_ranges
 
@@ -923,3 +991,38 @@ def test_surface_marginal_loglike_diffphase_quadrature_parity(
             )
         )(np.asarray(0.55))
         assert onp.isfinite(float(grad_dra))
+
+
+def test_night_summaries_diffphase_modes_and_prior_not_rescalable():
+    pytest.importorskip("jaxoplanet")
+    import types
+
+    from virgil import night_summaries as ns
+
+    t0 = _tables(mjd=60000.0)
+    t1 = _tables(mjd=60000.05)
+    t2 = _tables(mjd=60000.10)
+    night = OIData(
+        [build_hdulist(t) for t in (t0, t1, t2)], extras=("visphi",)
+    )
+    modes = onp.full((1, night.u.size), 0.06)
+    pos = types.SimpleNamespace(
+        names=("n",),
+        peaks=(
+            types.SimpleNamespace(
+                dra=onp.array([0.5]),
+                ddec=onp.array([0.2]),
+                flux=onp.array([0.1]),
+            ),
+        ),
+        primary_diam=None,
+    )
+    for configured in (
+        night.with_continuum(lines=[LINE], modes=modes),
+        night.with_continuum(lines=[LINE], prior_width=(0.15, 0.10)),
+    ):
+        peak = ns.night_summaries([configured], pos)[0].peaks[0]
+        assert not peak.rescalable
+        assert onp.isclose(peak.log_scale(1.0), 0.0)
+        with pytest.raises(NotImplementedError):
+            peak.covariance(scale=2.0)
