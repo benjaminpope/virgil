@@ -1000,7 +1000,7 @@ def _geometry_stage(p):  # deliberate: stage callable, patched by tests
     start = {
         "inc": float(inc_deg[i]),
         "pa": float(pa_axis[j]),
-        "r1": float(r_axis[k_r]),
+        "r1": _radius_start(ctx, r_axis[k_r]),
         "s1": ctx.halffringe,
         "f1": float(_FLUX_GRID[k_f]),
     }
@@ -1187,13 +1187,24 @@ def _planet_start(search, ctx):
     return start
 
 
+def _radius_start(ctx, r):
+    """Grid radius ``r`` as a fit start, at least half a half-fringe above ``r_in``.
+
+    The grids start on ``r_in``, the prior bound, where the fit's flat
+    coordinate squashes the gradient to nothing: a ring started there stays,
+    even when the likelihood rises steeply away from the bound.
+    """
+    lo = min(ctx.r_in + 0.5 * ctx.halffringe, 0.5 * (ctx.r_in + ctx.r_out))
+    return max(float(r), lo)
+
+
 def _ring_start(ctx, held, n, new):
     """Starting values of an ``n``-ring scene from ``held`` and the scan's ``new`` ring."""
     start = {k: v for k, v in held.items() if k != "pa_vec"}
     start["inc"] = max(float(start["inc"]), 5.0)
     if new is not None:
         start[f"r{n}"], start[f"s{n}"], start[f"f{n}"] = (
-            new["r"],
+            _radius_start(ctx, new["r"]),
             ctx.halffringe,
             new["f"],
         )

@@ -1578,6 +1578,18 @@ def test_a_parameter_near_a_bound_is_held_only_where_the_bound_is_active(
     assert (cov is not None) == (case == "interior")
 
 
+def test_a_ring_fit_never_starts_on_the_r_in_bound():
+    from virgil.pipeline import disk
+
+    ctx = types.SimpleNamespace(r_in=1.0, r_out=6.0, halffringe=1.0)
+    # the grids' first node is r_in: started there, the flat fit cannot leave
+    assert disk._radius_start(ctx, 1.0) == 1.5
+    assert disk._radius_start(ctx, 3.0) == 3.0
+    # a prior narrower than a half-fringe starts at its middle
+    narrow = types.SimpleNamespace(r_in=1.0, r_out=1.6, halffringe=1.0)
+    assert disk._radius_start(narrow, 1.0) == pytest.approx(1.3)
+
+
 @pytest.mark.parametrize("model", ["gp", "rings"])
 def test_a_geometry_bound_is_reported_by_at_bound_not_laplace_pd(model):
     # The geometry ring on its r_in bound has no width (it is held fixed):
