@@ -41,8 +41,14 @@ jobs:
       # the release notes bypasses it with a warning.
       - name: the carbon page was refreshed for this release
         env:
-          RELEASE_BODY: ${{ github.event.release.body }}
-        run: python3 .github/scripts/check_carbon_fresh.py
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        # The notes as they are now, not as at publish: a re-run after
+        # adding the skip line must see it.
+        run: |
+          RELEASE_BODY=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+          export RELEASE_BODY
+          python3 .github/scripts/check_carbon_fresh.py
 
   build:
     needs: gate

@@ -43,10 +43,21 @@ def test_page_sentence():
     assert "v0.5.0, 2026-11-17" in dc.refresh_sentence(stamp())
 
 
-def test_failed_sources_from_stderr():
-    err = "warning: slurm: TimeoutExpired()\nnote\nwarning: other: x\n"
-    assert dc.failed_sources(err) == ["slurm"]
-    assert dc.failed_sources("") == []
+@pytest.mark.parametrize(
+    "line",
+    [
+        "warning: slurm: TimeoutExpired(['ssh', 'nt'], 60)",  # carbon_common.warn
+        "ssh: connect to host nt port 22: Operation timed out",
+        "Traceback (most recent call last):",
+    ],
+)
+def test_trouble_lines_flag_failures(line):
+    assert dc.trouble_lines(f"fine\n{line}\n") == [line]
+
+
+def test_trouble_lines_quiet_run():
+    assert dc.trouble_lines("") == []
+    assert dc.trouble_lines("collected 12 records\n") == []
 
 
 @pytest.mark.parametrize("flag", ["--offline", "--sources=claude"])
