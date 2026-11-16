@@ -134,6 +134,8 @@ Compute for science with virgil (fits to observations, data reduction and archiv
 
 ## Scope and caveats
 
+> **Note.** The figures on this page were computed before virgil-vlti was brought into scope and do not yet include it. They will be refreshed at the next local run.
+
 - **What is counted.** Development and validation of virgil and virgil-vlti (its VLTI calibration package, counted as virgil core): AI coding assistants, GitHub Actions CI, and jobs on Swinburne's OzSTAR/NT cluster. Validation jobs (simulation-based calibration, the imaging contests, detection false-alarm and orbit checks) are counted. Data analysis is not (see above). GitHub Actions CI is counted for the virgil repository only.
 - **Claude Code** was used from 2026-09-28, and is counted from its local transcripts on one machine: sessions in the virgil and virgil-vlti repositories and their worktrees, but not in the separate virgil-validation repository. Sessions run in the cloud (claude.ai, cloud agents) or on other machines are not stored locally and are not captured.
 - **Before that, VS Code Copilot Chat** was the main assistant (from March 2026). Its logs give prompt and output tokens per request but no cache split, so prompts are costed as uncached input, which errs high.
