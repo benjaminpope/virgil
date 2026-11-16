@@ -7,12 +7,15 @@ standard-normal ``latent`` coefficients on the cosine (DCT-II) basis. Fitting
 the latents under a standard-normal prior is MAP estimation with a GP prior;
 see [Gaussian processes and IFT](../gp_and_ift.md).
 
-Source: the whitened ("standardized") latents and the stationary prior
-diagonal in a harmonic basis follow Edenhofer et al. (2024), Arras et al.
-(2022) and Enßlin et al. (2009), [references](../references.md#edenhofer2024).
-The cosine basis, the lattice-Laplacian spectrum and the fixed zero mode are
-virgil's own: those papers use the FFT (NIFTy.re also the Hartley transform)
-and infer the zero mode. No code is taken from NIFTy.
+Source: the exponential-of-a-GP image and the whitened ("standardized")
+latents follow Edenhofer et al. (2024), Arras et al. (2022) and Enßlin et al.
+(2009), [references](../references.md#edenhofer2024). The DCT basis is virgil's
+own choice, not from those papers (they use the FFT, NIFTy.re also the Hartley
+transform): the DCT-II diagonalizes the reflecting (Neumann) second difference
+(Strang 1999, [references](../references.md#strang1999)), and the Matérn-like
+spectrum is the SPDE/GMRF form of Lindgren, Rue & Lindström (2011,
+[references](../references.md#lindgren2011); Rue & Held 2005). The fixed zero
+mode is also virgil's; the papers infer it. No code is taken from NIFTy.
 """
 
 import equinox as eqx
@@ -156,7 +159,8 @@ class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     See [Gaussian processes and IFT](../gp_and_ift.md).
 
     Source: whitened latents as in Edenhofer et al. (2024),
-    [references](../references.md#edenhofer2024); the DCT basis is virgil's own.
+    [references](../references.md#edenhofer2024); the DCT basis is virgil's own
+    (Strang 1999; Lindgren, Rue & Lindström 2011; see the module docstring).
 
     Parameters
     ----------
