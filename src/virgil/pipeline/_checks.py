@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import dataclasses
 import math
-import re
 
 from .._utils import mas2rad
 
@@ -87,7 +86,60 @@ def format_sigma(value):
     return f"{float(value):.2f}σ" if _finite(value) else "n/a"
 
 
-def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
+# Tail levels of the χ² test behind the N-aware thresholds (conventions).
+# They are false-alarm rates for data that follow the quoted errors: a
+# warning on one run in a thousand (a 3σ-class one-sided tail) and a failure
+# on one in a million (a 5σ-class tail; the Gaussian 5σ tail is 2.9e-7).
+CHI2_WARN_TAIL = 1e-3
+CHI2_FAIL_TAIL = 1e-6
+
+
+def chi2_limits(n, tail, n_params=0):
+    """The χ²/N bounds ``(lower, upper)`` that a best fit of ``n_params``
+    parameters to ``n`` data leaves with probability ``tail`` at each end,
+    for a correct model and errors.
+
+    The best-fit χ² follows χ²(N − p), so the bounds are its quantiles
+    divided by N, the N of the reported χ²/N. At large N both tend to 1
+    (the spread is √(2/N)).
+    """
+    from scipy import stats
+
+    dof = float(n) - n_params
+    return (
+        float(stats.chi2.ppf(tail, dof) / n),
+        float(stats.chi2.isf(tail, dof) / n),
+    )
+
+
+def _chi2_bounds(n, warn, fail, n_params=None):
+    """``(low_warn, high_warn, high_fail)`` of χ²/N.
+
+    Without ``n``: ``1/warn``, ``warn`` and ``fail``. With ``n``, the high
+    limits are the wider of that fixed convention and the χ²(N − p) tail
+    bound at ``CHI2_WARN_TAIL`` / ``CHI2_FAIL_TAIL``, with p = ``n_params``
+    (0 if unknown, which is conservative: the tail is then too high, so
+    fewer alarms). The low limit widens to the lower tail bound only when
+    ``n_params`` is given: with p unknown the true degrees of freedom are
+    below N and the lower tail would alarm more often than stated. Few
+    degrees of freedom scatter widely, so the tail bounds are the wider
+    and avoid false alarms; at large N they close on 1, where a few per
+    cent of error misestimate is not actionable, so the fixed convention
+    (errors wrong by a factor √2) stays as the floor.
+    """
+    low_warn = 1.0 / warn
+    if n is not None and n - (n_params or 0) > 0:
+        p = n_params or 0
+        if n_params is not None:
+            low_warn = min(low_warn, chi2_limits(n, CHI2_WARN_TAIL, p)[0])
+        warn = max(warn, chi2_limits(n, CHI2_WARN_TAIL, p)[1])
+        fail = max(fail, chi2_limits(n, CHI2_FAIL_TAIL, p)[1])
+    return low_warn, warn, fail
+
+
+def chi2_reduced(
+    name, chi2_red, *, label, warn=2.0, fail=5.0, n=None, n_params=None
+):
     """χ²/N on the quoted errors, even when error scales are fitted.
 
     Parameters
@@ -100,11 +152,20 @@ def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
         What was fitted, e.g. ``"the best-fit binary"``.
     warn, fail : float, optional
         χ²/N above ``warn`` warns; above ``fail`` fails.
+    n : int, optional
+        The number of independent observables. Given, the thresholds widen
+        to the χ²(N) tail bounds at ``CHI2_WARN_TAIL`` and
+        ``CHI2_FAIL_TAIL`` where those exceed ``warn`` and ``fail``.
+    n_params : int, optional
+        The fitted parameters, so that the best-fit χ² has N − p degrees
+        of freedom. Without it the high limits use N (conservative) and
+        the "errors likely overestimated" limit stays at ``1/warn``.
     """
     if not _finite(chi2_red):
         return Check(
             name, "fail", chi2_red, warn, f"χ²/N of {label} is not finite."
         )
+    low_warn, warn, fail = _chi2_bounds(n, warn, fail, n_params)
     if chi2_red > fail:
         status, meaning = (
             "fail",
@@ -113,7 +174,7 @@ def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
         )
     elif chi2_red > warn:
         status, meaning = "warn", "errors likely underestimated"
-    elif chi2_red < 1.0 / warn:
+    elif chi2_red < low_warn:
         status, meaning = "warn", "errors likely overestimated"
     else:
         status, meaning = "pass", "consistent with the quoted errors"
@@ -126,17 +187,30 @@ def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
     )
 
 
-def error_scale(scales, *, warn=2.0, fail=5.0, kind="fitted"):
+def error_scale(
+    scales, *, warn=2.0, fail=5.0, kind="fitted", n=None, n_params=None
+):
     """Error-scale factors ``s``: fitted (``error_scale="fit"``) or estimated
     once by MacKay's rule (``"rescale"``, ``kind="estimated"``).
 
     A factor much greater than 1 means the quoted errors are too small or
     the model is wrong; rescaling then makes χ² ≈ 1 by construction, so the
     raw χ²/N on quoted errors is the number to quote.
+
+    ``n`` (an int, or a mapping from scale name to its number of
+    observables) makes the limits N-aware as in ``chi2_reduced``: ``s`` is
+    √(χ²/N), so its limits are the square roots of the χ²/N ones, taken for
+    the scale that sets the worst value; ``n_params`` is as there.
     """
     values = [float(s) for s in scales.values()]
     worst = max(values, default=1.0) if all(map(_finite, values)) else math.nan
     names = ", ".join(f"{k} = {float(v):.3g}" for k, v in scales.items())
+    if n is not None and _finite(worst):
+        for k, v in scales.items():
+            nk = n.get(k) if isinstance(n, dict) else n
+            if nk and float(v) == worst:
+                _, w, f = _chi2_bounds(nk, warn**2, fail**2, n_params)
+                warn, fail = math.sqrt(w), math.sqrt(f)
     if not _finite(worst):
         status = "fail"
         meaning = "an error scale is not finite"
@@ -594,8 +668,9 @@ def model_gain(
         Their names, for the message.
     unidentified : bool
         The simpler model's diameter is on the lower edge of the diameter
-        range: the comparison is not valid and the simpler model is kept (a
-        fit that did not converge still warns).
+        range: the comparison is not valid and the simpler model is kept,
+        with a warning. A richer model that fits worse than the simpler one
+        it contains fails: a fit did not converge.
     """
     gain = float(m2loglike_simple) - float(m2loglike_complex)
     penalty = bic_penalty(n_extra, n)
@@ -605,13 +680,13 @@ def model_gain(
         )
     # The richer model contains the simpler: a fit did not converge.
     if gain < -1.0:
-        status = "warn"
+        status = "fail"
         message = (
             f"The {complex_} model fits worse than the {simple} model it "
             f"contains (Δ(−2 log L) = {gain:.3g}): a fit did not converge."
         )
     elif unidentified:
-        status = "pass"
+        status = "warn"
         message = (
             f"Δ(−2 log L) = {gain:.3g} for {n_extra} extra parameters, but "
             f"the {simple} diameter is at the lower edge of its range, so the "
@@ -1089,9 +1164,13 @@ _BENIGN_CATEGORIES = (
 )
 
 
-def _numbers(pattern, text):
-    match = re.search(pattern, text)
-    return [float(g) for g in match.groups()] if match else None
+def _counts(records, key):
+    """The ``counts[key]`` of each record that carries it, as floats."""
+    return [
+        float(r["counts"][key])
+        for r in records
+        if key in (r.get("counts") or {})
+    ]
 
 
 def convergence(records):
@@ -1100,19 +1179,20 @@ def convergence(records):
     Parameters
     ----------
     records : list of dict
-        The recorded warnings that mention non-convergence ("the optimizer
-        did not converge at N of M grid positions"). The one with the worst
-        fraction N/M is reported; grids of different sizes can appear.
+        The recorded ``convergence`` warnings, each with ``counts`` holding
+        ``failed`` (N) and ``total`` (M) grid positions. The one with the
+        worst fraction N/M is reported; grids of different sizes can
+        appear.
+
+    A warning, except a failure when the optimizer failed at every position
+    of a grid (N = M): no value of that grid is a fit.
     """
     worst, total = 0.0, 0.0
     for record in records:
-        counts = _numbers(r"(\d+)\s+of\s+(\d+)", record["message"])
-        if (
-            counts
-            and counts[1]
-            and (not total or counts[0] / counts[1] > worst / total)
-        ):
-            worst, total = counts
+        counts = record.get("counts") or {}
+        n, m = float(counts.get("failed", 0)), float(counts.get("total", 0))
+        if m and (not total or n / m > worst / total):
+            worst, total = n, m
     if not total:
         return Check(
             "convergence",
@@ -1124,7 +1204,7 @@ def convergence(records):
         )
     return Check(
         "convergence",
-        "warn",
+        "fail" if worst >= total else "warn",
         worst / total,
         0.0,
         f"The optimizer did not converge at {worst:.0f} of {total:.0f} grid "
@@ -1135,11 +1215,7 @@ def convergence(records):
 
 def flux_axis_resolution(records, *, minimum=2.0):
     """The flux axis does not resolve the likelihood peak."""
-    steps = []
-    for r in records:
-        found = _numbers(r"([\d.]+(?:e[-+]?\d+)?)\s+steps", r["message"])
-        if found:
-            steps.append(found[0])
+    steps = _counts(records, "steps")
     value = min(steps) if steps else None
     detail = f" ({value:.2g} steps across its FWHM)" if steps else ""
     return Check(
@@ -1154,11 +1230,7 @@ def flux_axis_resolution(records, *, minimum=2.0):
 
 def limits_clipped(records):
     """Contrast limits clipped to the flux bounds."""
-    counts = []
-    for r in records:
-        found = _numbers(r"(\d+)\s+limits", r["message"])
-        if found:
-            counts.append(found[0])
+    counts = _counts(records, "clipped")
     value = max(counts) if counts else None
     which = f"{value:.0f} limits" if counts else "Some limits"
     return Check(
@@ -1196,29 +1268,22 @@ _RULES = {
 def stage_warning_checks(warning_records):
     """Checks for the warnings recorded inside the stages.
 
-    Known messages map to specific checks (``convergence``,
-    ``flux_axis_resolution``, ``limits_clipped``), matched by keywords so
-    that rewording a message does not break the mapping; any other
-    warning, except deprecation notices, goes to one ``stage_warnings``
-    check. No warnings give no checks.
+    A record whose ``check`` is ``convergence``, ``flux_axis_resolution``
+    or ``limits_clipped`` (a `virgil._deprecate.CheckWarning`) goes to that
+    check, which reads its ``counts``. Any other warning, except
+    deprecation notices, goes to one ``stage_warnings`` check; nothing is
+    matched on the message text. No warnings give no checks.
 
     Parameters
     ----------
     warning_records : list of dict
-        Each with ``stage``, ``category`` and ``message``.
+        Each with ``stage``, ``category`` and ``message``, and for a
+        `CheckWarning` also ``check`` and ``counts``.
     """
     grouped, other = {}, []
     for record in warning_records:
-        text = record["message"].lower()
-        if "converge" in text and "optimizer" in text:
-            rule = "convergence"
-        elif "resolve" in text and "peak" in text:
-            rule = "flux_axis_resolution"
-        elif "clipped" in text or "flux_bounds" in text:
-            rule = "limits_clipped"
-        else:
-            rule = None
-        if rule:
+        rule = record.get("check")
+        if rule in _RULES:
             grouped.setdefault(rule, []).append(record)
         elif not record["category"].endswith(_BENIGN_CATEGORIES):
             other.append(record)
@@ -1230,7 +1295,7 @@ def stage_warning_checks(warning_records):
     return checks
 
 
-def at_bound(names, *, start=False):
+def at_bound(names, *, start=False, seed=()):
     """Fitted parameters within 0.1% of a prior bound.
 
     A prior capped too tight pins a parameter silently: the fit is then the
@@ -1244,9 +1309,34 @@ def at_bound(names, *, start=False):
         Report the bound as the start of NUTS (the ``start_at_bound`` check,
         added by the posterior stage only when there are some): the
         posterior then starts just inside the bound and is prior-dominated.
+    seed : sequence of str, optional
+        Parameters of a seed fit (the disk's single-ring geometry fit) at a
+        bound, reported as ``geometry.<name>`` with their own message.
     """
-    names = list(names)
+    names, seed = list(names), list(seed)
     listing = ", ".join(names)
+    if seed and not start:
+        note = (
+            "The single-ring geometry fit, which seeds the inclination and "
+            f"position angle, sits at a prior bound for {', '.join(seed)}: "
+            "its value there is the bound, not a measurement, and an active "
+            "bound is held fixed for the other widths. A radius on the "
+            "r_in hole is light inside the resolution limit, which the seed "
+            "ring cannot resolve; it is not a reason to lower r_in."
+        )
+        best = (
+            f" The best fit also sits at a prior bound for {listing}: widen "
+            "the prior before reading the value."
+            if names
+            else ""
+        )
+        return Check(
+            "at_bound",
+            "warn",
+            names + [f"geometry.{k}" for k in seed],
+            None,
+            note + best,
+        )
     if start:
         return Check(
             "start_at_bound",
@@ -1440,7 +1530,7 @@ def labels_free(free):
     )
 
 
-def alias_ambiguity(delta, runner_up, *, warn=10.0, fail=1.0):
+def alias_ambiguity(delta, runner_up, *, warn=10.0, fail=1.0, n_failed=0):
     """The winning alias band's evidence over the runner-up's.
 
     Parameters
@@ -1453,7 +1543,21 @@ def alias_ambiguity(delta, runner_up, *, warn=10.0, fail=1.0):
     warn, fail : float, optional
         A margin below ``warn`` nats warns (the runner-up is not
         excluded); below ``fail`` fails (the period is not determined).
+    n_failed : int, optional
+        The alias bands whose fit raised. With no finite margin and some
+        bands failed, no rival was evaluated, so the check fails: it
+        cannot say the period is unique.
     """
+    if n_failed and (delta is None or not _finite(delta)):
+        return Check(
+            "alias_ambiguity",
+            "fail",
+            None,
+            warn,
+            f"No rival alias band was evaluated ({n_failed} failed): the "
+            "winner's margin is unknown, so the period is not shown to be "
+            "unique.",
+        )
     if delta is None or not _finite(delta):
         return Check(
             "alias_ambiguity",
@@ -1485,7 +1589,7 @@ def alias_ambiguity(delta, runner_up, *, warn=10.0, fail=1.0):
     )
 
 
-def bands_failed(failed):
+def bands_failed(failed, n_bands=None):
     """Alias bands the search could not evaluate.
 
     Parameters
@@ -1493,6 +1597,13 @@ def bands_failed(failed):
     failed : sequence of int
         The orbit counts N of the bands whose fit raised (their evidence is
         -inf, so they never win nor appear as the runner-up).
+    n_bands : int, optional
+        All bands searched. When at least half failed the check fails: the
+        winner is the best of a minority of the search. The half is a
+        convention, not derived: a failed band has no evidence, so no
+        margin can say how many failures the winner survives; a majority
+        is the smallest fraction at which most of the period range is
+        unevaluated.
     """
     if not len(failed):
         return Check(
@@ -1504,9 +1615,10 @@ def bands_failed(failed):
         )
     shown = ", ".join(str(n) for n in list(failed)[:10])
     more = "" if len(failed) <= 10 else f" and {len(failed) - 10} more"
+    majority = bool(n_bands) and 2 * len(failed) >= n_bands
     return Check(
         "bands_failed",
-        "warn",
+        "fail" if majority else "warn",
         len(failed),
         0,
         f"The fit of {len(failed)} alias band(s) failed (N = {shown}{more}): "
@@ -1515,6 +1627,8 @@ def bands_failed(failed):
     )
 
 
+# Without a mode the winner's evidence is invalid, not just less reliable.
+_WINNER_INVALID = ("no-valid-mode",)
 _WINNER_FLAGS = (
     "not-converged",
     "laplace-is-differ",
@@ -1541,6 +1655,16 @@ def winner_flags(flags):
             [],
             None,
             "The winning band's evidence has no flags.",
+        )
+    if any(f in _WINNER_INVALID for f in bad):
+        return Check(
+            "winner_flags",
+            "fail",
+            bad,
+            None,
+            f"The winning band's evidence carries {', '.join(bad)}: the "
+            "search found no mode, so its log Z and the margin over the "
+            "runner-up are not evidence.",
         )
     return Check(
         "winner_flags",
@@ -1747,8 +1871,10 @@ def period_bound(bound, lower, p_range):
 # --- checks of ImagingPipeline (every χ²/N is on the quoted errors) ---------
 
 
-def _two_way(name, bad, value, threshold, good_text, bad_text):
-    status = "warn" if bad else "pass"
+def _two_way(name, bad, value, threshold, good_text, bad_text, *, fail=False):
+    """A pass or, when ``bad``, a warning: a failure when ``fail`` as well
+    (the criterion invalidates the result, not just weakens it)."""
+    status = ("fail" if fail else "warn") if bad else "pass"
     return Check(
         name, status, value, threshold, bad_text if bad else good_text
     )
@@ -1769,6 +1895,7 @@ def quoted_errors(blocks):
         "The quoted errors vary and are positive.",
         f"The quoted errors are {' and '.join(parts)}: they look like "
         "placeholders, so the hyperparameters and every χ²/N are suspect.",
+        fail=bool(bad),
     )
 
 
@@ -1790,11 +1917,20 @@ def effective_parameters(n, n_gamma, *, warn=0.2):
 
 def short_baselines(mean, error, *, warn=3.0, fail=5.0):
     """Mean visibility residual on the shortest baselines, in errors."""
-    if mean is None or not _finite(mean):
+    if mean is None:
         return Check(
             "short_baselines", "pass", None, warn, "No baseline-ordered data."
         )
-    sigma = float(mean) / float(error)
+    sigma = float(mean) / float(error) if _finite(error) and error else None
+    if not _finite(mean) or not _finite(sigma):
+        return Check(
+            "short_baselines",
+            "fail",
+            None,
+            warn,
+            "The mean residual on the shortest baselines, or its error, is "
+            "not finite.",
+        )
     status = (
         ("fail" if abs(sigma) > fail else "warn")
         if abs(sigma) > warn
@@ -1844,6 +1980,7 @@ def orientation(flip_dchi2, closure, *, warn=9.0):
         f"Turning the image by 180° raises χ² by {flip_dchi2:.3g}.",
         "The orientation is weakly constrained (no closure phases, or a "
         "180° turn changes χ² by under the threshold).",
+        fail=bool(closure) and not _finite(flip_dchi2),
     )
 
 
@@ -1866,6 +2003,7 @@ def edges(grid_edges, flux, *, warn=0.01):
         "field.",
         f"The fit is {' and '.join(parts)}: the grid or the field is too "
         "small.",
+        fail=not _finite(flux),
     )
 
 
@@ -1881,6 +2019,7 @@ def ensemble_kept(n_kept, n, *, min_kept=3):
         "mean.",
         f"Only {n_kept} of {n} members are in the mean (fewer than "
         f"{min_kept}, or under half): the sigma map is not a useful map.",
+        fail=n_kept == 0,
     )
 
 
@@ -1903,4 +2042,5 @@ def ensemble_spread(spread, n_kept, *, warn=0.5, shared=True):
         f"The kept members differ by {100 * spread:.3g}% of the flux." + note,
         "Fewer than two members are kept, or they differ by more than "
         f"{100 * warn:g}% of the flux: the mean is not stable." + note,
+        fail=not _finite(spread),
     )

@@ -1,0 +1,3 @@
+K=10 sigma/a=0.01 exact=-6.024  Q: lnZ=-5.754 bias=0.270 sd=0.778 stages=4.4 cost/particle=2.10e+06 var*cost=1.27e+06 all=[-6.69, -5.41, -5.4, -6.43, -4.84]
+K=10 sigma/a=0.001 exact=23.908  Q: lnZ=23.912 bias=0.004 sd=0.030 stages=3.0 cost/particle=2.09e+06 var*cost=1.85e+03 all=[23.88, 23.96, 23.89, 23.91, 23.92]
+K=10 sigma/a=0.0001 exact=53.841  Q: lnZ=53.871 bias=0.029 sd=0.084 stages=3.0 cost/particle=2.09e+06 var*cost=1.49e+04 all=[54.01, 53.88, 53.8, 53.86, 53.8]

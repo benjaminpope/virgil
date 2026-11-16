@@ -19,11 +19,29 @@
 Every flux is relative: for a companion it is the companion/primary flux
 ratio. Likelihoods of these models are in
 [`virgil.likelihood`][virgil.likelihood].
+
+Contents, in file order (each family has a banner comment):
+
+1. Base classes: `SourceModel`, `Component`.
+2. Single shapes: `PointSource`, Gaussians, `GaussianArc`, `TruncatedCone`,
+   `UniformDisk`.
+3. Limb-darkened disks.
+4. `GravityDarkenedStar`, `ModulatedGaussianRim`.
+5. Pixel images: `Image`, `LinearImage`.
+6. Flared scattered-light disks: `FlaredDisk` and its subclasses.
+7. Radial profiles (`ThinRing`, `GaussianRing`, `RadialSum`, `RadialGP`, ...):
+   parts of a `MultipoleDisk`, not components.
+8. `MultipoleDisk` (its kernel, azimuthal and height parts are under 7).
+9. Composition: `System`, `Rotated`, `Attached`, `Resolved`.
+10. Binaries: `OrbitalBinary`, `BinaryModelAngular`, `BinaryModelCartesian`.
+11. `HarmonixModel`.
+12. The analytic `cvis_*` functions.
 """
 
 import dataclasses
 import math
 import textwrap
+import warnings
 from typing import Any
 
 import equinox as eqx
@@ -53,7 +71,7 @@ from ._geometry import (
     undo_elliptical_transf_spat_freq,
 )
 from . import _elr
-from ._deprecate import renamed
+from ._deprecate import external_stacklevel, renamed
 from .harmonics import cone_coefficients, rim_coefficients
 from ._utils import (
     FWHM_PER_SIGMA,
@@ -67,6 +85,8 @@ from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
 __provisional__ = (
+    "ArchimedeanSpiral",
+    "LinearImage",
     "MultipoleDisk",
     "ThinRing",
     "GaussianRing",
@@ -178,6 +198,11 @@ def _positive(x):
 
 def _in_unit_interval(x):
     return (x > 0.0) & (x <= 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Base classes: SourceModel and Component
+# ---------------------------------------------------------------------------
 
 
 class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -419,6 +444,11 @@ class Component(SourceModel):
         _check_shape_params(type(self).__name__, self._shape_checks())
 
 
+# ---------------------------------------------------------------------------
+# Single shapes: PointSource, Gaussians, arcs, cones and uniform disks
+# ---------------------------------------------------------------------------
+
+
 class PointSource(Component):
     """Unresolved point source.
 
@@ -585,7 +615,7 @@ class GaussianArc(Component):
         self.length = np.asarray(length, dtype=float)
         self.pa = np.asarray(pa, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
+        if int(nodes) != nodes or nodes < 2:
             raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
         self.nodes = int(nodes)
         self.quadrature = False
@@ -608,7 +638,7 @@ class GaussianArc(Component):
                     # arc instead.
                     self.quadrature = True
                     degree = _ARC_MAX_DEGREE
-        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+        if int(degree) != degree or degree < 1:
             raise ValueError(f"degree must be a positive integer: {degree}.")
         self.degree = int(degree)
 
@@ -697,6 +727,182 @@ class GaussianArc(Component):
         return np.sum(weight * np.exp(-4.0 * np.log(2.0) * d2 / width**2), -1)
 
 
+class ArchimedeanSpiral(Component):
+    r"""A pinwheel: a Gaussian ridge along an Archimedean spiral arm.
+
+    The arm is $r = |\mathrm{pitch}|\,\theta / 360^\circ$ in its own plane,
+    for $\theta$ from 0 to $360^\circ\,\mathrm{turns}$, blurred by a Gaussian
+    of FWHM ``width`` (isotropic in that plane) and fading as
+    $\exp(-\mathrm{fade}\,\theta / 360^\circ)$ per unit arc length; the
+    plane is then inclined, as for a
+    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]. The centre
+    is the binary at ``(dra, ddec)``. [Model notes](../notes.md#archimedeanspiral).
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    Parameters
+    ----------
+    pitch : float or array-like
+        Radial growth per full turn (mas); its sign is the winding sense,
+        positive for position angle increasing along the arm (counter-clockwise
+        on the sky when face-on). Not zero.
+    turns : float or array-like
+        Number of turns of the arm that are bright, positive.
+    width : float or array-like
+        FWHM across the arm, in the arm plane (mas).
+    pa : float or array-like, optional
+        Sky position angle (degrees North to East) of the direction in which
+        the arm leaves the centre (default 0).
+    inc, node : float or array-like, optional
+        Inclination of the arm plane, 0 = face-on, and position angle of its
+        projected major axis (degrees; defaults 0, 0).
+    fade : float or array-like, optional
+        e-foldings of brightness lost per turn, at least 0 (default 0, none).
+    flux, dra, ddec : optional
+        As for any [`Component`][virgil.models.Component].
+    nodes : int, optional
+        Points sampling the arm (static). Default from the starting values,
+        so that points are at most ``width / 4`` apart; with traced values
+        you must pass it. See the notes for the rule for long baselines.
+
+    Examples
+    --------
+    >>> arm = ArchimedeanSpiral(pitch=40.0, turns=1.5, width=3.0, pa=90.0)
+
+    Source: Tuthill et al. (1999), [references](../references.md#tuthill1999); Tuthill et al. (2008), [references](../references.md#tuthill2008).
+    """
+
+    pitch: jax.Array
+    turns: jax.Array
+    width: jax.Array
+    pa: jax.Array
+    inc: jax.Array
+    node: jax.Array
+    fade: jax.Array
+    nodes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        pitch,
+        turns,
+        width,
+        pa=0.0,
+        inc=0.0,
+        node=0.0,
+        fade=0.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+        nodes=None,
+    ):
+        self.pitch = np.asarray(pitch, dtype=float)
+        self.turns = np.asarray(turns, dtype=float)
+        self.width = np.asarray(width, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.inc = np.asarray(inc, dtype=float)
+        self.node = np.asarray(node, dtype=float)
+        self.fade = np.asarray(fade, dtype=float)
+        self._place(flux, dra, ddec)
+        if nodes is None:
+            pitch, turns, width = (
+                concrete(a) for a in (self.pitch, self.turns, self.width)
+            )
+            if pitch is None or turns is None or width is None:
+                raise ValueError(
+                    "nodes must be given when the shape parameters are traced."
+                )
+            if onp.all(onp.isfinite([pitch, turns, width])) and onp.all(
+                (turns > 0.0) & (width > 0.0)
+            ):
+                # Spacing in arc length is largest at the end, where
+                # ds/dtheta = a sqrt(1 + theta^2); the chain is continuous
+                # for baselines up to width * q = 2 (see the notes).
+                theta = 2.0 * onp.pi * onp.max(turns)
+                step = onp.min(width) / 4.0
+                a = onp.max(onp.abs(pitch)) / (2.0 * onp.pi)
+                # That many intervals of at most ``step``, so one more node.
+                nodes = (
+                    int(onp.ceil(theta * a * onp.hypot(1.0, theta) / step)) + 1
+                )
+            nodes = max(nodes or 0, 2)
+        if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
+            raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
+        self.nodes = int(nodes)
+
+    def _shape_checks(self):
+        return (
+            ("pitch", self.pitch, lambda x: x != 0.0, "non-zero"),
+            ("turns", self.turns, _positive, "positive"),
+            ("width", self.width, _positive, "positive"),
+            ("fade", self.fade, lambda x: x >= 0.0, "non-negative"),
+            ("inc", self.inc, lambda x: np.abs(x) < 90.0, "below 90 degrees"),
+        )
+
+    def curve(self):
+        """Points along the arm (mas, East and North of the centre) and
+        their normalized trapezoidal-rule weights, as the image samples it.
+
+        The points are equally spaced in the arm angle, with weights
+        proportional to the arc-length element, the fade and the
+        end-point factor of the trapezoidal rule."""
+        theta = np.linspace(0.0, 1.0, self.nodes) * 2.0 * np.pi * self.turns
+        stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        # In-plane azimuth from the major axis whose projection points at pa.
+        d = (self.pa - self.node) * dtor
+        alpha = np.arctan2(np.sin(d) / stretch, np.cos(d))
+        alpha = alpha + np.sign(self.pitch) * theta
+        r = np.abs(self.pitch) / (2.0 * np.pi) * theta
+        xe, yt = r * np.sin(alpha) * stretch, r * np.cos(alpha)
+        n = self.node * dtor
+        x = xe * np.cos(n) + yt * np.sin(n)
+        y = -xe * np.sin(n) + yt * np.cos(n)
+        ends = np.ones(self.nodes).at[np.array([0, -1])].set(0.5)
+        weight = (
+            ends
+            * np.exp(-self.fade * theta / (2.0 * np.pi))
+            * np.sqrt(1.0 + theta**2)
+        )
+        return x, y, weight / np.sum(weight)
+
+    def _centred_cvis(self, uu, vv):
+        x, y, weight = self.curve()
+        shape = np.shape(uu)
+        uf, vf = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
+        arm = np.matmul(
+            offset_phase(uf, vf, x[None, :], y[None, :]),
+            weight,
+            precision=jax.lax.Precision.HIGHEST,
+        )
+        stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        ut, vt = undo_elliptical_transf_spat_freq(
+            uf[:, 0], vf[:, 0], self.node, stretch
+        )
+        # Written out, not _cvis_gaussian_envelope: its hypot has a NaN
+        # gradient at u = v = 0, where flagged samples can sit.
+        fwhm_rad = self.width * mas2rad
+        envelope = np.exp(
+            -(np.pi**2) * fwhm_rad**2 * (ut**2 + vt**2) / (4.0 * np.log(2.0))
+        )
+        return np.reshape(arm * envelope, shape)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        x, y, weight = self.curve()
+        stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        width = np.maximum(self.width, pixel_scale_mas)
+
+        def add_blob(image, blob):
+            xk, yk, wk = blob
+            xt, yt = undo_elliptical_transf_coord(
+                xx - xk, yy - yk, self.node, stretch
+            )
+            blur = np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / width**2)
+            return image + wk * blur, None
+
+        image, _ = jax.lax.scan(add_blob, np.zeros_like(xx), (x, y, weight))
+        return image
+
+
 class TruncatedCone(Component):
     """A thin conical shell truncated near its apex, e.g. a dust cone.
 
@@ -777,7 +983,7 @@ class TruncatedCone(Component):
         self.pa = np.asarray(pa, dtype=float)
         self.ratio = np.asarray(ratio, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(n_rings, bool) or int(n_rings) != n_rings or n_rings < 2:
+        if int(n_rings) != n_rings or n_rings < 2:
             raise ValueError(
                 f"n_rings must be an integer >= 2, got {n_rings}."
             )
@@ -1039,6 +1245,11 @@ class UniformDisk(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
         return np.where(xx**2 + yy**2 <= radius**2, 1.0, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Limb-darkened disks
+# ---------------------------------------------------------------------------
 
 
 class _LimbDarkenedDisk(Component):
@@ -1356,6 +1567,11 @@ def _in_unit_square(q1, q2):
     return np.all((q1 >= 0.0) & (q1 <= 1.0) & (q2 >= 0.0) & (q2 <= 1.0))
 
 
+# ---------------------------------------------------------------------------
+# Gravity-darkened star
+# ---------------------------------------------------------------------------
+
+
 class GravityDarkenedStar(Component):
     """Rapidly rotating star: Roche shape and gravity darkening (ELR11).
 
@@ -1427,7 +1643,7 @@ class GravityDarkenedStar(Component):
         self.inc = np.asarray(inc, dtype=float)
         self.pa = np.asarray(pa, dtype=float)
         self._place(flux, dra, ddec)
-        if isinstance(n_lat, bool) or int(n_lat) != n_lat or n_lat < 4:
+        if int(n_lat) != n_lat or n_lat < 4:
             raise ValueError(f"n_lat must be an integer >= 4, got {n_lat}.")
         self.n_lat = int(n_lat)
         self.t_pole = None if t_pole is None else np.asarray(t_pole, float)
@@ -1655,6 +1871,11 @@ def _modulation_array(values, name):
     return array
 
 
+# ---------------------------------------------------------------------------
+# Modulated rim
+# ---------------------------------------------------------------------------
+
+
 class ModulatedGaussianRim(Component):
     """Azimuthally modulated, infinitely thin rim convolved with a Gaussian.
 
@@ -1822,7 +2043,150 @@ def _pixel_visibilities(
     return image_visibilities(fluxes, uu, vv, pixel_scale_mas, ft)
 
 
-class Image(Component):
+# ---------------------------------------------------------------------------
+# Pixel images: Image and LinearImage
+# ---------------------------------------------------------------------------
+
+
+class _BrightnessImage(Component):
+    """Shared transform code of the pixel images, which define ``brightness``
+    (unit-sum pixels) and the fields ``support``, ``pixel_scale_mas``,
+    ``rotation_deg``, ``ft`` and ``blur_fwhm_mas``, which each subclass
+    declares itself (so that its pytree order is its own)."""
+
+    def _set_layout(
+        self,
+        shape,
+        name,
+        pixel_scale_mas,
+        support,
+        rotation_deg,
+        ft,
+        blur_fwhm_mas,
+        allow_grid=False,
+    ):
+        """Validate and store the grid, support and transform options."""
+        if blur_fwhm_mas is not None and not (
+            onp.isfinite(blur_fwhm_mas) and blur_fwhm_mas > 0.0
+        ):
+            raise ValueError(
+                "blur_fwhm_mas must be None or finite and positive, "
+                f"not {blur_fwhm_mas}."
+            )
+        self.blur_fwhm_mas = (
+            None if blur_fwhm_mas is None else float(blur_fwhm_mas)
+        )
+        self.ft = ft
+        if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
+            raise ValueError(
+                f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
+            )
+        self.pixel_scale_mas = float(pixel_scale_mas)
+        if len(shape) != 2:
+            raise ValueError(f"{name} must be a 2D array.")
+        if support is not None:
+            support = np.asarray(support, dtype=bool)
+            if support.shape != tuple(shape):
+                raise ValueError(
+                    f"support has shape {support.shape}, but {name} "
+                    f"has shape {tuple(shape)}."
+                )
+            any_pixel = concrete(np.any(support))
+            if any_pixel is not None and not bool(any_pixel):
+                raise ValueError("support must contain at least one pixel.")
+        self.support = support
+        if isinstance(rotation_deg, str):
+            if not (allow_grid and rotation_deg == "grid"):
+                raise ValueError(
+                    "rotation_deg must be a number"
+                    + (" or 'grid'" if allow_grid else "")
+                    + f", not {rotation_deg!r}."
+                )
+            self.rotation_deg = rotation_deg
+        else:
+            self.rotation_deg = float(rotation_deg)
+
+    def _frame(self, grid=None):
+        """Position angle of the pixel grid's "up" axis for these data.
+
+        ``rotation_deg="grid"`` follows the data's uv lattice (North up
+        without one).
+        """
+        if self.rotation_deg != "grid":
+            return self.rotation_deg
+        return 0.0 if grid is None else grid.rotation_deg
+
+    def _numeric_frame(self):
+        """The grid's angle for code that reports the sky, not for the data.
+
+        ``rotation_deg="grid"`` is only defined with a uv lattice, so these
+        callers need a number: ``starting_image`` and ``clean`` return one.
+        """
+        if self.rotation_deg == "grid":
+            raise ValueError(
+                "rotation_deg='grid' depends on the data; give the Image a "
+                "number (starting_image and clean resolve it) before this."
+            )
+        return self.rotation_deg
+
+    @property
+    def smooth_fwhm_mas(self):
+        """Deprecated alias of ``blur_fwhm_mas``."""
+        return self.blur_fwhm_mas
+
+    def smoothed(self):
+        """The pixels convolved with the Gaussian of ``blur_fwhm_mas``.
+
+        Returns ``brightness`` itself when there is no smoothing. Otherwise
+        an FFT convolution on a zero-padded grid, cropped to the image, so
+        flux spreading past the edges is lost; see
+        ``virgil._geometry.gaussian_smooth`` for how closely
+        its transform matches the analytic Gaussian taper.
+        """
+        if self.blur_fwhm_mas is None:
+            return self.brightness
+        return gaussian_smooth(
+            self.brightness, self.blur_fwhm_mas / self.pixel_scale_mas
+        )
+
+    def _blur(self, u, v):
+        # Unrotated baselines in wavelengths: the taper is isotropic.
+        if self.blur_fwhm_mas is None:
+            return 1.0
+        return gaussian_taper(u * u + v * v, self.blur_fwhm_mas)
+
+    def _centred_cvis(self, uu, vv):
+        uu, vv = rotate(uu, vv, -self._frame())
+        vis = image_visibilities(
+            self.brightness, uu, vv, self.pixel_scale_mas, self.ft
+        )
+        return vis * self._blur(uu, vv)
+
+    def model_on_grid(self, u, v, wavel, grid):
+        vis = _pixel_visibilities(
+            self.brightness,
+            self.pixel_scale_mas,
+            self._frame(grid),
+            u,
+            v,
+            wavel,
+            grid,
+            self.ft,
+        )
+        vis = vis * self._blur(u / wavel, v / wavel)
+        return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        # Bilinear resampling of the (smoothed) pixels, exact at their centres.
+        xx, yy = rotate(xx, yy, -self._frame())
+        brightness = self.smoothed()
+        nrow, ncol = brightness.shape
+        rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
+        cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
+        return map_coordinates(brightness, [rows, cols], order=1)
+
+
+class Image(_BrightnessImage):
     """Pixelised brightness distribution, for image reconstruction.
 
     Pixel fluxes are ``softmax(log_brightness)`` over the pixels in
@@ -1850,10 +2214,15 @@ class Image(Component):
         all); see [`circular_support`][virgil.models.circular_support].
     flux, dra, ddec : optional
         As for any [`Component`][virgil.models.Component].
-    rotation_deg : float, optional
+    rotation_deg : float or "grid", optional
         Position angle (North to East) of the grid's "up" axis (default 0);
         matching ``data.uv_grid.rotation_deg`` gives a much faster exact
-        two-sided matrix transform.
+        two-sided matrix transform. ``"grid"`` (provisional) follows the
+        data's uv lattice, North up without one, so DISCO data always take
+        the matrix transform. The pixels are the parameters, so with ``"grid"``
+        they mean different skies on data with different lattices (or none),
+        and ``render`` and ``model`` without data are North up: fit one
+        lattice, or give a number (as ``starting_image`` does).
     ft : {"auto", "dft", "nufft"}, optional
         Transform for irregular uv points (default ``"auto"``, whichever is
         faster; see [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
@@ -1877,7 +2246,7 @@ class Image(Component):
     log_brightness: Any
     support: jax.Array | None
     pixel_scale_mas: float = eqx.field(static=True)
-    rotation_deg: float = eqx.field(static=True)
+    rotation_deg: float | str = eqx.field(static=True)
     ft: str = eqx.field(static=True)
     blur_fwhm_mas: float | None = eqx.field(static=True)
 
@@ -1894,42 +2263,28 @@ class Image(Component):
         ft="auto",
         blur_fwhm_mas=None,
     ):
-        if blur_fwhm_mas is not None and not (
-            onp.isfinite(blur_fwhm_mas) and blur_fwhm_mas > 0.0
-        ):
-            raise ValueError(
-                "blur_fwhm_mas must be None or finite and positive, "
-                f"not {blur_fwhm_mas}."
-            )
-        self.blur_fwhm_mas = (
-            None if blur_fwhm_mas is None else float(blur_fwhm_mas)
-        )
-        self.ft = _check_ft(ft)
         if not hasattr(log_brightness, "evaluate"):
             log_brightness = np.asarray(log_brightness, dtype=float)
         self.log_brightness = log_brightness
-        if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
-            raise ValueError(
-                f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
-            )
-        self.pixel_scale_mas = float(pixel_scale_mas)
+        self.pixel_scale_mas = pixel_scale_mas  # a field evaluates on it
         eta = self.eta
-        if eta.ndim != 2:
-            raise ValueError("log_brightness must be a 2D array.")
-        if support is not None:
-            support = np.asarray(support, dtype=bool)
-            if support.shape != eta.shape:
-                raise ValueError(
-                    f"support has shape {support.shape}, but log_brightness "
-                    f"has shape {eta.shape}."
-                )
-            any_pixel = concrete(np.any(support))
-            if any_pixel is not None and not bool(any_pixel):
-                raise ValueError("support must contain at least one pixel.")
-        self.support = support
+        self._set_layout(
+            eta.shape,
+            "log_brightness",
+            pixel_scale_mas,
+            support,
+            rotation_deg,
+            ft,
+            blur_fwhm_mas,
+            allow_grid=True,
+        )
         # Reject a log-brightness whose softmax over the support is not
         # finite (skipped under jax.jit).
-        live = np.ones(eta.shape, dtype=bool) if support is None else support
+        live = (
+            np.ones(eta.shape, dtype=bool)
+            if self.support is None
+            else self.support
+        )
         if concrete(np.any(live & (np.isnan(eta) | (eta == np.inf)))):
             raise ValueError("log_brightness must not be NaN or +inf.")
         finite = concrete(np.any(live & np.isfinite(eta)))
@@ -1937,7 +2292,6 @@ class Image(Component):
             raise ValueError(
                 "log_brightness needs at least one finite (supported) pixel."
             )
-        self.rotation_deg = float(rotation_deg)
         self._place(flux, dra, ddec)
 
     @classmethod
@@ -1974,7 +2328,14 @@ class Image(Component):
         the keyword arguments.
         """
         xx, yy = image_coordinates(npix, npix * pixel_scale_mas)
-        xx, yy = rotate(xx, yy, kwargs.get("rotation_deg", 0.0))
+        rotation = kwargs.get("rotation_deg", 0.0)
+        if isinstance(rotation, str):
+            raise ValueError(
+                "rotation_deg must be a number here (the model's pixels are "
+                "sampled in that frame; use starting_image(..., "
+                f"rotation_deg='grid') for the lattice), not {rotation!r}."
+            )
+        xx, yy = rotate(xx, yy, rotation)
         image = _normalize_image(model._image(xx, yy, pixel_scale_mas))
         return cls.from_brightness(image, pixel_scale_mas, **kwargs)
 
@@ -1994,61 +2355,185 @@ class Image(Component):
         flat = jax.nn.softmax(eta.ravel(), where=where)
         return flat.reshape(eta.shape)
 
+
+class LinearImage(_BrightnessImage):
+    """Pixel image whose fitted values are the pixel fluxes themselves.
+
+    The free array ``pixels`` is the flux of each pixel in ``support``
+    (``parametrization="linear"``, to be kept non-negative by bounds: see
+    ``bounds``) or its square root (``"sqrt"``, flux ``x**2``, unbounded and
+    so usable with any `fit` method). The total flux is the sum of the pixel
+    fluxes: there is no separate ``flux`` to fit (a free flux times free
+    pixel amplitudes is an exact scale degeneracy), and inside a
+    [`System`][virgil.models.System] the component's weight is that sum. The
+    ``flux`` field is fixed at 1 and must not be fitted. ``brightness`` is
+    the unit-sum image, as for an [`Image`][virgil.models.Image].
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    The data see the total flux only through a ``System``'s weights or, in the
+    radio χ², ``CalibrationNuisance(..., fit_flux=False)`` (``Σ pixels`` in
+    Jy). A lone ``LinearImage`` elsewhere fixes nothing, so TSV, TV or
+    ``StarletL1`` shrink it towards zero: put it in a ``System`` with a
+    fixed-flux component, or use ``MaxEntropy``. ``diagnose`` and the
+    ensemble helpers do not cover it yet.
+
+    Unlike the softmax of an ``Image``, pixels can reach exactly zero, which
+    the minimiser of TSV, TV, ``StarletL1`` or an unregularised fit needs.
+    The ``"sqrt"`` form is the choice for
+    [`MaxEntropy`][virgil.imaging.MaxEntropy]: it keeps the entropy's
+    interior minimum, and its metric ``4 I`` is that of entropic mirror
+    descent. ``x = 0`` is a stationary point, so start strictly positive.
+
+    Regularizers act on ``fluxes / reference_flux``, so their weights keep
+    their meaning and TSV, TV and ``StarletL1`` stay convex in a linear
+    image; the weight drifts by ``(F / reference_flux)**2`` if the fitted
+    flux ``F`` moves far from it. Source: SMILI's non-negative linear pixels,
+    [Akiyama et al. (2017)](../references.md#akiyama2017) (also AJ 153, 159); the ``"sqrt"`` form
+    is experimental, with no published source found.
+
+    Parameters
+    ----------
+    pixels : array-like, shape (nrow, ncol)
+        Pixel fluxes (``"linear"``, non-negative) or their square roots
+        (``"sqrt"``), oriented as [`render`][virgil.models.SourceModel.render]
+        (row 0 North, column 0 East).
+    pixel_scale_mas : float
+        Pixel size in mas, as for [`Image`][virgil.models.Image].
+    support, rotation_deg, ft, blur_fwhm_mas : optional
+        As for [`Image`][virgil.models.Image].
+    dra, ddec : optional
+        As for any [`Component`][virgil.models.Component].
+    parametrization : {"linear", "sqrt"}, optional
+        What ``pixels`` holds (default ``"linear"``).
+    reference_flux : float, optional
+        The fixed flux ``F0`` that regularizers divide by (default: the sum of
+        the starting pixel fluxes).
+
+    Examples
+    --------
+    >>> image = LinearImage(np.full((8, 8), 0.01), pixel_scale_mas=2.0)
+    >>> round(float(image.total_flux), 4)
+    0.64
+    """
+
+    pixels: jax.Array
+    support: jax.Array | None
+    pixel_scale_mas: float = eqx.field(static=True)
+    rotation_deg: float = eqx.field(static=True)
+    ft: str = eqx.field(static=True)
+    blur_fwhm_mas: float | None = eqx.field(static=True)
+    parametrization: str = eqx.field(static=True)
+    reference_flux: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        pixels,
+        pixel_scale_mas,
+        support=None,
+        dra=0.0,
+        ddec=0.0,
+        rotation_deg=0.0,
+        ft="auto",
+        blur_fwhm_mas=None,
+        parametrization="linear",
+        reference_flux=None,
+    ):
+        if parametrization not in ("linear", "sqrt"):
+            raise ValueError(
+                f"parametrization must be 'linear' or 'sqrt', not {parametrization!r}."
+            )
+        self.parametrization = parametrization
+        pixels = np.asarray(pixels, dtype=float)
+        self.pixels = pixels
+        self._set_layout(
+            pixels.shape,
+            "pixels",
+            pixel_scale_mas,
+            support,
+            rotation_deg,
+            ft,
+            blur_fwhm_mas,
+        )
+        if concrete(np.any(~np.isfinite(pixels))):
+            raise ValueError("pixels must be finite.")
+        if parametrization == "linear" and concrete(np.any(pixels < 0.0)):
+            raise ValueError("linear pixels must be non-negative.")
+        if reference_flux is None:
+            total = concrete(np.sum(self._fluxes(pixels)))
+            if total is None:
+                raise ValueError(
+                    "reference_flux is required when the pixels are traced."
+                )
+            reference_flux = float(total)
+        if not (onp.isfinite(reference_flux) and reference_flux > 0.0):
+            raise ValueError(
+                f"reference_flux must be finite and positive, not {reference_flux}."
+            )
+        self.reference_flux = float(reference_flux)
+        self._place(1.0, dra, ddec)
+
+    def _fluxes(self, pixels):
+        flux = pixels**2 if self.parametrization == "sqrt" else pixels
+        return (
+            flux if self.support is None else np.where(self.support, flux, 0.0)
+        )
+
     @property
-    def smooth_fwhm_mas(self):
-        """Deprecated alias of ``blur_fwhm_mas``."""
-        return self.blur_fwhm_mas
+    def fluxes(self):
+        """Pixel fluxes: non-negative, zero outside ``support``."""
+        return self._fluxes(self.pixels)
 
-    def smoothed(self):
-        """The pixels convolved with the Gaussian of ``blur_fwhm_mas``.
+    @property
+    def total_flux(self):
+        """The image's flux, the sum of ``fluxes``."""
+        return np.sum(self.fluxes)
 
-        Returns ``brightness`` itself when there is no smoothing. Otherwise
-        an FFT convolution on a zero-padded grid, cropped to the image, so
-        flux spreading past the edges is lost; see
-        ``virgil._geometry.gaussian_smooth`` for how closely
-        its transform matches the analytic Gaussian taper.
+    @property
+    def brightness(self):
+        """Pixel fluxes divided by the total: unit sum, zero outside ``support``."""
+        fluxes = self.fluxes
+        # Deliberately unguarded: at an all-zero total this is 0/0 = NaN, which
+        # the L-BFGS-B driver treats as an undefined point and restarts from.
+        # A guard gives a finite but wrong gradient (``System._mix`` forms
+        # ``F * V(b)``, and the ``V(b) dF`` term is lost) and a fit falsely
+        # converges on the empty image.
+        return fluxes / np.sum(fluxes)
+
+    @property
+    def regularized_pixels(self):
+        """``fluxes / reference_flux``, the pixels that regularizers penalize."""
+        return self.fluxes / self.reference_flux
+
+    def _weight(self, wavel=None):
+        return self.total_flux
+
+    def bounds(self):
+        """``(lower, upper)`` arrays for a bounded optimiser, or ``None``.
+
+        Linear pixels have ``0 <= flux < inf`` inside ``support`` and ``(0,
+        0)`` outside it; the square-root form needs no bounds.
         """
-        if self.blur_fwhm_mas is None:
-            return self.brightness
-        return gaussian_smooth(
-            self.brightness, self.blur_fwhm_mas / self.pixel_scale_mas
+        if self.parametrization == "sqrt":
+            return None
+        live = (
+            onp.ones(self.pixels.shape, bool)
+            if self.support is None
+            else onp.asarray(self.support)
         )
+        return onp.zeros(live.shape), onp.where(live, onp.inf, 0.0)
 
-    def _blur(self, u, v):
-        # Unrotated baselines in wavelengths: the taper is isotropic.
-        if self.blur_fwhm_mas is None:
-            return 1.0
-        return gaussian_taper(u * u + v * v, self.blur_fwhm_mas)
+    def is_physical(self):
+        ok = super().is_physical()
+        if self.parametrization == "linear":
+            ok = ok & np.all(self.pixels >= 0.0)
+        return ok & (self.total_flux > 0.0)
 
-    def _centred_cvis(self, uu, vv):
-        uu, vv = rotate(uu, vv, -self.rotation_deg)
-        vis = image_visibilities(
-            self.brightness, uu, vv, self.pixel_scale_mas, self.ft
-        )
-        return vis * self._blur(uu, vv)
 
-    def model_on_grid(self, u, v, wavel, grid):
-        vis = _pixel_visibilities(
-            self.brightness,
-            self.pixel_scale_mas,
-            self.rotation_deg,
-            u,
-            v,
-            wavel,
-            grid,
-            self.ft,
-        )
-        vis = vis * self._blur(u / wavel, v / wavel)
-        return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
-
-    def _centred_image(self, xx, yy, pixel_scale_mas):
-        # Bilinear resampling of the (smoothed) pixels, exact at their centres.
-        xx, yy = rotate(xx, yy, -self.rotation_deg)
-        brightness = self.smoothed()
-        nrow, ncol = brightness.shape
-        rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
-        cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
-        return map_coordinates(brightness, [rows, cols], order=1)
+# ---------------------------------------------------------------------------
+# Flared scattered-light disks
+# ---------------------------------------------------------------------------
 
 
 class _PixelRendered(Component):
@@ -2073,7 +2558,7 @@ class _PixelRendered(Component):
     # deliberate: the one grid setup that pixel-rendered models share
     def _set_grid(self, npix, pixel_scale_mas, ft, rotation_deg):
         """Validate and store the pixel grid and its transform."""
-        self.ft = _check_ft(ft)
+        self.ft = ft
         if isinstance(rotation_deg, str):
             if rotation_deg != "grid":
                 raise ValueError(
@@ -2082,10 +2567,6 @@ class _PixelRendered(Component):
             self.rotation_deg = rotation_deg
         else:
             self.rotation_deg = float(rotation_deg)
-            if not onp.isfinite(self.rotation_deg):
-                raise ValueError(
-                    f"rotation_deg must be finite, not {self.rotation_deg}."
-                )
         self.npix = int(npix)
         if self.npix <= 0 or self.npix % 2:
             raise ValueError(f"npix must be positive and even, got {npix}.")
@@ -2132,13 +2613,6 @@ class _PixelRendered(Component):
             self.ft,
         )
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
-
-
-def _check_ft(ft):
-    """``ft`` if it is a valid transform name."""
-    if ft not in ("auto", "dft", "nufft"):
-        raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")
-    return ft
 
 
 class FlaredDisk(_PixelRendered):
@@ -2528,6 +3002,11 @@ class ThinRing(_RadialProfile):
 class GaussianRing(_RadialProfile):
     r"""Gaussian ring, $I \propto \exp[-(r - r_0)^2 / 2\sigma^2]$, with
     $r \ge 0$ and $r_0$ = ``radius``.
+
+    A radial profile of a [`MultipoleDisk`][virgil.models.MultipoleDisk], not
+    a `Component`: put it in a `MultipoleDisk`, not directly in a `System`
+    (for a Gaussian component see
+    [`GaussianDisk`][virgil.models.GaussianDisk]).
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
@@ -3756,7 +4235,7 @@ class Harmonics(_Azimuthal):
                 )
             if degree is None:
                 raise ValueError("a Harmonics with a prior needs its degree.")
-            if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+            if int(degree) != degree or degree < 1:
                 raise ValueError(
                     f"degree must be a positive integer: {degree}."
                 )
@@ -3809,7 +4288,7 @@ class Harmonics(_Azimuthal):
             )
         first, second = (c, s) if form == "linear" else (re, im)
         top = max(len(first), len(second)) if degree is None else degree
-        if isinstance(top, bool) or int(top) != top or top < 0:
+        if int(top) != top or top < 0:
             raise ValueError(f"degree must be a non-negative integer: {top}.")
         top = int(top)
         if max(len(first), len(second)) > top:
@@ -3971,7 +4450,7 @@ class VonMises(_Azimuthal):
             from . import harmonics as _h
 
             degree = 32 if value is None else _h.auto_von_mises_degree(value)
-        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+        if int(degree) != degree or degree < 1:
             raise ValueError(f"degree must be a positive integer: {degree}.")
         self.degree = int(degree)
         n_fft = max(512, 8 * (self.degree + 1)) if n_fft is None else n_fft
@@ -4298,6 +4777,11 @@ def _dot(matrix, x):
     return np.sum(matrix * x, axis=-1)
 
 
+# ---------------------------------------------------------------------------
+# MultipoleDisk
+# ---------------------------------------------------------------------------
+
+
 class _FrozenGeometry(zdx.Base):
     """The cached matrices of ``MultipoleDisk.freeze_geometry``: the baselines,
     nodes and geometry they were built for (to check against at every call)
@@ -4540,8 +5024,8 @@ class MultipoleDisk(Component):
         phase of a ``height``'s lift (at the current parameter values, which
         must be concrete), rounded up to a
         multiple of 8 (but at most the 144 nodes buildable for a Gauss-Laguerre
-        tail). A starting point only: check convergence by
-        doubling ``n_r``.
+        tail), with a warning when it has to step down. A starting point
+        only: check convergence by doubling ``n_r``.
 
         Parameters
         ----------
@@ -4564,12 +5048,20 @@ class MultipoleDisk(Component):
         n = int(8 * onp.ceil(max(n, 16) / 8))
         # A Gauss-Laguerre tail (ExpTail, alone or inside a RadialSum/Gap)
         # has at most 150 nodes; step down in 8s until the rule builds.
+        wanted = n
         while n > 16:
             try:
                 self.profile.with_rule(n)
                 break
             except ValueError:
                 n -= 8
+        if n < wanted:
+            warnings.warn(
+                f"suggest_n_r wants {wanted} radial nodes but the profile "
+                f"cannot build that many; using {n}: the Hankel quadrature "
+                "may be under-resolved on the longest baselines.",
+                stacklevel=external_stacklevel(),
+            )
         return n
 
     def _alpha(self, r):
@@ -4890,6 +5382,11 @@ def gp_priors(model, sigma=None, ell=None, ell_theta=None):
     return priors
 
 
+# ---------------------------------------------------------------------------
+# Composition: System, Rotated, Attached, Resolved
+# ---------------------------------------------------------------------------
+
+
 class Resolved(SourceModel):
     """Fully resolved (over-resolved) flux, e.g. a large, diffuse envelope.
 
@@ -5085,6 +5582,12 @@ class System(SourceModel):
                 )
         # The disk's sky position and angle in the Image's grid frame: the
         # field's centre is relative to the Image's, along its rotated axes.
+        if part.rotation_deg == "grid":
+            raise ValueError(
+                f"The Image whose field follows {name!r} has "
+                "rotation_deg='grid', which depends on the data; give a "
+                "number for a MultipoleField to follow."
+            )
         x, y = rotate(
             disk.dra - part.dra, disk.ddec - part.ddec, -part.rotation_deg
         )
@@ -5198,7 +5701,9 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
         return total * offset_phase(
             u / wavel, v / wavel, model.dra, model.ddec
         )
-    if isinstance(model, Component) and not isinstance(model, Image):
+    if isinstance(model, Component) and not isinstance(
+        model, _BrightnessImage
+    ):
         ra, dec = ra0 + model.dra, dec0 + model.ddec
         arg = bandwidth * mas2rad * (u * ra + v * dec) / wavel**2
         return model.model(u, v, wavel) * np.sinc(arg)
@@ -5451,6 +5956,11 @@ class Attached(SourceModel):
         return self.component.is_physical()
 
 
+# ---------------------------------------------------------------------------
+# Binaries: OrbitalBinary, BinaryModelAngular, BinaryModelCartesian
+# ---------------------------------------------------------------------------
+
+
 class OrbitalBinary(SourceModel):
     """A primary and a point-source companion moving on a Keplerian orbit.
 
@@ -5646,6 +6156,11 @@ class BinaryModelCartesian(SourceModel):
         return self.to_system()._image(xx, yy, pixel_scale_mas)
 
 
+# ---------------------------------------------------------------------------
+# HarmonixModel: spotted stars (harmonix)
+# ---------------------------------------------------------------------------
+
+
 class HarmonixModel(SourceModel):
     """Wrapper for external models with harmonix-like visibility methods.
 
@@ -5747,6 +6262,11 @@ class HarmonixModel(SourceModel):
             x.ravel(), y.ravel(), z.ravel(), theta=theta
         )
         return np.where(on_disk, np.reshape(intensity, xx.shape), 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Analytic complex visibilities (cvis_*)
+# ---------------------------------------------------------------------------
 
 
 def cvis_binary(u, v, dra, ddec, flux):
@@ -5938,13 +6458,14 @@ def _cvis_gaussian_envelope(u, v, fwhm):
     )
 
 
-def _scene_images(scene, prefix=""):
+def _scene_images(scene, prefix="", kinds=Image):
     """Yield ``(path prefix, Image)`` for each Image in a scene, walking
-    ``System`` components and ``Rotated`` sources (``"env."``, ``"source."``)."""
-    if isinstance(scene, Image):
+    ``System`` components and ``Rotated`` sources (``"env."``, ``"source."``).
+    ``kinds`` widens the match, e.g. to ``(Image, LinearImage)``."""
+    if isinstance(scene, kinds):
         yield prefix, scene
     elif isinstance(scene, System):
         for name, part in scene.components.items():
-            yield from _scene_images(part, prefix + name + ".")
+            yield from _scene_images(part, prefix + name + ".", kinds)
     elif isinstance(scene, Rotated):
-        yield from _scene_images(scene.source, prefix + "source.")
+        yield from _scene_images(scene.source, prefix + "source.", kinds)

@@ -1,0 +1,15 @@
+K10_2s sigma/a=0.01 cells 18..22 | per-N: modes=205 cost=1.01e+06 | shared: modes=135 cost=1.76e+06 [20s]
+  per-N:
+    N=18: exact lnZ=  -61.139 p=5.821e-24 | lnZ=  -61.144 bias=  -0.005 sd= 0.009 p=5.809e-24 sd(p)=4.7e-26 finite=4/4
+    N=19: exact lnZ=  -50.312 p=2.931e-19 | lnZ=  -50.313 bias=  -0.001 sd= 0.013 p=2.936e-19 sd(p)=1.4e-21 finite=4/4
+    N=20: exact lnZ=   -7.638 p=1.000e+00 | lnZ=   -7.641 bias=  -0.003 sd= 0.012 p=1.000e+00 sd(p)=0.0e+00 finite=4/4
+    N=21: exact lnZ=  -51.969 p=5.591e-20 | lnZ=  -51.972 bias=  -0.003 sd= 0.017 p=5.589e-20 sd(p)=6.0e-22 finite=4/4
+    N=22: exact lnZ=  -64.784 p=1.520e-25 | lnZ=  -64.791 bias=  -0.007 sd= 0.006 p=1.514e-25 sd(p)=2.5e-27 finite=4/4
+    total-variation distance of p(N) from exact: 2.68e-22
+  shared:
+    N=18: exact lnZ=  -61.139 p=5.821e-24 | lnZ= -101.160 bias= -40.022 sd= 1.623 p=4.429e-41 sd(p)=3.7e-41 finite=4/4
+    N=19: exact lnZ=  -50.312 p=2.931e-19 | lnZ= -103.239 bias= -52.927 sd= 0.839 p=3.865e-42 sd(p)=2.8e-42 finite=4/4
+    N=20: exact lnZ=   -7.638 p=1.000e+00 | lnZ=   -7.637 bias=   0.001 sd= 0.003 p=1.000e+00 sd(p)=0.0e+00 finite=4/4
+    N=21: exact lnZ=  -51.969 p=5.591e-20 | lnZ=  -97.743 bias= -45.774 sd= 4.028 p=4.774e-38 sd(p)=9.5e-38 finite=4/4
+    N=22: exact lnZ=  -64.784 p=1.520e-25 | lnZ=  -99.585 bias= -34.801 sd= 2.044 p=5.310e-40 sd(p)=9.4e-40 finite=4/4
+    total-variation distance of p(N) from exact: 1.74e-19

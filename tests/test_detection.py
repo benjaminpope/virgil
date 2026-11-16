@@ -441,6 +441,21 @@ def test_monte_carlo_is_reproducible_and_independent_of_chunking():
     )
 
 
+def test_statistics_only_path_matches_the_full_one_bit_for_bit():
+    """Skipping the Laplace pass changes only the two statistics built on it."""
+    inj = injection_grid([60.0], [1e-2], 4, 1)
+    full = _recover(key=7, n_null=4, injections=inj)
+    fast = _recover(key=7, n_null=4, injections=inj, uncertainty=False)
+    for part in ("null", "injected"):
+        got, want = getattr(fast, part), getattr(full, part)
+        for stat in want:
+            if stat in ("max_snr", "flux_peak_steps"):
+                assert onp.isnan(got[stat]).all()
+                assert onp.isfinite(want[stat]).all()
+            else:
+                onp.testing.assert_array_equal(got[stat], want[stat])
+
+
 def test_draw_batch_vectorizes_the_same_draws():
     # draw_batch > 1 vmaps the search over draws (the tutorial uses it to
     # amortise the flux optimizer's loop); draw i keeps its key.
@@ -1040,8 +1055,6 @@ def test_gaussian_null_error_scale_scales_the_noise_not_the_errors():
         vis = onp.asarray(jax.vmap(lambda k: simulate(k).vis)(keys))
         assert onp.std(vis - 1.0) == pytest.approx(0.01 * scale, rel=0.1)
         assert onp.array_equal(simulate(keys[0]).d_vis, TEMPLATE.d_vis)
-    with pytest.raises(ValueError, match="error_scale"):
-        gaussian_null(NULL, TEMPLATE, error_scale=-1.0)
 
 
 def test_default_grid_batch_size_is_split_among_draw_batch(monkeypatch):
@@ -1105,3 +1118,21 @@ def test_remainder_chunk_matches_unchunked_run():
     onp.testing.assert_allclose(
         a.null["delta_chi2"], b.null["delta_chi2"], rtol=1e-4, atol=1e-6
     )
+
+
+def test_unresolved_flux_peak_reaches_its_check_with_the_steps():
+    from virgil.pipeline._checks import stage_warning_checks
+    from virgil.pipeline._core import _record_warnings
+
+    data = _data(1e-2, 5)
+    coarse = {
+        "dra": np.array([60.0]),
+        "ddec": np.array([-40.0]),
+        "flux": np.geomspace(1e-4, 0.1, 5),
+    }
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = detection_statistics(BinaryModelCartesian, data, coarse)
+    (found,) = stage_warning_checks(_record_warnings("overview", caught))
+    assert found.name == "flux_axis_resolution"
+    assert found.value == pytest.approx(float(result["flux_peak_steps"]))

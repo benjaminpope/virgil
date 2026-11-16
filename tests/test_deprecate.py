@@ -315,9 +315,11 @@ def test_l_curve_accepts_the_old_regulariser_keyword():
     )
     args = (start, image_priors(start), DATA)
     kw = {"weights": [1e3], "method": "lm"}
-    new = l_curve(*args, regularizer=TSV(1.0, path="env"), **kw)
+    new = l_curve(*args, regularizer=TSV(1.0, path="env", beam_mas=12.0), **kw)
     with pytest.warns(FutureWarning, match="regulariser=") as record:
-        old = l_curve(*args, regulariser=TSV(1.0, path="env"), **kw)
+        old = l_curve(
+            *args, regulariser=TSV(1.0, path="env", beam_mas=12.0), **kw
+        )
     assert record[0].filename == __file__
     assert np.allclose(old.chi2, new.chi2)
 

@@ -62,7 +62,7 @@ difference from the truth on one scale:
 
 ![CLEAN and RML against the truth](figures/radio_clean_vs_rml.png)
 
-Both reach χ²/N ≈ 1 on the quoted errors, and both differ from the truth by about 0.2 per
+Both reach χ²/N ≈ 1 on the quoted errors, and both differ from the truth by about 0.2–0.3 per
 cent of its peak. CLEAN is a greedy sparse model that needs no optimizer and no prior; the
 fit is a nonlinear optimization with a prior, which is what lets it carry constraints beyond
 the data (positivity, a regularizer, nuisance parameters). On this scene, one seed, neither

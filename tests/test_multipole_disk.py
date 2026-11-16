@@ -577,3 +577,13 @@ def test_a_profile_has_no_weight_and_a_sum_term_carries_it():
     assert onp.allclose(_cvis(heavy, u, v), _cvis(only_b, u, v), atol=1e-4)
     with pytest.raises(TypeError, match="not a profile"):
         RadialSum(a=(1.0, GaussianRing(3.0, 0.5)))
+
+
+def test_suggest_n_r_warns_when_it_steps_down():
+    class _Data:
+        u = onp.array([57.0])
+        v = onp.array([0.0])
+        wavel = onp.array([1e-6])
+
+    with pytest.warns(UserWarning, match="suggest_n_r wants"):
+        MultipoleDisk(ExpTail(0.0, 10.0)).suggest_n_r(_Data)

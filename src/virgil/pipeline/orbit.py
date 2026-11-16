@@ -153,7 +153,7 @@ class OrbitPipeline(_Pipeline):
         "vis_amp": True,
         "sign_free": True,
         "flip_flux": True,
-        "temper": True,
+        "temper": False,
         **_engine_defaults(
             "n_bands_max", "n_candidates", "n_refine", "max_steps", "n_is"
         ),
@@ -1111,34 +1111,6 @@ def _numpyro_order(sites):
     return onp.argsort(onp.asarray(sites))
 
 
-# deliberate: named step
-def _run_summary(stats, seconds, cap, kind, exhausted, adapted):
-    """The sampler's own report of one band: step size, tree depth, cost.
-    The counts are of the post-warm-up draws only."""
-    steps = onp.asarray(stats["num_steps"])
-    return {
-        "mass": kind,
-        "mass_adapted": bool(adapted),
-        "step_size": float(onp.median(onp.asarray(stats["step_size"])[:, -1])),
-        "tree_depth_max": int(onp.ceil(onp.log2(steps.max() + 1.0))),
-        "tree_depth_cap_fraction": float(onp.mean(steps >= 2**cap - 1)),
-        "n_gradients_sampling": int(steps.sum()),
-        "seconds": float(seconds),
-        "budget_exhausted": bool(exhausted),
-    }
-
-
-# deliberate: named step
-def _converged(band):
-    """Whether a band's chains ran to the end and pass the R-hat and ESS
-    checks' failure thresholds."""
-    return bool(
-        not band["sampler"]["budget_exhausted"]
-        and _checks.r_hat(band["r_hat_max"]).status != "fail"
-        and _checks.ess(band["ess_bulk_min"]).status != "fail"
-    )
-
-
 def _sample_band(  # deliberate: named step
     p, result, data, n, *, deadline=None
 ):
@@ -1211,17 +1183,21 @@ def _sample_band(  # deliberate: named step
 
     cap = s["posterior_max_tree_depth"]
     t0 = time.monotonic()
-    mcmc = _run_chains(
-        model,
-        s,
-        start,
+    kwargs = dict(
         dense_mass=True,
         priors=priors,
         inverse_mass=inverse_mass,
-        jitter=jitter,
         max_tree_depth=cap,
         adapt_mass=adapt,
     )
+    try:
+        mcmc = _run_chains(model, s, start, jitter=jitter, **kwargs)
+    except ValueError:
+        if deadline is None or time.monotonic() <= deadline:
+            raise
+        # The budget ran out during the start-up: every jittered start is
+        # -inf. Start every chain at the mode and drain, for the report.
+        mcmc = _run_chains(model, s, start, jitter=None, **kwargs)
     seconds = time.monotonic() - t0
     exhausted = late or (deadline is not None and time.monotonic() > deadline)
     drawn, stats = _draws(mcmc)
@@ -1232,10 +1208,25 @@ def _sample_band(  # deliberate: named step
     }
     summary = _band_summary(n, physical, drawn, stats, priors, bounds)
     summary["optimum_gap"] = _optimum_gap(problem, flat, x0)
-    summary["sampler"] = _run_summary(
-        stats, seconds, cap, kind, exhausted, adapt
+    # The sampler's own report of the band; the counts are of the post-warm-up
+    # draws only.
+    steps = onp.asarray(stats["num_steps"])
+    summary["sampler"] = {
+        "mass": kind,
+        "mass_adapted": bool(adapt),
+        "step_size": float(onp.median(onp.asarray(stats["step_size"])[:, -1])),
+        "tree_depth_max": int(onp.ceil(onp.log2(steps.max() + 1.0))),
+        "tree_depth_cap_fraction": float(onp.mean(steps >= 2**cap - 1)),
+        "n_gradients_sampling": int(steps.sum()),
+        "seconds": float(seconds),
+        "budget_exhausted": bool(exhausted),
+    }
+    # Converged: the chains ran to the end and neither R-hat nor ESS fails.
+    summary["converged"] = bool(
+        not exhausted
+        and _checks.r_hat(summary["r_hat_max"]).status != "fail"
+        and _checks.ess(summary["ess_bulk_min"]).status != "fail"
     )
-    summary["converged"] = _converged(summary)
     return physical, stats, summary
 
 
@@ -1464,6 +1455,7 @@ def _summarize(settings, reports):
                 "chi2",
                 pooled["chi2"] / pooled["n"],
                 label="the best-fit orbit",
+                n=pooled["n"],
             )
         )
     if epochs:
@@ -1472,7 +1464,9 @@ def _summarize(settings, reports):
         )
     if search:
         checks.append(_checks.labels_free(search["labels_free"]))
-        checks.append(_checks.bands_failed(search["failed_bands"]))
+        checks.append(
+            _checks.bands_failed(search["failed_bands"], search["n_bands"])
+        )
     if modes:
         sections["modes"] = _pick(modes, _MODES_KEYS, strict=False)
         runner = modes["runner_up"]
@@ -1481,6 +1475,7 @@ def _summarize(settings, reports):
                 modes["delta_log_z"],
                 None if runner is None else runner["n"],
                 warn=settings["alias_nats"],
+                n_failed=len(search["failed_bands"]) if search else 0,
             )
         )
         checks.append(_checks.winner_flags(modes["winner"]["flags"]))

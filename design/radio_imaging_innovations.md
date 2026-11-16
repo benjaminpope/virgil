@@ -333,6 +333,7 @@ marked *(unverified)*. Corrections are listed at the end.
 |---|---|---|---|---|
 | B1 full-batch L-BFGS, float64 | established | Liu & Nocedal 1989; Barnett+ 2019 | `test_nufft.py`, `test_fitting.py` (L-BFGS memory, convergence) | `alma_imlup_maxent.py`, `test_alma_maxent.py`, `test_alma_mpol_ref.py` |
 | B2 diagonal GN + entropy metric | derived | Bekas+ 2007; Skilling & Bryan 1984; Martens 2010 | `test_fit_precondition.py` | `test_radio_innovations.py` (dense JᵀJ, probes, entropy metric w·b(1−b)); not yet in pinned evidence |
+| B3b staged nuisance fit | established staging; defaults (reference = largest Σw, gain box 0.7–1.3, 5% edge) are choices pre-registered in the IM Lup gate criteria | Cornwell & Wilkinson 1981 | `test_radio_staged.py` | none yet |
 | B3 nuisance parameterization | established | Cornwell & Wilkinson 1981; Jeffreys 1946; DSHARP Sect. 4.4 | `test_radio.py` (nuisances, σ scales, offsets) | none yet (vv#178) |
 | B4 cold starts | CLEAN start and staging established; coarse-to-fine novel / experimental | Readhead & Wilkinson 1978; Chael+ 2018; Cornwell 2008 | `test_radio_clean.py`; staging none | `test_alma_clean.py`; staging none |
 | B5 Toeplitz likelihood, free offsets | Toeplitz terms established; free offsets (`offsets="spread"`, opt-in) derived (type-3 NUFFT; combination not found) | Fessler+ 2005; Lee & Greengard 2005; Barnett+ 2019 | `test_radio_toeplitz.py` (fast and slow; virgil#516 merged) | `test_radio_innovations.py`, `test_alma_toeplitz_check.py`; IM Lup A100 run not yet in evidence |

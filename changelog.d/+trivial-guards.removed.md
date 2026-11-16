@@ -1,0 +1,1 @@
+Drop trivial argument guards (non-finite or out-of-range `fit` stopping options, `gaussian_null` and `match_radius` scalars, `rotation_deg` finiteness, the constructor `ft` name check, bool-for-int typing) under the "Trust the user" rule.

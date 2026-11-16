@@ -124,12 +124,49 @@ modes the heuristics were built for.
     alias problem);
   - S3, a dense run then sparse returns: half the nights within 10 days,
     the rest uniform over 2 years.
-- *P* log-uniform on [1 d, 3 × span]. A draw whose orbit violates the
-  engine's documented domain (the companion moves more than half a
-  resolution element within its longest night, the sampling limit of
-  `period_window`) is redrawn with the next state of the same generator;
-  the number of redraws is reported. This keeps the population inside the
-  method's stated domain without selecting on difficulty.
+- *P* log-uniform on [1 d, 3 × span], as before: the draw and the generator
+  stream are unchanged. The redesign's search applies a declared prior with
+  lower end P_cut = max(2·Δt_min, P_night) (orbit_alias_cycles §1.3;
+  `virgil.aliases.period_cut`; today the shipped `period_window` still uses
+  P_night alone, so for the shipped engine the exclusion below is the
+  difference between the gate's population and the redesign's prior).
+  **Rule, fixed here before any run, decided at the draw from the truth only.**
+  A B truth is excluded iff *P*_true < P_cut(truth) = max(2·Δt_min, P_night),
+  with Δt_min the shortest gap between the system's consecutive nights, and
+  P_night = `virgil.aliases.period_cut`'s within-night bound evaluated with
+  `field` = the truth's semi-major axis *a*, `night_length` the longest
+  simulated night and `resolution` = λ_min/B_max. The exclusion is a property
+  of the population, never of a fit: it cannot move with the method's output
+  (an exclusion read from the engine's own epochs-stage window would let a
+  failure there exclude its own miss). Excluded systems are **counted and
+  reported** (`counts.B_below_p_cut`, `reported.B_prime`: indices, true
+  periods, P_cut), never silently dropped, and are **excluded from every
+  scored metric**, with their oracle runs; M4's denominator and M7's expected
+  counts are the scored B count. **A scored truth that lies outside the
+  window the engine searched** (*P*_true < `p_range[0]` or > `p_range[1]`
+  of its fit) **is a search failure**: it is scored, as a miss, not
+  excluded. The disagreement is reported raw both ways
+  (`reported.window_disagreement`: scored truths below and above the engine's
+  window; excluded truths inside it). A B fit that crashed is an M7 failure.
+  The excluded draws form a reported stratum B′, not scored in any must-hold:
+  the same draws, fitted once with `p_range` = [1 d, 3 × span], to show what
+  the declared prior excludes.
+  Stratum D systems of kind B are not excluded (D is unaffected). Excluding
+  rather than redrawing keeps the stream identical, so runs before and after
+  this commit are paired draw for draw. A draw whose orbit violates the
+  engine's documented domain (the companion moves more than half a resolution
+  element within its longest night, the sampling limit of `period_window`) is
+  still redrawn and counted, as before. The factor 2 in P_cut is a prior
+  choice (proposed 2026-11-01): above it the closest pair of nights advances
+  by under half a cycle, so the (prograde, retrograde, ν) ≡ (retrograde,
+  prograde, 1/Δt − ν) alias lies outside the domain, at every inclination.
+  **Proposed, awaiting Ben's sign-off.** The baseline (19560581 and its
+  oracle 19560586) stays reported under its own criteria commit as the
+  "before"; runs under this commit are judged on their own. The before/after
+  comparison on the *P* ≥ P_cut subset is a reported diagnostic, never a gate
+  input, and criteria commits are never mixed. vv's cross-check test compares
+  vv's copy of P_cut with `aliases.period_cut`; a
+  gate run sets `VV_GATE_RUN=1` so that a skipped cross-check fails.
 - *e* uniform on [0, 0.8] (roughly flat for P below about 1000 d:
   Raghavan et al. 2010; Moe & Di Stefano 2017); cos *i*, ω, Ω, τ as in A.
 - Semi-major axis: *a* / (λ/B_max) log-uniform on [0.5, 10], with
@@ -268,6 +305,11 @@ the default.
 - Strata B, N: `OrbitPipeline.from_oifits(paths).run()` with **every
   setting at its default** (the gate tests the defaults as shipped at the
   commit under test).
+- Stratum B′ (reported only): the *excluded* B truths themselves (P < P_cut,
+  decided at the draw by §3.3's rule), simulated as drawn and fitted once
+  with `p_range` = [1 d, 3 × span], the one non-default setting, to show what
+  the declared prior excludes. A second array job over the draw-time excluded
+  indices; one extra fit per excluded system.
 - Oracle runs (B only): the same call with `init=` the truth, which forces
   the truth's band to be fitted from the truth as well as from the blind
   seeds. Used only for metric M4.
@@ -320,7 +362,8 @@ log Z for the true band is more than 1 nat + 3√(SE_blind² + SE_oracle²)
 below the oracle run's, using each run's reported IS standard error
 (two independent estimates differ by noise alone; ln Ẑ is also biased
 low at small ESS). Pass
-if misses ≤ 2% of B (at most 4 of 240).
+if misses ≤ 2% of the scored B (at most 4 of 240 when none is excluded; *n* is
+the scored count, after the P_cut exclusion).
 *Why 1 nat:* a 1-nat shortfall changes that band's odds by a factor e,
 the smallest change that moves a reported *p* noticeably. *Why 2%:* the
 binomial standard error of a recovery rate near ½ on 240 systems is
@@ -403,7 +446,8 @@ probability the fit gives each injected bad night and sign-error night
 against the others (ROC area); `labels_free` on near-twins; the
 tempering factor against the injected *c*; the primary diameter against
 the truth; wall time and peak memory per system; the number of redraws
-in B; M3 and M5 split by the misspecification flag; and a data-sufficiency
+in B by reason (within-night motion, semi-major axis range) and the number
+excluded below P_cut, with stratum B′; M3 and M5 split by the misspecification flag; and a data-sufficiency
 table: recovery against the number of nights and the phase coverage of the
 true orbit (NN Del's four nights over 62 days is the case it describes).
 
@@ -429,6 +473,8 @@ must_hold:
   M8_false_no_orbit: {stratum: B, qualifying: oracle_fap_at_mc_floor, max_fraction: 0.02}
   M7_complete: {no_crash: true, credible_set_accurate: {m: 0.95, fail_flags: [evidence-noisy, evidence-failed], failed_band_in_window_fails: true}}
   M9_band_credible_set: {m: 0.95, sided: under, subsets: [B_all, B_misspecified], report: [set_size_median, set_size_q90, realised_mass]}
+population:
+  B_period: {draw: [1d, 3*span], exclude_iff: 'P_true < max(2*dt_min, P_night(truth a))', field: truth_semi_major_axis, engine: virgil.aliases.period_cut, below_p_cut: exclude_and_count, decided: at_draw_from_truth_only, outside_engine_window: search_failure_scored, report: [B_prime, window_disagreement], scored_in_must_hold: false}
 ```
 
 ## 7. Showcases (reported raw, never a gate)
@@ -483,6 +529,7 @@ them cold.
 | 2026-10-29 | §3.6 candidate (iii) replaced by (iii′) global-scale inflation (orbit_mixture_v2 §5); YAML name `shared_noise_inflation` → `global_scale_inflation` | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | yes: the #586 strict xfail showed (iii) cannot separate any night |
 | 2026-10-29 | YAML repair: `null_choice` moved to top level; it sat between two `must_hold` entries and the block did not parse (`yaml.safe_load` fails at `M4_search_misses`); no criterion changed, hash changes | Claude (Opus), for Ben | no |
 | 2026-10-29 | stratum A draws each global noise scale s_g from the fit's log-uniform prior (SBC exactness under orbit_mixture_v2 §2); s_g ranks reported, not tested; showcases report ŝ_g after raw χ²/N | Ben (approved in chat 2026-10-29; encoded by Claude, Opus) | no |
+| 2026-11-01 (Ben's date, Australia) | §3.3 stratum B: truths with *P* < P_cut = max(2Δt_min, P_night) (`virgil.aliases.period_cut`; orbit_alias_cycles §1.3) are excluded from scored metrics and counted, not redrawn (the draw and its stream are unchanged), decided at the draw from the truth only (a scored truth outside the engine's own window is a search failure, with the disagreement reported both ways); reported stratum B′; YAML `population` key added (criteria hash changes); the baseline 19560581/86 stays reported under its own commit, no mixing. Proposed, awaiting Ben's sign-off | Claude (Sonnet), for Ben, on the 0.4.2 coordinator's decisions | no: no G1 aggregate and no per-system B truth or fit of 19560581/86 had been inspected when written |
 
 ## References
 

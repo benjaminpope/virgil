@@ -23,35 +23,36 @@ Three classes cover the common cases:
 
 We compare four stars of the same 6 mas limb-darkened diameter: a uniform disk, a linear law, and quadratic and square-root laws with coefficients typical of a cool giant in the near-infrared. On the left are the brightness profiles across the disk, normalized to the centre; on the right are the squared visibilities against $x$, on a logarithmic scale so the nulls and the second lobe are visible. The darker the limb, the more the light is concentrated towards the centre, so the star looks smaller to an interferometer: the first null moves to longer baselines and the second lobe rises.
 
+??? note "Imports and setup"
+
+    ```python
+    import shutil
+    import warnings
+    import jax
+    import jax.numpy as jnp
+    import matplotlib.pyplot as plt
+    import numpy as onp
+    import numpyro.distributions as dist
+    from numpyro.diagnostics import split_gelman_rubin
+    from numpyro.infer import MCMC, NUTS, init_to_value
+
+    from virgil.coverage import vlti_oidata
+    from virgil.fitting import fit
+    from virgil.imaging import chi2_by_observable
+    from virgil.likelihood import numpyro_model, whitened_residuals
+    from virgil.models import (
+        LimbDarkenedDisk,
+        QuadraticLimbDarkenedDisk,
+        SquareRootLimbDarkenedDisk,
+        UniformDisk,
+    )
+    from virgil.plotting import plot_model
+
+    warnings.filterwarnings("ignore", category=SyntaxWarning)  # upstream zodiax docstrings
+    shutil.rmtree("star_run", ignore_errors=True)  # the pipeline section writes here
+    ```
+
 ```python
-import sys
-from pathlib import Path
-
-root = next(
-    p for p in [Path.cwd(), *Path.cwd().parents] if (p / "src").exists()
-)
-sys.path.insert(0, str(root / "src"))
-
-import jax
-import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as onp
-import numpyro.distributions as dist
-from numpyro.diagnostics import split_gelman_rubin
-from numpyro.infer import MCMC, NUTS, init_to_value
-
-from virgil.coverage import vlti_oidata
-from virgil.fitting import fit
-from virgil.imaging import chi2_by_observable
-from virgil.likelihood import numpyro_model, whitened_residuals
-from virgil.models import (
-    LimbDarkenedDisk,
-    QuadraticLimbDarkenedDisk,
-    SquareRootLimbDarkenedDisk,
-    UniformDisk,
-)
-from virgil.plotting import plot_model
-
 diam = 6.0
 stars = {
     "uniform": LimbDarkenedDisk(diam),
@@ -96,7 +97,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-![limb_darkening output 3.1](generated/limb_darkening_cell003_out01.png)
+![limb_darkening output 4.1](generated/limb_darkening_cell004_out01.png)
 
 Like every virgil component, the disks render on the sky. `plot_model` draws the quadratic star next to the uniform disk; the limb-darkened star has the same outline but a brighter centre.
 
@@ -116,7 +117,7 @@ Like every virgil component, the disks render on the sky. `plot_model` draws the
     plt.show()
     ```
 
-![limb_darkening output 5.1](generated/limb_darkening_cell005_out01.png)
+![limb_darkening output 6.1](generated/limb_darkening_cell006_out01.png)
 
 ## Kipping's parametrization
 
@@ -152,7 +153,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-![limb_darkening output 7.1](generated/limb_darkening_cell007_out01.png)
+![limb_darkening output 8.1](generated/limb_darkening_cell008_out01.png)
 
 ## Fitting simulated VLTI data
 
@@ -196,6 +197,9 @@ for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
 
 ```text
  uniform disk: diam = 5.686 mas, chi2/N = 651.91 (N = 162)
+```
+
+```text
 limb-darkened: diam = 6.022 mas, chi2/N = 1.14 (N = 162)
 ```
 
@@ -258,19 +262,16 @@ plt.show()
 ```
 
 ```text
-largest split r_hat over the four chains: 1.02
-```
-
-```text
+largest split r_hat over the four chains: 1.06
          truth         posterior
-  diam   6.000      6.046 ± 0.058
-    q1   0.360      0.573 ± 0.224
-    q2   0.292      0.131 ± 0.108
-    u1   0.350      0.202 ± 0.104
-    u2   0.250      0.559 ± 0.243
+  diam   6.000      6.024 ± 0.058
+    q1   0.360      0.478 ± 0.211
+    q2   0.292      0.179 ± 0.136
+    u1   0.350      0.247 ± 0.103
+    u2   0.250      0.444 ± 0.247
 ```
 
-![limb_darkening output 11.3](generated/limb_darkening_cell011_out03.png)
+![limb_darkening output 12.2](generated/limb_darkening_cell012_out02.png)
 
 The squared visibilities against spatial frequency show where the difference lies. Both fits agree in the first lobe; beyond the first null the uniform disk's second lobe is too low, while the limb-darkened model follows the data.
 
@@ -290,7 +291,7 @@ ax.legend()
 plt.show()
 ```
 
-![limb_darkening output 13.1](generated/limb_darkening_cell013_out01.png)
+![limb_darkening output 14.1](generated/limb_darkening_cell014_out01.png)
 
 ## Summary
 
@@ -298,65 +299,33 @@ virgil's limb-darkened disks give analytic, differentiable visibilities for any 
 
 ## As a pipeline
 
-Everything in the fit above can be run in one call with [`StarPipeline`](pipeline.md), which fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its input and the `load` stage; the uniform-disk scan and the `fit` of `QuadraticLimbDarkenedDisk` are its `fit` stage, which also compares the two fits; the NUTS chains are its `posterior` stage; and the $V^2$ plot is the main cell of its quicklook notebook. The cell below sets only the choices made in this notebook: the same $(2, 10)$ mas diameter prior and the same warmup, with the default four chains of 1000 draws. Its priors are the pipeline's group-invariant defaults (log-uniform diameter, uniform $q_1$ and $q_2$), so the posterior agrees with the hand-written one to within the sampling noise, not exactly. The pipeline reports $\chi^2/N$ on the quoted errors for both models, so the uniform disk's failure is visible there too. The data's closure-phase errors are 0.5 degrees, so a closure phase that flips at a visibility null costs about $10^5$ in $\chi^2$: the posterior sits in a cell with hard walls, in the diameter and in $q_1, q_2$ (a limb-darkened null moves with $q$). NUTS rejects the trajectories that cross a wall and flags them as divergent, so the `divergences` check fails and names the walls as the probable cause. The draws agree with a brute-force grid posterior, but with a reduced effective sample size.
+Everything in the fit above can be run in one call with [`StarPipeline`](pipeline.md), which fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its input and the `load` stage; the uniform-disk scan and the `fit` of `QuadraticLimbDarkenedDisk` are its `fit` stage, which also compares the two fits; the NUTS chains are its `posterior` stage; and the $V^2$ plot is the main cell of its quicklook notebook. The cell below sets only the choices made in this notebook: the same $(2, 10)$ mas diameter prior and the same warmup, with the default four chains of 1000 draws. Its priors are the pipeline's group-invariant defaults (log-uniform diameter, uniform $q_1$ and $q_2$), so the posterior agrees with the hand-written one to within the sampling noise, not exactly. The pipeline reports $\chi^2/N$ on the quoted errors for both models, so the uniform disk's failure is visible there too (its `chi2_uniform` check fails for that reason). The data's closure-phase errors are 0.5 degrees, so a closure phase that flips at a visibility null costs about $10^5$ in $\chi^2$: the posterior sits in a cell with hard walls, in the diameter and in $q_1, q_2$ (a limb-darkened null moves with $q$). NUTS rejects the trajectories that cross a wall and flags them as divergent, so the `divergences` check fails. This run's posterior is not reliable: the `divergences`, `r_hat` and `ess` checks all fail (the chains disagree and the effective sample size is small), and the hard walls are the probable cause, not an excuse. Do not quote its intervals. The diameter lands near the truth, but that is not evidence that the sampler worked. The hand-written NUTS run above shows the same weakness more mildly, with a split $\hat R$ above the usual 1.01. The `limb_darkening_constrained` warning says the data barely constrain $q_1$ and $q_2$, as the posterior table above shows. The cell prints a few summary numbers and the checks that did not pass; `res.describe()` has the full report.
 
 ```python
-from tempfile import mkdtemp
-
 from virgil.pipeline import StarPipeline
 
 res = StarPipeline(
     data,
-    output=f"{mkdtemp()}/star_run",
+    output="star_run",
     diam_range_mas=[2.0, 10.0],
     num_warmup=1000,
     num_samples=1000,
 ).run()
 
-print(res.describe())
+s = res.summary
+print(f"diameter: {s['star']['diam_mas']:.3f} ± {s['star']['diam_err_mas']:.3f} mas (truth {diam})")
+print(f"chi2/N, quoted errors: {s['fit']['models']['uniform']['chi2_reduced']:.0f} uniform disk, "
+      f"{s['fit']['models']['limb_darkened']['chi2_reduced']:.2f} limb-darkened")
+print(f"r_hat {s['posterior']['r_hat_max']:.2f}, bulk ESS {s['posterior']['ess_bulk_min']:.0f}, "
+      f"divergent steps {100 * s['posterior']['divergence_fraction']:.0f} %")
+print({c.name: c.status for c in res.checks if c.status != "pass"})
 ```
 
 ```text
-StarPipeline run in /tmp/tmp_qzc0x2u/star_run: complete
-  data.n_vis = 108
-  data.n_phi = 72
-  data.n_independent = 162
-  data.wavel_min_m = 1.6e-06
-  data.wavel_max_m = 2.4e-06
-  data.baseline_min_m = 36.51
-  data.baseline_max_m = 129.562
-  data.resolution_mas = 1.27361
-  data.fov_mas = 13.5589
-  data.freq_max_per_rad = 8.09765e+07
-  chi2.n_independent = 162
-  fit.scan_diam_mas = 5.68753
-  comparison.delta_m2loglike = 105401
-  comparison.delta_chi2 = 105401
-  comparison.n_extra_params = 2
-  comparison.bic_penalty = 10.1752
-  star.diam_mas = 6.0334
-  star.diam_err_mas = 0.0601054
-  resolution.diam_mas = 6.0334
-  resolution.freq_max_per_rad = 8.09765e+07
-  resolution.first_null = 1.30315
-  resolution.first_null_fraction = 1.81761
-  posterior.num_chains = 4
-  posterior.num_samples = 1000
-  posterior.num_warmup = 1000
-  posterior.r_hat_max = 1.00907
-  posterior.ess_bulk_min = 253.337
-  posterior.divergence_fraction = 0.50775
-  lobes: 6.022 mas (best); 7.028 mas (Δχ² 6.31e+05); 9.108 mas (Δχ² 2.43e+06)
-  [fail] chi2_uniform: χ²/N = 652 for the uniform disk on quoted errors: the model does not describe the data, or the errors are much too small.
-  [pass] chi2_limb_darkened: χ²/N = 1.14 for the limb-darkened disk on quoted errors: consistent with the quoted errors.
-  [pass] limb_darkening_gain: Δ(−2 log L) = 1.05e+05 for 2 extra parameters exceeds the BIC penalty 10.2: the limb-darkened disk model is preferred.
-  [pass] resolution: The longest baseline reaches 1.82 of the first null: the baselines reach the first null, so the diameter is well measured and limb darkening can be constrained.
-  [pass] multimodal: The best lobe (6.022 mas) beats the next (7.028 mas) by Δχ² = 6.31e+05.
-  [pass] limb_darkening_constrained: The data constrain every parameter (σ_posterior/σ_prior: q1 0.71, q2 0.38).
-  [pass] prior_bound: No posterior mass piles up at a prior bound.
-  [pass] r_hat: Largest R-hat 1.0091: the chains agree.
-  [warn] ess: Smallest bulk ESS 253: quantiles in the tails are noisy.
-  [fail] divergences: Divergent transitions: 51 per cent: the posterior is not reliable; 48 per cent of steps of 2 posterior standard deviations hit a hard wall of the likelihood (a closure-phase sign flip), where NUTS rejects trajectories: a probable cause, not an excuse (a bispectrum likelihood would remove the walls, virgil#578).
+diameter: 6.042 ± 0.074 mas (truth 6.0)
+chi2/N, quoted errors: 652 uniform disk, 1.14 limb-darkened
+r_hat 1.22, bulk ESS 14, divergent steps 50 %
+{'chi2_uniform': 'fail', 'limb_darkening_constrained': 'warn', 'r_hat': 'fail', 'ess': 'fail', 'divergences': 'fail'}
 ```
 
 ```python
@@ -371,4 +340,4 @@ plot_v2_models(
 plt.show()
 ```
 
-![limb_darkening output 17.1](generated/limb_darkening_cell017_out01.png)
+![limb_darkening output 18.1](generated/limb_darkening_cell018_out01.png)

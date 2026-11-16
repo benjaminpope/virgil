@@ -28,6 +28,7 @@ from ._grid import (
     resolve_grid_keys,
     warn_unconverged,
 )
+from . import _gauss_newton
 from ._deprecate import old_order, renamed
 from ._marginal import gauss_legendre
 from .inference import _ambient_dtype, laplace_parameter_uncertainty
@@ -43,6 +44,24 @@ def _best_grid_flux(loglike_im, grid, params, flux_key):
     return best_flux, np.nanmax(loglike_im, axis=flux_axis)
 
 
+def _flux_converged(grad, curvature, loglike):
+    """Whether a flux is at its maximum to the rounding error of ``loglike``.
+
+    The log likelihood still to gain is estimated by the Newton decrement
+    g²/(2|c|), exact for a quadratic. A point has converged when that is
+    at most `_gauss_newton.rounding_dtol` of ``loglike``: 10 ulp of
+    max(|ℓ|, 1), the rounding error of the sum (Higham 2002, §4.2; ℓ is
+    -½Σr², terms of one sign, so |ℓ| is Σ|ℓᵢ|). A smaller gain cannot be
+    told from rounding in this dtype. In float32 at ℓ = -5000 that leaves
+    offsets of up to ~0.1σ (6e-3 nats = ½(0.11σ)²·|c|σ²), as the gate it
+    replaces (a quarter σ on the flux, with no derivation) noted.
+    """
+    return (curvature < 0.0) & (
+        0.5 * grad**2 / np.abs(curvature)
+        <= _gauss_newton.rounding_dtol(loglike)
+    )
+
+
 @eqx.filter_jit
 def _optimize_flux_grid(
     data, model, grid, params, coord_keys, flux_key, batch_size
@@ -50,8 +69,9 @@ def _optimize_flux_grid(
     """Refine the best grid flux at every position with BFGS.
 
     Returns ``(flux, loglike, converged)``, each with one axis per coordinate
-    key; a point has converged when within a quarter sigma of the likelihood
-    maximum along the flux. Starts from the best fluxes of the full likelihood
+    key; a point has converged when the Newton decrement g²/(2|c|), the log
+    likelihood still to gain along the flux, is below the rounding error of
+    the log likelihood. Starts from the best fluxes of the full likelihood
     grid, in units of the starting flux.
     """
     loglike_im = _likelihood_grid(data, model, grid, params, batch_size)
@@ -127,15 +147,11 @@ def _refine_flux_grid(
         flux = result.x[0] * scale
         for _ in range(2):
             flux = newton_step(flux, coord_vals)
-        # Converged if the remaining distance to the maximum, estimated from
-        # the gradient and curvature, is under a quarter sigma of the flux.
-        # (Float32 rounding alone leaves offsets of up to ~0.1 sigma.)
         grad = jax.grad(flux_loglike)(flux, coord_vals)
         curvature = jax.grad(jax.grad(flux_loglike))(flux, coord_vals)
-        converged = (curvature < 0.0) & (
-            np.abs(grad) < 0.25 * np.sqrt(np.abs(curvature))
-        )
-        return flux, flux_loglike(flux, coord_vals), converged
+        best = flux_loglike(flux, coord_vals)
+        converged = _flux_converged(grad, curvature, best)
+        return flux, best, converged
 
     flux, best_loglike, success = map_points(
         refine,

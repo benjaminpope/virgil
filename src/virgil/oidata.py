@@ -14,6 +14,7 @@ from ._utils import inflate_errors, wrap_phase
 from .gains import (
     ClosureOffsets,
     GainModes,
+    _vis_sample_index,
     closure_offsets,
     gain_modes,
     offsets_noise,
@@ -24,6 +25,7 @@ from .observables import (
     FluxSpectrum,
     TripleAmplitude,
     VisibilityAmplitude,
+    _check_modes,
     _ranges,
     in_ranges,
 )
@@ -37,6 +39,8 @@ from ._deprecate import external_stacklevel
 
 
 __all__ = ["OIData", "closure_phases", "cp_indices"]
+
+_UNSET = object()
 
 
 class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -377,8 +381,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         self.stations = (
             None if stations is None else np.asarray(stations, np.int32)
         )
-        self.gains = None
-        self.phase_offsets = None
+        self.gains = self.phase_offsets = None
         self.extras = _build_extras(data, self, all_legs)
         vis_mode_in = data.get(
             "vis_mode", data.get("observable_vis_mode", "auto")
@@ -473,24 +476,71 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         See :meth:`epochs`. Each part keeps its own samples, observables and
         closure phases, so it can be fitted on its own or with a model per
         epoch. Not available for projected (kernel, DISCO) observables, nor
-        for data with a gain mode shared between epochs (a supplied mode
-        spanning frames): the parts' likelihoods would then not add up to
-        the whole.
+        for data with a gain or closure-offset mode shared between epochs (a
+        supplied mode spanning frames): the parts' likelihoods would then not
+        add up to the whole.
         """
         labels = self.epochs(gap_days)
+        flux_labels = self._flux_epochs(labels)
+        for b in self.extras:
+            legs = b.gain_legs()
+            if len(legs) > 1 and onp.size(b.values):
+                l0 = labels[onp.asarray(legs[0])]
+                if any(
+                    onp.any(labels[onp.asarray(leg)] != l0) for leg in legs[1:]
+                ):
+                    raise ValueError(
+                        "A triple amplitude would be split between parts."
+                    )
+            if isinstance(b, DifferentialPhase) and onp.size(b.values):
+                if b.labels_shared(labels[onp.asarray(b.sample)]):
+                    raise ValueError(
+                        "A differential-phase mode spans several epochs, so "
+                        "the epochs are not independent and their likelihoods "
+                        "would not add up; fit the data together, or drop "
+                        "that mode first."
+                    )
+            if isinstance(b, FluxSpectrum) and onp.size(b.values):
+                b_labels = (
+                    flux_labels[id(b)]
+                    if b.sample is None
+                    else labels[onp.asarray(b.sample)]
+                )
+                if b.labels_shared(b_labels):
+                    raise ValueError(
+                        f"A {b.kind!r} scale group or mode spans several "
+                        "epochs, so the epochs are not independent and their "
+                        "likelihoods would not add up; fit the data together, "
+                        "or drop that mode first."
+                    )
         if self.gains is not None:
-            index = (
-                onp.arange(onp.size(self.u))
-                if self.vis_index is None
-                else onp.asarray(self.vis_index)
-            )
-            if self.gains.labels_shared(labels[index]):
+            gain_labels = labels[_vis_sample_index(self)]
+            if self.gains.n_vis != self.vis.size:
+                gain_labels = onp.concatenate(
+                    [
+                        gain_labels,
+                        *(
+                            labels[onp.asarray(b.gain_legs()[0])]
+                            for b in self.extras
+                            if b.gain_legs() and onp.size(b.values)
+                        ),
+                    ]
+                )
+            if self.gains.labels_shared(gain_labels):
                 raise ValueError(
                     "A gain mode spans several epochs, so the epochs are not "
                     "independent and their likelihoods would not add up; "
                     "fit the data together, or drop that mode first."
                 )
-        flux_labels = self._flux_epochs(labels)
+        if self.phase_offsets is not None:
+            phi_labels = labels[onp.asarray(self.i_cps1)]
+            if self.phase_offsets.labels_shared(phi_labels):
+                raise ValueError(
+                    "A closure-phase offset mode spans several epochs, so the "
+                    "epochs are not independent and their likelihoods would "
+                    "not add up; fit the data together, or drop that mode "
+                    "first."
+                )
         return [
             self._subset(
                 labels == k,
@@ -560,8 +610,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         -------
         OIData
             The samples in range (closure triangles are kept whole). Not available
-            for projected (kernel, DISCO) observables, or after closure-phase
-            offsets are added.
+            for projected (kernel, DISCO) observables.
 
         Examples
         --------
@@ -615,19 +664,22 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 f"observables must name some of {list(known)}; got "
                 f"{sorted(names)}."
             )
-        if self.phase_offsets is not None and "phi" not in names:
-            raise ValueError(
-                "Data with closure-phase offsets cannot drop their closure "
-                "phases; add the offsets (with_closure_offsets) afterwards."
-            )
         out = self
         empty = np.zeros(0, dtype=int)
+        gains = out._subset_gains(
+            onp.full(out.vis.size, "vis" in names, dtype=bool),
+            lambda b: onp.full(b.values.size, b.kind in names, dtype=bool),
+        )
         if "vis" not in names:
             out = eqx.tree_at(
                 lambda d: (d.vis, d.d_vis, d.vis_index, d.gains),
                 out,
-                (out.vis[:0], out.d_vis[:0], empty, None),
+                (out.vis[:0], out.d_vis[:0], empty, gains),
                 is_leaf=lambda x: x is None,
+            )
+        elif gains is not out.gains:
+            out = eqx.tree_at(
+                lambda d: d.gains, out, gains, is_leaf=lambda x: x is None
             )
         dropped_phases = "phi" not in names and out.has_phases
         if "phi" not in names:
@@ -640,9 +692,19 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                     d.i_cps3,
                     d.phi_index,
                     d.cp_noise,
+                    d.phase_offsets,
                 ),
                 out,
-                (out.phi[:0], out.d_phi[:0], None, None, None, empty, None),
+                (
+                    out.phi[:0],
+                    out.d_phi[:0],
+                    None,
+                    None,
+                    None,
+                    empty,
+                    None,
+                    None,
+                ),
                 is_leaf=lambda x: x is None,
             )
             # A static field: tree_at made a fresh copy, so set it there.
@@ -658,7 +720,39 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             ):
                 block = block.rebuild(closure_free=False)
             extras.append(block)
-        return eqx.tree_at(lambda d: d.extras, out, tuple(extras))
+        out = eqx.tree_at(lambda d: d.extras, out, tuple(extras))
+        if (
+            out.gains is not None
+            and "_flux" in out.gains.groups
+            and "corrflux" not in names
+        ):
+            out = eqx.tree_at(
+                lambda d: d.gains,
+                out,
+                out.gains.with_corrflux(out),
+                is_leaf=lambda x: x is None,
+            )
+        return out
+
+    def _subset_gains(self, kept_vis, extra_keep):
+        """Subset ``self.gains`` across ``vis`` and amplitude ``extras``."""
+        if self.gains is None:
+            return None
+        kept = kept_vis
+        if self.gains.n_vis != self.vis.size:
+            kept = onp.concatenate(
+                [
+                    kept_vis,
+                    *(
+                        extra_keep(b)
+                        for b in self.extras
+                        if b.gain_legs() and onp.size(b.values)
+                    ),
+                ]
+            )
+        if not kept.any():
+            return None
+        return self.gains if kept.all() else self.gains.subset(kept)
 
     def _subset(self, keep, flux_keep=None):
         """These data restricted to the samples where ``keep`` is True.
@@ -675,11 +769,6 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "Only unprojected data can be split: projected (kernel, "
                 "DISCO) observables mix samples."
             )
-        if self.phase_offsets is not None:
-            raise ValueError(
-                "Data with closure-phase offsets cannot be split or "
-                "selected; add the offsets (with_closure_offsets) afterwards."
-            )
         keep = onp.asarray(keep, dtype=bool)
         new_index = onp.cumsum(keep) - 1  # old sample -> new sample
 
@@ -692,6 +781,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             return rows, np.asarray(new_index[index[rows]])
 
         vis_rows, vis_index = observed(self.vis_index)
+        phase_offsets = None
         if self.cp_flag:
             legs = [
                 onp.asarray(i) for i in (self.i_cps1, self.i_cps2, self.i_cps3)
@@ -703,26 +793,34 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                     "A closure phase would be split between parts."
                 )
             phi_rows = onp.flatnonzero(keep[legs[0]])
-            legs = [new_index[leg[phi_rows]] for leg in legs]
-            closure = ClosureNoise.from_indices(*legs)
-            legs = [np.asarray(leg) for leg in legs]
+            if phi_rows.size:
+                legs = [new_index[leg[phi_rows]] for leg in legs]
+                closure = ClosureNoise.from_indices(
+                    *legs, force=self.phase_offsets is not None
+                )
+                if self.phase_offsets is not None:
+                    kept_phi = onp.zeros(self.phi.size, bool)
+                    kept_phi[phi_rows] = True
+                    phase_offsets = self.phase_offsets.subset(
+                        kept_phi, closure
+                    )
+                legs = [np.asarray(leg) for leg in legs]
+            else:
+                legs, closure = [None] * 3, None
             phi_index = None
         else:
             phi_rows, phi_index = observed(self.phi_index)
             legs, closure = [None] * 3, None
         wavel = self.wavel if self.wavel.size == 1 else self.wavel[keep]
-        bandwidth = self.bandwidth
-        if bandwidth is not None and bandwidth.size > 1:
-            bandwidth = bandwidth[keep]
+        bandwidth = (
+            self.bandwidth[keep]
+            if self.bandwidth is not None and self.bandwidth.size > 1
+            else self.bandwidth
+        )
         times = [
             None if x is None else x[keep]
             for x in (self.dt, self.frame, self.stations)
         ]
-        gains = None
-        if self.gains is not None:
-            kept = onp.zeros(self.vis.size, bool)
-            kept[vis_rows] = True
-            gains = self.gains.subset(kept)
         extras = []
         for block in self.extras:
             own = None
@@ -731,47 +829,49 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                     raise ValueError("OI_FLUX data cannot be split this way.")
                 own = onp.asarray(flux_keep(block), dtype=bool)
             extras.append(block.subset(keep, new_index, own))
+        kept_vis = onp.zeros(self.vis.size, bool)
+        kept_vis[vis_rows] = True
+        gains = self._subset_gains(kept_vis, lambda b: keep[b.gain_legs()[0]])
+        updates = {
+            **dict(
+                zip(
+                    ("i_cps1", "i_cps2", "i_cps3", "dt", "frame", "stations"),
+                    (*legs, *times),
+                )
+            ),
+            "u": self.u[keep],
+            "v": self.v[keep],
+            "wavel": wavel,
+            "bandwidth": bandwidth,
+            "vis": self.vis[vis_rows],
+            "d_vis": self.d_vis[vis_rows],
+            "phi": self.phi[phi_rows],
+            "d_phi": self.d_phi[phi_rows],
+            "vis_index": vis_index,
+            "phi_index": phi_index,
+            "cp_noise": closure,
+            "gains": gains,
+            "phase_offsets": phase_offsets,
+            "extras": tuple(extras),
+        }
         out = eqx.tree_at(
-            lambda d: (
-                d.u,
-                d.v,
-                d.wavel,
-                d.bandwidth,
-                d.vis,
-                d.d_vis,
-                d.phi,
-                d.d_phi,
-                d.i_cps1,
-                d.i_cps2,
-                d.i_cps3,
-                d.vis_index,
-                d.phi_index,
-                d.cp_noise,
-                d.dt,
-                d.frame,
-                d.stations,
-                d.gains,
-            ),
+            lambda d: tuple(getattr(d, k) for k in updates),
             self,
-            (
-                self.u[keep],
-                self.v[keep],
-                wavel,
-                bandwidth,
-                self.vis[vis_rows],
-                self.d_vis[vis_rows],
-                self.phi[phi_rows],
-                self.d_phi[phi_rows],
-                *legs,
-                vis_index,
-                phi_index,
-                closure,
-                *times,
-                gains,
-            ),
+            tuple(updates.values()),
             is_leaf=lambda x: x is None,
         )
-        return eqx.tree_at(lambda d: d.extras, out, tuple(extras))
+        if self.cp_flag and not phi_rows.size:
+            object.__setattr__(out, "cp_flag", False)
+        if out.gains is not None and any(
+            b.kind == "corrflux" for b in self.extras
+        ):
+            out = eqx.tree_at(
+                lambda d: d.gains,
+                out,
+                out.gains.with_corrflux(out),
+                is_leaf=lambda x: x is None,
+            )
+        return out
 
     def _resolve_vis_mode(self, vis_mode):
         """Resolve the visibility channel convention used before linear projection."""
@@ -931,38 +1031,46 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         return amp
 
     def _visibility_channel_from_data(self, vis, d_vis):
-        """Convert stored visibility observables to the scalar channel ``vis_mode``."""
+        """Convert stored visibility observables to the scalar channel ``vis_mode``.
+
+        Values are transformed as they are, never floored. Samples where the
+        transform is undefined (V² or |V| ≤ 0 for ``logamp``, V² ≤ 0 for
+        ``amp`` from V²) were already flagged on construction.
+        """
         vis = np.asarray(vis, dtype=float)
-        d_vis = np.asarray(d_vis, dtype=float)
         if self.vis_mode == "logamp":
-            # Floored at its own error: V² or |V| at or below zero stays finite.
-            floored = np.maximum(vis, np.maximum(d_vis, 1e-30))
             if self.v2_flag:
-                return 0.5 * np.log(floored)
-            return np.log(floored)
+                return 0.5 * np.log(vis)
+            return np.log(vis)
         if self.vis_mode == "amp" and self.v2_flag:
-            return np.sqrt(np.maximum(vis, 0.0))
+            return np.sqrt(vis)
         if self.vis_mode == "v2" and (not self.v2_flag):
             return vis**2
         return vis
 
     def _visibility_uncertainty_channel(self, vis, d_vis):
-        """Propagate visibility errors linearly into the scalar channel ``vis_mode``."""
+        """Propagate visibility errors to first order into the channel ``vis_mode``.
+
+        σ_f = |f'(x)| σ_x on the data as given, with no floor: log|V| from V²
+        gives σ/(2V²); log|V| from |V| gives σ/|V|; |V| from V² gives
+        σ/(2|V|). These diverge as the datum goes to zero and are poor once σ
+        ≳ the datum (the transformed noise is then far from Gaussian); such
+        points are flagged out where undefined and counted otherwise. V² from
+        a Gaussian |V| is the exact standard deviation σ·√(4V² + 2σ²)
+        (Var a² = 4μ²σ² + 2σ⁴); it tends to first-order 2|V|σ for |V| ≫ σ,
+        and stays finite at |V| = 0, so first-order weights ∝ 1/V² are
+        avoided.
+        """
         vis = np.asarray(vis, dtype=float)
         d_vis = np.asarray(d_vis, dtype=float)
-        # The derivative diverges near zero, so the data are floored at their
-        # own error first, in either direction.
-        floored = np.maximum(vis, np.maximum(d_vis, 1e-30))
         if self.vis_mode == "logamp":
             if self.v2_flag:
-                return 0.5 * d_vis / floored
-            return d_vis / floored
+                return 0.5 * d_vis / vis
+            return d_vis / np.abs(vis)
         if self.vis_mode == "amp" and self.v2_flag:
-            return 0.5 * d_vis / np.sqrt(floored)
+            return 0.5 * d_vis / np.sqrt(vis)
         if self.vis_mode == "v2" and (not self.v2_flag):
-            # |V| is floored at its own uncertainty, so noisy amplitudes near
-            # or below zero do not get a vanishing V² error.
-            return 2.0 * np.hypot(vis, d_vis) * d_vis
+            return d_vis * np.sqrt(4.0 * vis**2 + 2.0 * d_vis**2)
         return d_vis
 
     def _transform_observed_channels(
@@ -980,6 +1088,63 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         n_phi = self._n_phi_samples()
         self._validate_operator_shape(self.vis_mat, n_vis, "vis_mat")
         self._validate_operator_shape(self.phi_mat, n_phi, "phi_mat")
+
+        mode, v2 = self.vis_mode, self.v2_flag
+        cut = mode == "logamp" or (mode == "amp" and v2)
+        if np.asarray(self.vis).size == n_vis and (
+            cut or (mode == "v2" and not v2)
+        ):
+            # logamp takes log|V| and amp from V² takes sqrt(V²); both are
+            # undefined for V² (or |V|) <= 0, which noisy data reach
+            # legitimately. Flag those samples out (one counted warning)
+            # rather than flooring them: a floor replaces a measured value
+            # with an invented one and biases the fit. Valid samples with the
+            # datum below σ are kept at their own value, but the propagated
+            # error is poor there (the transformed noise is far from
+            # Gaussian), so they are counted in a second warning, also for
+            # v2 from |V|. Flagged and invalid samples are already gone.
+            vis, err = onp.asarray(self.vis), onp.asarray(self.d_vis)
+            undefined = (vis <= 0) if cut else onp.zeros(vis.shape, bool)
+            weak = ~undefined & (onp.abs(vis) < err)
+            what = "V²" if v2 else "|V|"
+            if undefined.any() and self.vis_mat is not None:
+                raise ValueError(
+                    f"{undefined.sum()} of {vis.size} visibilities have "
+                    f"{what} <= 0, where vis_mode={mode!r} is undefined, and "
+                    "data with an operator (vis_mat) cannot be flagged per "
+                    "sample: drop those samples and the matching operator "
+                    "columns, or use vis_mode='v2'."
+                )
+            if undefined.any():
+                warnings.warn(
+                    f"{undefined.sum()} of {vis.size} points with {what} <= "
+                    f"0 are excluded from {mode} because the channel is "
+                    "undefined there (not floored).",
+                    UserWarning,
+                    stacklevel=external_stacklevel(),
+                )
+            if weak.any():
+                warnings.warn(
+                    f"{weak.sum()} of {vis.size} points have {what} < σ: "
+                    f"kept at their own value in {mode}, but the error "
+                    "propagation is poor there (the transformed noise is far "
+                    "from Gaussian).",
+                    UserWarning,
+                    stacklevel=external_stacklevel(),
+                )
+            if undefined.any():
+                kept = ~undefined
+                rows = (
+                    onp.arange(vis.size)
+                    if self.vis_index is None
+                    else onp.asarray(self.vis_index)
+                )
+                self.vis_index = np.asarray(rows[kept])
+                self.vis, self.d_vis = (
+                    np.asarray(vis[kept]),
+                    np.asarray(err[kept]),
+                )
+                n_vis = self._n_vis_samples()
 
         if np.asarray(self.vis).size == n_vis:
             vis_channel = self._visibility_channel_from_data(
@@ -1436,7 +1601,12 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         return eqx.tree_at(lambda d: d.extras, self, extras)
 
     def with_continuum(
-        self, continuum=None, lines=None, order=None, prior_width=None
+        self,
+        continuum=_UNSET,
+        lines=_UNSET,
+        order=_UNSET,
+        prior_width=_UNSET,
+        modes=_UNSET,
     ):
         """A copy with the continuum and line windows of the extra spectra.
 
@@ -1449,14 +1619,18 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         continuum, lines : sequence of (lo, hi), optional
             Wavelength ranges (metres); each defaults to the complement of the
             other. Differential phases are fitted over the continuum and kept in
-            the lines; normalized spectra use the continuum.
+            the lines; normalized spectra use the continuum. Pass ``None`` to
+            clear an existing window.
         order : int, optional
             The continuum polynomial in wavenumber: 1 by default for differential
             phases, 0 for spectra.
         prior_width : float or (float, float), optional
             For differential phases: marginalize each baseline and frame's offset
             (and slope) under Gaussian priors of these widths (radians), instead
-            of projecting them out (the default).
+            of projecting them out (pass ``None`` to restore projection).
+        modes : array-like, optional
+            For differential phases: linear tangent-space nuisance modes
+            ``(n_mode, data.u.size)`` in radians per 1σ (pass ``None`` to clear).
 
         Examples
         --------
@@ -1468,24 +1642,55 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "These data have no differential phases or normalized "
                 "spectra; read them with extras=('visphi',) or ('nflux',)."
             )
+        has_pw = prior_width is not _UNSET and prior_width is not None
+        has_m = modes is not _UNSET and modes is not None
+        if (has_pw or has_m) and "visphi" not in kinds:
+            raise ValueError(
+                "prior_width and modes require 'visphi' observables; read "
+                "them with extras=('visphi',)."
+            )
+        modes_arr = (
+            None
+            if modes is _UNSET or modes is None
+            else _check_modes(modes, onp.size(self.u), "visphi")
+        )
         out = self
         if "visphi" in kinds:
             out = out._replace_extra(
                 ("visphi",),
                 lambda b: b.rebuild(
-                    continuum=continuum,
-                    lines=lines,
-                    order=b.order if order is None else order,
-                    prior_width=prior_width,
+                    continuum=(
+                        b.continuum if continuum is _UNSET else continuum
+                    ),
+                    lines=b.lines if lines is _UNSET else lines,
+                    order=(
+                        b.order if order is _UNSET or order is None else order
+                    ),
+                    prior_width=(
+                        b.prior_width if prior_width is _UNSET else prior_width
+                    ),
+                    modes=(
+                        b.modes
+                        if modes is _UNSET
+                        else (
+                            None
+                            if modes_arr is None
+                            else modes_arr[:, b.sample]
+                        )
+                    ),
                 ),
             )
         if "nflux" in kinds:
             out = out._replace_extra(
                 ("nflux",),
                 lambda b: b.rebuild(
-                    continuum=continuum,
+                    continuum=(
+                        b.continuum if continuum is _UNSET else continuum
+                    ),
                     continuum_order=(
-                        b.continuum_order if order is None else order
+                        b.continuum_order
+                        if order is _UNSET or order is None
+                        else order
                     ),
                 ),
             )
@@ -1493,11 +1698,12 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     def with_flux_scale(
         self,
-        scale=None,
-        per="dataset",
-        poly_order=0,
-        poly_width=0.1,
+        scale=_UNSET,
+        per=_UNSET,
+        poly_order=_UNSET,
+        poly_width=_UNSET,
         kinds=None,
+        modes=_UNSET,
     ):
         """A copy with new grey-scale nuisances for the extra spectra.
 
@@ -1510,7 +1716,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         scale : (float, float), optional
             The prior ``(mean, sd)`` of the scale, in the data's units. Required
             for ``"flux"`` and ``"corrflux"`` before fitting; ``(1, 0.1)`` by
-            default for ``"nflux"``.
+            default for ``"nflux"`` (pass ``None`` to clear).
         per : {"dataset", "row", "frame", "station"}, optional
             One scale for the whole dataset (default), or one per spectrum (row),
             exposure, or telescope.
@@ -1520,27 +1726,74 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         poly_width : float, optional
             Prior width of each polynomial coefficient, relative to the scale's
             prior mean.
-        kinds : sequence of str, optional
-            Which blocks to change: ``"flux"`` and ``"corrflux"`` when ``scale`` is
-            given, every spectrum otherwise.
+        kinds : str or sequence of str, optional
+            Which blocks to change: ``"flux"`` and ``"corrflux"`` when ``scale`` or
+            ``modes`` is given, every spectrum otherwise. Required when ``modes``
+            is passed and both ``"flux"`` and ``"corrflux"`` are present.
+        modes : array-like, optional
+            Linear nuisance modes ``(n_mode, n_block)`` in ``d log F`` per 1σ
+            for ``"flux"`` or ``"corrflux"`` (refused on ``"nflux"``; pass
+            ``None`` to clear).
         """
+        if isinstance(kinds, str):
+            kinds = (kinds,)
+        has_modes = modes is not _UNSET and modes is not None
         if kinds is None:
+            present = {b.kind for b in self.extras}
+            if has_modes and present <= {"nflux"} and "nflux" in present:
+                raise ValueError(
+                    "Nuisance modes are not supported for continuum-normalized "
+                    "'nflux' spectra."
+                )
             kinds = (
                 ("flux", "corrflux")
-                if scale is not None
+                if scale is not _UNSET or modes is not _UNSET
                 else ("flux", "nflux", "corrflux")
             )
+        elif has_modes and "nflux" in kinds:
+            raise ValueError(
+                "Nuisance modes are not supported for continuum-normalized "
+                "'nflux' spectra."
+            )
+        if has_modes:
+            matching = [b for b in self.extras if b.kind in kinds]
+            if len(matching) > 1:
+                raise ValueError(
+                    "modes in with_flux_scale is indexed per block; give "
+                    "kinds='flux' or kinds='corrflux' when multiple spectrum "
+                    "blocks are present."
+                )
 
         def rebuilt(block):
-            stated = block.scale if scale is None else scale
             return block.rebuild(
-                per=per,
-                scale=stated,
-                poly_order=poly_order,
-                poly_width=poly_width,
+                per=block.per if per is _UNSET or per is None else per,
+                scale=block.scale if scale is _UNSET else scale,
+                poly_order=(
+                    block.poly.shape[1] - 1
+                    if poly_order is _UNSET or poly_order is None
+                    else poly_order
+                ),
+                poly_width=(
+                    block.poly_width
+                    if poly_width is _UNSET or poly_width is None
+                    else poly_width
+                ),
+                modes=block.modes if modes is _UNSET else modes,
             )
 
-        return self._replace_extra(tuple(kinds), rebuilt)
+        out = self._replace_extra(tuple(kinds), rebuilt)
+        if (
+            out.gains is not None
+            and "corrflux" in kinds
+            and any(b.kind == "corrflux" for b in out.extras)
+        ):
+            out = eqx.tree_at(
+                lambda d: d.gains,
+                out,
+                out.gains.with_corrflux(out),
+                is_leaf=lambda x: x is None,
+            )
+        return out
 
     def with_wavelength_scale(self, scale=1.0, offset=0.0):
         """A copy of the data whose wavelengths are ``scale · λ + offset``.
@@ -1624,7 +1877,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             rotated = eqx.tree_at(lambda d: d.uv_grid, rotated, None)
         return rotated
 
-    def with_closure_offsets(self, baseline=None, triangle=None, modes=None):
+    def with_closure_offsets(
+        self, baseline=None, triangle=None, modes=None, *, scale_penalty=True
+    ):
         """A copy of the data with closure-phase offsets per frame.
 
         The likelihood marginalizes offsets common to the channels of a frame
@@ -1644,16 +1899,20 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         triangle : float, optional
             Width (radians) of an offset per (frame, triangle).
         modes : array-like, optional
-            Further modes, ``(n_mode, n_phase)``, radians per 1σ, each within one
-            frame; their width, 1 by default, scales them.
+            Further modes, ``(n_mode, n_phase)``, radians per 1σ, each possibly
+            spanning frames; their width, 1 by default, scales them.
+        scale_penalty : bool, optional
+            Divide the periodic wrap penalty by ``hypot(σ, σ_off)`` at the
+            nominal widths (default ``True``). Pass ``False`` to keep ``σ``.
 
         Returns
         -------
         OIData
-            The data with ``phase_offsets`` set. Split or select first: data with
-            offsets cannot be split.
+            The data with ``phase_offsets`` set (replacing any earlier ones).
         """
-        offsets = closure_offsets(self, baseline, triangle, modes)
+        offsets = closure_offsets(
+            self, baseline, triangle, modes, scale_penalty=scale_penalty
+        )
         # Three telescopes have no cp_noise; the offsets are whitened with
         # the one-triangle-per-group form. Their baseline offsets are folded
         # into the triangle group, and the likelihood whitens the sines with a
@@ -1667,15 +1926,23 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         )
 
     def with_gains(
-        self, telescope=None, baseline=None, chromatic=None, modes=None
+        self,
+        telescope=None,
+        baseline=None,
+        chromatic=None,
+        modes=None,
+        *,
+        include_extras=True,
     ):
         """A copy of the data with calibration gains correlated across channels.
 
         The likelihood marginalizes gains on log |V| per frame analytically (see
-        [`virgil.gains`][virgil.gains]), with these widths unless fitted as the
-        noise terms ``vis_gain_telescope``, ``vis_gain_baseline``,
-        ``vis_gain_chromatic`` or ``vis_gain_modes`` (log-uniform priors on stated
-        bounds). The covariance then depends on the model, so fits use L-BFGS.
+        [`virgil.gains`][virgil.gains]), across ``vis`` and (by default) any
+        ``"corrflux"``, ``"visamp"``, or ``"t3amp"`` blocks in ``extras``, with
+        these widths unless fitted as the noise terms ``vis_gain_telescope``,
+        ``vis_gain_baseline``, ``vis_gain_chromatic`` or ``vis_gain_modes``
+        (log-uniform priors on stated bounds). The covariance then depends on
+        the model, so fits use L-BFGS.
 
         Parameters
         ----------
@@ -1686,13 +1953,26 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         modes : array-like, optional
             Further modes, ``(n_mode, n_sample)``, shapes on log |V| per 1σ; their
             width, 1 by default, scales them.
+        include_extras : bool, optional
+            Propagate the log-|V| modes to any ``"corrflux"``, ``"visamp"``, or
+            ``"t3amp"`` blocks in ``extras`` (default ``True``). Pass ``False`` to
+            restrict gains to ``vis`` (e.g. for
+            [`marginal_loglike`][virgil.epochs.marginal_loglike] when both ``vis``
+            and amplitude extras are present).
 
         Returns
         -------
         OIData
             The data with ``gains`` set (replacing any earlier ones).
         """
-        gains = gain_modes(self, telescope, baseline, chromatic, modes)
+        gains = gain_modes(
+            self,
+            telescope,
+            baseline,
+            chromatic,
+            modes,
+            include_extras=include_extras,
+        )
         return eqx.tree_at(
             lambda d: d.gains, self, gains, is_leaf=lambda x: x is None
         )
@@ -1715,15 +1995,17 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         n_phase = n_vis + self.phi.size
         vis = prediction[:n_vis]
         phi = prediction[n_vis:n_phase]
+        gain_draw = None
         if key is not None:
             vis_key, phi_key = jax.random.split(key)
             if self.gains is not None:
                 gain_key = jax.random.fold_in(key, 2)
-                g = self.gains.sample(gain_key, self.gains.widths)
+                gain_draw = self.gains.sample(gain_key, self.gains.widths)
+                g_vis = gain_draw[:n_vis]
                 vis = {
-                    "v2": vis * np.exp(2.0 * g),
-                    "amp": vis * np.exp(g),
-                }.get(self.vis_mode, vis + g)
+                    "v2": vis * np.exp(2.0 * g_vis),
+                    "amp": vis * np.exp(g_vis),
+                }.get(self.vis_mode, vis + g_vis)
             vis = vis + noise_scale * self.d_vis * jax.random.normal(
                 vis_key, vis.shape
             )
@@ -1744,9 +2026,19 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         if not self.extras:
             return out
         cvis = self._cvis(model)
-        extras, offset = [], n_phase
+        extras, offset, gain_offset = [], n_phase, n_vis
+        has_extra_gains = gain_draw is not None and gain_draw.size > n_vis
         for i, block in enumerate(self.extras):
             n = int(block.data().size)
+            pred_b = prediction[offset : offset + n]
+            coupled_gain = bool(has_extra_gains and block.gain_legs() and n)
+            if coupled_gain:
+                g_b = gain_draw[gain_offset : gain_offset + n]
+                if isinstance(block, FluxSpectrum):
+                    pred_b = pred_b * (1.0 + g_b)
+                else:
+                    pred_b = pred_b * np.exp(g_b)
+                gain_offset += n
             noise = None
             block_key = None
             if key is not None:
@@ -1754,18 +2046,13 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 noise = noise_scale * jax.random.normal(
                     jax.random.fold_in(block_key, 0), block.values.shape
                 )
-            extras.append(
-                block.simulated(
-                    prediction[offset : offset + n],
-                    cvis,
-                    noise,
-                    key=(
-                        None
-                        if block_key is None
-                        else jax.random.fold_in(block_key, 1)
-                    ),
-                )
+            sim_key = (
+                None
+                if block_key is None
+                or (coupled_gain and isinstance(block, FluxSpectrum))
+                else jax.random.fold_in(block_key, 1)
             )
+            extras.append(block.simulated(pred_b, cvis, noise, key=sim_key))
             offset += n
         return eqx.tree_at(lambda d: d.extras, out, tuple(extras))
 
@@ -2027,13 +2314,21 @@ _ZERO_PROJECTED_ERROR = (
 def _good_samples(values, errors, flag, n_samples, name, operator=False):
     """Mask of unflagged, usable samples, or ``None`` if all are good.
 
-    Already-projected data (size not ``n_samples``) are not checked.
+    Already-projected data (size not ``n_samples``) cannot be flagged per
+    sample, so they must be finite with positive finite errors.
     """
     if values.size != n_samples:
         if flag is not None:
             raise ValueError(
                 f"{name}_flag was given, but {name} has {values.size} values "
                 f"for {n_samples} samples (it looks already projected)."
+            )
+        if not onp.all(_valid_samples(values, errors)):
+            raise ValueError(
+                f"{name} has {values.size} values for {n_samples} samples (it "
+                "looks already projected), and some are not finite or have a "
+                "non-positive or non-finite error: projected data cannot be "
+                "flagged, so remove them first."
             )
         return None
     if operator:

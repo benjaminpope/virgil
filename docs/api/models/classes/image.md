@@ -14,6 +14,16 @@ the pixels.
         - from_brightness
         - from_model
 
+::: virgil.models.LinearImage
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members:
+        - brightness
+        - fluxes
+        - total_flux
+        - bounds
+
 ::: virgil.models.circular_support
     options:
       show_root_heading: true

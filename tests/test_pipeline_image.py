@@ -242,7 +242,7 @@ def test_quoted_errors_check():
     assert "all equal in phi" in check.message
     check = _checks.quoted_errors({"vis": zero, "phi": ok})
     assert (
-        check.status == "warn" and "zero or not finite in vis" in check.message
+        check.status == "fail" and "zero or not finite in vis" in check.message
     )
 
 
@@ -269,7 +269,7 @@ def test_edges_check():
     edge = f(["length max"], 0.003)
     assert edge.status == "warn" and "length max" in edge.message
     assert f([], 0.03).status == "warn"
-    assert f([], float("nan")).status == "warn"
+    assert f([], float("nan")).status == "fail"
 
 
 def test_star_check():
@@ -313,6 +313,7 @@ def _reports():
         },
         "combine": {
             "chi2_red_by_observable": kinds,
+            "n_by_observable": {k: 100 for k in kinds},
             "short_baseline_mean": 0.1,
             "short_baseline_error": 0.5,
             "flip_dchi2": 30.0,

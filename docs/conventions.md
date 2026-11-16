@@ -6,13 +6,15 @@ Which way the axes point, what sign a phase has, what a flux means: none of thes
 2. [Baselines and the Fourier sign](#baselines-and-the-fourier-sign)
 3. [Observables](#observables)
 4. [Closure phases with four or more telescopes](#closure-phases-with-four-or-more-telescopes)
-5. [Fluxes](#fluxes)
-6. [Times and frames](#times-and-frames)
-7. [Orbits](#orbits)
-8. [Which priors?](#which-priors)
-9. [Priors and the MAP](#priors-and-the-map)
-10. [Precision](#precision)
-11. [Preconditioning image fits](#preconditioning-image-fits)
+5. [Likelihood normalization](#likelihood-normalization)
+6. [Fluxes](#fluxes)
+7. [Times and frames](#times-and-frames)
+8. [Orbits](#orbits)
+9. [Which priors?](#which-priors)
+10. [Priors and the MAP](#priors-and-the-map)
+11. [Precision](#precision)
+12. [Preconditioning image fits](#preconditioning-image-fits)
+13. [Instrument noise specs](#instrument-noise-specs)
 
 ## Sky coordinates and images
 
@@ -84,7 +86,7 @@ Two further details. If a closure triangle $(a, b, c)$ needs baseline $(a, b)$ b
 | `"amp"` | $\lvert V \rvert$ | visibility amplitude |
 | `"logamp"` | $\ln \lvert V \rvert$ | log-amplitude |
 
-The default, `"auto"`, keeps the data's own form; ask for another and data and errors are converted, propagating errors linearly, $\sigma_f = \lvert f'(V)\rvert\,\sigma_V$. Near zero, where noisy data can be negative, the derivative blows up, so it is evaluated with the data floored at their uncertainty: $V^2$ converted to amplitude gets $\sigma_{V^2} / (2\sqrt{\max(V^2, \sigma_{V^2})})$. Fit low-signal data in the form they were measured in.
+The default, `"auto"`, keeps the data's own form; ask for another and data and errors are converted, propagating errors linearly, $\sigma_f = \lvert f'(V)\rvert\,\sigma_V$. Samples are never floored. Where the conversion is undefined ($V^2$ or $\lvert V\rvert \le 0$ for `"logamp"`, $V^2 \le 0$ for `"amp"` from $V^2$), the sample is flagged out with a counted warning; with an operator (`vis_mat`) it raises. Samples below $\sigma$ are kept at their own value, with a counted warning that the propagated error is poor there: $V^2$ to amplitude gives $\sigma_{V^2} / (2\sqrt{V^2})$, and $V^2$ from amplitude uses the exact $\sigma\sqrt{4V^2 + 2\sigma^2}$ for a Gaussian amplitude. Fit low-signal data in the form they were measured in.
 
 **Phases** are one of:
 
@@ -95,7 +97,7 @@ The default, `"auto"`, keeps the data's own form; ask for another and data and e
   where $\varphi_{ab}$ is the visibility phase on baseline $(a, b)$. The legs are stored as sample indices `i_cps1`, `i_cps2` and `i_cps3`, so the closure phase is `phase[i_cps1] + phase[i_cps2] - phase[i_cps3]`. [`cp_indices`][virgil.oidata.cp_indices] builds the indices from station numbers and [`closure_phases`][virgil.oidata.closure_phases] evaluates the sum, wrapped into $[-\pi, \pi)$. Closure phases cancel telescope phase errors and any shift of the whole source;
 - **absolute phases** (`cp_flag=False`), $\arg V$ of each sample, rarer because they need a phase reference.
 
-Phases are **radians inside virgil**: every `phi` and `d_phi` attribute and the output of `closure_phases`. OIFITS stores degrees, and [`read_oifits`][virgil.oifits.read_oifits] converts on reading (from the column's unit, or assuming degrees if there is none). [`write_oifits`][virgil.oifits.write_oifits] does **not** convert: its tables hold phases and errors in degrees, as OIFITS stores them, so convert `phi` and `d_phi` with `numpy.rad2deg` before writing, or both come back about 57 times too small. A dictionary passed straight to `OIData` takes `phi_unit="deg"` for degrees.
+Phases are **radians inside virgil**: every `phi` and `d_phi` attribute and the output of `closure_phases`. OIFITS stores degrees, and [`read_oifits`][virgil.oifits.read_oifits] converts on reading (from the column's unit, or assuming degrees if there is none). [`write_oifits`][virgil.oifits.write_oifits] converts an `OIData` back to degrees; a dictionary of tables passed to it must already hold phases and errors in degrees, as OIFITS stores them (see [OIFITS files](oifits_files.md#writing-oidata)). A dictionary passed straight to `OIData` takes `phi_unit="deg"` for degrees.
 
 **Wrapping and the likelihood.** A phase is an angle, so a model phase of $\pi - \epsilon$ and a data phase of $-\pi + \epsilon$ agree closely. For unprojected phases the residual $\Delta$ (model minus data) enters the likelihood as the chord
 
@@ -113,7 +115,7 @@ Three telescopes give one triangle and one closure phase per frame and wavelengt
 
 virgil handles this by default. For each frame and wavelength it keeps only the independent combinations of triangles and whitens them with the covariance of Kammerer et al. (2020, A&A 644, A110). That assumes equal noise on every baseline phase, giving a correlation of $\pm 1/3$ between triangles that share a baseline (signed by whether it enters both in the same sense), with each triangle's reported error on the diagonal. When errors within a group differ a lot, the $\chi^2$ is slightly off its nominal distribution; the docstring of `virgil._closure` gives the size of the effect.
 
-Use [`n_independent`][virgil.oidata.OIData.n_independent], the number of observables that remain, for degrees of freedom. [`whitened_residuals`][virgil.likelihood.whitened_residuals] returns one residual per independent combination (not the original triangles), then penalty residuals. The chord $2\sin(\Delta/2)$ won't do here: it changes sign when $\Delta$ changes by $2\pi$, which is harmless in one square but makes the $\chi^2$ of a correlated combination jump whenever a residual crosses $\pm\pi$, stalling gradient fits of high-S/N four-telescope data. Instead the smooth, periodic sines $s_i=\sin\Delta_i$ are whitened, and each closure phase adds an uncorrelated penalty residual $q_i/\sigma_i = 2\sin^2(\Delta_i/2)/\sigma_i$. For small residuals $\chi^2 = \Delta^\mathsf{T}C^{-1}\Delta$ up to $O(\Delta^3)$, the correlated Gaussian. At $\Delta_i=\pi$ the sines vanish, a false minimum that the penalty, $(2/\sigma_i)^2$, removes, so the $\chi^2$ is smooth everywhere. The penalty rows carry no normalization. So `whitened_residuals` has [`n_residuals`][virgil.oidata.OIData.n_residuals] entries, `n_independent` plus one per closure phase. For the Gaussian-process image prior that goes with these likelihoods, see [Gaussian processes and information field theory](gp_and_ift.md).
+Use [`n_independent`][virgil.oidata.OIData.n_independent], the number of observables that remain, for degrees of freedom. [`whitened_residuals`][virgil.likelihood.whitened_residuals] returns one residual per independent combination (not the original triangles), then penalty residuals. The chord $2\sin(\Delta/2)$ won't do here: it changes sign when $\Delta$ changes by $2\pi$, which is harmless in one square but makes the $\chi^2$ of a correlated combination jump whenever a residual crosses $\pm\pi$, stalling gradient fits of high-S/N four-telescope data. Instead the smooth, periodic sines $s_i=\sin\Delta_i$ are whitened, and each closure phase adds an uncorrelated penalty residual $q_i/\sigma_i = 2\sin^2(\Delta_i/2)/\sigma_i$ (or $2\sin^2(\Delta_i/2)/\sqrt{\sigma_i^2 + \sigma_{\text{off},i}^2}$ at the nominal widths when closure-phase offsets are marginalized via [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets], unless `scale_penalty=False`). For small residuals $\chi^2 = \Delta^\mathsf{T}C^{-1}\Delta$ up to $O(\Delta^3)$, the correlated Gaussian. At $\Delta_i=\pi$ the sines vanish, a false minimum that the penalty removes, so the $\chi^2$ is smooth everywhere. The penalty rows carry no normalization. So `whitened_residuals` has [`n_residuals`][virgil.oidata.OIData.n_residuals] entries, `n_independent` plus one per closure phase. For the Gaussian-process image prior that goes with these likelihoods, see [Gaussian processes and information field theory](gp_and_ift.md).
 
 ## Likelihood normalization
 
@@ -123,7 +125,7 @@ Use [`n_independent`][virgil.oidata.OIData.n_independent], the number of observa
 - An uncorrelated unprojected phase is von Mises with $\kappa = 1/\sigma^2$ and the exact normalizer $-\log 2\pi - \log i_{0e}(\kappa)$: Gaussian for $\sigma \ll 1$, and still normalized on the circle when $\sigma$ is large (a fitted `phi_error`, say). virgil returns it as the effective error $\sqrt{2\pi}\,i_{0e}(\kappa)$.
 - Correlated closure phases keep the Gaussian normalization, their small-$\sigma$ limit, since a correlated circular density has no closed-form normalizer. Their periodic penalty rows carry the effective error $1/\sqrt{2\pi}$ and add nothing; the whitened rows carry effective errors whose log-sum is $\tfrac12\log$ of the covariance's pseudo-determinant.
 - With gains or closure-phase offsets, the visibility (or phase) covariance is whitened with the gains marginalized, and the normalization includes $\tfrac12\log\det$ of that model-dependent covariance. The widths are the error terms `vis_gain_<group>` and `phi_offset_<group>`; see [`virgil.gains`][virgil.gains]. With three telescopes, closure-phase offsets change the closure-phase likelihood from von Mises to whitened sines with a periodic penalty, a normalization that differs by about $\log(1+\sigma^2/8)$ per closure phase, so evidences with and without offsets are not comparable.
-- Extra observables follow the phases, each block whitened on its own (see [`virgil.observables`][virgil.observables]).
+- Extra observables follow the phases, each block whitened on its own unless marginalized jointly with `data.gains` (`"visamp"` and `"t3amp"`, unless `include_extras=False`; see [`virgil.observables`][virgil.observables]).
 
 ## Fluxes
 
@@ -219,36 +221,11 @@ Prefer numpyro distributions: `dist.LogUniform(low, high)` and `dist.Normal(mean
 
 ### Angle priors without a wrap {#angle-vectors}
 
-A prior on an angle $\theta$ with support on an interval, such as `Uniform(0, 360)`, numpyro's `VonMises` or [`AxialVonMises`][virgil.orbits.AxialVonMises], reaches samplers and [`fit`][virgil.fitting.fit] through a bijection onto the real line, so a posterior that straddles the end of the interval meets a wall. [`AngleVector`][virgil.angles.AngleVector] removes the wall. It samples a vector $v = r(\cos\theta, \sin\theta)$ at the site `"<path>_vec"`, and the model receives $\theta = \operatorname{atan2}(v_2, v_1)$ in degrees in $[0°, 360°)$, which [`numpyro_model`][virgil.likelihood.numpyro_model] records and `fit` reports under `"<path>"`.
-
-The density of $v$ is
-
-$$p(v) = \frac{e^{-(r-1)^2 / 2s^2}}{Z_s}\, p(\theta), \qquad Z_s = \int_0^\infty r\, e^{-(r-1)^2/2s^2}\,dr,$$
-
-so $r$ and $\theta$ are independent and $\theta$ has exactly the density $p(\theta)$ (per radian): uniform, $1/2\pi$, by default; a von Mises, $\exp[\kappa(\cos(\theta - \mu) - 1)] / (2\pi\, \mathrm{i0e}(\kappa))$, given `mean` and `kappa`; or, with `axial=True`, the von Mises of $2\theta$, so that $\theta$ and $\theta + 180°$ are equally likely. The radius is a nuisance with a ring prior whose mode is the unit circle, which keeps a maximum a posteriori fit away from the origin, where $\theta$ is undefined. The ring width $s$ (`ring_width`, default 0.25) does not change the prior on $\theta$.
-
-Every term has a least-squares form for Levenberg–Marquardt and [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass], and the density is normalized in $\mathbb{R}^2$, so evidences stay normalized. The ring's residual is $(r - 1)/s$. A von Mises enters as a chord, $\sqrt{\kappa}\,(\hat v - \hat m)$ with $\hat v = v / r$ and $\hat m = (\cos\mu, \sin\mu)$; half its square is $\kappa(1 - \cos(\theta - \mu))$, the von Mises exponent, just as virgil's phase residuals $2\sin(\Delta/2)/\sigma$ are chords with $\kappa = 1/\sigma^2$ (see [`whitened_residuals`][virgil.likelihood.whitened_residuals]). The axial chord is the same on the doubled direction, $(\cos 2\theta, \sin 2\theta) = (x^2 - y^2, 2xy)/r^2$.
-
-The construction follows Octofitter's `UniformCircular` (Thompson et al. 2023, AJ 166, 164) and exoplanet's `Angle` (Foreman-Mackey et al. 2021, JOSS 6, 3285), which sample $v \sim N(0, I)$ and so peak at the origin; the ring and chord priors are virgil's own.
+A prior on an angle with support on an interval, such as `Uniform(0, 360)`, numpyro's `VonMises` or [`AxialVonMises`][virgil.orbits.AxialVonMises], reaches samplers and [`fit`][virgil.fitting.fit] through a bijection onto the real line, so a posterior that straddles the end of the interval meets a wall. [`AngleVector`][virgil.angles.AngleVector] samples a vector $v = r(\cos\theta, \sin\theta)$ instead and gives the model $\theta$ in degrees in $[0°, 360°)$; its density, least-squares form and credit are on the [`virgil.angles`](api/angles.md) page.
 
 ### Azimuthal harmonics {#azimuthal-harmonics}
 
-At each radius, every azimuthal profile of a [`MultipoleDisk`][virgil.models.MultipoleDisk] is a real function of the azimuth $\theta$ (in the disk plane, from the projected major axis towards `pa + 90`) with the Fourier series
-
-$$
-\frac{I(\theta)}{I_0} = \sum_{m=-M}^{M} I_m e^{im\theta}, \qquad I_0 = 1, \quad I_{-m} = \bar I_m,
-$$
-
-whose *image harmonics* $I_m$ are complex, $m = 0 \dots M$, normalized to the azimuthal mean. Every form maps to and from them with [`to_image_harmonics`][virgil.harmonics.to_image_harmonics] and [`from_image_harmonics`][virgil.harmonics.from_image_harmonics] (or `Harmonics.convert`):
-
-- **linear**: $1 + \sum_m c_m \cos m\theta + s_m \sin m\theta$, so $c_m = 2\,\mathrm{Re}\,I_m$ and $s_m = -2\,\mathrm{Im}\,I_m$ (exact);
-- **positive**: $|h(e^{i\theta})|^2 / \sum_j |h_j|^2$ with $h(z) = 1 + h_1 z + \dots + h_M z^M$, whose roots all lie outside the unit circle. It is built from complex reflection coefficients $k_j$ with $|k_j| < 1$ by the Levinson step-up recursion $h^{(j)}_i = h^{(j-1)}_i + k_j \overline{h^{(j-1)}_{j-i}}$, with $k = w \tanh|w| / |w|$ from unconstrained latents $w_j \in \mathbb{C}$. Then $I_m = \sum_j h_{j+m} \bar h_j / \sum_j |h_j|^2$ (exact); the inverse is a spectral factorization (`from_image_harmonics`);
-- **von Mises**, $\exp[\kappa\cos(\theta - \theta_0)]$, truncated at the model's degree;
-- the legacy amplitude and azimuth pairs `az_amps`/`az_pas` of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] and [`TruncatedCone`][virgil.models.TruncatedCone].
-
-Use the conversions to report models in one convention, warm-start a positive-form fit from a linear one, or compare models. Report image harmonics, not the positive form's internal reflection coefficients.
-
-References: Dumitrescu 2007, *Positive Trigonometric Polynomials and Signal Processing Applications* (Springer, doi:10.1007/978-1-4020-5125-8), for the Fejér–Riesz theorem, spectral factorization and the Schur–Levinson recursion; Barndorff-Nielsen & Schou 1973, J. Multivariate Anal. 3, 408 (doi:10.1016/0047-259X(73)90030-4), for the unconstrained parametrization of a minimum-phase polynomial by reflection (partial autocorrelation) coefficients, here with a complex tanh map.
+Report the image harmonics $I_m$ of a [`MultipoleDisk`][virgil.models.MultipoleDisk], not the positive form's internal reflection coefficients. The legacy `az_amps`/`az_pas` of `ModulatedGaussianRim` and `TruncatedCone` are amplitudes and in-plane angles, not sky position angles; the Fourier series, the four forms and the conversions between them are on the [`virgil.harmonics`](api/harmonics.md) page.
 
 ### Hierarchical scales {#hierarchical-scales}
 
@@ -303,3 +280,33 @@ result.info["precondition_rounds"]
 
 !!! warning "float32"
     At weak weights a float32 fit can still stall: the line search meets the noise of the float32 model evaluation, which rescaling does not remove. Use `dtype="float64"` (the default) for a sweep that reaches small weights.
+
+## Instrument noise specs
+
+An instrument package (such as `virgil-vlti`) measures departures from independent quoted errors and emits a declarative `virgil.noise_spec/1` record: a dictionary, a JSON file, or an object with `to_noise_spec() -> dict`. [`virgil.noise_spec`](api/noise_spec.md) (`load_noise_spec`, `validate_noise_spec`, `apply_noise_spec`, `instrument_match`; provisional, see [stability](stability.md)) validates and applies it to an [`OIData`][virgil.oidata.OIData] without importing any instrument code.
+
+```json
+{
+  "schema": "virgil.noise_spec/1",
+  "instrument": "PIONIER",
+  "white": {"vis": 0.32, "phi": 0.65},
+  "gains": {"telescope": 0.0055, "baseline": 0.0045, "chromatic": null},
+  "closure_offsets": {"triangle": 0.0036, "baseline": null},
+  "common_mode": {"visphi": null},
+  "provenance": {"run": "pair_test:11_pairs", "date": "2026-10-04", "bound": "lower"}
+}
+```
+
+Every unit conversion happens once, in the emitter:
+
+| Field | Units and allowed values | Applied by `apply_noise_spec` |
+| --- | --- | --- |
+| `schema` | `"virgil.noise_spec/1"` (major-versioned; unknown keys outside `provenance` raise `ValueError` so newer terms are never silently dropped) | checked by `validate_noise_spec` |
+| `instrument` | non-empty string or `null` | compared by case-insensitive delimiter-bounded prefix against `insname` (passed via `insname=` or carried on `data` when recorded; `UserWarning` on mismatch, never an error) |
+| `white` | finite scales $> 0$ on the quoted uncertainties, keyed by [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale] names (`"vis"`, `"phi"`, `"flux"`, `"nflux"`, `"corrflux"`, `"visamp"`, `"t3amp"`, `"visphi"`); missing keys mean `1` | `data.with_error_scale(...)` on the observables present in `data` |
+| `gains` | $1\sigma$ widths on $\ln \lvert V \rvert$ (`telescope`, `baseline`, `chromatic`), `null` or in $[0, 1]$ (half of a fractional $V^2$ gain width; warns above `0.1`) | [`data.with_gains(...)`][virgil.oidata.OIData.with_gains] when any width is positive and amplitude/visibility observables are present in `data` |
+| `closure_offsets` | $1\sigma$ widths in **radians** (`triangle`, `baseline`), `null` or in $[0, 0.3]$ rad (warns above `0.02` rad) | [`data.with_closure_offsets(...)`][virgil.oidata.OIData.with_closure_offsets] when any width is positive and closure phases are present in `data` |
+| `common_mode` | optional `{"visphi": width}` in **radians**, `null` or in $[0, 0.5]$ rad (warns above `0.05` rad) | validated in `/1`; `OIData` application on `"visphi"` currently raises `NotImplementedError` pending `DifferentialPhase` mode marginalization |
+| `provenance` | free-form mapping requiring non-empty `"run"` and `"date"` strings (and optional `"bound"` in `("lower", "estimate")` or `null`) | carried verbatim |
+
+`apply_noise_spec` refuses upfront with `ValueError` if `data` already carries marginalized `gains`, `phase_offsets`, or differential-phase nuisance modes (so a white-only spec never rescales `d_vis` underneath existing `gains`), then applies `white` multiplicatively followed by `gains`, `closure_offsets` and `common_mode` (repeated white-only specs on nuisance-free data compound multiplicatively, as [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale] leaves no marker on `OIData`).

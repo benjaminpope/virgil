@@ -18,11 +18,13 @@ Run VI when the posterior is *not* Gaussian in the sampler's coordinates: a curv
 | `"mvn"` | dense Gaussian | ≈ Laplace; a check, or when the flow is too costly |
 | `"laplace"` | numpyro's `AutoLaplaceApproximation` | the MAP and Hessian, found by numpyro |
 
-On small test posteriors (a banana, a curved ridge, and a scale with a tail down to its prior bound), the BNAF guide came closest to NUTS's means, widths and 5–95% quantiles. On the banana the Gaussian guides missed the curvature (half the width in one parameter, a third of the shift in the other's mean), and on the bounded scale they missed the tail. No guide reproduced the heavy tail along the ridge, where NUTS's width was about 1.5 times the guides'. A flow's cost grows with the square of the number of parameters, so for an image of thousands of pixels use [`laplace_samples`][virgil.imaging.laplace_samples] (see [Sampling the posterior](imaging_sampling.md)) or a diagonal guide.
+In our tests, on small test posteriors (a banana, a curved ridge, and a scale with a tail down to its prior bound), the BNAF guide came closest to NUTS's means, widths and 5–95% quantiles. On the banana the Gaussian guides missed the curvature (half the width in one parameter, a third of the shift in the other's mean), and on the bounded scale they missed the tail. No guide reproduced the heavy tail along the ridge, where NUTS's width was about 1.5 times the guides'. A flow's cost grows with the square of the number of parameters, so for an image of thousands of pixels use [`laplace_samples`][virgil.imaging.laplace_samples] (see [Sampling the posterior](imaging_sampling.md)) or a diagonal guide.
 
 Every guide starts at the Laplace approximation, centred on a [`FitResult`][virgil.fitting.FitResult] passed as `start`, with the Gauss–Newton covariance there as its width. That covariance includes fitted error terms in `noise` (each with its own width), data with gains and any elementwise prior, but not regularizers or fixed error terms in `**options`; with regularizers (as for an image) the guide starts at width `init_scale` instead. The dense guides (`"bnaf"`, `"iaf"`, `"mvn"`) keep an n × n Cholesky factor and `"laplace"` an n × n Hessian, so all four raise a `ValueError` above 4096 coordinates; use [`laplace_samples`][virgil.imaging.laplace_samples] or a diagonal guide such as `autoguide.AutoNormal` there. The guide learns its parameters in units of those widths, so one step size suits a position known to a milliarcsecond and a flux known to a few per cent. With `flat_coordinates=True` (off by default, as for `numpyro_model`; see [Conventions](conventions.md)) the guide works in the priors' flat coordinates, as `fit` does, and returns draws in the model's own parameters under the site names NUTS uses.
 
 ## A binary
+
+This block is not executed when the page is built, so it shows no output.
 
 ```python
 import jax
@@ -72,7 +74,7 @@ for name in priors:
 
 ## Checking the result
 
-- **Convergence.** `vi.converged` is `True` when the loss (the negative ELBO) has stopped falling over the last tenth of the steps; `vi.losses` holds its history. A plateau is necessary, not sufficient.
-- **PSIS k̂.** `vi.info["khat"]` is the Pareto k̂ of the importance weights p/q of the guide's draws. Below about 0.7 the guide covers the posterior well enough to reweight its draws towards it; above that it misses posterior mass.
+- **Convergence.** `vi.converged` is `True` when no fall of the loss between the last two windows (a tenth of the steps each) is detected at 2σ and its upper 2σ bound is under one nat; `vi.losses` holds its history. A noisy loss cannot pass, so raise `steps`, `num_particles` or `window` if it warns on a plateau. A plateau is necessary, not sufficient.
+- **PSIS k̂.** `vi.info["khat"]` is the Pareto k̂ of the importance weights p/q of the guide's draws. Below about 0.7 the guide covers the posterior well enough to reweight its draws towards it; above that it misses posterior mass, and `variational` warns.
 - **One mode.** Every guide here covers a single mode. A multimodal posterior (an orbit with Ω/ω flips or period aliases, an image with a mirrored solution) needs several starts, for example the distinct fits of [`OrbitStart.chain_values`][virgil.epochs.OrbitStart.chain_values]. Compare their ELBOs, or reweight their draws and check k̂.
 - **Precision.** SVI runs in float64 by default, as `fit` does (`dtype="float32"` also works).

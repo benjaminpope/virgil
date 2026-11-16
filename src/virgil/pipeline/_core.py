@@ -17,7 +17,7 @@ from typing import Callable
 
 import numpy as onp
 
-from .._deprecate import external_stacklevel
+from .._deprecate import CheckWarning, external_stacklevel
 from . import _io
 from ._checks import stage_warning_checks, worst_status
 
@@ -65,7 +65,11 @@ class Stage:
 
 
 def _record_warnings(stage, caught):
-    """Caught warnings as ``{"stage", "category", "message"}`` dicts."""
+    """Caught warnings as ``{"stage", "category", "message"}`` dicts.
+
+    A `CheckWarning` also gives ``check`` and ``counts``, which the checks
+    read in place of the message.
+    """
     seen, out = set(), []
     for w in caught:
         # ResourceWarning reports whichever object the garbage collector
@@ -76,13 +80,14 @@ def _record_warnings(stage, caught):
         if message in seen:
             continue
         seen.add(message)
-        out.append(
-            {
-                "stage": stage,
-                "category": w.category.__name__,
-                "message": message,
-            }
-        )
+        record = {
+            "stage": stage,
+            "category": w.category.__name__,
+            "message": message,
+        }
+        if isinstance(w.message, CheckWarning):
+            record.update(check=w.message.check, counts=w.message.counts)
+        out.append(record)
     return out
 
 

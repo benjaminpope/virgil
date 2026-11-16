@@ -414,3 +414,79 @@ def test_the_dense_guides_refuse_more_coordinates_than_the_limit(monkeypatch):
         psis=False,
     )
     assert result.samples["dra"].shape == (10,)
+
+
+def test_the_settling_rule_passes_only_in_a_band_of_noise():
+    """585#9: ``drop <= 2 se`` alone passed a run the more, the noisier it was.
+
+    Now a run passes only for drop/2 <= se <= (1 - drop)/2 (no measured
+    fall, and the upper 2σ bound on the fall under one nat): never when
+    2 se > 1, and not a measured fall (a 0.3-nat drop at 21 se, which the
+    #665 rule passed). The rule is not monotone in the noise: a drop of 0.3
+    passes at se ≈ 0.21 but not at se ≈ 0.014.
+    """
+    from virgil.svi import _loss_settled
+
+    window = 100
+    rng = onp.random.default_rng(0)
+    z = rng.standard_normal(2 * window)
+    z[:window] -= z[:window].mean()
+    z[window:] -= z[window:].mean()
+    z /= z.std()  # unit variance in the pooled draws; se = sqrt(2/window)·σ
+
+    def losses(sigma, drop):
+        out = sigma * z
+        out[:window] += drop
+        return out
+
+    assert _loss_settled(losses(0.1, 0.02), window)
+    assert not _loss_settled(losses(0.1, 0.3), window)  # measured, 21 se
+    assert _loss_settled(losses(1.5, 0.3), window)  # inside the band
+    assert not _loss_settled(losses(10.0, 0.02), window)  # 2 se > 1
+    assert not _loss_settled(losses(10.0, 0.0), window)
+    assert not _loss_settled(losses(0.1, 3.0), window)  # a real fall
+
+
+def test_a_large_khat_warns_and_is_in_info(monkeypatch):
+    """585#8: the PSIS diagnostic's warnings were silenced, and a k̂ above
+    0.7 passed without a word."""
+    importance = pytest.importorskip(
+        "numpyro.infer.importance"
+    )  # numpyro >= 0.20
+
+    monkeypatch.setattr(importance, "psis_diagnostic", lambda *a, **k: 0.9)
+    with pytest.warns(RuntimeWarning, match="Pareto k̂"):
+        vi = variational(
+            _no_model,
+            PRIORS,
+            (),
+            likelihoods=[_GaussianInZ(True)],
+            guide="mvn",
+            steps=20,
+            num_samples=50,
+        )
+    assert vi.info["khat"] == pytest.approx(0.9)
+
+
+def test_the_diagnostics_own_warnings_are_not_suppressed(monkeypatch):
+    import warnings
+
+    importance = pytest.importorskip(
+        "numpyro.infer.importance"
+    )  # numpyro >= 0.20
+
+    def noisy(*args, **kwargs):
+        warnings.warn("tail too short for the GPD fit", UserWarning)
+        return 0.2
+
+    monkeypatch.setattr(importance, "psis_diagnostic", noisy)
+    with pytest.warns(UserWarning, match="tail too short"):
+        variational(
+            _no_model,
+            PRIORS,
+            (),
+            likelihoods=[_GaussianInZ(True)],
+            guide="mvn",
+            steps=20,
+            num_samples=50,
+        )

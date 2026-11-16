@@ -42,7 +42,7 @@ from .grid_fit import (
 )
 from .likelihood import build_model, loglike, whitened_residuals
 from .limits import nsigma
-from ._deprecate import external_stacklevel
+from ._deprecate import CheckWarning, external_stacklevel
 
 
 __all__ = [
@@ -143,11 +143,14 @@ def detection_statistics(
         )
     elif float(steps) < MIN_PEAK_STEPS:
         warnings.warn(
-            "detection_statistics(): the flux axis does not resolve the "
-            f"likelihood peak ({float(steps):.2g} steps across its FWHM, "
-            f"under {MIN_PEAK_STEPS:g}), so log_bayes_factor is "
-            "inaccurate; refine the flux axis near the best flux.",
-            RuntimeWarning,
+            CheckWarning(
+                "detection_statistics(): the flux axis does not resolve the "
+                f"likelihood peak ({float(steps):.2g} steps across its FWHM, "
+                f"under {MIN_PEAK_STEPS:g}), so log_bayes_factor is "
+                "inaccurate; refine the flux axis near the best flux.",
+                check="flux_axis_resolution",
+                steps=float(steps),
+            ),
             stacklevel=external_stacklevel(),
         )
     return stats
@@ -192,12 +195,21 @@ def _resolve_keys(grid, flux_param):
 
 @eqx.filter_jit
 def _detection_statistics(
-    data, model, grid, params, coord_keys, flux_key, batch_size
+    data,
+    model,
+    grid,
+    params,
+    coord_keys,
+    flux_key,
+    batch_size,
+    uncertainty=True,
 ):
     """Jitted implementation of :func:`detection_statistics`.
 
     Returns ``(stats, converged)``, where ``converged`` is the flux
-    optimizer's convergence at every position.
+    optimizer's convergence at every position. Without ``uncertainty`` the
+    Laplace flux-uncertainty pass is skipped and ``max_snr`` and
+    ``flux_peak_steps`` are NaN; the other statistics are unchanged.
     """
     loglike_im = _likelihood_grid(data, model, grid, params, batch_size)
     grid_flux, grid_loglike = _best_grid_flux(
@@ -232,18 +244,22 @@ def _detection_statistics(
         log_ratio + _log_prior_weights(loglike_im.shape, log_ratio.dtype)
     )
 
-    sigma = _laplace_flux_uncertainty_grid(
-        opt_flux,
-        data,
-        model,
-        grid,
-        params,
-        coord_keys,
-        flux_key,
-        batch_size,
-    )
-    # The unconstrained best flux: a negative flux gives a negative SNR.
-    max_snr = np.nanmax(opt_flux / sigma)
+    if uncertainty:
+        sigma = _laplace_flux_uncertainty_grid(
+            opt_flux,
+            data,
+            model,
+            grid,
+            params,
+            coord_keys,
+            flux_key,
+            batch_size,
+        )
+        # The unconstrained best flux: a negative flux gives a negative SNR.
+        max_snr = np.nanmax(opt_flux / sigma)
+    else:
+        sigma = np.full(opt_flux.shape, np.nan, opt_flux.dtype)
+        max_snr = np.asarray(np.nan, opt_flux.dtype)
 
     stats = {
         "delta_chi2": delta_chi2,
@@ -400,12 +416,7 @@ def gaussian_null(null_scene, template, *, error_scale=1.0):
     >>> simulate = gaussian_null(BinaryModelCartesian(0, 0, 0), template)  # doctest: +SKIP
     >>> data = simulate(jax.random.PRNGKey(0))  # doctest: +SKIP
     """
-    error_scale = float(error_scale)
-    if not (onp.isfinite(error_scale) and error_scale >= 0.0):
-        raise ValueError(
-            f"error_scale must be finite and non-negative, not {error_scale}."
-        )
-    return _GaussianNull(template, null_scene, error_scale)
+    return _GaussianNull(template, null_scene, float(error_scale))
 
 
 @old_order("data", "null_scene", data="data")
@@ -594,6 +605,7 @@ def injection_recovery(
     draw_batch=1,
     chunk_size=None,
     batch_size=None,
+    uncertainty=True,
     progress=True,
 ):
     """Detection statistics of simulated null and injected observations.
@@ -632,6 +644,10 @@ def injection_recovery(
     draw_batch, chunk_size, batch_size : int, optional
         Draws evaluated together in ``jax.lax.map``; draws per kernel call
         (default min(64, draws)); grid points per search.
+    uncertainty : bool, optional
+        ``False`` skips the Laplace flux-uncertainty pass (about a third of
+        the cost): ``max_snr`` and ``flux_peak_steps`` are then NaN, and
+        every other statistic is unchanged.
     progress : bool, optional
         Show a ``tqdm`` bar.
 
@@ -648,38 +664,9 @@ def injection_recovery(
     ... )  # doctest: +SKIP
     """
     params, coord_keys, flux_key = _resolve_keys(grid, flux_param)
-    # short names of the grid keys (their last dotted part); the outputs are
-    # stored under ``_STORED``, ``best_<name>`` and (for the injected values)
-    # ``<name>``, all of which must be distinct, or one would overwrite another
-    names = {k: k.rsplit(".", 1)[-1] for k in params}
-    names[flux_key] = "flux"
-    short = list(names.values())
-    fields = list(_STORED) + short + [f"best_{n}" for n in short]
-    if len(set(fields)) != len(fields):
-        raise ValueError(
-            f"The grid keys {list(params)} have last parts {short}, which "
-            "repeat or clash with the stored outputs (statistics, "
-            "diagnostics and best_<name>); rename them."
-        )
-    n_null = int(n_null)
-    if n_null < 0:
-        raise ValueError(f"n_null must be non-negative; got {n_null}.")
-    draw_batch = int(draw_batch)
-    if draw_batch < 1:
-        raise ValueError(f"draw_batch must be positive; got {draw_batch}.")
-    if match_radius is not None:
-        match_radius = float(match_radius)
-        if not (onp.isfinite(match_radius) and match_radius >= 0.0):
-            raise ValueError(
-                "match_radius must be finite and non-negative, not "
-                f"{match_radius}."
-            )
-        short = set(names.values())
-        if not any(set(pair) <= short for pair in _POSITION_KEYS):
-            raise ValueError(
-                "match_radius needs coordinate keys ending in 'dra' and "
-                f"'ddec', or 'sep' and 'pa'; the grid has {list(coord_keys)}."
-            )
+    names, n_null, draw_batch, match_radius = _check_arguments(
+        params, coord_keys, flux_key, n_null, draw_batch, match_radius
+    )
     simulator = _simulator(noise, template, null_scene)
     _check_same_prediction(
         template,
@@ -688,24 +675,7 @@ def injection_recovery(
         "the model at zero companion flux",
         "null_scene",
     )
-    # ``(n, len(params))`` float32 injection values in ``params`` order
-    if injections is None:
-        inj_values = onp.zeros((0, len(params)), dtype=onp.float32)
-    else:
-        columns = {
-            k: onp.asarray(
-                _lookup(injections, k, names[k]), dtype=float
-            ).ravel()
-            for k in params
-        }
-        if len({c.size for c in columns.values()}) != 1:
-            raise ValueError("The injection arrays must all have one length.")
-        flux = [c for k, c in columns.items() if names[k] == "flux"][0]
-        if onp.any(flux < 0.0):
-            raise ValueError("Injected fluxes must be non-negative.")
-        inj_values = onp.stack([columns[k] for k in params], axis=1).astype(
-            onp.float32
-        )
+    inj_values = _injection_values(injections, params, names)
     n_inj = inj_values.shape[0]
     draw_batch, grid_batch = _batch_sizes(batch_size, template, draw_batch)
     if chunk_size is None:
@@ -727,6 +697,7 @@ def injection_recovery(
         "flux_key": flux_key,
         "batch_size": grid_batch,
         "draw_batch": draw_batch if draw_batch > 1 else None,
+        "uncertainty": bool(uncertainty),
     }
     bar = None
     if progress and n_null + n_inj > 0:
@@ -741,42 +712,22 @@ def injection_recovery(
         except ImportError:
             pass
 
-    def run(stream, values):
-        # Stream 0 is the null, 1 the injections; draw i folds in i, so
-        # results do not depend on chunking.
-        base_key = jax.random.fold_in(base, stream)
-        out = []
-        for start in range(0, values.shape[0], chunk):
-            part = values[start : start + chunk]
-            # An explicit chunk_size keeps one compiled shape (padding the
-            # last chunk); by default the last chunk is compiled at its own
-            # length rather than padded with discarded draws.
-            width = chunk if chunk_size is not None else part.shape[0]
-            padded = onp.zeros((width, len(params)), dtype=onp.float32)
-            padded[: part.shape[0]] = part
-            stats = _simulated_statistics(
-                simulator,
-                model,
-                grid,
-                base_key,
-                onp.arange(start, start + width, dtype=onp.int32),
-                padded,
-                **static,
-            )
-            out.append(
-                {k: onp.asarray(v)[: part.shape[0]] for k, v in stats.items()}
-            )
-            if bar is not None:
-                bar.update(1)
-        # per-chunk statistics concatenated; best positions as best_<name>
-        gathered = {stat: _concat([c[stat] for c in out]) for stat in _STORED}
-        for k in params:
-            gathered[f"best_{names[k]}"] = _concat([c[k] for c in out])
-        return gathered
-
     try:
-        null = run(0, onp.zeros((n_null, len(params)), dtype=onp.float32))
-        injected = run(1, inj_values)
+        args = (
+            simulator,
+            model,
+            grid,
+            base,
+            chunk,
+            chunk_size,
+            static,
+            names,
+            bar,
+        )
+        null = _run_stream(
+            0, onp.zeros((n_null, len(params)), dtype=onp.float32), *args
+        )
+        injected = _run_stream(1, inj_values, *args)
     finally:
         if bar is not None:
             bar.close()
@@ -813,9 +764,115 @@ def injection_recovery(
         "match_radius": match_radius,
         "n_null": n_null,
         "n_injected": n_inj,
+        "uncertainty": bool(uncertainty),
         "seeds": [seed],
     }
     return DetectionMC(null=null, injected=injected, meta=meta)
+
+
+# deliberate: argument-checking stage of injection_recovery, split out to keep it under the 120-line gate
+def _check_arguments(
+    params, coord_keys, flux_key, n_null, draw_batch, match_radius
+):
+    """Validate the grid names and counts; return ``names, n_null, draw_batch, match_radius``."""
+    # short names of the grid keys (their last dotted part); the outputs are
+    # stored under ``_STORED``, ``best_<name>`` and (for the injected values)
+    # ``<name>``, all of which must be distinct, or one would overwrite another
+    names = {k: k.rsplit(".", 1)[-1] for k in params}
+    names[flux_key] = "flux"
+    short = list(names.values())
+    fields = list(_STORED) + short + [f"best_{n}" for n in short]
+    if len(set(fields)) != len(fields):
+        raise ValueError(
+            f"The grid keys {list(params)} have last parts {short}, which "
+            "repeat or clash with the stored outputs (statistics, "
+            "diagnostics and best_<name>); rename them."
+        )
+    n_null = int(n_null)
+    if n_null < 0:
+        raise ValueError(f"n_null must be non-negative; got {n_null}.")
+    draw_batch = int(draw_batch)
+    if draw_batch < 1:
+        raise ValueError(f"draw_batch must be positive; got {draw_batch}.")
+    if match_radius is not None:
+        match_radius = float(match_radius)
+        if not (onp.isfinite(match_radius) and match_radius >= 0.0):
+            raise ValueError(
+                "match_radius must be finite and non-negative, not "
+                f"{match_radius}."
+            )
+        short = set(names.values())
+        if not any(set(pair) <= short for pair in _POSITION_KEYS):
+            raise ValueError(
+                "match_radius needs coordinate keys ending in 'dra' and "
+                f"'ddec', or 'sep' and 'pa'; the grid has {list(coord_keys)}."
+            )
+    return names, n_null, draw_batch, match_radius
+
+
+# deliberate: injection-parsing stage of injection_recovery, split out to keep it under the 120-line gate
+def _injection_values(injections, params, names):
+    """``(n, len(params))`` float32 injection values in ``params`` order, validated."""
+    if injections is None:
+        return onp.zeros((0, len(params)), dtype=onp.float32)
+    columns = {
+        k: onp.asarray(_lookup(injections, k, names[k]), dtype=float).ravel()
+        for k in params
+    }
+    if len({c.size for c in columns.values()}) != 1:
+        raise ValueError("The injection arrays must all have one length.")
+    flux = [c for k, c in columns.items() if names[k] == "flux"][0]
+    if onp.any(flux < 0.0):
+        raise ValueError("Injected fluxes must be non-negative.")
+    return onp.stack([columns[k] for k in params], axis=1).astype(onp.float32)
+
+
+def _run_stream(
+    stream,
+    values,
+    simulator,
+    model,
+    grid,
+    base,
+    chunk,
+    chunk_size,
+    static,
+    names,
+    bar,
+):
+    """Statistics of every row of ``values`` (one injection each), in chunks of ``chunk``."""
+    params = static["params"]
+    # Stream 0 is the null, 1 the injections; draw i folds in i, so
+    # results do not depend on chunking.
+    base_key = jax.random.fold_in(base, stream)
+    out = []
+    for start in range(0, values.shape[0], chunk):
+        part = values[start : start + chunk]
+        # An explicit chunk_size keeps one compiled shape (padding the
+        # last chunk); by default the last chunk is compiled at its own
+        # length rather than padded with discarded draws.
+        width = chunk if chunk_size is not None else part.shape[0]
+        padded = onp.zeros((width, len(params)), dtype=onp.float32)
+        padded[: part.shape[0]] = part
+        stats = _simulated_statistics(
+            simulator,
+            model,
+            grid,
+            base_key,
+            onp.arange(start, start + width, dtype=onp.int32),
+            padded,
+            **static,
+        )
+        out.append(
+            {k: onp.asarray(v)[: part.shape[0]] for k, v in stats.items()}
+        )
+        if bar is not None:
+            bar.update(1)
+    # per-chunk statistics concatenated; best positions as best_<name>
+    gathered = {stat: _concat([c[stat] for c in out]) for stat in _STORED}
+    for k in params:
+        gathered[f"best_{names[k]}"] = _concat([c[k] for c in out])
+    return gathered
 
 
 @eqx.filter_jit
@@ -831,6 +888,7 @@ def _simulated_statistics(
     flux_key,
     batch_size,
     draw_batch,
+    uncertainty,
 ):
     """The Monte Carlo kernel: statistics of one chunk of draws."""
 
@@ -846,6 +904,7 @@ def _simulated_statistics(
             coord_keys=coord_keys,
             flux_key=flux_key,
             batch_size=batch_size,
+            uncertainty=uncertainty,
         )
         stats = dict(stats)
         stats["converged_fraction"] = np.mean(converged.astype(row.dtype))

@@ -45,6 +45,12 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
       heading_level: 2
       members: false
 
+::: virgil.models.ArchimedeanSpiral
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members: false
+
 ::: virgil.models.TruncatedCone
     options:
       show_root_heading: true

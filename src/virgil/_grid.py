@@ -12,7 +12,7 @@ import jax.numpy as np
 import numpy as onp
 
 from ._utils import concrete, is_flux_param, resolve_flux_param
-from ._deprecate import external_stacklevel
+from ._deprecate import CheckWarning, external_stacklevel
 
 
 # Grid points are evaluated in batches of about batch_visibilities() model
@@ -158,10 +158,14 @@ def warn_unconverged(success, caller):
     failed = int(onp.sum(~onp.asarray(success, dtype=bool)))
     if failed:
         warnings.warn(
-            f"{caller}(): the optimizer did not converge at {failed} of "
-            f"{onp.size(success)} grid positions; values there may be "
-            "inaccurate.",
-            RuntimeWarning,
+            CheckWarning(
+                f"{caller}(): the optimizer did not converge at {failed} of "
+                f"{onp.size(success)} grid positions; values there may be "
+                "inaccurate.",
+                check="convergence",
+                failed=failed,
+                total=int(onp.size(success)),
+            ),
             # user -> public function -> here
             stacklevel=external_stacklevel(),
         )

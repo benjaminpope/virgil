@@ -354,21 +354,6 @@ def _star(p):
     }
 
 
-def _edges(grid):
-    """Which edges of its own grid the evidence optimum is on."""
-    best = grid.best
-    axes = (
-        ("length", grid.lengths_mas[best.variant], best.length_mas),
-        ("sigma", grid.sigmas[best.variant], best.sigma),
-    )
-    return [
-        f"{name} {side}"
-        for name, values, at in axes
-        for side, end in (("min", values[0]), ("max", values[-1]))
-        if at == end
-    ]
-
-
 def _hyperparameters(p):  # deliberate: stage callable
     from ..imaging import chi2_by_observable, error_scale
     from ..models import System
@@ -402,7 +387,16 @@ def _hyperparameters(p):  # deliberate: stage callable
         "length_beam": float(best.length_mas / ov["beam"]["minor_mas"]),
         "variant": best.variant,
         "log_z": float(best.log_evidence),
-        "edge": _edges(grid),
+        # Which edges of its own grid the evidence optimum is on.
+        "edge": [
+            f"{name} {side}"
+            for name, values, at in (
+                ("length", grid.lengths_mas[best.variant], best.length_mas),
+                ("sigma", grid.sigmas[best.variant], best.sigma),
+            )
+            for side, end in (("min", values[0]), ("max", values[-1]))
+            if at == end
+        ],
         "scale_by_observable": {k: float(v) for k, v in scales.items()},
         # MacKay's well-determined parameters; a star-free model is a bare
         # Image, so it is wrapped to give chi2_by_observable a path.
@@ -555,7 +549,10 @@ def _run_checks(settings, reports):
         red = fit["chi2_red_by_observable"]
         checks += [
             _checks.chi2_reduced(
-                name, red[kind], label=f"the {kind} of the image"
+                name,
+                red[kind],
+                label=f"the {kind} of the image",
+                n=fit["n_by_observable"][kind],
             )
             for name, kind in (
                 ("chi2_reduced", "total"),
@@ -568,7 +565,11 @@ def _run_checks(settings, reports):
         checks.append(_checks.quoted_errors(load["quoted_errors"]))
     if hyper:
         checks.append(
-            _checks.error_scale(hyper["scale_by_observable"], kind="estimated")
+            _checks.error_scale(
+                hyper["scale_by_observable"],
+                kind="estimated",
+                n=fit["n_by_observable"] if fit else None,
+            )
         )
     if fit and load:
         checks += [

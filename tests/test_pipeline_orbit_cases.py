@@ -20,6 +20,7 @@ pytestmark = pytest.mark.xdist_group("pipeline_orbit_cases")
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(900)
 def test_a_twin_is_labels_free(tmp_path):
     data = _simulate(SEASONS, flux=1.0, seed=5)

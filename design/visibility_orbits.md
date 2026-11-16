@@ -354,7 +354,7 @@ mcmc.run(key, init_params=init)
   finest resolution λ/B_max (`Epochs.resolution_mas`). This measures modes
   where the data see them: the (Ω + 180°, ω + 180°) mirror is one mode,
   fringe and period aliases are not. (The draft's `distinct_deg` compared
-  elements, which is not invariant to the parametrisation.)
+  elements, which is not invariant to the parametrization.)
 * `epoch_positions(data, grid, *, gap_mas=None, refine=True)`: per dataset,
   a `BinaryModelCartesian` likelihood grid, its best point, a `fit` from it
   and the Hessian's 2×2 position covariance; `gap` is the log likelihood
@@ -490,9 +490,9 @@ written as a script for OzSTAR and marked so.
   over many epochs is expensive under NUTS (8 h, 24 GB in the example).
   Snapshots cut the cost by the number of frames per dataset; the
   remaining cost is linear in rings and datasets. Heavy runs go to OzSTAR.
-* **Parametrisation.** 0.3.0's short-arc parametrisation and the LogUniform
+* **Parametrisation.** 0.3.0's short-arc parametrization and the LogUniform
   MAP in log x change what "the fit" means; forecasts and covariances must
-  state their parametrisation.
+  state their parametrization.
 * **Bandwidth smearing vs plate scale.** Fitting a plate scale to absorb
   chromatic smearing biases the separation; the bandpass model is the
   honest fix.

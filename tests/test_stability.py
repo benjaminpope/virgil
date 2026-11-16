@@ -36,16 +36,23 @@ EXPECTED = {
     "virgil.epochs": {"*"},
     "virgil.aliases": {"*"},
     "virgil.arcs": {"*"},
+    "virgil.night_summaries": {"*"},
+    "virgil.orbit_cells": {"*"},
+    "virgil.mode_search": {"*"},
     "virgil.orbit_search": {"*"},
     "virgil.tempering": {"*"},
     "virgil.svi": {"*"},
+    "virgil.smc": {"*"},
     "virgil.metrics": {"*"},
     "virgil.radio": {"*"},
     "virgil.radio_clean": {"*"},
     "virgil.radio_toeplitz": {"*"},
     "virgil.crossval": {"*"},
+    "virgil.noise_spec": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
+        "ArchimedeanSpiral",
+        "LinearImage",
         "MultipoleDisk",
         "ThinRing",
         "GaussianRing",
@@ -72,8 +79,8 @@ EXPECTED = {
         "GPFit",
         "EvidenceGrid",
     },
-    "virgil.imaging": {"clean", "CleanResult"},
-    "virgil.fitting": {"gauss_newton_diag"},
+    "virgil.imaging": {"clean", "CleanResult", "DofDiscrepancy"},
+    "virgil.fitting": {"gauss_newton_diag", "kkt_report"},
     "virgil.plotting": {"plot_field_draws"},
     "virgil.likelihood": {
         "group_outlier_mixture",
@@ -141,6 +148,7 @@ def test_stability_module_imports_nothing():
 
 PAGES = [
     "docs/orbit_fitting.md",
+    "docs/orbit_methods.md",
     "docs/multipole_disk_rings.md",
     "docs/imaging_clean.md",
     "docs/imaging_ensemble.md",
@@ -151,6 +159,7 @@ PAGES = [
     "docs/radio_clean.md",
     "docs/api/radio_clean.md",
     "docs/api/radio_toeplitz.md",
+    "docs/api/noise_spec.md",
     "docs/stability.md",
 ]
 

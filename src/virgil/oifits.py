@@ -31,7 +31,7 @@ __all__ = ["build_hdulist", "read_oifits", "write_oifits"]
 # different subsets of an exposure's frames for T3 and VIS2 (8 x 30 s DITs
 # with 120 s of valid frames can give MJDs 131 s apart). The closure phase
 # then uses the visibility rows' (u, v), which have rotated slightly.
-# TODO(Stage 6a.0): build closure-phase legs from the OI_T3 coordinates.
+# TODO: build closure-phase legs from the OI_T3 coordinates.
 # Relative tolerance for treating two wavelength tables as identical.
 _WAVE_RTOL = 1e-12
 _MJD_TOLERANCE = 1e-4

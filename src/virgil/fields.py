@@ -573,13 +573,16 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         )
         if self.r_min_mas == 0:
             # A smooth single-valued field has a_m(r) ~ r^|m| at the origin
-            # (Born & Wolf 1999, sec. 9.2): scale order m by tanh(r/spacing)^|m|,
-            # which is 1 - O(e^(-2r/spacing)), so the prior stays stationary
-            # away from the centre and only m = 0 survives at r = 0.
+            # (Born & Wolf 1999, sec. 9.2). The power law holds out to the
+            # scale on which the field varies, its radial correlation length
+            # ell (a physical length: the node spacing is only the grid's, so
+            # the taper would change with n_r). Scale order m by
+            # tanh(r/ell)^|m|, which is 1 - O(e^(-2r/ell)), so the prior stays
+            # stationary away from the centre and only m = 0 survives at r = 0.
             n_theta = field.shape[1]
             j = np.arange(n_theta)
             m = np.minimum(j, n_theta - j)
-            taper = np.tanh(nodes / self.spacing)[:, None] ** m[None, :]
+            taper = np.tanh(nodes / self.length_r)[:, None] ** m[None, :]
             field = np.real(
                 np.fft.ifft(taper * np.fft.fft(field, axis=1), axis=1)
             )

@@ -39,6 +39,7 @@ TINY = {
     "max_grid": 13,
     "n_flux": 6,
     "flux_range": [1e-4, 0.2],
+    # n_null=15 floors the false-alarm probability at 1/16 (norm.isf = 1.534σ), so detection_sigma must be below it.
     "n_null": 15,
     "detection_sigma": 1.5,
     "num_warmup": 30,
@@ -425,6 +426,7 @@ def _truth_within(res, nsigma):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 def test_golden_injected_companion_is_recovered_at_the_default_settings(
     data, tmp_path
 ):
@@ -457,6 +459,7 @@ def test_golden_injected_companion_is_recovered_at_the_default_settings(
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 def test_the_default_settings_never_pass_a_wrong_companion_silently(
     data, tmp_path
 ):

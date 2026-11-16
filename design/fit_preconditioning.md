@@ -276,6 +276,21 @@ case (dense `F = JᵀJ + ∇²penalty` over the 1644 supported pixels):
    positive by construction).
 3. **A better stopping rule** for the flat directions (see above), independent of both.
 
+**Hybrid exact/probed diagonal and non-finite entries (2026-11-07).** When
+probing, every coordinate block of at most `_EXACT_BLOCK = 64` coordinates (a
+gain, offset, flux or position) keeps its exact entries (one JVP or HVP per
+coordinate, static NumPy indices); only the large blocks (images) are probed,
+because a nuisance coordinate's probe noise comes from its cross-terms with
+every pixel. The column and probe maps run in `lax.map` chunks of 16, with
+one-hot tangents built from the traced index. A non-finite entry of a block's
+diagonal is replaced by the block's largest finite entry (with a warning),
+never by zero (formerly `nan_to_num` set it to 0, so it was floored and got the
+widest step). Ideas from h-greer/hubble `precond.py`; shapes the path only.
+On a 16² MaxEnt image with two free fluxes, forced to probe, `precondition="diag"`
+took 645 steps (loss 122.58768) before and 721 steps (122.58767) after: no
+gain on this problem, which has no badly scaled nuisance; the exact path is
+unchanged (635 steps).
+
 ### Worth doing after A–C?
 
 A and C remove the ~10⁶ spread between nuisance and image coordinates, which was
@@ -468,6 +483,15 @@ steps for w = 1e4 → 0.1 (identical χ²):
 
 Wall times are one run each on a loaded laptop. Float64 is at least as good;
 float32 is within the line search's run-to-run variation at the last weight.
+
+**2026-11-02, float32 L-curve under ambient x64.** The Stage 7 test
+(`test_the_l_curve_converges_at_every_weight[float32]`) stalled at w = 0.1
+(3358 steps, unconverged, deterministic across five CI runs) in the x64-ambient
+job only, once #615 asserted it. The fit itself runs float32 inside `run_in`, so
+the difference is the inputs: noise draws, scenes and the starting image built
+in float64 and cast down are another realisation of the problem. The test now
+builds a float32 case under `jax.enable_x64(False)`, so it is the same problem in
+every job; float32 at the weakest weight remains noisy, as above.
 
 ## L-BFGS memory sweep (2026-10-22)
 

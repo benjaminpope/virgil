@@ -11,8 +11,10 @@ from virgil.grid_fit import (
     laplace_flux_uncertainty_grid,
     likelihood_grid,
     optimized_flux_grid,
-    optimized_likelihood_grid,
 )
+from virgil._precision import cast_tree, run_in
+from virgil._grid import batch_size_or_default, resolve_grid_keys
+from virgil.grid_fit import _optimize_flux_grid
 from virgil.inference import laplace_cov
 from virgil.likelihood import (
     build_model,
@@ -414,24 +416,70 @@ def test_likelihood_grid_with_paths_matches_model_class():
     )
 
 
+def _optimized(model, grid, flux_param, data):
+    """``(log likelihood, converged)`` of the flux optimizer on a grid."""
+    params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
+    _, best, success = _optimize_flux_grid(
+        data,
+        model,
+        grid,
+        params=params,
+        coord_keys=coord_keys,
+        flux_key=flux_key,
+        batch_size=batch_size_or_default(None, data),
+    )
+    return onp.asarray(best), onp.asarray(success)
+
+
 def test_optimized_likelihood_grid_with_paths_matches_model_class():
-    grid_best = onp.asarray(
-        likelihood_grid(BinaryModelCartesian, data=oidata, grid=samples_dict)
-    ).max(axis=2)
-    composed = onp.asarray(
-        optimized_likelihood_grid(
-            _composed_binary(), oidata, _path_samples(), flux_param="comp.flux"
+    # Every converged cell, in float64, against an independent dense flux scan
+    # over positive flux, which can only undershoot the maximum.
+    # `_flux_converged` certifies a cell to within a Newton decrement of
+    # 10 ulp of max(|ℓ|, 1) of its maximum, so a converged cell is at most
+    # that far below the scan. Two converged cells differ by at most twice
+    # that plus the two models' own disagreement in ℓ, measured as the largest
+    # gap between the two dense scans of the cell. A cell whose maximum is at
+    # negative flux can only beat the scan. (Float32 evaluation of ℓ is
+    # noisier than 10 ulp, so the bound is only meaningful in float64.)
+    with run_in("float64"):
+        data = cast_tree(oidata, "float64")
+        grids = cast_tree((samples_dict, _path_samples()), "float64")
+        scan = onp.logspace(-6, -1, 400)
+        dense_reference = onp.asarray(
+            likelihood_grid(
+                BinaryModelCartesian,
+                data=data,
+                grid={**grids[0], "flux": scan},
+            )
         )
-    )
-    reference = onp.asarray(
-        optimized_likelihood_grid(
-            BinaryModelCartesian, oidata, samples_dict, flux_param="flux"
+        dense_composed = onp.asarray(
+            likelihood_grid(
+                cast_tree(_composed_binary(), "float64"),
+                data=data,
+                grid={**grids[1], "comp.flux": scan},
+            )
         )
+        composed, ok_composed = _optimized(
+            cast_tree(_composed_binary(), "float64"),
+            grids[1],
+            "comp.flux",
+            data,
+        )
+        reference, ok_reference = _optimized(
+            BinaryModelCartesian, grids[0], "flux", data
+        )
+    dense = dense_reference.max(axis=2)
+    model_gap = onp.abs(dense_composed - dense_reference).max(axis=2)
+    ulp10 = 10 * onp.finfo(composed.dtype).eps * onp.maximum(onp.abs(dense), 1)
+    for result, ok in ((composed, ok_composed), (reference, ok_reference)):
+        assert onp.all((result >= dense - ulp10)[ok])
+        # No silent non-convergence: a cell not certified must be one the
+        # scan cannot reach, because its maximum is at negative flux.
+        assert onp.all(ok | (result > dense))
+    both = ok_composed & ok_reference
+    assert onp.all(
+        (onp.abs(composed - reference) <= 2 * ulp10 + model_gap)[both]
     )
-    # In float32, BFGS lands on slightly different optima in ~1% of cells for
-    # either input; both must still improve on the grid.
-    assert onp.all(composed >= grid_best - 1e-2 * onp.abs(grid_best))
-    assert onp.mean(onp.isclose(composed, reference, rtol=1e-4)) > 0.98
 
 
 def test_absil_limits_with_paths_matches_model_class():

@@ -203,7 +203,8 @@ def _marginal_problem():
 def test_marginal_objective_with_irls_rows_matches_scipy_bfgs():
     problem = _marginal_problem()
     z0 = np.zeros(3)
-    state = solve(problem, z0, gtol=1e-12, max_steps=100)
+    # (gtol=1e-12 is below what Φ resolves; the decrement test ends the run.)
+    state = solve(problem, z0, gtol=1e-12, dtol=1e-12, max_steps=100)
     assert int(state.stop) == CONVERGED
     ref = minimize(
         lambda z: float(problem.loss(np.asarray(z))),
@@ -386,10 +387,13 @@ def test_float32_rosenbrock_ends_converged_not_stalled():
 
 @pytest.mark.parametrize("x64", [True, False], ids=["float64", "float32"])
 def test_rounding_floor_converges_with_a_nonzero_residual(x64):
-    """Default tolerances: the run ends through the λ > 1e10 rule, not LIMIT.
+    """A decrement tolerance converges at the rounding floor of Φ, not LIMIT.
 
     Rosenbrock has zero residual at the optimum, so it can stop on g == 0.
-    Noisy least squares cannot: Φ only changes by rounding noise there.
+    Noisy least squares cannot: Φ only changes by rounding noise there, and
+    ``dtol`` is raised to that noise. With the decrement test off
+    (``dtol=0``) the same run stalls and says so, whatever its decrement
+    (585#6: it used to be promoted to CONVERGED).
     """
     rng = onp.random.default_rng(0)
     A = rng.normal(size=(30, 4))
@@ -397,13 +401,34 @@ def test_rounding_floor_converges_with_a_nonzero_residual(x64):
     with jax.enable_x64(x64):
         dtype = np.float64 if x64 else np.float32
         problem = LeastSquares(np.asarray(A, dtype), np.asarray(b, dtype))
-        state = solve(problem, np.zeros(4, dtype))
+        state = solve(problem, np.zeros(4, dtype), dtol=1e-12)
         assert state.z.dtype == dtype
         assert int(state.stop) == CONVERGED
         assert int(state.steps) < 200
-        assert float(state.lam) > 1e10
         ref = onp.linalg.lstsq(A, b, rcond=None)[0]
         onp.testing.assert_allclose(state.z, ref, atol=1e-10 if x64 else 1e-4)
+        off = solve(problem, np.zeros(4, dtype))
+        assert int(off.stop) == STALLED
+        assert float(off.lam) > 1e10
+        # dtol=None is the rounding resolution of Φ, reachable by construction
+        auto = solve(problem, np.zeros(4, dtype), dtol=None)
+        assert int(auto.stop) == CONVERGED
+        # it stops within the decrement Φ resolves of the minimum, no closer
+        from virgil._gauss_newton import rounding_dtol
+
+        phi_ref = problem.loss(np.asarray(ref, dtype))
+        assert float(auto.value - phi_ref) <= 2 * float(
+            rounding_dtol(auto.value)
+        )
+
+
+def test_rounding_dtol_is_ten_ulp_of_phi_with_a_one_nat_floor():
+    from virgil._gauss_newton import rounding_dtol
+
+    for dtype in (np.float32, np.float64):
+        eps = float(np.finfo(dtype).eps)
+        assert float(rounding_dtol(dtype(0.1))) == pytest.approx(10 * eps)
+        assert float(rounding_dtol(dtype(-5000.0))) == pytest.approx(5e4 * eps)
 
 
 def test_a_coordinate_just_inside_a_bound_is_held_not_clipped_and_rejected():
@@ -454,15 +479,83 @@ def test_a_coordinate_just_inside_a_bound_in_float32_uses_a_float32_epsilon():
         assert int(state.rejects) <= 1
 
 
-def test_a_gradient_without_curvature_stalls_instead_of_returning_a_wrong_answer():
-    """A term of Φ missing from rows and diag: the run stops STALLED, finite.
+def test_a_gradient_without_curvature_is_damped_to_the_right_answer():
+    """A term of Φ missing from rows and diag (zero curvature in coordinate 1).
 
-    The step in coordinate 1 is ~1/(λ·1e-12) long, so every trial is
-    rejected until λ passes 1e10. Callers (`fit`) answer STALLED with a
-    fallback optimizer.
+    A zero diagonal takes unit Marquardt scaling, so the damped step there is
+    a gradient step: it is accepted once λ is large enough and the run
+    reaches the true minimum [1, 0] instead of stalling (it used to stall:
+    the old floor made the step ~1/(λ·1e-12) long). Never a wrong answer.
     """
     start = np.array([3.0, 7.0])
     state = solve(MissingTerm(), start, gtol=1e-10, max_steps=200)
+    assert int(state.stop) == CONVERGED
+    onp.testing.assert_allclose(state.z, [1.0, 0.0], atol=1e-8)
+    assert float(state.value) <= float(MissingTerm().loss(start))
+
+
+class TinyDiagonal(MissingTerm):
+    """As `MissingTerm`, but a diagonal of 1e-30 stands for the missing term."""
+
+    def diag(self, z):
+        return np.asarray([0.0, 1e-30])
+
+
+def test_a_tiny_but_nonzero_curvature_keeps_its_tiny_damping_and_stalls():
+    """The unit scaling is for an exactly zero diagonal only (plain Marquardt,
+    no Moré running max): the step in coordinate 1 is ~g/(1e-30·λ), every
+    trial is rejected, and the run says STALLED rather than claim success."""
+    state = solve(TinyDiagonal(), np.array([3.0, 7.0]), gtol=1e-10)
     assert int(state.stop) == STALLED
     assert onp.all(onp.isfinite(onp.asarray(state.z)))
-    assert float(state.value) <= float(MissingTerm().loss(start))
+
+
+class WrongGradient(eqx.Module):
+    """Φ = ½(z₀−1)² + ½z₁², but the z₁ gradient has the wrong sign."""
+
+    def rows(self, z):
+        return z[:1] - 1.0
+
+    def loss(self, z):
+        @jax.custom_jvp
+        def uphill(w):
+            return 0.5 * w**2
+
+        @uphill.defjvp
+        def _(primals, tangents):
+            (w,), (t,) = primals, tangents
+            return 0.5 * w**2, -w * t
+
+        return 0.5 * (z[0] - 1.0) ** 2 + uphill(z[1])
+
+    def diag(self, z):
+        return np.zeros_like(z)
+
+
+def test_a_gradient_that_disagrees_with_phi_stalls_with_a_large_decrement():
+    """Every trial along a wrong gradient is rejected: STALLED, never CONVERGED."""
+    state = solve(WrongGradient(), np.array([3.0, 7.0]), dtol=1e-12)
+    assert int(state.stop) == STALLED
+    assert onp.all(onp.isfinite(onp.asarray(state.z)))
+
+
+class Scaled(eqx.Module):
+    """ρ = (a(z₀−1), b(z₁−1)): curvatures a², b² 18 orders of magnitude apart."""
+
+    def rows(self, z):
+        return np.stack([1e6 * (z[0] - 1.0), 1e-3 * (z[1] - 1.0)])
+
+    def loss(self, z):
+        return 0.5 * np.sum(self.rows(z) ** 2)
+
+    def diag(self, z):
+        return np.zeros_like(z)
+
+
+def test_marquardt_scaling_is_per_parameter_for_mixed_units():
+    """585#4: a global floor max(diag)·1e-12 over-damped the small-unit
+    coordinate (floor 1 against its curvature 1e-6), so it crawled.
+    Per-parameter scaling takes the Newton step in both coordinates."""
+    state = solve(Scaled(), np.array([2.0, 5000.0]), dtol=1e-12, max_steps=12)
+    assert int(state.stop) == CONVERGED
+    onp.testing.assert_allclose(state.z, [1.0, 1.0], rtol=1e-6)

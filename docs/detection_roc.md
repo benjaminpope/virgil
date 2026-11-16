@@ -5,13 +5,13 @@ Your companion search over a grid of positions and fluxes returns a best candida
 
 Three terms carry the page. The **false-alarm probability (FAP)** of a threshold is the fraction of companion-free observations in which the search would still reach it; the FAP of an observed value is the p-value of the search, the probability that noise alone would give a candidate at least as strong somewhere on the grid. The **completeness**, or true-positive rate, is the fraction of real companions of a given flux and separation found above the threshold. A **ROC curve** (receiver operating characteristic) plots completeness against FAP as the threshold slides from strict to loose, showing the whole trade-off between false alarms and missed companions at once.
 
-You should come away with three things. First, the look-elsewhere effect: Wilks's theorem turns $\Delta\chi^2$ into a significance for one position chosen in advance, but the best of hundreds of positions is much larger than any one, so a search must take its threshold from simulations of companion-free data over the same grid. Second, what to quote for a detection: the empirical FAP of the observed statistic, with its uncertainty. Third, what to quote for a non-detection: the contrast at which the search is 50% and 90% complete at a stated FAP, beside the Absil and Ruffio limits of the [contrast limits](contrast_limits.md) tutorial.
+You should come away with three things. First, the look-elsewhere effect: the best of hundreds of positions is much larger than the statistic at any one chosen in advance ([local significance](detection_statistics.md#local)), so a search must take its threshold from simulations of companion-free data over the same grid. Second, what to quote for a detection: the empirical FAP of the observed statistic, with its uncertainty. Third, what to quote for a non-detection: the contrast at which the search is 50% and 90% complete at a stated FAP, beside the Absil and Ruffio limits of the [contrast limits](contrast_limits.md) tutorial.
 
 ## Setup
 
 We simulate the 7-hole NIRISS aperture mask at 4.3 µm with [`nrm_oidata`](api/coverage.md#virgil.coverage.nrm_oidata): 21 squared visibilities with errors of 0.01 and 35 closure phases with errors of 0.5°. The longest baseline is about 5.3 m, so the resolution $\lambda/B$ is about 170 mas. The star is a point source, so the **null scene**, the scene without a companion, is a `BinaryModelCartesian` with companion flux zero. That is the null hypothesis every statistic here tests.
 
-The search grid covers ±120 mas in both coordinates in steps of 16 mas, about $\lambda/(10B)$: fine enough that a companion between grid points loses at most a few per cent of its $\Delta\chi^2$ and is found near its true position, where a much coarser grid can put the best match on the wrong point. The even number of points keeps the star's own position, where a companion is indistinguishable from the star, off the grid. The flux axis has 32 values spaced logarithmically from $3\times10^{-4}$ to $3\times10^{-2}$ (companion/primary). It seeds the optimizer that refines the best flux at each position, and it is the prior of the log Bayes factor, uniform in log flux between its ends. We claim detections at an FAP of 0.135%, the one-sided Gaussian tail at 3σ: one-sided because a flux cannot be negative, so only upward fluctuations count (the often quoted 0.27% is two-sided).
+The search grid covers ±120 mas in both coordinates in steps of 16 mas, about $\lambda/(10B)$: fine enough that a companion between grid points loses at most a few per cent of its $\Delta\chi^2$ and is found at a nearby grid point, where a much coarser grid can put the best match on the wrong point. The even number of points keeps the star's own position, where a companion is indistinguishable from the star, off the grid. The flux axis has 32 values spaced logarithmically from $3\times10^{-4}$ to $3\times10^{-2}$ (companion/primary). It seeds the optimizer that refines the best flux at each position, and it is the prior of the log Bayes factor, uniform in log flux between its ends. We claim detections at an FAP of 0.135%, the one-sided Gaussian tail at 3σ: one-sided because a flux cannot be negative, so only upward fluctuations count (the often quoted 0.27% is two-sided).
 
 ```python
 import jax
@@ -67,6 +67,8 @@ Here is the observation to judge: a companion of flux $5\times10^{-3}$ (Δmag 5.
 
 [`local_nsigma`](api/detection.md#virgil.detection.local_nsigma) converts $\Delta\chi^2$ to a significance with Wilks's theorem. It is a **local** significance: what the candidate would have if we had looked only at that position, chosen before seeing the data.
 
+The position reported is the best node of the 16 mas grid, not the node nearest the truth. An offset of a few tens of mas is expected below $\lambda/B \approx 167$ mas, where noise moves the best node by a fraction of the resolution.
+
 ```python
 truth = BinaryModelCartesian(dra=60.6, ddec=35.0, flux=5e-3)  # 70 mas, PA 60°
 observed = template.with_model(truth, key=jax.random.PRNGKey(2026))
@@ -118,7 +120,7 @@ print(f"{mc.n_null} null and {mc.n_injected} injected searches")
 
 ## The look-elsewhere effect
 
-For each threshold on the x-axis, the plot shows the fraction of the 10,000 companion-free searches that reached it: its false-alarm probability. The dashed black curve is Wilks's prediction at one position fixed in advance, where $\Delta\chi^2$ is zero half the time (whenever the best flux would be negative) and $\chi^2_1$ otherwise, so the FAP is $\frac{1}{2}P(\chi^2_1 \geq \Delta\chi^2)$.
+For each threshold on the x-axis, the plot shows the fraction of the 10,000 companion-free searches that reached it: its false-alarm probability. The dashed black curve is the [local significance](detection_statistics.md#local), the prediction at one position fixed in advance.
 
 The grid search's curve lies far above it. Each of the 256 positions is another chance for noise to mimic a companion, and the search reports the best; neighbouring positions are correlated, so the effect is smaller than for 256 independent tries, but still large. The dotted horizontal line is our FAP of 0.135%. Wilks's curve crosses it at $\Delta\chi^2 = 9$, the local 3σ; the simulations cross it at a much higher empirical threshold, the dashed blue line. The red point is our candidate, at its $\Delta\chi^2$ and FAP with a 95% interval.
 
@@ -161,7 +163,7 @@ candidate: Δχ² = 31.8, FAP = 0.0001 (95%: 0 to 0.00037), global significance 
 
 ## ROC curves: which statistic?
 
-Every simulation gives all three statistics, so their ROC curves compare fairly. We draw them for injections of flux $4.3\times10^{-3}$ (Δmag 5.9), the fourth of our eight fluxes, at all four separations together. Each curve runs from a strict threshold (lower left) to a loose one (upper right). The false-positive axis is logarithmic because detections are claimed at small FAPs, so the grey chance curve, TPR = FPR (no better than a coin toss), is curved. The dotted vertical line is the FAP that Wilks's theorem assigns to a local 3σ, and the circle on each curve marks where its threshold equals a local 3σ ($\Delta\chi^2 = 9$, or an SNR of 3); the horizontal gap between them is the look-elsewhere effect again. A ROC curve depends only on how a statistic ranks the simulations, not on its scale, so such different statistics can share a plot.
+Every simulation gives all three statistics, so their ROC curves compare fairly. We draw them for injections of flux $4.3\times10^{-3}$ (Δmag 5.9), the fourth of our eight fluxes, at all four separations together. Each curve runs from a strict threshold (lower left) to a loose one (upper right). [Reading the detection plots](detection_statistics.md#detection-plots) explains the log axis, the chance curve and the local-3σ line and circles; the horizontal gap between a circle and the line is the look-elsewhere effect again. A ROC curve depends only on how a statistic ranks the simulations, not on its scale, so such different statistics can share a plot.
 
 The $\Delta\chi^2$ and maximum-SNR curves practically coincide. For a faint companion the log likelihood is nearly quadratic in flux, so $\Delta\chi^2 \approx \mathrm{SNR}^2$ wherever the best flux is positive, both statistics pick the same best position, and they rank the simulations in the same order. The log Bayes factor averages the likelihood over all positions and fluxes instead of taking the best, so it can rank them differently; the plot shows whether that helps here.
 

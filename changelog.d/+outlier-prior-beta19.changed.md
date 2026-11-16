@@ -1,0 +1,1 @@
+The orbit-cell outlier fraction has a declared prior ε ~ Beta(1, 9) (`EPS_PRIOR`, mean 0.1; was Beta(½, ½)), integrated by Gauss–Jacobi quadrature. Data with many bad nights now give broader answers or fail; the population census draws the same prior, so census results need a new baseline.

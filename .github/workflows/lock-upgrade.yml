@@ -95,5 +95,5 @@ jobs:
           else
             gh pr edit "$BRANCH" --body-file /tmp/body.md
           fi
-          gh workflow run tests.yml --ref "$BRANCH"
+          gh workflow run tests.yml --ref "$BRANCH" -f tier=main
           gh workflow run lint.yml --ref "$BRANCH"

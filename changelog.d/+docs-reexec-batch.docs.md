@@ -1,0 +1,1 @@
+Re-executed the tutorial notebooks with public data and fixed output folders, and explained the warnings they end on (limb darkening, binary search, orbit fitting, composition, contrast limits, pipelines, AMIGO DISCO).

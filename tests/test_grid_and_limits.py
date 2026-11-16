@@ -636,3 +636,28 @@ def test_limits_null_evaluation_uses_grid_coordinates_not_zeros():
         assert onp.all(onp.isfinite(lim))
         expected = limit_fn(BinaryModelCartesian, oidata_sim, samples, 3.0)
         onp.testing.assert_allclose(lim, expected, rtol=1e-5)
+
+
+def test_clipped_limits_reach_their_check_with_the_count():
+    """Both limits (about 3e-3) lie above ``flux_bounds``, so both clip."""
+    import jax
+
+    from virgil.pipeline._checks import stage_warning_checks
+    from virgil.pipeline._core import _record_warnings
+
+    null = BinaryModelCartesian(0.0, 0.0, 0.0)
+    data = oidata.with_error_scale(10.0).with_model(
+        null, key=jax.random.PRNGKey(0)
+    )
+    axes = {
+        "dra": np.array([60.0, 120.0]),
+        "ddec": np.array([-40.0]),
+        "flux": np.array([1e-3]),
+    }
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        absil_limits(
+            BinaryModelCartesian, data, axes, 3.0, flux_bounds=(1e-6, 1e-5)
+        )
+    (found,) = stage_warning_checks(_record_warnings("limits", caught))
+    assert found.name == "limits_clipped" and found.value == 2

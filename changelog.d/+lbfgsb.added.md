@@ -1,0 +1,1 @@
+`fit(method="lbfgsb")` runs scipy's L-BFGS-B in float64 with box bounds from `Uniform` priors and the non-negative pixels of a linear `LinearImage` (provisional); `info` gains `nit`, `message` and `pg_norm`. `image_priors` now covers linear `LinearImage` pixels, and other methods refuse them.

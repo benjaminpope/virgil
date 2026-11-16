@@ -56,25 +56,56 @@ def test_main_push_is_the_gate_with_slow_tests():
     jobs = _jobs("push")
     assert _ids(jobs) == GATE
     assert all(j["slow"] and not j["orbit_slow"] for j in jobs)
+    # Cold float32 shards with every slow test outran the 45-minute limit.
+    assert all(j["skip_full_only"] for j in jobs)
 
 
 def test_full_ci_label_adds_macos_py313_and_the_floors():
     jobs = _jobs("pull_request", full_label=True)
     assert _ids(jobs) == GATE | PY313 | FLOORS | {"macos-latest-py3.11-x640"}
     assert all(j["slow"] for j in jobs if j["id"] in GATE)
+    assert not any(j.get("skip_full_only") for j in jobs)
     # The extra jobs run slow tests nightly only.
     assert not any(j["slow"] for j in jobs if j["id"] not in GATE)
 
 
-def test_dispatch_is_full_and_nightly_adds_canary_and_slow_everywhere():
+def test_dispatch_is_full_and_nightly_is_full_with_slow_everywhere():
     assert _ids(_jobs("workflow_dispatch")) == _ids(
         _jobs("pull_request", full_label=True)
     )
     nightly = _jobs("schedule")
-    assert _ids(nightly) == _ids(_jobs("workflow_dispatch")) | {
-        "ubuntu-latest-py3.12-x640-canary"
-    }
+    assert _ids(nightly) == _ids(_jobs("workflow_dispatch"))
+    assert not any("canary" in i for i in _ids(nightly))
     assert all(j["slow"] for j in nightly)
+
+
+def test_dispatch_with_main_tier_is_the_main_tier():
+    """The lock-upgrade dispatch: the gate with slow tests, no full jobs."""
+    jobs = _jobs("workflow_dispatch", tier="main")
+    assert _ids(jobs) == GATE == _ids(_jobs("push"))
+    assert jobs == _jobs("push")
+    # An empty or unknown tier stays full.
+    for tier in ("", "full"):
+        assert _ids(_jobs("workflow_dispatch", tier=tier)) == _ids(
+            _jobs("workflow_dispatch")
+        )
+    # The tier input does not change other events.
+    assert _ids(_jobs("pull_request", tier="main")) == GATE
+
+
+def test_macos_job_is_float32_and_fast_only():
+    (mac,) = [
+        j for j in _jobs("workflow_dispatch") if j["os"] == "macos-latest"
+    ]
+    assert mac["x64"] == "0" and mac["fast_only"]
+
+
+def test_lock_upgrade_dispatches_the_main_tier():
+    lock = (ROOT / ".github/workflows/lock-upgrade.yml").read_text()
+    assert 'gh workflow run tests.yml --ref "$BRANCH" -f tier=main' in lock
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    assert "TIER: ${{ inputs.tier }}" in tests
+    assert "matrix.canary" not in tests
 
 
 @pytest.mark.parametrize(
@@ -138,10 +169,11 @@ def test_main_reads_the_environment(monkeypatch, capsys):
     ci.main()
     out = capsys.readouterr().out
     assert out.startswith("matrix=")
-    assert "canary" in out
+    assert "macos-latest" in out
     monkeypatch.setenv("NIGHTLY", "false")
+    monkeypatch.setenv("TIER", "main")
     ci.main()
-    assert "canary" not in capsys.readouterr().out
+    assert "macos-latest" not in capsys.readouterr().out
 
 
 def _script(name):
@@ -209,12 +241,15 @@ def test_release_gate_job_names_match_tests_yml():
         }.items():
             out = out.replace("${{ " + key + " }}", value)
         # The remaining expressions append a suffix when a flag is set.
-        for flag, suffix in (("lowest", " lowest"), ("canary", " canary")):
-            expr = f"matrix.{flag} && '{suffix}'"
-            assert expr in out, f"build.name lost its {flag} suffix"
+        for expr, suffix, on in (
+            ("matrix.x64 == '1'", " x64", job["x64"] == "1"),
+            ("matrix.lowest", " lowest", job.get("lowest")),
+        ):
+            expr = f"{expr} && '{suffix}'"
+            assert expr in out, f"build.name lost its {suffix} suffix"
             out = re.sub(
                 r"\$\{\{ [^}]*" + re.escape(expr) + r"[^}]*\}\}",
-                suffix if job.get(flag) else "",
+                suffix if on else "",
                 out,
             )
         return re.sub(r"\$\{\{.*?\}\}", "", out)
@@ -252,3 +287,12 @@ def test_test_budget_stays_active_when_shard_packing_changes():
     assert (
         "format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax)" in line
     )
+
+
+def test_slow_orbit_tests_are_never_dropped_on_nightly_or_main():
+    """``orbit_slow`` adds the orbit slow tests to a PR run that touches
+    orbit modules; main, dispatch and the nightly already run every slow
+    test, so none of those sets it."""
+    for event in ("push", "schedule", "workflow_dispatch"):
+        jobs = _jobs(event, orbit_slow=True)
+        assert not any(j.get("orbit_slow") for j in jobs), event

@@ -384,3 +384,37 @@ def test_log_uniform_float32_edge_cases():
     f_hat, sigma = float(out.flux[0, 0]), float(out.flux_error[0, 0])
     log_b, _, _ = _brute_log_uniform(f_hat, sigma, 1e-9, 1e-7)
     assert onp.isclose(out.log_bayes_factor[0, 0], log_b, rtol=1e-4)
+
+
+def test_flux_convergence_has_no_quarter_sigma_gate():
+    """585#15: a point 0.2σ from its maximum (g = 0.2√|c|) passed the old
+    gate |g| < 0.25√|c|, yet still has 0.02 nats to gain, above the float32
+    rounding error (6e-3 at ℓ = -5000); one within it has converged."""
+    from virgil.grid_fit import _flux_converged
+
+    f32 = np.float32
+    c, ll = f32(-100.0), f32(-5000.0)
+    assert not bool(_flux_converged(f32(0.2 * 10.0), c, ll))
+    assert bool(_flux_converged(f32(np.sqrt(2 * 100.0 * 1e-3)), c, ll))
+    assert not bool(_flux_converged(f32(0.0), f32(1.0), ll))  # not a maximum
+    # the allowance scales with |ℓ|: a 5e-3 nat decrement is rounding at
+    # ℓ = -5000 (resolution 6e-3) but real at ℓ = -0.5 (1.2e-6)
+    g = f32(np.sqrt(2 * 100.0 * 5e-3))
+    assert bool(_flux_converged(g, c, ll))
+    assert not bool(_flux_converged(g, c, f32(-0.5)))
+    # the allowance at ℓ = -5000 is an offset of ~0.1σ at c = -100
+    from virgil._gauss_newton import rounding_dtol
+
+    dec = float(rounding_dtol(ll))
+    assert 0.1 < np.sqrt(2 * dec / 100.0) * 10.0 < 0.12
+
+
+def test_optimized_flux_grid_converges_everywhere_in_float32():
+    """The rounding-error gate holds in float32 end to end: no point of a
+    small synthetic binary grid is flagged unconverged (585#15)."""
+    data = _simulate(0.05, noise_scale=1.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        with jax.enable_x64(False):
+            flux = optimized_flux_grid(BinaryModelCartesian, data, _grid())
+    assert onp.all(onp.isfinite(onp.asarray(flux)))

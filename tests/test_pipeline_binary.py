@@ -38,6 +38,7 @@ pytestmark = pytest.mark.xdist_group("pipeline_binary")
 TINY = {
     "max_sep_mas": 300.0,
     "max_grid": 13,
+    # n_null=15 floors the false-alarm probability at 1/16 (norm.isf = 1.534σ), so detection_sigma must be below it.
     "n_null": 15,
     "detection_sigma": 1.5,
     "n_flux": 6,
@@ -115,6 +116,7 @@ DEFAULTS = {
     "seed": 0,
     "batch_size": None,
     "limit_bins": 20,
+    "limit_method": "ruffio",
     "quicklook_execute": True,
 }
 SUMMARY_KEYS = {
@@ -233,6 +235,8 @@ def test_settings_are_validated(data):
         BinaryPipeline(data, sigma=-1.0)
     with pytest.raises(ValueError, match="error_scale"):
         BinaryPipeline(data, error_scale="rescaled")
+    with pytest.raises(ValueError, match="limit_method"):
+        BinaryPipeline(data, limit_method="injection")
     with pytest.raises(TypeError, match="unknown settings"):
         BinaryPipeline(data, num_sample=10)
     with pytest.raises(TypeError, match="BinaryModelAngular"):
@@ -348,6 +352,101 @@ def test_quicklook_notebook(full_run):
 def _started(out):
     run = json.loads((out / "run.json").read_text())
     return {k: v["started"] for k, v in run["stages"].items()}, run
+
+
+def _limits_meta(out):
+    from virgil.pipeline import _io
+
+    return _io.read_h5_attrs(out / "grids.h5", "limits/limit_flux")
+
+
+def _resolution_mask(pipeline, grid):
+    from virgil.pipeline._common import _geometry
+
+    dra, ddec = (onp.asarray(grid["axes"][k]) for k in ("dra", "ddec"))
+    r = onp.hypot(*onp.meshgrid(dra, ddec, indexing="ij"))
+    return r < _geometry(pipeline.processed)["resolution_mas"]
+
+
+def test_ruffio_limits_are_the_default_on_the_search_maps(full_run):
+    """Default limits: the norm.cdf(sigma) quantile of N(flux_best,
+    flux_sigma) truncated to flux >= 0 (scipy's truncnorm as the reference),
+    NaN inside the resolution limit and where the refinement failed."""
+    from scipy.stats import norm, truncnorm
+
+    pipeline, res = full_run
+    assert res.summary["limits"]["method"] == "ruffio"
+    assert _limits_meta(pipeline.output)["method"] == "ruffio"
+    grid = res.grid()
+    mu, s = grid["flux_best"], grid["flux_sigma"]
+    q = norm.cdf(pipeline.settings["sigma"])
+    inside = _resolution_mask(pipeline, grid)
+    bad = ~grid["flux_converged"] | ~onp.isfinite(s) | (s <= 0)
+    ok = ~inside & ~bad
+    assert inside.any() and ok.any()  # negative means: test_grid_and_limits
+    assert onp.isnan(grid["limit_flux"][inside | bad]).all()
+    want = truncnorm.ppf(q, -mu[ok] / s[ok], onp.inf, loc=mu[ok], scale=s[ok])
+    onp.testing.assert_allclose(grid["limit_flux"][ok], want, rtol=1e-4)
+
+
+def test_limits_recompute_search_maps_missing_from_an_older_run(
+    full_run, data, tmp_path
+):
+    """A run whose search group lacks flux_converged (an older virgil)
+    resumes through limits: the maps are recomputed and written back."""
+    import h5py
+
+    pipeline, res = full_run
+    out = tmp_path / "run"
+    shutil.copytree(pipeline.output, out)
+    with h5py.File(out / "grids.h5", "a") as f:
+        del f["search/flux_converged"]
+    run = json.loads((out / "run.json").read_text())
+    run["stages"]["limits"]["status"] = "failed"
+    (out / "run.json").write_text(json.dumps(run))
+    again = BinaryPipeline(data, output=out, quicklook_execute=False, **TINY)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        back = again.run(through="limits")
+    grid, want = back.grid(), res.grid()
+    assert back.summary["limits"]["method"] == "ruffio"
+    onp.testing.assert_array_equal(
+        grid["flux_converged"], want["flux_converged"]
+    )
+    onp.testing.assert_allclose(
+        grid["flux_best"], want["flux_best"], rtol=1e-6
+    )
+    onp.testing.assert_allclose(
+        grid["limit_flux"], want["limit_flux"], rtol=1e-5
+    )
+
+
+@pytest.mark.slow
+def test_absil_limit_method_reproduces_the_absil_limits(data, tmp_path):
+    """limit_method="absil": absil_limits at sigma, NaN inside the resolution
+    limit (the stage's output before Ruffio became the default)."""
+    from virgil.limits import absil_limits
+
+    out = tmp_path / "run"
+    settings = dict(TINY, quicklook_execute=False, limit_method="absil")
+    pipeline = BinaryPipeline(data, output=out, **settings)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = pipeline.run(through="limits")
+        want = onp.asarray(
+            absil_limits(
+                BinaryModelCartesian,
+                pipeline.processed,
+                pipeline._grid(),
+                pipeline.settings["sigma"],
+            )
+        )
+    assert res.summary["limits"]["method"] == "absil"
+    assert _limits_meta(out)["method"] == "absil"
+    grid = res.grid()
+    inside = _resolution_mask(pipeline, grid)
+    want = onp.where(inside, onp.nan, want)
+    onp.testing.assert_allclose(grid["limit_flux"], want)
 
 
 def test_resume_skips_completed_stages(data, tmp_path, monkeypatch):
@@ -472,15 +571,41 @@ def test_null_nsigma_bounds_and_nan(data):
     grid = BinaryPipeline(data, **TINY)._grid()
     n_null = 20
     # A peak above every null maximum: k = 0, FAP at the floor 1 / (n + 1).
-    sigma, fap, k = _null_nsigma(data, grid, None, n_null, 0, 1e12)
+    sigma, fap, k, n = _null_nsigma(data, grid, None, n_null, 0, 1e12, 1.5)
     assert k == 0 and fap == pytest.approx(1.0 / (n_null + 1))
     assert sigma == pytest.approx(float(norm.isf(fap)))
     # A peak below every null maximum: FAP = 1, finite and negative.
-    sigma, fap, k = _null_nsigma(data, grid, None, n_null, 0, -1.0)
+    sigma, fap, k, n = _null_nsigma(data, grid, None, n_null, 0, -1.0, 1.5)
     assert k == n_null and fap == 1.0
     assert math.isfinite(sigma) and sigma < 0.0
-    out = _null_nsigma(data, grid, None, n_null, 0, float("nan"))
+    out = _null_nsigma(data, grid, None, n_null, 0, float("nan"), 1.5)
     assert all(math.isnan(x) for x in out)
+
+
+def test_null_draws_stop_once_the_verdict_is_settled(data, monkeypatch):
+    from virgil.pipeline import binary
+
+    monkeypatch.setattr(binary, "_NULL_CHUNK", 4)
+    grid = BinaryPipeline(data, **TINY)._grid()
+    # 12 draws in three chunks of 4. Passing at 1.3σ allows no exceeding
+    # null (k <= 0), so a peak below every null settles it after one chunk.
+    sigma, fap, k, n = binary._null_nsigma(data, grid, None, 12, 0, -1.0, 1.3)
+    assert (k, n) == (4, 4) and sigma < 0.0
+    # A peak above every null can only be shown with all of them.
+    assert binary._null_nsigma(data, grid, None, 12, 0, 1e12, 1.3)[2:] == (
+        0,
+        12,
+    )
+
+
+def test_null_draws_round_up_to_whole_chunks(data, monkeypatch):
+    from virgil.pipeline import binary
+
+    monkeypatch.setattr(binary, "_NULL_CHUNK", 4)
+    grid = BinaryPipeline(data, **TINY)._grid()
+    # 5 requested -> two chunks of 3 = 6 draws; the floor is 1 / (n + 1).
+    _, fap, k, n = binary._null_nsigma(data, grid, None, 5, 0, 1e12, 1.0)
+    assert (k, n) == (0, 6) and fap == pytest.approx(1 / 7)
 
 
 # Slow: 8 searches, each against 50 simulated null searches, take about two
@@ -504,7 +629,7 @@ def test_noise_peaks_have_a_roughly_uniform_false_alarm_probability(data):
                 "delta_chi2"
             ]
         )
-        faps.append(_null_nsigma(data, grid, None, 50, 0, peak)[1])
+        faps.append(_null_nsigma(data, grid, None, 50, 0, peak, 1.5)[1])
     assert 0.2 < onp.mean(faps) < 0.8
 
 
@@ -599,7 +724,7 @@ def test_refined_flux_is_the_two_public_grids_from_one_pass(data):
     grid = {"dra": axis, "ddec": axis, "flux": np.logspace(-3, -1, 5)}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        flux, loglike = _refined_flux(data, grid, None)
+        flux, loglike, _ = _refined_flux(data, grid, None)
         want_flux = optimized_flux_grid(BinaryModelCartesian, data, grid)
         want_loglike = optimized_likelihood_grid(
             BinaryModelCartesian, data, grid
@@ -777,16 +902,14 @@ def test_stage_warnings_are_recorded_not_emitted(data, tmp_path, monkeypatch):
     import warnings
 
     import virgil.pipeline.binary as binary
+    from virgil._grid import warn_unconverged
 
     original = binary._overview
 
     def noisy(p):
         for _ in range(2):  # duplicates are recorded once
-            warnings.warn(
-                "detection_statistics(): the optimizer did not converge at "
-                "2 of 169 grid positions; values there may be inaccurate.",
-                RuntimeWarning,
-            )
+            # the real emitter: 2 of 169 grid positions
+            warn_unconverged(onp.arange(169) >= 2, "detection_statistics")
         warnings.warn("something odd happened", UserWarning)
         # Interpreter noise from a collected unclosed file is not recorded.
         warnings.warn("unclosed file <_io.BufferedReader>", ResourceWarning)
@@ -805,7 +928,7 @@ def test_stage_warnings_are_recorded_not_emitted(data, tmp_path, monkeypatch):
         (tmp_path / "run/stages/overview/report.json").read_text()
     )
     assert [w["category"] for w in report["warnings"]] == [
-        "RuntimeWarning",
+        "CheckWarning",
         "UserWarning",
     ]
     assert {w["stage"] for w in report["warnings"]} == {"overview"}
@@ -826,6 +949,7 @@ LATTICE_SETTINGS = {
     "max_grid": 41,
     "n_flux": 6,
     "flux_range": [1e-3, 0.2],
+    # n_null=15 floors the false-alarm probability at 1/16 (norm.isf = 1.534σ), so detection_sigma must be below it.
     "n_null": 15,
     "detection_sigma": 1.5,
     "quicklook_execute": False,

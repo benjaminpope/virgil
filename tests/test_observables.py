@@ -16,6 +16,7 @@ from virgil.models import PointSource, System
 from virgil.observables import (
     DifferentialPhase,
     FluxSpectrum,
+    TripleAmplitude,
     continuum_operator,
 )
 from virgil.oidata import OIData, cp_indices
@@ -925,8 +926,8 @@ def test_select_observables_takes_the_gains_with_the_visibilities():
     cp_only = data.select(observables="phi")
     assert cp_only.gains is None and not cp_only.has_model_covariance
     offsets = data.with_closure_offsets(baseline=0.01)
-    with pytest.raises(ValueError, match="closure-phase offsets"):
-        offsets.select(observables="vis")
+    assert offsets.select(observables="phi").phase_offsets is not None
+    assert offsets.select(observables="vis").phase_offsets is None
 
 
 def test_a_step_of_pi_wraps_the_same_in_data_and_model():
@@ -1002,3 +1003,245 @@ def test_a_missing_prior_is_a_different_structure_not_a_value():
 
     size, _, _ = _compiles_once(data(None), data((0.3, 0.5)))
     assert size == 2
+
+
+def _two_epoch_tables(extras):
+    t0 = _tables()
+    t1 = _tables()
+    t1["info"] = {**t1["info"], "MJD": 60005.0}
+    return OIData([build_hdulist(t0), build_hdulist(t1)], extras=extras)
+
+
+@pytest.mark.parametrize(
+    "extras",
+    [("visamp",), ("t3amp",), ("visamp", "t3amp", "flux")],
+)
+def test_gains_propagate_to_visamp_and_t3amp_with_exact_cross_covariance(
+    extras,
+):
+    from virgil._precision import cast_tree
+
+    plain = _two_epoch_tables(extras)
+    if "flux" in extras:
+        plain = plain.with_flux_scale(scale=SCALE_PRIOR)
+    rng = onp.random.default_rng(14)
+    modes = rng.normal(0.0, 0.015, (2, plain.u.size))
+    # Perturb the noiseless data so the quadratic χ² term is also tested.
+    noisy = plain.with_model(_scene(), key=jax.random.PRNGKey(15))
+    import equinox as eqx
+
+    other = _scene(dra=0.65, ddec=0.1)
+    with jax.enable_x64(True):
+        d64 = cast_tree(noisy, "float64").with_gains(
+            telescope=0.04, baseline=0.03, chromatic=0.02, modes=modes
+        )
+        p64 = eqx.tree_at(
+            lambda d: d.gains, d64, None, is_leaf=lambda x: x is None
+        )
+        o64 = cast_tree(other, "float64")
+
+        # Build the independent sample-level log-|V| covariance over data.u.
+        n_u = d64.u.size
+        frames = onp.asarray(d64.frame)
+        pairs = onp.sort(onp.asarray(d64.stations), axis=1)
+        wavel = onp.broadcast_to(onp.asarray(d64.wavel, float), (n_u,))
+        chrom = (onp.median(wavel) / wavel) ** 2
+        cov_logv = modes.T @ modes
+        for f in onp.unique(frames):
+            in_f = onp.flatnonzero(frames == f)
+            for t in onp.unique(pairs[in_f]):
+                v = onp.zeros(n_u)
+                v[in_f[(pairs[in_f] == t).any(axis=1)]] = 0.04
+                cov_logv = cov_logv + onp.outer(v, v)
+            for b_pair in onp.unique(pairs[in_f], axis=0):
+                rows = in_f[(pairs[in_f] == b_pair).all(axis=1)]
+                vb = onp.zeros(n_u)
+                vb[rows] = 0.03
+                vc = onp.zeros(n_u)
+                vc[rows] = 0.02 * chrom[rows]
+                cov_logv = cov_logv + onp.outer(vb, vb) + onp.outer(vc, vc)
+
+        # Map sample-level log-|V| covariance to [vis, *amp_extras].
+        pred = onp.asarray(d64.model(o64), float)
+        vals, errs = (onp.asarray(x, float) for x in d64.flatten_data())
+        n_vis = d64.vis.size
+        n_phase = n_vis + d64.phi.size
+        op_rows = []
+        r_amp = [pred[:n_vis] - vals[:n_vis]]
+        d_amp = [errs[:n_vis]]
+        j_amp = [2.0 * pred[:n_vis]]
+        for r in range(n_vis):
+            row = onp.zeros(n_u)
+            row[r] = 2.0 * pred[r]
+            op_rows.append(row)
+        offset = n_phase
+        for block in d64.extras:
+            end = offset + int(block.data().size)
+            if block.kind == "visamp":
+                for k, s in enumerate(block.sample):
+                    row = onp.zeros(n_u)
+                    row[int(s)] = pred[offset + k]
+                    op_rows.append(row)
+                r_amp.append(pred[offset:end] - vals[offset:end])
+                d_amp.append(errs[offset:end])
+                j_amp.append(pred[offset:end])
+            elif block.kind == "t3amp":
+                for k, (i1, i2, i3) in enumerate(
+                    zip(block.i1, block.i2, block.i3)
+                ):
+                    row = onp.zeros(n_u)
+                    for leg in (int(i1), int(i2), int(i3)):
+                        row[leg] += pred[offset + k]
+                    op_rows.append(row)
+                r_amp.append(pred[offset:end] - vals[offset:end])
+                d_amp.append(errs[offset:end])
+                j_amp.append(pred[offset:end])
+            offset = end
+        op = onp.stack(op_rows, axis=0)
+        r_vec = onp.concatenate(r_amp)
+        d_vec = onp.concatenate(d_amp)
+        j_vec = onp.concatenate(j_amp)
+        cov = onp.diag(d_vec**2) + op @ cov_logv @ op.T
+
+        got_cov = onp.asarray(
+            d64.gains.covariance(d_vec, j_vec, d64.gains.widths)
+        )
+        onp.testing.assert_allclose(got_cov, cov, rtol=1e-12, atol=1e-12)
+
+        chi2_gain = r_vec @ onp.linalg.solve(cov, r_vec)
+        chi2_plain = onp.sum((r_vec / d_vec) ** 2)
+        logdet = onp.linalg.slogdet(
+            onp.eye(d_vec.size)
+            + (op / d_vec[:, None]) @ cov_logv @ (op / d_vec[:, None]).T
+        )[1]
+        expected = -0.5 * (chi2_gain - chi2_plain) - 0.5 * logdet
+        got = float(model_loglike(o64, d64) - model_loglike(o64, p64))
+        assert got == pytest.approx(expected, rel=1e-11, abs=1e-11)
+
+
+def test_gains_work_on_t3amp_without_vis_and_through_select_and_split():
+    from virgil._precision import cast_tree
+
+    base = _two_epoch_tables(("visamp", "t3amp")).with_model(
+        _scene(), key=jax.random.PRNGKey(18)
+    )
+    data = base.with_gains(telescope=0.03, baseline=0.02)
+    other = _scene(dra=0.6, ddec=0.15)
+
+    # Dropping vis keeps the gains on t3amp and matches building gains directly
+    # on the vis-empty dataset.
+    t3_from_all = data.select(observables=("t3amp", "phi"))
+    assert t3_from_all.vis.size == 0
+    assert t3_from_all.gains is not None
+    t3_fresh = base.select(observables=("t3amp", "phi")).with_gains(
+        telescope=0.03, baseline=0.02
+    )
+    assert float(model_loglike(other, t3_from_all)) == pytest.approx(
+        float(model_loglike(other, t3_fresh)), rel=1e-6
+    )
+
+    # Wavelength selection and epoch splitting preserve gains across vis +
+    # visamp + t3amp, and epoch likelihoods add up to the whole.
+    sub = data.select(wavel_max=2.170e-6)
+    sub_fresh = base.select(wavel_max=2.170e-6).with_gains(
+        telescope=0.03, baseline=0.02
+    )
+    assert float(model_loglike(other, sub)) == pytest.approx(
+        float(model_loglike(other, sub_fresh)), rel=1e-5
+    )
+
+    with jax.enable_x64(True):
+        d64 = cast_tree(data, "float64")
+        o64 = cast_tree(other, "float64")
+        parts = [cast_tree(p, "float64") for p in data.split_by_epoch()]
+        assert len(parts) == 2
+        assert sum(float(model_loglike(o64, p)) for p in parts) == (
+            pytest.approx(float(model_loglike(o64, d64)), rel=1e-12, abs=1e-12)
+        )
+
+    # A spanning mode on a vis-empty t3amp dataset crossing epochs is refused.
+    cross = onp.full((1, base.u.size), 0.02)
+    t3_shared = base.select(observables=("t3amp", "phi")).with_gains(
+        modes=cross
+    )
+    with pytest.raises(ValueError, match="spans several epochs"):
+        t3_shared.split_by_epoch()
+
+
+def test_with_model_and_fit_propagate_gains_across_vis_visamp_and_t3amp():
+    import numpyro.distributions as dist
+
+    from virgil.fitting import fit
+
+    scene = _scene()
+    template = OIData(
+        read_oifits(build_hdulist(_tables(scene)), extras=("visamp", "t3amp"))
+    ).with_gains(telescope=0.03)
+    noiseless = template.with_model(scene)
+    sim = template.with_model(
+        scene, key=jax.random.PRNGKey(23), noise_scale=0.0
+    )
+
+    # Exact gain consistency across V², VISAMP and T3AMP in a single draw.
+    g_vis = 0.5 * onp.log(onp.asarray(sim.vis / noiseless.vis))
+    visamp_b, t3amp_b = sim.extras
+    visamp_0, t3amp_0 = noiseless.extras
+    g_visamp = onp.log(onp.asarray(visamp_b.values / visamp_0.values))
+    g_t3amp = onp.log(onp.asarray(t3amp_b.values / t3amp_0.values))
+    onp.testing.assert_allclose(
+        g_visamp, g_vis[visamp_b.sample], rtol=1e-5, atol=1e-6
+    )
+    onp.testing.assert_allclose(
+        g_t3amp,
+        g_vis[t3amp_b.i1] + g_vis[t3amp_b.i2] + g_vis[t3amp_b.i3],
+        rtol=1e-5,
+        atol=1e-6,
+    )
+
+    # include_extras=False restricts GainModes to vis only.
+    vis_only_gains = OIData(
+        read_oifits(build_hdulist(_tables(scene)), extras=("visamp", "t3amp"))
+    ).with_gains(telescope=0.03, include_extras=False)
+    assert vis_only_gains.gains.n_vis == vis_only_gains.vis.size
+
+    noisy = template.with_model(
+        scene, key=jax.random.PRNGKey(24), noise_scale=0.1
+    )
+    result = fit(
+        _scene(dra=0.45),
+        {"parts.1.dra": dist.Uniform(0.1, 1.0)},
+        noisy,
+        noise={"vis_gain_telescope": dist.Uniform(0.005, 0.2)},
+    )
+    assert result.info["method"] == "lbfgs"
+    assert float(result.values["parts.1.dra"]) == pytest.approx(0.5, abs=0.05)
+    assert float(result.values["noise.vis_gain_telescope"]) == pytest.approx(
+        0.03, abs=0.02
+    )
+
+
+def test_triple_amplitude_refuses_split_across_parts_or_epochs():
+    import equinox as eqx
+
+    base = _two_epoch_tables(("t3amp",)).select(observables=("vis", "t3amp"))
+    assert not base.cp_flag
+    t3 = base.extras[0]
+    # Point the third leg of row 0 into the second epoch (frame 1).
+    bad_i3 = onp.array(t3.i3, copy=True)
+    bad_i3[0] = int(onp.flatnonzero(onp.asarray(base.frame) == 1)[0])
+    bad_t3 = TripleAmplitude(t3.values, t3.errors, t3.i1, t3.i2, bad_i3)
+    bad = eqx.tree_at(lambda d: d.extras, base, (bad_t3,))
+
+    keep = onp.asarray(bad.frame) == 0
+    with pytest.raises(
+        ValueError, match="triple amplitude would be split between parts"
+    ):
+        bad._subset(keep)
+    with pytest.raises(
+        ValueError, match="triple amplitude would be split between parts"
+    ):
+        bad.split_by_epoch(gap_days=0.5)
+    with pytest.raises(
+        ValueError, match="triple amplitude would be split between parts"
+    ):
+        bad.with_gains(telescope=0.02).split_by_epoch(gap_days=0.5)

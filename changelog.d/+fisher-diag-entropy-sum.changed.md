@@ -1,0 +1,1 @@
+fit(precondition="diag") and gauss_newton_diag: the maximum-entropy metric is now added to the data curvature instead of replacing it, which froze faint pixels when the data curvature dominated (ALMA, χ²/N 3.78 → 0.94). Cost: more L-BFGS steps on a small 8×8 AMI test (13/41/45 → 16/48/146 at weights 1e3/50/3).

@@ -1,0 +1,1 @@
+Streamlined single-use private helpers in `aliases`, `pipeline.orbit`, `pipeline.image` and `pipeline.star`, removed history narration from comments, and gave `fit` and `variational` one numpydoc entry per parameter. No behaviour change.

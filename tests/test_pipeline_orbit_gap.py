@@ -24,6 +24,7 @@ pytestmark = pytest.mark.xdist_group("pipeline_orbit_gap")
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 @pytest.mark.timeout(900)
 def test_blind_search_resolves_the_two_season_gap_alias(tmp_path, monkeypatch):
     # Two seasons 238 d apart leave the period aliased to many integer

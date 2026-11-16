@@ -1,0 +1,1 @@
+Census (`scripts/orbit_population.py`) runs its simulation, fits, oracle, equivalence reruns and PITs inside float64, and `orbit_cells._labels` runs in its space's dtype, so the inlier set no longer depends on the ambient JAX precision (a float32 mean anomaly made simulated data disagree with the stated truth).

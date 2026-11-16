@@ -512,6 +512,7 @@ def test_quicklook_notebook(gp_run):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 def test_rings_run_contract_and_recovery(rings_run):
     pipeline, res = rings_run
     s = res.summary
@@ -545,6 +546,7 @@ def test_rings_run_contract_and_recovery(rings_run):
 
 
 @pytest.mark.slow
+@pytest.mark.full_only
 def test_rings_posterior_is_folded(rings_run):
     _, res = rings_run
     samples = res.samples()
@@ -1389,31 +1391,35 @@ def test_estimated_scale_is_not_called_fitted():
 # === FALLBACKS THAT USED TO BE SILENT (audit CO-1, CO-2, CO-3) ===
 
 
-def _laplace_returning(monkeypatch, cov):
+def _laplace_of_hessian(monkeypatch, hess):
     monkeypatch.setattr(disk, "_builder", lambda ctx, shape: None)
     monkeypatch.setattr(
-        "virgil.inference.laplace_cov", lambda *a, **k: onp.asarray(cov)
+        "virgil.inference.observed_information",
+        lambda *a, **k: onp.asarray(hess),
     )
     return disk._laplace(None, None, ["a", "b"], {"a": 1.0, "b": 2.0}, None)
 
 
 def test_a_positive_definite_laplace_covariance_gives_widths(monkeypatch):
-    sd, cov = _laplace_returning(monkeypatch, [[4.0, 0.0], [0.0, 9.0]])
-    assert sd == {"a": 2.0, "b": 3.0} and cov is not None
+    sd, cov = _laplace_of_hessian(monkeypatch, [[0.25, 0.0], [0.0, 1 / 9]])
+    assert sd == pytest.approx({"a": 2.0, "b": 3.0}) and cov is not None
 
 
 def test_a_negative_laplace_variance_is_unconstrained_not_zero(monkeypatch):
     # Not positive definite: the old clip reported sd = 0, "perfectly known".
-    sd, cov = _laplace_returning(monkeypatch, [[4.0, 0.0], [0.0, -9.0]])
-    assert sd == {"a": 2.0, "b": None}
+    sd, cov = _laplace_of_hessian(monkeypatch, [[0.25, 0.0], [0.0, -1 / 9]])
+    assert sd == {"a": None, "b": None}
     assert cov is None  # no Laplace evidence from it
 
 
-def test_an_indefinite_covariance_with_positive_diagonal_has_no_evidence(
+def test_an_indefinite_hessian_gives_no_widths_though_its_inverse_diagonal_is_positive(
     monkeypatch,
 ):
-    sd, cov = _laplace_returning(monkeypatch, [[1.0, 2.0], [2.0, 1.0]])
-    assert cov is None and sd == {"a": 1.0, "b": 1.0}
+    # H^-1 = [[1, 2], [2, 1]]: a positive diagonal, but no Gaussian, so no
+    # widths (laplace_pd then fails rather than reading them).
+    hess = onp.linalg.inv([[1.0, 2.0], [2.0, 1.0]])
+    sd, cov = _laplace_of_hessian(monkeypatch, hess)
+    assert cov is None and sd == {"a": None, "b": None}
 
 
 def test_a_programming_error_in_the_laplace_step_is_not_swallowed(monkeypatch):
@@ -1421,7 +1427,7 @@ def test_a_programming_error_in_the_laplace_step_is_not_swallowed(monkeypatch):
         raise TypeError("a bug")
 
     monkeypatch.setattr(disk, "_builder", lambda ctx, shape: None)
-    monkeypatch.setattr("virgil.inference.laplace_cov", broken)
+    monkeypatch.setattr("virgil.inference.observed_information", broken)
     with pytest.raises(TypeError, match="a bug"):
         disk._laplace(None, None, ["a"], {"a": 1.0}, None)
 
@@ -1431,7 +1437,7 @@ def test_a_numerical_laplace_failure_warns_and_gives_none(monkeypatch):
         raise onp.linalg.LinAlgError("singular")
 
     monkeypatch.setattr(disk, "_builder", lambda ctx, shape: None)
-    monkeypatch.setattr("virgil.inference.laplace_cov", singular)
+    monkeypatch.setattr("virgil.inference.observed_information", singular)
     with pytest.warns(RuntimeWarning, match="could not be computed"):
         sd, cov = disk._laplace(None, None, ["a"], {"a": 1.0}, None)
     assert sd == {"a": None} and cov is None
@@ -1479,13 +1485,13 @@ def test_a_missing_laplace_width_is_flagged_and_reaches_the_other_checks(
     model,
 ):
     # A non-positive-definite Hessian leaves sd = None (never 0): the
-    # laplace_pd check warns and names it, and the inclination check, which
+    # laplace_pd check fails and names it, and the inclination check, which
     # reads the position angle's spread, accepts None.
     settings = dict(DiskPipeline._DEFAULTS)
     entry = disk.models()[model]
     for sd, status in (
         ({"pa": 5.0, "inc": 2.0}, "pass"),
-        ({"pa": None, "inc": 2.0}, "warn"),
+        ({"pa": None, "inc": 2.0}, "fail"),
     ):
         overview, geometry, compare = _synthetic_compare(model, sd)
         checks = {
@@ -1496,9 +1502,119 @@ def test_a_missing_laplace_width_is_flagged_and_reaches_the_other_checks(
         }
         assert checks["laplace_pd"].status == status
         assert checks["inclination"].status in ("pass", "warn", "fail")
-        if status == "warn":
+        if status == "fail":
             assert "geometry.pa" in checks["laplace_pd"].message
             assert checks["laplace_pd"].value == 2  # geometry and best row
+
+
+def _quadratic(a0, r0):
+    """``-log L = ½ dᵀ A d``, ``d = (a - a0, r - r0)``, ``A = [[4, 1], [1, 2]]``:
+    free variances 2/7, 4/7; a's is 1/4 with r held."""
+    return lambda a, r: 2 * (a - a0) ** 2 + (a - a0) * (r - r0) + (r - r0) ** 2
+
+
+def _saddle(slope):
+    """Indefinite ``-log L = 2a² + 3a(r-1) - (r-1)²/2 + slope (r-1)``."""
+    return lambda a, r: (
+        2 * a**2 + 3 * a * (r - 1) - 0.5 * (r - 1) ** 2 + slope * (r - 1)
+    )
+
+
+# (nll, a, r, variances, held), for a prior r >= 1. Each nll is stationary
+# in a at (a, r); r is held when -log L keeps falling past r = 1 (KKT).
+_BOUND_CASES = {
+    # an interior maximum just inside the bound: free, with its evidence
+    "interior": (_quadratic(0.3, 1.0005), 0.3, 1.0005, (2 / 7, 4 / 7), False),
+    # a convex active bound (minimum at r = 0.9): the full Hessian is
+    # positive definite, but its inverse would let a use excursions to r < 1
+    "convex-active": (_quadratic(0.3, 0.9), 0.275, 1.0, (0.25,), True),
+    # the same, stopped just inside the bound as fit does
+    "convex-active-inside": (
+        _quadratic(0.3, 0.9),
+        0.3 - 0.1005 / 4,
+        1.0005,
+        (0.25,),
+        True,
+    ),
+    # an indefinite active bound, as on the golden disk
+    "indefinite-active": (_saddle(1.0), 0.0, 1.0, (0.25,), True),
+    # an interior saddle: not a maximum, so no widths at all
+    "saddle": (_saddle(0.0), 0.0, 1.0, (None, None), False),
+}
+
+
+@pytest.mark.filterwarnings("error::RuntimeWarning")
+@pytest.mark.parametrize("case", list(_BOUND_CASES))
+def test_a_parameter_near_a_bound_is_held_only_where_the_bound_is_active(
+    monkeypatch, case
+):
+    import numpyro.distributions as dist
+
+    nll, a, r, variances, held = _BOUND_CASES[case]
+
+    def loglike(z, params, model, data, **options):
+        v = model(**dict(zip(params, z)))
+        return -nll(v["a"], v["r"])
+
+    # the real (jax) Hessian and gradient of an analytic -log L
+    for where in ("virgil.inference.loglike", "virgil.likelihood.loglike"):
+        monkeypatch.setattr(where, loglike)
+    monkeypatch.setattr(disk, "_builder", lambda ctx, shape: lambda **v: v)
+    monkeypatch.setattr(
+        disk,
+        "_ring_priors",
+        lambda ctx, shape: {"r": dist.LogUniform(1.0, 10.0)},
+    )
+    sd, cov = disk._laplace(
+        None, None, ["a", "r"], {"a": a, "r": r}, None, near=["r"]
+    )
+
+    names = ["a"] if held else ["a", "r"]
+    assert sd == {
+        k: None if v is None else pytest.approx(v**0.5, rel=1e-6)
+        for k, v in zip(names, variances)
+    }
+    # no evidence at an active bound, nor at a saddle
+    assert (cov is not None) == (case == "interior")
+
+
+def test_a_ring_fit_never_starts_on_the_r_in_bound():
+    from virgil.pipeline import disk
+
+    ctx = types.SimpleNamespace(r_in=1.0, r_out=6.0, halffringe=1.0)
+    # the grids' first node is r_in: started there, the flat fit cannot leave
+    assert disk._radius_start(ctx, 1.0) == 1.5
+    assert disk._radius_start(ctx, 3.0) == 3.0
+    # a prior narrower than a half-fringe starts at its middle
+    narrow = types.SimpleNamespace(r_in=1.0, r_out=1.6, halffringe=1.0)
+    assert disk._radius_start(narrow, 1.0) == pytest.approx(1.3)
+
+
+@pytest.mark.parametrize("model", ["gp", "rings"])
+def test_a_geometry_bound_is_reported_by_at_bound_not_laplace_pd(model):
+    # The geometry ring on its r_in bound has no width (it is held fixed):
+    # at_bound names it and laplace_pd, which counts the free widths,
+    # passes. A free width that is missing still fails.
+    settings = dict(DiskPipeline._DEFAULTS)
+    entry = disk.models()[model]
+    for sd, status in (
+        ({"pa": 5.0, "inc": 2.0}, "pass"),
+        ({"pa": None, "inc": 2.0}, "fail"),
+    ):
+        overview, geometry, compare = _synthetic_compare(model, sd)
+        geometry["at_bound"] = ["r1"]
+        checks = {
+            c.name: c
+            for c in disk._fit_checks(
+                entry, settings, overview, geometry, compare
+            )
+        }
+        assert checks["at_bound"].status == "warn"
+        assert checks["at_bound"].value == ["geometry.r1"]
+        # the geometry seed's own wording: it does not advise widening r_in
+        assert "geometry fit" in checks["at_bound"].message
+        assert "Widen the prior" not in checks["at_bound"].message
+        assert checks["laplace_pd"].status == status
 
 
 @pytest.mark.parametrize("missing", ["report", "factor", "list"])

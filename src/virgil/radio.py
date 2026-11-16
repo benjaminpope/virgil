@@ -44,7 +44,10 @@ from ._geometry import (
 )
 from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
-from .models import Image, SourceModel
+from .fitting import fit, kkt_report
+from .models import Image, LinearImage, Rotated, SourceModel, System
+
+_PIXEL_IMAGES = (Image, LinearImage)
 
 __provisional__ = ("*",)
 
@@ -52,7 +55,9 @@ __all__ = [
     "CalibrationNuisance",
     "ComplexVisData",
     "SigmaScale",
+    "StagedFit",
     "dartboard_folds",
+    "fit_staged_nuisances",
     "primary_beam",
 ]
 
@@ -414,7 +419,8 @@ class ComplexVisData(eqx.Module):
         V_scene(u, v)``; see
         [`CalibrationNuisance`][virgil.radio.CalibrationNuisance]. ``scene``
         is a [`SourceModel`][virgil.models.SourceModel] (normalized to unit
-        flux; ``cal.flux`` sets the scale), evaluated at wavelength
+        flux; ``cal.flux`` sets the scale, or ``Σ pixels`` for one
+        ``LinearImage`` with ``fit_flux=False``), evaluated at wavelength
         ``c / ν`` of each point so that chromatic scenes work.
         """
         _no_antenna_gains(nuisance)
@@ -1109,7 +1115,7 @@ class CalibrationNuisance:
     ===============  ================  ==========================  =============
     Site             Shape             Default prior               Not fitted
     ===============  ================  ==========================  =============
-    ``cal.flux``     ``()``            ``LogUniform(1e-4, 1e2)``   always fitted
+    ``cal.flux``     ``()``            ``LogUniform(1e-4, 1e2)``   ``fit_flux=False``
     ``cal.gain``     ``(n_obs-1,)``    Jeffreys ``1/g``            1
     ``cal.offset``   ``(n_obs-1, 2)``  ``Uniform(-θ_k, θ_k)`` mas  0
     ``cal.sigma``    ``(n_ddid,)``     Jeffreys ``1/s``            1
@@ -1127,13 +1133,11 @@ class CalibrationNuisance:
     ref_obs : int
         Index of the reference observation.
     gains, offsets, sigmas, alpha : bool (``alpha`` also a float)
-        Which nuisances are fitted (the flux always is); gains and offsets
-        need more than one observation; a nuisance not fitted takes the
-        table's last column. ``sigmas="profile"`` sets the error scales at
-        every evaluation (see
+        Which nuisances are fitted (gains and offsets need more than one
+        observation); one not fitted takes the table's last column.
+        ``sigmas="profile"`` sets the error scales at every evaluation (see
         [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]). A float
-        ``alpha`` fixes the spectral index (a non-zero integer is refused:
-        ``alpha=1`` used to mean "fit").
+        ``alpha`` fixes the spectral index (a non-zero integer is refused).
     offset_beams : float, optional
         Default offset prior half-width in beams (3). Provisional, as the module.
     antenna_gains : bool
@@ -1159,6 +1163,8 @@ class CalibrationNuisance:
         Formerly ``taper_fwhm_mas``, a deprecated alias.
     prefix : str
         Site-name prefix.
+    fit_flux : bool
+        ``False``: no ``cal.flux``; for one [`LinearImage`][virgil.models.LinearImage].
     """
 
     @renamed({"taper_fwhm_mas": "blur_fwhm_mas"})
@@ -1173,6 +1179,7 @@ class CalibrationNuisance:
         nu0_hz=None,
         blur_fwhm_mas=None,
         prefix="cal",
+        fit_flux=True,
         offset_beams=3.0,
         antenna_gains=False,
         solint="scan",
@@ -1237,6 +1244,7 @@ class CalibrationNuisance:
             None if blur_fwhm_mas is None else float(blur_fwhm_mas)
         )
         self.prefix = prefix
+        self.fit_flux = bool(fit_flux)
         self.antenna_gains = bool(antenna_gains)
         if self.antenna_gains:
             _antenna_gains.gain_intervals(data, solint)  # validates
@@ -1308,8 +1316,12 @@ class CalibrationNuisance:
         if unknown:
             raise ValueError(f"unknown bounds {sorted(unknown)}.")
         k = self.n_obs - 1
-        lo, hi = bounds.get("flux", (1e-4, 1e2))
-        out = {self._site("flux"): dist.LogUniform(lo, hi)}
+        out = {}
+        if self.fit_flux:
+            lo, hi = bounds.get("flux", (1e-4, 1e2))
+            out[self._site("flux")] = dist.LogUniform(lo, hi)
+        elif "flux" in bounds:
+            raise ValueError("fit_flux=False: there is no flux site to bound.")
         if self.gains:
             if "gain" in bounds:
                 lo, hi = bounds["gain"]
@@ -1353,7 +1365,7 @@ class CalibrationNuisance:
     def defaults(self):
         """Starting values of the fitted sites."""
         k = self.n_obs - 1
-        out = {self._site("flux"): self.flux_start}
+        out = {self._site("flux"): self.flux_start} if self.fit_flux else {}
         if self.gains:
             out[self._site("gain")] = onp.ones(k)
         if self.offsets:
@@ -1404,7 +1416,8 @@ class CalibrationNuisance:
             else np.ones(self.n_ddid)  # profiled: set by the term
         )
         alpha = values[site("alpha")] if self.alpha else self.alpha_fixed
-        return values[site("flux")], gain, offset, sigma, alpha
+        flux = values[site("flux")] if self.fit_flux else 1.0
+        return flux, gain, offset, sigma, alpha
 
     @property
     def taper_fwhm_mas(self):
@@ -1432,8 +1445,57 @@ def _no_antenna_gains(nuisance):
         )
 
 
+def _owned_image(scene, nuisance):
+    """The `LinearImage` that is the whole of ``scene`` (inside Systems of one
+    part and ``Rotated``), else None, checked against ``nuisance.fit_flux``.
+
+    A lone `LinearImage` carries its flux (``fit_flux=False``). With a free
+    ``cal.flux`` a scene made only of `LinearImage` parts is refused (scaling
+    every pixel leaves the unit-normalized model unchanged); a fixed-flux
+    part such as a `PointSource` fixes the scale and is accepted.
+    """
+    image, leaves = scene, [scene]
+    while True:
+        if isinstance(image, System) and len(image.resolved().parts) == 1:
+            image = image.resolved().parts[0]
+        elif isinstance(image, Rotated):
+            image = image.source
+        else:
+            break
+    lone = isinstance(image, LinearImage)
+    while leaves:
+        part = leaves.pop()
+        if isinstance(part, System):
+            leaves += part.resolved().parts
+        elif isinstance(part, Rotated):
+            leaves.append(part.source)
+        elif not isinstance(part, LinearImage):
+            leaves = None
+            break
+    if nuisance.fit_flux and leaves is not None:
+        raise TypeError(
+            "a scene made only of LinearImages carries its own flux (Σ pixels):"
+            " use CalibrationNuisance(..., fit_flux=False) for one LinearImage;"
+            " with a free cal.flux the scale is a degeneracy with the pixels."
+        )
+    if not lone and not nuisance.fit_flux:
+        raise ValueError(
+            "fit_flux=False needs a scene that is one LinearImage; other "
+            "scenes are unit-normalized and need cal.flux."
+        )
+    return image if lone else None
+
+
 def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
     flux, gain, offset, _, alpha = unpacked
+    image = _owned_image(scene, nuisance)
+    if image is not None:
+        # Σ pixels times the unit-sum transform: must be positive
+        flux = eqx.error_if(
+            image.total_flux,
+            image.total_flux <= 0.0,
+            "Σ pixels must be positive.",
+        )
     lam = C_LIGHT / freq
     vis = scene.model(u * lam, v * lam, lam)
     ramp = offset_phase(u, v, offset[obs, 0], offset[obs, 1])
@@ -1478,10 +1540,11 @@ def _warn_double_blur(scene, nuisance):
     if nuisance.blur_fwhm_mas is None:
         return
     images = jax.tree_util.tree_leaves(
-        scene, is_leaf=lambda x: isinstance(x, Image)
+        scene, is_leaf=lambda x: isinstance(x, _PIXEL_IMAGES)
     )
     if any(
-        isinstance(x, Image) and x.blur_fwhm_mas is not None for x in images
+        isinstance(x, _PIXEL_IMAGES) and x.blur_fwhm_mas is not None
+        for x in images
     ):
         warnings.warn(
             "CalibrationNuisance.blur_fwhm_mas and Image.blur_fwhm_mas "
@@ -1657,7 +1720,7 @@ class _RadioTerm(_TermBase):
                     fitted.update(id(v) for v in eqn.outvars)
             if any(id(v) in fitted for v in jaxpr.outvars):
                 unmet.append("the Image's dra or ddec is fitted")
-            side, other = image.eta.shape
+            side, other = image.brightness.shape
             if side != other:
                 unmet.append("the Image is not square")
             pixels = side * other * nuis.n_ddid
@@ -1937,3 +2000,191 @@ def dartboard_folds(data, k=5, n_q=12, n_phi=16, seed=0):
     fold_of[order] = onp.arange(cells.size) % k
     fold = fold_of[onp.searchsorted(cells, cell)]
     return fold, annulus
+
+
+# ----------------------------------------------------------------------
+# Staged nuisance fit
+# ----------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class StagedFit:
+    """Result of [`fit_staged_nuisances`][virgil.radio.fit_staged_nuisances].
+
+    Attributes
+    ----------
+    stages : tuple of FitResult
+        Image at nominal nuisances, nuisances at the fixed image, joint.
+    ref_obs : int
+        Index of the observation whose gain is fixed at 1.
+    sum_weights : (n_obs,) array
+        ``Σw`` of each observation, from the weights alone.
+    nuisances : dict
+        Per boxed site: ``value``, ``lower``, ``upper`` and ``edge_frac``, the
+        distance to the nearer bound over the box width (in ``ln`` for a
+        log-uniform box).
+    edge : dict
+        Per boxed site, a bool array: within ``edge`` of a bound.
+    failed : bool
+        Any nuisance sits at a box edge.
+    kkt : dict
+        [`kkt_report`][virgil.fitting.kkt_report] of the joint fit.
+    """
+
+    stages: tuple
+    ref_obs: int
+    sum_weights: onp.ndarray
+    nuisances: dict
+    edge: dict
+    failed: bool
+    kkt: dict
+
+    @property
+    def values(self):
+        """The joint fit's values (image and nuisances)."""
+        return self.stages[2].values
+
+
+def fit_staged_nuisances(
+    data,
+    scene,
+    image_priors,
+    regularizers=(),
+    *,
+    init,
+    ref_obs=None,
+    bounds=None,
+    edge=0.05,
+    weight=None,
+    nuisance=None,
+    chi2="auto",
+    method="lbfgsb",
+    **fit_kw,
+):
+    """Fit an image and its calibration nuisances in three stages.
+
+    1. the image with the nuisances nominal (gains 1, offsets 0, scales 1);
+    2. the nuisances with the image held fixed;
+    3. a joint refinement, followed by a
+       [`kkt_report`][virgil.fitting.kkt_report] of the image block.
+
+    The fit fails (``failed``) if a boxed nuisance ends within ``edge`` of
+    either bound of its prior box. Provisional.
+
+    Parameters
+    ----------
+    data : ComplexVisData
+    scene : callable
+        Maps the fitted values to a [`SourceModel`][virgil.models.SourceModel].
+    image_priors, init : dict
+        Priors of the image sites (the keys of ``scene``) and their starts.
+    regularizers : sequence, optional
+        Image regularizers (all stages).
+    ref_obs : int, optional
+        Observation with gain 1. Default: the largest ``Σw``, so that
+        the flux gauge is not left to a lightly weighted observation.
+    bounds : dict, optional
+        Box ends for [`CalibrationNuisance.priors`][virgil.radio.CalibrationNuisance.priors],
+        default ``{"gain": (0.7, 1.3)}``. L-BFGS-B fits a box uniform in the
+        value; a sigma scale needs a box (``sigma=(lo, hi)``) or is not fitted.
+    edge : float, optional
+        Edge fraction of the box width.
+    weight : float, optional
+        Regularizer weight for the KKT report (as `kkt_report`).
+    nuisance : dict, optional
+        Keywords of `CalibrationNuisance` (``fit_flux``, ``offsets``, ...).
+    chi2, method : str, optional
+        As in [`ComplexVisData.term`][virgil.radio.ComplexVisData.term] and
+        [`fit`][virgil.fitting.fit]; further keywords go to ``fit``.
+
+    Returns
+    -------
+    StagedFit
+
+    Source: Cornwell & Wilkinson (1981), [references](../references.md#cornwellwilkinson1981).
+    """
+    sum_w = onp.bincount(
+        onp.asarray(data.obs),
+        weights=onp.asarray(data.weight, float),
+        minlength=len(data.obs_ids),
+    )
+    if ref_obs is None:
+        ref_obs = int(onp.argmax(sum_w))
+    kw = {**(nuisance or {}), "ref_obs": ref_obs}
+    nominal = CalibrationNuisance(
+        data, **{**kw, "gains": False, "offsets": False, "sigmas": False}
+    )
+    full = CalibrationNuisance(data, **kw)
+    raw = full.priors(**{"gain": (0.7, 1.3), **(bounds or {})})
+    improper = [k for k, q in raw.items() if not hasattr(q, "low")]
+    if improper:
+        raise ValueError(
+            f"{improper} have no box: L-BFGS-B needs one; pass bounds= "
+            "(e.g. sigma=(0.5, 2)) or fit that nuisance off."
+        )
+
+    def boxed(priors):
+        # deliberate: L-BFGS-B takes only Uniform boxes, so a LogUniform one
+        # becomes a Uniform over the same ends (the MAP differs from a plain
+        # fit's by the 1/x Jacobian); edges are measured in ln x for it.
+        return {
+            k: dist.Uniform(q.low, q.high)
+            if isinstance(q, dist.LogUniform)
+            else q
+            for k, q in priors.items()
+        }
+
+    nuis_priors = boxed(raw)
+    opts = dict(method=method, **fit_kw)
+
+    def run(model, priors, start, term, regs=regularizers):
+        return fit(
+            lambda **v: model(v),
+            priors,
+            (),
+            regularizers=regs,
+            likelihoods=[term],
+            init=start,
+            **opts,
+        )
+
+    s1 = run(
+        scene,
+        {**image_priors, **boxed(nominal.priors())},
+        {**init, **nominal.defaults()},
+        data.term(scene, nominal, chi2=chi2),
+    )
+    image = {k: s1.values[k] for k in image_priors}
+
+    def held(v):
+        return scene({**image, **v})
+
+    start2 = {**full.defaults(), **{k: s1.values[k] for k in nominal.sites}}
+    s2 = run(held, nuis_priors, start2, data.term(held, full, chi2=chi2), ())
+    term3 = data.term(scene, full, chi2=chi2)
+    priors3 = {**image_priors, **nuis_priors}
+    start3 = {**image, **s2.values}
+    s3 = run(scene, priors3, start3, term3)
+    # kkt_report needs the function model, not the model built at the result
+    report = kkt_report(
+        dataclasses.replace(s3, model=lambda **v: scene(v)),
+        priors3,
+        (),
+        regularizers,
+        likelihoods=[term3],
+        start=start3,
+        weight=weight,
+    )
+    table, flags = {}, {}
+    for site, prior in raw.items():
+        lo, hi = (onp.asarray(t, float) for t in (prior.low, prior.high))
+        x = onp.asarray(s3.values[site], float)
+        if isinstance(prior, dist.LogUniform):
+            x, lo, hi = onp.log(x), onp.log(lo), onp.log(hi)
+        frac = onp.minimum(x - lo, hi - x) / (hi - lo)
+        table[site] = dict(value=x, lower=lo, upper=hi, edge_frac=frac)
+        flags[site] = frac < edge
+    failed = any(bool(onp.any(f)) for f in flags.values())
+    return StagedFit(
+        (s1, s2, s3), ref_obs, sum_w, table, flags, failed, report
+    )

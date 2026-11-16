@@ -1,0 +1,1 @@
+fitting.kkt_report: convergence certificates of an image fit (KKT / projected-gradient residual, want_grow, band_limit), not a loss plateau.

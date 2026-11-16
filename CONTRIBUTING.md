@@ -97,16 +97,17 @@ Do not run the full suite locally: the JAX tests are heavy, and GitHub Actions r
 Note that passing locally does not guarantee cross-platform compatibility. GitHub Actions
 (`.github/workflows/tests.yml`, with the tiers tabulated in `.github/scripts/ci_matrix.py`)
 runs the suite in tiers. Every pull request runs the tests not marked `slow` on Linux with
-Python 3.12, in float32 (split across three jobs) and in float64 (three jobs, skipping the
+Python 3.12, in float32 (split across three jobs) and in float64 (three jobs, about 0.57 times the float32 suite because they skip the
 files listed in `DTYPE_INDEPENDENT` in `tests/conftest.py`, whose results cannot depend on
 the float width), with the versions in `uv.lock`; a pull request that edits `pyproject.toml`
 also runs once with every dependency at the oldest version it allows. A pull request that
 edits `aliases`, `epochs` or `orbit*` (or their test files) also runs the slow tests of
 `test_aliases.py`, `test_epochs.py` and `test_orbit*.py` in those jobs. Pushes to main run
-the same jobs with all the slow tests. Pull requests labelled `full-ci` (always the release
+the same jobs with the slow tests except those marked `full_only`, which only the `full-ci`
+label, dispatch and the nightly run (a regression in one shows as a nightly failure, not a red
+main). Pull requests labelled `full-ci` (always the release
 pull request) and manual dispatches add macOS with Python 3.11, Python 3.13 and the
-dependency floors (the last two in two shards each, to stay under the 30-minute pull-request limit). A daily run does all of that, plus a canary with dependencies newer than
-the lock, and opens an issue labelled `nightly-failure` when it fails. A failing push to main opens one
+dependency floors (the last two in two shards each, to stay under the 30-minute pull-request limit). The lock-upgrade pull request runs the main tier, so a break only on py3.13 or macOS shows in the next nightly, and a red lock PR opens no issue: watch it. A daily run does all of that, and opens an issue labelled `nightly-failure` when it fails. A failing push to main opens one
 issue labelled `red-main`, which the next green push closes. Each pull request also
 builds the wheel and sdist, checks them with `twine check --strict`, and imports the wheel in
 a clean environment.
@@ -126,7 +127,11 @@ The lint workflow only checks: fix what it reports with
 
 **Keep it small**
 
-Prefer deleting to adding, build only what a test system or user needs now, and keep docstrings short (a summary, parameters, returns and at most one example), putting derivations and design history in the docs or `design/` notes instead. A docstring over 60 lines fails `tests/lint/test_docstring_length.py`; and a source cited in the code or docs needs an entry in `references/provenance.toml` (`scripts/sync_references_page.py` regenerates `docs/references.md`). The full rules, including the docstring style, are in [AGENTS.md](AGENTS.md); each pull request also gets a comment showing its net change in `src/` and `tests/` lines and code-shape metrics. CI fails a PR that adds a private function (module-level, nested or method) called exactly once in the package: inline it, or mark it `# deliberate: <reason>` anywhere from the line above the def through the line ending its signature (vacuous reasons are rejected; see AGENTS.md rule 8 and `tests/lint/stamp_allowlist.txt`). Exempt without a comment: `jit` kernels, `custom_jvp`/`custom_vjp` functions and their `defjvp`/`defvjp` rules, `singledispatch` registrations, callbacks passed as values (to `lax.scan`, `vmap`, ...) and names used in `tests/`. Check locally with `python scripts/code_shape.py --since origin/main`.
+Prefer deleting to adding, build only what a test system or user needs now, and keep docstrings short (a summary, parameters, returns and at most one example), putting derivations and design history in the docs or `design/` notes instead. A docstring with more than 60 lines of prose (the Parameters, Returns and Raises sections do not count) fails `tests/lint/test_docstring_length.py`; and a source cited in the code or docs needs an entry in `references/provenance.toml` (`scripts/sync_references_page.py` regenerates `docs/references.md`). The full rules, including the docstring style, are in [AGENTS.md](AGENTS.md); each pull request also gets a comment showing its net change in `src/` and `tests/` lines and code-shape metrics. CI fails a PR that adds a private function (module-level, nested or method) called exactly once in the package: inline it, or mark it `# deliberate: <reason>` anywhere from the line above the def through the line ending its signature (vacuous reasons are rejected; see AGENTS.md rule 8 and `tests/lint/stamp_allowlist.txt`). Exempt without a comment: `jit` kernels, `custom_jvp`/`custom_vjp` functions and their `defjvp`/`defvjp` rules, `singledispatch` registrations, callbacks passed as values (to `lax.scan`, `vmap`, ...) and names used in `tests/`. Check locally with `python scripts/code_shape.py --since origin/main`.
+
+**Code layout**
+
+Separate the phases of a function with blank lines; write comments that say why, not what; build a result object with keyword arguments when it has more than four fields or any boolean field; and do not add `# fmt: skip` outside module-level constant tables (see "Code layout" in [AGENTS.md](AGENTS.md)).
 
 **Documentation**
 
@@ -197,7 +202,7 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
    - virgil-validation's tier A passes against that commit (`pytest -m "not slow"` there, with virgil installed from the commit);
    - its evidence (`trust/evidence/*.jsonl`) is regenerated and pinned to that single commit: `scripts/check_evidence_pin.py --release --expect <sha>` passes there;
    - no finding in its ledger ruled `virgil` with severity `bug` is open without a recorded decision (fixed, or accepted with a reason in the release notes).
-4. **GPU and long runs** (maintainer, on OzSTAR): the docs-examples run on a GPU passes (ozstar_scripts job `docs_examples_prof`). The Gl 229 Ba–Bb period-alias search was a release gate through 0.4.1 and was retired on 2026-10-23: the alias-search regressions are guarded by the CI tests listed in the "Binary orbits: solved problems" table (linked from AGENTS.md), and a maintainer may still run the cold search (ozstar_scripts job `orbit_aliases`, `virgil.aliases.fit_orbit_aliases` with `--no-init`; the N = 34 band, P ≈ 12.134 d, should rank first) when the search code changes.
+4. **GPU and long runs** (maintainer, on OzSTAR): the docs-examples run on a GPU passes (ozstar_scripts job `docs_examples_prof`). The Gl 229 Ba–Bb period-alias search was a release gate through 0.4.1 and was dropped as a release gate on 2026-10-23, so the Gl 229 result is now unverified at later releases: the alias-search regressions are guarded by the CI tests listed in the "Binary orbits: solved problems" table (linked from AGENTS.md), and a maintainer may still run the cold search (ozstar_scripts job `orbit_aliases`, `virgil.aliases.fit_orbit_aliases` with `--no-init`; the N = 34 band, P ≈ 12.134 d, should rank first) when the search code changes.
 5. Check the build locally:
    ```bash
    uv build && uvx twine check --strict dist/*

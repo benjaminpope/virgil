@@ -150,10 +150,10 @@ def test_hessian_groups_shrink_with_the_budget():
     plain = [_night(False)] * 3
     sp = tuple(_Surface(d, 10.0) for d in plain)
     assert _hessian_groups(1, plain, sp) == [slice(0, 3)]
-    from virgil.aliases import _HESSIAN_COPIES
-    from virgil.epochs import _whitening_floats
+    from virgil.aliases import _N_SITES
+    from virgil.epochs import _table_floats
 
-    two = 2 * 8 * _HESSIAN_COPIES * _whitening_floats(nights[0])
+    two = 2 * 8 * _N_SITES * _table_floats(nights[0])
     assert _hessian_groups(two, nights, surfaces) == [
         slice(0, 2),
         slice(2, 3),
@@ -182,6 +182,7 @@ def test_grouped_hessian_sums_to_the_fused_one():
 
 
 @pytest.mark.slow  # compiles the Hessian twice, in one and in several groups
+@pytest.mark.full_only
 @pytest.mark.timeout(900)
 @pytest.mark.parametrize("kind", ["mixture", "inflation"])
 def test_the_chain_rule_hessian_is_the_autodiff_hessian(kind):

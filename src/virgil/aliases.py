@@ -54,7 +54,7 @@ from ._grid import batch_size_or_default
 from .epochs import (
     _grid_batch,
     default_memory_budget,
-    _whitening_floats,
+    _table_floats,
     _REFINE_WINDOW,
     EpochPositions,
     _amp_profile,
@@ -95,6 +95,7 @@ __all__ = [
     "LABELS_FREE_NATS",
     "alias_bands",
     "fit_orbit_aliases",
+    "period_cut",
     "period_window",
     "position_profile",
 ]
@@ -119,7 +120,7 @@ UNRECORDED = "unrecorded"
 _RESULT_FORMAT = 1  # AliasResult JSON; a file without the field is format 0
 # The labels are *free* when a point-reflected mode's evidence is within this
 # many nats (tempered; odds of 1 to 20) of the best mode's. Why 3: docs/
-# orbit_fitting.md, "Alias search"; orbit_solved_problems.md, "Label swap" row.
+# orbit_methods.md, "Alias search"; orbit_solved_problems.md, "Label swap" row.
 LABELS_FREE_NATS = 3.0
 # ...and the reflected track matches within this fraction of λ/B_max.
 _LABELS_FREE_RES_FRACTION = 0.25
@@ -211,6 +212,58 @@ def alias_bands(times, p_range):
     return bands
 
 
+def _night_period_bound(
+    field, night_length, resolution, motion_fraction, p_floor
+):
+    """Shortest period (days) whose companion moves under ``motion_fraction`` of
+    ``resolution`` in the longest night (and is not below a night or ``p_floor``)."""
+    return max(
+        2 * math.pi * field * night_length / (motion_fraction * resolution),
+        night_length,
+        p_floor,
+    )
+
+
+def period_cut(
+    times,
+    field,
+    night_length,
+    *,
+    resolution,
+    motion_fraction=0.5,
+    p_floor=_P_FLOOR,
+):
+    """The shortest period of the declared prior: ``max(2 * dt_min, P_night)``, in days.
+
+    ``dt_min`` is the shortest gap between consecutive nights, so above the cut the
+    closest pair of nights advances by under half a cycle and the regular-sampling
+    alias lies outside the domain. ``P_night`` is the within-night motion bound of
+    [`period_window`][virgil.aliases.period_window]. A prior choice, not a Nyquist
+    limit: below it irregular sampling can still identify the period.
+
+    Parameters
+    ----------
+    times : array-like
+        One time per night (days); repeated times count as one night.
+    field, night_length, resolution
+        As for [`period_window`][virgil.aliases.period_window].
+    motion_fraction, p_floor
+        As for [`period_window`][virgil.aliases.period_window].
+
+    Returns
+    -------
+    float
+        ``P_cut`` in days; ``P_night`` alone for a single night.
+    """
+    t = onp.unique(onp.asarray(times, float))
+    p_night = _night_period_bound(
+        field, night_length, resolution, motion_fraction, p_floor
+    )
+    if t.size < 2:
+        return float(p_night)
+    return float(max(2 * onp.min(onp.diff(t)), p_night))
+
+
 def period_window(
     times,
     field,
@@ -225,7 +278,7 @@ def period_window(
 
     The lower end is a Nyquist-style sampling limit (the companion must not move
     much in a night); the upper end is ``span_factor`` times the span. No published
-    period enters ([why](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults)).
+    period enters ([why](../orbit_methods.md#alias-search)).
 
     Parameters
     ----------
@@ -264,10 +317,8 @@ def period_window(
             "positive field, resolution, motion_fraction, span_factor and "
             "p_floor."
         )
-    p_min = max(
-        2 * math.pi * field * night_length / (motion_fraction * resolution),
-        night_length,
-        p_floor,
+    p_min = _night_period_bound(
+        field, night_length, resolution, motion_fraction, p_floor
     )
     p_max = span_factor * span
     if not p_min < p_max:
@@ -532,17 +583,22 @@ def _terms_and_jacobian(surfaces, x, data, cfg, dof, log_broad):
     return jax.jacfwd(stacked, has_aux=True)(x)
 
 
-def _weighted_terms(surfaces, x, data, cfg, dof, log_broad, weights):
-    """``Σ w_ell ell + Σ w_bad bad`` of some epochs (``weights = (w_ell, w_bad)``)."""
-    ell, bad = _night_terms(surfaces, x, data, cfg, dof, log_broad)
-    return np.dot(weights[0], ell) + np.dot(weights[1], bad)
-
-
 _terms_jac = functools.partial(jax.jit, static_argnums=(0, 3))(
     _terms_and_jacobian
 )
+# Hessian of ``Σ w_ell ell + Σ w_bad bad`` over some epochs, ``weights = (w_ell, w_bad)``.
 _weighted_hessian = functools.partial(jax.jit, static_argnums=(0, 3))(
-    jax.hessian(_weighted_terms, argnums=1)
+    jax.hessian(
+        lambda surfaces, x, data, cfg, dof, log_broad, weights: sum(
+            np.dot(w, t)
+            for w, t in zip(
+                weights,
+                _night_terms(surfaces, x, data, cfg, dof, log_broad),
+                strict=True,
+            )
+        ),
+        argnums=1,
+    )
 )
 
 
@@ -571,10 +627,13 @@ def _batch(surfaces, xs, data, cfg, dof, log_broad=None, batch_size=64):
 
 
 # The Hessian of the likelihood (forward over reverse through the scale
-# integral) holds about this many whitenings' floats per night (measured: 6.4k
-# on calibrated GRAVITY-like data); it is a sum over nights, so it is
-# accumulated in groups of nights that fit the memory budget.
-_HESSIAN_COPIES = 8000
+# integral) holds one reverse working set per sampled coordinate: ``x`` has
+# the orbit's 8 elements and the diameter (``_elements``, ``_model``); a fixed
+# diameter only overcounts. Measured at 1.18 working sets per coordinate
+# (tests/test_marginal_woodbury.py); ``_table_floats`` carries a margin of 2.
+# It is a sum over nights, so it is accumulated in groups of nights that fit
+# the budget.
+_N_SITES = 9
 
 
 # deliberate: tests/test_epoch_coarse.py calls it; memory-budget grouping is not reachable cheaply via the public API
@@ -590,7 +649,7 @@ def _hessian_groups(memory_budget, data, surfaces):
     if not budget > 0:
         raise ValueError(f"memory_budget must be positive, got {budget}.")
     per_night = [
-        8 * _HESSIAN_COPIES * _whitening_floats(d) if s.numeric else 0
+        8 * _N_SITES * _table_floats(d) if s.numeric else 0
         for d, s in zip(data, surfaces)
     ]
     groups, start, used = [], 0, 0
@@ -2923,7 +2982,7 @@ def fit_orbit_aliases(
     init=None,
     skip_flagged=True,  # deliberate: a flagged night seeds nothing but its data still count
     n_bands_max=_N_BANDS_MAX,
-    temper=True,  # deliberate: untempered evidence is overconfident under correlated channels
+    temper=False,  # deliberate: opt-in until 0.5 (D6); temper=True corrects the overconfident evidence of correlated channels
     batch_size=None,
     memory_budget=None,
     short_arcs=True,  # deliberate: Nyquist-style bands alone leave hundreds of cycle counts
@@ -2937,7 +2996,7 @@ def fit_orbit_aliases(
 
     Each alias band (an integer number of orbits between the epochs) is fitted
     to all epochs and given an evidence; the defaults need no per-system
-    arguments ([how](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults),
+    arguments ([how](../orbit_methods.md#alias-search),
     [settings](../orbit_methods.md#alias-settings)).
 
     Parameters

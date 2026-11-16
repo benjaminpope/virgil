@@ -74,38 +74,68 @@ class _Axis(NamedTuple):
         return self.step > self.wanted * (1 + _STEP_TOLERANCE)
 
 
-def _null_nsigma(data, grid, batch_size, n_null, seed, delta_chi2):
-    """Global significance of ``delta_chi2`` from ``n_null`` companion-free
-    searches, and its false-alarm probability.
+# Null searches per call of the compiled kernel, and draws evaluated together
+# in it (about 25% faster than one at a time on a CPU). Changing the chunk size
+# changes the drawn nulls: it sets the number of draws and each chunk's key,
+# fold_in(PRNGKey(seed), chunk index).
+_NULL_CHUNK = 128
+_NULL_DRAW_BATCH = 32
 
-    The searches repeat the real one on Gaussian noise at the quoted errors.
-    The probability is ``(k + 1) / (n_null + 1)`` for ``k`` null maxima at
-    or above ``delta_chi2``, so it is an upper bound and the significance a
-    lower bound; with ``k = 0`` it sits at the floor ``1 / (n_null + 1)``
-    however strong the peak. Returns ``(sigma, fap, k)``; all NaN if
-    ``delta_chi2`` is not finite."""
+
+def _null_nsigma(
+    data, grid, batch_size, n_null, seed, delta_chi2, detection_sigma
+):
+    """Global significance of ``delta_chi2`` from companion-free searches,
+    its false-alarm probability and the counts behind it.
+
+    The searches repeat the real one on Gaussian noise at the quoted errors,
+    in equal chunks (at least ``n_null`` draws in all). The probability is
+    ``(k + 1) / (n + 1)`` for ``k`` of ``n`` null maxima at or above
+    ``delta_chi2``, so it is an upper bound and the significance a lower
+    bound; with ``k = 0`` it sits at the floor ``1 / (n + 1)`` however strong
+    the peak. Drawing stops early once ``k`` is too large for the probability
+    to reach ``detection_sigma`` even with all the draws: the verdict
+    is then settled and the significance rests on the draws so far.
+    Returns ``(sigma, fap, k, n)``; all NaN if ``delta_chi2`` is not finite."""
+    import jax
     from scipy.stats import norm
 
     from ..detection import gaussian_null, injection_recovery
     from ..models import BinaryModelCartesian
 
     if not math.isfinite(delta_chi2):
-        return float("nan"), float("nan"), float("nan")
-    mc = injection_recovery(
-        BinaryModelCartesian,
-        _null_model(),
-        data,
-        grid,
-        seed,
-        n_null=n_null,
-        noise=gaussian_null(_null_model(), data),
-        batch_size=batch_size,
-        progress=False,
+        return (float("nan"),) * 4
+    chunks = -(-n_null // _NULL_CHUNK)
+    size = -(-n_null // chunks)
+    # Passing needs (k + 1) / (N + 1) <= the tail beyond detection_sigma, for
+    # N = chunks * size draws (at least n_null).
+    k_pass = (
+        math.floor(float(norm.sf(detection_sigma)) * (chunks * size + 1)) - 1
     )
-    fap = float(mc.false_alarm_probability("delta_chi2", delta_chi2)[0])
+    noise = gaussian_null(_null_model(), data)
+    key = jax.random.PRNGKey(seed)
+    k = n = 0
+    for i in range(chunks):
+        mc = injection_recovery(
+            BinaryModelCartesian,
+            _null_model(),
+            data,
+            grid,
+            jax.random.fold_in(key, i),
+            n_null=size,
+            noise=noise,
+            draw_batch=min(_NULL_DRAW_BATCH, size),
+            batch_size=batch_size,
+            uncertainty=False,  # only delta_chi2 is read
+            progress=False,
+        )
+        k += int((mc.null["delta_chi2"] >= delta_chi2).sum())
+        n += size
+        if k > k_pass:
+            break
+    fap = (k + 1.0) / (n + 1.0)
     # A FAP of 1 (every null peaks higher) would give -inf, which JSON rejects.
-    k = round(fap * (n_null + 1)) - 1
-    return float(norm.isf(min(fap, n_null / (n_null + 1.0)))), fap, k
+    return float(norm.isf(min(fap, n / (n + 1.0)))), fap, k, n
 
 
 class BinaryPipeline(_Pipeline):
@@ -116,7 +146,8 @@ class BinaryPipeline(_Pipeline):
 
     Stages: ``load``, ``overview``, ``search`` (point-companion grid,
     [`detection_statistics`][virgil.detection.detection_statistics]),
-    ``limits`` ([`absil_limits`][virgil.limits.absil_limits]), ``fit``,
+    ``limits`` ([`ruffio_upperlimit`][virgil.limits.ruffio_upperlimit] by
+    default, or [`absil_limits`][virgil.limits.absil_limits]), ``fit``,
     ``posterior`` (NUTS, same prior as the fit) and ``quicklook``.
     ``res.summary["companion"]`` has ``sep_mas`` and ``pa_deg`` for either
     template. Settings:
@@ -135,7 +166,8 @@ class BinaryPipeline(_Pipeline):
         Run folder (default ``"run"``).
     **settings
         Overrides of ``BinaryPipeline.defaults()``. The most used: ``sigma``
-        (significance of the contrast limits, 3.0), ``max_sep_mas`` (search
+        (significance of the contrast limits, 3.0), ``limit_method``
+        (``"ruffio"``, the default, or ``"absil"``), ``max_sep_mas`` (search
         half-width in mas; default the coarsest λ/B, capped on lattice
         coverage), ``grid_step_mas``, ``flux_range`` (companion/primary, 1e-5 to 1; a
         brighter companion is the primary under relabelling), ``error_scale``
@@ -183,6 +215,7 @@ class BinaryPipeline(_Pipeline):
         "seed": 0,
         "batch_size": None,
         "limit_bins": 20,
+        "limit_method": "ruffio",
         "quicklook_execute": True,
     }
 
@@ -226,6 +259,8 @@ class BinaryPipeline(_Pipeline):
         _pair(s, "flux_range")
         if s["error_scale"] not in ("quoted", "fit"):
             raise ValueError('error_scale must be "quoted" or "fit".')
+        if s["limit_method"] not in ("ruffio", "absil"):
+            raise ValueError('limit_method must be "ruffio" or "absil".')
         _validate_common(s)
 
     # --- shared state, rebuilt on demand so that resume works ------------
@@ -387,7 +422,8 @@ def _search(p):
 def _refined_flux(
     data, grid, batch_size
 ):  # deliberate: tests call it directly
-    """``(flux, loglike)`` of the point companion refined at every position."""
+    """``(flux, loglike, converged)`` of the point companion refined at every
+    position."""
     from .._grid import (
         batch_size_or_default,
         resolve_grid_keys,
@@ -407,7 +443,7 @@ def _refined_flux(
         batch_size=batch_size_or_default(batch_size, data),
     )
     warn_unconverged(converged, "optimized_flux_grid")
-    return flux, loglike
+    return flux, loglike, converged
 
 
 def _search_maps(data, grid, batch_size):
@@ -418,7 +454,7 @@ def _search_maps(data, grid, batch_size):
     from ..likelihood import model_loglike
     from ..models import BinaryModelCartesian
 
-    flux, loglike = (
+    flux, loglike, converged = (
         onp.asarray(x) for x in _refined_flux(data, grid, batch_size)
     )
     sigma = onp.asarray(
@@ -439,6 +475,7 @@ def _search_maps(data, grid, batch_size):
         "loglike": loglike,
         "flux_best": flux,
         "flux_sigma": sigma,
+        "flux_converged": converged.astype(bool),
         "snr": flux / sigma,
     }
 
@@ -481,13 +518,14 @@ def _search_report(data, grid, axis, detection, settings):
     from ..detection import local_nsigma
 
     local = float(local_nsigma(float(detection["delta_chi2"])))
-    global_nsigma, fap, n_above = _null_nsigma(
+    global_nsigma, fap, n_above, n_drawn = _null_nsigma(
         data,
         grid,
         settings["batch_size"],
         settings["n_null"],
         settings["seed"],
         float(detection["delta_chi2"]),
+        settings["detection_sigma"],
     )
     chi2_null, _ = _chi2(_null_model(), data)
     return {
@@ -503,7 +541,7 @@ def _search_report(data, grid, axis, detection, settings):
         "false_alarm_probability": fap,
         "n_null_above": n_above,
         "global_nsigma_is_lower_bound": n_above == 0,
-        "n_null": settings["n_null"],
+        "n_null": n_drawn,
         "max_sep_mas": axis.max_sep,
         "alias_cap_mas": axis.alias_cap,
         "grid_step_mas": axis.step,
@@ -519,25 +557,61 @@ def _search_report(data, grid, axis, detection, settings):
 
 
 def _limits(p):
+    """Contrast limits at ``sigma``: Ruffio et al. (2018) or Absil et al. (2011).
+
+    Ruffio is the search's flux and Laplace σ, truncated to ``f >= 0``, at the
+    ``norm.cdf(sigma)`` quantile, on the quoted errors with no error-scale
+    rescale (a deliberate choice for now). Positions where the flux refinement
+    did not converge, or σ is undefined, are NaN, with a warning.
+
+    Source: Ruffio et al. (2018), [references](../references.md#ruffio2018).
+    """
+    from scipy.stats import norm
+
     from ..limits import (
         absil_limits,
         flux_to_delta_mag,
         radial_profile,
+        ruffio_upperlimit,
     )
     from ..models import BinaryModelCartesian
     from ..plotting import plot_contrast_curve, plot_grid_map
 
     s = p.settings
     grid, max_sep = p._grid(), p._grid_axis().max_sep
-    limit = onp.asarray(
-        absil_limits(
+    path = p.output / "grids.h5"
+    axes = _io.read_h5(path, "axes") if path.is_file() else {}
+    same = all(
+        onp.array_equal(axes.get(k), onp.asarray(grid[k]))
+        for k in ("dra", "ddec")
+    )
+    search = _io.read_h5(path, "search") if same else {}
+    method = s["limit_method"]
+    if method == "ruffio":
+        keys = ("flux_best", "flux_sigma", "flux_converged")
+        if not set(keys) <= search.keys():  # e.g. a run from an older virgil
+            search = _search_maps(p.processed, grid, s["batch_size"])
+        flux, sigma, converged = (onp.asarray(search[k]) for k in keys)
+        limit = ruffio_upperlimit(flux, sigma, norm.cdf(s["sigma"]))
+        bad = ~converged | ~onp.isfinite(sigma) | (sigma <= 0)
+        limit = onp.where(bad, onp.nan, limit)
+        if bad.any():
+            warnings.warn(
+                f"ruffio limits: {int(bad.sum())} of {bad.size} grid "
+                "positions have an unconverged flux refinement or no finite "
+                "Laplace sigma; their limits are NaN",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+    else:
+        limit = absil_limits(
             BinaryModelCartesian,
             p.processed,
             grid,
             s["sigma"],
             batch_size=s["batch_size"],
         )
-    )
+    limit = onp.asarray(limit)
     dra, ddec = onp.asarray(grid["dra"]), onp.asarray(grid["ddec"])
     # Inside the resolution limit separation and flux are degenerate: NaN.
     r = onp.hypot(*onp.meshgrid(dra, ddec, indexing="ij"))
@@ -547,11 +621,11 @@ def _limits(p):
         limit, dra, ddec, r_max=max_sep, bins=s["limit_bins"]
     )
     # write_h5 cannot append: rewrite the file with the search group read back.
-    meta = {"sigma": s["sigma"], "method": "absil"}
+    meta = {"sigma": s["sigma"], "method": method}
     _write_grids(
         p.output,
         grid,
-        search=_io.read_h5(p.output / "grids.h5", "search"),
+        search=search,
         limits={"limit_flux": (limit, meta)},
     )
     fig, _ = plot_grid_map(
@@ -564,7 +638,7 @@ def _limits(p):
     delta_mag = onp.asarray(flux_to_delta_mag(median), dtype=float)
     return {
         "sigma": s["sigma"],
-        "method": "absil",
+        "method": method,
         "r_mas": profile["r"],
         "median_flux": median,
         "median_delta_mag": delta_mag,
@@ -788,16 +862,37 @@ def _chi2_checks(search, fit):
         label = "the best-fit binary" + (
             f" (star alone: {null:.3g})" if null is not None else ""
         )
-        return [_checks.chi2_reduced("chi2", fit["chi2_reduced"], label=label)]
+        return [
+            _checks.chi2_reduced(
+                "chi2",
+                fit["chi2_reduced"],
+                label=label,
+                n=fit["n_independent"],
+                n_params=len(fit["params"]) + len(fit["error_scales"] or {}),
+            )
+        ]
     if search:
-        return [_checks.chi2_reduced("chi2", null, label="the star alone")]
+        return [
+            _checks.chi2_reduced(
+                "chi2",
+                null,
+                label="the star alone",
+                n=search["n_independent"],
+            )
+        ]
     return []
 
 
 def _fit_checks(fit, companion, load):
     checks = []
     if fit["error_scales"]:
-        checks.append(_checks.error_scale(fit["error_scales"]))
+        checks.append(
+            _checks.error_scale(
+                fit["error_scales"],
+                n=fit["n_independent"],
+                n_params=len(fit["params"]) + len(fit["error_scales"]),
+            )
+        )
     if fit["at_bound"]:
         checks.append(_checks.at_bound(fit["at_bound"], start=True))
     checks.append(

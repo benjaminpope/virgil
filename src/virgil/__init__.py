@@ -104,6 +104,7 @@ from .limits import (  # noqa: E402
     ruffio_upperlimit,
 )
 from .models import (  # noqa: E402
+    ArchimedeanSpiral,
     Attached,
     BinaryModelAngular,
     BinaryModelCartesian,
@@ -123,6 +124,7 @@ from .models import (  # noqa: E402
     Harmonics,
     Image,
     LimbDarkenedDisk,
+    LinearImage,
     ModulatedGaussianRim,
     OrbitalBinary,
     PointSource,
@@ -197,6 +199,7 @@ def __getattr__(name):
 
 
 __all__ = [
+    "ArchimedeanSpiral",
     "Attached",
     "AxialVonMises",
     "BinaryModelAngular",
@@ -220,6 +223,7 @@ __all__ = [
     "GravityDarkenedStar",
     "HarmonixModel",
     "Image",
+    "LinearImage",
     "KeplerOrbit",
     "Harmonics",
     "LimbDarkenedDisk",

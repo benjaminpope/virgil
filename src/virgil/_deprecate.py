@@ -331,3 +331,26 @@ def old_order(*old_names, data, aliases=None, removed=False, keywords=()):
         return wrapper
 
     return decorate
+
+
+class CheckWarning(RuntimeWarning):
+    """A warning that names the pipeline check it belongs to.
+
+    The pipelines read ``check`` and ``counts`` instead of parsing the
+    message, so rewording the message cannot change a verdict.
+
+    Parameters
+    ----------
+    message : str
+        The text shown to the user.
+    check : str
+        The check id: ``"convergence"``, ``"flux_axis_resolution"`` or
+        ``"limits_clipped"``.
+    **counts : float
+        The numbers the check reports, such as ``failed`` and ``total``.
+    """
+
+    def __init__(self, message, *, check, **counts):
+        super().__init__(message)
+        self.check = check
+        self.counts = counts

@@ -1,5 +1,8 @@
 """Synthetic truth images for testing image reconstructions.
 
+This module holds test images (`ring`, `spiral`, `gaussian_blob`), not source
+models; for models see [`virgil.models`][virgil.models].
+
 Each function returns a unit-sum ``(npix, npix)`` array in the virgil
 image orientation (East left, North up, centre at the middle of the pixel
 grid, as in [`render`][virgil.models.SourceModel.render]), ready for
