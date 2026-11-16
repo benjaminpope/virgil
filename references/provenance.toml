@@ -2098,6 +2098,17 @@ verified_via = "crossref"
 used_in = ["virgil.orbit_cells:search_cell"]
 note = "J. Am. Stat. Assoc. 79, 871; elemental subsets as starts of a robust fit"
 
+[ref.hadi1993]
+authors = "Hadi & Simonoff"
+year = 1993
+title = "Procedures for the Identification of Multiple Outliers in Linear Models"
+doi = "10.1080/01621459.1993.10476407"
+bibcode = "1993JASA...88.1264H"
+verified = true
+verified_via = "ads"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "J. Am. Stat. Assoc. 88, 1264; forward addition of observations to the clean set, which the add-one move uses to complete the concentration steps"
+
 [ref.rousseeuw1999]
 authors = "Rousseeuw & Van Driessen"
 year = 1999
