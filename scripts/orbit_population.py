@@ -48,7 +48,8 @@ elsewhere they are counted and tabled.
 2. no cell at the floor (no failed system) in the detectable stratum;
 3. SBC, chi-square over 10 bins: the randomized rank of f(true) among the
    draws (``pit_sky``) over all fitted in-domain systems, failing at
-   p < ``P_FAIL`` (a truth-selected stratum breaks the rank guarantee, so the
+   p < ``P_FAIL`` (f depends on the data, which SBC allows: Modrák et al.
+   2023; a truth-selected stratum breaks the rank guarantee, so the
    stratum's own uniformity is reported only). The PITs of N and ln P and the
    ranks of the invariants a, e, cos i, Omega and omega (folded) are reported
    only;
@@ -299,7 +300,8 @@ def stratum(k, n_outliers):
 def nyquist_ok(period, times):
     """Whether ``period`` is at least twice the median gap between consecutive
     nights of a season (gaps above ``SEASON_GAP`` are between seasons); false
-    with no within-season gap."""
+    with no within-season gap. Not the smallest gap, which is too lenient
+    (Eyer & Bartholdi 1999 on irregular sampling)."""
     gaps = onp.diff(onp.sort(onp.asarray(times, float)))
     gaps = gaps[gaps <= SEASON_GAP]
     return bool(len(gaps) and period >= 2.0 * onp.median(gaps))
