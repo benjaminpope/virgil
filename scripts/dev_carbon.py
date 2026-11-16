@@ -153,8 +153,8 @@ GEMINI_CAVEAT = (
     "- **Gemini (Google Antigravity)** has been used since 2026-10-27 for "
     "pull-request reviews and code audits (Gemini 4 Argon, with Gemini Flash "
     "for some calls). Token counts per model call come from Antigravity's "
-    "local conversation databases. Reviews and audits of virgil and "
-    "virgil-validation count; each conversation is attributed by the "
+    "local conversation databases. Reviews and audits of virgil, "
+    "virgil-validation and virgil-vlti count; each conversation is attributed by the "
     "repository its review or audit names, else its workspace. Google "
     "publishes no per-token energy, so Argon is assumed Opus class and Flash "
     "Haiku class, with a range across the neighbouring classes. Google's "
@@ -171,15 +171,18 @@ def caveats(summary):
         [
             "## Scope and caveats",
             "",
-            "- **What is counted.** Development and validation of virgil: "
+            "- **What is counted.** Development and validation of virgil and "
+            "virgil-vlti (its VLTI calibration package, counted as virgil "
+            "core): "
             "AI coding assistants, GitHub Actions CI, and jobs on Swinburne's "
             "OzSTAR/NT cluster. Validation jobs (simulation-based "
             "calibration, the imaging contests, detection false-alarm and "
-            "orbit checks) are counted. Data analysis is not (see above).",
+            "orbit checks) are counted. Data analysis is not (see above). "
+            "GitHub Actions CI is counted for the virgil repository only.",
             "- **Claude Code** was used from 2026-09-28, and is counted "
             "from its local transcripts on one machine: sessions in the "
-            "virgil repository and its worktrees, but not in the separate "
-            "virgil-validation and virgil-vlti repositories. Sessions run in "
+            "virgil and virgil-vlti repositories and their worktrees, but not "
+            "in the separate virgil-validation repository. Sessions run in "
             "the cloud (claude.ai, cloud agents) or on other machines are not "
             "stored locally and are not captured.",
             "- **Before that, VS Code Copilot Chat** was the main assistant "

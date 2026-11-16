@@ -118,6 +118,40 @@ def test_the_sentinel_fires_when_the_true_mode_is_missing():
     assert not ok.at_floor
 
 
+def _sentinel(inliers, key=0):
+    """``at_floor`` for a unit Gaussian target covered by its mode, with the
+    given per-draw inlier count and an all-outlier floor far below."""
+    lp = lambda x: -0.5 * np.sum(x**2) / 9 - 0.5 * np.log(2 * np.pi * 9)  # noqa: E731
+    sp = lambda k, n: 3 * jax.random.normal(k, (n, 1))  # noqa: E731
+    target = lambda x, theta: -0.5 * np.sum(x**2) - 0.5 * np.log(2 * np.pi)  # noqa: E731
+    mode = ms.Mode(
+        onp.zeros(1), float(target(np.zeros(1), None)), onp.eye(1), 2.0
+    )
+    mixture = ms.DefensiveMixture([mode], lp, sp)
+    return ms.importance_evidence(
+        target, None, mixture, jax.random.key(key),
+        inliers_fn=lambda x, theta: inliers(x[0]), log_floor=-100.0,
+    )  # fmt: skip
+
+
+@x64
+def test_the_sentinel_does_not_fire_on_a_mode_of_exactly_m_min_inliers():
+    # 84 % of the weight has 2 inliers, 16 % has lost one: the weighted mean
+    # (1.84) is below m_min, but the draws sit on the mode
+    ev = _sentinel(lambda x: np.where(x > -1.0, 2.0, 1.0))
+    assert ev.n_inliers < ms.M_MIN and ev.ess > 1000
+    assert not ev.at_floor
+
+
+@x64
+def test_the_sentinel_fires_when_most_weight_is_below_m_min_inliers():
+    # 69 % of the weight has 1 inlier, 31 % has 10: the mean (3.8) is above
+    # m_min, but the draws mostly sit at the floor
+    ev = _sentinel(lambda x: np.where(x > 0.5, 10.0, 1.0))
+    assert ev.n_inliers > ms.M_MIN
+    assert ev.at_floor
+
+
 @x64
 def test_distinct_modes_merges_a_mode_and_its_repeat_but_not_a_needle():
     cov = onp.diag([1.0, 1.0])

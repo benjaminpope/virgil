@@ -1295,7 +1295,7 @@ def stage_warning_checks(warning_records):
     return checks
 
 
-def at_bound(names, *, start=False):
+def at_bound(names, *, start=False, seed=()):
     """Fitted parameters within 0.1% of a prior bound.
 
     A prior capped too tight pins a parameter silently: the fit is then the
@@ -1309,9 +1309,34 @@ def at_bound(names, *, start=False):
         Report the bound as the start of NUTS (the ``start_at_bound`` check,
         added by the posterior stage only when there are some): the
         posterior then starts just inside the bound and is prior-dominated.
+    seed : sequence of str, optional
+        Parameters of a seed fit (the disk's single-ring geometry fit) at a
+        bound, reported as ``geometry.<name>`` with their own message.
     """
-    names = list(names)
+    names, seed = list(names), list(seed)
     listing = ", ".join(names)
+    if seed and not start:
+        note = (
+            "The single-ring geometry fit, which seeds the inclination and "
+            f"position angle, sits at a prior bound for {', '.join(seed)}: "
+            "its value there is the bound, not a measurement, and an active "
+            "bound is held fixed for the other widths. A radius on the "
+            "r_in hole is light inside the resolution limit, which the seed "
+            "ring cannot resolve; it is not a reason to lower r_in."
+        )
+        best = (
+            f" The best fit also sits at a prior bound for {listing}: widen "
+            "the prior before reading the value."
+            if names
+            else ""
+        )
+        return Check(
+            "at_bound",
+            "warn",
+            names + [f"geometry.{k}" for k in seed],
+            None,
+            note + best,
+        )
     if start:
         return Check(
             "start_at_bound",

@@ -16,12 +16,15 @@ hide_excluded = true
 # opened in them from other projects, and the old sibling worktrees
 # (~/code/drpangloss-*). After the rename, ~/code/virgil: its project
 # directory (the trailing space ends the match, as the next field follows
-# it) and its worktrees, but not the separate virgil-validation and
-# virgil-vlti repositories.
+# it) and its worktrees, and the same for ~/code/virgil-vlti, which counts
+# as virgil core (VLTI calibration; GRAVITY and PIONIER data are used in the
+# paper), but not the separate virgil-validation repository.
 projects = [
     "drpangloss",
     "-Users-benpope-code-virgil ",
     "-Users-benpope-code-virgil--claude-worktrees-",
+    "-Users-benpope-code-virgil-vlti ",
+    "-Users-benpope-code-virgil-vlti--claude-worktrees-",
 ]
 
 [vscode]
@@ -34,11 +37,11 @@ folders = ["~/code/drpangloss"]
 # Gemini in Google Antigravity (app and CLI): Argon PR reviews and audits.
 # Each conversation is attributed to a repository by its argon-review title,
 # its workspace or its parent conversation. virgil and virgil-validation
-# count; science repositories match [classes.science] dirs (virgil-apep,
-# virgil-vlti); any other project (the website, ozstar_scripts, scratch
+# count, as does virgil-vlti (core); science repositories match
+# [classes.science] dirs (virgil-apep); any other project (the website, ozstar_scripts, scratch
 # folders) is class "other", and conversations with no project
 # "unattributed": both are costed but kept out of the headline.
-projects = ["virgil", "virgil-validation"]
+projects = ["virgil", "virgil-validation", "virgil-vlti"]
 
 [gha]
 enabled = true
@@ -60,7 +63,7 @@ exclude = []
 
 # Data analysis: excluded from the headline and shown only as one aggregate
 # line. Covers the Apep, nuHor (HR 4049, HD 206893, PIONIER), ELR/PAVO,
-# IW Car, VLTI calibration (GRAVITY PCA, VLTI notebooks) and ESO archive
+# IW Car and ESO archive
 # (download, pipeline image, reductions and fits) work, plus jobs whose
 # purpose is unclear. hide_excluded drops their names from every output,
 # including the archive committed to git.
@@ -68,17 +71,17 @@ exclude = []
 sessions_file = "~/.claude/carbon/virgil-science-sessions.txt"
 jobs = [
     "apep*", "elr*", "pionier*", "hr4049*", "hd206893*", "iwcar*",
-    "gcp_*", "gravity_cal*", "vlti*", "eso_*", "sweep-*", "gpu-test",
+    "gcp_*", "eso_*", "sweep-*", "gpu-test",
 ]
 dirs = [
     "*apep*", "*nuHor*", "*hr4049*", "*hd206893*", "*iwcar*", "*elr-pavo*",
-    "*drpangloss-elr*", "*gravity_cal*", "*vlti*", "*eso_*", "*pionier*",
+    "*drpangloss-elr*", "*eso_*", "*pionier*",
     "*lbfgs_sweep_diag*",
 ]
 branches = [
     "apep-*", "*-apep-*", "elr-*pavo*", "elr-robustness-review", "elr-s6-chara-notebook",
     "remove-elr-pavo",
-    "gravity-calibration-review", "move-gravity-review", "pds70-disk",
+    "pds70-disk",
 ]
 
 # Validation of virgil: counted in the headline, shown as validation.
