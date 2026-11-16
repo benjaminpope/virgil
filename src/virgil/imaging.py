@@ -3116,6 +3116,8 @@ def error_scale(
                     reasons.append(
                         f"a {b.kind} block with a finite prior_width"
                     )
+                elif getattr(b, "modes", None) is not None:
+                    reasons.append(f"a {b.kind} block with nuisance modes")
             if reasons:
                 raise ValueError(
                     f"error_scale(by_observable=True) cannot rescale dataset {i}: "
