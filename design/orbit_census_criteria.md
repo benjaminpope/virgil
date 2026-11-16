@@ -27,8 +27,8 @@ B″ (every night an outlier); ≤ m inliers left; the rest (informative). Repor
 ## Gating
 
 §14 assertions 1–8 stand as committed, assertion 2 included (no cell-at-floor failures), except as amended on
-2026-11-16 below: assertions 1 and 2 gate in the detectable stratum only, and assertions 1 and 3 are scored in the sky
-plane. Rows of failed systems carry `pit_diagnostic=1` and never enter a gated SBC. The oracle columns are diagnostics:
+2026-11-16 below: assertions 1, 2, 5 and 7 gate in the detectable stratum only (assertion 5 outside it is report-only),
+and assertions 1 and 3 are scored in the sky plane. Rows of failed systems carry `pit_diagnostic=1` and never enter a gated SBC. The oracle columns are diagnostics:
 they never touch `p_pos` or the status.
 
 ## Persistence and the matched sample (added 2026-11-04, before the baseline run)

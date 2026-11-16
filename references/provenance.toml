@@ -2253,7 +2253,7 @@ doi = "10.1051/aas:1999102"
 verified = true
 verified_via = "ads"
 used_in = []
-note = "A&AS 135, 1; for irregular sampling the usable Nyquist frequency can far exceed that of the mean gap: considered, and not used, for the census's sampling test (design/orbit_census_criteria.md)"
+note = "A&AS 135, 1; for irregular sampling the usable Nyquist frequency can far exceed that of the mean gap: considered, and not used, for the census's sampling test (scripts/orbit_population.py, nyquist_ok)"
 
 [ref.marquardt1963]
 authors = "Marquardt"
