@@ -203,8 +203,13 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
    - its evidence (`trust/evidence/*.jsonl`) is regenerated and pinned to that single commit: `scripts/check_evidence_pin.py --release --expect <sha>` passes there;
    - no finding in its ledger ruled `virgil` with severity `bug` is open without a recorded decision (fixed, or accepted with a reason in the release notes).
 4. **GPU and long runs** (maintainer, on OzSTAR): the docs-examples run on a GPU passes (ozstar_scripts job `docs_examples_prof`). The Gl 229 Ba–Bb period-alias search was a release gate through 0.4.1 and was dropped as a release gate on 2026-10-23, so the Gl 229 result is now unverified at later releases: the alias-search regressions are guarded by the CI tests listed in the "Binary orbits: solved problems" table (linked from AGENTS.md), and a maintainer may still run the cold search (ozstar_scripts job `orbit_aliases`, `virgil.aliases.fit_orbit_aliases` with `--no-init`; the N = 34 band, P ≈ 12.134 d, should rank first) when the search code changes.
-5. Check the build locally:
+5. **Carbon page** (maintainer, locally: it reads private transcripts and `ssh nt`, so CI cannot). In the release PR, with `ssh nt` working and claude-code-carbon-dashboard installed, run:
+   ```bash
+   python3 scripts/dev_carbon.py --release
+   ```
+   and commit the changed `docs/dev_carbon.md`, `docs/generated/dev_carbon*.json`, `docs/index.md` and README badge. `--release` refuses `--offline` or `--sources` and fails if any source cannot be fetched; it stamps `dev_carbon.json` with the `pyproject.toml` version. The lint job `carbon-stamp` fails a PR that bumps the version without a matching stamp, and `publish.yml` refuses to publish unless the stamp matches the tag and was made at most 7 days before the tagged commit. If a source is down for good (an NT outage), put a line `carbon-gate: skip <reason>` in the release notes (or PR description); the gate then passes with a warning and the page keeps naming the version it was last refreshed for.
+6. Check the build locally:
    ```bash
    uv build && uvx twine check --strict dist/*
    ```
-6. On GitHub, draft a release with a new tag `v<version>` (e.g. `v0.2.0`) on that commit, write the notes, and publish it. The workflow first checks the gate in item 2, then that the tag matches the version, builds and checks the distributions, and uploads them.
+7. On GitHub, draft a release with a new tag `v<version>` (e.g. `v0.2.0`) on that commit, write the notes, and publish it. The workflow first checks the gate in item 2 and the carbon stamp in item 5, then that the tag matches the version, builds and checks the distributions, and uploads them.
