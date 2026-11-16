@@ -695,7 +695,11 @@ class FitResult:
         (``None`` if it converged):
         ``"limit"`` (``max_steps``), ``"time"`` (``time_limit``), ``"stalled"`` (an L-BFGS step no longer moved
         the parameters), ``"non-finite"`` (a NaN or infinite loss or gradient; any
-        method ending on a non-finite loss is unconverged) or ``"failed"`` (another LM failure);
+        method ending on a non-finite loss is unconverged), ``"failed"`` (another LM failure)
+        or ``"bound"`` (a parameter ended at a prior bound with the loss still
+        falling inward: its gradient is squashed to nothing there, so the test
+        in the unconstrained coordinate passed; ``bound_stall`` names them; not
+        checked after Adam's ``ftol_abs`` stop);
         ``at_bound``, a tuple of the parameters and error terms that ended within 1/1000
         of their prior's range of a finite end, in the coordinate they are
         fitted in (a fit at a bound, say an eccentricity at 0.9, is often not
@@ -987,6 +991,9 @@ def fit(
         values = problem.constrain(z)
         loss, chi2, grad_norm = _summary(problem, z, traced_scale, grad_norm)
         loss = float(loss)
+        # Adam's window stop is the caller's own criterion (``ftol_abs``) and
+        # says nothing about the gradient, so the check below leaves it be.
+        plateau = method == "adam" and converged is True
         if method == "adam" and not converged:
             tolerance = _lm_tolerance(problem, z0, traced_scale, gtol)
             converged = bool(grad_norm <= tolerance)
@@ -994,9 +1001,23 @@ def fit(
         if not math.isfinite(loss) and converged is not False:
             # E.g. LM or Adam ending on NaN parameters.
             converged, stop = False, "non-finite"
+        # The gradient in z cannot see a stall at a bound: check the first-order
+        # condition in the parameter's own coordinate (see ``_bound_stall``).
+        stalled = ()
+        if converged and not plateau:
+            stalled = _bound_stall(
+                problem,
+                z,
+                traced_scale,
+                _lm_tolerance(problem, z0, traced_scale, gtol),
+            )
+            if stalled:
+                converged, stop = False, "bound"
         if converged is False:
             warnings.warn(
-                _not_converged(method, stop, steps, limit, dtype, time_limit),
+                _not_converged(
+                    method, stop, steps, limit, dtype, time_limit, stalled
+                ),
                 RuntimeWarning,
                 stacklevel=external_stacklevel(),
             )
@@ -1023,6 +1044,7 @@ def fit(
             "precondition_rounds": rounds,
             **extra,
             "at_bound": _at_bound(problem, values),
+            "bound_stall": stalled,
             "derived": {
                 k: onp.asarray(v)
                 for term in problem.likelihoods
@@ -1096,22 +1118,22 @@ class _Budget:
 _AT_BOUND = 1e-3
 
 
-def _bound_fraction(prior, value, flat=True):
-    """Where ``value`` lies in its prior's finite interval, as a fraction.
+def _interval(prior, flat=True):
+    """``(to_flat, low, high)``: the finite interval ``prior`` is bounded to.
 
-    Only genuine edges of the support count (in the flat coordinate when ``flat``,
-    except at sphere coordinate poles); ``None`` for unbounded priors, angle
-    vectors, and tied terms.
+    ``to_flat`` maps a value to the interval's coordinate (the flat coordinate
+    when ``flat`` and the prior has one), or is ``None`` when the value is that
+    coordinate. The result is ``None`` for unbounded priors, angle vectors, and
+    tied terms.
     """
     if is_tied(prior) or is_angle_vector(prior):
         return None
-    base = _base(prior)
     fc = _flat_coordinate(prior)
     if flat and fc is not None:
         to_flat, _, low, high = fc
-        value = to_flat(value)
     else:
-        support = base.support
+        to_flat = None
+        support = _base(prior).support
         low = getattr(support, "lower_bound", None)
         high = getattr(support, "upper_bound", None)
         if low is None or high is None:
@@ -1119,6 +1141,23 @@ def _bound_fraction(prior, value, flat=True):
     low, high = onp.asarray(low, float), onp.asarray(high, float)
     if not (onp.all(onp.isfinite(low)) and onp.all(onp.isfinite(high))):
         return None
+    return to_flat, low, high
+
+
+def _bound_fraction(prior, value, flat=True):
+    """Where ``value`` lies in its prior's finite interval, as a fraction.
+
+    Only genuine edges of the support count (in the flat coordinate when ``flat``,
+    except at sphere coordinate poles); ``None`` for unbounded priors, angle
+    vectors, and tied terms.
+    """
+    interval = _interval(prior, flat)
+    if interval is None:
+        return None
+    to_flat, low, high = interval
+    base = _base(prior)
+    if to_flat is not None:
+        value = to_flat(value)
     fraction = onp.asarray((onp.asarray(value, float) - low) / (high - low))
     poles = getattr(base, "_poles", None)
     if poles is not None:
@@ -1151,6 +1190,68 @@ def _at_bound(problem, values):
         ):
             found.append(site)
     return tuple(found)
+
+
+# A coordinate fitted through a sigmoid (the bounded-to-unbounded map) has
+# its gradient scaled by dt/dz = t (1 - t) for t its fraction of the prior's
+# range, at most 1/4: it vanishes towards a bound. A fit that ended with the
+# gradient in z below its tolerance therefore has a gradient in t of at most
+# tolerance / (t (1 - t)), and ``_bound_stall`` allows the midpoint's 4 times
+# the tolerance. Derived from the sigmoid, not tuned.
+_SIGMOID_SLOPE = 4.0
+
+
+def _bound_stall(problem, z, scale, tolerance):
+    """The sites that ended at a prior bound with the loss still falling inward.
+
+    ``z`` is a fit's result and ``tolerance`` its gradient tolerance. With ``t``
+    a parameter's fraction of its prior's range (in the flat coordinate, when
+    it has one) and ``g`` the gradient of the loss per data point in ``t``, the
+    point is a constrained stationary point only if the bound's multiplier is
+    not negative: ``g >= 0`` at the lower end, ``g <= 0`` at the upper. A site
+    fails when, at the nearer end, ``g`` points inward by more than
+    ``_SIGMOID_SLOPE`` times ``tolerance``. A gradient pointing outward is a
+    genuine optimum at the bound, however far from it the fit stopped. The
+    test in ``z`` cannot see this: ``dt/dz`` shrinks towards a bound as fast as
+    the distance to it.
+
+    Source: [Nocedal & Wright (2006)](../references.md#nocedal2006), eq. 12.34 (KKT).
+    """
+    if problem.boxed:
+        return ()  # L-BFGS-B projects onto the bounds itself
+    gradient = _gradient(problem, z, scale)
+    priors = dict(problem.priors)
+    priors.update({site: p for site, (p, _, _) in problem.noise.items()})
+    values = problem.constrain(z)
+    stalled = []
+    for site, prior in priors.items():
+        interval = _interval(prior, problem.flat)
+        if interval is None:
+            continue
+        _, low, high = interval
+        bijection = problem.bijection(prior)
+        to_interval = (
+            bijection.interval
+            if problem._in_flat_coordinate(prior)
+            else bijection
+        )
+        t, slope = jax.jvp(
+            lambda zk: (to_interval(zk) - low) / (high - low),
+            (z[site],),
+            (np.ones_like(z[site]),),
+        )
+        t, slope, g = (
+            onp.asarray(a, float) for a in (t, slope, gradient[site])
+        )
+        with onp.errstate(divide="ignore", invalid="ignore"):
+            g = onp.where(slope > 0, g / slope, 0.0)
+        inward = onp.where(t < 0.5, -g, g)
+        # An end at a sphere coordinate pole is not a prior bound.
+        fraction = _bound_fraction(prior, values[site], problem.flat)
+        inward = onp.where(onp.isnan(fraction), 0.0, inward)
+        if onp.any(inward > _SIGMOID_SLOPE * float(tolerance)):
+            stalled.append(site)
+    return tuple(stalled)
 
 
 # The one size limit for dense n × n matrices. Above this many coordinates
@@ -1420,9 +1521,14 @@ def _direct_chi2(term, values):
 
 @eqx.filter_jit
 # deliberate: jit boundary, compiled once per problem structure
+def _gradient(problem, z, scale):
+    """The loss-per-data-point gradient at ``z``."""
+    return jax.grad(_scaled_loss(problem, scale))(z)
+
+
 def _gradient_norm(problem, z, scale):
     """The largest component of the loss-per-data-point gradient at ``z``."""
-    return _largest(jax.grad(_scaled_loss(problem, scale))(z))
+    return _largest(_gradient(problem, z, scale))
 
 
 def _summary(problem, z, scale, grad_norm=None):
@@ -1555,8 +1661,7 @@ def _lm_residuals(z, args):
 @eqx.filter_jit
 # deliberate: jit boundary, compiled once per problem structure
 def _lm_tolerance(problem, z0, scale, gtol):
-    gradient = jax.grad(_scaled_loss(problem, scale))(z0)
-    return _tolerance(gradient, gtol)
+    return _tolerance(_gradient(problem, z0, scale), gtol)
 
 
 # Up to this many unconstrained coordinates, LM's inner solve is a dense QR
@@ -2224,8 +2329,15 @@ def _lbfgs_run(
 
 
 # deliberate: message for an unconverged fit saying why; test_unconverged_lm_message_says_why calls it with raw stop codes
-def _not_converged(method, stop, steps, limit, dtype, time_limit):
+def _not_converged(method, stop, steps, limit, dtype, time_limit, stalled=()):
     """The warning for an unconverged fit, saying why it stopped."""
+    if stop == "bound":
+        return (
+            f"fit(method={method!r}) did not converge: {', '.join(stalled)} "
+            "stopped at a prior bound with the loss still falling inward (its "
+            "gradient is squashed to nothing there by the bounded-to-unbounded "
+            "map); start it inside the bound."
+        )
     if stop == "time":
         return (
             f"fit(method={method!r}) did not converge: it reached its "

@@ -1723,3 +1723,74 @@ def test_an_explicit_zero_max_steps_is_not_the_default(method):
         result = fit(START, PRIORS, DATA, method=method, max_steps=0)
     # scipy's L-BFGS-B still counts its first iteration; the default is 20000.
     assert result.info["steps"] <= 1
+
+
+# A fit that starts on a prior bound, with the likelihood rising steeply into the
+# interior, must not report convergence: the bounded-to-unbounded map squashes
+# the gradient there. A second parameter with a large gradient sets the
+# tolerance (relative to the largest starting gradient), as in a pipeline.
+_BOUND_ROWS = 20000
+
+
+def _bound_fit(prior, start, truth_x=3.0, **options):
+    def term(v):
+        return np.concatenate(
+            [
+                (v["x"] - truth_x) / 10.0 * np.ones(_BOUND_ROWS),
+                (v["y"] - 1.0) * np.ones(_BOUND_ROWS),
+            ]
+        )
+
+    priors = {"x": prior, "y": dist.Uniform(-100.0, 100.0)}
+    return fit(
+        lambda **_: None,
+        priors,
+        (),
+        init={"x": start, "y": 20.0},
+        likelihoods=[term],
+        **options,
+    )
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+@pytest.mark.parametrize(
+    "prior, start",
+    [
+        (dist.Uniform(0.0, 10.0), 0.0),
+        (dist.LogUniform(1e-2, 10.0), 1e-2),
+    ],
+    ids=["uniform", "loguniform"],
+)
+def test_a_stall_at_a_bound_is_not_converged(method, prior, start):
+    with pytest.warns(RuntimeWarning, match="prior bound"):
+        result = _bound_fit(prior, start, method=method)
+    assert result.info["converged"] is False
+    assert result.info["stop"] == "bound"
+    assert result.info["bound_stall"] == ("x",)
+    # Independent of the check: the fit is still next to the bound, and the
+    # loss is lower at the truth, inside it (chi2 is (x - 3)^2 / 100 per row).
+    assert float(result.values["x"]) < 0.1
+    assert result.info["chi2_red"] > 0.01
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_a_parameter_at_a_bound_pushed_outward_is_converged(method):
+    # The truth lies below the bound, so the loss rises inward: a genuine
+    # constrained optimum (KKT), reported as converged and as at a bound.
+    result = _bound_fit(
+        dist.Uniform(0.0, 10.0), 0.5, truth_x=-3.0, method=method
+    )
+    assert result.info["converged"] is True
+    assert result.info["bound_stall"] == ()
+    assert result.info["at_bound"] == ("x",)
+    # (LM approaches the bound through the sigmoid, so it can stop short of it.)
+    assert float(result.values["x"]) < 0.05
+    assert onp.isclose(float(result.values["y"]), 1.0, atol=1e-4)
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_an_interior_optimum_has_no_bound_stall(method):
+    result = _bound_fit(dist.Uniform(0.0, 10.0), 5.0, method=method)
+    assert result.info["converged"] is True
+    assert result.info["bound_stall"] == ()
+    assert onp.isclose(float(result.values["x"]), 3.0, atol=1e-4)
