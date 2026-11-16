@@ -1,1 +1,0 @@
-The docstring-length gate now caps prose (every section except Parameters, Returns and Raises, so Notes and Examples count) at 60 lines and no longer counts the numpydoc Parameters, Returns and Raises sections. AGENTS.md cites `common_arguments.md` for shared arguments and gains code-layout rules, mirrored in CONTRIBUTING.md.

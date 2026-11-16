@@ -1,1 +1,0 @@
-- `fit` starts a parameter that sits on or outside its prior's bound just inside it, instead of at infinity (NaN loss from step 0), and raises a `ValueError` naming parameters whose start is still non-finite.
