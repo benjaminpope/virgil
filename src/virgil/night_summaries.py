@@ -283,7 +283,7 @@ def _summarize(d, positions, i, diam, amp_range):
         dm = None if not diam else float(diam)
         problem = _Problem(d64, dm, t_ref, surface, amp_range)
         zero = np.zeros(5)
-        rescalable = d.gains is None and d.phase_offsets is None
+        rescalable = not surface.numeric
 
         def loglike_at(z):
             """``ln L`` at ``z`` with the amplitude profiled: the

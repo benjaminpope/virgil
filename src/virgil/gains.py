@@ -73,19 +73,19 @@ class GainModes(eqx.Module):
     Built by [`gain_modes`][virgil.gains.gain_modes] (or
     [`OIData.with_gains`][virgil.oidata.OIData.with_gains]); see the module
     notes for the model. Acts on ``OIData.vis`` followed (when
-    ``include_extras=True``) by any ``"visamp"`` and ``"t3amp"`` blocks in
-    ``OIData.extras``. Modes within one frame are kept in blocks (connected
-    groups padded to a common size); modes that span frames are kept apart as
-    dense columns and whitened after the blocks, so a few of them do not merge
-    every frame into one block.
+    ``include_extras=True``) by any ``"corrflux"``, ``"visamp"``, and
+    ``"t3amp"`` blocks in ``OIData.extras``. Modes within one frame are kept in
+    blocks (connected groups padded to a common size); modes that span frames
+    are kept apart as dense columns and whitened after the blocks, so a few of
+    them do not merge every frame into one block.
 
     Attributes
     ----------
     rows : jax.Array
         ``(n_block, n_row)`` int32: the amplitude observables of each block
-        (``OIData.vis`` then any included ``"visamp"``/``"t3amp"`` blocks),
-        padded with ``n_vis`` (out of range). If every mode spans frames, one
-        empty block of padding.
+        (``OIData.vis`` then any included ``"corrflux"``/``"visamp"``/``"t3amp"``
+        blocks), padded with ``n_vis`` (out of range). If every mode spans
+        frames, one empty block of padding.
     shapes : jax.Array
         ``(n_block, n_row, n_mode)``: each mode's shape on log |V| for unit
         width (summed over the three legs for ``"t3amp"``), zero on padding.
@@ -102,7 +102,8 @@ class GainModes(eqx.Module):
     widths : jax.Array
         The default width of each group.
     groups : tuple of str
-        The groups present, a subset of ``GAIN_GROUPS``.
+        The groups present, a subset of ``GAIN_GROUPS`` plus ``"_flux"`` when
+        correlated-flux scale or spectrum modes are coupled.
     n_vis : int
         The number of amplitude observables marginalized by these modes.
     """
@@ -116,6 +117,7 @@ class GainModes(eqx.Module):
     # Names, not numbers: they key the noise terms, so they are structure.
     groups: tuple = eqx.field(static=True)
     n_vis: int = eqx.field(static=True)
+    include_extras: bool = eqx.field(static=True, default=True)
 
     def widths_for(self, terms=None):
         """Each group's width, with ``vis_gain_<group>`` terms replacing them."""
@@ -219,6 +221,74 @@ class GainModes(eqx.Module):
             self.widths,
             self.groups,
             n_new,
+            self.include_extras,
+        )
+
+    def with_corrflux(self, data):
+        """Refresh row-scoped ``"_flux"`` columns from ``data.extras``."""
+        if not self.include_extras:
+            return self
+        amp_extras = [
+            b for b in data.extras if b.gain_legs() and onp.size(b.values)
+        ]
+        vis_idx = _vis_sample_index(data)
+        frame = _obs_frames(data, vis_idx, amp_extras)
+        if frame.size == 0:
+            return None
+        groups, widths, gid_map = [], [], {}
+        for old_g, (name, w) in enumerate(
+            zip(self.groups, onp.asarray(self.widths, float))
+        ):
+            if name != "_flux":
+                gid_map[old_g] = len(groups)
+                groups.append(name)
+                widths.append(float(w))
+        columns = []
+        rows_np = onp.asarray(self.rows)
+        shapes_np = onp.asarray(self.shapes, float)
+        group_np = onp.asarray(self.group)
+        for r_b, s_b, g_b in zip(rows_np, shapes_np, group_np):
+            valid_r = r_b < self.n_vis
+            for m_idx in range(s_b.shape[1]):
+                old_g = int(g_b[m_idx])
+                if old_g not in gid_map:
+                    continue
+                col_vals = s_b[:, m_idx]
+                mask = valid_r & (col_vals != 0)
+                if mask.any():
+                    order = onp.argsort(r_b[mask])
+                    columns.append(
+                        (
+                            gid_map[old_g],
+                            r_b[mask][order],
+                            col_vals[mask][order],
+                        )
+                    )
+        if self.spanning is not None:
+            span_np = onp.asarray(self.spanning, float)
+            sgrp_np = onp.asarray(self.spanning_group)
+            for j in range(span_np.shape[1]):
+                old_g = int(sgrp_np[j])
+                if old_g not in gid_map:
+                    continue
+                nz = onp.flatnonzero(span_np[:, j])
+                if nz.size:
+                    columns.append((gid_map[old_g], nz, span_np[nz, j]))
+        _append_corrflux_modes(
+            columns,
+            partial(_add_group, groups, widths),
+            amp_extras,
+            vis_idx.size,
+        )
+        if not groups:
+            return None
+        return _pack(
+            columns,
+            groups,
+            widths,
+            frame,
+            include_extras=self.include_extras,
+            dtype=self.shapes.dtype,
         )
 
     def labels_shared(self, labels):
@@ -314,9 +384,10 @@ def gain_modes(
         value per sample of the data (the order of ``data.u``; flagged
         samples are ignored). Their width (default 1) scales them all.
     include_extras : bool, optional
-        Propagate the log-|V| modes to any visibility or triple amplitudes
-        (``"visamp"``, ``"t3amp"``) in ``data.extras`` (default ``True``).
-        Pass ``False`` to restrict gains to ``data.vis``.
+        Propagate the log-|V| modes to any correlated fluxes, visibility or
+        triple amplitudes (``"corrflux"``, ``"visamp"``, ``"t3amp"``) in
+        ``data.extras`` (default ``True``). Pass ``False`` to restrict gains
+        to ``data.vis``.
 
     Returns
     -------
@@ -385,62 +456,102 @@ def gain_modes(
             rows = onp.flatnonzero(m)
             if rows.size:
                 columns.append((gid, rows, m[rows]))
-    if amp_extras and columns:
-        from scipy.sparse import coo_matrix
+    if amp_extras:
+        frame = _obs_frames(data, vis_idx, amp_extras)
+        if columns:
+            from scipy.sparse import coo_matrix
 
-        raw_frame = onp.asarray(data.frame)
-        low = min(int(raw_frame.min(initial=0)), 0) - 1
-        obs_r = [onp.arange(vis_idx.size)]
-        used_c = [onp.searchsorted(index, vis_idx)]
-        obs_frames = [raw_frame[vis_idx]]
-        offset = vis_idx.size
-        for b in amp_extras:
-            legs = [onp.asarray(leg, dtype=int) for leg in b.gain_legs()]
-            m = legs[0].size
-            for leg in legs:
-                obs_r.append(offset + onp.arange(m))
-                used_c.append(onp.searchsorted(index, leg))
-            f0 = raw_frame[legs[0]]
-            if any(onp.any(raw_frame[leg] != f0) for leg in legs[1:]):
-                bad = onp.logical_or.reduce(
-                    [raw_frame[leg] != f0 for leg in legs[1:]]
+            obs_r = [onp.arange(vis_idx.size)]
+            used_c = [onp.searchsorted(index, vis_idx)]
+            offset = vis_idx.size
+            for b in amp_extras:
+                legs = [onp.asarray(leg, dtype=int) for leg in b.gain_legs()]
+                m = legs[0].size
+                for leg in legs:
+                    obs_r.append(offset + onp.arange(m))
+                    used_c.append(onp.searchsorted(index, leg))
+                offset += m
+            obs_r = onp.concatenate(obs_r)
+            used_c = onp.concatenate(used_c)
+            mat = coo_matrix(
+                (onp.ones(obs_r.size), (obs_r, used_c)),
+                shape=(offset, index.size),
+            )
+            col_r = onp.concatenate([r for _, r, _ in columns])
+            col_k = onp.concatenate(
+                [onp.full(r.size, k) for k, (_, r, _) in enumerate(columns)]
+            )
+            col_v = onp.concatenate([v for _, _, v in columns])
+            mapped = (
+                mat
+                @ coo_matrix(
+                    (col_v, (col_r, col_k)), shape=(index.size, len(columns))
                 )
-                f0 = onp.where(bad, low - onp.arange(m), f0)
-                low -= m
-            obs_frames.append(f0)
-            offset += m
-        obs_r = onp.concatenate(obs_r)
-        used_c = onp.concatenate(used_c)
-        mat = coo_matrix(
-            (onp.ones(obs_r.size), (obs_r, used_c)), shape=(offset, index.size)
-        )
-        col_r = onp.concatenate([r for _, r, _ in columns])
-        col_k = onp.concatenate(
-            [onp.full(r.size, k) for k, (_, r, _) in enumerate(columns)]
-        )
-        col_v = onp.concatenate([v for _, _, v in columns])
-        mapped = (
-            mat
-            @ coo_matrix(
-                (col_v, (col_r, col_k)), shape=(index.size, len(columns))
-            )
-        ).tocsc()
-        mapped.sort_indices()
-        mapped.eliminate_zeros()
-        gids = [g for g, _, _ in columns]
-        columns = [
-            (
-                gids[k],
-                mapped.indices[mapped.indptr[k] : mapped.indptr[k + 1]],
-                mapped.data[mapped.indptr[k] : mapped.indptr[k + 1]],
-            )
-            for k in range(len(gids))
-            if mapped.indptr[k + 1] > mapped.indptr[k]
-        ]
-        frame = onp.concatenate(obs_frames)
+            ).tocsc()
+            mapped.sort_indices()
+            mapped.eliminate_zeros()
+            gids = [g for g, _, _ in columns]
+            columns = [
+                (
+                    gids[k],
+                    mapped.indices[mapped.indptr[k] : mapped.indptr[k + 1]],
+                    mapped.data[mapped.indptr[k] : mapped.indptr[k + 1]],
+                )
+                for k in range(len(gids))
+                if mapped.indptr[k + 1] > mapped.indptr[k]
+            ]
+        _append_corrflux_modes(columns, add_group, amp_extras, vis_idx.size)
     if not columns:
         raise ValueError("No gain modes: give at least one group or mode.")
-    return _pack(columns, groups, widths, frame)
+    return _pack(columns, groups, widths, frame, include_extras=include_extras)
+
+
+def _obs_frames(data, vis_idx, amp_extras):
+    """Frame label per amplitude-observable row (``vis`` then ``amp_extras``)."""
+    raw_frame = onp.asarray(data.frame)
+    low = min(int(raw_frame.min(initial=0)), 0) - 1
+    obs_frames = [raw_frame[vis_idx]]
+    for b in amp_extras:
+        legs = [onp.asarray(leg, dtype=int) for leg in b.gain_legs()]
+        m = legs[0].size
+        f0 = raw_frame[legs[0]]
+        if any(onp.any(raw_frame[leg] != f0) for leg in legs[1:]):
+            bad = onp.logical_or.reduce(
+                [raw_frame[leg] != f0 for leg in legs[1:]]
+            )
+            f0 = onp.where(bad, low - onp.arange(m), f0)
+            low -= m
+        obs_frames.append(f0)
+    return onp.concatenate(obs_frames)
+
+
+def _append_corrflux_modes(columns, add_group, amp_extras, offset):
+    """Append row-scoped ``_flux`` columns directly on ``corrflux`` rows."""
+    flux_gid = None
+    for b in amp_extras:
+        m = int(onp.asarray(b.gain_legs()[0]).size)
+        if b.kind == "corrflux" and (
+            b.widths is not None or b.modes is not None
+        ):
+            if flux_gid is None:
+                flux_gid = add_group("_flux", 1.0)
+            if b.widths is not None:
+                n_val = b.wavel.size
+                for members_g in b.members:
+                    idx = members_g[members_g < n_val]
+                    for j, w_j in enumerate(b.widths):
+                        vals = onp.asarray(b.poly[idx, j] * w_j, float)
+                        nz = onp.flatnonzero(vals)
+                        if nz.size:
+                            columns.append(
+                                (flux_gid, offset + idx[nz], vals[nz])
+                            )
+            if b.modes is not None:
+                for mode in onp.asarray(b.modes, float):
+                    nz = onp.flatnonzero(mode)
+                    if nz.size:
+                        columns.append((flux_gid, offset + nz, mode[nz]))
+        offset += m
 
 
 def _check_widths(widths):
@@ -479,7 +590,7 @@ def _mode_blocks(touched, n_item):
     return list(by_label.values())
 
 
-def _pack(columns, groups, widths, frame):
+def _pack(columns, groups, widths, frame, *, include_extras=True, dtype=None):
     """Sort columns into blocks within frames (connected by shared rows,
     padded to a common size) and columns spanning frames."""
     n_vis = frame.size
@@ -510,13 +621,14 @@ def _pack(columns, groups, widths, frame):
             group[b, j] = g
     return GainModes(
         np.asarray(rows),
-        np.asarray(shapes),
+        np.asarray(shapes, dtype=dtype),
         np.asarray(group),
-        np.asarray(spanning) if spanning_cols else None,
+        np.asarray(spanning, dtype=dtype) if spanning_cols else None,
         np.asarray(spanning_group) if spanning_cols else None,
-        np.asarray(widths, float),
+        np.asarray(widths, dtype=float if dtype is None else dtype),
         tuple(groups),
         int(n_vis),
+        bool(include_extras),
     )
 
 
@@ -770,15 +882,18 @@ class ClosureOffsets(eqx.Module):
 def _widths_for(groups, widths, terms, prefix, how):
     """Each group's width, with ``<prefix><group>`` terms replacing them."""
     terms = {} if terms is None else terms
-    unknown = [t for t in terms if t.removeprefix(prefix) not in groups]
+    fitted = [g for g in groups if not g.startswith("_")]
+    unknown = [t for t in terms if t.removeprefix(prefix) not in fitted]
     if unknown:
         raise ValueError(
             f"Noise terms {unknown} have no modes in these data (they have "
-            f"{list(groups)}); add them with {how}."
+            f"{fitted}); add them with {how}."
         )
     return np.stack(
         [
-            np.asarray(terms.get(f"{prefix}{g}", widths[i]), float)
+            np.asarray(widths[i], float)
+            if g.startswith("_")
+            else np.asarray(terms.get(f"{prefix}{g}", widths[i]), float)
             for i, g in enumerate(groups)
         ]
     )

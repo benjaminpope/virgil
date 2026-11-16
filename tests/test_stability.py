@@ -48,6 +48,7 @@ EXPECTED = {
     "virgil.radio_clean": {"*"},
     "virgil.radio_toeplitz": {"*"},
     "virgil.crossval": {"*"},
+    "virgil.noise_spec": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
         "ArchimedeanSpiral",
@@ -158,6 +159,7 @@ PAGES = [
     "docs/radio_clean.md",
     "docs/api/radio_clean.md",
     "docs/api/radio_toeplitz.md",
+    "docs/api/noise_spec.md",
     "docs/stability.md",
 ]
 

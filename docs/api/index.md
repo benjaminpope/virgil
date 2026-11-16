@@ -14,6 +14,7 @@ may change in any 0.4.x release without a deprecation. See
 - [AMIGO](amigo.md): AMIGO mixed-DISCO products
 - [Observables](observables.md): OI_FLUX spectra, |V|, T3AMP and differential phases after the visibilities and phases
 - [Gains](gains.md): calibration gains correlated across channels, marginalized analytically
+- [Noise specs](noise_spec.md): declarative `virgil.noise_spec/1` instrument error models (provisional)
 
 ## Models
 

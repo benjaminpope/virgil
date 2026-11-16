@@ -116,6 +116,7 @@ nav:
           - AMIGO: api/amigo.md
           - Observables: api/observables.md
           - Gains: api/gains.md
+          - Noise specs: api/noise_spec.md
       - Models:
           - Overview: api/models/index.md
           - Classes:
