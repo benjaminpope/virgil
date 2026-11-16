@@ -98,7 +98,7 @@ The draws are streaks running north–south, and the cut along the vertical axis
 
 An n × m image has nm pixels, so Σ is an nm × nm matrix, expensive to store and more so to invert. A stationary covariance is diagonal in a Fourier basis, and virgil's nearly stationary one is exactly diagonal in a cosine basis. Its diagonal there is the **power spectrum**, the Fourier transform of the kernel.
 
-virgil uses the cosine transform (DCT-II) rather than the FFT. The FFT treats the image as periodic, so the left edge sits next to the right edge and is strongly correlated with it. The DCT is the Fourier series of the image reflected at its edges, so opposite edges are only as correlated as their distance allows. The price is that this is the covariance of a Laplacian with reflecting (Neumann) boundaries, translation-invariant only far from the edges: near an edge a pixel is correlated with its own mirror image, so its variance is larger than the interior's: about twice along an edge and more at a corner, falling off over about ℓ. Leave a margin of a few ℓ between the source and the edge of the field. With C the orthonormal DCT matrix, the covariance is
+virgil uses the cosine transform (DCT-II) rather than the FFT. This is virgil's own choice. The IFT papers and NIFTy use the FFT, and NIFTy.re's tutorials use the Hartley transform, which maps real functions to real functions and is built from the same periodic DFT; none of them uses a DCT or the reflecting-Laplacian eigenvalues below. Selig et al. (2013) say only that the harmonic basis is the eigenbasis of the Laplace operator, which for flat space is the Fourier basis. The FFT treats the image as periodic, so the left edge sits next to the right edge and is strongly correlated with it. The DCT is the Fourier series of the image reflected at its edges, so opposite edges are only as correlated as their distance allows. The price is that this is the covariance of a Laplacian with reflecting (Neumann) boundaries, translation-invariant only far from the edges: near an edge a pixel is correlated with its own mirror image, so its variance is larger than the interior's: about twice along an edge and more at a corner, falling off over about ℓ. Leave a margin of a few ℓ between the source and the edge of the field. With C the orthonormal DCT matrix, the covariance is
 
 $$\Sigma = C^\top \mathrm{diag}(S)\, C, \qquad S_{jk} \propto \left(\frac{1}{\ell^2} + \lambda_{jk}\right)^{-\mathrm{order}}.$$
 
@@ -106,12 +106,12 @@ Here (j, k) labels a cosine mode and $\lambda_{jk}$ is its eigenvalue of the gri
 
 $$\lambda_{jk} = \left(\frac{2}{h}\right)^2 \left[\sin^2\frac{\pi j}{2n} + \sin^2\frac{\pi k}{2m}\right].$$
 
-For modes much coarser than a pixel, $\lambda_{jk} \approx q^2$ with q the mode's angular wavenumber (radians per mas), and S is the continuum Matérn spectrum, $(1/\ell^2 + q^2)^{-\mathrm{order}}$. At the finest scales the sines make it differ slightly, which is why the kernel is "Matérn-like".
+For modes much coarser than a pixel, $\lambda_{jk} \approx q^2$ with q the mode's angular wavenumber (radians per mas), and S is the continuum Matérn spectrum, $(1/\ell^2 + q^2)^{-\mathrm{order}}$. At the finest scales the sines make it differ slightly, which is why the kernel is "Matérn-like". The lattice-Laplacian form and the order-2 default are virgil's; the IFT papers read give a $(k^2 + q^2)^{-1}$ spectrum (Enßlin, Frommert & Kitaura 2009), a $k^{-2}$ one (Enßlin 2019), and NIFTy.re offers a Matérn kernel (Edenhofer et al. 2024; Guardiani et al. 2022).
 
 [`field_spectrum`][virgil.fields.field_spectrum] makes two adjustments to S:
 
 - **Normalization.** S is rescaled so that the pixel-averaged variance of η is σ². Because the DCT is orthonormal, the per-pixel variances sum to the sum of the $S_{jk}$.
-- **The constant mode.** $S_{00}$, the variance of the mode that raises every pixel equally, is zero, because the softmax ignores it.
+- **The constant mode.** $S_{00}$, the variance of the mode that raises every pixel equally, is zero, because the softmax ignores it. virgil fixes this mode and sets the overall level with `flux`; Arras et al. (2019, 2021, 2022) infer it, with a log-normal or inverse-gamma prior, because it carries the overall flux.
 
 So S is not a second prior acting "in frequency space". It is the same image-space kernel, written in the basis where its covariance is diagonal. σ sets the height of S and ℓ its knee: S is flat for q ≲ 1/ℓ and falls as $q^{-2\,\mathrm{order}}$ above it, suppressing structure finer than about ℓ.
 
@@ -238,7 +238,7 @@ The "GP terminology" column follows Rasmussen & Williams (2006) where it covers 
 | harmonic space; harmonic partner | Fourier space; Fourier basis | the DCT-II coefficients, the space in which `field.latent` lives (the image's own Fourier space, not the (u, v) plane) |
 | amplitude operator, A, with S = AA† | a square root of the covariance (like a Cholesky factor) | $C^\top \mathrm{diag}(\sqrt{S})$: in `field.evaluate`, the latents are multiplied by the square root of `field_spectrum(...)` and transformed with `idctn(..., type=2, norm="ortho")` |
 | standardized coordinates, excitations, ξ | whitened latents; non-centred parameterization | z: the array `field.latent`, fitted at the path `"env.log_brightness.latent"` with standard-normal priors from `image_priors(scene)` |
-| zero mode; offset | the mean level, the k = 0 Fourier component | `field_spectrum` sets `spectrum[0, 0]` to zero; the image's overall level is set by `env.flux` instead |
+| zero mode; offset | the mean level, the k = 0 Fourier component | `field_spectrum` sets `spectrum[0, 0]` to zero and the softmax removes any constant, so virgil fixes this mode and sets the image's overall level with `env.flux`; the papers infer it |
 | information Hamiltonian, H(d, s) = −ln p(d, s) | negative log joint density; the loss function | the loss that `fit` minimizes, reported as `FitResult.info["loss"]`: half the sum of squares of `whitened_residuals(scene, data)` and of `field.latent`, up to a constant |
 | partition function, Z(d) | evidence, marginal likelihood p(d) | `log_evidence(scene, data)` returns its logarithm, in the Laplace approximation |
 | classical solution; minimum of H | MAP (maximum a posteriori) estimate | `fit(scene, priors, data)`, which returns the MAP as `FitResult.model` and `FitResult.values` |
@@ -247,8 +247,8 @@ The "GP terminology" column follows Rasmussen & Williams (2006) where it covers 
 | Wiener filter, m = Dj | GP posterior mean; kriging | `FitResult.model`, the MAP. The MAP equals the posterior mean only for a linear model with Gaussian noise, and virgil's model is nonlinear |
 | (Gibbs) free energy | variational free energy, the negative evidence lower bound (ELBO) | the negative of `info["elbo"]` from `virgil.svi.variational` (see [Variational inference](variational_inference.md)); `log_evidence` gives the Laplace estimate of −ln Z instead |
 | Fisher metric, M = J†N⁻¹J + 1 | Gauss–Newton curvature of the loss: the data's part plus the prior's (the identity, in whitened coordinates) | $J^\top J + I$, where J is the Jacobian of `whitened_residuals` with respect to `field.latent`. It is the matrix in each step of `fit(..., method="lm")`; because `whitened_residuals` already divides by the errors, N⁻¹ does not appear |
-| MGVI (metric Gaussian variational inference) | variational inference with a Gaussian approximation whose covariance is the inverse Fisher metric | not implemented. virgil uses `fit` with the Laplace approximation, `virgil.svi.variational` with a Gaussian or flow guide, or NUTS through `numpyro_model` |
-| geoVI (geometric variational inference) | variational inference after a nonlinear change of coordinates that makes the posterior closer to Gaussian | not implemented |
+| MGVI (metric Gaussian variational inference) | variational inference with a Gaussian approximation whose covariance is the inverse Fisher metric | not implemented (Knollmüller & Enßlin 2019). `laplace_samples` uses the same covariance form, $(I + J^\top J)^{-1}$, but draws once about the MAP, with no mean update or iteration. virgil uses `fit` with the Laplace approximation, `virgil.svi.variational` with a Gaussian or flow guide, or NUTS through `numpyro_model` |
+| geoVI (geometric variational inference) | variational inference after a nonlinear change of coordinates that makes the posterior closer to Gaussian | not implemented (Frank, Leike & Enßlin 2021); `virgil.svi.variational` is a different method (ADVI and flow guides) |
 | critical filter | empirical-Bayes estimate of the power spectrum | a grid of `fit` and `log_evidence` over `sigma` and `length_mas`, as in [Imaging, part 3](imaging_gp.md); the spectral shape is fixed |
 | correlated field model | a GP whose power spectrum is itself unknown and inferred, under a hierarchical prior | not implemented; `field_spectrum` has a fixed Matérn-like shape |
 | log-normal field, s = e^φ | the exponential of a GP, used for positive quantities | `env.brightness`, the softmax of `env.eta` (unit sum; multiplied by `env.flux` in the visibilities) |
@@ -261,12 +261,12 @@ Two terms are easy to misread:
 
 ## Where virgil differs from NIFTy
 
-virgil takes two ideas from IFT, whitened latents and a stationary field computed in a Fourier basis, but does not use NIFTy. It differs from NIFTy's standard image prior, the "correlated field model", in four ways:
+virgil takes two ideas from IFT, whitened latents (the IFT papers say "standardization") and a stationary field computed in a harmonic basis, but does not use NIFTy. The cosine basis and the lattice-Laplacian spectrum are virgil's own choices, not taken from the IFT papers (see below). It differs from NIFTy's standard image prior, the "correlated field model", in four ways:
 
 | | virgil | NIFTy's correlated field |
 |---|---|---|
 | Spectrum | a fixed Matérn-like shape with two hyperparameters, σ and ℓ (`field_spectrum`) | inferred from the data: a power law plus smooth departures from it, controlled by hyperparameters named `fluctuations`, `flexibility`, `asperity` and `loglogavgslope` |
-| Basis and edges | DCT-II, with reflecting edges (`idctn(..., type=2, norm="ortho")` in `field.evaluate`) | FFT, which is periodic, usually with zero-padding to keep the edges apart |
+| Basis and edges | DCT-II, with reflecting edges (`idctn(..., type=2, norm="ortho")` in `field.evaluate`) | FFT, which is periodic (NIFTy.re's tutorials use the real-valued Hartley transform, built from the same DFT). Arras et al. (2021) do not pad the 2-D sky image; padding is used on non-periodic axes: time, the gains and the 1-D noise-correction field |
 | Hyperparameters | chosen by the evidence on a grid (`log_evidence`), or sampled with NUTS (`numpyro_model`) | inferred together with the field, usually by MGVI or geoVI |
 | Posterior | the MAP (`fit`) with a Laplace approximation (a Gaussian centred on the MAP), a variational guide (`virgil.svi.variational`), or NUTS samples (`numpyro_model`) | samples from MGVI or geoVI |
 
@@ -303,7 +303,7 @@ Read these with the dictionary above to hand.
 
 - Enßlin, Frommert & Kitaura 2009, PRD 80, 105005, [arXiv:0806.3474](https://arxiv.org/abs/0806.3474). The founding paper: Hamiltonian, information source, propagator and Wiener filter.
 - Enßlin 2019, Annalen der Physik 531, 1800127, [arXiv:1804.03350](https://arxiv.org/abs/1804.03350), "Information theory for fields". A review.
-- Knollmüller & Enßlin 2019, [arXiv:1901.11033](https://arxiv.org/abs/1901.11033). MGVI.
+- Knollmüller & Enßlin 2019, [arXiv:1901.11033](https://arxiv.org/abs/1901.11033). MGVI: a Gaussian approximation whose covariance is the inverse Fisher metric, with alternating mean and covariance updates.
 - Frank, Leike & Enßlin 2021, Entropy 23, 853, [arXiv:2105.10470](https://arxiv.org/abs/2105.10470). geoVI.
 - Edenhofer et al. 2024, JOSS 9, 6593, [arXiv:2402.16683](https://arxiv.org/abs/2402.16683). NIFTy.re, the JAX version of NIFTy, "a library for Gaussian processes and variational inference".
 - The [NIFTy documentation](https://ift.pages.mpcdf.de/nifty/user/index.html), including its guide to the correlated field model.

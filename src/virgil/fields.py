@@ -7,8 +7,12 @@ standard-normal ``latent`` coefficients on the cosine (DCT-II) basis. Fitting
 the latents under a standard-normal prior is MAP estimation with a GP prior;
 see [Gaussian processes and IFT](../gp_and_ift.md).
 
-Source: Edenhofer et al. (2024), Arras et al. (2022), Enßlin et al. (2009),
-[references](../references.md#edenhofer2024). No code is taken from NIFTy.
+Source: the whitened ("standardized") latents and the stationary prior
+diagonal in a harmonic basis follow Edenhofer et al. (2024), Arras et al.
+(2022) and Enßlin et al. (2009), [references](../references.md#edenhofer2024).
+The cosine basis, the lattice-Laplacian spectrum and the fixed zero mode are
+virgil's own: those papers use the FFT (NIFTy.re also the Hartley transform)
+and infer the zero mode. No code is taken from NIFTy.
 """
 
 import equinox as eqx
@@ -87,7 +91,11 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
     ℓ_col² λ_k)^(-order)``: correlated over ``ℓ_row`` down a column and over
     ``ℓ_col`` along a row. The constant mode is zero (a softmax image does not
     depend on it) and the spectrum is scaled so the field's pixel-averaged
-    variance is ``sigma²``.
+    variance is ``sigma²``. The cosine basis and these eigenvalues are virgil's
+    own choice, not taken from the IFT papers (Enßlin et al. 2009; Arras et al.
+    2022 use Fourier bases; NIFTy.re's Matérn kernel is described by Edenhofer
+    et al. 2024 and Guardiani et al. 2022). Those papers infer the zero mode;
+    virgil fixes it.
 
     Parameters
     ----------
@@ -147,7 +155,8 @@ class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     or sample them: their MAP values are biased (``fit`` warns).
     See [Gaussian processes and IFT](../gp_and_ift.md).
 
-    Source: Edenhofer et al. (2024), [references](../references.md#edenhofer2024).
+    Source: whitened latents as in Edenhofer et al. (2024),
+    [references](../references.md#edenhofer2024); the DCT basis is virgil's own.
 
     Parameters
     ----------
@@ -347,6 +356,13 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     standard normals. Priors:
     [`multipole_field_priors`][virgil.fields.multipole_field_priors]; kernel,
     tied geometry and fallback: [Model notes](models/notes.md#multipolefield).
+
+    Source: virgil's own construction (polar disc-frame grid, radial Matérn
+    Cholesky, azimuthal multipoles, ``tanh`` centre taper, edge fade). It shares
+    only the exponential-of-a-GP image and the whitened latents with the IFT
+    imaging papers (Junklewitz et al. 2016; Arras et al. 2019, 2022); the
+    Matérn amplitude form is as in NIFTy.re (Guardiani et al. 2022,
+    [references](../references.md#guardiani2022)).
 
     Parameters
     ----------

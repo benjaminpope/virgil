@@ -2798,6 +2798,11 @@ def laplace_samples(
     errors and is conditional on the hyperparameters held in ``model`` (or sample
     them, as for [`log_evidence`][virgil.imaging.log_evidence]).
 
+    Source: the covariance has the form of metric Gaussian variational
+    inference (Knollmüller & Enßlin 2019, [references](../references.md#knollmuller2019)),
+    the inverse of ``JᵀJ + I``. Here it is drawn once at the MAP, with no mean
+    update or iteration, so this is a Laplace approximation, not MGVI.
+
     Parameters
     ----------
     model : SourceModel or FitResult

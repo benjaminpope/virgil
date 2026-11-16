@@ -2375,3 +2375,15 @@ arxiv = "2008.05834"
 doi = "10.1093/mnras/staa2349"
 verified = true
 verified_via = "arxiv"
+
+[ref.guardiani2022]
+authors = "Guardiani et al."
+year = 2022
+title = "Causal, Bayesian, & non-parametric modeling of the SARS-CoV-2 viral load distribution vs. patient's age"
+used_in = ["virgil.fields:MultipoleField"]
+note = "PLoS ONE 17, e0275011; the Matérn amplitude that NIFTy.re cites (Edenhofer et al. 2024); virgil's MultipoleField is its own construction"
+role = "context"
+bibcode = "2022PLoSO..1775011G"
+arxiv = "2105.13483"
+verified = true
+verified_via = "ads"

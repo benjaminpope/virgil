@@ -414,6 +414,17 @@ structure is not smeared). A component at zero offset is exactly unaffected.
 
 ## MultipoleField
 
+The construction is virgil's own: a polar grid in the disc's frame, a radial
+Matérn prior applied by its Cholesky factor, azimuthal multipoles, a $\tanh$
+centre taper and a fade at the outer edge. It shares only the exponential-of-a-GP
+image and whitened ("standardized") latents with the information field theory
+imaging papers (Junklewitz et al. 2016; Arras et al. 2019, 2022; Edenhofer et al.
+2024), which put a stationary, isotropic prior on a Cartesian grid by the FFT. The
+Matérn amplitude $(1 + (k/\text{cutoff})^2)$ to a power is the form NIFTy.re
+cites to Guardiani et al. (2022), see
+[references](../../references.md#guardiani2022). Born & Wolf is cited below only for
+the $r^{|m|}$ regularity at the centre, not for the GP construction.
+
 The prior on the field $\eta$ is separable,
 
 $$\mathrm{Cov}[\eta(r, \theta), \eta(r', \theta')] =

@@ -626,7 +626,8 @@ The lessons for spectro-interferometry and for fitting orbits with a scene are i
 - Tiede et al., HIBI, arXiv:2511.17706: GMRF priors, visibility-domain
   recentring, NUTS at 64^2.
 - Arras et al. 2022, arXiv:2002.05218: M87* with resolve; "source
-  teleportation"; centred initialisation.
+  teleportation"; its Methods mitigate it by using the first days of
+  data first, then adding the rest, with tempering during inference.
 - Barnett, Magland & af Klinteberg 2019, arXiv:1808.06736: FINUFFT error
   analysis.
 - Knollmuller & Ensslin, arXiv:1901.11033 (MGVI); Frank et al. 2021,
