@@ -10,6 +10,7 @@ are generic; they name no person, machine or project.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -19,7 +20,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 PATTERNS: dict[str, re.Pattern[str]] = {
     "absolute home path": re.compile(
-        r"(?:/Users/|/home/|/root/|/private/var/|/var/folders/|[A-Za-z]:\\Users\\)[^\s/\"']+"
+        r"(?:/Users/|/home/|/root/|/private/var/|/var/folders/|[A-Za-z]:\\{1,2}Users\\{1,2})[^\s/\\\"']+"
+    ),
+    "Claude project slug": re.compile(
+        r"(?<![\w-])-(?:Users|home|root)-[\w.]+-"
     ),
     "home-relative path": re.compile(r"(?<![\w.])~/[\w.-]"),
     "transcript or log file": re.compile(r"\.(?:jsonl|log|sqlite3?|vscdb)\b"),
@@ -87,6 +91,9 @@ def test_carbon_files_found() -> None:
         ('"path": "/Users/alice/code/proj"', "absolute home path"),
         ("see /home/bob/data", "absolute home path"),
         ("C:\\Users\\carol\\x", "absolute home path"),
+        (json.dumps("C:\\Users\\carol\\x"), "absolute home path"),
+        ("-Users-alice-code-virgil", "Claude project slug"),
+        ("-home-bob-proj", "Claude project slug"),
         ("read ~/.claude/state", "home-relative path"),
         ("session abc.jsonl", "transcript or log file"),
         ("id 123e4567-e89b-12d3-a456-426614174000", "uuid (session id)"),
