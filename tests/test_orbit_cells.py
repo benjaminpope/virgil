@@ -1798,17 +1798,24 @@ def test_add_one_recovers_an_inlier_night_the_c_steps_leave_out():
     more precise, all inliers of one orbit. The C-steps from the truth with
     the last night labelled an outlier fit the other eight alone: their fit
     errs by a fraction of ``sigma``, which the 88 cycles to the last night
-    magnify far beyond its own ``sigma``, so it relabels as an outlier (a fixed
-    point of the C-steps). Add-one puts it back and the objective rises."""
+    magnify far beyond its own ``sigma``. The point term would relabel it as
+    an outlier (a fixed point of point-term C-steps); the predictive term
+    (design §6.14) keeps it. Add-one from that fit puts it back all the
+    same, and the objective rises."""
     times = onp.r_[TIMES, 1000.0]
     space, plan, xt = _true_state(0.05, times, sigma_last=0.005)
     lab = onp.asarray(oc_cells._labels(np.asarray(xt), space)).copy()
     assert (lab >= 0).all()
     lab[-1] = -1
-    v, lab, x = oc_cells._converge_csteps(
-        space, plan, xt[[0, 6, 7]][None], lab[None]
+    _, new, x, *_ = oc_cells._cstep_chunk(
+        space,
+        plan,
+        np.asarray(xt[[0, 6, 7]])[None],
+        np.asarray(lab)[None],
+        oc_cells.N_NEWTON,
     )
-    assert lab[0, -1] == -1 and (lab[0, :-1] >= 0).all()
+    assert onp.asarray(oc_cells._labels(x[0], space))[-1] == -1
+    assert (onp.asarray(new)[0] >= 0).all()  # the predictive term keeps it
     f0 = float(oc_cells._refine(space, np.asarray(x[0]), oc_cells.N_NEWTON)[2])
     info = {"evaluations": 0.0}
     x1 = oc_cells._add_one(space, plan, x[0], info)
