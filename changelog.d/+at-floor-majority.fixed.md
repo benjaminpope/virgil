@@ -1,0 +1,1 @@
+`importance_evidence`: the `at_floor` sentinel fires only when most of the importance weight is on draws with fewer than `m_min` inliers, not when the weighted mean inlier count is below `m_min` (a healthy mode of exactly `m_min` inliers fired it whenever a draw lost one).

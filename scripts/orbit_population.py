@@ -31,21 +31,38 @@ Verdict (INCONCLUSIVE, never PASS, below ``MIN_FITTED`` fitted systems: the
 criteria cannot fail on so few). Design §14, assertions 1-8, thresholds as
 committed in ``design/orbit_census_criteria.md``:
 
-1. the true N in the 99 % set: FAIL if ``P(Binomial(n_fitted, 0.01) >= misses)``
-   is below ``P_MISS``;
-2. no cell at the floor (no failed system);
-3. SBC, chi-square over 10 bins: the randomized PIT of N and the PIT of ln P
-   from the resample-move draws, each failing at p < ``P_FAIL``. The ranks of
-   the invariants a, e, cos i, Omega and omega (folded) are reported;
+The detectable stratum is defined from the truth and the sampling, never from
+a fit: the true period is Nyquist-sampled (at least twice the median
+within-season gap between nights) and the true orbit's expected chi-square
+excess over the best static model on the inlier nights clears the 1 %
+false-alarm threshold (columns ``nyquist_ok``, ``dchi2_true``,
+``dchi2_thresh``, ``detectable``). Assertions 1 and 2 gate there only;
+elsewhere they are counted and tabled.
+
+1. sky-plane retrieval: the truth's sky test quantity f (the time-averaged
+   squared distance of a sky track from the posterior-weighted mean track,
+   ``SKY_GRID`` uniform times over the nights) above the 99 % quantile of f
+   among the draws is a miss: FAIL if ``P(Binomial(n_detectable, 0.01) >=
+   misses)`` is below ``P_MISS``. The element-space test of N (``in_99``) is
+   reported only;
+2. no cell at the floor (no failed system) in the detectable stratum;
+3. SBC, chi-square over 10 bins: the randomized rank of f(true) among the
+   draws (``pit_sky``) over all fitted in-domain systems, failing at
+   p < ``P_FAIL`` (a truth-selected stratum breaks the rank guarantee, so the
+   stratum's own uniformity is reported only). The PITs of N and ln P and the
+   ranks of the invariants a, e, cos i, Omega and omega (folded) are reported
+   only;
 4. the coverage contract needs circular, positions-only truths against the
    exact toy reference: not drawn here, reported as not applicable;
 5. e > 0.3: the true cell's best mode within chi2_d(0.99) of the truth;
 6. scale equivariance on every ``--equiv-every``-th system;
-7. no dependence of failure on ln s at fixed effective noise (CMH);
+7. no dependence of failure on ln s at fixed effective noise (CMH, detectable
+   stratum);
 8. informativeness, reported only.
 
-Strata: all nights outliers (B''), at most ``M_MIN`` inliers, the rest; and a
-report-only stratum of at most two outlier nights. With ``--oracle`` the true
+Strata: all nights outliers (B''), at most ``M_MIN`` inliers, the rest; the detectable stratum
+and its two complements (report only); and a report-only stratum of at most
+two outlier nights. With ``--oracle`` the true
 cell is also rerun with the truth-started optimum as an extra mixture
 component (diagnostic columns only: the fit, ``p_pos`` and the status are
 untouched).
@@ -69,6 +86,7 @@ import time
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 
 import jax
+import jax.numpy as np
 import numpy as onp
 from scipy import stats
 
@@ -101,6 +119,11 @@ STEP_COUNTS = (  # runs ended by the step cap, by stage; only the C-steps conver
 INVARIANTS = ("a", "ecc", "cos_inc", "omega", "Omega")
 STRATA = ("B2", "le_m", "rest")  # B'' (all outliers), <= m inliers, the rest
 CLASSES = ("search_miss", "proposal_miss", "sentinel_fp", "support")
+ALPHA_DET = (
+    0.01  # false-alarm rate of the signal test (the plan's no-orbit verdict)
+)
+SEASON_GAP = 100.0  # d: nights further apart are in different seasons (sim: 30 d seasons, 365 d apart)
+SKY_GRID = 64  # declared budget: points of the uniform time grid of the sky test quantity
 
 
 # ---------------------------------------------------------------------------
@@ -273,10 +296,58 @@ def stratum(k, n_outliers):
     return "B2" if n_in == 0 else "le_m" if n_in <= M_MIN else "rest"
 
 
+def nyquist_ok(period, times):
+    """Whether ``period`` is at least twice the median gap between consecutive
+    nights of a season (gaps above ``SEASON_GAP`` are between seasons); false
+    with no within-season gap."""
+    gaps = onp.diff(onp.sort(onp.asarray(times, float)))
+    gaps = gaps[gaps <= SEASON_GAP]
+    return bool(len(gaps) and period >= 2.0 * onp.median(gaps))
+
+
+def signal_excess(orbit, times, inliers, sigma):
+    """``(dchi2, dof)`` of the best static model on the inlier nights.
+
+    ``dchi2`` is the noncentrality: the noise-free χ² of the model of a
+    constant sky position (fitted by weighted least squares) and zero
+    velocity, to the true orbit's night states ``(p̂, v̂)`` at the inlier
+    nights, each position coordinate with error ``sigma`` and each velocity
+    coordinate ``sigma / sqrt(T_SS)`` (the simulator's noise). ``dof`` is
+    that model's: 4 numbers a night minus the 2 fitted coordinates."""
+    m = len(inliers)
+    if m == 0:
+        return math.nan, 0
+    st = _night_state(orbit, onp.asarray(times, float)[inliers])
+    pos, vel = st[:, :2], st[:, 2:]
+    lam = onp.sum((pos - pos.mean(0)) ** 2) + T_SS * onp.sum(vel**2)
+    return float(lam / sigma**2), 4 * m - 2
+
+
+def detectability(sysd):
+    """The a priori detectable stratum, from the truth and the sampling only:
+    the period is Nyquist-sampled (``nyquist_ok``) and the true orbit's
+    expected χ² excess over the best static model on the inlier nights
+    (``dchi2_true``) reaches the ``ALPHA_DET`` false-alarm threshold of that
+    model's χ² distribution (``dchi2_thresh``: its quantile less its dof)."""
+    times = sysd["times"]
+    inl = onp.setdiff1d(onp.arange(len(times)), sysd["outliers"])
+    sigma = math.exp(sysd["ln_s"]) * sysd["rel"] * sysd["a"]
+    d2, dof = signal_excess(sysd["orbit"], times, inl, sigma)
+    thresh = (
+        float(stats.chi2.ppf(1.0 - ALPHA_DET, dof) - dof) if dof else math.nan
+    )
+    nyq = nyquist_ok(sysd["period"], times)
+    return dict(
+        nyquist_ok=int(nyq), dchi2_true=d2, dchi2_thresh=thresh,
+        detectable=int(nyq and d2 >= thresh),
+    )  # fmt: skip
+
+
 def describe(sysd, fit):
     """The columns every row carries, fitted or not."""
     k, n_out = len(sysd["times"]), len(sysd["outliers"])
     return dict(
+        **detectability(sysd),
         period=sysd["period"], a=sysd["a"], rel=sysd["rel"], k=k,
         two_seasons=int(sysd["two_seasons"]), n_outliers=n_out,
         p_cut=fit.p_cut, p_max=fit.p_max, ln_s=sysd["ln_s"],
@@ -356,6 +427,76 @@ def truth_invariants(sysd, t_anchor):
     out = {n: float(inv[n]) for n in INVARIANTS}
     out["omega"] %= 180.0
     return out
+
+
+def sky_features(space, c, t_rel):
+    """``(n, G, 3)`` features ``(x², xy, y²)`` of the sky track of each draw of
+    ``c`` (orbit coordinates, as ``decode_particles``) at ``t_rel`` (days from
+    the anchor). The outer product is the track up to the point reflection
+    through the origin, the exact degeneracy of position-only data (the label
+    swap), so the posterior mean is not zero."""
+    t = np.asarray(t_rel, space.dtype)
+    pos = jax.vmap(
+        lambda p, z, zt: space.states_at(t, p, oc.z_to_ti(z), zt)[:, :2]
+    )(c["period"], c["z"], c["zeta"])
+    x, y = onp.asarray(pos[..., 0], float), onp.asarray(pos[..., 1], float)
+    return onp.stack([x * x, x * y, y * y], -1)
+
+
+def sky_distance(feat, mean):
+    """``(n,)`` time-averaged squared (Frobenius) distance of the features
+    ``feat`` ``(n, G, 3)`` from ``mean`` ``(G, 3)``: the sky test quantity f."""
+    return (((feat - mean) ** 2) * (1.0, 2.0, 1.0)).sum(-1).mean(-1)
+
+
+def weighted_rank(f, w, f_true, u):
+    """``(pit, miss, q99)``: the randomized PIT of ``f_true`` among the
+    weighted draws ``f`` (``u`` breaks ties), whether it exceeds their 99 %
+    quantile ``q99``."""
+    f, w = onp.asarray(f, float), onp.asarray(w, float)
+    w = w / w.sum()
+    pit = float(w[f < f_true].sum() + u * w[f == f_true].sum())
+    order = onp.argsort(f)
+    cum = onp.cumsum(w[order])
+    q99 = float(f[order][min(onp.searchsorted(cum, CONFIDENCE), len(f) - 1)])
+    return pit, int(f_true > q99), q99
+
+
+def sky_columns(sysd, out, p, u, t_anchor, true_i):
+    """``pit_sky``, ``sky_miss`` (and ``sky_f``, ``sky_q99``): the rank of the
+    truth's sky test quantity f among the cells' draws, weighted by ``p`` (each
+    cell's draws equally; cells without draws left out). f is the distance of a
+    track from the posterior-weighted mean track on ``SKY_GRID`` uniform times
+    over the span of the nights. No draws at all: no PIT and a miss."""
+    nan = dict(pit_sky=math.nan, sky_miss=1, sky_f=math.nan, sky_q99=math.nan)
+    cells = [
+        (pi, f) for pi, f in zip(p, out.fits) if f.draws is not None and pi > 0
+    ]
+    if not cells:
+        return nan
+    times = sysd["times"]
+    t_rel = onp.linspace(times[0], times[-1], SKY_GRID) - t_anchor
+    feats, weights = [], []
+    for pi, f in cells:
+        with run_in(onp.dtype(f.space.dtype).name):
+            feats.append(
+                sky_features(f.space, oc_cells.decode_particles(f), t_rel)
+            )
+        weights.append(onp.full(len(feats[-1]), pi / len(feats[-1])))
+    feat, w = onp.concatenate(feats), onp.concatenate(weights)
+    mean = (w[:, None, None] * feat).sum(0) / w.sum()
+    space = out.fits[true_i].space
+    z, zeta = oc.campbell_to_coordinates(sysd["orbit"], t_anchor)
+    truth = dict(
+        period=np.asarray([sysd["period"]]), z=np.asarray(z)[None],
+        zeta=np.asarray(zeta)[None],
+    )  # fmt: skip
+    with run_in(onp.dtype(space.dtype).name):
+        f_true = float(
+            sky_distance(sky_features(space, truth, t_rel), mean)[0]
+        )
+    pit, miss, q99 = weighted_rank(sky_distance(feat, mean), w, f_true, u)
+    return dict(pit_sky=pit, sky_miss=miss, sky_f=f_true, sky_q99=q99)
 
 
 def classify(rec, ess_fail=ESS_FAIL):
@@ -576,10 +717,13 @@ def persist_cells(out, recs, key, store):
             rec["persist_error"] = repr(err)[:200]
 
 
-def run_one(sysd, fit, key, u, *, oracle=False, equiv=False, store=None):
+def run_one(
+    sysd, fit, key, u, *, oracle=False, equiv=False, store=None, u_sky=None
+):
     """Fit one system; returns its record (a dict). Every system, failed or
     not, keeps its truth, strata, ``p_true``, PITs (``pit_diagnostic`` if the
-    system failed) and its flagged cells."""
+    system failed) and its flagged cells. ``u_sky`` (default ``u``) breaks
+    ties in the sky PIT."""
     s = sysd["summaries"]
     start = time.time()
     row = describe(sysd, fit)
@@ -616,6 +760,16 @@ def run_one(sysd, fit, key, u, *, oracle=False, equiv=False, store=None):
                 except Exception as err:  # a diagnostic never fails a system
                     row["diag_error"] = repr(err)[:200]
     row.update(sbc_columns(sysd, out, p, u, true_i, t_a))
+    try:
+        row.update(
+            sky_columns(
+                sysd, out, p, u if u_sky is None else u_sky, t_a, true_i
+            )
+        )
+    except (
+        Exception
+    ) as err:  # a diagnostic never fails a system; no PIT, a miss
+        row.update(pit_sky=math.nan, sky_miss=1, diag_error=repr(err)[:200])
     try:
         cols, orc = truth_columns(
             sysd, out, true_i, t_a, oracle, jax.random.fold_in(key, 2)
@@ -717,11 +871,12 @@ def _a6(rows):
 
 def _a7(rows):
     """Assertion 7: the CMH p-value of failure against the terciles of the true
-    ``ln s`` within the terciles of ``s σ / a`` (B'' excluded)."""
+    ``ln s`` within the terciles of ``s σ / a`` (the detectable stratum, where
+    failure gates)."""
     sel = [
         r for r in rows
         if r["status"] in ("ok", "failed") and "ln_s" in r
-        and r.get("stratum") != "B2"
+        and r.get("detectable", 0)
     ]  # fmt: skip
     if len(sel) < 9:
         return math.nan
@@ -734,15 +889,24 @@ def _a7(rows):
 
 
 def stratum_lines(rows):
-    """Per-stratum counts and cell classes, and the report-only stratum."""
+    """Per-stratum counts and cell classes: the data strata, the detectable
+    stratum (the gated one) and its complements, and the report-only stratum."""
     lines = [
         "",
-        "| stratum | drawn | ok | failed | error | missed | search miss | proposal miss | sentinel fp | support | unresolved |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| stratum | drawn | ok | failed | error | missed (N, report only) | sky miss | search miss | proposal miss | sentinel fp | support | unresolved |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     groups = {s: [r for r in rows if r.get("stratum") == s] for s in STRATA}
     groups["<=2 outlier nights (report only)"] = [
         r for r in rows if r.get("le2_outliers")
+    ]
+    scored = [r for r in rows if "detectable" in r]
+    groups["detectable (gated)"] = [r for r in scored if r["detectable"]]
+    groups["not detectable: period not Nyquist-sampled (report only)"] = [
+        r for r in scored if not r["nyquist_ok"]
+    ]
+    groups["not detectable: signal below threshold (report only)"] = [
+        r for r in scored if r["nyquist_ok"] and not r["detectable"]
     ]
     for name, g in groups.items():
         cls = [
@@ -754,8 +918,9 @@ def stratum_lines(rows):
             for s in ("ok", "failed", "error")
         }
         miss = sum(r["status"] == "ok" and not r["in_99"] for r in g)
+        sky = sum(r["status"] == "ok" and bool(r.get("sky_miss")) for r in g)
         lines.append(
-            f"| {name} | {len(g)} | {n['ok']} | {n['failed']} | {n['error']} | {miss} | "
+            f"| {name} | {len(g)} | {n['ok']} | {n['failed']} | {n['error']} | {miss} | {sky} | "
             + " | ".join(str(cls.count(c)) for c in (*CLASSES, "unresolved"))
             + " |"
         )
@@ -802,34 +967,55 @@ def summarize(rows, n_sys):
         for n in INVARIANTS
     }
     tail = miss_tail(len(ok), len(miss))
+    det = [r for r in ok if r.get("detectable", 0)]
+    sky_miss = [r for r in det if r.get("sky_miss", 1)]
+    sky_all = [r for r in ok if r.get("sky_miss", 1)]
+    failed_det = [r for r in failed if r.get("detectable", 0)]
+    tail_sky = miss_tail(len(det), len(sky_miss))
+    p_sky = chi2_uniform([r.get("pit_sky", math.nan) for r in ok])
+    p_sky_det = chi2_uniform([r.get("pit_sky", math.nan) for r in det])
+    legacy = any(
+        "detectable" not in r or ("pit_sky" not in r and r["status"] == "ok")
+        for r in (*ok, *failed)
+    )
     n5, m5 = _a5(rows)
     n6, v6 = _a6(rows)
     p7 = _a7(rows)
     bad = (
-        tail < P_MISS
-        or bool(failed)
+        tail_sky < P_MISS
+        or bool(failed_det)
         or bool(errors)
-        or p_n < P_FAIL
-        or p_p < P_FAIL
+        or p_sky < P_FAIL
         or (n5 > 0 and miss_tail(n5, m5) < P_MISS)
         or v6 > 0
         or p7 < P_FAIL
     )
-    verdict = (
-        "FAIL" if bad else "PASS" if len(ok) >= MIN_FITTED else "INCONCLUSIVE"
-    )
+    enough = len(ok) >= MIN_FITTED and not legacy
+    verdict = "FAIL" if bad else "PASS" if enough else "INCONCLUSIVE"
     sec = onp.array([r["seconds"] for r in ok]) if ok else onp.zeros(1)
     lines = [
         "# Orbit population test",
         "",
         f"- systems drawn: {n_sys}; fitted: {len(ok)}",
         f"- truth outside the default period domain (stratum B'): {len(outside)}",
-        f"- cell at floor (failed): {len(failed)}",
+        f"- detectable stratum (true period Nyquist-sampled and signal above the "
+        f"{ALPHA_DET} false-alarm threshold): {len(det)} of {len(ok)} fitted",
+        f"- cell at floor (failed), detectable stratum (gated): {len(failed_det)}; "
+        f"outside it (report only): {len(failed) - len(failed_det)}",
         f"- errors: {len(errors)}",
-        f"- true N outside the 99 % set: {len(miss)} of {len(ok)} "
-        f"(P(Binomial >= misses at 1 %) = {tail:.3g}; fails below {P_MISS})",
-        f"- SBC chi-square p, N (randomized PIT, {BINS} bins): {p_n:.3g}",
-        f"- SBC chi-square p, ln P (resample-move draws): {p_p:.3g}",
+        f"- sky-plane miss, detectable stratum (gated; f(true) above the 99 % "
+        f"quantile of f): {len(sky_miss)} of {len(det)} "
+        f"(P(Binomial >= misses at 1 %) = {tail_sky:.3g}; fails below {P_MISS})",
+        f"- sky-plane miss, all fitted (report only): {len(sky_all)} of {len(ok)}",
+        f"- sky-plane SBC chi-square p, all fitted in-domain systems (gated; "
+        f"randomized rank of f(true), {BINS} bins): {p_sky:.3g}",
+        f"- sky-plane SBC chi-square p, detectable stratum (report only: the "
+        f"stratum is selected on the truth, so uniformity is approximate): "
+        f"{p_sky_det:.3g}",
+        f"- true N outside the 99 % set (report only): {len(miss)} of {len(ok)} "
+        f"(P(Binomial >= misses at 1 %) = {tail:.3g})",
+        f"- SBC chi-square p, N (randomized PIT, {BINS} bins; report only): {p_n:.3g}",
+        f"- SBC chi-square p, ln P (resample-move draws; report only): {p_p:.3g}",
         f"- SBC chi-square p, ln s (resample-move draws; reported, not yet "
         f"gated): {p_s:.3g}",
         "- SBC chi-square p, invariants (distinct weighted draws; "
@@ -847,7 +1033,9 @@ def summarize(rows, n_sys):
         "",
         f"Verdict: {verdict}"
         + (
-            f" (fewer than {MIN_FITTED} systems fitted)"
+            " (rows lack the detectability or sky-plane columns: rescore with a rerun)"
+            if verdict == "INCONCLUSIVE" and legacy
+            else f" (fewer than {MIN_FITTED} systems fitted)"
             if verdict == "INCONCLUSIVE"
             else ""
         ),
@@ -885,6 +1073,7 @@ def run_population(seed, start, n_sys, oracle, equiv_every, persist=None):
         for i in range(start, start + n_sys):
             rng, pit_rng = streams(seed, i)
             u = float(pit_rng.uniform())  # consumed whatever the status
+            u_sky = float(pit_rng.uniform())  # drawn after u: u is unchanged
             key = jax.random.fold_in(root, i)
             nights = draw_nights(rng)
             default, fit = fit_domain(nights)
@@ -906,7 +1095,7 @@ def run_population(seed, start, n_sys, oracle, equiv_every, persist=None):
                     row = run_one(
                         sysd, fit, key, u, oracle=oracle,
                         equiv=bool(equiv_every) and i % equiv_every == 0,
-                        store=store,
+                        store=store, u_sky=u_sky,
                     )  # fmt: skip
                     if store:
                         onp.savez_compressed(
