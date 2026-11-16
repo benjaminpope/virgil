@@ -648,16 +648,12 @@ def _peak_terms(cat, ln_s, jitter, state, dtype):
     return np.where(cat.valid, scaled + log_det - 0.5 * quad, -1e30)
 
 
-def _log_mixture(cat, ln_s, jitter, pv, ln_f, dtype, inliers=False):
-    """``ln ∫ dε Beta(ε; EPS_PRIOR) ½ Σ_σ Π_k [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``, with the
-    brighter/fainter sign ``σ`` flipping ``(p, v)``. ``pv`` is ``(K, 4)``.
-
-    With ``inliers``, also the expected number of inlier nights: the night
-    responsibilities ``(1-ε) e^{ℓ̃_k} / [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``, summed
-    over nights and averaged over ``(σ, ε)`` with their posterior weights.
-    """
+def _sign_terms(cat, ln_s, jitter, pv, ln_f, dtype):
+    """``(total, resp)``, each ``(2, nodes)``: for the brighter/fainter sign
+    ``σ = +1, -1`` (flipping ``(p, v)``) and each ``ε`` node, the log of
+    ``Π_k [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]`` and the summed night responsibilities
+    ``(1-ε) e^{ℓ̃_k} / [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``. ``pv`` is ``(K, 4)``."""
     eps = np.asarray(cat.eps, dtype)
-    log_w = np.asarray(cat.log_w_eps, dtype)
     per_sign, resp = [], []
     for sign in (1.0, -1.0):
         state = np.concatenate(
@@ -668,12 +664,24 @@ def _log_mixture(cat, ln_s, jitter, pv, ln_f, dtype, inliers=False):
         night = np.logaddexp(inside, np.log(eps)[:, None] + cat.log_b)
         per_sign.append(night.sum(axis=1))
         resp.append(np.exp(inside - night).sum(axis=1))
-    total = np.stack(per_sign)  # (2, nodes)
+    return np.stack(per_sign), np.stack(resp)
+
+
+def _log_mixture(cat, ln_s, jitter, pv, ln_f, dtype, inliers=False):
+    """``ln ∫ dε Beta(ε; EPS_PRIOR) ½ Σ_σ Π_k [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``, with the
+    brighter/fainter sign ``σ`` flipping ``(p, v)``. ``pv`` is ``(K, 4)``.
+
+    With ``inliers``, also the expected number of inlier nights: the night
+    responsibilities ``(1-ε) e^{ℓ̃_k} / [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``, summed
+    over nights and averaged over ``(σ, ε)`` with their posterior weights.
+    """
+    log_w = np.asarray(cat.log_w_eps, dtype)
+    total, resp = _sign_terms(cat, ln_s, jitter, pv, ln_f, dtype)
     out = logsumexp(total + log_w) - np.log(2.0)
     if not inliers:
         return out
     weight = np.exp(total + log_w - logsumexp(total + log_w))
-    return out, np.sum(weight * np.stack(resp))
+    return out, np.sum(weight * resp)
 
 
 # ---------------------------------------------------------------------------
@@ -839,6 +847,19 @@ class _Space:
         pv = self.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
         return _log_mixture(
             self.cat, c["ln_s"], self.jitter, pv, c["ln_f"], self.dtype
+        )
+
+    def sign_log_likelihood(self, x):
+        """``(2,)``: ``ln ∫ dε Π_k [...]`` for the sign ``σ = +1, -1``, the two
+        terms of the label sum in `loglike` (before its ``½``): the posterior
+        of ``σ`` given ``x`` is their softmax."""
+        c = self.decode(x)
+        pv = self.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+        total, _ = _sign_terms(
+            self.cat, c["ln_s"], self.jitter, pv, c["ln_f"], self.dtype
+        )
+        return logsumexp(
+            total + np.asarray(self.cat.log_w_eps, self.dtype), axis=-1
         )
 
     def logprior(self, x):
