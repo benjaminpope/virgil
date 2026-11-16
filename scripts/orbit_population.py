@@ -40,8 +40,10 @@ at which a 1 % test rejects that model with power 0.9 (columns ``nyquist_ok``,
 there only; elsewhere they are counted and tabled.
 
 1. sky-plane retrieval: the truth's sky test quantity f (the time-averaged
-   squared distance of a sky track from the posterior-weighted mean track,
-   ``SKY_GRID`` uniform times over the nights; the track keeps its sign) above the 99 % quantile of f
+   squared distance of a physical sky track, ``σ_i · track(θ_i)`` with the label
+   ``σ_i`` drawn from its exact conditional given the draw, from the posterior-weighted mean
+   track, ``SKY_GRID`` uniform times over the nights; the truth's track carries the simulated
+   sign) above the 99 % quantile of f
    among the draws is a miss: FAIL if ``P(Binomial(n_detectable, 0.01) >=
    misses)`` is below ``P_MISS``. The element-space test of N (``in_99``) is
    reported only;
@@ -147,6 +149,15 @@ def streams(seed, i):
     the other systems nor any fit."""
     sim, pit = onp.random.SeedSequence([seed, i]).spawn(2)
     return onp.random.default_rng(sim), onp.random.default_rng(pit)
+
+
+def label_stream(seed, i):
+    """The generator of the label draws ``σ_i`` of system ``i`` of ``seed``: a
+    third child of ``SeedSequence([seed, i])``. Spawning a child leaves the
+    others unchanged, so the simulation and PIT streams are those of `streams`."""
+    return onp.random.default_rng(
+        onp.random.SeedSequence([seed, i]).spawn(3)[2]
+    )
 
 
 def _loguniform(rng, lo, hi):
@@ -456,12 +467,20 @@ def truth_invariants(sysd, t_anchor):
 def sky_features(space, c, t_rel):
     """``(n, G, 2)`` sky positions ``(x, y)`` (mas) of each draw of ``c`` (orbit
     coordinates, as ``decode_particles``) at ``t_rel`` (days from the
-    anchor): the plain track, whose sign is the brighter/fainter label."""
+    anchor): the track of the orbit, before the brighter/fainter label."""
     t = np.asarray(t_rel, space.dtype)
     pos = jax.vmap(
         lambda p, z, zt: space.states_at(t, p, oc.z_to_ti(z), zt)[:, :2]
     )(c["period"], c["z"], c["zeta"])
     return onp.asarray(pos, float)
+
+
+def label_probability(fit):
+    """``(n,)`` ``P(σ = +1 | θ_i, D)`` of each posterior draw of ``fit``: the
+    softmax of the two terms of the label sum in the target (the exact
+    conditional of the label given the draw)."""
+    ll = jax.vmap(fit.space.sign_log_likelihood)(np.asarray(fit.draws))
+    return onp.asarray(jax.nn.sigmoid(ll[:, 0] - ll[:, 1]), float)
 
 
 def sky_distance(feat, mean):
@@ -484,13 +503,17 @@ def weighted_rank(f, w, f_true, u):
     return pit, int(f_true > q99), q99
 
 
-def sky_columns(sysd, out, p, u, t_anchor, true_i):
+def sky_columns(sysd, out, p, u, t_anchor, true_i, rng=None):
     """``pit_sky``, ``sky_miss`` (and ``sky_f``, ``sky_q99``): the rank of the
     truth's sky test quantity f among the cells' draws, weighted by ``p`` (each
     cell's draws equally; cells without draws left out). f is the distance of a
     track from the posterior-weighted mean track on ``SKY_GRID`` uniform times
-    over the span of the nights; the truth's track carries the simulated
-    brighter/fainter ``sign``. No draws at all: no PIT and a miss."""
+    over the span of the nights. The target sums out the brighter/fainter label
+    ``σ``, so each draw θ_i is given ``σ_i`` from its exact conditional
+    (``label_probability``, drawn from ``rng``); the physical track is
+    ``σ_i · track(θ_i)`` and the truth's is the simulator's ``sign · track``.
+    No draws at all: no PIT and a miss."""
+    rng = onp.random.default_rng(0) if rng is None else rng
     nan = dict(pit_sky=math.nan, sky_miss=1, sky_f=math.nan, sky_q99=math.nan)
     cells = [
         (pi, f) for pi, f in zip(p, out.fits) if f.draws is not None and pi > 0
@@ -502,9 +525,11 @@ def sky_columns(sysd, out, p, u, t_anchor, true_i):
     feats, weights = [], []
     for pi, f in cells:
         with run_in(onp.dtype(f.space.dtype).name):
-            feats.append(
-                sky_features(f.space, oc_cells.decode_particles(f), t_rel)
+            feat_f = sky_features(f.space, oc_cells.decode_particles(f), t_rel)
+            sigma = onp.where(
+                rng.uniform(size=len(feat_f)) < label_probability(f), 1.0, -1.0
             )
+        feats.append(sigma[:, None, None] * feat_f)
         weights.append(onp.full(len(feats[-1]), pi / len(feats[-1])))
     feat, w = onp.concatenate(feats), onp.concatenate(weights)
     mean = (w[:, None, None] * feat).sum(0) / w.sum()
@@ -740,12 +765,14 @@ def persist_cells(out, recs, key, store):
 
 
 def run_one(
-    sysd, fit, key, u, *, oracle=False, equiv=False, store=None, u_sky=None
-):
+    sysd, fit, key, u, *, oracle=False, equiv=False, store=None, u_sky=None,
+    label_rng=None,
+):  # fmt: skip
     """Fit one system; returns its record (a dict). Every system, failed or
     not, keeps its truth, strata, ``p_true``, PITs (``pit_diagnostic`` if the
     system failed) and its flagged cells. ``u_sky`` (default ``u``) breaks
-    ties in the sky PIT."""
+    ties in the sky PIT; ``label_rng`` draws the brighter/fainter labels of the
+    sky draws."""
     s = sysd["summaries"]
     start = time.time()
     row = describe(sysd, fit)
@@ -785,7 +812,13 @@ def run_one(
     try:
         row.update(
             sky_columns(
-                sysd, out, p, u if u_sky is None else u_sky, t_a, true_i
+                sysd,
+                out,
+                p,
+                u if u_sky is None else u_sky,
+                t_a,
+                true_i,
+                label_rng,
             )
         )
     except (
@@ -1104,6 +1137,9 @@ def run_population(seed, start, n_sys, oracle, equiv_every, persist=None):
             rng, pit_rng = streams(seed, i)
             u = float(pit_rng.uniform())  # consumed whatever the status
             u_sky = float(pit_rng.uniform())  # drawn after u: u is unchanged
+            label_rng = label_stream(
+                seed, i
+            )  # a new stream: the rest unchanged
             key = jax.random.fold_in(root, i)
             nights = draw_nights(rng)
             default, fit = fit_domain(nights)
@@ -1126,6 +1162,7 @@ def run_population(seed, start, n_sys, oracle, equiv_every, persist=None):
                         sysd, fit, key, u, oracle=oracle,
                         equiv=bool(equiv_every) and i % equiv_every == 0,
                         store=store, u_sky=u_sky,
+                        label_rng=label_rng,
                     )  # fmt: skip
                     if store:
                         onp.savez_compressed(

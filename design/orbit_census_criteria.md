@@ -130,16 +130,29 @@ failure gates. Errors (a crash) still fail the run wherever they occur. Assertio
 
 ### Sky-plane retrieval (columns `pit_sky`, `sky_miss`, `sky_f`, `sky_q99`)
 
-**Test quantity.** `f(θ)` is the time-averaged squared sky-plane distance between θ's relative-position track and the
-posterior-weighted mean track, on `SKY_GRID` = 64 uniform times over `[first night, last night]` (a declared budget,
-not tuned). The track is the plain relative-position track `(x, y)`, with its sign: the truth's track carries the
-simulated brighter/fainter sign. SBC is valid for any test quantity, so the choice only sets the sensitivity:
+**Test quantity.** `f` is the time-averaged squared sky-plane distance between a *physical* relative-position track
+and the posterior-weighted mean physical track, on `SKY_GRID` = 64 uniform times over `[first night, last night]` (a
+declared budget, not tuned). SBC is valid for any test quantity, so the choice only sets the sensitivity.
 
-- for twins, the posterior is bimodal under the label swap `TI′ → −TI′` (which negates the track). The mean track then
-  shrinks towards zero and `f` loses power, but the test stays valid. That is the accepted twin degeneracy;
-- for non-twins, the per-night flux fixes the brighter/fainter label, so the posterior sits in one image. The plain track
-  then flags a fit with the wrong label, which a sign-free quantity (for example the outer-product features
-  `(x², xy, y²)`) would miss.
+*The label.* The target sums out the brighter/fainter label `σ = ±1` (`½ Σ_σ`, with `σ` flipping `(p, v)`), so the
+posterior over the orbit `θ` is exactly symmetric under `TI′ → −TI′` (`z → iz`), which negates the orbit's track, for
+every system. The physical label is `σ`, not the sign of `TI′`. Each draw `θ_i` is therefore given `σ_i` from its exact
+conditional, `P(σ = +1 | θ_i, D) ∝ L_{+1}(θ_i)` with `L_σ(θ) = ∫ dε Π_k [(1−ε) e^{ℓ̃_k(σ·state)} + ε e^{b_k}]` (the two
+terms of the target's label sum, exposed as `sign_log_likelihood`; the target value is unchanged), so that `(θ_i, σ_i)`
+are exact draws of the joint posterior. The physical track of draw `i` is `σ_i · track(θ_i)`. The truth's is the
+simulator's, `sign · track(θ_true)` (`σ = +1` is the simulator's convention, companion relative to primary with `ln f ≤ 0`).
+The `σ_i` are drawn from a new child stream of the system's `SeedSequence`, so the simulation, PIT and tie-break draws
+are unchanged. The image `θ → θ′` has `P(σ = +1 | θ′) = P(σ = −1 | θ)`, so `σ · track` is invariant under it.
+
+- For a non-twin the catalogue's peaks sit at one sign of `(p, v)` with that `ln f`, so one `σ` fits the data and
+  dominates: the posterior is one physical track, the test has full power and flags a wrong-label fit;
+- for twins (peaks at both signs) `σ` is about 50/50, the posterior is bimodal and the mean track shrinks towards zero:
+  power is lost, validity is not. That is the accepted twin degeneracy.
+
+*Correction.* The first version of amendment (b) said that the per-night flux fixes the TI′ sign. That was wrong: the
+target is symmetric in TI′ and the label is carried by `σ`, which the target sums out. The mechanism above is the
+correction. It keeps the intent of (b) (a sign-aware test quantity that catches a wrong label for non-twins) and was
+decided by the coordinator within Ben's sign-off, with Ben informed.
 
 Cells are weighted by `p` and each cell's resample-move draws equally, as for the other PITs.
 

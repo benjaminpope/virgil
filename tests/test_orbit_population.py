@@ -973,6 +973,10 @@ def test_the_sky_columns_rank_the_truth_among_the_draws_and_flag_a_miss(
     with jax.enable_x64(True):
         c = _coords(_cloud())
         monkeypatch.setattr(pop.oc_cells, "decode_particles", lambda f: c)
+        # every draw is the +1 label: the physical track is the plain track
+        monkeypatch.setattr(
+            pop, "label_probability", lambda f: onp.ones(len(c["period"]))
+        )
         fit = types.SimpleNamespace(draws=True, space=_flat_space())
         out = types.SimpleNamespace(fits=[fit])
         times = onp.array([0.0, 5.0, 10.0, 20.0])
@@ -984,16 +988,106 @@ def test_the_sky_columns_rank_the_truth_among_the_draws_and_flag_a_miss(
         far = pop.KeplerOrbit(7.6, 1.3, 0.4, 60.0, 30.0, 100.0, 8.0)
         bad = pop.sky_columns(dict(sysd, orbit=far, period=7.6), *args)
         assert bad["sky_miss"] == 1 and bad["pit_sky"] == pytest.approx(1.0)
-        # a label-flipped truth (the posterior sits in the other image) is
-        # flagged on this non-twin: the plain track keeps the sign
-        flipped = pop.sky_columns(dict(sysd, sign=-1.0), *args)
-        assert flipped["sky_miss"] == 1 and flipped[
-            "pit_sky"
-        ] == pytest.approx(1.0)
         # no draws at all: no PIT, and a miss
         none = types.SimpleNamespace(fits=[types.SimpleNamespace(draws=None)])
         out0 = pop.sky_columns(sysd, none, onp.array([1.0]), 0.5, 0.0, 0)
         assert onp.isnan(out0["pit_sky"]) and out0["sky_miss"] == 1
+
+
+def _real_fit(sign=1.0, twin=False, image=False, n=24):
+    """A real cell space on one-peak night summaries of ``sign`` times the
+    orbit (``twin``: each night's peak and its mirror image), and ``n`` posterior
+    draws at the truth's chart vector (``image``: at its label-swapped image)."""
+    from tests import test_orbit_cells as toc
+
+    orbit = toc._orbit()
+    s = toc._summaries(orbit, toc.TIMES, sign=sign)
+    if twin:  # the mirror image of each peak: one measurement, two peaks
+        mirror = onp.array([-1.0, -1.0, -1.0, -1.0, 1.0])
+        s = tuple(
+            dataclasses.replace(
+                a,
+                peaks=a.peaks
+                + (
+                    dataclasses.replace(
+                        a.peaks[0], mean=mirror * a.peaks[0].mean
+                    ),
+                ),
+            )
+            for a in s
+        )
+    _, _, cell = toc._true_cell(11.3, toc.TIMES, s, (6.0, 400.0))
+    space = toc._space(s, cell)
+    x = toc._truth_chart(space, orbit, toc.TIMES[0])
+    if image:  # the label swap z -> i z: y -> (-y1, y0, -y3, y2)
+        x = x.copy()
+        x[1:5] = [-x[2], x[1], -x[4], x[3]]
+    rng = onp.random.default_rng(0)
+    draws = x + 1e-4 * rng.standard_normal((n, len(x)))
+    return orbit, toc.TIMES, types.SimpleNamespace(draws=draws, space=space)
+
+
+def _sky(orbit, times, fit, sign, seed=0):
+    out = types.SimpleNamespace(fits=[fit])
+    sysd = dict(
+        orbit=orbit, period=float(orbit.period), times=times, sign=sign
+    )
+    rng = onp.random.default_rng(seed)
+    return pop.sky_columns(
+        sysd, out, onp.array([1.0]), 0.5, times[0], 0, rng=rng
+    )
+
+
+def test_the_label_is_decisive_for_a_non_twin_and_flips_with_the_image():
+    with jax.enable_x64(True):
+        for sign in (1.0, -1.0):
+            _, _, fit = _real_fit(sign=sign)
+            _, _, swapped = _real_fit(sign=sign, image=True)
+            p = pop.label_probability(fit)
+            q = pop.label_probability(swapped)
+            # the data peak is at sign * orbit: the matching label dominates
+            want = 1.0 if sign > 0 else 0.0
+            assert onp.all(onp.abs(p - want) < 1e-3)
+            # the swap TI' -> -TI' negates the track and the label: the
+            # physical track sigma * track is the same
+            onp.testing.assert_allclose(q, 1.0 - p, atol=1e-6)
+
+
+def test_the_label_of_a_twin_is_not_decided_by_the_data():
+    with jax.enable_x64(True):
+        _, _, fit = _real_fit(twin=True)
+        p = pop.label_probability(fit)
+        # one measurement and its mirror image: the label is a coin flip
+        onp.testing.assert_allclose(p, 0.5, atol=1e-6)
+
+
+def test_sky_columns_flag_a_wrong_label_truth_on_a_non_twin():
+    """The truth is the simulator's ``sign * track``, and a draw's physical
+    track is ``sigma_i * track(theta_i)``, with ``sigma_i`` drawn from its
+    exact conditional. A non-twin with the data at ``+track``: the true sign
+    is not flagged, a truth whose sign is flipped is; and the same holds
+    whichever image the posterior sits in."""
+    with jax.enable_x64(True):
+        for image in (False, True):
+            orbit, times, fit = _real_fit(sign=1.0, image=image)
+            ok = _sky(orbit, times, fit, sign=1.0)
+            assert ok["sky_miss"] == 0 and ok["sky_f"] < 1e-3
+            bad = _sky(orbit, times, fit, sign=-1.0)
+            assert bad["sky_miss"] == 1 and bad["pit_sky"] == pytest.approx(
+                1.0
+            )
+            assert bad["sky_f"] > 10 * ok["sky_f"] + 1.0
+
+
+def test_the_sky_score_of_a_twin_does_not_depend_on_the_truth_sign_or_image():
+    """A twin's label is 50/50, the draws cover both tracks and the mean track
+    shrinks towards zero, so the truth of either sign is inside them."""
+    with jax.enable_x64(True):
+        orbit, times, fit = _real_fit(twin=True, n=200)
+        a = _sky(orbit, times, fit, sign=1.0)
+        b = _sky(orbit, times, fit, sign=-1.0)
+        assert a["sky_miss"] == 0 and b["sky_miss"] == 0
+        assert 0.0 < a["pit_sky"] < 1.0 and 0.0 < b["pit_sky"] < 1.0
 
 
 def test_a_bimodal_twin_posterior_shrinks_the_mean_track_but_stays_valid(
@@ -1046,3 +1140,17 @@ def test_the_sky_pit_is_uniform_when_the_truth_is_a_draw_of_the_posterior():
                 pop.weighted_rank(f[1:], onp.ones(40), f[0], rng.uniform())[0]
             )
         assert pop.stats.kstest(pits, "uniform").pvalue > 0.01
+
+
+def test_the_label_stream_leaves_the_simulation_and_pit_streams_unchanged():
+    sim, pit = pop.streams(3, 5)
+    first = (sim.uniform(size=3), pit.uniform(size=3))
+    lab = pop.label_stream(3, 5)
+    sim2, pit2 = pop.streams(3, 5)
+    onp.testing.assert_array_equal(first[0], sim2.uniform(size=3))
+    onp.testing.assert_array_equal(first[1], pit2.uniform(size=3))
+    assert not onp.array_equal(lab.uniform(size=3), first[0])
+    onp.testing.assert_array_equal(
+        pop.label_stream(3, 5).uniform(size=3),
+        pop.label_stream(3, 5).uniform(size=3),
+    )
