@@ -161,7 +161,9 @@ def _eccentric_longitude(m, k, h):
     Kepler's equation in the eccentricity vector ``k + ih = e e^{iM_a}``
     (Broucke & Cefola 1972), ``m`` the mean anomaly since the anchor. The value
     comes from the standard solver; the derivatives are implicit, so they stay
-    finite at ``e = 0``, where ``M_a`` is undefined.
+    finite at ``e = 0``, where ``M_a`` is undefined. ``F`` is modulo ``2π``
+    (it jumps where ``E`` wraps) while its derivative is continuous: use it
+    only inside ``sin`` and ``cos``.
     """
     e2 = k**2 + h**2
     e = np.sqrt(e2)

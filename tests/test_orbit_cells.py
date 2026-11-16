@@ -784,11 +784,19 @@ def test_the_position_evidence_of_a_tiny_case_matches_prior_importance(
 
 
 @x64
-@pytest.mark.parametrize("e_max", [1e-6, oc_cells.E_MAX])
-def test_the_likelihood_hessian_is_exact_at_a_circular_orbit(e_max):
-    """At ``ζ ≈ 0`` (where the search's near-circular modes sit) the autodiff
-    Hessian of ``ln L`` in ``y_ζ``, velocities included, matches finite
-    differences; through ``M_a = arg ζ²`` it was rounding noise of order 10³."""
+@pytest.mark.parametrize(
+    "e_max, y_zeta",
+    [
+        (1e-6, (2e-9, 3e-9)),
+        (oc_cells.E_MAX, (2e-9, 3e-9)),
+        (oc_cells.E_MAX, (0.6, -0.4)),
+    ],
+)
+def test_the_likelihood_derivatives_match_finite_differences(e_max, y_zeta):
+    """The autodiff gradient of ``ln L`` and its Hessian in ``(w_P, y_ζ)``,
+    velocities included, match central differences, at ``ζ ≈ 0`` (where
+    near-circular modes sit; through ``M_a = arg ζ²`` the Hessian was rounding
+    noise of order 10³) and at ``e ≈ 0.3``."""
     times = onp.array([0.0, 4.1, 9.3])
     s = _summaries(
         _orbit(period=11.3, a=6.0, ecc=0.0), times, sigma=0.9, seed=2
@@ -799,28 +807,52 @@ def test_the_likelihood_hessian_is_exact_at_a_circular_orbit(e_max):
         for c in oc_cells.make_cells(times[0], times[-1], domain)
         if c.p_lo <= 11.3 <= c.p_hi
     ][0]
+    catalogue = oc_cells._Catalogue(s, onp.full(3, LOG_B))
     space = oc_cells._Space(
-        oc_cells._Catalogue(s, onp.full(3, LOG_B)), cell, times[0],
-        times - times[0], oc_cells.A_RANGE, e_max, oc_cells.FLUX_FLOOR, 0.0,
+        catalogue,
+        cell,
+        times[0],
+        times - times[0],
+        oc_cells.A_RANGE,
+        e_max,
+        oc_cells.FLUX_FLOOR,
+        0.0,
         np.float64,
-    )  # fmt: skip
+    )
     # near the cell's best mode (P = 11.5 d), every night an inlier
-    x = np.array([0.59, 1.53, 0.58, 0.48, -0.3, -0.41, 2e-9, 3e-9, 1.3, 0.02])
+    x = np.array([0.59, 1.53, 0.58, 0.48, -0.3, -0.41, 0.0, 0.0, 1.3, 0.02])
+    x = x.at[6:8].set(np.array(y_zeta))
     assert float(space.loglike(x)) > 3 * LOG_B + 10.0
-    hess = onp.asarray(jax.hessian(space.loglike)(x))[6:8, 6:8]
-    step, eye = 1e-3, onp.eye(2)
+    idx = [0, 6, 7]
+    step, eye = 1e-3, onp.eye(space.d)
 
-    def f(i, j, a, b):
-        dy = step * (a * eye[i] + b * eye[j])
-        return float(space.loglike(x.at[6:8].add(dy)))
+    def f(dx):
+        return float(space.loglike(x + step * dx))
 
-    fd = onp.array([
-        [(f(i, j, 1, 1) - f(i, j, 1, -1) - f(i, j, -1, 1) + f(i, j, -1, -1))
-         / (4 * step**2) for j in range(2)]
-        for i in range(2)
-    ])  # fmt: skip
+    grad_fd = [(f(eye[i]) - f(-eye[i])) / (2 * step) for i in idx]
+    hess_fd = onp.array(
+        [
+            [
+                (
+                    f(eye[i] + eye[j])
+                    - f(eye[i] - eye[j])
+                    - f(eye[j] - eye[i])
+                    + f(-eye[i] - eye[j])
+                )
+                / (4 * step**2)
+                for j in idx
+            ]
+            for i in idx
+        ]
+    )
+    grad = onp.asarray(jax.grad(space.loglike)(x))[idx]
+    hess = onp.asarray(jax.hessian(space.loglike)(x))[onp.ix_(idx, idx)]
+    scale = abs(hess_fd).max()
     onp.testing.assert_allclose(
-        hess, fd, rtol=1e-3, atol=1e-3 * abs(fd).max() + 1e-7
+        grad, grad_fd, rtol=1e-4, atol=1e-5 * abs(onp.array(grad_fd)).max()
+    )
+    onp.testing.assert_allclose(
+        hess, hess_fd, rtol=1e-3, atol=1e-3 * scale + 1e-7
     )
 
 

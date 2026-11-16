@@ -351,6 +351,24 @@ def test_the_anchor_unit_orbit_is_the_kepler_sky(radius):
     sky = oc.coordinates_to_orbit(120.0, z, zeta, T_ANCHOR).sky(t)
     onp.testing.assert_allclose(b * x + g * y, sky[0], atol=1e-9)
     onp.testing.assert_allclose(a * x + f * y, sky[1], atol=1e-9)
+    if radius < 0.1:
+        return  # the Kepler sky's derivatives in zeta go through M_a
+    # away from e = 0 the KeplerOrbit path is smooth: the derivatives in zeta
+    # (the custom JVP and the q projection at O(e)) agree with its own
+
+    def new_sky(zeta):
+        x, y = oc.anchor_unit_orbit(t - T_ANCHOR, 120.0, zeta)
+        return np.stack([b * x + g * y, a * x + f * y])
+
+    def kepler_sky(zeta):
+        return np.stack(
+            oc.coordinates_to_orbit(120.0, z, zeta, T_ANCHOR).sky(t)
+        )
+
+    for d in (jax.jacfwd, jax.hessian):
+        onp.testing.assert_allclose(
+            d(new_sky)(zeta), d(kepler_sky)(zeta), atol=1e-7
+        )
 
 
 @x64
@@ -391,7 +409,15 @@ def test_float32_round_trips():
     z2 = oc.ti_to_z(*abfg)
     ecc, m = oc.zeta_to_eccentricity(zeta)
     zeta2 = oc.eccentricity_to_zeta(ecc, m)
-    for x in (z, zeta, *abfg, z2, ecc, m, zeta2):
+    unit = oc.anchor_unit_orbit(
+        np.linspace(0, 9, 5, dtype=np.float32), 7.0, zeta[0]
+    )
+    _, tangent = jax.jvp(
+        lambda w: oc.anchor_unit_orbit(np.float32(1.0), 7.0, w),
+        (np.zeros(2, np.float32),),
+        (np.ones(2, np.float32),),
+    )
+    for x in (z, zeta, *abfg, z2, ecc, m, zeta2, *unit, *tangent):
         assert x.dtype == np.float32
     onp.testing.assert_allclose(oc.z_to_ti(z2), abfg, atol=1e-4, rtol=1e-4)
     sign = onp.where(zeta[:, :1] < 0, -1.0, 1.0)
