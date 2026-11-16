@@ -1519,6 +1519,26 @@ def test_position_cells_fails_on_a_flagged_cell_within_the_bound(monkeypatch):
     assert not out.failed.any() and out.omitted_bound <= oc_cells.DELTA
 
 
+@x64
+def test_the_label_terms_are_the_two_halves_of_the_target_label_sum():
+    """``sign_log_likelihood`` gives the two terms of the label sum in the
+    likelihood: their mean (``½ Σ_σ``) is ``loglike``."""
+    orbit = _orbit()
+    s = _summaries(orbit, TIMES)
+    _, _, cell = _true_cell(11.3, TIMES, s, (6.0, 400.0))
+    space = _space(s, cell)
+    x = np.asarray(_truth_chart(space, orbit, TIMES[0]))
+    terms = space.sign_log_likelihood(x)
+    assert terms.shape == (2,)
+    onp.testing.assert_allclose(
+        float(np.logaddexp(terms[0], terms[1]) - math.log(2.0)),
+        float(space.loglike(x)),
+        rtol=1e-12,
+    )
+    # data at +track: the +1 label dominates
+    assert float(terms[0] - terms[1]) > 20.0
+
+
 def _true_state(sigma, k_times, b=None, p_range=(9.0, 14.0), sigma_last=None):
     """A small system at its truth: ``(space, plan, truth chart)``; the last
     night has ``sigma_last`` if given."""
