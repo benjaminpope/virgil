@@ -648,3 +648,56 @@ def test_the_old_data_first_order_still_works_with_a_warning():
     with pytest.warns(FutureWarning, match="model before the data"):
         old = score_orbits(epochs, OrbitalBinary, [TRUTH], s_max=None)
     assert old.score[0] == new.score[0]
+
+
+def test_scorer_scales_wrap_penalty_and_recovers_flux_with_closure_offsets():
+    """At 0.1 deg photon noise and 10 deg closure-phase offsets (per-triangle +
+    frame-spanning mode), _Scorer.chi2 scales the wrap penalty by hypot(σ, σ_off)
+    so score_orbits recovers the companion flux and ranks TRUTH above OTHER."""
+    rng = onp.random.default_rng(17)
+    deg10 = onp.deg2rad(10.0)
+    scaled_nights = {}
+    unscaled_nights = {}
+    for k, mjd in enumerate(NIGHTS[:2]):
+        d = _night(
+            TRUTH,
+            0.4,
+            mjd,
+            seed=20 + k,
+            stations=VLTI_UTS,
+            hours=(-0.5, 0.5),
+            sigma_v2=0.01,
+            sigma_cp_deg=0.1,
+        )
+        n_phi = int(onp.asarray(d.phi).size)
+        n_wave = len(WAVELENGTHS)
+        span = onp.tile(rng.choice([-1.0, 1.0], size=n_phi // n_wave), n_wave)
+        span = span.reshape(1, n_phi)
+        shift = deg10 * span[0]
+        shifted = d.set("phi", d.phi + shift)
+        scaled_nights[f"n{k}"] = shifted.with_closure_offsets(
+            triangle=0.05, modes=deg10 * span
+        )
+        unscaled_nights[f"n{k}"] = shifted.with_closure_offsets(
+            triangle=0.05, modes=deg10 * span, scale_penalty=False
+        )
+
+    from virgil.orbit_search import _Scorer
+
+    scaled = score_orbits(OrbitalBinary, Epochs(scaled_nights), [TRUTH, OTHER])
+    snap = OrbitalBinary(TRUTH, 0.4).at(NIGHTS[0])
+    d_sc, d_un = scaled_nights["n0"], unscaled_nights["n0"]
+    cvis = snap.model(d_sc.u, d_sc.v, d_sc.wavel)
+    sc_s, un_s = _Scorer(d_sc, 10.0), _Scorer(d_un, 10.0)
+    chi2_phi_sc = float(
+        sc_s.chi2(cvis, sc_s.plain, sc_s.gains, sc_s.offsets)[1]
+    )
+    chi2_phi_un = float(
+        un_s.chi2(cvis, un_s.plain, un_s.gains, un_s.offsets)[1]
+    )
+    # Without wrap-penalty scaling, the quartic wrap penalty inflates phi chi2
+    # by >100x at TRUTH; with scale_penalty=True it stays near nominal.
+    assert chi2_phi_un > 100.0 * chi2_phi_sc
+    assert float(scaled.score[0]) > float(scaled.score[1]) + 20.0
+    assert float(scaled.flux[0, 0]) == pytest.approx(0.4, abs=0.05)
+    assert float(scaled.scale[0].max()) < 2.0

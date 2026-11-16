@@ -107,7 +107,7 @@ print(f"{len(pairs)} baselines and {len(triangles)} closure phases")
 36 baselines and 84 closure phases
 ```
 
-## Mixing shapes into a `System`
+## Mixing shapes into a `System` {#system}
 
 A `System` is a scene made of named parts. Its visibility is the flux-weighted average of theirs,
 

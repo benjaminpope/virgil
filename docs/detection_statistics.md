@@ -171,6 +171,52 @@ reviews the ROC curve and its area. The bootstrap for a threshold's error
 works in batches of about $2^{22}$ values, so its memory does not grow with
 `n_boot × n`.
 
+## Reading the detection plots {#detection-plots}
+
+[Detection ROC curves](detection_roc.md) describes the three plots of a
+[`DetectionMC`][virgil.detection.DetectionMC] (simulated searches from
+[`injection_recovery`][virgil.detection.injection_recovery]); here are their
+conventions and what to look at.
+
+**Null distribution** ([`plot_null_distribution`][virgil.plotting.plot_null_distribution]).
+The curve is the fraction of companion-free simulations at or above each
+threshold, that threshold's false-alarm probability, on a log scale so the
+tail that sets thresholds is visible. The reference curve is the statistic at
+one position fixed in advance ([local significance](#local)) for `delta_chi2`
+and `max_snr`, and none for `log_bayes_factor`. The gap between the two is
+the look-elsewhere effect of searching a grid. The legend sits outside the
+axes so it never hides the tail; leave room for it in subplot grids.
+
+**ROC curves** ([`plot_roc`][virgil.plotting.plot_roc]). Each curve follows a
+threshold from high to low, with its false-positive rate (the false-alarm
+probability) on the x-axis and its true-positive rate (the completeness) on
+the y-axis. A statistic that cannot tell companions from noise lies on the
+chance curve TPR = FPR; a better one lies above it. The x-axis is logarithmic
+by default, from $0.5/n_\text{null}$ to 1, since detections are claimed at
+small false-alarm probabilities, so the chance curve is curved. `mark_wilks`
+marks [local significances](#local) (default 3σ and 5σ): a vertical line at
+the false-alarm probability of each, and a circle on each `delta_chi2`
+or `max_snr` curve where the threshold equals that significance
+(`delta_chi2` = 9 or `max_snr` = 3 at 3σ). The circle's horizontal distance
+from the line is the look-elsewhere effect. With several statistics, line
+style distinguishes the statistics and colour the flux or separation
+selections.
+
+**Completeness map** ([`plot_completeness`][virgil.plotting.plot_completeness]).
+Each cell is the fraction of injected companions of that separation and flux
+detected at the false-alarm probability `fap`
+([`DetectionMC.completeness`][virgil.detection.DetectionMC.completeness]).
+Cells span halfway to their neighbours in separation and log flux; zero-flux
+injections have no Δmag or contrast and are left out. The contours are the
+empirical contrast curves of
+[`DetectionMC.contrast_curve`][virgil.detection.DetectionMC.contrast_curve]:
+in each separation bin the completeness is made non-decreasing in flux and
+interpolated linearly in log flux (linearly in Δmag), and a contour is absent
+where the injected fluxes do not bracket its level. The map fixes the axis
+limits to its cells, so curves drawn afterwards, such as Absil limits from
+`plot_contrast_curve`, do not widen them; `plot_contrast_curve` redraws the
+legend, so place it again at the end.
+
 ## References
 
 - Chernoff (1954), *Ann. Math. Statist.* 25, 573, doi:10.1214/aoms/1177728725.

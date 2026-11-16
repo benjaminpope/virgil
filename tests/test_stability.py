@@ -48,6 +48,7 @@ EXPECTED = {
     "virgil.radio_clean": {"*"},
     "virgil.radio_toeplitz": {"*"},
     "virgil.crossval": {"*"},
+    "virgil.noise_spec": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
         "ArchimedeanSpiral",
@@ -147,6 +148,7 @@ def test_stability_module_imports_nothing():
 
 PAGES = [
     "docs/orbit_fitting.md",
+    "docs/orbit_methods.md",
     "docs/multipole_disk_rings.md",
     "docs/imaging_clean.md",
     "docs/imaging_ensemble.md",
@@ -157,6 +159,7 @@ PAGES = [
     "docs/radio_clean.md",
     "docs/api/radio_clean.md",
     "docs/api/radio_toeplitz.md",
+    "docs/api/noise_spec.md",
     "docs/stability.md",
 ]
 
