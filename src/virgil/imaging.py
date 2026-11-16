@@ -2800,7 +2800,8 @@ def laplace_samples(
 
     Source: the covariance has the form of metric Gaussian variational
     inference (Knollmüller & Enßlin 2019, [references](../references.md#knollmuller2019)),
-    the inverse of ``JᵀJ + I``. Here it is drawn once at the MAP, with no mean
+    the inverse of ``JᵀJ + I`` (without ``priors``; with them, the marginal of
+    the joint Hessian). The Gaussian is built once, about the MAP, with no mean
     update or iteration, so this is a Laplace approximation, not MGVI.
 
     Parameters

@@ -365,8 +365,10 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     Cholesky, azimuthal multipoles, ``tanh`` centre taper, edge fade). It shares
     only the exponential-of-a-GP image and the whitened latents with the IFT
     imaging papers (Junklewitz et al. 2016; Arras et al. 2019, 2022); the
-    Matérn amplitude form is as in NIFTy.re (Guardiani et al. 2022,
-    [references](../references.md#guardiani2022)).
+    azimuthal spectral density has the Matérn amplitude form that NIFTy.re
+    cites to Guardiani et al. (2022,
+    [references](../references.md#guardiani2022)); the radial prior is a
+    real-space Matérn correlation, not a spectrum.
 
     Parameters
     ----------

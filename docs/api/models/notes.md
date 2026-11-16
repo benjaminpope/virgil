@@ -420,9 +420,10 @@ centre taper and a fade at the outer edge. It shares only the exponential-of-a-G
 image and whitened ("standardized") latents with the information field theory
 imaging papers (Junklewitz et al. 2016; Arras et al. 2019, 2022; Edenhofer et al.
 2024), which put a stationary, isotropic prior on a Cartesian grid by the FFT. The
-Matérn amplitude $(1 + (k/\text{cutoff})^2)$ to a power is the form NIFTy.re
-cites to Guardiani et al. (2022), see
-[references](../../references.md#guardiani2022). Born & Wolf is cited below only for
+azimuthal spectral density has the Matérn amplitude form, $(1 + (k/\text{cutoff})^2)$
+to a power, that NIFTy.re cites to Guardiani et al. (2022), see
+[references](../../references.md#guardiani2022); the radial prior is a real-space
+Matérn correlation, not a spectrum. Born & Wolf is cited below only for
 the $r^{|m|}$ regularity at the centre, not for the GP construction.
 
 The prior on the field $\eta$ is separable,
