@@ -66,6 +66,10 @@ one platform (OzSTAR), never across.
 
 ## Detectable stratum and sky-plane scoring (added 2026-11-16, before any run on it)
 
+Signed off by Ben with amendments (a)–(d), 2026-11-16: (a) the signal test is at 90 % power, not the expected data;
+(b) the sky test quantity is the plain, sign-aware track; (c) assertion 5 gates in the detectable stratum only;
+(d) `SEASON_GAP` is derived from the simulator's season constants. All four are incorporated below.
+
 Direction (Ben, 2026-11-16): some orbits should not be detectable and the census should not worry about them: those
 whose time sampling does not Nyquist-sample the true period, or with many outliers or poor SNR. Comparison is made in
 the sky plane only. This section is the pre-registration: it is committed before any census run that scores with it. No
@@ -77,8 +81,13 @@ only.
 Defined from the truth and the night times only, never from a fit. A system is detectable iff (a) and (b) hold.
 
 **(a) Sampling.** `P_true >= 2 · median(gaps)`, the gaps being those between consecutive nights of the same season
-(consecutive nights further apart than `SEASON_GAP` = 100 d are in different seasons; the simulator's seasons span 30 d
-and are 365 d apart, so the inter-season gap is never a sampling gap). A system with no within-season gap fails.
+(consecutive nights further apart than `SEASON_GAP` are in different seasons). `SEASON_GAP` is derived from the
+simulator's own constants, `SEASON_LEN` = 30 d (a season's span) and `SEASON_SPACING` = 365.25 d (the second season
+starts this long after the first): the longest in-season gap is at most `SEASON_LEN` and the shortest between-season
+gap is at least `SEASON_SPACING − SEASON_LEN` = 335.25 d, and `SEASON_GAP` is their midpoint,
+`(SEASON_LEN + (SEASON_SPACING − SEASON_LEN)) / 2` = `SEASON_SPACING / 2` ≈ 182.6 d. Any value strictly between the two
+separates the simulator's seasons exactly; the midpoint is the neutral one. The inter-season gap is never a sampling
+gap. A system with no within-season gap fails.
 Irregular sampling has no sharp Nyquist limit; the median gap is the typical cadence, so (a) removes the systems whose
 cadence plainly cannot resolve the period and nothing finer. The smallest gap was considered and rejected: the usable
 Nyquist frequency of irregular sampling can far exceed that of the mean gap (Eyer & Bartholdi 1999), so the smallest
@@ -99,32 +108,40 @@ inlier nights,
 - under the true orbit `χ²_static` is noncentral χ² with `ν` degrees of freedom and noncentrality
   `λ = [Σ_k |μ_k − μ̄|² + T_SS Σ_k |u_k|²] / σ_eff²`, the noise-free Δχ² of the static model against the true orbit
   (the true orbit fits the noise-free data with χ² = 0). This is `dchi2_true`;
-- under a static truth `χ²_static` is central χ²_ν, and the 1 % false-alarm threshold is `c = χ²_ν,0.99`. The expected
-  data reject the static model at that level iff `ν + λ >= c`, so `dchi2_thresh = c − ν` and the test is
-  `dchi2_true >= dchi2_thresh`.
+- under a static truth `χ²_static` is central χ²_ν, and the 1 % false-alarm threshold is `c = χ²_ν,0.99`
+  (`α = 0.01` matches the plan's no-orbit verdict);
+- the **power** of that test against the true orbit is `P(χ²'_ν(λ) > c)`, the noncentral χ² survival function
+  (`scipy.stats.ncx2.sf(c, ν, λ)`), increasing in `λ`. `dchi2_thresh` is the `λ*` at which the power is 0.9, the root
+  of `ncx2.sf(c, ν, λ*) = 0.9` found by Brent's method (`required_excess`). A system is detectable iff
+  `dchi2_true >= dchi2_thresh`, i.e. iff the 1 % test of a static model has power ≥ 0.9 against the true orbit.
 
-`α = 0.01` matches the plan's no-orbit verdict. The test is the expected-data one (about even odds of rejecting
-a static model, not a high-power one): the stratum is the systems whose noise-free data already reject a static source at
-1 %. This one number covers SNR, the number of inlier nights and the outlier fraction, so there are no hand-set cuts on
-any of them. A system with no inlier night (B″) has no signal: not detectable.
+This one number covers SNR, the number of inlier nights and the outlier fraction (through `m`, hence `ν` and `c`), so
+there are no hand-set cuts on any of them. A system with no inlier night (B″) has no signal: not detectable. A Monte
+Carlo test (`tests/test_orbit_population.py`) checks the derivation: mean `χ²_static` is `ν + λ`, the false-alarm rate
+under a static truth is 1 %, and the power at `λ = λ*` is 0.9.
 
 ### What gates in the stratum
 
-Assertion 2 (no flagged or failed cell) and the retrieval-miss rule gate in the detectable stratum only. Everything
-outside it (not Nyquist-sampled; Nyquist-sampled with the signal below the threshold) is counted and tabled by stratum,
-never gated. Assertion 7 (CMH on failure vs ln s) uses the detectable stratum, where failure gates. Errors (a crash) still
-fail the run wherever they occur. Assertions 5 and 6 are unchanged.
+Assertion 2 (no flagged or failed cell), the retrieval-miss rule and assertion 5 (e > 0.3: the true cell's best mode
+within χ²_d(0.99) of the truth; otherwise unchanged) gate in the detectable stratum only. Everything outside it (not
+Nyquist-sampled; Nyquist-sampled with the signal below the threshold) is counted and tabled by stratum, never gated;
+assertion 5 outside the stratum is reported. Assertion 7 (CMH on failure vs ln s) uses the detectable stratum, where
+failure gates. Errors (a crash) still fail the run wherever they occur. Assertion 6 is unchanged.
 
 ### Sky-plane retrieval (columns `pit_sky`, `sky_miss`, `sky_f`, `sky_q99`)
 
 **Test quantity.** `f(θ)` is the time-averaged squared sky-plane distance between θ's relative-position track and the
 posterior-weighted mean track, on `SKY_GRID` = 64 uniform times over `[first night, last night]` (a declared budget,
-not tuned). Position-only data fix the track only up to the point reflection through the origin (the label swap
-`TI′ → −TI′`, a symmetry of the target; the simulator's brighter/fainter sign), and the posterior has equal mass in both
-images, so the mean track itself would vanish. The track is therefore represented by its outer product
-`(x², xy, y²)`, which is invariant under the reflection, and `f` is the squared Frobenius distance of the draw's
-features from the posterior-weighted mean features. Cells are weighted by `p` and each cell's resample-move draws
-equally, as for the other PITs.
+not tuned). The track is the plain relative-position track `(x, y)`, with its sign: the truth's track carries the
+simulated brighter/fainter sign. SBC is valid for any test quantity, so the choice only sets the sensitivity:
+
+- for twins, the posterior is bimodal under the label swap `TI′ → −TI′` (which negates the track). The mean track then
+  shrinks towards zero and `f` loses power, but the test stays valid. That is the accepted twin degeneracy;
+- for non-twins, the per-night flux fixes the brighter/fainter label, so the posterior sits in one image. The plain track
+  then flags a fit with the wrong label, which a sign-free quantity (for example the outer-product features
+  `(x², xy, y²)`) would miss.
+
+Cells are weighted by `p` and each cell's resample-move draws equally, as for the other PITs.
 
 **SBC.** `pit_sky` is the randomized rank of `f(θ_true)` among the weighted draws (ties broken by a uniform drawn after
 the existing PIT's uniform in the system's PIT stream, so the paired draws are unchanged), tested for uniformity with

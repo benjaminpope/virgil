@@ -3,6 +3,7 @@ calibrated to the number of fitted systems."""
 
 import dataclasses
 import json
+import math
 import importlib.util
 import pathlib
 import types
@@ -346,6 +347,13 @@ def test_failed_systems_never_enter_the_gated_sbc_and_assertions_5_to_7_gate():
     ecc = [dict(r, ecc=0.6, maha2=1.0, maha_df=10) for r in ok[:100]]
     ecc[:6] = [dict(r, maha2=1e3) for r in ecc[:6]]
     assert pop.summarize(ecc + ok[100:], 200)[1] == "FAIL"
+    # ... but only in the detectable stratum: outside it, report only
+    hid5 = [dict(r, detectable=0) for r in ecc[:6]] + ecc[6:]
+    text, verdict = pop.summarize(hid5 + ok[100:], 200)
+    assert (
+        "outside the detectable stratum (report only): 6 misses of 6" in text
+    )
+    assert pop._a5(hid5, detectable=False) == (6, 6)
     # assertion 6: one violation fails
     viol = [dict(ok[0], eqv0_viol=1)] + ok[1:]
     assert pop.summarize(viol, 200)[1] == "FAIL"
@@ -757,6 +765,22 @@ def test_nyquist_uses_the_median_gap_within_a_season_not_between_seasons():
     assert pop.nyquist_ok(10.0, [0.0, 0.1, 5.1, 10.1, 15.1])
 
 
+def test_the_season_gap_is_the_midpoint_of_the_simulators_own_gaps():
+    assert (
+        pop.SEASON_LEN < pop.SEASON_GAP < pop.SEASON_SPACING - pop.SEASON_LEN
+    )
+    assert pop.SEASON_GAP == pytest.approx(pop.SEASON_SPACING / 2)
+    rng = onp.random.default_rng(2)
+    for _ in range(40):
+        nights = pop.draw_nights(rng)
+        gaps = onp.diff(nights["times"])
+        assert (gaps[gaps <= pop.SEASON_GAP] <= pop.SEASON_LEN).all()
+        assert (
+            gaps[gaps > pop.SEASON_GAP] > pop.SEASON_SPACING - pop.SEASON_LEN
+        ).all()
+        assert nights["two_seasons"] == bool((gaps > pop.SEASON_GAP).any())
+
+
 def _orbit_and_nights(period=7.0, a=8.0):
     orbit = pop.KeplerOrbit(period, 1.3, 0.4, 60.0, 30.0, 100.0, a)
     return orbit, onp.array([0.5, 2.0, 3.7, 6.1, 9.0, 12.5, 14.2, 20.0])
@@ -778,10 +802,11 @@ def test_the_signal_excess_has_the_derived_degrees_of_freedom_and_scales_as_snr(
         assert lam3 != lam
 
 
-def test_the_signal_excess_is_the_expected_chi2_of_the_static_model_above_its_dof():
+def test_the_signal_excess_is_the_noncentrality_of_the_static_models_chi2():
     """Monte Carlo of the derivation: under the true orbit (the simulator's
     noise) the best static model's χ² has mean dof + λ; under a static truth
-    it exceeds the 1 % quantile 1 % of the time."""
+    it exceeds the 1 % quantile 1 % of the time; and at the required excess
+    the 1 % test has power 0.9."""
     rng = onp.random.default_rng(0)
     with jax.enable_x64(True):
         orbit, times = _orbit_and_nights(a=2.0)
@@ -809,6 +834,30 @@ def test_the_signal_excess_is_the_expected_chi2_of_the_static_model_above_its_do
         null = static_chi2(static)
         q = pop.stats.chi2.ppf(1 - pop.ALPHA_DET, dof)
         assert 0.003 < float((null > q).mean()) < 0.02
+        # at the threshold excess the 1 % test has power POWER_DET: rescale the
+        # noise so that the orbit's λ is the required excess
+        need = pop.required_excess(dof)
+        sigma = sigma * math.sqrt(lam / need)
+        assert pop.signal_excess(orbit, times, inl, sigma)[0] == pytest.approx(
+            need
+        )
+        power = float((static_chi2(st) > q).mean())
+        assert power == pytest.approx(pop.POWER_DET, abs=0.02)
+
+
+def test_the_required_excess_solves_the_noncentral_power_equation():
+    for dof in (2, 6, 22, 78):
+        lam = pop.required_excess(dof)
+        cut = pop.stats.chi2.ppf(1 - pop.ALPHA_DET, dof)
+        assert pop.stats.ncx2.sf(cut, dof, lam) == pytest.approx(
+            pop.POWER_DET, abs=1e-6
+        )
+    # more dof needs more excess: the threshold depends on the inlier count
+    assert (
+        pop.required_excess(6)
+        < pop.required_excess(22)
+        < pop.required_excess(78)
+    )
 
 
 def _system(seed=0):
@@ -832,10 +881,11 @@ def test_a_row_carries_the_detectability_columns_from_the_truth_alone():
         # a system whose every night is an outlier has no signal to detect
         none = dict(sysd, outliers=onp.arange(len(sysd["times"])))
         assert pop.detectability(none)["detectable"] == 0
-        # the threshold is the chi-square quantile less the dof, a function of m
+        # the threshold is the excess for power 0.9, a function of m
         m = len(sysd["times"]) - len(sysd["outliers"])
-        want = pop.stats.chi2.ppf(0.99, 4 * m - 2) - (4 * m - 2)
-        assert row["dchi2_thresh"] == pytest.approx(want)
+        assert row["dchi2_thresh"] == pytest.approx(
+            pop.required_excess(4 * m - 2)
+        )
 
 
 def test_a_loud_system_is_detectable_and_a_faint_one_is_not():
@@ -889,31 +939,30 @@ def _coords(orbits, t_anchor=0.0):
     )
 
 
-def test_the_sky_features_are_the_simulators_track_up_to_the_point_reflection():
+def test_the_sky_features_are_the_simulators_plain_track():
     with jax.enable_x64(True):
         orbit, times = _orbit_and_nights()
         t = onp.linspace(0.0, 20.0, 17)
         feat = pop.sky_features(_flat_space(), _coords([orbit]), t)[0]
-        x, y = pop._state(orbit, t)[:, :2].T
-        want = onp.stack([x * x, x * y, y * y], -1)
+        want = pop._state(orbit, t)[:, :2]
         onp.testing.assert_allclose(feat, want, rtol=1e-8, atol=1e-10)
-        # the label swap z -> i z negates the track and leaves f unchanged
-        c = _coords([orbit])
-        z = c["z"]
+        # the label swap z -> i z negates the track: the sign is kept
+        z = _coords([orbit])["z"]
         swapped = dict(
-            c, z=onp.stack([-z[:, 1], z[:, 0], -z[:, 3], z[:, 2]], -1)
+            _coords([orbit]),
+            z=onp.stack([-z[:, 1], z[:, 0], -z[:, 3], z[:, 2]], -1),
         )
         onp.testing.assert_allclose(
-            pop.sky_features(_flat_space(), swapped, t),
-            feat[None],
+            pop.sky_features(_flat_space(), swapped, t)[0],
+            -want,
             rtol=1e-8,
             atol=1e-10,
         )
 
 
-def _cloud(period0=7.0, n=60, spread=0.02):
+def _cloud(period0=7.0, n=60, spread=0.02, rng=None):
     """Orbits of a common shape with periods spread around ``period0``."""
-    rng = onp.random.default_rng(3)
+    rng = onp.random.default_rng(3) if rng is None else rng
     ps = period0 * (1 + spread * rng.standard_normal(n))
     return [pop.KeplerOrbit(p, 1.3, 0.4, 60.0, 30.0, 100.0, 8.0) for p in ps]
 
@@ -922,35 +971,51 @@ def test_the_sky_columns_rank_the_truth_among_the_draws_and_flag_a_miss(
     monkeypatch,
 ):
     with jax.enable_x64(True):
-        orbits = _cloud()
-        c = _coords(orbits)
-        # half the draws in the swapped image: the mean track would vanish
-        z = c["z"].copy()
-        z[::2] = onp.stack([-z[::2, 1], z[::2, 0], -z[::2, 3], z[::2, 2]], -1)
-        monkeypatch.setattr(
-            pop.oc_cells, "decode_particles", lambda f: dict(c, z=z)
-        )
+        c = _coords(_cloud())
+        monkeypatch.setattr(pop.oc_cells, "decode_particles", lambda f: c)
         fit = types.SimpleNamespace(draws=True, space=_flat_space())
         out = types.SimpleNamespace(fits=[fit])
         times = onp.array([0.0, 5.0, 10.0, 20.0])
         centre = pop.KeplerOrbit(7.0, 1.3, 0.4, 60.0, 30.0, 100.0, 8.0)
-        sysd = dict(orbit=centre, period=7.0, times=times)
-        near = pop.sky_columns(sysd, out, onp.array([1.0]), 0.5, 0.0, 0)
+        sysd = dict(orbit=centre, period=7.0, times=times, sign=1.0)
+        args = (out, onp.array([1.0]), 0.5, 0.0, 0)
+        near = pop.sky_columns(sysd, *args)
         assert near["sky_miss"] == 0 and 0.0 <= near["pit_sky"] < 0.5
         far = pop.KeplerOrbit(7.6, 1.3, 0.4, 60.0, 30.0, 100.0, 8.0)
-        bad = pop.sky_columns(
-            dict(sysd, orbit=far, period=7.6),
-            out,
-            onp.array([1.0]),
-            0.5,
-            0.0,
-            0,
-        )
+        bad = pop.sky_columns(dict(sysd, orbit=far, period=7.6), *args)
         assert bad["sky_miss"] == 1 and bad["pit_sky"] == pytest.approx(1.0)
+        # a label-flipped truth (the posterior sits in the other image) is
+        # flagged on this non-twin: the plain track keeps the sign
+        flipped = pop.sky_columns(dict(sysd, sign=-1.0), *args)
+        assert flipped["sky_miss"] == 1 and flipped[
+            "pit_sky"
+        ] == pytest.approx(1.0)
         # no draws at all: no PIT, and a miss
         none = types.SimpleNamespace(fits=[types.SimpleNamespace(draws=None)])
         out0 = pop.sky_columns(sysd, none, onp.array([1.0]), 0.5, 0.0, 0)
         assert onp.isnan(out0["pit_sky"]) and out0["sky_miss"] == 1
+
+
+def test_a_bimodal_twin_posterior_shrinks_the_mean_track_but_stays_valid(
+    monkeypatch,
+):
+    """Draws in both images (a twin): the mean track shrinks towards zero and
+    f loses power, but a truth drawn from the same mixture ranks uniformly."""
+    with jax.enable_x64(True):
+        rng = onp.random.default_rng(7)
+        t = onp.linspace(0.0, 20.0, pop.SKY_GRID)
+        pits = []
+        for _ in range(80):
+            orbits = _cloud(n=41, spread=0.03, rng=rng)
+            feat = pop.sky_features(_flat_space(), _coords(orbits), t)
+            feat = feat * rng.choice([-1.0, 1.0], size=(41, 1, 1))
+            mean = feat[1:].mean(0)
+            f = pop.sky_distance(feat, mean)
+            pits.append(
+                pop.weighted_rank(f[1:], onp.ones(40), f[0], rng.uniform())[0]
+            )
+        assert onp.abs(mean).max() < onp.abs(feat).max()  # shrunk towards zero
+        assert pop.stats.kstest(pits, "uniform").pvalue > 0.01
 
 
 def test_the_sky_pit_is_uniform_when_the_truth_is_a_draw_of_the_posterior():
