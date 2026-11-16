@@ -228,3 +228,17 @@ columns and report lines, so arms stay comparable with earlier runs.
 healthy mode with exactly `m_min` inliers fired it whenever a draw lost one. It now fires only when more than half of
 the importance weight is on draws with fewer than `m_min` inliers (the count rounded to an integer), and the found-mode
 Laplace `ln Z > floor + W` condition is unchanged.
+
+---
+## Stack decision: W1 #642 + #667 + #678, added 2026-11-17 before any run of this arm (approved by Ben)
+
+- **Arms:** the stack, at the head pinned for its census (this commit or a later one with no `src`/`scripts` change), against main `8dd7264461162f2f076b7b734c021d961e560dd7`. Both run on OzSTAR in the same image, on seed 0, systems 400–599 (`START_BASE=400`). They are scored with the criteria committed by #728 (detectable stratum, sky-plane retrieval, majority-weight `at_floor` sentinel).
+- **Unit:** the stack merges as one unit. W1 and #667 are not decided alone. Their earlier sub-rules in this file (the W1 Bonferroni rule and the #667 primary against f71294b) are kept on record but superseded for the merge decision.
+- **Primary:** failure (status failed or error) in the detectable stratum. Exact one-sided McNemar on discordant pairs, α = 0.01.
+- **Harm**, judged by exact two-sided McNemar (p < 0.05, arm worse), on each of:
+  - sky misses in the detectable stratum;
+  - failure in each non-detectable stratum.
+
+  Also harm: the sky-plane SBC uniformity test (all fitted in-domain systems) fails for the arm where it passes for main.
+- **Merge rule:** the primary passes and there is no harm.
+- **Data handling:** systems 400–599 are aggregate-only. Nobody traces them per seed.
