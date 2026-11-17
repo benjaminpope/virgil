@@ -1,0 +1,1 @@
+`LinearImage(parametrisation=...)`, its field and the property `regularised_pixels` are now `parametrization` and `regularized_pixels` (Oxford -ize spelling). `LinearImage` is unreleased, so there is no alias.

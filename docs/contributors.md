@@ -1,6 +1,6 @@
 # Contributions
 
-`virgil` brings together many projects from one research team and ideas we liked in other packages. We used Claude Code (Opus 5.5) to join existing ideas in one framework, not to write everything from scratch, and GitHub Copilot's coding agent wrote much of the 2026 code: tests, review fixes, the Laplace uncertainties for grid searches and some tutorials. So the commit history does not show who deserves credit for which ideas. The [Development carbon](dev_carbon.md) page estimates the energy and carbon cost of this AI-assisted work.
+`virgil` brings together many projects from one research team and ideas we liked in other packages. We used Claude Code (Opus 5.5) to join existing ideas in one framework, not to write everything from scratch, and GitHub Copilot's coding agent wrote much of the 2026 code: tests, review fixes, the Laplace uncertainties for grid searches and some tutorials. So the commit history does not show who deserves credit for which ideas. The [Development carbon](dev_carbon.md) page estimates the energy and carbon cost of this AI-assisted work on virgil and virgil-vlti.
 
 ## History
 

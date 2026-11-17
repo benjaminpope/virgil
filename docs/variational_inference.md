@@ -18,11 +18,13 @@ Run VI when the posterior is *not* Gaussian in the sampler's coordinates: a curv
 | `"mvn"` | dense Gaussian | ≈ Laplace; a check, or when the flow is too costly |
 | `"laplace"` | numpyro's `AutoLaplaceApproximation` | the MAP and Hessian, found by numpyro |
 
-On small test posteriors (a banana, a curved ridge, and a scale with a tail down to its prior bound), the BNAF guide came closest to NUTS's means, widths and 5–95% quantiles. On the banana the Gaussian guides missed the curvature (half the width in one parameter, a third of the shift in the other's mean), and on the bounded scale they missed the tail. No guide reproduced the heavy tail along the ridge, where NUTS's width was about 1.5 times the guides'. A flow's cost grows with the square of the number of parameters, so for an image of thousands of pixels use [`laplace_samples`][virgil.imaging.laplace_samples] (see [Sampling the posterior](imaging_sampling.md)) or a diagonal guide.
+In our tests, on small test posteriors (a banana, a curved ridge, and a scale with a tail down to its prior bound), the BNAF guide came closest to NUTS's means, widths and 5–95% quantiles. On the banana the Gaussian guides missed the curvature (half the width in one parameter, a third of the shift in the other's mean), and on the bounded scale they missed the tail. No guide reproduced the heavy tail along the ridge, where NUTS's width was about 1.5 times the guides'. A flow's cost grows with the square of the number of parameters, so for an image of thousands of pixels use [`laplace_samples`][virgil.imaging.laplace_samples] (see [Sampling the posterior](imaging_sampling.md)) or a diagonal guide.
 
 Every guide starts at the Laplace approximation, centred on a [`FitResult`][virgil.fitting.FitResult] passed as `start`, with the Gauss–Newton covariance there as its width. That covariance includes fitted error terms in `noise` (each with its own width), data with gains and any elementwise prior, but not regularizers or fixed error terms in `**options`; with regularizers (as for an image) the guide starts at width `init_scale` instead. The dense guides (`"bnaf"`, `"iaf"`, `"mvn"`) keep an n × n Cholesky factor and `"laplace"` an n × n Hessian, so all four raise a `ValueError` above 4096 coordinates; use [`laplace_samples`][virgil.imaging.laplace_samples] or a diagonal guide such as `autoguide.AutoNormal` there. The guide learns its parameters in units of those widths, so one step size suits a position known to a milliarcsecond and a flux known to a few per cent. With `flat_coordinates=True` (off by default, as for `numpyro_model`; see [Conventions](conventions.md)) the guide works in the priors' flat coordinates, as `fit` does, and returns draws in the model's own parameters under the site names NUTS uses.
 
 ## A binary
+
+This block is not executed when the page is built, so it shows no output.
 
 ```python
 import jax

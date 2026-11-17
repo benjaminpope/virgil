@@ -45,8 +45,10 @@ data = template.with_model(truth, key=jax.random.PRNGKey(1))
 resolution = beam(data)
 
 # starting_image supplies the grid, the hole under the star, the flux, and a
-# Gaussian template for the field to vary about.
-start = starting_image(data, largest_mas=fov, hole_mas=0.5 * resolution.minor_mas)
+# Gaussian template for the field to vary about. rotation_deg="grid" turns the
+# pixels to the data's uv lattice (-6.9 degrees) for the exact fast matrix transform;
+# plot_model and the metrics still render them North up.
+start = starting_image(data, largest_mas=fov, hole_mas=0.5 * resolution.minor_mas, rotation_deg="grid")
 n, h = start.env.log_brightness.shape[0], start.env.pixel_scale_mas
 gaussian_template = onp.asarray(start.env.brightness)
 print(f"{n}² pixels of {h:.1f} mas; beam {resolution.major_mas:.0f} × {resolution.minor_mas:.0f} mas")
@@ -72,9 +74,9 @@ Setting z = 0 gives the template, and z drawn from the prior gives an image from
 ```python
 latent = jax.random.normal(jax.random.PRNGKey(0), (n, n))
 fig, axes = plt.subplots(1, 4, figsize=(16, 4))
-plot_model(Image(GaussianField(onp.zeros((n, n)), mean=gaussian_template), h), fov_mas=fov, npix=npix, ax=axes[0], title="template (z = 0)")
+plot_model(Image(GaussianField(onp.zeros((n, n)), mean=gaussian_template), h, rotation_deg=start.env.rotation_deg), fov_mas=fov, npix=npix, ax=axes[0], title="template (z = 0)")
 for ax, length in zip(axes[1:], (40.0, 100.0, 250.0)):
-    draw = Image(GaussianField(latent, sigma=1.0, length_mas=length, mean=gaussian_template), h)
+    draw = Image(GaussianField(latent, sigma=1.0, length_mas=length, mean=gaussian_template), h, rotation_deg=start.env.rotation_deg)
     plot_model(draw, fov_mas=fov, npix=npix, ax=ax, title=f"a draw, σ = 1, ℓ = {length:.0f} mas")
 plt.tight_layout()
 plt.show()
@@ -106,7 +108,7 @@ Here is one fit, at σ = 2 and ℓ = half the beam's minor axis.
 ```python
 def gp_scene(sigma, length):
     field = GaussianField(onp.zeros((n, n)), sigma, length, mean=gaussian_template)
-    return System(star=PointSource(), env=Image(field, h, support=start.env.support, flux=start.env.flux))
+    return System(star=PointSource(), env=Image(field, h, support=start.env.support, flux=start.env.flux, rotation_deg=start.env.rotation_deg))
 
 
 flux_prior = {"env.flux": dist.LogUniform(1e-3, 2.0)}
@@ -116,7 +118,7 @@ print(f"{one.info['method']}: converged {one.info['converged']} in {one.info['st
 ```
 
 ```text
-lm: converged True in 36 steps; chi2 per point 1.023; flux 0.0507 (truth 0.05)
+lm: converged True in 37 steps; chi2 per point 1.023; flux 0.0507 (truth 0.05)
 ```
 
 ## Choosing σ and ℓ from the evidence
@@ -201,7 +203,7 @@ def ncc(a, b):
     return float(jnp.sum(a * b) / jnp.sqrt(jnp.sum(a * a) * jnp.sum(b * b)))
 
 
-mem_start = starting_image(data, largest_mas=fov, hole_mas=0.5 * resolution.minor_mas)
+mem_start = starting_image(data, largest_mas=fov, hole_mas=0.5 * resolution.minor_mas, rotation_deg="grid")
 curve = l_curve(mem_start, image_priors(mem_start) | flux_prior, data, MaxEntropy(1.0, path="env"), jnp.logspace(3.5, 1.0, 6), max_steps=200_000)
 mem = curve.results[int(jnp.argmin(jnp.abs(jnp.log(curve.weights) - jnp.log(curve.discrepancy()))))]
 

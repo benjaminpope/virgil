@@ -110,6 +110,17 @@ arxiv = "2011.01209"
 verified = true
 verified_via = "ads"
 
+[ref.meimon2005]
+authors = "Meimon, Mugnier & Le Besnerais"
+year = 2005
+title = "Convex approximation to the likelihood criterion for aperture synthesis imaging"
+doi = "10.1364/JOSAA.22.002348"
+used_in = ["virgil.gains:ClosureOffsets"]
+note = "JOSA A 22, 2348"
+bibcode = "2005JOSAA..22.2348M"
+verified = true
+verified_via = "ads"
+
 [ref.soummer2007]
 authors = "Soummer et al."
 year = 2007
@@ -151,7 +162,7 @@ authors = "Luger, Foreman-Mackey & Hogg"
 year = 2017
 title = "Linear Models for Systematics and Nuisances"
 doi = "10.3847/2515-5172/aa96b5"
-used_in = ["virgil._linear", "virgil.grid_fit:linear_flux_grid", "virgil.orbits:starting_orbits"]
+used_in = ["virgil._linear", "virgil.grid_fit:linear_flux_grid", "virgil.observables:DifferentialPhase", "virgil.observables:FluxSpectrum", "virgil.orbits:starting_orbits"]
 note = "RNAAS 1, 7"
 bibcode = "2017RNAAS...1....7L"
 arxiv = "1710.11136"
@@ -367,7 +378,7 @@ authors = "Lachaume"
 year = 2021
 title = "Bias-free model fitting of correlated data in interferometry"
 doi = "10.1017/pasa.2021.20"
-used_in = ["virgil.gains:GainModes"]
+used_in = ["virgil.gains:GainModes", "virgil.gains:ClosureOffsets"]
 note = "PASA 38, e033 (2021)"
 bibcode = "2021PASA...38...29L"
 arxiv = "2104.07082"
@@ -2099,6 +2110,17 @@ verified_via = "crossref"
 used_in = ["virgil.orbit_cells:search_cell"]
 note = "J. Am. Stat. Assoc. 79, 871; elemental subsets as starts of a robust fit"
 
+[ref.hadi1993]
+authors = "Hadi & Simonoff"
+year = 1993
+title = "Procedures for the Identification of Multiple Outliers in Linear Models"
+doi = "10.1080/01621459.1993.10476407"
+bibcode = "1993JASA...88.1264H"
+verified = true
+verified_via = "ads"
+used_in = ["virgil.orbit_cells:search_cell"]
+note = "J. Am. Stat. Assoc. 88, 1264; forward addition of observations to the clean set, which the add-one move uses to complete the concentration steps"
+
 [ref.rousseeuw1999]
 authors = "Rousseeuw & Van Driessen"
 year = 1999
@@ -2235,6 +2257,27 @@ verified_via = "crossref"
 used_in = []
 note = "rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py)"
 
+[ref.modrak2023]
+authors = "Modrák, Moon, Kim, Bürkner, Huurre, Faltejsková, Gelman & Vehtari"
+year = 2023
+title = "Simulation-based calibration checking for Bayesian computation: the choice of test quantities shapes sensitivity"
+arxiv = "2211.02383"
+verified = true
+verified_via = "ads"
+used_in = []
+note = "Bayesian Analysis 2023 (arXiv 2022); data-dependent test quantities are valid in SBC; the sky-plane rank of the population test (scripts/orbit_population.py)"
+
+[ref.eyer1999]
+authors = "Eyer & Bartholdi"
+year = 1999
+title = "Variable stars: Which Nyquist frequency?"
+arxiv = "astro-ph/9808176"
+doi = "10.1051/aas:1999102"
+verified = true
+verified_via = "ads"
+used_in = []
+note = "A&AS 135, 1; for irregular sampling the usable Nyquist frequency can far exceed that of the mean gap: considered, and not used, for the census's sampling test (scripts/orbit_population.py, nyquist_ok)"
+
 [ref.marquardt1963]
 authors = "Marquardt"
 year = 1963
@@ -2311,3 +2354,36 @@ used_in = ["virgil.fitting:gauss_newton_diag"]
 note = "exact entries for small coordinate blocks beside probed large ones, batched one-hot lax.map, imputing non-finite diagonal entries; ideas only, no code copied"
 verified = false
 verified_via = "none"
+
+[ref.tuthill1999]
+authors = "Tuthill, Monnier & Danchi"
+year = 1999
+title = "A dusty pinwheel nebula around the massive star WR 104"
+used_in = ["virgil.models:ArchimedeanSpiral"]
+note = "Nature 398, 487; the dust plume follows a linear (Archimedean) spiral; geometry only"
+arxiv = "astro-ph/9904092"
+doi = "10.1038/19033"
+verified = true
+verified_via = "arxiv"
+
+[ref.tuthill2008]
+authors = "Tuthill et al."
+year = 2008
+title = "The prototype colliding-wind pinwheel WR 104"
+used_in = ["virgil.models:ArchimedeanSpiral"]
+note = "ApJ 675, 698; uniformly rotating Archimedean spiral fitted to the WR 104 plume, with the measured brightness profile along it"
+arxiv = "0712.2111"
+doi = "10.1086/527286"
+verified = true
+verified_via = "arxiv"
+
+[ref.han2020]
+authors = "Han et al."
+year = 2020
+title = "The extreme colliding-wind system Apep: resolved imagery of the central binary and dust plume in the infrared"
+used_in = ["virgil.models:ArchimedeanSpiral"]
+note = "MNRAS (2020); geometric pinwheel model of the Apep plume"
+arxiv = "2008.05834"
+doi = "10.1093/mnras/staa2349"
+verified = true
+verified_via = "arxiv"

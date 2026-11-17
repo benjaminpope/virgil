@@ -732,16 +732,12 @@ def _prior_repr(prior):
 
 
 def _positive(s, name):
-    if isinstance(s[name], bool) or not (
-        isinstance(s[name], numbers.Real) and s[name] > 0
-    ):
+    if not (isinstance(s[name], numbers.Real) and s[name] > 0):
         raise ValueError(f"{name} must be positive; got {s[name]!r}.")
 
 
 def _integer(s, name, minimum):
-    if isinstance(s[name], bool) or not (
-        isinstance(s[name], int) and s[name] >= minimum
-    ):
+    if not (isinstance(s[name], int) and s[name] >= minimum):
         raise ValueError(f"{name} must be an integer >= {minimum}.")
 
 

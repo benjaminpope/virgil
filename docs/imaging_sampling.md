@@ -45,7 +45,9 @@ truth_image = ring(npix, pixel_scale, radius_mas=240.0, width_mas=36.0, inc_deg=
 truth = System(star=PointSource(), dust=Image.from_brightness(truth_image, pixel_scale, flux=0.05))
 data = template.with_model(truth, key=jax.random.PRNGKey(1))
 resolution = beam(data)
-start = starting_image(data, largest_mas=fov, hole_mas=0.5 * resolution.minor_mas)
+# rotation_deg="grid" turns the pixels to the data's uv lattice (-6.9 degrees) for the exact
+# fast matrix transform; plot_model and the metrics still render them North up.
+start = starting_image(data, largest_mas=fov, hole_mas=0.5 * resolution.minor_mas, rotation_deg="grid")
 n, h = start.env.log_brightness.shape[0], start.env.pixel_scale_mas
 print(f"{n}² = {n * n} pixels, {int(data.flatten_data()[0].size)} data")
 ```
@@ -61,7 +63,7 @@ Part 3's evidence chose σ = 4 and ℓ equal to the beam's minor axis. We hold t
 ```python
 sigma, length = 4.0, resolution.minor_mas
 field = GaussianField(onp.zeros((n, n)), sigma, length, mean=onp.asarray(start.env.brightness))
-scene = System(star=PointSource(), env=Image(field, h, support=start.env.support, flux=start.env.flux))
+scene = System(star=PointSource(), env=Image(field, h, support=start.env.support, flux=start.env.flux, rotation_deg=start.env.rotation_deg))
 priors = image_priors(scene) | {"env.flux": dist.LogUniform(1e-3, 2.0)}
 result = fit(scene, priors, data)
 print(f"MAP: converged {result.info['converged']} in {result.info['steps']} steps; chi2 per point {result.info['chi2_red']:.2f}; flux {float(result.values['env.flux']):.4f} (truth 0.05); σ = {sigma}, ℓ = {length:.0f} mas")
@@ -109,7 +111,7 @@ print(f"flux {mid:.4f} (90%: {low:.4f}–{high:.4f}; truth 0.05), ESS {float(eff
 ```
 
 ```text
-flux 0.0507 (90%: 0.0503–0.0511; truth 0.05), ESS 226; latent ESS: 5th percentile 209, median 294 of 300
+flux 0.0507 (90%: 0.0503–0.0512; truth 0.05), ESS 247; latent ESS: 5th percentile 240, median 346 of 300
 ```
 
 ## The posterior mean and standard deviation

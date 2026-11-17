@@ -20,35 +20,37 @@ The star is a 6000 K blackbody point source, and every other flux is relative to
 
 The data mimic a low-resolution L-band run with the four unit telescopes: nine channels from 2.4 to 3.6 microns and seven hour angles, giving 378 squared visibilities (error 0.01) and 252 closure phases (error 0.5°), or 567 independent data once the closure phases' correlations are counted. The longest baseline gives a half-fringe $\lambda/2B$ of 2 to 3 mas, so the rings' widths (FWHM 3.1, 3.5 and 5.7 mas) are at or above the resolution and finer structure is not measured. The image shows the truth at 3 microns, East to the left, with the star saturated to show the outer ring and the beam in the corner.
 
+??? note "Imports and setup"
+
+    ```python
+    import shutil
+    import warnings
+
+    import jax
+    import jax.numpy as jnp
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import numpyro.distributions as dist
+
+    from virgil import (
+        BlackBody, GaussianRing, Harmonics, PointSource, MultipoleDisk,
+        MultipoleKernel, RadialGP, RadialGPFunction, System, fit, gp_priors,
+    )
+    from virgil.coverage import vlti_oidata
+    from virgil.imaging import beam, log_evidence
+    from virgil.inference import laplace_cov
+    from virgil.likelihood import whitened_residuals
+    from virgil.priors import IsotropicInclination
+    from virgil.plotting import plot_model, plot_residual_map
+
+    warnings.filterwarnings("ignore", category=SyntaxWarning)  # upstream zodiax docstrings
+    for run in ("rings_run", "gp_run"):  # the pipeline section writes here
+        shutil.rmtree(run, ignore_errors=True)
+
+    W0 = 3.0e-6  # reference wavelength, m
+    ```
+
 ```python
-import sys
-from pathlib import Path
-
-root = next(
-    p for p in [Path.cwd(), *Path.cwd().parents] if (p / "src").exists()
-)
-sys.path.insert(0, str(root / "src"))
-
-import jax
-import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as np
-import numpyro.distributions as dist
-
-from virgil import (
-    BlackBody, GaussianRing, Harmonics, PointSource, MultipoleDisk,
-    MultipoleKernel, RadialGP, RadialGPFunction, System, fit, gp_priors,
-)
-from virgil.coverage import vlti_oidata
-from virgil.imaging import beam, log_evidence
-from virgil.inference import laplace_cov
-from virgil.likelihood import whitened_residuals
-from virgil.priors import IsotropicInclination
-from virgil.plotting import plot_model, plot_residual_map
-
-W0 = 3.0e-6  # reference wavelength, m
-
-
 def scene(inc, pa, r1, s1, f1, t1, r2, s2, f2, t2, r3, s3, f3, t3,
           h_re, h_im, dra, ddec, fp, tp):
     """Star, three coplanar rings and a planet; one inc and pa for the rings."""
@@ -97,17 +99,10 @@ plt.show()
 ```
 
 ```text
-stats.py:24: SyntaxWarning: invalid escape sequence '\m'
-  Calculates the z-score $(\mu - x) / \sigma$ of a value given a mean and standard
-stats.py:46: SyntaxWarning: invalid escape sequence '\m'
-  Calculates the squared Mahalanobis distance $(\mu - x)^\top\Sigma^{-1}(\mu - x)$
-```
-
-```text
 planet: sky separation 14.40 mas, disk-plane radius 14.40 mas (rings at 4.5, 10.0, 21.5 mas)
 ```
 
-![multipole_disk_rings output 3.3](generated/multipole_disk_rings_cell003_out03.png)
+![multipole_disk_rings output 4.2](generated/multipole_disk_rings_cell004_out02.png)
 
 ## The parametric fit
 
@@ -151,11 +146,11 @@ chi2 = 572 for N = 567 independent data (chi2/N = 1.01), converged: True
     r1    4.500    4.465       0.072
     s1    1.300    1.296       0.169
     f1    0.150    0.165       0.015
-    t1 1500.000 1285.476      71.295
+    t1 1500.000 1285.479      71.296
     r2   10.000    9.940       0.122
     s2    1.500    1.519       0.130
     f2    0.250    0.277       0.015
-    t2  900.000  940.208      29.298
+    t2  900.000  940.209      29.298
     r3   21.500   21.488       0.029
     s3    2.400    2.403       0.042
     f3    0.500    0.454       0.019
@@ -317,7 +312,7 @@ The panels compare the prior of the profile and of the spectral index (16 to 84 
     plt.show()
     ```
 
-![multipole_disk_rings output 11.1](generated/multipole_disk_rings_cell011_out01.png)
+![multipole_disk_rings output 12.1](generated/multipole_disk_rings_cell012_out01.png)
 
 ## Truth, parametric fit and deconvolution side by side
 
@@ -418,7 +413,7 @@ Look for a bump at each true ring radius and a minimum in the gap where the plan
           f"(truth within e^-6 of its peak): GP {rms_ln(i_map):.2f}, parametric {rms_ln(i_p):.2f}")
     ```
 
-![multipole_disk_rings output 13.1](generated/multipole_disk_rings_cell013_out01.png)
+![multipole_disk_rings output 14.1](generated/multipole_disk_rings_cell014_out01.png)
 
 ```text
 rms error of ln I0 over 2.0-29.0 mas (truth within e^-6 of its peak): GP 0.33, parametric 0.10
@@ -430,17 +425,17 @@ A `MultipoleField` is the same Gaussian-process idea on a polar grid in the disk
 
 ```python
 import jax
-import jax.numpy as np
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from virgil.fields import MultipoleField
 from virgil.plotting import plot_field_draws
 
-prior = MultipoleField(np.zeros((32, 64)), image_shape=(96, 96), r_max_mas=40.0, sigma=2.0, length_r=6.0, length_theta=0.8, inc=50.0, pa=30.0)
+prior = MultipoleField(jnp.zeros((32, 64)), image_shape=(96, 96), r_max_mas=40.0, sigma=2.0, length_r=6.0, length_theta=0.8, inc=50.0, pa=30.0)
 plot_field_draws(prior, 1.0, jax.random.PRNGKey(3), n=300, title="MultipoleField prior, inclination 50°, PA 30°")
 plt.show()
 ```
 
-![multipole_disk_rings output 15.1](generated/multipole_disk_rings_cell015_out01.png)
+![multipole_disk_rings output 16.1](generated/multipole_disk_rings_cell016_out01.png)
 
 The same plot accepts a `MultipoleDisk` with a `RadialGP` profile. Here are prior draws from the hyperparameters of the fit above (a Gaussian-process profile and first-order harmonics, $\ell = 5$ mas, the same inclination and position angle as the field). The bottom panel shows the profile, $\ln I_0(r)$ (the $m = 0$ track), and the cosine coefficient $c_1(r)$ of the first harmonic, each offset on its own track. For posterior draws, pass `latents={"profile.z": ..., "harmonics.z": ...}`. We show only the prior: the Laplace draws above come from a fit that this page does not rerun.
 
@@ -456,7 +451,7 @@ plot_field_draws(disk, 1.0, jax.random.PRNGKey(3), n=300, npix=96, title="Multip
 plt.show()
 ```
 
-![multipole_disk_rings output 17.1](generated/multipole_disk_rings_cell017_out01.png)
+![multipole_disk_rings output 18.1](generated/multipole_disk_rings_cell018_out01.png)
 
 ## Summary
 
@@ -471,8 +466,6 @@ Both fits above can be run with [`DiskPipeline`](pipeline.md), which is provisio
 The pipelines find the rings and the planet without being told how many or where. Their priors are the pipeline's group-invariant ones (a flux, radius and width are log-uniform, the inclination is uniform in $\cos i$, the position angle an angle vector), and each ring's colour is a power law in wavelength, which only approximates the blackbodies that made the data. So the numbers agree with the hand-written fits to within the Laplace uncertainties, not exactly. Each run reports $\chi^2/N$ on the quoted errors as the first check. The Gaussian-process run's `length_scale` check warns that its best $\ell$ is the lowest of the grid, at the pipeline's floor, so the data prefer the smallest length allowed and do not measure it, as in the evidence comparison above.
 
 ```python
-from tempfile import mkdtemp
-
 from virgil.pipeline import DiskPipeline
 
 settings = dict(
@@ -487,97 +480,35 @@ settings = dict(
 # The rings are blackbodies here, so give the rings model that colour law (the
 # default, a power-law index per ring, cannot follow a blackbody across the band).
 rings_res = DiskPipeline(
-    data, "rings", output=f"{mkdtemp()}/rings_run", ring_colour="blackbody",
+    data, "rings", output="rings_run", ring_colour="blackbody",
     **settings
 ).run()
 gp_res = DiskPipeline(
-    data, "gp", output=f"{mkdtemp()}/gp_run", **settings
+    data, "gp", output="gp_run", **settings
 ).run()
 
-print(rings_res.describe())
-print()
-print(gp_res.describe())
+for name, r in (("rings", rings_res), ("gp", gp_res)):
+    s = r.summary
+    best = s["disk"]["best"]
+    print(f"{name:>5}: chi2/N = {s['chi2']['reduced'][best]:.2f} on the quoted errors, "
+          f"inc = {s['disk']['inc_deg']:.1f}, pa = {s['disk']['pa_deg']:.1f} deg, "
+          f"geometry-stage chi2/N = {s['geometry']['chi2_reduced']:.0f}")
+    print("       checks that did not pass:", {c.name: c.status for c in r.checks if c.status != "pass"})
 ```
 
 ```text
-DiskPipeline run in /tmp/tmpk3u3kto3/rings_run: complete
-  data.n_vis = 378
-  data.n_phi = 252
-  data.n_independent = 567
-  data.wavel_min_m = 2.4e-06
-  data.wavel_max_m = 3.6e-06
-  data.baseline_min_m = 34.1699
-  data.baseline_max_m = 130.068
-  data.resolution_mas = 1.90299
-  data.fov_mas = 21.7312
-  model.resolution_mas = 1.90299
-  model.r_in_mas = 1.90299
-  model.r_out_mas = 30
-  model.n_r_rings = 32
-  model.n_r_gp = 72
-  model.n_channels = 9
-  model.wavel0_m = 3e-06
-  geometry.inc_deg = 59.8073
-  geometry.pa_deg = 107.725
-  geometry.r_mas = 19.0666
-  geometry.sigma_mas = 4.26434
-  geometry.flux = 0.880331
-  geometry.chi2_reduced = 55.6727
-  geometry.gp_sigma = 0.788052
-  chi2.n_independent = 567
-  disk.n_rings = 3
-  disk.inc_deg = 50.1075
-  disk.pa_deg = 29.9613
-  [pass] chi2_reduced: χ²/N = 1.01 for the Gaussian rings fit on quoted errors: consistent with the quoted errors.
-  [warn] ring_count: With 3 rings: ring 1, 3 is narrower than the half-fringe, so its width is not resolved.
-  [pass] outer_edge: 0.17 per cent of the light is within one half-fringe of the outer edge.
-  [pass] inclination: Inclination 50.1° with a single minimum of the geometry grid.
-  [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 12.2).
-  [pass] at_bound: No fitted parameter sits at a prior bound.
-
-DiskPipeline run in /tmp/tmp2i4id96b/gp_run: complete
-  data.n_vis = 378
-  data.n_phi = 252
-  data.n_independent = 567
-  data.wavel_min_m = 2.4e-06
-  data.wavel_max_m = 3.6e-06
-  data.baseline_min_m = 34.1699
-  data.baseline_max_m = 130.068
-  data.resolution_mas = 1.90299
-  data.fov_mas = 21.7312
-  model.resolution_mas = 1.90299
-  model.r_in_mas = 1.90299
-  model.r_out_mas = 30
-  model.n_r_rings = 32
-  model.n_r_gp = 72
-  model.n_channels = 9
-  model.wavel0_m = 3e-06
-  geometry.inc_deg = 59.8073
-  geometry.pa_deg = 107.725
-  geometry.r_mas = 19.0666
-  geometry.sigma_mas = 4.26434
-  geometry.flux = 0.880331
-  geometry.chi2_reduced = 55.6727
-  geometry.gp_sigma = 0.788052
-  chi2.n_independent = 567
-  chi2.error_scale_factor = 1.1164
-  disk.ell_mas = 1.64804
-  disk.flux = 0.890811
-  disk.inc_deg = 49.8094
-  disk.pa_deg = 30.6551
-  [pass] chi2_reduced: χ²/N = 1.17 for the Gaussian-process disk fit on quoted errors: consistent with the quoted errors.
-  [pass] error_scale: Estimated error scales mackay = 1.12: close to the quoted errors.
-  [warn] length_scale: The best ℓ is the lowest of the grid and the grid could not be extended that way (best ℓ = 1.65 mas, a squared-exponential length of 0.951 mas, 0.5× the half-fringe): the grid chose its own edge, so ℓ is not measured. The floor ell_floor_halffringes stops a smaller ℓ (below a pixel a small ℓ gives beads with χ²/N far under 1): treat the data as not resolving the structure.
-  [pass] structure_unconstrained: The radial profile is stable across ℓ (smallest correlation 0.9) or the evidence separates the lengths.
-  [pass] inner_edge: 2.2 per cent of the light is within one half-fringe of the inner edge (correlation with the flux 0.45).
-  [warn] outer_edge: 1.7 per cent of the model's light lies within one half-fringe (1.9 mas) of its outer edge: light beyond it cannot be placed. Refit with a larger r_out_mas.
-  [pass] inclination: Inclination 49.8° with a single minimum of the geometry grid.
-  [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 9.61).
-  [pass] render_consistency: On the reference channel with the disk's colour removed, on the rescaled errors if any (not the summary's χ²/N): χ²/N is 0.821 for the model and 0.82 for its rendered image.
-  [pass] at_bound: No fitted parameter sits at a prior bound.
-  [warn] stage_warnings: 1 warning(s) were raised inside the stages: fit(method='lm') did not converge in 25 steps, the step limit; raise max_steps.. See the 'warnings' list of summary.json.
-  1 warning(s) recorded in the profile stage(s) (see the checks, or Result.summary['warnings'])
+rings: chi2/N = 1.01 on the quoted errors, inc = 50.1, pa = 30.0 deg, geometry-stage chi2/N = 56
+       checks that did not pass: {'ring_count': 'warn', 'stage_warnings': 'warn'}
+   gp: chi2/N = 1.17 on the quoted errors, inc = 49.8, pa = 30.7 deg, geometry-stage chi2/N = 56
+       checks that did not pass: {'length_scale': 'warn', 'outer_edge': 'warn', 'stage_warnings': 'warn'}
 ```
+
+The geometry stage's $\chi^2/N$ of about 56 is deliberate: it fits a single ring to data made by three rings, only to find the inclination and position angle, which the later stages take as their starting point, so a poor fit there is expected, and its inclination and position angle (about 59.8° and 107.7°, against the true 50° and 30°) are only a start. The two final fits are at $\chi^2/N$ close to one. The checks that did not pass are cautions, each named in `describe()` with its reason:
+
+- `ring_count`: two of the three rings are narrower than the half-fringe (the smallest scale the baselines resolve), so their widths are not measured. Their radii are.
+- `length_scale`: the Gaussian process chose the smallest correlation length it was allowed, so the data do not fix it; the radial profile is stable across the lengths tried.
+- `outer_edge`: 1.7 per cent of the light lies within a half-fringe of the 30 mas outer edge. A larger `r_out_mas` would place it, at more cost.
+- `stage_warnings` (both runs): the fits inside the stages recorded warnings, listed in the `warnings` entry of `summary`. In the Gaussian-process run the one we inspected was a Levenberg–Marquardt fit that stopped at its step limit before converging, in the profile stage; the reported $\chi^2/N$ is that of the final fit.
 
 ```python
 from virgil.pipeline.disk import plot_summary
@@ -586,4 +517,4 @@ plot_summary(gp_res.model(), data, r_out_mas=30.0, r_in_mas=gp_res.summary["mode
 plt.show()
 ```
 
-![multipole_disk_rings output 21.1](generated/multipole_disk_rings_cell021_out01.png)
+![multipole_disk_rings output 23.1](generated/multipole_disk_rings_cell023_out01.png)

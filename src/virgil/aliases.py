@@ -120,7 +120,7 @@ UNRECORDED = "unrecorded"
 _RESULT_FORMAT = 1  # AliasResult JSON; a file without the field is format 0
 # The labels are *free* when a point-reflected mode's evidence is within this
 # many nats (tempered; odds of 1 to 20) of the best mode's. Why 3: docs/
-# orbit_fitting.md, "Alias search"; orbit_solved_problems.md, "Label swap" row.
+# orbit_methods.md, "Alias search"; orbit_solved_problems.md, "Label swap" row.
 LABELS_FREE_NATS = 3.0
 # ...and the reflected track matches within this fraction of λ/B_max.
 _LABELS_FREE_RES_FRACTION = 0.25
@@ -278,7 +278,7 @@ def period_window(
 
     The lower end is a Nyquist-style sampling limit (the companion must not move
     much in a night); the upper end is ``span_factor`` times the span. No published
-    period enters ([why](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults)).
+    period enters ([why](../orbit_methods.md#alias-search)).
 
     Parameters
     ----------
@@ -583,17 +583,22 @@ def _terms_and_jacobian(surfaces, x, data, cfg, dof, log_broad):
     return jax.jacfwd(stacked, has_aux=True)(x)
 
 
-def _weighted_terms(surfaces, x, data, cfg, dof, log_broad, weights):
-    """``Σ w_ell ell + Σ w_bad bad`` of some epochs (``weights = (w_ell, w_bad)``)."""
-    ell, bad = _night_terms(surfaces, x, data, cfg, dof, log_broad)
-    return np.dot(weights[0], ell) + np.dot(weights[1], bad)
-
-
 _terms_jac = functools.partial(jax.jit, static_argnums=(0, 3))(
     _terms_and_jacobian
 )
+# Hessian of ``Σ w_ell ell + Σ w_bad bad`` over some epochs, ``weights = (w_ell, w_bad)``.
 _weighted_hessian = functools.partial(jax.jit, static_argnums=(0, 3))(
-    jax.hessian(_weighted_terms, argnums=1)
+    jax.hessian(
+        lambda surfaces, x, data, cfg, dof, log_broad, weights: sum(
+            np.dot(w, t)
+            for w, t in zip(
+                weights,
+                _night_terms(surfaces, x, data, cfg, dof, log_broad),
+                strict=True,
+            )
+        ),
+        argnums=1,
+    )
 )
 
 
@@ -2991,7 +2996,7 @@ def fit_orbit_aliases(
 
     Each alias band (an integer number of orbits between the epochs) is fitted
     to all epochs and given an evidence; the defaults need no per-system
-    arguments ([how](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults),
+    arguments ([how](../orbit_methods.md#alias-search),
     [settings](../orbit_methods.md#alias-settings)).
 
     Parameters

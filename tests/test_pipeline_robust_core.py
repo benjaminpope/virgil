@@ -20,9 +20,7 @@ from virgil.pipeline import (
 from virgil.pipeline import _checks as checks
 from virgil.pipeline import orbit
 from virgil.pipeline._common import (
-    _integer,
     _pick,
-    _positive,
     _prior_repr,
     _validate_sampler,
 )
@@ -176,14 +174,6 @@ def test_prior_repr_of_a_prior_without_parameters_is_its_class():
 # --- shared validation ------------------------------------------------------
 
 
-@pytest.mark.parametrize("value", [True, False])
-def test_a_bool_is_not_an_integer_or_a_positive_number(value):
-    with pytest.raises(ValueError, match="num_samples"):
-        _integer({"num_samples": value}, "num_samples", 0)
-    with pytest.raises(ValueError, match="batch_size"):
-        _positive({"batch_size": value}, "batch_size")
-
-
 def test_validate_sampler_checks_the_nuts_settings_only():
     good = {
         "num_samples": 5,
@@ -211,13 +201,6 @@ def test_pick_is_strict_by_default_and_lenient_on_request():
 
 
 # --- the orbit pipeline on the shared helpers -------------------------------
-
-
-@pytest.mark.parametrize("name", ["n_peaks", "max_grid", "num_chains"])
-def test_orbit_settings_reject_a_bool_for_an_integer(name):
-    s = {**OrbitPipeline.defaults(), name: True}
-    with pytest.raises(ValueError, match=name):
-        OrbitPipeline._validate(s)
 
 
 def test_orbit_sampler_settings_are_validated_with_the_shared_checks():

@@ -246,14 +246,14 @@ def _fit_sweep():
             / 1.0
         ),
         SCALE,
-        parametrisation="sqrt",
+        parametrization="sqrt",
         reference_flux=0.3,
     )
     data = DATA.with_model(truth, key=jax.random.PRNGKey(3))
     start = LinearImage(
         np.sqrt(np.full((NPIX, NPIX), 0.3 / NPIX**2)),
         SCALE,
-        parametrisation="sqrt",
+        parametrization="sqrt",
         reference_flux=0.3,
     )
     reg = MaxEntropy(1.0)

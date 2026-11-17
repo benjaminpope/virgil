@@ -9,26 +9,26 @@ This notebook builds such a star, compares it with a uniform disk of the same si
 
 We build a star with an equatorial angular diameter of 4 mas, large enough that VLTI resolves it, rotating at 90 percent of its critical rate, seen at an inclination of 50 degrees (0 is pole-on and 90 is equator-on), with its rotation pole pointing 30 degrees East of North. With no temperature given the model is the grey one, in which the brightness depends only on the local gravity and not on wavelength. `plot_surface` draws the visible surface mesh coloured by its local flux, with East to the left and North up, so the bright pole should appear towards the upper left and the dark, gravity-darkened equatorial belt across the middle.
 
+??? note "Imports and setup"
+
+    ```python
+    import warnings
+
+    import jax
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import numpyro.distributions as dist
+
+    from virgil.coverage import vlti_oidata
+    from virgil.fitting import fit
+    from virgil.models import GravityDarkenedStar, UniformDisk
+    from virgil.priors import IsotropicInclination
+    from virgil.plotting import plot_data_model_correlation, plot_model
+
+    warnings.filterwarnings("ignore", category=SyntaxWarning)  # upstream zodiax docstrings
+    ```
+
 ```python
-import sys
-from pathlib import Path
-
-root = next(
-    p for p in [Path.cwd(), *Path.cwd().parents] if (p / "src").exists()
-)
-sys.path.insert(0, str(root / "src"))
-
-import jax
-import matplotlib.pyplot as plt
-import numpy as np
-import numpyro.distributions as dist
-
-from virgil.coverage import vlti_oidata
-from virgil.fitting import fit
-from virgil.models import GravityDarkenedStar, UniformDisk
-from virgil.priors import IsotropicInclination
-from virgil.plotting import plot_data_model_correlation, plot_model
-
 star = GravityDarkenedStar(4.0, omega=0.9, inc=50.0, pa=30.0, n_lat=64)
 fig, ax = plt.subplots(figsize=(4.5, 4))
 star.plot_surface(ax=ax)
@@ -36,7 +36,7 @@ ax.set_title("Gravity-darkened star: visible surface")
 plt.show()
 ```
 
-![gravity_darkened_star output 3.1](generated/gravity_darkened_star_cell003_out01.png)
+![gravity_darkened_star output 4.1](generated/gravity_darkened_star_cell004_out01.png)
 
 ## Oblateness and the bright pole in the image
 
@@ -61,7 +61,7 @@ The mesh above is what the model sums over, but what matters for interferometry 
     plt.show()
     ```
 
-![gravity_darkened_star output 5.1](generated/gravity_darkened_star_cell005_out01.png)
+![gravity_darkened_star output 6.1](generated/gravity_darkened_star_cell006_out01.png)
 
 ## The chromatic mode
 
@@ -90,7 +90,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-![gravity_darkened_star output 7.1](generated/gravity_darkened_star_cell007_out01.png)
+![gravity_darkened_star output 8.1](generated/gravity_darkened_star_cell008_out01.png)
 
 ## Simulating and fitting multi-channel data
 
@@ -158,7 +158,7 @@ fig.suptitle(
 plt.show()
 ```
 
-![gravity_darkened_star output 11.1](generated/gravity_darkened_star_cell011_out01.png)
+![gravity_darkened_star output 12.1](generated/gravity_darkened_star_cell012_out01.png)
 
 ## Summary
 

@@ -201,6 +201,8 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
+| `ClosureOffsets` | [Lachaume (2021)](#lachaume2021), [arXiv:2104.07082](https://arxiv.org/abs/2104.07082), [ADS](https://ui.adsabs.harvard.edu/abs/2021PASA...38...29L/abstract), [doi:10.1017/pasa.2021.20](https://doi.org/10.1017/pasa.2021.20) | after |
+| `ClosureOffsets` | [Meimon, Mugnier & Le Besnerais (2005)](#meimon2005), [ADS](https://ui.adsabs.harvard.edu/abs/2005JOSAA..22.2348M/abstract), [doi:10.1364/JOSAA.22.002348](https://doi.org/10.1364/JOSAA.22.002348) | after |
 | `GainModes` | [Lachaume (2021)](#lachaume2021), [arXiv:2104.07082](https://arxiv.org/abs/2104.07082), [ADS](https://ui.adsabs.harvard.edu/abs/2021PASA...38...29L/abstract), [doi:10.1017/pasa.2021.20](https://doi.org/10.1017/pasa.2021.20) | after |
 
 ### `virgil.grid_fit`
@@ -313,6 +315,9 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `(module)` | [Pope et al.](#jaxbessel), [GitHub](https://github.com/benjaminpope/jaxbessel) | ported |
 | `(module)` | [Desdoigts](#zodiax), [GitHub](https://github.com/LouisDesdoigts/zodiax) | after |
+| `ArchimedeanSpiral` | [Han et al. (2020)](#han2020), [arXiv:2008.05834](https://arxiv.org/abs/2008.05834), [doi:10.1093/mnras/staa2349](https://doi.org/10.1093/mnras/staa2349) | after |
+| `ArchimedeanSpiral` | [Tuthill, Monnier & Danchi (1999)](#tuthill1999), [arXiv:astro-ph/9904092](https://arxiv.org/abs/astro-ph/9904092), [doi:10.1038/19033](https://doi.org/10.1038/19033) | after |
+| `ArchimedeanSpiral` | [Tuthill et al. (2008)](#tuthill2008), [arXiv:0712.2111](https://arxiv.org/abs/0712.2111), [doi:10.1086/527286](https://doi.org/10.1086/527286) | after |
 | `FlaredDisk` | [Blakely et al. (2024)](#blakely2024), [arXiv:2404.13032](https://arxiv.org/abs/2404.13032), [ADS](https://ui.adsabs.harvard.edu/abs/2025AJ....169..137B/abstract) | after |
 | `GravityDarkenedStar` | [Espinosa Lara & Rieutord (2011)](#espinosalara2011), [arXiv:1109.3038](https://arxiv.org/abs/1109.3038), [ADS](https://ui.adsabs.harvard.edu/abs/2011A&A...533A..43E/abstract), [doi:10.1051/0004-6361/201117252](https://doi.org/10.1051/0004-6361/201117252) | after |
 | `Harmonics` | [Barndorff-Nielsen & Schou (1973)](#barndorff-nielsen1973), [doi:10.1016/0047-259X(73)90030-4](https://doi.org/10.1016/0047-259X(73)90030-4) | after |
@@ -345,6 +350,13 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `_eps_rule` | [Golub & Welsch (1969)](#golub1969), [doi:10.1090/S0025-5718-69-99647-1](https://doi.org/10.1090/S0025-5718-69-99647-1) | after |
 
+### `virgil.observables`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `DifferentialPhase` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
+| `FluxSpectrum` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
+
 ### `virgil.oidata`
 
 | Symbol | Source | Relation |
@@ -369,6 +381,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `position_leg` | [Hoffman & Gelman (2011)](#hoffman2014), [arXiv:1111.4246](https://arxiv.org/abs/1111.4246), [ADS](https://ui.adsabs.harvard.edu/abs/2011arXiv1111.4246H/abstract) | after |
 | `search_cell` | [Fischler & Bolles (1981)](#fischler1981), [doi:10.1145/358669.358692](https://doi.org/10.1145/358669.358692) | after |
 | `search_cell` | [Golub & Pereyra (1973)](#golub1973), [doi:10.1137/0710036](https://doi.org/10.1137/0710036) | after |
+| `search_cell` | [Hadi & Simonoff (1993)](#hadi1993), [ADS](https://ui.adsabs.harvard.edu/abs/1993JASA...88.1264H/abstract), [doi:10.1080/01621459.1993.10476407](https://doi.org/10.1080/01621459.1993.10476407) | after |
 | `search_cell` | [Rousseeuw (1984)](#rousseeuw1984), [doi:10.1080/01621459.1984.10477105](https://doi.org/10.1080/01621459.1984.10477105) | after |
 | `search_cell` | [Rousseeuw & Van Driessen (1999)](#rousseeuw1999), [doi:10.1080/00401706.1999.10485670](https://doi.org/10.1080/00401706.1999.10485670) | after |
 | `search_plan` | [Fischler & Bolles (1981)](#fischler1981), [doi:10.1145/358669.358692](https://doi.org/10.1145/358669.358692) | after |
@@ -538,7 +551,9 @@ Heritage and context without a code symbol of their own.
 
 | Source | Note |
 |---|---|
+| [Eyer & Bartholdi (1999)](#eyer1999), [arXiv:astro-ph/9808176](https://arxiv.org/abs/astro-ph/9808176), [doi:10.1051/aas:1999102](https://doi.org/10.1051/aas:1999102) | A&AS 135, 1; for irregular sampling the usable Nyquist frequency can far exceed that of the mean gap: considered, and not used, for the census's sampling test (scripts/orbit_population.py, nyquist_ok) |
 | [Martinache (2010)](#martinache2010), [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract) | ApJ 724, 464 (2010) |
+| [Modrák, Moon, Kim, Bürkner, Huurre, Faltejsková, Gelman & Vehtari (2023)](#modrak2023), [arXiv:2211.02383](https://arxiv.org/abs/2211.02383) | Bayesian Analysis 2023 (arXiv 2022); data-dependent test quantities are valid in SBC; the sky-plane rank of the population test (scripts/orbit_population.py) |
 | [Talts, Betancourt, Simpson, Vehtari & Gelman (2018)](#talts2018), [arXiv:1804.06788](https://arxiv.org/abs/1804.06788) | rank-uniformity check of a posterior against its own prior draws; the population test of the cell fit (scripts/orbit_population.py) |
 
 ## In the bibliography only
@@ -653,6 +668,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="nifty"></a>**Enßlin group (Arras, Edenhofer et al.)**. NIFTy: Numerical Information Field Theory. [link](https://ift.pages.mpcdf.de/nifty/user/index.html). papers: edenhofer2024, arras2021, ensslin2009. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="ensslin2009"></a>**Enßlin, Frommert & Kitaura (2008)**. Information field theory for cosmological perturbation reconstruction and non-linear signal analysis. [arXiv:0806.3474](https://arxiv.org/abs/0806.3474), [ADS](https://ui.adsabs.harvard.edu/abs/2009PhRvD..80j5005E/abstract). Phys. Rev. D 80, 105005 (2009).
 - <a id="espinosalara2011"></a>**Espinosa Lara & Rieutord (2011)**. Gravity darkening in rotating stars. [arXiv:1109.3038](https://arxiv.org/abs/1109.3038), [ADS](https://ui.adsabs.harvard.edu/abs/2011A&A...533A..43E/abstract), [doi:10.1051/0004-6361/201117252](https://doi.org/10.1051/0004-6361/201117252). A&A 533, A43.
+- <a id="eyer1999"></a>**Eyer & Bartholdi (1999)**. Variable stars: Which Nyquist frequency?. [arXiv:astro-ph/9808176](https://arxiv.org/abs/astro-ph/9808176), [doi:10.1051/aas:1999102](https://doi.org/10.1051/aas:1999102). A&AS 135, 1; for irregular sampling the usable Nyquist frequency can far exceed that of the mean gap: considered, and not used, for the census's sampling test (scripts/orbit_population.py, nyquist_ok).
 - <a id="fawcett2006"></a>**Fawcett (2006)**. An introduction to ROC analysis. [ADS](https://ui.adsabs.harvard.edu/abs/2006PaReL..27..861F/abstract), [doi:10.1016/j.patrec.2005.10.010](https://doi.org/10.1016/j.patrec.2005.10.010).
 - <a id="fessler2005"></a>**Fessler et al. (2005)**. Toeplitz-based iterative image reconstruction for MRI with correction for magnetic field inhomogeneity. [ADS](https://ui.adsabs.harvard.edu/abs/2005ITSP...53.3393F/abstract), [doi:10.1109/TSP.2005.853152](https://doi.org/10.1109/TSP.2005.853152). IEEE Trans. Signal Process. 53, 3393; the Toeplitz embedding of the normal operator AᴴWA on a 2N grid.
 - <a id="fischler1981"></a>**Fischler & Bolles (1981)**. Random sample consensus: a paradigm for model fitting with applications to image analysis and automated cartography. [doi:10.1145/358669.358692](https://doi.org/10.1145/358669.358692). Commun. ACM 24, 381; minimal sets of nights as candidate fits (RANSAC).
@@ -673,6 +689,8 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="gronau2017"></a>**Gronau, Sarafoglou, Matzke, Ly, Boehm, Marsman, Leslie, Forster, Wagenmakers & Steingroever (2017)**. A tutorial on bridge sampling. [arXiv:1703.05984](https://arxiv.org/abs/1703.05984), [doi:10.1016/j.jmp.2017.09.005](https://doi.org/10.1016/j.jmp.2017.09.005). J. Math. Psychol. 81, 80; bridge sampling from MCMC draws to a fitted proposal (compared for the orbit alias-cell evidence).
 - <a id="gross2010"></a>**Gross & Vitells (2010)**. Trial factors for the look elsewhere effect in high energy physics. [arXiv:1005.1891](https://arxiv.org/abs/1005.1891), [ADS](https://ui.adsabs.harvard.edu/abs/2010EPJC...70..525G/abstract).
 - <a id="gull1989"></a>**Gull (1989)**. Developments in Maximum Entropy Data Analysis. [doi:10.1007/978-94-015-7860-8_4](https://doi.org/10.1007/978-94-015-7860-8_4). in Maximum Entropy and Bayesian Methods, Cambridge 1988; the DOI chapter title is the Gull one; Skilling 1989 shares the volume.
+- <a id="hadi1993"></a>**Hadi & Simonoff (1993)**. Procedures for the Identification of Multiple Outliers in Linear Models. [ADS](https://ui.adsabs.harvard.edu/abs/1993JASA...88.1264H/abstract), [doi:10.1080/01621459.1993.10476407](https://doi.org/10.1080/01621459.1993.10476407). J. Am. Stat. Assoc. 88, 1264; forward addition of observations to the clean set, which the add-one move uses to complete the concentration steps.
+- <a id="han2020"></a>**Han et al. (2020)**. The extreme colliding-wind system Apep: resolved imagery of the central binary and dust plume in the infrared. [arXiv:2008.05834](https://arxiv.org/abs/2008.05834), [doi:10.1093/mnras/staa2349](https://doi.org/10.1093/mnras/staa2349). MNRAS (2020); geometric pinwheel model of the Apep plume.
 - <a id="hansen1993"></a>**Hansen & O'Leary (1993)**. The Use of the L-Curve in the Regularization of Discrete Ill-Posed Problems. [ADS](https://ui.adsabs.harvard.edu/abs/1993SJSC...14.1487H/abstract), [doi:10.1137/0914086](https://doi.org/10.1137/0914086).
 - <a id="hartkopf1989"></a>**Hartkopf, McAlister & Franz (1989)**. Binary star orbits from speckle interferometry. II. Combined visual-spectroscopic orbits of 31 close binaries. [ADS](https://ui.adsabs.harvard.edu/abs/1989AJ.....98.1014H/abstract), [doi:10.1086/115193](https://doi.org/10.1086/115193). AJ 98, 1014; bibcode 1989AJ.....98.1014H.
 - <a id="jaxoplanet"></a>**Hattori et al. (2024)**. jaxoplanet. [ADS](https://ui.adsabs.harvard.edu/abs/2024zndo..10736936H/abstract), [doi:10.5281/zenodo.10736936](https://doi.org/10.5281/zenodo.10736936), [GitHub](https://github.com/exoplanet-dev/jaxoplanet). Zenodo; https://github.com/exoplanet-dev/jaxoplanet.
@@ -726,9 +744,11 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="xara"></a>**Martinache (2010)**. Kernel-Phase in Fizeau Inteferometry. [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract), [GitHub](https://github.com/fmartinache/xara). xara was formerly pysco; cvis_binary is adapted from it.
 - <a id="mawet2014"></a>**Mawet et al. (2014)**. Fundamental limitations of high contrast imaging set by small sample statistics. [arXiv:1407.2247](https://arxiv.org/abs/1407.2247), [ADS](https://ui.adsabs.harvard.edu/abs/2014ApJ...792...97M/abstract). ApJ 792, 97; the small-sample false-alarm correction, not applied in injection_recovery.
 - <a id="mcdougall2026"></a>**McDougall, Pope & Davis (2026)**. LITMUS: Bayesian lag recovery in reverberation mapping with fast differentiable models. [arXiv:2505.09832](https://arxiv.org/abs/2505.09832), [doi:10.1017/pasa.2026.10149](https://doi.org/10.1017/pasa.2026.10149). PASA 43; hessian_scan: a scan over an aliased variable with optimization and a Laplace evidence per slice, integrated across the grid; prior art for the across-N propagation.
+- <a id="meimon2005"></a>**Meimon, Mugnier & Le Besnerais (2005)**. Convex approximation to the likelihood criterion for aperture synthesis imaging. [ADS](https://ui.adsabs.harvard.edu/abs/2005JOSAA..22.2348M/abstract), [doi:10.1364/JOSAA.22.002348](https://doi.org/10.1364/JOSAA.22.002348). JOSA A 22, 2348.
 - <a id="meng1996"></a>**Meng & Wong (1996)**. Simulating ratios of normalizing constants via a simple identity: a theoretical exploration. [link](https://www3.stat.sinica.edu.tw/statistica/j6n4/j6n43/j6n43.htm). Statistica Sinica 6, 831; bridge sampling and its optimal iterative estimator (compared for the orbit alias-cell evidence). No DOI, arXiv ID or ADS record: title and authors read from the journal page. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="mengersen1996"></a>**Mengersen & Tweedie (1996)**. Rates of convergence of the Hastings and Metropolis algorithms. [doi:10.1214/aos/1033066201](https://doi.org/10.1214/aos/1033066201). Ann. Stat. 24, 101; independence Metropolis-Hastings is uniformly ergodic iff the weight is bounded.
 - <a id="miles1965"></a>**Miles (1965)**. On random rotations in R^3. [doi:10.1093/biomet/52.3-4.636](https://doi.org/10.1093/biomet/52.3-4.636). Biometrika 52, 636-639; the isotropic (Haar) distribution of rotations: Omega and omega uniform, cos i uniform. Not on ADS: checked on Crossref.
+- <a id="modrak2023"></a>**Modrák, Moon, Kim, Bürkner, Huurre, Faltejsková, Gelman & Vehtari (2023)**. Simulation-based calibration checking for Bayesian computation: the choice of test quantities shapes sensitivity. [arXiv:2211.02383](https://arxiv.org/abs/2211.02383). Bayesian Analysis 2023 (arXiv 2022); data-dependent test quantities are valid in SBC; the sky-plane rank of the population test (scripts/orbit_population.py).
 - <a id="monnier2007"></a>**Monnier et al. (2007)**. Imaging the Surface of Altair. [arXiv:0706.0867](https://arxiv.org/abs/0706.0867), [ADS](https://ui.adsabs.harvard.edu/abs/2007Sci...317..342M/abstract), [doi:10.1126/science.1143205](https://doi.org/10.1126/science.1143205). Science 317, 342; the Altair-like truth of notebooks/mwe/mwe_elr_chara.ipynb is inspired by it, not a reproduction.
 - <a id="moran1975"></a>**Moran (1975)**. Quaternions, Haar measure and the estimation of a palaeomagnetic rotation. [doi:10.1017/s0021900200047720](https://doi.org/10.1017/s0021900200047720). J. Appl. Prob. 12, 295-301; Haar measure on SO(3) is the uniform measure on S^3, covered 2:1 by unit quaternions. Not on ADS: checked on Crossref.
 - <a id="morozov1966"></a>**Morozov (1966)**. On the solution of functional equations by the method of regularization. Soviet Math. Dokl. 7, 414 (1966); the discrepancy principle. No DOI, and not in ADS or Crossref as of 2026-11-05: unverified. *Not yet verified against arXiv, Crossref or ADS.*
@@ -777,6 +797,8 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="thompson2023"></a>**Thompson et al. (2023)**. Octofitter: Fast, Flexible, and Accurate Orbit Modelling to Detect Exoplanets. [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc), [GitHub](https://github.com/sefffal/Octofitter.jl). AJ 166, 164 (2023); the arXiv preprint was posted in February 2024, after publication.
 - <a id="tiede2025"></a>**Tiede et al. (2025)**. Hierarchical Interferometric Bayesian Imaging. [arXiv:2511.17706](https://arxiv.org/abs/2511.17706), [ADS](https://ui.adsabs.harvard.edu/abs/2026ApJ...997..262T/abstract). HIBI/Comrade.
 - <a id="tierney1986"></a>**Tierney & Kadane (1986)**. Accurate Approximations for Posterior Moments and Marginal Densities. [doi:10.1080/01621459.1986.10478240](https://doi.org/10.1080/01621459.1986.10478240). JASA 81, 82; Laplace's method for marginal likelihoods (the baseline for the orbit alias-cell evidence).
+- <a id="tuthill2008"></a>**Tuthill et al. (2008)**. The prototype colliding-wind pinwheel WR 104. [arXiv:0712.2111](https://arxiv.org/abs/0712.2111), [doi:10.1086/527286](https://doi.org/10.1086/527286). ApJ 675, 698; uniformly rotating Archimedean spiral fitted to the WR 104 plume, with the measured brightness profile along it.
+- <a id="tuthill1999"></a>**Tuthill, Monnier & Danchi (1999)**. A dusty pinwheel nebula around the massive star WR 104. [arXiv:astro-ph/9904092](https://arxiv.org/abs/astro-ph/9904092), [doi:10.1038/19033](https://doi.org/10.1038/19033). Nature 398, 487; the dust plume follows a linear (Archimedean) spiral; geometry only.
 - <a id="vanhamme1993"></a>**van Hamme (1993)**. New Limb-Darkening Coefficients for Modeling Binary Star Light Curves. [ADS](https://ui.adsabs.harvard.edu/abs/1993AJ....106.2096V/abstract), [doi:10.1086/116788](https://doi.org/10.1086/116788). AJ 106, 2096; the quadratic law the square-root law is compared with.
 - <a id="vanderplas2018"></a>**VanderPlas (2017)**. Understanding the Lomb-Scargle Periodogram. [arXiv:1703.09824](https://arxiv.org/abs/1703.09824), [ADS](https://ui.adsabs.harvard.edu/abs/2018ApJS..236...16V/abstract). ApJS 236, 16 (2018).
 - <a id="veach1995"></a>**Veach & Guibas (1995)**. Optimally combining sampling techniques for Monte Carlo rendering. [doi:10.1145/218380.218498](https://doi.org/10.1145/218380.218498). SIGGRAPH '95, 419; the balance heuristic, the partition of unity that splits the bridge per mode.

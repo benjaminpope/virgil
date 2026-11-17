@@ -12,6 +12,8 @@ First, the imports.
 ??? note "Imports and setup"
 
     ```python
+    import logging
+    import shutil
     import warnings
     import jax
     import jax.numpy as jnp
@@ -20,6 +22,8 @@ First, the imports.
     from jax.flatten_util import ravel_pytree
 
     warnings.filterwarnings("ignore", message="IProgress not found.*")
+    logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
+    shutil.rmtree("binary_run", ignore_errors=True)  # the pipeline section writes here
 
     import numpyro
     import numpyro.distributions as dist
@@ -329,17 +333,9 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-```text
-findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
-```
+![binary_search output 19.1](generated/binary_search_cell019_out01.png)
 
-```text
-findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
-```
-
-![binary_search output 19.3](generated/binary_search_cell019_out03.png)
-
-![binary_search output 19.4](generated/binary_search_cell019_out04.png)
+![binary_search output 19.2](generated/binary_search_cell019_out02.png)
 
 And in polar coordinates:
 
@@ -390,82 +386,42 @@ plt.show()
 
 ## As a pipeline
 
-[`BinaryPipeline`](pipeline.md) runs everything above in one call, fixes the order of the steps and writes a run folder that reloads without recomputing. The grid search and maps are its `search` stage, the maximum-likelihood point starts its `fit` stage, and the HMC chains are its `posterior` stage. The cell below sets only this notebook's choices: the same $\pm 250$ mas grid of 81 points per axis, the same flux range over 60 points and the same sampler length. Its priors are the pipeline's group-invariant defaults (uniform in position, log-uniform in flux), so the posterior matches the hand-written one to within sampling noise, not exactly.
+[`BinaryPipeline`](pipeline.md) runs everything above in one call, fixes the order of the steps and writes a run folder that reloads without recomputing. The grid search and maps are its `search` stage, the maximum-likelihood point starts its `fit` stage, and the HMC chains are its `posterior` stage. The cell below sets only this notebook's choices: the same $\pm 250$ mas grid of 81 points per axis, a flux axis of 1000 points over $10^{-5}$ to $10^{-1}$ (a finer, wider axis than the hand-written grid: the pipeline warns when the axis does not resolve the flux peak, or when contrast limits fall outside it) and the same sampler length. Its priors are the pipeline's group-invariant defaults (uniform in position, log-uniform in flux), so the posterior matches the hand-written one to within sampling noise, not exactly.
+
+The printed $\chi^2/N$ is well below one at the fit, and the `chi2` check says the errors are likely overestimated. In this simulation they are not: the data were drawn with exactly the quoted errors. For 48 data the lower tail is $P(\chi^2_{48}/48 \le 0.48) \approx 9 \times 10^{-4}$, so the value printed at the true parameters is an unlucky draw of roughly one in a thousand for this seed. The warning is a false alarm here. On real data such a low value would deserve suspicion, and the likely cause would be errors that are too large. The `convergence` and `stage_warnings` warnings count the few grid positions where the flux refinement did not converge; `res.describe()` lists them.
 
 ```python
-from tempfile import mkdtemp
-
+from virgil.imaging import chi2_by_observable
 from virgil.pipeline import BinaryPipeline
 
 res = BinaryPipeline(
     data,
     BinaryModelCartesian(dra=100.0, ddec=-100.0, flux=1e-3),
-    output=f"{mkdtemp()}/binary_run",
+    output="binary_run",
     max_sep_mas=250.0,
     grid_step_mas=6.25,  # 81 points from -250 to 250 mas
-    flux_range=[10**-4.5, 10**-1.5],
-    n_flux=60,
+    flux_range=[1e-5, 1e-1],
+    n_flux=1000,  # fine enough to resolve the flux peak across 4 decades
     num_warmup=800,
     num_samples=2000,
     num_chains=1,
 ).run()
-print(res.describe())
+
+s = res.summary
+print(f"best grid point: dra={s['search']['dra_mas']:.1f} mas, ddec={s['search']['ddec_mas']:.1f} mas, "
+      f"{s['search']['local_nsigma']:.1f} sigma (local)")
+print(f"companion: sep={s['companion']['sep_mas']:.1f} mas, pa={s['companion']['pa_deg']:.1f} deg, "
+      f"flux={s['companion']['flux']:.4f}")
+print(f"chi2/N, quoted errors: {s['fit']['chi2_reduced']:.2f} at the fit, "
+      f"{chi2_by_observable(model_true, data)['chi2_red']['total']:.2f} at the truth (N = {data.vis.size + data.phi.size})")
+print(f"r_hat {s['posterior']['r_hat_max']:.2f}, bulk ESS {s['posterior']['ess_bulk_min']:.0f}")
+print({c.name: c.status for c in res.checks if c.status != "pass"})
 ```
 
 ```text
-BinaryPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp59ezaoph/binary_run: complete
-  data.n_vis = 24
-  data.n_phi = 24
-  data.n_independent = 48
-  data.wavel_min_m = 4.8e-06
-  data.wavel_max_m = 4.8e-06
-  data.baseline_min_m = 4.6616
-  data.baseline_max_m = 30.72
-  data.resolution_mas = 16.1145
-  data.fov_mas = 212.389
-  chi2.n_independent = 48
-  chi2.null_reduced = 102.337
-  chi2.companion_reduced = 0.403872
-  search.delta_chi2 = 4851
-  search.log_bayes_factor = 2411.45
-  search.max_snr = 69.3432
-  search.local_nsigma = 12.95
-  search.global_nsigma = 3.09053
-  search.false_alarm_probability = 0.000999001
-  search.n_null = 1000
-  search.n_null_above = 0
-  search.dra_mas = 118.75
-  search.ddec_mas = -81.25
-  search.flux = 0.0039317
-  search.max_sep_mas = 250
-  limits.sigma = 3
-  limits.deepest_delta_mag = 5.53316
-  fit.chi2_reduced = 0.403872
-  companion.sep_mas = 144.052
-  companion.pa_deg = 123.794
-  companion.dra_mas = 119.714
-  companion.ddec_mas = -80.1226
-  companion.flux = 0.00392741
-  companion.flux_err = 5.8359e-05
-  companion.contrast = 254.621
-  companion.delta_mag = 6.01473
-  posterior.num_chains = 1
-  posterior.num_samples = 2000
-  posterior.num_warmup = 800
-  posterior.r_hat_max = 1.00038
-  posterior.ess_bulk_min = 1054.58
-  posterior.divergence_fraction = 0
-  [warn] chi2: χ²/N = 0.404 for the best-fit binary (star alone: 102) on quoted errors: errors likely overestimated.
-  [pass] detection: Companion detected at ≥3.09σ against simulated companion-free searches (12.95σ local).
-  [pass] grid_edge: The grid peak lies inside the searched grid.
-  [pass] residual_normality: Whitened residuals look normal (skew 0.38, excess kurtosis 0.07).
-  [pass] field_of_view: Separation 144 mas lies between the resolution limit and the field of view.
-  [pass] prior_bound: No posterior mass piles up at a prior bound.
-  [pass] r_hat: Largest R-hat 1.0004: the chains agree.
-  [pass] ess: Smallest bulk ESS 1055: enough independent samples.
-  [pass] divergences: Divergent transitions: 0 per cent: none.
-  [warn] convergence: The optimizer did not converge at 2 of 6561 grid positions (0.03 per cent): values there may be inaccurate.
-  [warn] flux_axis_resolution: The flux axis does not resolve the likelihood peak (0.28 steps across its FWHM): log_bayes_factor is inaccurate; use a finer flux axis (n_flux).
-  [warn] limits_clipped: 1 limits fell outside the flux bounds and were clipped to the nearer bound: those limits are not the true limits; widen flux_range.
-  4 warning(s) recorded in the limits, search stage(s) (see the checks, or Result.summary['warnings'])
+best grid point: dra=118.8 mas, ddec=-81.2 mas, 12.9 sigma (local)
+companion: sep=144.1 mas, pa=123.8 deg, flux=0.0039
+chi2/N, quoted errors: 0.40 at the fit, 0.48 at the truth (N = 48)
+r_hat 1.00, bulk ESS 1132
+{'chi2': 'warn', 'convergence': 'warn', 'stage_warnings': 'warn'}
 ```
