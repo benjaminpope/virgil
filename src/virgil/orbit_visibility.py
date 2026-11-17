@@ -825,7 +825,9 @@ class _VisSpace:
         base = self.base
         c = base.decode(x)
         pv = base.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
-        ln_s = math.log(S_MAX) * (2.0 * jax.nn.sigmoid(x[9:]) - 1.0)
+        ln_s = math.log(S_MAX) * (
+            2.0 * jax.nn.sigmoid(x[9 : 9 + len(self.nights.blocks)]) - 1.0
+        )
         eps = np.asarray(base.cat.eps, base.dtype)
         log_w = np.asarray(base.cat.log_w_eps, base.dtype)
         per_sign, resp = [], []
