@@ -12,7 +12,7 @@ pytest.importorskip("jaxoplanet")
 pytest.importorskip("blackjax")
 
 from tests.test_orbit_cells import (  # noqa: E402
-    BLOCKS, FRAMES, LOG_B, N_OBS, T_SS, _night_state, _orbit,
+    BLOCKS, LOG_B, N_OBS, T_SS, _night_state, _orbit,
     _two_season_times,
 )  # fmt: skip
 from virgil import orbit_cells as oc_cells  # noqa: E402
@@ -31,19 +31,14 @@ def x64(test):
 
 
 def _jittery(orbit, times, jitter, *, sigma=SIGMA, seed=0, gross=()):
-    """One-peak summaries of ``orbit`` whose means carry the quoted noise, the
-    per-frame jitter ``jitter`` (mas) as the likelihood adds it
-    (``σ_J² / n_frames`` on ``p``, ``σ_J² / T_ss`` on ``v``) and a 100-sigma
-    offset on the nights ``gross``."""
+    """One-peak summaries of ``orbit`` whose means carry the quoted noise, one
+    independent ``N(0, jitter²)`` offset (mas) of each night's position and a
+    100-sigma offset on the nights ``gross``."""
     rng = onp.random.default_rng(seed)
     cov = onp.diag(
         [sigma**2, sigma**2, sigma**2 / T_SS, sigma**2 / T_SS, 0.05**2]
     )
-    extra = onp.array(
-        [jitter / math.sqrt(len(FRAMES))] * 2
-        + [jitter / math.sqrt(T_SS)] * 2
-        + [0.0]
-    )
+    extra = onp.array([jitter, jitter, 0.0, 0.0, 0.0])
     out = []
     for k, (t, s) in enumerate(zip(times, _night_state(orbit, times))):
         mean = (
@@ -103,20 +98,27 @@ def _scan(space, orbit, grid):
 
 
 def test_the_jitter_prior_is_absolute_and_log_uniform_in_the_chart():
-    """σ_J = 1 µas … 3 mas whatever the quoted errors; the logistic chart gives
-    ln σ_J uniform."""
+    """σ_J = 1 µas … 3 mas whatever the quoted errors. Integrating the chart
+    prior over the jitter coordinate (the rest fixed) gives a unit mass of
+    which a fraction ``f`` lies below ``σ_J = exp(lo + f (hi - lo))``."""
     assert oc_cells.JITTER_RANGE == (1e-3, 3.0)
     orbit, s, space = _setup(0.0, k=8)
     assert space.d == 9 + 1 + 1
     lo, hi = (math.log(v) for v in oc_cells.JITTER_RANGE)
-    w = jax.random.logistic(jax.random.key(0), (20000,))
-    j = onp.asarray(space.decode_jitter(np.asarray(w)[:, None]))
-    hist, _ = onp.histogram(onp.log(j), bins=8, range=(lo, hi))
-    assert (
-        hist.min() > 0.9 * hist.max() * 0.8
-        and j.min() >= 1e-3
-        and j.max() <= 3.0
-    )
+    base = onp.asarray(_truth_x(space, orbit, 0.1))
+    w = onp.linspace(-40.0, 40.0, 40001)
+    xs = onp.tile(base, (len(w), 1))
+    xs[:, -1] = w
+    lp = onp.asarray(jax.vmap(space.logprior)(np.asarray(xs)))
+    dens = onp.exp(lp - lp.max())
+    mass = dens / onp.trapezoid(dens, w)
+    ln_j = onp.log(onp.asarray(space.decode_jitter(np.asarray(xs[:, -1:]))))
+    assert ln_j.min() >= lo - 1e-9 and ln_j.max() <= hi + 1e-9
+    for f in (0.1, 0.5, 0.9):
+        below = w[ln_j <= lo + f * (hi - lo)]
+        assert onp.trapezoid(mass[w <= below.max()], below) == pytest.approx(
+            f, abs=2e-3
+        )
     assert float(
         space.decode_jitter(space.jitter_coordinate())
     ) == pytest.approx(SIGMA)

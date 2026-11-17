@@ -284,8 +284,9 @@ def draw_system(rng, nights, fit, jitter=False):
     jitter ``σ_J`` is drawn log-uniform on ``oc_cells.JITTER_RANGE`` (the fit's
     own prior, so SBC stays exact) after everything else, so the paired truth
     and means of a stream are those of the no-jitter arm until it is added to
-    the inlier nights' means (``σ_J² / n_frames`` on ``p``, ``σ_J² / T_ss`` on
-    ``v``, as the likelihood adds it)."""
+    the inlier nights' means as one position offset per night
+    (``N(0, σ_J²)`` on each of ``p``'s two components, none on ``v``: the
+    between-night term the likelihood adds)."""
     times, a, rel = nights["times"], nights["a"], nights["rel"]
     sigma = rel * a
     orbit = _orbit(rng, fit.p_cut, fit.p_max, a)
@@ -312,9 +313,8 @@ def draw_system(rng, nights, fit, jitter=False):
     if jitter:
         lo, hi = oc_cells.JITTER_RANGE
         sj = _loguniform(rng, lo, hi)
-        z = rng.standard_normal((k, 4))
-        scale = onp.array([1 / math.sqrt(len(FRAMES))] * 2 + [1 / math.sqrt(T_SS)] * 2)
-        mean[~outlier, :4] += sj * scale * z[~outlier]
+        shift = sj * rng.standard_normal((k, 2))
+        mean[~outlier, :2] += shift[~outlier]
         extra = dict(jitter=float(sj))
     return dict(
         **extra,
@@ -1057,7 +1057,9 @@ def jitter_lines(ok):
     arm = [r for r in ok if "jitter_in_99" in r]
     if not arm:
         return []
-    ratio = onp.array([math.log10(r["jitter_hat"] / r["jitter_true"]) for r in arm])
+    ratio = onp.array(
+        [math.log10(r["jitter_hat"] / r["jitter_true"]) for r in arm]
+    )
     hit = onp.mean([r["jitter_in_99"] for r in arm])
     q = onp.array([r.get("chi2_quoted", math.nan) for r in arm], float)
     t = onp.array([r.get("chi2_total", math.nan) for r in arm], float)
