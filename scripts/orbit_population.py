@@ -278,9 +278,14 @@ def _noise_outliers_and_chi2(rng, mean, outlier, ln_s, sigma):
     return mean, scale**2 * rng.chisquare(N_OBS - N_PAR, size=k)
 
 
-def draw_system(rng, nights, fit):
+def draw_system(rng, nights, fit, jitter=False):
     """The truth (from the fit's prior) and the summaries, given the nights
-    and the fit domain."""
+    and the fit domain. With ``jitter`` (the census arm), a between-night
+    jitter ``σ_J`` is drawn log-uniform on ``oc_cells.JITTER_RANGE`` (the fit's
+    own prior, so SBC stays exact) after everything else, so the paired truth
+    and means of a stream are those of the no-jitter arm until it is added to
+    the inlier nights' means (``σ_J² / n_frames`` on ``p``, ``σ_J² / T_ss`` on
+    ``v``, as the likelihood adds it)."""
     times, a, rel = nights["times"], nights["a"], nights["rel"]
     sigma = rel * a
     orbit = _orbit(rng, fit.p_cut, fit.p_max, a)
@@ -303,7 +308,16 @@ def draw_system(rng, nights, fit):
         mean[i, :4] = _night_state(other, times[i : i + 1])[0]
         mean[i, 4] = onp.log(oc_cells.FLUX_FLOOR) * rng.uniform()
     mean, chi2 = _noise_outliers_and_chi2(rng, mean, outlier, ln_s, sigma)
+    extra = {}
+    if jitter:
+        lo, hi = oc_cells.JITTER_RANGE
+        sj = _loguniform(rng, lo, hi)
+        z = rng.standard_normal((k, 4))
+        scale = onp.array([1 / math.sqrt(len(FRAMES))] * 2 + [1 / math.sqrt(T_SS)] * 2)
+        mean[~outlier, :4] += sj * scale * z[~outlier]
+        extra = dict(jitter=float(sj))
     return dict(
+        **extra,
         **nights, period=period, orbit=orbit, sign=float(sign), ln_s=ln_s,
         ln_f=float(ln_f), eps=float(eps), outliers=onp.flatnonzero(outlier),
         summaries=_summaries(times, mean, sigma, chi2),
@@ -670,8 +684,9 @@ def truth_columns(sysd, out, true_i, t_anchor, oracle, key):
     its best mode (assertion 5) and, with ``oracle``, the mass oracle."""
     fit = out.fits[true_i]
     x_true = oc_cells.truth_chart(
-        fit.space, sysd["orbit"], t_anchor, sysd["ln_f"], sysd["ln_s"]
-    )
+        fit.space, sysd["orbit"], t_anchor, sysd["ln_f"], sysd["ln_s"],
+        jitter=sysd.get("jitter"),
+    )  # fmt: skip
     dim = fit.space.d
     maha = math.inf
     if fit.modes:
@@ -711,6 +726,30 @@ def _inlier_set(fit):
     best = max(fit.modes, key=oc_cells.laplace_log_evidence)
     lab = oc_cells._labels(onp.asarray(best.x, fit.space.dtype), fit.space)
     return tuple(int(i) for i in onp.flatnonzero(onp.asarray(lab) >= 0))
+
+
+def jitter_columns(sysd, out):
+    """Report-only columns of the jitter arm (empty otherwise): the injected
+    ``σ_J`` (``jitter_true``), its posterior median (``jitter_hat``), whether it
+    lies in the central 98 % of the ``p(N)``-weighted importance draws
+    (``jitter_in_99``), and the raw ``χ²/N`` of the dominant cell's best mode on
+    the quoted errors (``chi2_quoted``) and on ``σ² + σ_J²`` (``chi2_total``).
+    The no-jitter arm still reports the chi-squares (``jitter_hat`` 0)."""
+    cols = {}
+    try:
+        best = int(onp.nanargmax(out.p_pos))
+        chi2 = oc_cells.fit_chi2(out.fits[best])
+        cols.update(chi2_quoted=chi2["quoted"], chi2_total=chi2["total"])
+        if "jitter" not in sysd:
+            return cols
+        draws = oc_cells.jitter_draws(out.fits, out.p_pos)
+        cols.update(jitter_true=sysd["jitter"], jitter_hat=out.jitter)
+        if draws is not None:
+            lo, hi = (oc_cells.jitter_quantile(draws, q) for q in (0.01, 0.99))
+            cols["jitter_in_99"] = int(lo <= sysd["jitter"] <= hi)
+    except Exception as err:  # a diagnostic never fails a system
+        cols["jitter_diag_error"] = repr(err)[:200]
+    return cols
 
 
 def equivariance_columns(sysd, fit_dom, out, key, true_i):
@@ -776,8 +815,9 @@ def run_one(
     s = sysd["summaries"]
     start = time.time()
     row = describe(sysd, fit)
+    arm = "jitter" in sysd  # the jitter arm marginalizes σ_J, else none
     out = oc_cells.position_cells(
-        s, fit, key, jitter=0.0, e_max=oc_cells.E_MAX
+        s, fit, key, jitter=None if arm else 0.0, e_max=oc_cells.E_MAX
     )
     cells = out.cells
     true_i = next(
@@ -795,6 +835,7 @@ def run_one(
         **{k: sum(f.info.get(k, 0) for f in fits) for k in STEP_COUNTS},
         min_ess=min(float(getattr(f.evidence, "ess", onp.nan)) for f in fits),
         n_undersampled=sum(f.undersampled for f in fits),
+        **jitter_columns(sysd, out),
     )  # fmt: skip
     t_a = float(s[out.anchors[0]].t_ref)
     extra = time.time()
@@ -1011,6 +1052,24 @@ def informativeness_lines(rows):
     return lines
 
 
+def jitter_lines(ok):
+    """Report-only lines of the jitter arm (none without ``jitter_true``)."""
+    arm = [r for r in ok if "jitter_in_99" in r]
+    if not arm:
+        return []
+    ratio = onp.array([math.log10(r["jitter_hat"] / r["jitter_true"]) for r in arm])
+    hit = onp.mean([r["jitter_in_99"] for r in arm])
+    q = onp.array([r.get("chi2_quoted", math.nan) for r in arm], float)
+    t = onp.array([r.get("chi2_total", math.nan) for r in arm], float)
+    return [
+        f"- jitter arm ({len(arm)} fitted systems; report only): log10(sigma_J hat / "
+        f"true) median {onp.median(ratio):+.2f}, 16-84% [{onp.quantile(ratio, 0.16):+.2f}, "
+        f"{onp.quantile(ratio, 0.84):+.2f}]; truth in the central 98%: {hit:.3f}",
+        f"- jitter arm raw chi2/N of the best mode, quoted errors: median "
+        f"{onp.nanmedian(q):.3g}; sigma^2 + sigma_J^2: median {onp.nanmedian(t):.3g}",
+    ]
+
+
 def summarize(rows, n_sys):
     """The markdown summary and the verdict: ``"PASS"``, ``"FAIL"`` or
     ``"INCONCLUSIVE"`` (too few fitted systems for the criteria to bite)."""
@@ -1091,6 +1150,7 @@ def summarize(rows, n_sys):
         f"{m5o} misses of {n5o}",
         f"- assertion 6 (scale equivariance): {v6} violations in {n6} reruns",
         f"- assertion 7 (CMH, failure vs ln s at fixed effective noise): p = {p7:.3g}",
+        *jitter_lines(ok),
         f"- seconds per system: median {onp.median(sec):.1f}, max {sec.max():.1f}",
         f"- peak RSS: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**30:.2f} GB",
         "",
@@ -1126,7 +1186,9 @@ def git_hash():
         return ""
 
 
-def run_population(seed, start, n_sys, oracle, equiv_every, persist=None):
+def run_population(
+    seed, start, n_sys, oracle, equiv_every, persist=None, jitter=False
+):
     """The records of systems ``start .. start + n_sys - 1`` of ``seed``."""
     root = jax.random.key(seed)
     rows = []
@@ -1156,11 +1218,12 @@ def run_population(seed, start, n_sys, oracle, equiv_every, persist=None):
             else:
                 sysd = None
                 try:
-                    sysd = draw_system(rng, nights, fit)
+                    sysd = draw_system(rng, nights, fit, jitter)
                     store = {} if persist else None
                     row = run_one(
                         sysd, fit, key, u, oracle=oracle,
-                        equiv=bool(equiv_every) and i % equiv_every == 0,
+                        equiv=bool(equiv_every) and not jitter
+                        and i % equiv_every == 0,
                         store=store, u_sky=u_sky,
                         label_rng=label_rng,
                     )  # fmt: skip
@@ -1236,6 +1299,10 @@ def main():
         "--persist", action="store_true",
         help="per-system npz of the modes and IS draws of the flagged, true and matched cells, and their block variances of ln w",
     )  # fmt: skip
+    ap.add_argument(
+        "--jitter", action="store_true",
+        help="the jitter arm: inject a between-night jitter drawn from the fit's prior (log-uniform 1 uas to 3 mas) and marginalize it in the fit; scale equivariance is skipped",
+    )  # fmt: skip
     ap.add_argument("--start", type=int, default=0, help="first system index")
     ap.add_argument(
         "--merge", nargs="+", metavar="CSV",
@@ -1256,6 +1323,7 @@ def main():
         args.oracle,
         args.equiv_every,
         args.out if args.persist else None,
+        args.jitter,
     )
     finish(rows, args.n_sys, args.out)
 

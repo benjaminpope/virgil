@@ -1,0 +1,1 @@
+`position_cells` marginalizes a between-night astrometric jitter (`jitter=None`, the new default) as one more chart coordinate, log-uniform on 1 µas to 3 mas, replacing the type-II-ML `fit_jitter`; `reference_jitter` seeds the search, `fit_chi2` reports raw χ²/N on the quoted and on σ² + σ_J² errors, and the census gains a jitter arm (`scripts/orbit_population.py --jitter`).
