@@ -10,7 +10,7 @@ pip install --upgrade virgil-astro==0.4.2
 
 0.4.2 brings the radio work of 0.4.1's plan: an exact Toeplitz χ² that `fit` picks on its own where it applies,
 Adam that reports convergence, and a CLEAN that no longer diverges on sparse coverage. Most of the rest is code
-shape: the package is shorter to read, with 193 fewer single-use private helpers.
+shape: the package is shorter to read, with 193 fewer single-use private helpers. It also carries the orbit, binary-pipeline, SMC and `LinearImage` work since 0.4.1; its default changes are in the CHANGELOG and the upgrading table below.
 
 ## What's new
 
@@ -37,11 +37,23 @@ shape: the package is shorter to read, with 193 fewer single-use private helpers
 | fits an Adam model that stops at `max_steps` | `info["converged"]` is `False` and the fit warns (it was `None`, silent). | Raise `max_steps`, set `ftol_abs`, or filter the warning. |
 | fits one radio `Image` with enough data | `fit` uses the Toeplitz χ² (exact; agrees with the direct term to about 1e-13 of the loss). | Pass `chi2="direct"` to `term` for the old path. |
 | passes `CalibrationNuisance(alpha=1)` | it raises: an integer used to fit α. | Write `alpha=True` to fit or `alpha=1.0` to fix. |
-| uses `MultipoleField` with the default `r_min_mas=0` | order `m` is scaled by `tanh(r/spacing)^|m|`, so only `m = 0` survives at the centre. The default prior changes near the centre, so MAP fits and evidences move. | Refit; nothing to change in code. |
-| passes `Image(smooth_fwhm_mas=)` or `CalibrationNuisance(taper_fwhm_mas=)` ([#565](https://github.com/benjaminpope/virgil/pull/565)) | both are now `blur_fwhm_mas=`. The old names are deprecated aliases until 0.5 and raise a `DeprecationWarning`. Results are bit-identical. | Rename the keyword. |
+| uses `MultipoleField` with the default `r_min_mas=0` | order `m` is scaled by `tanh(r/length_r)^|m|` (`length_r` is five node spacings by default), so only `m = 0` survives at the centre. The default prior is suppressed for orders m ≥ 1 within about five spacings of the centre, whatever `n_r`, so MAP fits and evidences move. | Refit; nothing to change in code. |
+| passes `Image(smooth_fwhm_mas=)` or `CalibrationNuisance(taper_fwhm_mas=)` ([#565](https://github.com/benjaminpope/virgil/pull/565)) | both are now `blur_fwhm_mas=`. The old names are deprecated aliases until 0.5 and raise a `FutureWarning`. Results are bit-identical. | Rename the keyword. |
 | reads `fit(...).values["...log_brightness"]` of a free-pixel `Image` | it is the log of the pixel fluxes (`Σ exp = 1`), the same on every platform. Images, χ² and penalties are unchanged to rounding. | Nothing, unless you compared raw log-brightness across runs. |
 
-Everything else runs unchanged.
+Other rows (all in the CHANGELOG's "Changes to default behaviour"):
+
+| If you | What changes | What to do |
+|---|---|---|
+| call `fit_orbit_aliases` or `OrbitPipeline` | `temper=False` is now the default, and results change: default orbit results can cut the true cycle count. | Pass `temper=True` for the old behaviour. |
+| use `TSV(weight=w)` or `TV` | `beam_mas` is required, so the old call raises `TypeError`. | Pass `beam_mas`. |
+| use `BinaryPipeline` | `flux_range` is `[1e-5, 1]`; `global_nsigma` comes from simulated nulls, is capped at 3.09σ and `n_trials` is removed; limits use Ruffio et al. by default. | `limit_method="absil"` restores the old limits. |
+| pass `outlier_eps` or `drop_outlier_night`, or read `night_dropped` or `modes.robustness` | the keywords are ignored with a `FutureWarning`; the check and fields are removed. | Drop them. |
+| pass `night_length`, `resolution` or `motion_fraction` to `period_domain` | they are no longer accepted. | Drop them. |
+| fit with `regularizers` and a model returning one model per dataset | it raises. | Fit one dataset, or fold the regularizers into the model. |
+| install virgil | `blackjax>=1.7.1` is a new hard dependency and the floor is `jax>=0.9`; environments pinned to jax 0.8 will not install. | Upgrade jax. |
+
+The orbit, binary, SMC and `LinearImage` work is described in the CHANGELOG; the rest runs unchanged.
 
 ## Added
 
@@ -66,7 +78,7 @@ Everything else runs unchanged.
 ## Radio
 
 All radio code stays **provisional**. Trust status of each piece, from the radio register
-(`design/radio_imaging_innovations.md`, section B):
+(section B of the internal radio innovations register):
 
 | Item | Status | Independent check |
 |---|---|---|
@@ -111,7 +123,7 @@ positivity.
 
 ## Smaller and easier to read
 
-Measured on `src/virgil` with `design/code_shape_metrics.py`:
+Measured on `src/virgil` with `scripts/code_shape_metrics.py`:
 
 | | 0.4.1 | 0.4.2 |
 |---|---|---|
