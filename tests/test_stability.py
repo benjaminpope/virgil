@@ -53,6 +53,8 @@ EXPECTED = {
     "virgil.pipeline": {"*"},
     "virgil.models": {
         "ArchimedeanSpiral",
+        "Crescent",
+        "Blurred",
         "LinearImage",
         "MultipoleDisk",
         "ThinRing",
