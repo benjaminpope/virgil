@@ -71,7 +71,10 @@ __all__ = [
     "PeriodDomain",
     "choose_anchors",
     "decode_particles",
-    "fit_jitter",
+    "fit_chi2",
+    "jitter_draws",
+    "jitter_quantile",
+    "reference_jitter",
     "make_cells",
     "outlier_log_density",
     "outlier_prior",
@@ -87,6 +90,15 @@ __provisional__ = ("*",)
 # Declared prior bounds, inherited from the engine (design §10).
 S_MAX = 10.0  # inlier scale: ln s uniform on ±ln S_MAX (covers χ²/N <= 100)
 A_RANGE = (1.0, 30.0)  # mas
+# Between-night astrometric jitter σ_J (mas), added in quadrature to a night's
+# quoted position error (an offset of the night's position, none on its
+# velocity; see ``_peak_precision``): log-uniform on
+# 1 µas to 3 mas, an absolute range (not relative to the quoted errors, which
+# are exactly what excess scatter shows to be wrong). The floor is below any
+# real instrument's systematic floor; the ceiling is 10 % of the largest
+# semimajor axis in ``A_RANGE``, beyond which the scatter is no longer
+# astrometry of an orbit.
+JITTER_RANGE = (1e-3, 3.0)
 E_MAX = 0.9
 FLUX_FLOOR = 1e-4  # engine's flux floor (arcs._half_position)
 _N_PV = 4  # (p, v) of the linear Gaussian block; ln f is the fifth dimension
@@ -611,22 +623,16 @@ class _Catalogue:
 
 def _peak_precision(cat, ln_s, jitter, dtype):
     """``(Σ_data, Σ_total, Σ_total⁻¹)`` of every peak at scales ``exp(ln_s)``,
-    with an independent per-frame ``jitter`` (mas) added in quadrature."""
+    with the between-night ``jitter`` ``σ_J`` (mas) added in quadrature: one
+    offset of the night's position of variance ``σ_J²`` (none on ``v``)."""
     prec = np.einsum("g,kjgab->kjab", np.exp(-2 * ln_s), cat.hess)
     eps = np.finfo(dtype).eps
     # An unconstrained direction gets a huge variance, as NightPeak.covariance
     reg = eps * np.trace(prec, axis1=-2, axis2=-1)[..., None, None]
     cov = np.linalg.inv(prec + reg * np.eye(5, dtype=dtype))
-    add = np.stack(
-        [
-            jitter**2 / cat.n_frames,
-            jitter**2 / cat.n_frames,
-            jitter**2 / np.maximum(cat.t_ss, eps),
-            jitter**2 / np.maximum(cat.t_ss, eps),
-            np.zeros_like(cat.t_ss),
-        ],
-        axis=-1,
-    )
+    pos = jitter**2 * np.ones_like(cat.t_ss)
+    zero = np.zeros_like(cat.t_ss)
+    add = np.stack([pos, pos, zero, zero, zero], axis=-1)
     total = cov + add[:, None, :, None] * np.eye(5, dtype=dtype)
     return cov, total, np.linalg.inv(total)
 
@@ -742,7 +748,7 @@ class _Space:
 
     def __init__(
         self, cat, cell, t_anchor, t_k, a_range, e_max, flux_floor, jitter,
-        dtype,
+        dtype, marginal=False, jitter_range=JITTER_RANGE,
     ):  # fmt: skip
         self.cat, self.cell, self.dtype = cat.cast(dtype), cell, dtype
         self.t_anchor, self.t_k = t_anchor, np.asarray(t_k, dtype)
@@ -751,7 +757,13 @@ class _Space:
         self.ln_lo = np.asarray(math.log(cell.p_lo), dtype)
         self.ln_hi = np.asarray(math.log(cell.p_hi), dtype)
         self.ln_f_floor = math.log(flux_floor)
-        self.d = 9 + len(cat.blocks)
+        # marginal: σ_J is one more chart coordinate (the last), log-uniform on
+        # JITTER_RANGE; ``jitter`` is then only the reference the search starts
+        # from (plan covariances, C-steps and the start of the chart's σ_J)
+        self.marginal = bool(marginal)
+        self.jitter_range = tuple(jitter_range)
+        self.n_blocks = len(cat.blocks)
+        self.d = 9 + self.n_blocks + int(self.marginal)
         self.s_w2 = (a_range[1] ** 2 - a_range[0] ** 2) / (
             2 * math.log(a_range[1] / a_range[0]) * 3
         )
@@ -760,7 +772,8 @@ class _Space:
         children = (self.cat, self.t_k, self.jitter, self.ln_lo, self.ln_hi)
         aux = (
             self.dtype, self.t_anchor, self.a_range, self.e_max,
-            self.ln_f_floor, self.d, self.s_w2,
+            self.ln_f_floor, self.d, self.s_w2, self.marginal, self.n_blocks,
+            self.jitter_range,
         )  # fmt: skip
         return children, aux
 
@@ -769,7 +782,7 @@ class _Space:
         new = object.__new__(cls)
         new.cat, new.t_k, new.jitter, new.ln_lo, new.ln_hi = children
         (new.dtype, new.t_anchor, new.a_range, new.e_max, new.ln_f_floor,
-         new.d, new.s_w2) = aux  # fmt: skip
+         new.d, new.s_w2, new.marginal, new.n_blocks, new.jitter_range) = aux  # fmt: skip
         new.cell = None
         return new
 
@@ -800,8 +813,27 @@ class _Space:
             # closure offsets): the coordinates remain, with no likelihood
             "ln_s": float(self.cat.rescalable)
             * math.log(S_MAX)
-            * (2.0 * jax.nn.sigmoid(x[..., 9:]) - 1.0),
+            * (2.0 * jax.nn.sigmoid(x[..., 9 : 9 + self.n_blocks]) - 1.0),
+            "jitter": self.decode_jitter(x),
         }
+
+    def decode_jitter(self, x):
+        """σ_J (mas) of the chart vector(s) ``x``: the fixed reference unless
+        marginal, else log-uniform on ``jitter_range`` by the last coordinate."""
+        if not self.marginal:
+            return self.jitter * np.ones(np.shape(x)[:-1], self.dtype)
+        lo, hi = (math.log(v) for v in self.jitter_range)
+        return np.exp(lo + (hi - lo) * jax.nn.sigmoid(x[..., -1]))
+
+    def jitter_coordinate(self):
+        """The chart coordinate of the reference σ_J (empty unless marginal)."""
+        if not self.marginal:
+            return np.zeros(0, self.dtype)
+        lo, hi = (math.log(v) for v in self.jitter_range)
+        frac = np.clip(
+            (np.log(self.jitter) - lo) / (hi - lo), 1e-6, 1.0 - 1e-6
+        )
+        return (np.log(frac) - np.log1p(-frac))[None].astype(self.dtype)
 
     def states_at(self, t, period, ti, zeta):
         """``(p, v)`` of the Thiele–Innes constants ``ti`` (the anchor-frame
@@ -844,7 +876,7 @@ class _Space:
         c = self.decode(x)
         pv = self.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
         return _log_mixture(
-            self.cat, c["ln_s"], self.jitter, pv, c["ln_f"], self.dtype
+            self.cat, c["ln_s"], c["jitter"], pv, c["ln_f"], self.dtype
         )
 
     def sign_log_likelihood(self, x):
@@ -854,7 +886,7 @@ class _Space:
         c = self.decode(x)
         pv = self.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
         total, _ = _sign_terms(
-            self.cat, c["ln_s"], self.jitter, pv, c["ln_f"], self.dtype
+            self.cat, c["ln_s"], c["jitter"], pv, c["ln_f"], self.dtype
         )
         return logsumexp(
             total + np.asarray(self.cat.log_w_eps, self.dtype), axis=-1
@@ -883,7 +915,7 @@ def _inliers(x, space):
     c = space.decode(x)
     pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
     return _log_mixture(
-        space.cat, c["ln_s"], space.jitter, pv, c["ln_f"], space.dtype,
+        space.cat, c["ln_s"], c["jitter"], pv, c["ln_f"], space.dtype,
         inliers=True,
     )[1]  # fmt: skip
 
@@ -906,28 +938,30 @@ def _objective(x, space):
     return _target(x, space) + 3.0 * np.log(np.linalg.norm(x[_Z]))
 
 
-def _best_peaks(x, space):
-    """Each night's best peak at ``x`` and its term (the outlier floor ignored)."""
+def _best_peaks(x, space, sign=1.0):
+    """Each night's best peak at ``x`` (``(p, v)`` times ``sign``, the brighter
+    or fainter label) and its term (the outlier floor ignored)."""
     with run_in(onp.dtype(space.dtype).name):
         c = space.decode(x)
         pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
         state = np.concatenate(
-            [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
+            [sign * pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)],
+            axis=1,
         )
         terms = _peak_terms(
-            space.cat, c["ln_s"], space.jitter, state, space.dtype
+            space.cat, c["ln_s"], c["jitter"], state, space.dtype
         )
         j = np.argmax(terms, axis=1)
         return j, np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
 
 
-def _labels(x, space):
+def _labels(x, space, sign=1.0):
     """Each night's best peak, or -1 (outlier) where the floor is higher.
 
     At the prior mean ``ε̄ = ½`` the inlier and outlier weights ``1 - ε̄`` and
     ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``.
     """
-    j, best = _best_peaks(x, space)
+    j, best = _best_peaks(x, space, sign)
     return np.where(best > space.cat.log_b, j, -1)
 
 
@@ -1114,6 +1148,7 @@ def _chart_from(space, v, ti, ln_f, chi2, n):
             v[1:3],
             (np.log(ff) - np.log1p(-ff))[None],
             (np.log(frac_s) - np.log1p(-frac_s)).astype(space.dtype),
+            space.jitter_coordinate(),
         ]
     )
 
@@ -1309,8 +1344,9 @@ def search_plan(space, key=None, nu_width=None):
     cat, dt = space.cat, space.dtype
     if nu_width is None:
         nu_width = 1.0 / space.cell.p_lo - 1.0 / space.cell.p_hi
-    zero = np.zeros(len(cat.blocks), dt)
-    total = onp.asarray(_peak_precision(cat, zero, space.jitter, dt)[1], float)
+    pp = functools.partial(_peak_precision, cat, dtype=dt)
+    pp = functools.partial(pp, jitter=space.jitter)
+    total = onp.asarray(pp(np.zeros(len(cat.blocks), dt))[1], float)
     w_pv = onp.linalg.inv(total[..., :4, :4])
     w_pos = onp.zeros_like(w_pv)
     w_pos[..., :2, :2] = onp.linalg.inv(total[..., :2, :2])
@@ -1401,9 +1437,7 @@ def search_plan(space, key=None, nu_width=None):
         if cat.rescalable
         else [0.0]
     ):
-        cov, total, _ = _peak_precision(
-            cat, np.full(len(cat.blocks), ln_s, dt), space.jitter, dt
-        )
+        cov, total, _ = pp(np.full(len(cat.blocks), ln_s, dt))
         scaled = cat.loglike - np.sum(
             cat.n * ln_s + 0.5 * cat.chi2 * (math.exp(-2 * ln_s) - 1.0),
             axis=-1,
@@ -1810,7 +1844,7 @@ def decode_particles(result):
     """Orbit coordinates of a fit's posterior draws.
 
     Returns a dict of arrays with ``period``, ``z``, ``zeta``, ``ln_f``,
-    ``ln_s`` and the reporting invariants ``a``, ``ecc``, ``cos_inc``,
+    ``ln_s``, ``jitter`` (``σ_J``, mas) and the reporting invariants ``a``, ``ecc``, ``cos_inc``,
     ``omega`` and ``Omega`` (invariant under the covers of ``z`` and ``ζ``).
     """
     if result.draws is None:
@@ -1879,6 +1913,8 @@ def position_leg(
     e_max=E_MAX,
     flux_floor=FLUX_FLOOR,
     jitter=0.0,
+    jitter_ref=None,
+    jitter_range=JITTER_RANGE,
     n_is=N_IS,
     posterior_draws=True,
     dtype="float64",
@@ -1907,9 +1943,20 @@ def position_leg(
         origin).
     a_range, e_max, flux_floor : declared prior bounds
         Semimajor axis (mas), maximum eccentricity and flux-ratio floor.
-    jitter : float, optional
-        Position jitter (mas) added in quadrature, from
-        [`fit_jitter`][virgil.orbit_cells.fit_jitter] (default 0).
+    jitter : float or None, optional
+        A fixed position jitter (mas) added in quadrature (default 0), or
+        ``None`` to marginalize it: ``σ_J`` is then a coordinate of the chart,
+        log-uniform on ``JITTER_RANGE``, with the same inlier likelihood for
+        every night (the outlier floor ``b_k`` is its own integral over the
+        night's scale, free of ``σ_J``), so a night with modest excess scatter
+        is absorbed by ``σ_J`` instead of labelled an outlier.
+    jitter_ref : float, optional
+        With ``jitter=None``, the reference ``σ_J`` (mas) the search runs at
+        and the chart starts from (default the median quoted position error;
+        [`reference_jitter`][virgil.orbit_cells.reference_jitter] is better).
+    jitter_range : (float, float), optional
+        With ``jitter=None``, the ``σ_J`` prior bounds (mas, default
+        ``JITTER_RANGE``): widen the ceiling for large separations.
     n_is : int, optional
         Importance draws.
     posterior_draws : bool, optional
@@ -1941,10 +1988,21 @@ def position_leg(
             "non-finite peak mean or covariance): the all-outlier floor is "
             "undefined."
         )
+    marginal = jitter is None
+    if marginal:
+        if jitter_ref is None:
+            jitter_ref = float(
+                onp.clip(
+                    onp.median([_sigma_p(s) for s in summaries if s.peaks]),
+                    *jitter_range,
+                )
+            )
+        jitter = jitter_ref
     with run_in(name):
         space = _Space(
             cat, cell, 0.0, onp.asarray(t_nights, float) - t_anchor, a_range,
-            e_max, flux_floor, jitter, getattr(np, name),
+            e_max, flux_floor, jitter, getattr(np, name), marginal,
+            jitter_range,
         )  # fmt: skip
         plan = search_plan(space, k_plan, nu_width) if plan is None else plan
         info = {}
@@ -1972,34 +2030,32 @@ def position_leg(
     return fit
 
 
-def fit_jitter(
-    summaries,
-    log_outlier,
-    domain,
-    t_ab,
-    *,
-    n_grid=21,
-    n_best=3,
+def reference_jitter(
+    summaries, domain, t_ab, *, n_best=3, jitter_range=JITTER_RANGE
 ):
-    """The position jitter ``σ_J`` (mas) by type-II maximum likelihood.
+    """A robust reference ``σ_J`` (mas) for the search; never the fitted value.
 
-    ``σ_J`` maximizes ``ln Σ_n S_n(σ_J)`` on a log grid from 0.1 to 10 times the
-    median night position error, with ``S_n`` the position-level mixture
-    likelihood of the best seed orbit of cell ``n``
+    The search (plan covariances, C-steps) runs at one fixed jitter, so it needs
+    a starting scale: the excess of the nights' position scatter about the best
+    position-only seed orbits
     ([`position_profile`][virgil.aliases.position_profile], best peaks as
-    positions): the Laplace errors of a night are overconfident wherever the
-    summary model is imperfect.
+    positions) over the quoted errors, by medians (outlier nights do not move
+    them): ``σ_J² = max(median(|r|² / 2) / ln 2 - median(σ²), 0)``, the least
+    over the seeds, clipped to ``JITTER_RANGE``. The posterior of ``σ_J`` is
+    the chart's own last coordinate (``position_leg`` with ``jitter=None``);
+    this value only places the search and starts that coordinate, and the
+    modes' Newton moves it.
 
     Parameters
     ----------
     summaries : sequence of NightSummary
-    log_outlier : array-like
-        Each night's ``b_k``.
     domain : PeriodDomain
     t_ab : (float, float)
         The anchor times (days).
-    n_grid, n_best : int, optional
-        Grid size and seed orbits per cell (budgets, 21 and 3).
+    n_best : int, optional
+        Seed orbits per cell (budget, 3).
+    jitter_range : (float, float), optional
+        The ``σ_J`` bounds the result is clipped to (default ``JITTER_RANGE``).
 
     Returns
     -------
@@ -2008,11 +2064,13 @@ def fit_jitter(
     have = [i for i, s in enumerate(summaries) if s.peaks]
     t = onp.array([summaries[i].t_ref for i in have])
     best = [summaries[i].peaks[0] for i in have]
+    mean = onp.array([p.mean[:2] for p in best])
+    cov = onp.array([p.cov[:2, :2] for p in best])
     data = PositionData(
         t,
-        onp.array([p.mean[0] for p in best]),
-        onp.array([p.mean[1] for p in best]),
-        onp.array([p.cov[:2, :2] for p in best]),
+        mean[:, 0],
+        mean[:, 1],
+        cov,
         t_ref=float(t.min()),
     )
     bands = alias_bands([t_ab[0], t_ab[1]], (domain.p_cut, domain.p_max))
@@ -2021,33 +2079,86 @@ def fit_jitter(
         for row in position_profile(data, bands, n_best=n_best)
         for o, _ in row["orbits"]
     ]
-    sigma = float(onp.median([_sigma_p(s) for s in summaries if s.peaks]))
-    ln_f = float(onp.median([p.mean[4] for p in best]))
-    with run_in("float64"):
-        cat = _Catalogue(summaries, log_outlier).cast(np.float64)
-        # each seed's (p, v) at the nights, once
-        states = np.stack(
-            [
-                np.concatenate(
-                    [
-                        np.stack(o.relative(cat.t_ref)[:2], axis=1),
-                        np.stack(o.relative_velocity(cat.t_ref)[:2], axis=1),
-                    ],
-                    axis=1,
-                )
-                for o in seeds
-            ]
+    var_q = float(onp.median(onp.trace(cov, axis1=1, axis2=2) / 2.0))
+    excess = []
+    for o in seeds:
+        r = mean - onp.stack(o.relative(t)[:2], axis=1)
+        u = float(onp.median(onp.sum(r**2, axis=1) / 2.0)) / math.log(2.0)
+        excess.append(max(u - var_q, 0.0))
+    sigma = math.sqrt(min(excess)) if excess else 0.0
+    return float(onp.clip(sigma, *jitter_range))
+
+
+def fit_chi2(fit, mode=None):
+    """Raw ``χ²/N`` of a mode's inlier nights on the quoted and the total errors.
+
+    Both are on the nights' best peaks as ``(p, v)`` measurements (``(p)`` on a
+    single-frame night): ``quoted`` with the quoted covariance (scale 1, no
+    jitter), ``total`` with ``σ² + σ_J²`` (the brighter or fainter label chosen by
+    ``sign_log_likelihood``); ``n`` is
+    the number of data and ``n_inliers`` the nights. Neither is rescaled: a
+    ``quoted`` far above 1 with ``total`` near 1 is jitter, ``total`` far above 1
+    is a failed fit. Nights are the mode's labels (``_labels``).
+
+    Parameters
+    ----------
+    fit : CellFit
+    mode : Mode, optional
+        Default the cell's highest-evidence mode.
+
+    Returns
+    -------
+    dict
+        ``quoted``, ``total`` (``nan`` with no inlier night), ``n``,
+        ``n_inliers`` and ``jitter`` (mas).
+    """
+    out = dict(
+        quoted=math.nan, total=math.nan, n=0, n_inliers=0, jitter=math.nan
+    )
+    if mode is None:
+        if not fit.modes:
+            return out
+        mode = max(fit.modes, key=laplace_log_evidence)
+    space = fit.space
+    x = np.asarray(mode.x, space.dtype)
+    with run_in(onp.dtype(space.dtype).name):
+        c = space.decode(x)
+        sign = (
+            1.0
+            if space.sign_log_likelihood(x)[0]
+            >= space.sign_log_likelihood(x)[1]
+            else -1.0
         )
-        zero = np.zeros(len(cat.blocks))
-        score = jax.jit(
-            jax.vmap(
-                lambda pv, j: _log_mixture(cat, zero, j, pv, ln_f, np.float64),
-                in_axes=(0, None),
-            )
+        lab, _ = _best_peaks(x, space, sign)
+        use = onp.asarray(_labels(x, space, sign)) >= 0
+        pv = sign * space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+        state = onp.concatenate(
+            [onp.asarray(pv, float), onp.full((len(pv), 1), float(c["ln_f"]))],
+            axis=1,
         )
-        grid = sigma * onp.logspace(-1, 1, n_grid)
-        out = [float(logsumexp(score(states, j))) for j in grid]
-    return float(grid[int(onp.argmax(out))])
+        cat = space.cat
+        zero = np.zeros_like(c["ln_s"])
+        cov_q = onp.asarray(_peak_precision(cat, zero, 0.0, space.dtype)[0])
+        cov_t = onp.asarray(
+            _peak_precision(cat, zero, c["jitter"], space.dtype)[1]
+        )
+        mean = onp.asarray(cat.mean)
+        single = onp.asarray(cat.single)
+        j = onp.asarray(lab)
+    out["jitter"] = float(c["jitter"])
+    q = t = 0.0
+    n = 0
+    for k in onp.flatnonzero(use):
+        dims = [0, 1] if single[k] else [0, 1, 2, 3]
+        d = (state[k] - mean[k, j[k]])[dims]
+        sel = onp.ix_(dims, dims)
+        q += d @ onp.linalg.solve(cov_q[k, j[k]][sel], d)
+        t += d @ onp.linalg.solve(cov_t[k, j[k]][sel], d)
+        n += len(dims)
+    if n:
+        out.update(quoted=float(q / n), total=float(t / n), n=n)
+    out["n_inliers"] = int(use.sum())
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -2113,6 +2224,41 @@ class CellsResult:
     upper: onp.ndarray = None
     matters: onp.ndarray = None
     omitted_bound: float = None
+
+
+def jitter_draws(fits, p):
+    """``(σ_J, weight)`` of the cells' importance draws, the weights summing to
+    one and carrying ``p(N)``; ``None`` where ``p`` is undefined (a failed fit)
+    or there are no usable draws (a cell with no finite weight is skipped)."""
+    p = onp.asarray(p, float)
+    if not onp.all(onp.isfinite(p)):
+        return None
+    val, wt = [], []
+    for f, pi in zip(fits, p):
+        if pi <= 0 or f.x_is is None or f.log_w is None:
+            continue
+        lw = onp.asarray(f.log_w, float)
+        if not onp.isfinite(lw).any():
+            continue
+        w = onp.exp(lw - lw.max())
+        val.append(
+            onp.asarray(f.space.decode_jitter(np.asarray(f.x_is)), float)
+        )
+        wt.append(pi * w / w.sum())
+    if not val:
+        return None
+    val, wt = onp.concatenate(val), onp.concatenate(wt)
+    return val, wt / wt.sum()
+
+
+def jitter_quantile(draws, q):
+    """Weighted quantile ``q`` of ``jitter_draws``."""
+    val, wt = draws
+    order = onp.argsort(val)
+    cum = onp.cumsum(wt[order])
+    return float(
+        val[order][min(onp.searchsorted(cum, q * cum[-1]), len(val) - 1)]
+    )
 
 
 def _matters(cells, fits, log_p, delta):
@@ -2196,13 +2342,19 @@ def position_cells(
     outlier : OutlierPrior, optional
         The prior predictive for ``b_k`` (default tabulated for ``domain``).
     jitter : float, optional
-        Position jitter (mas); default fitted by
-        [`fit_jitter`][virgil.orbit_cells.fit_jitter]. Pass 0 for none.
+        A fixed position jitter (mas), 0 for none. Default ``None``: marginalized
+        over ``JITTER_RANGE`` in every cell
+        ([`position_leg`][virgil.orbit_cells.position_leg]), the search
+        starting from [`reference_jitter`][virgil.orbit_cells.reference_jitter].
+        ``CellsResult.jitter`` is then the posterior median.
     prune : bool, optional
         Drop cells below ``δ / N_cells`` (False: the dropped mass is recorded
         but nothing is dropped).
     delta : float, optional
         Reporting precision (default ``DELTA``).
+    jitter_range : (float, float), optional
+        With ``jitter=None``, the ``σ_J`` prior bounds (mas, default
+        ``JITTER_RANGE``): widen the ceiling for large separations.
     n_is : int, optional
         Importance draws per cell.
     max_seconds : float, optional
@@ -2231,8 +2383,10 @@ def position_cells(
     t_all = [s.t_ref for s in summaries]
     t_a, t_b = t_all[first], t_all[last]
     t_ab = t_b - t_a
-    if jitter is None:
-        jitter = fit_jitter(summaries, log_outlier, domain, (t_a, t_b))
+    jitter_ref = None if jitter is not None else reference_jitter(
+        summaries, domain, (t_a, t_b),
+        jitter_range=leg_kwargs.get("jitter_range", JITTER_RANGE),
+    )  # fmt: skip
     cells = make_cells(t_a, t_b, domain)
     workers = N_WORKERS if workers is None else workers
     start = time.time()
@@ -2245,8 +2399,8 @@ def position_cells(
             )
         return position_leg(
             summaries, log_outlier, cells[i], keys[i], t_anchor=t_a,
-            t_nights=t_all, jitter=jitter, n_is=n_is, posterior_draws=False,
-            plan=plan, nu_width=1.0 / t_ab, **leg_kwargs,
+            t_nights=t_all, jitter=jitter, jitter_ref=jitter_ref, n_is=n_is,
+            posterior_draws=False, plan=plan, nu_width=1.0 / t_ab, **leg_kwargs,
         )  # fmt: skip
 
     fits = [run(0, None)]
@@ -2331,10 +2485,15 @@ def position_cells(
         drawn, _map(lambda fk: _draw(*fk), drawn, workers)
     ):
         f.draws = draws
+    draws = None if jitter is not None else jitter_draws(fits, p)
+    jitter_hat = (  # the fixed value, else the posterior median of σ_J
+        float(jitter) if jitter is not None
+        else math.nan if draws is None else jitter_quantile(draws, 0.5)
+    )  # fmt: skip
     return CellsResult(
         domain, (first, last), t_ab, cells, fits, p, below,
         below if prune else onp.zeros_like(below), float(p[below].sum()),
-        float(jitter), failed, upper, matters, omitted,
+        jitter_hat, failed, upper, matters, omitted,
     )  # fmt: skip
 
 
@@ -2343,14 +2502,15 @@ def position_cells(
 # ---------------------------------------------------------------------------
 
 
-def truth_chart(space, orbit, t_anchor, ln_f, ln_s=0.0):
+def truth_chart(space, orbit, t_anchor, ln_f, ln_s=0.0, jitter=None):
     """The chart vector of a known orbit in the cell ``space`` (a diagnostic of
     the population census, never an input of a fit).
 
     ``t_anchor`` is the anchor time in days since ``orbit.t_ref``. ``y_z`` is
     placed at the radius ``R0`` (the likelihood does not depend on it); the
     label sign is not encoded: it is a symmetry of the target (the swap among
-    ``_symmetry_images``).
+    ``_symmetry_images``). With a marginal ``space``, ``jitter`` (mas, default
+    the space's reference) is the last coordinate.
     """
     z, zeta = oc.campbell_to_coordinates(orbit, t_anchor)
     z, zeta = onp.asarray(z, float), onp.asarray(zeta, float)
@@ -2363,9 +2523,18 @@ def truth_chart(space, orbit, t_anchor, ln_f, ln_s=0.0):
     da = math.log(space.a_range[1] / space.a_range[0])
     ln_lo, ln_hi = float(space.ln_lo), float(space.ln_hi)
     u = zeta / math.sqrt(space.e_max)  # the disc point of the ζ chart
-    w_s = onp.zeros(space.d - 9)
+    w_s = onp.zeros(space.n_blocks)
     if space.cat.rescalable:
         w_s += logit((ln_s / math.log(S_MAX) + 1.0) / 2.0)
+    w_j = onp.zeros(0)
+    if (
+        space.marginal
+    ):  # σ_J (default the space's reference), the last coordinate
+        jit = float(space.jitter) if jitter is None else float(jitter)
+        w_j = logit(
+            (math.log(jit) - math.log(space.jitter_range[0]))
+            / math.log(space.jitter_range[1] / space.jitter_range[0])
+        )[None]
     return onp.concatenate(
         [
             [logit((math.log(float(orbit.period)) - ln_lo) / (ln_hi - ln_lo))],
@@ -2374,6 +2543,7 @@ def truth_chart(space, orbit, t_anchor, ln_f, ln_s=0.0):
             u / onp.sqrt(max(1.0 - onp.sum(u**2), 1e-12)),
             [logit(1.0 - ln_f / space.ln_f_floor)],
             w_s,
+            w_j,
         ]
     )
 

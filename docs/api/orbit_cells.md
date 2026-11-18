@@ -19,7 +19,10 @@ posterior draws are an HMC resample-move.
         - search_cell
         - position_leg
         - decode_particles
-        - fit_jitter
+        - jitter_draws
+        - jitter_quantile
+        - fit_chi2
+        - reference_jitter
         - position_cells
         - PeriodDomain
         - Cell

@@ -529,14 +529,17 @@ def test_the_census_simulates_and_labels_in_float64(monkeypatch):
     # _labels: the state it scores is float64 whatever the ambient mode
     seen_state = []
 
-    def peak_terms(cat, ln_s, jitter, state, dtype):
+    def peak_terms(cat, ln_s, jitter, state, dtype, between=False):
         seen_state.append((jax.config.jax_enable_x64, state.dtype))
         return np.zeros((state.shape[0], 1), dtype)
 
     monkeypatch.setattr(pop.oc_cells, "_peak_terms", peak_terms)
     space = types.SimpleNamespace(
-        dtype=onp.float64, jitter=0.0, cat=types.SimpleNamespace(log_b=-1.0),
-        decode=lambda x: dict(period=1.0, z=None, zeta=0.0, ln_f=0.0, ln_s=0.0),
+        dtype=onp.float64, jitter=0.0, marginal=False,
+        cat=types.SimpleNamespace(log_b=-1.0),
+        decode=lambda x: dict(
+            period=1.0, z=None, zeta=0.0, ln_f=0.0, ln_s=0.0, jitter=0.0
+        ),
         states=lambda period, ti, zeta: onp.zeros((3, 4)),
     )  # fmt: skip
     monkeypatch.setattr(pop.oc_cells.oc, "z_to_ti", lambda z: z)
