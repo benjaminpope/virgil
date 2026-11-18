@@ -748,7 +748,7 @@ class _Space:
 
     def __init__(
         self, cat, cell, t_anchor, t_k, a_range, e_max, flux_floor, jitter,
-        dtype, marginal=False,
+        dtype, marginal=False, jitter_range=JITTER_RANGE,
     ):  # fmt: skip
         self.cat, self.cell, self.dtype = cat.cast(dtype), cell, dtype
         self.t_anchor, self.t_k = t_anchor, np.asarray(t_k, dtype)
@@ -761,6 +761,7 @@ class _Space:
         # JITTER_RANGE; ``jitter`` is then only the reference the search starts
         # from (plan covariances, C-steps and the start of the chart's σ_J)
         self.marginal = bool(marginal)
+        self.jitter_range = tuple(jitter_range)
         self.n_blocks = len(cat.blocks)
         self.d = 9 + self.n_blocks + int(self.marginal)
         self.s_w2 = (a_range[1] ** 2 - a_range[0] ** 2) / (
@@ -772,6 +773,7 @@ class _Space:
         aux = (
             self.dtype, self.t_anchor, self.a_range, self.e_max,
             self.ln_f_floor, self.d, self.s_w2, self.marginal, self.n_blocks,
+            self.jitter_range,
         )  # fmt: skip
         return children, aux
 
@@ -780,7 +782,7 @@ class _Space:
         new = object.__new__(cls)
         new.cat, new.t_k, new.jitter, new.ln_lo, new.ln_hi = children
         (new.dtype, new.t_anchor, new.a_range, new.e_max, new.ln_f_floor,
-         new.d, new.s_w2, new.marginal, new.n_blocks) = aux  # fmt: skip
+         new.d, new.s_w2, new.marginal, new.n_blocks, new.jitter_range) = aux  # fmt: skip
         new.cell = None
         return new
 
@@ -817,17 +819,17 @@ class _Space:
 
     def decode_jitter(self, x):
         """σ_J (mas) of the chart vector(s) ``x``: the fixed reference unless
-        marginal, else log-uniform on ``JITTER_RANGE`` by the last coordinate."""
+        marginal, else log-uniform on ``jitter_range`` by the last coordinate."""
         if not self.marginal:
             return self.jitter * np.ones(np.shape(x)[:-1], self.dtype)
-        lo, hi = (math.log(v) for v in JITTER_RANGE)
+        lo, hi = (math.log(v) for v in self.jitter_range)
         return np.exp(lo + (hi - lo) * jax.nn.sigmoid(x[..., -1]))
 
     def jitter_coordinate(self):
         """The chart coordinate of the reference σ_J (empty unless marginal)."""
         if not self.marginal:
             return np.zeros(0, self.dtype)
-        lo, hi = (math.log(v) for v in JITTER_RANGE)
+        lo, hi = (math.log(v) for v in self.jitter_range)
         frac = np.clip(
             (np.log(self.jitter) - lo) / (hi - lo), 1e-6, 1.0 - 1e-6
         )
@@ -1913,6 +1915,7 @@ def position_leg(
     flux_floor=FLUX_FLOOR,
     jitter=0.0,
     jitter_ref=None,
+    jitter_range=JITTER_RANGE,
     n_is=N_IS,
     posterior_draws=True,
     dtype="float64",
@@ -1952,6 +1955,9 @@ def position_leg(
         With ``jitter=None``, the reference ``σ_J`` (mas) the search runs at
         and the chart starts from (default the median quoted position error;
         [`reference_jitter`][virgil.orbit_cells.reference_jitter] is better).
+    jitter_range : (float, float), optional
+        With ``jitter=None``, the ``σ_J`` prior bounds (mas, default
+        ``JITTER_RANGE``): widen the ceiling for large separations.
     n_is : int, optional
         Importance draws.
     posterior_draws : bool, optional
@@ -1989,7 +1995,7 @@ def position_leg(
             jitter_ref = float(
                 onp.clip(
                     onp.median([_sigma_p(s) for s in summaries if s.peaks]),
-                    *JITTER_RANGE,
+                    *jitter_range,
                 )
             )
         jitter = jitter_ref
@@ -1997,6 +2003,7 @@ def position_leg(
         space = _Space(
             cat, cell, 0.0, onp.asarray(t_nights, float) - t_anchor, a_range,
             e_max, flux_floor, jitter, getattr(np, name), marginal,
+            jitter_range,
         )  # fmt: skip
         plan = search_plan(space, k_plan, nu_width) if plan is None else plan
         info = {}
@@ -2024,7 +2031,9 @@ def position_leg(
     return fit
 
 
-def reference_jitter(summaries, domain, t_ab, *, n_best=3):
+def reference_jitter(
+    summaries, domain, t_ab, *, n_best=3, jitter_range=JITTER_RANGE
+):
     """A robust reference ``σ_J`` (mas) for the search; never the fitted value.
 
     The search (plan covariances, C-steps) runs at one fixed jitter, so it needs
@@ -2046,6 +2055,8 @@ def reference_jitter(summaries, domain, t_ab, *, n_best=3):
         The anchor times (days).
     n_best : int, optional
         Seed orbits per cell (budget, 3).
+    jitter_range : (float, float), optional
+        The ``σ_J`` bounds the result is clipped to (default ``JITTER_RANGE``).
 
     Returns
     -------
@@ -2076,7 +2087,7 @@ def reference_jitter(summaries, domain, t_ab, *, n_best=3):
         u = float(onp.median(onp.sum(r**2, axis=1) / 2.0)) / math.log(2.0)
         excess.append(max(u - var_q, 0.0))
     sigma = math.sqrt(min(excess)) if excess else 0.0
-    return float(onp.clip(sigma, *JITTER_RANGE))
+    return float(onp.clip(sigma, *jitter_range))
 
 
 def fit_chi2(fit, mode=None):
@@ -2342,6 +2353,9 @@ def position_cells(
         but nothing is dropped).
     delta : float, optional
         Reporting precision (default ``DELTA``).
+    jitter_range : (float, float), optional
+        With ``jitter=None``, the ``σ_J`` prior bounds (mas, default
+        ``JITTER_RANGE``): widen the ceiling for large separations.
     n_is : int, optional
         Importance draws per cell.
     max_seconds : float, optional
@@ -2370,9 +2384,10 @@ def position_cells(
     t_all = [s.t_ref for s in summaries]
     t_a, t_b = t_all[first], t_all[last]
     t_ab = t_b - t_a
-    jitter_ref = None
-    if jitter is None:
-        jitter_ref = reference_jitter(summaries, domain, (t_a, t_b))
+    jitter_ref = None if jitter is not None else reference_jitter(
+        summaries, domain, (t_a, t_b),
+        jitter_range=leg_kwargs.get("jitter_range", JITTER_RANGE),
+    )  # fmt: skip
     cells = make_cells(t_a, t_b, domain)
     workers = N_WORKERS if workers is None else workers
     start = time.time()
@@ -2518,8 +2533,8 @@ def truth_chart(space, orbit, t_anchor, ln_f, ln_s=0.0, jitter=None):
     ):  # σ_J (default the space's reference), the last coordinate
         jit = float(space.jitter) if jitter is None else float(jitter)
         w_j = logit(
-            (math.log(jit) - math.log(JITTER_RANGE[0]))
-            / math.log(JITTER_RANGE[1] / JITTER_RANGE[0])
+            (math.log(jit) - math.log(space.jitter_range[0]))
+            / math.log(space.jitter_range[1] / space.jitter_range[0])
         )[None]
     return onp.concatenate(
         [

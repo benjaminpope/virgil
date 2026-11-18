@@ -225,6 +225,7 @@ def test_the_period_is_calibrated_with_injected_jitter_end_to_end():
     assert n_ok == n_run  # calibration at scale is the census jitter arm's job
 
 
+@pytest.mark.slow
 @x64
 def test_one_cell_fit_with_marginal_jitter_recovers_the_jitter_scale():
     """The marginal ``position_leg`` of the true cell (8 nights, jitter 3 sigma)
@@ -243,3 +244,36 @@ def test_one_cell_fit_with_marginal_jitter_recovers_the_jitter_scale():
     draw = onp.asarray(oc_cells.decode_particles(fit)["jitter"])
     assert draw.min() >= 1e-3 and draw.max() <= 3.0
     assert j_true / 4 < onp.median(draw) < 4 * j_true
+
+
+@x64
+def test_newton_from_a_wrong_reference_moves_the_jitter_coordinate_to_the_truth():
+    """From the true orbit with σ_J started 2x too low, the Newton refinement
+    of the marginal chart (the search's last step) moves σ_J to the truth's
+    scale: the jitter is a fitted coordinate, not the reference."""
+    j_true = 5 * SIGMA
+    orbit, s, space = _setup(j_true, k=40)
+    x0 = np.asarray(_truth_x(space, orbit, j_true / 2))
+    x, _, _ = oc_cells._lm(oc_cells._target, x0, (space,), 40)
+    j = float(space.decode_jitter(x))
+    assert j_true / 2.5 < j < 2.5 * j_true
+    assert float(oc_cells._target(x, space)) > float(
+        oc_cells._target(x0, space)
+    )
+
+
+@x64
+def test_the_jitter_range_is_a_parameter_of_the_chart():
+    """A wider ``jitter_range`` moves the decode and the reference coordinate
+    together; the chart prior itself is unchanged."""
+    orbit, s, space = _setup(0.0, k=8)
+    wide = oc_cells._Space(
+        space.cat, space.cell, 0.0, space.t_k, (1.0, 30.0), 0.9, 1e-4, 0.5,
+        np.float64, True, (1e-3, 30.0),
+    )  # fmt: skip
+    assert float(wide.decode_jitter(wide.jitter_coordinate())) == (
+        pytest.approx(0.5)
+    )
+    x = np.asarray(_truth_x(space, orbit, 0.1))
+    assert float(wide.decode_jitter(x)) > float(space.decode_jitter(x))
+    assert float(wide.logprior(x)) == pytest.approx(float(space.logprior(x)))
