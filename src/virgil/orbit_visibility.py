@@ -25,6 +25,12 @@ Stage 3c of the plan in ``design/orbit_alias_cycles.md``. It adds to
   invariants ([`report_invariants`][virgil.orbit_visibility.report_invariants]);
 - [`fit_cells`][virgil.orbit_visibility.fit_cells], the whole new path on prepared data.
 
+The visibility-level model is the outlier mixture plus the dataset and night error
+scales, with gains and closure offsets marginalized; it has **no jitter**. Leg 1's
+marginalised jitter ``σ_J`` only shapes the proposal and the bridge: in the visibility
+leg it is a prior-only coordinate, which integrates out to exactly 1, so the reported
+posterior and evidence come from the model without jitter.
+
 Nothing here touches the old search path. The primary diameter is held at the value of
 ``positions`` and no visibility amplitude is fitted.
 
