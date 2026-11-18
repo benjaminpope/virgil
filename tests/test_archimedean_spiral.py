@@ -446,3 +446,15 @@ def test_default_nodes_are_at_most_a_quarter_width_apart_on_a_short_arm():
     )  # spacing is largest at the end
     assert spiral.nodes == 4
     assert largest <= width / 4.0
+
+
+def test_a_float32_grid_with_float64_parameters_renders():
+    """The scan carry takes the promoted dtype (a regression: a float32 carry
+    against a float64 step output raised)."""
+    with jax.enable_x64(True):
+        spiral = ArchimedeanSpiral(**SHAPES["inclined_clockwise_faded"])
+        axis = np.linspace(-80.0, 80.0, 64, dtype=np.float32)
+        xx, yy = np.meshgrid(axis, axis)
+        image = spiral._centred_image(xx, yy, 2.5)
+    assert image.shape == xx.shape
+    assert onp.isfinite(onp.asarray(image)).all()
