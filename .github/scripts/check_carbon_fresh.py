@@ -27,16 +27,19 @@ import tomllib
 from datetime import datetime, timedelta
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+# The working directory, not this file's: lint.yml runs the base branch's
+# copy from outside the checkout.
+ROOT = Path.cwd()
+# Keep in sync with SOURCES in scripts/dev_carbon.py (a test checks it).
+SOURCES = ("claude", "vscode", "gemini", "copilot", "gha", "slurm")
 SUMMARY = ROOT / "docs" / "generated" / "dev_carbon.json"
-SKIP = re.compile(r"^\s*carbon-gate:\s*skip\b", re.M | re.I)
+SKIP = re.compile(r"^\s*carbon-gate:[ \t]*skip[ \t]+(\S[^\r\n]*)", re.M | re.I)
 
 
 def problems(stamp, version, commit_time, max_age_days=7):
     """Why ``stamp`` does not clear the gate for ``version``; [] if it does.
 
-    ``commit_time`` is the tagged commit's date; ``None`` skips the age check
-    (pull requests).
+    ``commit_time`` is the date of the commit being checked.
     """
     if not stamp:
         return [
@@ -49,18 +52,23 @@ def problems(stamp, version, commit_time, max_age_days=7):
             f"carbon page was refreshed for v{stamp.get('version')}, "
             f"not v{version}"
         )
-    if commit_time is not None:
-        age = commit_time - datetime.fromisoformat(stamp["generated"])
-        if age > timedelta(days=max_age_days):
-            out.append(
-                f"carbon refresh is {age.days} days older than the tagged "
-                f"commit (limit {max_age_days})"
-            )
+    if set(stamp.get("sources") or ()) != set(SOURCES):
+        out.append(f"stamp does not cover all sources: {stamp.get('sources')}")
+    age = commit_time - datetime.fromisoformat(stamp["generated"])
+    if age > timedelta(days=max_age_days):
+        out.append(
+            f"carbon refresh is {age.total_seconds() / 86400:.1f} days older "
+            f"than the commit (limit {max_age_days})"
+        )
+    if age < -timedelta(hours=1):
+        out.append("carbon refresh is dated after the commit")
     return out
 
 
-def skipped(body):
-    return bool(SKIP.search(body or ""))
+def skip_reason(body):
+    """The reason given on a ``carbon-gate: skip <reason>`` line, or None."""
+    m = SKIP.search(body or "")
+    return m and m.group(1).strip()
 
 
 def version_of(text):
@@ -76,22 +84,23 @@ def git(*args):
 def main(argv):
     stamp = json.loads(SUMMARY.read_text("utf-8")).get("release")
     max_age = int(os.environ.get("CARBON_MAX_AGE_DAYS", "7"))
+    commit = datetime.fromisoformat(git("show", "-s", "--format=%cI", "HEAD"))
     if argv[:1] == ["--pr"]:
         new = version_of((ROOT / "pyproject.toml").read_text("utf-8"))
         if new == version_of(git("show", f"{argv[1]}:pyproject.toml")):
             print("version unchanged: carbon page not required")
             return 0
-        found, body, label = problems(stamp, new, None), "PR_BODY", "PR"
+        found = problems(stamp, new, commit, max_age)
+        body, label = "PR_BODY", "PR"
     else:
         tag = os.environ["GITHUB_REF_NAME"]
-        commit = datetime.fromisoformat(
-            git("show", "-s", "--format=%cI", "HEAD")
-        )
         found = problems(stamp, tag.removeprefix("v"), commit, max_age)
         body, label = "RELEASE_BODY", "release notes"
-    if found and skipped(os.environ.get(body)):
+    reason = skip_reason(os.environ.get(body))
+    if found and reason:
         print(
-            f"::warning::carbon gate skipped by the {label}: {'; '.join(found)}"
+            f"::warning::carbon gate skipped by the {label} ({reason}): "
+            + "; ".join(found)
         )
         return 0
     for p in found:

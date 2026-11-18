@@ -48,7 +48,7 @@ jobs:
         run: |
           RELEASE_BODY=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
           export RELEASE_BODY
-          python3 .github/scripts/check_carbon_fresh.py
+          python3 -P .github/scripts/check_carbon_fresh.py
 
   build:
     needs: gate

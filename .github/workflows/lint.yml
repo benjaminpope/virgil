@@ -139,13 +139,17 @@ jobs:
       - name: stamp matches a bumped version
         run: |
           git fetch -q --depth=1 origin "$BASE"
-          if git show "origin/$BASE:.github/scripts/check_carbon_fresh.py" > "$RUNNER_TEMP/check.py" 2>/dev/null; then
-            cp "$RUNNER_TEMP/check.py" .github/scripts/check_carbon_fresh.py
+          # The base's copy, run from outside the checkout with -P so the PR's
+          # files cannot shadow the standard library; until the base has the
+          # script (the PR that introduced it) the PR's own copy runs.
+          script=.github/scripts/check_carbon_fresh.py
+          if git show "origin/$BASE:$script" > "$RUNNER_TEMP/check.py" 2>/dev/null; then
+            script="$RUNNER_TEMP/check.py"
           fi
           # The description as it is now, so a re-run sees an added skip line.
           PR_BODY=$(gh pr view "$PR" --json body -q .body)
           export PR_BODY
-          python3 .github/scripts/check_carbon_fresh.py --pr "origin/$BASE"
+          python3 -P "$script" --pr "origin/$BASE"
 
   # Changelog fragments (changelog.d/README.md): only a release PR (head
   # branch `release*`) may edit CHANGELOG.md, so parallel PRs never conflict

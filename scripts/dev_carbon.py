@@ -40,6 +40,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -368,7 +369,7 @@ def main(argv=None):
 
     home = carbon_home()
     cmd = [sys.executable, str(home / "carbon_report.py")]
-    cmd += ["--config", str(CONFIG), "--archive", str(ARCHIVE)]
+    cmd += ["--config", str(CONFIG)]
     if args.offline:
         cmd.append("--offline")
     if args.sources:
@@ -379,6 +380,12 @@ def main(argv=None):
         # the run is accepted, so a failed --release leaves the tree (and an
         # earlier stamp) untouched.
         new_summary = Path(tmp) / "summary.json"
+        # The archive is staged the same way: carbon_report.py compacts into
+        # it in place before it can warn.
+        new_archive = Path(tmp) / "archive.json"
+        if ARCHIVE.exists():
+            shutil.copy(ARCHIVE, new_archive)
+        cmd += ["--archive", str(new_archive)]
         cmd += ["--markdown", str(fragment), "--summary", str(new_summary)]
         run = subprocess.run(cmd, stderr=subprocess.PIPE, text=True)
         sys.stderr.write(run.stderr)
@@ -393,6 +400,14 @@ def main(argv=None):
                     + "\n  ".join(bad)
                 )
             cfg = tomllib.loads(CONFIG.read_text("utf-8"))
+            off = [
+                s for s in SOURCES if not cfg.get(s, {}).get("enabled", True)
+            ]
+            if off:
+                sys.exit(
+                    f"--release: sources disabled in {CONFIG.name}: "
+                    f"{', '.join(off)}. A release refresh needs all of them."
+                )
             head = subprocess.run(
                 ["git", "rev-parse", "--short", "HEAD"],
                 cwd=ROOT,
@@ -406,9 +421,11 @@ def main(argv=None):
             summary["release"] = release_stamp(
                 version,
                 head,
-                [s for s in SOURCES if cfg.get(s, {}).get("enabled", True)],
+                SOURCES,
                 datetime.now().astimezone(),
             )
+        if new_archive.exists():
+            shutil.copy(new_archive, ARCHIVE)
         SUMMARY.write_text(json.dumps(summary, indent=1) + "\n")
         PAGE.write_text(page(fragment.read_text(), summary, home), "utf-8")
     write_badge(summary)
