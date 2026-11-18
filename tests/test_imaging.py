@@ -766,7 +766,10 @@ def test_evidence_and_laplace_account_for_non_pixel_priors():
     # LogUniform is fitted in log f without its density: the MAP is the
     # likelihood's mode, so the prior precision in f is 0.
     hess = prior_prec + jac.T @ jac
-    log_pi_f = float(full_priors["env.flux"].log_prob(float(f0[0])))
+    with jax.enable_x64(True):
+        log_pi_f = float(
+            full_priors["env.flux"].log_prob(np.float64(float(f0[0])))
+        )
     expected_ev_free = (
         ev_fixed
         + 0.5
@@ -1062,7 +1065,8 @@ def test_log_evidence_adds_the_prior_precision_of_scene_parameters():
     f0 = float(result.model.env.flux)
     flat = base | {"env.flux": dist.Uniform(0.0, 100.0)}
     ev_flat = float(log_evidence(result, data, priors=flat))
-    log_flat = float(flat["env.flux"].log_prob(f0))
+    with jax.enable_x64(True):
+        log_flat = float(flat["env.flux"].log_prob(np.float64(f0)))
     dense, cov = _dense_evidence(
         result, data, paths, onp.diag([1.0, 1.0, 0.0]), log_flat
     )
@@ -1075,7 +1079,8 @@ def test_log_evidence_adds_the_prior_precision_of_scene_parameters():
     mu, sigma = f0 + 0.3, 0.5
     normal = base | {"env.flux": dist.Normal(mu, sigma)}
     ev_normal = float(log_evidence(result, data, priors=normal))
-    log_normal = float(dist.Normal(mu, sigma).log_prob(f0))
+    with jax.enable_x64(True):
+        log_normal = float(dist.Normal(mu, sigma).log_prob(np.float64(f0)))
     expected = (
         ev_flat
         + (log_normal - log_flat)
@@ -1102,9 +1107,11 @@ def test_log_evidence_is_finite_for_a_prior_constrained_parameter():
         "env.flux": dist.Normal(f_env - 0.2, sigma),
     }
     ev = float(log_evidence(result, data, priors=base | pri))
-    log_prior = sum(
-        float(pri[p].log_prob(float(result.model.get(p)))) for p in pri
-    )
+    with jax.enable_x64(True):
+        log_prior = sum(
+            float(pri[p].log_prob(np.float64(float(result.model.get(p)))))
+            for p in pri
+        )
     dense, _ = _dense_evidence(
         result,
         data,

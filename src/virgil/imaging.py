@@ -2681,8 +2681,8 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
     of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
     ``L`` the likelihood normalizer; extra priors in ``priors`` enter through
-    their ``log_prob`` at the MAP and add ``-∂² log p`` (0 for a LogUniform prior, fitted in ``log x``) to their ``JᵀJ`` block of
-    the Hessian. Without ``priors=``, every non-latent parameter is held at its
+    their ``log_prob`` at the MAP and add ``-∂² log p`` (0 for a prior with a flat coordinate, such as LogUniform) to their
+    ``JᵀJ`` block of the Hessian. Without ``priors=``, every non-latent parameter is held at its
     MAP: the result is a profile likelihood in them and cannot compare scenes
     with different numbers of parameters. Compare
     it across hyperparameters: it is conditional on those held in ``model`` (or
@@ -2766,10 +2766,15 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     sign, logdet_extra = onp.linalg.slogdet(schur)
     if sign <= 0:
         return float(-onp.inf)
-    log_prior = sum(
-        float(onp.sum(onp.asarray(priors[p].log_prob(model.get(p)), float)))
-        for p in extra_paths
-    )
+    with run_in("float64"):
+        log_prior = sum(
+            float(
+                np.sum(
+                    priors[p].log_prob(np.asarray(model.get(p), np.float64))
+                )
+            )
+            for p in extra_paths
+        )
     extra_term = (
         log_prior
         + 0.5 * jac_extra.shape[1] * float(onp.log(2.0 * onp.pi))
@@ -2817,7 +2822,8 @@ def laplace_samples(
     The whitened latents ``z`` are drawn from ``N(z₀, (I + JᵀJ)⁻¹)`` about the
     MAP ``z₀``, the approximation of [`log_evidence`][virgil.imaging.log_evidence].
     With ``priors``, the latents' covariance is the marginal one of the full
-    Hessian ``diag(I, 0) + JᵀJ``, with the other parameters' columns in ``J``.
+    Hessian ``diag(I, 0) + JᵀJ``, with the other parameters' columns in ``J``
+    (their prior precision is not added, unlike in ``log_evidence``).
     Exact only for a linear model, assumes correct error bars, uses the quoted
     errors and is conditional on the hyperparameters held in ``model`` (or sample
     them, as for [`log_evidence`][virgil.imaging.log_evidence]).
