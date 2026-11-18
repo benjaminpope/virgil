@@ -905,7 +905,14 @@ class ArchimedeanSpiral(Component):
             blur = np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / width**2)
             return image + wk * blur, None
 
-        image, _ = jax.lax.scan(add_blob, np.zeros_like(xx), (x, y, weight))
+        blob0 = (x[0], y[0], weight[0])
+        zero = np.zeros_like(xx)
+        # the carry takes the dtype the blob promotes to (float64 parameters
+        # on a float32 grid), or scan rejects the mismatched carry
+        dtype = jax.eval_shape(add_blob, zero, blob0)[0].dtype
+        image, _ = jax.lax.scan(
+            add_blob, zero.astype(dtype), (x, y, weight)
+        )
         return image
 
 
