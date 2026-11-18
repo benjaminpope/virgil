@@ -2508,20 +2508,6 @@ def _residual_jacobian(model, data, path, on_device=False, regularizers=()):
         return r, (jac if on_device else onp.asarray(jac, dtype=float))
 
 
-def _prior_precision(model, priors, paths):
-    """Block-diagonal ``-∂² Σ log p`` at the MAP for ``paths``, by autodiff."""
-    with run_in("float64"):
-        blocks = []
-        for p in paths:
-            x = np.asarray(model.get(p), dtype=np.float64)
-
-            def neg_log_prior(v, p=p, shape=x.shape):
-                return -np.sum(priors[p].log_prob(v.reshape(shape)))
-
-            blocks.append(onp.asarray(jax.hessian(neg_log_prior)(x.ravel())))
-    return scipy.linalg.block_diag(*blocks)
-
-
 def _singular_values(jac):
     """Singular values of ``jac`` (descending, NumPy), float64 on the device;
     QR-reduced first when far from square (the Gram matrix would lose the
@@ -2757,7 +2743,17 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     singular, vt = _svd(jac_z)
     logdet = float(onp.sum(onp.log1p(singular**2)))
     c = vt @ (onp.asarray(jac_z, dtype=float).T @ jac_extra)
-    precision = _prior_precision(model, priors, extra_paths)
+    # Λ = -∂² Σ log p at the MAP, by autodiff, one block per parameter.
+    blocks = []
+    with run_in("float64"):
+        for p in extra_paths:
+            x = np.asarray(model.get(p), dtype=np.float64)
+
+            def neg_log_prior(v, p=p, shape=x.shape):
+                return -np.sum(priors[p].log_prob(v.reshape(shape)))
+
+            blocks.append(onp.asarray(jax.hessian(neg_log_prior)(x.ravel())))
+    precision = scipy.linalg.block_diag(*blocks)
     schur = (
         jac_extra.T @ jac_extra + precision - (c.T / (1.0 + singular**2)) @ c
     )
