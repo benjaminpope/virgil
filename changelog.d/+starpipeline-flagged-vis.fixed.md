@@ -1,0 +1,1 @@
+`StarPipeline.run()` no longer crashes on data with flagged visibilities: `plot_v2_models` now pairs each plotted V² with the spatial frequency of its own baseline (`vis_index`), and skips the data points when a `vis_mat` operator makes them unpairable. Display only; fit results are unchanged.

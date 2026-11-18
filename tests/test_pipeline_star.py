@@ -1101,3 +1101,38 @@ def test_unresolved_star_starts_inside_the_diameter_prior(tmp_path):
     check = {c.name: c for c in result.checks}["start_at_bound"]
     assert check.status == "warn"
     assert any(name.endswith(".diam") for name in check.value)
+
+
+# --- flagged visibilities -----------------------------------------------------
+def test_run_with_flagged_visibilities(tmp_path):
+    """Flagged V² samples stay in u, v and wavel but not in vis: the fit and
+    the V² plot must pair each plotted point with its own baseline."""
+    rng = onp.random.default_rng(5)
+    u, v = rng.uniform(5.0, 90.0, (2, 24))
+    wavel = 2.2e-6
+    truth = UniformDisk(6.0)
+    v2 = onp.abs(onp.asarray(truth.model(u, v, wavel))) ** 2
+    flag = onp.zeros(u.size, dtype=bool)
+    flag[[0, 7, 8, 23]] = True
+    flagged = virgil.OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": wavel,
+            "vis": v2 + rng.normal(0.0, 0.01, u.size),
+            "d_vis": onp.full(u.size, 0.01),
+            "vis_flag": flag,
+        }
+    )
+    assert flagged.vis.size == u.size - 4 and flagged.vis_index is not None
+    res = StarPipeline(
+        flagged, "uniform", output=tmp_path / "run", **TINY
+    ).run(through="fit")
+    assert res.status == "partial"
+    assert (tmp_path / "run" / "plots" / "fit_v2.png").exists()
+    # The plot pairs each unflagged V² with its own spatial frequency.
+    ax = star.plot_v2_models(flagged, {"uniform": res.model()}).axes[0]
+    x, y = ax.lines[0].get_data()
+    keep = ~flag
+    onp.testing.assert_allclose(x * 1e6, (onp.hypot(u, v) / wavel)[keep])
+    onp.testing.assert_allclose(y, flagged.vis)

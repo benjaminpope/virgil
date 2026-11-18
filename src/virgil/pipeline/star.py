@@ -521,15 +521,20 @@ def plot_v2_models(data, fitted, ax=None, curves=400):
     u = onp.asarray(data.u, dtype=float)
     wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
     freq = onp.hypot(u, onp.asarray(data.v, dtype=float)) / wavel
+    # `vis` holds only the unflagged samples; `vis_index` says which rows of
+    # u, v and wavel they are (None: all).
+    if data.vis_index is not None:
+        freq = freq[onp.asarray(data.vis_index)]
     power = 2 if data.v2_flag else 1
-    ax.errorbar(
-        freq / 1e6,
-        onp.asarray(data.vis),
-        onp.asarray(data.d_vis),
-        fmt=".",
-        color="0.4",
-        label="data",
-    )
+    if freq.size == onp.asarray(data.vis).size:  # not with a vis_mat operator
+        ax.errorbar(
+            freq / 1e6,
+            onp.asarray(data.vis),
+            onp.asarray(data.d_vis),
+            fmt=".",
+            color="0.4",
+            label="data",
+        )
     grid = onp.linspace(1e-3, 1.05 * freq.max(), curves)
     for label, model in fitted.items():
         vis = onp.abs(onp.asarray(model.model(grid, 0.0 * grid, 1.0)))
