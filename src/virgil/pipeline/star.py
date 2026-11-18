@@ -526,7 +526,7 @@ def plot_v2_models(data, fitted, ax=None, curves=400):
     if data.vis_index is not None:
         freq = freq[onp.asarray(data.vis_index)]
     power = 2 if data.v2_flag else 1
-    if freq.size == onp.asarray(data.vis).size:  # not with a vis_mat operator
+    if data.vis_mat is None:  # projected outputs have no baseline of their own
         ax.errorbar(
             freq / 1e6,
             onp.asarray(data.vis),
