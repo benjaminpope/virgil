@@ -554,3 +554,43 @@ def test_fit_cells_runs_the_whole_path_on_a_simulated_system():
     assert len(out.log_outlier) == len(sets)
     assert onp.all(onp.isfinite(out.log_outlier))
     assert out.failed.any() or abs(out.p.sum() - 1.0) < 1e-6
+
+
+@x64
+def test_a_prior_only_jitter_coordinate_contributes_nothing_to_the_evidence():
+    """With ``σ_J`` marginalized in leg 1, the visibility target does not see it: the
+    target is flat in the last coordinate except for its normalised prior, so
+    ``∫ exp(target) dσ_J`` is the target without it (the evidence is unchanged)."""
+    from tests.test_orbit_cells import _truth_chart
+
+    orbit, sets, summaries, log_b = _system(TIMES[:6])
+    domain = cells.period_domain(summaries, p_range=(9.0, 14.0))
+    t_all = [s.t_ref for s in summaries]
+    cell = [
+        c
+        for c in cells.make_cells(t_all[0], t_all[-1], domain)
+        if c.p_lo <= 11.3 <= c.p_hi
+    ][0]
+    base = cells._Space(
+        cells._Catalogue(summaries, log_b), cell, 0.0,
+        onp.array(t_all) - t_all[0], (1.0, 30.0), 0.9, 1e-4, 0.0, np.float64,
+        marginal=True,
+    )  # fmt: skip
+    space = ov._VisSpace(base, ov._Nights(sets, summaries, None, "float64"))
+    assert base.d == 9 + base.n_blocks + 1
+    x = onp.asarray(_truth_chart(base, orbit, t_all[0] - T0, ln_f=LN_F), float)
+    grid = onp.linspace(-40.0, 40.0, 4001)
+    xs = onp.tile(x, (len(grid), 1))
+    xs[:, -1] = grid
+    target = jax.jit(jax.vmap(ov._vis_target, in_axes=(0, None)))
+    terms = jax.jit(jax.vmap(lambda v: space.terms(v)[0]))
+    lik = onp.asarray(terms(xs))
+    onp.testing.assert_allclose(
+        lik, lik[0], rtol=0, atol=1e-10
+    )  # likelihood: no σ_J
+    t = onp.asarray(target(xs, space))
+    log_int = onp.log(onp.trapezoid(onp.exp(t - t.max()), grid)) + t.max()
+    flat = float(ov._vis_target(np.asarray(x), space)) - float(
+        cells._logistic_log_pdf(np.asarray(x[-1]))
+    )
+    onp.testing.assert_allclose(log_int, flat, rtol=0, atol=1e-6)
