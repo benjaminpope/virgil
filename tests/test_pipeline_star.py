@@ -11,6 +11,7 @@ import json
 import math
 
 import jax
+import matplotlib.pyplot as plt
 import numpy as onp
 import pytest
 
@@ -1119,7 +1120,7 @@ def test_run_with_flagged_visibilities(tmp_path):
             "u": u,
             "v": v,
             "wavel": wavel,
-            "vis": v2 + rng.normal(0.0, 0.01, u.size),
+            "vis": onp.where(flag, 50.0, v2 + rng.normal(0.0, 0.01, u.size)),
             "d_vis": onp.full(u.size, 0.01),
             "vis_flag": flag,
         }
@@ -1131,8 +1132,19 @@ def test_run_with_flagged_visibilities(tmp_path):
     assert res.status == "partial"
     assert (tmp_path / "run" / "plots" / "fit_v2.png").exists()
     # The plot pairs each unflagged V² with its own spatial frequency.
-    ax = star.plot_v2_models(flagged, {"uniform": res.model()}).axes[0]
+    fig = star.plot_v2_models(flagged, {"uniform": res.model()})
+    ax = fig.axes[0]
     x, y = ax.lines[0].get_data()
     keep = ~flag
     onp.testing.assert_allclose(x * 1e6, (onp.hypot(u, v) / wavel)[keep])
     onp.testing.assert_allclose(y, flagged.vis)
+    plt.close(fig)
+
+
+def test_v2_plot_without_visibilities(data):
+    """Phase-only data (no V² left) still draw the model curves."""
+    phase_only = data.select(observables="phi")
+    assert onp.size(phase_only.vis) == 0
+    fig = star.plot_v2_models(phase_only, {"uniform": UniformDisk(6.0)})
+    assert len(fig.axes[0].lines) == 1  # the model curve only
+    plt.close(fig)
