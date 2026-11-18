@@ -763,7 +763,9 @@ def test_evidence_and_laplace_account_for_non_pixel_priors():
         r0 = onp.asarray(resid_zf(theta0), float)
         jac = onp.asarray(jax.jacfwd(resid_zf)(theta0), float)
     prior_prec = onp.diag([1.0] * (n * n) + [0.0])
-    hess = prior_prec + jac.T @ jac
+    # LogUniform: ln p = -ln f, so -d2 ln p/df2 = -1/f^2 (analytic).
+    prec_f = onp.diag([1.0] * (n * n) + [-1.0 / float(f0[0]) ** 2])
+    hess = prec_f + jac.T @ jac
     log_pi_f = float(full_priors["env.flux"].log_prob(float(f0[0])))
     expected_ev_free = (
         ev_fixed
@@ -997,3 +999,118 @@ def test_laplace_samples_have_the_marginal_covariance_of_the_full_hessian():
         onp.diag(sample), onp.diag(marginal), rtol=0.025
     )
     assert abs(sample[1, 1] / conditional[1, 1] - 1.0) > 0.025
+
+
+def _dense_evidence(result, data, paths, precision, log_prior):
+    """Laplace evidence from an explicit dense float64 Hessian JᵀJ + Λ."""
+    from virgil.imaging import _log_norm
+    from virgil.likelihood import whitened_residuals
+
+    with jax.enable_x64(True):
+        m = jax.tree_util.tree_map(
+            lambda x: (
+                np.asarray(x, np.float64)
+                if hasattr(x, "dtype")
+                and onp.issubdtype(x.dtype, onp.floating)
+                else x
+            ),
+            result.model,
+        )
+        d = jax.tree_util.tree_map(
+            lambda x: (
+                np.asarray(x, np.float64)
+                if hasattr(x, "dtype")
+                and onp.issubdtype(x.dtype, onp.floating)
+                else x
+            ),
+            data,
+        )
+        shapes = [onp.shape(m.get(p)) for p in paths]
+        sizes = [int(onp.prod(s)) for s in shapes]
+        theta0 = np.concatenate([np.ravel(m.get(p)) for p in paths])
+
+        def resid(theta):
+            parts = np.split(theta, onp.cumsum(sizes)[:-1])
+            return whitened_residuals(
+                m.set(paths, [x.reshape(s) for x, s in zip(parts, shapes)]), d
+            )
+
+        r = onp.asarray(resid(theta0), float)
+        jac = onp.asarray(jax.jacfwd(resid)(theta0), float)
+        log_norm = _log_norm(m, d)
+    z = onp.asarray(m.get(paths[0]), float).ravel()
+    hess = jac.T @ jac + precision
+    return (
+        -0.5 * float(r @ r)
+        - log_norm
+        - 0.5 * float(z @ z)
+        + log_prior
+        + 0.5 * (len(theta0) - z.size) * onp.log(2.0 * onp.pi)
+        - 0.5 * onp.linalg.slogdet(hess)[1],
+        onp.linalg.inv(hess),
+    )
+
+
+def test_log_evidence_adds_the_prior_precision_of_scene_parameters():
+    import numpyro.distributions as dist
+
+    from virgil.imaging import log_evidence
+
+    result, data, priors = _tiny_gp_scene()
+    base = {k: v for k, v in priors.items() if k != "env.flux"}
+    paths = ["env.log_brightness.latent", "env.flux"]
+    f0 = float(result.model.env.flux)
+    flat = base | {"env.flux": dist.Uniform(0.0, 100.0)}
+    ev_flat = float(log_evidence(result, data, priors=flat))
+    log_flat = float(flat["env.flux"].log_prob(f0))
+    dense, cov = _dense_evidence(
+        result, data, paths, onp.diag([1.0, 1.0, 0.0]), log_flat
+    )
+    # All priors flat: the Hessian block is JᵀJ alone, as before.
+    assert ev_flat == pytest.approx(dense, rel=1e-10)
+
+    # One Normal(mu, sigma): ln Z drops by its log density over the flat one
+    # and by the rank-one term -½ ln(1 + sd_flat²/σ²).
+    sd_flat2 = cov[2, 2]
+    mu, sigma = f0 + 0.3, 0.5
+    normal = base | {"env.flux": dist.Normal(mu, sigma)}
+    ev_normal = float(log_evidence(result, data, priors=normal))
+    log_normal = float(dist.Normal(mu, sigma).log_prob(f0))
+    expected = (
+        ev_flat
+        + (log_normal - log_flat)
+        - 0.5 * onp.log(1.0 + sd_flat2 / sigma**2)
+    )
+    assert ev_normal == pytest.approx(expected, rel=1e-8)
+
+
+def test_log_evidence_is_finite_for_a_prior_constrained_parameter():
+    import numpyro.distributions as dist
+
+    from virgil.imaging import log_evidence
+
+    result, data, priors = _tiny_gp_scene()
+    base = {k: v for k, v in priors.items() if k != "env.flux"}
+    # The scene is normalized, so star.flux and env.flux enter only through
+    # their ratio: with flat priors the Hessian block is singular (before the
+    # fix, ln Z = -inf or noise); Normal priors regularize it.
+    sigma = 0.7
+    paths = ["env.log_brightness.latent", "star.flux", "env.flux"]
+    f_star, f_env = float(result.model.star.flux), float(result.model.env.flux)
+    pri = {
+        "star.flux": dist.Normal(f_star + 0.1, sigma),
+        "env.flux": dist.Normal(f_env - 0.2, sigma),
+    }
+    ev = float(log_evidence(result, data, priors=base | pri))
+    log_prior = sum(
+        float(pri[p].log_prob(float(result.model.get(p)))) for p in pri
+    )
+    dense, _ = _dense_evidence(
+        result,
+        data,
+        paths,
+        onp.diag([1.0, 1.0, sigma**-2, sigma**-2]),
+        log_prior,
+    )
+    assert onp.isfinite(ev)
+    assert ev == pytest.approx(dense, rel=1e-8)

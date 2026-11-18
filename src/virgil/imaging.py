@@ -40,6 +40,7 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
+import scipy.linalg
 from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
@@ -2507,6 +2508,20 @@ def _residual_jacobian(model, data, path, on_device=False, regularizers=()):
         return r, (jac if on_device else onp.asarray(jac, dtype=float))
 
 
+def _prior_precision(model, priors, paths):
+    """Block-diagonal ``-∂² Σ log p`` at the MAP for ``paths``, by autodiff."""
+    with run_in("float64"):
+        blocks = []
+        for p in paths:
+            x = np.asarray(model.get(p), dtype=np.float64)
+
+            def neg_log_prior(v, p=p, shape=x.shape):
+                return -np.sum(priors[p].log_prob(v.reshape(shape)))
+
+            blocks.append(onp.asarray(jax.hessian(neg_log_prior)(x.ravel())))
+    return scipy.linalg.block_diag(*blocks)
+
+
 def _singular_values(jac):
     """Singular values of ``jac`` (descending, NumPy), float64 on the device;
     QR-reduced first when far from square (the Gram matrix would lose the
@@ -2679,7 +2694,10 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
     of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
     ``L`` the likelihood normalizer; extra priors in ``priors`` enter through
-    their ``log_prob`` at the MAP and their ``JᵀJ`` block of the Hessian. Compare
+    their ``log_prob`` at the MAP and add ``-∂² log p`` to their ``JᵀJ`` block of
+    the Hessian. Without ``priors=``, every non-latent parameter is held at its
+    MAP: the result is a profile likelihood in them and cannot compare scenes
+    with different numbers of parameters. Compare
     it across hyperparameters: it is conditional on those held in ``model`` (or
     sample them: log-uniform priors from [`gp_priors`][virgil.models.gp_priors]
     for a ``MultipoleDisk``, your own log-uniform priors on a field's ``sigma``
@@ -2702,7 +2720,7 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
         every such Image and disk (``TypeError`` if there is none).
     priors : dict, optional
         Priors of free parameters; non-latent parameters enter via ``log_prob``
-        and their ``JᵀJ`` block of the Hessian.
+        and their ``JᵀJ`` plus prior-precision block of the Hessian.
     regularizers : sequence, optional
         Fit regularizers; probabilistic ones (``Centroid``) enter ``χ²`` and ``J``.
 
@@ -2739,7 +2757,10 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     singular, vt = _svd(jac_z)
     logdet = float(onp.sum(onp.log1p(singular**2)))
     c = vt @ (onp.asarray(jac_z, dtype=float).T @ jac_extra)
-    schur = jac_extra.T @ jac_extra - (c.T / (1.0 + singular**2)) @ c
+    precision = _prior_precision(model, priors, extra_paths)
+    schur = (
+        jac_extra.T @ jac_extra + precision - (c.T / (1.0 + singular**2)) @ c
+    )
     sign, logdet_extra = onp.linalg.slogdet(schur)
     if sign <= 0:
         return float(-onp.inf)
