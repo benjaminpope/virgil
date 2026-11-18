@@ -910,9 +910,7 @@ class ArchimedeanSpiral(Component):
         # the carry takes the dtype the blob promotes to (float64 parameters
         # on a float32 grid), or scan rejects the mismatched carry
         dtype = jax.eval_shape(add_blob, zero, blob0)[0].dtype
-        image, _ = jax.lax.scan(
-            add_blob, zero.astype(dtype), (x, y, weight)
-        )
+        image, _ = jax.lax.scan(add_blob, zero.astype(dtype), (x, y, weight))
         return image
 
 
