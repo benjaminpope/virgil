@@ -1193,7 +1193,7 @@ def _convergence(problem, z, start, outcome):
         # E.g. LM or Adam ending on NaN parameters.
         converged, stop = False, "non-finite"
     stalled = ()
-    if converged and not plateau:
+    if converged and not plateau and _bounded_sites(problem):
         tolerance = _lm_tolerance(problem, z0, scale, gtol)
         stalled = _bound_stall(problem, z, scale, tolerance)
         if stalled:
@@ -1212,6 +1212,21 @@ def _convergence(problem, z, start, outcome):
 _SIGMOID_SLOPE = 4.0
 
 
+def _bounded_sites(problem):
+    """``{site: (prior, interval)}`` of the fitted parameters and error terms
+    with a finite interval (none for a boxed problem, which projects itself)."""
+    if problem.boxed:
+        return {}
+    priors = dict(problem.priors)
+    priors.update({site: p for site, (p, _, _) in problem.noise.items()})
+    found = {}
+    for site, prior in priors.items():
+        interval = _interval(prior, problem.flat)
+        if interval is not None:
+            found[site] = (prior, interval)
+    return found
+
+
 def _bound_stall(problem, z, scale, tolerance):
     """The sites at a prior bound with the loss still falling inward.
 
@@ -1228,18 +1243,13 @@ def _bound_stall(problem, z, scale, tolerance):
 
     Source: [Nocedal & Wright (2006)](../references.md#nocedal2006), eq. 12.34 (KKT).
     """
-    if problem.boxed:
-        return ()  # L-BFGS-B projects onto the bounds itself
+    sites = _bounded_sites(problem)
+    if not sites:
+        return ()  # no full-model gradient for an unbounded fit
     gradient = _gradient(problem, z, scale)
-    priors = dict(problem.priors)
-    priors.update({site: p for site, (p, _, _) in problem.noise.items()})
     values = problem.constrain(z)
     stalled = []
-    for site, prior in priors.items():
-        interval = _interval(prior, problem.flat)
-        if interval is None:
-            continue
-        _, low, high = interval
+    for site, (prior, (_, low, high)) in sites.items():
         bijection = problem.bijection(prior)
         to_interval = (
             bijection.interval
@@ -1534,7 +1544,6 @@ def _direct_chi2(term, values):
 
 
 @eqx.filter_jit
-# deliberate: jit boundary, compiled once per problem structure
 def _gradient(problem, z, scale):
     """The loss-per-data-point gradient at ``z``."""
     return jax.grad(_scaled_loss(problem, scale))(z)

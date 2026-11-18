@@ -1732,7 +1732,7 @@ def test_an_explicit_zero_max_steps_is_not_the_default(method):
 _BOUND_ROWS = 20000
 
 
-def _bound_fit(prior, start, truth_x=3.0, **options):
+def _bound_fit(prior, start, truth_x=3.0, y_start=20.0, **options):
     def term(v):
         return np.concatenate(
             [
@@ -1746,7 +1746,7 @@ def _bound_fit(prior, start, truth_x=3.0, **options):
         lambda **_: None,
         priors,
         (),
-        init={"x": start, "y": 20.0},
+        init={"x": start, "y": y_start},
         likelihoods=[term],
         **options,
     )
@@ -1871,3 +1871,82 @@ def test_bound_stall_skips_an_isotropic_prior_with_both_ends_poles():
         )
         z = problem.init({"inc": 1e-4})
         assert _bound_stall(problem, z, 100.0, 1e-6) == ()
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_bound_stall_at_the_upper_end(method):
+    # Truth above the range, x started at its top: the loss falls with x, so
+    # the top is a true optimum; truth below it, the loss falls inward.
+    outward = _bound_fit(
+        dist.Uniform(0.0, 10.0), 10.0, truth_x=13.0, method=method
+    )
+    assert outward.info["converged"] is True
+    assert outward.info["bound_stall"] == ()
+    with pytest.warns(RuntimeWarning, match="prior bound"):
+        inward = _bound_fit(
+            dist.Uniform(0.0, 10.0), 10.0, truth_x=3.0, method=method
+        )
+    assert inward.info["stop"] == "bound" and inward.info["bound_stall"] == (
+        "x",
+    )
+
+
+def test_a_stall_at_a_bound_is_not_converged_in_float32():
+    # The tolerance is relative to the largest starting gradient (here y's);
+    # with a small one the stall at x is still seen in float32.
+    with pytest.warns(RuntimeWarning, match="prior bound"):
+        result = _bound_fit(
+            dist.Uniform(0.0, 10.0),
+            0.0,
+            y_start=2.0,
+            method="lbfgs",
+            dtype="float32",
+        )
+    assert result.info["converged"] is False
+    assert result.info["stop"] == "bound"
+
+
+def test_an_adam_fit_converged_by_gradient_is_checked_for_a_bound_stall():
+    # Without ftol_abs Adam converges by its gradient test, which the bound
+    # check then applies to.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        result = _bound_fit(dist.Uniform(0.0, 10.0), 0.0, method="adam")
+    assert result.info["converged"] is True or result.info["stop"] == "bound"
+    assert result.info["bound_stall"] in ((), ("x",))
+    assert (result.info["stop"] == "bound") == (
+        result.info["bound_stall"] == ("x",)
+    )
+
+
+@pytest.mark.parametrize("inc_max", [None, 90.0])
+def test_a_fit_with_an_isotropic_inclination_prior_has_no_bound_stall(inc_max):
+    from virgil.priors import IsotropicInclination
+
+    prior = (
+        IsotropicInclination()
+        if inc_max is None
+        else IsotropicInclination(0.0, inc_max)
+    )
+
+    def term(v):
+        return (v["inc"] - 50.0) / 5.0 * np.ones(200)
+
+    result = fit(
+        lambda **_: None,
+        {"inc": prior},
+        (),
+        init={"inc": 30.0},
+        likelihoods=[term],
+        method="lbfgs",
+    )
+    assert result.info["converged"] is True
+    assert result.info["bound_stall"] == ()
+
+
+def test_an_interior_optimum_started_nearby_is_not_a_bound_stall():
+    result = _bound_fit(
+        dist.Uniform(0.0, 10.0), 0.1, truth_x=0.2, method="lbfgs"
+    )
+    assert result.info["converged"] is True
+    assert result.info["bound_stall"] == ()
