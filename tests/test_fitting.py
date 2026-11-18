@@ -1757,7 +1757,7 @@ def _bound_fit(prior, start, truth_x=3.0, **options):
     "prior, start",
     [
         (dist.Uniform(0.0, 10.0), 0.0),
-        (dist.LogUniform(1e-2, 10.0), 1e-2),
+        (dist.LogUniform(1e-2, 10.0), 1.0003e-2),
     ],
     ids=["uniform", "loguniform"],
 )
@@ -1794,3 +1794,80 @@ def test_an_interior_optimum_has_no_bound_stall(method):
     assert result.info["converged"] is True
     assert result.info["bound_stall"] == ()
     assert onp.isclose(float(result.values["x"]), 3.0, atol=1e-4)
+
+
+@pytest.mark.parametrize("truth_x", [0.005, 0.05, 0.3])
+def test_an_optimum_near_a_bound_is_not_a_bound_stall(truth_x):
+    # The optimum is 5e-4, 5e-3 and 3e-2 of the range from the end, so the
+    # gradient in t of a converged L-BFGS fit can point inward by more than 4
+    # tolerances there; only a site stuck at the end is a stall.
+    result = _bound_fit(
+        dist.Uniform(0.0, 10.0), 1.0, truth_x=truth_x, method="lbfgs"
+    )
+    assert result.info["converged"] is True
+    assert result.info["bound_stall"] == ()
+    assert onp.isclose(float(result.values["x"]), truth_x, atol=1e-3)
+
+
+@pytest.mark.parametrize(
+    "x, truth, flagged",
+    [
+        (0.005, 3.0, True),  # t = 5e-4, loss falling inward
+        (0.005, -3.0, False),  # t = 5e-4, loss rising inward: a true optimum
+        (0.5, 3.0, False),  # t = 0.05: not at an end, the z test governs
+        (
+            9.995,
+            3.0,
+            True,
+        ),  # t = 1 - 5e-4, the loss rises with x: falling inward
+        (
+            9.995,
+            12.0,
+            False,
+        ),  # t = 1 - 5e-4, the loss falls with x: a true optimum
+    ],
+)
+def test_bound_stall_signs_and_band(x, truth, flagged):
+    from virgil.fitting import _bound_stall
+
+    rows = 100
+
+    def term(
+        v,
+    ):  # per-point loss ((x - truth) / 10)^2 / 2: dL/dt = (x - truth) / 10
+        return (v["x"] - truth) / 10.0 * np.ones(rows)
+
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(
+                lambda **_: None,
+                {"x": dist.Uniform(0.0, 10.0)},
+                (),
+                likelihoods=[term],
+            ),
+            "float64",
+        )
+        z = problem.init({"x": x})
+        got = _bound_stall(problem, z, float(rows), 0.01)
+    assert got == (("x",) if flagged else ())
+
+
+def test_bound_stall_skips_an_isotropic_prior_with_both_ends_poles():
+    from virgil.fitting import _bound_stall
+    from virgil.priors import IsotropicInclination
+
+    def term(v):  # loss rising towards a pole of the coordinate
+        return (v["inc"] - 2.0) * np.ones(100)
+
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(
+                lambda **_: None,
+                {"inc": IsotropicInclination()},
+                (),
+                likelihoods=[term],
+            ),
+            "float64",
+        )
+        z = problem.init({"inc": 1e-4})
+        assert _bound_stall(problem, z, 100.0, 1e-6) == ()

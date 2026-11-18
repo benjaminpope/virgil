@@ -991,33 +991,15 @@ def fit(
         values = problem.constrain(z)
         loss, chi2, grad_norm = _summary(problem, z, traced_scale, grad_norm)
         loss = float(loss)
-        # Adam's window stop is the caller's own criterion (``ftol_abs``) and
-        # says nothing about the gradient, so the check below leaves it be.
-        plateau = method == "adam" and converged is True
-        if method == "adam" and not converged:
-            tolerance = _lm_tolerance(problem, z0, traced_scale, gtol)
-            converged = bool(grad_norm <= tolerance)
-            stop = None if converged else stop or "limit"
-        if not math.isfinite(loss) and converged is not False:
-            # E.g. LM or Adam ending on NaN parameters.
-            converged, stop = False, "non-finite"
-        # The gradient in z cannot see a stall at a bound: check the first-order
-        # condition in the parameter's own coordinate (see ``_bound_stall``).
-        stalled = ()
-        if converged and not plateau:
-            stalled = _bound_stall(
-                problem,
-                z,
-                traced_scale,
-                _lm_tolerance(problem, z0, traced_scale, gtol),
-            )
-            if stalled:
-                converged, stop = False, "bound"
+        converged, stop, stalled = _convergence(
+            problem,
+            z,
+            (z0, traced_scale, gtol),
+            (method, converged, stop, loss, grad_norm),
+        )
         if converged is False:
             warnings.warn(
-                _not_converged(
-                    method, stop, steps, limit, dtype, time_limit, stalled
-                ),
+                _not_converged(method, stop, steps, limit, dtype, time_limit),
                 RuntimeWarning,
                 stacklevel=external_stacklevel(),
             )
@@ -1192,24 +1174,53 @@ def _at_bound(problem, values):
     return tuple(found)
 
 
+# deliberate: fit is over the 120-line cap and the size gate bars growing it, so its convergence verdict (Adam's gradient test, non-finite loss, bound stall) lives here
+def _convergence(problem, z, start, outcome):
+    """``(converged, stop, stalled)`` of a finished fit.
+
+    ``start`` is ``(z0, scale, gtol)`` and ``outcome`` the solver's ``(method,
+    converged, stop)`` and the final loss and gradient norm.
+    """
+    z0, scale, gtol = start
+    method, converged, stop, loss, grad_norm = outcome
+    # Adam's window stop is the caller's own criterion (``ftol_abs``) and says
+    # nothing about the gradient, so the bound check leaves it be.
+    plateau = method == "adam" and converged is True
+    if method == "adam" and not converged:
+        converged = bool(grad_norm <= _lm_tolerance(problem, z0, scale, gtol))
+        stop = None if converged else stop or "limit"
+    if not math.isfinite(loss) and converged is not False:
+        # E.g. LM or Adam ending on NaN parameters.
+        converged, stop = False, "non-finite"
+    stalled = ()
+    if converged and not plateau:
+        tolerance = _lm_tolerance(problem, z0, scale, gtol)
+        stalled = _bound_stall(problem, z, scale, tolerance)
+        if stalled:
+            converged, stop = False, "bound"
+    return converged, stop, stalled
+
+
 # A coordinate fitted through a sigmoid (the bounded-to-unbounded map) has
 # its gradient scaled by dt/dz = t (1 - t) for t its fraction of the prior's
 # range, at most 1/4: it vanishes towards a bound. A fit that ended with the
 # gradient in z below its tolerance therefore has a gradient in t of at most
-# tolerance / (t (1 - t)), and ``_bound_stall`` allows the midpoint's 4 times
-# the tolerance. Derived from the sigmoid, not tuned.
+# tolerance / (t (1 - t)), which is no less than 4 times the tolerance (the
+# midpoint's). ``_bound_stall`` allows that 4 times and looks only within
+# ``_AT_BOUND`` of an end: further in, the gradient in t of a converged fit
+# can exceed it for the same reason, with the optimum short of the end.
 _SIGMOID_SLOPE = 4.0
 
 
 def _bound_stall(problem, z, scale, tolerance):
-    """The sites that ended at a prior bound with the loss still falling inward.
+    """The sites at a prior bound with the loss still falling inward.
 
     ``z`` is a fit's result and ``tolerance`` its gradient tolerance. With ``t``
     a parameter's fraction of its prior's range (in the flat coordinate, when
-    it has one) and ``g`` the gradient of the loss per data point in ``t``, the
-    point is a constrained stationary point only if the bound's multiplier is
-    not negative: ``g >= 0`` at the lower end, ``g <= 0`` at the upper. A site
-    fails when, at the nearer end, ``g`` points inward by more than
+    it has one) and ``g`` the gradient of the loss per data point in ``t``, a
+    site within ``_AT_BOUND`` of an end is a constrained stationary point only
+    if the bound's multiplier is not negative: ``g >= 0`` at the lower end,
+    ``g <= 0`` at the upper. It fails when ``g`` points inward by more than
     ``_SIGMOID_SLOPE`` times ``tolerance``. A gradient pointing outward is a
     genuine optimum at the bound, however far from it the fit stopped. The
     test in ``z`` cannot see this: ``dt/dz`` shrinks towards a bound as fast as
@@ -1246,10 +1257,13 @@ def _bound_stall(problem, z, scale, tolerance):
         with onp.errstate(divide="ignore", invalid="ignore"):
             g = onp.where(slope > 0, g / slope, 0.0)
         inward = onp.where(t < 0.5, -g, g)
-        # An end at a sphere coordinate pole is not a prior bound.
+        # Sphere coordinate poles are not prior bounds: ``_bound_fraction`` is
+        # None (both ends) or NaN (one end) there.
         fraction = _bound_fraction(prior, values[site], problem.flat)
-        inward = onp.where(onp.isnan(fraction), 0.0, inward)
-        if onp.any(inward > _SIGMOID_SLOPE * float(tolerance)):
+        if fraction is None:
+            continue
+        at_end = (onp.minimum(t, 1 - t) < _AT_BOUND) & ~onp.isnan(fraction)
+        if onp.any(at_end & (inward > _SIGMOID_SLOPE * float(tolerance))):
             stalled.append(site)
     return tuple(stalled)
 
@@ -2329,14 +2343,14 @@ def _lbfgs_run(
 
 
 # deliberate: message for an unconverged fit saying why; test_unconverged_lm_message_says_why calls it with raw stop codes
-def _not_converged(method, stop, steps, limit, dtype, time_limit, stalled=()):
+def _not_converged(method, stop, steps, limit, dtype, time_limit):
     """The warning for an unconverged fit, saying why it stopped."""
     if stop == "bound":
         return (
-            f"fit(method={method!r}) did not converge: {', '.join(stalled)} "
-            "stopped at a prior bound with the loss still falling inward (its "
-            "gradient is squashed to nothing there by the bounded-to-unbounded "
-            "map); start it inside the bound."
+            f"fit(method={method!r}) did not converge: a parameter stopped at a "
+            "prior bound with the loss still falling inward (its gradient is "
+            "squashed to nothing there by the bounded-to-unbounded map; see "
+            "info['bound_stall']); start it inside the bound."
         )
     if stop == "time":
         return (
