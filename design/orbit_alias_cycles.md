@@ -1587,28 +1587,46 @@ shape). The C-step therefore rebuilds the (p, v) block precision and the ln f we
 the current (s, σ_J) before its Newton. The plan's sets and χ² cut keep the reference: the cut is conservative when σ_J
 is underestimated (the residual is measured on too tight a weight, so a true set passes), and the sets only seed.
 
-**Constants.** Declared: the grid spacing 1/√(2K) and one round per C-step. Inherited: the σ_J bounds, `N_SCALE`,
-`S_MAX`. No others, and none from seeds or named systems.
+**The floor does not depend on σ_J.** b_k is the night's outlier density: it integrates the night's own scale (Laplace at
+ŝ_k) and has no σ_J, and it does not depend on x's s or on the orbit. Step 1 therefore moves σ_J with the floor fixed,
+which is what makes the cap "outliers cannot drag it" and the monotonicity of F hold. Under (iii′) the outlier term moves
+with s, which only step 2 changes, and step 2 re-evaluates it.
+
+**Degrees-of-freedom bias of the profiled σ_J (REML-style).** The C-step fits the orbit to the same inlier positions, so
+the maximum-likelihood σ_J² is low by about (2n_I − p)/(2n_I). Declared p = 7, the orbit parameters that are fitted
+against the positions (4 TI′, plus ln P and the two ζ coordinates; ln f and the velocities add none). Step 1 therefore
+profiles the dof-corrected objective: the Laplace quadratic dᵀΣ_tot⁻¹d is multiplied by κ = 2n_I/max(2n_I − p, 3), with n_I the
+night's label count at the node, the labels of the node being the arg-max set of the floor-capped sum. (Scaling the
+quadratic by κ scales the excess scatter by κ at fixed s.) The floor of 3 degrees of freedom is declared: below it the
+correction is not finite-variance and σ_J is not identified anyway. At n_I = 5, 7, 10, 20 this is κ = 3.3, 1.9, 1.5, 1.2.
+It is the same correction as `reference_jitter`'s with p = 4 (the seed fits only the TI′).
+
+**Constants.** Declared: grid spacing 1/√(2K); one round per C-step; p = 7 and the floor of 3 dofs in κ. Inherited: the
+σ_J bounds, `N_SCALE`, `S_MAX`. No others, and none from seeds or named systems.
 
 **`reference_jitter` after this change.** It only places the plan's weights and starts the chart's σ_J coordinate; the
-grid removes the search's dependence on it. It must still behave:
+grid removes the search's dependence on it. So it is kept simple and robust, not best:
 
-- *Degrees of freedom.* A fit of the 4 TI′ to K nights leaves 2K − 4 position dofs, so the seed's residual variance is
-  low by (K − 2)/K: divide by it (K ≥ 4).
-- *Few nights.* For K ≤ 3 (2 or fewer dofs left) nothing is identified: return the geometric centre of `jitter_range`
-  (the prior median), declared.
-- *Outlier nights.* The seeds are least-squares on all nights, so an outlier leaks into the other residuals. After the
-  seed, trim the nights with |r|² above the (1 − δ) quantile of the median-scaled χ²₂ (δ = `DELTA`), refit once, take the
-  medians of the refit residuals; the least over seeds as now.
+- *One seed, not the least of many.* The least over hundreds of alias seeds selects the interpolating seed, whose residuals
+  are near zero (the small-K collapse); no correction repairs a minimum. Use the best seed by position-fit χ².
+- *Degrees of freedom.* The seed fits 4 TI′ to K nights, leaving 2K − 4 position dofs: divide the median-based variance
+  by (K − 2)/K (K ≥ 4).
+- *Few nights.* For K ≤ 3 return the geometric centre of `jitter_range` (the prior median), declared.
+- *Outlier nights.* Trim the nights with |r|² above the (1 − δ) quantile of a χ²₂ scaled by the median variance (δ = `DELTA`),
+  never more than K − 4 of them (never fewer than 4 left), refit once, take the medians of the refit residuals.
+- Clip to `jitter_range`.
 
 **No scoring mismatch.** After the step x carries (s, σ_J) in its own coordinates. `_labels`, `_scores`, `_prune`,
 `_refine` read them from x and the C-step's weights are rebuilt from them, so no stage scores at a value another stage
 did not optimize. A test asserts that `_cstep_chunk`'s returned labels equal `_labels` at its returned x.
 
-**Tests.** (i) The closed form equals `_peak_terms`. (ii) Started 10× low, one profile step and the C-steps move σ_J to
-within a factor 2.5 of the truth and label every true inlier. (iii) Non-rescalable data keep s = 1. (iv) `reference_jitter`
-at K = 3, 5, 7 and with one outlier night. (v) The strict seed-0 end-to-end test (xfail removed only if it passes, tolerance
-unchanged). (vi) The census (§14 and its criteria file): a science merge needs its paired delta.
+**Tests.** (i) The closed form equals `_peak_terms`. (ii) Started 10× low at K = 5, 7 and 40 inlier nights, one profile
+step and the C-steps return |Δ ln σ_J| ≤ 3 sd, sd = 1/√(2Σ(1 − f)²) the Fisher standard deviation of ln σ_J at the truth
+for the test's design (computed in the test), and label every true inlier. (iii) Non-rescalable data keep s = 1. (iv)
+`reference_jitter` at K = 3, 5, 7, with one outlier night, and a many-seed case where the minimum would collapse. (v) The
+strict seed-0 end-to-end test (xfail removed only if it passes, tolerance unchanged). (vi) The census (§14 and its criteria
+file): a science merge needs its paired delta. Any other tolerance in the tests is derived the same way or declared in its
+docstring.
 
 
 ## 7. Pruning
