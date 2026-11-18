@@ -24,12 +24,31 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-        with: {sparse-checkout: .github/scripts}
+        with:
+          sparse-checkout: |
+            .github/scripts
+            pyproject.toml
+            docs/generated/dev_carbon.json
+          sparse-checkout-cone-mode: false
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
         run: python3 .github/scripts/check_release_gate.py
+      # The development-carbon page must be refreshed for this version
+      # (python3 scripts/dev_carbon.py --release, run locally in the release
+      # PR: its inputs are private). A `carbon-gate: skip <reason>` line in
+      # the release notes bypasses it with a warning.
+      - name: the carbon page was refreshed for this release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        # The notes as they are now, not as at publish: a re-run after
+        # adding the skip line must see it.
+        run: |
+          RELEASE_BODY=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+          export RELEASE_BODY
+          python3 -P .github/scripts/check_carbon_fresh.py
 
   build:
     needs: gate
