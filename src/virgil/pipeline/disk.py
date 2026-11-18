@@ -1000,7 +1000,7 @@ def _geometry_stage(p):  # deliberate: stage callable, patched by tests
     start = {
         "inc": float(inc_deg[i]),
         "pa": float(pa_axis[j]),
-        "r1": float(r_axis[k_r]),
+        "r1": _radius_start(ctx, r_axis[k_r]),
         "s1": ctx.halffringe,
         "f1": float(_FLUX_GRID[k_f]),
     }
@@ -1009,7 +1009,11 @@ def _geometry_stage(p):  # deliberate: stage callable, patched by tests
     fit = _fit_rings(p, shape, start)
     values = _scalars(fit.values)
     names = list(_ring_priors(ctx, shape))
-    sd, _ = _laplace(ctx, shape, names, values, data)
+    # A parameter at a bound (the ring pinned to the r_in hole) is reported
+    # by at_bound; if the bound is active, inc and pa get their widths with
+    # it held there.
+    at_bound = list(fit.info.get("at_bound") or [])
+    sd, _ = _laplace(ctx, shape, names, values, data, near=at_bound)
     n = int(data.n_independent)
     _save_fit(p.output / "models" / "geometry", fit, names)
     return {
@@ -1023,6 +1027,7 @@ def _geometry_stage(p):  # deliberate: stage callable, patched by tests
         "n_independent": n,
         "converged": fit.info.get("converged"),
         "laplace_sd": sd,
+        "at_bound": at_bound,
         "gp_sigma": _dynamic_range_sigma(ctx, values["r1"], values["s1"]),
         "grid": {
             "shape": list(delta.shape),
@@ -1040,21 +1045,37 @@ def _geometry_stage(p):  # deliberate: stage callable, patched by tests
     }
 
 
-def _laplace(ctx, shape, names, values, data):
+def _laplace(ctx, shape, names, values, data, near=()):
     """``(sd, cov)``: Laplace standard deviations of the ring scene's scalar
     parameters and their covariance.
 
-    A parameter whose variance is not positive and finite (the Hessian is
-    not positive definite there: the point is not a likelihood maximum, or
-    the parameter is unconstrained) has ``sd`` ``None``, never 0, and
-    ``cov`` is ``None`` unless the whole matrix is positive definite, since
-    a Laplace evidence needs that. A failed computation gives all ``None``.
+    The Hessian of ``-log L`` must be positive definite (a likelihood
+    maximum, every parameter constrained); otherwise every ``sd`` is
+    ``None``, never 0, and so is ``cov``, which a Laplace evidence needs. A
+    failed computation gives the same. A parameter in ``near`` (within its
+    fit's ``at_bound`` tolerance of a prior bound) whose bound is active, by
+    the KKT condition that ``-log L`` keeps falling past the bound, is held
+    there: the others' widths come from the Hessian on the free subspace,
+    it has no ``sd`` entry and ``cov`` is ``None``, since the Gaussian
+    evidence does not hold at a bound.
     """
-    from ..inference import laplace_cov
+    import jax
 
+    from .._precision import cast_tree, run_in
+    from ..inference import observed_information
+    from ..likelihood import loglike
+
+    model = _builder(ctx, shape)
+    x = onp.array([values[k] for k in names], dtype=float)
     try:
-        x = onp.array([values[k] for k in names], dtype=float)
-        cov = onp.asarray(laplace_cov(x, names, _builder(ctx, shape), data))
+        with run_in("float64"):
+            hess = onp.asarray(observed_information(x, names, model, data))
+            grad = onp.zeros_like(x)
+            if near:
+                d64 = cast_tree(data, "float64")
+                grad = onp.asarray(
+                    jax.grad(lambda z: -loglike(z, names, model, d64))(x)
+                )
     except (FloatingPointError, onp.linalg.LinAlgError) as err:
         warnings.warn(
             f"The Laplace covariance could not be computed ({err}).",
@@ -1062,17 +1083,36 @@ def _laplace(ctx, shape, names, values, data):
             stacklevel=2,
         )
         return {k: None for k in names}, None
-    var = onp.diag(cov)
-    good = onp.isfinite(var) & (var > 0.0)
+
+    priors = _ring_priors(ctx, shape) if near else {}
+    held = set()
+    for i, k in enumerate(names):
+        if k not in near:
+            continue
+        lo = float(priors[k].support.lower_bound)
+        hi = float(priors[k].support.upper_bound)
+        # the slope of -log L outwards through the nearer bound must exceed
+        # the quadratic model's rise over the gap to it: its minimum is past
+        # the bound, not in the gap
+        if x[i] - lo <= hi - x[i]:
+            outward, gap = -1.0, x[i] - lo
+        else:
+            outward, gap = 1.0, hi - x[i]
+        if -outward * grad[i] > max(hess[i, i], 0.0) * abs(gap):
+            held.add(k)
+    free = [i for i, k in enumerate(names) if k not in held]
+    if not free:
+        return {}, None
+    block = hess[onp.ix_(free, free)]
     pd = bool(
-        onp.all(onp.isfinite(cov))
-        and onp.all(onp.linalg.eigvalsh(0.5 * (cov + cov.T)) > 0.0)
+        onp.all(onp.isfinite(block))
+        and onp.all(onp.linalg.eigvalsh(0.5 * (block + block.T)) > 0.0)
     )
-    sd = {
-        k: float(onp.sqrt(v)) if g else None
-        for k, v, g in zip(names, var, good)
-    }
-    return sd, (cov if pd else None)
+    if not pd:
+        return {names[i]: None for i in free}, None
+    cov = onp.linalg.inv(block)
+    sd = {names[i]: float(onp.sqrt(cov[j, j])) for j, i in enumerate(free)}
+    return sd, (None if held else cov)
 
 
 # === POINT-SOURCE SEARCH ON RESIDUALS ===
@@ -1147,13 +1187,24 @@ def _planet_start(search, ctx):
     return start
 
 
+def _radius_start(ctx, r):
+    """Grid radius ``r`` as a fit start, at least half a half-fringe above ``r_in``.
+
+    The grids start on ``r_in``, the prior bound, where the fit's flat
+    coordinate squashes the gradient to nothing: a ring started there stays,
+    even when the likelihood rises steeply away from the bound.
+    """
+    lo = min(ctx.r_in + 0.5 * ctx.halffringe, 0.5 * (ctx.r_in + ctx.r_out))
+    return max(float(r), lo)
+
+
 def _ring_start(ctx, held, n, new):
     """Starting values of an ``n``-ring scene from ``held`` and the scan's ``new`` ring."""
     start = {k: v for k, v in held.items() if k != "pa_vec"}
     start["inc"] = max(float(start["inc"]), 5.0)
     if new is not None:
         start[f"r{n}"], start[f"s{n}"], start[f"f{n}"] = (
-            new["r"],
+            _radius_start(ctx, new["r"]),
             ctx.halffringe,
             new["f"],
         )
@@ -2468,9 +2519,15 @@ def _fit_checks(entry, settings, overview, geometry, compare):
         geometry["grid"]["n_minima"],
         minimum=settings["inclination_min_deg"],
     )
-    by["at_bound"] = _checks.at_bound(compare["at_bound"])
+    by["at_bound"] = _checks.at_bound(
+        compare["at_bound"],
+        # .get: geometry reports from before the key was added have none
+        seed=geometry.get("at_bound", []),
+    )
     # The Laplace widths behind the position-angle spread (and the ring
     # evidences) need a positive-definite Hessian: say which are missing.
+    # Geometry parameters held at an active bound have no width: at_bound
+    # reports them.
     sds = {f"geometry.{k}": v for k, v in geometry["laplace_sd"].items()}
     for row in rows:
         if row["name"] == compare["best"]:
