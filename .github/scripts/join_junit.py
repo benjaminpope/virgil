@@ -14,7 +14,5 @@ joined = ET.Element("testsuites")
 for path in sorted(glob.glob(f"{sys.argv[1]}/*/junit-evidence.xml")):
     root = ET.parse(path).getroot()
     joined.extend(root if root.tag == "testsuites" else [root])
-ET.ElementTree(joined).write(
-    sys.argv[2], encoding="utf-8", xml_declaration=True
-)
+ET.ElementTree(joined).write(sys.argv[2], encoding="utf-8", xml_declaration=True)
 print(len(joined), "suites")
