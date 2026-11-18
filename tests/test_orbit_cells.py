@@ -343,7 +343,7 @@ def test_the_floor_is_the_expected_epsilon_power():
 
 
 @x64
-def test_a_peak_term_is_the_gaussian_convolved_with_the_jitter():
+def test_a_peak_term_is_the_gaussian_convolved_with_the_between_night_jitter():
     s = _summaries(_orbit(), TIMES)
     cat = oc_cells._Catalogue(s, LOG_B).cast(np.float64)
     state = onp.asarray(cat.mean[:, 0]) + onp.random.default_rng(1).normal(
@@ -357,7 +357,8 @@ def test_a_peak_term_is_the_gaussian_convolved_with_the_jitter():
         )[:, 0]
         for k, night in enumerate(s):
             p = night.peaks[0]
-            cov = night.covariance(p, 1.0, jitter)
+            # the between-night jitter: one offset of the position, none on v
+            cov = p.cov + onp.diag([jitter**2] * 2 + [0.0] * 3)
             # ln L_j (N(d; 0, Σ_total) / N(0; 0, Σ_data)) with unit scale
             want = (
                 p.loglike

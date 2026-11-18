@@ -621,32 +621,26 @@ class _Catalogue:
         return new
 
 
-def _peak_precision(cat, ln_s, jitter, dtype, between=False):
+def _peak_precision(cat, ln_s, jitter, dtype):
     """``(Σ_data, Σ_total, Σ_total⁻¹)`` of every peak at scales ``exp(ln_s)``,
-    with ``jitter`` (mas) added in quadrature: independent per frame
-    (``σ_J² / n_frames`` on ``p``, ``σ_J² / T_ss`` on ``v``), or with
-    ``between`` one offset of the night's ``p`` of variance ``σ_J²`` (none on
-    ``v``)."""
+    with the between-night ``jitter`` ``σ_J`` (mas) added in quadrature: one
+    offset of the night's position of variance ``σ_J²`` (none on ``v``)."""
     prec = np.einsum("g,kjgab->kjab", np.exp(-2 * ln_s), cat.hess)
     eps = np.finfo(dtype).eps
     # An unconstrained direction gets a huge variance, as NightPeak.covariance
     reg = eps * np.trace(prec, axis1=-2, axis2=-1)[..., None, None]
     cov = np.linalg.inv(prec + reg * np.eye(5, dtype=dtype))
-    if between:
-        pos = jitter**2 * np.ones_like(cat.t_ss)
-        vel = np.zeros_like(cat.t_ss)
-    else:
-        pos = jitter**2 / cat.n_frames
-        vel = jitter**2 / np.maximum(cat.t_ss, eps)
-    add = np.stack([pos, pos, vel, vel, np.zeros_like(cat.t_ss)], axis=-1)
+    pos = jitter**2 * np.ones_like(cat.t_ss)
+    zero = np.zeros_like(cat.t_ss)
+    add = np.stack([pos, pos, zero, zero, zero], axis=-1)
     total = cov + add[:, None, :, None] * np.eye(5, dtype=dtype)
     return cov, total, np.linalg.inv(total)
 
 
-def _peak_terms(cat, ln_s, jitter, state, dtype, between=False):
+def _peak_terms(cat, ln_s, jitter, state, dtype):
     """``ln L_j(s) + ½ ln(|Σ_data| / |Σ_total|) - ½ dᵀ Σ_total⁻¹ d`` per peak,
     ``(K, J)``; ``-inf`` for padding. ``state`` is ``(K, 5)``."""
-    cov, total, inv = _peak_precision(cat, ln_s, jitter, dtype, between)
+    cov, total, inv = _peak_precision(cat, ln_s, jitter, dtype)
     s = np.exp(ln_s)
     scaled = cat.loglike - np.sum(
         cat.n * ln_s + 0.5 * cat.chi2 * (s**-2 - 1.0), axis=-1
@@ -659,7 +653,7 @@ def _peak_terms(cat, ln_s, jitter, state, dtype, between=False):
     return np.where(cat.valid, scaled + log_det - 0.5 * quad, -1e30)
 
 
-def _sign_terms(cat, ln_s, jitter, pv, ln_f, dtype, between=False):
+def _sign_terms(cat, ln_s, jitter, pv, ln_f, dtype):
     """``(total, resp)``, each ``(2, nodes)``: for the brighter/fainter sign
     ``σ = +1, -1`` (flipping ``(p, v)``) and each ``ε`` node, the log of
     ``Π_k [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]`` and the summed night responsibilities
@@ -670,9 +664,7 @@ def _sign_terms(cat, ln_s, jitter, pv, ln_f, dtype, between=False):
         state = np.concatenate(
             [sign * pv, np.full((pv.shape[0], 1), ln_f, dtype)], axis=1
         )
-        a = logsumexp(
-            _peak_terms(cat, ln_s, jitter, state, dtype, between), axis=1
-        )
+        a = logsumexp(_peak_terms(cat, ln_s, jitter, state, dtype), axis=1)
         inside = np.log1p(-eps)[:, None] + a[None]
         night = np.logaddexp(inside, np.log(eps)[:, None] + cat.log_b)
         per_sign.append(night.sum(axis=1))
@@ -680,9 +672,7 @@ def _sign_terms(cat, ln_s, jitter, pv, ln_f, dtype, between=False):
     return np.stack(per_sign), np.stack(resp)
 
 
-def _log_mixture(
-    cat, ln_s, jitter, pv, ln_f, dtype, inliers=False, between=False
-):
+def _log_mixture(cat, ln_s, jitter, pv, ln_f, dtype, inliers=False):
     """``ln ∫ dε Beta(ε; EPS_PRIOR) ½ Σ_σ Π_k [(1-ε) e^{ℓ̃_k} + ε e^{b_k}]``, with the
     brighter/fainter sign ``σ`` flipping ``(p, v)``. ``pv`` is ``(K, 4)``.
 
@@ -691,7 +681,7 @@ def _log_mixture(
     over nights and averaged over ``(σ, ε)`` with their posterior weights.
     """
     log_w = np.asarray(cat.log_w_eps, dtype)
-    total, resp = _sign_terms(cat, ln_s, jitter, pv, ln_f, dtype, between)
+    total, resp = _sign_terms(cat, ln_s, jitter, pv, ln_f, dtype)
     out = logsumexp(total + log_w) - np.log(2.0)
     if not inliers:
         return out
@@ -885,9 +875,8 @@ class _Space:
         c = self.decode(x)
         pv = self.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
         return _log_mixture(
-            self.cat, c["ln_s"], c["jitter"], pv, c["ln_f"], self.dtype,
-            between=self.marginal,
-        )  # fmt: skip
+            self.cat, c["ln_s"], c["jitter"], pv, c["ln_f"], self.dtype
+        )
 
     def sign_log_likelihood(self, x):
         """``(2,)``: ``ln ∫ dε Π_k [...]`` for the sign ``σ = +1, -1``, the two
@@ -896,9 +885,8 @@ class _Space:
         c = self.decode(x)
         pv = self.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
         total, _ = _sign_terms(
-            self.cat, c["ln_s"], c["jitter"], pv, c["ln_f"], self.dtype,
-            self.marginal,
-        )  # fmt: skip
+            self.cat, c["ln_s"], c["jitter"], pv, c["ln_f"], self.dtype
+        )
         return logsumexp(
             total + np.asarray(self.cat.log_w_eps, self.dtype), axis=-1
         )
@@ -927,7 +915,7 @@ def _inliers(x, space):
     pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
     return _log_mixture(
         space.cat, c["ln_s"], c["jitter"], pv, c["ln_f"], space.dtype,
-        inliers=True, between=space.marginal,
+        inliers=True,
     )[1]  # fmt: skip
 
 
@@ -949,29 +937,30 @@ def _objective(x, space):
     return _target(x, space) + 3.0 * np.log(np.linalg.norm(x[_Z]))
 
 
-def _best_peaks(x, space):
-    """Each night's best peak at ``x`` and its term (the outlier floor ignored)."""
+def _best_peaks(x, space, sign=1.0):
+    """Each night's best peak at ``x`` (``(p, v)`` times ``sign``, the brighter
+    or fainter label) and its term (the outlier floor ignored)."""
     with run_in(onp.dtype(space.dtype).name):
         c = space.decode(x)
         pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
         state = np.concatenate(
-            [pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
+            [sign * pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)],
+            axis=1,
         )
         terms = _peak_terms(
-            space.cat, c["ln_s"], c["jitter"], state, space.dtype,
-            space.marginal,
-        )  # fmt: skip
+            space.cat, c["ln_s"], c["jitter"], state, space.dtype
+        )
         j = np.argmax(terms, axis=1)
         return j, np.take_along_axis(terms, j[:, None], axis=1)[:, 0]
 
 
-def _labels(x, space):
+def _labels(x, space, sign=1.0):
     """Each night's best peak, or -1 (outlier) where the floor is higher.
 
     At the prior mean ``ε̄ = ½`` the inlier and outlier weights ``1 - ε̄`` and
     ``ε̄`` are equal, so the comparison is of ``ℓ̃_k`` and ``b_k``.
     """
-    j, best = _best_peaks(x, space)
+    j, best = _best_peaks(x, space, sign)
     return np.where(best > space.cat.log_b, j, -1)
 
 
@@ -1355,7 +1344,7 @@ def search_plan(space, key=None, nu_width=None):
     if nu_width is None:
         nu_width = 1.0 / space.cell.p_lo - 1.0 / space.cell.p_hi
     pp = functools.partial(_peak_precision, cat, dtype=dt)
-    pp = functools.partial(pp, jitter=space.jitter, between=space.marginal)
+    pp = functools.partial(pp, jitter=space.jitter)
     total = onp.asarray(pp(np.zeros(len(cat.blocks), dt))[1], float)
     w_pv = onp.linalg.inv(total[..., :4, :4])
     w_pos = onp.zeros_like(w_pv)
@@ -1854,7 +1843,7 @@ def decode_particles(result):
     """Orbit coordinates of a fit's posterior draws.
 
     Returns a dict of arrays with ``period``, ``z``, ``zeta``, ``ln_f``,
-    ``ln_s`` and the reporting invariants ``a``, ``ecc``, ``cos_inc``,
+    ``ln_s``, ``jitter`` (``σ_J``, mas) and the reporting invariants ``a``, ``ecc``, ``cos_inc``,
     ``omega`` and ``Omega`` (invariant under the covers of ``z`` and ``ζ``).
     """
     if result.draws is None:
@@ -2095,7 +2084,8 @@ def fit_chi2(fit, mode=None):
 
     Both are on the nights' best peaks as ``(p, v)`` measurements (``(p)`` on a
     single-frame night): ``quoted`` with the quoted covariance (scale 1, no
-    jitter), ``total`` with ``σ² + σ_J²`` and the mode's error scale; ``n`` is
+    jitter), ``total`` with ``σ² + σ_J²`` (the brighter or fainter label chosen by
+    ``sign_log_likelihood``); ``n`` is
     the number of data and ``n_inliers`` the nights. Neither is rescaled: a
     ``quoted`` far above 1 with ``total`` near 1 is jitter, ``total`` far above 1
     is a failed fit. Nights are the mode's labels (``_labels``).
@@ -2123,9 +2113,15 @@ def fit_chi2(fit, mode=None):
     x = np.asarray(mode.x, space.dtype)
     with run_in(onp.dtype(space.dtype).name):
         c = space.decode(x)
-        lab, _ = _best_peaks(x, space)
-        use = onp.asarray(_labels(x, space)) >= 0
-        pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+        sign = (
+            1.0
+            if space.sign_log_likelihood(x)[0]
+            >= space.sign_log_likelihood(x)[1]
+            else -1.0
+        )
+        lab, _ = _best_peaks(x, space, sign)
+        use = onp.asarray(_labels(x, space, sign)) >= 0
+        pv = sign * space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
         state = onp.concatenate(
             [onp.asarray(pv, float), onp.full((len(pv), 1), float(c["ln_f"]))],
             axis=1,
@@ -2134,9 +2130,7 @@ def fit_chi2(fit, mode=None):
         zero = np.zeros_like(c["ln_s"])
         cov_q = onp.asarray(_peak_precision(cat, zero, 0.0, space.dtype)[0])
         cov_t = onp.asarray(
-            _peak_precision(
-                cat, c["ln_s"], c["jitter"], space.dtype, space.marginal
-            )[1]
+            _peak_precision(cat, zero, c["jitter"], space.dtype)[1]
         )
         mean = onp.asarray(cat.mean)
         single = onp.asarray(cat.single)
@@ -2224,17 +2218,19 @@ class CellsResult:
 
 def jitter_draws(fits, p):
     """``(σ_J, weight)`` of the cells' importance draws, the weights summing to
-    one and carrying ``p(N)``; ``None`` with no draws (a fixed-jitter fit has
-    constant draws). Where ``p`` is undefined (a failed cell) the cells with
-    draws count equally: ``σ_J`` is then only a rough summary."""
+    one and carrying ``p(N)``; ``None`` where ``p`` is undefined (a failed fit)
+    or there are no usable draws (a cell with no finite weight is skipped)."""
     p = onp.asarray(p, float)
     if not onp.all(onp.isfinite(p)):
-        p = onp.ones_like(p)
+        return None
     val, wt = [], []
     for f, pi in zip(fits, p):
         if pi <= 0 or f.x_is is None or f.log_w is None:
             continue
-        w = onp.exp(onp.asarray(f.log_w) - onp.max(f.log_w))
+        lw = onp.asarray(f.log_w, float)
+        if not onp.isfinite(lw).any():
+            continue
+        w = onp.exp(lw - lw.max())
         val.append(
             onp.asarray(f.space.decode_jitter(np.asarray(f.x_is)), float)
         )

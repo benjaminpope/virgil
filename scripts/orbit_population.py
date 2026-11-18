@@ -341,22 +341,24 @@ def nyquist_ok(period, times):
     return bool(len(gaps) and period >= 2.0 * onp.median(gaps))
 
 
-def signal_excess(orbit, times, inliers, sigma):
+def signal_excess(orbit, times, inliers, sigma, jitter=0.0):
     """``(dchi2, dof)`` of the best static model on the inlier nights.
 
     ``dchi2`` is the noncentrality: the noise-free χ² of the model of a
     constant sky position (fitted by weighted least squares) and zero
     velocity, to the true orbit's night states ``(p̂, v̂)`` at the inlier
-    nights, each position coordinate with error ``sigma`` and each velocity
-    coordinate ``sigma / sqrt(T_SS)`` (the simulator's noise). ``dof`` is
+    nights, each position coordinate with error ``sqrt(sigma² + jitter²)`` (the
+    quoted error and the between-night jitter) and each velocity coordinate
+    ``sigma / sqrt(T_SS)`` (the simulator's noise). ``dof`` is
     that model's: 4 numbers a night minus the 2 fitted coordinates."""
     m = len(inliers)
     if m == 0:
         return math.nan, 0
     st = _night_state(orbit, onp.asarray(times, float)[inliers])
     pos, vel = st[:, :2], st[:, 2:]
-    lam = onp.sum((pos - pos.mean(0)) ** 2) + T_SS * onp.sum(vel**2)
-    return float(lam / sigma**2), 4 * m - 2
+    lam = onp.sum((pos - pos.mean(0)) ** 2) / (sigma**2 + jitter**2)
+    lam += T_SS * onp.sum(vel**2) / sigma**2
+    return float(lam), 4 * m - 2
 
 
 def required_excess(dof):
@@ -383,7 +385,9 @@ def detectability(sysd):
     times = sysd["times"]
     inl = onp.setdiff1d(onp.arange(len(times)), sysd["outliers"])
     sigma = math.exp(sysd["ln_s"]) * sysd["rel"] * sysd["a"]
-    d2, dof = signal_excess(sysd["orbit"], times, inl, sigma)
+    d2, dof = signal_excess(
+        sysd["orbit"], times, inl, sigma, sysd.get("jitter", 0.0)
+    )
     thresh = required_excess(dof) if dof else math.nan
     nyq = nyquist_ok(sysd["period"], times)
     return dict(
@@ -400,9 +404,13 @@ def describe(sysd, fit):
         period=sysd["period"], a=sysd["a"], rel=sysd["rel"], k=k,
         two_seasons=int(sysd["two_seasons"]), n_outliers=n_out,
         p_cut=fit.p_cut, p_max=fit.p_max, ln_s=sysd["ln_s"],
-        eff_noise=math.exp(sysd["ln_s"]) * sysd["rel"], eps=sysd["eps"],
+        eff_noise=math.hypot(
+            math.exp(sysd["ln_s"]) * sysd["rel"], sysd.get("jitter", 0.0) / sysd["a"]
+        ),
+        eps=sysd["eps"],
         ecc=float(sysd["orbit"].ecc), stratum=stratum(k, n_out),
         le2_outliers=int(n_out <= 2),
+        **({"jitter_true": sysd["jitter"]} if "jitter" in sysd else {}),
     )  # fmt: skip
 
 
@@ -729,24 +737,31 @@ def _inlier_set(fit):
 
 
 def jitter_columns(sysd, out):
-    """Report-only columns of the jitter arm (empty otherwise): the injected
-    ``σ_J`` (``jitter_true``), its posterior median (``jitter_hat``), whether it
-    lies in the central 98 % of the ``p(N)``-weighted importance draws
-    (``jitter_in_99``), and the raw ``χ²/N`` of the dominant cell's best mode on
-    the quoted errors (``chi2_quoted``) and on ``σ² + σ_J²`` (``chi2_total``).
+    """Report-only columns of the jitter arm (empty otherwise): the posterior
+    median of ``σ_J`` (``jitter_hat``), whether the injected ``σ_J`` (a
+    ``describe`` column) lies in the central 99 % of the ``p(N)``-weighted
+    importance draws (``jitter_in_99``) and its rank among them
+    (``pit_jitter``, uniform under the prior), and the raw ``χ²/N`` of the
+    dominant cell's best mode on the quoted errors (``chi2_quoted``) and on
+    ``σ² + σ_J²`` (``chi2_total``). None where the fit failed (``p`` is NaN).
     The no-jitter arm still reports the chi-squares (``jitter_hat`` 0)."""
     cols = {}
+    if not onp.isfinite(out.p_pos).all():
+        return cols
     try:
-        best = int(onp.nanargmax(out.p_pos))
-        chi2 = oc_cells.fit_chi2(out.fits[best])
+        chi2 = oc_cells.fit_chi2(out.fits[int(onp.argmax(out.p_pos))])
         cols.update(chi2_quoted=chi2["quoted"], chi2_total=chi2["total"])
         if "jitter" not in sysd:
             return cols
         draws = oc_cells.jitter_draws(out.fits, out.p_pos)
-        cols.update(jitter_true=sysd["jitter"], jitter_hat=out.jitter)
+        cols["jitter_hat"] = out.jitter
         if draws is not None:
-            lo, hi = (oc_cells.jitter_quantile(draws, q) for q in (0.01, 0.99))
+            lo, hi = (
+                oc_cells.jitter_quantile(draws, q) for q in (0.005, 0.995)
+            )
             cols["jitter_in_99"] = int(lo <= sysd["jitter"] <= hi)
+            val, wt = draws
+            cols["pit_jitter"] = float(wt[val < sysd["jitter"]].sum())
     except Exception as err:  # a diagnostic never fails a system
         cols["jitter_diag_error"] = repr(err)[:200]
     return cols
@@ -1054,7 +1069,11 @@ def informativeness_lines(rows):
 
 def jitter_lines(ok):
     """Report-only lines of the jitter arm (none without ``jitter_true``)."""
-    arm = [r for r in ok if "jitter_in_99" in r]
+    arm = [
+        r
+        for r in ok
+        if "jitter_in_99" in r and onp.isfinite(r.get("jitter_hat", math.nan))
+    ]
     if not arm:
         return []
     ratio = onp.array(

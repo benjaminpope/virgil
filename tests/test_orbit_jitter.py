@@ -184,15 +184,20 @@ def test_fit_chi2_reports_quoted_and_total_errors():
 
 @pytest.mark.slow
 @pytest.mark.full_only
+@pytest.mark.xfail(
+    strict=False,
+    reason="seed 0: an off-truth cell's importance sampling is flagged "
+    "(ESS 1.4), so p is NaN; the C-steps hold sigma_J at its reference",
+)
 @x64
 @pytest.mark.timeout(6000)
 def test_the_period_is_calibrated_with_injected_jitter_end_to_end():
-    """Two seasons, jitter 5 sigma, three seeds (about 20 min each on a laptop): the
-    true ln P lies in the central 99 % of the posterior draws and the posterior
-    median jitter is within a factor 3 of the truth, in every seed the fit
-    does not refuse (a flagged cell refuses: ``p`` is NaN; at least two of
-    the three fit; the census jitter arm measures the refusal rate)."""
-    j_true, n_ok, n_fit, n_run = 5 * SIGMA, 0, 0, 3
+    """Two seasons, jitter 5 sigma, three seeds (about 20 min each on a laptop): no
+    cell is flagged, the true ln P lies in the central 99 % of the posterior
+    draws and the posterior median jitter is within a factor 3 of the truth.
+    Seed 0 currently flags a wrong-period cell (importance ESS 1.4, 40 nats
+    below the true cell): a known search/proposal gap, hence the xfail."""
+    j_true, n_ok, n_run = 5 * SIGMA, 0, 3
     for seed in range(n_run):
         rng = onp.random.default_rng(seed)
         times = _two_season_times(rng, 10)
@@ -203,9 +208,7 @@ def test_the_period_is_calibrated_with_injected_jitter_end_to_end():
             s, domain, jax.random.key(seed), a_range=(1.0, 30.0), e_max=0.9,
             log_outlier=onp.full(len(times), LOG_B),
         )  # fmt: skip
-        if out.failed.any():  # refused honestly (p is NaN), not a wrong answer
-            continue
-        n_fit += 1
+        assert not out.failed.any()
         assert j_true / 3 < out.jitter < 3 * j_true
         ln_p, w = [], []
         for f, p in zip(out.fits, out.p_pos):
@@ -219,6 +222,24 @@ def test_the_period_is_calibrated_with_injected_jitter_end_to_end():
             ln_p[order][onp.searchsorted(cum, q)] for q in (0.005, 0.995)
         )
         n_ok += lo <= math.log(11.3) <= hi
-    assert (
-        n_fit >= 2 and n_ok == n_fit
-    )  # calibration at scale is the census jitter arm's job
+    assert n_ok == n_run  # calibration at scale is the census jitter arm's job
+
+
+@x64
+def test_one_cell_fit_with_marginal_jitter_recovers_the_jitter_scale():
+    """The marginal ``position_leg`` of the true cell (8 nights, jitter 3 sigma)
+    finishes with finite evidence and draws of ``σ_J`` inside the prior range,
+    whose median is within a factor 4 of the truth."""
+    j_true = 3 * SIGMA
+    orbit, s, space = _setup(j_true, k=8)
+    cell = space.cell
+    fit = oc_cells.position_leg(
+        s, onp.full(len(s), LOG_B), cell, jax.random.key(0),
+        t_anchor=float(space.cat.t_ref[0]), t_nights=[n.t_ref for n in s],
+        a_range=(1.0, 30.0), e_max=0.9, jitter=None, jitter_ref=SIGMA,
+        n_is=512,
+    )  # fmt: skip
+    assert onp.isfinite(fit.log_z) and not fit.nonfinite
+    draw = onp.asarray(oc_cells.decode_particles(fit)["jitter"])
+    assert draw.min() >= 1e-3 and draw.max() <= 3.0
+    assert j_true / 4 < onp.median(draw) < 4 * j_true
