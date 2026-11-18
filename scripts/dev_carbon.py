@@ -25,6 +25,14 @@ Usage::
 
     python3 scripts/dev_carbon.py             # fetch, archive, write
     python3 scripts/dev_carbon.py --offline   # from the private ledger only
+    python3 scripts/dev_carbon.py --release   # full refresh, stamped for the release
+
+``--release`` is run by the maintainer in each release PR. It needs every
+source fetched (so ``ssh nt`` must work), refuses ``--offline`` and
+``--sources``, fails if any source warns, and adds a ``release`` stamp
+(version, time, short commit, sources) to ``dev_carbon.json``. The
+``publish.yml`` gate (``.github/scripts/check_carbon_fresh.py``) refuses to
+publish a tag whose stamp does not match.
 """
 
 import argparse
@@ -32,9 +40,12 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -48,6 +59,10 @@ BADGE_JSON_URL = (
     "https://benjaminpope.github.io/virgil/generated/dev_carbon_badge.json"
 )
 README = ROOT / "README.md"
+PYPROJECT = ROOT / "pyproject.toml"
+# The sources carbon_report.py fetches (its SOURCES); a release stamp lists
+# the enabled ones.
+SOURCES = ("claude", "vscode", "gemini", "copilot", "gha", "slurm")
 PAGE_URL = "https://benjaminpope.github.io/virgil/dev_carbon/"
 BADGE = re.compile(
     r"<!-- dev-carbon-badge -->.*?<!-- /dev-carbon-badge -->", re.S
@@ -222,6 +237,43 @@ def caveats(summary):
     )
 
 
+TROUBLE = re.compile(r"warning|error|traceback|ssh:|timed out", re.I)
+
+
+def trouble_lines(stderr):
+    """Stderr lines that suggest a source failed.
+
+    ``carbon_report.py`` prints ``warning: <source>: <error>`` for a source
+    that raises (``carbon_common.warn``), but a subprocess such as ``ssh``
+    writes its own messages, so any such line counts: a stamp must mean a
+    clean full refresh.
+    """
+    return [s for s in stderr.splitlines() if TROUBLE.search(s)]
+
+
+def release_stamp(version, head, sources, now):
+    """The stamp ``check_carbon_fresh.py`` reads from ``dev_carbon.json``."""
+    return {
+        "version": version,
+        "generated": now.isoformat(timespec="seconds"),
+        "head": head,
+        "sources": list(sources),
+    }
+
+
+def refresh_sentence(stamp):
+    if not stamp:
+        return (
+            "It is refreshed by hand with `python3 scripts/dev_carbon.py`, "
+            "so it lags the repository."
+        )
+    return (
+        "It is refreshed for each PyPI release (this page: "
+        f"v{stamp['version']}, {stamp['generated'][:10]}); the release "
+        "workflow refuses to publish without a refresh."
+    )
+
+
 def page(fragment, summary, home):
     fragment = re.sub(
         r"## Data analysis runs \(not in the total\)\n.*?(?=\n## )",
@@ -238,8 +290,9 @@ def page(fragment, summary, home):
         "# Development carbon\n\n"
         "An estimate of the energy and carbon emitted in developing and "
         "validating virgil: AI coding assistants, continuous integration "
-        "and cluster jobs. It is refreshed by hand with "
-        "`python3 scripts/dev_carbon.py`, so it lags the repository.\n\n"
+        "and cluster jobs. "
+        + refresh_sentence(summary.get("release"))
+        + "\n\n"
         + head.rstrip()
         + "\n\n"
         + science_section(summary)
@@ -302,20 +355,78 @@ def main(argv=None):
     ap.add_argument(
         "--sources", help="comma-separated subset of sources to fetch"
     )
+    ap.add_argument(
+        "--release",
+        action="store_true",
+        help="full refresh for a release: stamp dev_carbon.json with the "
+        "pyproject version; needs every source (incl. ssh nt)",
+    )
     args = ap.parse_args(argv)
+    if args.release and (args.offline or args.sources):
+        ap.error(
+            "--release needs a full online refresh: drop --offline/--sources"
+        )
 
     home = carbon_home()
     cmd = [sys.executable, str(home / "carbon_report.py")]
-    cmd += ["--config", str(CONFIG), "--archive", str(ARCHIVE)]
+    cmd += ["--config", str(CONFIG)]
     if args.offline:
         cmd.append("--offline")
     if args.sources:
         cmd += ["--sources", args.sources]
     with tempfile.TemporaryDirectory() as tmp:
         fragment = Path(tmp) / "page.md"
-        cmd += ["--markdown", str(fragment), "--summary", str(SUMMARY)]
-        subprocess.run(cmd, check=True)
-        summary = json.loads(SUMMARY.read_text())
+        # The summary goes to a temp file and is copied to SUMMARY only once
+        # the run is accepted, so a failed --release leaves the tree (and an
+        # earlier stamp) untouched.
+        new_summary = Path(tmp) / "summary.json"
+        # The archive is staged the same way: carbon_report.py compacts into
+        # it in place before it can warn.
+        new_archive = Path(tmp) / "archive.json"
+        if ARCHIVE.exists():
+            shutil.copy(ARCHIVE, new_archive)
+        cmd += ["--archive", str(new_archive)]
+        cmd += ["--markdown", str(fragment), "--summary", str(new_summary)]
+        run = subprocess.run(cmd, stderr=subprocess.PIPE, text=True)
+        sys.stderr.write(run.stderr)
+        run.check_returncode()
+        summary = json.loads(new_summary.read_text())
+        if args.release:
+            bad = trouble_lines(run.stderr)
+            if bad:
+                sys.exit(
+                    "--release: the refresh reported problems (is `ssh nt` "
+                    "up?); fix them and rerun. Nothing was written:\n  "
+                    + "\n  ".join(bad)
+                )
+            cfg = tomllib.loads(CONFIG.read_text("utf-8"))
+            off = [
+                s for s in SOURCES if not cfg.get(s, {}).get("enabled", True)
+            ]
+            if off:
+                sys.exit(
+                    f"--release: sources disabled in {CONFIG.name}: "
+                    f"{', '.join(off)}. A release refresh needs all of them."
+                )
+            head = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            version = tomllib.loads(PYPROJECT.read_text("utf-8"))["project"][
+                "version"
+            ]
+            summary["release"] = release_stamp(
+                version,
+                head,
+                SOURCES,
+                datetime.now().astimezone(),
+            )
+        if new_archive.exists():
+            shutil.copy(new_archive, ARCHIVE)
+        SUMMARY.write_text(json.dumps(summary, indent=1) + "\n")
         PAGE.write_text(page(fragment.read_text(), summary, home), "utf-8")
     write_badge(summary)
     subprocess.run(
