@@ -763,9 +763,9 @@ def test_evidence_and_laplace_account_for_non_pixel_priors():
         r0 = onp.asarray(resid_zf(theta0), float)
         jac = onp.asarray(jax.jacfwd(resid_zf)(theta0), float)
     prior_prec = onp.diag([1.0] * (n * n) + [0.0])
-    # LogUniform: ln p = -ln f, so -d2 ln p/df2 = -1/f^2 (analytic).
-    prec_f = onp.diag([1.0] * (n * n) + [-1.0 / float(f0[0]) ** 2])
-    hess = prec_f + jac.T @ jac
+    # LogUniform is fitted in log f without its density: the MAP is the
+    # likelihood's mode, so the prior precision in f is 0.
+    hess = prior_prec + jac.T @ jac
     log_pi_f = float(full_priors["env.flux"].log_prob(float(f0[0])))
     expected_ev_free = (
         ev_fixed

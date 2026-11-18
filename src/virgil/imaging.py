@@ -54,6 +54,7 @@ from ._geometry import (
 from ._utils import FWHM_PER_SIGMA, _reference, mas2rad
 from ._deprecate import external_stacklevel, keyword_only, renamed
 from ._precision import cast_tree, run_in
+from ._flat import _flat_coordinate
 from .fitting import FitResult, fit
 from .spectra import flux_at
 from .likelihood import _whitened_errors_and_log_norm, whitened_residuals
@@ -2680,7 +2681,7 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
     of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
     ``L`` the likelihood normalizer; extra priors in ``priors`` enter through
-    their ``log_prob`` at the MAP and add ``-∂² log p`` to their ``JᵀJ`` block of
+    their ``log_prob`` at the MAP and add ``-∂² log p`` (0 for a LogUniform prior, fitted in ``log x``) to their ``JᵀJ`` block of
     the Hessian. Without ``priors=``, every non-latent parameter is held at its
     MAP: the result is a profile likelihood in them and cannot compare scenes
     with different numbers of parameters. Compare
@@ -2743,11 +2744,16 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     singular, vt = _svd(jac_z)
     logdet = float(onp.sum(onp.log1p(singular**2)))
     c = vt @ (onp.asarray(jac_z, dtype=float).T @ jac_extra)
-    # Λ = -∂² Σ log p at the MAP, by autodiff, one block per parameter.
+    # Λ = -∂² Σ log p at the MAP, by autodiff, one block per parameter. A prior
+    # with a flat coordinate (LogUniform) is fitted there without its density
+    # in the loss, so the MAP is the likelihood's mode and Λ = 0.
     blocks = []
     with run_in("float64"):
         for p in extra_paths:
             x = np.asarray(model.get(p), dtype=np.float64)
+            if _flat_coordinate(priors[p]) is not None:
+                blocks.append(onp.zeros((x.size, x.size)))
+                continue
 
             def neg_log_prior(v, p=p, shape=x.shape):
                 return -np.sum(priors[p].log_prob(v.reshape(shape)))
