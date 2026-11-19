@@ -1,6 +1,5 @@
 """Rendering on rotated pixel grids, against analytic oracles (virgil#712 §12)."""
 
-import jax
 import jax.numpy as np
 import numpy as onp
 import pytest
@@ -73,29 +72,28 @@ def test_rotated_grid_image_is_the_unrotated_image_resampled(rotation_deg):
 @pytest.mark.parametrize("pa", (0.0, 40.0))
 def test_blur_in_plane_matches_the_analytic_gaussian(rotation_deg, pa):
     """Blurring a sky-frame Gaussian by an in-plane kernel adds covariances."""
-    with jax.enable_x64(True):
-        xx, yy = _pixel_grid(rotation_deg)
-        xx, yy = np.asarray(xx), np.asarray(yy)
-        s0, fwhm, stretch = 6.0, 8.0, 0.5
-        sk = fwhm / 2.3548200450309493
-        image = np.exp(-0.5 * (xx**2 + yy**2) / s0**2)
-        # the kernel has unit peak: divide by its sum, 2 pi sigma^2 stretch / px^2
-        got = _blur_in_plane(image, fwhm, pa, stretch, SCALE, xx, yy) / (
-            2 * onp.pi * sk**2 * stretch / SCALE**2
-        )
-        # kernel: sigma sk along the major axis (pa, East of North), sk*stretch across
-        th = onp.deg2rad(pa)
-        major = onp.array([onp.sin(th), onp.cos(th)])
-        minor = onp.array([onp.cos(th), -onp.sin(th)])
-        cov_k = sk**2 * (
-            onp.outer(major, major) + stretch**2 * onp.outer(minor, minor)
-        )
-        cov = s0**2 * onp.eye(2) + cov_k
-        inv = onp.linalg.inv(cov)
-        p = onp.stack([onp.asarray(xx), onp.asarray(yy)], -1)
-        quad = onp.einsum("...i,ij,...j->...", p, inv, p)
-        want = onp.exp(-0.5 * quad) * s0**2 / onp.sqrt(onp.linalg.det(cov))
-        onp.testing.assert_allclose(onp.asarray(got), want, atol=2e-3)
+    xx, yy = _pixel_grid(rotation_deg)
+    xx, yy = np.asarray(xx), np.asarray(yy)
+    s0, fwhm, stretch = 6.0, 8.0, 0.5
+    sk = fwhm / 2.3548200450309493
+    image = np.exp(-0.5 * (xx**2 + yy**2) / s0**2)
+    # the kernel has unit peak: divide by its sum, 2 pi sigma^2 stretch / px^2
+    got = _blur_in_plane(image, fwhm, pa, stretch, SCALE, xx, yy) / (
+        2 * onp.pi * sk**2 * stretch / SCALE**2
+    )
+    # kernel: sigma sk along the major axis (pa, East of North), sk*stretch across
+    th = onp.deg2rad(pa)
+    major = onp.array([onp.sin(th), onp.cos(th)])
+    minor = onp.array([onp.cos(th), -onp.sin(th)])
+    cov_k = sk**2 * (
+        onp.outer(major, major) + stretch**2 * onp.outer(minor, minor)
+    )
+    cov = s0**2 * onp.eye(2) + cov_k
+    inv = onp.linalg.inv(cov)
+    p = onp.stack([onp.asarray(xx), onp.asarray(yy)], -1)
+    quad = onp.einsum("...i,ij,...j->...", p, inv, p)
+    want = onp.exp(-0.5 * quad) * s0**2 / onp.sqrt(onp.linalg.det(cov))
+    onp.testing.assert_allclose(onp.asarray(got), want, atol=1e-4)
 
 
 @pytest.mark.parametrize("rotation_deg", (20.0,))
