@@ -1187,7 +1187,8 @@ def _convergence(problem, z, start, outcome):
     # nothing about the gradient, so the bound check leaves it be.
     plateau = method == "adam" and converged is True
     if method == "adam" and not converged:
-        converged = bool(grad_norm <= _lm_tolerance(problem, z0, scale, gtol))
+        tolerance = _lm_tolerance(problem, z0, scale, gtol)
+        converged = bool(float(grad_norm) <= float(tolerance))
         stop = None if converged else stop or "limit"
     if not math.isfinite(loss) and converged is not False:
         # E.g. LM or Adam ending on NaN parameters.
@@ -1596,8 +1597,15 @@ def _state_gradient_norm(state, metric=None):
 
 
 def _largest(tree):
-    """The largest absolute value in a pytree of arrays."""
-    return np.max(np.stack([np.max(np.abs(x)) for x in jax.tree.leaves(tree)]))
+    """The largest absolute value in a pytree of arrays.
+
+    Concrete arrays are reduced in NumPy on the host (no XLA compile);
+    traced ones with ``jax.numpy``.
+    """
+    leaves = jax.tree.leaves(tree)
+    if any(isinstance(x, jax.core.Tracer) for x in leaves):
+        return np.max(np.stack([np.max(np.abs(x)) for x in leaves]))
+    return onp.max([onp.max(onp.abs(onp.asarray(x))) for x in leaves])
 
 
 def _scaled_loss(problem, scale):
@@ -1613,12 +1621,13 @@ def _tolerance(gradient, gtol):
     stop at a different gradient. See ``design/fitting_internals.md``.
     """
     largest = _largest(gradient)
-    floor = np.sqrt(np.finfo(largest.dtype).eps) * largest
+    xp = onp if isinstance(largest, onp.generic) else np
+    floor = xp.sqrt(xp.finfo(largest.dtype).eps) * largest
     # Both floors scale with the starting gradient, which at an exact,
     # zero-residual optimum is itself rounding noise; 1e-6 * gtol keeps
     # such a start reachable (converged at once).
-    return np.maximum(
-        np.minimum(gtol, 1e-3 * largest), np.maximum(floor, 1e-6 * gtol)
+    return xp.maximum(
+        xp.minimum(gtol, 1e-3 * largest), xp.maximum(floor, 1e-6 * gtol)
     )
 
 

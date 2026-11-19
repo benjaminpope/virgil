@@ -341,6 +341,63 @@ def test_zeta_has_a_coordinate_singularity_at_zero():
 
 
 @x64
+@pytest.mark.parametrize("radius", [0.0, 1e-9, 0.3, 0.9])
+def test_the_anchor_unit_orbit_is_the_kepler_sky(radius):
+    z = np.array([1.0, 0.7, 0.5, -0.3])
+    zeta = radius * np.array([np.cos(2.2), np.sin(2.2)])
+    t = onp.random.default_rng(4).uniform(-300, 300, 25)
+    x, y = oc.anchor_unit_orbit(t - T_ANCHOR, 120.0, zeta)
+    a, b, f, g = oc.z_to_ti(z)
+    sky = oc.coordinates_to_orbit(120.0, z, zeta, T_ANCHOR).sky(t)
+    onp.testing.assert_allclose(b * x + g * y, sky[0], atol=1e-9)
+    onp.testing.assert_allclose(a * x + f * y, sky[1], atol=1e-9)
+    if radius < 0.1:
+        return  # the Kepler sky's derivatives in zeta go through M_a
+    # away from e = 0 the KeplerOrbit path is smooth: the derivatives in zeta
+    # (the custom JVP and the q projection at O(e)) agree with its own
+
+    def new_sky(zeta):
+        x, y = oc.anchor_unit_orbit(t - T_ANCHOR, 120.0, zeta)
+        return np.stack([b * x + g * y, a * x + f * y])
+
+    def kepler_sky(zeta):
+        return np.stack(
+            oc.coordinates_to_orbit(120.0, z, zeta, T_ANCHOR).sky(t)
+        )
+
+    for d in (jax.jacfwd, jax.hessian):
+        onp.testing.assert_allclose(
+            d(new_sky)(zeta), d(kepler_sky)(zeta), atol=1e-7
+        )
+
+
+@x64
+def test_the_anchor_unit_orbit_is_analytic_at_zero_eccentricity():
+    # to first order in e, with E = M + e sin M (Murray & Dermott 1999, §2.5):
+    # ∂(X, Y)/∂k = (-1 - sin²m, sin m cos m) and ∂(X, Y)/∂h = (-sin m cos m,
+    # 1 + cos²m), m the mean anomaly since the anchor; k + ih = zeta², so
+    # the Hessian in zeta is 2 ∂/∂k diag(1, -1) + 2 ∂/∂h [[0, 1], [1, 0]]
+    m = onp.linspace(-3.0, 3.0, 7)
+    s, c = onp.sin(m), onp.cos(m)
+    d_k = onp.stack([-1 - s**2, s * c])
+    d_h = onp.stack([-s * c, 1 + c**2])
+    expected = onp.zeros((2, 7, 2, 2))
+    expected[..., 0, 0], expected[..., 1, 1] = 2 * d_k, -2 * d_k
+    expected[..., 0, 1] = expected[..., 1, 0] = 2 * d_h
+
+    def unit(zeta):
+        return np.stack(
+            oc.anchor_unit_orbit(m * 10.0 / (2 * np.pi), 10.0, zeta)
+        )
+
+    for zeta in (np.zeros(2), np.array([1e-9, -2e-9])):
+        onp.testing.assert_allclose(
+            jax.hessian(unit)(zeta), expected, atol=1e-7
+        )
+        onp.testing.assert_allclose(jax.jacfwd(unit)(zeta), 0.0, atol=1e-7)
+
+
+@x64
 def test_float32_round_trips():
     # float32 inputs under x64: nothing is promoted to float64 or complex128.
     # Run with x64 on, so a promotion would show; with it off every float64
@@ -352,7 +409,15 @@ def test_float32_round_trips():
     z2 = oc.ti_to_z(*abfg)
     ecc, m = oc.zeta_to_eccentricity(zeta)
     zeta2 = oc.eccentricity_to_zeta(ecc, m)
-    for x in (z, zeta, *abfg, z2, ecc, m, zeta2):
+    unit = oc.anchor_unit_orbit(
+        np.linspace(0, 9, 5, dtype=np.float32), 7.0, zeta[0]
+    )
+    _, tangent = jax.jvp(
+        lambda w: oc.anchor_unit_orbit(np.float32(1.0), 7.0, w),
+        (np.zeros(2, np.float32),),
+        (np.ones(2, np.float32),),
+    )
+    for x in (z, zeta, *abfg, z2, ecc, m, zeta2, *unit, *tangent):
         assert x.dtype == np.float32
     onp.testing.assert_allclose(oc.z_to_ti(z2), abfg, atol=1e-4, rtol=1e-4)
     sign = onp.where(zeta[:, :1] < 0, -1.0, 1.0)

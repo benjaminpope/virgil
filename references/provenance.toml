@@ -1764,6 +1764,17 @@ doi = "10.1086/500802"
 verified = true
 verified_via = "ads"
 
+[ref.broucke1972]
+authors = "Broucke & Cefola"
+year = 1972
+title = "On the equinoctial orbit elements"
+used_in = ["virgil._orbit_coordinates:anchor_unit_orbit", "virgil.orbit_cells:_Space.states_at"]
+note = "Celestial Mechanics 5, 303; Kepler's equation in the eccentricity vector (k, h), regular at e = 0"
+bibcode = "1972CeMec...5..303B"
+doi = "10.1007/BF01228432"
+verified = true
+verified_via = "crossref"
+
 # Sources of design/orbit_alias_cycles.md (not yet coded): role "bibliography" until a stage sets used_in.
 # The z and ζ maps, the anchor TI' rotation and the velocity-aware outlier contract are derived there (no source).
 
