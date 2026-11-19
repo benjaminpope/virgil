@@ -1488,6 +1488,14 @@ def _unique_starts(lab, v, h, r):
     return onp.array(kept, int)
 
 
+def _bucket(n):
+    """The padded batch size for ``n`` C-step rows: 8, 32 or ``CHUNK_C``.
+
+    The rows are independent, so a few add-one candidates need not run as
+    256; three sizes keep the number of compiled shapes small."""
+    return next((s for s in (8, 32) if n <= s), CHUNK_C)
+
+
 def _converge_csteps(space, plan, v, lab):
     """C-steps of the rows ``(v, lab)`` until each one's labels repeat (at most
     ``N_C``); returns ``v``, the labels and the chart vectors."""
@@ -1498,11 +1506,12 @@ def _converge_csteps(space, plan, v, lab):
         nxt = []
         for sl in _chunks(len(active), CHUNK_C):
             idx = active[sl]
+            size = _bucket(len(idx))
             res = _cstep_chunk(
                 space,
                 plan,
-                np.asarray(_padded(v[idx], CHUNK_C), space.dtype),
-                np.asarray(_padded(lab[idx], CHUNK_C)),
+                np.asarray(_padded(v[idx], size), space.dtype),
+                np.asarray(_padded(lab[idx], size)),
                 N_NEWTON,
             )
             vs, ls, xs = (onp.asarray(a)[: len(idx)] for a in res[:3])
