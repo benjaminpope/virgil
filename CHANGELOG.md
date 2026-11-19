@@ -1248,7 +1248,6 @@ Provisional in 0.4:
 - the Gaussian-process members of `virgil.ensemble`: `evidence_grid`,
   `gp_members`, `GPFit` and `EvidenceGrid`;
 - `virgil.svi` (`variational`);
-- `virgil.enable_compilation_cache`;
 - all of `virgil.pipeline`: `BinaryPipeline`, `StarPipeline` and
   `DiskPipeline`. `BinaryPipeline` and `StarPipeline` were documented as
   stable and are now provisional, to be promoted after a release of use
