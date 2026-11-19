@@ -7,7 +7,14 @@ import pytest
 from scipy.special import j1
 
 from virgil._geometry import image_coordinates, image_visibilities, rotate
-from virgil.models import GravityDarkenedStar, _blur_in_plane
+from virgil.models import (
+    GaussianRing,
+    GravityDarkenedStar,
+    ModulatedGaussianRim,
+    MultipoleDisk,
+    _blur_in_plane,
+    _lattice_axis,
+)
 
 NPIX, SCALE = 64, 1.0
 MAS_INV = 180 * 3600 * 1000 / onp.pi  # per-radian frequency of 1 cycle/mas
@@ -91,30 +98,76 @@ def test_blur_in_plane_matches_the_analytic_gaussian(rotation_deg, pa):
         onp.testing.assert_allclose(onp.asarray(got), want, atol=2e-3)
 
 
-@pytest.mark.parametrize("rotation_deg", (45.0,))
+@pytest.mark.parametrize("rotation_deg", (20.0,))
 def test_star_samples_are_the_turned_pixel_square(rotation_deg):
     """Coarse pixels average 4 x 4 samples of the disk indicator over the pixel
     square turned with the lattice: a pixel carries 2 * mean * scale^2."""
     diam, scale, npix = 20.0, 5.0, 12
     xx, yy = image_coordinates(npix, npix * scale)
     xx, yy = (onp.asarray(a) for a in rotate(xx, yy, rotation_deg))
-    star = GravityDarkenedStar(diam, 0.0, 90.0, 0.0, n_lat=64)
+    # off-centre: a centred disk is symmetric under the sign flip being tested
+    dra, ddec = 1.3, -0.7
+    star = GravityDarkenedStar(
+        diam, 0.0, 90.0, 0.0, dra=dra, ddec=ddec, n_lat=64
+    )
     got = onp.asarray(star._image(xx, yy, scale)) / (2 * scale**2)
-    th = onp.deg2rad(rotation_deg)
-    axis = onp.array(
-        [onp.cos(th), -onp.sin(th)]
-    )  # the grid's x axis on the sky
-    perp = onp.array([onp.sin(th), onp.cos(th)])
     t = ((onp.arange(4) + 0.5) / 4 - 0.5) * scale
 
-    def coverage(turned):
-        e1, e2 = (axis, perp) if turned else (onp.eye(2)[0], onp.eye(2)[1])
+    def coverage(angle):
+        th = onp.deg2rad(angle)
+        e1 = onp.array(
+            [onp.cos(th), -onp.sin(th)]
+        )  # the grid's x axis on the sky
+        e2 = onp.array([onp.sin(th), onp.cos(th)])
         ox = t[:, None] * e1[0] + t[None, :] * e2[0]
         oy = t[:, None] * e1[1] + t[None, :] * e2[1]
-        px = xx[..., None, None] + ox
-        py = yy[..., None, None] + oy
+        px = xx[..., None, None] + ox - dra
+        py = yy[..., None, None] + oy - ddec
         return (px**2 + py**2 <= (diam / 2) ** 2).mean(axis=(-1, -2))
 
-    # the same samples as the disk's indicator; the axis-aligned square misses
-    assert onp.abs(got - coverage(True)).mean() < 1e-5
-    assert onp.abs(got - coverage(False)).mean() > 1e-3
+    # the same samples as the disk's indicator; a square turned the other way
+    # (or not at all) misses
+    assert onp.abs(got - coverage(rotation_deg)).mean() < 1e-5
+    assert onp.abs(got - coverage(-rotation_deg)).mean() > 1e-3
+    assert onp.abs(got - coverage(0.0)).mean() > 1e-3
+
+
+@pytest.mark.parametrize("rotation_deg", (0.0, 25.0, -90.0, 137.0))
+def test_lattice_axis_is_the_grid_rotation_from_any_two_pixels(rotation_deg):
+    xx, yy = (onp.asarray(a) for a in _pixel_grid(rotation_deg))
+    th = onp.deg2rad(rotation_deg)
+    want = onp.array([onp.cos(th), -onp.sin(th)])
+    for sl in (np.s_[:, :], np.s_[:, :2], np.s_[:2, :1]):
+        got = onp.array([float(c) for c in _lattice_axis(xx[sl], yy[sl])])
+        onp.testing.assert_allclose(got, want, atol=1e-5)
+
+
+def _rim():
+    return ModulatedGaussianRim(
+        24.0, 6.0, 55.0, 30.0, az_amps=(0.3,), az_pas=(10.0,)
+    )
+
+
+def _multipole():
+    return MultipoleDisk(
+        GaussianRing(10.0, 4.0), inc=55.0, pa=30.0, blur_fwhm=5.0
+    )
+
+
+@pytest.mark.parametrize("rotation_deg", (0.0, 25.0, 90.0, 137.0))
+@pytest.mark.parametrize("make", (_rim, _multipole))
+def test_blurred_disk_render_on_a_rotated_grid_is_the_same_sky_image(
+    make, rotation_deg
+):
+    """A rotated grid and an unrotated one render the same sky: their
+    visibilities at the same sky frequencies agree."""
+    model = make()
+    u, v = _freqs()
+    out = []
+    for rot in (0.0, rotation_deg):
+        xx, yy = _pixel_grid(rot)
+        pix = model._image(xx, yy, SCALE)
+        pix = pix / np.sum(pix)
+        uu, vv = rotate(u, v, -rot) if rot else (u, v)
+        out.append(onp.asarray(image_visibilities(pix, uu, vv, SCALE, "dft")))
+    onp.testing.assert_allclose(out[1], out[0], atol=2e-3)

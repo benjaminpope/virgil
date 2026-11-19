@@ -1928,6 +1928,7 @@ class GravityDarkenedStar(Component):
         # pixel centres are the grid xx, yy (rotated for a rotated grid).
         s = self._image_oversample
         nrow, ncol = xx.shape
+        xx, yy = np.asarray(xx), np.asarray(yy)
         cx, cy = _lattice_axis(xx, yy)
         frac = ((np.arange(s) + 0.5) / s - 0.5) * pixel_scale_mas
         # offsets along the column axis (b) and the row axis (a); each set is
@@ -1983,11 +1984,18 @@ class GravityDarkenedStar(Component):
 
 
 def _lattice_axis(xx, yy):
-    """Unit sky vector of the grid's x axis: ``(cos, sin)`` of its rotation.
+    """Unit sky vector of the grid's x axis: ``(cos, -sin)`` of its rotation.
 
-    Exactly ``(1, 0)`` for an unrotated grid, whose columns run to -x.
+    That is ``rotate`` of ``(1, 0)`` by ``rotation_deg``, exactly ``(1, 0)``
+    for an unrotated grid, whose columns run to -x. A one-column grid takes
+    its axis from the rows; a single pixel has none, so it counts as unrotated.
     """
-    dx, dy = xx[0, 0] - xx[0, 1], yy[0, 0] - yy[0, 1]
+    if xx.shape[1] > 1:
+        dx, dy = xx[0, 0] - xx[0, 1], yy[0, 0] - yy[0, 1]
+    elif xx.shape[0] > 1:  # the row step is scale * (sin, cos)
+        dx, dy = yy[0, 0] - yy[1, 0], xx[1, 0] - xx[0, 0]
+    else:
+        return 1.0, 0.0
     norm = np.hypot(dx, dy)
     return dx / norm, dy / norm
 

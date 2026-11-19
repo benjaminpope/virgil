@@ -1530,7 +1530,8 @@ class CleanResult:
         The FWHM of each scale's Gaussian shape (0 for a point).
     rotation_deg : float
         Position angle of the pixel grid's "up" axis, the frame of
-        ``components``; the model's, 0 for North up.
+        ``components``: ``frame_deg`` when set, else the model's (0 for North
+        up).
     frame_deg : float, optional
         The frame ``clean`` ran in; ``rotation_deg`` uses it when set.
     """
