@@ -449,14 +449,15 @@ def _member_setup(p):
 
 def _members(p):  # deliberate: stage callable
     # The members' warnings are kept in the report as well as re-issued.
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        for k in range(p.settings["members"]):
-            p.run_member(k)
-    for w in caught:
-        warnings.warn_explicit(
-            w.message, w.category, w.filename, w.lineno
-        )
+    caught = []
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            for k in range(p.settings["members"]):
+                p.run_member(k)
+    finally:  # the warnings of the members that ran survive a failure
+        for w in caught:
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
     return {
         "n_members": int(p.settings["members"]),
         "warnings": sorted({str(w.message) for w in caught}),

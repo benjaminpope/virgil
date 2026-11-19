@@ -1121,6 +1121,6 @@ def test_a_rejected_rivals_failed_chi2_only_warns():
     assert status["chi2_b"].status == "warn"
     assert "b (not selected)" in status["chi2_b"].message
     fit["best"] = "b"  # selected, the same χ² fails
-    assert {
-        c.name: c.status for c in star._fit_checks(fit, registry)
-    }["chi2_b"] == "fail"
+    assert {c.name: c.status for c in star._fit_checks(fit, registry)}[
+        "chi2_b"
+    ] == "fail"

@@ -1511,6 +1511,8 @@ def test_error_scale_judges_each_scale_on_its_own_n():
     # N = 1 widens its warn limit to ~3.29, so s = 3.0 passes alone; the
     # large block's s = 2.5 exceeds its own limit of 2 and must still warn.
     scales, n = {"small": 3.0, "large": 2.5}, {"small": 1, "large": 1000}
-    assert _status(checks.error_scale({"small": 3.0}, n={"small": 1})) == "pass"
+    assert (
+        _status(checks.error_scale({"small": 3.0}, n={"small": 1})) == "pass"
+    )
     assert _status(checks.error_scale(scales, n=n)) == "warn"
     assert _status(checks.error_scale({"large": 2.5}, n=n)) == "warn"

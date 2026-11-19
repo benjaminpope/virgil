@@ -479,7 +479,6 @@ class StarPipeline(_Pipeline):
                     },
                     walls=other.get("wall_probe"),
                 )
-                other_checks = [_rival(oc, name) for oc in other_checks]
                 sampler_checks = [
                     dataclasses.replace(
                         oc,
@@ -1244,8 +1243,9 @@ _POSTERIOR_KEYS = (
 
 
 def _rival(check, name):
-    """``check`` of a model that was not selected: a failure is a warning, as
-    the best model's checks decide the run."""
+    """A χ² ``check`` of a model that was not selected: a failure is a
+    warning, since a poor fit is why it was rejected. Sampler checks of a
+    rival are not downgraded."""
     if check.status != "fail":
         return check
     return dataclasses.replace(check, status="warn")
