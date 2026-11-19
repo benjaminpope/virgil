@@ -276,7 +276,7 @@ Mostly Gaussian-process and hierarchical-Bayes machinery under other names
 
 Take:
 - whitened latents (N(0,1) parameters mapped to the field);
-- the DCT Matern-like field of decision 5.
+- the Matern-like spectrum (Lindgren et al. 2011) on a DCT basis, virgil's own choice (decision 5), not taken from the IFT papers.
 
 Do not take a dependency on `nifty.re`: its licence metadata is ambiguous, it
 changes between versions, its demos assume x64, `amend` makes callables
