@@ -13,9 +13,11 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 | gate    | pull request                 | py3.12 float32 and float64, 3 shards    |
 |         |                              | each, no slow tests; a PR touching      |
 |         |                              | tests/test_*.py adds that file's        |
-|         |                              | non-`full_only` slow tests, touching    |
-|         |                              | the orbit modules or pipeline core/disk |
-|         |                              | adds their slow tests, and changing     |
+|         |                              | non-`full_only` slow tests; touching a  |
+|         |                              | src/virgil module adds those of its     |
+|         |                              | test_<module>*.py files; touching the   |
+|         |                              | orbit modules or pipeline core/disk     |
+|         |                              | adds their slow tests; changing         |
 |         |                              | pyproject.toml adds the floors          |
 | main    | push to main                 | the gate, with the slow tests except    |
 |         |                              | the `full_only` ones                    |
@@ -47,10 +49,20 @@ ORBIT_PATHS = re.compile(
     r"|tests/test_(aliases|arcs|epochs|epoch_coarse|orbit[a-z_]*|tempering|pipeline_(disk|robust_disk|image|orbit[a-z_]*)))\.py$"
 )
 ORBIT_SLOW_FILES = (
-    "test_aliases.py test_arcs.py test_epochs.py test_epoch_coarse.py test_orbit*.py test_tempering.py "
-    "test_pipeline_disk.py test_pipeline_robust_disk.py test_pipeline_image.py test_pipeline_orbit_gap.py"
+    "test_aliases.py test_epochs.py test_epoch_coarse.py test_orbit*.py test_tempering.py "
+    "test_pipeline_disk.py test_pipeline_robust_disk.py test_pipeline_image.py test_pipeline_orbit*.py "
+    "test_night_flags.py test_marginal*.py"
 )
 TEST_FILE_RE = re.compile(r"^tests/(test_[a-z0-9_]+\.py)$")
+SRC_FILE_RE = re.compile(r"^src/virgil/(pipeline/)?([a-z0-9_]+)\.py$")
+# Test files whose name does not follow their module's (`test_<module>*.py`).
+SRC_TEST_GLOBS = {
+    "fitting": ["test_fit*.py"],
+    "inference": ["test_sampling.py", "test_evidence.py"],
+    "night_summaries": ["test_night_*.py"],
+}
+# Shared helpers: a change reaches every test file that imports them.
+SHARED_TEST_HELPERS = ("tests/_orbit_pipeline.py", "tests/_orbit_toy.py")
 
 LINUX = {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"}
 
@@ -66,6 +78,29 @@ def changed_flags(files):
 def changed_test_files(files):
     """Sorted top-level ``test_*.py`` basenames touched by ``files``."""
     return sorted({m.group(1) for f in files if (m := TEST_FILE_RE.match(f))})
+
+
+def changed_source_globs(files):
+    """Test-file globs for the ``src/virgil`` modules touched by ``files``.
+
+    A module ``<m>`` reaches ``test_<m>*.py`` (leading underscore dropped), a
+    ``pipeline/`` module reaches ``test_pipeline_*.py``, and
+    ``SRC_TEST_GLOBS`` names the files whose name differs from their
+    module's; the shared orbit-pipeline test helpers reach
+    ``test_pipeline_orbit*.py``. A glob matching nothing is harmless.
+    """
+    globs = []
+    for f in files:
+        if f in SHARED_TEST_HELPERS:
+            globs.append("test_pipeline_orbit*.py")
+        elif m := SRC_FILE_RE.match(f):
+            pipeline, stem = m.groups()
+            if pipeline:
+                globs.append("test_pipeline_*.py")
+            elif stem != "__init__":
+                globs.append(f"test_{stem.lstrip('_')}*.py")
+                globs += SRC_TEST_GLOBS.get(stem, [])
+    return sorted(set(globs))
 
 
 def choose(
@@ -183,7 +218,7 @@ def main():
             text=True,
         ).stdout.split()
         pyproject, orbit_slow = changed_flags(files)
-        extra_slow = changed_test_files(files)
+        extra_slow = changed_test_files(files) + changed_source_globs(files)
     matrix = choose(
         "schedule" if nightly else event,
         os.environ.get("FULL_CI") == "true",

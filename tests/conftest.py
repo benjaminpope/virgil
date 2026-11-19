@@ -45,7 +45,8 @@ def pytest_configure(config):
     )
     # The heaviest, compile-dominated tests. Pull requests run
     # `-m "not slow"`, except that a pull request touching a `tests/test_*.py`
-    # file runs that file's non-`full_only` slow tests and one touching the
+    # file, or the `src/virgil` module it is named for, runs that file's
+    # non-`full_only` slow tests and one touching the
     # orbit or pipeline core/disk/image modules runs `ORBIT_SLOW_FILES`
     # (`VIRGIL_SLOW_FILES` below); pushes to main run them except the
     # `full_only` ones, which only `full-ci`, dispatch and the nightly run
@@ -60,8 +61,8 @@ def pytest_configure(config):
         "markers",
         "slow: heaviest, compile-dominated tests; skipped on pull requests "
         "(-m 'not slow', except non-full_only slow tests in modified "
-        "tests/test_*.py files and ORBIT_SLOW_FILES when orbit/pipeline "
-        "modules change) but run on main, with the full-ci label and nightly",
+        "tests/test_*.py files or their src/virgil modules, and "
+        "ORBIT_SLOW_FILES when orbit/pipeline modules change) but run on main, with the full-ci label and nightly",
     )
 
 

@@ -187,6 +187,96 @@ def test_changed_test_files():
     ]
 
 
+def test_changed_source_globs():
+    assert ci.changed_source_globs(["README.md", "tests/test_x.py"]) == []
+    assert ci.changed_source_globs(["src/virgil/__init__.py"]) == []
+    assert ci.changed_source_globs(["src/virgil/_orbit_coordinates.py"]) == [
+        "test_orbit_coordinates*.py"
+    ]
+    assert ci.changed_source_globs(["src/virgil/fitting.py"]) == [
+        "test_fit*.py",
+        "test_fitting*.py",
+    ]
+    assert ci.changed_source_globs(["src/virgil/pipeline/_common.py"]) == [
+        "test_pipeline_*.py"
+    ]
+    assert ci.changed_source_globs(["tests/_orbit_toy.py"]) == [
+        "test_pipeline_orbit*.py"
+    ]
+    assert "test_night_*.py" in ci.changed_source_globs(
+        ["src/virgil/night_summaries.py"]
+    )
+
+
+def _slow_test_files():
+    """{file name: has a slow test that is not `full_only`}, by AST scan."""
+    import ast
+
+    def marks(node):
+        text = ""
+        for dec in getattr(node, "decorator_list", []):
+            text += ast.unparse(dec) + " "
+        return text
+
+    out = {}
+    for path in sorted((ROOT / "tests").glob("test_*.py")):
+        tree = ast.parse(path.read_text())
+        module_marks = " ".join(
+            ast.unparse(n.value)
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            and any(getattr(t, "id", "") == "pytestmark" for t in n.targets)
+        )
+        tests = []
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                cls = marks(node)
+                tests += [
+                    cls + marks(f)
+                    for f in node.body
+                    if isinstance(f, ast.FunctionDef)
+                ]
+            elif isinstance(node, ast.FunctionDef):
+                tests.append(marks(node))
+        out[path.name] = any(
+            "mark.slow" in (m := module_marks + " " + t)
+            and "full_only" not in m
+            for t in tests
+        )
+    return out
+
+
+def test_slow_file_globs_match_runnable_slow_tests():
+    """Each ORBIT_SLOW_FILES glob selects a slow test the PR gate would run.
+
+    A glob that matches only `full_only` tests (which VIRGIL_SLOW_FILES
+    drops) or no file at all gates nothing.
+    """
+    import fnmatch
+
+    slow = {name for name, ok in _slow_test_files().items() if ok}
+    for glob in ci.ORBIT_SLOW_FILES.split():
+        assert any(fnmatch.fnmatch(n, glob) for n in slow), glob
+
+
+def test_slow_tests_follow_their_module():
+    """A change to src/virgil/<m>.py reaches the slow tests named for <m>."""
+    import fnmatch
+
+    slow = {name for name, ok in _slow_test_files().items() if ok}
+    for path in (ROOT / "src" / "virgil").glob("*.py"):
+        if path.stem == "__init__":
+            continue
+        globs = ci.changed_source_globs([f"src/virgil/{path.name}"])
+        named = f"test_{path.stem.lstrip('_')}"
+        for name in slow:
+            if name == f"{named}.py" or name.startswith(named + "_"):
+                assert any(fnmatch.fnmatch(name, g) for g in globs), (
+                    path.name,
+                    name,
+                )
+
+
 def test_dtype_independent_list_is_safe():
     """Files skipped on the float64 jobs exist and carry no evidence."""
     from tests.conftest import DTYPE_INDEPENDENT
@@ -226,7 +316,7 @@ def test_main_reads_the_environment(monkeypatch, capsys):
     )
     ci.main()
     pr_out = capsys.readouterr().out
-    assert '"orbit_slow": "test_sampling.py"' in pr_out
+    assert '"orbit_slow": "test_sampling.py test_fit*.py test_fitting*.py"' in pr_out
 
 
 def _script(name):
