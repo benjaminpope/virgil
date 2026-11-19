@@ -327,7 +327,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `alias_ambiguity` (`OrbitPipeline`: log Z of the best alias band over the runner-up's, `alias_nats`) | under 10 nats: the runner-up is not excluded | under 1 nat: the period is not determined |
 | `winner_flags` (`OrbitPipeline`: the winning band's evidence flags, such as `not-converged`, `laplace-is-differ`, `low-ess`) | any flag: its log Z is less reliable | |
 | `mode_converged` (`OrbitPipeline`: the best sampled point against the search's best mode) | over 1 nat: the search stopped short of the optimum; raise `n_candidates`, `n_refine` or `max_steps` | |
-| `sampler_budget` (`OrbitPipeline`: the time budget against the sampling) | a band ran out of budget; fails if the best band is only the 8-draw token chain: raise the time budget | |
+| `sampler_budget` (`OrbitPipeline`: the time budget against the sampling) | a band ran out of budget | the best band's posterior is only the 8-draw token chain: raise the time budget |
 | `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood; tempering is virgil's own design, opt-in with `temper=True` until 0.5) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
 | `primary_resolved` (`OrbitPipeline`) | the primary is resolved and its diameter is the largest tried | |
 | `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's, `no_orbit_nats`, an uncalibrated difference in nats and not a Bayes factor; both carry the night-outlier component, so under `"mixture"` the single star may have an unrelated companion on any night and the check asks whether the positions follow an orbit) | under 10 nats | under 0: no orbit is detected |

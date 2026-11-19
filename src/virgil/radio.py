@@ -2196,7 +2196,7 @@ def fit_staged_nuisances(
             weight=weight,
         )
         if finite
-        else {"converged": False}
+        else {"images": {}, "nuisances": {}, "converged": False}
     )
     table, flags = {}, {}
     for site, prior in raw.items():

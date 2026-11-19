@@ -459,45 +459,7 @@ class StarPipeline(_Pipeline):
                     _checks.prior_constrained(entry.constrained_check, ratios)
                 )
             sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
-            chosen = post["models"][best]
-            sampler_checks = _sampler_checks(
-                chosen,
-                bounds={
-                    f"{best}.{k}": v
-                    for k, v in chosen["prior_bound_fraction"].items()
-                },
-                walls=chosen.get("wall_probe"),
-            )
-            for name, other in post["models"].items():
-                if name == best:
-                    continue
-                other_checks = _sampler_checks(
-                    other,
-                    bounds={
-                        f"{name}.{k}": v
-                        for k, v in other["prior_bound_fraction"].items()
-                    },
-                    walls=other.get("wall_probe"),
-                )
-                # S6 (Ben, 2026-11-19, confirmed 2026-11-20): a failure of a
-                # model that was not selected is a warning.
-                other_checks = [
-                    dataclasses.replace(oc, status="warn")
-                    if oc.status == "fail"
-                    else oc
-                    for oc in other_checks
-                ]
-                sampler_checks = [
-                    dataclasses.replace(
-                        oc,
-                        message=f"{name} (not selected): {oc.message}",
-                    )
-                    if _checks.STATUSES.index(oc.status)
-                    > _checks.STATUSES.index(bc.status)
-                    else bc
-                    for bc, oc in zip(sampler_checks, other_checks)
-                ]
-            checks += sampler_checks
+            checks += _model_sampler_checks(post["models"], best)
         return sections, checks
 
 
@@ -1248,6 +1210,44 @@ _POSTERIOR_KEYS = (
     "ess_bulk_min",
     "divergence_fraction",
 )
+
+
+# deliberate: sampler checks; inlined they take _summarize past MAX_FUNC_LINES (120)
+def _model_sampler_checks(models, best):
+    """The sampler checks of the selected model ``best``, each replaced by a
+    worse one of a model that was not selected. S6 (Ben, 2026-11-19,
+    confirmed 2026-11-20): such a model's failure is a warning."""
+
+    def run(name, report):
+        return _sampler_checks(
+            report,
+            bounds={
+                f"{name}.{k}": v
+                for k, v in report["prior_bound_fraction"].items()
+            },
+            walls=report.get("wall_probe"),
+        )
+
+    checks = run(best, models[best])
+    for name, other in models.items():
+        if name == best:
+            continue
+        rival = [
+            dataclasses.replace(oc, status="warn")
+            if oc.status == "fail"
+            else oc
+            for oc in run(name, other)
+        ]
+        checks = [
+            dataclasses.replace(
+                oc, message=f"{name} (not selected): {oc.message}"
+            )
+            if _checks.STATUSES.index(oc.status)
+            > _checks.STATUSES.index(bc.status)
+            else bc
+            for bc, oc in zip(checks, rival)
+        ]
+    return checks
 
 
 # deliberate: fit-stage checks; inlined they take _summarize past MAX_FUNC_LINES (120)

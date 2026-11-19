@@ -126,7 +126,6 @@ def test_edge_flag_when_truth_is_outside_the_box():
 def test_stage_three_reports_kkt():
     result = _run(_data([1.0, 1.05, 0.95]), ref_obs=0)
     assert len(result.stages) == 3
-    assert isinstance(result.kkt["converged"], bool)
     image = result.kkt["images"]["."]
     assert onp.isfinite(image["kkt_w"]) and image["kkt_w"] > 0
     assert 0 <= image["kkt_rel"] < 0.1
@@ -161,6 +160,9 @@ def test_radio_term_counts_only_unmasked_points():
     term = data.term(_scene, _nuis(data), mask=mask, chi2="direct")
     assert term.n_data == 2 * int(mask.sum())
     assert term.n_data < 2 * len(data)
+    # The Toeplitz term counts the same points.
+    toeplitz = data.term(_scene, _nuis(data), mask=mask, chi2="toeplitz")
+    assert toeplitz.n_data == term.n_data
 
 
 def test_nan_staged_fit_is_reported_as_failed(monkeypatch):

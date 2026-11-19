@@ -568,17 +568,21 @@ def test_grid_growths_none_is_the_engine_default():
     assert image._grid_spec(s, None).gp_growths == 1
 
 
-def test_members_stage_reports_the_members_warnings():
-    class Fake:
-        settings = {"members": 2}
+@pytest.mark.slow
+def test_a_members_warnings_are_saved_and_replayed(
+    data, tmp_path, monkeypatch
+):
+    real = image_module._evidence_grid
 
-        def run_member(self, k):
-            warnings.warn(f"Member {k} fitted with the isotropic prior.")
+    def noisy(*a, **k):
+        warnings.warn("probe warning")
+        return real(*a, **k)
 
-    with pytest.warns(UserWarning) as seen:
-        report = image_module._members(Fake())
-    assert len(seen) == 2
-    assert report["warnings"] == [
-        "Member 0 fitted with the isotropic prior.",
-        "Member 1 fitted with the isotropic prior.",
-    ]
+    monkeypatch.setattr(image_module, "_evidence_grid", noisy)
+    pipe = ImagingPipeline(data, output=tmp_path / "run", **SMALL)
+    pipe.run(through="hyperparameters")
+    pipe.run_member(1)
+    saved = pipe.output / "members" / "001" / "warnings.json"
+    assert "probe warning" in json.loads(saved.read_text())
+    with pytest.warns(UserWarning, match="probe warning"):
+        pipe.run_member(1)  # saved: replayed, not fitted again
