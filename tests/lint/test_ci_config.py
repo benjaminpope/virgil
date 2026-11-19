@@ -316,7 +316,10 @@ def test_main_reads_the_environment(monkeypatch, capsys):
     )
     ci.main()
     pr_out = capsys.readouterr().out
-    assert '"orbit_slow": "test_sampling.py test_fit*.py test_fitting*.py"' in pr_out
+    assert (
+        '"orbit_slow": "test_sampling.py test_fit*.py test_fitting*.py"'
+        in pr_out
+    )
 
 
 def _script(name):
