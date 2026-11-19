@@ -1675,7 +1675,7 @@ def test_add_one_recovers_an_inlier_night_the_c_steps_leave_out():
     assert (lab >= 0).all()
     lab[-1] = -1
     v, lab, x = oc_cells._converge_csteps(
-        space, plan, xt[[0, 6, 7]][None], lab[None]
+        space, plan, xt[[0, 6, 7]][None], lab[None], xt[None, 9:]
     )
     assert lab[0, -1] == -1 and (lab[0, :-1] >= 0).all()
     f0 = float(oc_cells._refine(space, np.asarray(x[0]), oc_cells.N_NEWTON)[2])
@@ -1696,8 +1696,9 @@ def test_an_all_outlier_c_step_row_gives_a_finite_chart():
     space, plan, xt = _true_state(0.05, times)
     lab = -onp.ones((1, len(times)), int)
     res = oc_cells._cstep_chunk(
-        space, plan, np.asarray(xt[[0, 6, 7]][None]), np.asarray(lab), 4
-    )
+        space, plan, np.asarray(xt[[0, 6, 7]][None]), np.asarray(lab),
+        np.asarray(xt[None, 9:]), 4,
+    )  # fmt: skip
     x = onp.asarray(res[2])[0]
     assert onp.isfinite(x).all() and onp.isfinite(onp.asarray(res[1])).all()
     assert abs(onp.linalg.norm(x[1:5]) - math.sqrt(3.0)) < 1e-9
