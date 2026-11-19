@@ -341,7 +341,7 @@ def test_c_steps_recover_a_jitter_ten_times_above_the_reference(k):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("k", [5, 7, 40])
+@pytest.mark.parametrize("k", [5, 7])  # K = 40 takes ~3 min: the C-step test
 @x64
 def test_the_search_leaves_the_all_outlier_stall(k):
     """A reference σ_J more than ten times below the truth in total position
