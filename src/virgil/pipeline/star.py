@@ -1242,15 +1242,6 @@ _POSTERIOR_KEYS = (
 )
 
 
-def _rival(check, name):
-    """A χ² ``check`` of a model that was not selected: a failure is a
-    warning, since a poor fit is why it was rejected. Sampler checks of a
-    rival are not downgraded."""
-    if check.status != "fail":
-        return check
-    return dataclasses.replace(check, status="warn")
-
-
 # deliberate: fit-stage checks; inlined they take _summarize past MAX_FUNC_LINES (120)
 def _fit_checks(fit, registry):
     """Checks on the fits: χ²/N, model gains and the fitted error scales."""
@@ -1266,11 +1257,15 @@ def _fit_checks(fit, registry):
         )
         for k in fit["names"]
     ]
+    # A model that was not selected: a poor fit is why it was rejected, so a
+    # χ² failure is a warning. Its sampler checks are not downgraded.
     checks = [
         c
         if k == fit["best"]
         else dataclasses.replace(
-            _rival(c, k), message=f"{k} (not selected): {c.message}"
+            c,
+            status="warn" if c.status == "fail" else c.status,
+            message=f"{k} (not selected): {c.message}",
         )
         for k, c in zip(fit["names"], checks)
     ]
