@@ -577,6 +577,18 @@ def test_a_failing_model_that_was_not_selected_warns_and_is_named(completed):
         assert "rival (not selected)" in by_name[name].message
     assert not any(c.status == "fail" for c in checks)
 
+    # An earlier rival's milder warning does not hide a later rival's failure.
+    mild = copy.deepcopy(reports["posterior"]["models"][best])
+    mild.update(ess_bulk_min=300.0)
+    models = reports["posterior"]["models"]
+    models.pop("rival")
+    models["mild"] = mild
+    models["rival"] = bad
+    _, checks = completed._summarize(reports)
+    ess = {c.name: c for c in checks}["ess"]
+    assert ess.status == "warn" and "rival (not selected)" in ess.message
+    models.pop("mild")
+
     # The selected model's failures stay failures.
     reports["posterior"]["models"][best].update(
         r_hat_max=4.0, ess_bulk_min=2.0

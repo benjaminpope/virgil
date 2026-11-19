@@ -303,7 +303,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `prior_bound` (posterior mass within 1% of a prior bound) | above 5% | |
 | `r_hat` | above 1.01, or a pass with the smallest bulk effective sample size below 400 (too few draws to trust it) | above 1.05 (a warning for a `StarPipeline` model that was not selected: ruling S6) |
 | `ess` (smallest bulk effective sample size) | below 400 | below 100 (a warning for a model that was not selected) |
-| `divergences` | any | above 1% of transitions (a warning instead, naming the walls, when `StarPipeline`'s wall probe finds hard closure-phase walls around the posterior; also a warning for a model that was not selected) |
+| `divergences` | any | above 1% of transitions; when `StarPipeline`'s wall probe finds hard closure-phase walls around the posterior, the message names them and the check still fails (a model that was not selected only warns: ruling S6) |
 | `residual_normality` (skewness and excess kurtosis of the independent whitened residuals, without the periodic closure-phase penalty terms) | beyond three standard errors | |
 | `field_of_view` (companion inside the resolution limit or beyond the field) | outside | |
 | `chi2_uniform`, `chi2_limb_darkened` (`StarPipeline`; as `chi2`) | as `chi2`; for a model that was not selected, a failure is a warning (ruling S6) | as `chi2` |
