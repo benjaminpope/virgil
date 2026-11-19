@@ -941,16 +941,21 @@ def _objective(x, space):
     return _target(x, space) + 3.0 * np.log(np.linalg.norm(x[_Z]))
 
 
+def _peak_state(x, space, sign=1.0):
+    """``(decoded x, (K, 5) state)`` of the chart vector ``x``."""
+    c = space.decode(x)
+    pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
+    state = np.concatenate(
+        [sign * pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
+    )
+    return c, state
+
+
 def _best_peaks(x, space, sign=1.0):
     """Each night's best peak at ``x`` (``(p, v)`` times ``sign``, the brighter
     or fainter label) and its term (the outlier floor ignored)."""
     with run_in(onp.dtype(space.dtype).name):
-        c = space.decode(x)
-        pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
-        state = np.concatenate(
-            [sign * pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)],
-            axis=1,
-        )
+        c, state = _peak_state(x, space, sign)
         terms = _peak_terms(
             space.cat, c["ln_s"], c["jitter"], state, space.dtype
         )
@@ -966,16 +971,6 @@ def _labels(x, space, sign=1.0):
     """
     j, best = _best_peaks(x, space, sign)
     return np.where(best > space.cat.log_b, j, -1)
-
-
-def _peak_state(x, space, sign=1.0):
-    """``(decoded x, (K, 5) state)`` of the chart vector ``x``."""
-    c = space.decode(x)
-    pv = space.states(c["period"], oc.z_to_ti(c["z"]), c["zeta"])
-    state = np.concatenate(
-        [sign * pv, np.full((pv.shape[0], 1), c["ln_f"], space.dtype)], axis=1
-    )
-    return c, state
 
 
 def _jitter_parts(cat, ln_s, state, dtype):
@@ -1007,27 +1002,8 @@ def _jitter_terms(parts, sigma2, kappa, valid):
 
 
 def _profile(x, space):
-    """One round of design 6.14 on ``x``: σ_J given ``(x, s)`` with the labels
-    free, then ``s`` given the labels at that σ_J. Only with a marginal σ_J: a
-    fixed jitter leaves ``x`` as it is. The caller labels at the result, so the
-    labels, weights and objective use one ``(s, σ_J)``.
-
-    σ_J: a global grid in ``ln σ_J`` over its prior range at spacing
-    ``1/√(2K)`` on the floor-capped sum ``Σ_k max(max_j ℓ̃_kj, b_k)``, the
-    Laplace quadratic scaled by the REML-style ``κ = 2 n_I / (2 n_I - p)`` (``n_I`` the
-    nights above their floor, ``p`` = ``P_ORBIT``; 1 unless ``2 n_I - p >=
-    DOF_FLOOR``), then
-    Newton on the winning node kept within its neighbours (the sum is flat where
-    every night is at its floor, so Newton alone stalls there). ``s``: per
-    block ``ŝ² = Σ_I (χ² + q) / Σ_I n`` (``q`` the peak's Laplace quadratic at
-    the state) clipped to ``[1/S_MAX, S_MAX]``, then ``N_SCALE`` Newton steps
-    in ``ln s`` on the labelled peak terms (trust radius one e-fold). Data that
-    do not rescale, or without inliers, keep ``s``. The incoming σ_J and ``s``
-    are kept unless a step scores higher (σ_J on the κ-scaled sum), which is not
-    the ascent of the unscaled sum: the C-step loop is bounded by ``N_C``.
-
-    Source: Celeux & Govaert (1992), [references](../references.md#celeux1992).
-    """
+    """One round of design 6.14: σ_J (a floor-capped grid, then a REML-scaled
+    polish on the inlier set), then the error scales, on a marginal-σ_J chart."""
     if not space.marginal:
         return x
     cat, lim = space.cat, math.log(S_MAX)
@@ -1036,20 +1012,13 @@ def _profile(x, space):
     lo, hi = (math.log(v) for v in space.jitter_range)
 
     def capped(ln_sigma):
-        s2 = np.exp(2.0 * ln_sigma)
-        n_i = np.sum(
-            _jitter_terms(parts, s2, 1.0, cat.valid).max(1) > cat.log_b
-        )
-        dof = 2.0 * n_i - P_ORBIT  # no correction where the dofs run out
-        kappa = np.where(
-            dof >= DOF_FLOOR, 2.0 * n_i / np.maximum(dof, DOF_FLOOR), 1.0
-        )
-        best = _jitter_terms(parts, s2, kappa, cat.valid).max(1)
-        return np.sum(np.maximum(best, cat.log_b))
+        best = _jitter_terms(parts, np.exp(2.0 * ln_sigma), 1.0, cat.valid)
+        return np.sum(np.maximum(best.max(1), cat.log_b))
 
     k = int(cat.valid.shape[0])
     n_node = math.ceil((hi - lo) * math.sqrt(2.0 * k)) + 1
     nodes = np.linspace(lo, hi, n_node).astype(space.dtype)
+    step = (hi - lo) / (n_node - 1)
     vals = jax.vmap(capped)(nodes)
     i = np.argmax(vals)
     ln_new = _lm(lambda v: capped(v[0]), nodes[i][None], (), N_SCALE, 1.0)[0][
@@ -1065,6 +1034,22 @@ def _profile(x, space):
         lo + (hi - lo) * jax.nn.sigmoid(x[-1]), lo, hi
     )  # the incoming σ_J stays unless the search finds a higher sum
     best = np.where(capped(ln_in) >= capped(best), ln_in, best)
+    # REML polish on the inlier set and peaks fixed at the unscaled optimum,
+    # where the dofs allow (uncapped: the floor does not depend on σ_J)
+    t0 = _jitter_terms(parts, np.exp(2.0 * best), 1.0, cat.valid)
+    jj, ins = np.argmax(t0, axis=1), t0.max(1) > cat.log_b
+    n_i = np.sum(ins)
+    dof = 2.0 * n_i - P_ORBIT
+    kappa = 2.0 * n_i / np.maximum(dof, DOF_FLOOR)
+    kk = np.arange(k)
+
+    def reml(v):
+        t = _jitter_terms(parts, np.exp(2.0 * v[0]), kappa, cat.valid)
+        return np.sum(np.where(ins, t[kk, jj], 0.0))
+
+    pol = _lm(reml, best[None], (), N_SCALE, 1.0)[0][0]
+    pol = np.clip(pol, best - step, best + step)
+    best = np.where(dof >= DOF_FLOOR, np.clip(pol, lo, hi), best)
     u = np.clip((best - lo) / (hi - lo), 1e-6, 1.0 - 1e-6)
     x = x.at[-1].set((np.log(u) - np.log1p(-u)).astype(x.dtype))
     if not cat.rescalable:
@@ -1072,6 +1057,11 @@ def _profile(x, space):
     lab = _labels(x, space)
     c, state = _peak_state(x, space)
     d = state[:, None, :] - cat.mean
+    tiny = np.finfo(space.dtype).tiny
+    # the within-night misfit with d attenuated to the share the quoted errors
+    # carry, Σ_dat Σ_tot⁻¹ d (d itself at σ_J = 0)
+    cov, _, inv = _peak_precision(cat, c["ln_s"], c["jitter"], space.dtype)
+    d = np.einsum("kjab,kjbc,kjc->kja", cov, inv, d)
     chi2_q = cat.chi2 + np.einsum("kja,kjgab,kjb->kjg", d, cat.hess, d)
     j, kk = np.maximum(lab, 0), np.arange(lab.shape[0])
     on = (lab >= 0)[:, None]
@@ -1080,7 +1070,7 @@ def _profile(x, space):
     ln_s = np.where(
         den > 0,
         np.clip(
-            0.5 * np.log(np.maximum(num, 1e-300) / np.maximum(den, 1e-300)),
+            0.5 * np.log(np.maximum(num, tiny) / np.maximum(den, tiny)),
             -lim,
             lim,
         ),
@@ -1097,6 +1087,16 @@ def _profile(x, space):
     return x.at[9 : 9 + space.n_blocks].set(
         (np.log(u) - np.log1p(-u)).astype(x.dtype)
     )
+
+
+def _profile_cost(space):
+    """Likelihood-equivalent evaluations of one `_profile` call: the σ_J grid,
+    its polishes and the scale step."""
+    if not space.marginal:
+        return 0.0
+    lo, hi = (math.log(v) for v in space.jitter_range)
+    k = int(space.cat.valid.shape[0])
+    return math.ceil((hi - lo) * math.sqrt(2.0 * k)) + 1 + 12.0 * N_SCALE
 
 
 def _lm(f, x, args, n_iter, step_max=10.0):
@@ -1309,11 +1309,27 @@ def _varpro_chunk(space, plan, s, v0, n_iter):
             plan["n"][si].sum(0),
         )
         x = _profile(x, space)
+        rr = -2.0 * fv - ti @ ti / space.s_w2
+        if space.marginal:  # the data residual at the profiled (s, σ_J)
+            c = space.decode(x)
+            tot = _peak_precision(
+                space.cat, c["ln_s"], c["jitter"], space.dtype
+            )[1]
+            n3, p3 = plan["nights"][si], plan["peak"][si]
+            wt = np.linalg.inv(tot[n3, p3][:, :4, :4])
+            wp = (
+                np.zeros_like(wt)
+                .at[:, :2, :2]
+                .set(np.linalg.inv(tot[n3, p3][:, :2, :2]))
+            )
+            w = (
+                np.where((plan["w"][si][:, 2:, 2:] != 0).any(), wt, wp)
+                * (plan["w"][si] != 0).any((-1, -2))[:, None, None]
+            )
+            res, ti = _solve_set(_design(space, n3, v), args[2], w, space.s_w2)
+            rr = res - ti @ ti / space.s_w2
         h = -jax.hessian(_varpro_objective)(v, *args)
-        return (
-            x, _labels(x, space), -2.0 * fv - ti @ ti / space.s_w2, v, h,
-            capped,
-        )  # fmt: skip
+        return x, _labels(x, space), rr, v, h, capped
 
     return jax.vmap(one)(s, v0)
 
@@ -1374,8 +1390,12 @@ def _cstep_chunk(space, plan, v, lab, tail, n_iter):
             np.sum(np.where(inl, space.cat.chi2[np.arange(k), j], 0.0), 0),
             np.sum(np.where(inl, space.cat.n[np.arange(k), j], 0.0), 0),
         )
-        if space.marginal:
-            x = _profile(x.at[9:].set(tail), space)
+        if space.marginal:  # no inlier: nothing to profile against
+            x = np.where(
+                (lab >= 0).any(),
+                _profile(x.at[9:].set(tail), space),
+                x.at[9:].set(tail),
+            )
         h = -jax.hessian(_labelled_objective)(v, *args)
         return v, _labels(x, space), x, -2.0 * fv, h, capped
 
@@ -1539,12 +1559,11 @@ def search_plan(space, key=None, nu_width=None):
     nights = onp.zeros((s, 3), int)
     w = onp.zeros((s, 3, 4, 4))
     mean = onp.zeros((s, 3, 4))
-    lnf, cut = onp.zeros(s), onp.zeros(s)
+    lnf, cut0, peak = onp.zeros(s), onp.zeros(s), onp.zeros((s, 3), int)
     chi2s, ns = (
         onp.zeros((s, 3, len(cat.blocks))),
         onp.zeros((s, 3, len(cat.blocks))),
     )
-    scale = S_MAX**2 if cat.rescalable else 1.0
     for i, (nt, pk) in enumerate(chosen):
         wt = w_pv if len(nt) == 2 else w_pos
         nights[i, :] = nt[0]
@@ -1558,7 +1577,8 @@ def search_plan(space, key=None, nu_width=None):
             @ onp.array([mean_all[k, p, 4] for k, p in zip(nt, pk)])
             / wf.sum()
         )
-        cut[i] = scale * stats.chi2.isf(DELTA, 4 if len(nt) == 2 else 2)
+        cut0[i] = stats.chi2.isf(DELTA, 4 if len(nt) == 2 else 2)
+        peak[i, : len(pk)] = pk
     t_k = onp.asarray(space.t_k, float)
     span = max((t_k[max(nt)] - t_k[min(nt)] for nt, _ in chosen), default=0.0)
     n_grid = max(K_COH + 1, math.ceil(K_COH * span * nu_width) + 1)
@@ -1599,7 +1619,8 @@ def search_plan(space, key=None, nu_width=None):
     gap = np.max(np.stack(heights), axis=0) - cat.log_b
     return {
         "nights": np.asarray(nights), "w": np.asarray(w, dt), "mean": np.asarray(mean, dt),
-        "lnf": np.asarray(lnf, dt), "cut": onp.asarray(cut), "y0": np.asarray(y0, dt),
+        "lnf": np.asarray(lnf, dt), "cut": onp.asarray((S_MAX**2 if cat.rescalable else 1.0) * cut0), "cut0": onp.asarray(cut0),
+        "peak": np.asarray(peak), "y0": np.asarray(y0, dt),
         "grid": np.linspace(0.0, 1.0, n_grid, dtype=dt),
         "wk": np.asarray(w_pv, dt), "mk": np.asarray(mean_all[..., :4], dt),
         "wf": np.asarray(w_f, dt), "fm": np.asarray(mean_all[..., 4], dt),
@@ -1687,10 +1708,17 @@ def _add_one(space, plan, x, info):
         labs = onp.repeat(lab[None], len(cand), 0)
         labs[onp.arange(len(cand)), cand] = peaks[cand]
         v, _, xs = _converge_csteps(
-            space, plan, onp.repeat(x[[0, 6, 7]][None], len(cand), 0), labs,
+            space,
+            plan,
+            onp.repeat(x[[0, 6, 7]][None], len(cand), 0),
+            labs,
             onp.repeat(x[None, 9:], len(cand), 0),
-        )  # fmt: skip
-        info["evaluations"] += len(cand) * N_C * N_NEWTON * (1.0 + 3.0 + 9.0)
+        )
+        info["evaluations"] += (
+            len(cand)
+            * N_C
+            * (N_NEWTON * (1.0 + 3.0 + 9.0) + _profile_cost(space))
+        )
         best = None
         for xi in xs:
             if not onp.isfinite(xi).all():
@@ -1803,13 +1831,15 @@ def search_cell(space, key=None, *, plan=None, info=None):
         )  # fmt: skip
         out.append([onp.asarray(a)[:n] for a in res])
     info["evaluations"] += len(s_i) * N_VARPRO * (4.0 + 9.0) * 3 / max(k, 1)
+    info["evaluations"] += len(s_i) * _profile_cost(space)
     if not out:
         return []
     x, lab, rr, v, h, capped = (
         onp.concatenate([o[i] for o in out]) for i in range(6)
     )
     info["varpro_runs"], info["varpro_capped"] = len(x), int(capped.sum())
-    ok = onp.isfinite(x).all(1) & onp.isfinite(rr) & (rr <= plan["cut"][s_i])
+    cut = plan["cut0" if space.marginal else "cut"]  # rr at the profiled σ
+    ok = onp.isfinite(x).all(1) & onp.isfinite(rr) & (rr <= cut[s_i])
     info["survivors"] = int(ok.sum())
     if not ok.any():
         return []
@@ -1826,17 +1856,20 @@ def search_cell(space, key=None, *, plan=None, info=None):
         for sl in _chunks(len(active), CHUNK_C):
             idx = active[sl]
             res = _cstep_chunk(
-                space, plan,
+                space,
+                plan,
                 np.asarray(_padded(v[idx], CHUNK_C), space.dtype),
                 np.asarray(_padded(lab[idx], CHUNK_C)),
-                np.asarray(_padded(tail[idx], CHUNK_C), space.dtype), n_iter,
-            )  # fmt: skip
+                np.asarray(_padded(tail[idx], CHUNK_C), space.dtype),
+                n_iter,
+            )
             vs, ls, xs, rs, hs, cs = (onp.asarray(a)[: len(idx)] for a in res)
             changed.append(idx[(ls != lab[idx]).any(1)])
             v[idx], lab[idx], x[idx], r2[idx], h2[idx] = vs, ls, xs, rs, hs
             tail[idx] = xs[:, 9:]
             cap[idx] = cs
             steps += len(idx) * n_iter
+            info["evaluations"] += len(idx) * _profile_cost(space)
         stage = "pre" if n_pass == 0 else "c"
         info[f"{stage}_runs"] += len(active)
         info[f"{stage}_capped"] += int(cap[active].sum())
@@ -2193,8 +2226,9 @@ def reference_jitter(
 
     The excess of the nights' position scatter about the best position-only
     seed orbit ([`position_profile`][virgil.aliases.position_profile], best
-    peaks as positions; the seed with the least χ², which is still the best
-    interpolating alias at small ``K``: a start, not an estimate) over the
+    peaks as positions; of the ``n_best`` per band, the seed with the least
+    median ``|r|²``: robust to a night an alias interpolates; a start, not an
+    estimate) over the
     quoted errors, by medians: ``σ_J² = median(|r|² / 2) / (ln 2 (2K - 7) /
     2K) - median(σ²)``, the ``7`` the orbit parameters fitted to the positions
     (4 TI′, ``P``, ``e``, ``T``; `P_ORBIT`). Nights with ``|r|²`` above the
@@ -2228,26 +2262,41 @@ def reference_jitter(
     cov = onp.array([p.cov[:2, :2] for p in best])
     bands = alias_bands([t_ab[0], t_ab[1]], (domain.p_cut, domain.p_max))
 
-    def seed(rows):
-        found = [row for r in position_profile(
-            PositionData(t[rows], mean[rows, 0], mean[rows, 1], cov[rows],
-                         t_ref=float(t.min())), bands, n_best=n_best,
-        ) for row in r["orbits"]]  # fmt: skip
-        return min(found, key=lambda row: row[1])[0] if found else None
-
     def resid(o, rows):
         return mean[rows] - onp.stack(o.relative(t[rows])[:2], axis=1)
 
+    def seed(rows):
+        """The seed orbit with the least median |r|² over the ``n_best`` best
+        of each band: robust to a night the least-χ² alias interpolates."""
+        data = PositionData(
+            t[rows],
+            mean[rows, 0],
+            mean[rows, 1],
+            cov[rows],
+            t_ref=float(t.min()),
+        )
+        found = [
+            row
+            for r in position_profile(data, bands, n_best=n_best)
+            for row in r["orbits"]
+        ]
+        if not found:
+            return None
+        return min(
+            (row[0] for row in found),
+            key=lambda o: onp.median(onp.sum(resid(o, rows) ** 2, axis=1)),
+        )
+
     rows = onp.arange(len(t))
-    var_q = float(onp.median(onp.trace(cov, axis1=1, axis2=2) / 2.0))
     orbit = seed(rows)
     if orbit is None:
         return float(centre)
     r2 = onp.sum(resid(orbit, rows) ** 2, axis=1)
+    dof = (2.0 * len(t) - P_ORBIT) / (2.0 * len(t))
     cut = (
         float(stats.chi2.isf(DELTA, 2))
         * float(onp.median(r2))
-        / (2.0 * math.log(2.0))
+        / (2.0 * math.log(2.0) * dof)
     )
     keep = rows[r2 <= max(cut, 0.0)]
     if len(keep) < 5:  # trim at most K - 5: keep the 5 nights nearest the seed
@@ -2257,6 +2306,7 @@ def reference_jitter(
         if refit is not None:
             orbit, rows = refit, keep
     k = len(rows)
+    var_q = float(onp.median(onp.trace(cov[rows], axis1=1, axis2=2) / 2.0))
     u = float(onp.median(onp.sum(resid(orbit, rows) ** 2, axis=1) / 2.0))
     u /= math.log(2.0) * (2.0 * k - P_ORBIT) / (2.0 * k)
     return float(onp.clip(math.sqrt(max(u - var_q, 0.0)), *jitter_range))

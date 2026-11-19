@@ -283,9 +283,11 @@ def _minimal_plan(space):
         cat, np.zeros(len(cat.blocks)), space.jitter, np.float64
     )[1]
     return {
-        "wk": np.linalg.inv(total[..., :4, :4]), "mk": cat.mean[..., :4],
-        "wf": 1.0 / total[..., 4, 4], "fm": cat.mean[..., 4],
-    }  # fmt: skip
+        "wk": np.linalg.inv(total[..., :4, :4]),
+        "mk": cat.mean[..., :4],
+        "wf": 1.0 / total[..., 4, 4],
+        "fm": cat.mean[..., 4],
+    }
 
 
 @x64
@@ -332,10 +334,42 @@ def test_c_steps_recover_a_jitter_ten_times_above_the_reference(k):
         v, lab, x = (onp.asarray(a) for a in res[:3])
         tail = x[:, 9:]
     f = SIGMA**2 / (SIGMA**2 + j_true**2)
-    sd = 1.0 / math.sqrt(2.0 * 2 * k * (1.0 - f) ** 2)
+    sd = 1.0 / math.sqrt(2.0 * (2 * k - oc_cells.P_ORBIT) * (1.0 - f) ** 2)
     found = float(space.decode_jitter(np.asarray(x[0])))
     assert abs(math.log(found / j_true)) <= 3 * sd
     assert (lab >= 0).all()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("k", [5, 7, 40])
+@x64
+def test_the_search_leaves_the_all_outlier_stall(k):
+    """A reference σ_J more than ten times below the truth in total position
+    error, sqrt(σ² + σ_J²) / sqrt(σ² + σ_ref²): every night is an outlier
+    at the reference. The search (VarPro sets profiled, then C-steps) finds the
+    true cell's mode with every night an inlier and σ_J within 3 Fisher
+    standard deviations of the truth."""
+    j_true = 12 * SIGMA
+    orbit, s, space = _setup(j_true, k=k)
+    space = _marginal_space(
+        s, space.cell, onp.asarray(space.cat.log_b), jitter_ref=SIGMA / 10
+    )
+    k = len(s)
+    ratio = math.sqrt(SIGMA**2 + j_true**2) / math.sqrt(
+        SIGMA**2 + (SIGMA / 10) ** 2
+    )
+    assert ratio > 10
+    xt = np.asarray(_truth_x(space, orbit, SIGMA / 10))
+    start = (onp.asarray(oc_cells._labels(xt, space)) >= 0).sum()
+    assert start <= k // 4  # the stall: at most a quarter are inliers
+    modes = oc_cells.search_cell(space, jax.random.key(0))
+    assert modes
+    x = np.asarray(modes[0].x)
+    f = SIGMA**2 / (SIGMA**2 + j_true**2)
+    sd = 1.0 / math.sqrt(2.0 * (2 * k - oc_cells.P_ORBIT) * (1.0 - f) ** 2)
+    found = float(space.decode_jitter(x))
+    assert abs(math.log(found / j_true)) <= 3 * sd
+    assert (onp.asarray(oc_cells._labels(x, space)) >= 0).all()
 
 
 @x64
@@ -351,9 +385,13 @@ def test_the_c_step_scores_its_labels_at_the_profiled_jitter():
     xt = onp.asarray(_truth_x(space, orbit, j_true / 10))
     lab = onp.asarray(oc_cells._labels(np.asarray(xt), space))[None]
     res = oc_cells._cstep_chunk(
-        space, _minimal_plan(space), np.asarray(xt[None, [0, 6, 7]]),
-        np.asarray(lab), np.asarray(xt[None, 9:]), 30,
-    )  # fmt: skip
+        space,
+        _minimal_plan(space),
+        np.asarray(xt[None, [0, 6, 7]]),
+        np.asarray(lab),
+        np.asarray(xt[None, 9:]),
+        30,
+    )
     x = onp.asarray(res[2][0])
     assert float(space.decode_jitter(np.asarray(x))) > 3 * float(space.jitter)
     back = x.copy()
@@ -416,17 +454,40 @@ def test_reference_jitter_is_the_prior_median_without_degrees_of_freedom():
 
 
 @x64
-def test_reference_jitter_trims_gross_nights_to_the_clean_nights_value():
-    """Two gross nights of 16: the trim and refit drop them, so the result
-    equals the reference of the 14 clean nights alone (0.32 mas); without the
-    trim it is 0.54 mas. The trim catches gross nights only when the seed does
-    not absorb them, hence a fixed case rather than a statement for every
-    draw."""
+def test_reference_jitter_trims_gross_nights_to_the_clean_nights_value(
+    monkeypatch,
+):
+    """Two gross nights of 16 and one of 9: the trim and refit drop them, so
+    the result equals the reference of the clean nights alone and differs from
+    the untrimmed one (``DELTA`` -> 0 trims nothing). A second draw of 9: the
+    result is nearer the clean nights' value than the untrimmed one is. The
+    trim catches a gross night only when the seed does not absorb it, hence
+    fixed draws rather than a statement for every draw."""
     j_true = 5 * SIGMA
-    gross = (2, 9)
-    s, dom, t_ab = _ref_setup(16, j_true, gross=gross, seed=1)
-    clean = tuple(n for i, n in enumerate(s) if i not in gross)
-    got = oc_cells.reference_jitter(s, dom, t_ab)
-    want = oc_cells.reference_jitter(clean, dom, t_ab)
-    assert got == pytest.approx(want, rel=1e-6)
-    assert abs(got - 0.5374) > 0.1
+    cases = ((16, (2, 9), 4, True), (9, (3,), 3, True), (9, (3,), 1, False))
+    for k, gross, seed, exact in cases:
+        s, dom, t_ab = _ref_setup(k, j_true, gross=gross, seed=seed)
+        clean = tuple(n for i, n in enumerate(s) if i not in gross)
+        got = oc_cells.reference_jitter(s, dom, t_ab)
+        want = oc_cells.reference_jitter(clean, dom, t_ab)
+        with monkeypatch.context() as m:
+            m.setattr(oc_cells, "DELTA", 1e-300)
+            untrimmed = oc_cells.reference_jitter(s, dom, t_ab)
+        if exact:
+            assert got == pytest.approx(want, rel=1e-6)
+        assert abs(got - want) < abs(untrimmed - want)
+
+
+@x64
+def test_reference_jitter_does_not_collapse_on_clean_small_samples():
+    """The minimum over aliases interpolates and returns about zero: over
+    twelve clean draws (K = 5, 6, 8) the reference never falls below a third
+    of the truth, and its median is within a factor 2 of it."""
+    j_true = 5 * SIGMA
+    got = [
+        oc_cells.reference_jitter(*_ref_setup(k, j_true, seed=seed))
+        for k in (5, 6, 8)
+        for seed in range(4)
+    ]
+    assert min(got) > j_true / 3
+    assert j_true / 2 < onp.median(got) < 2 * j_true

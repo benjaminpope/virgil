@@ -1696,9 +1696,13 @@ def test_an_all_outlier_c_step_row_gives_a_finite_chart():
     space, plan, xt = _true_state(0.05, times)
     lab = -onp.ones((1, len(times)), int)
     res = oc_cells._cstep_chunk(
-        space, plan, np.asarray(xt[[0, 6, 7]][None]), np.asarray(lab),
-        np.asarray(xt[None, 9:]), 4,
-    )  # fmt: skip
+        space,
+        plan,
+        np.asarray(xt[[0, 6, 7]][None]),
+        np.asarray(lab),
+        np.asarray(xt[None, 9:]),
+        4,
+    )
     x = onp.asarray(res[2])[0]
     assert onp.isfinite(x).all() and onp.isfinite(onp.asarray(res[1])).all()
     assert abs(onp.linalg.norm(x[1:5]) - math.sqrt(3.0)) < 1e-9

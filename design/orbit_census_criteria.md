@@ -181,12 +181,12 @@ Laplace `ln Z > floor + W` condition is unchanged.
 
 ## σ_J profiling in the search C-steps (design §6.14), added 2026-11-19 before any run of this arm
 
-- **Arms:** this PR's head, at the commit pinned for its census (a later one only with no `src`/`scripts` change), against main `b50073ee31291e9a42997d93f30eb30c63706fa3`. Both run with `--jitter` (the marginal σ_J arm) on OzSTAR in the same image, on **seed 1**, systems 0–399 or more (`--seed 1 --n-sys 400`; at least 400 drawn systems; seed 0 systems 0–999 are all used). They are scored with the criteria above (detectable stratum, sky-plane retrieval, majority-weight `at_floor` sentinel).
+- **Arms:** this PR's head, at the commit pinned for its census (a later one only with no `src`/`scripts` change), against main `b50073ee31291e9a42997d93f30eb30c63706fa3`. Both run with `--jitter` (the marginal σ_J arm) on OzSTAR in the same image, on **seed 1**, systems 0–399 exactly (`--seed 1 --n-sys 400`: no optional stopping; a larger sample is a new registered seed; seed 0 systems 0–999 are all used). They are scored with the criteria above (detectable stratum, sky-plane retrieval, majority-weight `at_floor` sentinel).
 - **Primary:** failure (status failed or error) in the detectable stratum. Exact one-sided McNemar on the discordant pairs, α = 0.01.
 - **Harm**, judged by exact two-sided McNemar (p < 0.05, the PR worse), on each of:
   - sky misses in the detectable stratum;
   - failure in each non-detectable stratum;
-  - the median of `|log10(jitter_hat / jitter_true)|` over fitted systems (paired Wilcoxon signed-rank, p < 0.05, PR worse).
+  - the paired differences `|log10(jitter_hat_PR / jitter_true)| - |log10(jitter_hat_main / jitter_true)|` over the systems fitted (`status == "ok"`, finite `jitter_hat`) in **both** arms (Wilcoxon signed-rank, two-sided p < 0.05, PR worse).
 
   Also harm: the sky-plane SBC uniformity test (all fitted in-domain systems) fails for the PR where it passes for main.
 - **Merge rule:** the primary passes and there is no harm. The PR does not merge before its census delta is in.
