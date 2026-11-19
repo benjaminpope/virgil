@@ -127,6 +127,8 @@ W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
 #                    (at least; raised to ln(n / δ) for n candidates)
 N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
 CHUNK_C = 256  # candidates per batched C-step call (budget)
+CSTEP_SIZES = (8, 32, CHUNK_C)  # padded batch sizes of a C-step call
+_WARMED = set()  # ids of the plans whose C-step shapes are compiled
 CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
 EDGE_STOP = W  # |w_P| beyond which the logistic chart holds less than δ of the
 #                cell's ρ-interval: where a shared neighbour mode's proposal ends
@@ -1460,23 +1462,7 @@ def search_plan(space, key=None, nu_width=None):
         "gap": np.asarray(gap, dt),
         "chi2": np.asarray(chi2s, dt), "n": np.asarray(ns, dt),
     }  # fmt: skip
-    if len(nights):
-        _warm_csteps(space, plan)
     return plan
-
-
-def _warm_csteps(space, plan):
-    """Compile the C-step at every padded size ``_bucket`` can choose, on dummy
-    rows, so a later cell of the system (the plan is shared) compiles nothing."""
-    k = len(space.cat.log_b)
-    for size in (8, 32, CHUNK_C):
-        _cstep_chunk(
-            space,
-            plan,
-            np.asarray(_padded(onp.zeros((1, 3)), size), space.dtype),
-            np.asarray(_padded(onp.zeros((1, k), int), size)),
-            N_NEWTON,
-        )
 
 
 def _unique_starts(lab, v, h, r):
@@ -1505,17 +1491,22 @@ def _unique_starts(lab, v, h, r):
     return onp.array(kept, int)
 
 
-def _bucket(n):
-    """The padded batch size for ``n`` C-step rows: 8, 32 or ``CHUNK_C``.
-
-    The rows are independent, so a few add-one candidates need not run as
-    256; three sizes keep the number of compiled shapes small."""
-    return next((s for s in (8, 32) if n <= s), CHUNK_C)
-
-
 def _converge_csteps(space, plan, v, lab):
     """C-steps of the rows ``(v, lab)`` until each one's labels repeat (at most
     ``N_C``); returns ``v``, the labels and the chart vectors."""
+    if id(plan["w"]) not in _WARMED:
+        # compile the C-step at every padded size, on dummy rows, so a later
+        # cell of the system (the plan is shared) compiles nothing
+        _WARMED.add(id(plan["w"]))
+        k = len(space.cat.log_b)
+        for size in CSTEP_SIZES:
+            _cstep_chunk(
+                space,
+                plan,
+                np.asarray(_padded(onp.zeros((1, 3)), size), space.dtype),
+                np.asarray(_padded(onp.zeros((1, k), int), size)),
+                N_NEWTON,
+            )
     v, lab = v.copy(), lab.copy()
     x = onp.zeros((len(v), space.d))
     active = onp.arange(len(v))
@@ -1523,7 +1514,9 @@ def _converge_csteps(space, plan, v, lab):
         nxt = []
         for sl in _chunks(len(active), CHUNK_C):
             idx = active[sl]
-            size = _bucket(len(idx))
+            # the rows are independent, so a few add-one candidates need not
+            # run as 256 (three sizes keep the compiled shapes few)
+            size = next(s for s in CSTEP_SIZES if len(idx) <= s)
             res = _cstep_chunk(
                 space,
                 plan,
