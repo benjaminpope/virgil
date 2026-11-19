@@ -905,7 +905,10 @@ class ArchimedeanSpiral(Component):
             blur = np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / width**2)
             return image + wk * blur, None
 
-        image, _ = jax.lax.scan(add_blob, np.zeros_like(xx), (x, y, weight))
+        # the first blob seeds the carry, so it has the step's own dtype
+        # (float64 parameters on a float32 grid promote); nodes >= 2
+        first, _ = add_blob(np.zeros_like(xx), (x[0], y[0], weight[0]))
+        image, _ = jax.lax.scan(add_blob, first, (x[1:], y[1:], weight[1:]))
         return image
 
 

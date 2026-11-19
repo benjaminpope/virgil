@@ -67,6 +67,7 @@ from . import (  # noqa: E402
     spectra,
     svi,
 )
+from ._cache import enable_compilation_cache  # noqa: E402
 from ._geometry import pixel_offsets, set_ft_defaults  # noqa: E402
 from .detection import detection_statistics  # noqa: E402
 from .epochs import Epochs, rank_orbits, start_from_positions  # noqa: E402
@@ -200,6 +201,7 @@ def __getattr__(name):
 
 
 __all__ = [
+    "enable_compilation_cache",
     "ArchimedeanSpiral",
     "Attached",
     "AxialVonMises",
