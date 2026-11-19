@@ -11,8 +11,11 @@ from virgil._geometry import image_coordinates as _image_coordinates
 from virgil._geometry import offset_phase
 from virgil._geometry import undo_elliptical_transf_spat_freq
 from virgil.models import (
+    ArchimedeanSpiral,
+    Blurred,
     BinaryModelAngular,
     BinaryModelCartesian,
+    Crescent,
     EllipticalGaussian,
     EllipticalLimbDarkenedDisk,
     FlaredDiskGaussian,
@@ -561,6 +564,42 @@ def test_binary_render_is_available():
             ),
             2e-3,
         ),
+        (
+            System(
+                star=PointSource(),
+                arm=ArchimedeanSpiral(
+                    12.0,
+                    1.5,
+                    3.0,
+                    pa=250.0,
+                    inc=40.0,
+                    node=20.0,
+                    fade=0.3,
+                    flux=0.8,
+                    dra=6.0,
+                ),
+            ),
+            2e-3,
+        ),
+        (
+            System(
+                star=PointSource(),
+                ring=Crescent(
+                    14.0, 5.0, ecc=0.5, fade=0.7, pa=130.0, flux=0.8, dra=6.0
+                ),
+            ),
+            3e-3,
+        ),
+        (
+            System(
+                star=PointSource(),
+                ring=Blurred(
+                    Crescent(14.0, 5.0, ecc=0.5, fade=0.7, pa=130.0, dra=6.0),
+                    3.0,
+                ),
+            ),
+            3e-3,
+        ),
         pytest.param(
             GravityDarkenedStar(
                 12.0, omega=0.9, inc=50.0, pa=30.0, dra=-5.0, ddec=4.0
@@ -588,6 +627,9 @@ def test_binary_render_is_available():
         "flared_disk",
         "elliptical_gaussian",
         "gaussian_arc",
+        "archimedean_spiral",
+        "crescent",
+        "blurred_crescent",
         "gravity_darkened_star",
     ],
 )

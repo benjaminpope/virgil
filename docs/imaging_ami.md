@@ -7,7 +7,6 @@ Real DISCO products are large, so we use `virgil.coverage.ami_grid_record`, a sm
 
 ```python
 import sys
-import time
 from pathlib import Path
 
 import equinox as eqx
@@ -145,7 +144,7 @@ The two agree to float32 rounding, so the image and the analytic model are inter
 
 ## Pixels that follow the detector
 
-The visibilities of an `Image` are an exact sum over its pixels, whatever the uv sampling. When the samples lie on a lattice and the image's pixel grid is rotated to match it (`rotation_deg`), the sum separates into two small matrix products, the matrix Fourier transform of Soummer et al. (2007). It gives the same answer as the direct sum; the cell below checks that the two paths agree and times them; the timings depend on the machine and show no speed-up at this size. For AMI this means pixels aligned with the detector rather than with North, though `render` and `plot_model` still show the image North up.
+The visibilities of an `Image` are an exact sum over its pixels, whatever the uv sampling. When the samples lie on a lattice and the image's pixel grid is rotated to match it (`rotation_deg`), the sum separates into two small matrix products, the matrix Fourier transform of Soummer et al. (2007). It gives the same answer as the direct sum; the cell below checks that the two paths agree. For AMI this means pixels aligned with the detector rather than with North, though `render` and `plot_model` still show the image North up.
 
 ```python
 rotation = template.uv_grid.rotation_deg
@@ -157,24 +156,8 @@ per_point = eqx.tree_at(
     lambda d: d.uv_grid, template, None, is_leaf=lambda x: x is None
 )
 
-evaluate = eqx.filter_jit(lambda data_object, model: data_object.model(model))
-for name, data_object in [("lattice (MFT)", template), ("per point", per_point)]:
-    evaluate(data_object, detector_scene).block_until_ready()
-    start = time.perf_counter()
-    for _ in range(100):
-        evaluate(data_object, detector_scene).block_until_ready()
-    print(f"{name}: {10 * (time.perf_counter() - start):.1f} ms per evaluation on this machine")
-
 difference = jnp.abs(template.model(detector_scene) - per_point.model(detector_scene))
 print(f"agree to float32 rounding: {bool(difference.max() < 1e-6)}")
-```
-
-```text
-lattice (MFT): 0.3 ms per evaluation on this machine
-```
-
-```text
-per point: 0.2 ms per evaluation on this machine
 ```
 
 ```text

@@ -67,6 +67,7 @@ from . import (  # noqa: E402
     spectra,
     svi,
 )
+from ._cache import enable_compilation_cache  # noqa: E402
 from ._geometry import pixel_offsets, set_ft_defaults  # noqa: E402
 from .detection import detection_statistics  # noqa: E402
 from .epochs import Epochs, rank_orbits, start_from_positions  # noqa: E402
@@ -104,10 +105,12 @@ from .limits import (  # noqa: E402
     ruffio_upperlimit,
 )
 from .models import (  # noqa: E402
+    ArchimedeanSpiral,
     Attached,
     BinaryModelAngular,
     BinaryModelCartesian,
     Cone,
+    Crescent,
     EllipticalGaussian,
     EllipticalLimbDarkenedDisk,
     ExpTail,
@@ -198,12 +201,15 @@ def __getattr__(name):
 
 
 __all__ = [
+    "enable_compilation_cache",
+    "ArchimedeanSpiral",
     "Attached",
     "AxialVonMises",
     "BinaryModelAngular",
     "BinaryModelCartesian",
     "BlackBody",
     "Cone",
+    "Crescent",
     "EllipticalGaussian",
     "EllipticalLimbDarkenedDisk",
     "Epochs",

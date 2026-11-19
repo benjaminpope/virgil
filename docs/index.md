@@ -76,10 +76,17 @@ Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpo
 | --- | --- |
 | Read my OIFITS file | [Reading data](data_io.md) |
 | Find and fit a companion | [Binary search](binary_search.md) |
-| Set a contrast limit or a detection limit | [Contrast limits](contrast_limits.md) |
+| Set a contrast limit or a detection limit | [Contrast limits: Ruffio and Absil](contrast_limits.md), then [Detection ROC curves](detection_roc.md) |
 | Fit a binary's orbit | [Which orbit tool?](which_orbit_tool.md), then [Orbits from interferometric data](orbit_fitting.md) |
 | Make an image | [Simulating AMI data](imaging_ami.md), then [Regularized maximum likelihood](imaging_rml.md) |
-| Run a whole analysis in one command | [Pipelines](pipeline.md) |
+| Image radio visibilities | [Radio imaging tutorial](radio_tutorial.md), then [Radio interferometry](radio_interferometry.md) |
+| Image with a Gaussian-process prior | [Imaging, part 3](imaging_gp.md) |
+| Use AMIGO DISCO products | [AMIGO DISCO data](amigo_disco.md) |
+| Work with spectro-interferometric data | [Spectro-interferometric observables](spectro_observables.md) |
+| Fit a stellar diameter with limb darkening | [Limb-darkened stars](limb_darkening.md) |
+| Run a whole analysis in one command | [Pipeline tutorial](pipelines.md), then [Pipeline reference](pipeline.md) |
+| Check a convention or an argument name | [Conventions](conventions.md) |
+| Look up a function | [API reference](api/index.md) |
 | Check which features may change | [Stability](stability.md) |
 
 ## Independent validation

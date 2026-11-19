@@ -1,0 +1,1 @@
+Adds `ArchimedeanSpiral` (provisional), a pinwheel arm for colliding-wind binaries: a Gaussian ridge along an Archimedean spiral with signed `pitch`, `turns`, `width`, `pa`, optional `inc` and `node`, and an exponential `fade` along the arm, with a closed-form visibility and a consistent image.

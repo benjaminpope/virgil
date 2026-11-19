@@ -4,7 +4,7 @@
 
 - There are two kinds of `SourceModel`. **Components** (`Component`
   subclasses: `PointSource`, `GaussianDisk`, `EllipticalGaussian`,
-  `GaussianArc`, `UniformDisk`, `ModulatedGaussianRim`, and others) are pure shapes normalized to unit flux, with
+  `GaussianArc`, `ArchimedeanSpiral`, `UniformDisk`, `ModulatedGaussianRim`, and others) are pure shapes normalized to unit flux, with
   `flux`, `dra`, `ddec`; their `flux` is a relative weight. **Scenes**
   (`System`, the binaries, `HarmonixModel`) are whole normalized skies with
   weight 1 inside a `System`, unless they carry their own `flux` weight as

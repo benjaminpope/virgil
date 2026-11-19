@@ -78,13 +78,21 @@ def regularized_inverse(matrix, ridge=1e-10):
     regularized matrix is not positive definite, since its inverse is then
     not a covariance.
     """
-    matrix = np.asarray(matrix, dtype=float)
-    scale = np.abs(np.diagonal(matrix))
-    top = np.max(scale)
-    scale = np.where(scale > 0.0, scale, np.where(top > 0.0, top, 1.0))
-    regularized = matrix + ridge * np.diag(scale)
+    # A concrete matrix is handled in NumPy on the host: each eager
+    # jax.numpy op below is otherwise a separate XLA compile in a cold process.
+    xp = np if _concrete(matrix) is None else onp
+    # The precision JAX gives ``float`` (float32 unless x64 is on), on the host
+    # too, so the positive-definite test and the inverse match the traced path.
+    matrix = xp.asarray(matrix, dtype=jax.dtypes.canonicalize_dtype(float))
+    scale = xp.abs(xp.diagonal(matrix))
+    top = xp.max(scale)
+    scale = xp.where(scale > 0.0, scale, xp.where(top > 0.0, top, 1.0))
+    regularized = matrix + ridge * xp.diag(scale)
     # Cholesky gives NaN unless the matrix is positive definite.
-    plain = np.all(np.isfinite(np.linalg.cholesky(matrix)))
+    try:
+        plain = xp.all(xp.isfinite(xp.linalg.cholesky(matrix)))
+    except onp.linalg.LinAlgError:
+        plain = False
     value, raw = _concrete(regularized), _concrete(matrix)
     if (
         value is not None
@@ -112,7 +120,14 @@ def regularized_inverse(matrix, ridge=1e-10):
             RuntimeWarning,
             stacklevel=external_stacklevel(),
         )
-    return np.linalg.inv(np.where(plain, matrix, regularized))
+    chosen = xp.where(plain, matrix, regularized)
+    if xp is onp:
+        try:
+            return np.asarray(onp.linalg.inv(chosen), dtype=float)
+        except onp.linalg.LinAlgError:
+            # Singular, as JAX's inv would give for it.
+            return np.asarray(onp.full_like(chosen, onp.nan), dtype=float)
+    return np.linalg.inv(chosen)
 
 
 def objective_laplace_covariance(objective, x, ridge=1e-10):
