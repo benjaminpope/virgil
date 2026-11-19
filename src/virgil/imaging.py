@@ -1832,9 +1832,8 @@ def clean(
             history.append(float(chi2) / ndata)
         by_scale = onp.asarray(fluxes, float)
         components = onp.asarray(_sky(fluxes, fixed[0][2]), float)
-    if base is None:
-        total = components.sum()
-        components, by_scale = components / total, by_scale / total
+    norm = components.sum() if base is None else 1.0  # unit total flux
+    components, by_scale = components / norm, by_scale / norm
     model = _clean_model(
         base, components, pixel_scale_mas, rotation_deg, spectrum
     )

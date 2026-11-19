@@ -89,3 +89,32 @@ def test_blur_in_plane_matches_the_analytic_gaussian(rotation_deg, pa):
         quad = onp.einsum("...i,ij,...j->...", p, inv, p)
         want = onp.exp(-0.5 * quad) * s0**2 / onp.sqrt(onp.linalg.det(cov))
         onp.testing.assert_allclose(onp.asarray(got), want, atol=2e-3)
+
+
+@pytest.mark.parametrize("rotation_deg", (45.0,))
+def test_star_samples_are_the_turned_pixel_square(rotation_deg):
+    """Coarse pixels average 4 x 4 samples of the disk indicator over the pixel
+    square turned with the lattice: a pixel carries 2 * mean * scale^2."""
+    diam, scale, npix = 20.0, 5.0, 12
+    xx, yy = image_coordinates(npix, npix * scale)
+    xx, yy = (onp.asarray(a) for a in rotate(xx, yy, rotation_deg))
+    star = GravityDarkenedStar(diam, 0.0, 90.0, 0.0, n_lat=64)
+    got = onp.asarray(star._image(xx, yy, scale)) / (2 * scale**2)
+    th = onp.deg2rad(rotation_deg)
+    axis = onp.array(
+        [onp.cos(th), -onp.sin(th)]
+    )  # the grid's x axis on the sky
+    perp = onp.array([onp.sin(th), onp.cos(th)])
+    t = ((onp.arange(4) + 0.5) / 4 - 0.5) * scale
+
+    def coverage(turned):
+        e1, e2 = (axis, perp) if turned else (onp.eye(2)[0], onp.eye(2)[1])
+        ox = t[:, None] * e1[0] + t[None, :] * e2[0]
+        oy = t[:, None] * e1[1] + t[None, :] * e2[1]
+        px = xx[..., None, None] + ox
+        py = yy[..., None, None] + oy
+        return (px**2 + py**2 <= (diam / 2) ** 2).mean(axis=(-1, -2))
+
+    # the same samples as the disk's indicator; the axis-aligned square misses
+    assert onp.abs(got - coverage(True)).mean() < 1e-5
+    assert onp.abs(got - coverage(False)).mean() > 1e-3
