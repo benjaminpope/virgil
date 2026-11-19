@@ -608,7 +608,7 @@ title = "Bayesian Interpolation"
 doi = "10.1162/neco.1992.4.3.415"
 verified = true
 verified_via = "crossref"
-used_in = ["virgil.imaging:log_evidence", "virgil.imaging:error_scale", "virgil.epochs:marginal_loglike", "virgil.aliases"]
+used_in = ["virgil.imaging:log_evidence", "virgil.imaging:error_scale", "virgil.imaging:laplace_samples", "virgil.epochs:marginal_loglike", "virgil.aliases"]
 note = "Neural Comput. 4, 415"
 
 [ref.hansen1993]
@@ -704,6 +704,7 @@ alt_years_note = "year is the first posting; the journal paper is dated 2021"
 title = "Comparison of classical and Bayesian imaging in radio interferometry: Cygnus A with CLEAN and resolve"
 used_in = ["virgil.fields:GaussianField"]
 note = "A&A 646, A84 (2021)"
+role = "compared"
 bibcode = "2021A&A...646A..84A"
 arxiv = "2008.11435"
 verified = true
@@ -738,6 +739,8 @@ authors = "Knollmüller & Enßlin"
 year = 2019
 title = "Metric Gaussian Variational Inference"
 used_in = ["virgil.imaging:laplace_samples"]
+note = "MGVI; laplace_samples shares its covariance form but is a single draw at the MAP, with no iteration"
+role = "compared"
 bibcode = "2019arXiv190111033K"
 arxiv = "1901.11033"
 verified = true
@@ -748,7 +751,8 @@ authors = "Frank, Leike & Enßlin"
 year = 2021
 title = "Geometric variational inference"
 used_in = ["virgil.svi:variational"]
-note = "geoVI"
+note = "geoVI; not implemented, svi.variational is a different method"
+role = "compared"
 bibcode = "2021Entrp..23..853F"
 arxiv = "2105.10470"
 verified = true
@@ -1212,6 +1216,7 @@ authors = "Selig et al."
 year = 2013
 title = "NIFTY - Numerical Information Field Theory - a versatile Python library for signal inference"
 used_in = ["virgil.fields:GaussianField"]
+role = "compared"
 bibcode = "2013A&A...554A..26S"
 arxiv = "1301.4499"
 verified = true
@@ -1418,7 +1423,7 @@ authors = "Rue & Held"
 year = 2005
 title = "Gaussian Markov Random Fields: Theory and Applications"
 doi = "10.1201/9780203492024"
-used_in = []
+used_in = ["virgil.fields:GaussianField"]
 note = "Chapman & Hall/CRC (book)"
 role = "context"
 verified = true
@@ -1429,9 +1434,8 @@ authors = "Lindgren, Rue & Lindström"
 year = 2011
 title = "An Explicit Link between Gaussian Fields and Gaussian Markov Random Fields: The Stochastic Partial Differential Equation Approach"
 doi = "10.1111/j.1467-9868.2011.00777.x"
-used_in = []
+used_in = ["virgil.fields:GaussianField", "virgil.fields:field_spectrum"]
 note = "JRSS B 73, 423; Matérn fields as solutions of an SPDE"
-role = "context"
 verified = true
 verified_via = "crossref"
 
@@ -1687,6 +1691,14 @@ note = "Nonstandard conditions: a parameter on the boundary, or a nuisance param
 bibcode = "1987JASA...82..605S"
 verified = true
 verified_via = "ads"
+
+[ref.virgil_multipole]
+authors = "virgil (own design)"
+year = 2026
+title = "MultipoleField: a multipole-expanded Gaussian-process image on a polar disc-frame grid"
+used_in = ["virgil.fields:MultipoleField"]
+note = "No published source for the construction: polar grid, radial Matérn Cholesky, tanh taper, multipoles and edge fade are virgil's own; it shares only the exponential-of-a-GP image and whitened latents with the IFT papers"
+verified = false
 
 [ref.virgil_tempering]
 authors = "virgil (own design)"
@@ -2386,6 +2398,29 @@ arxiv = "2008.05834"
 doi = "10.1093/mnras/staa2349"
 verified = true
 verified_via = "arxiv"
+
+[ref.guardiani2022]
+authors = "Guardiani et al."
+year = 2022
+title = "Causal, Bayesian, & non-parametric modeling of the SARS-CoV-2 viral load distribution vs. patient's age"
+used_in = ["virgil.fields:MultipoleField"]
+note = "PLoS ONE 17, e0275011; the Matérn amplitude that NIFTy.re cites (Edenhofer et al. 2024); virgil's MultipoleField is its own construction"
+role = "context"
+bibcode = "2022PLoSO..1775011G"
+arxiv = "2105.13483"
+verified = true
+verified_via = "ads"
+
+[ref.strang1999]
+authors = "Strang"
+year = 1999
+title = "The Discrete Cosine Transform"
+used_in = ["virgil.fields:GaussianField", "virgil.fields:field_spectrum"]
+note = "SIAM Review 41, 135; the DCT-II vectors are the eigenvectors of the second-difference matrix with symmetric (Neumann) boundaries"
+doi = "10.1137/S0036144598336745"
+bibcode = "1999SIAMR..41..135S"
+verified = true
+verified_via = "crossref"
 
 [ref.kamruddin2013]
 authors = "Kamruddin & Dexter"
