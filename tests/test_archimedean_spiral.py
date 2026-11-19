@@ -446,3 +446,22 @@ def test_default_nodes_are_at_most_a_quarter_width_apart_on_a_short_arm():
     )  # spacing is largest at the end
     assert spiral.nodes == 4
     assert largest <= width / 4.0
+
+
+@pytest.mark.parametrize("x64_at_render", [True, False])
+def test_a_float32_grid_with_float64_parameters_renders(x64_at_render):
+    """The scan carry takes the promoted dtype, with x64 on or off when a
+    float64-parameter spiral is drawn on a float32 grid (regressions: a float32
+    carry against a float64 step output raised; casting the carry to float64
+    raised with x64 off)."""
+    with jax.enable_x64(True):
+        spiral = ArchimedeanSpiral(**SHAPES["inclined_clockwise_faded"])
+        xx, yy = image_coordinates(64, 160.0)
+        ref = onp.asarray(spiral._centred_image(xx, yy, 2.5))
+        grid32 = [onp.asarray(a, onp.float32) for a in (xx, yy)]
+    with jax.enable_x64(x64_at_render):
+        image = spiral._centred_image(*map(np.asarray, grid32), 2.5)
+    assert ref.max() > 0.0
+    assert onp.allclose(
+        onp.asarray(image), ref, rtol=1e-3, atol=1e-6 * ref.max()
+    )
