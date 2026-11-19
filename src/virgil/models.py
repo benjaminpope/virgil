@@ -1989,6 +1989,7 @@ def _lattice_axis(xx, yy):
     That is ``rotate`` of ``(1, 0)`` by ``rotation_deg``, exactly ``(1, 0)``
     for an unrotated grid, whose columns run to -x. A one-column grid takes
     its axis from the rows; a single pixel has none, so it counts as unrotated.
+    Valid only for grids that ``rotate`` produces: orthogonal, square, not mirrored.
     """
     if xx.shape[1] > 1:
         dx, dy = xx[0, 0] - xx[0, 1], yy[0, 0] - yy[0, 1]
