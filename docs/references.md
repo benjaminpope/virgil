@@ -172,12 +172,15 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | Symbol | Source | Relation |
 |---|---|---|
 | `(module)` | [Enßlin, Frommert & Kitaura (2008)](#ensslin2009), [arXiv:0806.3474](https://arxiv.org/abs/0806.3474), [ADS](https://ui.adsabs.harvard.edu/abs/2009PhRvD..80j5005E/abstract) | after |
-| `GaussianField` | [Arras et al. (2020)](#arras2021), [arXiv:2008.11435](https://arxiv.org/abs/2008.11435), [ADS](https://ui.adsabs.harvard.edu/abs/2021A&A...646A..84A/abstract) | after |
 | `GaussianField` | [Arras et al. (2020)](#arras2022), [arXiv:2002.05218](https://arxiv.org/abs/2002.05218), [ADS](https://ui.adsabs.harvard.edu/abs/2022NatAs...6..259A/abstract) | after |
 | `GaussianField` | [Edenhofer et al. (2024)](#edenhofer2024), [arXiv:2402.16683](https://arxiv.org/abs/2402.16683), [ADS](https://ui.adsabs.harvard.edu/abs/2024JOSS....9.6593E/abstract) | after |
 | `GaussianField` | [Enßlin (2018)](#ensslin2019), [arXiv:1804.03350](https://arxiv.org/abs/1804.03350), [ADS](https://ui.adsabs.harvard.edu/abs/2019AnP...53100127E/abstract) | after |
+| `GaussianField` | [Lindgren, Rue & Lindström (2011)](#lindgren2011), [doi:10.1111/j.1467-9868.2011.00777.x](https://doi.org/10.1111/j.1467-9868.2011.00777.x) | after |
 | `GaussianField` | [Enßlin group (Arras, Edenhofer et al.)](#nifty), [link](https://ift.pages.mpcdf.de/nifty/user/index.html) | after |
-| `GaussianField` | [Selig et al. (2013)](#selig2013), [arXiv:1301.4499](https://arxiv.org/abs/1301.4499), [ADS](https://ui.adsabs.harvard.edu/abs/2013A&A...554A..26S/abstract) | after |
+| `GaussianField` | [Strang (1999)](#strang1999), [ADS](https://ui.adsabs.harvard.edu/abs/1999SIAMR..41..135S/abstract), [doi:10.1137/S0036144598336745](https://doi.org/10.1137/S0036144598336745) | after |
+| `MultipoleField` | [virgil (own design) (2026)](#virgil_multipole) | after |
+| `field_spectrum` | [Lindgren, Rue & Lindström (2011)](#lindgren2011), [doi:10.1111/j.1467-9868.2011.00777.x](https://doi.org/10.1111/j.1467-9868.2011.00777.x) | after |
+| `field_spectrum` | [Strang (1999)](#strang1999), [ADS](https://ui.adsabs.harvard.edu/abs/1999SIAMR..41..135S/abstract), [doi:10.1137/S0036144598336745](https://doi.org/10.1137/S0036144598336745) | after |
 
 ### `virgil.fitting`
 
@@ -254,7 +257,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `diagnose` | [Thiébaut & Young (2017)](#thiebaut2017), [arXiv:1708.08390](https://arxiv.org/abs/1708.08390), [ADS](https://ui.adsabs.harvard.edu/abs/2017JOSAA..34..904T/abstract) | after |
 | `error_scale` | [MacKay (1992)](#mackay1992), [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415) | after |
 | `l_curve` | [Hansen & O'Leary (1993)](#hansen1993), [ADS](https://ui.adsabs.harvard.edu/abs/1993SJSC...14.1487H/abstract), [doi:10.1137/0914086](https://doi.org/10.1137/0914086) | after |
-| `laplace_samples` | [Knollmüller & Enßlin (2019)](#knollmuller2019), [arXiv:1901.11033](https://arxiv.org/abs/1901.11033), [ADS](https://ui.adsabs.harvard.edu/abs/2019arXiv190111033K/abstract) | after |
+| `laplace_samples` | [MacKay (1992)](#mackay1992), [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415) | after |
 | `log_evidence` | [MacKay (1992)](#mackay1992), [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415) | after |
 | `short_baseline_residual` | [Ireland, Monnier & Thureau (2006)](#ireland2006), [arXiv:2007.00716](https://arxiv.org/abs/2007.00716), [ADS](https://ui.adsabs.harvard.edu/abs/2006SPIE.6268E..1TI/abstract), [doi:10.1117/12.670940](https://doi.org/10.1117/12.670940) | after |
 | `starlet` | [Starck, Murtagh & Fadili (2010)](#starck2010) | after |
@@ -491,7 +494,6 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `_loss_settled` | [Kass & Raftery (1995)](#kass1995), [doi:10.1080/01621459.1995.10476572](https://doi.org/10.1080/01621459.1995.10476572) | after |
 | `variational` | [De Cao, Titov & Aziz (2019)](#decao2019), [arXiv:1904.04676](https://arxiv.org/abs/1904.04676), [ADS](https://ui.adsabs.harvard.edu/abs/2019arXiv190404676D/abstract) | after |
-| `variational` | [Frank, Leike & Enßlin (2021)](#frank2021), [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract) | after |
 | `variational` | [Kingma et al. (2016)](#kingma2016), [arXiv:1606.04934](https://arxiv.org/abs/1606.04934), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160604934K/abstract) | after |
 | `variational` | [Kucukelbir et al. (2016)](#kucukelbir2017), [arXiv:1603.00788](https://arxiv.org/abs/1603.00788), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160300788K/abstract) | after |
 | `variational` | [Vehtari et al. (2015)](#vehtari2024), [arXiv:1507.02646](https://arxiv.org/abs/1507.02646), [ADS](https://ui.adsabs.harvard.edu/abs/2015arXiv150702646V/abstract) | after |
@@ -508,14 +510,18 @@ Studied for comparison; nothing was taken from them.
 
 | Source | Note |
 |---|---|
+| [Arras et al. (2020)](#arras2021), [arXiv:2008.11435](https://arxiv.org/abs/2008.11435), [ADS](https://ui.adsabs.harvard.edu/abs/2021A&A...646A..84A/abstract) | A&A 646, A84 (2021) |
 | [Blunt et al. (2017)](#blunt2017), [arXiv:1703.10653](https://arxiv.org/abs/1703.10653), [ADS](https://ui.adsabs.harvard.edu/abs/2017AJ....153..229B/abstract) | OFTI |
 | [Blunt et al. (2019)](#blunt2020), [arXiv:1910.01756](https://arxiv.org/abs/1910.01756), [ADS](https://ui.adsabs.harvard.edu/abs/2020AJ....159...89B/abstract), [GitHub](https://github.com/sblunt/orbitize) | orbitize!; AJ 159, 89 (2020) |
 | [Blunt et al. (2024)](#blunt2024), [arXiv:2409.11573](https://arxiv.org/abs/2409.11573), [ADS](https://ui.adsabs.harvard.edu/abs/2024JOSS....9.6756B/abstract), [doi:10.21105/joss.06756](https://doi.org/10.21105/joss.06756) | orbitize!; JOSS 9, 6756 |
 | [Brandt et al. (2021)](#brandt2021), [arXiv:2105.11671](https://arxiv.org/abs/2105.11671), [ADS](https://ui.adsabs.harvard.edu/abs/2021AJ....162..186B/abstract), [GitHub](https://github.com/t-brandt/orvara) | orvara; AJ 162, 186 |
 | [CASA Team (2022)](#casa_tclean), [link](https://casadocs.readthedocs.io/en/stable/notebooks/synthesis_imaging.html) | Iteration Control, global stopping criteria: divergence 1 is (PeakRes - PrevPeakRes) / PrevPeakRes > 3.0, divergence 2 is (PeakRes - MinPeakRes) / MinPeakRes > 3.0, both over the whole image ignoring the mask (stop codes 5 and 6); minor cycle: (currentPeak - prevPeak) / prevPeak > 0.1, stop code 4 saying 'from minimum'. The page is inconsistent on the minor-cycle reference; virgil uses the running minimum per scale (virgil's choice). Read 2026-10-24 |
+| [Frank, Leike & Enßlin (2021)](#frank2021), [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract) | geoVI; not implemented, svi.variational is a different method |
 | [Kammerer](#fouriever), [GitHub](https://github.com/kammerje/fouriever) | comparison only: compare linear_flux_grid with its lincmap (closure/kernel phases only); no paper found |
+| [Knollmüller & Enßlin (2019)](#knollmuller2019), [arXiv:1901.11033](https://arxiv.org/abs/1901.11033), [ADS](https://ui.adsabs.harvard.edu/abs/2019arXiv190111033K/abstract) | MGVI; laplace_samples shares its covariance form but is a single draw at the MAP, with no iteration |
 | [Mawet et al. (2014)](#mawet2014), [arXiv:1407.2247](https://arxiv.org/abs/1407.2247), [ADS](https://ui.adsabs.harvard.edu/abs/2014ApJ...792...97M/abstract) | ApJ 792, 97; the small-sample false-alarm correction, not applied in injection_recovery |
 | [Mérand et al.](#candid), [GitHub](https://github.com/amerand/CANDID) | algorithm paper: gallenne2015 |
+| [Selig et al. (2013)](#selig2013), [arXiv:1301.4499](https://arxiv.org/abs/1301.4499), [ADS](https://ui.adsabs.harvard.edu/abs/2013A&A...554A..26S/abstract) |  |
 
 ## Background literature
 
@@ -532,14 +538,12 @@ Cited in the documentation as motivation or terminology; not a source of virgil'
 | [Junklewitz et al. (2016)](#junklewitz2016), [arXiv:1311.5282](https://arxiv.org/abs/1311.5282), [ADS](https://ui.adsabs.harvard.edu/abs/2016A&A...586A..76J/abstract) | A&A 586, A76; an IFT imaging algorithm for radio interferometry |
 | [Kraus & Ireland (2012)](#kraus2012), [arXiv:1110.3808](https://arxiv.org/abs/1110.3808), [ADS](https://ui.adsabs.harvard.edu/abs/2012ApJ...745....5K/abstract), [doi:10.1088/0004-637X/745/1/5](https://doi.org/10.1088/0004-637X/745/1/5) | ApJ 745, 5; motivates fitting a disk and a planet together |
 | [Lannelongue, Grealey & Inouye (2021)](#lannelongue2021), [ADS](https://ui.adsabs.harvard.edu/abs/2021AdvSc...800707L/abstract), [doi:10.1002/advs.202100707](https://doi.org/10.1002/advs.202100707) | Advanced Science 8, 2100707; the method behind the development-carbon estimate (docs/dev_carbon.md) |
-| [Lindgren, Rue & Lindström (2011)](#lindgren2011), [doi:10.1111/j.1467-9868.2011.00777.x](https://doi.org/10.1111/j.1467-9868.2011.00777.x) | JRSS B 73, 423; Matérn fields as solutions of an SPDE |
 | [Monnier et al. (2007)](#monnier2007), [arXiv:0706.0867](https://arxiv.org/abs/0706.0867), [ADS](https://ui.adsabs.harvard.edu/abs/2007Sci...317..342M/abstract), [doi:10.1126/science.1143205](https://doi.org/10.1126/science.1143205) | Science 317, 342; the Altair-like truth of notebooks/mwe/mwe_elr_chara.ipynb is inspired by it, not a reproduction |
 | [Papaspiliopoulos, Roberts & Sköld (2007)](#papaspiliopoulos2007), [ADS](https://ui.adsabs.harvard.edu/abs/2007StaSc..2200014P/abstract), [doi:10.1214/088342307000000014](https://doi.org/10.1214/088342307000000014) | Statistical Science 22, 59; centred and non-centred parameterizations |
 | [Rasmussen & Williams (2006)](#rasmussen2006), [doi:10.7551/mitpress/3206.001.0001](https://doi.org/10.7551/mitpress/3206.001.0001), [link](https://gaussianprocess.org/gpml/) | MIT Press (book); GP terminology, Matérn kernels, marginal likelihood; A.9 matrix inversion and determinant lemmas (arrow_at) |
 | [Roettenbacher et al. (2016)](#roettenbacher2016), [arXiv:1709.10107](https://arxiv.org/abs/1709.10107), [ADS](https://ui.adsabs.harvard.edu/abs/2016Natur.533..217R/abstract), [doi:10.1038/nature17444](https://doi.org/10.1038/nature17444) | Nature 533, 217; CHARA/MIRC starspot imaging that motivates HarmonixModel |
 | [Rue & Held (2005)](#rue2005), [doi:10.1201/9780203492024](https://doi.org/10.1201/9780203492024) | Chapman & Hall/CRC (book) |
 | [Sallum et al. (2015)](#sallum2015), [arXiv:1511.07456](https://arxiv.org/abs/1511.07456), [ADS](https://ui.adsabs.harvard.edu/abs/2015Natur.527..342S/abstract), [doi:10.1038/nature15761](https://doi.org/10.1038/nature15761) | Nature 527, 342; motivates fitting a disk and a planet together |
-| [Strang (1999)](#strang1999), [ADS](https://ui.adsabs.harvard.edu/abs/1999SIAMR..41..135S/abstract), [doi:10.1137/S0036144598336745](https://doi.org/10.1137/S0036144598336745) | SIAM Review 41, 135; the DCT-II vectors are the eigenvectors of the second-difference matrix with symmetric (Neumann) boundaries |
 | [van Hamme (1993)](#vanhamme1993), [ADS](https://ui.adsabs.harvard.edu/abs/1993AJ....106.2096V/abstract), [doi:10.1086/116788](https://doi.org/10.1086/116788) | AJ 106, 2096; the quadratic law the square-root law is compared with |
 
 ## Other background sources
@@ -674,7 +678,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="ford2006"></a>**Ford (2006)**. Improving the Efficiency of Markov Chain Monte Carlo for Analyzing the Orbits of Extrasolar Planets. [arXiv:astro-ph/0512634](https://arxiv.org/abs/astro-ph/0512634), [ADS](https://ui.adsabs.harvard.edu/abs/2006ApJ...642..505F/abstract), [doi:10.1086/500802](https://doi.org/10.1086/500802). ApJ 642, 505; the (sqrt(e) cos omega, sqrt(e) sin omega) parameterization, uniform in e; zeta is its half-angle variant.
 - <a id="foreman-mackey2021"></a>**Foreman-Mackey et al. (2021)**. exoplanet: Gradient-based probabilistic inference for exoplanet data & other astronomical time series. [arXiv:2105.01994](https://arxiv.org/abs/2105.01994), [ADS](https://ui.adsabs.harvard.edu/abs/2021JOSS....6.3285F/abstract), [doi:10.21105/joss.03285](https://doi.org/10.21105/joss.03285). JOSS 6, 3285.
 - <a id="fowlie2021"></a>**Fowlie, Handley & Su (2021)**. Nested sampling with plateaus. [arXiv:2010.13884](https://arxiv.org/abs/2010.13884), [doi:10.1093/mnras/stab590](https://doi.org/10.1093/mnras/stab590). MNRAS 503, 1199; likelihood plateaus break nested sampling's compression; the all-outlier floor is one.
-- <a id="frank2021"></a>**Frank, Leike & Enßlin (2021)**. Geometric variational inference. [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract). geoVI.
+- <a id="frank2021"></a>**Frank, Leike & Enßlin (2021)**. Geometric variational inference. [arXiv:2105.10470](https://arxiv.org/abs/2105.10470), [ADS](https://ui.adsabs.harvard.edu/abs/2021Entrp..23..853F/abstract). geoVI; not implemented, svi.variational is a different method.
 - <a id="gallenne2015"></a>**Gallenne et al. (2015)**. Robust high-contrast companion detection from interferometric observations. The CANDID algorithm and an application to six binary stars. [arXiv:1505.02715](https://arxiv.org/abs/1505.02715), [ADS](https://ui.adsabs.harvard.edu/abs/2015A&A...579A..68G/abstract). CANDID.
 - <a id="gilks2001"></a>**Gilks & Berzuini (2001)**. Following a moving target: Monte Carlo inference for dynamic Bayesian models. [doi:10.1111/1467-9868.00280](https://doi.org/10.1111/1467-9868.00280). J. R. Stat. Soc. B 63, 127; resample-move: resample weighted draws, then move them with a kernel invariant for the target.
 - <a id="frito"></a>**Goldfine**. frito. [GitHub](https://github.com/JonahDG/frito). *Not yet verified against arXiv, Crossref or ADS.*
@@ -717,7 +721,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="kingma2016"></a>**Kingma et al. (2016)**. Improving Variational Inference with Inverse Autoregressive Flow. [arXiv:1606.04934](https://arxiv.org/abs/1606.04934), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160604934K/abstract). IAF.
 - <a id="kipping2013"></a>**Kipping (2013)**. Efficient, uninformative sampling of limb darkening coefficients for two-parameter laws. [arXiv:1308.0009](https://arxiv.org/abs/1308.0009), [ADS](https://ui.adsabs.harvard.edu/abs/2013MNRAS.435.2152K/abstract), [doi:10.1093/mnras/stt1435](https://doi.org/10.1093/mnras/stt1435).
 - <a id="kluska2014"></a>**Kluska et al. (2014)**. SPARCO: a semi-parametric approach for image reconstruction of chromatic objects. [arXiv:1403.3343](https://arxiv.org/abs/1403.3343), [ADS](https://ui.adsabs.harvard.edu/abs/2014A&A...564A..80K/abstract).
-- <a id="knollmuller2019"></a>**Knollmüller & Enßlin (2019)**. Metric Gaussian Variational Inference. [arXiv:1901.11033](https://arxiv.org/abs/1901.11033), [ADS](https://ui.adsabs.harvard.edu/abs/2019arXiv190111033K/abstract).
+- <a id="knollmuller2019"></a>**Knollmüller & Enßlin (2019)**. Metric Gaussian Variational Inference. [arXiv:1901.11033](https://arxiv.org/abs/1901.11033), [ADS](https://ui.adsabs.harvard.edu/abs/2019arXiv190111033K/abstract). MGVI; laplace_samples shares its covariance form but is a single draw at the MAP, with no iteration.
 - <a id="kraus2012"></a>**Kraus & Ireland (2012)**. LkCa 15: A Young Exoplanet Caught at Formation?. [arXiv:1110.3808](https://arxiv.org/abs/1110.3808), [ADS](https://ui.adsabs.harvard.edu/abs/2012ApJ...745....5K/abstract), [doi:10.1088/0004-637X/745/1/5](https://doi.org/10.1088/0004-637X/745/1/5). ApJ 745, 5; motivates fitting a disk and a planet together.
 - <a id="kroupa2026"></a>**Kroupa & Handley (2026)**. Global structure of the time delay likelihood. [arXiv:2602.22307](https://arxiv.org/abs/2602.22307). nested sampling on an aliased (time-delay) likelihood needs many live points to avoid spurious modes; the caution behind running NS as a check, not the default.
 - <a id="kucukelbir2017"></a>**Kucukelbir et al. (2016)**. Automatic Differentiation Variational Inference. [arXiv:1603.00788](https://arxiv.org/abs/1603.00788), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160300788K/abstract). ADVI; JMLR 18, 14 (2017).
@@ -805,6 +809,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="veach1995"></a>**Veach & Guibas (1995)**. Optimally combining sampling techniques for Monte Carlo rendering. [doi:10.1145/218380.218498](https://doi.org/10.1145/218380.218498). SIGGRAPH '95, 419; the balance heuristic, the partition of unity that splits the bridge per mode.
 - <a id="vehtari2024"></a>**Vehtari et al. (2015)**. Pareto Smoothed Importance Sampling. [arXiv:1507.02646](https://arxiv.org/abs/1507.02646), [ADS](https://ui.adsabs.harvard.edu/abs/2015arXiv150702646V/abstract). JMLR 25, 72 (2024).
 - <a id="vehtari2021"></a>**Vehtari et al. (2021)**. Rank-normalization, folding, and localization: An improved R-hat for assessing convergence of MCMC. [arXiv:1903.08008](https://arxiv.org/abs/1903.08008), [ADS](https://ui.adsabs.harvard.edu/abs/2021BayAn..16..667V/abstract). Bayesian Analysis 16, 667; R-hat is trusted only with bulk ESS above 100 per chain.
+- <a id="virgil_multipole"></a>**virgil (own design) (2026)**. MultipoleField: a multipole-expanded Gaussian-process image on a polar disc-frame grid. No published source for the construction: polar grid, radial Matérn Cholesky, tanh taper, multipoles and edge fade are virgil's own; it shares only the exponential-of-a-GP image and whitened latents with the IFT papers. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="virgil_tempering"></a>**virgil (own design) (2026)**. Tempering an evidence for correlated spectral channels. No published source. The effective-channel factor from neighbouring-channel residual covariance is virgil's own method; provisional, and no test checks that tempered evidences are calibrated. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="virgil_short_arcs"></a>**virgil (own design) (2026)**. Short-arc motion constraints for the orbit period search. No published source. Provisional; not independently validated. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="virgil_alias_search"></a>**virgil (own design) (2026)**. Period-alias band search for sparsely sampled orbits. No published source. The search over cycle-count bands, its nats thresholds and its night-outlier mixture (marginalized rate, Beta(1/2, 1/2) (Jeffreys)) are virgil's own design, provisional and not independently validated end to end. *Not yet verified against arXiv, Crossref or ADS.*

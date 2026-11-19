@@ -443,19 +443,7 @@ structure is not smeared). A component at zero offset is exactly unaffected.
 
 ## MultipoleField
 
-The construction is virgil's own: a polar grid in the disc's frame, a radial
-Matérn prior applied by its Cholesky factor, azimuthal multipoles, a $\tanh$
-centre taper and a fade at the outer edge. It shares only the exponential-of-a-GP
-image and whitened ("standardized") latents with the information field theory
-imaging papers (Junklewitz et al. 2016; Arras et al. 2019, 2022; Edenhofer et al.
-2024), which put a stationary, isotropic prior on a Cartesian grid by the FFT. The
-azimuthal spectral density has the Matérn amplitude form, $(1 + (k/\text{cutoff})^2)$
-to a power, that NIFTy.re cites to Guardiani et al. (2022), see
-[references](../../references.md#guardiani2022); the radial prior is a real-space
-Matérn correlation, not a spectrum. Born & Wolf is cited below only for
-the $r^{|m|}$ regularity at the centre, not for the GP construction.
-
-The prior on the field $\eta$ is separable,
+The log-brightness $\eta$ is a Gaussian process on a polar grid in the disc's frame, with a separable prior,
 
 $$\mathrm{Cov}[\eta(r, \theta), \eta(r', \theta')] =
 \sigma^2\, k_r(|r - r'|;\, \ell_r)\, k_\theta(\Delta\theta;\, \ell_\theta),$$
@@ -511,7 +499,17 @@ what `from_disk` stores. `System.resolved` returns the System with the ties
 baked in, for code that reads the pixels directly. The pixel scale comes from
 the Image.
 
-**References.** The whitened Gaussian-process latents of a radial profile follow
-FRAP (Yoshida et al. 2026, arXiv:2607.12618), and the polar-grid representation
-of a disk's brightness follows frank (Jennings et al. 2020, MNRAS 495, 3209).
-The code is a new implementation; none was copied.
+**References.** The construction is virgil's own: a polar grid in the disc's
+frame, a radial Matérn prior applied by its Cholesky factor, azimuthal
+multipoles, a $\tanh$ centre taper and an outer-edge fade. It shares only the
+exponential-of-a-GP image and whitened latents with the information field theory
+imaging papers (Arras et al. 2019, 2022; Edenhofer et al. 2024), which use a
+stationary prior on a Cartesian grid by the FFT. The whitened Gaussian-process
+latents of a radial profile follow FRAP (Yoshida et al. 2026, arXiv:2607.12618);
+frank (Jennings et al. 2020, MNRAS 495, 3209) represents a disk's brightness as
+a one-dimensional axisymmetric profile, which `MultipoleField` generalizes to a
+polar grid. The azimuthal spectral density has the Matérn amplitude form that
+NIFTy.re cites to Guardiani et al. (2022), see
+[references](../../references.md#guardiani2022); the radial prior is a real-space
+Matérn correlation, not a spectrum. Born & Wolf is cited above only for the
+$r^{|m|}$ regularity at the centre. The code is a new implementation; none was copied.
