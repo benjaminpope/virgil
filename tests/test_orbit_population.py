@@ -408,6 +408,26 @@ def test_the_oracle_and_the_diagnostics_change_no_fit_result():
     assert any(r["matched"] for r in recs) or all(r["flagged"] for r in recs)
 
 
+def _few_posterior_draws(monkeypatch, n_draws=100, n_moves=2, n_warm=40):
+    """Cut the resample-move work of ``position_cells`` for a slow test.
+
+    The pin test below asserts on ``ln Ẑ``, ``p_pos`` and the mode counts,
+    none of which read the posterior draws; the draws were 77% of its run
+    time. Library defaults are unchanged."""
+    import functools
+
+    from virgil import mode_search
+
+    monkeypatch.setattr(
+        pop.oc_cells,
+        "resample_move",
+        functools.partial(
+            mode_search.resample_move, n_draws=n_draws, n_moves=n_moves
+        ),
+    )
+    monkeypatch.setattr(mode_search, "N_WARM", n_warm)
+
+
 MAIN_P = [
     0.0824096751078581, 0.3332734433161518, 0.14456033264572826,
     0.09721359313839946, 0.07533519955161296, 0.06108624763063713,
@@ -462,6 +482,7 @@ def test_position_cells_matches_main_before_the_counters_were_added(
 
     monkeypatch.setattr(pop.oc_cells, "EPS_PRIOR", (0.5, 0.5))
     monkeypatch.setattr(_ns, "EPS_PRIOR", (0.5, 0.5))
+    _few_posterior_draws(monkeypatch)
     monkeypatch.setattr(
         pop, "_noise_outliers_and_chi2",
         lambda rng, mean, outlier, ln_s, sigma: (
@@ -529,14 +550,17 @@ def test_the_census_simulates_and_labels_in_float64(monkeypatch):
     # _labels: the state it scores is float64 whatever the ambient mode
     seen_state = []
 
-    def peak_terms(cat, ln_s, jitter, state, dtype):
+    def peak_terms(cat, ln_s, jitter, state, dtype, between=False):
         seen_state.append((jax.config.jax_enable_x64, state.dtype))
         return np.zeros((state.shape[0], 1), dtype)
 
     monkeypatch.setattr(pop.oc_cells, "_peak_terms", peak_terms)
     space = types.SimpleNamespace(
-        dtype=onp.float64, jitter=0.0, cat=types.SimpleNamespace(log_b=-1.0),
-        decode=lambda x: dict(period=1.0, z=None, zeta=0.0, ln_f=0.0, ln_s=0.0),
+        dtype=onp.float64, jitter=0.0, marginal=False,
+        cat=types.SimpleNamespace(log_b=-1.0),
+        decode=lambda x: dict(
+            period=1.0, z=None, zeta=0.0, ln_f=0.0, ln_s=0.0, jitter=0.0
+        ),
         states=lambda period, ti, zeta: onp.zeros((3, 4)),
     )  # fmt: skip
     monkeypatch.setattr(pop.oc_cells.oc, "z_to_ti", lambda z: z)
