@@ -78,18 +78,20 @@ def regularized_inverse(matrix, ridge=1e-10):
     regularized matrix is not positive definite, since its inverse is then
     not a covariance.
     """
-    host = _concrete(matrix)
-    if host is not None:
-        result = _regularized_inverse_host(host, matrix.dtype, ridge)
-        if result is not None:
-            return result
-    matrix = np.asarray(matrix, dtype=float)
-    scale = np.abs(np.diagonal(matrix))
-    top = np.max(scale)
-    scale = np.where(scale > 0.0, scale, np.where(top > 0.0, top, 1.0))
-    regularized = matrix + ridge * np.diag(scale)
+    # A concrete matrix is handled in NumPy on the host: each eager
+    # jax.numpy op below is otherwise a separate XLA compile in a cold process.
+    xp = np if _concrete(matrix) is None else onp
+    dtype = getattr(matrix, "dtype", None)
+    matrix = xp.asarray(matrix, dtype=float)
+    scale = xp.abs(xp.diagonal(matrix))
+    top = xp.max(scale)
+    scale = xp.where(scale > 0.0, scale, xp.where(top > 0.0, top, 1.0))
+    regularized = matrix + ridge * xp.diag(scale)
     # Cholesky gives NaN unless the matrix is positive definite.
-    plain = np.all(np.isfinite(np.linalg.cholesky(matrix)))
+    try:
+        plain = xp.all(xp.isfinite(xp.linalg.cholesky(matrix)))
+    except onp.linalg.LinAlgError:
+        plain = False
     value, raw = _concrete(regularized), _concrete(matrix)
     if (
         value is not None
@@ -117,54 +119,13 @@ def regularized_inverse(matrix, ridge=1e-10):
             RuntimeWarning,
             stacklevel=external_stacklevel(),
         )
-    return np.linalg.inv(np.where(plain, matrix, regularized))
-
-
-def _regularized_inverse_host(raw, dtype, ridge):
-    """``regularized_inverse`` of a concrete matrix, in NumPy on the host.
-
-    The same arithmetic and warnings as the traced path, but with no eager
-    ``jax.numpy`` op, each of which is a separate XLA compile in a cold
-    process. ``None`` if NumPy cannot invert it (the traced path then does).
-    """
-    matrix = onp.asarray(raw, dtype=float)
-    scale = onp.abs(onp.diagonal(matrix))
-    top = onp.max(scale)
-    scale = onp.where(scale > 0.0, scale, onp.where(top > 0.0, top, 1.0))
-    regularized = matrix + ridge * onp.diag(scale)
-    finite = bool(onp.all(onp.isfinite(matrix)))
-    reg_finite = bool(onp.all(onp.isfinite(regularized)))
-    try:
-        onp.linalg.cholesky(matrix)
-        plain = True
-    except onp.linalg.LinAlgError:
-        plain = False
-    if (
-        finite
-        and reg_finite
-        and onp.min(onp.linalg.eigvalsh(matrix)) <= 0.0
-        and onp.min(onp.linalg.eigvalsh(regularized)) > 0.0
-    ):
-        warnings.warn(
-            "The matrix is not positive definite (a parameter is "
-            "unconstrained, or the Hessian is too inexact): a ridge was added, "
-            "so that variance is set by the ridge, not the data.",
-            RuntimeWarning,
-            stacklevel=external_stacklevel(),
-        )
-    if reg_finite and onp.min(onp.linalg.eigvalsh(regularized)) <= 0.0:
-        warnings.warn(
-            "The matrix to invert is not positive definite (the point is not a "
-            "likelihood maximum, or a parameter is unconstrained); the "
-            "result has negative or infinite variances.",
-            RuntimeWarning,
-            stacklevel=external_stacklevel(),
-        )
-    try:
-        inverse = onp.linalg.inv(matrix if plain else regularized)
-    except onp.linalg.LinAlgError:
-        return None
-    return np.asarray(inverse, dtype=dtype)
+    chosen = xp.where(plain, matrix, regularized)
+    if xp is onp:
+        try:
+            return np.asarray(onp.linalg.inv(chosen), dtype=dtype)
+        except onp.linalg.LinAlgError:
+            pass
+    return np.linalg.inv(np.asarray(chosen))
 
 
 def objective_laplace_covariance(objective, x, ridge=1e-10):
