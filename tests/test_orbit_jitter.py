@@ -30,7 +30,9 @@ def x64(test):
     return wrapper
 
 
-def _jittery(orbit, times, jitter, *, sigma=SIGMA, seed=0, gross=()):
+def _jittery(
+    orbit, times, jitter, *, sigma=SIGMA, seed=0, gross=(), rescalable=True
+):
     """One-peak summaries of ``orbit`` whose means carry the quoted noise, one
     independent ``N(0, jitter²)`` offset (mas) of each night's position and a
     100-sigma offset on the nights ``gross``."""
@@ -50,7 +52,7 @@ def _jittery(orbit, times, jitter, *, sigma=SIGMA, seed=0, gross=()):
             mean[:2] += 100.0 * sigma
         peak = NightPeak(
             mean, cov, -30.0, onp.array([N_OBS]), onp.array([N_OBS]),
-            onp.linalg.inv(cov)[None],
+            onp.linalg.inv(cov)[None], rescalable,
         )  # fmt: skip
         out.append(NightSummary(float(t), T_SS, 6, BLOCKS, (peak,), -200.0))
     return tuple(out)
@@ -303,14 +305,14 @@ def test_the_rank_two_jitter_terms_equal_the_peak_terms():
         assert onp.allclose(got, want, rtol=1e-9, atol=1e-9)
 
 
-@pytest.mark.parametrize("k", [7, 40])
+@pytest.mark.parametrize("k", [5, 7, 40])
 @x64
 def test_c_steps_recover_a_jitter_ten_times_above_the_reference(k):
     """The case that stalled: the search's reference σ_J is 10x below the
-    truth. A C-step (profile step, then labels) moves σ_J to within 3 Fisher
-    standard deviations of ln σ_J, ``1 / sqrt(2 Σ (1 - f)²)`` over the 2 position
-    dofs of each night with ``f = σ² / (σ² + σ_J²)`` (σ the quoted error), and
-    labels every night an inlier, which the reference did not for K = 40."""
+    truth. From the labels at that reference, two C-steps move σ_J to within 3
+    Fisher standard deviations of ln σ_J, ``1 / sqrt(2 Σ (1 - f)²)`` over the 2
+    position dofs of each night with ``f = σ² / (σ² + σ_J²)`` (σ the quoted
+    error), and label every night an inlier."""
     j_true = 5 * SIGMA
     orbit, s, space = _setup(j_true, k=k)
     space = _marginal_space(
@@ -319,7 +321,9 @@ def test_c_steps_recover_a_jitter_ten_times_above_the_reference(k):
     xt = onp.asarray(_truth_x(space, orbit, j_true / 10))
     k = len(s)
     start = onp.asarray(oc_cells._labels(np.asarray(xt), space))
-    v, lab, tail = xt[None, [0, 6, 7]], onp.zeros((1, k), int), xt[None, 9:]
+    if k == 40:  # the stall: the reference scoring drops inlier nights
+        assert (start >= 0).sum() < k
+    v, lab, tail = xt[None, [0, 6, 7]], start[None].copy(), xt[None, 9:]
     plan = _minimal_plan(space)
     for _ in range(2):
         res = oc_cells._cstep_chunk(
@@ -332,22 +336,60 @@ def test_c_steps_recover_a_jitter_ten_times_above_the_reference(k):
     found = float(space.decode_jitter(np.asarray(x[0])))
     assert abs(math.log(found / j_true)) <= 3 * sd
     assert (lab >= 0).all()
-    assert (start >= 0).sum() <= k  # the reference scoring: recorded only
 
 
 @x64
-def test_profile_step_labels_equal_labels_at_the_returned_chart():
-    """No scoring mismatch: the labels a C-step returns are ``_labels`` of the
-    chart it returns (the profiled σ_J and s), not of the reference."""
+def test_the_c_step_scores_its_labels_at_the_profiled_jitter():
+    """No scoring mismatch: with the returned chart's σ_J put back to the
+    reference, fewer nights are inliers than the C-step labelled, so its
+    labels came from the profiled value."""
     j_true = 5 * SIGMA
-    orbit, s, space = _setup(j_true, k=7)
+    orbit, s, space = _setup(j_true, k=40)
+    space = _marginal_space(
+        s, space.cell, onp.asarray(space.cat.log_b), jitter_ref=j_true / 10
+    )
     xt = onp.asarray(_truth_x(space, orbit, j_true / 10))
+    lab = onp.asarray(oc_cells._labels(np.asarray(xt), space))[None]
     res = oc_cells._cstep_chunk(
         space, _minimal_plan(space), np.asarray(xt[None, [0, 6, 7]]),
-        np.zeros((1, len(s)), int), np.asarray(xt[None, 9:]), 20,
+        np.asarray(lab), np.asarray(xt[None, 9:]), 30,
     )  # fmt: skip
-    again = oc_cells._labels(np.asarray(res[2][0]), space)
-    assert onp.array_equal(onp.asarray(res[1][0]), onp.asarray(again))
+    x = onp.asarray(res[2][0])
+    assert float(space.decode_jitter(np.asarray(x))) > 3 * float(space.jitter)
+    back = x.copy()
+    back[-1] = xt[-1]
+    n_back = (
+        onp.asarray(oc_cells._labels(np.asarray(back), space)) >= 0
+    ).sum()
+    assert n_back < (onp.asarray(res[1][0]) >= 0).sum()
+
+
+@x64
+def test_the_profile_step_keeps_the_scale_of_data_that_do_not_rescale():
+    """Gains or closure offsets: s stays at 1 (its chart coordinates are
+    untouched), while σ_J is still profiled."""
+    j_true = 5 * SIGMA
+    rng = onp.random.default_rng(0)
+    times = onp.unique(onp.sort(rng.uniform(0.0, 60.0, 12).round(3)))
+    orbit = _orbit(period=11.3, a=8.0)
+    s = _jittery(orbit, times, j_true, rescalable=False)
+    domain = oc_cells.period_domain(s, p_range=(9.0, 14.0))
+    cell = [
+        c
+        for c in oc_cells.make_cells(times[0], times[-1], domain)
+        if c.p_lo <= 11.3 <= c.p_hi
+    ][0]
+    log_b = oc_cells.outlier_log_density(
+        s, oc_cells.outlier_prior(domain, n=2**10)
+    )
+    space = _marginal_space(s, cell, log_b, jitter_ref=j_true / 10)
+    x = np.asarray(_truth_x(space, orbit, j_true / 10))
+    out = oc_cells._profile(x, space)
+    nb = space.n_blocks
+    assert onp.array_equal(
+        onp.asarray(out[9 : 9 + nb]), onp.asarray(x[9 : 9 + nb])
+    )
+    assert float(space.decode_jitter(out)) > 3 * float(space.jitter)
 
 
 def _ref_setup(k, jitter, gross=(), seed=0):
@@ -361,29 +403,30 @@ def _ref_setup(k, jitter, gross=(), seed=0):
 
 
 @x64
-def test_reference_jitter_is_defined_at_small_k_and_clipped():
-    """K <= 3 returns the geometric centre of the range (nothing identified);
-    every K returns a finite value inside the range."""
+def test_reference_jitter_is_the_prior_median_without_degrees_of_freedom():
+    """Fewer than ``DOF_FLOOR`` position dofs left after the 7 fitted orbit
+    parameters (K <= 4): the geometric centre of the range, whatever the
+    data."""
     lo, hi = oc_cells.JITTER_RANGE
-    for k in (2, 3):
+    for k in (2, 3, 4):
         s, dom, t_ab = _ref_setup(k, 0.1)
         assert oc_cells.reference_jitter(s, dom, t_ab) == pytest.approx(
             math.sqrt(lo * hi)
         )
-    for k in (5, 7):
-        s, dom, t_ab = _ref_setup(k, 0.1)
-        assert lo <= oc_cells.reference_jitter(s, dom, t_ab) <= hi
 
 
 @x64
-def test_reference_jitter_survives_an_outlier_night_and_never_leaves_the_range():
-    """K = 12 with and without one gross night: the reference moves by less
-    than a factor 3 (a gross night is 100 σ off, so an untrimmed refit would
-    move it by a factor of order 10) and stays finite inside the range. It is
-    only a start: the C-steps profile σ_J."""
-    lo, hi = oc_cells.JITTER_RANGE
+def test_reference_jitter_trims_gross_nights_to_the_clean_nights_value():
+    """Two gross nights of 16: the trim and refit drop them, so the result
+    equals the reference of the 14 clean nights alone (0.32 mas); without the
+    trim it is 0.54 mas. The trim catches gross nights only when the seed does
+    not absorb them, hence a fixed case rather than a statement for every
+    draw."""
     j_true = 5 * SIGMA
-    base = oc_cells.reference_jitter(*_ref_setup(12, j_true))
-    out = oc_cells.reference_jitter(*_ref_setup(12, j_true, gross=(3,)))
-    assert lo <= base <= hi and lo <= out <= hi
-    assert base / 3 < out < 3 * base
+    gross = (2, 9)
+    s, dom, t_ab = _ref_setup(16, j_true, gross=gross, seed=1)
+    clean = tuple(n for i, n in enumerate(s) if i not in gross)
+    got = oc_cells.reference_jitter(s, dom, t_ab)
+    want = oc_cells.reference_jitter(clean, dom, t_ab)
+    assert got == pytest.approx(want, rel=1e-6)
+    assert abs(got - 0.5374) > 0.1

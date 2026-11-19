@@ -1569,9 +1569,11 @@ C-step:
    trust radius of one e-fold (`_scale_step` of #642, folded into `_profile`). Data with gains or closure offsets keep s = 1 (§1.1).
 3. **Labels** at the new (s, σ_J), by `_labels` on the *rewritten* x.
 
-Steps 1 and 2 do not decrease F (step 2 at fixed labels, and relabelling does not decrease it), so §6.1's finite
-termination is unchanged. One round per C-step suffices: ρ² ≤ 0.17 is the contraction of the alternation, and the
-C-steps iterate.
+Step 1 maximizes the κ-scaled G, not the unscaled F that the labels score, so with κ > 1 the alternation is not a
+monotone ascent on F. The incoming σ_J and s are kept unless a step scores higher on its own objective (step 2 starts
+from the better of its closed form and the incoming s). §6.1's finite termination is therefore **not** claimed: the
+C-step loop is bounded by `N_C`, and a cap hit shows as `c_capped` in the census. One round per C-step: ρ² ≤ 0.17 is
+the contraction of the alternation, and the C-steps iterate.
 
 **Evaluation (closed form, so the grid is cheap).** σ_J enters Σ_tot through the rank-2 P. With E = (e₁ e₂),
 M = EᵀΣ_dat⁻¹E (2 × 2, eigenpairs (μ_i, u_i)) and c = Uᵀ EᵀΣ_dat⁻¹ d,
@@ -1595,11 +1597,9 @@ with s, which only step 2 changes, and step 2 re-evaluates it.
 **Degrees-of-freedom bias of the profiled σ_J (REML-style).** The C-step fits the orbit to the same inlier positions, so
 the maximum-likelihood σ_J² is low by about (2n_I − p)/(2n_I). Declared p = 7, the orbit parameters that are fitted
 against the positions (4 TI′, plus ln P and the two ζ coordinates; ln f and the velocities add none). Step 1 therefore
-profiles the dof-corrected objective: the Laplace quadratic dᵀΣ_tot⁻¹d is multiplied by κ = max(1, 2n_I/max(2n_I − p, 3)), with n_I the
+profiles the dof-corrected objective: the Laplace quadratic dᵀΣ_tot⁻¹d is multiplied by κ = 2n_I/(2n_I − p) where 2n_I − p ≥ 3 and κ = 1 otherwise, with n_I the
 night's label count at the node, the labels of the node being the arg-max set of the floor-capped sum. (Scaling the
-quadratic by κ scales the excess scatter by κ at fixed s.) The floor of 3 degrees of freedom is declared: below it the
-correction is not finite-variance and σ_J is not identified anyway. At n_I = 5, 7, 10, 20 this is κ = 3.3, 1.9, 1.5, 1.2; κ ≥ 1 (a fit cannot inflate scatter), and κ = 1 with no inlier.
-It is the same correction as `reference_jitter`'s with p = 4 (the seed fits only the TI′).
+quadratic by κ scales the excess scatter by κ at fixed s.) The floor of 3 degrees of freedom is declared: with fewer, the orbit is not identified by the positions and the correction has no meaning, so κ = 1. κ is not monotone in n_I (n_I = 4: 1; 5: 3.3; 6: 2.4; 7: 2.0; 10: 1.5; 20: 1.2) and G is discontinuous where a night crosses its floor: that is why step 1 is a global grid, and the Newton polish only accepts a rise of G. It is the same correction as `reference_jitter`'s, with the same p.
 
 **Constants.** Declared: grid spacing 1/√(2K); one round per C-step; p = 7 and the floor of 3 dofs in κ. Inherited: the
 σ_J bounds, `N_SCALE`, `S_MAX`. No others, and none from seeds or named systems.
@@ -1609,11 +1609,12 @@ grid removes the search's dependence on it. So it is kept simple and robust, not
 
 - *One seed, not the least of many.* The least over hundreds of alias seeds selects the interpolating seed, whose residuals
   are near zero (the small-K collapse); no correction repairs a minimum. Use the best seed by position-fit χ².
-- *Degrees of freedom.* The seed fits 4 TI′ to K nights, leaving 2K − 4 position dofs: divide the median-based variance
-  by (K − 2)/K (K ≥ 4).
-- *Few nights.* For K ≤ 3 return the geometric centre of `jitter_range` (the prior median), declared.
+- *Degrees of freedom.* The seed also fits P, e and T on the same positions, so it fits `P_ORBIT` = 7 parameters and
+  leaves 2K − 7 position dofs: divide the median-based variance by (2K − 7)/2K. The best-χ² seed is still the best
+  interpolating alias at small K; the reference is a start, not an estimate.
+- *Few nights.* With 2K − 7 < `DOF_FLOOR` (K ≤ 4) return the geometric centre of `jitter_range` (the prior median).
 - *Outlier nights.* Trim the nights with |r|² above the (1 − δ) quantile of a χ²₂ scaled by the median variance (δ = `DELTA`),
-  never more than K − 4 of them (never fewer than 4 left), refit once, take the medians of the refit residuals.
+  never more than K − 5 of them (never fewer than 5 left), refit once, take the medians of the refit residuals.
 - Clip to `jitter_range`.
 
 **No scoring mismatch.** After the step x carries (s, σ_J) in its own coordinates. `_labels`, `_scores`, `_prune`,

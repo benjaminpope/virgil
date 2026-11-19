@@ -137,9 +137,7 @@ N_WORKERS = (
 R0 = math.sqrt(3.0)  # radius of y_z at a mode: the mode of its chi-4 prior
 N_SCALE = 3  # Newton steps of ln s with a jitter, per profile step (budget)
 P_ORBIT = 7  # orbit parameters fitted to the positions: 4 TI', ln P, 2 zeta
-DOF_FLOOR = (
-    3  # least position dof in the jitter's dof correction (design 6.14)
-)
+DOF_FLOOR = 3  # least position dof in the jitter's dof correction
 
 
 # ---------------------------------------------------------------------------
@@ -984,7 +982,7 @@ def _jitter_parts(cat, ln_s, state, dtype):
     """The σ_J-free pieces of every peak's term at ``(ln s, state)``: the
     height ``ℓ - Σ n ln s - ½ χ² (s⁻² - 1)``, ``dᵀ Σ_dat⁻¹ d``, and the
     eigenvalues ``μ`` and squared projections ``c²`` of the position block
-    (rank-2 Woodbury, design 6.14); each ``(K, J[, 2])``."""
+    (rank-2 Woodbury); each ``(K, J[, 2])``."""
     prec = np.einsum("g,kjgab->kjab", np.exp(-2 * ln_s), cat.hess)
     eps = np.finfo(dtype).eps
     reg = eps * np.trace(prec, axis1=-2, axis2=-1)[..., None, None]
@@ -1016,15 +1014,17 @@ def _profile(x, space):
 
     σ_J: a global grid in ``ln σ_J`` over its prior range at spacing
     ``1/√(2K)`` on the floor-capped sum ``Σ_k max(max_j ℓ̃_kj, b_k)``, the
-    Laplace quadratic scaled by the REML-style ``κ = max(1, 2 n_I / max(2 n_I -
-    p, 3))`` (``n_I`` the nights above their floor, ``p`` = ``P_ORBIT``), then
+    Laplace quadratic scaled by the REML-style ``κ = 2 n_I / (2 n_I - p)`` (``n_I`` the
+    nights above their floor, ``p`` = ``P_ORBIT``; 1 unless ``2 n_I - p >=
+    DOF_FLOOR``), then
     Newton on the winning node kept within its neighbours (the sum is flat where
     every night is at its floor, so Newton alone stalls there). ``s``: per
     block ``ŝ² = Σ_I (χ² + q) / Σ_I n`` (``q`` the peak's Laplace quadratic at
     the state) clipped to ``[1/S_MAX, S_MAX]``, then ``N_SCALE`` Newton steps
     in ``ln s`` on the labelled peak terms (trust radius one e-fold). Data that
-    do not rescale, or without inliers, keep ``s``. Each step does not
-    decrease the floor-capped sum.
+    do not rescale, or without inliers, keep ``s``. The incoming σ_J and ``s``
+    are kept unless a step scores higher (σ_J on the κ-scaled sum), which is not
+    the ascent of the unscaled sum: the C-step loop is bounded by ``N_C``.
 
     Source: Celeux & Govaert (1992), [references](../references.md#celeux1992).
     """
@@ -1040,8 +1040,10 @@ def _profile(x, space):
         n_i = np.sum(
             _jitter_terms(parts, s2, 1.0, cat.valid).max(1) > cat.log_b
         )
-        dof = np.maximum(2.0 * n_i - P_ORBIT, DOF_FLOOR)
-        kappa = np.where(n_i > 0, np.maximum(1.0, 2.0 * n_i / dof), 1.0)
+        dof = 2.0 * n_i - P_ORBIT  # no correction where the dofs run out
+        kappa = np.where(
+            dof >= DOF_FLOOR, 2.0 * n_i / np.maximum(dof, DOF_FLOOR), 1.0
+        )
         best = _jitter_terms(parts, s2, kappa, cat.valid).max(1)
         return np.sum(np.maximum(best, cat.log_b))
 
@@ -1059,6 +1061,10 @@ def _profile(x, space):
         nodes[np.minimum(i + 1, n_node - 1)],
     )
     best = np.where(capped(ln_new) >= vals[i], ln_new, nodes[i])
+    ln_in = np.clip(
+        lo + (hi - lo) * jax.nn.sigmoid(x[-1]), lo, hi
+    )  # the incoming σ_J stays unless the search finds a higher sum
+    best = np.where(capped(ln_in) >= capped(best), ln_in, best)
     u = np.clip((best - lo) / (hi - lo), 1e-6, 1.0 - 1e-6)
     x = x.at[-1].set((np.log(u) - np.log1p(-u)).astype(x.dtype))
     if not cat.rescalable:
@@ -1085,6 +1091,7 @@ def _profile(x, space):
         t = _peak_terms(cat, ls, c["jitter"], state, space.dtype)
         return np.sum(np.where(lab >= 0, t[kk, j], 0.0))
 
+    ln_s = np.where(labelled(c["ln_s"]) > labelled(ln_s), c["ln_s"], ln_s)
     ln_s = np.clip(_lm(labelled, ln_s, (), N_SCALE, 1.0)[0], -lim, lim)
     u = np.clip(0.5 * (ln_s / lim + 1.0), 1e-6, 1.0 - 1e-6)
     return x.at[9 : 9 + space.n_blocks].set(
@@ -1327,7 +1334,7 @@ def _cstep_chunk(space, plan, v, lab, tail, n_iter):
     """One C-step per candidate: Newton in ``(ln P, ζ)`` on the labelled
     target (TI′ and ``ln f`` solved linearly) at the weights of the error
     scales and σ_J in ``tail`` (the chart's ``x[9:]`` of the previous step),
-    then the profile step (design 6.14) and relabel at the result.
+    then the profile step  and relabel at the result.
     Returns ``v``, the labels, the chart vector, the residual, the Hessian
     of ``R / 2`` in ``v`` and whether the step cap ended it."""
 
@@ -2182,19 +2189,19 @@ def reference_jitter(
     summaries, domain, t_ab, *, n_best=3, jitter_range=JITTER_RANGE
 ):
     """A robust reference ``σ_J`` (mas) that places the search and starts the
-    chart's σ_J; never the fitted value (the C-steps profile σ_J, design 6.14).
+    chart's σ_J; never the fitted value (the C-steps profile σ_J).
 
     The excess of the nights' position scatter about the best position-only
     seed orbit ([`position_profile`][virgil.aliases.position_profile], best
-    peaks as positions; the seed with the least χ², not the least excess, which
-    at small ``K`` is the interpolating alias) over the quoted errors, by
-    medians: ``σ_J² = median(|r|² / 2) / (ln 2 (K - 2) / K) - median(σ²)``,
-    with the ``(K - 2)/K`` of the 4 fitted TI′ (``K >= 4`` nights). Nights
-    with ``|r|²`` above the ``1 - δ`` quantile of a ``χ²₂`` scaled by the median
-    variance are trimmed (at most ``K - 4``, so at least 4 stay) and the seed's
-    residuals refitted once. With ``K <= 3`` nothing is identified: the
-    geometric centre of ``jitter_range`` (the prior median). Clipped to
-    ``jitter_range``.
+    peaks as positions; the seed with the least χ², which is still the best
+    interpolating alias at small ``K``: a start, not an estimate) over the
+    quoted errors, by medians: ``σ_J² = median(|r|² / 2) / (ln 2 (2K - 7) /
+    2K) - median(σ²)``, the ``7`` the orbit parameters fitted to the positions
+    (4 TI′, ``P``, ``e``, ``T``; `P_ORBIT`). Nights with ``|r|²`` above the
+    ``1 - δ`` quantile of a ``χ²₂`` scaled by the median variance are trimmed
+    (at most ``K - 5``) and the seed refitted once. With fewer than ``DOF_FLOOR``
+    degrees of freedom left (``K <= 4``) nothing is identified: the geometric
+    centre of ``jitter_range`` (the prior median). Clipped to ``jitter_range``.
 
     Parameters
     ----------
@@ -2213,7 +2220,7 @@ def reference_jitter(
     """
     centre = math.sqrt(jitter_range[0] * jitter_range[1])
     have = [i for i, s in enumerate(summaries) if s.peaks]
-    if len(have) <= 3:
+    if 2 * len(have) - P_ORBIT < DOF_FLOOR:
         return float(centre)
     t = onp.array([summaries[i].t_ref for i in have])
     best = [summaries[i].peaks[0] for i in have]
@@ -2243,15 +2250,15 @@ def reference_jitter(
         / (2.0 * math.log(2.0))
     )
     keep = rows[r2 <= max(cut, 0.0)]
-    if len(keep) < 4:  # trim at most K - 4: keep the 4 nights nearest the seed
-        keep = onp.sort(onp.argsort(r2)[:4])
+    if len(keep) < 5:  # trim at most K - 5: keep the 5 nights nearest the seed
+        keep = onp.sort(onp.argsort(r2)[:5])
     if len(keep) < len(t):
         refit = seed(keep)
         if refit is not None:
             orbit, rows = refit, keep
     k = len(rows)
     u = float(onp.median(onp.sum(resid(orbit, rows) ** 2, axis=1) / 2.0))
-    u /= math.log(2.0) * (k - 2.0) / k
+    u /= math.log(2.0) * (2.0 * k - P_ORBIT) / (2.0 * k)
     return float(onp.clip(math.sqrt(max(u - var_q, 0.0)), *jitter_range))
 
 
