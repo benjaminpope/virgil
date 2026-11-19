@@ -1595,10 +1595,10 @@ with s, which only step 2 changes, and step 2 re-evaluates it.
 **Degrees-of-freedom bias of the profiled σ_J (REML-style).** The C-step fits the orbit to the same inlier positions, so
 the maximum-likelihood σ_J² is low by about (2n_I − p)/(2n_I). Declared p = 7, the orbit parameters that are fitted
 against the positions (4 TI′, plus ln P and the two ζ coordinates; ln f and the velocities add none). Step 1 therefore
-profiles the dof-corrected objective: the Laplace quadratic dᵀΣ_tot⁻¹d is multiplied by κ = 2n_I/max(2n_I − p, 3), with n_I the
+profiles the dof-corrected objective: the Laplace quadratic dᵀΣ_tot⁻¹d is multiplied by κ = max(1, 2n_I/max(2n_I − p, 3)), with n_I the
 night's label count at the node, the labels of the node being the arg-max set of the floor-capped sum. (Scaling the
 quadratic by κ scales the excess scatter by κ at fixed s.) The floor of 3 degrees of freedom is declared: below it the
-correction is not finite-variance and σ_J is not identified anyway. At n_I = 5, 7, 10, 20 this is κ = 3.3, 1.9, 1.5, 1.2.
+correction is not finite-variance and σ_J is not identified anyway. At n_I = 5, 7, 10, 20 this is κ = 3.3, 1.9, 1.5, 1.2; κ ≥ 1 (a fit cannot inflate scatter), and κ = 1 with no inlier.
 It is the same correction as `reference_jitter`'s with p = 4 (the seed fits only the TI′).
 
 **Constants.** Declared: grid spacing 1/√(2K); one round per C-step; p = 7 and the floor of 3 dofs in κ. Inherited: the

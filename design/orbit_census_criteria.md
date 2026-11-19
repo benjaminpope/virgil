@@ -178,3 +178,17 @@ columns and report lines, so arms stay comparable with earlier runs.
 healthy mode with exactly `m_min` inliers fired it whenever a draw lost one. It now fires only when more than half of
 the importance weight is on draws with fewer than `m_min` inliers (the count rounded to an integer), and the found-mode
 Laplace `ln Z > floor + W` condition is unchanged.
+
+## σ_J profiling in the search C-steps (design §6.14), added 2026-11-19 before any run of this arm
+
+- **Arms:** this PR's head, at the commit pinned for its census (a later one only with no `src`/`scripts` change), against main `b50073ee31291e9a42997d93f30eb30c63706fa3`. Both run with `--jitter` (the marginal σ_J arm) on OzSTAR in the same image, on **seed 1**, systems 0–399 or more (`--seed 1 --n-sys 400`; at least 400 drawn systems; seed 0 systems 0–999 are all used). They are scored with the criteria above (detectable stratum, sky-plane retrieval, majority-weight `at_floor` sentinel).
+- **Primary:** failure (status failed or error) in the detectable stratum. Exact one-sided McNemar on the discordant pairs, α = 0.01.
+- **Harm**, judged by exact two-sided McNemar (p < 0.05, the PR worse), on each of:
+  - sky misses in the detectable stratum;
+  - failure in each non-detectable stratum;
+  - the median of `|log10(jitter_hat / jitter_true)|` over fitted systems (paired Wilcoxon signed-rank, p < 0.05, PR worse).
+
+  Also harm: the sky-plane SBC uniformity test (all fitted in-domain systems) fails for the PR where it passes for main.
+- **Merge rule:** the primary passes and there is no harm. The PR does not merge before its census delta is in.
+- **Power.** The exact one-sided test at α = 0.01 needs `k` of the `D` discordant pairs to favour the PR: D = 7 needs 7 (a one-sided sign test cannot reach 0.01 below D = 7), D = 10 needs 10, D = 15 needs 13, D = 20 needs 16, D = 30 needs 22, D = 40 needs 28. If a share π of the discordant pairs favours the PR, the power is, for π = 0.7 / 0.8 / 0.9: 0.08 / 0.21 / 0.48 at D = 7; 0.13 / 0.40 / 0.82 at D = 15; 0.24 / 0.63 / 0.96 at D = 20; 0.43 / 0.87 / 1.00 at D = 30; 0.58 / 0.96 / 1.00 at D = 40. The number of discordant pairs depends on the failure rates, which are not known in advance for the jitter arm; the arms report them. With D < 7 the test cannot reach α, and the verdict is *inconclusive* (no merge on this evidence; a larger sample on a new seed is a new registered run), never a pass by a looser α.
+- **Data handling:** seed 1 is aggregate-only: nobody traces systems per seed, and the PR is not tuned on it. A failed census is recorded and the PR is closed or reworked with a new registered seed.
