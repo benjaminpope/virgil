@@ -408,6 +408,26 @@ def test_the_oracle_and_the_diagnostics_change_no_fit_result():
     assert any(r["matched"] for r in recs) or all(r["flagged"] for r in recs)
 
 
+def _few_posterior_draws(monkeypatch, n_draws=100, n_moves=2, n_warm=40):
+    """Cut the resample-move work of ``position_cells`` for a slow test.
+
+    The pin test below asserts on ``ln Ẑ``, ``p_pos`` and the mode counts,
+    none of which read the posterior draws; the draws were 77% of its run
+    time. Library defaults are unchanged."""
+    import functools
+
+    from virgil import mode_search
+
+    monkeypatch.setattr(
+        pop.oc_cells,
+        "resample_move",
+        functools.partial(
+            mode_search.resample_move, n_draws=n_draws, n_moves=n_moves
+        ),
+    )
+    monkeypatch.setattr(mode_search, "N_WARM", n_warm)
+
+
 MAIN_P = [
     0.0824096751078581, 0.3332734433161518, 0.14456033264572826,
     0.09721359313839946, 0.07533519955161296, 0.06108624763063713,
@@ -462,6 +482,7 @@ def test_position_cells_matches_main_before_the_counters_were_added(
 
     monkeypatch.setattr(pop.oc_cells, "EPS_PRIOR", (0.5, 0.5))
     monkeypatch.setattr(_ns, "EPS_PRIOR", (0.5, 0.5))
+    _few_posterior_draws(monkeypatch)
     monkeypatch.setattr(
         pop, "_noise_outliers_and_chi2",
         lambda rng, mean, outlier, ln_s, sigma: (
