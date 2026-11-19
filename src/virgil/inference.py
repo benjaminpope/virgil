@@ -81,8 +81,9 @@ def regularized_inverse(matrix, ridge=1e-10):
     # A concrete matrix is handled in NumPy on the host: each eager
     # jax.numpy op below is otherwise a separate XLA compile in a cold process.
     xp = np if _concrete(matrix) is None else onp
-    dtype = getattr(matrix, "dtype", None)
-    matrix = xp.asarray(matrix, dtype=float)
+    # The precision JAX gives ``float`` (float32 unless x64 is on), on the host
+    # too, so the positive-definite test and the inverse match the traced path.
+    matrix = xp.asarray(matrix, dtype=jax.dtypes.canonicalize_dtype(float))
     scale = xp.abs(xp.diagonal(matrix))
     top = xp.max(scale)
     scale = xp.where(scale > 0.0, scale, xp.where(top > 0.0, top, 1.0))
@@ -122,10 +123,11 @@ def regularized_inverse(matrix, ridge=1e-10):
     chosen = xp.where(plain, matrix, regularized)
     if xp is onp:
         try:
-            return np.asarray(onp.linalg.inv(chosen), dtype=dtype)
+            return np.asarray(onp.linalg.inv(chosen), dtype=float)
         except onp.linalg.LinAlgError:
-            pass
-    return np.linalg.inv(np.asarray(chosen))
+            # Singular, as JAX's inv would give for it.
+            return np.asarray(onp.full_like(chosen, onp.nan), dtype=float)
+    return np.linalg.inv(chosen)
 
 
 def objective_laplace_covariance(objective, x, ridge=1e-10):

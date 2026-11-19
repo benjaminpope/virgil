@@ -1,5 +1,7 @@
 """Cold-start bookkeeping runs on the host, not as eager XLA compiles."""
 
+import warnings
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -14,28 +16,65 @@ from virgil.oidata import OIData
 
 from ._compiles import count_compiles
 
-MATRICES = {
-    "positive-definite": onp.array([[4.0, 1.0], [1.0, 3.0]]),
-    "indefinite": onp.array([[2.0, 0.0], [0.0, -1.0]]),
-    "zero-curvature": onp.array([[1.0, 0.0], [0.0, 0.0]]),
+# (matrix, analytic inverse, warning). The ridge is 1e-10 of each diagonal.
+CASES = {
+    "positive-definite": (
+        onp.array([[4.0, 1.0], [1.0, 3.0]]),
+        onp.array([[3.0, -1.0], [-1.0, 4.0]]) / 11,
+        None,
+    ),
+    "indefinite": (
+        onp.array([[2.0, 0.0], [0.0, -1.0]]),
+        onp.diag([0.5, -1.0]),
+        "not positive definite",
+    ),
+    "zero-curvature": (
+        onp.array([[1.0, 0.0], [0.0, 0.0]]),
+        onp.diag([1.0, 1e10]),
+        "a ridge was added",
+    ),
 }
 
 
-@pytest.mark.parametrize("name", MATRICES)
-def test_regularized_inverse_host_matches_traced(name):
-    matrix = MATRICES[name]
-    with pytest.warns() if name != "positive-definite" else _no_warning():
+@pytest.mark.parametrize("name", CASES)
+def test_regularized_inverse_host(name):
+    matrix, inverse, message = CASES[name]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         host = regularized_inverse(matrix)
+    texts = [str(w.message) for w in caught]
+    if message is None:
+        assert texts == []
+    else:
+        assert any(
+            issubclass(w.category, RuntimeWarning)
+            and message in str(w.message)
+            for w in caught
+        ), texts
+    assert onp.allclose(host, inverse, rtol=1e-4)
+    # And the traced path agrees.
     traced = jax.jit(regularized_inverse)(np.asarray(matrix))
     assert onp.allclose(host, traced, rtol=1e-5, equal_nan=True)
 
 
-class _no_warning:
-    def __enter__(self):
-        return self
+def test_regularized_inverse_accepts_a_list_and_keeps_dtype():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = regularized_inverse([[4.0, 1.0], [1.0, 3.0]])
+    assert result.dtype == np.asarray(0.0, dtype=float).dtype
 
-    def __exit__(self, *exc):
-        return False
+
+def test_regularized_inverse_precision_follows_jax():
+    # Positive definite in float64 but singular in float32: whether the ridge
+    # is added depends on JAX's precision, the same on the host as traced.
+    matrix = onp.array([[1.0, 1.0], [1.0, 1.0 + 1e-8]])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        host = regularized_inverse(matrix)
+    traced = jax.jit(regularized_inverse)(np.asarray(matrix))
+    # Both singular in float32 (non-finite), both fine in float64.
+    assert onp.isfinite(host).all() == onp.isfinite(traced).all()
+    assert onp.isfinite(host).all() == bool(jax.config.jax_enable_x64)
 
 
 def test_tolerance_host_matches_traced():
@@ -73,15 +112,27 @@ def test_cold_laplace_and_fit_avoid_eager_compiles():
     assert onp.all(onp.isfinite(cov))
 
 
-def test_enable_compilation_cache(tmp_path):
+def test_enable_compilation_cache_writes_entries(tmp_path):
     import virgil
 
-    old = jax.config.jax_compilation_cache_dir
+    keys = (
+        "jax_compilation_cache_dir",
+        "jax_persistent_cache_min_compile_time_secs",
+        "jax_persistent_cache_min_entry_size_bytes",
+    )
+    old = {key: getattr(jax.config, key) for key in keys}
     try:
         path = virgil.enable_compilation_cache(tmp_path / "c")
         assert path.is_dir()
-        assert jax.config.jax_compilation_cache_dir == str(path)
         assert jax.config.jax_persistent_cache_min_compile_time_secs == 0
         assert jax.config.jax_persistent_cache_min_entry_size_bytes == 0
+        jax.jit(lambda x: np.sin(x) * 3.25 + 0.125)(
+            np.arange(7.0)
+        ).block_until_ready()
+        assert any(path.iterdir())
     finally:
-        jax.config.update("jax_compilation_cache_dir", old)
+        for key, value in old.items():
+            jax.config.update(key, value)
+        from jax._src import compilation_cache
+
+        compilation_cache.reset_cache()
