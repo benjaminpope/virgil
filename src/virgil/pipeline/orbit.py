@@ -1220,6 +1220,7 @@ def _sample_band(  # deliberate: named step
         "n_gradients_sampling": int(steps.sum()),
         "seconds": float(seconds),
         "budget_exhausted": bool(exhausted),
+        "token_run": bool(late),
     }
     # Converged: the chains ran to the end and neither R-hat nor ESS fails.
     summary["converged"] = bool(
@@ -1528,4 +1529,12 @@ def _summarize(settings, reports):
         if "r_hat_max" in post:
             checks += _sampler_checks(post)
             checks.append(_checks.mode_converged(post["optimum_gap_max"]))
+        token = bool(modes) and any(
+            m["n"] == modes["winner"]["n"]
+            and m.get("sampler", {}).get("token_run", False)
+            for m in post.get("modes", [])
+        )
+        checks.append(
+            _checks.sampler_budget(post.get("budget_exhausted", False), token)
+        )
     return sections, checks

@@ -1684,6 +1684,13 @@ class _RadioTerm(_TermBase):
             )
         )
 
+    @property
+    def n_data(self):
+        """Real and imaginary parts of the unmasked points, as for the
+        Toeplitz term (read outside jit; not a static field, so that changing
+        the mask does not recompile)."""
+        return 2 * int(self.arrays["m"].sum())
+
     def resolve(self, start, least_squares):
         """``(term, form)``: the Toeplitz term of ``fit`` at ``start`` if ``chi2``
         asks for it and it is exact, else ``self``, with a note of what ran;
@@ -2034,7 +2041,7 @@ class StagedFit:
     edge : dict
         Per boxed site, a bool array: within ``edge`` of a bound.
     failed : bool
-        Any nuisance sits at a box edge.
+        Any nuisance sits at a box edge, or any fitted value is not finite.
     kkt : dict
         [`kkt_report`][virgil.fitting.kkt_report] of the joint fit.
     """
@@ -2173,15 +2180,23 @@ def fit_staged_nuisances(
     priors3 = {**image_priors, **nuis_priors}
     start3 = {**image, **s2.values}
     s3 = run(scene, priors3, start3, term3)
-    # kkt_report needs the function model, not the model built at the result
-    report = kkt_report(
-        dataclasses.replace(s3, model=lambda **v: scene(v)),
-        priors3,
-        (),
-        regularizers,
-        likelihoods=[term3],
-        start=start3,
-        weight=weight,
+    finite = all(
+        bool(onp.all(onp.isfinite(onp.asarray(v)))) for v in s3.values.values()
+    )
+    # kkt_report needs the function model, not the model built at the result;
+    # a non-finite fit has no KKT point to report.
+    report = (
+        kkt_report(
+            dataclasses.replace(s3, model=lambda **v: scene(v)),
+            priors3,
+            (),
+            regularizers,
+            likelihoods=[term3],
+            start=start3,
+            weight=weight,
+        )
+        if finite
+        else {"converged": False}
     )
     table, flags = {}, {}
     for site, prior in raw.items():
@@ -2191,8 +2206,9 @@ def fit_staged_nuisances(
             x, lo, hi = onp.log(x), onp.log(lo), onp.log(hi)
         frac = onp.minimum(x - lo, hi - x) / (hi - lo)
         table[site] = dict(value=x, lower=lo, upper=hi, edge_frac=frac)
-        flags[site] = frac < edge
-    failed = any(bool(onp.any(f)) for f in flags.values())
+        # A NaN value fails the edge test silently: flag it.
+        flags[site] = (frac < edge) | ~onp.isfinite(x)
+    failed = any(bool(onp.any(f)) for f in flags.values()) or not finite
     return StagedFit(
         (s1, s2, s3), ref_obs, sum_w, table, flags, failed, report
     )

@@ -1441,6 +1441,7 @@ def test_star_fit_checks_pass_the_number_of_data():
     def report(n):
         return {
             "names": ["a"],
+            "best": "a",
             "comparisons": [],
             "n_independent": n,
             "models": {
@@ -1504,3 +1505,12 @@ def test_winner_flags_message_says_a_failed_winner_is_not_evidence():
     assert fail.status == "fail" and "not evidence" in fail.message
     warn = checks.winner_flags(["low-ess"])
     assert warn.status == "warn" and "less reliable" in warn.message
+
+
+def test_error_scale_judges_each_scale_on_its_own_n():
+    # N = 1 widens its warn limit to ~3.29, so s = 3.0 passes alone; the
+    # large block's s = 2.5 exceeds its own limit of 2 and must still warn.
+    scales, n = {"small": 3.0, "large": 2.5}, {"small": 1, "large": 1000}
+    assert _status(checks.error_scale({"small": 3.0}, n={"small": 1})) == "pass"
+    assert _status(checks.error_scale(scales, n=n)) == "warn"
+    assert _status(checks.error_scale({"large": 2.5}, n=n)) == "warn"

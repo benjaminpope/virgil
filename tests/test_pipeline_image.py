@@ -15,6 +15,7 @@ marked slow.
 """
 
 import json
+import warnings
 
 import jax
 import numpy as onp
@@ -24,6 +25,7 @@ pytest.importorskip("h5py")
 pytest.importorskip("nbclient")
 
 from virgil.coverage import vlti_oidata  # noqa: E402
+from virgil.pipeline import image as image_module  # noqa: E402
 from virgil.metrics import align, ncc  # noqa: E402
 from virgil.models import (  # noqa: E402
     GaussianRing,
@@ -564,3 +566,19 @@ def test_grid_growths_none_is_the_engine_default():
     assert image._grid_spec(s, None).gp_growths == EnsembleSpec().gp_growths
     s["grid_growths"] = 1
     assert image._grid_spec(s, None).gp_growths == 1
+
+
+def test_members_stage_reports_the_members_warnings():
+    class Fake:
+        settings = {"members": 2}
+
+        def run_member(self, k):
+            warnings.warn(f"Member {k} fitted with the isotropic prior.")
+
+    with pytest.warns(UserWarning) as seen:
+        report = image_module._members(Fake())
+    assert len(seen) == 2
+    assert report["warnings"] == [
+        "Member 0 fitted with the isotropic prior.",
+        "Member 1 fitted with the isotropic prior.",
+    ]

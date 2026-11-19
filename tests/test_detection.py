@@ -606,6 +606,7 @@ def test_concatenate_refuses_incompatible_results():
         {"grid": {"dra": [0.0]}},
         {"noise": {"kind": "bootstrap", "method": "sign_flip"}},
         {"match_radius": 10.0},
+        {"uncertainty": not a.meta["uncertainty"]},
         {"template": {"n_vis": 1, "n_phi": 0, "hash": "0"}},
     ):
         other = dataclasses.replace(

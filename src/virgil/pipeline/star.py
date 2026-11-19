@@ -479,6 +479,7 @@ class StarPipeline(_Pipeline):
                     },
                     walls=other.get("wall_probe"),
                 )
+                other_checks = [_rival(oc, name) for oc in other_checks]
                 sampler_checks = [
                     dataclasses.replace(
                         oc,
@@ -1242,6 +1243,14 @@ _POSTERIOR_KEYS = (
 )
 
 
+def _rival(check, name):
+    """``check`` of a model that was not selected: a failure is a warning, as
+    the best model's checks decide the run."""
+    if check.status != "fail":
+        return check
+    return dataclasses.replace(check, status="warn")
+
+
 # deliberate: fit-stage checks; inlined they take _summarize past MAX_FUNC_LINES (120)
 def _fit_checks(fit, registry):
     """Checks on the fits: χ²/N, model gains and the fitted error scales."""
@@ -1256,6 +1265,14 @@ def _fit_checks(fit, registry):
             + len(reports[k]["error_scales"] or {}),
         )
         for k in fit["names"]
+    ]
+    checks = [
+        c
+        if k == fit["best"]
+        else dataclasses.replace(
+            _rival(c, k), message=f"{k} (not selected): {c.message}"
+        )
+        for k, c in zip(fit["names"], checks)
     ]
     for comparison in fit["comparisons"]:
         simple, complex_ = comparison["simple"], comparison["complex"]
