@@ -137,7 +137,9 @@ N_WORKERS = (
 R0 = math.sqrt(3.0)  # radius of y_z at a mode: the mode of its chi-4 prior
 N_SCALE = 3  # Newton steps of ln s with a jitter, per profile step (budget)
 P_ORBIT = 7  # orbit parameters fitted to the positions: 4 TI', ln P, 2 zeta
-DOF_FLOOR = 3  # least position dof in the jitter's dof correction (design 6.14)
+DOF_FLOOR = (
+    3  # least position dof in the jitter's dof correction (design 6.14)
+)
 
 
 # ---------------------------------------------------------------------------
@@ -978,14 +980,6 @@ def _peak_state(x, space, sign=1.0):
     return c, state
 
 
-def _scale_sums(cat, state):
-    """Per peak and block ``χ² + q`` and ``n``, ``(K, J, G)`` each: ``q`` is
-    the peak's Laplace quadratic ``dᵀ H_g d`` at the state."""
-    d = state[:, None, :] - cat.mean
-    q = np.einsum("kja,kjgab,kjb->kjg", d, cat.hess, d)
-    return cat.chi2 + q, cat.n
-
-
 def _jitter_parts(cat, ln_s, state, dtype):
     """The σ_J-free pieces of every peak's term at ``(ln s, state)``: the
     height ``ℓ - Σ n ln s - ½ χ² (s⁻² - 1)``, ``dᵀ Σ_dat⁻¹ d``, and the
@@ -1014,79 +1008,69 @@ def _jitter_terms(parts, sigma2, kappa, valid):
     return np.where(valid, scaled - 0.5 * logdet - 0.5 * kappa * quad, -1e30)
 
 
-def _jitter_objective(parts, ln_sigma, log_b, valid):
-    """``G(σ_J)``: the floor-capped sum over nights of the best peak term,
-    with the Laplace quadratic scaled by ``κ = 2 n_I / max(2 n_I - p, 3)``
-    (at least 1; ``n_I`` the nights above their floor), the REML-style
-    correction for the orbit's fit to the same positions (design 6.14)."""
-    s2 = np.exp(2.0 * ln_sigma)
-    n_i = np.sum(_jitter_terms(parts, s2, 1.0, valid).max(1) > log_b)
-    kappa = np.where(
-        n_i > 0,
-        np.maximum(
-            1.0, 2.0 * n_i / np.maximum(2.0 * n_i - P_ORBIT, DOF_FLOOR)
-        ),
-        1.0,
-    )
-    best = _jitter_terms(parts, s2, kappa, valid).max(1)
-    return np.sum(np.maximum(best, log_b))
+def _profile(x, space):
+    """One round of design 6.14 on ``x``: σ_J given ``(x, s)`` with the labels
+    free, then ``s`` given the labels at that σ_J. Only with a marginal σ_J: a
+    fixed jitter leaves ``x`` as it is. The caller labels at the result, so the
+    labels, weights and objective use one ``(s, σ_J)``.
 
+    σ_J: a global grid in ``ln σ_J`` over its prior range at spacing
+    ``1/√(2K)`` on the floor-capped sum ``Σ_k max(max_j ℓ̃_kj, b_k)``, the
+    Laplace quadratic scaled by the REML-style ``κ = max(1, 2 n_I / max(2 n_I -
+    p, 3))`` (``n_I`` the nights above their floor, ``p`` = ``P_ORBIT``), then
+    Newton on the winning node kept within its neighbours (the sum is flat where
+    every night is at its floor, so Newton alone stalls there). ``s``: per
+    block ``ŝ² = Σ_I (χ² + q) / Σ_I n`` (``q`` the peak's Laplace quadratic at
+    the state) clipped to ``[1/S_MAX, S_MAX]``, then ``N_SCALE`` Newton steps
+    in ``ln s`` on the labelled peak terms (trust radius one e-fold). Data that
+    do not rescale, or without inliers, keep ``s``. Each step does not
+    decrease the floor-capped sum.
 
-def _jitter_step(x, space):
-    """``x`` with σ_J at the maximum of ``_jitter_objective`` over its prior
-    range, given the orbit and the error scales in ``x`` (labels free).
-
-    A global grid in ``ln σ_J`` at spacing ``1/√(2K)`` (the floor-capped sum is
-    flat where every night is at its floor, so Newton alone stalls there), then
-    Newton on the winning node, kept within its neighbours.
-
-    Source: design 6.14.
+    Source: Celeux & Govaert (1992), [references](../references.md#celeux1992).
     """
-    cat = space.cat
+    if not space.marginal:
+        return x
+    cat, lim = space.cat, math.log(S_MAX)
     c, state = _peak_state(x, space)
     parts = _jitter_parts(cat, c["ln_s"], state, space.dtype)
     lo, hi = (math.log(v) for v in space.jitter_range)
+
+    def capped(ln_sigma):
+        s2 = np.exp(2.0 * ln_sigma)
+        n_i = np.sum(
+            _jitter_terms(parts, s2, 1.0, cat.valid).max(1) > cat.log_b
+        )
+        dof = np.maximum(2.0 * n_i - P_ORBIT, DOF_FLOOR)
+        kappa = np.where(n_i > 0, np.maximum(1.0, 2.0 * n_i / dof), 1.0)
+        best = _jitter_terms(parts, s2, kappa, cat.valid).max(1)
+        return np.sum(np.maximum(best, cat.log_b))
+
     k = int(cat.valid.shape[0])
     n_node = math.ceil((hi - lo) * math.sqrt(2.0 * k)) + 1
     nodes = np.linspace(lo, hi, n_node).astype(space.dtype)
-    g = lambda ln_sigma: _jitter_objective(  # noqa: E731
-        parts, ln_sigma, cat.log_b, cat.valid
-    )
-    vals = jax.vmap(g)(nodes)
+    vals = jax.vmap(capped)(nodes)
     i = np.argmax(vals)
-    ln_new = _lm(lambda v: g(v[0]), nodes[i][None], (), N_SCALE, 1.0)[0][0]
+    ln_new = _lm(lambda v: capped(v[0]), nodes[i][None], (), N_SCALE, 1.0)[0][
+        0
+    ]
     ln_new = np.clip(
         ln_new,
         nodes[np.maximum(i - 1, 0)],
         nodes[np.minimum(i + 1, n_node - 1)],
     )
-    best = np.where(g(ln_new) >= vals[i], ln_new, nodes[i])
+    best = np.where(capped(ln_new) >= vals[i], ln_new, nodes[i])
     u = np.clip((best - lo) / (hi - lo), 1e-6, 1.0 - 1e-6)
-    return x.at[-1].set((np.log(u) - np.log1p(-u)).astype(x.dtype))
-
-
-def _scale_step(x, space, lab):
-    """``x`` with the inlier scale at its maximum given the labels ``lab``.
-
-    Per block, ``ŝ² = Σ_I (χ² + q) / Σ_I n`` clipped to ``[1/S_MAX, S_MAX]``;
-    with jitter, ``N_SCALE`` steps of ``_lm`` in ``ln s`` (trust radius one
-    e-fold) on the labelled peak terms from there. With the labels fixed it
-    does not decrease the labelled objective. Data that do not rescale, or no
-    inlier, keep ``s = 1``.
-
-    Source: Celeux & Govaert (1992), [references](../references.md#celeux1992).
-    """
-    cat = space.cat
+    x = x.at[-1].set((np.log(u) - np.log1p(-u)).astype(x.dtype))
     if not cat.rescalable:
         return x
+    lab = _labels(x, space)
     c, state = _peak_state(x, space)
-    j = np.maximum(lab, 0)
-    k = np.arange(lab.shape[0])
-    a, n = _scale_sums(cat, state)
+    d = state[:, None, :] - cat.mean
+    chi2_q = cat.chi2 + np.einsum("kja,kjgab,kjb->kjg", d, cat.hess, d)
+    j, kk = np.maximum(lab, 0), np.arange(lab.shape[0])
     on = (lab >= 0)[:, None]
-    num = np.sum(np.where(on, a[k, j], 0.0), axis=0)
-    den = np.sum(np.where(on, n[k, j], 0.0), axis=0)
-    lim = math.log(S_MAX)
+    num = np.sum(np.where(on, chi2_q[kk, j], 0.0), axis=0)
+    den = np.sum(np.where(on, cat.n[kk, j], 0.0), axis=0)
     ln_s = np.where(
         den > 0,
         np.clip(
@@ -1097,25 +1081,15 @@ def _scale_step(x, space, lab):
         c["ln_s"],
     )
 
-    def objective(ls):
+    def labelled(ls):
         t = _peak_terms(cat, ls, c["jitter"], state, space.dtype)
-        return np.sum(np.where(lab >= 0, t[k, j], 0.0))
+        return np.sum(np.where(lab >= 0, t[kk, j], 0.0))
 
-    ln_s = np.clip(_lm(objective, ln_s, (), N_SCALE, 1.0)[0], -lim, lim)
+    ln_s = np.clip(_lm(labelled, ln_s, (), N_SCALE, 1.0)[0], -lim, lim)
     u = np.clip(0.5 * (ln_s / lim + 1.0), 1e-6, 1.0 - 1e-6)
-    nb = space.n_blocks
-    return x.at[9 : 9 + nb].set((np.log(u) - np.log1p(-u)).astype(x.dtype))
-
-
-def _profile(x, space):
-    """One round of design 6.14 on ``x``: σ_J given ``(x, s)`` with labels free,
-    then ``s`` given the labels at that σ_J. Only with a marginal σ_J: a fixed
-    jitter leaves ``x`` as it is. The caller labels at the result, so the
-    labels, weights and objective use one ``(s, σ_J)``."""
-    if not space.marginal:
-        return x
-    x = _jitter_step(x, space)
-    return _scale_step(x, space, _labels(x, space))
+    return x.at[9 : 9 + space.n_blocks].set(
+        (np.log(u) - np.log1p(-u)).astype(x.dtype)
+    )
 
 
 def _lm(f, x, args, n_iter, step_max=10.0):
@@ -1359,10 +1333,14 @@ def _cstep_chunk(space, plan, v, lab, tail, n_iter):
 
     def one(v, lab, tail):
         wk, wf_all = plan["wk"], plan["wf"]
-        if space.marginal:  # the weights at the profiled (s, σ_J), not the plan's
+        if (
+            space.marginal
+        ):  # the weights at the profiled (s, σ_J), not the plan's
             cat = space.cat
             c = space.decode(np.concatenate([np.zeros(9, tail.dtype), tail]))
-            total = _peak_precision(cat, c["ln_s"], c["jitter"], space.dtype)[1]
+            total = _peak_precision(cat, c["ln_s"], c["jitter"], space.dtype)[
+                1
+            ]
             wk = np.linalg.inv(total[..., :4, :4])
             wf_all = 1.0 / total[..., 4, 4]
         args = (lab, wk, plan["mk"], space)
@@ -2259,8 +2237,10 @@ def reference_jitter(
     if orbit is None:
         return float(centre)
     r2 = onp.sum(resid(orbit, rows) ** 2, axis=1)
-    cut = float(stats.chi2.isf(DELTA, 2)) * float(onp.median(r2)) / (
-        2.0 * math.log(2.0)
+    cut = (
+        float(stats.chi2.isf(DELTA, 2))
+        * float(onp.median(r2))
+        / (2.0 * math.log(2.0))
     )
     keep = rows[r2 <= max(cut, 0.0)]
     if len(keep) < 4:  # trim at most K - 4: keep the 4 nights nearest the seed
@@ -2272,9 +2252,7 @@ def reference_jitter(
     k = len(rows)
     u = float(onp.median(onp.sum(resid(orbit, rows) ** 2, axis=1) / 2.0))
     u /= math.log(2.0) * (k - 2.0) / k
-    return float(
-        onp.clip(math.sqrt(max(u - var_q, 0.0)), *jitter_range)
-    )
+    return float(onp.clip(math.sqrt(max(u - var_q, 0.0)), *jitter_range))
 
 
 def fit_chi2(fit, mode=None):

@@ -184,19 +184,14 @@ def test_fit_chi2_reports_quoted_and_total_errors():
 
 @pytest.mark.slow
 @pytest.mark.full_only
-@pytest.mark.xfail(
-    strict=False,
-    reason="seed 0: an off-truth cell's importance sampling is flagged "
-    "(ESS 1.4), so p is NaN; the C-steps hold sigma_J at its reference",
-)
 @x64
 @pytest.mark.timeout(6000)
 def test_the_period_is_calibrated_with_injected_jitter_end_to_end():
     """Two seasons, jitter 5 sigma, three seeds (about 20 min each on a laptop): no
     cell is flagged, the true ln P lies in the central 99 % of the posterior
     draws and the posterior median jitter is within a factor 3 of the truth.
-    Seed 0 currently flags a wrong-period cell (importance ESS 1.4, 40 nats
-    below the true cell): a known search/proposal gap, hence the xfail."""
+    Seed 0 once flagged a wrong-period cell because the C-steps held σ_J at its
+    reference; they profile it now (design §6.14)."""
     j_true, n_ok, n_run = 5 * SIGMA, 0, 3
     for seed in range(n_run):
         rng = onp.random.default_rng(seed)
@@ -304,9 +299,7 @@ def test_the_rank_two_jitter_terms_equal_the_peak_terms():
         want = oc_cells._peak_terms(
             space.cat, c["ln_s"], sigma, state, np.float64
         )
-        got = oc_cells._jitter_terms(
-            parts, sigma**2, 1.0, space.cat.valid
-        )
+        got = oc_cells._jitter_terms(parts, sigma**2, 1.0, space.cat.valid)
         assert onp.allclose(got, want, rtol=1e-9, atol=1e-9)
 
 
@@ -360,7 +353,9 @@ def test_profile_step_labels_equal_labels_at_the_returned_chart():
 def _ref_setup(k, jitter, gross=(), seed=0):
     rng = onp.random.default_rng(seed)
     times = onp.unique(onp.sort(rng.uniform(0.0, 60.0, k).round(3)))
-    s = _jittery(_orbit(period=11.3, a=8.0), times, jitter, seed=seed, gross=gross)
+    s = _jittery(
+        _orbit(period=11.3, a=8.0), times, jitter, seed=seed, gross=gross
+    )
     domain = oc_cells.period_domain(s, p_range=(9.0, 14.0))
     return s, domain, (float(times[0]), float(times[-1]))
 

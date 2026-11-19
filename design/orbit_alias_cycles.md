@@ -1566,7 +1566,7 @@ C-step:
    ⌈ln(hi/lo)/h⌉ + 1 nodes (72 at K = 40).
 2. **s given (x, σ_J, labels).** §6.9's closed form per block, ŝ_g² = Σ_I(χ²_g + q_g)/Σ_I n_g clipped to
    [1/S_MAX, S_MAX] with q the peak's Laplace quadratic, then (σ_J > 0) `N_SCALE` Newton steps of Σ_I ℓ̃ in ln s with a
-   trust radius of one e-fold (`_scale_step` on branch 9b0eec7). Data with gains or closure offsets keep s = 1 (§1.1).
+   trust radius of one e-fold (`_scale_step` of #642, folded into `_profile`). Data with gains or closure offsets keep s = 1 (§1.1).
 3. **Labels** at the new (s, σ_J), by `_labels` on the *rewritten* x.
 
 Steps 1 and 2 do not decrease F (step 2 at fixed labels, and relabelling does not decrease it), so §6.1's finite
