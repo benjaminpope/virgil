@@ -296,20 +296,17 @@ def ruffio_upperlimit(mean, sigma, percentile):
     log_tail = np.log1p(-percentile) + jsp.special.log_ndtr(-a)
     z_tail = -jsp.special.ndtri(np.exp(log_tail))
     z_asymptotic = np.sqrt(a**2 - 2.0 * np.log1p(-percentile))
-    # 1 - percentile rounds to 1 for tiny percentiles: the upper-tail
-    # inversion gives -inf and the quantile is in the lower tail instead,
-    # z = Φ⁻¹(Φ(a) + p Φ(-a)); the asymptotic branch (z > 0) is only for
-    # percentiles near 1.
-    z_lower = jsp.special.ndtri(
-        jsp.special.ndtr(a) + percentile * jsp.special.ndtr(-a)
-    )
-    z = np.where(
-        np.isfinite(z_tail),
-        z_tail,
-        np.where(z_tail < 0.0, z_lower, z_asymptotic),
-    )
+    # When the quantile lies in the lower half, 1 - percentile (and the upper
+    # tail Q) round to values near 1 in float32 and lose the quantile:
+    # invert the lower tail instead, z = Φ⁻¹(Φ(a) + p Φ(-a)), accurate for
+    # small arguments. The asymptotic branch (z > 0) is only for percentiles
+    # near 1.
+    lower_mass = jsp.special.ndtr(a) + percentile * jsp.special.ndtr(-a)
+    use_lower = lower_mass < 0.5
+    z_lower = jsp.special.ndtri(lower_mass)
+    z = np.where(np.isfinite(z_tail), z_tail, z_asymptotic)
 
-    # Newton steps on log Q(z) = log_tail polish either starting point.
+    # Newton steps on log Q(z) = log_tail polish the upper-tail starting point.
     def newton(z, _):
         log_q = jsp.special.log_ndtr(-z)
         log_pdf = -0.5 * z**2 - 0.5 * np.log(2.0 * np.pi)
@@ -317,6 +314,7 @@ def ruffio_upperlimit(mean, sigma, percentile):
         return np.where(np.isfinite(step), z + step, z), None
 
     z, _ = jax.lax.scan(newton, z, None, length=2)
+    z = np.where(use_lower, z_lower, z)
     return np.maximum(mean + sigma * z, 0.0)
 
 

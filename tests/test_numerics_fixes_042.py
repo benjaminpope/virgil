@@ -9,7 +9,7 @@ import pytest
 from virgil import fitting, grid_fit
 from virgil.fitting import NoLeastSquaresForm, _Objective, kkt_report
 from virgil.limits import ruffio_upperlimit
-from virgil.likelihood import build_model
+from virgil.likelihood import build_model, whitened_residuals
 from virgil.models import BinaryModelCartesian
 from virgil.orbits import KeplerOrbit, ThieleInnesOrbit
 from tests._test_data import oidata_sim, samples_dict
@@ -29,9 +29,20 @@ def test_grid_fit_convergence_uses_half_chi2_not_the_signed_loglike(
     small = {key: value[::8] for key, value in samples_dict.items()}
     grid_fit.optimized_flux_grid(BinaryModelCartesian, oidata_sim, small)
     assert seen
-    # -½χ² is never positive; the Gaussian normalization has either sign.
     jax.effects_barrier()
-    assert all(onp.all(x <= 0.0) for x in seen)
+    first = list(seen)
+    # An independent -½χ² at the returned fluxes (not the normalized loglike).
+    flux = onp.asarray(
+        grid_fit.optimized_flux_grid(BinaryModelCartesian, oidata_sim, small)
+    )
+    expected = []
+    for i, dra in enumerate(onp.asarray(small["dra"])):
+        for j, ddec in enumerate(onp.asarray(small["ddec"])):
+            model = BinaryModelCartesian(dra, ddec, flux[i, j])
+            r = whitened_residuals(model, oidata_sim)
+            expected.append(-0.5 * float(np.sum(r**2)))
+    got = onp.sort(onp.concatenate([onp.ravel(x) for x in first]))
+    onp.testing.assert_allclose(got, onp.sort(expected), rtol=2e-3)
 
 
 def test_unconverged_warning_reports_the_fraction():
@@ -47,9 +58,9 @@ def test_ruffio_small_percentile_far_above_zero_is_the_lower_tail():
     from scipy.stats import truncnorm
 
     sigma = 1e-3
-    mean = np.array([6.0, 10.0], np.float32) * sigma
+    mean = np.array([4.5, 5.0, 6.0, 10.0], np.float32) * sigma
     limit = ruffio_upperlimit(
-        mean, np.full(2, sigma, np.float32), np.float32(1e-9)
+        mean, np.full(4, sigma, np.float32), np.float32(1e-9)
     )
     expected = truncnorm.ppf(
         1e-9, -onp.asarray(mean, float) / sigma, onp.inf, loc=mean, scale=sigma
@@ -58,10 +69,8 @@ def test_ruffio_small_percentile_far_above_zero_is_the_lower_tail():
 
 
 def test_ruffio_percentile_one_is_not_nan():
-    limit = ruffio_upperlimit(
-        np.array([1.0, -1.0]), np.ones(2), np.array(1.0 - 1e-16)
-    )
-    assert not onp.any(onp.isnan(onp.asarray(limit)))
+    limit = ruffio_upperlimit(np.array([1.0, -1.0]), np.ones(2), np.array(1.0))
+    assert onp.all(onp.isposinf(onp.asarray(limit)))
 
 
 def test_build_model_rejects_mismatched_lengths():
@@ -113,6 +122,10 @@ def test_face_on_retrograde_thiele_innes_converts():
     kepler = orbit.to_kepler()
     assert isinstance(kepler, KeplerOrbit)
     assert 179.0 < float(kepler.inc) < 180.0
+    back = kepler.to_thiele_innes()
+    onp.testing.assert_allclose(
+        [back.A, back.B, back.F, back.G], [1.0, 0.0, 0.0, -1.0], atol=1e-5
+    )
 
 
 def test_linear_flux_grid_rejects_model_dependent_covariance():
