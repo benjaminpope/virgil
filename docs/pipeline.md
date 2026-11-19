@@ -301,12 +301,12 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `grid_edge` (peak on the edge of the `dra` or `ddec` axis; the flux axis is not a search boundary) | at the edge | |
 | `start_at_bound` (only when triggered: the best fit, where NUTS starts, within 0.1% of a prior bound; typically a non-detection, with the flux or diameter at the edge of its range) | any: NUTS starts just inside the bound and the posterior is prior-dominated | |
 | `prior_bound` (posterior mass within 1% of a prior bound) | above 5% | |
-| `r_hat` | above 1.01, or a pass with the smallest bulk effective sample size below 400 (too few draws to trust it) | above 1.05 |
-| `ess` (smallest bulk effective sample size) | below 400 | below 100 |
-| `divergences` | any | above 1% of transitions (a warning instead, naming the walls, when `StarPipeline`'s wall probe finds hard closure-phase walls around the posterior) |
+| `r_hat` | above 1.01, or a pass with the smallest bulk effective sample size below 400 (too few draws to trust it) | above 1.05 (a warning for a `StarPipeline` model that was not selected: ruling S6) |
+| `ess` (smallest bulk effective sample size) | below 400 | below 100 (a warning for a model that was not selected) |
+| `divergences` | any | above 1% of transitions (a warning instead, naming the walls, when `StarPipeline`'s wall probe finds hard closure-phase walls around the posterior; also a warning for a model that was not selected) |
 | `residual_normality` (skewness and excess kurtosis of the independent whitened residuals, without the periodic closure-phase penalty terms) | beyond three standard errors | |
 | `field_of_view` (companion inside the resolution limit or beyond the field) | outside | |
-| `chi2_uniform`, `chi2_limb_darkened` (`StarPipeline`; as `chi2`) | as `chi2`; for a model that was not selected, a failure is a warning | as `chi2` |
+| `chi2_uniform`, `chi2_limb_darkened` (`StarPipeline`; as `chi2`) | as `chi2`; for a model that was not selected, a failure is a warning (ruling S6) | as `chi2` |
 | `limb_darkening_gain` (delta chi-squared of the limb-darkened over the uniform fit, against a BIC penalty of 2 ln N for two parameters) | the uniform-disk diameter is at the lower edge of its range (the comparison is not valid, the uniform disk is kept) | the limb-darkened model fits worse than the uniform disk it contains (Δ(−2 log L) < −1) |
 | `resolution` (the longest B/λ against the first null of the fitted model's visibility, θB/λ = 1.22 for a uniform disk) | below the first null (limb darkening is degenerate with the diameter) | below 0.15 of it (unresolved: an upper limit) |
 | `multimodal` (the per-lobe table of the preferred model, `fit.models.<name>.lobes`: the next-best diameter lobe against a Δχ² of 25) | the next-best lobe is within Δχ² of 25; the message gives its diameter | |

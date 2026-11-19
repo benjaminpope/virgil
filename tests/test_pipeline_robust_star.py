@@ -555,9 +555,9 @@ def test_a_constrained_limb_darkened_star_mixes_at_the_default_draws(tmp_path):
     assert s["posterior"]["ess_bulk_min"] > 400
 
 
-def test_a_failing_model_that_was_not_selected_still_fails_and_is_named(
-    completed,
-):
+def test_a_failing_model_that_was_not_selected_warns_and_is_named(completed):
+    """S6 (Ben, 2026-11-19, confirmed 2026-11-20): a rival's failed sampler
+    checks are warnings; the selected model's still fail."""
     import copy
 
     reports = {s: completed._report(s) for s in ("load", "fit", "posterior")}
@@ -573,26 +573,9 @@ def test_a_failing_model_that_was_not_selected_still_fails_and_is_named(
     _, checks = completed._summarize(reports)
     by_name = {c.name: c for c in checks}
     for name in ("r_hat", "ess", "divergences"):
-        assert by_name[name].status == "fail", name
+        assert by_name[name].status == "warn", name
         assert "rival (not selected)" in by_name[name].message
-
-    # A rival's failure is not hidden by the selected model's warning, nor by
-    # an earlier rival's milder warning (the selected model passes ess here).
-    mild = copy.deepcopy(reports["posterior"]["models"][best])
-    mild.update(ess_bulk_min=300.0)
-    models = reports["posterior"]["models"]
-    models.pop("rival")
-    models["mild"] = mild
-    models["rival"] = bad
-    _, checks = completed._summarize(reports)
-    ess = {c.name: c for c in checks}["ess"]
-    assert ess.status == "fail" and "rival (not selected)" in ess.message
-    models.pop("mild")
-    models[best].update(ess_bulk_min=250.0)
-    _, checks = completed._summarize(reports)
-    ess = {c.name: c for c in checks}["ess"]
-    assert ess.status == "fail" and "rival (not selected)" in ess.message
-    models[best].update(ess_bulk_min=1e3)
+    assert not any(c.status == "fail" for c in checks)
 
     # The selected model's failures stay failures.
     reports["posterior"]["models"][best].update(

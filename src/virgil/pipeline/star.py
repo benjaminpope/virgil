@@ -479,6 +479,14 @@ class StarPipeline(_Pipeline):
                     },
                     walls=other.get("wall_probe"),
                 )
+                # S6 (Ben, 2026-11-19, confirmed 2026-11-20): a failure of a
+                # model that was not selected is a warning.
+                other_checks = [
+                    dataclasses.replace(oc, status="warn")
+                    if oc.status == "fail"
+                    else oc
+                    for oc in other_checks
+                ]
                 sampler_checks = [
                     dataclasses.replace(
                         oc,
@@ -1257,8 +1265,8 @@ def _fit_checks(fit, registry):
         )
         for k in fit["names"]
     ]
-    # A model that was not selected: a poor fit is why it was rejected, so a
-    # χ² failure is a warning. Its sampler checks are not downgraded.
+    # A model that was not selected: a failure is a warning (S6, Ben,
+    # 2026-11-19, confirmed 2026-11-20; sampler checks likewise).
     checks = [
         c
         if k == fit["best"]
