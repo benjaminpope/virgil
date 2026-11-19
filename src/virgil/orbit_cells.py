@@ -1449,7 +1449,7 @@ def search_plan(space, key=None, nu_width=None):
             np.where(cat.valid, scaled + log_det, -1e30).max(axis=1)
         )
     gap = np.max(np.stack(heights), axis=0) - cat.log_b
-    return {
+    plan = {
         "nights": np.asarray(nights), "w": np.asarray(w, dt), "mean": np.asarray(mean, dt),
         "lnf": np.asarray(lnf, dt), "cut": onp.asarray(cut), "y0": np.asarray(y0, dt),
         "grid": np.linspace(0.0, 1.0, n_grid, dtype=dt),
@@ -1460,6 +1460,23 @@ def search_plan(space, key=None, nu_width=None):
         "gap": np.asarray(gap, dt),
         "chi2": np.asarray(chi2s, dt), "n": np.asarray(ns, dt),
     }  # fmt: skip
+    if len(nights):
+        _warm_csteps(space, plan)
+    return plan
+
+
+def _warm_csteps(space, plan):
+    """Compile the C-step at every padded size ``_bucket`` can choose, on dummy
+    rows, so a later cell of the system (the plan is shared) compiles nothing."""
+    k = len(space.cat.log_b)
+    for size in (8, 32, CHUNK_C):
+        _cstep_chunk(
+            space,
+            plan,
+            np.asarray(_padded(onp.zeros((1, 3)), size), space.dtype),
+            np.asarray(_padded(onp.zeros((1, k), int), size)),
+            N_NEWTON,
+        )
 
 
 def _unique_starts(lab, v, h, r):
