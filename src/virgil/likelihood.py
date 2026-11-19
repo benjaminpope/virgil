@@ -667,7 +667,7 @@ def build_model(model, params, values):
     """
     if isinstance(model, SourceModel):
         return model.set(list(params), list(values))
-    return model(**dict(zip(params, values)))
+    return model(**dict(zip(params, values, strict=True)))
 
 
 @old_order("values", "params", "data", "model", data="data")

@@ -442,7 +442,7 @@ class _Objective(eqx.Module):
             parts.append(np.ravel(regularizer.residuals(_reference(model))))
         for path, prior in self.priors.items():
             value = self._prior_value(values, path)
-            if _flat_coordinate(prior) is not None:
+            if self._in_flat_coordinate(prior):
                 continue  # flat in the fitted coordinate: adds nothing
             prior = _base(prior)
             if is_angle_vector(prior):
@@ -2282,6 +2282,10 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
 
 
 # deliberate: the bounds of an L-BFGS-B fit, kept apart from the host loop
+class _NoBox(TypeError):
+    """The problem has no box-constrained form."""
+
+
 def _box(problem, z):
     """``(lower, upper)`` flat bounds of the coordinates of a boxed problem.
 
@@ -2294,7 +2298,7 @@ def _box(problem, z):
     import numpyro.distributions as dist
 
     if problem.noise:
-        raise TypeError("method='lbfgsb' does not fit error terms.")
+        raise _NoBox("method='lbfgsb' does not fit error terms.")
     lower, upper = [], []
     for path, prior in problem.priors.items():
         base, shape = _base(prior), onp.shape(z[path])
@@ -2303,9 +2307,7 @@ def _box(problem, z):
             support = support.base_constraint
         flat_real = isinstance(support, type(dist.constraints.real))
         if is_angle_vector(prior):
-            raise TypeError(
-                f"method='lbfgsb' cannot fit angle vector {path!r}."
-            )
+            raise _NoBox(f"method='lbfgsb' cannot fit angle vector {path!r}.")
         if isinstance(base, dist.Uniform):
             lo, hi = (
                 onp.broadcast_to(onp.asarray(b, float), shape)
@@ -2314,7 +2316,7 @@ def _box(problem, z):
         elif isinstance(base, dist.ImproperUniform) and flat_real:
             lo, hi = onp.full(shape, -onp.inf), onp.full(shape, onp.inf)
         else:
-            raise TypeError(
+            raise _NoBox(
                 f"method='lbfgsb' supports only Uniform priors and flat real "
                 f"priors (ImproperUniform on the real line, as image_priors "
                 f"gives); {path!r} has {type(base).__name__}."
@@ -3038,7 +3040,7 @@ def kkt_report(
         pen0 = None if start is None else jax.grad(problem.penalty)(z0)
         try:
             lower, upper = _box(problem, z)
-        except TypeError:
+        except _NoBox:
             lower = upper = None
         keys = problem.coordinate_keys
         offsets = dict(

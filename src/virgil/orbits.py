@@ -462,7 +462,14 @@ def _thiele_innes_angles(a, b, f, g):
     q_norm = np.hypot(a + g, b - f)
     a_mas = (q_norm + p_norm) / 2
     inc = 2.0 * np.rad2deg(np.arctan2(np.sqrt(p_norm), np.sqrt(q_norm)))
+    inc = _below_retrograde(inc)
     return inc, omega, Omega, a_mas
+
+
+def _below_retrograde(inc):
+    """``inc`` (degrees) clipped to the largest value below 180°, which
+    ``KeplerOrbit`` requires; a face-on retrograde orbit rounds to 180."""
+    return np.minimum(inc, np.nextafter(np.asarray(180.0, inc.dtype), 0.0))
 
 
 class ThieleInnesOrbit(zdx.Base):
@@ -969,7 +976,7 @@ def _state_elements(  # deliberate: jit boundary
         period,
         dt_peri,
         ecc,
-        np.rad2deg(inc),
+        _below_retrograde(np.rad2deg(inc)),
         np.where(omega_deg >= 360.0, 0.0, omega_deg),
         np.where(Omega_deg >= 360.0, 0.0, Omega_deg),
         a_mas,

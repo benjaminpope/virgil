@@ -47,6 +47,8 @@ def _best_grid_flux(loglike_im, grid, params, flux_key):
 def _flux_converged(grad, curvature, loglike):
     """Whether a flux is at its maximum to the rounding error of ``loglike``.
 
+    Pass ℓ = -½χ², without the normalization, which can have either sign.
+
     The log likelihood still to gain is estimated by the Newton decrement
     g²/(2|c|), exact for a quadratic. A point has converged when that is
     at most `_gauss_newton.rounding_dtol` of ``loglike``: 10 ulp of
@@ -150,7 +152,11 @@ def _refine_flux_grid(
         grad = jax.grad(flux_loglike)(flux, coord_vals)
         curvature = jax.grad(jax.grad(flux_loglike))(flux, coord_vals)
         best = flux_loglike(flux, coord_vals)
-        converged = _flux_converged(grad, curvature, best)
+        # Rounding error scales with the sum of squares, not with the
+        # (signed, normalized) log likelihood.
+        values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
+        resid = whitened_residuals(build_model(model, params, values), data)
+        converged = _flux_converged(grad, curvature, -0.5 * np.sum(resid**2))
         return flux, best, converged
 
     flux, best_loglike, success = map_points(
@@ -545,6 +551,12 @@ def linear_flux_grid(
     >>> grid = {"dra": axis, "ddec": axis, "flux": np.array([1e-3])}
     >>> res = linear_flux_grid(BinaryModelCartesian, data, grid)  # doctest: +SKIP
     """
+    if getattr(data, "has_model_covariance", False):
+        raise ValueError(
+            "linear_flux_grid assumes a model-independent covariance; data "
+            "with gains or marginalized flux scales has none. Use "
+            "optimized_flux_grid."
+        )
     params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     # numpyro's dist.LogUniform / dist.Normal (scalar parameters) become the
     # NamedTuples; anything else is validated
