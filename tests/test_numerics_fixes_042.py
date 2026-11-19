@@ -25,9 +25,15 @@ def test_grid_fit_convergence_uses_half_chi2_not_the_signed_loglike(
         jax.debug.callback(lambda x: seen.append(onp.asarray(x)), loglike)
         return real(grad, curvature, loglike)
 
+    # _optimize_flux_grid is jitted: a program compiled by an earlier test
+    # would bypass the spy, and ours must not outlive it.
+    jax.clear_caches()
     monkeypatch.setattr(grid_fit, "_flux_converged", spy)
     small = {key: value[::8] for key, value in samples_dict.items()}
-    grid_fit.optimized_flux_grid(BinaryModelCartesian, oidata_sim, small)
+    try:
+        grid_fit.optimized_flux_grid(BinaryModelCartesian, oidata_sim, small)
+    finally:
+        jax.clear_caches()
     assert seen
     jax.effects_barrier()
     first = list(seen)
@@ -76,6 +82,13 @@ def test_ruffio_percentile_one_is_not_nan():
 def test_build_model_rejects_mismatched_lengths():
     with pytest.raises(ValueError):
         build_model(BinaryModelCartesian, ["dra", "ddec", "flux"], [1.0, 2.0])
+    # zodiax would broadcast a single value over every path
+    with pytest.raises(ValueError):
+        build_model(
+            BinaryModelCartesian(0.0, 0.0, 0.01),
+            ["dra", "ddec", "flux"],
+            [1.0],
+        )
 
 
 def test_residuals_follow_the_flat_coordinate_switch():
@@ -128,9 +141,53 @@ def test_face_on_retrograde_thiele_innes_converts():
     )
 
 
-def test_linear_flux_grid_rejects_model_dependent_covariance():
-    class Data:
-        has_model_covariance = True
+def test_linear_flux_grid_warns_on_model_dependent_covariance(monkeypatch):
+    from virgil.oidata import OIData
 
-    with pytest.raises(ValueError, match="model-independent"):
-        grid_fit.linear_flux_grid(BinaryModelCartesian, Data(), samples_dict)
+    small = {key: value[::8] for key, value in samples_dict.items()}
+    monkeypatch.setattr(OIData, "has_model_covariance", True)
+    with pytest.warns(UserWarning, match="model-independent"):
+        result = grid_fit.linear_flux_grid(
+            BinaryModelCartesian, oidata_sim, small
+        )
+    assert onp.all(onp.isfinite(onp.asarray(result.flux)))
+
+
+def test_face_on_retrograde_state_vector_converts():
+    from virgil.orbits import StateVectorOrbit
+
+    # r = (1, 0, 0), v = (0, 1, 0): angular momentum along +z, face-on
+    # clockwise on the sky, bound for mu = 4.
+    orbit = StateVectorOrbit(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 4.0)
+    kepler = orbit.to_kepler()
+    assert 179.0 < float(kepler.inc) < 180.0
+    onp.testing.assert_allclose(
+        kepler.relative(0.0), orbit.relative(0.0), atol=1e-4
+    )
+
+
+def test_face_on_retrograde_jaxoplanet_body_converts():
+    from types import SimpleNamespace
+
+    body = SimpleNamespace(
+        period=10.0,
+        time_peri=0.0,
+        eccentricity=0.1,
+        sin_omega_peri=0.0,
+        cos_omega_peri=1.0,
+        sin_asc_node=0.0,
+        cos_asc_node=1.0,
+        sin_inclination=-1e-16,  # float32 sin(pi) < 0
+        cos_inclination=-1.0,
+    )
+    kepler = KeplerOrbit.from_jaxoplanet(body, a_mas=20.0)
+    assert 179.0 < float(kepler.inc) < 180.0
+
+
+def test_aliases_physical_clips_cos_inc_minus_one():
+    from virgil.aliases import _physical
+
+    x = onp.zeros((1, 8))
+    x[:, 3] = -1.0
+    inc = _physical(x)["inc"]
+    assert 179.0 < float(inc[0]) < 180.0

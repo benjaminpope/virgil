@@ -2281,11 +2281,11 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
     return f"fit(method={method!r}) did not converge in {steps} steps."
 
 
-# deliberate: the bounds of an L-BFGS-B fit, kept apart from the host loop
 class _NoBox(TypeError):
     """The problem has no box-constrained form."""
 
 
+# deliberate: the bounds of an L-BFGS-B fit, kept apart from the host loop
 def _box(problem, z):
     """``(lower, upper)`` flat bounds of the coordinates of a boxed problem.
 
@@ -3028,7 +3028,7 @@ def kkt_report(
                 regularizers,
                 noise,
                 likelihoods,
-                boxed=True,
+                boxed=result.info.get("method", "lbfgsb") == "lbfgsb",
             ),
             "float64",
         )

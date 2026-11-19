@@ -427,8 +427,12 @@ class KeplerOrbit(zdx.Base):
             period=body.period,
             dt_peri=body.time_peri,
             ecc=body.eccentricity,
-            inc=np.rad2deg(
-                np.arctan2(body.sin_inclination, body.cos_inclination)
+            inc=_below_retrograde(
+                np.rad2deg(
+                    np.arctan2(
+                        np.abs(body.sin_inclination), body.cos_inclination
+                    )
+                )
             ),
             omega=np.mod(omega + 180.0, 360.0),
             Omega=np.mod(Omega, 360.0),

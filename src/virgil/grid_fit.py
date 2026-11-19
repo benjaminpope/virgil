@@ -10,6 +10,7 @@ See [Grid searches](../grid_searches.md).
 """
 
 import math
+import warnings
 from typing import NamedTuple
 
 import equinox as eqx
@@ -29,7 +30,7 @@ from ._grid import (
     warn_unconverged,
 )
 from . import _gauss_newton
-from ._deprecate import old_order, renamed
+from ._deprecate import external_stacklevel, old_order, renamed
 from ._marginal import gauss_legendre
 from .inference import _ambient_dtype, laplace_parameter_uncertainty
 from .likelihood import build_model, loglike, whitened_residuals
@@ -552,10 +553,13 @@ def linear_flux_grid(
     >>> res = linear_flux_grid(BinaryModelCartesian, data, grid)  # doctest: +SKIP
     """
     if getattr(data, "has_model_covariance", False):
-        raise ValueError(
-            "linear_flux_grid assumes a model-independent covariance; data "
-            "with gains or marginalized flux scales has none. Use "
-            "optimized_flux_grid."
+        warnings.warn(
+            "linear_flux_grid treats the covariance as model-independent, "
+            "but this data's depends on the model (gains or marginalized "
+            "flux scales); the fluxes and errors are approximate. "
+            "optimized_flux_grid is exact.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
         )
     params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     # numpyro's dist.LogUniform / dist.Normal (scalar parameters) become the
