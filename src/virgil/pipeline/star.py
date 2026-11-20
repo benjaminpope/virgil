@@ -459,37 +459,7 @@ class StarPipeline(_Pipeline):
                     _checks.prior_constrained(entry.constrained_check, ratios)
                 )
             sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
-            chosen = post["models"][best]
-            sampler_checks = _sampler_checks(
-                chosen,
-                bounds={
-                    f"{best}.{k}": v
-                    for k, v in chosen["prior_bound_fraction"].items()
-                },
-                walls=chosen.get("wall_probe"),
-            )
-            for name, other in post["models"].items():
-                if name == best:
-                    continue
-                other_checks = _sampler_checks(
-                    other,
-                    bounds={
-                        f"{name}.{k}": v
-                        for k, v in other["prior_bound_fraction"].items()
-                    },
-                    walls=other.get("wall_probe"),
-                )
-                sampler_checks = [
-                    dataclasses.replace(
-                        oc,
-                        message=f"{name} (not selected): {oc.message}",
-                    )
-                    if _checks.STATUSES.index(oc.status)
-                    > _checks.STATUSES.index(bc.status)
-                    else bc
-                    for bc, oc in zip(sampler_checks, other_checks)
-                ]
-            checks += sampler_checks
+            checks += _model_sampler_checks(post["models"], best)
         return sections, checks
 
 
@@ -1242,6 +1212,42 @@ _POSTERIOR_KEYS = (
 )
 
 
+# deliberate: sampler checks; inlined they take _summarize past MAX_FUNC_LINES (120)
+def _model_sampler_checks(models, best):
+    """The sampler checks of the selected model ``best``, each replaced by a
+    worse one of a model that was not selected. S6 (Ben, 2026-11-19,
+    confirmed 2026-11-20): such a model's failure is a warning."""
+
+    def run(name, report):
+        return _sampler_checks(
+            report,
+            bounds={
+                f"{name}.{k}": v
+                for k, v in report["prior_bound_fraction"].items()
+            },
+            walls=report.get("wall_probe"),
+        )
+
+    checks = run(best, models[best])
+    raw = [c.status for c in checks]
+    for name, other in models.items():
+        if name == best:
+            continue
+        # Compare on the raw status, then show a rival's failure as a warning
+        # (it must not be hidden by an earlier rival's milder one).
+        for i, oc in enumerate(run(name, other)):
+            if _checks.STATUSES.index(oc.status) > _checks.STATUSES.index(
+                raw[i]
+            ):
+                raw[i] = oc.status
+                checks[i] = dataclasses.replace(
+                    oc,
+                    status="warn" if oc.status == "fail" else oc.status,
+                    message=f"{name} (not selected): {oc.message}",
+                )
+    return checks
+
+
 # deliberate: fit-stage checks; inlined they take _summarize past MAX_FUNC_LINES (120)
 def _fit_checks(fit, registry):
     """Checks on the fits: χ²/N, model gains and the fitted error scales."""
@@ -1256,6 +1262,18 @@ def _fit_checks(fit, registry):
             + len(reports[k]["error_scales"] or {}),
         )
         for k in fit["names"]
+    ]
+    # A model that was not selected: a failure is a warning (S6, Ben,
+    # 2026-11-19, confirmed 2026-11-20; sampler checks likewise).
+    checks = [
+        c
+        if k == fit["best"]
+        else dataclasses.replace(
+            c,
+            status="warn" if c.status == "fail" else c.status,
+            message=f"{k} (not selected): {c.message}",
+        )
+        for k, c in zip(fit["names"], checks)
     ]
     for comparison in fit["comparisons"]:
         simple, complex_ = comparison["simple"], comparison["complex"]
@@ -1287,13 +1305,35 @@ def _fit_checks(fit, registry):
                     "is used.",
                 )
             )
-    scales = {
-        f"{k}.{kk}": v
-        for k in fit["names"]
-        for kk, v in (reports[k]["error_scales"] or {}).items()
-    }
-    if scales:
-        checks.append(_checks.error_scale(scales, n=fit["n_independent"]))
+
+    def scales(names):
+        return {
+            f"{k}.{kk}": v
+            for k in names
+            for kk, v in (reports[k]["error_scales"] or {}).items()
+        }
+
+    # The selected model's scales decide the check; a rival's failure is a
+    # warning (S6), shown when it is worse than the selected model's status.
+    best_scales = scales([fit["best"]])
+    verdict = (
+        _checks.error_scale(best_scales, n=fit["n_independent"])
+        if best_scales
+        else None
+    )
+    rivals = scales([k for k in fit["names"] if k != fit["best"]])
+    if rivals:
+        other = _checks.error_scale(rivals, n=fit["n_independent"])
+        if verdict is None or _checks.STATUSES.index(
+            other.status
+        ) > _checks.STATUSES.index(verdict.status):
+            verdict = dataclasses.replace(
+                other,
+                status="warn" if other.status == "fail" else other.status,
+                message=f"(not selected) {other.message}",
+            )
+    if verdict is not None:
+        checks.append(verdict)
     at_bound = [
         f"{k}.{site}" for k in fit["names"] for site in reports[k]["at_bound"]
     ]

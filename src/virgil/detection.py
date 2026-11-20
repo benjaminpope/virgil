@@ -934,6 +934,7 @@ _COMPATIBLE = (
     "template",
     "noise",
     "match_radius",
+    "uncertainty",
 )
 
 
