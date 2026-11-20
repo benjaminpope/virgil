@@ -34,6 +34,7 @@ import itertools
 import math
 import time
 import warnings
+import weakref
 
 import jax
 import jax.numpy as np
@@ -128,7 +129,7 @@ W_PRUNE = 2.0 * W  # nats below the best Laplace ln Z that drop a candidate
 N_PRE = 4  # Newton steps of the first C-step, before the candidates merge
 CHUNK_C = 256  # candidates per batched C-step call (budget)
 CSTEP_SIZES = (8, 32, CHUNK_C)  # padded batch sizes of a C-step call
-_WARMED = set()  # ids of the plans whose C-step shapes are compiled
+_WARMED = set()  # ids of the live plans whose C-step shapes are compiled
 CHUNK_VP = 1024  # candidates per batched set refinement call (budget)
 EDGE_STOP = W  # |w_P| beyond which the logistic chart holds less than δ of the
 #                cell's ρ-interval: where a shared neighbour mode's proposal ends
@@ -1498,6 +1499,8 @@ def _converge_csteps(space, plan, v, lab):
         # compile the C-step at every padded size, on dummy rows, so a later
         # cell of the system (the plan is shared) compiles nothing
         _WARMED.add(id(plan["w"]))
+        # a freed array's id can be reused by a later plan
+        weakref.finalize(plan["w"], _WARMED.discard, id(plan["w"]))
         k = len(space.cat.log_b)
         for size in CSTEP_SIZES:
             _cstep_chunk(
