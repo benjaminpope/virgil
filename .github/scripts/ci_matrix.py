@@ -18,18 +18,23 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 | main    | push to main                 | the gate, with the slow tests except    |
 |         |                              | the `full_only` ones                    |
 |         | dispatch with `tier=main`    | the same (the daily lock-upgrade PR)    |
-| full    | `full-ci` label, dispatch    | main + the `full_only` tests, macOS     |
-|         |                              | py3.11, py3.13 and the floors           |
-|         |                              | (the last two in 2 shards each)         |
+| full    | `full-ci` label, dispatch    | main + the `full_only` tests in 6       |
+|         |                              | float32 and 5 float64 shards, macOS     |
+|         |                              | py3.11, py3.13 and the floors (the last |
+|         |                              | two fast tier, 2 shards each)           |
 | nightly | daily schedule               | full, all with slow tests except macOS  |
-|         |                              | (fast tier)                             |
+|         |                              | (fast tier); py3.13 and the floors in 6 |
+|         |                              | shards each (24 jobs in all)            |
 
 The float64 gate jobs skip the dtype-independent test files, so they add
 about 0.57x the float32 suite, not 2x. The lock-upgrade PR tests the newest
 dependencies before they merge, so the nightly has no separate canary.
 
-Job names do not change between tiers, so the same checks report on every
-pull request. Standard library and the ``gh`` CLI only.
+The full tiers pack their shards by ``tests/test_durations_full.json`` (with
+the ``full_only`` tests), the others by ``tests/test_durations.json``. The
+shard counts differ between the gate and the full tiers, so a shard's job name
+(``1/3``, ``1/6``) does too; the gate's names are the same on every pull
+request. Standard library and the ``gh`` CLI only.
 """
 
 import json
@@ -91,7 +96,8 @@ def choose(
         else {"0": 3, "1": 3}
     )
 
-    # Whole files per shard, packed by tests/test_durations.json. The
+    # Whole files per shard, packed by tests/test_durations.json (the full
+    # tiers: test_durations_full.json). The
     # per-test budget (tests/conftest.py) is enforced on these Linux py3.12
     # jobs, whose timings it was set from. x64 exercises the float64 paths
     # on the numerical test files only.

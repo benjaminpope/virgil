@@ -395,3 +395,16 @@ def test_hung_tests_are_ended_by_the_thread_timeout():
     hung 35 minutes in the last tests): the thread method dumps the stacks."""
     tests = (ROOT / ".github/workflows/tests.yml").read_text()
     assert "--timeout-method=thread" in tests
+
+
+def test_full_durations_reach_the_packer_only_in_the_full_tiers():
+    """matrix key -> workflow env (cache-key step and pytest step) -> conftest
+    must agree, or the nightly silently packs by the fast-tier timings."""
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    assert tests.count("VIRGIL_FULL_DURATIONS: ${{ matrix.full_durations") == 1
+    assert 'export VIRGIL_FULL_DURATIONS="${{ matrix.full_durations' in tests
+    conftest = (ROOT / "tests/conftest.py").read_text()
+    assert 'os.environ.get("VIRGIL_FULL_DURATIONS") == "1"' in conftest
+    for event in ("pull_request", "push"):
+        assert not any(j.get("full_durations") for j in _jobs(event)), event
+    assert all(j["full_durations"] for j in _jobs("schedule") if "shard" in j)
