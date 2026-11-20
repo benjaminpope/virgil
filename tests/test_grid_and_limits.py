@@ -31,6 +31,7 @@ from virgil.plotting import (
     plot_grid_map,
     truth_cartesian_and_polar,
 )
+from tests._shared import limit_significances
 from tests._test_data import (
     oidata,
     oidata_sim,
@@ -284,7 +285,9 @@ def test_absil_limit_responds_to_smaller_uncertainties():
         BinaryModelCartesian, noisy_null(0.1), samples, 2.0
     )
 
-    assert improved.item() < nominal.item()
+    # In the linear regime the limit is proportional to the quoted errors, and
+    # the data (noise times error) are whitened identically in both runs.
+    assert improved.item() / nominal.item() == pytest.approx(0.1, rel=0.02)
 
 
 def test_absil_limit_does_not_depend_on_the_starting_flux_axis():
@@ -529,7 +532,6 @@ def test_injection_limits_with_extras_is_absil_on_reflected_data():
     the data reflected about the null model, here built directly, block by
     block, including the T3AMP block.
     """
-    import equinox as eqx
 
     from virgil.likelihood import build_model
     from virgil.limits import injection_limits
@@ -559,17 +561,12 @@ def test_injection_limits_with_extras_is_absil_on_reflected_data():
     assert not onp.allclose(without, injection, rtol=1e-3)
 
 
-def test_injection_limits_run_with_every_extra():
-    from virgil.limits import injection_limits
-
-    data, template = _extras_data(("flux", "t3amp", "visamp", "visphi"))
-    assert len(data.extras) == 4
-    limits = injection_limits(template, data, EXTRAS_SAMPLES, 3.0)
-    assert limits.shape == (2, 1)
-    assert onp.all((limits > 1e-6) & (limits < 1.0))
-
-
-def test_injection_limits_with_oi_flux_reach_sigma_on_injected_data():
+@pytest.mark.parametrize(
+    "extras",
+    [("flux", "t3amp"), ("flux", "t3amp", "visamp", "visphi")],
+    ids=["flux+t3amp", "every-extra"],
+)
+def test_injection_limits_with_oi_flux_reach_sigma_on_injected_data(extras):
     """The OI_FLUX block whitens with the model's own prediction.
 
     So the companion model's chi-squared on the injected data is not the
@@ -577,45 +574,16 @@ def test_injection_limits_with_oi_flux_reach_sigma_on_injected_data():
     directly, block by block, must give ``sigma`` from the public
     likelihood: the null model's chi-squared over the companion model's.
     """
-    from virgil.likelihood import build_model, whitened_residuals
     from virgil.limits import injection_limits
 
-    data, template = _extras_data(("flux", "t3amp"))
-    keys = tuple(EXTRAS_SAMPLES)
-    null = build_model(template, keys, [0.0, 0.0, 0.0])
-    m0 = data.model(null)
-    limits = injection_limits(template, data, EXTRAS_SAMPLES, 3.0)
-    ndof = data.n_independent
-    for i, dra in enumerate(EXTRAS_SAMPLES["comp.dra"]):
-        flux = float(limits[i, 0])
-        ddec = float(EXTRAS_SAMPLES["comp.ddec"][0])
-        companion = build_model(template, keys, [dra, ddec, flux])
-        signal = data.model(companion) - m0
-        n_vis, n_phi = data.vis.size, data.phi.size
-        injected = data.set(
-            ["vis", "phi"],
-            [
-                data.vis + signal[:n_vis],
-                data.phi + signal[n_vis : n_vis + n_phi],
-            ],
-        )
-        blocks, offset = [], n_vis + n_phi
-        for block in data.extras:
-            n = block.values.size
-            blocks.append(
-                block.simulated(
-                    block.values + signal[offset : offset + n], None, None
-                )
-            )
-            offset += n
-        injected = eqx.tree_at(lambda d: d.extras, injected, tuple(blocks))
-        chi2 = [
-            float(np.sum(whitened_residuals(m, injected) ** 2)) / ndof
-            for m in (null, companion)
-        ]
-        assert float(nsigma(chi2[0], chi2[1], ndof)) == pytest.approx(
-            3.0, abs=1e-2
-        )
+    data, template = _extras_data(extras)
+    assert len(data.extras) == len(extras)
+    limits = onp.asarray(injection_limits(template, data, EXTRAS_SAMPLES, 3.0))
+    assert limits.shape == (2, 1)
+    sigmas = limit_significances(
+        template, data, EXTRAS_SAMPLES, limits, "injection"
+    )
+    onp.testing.assert_allclose(sigmas, 3.0, atol=1e-2)
 
 
 def test_limits_null_evaluation_uses_grid_coordinates_not_zeros():

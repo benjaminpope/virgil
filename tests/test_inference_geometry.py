@@ -33,6 +33,8 @@ def test_objective_laplace_covariance_is_finite_and_positive_diagonal():
     assert cov.shape == (2, 2)
     assert np.all(np.isfinite(cov))
     assert np.all(np.diag(cov) > 0.0)
+    # The Hessian is diag(1/2, 2/9), so the Laplace covariance is its inverse.
+    assert np.allclose(cov, np.diag(np.array([2.0, 4.5])), rtol=1e-4)
 
 
 def test_fisher_projection_whitens_local_metric():

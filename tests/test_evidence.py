@@ -783,6 +783,9 @@ def test_error_scale_of_two_images_counts_every_latent():
     gamma = onp.sum(beta * lam / (1.0 + beta * lam))
     assert gamma <= n_latent
     _assert_mackay_fixed_point(scale, r, jac, data.n_independent)
+    # The noise was drawn at the quoted errors, so the injected scale is 1;
+    # the fixed point alone would hold for any scale the code returned.
+    _assert_recovers_noise_scale(scale, 1.0, jac, data.n_independent)
     only = error_scale(model, data, path="compact")
     assert only != scale
     blocks = error_scale(model, data, path=None, by_observable=True)
