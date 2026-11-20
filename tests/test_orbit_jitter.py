@@ -400,6 +400,7 @@ def test_the_c_step_scores_its_labels_at_the_profiled_jitter():
         onp.asarray(oc_cells._labels(np.asarray(back), space)) >= 0
     ).sum()
     assert n_back < (onp.asarray(res[1][0]) >= 0).sum()
+    assert onp.array_equal(res[1][0], oc_cells._labels(np.asarray(x), space))
 
 
 @x64
