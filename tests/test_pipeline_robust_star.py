@@ -494,27 +494,78 @@ def _shape_ratios(data, diam):
     return star._shape_ratios(data, entry, diam, prior_std)
 
 
+def _independent_shape_ratios(data, diam, prior_sd=0.2887):
+    """sigma_posterior / sigma_prior of (q1, q2) from first principles.
+
+    V^2 of a quadratic limb-darkened disk (Kipping's q1, q2 to u1, u2) is the
+    Hankel transform of its intensity, integrated here by Gauss-Legendre in
+    r = sin(phi) (smooth at the limb) with scipy's J0; the Jacobian is a
+    float64 central difference. Same formula as the gate otherwise: the
+    Fisher information of V^2 plus the shape prior's precision, inverted.
+    """
+    from scipy.special import j0
+
+    mas = onp.pi / 180.0 / 3600e3
+
+    def v2(theta, q1, q2):
+        u1 = 2.0 * onp.sqrt(q1) * q2
+        u2 = onp.sqrt(q1) * (1.0 - 2.0 * q2)
+        x, w = onp.polynomial.legendre.leggauss(200)
+        phi, w = (x + 1.0) * onp.pi / 4.0, w * onp.pi / 4.0
+        mu = onp.cos(phi)
+        weight = (
+            w
+            * (1.0 - u1 * (1.0 - mu) - u2 * (1.0 - mu) ** 2)
+            * onp.sin(phi)
+            * onp.cos(phi)
+        )
+        rho = onp.hypot(onp.asarray(data.u), onp.asarray(data.v)) / (
+            onp.asarray(data.wavel)
+        )
+        k = onp.pi * rho * theta * mas
+        vis = (j0(k[:, None] * onp.sin(phi)[None, :]) * weight).sum(1)
+        return (vis / weight.sum()) ** 2
+
+    centre = onp.array([diam, 0.5, 0.5])  # the uniform prior's centre
+    jac = onp.zeros((onp.asarray(data.d_vis).size, 3))
+    for i in range(3):
+        h = 1e-4 * max(abs(centre[i]), 1.0)
+        up, down = centre.copy(), centre.copy()
+        up[i] += h
+        down[i] -= h
+        jac[:, i] = (v2(*up) - v2(*down)) / (2.0 * h)
+    jac /= onp.asarray(data.d_vis)[:, None]
+    precision = jac.T @ jac + onp.diag([0.0, prior_sd**-2, prior_sd**-2])
+    return onp.sqrt(onp.diag(onp.linalg.pinv(precision)))[1:] / prior_sd
+
+
 @pytest.mark.parametrize(
-    "data, diam, expected, constrained",
+    "data, diam, constrained",
     [
         # The golden star's coverage (3 wavelengths x 3 hour angles, sigma
-        # 0.01, 4 mas): almost the prior alone.
-        (_template(), 4.0, (0.92, 0.88), False),
+        # 0.01, 4 mas): almost the prior alone (0.91, 0.88).
+        (_template(), 4.0, False),
         # Just above 0.8 (4 x 5, sigma 1e-2, 8 mas): sampled alone at
         # 500 + 500 draws the limb-darkened model had r_hat 2.6, ESS 2.6.
-        (_dense(1e-2), 8.0, (0.85, 0.74), False),
+        (_dense(1e-2), 8.0, False),
         # Just below (4 x 5, sigma 3e-4, 4 mas): r_hat 1.035, ESS 141 at
         # 500 + 500 draws.
-        (_dense(3e-4), 4.0, (0.70, 0.60), True),
+        (_dense(3e-4), 4.0, True),
         # Well measured (4 x 5, sigma 1e-4, 8 mas).
-        (_dense(1e-4), 8.0, (0.14, 0.11), True),
+        (_dense(1e-4), 8.0, True),
     ],
 )
 def test_the_shape_gate_decides_on_both_sides_of_the_threshold(
-    data, diam, expected, constrained
+    data, diam, constrained
 ):
     ratios = _shape_ratios(data, diam)
-    assert tuple(ratios.values()) == pytest.approx(expected, abs=0.02)
+    # Against an independent Hankel-transform Fisher matrix, not numbers
+    # copied from a run. The float32 Jacobian of the gate agrees to ~1.6%.
+    onp.testing.assert_allclose(
+        tuple(ratios.values()),
+        _independent_shape_ratios(data, diam),
+        rtol=2e-2,
+    )
     assert all(r < 0.8 for r in ratios.values()) is constrained
 
 

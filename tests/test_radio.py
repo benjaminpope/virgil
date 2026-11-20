@@ -756,15 +756,41 @@ def _uv_data(n=4000, seed=0, vis=None, weight=None):
     return ComplexVisData.from_arrays(u, v, vis, weight, 230e9)
 
 
+def _reference_weights(data, weighting, robust, cell):
+    """Imaging weights by a per-visibility loop over a dict of uv cells.
+
+    Briggs (1995): ``w / (1 + W_c f^2)`` with ``W_c`` the summed weight of the
+    cell and ``f^2 = (5 10^-R)^2 / (sum_c W_c^2 / sum_k w_k)``; uniform is
+    ``w / W_c``. A visibility and its Hermitian partner share a cell.
+    """
+    u, v = onp.asarray(data.u), onp.asarray(data.v)
+    w = onp.asarray(data.weight, dtype=float)
+    if weighting == "natural":
+        return w
+    keys = []
+    for uk, vk in zip(u, v):
+        if vk < 0 or (vk == 0 and uk < 0):
+            uk, vk = -uk, -vk
+        keys.append((int(onp.floor(uk / cell)), int(onp.floor(vk / cell))))
+    total = {}
+    for key, wk in zip(keys, w):
+        total[key] = total.get(key, 0.0) + wk
+    density = onp.array([total[key] for key in keys])
+    if weighting == "uniform":
+        return w / density
+    f2 = (5.0 * 10.0 ** (-robust)) ** 2 / (
+        sum(t**2 for t in total.values()) / w.sum()
+    )
+    return w / (1.0 + density * f2)
+
+
 @pytest.mark.parametrize("npix", [32, 31])
 @pytest.mark.parametrize("weighting", ["natural", "uniform", "briggs"])
 def test_dirty_image_matches_brute_force(npix, weighting):
     data = _uv_data(n=3000)
     s = 0.7
     img = data.dirty_image(npix, s, weighting=weighting)
-    w = data._imaging_weights(
-        weighting, 0.5, 1.0 / (npix * s * mas2rad), None, None
-    )
+    w = _reference_weights(data, weighting, 0.5, 1.0 / (npix * s * mas2rad))
     c = 0.5 * (npix - 1)
     x = (c - onp.arange(npix)) * s * mas2rad
     X, Y = onp.meshgrid(x, x, indexing="xy")

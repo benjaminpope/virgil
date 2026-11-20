@@ -74,6 +74,50 @@ def test_whitening_matches_the_dense_covariance(vis_mode, v2):
     )
 
 
+def test_whitening_matches_a_dense_build_from_the_station_indices():
+    # The incidence is built here from the raw station pairs, not from
+    # gains.covariance or its modes: gain g_s on amplitudes multiplies V by
+    # (1 + g_i)(1 + g_j), so a row is shifted by jac * (g_i + g_j) at first
+    # order. Telescope gains are one per (frame, station), baseline gains one
+    # per (frame, baseline); both are shared by all channels.
+    n_frame, n_wave, tau_t, tau_b = 2, 5, 0.02, 0.01
+    data = _data(n_frame=n_frame, n_wave=n_wave).with_gains(
+        telescope=tau_t, baseline=tau_b
+    )
+    prediction = onp.asarray(data.model(TRUTH))
+    obs, err = (onp.asarray(x) for x in data.flatten_data())
+    jac = _jacobian(data, prediction)
+    resid = prediction - obs
+    rows = onp.arange(resid.size)
+    baseline = rows // n_wave  # flat row -> (frame, baseline) index
+    frame = baseline // 6
+    columns, widths = [], []
+    for f in range(n_frame):
+        for station in (1, 2, 3, 4):
+            on = [
+                f == frame[r] and station in PAIRS[baseline[r] % 6]
+                for r in rows
+            ]
+            columns.append(onp.asarray(on, float))
+            widths.append(tau_t)
+    for k in range(6 * n_frame):
+        columns.append((baseline == k).astype(float))
+        widths.append(tau_b)
+    design = jac[:, None] * onp.stack(columns, axis=1)
+    cov = onp.diag(err**2) + (design * onp.square(widths)) @ design.T
+    chi2 = resid @ onp.linalg.solve(cov, resid)
+    expected = (
+        -0.5 * chi2
+        - 0.5 * onp.linalg.slogdet(cov)[1]
+        - 0.5 * resid.size * onp.log(2 * onp.pi)
+    )
+    whitened = whitened_residuals(TRUTH, data)
+    assert float(np.sum(whitened**2)) == pytest.approx(chi2, rel=1e-4)
+    assert float(model_loglike(TRUTH, data)) == pytest.approx(
+        expected, rel=1e-4
+    )
+
+
 def test_supplied_modes_spanning_frames_join_one_block():
     data = _data()
     mode = onp.zeros(data.u.size)
@@ -225,6 +269,15 @@ def test_fit_with_gains_uses_lbfgs_and_fits_widths():
     assert result.info["method"] == "lbfgs"
     assert 0.02 <= float(result.values["noise.vis_gain_telescope"]) <= 0.5
     assert onp.isfinite(result.info["loss"])
+    # The bounds hold for any finite parameter (the transform guarantees
+    # them), so check the fit: converged, at the data's own noise level (the
+    # simulated data carry no gain error, so the width pins to its lower bound
+    # rather than inventing one), and the flux recovered.
+    assert result.info["converged"]
+    assert result.info["at_bound"] == ("noise.vis_gain_telescope",)
+    ndata = result.info["ndata"][0]
+    assert abs(result.info["chi2_red"] - 1.0) < 3.0 * onp.sqrt(2.0 / ndata)
+    assert abs(float(result.values["flux"]) - float(TRUTH.flux)) < 0.02
     with pytest.raises(TypeError, match="least-squares"):
         fit(start, {"flux": dist.Uniform(0.0, 1.0)}, data, method="lm")
 
