@@ -1049,12 +1049,12 @@ def _profile(x, space):
 
     pol = _lm(reml, best[None], (), N_SCALE, 1.0)[0][0]
     pol = np.clip(pol, best - step, best + step)
-    # unidentified (dof <= 0: the orbit interpolates the positions and the
-    # sum falls to the lower bound): keep the incoming σ_J
+    # unidentified (dof <= 0): overfitting only shrinks σ_J, so never below
+    # the incoming value
     best = np.where(
         dof >= DOF_FLOOR,
         np.clip(pol, lo, hi),
-        np.where(dof <= 0, ln_in, best),
+        np.where(dof <= 0, np.maximum(best, ln_in), best),
     )
     u = np.clip((best - lo) / (hi - lo), 1e-6, 1.0 - 1e-6)
     x = x.at[-1].set((np.log(u) - np.log1p(-u)).astype(x.dtype))
@@ -2287,7 +2287,7 @@ def reference_jitter(
 
     def seed(rows):
         """The seed orbit with the least median |r|² over the ``n_best`` best
-        of each band: robust to a night the least-χ² alias interpolates."""
+        of each band: resists a night the least-χ² alias does not absorb."""
         data = PositionData(
             t[rows],
             mean[rows, 0],

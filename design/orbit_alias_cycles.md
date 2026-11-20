@@ -1608,7 +1608,7 @@ finishes with a polish of the dof-corrected objective on the inlier set I and pe
 independent of σ_J and the set is fixed, so nothing crosses it). The correction was first applied inside the floor-capped
 sum; there κ jumps with n_I (it is not monotone: n_I = 4: 1; 5: 3.3; 6: 2.4; 7: 2.0; 10: 1.5; 20: 1.2) and, applied before
 the cap, that biased σ_J low at K = 5–8 and clamped true inliers to the floor. Fixing I first removes both. The floor of 3 degrees of freedom is
-declared: with fewer, the orbit is not identified by the positions and the correction has no meaning. It is the same
+declared: with fewer, the orbit is not identified by the positions and the correction has no meaning. With 2n_I − p ≤ 0 the orbit interpolates the positions and overfitting only shrinks σ_J, so σ_J is never taken below the incoming value; between 0 and 3 dofs it keeps the unscaled optimum. It is the same
 correction as `reference_jitter`'s, with the same p.
 
 **Constants.** Declared: grid spacing 1/√(2K); one round per C-step; p = 7 and the floor of 3 dofs in κ. Inherited: the
@@ -1633,10 +1633,10 @@ grid removes the search's dependence on it. So it is kept simple and robust, not
 did not optimize. A test asserts that `_cstep_chunk`'s returned labels equal `_labels` at its returned x.
 
 **Tests.** (i) The closed form equals `_peak_terms`. (ii) Started with a reference σ_J small enough that at most a quarter of the nights are inliers
-at the reference (the stall), at K = 5, 7 (the search) and 40 (the C-steps), the result is |Δ ln σ_J| ≤ 3 sd,
+at the reference (the stall), at K = 5, 7 (the search), the result is |Δ ln σ_J| ≤ 3 sd,
 sd = 1/√(2(2K − p)(1 − f)²) the Fisher standard deviation of ln σ_J at the truth over the 2K − p residual dofs (computed
 in the test), and label every true inlier. (iii) Non-rescalable data keep s = 1. (iv)
-`reference_jitter` at K = 3, 5, 7, with one outlier night, and a many-seed case where the minimum would collapse. (v) The
+`reference_jitter` at K ≤ 4 (the prior median), with a gross night (the trim helps on most unpicked draws) and a few-band clean-sample check; the C-step test at K = 5, 7, 40 starts from the reference labels at 4.6× below the truth in total error (not a full stall at K = 40, where a quarter to three quarters of the nights are inliers at the start). (v) The
 strict seed-0 end-to-end test (xfail removed only if it passes, tolerance unchanged). (vi) The census (§14 and its criteria
 file): a science merge needs its paired delta. Any other tolerance in the tests is derived the same way or declared in its
 docstring.
