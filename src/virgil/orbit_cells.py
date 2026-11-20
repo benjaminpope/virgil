@@ -1495,21 +1495,6 @@ def _unique_starts(lab, v, h, r):
 def _converge_csteps(space, plan, v, lab):
     """C-steps of the rows ``(v, lab)`` until each one's labels repeat (at most
     ``N_C``); returns ``v``, the labels and the chart vectors."""
-    if id(plan["w"]) not in _WARMED:
-        # compile the C-step at every padded size, on dummy rows, so a later
-        # cell of the system (the plan is shared) compiles nothing
-        _WARMED.add(id(plan["w"]))
-        # a freed array's id can be reused by a later plan
-        weakref.finalize(plan["w"], _WARMED.discard, id(plan["w"]))
-        k = len(space.cat.log_b)
-        for size in CSTEP_SIZES:
-            _cstep_chunk(
-                space,
-                plan,
-                np.asarray(_padded(onp.zeros((1, 3)), size), space.dtype),
-                np.asarray(_padded(onp.zeros((1, k), int), size)),
-                N_NEWTON,
-            )
     v, lab = v.copy(), lab.copy()
     x = onp.zeros((len(v), space.d))
     active = onp.arange(len(v))
@@ -1641,6 +1626,22 @@ def search_cell(space, key=None, *, plan=None, info=None):
     """
     plan = search_plan(space, key) if plan is None else plan
     info = {} if info is None else info
+    if id(plan["w"]) not in _WARMED:
+        # compile the C-step at every padded size of ``_converge_csteps``, on
+        # dummy rows, so a later cell of the system (the plan is shared)
+        # compiles nothing, whichever stages the first cell reaches
+        _WARMED.add(id(plan["w"]))
+        # a freed array's id can be reused by a later plan
+        weakref.finalize(plan["w"], _WARMED.discard, id(plan["w"]))
+        k = len(space.cat.log_b)
+        for size in CSTEP_SIZES:
+            _cstep_chunk(
+                space,
+                plan,
+                np.asarray(_padded(onp.zeros((1, 3)), size), space.dtype),
+                np.asarray(_padded(onp.zeros((1, k), int), size)),
+                N_NEWTON,
+            )
     n_sets, d, k = len(plan["nights"]), space.d, len(space.cat.log_b)
     info.update(sets=n_sets, candidates=0, survivors=0, unique=0, modes=0)
     info.update(varpro_runs=0, varpro_capped=0, pre_runs=0, pre_capped=0)
