@@ -5,8 +5,11 @@ Reads one or more JUnit reports from CI (the ``virgil-evidence-*`` artifacts
 of a run on main, or the nightly's ``junit-*`` artifacts) and writes
 
 - ``tests/test_durations.json``: seconds per test file, the largest over the
-  reports given. ``--shard K/N`` (tests/conftest.py) packs whole files into
+  reports given, without the ``full_only`` tests (the gate and main tiers do
+  not run them). ``--shard K/N`` (tests/conftest.py) packs whole files into
   shards with these, so module-scoped fixtures run once per job.
+- ``tests/test_durations_full.json``: the same with the ``full_only`` tests,
+  which the full and nightly tiers pack by (``VIRGIL_FULL_DURATIONS=1``).
 - with ``--over-budget SECONDS``, ``tests/over_budget.txt``: the tests that
   are not marked slow and took longer than SECONDS in any report, and their
   files. JUnit times include setup, so each such test is exempt from the
@@ -30,6 +33,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DURATIONS = ROOT / "tests" / "test_durations.json"
+DURATIONS_FULL = ROOT / "tests" / "test_durations_full.json"
 OVER_BUDGET = ROOT / "tests" / "over_budget.txt"
 
 
@@ -54,20 +58,21 @@ def read(reports):
     return tests
 
 
-def per_file(reports):
+def per_file(reports, skip=frozenset()):
     files = collections.Counter()
     for report in reports:
         one = collections.Counter()
         for nid, seconds in read([report]).items():
-            one[nid.split("::")[0]] += seconds
+            if nid not in skip:
+                one[nid.split("::")[0]] += seconds
         for path, seconds in one.items():
             files[path] = max(files[path], seconds)
     return files
 
 
-def slow_tests():
+def collected(marker):
     out = subprocess.run(
-        [sys.executable, "-m", "pytest", "-o", "addopts=", "-m", "slow"]
+        [sys.executable, "-m", "pytest", "-o", "addopts=", "-m", marker]
         + ["--collect-only", "-q", "-p", "no:cacheprovider", "-W", "ignore"],
         cwd=ROOT,
         capture_output=True,
@@ -76,20 +81,27 @@ def slow_tests():
     return {line for line in out.splitlines() if "::" in line}
 
 
+def slow_tests():
+    return collected("slow")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("reports", nargs="+", type=Path)
     parser.add_argument("--over-budget", type=float, metavar="SECONDS")
     args = parser.parse_args()
 
-    files = per_file(args.reports)
-    DURATIONS.write_text(
-        json.dumps(
-            {k: round(v, 1) for k, v in sorted(files.items())}, indent=1
+    for path, files in (
+        (DURATIONS, per_file(args.reports, collected("full_only"))),
+        (DURATIONS_FULL, per_file(args.reports)),
+    ):
+        path.write_text(
+            json.dumps(
+                {k: round(v, 1) for k, v in sorted(files.items())}, indent=1
+            )
+            + "\n"
         )
-        + "\n"
-    )
-    print(f"{len(files)} files -> {DURATIONS.relative_to(ROOT)}")
+        print(f"{len(files)} files -> {path.relative_to(ROOT)}")
 
     if args.over_budget is not None:
         slow = slow_tests()

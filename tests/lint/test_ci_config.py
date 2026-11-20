@@ -4,6 +4,7 @@ Pure stdlib: nothing here compiles JAX.
 """
 
 import importlib.util
+import json
 import re
 from pathlib import Path
 
@@ -29,6 +30,21 @@ FLOORS = {f"ubuntu-latest-py3.11-x640-lowest-shard{k}of2" for k in "12"}
 PY313 = {f"ubuntu-latest-py3.13-x640-shard{k}of2" for k in "12"}
 GATE = {
     f"ubuntu-latest-py3.12-x64{x}-shard{k}of3" for x in "01" for k in "123"
+}
+
+
+# The full tiers run the `full_only` tests too, in more shards.
+FULL_GATE = {
+    f"ubuntu-latest-py3.12-x640-shard{k}of{ci.FULL_F32_SHARDS}"
+    for k in range(1, ci.FULL_F32_SHARDS + 1)
+} | {
+    f"ubuntu-latest-py3.12-x641-shard{k}of{ci.FULL_X64_SHARDS}"
+    for k in range(1, ci.FULL_X64_SHARDS + 1)
+}
+NIGHTLY_EXTRA = {
+    f"ubuntu-latest-py3.{v}-x640{low}-shard{k}of{ci.NIGHTLY_FLOOR_SHARDS}"
+    for v, low in (("13", ""), ("11", "-lowest"))
+    for k in range(1, ci.NIGHTLY_FLOOR_SHARDS + 1)
 }
 
 
@@ -62,11 +78,13 @@ def test_main_push_is_the_gate_with_slow_tests():
 
 def test_full_ci_label_adds_macos_py313_and_the_floors():
     jobs = _jobs("pull_request", full_label=True)
-    assert _ids(jobs) == GATE | PY313 | FLOORS | {"macos-latest-py3.11-x640"}
-    assert all(j["slow"] for j in jobs if j["id"] in GATE)
+    assert _ids(jobs) == FULL_GATE | PY313 | FLOORS | {
+        "macos-latest-py3.11-x640"
+    }
+    assert all(j["slow"] for j in jobs if j["id"] in FULL_GATE)
     assert not any(j.get("skip_full_only") for j in jobs)
     # The extra jobs run slow tests nightly only.
-    assert not any(j["slow"] for j in jobs if j["id"] not in GATE)
+    assert not any(j["slow"] for j in jobs if j["id"] not in FULL_GATE)
 
 
 def test_dispatch_is_full_and_nightly_is_full_with_slow_everywhere():
@@ -74,9 +92,17 @@ def test_dispatch_is_full_and_nightly_is_full_with_slow_everywhere():
         _jobs("pull_request", full_label=True)
     )
     nightly = _jobs("schedule")
-    assert _ids(nightly) == _ids(_jobs("workflow_dispatch"))
+    # The nightly shards py3.13 and the floors more finely: they run the
+    # slow and `full_only` tests there.
+    assert _ids(nightly) == FULL_GATE | NIGHTLY_EXTRA | {
+        "macos-latest-py3.11-x640"
+    }
+    assert _ids(_jobs("workflow_dispatch")) == _ids(
+        _jobs("pull_request", full_label=True)
+    )
     assert not any("canary" in i for i in _ids(nightly))
-    assert all(j["slow"] for j in nightly)
+    assert all(j["slow"] for j in nightly if j["os"] != "macos-latest")
+    assert all(j["full_durations"] for j in nightly if "shard" in j)
 
 
 def test_dispatch_with_main_tier_is_the_main_tier():
@@ -296,3 +322,89 @@ def test_slow_orbit_tests_are_never_dropped_on_nightly_or_main():
     for event in ("push", "schedule", "workflow_dispatch"):
         jobs = _jobs(event, orbit_slow=True)
         assert not any(j.get("orbit_slow") for j in jobs), event
+
+
+def _pack(durations, files, n):
+    """Mirror of tests/conftest.py ``_shard_files``: the load of each shard."""
+    mean = sum(durations.values()) / len(durations)
+    loads = [0.0] * n
+    for path in sorted(files, key=lambda f: (-durations.get(f, mean), f)):
+        loads[loads.index(min(loads))] += durations.get(path, mean)
+    return loads
+
+
+def test_nightly_shards_fit_well_inside_the_job_cap():
+    """Estimated wall time of every nightly shard <= 60% of its 90 minutes.
+
+    A shard's wall time is about half its summed per-test time (two xdist
+    workers on a hosted runner; tests/test_durations_full.json is summed
+    test time, from the nightly JUnit reports). Refresh the durations with
+    scripts/update_test_durations.py when the suite grows.
+    """
+    durations = json.loads(
+        (ROOT / "tests/test_durations_full.json").read_text()
+    )
+    conftest = (ROOT / "tests/conftest.py").read_text()
+    independent = set(
+        re.findall(
+            r'"(test_\w+\.py)"',
+            conftest.split("DTYPE_INDEPENDENT = (")[1].split(")")[0],
+        )
+    )
+    files = [
+        f"tests/{p.name}" for p in sorted((ROOT / "tests").glob("test_*.py"))
+    ]
+    assert all(f in durations for f in files), "stale test_durations_full.json"
+    cap = 90 * 60
+    for job in _jobs("schedule"):
+        if "shard" not in job:
+            continue
+        mine = [
+            f
+            for f in files
+            if job["x64"] == "0" or Path(f).name not in independent
+        ]
+        n = int(job["shard"].split("/")[1])
+        worst = max(_pack(durations, mine, n)) / 2
+        assert worst <= 0.6 * cap, (job["id"], round(worst / 60), "min")
+
+
+def test_nightly_report_names_cancelled_jobs_and_counts_them_red(monkeypatch):
+    """A job cancelled at its time cap has no failing test: the verdict is
+    failure (anything but success) and the issue names the job."""
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    verdict = next(
+        x for x in tests.splitlines() if "RESULT: ${{ needs.build" in x
+    )
+    assert "needs.build.result == 'success'" in verdict
+    assert "&& 'success' || 'failure'" in verdict
+    report = _script("nightly_report")
+    jobs = [
+        {"name": "a", "conclusion": "success"},
+        {"name": "b", "conclusion": "cancelled"},
+        {"name": "c", "conclusion": "skipped"},
+        {"name": "d", "conclusion": ""},
+    ]
+    monkeypatch.setattr(report, "gh", lambda *a: json.dumps({"jobs": jobs}))
+    monkeypatch.setenv("GITHUB_RUN_ID", "1")
+    assert report.unsuccessful_jobs() == [("b", "cancelled")]
+
+
+def test_hung_tests_are_ended_by_the_thread_timeout():
+    """The signal method cannot interrupt native code (a macOS nightly job
+    hung 35 minutes in the last tests): the thread method dumps the stacks."""
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    assert "--timeout-method=thread" in tests
+
+
+def test_full_durations_reach_the_packer_only_in_the_full_tiers():
+    """matrix key -> workflow env (cache-key step and pytest step) -> conftest
+    must agree, or the nightly silently packs by the fast-tier timings."""
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    assert tests.count("VIRGIL_FULL_DURATIONS: ${{ matrix.full_durations") == 1
+    assert 'export VIRGIL_FULL_DURATIONS="${{ matrix.full_durations' in tests
+    conftest = (ROOT / "tests/conftest.py").read_text()
+    assert 'os.environ.get("VIRGIL_FULL_DURATIONS") == "1"' in conftest
+    for event in ("pull_request", "push"):
+        assert not any(j.get("full_durations") for j in _jobs(event)), event
+    assert all(j["full_durations"] for j in _jobs("schedule") if "shard" in j)
