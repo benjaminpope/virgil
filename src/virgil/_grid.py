@@ -165,7 +165,6 @@ def warn_unconverged(success, caller):
                 "inaccurate.",
                 check="convergence",
                 failed=failed,
-                fraction=failed / int(onp.size(success)),
                 total=int(onp.size(success)),
             ),
             # user -> public function -> here

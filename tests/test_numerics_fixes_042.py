@@ -57,7 +57,7 @@ def test_unconverged_warning_reports_the_fraction():
     success = onp.array([True, False, False, True])
     with pytest.warns(Warning, match=r"2 of 4.*50\.0%") as record:
         warn_unconverged(success, "f")
-    assert record[0].message.counts["fraction"] == 0.5
+    assert record[0].message.counts == {"failed": 2, "total": 4}
 
 
 def test_ruffio_small_percentile_far_above_zero_is_the_lower_tail():
