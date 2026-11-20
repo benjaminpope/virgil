@@ -143,7 +143,13 @@ jobs:
             .github/scripts/mem_sampler.sh &
           fi
           echo "per-test budget: ${VIRGIL_TEST_BUDGET:-off} s"
+          # --timeout-method=thread: the 300 s per-test timeout (pyproject.toml,
+          # unchanged) cannot interrupt a test stuck in native code with the
+          # default signal method (the macOS job sat 35 minutes at 99% until
+          # the job cap). The thread method dumps every thread's stack, which
+          # names the hung test, and ends that worker.
           .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} --dist loadgroup -rs --durations=30 \
+            --timeout-method=thread \
             --ignore=tests/lint \
             ${{ (matrix.fast_only || !matrix.slow && !matrix.orbit_slow) && '-m "not slow"' || '' }} \
             ${{ matrix.skip_full_only && '-m "not full_only"' || '' }} \

@@ -388,3 +388,10 @@ def test_nightly_report_names_cancelled_jobs_and_counts_them_red(monkeypatch):
     monkeypatch.setattr(report, "gh", lambda *a: json.dumps({"jobs": jobs}))
     monkeypatch.setenv("GITHUB_RUN_ID", "1")
     assert report.unsuccessful_jobs() == [("b", "cancelled")]
+
+
+def test_hung_tests_are_ended_by_the_thread_timeout():
+    """The signal method cannot interrupt native code (a macOS nightly job
+    hung 35 minutes in the last tests): the thread method dumps the stacks."""
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    assert "--timeout-method=thread" in tests
