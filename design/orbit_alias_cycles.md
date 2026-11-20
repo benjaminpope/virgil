@@ -1617,9 +1617,10 @@ correction as `reference_jitter`'s, with the same p.
 **`reference_jitter` after this change.** It only places the plan's weights and starts the chart's σ_J coordinate; the
 grid removes the search's dependence on it. So it is kept simple and robust, not best:
 
-- *Robust seed.* The least-χ² seed over hundreds of aliases selects the interpolating one, whose residuals are near zero
-  (the small-K collapse), and one gross night pulls the least-χ² alias onto it. Take the `n_best` best seeds of each band
-  and keep the one with the least median |r|² (robust to a night an alias interpolates); it is a start, not an estimate.
+- *Seed.* Take the `n_best` best seeds of each band and keep the one with the least median |r|²: it resists a single
+  night the alias does not absorb. It does not remove the small-K multi-band collapse (the median is still bounded by the
+  least-squares sum, so over many bands at small 2K − 7 it falls): that is why this value only places the weights and the
+  C-steps' profile (a global ln σ_J grid) finds σ_J. It is a start, not an estimate.
 - *Degrees of freedom.* The seed also fits P, e and T on the same positions, so it fits `P_ORBIT` = 7 parameters and
   leaves 2K − 7 position dofs: divide the median-based variance by (2K − 7)/2K, and the trim's scale likewise.
 - *Few nights.* With 2K − 7 < `DOF_FLOOR` (K ≤ 4) return the geometric centre of `jitter_range` (the prior median).
@@ -1631,9 +1632,9 @@ grid removes the search's dependence on it. So it is kept simple and robust, not
 `_refine` read them from x and the C-step's weights are rebuilt from them, so no stage scores at a value another stage
 did not optimize. A test asserts that `_cstep_chunk`'s returned labels equal `_labels` at its returned x.
 
-**Tests.** (i) The closed form equals `_peak_terms`. (ii) Started with a reference σ_J large enough that every night is an outlier
-at the reference (the stall: no inlier label), at K = 5, 7 and 40, the C-steps return |Δ ln σ_J| ≤ 3 sd,
-sd = 1/√(2(2K − p)(1 − f)²/2) the Fisher standard deviation of ln σ_J at the truth over the 2K − p residual dofs (computed
+**Tests.** (i) The closed form equals `_peak_terms`. (ii) Started with a reference σ_J small enough that at most a quarter of the nights are inliers
+at the reference (the stall), at K = 5, 7 (the search) and 40 (the C-steps), the result is |Δ ln σ_J| ≤ 3 sd,
+sd = 1/√(2(2K − p)(1 − f)²) the Fisher standard deviation of ln σ_J at the truth over the 2K − p residual dofs (computed
 in the test), and label every true inlier. (iii) Non-rescalable data keep s = 1. (iv)
 `reference_jitter` at K = 3, 5, 7, with one outlier night, and a many-seed case where the minimum would collapse. (v) The
 strict seed-0 end-to-end test (xfail removed only if it passes, tolerance unchanged). (vi) The census (§14 and its criteria

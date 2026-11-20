@@ -1049,7 +1049,13 @@ def _profile(x, space):
 
     pol = _lm(reml, best[None], (), N_SCALE, 1.0)[0][0]
     pol = np.clip(pol, best - step, best + step)
-    best = np.where(dof >= DOF_FLOOR, np.clip(pol, lo, hi), best)
+    # unidentified (dof <= 0: the orbit interpolates the positions and the
+    # sum falls to the lower bound): keep the incoming σ_J
+    best = np.where(
+        dof >= DOF_FLOOR,
+        np.clip(pol, lo, hi),
+        np.where(dof <= 0, ln_in, best),
+    )
     u = np.clip((best - lo) / (hi - lo), 1e-6, 1.0 - 1e-6)
     x = x.at[-1].set((np.log(u) - np.log1p(-u)).astype(x.dtype))
     if not cat.rescalable:
@@ -1328,6 +1334,19 @@ def _varpro_chunk(space, plan, s, v0, n_iter):
             )
             res, ti = _solve_set(_design(space, n3, v), args[2], w, space.s_w2)
             rr = res - ti @ ti / space.s_w2
+            args = (n3, w, args[2], space)  # curvature at the profiled weights
+            x = (
+                _chart_from(
+                    space,
+                    v,
+                    ti,
+                    plan["lnf"][si],
+                    plan["chi2"][si].sum(0),
+                    plan["n"][si].sum(0),
+                )
+                .at[9:]
+                .set(x[9:])
+            )
         h = -jax.hessian(_varpro_objective)(v, *args)
         return x, _labels(x, space), rr, v, h, capped
 
@@ -2139,8 +2158,9 @@ def position_leg(
         night's scale, free of ``σ_J``), so a night with modest excess scatter
         is absorbed by ``σ_J`` instead of labelled an outlier.
     jitter_ref : float, optional
-        With ``jitter=None``, the reference ``σ_J`` (mas) the search runs at
-        and the chart starts from (default the median quoted position error;
+        With ``jitter=None``, the reference ``σ_J`` (mas) that weights the
+        search's sets and starts the chart's ``σ_J``, which the C-steps then
+        profile (default the median quoted position error;
         [`reference_jitter`][virgil.orbit_cells.reference_jitter] is better).
     jitter_range : (float, float), optional
         With ``jitter=None``, the ``σ_J`` prior bounds (mas, default
@@ -2227,8 +2247,8 @@ def reference_jitter(
     The excess of the nights' position scatter about the best position-only
     seed orbit ([`position_profile`][virgil.aliases.position_profile], best
     peaks as positions; of the ``n_best`` per band, the seed with the least
-    median ``|r|²``: robust to a night an alias interpolates; a start, not an
-    estimate) over the
+    median ``|r|²``, which resists a night the alias does not absorb; a start,
+    not an estimate) over the
     quoted errors, by medians: ``σ_J² = median(|r|² / 2) / (ln 2 (2K - 7) /
     2K) - median(σ²)``, the ``7`` the orbit parameters fitted to the positions
     (4 TI′, ``P``, ``e``, ``T``; `P_ORBIT`). Nights with ``|r|²`` above the

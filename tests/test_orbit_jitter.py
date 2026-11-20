@@ -454,35 +454,38 @@ def test_reference_jitter_is_the_prior_median_without_degrees_of_freedom():
 
 
 @x64
-def test_reference_jitter_trims_gross_nights_to_the_clean_nights_value(
+def test_reference_jitter_trim_helps_on_most_draws_with_a_gross_night(
     monkeypatch,
 ):
-    """Two gross nights of 16 and one of 9: the trim and refit drop them, so
-    the result equals the reference of the clean nights alone and differs from
-    the untrimmed one (``DELTA`` -> 0 trims nothing). A second draw of 9: the
-    result is nearer the clean nights' value than the untrimmed one is. The
-    trim catches a gross night only when the seed does not absorb it, hence
-    fixed draws rather than a statement for every draw."""
-    j_true = 5 * SIGMA
-    cases = ((16, (2, 9), 4, True), (9, (3,), 3, True), (9, (3,), 1, False))
-    for k, gross, seed, exact in cases:
-        s, dom, t_ab = _ref_setup(k, j_true, gross=gross, seed=seed)
+    """A 100-sigma night among 12, over the consecutive seeds 0-7 (none
+    skipped): the trimmed reference is nearer the clean nights' value than the
+    untrimmed one (``DELTA`` -> 0 trims nothing) on at least half of the
+    draws that the trim changes. The seed is a least-squares-like fit that can
+    absorb a night, so it is a majority, not every draw."""
+    j_true, gross = 5 * SIGMA, (3,)
+    better = changed = 0
+    for seed in range(8):
+        s, dom, t_ab = _ref_setup(12, j_true, gross=gross, seed=seed)
         clean = tuple(n for i, n in enumerate(s) if i not in gross)
         got = oc_cells.reference_jitter(s, dom, t_ab)
         want = oc_cells.reference_jitter(clean, dom, t_ab)
         with monkeypatch.context() as m:
             m.setattr(oc_cells, "DELTA", 1e-300)
             untrimmed = oc_cells.reference_jitter(s, dom, t_ab)
-        if exact:
-            assert got == pytest.approx(want, rel=1e-6)
-        assert abs(got - want) < abs(untrimmed - want)
+        if got != untrimmed:
+            changed += 1
+            better += abs(got - want) < abs(untrimmed - want)
+    assert changed >= 3
+    assert better >= changed / 2
 
 
 @x64
 def test_reference_jitter_does_not_collapse_on_clean_small_samples():
-    """The minimum over aliases interpolates and returns about zero: over
-    twelve clean draws (K = 5, 6, 8) the reference never falls below a third
-    of the truth, and its median is within a factor 2 of it."""
+    """Few-band sanity (the 9-14 d range of one season has 2-3 alias bands, not
+    the many of a two-season search): over twelve clean draws (K = 5, 6, 8)
+    the reference never falls below a third of the truth, and its median is
+    within a factor 2 of it. The many-band small-K collapse is the profile
+    step's to repair, tested by the stall tests."""
     j_true = 5 * SIGMA
     got = [
         oc_cells.reference_jitter(*_ref_setup(k, j_true, seed=seed))
