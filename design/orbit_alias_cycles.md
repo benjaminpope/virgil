@@ -1608,7 +1608,7 @@ finishes with a polish of the dof-corrected objective on the inlier set I and pe
 independent of σ_J and the set is fixed, so nothing crosses it). The correction was first applied inside the floor-capped
 sum; there κ jumps with n_I (it is not monotone: n_I = 4: 1; 5: 3.3; 6: 2.4; 7: 2.0; 10: 1.5; 20: 1.2) and, applied before
 the cap, that biased σ_J low at K = 5–8 and clamped true inliers to the floor. Fixing I first removes both. The floor of 3 degrees of freedom is
-declared: with fewer, the orbit is not identified by the positions and the correction has no meaning. With 2n_I − p ≤ 0 the orbit interpolates the positions and overfitting only shrinks σ_J, so σ_J is never taken below the incoming value; between 0 and 3 dofs it keeps the unscaled optimum. It is the same
+declared: with fewer, the orbit is not identified by the positions and the correction has no meaning. Below the floor (2n_I − p < 3, the same threshold as `reference_jitter`) the orbit nearly interpolates the positions and overfitting only shrinks σ_J, so σ_J is the larger of the unscaled optimum and the incoming value; there is no REML polish. It is the same
 correction as `reference_jitter`'s, with the same p.
 
 **Constants.** Declared: grid spacing 1/√(2K); one round per C-step; p = 7 and the floor of 3 dofs in κ. Inherited: the

@@ -1049,12 +1049,10 @@ def _profile(x, space):
 
     pol = _lm(reml, best[None], (), N_SCALE, 1.0)[0][0]
     pol = np.clip(pol, best - step, best + step)
-    # unidentified (dof <= 0): overfitting only shrinks σ_J, so never below
-    # the incoming value
+    # fewer than DOF_FLOOR dofs (as in ``reference_jitter``): overfitting only
+    # shrinks σ_J, so never below the incoming value
     best = np.where(
-        dof >= DOF_FLOOR,
-        np.clip(pol, lo, hi),
-        np.where(dof <= 0, np.maximum(best, ln_in), best),
+        dof >= DOF_FLOOR, np.clip(pol, lo, hi), np.maximum(best, ln_in)
     )
     u = np.clip((best - lo) / (hi - lo), 1e-6, 1.0 - 1e-6)
     x = x.at[-1].set((np.log(u) - np.log1p(-u)).astype(x.dtype))
