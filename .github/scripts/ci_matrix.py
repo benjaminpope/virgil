@@ -18,13 +18,13 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 | main    | push to main                 | the gate, with the slow tests except    |
 |         |                              | the `full_only` ones                    |
 |         | dispatch with `tier=main`    | the same (the daily lock-upgrade PR)    |
-| full    | `full-ci` label, dispatch    | main + the `full_only` tests in 6       |
-|         |                              | float32 and 5 float64 shards, macOS     |
+| full    | `full-ci` label, dispatch    | main + the `full_only` tests in 9       |
+|         |                              | float32 and 6 float64 shards, macOS     |
 |         |                              | py3.11, py3.13 and the floors (the last |
 |         |                              | two fast tier, 2 shards each)           |
 | nightly | daily schedule               | full, all with slow tests except macOS  |
 |         |                              | (fast tier); py3.13 and the floors in 6 |
-|         |                              | shards each (24 jobs in all)            |
+|         |                              | shards each (28 jobs in all)            |
 
 The float64 gate jobs skip the dtype-independent test files, so they add
 about 0.57x the float32 suite, not 2x. The lock-upgrade PR tests the newest
@@ -54,8 +54,8 @@ ORBIT_SLOW_FILES = (
     "test_pipeline_disk.py test_pipeline_image.py test_pipeline_orbit_gap.py"
 )
 
-FULL_F32_SHARDS = 6
-FULL_X64_SHARDS = 5
+FULL_F32_SHARDS = 9
+FULL_X64_SHARDS = 6
 NIGHTLY_FLOOR_SHARDS = 6
 
 LINUX = {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"}
@@ -89,7 +89,7 @@ def choose(
     # float32 suite (tests/test_durations_full.json: about 220 estimated
     # minutes on one runner before sharding): more shards keep each job near
     # half of the nightly's 90-minute cap. The largest file,
-    # test_orbit_cells.py, is about 44 minutes alone.
+    # test_orbit_population.py, is about 25 minutes.
     n_shards = (
         {"0": FULL_F32_SHARDS, "1": FULL_X64_SHARDS}
         if full
