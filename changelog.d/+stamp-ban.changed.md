@@ -1,1 +1,0 @@
-The `# deliberate:` exemption in `scripts/code_shape.py` rejects vacuous reasons ("jit boundary", "test seam", "tested directly", …) on stamps added or changed in a PR; `--audit-stamps src/virgil` lists existing stamps as vacuous or kept.
