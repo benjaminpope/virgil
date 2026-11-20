@@ -30,6 +30,8 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Rendered disks and images on uv lattices | the `rotation_deg` argument of `FlaredDisk*` and its `"grid"` default; the opt-in `rotation_deg="grid"` of `Image`, `starting_image`, `clean`, `dirty_image` and `residual_image` (their defaults stay North up); the lattice tolerance for DISCO dictionaries |
 | Diagnostic plots ([`virgil.plotting`](api/plotting.md)) | `plot_field_draws` |
 | Preconditioned fits ([`virgil.fitting`](api/fitting.md)) | `gauss_newton_diag`, `kkt_report` and the `precondition` argument of `fit` |
+| Optimizer options ([`virgil.fitting`](api/fitting.md)) | `fit(method="lbfgsb")` (scipy L-BFGS-B, float64, box bounds; the extra `info` keys `nit`, `message`, `pg_norm`) and `fit(post_step=)` (Adam only) |
+| Observable nuisance modes | the `modes` argument of `DifferentialPhase` and `FluxSpectrum`, the row-scoped correlated-flux marginalization of `GainModes`, and closure-phase modes that span several frames (`with_closure_offsets(modes=)`); see [spectroscopic observables](spectro_observables.md) |
 | Night-outlier mixture ([`virgil.likelihood`](api/likelihood.md)) | `group_outlier_mixture`, `group_outlier_probabilities` |
 | Radio interferometry | the module [`virgil.radio`](api/radio.md) (`ComplexVisData`, `CalibrationNuisance`, `primary_beam`, `dartboard_folds`; site names, default priors and the measurement-set convention) |
 | Radio Toeplitz χ² | the module [`virgil.radio_toeplitz`](api/radio_toeplitz.md) (`ToeplitzVisData`), `ComplexVisData.toeplitz`, and the scalar-term protocol of `fit` (`chi2_and_log_norm`, `curvature_params`, `curvature_loss`) |

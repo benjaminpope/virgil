@@ -851,7 +851,8 @@ def fit(
         mean is not lower than the previous window's by ``ftol_abs`` or more
         (unscaled; off if ``None``).
     ftol_window : int, optional
-        Adam only: the window of ``ftol_abs``, in steps.
+        Adam only: the window of ``ftol_abs``, in steps; an integer of at
+        least 2, and at most ``max_steps // 2`` or ``ftol_abs`` never fires.
     post_step : callable, optional
         Adam only, not with ``precondition``: a jax-traceable ``post_step(z) -> z``
         on the unconstrained coordinates ``z`` (a dict by path, not ``values``),
