@@ -49,6 +49,10 @@ ORBIT_SLOW_FILES = (
     "test_pipeline_disk.py test_pipeline_image.py test_pipeline_orbit_gap.py"
 )
 
+FULL_F32_SHARDS = 6
+FULL_X64_SHARDS = 5
+NIGHTLY_FLOOR_SHARDS = 6
+
 LINUX = {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"}
 
 
@@ -76,6 +80,17 @@ def choose(
     slow = full or main_tier
     orbit_files = ORBIT_SLOW_FILES if orbit_slow and not slow else ""
 
+    # The full tiers also run the `full_only` tests, which roughly triple the
+    # float32 suite (tests/test_durations_full.json: about 220 estimated
+    # minutes on one runner before sharding): more shards keep each job near
+    # half of the nightly's 90-minute cap. The largest file,
+    # test_orbit_cells.py, is about 44 minutes alone.
+    n_shards = (
+        {"0": FULL_F32_SHARDS, "1": FULL_X64_SHARDS}
+        if full
+        else {"0": 3, "1": 3}
+    )
+
     # Whole files per shard, packed by tests/test_durations.json. The
     # per-test budget (tests/conftest.py) is enforced on these Linux py3.12
     # jobs, whose timings it was set from. x64 exercises the float64 paths
@@ -84,7 +99,8 @@ def choose(
         {
             **LINUX,
             "x64": x64,
-            "shard": f"{k}/3",
+            "shard": f"{k}/{n_shards[x64]}",
+            "full_durations": full,
             "slow": slow,
             "orbit_slow": orbit_files,
             "budget": True,
@@ -93,8 +109,10 @@ def choose(
             "skip_full_only": slow and not full,
         }
         for x64 in ("0", "1")
-        for k in (1, 2, 3)
+        for k in range(1, n_shards[x64] + 1)
     ]
+    # py3.13 and the floors run the slow and `full_only` tests in the nightly.
+    floor_shards = NIGHTLY_FLOOR_SHARDS if nightly else 2
     if full:
         # A float32 platform check: macOS py3.11, fast tier. It does not
         # test x64 (the Linux gate jobs do).
@@ -117,9 +135,10 @@ def choose(
                 **LINUX,
                 "python-version": "3.13",
                 "slow": nightly,
-                "shard": f"{k}/2",
+                "shard": f"{k}/{floor_shards}",
+                "full_durations": nightly,
             }
-            for k in (1, 2)
+            for k in range(1, floor_shards + 1)
         ]
     if full or pyproject:
         # Every direct dependency at the oldest version pyproject.toml
@@ -130,9 +149,10 @@ def choose(
                 "python-version": "3.11",
                 "lowest": True,
                 "slow": nightly,
-                "shard": f"{k}/2",
+                "shard": f"{k}/{floor_shards}",
+                "full_durations": nightly,
             }
-            for k in (1, 2)
+            for k in range(1, floor_shards + 1)
         ]
 
     for job in include:

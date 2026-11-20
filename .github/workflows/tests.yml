@@ -87,6 +87,7 @@ jobs:
         id: key
         shell: bash
         run: |
+          export VIRGIL_FULL_DURATIONS="${{ matrix.full_durations && '1' || '' }}"
           jax=$(.venv/bin/python -c 'import jax; print(jax.__version__)')
           pack=$(.venv/bin/python -c "
           import sys; sys.path.insert(0, 'tests')
@@ -130,6 +131,8 @@ jobs:
           # The float64 jobs skip the dtype-independent files (conftest.py).
           VIRGIL_SKIP_DTYPE_INDEPENDENT: ${{ matrix.x64 }}
           VIRGIL_SLOW_FILES: ${{ matrix.orbit_slow }}
+          # Pack the shards by the timings that include `full_only` tests.
+          VIRGIL_FULL_DURATIONS: ${{ matrix.full_durations && '1' || '' }}
           # Seconds per test not marked slow (tests/conftest.py), whenever any
           # warm cache for this job and JAX version is restored (including
           # when PR file changes fall back to the job+JAX restore-key).
