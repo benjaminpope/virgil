@@ -71,6 +71,9 @@ _ELL_PER_EQUIVALENT = math.sqrt(3.0)
 # check.
 _RENDER_NPIX = 512
 _UNSET = object()
+# Sweeps that re-place each ring given the others, ending early when none is
+# accepted. Two: the second revisits rings whose neighbours moved in the first;
+# a cap, not a convergence test (not tuned against larger values).
 _BACKFIT_PASSES = 2
 _BACKFIT_MIN_GAIN = 2.0  # BIC units: below this a re-placement is noise
 # Coarse starts for the Gaussian process's geometry, beside the single ring's.

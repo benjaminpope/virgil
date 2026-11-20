@@ -799,7 +799,8 @@ _DIRTY_BATCH = 4096
 
 def _grid_rotation(observations, rotation_deg="grid"):
     """The pixel grid's rotation: ``rotation_deg``, or for ``"grid"`` that of
-    the data's uv lattice (0 when they have none, or lattices that differ).
+    the data's uv lattice (0 when they have none, or lattices that differ,
+    without a warning: pass an angle for datasets on different lattices).
     """
     if not isinstance(rotation_deg, str):
         return float(rotation_deg)
@@ -1970,7 +1971,8 @@ class LCurve:
         data : OIData or sequence of OIData
             The data the sweep was fitted to.
         regularizer
-            The regularizer swept, with its ``path`` (its weight is replaced).
+            The regularizer swept, with its ``path`` (its weight is replaced
+            by the sweep's weights, without its ``n_data`` factor).
         noise_scale2 : float, optional
             ``s²``, from the data scatter rather than an image fit.
         noise_scale_sigma : float, optional
@@ -3173,7 +3175,8 @@ def l_curve(
     regularizer : TSV, TV, MaxEntropy, Laplacian, StarletL1 or LogSum
         The regularizer whose ``weight`` is swept (its own is ignored).
     weights : sequence of float
-        The weights to try (sorted internally, largest first).
+        The weights to try (sorted internally, largest first). Each is the
+        final ``weight``: the regularizer's ``n_data`` factor is not applied.
     others : sequence, optional
         Further regularizers kept fixed, e.g. a
         [`Centroid`][virgil.imaging.Centroid] prior.
