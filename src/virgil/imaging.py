@@ -1530,7 +1530,10 @@ class CleanResult:
         The FWHM of each scale's Gaussian shape (0 for a point).
     rotation_deg : float
         Position angle of the pixel grid's "up" axis, the frame of
-        ``components``; the model's, 0 for North up.
+        ``components``: ``frame_deg`` when set, else the model's (0 for North
+        up).
+    frame_deg : float, optional
+        The frame ``clean`` ran in; ``rotation_deg`` uses it when set.
     """
 
     model: object
@@ -1540,10 +1543,14 @@ class CleanResult:
     stop: str
     components_by_scale: jax.Array = None
     scales_mas: tuple = (0.0,)
+    frame_deg: float = None
 
     @property
     def rotation_deg(self):
-        # With no components the model may be the bare base: any frame will do.
+        # With no components the model is the bare base, with no frame of its
+        # own: use the one ``clean`` ran in.
+        if self.frame_deg is not None:
+            return float(self.frame_deg)
         image = getattr(self.model, "clean", self.model)
         return float(image._frame()) if hasattr(image, "_frame") else 0.0
 
@@ -1826,9 +1833,8 @@ def clean(
             history.append(float(chi2) / ndata)
         by_scale = onp.asarray(fluxes, float)
         components = onp.asarray(_sky(fluxes, fixed[0][2]), float)
-    if base is None:
-        total = components.sum()
-        components, by_scale = components / total, by_scale / total
+    norm = components.sum() if base is None else 1.0  # unit total flux
+    components, by_scale = components / norm, by_scale / norm
     model = _clean_model(
         base, components, pixel_scale_mas, rotation_deg, spectrum
     )
@@ -1840,6 +1846,7 @@ def clean(
         stop,
         np.asarray(by_scale),
         scales_mas,
+        rotation_deg,
     )
 
 
