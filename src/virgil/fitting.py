@@ -2286,7 +2286,7 @@ class _NoBox(TypeError):
 
 
 # deliberate: the bounds of an L-BFGS-B fit, kept apart from the host loop
-def _box(problem, z):
+def _box(problem, z, strict=True):
     """``(lower, upper)`` flat bounds of the coordinates of a boxed problem.
 
     From ``Uniform`` priors, and from the non-negative pixels of a linear
@@ -2294,10 +2294,12 @@ def _box(problem, z):
     priors (``LogUniform``, isotropic angles, positive ``ImproperUniform``)
     raise ``TypeError``, as do angle vectors and error terms; a function model
     gets no image bounds, with a warning if a flat prior could hold pixels.
+    With ``strict=False`` (``kkt_report``) a coordinate without a box is
+    unbounded instead, so the others keep theirs.
     """
     import numpyro.distributions as dist
 
-    if problem.noise:
+    if problem.noise and strict:
         raise _NoBox("method='lbfgsb' does not fit error terms.")
     lower, upper = [], []
     for path, prior in problem.priors.items():
@@ -2307,7 +2309,13 @@ def _box(problem, z):
             support = support.base_constraint
         flat_real = isinstance(support, type(dist.constraints.real))
         if is_angle_vector(prior):
-            raise _NoBox(f"method='lbfgsb' cannot fit angle vector {path!r}.")
+            if strict:
+                raise _NoBox(
+                    f"method='lbfgsb' cannot fit angle vector {path!r}."
+                )
+            lower.append(onp.full(onp.size(z[path]), -onp.inf))
+            upper.append(onp.full(onp.size(z[path]), onp.inf))
+            continue
         if isinstance(base, dist.Uniform):
             lo, hi = (
                 onp.broadcast_to(onp.asarray(b, float), shape)
@@ -2315,12 +2323,15 @@ def _box(problem, z):
             )
         elif isinstance(base, dist.ImproperUniform) and flat_real:
             lo, hi = onp.full(shape, -onp.inf), onp.full(shape, onp.inf)
-        else:
+        elif strict:
             raise _NoBox(
                 f"method='lbfgsb' supports only Uniform priors and flat real "
                 f"priors (ImproperUniform on the real line, as image_priors "
                 f"gives); {path!r} has {type(base).__name__}."
             )
+        else:
+            lo, hi = onp.full(shape, -onp.inf), onp.full(shape, onp.inf)
+            flat_real = False
         parent, _, name = path.rpartition(".")
         if not isinstance(problem.model, SourceModel) and flat_real:
             warnings.warn(
@@ -2337,6 +2348,9 @@ def _box(problem, z):
                 lo, hi = onp.maximum(lo, box[0]), onp.minimum(hi, box[1])
         lower.append(onp.ravel(lo))
         upper.append(onp.ravel(hi))
+    for site in problem.coordinate_keys[len(problem.priors) :]:  # error terms
+        lower.append(onp.full(onp.size(z[site]), -onp.inf))
+        upper.append(onp.full(onp.size(z[site]), onp.inf))
     return onp.concatenate(lower), onp.concatenate(upper)
 
 
@@ -3038,10 +3052,7 @@ def kkt_report(
         z0 = None if start is None else problem.init(start)
         ref = None if start is None else jax.grad(problem.loss)(z0)
         pen0 = None if start is None else jax.grad(problem.penalty)(z0)
-        try:
-            lower, upper = _box(problem, z)
-        except _NoBox:
-            lower = upper = None
+        lower, upper = _box(problem, z, strict=False)
         keys = problem.coordinate_keys
         offsets = dict(
             zip(keys, onp.cumsum([0] + [onp.size(z[k]) for k in keys]))

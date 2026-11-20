@@ -107,7 +107,7 @@ def test_residuals_follow_the_flat_coordinate_switch():
         unflat.residuals(unflat.init())
 
 
-def test_kkt_report_only_swallows_the_no_box_error(monkeypatch):
+def test_kkt_report_does_not_swallow_box_errors(monkeypatch):
     from tests.test_kkt_report import _problem
     from virgil.imaging import TSV
 
@@ -120,7 +120,7 @@ def test_kkt_report_only_swallows_the_no_box_error(monkeypatch):
         method="lbfgsb",
     )
 
-    def broken(problem, z):
+    def broken(problem, z, strict=True):
         raise TypeError("a genuine bug")
 
     monkeypatch.setattr(fitting, "_box", broken)
@@ -191,3 +191,19 @@ def test_aliases_physical_clips_cos_inc_minus_one():
     x[:, 3] = -1.0
     inc = _physical(x)["inc"]
     assert 179.0 < float(inc[0]) < 180.0
+
+
+def test_non_box_prior_does_not_drop_the_other_bounds():
+    priors = {
+        "dra": dist.Uniform(-200.0, 200.0),
+        "ddec": dist.Uniform(-100.0, 100.0),
+        "flux": dist.LogUniform(1e-4, 0.5),
+    }
+    start = BinaryModelCartesian(55.0, -35.0, 0.03)
+    problem = _Objective(start, priors, oidata_sim, boxed=True)
+    z = problem.init()
+    lower, upper = fitting._box(problem, z, strict=False)
+    onp.testing.assert_array_equal(lower, [-200.0, -100.0, -onp.inf])
+    onp.testing.assert_array_equal(upper, [200.0, 100.0, onp.inf])
+    with pytest.raises(fitting._NoBox):  # L-BFGS-B still needs a full box
+        fitting._box(problem, z)
