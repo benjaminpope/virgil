@@ -1529,9 +1529,10 @@ def _summarize(settings, reports):
         if "r_hat_max" in post:
             checks += _sampler_checks(post)
             checks.append(_checks.mode_converged(post["optimum_gap_max"]))
+            # The winning band cut short (a token chain included) fails.
             token = bool(modes) and any(
                 m["n"] == modes["winner"]["n"]
-                and m.get("sampler", {}).get("token_run", False)
+                and m.get("sampler", {}).get("budget_exhausted", False)
                 for m in post.get("modes", [])
             )
             checks.append(

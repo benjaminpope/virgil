@@ -808,3 +808,23 @@ def test_summary_chi2_limits_use_the_number_of_data():
     # the same chi2/N on 1000 data is far outside the tail and above 2
     reports["search"]["chi2"].update(chi2=2500.0, n=1000)
     assert _verdicts(reports)["chi2"] == "warn"
+
+
+def _budget_check(winner_cut, rival_cut):
+    reports = _fake_reports()
+    post = reports["posterior"]
+    winner = reports["modes"]["winner"]["n"]
+    post["modes"][0]["sampler"] = {"budget_exhausted": winner_cut}
+    rival = {**post["modes"][0], "n": winner + 1}
+    rival["sampler"] = {"budget_exhausted": rival_cut}
+    post["modes"].append(rival)
+    post["budget_exhausted"] = winner_cut or rival_cut
+    _, checks = orbit_module._summarize(OrbitPipeline.defaults(), reports)
+    return next(c for c in checks if c.name == "sampler_budget")
+
+
+def test_a_truncated_winning_band_fails_sampler_budget():
+    # Ben, 2026-11-20: the winning band cut short fails; a rival's only warns.
+    assert _budget_check(True, False).status == "fail"
+    assert _budget_check(False, True).status == "warn"
+    assert _budget_check(False, False).status == "pass"

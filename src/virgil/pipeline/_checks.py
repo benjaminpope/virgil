@@ -1685,20 +1685,17 @@ def winner_flags(flags):
     )
 
 
-def sampler_budget(exhausted, token_winner=False):
+def sampler_budget(exhausted, winner_cut=False):
     """Whether the time budget cut the sampling short.
 
-    A band that ran out of budget is a warning. If the winning band was only
-    the 8-draw, un-warmed token chain, that chain is the whole evidence for
-    the orbit's posterior, so the check fails.
+    A band that ran out of budget is a warning. If it was the winning band,
+    including one reduced to the 8-draw, un-warmed token chain, its posterior
+    is truncated, so the check fails (Ben, 2026-11-20).
     """
-    if token_winner:
-        status, meaning = (
-            "fail",
-            "the best band's posterior is an un-warmed token chain",
-        )
+    if winner_cut:
+        status, meaning = "fail", "the best band's sampling was cut short"
     elif exhausted:
-        status, meaning = "warn", "sampling was cut short in at least one band"
+        status, meaning = "warn", "sampling was cut short in a band"
     else:
         status, meaning = "pass", "sampling ran to its full length"
     return Check(
