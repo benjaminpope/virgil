@@ -258,9 +258,9 @@ def test_hessian_through_the_nufft_says_to_use_the_dft():
     import jax.numpy as np
 
     from virgil._geometry import image_visibilities
-    from tests.test_nufft import _problem
+    from tests._shared import nufft_problem
 
-    image, uu, vv = _problem((8, 8), n=10)
+    image, uu, vv = nufft_problem((8, 8), n=10)
 
     def objective(b):
         grid = b.reshape(image.shape)

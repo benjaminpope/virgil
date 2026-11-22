@@ -2798,7 +2798,8 @@ class FlaredDisk(_PixelRendered):
     thin-surface projection. Eq. 3 assigns the brightness per sky pixel with no
     area Jacobian, so the ring is brighter on one side, a spurious first
     harmonic of amplitude about ``flaring * aspect * tan(inc)``; a matching
-    ``PowerLawHeight`` takes ``h0 = -aspect * radius``.
+    ``PowerLawHeight`` takes ``h_ref = -aspect * radius``,
+    ``r_ref = radius`` and ``psi = flaring``.
 
     Source: Blakely et al. (2024), §III,
     [references](../../../references.md#blakely2024).

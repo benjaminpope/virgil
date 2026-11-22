@@ -128,22 +128,6 @@ def _log_jacobian(bijection, z):
     return bijection.log_abs_det_jacobian(z, bijection(z))
 
 
-def _warn_centred_scales(problem):
-    """Warn that MAP on centred ``hierarchical_scales`` collapses its spread."""
-    if any(
-        getattr(spec, "centred", False) and hasattr(spec, "log_prior")
-        for spec, _, _ in problem.noise.values()
-    ):
-        warnings.warn(
-            "fit() on centred hierarchical_scales: the joint MAP has no "
-            "finite optimum (Neal's funnel), so the spread is driven to its "
-            "lower bound and the member scales collapse onto the median. Use "
-            "centred=False, fix the spread, or sample with numpyro_model.",
-            UserWarning,
-            stacklevel=external_stacklevel(),
-        )
-
-
 def _nudge_inside(prior, start):
     """``start`` moved just inside the support of ``prior`` if it is on a bound.
 
@@ -922,7 +906,21 @@ def fit(
             ),
             dtype,
         )
-        _warn_centred_scales(problem)
+        if any(
+            getattr(spec, "centred", False)
+            and hasattr(spec, "log_prior")
+            and f"{spec.name}_spread" in problem.priors
+            for spec, _, _ in problem.noise.values()
+        ):
+            warnings.warn(
+                "fit() on centred hierarchical_scales: the joint MAP has no "
+                "finite optimum (Neal's funnel), so the spread is driven to "
+                "its lower bound and the member scales collapse onto the "
+                "median. Use centred=False, fix the spread, or sample with "
+                "numpyro_model.",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
         z0 = _recentre(problem, problem.init(cast_tree(init, dtype)))
         if not method:
             try:
@@ -2061,9 +2059,9 @@ def gauss_newton_diag(
     coordinates [`fit`][virgil.fitting.fit] optimizes: J is the Jacobian of the
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
     of the regularizers, floored at zero. On the pixels of a regularizer with
-    ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b *
-    (1 - b)`` (the softmax's, unsmoothed pixels), added to the data JᵀJ and the
-    other terms, so it is a scale, not the curvature, at weak weights. It is the scale
+    ``metric_rows`` (maximum entropy) R is that metric, ``weight * b *
+    (1 - b)`` (the softmax's, unsmoothed pixels), not the regularizer's
+    Hessian; JᵀJ and P are kept there. It is the scale
     ``fit(..., precondition="diag")`` divides each coordinate by; see
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense matrix.
 

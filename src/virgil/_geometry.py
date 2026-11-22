@@ -700,9 +700,9 @@ def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
     theta = np.linspace(0.0, 2 * np.pi, 64 * k, endpoint=False)
     f_grid = derivatives(theta)[0]
     f_min = np.min(f_grid)
-    # Newton steps on f' from the lowest grid point, where f'' > 0 near a
-    # minimum; a step is skipped where it is not.
-    # Polish the lowest local grid minima (at most ``k`` troughs exist).
+    # Newton steps on f' from the lowest local grid minima (a degree-k
+    # trigonometric polynomial has at most k); a step is skipped where
+    # f'' <= 0.
     local = (f_grid <= np.roll(f_grid, 1)) & (f_grid <= np.roll(f_grid, -1))
     _, picks = jax.lax.top_k(-np.where(local, f_grid, np.inf), k)
     t = theta[picks]

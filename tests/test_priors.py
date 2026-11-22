@@ -383,7 +383,17 @@ def test_centred_hierarchical_scales_have_positive_definite_curvature():
         assert onp.all(onp.isfinite(eig)) and eig.min() > 0.0
 
 
-def test_isotropic_latitude_mean_is_finite_on_a_narrow_float32_range():
-    prior = IsotropicLatitude(onp.float32(1.5707), onp.float32(1.57079))
-    mean = float(prior.mean)
-    assert onp.isfinite(mean) and 1.5707 <= mean <= 1.57079
+@pytest.mark.parametrize(
+    "low, high",
+    [
+        (1.5707, 1.57079),  # at the pole, narrower than float32 resolves
+        (0.3, 0.30005),  # away from it
+        (-0.3, 1.0),
+        (-onp.pi / 2, onp.pi / 2),
+    ],
+)
+def test_isotropic_latitude_mean_matches_quadrature_in_float32(low, high):
+    x = onp.linspace(low, high, 200_001)
+    reference = onp.trapezoid(x * onp.cos(x), x) / onp.trapezoid(onp.cos(x), x)
+    mean = float(IsotropicLatitude(onp.float32(low), onp.float32(high)).mean)
+    assert abs(mean - reference) < min(0.1 * (high - low), 1e-3)

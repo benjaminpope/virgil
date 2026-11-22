@@ -503,3 +503,22 @@ def test_a_dict_start_on_a_bound_is_nudged_inside_it():
         steps=3,
     )
     assert onp.isfinite(onp.asarray(vi.losses)).all()
+
+
+def test_a_noise_start_on_a_bound_is_nudged_inside_it():
+    data = nrm_oidata().with_model(BinaryModelCartesian(120.0, -80.0, 0.02))
+    vi = variational(
+        BINARY,
+        BINARY_PRIORS,
+        data,
+        noise={"vis_scale": dist.LogUniform(0.1, 10.0)},
+        start={
+            "dra": 120.0,
+            "ddec": -80.0,
+            "flux": 0.02,
+            "noise.vis_scale": 0.1,  # on the lower bound
+        },
+        guide="mvn",
+        steps=3,
+    )
+    assert onp.isfinite(onp.asarray(vi.losses)).all()

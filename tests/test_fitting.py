@@ -844,17 +844,23 @@ def test_fit_does_not_warn_for_non_centred_hierarchical_scales():
     from virgil.priors import hierarchical_scales
 
     population, scales = hierarchical_scales("v2", 2, centred=False)
-    objective = _Objective(
-        _binary_fn,
-        {**PRIORS, **population},
-        [DATA, DATA],
-        noise=[{"vis_scale": s} for s in scales],
-    )
-    from virgil.fitting import _warn_centred_scales
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        _warn_centred_scales(objective)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fit(
+            _binary_fn,
+            {**PRIORS, **population},
+            [DATA, DATA],
+            noise=[{"vis_scale": s} for s in scales],
+            init={
+                "dra": 150.0,
+                "ddec": -80.0,
+                "flux": 0.02,
+                "v2_median": 1.0,
+                "v2_spread": 0.5,
+                "v2_z": np.zeros(2),
+            },
+        )
+    assert not [w for w in caught if "Neal" in str(w.message)]
 
 
 def test_numpyro_model_adds_each_population_density_once():

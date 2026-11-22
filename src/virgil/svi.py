@@ -52,7 +52,7 @@ from .fitting import (
     _nudge_inside,
     gauss_newton_mass,
 )
-from .likelihood import numpyro_model
+from .likelihood import is_tied, noise_sites, numpyro_model
 from ._deprecate import external_stacklevel
 
 __provisional__ = ("*",)
@@ -420,9 +420,16 @@ def variational(
         values_c = None if values is None else cast_tree(dict(values), dtype)
         if values_c is not None:
             # A start on a bound maps to ±inf in the guide; nudge it inside.
-            for path, prior in dict(priors_c).items():
-                if path in values_c and hasattr(prior, "support"):
-                    values_c[path] = _nudge_inside(prior, values_c[path])
+            sites = dict(priors_c)
+            for site, (prior, _, _) in noise_sites(
+                noise_c,
+                len(data_c) if isinstance(data_c, (list, tuple)) else 1,
+            ).items():
+                if not is_tied(prior):
+                    sites[site] = prior
+            for site, prior in sites.items():
+                if site in values_c and hasattr(prior, "support"):
+                    values_c[site] = _nudge_inside(prior, values_c[site])
         posterior = numpyro_model(
             model_c,
             priors_c,
