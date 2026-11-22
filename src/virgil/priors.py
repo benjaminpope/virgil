@@ -269,7 +269,7 @@ class IsotropicLatitude(_InverseCDFPrior):
         m, h = 0.5 * (lo + hi), 0.5 * (hi - lo)
         d = np.where(
             h < 0.05,
-            -(h**3) / 3.0 * (1.0 - h**2 / 10.0),
+            -(h**3) / 3.0 * (1.0 - h**2 / 10.0 + h**4 / 280.0),
             h * np.cos(h) - np.sin(h),
         )
         mean = m + np.sin(m) * d / self._half_norm

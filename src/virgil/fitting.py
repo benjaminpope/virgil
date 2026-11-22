@@ -142,7 +142,10 @@ def _nudge_inside(prior, start):
     eps = 1e-5 * np.where(
         np.isfinite(hi - lo), hi - lo, np.maximum(1.0, np.abs(bound))
     )
-    return np.clip(np.asarray(start, float), lo + eps, hi - eps)
+    start = np.asarray(start, float)
+    # Only values on or outside a bound move; interior ones are kept.
+    inside = (start > lo) & (start < hi)
+    return np.where(inside, start, np.clip(start, lo + eps, hi - eps))
 
 
 class _Objective(eqx.Module):

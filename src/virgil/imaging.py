@@ -3606,14 +3606,17 @@ def diagnose(model, data, regularizers=()):
                 "or check the error bars."
             )
 
-    checks["chi2_red_by_observable"] = [
-        {
-            k: v
-            for k, v in chi2_by_observable(model, d)["chi2_red"].items()
-            if k != "total"
-        }
-        for d in observations
-    ]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        checks["chi2_red_by_observable"] = [
+            {
+                k: v
+                for k, v in chi2_by_observable(model, d)["chi2_red"].items()
+                if k != "total"
+            }
+            for d in observations
+        ]
+    warns.extend(str(w.message) for w in caught)
     checks["short_baseline_mean"] = (
         None
         if _no_baselines(observations)
