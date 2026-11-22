@@ -289,7 +289,9 @@ def test_fit_recovers_an_interior_gain_width():
     import numpyro.distributions as dist
 
     width = 0.12
-    data = _data(n_frame=8, n_wave=4).with_gains(telescope=width, baseline=0.01)
+    data = _data(n_frame=8, n_wave=4).with_gains(
+        telescope=width, baseline=0.01
+    )
     data = data.with_model(TRUTH, jax.random.PRNGKey(3))
     # Nominal start 0.01 is outside the prior's bounds, as above.
     data = data.with_gains(telescope=0.01, baseline=0.01)

@@ -811,9 +811,7 @@ def test_dirty_image_matches_brute_force(npix, weighting):
             for a, b in zip(u, v)
         }
         assert len({k[0] for k in keys}) > 4 and len({k[1] for k in keys}) > 4
-    ref = brute_dirty_image(
-        data.u, data.v, data.vis, w, npix, s
-    )
+    ref = brute_dirty_image(data.u, data.v, data.vis, w, npix, s)
     assert onp.abs(img - ref).max() < 1e-10 * onp.abs(ref).max()
 
 
