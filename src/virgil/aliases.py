@@ -2228,7 +2228,10 @@ def _physical(x):
         period=period,
         dt_peri=x[:, 1] * period,
         ecc=x[:, 2],
-        inc=onp.degrees(onp.arccos(onp.clip(x[:, 3], -1, 1))),
+        inc=onp.minimum(
+            onp.degrees(onp.arccos(onp.clip(x[:, 3], -1, 1))),
+            onp.nextafter(180.0, 0.0),
+        ),
         omega=onp.mod(x[:, 4], 360.0),
         Omega=onp.mod(x[:, 5], 360.0),
         a_mas=onp.exp(x[:, 6]),
