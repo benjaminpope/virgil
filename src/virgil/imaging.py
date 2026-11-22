@@ -1037,7 +1037,7 @@ def starting_image(
         Position angle of the pixel grid (default 0, North up). ``"grid"``
         (provisional) takes the data's uv lattice, ``data.uv_grid.rotation_deg``,
         so that fits take the exact fast matrix transform (North up without a
-        lattice).
+        lattice); North up too when the datasets' lattices differ, without a warning.
 
     Returns
     -------
@@ -1633,7 +1633,7 @@ def clean(
         ``(n_scales, npix, npix)``.
     rotation_deg, dtype : float or "grid", and str, optional
         Grid angle, default 0 (North up); ``"grid"`` (provisional) is the uv
-        lattice's, for the fast transform ([`Image`][virgil.models.Image]);
+        lattice's (North up if the datasets' differ, without a warning), for the fast transform ([`Image`][virgil.models.Image]);
         [precision](../common_arguments.md#dtype).
     scales_mas, scale_bias : sequence of float and float, optional
         FWHMs (mas) of the components, 0 for a point (``(0.0, 3.0)``: both);
@@ -1979,7 +1979,8 @@ class LCurve:
         data : OIData or sequence of OIData
             The data the sweep was fitted to.
         regularizer
-            The regularizer swept, with its ``path`` (its weight is replaced).
+            The regularizer swept, with its ``path`` (its weight is replaced
+            by the sweep's weights, without its ``n_data`` factor).
         noise_scale2 : float, optional
             ``s²``, from the data scatter rather than an image fit.
         noise_scale_sigma : float, optional
@@ -3226,7 +3227,8 @@ def l_curve(
     regularizer : TSV, TV, MaxEntropy, Laplacian, StarletL1 or LogSum
         The regularizer whose ``weight`` is swept (its own is ignored).
     weights : sequence of float
-        The weights to try (sorted internally, largest first).
+        The weights to try (sorted internally, largest first). Each is the
+        final ``weight``: the regularizer's ``n_data`` factor is not applied.
     others : sequence, optional
         Further regularizers kept fixed, e.g. a
         [`Centroid`][virgil.imaging.Centroid] prior.

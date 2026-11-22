@@ -795,6 +795,14 @@ def test_error_scale_of_two_images_counts_every_latent():
     gamma = onp.sum(beta * lam / (1.0 + beta * lam))
     assert gamma <= n_latent
     _assert_mackay_fixed_point(scale, r, jac, data.n_independent)
+    # The noise was drawn at the quoted errors (injected scale 1) and `model`
+    # is the unfitted truth, so nothing was absorbed by a fit: |r|² is N times
+    # a chi-squared variate of N dof over N, and the fixed point returns
+    # scale² = |r|² / (N - γ), i.e. N / (N - γ) times 1 to within
+    # 3 sqrt(2 / N). (The fitted-MAP recovery is the single-image test above.)
+    n = data.n_independent
+    expected = n / (n - gamma)
+    assert abs(scale**2 / expected - 1.0) < 3.0 * onp.sqrt(2.0 / n)
     only = error_scale(model, data, path="compact")
     assert only != scale
     blocks = error_scale(model, data, path=None, by_observable=True)

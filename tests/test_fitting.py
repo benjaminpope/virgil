@@ -1245,6 +1245,9 @@ def test_fitted_gain_widths_and_scales_stay_positive_definite():
     assert onp.all(onp.isfinite(eigenvalues)) and eigenvalues.min() > 0
     assert eigenvalues.min() > GAIN_WIDTH_BOUNDS[0]
     assert eigenvalues.max() < GAIN_WIDTH_BOUNDS[1], eigenvalues
+    # One direction is loose (vis_scale, whose curvature the gains swamp);
+    # the other four (dra, ddec, flux, vis_gain_baseline) stay above 0.3.
+    assert onp.sort(eigenvalues)[1] > 0.3, eigenvalues
 
 
 # Measured: eig(F⁻¹H) = 0.0058, 0.996, 1.000, 1.011, 1.44. The three parameter

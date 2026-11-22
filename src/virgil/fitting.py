@@ -836,7 +836,7 @@ def fit(
         Starting values by path (required for a function model).
     method : {"lm", "lbfgs", "adam", "lbfgsb"}, optional
         ``"lm"`` (default for least squares), ``"lbfgs"`` (for penalties, which
-        LM also fits in float64), ``"adam"`` or ``"lbfgsb"`` (bounded by
+        LM also fits in float64), ``"adam"`` or ``"lbfgsb"`` (provisional; bounded by
         ``Uniform`` priors and linear ``LinearImage`` pixels).
     max_steps : int, optional
         Step limit (1000 LM, 20000 L-BFGS and L-BFGS-B, 2000 Adam); see
@@ -869,9 +869,10 @@ def fit(
         mean is not lower than the previous window's by ``ftol_abs`` or more
         (unscaled; off if ``None``).
     ftol_window : int, optional
-        Adam only: the window of ``ftol_abs``, in steps.
+        Adam only: the window of ``ftol_abs``, in steps; an integer of at
+        least 2, and at most ``max_steps // 2`` or ``ftol_abs`` never fires.
     post_step : callable, optional
-        Adam only, not with ``precondition``: a jax-traceable ``post_step(z) -> z``
+        (Provisional.) Adam only, not with ``precondition``: a jax-traceable ``post_step(z) -> z``
         on the unconstrained coordinates ``z`` (a dict by path, not ``values``),
         applied after each update. Source: [Charles et al. (2026)](../references.md#dorito).
     precondition : {None, "diag"}, optional
@@ -2050,9 +2051,8 @@ def gauss_newton_diag(
     coordinates [`fit`][virgil.fitting.fit] optimizes: J is the Jacobian of the
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
     of the regularizers, floored at zero. On the pixels of a regularizer with
-    ``metric_rows`` (maximum entropy) R is that metric, ``weight * b *
-    (1 - b)`` (the softmax's, unsmoothed pixels), not the regularizer's
-    Hessian; JᵀJ and P are kept there. It is the scale
+    ``metric_rows`` (maximum entropy) it adds that metric, ``weight * b *
+    (1 - b)`` (the softmax's, unsmoothed pixels), to the data JᵀJ. It is the scale
     ``fit(..., precondition="diag")`` divides each coordinate by; see
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense matrix.
 
