@@ -197,7 +197,9 @@ def test_likelihood_and_linear_flux_grids_recover_the_chromatic_companion(
     i, j = onp.unravel_index(onp.nanargmax(snr), snr.shape)
     assert (grid["comp.dra"][i], grid["comp.ddec"][j]) == (8.0, -5.0)
     flux = float(result.flux[i, j])
-    assert abs(flux - RATIO) < 4 * flux / snr[i, j]  # 4 sigma_flux
+    assert flux == pytest.approx(RATIO, rel=0.1)
+    # And within 3 sigma_flux (= flux / snr), like the other statistical checks.
+    assert abs(flux - RATIO) < 3 * flux / snr[i, j]
     assert snr[i, j] > 20.0
 
 
