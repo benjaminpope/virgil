@@ -267,7 +267,7 @@ def test_clean_with_no_components_has_a_frame():
         base=PointSource(),
         rotation_deg="grid",
     )
-    assert isinstance(result.rotation_deg, float)
+    assert result.rotation_deg == pytest.approx(ROTATION)
     assert result.restored(beam(data)).shape == (NPIX, NPIX)
 
 
