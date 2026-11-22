@@ -3608,15 +3608,11 @@ def diagnose(model, data, regularizers=()):
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        checks["chi2_red_by_observable"] = [
-            {
-                k: v
-                for k, v in chi2_by_observable(model, d)["chi2_red"].items()
-                if k != "total"
-            }
-            for d in observations
-        ]
+        red = [chi2_by_observable(model, d)["chi2_red"] for d in observations]
     warns.extend(str(w.message) for w in caught)
+    checks["chi2_red_by_observable"] = [
+        {k: v for k, v in r.items() if k != "total"} for r in red
+    ]
     checks["short_baseline_mean"] = (
         None
         if _no_baselines(observations)
