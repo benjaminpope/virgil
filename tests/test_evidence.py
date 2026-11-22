@@ -555,6 +555,18 @@ def test_block_error_scales_refuse_unscaled_nuisance_covariance():
             error_scale(start, data, by_observable=True)
 
 
+def test_the_scalar_error_scale_refuses_unscaled_nuisance_covariance():
+    # The same guard as for blocks: the scalar s² C(1) fixed point assumes
+    # the covariance scales with the quoted errors.
+    start = _gp_scene(onp.zeros((N, N)), 1.5)
+    for data, what in (
+        (DATA.with_gains(telescope=0.01), "calibration gains"),
+        (DATA.with_closure_offsets(triangle=0.01), "closure-phase offsets"),
+    ):
+        with pytest.raises(ValueError, match=what):
+            error_scale(start, data)
+
+
 @pytest.mark.parametrize("n_telescopes", [3, 4])
 def test_observable_blocks_map_residual_rows(n_telescopes):
     # The rows labelled "phi" are exactly those that change when only the

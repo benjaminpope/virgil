@@ -3075,7 +3075,8 @@ def error_scale(
     make the evidence over-regularize). ``s`` much greater than 1 means a failed
     or inadequate model, not a noise fix: unmodelled structure is absorbed into
     ``s``. It uses the quoted errors, so no ``noise=`` terms or per-dataset
-    models.
+    models. Data with gains, closure-phase offsets or other covariance that
+    does not scale with the errors raise ``ValueError``.
     Source: MacKay (1992), [references](../references.md#mackay1992).
 
     Parameters
@@ -3088,9 +3089,7 @@ def error_scale(
         Path of the Image (default ``"env"``), a tuple of paths, or ``None`` for
         every such Image and disk (``TypeError`` if there is none).
     by_observable : bool, optional
-        One scale per kind of observable instead of one for all. Data with
-        gains, closure-phase offsets or other covariance that does not scale
-        with the errors raise ``ValueError``.
+        One scale per kind of observable instead of one for all.
     priors : dict or sequence of str, optional
         Free parameters (priors or paths) besides the latents; they enter
         through their ``JᵀJ`` block, with no unit-Gaussian prior.
@@ -3113,10 +3112,33 @@ def error_scale(
         if p not in latent_paths and not p.endswith("_vec")
     )
     all_paths = latent_paths + extra_paths
+    datasets = _as_list(data)
+    # Refuse data whose covariance is not s² D: their nuisance widths do not
+    # scale with the quoted errors.
+    for i, d in enumerate(datasets):
+        reasons = []
+        if d.gains is not None:
+            reasons.append("calibration gains (with_gains)")
+        if d.phase_offsets is not None:
+            reasons.append("closure-phase offsets (with_closure_offsets)")
+        for b in d.extras:
+            if b.model_dependent_covariance:
+                reasons.append(f"a marginalized {b.kind} block")
+            elif getattr(b, "prior_width", None) is not None:
+                reasons.append(f"a {b.kind} block with a finite prior_width")
+            elif getattr(b, "modes", None) is not None:
+                reasons.append(f"a {b.kind} block with nuisance modes")
+        if reasons:
+            raise ValueError(
+                f"error_scale(by_observable={by_observable}) cannot rescale "
+                f"dataset {i}: it has {', '.join(reasons)}, whose nuisance "
+                "widths do not scale with the quoted errors. Estimate the "
+                "scales without them, or fit the nuisance widths as noise "
+                "terms."
+            )
     r, jac = _residual_jacobian(
         model, data, all_paths, on_device=True, regularizers=regularizers
     )
-    datasets = _as_list(data)
     n_data_rows = sum(d.n_residuals for d in datasets)
     r_data = r[:n_data_rows]
     if not extra_paths and jac.shape[0] == n_data_rows:
@@ -3146,30 +3168,6 @@ def error_scale(
         else:
             r_extra = 0
     if by_observable:
-        # Refuse data whose covariance is not s_b² D per block: their nuisance
-        # widths do not scale with the quoted errors.
-        for i, d in enumerate(datasets):
-            reasons = []
-            if d.gains is not None:
-                reasons.append("calibration gains (with_gains)")
-            if d.phase_offsets is not None:
-                reasons.append("closure-phase offsets (with_closure_offsets)")
-            for b in d.extras:
-                if b.model_dependent_covariance:
-                    reasons.append(f"a marginalized {b.kind} block")
-                elif getattr(b, "prior_width", None) is not None:
-                    reasons.append(
-                        f"a {b.kind} block with a finite prior_width"
-                    )
-                elif getattr(b, "modes", None) is not None:
-                    reasons.append(f"a {b.kind} block with nuisance modes")
-            if reasons:
-                raise ValueError(
-                    f"error_scale(by_observable=True) cannot rescale dataset {i}: "
-                    f"it has {', '.join(reasons)}, whose nuisance widths do not "
-                    "scale with the quoted errors. Estimate the scales without "
-                    "them, or fit the nuisance widths as noise terms."
-                )
         rows, counts = _observable_blocks(datasets)
         # The block fixed point factors on the host (NumPy QR).
         beta = _block_precisions(r_data, onp.asarray(jac_z), rows, counts)
