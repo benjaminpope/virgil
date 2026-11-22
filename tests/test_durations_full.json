@@ -128,6 +128,7 @@
  "tests/test_radio_toeplitz.py": 236.8,
  "tests/test_regressions.py": 31.1,
  "tests/test_release_correctness.py": 7.7,
+ "tests/test_rotated_grid_rendering.py": 28.6,
  "tests/test_sampler_flat_coordinates.py": 39.7,
  "tests/test_sampling.py": 111.6,
  "tests/test_scenes.py": 7.3,

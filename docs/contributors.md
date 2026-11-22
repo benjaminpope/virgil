@@ -77,7 +77,7 @@ Docstrings cite these where they are used. The [References](references.md) page 
 - CLEAN: Högbom (1974), multiscale CLEAN ([Cornwell 2008](https://arxiv.org/abs/0806.2228)) and multi-frequency CLEAN ([Rau & Cornwell 2011](https://arxiv.org/abs/1106.2745)).
 - Image-quality metrics: from the interferometric imaging beauty contests ([Malbet et al. 2010](https://arxiv.org/abs/1007.4473); [Baron et al. 2012](https://arxiv.org/abs/1207.7141)).
 - Review of optical-interferometric imaging: [Thiébaut & Young (2017)](https://arxiv.org/abs/1708.08390).
-- Gaussian-process image priors: from information field theory ([Enßlin, Frommert & Kitaura 2009](https://arxiv.org/abs/0806.3474)) and the Enßlin group's [NIFTy](https://ift.pages.mpcdf.de/nifty/user/index.html) ([Arras et al. 2021](https://arxiv.org/abs/2002.05218); [Edenhofer et al. 2024](https://arxiv.org/abs/2402.16683)).
+- Gaussian-process image priors: from information field theory ([Enßlin, Frommert & Kitaura 2009](https://arxiv.org/abs/0806.3474)) and the Enßlin group's [NIFTy](https://ift.pages.mpcdf.de/nifty/user/index.html) ([Arras et al. 2021](https://arxiv.org/abs/2008.11435); [Edenhofer et al. 2024](https://arxiv.org/abs/2402.16683)).
 - Imaging ensembles: [Drevon et al. (2026)](https://arxiv.org/abs/2609.15365).
 
 **Inference**
