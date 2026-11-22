@@ -306,6 +306,19 @@ def test_auto_mask_seeds_sources_when_the_residual_is_sidelobe_dominated():
     assert mask.sum() < 0.15 * mask.size
 
 
+@pytest.mark.parametrize("psf_sidelobe", [0.6, 1.0, 5.0])
+def test_auto_mask_sidelobe_term_is_capped_at_half_the_peak(psf_sidelobe):
+    # virgil#551 (a departure from Kepley et al. 2020 Eq. 1, which has no cap):
+    # an uncapped sidelobe x psf_sidelobe >= 1 puts the seed above the peak and
+    # masks nothing; capped, the brightest region is always seeded
+    rng = onp.random.default_rng(3)
+    resid = _gaussian(
+        (N, N), (C - 5, C + 7), 6.0, 6.0, 0.0
+    ) + 0.01 * rng.normal(size=(N, N))
+    mask = _auto_mask(resid, 5.0, psf_sidelobe, 3.0, 5.0, 1.5)
+    assert mask[int(C - 5), int(C + 7)]
+
+
 def test_auto_mask_threshold_includes_the_residual_median():
     # Kepley et al. (2020) Eq. 4: the location is added to the seed and to the
     # growth threshold. A +3 offset makes noise peak 3.5 rms above the median:
