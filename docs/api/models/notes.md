@@ -373,10 +373,12 @@ with a `height` splats rings on a fine radial grid and needs concrete
 parameters.
 
 **Radial support.** The range `[r_in, r_out]` of a `RadialGPFunction` (the
-`spectral_index`) or a `MultipoleKernel` (the `harmonics` prior) is fixed when
-the disk is made. Fitting `profile.radius` or `profile.sigma` (the ring's width, not the GP's amplitude) does not move it, and the
-function is constant beyond its last node, so choose the range to cover every
-radius the priors allow.
+`spectral_index`, or a coefficient inside `harmonics`) or a `MultipoleKernel`
+(the `harmonics` prior) is fixed when the disk is made. Fitting `profile.radius`
+or `profile.sigma` (the ring's width, not the GP's amplitude) does not move it,
+and the function is constant outside both ends, so choose the range to cover
+every radius the priors allow. In a callable model traced by `fit` or
+`numpyro_model`, give concrete `r_in` and `r_out`.
 
 **Precision.** A profile's reference nodes are built in the default precision
 when the disk is made, so to evaluate in float64 construct the disk inside

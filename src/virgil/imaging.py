@@ -799,8 +799,7 @@ _DIRTY_BATCH = 4096
 
 def _grid_rotation(observations, rotation_deg="grid"):
     """The pixel grid's rotation: ``rotation_deg``, or for ``"grid"`` that of
-    the data's uv lattice (0 when they have none, or lattices that differ,
-    without a warning: pass an angle for datasets on different lattices).
+    the data's uv lattice (0 when they have none, or lattices that differ).
     """
     if not isinstance(rotation_deg, str):
         return float(rotation_deg)
@@ -1036,7 +1035,7 @@ def starting_image(
         Position angle of the pixel grid (default 0, North up). ``"grid"``
         (provisional) takes the data's uv lattice, ``data.uv_grid.rotation_deg``,
         so that fits take the exact fast matrix transform (North up without a
-        lattice).
+        lattice); North up too when the datasets' lattices differ, without a warning.
 
     Returns
     -------
@@ -1625,7 +1624,7 @@ def clean(
         ``(n_scales, npix, npix)``.
     rotation_deg, dtype : float or "grid", and str, optional
         Grid angle, default 0 (North up); ``"grid"`` (provisional) is the uv
-        lattice's, for the fast transform ([`Image`][virgil.models.Image]);
+        lattice's (North up if the datasets' differ, without a warning), for the fast transform ([`Image`][virgil.models.Image]);
         [precision](../common_arguments.md#dtype).
     scales_mas, scale_bias : sequence of float and float, optional
         FWHMs (mas) of the components, 0 for a point (``(0.0, 3.0)``: both);

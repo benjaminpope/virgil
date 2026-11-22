@@ -71,11 +71,10 @@ def regularized_inverse(matrix, ridge=1e-10):
     inverted as it is, whatever the scales of its parameters. Otherwise
     ``ridge * |matrix_ii|`` is added to each diagonal entry first (the
     largest ``|matrix_ii|`` for a zero one, 1 if all are zero): a ridge
-    relative to each parameter's own curvature, so it does not depend on the
-    units of the parameters. A parameter the data do not constrain then has a
-    large variance set by the ridge (for a zero ``matrix_ii``, by the stiffest
-    parameter's curvature, so in no fixed units): read it as unconstrained,
-    not as a value. A ``RuntimeWarning`` is raised
+    relative to each parameter's own curvature, so for a non-zero ``matrix_ii`` it
+    does not depend on units. For a zero one the variance is
+    ``1 / (ridge * max_j |matrix_jj|)``, set by the stiffest parameter's units
+    and not necessarily large: rely on the warning, not on the size. A ``RuntimeWarning`` is raised
     (outside ``jax.jit``) when the ridge was needed, and when even the
     regularized matrix is not positive definite, since its inverse is then
     not a covariance.
