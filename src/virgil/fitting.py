@@ -906,22 +906,7 @@ def fit(
             ),
             dtype,
         )
-        if any(
-            getattr(spec, "centred", False)
-            and hasattr(spec, "log_prior")
-            and f"{spec.name}_spread" in problem.priors
-            for spec, _, _ in problem.noise.values()
-        ):
-            warnings.warn(
-                "fit() on centred hierarchical_scales: the joint MAP has no "
-                "finite optimum (Neal's funnel), so the spread is driven to "
-                "its lower bound and the member scales collapse onto the "
-                "median. Use centred=False, fix the spread, or sample with "
-                "numpyro_model.",
-                UserWarning,
-                stacklevel=external_stacklevel(),
-            )
-        z0 = _recentre(problem, problem.init(cast_tree(init, dtype)))
+        z0 = _initial_point(problem, init, dtype)
         if not method:
             try:
                 jax.eval_shape(problem.residuals, z0)
@@ -2191,6 +2176,25 @@ def _log_flux(mask, x):
     """The log of the total flux ``Σ exp(x)`` over the supported pixels."""
     used = mask & np.isfinite(x)
     return jax.nn.logsumexp(np.where(used, x, -np.inf))
+
+
+def _initial_point(problem, init, dtype):
+    """The recentred unconstrained start of ``problem``; warns about the funnel."""
+    if any(
+        getattr(spec, "centred", False)
+        and hasattr(spec, "log_prior")
+        and f"{spec.name}_spread" in problem.priors
+        for spec, _, _ in problem.noise.values()
+    ):
+        warnings.warn(
+            "fit() on centred hierarchical_scales: the joint MAP has no "
+            "finite optimum (Neal's funnel), so the spread is driven to its "
+            "lower bound and the member scales collapse onto the median. Use "
+            "centred=False, fix the spread, or sample with numpyro_model.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    return _recentre(problem, problem.init(cast_tree(init, dtype)))
 
 
 def _recentre(problem, z):

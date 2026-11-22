@@ -20,7 +20,7 @@ from virgil.coverage import nrm_oidata
 from virgil.fitting import _Objective, fit, gauss_newton_mass
 from virgil.likelihood import numpyro_model
 from virgil.models import BinaryModelAngular, BinaryModelCartesian
-from virgil.svi import variational
+from virgil.svi import _start_values, variational
 
 # Not in alphabetical order, so that the exact test pins the map from
 # sites to the guide's latent vector (insertion order, not sorted keys).
@@ -522,3 +522,19 @@ def test_a_noise_start_on_a_bound_is_nudged_inside_it():
         steps=3,
     )
     assert onp.isfinite(onp.asarray(vi.losses)).all()
+
+
+def test_start_values_nudges_prior_and_noise_sites_inside_their_bounds():
+    data = nrm_oidata()
+    start = {"dra": 400.0, "flux": 0.02, "noise.vis_scale": 0.1}
+    values = _start_values(
+        start,
+        BINARY_PRIORS,
+        {"vis_scale": dist.LogUniform(0.1, 10.0)},
+        data,
+        "float32",
+    )
+    assert 399.9 < float(values["dra"]) < 400.0
+    assert 0.1 < float(values["noise.vis_scale"]) < 0.1001
+    assert float(values["flux"]) == pytest.approx(0.02)
+    assert _start_values(None, BINARY_PRIORS, {}, data, "float32") is None

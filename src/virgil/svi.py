@@ -270,6 +270,22 @@ _KHAT_MAX = (
 _SETTLED_NATS = 1.0
 
 
+def _start_values(values, priors, noise, data, dtype):
+    """``values`` cast to ``dtype``, with starts on a bound moved just inside it."""
+    if values is None:
+        return None
+    values = cast_tree(dict(values), dtype)
+    sites = dict(priors)
+    n = len(data) if isinstance(data, (list, tuple)) else 1
+    for site, (prior, _, _) in noise_sites(noise, n).items():
+        if not is_tied(prior):
+            sites[site] = prior
+    for site, prior in sites.items():
+        if site in values and hasattr(prior, "support"):
+            values[site] = _nudge_inside(prior, values[site])
+    return values
+
+
 def _loss_settled(losses, window):
     """Whether the loss has stopped falling, and cannot be falling much.
 
@@ -417,19 +433,7 @@ def variational(
         ) = cast_tree(
             (model, priors, data, noise, regularizers, likelihoods), dtype
         )
-        values_c = None if values is None else cast_tree(dict(values), dtype)
-        if values_c is not None:
-            # A start on a bound maps to ±inf in the guide; nudge it inside.
-            sites = dict(priors_c)
-            for site, (prior, _, _) in noise_sites(
-                noise_c,
-                len(data_c) if isinstance(data_c, (list, tuple)) else 1,
-            ).items():
-                if not is_tied(prior):
-                    sites[site] = prior
-            for site, prior in sites.items():
-                if site in values_c and hasattr(prior, "support"):
-                    values_c[site] = _nudge_inside(prior, values_c[site])
+        values_c = _start_values(values, priors_c, noise_c, data_c, dtype)
         posterior = numpyro_model(
             model_c,
             priors_c,

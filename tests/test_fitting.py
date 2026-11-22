@@ -840,27 +840,34 @@ def test_fit_with_hierarchical_error_scales():
     assert onp.all(onp.isfinite(eig)) and eig.min() > 0.0
 
 
-def test_fit_does_not_warn_for_non_centred_hierarchical_scales():
+@pytest.mark.parametrize("centred", [True, False])
+def test_only_centred_hierarchical_scales_warn_about_the_funnel(centred):
+    from virgil.fitting import _initial_point
     from virgil.priors import hierarchical_scales
 
-    population, scales = hierarchical_scales("v2", 2, centred=False)
+    population, scales = hierarchical_scales("v2", 2, centred=centred)
+    problem = _Objective(
+        _binary_fn,
+        {**PRIORS, **population},
+        [DATA, DATA],
+        noise=[{"vis_scale": s} for s in scales],
+    )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        fit(
-            _binary_fn,
-            {**PRIORS, **population},
-            [DATA, DATA],
-            noise=[{"vis_scale": s} for s in scales],
-            init={
+        _initial_point(
+            problem,
+            {
                 "dra": 150.0,
                 "ddec": -80.0,
                 "flux": 0.02,
                 "v2_median": 1.0,
                 "v2_spread": 0.5,
-                "v2_z": np.zeros(2),
+                ("v2_log" if centred else "v2_z"): np.zeros(2),
             },
+            "float32",
         )
-    assert not [w for w in caught if "Neal" in str(w.message)]
+    funnel = [w for w in caught if "Neal" in str(w.message)]
+    assert bool(funnel) == centred
 
 
 def test_numpyro_model_adds_each_population_density_once():
