@@ -520,21 +520,35 @@ def plot_v2_models(data, fitted, ax=None, curves=400):
         _, ax = plt.subplots(figsize=(7, 4))
     u = onp.asarray(data.u, dtype=float)
     wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
-    freq = onp.hypot(u, onp.asarray(data.v, dtype=float)) / wavel
-    power = 2 if data.v2_flag else 1
-    ax.errorbar(
-        freq / 1e6,
-        onp.asarray(data.vis),
-        onp.asarray(data.d_vis),
-        fmt=".",
-        color="0.4",
-        label="data",
+    all_freq = onp.hypot(u, onp.asarray(data.v, dtype=float)) / wavel
+    # `vis` holds only the unflagged samples; `vis_index` says which rows of
+    # u, v and wavel they are (None: all).
+    freq = (
+        all_freq
+        if data.vis_index is None
+        else all_freq[onp.asarray(data.vis_index)]
     )
-    grid = onp.linspace(1e-3, 1.05 * freq.max(), curves)
+    vis = onp.asarray(data.vis)
+    power = 2 if data.v2_flag else 1
+    # Projected outputs (vis_mat) have no baseline of their own.
+    plotted = data.vis_mat is None and vis.size > 0
+    if plotted:
+        ax.errorbar(
+            freq / 1e6,
+            vis,
+            onp.asarray(data.d_vis),
+            fmt=".",
+            color="0.4",
+            label="data",
+        )
+    # Curves span every unflagged sample (closure phases too), not just V².
+    used = all_freq[onp.asarray(data.unflagged, dtype=bool)]
+    top = (used if used.size else all_freq).max()
+    grid = onp.linspace(1e-3, 1.05 * top, curves)
     for label, model in fitted.items():
-        vis = onp.abs(onp.asarray(model.model(grid, 0.0 * grid, 1.0)))
-        ax.plot(grid / 1e6, vis**power, label=label)
-    positive = onp.asarray(data.vis)[onp.asarray(data.vis) > 0]
+        curve = onp.abs(onp.asarray(model.model(grid, 0.0 * grid, 1.0)))
+        ax.plot(grid / 1e6, curve**power, label=label)
+    positive = vis[vis > 0] if plotted else vis[:0]
     floor = min(1e-4, float(positive.min()) / 3.0) if positive.size else 1e-4
     ax.set(
         yscale="log",
