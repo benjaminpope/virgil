@@ -23,6 +23,7 @@ from virgil import (
 from virgil._geometry import _FT_DEFAULTS
 from virgil._utils import mas2rad, rad2mas
 from virgil.radio import C_LIGHT
+from tests._shared import brute_dirty_image
 
 
 @pytest.fixture(autouse=True)
@@ -787,23 +788,32 @@ def _reference_weights(data, weighting, robust, cell):
 @pytest.mark.parametrize("npix", [32, 31])
 @pytest.mark.parametrize("weighting", ["natural", "uniform", "briggs"])
 def test_dirty_image_matches_brute_force(npix, weighting):
-    data = _uv_data(n=3000)
-    s = 0.7
+    # Core-concentrated coverage (a Gaussian, sigma 1e6 wavelengths) imaged on
+    # 10 mas pixels: the uv cell is 6.4e5 wavelengths, so the sampling
+    # density varies across both the u and v cell indices (tens of cells).
+    rng = onp.random.default_rng(1)
+    n = 3000
+    u, v = rng.normal(0.0, 1.0e6, (2, n))
+    data = ComplexVisData.from_arrays(
+        u,
+        v,
+        rng.normal(size=n) + 1j * rng.normal(size=n),
+        rng.uniform(1.0, 3.0, n),
+        230e9,
+    )
+    s = 10.0
+    cell = 1.0 / (npix * s * mas2rad)
     img = data.dirty_image(npix, s, weighting=weighting)
-    w = _reference_weights(data, weighting, 0.5, 1.0 / (npix * s * mas2rad))
-    c = 0.5 * (npix - 1)
-    x = (c - onp.arange(npix)) * s * mas2rad
-    X, Y = onp.meshgrid(x, x, indexing="xy")
-    u, v = onp.asarray(data.u), onp.asarray(data.v)
-    vis = onp.asarray(data.vis)
-    ph = 2 * onp.pi * (u[:, None, None] * X + v[:, None, None] * Y)
-    ref = (
-        w[:, None, None]
-        * (
-            vis.real[:, None, None] * onp.cos(ph)
-            - vis.imag[:, None, None] * onp.sin(ph)
-        )
-    ).sum(0) / w.sum()
+    w = _reference_weights(data, weighting, 0.5, cell)
+    if weighting != "natural":
+        keys = {
+            (int(onp.floor(abs(a) / cell)), int(onp.floor(abs(b) / cell)))
+            for a, b in zip(u, v)
+        }
+        assert len({k[0] for k in keys}) > 4 and len({k[1] for k in keys}) > 4
+    ref = brute_dirty_image(
+        data.u, data.v, data.vis, w, npix, s
+    )
     assert onp.abs(img - ref).max() < 1e-10 * onp.abs(ref).max()
 
 

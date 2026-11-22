@@ -146,7 +146,7 @@ def limit_significances(template, data, grid, limits, kind):
     import jax.numpy as np
 
     from virgil.likelihood import build_model, whitened_residuals
-    from virgil.limits import nsigma
+    from scipy import stats
 
     keys = list(grid)
     flux_axis = next(i for i, k in enumerate(keys) if "flux" in k)
@@ -185,7 +185,9 @@ def limit_significances(template, data, grid, limits, kind):
             for m in (null, companion)
         ]
         pair = chi2 if kind == "injection" else chi2[::-1]
-        out[index] = float(nsigma(pair[0], pair[1], ndof))
+        # Independent of virgil.limits.nsigma, which the limits solve against.
+        tail = stats.chi2.sf(ndof * pair[0] / pair[1], ndof)
+        out[index] = float(stats.norm.isf(0.5 * tail))
     return out
 
 

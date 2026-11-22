@@ -29,7 +29,7 @@ def _data(key=0, stations=None, hours=(-2.0, 0.0, 2.0)):
 
 
 @pytest.mark.validates(
-    "virgil.gains.ClosureOffsets", roots=["mathematics"], kind="check"
+    "virgil.gains.ClosureOffsets", roots=["self-consistency"], kind="check"
 )
 def test_offsets_match_the_dense_whitened_covariance():
     data = _data()
@@ -61,6 +61,9 @@ def test_offsets_match_the_dense_whitened_covariance():
     assert float(difference) == pytest.approx(expected, rel=1e-4, abs=1e-4)
 
 
+@pytest.mark.validates(
+    "virgil.gains.ClosureOffsets", roots=["mathematics"], kind="check"
+)
 def test_offset_covariance_matches_an_independent_triangle_incidence():
     # Built here from the raw station indices: a baseline offset e_ab (one
     # per frame and baseline, shared by channels) enters triangle (a, b, c) as

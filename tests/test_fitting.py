@@ -1193,8 +1193,8 @@ def test_fitted_gain_widths_and_scales_stay_positive_definite():
     assert onp.all(onp.isfinite(eigenvalues)) and eigenvalues.min() > 0
     assert eigenvalues.min() > GAIN_WIDTH_BOUNDS[0]
     assert eigenvalues.max() < GAIN_WIDTH_BOUNDS[1], eigenvalues
-    # The lower bound is loose only for the gain width's own direction; every
-    # other direction (dra, ddec, flux, the scale) must stay close to exact.
+    # One direction is loose (vis_scale, whose curvature the gains swamp);
+    # the other four (dra, ddec, flux, vis_gain_baseline) stay above 0.3.
     assert onp.sort(eigenvalues)[1] > 0.3, eigenvalues
 
 

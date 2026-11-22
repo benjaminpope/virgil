@@ -47,7 +47,7 @@ def _jacobian(data, prediction):
     "vis_mode, v2", [("auto", True), ("auto", False), ("logamp", True)]
 )
 @pytest.mark.validates(
-    "virgil.gains.GainModes", roots=["mathematics"], kind="check"
+    "virgil.gains.GainModes", roots=["self-consistency"], kind="check"
 )
 def test_whitening_matches_the_dense_covariance(vis_mode, v2):
     data = _data(vis_mode=vis_mode, v2=v2).with_gains(
@@ -74,6 +74,9 @@ def test_whitening_matches_the_dense_covariance(vis_mode, v2):
     )
 
 
+@pytest.mark.validates(
+    "virgil.gains.GainModes", roots=["mathematics"], kind="check"
+)
 def test_whitening_matches_a_dense_build_from_the_station_indices():
     # The incidence is built here from the raw station pairs, not from
     # gains.covariance or its modes: gain g_s on amplitudes multiplies V by
@@ -271,8 +274,8 @@ def test_fit_with_gains_uses_lbfgs_and_fits_widths():
     assert onp.isfinite(result.info["loss"])
     # The bounds hold for any finite parameter (the transform guarantees
     # them), so check the fit: converged, at the data's own noise level (the
-    # simulated data carry no gain error, so the width pins to its lower bound
-    # rather than inventing one), and the flux recovered.
+    # simulated 0.01 gain width is below the prior's lower bound 0.02, so the
+    # fitted width pins to that bound), and the flux recovered.
     assert result.info["converged"]
     assert result.info["at_bound"] == ("noise.vis_gain_telescope",)
     ndata = result.info["ndata"][0]
@@ -280,6 +283,26 @@ def test_fit_with_gains_uses_lbfgs_and_fits_widths():
     assert abs(float(result.values["flux"]) - float(TRUTH.flux)) < 0.02
     with pytest.raises(TypeError, match="least-squares"):
         fit(start, {"flux": dist.Uniform(0.0, 1.0)}, data, method="lm")
+
+
+def test_fit_recovers_an_interior_gain_width():
+    import numpyro.distributions as dist
+
+    width = 0.12
+    data = _data(n_frame=8, n_wave=4).with_gains(telescope=width, baseline=0.01)
+    data = data.with_model(TRUTH, jax.random.PRNGKey(3))
+    # Nominal start 0.01 is outside the prior's bounds, as above.
+    data = data.with_gains(telescope=0.01, baseline=0.01)
+    result = fit(
+        TRUTH.set("flux", 0.25),
+        {"flux": dist.Uniform(0.0, 1.0)},
+        data,
+        noise={"vis_gain_telescope": dist.LogUniform(0.02, 0.5)},
+    )
+    assert result.info["converged"]
+    assert result.info["at_bound"] == ()
+    fitted = float(result.values["noise.vis_gain_telescope"])
+    assert fitted == pytest.approx(width, rel=0.5)
 
 
 def test_synthetic_vlti_coverage_takes_gains():

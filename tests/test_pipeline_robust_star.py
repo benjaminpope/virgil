@@ -488,13 +488,16 @@ def _dense(sigma_v2):
     )
 
 
+_UNIFORM_SD = 1.0 / onp.sqrt(12.0)
+
+
 def _shape_ratios(data, diam):
     entry = star.models()["limb_darkened"]
-    prior_std = {"q1": 0.2887, "q2": 0.2887}  # Uniform(0, 1)
+    prior_std = {"q1": _UNIFORM_SD, "q2": _UNIFORM_SD}  # Uniform(0, 1)
     return star._shape_ratios(data, entry, diam, prior_std)
 
 
-def _independent_shape_ratios(data, diam, prior_sd=0.2887):
+def _independent_shape_ratios(data, diam, prior_sd=_UNIFORM_SD):
     """sigma_posterior / sigma_prior of (q1, q2) from first principles.
 
     V^2 of a quadratic limb-darkened disk (Kipping's q1, q2 to u1, u2) is the
@@ -567,6 +570,17 @@ def test_the_shape_gate_decides_on_both_sides_of_the_threshold(
         rtol=2e-2,
     )
     assert all(r < 0.8 for r in ratios.values()) is constrained
+    # In float64 (this module is skipped from CI's float64 job) the formula
+    # itself agrees to 1e-4, so the 2e-2 above is float32 conditioning only.
+    from virgil._precision import cast_tree
+
+    with jax.enable_x64(True):
+        wide = _shape_ratios(cast_tree(data, "float64"), diam)
+    onp.testing.assert_allclose(
+        tuple(wide.values()),
+        _independent_shape_ratios(data, diam),
+        rtol=1e-4,
+    )
 
 
 def test_a_constrained_shape_is_fitted_and_kept_when_the_data_resolve_it(

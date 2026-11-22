@@ -250,6 +250,17 @@ def test_nsigma_increases_with_chi2_ratio():
     assert np.all(np.diff(significances) > 0.0)
 
 
+def test_nsigma_matches_the_scipy_chi_squared_tail():
+    from scipy import stats
+
+    ratio = onp.array([1.0, 1.3, 2.0, 4.0])
+    ndof = 56
+    expected = stats.norm.isf(0.5 * stats.chi2.sf(ndof * ratio, ndof))
+    onp.testing.assert_allclose(
+        onp.asarray(nsigma(np.array(ratio), 1.0, ndof)), expected, rtol=2e-3
+    )
+
+
 def test_absil_limit_responds_to_smaller_uncertainties():
     samples = {
         "dra": np.array([100.0]),
