@@ -319,6 +319,29 @@ def test_auto_mask_sidelobe_term_is_capped_at_half_the_peak(psf_sidelobe):
     assert mask[int(C - 5), int(C + 7)]
 
 
+def test_auto_mask_sidelobe_term_uses_the_absolute_peak():
+    # Kepley et al. (2020) Eq. 1 uses |peakResidual|: a dominant negative
+    # trough sets the sidelobe level, so a 0.2 positive blob (its sidelobe
+    # confusion, 0.3 here) is not seeded
+    rng = onp.random.default_rng(3)
+    trough = -_gaussian((N, N), (C - 20, C - 20), 6.0, 6.0, 0.0)
+    blob = 0.2 * _gaussian((N, N), (C + 15, C + 15), 6.0, 6.0, 0.0)
+    resid = trough + blob + 0.005 * rng.normal(size=(N, N))
+    mask = _auto_mask(resid, 5.0, 0.1, 3.0, 5.0, 1.5)
+    assert not mask[int(C + 15), int(C + 15)]
+
+
+def test_auto_mask_finds_a_source_on_a_negative_pedestal():
+    rng = onp.random.default_rng(5)
+    resid = (
+        _gaussian((N, N), (C - 5, C + 7), 6.0, 6.0, 0.0)
+        + 0.01 * rng.normal(size=(N, N))
+        - 3.0
+    )
+    mask = _auto_mask(resid, 5.0, 0.1, 3.0, 5.0, 1.5)
+    assert mask[int(C - 5), int(C + 7)] and mask.sum() < 0.2 * mask.size
+
+
 def test_auto_mask_threshold_includes_the_residual_median():
     # Kepley et al. (2020) Eq. 4: the location is added to the seed and to the
     # growth threshold. A +3 offset makes noise peak 3.5 rms above the median:
