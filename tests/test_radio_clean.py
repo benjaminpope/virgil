@@ -262,6 +262,47 @@ def test_off_axis_point_source_cleans_and_restores_to_its_true_pixel():
     assert abs(float(onp.sum(w * cc) / onp.sum(w)) - col_true) < 0.05
 
 
+@pytest.mark.parametrize("n", [128, 129])
+def test_restore_keeps_a_component_on_its_pixel_on_even_and_odd_grids(n):
+    # virgil audit 724#11.1: the kernel centre sat half a pixel off on even
+    # grids, shifting the restored source by (0.5, 0.5) and losing ~4% peak
+    model = onp.zeros((n, n))
+    model[40, 50] = 1.0
+    restored = restore(
+        model, onp.zeros_like(model), (6.0 * S, 5.0 * S, 20.0), S
+    )
+    assert onp.unravel_index(onp.argmax(restored), restored.shape) == (40, 50)
+    assert restored[40, 50] == pytest.approx(1.0, rel=1e-12)
+    rr, cc = onp.indices(restored.shape, dtype=float)
+    box = (onp.abs(rr - 40) <= 8) & (onp.abs(cc - 50) <= 8)
+    w = onp.where(box, restored, 0.0)
+    assert abs(float((w * rr).sum() / w.sum()) - 40) < 1e-6
+    assert abs(float((w * cc).sum() / w.sum()) - 50) < 1e-6
+
+
+def test_auto_mask_selects_nothing_on_a_source_free_noise_map():
+    # virgil audit 727#4.1: the 0.5 x peak cap used to override the noise floor,
+    # seeding masks on pure noise whenever the smoothed peak < 2 x noise x rms
+    n_masked = []
+    for seed in range(20):
+        resid = onp.random.default_rng(seed).normal(size=(100, 100))
+        n_masked.append(int(_auto_mask(resid, 3.0, 0.1, 3.0, 5.0, 1.5).sum()))
+    assert n_masked == [0] * 20
+
+
+def test_auto_mask_seeds_sources_when_the_residual_is_sidelobe_dominated():
+    # sparse track: the MAD rms (0.06) is ~1000 x thermal and the median is
+    # 0.11, so the beam-smoothed peak is only 2.7 x rms above the median, but
+    # the residual's own peak is 7 x rms above it (Kepley et al. 2020 measure
+    # the noise on the residual, plus the median)
+    data = _sparse_track_data()
+    res = clean(data, 65, 4.0, niter=0)
+    beam_pix = onp.sqrt(res.beam[0] * res.beam[1]) / 4.0
+    resid = onp.asarray(res.residual)
+    mask = _auto_mask(resid, beam_pix, 0.015, 3.0, 5.0, 1.5)
+    assert mask[onp.unravel_index(onp.argmax(resid), resid.shape)]
+
+
 def _sparse_track_data(n=65, scale=4.0):
     """300 baselines x 80 hour angles (a poor, sidelobe-ridden beam) and three
     point sources summing to 1 Jy, one near an edge (virgil#551)."""

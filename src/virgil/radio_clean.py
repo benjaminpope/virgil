@@ -135,7 +135,7 @@ def restore(model, residual, beam, pixel_scale_mas):
     bmaj, bmin, pa = beam
     kernel = _gaussian(
         model.shape,
-        ((n0 - 1) / 2, (n1 - 1) / 2),
+        (n0 // 2, n1 // 2),
         bmaj / pixel_scale_mas,
         bmin / pixel_scale_mas,
         pa,
@@ -144,7 +144,7 @@ def restore(model, residual, beam, pixel_scale_mas):
     conv = sfft.irfft2(
         sfft.rfft2(model, s=pad) * sfft.rfft2(kernel, s=pad), s=pad
     )
-    r, c = (n0 - 1) // 2, (n1 - 1) // 2  # the kernel's centre is the origin
+    r, c = n0 // 2, n1 // 2  # the kernel's centre pixel is the origin
     return conv[r : r + n0, c : c + n1] + residual
 
 
@@ -179,19 +179,25 @@ def _area(sigma_pix):
 
 def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
     """A simplified ``auto-multithresh``: the connected regions of the
-    beam-smoothed residual above ``low`` × rms that hold a pixel above
-    ``max(noise × rms, sidelobe × sidelobe level × peak)``."""
+    beam-smoothed residual above ``low`` × rms that hold a residual pixel above
+    ``max(noise × rms + median, sidelobe × sidelobe level × peak)``.
+
+    Source: Kepley et al. (2020, PASP 132, 024505), whose seed threshold is the
+    larger of the noise and sidelobe terms, the noise term measured on the
+    residual itself (MAD rms plus median). Departures: the sidelobe term is
+    capped at half the peak, so a poor PSF cannot hide the brightest region
+    (virgil#551), and the growth regions come from the beam-smoothed residual.
+    """
     smooth = _Smoother(residual.shape)(residual, beam_pix * FWHM_TO_SIGMA)
     rms = _mad_rms(smooth)
-    # a poor PSF must not hide the brightest region: seed at half the peak at most
-    high = min(
-        max(noise * rms, sidelobe * psf_sidelobe * smooth.max()),
-        0.5 * smooth.max(),
+    seed = max(
+        noise * _mad_rms(residual) + onp.median(residual),
+        min(sidelobe * psf_sidelobe, 0.5) * residual.max(),
     )
     lab, n = ndimage.label(smooth > low * rms)
     if n == 0:
         return onp.zeros(residual.shape, bool)
-    keep = onp.unique(lab[smooth > high])
+    keep = onp.unique(lab[residual > seed])
     return onp.isin(lab, keep[keep > 0])
 
 
