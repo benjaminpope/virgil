@@ -3055,6 +3055,28 @@ def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
     return dict(zip(kinds, beta))
 
 
+def unscalable_nuisances(d):
+    """What in dataset ``d`` has a covariance that does not scale with its errors.
+
+    Calibration gains, closure-phase offsets and extra blocks that are
+    marginalized, have a finite ``prior_width`` or have nuisance modes: a
+    list of phrases, empty if the errors can be rescaled.
+    """
+    reasons = []
+    if d.gains is not None:
+        reasons.append("calibration gains (with_gains)")
+    if d.phase_offsets is not None:
+        reasons.append("closure-phase offsets (with_closure_offsets)")
+    for b in d.extras:
+        if b.model_dependent_covariance:
+            reasons.append(f"a marginalized {b.kind} block")
+        elif getattr(b, "prior_width", None) is not None:
+            reasons.append(f"a {b.kind} block with a finite prior_width")
+        elif getattr(b, "modes", None) is not None:
+            reasons.append(f"a {b.kind} block with nuisance modes")
+    return reasons
+
+
 def error_scale(
     model,
     data,
@@ -3116,18 +3138,7 @@ def error_scale(
     # Refuse data whose covariance is not s² D: their nuisance widths do not
     # scale with the quoted errors.
     for i, d in enumerate(datasets):
-        reasons = []
-        if d.gains is not None:
-            reasons.append("calibration gains (with_gains)")
-        if d.phase_offsets is not None:
-            reasons.append("closure-phase offsets (with_closure_offsets)")
-        for b in d.extras:
-            if b.model_dependent_covariance:
-                reasons.append(f"a marginalized {b.kind} block")
-            elif getattr(b, "prior_width", None) is not None:
-                reasons.append(f"a {b.kind} block with a finite prior_width")
-            elif getattr(b, "modes", None) is not None:
-                reasons.append(f"a {b.kind} block with nuisance modes")
+        reasons = unscalable_nuisances(d)
         if reasons:
             raise ValueError(
                 f"error_scale(by_observable={by_observable}) cannot rescale "

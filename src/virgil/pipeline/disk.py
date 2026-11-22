@@ -327,7 +327,7 @@ class DiskPipeline(_Pipeline):
     def error_mode(self):
         """``"quoted"``, ``"fit"`` or ``"rescale"``: ``error_scale`` with
         ``"auto"`` resolved (``"rescale"`` for ``"gp"``, else ``"quoted"``)."""
-        return _error_mode(self.settings, self.name)
+        return _error_mode(self.settings, self.name, self.data)
 
     @property
     def processed(self):
@@ -460,14 +460,30 @@ class DiskPipeline(_Pipeline):
         )
 
     def _summarize(self, reports):
-        return _summarize(self.name, self.settings, reports)
+        return _summarize(self.name, self.settings, reports, self.error_mode)
 
 
-def _error_mode(settings, name):
+def _error_mode(settings, name, data=None):
     mode = settings["error_scale"]
-    if mode == "auto":
-        return "rescale" if name == "gp" else "quoted"
-    return mode
+    if mode != "auto":
+        return mode
+    if name != "gp":
+        return "quoted"
+    from ..imaging import _as_list, unscalable_nuisances
+
+    reasons = sorted(
+        {r for d in _as_list(data) for r in unscalable_nuisances(d)}
+    )
+    if reasons:
+        warnings.warn(
+            "error_scale='auto' falls back to 'quoted': the data have "
+            f"{', '.join(reasons)}, whose widths do not scale with the "
+            "quoted errors, so the MacKay rescale does not apply.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return "quoted"
+    return "rescale"
 
 
 def _model_files(name):
@@ -2563,7 +2579,7 @@ def _fit_checks(entry, settings, overview, geometry, compare):
     return [by[name] for name in CHECKS if name in by and name in entry.checks]
 
 
-def _summarize(name, settings, reports):
+def _summarize(name, settings, reports, error_mode):
     entry = models()[name]
     sections, checks = {}, []
     load, over, geo, prof, comp, post = (
@@ -2593,7 +2609,7 @@ def _summarize(name, settings, reports):
         return sections, checks
     sections["chi2"] = {
         "n_independent": comp["n_independent"],
-        "error_scale": _error_mode(settings, name),
+        "error_scale": error_mode,
         "error_scale_factor": comp["error_scale_factor"],
         "reduced": {comp["best"]: comp["chi2_reduced"]},
         "error_scales": comp["error_scales"],
