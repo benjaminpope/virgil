@@ -57,6 +57,7 @@ plugins:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
+  - Performance: performance.md
   - Background:
       - Contributions: contributors.md
       - References: references.md
@@ -116,6 +117,7 @@ nav:
           - AMIGO: api/amigo.md
           - Observables: api/observables.md
           - Gains: api/gains.md
+          - Noise specs: api/noise_spec.md
       - Models:
           - Overview: api/models/index.md
           - Classes:

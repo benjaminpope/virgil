@@ -86,9 +86,10 @@ class Evidence:
     ``log_z_error`` is the delta-method ``√(1/ESS - 1/n)``, a first-order
     lower bound (it misses heavy tails and mass the proposal missed; ``ln Ẑ``
     also carries a bias of ``-1/(2 ESS)``). ``at_floor``
-    is the sentinel: the draws sit at the all-outlier floor although a mode
-    with at least ``m_min`` inliers has a Laplace ``ln Z`` ``W`` nats above it; ``log_z`` must
-    then not be reported. ``undersampled`` is ``ess < ESS_TARGET``
+    is the sentinel: most of the importance weight sits on draws with fewer
+    than ``m_min`` inliers (the all-outlier floor) although a mode with at
+    least ``m_min`` inliers has a Laplace ``ln Z`` ``W`` nats above it;
+    ``log_z`` must then not be reported. ``undersampled`` is ``ess < ESS_TARGET``
     (information only). ``n_inliers`` is the weighted mean of ``inliers_fn``;
     ``log_q`` is the proposal's log density at the draws (``None`` if unset).
     """
@@ -314,9 +315,12 @@ def importance_evidence(
 ):  # fmt: skip
     """``ln Z`` of ``log_target`` by importance sampling from ``mixture``.
 
-    The sentinel ``at_floor`` fires when the weighted mean of
-    ``inliers_fn(x, theta)`` is below ``m_min`` while a mode with at least
-    ``m_min`` inliers has a Laplace ``ln Z`` above ``log_floor + W``;
+    The sentinel ``at_floor`` fires when more than half of the importance
+    weight is on draws with fewer than ``m_min`` inliers (``inliers_fn``
+    rounded to an integer; the weighted mean would fire on a healthy mode of
+    exactly ``m_min`` inliers as soon as one draw loses one) while a mode
+    with at least ``m_min`` inliers has a Laplace ``ln Z`` above
+    ``log_floor + W``;
     ``log_floor`` is the ``ln Z`` of the all-outlier target (a mode's peak
     height says nothing of its mass: a ridge fitted by ``m_min`` nights is
     high and thin).
@@ -337,13 +341,14 @@ def importance_evidence(
         w = onp.exp(lw - lw[finite].max())
         ess = float(w.sum() ** 2 / (w**2).sum())
         n_in = float((w * inl).sum() / w.sum())
+        low = float(w[onp.rint(inl) < m_min].sum() / w.sum())
     else:
-        ess, n_in = 0.0, 0.0
+        ess, n_in, low = 0.0, 0.0, 1.0
     err = math.sqrt(max(1.0 / max(ess, 1.0) - 1.0 / n, 0.0))
     found = [
         laplace_log_evidence(m) for m in mixture.modes if m.n_inliers >= m_min
     ]
-    at_floor = bool(n_in < m_min and found and max(found) > log_floor + W)
+    at_floor = bool(low > 0.5 and found and max(found) > log_floor + W)
     return Evidence(
         log_z, err, ess, onp.asarray(x), lw, at_floor, ess < ESS_TARGET,
         n_in, int(bad.sum()), onp.asarray(lq, float),

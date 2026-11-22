@@ -1,0 +1,1 @@
+The pin test `test_position_cells_matches_main_before_the_counters_were_added` runs with 100 resample-move draws, 2 moves and 40 warm-up steps (test-side arguments; library defaults unchanged), so it takes about a sixth of the time; its assertions read ln Ẑ, p_pos and mode counts, not the draws.

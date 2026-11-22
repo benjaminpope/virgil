@@ -1,5 +1,6 @@
 """Cells, period domain and the position-level search and evidence."""
 
+import dataclasses
 import functools
 import math
 import time
@@ -342,7 +343,7 @@ def test_the_floor_is_the_expected_epsilon_power():
 
 
 @x64
-def test_a_peak_term_is_the_gaussian_convolved_with_the_jitter():
+def test_a_peak_term_is_the_gaussian_convolved_with_the_between_night_jitter():
     s = _summaries(_orbit(), TIMES)
     cat = oc_cells._Catalogue(s, LOG_B).cast(np.float64)
     state = onp.asarray(cat.mean[:, 0]) + onp.random.default_rng(1).normal(
@@ -356,7 +357,8 @@ def test_a_peak_term_is_the_gaussian_convolved_with_the_jitter():
         )[:, 0]
         for k, night in enumerate(s):
             p = night.peaks[0]
-            cov = night.covariance(p, 1.0, jitter)
+            # the between-night jitter: one offset of the position, none on v
+            cov = p.cov + onp.diag([jitter**2] * 2 + [0.0] * 3)
             # ln L_j (N(d; 0, Σ_total) / N(0; 0, Σ_data)) with unit scale
             want = (
                 p.loglike
@@ -384,12 +386,18 @@ def test_a_night_without_a_peak_has_a_finite_gradient():
     assert onp.all(onp.isfinite(onp.asarray(g)))
 
 
-def _space(summaries, cell, dtype=np.float64):
+def _space(summaries, cell, dtype=np.float64, log_b=LOG_B):
     return oc_cells._Space(
-        oc_cells._Catalogue(summaries, LOG_B), cell, 0.0,
+        oc_cells._Catalogue(summaries, log_b),
+        cell,
+        0.0,
         onp.array([n.t_ref for n in summaries]) - summaries[0].t_ref,
-        (1.0, 30.0), 0.9, 1e-4, 0.0, dtype,
-    )  # fmt: skip
+        (1.0, 30.0),
+        0.9,
+        1e-4,
+        0.0,
+        dtype,
+    )
 
 
 @pytest.mark.slow
@@ -678,6 +686,37 @@ def test_a_failed_cell_makes_the_probabilities_undefined(monkeypatch):
     assert real is not leg
 
 
+@x64
+def test_the_scale_start_is_the_conditional_mle_per_block_of_the_inliers():
+    """Two error blocks at different χ² / n: the start's ``ln s`` is
+    ``½ ln(Σχ² / Σn)`` of each block over the nights it is given (here
+    ``-ln c_g``), not a value pooled across blocks."""
+    lnc = onp.array([0.7, -1.2])
+    s = tuple(
+        dataclasses.replace(
+            night,
+            blocks=("vis", "phi"),
+            peaks=(
+                dataclasses.replace(
+                    night.peaks[0],
+                    n=onp.full(2, N_OBS),
+                    chi2=N_OBS * onp.exp(-2 * lnc),
+                    hessian=onp.tile(night.peaks[0].hessian, (2, 1, 1)) / 2,
+                ),
+            ),
+        )
+        for night in _summaries(_orbit(), TIMES, seed=2)
+    )
+    space = _space(s, _cells(s, (9.0, 14.0))[1][0])
+    keep = onp.arange(len(TIMES)) != 3  # the sums run over a subset of nights
+    chi2 = onp.asarray(space.cat.chi2[keep, 0]).sum(0)
+    n = onp.asarray(space.cat.n[keep, 0]).sum(0)
+    x = oc_cells._chart_from(
+        space, np.zeros(3), onp.array([1.0, 2.0, 0.5, 0.3]), -2.0, chi2, n
+    )
+    onp.testing.assert_allclose(space.decode(x)["ln_s"], -lnc, atol=1e-6)
+
+
 @pytest.mark.slow
 @pytest.mark.full_only
 @x64
@@ -781,6 +820,79 @@ def test_the_position_evidence_of_a_tiny_case_matches_prior_importance(
     ess = w.sum() ** 2 / (w**2).sum()
     err = onp.sqrt(1 / ess)
     assert abs(fit.log_z - lz) < 4 * onp.hypot(fit.log_z_error, err) + 0.02
+
+
+@x64
+@pytest.mark.parametrize(
+    "e_max, y_zeta",
+    [
+        (1e-6, (2e-9, 3e-9)),
+        (oc_cells.E_MAX, (2e-9, 3e-9)),
+        (oc_cells.E_MAX, (0.6, -0.4)),
+    ],
+)
+def test_the_likelihood_derivatives_match_finite_differences(e_max, y_zeta):
+    """The autodiff gradient of ``ln L`` and its Hessian in ``(w_P, y_ζ)``,
+    velocities included, match central differences, at ``ζ ≈ 0`` (where
+    near-circular modes sit; through ``M_a = arg ζ²`` the Hessian was rounding
+    noise of order 10³) and at ``e ≈ 0.3``."""
+    times = onp.array([0.0, 4.1, 9.3])
+    s = _summaries(
+        _orbit(period=11.3, a=6.0, ecc=0.0), times, sigma=0.9, seed=2
+    )
+    domain = oc_cells.period_domain(s, p_range=(8.0, 14.0))
+    cell = [
+        c
+        for c in oc_cells.make_cells(times[0], times[-1], domain)
+        if c.p_lo <= 11.3 <= c.p_hi
+    ][0]
+    catalogue = oc_cells._Catalogue(s, onp.full(3, LOG_B))
+    space = oc_cells._Space(
+        catalogue,
+        cell,
+        times[0],
+        times - times[0],
+        oc_cells.A_RANGE,
+        e_max,
+        oc_cells.FLUX_FLOOR,
+        0.0,
+        np.float64,
+    )
+    # near the cell's best mode (P = 11.5 d), every night an inlier
+    x = np.array([0.59, 1.53, 0.58, 0.48, -0.3, -0.41, 0.0, 0.0, 1.3, 0.02])
+    x = x.at[6:8].set(np.array(y_zeta))
+    assert float(space.loglike(x)) > 3 * LOG_B + 10.0
+    idx = [0, 6, 7]
+    step, eye = 1e-3, onp.eye(space.d)
+
+    def f(dx):
+        return float(space.loglike(x + step * dx))
+
+    grad_fd = [(f(eye[i]) - f(-eye[i])) / (2 * step) for i in idx]
+    hess_fd = onp.array(
+        [
+            [
+                (
+                    f(eye[i] + eye[j])
+                    - f(eye[i] - eye[j])
+                    - f(eye[j] - eye[i])
+                    + f(-eye[i] - eye[j])
+                )
+                / (4 * step**2)
+                for j in idx
+            ]
+            for i in idx
+        ]
+    )
+    grad = onp.asarray(jax.grad(space.loglike)(x))[idx]
+    hess = onp.asarray(jax.hessian(space.loglike)(x))[onp.ix_(idx, idx)]
+    scale = abs(hess_fd).max()
+    onp.testing.assert_allclose(
+        grad, grad_fd, rtol=1e-4, atol=1e-5 * abs(onp.array(grad_fd)).max()
+    )
+    onp.testing.assert_allclose(
+        hess, hess_fd, rtol=1e-3, atol=1e-3 * scale + 1e-7
+    )
 
 
 # --- review hardening ---------------------------------------------------------
@@ -1479,3 +1591,150 @@ def test_position_cells_fails_on_a_flagged_cell_within_the_bound(monkeypatch):
     assert run(margin - 0.01).failed.sum() == 1
     out = run(margin + 0.01)
     assert not out.failed.any() and out.omitted_bound <= oc_cells.DELTA
+
+
+@x64
+def test_the_label_terms_are_the_two_halves_of_the_target_label_sum():
+    """``sign_log_likelihood`` gives the two terms of the label sum in the
+    likelihood: their mean (``½ Σ_σ``) is ``loglike``."""
+    orbit = _orbit()
+    s = _summaries(orbit, TIMES)
+    _, _, cell = _true_cell(11.3, TIMES, s, (6.0, 400.0))
+    space = _space(s, cell)
+    x = np.asarray(_truth_chart(space, orbit, TIMES[0]))
+    terms = space.sign_log_likelihood(x)
+    assert terms.shape == (2,)
+    onp.testing.assert_allclose(
+        float(np.logaddexp(terms[0], terms[1]) - math.log(2.0)),
+        float(space.loglike(x)),
+        rtol=1e-12,
+    )
+    # data at +track: the +1 label dominates
+    assert float(terms[0] - terms[1]) > 20.0
+
+
+def _true_state(sigma, k_times, b=None, p_range=(9.0, 14.0), sigma_last=None):
+    """A small system at its truth: ``(space, plan, truth chart)``; the last
+    night has ``sigma_last`` if given."""
+    orbit = _orbit(period=11.3, a=6.0, ecc=0.5)
+    s = _summaries(orbit, k_times, sigma=sigma, seed=1)
+    if sigma_last is not None:
+        s = s[:-1] + _summaries(orbit, k_times[-1:], sigma=sigma_last, seed=2)
+    _, _, cell = _true_cell(11.3, k_times, s, p_range)
+    space = _space(s, cell, log_b=LOG_B if b is None else b)
+    plan = oc_cells.search_plan(space, None, 1.0 / (k_times[-1] - k_times[0]))
+    xt = _truth_chart(space, orbit, k_times[0])
+    xt[1:5] *= math.sqrt(3.0)
+    return space, plan, xt
+
+
+@x64
+def test_the_prune_score_never_exceeds_the_likelihood_so_a_flat_candidate_cannot_drop_the_truth():
+    """``Z_mode <= sup L`` (design 6.10): the Laplace score of a point is at
+    most ``ln L`` there. A candidate with every night an outlier is flat in the
+    orbit; flooring its Hessian eigenvalues credits it ``½ ln 10^12`` nats per
+    flat direction (13.8). Its floor is set 5 nats inside the prune margin
+    above the truth's score, so only that credit puts it more than the margin
+    over the truth's basin."""
+    rng = onp.random.default_rng(5 * 10**3 + 10)
+    times = _two_season_times(rng)
+    space, _, xt = _true_state(6e-4, times)
+    flat = xt.copy()
+    flat[5:] = 14.0  # a saturated chart: every night an outlier, no curvature
+    assert (onp.asarray(oc_cells._labels(np.asarray(flat), space)) < 0).all()
+    at = lambda x: np.asarray(x)[None]  # noqa: E731
+    truth_score = float(oc_cells._scores(space, at(xt))[0])
+    margin = max(oc_cells.W_PRUNE, math.log(2 / oc_cells.DELTA))
+    # ln L of the flat point is K b + const: move b so that it sits 5 nats
+    # inside the margin over the truth's score
+    ll = lambda b: float(  # noqa: E731
+        _true_state(6e-4, times, b)[0].loglike(np.asarray(flat))
+    )
+    slope = ll(0.0) - ll(-1.0)
+    b = LOG_B + (truth_score + margin - 5.0 - ll(LOG_B)) / slope
+    space, _, xt = _true_state(6e-4, times, b)
+    truth_score = float(oc_cells._scores(space, at(xt))[0])
+    flat_ll = float(space.loglike(np.asarray(flat)))
+    assert flat_ll < truth_score + margin
+    keep = oc_cells._prune(space, onp.stack([flat, xt]))
+    assert 1 in keep
+
+
+@pytest.mark.slow
+@x64
+def test_add_one_recovers_an_inlier_night_the_c_steps_leave_out():
+    """Eight nights within 80 d (``sigma`` 0.05) and one at 1000 d, ten times
+    more precise, all inliers of one orbit. The C-steps from the truth with
+    the last night labelled an outlier fit the other eight alone: their fit
+    errs by a fraction of ``sigma``, which the 88 cycles to the last night
+    magnify far beyond its own ``sigma``, so it relabels as an outlier (a fixed
+    point of the C-steps). Add-one puts it back and the objective rises."""
+    times = onp.r_[TIMES, 1000.0]
+    space, plan, xt = _true_state(0.05, times, sigma_last=0.005)
+    lab = onp.asarray(oc_cells._labels(np.asarray(xt), space)).copy()
+    assert (lab >= 0).all()
+    lab[-1] = -1
+    v, lab, x = oc_cells._converge_csteps(
+        space, plan, xt[[0, 6, 7]][None], lab[None]
+    )
+    assert lab[0, -1] == -1 and (lab[0, :-1] >= 0).all()
+    f0 = float(oc_cells._refine(space, np.asarray(x[0]), oc_cells.N_NEWTON)[2])
+    info = {"evaluations": 0.0}
+    x1 = oc_cells._add_one(space, plan, x[0], info)
+    assert float(oc_cells._objective(np.asarray(x1), space)) > f0
+    assert (onp.asarray(oc_cells._labels(np.asarray(x1), space)) >= 0).all()
+
+
+@x64
+def test_an_all_outlier_c_step_row_gives_a_finite_chart():
+    """With every night an outlier there are no inliers, ``TI' = 0`` and ``z``
+    has no direction: the chart takes a fixed one at radius ``R0`` instead of
+    dividing ``0 / 0``, so the candidate stays finite through the filters of
+    ``search_cell`` (it is a flat candidate: ``_prune`` scores it capped at
+    ``ln L``)."""
+    times = onp.r_[TIMES]
+    space, plan, xt = _true_state(0.05, times)
+    lab = -onp.ones((1, len(times)), int)
+    res = oc_cells._cstep_chunk(
+        space, plan, np.asarray(xt[[0, 6, 7]][None]), np.asarray(lab), 4
+    )
+    x = onp.asarray(res[2])[0]
+    assert onp.isfinite(x).all() and onp.isfinite(onp.asarray(res[1])).all()
+    assert abs(onp.linalg.norm(x[1:5]) - math.sqrt(3.0)) < 1e-9
+    assert oc_cells._prune(space, x[None]).tolist() == [0]
+
+
+@pytest.mark.slow
+@x64
+def test_the_add_one_results_join_the_survivors_instead_of_replacing_them(
+    monkeypatch,
+):
+    """A survivor whose add-one result differs in its labels stays a candidate
+    next to it, so a partial-label mode with its own mass is not dropped. The
+    add-one result is stubbed with a point labelling every night an outlier,
+    which no survivor does."""
+    times = onp.r_[TIMES, 1000.0]
+    space, plan, xt = _true_state(0.05, times, sigma_last=0.005)
+    other = xt.copy()
+    other[5:] = 14.0
+    survivors, batch = [], []
+    monkeypatch.setattr(
+        oc_cells,
+        "_add_one",
+        lambda space, plan, x, info: survivors.append(x.copy()) or other,
+    )
+    monkeypatch.setattr(
+        oc_cells,
+        "_laplace_modes",
+        lambda space, x, info: batch.extend(x) or [],
+    )
+    oc_cells.search_cell(space, plan=plan)
+
+    def labels(x):
+        return onp.asarray(oc_cells._labels(np.asarray(x), space))
+
+    assert (labels(other) < 0).all()
+    assert survivors and all((labels(x) >= 0).any() for x in survivors)
+    for x in survivors:
+        assert any(onp.array_equal(x, b) for b in batch)
+    assert any(onp.array_equal(other, b) for b in batch)

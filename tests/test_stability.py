@@ -48,9 +48,13 @@ EXPECTED = {
     "virgil.radio_clean": {"*"},
     "virgil.radio_toeplitz": {"*"},
     "virgil.crossval": {"*"},
+    "virgil.noise_spec": {"*"},
     "virgil.pipeline": {"*"},
+    "virgil._cache": {"enable_compilation_cache"},
     "virgil.models": {
         "ArchimedeanSpiral",
+        "Crescent",
+        "Blurred",
         "LinearImage",
         "MultipoleDisk",
         "ThinRing",
@@ -158,6 +162,7 @@ PAGES = [
     "docs/radio_clean.md",
     "docs/api/radio_clean.md",
     "docs/api/radio_toeplitz.md",
+    "docs/api/noise_spec.md",
     "docs/stability.md",
 ]
 

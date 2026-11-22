@@ -14,6 +14,7 @@ Which way the axes point, what sign a phase has, what a flux means: none of thes
 10. [Priors and the MAP](#priors-and-the-map)
 11. [Precision](#precision)
 12. [Preconditioning image fits](#preconditioning-image-fits)
+13. [Instrument noise specs](#instrument-noise-specs)
 
 ## Sky coordinates and images
 
@@ -114,7 +115,7 @@ Three telescopes give one triangle and one closure phase per frame and wavelengt
 
 virgil handles this by default. For each frame and wavelength it keeps only the independent combinations of triangles and whitens them with the covariance of Kammerer et al. (2020, A&A 644, A110). That assumes equal noise on every baseline phase, giving a correlation of $\pm 1/3$ between triangles that share a baseline (signed by whether it enters both in the same sense), with each triangle's reported error on the diagonal. When errors within a group differ a lot, the $\chi^2$ is slightly off its nominal distribution; the docstring of `virgil._closure` gives the size of the effect.
 
-Use [`n_independent`][virgil.oidata.OIData.n_independent], the number of observables that remain, for degrees of freedom. [`whitened_residuals`][virgil.likelihood.whitened_residuals] returns one residual per independent combination (not the original triangles), then penalty residuals. The chord $2\sin(\Delta/2)$ won't do here: it changes sign when $\Delta$ changes by $2\pi$, which is harmless in one square but makes the $\chi^2$ of a correlated combination jump whenever a residual crosses $\pm\pi$, stalling gradient fits of high-S/N four-telescope data. Instead the smooth, periodic sines $s_i=\sin\Delta_i$ are whitened, and each closure phase adds an uncorrelated penalty residual $q_i/\sigma_i = 2\sin^2(\Delta_i/2)/\sigma_i$. For small residuals $\chi^2 = \Delta^\mathsf{T}C^{-1}\Delta$ up to $O(\Delta^3)$, the correlated Gaussian. At $\Delta_i=\pi$ the sines vanish, a false minimum that the penalty, $(2/\sigma_i)^2$, removes, so the $\chi^2$ is smooth everywhere. The penalty rows carry no normalization. So `whitened_residuals` has [`n_residuals`][virgil.oidata.OIData.n_residuals] entries, `n_independent` plus one per closure phase. For the Gaussian-process image prior that goes with these likelihoods, see [Gaussian processes and information field theory](gp_and_ift.md).
+Use [`n_independent`][virgil.oidata.OIData.n_independent], the number of observables that remain, for degrees of freedom. [`whitened_residuals`][virgil.likelihood.whitened_residuals] returns one residual per independent combination (not the original triangles), then penalty residuals. The chord $2\sin(\Delta/2)$ won't do here: it changes sign when $\Delta$ changes by $2\pi$, which is harmless in one square but makes the $\chi^2$ of a correlated combination jump whenever a residual crosses $\pm\pi$, stalling gradient fits of high-S/N four-telescope data. Instead the smooth, periodic sines $s_i=\sin\Delta_i$ are whitened, and each closure phase adds an uncorrelated penalty residual $q_i/\sigma_i = 2\sin^2(\Delta_i/2)/\sigma_i$ (or $2\sin^2(\Delta_i/2)/\sqrt{\sigma_i^2 + \sigma_{\text{off},i}^2}$ at the nominal widths when closure-phase offsets are marginalized via [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets], unless `scale_penalty=False`). For small residuals $\chi^2 = \Delta^\mathsf{T}C^{-1}\Delta$ up to $O(\Delta^3)$, the correlated Gaussian. At $\Delta_i=\pi$ the sines vanish, a false minimum that the penalty removes, so the $\chi^2$ is smooth everywhere. The penalty rows carry no normalization. So `whitened_residuals` has [`n_residuals`][virgil.oidata.OIData.n_residuals] entries, `n_independent` plus one per closure phase. For the Gaussian-process image prior that goes with these likelihoods, see [Gaussian processes and information field theory](gp_and_ift.md).
 
 ## Likelihood normalization
 
@@ -124,7 +125,7 @@ Use [`n_independent`][virgil.oidata.OIData.n_independent], the number of observa
 - An uncorrelated unprojected phase is von Mises with $\kappa = 1/\sigma^2$ and the exact normalizer $-\log 2\pi - \log i_{0e}(\kappa)$: Gaussian for $\sigma \ll 1$, and still normalized on the circle when $\sigma$ is large (a fitted `phi_error`, say). virgil returns it as the effective error $\sqrt{2\pi}\,i_{0e}(\kappa)$.
 - Correlated closure phases keep the Gaussian normalization, their small-$\sigma$ limit, since a correlated circular density has no closed-form normalizer. Their periodic penalty rows carry the effective error $1/\sqrt{2\pi}$ and add nothing; the whitened rows carry effective errors whose log-sum is $\tfrac12\log$ of the covariance's pseudo-determinant.
 - With gains or closure-phase offsets, the visibility (or phase) covariance is whitened with the gains marginalized, and the normalization includes $\tfrac12\log\det$ of that model-dependent covariance. The widths are the error terms `vis_gain_<group>` and `phi_offset_<group>`; see [`virgil.gains`][virgil.gains]. With three telescopes, closure-phase offsets change the closure-phase likelihood from von Mises to whitened sines with a periodic penalty, a normalization that differs by about $\log(1+\sigma^2/8)$ per closure phase, so evidences with and without offsets are not comparable.
-- Extra observables follow the phases, each block whitened on its own (see [`virgil.observables`][virgil.observables]).
+- Extra observables follow the phases, each block whitened on its own unless marginalized jointly with `data.gains` (`"visamp"` and `"t3amp"`, unless `include_extras=False`; see [`virgil.observables`][virgil.observables]).
 
 ## Fluxes
 
@@ -279,3 +280,33 @@ result.info["precondition_rounds"]
 
 !!! warning "float32"
     At weak weights a float32 fit can still stall: the line search meets the noise of the float32 model evaluation, which rescaling does not remove. Use `dtype="float64"` (the default) for a sweep that reaches small weights.
+
+## Instrument noise specs
+
+An instrument package (such as `virgil-vlti`) measures departures from independent quoted errors and emits a declarative `virgil.noise_spec/1` record: a dictionary, a JSON file, or an object with `to_noise_spec() -> dict`. [`virgil.noise_spec`](api/noise_spec.md) (`load_noise_spec`, `validate_noise_spec`, `apply_noise_spec`, `instrument_match`; provisional, see [stability](stability.md)) validates and applies it to an [`OIData`][virgil.oidata.OIData] without importing any instrument code.
+
+```json
+{
+  "schema": "virgil.noise_spec/1",
+  "instrument": "PIONIER",
+  "white": {"vis": 0.32, "phi": 0.65},
+  "gains": {"telescope": 0.0055, "baseline": 0.0045, "chromatic": null},
+  "closure_offsets": {"triangle": 0.0036, "baseline": null},
+  "common_mode": {"visphi": null},
+  "provenance": {"run": "pair_test:11_pairs", "date": "2026-10-04", "bound": "lower"}
+}
+```
+
+Every unit conversion happens once, in the emitter:
+
+| Field | Units and allowed values | Applied by `apply_noise_spec` |
+| --- | --- | --- |
+| `schema` | `"virgil.noise_spec/1"` (major-versioned; unknown keys outside `provenance` raise `ValueError` so newer terms are never silently dropped) | checked by `validate_noise_spec` |
+| `instrument` | non-empty string or `null` | compared by case-insensitive delimiter-bounded prefix against `insname` (passed via `insname=` or carried on `data` when recorded; `UserWarning` on mismatch, never an error) |
+| `white` | finite scales $> 0$ on the quoted uncertainties, keyed by [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale] names (`"vis"`, `"phi"`, `"flux"`, `"nflux"`, `"corrflux"`, `"visamp"`, `"t3amp"`, `"visphi"`); missing keys mean `1` | `data.with_error_scale(...)` on the observables present in `data` |
+| `gains` | $1\sigma$ widths on $\ln \lvert V \rvert$ (`telescope`, `baseline`, `chromatic`), `null` or in $[0, 1]$ (half of a fractional $V^2$ gain width; warns above `0.1`) | [`data.with_gains(...)`][virgil.oidata.OIData.with_gains] when any width is positive and amplitude/visibility observables are present in `data` |
+| `closure_offsets` | $1\sigma$ widths in **radians** (`triangle`, `baseline`), `null` or in $[0, 0.3]$ rad (warns above `0.02` rad) | [`data.with_closure_offsets(...)`][virgil.oidata.OIData.with_closure_offsets] when any width is positive and closure phases are present in `data` |
+| `common_mode` | optional `{"visphi": width}` in **radians**, `null` or in $[0, 0.5]$ rad (warns above `0.05` rad) | validated in `/1`; `OIData` application on `"visphi"` currently raises `NotImplementedError` pending `DifferentialPhase` mode marginalization |
+| `provenance` | free-form mapping requiring non-empty `"run"` and `"date"` strings (and optional `"bound"` in `("lower", "estimate")` or `null`) | carried verbatim |
+
+`apply_noise_spec` refuses upfront with `ValueError` if `data` already carries marginalized `gains`, `phase_offsets`, or differential-phase nuisance modes (so a white-only spec never rescales `d_vis` underneath existing `gains`), then applies `white` multiplicatively followed by `gains`, `closure_offsets` and `common_mode` (repeated white-only specs on nuisance-free data compound multiplicatively, as [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale] leaves no marker on `OIData`).
