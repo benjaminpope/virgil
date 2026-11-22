@@ -301,6 +301,30 @@ def test_auto_mask_seeds_sources_when_the_residual_is_sidelobe_dominated():
     resid = onp.asarray(res.residual)
     mask = _auto_mask(resid, beam_pix, 0.015, 3.0, 5.0, 1.5)
     assert mask[onp.unravel_index(onp.argmax(resid), resid.shape)]
+    # growth is above rms + median too: without the median the level (0.09) is
+    # below the map median (0.11) and the mask percolates over most of the image
+    assert mask.sum() < 0.15 * mask.size
+
+
+def test_auto_mask_threshold_includes_the_residual_median():
+    # Kepley et al. (2020) Eq. 4: the location is added to the seed and to the
+    # growth threshold. A +3 offset makes noise peak 3.5 rms above the median:
+    # no seed with the median, but a seed (peak > 5) without it
+    resid = onp.random.default_rng(0).normal(size=(100, 100)) + 3.0
+    assert not _auto_mask(resid, 3.0, 0.1, 3.0, 5.0, 1.5).any()
+
+
+def test_auto_mask_with_nothing_seeded_ends_at_the_floor_with_a_history_entry():
+    u, v = _uv(seed=0)
+    rng = onp.random.default_rng(1)
+    vis = 0.02 * (rng.normal(size=u.size) + 1j * rng.normal(size=u.size))
+    data = ComplexVisData.from_arrays(u, v, vis, 1.0, 230e9)
+    res = clean(
+        data, N, S, niter=100, threshold=1.0, usemask="auto-multithresh"
+    )
+    assert not res.mask.any()
+    assert res.stop == "threshold" and len(res.history) == 1
+    assert res.history[-1]["peak_residual"] <= 1.0
 
 
 def _sparse_track_data(n=65, scale=4.0):

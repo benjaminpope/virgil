@@ -128,10 +128,13 @@ is left in dirty-beam Jy/beam, not rescaled to the new beam's area, as CASA does
 
 **Masks.** `mask` is a boolean array (True where components may be placed).
 `usemask="auto-multithresh"` adds, every major cycle, regions of the
-beam-smoothed residual: connected above `lownoisethreshold × rms` and
-containing a pixel above `noisethreshold × rms` or `sidelobethreshold ×
-sidelobe × peak`. It is a simplified version of CASA's (positive features only;
-no negative or pruning thresholds).
+beam-smoothed residual: connected above `lownoisethreshold × rms + median` and
+containing a residual pixel above `max(noisethreshold × rms, sidelobethreshold ×
+sidelobe × |peak|) + median` (Kepley et al. 2020, Eqs. 1-4; rms is the MAD
+estimate, median the location, both of the residual). The sidelobe term is
+capped at half the peak. It is a simplified version of CASA's (positive
+features only; no negative or pruning thresholds). A field with nothing above
+the seed threshold seeds no mask and stops at the threshold or `nsigma` floor.
 
 **Primary beam.** CLEAN runs in the sky-times-beam plane, as `tclean` does with
 `gridder="standard"`; `RadioCleanResult.pb_corrected(pb, pblimit)` divides the

@@ -179,22 +179,24 @@ def _area(sigma_pix):
 
 def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
     """A simplified ``auto-multithresh``: the connected regions of the
-    beam-smoothed residual above ``low`` × rms that hold a residual pixel above
-    ``max(noise × rms + median, sidelobe × sidelobe level × peak)``.
+    beam-smoothed residual above ``low`` × rms + median that hold a residual
+    pixel above ``max(noise × rms, sidelobe × sidelobe level × |peak|) +
+    median``, the rms and median being those of the residual itself.
 
-    Source: Kepley et al. (2020, PASP 132, 024505), whose seed threshold is the
-    larger of the noise and sidelobe terms, the noise term measured on the
-    residual itself (MAD rms plus median). Departures: the sidelobe term is
+    Source: Kepley et al. (2020, PASP 132, 024505), Eqs. 1-4 and Appendix A
+    (MAD rms; median added as the location). Departures: the sidelobe term is
     capped at half the peak, so a poor PSF cannot hide the brightest region
-    (virgil#551), and the growth regions come from the beam-smoothed residual.
+    (virgil#551); the sidelobe level is the lobe-exterior peak of the PSF, not
+    Eq. 2; the growth regions come from the beam-smoothed residual, with no
+    sidelobe term.
     """
     smooth = _Smoother(residual.shape)(residual, beam_pix * FWHM_TO_SIGMA)
     rms = _mad_rms(smooth)
-    seed = max(
-        noise * _mad_rms(residual) + onp.median(residual),
-        min(sidelobe * psf_sidelobe, 0.5) * residual.max(),
+    seed = onp.median(residual) + max(
+        noise * _mad_rms(residual),
+        min(sidelobe * psf_sidelobe, 0.5) * onp.abs(residual).max(),
     )
-    lab, n = ndimage.label(smooth > low * rms)
+    lab, n = ndimage.label(smooth > low * rms + onp.median(smooth))
     if n == 0:
         return onp.zeros(residual.shape, bool)
     keep = onp.unique(lab[residual > seed])
@@ -345,7 +347,8 @@ class RadioCleanResult:
         Minor-cycle iterations.
     stop : str
         ``"threshold"``, ``"nsigma"``, ``"niter"``, ``"time_limit"`` or
-        ``"no_progress"`` (no component above the cycle threshold) or
+        ``"no_progress"`` (no component above the cycle threshold, or a source above
+        the floor but nothing masked) or
         ``"diverged"`` (the peak residual grew by more than 3.0, relative, over
         the previous major cycle or the minimum so far, as in ``tclean``;
         ``model`` and ``residual`` are then those of the cycle that diverged).
@@ -624,11 +627,9 @@ def clean(
                     noisethreshold,
                     lownoisethreshold,
                 )
-            if not use.any():
-                stop = "no_progress"
-                break
             rms = _mad_rms(resid)
-            peak = float(onp.abs(resid[use]).max())
+            # an empty mask (nothing seeded) tests the whole image
+            peak = float(onp.abs(resid[use] if use.any() else resid).max())
             history.append(
                 dict(
                     iterations=total,
@@ -646,6 +647,9 @@ def clean(
             floor = max(threshold, nsigma * rms)
             if peak <= floor:  # <=: all-zero data stops at threshold=0
                 stop = "nsigma" if nsigma * rms > threshold else "threshold"
+                break
+            if not use.any():  # a source above the floor, but nothing masked
+                stop = "no_progress"
                 break
             whole = float(onp.abs(resid).max())
             if whole > (1 + _MAJOR_RISE) * lowest_whole:
