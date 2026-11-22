@@ -628,7 +628,6 @@ def clean(
                     lownoisethreshold,
                 )
             rms = _mad_rms(resid)
-            # an empty mask (nothing seeded) tests the whole image
             peak = float(onp.abs(resid[use] if use.any() else resid).max())
             history.append(
                 dict(
@@ -648,7 +647,7 @@ def clean(
             if peak <= floor:  # <=: all-zero data stops at threshold=0
                 stop = "nsigma" if nsigma * rms > threshold else "threshold"
                 break
-            if not use.any():  # a source above the floor, but nothing masked
+            if not use.any():
                 stop = "no_progress"
                 break
             whole = float(onp.abs(resid).max())
