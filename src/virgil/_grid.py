@@ -160,7 +160,8 @@ def warn_unconverged(success, caller):
         warnings.warn(
             CheckWarning(
                 f"{caller}(): the optimizer did not converge at {failed} of "
-                f"{onp.size(success)} grid positions; values there may be "
+                f"{onp.size(success)} grid positions "
+                f"({failed / onp.size(success):.1%}); values there may be "
                 "inaccurate.",
                 check="convergence",
                 failed=failed,
