@@ -317,14 +317,17 @@ class _Objective(eqx.Module):
             start = values.get(site, default)
             if not bool(prior.support(np.asarray(start, float))):
                 mean = np.asarray(prior.mean, float)
-                start = mean if bool(np.all(np.isfinite(mean))) else start
+                if site in values or not bool(np.all(np.isfinite(mean))):
+                    start = _nudge_inside(prior, start)
+                else:
+                    start = mean
             z[site] = self.bijection(prior).inv(np.asarray(start, float))
             if not bool(np.all(np.isfinite(z[site]))):
                 # On the boundary of a bounded prior (e.g. 0 for
                 # Uniform(0, ...)): start at the prior's mean, or just
                 # inside the bound where that is not finite (HalfCauchy).
                 mean = np.asarray(prior.mean, float)
-                if not bool(np.all(np.isfinite(mean))):
+                if site in values or not bool(np.all(np.isfinite(mean))):
                     mean = _nudge_inside(prior, start)
                 z[site] = self.bijection(prior).inv(mean)
         for path, prior in self.priors.items():
@@ -2189,8 +2192,8 @@ def _initial_point(problem, init, dtype):
         warnings.warn(
             "fit() on centred hierarchical_scales: the joint MAP has no "
             "finite optimum (Neal's funnel), so the spread is driven to its "
-            "lower bound and the member scales collapse onto the median. Use "
-            "centred=False, fix the spread, or sample with numpyro_model.",
+            "lower bound and the member scales collapse onto the median. Sample "
+            "with numpyro_model or variational, or use independent scales.",
             UserWarning,
             stacklevel=external_stacklevel(),
         )

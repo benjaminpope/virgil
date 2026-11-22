@@ -266,7 +266,17 @@ def test_the_residual_image_points_at_the_missing_flux():
     assert onp.abs(fitted).max() < 0.5 * residual.max()
 
 
-def test_chi2_by_observable_warns_when_gains_mix_the_observables():
+def test_chi2_by_observable_warns_only_when_gains_mix_the_observables(recwarn):
+    import copy
+
+    gained = VDATA.with_gains(telescope=0.05)
+    # Gains on V² alone whiten within vis: the per-observable χ² is exact.
+    chi2_by_observable(VTRUTH, gained)
+    assert not [w for w in recwarn if "calibration gains" in str(w.message)]
+    # Gains coupled to amplitude blocks mix the rows.
+    wider = copy.copy(gained.gains)
+    object.__setattr__(wider, "n_vis", gained.vis.size + 1)
+    coupled = eqx.tree_at(lambda d: d.gains, gained, wider)
     with pytest.warns(UserWarning, match="calibration gains"):
-        out = chi2_by_observable(VTRUTH, VDATA.with_gains(telescope=0.05))
+        out = chi2_by_observable(VTRUTH, coupled)
     assert out["n"]["total"] > 0

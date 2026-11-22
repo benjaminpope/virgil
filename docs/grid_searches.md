@@ -56,10 +56,12 @@ nearly zero (a null of the baselines), $\sigma_f$ is large and the SNR small.
 
 With `prior=`, the result also holds the posterior mean and sd of $f$ and the
 log Bayes factor against $f = 0$ (`log_bayes_factor`; $\log B > 0$ favours a
-companion at that pixel). These hold in the linear model about the final
-linearization point, so they are exact only where the residuals are linear in
-$f$ over the posterior ($f \ll 1$, or after enough `n_iter`); do not trust the
-Bayes factor for $f \gtrsim 0.2$, where it can be badly biased or NaN. The position is
+companion at that pixel). The mean and sd are those of the linear model about the final
+linearization point; `n_iter` makes them the local posterior moments about
+$\hat f$. The Bayes factor extrapolates that local Gaussian back to $f = 0$, so
+it is reliable only where the residuals are linear in $f$ between $0$ and
+$\hat f$ ($f \ll 1$); do not trust it for $f \gtrsim 0.2$, however large
+`n_iter`, where it can be badly biased or NaN. The position is
 not marginalized. The likelihood in $f$ is Gaussian with mean $\hat f$ and sd
 $\sigma_f$, so
 $B = \int N(f;\hat f,\sigma_f^2)\,p(f)\,\mathrm{d}f \,/\, N(0;\hat f,\sigma_f^2)$.

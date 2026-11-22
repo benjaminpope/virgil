@@ -2171,15 +2171,15 @@ class LCurve:
             n_good = onp.sum(curvature / (curvature + weight))
             gap.append(2.0 * weight * penalty - n_good)
         gap = onp.asarray(gap)
-        # A non-finite gap (NaN compares unequal) is never a crossing.
-        ok = onp.isfinite(gap[:-1]) & onp.isfinite(gap[1:])
-        crossings = onp.nonzero(
-            ok & (onp.sign(gap[:-1]) != onp.sign(gap[1:]))
-        )[0]
+        # Skip non-finite sweep points (NaN compares unequal, so would fake a crossing).
+        finite = onp.isfinite(gap)
+        gap = gap[finite]
+        weights = onp.asarray(self.weights, dtype=float)[finite]
+        crossings = onp.nonzero(onp.sign(gap[:-1]) != onp.sign(gap[1:]))[0]
         if crossings.size == 0:
             return None
         i = int(crossings[0])
-        t = onp.log(onp.asarray(self.weights[i : i + 2], dtype=float))
+        t = onp.log(weights[i : i + 2])
         fraction = gap[i] / (gap[i] - gap[i + 1])
         return float(onp.exp(t[0] + fraction * (t[1] - t[0])))
 
@@ -3319,17 +3319,20 @@ def chi2_by_observable(model, data, path=None):
         ``Σ s²/(1 + s²)`` over the singular values ``s`` of the Jacobian of
         the whitened residuals by the latents.
 
-    Warns if a dataset has calibration gains: whitening then mixes rows across
-    observables, so only the total is exact.
+    Warns if a dataset has calibration gains coupled to amplitude blocks:
+    whitening then mixes rows across observables, so only the total is exact.
     """
     observations = _as_list(data)
-    if any(d.gains is not None for d in observations):
+    if any(
+        d.gains is not None and d.gains.n_vis != onp.size(d.vis)
+        for d in observations
+    ):
         warnings.warn(
             "chi2_by_observable: calibration gains whiten across rows of "
             "different observables, so the per-observable χ² here is "
             "approximate; the total is exact.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=external_stacklevel(),
         )
     rows, counts = _observable_blocks(observations)
     r = _residual_vector(model, observations)

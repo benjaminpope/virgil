@@ -912,7 +912,10 @@ def test_the_evidence_jacobian_stays_on_the_device_for_the_spectrum():
     )
 
 
-def test_classic_maxent_skips_a_non_finite_sweep_point(monkeypatch):
+@pytest.mark.parametrize("beside_crossing", [False, True])
+def test_classic_maxent_skips_a_non_finite_sweep_point(
+    monkeypatch, beside_crossing
+):
     from virgil import imaging
 
     truth = System(
@@ -936,8 +939,12 @@ def test_classic_maxent_skips_a_non_finite_sweep_point(monkeypatch):
     # never a crossing, but a NaN compares unequal, so it used to be one.
     weights = onp.asarray(curve.weights, dtype=float)
     crossing = int(onp.searchsorted(weights, expected)) - 1
-    poisoned_index = next(
-        k for k in range(len(weights)) if k not in (crossing, crossing + 1)
+    poisoned_index = (
+        crossing + 1
+        if beside_crossing
+        else next(
+            k for k in range(len(weights)) if k not in (crossing, crossing + 1)
+        )
     )
     real = imaging._singular_values
     calls = []
@@ -948,4 +955,10 @@ def test_classic_maxent_skips_a_non_finite_sweep_point(monkeypatch):
         return values * onp.nan if len(calls) == poisoned_index + 1 else values
 
     monkeypatch.setattr(imaging, "_singular_values", poisoned)
-    assert curve.classic_maxent(data) == pytest.approx(expected, rel=1e-6)
+    weight = curve.classic_maxent(data)
+    if beside_crossing:
+        # The crossing is now interpolated across the skipped point.
+        assert weight is not None
+        assert weights.min() < weight < weights.max()
+    else:
+        assert weight == pytest.approx(expected, rel=1e-6)
