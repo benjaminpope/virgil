@@ -342,25 +342,52 @@ def test_auto_mask_finds_a_source_on_a_negative_pedestal():
     assert mask[int(C - 5), int(C + 7)] and mask.sum() < 0.2 * mask.size
 
 
-def test_auto_mask_threshold_includes_the_residual_median():
-    # Kepley et al. (2020) Eq. 4: the location is added to the seed and to the
-    # growth threshold. A +3 offset makes noise peak 3.5 rms above the median:
-    # no seed with the median, but a seed (peak > 5) without it
-    resid = onp.random.default_rng(0).normal(size=(100, 100)) + 3.0
-    assert not _auto_mask(resid, 3.0, 0.1, 3.0, 5.0, 1.5).any()
+@pytest.mark.parametrize("psf_sidelobe", [0.1, 0.6])
+@pytest.mark.parametrize("offset", [-3.0, 3.0])
+def test_auto_mask_seeds_sources_on_a_constant_residual_offset(
+    offset, psf_sidelobe
+):
+    # Kepley et al. (2020) Eq. 4 adds the location (the median) to the seed
+    # threshold, and |peak| is measured from it: interior and near-edge
+    # sources stay seeded on a pedestal. (Growth is not exactly offset-
+    # invariant: the zero-padded smoother turns the pedestal into a border.)
+    rng = onp.random.default_rng(7)
+    resid = (
+        _gaussian((N, N), (C - 5, C + 7), 6.0, 6.0, 0.0)
+        + 0.5 * _gaussian((N, N), (3.0, 4.0), 4.0, 4.0, 0.0)
+        + 0.01 * rng.normal(size=(N, N))
+    )
+    mask = _auto_mask(resid + offset, 5.0, psf_sidelobe, 3.0, 5.0, 1.5)
+    assert mask[int(C - 5), int(C + 7)] and mask[3, 4]
 
 
-def test_auto_mask_with_nothing_seeded_ends_at_the_floor_with_a_history_entry():
+def test_auto_mask_keeps_a_seed_the_smoothed_residual_does_not_support():
+    # a lone pixel above the seed threshold stays masked even when its beam-
+    # smoothed value is below the growth threshold (low == noise)
+    resid = 0.01 * onp.random.default_rng(2).normal(size=(N, N))
+    resid[40, 40] = 1.0
+    mask = _auto_mask(resid, 5.0, 0.1, 3.0, 5.0, 5.0)
+    assert mask[40, 40]
+
+
+@pytest.mark.parametrize(
+    "nsigma, stop", [(5.0, "nsigma"), (3.0, "no_progress")]
+)
+def test_auto_mask_with_nothing_seeded_stops_at_the_floor_or_makes_no_progress(
+    nsigma, stop
+):
+    # noise peaks reach ~4 rms: below the 5 rms seed threshold (nothing
+    # seeded, whole-image peak tested), at or below an nsigma=5 floor but above
+    # an nsigma=3 one
     u, v = _uv(seed=0)
     rng = onp.random.default_rng(1)
     vis = 0.02 * (rng.normal(size=u.size) + 1j * rng.normal(size=u.size))
     data = ComplexVisData.from_arrays(u, v, vis, 1.0, 230e9)
     res = clean(
-        data, N, S, niter=100, threshold=1.0, usemask="auto-multithresh"
+        data, N, S, niter=100, nsigma=nsigma, usemask="auto-multithresh"
     )
-    assert not res.mask.any()
-    assert res.stop == "threshold" and len(res.history) == 1
-    assert res.history[-1]["peak_residual"] <= 1.0
+    assert not res.mask.any() and res.iterations == 0
+    assert res.stop == stop and len(res.history) == 1
 
 
 def _sparse_track_data(n=65, scale=4.0):

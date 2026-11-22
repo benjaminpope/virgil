@@ -178,29 +178,30 @@ def _area(sigma_pix):
 
 
 def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
-    """A simplified ``auto-multithresh``: the connected regions of the
-    beam-smoothed residual above ``low`` × rms + median that hold a residual
-    pixel above ``max(noise × rms, sidelobe × sidelobe level × |peak|) +
-    median``, the rms and median being those of the residual itself.
+    """A simplified ``auto-multithresh``: the residual pixels above ``median +
+    max(noise × rms, sidelobe × sidelobe level × |peak|)`` plus the connected
+    regions of the beam-smoothed residual above ``low`` × rms + median that
+    contain one. The seed ``rms`` and ``peak`` are those of the residual about
+    its median, the growth ``rms`` and median those of the smoothed residual.
 
     Source: Kepley et al. (2020, PASP 132, 024505), Eqs. 1-4 and Appendix A
     (MAD rms; median added as the location). Departures: the sidelobe term is
     capped at half the peak, so a poor PSF cannot hide the brightest region
     (virgil#551); the sidelobe level is the lobe-exterior peak of the PSF, not
-    Eq. 2; the growth regions come from the beam-smoothed residual, with no
-    sidelobe term.
+    Eq. 2; |peak| is taken from the median; the growth regions come from the
+    beam-smoothed residual, with no sidelobe term.
     """
-    smooth = _Smoother(residual.shape)(residual, beam_pix * FWHM_TO_SIGMA)
-    rms = _mad_rms(smooth)
-    seed = onp.median(residual) + max(
+    med = onp.median(residual)
+    seed = residual > med + max(
         noise * _mad_rms(residual),
-        min(sidelobe * psf_sidelobe, 0.5) * onp.abs(residual).max(),
+        min(sidelobe * psf_sidelobe, 0.5) * onp.abs(residual - med).max(),
     )
-    lab, n = ndimage.label(smooth > low * rms + onp.median(smooth))
-    if n == 0:
-        return onp.zeros(residual.shape, bool)
-    keep = onp.unique(lab[residual > seed])
-    return onp.isin(lab, keep[keep > 0])
+    smooth = _Smoother(residual.shape)(residual, beam_pix * FWHM_TO_SIGMA)
+    lab, _ = ndimage.label(
+        smooth > low * _mad_rms(smooth) + onp.median(smooth)
+    )
+    keep = onp.unique(lab[seed])
+    return seed | onp.isin(lab, keep[keep > 0])
 
 
 # ----------------------------------------------------------------------
