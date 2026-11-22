@@ -130,3 +130,80 @@ def thinned(draws):
     ess = float(effective_sample_size(draws[None]))
     step = max(1, int(onp.ceil(len(draws) / max(ess, 1.0))))
     return draws[::step]
+
+
+def limit_significances(template, data, grid, limits, kind):
+    """Significance of the companion at each limit, from the public likelihood.
+
+    ``kind="absil"``: the model at the limit flux against the no-companion
+    model, both on ``data`` (the definition of ``absil_limits``).
+    ``kind="injection"``: the companion's signal added block by block to
+    ``data`` (V2/vis, phases and every extra), the no-companion model against
+    the companion model on that injected data (``injection_limits``).
+    Both return ``nsigma`` of the chi-squared ratio, one value per
+    ``(coordinate point)`` of the leading axes of ``limits``.
+    """
+    import jax.numpy as np
+
+    from virgil.likelihood import build_model, whitened_residuals
+    from scipy import stats
+
+    keys = list(grid)
+    flux_axis = next(i for i, k in enumerate(keys) if "flux" in k)
+    coords = [k for i, k in enumerate(keys) if i != flux_axis]
+    ndof = data.n_independent
+    out = onp.zeros(limits.shape)
+    for index in onp.ndindex(*limits.shape):
+        values = [None] * len(keys)
+        for axis, key in zip(index, coords):
+            values[keys.index(key)] = float(grid[key][axis])
+        flux = float(limits[index])
+        null_values = list(values)
+        null_values[flux_axis] = 0.0
+        values[flux_axis] = flux
+        null = build_model(template, keys, null_values)
+        companion = build_model(template, keys, values)
+        target = data
+        if kind == "injection":
+            # data + (companion data - null data), every observable block:
+            # the noise-free data of each model differ by the signal only.
+            def inject(d, c, n):
+                if hasattr(d, "dtype") and onp.issubdtype(
+                    d.dtype, onp.inexact
+                ):
+                    return d + (c - n)
+                return d
+
+            target = jax.tree_util.tree_map(
+                inject,
+                data,
+                data.with_model(companion, noise_scale=0.0),
+                data.with_model(null, noise_scale=0.0),
+            )
+        chi2 = [
+            float(np.sum(whitened_residuals(m, target) ** 2)) / ndof
+            for m in (null, companion)
+        ]
+        pair = chi2 if kind == "injection" else chi2[::-1]
+        # Independent of virgil.limits.nsigma, which the limits solve against.
+        tail = stats.chi2.sf(ndof * pair[0] / pair[1], ndof)
+        out[index] = float(stats.norm.isf(0.5 * tail))
+    return out
+
+
+def brute_dirty_image(u, v, values, weights, npix, scale_mas):
+    """Direct-sum dirty image ``Σ w Re[V e^{+2πi(uX+vY)}] / Σ w``.
+
+    ``X``, ``Y`` are the pixel offsets in radians, East (+x) to the left of
+    column 0; written from the definition, with no NUFFT.
+    """
+    from virgil._utils import mas2rad
+
+    c = 0.5 * (npix - 1)
+    x = (c - onp.arange(npix)) * scale_mas * mas2rad
+    X, Y = onp.meshgrid(x, x, indexing="xy")
+    u, v = onp.asarray(u)[:, None, None], onp.asarray(v)[:, None, None]
+    w = onp.asarray(weights)[:, None, None]
+    z = onp.asarray(values)[:, None, None]
+    ph = 2 * onp.pi * (u * X + v * Y)
+    return (w * (z.real * onp.cos(ph) - z.imag * onp.sin(ph))).sum(0) / w.sum()
