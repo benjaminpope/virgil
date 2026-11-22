@@ -381,3 +381,9 @@ def test_centred_hierarchical_scales_have_positive_definite_curvature():
         assert {"s_median", "s_spread", "s_log"} <= set(sites)
         eig = onp.linalg.eigvalsh(onp.asarray(cov))
         assert onp.all(onp.isfinite(eig)) and eig.min() > 0.0
+
+
+def test_isotropic_latitude_mean_is_finite_on_a_narrow_float32_range():
+    prior = IsotropicLatitude(onp.float32(1.5707), onp.float32(1.57079))
+    mean = float(prior.mean)
+    assert onp.isfinite(mean) and 1.5707 <= mean <= 1.57079

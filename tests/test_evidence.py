@@ -898,3 +898,34 @@ def test_the_evidence_jacobian_stays_on_the_device_for_the_spectrum():
         rtol=1e-9,
         atol=1e-9,
     )
+
+
+def test_classic_maxent_skips_a_non_finite_sweep_point(monkeypatch):
+    from virgil import imaging
+
+    truth = System(
+        star=PointSource(), env=GaussianDisk(3.0, dra=2.0, flux=0.4)
+    )
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(2))
+    start = System(
+        star=PointSource(),
+        env=Image.from_model(GaussianDisk(4.0), N, H, flux=0.4),
+    )
+    curve = l_curve(
+        start,
+        image_priors(start),
+        data,
+        MaxEntropy(1.0, path="env"),
+        np.logspace(-1, 3, 5),
+    )
+    real = imaging._singular_values
+    calls = []
+
+    def poisoned(matrix):
+        values = real(matrix)
+        calls.append(1)
+        return values * onp.nan if len(calls) == 1 else values
+
+    monkeypatch.setattr(imaging, "_singular_values", poisoned)
+    weight = curve.classic_maxent(data)
+    assert weight is None or onp.isfinite(weight)

@@ -2086,7 +2086,10 @@ def _compare_gp(p):
     x0 = np.concatenate([flux0.reshape(1), z0])
     jac = onp.asarray(jax.jacfwd(residuals)(x0), dtype=float)
     prior = onp.diag(onp.r_[1e-9, onp.ones(z0.size)])
-    cov = onp.linalg.inv(jac.T @ jac + prior)
+    try:
+        cov = onp.linalg.inv(jac.T @ jac + prior)
+    except onp.linalg.LinAlgError:  # singular Jacobian
+        cov = onp.linalg.pinv(jac.T @ jac + prior)
     grad = onp.asarray(jax.grad(fraction)(x0), dtype=float)
     value = float(fraction(x0))
     var_flux, var_frac = cov[0, 0], float(grad @ cov @ grad)

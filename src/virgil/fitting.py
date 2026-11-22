@@ -128,6 +128,39 @@ def _log_jacobian(bijection, z):
     return bijection.log_abs_det_jacobian(z, bijection(z))
 
 
+def _warn_centred_scales(problem):
+    """Warn that MAP on centred ``hierarchical_scales`` collapses its spread."""
+    if any(
+        getattr(spec, "centred", False) and hasattr(spec, "log_prior")
+        for spec, _, _ in problem.noise.values()
+    ):
+        warnings.warn(
+            "fit() on centred hierarchical_scales: the joint MAP has no "
+            "finite optimum (Neal's funnel), so the spread is driven to its "
+            "lower bound and the member scales collapse onto the median. Use "
+            "centred=False, fix the spread, or sample with numpyro_model.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+
+
+def _nudge_inside(prior, start):
+    """``start`` moved just inside the support of ``prior`` if it is on a bound.
+
+    Unwraps ``.to_event`` / ``.expand`` wrappers to find the bounds.
+    """
+    support = prior.support
+    while hasattr(support, "base_constraint"):
+        support = support.base_constraint
+    lo = np.asarray(getattr(support, "lower_bound", -np.inf), float)
+    hi = np.asarray(getattr(support, "upper_bound", np.inf), float)
+    bound = np.where(np.isfinite(lo), lo, np.where(np.isfinite(hi), hi, 0.0))
+    eps = 1e-5 * np.where(
+        np.isfinite(hi - lo), hi - lo, np.maximum(1.0, np.abs(bound))
+    )
+    return np.clip(np.asarray(start, float), lo + eps, hi - eps)
+
+
 class _Objective(eqx.Module):
     """The negative log posterior of a fit, as a loss and as residuals.
 
@@ -286,7 +319,8 @@ class _Objective(eqx.Module):
 
         Error terms start at 1 (scales and supplied gain widths), 0 (``wavel_offset``,
         ``north_angle``) or 0.01 (added errors, other gain widths), or at their
-        prior's mean if that is outside the support or on its boundary.
+        prior's mean (just inside the bound if that is infinite) if outside the
+        support or on its boundary.
         """
         values = {} if values is None else dict(values)
         z = {}
@@ -298,13 +332,16 @@ class _Objective(eqx.Module):
             default = 0.0 if zero else 1.0 if unit else 0.01
             start = values.get(site, default)
             if not bool(prior.support(np.asarray(start, float))):
-                start = prior.mean
+                mean = np.asarray(prior.mean, float)
+                start = mean if bool(np.all(np.isfinite(mean))) else start
             z[site] = self.bijection(prior).inv(np.asarray(start, float))
             if not bool(np.all(np.isfinite(z[site]))):
                 # On the boundary of a bounded prior (e.g. 0 for
-                # Uniform(0, ...)), the unconstrained coordinate is
-                # infinite: start inside it, at the prior's mean.
+                # Uniform(0, ...)): start at the prior's mean, or just
+                # inside the bound where that is not finite (HalfCauchy).
                 mean = np.asarray(prior.mean, float)
+                if not bool(np.all(np.isfinite(mean))):
+                    mean = _nudge_inside(prior, start)
                 z[site] = self.bijection(prior).inv(mean)
         for path, prior in self.priors.items():
             if is_angle_vector(prior) and vector_site(path) in values:
@@ -327,20 +364,7 @@ class _Objective(eqx.Module):
             if not bool(np.all(np.isfinite(z[path]))):
                 # On or outside a bound (e.g. a railed earlier stage):
                 # nudge just inside it, keeping the fitted value.
-                support = prior.support
-                lo = np.asarray(
-                    getattr(support, "lower_bound", -np.inf), float
-                )
-                hi = np.asarray(getattr(support, "upper_bound", np.inf), float)
-                bound = np.where(
-                    np.isfinite(lo), lo, np.where(np.isfinite(hi), hi, 0.0)
-                )
-                eps = 1e-5 * np.where(
-                    np.isfinite(hi - lo),
-                    hi - lo,
-                    np.maximum(1.0, np.abs(bound)),
-                )
-                start = np.clip(start, lo + eps, hi - eps)
+                start = _nudge_inside(prior, start)
                 z[path] = self.bijection(prior).inv(start)
         bad = [p for p, v in z.items() if not bool(np.all(np.isfinite(v)))]
         if bad:
@@ -898,6 +922,7 @@ def fit(
             ),
             dtype,
         )
+        _warn_centred_scales(problem)
         z0 = _recentre(problem, problem.init(cast_tree(init, dtype)))
         if not method:
             try:
@@ -2037,8 +2062,8 @@ def gauss_newton_diag(
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
     of the regularizers, floored at zero. On the pixels of a regularizer with
     ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b *
-    (1 - b)`` (the softmax's, unsmoothed pixels). The data JᵀJ and other terms
-    are dropped there, so it is a scale, not the curvature, at weak weights. It is the scale
+    (1 - b)`` (the softmax's, unsmoothed pixels), added to the data JᵀJ and the
+    other terms, so it is a scale, not the curvature, at weak weights. It is the scale
     ``fit(..., precondition="diag")`` divides each coordinate by; see
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense matrix.
 

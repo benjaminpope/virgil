@@ -217,6 +217,8 @@ def _query_simbad(name):
             "propermotions", "sp_type", "parallax"
         )
         query = custom_simbad.query_object(name)
+        if query is None:  # some astroquery versions: no match
+            raise KeyError(f"no SIMBAD match for {name!r}")
         names = {col.lower(): col for col in query.colnames}
 
         def column(*candidates):

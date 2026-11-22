@@ -61,7 +61,9 @@ $$V(\mathbf{q}) = \Big[\sum_k w_k\, e^{-2\pi i\,\mathbf{q}\cdot\mathbf{x}_k}\Big
 
 where $\mathbf{q}'$ is $\mathbf{q}$ rotated and shortened into the arm plane,
 and the image is the same Gaussian blobs summed on the pixel grid. The image
-floors `width` at one pixel.
+floors `width` at one pixel in the arm plane, before the inclination
+stretches it: at high inclination the sky minor-axis width of the rendered
+image can fall below a pixel. The visibilities are exact.
 
 **Choosing `nodes`.** A chain of Gaussians a distance $d$ apart has the
 transform of the continuous ridge plus copies shifted by $1/d$ along the

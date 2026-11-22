@@ -2171,7 +2171,11 @@ class LCurve:
             n_good = onp.sum(curvature / (curvature + weight))
             gap.append(2.0 * weight * penalty - n_good)
         gap = onp.asarray(gap)
-        crossings = onp.nonzero(onp.sign(gap[:-1]) != onp.sign(gap[1:]))[0]
+        # A non-finite gap (NaN compares unequal) is never a crossing.
+        ok = onp.isfinite(gap[:-1]) & onp.isfinite(gap[1:])
+        crossings = onp.nonzero(
+            ok & (onp.sign(gap[:-1]) != onp.sign(gap[1:]))
+        )[0]
         if crossings.size == 0:
             return None
         i = int(crossings[0])
@@ -3316,8 +3320,19 @@ def chi2_by_observable(model, data, path=None):
         MacKay's number of well-determined latent parameters,
         ``Σ s²/(1 + s²)`` over the singular values ``s`` of the Jacobian of
         the whitened residuals by the latents.
+
+    Warns if a dataset has calibration gains: whitening then mixes rows across
+    observables, so only the total is exact.
     """
     observations = _as_list(data)
+    if any(d.gains is not None for d in observations):
+        warnings.warn(
+            "chi2_by_observable: calibration gains whiten across rows of "
+            "different observables, so the per-observable χ² here is "
+            "approximate; the total is exact.",
+            UserWarning,
+            stacklevel=2,
+        )
     rows, counts = _observable_blocks(observations)
     r = _residual_vector(model, observations)
     chi2 = {kind: float(onp.sum(r[idx] ** 2)) for kind, idx in rows.items()}

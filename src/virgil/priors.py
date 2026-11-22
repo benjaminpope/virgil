@@ -264,7 +264,7 @@ class IsotropicLatitude(_InverseCDFPrior):
     def mean(self):
         lo, hi = self.low, self.high
         num = (np.cos(hi) + hi * np.sin(hi)) - (np.cos(lo) + lo * np.sin(lo))
-        mean = num / (np.sin(hi) - np.sin(lo))
+        mean = num / (2.0 * self._half_norm)
         return np.clip(mean, lo, hi)
 
 

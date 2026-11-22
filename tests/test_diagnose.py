@@ -264,3 +264,9 @@ def test_the_residual_image_points_at_the_missing_flux():
     # The truth leaves a far smaller residual map than the star alone.
     fitted = residual_image(TRUTH, DATA, NPIX, SCALE)
     assert onp.abs(fitted).max() < 0.5 * residual.max()
+
+
+def test_chi2_by_observable_warns_when_gains_mix_the_observables():
+    with pytest.warns(UserWarning, match="calibration gains"):
+        out = chi2_by_observable(VTRUTH, VDATA.with_gains(telescope=0.05))
+    assert out["n"]["total"] > 0

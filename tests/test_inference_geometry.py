@@ -252,3 +252,21 @@ def test_a_positive_definite_hessian_is_inverted_exactly_in_mixed_units():
 
     hess = np.diag(np.array([1e8, 1e-10]))
     assert np.allclose(regularized_inverse(hess), np.diag(1.0 / np.diag(hess)))
+
+
+def test_hessian_through_the_nufft_says_to_use_the_dft():
+    import jax.numpy as np
+
+    from virgil._geometry import image_visibilities
+    from tests.test_nufft import _problem
+
+    image, uu, vv = _problem((8, 8), n=10)
+
+    def objective(b):
+        grid = b.reshape(image.shape)
+        return np.sum(
+            np.abs(image_visibilities(grid, uu, vv, 3.0, "nufft")) ** 2
+        )
+
+    with pytest.raises(RuntimeError, match="ft='dft'"):
+        hessian_matrix(objective, np.asarray(image).ravel())

@@ -660,7 +660,7 @@ def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
 
     The modulation is $1 + f(\theta)$, $f(\theta) = \sum_{m=1}^{n} A_m
     \cos(m(\theta - \mathrm{pa}_m))$. Its minimum is the lowest of $64 n$
-    grid values polished by Newton steps, so it is never underestimated.
+    grid values, with the lowest local minima polished by Newton steps, so it is never underestimated.
     ``jit``-safe.
 
     Parameters
@@ -702,11 +702,14 @@ def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
     f_min = np.min(f_grid)
     # Newton steps on f' from the lowest grid point, where f'' > 0 near a
     # minimum; a step is skipped where it is not.
-    t = theta[np.argmin(f_grid)]
+    # Polish the lowest local grid minima (at most ``k`` troughs exist).
+    local = (f_grid <= np.roll(f_grid, 1)) & (f_grid <= np.roll(f_grid, -1))
+    _, picks = jax.lax.top_k(-np.where(local, f_grid, np.inf), k)
+    t = theta[picks]
     for _ in range(3):
         f, df, d2f = derivatives(t)
         t = t - np.where(d2f > 0, df / np.where(d2f > 0, d2f, 1.0), 0.0)
-        f_min = np.minimum(f_min, derivatives(t)[0])
+        f_min = np.minimum(f_min, np.min(derivatives(t)[0]))
 
     return 1.0 + f_min > -tol
 

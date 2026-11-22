@@ -490,3 +490,16 @@ def test_the_diagnostics_own_warnings_are_not_suppressed(monkeypatch):
             steps=20,
             num_samples=50,
         )
+
+
+def test_a_dict_start_on_a_bound_is_nudged_inside_it():
+    data = nrm_oidata().with_model(BinaryModelCartesian(120.0, -80.0, 0.02))
+    vi = variational(
+        BINARY,
+        BINARY_PRIORS,
+        data,
+        start={"dra": 400.0, "ddec": -80.0, "flux": 0.02},
+        guide="mvn",
+        steps=3,
+    )
+    assert onp.isfinite(onp.asarray(vi.losses)).all()

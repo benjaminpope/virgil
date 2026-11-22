@@ -49,6 +49,7 @@ from .fitting import (
     NoStartingValue,
     SingularCurvature,
     _check_dense_size,
+    _nudge_inside,
     gauss_newton_mass,
 )
 from .likelihood import numpyro_model
@@ -417,6 +418,11 @@ def variational(
             (model, priors, data, noise, regularizers, likelihoods), dtype
         )
         values_c = None if values is None else cast_tree(dict(values), dtype)
+        if values_c is not None:
+            # A start on a bound maps to ±inf in the guide; nudge it inside.
+            for path, prior in dict(priors_c).items():
+                if path in values_c and hasattr(prior, "support"):
+                    values_c[path] = _nudge_inside(prior, values_c[path])
         posterior = numpyro_model(
             model_c,
             priors_c,
