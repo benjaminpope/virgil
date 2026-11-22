@@ -442,7 +442,7 @@ class _Objective(eqx.Module):
             parts.append(np.ravel(regularizer.residuals(_reference(model))))
         for path, prior in self.priors.items():
             value = self._prior_value(values, path)
-            if _flat_coordinate(prior) is not None:
+            if self._in_flat_coordinate(prior):
                 continue  # flat in the fitted coordinate: adds nothing
             prior = _base(prior)
             if is_angle_vector(prior):
@@ -695,7 +695,11 @@ class FitResult:
         (``None`` if it converged):
         ``"limit"`` (``max_steps``), ``"time"`` (``time_limit``), ``"stalled"`` (an L-BFGS step no longer moved
         the parameters), ``"non-finite"`` (a NaN or infinite loss or gradient; any
-        method ending on a non-finite loss is unconverged) or ``"failed"`` (another LM failure);
+        method ending on a non-finite loss is unconverged), ``"failed"`` (another LM failure)
+        or ``"bound"`` (a parameter ended at a prior bound with the loss still
+        falling inward: its gradient is squashed to nothing there, so the test
+        in the unconstrained coordinate passed; ``bound_stall`` names them; not
+        checked after Adam's ``ftol_abs`` stop);
         ``at_bound``, a tuple of the parameters and error terms that ended within 1/1000
         of their prior's range of a finite end, in the coordinate they are
         fitted in (a fit at a bound, say an eccentricity at 0.9, is often not
@@ -987,13 +991,12 @@ def fit(
         values = problem.constrain(z)
         loss, chi2, grad_norm = _summary(problem, z, traced_scale, grad_norm)
         loss = float(loss)
-        if method == "adam" and not converged:
-            tolerance = _lm_tolerance(problem, z0, traced_scale, gtol)
-            converged = bool(float(grad_norm) <= float(tolerance))
-            stop = None if converged else stop or "limit"
-        if not math.isfinite(loss) and converged is not False:
-            # E.g. LM or Adam ending on NaN parameters.
-            converged, stop = False, "non-finite"
+        converged, stop, stalled = _convergence(
+            problem,
+            z,
+            (z0, traced_scale, gtol),
+            (method, converged, stop, loss, grad_norm),
+        )
         if converged is False:
             warnings.warn(
                 _not_converged(method, stop, steps, limit, dtype, time_limit),
@@ -1023,6 +1026,7 @@ def fit(
             "precondition_rounds": rounds,
             **extra,
             "at_bound": _at_bound(problem, values),
+            "bound_stall": stalled,
             "derived": {
                 k: onp.asarray(v)
                 for term in problem.likelihoods
@@ -1096,22 +1100,22 @@ class _Budget:
 _AT_BOUND = 1e-3
 
 
-def _bound_fraction(prior, value, flat=True):
-    """Where ``value`` lies in its prior's finite interval, as a fraction.
+def _interval(prior, flat=True):
+    """``(to_flat, low, high)``: the finite interval ``prior`` is bounded to.
 
-    Only genuine edges of the support count (in the flat coordinate when ``flat``,
-    except at sphere coordinate poles); ``None`` for unbounded priors, angle
-    vectors, and tied terms.
+    ``to_flat`` maps a value to the interval's coordinate (the flat coordinate
+    when ``flat`` and the prior has one), or is ``None`` when the value is that
+    coordinate. The result is ``None`` for unbounded priors, angle vectors, and
+    tied terms.
     """
     if is_tied(prior) or is_angle_vector(prior):
         return None
-    base = _base(prior)
     fc = _flat_coordinate(prior)
     if flat and fc is not None:
         to_flat, _, low, high = fc
-        value = to_flat(value)
     else:
-        support = base.support
+        to_flat = None
+        support = _base(prior).support
         low = getattr(support, "lower_bound", None)
         high = getattr(support, "upper_bound", None)
         if low is None or high is None:
@@ -1119,6 +1123,23 @@ def _bound_fraction(prior, value, flat=True):
     low, high = onp.asarray(low, float), onp.asarray(high, float)
     if not (onp.all(onp.isfinite(low)) and onp.all(onp.isfinite(high))):
         return None
+    return to_flat, low, high
+
+
+def _bound_fraction(prior, value, flat=True):
+    """Where ``value`` lies in its prior's finite interval, as a fraction.
+
+    Only genuine edges of the support count (in the flat coordinate when ``flat``,
+    except at sphere coordinate poles); ``None`` for unbounded priors, angle
+    vectors, and tied terms.
+    """
+    interval = _interval(prior, flat)
+    if interval is None:
+        return None
+    to_flat, low, high = interval
+    base = _base(prior)
+    if to_flat is not None:
+        value = to_flat(value)
     fraction = onp.asarray((onp.asarray(value, float) - low) / (high - low))
     poles = getattr(base, "_poles", None)
     if poles is not None:
@@ -1151,6 +1172,111 @@ def _at_bound(problem, values):
         ):
             found.append(site)
     return tuple(found)
+
+
+# deliberate: fit is over the 120-line cap and the size gate bars growing it, so its convergence verdict (Adam's gradient test, non-finite loss, bound stall) lives here
+def _convergence(problem, z, start, outcome):
+    """``(converged, stop, stalled)`` of a finished fit.
+
+    ``start`` is ``(z0, scale, gtol)`` and ``outcome`` the solver's ``(method,
+    converged, stop)`` and the final loss and gradient norm.
+    """
+    z0, scale, gtol = start
+    method, converged, stop, loss, grad_norm = outcome
+    # Adam's window stop is the caller's own criterion (``ftol_abs``) and says
+    # nothing about the gradient, so the bound check leaves it be.
+    plateau = method == "adam" and converged is True
+    if method == "adam" and not converged:
+        tolerance = _lm_tolerance(problem, z0, scale, gtol)
+        converged = bool(float(grad_norm) <= float(tolerance))
+        stop = None if converged else stop or "limit"
+    if not math.isfinite(loss) and converged is not False:
+        # E.g. LM or Adam ending on NaN parameters.
+        converged, stop = False, "non-finite"
+    stalled = ()
+    if converged and not plateau and _bounded_sites(problem):
+        tolerance = _lm_tolerance(problem, z0, scale, gtol)
+        stalled = _bound_stall(problem, z, scale, tolerance)
+        if stalled:
+            converged, stop = False, "bound"
+    return converged, stop, stalled
+
+
+# A coordinate fitted through a sigmoid (the bounded-to-unbounded map) has
+# its gradient scaled by dt/dz = t (1 - t) for t its fraction of the prior's
+# range, at most 1/4: it vanishes towards a bound. A fit that ended with the
+# gradient in z below its tolerance therefore has a gradient in t of at most
+# tolerance / (t (1 - t)), which is no less than 4 times the tolerance (the
+# midpoint's). ``_bound_stall`` allows that 4 times and looks only within
+# ``_AT_BOUND`` of an end: further in, the gradient in t of a converged fit
+# can exceed it for the same reason, with the optimum short of the end.
+_SIGMOID_SLOPE = 4.0
+
+
+def _bounded_sites(problem):
+    """``{site: (prior, interval)}`` of the fitted parameters and error terms
+    with a finite interval (none for a boxed problem, which projects itself)."""
+    if problem.boxed:
+        return {}
+    priors = dict(problem.priors)
+    priors.update({site: p for site, (p, _, _) in problem.noise.items()})
+    found = {}
+    for site, prior in priors.items():
+        interval = _interval(prior, problem.flat)
+        if interval is not None:
+            found[site] = (prior, interval)
+    return found
+
+
+def _bound_stall(problem, z, scale, tolerance):
+    """The sites at a prior bound with the loss still falling inward.
+
+    ``z`` is a fit's result and ``tolerance`` its gradient tolerance. With ``t``
+    a parameter's fraction of its prior's range (in the flat coordinate, when
+    it has one) and ``g`` the gradient of the loss per data point in ``t``, a
+    site within ``_AT_BOUND`` of an end is a constrained stationary point only
+    if the bound's multiplier is not negative: ``g >= 0`` at the lower end,
+    ``g <= 0`` at the upper. It fails when ``g`` points inward by more than
+    ``_SIGMOID_SLOPE`` times ``tolerance``. A gradient pointing outward is a
+    genuine optimum at the bound, however far from it the fit stopped. The
+    test in ``z`` cannot see this: ``dt/dz`` shrinks towards a bound as fast as
+    the distance to it.
+
+    Source: [Nocedal & Wright (2006)](../references.md#nocedal2006), eq. 12.34 (KKT).
+    """
+    sites = _bounded_sites(problem)
+    if not sites:
+        return ()  # no full-model gradient for an unbounded fit
+    gradient = _gradient(problem, z, scale)
+    values = problem.constrain(z)
+    stalled = []
+    for site, (prior, (_, low, high)) in sites.items():
+        bijection = problem.bijection(prior)
+        to_interval = (
+            bijection.interval
+            if problem._in_flat_coordinate(prior)
+            else bijection
+        )
+        t, slope = jax.jvp(
+            lambda zk: (to_interval(zk) - low) / (high - low),
+            (z[site],),
+            (np.ones_like(z[site]),),
+        )
+        t, slope, g = (
+            onp.asarray(a, float) for a in (t, slope, gradient[site])
+        )
+        with onp.errstate(divide="ignore", invalid="ignore"):
+            g = onp.where(slope > 0, g / slope, 0.0)
+        inward = onp.where(t < 0.5, -g, g)
+        # Sphere coordinate poles are not prior bounds: ``_bound_fraction`` is
+        # None (both ends) or NaN (one end) there.
+        fraction = _bound_fraction(prior, values[site], problem.flat)
+        if fraction is None:
+            continue
+        at_end = (onp.minimum(t, 1 - t) < _AT_BOUND) & ~onp.isnan(fraction)
+        if onp.any(at_end & (inward > _SIGMOID_SLOPE * float(tolerance))):
+            stalled.append(site)
+    return tuple(stalled)
 
 
 # The one size limit for dense n × n matrices. Above this many coordinates
@@ -1419,10 +1545,14 @@ def _direct_chi2(term, values):
 
 
 @eqx.filter_jit
-# deliberate: jit boundary, compiled once per problem structure
+def _gradient(problem, z, scale):
+    """The loss-per-data-point gradient at ``z``."""
+    return jax.grad(_scaled_loss(problem, scale))(z)
+
+
 def _gradient_norm(problem, z, scale):
     """The largest component of the loss-per-data-point gradient at ``z``."""
-    return _largest(jax.grad(_scaled_loss(problem, scale))(z))
+    return _largest(_gradient(problem, z, scale))
 
 
 def _summary(problem, z, scale, grad_norm=None):
@@ -1563,8 +1693,7 @@ def _lm_residuals(z, args):
 @eqx.filter_jit
 # deliberate: jit boundary, compiled once per problem structure
 def _lm_tolerance(problem, z0, scale, gtol):
-    gradient = jax.grad(_scaled_loss(problem, scale))(z0)
-    return _tolerance(gradient, gtol)
+    return _tolerance(_gradient(problem, z0, scale), gtol)
 
 
 # Up to this many unconstrained coordinates, LM's inner solve is a dense QR
@@ -2234,6 +2363,13 @@ def _lbfgs_run(
 # deliberate: message for an unconverged fit saying why; test_unconverged_lm_message_says_why calls it with raw stop codes
 def _not_converged(method, stop, steps, limit, dtype, time_limit):
     """The warning for an unconverged fit, saying why it stopped."""
+    if stop == "bound":
+        return (
+            f"fit(method={method!r}) did not converge: a parameter stopped at a "
+            "prior bound with the loss still falling inward (its gradient is "
+            "squashed to nothing there by the bounded-to-unbounded map; see "
+            "info['bound_stall']); start it inside the bound."
+        )
     if stop == "time":
         return (
             f"fit(method={method!r}) did not converge: it reached its "
@@ -2281,8 +2417,12 @@ def _not_converged(method, stop, steps, limit, dtype, time_limit):
     return f"fit(method={method!r}) did not converge in {steps} steps."
 
 
+class _NoBox(TypeError):
+    """The problem has no box-constrained form."""
+
+
 # deliberate: the bounds of an L-BFGS-B fit, kept apart from the host loop
-def _box(problem, z):
+def _box(problem, z, strict=True):
     """``(lower, upper)`` flat bounds of the coordinates of a boxed problem.
 
     From ``Uniform`` priors, and from the non-negative pixels of a linear
@@ -2290,11 +2430,13 @@ def _box(problem, z):
     priors (``LogUniform``, isotropic angles, positive ``ImproperUniform``)
     raise ``TypeError``, as do angle vectors and error terms; a function model
     gets no image bounds, with a warning if a flat prior could hold pixels.
+    With ``strict=False`` (``kkt_report``) a coordinate without a box is
+    unbounded instead, so the others keep theirs.
     """
     import numpyro.distributions as dist
 
-    if problem.noise:
-        raise TypeError("method='lbfgsb' does not fit error terms.")
+    if problem.noise and strict:
+        raise _NoBox("method='lbfgsb' does not fit error terms.")
     lower, upper = [], []
     for path, prior in problem.priors.items():
         base, shape = _base(prior), onp.shape(z[path])
@@ -2303,9 +2445,13 @@ def _box(problem, z):
             support = support.base_constraint
         flat_real = isinstance(support, type(dist.constraints.real))
         if is_angle_vector(prior):
-            raise TypeError(
-                f"method='lbfgsb' cannot fit angle vector {path!r}."
-            )
+            if strict:
+                raise _NoBox(
+                    f"method='lbfgsb' cannot fit angle vector {path!r}."
+                )
+            lower.append(onp.full(onp.size(z[path]), -onp.inf))
+            upper.append(onp.full(onp.size(z[path]), onp.inf))
+            continue
         if isinstance(base, dist.Uniform):
             lo, hi = (
                 onp.broadcast_to(onp.asarray(b, float), shape)
@@ -2313,12 +2459,15 @@ def _box(problem, z):
             )
         elif isinstance(base, dist.ImproperUniform) and flat_real:
             lo, hi = onp.full(shape, -onp.inf), onp.full(shape, onp.inf)
-        else:
-            raise TypeError(
+        elif strict:
+            raise _NoBox(
                 f"method='lbfgsb' supports only Uniform priors and flat real "
                 f"priors (ImproperUniform on the real line, as image_priors "
                 f"gives); {path!r} has {type(base).__name__}."
             )
+        else:
+            lo, hi = onp.full(shape, -onp.inf), onp.full(shape, onp.inf)
+            flat_real = False
         parent, _, name = path.rpartition(".")
         if not isinstance(problem.model, SourceModel) and flat_real:
             warnings.warn(
@@ -2335,6 +2484,9 @@ def _box(problem, z):
                 lo, hi = onp.maximum(lo, box[0]), onp.minimum(hi, box[1])
         lower.append(onp.ravel(lo))
         upper.append(onp.ravel(hi))
+    for site in problem.coordinate_keys[len(problem.priors) :]:  # error terms
+        lower.append(onp.full(onp.size(z[site]), -onp.inf))
+        upper.append(onp.full(onp.size(z[site]), onp.inf))
     return onp.concatenate(lower), onp.concatenate(upper)
 
 
@@ -3026,7 +3178,7 @@ def kkt_report(
                 regularizers,
                 noise,
                 likelihoods,
-                boxed=True,
+                boxed=result.info.get("method", "lbfgsb") == "lbfgsb",
             ),
             "float64",
         )
@@ -3036,10 +3188,7 @@ def kkt_report(
         z0 = None if start is None else problem.init(start)
         ref = None if start is None else jax.grad(problem.loss)(z0)
         pen0 = None if start is None else jax.grad(problem.penalty)(z0)
-        try:
-            lower, upper = _box(problem, z)
-        except TypeError:
-            lower = upper = None
+        lower, upper = _box(problem, z, strict=False)
         keys = problem.coordinate_keys
         offsets = dict(
             zip(keys, onp.cumsum([0] + [onp.size(z[k]) for k in keys]))

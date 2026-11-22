@@ -665,9 +665,10 @@ def build_model(model, params, values):
     values)))``, or a [`SourceModel`][virgil.models.SourceModel] instance used as a template whose
     leaves at the (dot-separated) paths ``params`` are replaced by ``values``.
     """
+    pairs = list(zip(params, values, strict=True))
     if isinstance(model, SourceModel):
-        return model.set(list(params), list(values))
-    return model(**dict(zip(params, values)))
+        return model.set([p for p, _ in pairs], [v for _, v in pairs])
+    return model(**dict(pairs))
 
 
 @old_order("values", "params", "data", "model", data="data")
