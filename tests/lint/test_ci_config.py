@@ -324,49 +324,62 @@ def test_slow_orbit_tests_are_never_dropped_on_nightly_or_main():
         assert not any(j.get("orbit_slow") for j in jobs), event
 
 
-def _pack(durations, files, n):
-    """Mirror of tests/conftest.py ``_shard_files``: the load of each shard."""
-    mean = sum(durations.values()) / len(durations)
-    loads = [0.0] * n
-    for path in sorted(files, key=lambda f: (-durations.get(f, mean), f)):
-        loads[loads.index(min(loads))] += durations.get(path, mean)
-    return loads
+def _worst_shard_minutes(job, monkeypatch):
+    """Estimated wall minutes of the slowest shard of a sharded job: the
+    packing of tests/conftest.py itself, whose summed per-test time halves on
+    the runner's two xdist workers (measured: 50 min wall for 90 summed)."""
+    from tests import conftest
 
-
-def test_nightly_shards_fit_well_inside_the_job_cap():
-    """Estimated wall time of every nightly shard <= 60% of its 90 minutes.
-
-    A shard's wall time is about half its summed per-test time (two xdist
-    workers on a hosted runner; tests/test_durations_full.json is summed
-    test time, from the nightly JUnit reports). Refresh the durations with
-    scripts/update_test_durations.py when the suite grows.
-    """
-    durations = json.loads(
-        (ROOT / "tests/test_durations_full.json").read_text()
+    monkeypatch.setenv(
+        "VIRGIL_FULL_DURATIONS", "1" if job["full_durations"] else ""
     )
-    conftest = (ROOT / "tests/conftest.py").read_text()
-    independent = set(
-        re.findall(
-            r'"(test_\w+\.py)"',
-            conftest.split("DTYPE_INDEPENDENT = (")[1].split(")")[0],
-        )
+    durations = json.loads(
+        (
+            ROOT
+            / "tests"
+            / (
+                "test_durations_full.json"
+                if job["full_durations"]
+                else "test_durations.json"
+            )
+        ).read_text()
     )
     files = [
         f"tests/{p.name}" for p in sorted((ROOT / "tests").glob("test_*.py"))
     ]
-    assert all(f in durations for f in files), "stale test_durations_full.json"
-    cap = 90 * 60
-    for job in _jobs("schedule"):
-        if "shard" not in job:
-            continue
-        mine = [
-            f
-            for f in files
-            if job["x64"] == "0" or Path(f).name not in independent
+    if job["x64"] == "1":
+        files = [
+            f for f in files if Path(f).name not in conftest.DTYPE_INDEPENDENT
         ]
-        n = int(job["shard"].split("/")[1])
-        worst = max(_pack(durations, mine, n)) / 2
-        assert worst <= 0.6 * cap, (job["id"], round(worst / 60), "min")
+    n = int(job["shard"].split("/")[1])
+    pack = conftest._shard_files(files, n)
+    loads = [0.0] * n
+    for f in files:
+        loads[pack[f]] += durations[f]
+    return max(loads) / 120
+
+
+def test_nightly_shards_fit_well_inside_the_job_cap(monkeypatch):
+    """Estimated wall time of every nightly shard <= 60% of its 90 minutes
+    (tests/test_durations_full.json is summed test time from the nightly
+    JUnit reports; refresh it with scripts/update_test_durations.py when the
+    suite grows)."""
+    for job in _jobs("schedule"):
+        if "shard" in job:
+            worst = _worst_shard_minutes(job, monkeypatch)
+            assert worst <= 0.6 * 90, (job["id"], round(worst), "min")
+
+
+def test_full_durations_change_the_packing(monkeypatch):
+    from tests import conftest
+
+    files = [
+        f"tests/{p.name}" for p in sorted((ROOT / "tests").glob("test_*.py"))
+    ]
+    monkeypatch.setenv("VIRGIL_FULL_DURATIONS", "")
+    fast = conftest._shard_files(files, 6)
+    monkeypatch.setenv("VIRGIL_FULL_DURATIONS", "1")
+    assert conftest._shard_files(files, 6) != fast
 
 
 def test_nightly_report_names_cancelled_jobs_and_counts_them_red(monkeypatch):
@@ -403,8 +416,35 @@ def test_full_durations_reach_the_packer_only_in_the_full_tiers():
     tests = (ROOT / ".github/workflows/tests.yml").read_text()
     assert tests.count("VIRGIL_FULL_DURATIONS: ${{ matrix.full_durations") == 1
     assert 'export VIRGIL_FULL_DURATIONS="${{ matrix.full_durations' in tests
-    conftest = (ROOT / "tests/conftest.py").read_text()
-    assert 'os.environ.get("VIRGIL_FULL_DURATIONS") == "1"' in conftest
     for event in ("pull_request", "push"):
         assert not any(j.get("full_durations") for j in _jobs(event)), event
     assert all(j["full_durations"] for j in _jobs("schedule") if "shard" in j)
+    # Pull-request and main variants, and the main-tier dispatch, keep the
+    # fast-tier packing; a full dispatch packs the full-tier jobs by the
+    # full timings but not the fast-tier py3.13 and floors.
+    for jobs in (
+        _jobs("pull_request", pyproject=True),
+        _jobs("workflow_dispatch", tier="main"),
+    ):
+        assert not any(j.get("full_durations") for j in jobs)
+    dispatch = _jobs("workflow_dispatch")
+    assert all(j["full_durations"] for j in dispatch if j["id"] in FULL_GATE)
+    assert not any(
+        j.get("full_durations") for j in dispatch if j["id"] not in FULL_GATE
+    )
+    assert all(
+        j["full_durations"]
+        for j in _jobs("pull_request", full_label=True)
+        if j["id"] in FULL_GATE
+    )
+
+
+def test_full_ci_shards_fit_inside_the_45_minute_cap(monkeypatch):
+    """The full-ci label and the release-gate dispatch run the same shards
+    under the 45-minute job cap: estimated worst shard <= 70% of it (the
+    estimate undercounts by about 10%, measured on the nightly)."""
+    for event in ("workflow_dispatch",):
+        for job in _jobs(event):
+            if "shard" in job and job["full_durations"]:
+                worst = _worst_shard_minutes(job, monkeypatch)
+                assert worst <= 0.7 * 45, (job["id"], round(worst), "min")
