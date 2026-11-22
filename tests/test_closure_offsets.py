@@ -10,6 +10,7 @@ from virgil.coverage import vlti_oidata
 from virgil.fitting import fit
 from virgil.likelihood import model_loglike
 from virgil.models import BinaryModelCartesian
+from tests._shared import PAIRS, TRIANGLES
 
 TRUTH = BinaryModelCartesian(dra=6.0, ddec=-4.0, flux=0.3)
 N_WAVE = 4
@@ -28,7 +29,7 @@ def _data(key=0, stations=None, hours=(-2.0, 0.0, 2.0)):
 
 
 @pytest.mark.validates(
-    "virgil.gains.ClosureOffsets", roots=["mathematics"], kind="check"
+    "virgil.gains.ClosureOffsets", roots=["self-consistency"], kind="check"
 )
 def test_offsets_match_the_dense_whitened_covariance():
     data = _data()
@@ -58,6 +59,45 @@ def test_offsets_match_the_dense_whitened_covariance():
         TRUTH, data
     )
     assert float(difference) == pytest.approx(expected, rel=1e-4, abs=1e-4)
+
+
+@pytest.mark.validates(
+    "virgil.gains.ClosureOffsets", roots=["mathematics"], kind="check"
+)
+def test_offset_covariance_matches_an_independent_triangle_incidence():
+    # Built here from the raw station indices: a baseline offset e_ab (one
+    # per frame and baseline, shared by channels) enters triangle (a, b, c) as
+    # e_ab + e_bc - e_ac; a triangle offset is added to that triangle alone.
+    widths = {"baseline": 0.01, "triangle": 0.005}
+    hours = (-2.0, 0.0, 2.0)
+    data = _data(hours=hours).with_closure_offsets(**widths)
+    pairs = [tuple(p) for p in PAIRS.tolist()]
+    n_frame = len(hours)
+    n_phase = data.phi.size
+    assert n_phase == n_frame * len(TRIANGLES) * N_WAVE
+    expected = onp.zeros((n_phase, n_phase))
+    for f in range(n_frame):
+        rows = {
+            (t, w): (f * len(TRIANGLES) + t) * N_WAVE + w
+            for t in range(len(TRIANGLES))
+            for w in range(N_WAVE)
+        }
+        for p in pairs:
+            column = onp.zeros(n_phase)
+            for t, (a, b, c) in enumerate(TRIANGLES.tolist()):
+                sign = {(a, b): 1.0, (b, c): 1.0, (a, c): -1.0}.get(p, 0.0)
+                for w in range(N_WAVE):
+                    column[rows[t, w]] = sign
+            expected += widths["baseline"] ** 2 * onp.outer(column, column)
+        for t in range(len(TRIANGLES)):
+            column = onp.zeros(n_phase)
+            for w in range(N_WAVE):
+                column[rows[t, w]] = 1.0
+            expected += widths["triangle"] ** 2 * onp.outer(column, column)
+    modes = onp.asarray(
+        data.phase_offsets.modes(data.cp_noise, n_phase), float
+    )
+    onp.testing.assert_allclose(modes @ modes.T, expected, atol=1e-9)
 
 
 def test_baseline_offsets_close_around_four_telescopes():

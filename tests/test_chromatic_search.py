@@ -30,6 +30,7 @@ from virgil.detection import (
 from virgil.grid_fit import likelihood_grid, linear_flux_grid
 from virgil.spectra import reference_flux
 from virgil.limits import absil_limits, injection_limits
+from tests._shared import limit_significances
 
 BRG = 2.1661e-6
 W0 = BRG
@@ -195,7 +196,10 @@ def test_likelihood_and_linear_flux_grids_recover_the_chromatic_companion(
     snr = onp.asarray(result.snr)
     i, j = onp.unravel_index(onp.nanargmax(snr), snr.shape)
     assert (grid["comp.dra"][i], grid["comp.ddec"][j]) == (8.0, -5.0)
-    assert float(result.flux[i, j]) == pytest.approx(RATIO, rel=0.1)
+    flux = float(result.flux[i, j])
+    assert flux == pytest.approx(RATIO, rel=0.1)
+    # And within 3 sigma_flux (= flux / snr), like the other statistical checks.
+    assert abs(flux - RATIO) < 3 * flux / snr[i, j]
     assert snr[i, j] > 20.0
 
 
@@ -215,7 +219,13 @@ def test_limits_are_finite_and_sensible_for_the_chromatic_companion(wr_data):
             limit = onp.asarray(function(template, wr_data, positions, 3.0))
             assert limit.shape == (2, 1)
             assert onp.all(onp.isfinite(limit))
-            assert onp.all((limit > 1e-6) & (limit < 1.0))
+            # The limit solves its own definition, evaluated through the
+            # public likelihood (not a bound: it fails if the flux is off).
+            onp.testing.assert_allclose(
+                limit_significances(template, wr_data, positions, limit, name),
+                3.0,
+                atol=1e-2,
+            )
             limits[companion, name] = limit
     # Both spectra are the same model, so the same limits.
     for name in ("injection", "absil"):
