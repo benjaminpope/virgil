@@ -426,6 +426,7 @@ def test_arrow_marginal_is_the_dense_cholesky_marginal():
             assert float(norm) == pytest.approx(float(half), rel=1e-10)
 
 
+@pytest.mark.slow
 def test_the_memory_model_bounds_the_compiled_working_set():
     """``_table_floats`` counts the arrays of a gradient through the table:
     it must not undercount the compiler's temporaries, nor exceed them by an
