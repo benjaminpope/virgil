@@ -456,6 +456,22 @@ def test_statistics_only_path_matches_the_full_one_bit_for_bit():
                 onp.testing.assert_array_equal(got[stat], want[stat])
 
 
+def test_max_snr_without_uncertainty_raises():
+    inj = injection_grid([60.0], [1e-2], 4, 1)
+    fast = _recover(key=7, n_null=4, injections=inj, uncertainty=False)
+    calls = (
+        lambda: fast.false_alarm_probability("max_snr", 1.0),
+        lambda: fast.threshold("max_snr", 0.5),
+        lambda: fast.completeness("max_snr", 0.5),
+        lambda: fast.roc("max_snr"),
+    )
+    for call in calls:
+        with pytest.raises(ValueError, match="uncertainty=False"):
+            call()
+    # The other statistics still work.
+    assert fast.false_alarm_probability("delta_chi2", 1.0)[0].size == 1
+
+
 def test_draw_batch_vectorizes_the_same_draws():
     # draw_batch > 1 vmaps the search over draws (the tutorial uses it to
     # amortise the flux optimizer's loop); draw i keeps its key.
