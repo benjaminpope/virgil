@@ -390,7 +390,7 @@ staged = fit_staged_nuisances(
 )
 print(f"reference observation {staged.ref_obs} (sums of weights {staged.sum_weights})")
 print("gains of the others, relative to it:", onp.round(onp.exp(staged.nuisances["cal.gain"]["value"]), 3))
-print("failed (a gain within 5% of its box edge, or stage 3 unconverged):", staged.failed)
+print("failed (a gain within 5% of its box edge):", staged.failed)
 print("image block converged (kkt_report):", staged.kkt["converged"])
 ```
 
@@ -401,7 +401,7 @@ RuntimeWarning: fit(method='lbfgsb') did not converge after 5000 steps: it reach
 ```text
 reference observation 1 (sums of weights [3.0e+07 4.5e+08 1.5e+08])
 gains of the others, relative to it: [1.1 0.9]
-failed (a gain within 5% of its box edge, or stage 3 unconverged): True
+failed (a gain within 5% of its box edge): True
 image block converged (kkt_report): False
 ```
 
