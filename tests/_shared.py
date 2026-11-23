@@ -10,6 +10,16 @@ from numpyro.diagnostics import effective_sample_size
 
 from virgil.oidata import OIData, cp_indices
 
+
+def nufft_problem(shape, n=200, seed=0, max_freq=2e6):
+    """A random unit-flux image of ``shape`` and ``n`` random uv points."""
+    rng = onp.random.default_rng(seed)
+    image = rng.uniform(0.0, 1.0, shape)
+    image /= image.sum()
+    uu, vv = rng.uniform(-max_freq, max_freq, (2, n))
+    return image, uu, vv
+
+
 PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
 TRIANGLES = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
 

@@ -442,6 +442,14 @@ def test_diffphase_modes_tangent_space_no_unwrap_and_guards():
     )
     with pytest.raises(ValueError, match="nuisance modes"):
         error_scale(gp_model, full, by_observable=True)
+    # ... and so does the scalar path, here and for a finite prior_width.
+    with pytest.raises(ValueError, match="nuisance modes"):
+        error_scale(gp_model, full)
+    wide = _two_epoch_oidata(("visphi",)).with_continuum(
+        lines=[LINE], prior_width=(0.3, 0.5)
+    )
+    with pytest.raises(ValueError, match="finite prior_width"):
+        error_scale(gp_model, wide)
 
     # split_by_epoch succeeds for frame-local modes and refuses spanning modes.
     with jax.enable_x64(True):

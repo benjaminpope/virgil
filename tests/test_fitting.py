@@ -143,6 +143,27 @@ def test_a_start_on_a_bound_is_nudged_inside_it(flux_prior, flux_start):
     assert np.isfinite(objective.loss(z))
 
 
+def test_a_noise_start_on_a_bound_with_an_infinite_mean_is_nudged_inside():
+    # HalfCauchy has no finite mean, so the mean is no fallback.
+    objective = _Objective(
+        START, PRIORS, DATA, noise={"vis_scale": dist.HalfCauchy(1.0)}
+    )
+    for start in (0.0, -1.0):  # on the bound, outside it
+        z = objective.init({"noise.vis_scale": start})
+        assert all(np.all(np.isfinite(v)) for v in z.values())
+        scale = float(objective.constrain(z)["noise.vis_scale"])
+        assert 0.0 < scale < 1e-3
+
+
+def test_nudge_inside_finds_the_bounds_of_a_vector_prior():
+    from virgil.fitting import _nudge_inside
+
+    prior = dist.Uniform(0.0, 1.0).expand([3]).to_event(1)
+    got = _nudge_inside(prior, np.array([0.0, 0.5, 1.0]))
+    assert np.all(got > 0.0) and np.all(got < 1.0)
+    assert float(got[1]) == 0.5
+
+
 def test_a_non_finite_start_is_rejected_by_path():
     objective = _Objective(START, PRIORS, DATA)
     with pytest.raises(ValueError, match="ddec"):
@@ -751,13 +772,14 @@ def test_fit_with_hierarchical_error_scales():
         "v2_spread": 0.5,
         "v2_log": np.zeros(2),
     }
-    result = fit(
-        _binary_fn,
-        priors,
-        [quiet, noisy],
-        noise=[{"vis_scale": s} for s in scales],
-        init=init,
-    )
+    with pytest.warns(UserWarning, match="centred hierarchical_scales"):
+        result = fit(
+            _binary_fn,
+            priors,
+            [quiet, noisy],
+            noise=[{"vis_scale": s} for s in scales],
+            init=init,
+        )
     # Unpooled reference: an independent log-uniform scale per dataset.
     unpooled = fit(
         _binary_fn,
@@ -816,6 +838,36 @@ def test_fit_with_hierarchical_error_scales():
     assert {"v2_median", "v2_spread", "v2_log"} <= set(sites)
     eig = onp.linalg.eigvalsh(onp.asarray(cov))
     assert onp.all(onp.isfinite(eig)) and eig.min() > 0.0
+
+
+@pytest.mark.parametrize("centred", [True, False])
+def test_only_centred_hierarchical_scales_warn_about_the_funnel(centred):
+    from virgil.fitting import _initial_point
+    from virgil.priors import hierarchical_scales
+
+    population, scales = hierarchical_scales("v2", 2, centred=centred)
+    problem = _Objective(
+        _binary_fn,
+        {**PRIORS, **population},
+        [DATA, DATA],
+        noise=[{"vis_scale": s} for s in scales],
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _initial_point(
+            problem,
+            {
+                "dra": 150.0,
+                "ddec": -80.0,
+                "flux": 0.02,
+                "v2_median": 1.0,
+                "v2_spread": 0.5,
+                ("v2_log" if centred else "v2_z"): np.zeros(2),
+            },
+            "float32",
+        )
+    funnel = [w for w in caught if "Neal" in str(w.message)]
+    assert bool(funnel) == centred
 
 
 def test_numpyro_model_adds_each_population_density_once():

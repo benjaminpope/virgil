@@ -217,13 +217,20 @@ def _query_simbad(name):
             "propermotions", "sp_type", "parallax"
         )
         query = custom_simbad.query_object(name)
+        if query is None:  # some astroquery versions: no match
+            raise KeyError(f"no SIMBAD match for {name!r}")
         names = {col.lower(): col for col in query.colnames}
 
-        def column(*candidates):
+        def column(*candidates, default=None):
             for candidate in candidates:
                 if candidate in names:
-                    return query[names[candidate]][0]
-            raise KeyError(candidates)
+                    value = query[names[candidate]][0]
+                    if onp.ma.is_masked(value):  # field absent in SIMBAD
+                        break
+                    return value
+            if default is None:
+                raise KeyError(candidates)
+            return default
 
         ra, dec = column("ra"), column("dec")
         if isinstance(ra, str):
@@ -233,10 +240,10 @@ def _query_simbad(name):
         return (
             [float(ra)],
             [float(dec)],
-            [str(column("sp_type"))],
-            [float(column("pmra")) * mas_to_deg],
-            [float(column("pmdec")) * mas_to_deg],
-            [float(column("plx_value")) * mas_to_deg],
+            [str(column("sp_type", default="unknown"))],
+            [float(column("pmra", default=0.0)) * mas_to_deg],
+            [float(column("pmdec", default=0.0)) * mas_to_deg],
+            [float(column("plx_value", default=0.0)) * mas_to_deg],
         )
     except (OSError, KeyError, IndexError, TypeError, ValueError) as err:
         warnings.warn(

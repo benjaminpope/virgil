@@ -1,0 +1,1 @@
+- Document the Bayes-factor validity range in `linear_flux_grid`, the boundary variance of `GaussianField`, what `rescale_errors` leaves unscaled, the `FlaredDisk` area-Jacobian caveat, the fixed nominal closure-offset widths, and the one-pixel floor of `ArchimedeanSpiral` images; correct the `gauss_newton_diag` docstring.

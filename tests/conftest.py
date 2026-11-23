@@ -197,7 +197,11 @@ def _shard_files(files, n):
     recorded timing counts as the mean. Every shard collects the same files,
     so each computes the same packing.
     """
-    known = json.loads((HERE / "test_durations.json").read_text())
+    # The full and nightly tiers run the `full_only` tests too, which the
+    # gate and main tiers do not: they pack by their own timings.
+    full = os.environ.get("VIRGIL_FULL_DURATIONS") == "1"
+    name = "test_durations_full.json" if full else "test_durations.json"
+    known = json.loads((HERE / name).read_text())
     mean = sum(known.values()) / len(known)
     loads = [0.0] * n
     shard = {}

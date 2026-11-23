@@ -905,3 +905,19 @@ def test_legacy_simbad_programming_error_is_not_swallowed(monkeypatch):
     monkeypatch.setattr(oifits_implaneia, "Simbad", Broken)
     with pytest.raises(RuntimeError, match="bug"):
         oifits_implaneia._query_simbad("HD 1")
+
+
+def test_legacy_simbad_no_match_warns_and_gives_placeholders(monkeypatch):
+    from virgil.legacy import oifits_implaneia
+
+    class Empty:
+        def add_votable_fields(self, *fields):
+            pass
+
+        def query_object(self, name):
+            return None  # some astroquery versions
+
+    monkeypatch.setattr(oifits_implaneia, "Simbad", Empty)
+    with pytest.warns(UserWarning, match="SIMBAD lookup"):
+        out = oifits_implaneia._query_simbad("HD 1")
+    assert out[2] == ["unknown"]

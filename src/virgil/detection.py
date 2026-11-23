@@ -438,7 +438,8 @@ def rescale_errors(null_scene, data):
     -------
     data : OIData
         A copy with ``d_vis`` and ``d_phi`` scaled (the factors are already
-        applied); ``data.extras`` unchanged.
+        applied); ``data.extras`` unchanged. Calibration gains and closure-phase
+        offsets are not rescaled, so χ²_r need not be 1 for data that have them.
     factors : dict[str, float]
         ``{"vis": s_vis, "phi": s_phi}`` (``s_phi`` is 1 without phases).
 
