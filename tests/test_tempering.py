@@ -719,7 +719,7 @@ def test_the_tempered_posterior_is_calibrated(common, rho):
     strict=True,
     reason="untempered outlier-mixture fit has no valid mode on 17/20 seeds "
     "(ar1-0.85) and 19/20 (common-0.6): offsets inf (0.4.2 review F3; "
-    "tracking issue to be linked, milestone 0.4.3)",
+    "tracked in #747, milestone 0.4.3)",
 )
 @CALIBRATION_CASES
 def test_the_untempered_posterior_is_not_calibrated(common, rho):

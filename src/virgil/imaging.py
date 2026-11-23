@@ -40,6 +40,7 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
+import scipy.linalg
 from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
@@ -53,6 +54,7 @@ from ._geometry import (
 from ._utils import FWHM_PER_SIGMA, _reference, mas2rad
 from ._deprecate import external_stacklevel, keyword_only, renamed
 from ._precision import cast_tree, run_in
+from ._flat import _flat_coordinate
 from .fitting import FitResult, fit
 from .spectra import flux_at
 from .likelihood import _whitened_errors_and_log_norm, whitened_residuals
@@ -1035,7 +1037,7 @@ def starting_image(
         Position angle of the pixel grid (default 0, North up). ``"grid"``
         (provisional) takes the data's uv lattice, ``data.uv_grid.rotation_deg``,
         so that fits take the exact fast matrix transform (North up without a
-        lattice).
+        lattice); North up too when the datasets' lattices differ, without a warning.
 
     Returns
     -------
@@ -1530,7 +1532,10 @@ class CleanResult:
         The FWHM of each scale's Gaussian shape (0 for a point).
     rotation_deg : float
         Position angle of the pixel grid's "up" axis, the frame of
-        ``components``; the model's, 0 for North up.
+        ``components``: ``frame_deg`` when set, else the model's (0 for North
+        up).
+    frame_deg : float, optional
+        The frame ``clean`` ran in; ``rotation_deg`` uses it when set.
     """
 
     model: object
@@ -1540,10 +1545,14 @@ class CleanResult:
     stop: str
     components_by_scale: jax.Array = None
     scales_mas: tuple = (0.0,)
+    frame_deg: float = None
 
     @property
     def rotation_deg(self):
-        # With no components the model may be the bare base: any frame will do.
+        # With no components the model is the bare base, with no frame of its
+        # own: use the one ``clean`` ran in.
+        if self.frame_deg is not None:
+            return float(self.frame_deg)
         image = getattr(self.model, "clean", self.model)
         return float(image._frame()) if hasattr(image, "_frame") else 0.0
 
@@ -1624,7 +1633,7 @@ def clean(
         ``(n_scales, npix, npix)``.
     rotation_deg, dtype : float or "grid", and str, optional
         Grid angle, default 0 (North up); ``"grid"`` (provisional) is the uv
-        lattice's, for the fast transform ([`Image`][virgil.models.Image]);
+        lattice's (North up if the datasets' differ, without a warning), for the fast transform ([`Image`][virgil.models.Image]);
         [precision](../common_arguments.md#dtype).
     scales_mas, scale_bias : sequence of float and float, optional
         FWHMs (mas) of the components, 0 for a point (``(0.0, 3.0)``: both);
@@ -1826,9 +1835,8 @@ def clean(
             history.append(float(chi2) / ndata)
         by_scale = onp.asarray(fluxes, float)
         components = onp.asarray(_sky(fluxes, fixed[0][2]), float)
-    if base is None:
-        total = components.sum()
-        components, by_scale = components / total, by_scale / total
+    norm = components.sum() if base is None else 1.0  # unit total flux
+    components, by_scale = components / norm, by_scale / norm
     model = _clean_model(
         base, components, pixel_scale_mas, rotation_deg, spectrum
     )
@@ -1840,6 +1848,7 @@ def clean(
         stop,
         np.asarray(by_scale),
         scales_mas,
+        rotation_deg,
     )
 
 
@@ -1970,7 +1979,8 @@ class LCurve:
         data : OIData or sequence of OIData
             The data the sweep was fitted to.
         regularizer
-            The regularizer swept, with its ``path`` (its weight is replaced).
+            The regularizer swept, with its ``path`` (its weight is replaced
+            by the sweep's weights, without its ``n_data`` factor).
         noise_scale2 : float, optional
             ``s²``, from the data scatter rather than an image fit.
         noise_scale_sigma : float, optional
@@ -2679,7 +2689,10 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
     of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
     ``L`` the likelihood normalizer; extra priors in ``priors`` enter through
-    their ``log_prob`` at the MAP and their ``JᵀJ`` block of the Hessian. Compare
+    their ``log_prob`` at the MAP and add ``-∂² log p`` (0 for a prior with a flat coordinate, such as LogUniform) to their
+    ``JᵀJ`` block of the Hessian. Without ``priors=``, every non-latent parameter is held at its
+    MAP: the result is a profile likelihood in them and cannot compare scenes
+    with different numbers of parameters. Compare
     it across hyperparameters: it is conditional on those held in ``model`` (or
     sample them: log-uniform priors from [`gp_priors`][virgil.models.gp_priors]
     for a ``MultipoleDisk``, your own log-uniform priors on a field's ``sigma``
@@ -2702,7 +2715,7 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
         every such Image and disk (``TypeError`` if there is none).
     priors : dict, optional
         Priors of free parameters; non-latent parameters enter via ``log_prob``
-        and their ``JᵀJ`` block of the Hessian.
+        and their ``JᵀJ`` plus prior-precision block of the Hessian.
     regularizers : sequence, optional
         Fit regularizers; probabilistic ones (``Centroid``) enter ``χ²`` and ``J``.
 
@@ -2739,14 +2752,37 @@ def log_evidence(model, data, path="env", *, priors=None, regularizers=()):
     singular, vt = _svd(jac_z)
     logdet = float(onp.sum(onp.log1p(singular**2)))
     c = vt @ (onp.asarray(jac_z, dtype=float).T @ jac_extra)
-    schur = jac_extra.T @ jac_extra - (c.T / (1.0 + singular**2)) @ c
+    # Λ = -∂² Σ log p at the MAP, by autodiff, one block per parameter. A prior
+    # with a flat coordinate (LogUniform) is fitted there without its density
+    # in the loss, so the MAP is the likelihood's mode and Λ = 0.
+    blocks = []
+    with run_in("float64"):
+        for p in extra_paths:
+            x = np.asarray(model.get(p), dtype=np.float64)
+            if _flat_coordinate(priors[p]) is not None:
+                blocks.append(onp.zeros((x.size, x.size)))
+                continue
+
+            def neg_log_prior(v, p=p, shape=x.shape):
+                return -np.sum(priors[p].log_prob(v.reshape(shape)))
+
+            blocks.append(onp.asarray(jax.hessian(neg_log_prior)(x.ravel())))
+    precision = scipy.linalg.block_diag(*blocks)
+    schur = (
+        jac_extra.T @ jac_extra + precision - (c.T / (1.0 + singular**2)) @ c
+    )
     sign, logdet_extra = onp.linalg.slogdet(schur)
     if sign <= 0:
         return float(-onp.inf)
-    log_prior = sum(
-        float(onp.sum(onp.asarray(priors[p].log_prob(model.get(p)), float)))
-        for p in extra_paths
-    )
+    with run_in("float64"):
+        log_prior = sum(
+            float(
+                np.sum(
+                    priors[p].log_prob(np.asarray(model.get(p), np.float64))
+                )
+            )
+            for p in extra_paths
+        )
     extra_term = (
         log_prior
         + 0.5 * jac_extra.shape[1] * float(onp.log(2.0 * onp.pi))
@@ -2794,10 +2830,15 @@ def laplace_samples(
     The whitened latents ``z`` are drawn from ``N(z₀, (I + JᵀJ)⁻¹)`` about the
     MAP ``z₀``, the approximation of [`log_evidence`][virgil.imaging.log_evidence].
     With ``priors``, the latents' covariance is the marginal one of the full
-    Hessian ``diag(I, 0) + JᵀJ``, with the other parameters' columns in ``J``.
+    Hessian ``diag(I, 0) + JᵀJ``, with the other parameters' columns in ``J``
+    (their prior precision is not added, unlike in ``log_evidence``).
     Exact only for a linear model, assumes correct error bars, uses the quoted
     errors and is conditional on the hyperparameters held in ``model`` (or sample
     them, as for [`log_evidence`][virgil.imaging.log_evidence]).
+
+    Source: MacKay (1992), [references](../references.md#mackay1992); the
+    covariance form is shared with MGVI, Knollmüller & Enßlin (2019),
+    [references](../references.md#knollmuller2019) (no iteration).
 
     Parameters
     ----------
@@ -3173,7 +3214,8 @@ def l_curve(
     regularizer : TSV, TV, MaxEntropy, Laplacian, StarletL1 or LogSum
         The regularizer whose ``weight`` is swept (its own is ignored).
     weights : sequence of float
-        The weights to try (sorted internally, largest first).
+        The weights to try (sorted internally, largest first). Each is the
+        final ``weight``: the regularizer's ``n_data`` factor is not applied.
     others : sequence, optional
         Further regularizers kept fixed, e.g. a
         [`Centroid`][virgil.imaging.Centroid] prior.

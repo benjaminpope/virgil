@@ -23,6 +23,7 @@ from virgil import (
 from virgil._geometry import _FT_DEFAULTS
 from virgil._utils import mas2rad, rad2mas
 from virgil.radio import C_LIGHT
+from tests._shared import brute_dirty_image
 
 
 @pytest.fixture(autouse=True)
@@ -756,28 +757,61 @@ def _uv_data(n=4000, seed=0, vis=None, weight=None):
     return ComplexVisData.from_arrays(u, v, vis, weight, 230e9)
 
 
+def _reference_weights(data, weighting, robust, cell):
+    """Imaging weights by a per-visibility loop over a dict of uv cells.
+
+    Briggs (1995): ``w / (1 + W_c f^2)`` with ``W_c`` the summed weight of the
+    cell and ``f^2 = (5 10^-R)^2 / (sum_c W_c^2 / sum_k w_k)``; uniform is
+    ``w / W_c``. A visibility and its Hermitian partner share a cell.
+    """
+    u, v = onp.asarray(data.u), onp.asarray(data.v)
+    w = onp.asarray(data.weight, dtype=float)
+    if weighting == "natural":
+        return w
+    keys = []
+    for uk, vk in zip(u, v):
+        if vk < 0 or (vk == 0 and uk < 0):
+            uk, vk = -uk, -vk
+        keys.append((int(onp.floor(uk / cell)), int(onp.floor(vk / cell))))
+    total = {}
+    for key, wk in zip(keys, w):
+        total[key] = total.get(key, 0.0) + wk
+    density = onp.array([total[key] for key in keys])
+    if weighting == "uniform":
+        return w / density
+    f2 = (5.0 * 10.0 ** (-robust)) ** 2 / (
+        sum(t**2 for t in total.values()) / w.sum()
+    )
+    return w / (1.0 + density * f2)
+
+
 @pytest.mark.parametrize("npix", [32, 31])
 @pytest.mark.parametrize("weighting", ["natural", "uniform", "briggs"])
 def test_dirty_image_matches_brute_force(npix, weighting):
-    data = _uv_data(n=3000)
-    s = 0.7
-    img = data.dirty_image(npix, s, weighting=weighting)
-    w = data._imaging_weights(
-        weighting, 0.5, 1.0 / (npix * s * mas2rad), None, None
+    # Core-concentrated coverage (a Gaussian, sigma 1e6 wavelengths) imaged on
+    # 10 mas pixels: the uv cell is 6.4e5 wavelengths, so the sampling
+    # density varies across both the u and v cell indices (tens of cells).
+    rng = onp.random.default_rng(1)
+    n = 3000
+    u, v = rng.normal(0.0, 1.0e6, (2, n))
+    data = ComplexVisData.from_arrays(
+        u,
+        v,
+        rng.normal(size=n) + 1j * rng.normal(size=n),
+        rng.uniform(1.0, 3.0, n),
+        230e9,
     )
-    c = 0.5 * (npix - 1)
-    x = (c - onp.arange(npix)) * s * mas2rad
-    X, Y = onp.meshgrid(x, x, indexing="xy")
-    u, v = onp.asarray(data.u), onp.asarray(data.v)
-    vis = onp.asarray(data.vis)
-    ph = 2 * onp.pi * (u[:, None, None] * X + v[:, None, None] * Y)
-    ref = (
-        w[:, None, None]
-        * (
-            vis.real[:, None, None] * onp.cos(ph)
-            - vis.imag[:, None, None] * onp.sin(ph)
-        )
-    ).sum(0) / w.sum()
+    s = 10.0
+    cell = 1.0 / (npix * s * mas2rad)
+    img = data.dirty_image(npix, s, weighting=weighting)
+    w = _reference_weights(data, weighting, 0.5, cell)
+    if weighting != "natural":
+        keys = {
+            (int(onp.floor(abs(a) / cell)), int(onp.floor(abs(b) / cell)))
+            for a, b in zip(u, v)
+        }
+        assert len({k[0] for k in keys}) > 4 and len({k[1] for k in keys}) > 4
+    ref = brute_dirty_image(data.u, data.v, data.vis, w, npix, s)
     assert onp.abs(img - ref).max() < 1e-10 * onp.abs(ref).max()
 
 

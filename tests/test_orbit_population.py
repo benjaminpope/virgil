@@ -732,7 +732,7 @@ def test_the_cell_fit_is_equivariant_to_the_scale_of_the_quoted_errors():
 
     with jax.enable_x64(True):
         rng = onp.random.default_rng(7)
-        times = toc._two_season_times(rng)
+        times = toc._two_season_times(rng, k=7)
         orbit = toc._orbit(period=11.3, a=6.0, ecc=0.3)
         base = toc._summaries(orbit, times, sigma=0.03 * 6.0, seed=1)
         domain = oc_cells.period_domain(base, p_range=(9.0, 14.0))
