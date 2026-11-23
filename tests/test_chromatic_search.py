@@ -69,9 +69,7 @@ def _scaled(ratio):
     return Scaled(PowerLaw(1.0, wavel0=W0), ratio)
 
 
-def _template(
-    blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01, unit=1.0
-):
+def _template(blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01, unit=1.0):
     """GRAVITY AT-like snapshots with zero data, in dictionary form."""
     base = vlti_oidata(
         hour_angles_h=(-1.0, 1.0),
@@ -118,7 +116,11 @@ def _template(
 
 
 def _data(
-    truth, blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01, key=1, unit=1.0
+    truth,
+    blocks=("v2", "t3", "visphi", "flux"),
+    sigma_phi=0.01,
+    key=1,
+    unit=1.0,
 ):
     """``unit`` is the spectrum's continuum level (1, or e.g. raw ADU)."""
     data = OIData(_template(blocks, sigma_phi, unit))
@@ -350,4 +352,6 @@ def test_oiflux_enters_the_injection_limit():
     truth = _scene(_power(RATIO))
     with_flux = _data(truth, ("v2", "t3", "flux"), unit=ADU)
     without = _data(truth, ("v2", "t3"))
-    assert _flux_limit(with_flux) != pytest.approx(_flux_limit(without), rel=1e-2)
+    assert _flux_limit(with_flux) != pytest.approx(
+        _flux_limit(without), rel=1e-2
+    )
