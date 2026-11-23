@@ -110,10 +110,14 @@ class ClosureNoise(eqx.Module):
             wl = onp.broadcast_to(
                 onp.asarray(wavel, float).reshape(-1), fr.shape
             )
-            used = onp.unique(onp.concatenate((i1, i2, i3)))
+            i1o, i2o, i3o = i1, i2, i3
+            used = onp.arange(len(sta))  # a twin need not be a leg itself
             a, b = sta[used, 0], sta[used, 1]
-            fwd = onp.column_stack([a, b, fr[used], wl[used]])
-            rev = onp.column_stack([b, a, fr[used], wl[used]])
+            lw = onp.round(
+                onp.log(wl[used]) * 1e10
+            )  # wavelengths within ~1e-10
+            fwd = onp.column_stack([a, b, fr[used], lw])
+            rev = onp.column_stack([b, a, fr[used], lw])
             _, gid = onp.unique(
                 onp.vstack([fwd, rev]), axis=0, return_inverse=True
             )
@@ -123,9 +127,10 @@ class ClosureNoise(eqx.Module):
             twin = first[gid[used.size :]]
             alias = (a != b) & (twin < first[gid[: used.size]])
             target = onp.where(alias, twin, used)
-            pos = [onp.searchsorted(used, leg) for leg in (i1, i2, i3)]
-            i1, i2, i3 = (target[q] for q in pos)
-            signs = onp.stack([onp.where(alias[q], -1.0, 1.0) for q in pos], 1)
+            i1, i2, i3 = (target[q] for q in (i1, i2, i3))
+            signs = onp.stack(
+                [onp.where(alias[q], -1.0, 1.0) for q in (i1o, i2o, i3o)], 1
+            )
             if not (signs < 0).any():
                 signs = None
         groups = _groups(i1, i2, i3)

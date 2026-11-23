@@ -669,6 +669,9 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
                     )
                     if reverse is None or reverse[1] != nwave:
                         n_unmatched += 1
+                    else:
+                        # The same baseline: keep it in the triangle's frame.
+                        starts.append(reverse[0])
                     uu, vv = legs_uv[k]
                     lookup.add(
                         ins,

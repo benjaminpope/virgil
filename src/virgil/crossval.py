@@ -204,7 +204,7 @@ def cv_task(
             raise ValueError(
                 "cv_task does not support sigmas='profile' yet: the held-out fold "
                 "would be scored at its own profiled σ, not a predictive score. "
-                "Pass the term a fixed `sigma` or use sigmas=True."
+                "Use sigmas=True, or give the term a fixed `sigma` (and no `unit_scale`)."
             )
         result = fit(
             **fit_kwargs(setting),
