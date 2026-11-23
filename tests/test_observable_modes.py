@@ -1050,6 +1050,7 @@ def test_diffphase_without_line_channels_is_empty_not_a_nan_block():
         problem = block.marginal_problem(np.zeros(0), np.zeros(0))
         assert problem.x.shape == (0,)
         assert _Surface(data).nu.min() > 0
+        assert not _Surface(data).numeric  # an empty block is inert
 
 
 def test_diffphase_simulated_draws_are_wrapped_phases():

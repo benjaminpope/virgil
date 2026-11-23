@@ -743,3 +743,28 @@ def test_scorer_does_not_profile_a_zero_width_gain_group():
 
     assert nu_vis(data.with_gains(telescope=0.0)) == nu_vis(data)
     assert nu_vis(data.with_gains(telescope=0.05)) < nu_vis(data)
+
+
+def test_scorer_chi2_does_not_profile_zero_width_groups():
+    """χ² agrees with the unprofiled data for width-0 groups, and its
+    gradient stays finite."""
+    from virgil.orbit_search import _Scorer
+
+    data = _data()
+
+    def chi2(d, scale=1.0):
+        sc = _Scorer(d, None)
+        cvis = d._cvis(TRUTH) * scale
+        return sc.chi2(cvis, sc.plain, sc.gains, sc.offsets)
+
+    base = chi2(data)
+    for zero in (
+        data.with_closure_offsets(triangle=0.0),
+        data.with_gains(telescope=0.0),
+    ):
+        onp.testing.assert_allclose(chi2(zero), base, rtol=1e-9)
+    live = chi2(data.with_gains(telescope=0.05))
+    mixed = chi2(data.with_gains(telescope=0.05, chromatic=0.0))
+    onp.testing.assert_allclose(mixed, live, rtol=1e-9)
+    g = jax.grad(lambda a: chi2(data.with_gains(telescope=0.0), a).sum())(1.0)
+    assert onp.isfinite(float(g))

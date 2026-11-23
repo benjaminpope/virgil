@@ -1259,8 +1259,7 @@ class DifferentialPhase(_Block):
             raw_modes = np.asarray(self.modes, values.dtype)
             z = jax.random.normal(mode_key, (raw_modes.shape[0],))
             values = values + raw_modes.T @ z
-        if self.prior_width is not None or self.modes is not None:
-            values = -wrap_phase(-values)
+        values = -wrap_phase(-values)  # the angle convention: (-pi, pi]
         return eqx.tree_at(lambda b: b.values, self, values)
 
     def labels_shared(self, labels):
