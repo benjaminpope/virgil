@@ -369,7 +369,13 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         # only some of them are independent: whiten them as a group (see
         # _closure). A phase operator applied to them gets their full
         # covariance instead (_transform_observed_channels).
-        closure = ClosureNoise.from_indices(*indices) if cp_flag else None
+        closure = (
+            ClosureNoise.from_indices(
+                *indices, stations=stations, frame=frame, wavel=wavel
+            )
+            if cp_flag
+            else None
+        )
         self.cp_noise = closure if phi_mat is None else None
         self._set_times(mjd, frame)
         if stations is not None and len(stations) != onp.size(self.u):
@@ -796,7 +802,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             if phi_rows.size:
                 legs = [new_index[leg[phi_rows]] for leg in legs]
                 closure = ClosureNoise.from_indices(
-                    *legs, force=self.phase_offsets is not None
+                    *legs,
+                    force=self.phase_offsets is not None,
+                    **_alias_data(self, keep),
                 )
                 if self.phase_offsets is not None:
                     kept_phi = onp.zeros(self.phi.size, bool)
@@ -2087,6 +2095,18 @@ def _good(record):
 
 
 # deliberate: builds and validates every extra-observable block (flux, nflux, visamp/corrflux, t3amp, visphi) from the reader records, in KINDS order
+def _alias_data(data, keep):
+    """The kept samples' stations, frames and wavelengths, for ``ClosureNoise``."""
+    if data.stations is None or data.frame is None:
+        return {}
+    wavel = onp.asarray(data.wavel)
+    return {
+        "stations": onp.asarray(data.stations)[keep],
+        "frame": onp.asarray(data.frame)[keep],
+        "wavel": wavel if wavel.size == 1 else wavel[keep],
+    }
+
+
 def _build_extras(data, obj, legs):
     """The blocks of extra observables of a record, in ``KINDS`` order."""
     n = onp.size(obj.u)

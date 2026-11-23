@@ -517,3 +517,47 @@ def test_gradients_match_finite_differences_with_residuals_near_pi():
         assert onp.allclose(
             grad, fd, rtol=1e-5, atol=1e-8 * onp.abs(grad).max()
         )
+
+
+@pytest.mark.validates(
+    "virgil.likelihood.model_loglike", roots=["self-consistency"]
+)
+def test_a_reversed_triangle_leg_gives_the_same_likelihood():
+    # Storing a triangle's legs in the opposite orientation puts them on
+    # appended samples with negated (u, v) and phases. They are the same
+    # baselines, so the likelihood and the independent count are unchanged.
+    one = vlti_oidata(hour_angles_h=(0.0,), wavelengths_m=[3.5e-6])
+    one = one.with_model(TRUTH, key=jax.random.PRNGKey(1))
+    n = onp.size(one.u)
+    stations = onp.asarray(one.stations)
+    frame = onp.zeros(n, int)
+    canonical = OIData(_record(one, stations=stations, frame=frame))
+    assert canonical.cp_noise.size == 3
+
+    legs = onp.array([one.i_cps1[0], one.i_cps2[0], one.i_cps3[0]])
+    new = n + onp.arange(3)
+    i1, i2, i3 = (onp.array(i) for i in (one.i_cps1, one.i_cps2, one.i_cps3))
+    i1[0], i2[0], i3[0] = new
+    phi = onp.array(one.phi)
+    phi[0] = -phi[0]
+    reversed_ = OIData(
+        _record(
+            one,
+            u=onp.concatenate([one.u, -onp.asarray(one.u)[legs]]),
+            v=onp.concatenate([one.v, -onp.asarray(one.v)[legs]]),
+            wavel=onp.full(n + 3, float(onp.asarray(one.wavel).ravel()[0])),
+            vis=onp.concatenate([one.vis, onp.ones(3)]),
+            d_vis=onp.concatenate([one.d_vis, onp.ones(3)]),
+            vis_flag=onp.r_[onp.zeros(n, bool), onp.ones(3, bool)],
+            phi=phi,
+            i_cps1=i1,
+            i_cps2=i2,
+            i_cps3=i3,
+            stations=onp.concatenate([stations, stations[legs][:, ::-1]]),
+            frame=onp.zeros(n + 3, int),
+        )
+    )
+    assert reversed_.cp_noise.size == 3
+    assert float(model_loglike(MODEL, reversed_)) == pytest.approx(
+        float(model_loglike(MODEL, canonical)), rel=1e-9
+    )

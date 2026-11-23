@@ -187,11 +187,22 @@ def cv_task(
     n = fold.size
     train, test = fold_masks(fold, k)
     options = dict(fit_options or {})
+    train_term = make_term(train)
+    if (
+        getattr(getattr(train_term, "nuisance", None), "sigmas", None)
+        == "profile"
+        and getattr(train_term, "sigma_fixed", 0) is None
+    ):
+        raise ValueError(
+            "cv_task does not support sigmas='profile' yet: the held-out fold "
+            "would be scored at its own profiled σ, not a predictive score. "
+            "Pass the term a fixed `sigma` or use sigmas=True."
+        )
     # deliberate: fits stay direct under chi2="auto" (a precompute per fold)
     with _ft({"toeplitz_min_points": float("inf"), **(fit_ft or {})}):
         result = fit(
             **fit_kwargs(setting),
-            likelihoods=[make_term(train)],
+            likelihoods=[train_term],
             init=init,
             dtype=dtype,
             **options,

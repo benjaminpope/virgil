@@ -909,7 +909,13 @@ def offsets_noise(data):
     if data.cp_noise is not None:
         return data.cp_noise
     return ClosureNoise.from_indices(
-        data.i_cps1, data.i_cps2, data.i_cps3, force=True
+        data.i_cps1,
+        data.i_cps2,
+        data.i_cps3,
+        force=True,
+        stations=data.stations,
+        frame=data.frame,
+        wavel=data.wavel,
     )
 
 
