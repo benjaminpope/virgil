@@ -1051,6 +1051,11 @@ def test_diffphase_without_line_channels_is_empty_not_a_nan_block():
         assert problem.x.shape == (0,)
         assert _Surface(data).nu.min() > 0
         assert not _Surface(data).numeric  # an empty block is inert
+        vis_only = base.select(observables=("vis",))
+        assert float(marginal_loglike(_scene(), data)) == pytest.approx(
+            float(marginal_loglike(_scene(), vis_only))
+        )
+        data.with_model(_scene(), key=jax.random.PRNGKey(0))  # no crash
 
 
 def test_diffphase_simulated_draws_are_wrapped_phases():

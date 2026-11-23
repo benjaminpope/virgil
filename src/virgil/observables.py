@@ -1236,7 +1236,11 @@ class DifferentialPhase(_Block):
             and self.modes is not None
         ):
             prior_key, mode_key = jax.random.split(key)
-        if prior_key is not None and self.prior_width is not None:
+        if (
+            prior_key is not None
+            and self.prior_width is not None
+            and self.w.size
+        ):
             n_f, n_b, _ = self.grid.shape
             n_mode = len(self.prior_width)
             latent = jax.random.normal(prior_key, (n_f, n_b, n_mode))

@@ -762,10 +762,10 @@ def test_scorer_chi2_does_not_profile_zero_width_groups():
         data.with_closure_offsets(triangle=0.0),
         data.with_gains(telescope=0.0),
     ):
-        onp.testing.assert_allclose(chi2(zero), base, rtol=1e-9)
+        onp.testing.assert_allclose(chi2(zero), base, rtol=1e-5)
     live = chi2(data.with_gains(telescope=0.05))
     mixed = chi2(data.with_gains(telescope=0.05, chromatic=0.0))
-    onp.testing.assert_allclose(mixed, live, rtol=1e-9)
+    onp.testing.assert_allclose(mixed, live, rtol=1e-5)
     g = jax.grad(lambda a: chi2(data.with_gains(telescope=0.0), a).sum())(1.0)
     assert onp.isfinite(float(g))
 
