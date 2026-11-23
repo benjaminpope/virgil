@@ -347,7 +347,7 @@ Radio data need antenna-based gains (and optionally offsets) fitted with the ima
 
 Two guards come with it:
 - **The reference gain.** Gains are relative: scaling every gain and the flux by the same factor leaves the data unchanged. One observation's gain is fixed at 1, by default the one with the largest Σw, so the flux scale comes from the best-measured data and not a lightly weighted observation.
-- **The box-edge check.** L-BFGS-B fits each nuisance inside a box (gains default to 0.7–1.3). A nuisance that ends within 5% of the box width of an edge is probably being held there, not measured: `failed` is set and `edge` says which.
+- **The box-edge check.** L-BFGS-B fits each nuisance inside a box (gains default to 0.7–1.3). A nuisance that ends within 5% of the box width of an edge is probably being held there, not measured: `failed` is set and `edge` says which. `failed` is also set if the stage-3 joint fit did not converge.
 
 Here three observations have gains 1.1, 1.0 and 0.9, and unequal weights. The gains are recovered, but the image block of this short run is not yet certified: `fit` warns that it ran out of steps, and `kkt_report` agrees. Raise `max_steps` before trusting the image.
 
@@ -390,7 +390,7 @@ staged = fit_staged_nuisances(
 )
 print(f"reference observation {staged.ref_obs} (sums of weights {staged.sum_weights})")
 print("gains of the others, relative to it:", onp.round(onp.exp(staged.nuisances["cal.gain"]["value"]), 3))
-print("failed (a gain within 5% of its box edge):", staged.failed)
+print("failed (a gain within 5% of its box edge, or stage 3 unconverged):", staged.failed)
 print("image block converged (kkt_report):", staged.kkt["converged"])
 ```
 

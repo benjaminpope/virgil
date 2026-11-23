@@ -75,7 +75,7 @@ def _nuis(data):
     )
 
 
-def _run(data, nuisance=None, key="pixels", **kw):
+def _run(data, nuisance=None, key="pixels", max_steps=500, **kw):
     prior = dist.ImproperUniform(
         dist.constraints.real, (), event_shape=(NPIX, NPIX)
     )
@@ -90,7 +90,7 @@ def _run(data, nuisance=None, key="pixels", **kw):
         nuisance=nuisance
         or dict(offsets=False, sigmas=False, alpha=False, fit_flux=False),
         weight=1e-6,
-        max_steps=500,
+        max_steps=max_steps,
         **kw,
     )
 
@@ -112,8 +112,27 @@ def test_gains_are_recovered_relative_to_the_reference():
     gains = onp.array([1.0, 1.08, 0.93])
     result = _run(_data(gains), ref_obs=0)
     assert onp.allclose(result.values["cal.gain"], gains[1:], atol=0.02)
-    assert not result.failed
     assert onp.all(result.nuisances["cal.gain"]["edge_frac"] > 0.05)
+    # no edge flag; it is the unconverged stage 3 (500 steps) that fails
+    assert not any(bool(onp.any(f)) for f in result.edge.values())
+
+
+def test_an_unconverged_stage_three_fails_with_every_value_interior():
+    result = _run(_data([1.0, 1.08, 0.93]), ref_obs=0)
+    assert not result.stages[2].info["converged"]
+    assert not any(bool(onp.any(f)) for f in result.edge.values())
+    assert result.failed
+
+
+@pytest.mark.slow
+def test_a_converged_stage_three_does_not_fail():
+    # ~10 s: the entropy-regularized image needs ~50k L-BFGS-B steps
+    result = _run(_data([1.0, 1.08, 0.93]), ref_obs=0, max_steps=50000)
+    assert all(s.info["converged"] for s in result.stages)
+    assert not result.failed
+    # the kkt start is the pre-stage-2 point: nuisance grad_rel is measured
+    # against the starting gradient, not stage 2's near-zero one
+    assert result.kkt["nuisances"]["cal.gain"]["grad_rel"] < 1e-3
 
 
 def test_edge_flag_when_truth_is_outside_the_box():
@@ -138,7 +157,7 @@ def test_offsets_are_boxed_and_checked():
         nuisance=dict(sigmas=False, alpha=False, fit_flux=False),
     )
     assert result.nuisances["cal.offset"]["value"].shape == (NOBS - 1, 2)
-    assert not result.failed
+    assert not any(bool(onp.any(f)) for f in result.edge.values())
 
 
 def test_unboxed_sigma_scales_are_refused():
