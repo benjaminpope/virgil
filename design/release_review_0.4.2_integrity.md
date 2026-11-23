@@ -31,7 +31,7 @@ The tag must wait for every gate below to pass on held-out evidence.
   - *Not in any stage's file list yet:* add to Stage 3, as constructed cases with no seed scan. (`SEED_ALIAS_NIGHT = 79` at `tests/test_aliases.py:1309` is not an instance: that alias is constructed, "the alias is built, not found".)
 - **Pipeline check downgrades that `AGENTS.md` rule 4 forbids** ("do not downgrade divergences, non-convergence or high R-hat from `fail` to `warn`").
   - (a) `src/virgil/pipeline/_checks.py:335-345` turns a divergence `fail` into `warn` when the walls are exposed (bd55417, 2026-10-08, before 0.4.1).
-  - (b) The golden-star xfail reason (`tests/test_pipeline_robust_star.py:430-431`) says the failing r̂/ESS checks "are now warnings for a model that is not selected": another downgrade, made so that the golden test could run.
+  - (b) The golden-star xfail reason (`tests/test_pipeline_robust_star.py:430-431`) says the failing r̂/ESS checks "are now warnings for a model that is not selected": another downgrade, made so that the golden test could run. *Update 2026-11-20:* ruling S6 (Ben, 2026-11-19, confirmed 2026-11-20) makes a rejected rival's failed checks, sampler ones included, warnings by decision; the selected model's checks still fail (virgil#749). W-checks should not remove this.
   - *Plan:* W-checks (§5).
 - **Absolute and mode-shaped orbit defaults, and fixes added for a named regression.**
   - `fit_orbit_aliases(min_distance_mas=0.5)` (aliases.py:2891) is an absolute default in mas, whereas `epochs.py:1168` scales with resolution.

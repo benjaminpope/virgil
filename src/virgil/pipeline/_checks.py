@@ -199,18 +199,27 @@ def error_scale(
 
     ``n`` (an int, or a mapping from scale name to its number of
     observables) makes the limits N-aware as in ``chi2_reduced``: ``s`` is
-    √(χ²/N), so its limits are the square roots of the χ²/N ones, taken for
-    the scale that sets the worst value; ``n_params`` is as there.
+    √(χ²/N), so its limits are the square roots of the χ²/N ones. Each scale is judged
+    against its own limits and the worst status is reported; ``n_params`` is as there.
     """
     values = [float(s) for s in scales.values()]
     worst = max(values, default=1.0) if all(map(_finite, values)) else math.nan
     names = ", ".join(f"{k} = {float(v):.3g}" for k, v in scales.items())
-    if n is not None and _finite(worst):
+    if _finite(worst):
+        # Each scale against its own N-aware limits; report the worst status
+        # (ties: the largest s relative to its fail limit).
+        rank, pick = (-1, 0.0), None
         for k, v in scales.items():
             nk = n.get(k) if isinstance(n, dict) else n
-            if nk and float(v) == worst:
-                _, w, f = _chi2_bounds(nk, warn**2, fail**2, n_params)
-                warn, fail = math.sqrt(w), math.sqrt(f)
+            w, f = warn, fail
+            if nk:
+                _, w2, f2 = _chi2_bounds(nk, warn**2, fail**2, n_params)
+                w, f = math.sqrt(w2), math.sqrt(f2)
+            level = 2 if v > f else 1 if v > w else 0
+            if (level, v / f) > rank:
+                rank, pick = (level, v / f), (float(v), w, f)
+        if pick is not None:
+            worst, warn, fail = pick
     if not _finite(worst):
         status = "fail"
         meaning = "an error scale is not finite"
@@ -1673,6 +1682,28 @@ def winner_flags(flags):
         None,
         f"The winning band's evidence carries {', '.join(bad)}: its log Z, "
         "and so the margin over the runner-up, is less reliable.",
+    )
+
+
+def sampler_budget(exhausted, winner_cut=False):
+    """Whether the time budget cut the sampling short.
+
+    A band that ran out of budget is a warning. If it was the winning band,
+    including one reduced to the 8-draw, un-warmed token chain, its posterior
+    is truncated, so the check fails (Ben, 2026-11-20).
+    """
+    if winner_cut:
+        status, meaning = "fail", "the best band's sampling was cut short"
+    elif exhausted:
+        status, meaning = "warn", "sampling was cut short in a band"
+    else:
+        status, meaning = "pass", "sampling ran to its full length"
+    return Check(
+        "sampler_budget",
+        status,
+        bool(exhausted),
+        None,
+        f"Time budget: {meaning}.",
     )
 
 

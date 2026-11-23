@@ -15,6 +15,7 @@ marked slow.
 """
 
 import json
+import warnings
 
 import jax
 import numpy as onp
@@ -24,6 +25,7 @@ pytest.importorskip("h5py")
 pytest.importorskip("nbclient")
 
 from virgil.coverage import vlti_oidata  # noqa: E402
+from virgil.pipeline import image as image_module  # noqa: E402
 from virgil.metrics import align, ncc  # noqa: E402
 from virgil.models import (  # noqa: E402
     GaussianRing,
@@ -564,3 +566,23 @@ def test_grid_growths_none_is_the_engine_default():
     assert image._grid_spec(s, None).gp_growths == EnsembleSpec().gp_growths
     s["grid_growths"] = 1
     assert image._grid_spec(s, None).gp_growths == 1
+
+
+@pytest.mark.slow
+def test_a_members_warnings_are_saved_and_replayed(
+    data, tmp_path, monkeypatch
+):
+    real = image_module._evidence_grid
+
+    def noisy(*a, **k):
+        warnings.warn("probe warning")
+        return real(*a, **k)
+
+    monkeypatch.setattr(image_module, "_evidence_grid", noisy)
+    pipe = ImagingPipeline(data, output=tmp_path / "run", **SMALL)
+    pipe.run(through="hyperparameters")
+    pipe.run_member(1)
+    saved = pipe.output / "members" / "001" / "warnings.json"
+    assert "probe warning" in json.loads(saved.read_text())
+    with pytest.warns(UserWarning, match="probe warning"):
+        pipe.run_member(1)  # saved: replayed, not fitted again

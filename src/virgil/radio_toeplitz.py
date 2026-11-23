@@ -517,8 +517,8 @@ class _ToeplitzTerm(_TermBase):
         self.free_offsets = tdata.free_offsets
         self.max_shift_pix = tdata.max_shift_pix
         self.kp = tdata.kp
-        # As ComplexVisData.term: two numbers per point, masked or not.
-        self.n_data = 2 * len(tdata.data)
+        # As ComplexVisData.term: two numbers per unmasked point.
+        self.n_data = 2 * int(tdata.mask.sum())
 
     @property
     def _profiled(self):

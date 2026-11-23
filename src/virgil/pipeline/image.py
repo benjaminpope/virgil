@@ -192,22 +192,37 @@ class ImagingPipeline(_Pipeline):
                 'Run the "hyperparameters" stage before run_member.'
             )
         folder = self.output / "members" / f"{k:03d}"
+        record = folder / "warnings.json"
         if not (folder / "info.json").exists():
-            spec, star, draws, variant = _member_setup(self)
-            grid = _evidence_grid(self, spec, star, draws[k])
-            best = grid.best
-            if variant:  # one point per variant: the shared hyperparameters
-                # Each member re-estimates the elongation on its own field.
-                best = next(
-                    (f for f in grid.fits.values() if f.variant == variant),
-                    best,
-                )
-                if best.variant != variant:
-                    warnings.warn(
-                        f"Member {k} found no {variant!r} grid on its field: "
-                        "it is fitted with the isotropic prior."
+            # The member's warnings are saved with it, so that a later run
+            # (the stages after an array of run_member calls) can report them.
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                spec, star, draws, variant = _member_setup(self)
+                grid = _evidence_grid(self, spec, star, draws[k])
+                best = grid.best
+                if (
+                    variant
+                ):  # one point per variant: the shared hyperparameters
+                    # Each member re-estimates the elongation on its own field.
+                    best = next(
+                        (
+                            f
+                            for f in grid.fits.values()
+                            if f.variant == variant
+                        ),
+                        best,
                     )
+                    if best.variant != variant:
+                        warnings.warn(
+                            f"Member {k} found no {variant!r} grid on its "
+                            "field: it is fitted with the isotropic prior."
+                        )
             _save_fit(folder, best.result, list(best.result.values))
+            _io.write_json(record, sorted({str(w.message) for w in caught}))
+        if record.exists():
+            for message in _io.read_json(record):
+                warnings.warn(message, stacklevel=2)
 
     def _summarize(self, reports):
         checks = _run_checks(self.settings, reports)
