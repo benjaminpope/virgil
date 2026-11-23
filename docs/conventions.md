@@ -255,7 +255,7 @@ An [`Image`][virgil.models.Image] (and the `FlaredDisk` family) computes visibil
 
 ## Preconditioning image fits
 
-An image fit with a weak penalty (maximum entropy at a small weight) is badly conditioned: the faint pixels are almost unconstrained, so L-BFGS takes many tiny steps along them. `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal of the Gauss–Newton curvature ([`gauss_newton_diag`][virgil.fitting.gauss_newton_diag]) for L-BFGS and Adam. The optimum is the same. In the two L-curves measured it took 30–40% fewer steps in total (more at a tight `gtol`), and at the weakest weight it sometimes converges where the plain fit reaches the step limit. LM already uses JᵀJ and ignores it. The option is provisional (see [stability](stability.md)).
+An image fit with a weak penalty (maximum entropy at a small weight) is badly conditioned: the faint pixels are almost unconstrained, so L-BFGS takes many tiny steps along them. `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal of the Gauss–Newton curvature ([`gauss_newton_diag`][virgil.fitting.gauss_newton_diag]) for L-BFGS and Adam. The optimum is the same. In the two L-curves measured it took 30–40% fewer steps in total (more at a tight `gtol`), and at the weakest weight it sometimes converges where the plain fit reaches the step limit. LM already uses JᵀJ and ignores it. On the pixels of a maximum-entropy penalty the diagonal adds the penalty's metric to the data JᵀJ (replacing it froze faint pixels), so it falls back to JᵀJ as the weight goes to zero. The option is provisional (see [stability](stability.md)).
 
 ```python
 import jax

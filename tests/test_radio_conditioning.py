@@ -10,6 +10,7 @@ from virgil._utils import mas2rad, rad2mas
 from virgil.radio import C_LIGHT
 from virgil.fitting import _Objective
 from virgil.models import GaussianDisk
+from tests._shared import brute_dirty_image
 
 FREQS = onp.array([230e9, 240e9, 245e9])
 FLUX = 0.1
@@ -207,6 +208,26 @@ def test_profile_optimum_equals_joint_optimum():
     assert "derived" in joint.info and joint.info["derived"] == {}
 
 
+def test_dirty_image_use_sigma_weights_by_the_fitted_scales():
+    data, template = _problem(n=300)
+    nuis = CalibrationNuisance(data, nu0_hz=239e9, sigmas=True)
+    values = _truth(nuis)
+    scales = onp.asarray(values["cal.sigma"])
+    img = data.dirty_image(
+        8, 8.0, scene=template, values=values, nuisance=nuis, use_sigma=True
+    )
+    model = onp.asarray(data.model(template, values, nuis))
+    ref = brute_dirty_image(
+        data.u,
+        data.v,
+        onp.asarray(data.vis) - model,
+        onp.asarray(data.weight) / scales[onp.asarray(data.ddid)] ** 2,
+        8,
+        8.0,
+    )
+    onp.testing.assert_allclose(img, ref, atol=1e-6 * onp.abs(ref).max())
+
+
 def test_sigma_hat_and_dirty_image_with_profile():
     data, template = _problem(n=300)
     nuis = CalibrationNuisance(data, nu0_hz=239e9, sigmas="profile")
@@ -215,9 +236,22 @@ def test_sigma_hat_and_dirty_image_with_profile():
     chi2, n = data.chi2_by_ddid(template, values, nuis)
     onp.testing.assert_allclose(chi2, 2 * n)  # χ² at ŝ is 2 N_d
     assert s.shape == (3,) and onp.all(s > 0)
-    data.dirty_image(
+    img = data.dirty_image(
         8, 8.0, scene=template, values=values, nuisance=nuis, use_sigma=True
     )
+    # The residual V - M weighted by w / s_hat[ddid]^2, by direct sum.
+    model = onp.asarray(data.model(template, values, nuis))
+    weights = (
+        onp.asarray(data.weight) / onp.asarray(s)[onp.asarray(data.ddid)] ** 2
+    )
+    ref = brute_dirty_image(
+        data.u, data.v, onp.asarray(data.vis) - model, weights, 8, 8.0
+    )
+    onp.testing.assert_allclose(img, ref, atol=1e-6 * onp.abs(ref).max())
+    unweighted = data.dirty_image(
+        8, 8.0, scene=template, values=values, nuisance=nuis
+    )
+    assert onp.abs(unweighted - ref).max() > 1e-3 * onp.abs(ref).max()
     with pytest.raises(ValueError, match="scene"):
         data.dirty_image(8, 8.0, nuisance=nuis, use_sigma=True)
     with pytest.raises(ValueError, match="profile"):

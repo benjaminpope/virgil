@@ -22,7 +22,10 @@ guide and how to check the result. References: ADVI (Kucukelbir et al.
 flow (De Cao, Titov & Aziz 2019, https://arxiv.org/abs/1904.04676), the
 inverse autoregressive flow (Kingma et al. 2016,
 https://arxiv.org/abs/1606.04934) and Pareto-smoothed importance sampling
-(Vehtari et al. 2024, https://arxiv.org/abs/1507.02646).
+(Vehtari et al. 2024, https://arxiv.org/abs/1507.02646). The related geometric
+variational inference (Frank, Leike & Enßlin 2021,
+https://arxiv.org/abs/2105.10470) fits a Gaussian in nonlinearly transformed
+coordinates; it is not implemented here.
 """
 
 import dataclasses

@@ -1465,12 +1465,14 @@ def test_the_alias_night_fixture_is_the_same_in_float32_and_float64():
     assert f32.flagged.tolist() == f64.flagged.tolist() == FLAGGED_ALIAS
     assert f32.flag_codes() == f64.flag_codes()
     # Every night, the alias included, lands on the same grid peak.
-    assert onp.allclose(f32.dra, f64.dra, atol=0.1)
-    assert onp.allclose(f32.ddec, f64.ddec, atol=0.1)
+    # Measured (macOS CPU): the peaks differ by 1.5e-5 mas and the raw chi2 by
+    # 1.8e-6 relative; the bounds keep about a 50x margin for other platforms.
+    assert onp.allclose(f32.dra, f64.dra, atol=1e-3)
+    assert onp.allclose(f32.ddec, f64.ddec, atol=1e-3)
     assert onp.allclose(
         [c["all"] for c in f32.chi2_raw],
         [c["all"] for c in f64.chi2_raw],
-        rtol=1e-2,
+        rtol=1e-4,
     )
     miss = onp.hypot(f64.dra - dra, f64.ddec - ddec)
     assert miss[ALIAS_NIGHT] > 3.0 and onp.all(miss[SOUND_NIGHTS] < 0.5)
