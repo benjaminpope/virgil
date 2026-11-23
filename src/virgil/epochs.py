@@ -521,7 +521,8 @@ class _Surface:
         # Extra observables with a model-dependent covariance cannot be
         # scored (gains and closure offsets are integrated numerically).
         extras = getattr(data, "extras", ())
-        if any(b.model_dependent_covariance for b in extras):
+        live = [b for b in extras if b.data().size]  # empty blocks are inert
+        if any(b.model_dependent_covariance for b in live):
             raise NotImplementedError(
                 "The scale-marginalized surface (scales='marginal', "
                 "epoch_positions, marginal_loglike) cannot score extra "
@@ -550,7 +551,7 @@ class _Surface:
             or any(
                 getattr(b, "prior_width", None) is not None
                 or getattr(b, "modes", None) is not None
-                for b in extras
+                for b in live
             )
         )
         if self.numeric and s_max is None:

@@ -1236,7 +1236,11 @@ class DifferentialPhase(_Block):
             and self.modes is not None
         ):
             prior_key, mode_key = jax.random.split(key)
-        if prior_key is not None and self.prior_width is not None:
+        if (
+            prior_key is not None
+            and self.prior_width is not None
+            and self.w.size
+        ):
             n_f, n_b, _ = self.grid.shape
             n_mode = len(self.prior_width)
             latent = jax.random.normal(prior_key, (n_f, n_b, n_mode))
@@ -1259,8 +1263,7 @@ class DifferentialPhase(_Block):
             raw_modes = np.asarray(self.modes, values.dtype)
             z = jax.random.normal(mode_key, (raw_modes.shape[0],))
             values = values + raw_modes.T @ z
-        if self.prior_width is not None or self.modes is not None:
-            values = -wrap_phase(-values)
+        values = -wrap_phase(-values)  # matches np.angle: (-pi, pi]
         return eqx.tree_at(lambda b: b.values, self, values)
 
     def labels_shared(self, labels):

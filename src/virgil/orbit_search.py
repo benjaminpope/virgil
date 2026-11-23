@@ -486,7 +486,7 @@ class _Scorer:
                 _gain_jacobian(plain, prediction[:n_vis]) / errors[:n_vis]
             )
             local, spanning = gains._columns(
-                jacobian, np.ones_like(gains.widths)
+                jacobian, (gains.widths > 0).astype(gains.widths.dtype)
             )
             r = r.at[:n_vis].set(
                 _profile(r[:n_vis], gains.rows, local, spanning)
@@ -495,7 +495,9 @@ class _Scorer:
             stop = n_vis + offsets.n_out
             err_phi = errors[n_vis : self.n_phase]
             cols, spanning = offsets._columns(
-                plain.cp_noise, err_phi, np.ones_like(offsets.widths)
+                plain.cp_noise,
+                err_phi,
+                (offsets.widths > 0).astype(offsets.widths.dtype),
             )
             rows = np.asarray(offsets.rows)
             r = r.at[n_vis:stop].set(

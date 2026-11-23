@@ -743,3 +743,69 @@ def test_scorer_does_not_profile_a_zero_width_gain_group():
 
     assert nu_vis(data.with_gains(telescope=0.0)) == nu_vis(data)
     assert nu_vis(data.with_gains(telescope=0.05)) < nu_vis(data)
+
+
+def test_scorer_chi2_does_not_profile_zero_width_groups():
+    """χ² agrees with the unprofiled data for width-0 groups, and its
+    gradient stays finite."""
+    from virgil.orbit_search import _Scorer
+
+    data = _data()
+
+    def chi2(d, scale=1.0):
+        sc = _Scorer(d, None)
+        cvis = d._cvis(TRUTH) * scale
+        return sc.chi2(cvis, sc.plain, sc.gains, sc.offsets)
+
+    base = chi2(data)
+    for zero in (
+        data.with_closure_offsets(triangle=0.0),
+        data.with_gains(telescope=0.0),
+    ):
+        onp.testing.assert_allclose(chi2(zero), base, rtol=1e-5)
+    live = chi2(data.with_gains(telescope=0.05))
+    mixed = chi2(data.with_gains(telescope=0.05, chromatic=0.0))
+    onp.testing.assert_allclose(mixed, live, rtol=1e-5)
+    g = jax.grad(lambda a: chi2(data.with_gains(telescope=0.0), a).sum())(1.0)
+    assert onp.isfinite(float(g))
+
+
+def test_scorer_chi2_is_unchanged_when_every_width_is_positive():
+    """The width mask is all ones then: χ² is bit-identical to the old
+    formula, which profiled every column with ``ones_like(widths)``."""
+    from virgil import orbit_search as os_
+    from virgil.orbit_search import _Scorer
+
+    data = (
+        _data().with_gains(telescope=0.05).with_closure_offsets(triangle=0.005)
+    )
+    sc = _Scorer(data, None)
+    plain, gains, offsets = sc.plain, sc.gains, sc.offsets
+    cvis = data._cvis(TRUTH)
+
+    prediction = plain.model(os_._Fixed(cvis))
+    errors = os_.inflated_errors(plain, prediction)
+    r = os_._whiten(plain, prediction, plain.flatten_data()[0], errors)[0]
+    n_vis = sc.n_vis
+    jac = os_._gain_jacobian(plain, prediction[:n_vis]) / errors[:n_vis]
+    local, spanning = gains._columns(jac, np.ones_like(gains.widths))
+    r = r.at[:n_vis].set(os_._profile(r[:n_vis], gains.rows, local, spanning))
+    stop = n_vis + offsets.n_out
+    cols, span = offsets._columns(
+        plain.cp_noise,
+        errors[n_vis : sc.n_phase],
+        np.ones_like(offsets.widths),
+    )
+    r = r.at[n_vis:stop].set(
+        os_._profile(r[n_vis:stop], np.asarray(offsets.rows), cols, span)
+    )
+    if offsets.scale_penalty:
+        err_phi = errors[n_vis : sc.n_phase]
+        scale = err_phi / np.hypot(
+            err_phi, offsets.marginal_std(offsets.widths)
+        )
+        r = r.at[stop : stop + err_phi.size].multiply(scale)
+    old = sc.surface.block_chi2(r)
+    onp.testing.assert_array_equal(
+        onp.asarray(sc.chi2(cvis, plain, gains, offsets)), onp.asarray(old)
+    )
