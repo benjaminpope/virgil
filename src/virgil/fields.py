@@ -89,7 +89,11 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
     ℓ_col² λ_k)^(-order)``: correlated over ``ℓ_row`` down a column and over
     ``ℓ_col`` along a row. The constant mode is zero (a softmax image does not
     depend on it) and the spectrum is scaled so the field's pixel-averaged
-    variance is ``sigma²``.
+    variance is ``sigma²``. The reflecting boundary inflates the variance
+    towards the edges (up to about 4× at a corner against the interior, two
+    reflecting walls), so a log-normal flux is larger there than ``sigma``
+    suggests.
+
     Parameters
     ----------
     shape : tuple of int

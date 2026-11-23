@@ -192,3 +192,25 @@ def test_injection_limits_rejects_invalid_flux_bounds(data, template, bounds):
 def test_injection_limits_rejects_unreachable_sigma(data, template):
     with pytest.raises(ValueError, match="cannot be reached"):
         injection_limits(template, data, one_point(5.0, 8.0), 0.1)
+
+
+@pytest.mark.parametrize("limits", [absil_limits, injection_limits])
+def test_the_null_is_taken_at_each_grid_point(limits, data, template):
+    """A host parameter on the grid enters the null model, not only the companion."""
+    diams = np.array([0.6, 1.4])
+
+    def grid(diam):
+        return {
+            "star.diam": np.atleast_1d(diam),
+            "comp.dra": np.array([5.0]),
+            "comp.ddec": np.array([8.0]),
+            "comp.flux": np.array([0.01]),
+        }
+
+    together = onp.asarray(limits(template, data, grid(diams), 3.0)).ravel()
+    separate = [
+        float(onp.asarray(limits(template, data, grid(d), 3.0)).ravel()[0])
+        for d in diams
+    ]
+    assert together == pytest.approx(separate, rel=1e-5)
+    assert abs(separate[0] - separate[1]) > 1e-4 * separate[0]

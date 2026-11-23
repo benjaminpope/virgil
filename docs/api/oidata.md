@@ -65,7 +65,9 @@ offsets and residuals are small (δ ≲ 0.3 rad, 17°); larger widths are not
 marginalized exactly. When `scale_penalty=True` (the default), the periodic
 wrap penalty divides by `hypot(σ, σ_off)` at the nominal offset widths so
 large instrumental offsets do not incur a spurious quartic penalty at small
-photon noise.
+photon noise. The widths are fixed at their nominal values, so a log-likelihood
+that fits `phi_offset_*` depends on them; a nominal width of 0 leaves the
+penalty unscaled.
 
 ## Attributes
 
