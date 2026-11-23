@@ -647,8 +647,9 @@ def injection_recovery(
         (default min(64, draws)); grid points per search.
     uncertainty : bool, optional
         ``False`` skips the Laplace flux-uncertainty pass (about a third of
-        the cost): ``max_snr`` and ``flux_peak_steps`` are then NaN, and
-        every other statistic is unchanged.
+        the cost): ``max_snr`` and ``flux_peak_steps`` are then NaN, the
+        `DetectionMC` methods refuse ``stat="max_snr"``, and every other
+        statistic is unchanged.
     progress : bool, optional
         Show a ``tqdm`` bar.
 
