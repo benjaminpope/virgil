@@ -1066,17 +1066,34 @@ def test_uncoupled_rows_keep_their_own_channels():
             stations.append((1, 2 + r))
     wavel = onp.array(wavel)
     n = wavel.size
-    rng = onp.random.default_rng(2)
-    build = lambda free: DifferentialPhase.build(
-        rng.normal(0.0, 0.05, n),
-        onp.full(n, 0.05),
-        onp.arange(n),
-        wavel,
+    values = onp.random.default_rng(2).normal(0.0, 0.05, n)
+    row, frame, stations = (
+        onp.array(row),
         onp.array(frame),
         onp.array(stations),
-        onp.array(row),
-        closure_free=free,
-        lines=[(2.160e-6, 2.176e-6)],
     )
+
+    def build(free, keep=slice(None)):
+        return DifferentialPhase.build(
+            values[keep],
+            onp.full(n, 0.05)[keep],
+            onp.arange(n)[keep],
+            wavel[keep],
+            frame[keep],
+            stations[keep],
+            row[keep],
+            closure_free=free,
+            lines=[(2.160e-6, 2.176e-6)],
+        )
+
     independent, coupled = build(False), build(True)
     assert independent.n_independent > coupled.n_independent
+    # independent rows: the block is the union of its single-row blocks
+    singles = [build(False, row == r) for r in range(n_row)]
+    assert independent.n_independent == sum(b.n_independent for b in singles)
+    for read in (lambda b: b.data(), lambda b: b.data_errors()):
+        got = onp.sort(onp.asarray(read(independent)))
+        want = onp.sort(
+            onp.concatenate([onp.asarray(read(b)) for b in singles])
+        )
+        onp.testing.assert_allclose(got, want, atol=1e-6)

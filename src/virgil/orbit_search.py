@@ -435,8 +435,18 @@ class _Scorer:
         if self.gains is not None:
             # The independent gains: the degrees of freedom lost.
             g = self.gains
+            on = onp.asarray(g.widths) > 0  # a width-0 group is disabled
+            shapes = (
+                onp.asarray(g.shapes) * on[onp.asarray(g.group)][:, None, :]
+            )
+            spanning = (
+                None
+                if g.spanning is None
+                else onp.asarray(g.spanning)
+                * on[onp.asarray(g.spanning_group)]
+            )
             lost["vis"] = _local_rank(
-                onp.asarray(g.rows), onp.asarray(g.shapes), g.n_vis, g.spanning
+                onp.asarray(g.rows), shapes, g.n_vis, spanning
             )
         if self.offsets is not None:
             sigma = onp.asarray(plain.flatten_data()[1], float)

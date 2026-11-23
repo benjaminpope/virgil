@@ -495,8 +495,16 @@ def apply_noise_spec(data, spec, *, insname=None):
     )
     if gain_kwargs and has_gain_obs:
         out = out.with_gains(**gain_kwargs)
-    if offset_kwargs and out.phi.size and out.cp_flag and out.phi_mat is None:
-        out = out.with_closure_offsets(**offset_kwargs)
+    if offset_kwargs and out.phi.size:
+        if out.cp_flag and out.phi_mat is None:
+            out = out.with_closure_offsets(**offset_kwargs)
+        else:
+            warnings.warn(
+                f"closure_offsets {offset_kwargs} skipped: the data's phases "
+                "are not closure phases (baseline or projected phases).",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
     if visphi_active and visphi_blocks:
         raise NotImplementedError(
             "Applying common_mode.visphi to DifferentialPhase is not yet "

@@ -328,7 +328,9 @@ def test_apply_noise_spec_refuses_stacking_upfront():
     with pytest.raises(ValueError, match="refuses to stack"):
         apply_noise_spec(applied, white_only)
 
-    offsets_applied = apply_noise_spec(data, _base_spec(gains=None), insname="PIONIER")
+    offsets_applied = apply_noise_spec(
+        data, _base_spec(gains=None), insname="PIONIER"
+    )
     with pytest.raises(ValueError, match="refuses to stack"):
         apply_noise_spec(offsets_applied, white_only)
 
@@ -403,7 +405,8 @@ def test_apply_noise_spec_skips_closure_offsets_without_closure_phases():
     plain = OIData(record)
     projected = OIData({**record, "phi_mat": onp.eye(n_b)[:-1]})
     for data in (plain, projected):
-        out = apply_noise_spec(data, spec)
+        with pytest.warns(UserWarning, match="closure_offsets.*skipped"):
+            out = apply_noise_spec(data, spec)
         assert out.phase_offsets is None
         onp.testing.assert_allclose(out.d_phi, data.d_phi * 0.65, rtol=1e-6)
 

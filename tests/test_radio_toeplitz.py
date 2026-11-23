@@ -1092,16 +1092,16 @@ def test_profiled_gradient_vanishes_where_a_ddid_has_no_power():
     (a finite difference of the loss agrees with ``jax.grad``)."""
     term, values, _ = _noise_free_term()
     c_sum = term.arrays["c_sum"]
-    term = eqx.tree_at(
-        lambda t: t.arrays["c_sum"], term, c_sum.at[0].set(0.0)
-    )
+    term = eqx.tree_at(lambda t: t.arrays["c_sum"], term, c_sum.at[0].set(0.0))
     v = {**values, "eta": values["eta"] * 3.0}
 
     def loss(eta):
         chi2, log_norm = term.chi2_and_log_norm({**v, "eta": eta})
         return 0.5 * chi2 + log_norm
 
-    direction = np.asarray(onp.random.default_rng(3).normal(size=v["eta"].shape))
+    direction = np.asarray(
+        onp.random.default_rng(3).normal(size=v["eta"].shape)
+    )
     grad = jax.grad(loss)(v["eta"])
     h = 1e-6
     fd = (loss(v["eta"] + h * direction) - loss(v["eta"] - h * direction)) / (

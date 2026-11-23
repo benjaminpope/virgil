@@ -729,3 +729,17 @@ def test_scorer_does_not_profile_a_zero_width_offset_group():
     on = data.with_closure_offsets(triangle=0.005)
     assert nu_phi(off) == nu_phi(data)
     assert nu_phi(on) < nu_phi(data)
+
+
+def test_scorer_does_not_profile_a_zero_width_gain_group():
+    from virgil.orbit_search import _Scorer
+
+    data = _data()
+
+    def nu_vis(d):
+        return dict((b[0], b[3]) for b in _Scorer(d, None).surface.blocks)[
+            "vis"
+        ]
+
+    assert nu_vis(data.with_gains(telescope=0.0)) == nu_vis(data)
+    assert nu_vis(data.with_gains(telescope=0.05)) < nu_vis(data)
