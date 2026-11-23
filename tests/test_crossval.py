@@ -316,17 +316,27 @@ def test_cv_task_refuses_profiled_sigma():
 
     priors = nuis.priors()
     priors["log_brightness"] = dist.Normal(np.zeros((npix, npix)), 3.0)
+    init = nuis.defaults()
+    init["log_brightness"] = onp.full((npix, npix), -np.log(npix**2))
+    task = dict(
+        fit_kwargs=lambda w: dict(
+            model=lambda **values: scene(values),
+            priors=priors,
+            data=(),
+            regularizers=[MaxEntropy(w)],
+        ),
+        init=init,
+        fit_options={"method": "lbfgs", "max_steps": 3},
+    )
     with pytest.raises(ValueError, match="profile"):
         cv_task(
             1.0,
             0,
             fold,
-            fit_kwargs=lambda w: dict(
-                model=lambda **values: scene(values),
-                priors=priors,
-                data=(),
-                regularizers=[MaxEntropy(w)],
-            ),
             make_term=lambda m: data.term(scene, nuis, mask=m),
-            init=nuis.defaults(),
+            **task,
         )
+    # a fixed σ is a predictive score and still runs
+    fixed = lambda m: data.term(scene, nuis, mask=m, sigma=onp.ones(1))  # noqa: E731
+    record = cv_task(1.0, 0, fold, make_term=fixed, **task)
+    assert onp.isfinite(record["score"])

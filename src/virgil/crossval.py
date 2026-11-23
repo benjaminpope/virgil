@@ -175,6 +175,12 @@ def cv_task(
     fit_options : dict, optional
         Further arguments of ``fit`` (``method``, ``max_steps``, ...).
 
+    Raises
+    ------
+    ValueError
+        If the term profiles σ (``sigmas="profile"``) without a fixed
+        ``sigma``: the held-out fold would be scored at its own ŝ.
+
     Returns
     -------
     dict
@@ -193,7 +199,7 @@ def cv_task(
         if (
             getattr(getattr(train_term, "nuisance", None), "sigmas", None)
             == "profile"
-            and getattr(train_term, "sigma_fixed", 0) is None
+            and getattr(train_term, "sigma_fixed", None) is None
         ):
             raise ValueError(
                 "cv_task does not support sigmas='profile' yet: the held-out fold "

@@ -101,7 +101,7 @@ class ClosureNoise(eqx.Module):
         """
         i1, i2, i3 = (onp.asarray(i, dtype=int) for i in (i1, i2, i3))
         signs = None
-        if stations is not None and frame is not None and wavel is not None:
+        if i1.size and all(x is not None for x in (stations, frame, wavel)):
             # Of two samples of one frame and wavelength with station pairs
             # (a, b) and (b, a), the one seen later is the first's negated
             # phase: alias it, with sign -1.
@@ -110,23 +110,23 @@ class ClosureNoise(eqx.Module):
             wl = onp.broadcast_to(
                 onp.asarray(wavel, float).reshape(-1), fr.shape
             )
-
-            def tag(s):
-                return (*sta[s], int(fr[s]), float(wl[s]))
-
-            first = {}
-            for s in onp.unique(onp.concatenate((i1, i2, i3))):
-                first.setdefault(tag(s), int(s))
-            legs = [onp.array(leg) for leg in (i1, i2, i3)]
-            signs = onp.ones((len(i1), 3))
-            for k, leg in enumerate(legs):
-                for row, s in enumerate(leg):
-                    a, b, f, w = tag(s)
-                    twin = first.get((b, a, f, w))
-                    if a != b and twin is not None and twin < first[tag(s)]:
-                        legs[k][row], signs[row, k] = twin, -1.0
-            i1, i2, i3 = legs
-            if signs.min() > 0:
+            used = onp.unique(onp.concatenate((i1, i2, i3)))
+            a, b = sta[used, 0], sta[used, 1]
+            fwd = onp.column_stack([a, b, fr[used], wl[used]])
+            rev = onp.column_stack([b, a, fr[used], wl[used]])
+            _, gid = onp.unique(
+                onp.vstack([fwd, rev]), axis=0, return_inverse=True
+            )
+            gid = gid.reshape(-1)
+            first = onp.full(gid.max() + 1, onp.iinfo(int).max)
+            onp.minimum.at(first, gid[: used.size], used)
+            twin = first[gid[used.size :]]
+            alias = (a != b) & (twin < first[gid[: used.size]])
+            target = onp.where(alias, twin, used)
+            pos = [onp.searchsorted(used, leg) for leg in (i1, i2, i3)]
+            i1, i2, i3 = (target[q] for q in pos)
+            signs = onp.stack([onp.where(alias[q], -1.0, 1.0) for q in pos], 1)
+            if not (signs < 0).any():
                 signs = None
         groups = _groups(i1, i2, i3)
         if not force and all(g.size == 1 for g in groups):

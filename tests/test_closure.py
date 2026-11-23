@@ -522,8 +522,9 @@ def test_gradients_match_finite_differences_with_residuals_near_pi():
 @pytest.mark.validates(
     "virgil.likelihood.model_loglike", roots=["self-consistency"]
 )
+@pytest.mark.parametrize("timing", ["frame", "mjd"])
 @pytest.mark.parametrize("which", ["all", "one"])
-def test_a_reversed_triangle_leg_gives_the_same_likelihood(which):
+def test_a_reversed_triangle_leg_gives_the_same_likelihood(which, timing):
     # Storing legs in the opposite orientation puts them on appended samples
     # with negated (u, v). They are the same baselines, so the likelihood and
     # the independent count are unchanged. "all" reverses the three legs of
@@ -534,7 +535,8 @@ def test_a_reversed_triangle_leg_gives_the_same_likelihood(which):
     n = onp.size(one.u)
     stations = onp.asarray(one.stations)
     frame = onp.zeros(n, int)
-    canonical = OIData(_record(one, stations=stations, frame=frame))
+    key = {"frame": "frame", "mjd": "mjd"}[timing]  # mjd derives the frame
+    canonical = OIData(_record(one, stations=stations, **{key: frame}))
     assert canonical.cp_noise.size == 3
 
     i1, i2, i3 = (onp.array(i) for i in (one.i_cps1, one.i_cps2, one.i_cps3))
@@ -561,7 +563,7 @@ def test_a_reversed_triangle_leg_gives_the_same_likelihood(which):
             i_cps2=i2,
             i_cps3=i3,
             stations=onp.concatenate([stations, stations[legs][:, ::-1]]),
-            frame=onp.zeros(n + k, int),
+            **{key: onp.zeros(n + k, int)},
         )
     )
     assert reversed_.cp_noise.size == 3
