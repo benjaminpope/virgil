@@ -1065,7 +1065,7 @@ def flux_scale_posterior(model, data, kinds=None):
             and data.gains is not None
             and data.gains.n_vis != np.asarray(data.vis).size
         )
-        if coupled and kinds is None and len(spectra) > 1:
+        if coupled and kinds is None:
             continue
         prediction = block.predict(model, cvis)
         mean, cov = block.posterior(

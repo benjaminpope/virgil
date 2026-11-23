@@ -652,9 +652,10 @@ def test_joint_vis2_corrflux_gain_modes_dense_mvn_and_zero_bleed():
     with pytest.raises(ValueError, match="vis_gain__flux"):
         noisy.gains.widths_for({"vis_gain__flux": 2.0})
 
-    # Coupled corrflux refuses flux_scale_posterior with NotImplementedError.
+    # Coupled corrflux is skipped by default (even alone) and refused on request.
+    assert flux_scale_posterior(_scene(), noisy) == {}
     with pytest.raises(NotImplementedError, match="corrflux"):
-        flux_scale_posterior(_scene(), noisy)
+        flux_scale_posterior(_scene(), noisy, kinds="corrflux")
 
     other = _scene(dra=0.63, ddec=0.13)
     ll32 = float(model_loglike(other, noisy))
