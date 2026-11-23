@@ -12,7 +12,7 @@ from scipy.stats import multivariate_normal
 
 from tests._shared import PAIRS, TRIANGLES  # noqa: E402
 from virgil._precision import cast_tree
-from virgil.epochs import _Surface, marginal_loglike
+from virgil.epochs import _Surface, _blocks, marginal_loglike
 from virgil.gains import gain_modes
 from virgil.imaging import error_scale
 from virgil.likelihood import (
@@ -652,9 +652,10 @@ def test_joint_vis2_corrflux_gain_modes_dense_mvn_and_zero_bleed():
     with pytest.raises(ValueError, match="vis_gain__flux"):
         noisy.gains.widths_for({"vis_gain__flux": 2.0})
 
-    # Coupled corrflux refuses flux_scale_posterior with NotImplementedError.
+    # Coupled corrflux is skipped by default (even alone) and refused on request.
+    assert flux_scale_posterior(_scene(), noisy) == {}
     with pytest.raises(NotImplementedError, match="corrflux"):
-        flux_scale_posterior(_scene(), noisy)
+        flux_scale_posterior(_scene(), noisy, kinds="corrflux")
 
     other = _scene(dra=0.63, ddec=0.13)
     ll32 = float(model_loglike(other, noisy))
@@ -1034,3 +1035,74 @@ def test_night_summaries_diffphase_modes_and_prior_not_rescalable():
         assert onp.isclose(peak.log_scale(1.0), 0.0)
         with pytest.raises(NotImplementedError):
             peak.covariance(scale=2.0)
+
+
+# === Follow-ups: empty blocks, wrapped draws, per-row channels ===
+
+
+def test_diffphase_without_line_channels_is_empty_not_a_nan_block():
+    base = _two_epoch_oidata(("visphi",)).select(observables=("vis", "visphi"))
+    for width in (None, (0.1, 0.1)):
+        data = base.with_continuum(lines=[(1e-6, 1.1e-6)], prior_width=width)
+        (block,) = data.extras
+        assert block.n_independent == 0
+        assert [b[0] for b in _blocks(data)] == ["vis"]
+        problem = block.marginal_problem(np.zeros(0), np.zeros(0))
+        assert problem.x.shape == (0,)
+        assert _Surface(data).nu.min() > 0
+
+
+def test_diffphase_simulated_draws_are_wrapped_phases():
+    base = _two_epoch_oidata(("visphi",)).select(observables=("visphi",))
+    wide = base.with_continuum(lines=[LINE], prior_width=(3.0, 3.0))
+    drawn = wide.with_model(_scene(), key=jax.random.PRNGKey(4))
+    values = onp.asarray(drawn.extras[0].values)
+    assert onp.abs(values).max() <= onp.pi
+
+
+def test_uncoupled_rows_keep_their_own_channels():
+    """With ``closure_free=False`` rows are independent: a row missing one
+    channel does not cost the others that channel."""
+    n_row, n_chan = 3, 6
+    wavel, row, frame, stations = [], [], [], []
+    for r in range(n_row):
+        for c in range(n_chan):
+            if r == 2 and c == 5:
+                continue
+            wavel.append(2.150e-6 + 5e-9 * c)
+            row.append(r)
+            frame.append(0)
+            stations.append((1, 2 + r))
+    wavel = onp.array(wavel)
+    n = wavel.size
+    values = onp.random.default_rng(2).normal(0.0, 0.05, n)
+    row, frame, stations = (
+        onp.array(row),
+        onp.array(frame),
+        onp.array(stations),
+    )
+
+    def build(free, keep=slice(None)):
+        return DifferentialPhase.build(
+            values[keep],
+            onp.full(n, 0.05)[keep],
+            onp.arange(n)[keep],
+            wavel[keep],
+            frame[keep],
+            stations[keep],
+            row[keep],
+            closure_free=free,
+            lines=[(2.160e-6, 2.176e-6)],
+        )
+
+    independent, coupled = build(False), build(True)
+    assert independent.n_independent > coupled.n_independent
+    # independent rows: the block is the union of its single-row blocks
+    singles = [build(False, row == r) for r in range(n_row)]
+    assert independent.n_independent == sum(b.n_independent for b in singles)
+    for read in (lambda b: b.data(), lambda b: b.data_errors()):
+        got = onp.sort(onp.asarray(read(independent)))
+        want = onp.sort(
+            onp.concatenate([onp.asarray(read(b)) for b in singles])
+        )
+        onp.testing.assert_allclose(got, want, atol=1e-6)

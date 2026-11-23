@@ -656,7 +656,7 @@ class _ToeplitzTerm(_TermBase):
             # Σ r is zero in value and has gradient ∇Δ/ŝ² (ŝ² is held), the
             # same gradient and Hessian as Σ Δ/ŝ²; the loss's value is the
             # held log_norm. Below the floor both are flat: no gradient.
-            live = ratio > eps - 1.0
+            live = (ratio > eps - 1.0) & ok
             r = np.where(
                 live,
                 (delta - jax.lax.stop_gradient(delta)) / self._profile(delta),
