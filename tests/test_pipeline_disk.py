@@ -1668,3 +1668,20 @@ def test_the_evidence_failure_is_narrow(monkeypatch, error, raises):
         with pytest.warns(RuntimeWarning, match="evidence"):
             row = disk._score_ell(pipe, 1.0, None, None, 0)
         assert row["log_evidence"] is None
+
+
+def test_auto_error_scale_falls_back_to_quoted_with_gains(data, tmp_path):
+    gained = data.with_gains(telescope=0.05)
+    pipeline = DiskPipeline(gained, "gp", output=tmp_path / "run", **_TINY)
+    with pytest.warns(UserWarning, match="falls back to 'quoted'.*gains"):
+        assert pipeline.error_mode == "quoted"
+    plain = DiskPipeline(data, "gp", output=tmp_path / "plain", **_TINY)
+    assert plain.error_mode == "rescale"
+    # An explicit request is not overridden: error_scale() then raises.
+    explicit = DiskPipeline(
+        gained,
+        "gp",
+        output=tmp_path / "explicit",
+        **{**_TINY, "error_scale": "rescale"},
+    )
+    assert explicit.error_mode == "rescale"

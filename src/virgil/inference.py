@@ -20,6 +20,8 @@ that need concrete values are skipped inside ``jax.jit``.
 import warnings
 
 import equinox as eqx
+import traceback
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -61,7 +63,17 @@ def hessian_matrix(objective, x):
             f"hessian_matrix expects a 1D parameter vector; got shape "
             f"{x.shape}."
         )
-    return np.asarray(jax.hessian(objective)(x), dtype=float)
+    try:
+        return np.asarray(jax.hessian(objective)(x), dtype=float)
+    except (TypeError, ValueError) as error:
+        if "nufftax" not in "".join(traceback.format_exception(error)):
+            raise
+        raise RuntimeError(
+            "jax.hessian failed inside nufftax: a model rendering through the "
+            "NUFFT (ft='auto' on a large Image or FlaredDisk, or ft='nufft') "
+            "cannot be differentiated twice, as nufftax batches over one axis "
+            "only. Pass ft='dft' to the model."
+        ) from error
 
 
 def regularized_inverse(matrix, ridge=1e-10):

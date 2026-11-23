@@ -49,9 +49,10 @@ from .fitting import (
     NoStartingValue,
     SingularCurvature,
     _check_dense_size,
+    _nudge_inside,
     gauss_newton_mass,
 )
-from .likelihood import numpyro_model
+from .likelihood import is_tied, noise_sites, numpyro_model
 from ._deprecate import external_stacklevel
 
 __provisional__ = ("*",)
@@ -269,6 +270,22 @@ _KHAT_MAX = (
 _SETTLED_NATS = 1.0
 
 
+def _start_values(values, priors, noise, data, dtype):
+    """``values`` cast to ``dtype``, with starts on a bound moved just inside it."""
+    if values is None:
+        return None
+    values = cast_tree(dict(values), dtype)
+    sites = dict(priors)
+    n = len(data) if isinstance(data, (list, tuple)) else 1
+    for site, (prior, _, _) in noise_sites(noise, n).items():
+        if not is_tied(prior):
+            sites[site] = prior
+    for site, prior in sites.items():
+        if site in values and hasattr(prior, "support"):
+            values[site] = _nudge_inside(prior, values[site])
+    return values
+
+
 def _loss_settled(losses, window):
     """Whether the loss has stopped falling, and cannot be falling much.
 
@@ -416,7 +433,7 @@ def variational(
         ) = cast_tree(
             (model, priors, data, noise, regularizers, likelihoods), dtype
         )
-        values_c = None if values is None else cast_tree(dict(values), dtype)
+        values_c = _start_values(values, priors_c, noise_c, data_c, dtype)
         posterior = numpyro_model(
             model_c,
             priors_c,

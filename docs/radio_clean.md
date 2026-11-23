@@ -128,10 +128,19 @@ is left in dirty-beam Jy/beam, not rescaled to the new beam's area, as CASA does
 
 **Masks.** `mask` is a boolean array (True where components may be placed).
 `usemask="auto-multithresh"` adds, every major cycle, regions of the
-beam-smoothed residual: connected above `lownoisethreshold × rms` and
-containing a pixel above `noisethreshold × rms` or `sidelobethreshold ×
-sidelobe × peak`. It is a simplified version of CASA's (positive features only;
-no negative or pruning thresholds).
+beam-smoothed residual: connected above `lownoisethreshold × rms + median`
+(the MAD rms and median of the smoothed residual) and containing a residual
+pixel above `median + max(noisethreshold × rms, sidelobethreshold × sidelobe ×
+|peak|)` (Kepley et al. 2020, Eqs. 1-4; rms the MAD estimate of the residual,
+median the location, |peak| measured from it). Seeded pixels are always
+masked. The sidelobe term is capped at half the peak. It is a simplified
+version of CASA's (positive features only; no negative or pruning thresholds).
+Growth is not exactly invariant to a constant offset of the residual: the
+zero-padded smoother turns an offset into a border. A field with nothing above
+the seed threshold seeds no mask. It then stops at `"threshold"` or `"nsigma"`
+if the whole-image peak is at or below that floor, and with `"no_progress"`
+otherwise (source-free noise peaks at 3-5 rms, so `nsigma=3` gives
+`"no_progress"` and `nsigma=5` gives `"nsigma"`).
 
 **Primary beam.** CLEAN runs in the sky-times-beam plane, as `tclean` does with
 `gridder="standard"`; `RadioCleanResult.pb_corrected(pb, pblimit)` divides the
@@ -183,4 +192,5 @@ two share a name only, and `virgil.imaging.clean` is unchanged.
 Högbom (1974, A&AS 15, 417); Clark (1980, A&A 89, 377); Schwab (1984, AJ 89,
 1076); Cornwell (2008, IEEE J. Sel. Top. Signal Process. 2, 793); Rau &
 Cornwell (2011, A&A 532, A71); Offringa et al. (2014, MNRAS 444, 606); Briggs
-(1995, PhD thesis); CASA `tclean` documentation.
+(1995, PhD thesis); Kepley et al. (2020, PASP 132, 024505); CASA `tclean`
+documentation.

@@ -262,6 +262,134 @@ def test_off_axis_point_source_cleans_and_restores_to_its_true_pixel():
     assert abs(float(onp.sum(w * cc) / onp.sum(w)) - col_true) < 0.05
 
 
+@pytest.mark.parametrize("n", [128, 129])
+def test_restore_keeps_a_component_on_its_pixel_on_even_and_odd_grids(n):
+    # virgil audit 724#11.1: the kernel centre sat half a pixel off on even
+    # grids, shifting the restored source by (0.5, 0.5) and losing ~4% peak
+    model = onp.zeros((n, n))
+    model[40, 50] = 1.0
+    restored = restore(
+        model, onp.zeros_like(model), (6.0 * S, 5.0 * S, 20.0), S
+    )
+    assert onp.unravel_index(onp.argmax(restored), restored.shape) == (40, 50)
+    assert restored[40, 50] == pytest.approx(1.0, rel=1e-12)
+    rr, cc = onp.indices(restored.shape, dtype=float)
+    box = (onp.abs(rr - 40) <= 8) & (onp.abs(cc - 50) <= 8)
+    w = onp.where(box, restored, 0.0)
+    assert abs(float((w * rr).sum() / w.sum()) - 40) < 1e-6
+    assert abs(float((w * cc).sum() / w.sum()) - 50) < 1e-6
+
+
+def test_auto_mask_selects_nothing_on_a_source_free_noise_map():
+    # virgil audit 727#4.1: the 0.5 x peak cap used to override the noise floor,
+    # seeding masks on pure noise whenever the smoothed peak < 2 x noise x rms
+    n_masked = []
+    for seed in range(20):
+        resid = onp.random.default_rng(seed).normal(size=(100, 100))
+        n_masked.append(int(_auto_mask(resid, 3.0, 0.1, 3.0, 5.0, 1.5).sum()))
+    assert n_masked == [0] * 20
+
+
+def test_auto_mask_seeds_sources_when_the_residual_is_sidelobe_dominated():
+    # sparse track: the MAD rms (0.06) is ~1000 x thermal and the median is
+    # 0.11, so the beam-smoothed peak is only 2.7 x rms above the median, but
+    # the residual's own peak is 7 x rms above it (Kepley et al. 2020 measure
+    # the noise on the residual, plus the median)
+    data = _sparse_track_data()
+    res = clean(data, 65, 4.0, niter=0)
+    beam_pix = onp.sqrt(res.beam[0] * res.beam[1]) / 4.0
+    resid = onp.asarray(res.residual)
+    mask = _auto_mask(resid, beam_pix, 0.015, 3.0, 5.0, 1.5)
+    assert mask[onp.unravel_index(onp.argmax(resid), resid.shape)]
+    # growth is above rms + median too: without the median the level (0.09) is
+    # below the map median (0.11) and the mask percolates over most of the image
+    assert mask.sum() < 0.15 * mask.size
+
+
+@pytest.mark.parametrize("psf_sidelobe", [0.6, 1.0, 5.0])
+def test_auto_mask_sidelobe_term_is_capped_at_half_the_peak(psf_sidelobe):
+    # virgil#551 (a departure from Kepley et al. 2020 Eq. 1, which has no cap):
+    # an uncapped sidelobe x psf_sidelobe >= 1 puts the seed above the peak and
+    # masks nothing; capped, the brightest region is always seeded
+    rng = onp.random.default_rng(3)
+    resid = _gaussian(
+        (N, N), (C - 5, C + 7), 6.0, 6.0, 0.0
+    ) + 0.01 * rng.normal(size=(N, N))
+    mask = _auto_mask(resid, 5.0, psf_sidelobe, 3.0, 5.0, 1.5)
+    assert mask[int(C - 5), int(C + 7)]
+
+
+def test_auto_mask_sidelobe_term_uses_the_absolute_peak():
+    # Kepley et al. (2020) Eq. 1 uses |peakResidual|: a dominant negative
+    # trough sets the sidelobe level, so a 0.2 positive blob (its sidelobe
+    # confusion, 0.3 here) is not seeded
+    rng = onp.random.default_rng(3)
+    trough = -_gaussian((N, N), (C - 20, C - 20), 6.0, 6.0, 0.0)
+    blob = 0.2 * _gaussian((N, N), (C + 15, C + 15), 6.0, 6.0, 0.0)
+    resid = trough + blob + 0.005 * rng.normal(size=(N, N))
+    mask = _auto_mask(resid, 5.0, 0.1, 3.0, 5.0, 1.5)
+    assert not mask[int(C + 15), int(C + 15)]
+
+
+def test_auto_mask_finds_a_source_on_a_negative_pedestal():
+    rng = onp.random.default_rng(5)
+    resid = (
+        _gaussian((N, N), (C - 5, C + 7), 6.0, 6.0, 0.0)
+        + 0.01 * rng.normal(size=(N, N))
+        - 3.0
+    )
+    mask = _auto_mask(resid, 5.0, 0.1, 3.0, 5.0, 1.5)
+    assert mask[int(C - 5), int(C + 7)] and mask.sum() < 0.2 * mask.size
+
+
+@pytest.mark.parametrize("psf_sidelobe", [0.1, 0.6])
+@pytest.mark.parametrize("offset", [-3.0, 3.0])
+def test_auto_mask_seeds_sources_on_a_constant_residual_offset(
+    offset, psf_sidelobe
+):
+    # Kepley et al. (2020) Eq. 4 adds the location (the median) to the seed
+    # threshold, and |peak| is measured from it: interior and near-edge
+    # sources stay seeded on a pedestal. (Growth is not exactly offset-
+    # invariant: the zero-padded smoother turns the pedestal into a border.)
+    rng = onp.random.default_rng(7)
+    resid = (
+        _gaussian((N, N), (C - 5, C + 7), 6.0, 6.0, 0.0)
+        + 0.5 * _gaussian((N, N), (3.0, 4.0), 4.0, 4.0, 0.0)
+        + 0.01 * rng.normal(size=(N, N))
+    )
+    mask = _auto_mask(resid + offset, 5.0, psf_sidelobe, 3.0, 5.0, 1.5)
+    assert mask[int(C - 5), int(C + 7)] and mask[3, 4]
+
+
+def test_auto_mask_keeps_a_seed_the_smoothed_residual_does_not_support():
+    # a lone pixel above the seed threshold stays masked even when its beam-
+    # smoothed value is below the growth threshold (low == noise)
+    resid = 0.01 * onp.random.default_rng(2).normal(size=(N, N))
+    resid[40, 40] = 1.0
+    mask = _auto_mask(resid, 5.0, 0.1, 3.0, 5.0, 5.0)
+    assert mask[40, 40]
+
+
+@pytest.mark.parametrize(
+    "nsigma, stop", [(5.0, "nsigma"), (3.0, "no_progress")]
+)
+def test_auto_mask_with_nothing_seeded_stops_at_the_floor_or_makes_no_progress(
+    nsigma, stop
+):
+    # noise peaks reach ~4 rms: below the 5 rms seed threshold (nothing
+    # seeded, whole-image peak tested), at or below an nsigma=5 floor but above
+    # an nsigma=3 one
+    u, v = _uv(seed=0)
+    rng = onp.random.default_rng(1)
+    vis = 0.02 * (rng.normal(size=u.size) + 1j * rng.normal(size=u.size))
+    data = ComplexVisData.from_arrays(u, v, vis, 1.0, 230e9)
+    res = clean(
+        data, N, S, niter=100, nsigma=nsigma, usemask="auto-multithresh"
+    )
+    assert not res.mask.any() and res.iterations == 0
+    assert res.stop == stop and len(res.history) == 1
+
+
 def _sparse_track_data(n=65, scale=4.0):
     """300 baselines x 80 hour angles (a poor, sidelobe-ridden beam) and three
     point sources summing to 1 Jy, one near an edge (virgil#551)."""

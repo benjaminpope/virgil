@@ -2172,11 +2172,15 @@ class LCurve:
             n_good = onp.sum(curvature / (curvature + weight))
             gap.append(2.0 * weight * penalty - n_good)
         gap = onp.asarray(gap)
+        # Skip non-finite sweep points (NaN compares unequal, so would fake a crossing).
+        finite = onp.isfinite(gap)
+        gap = gap[finite]
+        weights = onp.asarray(self.weights, dtype=float)[finite]
         crossings = onp.nonzero(onp.sign(gap[:-1]) != onp.sign(gap[1:]))[0]
         if crossings.size == 0:
             return None
         i = int(crossings[0])
-        t = onp.log(onp.asarray(self.weights[i : i + 2], dtype=float))
+        t = onp.log(weights[i : i + 2])
         fraction = gap[i] / (gap[i] - gap[i + 1])
         return float(onp.exp(t[0] + fraction * (t[1] - t[0])))
 
@@ -3052,6 +3056,28 @@ def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
     return dict(zip(kinds, beta))
 
 
+def unscalable_nuisances(d):
+    """What in dataset ``d`` has a covariance that does not scale with its errors.
+
+    Calibration gains, closure-phase offsets and extra blocks that are
+    marginalized, have a finite ``prior_width`` or have nuisance modes: a
+    list of phrases, empty if the errors can be rescaled.
+    """
+    reasons = []
+    if d.gains is not None:
+        reasons.append("calibration gains (with_gains)")
+    if d.phase_offsets is not None:
+        reasons.append("closure-phase offsets (with_closure_offsets)")
+    for b in d.extras:
+        if b.model_dependent_covariance:
+            reasons.append(f"a marginalized {b.kind} block")
+        elif getattr(b, "prior_width", None) is not None:
+            reasons.append(f"a {b.kind} block with a finite prior_width")
+        elif getattr(b, "modes", None) is not None:
+            reasons.append(f"a {b.kind} block with nuisance modes")
+    return reasons
+
+
 def error_scale(
     model,
     data,
@@ -3072,7 +3098,8 @@ def error_scale(
     make the evidence over-regularize). ``s`` much greater than 1 means a failed
     or inadequate model, not a noise fix: unmodelled structure is absorbed into
     ``s``. It uses the quoted errors, so no ``noise=`` terms or per-dataset
-    models.
+    models. Data with gains, closure-phase offsets or other covariance that
+    does not scale with the errors raise ``ValueError``.
     Source: MacKay (1992), [references](../references.md#mackay1992).
 
     Parameters
@@ -3085,9 +3112,7 @@ def error_scale(
         Path of the Image (default ``"env"``), a tuple of paths, or ``None`` for
         every such Image and disk (``TypeError`` if there is none).
     by_observable : bool, optional
-        One scale per kind of observable instead of one for all. Data with
-        gains, closure-phase offsets or other covariance that does not scale
-        with the errors raise ``ValueError``.
+        One scale per kind of observable instead of one for all.
     priors : dict or sequence of str, optional
         Free parameters (priors or paths) besides the latents; they enter
         through their ``JᵀJ`` block, with no unit-Gaussian prior.
@@ -3110,10 +3135,22 @@ def error_scale(
         if p not in latent_paths and not p.endswith("_vec")
     )
     all_paths = latent_paths + extra_paths
+    datasets = _as_list(data)
+    # Refuse data whose covariance is not s² D: their nuisance widths do not
+    # scale with the quoted errors.
+    for i, d in enumerate(datasets):
+        reasons = unscalable_nuisances(d)
+        if reasons:
+            raise ValueError(
+                f"error_scale(by_observable={by_observable}) cannot rescale "
+                f"dataset {i}: it has {', '.join(reasons)}, whose nuisance "
+                "widths do not scale with the quoted errors. Estimate the "
+                "scales without them, or fit the nuisance widths as noise "
+                "terms."
+            )
     r, jac = _residual_jacobian(
         model, data, all_paths, on_device=True, regularizers=regularizers
     )
-    datasets = _as_list(data)
     n_data_rows = sum(d.n_residuals for d in datasets)
     r_data = r[:n_data_rows]
     if not extra_paths and jac.shape[0] == n_data_rows:
@@ -3143,30 +3180,6 @@ def error_scale(
         else:
             r_extra = 0
     if by_observable:
-        # Refuse data whose covariance is not s_b² D per block: their nuisance
-        # widths do not scale with the quoted errors.
-        for i, d in enumerate(datasets):
-            reasons = []
-            if d.gains is not None:
-                reasons.append("calibration gains (with_gains)")
-            if d.phase_offsets is not None:
-                reasons.append("closure-phase offsets (with_closure_offsets)")
-            for b in d.extras:
-                if b.model_dependent_covariance:
-                    reasons.append(f"a marginalized {b.kind} block")
-                elif getattr(b, "prior_width", None) is not None:
-                    reasons.append(
-                        f"a {b.kind} block with a finite prior_width"
-                    )
-                elif getattr(b, "modes", None) is not None:
-                    reasons.append(f"a {b.kind} block with nuisance modes")
-            if reasons:
-                raise ValueError(
-                    f"error_scale(by_observable=True) cannot rescale dataset {i}: "
-                    f"it has {', '.join(reasons)}, whose nuisance widths do not "
-                    "scale with the quoted errors. Estimate the scales without "
-                    "them, or fit the nuisance widths as noise terms."
-                )
         rows, counts = _observable_blocks(datasets)
         # The block fixed point factors on the host (NumPy QR).
         beta = _block_precisions(r_data, onp.asarray(jac_z), rows, counts)
@@ -3318,8 +3331,22 @@ def chi2_by_observable(model, data, path=None):
         MacKay's number of well-determined latent parameters,
         ``Σ s²/(1 + s²)`` over the singular values ``s`` of the Jacobian of
         the whitened residuals by the latents.
+
+    Warns if a dataset has calibration gains coupled to amplitude blocks:
+    whitening then mixes rows across observables, so only the total is exact.
     """
     observations = _as_list(data)
+    if any(
+        d.gains is not None and d.gains.n_vis != onp.size(d.vis)
+        for d in observations
+    ):
+        warnings.warn(
+            "chi2_by_observable: calibration gains whiten across rows of "
+            "different observables, so the per-observable χ² here is "
+            "approximate; the total is exact.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
     rows, counts = _observable_blocks(observations)
     r = _residual_vector(model, observations)
     chi2 = {kind: float(onp.sum(r[idx] ** 2)) for kind, idx in rows.items()}
@@ -3592,13 +3619,12 @@ def diagnose(model, data, regularizers=()):
                 "or check the error bars."
             )
 
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        red = [chi2_by_observable(model, d)["chi2_red"] for d in observations]
+    warns.extend(str(w.message) for w in caught)
     checks["chi2_red_by_observable"] = [
-        {
-            k: v
-            for k, v in chi2_by_observable(model, d)["chi2_red"].items()
-            if k != "total"
-        }
-        for d in observations
+        {k: v for k, v in r.items() if k != "total"} for r in red
     ]
     checks["short_baseline_mean"] = (
         None
