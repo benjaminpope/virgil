@@ -124,15 +124,25 @@ def test_an_unconverged_stage_three_fails_with_every_value_interior():
     assert result.failed
 
 
+def test_a_converged_stage_three_does_not_fail_on_a_small_image(monkeypatch):
+    # a 3x3 image converges in 500 steps: `failed` is not always True
+    monkeypatch.setitem(globals(), "NPIX", 3)
+    result = _run(_data([1.0, 1.08, 0.93]), ref_obs=0)
+    assert all(s.info["converged"] for s in result.stages)
+    assert not result.failed
+
+
 @pytest.mark.slow
 def test_a_converged_stage_three_does_not_fail():
     # ~10 s: the entropy-regularized image needs ~50k L-BFGS-B steps
     result = _run(_data([1.0, 1.08, 0.93]), ref_obs=0, max_steps=50000)
     assert all(s.info["converged"] for s in result.stages)
     assert not result.failed
-    # the kkt start is the pre-stage-2 point: nuisance grad_rel is measured
-    # against the starting gradient, not stage 2's near-zero one
+    # the kkt start is the staged fit's own start ({**init, **start2}), so
+    # grad_rel is relative to the starting gradient, not the converged one
+    # (start=start3 gave 2e7 here)
     assert result.kkt["nuisances"]["cal.gain"]["grad_rel"] < 1e-3
+    assert result.kkt["images"]["."]["kkt_rel"] < 1e-3
 
 
 def test_edge_flag_when_truth_is_outside_the_box():
