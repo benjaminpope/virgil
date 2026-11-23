@@ -1061,6 +1061,19 @@ def test_diffphase_simulated_draws_are_wrapped_phases():
     assert onp.abs(values).max() <= onp.pi
 
 
+def test_diffphase_noise_only_draws_are_wrapped_phases():
+    base = _two_epoch_oidata(("visphi",)).select(observables=("visphi",))
+    plain = base.with_continuum(lines=[LINE])
+    assert (
+        plain.extras[0].prior_width is None and plain.extras[0].modes is None
+    )
+    drawn = plain.with_model(
+        _scene(), key=jax.random.PRNGKey(5), noise_scale=1e3
+    )
+    values = onp.asarray(drawn.extras[0].values)
+    assert onp.abs(values).max() <= onp.pi
+
+
 def test_uncoupled_rows_keep_their_own_channels():
     """With ``closure_free=False`` rows are independent: a row missing one
     channel does not cost the others that channel."""
