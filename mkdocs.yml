@@ -57,6 +57,7 @@ plugins:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
+  - Performance: performance.md
   - Background:
       - Contributions: contributors.md
       - References: references.md

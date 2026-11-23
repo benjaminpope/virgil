@@ -1,0 +1,1 @@
+- `fit` warns when a noise term is a centred `hierarchical_scales` member: the joint MAP has no finite optimum there (Neal's funnel), so the spread collapses to its lower bound. The default stays `centred=True`; the change of default is planned for 0.4.3.

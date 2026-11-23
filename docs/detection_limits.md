@@ -76,7 +76,7 @@ ratio converted by [`nsigma`][virgil.limits.nsigma], first reaches `sigma`.
   null model. With gains or OI_FLUX data, whose whitening depends on the
   model, the companion model's $\chi^2$ is computed in full.
 
-The no-companion model sets every parameter in `grid` to zero. The degrees of
+The no-companion model sets the flux to zero at each grid position. The degrees of
 freedom are the number of data points; fitted parameters are not subtracted.
 
 **The search.** The flux steps up from the lower bound in quarter decades
@@ -96,7 +96,7 @@ float64; enable float64 with `jax.config.update("jax_enable_x64", True)`).
 
 **Differences from CANDID.** CANDID refits the primary's diameter to the
 injected data before computing the null chi-squared (for V² and T3); virgil's
-null model is exactly the one with every grid parameter at zero. CANDID
+null model is exactly the one with the flux at zero at each grid position. CANDID
 brackets the limit in flux steps of 1.4 and interpolates linearly in
 significance; virgil bisects. The chi-squared and degrees of freedom are
 virgil's.

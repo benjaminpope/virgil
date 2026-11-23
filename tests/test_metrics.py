@@ -12,11 +12,13 @@ NPIX = 32
 SCALE = 1.0
 
 
-def _scene():
-    # Asymmetric, so rotation and shifts are distinguishable.
+def _scene(dra=0.0, ddec=0.0):
+    # Asymmetric, so rotation and shifts are distinguishable. dra, ddec move
+    # the whole scene by building it there (East +dra, North +ddec), so a
+    # shift test does not use the metrics' own shift.
     return gaussian_blob(
-        NPIX, SCALE, 2.0, dra=3.0, ddec=-2.0
-    ) + 0.4 * gaussian_blob(NPIX, SCALE, 1.5, dra=-4.0, ddec=3.0)
+        NPIX, SCALE, 2.0, dra=3.0 + dra, ddec=-2.0 + ddec
+    ) + 0.4 * gaussian_blob(NPIX, SCALE, 1.5, dra=-4.0 + dra, ddec=3.0 + ddec)
 
 
 def test_identity_scores_perfectly():
@@ -33,7 +35,7 @@ def test_identity_scores_perfectly():
 def test_known_shift_is_recovered():
     truth = _scene()
     # Move the source 3 mas East and 2 mas South; align undoes it.
-    moved = metrics._shift(truth, 2, -3)
+    moved = _scene(dra=3.0, ddec=-2.0)
     shifted, (dra, ddec) = metrics.align(moved, truth, 5.0, SCALE)
     assert dra == pytest.approx(-3.0, abs=0.1)
     assert ddec == pytest.approx(2.0, abs=0.1)
@@ -42,7 +44,7 @@ def test_known_shift_is_recovered():
 
 def test_subpixel_shift_is_recovered():
     truth = _scene()
-    moved = metrics._shift(truth, 0.4, 0.0)
+    moved = _scene(ddec=-0.4)
     _, (dra, ddec) = metrics.align(moved, truth, 3.0, SCALE)
     assert ddec == pytest.approx(0.4, abs=0.15)
     assert dra == pytest.approx(0.0, abs=0.15)

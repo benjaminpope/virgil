@@ -143,6 +143,27 @@ def test_a_start_on_a_bound_is_nudged_inside_it(flux_prior, flux_start):
     assert np.isfinite(objective.loss(z))
 
 
+def test_a_noise_start_on_a_bound_with_an_infinite_mean_is_nudged_inside():
+    # HalfCauchy has no finite mean, so the mean is no fallback.
+    objective = _Objective(
+        START, PRIORS, DATA, noise={"vis_scale": dist.HalfCauchy(1.0)}
+    )
+    for start in (0.0, -1.0):  # on the bound, outside it
+        z = objective.init({"noise.vis_scale": start})
+        assert all(np.all(np.isfinite(v)) for v in z.values())
+        scale = float(objective.constrain(z)["noise.vis_scale"])
+        assert 0.0 < scale < 1e-3
+
+
+def test_nudge_inside_finds_the_bounds_of_a_vector_prior():
+    from virgil.fitting import _nudge_inside
+
+    prior = dist.Uniform(0.0, 1.0).expand([3]).to_event(1)
+    got = _nudge_inside(prior, np.array([0.0, 0.5, 1.0]))
+    assert np.all(got > 0.0) and np.all(got < 1.0)
+    assert float(got[1]) == 0.5
+
+
 def test_a_non_finite_start_is_rejected_by_path():
     objective = _Objective(START, PRIORS, DATA)
     with pytest.raises(ValueError, match="ddec"):
@@ -751,13 +772,14 @@ def test_fit_with_hierarchical_error_scales():
         "v2_spread": 0.5,
         "v2_log": np.zeros(2),
     }
-    result = fit(
-        _binary_fn,
-        priors,
-        [quiet, noisy],
-        noise=[{"vis_scale": s} for s in scales],
-        init=init,
-    )
+    with pytest.warns(UserWarning, match="centred hierarchical_scales"):
+        result = fit(
+            _binary_fn,
+            priors,
+            [quiet, noisy],
+            noise=[{"vis_scale": s} for s in scales],
+            init=init,
+        )
     # Unpooled reference: an independent log-uniform scale per dataset.
     unpooled = fit(
         _binary_fn,
@@ -816,6 +838,36 @@ def test_fit_with_hierarchical_error_scales():
     assert {"v2_median", "v2_spread", "v2_log"} <= set(sites)
     eig = onp.linalg.eigvalsh(onp.asarray(cov))
     assert onp.all(onp.isfinite(eig)) and eig.min() > 0.0
+
+
+@pytest.mark.parametrize("centred", [True, False])
+def test_only_centred_hierarchical_scales_warn_about_the_funnel(centred):
+    from virgil.fitting import _initial_point
+    from virgil.priors import hierarchical_scales
+
+    population, scales = hierarchical_scales("v2", 2, centred=centred)
+    problem = _Objective(
+        _binary_fn,
+        {**PRIORS, **population},
+        [DATA, DATA],
+        noise=[{"vis_scale": s} for s in scales],
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _initial_point(
+            problem,
+            {
+                "dra": 150.0,
+                "ddec": -80.0,
+                "flux": 0.02,
+                "v2_median": 1.0,
+                "v2_spread": 0.5,
+                ("v2_log" if centred else "v2_z"): np.zeros(2),
+            },
+            "float32",
+        )
+    funnel = [w for w in caught if "Neal" in str(w.message)]
+    assert bool(funnel) == centred
 
 
 def test_numpyro_model_adds_each_population_density_once():
@@ -1193,6 +1245,9 @@ def test_fitted_gain_widths_and_scales_stay_positive_definite():
     assert onp.all(onp.isfinite(eigenvalues)) and eigenvalues.min() > 0
     assert eigenvalues.min() > GAIN_WIDTH_BOUNDS[0]
     assert eigenvalues.max() < GAIN_WIDTH_BOUNDS[1], eigenvalues
+    # One direction is loose (vis_scale, whose curvature the gains swamp);
+    # the other four (dra, ddec, flux, vis_gain_baseline) stay above 0.3.
+    assert onp.sort(eigenvalues)[1] > 0.3, eigenvalues
 
 
 # Measured: eig(F⁻¹H) = 0.0058, 0.996, 1.000, 1.011, 1.44. The three parameter
@@ -1723,3 +1778,230 @@ def test_an_explicit_zero_max_steps_is_not_the_default(method):
         result = fit(START, PRIORS, DATA, method=method, max_steps=0)
     # scipy's L-BFGS-B still counts its first iteration; the default is 20000.
     assert result.info["steps"] <= 1
+
+
+# A fit that starts on a prior bound, with the likelihood rising steeply into the
+# interior, must not report convergence: the bounded-to-unbounded map squashes
+# the gradient there. A second parameter with a large gradient sets the
+# tolerance (relative to the largest starting gradient), as in a pipeline.
+_BOUND_ROWS = 20000
+
+
+def _bound_fit(prior, start, truth_x=3.0, y_start=20.0, **options):
+    def term(v):
+        return np.concatenate(
+            [
+                (v["x"] - truth_x) / 10.0 * np.ones(_BOUND_ROWS),
+                (v["y"] - 1.0) * np.ones(_BOUND_ROWS),
+            ]
+        )
+
+    priors = {"x": prior, "y": dist.Uniform(-100.0, 100.0)}
+    return fit(
+        lambda **_: None,
+        priors,
+        (),
+        init={"x": start, "y": y_start},
+        likelihoods=[term],
+        **options,
+    )
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+@pytest.mark.parametrize(
+    "prior, start",
+    [
+        (dist.Uniform(0.0, 10.0), 0.0),
+        (dist.LogUniform(1e-2, 10.0), 1.0003e-2),
+    ],
+    ids=["uniform", "loguniform"],
+)
+def test_a_stall_at_a_bound_is_not_converged(method, prior, start):
+    with pytest.warns(RuntimeWarning, match="prior bound"):
+        result = _bound_fit(prior, start, method=method)
+    assert result.info["converged"] is False
+    assert result.info["stop"] == "bound"
+    assert result.info["bound_stall"] == ("x",)
+    # Independent of the check: the fit is still next to the bound, and the
+    # loss is lower at the truth, inside it (chi2 is (x - 3)^2 / 100 per row).
+    assert float(result.values["x"]) < 0.1
+    assert result.info["chi2_red"] > 0.01
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_a_parameter_at_a_bound_pushed_outward_is_converged(method):
+    # The truth lies below the bound, so the loss rises inward: a genuine
+    # constrained optimum (KKT), reported as converged and as at a bound.
+    result = _bound_fit(
+        dist.Uniform(0.0, 10.0), 0.5, truth_x=-3.0, method=method
+    )
+    assert result.info["converged"] is True
+    assert result.info["bound_stall"] == ()
+    assert result.info["at_bound"] == ("x",)
+    # (LM approaches the bound through the sigmoid, so it can stop short of it.)
+    assert float(result.values["x"]) < 0.05
+    assert onp.isclose(float(result.values["y"]), 1.0, atol=1e-4)
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_an_interior_optimum_has_no_bound_stall(method):
+    result = _bound_fit(dist.Uniform(0.0, 10.0), 5.0, method=method)
+    assert result.info["converged"] is True
+    assert result.info["bound_stall"] == ()
+    assert onp.isclose(float(result.values["x"]), 3.0, atol=1e-4)
+
+
+@pytest.mark.parametrize("truth_x", [0.005, 0.05, 0.3])
+def test_an_optimum_near_a_bound_is_not_a_bound_stall(truth_x):
+    # The optimum is 5e-4, 5e-3 and 3e-2 of the range from the end, so the
+    # gradient in t of a converged L-BFGS fit can point inward by more than 4
+    # tolerances there; only a site stuck at the end is a stall.
+    result = _bound_fit(
+        dist.Uniform(0.0, 10.0), 1.0, truth_x=truth_x, method="lbfgs"
+    )
+    assert result.info["converged"] is True
+    assert result.info["bound_stall"] == ()
+    assert onp.isclose(float(result.values["x"]), truth_x, atol=1e-3)
+
+
+@pytest.mark.parametrize(
+    "x, truth, flagged",
+    [
+        (0.005, 3.0, True),  # t = 5e-4, loss falling inward
+        (0.005, -3.0, False),  # t = 5e-4, loss rising inward: a true optimum
+        (0.5, 3.0, False),  # t = 0.05: not at an end, the z test governs
+        (
+            9.995,
+            3.0,
+            True,
+        ),  # t = 1 - 5e-4, the loss rises with x: falling inward
+        (
+            9.995,
+            12.0,
+            False,
+        ),  # t = 1 - 5e-4, the loss falls with x: a true optimum
+    ],
+)
+def test_bound_stall_signs_and_band(x, truth, flagged):
+    from virgil.fitting import _bound_stall
+
+    rows = 100
+
+    def term(
+        v,
+    ):  # per-point loss ((x - truth) / 10)^2 / 2: dL/dt = (x - truth) / 10
+        return (v["x"] - truth) / 10.0 * np.ones(rows)
+
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(
+                lambda **_: None,
+                {"x": dist.Uniform(0.0, 10.0)},
+                (),
+                likelihoods=[term],
+            ),
+            "float64",
+        )
+        z = problem.init({"x": x})
+        got = _bound_stall(problem, z, float(rows), 0.01)
+    assert got == (("x",) if flagged else ())
+
+
+def test_bound_stall_skips_an_isotropic_prior_with_both_ends_poles():
+    from virgil.fitting import _bound_stall
+    from virgil.priors import IsotropicInclination
+
+    def term(v):  # loss rising towards a pole of the coordinate
+        return (v["inc"] - 2.0) * np.ones(100)
+
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(
+                lambda **_: None,
+                {"inc": IsotropicInclination()},
+                (),
+                likelihoods=[term],
+            ),
+            "float64",
+        )
+        z = problem.init({"inc": 1e-4})
+        assert _bound_stall(problem, z, 100.0, 1e-6) == ()
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_bound_stall_at_the_upper_end(method):
+    # Truth above the range, x started at its top: the loss falls with x, so
+    # the top is a true optimum; truth below it, the loss falls inward.
+    outward = _bound_fit(
+        dist.Uniform(0.0, 10.0), 10.0, truth_x=13.0, method=method
+    )
+    assert outward.info["converged"] is True
+    assert outward.info["bound_stall"] == ()
+    with pytest.warns(RuntimeWarning, match="prior bound"):
+        inward = _bound_fit(
+            dist.Uniform(0.0, 10.0), 10.0, truth_x=3.0, method=method
+        )
+    assert inward.info["stop"] == "bound" and inward.info["bound_stall"] == (
+        "x",
+    )
+
+
+def test_a_stall_at_a_bound_is_not_converged_in_float32():
+    # The tolerance is relative to the largest starting gradient (here y's);
+    # with a small one the stall at x is still seen in float32.
+    with pytest.warns(RuntimeWarning, match="prior bound"):
+        result = _bound_fit(
+            dist.Uniform(0.0, 10.0),
+            0.0,
+            y_start=2.0,
+            method="lbfgs",
+            dtype="float32",
+        )
+    assert result.info["converged"] is False
+    assert result.info["stop"] == "bound"
+
+
+def test_an_adam_fit_converged_by_gradient_is_checked_for_a_bound_stall():
+    # Without ftol_abs Adam converges by its gradient test, which the bound
+    # check then applies to.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        result = _bound_fit(dist.Uniform(0.0, 10.0), 0.0, method="adam")
+    assert result.info["converged"] is True or result.info["stop"] == "bound"
+    assert result.info["bound_stall"] in ((), ("x",))
+    assert (result.info["stop"] == "bound") == (
+        result.info["bound_stall"] == ("x",)
+    )
+
+
+@pytest.mark.parametrize("inc_max", [None, 90.0])
+def test_a_fit_with_an_isotropic_inclination_prior_has_no_bound_stall(inc_max):
+    from virgil.priors import IsotropicInclination
+
+    prior = (
+        IsotropicInclination()
+        if inc_max is None
+        else IsotropicInclination(0.0, inc_max)
+    )
+
+    def term(v):
+        return (v["inc"] - 50.0) / 5.0 * np.ones(200)
+
+    result = fit(
+        lambda **_: None,
+        {"inc": prior},
+        (),
+        init={"inc": 30.0},
+        likelihoods=[term],
+        method="lbfgs",
+    )
+    assert result.info["converged"] is True
+    assert result.info["bound_stall"] == ()
+
+
+def test_an_interior_optimum_started_nearby_is_not_a_bound_stall():
+    result = _bound_fit(
+        dist.Uniform(0.0, 10.0), 0.1, truth_x=0.2, method="lbfgs"
+    )
+    assert result.info["converged"] is True
+    assert result.info["bound_stall"] == ()

@@ -27,6 +27,8 @@ differential phases apply the pipeline's continuum normalization to the exact
 model phase. See [spectro-interferometric observables](../spectro_observables.md).
 """
 
+import functools
+
 import equinox as eqx
 import jax
 import jax.numpy as np
@@ -827,21 +829,21 @@ class DifferentialPhase(_Block):
         # The samples of each row, ascending (one stable sort, not a pass
         # over all samples per row and frame).
         by_row = dict(zip(onp.unique(row), group_indices(row)))
-        frames = []
+        if len(set(zip(row.tolist(), wavel.tolist()))) != row.size:
+            raise ValueError(
+                "A differential-phase spectrum has two values at one "
+                "wavelength; give each spectrum its own row."
+            )
+        frames, units = [], []  # units: rows coupled through shared channels
         for in_frame in group_indices(frame):
             rows = onp.unique(row[in_frame])
-            channels = None
-            for r in rows:
-                w_r = wavel[by_row[r]]
-                if onp.unique(w_r).size != w_r.size:
-                    raise ValueError(
-                        "A differential-phase spectrum has two values at one "
-                        "wavelength; give each spectrum its own row."
-                    )
-                channels = (
-                    w_r if channels is None else onp.intersect1d(channels, w_r)
-                )
-            channels = onp.sort(channels)
+            chans = [onp.sort(wavel[by_row[r]]) for r in rows]
+            shared = functools.reduce(onp.intersect1d, chans)
+            if closure_free or all(c.size == shared.size for c in chans):
+                units.append((rows, shared))
+            else:
+                units += [(rows[[k]], c) for k, c in enumerate(chans)]
+        for rows, channels in units:
             if channels.size == 0:
                 continue
             # continuum and line masks of the frame's channels
@@ -1211,6 +1213,13 @@ class DifferentialPhase(_Block):
 
     def marginal_problem(self, prediction, data):
         """White-noise ``arrow_problem`` for ``s² C_0 + U Uᵀ`` integration."""
+        if self.keep.size == 0:
+            empty = np.zeros(0, (prediction - data).dtype)
+            return arrow_problem(
+                empty,
+                np.zeros((1, 0), np.int32),
+                np.zeros((1, 0, 0), empty.dtype),
+            )
         x_keep, _, rows, local, spanning = self._whitened_diffphase(
             prediction - data
         )
@@ -1249,7 +1258,9 @@ class DifferentialPhase(_Block):
         if mode_key is not None and self.modes is not None:
             raw_modes = np.asarray(self.modes, values.dtype)
             z = jax.random.normal(mode_key, (raw_modes.shape[0],))
-            values = -wrap_phase(-(values + raw_modes.T @ z))
+            values = values + raw_modes.T @ z
+        if self.prior_width is not None or self.modes is not None:
+            values = -wrap_phase(-values)
         return eqx.tree_at(lambda b: b.values, self, values)
 
     def labels_shared(self, labels):

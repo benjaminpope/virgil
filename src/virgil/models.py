@@ -905,7 +905,10 @@ class ArchimedeanSpiral(Component):
             blur = np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / width**2)
             return image + wk * blur, None
 
-        image, _ = jax.lax.scan(add_blob, np.zeros_like(xx), (x, y, weight))
+        # the first blob seeds the carry, so it has the step's own dtype
+        # (float64 parameters on a float32 grid promote); nodes >= 2
+        first, _ = add_blob(np.zeros_like(xx), (x[0], y[0], weight[0]))
+        image, _ = jax.lax.scan(add_blob, first, (x[1:], y[1:], weight[1:]))
         return image
 
 
@@ -1921,16 +1924,28 @@ class GravityDarkenedStar(Component):
             total = np.sum(np.where(inside, value[:, None], 0.0), axis=0)
             return total / np.maximum(hits, 1)
 
-        # sub-pixel sample positions; the pixel centres are the grid xx, yy
+        # Sub-pixel samples are the pixel square turned with the lattice; the
+        # pixel centres are the grid xx, yy (rotated for a rotated grid).
         s = self._image_oversample
         nrow, ncol = xx.shape
+        xx, yy = np.asarray(xx), np.asarray(yy)
+        cx, cy = _lattice_axis(xx, yy)
         frac = ((np.arange(s) + 0.5) / s - 0.5) * pixel_scale_mas
-        sx = (xx[0, :, None] + frac).reshape(-1)  # (ncol * s,)
-        sy = (yy[:, 0, None] + frac).reshape(-1)  # (nrow * s,)
+        # offsets along the column axis (b) and the row axis (a); each set is
+        # symmetric about 0, so the axes' signs do not matter
+        ox = frac[None, :] * cx - frac[:, None] * cy  # (a, b)
+        oy = frac[None, :] * cy + frac[:, None] * cx
+
+        def sub_row(idx):
+            i, a = idx
+            sx = (xx[i][:, None] + ox[a]).reshape(-1)  # (ncol * s,)
+            sy = (yy[i][:, None] + oy[a]).reshape(-1)
+            return sample_row((sx, sy))
+
+        rows = np.repeat(np.arange(nrow), s)
+        subs = np.tile(np.arange(s), nrow)
         # one sub-row of samples at a time bounds memory by ncol * s * n_tri
-        sub_rows = jax.lax.map(
-            lambda y: sample_row((sx, y)), sy.astype(intensity.dtype)
-        )
+        sub_rows = jax.lax.map(sub_row, (rows, subs))
         mean = sub_rows.reshape(nrow, s, ncol, s).mean(axis=(1, 3))
         # |normal| = 2 x area, so cosine carries twice the projected area
         # in the DFT weights; the pixel area carries the same factor here
@@ -1968,7 +1983,25 @@ class GravityDarkenedStar(Component):
         return coll
 
 
-def _blur_in_plane(image, fwhm, pa, stretch, pixel_scale_mas):
+def _lattice_axis(xx, yy):
+    """Unit sky vector of the grid's x axis: ``(cos, -sin)`` of its rotation.
+
+    That is ``rotate`` of ``(1, 0)`` by ``rotation_deg``, exactly ``(1, 0)``
+    for an unrotated grid, whose columns run to -x. A one-column grid takes
+    its axis from the rows; a single pixel has none, so it counts as unrotated.
+    Valid only for grids that ``rotate`` produces: orthogonal, square, not mirrored.
+    """
+    if xx.shape[1] > 1:
+        dx, dy = xx[0, 0] - xx[0, 1], yy[0, 0] - yy[0, 1]
+    elif xx.shape[0] > 1:  # the row step is scale * (sin, cos)
+        dx, dy = yy[0, 0] - yy[1, 0], xx[1, 0] - xx[0, 0]
+    else:
+        return 1.0, 0.0
+    norm = np.hypot(dx, dy)
+    return dx / norm, dy / norm
+
+
+def _blur_in_plane(image, fwhm, pa, stretch, pixel_scale_mas, xx, yy):
     """``image`` convolved with a Gaussian of FWHM ``fwhm`` (mas) that is
     isotropic in the plane of a disk inclined by ``stretch = cos(inc)``.
 
@@ -1976,7 +2009,8 @@ def _blur_in_plane(image, fwhm, pa, stretch, pixel_scale_mas):
     shift. Its minor-axis sigma on the sky is kept at least half a pixel (or
     ``sigma``, if smaller), so a near edge-on kernel cannot fall between pixel
     centres, and the stretch is capped at 1 so that a face-on kernel stays
-    isotropic.
+    isotropic. ``xx, yy`` are the sky coordinates of the pixel centres: on a
+    rotated grid the kernel is turned with the lattice.
     """
     npix = image.shape[0]
     nker = npix + 1 - npix % 2
@@ -1985,6 +2019,9 @@ def _blur_in_plane(image, fwhm, pa, stretch, pixel_scale_mas):
     psf_stretch = np.minimum(
         np.maximum(stretch, 0.5 * pixel_scale_mas / sigma_mas), 1.0
     )
+    # the kernel's pixel offsets, turned into sky axes with the lattice
+    c, d = _lattice_axis(xx, yy)
+    kx, ky = c * kx - d * ky, d * kx + c * ky
     kx_ell, ky_ell = undo_elliptical_transf_coord(kx, ky, pa, psf_stretch)
     psf = np.exp(-0.5 * (kx_ell**2 + ky_ell**2) / sigma_mas**2)
     return fftconvolve(image, psf, mode="same")
@@ -2130,7 +2167,7 @@ class ModulatedGaussianRim(Component):
         ring = ring * np.sum(az_factors, axis=0)
 
         return _blur_in_plane(
-            ring, self.fwhm, self.pa, stretch, pixel_scale_mas
+            ring, self.fwhm, self.pa, stretch, pixel_scale_mas, xx, yy
         )
 
 
@@ -2758,7 +2795,11 @@ class FlaredDisk(_PixelRendered):
     $\sin i$ surface projection of Blakely et al. (2024), whereas
     [`MultipoleDisk`][virgil.models.MultipoleDisk] with
     [`PowerLawHeight`][virgil.models.PowerLawHeight] uses the exact $\tan i$
-    thin-surface projection.
+    thin-surface projection. Eq. 3 assigns the brightness per sky pixel with no
+    area Jacobian, so the ring is brighter on one side, a spurious first
+    harmonic of amplitude about ``flaring * aspect * tan(inc)``; a matching
+    ``PowerLawHeight`` takes ``h_ref = -aspect * radius``,
+    ``r_ref = radius`` and ``psi = flaring``.
 
     Source: Blakely et al. (2024), §III,
     [references](../../../references.md#blakely2024).
@@ -5427,7 +5468,7 @@ class MultipoleDisk(Component):
         if self.blur_fwhm is None:
             return image
         return _blur_in_plane(
-            image, self.blur_fwhm, self.pa, stretch, pixel_scale_mas
+            image, self.blur_fwhm, self.pa, stretch, pixel_scale_mas, xx, yy
         )
 
 

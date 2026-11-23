@@ -135,7 +135,7 @@ def restore(model, residual, beam, pixel_scale_mas):
     bmaj, bmin, pa = beam
     kernel = _gaussian(
         model.shape,
-        ((n0 - 1) / 2, (n1 - 1) / 2),
+        (n0 // 2, n1 // 2),
         bmaj / pixel_scale_mas,
         bmin / pixel_scale_mas,
         pa,
@@ -144,7 +144,7 @@ def restore(model, residual, beam, pixel_scale_mas):
     conv = sfft.irfft2(
         sfft.rfft2(model, s=pad) * sfft.rfft2(kernel, s=pad), s=pad
     )
-    r, c = (n0 - 1) // 2, (n1 - 1) // 2  # the kernel's centre is the origin
+    r, c = n0 // 2, n1 // 2  # the kernel's centre pixel is the origin
     return conv[r : r + n0, c : c + n1] + residual
 
 
@@ -178,21 +178,30 @@ def _area(sigma_pix):
 
 
 def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
-    """A simplified ``auto-multithresh``: the connected regions of the
-    beam-smoothed residual above ``low`` × rms that hold a pixel above
-    ``max(noise × rms, sidelobe × sidelobe level × peak)``."""
-    smooth = _Smoother(residual.shape)(residual, beam_pix * FWHM_TO_SIGMA)
-    rms = _mad_rms(smooth)
-    # a poor PSF must not hide the brightest region: seed at half the peak at most
-    high = min(
-        max(noise * rms, sidelobe * psf_sidelobe * smooth.max()),
-        0.5 * smooth.max(),
+    """A simplified ``auto-multithresh``: the residual pixels above ``median +
+    max(noise × rms, sidelobe × sidelobe level × |peak|)`` plus the connected
+    regions of the beam-smoothed residual above ``low`` × rms + median that
+    contain one. The seed ``rms`` and ``peak`` are those of the residual about
+    its median, the growth ``rms`` and median those of the smoothed residual.
+
+    Source: Kepley et al. (2020, PASP 132, 024505), Eqs. 1-4 and Appendix A
+    (MAD rms; median added as the location). Departures: the sidelobe term is
+    capped at half the peak, so a poor PSF cannot hide the brightest region
+    (virgil#551); the sidelobe level is the lobe-exterior peak of the PSF, not
+    Eq. 2; |peak| is taken from the median; the growth regions come from the
+    beam-smoothed residual, with no sidelobe term.
+    """
+    med = onp.median(residual)
+    seed = residual > med + max(
+        noise * _mad_rms(residual),
+        min(sidelobe * psf_sidelobe, 0.5) * onp.abs(residual - med).max(),
     )
-    lab, n = ndimage.label(smooth > low * rms)
-    if n == 0:
-        return onp.zeros(residual.shape, bool)
-    keep = onp.unique(lab[smooth > high])
-    return onp.isin(lab, keep[keep > 0])
+    smooth = _Smoother(residual.shape)(residual, beam_pix * FWHM_TO_SIGMA)
+    lab, _ = ndimage.label(
+        smooth > low * _mad_rms(smooth) + onp.median(smooth)
+    )
+    keep = onp.unique(lab[seed])
+    return seed | onp.isin(lab, keep[keep > 0])
 
 
 # ----------------------------------------------------------------------
@@ -339,7 +348,8 @@ class RadioCleanResult:
         Minor-cycle iterations.
     stop : str
         ``"threshold"``, ``"nsigma"``, ``"niter"``, ``"time_limit"`` or
-        ``"no_progress"`` (no component above the cycle threshold) or
+        ``"no_progress"`` (no component above the cycle threshold, or a source above
+        the floor but nothing masked) or
         ``"diverged"`` (the peak residual grew by more than 3.0, relative, over
         the previous major cycle or the minimum so far, as in ``tclean``;
         ``model`` and ``residual`` are then those of the cycle that diverged).
@@ -618,11 +628,8 @@ def clean(
                     noisethreshold,
                     lownoisethreshold,
                 )
-            if not use.any():
-                stop = "no_progress"
-                break
             rms = _mad_rms(resid)
-            peak = float(onp.abs(resid[use]).max())
+            peak = float(onp.abs(resid[use] if use.any() else resid).max())
             history.append(
                 dict(
                     iterations=total,
@@ -640,6 +647,9 @@ def clean(
             floor = max(threshold, nsigma * rms)
             if peak <= floor:  # <=: all-zero data stops at threshold=0
                 stop = "nsigma" if nsigma * rms > threshold else "threshold"
+                break
+            if not use.any():
+                stop = "no_progress"
                 break
             whole = float(onp.abs(resid).max())
             if whole > (1 + _MAJOR_RISE) * lowest_whole:
