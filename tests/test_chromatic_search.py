@@ -69,7 +69,9 @@ def _scaled(ratio):
     return Scaled(PowerLaw(1.0, wavel0=W0), ratio)
 
 
-def _template(blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01):
+def _template(
+    blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01, unit=1.0
+):
     """GRAVITY AT-like snapshots with zero data, in dictionary form."""
     base = vlti_oidata(
         hour_angles_h=(-1.0, 1.0),
@@ -109,16 +111,19 @@ def _template(blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01):
         record["flux"] = {
             "wavel": onp.asarray(base.wavel),
             "value": onp.ones(n),
-            "error": onp.full(n, 0.05),
+            "error": onp.full(n, 0.05 * unit),
             "row": rows,
         }
     return record
 
 
-def _data(truth, blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01, key=1):
-    data = OIData(_template(blocks, sigma_phi))
+def _data(
+    truth, blocks=("v2", "t3", "visphi", "flux"), sigma_phi=0.01, key=1, unit=1.0
+):
+    """``unit`` is the spectrum's continuum level (1, or e.g. raw ADU)."""
+    data = OIData(_template(blocks, sigma_phi, unit))
     if "flux" in blocks:
-        data = data.with_flux_scale(scale=(1.0, 0.5))
+        data = data.with_flux_scale(scale=(unit, 0.5 * unit))
     if "visphi" in blocks:
         data = data.with_continuum(CONTINUUM, lines=LINE)
     return data.with_model(truth, key=jax.random.PRNGKey(key))
@@ -304,3 +309,45 @@ def test_differential_phase_alone_detects_what_a_grey_fit_misses():
     assert float(chromatic["comp.dra"]) == pytest.approx(sep, rel=1e-5)
     assert float(chromatic["delta_chi2"]) > 30.0
     assert float(constant["delta_chi2"]) < 9.0
+
+
+ADU = 1e5
+
+
+def _flux_limit(data):
+    positions = {
+        "comp.dra": onp.array([8.0]),
+        "comp.ddec": onp.array([-5.0]),
+        "comp.flux.ratio": onp.array([0.01]),
+    }
+    template = _scene(_power(0.05))
+    return float(injection_limits(template, data, positions, 3.0)[0, 0])
+
+
+def test_oiflux_injection_limit_is_scale_free():
+    """Audit finding 724#12.3b is not reproduced.
+
+    `FluxSpectrum.predict` returns ``mu * template`` in the data's units, so
+    the injected signal is in ADU too: a 1e5 ADU spectrum and the same one
+    normalized to 1 (errors scaled alike) give the same limit.
+    """
+    truth = _scene(_power(RATIO))
+    blocks = ("v2", "t3", "flux")
+    adu = _data(truth, blocks, unit=ADU)
+    # the model's flux samples are at the ADU level, independently of the
+    # injection
+    n_flux = int(adu.extras[0].values.size)
+    assert float(onp.mean(adu.model(truth)[-n_flux:])) == pytest.approx(
+        ADU, rel=0.1
+    )
+    assert _flux_limit(adu) == pytest.approx(
+        _flux_limit(_data(truth, blocks)), rel=1e-3
+    )
+
+
+def test_oiflux_enters_the_injection_limit():
+    """Not vacuous: the spectrum changes the limit."""
+    truth = _scene(_power(RATIO))
+    with_flux = _data(truth, ("v2", "t3", "flux"), unit=ADU)
+    without = _data(truth, ("v2", "t3"))
+    assert _flux_limit(with_flux) != pytest.approx(_flux_limit(without), rel=1e-2)
