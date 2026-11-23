@@ -316,10 +316,17 @@ def test_band_limit_matches_the_diagnosis_reference():
     )
 
 
-# 10 mas pixels are left out: there band_limit is 6.5 (disc) and 7.3 (ring)
-# against its gate of 2.0 at a KKT optimum, and the ring fit stalls. That
-# finding is in the PR (an xfail needs Ben's sign-off); the gate is unchanged.
-@pytest.mark.parametrize("scale", [5.0])
+# Finding, not tuned away: at 10 mas pixels the sharp-edged disc and ring give
+# band_limit 6.5 and 7.3 (gate 2.0) at a KKT optimum (the ring fit itself
+# stalls), so the over-converged case is not certified. The constants are
+# unchanged; whether the gate or these scenes is at fault is open (#751).
+_COARSE = pytest.mark.xfail(
+    strict=True,
+    reason="band_limit gate fails at 10 mas pixels; tracked in #751",
+)
+
+
+@pytest.mark.parametrize("scale", [5.0, pytest.param(10.0, marks=_COARSE)])
 @pytest.mark.parametrize("shape", [_disc, _ring])
 def test_converged_gate_holds_across_morphology_and_resolution(shape, scale):
     # New scenes (the ring is new): a fit stopped after 5 steps is not

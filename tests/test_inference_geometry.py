@@ -33,6 +33,8 @@ def test_objective_laplace_covariance_is_finite_and_positive_diagonal():
     assert cov.shape == (2, 2)
     assert np.all(np.isfinite(cov))
     assert np.all(np.diag(cov) > 0.0)
+    # The Hessian is diag(1/2, 2/9), so the Laplace covariance is its inverse.
+    assert np.allclose(cov, np.diag(np.array([2.0, 4.5])), rtol=1e-4)
 
 
 def test_fisher_projection_whitens_local_metric():
@@ -252,3 +254,21 @@ def test_a_positive_definite_hessian_is_inverted_exactly_in_mixed_units():
 
     hess = np.diag(np.array([1e8, 1e-10]))
     assert np.allclose(regularized_inverse(hess), np.diag(1.0 / np.diag(hess)))
+
+
+def test_hessian_through_the_nufft_says_to_use_the_dft():
+    import jax.numpy as np
+
+    from virgil._geometry import image_visibilities
+    from tests._shared import nufft_problem
+
+    image, uu, vv = nufft_problem((8, 8), n=10)
+
+    def objective(b):
+        grid = b.reshape(image.shape)
+        return np.sum(
+            np.abs(image_visibilities(grid, uu, vv, 3.0, "nufft")) ** 2
+        )
+
+    with pytest.raises(RuntimeError, match="ft='dft'"):
+        hessian_matrix(objective, np.asarray(image).ravel())

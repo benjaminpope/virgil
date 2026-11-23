@@ -15,25 +15,17 @@ from virgil._geometry import (
 )
 from virgil.likelihood import model_loglike
 from virgil.models import FlaredDiskHG, Image
-from tests._shared import vlti_night
+from tests._shared import nufft_problem, vlti_night
 from tests.test_image_model import MAS2RAD, _dft_reference
 
 WAVEL = 4.8e-6
-
-
-def _problem(shape, n=200, seed=0, max_freq=2e6):
-    rng = onp.random.default_rng(seed)
-    image = rng.uniform(0.0, 1.0, shape)
-    image /= image.sum()
-    uu, vv = rng.uniform(-max_freq, max_freq, (2, n))
-    return image, uu, vv
 
 
 @pytest.mark.parametrize("x64", [False, True])
 @pytest.mark.parametrize("shape", [(17, 17), (16, 16), (12, 15), (128, 128)])
 def test_nufft_matches_the_direct_sum(shape, x64):
     n = 50 if shape[0] > 100 else 200
-    image, uu, vv = _problem(shape, n=n)
+    image, uu, vv = nufft_problem(shape, n=n)
     expected = _dft_reference(image, uu, vv, 3.0)
     with jax.enable_x64(x64):
         got = _nufft(np.asarray(image), np.asarray(uu), np.asarray(vv), 3.0)
@@ -49,7 +41,7 @@ def test_nufft_matches_the_direct_sum(shape, x64):
 def test_long_baselines_beyond_the_nufft_period_agree(shape, x64, ft):
     # |2π s u| up to ~27 rad: the even-axis half-pixel phase is 4π-periodic,
     # and float32 phases are good to ~1e-6 rad.
-    image, uu, vv = _problem(shape, max_freq=3e7)
+    image, uu, vv = nufft_problem(shape, max_freq=3e7)
     scale = 30.0
     assert onp.max(onp.abs(2 * onp.pi * scale * MAS2RAD * uu)) > 3 * onp.pi
     expected = _dft_reference(image, uu, vv, scale)
@@ -61,7 +53,7 @@ def test_long_baselines_beyond_the_nufft_period_agree(shape, x64, ft):
 
 
 def test_gradient_matches_the_dft_gradient():
-    image, uu, vv = _problem((16, 15), n=60)
+    image, uu, vv = nufft_problem((16, 15), n=60)
     weights = np.asarray(onp.random.default_rng(3).normal(size=60))
 
     def objective(ft):
@@ -79,7 +71,7 @@ def test_gradient_matches_the_dft_gradient():
 
 def test_forward_mode_matches_the_dft():
     # CLEAN, the image Jacobian, LM and Gauss-Newton differentiate forward.
-    image, uu, vv = _problem((16, 15), n=60)
+    image, uu, vv = nufft_problem((16, 15), n=60)
     image = np.asarray(image)
     tangent = np.asarray(onp.random.default_rng(4).normal(size=image.shape))
 
@@ -101,7 +93,7 @@ def test_forward_mode_matches_the_dft():
     ),
 )
 def test_hessian_through_the_nufft():
-    image, uu, vv = _problem((8, 8), n=10)
+    image, uu, vv = nufft_problem((8, 8), n=10)
 
     def f(b):
         return np.sum(np.abs(image_visibilities(b, uu, vv, 3.0, "nufft")) ** 2)
@@ -127,7 +119,7 @@ def test_use_nufft_decisions(monkeypatch):
 
 
 def test_auto_follows_the_decision(monkeypatch):
-    image, uu, vv = _problem((16, 16), n=20)
+    image, uu, vv = nufft_problem((16, 16), n=20)
     calls = []
     real = _geometry._nufft
     monkeypatch.setattr(
@@ -153,7 +145,7 @@ def test_image_loglike_agrees_between_transforms():
 
 
 def test_vmap_over_a_batch_of_images():
-    _, uu, vv = _problem((16, 16), n=30)
+    _, uu, vv = nufft_problem((16, 16), n=30)
     batch = onp.random.default_rng(5).uniform(size=(3, 16, 16))
     batch = np.asarray(batch / batch.sum(axis=(1, 2), keepdims=True))
     run = lambda ft: jax.vmap(  # noqa: E731
@@ -217,7 +209,7 @@ def test_global_ft_forces_a_transform(monkeypatch, restore_defaults):
     set_ft_defaults(ft="nufft")
     assert _use_nufft((4, 4), 1)
     # An explicit ft on a call beats the global setting.
-    image, uu, vv = _problem((16, 16), n=20)
+    image, uu, vv = nufft_problem((16, 16), n=20)
     set_ft_defaults(ft="dft")
     calls = []
     real = _geometry._nufft
@@ -235,7 +227,7 @@ def test_flared_disk_takes_ft(monkeypatch):
         g=0.3, radius=40.0, fwhm=20.0, inc=40.0, pa=10.0,
         npix=16, pixel_scale_mas=8.0,
     )  # fmt: skip
-    _, uu, vv = _problem((2, 2), n=20)
+    _, uu, vv = nufft_problem((2, 2), n=20)
     u, v = uu * WAVEL, vv * WAVEL
     a = FlaredDiskHG(ft="dft", **kwargs).model(u, v, WAVEL)
     b = FlaredDiskHG(ft="nufft", **kwargs).model(u, v, WAVEL)
@@ -247,7 +239,7 @@ def test_flared_disk_takes_ft(monkeypatch):
     reason="nufftax 0.6.1 batches only one dimension at axis 0: nested vmap",
 )
 def test_nested_vmap_through_the_nufft():
-    _, uu, vv = _problem((8, 8), n=10)
+    _, uu, vv = nufft_problem((8, 8), n=10)
     batch = np.ones((2, 3, 8, 8))
     jax.vmap(jax.vmap(lambda b: image_visibilities(b, uu, vv, 3.0, "nufft")))(
         batch
@@ -270,7 +262,7 @@ def choose(monkeypatch):
 
 
 def test_jvp_alone_and_under_vmap_matches_the_dft(choose):
-    image, uu, vv = _problem((8, 9), n=20)
+    image, uu, vv = nufft_problem((8, 9), n=20)
     image = np.asarray(image)
     tangents = np.asarray(onp.random.default_rng(2).normal(size=(3, 8, 9)))
 

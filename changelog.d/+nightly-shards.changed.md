@@ -1,0 +1,1 @@
+Shard the nightly's full tier more finely (6 float32, 5 float64, 6 each for py3.13 and the floors) from refreshed per-file timings (`tests/test_durations_full.json`, with the `full_only` tests), so no nightly job reaches its 90-minute cap; the nightly issue now names cancelled jobs.

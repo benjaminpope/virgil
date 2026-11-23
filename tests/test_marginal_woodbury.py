@@ -426,6 +426,9 @@ def test_arrow_marginal_is_the_dense_cholesky_marginal():
             assert float(norm) == pytest.approx(float(half), rel=1e-10)
 
 
+_XS = np.tile(np.asarray([6.2, -3.9, 0.31]), (4, 1))
+
+
 def test_the_memory_model_bounds_the_compiled_working_set():
     """``_table_floats`` counts the arrays of a gradient through the table:
     it must not undercount the compiler's temporaries, nor exceed them by an
@@ -439,14 +442,16 @@ def test_the_memory_model_bounds_the_compiled_working_set():
             surface.chi2(model, data, None, 1.0), np.ones(2), data
         )
 
-    xs = np.tile(np.asarray([6.2, -3.9, 0.31]), (4, 1))
-    compiled = jax.jit(jax.vmap(jax.value_and_grad(f))).lower(xs).compile()
+    compiled = jax.jit(jax.vmap(jax.value_and_grad(f))).lower(_XS).compile()
     temp = compiled.memory_analysis().temp_size_in_bytes
     model = 4 * 4 * _table_floats(data)  # float32, four points
     assert temp <= model < 20 * temp
     assert _N_NODES == 32
 
-    # Also verify _table_floats on DifferentialPhase(prior_width=..., modes=...).
+
+def test_the_memory_model_bounds_the_compiled_working_set_with_modes():
+    """The same bound on a ``DifferentialPhase(prior_width=..., modes=...)``
+    block."""
     from virgil.observables import DifferentialPhase
 
     spec = vlti_oidata(
@@ -484,7 +489,7 @@ def test_the_memory_model_bounds_the_compiled_working_set():
             surf.chi2(m, data_vp, None, 1.0), np.ones(n_b), data_vp
         )
 
-    comp_vp = jax.jit(jax.vmap(jax.value_and_grad(f_vp))).lower(xs).compile()
+    comp_vp = jax.jit(jax.vmap(jax.value_and_grad(f_vp))).lower(_XS).compile()
     temp_vp = comp_vp.memory_analysis().temp_size_in_bytes
     model_vp = 4 * 4 * _table_floats(data_vp)
     assert temp_vp <= model_vp < 20 * temp_vp

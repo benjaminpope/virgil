@@ -61,7 +61,9 @@ $$V(\mathbf{q}) = \Big[\sum_k w_k\, e^{-2\pi i\,\mathbf{q}\cdot\mathbf{x}_k}\Big
 
 where $\mathbf{q}'$ is $\mathbf{q}$ rotated and shortened into the arm plane,
 and the image is the same Gaussian blobs summed on the pixel grid. The image
-floors `width` at one pixel.
+floors `width` at one pixel in the arm plane, before the inclination
+stretches it: at high inclination the sky minor-axis width of the rendered
+image can fall below a pixel. The visibilities are exact.
 
 **Choosing `nodes`.** A chain of Gaussians a distance $d$ apart has the
 transform of the continuous ridge plus copies shifted by $1/d$ along the
@@ -371,6 +373,14 @@ $\pi q_{\max}(r_{\rm out} - r_{\rm in})$, plus a dozen. A height needs `n_r` to
 resolve the extra phase $2\pi q h\sin(\mathrm{inc})$ as well. Rendering a disk
 with a `height` splats rings on a fine radial grid and needs concrete
 parameters.
+
+**Radial support.** The range `[r_in, r_out]` of a `RadialGPFunction` (the
+`spectral_index`, or a coefficient inside `harmonics`) or a `MultipoleKernel`
+(the `harmonics` prior) is fixed when the disk is made. Fitting `profile.radius`
+or `profile.sigma` (the ring's width, not the GP's amplitude) does not move it,
+and the function is constant outside both ends, so choose the range to cover
+every radius the priors allow. In a callable model traced by `fit` or
+`numpyro_model`, give concrete `r_in` and `r_out`.
 
 **Precision.** A profile's reference nodes are built in the default precision
 when the disk is made, so to evaluate in float64 construct the disk inside

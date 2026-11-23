@@ -395,8 +395,9 @@ def _blocks(data):  # deliberate: used by pipeline/_common.py
     stop = blocks[-1][2] if blocks else 0
     for k, block in enumerate(data.extras):
         nu = int(block.n_independent)
-        blocks.append((f"extra[{k}]", stop, stop + nu, nu, False))
-        stop += nu
+        if nu:
+            blocks.append((f"extra[{k}]", stop, stop + nu, nu, False))
+            stop += nu
     if stop != data.n_residuals or not blocks:
         raise ValueError(
             "Cannot split the whitened residuals into observable blocks "

@@ -20,6 +20,8 @@ that need concrete values are skipped inside ``jax.jit``.
 import warnings
 
 import equinox as eqx
+import traceback
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -61,7 +63,17 @@ def hessian_matrix(objective, x):
             f"hessian_matrix expects a 1D parameter vector; got shape "
             f"{x.shape}."
         )
-    return np.asarray(jax.hessian(objective)(x), dtype=float)
+    try:
+        return np.asarray(jax.hessian(objective)(x), dtype=float)
+    except (TypeError, ValueError) as error:
+        if "nufftax" not in "".join(traceback.format_exception(error)):
+            raise
+        raise RuntimeError(
+            "jax.hessian failed inside nufftax: a model rendering through the "
+            "NUFFT (ft='auto' on a large Image or FlaredDisk, or ft='nufft') "
+            "cannot be differentiated twice, as nufftax batches over one axis "
+            "only. Pass ft='dft' to the model."
+        ) from error
 
 
 def regularized_inverse(matrix, ridge=1e-10):
@@ -71,9 +83,10 @@ def regularized_inverse(matrix, ridge=1e-10):
     inverted as it is, whatever the scales of its parameters. Otherwise
     ``ridge * |matrix_ii|`` is added to each diagonal entry first (the
     largest ``|matrix_ii|`` for a zero one, 1 if all are zero): a ridge
-    relative to each parameter's own curvature, so it does not depend on the
-    units of the parameters. A parameter the data do not constrain then has a
-    large variance set by the ridge, not the data. A ``RuntimeWarning`` is raised
+    relative to each parameter's own curvature, so for a non-zero ``matrix_ii`` it
+    does not depend on units. For a zero one the variance is
+    ``1 / (ridge * max_j |matrix_jj|)``, set by the stiffest parameter's units
+    and not necessarily large: rely on the warning, not on the size. A ``RuntimeWarning`` is raised
     (outside ``jax.jit``) when the ridge was needed, and when even the
     regularized matrix is not positive definite, since its inverse is then
     not a covariance.
