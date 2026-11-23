@@ -72,35 +72,6 @@ def _incidence(group, i1, i2, i3, signs=None):
     return t
 
 
-def _alias_reversed(legs, stations, frame, wavel):
-    """Resolve legs stored reversed onto the baseline they negate.
-
-    Of two samples of one frame and wavelength with station pairs ``(a, b)``
-    and ``(b, a)``, the one seen later is the negated phase of the first.
-    Returns the legs with such samples replaced by that first one, and a
-    ``(n, 3)`` array of ±1 (-1 for the replaced legs).
-    """
-    stations = onp.asarray(stations, dtype=int).reshape(-1, 2)
-    frame = onp.asarray(frame).reshape(-1)
-    wavel = onp.broadcast_to(onp.asarray(wavel, float).reshape(-1), frame.shape)
-
-    def key(s):
-        return int(stations[s, 0]), int(stations[s, 1]), int(frame[s]), float(wavel[s])
-
-    first = {}
-    for s in onp.unique(onp.concatenate(legs)):
-        first.setdefault(key(s), int(s))
-    out = [onp.array(leg) for leg in legs]
-    signs = onp.ones((len(legs[0]), 3))
-    for k, leg in enumerate(legs):
-        for row, s in enumerate(leg):
-            a, b, f, w = key(s)
-            twin = first.get((b, a, f, w))
-            if a != b and twin is not None and twin < first[(a, b, f, w)]:
-                out[k][row], signs[row, k] = twin, -1.0
-    return out, signs
-
-
 class ClosureNoise(eqx.Module):
     """Correlated closure-phase noise from equal noise on every baseline.
 
@@ -131,9 +102,30 @@ class ClosureNoise(eqx.Module):
         i1, i2, i3 = (onp.asarray(i, dtype=int) for i in (i1, i2, i3))
         signs = None
         if stations is not None and frame is not None and wavel is not None:
-            (i1, i2, i3), signs = _alias_reversed(
-                (i1, i2, i3), stations, frame, wavel
+            # Of two samples of one frame and wavelength with station pairs
+            # (a, b) and (b, a), the one seen later is the first's negated
+            # phase: alias it, with sign -1.
+            sta = onp.asarray(stations, dtype=int).reshape(-1, 2)
+            fr = onp.asarray(frame).reshape(-1)
+            wl = onp.broadcast_to(
+                onp.asarray(wavel, float).reshape(-1), fr.shape
             )
+
+            def tag(s):
+                return (*sta[s], int(fr[s]), float(wl[s]))
+
+            first = {}
+            for s in onp.unique(onp.concatenate((i1, i2, i3))):
+                first.setdefault(tag(s), int(s))
+            legs = [onp.array(leg) for leg in (i1, i2, i3)]
+            signs = onp.ones((len(i1), 3))
+            for k, leg in enumerate(legs):
+                for row, s in enumerate(leg):
+                    a, b, f, w = tag(s)
+                    twin = first.get((b, a, f, w))
+                    if a != b and twin is not None and twin < first[tag(s)]:
+                        legs[k][row], signs[row, k] = twin, -1.0
+            i1, i2, i3 = legs
             if signs.min() > 0:
                 signs = None
         groups = _groups(i1, i2, i3)

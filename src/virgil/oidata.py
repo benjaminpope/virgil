@@ -369,14 +369,6 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         # only some of them are independent: whiten them as a group (see
         # _closure). A phase operator applied to them gets their full
         # covariance instead (_transform_observed_channels).
-        closure = (
-            ClosureNoise.from_indices(
-                *indices, stations=stations, frame=frame, wavel=wavel
-            )
-            if cp_flag
-            else None
-        )
-        self.cp_noise = closure if phi_mat is None else None
         self._set_times(mjd, frame)
         if stations is not None and len(stations) != onp.size(self.u):
             raise ValueError(
@@ -387,6 +379,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         self.stations = (
             None if stations is None else np.asarray(stations, np.int32)
         )
+        closure = self._closure_noise(indices) if cp_flag else None
+        self.cp_noise = closure if phi_mat is None else None
         self.gains = self.phase_offsets = None
         self.extras = _build_extras(data, self, all_legs)
         vis_mode_in = data.get(
@@ -414,6 +408,19 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "No data left: the operators (vis_mat, phi_mat) project "
                 "every observable away."
             )
+
+    def _closure_noise(self, legs, keep=None, **kw):
+        """`ClosureNoise` of ``legs``, aliasing reversed legs (``keep``: kept samples)."""
+        alias = {}
+        if self.stations is not None and self.frame is not None:
+            k = slice(None) if keep is None else keep
+            wavel = onp.asarray(self.wavel)
+            alias = {
+                "stations": onp.asarray(self.stations)[k],
+                "frame": onp.asarray(self.frame)[k],
+                "wavel": wavel if wavel.size == 1 else wavel[k],
+            }
+        return ClosureNoise.from_indices(*legs, **alias, **kw)
 
     def _set_times(self, mjd, frame):
         """Store ``mjd`` as ``t_ref`` + ``dt`` and ``frame``, per sample."""
@@ -801,10 +808,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             phi_rows = onp.flatnonzero(keep[legs[0]])
             if phi_rows.size:
                 legs = [new_index[leg[phi_rows]] for leg in legs]
-                closure = ClosureNoise.from_indices(
-                    *legs,
-                    force=self.phase_offsets is not None,
-                    **_alias_data(self, keep),
+                closure = self._closure_noise(
+                    legs, keep, force=self.phase_offsets is not None
                 )
                 if self.phase_offsets is not None:
                     kept_phi = onp.zeros(self.phi.size, bool)
@@ -2095,18 +2100,6 @@ def _good(record):
 
 
 # deliberate: builds and validates every extra-observable block (flux, nflux, visamp/corrflux, t3amp, visphi) from the reader records, in KINDS order
-def _alias_data(data, keep):
-    """The kept samples' stations, frames and wavelengths, for ``ClosureNoise``."""
-    if data.stations is None or data.frame is None:
-        return {}
-    wavel = onp.asarray(data.wavel)
-    return {
-        "stations": onp.asarray(data.stations)[keep],
-        "frame": onp.asarray(data.frame)[keep],
-        "wavel": wavel if wavel.size == 1 else wavel[keep],
-    }
-
-
 def _build_extras(data, obj, legs):
     """The blocks of extra observables of a record, in ``KINDS`` order."""
     n = onp.size(obj.u)
