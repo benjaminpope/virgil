@@ -1,0 +1,1 @@
+`cv_task` (and so `cross_validate`) now raises `ValueError` for a term with `sigmas="profile"` and no fixed `sigma`: the held-out fold was scored at its own profiled σ, which is not a predictive score. Pass a fixed `sigma` to the term or use `sigmas=True`; scoring at the training ŝ is planned for 0.4.3.
