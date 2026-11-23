@@ -830,7 +830,7 @@ class DifferentialPhase(_Block):
         frames = []
         for in_frame in group_indices(frame):
             rows = onp.unique(row[in_frame])
-            channels = None
+            by_row_w = {}
             for r in rows:
                 w_r = wavel[by_row[r]]
                 if onp.unique(w_r).size != w_r.size:
@@ -838,62 +838,71 @@ class DifferentialPhase(_Block):
                         "A differential-phase spectrum has two values at one "
                         "wavelength; give each spectrum its own row."
                     )
-                channels = (
-                    w_r if channels is None else onp.intersect1d(channels, w_r)
-                )
-            channels = onp.sort(channels)
-            if channels.size == 0:
-                continue
-            # continuum and line masks of the frame's channels
-            if continuum is None and lines is None:
-                cont = line = onp.ones(channels.size, dtype=bool)
-            elif lines is None:
-                cont = in_ranges(channels, continuum)
-                line = ~cont
+                by_row_w[r] = onp.sort(w_r)
+            shared = None
+            for w_r in by_row_w.values():
+                shared = w_r if shared is None else onp.intersect1d(shared, w_r)
+            # Rows are coupled through Q only when closure-free; otherwise
+            # each keeps its own channels where they differ.
+            if closure_free or all(
+                w_r.size == shared.size for w_r in by_row_w.values()
+            ):
+                units = [(rows, shared)]
             else:
-                line = in_ranges(channels, lines)
-                cont = (
-                    ~line
-                    if continuum is None
-                    else in_ranges(channels, continuum)
-                )
-            if not line.any():
-                continue
-            if prior_width is None:
-                n_op = continuum_operator(channels, cont, order)
-                m = (onp.eye(channels.size) - n_op)[line]
-                u_t = _colspace(m)
-                if u_t.shape[0] == 0:
+                units = [(rows[[k]], by_row_w[r]) for k, r in enumerate(rows)]
+            for rows, channels in units:
+                if channels.size == 0:
                     continue
-                w_op = u_t @ m
-                basis_f = None
-            else:
-                used = cont | line
-                w_op = onp.eye(channels.size)[used]
-                basis_f = _continuum_basis(channels[used], order)
-            grid = onp.empty((rows.size, channels.size), dtype=int)
-            pairs = onp.empty((rows.size, 2), dtype=int)
-            for b, r in enumerate(rows):
-                idx = by_row[r]
-                order_in_row = onp.argsort(wavel[idx])
-                idx = idx[order_in_row]
-                pos = onp.searchsorted(wavel[idx], channels)
-                grid[b] = idx[pos]
-                pairs[b] = stations[idx[0]]
-            if closure_free:
-                # Qᵀ: an orthonormal basis of the telescope-differenced
-                # phases (the column space of the baseline-telescope
-                # incidence matrix)
-                telescopes = onp.unique(pairs)
-                col = {tel: j for j, tel in enumerate(telescopes)}
-                inc = onp.zeros((len(pairs), telescopes.size))
-                for b, (i, j) in enumerate(pairs):
-                    inc[b, col[i]] += 1.0
-                    inc[b, col[j]] -= 1.0
-                q_op = _colspace(inc)
-            else:
-                q_op = onp.eye(rows.size)
-            frames.append((grid, q_op, w_op, basis_f))
+                # continuum and line masks of the frame's channels
+                if continuum is None and lines is None:
+                    cont = line = onp.ones(channels.size, dtype=bool)
+                elif lines is None:
+                    cont = in_ranges(channels, continuum)
+                    line = ~cont
+                else:
+                    line = in_ranges(channels, lines)
+                    cont = (
+                        ~line
+                        if continuum is None
+                        else in_ranges(channels, continuum)
+                    )
+                if not line.any():
+                    continue
+                if prior_width is None:
+                    n_op = continuum_operator(channels, cont, order)
+                    m = (onp.eye(channels.size) - n_op)[line]
+                    u_t = _colspace(m)
+                    if u_t.shape[0] == 0:
+                        continue
+                    w_op = u_t @ m
+                    basis_f = None
+                else:
+                    used = cont | line
+                    w_op = onp.eye(channels.size)[used]
+                    basis_f = _continuum_basis(channels[used], order)
+                grid = onp.empty((rows.size, channels.size), dtype=int)
+                pairs = onp.empty((rows.size, 2), dtype=int)
+                for b, r in enumerate(rows):
+                    idx = by_row[r]
+                    order_in_row = onp.argsort(wavel[idx])
+                    idx = idx[order_in_row]
+                    pos = onp.searchsorted(wavel[idx], channels)
+                    grid[b] = idx[pos]
+                    pairs[b] = stations[idx[0]]
+                if closure_free:
+                    # Qᵀ: an orthonormal basis of the telescope-differenced
+                    # phases (the column space of the baseline-telescope
+                    # incidence matrix)
+                    telescopes = onp.unique(pairs)
+                    col = {tel: j for j, tel in enumerate(telescopes)}
+                    inc = onp.zeros((len(pairs), telescopes.size))
+                    for b, (i, j) in enumerate(pairs):
+                        inc[b, col[i]] += 1.0
+                        inc[b, col[j]] -= 1.0
+                    q_op = _colspace(inc)
+                else:
+                    q_op = onp.eye(rows.size)
+                frames.append((grid, q_op, w_op, basis_f))
 
         n_f = len(frames)
         b_max = max((x[0].shape[0] for x in frames), default=0)
@@ -1211,6 +1220,13 @@ class DifferentialPhase(_Block):
 
     def marginal_problem(self, prediction, data):
         """White-noise ``arrow_problem`` for ``s² C_0 + U Uᵀ`` integration."""
+        if self.keep.size == 0:
+            empty = np.zeros(0, (prediction - data).dtype)
+            return arrow_problem(
+                empty,
+                np.zeros((1, 0), np.int32),
+                np.zeros((1, 0, 0), empty.dtype),
+            )
         x_keep, _, rows, local, spanning = self._whitened_diffphase(
             prediction - data
         )
@@ -1249,7 +1265,9 @@ class DifferentialPhase(_Block):
         if mode_key is not None and self.modes is not None:
             raw_modes = np.asarray(self.modes, values.dtype)
             z = jax.random.normal(mode_key, (raw_modes.shape[0],))
-            values = -wrap_phase(-(values + raw_modes.T @ z))
+            values = values + raw_modes.T @ z
+        if self.prior_width is not None or self.modes is not None:
+            values = -wrap_phase(-values)
         return eqx.tree_at(lambda b: b.values, self, values)
 
     def labels_shared(self, labels):

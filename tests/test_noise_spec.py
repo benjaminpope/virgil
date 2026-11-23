@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import json
 
+import equinox as eqx
 import numpy as onp
 import pytest
 
@@ -16,6 +17,7 @@ from virgil.noise_spec import (
     load_noise_spec,
     validate_noise_spec,
 )
+from virgil.observables import FluxSpectrum
 from virgil.oidata import OIData, cp_indices
 from virgil.oifits import build_hdulist
 
@@ -290,6 +292,7 @@ def test_apply_noise_spec_equals_manual_chain_and_is_instrument_invariant():
             gains={"telescope": 0.0, "baseline": None, "chromatic": None},
             closure_offsets={"triangle": None, "baseline": 0.0},
         ),
+        insname="PIONIER",
     )
     assert white_only.gains is None
     assert white_only.phase_offsets is None
@@ -300,7 +303,7 @@ def test_apply_noise_spec_skips_absent_gain_and_offset_observables():
     spec = _base_spec()
 
     vis_only = data.select(observables="vis")
-    vis_applied = apply_noise_spec(vis_only, spec)
+    vis_applied = apply_noise_spec(vis_only, spec, insname="PIONIER")
     assert vis_applied.gains is not None
     assert vis_applied.phase_offsets is None
     onp.testing.assert_allclose(
@@ -308,7 +311,7 @@ def test_apply_noise_spec_skips_absent_gain_and_offset_observables():
     )
 
     phi_only = data.select(observables="phi")
-    phi_applied = apply_noise_spec(phi_only, spec)
+    phi_applied = apply_noise_spec(phi_only, spec, insname="PIONIER")
     assert phi_applied.gains is None
     assert phi_applied.phase_offsets is not None
     onp.testing.assert_allclose(
@@ -319,13 +322,13 @@ def test_apply_noise_spec_skips_absent_gain_and_offset_observables():
 def test_apply_noise_spec_refuses_stacking_upfront():
     data = _multi_channel_oidata(n_frames=2)
     spec = _base_spec()
-    applied = apply_noise_spec(data, spec)
+    applied = apply_noise_spec(data, spec, insname="PIONIER")
     white_only = _base_spec(gains=None, closure_offsets=None)
 
     with pytest.raises(ValueError, match="refuses to stack"):
         apply_noise_spec(applied, white_only)
 
-    offsets_applied = apply_noise_spec(data, _base_spec(gains=None))
+    offsets_applied = apply_noise_spec(data, _base_spec(gains=None), insname="PIONIER")
     with pytest.raises(ValueError, match="refuses to stack"):
         apply_noise_spec(offsets_applied, white_only)
 
@@ -349,11 +352,13 @@ def test_apply_noise_spec_common_mode_visphi_raises_until_supported():
 
     # Absent visphi on data skips common_mode.visphi cleanly.
     v2_cp_only = _multi_channel_oidata(n_frames=2)
-    assert apply_noise_spec(v2_cp_only, spec).gains is None
+    assert apply_noise_spec(v2_cp_only, spec, insname="PIONIER").gains is None
 
     # Null/zero common_mode.visphi rescales white.visphi cleanly.
     scaled_only = apply_noise_spec(
-        data, _base_spec(**{**spec, "common_mode": {"visphi": 0.0}})
+        data,
+        _base_spec(**{**spec, "common_mode": {"visphi": 0.0}}),
+        insname="PIONIER",
     )
     onp.testing.assert_allclose(
         scaled_only.extras[0].errors,
@@ -363,4 +368,59 @@ def test_apply_noise_spec_common_mode_visphi_raises_until_supported():
     )
 
     with pytest.raises(NotImplementedError, match="common_mode.visphi"):
-        apply_noise_spec(data, spec)
+        apply_noise_spec(data, spec, insname="PIONIER")
+
+
+def test_apply_noise_spec_needs_insname_when_the_spec_names_an_instrument():
+    data = _multi_channel_oidata(n_frames=2)
+    with pytest.raises(ValueError, match="insname"):
+        apply_noise_spec(data, _base_spec())
+    applied = apply_noise_spec(data, _base_spec(), insname="PIONIER")
+    assert applied.gains is not None
+    anonymous = apply_noise_spec(data, _base_spec(instrument=None))
+    assert anonymous.gains is not None
+
+
+def test_instrument_match_accepts_a_zero_dimensional_name():
+    spec = _base_spec(instrument="GRAVITY")
+    assert instrument_match({}, spec, insname=onp.array("GRAVITY_SC"))
+
+
+def test_apply_noise_spec_skips_closure_offsets_without_closure_phases():
+    base = _multi_channel_oidata(n_frames=1)
+    n_b = len(PAIRS)
+    record = {
+        "u": base.u[:n_b],
+        "v": base.v[:n_b],
+        "wavel": 2.16e-6,
+        "vis": onp.ones(n_b),
+        "d_vis": onp.full(n_b, 0.1),
+        "phi": onp.full(n_b, 0.1),
+        "d_phi": onp.full(n_b, 0.1),
+        "cp_flag": False,
+    }
+    spec = _base_spec(instrument=None, gains=None)
+    plain = OIData(record)
+    projected = OIData({**record, "phi_mat": onp.eye(n_b)[:-1]})
+    for data in (plain, projected):
+        out = apply_noise_spec(data, spec)
+        assert out.phase_offsets is None
+        onp.testing.assert_allclose(out.d_phi, data.d_phi * 0.65, rtol=1e-6)
+
+
+def test_apply_noise_spec_refuses_to_stack_on_flux_spectrum_modes():
+    data = _multi_channel_oidata(n_frames=1)
+    blocks = FluxSpectrum.build(
+        "flux",
+        onp.ones(WAVES.size),
+        onp.full(WAVES.size, 0.1),
+        WAVES,
+        row=onp.zeros(WAVES.size, int),
+        frame=onp.zeros(WAVES.size, int),
+        station=onp.ones(WAVES.size, int),
+        scale=(1.0, 0.1),
+        modes=onp.linspace(0.0, 0.1, WAVES.size)[None, :],
+    )
+    stacked = eqx.tree_at(lambda d: d.extras, data, (blocks,))
+    with pytest.raises(ValueError, match="flux-spectrum nuisance modes"):
+        apply_noise_spec(stacked, _base_spec(), insname="PIONIER")

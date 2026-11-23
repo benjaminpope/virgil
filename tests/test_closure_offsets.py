@@ -672,3 +672,20 @@ def test_fitted_offset_width_is_unbiased_across_many_channels():
     assert float(result.values["flux"]) == pytest.approx(0.3, abs=0.015)
     assert fitted_tri_rms == pytest.approx(emp_rms, rel=0.25)
     assert fitted_tri_rms < 0.25
+
+
+def test_scorer_does_not_profile_a_zero_width_offset_group():
+    """A group of width 0 is disabled: it costs no degrees of freedom."""
+    from virgil.orbit_search import _Scorer
+
+    data = _data()
+
+    def nu_phi(d):
+        return dict((b[0], b[3]) for b in _Scorer(d, None).surface.blocks)[
+            "phi"
+        ]
+
+    off = data.with_closure_offsets(triangle=0.0)
+    on = data.with_closure_offsets(triangle=0.005)
+    assert nu_phi(off) == nu_phi(data)
+    assert nu_phi(on) < nu_phi(data)

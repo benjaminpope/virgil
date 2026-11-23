@@ -443,7 +443,7 @@ class _Scorer:
             cols, spanning = self.offsets._columns(
                 plain.cp_noise,
                 sigma[self.n_vis : self.n_phase],
-                onp.ones(len(self.offsets.widths)),
+                onp.asarray(self.offsets.widths) > 0,
             )
             lost["phi"] = _local_rank(
                 onp.asarray(self.offsets.rows),
