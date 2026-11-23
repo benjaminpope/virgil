@@ -1,0 +1,1 @@
+**Behaviour change:** `DetectionMC.false_alarm_probability`, `threshold`, `completeness`, `roc` and `auc` raise `ValueError` for `"max_snr"` on a run made with `injection_recovery(uncertainty=False)`. They used to return `1/(n+1)`, `(nan, nan)` and `0.0` from the all-NaN statistic. `concatenate` already refuses to mix `uncertainty` settings (virgil-validation F32).

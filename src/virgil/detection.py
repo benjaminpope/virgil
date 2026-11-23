@@ -1153,6 +1153,12 @@ class DetectionMC:
             raise ValueError(
                 f"stat must be one of {STATISTICS}, not {stat!r}."
             )
+        if stat == "max_snr" and not self.meta.get("uncertainty", True):
+            raise ValueError(
+                "max_snr is NaN: this run used injection_recovery("
+                "uncertainty=False). Use 'delta_chi2' or 'log_bayes_factor', "
+                "or rerun with uncertainty=True."
+            )
         x = onp.asarray(part[stat], dtype=float)
         return onp.where(onp.isnan(x), -onp.inf, x)
 
