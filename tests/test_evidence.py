@@ -555,6 +555,18 @@ def test_block_error_scales_refuse_unscaled_nuisance_covariance():
             error_scale(start, data, by_observable=True)
 
 
+def test_the_scalar_error_scale_refuses_unscaled_nuisance_covariance():
+    # The same guard as for blocks: the scalar s² C(1) fixed point assumes
+    # the covariance scales with the quoted errors.
+    start = _gp_scene(onp.zeros((N, N)), 1.5)
+    for data, what in (
+        (DATA.with_gains(telescope=0.01), "calibration gains"),
+        (DATA.with_closure_offsets(triangle=0.01), "closure-phase offsets"),
+    ):
+        with pytest.raises(ValueError, match=what):
+            error_scale(start, data)
+
+
 @pytest.mark.parametrize("n_telescopes", [3, 4])
 def test_observable_blocks_map_residual_rows(n_telescopes):
     # The rows labelled "phi" are exactly those that change when only the
@@ -906,3 +918,55 @@ def test_the_evidence_jacobian_stays_on_the_device_for_the_spectrum():
         rtol=1e-9,
         atol=1e-9,
     )
+
+
+@pytest.mark.parametrize("beside_crossing", [False, True])
+def test_classic_maxent_skips_a_non_finite_sweep_point(
+    monkeypatch, beside_crossing
+):
+    from virgil import imaging
+
+    truth = System(
+        star=PointSource(), env=GaussianDisk(3.0, dra=2.0, flux=0.4)
+    )
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(2))
+    start = System(
+        star=PointSource(),
+        env=Image.from_model(GaussianDisk(4.0), N, H, flux=0.4),
+    )
+    curve = l_curve(
+        start,
+        image_priors(start),
+        data,
+        MaxEntropy(1.0, path="env"),
+        np.logspace(-1, 3, 5),
+    )
+    expected = curve.classic_maxent(data)
+    assert expected is not None
+    # Poison a sweep point away from the crossing: its neighbours' pairs are
+    # never a crossing, but a NaN compares unequal, so it used to be one.
+    weights = onp.asarray(curve.weights, dtype=float)
+    crossing = int(onp.searchsorted(weights, expected)) - 1
+    poisoned_index = (
+        crossing + 1
+        if beside_crossing
+        else next(
+            k for k in range(len(weights)) if k not in (crossing, crossing + 1)
+        )
+    )
+    real = imaging._singular_values
+    calls = []
+
+    def poisoned(matrix):
+        values = real(matrix)
+        calls.append(1)
+        return values * onp.nan if len(calls) == poisoned_index + 1 else values
+
+    monkeypatch.setattr(imaging, "_singular_values", poisoned)
+    weight = curve.classic_maxent(data)
+    if beside_crossing:
+        # The crossing is now interpolated across the skipped point.
+        assert weight is not None
+        assert weights.min() < weight < weights.max()
+    else:
+        assert weight == pytest.approx(expected, rel=1e-6)

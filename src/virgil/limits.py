@@ -343,7 +343,7 @@ def absil_limits(
     ----------
     model : SourceModel or class
         As for [`likelihood_grid`][virgil.grid_fit.likelihood_grid]; the
-        no-companion model sets every parameter in ``grid`` to zero.
+        no-companion model sets the flux to zero at each grid position.
     data : OIData
         Data to fit.
     grid : dict[str, array-like]
@@ -544,6 +544,7 @@ def _limits(
 
 
 def _solve_limits(
+    null_of,
     significance,
     sigma,
     search,
@@ -554,7 +555,10 @@ def _solve_limits(
     flux_key,
     params,
 ):
-    """Limit at every grid position, from ``significance(values)``.
+    """Limit at every grid position, from ``significance(values, null)``.
+
+    ``null`` is ``null_of(values)`` for the zero-flux values at that position, so
+    host parameters on the grid enter the null as well as the companion model.
 
     ``search`` holds the log10 of the starting flux and of the bounds.
     Returns the limits and whether each was bracketed.
@@ -563,11 +567,15 @@ def _solve_limits(
     log_start, log_low, log_high = search[0], search[1], search[2]
 
     def solve(coord_vals):
+        null = null_of(
+            ordered_values(0.0, coord_vals, params, coord_keys, flux_key)
+        )
+
         def reached(log_flux):
             values = ordered_values(
                 10.0**log_flux, coord_vals, params, coord_keys, flux_key
             )
-            return significance(values) >= sigma
+            return significance(values, null) >= sigma
 
         log_limit, crossed = first_crossing(
             reached,
@@ -602,19 +610,16 @@ def _absil_limits(
     Returns the limits and whether each was bracketed.
     """
     ndof = data.n_independent
-    coords, _ = coordinate_points(grid, coord_keys)
-    null_values = ordered_values(0.0, coords[0], params, coord_keys, flux_key)
 
     def reduced_chi2(values):
         source = build_model(model, params, values)
         return np.sum(whitened_residuals(source, data) ** 2) / ndof
 
-    chi2_null = reduced_chi2(null_values)
-
-    def significance(values):
+    def significance(values, chi2_null):
         return nsigma(reduced_chi2(values), chi2_null, ndof)
 
     return _solve_limits(
+        reduced_chi2,
         significance,
         sigma,
         search,
@@ -645,21 +650,21 @@ def _injection_limits(
     Returns the limits and whether each was bracketed.
     """
     ndof = data.n_independent
-    coords, _ = coordinate_points(grid, coord_keys)
-    null_values = ordered_values(0.0, coords[0], params, coord_keys, flux_key)
-    null_source = build_model(model, params, null_values)
-    null_prediction = data.model(null_source)
     data_vector = data.flatten_data()[0]
-    errors = inflated_errors(data, null_prediction)
 
-    def reduced_chi2(prediction, reference):
+    def null_of(null_values):
+        null_prediction = data.model(build_model(model, params, null_values))
+        return null_prediction, inflated_errors(data, null_prediction)
+
+    def reduced_chi2(prediction, reference, errors):
         # ``prediction`` against ``reference`` in place of the data vector,
         # each block (visibilities, phases, every extra) whitened as by
         # `whitened_residuals`.
         whitened, _ = _whiten(data, prediction, reference, errors, {}, {})
         return np.sum(whitened**2) / ndof
 
-    def significance(values):
+    def significance(values, null):
+        null_prediction, errors = null
         # Add the companion's signal to every observable, and compare the
         # null model's fit to the result with the companion model's. With
         # whitening independent of the model the latter is the null model's
@@ -669,12 +674,13 @@ def _injection_limits(
         prediction = data.model(source)
         injected = data_vector + (prediction - null_prediction)
         return nsigma(
-            reduced_chi2(null_prediction, injected),
-            reduced_chi2(prediction, injected),
+            reduced_chi2(null_prediction, injected, errors),
+            reduced_chi2(prediction, injected, errors),
             ndof,
         )
 
     return _solve_limits(
+        null_of,
         significance,
         sigma,
         search,

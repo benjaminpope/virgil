@@ -128,6 +128,26 @@ def _log_jacobian(bijection, z):
     return bijection.log_abs_det_jacobian(z, bijection(z))
 
 
+def _nudge_inside(prior, start):
+    """``start`` moved just inside the support of ``prior`` if it is on a bound.
+
+    Unwraps ``.to_event`` / ``.expand`` wrappers to find the bounds.
+    """
+    support = prior.support
+    while hasattr(support, "base_constraint"):
+        support = support.base_constraint
+    lo = np.asarray(getattr(support, "lower_bound", -np.inf), float)
+    hi = np.asarray(getattr(support, "upper_bound", np.inf), float)
+    bound = np.where(np.isfinite(lo), lo, np.where(np.isfinite(hi), hi, 0.0))
+    eps = 1e-5 * np.where(
+        np.isfinite(hi - lo), hi - lo, np.maximum(1.0, np.abs(bound))
+    )
+    start = np.asarray(start, float)
+    # Only values on or outside a bound move; interior ones are kept.
+    inside = (start > lo) & (start < hi)
+    return np.where(inside, start, np.clip(start, lo + eps, hi - eps))
+
+
 class _Objective(eqx.Module):
     """The negative log posterior of a fit, as a loss and as residuals.
 
@@ -286,7 +306,8 @@ class _Objective(eqx.Module):
 
         Error terms start at 1 (scales and supplied gain widths), 0 (``wavel_offset``,
         ``north_angle``) or 0.01 (added errors, other gain widths), or at their
-        prior's mean if that is outside the support or on its boundary.
+        prior's mean (just inside the bound if that is infinite) if outside the
+        support or on its boundary.
         """
         values = {} if values is None else dict(values)
         z = {}
@@ -298,13 +319,19 @@ class _Objective(eqx.Module):
             default = 0.0 if zero else 1.0 if unit else 0.01
             start = values.get(site, default)
             if not bool(prior.support(np.asarray(start, float))):
-                start = prior.mean
+                mean = np.asarray(prior.mean, float)
+                if site in values or not bool(np.all(np.isfinite(mean))):
+                    start = _nudge_inside(prior, start)
+                else:
+                    start = mean
             z[site] = self.bijection(prior).inv(np.asarray(start, float))
             if not bool(np.all(np.isfinite(z[site]))):
                 # On the boundary of a bounded prior (e.g. 0 for
-                # Uniform(0, ...)), the unconstrained coordinate is
-                # infinite: start inside it, at the prior's mean.
+                # Uniform(0, ...)): start at the prior's mean, or just
+                # inside the bound where that is not finite (HalfCauchy).
                 mean = np.asarray(prior.mean, float)
+                if site in values or not bool(np.all(np.isfinite(mean))):
+                    mean = _nudge_inside(prior, start)
                 z[site] = self.bijection(prior).inv(mean)
         for path, prior in self.priors.items():
             if is_angle_vector(prior) and vector_site(path) in values:
@@ -327,20 +354,7 @@ class _Objective(eqx.Module):
             if not bool(np.all(np.isfinite(z[path]))):
                 # On or outside a bound (e.g. a railed earlier stage):
                 # nudge just inside it, keeping the fitted value.
-                support = prior.support
-                lo = np.asarray(
-                    getattr(support, "lower_bound", -np.inf), float
-                )
-                hi = np.asarray(getattr(support, "upper_bound", np.inf), float)
-                bound = np.where(
-                    np.isfinite(lo), lo, np.where(np.isfinite(hi), hi, 0.0)
-                )
-                eps = 1e-5 * np.where(
-                    np.isfinite(hi - lo),
-                    hi - lo,
-                    np.maximum(1.0, np.abs(bound)),
-                )
-                start = np.clip(start, lo + eps, hi - eps)
+                start = _nudge_inside(prior, start)
                 z[path] = self.bijection(prior).inv(start)
         bad = [p for p, v in z.items() if not bool(np.all(np.isfinite(v)))]
         if bad:
@@ -899,7 +913,7 @@ def fit(
             ),
             dtype,
         )
-        z0 = _recentre(problem, problem.init(cast_tree(init, dtype)))
+        z0 = _initial_point(problem, init, dtype)
         if not method:
             try:
                 jax.eval_shape(problem.residuals, z0)
@@ -2168,6 +2182,25 @@ def _log_flux(mask, x):
     """The log of the total flux ``Σ exp(x)`` over the supported pixels."""
     used = mask & np.isfinite(x)
     return jax.nn.logsumexp(np.where(used, x, -np.inf))
+
+
+def _initial_point(problem, init, dtype):
+    """The recentred unconstrained start of ``problem``; warns about the funnel."""
+    if any(
+        getattr(spec, "centred", False)
+        and hasattr(spec, "log_prior")
+        and f"{spec.name}_spread" in problem.priors
+        for spec, _, _ in problem.noise.values()
+    ):
+        warnings.warn(
+            "fit() on centred hierarchical_scales: the joint MAP has no "
+            "finite optimum (Neal's funnel), so the spread is driven to its "
+            "lower bound and the member scales collapse onto the median. Sample "
+            "with numpyro_model or variational, or use independent scales.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    return _recentre(problem, problem.init(cast_tree(init, dtype)))
 
 
 def _recentre(problem, z):
