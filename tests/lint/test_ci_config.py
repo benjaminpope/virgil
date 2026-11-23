@@ -592,6 +592,17 @@ def test_full_durations_reach_the_packer_only_in_the_full_tiers():
     )
 
 
+def test_full_ci_shards_fit_inside_the_45_minute_cap(monkeypatch):
+    """The full-ci label and the release-gate dispatch run the same shards
+    under the 45-minute job cap: estimated worst shard <= 70% of it (the
+    estimate undercounts by about 10%, measured on the nightly)."""
+    for event in ("workflow_dispatch",):
+        for job in _jobs(event):
+            if "shard" in job and job["full_durations"]:
+                worst = _worst_shard_minutes(job, monkeypatch)
+                assert worst <= 0.7 * 45, (job["id"], round(worst), "min")
+
+
 def test_readme_integration_badge_is_scoped_to_main_push():
     """The tests.yml badge must reflect push runs on main, not schedule runs."""
     for rel in ("README.md", "docs/index.md"):
