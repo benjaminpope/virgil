@@ -126,9 +126,10 @@ def test_edge_flag_when_truth_is_outside_the_box():
 def test_stage_three_reports_kkt():
     result = _run(_data([1.0, 1.05, 0.95]), ref_obs=0)
     assert len(result.stages) == 3
-    assert "converged" in result.kkt
-    assert "kkt_w" in result.kkt["images"]["."]
-    assert "cal.gain" in result.kkt["nuisances"]
+    image = result.kkt["images"]["."]
+    assert onp.isfinite(image["kkt_w"]) and image["kkt_w"] > 0
+    assert 0 <= image["kkt_rel"] < 0.1
+    assert onp.isfinite(result.kkt["nuisances"]["cal.gain"]["grad_norm"])
 
 
 def test_offsets_are_boxed_and_checked():
@@ -151,3 +152,36 @@ def test_unboxed_sigma_scales_are_refused():
 def test_kkt_refuses_an_unrecognized_image_site():
     with pytest.raises(ValueError, match="no image block"):
         _run(_data([1.0, 1.0, 1.0]), key="img")
+
+
+def test_radio_term_counts_only_unmasked_points():
+    data = _data([1.0, 1.0, 1.0])
+    mask = onp.arange(len(data)) % 3 != 0
+    term = data.term(_scene, _nuis(data), mask=mask, chi2="direct")
+    assert term.n_data == 2 * int(mask.sum())
+    assert term.n_data < 2 * len(data)
+    # The Toeplitz term counts the same points.
+    toeplitz = data.term(_scene, _nuis(data), mask=mask, chi2="toeplitz")
+    assert toeplitz.n_data == term.n_data
+
+
+def test_nan_staged_fit_is_reported_as_failed(monkeypatch):
+    import dataclasses
+
+    import virgil.radio as radio
+
+    real, calls = radio.fit, []
+
+    def nan_joint(*a, **k):
+        res = real(*a, **k)
+        calls.append(1)
+        if len(calls) < 3:
+            return res
+        return dataclasses.replace(
+            res, values={n: v * onp.nan for n, v in res.values.items()}
+        )
+
+    monkeypatch.setattr(radio, "fit", nan_joint)
+    result = _run(_data([1.0, 1.05, 0.95]), ref_obs=0)
+    assert result.failed
+    assert bool(onp.all(result.edge["cal.gain"]))

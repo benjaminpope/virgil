@@ -1050,12 +1050,31 @@ def test_diffphase_without_line_channels_is_empty_not_a_nan_block():
         problem = block.marginal_problem(np.zeros(0), np.zeros(0))
         assert problem.x.shape == (0,)
         assert _Surface(data).nu.min() > 0
+        assert not _Surface(data).numeric  # an empty block is inert
+        vis_only = base.select(observables=("vis",))
+        assert float(marginal_loglike(_scene(), data)) == pytest.approx(
+            float(marginal_loglike(_scene(), vis_only))
+        )
+        data.with_model(_scene(), key=jax.random.PRNGKey(0))  # no crash
 
 
 def test_diffphase_simulated_draws_are_wrapped_phases():
     base = _two_epoch_oidata(("visphi",)).select(observables=("visphi",))
     wide = base.with_continuum(lines=[LINE], prior_width=(3.0, 3.0))
     drawn = wide.with_model(_scene(), key=jax.random.PRNGKey(4))
+    values = onp.asarray(drawn.extras[0].values)
+    assert onp.abs(values).max() <= onp.pi
+
+
+def test_diffphase_noise_only_draws_are_wrapped_phases():
+    base = _two_epoch_oidata(("visphi",)).select(observables=("visphi",))
+    plain = base.with_continuum(lines=[LINE])
+    assert (
+        plain.extras[0].prior_width is None and plain.extras[0].modes is None
+    )
+    drawn = plain.with_model(
+        _scene(), key=jax.random.PRNGKey(5), noise_scale=1e3
+    )
     values = onp.asarray(drawn.extras[0].values)
     assert onp.abs(values).max() <= onp.pi
 

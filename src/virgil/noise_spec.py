@@ -306,6 +306,29 @@ def load_noise_spec(obj):
     return validate_noise_spec(raw)
 
 
+def _instrument_names(data, insname):
+    """The non-empty instrument names recorded for ``data`` (or ``insname``)."""
+    raw_ins = insname
+    if raw_ins is None:
+        raw_ins = (
+            data.get("insname")
+            if isinstance(data, Mapping)
+            else getattr(data, "insname", None)
+        )
+    if raw_ins is None:
+        return []
+    if isinstance(raw_ins, str):
+        return [raw_ins.strip()] if raw_ins.strip() else []
+    if isinstance(raw_ins, (tuple, list, set, frozenset, onp.ndarray)):
+        if isinstance(raw_ins, onp.ndarray):
+            raw_ins = raw_ins.reshape(-1)  # also a 0-d string array
+        return [
+            str(x).strip() for x in raw_ins if x is not None and str(x).strip()
+        ]
+    single = str(raw_ins).strip()
+    return [single] if single else []
+
+
 def instrument_match(data, spec, *, insname=None):
     """Check whether a dataset's recorded instrument matches ``spec``.
 
@@ -339,26 +362,7 @@ def instrument_match(data, spec, *, insname=None):
         return True
     spec_clean = str(spec_inst).strip()
 
-    raw_ins = insname
-    if raw_ins is None:
-        raw_ins = (
-            data.get("insname")
-            if isinstance(data, Mapping)
-            else getattr(data, "insname", None)
-        )
-    if raw_ins is None:
-        return True
-    if isinstance(raw_ins, str):
-        names = [raw_ins.strip()] if raw_ins.strip() else []
-    elif isinstance(raw_ins, (tuple, list, set, frozenset, onp.ndarray)):
-        if isinstance(raw_ins, onp.ndarray):
-            raw_ins = raw_ins.reshape(-1)  # also a 0-d string array
-        names = [
-            str(x).strip() for x in raw_ins if x is not None and str(x).strip()
-        ]
-    else:
-        single = str(raw_ins).strip()
-        names = [single] if single else []
+    names = _instrument_names(data, insname)
     if not names:
         return True
 
@@ -397,7 +401,8 @@ def apply_noise_spec(data, spec, *, insname=None):
     ----------
     data : OIData
         Prepared interferometric dataset without pre-existing gains,
-        closure-phase offsets, or differential-phase nuisance modes.
+        closure-phase offsets, flux-spectrum modes, or differential-phase
+        nuisance modes.
     spec : Mapping
         Noise specification dictionary conforming to ``virgil.noise_spec/1``.
     insname : str or sequence of str, optional
@@ -460,7 +465,9 @@ def apply_noise_spec(data, spec, *, insname=None):
             "nuisance modes."
         )
 
-    if spec["instrument"] is not None and insname is None:
+    if str(spec["instrument"] or "").strip() and not _instrument_names(
+        data, insname
+    ):
         raise ValueError(
             "The spec names an instrument but OIData does not record "
             "INSNAME: pass insname= so the instrument can be checked."

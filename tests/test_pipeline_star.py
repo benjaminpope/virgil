@@ -802,6 +802,7 @@ def test_model_choice_is_invalid_with_the_parent_diameter_on_the_lower_edge(
     assert (best, comparison["unidentified"]) == (preferred, unidentified)
     fit = {
         "names": ["a", "b"],
+        "best": preferred,
         "models": {
             k: {**v, "chi2_reduced": 1.0, "error_scales": None}
             for k, v in reports.items()
@@ -1102,6 +1103,28 @@ def test_unresolved_star_starts_inside_the_diameter_prior(tmp_path):
     check = {c.name: c for c in result.checks}["start_at_bound"]
     assert check.status == "warn"
     assert any(name.endswith(".diam") for name in check.value)
+
+
+def test_a_rejected_rivals_failed_chi2_only_warns():
+    registry = _fake_models({"a": (None, 1), "b": ("a", 3)})
+    fit = {
+        "names": ["a", "b"],
+        "best": "a",
+        "models": {
+            "a": {"chi2_reduced": 1.0, "error_scales": None, "at_bound": []},
+            "b": {"chi2_reduced": 50.0, "error_scales": None, "at_bound": []},
+        },
+        "comparisons": [],
+        "n_independent": 81,
+    }
+    status = {c.name: c for c in star._fit_checks(fit, registry)}
+    assert status["chi2_a"].status == "pass"
+    assert status["chi2_b"].status == "warn"
+    assert "b (not selected)" in status["chi2_b"].message
+    fit["best"] = "b"  # selected, the same χ² fails
+    assert {c.name: c.status for c in star._fit_checks(fit, registry)}[
+        "chi2_b"
+    ] == "fail"
 
 
 # --- flagged visibilities -----------------------------------------------------

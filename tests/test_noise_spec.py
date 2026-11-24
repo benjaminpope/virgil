@@ -379,6 +379,9 @@ def test_apply_noise_spec_needs_insname_when_the_spec_names_an_instrument():
         apply_noise_spec(data, _base_spec())
     applied = apply_noise_spec(data, _base_spec(), insname="PIONIER")
     assert applied.gains is not None
+    for blank in ("", "   ", [], onp.array("")):
+        with pytest.raises(ValueError, match="insname"):
+            apply_noise_spec(data, _base_spec(), insname=blank)
     anonymous = apply_noise_spec(data, _base_spec(instrument=None))
     assert anonymous.gains is not None
 
