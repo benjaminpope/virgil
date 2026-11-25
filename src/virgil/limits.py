@@ -632,42 +632,6 @@ def _absil_limits(
     )
 
 
-def _grey_factors(data, null_prediction):
-    """Per-sample ``k / mu`` of the null model's grey scale, 1 elsewhere.
-
-    ``FluxSpectrum`` predicts ``mu t`` for the stated prior mean ``mu``, and
-    the data are ``k t`` for the grey scale ``k`` the null model fits (its
-    conditional posterior mean); injecting a companion's change of ``t`` at
-    ``mu`` rather than ``k`` would scale it by ``mu / k``. Correlated fluxes
-    coupled to ``data.gains`` are left at 1.
-    """
-    from .observables import FluxSpectrum
-
-    n_main = np.asarray(data.vis).size + np.asarray(data.phi).size
-    pieces, offset = [np.ones(n_main, null_prediction.dtype)], n_main
-    for block in data.extras:
-        end = offset + int(block.data().size)
-        factor = np.ones(end - offset, null_prediction.dtype)
-        coupled = (
-            (
-                block.kind == "corrflux"
-                and data.gains is not None
-                and data.gains.n_vis != np.asarray(data.vis).size
-            )
-            if isinstance(block, FluxSpectrum)
-            else True
-        )
-        if not coupled:
-            mean, _ = block.posterior(
-                null_prediction[offset:end], block.values, block.errors
-            )
-            mu = np.asarray(block.mu, mean.dtype)
-            factor = (mean[:, 0] / mu)[block.group]
-        pieces.append(factor)
-        offset = end
-    return np.concatenate(pieces)
-
-
 @eqx.filter_jit
 def _injection_limits(
     grid,
@@ -692,6 +656,35 @@ def _injection_limits(
         null_prediction = data.model(build_model(model, params, null_values))
         return null_prediction, inflated_errors(data, null_prediction)
 
+    def grey_of(null_prediction):
+        # Per-sample k / mu of the null model's grey scale, 1 elsewhere.
+        # FluxSpectrum predicts mu t for the stated prior mean mu, while the
+        # data are k t for the grey scale k the null model fits (its
+        # conditional posterior mean). Correlated fluxes coupled to
+        # data.gains are left at 1.
+        from .observables import FluxSpectrum
+
+        n_vis = np.asarray(data.vis).size
+        n_main = n_vis + np.asarray(data.phi).size
+        pieces, offset = [np.ones(n_main, null_prediction.dtype)], n_main
+        for block in data.extras:
+            end = offset + int(block.data().size)
+            factor = np.ones(end - offset, null_prediction.dtype)
+            coupled = not isinstance(block, FluxSpectrum) or (
+                block.kind == "corrflux"
+                and data.gains is not None
+                and data.gains.n_vis != n_vis
+            )
+            if not coupled:
+                mean, _ = block.posterior(
+                    null_prediction[offset:end], block.values, block.errors
+                )
+                mu = np.asarray(block.mu, mean.dtype)
+                factor = (mean[:, 0] / mu)[block.group]
+            pieces.append(factor)
+            offset = end
+        return np.concatenate(pieces)
+
     def reduced_chi2(prediction, reference, errors):
         # ``prediction`` against ``reference`` in place of the data vector,
         # each block (visibilities, phases, every extra) whitened as by
@@ -711,7 +704,7 @@ def _injection_limits(
         # Predictions at the fitted grey scale k rather than the stated
         # prior mean mu: the data are k t, so the companion's change of t
         # and the models it is compared with must be in k's units.
-        grey = _grey_factors(data, null_prediction)
+        grey = grey_of(null_prediction)
         prediction, null_prediction = prediction * grey, null_prediction * grey
         injected = data_vector + (prediction - null_prediction)
         return nsigma(
