@@ -125,7 +125,9 @@ jobs:
       # for virgil-validation; xunit1 keeps test properties.
       - name: Test Suite
         env:
-          # A native crash prints its stack (the macOS workers die silently).
+          # Covers interpreter start-up (pytest enables faulthandler itself
+          # later). A SIGKILL from jetsam leaves no stack: see the memory
+          # log and the jetsam step.
           PYTHONFAULTHANDLER: "1"
           JAX_COMPILATION_CACHE_DIR: .jax-cache
           JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
@@ -167,7 +169,7 @@ jobs:
         run: sudo dmesg | grep -iE "oom|killed process" | tail -20 || true
 
       - name: macOS memory-kill evidence
-        if: failure() && runner.os == 'macOS'
+        if: (failure() || cancelled()) && runner.os == 'macOS'
         run: |
           log show --last 2h --predicate 'eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus"' | tail -200 || true
 
