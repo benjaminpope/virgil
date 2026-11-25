@@ -438,16 +438,32 @@ def rescale_errors(null_scene, data):
     -------
     data : OIData
         A copy with ``d_vis`` and ``d_phi`` scaled (the factors are already
-        applied); ``data.extras`` unchanged. Calibration gains and closure-phase
-        offsets are not rescaled, so χ²_r need not be 1 for data that have them.
+        applied).
     factors : dict[str, float]
         ``{"vis": s_vis, "phi": s_phi}`` (``s_phi`` is 1 without phases).
 
     Raises
     ------
     ValueError
-        If a block fits perfectly or not at all.
+        If a block fits perfectly or not at all, or if ``data`` has
+        calibration gains, closure-phase offsets or extra observables (their
+        weighting is not yet supported).
     """
+    unsupported = [
+        name
+        for name, value in (
+            ("calibration gains", data.gains),
+            ("closure-phase offsets", data.phase_offsets),
+        )
+        if value is not None
+    ] + (["extra observables"] if data.extras else [])
+    if unsupported:
+        raise ValueError(
+            "rescale_errors() does not support data with "
+            f"{' or '.join(unsupported)}: scaling d_vis and d_phi alone would "
+            "not give χ²_r = 1. Rescale data without them; proper weighting "
+            "is planned."
+        )
     r = onp.asarray(whitened_residuals(null_scene, data))
     n_vis = int(onp.size(data.vis))
     n_phi = int(onp.size(data.phi))

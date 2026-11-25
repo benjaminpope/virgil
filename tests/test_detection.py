@@ -1065,6 +1065,34 @@ def test_bootstrap_rejects_unsupported_data():
         bootstrap_null(NULL, gains)
 
 
+@pytest.mark.parametrize(
+    "field, match",
+    [
+        ("gains", "calibration gains"),
+        ("phase_offsets", "closure-phase offsets"),
+        ("extras", "extra observables"),
+    ],
+)
+def test_rescale_errors_rejects_nuisance_data(field, match):
+    data = TEMPLATE.with_model(NULL, key=jax.random.PRNGKey(0))
+    # A placeholder stands in for each nuisance model.
+    placeholder = ("block",) if field == "extras" else "placeholder"
+    bad = eqx.tree_at(
+        lambda d: getattr(d, field),
+        data,
+        placeholder,
+        is_leaf=lambda x: x is None or isinstance(x, tuple),
+    )
+    with pytest.raises(ValueError, match=match):
+        rescale_errors(NULL, bad)
+
+
+def test_rescale_errors_accepts_plain_data():
+    data = TEMPLATE.with_model(NULL, key=jax.random.PRNGKey(0))
+    scaled, factors = rescale_errors(NULL, data)
+    assert set(factors) == {"vis", "phi"}
+
+
 def test_gaussian_null_error_scale_scales_the_noise_not_the_errors():
     keys = jax.random.split(jax.random.PRNGKey(0), 200)
     for scale in (1.0, 2.0):
