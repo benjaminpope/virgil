@@ -419,6 +419,18 @@ def gaussian_null(null_scene, template, *, error_scale=1.0):
     return _GaussianNull(template, null_scene, float(error_scale))
 
 
+def _nuisance_names(data):
+    """Names of the gains, closure-phase offsets and extras that ``data`` has."""
+    return [
+        name
+        for name, value in (
+            ("gains", data.gains),
+            ("closure-phase offsets", data.phase_offsets),
+        )
+        if value is not None
+    ] + (["extra observables"] if data.extras else [])
+
+
 @old_order("data", "null_scene", data="data")
 def rescale_errors(null_scene, data):
     """Scale the errors so that the null scene has χ²_r = 1.
@@ -449,14 +461,7 @@ def rescale_errors(null_scene, data):
         calibration gains, closure-phase offsets or extra observables (their
         weighting is not yet supported).
     """
-    unsupported = [
-        name
-        for name, value in (
-            ("calibration gains", data.gains),
-            ("closure-phase offsets", data.phase_offsets),
-        )
-        if value is not None
-    ] + (["extra observables"] if data.extras else [])
+    unsupported = _nuisance_names(data)
     if unsupported:
         raise ValueError(
             "rescale_errors() does not support data with "
@@ -528,14 +533,7 @@ def bootstrap_null(null_scene, data, *, method="sign_flip"):
             "bootstrap_null() supports visibility and phase observables "
             f"('split'), not {data.vis_encoding!r}."
         )
-    unsupported = [
-        name
-        for name, value in (
-            ("gains", data.gains),
-            ("closure-phase offsets", data.phase_offsets),
-        )
-        if value is not None
-    ] + (["extra observables"] if data.extras else [])
+    unsupported = _nuisance_names(data)
     if unsupported:
         raise ValueError(
             f"bootstrap_null() does not support data with "

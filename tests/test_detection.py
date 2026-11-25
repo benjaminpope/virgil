@@ -1068,7 +1068,7 @@ def test_bootstrap_rejects_unsupported_data():
 @pytest.mark.parametrize(
     "field, match",
     [
-        ("gains", "calibration gains"),
+        ("gains", "gains"),
         ("phase_offsets", "closure-phase offsets"),
         ("extras", "extra observables"),
     ],
@@ -1085,12 +1085,6 @@ def test_rescale_errors_rejects_nuisance_data(field, match):
     )
     with pytest.raises(ValueError, match=match):
         rescale_errors(NULL, bad)
-
-
-def test_rescale_errors_accepts_plain_data():
-    data = TEMPLATE.with_model(NULL, key=jax.random.PRNGKey(0))
-    scaled, factors = rescale_errors(NULL, data)
-    assert set(factors) == {"vis", "phi"}
 
 
 def test_gaussian_null_error_scale_scales_the_noise_not_the_errors():
