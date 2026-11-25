@@ -197,9 +197,6 @@ for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
 
 ```text
  uniform disk: diam = 5.686 mas, chi2/N = 651.91 (N = 162)
-```
-
-```text
 limb-darkened: diam = 6.022 mas, chi2/N = 1.14 (N = 162)
 ```
 
@@ -262,16 +259,19 @@ plt.show()
 ```
 
 ```text
-largest split r_hat over the four chains: 1.06
-         truth         posterior
-  diam   6.000      6.024 ± 0.058
-    q1   0.360      0.478 ± 0.211
-    q2   0.292      0.179 ± 0.136
-    u1   0.350      0.247 ± 0.103
-    u2   0.250      0.444 ± 0.247
+largest split r_hat over the four chains: 1.02
 ```
 
-![limb_darkening output 12.2](generated/limb_darkening_cell012_out02.png)
+```text
+         truth         posterior
+  diam   6.000      6.046 ± 0.058
+    q1   0.360      0.573 ± 0.224
+    q2   0.292      0.131 ± 0.108
+    u1   0.350      0.202 ± 0.104
+    u2   0.250      0.559 ± 0.243
+```
+
+![limb_darkening output 12.3](generated/limb_darkening_cell012_out03.png)
 
 The squared visibilities against spatial frequency show where the difference lies. Both fits agree in the first lobe; beyond the first null the uniform disk's second lobe is too low, while the limb-darkened model follows the data.
 
@@ -299,7 +299,7 @@ virgil's limb-darkened disks give analytic, differentiable visibilities for any 
 
 ## As a pipeline
 
-Everything in the fit above can be run in one call with [`StarPipeline`](pipeline.md), which fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its input and the `load` stage; the uniform-disk scan and the `fit` of `QuadraticLimbDarkenedDisk` are its `fit` stage, which also compares the two fits; the NUTS chains are its `posterior` stage; and the $V^2$ plot is the main cell of its quicklook notebook. The cell below sets only the choices made in this notebook: the same $(2, 10)$ mas diameter prior and the same warmup, with the default four chains of 1000 draws. Its priors are the pipeline's group-invariant defaults (log-uniform diameter, uniform $q_1$ and $q_2$), so the posterior agrees with the hand-written one to within the sampling noise, not exactly. The pipeline reports $\chi^2/N$ on the quoted errors for both models, so the uniform disk's misfit is visible there too (its `chi2_uniform` check warns, not fails, because that model was not selected). The data's closure-phase errors are 0.5 degrees, so a closure phase that flips at a visibility null costs about $10^5$ in $\chi^2$: the posterior sits in a cell with hard walls, in the diameter and in $q_1, q_2$ (a limb-darkened null moves with $q$). NUTS rejects the trajectories that cross a wall and flags them as divergent, so the `divergences` check fails. This run's posterior is not reliable: the `divergences`, `r_hat` and `ess` checks all fail (the chains disagree and the effective sample size is small), and the hard walls are the probable cause, not an excuse. Do not quote its intervals. The diameter lands near the truth, but that is not evidence that the sampler worked. The hand-written NUTS run above shows the same weakness more mildly, with a split $\hat R$ above the usual 1.01. The `limb_darkening_constrained` warning says the data barely constrain $q_1$ and $q_2$, as the posterior table above shows. The cell prints a few summary numbers and the checks that did not pass; `res.describe()` has the full report.
+Everything in the fit above can be run in one call with [`StarPipeline`](pipeline.md), which fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its input and the `load` stage; the uniform-disk scan and the `fit` of `QuadraticLimbDarkenedDisk` are its `fit` stage, which also compares the two fits; the NUTS chains are its `posterior` stage; and the $V^2$ plot is the main cell of its quicklook notebook. The cell below sets only the choices made in this notebook: the same $(2, 10)$ mas diameter prior and the same warmup, with the default four chains of 1000 draws. Its priors are the pipeline's group-invariant defaults (log-uniform diameter, uniform $q_1$ and $q_2$), so the posterior agrees with the hand-written one to within the sampling noise, not exactly. The pipeline reports $\chi^2/N$ on the quoted errors for both models, so the uniform disk's misfit is visible there too (its `chi2_uniform` check warns, not fails, because that model was not selected). The data's closure-phase errors are 0.5 degrees, so a closure phase that flips at a visibility null costs about $10^5$ in $\chi^2$: the posterior sits in a cell with hard walls, in the diameter and in $q_1, q_2$ (a limb-darkened null moves with $q$). NUTS rejects the trajectories that cross a wall and flags them as divergent, so the `divergences` check fails. This run's posterior is not reliable: the `divergences` check fails (about half the steps are divergent) and the `r_hat` and `ess` checks warn (a split $\hat R$ of 1.01 and a bulk ESS of a few hundred), and the hard walls are the probable cause, not an excuse. Do not quote its intervals. The diameter lands near the truth, but that is not evidence that the sampler worked. The hand-written NUTS run above shows the same weakness more mildly, with a split $\hat R$ above the usual 1.01. The posterior table above shows that the data barely constrain $q_1$ and $q_2$. The cell prints a few summary numbers and the checks that did not pass; `res.describe()` has the full report.
 
 ```python
 from virgil.pipeline import StarPipeline
@@ -322,10 +322,10 @@ print({c.name: c.status for c in res.checks if c.status != "pass"})
 ```
 
 ```text
-diameter: 6.042 ± 0.074 mas (truth 6.0)
+diameter: 6.033 ± 0.060 mas (truth 6.0)
 chi2/N, quoted errors: 652 uniform disk, 1.14 limb-darkened
-r_hat 1.22, bulk ESS 14, divergent steps 50 %
-{'chi2_uniform': 'warn', 'limb_darkening_constrained': 'warn', 'r_hat': 'fail', 'ess': 'fail', 'divergences': 'fail'}
+r_hat 1.01, bulk ESS 253, divergent steps 51 %
+{'chi2_uniform': 'warn', 'r_hat': 'warn', 'ess': 'warn', 'divergences': 'fail'}
 ```
 
 ```python
