@@ -30,17 +30,28 @@ shared path that many jobs write at once.
 ## Timing small NUTS fits: time per step, not per gradient
 
 For a model with a handful of parameters, such as a seven-parameter
-astrometric orbit fit (`PositionData`; ten unconstrained numbers, because the
-three angles are sampled as `AngleVector` 2-vectors), compare samplers by the
-warm time per leapfrog step. With one chain (or `chain_method="sequential"`)
-that is the post-warmup sampling time divided by the summed
-`extra_fields=("num_steps",)`; `num_steps` covers the collected samples only,
-so leave warmup out of the time too. With vectorized or parallel chains the
-batched loop runs until the longest tree finishes, so this ratio comes out low
-by roughly the number of chains (or devices): time one chain for a per-chain
-figure. A single jitted `value_and_grad` call is the wrong figure. It is
-dominated by JAX's dispatch of a small pytree, and NUTS never pays it, because
-the gradient runs inside NumPyro's compiled `while_loop`.
+astrometric orbit fit ([`PositionData`][virgil.orbits.PositionData] with a
+scalar period, mass, eccentricity and
+[`IsotropicInclination`][virgil.priors.IsotropicInclination], and three
+periodic angles, node, periastron and reference-epoch phase, each an
+[`AngleVector`][virgil.angles.AngleVector] 2-vector, so ten unconstrained
+numbers), compare samplers by the warm time per leapfrog step. To time it
+cleanly in NumPyro, use `progress_bar=False` and one chain; call
+`mcmc.warmup(k0, extra_fields=("num_steps",))`, then one untimed
+`mcmc.run(k1, extra_fields=("num_steps",))` (a `run` without a prior `warmup`
+repeats the warmup, and the first post-warmup `run` compiles the sampling
+loop). Then time `mcmc.run(k2, extra_fields=("num_steps",))` through
+`jax.block_until_ready(mcmc.get_samples())` and divide by
+`mcmc.get_extra_fields()["num_steps"].sum()`: `num_steps` covers the collected
+samples only, so warmup stays out of both. With several chains the ratio is
+not a per-chain step cost, and two effects pull it in opposite directions.
+Under `chain_method="vectorized"` every chain waits for the longest tree of
+each iteration, which raises the time per counted step; but the chains also run
+concurrently (and on separate devices under `"parallel"`) while `num_steps` is
+summed over them, which lowers it by up to the number of chains. Time one chain
+for a per-chain figure. A single jitted `value_and_grad` call is the wrong
+figure. It is dominated by JAX's dispatch of a small pytree, and NUTS never
+pays it, because the gradient runs inside NumPyro's compiled `while_loop`.
 
 On an Apple M4 (one thread, float64) the orbit gradient inside a compiled
 loop, without the Kepler solve, is about 1.5 µs; the Kepler solve adds about
@@ -55,5 +66,8 @@ without it). The vector-to-angle conversion itself is part of the likelihood
 and is not free.
 
 Sampling the ten unconstrained numbers as one packed vector, with the same
-density, took the same step from 35.5 to 26.4 µs in a trial. That changes the
-sample-site structure, so it is not in the default path.
+density, took the same step from 35.5 to 26.4 µs in a trial. The packed vector
+still runs every transform, log-determinant and prior log-density, so the
+roughly 9 µs saved is the bookkeeping across seven separate sample sites, not
+that arithmetic. Packing changes the sample-site structure, so it is not in the
+default path.
