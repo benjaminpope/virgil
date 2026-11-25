@@ -2185,8 +2185,8 @@ def fit_staged_nuisances(
     finite = all(
         bool(onp.all(onp.isfinite(onp.asarray(v)))) for v in s3.values.values()
     )
-    # `start` sets the reference gradients: the staged fit's own start, not
-    # start3 (stage 2 drove the nuisance gradients to ~0, so grad_rel blew up).
+    # `start` sets the reference gradients: the staged fit's own start (init,
+    # nuisance defaults), not start3 (stage 2 zeroed the nuisance gradients).
     # kkt_report needs the function model, not the model built at the result;
     # a non-finite fit has no KKT point to report.
     report = (
@@ -2196,7 +2196,7 @@ def fit_staged_nuisances(
             (),
             regularizers,
             likelihoods=[term3],
-            start={**init, **start2},
+            start={**init, **full.defaults()},
             weight=weight,
         )
         if finite

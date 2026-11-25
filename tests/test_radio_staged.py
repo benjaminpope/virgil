@@ -75,7 +75,7 @@ def _nuis(data):
     )
 
 
-def _run(data, nuisance=None, key="pixels", max_steps=500, **kw):
+def _run(data, nuisance=None, key="pixels", max_steps=500, w=1e-6, **kw):
     prior = dist.ImproperUniform(
         dist.constraints.real, (), event_shape=(NPIX, NPIX)
     )
@@ -85,11 +85,11 @@ def _run(data, nuisance=None, key="pixels", max_steps=500, **kw):
         data,
         scene,
         {key: prior},
-        [MaxEntropy(1e-6)],
+        [MaxEntropy(w)],
         init=start,
         nuisance=nuisance
         or dict(offsets=False, sigmas=False, alpha=False, fit_flux=False),
-        weight=1e-6,
+        weight=w,
         max_steps=max_steps,
         **kw,
     )
@@ -130,6 +130,9 @@ def test_a_converged_stage_three_does_not_fail_on_a_small_image(monkeypatch):
     result = _run(_data([1.0, 1.08, 0.93]), ref_obs=0)
     assert all(s.info["converged"] for s in result.stages)
     assert not result.failed
+    # kkt references are the staged fit's start, not the converged point
+    assert result.kkt["nuisances"]["cal.gain"]["grad_rel"] < 1e-3
+    assert result.kkt["images"]["."]["kkt_rel"] < 1e-3
 
 
 @pytest.mark.slow
