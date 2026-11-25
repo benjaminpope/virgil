@@ -45,12 +45,12 @@ def _best_grid_flux(loglike_im, grid, params, flux_key):
     return best_flux, np.nanmax(loglike_im, axis=flux_axis)
 
 
-def _flux_converged(grad, curvature, loglike, noise=0.0):
+def _flux_converged(grad, curvature, loglike, scale=0.0):
     """Whether a flux is at its maximum to the rounding error of ``loglike``.
 
     Pass ℓ = -½χ², without the normalization, which can have either sign.
-    ``noise`` is the measured scatter of ℓ under rounding (`_rounding_noise`);
-    the resolution is the larger of it and the bound below.
+    ``scale`` is rms_i((|m_i| + |d_i|)/σ_i) over the model and data values,
+    which sets the rounding error of the residuals (below).
 
     The log likelihood still to gain is estimated by the Newton decrement
     g²/(2|c|), exact for a quadratic. A point has converged when that is
@@ -61,32 +61,23 @@ def _flux_converged(grad, curvature, loglike, noise=0.0):
     offsets of up to ~0.1σ (6e-3 nats = ½(0.11σ)²·|c|σ²), as the gate it
     replaces (a quarter σ on the flux, with no derivation) noted.
 
-    The bound covers the sum only. Where the fit is nearly perfect (|ℓ| of a
-    few nats) each residual is a difference of terms much larger than itself,
-    and its own rounding error, ~ε|model|/σ, dominates by orders of magnitude;
-    ``noise`` is that error, measured.
+    That bound covers the sum only. Each residual r_i = (m_i - d_i)/σ_i is
+    itself a difference of terms that may be much larger than r_i, with a
+    rounding error δr_i ≈ ε(|m_i| + |d_i|)/σ_i, so ℓ = -½Σr_i² carries
+    δℓ = Σ r_i δr_i. For rounding errors independent across the N rows (the
+    probabilistic bound of Higham & Mary 2019, SIAM J. Sci. Comput. 41),
+    |δℓ| ≈ ε sqrt(Σ r_i² s_i²) ≈ ε sqrt(2|ℓ|) · rms(s), s_i = (|m_i| + |d_i|)/σ_i,
+    taking r_i uncorrelated with s_i. It exceeds the sum's bound only near a
+    perfect fit, where |ℓ| is a few nats and rms(s) ~ 10³ to 10⁴. The resolution
+    is the larger of the two.
     """
+    noise = (
+        np.finfo(loglike.dtype).eps * np.sqrt(2.0 * np.abs(loglike)) * scale
+    )
     resolution = np.maximum(_gauss_newton.rounding_dtol(loglike), noise)
     return (curvature < 0.0) & (
         0.5 * grad**2 / np.abs(curvature) <= resolution
     )
-
-
-def _rounding_noise(flux_loglike, flux, coord_vals, dtype):
-    """Scatter (nats) of the log likelihood under rounding, at ``flux``.
-
-    The range of ℓ over fluxes ±1 and ±2 ulp-scale steps (ε·flux) from the
-    point. The steps are so small that the curvature moves ℓ by far less than
-    rounding does (½|c|(2εf)² against the scatter), so what ranges is rounding.
-    """
-    eps = np.finfo(dtype).eps
-    steps = (
-        np.array([-2.0, -1.0, 1.0, 2.0])
-        * eps
-        * np.maximum(np.abs(flux), np.finfo(dtype).tiny)
-    )
-    values = jax.vmap(lambda d: flux_loglike(flux + d, coord_vals))(steps)
-    return np.max(values) - np.min(values)
 
 
 @eqx.filter_jit
@@ -181,11 +172,16 @@ def _refine_flux_grid(
         # (signed, normalized) log likelihood.
         values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
         resid = whitened_residuals(build_model(model, params, values), data)
+        instance = build_model(model, params, values)
+        observed, errors = data.flatten_data()
+        scale = np.sqrt(
+            np.mean(
+                ((np.abs(data.model(instance)) + np.abs(observed)) / errors)
+                ** 2
+            )
+        )
         converged = _flux_converged(
-            grad,
-            curvature,
-            -0.5 * np.sum(resid**2),
-            _rounding_noise(flux_loglike, flux, coord_vals, best.dtype),
+            grad, curvature, -0.5 * np.sum(resid**2), scale
         )
         return flux, best, converged
 
