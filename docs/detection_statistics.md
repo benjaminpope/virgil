@@ -92,7 +92,8 @@ $s = \sqrt{\chi^2/n}$, where $\chi^2$ is that block's sum of squared whitened
 residuals about the null scene (including the periodic penalty rows of
 correlated closure phases) and $n$ its independent observables, as in
 [`n_independent`][virgil.oidata.OIData.n_independent]. Each block then has
-$\chi^2/n = 1$, exactly without gains and approximately with them. $n$ does
+$\chi^2/n = 1$. Data with gains, closure-phase offsets or extras are not
+supported and raise. $n$ does
 not subtract the parameters fitted to get the null scene, so with few data
 and several fitted parameters the factors are biased low by about $p/(2n)$.
 
