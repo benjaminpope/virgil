@@ -11,6 +11,7 @@ import json
 import math
 
 import jax
+import matplotlib.pyplot as plt
 import numpy as onp
 import pytest
 
@@ -801,6 +802,7 @@ def test_model_choice_is_invalid_with_the_parent_diameter_on_the_lower_edge(
     assert (best, comparison["unidentified"]) == (preferred, unidentified)
     fit = {
         "names": ["a", "b"],
+        "best": preferred,
         "models": {
             k: {**v, "chi2_reduced": 1.0, "error_scales": None}
             for k, v in reports.items()
@@ -1101,3 +1103,71 @@ def test_unresolved_star_starts_inside_the_diameter_prior(tmp_path):
     check = {c.name: c for c in result.checks}["start_at_bound"]
     assert check.status == "warn"
     assert any(name.endswith(".diam") for name in check.value)
+
+
+def test_a_rejected_rivals_failed_chi2_only_warns():
+    registry = _fake_models({"a": (None, 1), "b": ("a", 3)})
+    fit = {
+        "names": ["a", "b"],
+        "best": "a",
+        "models": {
+            "a": {"chi2_reduced": 1.0, "error_scales": None, "at_bound": []},
+            "b": {"chi2_reduced": 50.0, "error_scales": None, "at_bound": []},
+        },
+        "comparisons": [],
+        "n_independent": 81,
+    }
+    status = {c.name: c for c in star._fit_checks(fit, registry)}
+    assert status["chi2_a"].status == "pass"
+    assert status["chi2_b"].status == "warn"
+    assert "b (not selected)" in status["chi2_b"].message
+    fit["best"] = "b"  # selected, the same χ² fails
+    assert {c.name: c.status for c in star._fit_checks(fit, registry)}[
+        "chi2_b"
+    ] == "fail"
+
+
+# --- flagged visibilities -----------------------------------------------------
+def test_run_with_flagged_visibilities(tmp_path):
+    """Flagged V² samples stay in u, v and wavel but not in vis: the fit and
+    the V² plot must pair each plotted point with its own baseline."""
+    rng = onp.random.default_rng(5)
+    u, v = rng.uniform(5.0, 90.0, (2, 24))
+    wavel = 2.2e-6
+    truth = UniformDisk(6.0)
+    v2 = onp.abs(onp.asarray(truth.model(u, v, wavel))) ** 2
+    flag = onp.zeros(u.size, dtype=bool)
+    flag[[0, 7, 8, 23]] = True
+    flagged = virgil.OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": wavel,
+            "vis": onp.where(flag, 50.0, v2 + rng.normal(0.0, 0.01, u.size)),
+            "d_vis": onp.full(u.size, 0.01),
+            "vis_flag": flag,
+        }
+    )
+    assert flagged.vis.size == u.size - 4 and flagged.vis_index is not None
+    res = StarPipeline(
+        flagged, "uniform", output=tmp_path / "run", **TINY
+    ).run(through="fit")
+    assert res.status == "partial"
+    assert (tmp_path / "run" / "plots" / "fit_v2.png").exists()
+    # The plot pairs each unflagged V² with its own spatial frequency.
+    fig = star.plot_v2_models(flagged, {"uniform": res.model()})
+    ax = fig.axes[0]
+    x, y = ax.lines[0].get_data()
+    keep = ~flag
+    onp.testing.assert_allclose(x * 1e6, (onp.hypot(u, v) / wavel)[keep])
+    onp.testing.assert_allclose(y, flagged.vis)
+    plt.close(fig)
+
+
+def test_v2_plot_without_visibilities(data):
+    """Phase-only data (no V² left) still draw the model curves."""
+    phase_only = data.select(observables="phi")
+    assert onp.size(phase_only.vis) == 0
+    fig = star.plot_v2_models(phase_only, {"uniform": UniformDisk(6.0)})
+    assert len(fig.axes[0].lines) == 1  # the model curve only
+    plt.close(fig)

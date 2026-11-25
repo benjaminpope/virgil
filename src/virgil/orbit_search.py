@@ -435,15 +435,25 @@ class _Scorer:
         if self.gains is not None:
             # The independent gains: the degrees of freedom lost.
             g = self.gains
+            on = onp.asarray(g.widths) > 0  # a width-0 group is disabled
+            shapes = (
+                onp.asarray(g.shapes) * on[onp.asarray(g.group)][:, None, :]
+            )
+            spanning = (
+                None
+                if g.spanning is None
+                else onp.asarray(g.spanning)
+                * on[onp.asarray(g.spanning_group)]
+            )
             lost["vis"] = _local_rank(
-                onp.asarray(g.rows), onp.asarray(g.shapes), g.n_vis, g.spanning
+                onp.asarray(g.rows), shapes, g.n_vis, spanning
             )
         if self.offsets is not None:
             sigma = onp.asarray(plain.flatten_data()[1], float)
             cols, spanning = self.offsets._columns(
                 plain.cp_noise,
                 sigma[self.n_vis : self.n_phase],
-                onp.ones(len(self.offsets.widths)),
+                onp.asarray(self.offsets.widths) > 0,
             )
             lost["phi"] = _local_rank(
                 onp.asarray(self.offsets.rows),
@@ -476,7 +486,7 @@ class _Scorer:
                 _gain_jacobian(plain, prediction[:n_vis]) / errors[:n_vis]
             )
             local, spanning = gains._columns(
-                jacobian, np.ones_like(gains.widths)
+                jacobian, (gains.widths > 0).astype(gains.widths.dtype)
             )
             r = r.at[:n_vis].set(
                 _profile(r[:n_vis], gains.rows, local, spanning)
@@ -485,7 +495,9 @@ class _Scorer:
             stop = n_vis + offsets.n_out
             err_phi = errors[n_vis : self.n_phase]
             cols, spanning = offsets._columns(
-                plain.cp_noise, err_phi, np.ones_like(offsets.widths)
+                plain.cp_noise,
+                err_phi,
+                (offsets.widths > 0).astype(offsets.widths.dtype),
             )
             rows = np.asarray(offsets.rows)
             r = r.at[n_vis:stop].set(

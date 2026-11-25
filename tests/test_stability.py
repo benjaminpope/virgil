@@ -50,8 +50,11 @@ EXPECTED = {
     "virgil.crossval": {"*"},
     "virgil.noise_spec": {"*"},
     "virgil.pipeline": {"*"},
+    "virgil._cache": {"enable_compilation_cache"},
     "virgil.models": {
         "ArchimedeanSpiral",
+        "Crescent",
+        "Blurred",
         "LinearImage",
         "MultipoleDisk",
         "ThinRing",

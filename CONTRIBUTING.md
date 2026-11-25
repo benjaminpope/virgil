@@ -100,9 +100,10 @@ runs the suite in tiers. Every pull request runs the tests not marked `slow` on 
 Python 3.12, in float32 (split across three jobs) and in float64 (three jobs, about 0.57 times the float32 suite because they skip the
 files listed in `DTYPE_INDEPENDENT` in `tests/conftest.py`, whose results cannot depend on
 the float width), with the versions in `uv.lock`; a pull request that edits `pyproject.toml`
-also runs once with every dependency at the oldest version it allows. A pull request that
-edits `aliases`, `epochs` or `orbit*` (or their test files) also runs the slow tests of
-`test_aliases.py`, `test_epochs.py` and `test_orbit*.py` in those jobs. Pushes to main run
+also runs once with every dependency at the oldest version it allows. A pull request that edits a top-level `tests/test_*.py` file also runs that file's
+non-`full_only` `slow` tests in those jobs, as does one that edits `src/virgil/<module>.py` (the slow tests of `test_<module>*.py`, and of the files `SRC_TEST_GLOBS` in `.github/scripts/ci_matrix.py` names; any `pipeline/` module runs `test_pipeline_*.py`), and a pull request touching the orbit, tempering,
+marginal, precision, likelihood or pipeline (`_checks`, `_core`, `disk`, `image`, `orbit`)
+modules runs their `slow` test files (`ORBIT_SLOW_FILES` in `.github/scripts/ci_matrix.py`). Pushes to main run
 the same jobs with the slow tests except those marked `full_only`, which only the `full-ci`
 label, dispatch and the nightly run (a regression in one shows as a nightly failure, not a red
 main). Pull requests labelled `full-ci` (always the release
@@ -193,18 +194,23 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
 
 **Each release** (a short list; every item must hold for the commit you tag):
 1. **Versions.** `version` in `pyproject.toml` and `CITATION.cff` agree, `uv lock` is run, and the release PR (head branch `release*`, the only kind CI lets edit `CHANGELOG.md`) collects the fragments with `towncrier build --yes --version X.Y.Z`, which writes the dated `## X.Y.Z (YYYY-MM-DD)` section and deletes the fragments. Review the stability-tier list (`docs/stability.md` and the CHANGELOG's Stability section): promotion to stable is a decision for the maintainer.
-2. **Main is green on the tagged commit, in the full tier.** Label the release PR `full-ci`, merge it, then dispatch the full tier on the merge commit and wait for it to pass (a push run lacks macOS, py3.13 and the floors, and a newer push may have cancelled it):
+2. **Carbon page** (maintainer, locally: it reads private transcripts and `ssh nt`, so CI cannot). In the release PR, before merging it, with `ssh nt` working and claude-code-carbon-dashboard installed, run:
+   ```bash
+   python3 scripts/dev_carbon.py --release
+   ```
+   and commit the changed `docs/dev_carbon.md`, `docs/generated/dev_carbon*.json`, `docs/index.md` and README badge. `--release` refuses `--offline` or `--sources` and fails if any source cannot be fetched; it stamps `dev_carbon.json` with the `pyproject.toml` version. The lint job `carbon-stamp` fails a PR that bumps the version without a matching stamp, and `publish.yml` refuses to publish unless the stamp matches the tag and was made at most 7 days before the tagged commit. If a source is down for good (an NT outage), put a line `carbon-gate: skip <reason>` in the release notes (or PR description); the gate then passes with a warning and the page keeps naming the version it was last refreshed for.
+3. **Main is green on the tagged commit, in the full tier.** Label the release PR `full-ci`, merge it, then dispatch the full tier on the merge commit and wait for it to pass (a push run lacks macOS, py3.13 and the floors, and a newer push may have cancelled it):
    ```bash
    gh workflow run tests.yml --ref main
    ```
    `publish.yml` refuses to build unless `tests.yml` succeeded in the full tier (macOS, py3.13 and the dependency floors) on exactly the tagged commit, so a release can never ship untested code. A red `main` opens an issue labelled `red-main`; close it first.
-3. **Evidence gate** ([virgil-validation](https://github.com/benjaminpope/virgil-validation), its method page "Release gate"). All three must hold for the release commit:
+4. **Evidence gate** ([virgil-validation](https://github.com/benjaminpope/virgil-validation), its method page "Release gate"). All three must hold for the release commit:
    - virgil-validation's tier A passes against that commit (`pytest -m "not slow"` there, with virgil installed from the commit);
    - its evidence (`trust/evidence/*.jsonl`) is regenerated and pinned to that single commit: `scripts/check_evidence_pin.py --release --expect <sha>` passes there;
    - no finding in its ledger ruled `virgil` with severity `bug` is open without a recorded decision (fixed, or accepted with a reason in the release notes).
-4. **GPU and long runs** (maintainer, on OzSTAR): the docs-examples run on a GPU passes (ozstar_scripts job `docs_examples_prof`). The Gl 229 Ba–Bb period-alias search was a release gate through 0.4.1 and was dropped as a release gate on 2026-10-23, so the Gl 229 result is now unverified at later releases: the alias-search regressions are guarded by the CI tests listed in the "Binary orbits: solved problems" table (linked from AGENTS.md), and a maintainer may still run the cold search (ozstar_scripts job `orbit_aliases`, `virgil.aliases.fit_orbit_aliases` with `--no-init`; the N = 34 band, P ≈ 12.134 d, should rank first) when the search code changes.
-5. Check the build locally:
+5. **GPU and long runs** (maintainer, on OzSTAR): the docs-examples run on a GPU passes (ozstar_scripts job `docs_examples_prof`). The Gl 229 Ba–Bb period-alias search was a release gate through 0.4.1 and was dropped as a release gate on 2026-10-23, so the Gl 229 result is now unverified at later releases: the alias-search regressions are guarded by the CI tests listed in the "Binary orbits: solved problems" table (linked from AGENTS.md), and a maintainer may still run the cold search (ozstar_scripts job `orbit_aliases`, `virgil.aliases.fit_orbit_aliases` with `--no-init`; the N = 34 band, P ≈ 12.134 d, should rank first) when the search code changes.
+6. Check the build locally:
    ```bash
    uv build && uvx twine check --strict dist/*
    ```
-6. On GitHub, draft a release with a new tag `v<version>` (e.g. `v0.2.0`) on that commit, write the notes, and publish it. The workflow first checks the gate in item 2, then that the tag matches the version, builds and checks the distributions, and uploads them.
+7. On GitHub, draft a release with a new tag `v<version>` (e.g. `v0.2.0`) on that commit, write the notes, and publish it. The workflow first checks the gate in item 3 and the carbon stamp in item 2, then that the tag matches the version, builds and checks the distributions, and uploads them.

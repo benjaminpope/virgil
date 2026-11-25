@@ -517,8 +517,8 @@ class _ToeplitzTerm(_TermBase):
         self.free_offsets = tdata.free_offsets
         self.max_shift_pix = tdata.max_shift_pix
         self.kp = tdata.kp
-        # As ComplexVisData.term: two numbers per point, masked or not.
-        self.n_data = 2 * len(tdata.data)
+        # As ComplexVisData.term: two numbers per unmasked point.
+        self.n_data = 2 * int(tdata.mask.sum())
 
     @property
     def _profiled(self):
@@ -656,7 +656,7 @@ class _ToeplitzTerm(_TermBase):
             # Σ r is zero in value and has gradient ∇Δ/ŝ² (ŝ² is held), the
             # same gradient and Hessian as Σ Δ/ŝ²; the loss's value is the
             # held log_norm. Below the floor both are flat: no gradient.
-            live = ratio > eps - 1.0
+            live = (ratio > eps - 1.0) & ok
             r = np.where(
                 live,
                 (delta - jax.lax.stop_gradient(delta)) / self._profile(delta),

@@ -18,7 +18,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | --- | --- |
 | Orbit fitting | the modules [`virgil.epochs`](api/epochs.md), [`virgil.aliases`](api/aliases.md), [`virgil.arcs`](api/arcs.md), [`virgil.night_summaries`](api/night_summaries.md), [`virgil.orbit_cells`](api/orbit_cells.md), [`virgil.mode_search`](api/mode_search.md), [`virgil.orbit_search`](api/orbit_search.md) and [`virgil.tempering`](api/tempering.md) (the whole of each) |
 | `MultipoleDisk` family ([`virgil.models`](api/models/classes/multipole_disk.md)) | `MultipoleDisk`, `ThinRing`, `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`, `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `Harmonics`, `VonMises`, `Cone`, `PowerLawHeight`, `multipole_disk_cvis`, `gp_priors` |
-| Pinwheel spiral ([`virgil.models`](api/models/classes/composition.md)) | `ArchimedeanSpiral` |
+| Pinwheel spiral, crescent and blur ([`virgil.models`](api/models/classes/composition.md)) | `ArchimedeanSpiral`, `Crescent`, `Blurred` |
 | Linear pixel images ([`virgil.models`](api/models/classes/image.md)) | `LinearImage` |
 | Polar fields ([`virgil.fields`](api/fields.md)) | `MultipoleField`, `multipole_field_priors` |
 | Ensembles' Gaussian-process members ([`virgil.ensemble`](api/ensemble.md)) | `evidence_grid`, `gp_members`, `GPFit`, `EvidenceGrid` |
@@ -30,11 +30,14 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Rendered disks and images on uv lattices | the `rotation_deg` argument of `FlaredDisk*` and its `"grid"` default; the opt-in `rotation_deg="grid"` of `Image`, `starting_image`, `clean`, `dirty_image` and `residual_image` (their defaults stay North up); the lattice tolerance for DISCO dictionaries |
 | Diagnostic plots ([`virgil.plotting`](api/plotting.md)) | `plot_field_draws` |
 | Preconditioned fits ([`virgil.fitting`](api/fitting.md)) | `gauss_newton_diag`, `kkt_report` and the `precondition` argument of `fit` |
+| Optimizer options ([`virgil.fitting`](api/fitting.md)) | `fit(method="lbfgsb")` (scipy L-BFGS-B, float64, box bounds; the extra `info` keys `nit`, `message`, `pg_norm`, `restarts`, `undefined`) and `fit(post_step=)` (Adam only) |
+| Observable nuisance modes | the `modes` argument of `DifferentialPhase` and `FluxSpectrum`, the row-scoped correlated-flux marginalization of `GainModes`, and closure-phase modes that span several frames (the `modes` argument of `OIData.with_continuum`, `with_flux_scale` and `with_closure_offsets`); see [spectroscopic observables](spectro_observables.md) |
 | Night-outlier mixture ([`virgil.likelihood`](api/likelihood.md)) | `group_outlier_mixture`, `group_outlier_probabilities` |
 | Radio interferometry | the module [`virgil.radio`](api/radio.md) (`ComplexVisData`, `CalibrationNuisance`, `primary_beam`, `dartboard_folds`; site names, default priors and the measurement-set convention) |
 | Radio Toeplitz χ² | the module [`virgil.radio_toeplitz`](api/radio_toeplitz.md) (`ToeplitzVisData`), `ComplexVisData.toeplitz`, and the scalar-term protocol of `fit` (`chi2_and_log_norm`, `curvature_params`, `curvature_loss`) |
 | Radio CLEAN | the module [`virgil.radio_clean`](api/radio_clean.md) (`clean`, `RadioCleanResult`, `fit_beam`, `restore`) and the `uvtaper` argument of `ComplexVisData.dirty_image` and `dirty_beam` |
 | Image blurring | `Image(blur_fwhm_mas=...)`, `Image.smoothed()` and the `smoothed` option of the regularizers |
+| Compilation cache | `virgil.enable_compilation_cache` |
 | Image-recovery scores | the module [`virgil.metrics`](api/metrics.md) |
 | Cross-validation | the module [`virgil.crossval`](api/crossval.md) (`cv_task`, `cross_validate`, `aggregate`, `aggregate_files`, `fold_masks`, `save_record`, `load_records`) |
 | Instrument noise specs ([conventions](conventions.md#instrument-noise-specs)) | the module [`virgil.noise_spec`](api/noise_spec.md) (`load_noise_spec`, `validate_noise_spec`, `apply_noise_spec`, `instrument_match`) |

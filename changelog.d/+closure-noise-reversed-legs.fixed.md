@@ -1,0 +1,1 @@
+`ClosureNoise` now treats an `OI_T3` triangle leg stored in the reverse orientation of its visibility baseline as the negated phase of that baseline, so triangles sharing it are correlated correctly (a 4-telescope cyclic set had rank 4 instead of 3).

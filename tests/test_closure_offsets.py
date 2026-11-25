@@ -10,6 +10,7 @@ from virgil.coverage import vlti_oidata
 from virgil.fitting import fit
 from virgil.likelihood import model_loglike
 from virgil.models import BinaryModelCartesian
+from tests._shared import PAIRS, TRIANGLES
 
 TRUTH = BinaryModelCartesian(dra=6.0, ddec=-4.0, flux=0.3)
 N_WAVE = 4
@@ -28,7 +29,7 @@ def _data(key=0, stations=None, hours=(-2.0, 0.0, 2.0)):
 
 
 @pytest.mark.validates(
-    "virgil.gains.ClosureOffsets", roots=["mathematics"], kind="check"
+    "virgil.gains.ClosureOffsets", roots=["self-consistency"], kind="check"
 )
 def test_offsets_match_the_dense_whitened_covariance():
     data = _data()
@@ -58,6 +59,45 @@ def test_offsets_match_the_dense_whitened_covariance():
         TRUTH, data
     )
     assert float(difference) == pytest.approx(expected, rel=1e-4, abs=1e-4)
+
+
+@pytest.mark.validates(
+    "virgil.gains.ClosureOffsets", roots=["mathematics"], kind="check"
+)
+def test_offset_covariance_matches_an_independent_triangle_incidence():
+    # Built here from the raw station indices: a baseline offset e_ab (one
+    # per frame and baseline, shared by channels) enters triangle (a, b, c) as
+    # e_ab + e_bc - e_ac; a triangle offset is added to that triangle alone.
+    widths = {"baseline": 0.01, "triangle": 0.005}
+    hours = (-2.0, 0.0, 2.0)
+    data = _data(hours=hours).with_closure_offsets(**widths)
+    pairs = [tuple(p) for p in PAIRS.tolist()]
+    n_frame = len(hours)
+    n_phase = data.phi.size
+    assert n_phase == n_frame * len(TRIANGLES) * N_WAVE
+    expected = onp.zeros((n_phase, n_phase))
+    for f in range(n_frame):
+        rows = {
+            (t, w): (f * len(TRIANGLES) + t) * N_WAVE + w
+            for t in range(len(TRIANGLES))
+            for w in range(N_WAVE)
+        }
+        for p in pairs:
+            column = onp.zeros(n_phase)
+            for t, (a, b, c) in enumerate(TRIANGLES.tolist()):
+                sign = {(a, b): 1.0, (b, c): 1.0, (a, c): -1.0}.get(p, 0.0)
+                for w in range(N_WAVE):
+                    column[rows[t, w]] = sign
+            expected += widths["baseline"] ** 2 * onp.outer(column, column)
+        for t in range(len(TRIANGLES)):
+            column = onp.zeros(n_phase)
+            for w in range(N_WAVE):
+                column[rows[t, w]] = 1.0
+            expected += widths["triangle"] ** 2 * onp.outer(column, column)
+    modes = onp.asarray(
+        data.phase_offsets.modes(data.cp_noise, n_phase), float
+    )
+    onp.testing.assert_allclose(modes @ modes.T, expected, atol=1e-9)
 
 
 def test_baseline_offsets_close_around_four_telescopes():
@@ -672,3 +712,100 @@ def test_fitted_offset_width_is_unbiased_across_many_channels():
     assert float(result.values["flux"]) == pytest.approx(0.3, abs=0.015)
     assert fitted_tri_rms == pytest.approx(emp_rms, rel=0.25)
     assert fitted_tri_rms < 0.25
+
+
+def test_scorer_does_not_profile_a_zero_width_offset_group():
+    """A group of width 0 is disabled: it costs no degrees of freedom."""
+    from virgil.orbit_search import _Scorer
+
+    data = _data()
+
+    def nu_phi(d):
+        return dict((b[0], b[3]) for b in _Scorer(d, None).surface.blocks)[
+            "phi"
+        ]
+
+    off = data.with_closure_offsets(triangle=0.0)
+    on = data.with_closure_offsets(triangle=0.005)
+    assert nu_phi(off) == nu_phi(data)
+    assert nu_phi(on) < nu_phi(data)
+
+
+def test_scorer_does_not_profile_a_zero_width_gain_group():
+    from virgil.orbit_search import _Scorer
+
+    data = _data()
+
+    def nu_vis(d):
+        return dict((b[0], b[3]) for b in _Scorer(d, None).surface.blocks)[
+            "vis"
+        ]
+
+    assert nu_vis(data.with_gains(telescope=0.0)) == nu_vis(data)
+    assert nu_vis(data.with_gains(telescope=0.05)) < nu_vis(data)
+
+
+def test_scorer_chi2_does_not_profile_zero_width_groups():
+    """χ² agrees with the unprofiled data for width-0 groups, and its
+    gradient stays finite."""
+    from virgil.orbit_search import _Scorer
+
+    data = _data()
+
+    def chi2(d, scale=1.0):
+        sc = _Scorer(d, None)
+        cvis = d._cvis(TRUTH) * scale
+        return sc.chi2(cvis, sc.plain, sc.gains, sc.offsets)
+
+    base = chi2(data)
+    for zero in (
+        data.with_closure_offsets(triangle=0.0),
+        data.with_gains(telescope=0.0),
+    ):
+        onp.testing.assert_allclose(chi2(zero), base, rtol=1e-5)
+    live = chi2(data.with_gains(telescope=0.05))
+    mixed = chi2(data.with_gains(telescope=0.05, chromatic=0.0))
+    onp.testing.assert_allclose(mixed, live, rtol=1e-5)
+    g = jax.grad(lambda a: chi2(data.with_gains(telescope=0.0), a).sum())(1.0)
+    assert onp.isfinite(float(g))
+
+
+def test_scorer_chi2_is_unchanged_when_every_width_is_positive():
+    """The width mask is all ones then: χ² is bit-identical to the old
+    formula, which profiled every column with ``ones_like(widths)``."""
+    from virgil import orbit_search as os_
+    from virgil.orbit_search import _Scorer
+
+    data = (
+        _data().with_gains(telescope=0.05).with_closure_offsets(triangle=0.005)
+    )
+    sc = _Scorer(data, None)
+    plain, gains, offsets = sc.plain, sc.gains, sc.offsets
+    cvis = data._cvis(TRUTH)
+
+    prediction = plain.model(os_._Fixed(cvis))
+    errors = os_.inflated_errors(plain, prediction)
+    r = os_._whiten(plain, prediction, plain.flatten_data()[0], errors)[0]
+    n_vis = sc.n_vis
+    jac = os_._gain_jacobian(plain, prediction[:n_vis]) / errors[:n_vis]
+    local, spanning = gains._columns(jac, np.ones_like(gains.widths))
+    r = r.at[:n_vis].set(os_._profile(r[:n_vis], gains.rows, local, spanning))
+    stop = n_vis + offsets.n_out
+    cols, span = offsets._columns(
+        plain.cp_noise,
+        errors[n_vis : sc.n_phase],
+        np.ones_like(offsets.widths),
+    )
+    r = r.at[n_vis:stop].set(
+        os_._profile(r[n_vis:stop], np.asarray(offsets.rows), cols, span)
+    )
+    if offsets.scale_penalty:
+        err_phi = errors[n_vis : sc.n_phase]
+        scale = err_phi / np.hypot(
+            err_phi, offsets.marginal_std(offsets.widths)
+        )
+        r = r.at[stop : stop + err_phi.size].multiply(scale)
+    old = sc.surface.block_chi2(r)
+    onp.testing.assert_array_equal(
+        onp.asarray(sc.chi2(cvis, plain, gains, offsets)), onp.asarray(old)
+    )

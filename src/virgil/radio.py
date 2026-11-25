@@ -45,7 +45,14 @@ from ._geometry import (
 from ._deprecate import external_stacklevel, renamed
 from ._utils import mas2rad, rad2mas
 from .fitting import fit, kkt_report
-from .models import Image, LinearImage, Rotated, SourceModel, System
+from .models import (
+    Blurred,
+    Image,
+    LinearImage,
+    SourceModel,
+    System,
+    _Wrapper,
+)
 
 _PIXEL_IMAGES = (Image, LinearImage)
 
@@ -1447,7 +1454,7 @@ def _no_antenna_gains(nuisance):
 
 def _owned_image(scene, nuisance):
     """The `LinearImage` that is the whole of ``scene`` (inside Systems of one
-    part and ``Rotated``), else None, checked against ``nuisance.fit_flux``.
+    part, ``Rotated`` and ``Blurred``), else None, checked against ``nuisance.fit_flux``.
 
     A lone `LinearImage` carries its flux (``fit_flux=False``). With a free
     ``cal.flux`` a scene made only of `LinearImage` parts is refused (scaling
@@ -1458,7 +1465,7 @@ def _owned_image(scene, nuisance):
     while True:
         if isinstance(image, System) and len(image.resolved().parts) == 1:
             image = image.resolved().parts[0]
-        elif isinstance(image, Rotated):
+        elif isinstance(image, _Wrapper):
             image = image.source
         else:
             break
@@ -1467,7 +1474,7 @@ def _owned_image(scene, nuisance):
         part = leaves.pop()
         if isinstance(part, System):
             leaves += part.resolved().parts
-        elif isinstance(part, Rotated):
+        elif isinstance(part, _Wrapper):
             leaves.append(part.source)
         elif not isinstance(part, LinearImage):
             leaves = None
@@ -1539,17 +1546,18 @@ def _checked_sigma(sigma, nuisance):
 def _warn_double_blur(scene, nuisance):
     if nuisance.blur_fwhm_mas is None:
         return
-    images = jax.tree_util.tree_leaves(
-        scene, is_leaf=lambda x: isinstance(x, _PIXEL_IMAGES)
+    leaves = jax.tree_util.tree_leaves(
+        scene, is_leaf=lambda x: isinstance(x, (*_PIXEL_IMAGES, Blurred))
     )
     if any(
-        isinstance(x, _PIXEL_IMAGES) and x.blur_fwhm_mas is not None
-        for x in images
+        isinstance(x, Blurred)
+        or (isinstance(x, _PIXEL_IMAGES) and x.blur_fwhm_mas is not None)
+        for x in leaves
     ):
         warnings.warn(
-            "CalibrationNuisance.blur_fwhm_mas and Image.blur_fwhm_mas "
-            "are both set; the two Gaussians compound, blurring the model "
-            "twice. Use one of them.",
+            "CalibrationNuisance.blur_fwhm_mas and a Blurred wrapper or "
+            "Image.blur_fwhm_mas are both set; the two Gaussians compound, "
+            "blurring the model twice. Use one of them.",
             UserWarning,
             stacklevel=2,
         )
@@ -1675,6 +1683,13 @@ class _RadioTerm(_TermBase):
                 "spread" if nuisance.offsets else "none",
             )
         )
+
+    @property
+    def n_data(self):
+        """Real and imaginary parts of the unmasked points, as for the
+        Toeplitz term (read outside jit; not a static field, so that changing
+        the mask does not recompile)."""
+        return 2 * int(self.arrays["m"].sum())
 
     def resolve(self, start, least_squares):
         """``(term, form)``: the Toeplitz term of ``fit`` at ``start`` if ``chi2``
@@ -2026,7 +2041,7 @@ class StagedFit:
     edge : dict
         Per boxed site, a bool array: within ``edge`` of a bound.
     failed : bool
-        Any nuisance sits at a box edge.
+        Any nuisance sits at a box edge, or any fitted value is not finite.
     kkt : dict
         [`kkt_report`][virgil.fitting.kkt_report] of the joint fit.
     """
@@ -2165,15 +2180,23 @@ def fit_staged_nuisances(
     priors3 = {**image_priors, **nuis_priors}
     start3 = {**image, **s2.values}
     s3 = run(scene, priors3, start3, term3)
-    # kkt_report needs the function model, not the model built at the result
-    report = kkt_report(
-        dataclasses.replace(s3, model=lambda **v: scene(v)),
-        priors3,
-        (),
-        regularizers,
-        likelihoods=[term3],
-        start=start3,
-        weight=weight,
+    finite = all(
+        bool(onp.all(onp.isfinite(onp.asarray(v)))) for v in s3.values.values()
+    )
+    # kkt_report needs the function model, not the model built at the result;
+    # a non-finite fit has no KKT point to report.
+    report = (
+        kkt_report(
+            dataclasses.replace(s3, model=lambda **v: scene(v)),
+            priors3,
+            (),
+            regularizers,
+            likelihoods=[term3],
+            start=start3,
+            weight=weight,
+        )
+        if finite
+        else {"images": {}, "nuisances": {}, "converged": False}
     )
     table, flags = {}, {}
     for site, prior in raw.items():
@@ -2183,8 +2206,9 @@ def fit_staged_nuisances(
             x, lo, hi = onp.log(x), onp.log(lo), onp.log(hi)
         frac = onp.minimum(x - lo, hi - x) / (hi - lo)
         table[site] = dict(value=x, lower=lo, upper=hi, edge_frac=frac)
-        flags[site] = frac < edge
-    failed = any(bool(onp.any(f)) for f in flags.values())
+        # A NaN value fails the edge test silently: flag it.
+        flags[site] = (frac < edge) | ~onp.isfinite(x)
+    failed = any(bool(onp.any(f)) for f in flags.values()) or not finite
     return StagedFit(
         (s1, s2, s3), ref_obs, sum_w, table, flags, failed, report
     )

@@ -62,6 +62,24 @@ def failures(directory):
     return out
 
 
+def unsuccessful_jobs():
+    """[(job name, conclusion)] of the run's finished jobs that did not pass.
+
+    A job cancelled at its ``timeout-minutes`` has no failing test in any
+    JUnit report, so the issue names it from the run itself. Jobs still
+    running (this reporter) and skipped ones do not count.
+    """
+    run = os.environ.get("GITHUB_RUN_ID")
+    if not run:
+        return []
+    jobs = json.loads(gh("run", "view", run, "--json", "jobs"))["jobs"]
+    return [
+        (job["name"], job["conclusion"])
+        for job in jobs
+        if job["conclusion"] not in ("success", "skipped", "", None)
+    ]
+
+
 def last_green():
     runs = json.loads(
         gh(
@@ -90,10 +108,16 @@ def body(directory):
         "",
     ]
     found = failures(directory)
+    bad = unsuccessful_jobs()
+    if bad:
+        lines.append("Jobs that did not pass:")
+        lines += [f"- {name}: **{how}**" for name, how in bad]
+        lines.append("")
     if not found:
         lines.append(
-            "No failing tests in the JUnit reports: a job failed outside "
-            "pytest (environment, timeout, packaging). See the run."
+            "No failing tests in the JUnit reports: a job failed or was "
+            "cancelled outside pytest (environment, timeout, packaging). "
+            "See the run."
         )
     for job, ids in found.items():
         lines.append(f"**{job}** ({len(ids)})")

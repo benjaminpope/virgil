@@ -300,3 +300,43 @@ def test_aggregate_group_with_only_nan_scores_has_no_best():
 
     out = aggregate([record(s, k) for s in (1.0, 2.0) for k in range(2)])
     assert out["group_best"].tolist() == [0, -1]
+
+
+def test_cv_task_refuses_profiled_sigma():
+    rng = onp.random.default_rng(0)
+    n, npix = 200, 8
+    u, v = rng.uniform(-2e6, 2e6, n), rng.uniform(-2e6, 2e6, n)
+    vis = onp.exp(-0.5 * (onp.hypot(u, v) / 1e6) ** 2) + 0j
+    data = ComplexVisData.from_arrays(u, v, vis, onp.full(n, 400.0), 230e9)
+    nuis = CalibrationNuisance(data, sigmas="profile", alpha=False)
+    fold = onp.arange(n) % 2
+
+    def scene(values):
+        return Image(values["log_brightness"], pixel_scale_mas=2.0)
+
+    priors = nuis.priors()
+    priors["log_brightness"] = dist.Normal(np.zeros((npix, npix)), 3.0)
+    init = nuis.defaults()
+    init["log_brightness"] = onp.full((npix, npix), -np.log(npix**2))
+    task = dict(
+        fit_kwargs=lambda w: dict(
+            model=lambda **values: scene(values),
+            priors=priors,
+            data=(),
+            regularizers=[MaxEntropy(w)],
+        ),
+        init=init,
+        fit_options={"method": "lbfgs", "max_steps": 3},
+    )
+    with pytest.raises(ValueError, match="profile"):
+        cv_task(
+            1.0,
+            0,
+            fold,
+            make_term=lambda m: data.term(scene, nuis, mask=m),
+            **task,
+        )
+    # a fixed σ is a predictive score and still runs
+    fixed = lambda m: data.term(scene, nuis, mask=m, sigma=onp.ones(1))  # noqa: E731
+    record = cv_task(1.0, 0, fold, make_term=fixed, **task)
+    assert onp.isfinite(record["score"])

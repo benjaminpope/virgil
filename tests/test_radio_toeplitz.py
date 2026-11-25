@@ -3,6 +3,7 @@
 import math
 import warnings
 
+import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -1084,3 +1085,28 @@ def test_a_zero_max_offset_is_honoured_not_replaced_by_the_nuisance_bound(
     default = data.toeplitz(template, nuis, offsets="spread")
     assert zero.max_shift_pix == 0.0
     assert default.max_shift_pix > 0.0
+
+
+def test_profiled_gradient_vanishes_where_a_ddid_has_no_power():
+    """A ddid with ``c_sum == 0`` has zero value; its gradient is zero too
+    (a finite difference of the loss agrees with ``jax.grad``)."""
+    term, values, _ = _noise_free_term()
+    c_sum = term.arrays["c_sum"]
+    term = eqx.tree_at(lambda t: t.arrays["c_sum"], term, c_sum.at[0].set(0.0))
+    v = {**values, "eta": values["eta"] * 3.0}
+
+    def loss(eta):
+        chi2, log_norm = term.chi2_and_log_norm({**v, "eta": eta})
+        return 0.5 * chi2 + log_norm
+
+    direction = np.asarray(
+        onp.random.default_rng(3).normal(size=v["eta"].shape)
+    )
+    grad = jax.grad(loss)(v["eta"])
+    h = 1e-6
+    fd = (loss(v["eta"] + h * direction) - loss(v["eta"] - h * direction)) / (
+        2 * h
+    )
+    assert float(np.sum(grad * direction)) == pytest.approx(
+        float(fd), rel=1e-4, abs=1e-6
+    )

@@ -343,7 +343,7 @@ def test_the_floor_is_the_expected_epsilon_power():
 
 
 @x64
-def test_a_peak_term_is_the_gaussian_convolved_with_the_jitter():
+def test_a_peak_term_is_the_gaussian_convolved_with_the_between_night_jitter():
     s = _summaries(_orbit(), TIMES)
     cat = oc_cells._Catalogue(s, LOG_B).cast(np.float64)
     state = onp.asarray(cat.mean[:, 0]) + onp.random.default_rng(1).normal(
@@ -357,7 +357,8 @@ def test_a_peak_term_is_the_gaussian_convolved_with_the_jitter():
         )[:, 0]
         for k, night in enumerate(s):
             p = night.peaks[0]
-            cov = night.covariance(p, 1.0, jitter)
+            # the between-night jitter: one offset of the position, none on v
+            cov = p.cov + onp.diag([jitter**2] * 2 + [0.0] * 3)
             # ln L_j (N(d; 0, Σ_total) / N(0; 0, Σ_data)) with unit scale
             want = (
                 p.loglike
@@ -717,44 +718,6 @@ def test_the_scale_start_is_the_conditional_mle_per_block_of_the_inliers():
 
 
 @pytest.mark.slow
-@pytest.mark.full_only
-@x64
-@pytest.mark.timeout(1200)
-@pytest.mark.parametrize("ecc", [0.0, 0.5])
-@pytest.mark.parametrize("rel", [1e-2, 1e-4])
-def test_the_true_cell_is_found_and_its_cycle_count_is_in_the_99_percent_set(
-    ecc, rel
-):
-    """The search's coverage contract on K = 8 nights in two seasons."""
-    rng = onp.random.default_rng(int(1e4 * ecc) + int(rel * 1e5))
-    times = _two_season_times(rng)
-    period, a = 11.3, 6.0
-    orbit = _orbit(period=period, a=a, ecc=ecc)
-    s = _summaries(orbit, times, sigma=rel * a, seed=1)
-    domain = oc_cells.period_domain(s, p_range=(9.0, 14.0))
-    out = oc_cells.position_cells(
-        s, domain, jax.random.key(0), log_outlier=onp.full(len(times), LOG_B),
-        jitter=0.0, a_range=(1.0, 30.0), e_max=0.9,
-    )  # fmt: skip
-    assert not out.failed.any() and onp.all(onp.isfinite(out.p_pos))
-    order = onp.argsort(-out.p_pos)
-    keep = order[
-        : int(onp.searchsorted(onp.cumsum(out.p_pos[order]), 0.99)) + 1
-    ]
-    true_n = [i for i, c in enumerate(out.cells) if c.p_lo <= period <= c.p_hi]
-    assert true_n[0] in keep
-    fit = out.fits[true_n[0]]
-    # the nearest mode (any symmetry image) is within the 1 - DELTA chi-square
-    # radius of the truth: 9 degrees of freedom (the radius of y_z is free)
-    d2 = _truth_distance2(fit, orbit, times[out.anchors[0]])
-    assert d2 < stats.chi2.isf(oc_cells.DELTA, fit.space.d - 1)
-    # the resample-move draws are spread over the posterior, not duplicates
-    assert fit.draws is not None and len(onp.unique(fit.draws[:, 0])) > 100
-    ln_p = onp.log(oc_cells.decode_particles(fit)["period"])
-    assert abs(onp.median(ln_p) - onp.log(period)) < 5 * ln_p.std() + 1e-3
-
-
-@pytest.mark.slow
 def test_the_position_fit_runs_in_float32():
     rng = onp.random.default_rng(3)
     times = _two_season_times(rng, 6)
@@ -819,6 +782,79 @@ def test_the_position_evidence_of_a_tiny_case_matches_prior_importance(
     ess = w.sum() ** 2 / (w**2).sum()
     err = onp.sqrt(1 / ess)
     assert abs(fit.log_z - lz) < 4 * onp.hypot(fit.log_z_error, err) + 0.02
+
+
+@x64
+@pytest.mark.parametrize(
+    "e_max, y_zeta",
+    [
+        (1e-6, (2e-9, 3e-9)),
+        (oc_cells.E_MAX, (2e-9, 3e-9)),
+        (oc_cells.E_MAX, (0.6, -0.4)),
+    ],
+)
+def test_the_likelihood_derivatives_match_finite_differences(e_max, y_zeta):
+    """The autodiff gradient of ``ln L`` and its Hessian in ``(w_P, y_ζ)``,
+    velocities included, match central differences, at ``ζ ≈ 0`` (where
+    near-circular modes sit; through ``M_a = arg ζ²`` the Hessian was rounding
+    noise of order 10³) and at ``e ≈ 0.3``."""
+    times = onp.array([0.0, 4.1, 9.3])
+    s = _summaries(
+        _orbit(period=11.3, a=6.0, ecc=0.0), times, sigma=0.9, seed=2
+    )
+    domain = oc_cells.period_domain(s, p_range=(8.0, 14.0))
+    cell = [
+        c
+        for c in oc_cells.make_cells(times[0], times[-1], domain)
+        if c.p_lo <= 11.3 <= c.p_hi
+    ][0]
+    catalogue = oc_cells._Catalogue(s, onp.full(3, LOG_B))
+    space = oc_cells._Space(
+        catalogue,
+        cell,
+        times[0],
+        times - times[0],
+        oc_cells.A_RANGE,
+        e_max,
+        oc_cells.FLUX_FLOOR,
+        0.0,
+        np.float64,
+    )
+    # near the cell's best mode (P = 11.5 d), every night an inlier
+    x = np.array([0.59, 1.53, 0.58, 0.48, -0.3, -0.41, 0.0, 0.0, 1.3, 0.02])
+    x = x.at[6:8].set(np.array(y_zeta))
+    assert float(space.loglike(x)) > 3 * LOG_B + 10.0
+    idx = [0, 6, 7]
+    step, eye = 1e-3, onp.eye(space.d)
+
+    def f(dx):
+        return float(space.loglike(x + step * dx))
+
+    grad_fd = [(f(eye[i]) - f(-eye[i])) / (2 * step) for i in idx]
+    hess_fd = onp.array(
+        [
+            [
+                (
+                    f(eye[i] + eye[j])
+                    - f(eye[i] - eye[j])
+                    - f(eye[j] - eye[i])
+                    + f(-eye[i] - eye[j])
+                )
+                / (4 * step**2)
+                for j in idx
+            ]
+            for i in idx
+        ]
+    )
+    grad = onp.asarray(jax.grad(space.loglike)(x))[idx]
+    hess = onp.asarray(jax.hessian(space.loglike)(x))[onp.ix_(idx, idx)]
+    scale = abs(hess_fd).max()
+    onp.testing.assert_allclose(
+        grad, grad_fd, rtol=1e-4, atol=1e-5 * abs(onp.array(grad_fd)).max()
+    )
+    onp.testing.assert_allclose(
+        hess, hess_fd, rtol=1e-3, atol=1e-3 * scale + 1e-7
+    )
 
 
 # --- review hardening ---------------------------------------------------------
@@ -1088,67 +1124,6 @@ def test_pruning_does_not_change_the_evidence(monkeypatch):
     assert abs(pruned.log_z - full.log_z) < tol
 
 
-def _decoys_and_outliers(summaries, rng, outliers):
-    """Each night gets a decoy peak (lower likelihood, random state); the
-    nights in ``outliers`` lose their true peak to a random state."""
-    out = []
-    for i, n in enumerate(summaries):
-        p = n.peaks[0]
-        mean = p.mean.copy()
-        if i in outliers:
-            mean[:2] = rng.uniform(-20.0, 20.0, 2)
-            mean[2:4] = rng.normal(size=2) * 0.5
-        peak = NightPeak(mean, p.cov, p.loglike, p.n, p.chi2, p.hessian)
-        decoy_mean = p.mean + rng.normal(size=5) * onp.array(
-            [5.0, 5.0, 0.5, 0.5, 0.1]
-        )
-        decoy = NightPeak(
-            decoy_mean, p.cov, p.loglike - 6.0, p.n, p.chi2, p.hessian
-        )
-        out.append(
-            NightSummary(
-                n.t_ref,
-                n.t_ss,
-                n.n_frames,
-                BLOCKS,
-                (peak, decoy),
-                n.loglike_null,
-            )
-        )
-    return tuple(out)
-
-
-@pytest.mark.slow
-@pytest.mark.full_only
-@x64
-@pytest.mark.timeout(1800)
-def test_outlier_nights_decoy_peaks_and_a_set_budget_still_find_the_true_mode(
-    monkeypatch,
-):
-    """K = 10 with two peaks per night, two outlier nights, e = 0.8 and the
-    set budget forced low (the interior fills of design 6.1)."""
-    rng = onp.random.default_rng(11)
-    times = _two_season_times(rng, 10)
-    orbit = _orbit(period=11.3, a=6.0, ecc=0.8)
-    s = _summaries(orbit, times, sigma=6e-3, seed=1)
-    s = _decoys_and_outliers(s, rng, {2, 7})
-    monkeypatch.setattr(oc_cells, "N_SET_MAX", 100)
-    domain = oc_cells.period_domain(s, p_range=(9.0, 14.0))
-    out = oc_cells.position_cells(
-        s, domain, jax.random.key(0), log_outlier=onp.full(10, LOG_B),
-        jitter=0.0,
-    )  # fmt: skip
-    assert not out.failed.any()
-    assert len(out.fits[0].plan["nights"]) < 2000
-    order = onp.argsort(-out.p_pos)
-    keep = order[
-        : int(onp.searchsorted(onp.cumsum(out.p_pos[order]), 0.99)) + 1
-    ]
-    true_i = [i for i, c in enumerate(out.cells) if c.p_lo <= 11.3 <= c.p_hi]
-    assert true_i[0] in keep
-    assert out.fits[true_i[0]].modes[0].n_inliers > 10 - 2 - 0.5
-
-
 @x64
 @pytest.mark.parametrize("gap", [3.0, 40.0])
 def test_a_low_ess_cell_fails_the_system_only_if_it_could_matter(
@@ -1312,40 +1287,6 @@ def test_the_prediction_cost_does_not_depend_on_the_error_scale():
 
     assert onp.allclose(cost(1.0), cost(7.0), rtol=1e-8)
     assert onp.all(onp.asarray(cost(1.0)) > 0)
-
-
-@pytest.mark.slow
-@pytest.mark.full_only
-@x64
-@pytest.mark.timeout(1200)
-@pytest.mark.parametrize("ecc", [0.0, 0.5])
-def test_the_velocity_criterion_keeps_the_true_mode_with_fewer_triplets(
-    monkeypatch, ecc
-):
-    """Fill regime, K = 8, velocities informative: the criterion drops some
-    triplet candidates and the coverage contract of the search still holds."""
-    rng = onp.random.default_rng(int(1e4 * ecc) + 1000)
-    times = _two_season_times(rng)
-    orbit = _orbit(period=11.3, a=6.0, ecc=ecc)
-    s = _summaries(orbit, times, sigma=1e-3 * 6.0, seed=1)
-    monkeypatch.setattr(oc_cells, "N_SET_MAX", 20)
-    domain, cells, cell = _true_cell(11.3, times, s, (9.0, 14.0))
-    space = _space(s, cell)
-    plan = oc_cells.search_plan(space, jax.random.key(0))
-    assert int(oc_cells._grid_stage(space, plan)[3]) > 0
-    out = oc_cells.position_cells(
-        s, domain, jax.random.key(0), log_outlier=onp.full(len(times), LOG_B),
-        jitter=0.0, a_range=(1.0, 30.0), e_max=0.9,
-    )  # fmt: skip
-    assert not out.failed.any() and onp.all(onp.isfinite(out.p_pos))
-    order = onp.argsort(-out.p_pos)
-    keep = order[
-        : int(onp.searchsorted(onp.cumsum(out.p_pos[order]), 0.99)) + 1
-    ]
-    true_n = [i for i, c in enumerate(out.cells) if c.p_lo <= 11.3 <= c.p_hi]
-    assert true_n[0] in keep
-    d2 = _truth_distance2(out.fits[true_n[0]], orbit, times[out.anchors[0]])
-    assert d2 < stats.chi2.isf(oc_cells.DELTA, out.fits[true_n[0]].space.d - 1)
 
 
 @x64

@@ -61,7 +61,9 @@ $$V(\mathbf{q}) = \Big[\sum_k w_k\, e^{-2\pi i\,\mathbf{q}\cdot\mathbf{x}_k}\Big
 
 where $\mathbf{q}'$ is $\mathbf{q}$ rotated and shortened into the arm plane,
 and the image is the same Gaussian blobs summed on the pixel grid. The image
-floors `width` at one pixel.
+floors `width` at one pixel in the arm plane, before the inclination
+stretches it: at high inclination the sky minor-axis width of the rendered
+image can fall below a pixel. The visibilities are exact.
 
 **Choosing `nodes`.** A chain of Gaussians a distance $d$ apart has the
 transform of the continuous ridge plus copies shifted by $1/d$ along the
@@ -77,6 +79,35 @@ $2\pi q h/(6N)$ with $h$ the node spacing, below $10^{-3}$ at the default.
 Because `nodes` is static, give it explicitly when the shape parameters are
 traced (the default is computed from their starting values), and re-create
 the model with a larger value if a fit lengthens the arm substantially.
+
+## Crescent
+
+The brightness is $S(\mathbf{x})\,[\,1 - f/2 + f\,x/(2R)\,]$, with $S$ the
+indicator of the outer disk (radius $R$) minus the inner disk (radius $r$,
+centre displaced by $e\,(R-r)$ away from the bright side), $f$ the `fade`
+and $x$ the coordinate along the axis towards the bright side. Writing $T(\mathbf{q})$
+for the transform of $S$, whose disks are $R\,J_1(2\pi\rho R)/\rho$ with a
+shift phase on the inner one, the slash term is
+$\mathcal{F}[x\,S] = (i/2\pi)\,\partial T/\partial q_x$, taken as one
+forward-mode derivative of $T$ along the axis, so no Bessel-recurrence algebra is
+transcribed. The visibility is divided by its value at zero spacing, which makes
+the flux exactly one. `fade = 1` sends the brightness to zero on the far edge;
+the brightness is non-negative throughout `fade` in [0, 1]. The model is
+the geometry of Kamruddin & Dexter (2013) and the "xs-ring" of Benkevitch et al. (2016) without
+their Gaussian components: compose those with
+[`System`][virgil.models.System] and, to blur the composite as one, with
+[`Blurred`][virgil.models.Blurred]. A wide `fade` and `ecc` are partly
+degenerate at low resolution.
+
+## Blurred
+
+`Blurred(source, fwhm)` multiplies the visibilities by the transform of a
+circular Gaussian of FWHM `fwhm`, so the fitted model is the blurred image;
+`render` returns that image by FFT convolution on a zero-padded grid, which
+loses flux that spreads past the edge. It nests like
+[`Rotated`][virgil.models.Rotated]. The blur compounds with
+`CalibrationNuisance.blur_fwhm_mas` and `Image.blur_fwhm_mas` (a warning is
+raised), and a Gaussian component needs no wrapper: widen it.
 
 ## TruncatedCone
 
@@ -343,6 +374,14 @@ resolve the extra phase $2\pi q h\sin(\mathrm{inc})$ as well. Rendering a disk
 with a `height` splats rings on a fine radial grid and needs concrete
 parameters.
 
+**Radial support.** The range `[r_in, r_out]` of a `RadialGPFunction` (the
+`spectral_index`, or a coefficient inside `harmonics`) or a `MultipoleKernel`
+(the `harmonics` prior) is fixed when the disk is made. Fitting `profile.radius`
+or `profile.sigma` (the ring's width, not the GP's amplitude) does not move it,
+and the function is constant outside both ends, so choose the range to cover
+every radius the priors allow. In a callable model traced by `fit` or
+`numpyro_model`, give concrete `r_in` and `r_out`.
+
 **Precision.** A profile's reference nodes are built in the default precision
 when the disk is made, so to evaluate in float64 construct the disk inside
 `jax.enable_x64(True)`.
@@ -414,7 +453,7 @@ structure is not smeared). A component at zero offset is exactly unaffected.
 
 ## MultipoleField
 
-The prior on the field $\eta$ is separable,
+The log-brightness $\eta$ is a Gaussian process on a polar grid in the disc's frame, with a separable prior,
 
 $$\mathrm{Cov}[\eta(r, \theta), \eta(r', \theta')] =
 \sigma^2\, k_r(|r - r'|;\, \ell_r)\, k_\theta(\Delta\theta;\, \ell_\theta),$$
@@ -470,7 +509,17 @@ what `from_disk` stores. `System.resolved` returns the System with the ties
 baked in, for code that reads the pixels directly. The pixel scale comes from
 the Image.
 
-**References.** The whitened Gaussian-process latents of a radial profile follow
-FRAP (Yoshida et al. 2026, arXiv:2607.12618), and the polar-grid representation
-of a disk's brightness follows frank (Jennings et al. 2020, MNRAS 495, 3209).
-The code is a new implementation; none was copied.
+**References.** The construction is virgil's own: a polar grid in the disc's
+frame, a radial Matérn prior applied by its Cholesky factor, azimuthal
+multipoles, a $\tanh$ centre taper and an outer-edge fade. It shares only the
+exponential-of-a-GP image and whitened latents with the information field theory
+imaging papers (Arras et al. 2019, 2022; Edenhofer et al. 2024), which use a
+stationary prior on a Cartesian grid by the FFT. The whitened Gaussian-process
+latents of a radial profile follow FRAP (Yoshida et al. 2026, arXiv:2607.12618);
+frank (Jennings et al. 2020, MNRAS 495, 3209) represents a disk's brightness as
+a one-dimensional axisymmetric profile, which `MultipoleField` generalizes to a
+polar grid. The azimuthal spectral density has the Matérn amplitude form that
+NIFTy.re cites to Guardiani et al. (2022), see
+[references](../../references.md#guardiani2022); the radial prior is a real-space
+Matérn correlation, not a spectrum. Born & Wolf is cited above only for the
+$r^{|m|}$ regularity at the centre. The code is a new implementation; none was copied.

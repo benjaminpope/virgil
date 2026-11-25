@@ -118,6 +118,39 @@ jobs:
           fi
           python3 "$script" --since "origin/$BASE"
 
+  # A PR that bumps project.version must carry a carbon-page refresh for it
+  # (`python3 scripts/dev_carbon.py --release`); publish.yml enforces the
+  # same at release time. The base's copy of the script runs.
+  carbon-stamp:
+    name: carbon page refreshed for a version bump
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      BASE: ${{ github.base_ref }}
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: stamp matches a bumped version
+        run: |
+          git fetch -q --depth=1 origin "$BASE"
+          # The base's copy, run from outside the checkout with -P so the PR's
+          # files cannot shadow the standard library; until the base has the
+          # script (the PR that introduced it) the PR's own copy runs.
+          script=.github/scripts/check_carbon_fresh.py
+          if git show "origin/$BASE:$script" > "$RUNNER_TEMP/check.py" 2>/dev/null; then
+            script="$RUNNER_TEMP/check.py"
+          fi
+          # The description as it is now, so a re-run sees an added skip line.
+          PR_BODY=$(gh pr view "$PR" --json body -q .body)
+          export PR_BODY
+          python3 -P "$script" --pr "origin/$BASE"
+
   # Changelog fragments (changelog.d/README.md): only a release PR (head
   # branch `release*`) may edit CHANGELOG.md, so parallel PRs never conflict
   # there. A src/ change with no new fragment only warns.

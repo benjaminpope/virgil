@@ -5,8 +5,11 @@ Reads one or more JUnit reports from CI (the ``virgil-evidence-*`` artifacts
 of a run on main, or the nightly's ``junit-*`` artifacts) and writes
 
 - ``tests/test_durations.json``: seconds per test file, the largest over the
-  reports given. ``--shard K/N`` (tests/conftest.py) packs whole files into
+  reports given, without the ``full_only`` tests (the gate and main tiers do
+  not run them). ``--shard K/N`` (tests/conftest.py) packs whole files into
   shards with these, so module-scoped fixtures run once per job.
+- ``tests/test_durations_full.json``: the same with the ``full_only`` tests,
+  which the full and nightly tiers pack by (``VIRGIL_FULL_DURATIONS=1``).
 - with ``--over-budget SECONDS``, ``tests/over_budget.txt``: the tests that
   are not marked slow and took longer than SECONDS in any report, and their
   files. JUnit times include setup, so each such test is exempt from the
@@ -20,6 +23,7 @@ Only the standard library is used.
 """
 
 import argparse
+import ast
 import collections
 import json
 import re
@@ -30,6 +34,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DURATIONS = ROOT / "tests" / "test_durations.json"
+DURATIONS_FULL = ROOT / "tests" / "test_durations_full.json"
 OVER_BUDGET = ROOT / "tests" / "over_budget.txt"
 
 
@@ -47,25 +52,78 @@ def read(reports):
     tests = collections.defaultdict(float)
     for report in reports:
         for case in ET.parse(report).getroot().iter("testcase"):
-            if case.find("skipped") is not None:
+            skipped = case.find("skipped")
+            # An xfail ran (its time counts); any other skip did not.
+            if skipped is not None and skipped.get("type") != "pytest.xfail":
                 continue
             nid = node_id(case.get("classname"), case.get("name"))
             tests[nid] = max(tests[nid], float(case.get("time", 0)))
     return tests
 
 
-def per_file(reports):
+def per_file(reports, skip=frozenset()):
+    """Seconds per file; ``skip`` holds ``(path, function name)`` pairs.
+
+    A file whose tests are all skipped still gets an entry (0.0).
+    """
     files = collections.Counter()
     for report in reports:
         one = collections.Counter()
         for nid, seconds in read([report]).items():
-            one[nid.split("::")[0]] += seconds
+            path = nid.split("::")[0]
+            name = re.sub(r"\[.*$", "", nid.split("::")[-1])
+            one[path] += 0.0 if (path, name) in skip else seconds
         for path, seconds in one.items():
             files[path] = max(files[path], seconds)
     return files
 
 
+def marked(marker):
+    """``(path, function name)`` of the tests carrying ``@pytest.mark.<marker>``.
+
+    Read from the source (a decorator on the function or its class, or a
+    module ``pytestmark``), not by collecting: a collection run skips every
+    module whose optional dependencies are missing (``importorskip``) and
+    would lose their tests.
+    """
+
+    def names(node):
+        for dec in getattr(node, "decorator_list", []):
+            for part in ast.walk(dec):
+                if isinstance(part, ast.Attribute):
+                    yield part.attr
+
+    found = set()
+    for path in sorted((ROOT / "tests").glob("test_*.py")):
+        tree = ast.parse(path.read_text())
+        rel = f"tests/{path.name}"
+        module_marks = any(
+            isinstance(n, ast.Assign)
+            and any(getattr(t, "id", "") == "pytestmark" for t in n.targets)
+            and any(
+                isinstance(a, ast.Attribute) and a.attr == marker
+                for a in ast.walk(n.value)
+            )
+            for n in tree.body
+        )
+
+        def visit(body, inherited):
+            for node in body:
+                here = inherited or marker in names(node)
+                if isinstance(node, ast.ClassDef):
+                    visit(node.body, here)
+                elif isinstance(
+                    node, ast.FunctionDef
+                ) and node.name.startswith("test"):
+                    if here:
+                        found.add((rel, node.name))
+
+        visit(tree.body, module_marks)
+    return found
+
+
 def slow_tests():
+    """Node ids of the slow tests (a collection run: needs the test extras)."""
     out = subprocess.run(
         [sys.executable, "-m", "pytest", "-o", "addopts=", "-m", "slow"]
         + ["--collect-only", "-q", "-p", "no:cacheprovider", "-W", "ignore"],
@@ -82,14 +140,17 @@ def main():
     parser.add_argument("--over-budget", type=float, metavar="SECONDS")
     args = parser.parse_args()
 
-    files = per_file(args.reports)
-    DURATIONS.write_text(
-        json.dumps(
-            {k: round(v, 1) for k, v in sorted(files.items())}, indent=1
+    for path, files in (
+        (DURATIONS, per_file(args.reports, marked("full_only"))),
+        (DURATIONS_FULL, per_file(args.reports)),
+    ):
+        path.write_text(
+            json.dumps(
+                {k: round(v, 1) for k, v in sorted(files.items())}, indent=1
+            )
+            + "\n"
         )
-        + "\n"
-    )
-    print(f"{len(files)} files -> {DURATIONS.relative_to(ROOT)}")
+        print(f"{len(files)} files -> {path.relative_to(ROOT)}")
 
     if args.over_budget is not None:
         slow = slow_tests()

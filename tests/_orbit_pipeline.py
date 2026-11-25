@@ -79,6 +79,7 @@ CHECKS = [
     "ess",
     "divergences",
     "mode_converged",
+    "sampler_budget",
 ]
 
 

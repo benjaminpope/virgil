@@ -438,7 +438,8 @@ def rescale_errors(null_scene, data):
     -------
     data : OIData
         A copy with ``d_vis`` and ``d_phi`` scaled (the factors are already
-        applied); ``data.extras`` unchanged.
+        applied); ``data.extras`` unchanged. Calibration gains and closure-phase
+        offsets are not rescaled, so χ²_r need not be 1 for data that have them.
     factors : dict[str, float]
         ``{"vis": s_vis, "phi": s_phi}`` (``s_phi`` is 1 without phases).
 
@@ -646,8 +647,9 @@ def injection_recovery(
         (default min(64, draws)); grid points per search.
     uncertainty : bool, optional
         ``False`` skips the Laplace flux-uncertainty pass (about a third of
-        the cost): ``max_snr`` and ``flux_peak_steps`` are then NaN, and
-        every other statistic is unchanged.
+        the cost): ``max_snr`` and ``flux_peak_steps`` are then NaN, the
+        `DetectionMC` methods refuse ``stat="max_snr"``, and every other
+        statistic is unchanged.
     progress : bool, optional
         Show a ``tqdm`` bar.
 
@@ -934,6 +936,7 @@ _COMPATIBLE = (
     "template",
     "noise",
     "match_radius",
+    "uncertainty",
 )
 
 
@@ -1150,6 +1153,12 @@ class DetectionMC:
         if stat not in STATISTICS:
             raise ValueError(
                 f"stat must be one of {STATISTICS}, not {stat!r}."
+            )
+        if stat == "max_snr" and not self.meta.get("uncertainty", True):
+            raise ValueError(
+                "max_snr is NaN: this run used injection_recovery("
+                "uncertainty=False). Use 'delta_chi2' or 'log_bayes_factor', "
+                "or rerun with uncertainty=True."
             )
         x = onp.asarray(part[stat], dtype=float)
         return onp.where(onp.isnan(x), -onp.inf, x)

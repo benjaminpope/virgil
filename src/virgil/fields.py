@@ -7,8 +7,10 @@ standard-normal ``latent`` coefficients on the cosine (DCT-II) basis. Fitting
 the latents under a standard-normal prior is MAP estimation with a GP prior;
 see [Gaussian processes and IFT](../gp_and_ift.md).
 
-Source: Edenhofer et al. (2024), Arras et al. (2022), Enßlin et al. (2009),
-[references](../references.md#edenhofer2024). No code is taken from NIFTy.
+Source: exponential-of-a-GP image and whitened latents after Edenhofer et al.
+(2024), [references](../references.md#edenhofer2024); the DCT basis, Matérn-like
+spectrum and fixed zero mode are virgil's own (see the
+[references](../references.md#strang1999)). No code is taken from NIFTy.
 """
 
 import equinox as eqx
@@ -87,7 +89,10 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
     ℓ_col² λ_k)^(-order)``: correlated over ``ℓ_row`` down a column and over
     ``ℓ_col`` along a row. The constant mode is zero (a softmax image does not
     depend on it) and the spectrum is scaled so the field's pixel-averaged
-    variance is ``sigma²``.
+    variance is ``sigma²``. The reflecting boundary inflates the variance
+    towards the edges (up to about 4× at a corner against the interior, two
+    reflecting walls), so a log-normal flux is larger there than ``sigma``
+    suggests.
 
     Parameters
     ----------
@@ -147,7 +152,9 @@ class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     or sample them: their MAP values are biased (``fit`` warns).
     See [Gaussian processes and IFT](../gp_and_ift.md).
 
-    Source: Edenhofer et al. (2024), [references](../references.md#edenhofer2024).
+    Source: whitened latents as in Edenhofer et al. (2024),
+    [references](../references.md#edenhofer2024); the DCT basis is virgil's own
+    (see the module docstring).
 
     Parameters
     ----------
@@ -347,6 +354,10 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     standard normals. Priors:
     [`multipole_field_priors`][virgil.fields.multipole_field_priors]; kernel,
     tied geometry and fallback: [Model notes](models/notes.md#multipolefield).
+
+    Source: virgil's own construction; it shares only the exponential-of-a-GP
+    image and whitened latents with the IFT papers (Matérn amplitude:
+    Guardiani et al. 2022, [references](../references.md#guardiani2022)).
 
     Parameters
     ----------

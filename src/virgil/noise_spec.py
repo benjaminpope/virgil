@@ -306,6 +306,29 @@ def load_noise_spec(obj):
     return validate_noise_spec(raw)
 
 
+def _instrument_names(data, insname):
+    """The non-empty instrument names recorded for ``data`` (or ``insname``)."""
+    raw_ins = insname
+    if raw_ins is None:
+        raw_ins = (
+            data.get("insname")
+            if isinstance(data, Mapping)
+            else getattr(data, "insname", None)
+        )
+    if raw_ins is None:
+        return []
+    if isinstance(raw_ins, str):
+        return [raw_ins.strip()] if raw_ins.strip() else []
+    if isinstance(raw_ins, (tuple, list, set, frozenset, onp.ndarray)):
+        if isinstance(raw_ins, onp.ndarray):
+            raw_ins = raw_ins.reshape(-1)  # also a 0-d string array
+        return [
+            str(x).strip() for x in raw_ins if x is not None and str(x).strip()
+        ]
+    single = str(raw_ins).strip()
+    return [single] if single else []
+
+
 def instrument_match(data, spec, *, insname=None):
     """Check whether a dataset's recorded instrument matches ``spec``.
 
@@ -339,24 +362,7 @@ def instrument_match(data, spec, *, insname=None):
         return True
     spec_clean = str(spec_inst).strip()
 
-    raw_ins = insname
-    if raw_ins is None:
-        raw_ins = (
-            data.get("insname")
-            if isinstance(data, Mapping)
-            else getattr(data, "insname", None)
-        )
-    if raw_ins is None:
-        return True
-    if isinstance(raw_ins, str):
-        names = [raw_ins.strip()] if raw_ins.strip() else []
-    elif isinstance(raw_ins, (tuple, list, set, frozenset, onp.ndarray)):
-        names = [
-            str(x).strip() for x in raw_ins if x is not None and str(x).strip()
-        ]
-    else:
-        single = str(raw_ins).strip()
-        names = [single] if single else []
+    names = _instrument_names(data, insname)
     if not names:
         return True
 
@@ -395,24 +401,30 @@ def apply_noise_spec(data, spec, *, insname=None):
     ----------
     data : OIData
         Prepared interferometric dataset without pre-existing gains,
-        closure-phase offsets, or differential-phase nuisance modes.
+        closure-phase offsets, flux-spectrum modes, or differential-phase
+        nuisance modes.
     spec : Mapping
         Noise specification dictionary conforming to ``virgil.noise_spec/1``.
     insname : str or sequence of str, optional
-        Explicit instrument name(s) forwarded to
-        [`instrument_match`][virgil.noise_spec.instrument_match].
+        The data's instrument name(s), checked by
+        [`instrument_match`][virgil.noise_spec.instrument_match]; required
+        when the spec names an instrument, as `OIData` does not record
+        `INSNAME`.
 
     Returns
     -------
     OIData
         Dataset with the specification's white scales and nuisance modes
-        applied.
+        applied. Closure-phase offsets are
+        skipped on data without closure phases (baseline phases, projected
+        kernel phases).
 
     Raises
     ------
     ValueError
         If ``spec`` is invalid, if ``data`` already carries marginalized
-        gains, closure-phase offsets, or differential-phase modes, or if
+        gains, closure-phase offsets, differential-phase or flux-spectrum modes, if
+        the spec names an instrument and ``insname`` is not given, or if
         ``data`` is incompatible with the requested nuisance modes.
     NotImplementedError
         If ``spec["common_mode"]["visphi"]`` is positive and ``data`` carries
@@ -435,7 +447,6 @@ def apply_noise_spec(data, spec, *, insname=None):
     if any(
         getattr(b, "prior_width", None) is not None
         or getattr(b, "modes", None) is not None
-        or getattr(b, "raw_modes", None) is not None
         for b in visphi_blocks
     ):
         raise ValueError(
@@ -443,7 +454,24 @@ def apply_noise_spec(data, spec, *, insname=None):
             "apply_noise_spec refuses to stack onto data with existing "
             "nuisance modes."
         )
+    if any(
+        b.kind in ("flux", "nflux", "corrflux")
+        and getattr(b, "modes", None) is not None
+        for b in data.extras
+    ):
+        raise ValueError(
+            "Data already carry flux-spectrum nuisance modes; "
+            "apply_noise_spec refuses to stack onto data with existing "
+            "nuisance modes."
+        )
 
+    if str(spec["instrument"] or "").strip() and not _instrument_names(
+        data, insname
+    ):
+        raise ValueError(
+            "The spec names an instrument but OIData does not record "
+            "INSNAME: pass insname= so the instrument can be checked."
+        )
     instrument_match(data, spec, insname=insname)
 
     present_kinds = {b.kind for b in data.extras}
@@ -475,7 +503,15 @@ def apply_noise_spec(data, spec, *, insname=None):
     if gain_kwargs and has_gain_obs:
         out = out.with_gains(**gain_kwargs)
     if offset_kwargs and out.phi.size:
-        out = out.with_closure_offsets(**offset_kwargs)
+        if out.cp_flag and out.phi_mat is None:
+            out = out.with_closure_offsets(**offset_kwargs)
+        else:
+            warnings.warn(
+                f"closure_offsets {offset_kwargs} skipped: the data's phases "
+                "are not closure phases (baseline or projected phases).",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
     if visphi_active and visphi_blocks:
         raise NotImplementedError(
             "Applying common_mode.visphi to DifferentialPhase is not yet "

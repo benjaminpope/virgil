@@ -17,7 +17,10 @@ name: claude review
 #
 # GitHub cannot filter comment events by their text, so a comment without
 # @claude starts a run whose jobs are skipped (no runner time). Comments by
-# bots, Claude's own included, are skipped at the job level.
+# bots, Claude's own included, are skipped at the job level, as are comments
+# from anyone whose author_association is not OWNER, MEMBER or COLLABORATOR
+# (defence in depth: a drive-by commenter cannot start a run by typing
+# @claude).
 
 on:
   pull_request:
@@ -40,9 +43,11 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
        github.event.comment.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' &&
        github.event.comment.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '@claude'))
     runs-on: ubuntu-latest
     timeout-minutes: 30

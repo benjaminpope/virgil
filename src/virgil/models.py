@@ -86,6 +86,8 @@ from .spectra import Spectrum, _planck_ratio, flux_at
 
 __provisional__ = (
     "ArchimedeanSpiral",
+    "Crescent",
+    "Blurred",
     "LinearImage",
     "MultipoleDisk",
     "ThinRing",
@@ -198,6 +200,10 @@ def _positive(x):
 
 def _in_unit_interval(x):
     return (x > 0.0) & (x <= 1.0)
+
+
+def _in_closed_unit_interval(x):
+    return (x >= 0.0) & (x <= 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -899,7 +905,10 @@ class ArchimedeanSpiral(Component):
             blur = np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / width**2)
             return image + wk * blur, None
 
-        image, _ = jax.lax.scan(add_blob, np.zeros_like(xx), (x, y, weight))
+        # the first blob seeds the carry, so it has the step's own dtype
+        # (float64 parameters on a float32 grid promote); nodes >= 2
+        first, _ = add_blob(np.zeros_like(xx), (x[0], y[0], weight[0]))
+        image, _ = jax.lax.scan(add_blob, first, (x[1:], y[1:], weight[1:]))
         return image
 
 
@@ -1245,6 +1254,129 @@ class UniformDisk(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
         return np.where(xx**2 + yy**2 <= radius**2, 1.0, 0.0)
+
+
+def _disk_transform(u, v, radius_mas):
+    """Transform of a unit-brightness disk, in mas^2: ``2 pi R^2 J1(x) / x``."""
+    x = 2.0 * np.pi * mas2rad * radius_mas * safe_radius(u, v)
+    return 2.0 * np.pi * radius_mas**2 * bessel_jv_over_xv(1.0, x) + 0j
+
+
+class Crescent(Component):
+    """Crescent: an outer disk minus an offset inner disk, with a linear slash.
+
+    The brightness is the outer disk of radius ``r_out`` less an inner disk of
+    radius ``r_in``, displaced by ``ecc * (r_out - r_in)`` away from the bright
+    side, times a linear slash ``1 - fade/2 + fade * x / (2 r_out)`` with ``x``
+    along the axis towards the bright side. The slash is 1 on the bright edge,
+    ``1 - fade/2`` across the middle and ``1 - fade`` on the far edge of the
+    outer disk. [Model notes](../notes.md#crescent).
+
+    Source: Kamruddin & Dexter (2013),
+    [references](../../../references.md#kamruddin2013); Benkevitch et al.
+    (2016) "xs-ring", [references](../../../references.md#benkevitch2016).
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    Parameters
+    ----------
+    r_out, r_in : float or array-like
+        Outer and inner radii in milliarcseconds, ``0 <= r_in < r_out``.
+    ecc : float or array-like
+        Inner-disk displacement as a fraction of ``r_out - r_in``, in [0, 1].
+    fade : float or array-like
+        Slash depth, in [0, 1]; 0 is uniform.
+    pa : float or array-like
+        Position angle of the bright (thick) side in degrees, North to East.
+    flux, dra, ddec : optional
+        Relative weight (or spectrum) and sky offset in milliarcseconds,
+        as for any [`Component`][virgil.models.Component].
+
+    Examples
+    --------
+    >>> ring = Crescent(r_out=20.0, r_in=8.0, ecc=0.3, fade=0.5, pa=200.0)
+    """
+
+    r_out: jax.Array
+    r_in: jax.Array
+    ecc: jax.Array
+    fade: jax.Array
+    pa: jax.Array
+
+    def __init__(
+        self,
+        r_out,
+        r_in,
+        ecc=0.0,
+        fade=0.0,
+        pa=0.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+    ):
+        self.r_out = np.asarray(r_out, dtype=float)
+        self.r_in = np.asarray(r_in, dtype=float)
+        self.ecc = np.asarray(ecc, dtype=float)
+        self.fade = np.asarray(fade, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self._place(flux, dra, ddec)
+
+    def _shape_checks(self):
+        return (
+            ("r_in", self.r_in, lambda x: x >= 0.0, "non-negative"),
+            (
+                "r_out - r_in",
+                self.r_out - self.r_in,
+                _positive,
+                "positive (r_in < r_out)",
+            ),
+            ("ecc", self.ecc, _in_closed_unit_interval, "in [0, 1]"),
+            ("fade", self.fade, _in_closed_unit_interval, "in [0, 1]"),
+        )
+
+    def _axis(self):
+        """Unit vector (East, North) towards the bright side."""
+        pa = self.pa * dtor
+        return np.sin(pa), np.cos(pa)
+
+    def _centred_cvis(self, uu, vv):
+        uu, vv = np.broadcast_arrays(
+            np.asarray(uu, dtype=float), np.asarray(vv, dtype=float)
+        )
+        zero = np.zeros(())
+        return self._transform(uu, vv) / self._transform(zero, zero)
+
+    def _transform(self, uu, vv):
+        """Un-normalized visibility (mas^2) at ``(uu, vv)`` in wavelengths."""
+        ax_e, ax_n = self._axis()
+        shift = self.ecc * (self.r_out - self.r_in)
+
+        def top(u, v):
+            outer = _disk_transform(u, v, self.r_out)
+            inner = _disk_transform(u, v, self.r_in) * offset_phase(
+                u, v, -shift * ax_e, -shift * ax_n
+            )
+            return outer - inner
+
+        # x f(x) <-> (i / 2 pi) dF/dq along the axis: one directional derivative.
+        body, slope = jax.jvp(
+            top, (uu, vv), (np.full_like(uu, ax_e), np.full_like(vv, ax_n))
+        )
+        slash = 1j / (2.0 * np.pi * mas2rad) * slope
+        return (1.0 - self.fade / 2.0) * body + (
+            self.fade / (2.0 * self.r_out)
+        ) * slash
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        ax_e, ax_n = self._axis()
+        shift = self.ecc * (self.r_out - self.r_in)
+        inner2 = (xx + shift * ax_e) ** 2 + (yy + shift * ax_n) ** 2
+        hole = (inner2 <= self.r_in**2) & (self.r_in > 0.0)
+        inside = (xx**2 + yy**2 <= self.r_out**2) & ~hole
+        along = xx * ax_e + yy * ax_n
+        slash = 1.0 - self.fade / 2.0 + self.fade * along / (2.0 * self.r_out)
+        return np.where(inside, slash, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1792,16 +1924,28 @@ class GravityDarkenedStar(Component):
             total = np.sum(np.where(inside, value[:, None], 0.0), axis=0)
             return total / np.maximum(hits, 1)
 
-        # sub-pixel sample positions; the pixel centres are the grid xx, yy
+        # Sub-pixel samples are the pixel square turned with the lattice; the
+        # pixel centres are the grid xx, yy (rotated for a rotated grid).
         s = self._image_oversample
         nrow, ncol = xx.shape
+        xx, yy = np.asarray(xx), np.asarray(yy)
+        cx, cy = _lattice_axis(xx, yy)
         frac = ((np.arange(s) + 0.5) / s - 0.5) * pixel_scale_mas
-        sx = (xx[0, :, None] + frac).reshape(-1)  # (ncol * s,)
-        sy = (yy[:, 0, None] + frac).reshape(-1)  # (nrow * s,)
+        # offsets along the column axis (b) and the row axis (a); each set is
+        # symmetric about 0, so the axes' signs do not matter
+        ox = frac[None, :] * cx - frac[:, None] * cy  # (a, b)
+        oy = frac[None, :] * cy + frac[:, None] * cx
+
+        def sub_row(idx):
+            i, a = idx
+            sx = (xx[i][:, None] + ox[a]).reshape(-1)  # (ncol * s,)
+            sy = (yy[i][:, None] + oy[a]).reshape(-1)
+            return sample_row((sx, sy))
+
+        rows = np.repeat(np.arange(nrow), s)
+        subs = np.tile(np.arange(s), nrow)
         # one sub-row of samples at a time bounds memory by ncol * s * n_tri
-        sub_rows = jax.lax.map(
-            lambda y: sample_row((sx, y)), sy.astype(intensity.dtype)
-        )
+        sub_rows = jax.lax.map(sub_row, (rows, subs))
         mean = sub_rows.reshape(nrow, s, ncol, s).mean(axis=(1, 3))
         # |normal| = 2 x area, so cosine carries twice the projected area
         # in the DFT weights; the pixel area carries the same factor here
@@ -1839,7 +1983,25 @@ class GravityDarkenedStar(Component):
         return coll
 
 
-def _blur_in_plane(image, fwhm, pa, stretch, pixel_scale_mas):
+def _lattice_axis(xx, yy):
+    """Unit sky vector of the grid's x axis: ``(cos, -sin)`` of its rotation.
+
+    That is ``rotate`` of ``(1, 0)`` by ``rotation_deg``, exactly ``(1, 0)``
+    for an unrotated grid, whose columns run to -x. A one-column grid takes
+    its axis from the rows; a single pixel has none, so it counts as unrotated.
+    Valid only for grids that ``rotate`` produces: orthogonal, square, not mirrored.
+    """
+    if xx.shape[1] > 1:
+        dx, dy = xx[0, 0] - xx[0, 1], yy[0, 0] - yy[0, 1]
+    elif xx.shape[0] > 1:  # the row step is scale * (sin, cos)
+        dx, dy = yy[0, 0] - yy[1, 0], xx[1, 0] - xx[0, 0]
+    else:
+        return 1.0, 0.0
+    norm = np.hypot(dx, dy)
+    return dx / norm, dy / norm
+
+
+def _blur_in_plane(image, fwhm, pa, stretch, pixel_scale_mas, xx, yy):
     """``image`` convolved with a Gaussian of FWHM ``fwhm`` (mas) that is
     isotropic in the plane of a disk inclined by ``stretch = cos(inc)``.
 
@@ -1847,7 +2009,8 @@ def _blur_in_plane(image, fwhm, pa, stretch, pixel_scale_mas):
     shift. Its minor-axis sigma on the sky is kept at least half a pixel (or
     ``sigma``, if smaller), so a near edge-on kernel cannot fall between pixel
     centres, and the stretch is capped at 1 so that a face-on kernel stays
-    isotropic.
+    isotropic. ``xx, yy`` are the sky coordinates of the pixel centres: on a
+    rotated grid the kernel is turned with the lattice.
     """
     npix = image.shape[0]
     nker = npix + 1 - npix % 2
@@ -1856,6 +2019,9 @@ def _blur_in_plane(image, fwhm, pa, stretch, pixel_scale_mas):
     psf_stretch = np.minimum(
         np.maximum(stretch, 0.5 * pixel_scale_mas / sigma_mas), 1.0
     )
+    # the kernel's pixel offsets, turned into sky axes with the lattice
+    c, d = _lattice_axis(xx, yy)
+    kx, ky = c * kx - d * ky, d * kx + c * ky
     kx_ell, ky_ell = undo_elliptical_transf_coord(kx, ky, pa, psf_stretch)
     psf = np.exp(-0.5 * (kx_ell**2 + ky_ell**2) / sigma_mas**2)
     return fftconvolve(image, psf, mode="same")
@@ -2001,7 +2167,7 @@ class ModulatedGaussianRim(Component):
         ring = ring * np.sum(az_factors, axis=0)
 
         return _blur_in_plane(
-            ring, self.fwhm, self.pa, stretch, pixel_scale_mas
+            ring, self.fwhm, self.pa, stretch, pixel_scale_mas, xx, yy
         )
 
 
@@ -2629,7 +2795,11 @@ class FlaredDisk(_PixelRendered):
     $\sin i$ surface projection of Blakely et al. (2024), whereas
     [`MultipoleDisk`][virgil.models.MultipoleDisk] with
     [`PowerLawHeight`][virgil.models.PowerLawHeight] uses the exact $\tan i$
-    thin-surface projection.
+    thin-surface projection. Eq. 3 assigns the brightness per sky pixel with no
+    area Jacobian, so the ring is brighter on one side, a spurious first
+    harmonic of amplitude about ``flaring * aspect * tan(inc)``; a matching
+    ``PowerLawHeight`` takes ``h_ref = -aspect * radius``,
+    ``r_ref = radius`` and ``psi = flaring``.
 
     Source: Blakely et al. (2024), §III,
     [references](../../../references.md#blakely2024).
@@ -5298,7 +5468,7 @@ class MultipoleDisk(Component):
         if self.blur_fwhm is None:
             return image
         return _blur_in_plane(
-            image, self.blur_fwhm, self.pa, stretch, pixel_scale_mas
+            image, self.blur_fwhm, self.pa, stretch, pixel_scale_mas, xx, yy
         )
 
 
@@ -5310,7 +5480,7 @@ def _multipole_disks(model, prefix=""):
     elif isinstance(model, System):
         for name, part in model.components.items():
             yield from _multipole_disks(part, f"{prefix}{name}.")
-    elif isinstance(model, Rotated):
+    elif isinstance(model, _Wrapper):
         yield from _multipole_disks(model.source, f"{prefix}source.")
     elif isinstance(model, Attached):
         yield from _multipole_disks(model.component, f"{prefix}component.")
@@ -5720,6 +5890,12 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
         u, v = rotate(u, v, -model.rotation_deg)
         ra0, dec0 = rotate(ra0, dec0, -model.rotation_deg)
         return _smeared(model.source, u, v, wavel, bandwidth, ra0, dec0)
+    if isinstance(model, Blurred):
+        # A blur commutes with the shift that the smearing multiplies by.
+        q2 = (u * u + v * v) / wavel**2
+        return gaussian_taper(q2, model.fwhm) * _smeared(
+            model.source, u, v, wavel, bandwidth, ra0, dec0
+        )
     if isinstance(model, OrbitalBinary):
         raise TypeError(
             "OrbitalBinary changes with time: smear a snapshot, "
@@ -5727,14 +5903,52 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
         )
     raise TypeError(
         "Bandwidth smearing supports Systems of Component shapes, Resolved, "
-        "BinaryModelCartesian, BinaryModelAngular and Rotated of these (not "
+        "BinaryModelCartesian, BinaryModelAngular, Rotated and Blurred of these (not "
         "Image, whose flux is not at its offset); got "
         f"{type(model).__name__}. Remove the bandwidth (with_bandwidth(None))"
         " to evaluate it unsmeared."
     )
 
 
-class Rotated(SourceModel):
+class _Wrapper(SourceModel):
+    """A model that transforms one ``source`` (private base of
+    [`Rotated`][virgil.models.Rotated] and [`Blurred`][virgil.models.Blurred]).
+    """
+
+    source: SourceModel
+
+    def resolved(self):
+        source = self.source.resolved()
+        if source is self.source:
+            return self
+        return eqx.tree_at(lambda r: r.source, self, source)
+
+    def _weight(self, wavel=None):
+        return self.source._weight(wavel)
+
+    def total_spectrum(self, wavel):
+        return self.source.total_spectrum(wavel)
+
+    def is_physical(self):
+        return self.source.is_physical()
+
+    @property
+    def time_dependent(self):
+        return self.source.time_dependent
+
+    @property
+    def broadcast_in_time(self):
+        return self.source.broadcast_in_time
+
+    def at(self, mjd, t_ref=0.0):
+        if not self.time_dependent:
+            return self
+        return eqx.tree_at(
+            lambda r: r.source, self, self.source.at(mjd, t_ref)
+        )
+
+
+class Rotated(_Wrapper):
     """A model rotated on the sky about the phase centre.
 
     The rotation is by ``rotation_deg`` from North towards East, and the angle
@@ -5761,7 +5975,6 @@ class Rotated(SourceModel):
     True
     """
 
-    source: SourceModel
     rotation_deg: jax.Array
 
     def __init__(self, source, rotation_deg):
@@ -5772,38 +5985,81 @@ class Rotated(SourceModel):
         u, v = rotate(u, v, -self.rotation_deg)
         return self.source.model(u, v, wavel)
 
-    def resolved(self):
-        source = self.source.resolved()
-        if source is self.source:
-            return self
-        return eqx.tree_at(lambda r: r.source, self, source)
-
     def _image(self, xx, yy, pixel_scale_mas):
         xx, yy = rotate(xx, yy, -self.rotation_deg)
         return self.source._image(xx, yy, pixel_scale_mas)
 
-    def _weight(self, wavel=None):
-        return self.source._weight(wavel)
 
-    def total_spectrum(self, wavel):
-        return self.source.total_spectrum(wavel)
+class Blurred(_Wrapper):
+    """A model convolved with a circular Gaussian.
+
+    The visibilities are those of ``source`` times the Gaussian's transform,
+    so the model is the blurred image. The FWHM is an ordinary (fittable)
+    parameter. [`render`][virgil.models.SourceModel.render] shows the blurred
+    image, by FFT convolution on a zero-padded grid, so flux spreading past the
+    edges is lost. It compounds with ``blur_fwhm_mas`` of an
+    [`Image`][virgil.models.Image] and of
+    [`CalibrationNuisance`][virgil.radio.CalibrationNuisance]; use one.
+    Gaussians need no blur: widen them instead.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    Parameters
+    ----------
+    source : SourceModel
+        The model to blur.
+    fwhm : float
+        Full width at half maximum of the Gaussian in milliarcseconds.
+
+    Examples
+    --------
+    >>> disk = Blurred(UniformDisk(diam=4.0), fwhm=1.0)
+    >>> bool(abs(disk.model(np.array([3.0]), np.array([1.0]), 1e-6)[0]) < 1)
+    True
+    """
+
+    fwhm: jax.Array
+
+    def __init__(self, source, fwhm):
+        self.source = source
+        self.fwhm = np.asarray(fwhm, dtype=float)
+        if any(
+            image.blur_fwhm_mas is not None
+            for _, image in _scene_images(source, kinds=(Image, LinearImage))
+        ):
+            warnings.warn(
+                "Blurred wraps an Image with blur_fwhm_mas set; the two "
+                "Gaussians compound, blurring the model twice. Use one.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    def _shape_checks(self):
+        return (("fwhm", self.fwhm, lambda x: x >= 0.0, "non-negative"),)
+
+    def __check_init__(self):
+        _check_shape_params(type(self).__name__, self._shape_checks())
 
     def is_physical(self):
-        return self.source.is_physical()
+        return self.source.is_physical() & np.all(self.fwhm >= 0.0)
 
-    @property
-    def time_dependent(self):
-        return self.source.time_dependent
+    def _taper(self, u, v, wavel):
+        uu, vv = u / wavel, v / wavel
+        return gaussian_taper(uu * uu + vv * vv, self.fwhm)
 
-    @property
-    def broadcast_in_time(self):
-        return self.source.broadcast_in_time
+    def model(self, u, v, wavel):
+        return self.source.model(u, v, wavel) * self._taper(u, v, wavel)
 
-    def at(self, mjd, t_ref=0.0):
-        if not self.time_dependent:
-            return self
-        return eqx.tree_at(
-            lambda r: r.source, self, self.source.at(mjd, t_ref)
+    def model_on_grid(self, u, v, wavel, grid):
+        return self.source.model_on_grid(u, v, wavel, grid) * self._taper(
+            u, v, wavel
+        )
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        return gaussian_smooth(
+            self.source._image(xx, yy, pixel_scale_mas),
+            self.fwhm / pixel_scale_mas,
         )
 
 
@@ -6460,12 +6716,12 @@ def _cvis_gaussian_envelope(u, v, fwhm):
 
 def _scene_images(scene, prefix="", kinds=Image):
     """Yield ``(path prefix, Image)`` for each Image in a scene, walking
-    ``System`` components and ``Rotated`` sources (``"env."``, ``"source."``).
+    ``System`` components and ``Rotated`` or ``Blurred`` sources (``"env."``, ``"source."``).
     ``kinds`` widens the match, e.g. to ``(Image, LinearImage)``."""
     if isinstance(scene, kinds):
         yield prefix, scene
     elif isinstance(scene, System):
         for name, part in scene.components.items():
             yield from _scene_images(part, prefix + name + ".", kinds)
-    elif isinstance(scene, Rotated):
+    elif isinstance(scene, (Rotated, Blurred)):
         yield from _scene_images(scene.source, prefix + "source.", kinds)
