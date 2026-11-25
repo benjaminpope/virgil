@@ -64,8 +64,8 @@ def _flux_converged(grad, curvature, loglike, scale=0.0):
     That bound covers the sum only. Each residual r_i = (m_i - d_i)/σ_i is
     itself a difference of terms that may be much larger than r_i, with a
     rounding error δr_i ≈ ε(|m_i| + |d_i|)/σ_i, so ℓ = -½Σr_i² carries
-    δℓ = Σ r_i δr_i. For rounding errors independent across the N rows (the
-    probabilistic bound of Higham & Mary 2019, SIAM J. Sci. Comput. 41),
+    δℓ = Σ r_i δr_i. For rounding errors independent across the N rows (errors
+    add in quadrature, the rule of thumb of Higham 2002),
     |δℓ| ≈ ε sqrt(Σ r_i² s_i²) ≈ ε sqrt(2|ℓ|) · rms(s), s_i = (|m_i| + |d_i|)/σ_i,
     taking r_i uncorrelated with s_i. It exceeds the sum's bound only near a
     perfect fit, where |ℓ| is a few nats and rms(s) ~ 10³ to 10⁴. The resolution

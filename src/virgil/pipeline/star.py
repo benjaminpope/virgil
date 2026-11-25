@@ -902,9 +902,7 @@ def _compare(registry, reports, child, n):
 
 
 @in_float64
-def _shape_ratios(
-    data, entry, diam, prior_std
-):  # deliberate: float64 boundary
+def _shape_ratios(data, entry, diam, prior_std):
     """Expected σ_posterior/σ_prior of a model's shape parameters, predicted before
     sampling: the linear Fisher information of V² at the parent's diameter and
     the prior centre, marginalized over the diameter, plus the prior's precision.
