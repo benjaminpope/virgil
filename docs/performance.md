@@ -26,3 +26,26 @@ version and hardware, so it is safe to share and to delete. It is off by default
 
 On a cluster, put it on node-local or per-user scratch storage rather than a
 shared path that many jobs write at once.
+
+## Timing small NUTS fits: time per step, not per gradient
+
+For a model with a handful of parameters, such as a Level A orbit fit
+(`PositionData` astrometry, seven sampled parameters), compare samplers by
+the warm time per leapfrog step: the warm sampling time divided by
+`extra_fields=("num_steps",)` summed over the chains. A single jitted
+`value_and_grad` call is the wrong figure. It is dominated by JAX's dispatch of
+a small pytree, and NUTS never pays it, because the gradient runs inside
+NumPyro's compiled `while_loop`.
+
+On an Apple M4 (one thread, float64) the orbit gradient arithmetic is about
+1.5 µs, the Kepler solve about 5 µs per step, and a fixed-length HMC step on
+the full orbit model about 35 µs. About 12–18 µs of that is NumPyro's
+leapfrog loop, which a seven-dimensional Gaussian pays too. The rest is the
+per-site transforms, log-determinants and prior log-densities of the model
+wrapper. Declaring the angle sites with `numpyro.deterministic` costs
+nothing inside the sampler: XLA removes them from the gradient program
+(measured: 36 against 37 µs per step with and without them).
+
+Sampling the seven parameters as one packed unconstrained vector, with the
+same density, took the same step from 35.5 to 26.4 µs in a trial. That
+changes the sample-site structure, so it is not in the default path.
