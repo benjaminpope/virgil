@@ -188,7 +188,18 @@ def flat_nuts_sampler(
     def sample(seed=0, init=None):
         key, k_init = jax.random.split(jax.random.PRNGKey(seed))
         if init is None:
-            starts = _prior_starts(priors, k_init, num_chains)
+            keys = jax.random.split(k_init, num_chains * len(priors)).reshape(
+                num_chains, len(priors), -1
+            )
+            starts = [
+                {
+                    (vector_site(p) if is_angle_vector(pr) else p): pr.sample(
+                        keys[c, i]
+                    )
+                    for i, (p, pr) in enumerate(priors.items())
+                }
+                for c in range(num_chains)
+            ]
         elif isinstance(init, dict):
             starts = [init] * num_chains
         else:
@@ -201,18 +212,3 @@ def flat_nuts_sampler(
         return unpack_all(draws), info
 
     return sample
-
-
-def _prior_starts(priors, key, n):
-    keys = jax.random.split(key, n * len(priors)).reshape(n, len(priors), -1)
-    out = []
-    for c in range(n):
-        out.append(
-            {
-                (vector_site(p) if is_angle_vector(pr) else p): pr.sample(
-                    keys[c, i]
-                )
-                for i, (p, pr) in enumerate(priors.items())
-            }
-        )
-    return out

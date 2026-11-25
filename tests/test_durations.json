@@ -42,6 +42,7 @@
  "tests/test_flared_disk_phase.py": 79.8,
  "tests/test_flared_vs_multipole_disk.py": 8.6,
  "tests/test_flat_coordinates.py": 61.9,
+ "tests/test_flat_nuts.py": 27.0,
  "tests/test_gains.py": 38.1,
  "tests/test_gauss_newton.py": 15.3,
  "tests/test_gravity_darkened_chromatic.py": 70.7,
