@@ -1,0 +1,1 @@
+Two pipeline tests (`test_grid_is_capped_at_an_odd_number_and_the_step_reported`, `test_a_prior_that_excludes_the_truth_is_reported_at_the_fit[flux prior below the truth]`) are exempted from the per-test time budget in `tests/over_budget.txt`, each with its measured durations. No regression was found and nothing could be trimmed. Needs maintainer approval.
