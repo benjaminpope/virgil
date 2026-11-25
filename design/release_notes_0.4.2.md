@@ -145,7 +145,8 @@ Trust status of each piece, from the radio register:
 - **`position_cells` can return NaN `p_pos` (with `failed` set)** for a system whose alias cell next to the true period
   has an importance-sampling ESS below 10 and a likelihood-peak bound too loose to prove it negligible. Seen on the
   two-season, 5-sigma-jitter test, seed 0, where that cell is 42 nats below the true one. The result is flagged, not
-  silently wrong. Tracked for 0.4.3 (orbit audit, census-gated).
+  silently wrong. Tracked for 0.4.3 (orbit audit, census-gated) in
+  [#778](https://github.com/benjaminpope/virgil/issues/778).
 - **Nightly [#574](https://github.com/benjaminpope/virgil/issues/574) is red** on two lowest-dependency-pin tests,
   `test_the_shape_gate_decides_on_both_sides_of_the_threshold[data2-4.0-True]` and
   `test_optimized_flux_grid_converges_everywhere_in_float32`; the fix is on `main`, not yet in this candidate.
