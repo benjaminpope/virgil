@@ -418,3 +418,21 @@ def test_optimized_flux_grid_converges_everywhere_in_float32():
         with jax.enable_x64(False):
             flux = optimized_flux_grid(BinaryModelCartesian, data, _grid())
     assert onp.all(onp.isfinite(onp.asarray(flux)))
+
+
+def test_flux_convergence_allows_for_the_measured_rounding_noise():
+    """Near a perfect fit (ℓ = -4.6) the sum's bound is 5e-6 nats, but each
+    residual is a difference of large terms and ℓ scatters by ~2e-4 in float32
+    (measured by float32 against float64 over ±20 ulp steps of the flux). A
+    decrement of 1e-5 nats is then rounding, not a flux still to find."""
+    from virgil.grid_fit import _flux_converged
+
+    f32 = np.float32
+    c, ll = f32(-7e8), f32(-4.6)
+    g = f32(np.sqrt(2 * 7e8 * 1e-5))  # a decrement of 1e-5 nats
+    assert not bool(_flux_converged(g, c, ll))
+    assert bool(_flux_converged(g, c, ll, f32(2e-4)))
+    # noise never excuses a real gain: 1e-2 nats is above 2e-4
+    assert not bool(
+        _flux_converged(f32(np.sqrt(2 * 7e8 * 1e-2)), c, ll, f32(2e-4))
+    )

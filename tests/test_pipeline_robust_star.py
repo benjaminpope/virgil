@@ -563,24 +563,14 @@ def test_the_shape_gate_decides_on_both_sides_of_the_threshold(
 ):
     ratios = _shape_ratios(data, diam)
     # Against an independent Hankel-transform Fisher matrix, not numbers
-    # copied from a run. The float32 Jacobian of the gate agrees to ~1.6%.
+    # copied from a run. The gate runs in float64 whatever the ambient
+    # precision, so it agrees to the 1e-4 of the independent central difference.
     onp.testing.assert_allclose(
         tuple(ratios.values()),
         _independent_shape_ratios(data, diam),
-        rtol=2e-2,
-    )
-    assert all(r < 0.8 for r in ratios.values()) is constrained
-    # In float64 (this module is skipped from CI's float64 job) the formula
-    # itself agrees to 1e-4, so the 2e-2 above is float32 conditioning only.
-    from virgil._precision import cast_tree
-
-    with jax.enable_x64(True):
-        wide = _shape_ratios(cast_tree(data, "float64"), diam)
-    onp.testing.assert_allclose(
-        tuple(wide.values()),
-        _independent_shape_ratios(data, diam),
         rtol=1e-4,
     )
+    assert all(r < 0.8 for r in ratios.values()) is constrained
 
 
 def test_a_constrained_shape_is_fitted_and_kept_when_the_data_resolve_it(

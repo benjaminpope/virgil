@@ -901,10 +901,17 @@ def _compare(registry, reports, child, n):
     }
 
 
-def _shape_ratios(data, entry, diam, prior_std):
+@in_float64
+def _shape_ratios(
+    data, entry, diam, prior_std
+):  # deliberate: float64 boundary
     """Expected σ_posterior/σ_prior of a model's shape parameters, predicted before
     sampling: the linear Fisher information of V² at the parent's diameter and
     the prior centre, marginalized over the diameter, plus the prior's precision.
+    Run in float64: the information matrix is nearly singular along the ridge
+    of the diameter with the shape (marginal σ_L ~ 80 σ_prior when the data do
+    not constrain it), so a float32 Jacobian moved the ratios by 1.6 % on one
+    platform and 2.5 % on another.
     """
     import jax
     import jax.numpy as np

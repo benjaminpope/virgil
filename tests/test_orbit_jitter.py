@@ -186,8 +186,10 @@ def test_fit_chi2_reports_quoted_and_total_errors():
 @pytest.mark.full_only
 @pytest.mark.xfail(
     strict=False,
-    reason="seed 0: an off-truth cell's importance sampling is flagged "
-    "(ESS 1.4), so p is NaN; the C-steps hold sigma_J at its reference",
+    reason="seed 0: alias cell 6 (P 11.37-11.72 d, beside the true cell) has "
+    "importance-sampling ESS 5.06 and a likelihood-peak bound too loose to "
+    "prove it negligible, so position_cells marks the system failed and p_pos "
+    "is NaN (virgil#778, planned for 0.4.3)",
 )
 @x64
 @pytest.mark.timeout(6000)
@@ -195,8 +197,9 @@ def test_the_period_is_calibrated_with_injected_jitter_end_to_end():
     """Two seasons, jitter 5 sigma, three seeds (about 20 min each on a laptop): no
     cell is flagged, the true ln P lies in the central 99 % of the posterior
     draws and the posterior median jitter is within a factor 3 of the truth.
-    Seed 0 currently flags a wrong-period cell (importance ESS 1.4, 40 nats
-    below the true cell): a known search/proposal gap, hence the xfail."""
+    Seed 0 currently fails on the alias cell next to the true one (importance
+    ESS 5.06, 42 nats below the true cell, bound too loose to discard it):
+    virgil#778, hence the xfail."""
     j_true, n_ok, n_run = 5 * SIGMA, 0, 3
     for seed in range(n_run):
         rng = onp.random.default_rng(seed)

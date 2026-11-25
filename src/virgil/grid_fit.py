@@ -45,10 +45,12 @@ def _best_grid_flux(loglike_im, grid, params, flux_key):
     return best_flux, np.nanmax(loglike_im, axis=flux_axis)
 
 
-def _flux_converged(grad, curvature, loglike):
+def _flux_converged(grad, curvature, loglike, noise=0.0):
     """Whether a flux is at its maximum to the rounding error of ``loglike``.
 
     Pass ℓ = -½χ², without the normalization, which can have either sign.
+    ``noise`` is the measured scatter of ℓ under rounding (`_rounding_noise`);
+    the resolution is the larger of it and the bound below.
 
     The log likelihood still to gain is estimated by the Newton decrement
     g²/(2|c|), exact for a quadratic. A point has converged when that is
@@ -58,11 +60,33 @@ def _flux_converged(grad, curvature, loglike):
     told from rounding in this dtype. In float32 at ℓ = -5000 that leaves
     offsets of up to ~0.1σ (6e-3 nats = ½(0.11σ)²·|c|σ²), as the gate it
     replaces (a quarter σ on the flux, with no derivation) noted.
+
+    The bound covers the sum only. Where the fit is nearly perfect (|ℓ| of a
+    few nats) each residual is a difference of terms much larger than itself,
+    and its own rounding error, ~ε|model|/σ, dominates by orders of magnitude;
+    ``noise`` is that error, measured.
     """
+    resolution = np.maximum(_gauss_newton.rounding_dtol(loglike), noise)
     return (curvature < 0.0) & (
-        0.5 * grad**2 / np.abs(curvature)
-        <= _gauss_newton.rounding_dtol(loglike)
+        0.5 * grad**2 / np.abs(curvature) <= resolution
     )
+
+
+def _rounding_noise(flux_loglike, flux, coord_vals, dtype):
+    """Scatter (nats) of the log likelihood under rounding, at ``flux``.
+
+    The range of ℓ over fluxes ±1 and ±2 ulp-scale steps (ε·flux) from the
+    point. The steps are so small that the curvature moves ℓ by far less than
+    rounding does (½|c|(2εf)² against the scatter), so what ranges is rounding.
+    """
+    eps = np.finfo(dtype).eps
+    steps = (
+        np.array([-2.0, -1.0, 1.0, 2.0])
+        * eps
+        * np.maximum(np.abs(flux), np.finfo(dtype).tiny)
+    )
+    values = jax.vmap(lambda d: flux_loglike(flux + d, coord_vals))(steps)
+    return np.max(values) - np.min(values)
 
 
 @eqx.filter_jit
@@ -157,7 +181,12 @@ def _refine_flux_grid(
         # (signed, normalized) log likelihood.
         values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
         resid = whitened_residuals(build_model(model, params, values), data)
-        converged = _flux_converged(grad, curvature, -0.5 * np.sum(resid**2))
+        converged = _flux_converged(
+            grad,
+            curvature,
+            -0.5 * np.sum(resid**2),
+            _rounding_noise(flux_loglike, flux, coord_vals, best.dtype),
+        )
         return flux, best, converged
 
     flux, best_loglike, success = map_points(
