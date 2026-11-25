@@ -48,6 +48,7 @@ EXPECTED = {
     "virgil.radio_clean": {"*"},
     "virgil.radio_toeplitz": {"*"},
     "virgil.crossval": {"*"},
+    "virgil.flat_nuts": {"*"},
     "virgil.noise_spec": {"*"},
     "virgil.pipeline": {"*"},
     "virgil._cache": {"enable_compilation_cache"},

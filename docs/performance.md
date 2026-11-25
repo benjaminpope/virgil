@@ -1,5 +1,26 @@
 # Performance
 
+## Small NUTS fits: `flat_nuts`
+
+NumPyro's NUTS samples every prior at its own site, so each leapfrog step of a
+model with a handful of parameters, such as a seven-parameter orbit fit to
+astrometry, spends most of its time in per-site bookkeeping. Compare samplers
+by the warm time per leapfrog step, not by a jitted gradient call (which is
+dominated by JAX dispatch that NUTS never pays), with one chain.
+[`flat_nuts_sampler`][virgil.flat_nuts.flat_nuts_sampler] packs the unconstrained
+coordinates into one vector and runs blackjax NUTS on it, for the same posterior
+and the same site names.
+
+On an Apple M4 (one thread, float64, 4 vectorized chains, 1000 + 1000
+iterations, target acceptance 0.9, tree depth 8, starts near the optimum) a
+warm orbit fit took 0.8-1.4 s against 4.8 s for NumPyro's NUTS, and the minimum
+ESS per second rose from about 580 to 2250-3940. A fixed-length HMC step on the
+packed potential alone took 26 against 36 µs. Two things differ from
+`numpyro_model`: `init` is in constrained site values (NumPyro's `init_params`
+are unconstrained), and blackjax does not search for an initial step size, so
+chains started from prior draws can get stuck (a warning says so); give starts
+near the optimum, as the orbit pipelines' grid search does.
+
 ## Faster first calls: the compilation cache
 
 virgil is built on JAX, which compiles each program the first time it runs. A

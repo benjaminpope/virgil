@@ -1,5 +1,8 @@
 """NUTS on one packed unconstrained vector, for small likelihood-term models.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 [`numpyro_model`][virgil.likelihood.numpyro_model] samples every prior at its own
 site, so each leapfrog step carries a pytree of small leaves through NumPyro's
 loop. For a model of a few parameters (an orbit fit to astrometry) that
@@ -14,14 +17,20 @@ Source: Hoffman and Gelman (2014), NUTS; adaptation as in Stan, via blackjax.
 
 from __future__ import annotations
 
+import warnings
+
 import blackjax
 import jax
 import jax.numpy as np
+import numpy as onp
 from numpyro.distributions.transforms import biject_to
 
+from ._precision import cast_tree, run_in
 from .angles import is_angle_vector, vector_angle, vector_site
 
 __all__ = ["flat_nuts", "flat_nuts_sampler", "packed_posterior"]
+
+__provisional__ = ("*",)
 
 
 def packed_posterior(priors, likelihoods):
@@ -44,7 +53,8 @@ def packed_posterior(priors, likelihoods):
         Packed vector to the dict of sites a ``numpyro_model`` run reports: each path's
         constrained value (angles in degrees) and each angle vector at ``<path>_vec``.
     pack : callable
-        Dict of those sites (angle paths may be given as ``<path>_vec``) to the vector.
+        Dict of those sites to the vector; an angle is read from ``<path>_vec``, else from
+        ``<path>`` in degrees.
     size : int
         Length of the packed vector.
     """
@@ -93,8 +103,11 @@ def packed_posterior(priors, likelihoods):
     def pack(values):
         parts = []
         for p in paths:
-            if maps[p] is None:
+            if maps[p] is None and vector_site(p) in values:
                 parts.append(np.asarray(values[vector_site(p)], float))
+            elif maps[p] is None:  # the angle in degrees
+                theta = np.deg2rad(np.asarray(values[p], float))
+                parts.append(np.stack([np.cos(theta), np.sin(theta)]))
             else:
                 parts.append(
                     np.atleast_1d(maps[p].inv(np.asarray(values[p], float)))
@@ -123,6 +136,7 @@ def flat_nuts_sampler(
     target_accept=0.8,
     max_tree_depth=10,
     dense_mass=True,
+    dtype="float64",
 ):
     """Build a blackjax NUTS sampler, with window adaptation, on the packed posterior.
 
@@ -142,6 +156,8 @@ def flat_nuts_sampler(
         Trajectory doublings.
     dense_mass : bool, optional
         Dense (default) or diagonal mass matrix.
+    dtype : {"float64", "float32"}, optional
+        Precision, applied locally (the priors, terms and starts are cast to it).
 
     Returns
     -------
@@ -149,10 +165,14 @@ def flat_nuts_sampler(
         ``sample(seed=0, init=None)`` returns ``(samples, info)``. ``init`` is one dict
         of starting site values, or one per chain, keyed as the sampled sites (``<path>``
         for scalars, ``<path>_vec`` for angle vectors); the default draws from the
-        priors. ``samples`` maps site name to an array of shape
+        priors, which can leave chains stuck (a warning says so): give starts near the optimum. ``samples`` maps site name to an array of shape
         ``(num_chains, num_samples, ...)``; ``info`` has ``num_steps`` and ``diverging``
         of that shape, and the adapted ``step_size`` per chain.
     """
+    with run_in(dtype):
+        priors, likelihoods = cast_tree(
+            (dict(priors), list(likelihoods)), dtype
+        )
     logdensity, unpack, pack, _ = packed_posterior(priors, likelihoods)
     warmup = blackjax.window_adaptation(
         blackjax.nuts,
@@ -185,7 +205,7 @@ def flat_nuts_sampler(
     run = jax.jit(jax.vmap(one_chain))
     unpack_all = jax.jit(jax.vmap(jax.vmap(unpack)))
 
-    def sample(seed=0, init=None):
+    def _sample(seed, init):
         key, k_init = jax.random.split(jax.random.PRNGKey(seed))
         if init is None:
             keys = jax.random.split(k_init, num_chains * len(priors)).reshape(
@@ -204,11 +224,31 @@ def flat_nuts_sampler(
             starts = [init] * num_chains
         else:
             starts = list(init)
-        u0 = np.stack([pack(s) for s in starts])
+        u0 = cast_tree(np.stack([pack(s) for s in starts]), dtype)
         draws, steps, div, step_size = run(
             jax.random.split(key, num_chains), u0
         )
         info = {"num_steps": steps, "diverging": div, "step_size": step_size}
+        _warn_if_stuck(div, step_size)
         return unpack_all(draws), info
 
+    def sample(seed=0, init=None):
+        with run_in(dtype):
+            return _sample(seed, init)
+
     return sample
+
+
+def _warn_if_stuck(diverging, step_size):
+    """Warn on a divergent run or a chain whose adapted step size is far below the rest."""
+    fraction = float(onp.mean(onp.asarray(diverging)))
+    steps = onp.asarray(step_size)
+    spread = float(steps.max() / max(steps.min(), onp.finfo(float).tiny))
+    if fraction > 0.01 or spread > 10.0:
+        warnings.warn(
+            f"flat_nuts: {fraction:.1%} of draws diverged and the adapted step sizes "
+            f"span a factor {spread:.0f}; a chain is probably stuck. Start the chains "
+            "near the optimum (init=, e.g. from starting_orbits) and check "
+            "info['diverging'] and info['step_size'].",
+            stacklevel=3,
+        )

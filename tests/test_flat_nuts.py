@@ -9,12 +9,26 @@ from numpyro.infer import MCMC, NUTS, init_to_value
 from numpyro.infer.util import initialize_model
 
 from virgil.angles import AngleVector
-from virgil.flat_nuts import flat_nuts, flat_nuts_sampler, packed_posterior
+from virgil.flat_nuts import (
+    _warn_if_stuck,
+    flat_nuts,
+    flat_nuts_sampler,
+    packed_posterior,
+)
 from virgil.likelihood import numpyro_model
 from virgil.orbits import KeplerOrbit, PositionData
 from virgil.priors import IsotropicInclination
 
 T_REF = 60000.0
+
+
+@pytest.fixture(autouse=True)
+def _x64():
+    """Float64: the density and round-trip tolerances below hold only there."""
+    with jax.enable_x64(True):
+        yield
+
+
 TRUTH = dict(
     P=200.0, a=20.0, e=0.34, inc=53.4, omega=76.9, Omega=28.2, M0=120.0
 )
@@ -134,6 +148,7 @@ def test_same_posterior_as_numpyro_nuts():
     assert set(r) <= set(samples)  # the same site names, plus nothing missing
 
 
+@pytest.mark.filterwarnings("ignore:flat_nuts:UserWarning")
 def test_sampler_is_reusable_and_seeded():
     priors, term = _problem()
     sample = flat_nuts_sampler(
@@ -143,3 +158,22 @@ def test_sampler_is_reusable_and_seeded():
     b, _ = sample(5)
     assert onp.array_equal(a["P"], b["P"])
     assert a["omega_vec"].shape == (2, 20, 2)
+
+
+def test_angle_start_in_degrees_matches_vector_start():
+    priors, term = _problem()
+    _, unpack, pack, _ = packed_posterior(priors, [term])
+    vec = _starts(1)[0]
+    deg = {k: v for k, v in vec.items() if not k.endswith("_vec")}
+    deg.update({"omega": 70.0, "Omega": 30.0, "M0": 115.0})
+    assert onp.allclose(pack(vec), pack(deg), atol=1e-12)
+
+
+def test_stuck_chain_warns_and_a_clean_run_does_not(recwarn):
+    ok = onp.zeros((2, 50), bool)
+    _warn_if_stuck(ok, onp.array([0.11, 0.12]))
+    assert not recwarn.list
+    with pytest.warns(UserWarning, match="stuck"):
+        _warn_if_stuck(ok, onp.array([0.11, 0.002]))
+    with pytest.warns(UserWarning, match="stuck"):
+        _warn_if_stuck(onp.ones((2, 50), bool), onp.array([0.1, 0.1]))

@@ -1,1 +1,0 @@
-flat_nuts, flat_nuts_sampler: blackjax NUTS on one packed unconstrained vector for likelihood-term models (orbit fits to astrometry), the same posterior as numpyro_model with NUTS and about 3-6x faster warm on a 7-parameter orbit fit; the model needs good chain starts (blackjax does not search for the initial step size)
