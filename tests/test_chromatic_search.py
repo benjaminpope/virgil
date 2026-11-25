@@ -318,40 +318,40 @@ ADU = 1e5
 
 def _flux_limit(data):
     positions = {
-        "comp.dra": onp.array([8.0]),
-        "comp.ddec": onp.array([-5.0]),
+        "comp.dra": onp.array([0.2]),
+        "comp.ddec": onp.array([0.0]),
         "comp.flux.ratio": onp.array([0.01]),
     }
     template = _scene(_power(0.05))
     return float(injection_limits(template, data, positions, 3.0)[0, 0])
 
 
-def test_oiflux_injection_limit_is_scale_free():
-    """Audit finding 724#12.3b is not reproduced.
-
-    `FluxSpectrum.predict` returns ``mu * template`` in the data's units, so
-    the injected signal is in ADU too: a 1e5 ADU spectrum and the same one
-    normalized to 1 (errors scaled alike) give the same limit.
-    """
-    truth = _scene(_power(RATIO))
+def _null_flux_data(unit, mu):
+    """Null-scene data whose spectrum has grey scale ~``unit``, then the
+    scale prior restated with mean ``mu`` (the data are not regenerated)."""
     blocks = ("v2", "t3", "flux")
-    adu = _data(truth, blocks, unit=ADU)
-    # the model's flux samples are at the ADU level, independently of the
-    # injection
-    n_flux = int(adu.extras[0].values.size)
-    assert float(onp.mean(adu.model(truth)[-n_flux:])) == pytest.approx(
-        ADU, rel=0.1
-    )
-    assert _flux_limit(adu) == pytest.approx(
-        _flux_limit(_data(truth, blocks)), rel=1e-3
+    data = _data(_scene(_power(1e-9)), blocks, unit=unit)
+    return data.with_flux_scale(scale=(mu, 0.5 * mu))
+
+
+@pytest.mark.parametrize("mu", [ADU, ADU / 2, 2 * ADU, ADU / 3])
+def test_oiflux_injection_limit_ignores_the_stated_scale_prior(mu):
+    """Audit finding 724#12.3b: injected at the data's grey scale, not at mu.
+
+    `FluxSpectrum.predict` returns ``mu t``, so adding its change of ``t`` at
+    ``mu`` scaled the injection by ``mu / k`` (limits ~3x too loose at
+    ``mu = k / 3``, clipped to the search bound below). The limit must not
+    depend on the stated prior mean, nor on the data's units.
+    """
+    reference = _flux_limit(_null_flux_data(1.0, 1.0))
+    assert _flux_limit(_null_flux_data(ADU, mu)) == pytest.approx(
+        reference, rel=1e-3
     )
 
 
-def test_oiflux_enters_the_injection_limit():
-    """Not vacuous: the spectrum changes the limit."""
-    truth = _scene(_power(RATIO))
-    with_flux = _data(truth, ("v2", "t3", "flux"), unit=ADU)
-    without = _data(truth, ("v2", "t3"))
-    assert _flux_limit(with_flux) != pytest.approx(
-        _flux_limit(without), rel=1e-2
-    )
+def test_oiflux_tightens_the_injection_limit():
+    """The spectrum tightens an unresolved companion's limit (null data)."""
+    blocks = ("v2", "t3")
+    without = _flux_limit(_data(_scene(_power(1e-9)), blocks))
+    with_flux = _flux_limit(_null_flux_data(ADU, ADU))
+    assert with_flux < 0.8 * without
