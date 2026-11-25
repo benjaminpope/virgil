@@ -170,6 +170,7 @@ jobs:
 
       - name: macOS memory-kill evidence
         if: (failure() || cancelled()) && runner.os == 'macOS'
+        timeout-minutes: 3  # a slow log scan must not starve the uploads below
         run: |
           log show --last 2h --predicate '(processID == 0 AND (eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus")) OR process == "ReportCrash"' | tail -200 || true
           # Jetsam ledger snapshots and native crash reports (Mach exceptions)
