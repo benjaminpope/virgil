@@ -4,8 +4,8 @@
 pip install --upgrade virgil-astro==0.4.2
 ```
 
-> **Radio imaging is experimental in this release.** The IM Lup cold-start gate failed item 6 on its 2026-11-23
-> rerun (see [Radio](#radio)). The gate carries to 0.4.3 with its criteria unchanged.
+> **Radio imaging is experimental in this release.** The IM Lup regularizer-weight gate failed its convergence
+> criterion (see [Radio](#radio)). The gate carries to 0.4.3 with its criteria unchanged.
 
 0.4.2 brings the radio work of 0.4.1's plan (an exact Toeplitz χ² that `fit` picks on its own where it applies, a
 CLEAN that no longer diverges on sparse coverage, measurement-set input), a large audit of numerical and verdict
@@ -110,9 +110,12 @@ chooses the regularization weight by the degrees-of-freedom discrepancy (`DofDis
 [`docs/stability.md`](https://benjaminpope.github.io/virgil/stability/). Use them, but check results against an
 independent imager.
 
-**IM Lup cold-start gate: FAILED item 6** (2026-11-23 rerun, registered criteria unchanged). The grid fits ended
-unconverged: at w = 842 the KKT residual was 1.76e-4 and at w = 266 it was 7.84e-4, against the limit of 1e-4. Ben
-ruled "ship as experimental". The criteria are not loosened and the gate carries to 0.4.3.
+Radio imaging (`virgil.imaging` MaxEnt on ALMA data) ships as experimental in 0.4.2. Its pre-registered
+regularizer-weight rule (virgil-validation, criteria commit `432aa3a`) failed its convergence criterion on the IM Lup
+visibilities: the fast-loop fits at w/s² ≤ 316 stopped at `kkt_w` of 1.8e-4 to 7.8e-4 against the required 1e-4, so no
+weight was chosen and the criteria were not changed. The gate carries to 0.4.3
+([virgil#534](https://github.com/benjaminpope/virgil/issues/534),
+[virgil-validation#292](https://github.com/benjaminpope/virgil-validation/issues/292)).
 
 Trust status of each piece, from the radio register:
 

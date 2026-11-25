@@ -44,7 +44,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 
 ## Experimental in 0.4.2
 
-Within the provisional radio imaging, three pieces are **experimental**: the IM Lup cold-start gate failed item 6 on its 2026-11-23 rerun (grid fits ended with a KKT residual of 1.76e-4 at w = 842 and 7.84e-4 at w = 266, against the limit of 1e-4), and the gate carries to 0.4.3 with its criteria unchanged. Check their results against an independent imager.
+Within the provisional radio imaging, three pieces are **experimental**: the pre-registered regularizer-weight rule failed its convergence criterion on the IM Lup visibilities (fits at w/s² ≤ 316 stopped at `kkt_w` of 1.8e-4 to 7.8e-4 against the required 1e-4, so no weight was chosen), and the gate carries to 0.4.3 with its criteria unchanged. Check their results against an independent imager.
 
 - `radio_clean` (`clean`, `RadioCleanResult`, `fit_beam`, `restore`);
 - `ComplexVisData` and `ComplexVisData.read_ms`;
